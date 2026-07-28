@@ -541,6 +541,26 @@ impl Orchestrator {
         self.shared.store.read_config(id, kind).await
     }
 
+    // ---- アイコン -------------------------------------------------------------
+
+    /// エージェントのアイコン（WebP バイト列）を読む。未設定なら `None`。
+    pub async fn agent_icon(&self, id: &AgentId) -> CoreResult<Option<Vec<u8>>> {
+        self.shared.world.read().await.agent(id)?;
+        self.shared.store.read_icon(id).await
+    }
+
+    /// エージェントのアイコンを設定する。中身の検証（WebP・サイズ上限）は store が担う。
+    pub async fn set_agent_icon(&self, id: &AgentId, bytes: &[u8]) -> CoreResult<()> {
+        self.shared.world.read().await.agent(id)?;
+        self.shared.store.write_icon(id, bytes).await
+    }
+
+    /// エージェントのアイコンを削除する。
+    pub async fn clear_agent_icon(&self, id: &AgentId) -> CoreResult<()> {
+        self.shared.world.read().await.agent(id)?;
+        self.shared.store.delete_icon(id).await
+    }
+
     /// 設定ファイルを書く。
     pub async fn write_config(
         &self,
@@ -961,7 +981,7 @@ async fn handle_message(
             record.total_tokens += tokens;
             record.push_exchange(
                 &incoming.content,
-                outcome.spoken(),
+                &outcome.spoken(),
                 shared.config.history_turns,
             );
         }
@@ -969,27 +989,38 @@ async fn handle_message(
 
     // 8. 記録と転送。
     let next_hop = incoming.hop.saturating_add(1);
-    let (destination, spoken) = match &outcome {
-        Outcome::Finish { content } => (Endpoint::User, content.as_str()),
-        Outcome::Handoff { to, message } => (Endpoint::Agent { id: to.clone() }, message.as_str()),
+    let from = Endpoint::Agent {
+        id: agent_id.clone(),
     };
 
-    let mut outgoing = AgentMessage::new(
-        Endpoint::Agent {
-            id: agent_id.clone(),
-        },
-        destination,
-        spoken,
-        next_hop,
-    );
-    outgoing.tokens = tokens as u32;
-    shared.record(outgoing.clone()).await;
-
-    let Outcome::Handoff { to, .. } = &outcome else {
-        // 会話はここで終わり。ユーザーへ返して転送しない。
-        return Ok(());
+    let deliveries = match &outcome {
+        Outcome::Finish { content } => {
+            // 会話はここで終わり。ユーザーへ返して転送しない。
+            let mut outgoing = AgentMessage::new(from, Endpoint::User, content, next_hop);
+            outgoing.tokens = tokens as u32;
+            shared.record(outgoing).await;
+            return Ok(());
+        }
+        Outcome::Handoff { deliveries } => deliveries,
     };
 
+    // 宛先ごとに 1 通として記録する（fan-out）。トークンは 1 ターンぶんの消費なので、
+    // 全通に載せると宛先数で二重計上される。先頭の 1 通にだけ載せる。
+    let mut queued = Vec::with_capacity(deliveries.len());
+    for (index, (to, message)) in deliveries.iter().enumerate() {
+        let mut outgoing = AgentMessage::new(
+            from.clone(),
+            Endpoint::Agent { id: to.clone() },
+            message,
+            next_hop,
+        );
+        outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };
+        shared.record(outgoing.clone()).await;
+        queued.push((to, outgoing));
+    }
+
+    // 燃料切れの判定は宛先共通（同じターン由来なので hop も同じ）。
+    // 記録は済ませてから打ち切る——発話自体は起きたのだから、ログには残す。
     if next_hop >= shared.config.max_hops {
         shared.emit(CoreEvent::HopLimitReached {
             agent_id: agent_id.clone(),
@@ -1000,11 +1031,14 @@ async fn handle_message(
 
     // 転送失敗（宛先停止中・受信箱飽和）は、このエージェント自身の失敗ではない。
     // 自分を Failed に落とさず、事象として通知するに留める。
-    if let Err(err) = deliver(shared, to, outgoing).await {
-        shared.emit(CoreEvent::AgentFailed {
-            agent_id: to.clone(),
-            error: ErrorPayload::from(&err),
-        });
+    // 1 宛先の失敗で残りを道連れにしない——枝は独立している。
+    for (to, outgoing) in queued {
+        if let Err(err) = deliver(shared, to, outgoing).await {
+            shared.emit(CoreEvent::AgentFailed {
+                agent_id: to.clone(),
+                error: ErrorPayload::from(&err),
+            });
+        }
     }
 
     Ok(())
@@ -1046,20 +1080,32 @@ enum Outcome {
         content: String,
     },
     /// 転送して会話を続ける。
+    ///
+    /// 宛先は複数持てる（fan-out）。かつて単一宛先の型だったときは、
+    /// モデルが並列ツール呼び出しで複数へ渡そうとしても 2 本目以降が
+    /// 黙って捨てられ、「みんなに挨拶して」が原理的に成立しなかった。
     Handoff {
-        /// 転送先。
-        to: AgentId,
-        /// 相手に伝える内容。
-        message: String,
+        /// 宛先と、それぞれへ伝える内容。空にはならない（`decide` が保証）。
+        deliveries: Vec<(AgentId, String)>,
     },
 }
 
 impl Outcome {
     /// このターンで実際に発した言葉。履歴へ積むのはこちら。
-    fn spoken(&self) -> &str {
+    ///
+    /// 複数宛先のときは宛先を添えて結合する。履歴を読むのは本人（モデル）なので、
+    /// 「誰に何を言ったか」が残らないと、次のターンで自分の発言を再構成できない。
+    fn spoken(&self) -> String {
         match self {
-            Self::Finish { content } => content,
-            Self::Handoff { message, .. } => message,
+            Self::Finish { content } => content.clone(),
+            Self::Handoff { deliveries } => match deliveries.as_slice() {
+                [(_, message)] => message.clone(),
+                many => many
+                    .iter()
+                    .map(|(to, message)| format!("[→ {to}] {message}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
         }
     }
 }
@@ -1135,6 +1181,8 @@ impl HandoffTools {
         if tools_available {
             "## 会話の進め方\n\
              他のエージェントへ話を渡す必要があるときだけ `transfer_to_*` ツールを呼んでください。\
+             **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
+             全員へ並行して届きます。\
              自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
              **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
              結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
@@ -1166,14 +1214,23 @@ impl HandoffTools {
     ///
     /// 規則は OpenAI Agents SDK と同じ:
     /// **ツール呼び出しの無いテキスト出力が最終出力**。
+    ///
+    /// 転送要求は**全部**拾う（fan-out）。Claude / Gemini は 1 応答で複数の
+    /// tool call を普通に返すので、最初の 1 本で打ち切ると残りが黙って消える。
+    /// 同じ宛先への重複は先勝ちで 1 通に畳む——モデルは同じツールを
+    /// 同じ引数で 2 回呼ぶことがあり、素通しにすると受け手の履歴が汚れる。
     fn decide(&self, response: &ChatResponse, tools_available: bool) -> Outcome {
         let text = response.text.clone().unwrap_or_default();
 
         if tools_available {
+            let mut deliveries: Vec<(AgentId, String)> = Vec::new();
             for call in &response.tool_calls {
                 let Some(target) = self.resolve(&call.name) else {
                     continue;
                 };
+                if deliveries.iter().any(|(to, _)| to == target) {
+                    continue;
+                }
                 // 引数が欠けていても転送自体は成立させる。本文を代わりに渡す。
                 let message = call
                     .args
@@ -1181,19 +1238,19 @@ impl HandoffTools {
                     .and_then(|v| v.as_str())
                     .map(str::to_owned)
                     .unwrap_or_else(|| text.clone());
-                return Outcome::Handoff {
-                    to: target.clone(),
-                    message,
-                };
+                deliveries.push((target.clone(), message));
+            }
+            if !deliveries.is_empty() {
+                return Outcome::Handoff { deliveries };
             }
             return Outcome::Finish { content: text };
         }
 
         // ツールを使えない経路: 終了マーカーが無ければ最初の相手へ渡す。
+        // 宛先を選ぶ手段が本文しか無いこの経路では、fan-out は表現できない。
         match (self.first(), text.contains(TERMINATION_MARKER)) {
             (Some(target), false) => Outcome::Handoff {
-                to: target.clone(),
-                message: text,
+                deliveries: vec![(target.clone(), text)],
             },
             _ => Outcome::Finish {
                 content: text.replace(TERMINATION_MARKER, "").trim_end().to_owned(),

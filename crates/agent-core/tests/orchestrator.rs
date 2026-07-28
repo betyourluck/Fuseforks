@@ -137,12 +137,53 @@ impl LlmBackend for AlwaysHandoffBackend {
                 id: "call_1".into(),
                 name: tool.name.clone(),
                 args: serde_json::json!({ "message": text }),
+                extra: None,
             }],
             None => Vec::new(),
         };
 
         Ok(ChatResponse {
             text: Some(text),
+            tool_calls,
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 10,
+                completion: 5,
+                cache_read: 0,
+            },
+        })
+    }
+}
+
+/// 提示された転送ツールを**すべて同時に**呼ぶバックエンド。
+///
+/// Claude / Gemini は 1 応答で複数の tool call を普通に返す（並列ツール呼び出し）。
+/// 「みんなに挨拶して」に対してモデルが全接続先へ転送を要求する状況を再現する。
+struct FanOutBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for FanOutBackend {
+    fn name(&self) -> &str {
+        "fan-out"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let text = "みんなへ".to_owned();
+        let tool_calls = req
+            .tools
+            .iter()
+            .filter(|tool| tool.name.starts_with("transfer_to_"))
+            .enumerate()
+            .map(|(index, tool)| ToolCall {
+                id: format!("call_{index}"),
+                name: tool.name.clone(),
+                args: serde_json::json!({ "message": format!("{} への挨拶", tool.name) }),
+                extra: None,
+            })
+            .collect();
+
+        Ok(ChatResponse {
+            text: Some(text.clone()),
             tool_calls,
             finish: Finish::Stop,
             usage: Usage {
@@ -183,6 +224,7 @@ impl LlmBackend for ToolCallingBackend {
                 id: "call_1".into(),
                 name: self.tool.clone(),
                 args: self.args.clone(),
+                extra: None,
             }]
         } else {
             Vec::new()
@@ -452,6 +494,95 @@ async fn not_required_transitions_still_flow_through_upsert() {
     );
 }
 
+/// 最小の正当な WebP コンテナ（RIFF ヘッダ + "WEBP"）を作る。
+fn webp_bytes(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(4u32 + payload.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(b"WEBP");
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+/// アイコンの保存・取得・削除の往復。
+///
+/// 中身は WebP に固定する契約（変換は UI 層の責務）。
+/// コアはマジック番号とサイズ上限で入口を絞り、任意バイト列の書き込み経路を塞ぐ。
+#[tokio::test]
+async fn agent_icon_round_trips_and_rejects_non_webp() {
+    let dir = TempDir::new("icon");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "IconAgent", "tpl"))
+        .await
+        .unwrap();
+
+    // 未設定は None（エラーではない）。
+    assert_eq!(orchestrator.agent_icon(&id).await.unwrap(), None);
+
+    // WebP でないバイト列は拒否される。PNG のマジックで偽装しても通らない。
+    let err = orchestrator
+        .set_agent_icon(&id, b"\x89PNG\r\n\x1a\n....")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ICON");
+
+    // サイズ上限（512 KB）超過も拒否される。
+    let oversized = webp_bytes(&vec![0u8; 512 * 1024]);
+    let err = orchestrator.set_agent_icon(&id, &oversized).await.unwrap_err();
+    assert_eq!(err.code(), "INVALID_ICON");
+
+    // 正当な WebP は保存でき、そのまま読み戻せる。
+    let icon = webp_bytes(b"icon-payload");
+    orchestrator.set_agent_icon(&id, &icon).await.unwrap();
+    assert_eq!(orchestrator.agent_icon(&id).await.unwrap().as_deref(), Some(icon.as_slice()));
+
+    // 削除は冪等。
+    orchestrator.clear_agent_icon(&id).await.unwrap();
+    assert_eq!(orchestrator.agent_icon(&id).await.unwrap(), None);
+    orchestrator.clear_agent_icon(&id).await.unwrap();
+
+    // 未登録エージェントには読み書きさせない。
+    let ghost = AgentId::from("ghost");
+    assert_eq!(
+        orchestrator.agent_icon(&ghost).await.unwrap_err().code(),
+        "AGENT_NOT_FOUND"
+    );
+    assert_eq!(
+        orchestrator
+            .set_agent_icon(&ghost, &webp_bytes(b"x"))
+            .await
+            .unwrap_err()
+            .code(),
+        "AGENT_NOT_FOUND"
+    );
+}
+
+/// エージェント削除でアイコンも消えること（設定ディレクトリごと消す既存挙動の確認）。
+#[tokio::test]
+async fn deleting_an_agent_removes_its_icon_too() {
+    let dir = TempDir::new("icon-cleanup");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "IconAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .set_agent_icon(&id, &webp_bytes(b"icon"))
+        .await
+        .unwrap();
+
+    orchestrator.delete_agent(&id).await.unwrap();
+    assert!(
+        !dir.0.join("agents").join("agent_01").exists(),
+        "設定ディレクトリごと消える（アイコンの孤児を残さない）"
+    );
+}
+
 #[tokio::test]
 async fn lifecycle_transitions_are_guarded_in_both_directions() {
     let dir = TempDir::new("lifecycle");
@@ -589,6 +720,140 @@ async fn message_is_routed_when_the_agent_requests_a_handoff() {
     assert_eq!(log[1].to, Endpoint::Agent { id: b.clone() });
     assert_eq!(log[2].from, Endpoint::Agent { id: b.clone() });
     assert_eq!(log[2].to, Endpoint::User);
+}
+
+/// 1 応答内の複数の転送要求が、**全宛先へ**配送されること（fan-out）。
+///
+/// かつては `Outcome::Handoff` が単一宛先の型で、`decide()` も最初の 1 本で
+/// 打ち切っていた。モデルが「みんなへ渡す」つもりで並列ツール呼び出しを
+/// 返しても 2 本目以降は黙って捨てられ、「みんなに挨拶して」が
+/// 原理的に成立しなかった（ジェミーだけトークン 0 のまま、という形で表面化）。
+#[tokio::test]
+async fn a_single_response_fans_out_to_every_requested_target() {
+    let dir = TempDir::new("fan-out");
+    let orchestrator =
+        setup_with(&dir, Arc::new(FanOutBackend), OrchestratorConfig::default()).await;
+    let (hub, b, c) = (
+        AgentId::from("agent_hub"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+
+    for (id, name) in [(&hub, "Hub"), (&b, "Left"), (&c, "Right")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator
+        .set_connections(&hub, vec![b.clone(), c.clone()])
+        .await
+        .unwrap();
+    for id in [&hub, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&hub, "みんなに挨拶して").await.unwrap();
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let log = messages(&events);
+
+    // user → hub、hub → b、hub → c、b → user、c → user の 5 件。
+    // b / c は接続先が無くツールが提示されないため、そこで会話が終わる。
+    assert_eq!(log.len(), 5, "実際: {log:#?}");
+
+    let hub_deliveries: Vec<_> = log
+        .iter()
+        .filter(|m| m.from == Endpoint::Agent { id: hub.clone() })
+        .collect();
+    assert_eq!(hub_deliveries.len(), 2, "hub は 2 宛先へ配送する");
+    let destinations: Vec<_> = hub_deliveries.iter().map(|m| &m.to).collect();
+    assert!(destinations.contains(&&Endpoint::Agent { id: b.clone() }));
+    assert!(destinations.contains(&&Endpoint::Agent { id: c.clone() }));
+
+    // 宛先ごとに個別の本文が渡ること（全員に同一文のブロードキャストではない）。
+    assert!(hub_deliveries.iter().all(|m| m.content.contains("への挨拶")));
+    // 同じターン由来なので hop は揃う。
+    assert!(hub_deliveries.iter().all(|m| m.hop == 1));
+
+    // トークンは 1 ターンぶんの消費。宛先数で二重計上せず、先頭の 1 通にだけ載る。
+    let tokens: Vec<u32> = hub_deliveries.iter().map(|m| m.tokens).collect();
+    assert_eq!(tokens.iter().filter(|t| **t > 0).count(), 1, "実際: {tokens:?}");
+
+    // 双方の枝が独立にユーザーへ返る。
+    let finishes: Vec<_> = log.iter().filter(|m| m.to == Endpoint::User).collect();
+    assert_eq!(finishes.len(), 2);
+}
+
+/// 同じ宛先への重複した転送要求は 1 通にまとめられること。
+///
+/// モデルは同じツールを同じ引数で 2 回呼ぶことがある（実際に起きる）。
+/// 素通しにすると同一内容が二重配送され、受け手の履歴が汚れる。
+#[tokio::test]
+async fn duplicate_handoff_requests_to_one_target_are_collapsed() {
+    struct DuplicateHandoffBackend;
+
+    #[async_trait::async_trait]
+    impl LlmBackend for DuplicateHandoffBackend {
+        fn name(&self) -> &str {
+            "duplicate-handoff"
+        }
+
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            let tool_calls = match req.tools.iter().find(|t| t.name.starts_with("transfer_to_")) {
+                Some(tool) => vec![
+                    ToolCall {
+                        id: "call_1".into(),
+                        name: tool.name.clone(),
+                        args: serde_json::json!({ "message": "一通目" }),
+                        extra: None,
+                    },
+                    ToolCall {
+                        id: "call_2".into(),
+                        name: tool.name.clone(),
+                        args: serde_json::json!({ "message": "二通目" }),
+                        extra: None,
+                    },
+                ],
+                None => Vec::new(),
+            };
+            Ok(ChatResponse {
+                text: Some("渡します".into()),
+                tool_calls,
+                finish: Finish::Stop,
+                usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+            })
+        }
+    }
+
+    let dir = TempDir::new("dup-handoff");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(DuplicateHandoffBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let (a, b) = (AgentId::from("agent_01"), AgentId::from("agent_02"));
+
+    orchestrator.create_agent(AgentSpec::new(a.clone(), "A", "tpl")).await.unwrap();
+    orchestrator.create_agent(AgentSpec::new(b.clone(), "B", "tpl")).await.unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "始めて").await.unwrap();
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let log = messages(&events);
+
+    let deliveries: Vec<_> = log
+        .iter()
+        .filter(|m| m.from == Endpoint::Agent { id: a.clone() })
+        .collect();
+    assert_eq!(deliveries.len(), 1, "同一宛先は 1 通に畳む: {log:#?}");
+    assert_eq!(deliveries[0].content, "一通目", "先勝ち");
 }
 
 /// 履歴が積まれ、次のターンのプロンプトへ入ること。

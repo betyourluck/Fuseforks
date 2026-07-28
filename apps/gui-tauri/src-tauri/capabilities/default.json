@@ -1,11 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "メインウィンドウの権限。decorations:false のカスタム TitleBar 用に window 操作権限を付与。",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
-    "opener:allow-open-path"
+    "opener:allow-open-path",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize"
   ]
 }

@@ -14,6 +14,8 @@ import { computed, ref, watch } from "vue";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
+import { avatarHue, avatarInitial } from "../lib/avatar";
+import { fileToWebpIcon } from "../lib/iconImage";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABELS, type AgentId, type AgentSpec } from "../types";
 
@@ -104,6 +106,45 @@ async function openFolder(): Promise<void> {
   if (!state.workspace) return;
   await openPath(`${state.workspace}\\agents\\${props.agentId}`);
 }
+
+// ---- アイコン ----------------------------------------------------------------
+
+const iconInput = ref<HTMLInputElement | null>(null);
+const iconBusy = ref(false);
+const iconError = ref("");
+
+const iconUrl = computed(() => state.icons[props.agentId] ?? null);
+
+/**
+ * 選択された画像を WebP へ変換して保存する。
+ *
+ * 変換はここ（UI 層）の責務。コアは WebP 以外を受け付けない契約なので、
+ * 生の png / jpg をそのまま送る経路は最初から存在しない。
+ */
+async function onIconPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  // 同じファイルを選び直しても change が発火するよう、先に値を消す。
+  input.value = "";
+  if (!file) return;
+
+  iconBusy.value = true;
+  iconError.value = "";
+  try {
+    const bytes = await fileToWebpIcon(file);
+    await orchestrator.setAgentIcon(props.agentId, bytes);
+  } catch (error) {
+    // 変換の失敗（壊れた画像など）は IPC まで到達しないので、ここで表示する。
+    iconError.value = error instanceof Error ? error.message : "変換に失敗しました";
+  } finally {
+    iconBusy.value = false;
+  }
+}
+
+async function removeIcon(): Promise<void> {
+  if (!confirm("アイコン画像を削除しますか？")) return;
+  await orchestrator.clearAgentIcon(props.agentId);
+}
 </script>
 
 <template>
@@ -132,6 +173,52 @@ async function openFolder(): Promise<void> {
         </header>
 
         <div v-if="agent && draft" class="min-h-0 flex-1 overflow-y-auto p-3">
+          <!-- アイコン。丸抜きのプレビューが会話・マップ・一覧と同じ見た目になる。 -->
+          <div class="mb-3 flex items-center gap-3">
+            <img
+              v-if="iconUrl"
+              :src="iconUrl"
+              class="size-14 shrink-0 rounded-full object-cover ring-1 ring-line"
+              alt="エージェントのアイコン"
+            />
+            <div
+              v-else
+              class="flex size-14 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-surface-0"
+              :style="{ backgroundColor: avatarHue(agent.name) }"
+            >
+              {{ avatarInitial(agent.name) }}
+            </div>
+
+            <div class="min-w-0 text-[11px]">
+              <div class="flex gap-2">
+                <button
+                  class="rounded border border-line px-2 py-1 hover:border-accent hover:text-accent disabled:opacity-40"
+                  :disabled="iconBusy"
+                  @click="iconInput?.click()"
+                >
+                  {{ iconBusy ? "変換中…" : iconUrl ? "画像を変更" : "画像を選ぶ" }}
+                </button>
+                <button
+                  v-if="iconUrl"
+                  class="rounded border border-fail/60 px-2 py-1 text-fail hover:bg-fail/10"
+                  @click="removeIcon"
+                >
+                  削除
+                </button>
+              </div>
+              <p class="mt-1 text-ink-dim">png / jpg を選ぶと WebP に変換して保存します。</p>
+              <p v-if="iconError" class="mt-0.5 text-fail">{{ iconError }}</p>
+            </div>
+
+            <input
+              ref="iconInput"
+              type="file"
+              accept="image/png,image/jpeg"
+              class="hidden"
+              @change="onIconPicked"
+            />
+          </div>
+
           <dl class="grid grid-cols-[80px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
             <dt class="text-ink-dim">ID</dt>
             <dd class="selectable truncate font-mono">{{ agent.id }}</dd>

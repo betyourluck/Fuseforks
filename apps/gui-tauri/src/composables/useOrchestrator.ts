@@ -50,6 +50,11 @@ interface OrchestratorState {
   ready: boolean;
   /** 初期化に失敗した理由。`null` なら未発生。 */
   initError: ErrorPayload | null;
+  /**
+   * エージェントアイコンの object URL。`null` は「確認済みで未設定」、
+   * キー不在は「未確認」。バイト列を毎描画で運ばないための投影キャッシュ。
+   */
+  icons: Record<AgentId, string | null>;
 }
 
 const state = reactive<OrchestratorState>({
@@ -63,6 +68,7 @@ const state = reactive<OrchestratorState>({
   toasts: [],
   ready: false,
   initError: null,
+  icons: {},
 });
 
 let toastSeq = 0;
@@ -130,23 +136,82 @@ async function mutate<T>(label: string, task: () => Promise<T>): Promise<T | nul
     pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
     return null;
   } finally {
-    // 再同期自体の失敗で、元の操作の通知を上書きしない。
-    await refreshAll().catch(() => undefined);
+    // 再同期自体の失敗で、元の操作の通知を上書きしない。ただし黙殺もしない —
+    // 取り直しが落ちると投影が古いまま残るので、痕跡が無いと調査不能になる。
+    await refreshAll().catch((error) =>
+      console.warn("[useOrchestrator] 再同期に失敗しました（表示が古い可能性）:", error),
+    );
   }
 }
 
+/**
+ * 取り直しの世代番号。
+ *
+ * refreshAll は「mutate の完了時」と「コアイベント受信時」の 2 系統から呼ばれ、
+ * **並行に走る**。IPC の完了順は開始順と一致しないので、古い状態を持った応答が
+ * 後から着地すると新しい状態を黙って上書きする。実機では「削除したのに一覧に残る」
+ * 「保存したのに表示が戻る」として現れ、再起動まで直らない（failures.md #19）。
+ * 各呼び出しに世代を振り、**最後に開始した取り直しだけ**が状態を書けるようにする。
+ */
+let refreshEpoch = 0;
+
 /** 一覧をコア側から取り直す。 */
 async function refreshAll(): Promise<void> {
+  const epoch = ++refreshEpoch;
   const [agents, edges, templates, ragSources] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listModelTemplates(),
     ipc.listRagSources(),
   ]);
+
+  // 自分より新しい取り直しが始まっていたら、この応答は既に過去のもの。捨てる。
+  if (epoch !== refreshEpoch) return;
+
   state.agents = agents;
   state.edges = edges;
   state.templates = templates;
   state.ragSources = ragSources;
+  await refreshIcons();
+}
+
+/** バイト列をアイコン表示用の object URL にする。 */
+function iconUrlOf(bytes: number[]): string {
+  return URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" }));
+}
+
+/**
+ * アイコンの投影キャッシュを一覧と同期する。
+ *
+ * 取得するのは**未確認のエージェントだけ**。mutate のたびに全アイコンを
+ * 引き直すと、数十 KB のバイト列が毎操作 IPC を往復する。
+ * 差し替え・削除は操作したアクション側がキャッシュを直接更新する。
+ */
+async function refreshIcons(): Promise<void> {
+  // 消えたエージェントの URL は破棄する。object URL はプロセスが持つ実リソースで、
+  // 放置するとエージェントの作り直しのたびに Blob が溜まり続ける。
+  const known = new Set(state.agents.map((a) => a.id));
+  for (const id of Object.keys(state.icons)) {
+    if (!known.has(id)) {
+      const url = state.icons[id];
+      if (url) URL.revokeObjectURL(url);
+      delete state.icons[id];
+    }
+  }
+
+  await Promise.all(
+    state.agents
+      .filter((a) => !(a.id in state.icons))
+      .map(async (a) => {
+        try {
+          const bytes = await ipc.getAgentIcon(a.id);
+          state.icons[a.id] = bytes && bytes.length ? iconUrlOf(bytes) : null;
+        } catch {
+          // アイコンは装飾であり、取得失敗で操作全体の通知を汚さない。
+          state.icons[a.id] = null;
+        }
+      }),
+  );
 }
 
 /** 単一エージェントの一部フィールドだけを差し替える。 */
@@ -180,7 +245,10 @@ function applyEvent(event: CoreEvent): void {
 
     case "topologyChanged":
       // 辺の変化は一覧全体に波及しうるので、差分適用せず取り直す。
-      void refreshAll();
+      // mutate 由来の取り直しと並行しうるが、世代ガードが後勝ち上書きを防ぐ。
+      refreshAll().catch((error) =>
+        console.warn("[useOrchestrator] イベント由来の再同期に失敗しました:", error),
+      );
       break;
 
     case "agentFailed": {
@@ -342,6 +410,35 @@ export function useOrchestrator() {
       );
     },
 
+    /**
+     * アイコンを保存する。`bytes` は UI 側で WebP へ変換済みであること。
+     * 成功したらキャッシュを手元のバイト列で直接更新する（再フェッチしない）。
+     */
+    async setAgentIcon(agentId: AgentId, bytes: Uint8Array): Promise<boolean> {
+      const done = await mutate("アイコンの保存", () =>
+        ipc.setAgentIcon(agentId, Array.from(bytes)),
+      );
+      if (done !== null) {
+        const old = state.icons[agentId];
+        if (old) URL.revokeObjectURL(old);
+        state.icons[agentId] = iconUrlOf(Array.from(bytes));
+      }
+      return done !== null;
+    },
+
+    /** アイコンを削除する。 */
+    async clearAgentIcon(agentId: AgentId): Promise<boolean> {
+      const done = await mutate("アイコンの削除", () =>
+        ipc.clearAgentIcon(agentId),
+      );
+      if (done !== null) {
+        const old = state.icons[agentId];
+        if (old) URL.revokeObjectURL(old);
+        state.icons[agentId] = null;
+      }
+      return done !== null;
+    },
+
     readConfig: (agentId: AgentId, kind: ConfigFileKind) =>
       guard("設定ファイルの読み込み", () => ipc.readAgentConfig(agentId, kind)),
 
@@ -361,6 +458,22 @@ export function useOrchestrator() {
       // 発話は MessageSent イベントで届くので、ここでの再同期は
       // 送信が拒否された場合に一覧を正しく戻すために効く。
       await mutate("送信", () => ipc.sendUserMessage(agentId, content));
+    },
+
+    /**
+     * 複数エージェントへ同じ内容を同報する。
+     *
+     * コアの配送 API は単一宛先のまま。同報の実体は「N 回呼ぶ」以上のものではなく、
+     * 複数宛先 API をコアへ足すと部分失敗の集約という新しい契約が生まれる。
+     * 各宛先の mailbox は独立なので、1 宛先の失敗は他の配送を妨げない
+     * （Promise.all は最初の失敗を報告するが、他の送信自体は走り切る）。
+     */
+    async sendMany(agentIds: AgentId[], content: string): Promise<void> {
+      await mutate("送信", () =>
+        Promise.all(
+          agentIds.map((id) => ipc.sendUserMessage(id, content)),
+        ).then(() => undefined),
+      );
     },
 
     dismissToast,

@@ -34,7 +34,10 @@ pub enum OaiRole {
 /// ツール往復では 2 通りの形を取る:
 /// - assistant がツールを呼んだ発話: `content` は空になりうる。`tool_calls` を持つ
 /// - ツール結果: `role: "tool"` + `tool_call_id` + 結果本文
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq` を持たないのは、[`OaiRequestToolCall::extra_content`] が
+/// `serde_json::Value`（浮動小数を含みうるため `PartialEq` 止まり）だから。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OaiMessage {
     /// 役割。
     pub role: OaiRole,
@@ -64,7 +67,7 @@ impl OaiMessage {
 /// リクエスト側のツール呼び出し（履歴として送り返す形）。
 ///
 /// `arguments` は **JSON 文字列**。応答で受け取ったときと同じ形へ戻す必要がある。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OaiRequestToolCall {
     /// 呼び出し ID。
     pub id: String,
@@ -73,6 +76,13 @@ pub struct OaiRequestToolCall {
     pub kind: OaiToolKind,
     /// 関数呼び出しの中身。
     pub function: OaiRequestFunctionCall,
+    /// プロバイダ固有の随伴データ。応答で受けた値を**そのまま**返す。
+    ///
+    /// Gemini の思考署名（`{"google":{"thought_signature":...}}`）が入る。
+    /// 無いときはキーごと省く——署名を返さないサーバへ null や空オブジェクトを
+    /// 送ると、未知キーに厳格なサーバで壊れる。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// リクエスト側の関数呼び出し。
@@ -226,6 +236,10 @@ pub struct OaiToolCall {
     pub id: Option<String>,
     /// 関数呼び出しの中身。
     pub function: OaiFunctionCall,
+    /// プロバイダ固有の随伴データ（Gemini の思考署名など）。
+    /// 中身は解釈せず、履歴再送時にそのまま返すためだけに保持する。
+    #[serde(default)]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// 関数呼び出しの中身。

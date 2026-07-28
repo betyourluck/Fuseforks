@@ -51,6 +51,10 @@ pub fn run() {
             // 設定ファイル
             commands::read_agent_config,
             commands::write_agent_config,
+            // アイコン
+            commands::get_agent_icon,
+            commands::set_agent_icon,
+            commands::clear_agent_icon,
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,

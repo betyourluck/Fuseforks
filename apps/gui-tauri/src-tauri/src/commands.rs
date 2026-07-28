@@ -195,6 +195,39 @@ pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
     Ok(state.workspace.display().to_string())
 }
 
+// ---- アイコン ----------------------------------------------------------------
+
+/// エージェントのアイコン（WebP バイト列）を返す。未設定なら `null`。
+#[tauri::command]
+pub async fn get_agent_icon(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CoreResult<Option<Vec<u8>>> {
+    state.orchestrator.agent_icon(&agent_id).await
+}
+
+/// エージェントのアイコンを設定する。
+///
+/// UI 側が png / jpg を **WebP へ変換してから**送る契約。コアは WebP の
+/// マジック番号とサイズ上限だけを検証し、通らないバイト列は書かない。
+#[tauri::command]
+pub async fn set_agent_icon(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    data: Vec<u8>,
+) -> CoreResult<()> {
+    state.orchestrator.set_agent_icon(&agent_id, &data).await
+}
+
+/// エージェントのアイコンを削除する。
+#[tauri::command]
+pub async fn clear_agent_icon(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CoreResult<()> {
+    state.orchestrator.clear_agent_icon(&agent_id).await
+}
+
 // ---- ライフサイクルと配送 ---------------------------------------------------
 
 /// エージェントを起動する。

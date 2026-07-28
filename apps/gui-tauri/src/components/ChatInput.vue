@@ -66,7 +66,9 @@ function onEnter(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="shrink-0 border-t border-line px-3 py-2.5">
+  <!-- 上端の境界線は持たない。フッター（宛先チップ行）が境界線を担っており、
+       ここにも引くと二重線になる。 -->
+  <div class="shrink-0 px-3 py-2.5">
     <div
       class="relative rounded-xl bg-surface-1 ring-1 ring-transparent transition focus-within:ring-accent/60"
       :class="{ 'opacity-40': disabled }"

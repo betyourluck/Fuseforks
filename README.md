@@ -24,7 +24,7 @@ ConcordiaOrcehstrator/
 │       │   ├── error.rs             CoreError と、UI へ渡す ErrorPayload
 │       │   ├── event.rs             CoreEvent（broadcast で押し出す状態変化）
 │       │   ├── world.rs             登録簿。同期的な純データ構造（ロックを持たない）
-│       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md と world.json の入出力
+│       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md / icon.webp と world.json の入出力
 │       │   ├── orchestrator.rs      ★ ライフサイクルとメッセージ配送（Tokio）
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
 │       │   ├── rag.rs               RAG 索引（検索は Rayon 側で走る）
@@ -157,7 +157,12 @@ OpenAI Agents SDK の規則を採る。**ツール呼び出しの無いテキス
 `tool_choice` は `Auto`。
 
 - ツールを呼んだ → その相手へ転送し、会話が続く
+- **複数の `transfer_to_*` を同時に呼んだ → 全宛先へ並行に配送**（fan-out）。
+  同一宛先への重複は先勝ちで 1 通に畳む
 - **本文だけを返した → 会話終了**。ユーザーへ返る
+
+ユーザーからの送信も同報できる。会話ペインの宛先チップで複数エージェントを
+選ぶと、同じ内容が各エージェントへ独立に投入され、並列に走る。
 
 呼ばないことが終了を意味することはツールからは読み取れないので、手順を system
 メッセージで明示する（同 SDK の `RECOMMENDED_PROMPT_PREFIX` と同じ意図）。
@@ -310,6 +315,7 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
     SKILL.md
     Memory.md
     Construct.md
+    icon.webp                 エージェントのアイコン（設定時のみ。UI が WebP へ変換して保存）
 ```
 
 カードの ⚙ から開く設定ダイアログの 📁 ボタンで、そのエージェントの設定フォルダを

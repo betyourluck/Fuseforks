@@ -22,6 +22,7 @@ import AgentList from "./components/AgentList.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
+import TitleBar from "./components/TitleBar.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { useOrchestrator } from "./composables/useOrchestrator";
@@ -42,8 +43,10 @@ onMounted(() => {
 </script>
 
 <template>
+  <div class="flex h-full flex-col overflow-hidden bg-surface-0 text-ink">
+  <TitleBar />
   <div
-    class="grid h-full overflow-hidden bg-surface-0 text-ink"
+    class="grid min-h-0 flex-1 overflow-hidden"
     :style="{ gridTemplateColumns: columns }"
   >
     <!--
@@ -119,5 +122,6 @@ onMounted(() => {
       </template>
       <p v-else class="text-ink-dim">オーケストレーターを起動しています…</p>
     </div>
+  </div>
   </div>
 </template>

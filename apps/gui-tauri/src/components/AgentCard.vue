@@ -7,11 +7,14 @@
  */
 import { computed } from "vue";
 
+import { avatarHue, avatarInitial } from "../lib/avatar";
 import { STATUS_LABELS, type AgentSnapshot } from "../types";
 
 const props = defineProps<{
   agent: AgentSnapshot;
   selected: boolean;
+  /** 設定済みアイコンの object URL。無ければ頭文字の円を出す。 */
+  icon?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -66,11 +69,27 @@ const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
     @click="emit('select')"
   >
     <header class="flex items-center gap-2">
-      <span
-        class="size-2 shrink-0 rounded-full"
-        :class="statusColor"
-        :title="STATUS_LABELS[agent.status]"
-      />
+      <!-- アバター + 状態。状態ドットはアバターの右下に重ね、面積を取らずに両方見せる。 -->
+      <div class="relative shrink-0">
+        <img
+          v-if="icon"
+          :src="icon"
+          class="size-8 rounded-full object-cover ring-1 ring-line"
+          :alt="agent.name"
+        />
+        <div
+          v-else
+          class="flex size-8 items-center justify-center rounded-full text-[12px] font-semibold text-surface-0"
+          :style="{ backgroundColor: avatarHue(agent.name) }"
+        >
+          {{ avatarInitial(agent.name) }}
+        </div>
+        <span
+          class="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-surface-1"
+          :class="statusColor"
+          :title="STATUS_LABELS[agent.status]"
+        />
+      </div>
       <h3 class="min-w-0 flex-1 truncate font-medium">{{ agent.name }}</h3>
 
       <!-- 設定。カード本体のクリック（選択）と混ざらないよう伝播を止める。 -->

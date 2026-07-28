@@ -105,6 +105,8 @@ fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
                     // 受け取ったときと同じ「JSON 文字列」へ戻す。
                     arguments: serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".into()),
                 },
+                // Gemini の思考署名など。受けた値をそのまま返す（欠くと 400）。
+                extra_content: call.extra.clone(),
             })
             .collect(),
         tool_call_id: None,
@@ -188,6 +190,7 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
             id: call.id.unwrap_or_default(),
             name: call.function.name.unwrap_or_default(),
             args,
+            extra: call.extra_content,
         });
     }
 
@@ -283,6 +286,7 @@ mod tests {
             id: "call_1".into(),
             name: "remember".into(),
             args: serde_json::json!({ "note": "覚えること" }),
+            extra: None,
         }];
 
         let req = ChatRequest {
@@ -312,6 +316,72 @@ mod tests {
         assert_eq!(messages[2]["role"], "tool");
         assert_eq!(messages[2]["tool_call_id"], "call_1");
         assert_eq!(messages[2]["content"], "書き留めました。");
+    }
+
+    /// Gemini (OpenAI 互換) の思考署名がツール往復で保存されること。
+    ///
+    /// Gemini 3 系はツール呼び出しごとに `extra_content.google.thought_signature` を返し、
+    /// 履歴として assistant の tool_calls を再送するとき、**同じ位置に同じ値**を
+    /// 返すことを要求する。欠くと 400 INVALID_ARGUMENT
+    /// (`Function call is missing a thought_signature`) で、ツールを 1 回でも
+    /// 呼んだ会話の 2 周目が必ず落ちる。実機のジェミー (remember 呼び出し直後) で表面化。
+    /// 一次資料: https://ai.google.dev/gemini-api/docs/thought-signatures
+    #[test]
+    fn gemini_thought_signature_round_trips_through_tool_calls() {
+        let raw = r#"{
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "function-call-587",
+                        "type": "function",
+                        "extra_content": { "google": { "thought_signature": "CvcQAdHN2g==" } },
+                        "function": { "name": "remember", "arguments": "{\"note\":\"呼称ルール\"}" }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+
+        // オーケストレーターと同じ経路: 受けた呼び出しをそのまま履歴へ積んで再送する。
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("覚えておいて"),
+                ChatMessage::assistant_tool_calls("", resp.tool_calls.clone()),
+                ChatMessage::tool_result("function-call-587", "remember", "書き留めました。"),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+
+        assert_eq!(
+            json["messages"][1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            "CvcQAdHN2g==",
+            "署名は受け取った位置と同じ位置へそのまま戻す"
+        );
+    }
+
+    /// 署名を返さないサーバ (OpenAI / Grok / ローカル互換) では `extra_content` を送らないこと。
+    ///
+    /// 無い所へ null や空オブジェクトを送ると、未知キーに厳格なサーバで壊れる。
+    #[test]
+    fn extra_content_is_omitted_when_the_server_did_not_send_one() {
+        let calls = vec![ToolCall {
+            id: "call_1".into(),
+            name: "remember".into(),
+            args: serde_json::json!({ "note": "覚えること" }),
+            extra: None,
+        }];
+        let req = ChatRequest {
+            messages: vec![ChatMessage::assistant_tool_calls("", calls)],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+
+        assert!(
+            json["messages"][0]["tool_calls"][0].get("extra_content").is_none(),
+            "署名の無い呼び出しに extra_content キーを生やさない"
+        );
     }
 
     #[test]

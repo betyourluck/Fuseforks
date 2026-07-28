@@ -72,6 +72,16 @@ pub enum CoreError {
         value: String,
     },
 
+    /// アイコン画像が受け入れ条件（WebP 形式・サイズ上限）を満たさない。
+    ///
+    /// 変換は UI 層の責務（canvas で WebP 化してから送る契約）。コアは検証だけを持ち、
+    /// 任意のバイト列が IPC 経由でワークスペースへ書かれる経路を塞ぐ。
+    #[error("アイコン画像を受け付けられません: {reason}")]
+    InvalidIcon {
+        /// 拒否した具体的な理由。
+        reason: String,
+    },
+
     /// OS の資格情報ストアの操作に失敗した。
     ///
     /// **秘密そのものはこのエラーに載せない。** 保管の失敗を伝えるために
@@ -120,6 +130,7 @@ impl CoreError {
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
+            Self::InvalidIcon { .. } => "INVALID_ICON",
             Self::SecretStore { .. } => "SECRET_STORE_FAILED",
             Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",
             // LLM 境界のコードはそのまま透過させ、UI 側で 1 つの体系として扱えるようにする。

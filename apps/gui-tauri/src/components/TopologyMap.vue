@@ -21,6 +21,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
+import { avatarHue, avatarInitial } from "../lib/avatar";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABELS, type AgentId } from "../types";
 
@@ -204,11 +205,30 @@ function borderClass(status: string): string {
             class="min-w-[132px] rounded-md border-2 bg-surface-1 px-2.5 py-1.5 shadow-lg"
             :class="borderClass(data.agent.status)"
           >
-            <div class="truncate text-xs font-medium text-ink">
-              {{ data.agent.name }}
-            </div>
-            <div class="mt-0.5 truncate text-[10px] text-ink-dim">
-              {{ data.agent.model }}
+            <div class="flex items-center gap-2">
+              <!-- アバター。会話・一覧と同じ規則（画像 > 頭文字の円）。 -->
+              <img
+                v-if="state.icons[data.agent.id]"
+                :src="state.icons[data.agent.id]!"
+                class="size-8 shrink-0 rounded-full object-cover ring-1 ring-line"
+                :alt="data.agent.name"
+              />
+              <div
+                v-else
+                class="flex size-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-surface-0"
+                :style="{ backgroundColor: avatarHue(data.agent.name) }"
+              >
+                {{ avatarInitial(data.agent.name) }}
+              </div>
+
+              <div class="min-w-0">
+                <div class="truncate text-xs font-medium text-ink">
+                  {{ data.agent.name }}
+                </div>
+                <div class="mt-0.5 truncate text-[10px] text-ink-dim">
+                  {{ data.agent.model }}
+                </div>
+              </div>
             </div>
             <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
               <span>{{ STATUS_LABELS[data.agent.status as keyof typeof STATUS_LABELS] }}</span>

@@ -160,6 +160,20 @@ export const writeAgentConfig = (
   content: string,
 ) => call<void>("write_agent_config", { agentId, kind, content });
 
+// ---- アイコン ----------------------------------------------------------------
+
+/** エージェントのアイコン（WebP バイト列）を取得する。未設定なら `null`。 */
+export const getAgentIcon = (agentId: AgentId) =>
+  call<number[] | null>("get_agent_icon", { agentId });
+
+/** エージェントのアイコンを保存する。`data` は WebP へ変換済みであること。 */
+export const setAgentIcon = (agentId: AgentId, data: number[]) =>
+  call<void>("set_agent_icon", { agentId, data });
+
+/** エージェントのアイコンを削除する。 */
+export const clearAgentIcon = (agentId: AgentId) =>
+  call<void>("clear_agent_icon", { agentId });
+
 // ---- ライフサイクルと配送 ---------------------------------------------------
 
 /** トグル操作で稼働状態を切り替える。既に望む状態なら何も起きない。 */

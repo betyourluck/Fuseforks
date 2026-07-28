@@ -216,6 +216,9 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
                     id,
                     name,
                     args: input,
+                    // Anthropic の tool_use に随伴データは無い。署名相当（thinking ブロック）は
+                    // ブロック単位で別枠であり、この adapter は現状それを運ばない。
+                    extra: None,
                 });
             }
             // thinking など未知のブロックは canonical に写す先がないので落とす。
@@ -313,6 +316,7 @@ mod tests {
             id: "tu_1".into(),
             name: "remember".into(),
             args: json!({ "note": "覚えること" }),
+            extra: None,
         }];
 
         let mut req = request(0);

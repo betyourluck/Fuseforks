@@ -9,6 +9,7 @@
 //!     SKILL.md              能力・振る舞いの定義
 //!     Memory.md             長期記憶
 //!     Construct.md          構成・制約の宣言
+//!     icon.webp             アイコン（設定時のみ。UI が WebP へ変換して送る）
 //! ```
 //!
 //! 書き込み先は **エージェント ID と [`ConfigFileKind`] の組み合わせでしか指定できない**。
@@ -23,6 +24,18 @@ use crate::world::PersistedWorld;
 
 /// 登録簿の永続化ファイル名。
 const WORLD_FILE: &str = "world.json";
+
+/// エージェントアイコンのファイル名。**中身は WebP に固定する。**
+///
+/// 変換（png / jpg → WebP・リサイズ）は UI 層の責務で、コアは受け入れ検証だけを持つ。
+/// 形式を 1 つに固定すると、表示側は MIME 判定なしで `image/webp` として扱える。
+const ICON_FILE: &str = "icon.webp";
+
+/// アイコンの許容上限（bytes）。
+///
+/// UI 側は 256px 角へ縮小してから送るため、通常は数十 KB に収まる。
+/// 上限はその 1 桁上に置き、変換を通さず巨大ファイルを流し込む経路を塞ぐ。
+const ICON_MAX_BYTES: usize = 512 * 1024;
 
 /// 設定ファイルの読み書きを担う。
 #[derive(Debug, Clone)]
@@ -91,6 +104,61 @@ impl ConfigStore {
         tokio::fs::write(&path, content)
             .await
             .map_err(|e| Self::io_err(&path, e))
+    }
+
+    /// エージェントのアイコンを読む。未設定なら `None`。
+    pub async fn read_icon(&self, id: &AgentId) -> CoreResult<Option<Vec<u8>>> {
+        let path = self.agent_dir(id)?.join(ICON_FILE);
+        match tokio::fs::read(&path).await {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// エージェントのアイコンを書く。
+    ///
+    /// # Errors
+    /// WebP でない・サイズ上限超過の場合 [`CoreError::InvalidIcon`]。
+    /// IPC から来る任意のバイト列をそのまま書くと、ワークスペースが
+    /// 「画像のふりをした何か」の置き場になる。マジック番号とサイズで入口を絞る。
+    pub async fn write_icon(&self, id: &AgentId, bytes: &[u8]) -> CoreResult<()> {
+        if bytes.len() > ICON_MAX_BYTES {
+            return Err(CoreError::InvalidIcon {
+                reason: format!(
+                    "サイズが上限を超えています（{} bytes > {} bytes）",
+                    bytes.len(),
+                    ICON_MAX_BYTES
+                ),
+            });
+        }
+        // WebP コンテナの magic: 先頭 "RIFF" + オフセット 8 から "WEBP"。
+        let is_webp =
+            bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP";
+        if !is_webp {
+            return Err(CoreError::InvalidIcon {
+                reason: "WebP 形式ではありません（UI 側で変換してから送る契約）".to_owned(),
+            });
+        }
+
+        let dir = self.agent_dir(id)?;
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| Self::io_err(&dir, e))?;
+        let path = dir.join(ICON_FILE);
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|e| Self::io_err(&path, e))
+    }
+
+    /// エージェントのアイコンを削除する。未設定でも成功として扱う（削除は冪等）。
+    pub async fn delete_icon(&self, id: &AgentId) -> CoreResult<()> {
+        let path = self.agent_dir(id)?.join(ICON_FILE);
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
     }
 
     /// エージェントの設定ディレクトリごと削除する。存在しなければ何もしない。

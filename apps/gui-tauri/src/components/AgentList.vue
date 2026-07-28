@@ -143,6 +143,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         v-for="agent in agents"
         :key="agent.id"
         :agent="agent"
+        :icon="state.icons[agent.id]"
         :selected="agent.id === state.selectedAgentId"
         @select="orchestrator.select(agent.id)"
         @configure="configuring = agent.id"

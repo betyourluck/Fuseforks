@@ -277,6 +277,15 @@ pub struct ToolCall {
     pub name: String,
     /// 解析済みの引数オブジェクト。
     pub args: Value,
+    /// プロバイダ固有の不透明な随伴データ。**canonical は中身を解釈しない。**
+    ///
+    /// Gemini (OpenAI 互換) はツール呼び出しごとに
+    /// `extra_content.google.thought_signature`（思考署名）を返し、履歴として
+    /// assistant の tool_calls を再送するとき同じ値を返すことを要求する。
+    /// 欠くと 400 INVALID_ARGUMENT で、ツールを呼んだ会話の 2 周目が必ず落ちる。
+    /// decode した adapter だけが encode で読み戻す（ラウンドトリップ専用）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
 }
 
 /// プロバイダ中立の応答。
