@@ -1404,6 +1404,46 @@ async fn message_to_a_leaf_agent_comes_back_to_the_user() {
     assert!(log[1].tokens > 0, "トークンが計上されること");
 }
 
+/// 入力中イベントは処理の開始と終了で対になって流れ、応答を挟むこと。
+///
+/// `active: false` が流れないと UI の「入力中…」が出しっぱなしになるので、
+/// 対であること自体が契約。
+#[tokio::test]
+async fn typing_events_bracket_the_reply() {
+    let dir = TempDir::new("typing");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let typing_reply_sequence: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::AgentTyping { active: true, .. } => Some("typing-on"),
+            CoreEvent::AgentTyping { active: false, .. } => Some("typing-off"),
+            CoreEvent::MessageSent { message } if matches!(message.from, Endpoint::Agent { .. }) => {
+                Some("reply")
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        typing_reply_sequence,
+        vec!["typing-on", "reply", "typing-off"],
+        "開始 → 応答 → 終了の順で対になること。実際: {events:?}"
+    );
+}
+
 /// **ツールを呼ばなければ会話は終わる。**
 ///
 /// 接続先を持っていても、転送を要求しない応答はそこで完結してユーザーへ返る。

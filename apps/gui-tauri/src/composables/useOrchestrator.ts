@@ -56,6 +56,11 @@ interface OrchestratorState {
    * キー不在は「未確認」。バイト列を毎描画で運ばないための投影キャッシュ。
    */
   icons: Record<AgentId, string | null>;
+  /**
+   * 応答を作っている最中のエージェント。会話ペインの「入力中…」表示に使う。
+   * true のキーだけを持ち、終了イベントでキーごと消す。
+   */
+  typing: Record<AgentId, true>;
 }
 
 const state = reactive<OrchestratorState>({
@@ -70,6 +75,7 @@ const state = reactive<OrchestratorState>({
   ready: false,
   initError: null,
   icons: {},
+  typing: {},
 });
 
 let toastSeq = 0;
@@ -275,6 +281,11 @@ function applyEvent(event: CoreEvent): void {
   switch (event.type) {
     case "agentStatusChanged":
       patchAgent(event.agentId, { status: event.status });
+      // 停止・失敗したエージェントの「入力中…」を残さない保険。
+      // 通常は agentTyping の終了イベントが対で消すが、二重の網にしておく。
+      if (event.status !== "running" && event.status !== "starting") {
+        delete state.typing[event.agentId];
+      }
       break;
 
     case "agentStatsUpdated":
@@ -297,6 +308,14 @@ function applyEvent(event: CoreEvent): void {
       refreshAll().catch((error) =>
         console.warn("[useOrchestrator] イベント由来の再同期に失敗しました:", error),
       );
+      break;
+
+    case "agentTyping":
+      if (event.active) {
+        state.typing[event.agentId] = true;
+      } else {
+        delete state.typing[event.agentId];
+      }
       break;
 
     case "agentFailed": {

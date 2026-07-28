@@ -127,6 +127,18 @@ const visible = computed(() => {
  */
 const rows = computed<ChatRow[]>(() => collapseRows(visible.value));
 
+/**
+ * 応答を作っている最中のエージェント。末尾に「入力中…」バブルを出す。
+ * エージェントで絞り込んでいる間は、その相手の分だけを出す。
+ */
+const typingAgents = computed(() =>
+  state.agents.filter(
+    (a) =>
+      state.typing[a.id] &&
+      (!filterAgentId.value || a.id === filterAgentId.value),
+  ),
+);
+
 /** 宛先の表示。同報は「〇〇 他X名」。 */
 function toLabel(row: ChatRow): string {
   const first = label(row.message.to);
@@ -199,7 +211,9 @@ function timestamp(ms: number): string {
 }
 
 watch(
-  () => rows.value.length,
+  // 入力中バブルの出入りでも追従する。バブルが末尾に生えた瞬間に
+  // 見切れると、「入力中」という一番知りたい情報が見えない。
+  () => rows.value.length + typingAgents.value.length,
   async () => {
     const el = scroller.value;
     if (!el) return;
@@ -329,7 +343,34 @@ async function send(content: string): Promise<void> {
         </div>
       </div>
 
-      <p v-if="!rows.length" class="py-10 text-center text-[11px] text-ink-dim">
+      <!-- 入力中バブル。応答の生成中（LLM 呼び出し + ツール実行）に出す。 -->
+      <div v-for="agent in typingAgents" :key="`typing-${agent.id}`" class="flex gap-2">
+        <div class="w-7 shrink-0">
+          <img
+            v-if="state.icons[agent.id]"
+            :src="state.icons[agent.id]!"
+            class="size-7 rounded-full object-cover ring-1 ring-line"
+            :title="agent.name"
+            :alt="agent.name"
+          />
+          <div
+            v-else
+            class="flex size-7 items-center justify-center rounded-full text-[11px] font-semibold text-surface-0"
+            :style="{ backgroundColor: hueOfName(agent.name) }"
+            :title="agent.name"
+          >
+            {{ avatarInitial(agent.name) }}
+          </div>
+        </div>
+        <div
+          class="typing-bubble rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2.5"
+          :title="`${agent.name} が応答を作成しています`"
+        >
+          <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
+        </div>
+      </div>
+
+      <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
         まだ発話がありません。
       </p>
     </div>
@@ -379,3 +420,37 @@ async function send(content: string): Promise<void> {
     />
   </div>
 </template>
+
+<style scoped>
+/* 入力中バブルの 3 点アニメーション。位相を 1/6 周期ずつずらして波にする。 */
+.typing-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-ink-dim);
+  animation: typing-wave 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes typing-wave {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+</style>

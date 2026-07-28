@@ -277,6 +277,7 @@ events:
     topologyChanged: {}
     agentFailed: { agentId, error }
     backendDegraded: { modelTemplateId, reason }
+    agentTyping: { agentId, active }
     toolInvoked: { agentId, tool, ok }
     toolLimitReached: { agentId, maxIterations }
     hopLimitReached: { agentId, maxHops }
@@ -284,6 +285,18 @@ events:
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
     「動いたかどうか」ではなく「何をしたか」が見えることが要件。
+  typing_rule: |
+    agentTyping は発話処理 (LLM 呼び出し + ツール実行) の開始と終了で
+    **対になって**流れる (2026-07-29)。処理は数十秒かかりうるため、この間
+    UI に何も出ないと「届いていないのか、考えているのか」を区別できない。
+    不変条件:
+      - active: false は成功・失敗を問わず必ず流れる (出しっぱなし禁止)。
+        開始 → 応答 → 終了の順序をテストで固定 (typing_events_bracket_the_reply)
+      - フロントは true のキーだけ保持し、終了でキーごと消す。加えて
+        agentStatusChanged で稼働外へ遷移したら消す二重の網
+      - これはストリーミングではない (本文は従来どおり確定時に一括)。
+        SSE ストリーミングは別 Spec 候補 — LlmBackend::chat が完全応答を
+        返す設計のため、wire 2 系統 + trait + 逐次描画まで全層に触る
   boot_contract: |
     起動ハンドシェイク = boot_status コマンド (2026-07-29)。
     ウィンドウを先に出し、オーケストレーターの初期化 (MCP 接続を含む、

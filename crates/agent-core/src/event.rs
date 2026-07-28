@@ -75,6 +75,20 @@ pub enum CoreEvent {
         reason: String,
     },
 
+    /// エージェントが受信した発話の処理を始めた / 終えた（入力中表示用）。
+    ///
+    /// 応答の生成には LLM 呼び出しとツール実行が含まれ、数十秒かかりうる。
+    /// この間 UI に何も出ないと「届いていないのか、考えているのか」を
+    /// 区別できない。処理の開始と終了を対で流し、UI は「入力中…」を出す。
+    /// `active: false` は成功・失敗を問わず必ず流れる（出しっぱなしにしない）。
+    #[serde(rename_all = "camelCase")]
+    AgentTyping {
+        /// 対象エージェント。
+        agent_id: AgentId,
+        /// true = 処理開始、false = 処理終了。
+        active: bool,
+    },
+
     /// ツールを実行した。
     ///
     /// エージェントが何をしたかは会話ログに現れない（結果はプロンプトの中で消える）。
@@ -128,6 +142,23 @@ mod tests {
                 "type": "agentStatusChanged",
                 "agentId": "agent_01",
                 "status": "running"
+            })
+        );
+    }
+
+    #[test]
+    fn typing_event_serializes_with_camel_case_tag() {
+        let event = CoreEvent::AgentTyping {
+            agent_id: AgentId::from("agent_01"),
+            active: true,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "type": "agentTyping",
+                "agentId": "agent_01",
+                "active": true
             })
         );
     }

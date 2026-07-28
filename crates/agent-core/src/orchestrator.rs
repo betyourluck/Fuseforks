@@ -933,7 +933,20 @@ async fn agent_loop(
             received = inbox.recv() => {
                 let Some(envelope) = received else { break };
 
-                if let Err(err) = handle_message(&shared, &agent_id, envelope).await {
+                // 入力中表示。処理は LLM 呼び出しを含み数十秒かかりうるので、
+                // 開始と終了を対で流す。終了は成功・失敗を問わず必ず流す —
+                // 片方だけだと「入力中…」が出しっぱなしになる。
+                shared.emit(CoreEvent::AgentTyping {
+                    agent_id: agent_id.clone(),
+                    active: true,
+                });
+                let outcome = handle_message(&shared, &agent_id, envelope).await;
+                shared.emit(CoreEvent::AgentTyping {
+                    agent_id: agent_id.clone(),
+                    active: false,
+                });
+
+                if let Err(err) = outcome {
                     let payload = ErrorPayload::from(&err);
                     let fatal = !err.is_retryable();
 

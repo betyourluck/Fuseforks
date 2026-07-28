@@ -176,6 +176,9 @@ export type CoreEvent =
       modelTemplateId: ModelTemplateId;
       reason: string;
     }
+  | { type: "agentTyping"; agentId: AgentId; active: boolean }
+  | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
+  | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   | { type: "hopLimitReached"; agentId: AgentId; maxHops: number };
 
 /** 設定ファイル種別と表示名の対応。Rust 側の実ファイル名と揃えてある。 */
