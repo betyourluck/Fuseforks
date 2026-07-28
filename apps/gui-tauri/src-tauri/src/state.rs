@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agent_core::{
     ConfigStore, CoreEvent, HttpBackendFactory, KeyringSecretStore, Orchestrator,
-    OrchestratorConfig, SecretStore,
+    OrchestratorConfig, RememberTool, SecretStore,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -44,13 +44,19 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::new());
     let factory = Arc::new(HttpBackendFactory::echo_on_failure(Arc::clone(&secrets)));
 
+    let store = ConfigStore::new(&workspace);
     let orchestrator = Orchestrator::bootstrap(
-        ConfigStore::new(&workspace),
+        store.clone(),
         factory,
         secrets,
         OrchestratorConfig::default(),
     )
     .await?;
+
+    // 同梱ツール。外部の能力は将来 MCP 経由で足す（README の未実装表を参照）。
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(store)))
+        .await;
 
     Ok(AppState {
         orchestrator: Arc::new(orchestrator),

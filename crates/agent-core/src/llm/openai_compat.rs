@@ -9,7 +9,7 @@
 use serde_json::Value;
 
 use super::canonical::{
-    ChatRequest, ChatResponse, Effort, Finish, Role, ToolCall, ToolChoice, Usage,
+    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Role, ToolCall, ToolChoice, Usage,
 };
 use super::error::LlmError;
 use super::wire;
@@ -20,18 +20,7 @@ use super::wire;
 /// system メッセージとして末尾に積む。`tool_choice` を実装していない互換サーバ
 /// （ローカル推論サーバなど）でも構造化出力を得るためのフォールバック経路。
 pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
-    let mut messages: Vec<wire::OaiMessage> = req
-        .messages
-        .iter()
-        .map(|m| wire::OaiMessage {
-            role: match m.role {
-                Role::System => wire::OaiRole::System,
-                Role::User => wire::OaiRole::User,
-                Role::Assistant => wire::OaiRole::Assistant,
-            },
-            content: m.content.clone(),
-        })
-        .collect();
+    let mut messages: Vec<wire::OaiMessage> = req.messages.iter().map(encode_message).collect();
 
     let (tools, tool_choice) = if req.tools.is_empty() {
         (Vec::new(), None)
@@ -60,10 +49,10 @@ pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
         };
         (tools, choice)
     } else {
-        messages.push(wire::OaiMessage {
-            role: wire::OaiRole::System,
-            content: json_instruction(&req.tools[0].parameters),
-        });
+        messages.push(wire::OaiMessage::text(
+            wire::OaiRole::System,
+            json_instruction(&req.tools[0].parameters),
+        ));
         (Vec::new(), None)
     };
 
@@ -75,6 +64,50 @@ pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
         tools,
         tool_choice,
         reasoning_effort: reasoning_effort(&req.model, req.effort),
+    }
+}
+
+/// canonical の 1 発話を OpenAI 互換の形へ写す。
+///
+/// ツール往復では 3 通りに分かれる:
+/// - ツール結果 → `role: "tool"` + `tool_call_id`
+/// - ツールを呼んだ assistant → `tool_calls` を持ち、`content` は空なら省く
+/// - それ以外 → 本文だけ
+fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
+    let role = match message.role {
+        Role::System => wire::OaiRole::System,
+        Role::User => wire::OaiRole::User,
+        Role::Assistant => wire::OaiRole::Assistant,
+        Role::Tool => wire::OaiRole::Tool,
+    };
+
+    if message.role == Role::Tool {
+        return wire::OaiMessage {
+            role,
+            content: Some(message.content.clone()),
+            tool_calls: Vec::new(),
+            tool_call_id: message.tool_call_id.clone(),
+        };
+    }
+
+    wire::OaiMessage {
+        role,
+        // 本文が空のまま送ると `content` が必須のサーバで 400 になる。省くほうが安全。
+        content: (!message.content.is_empty()).then(|| message.content.clone()),
+        tool_calls: message
+            .tool_calls
+            .iter()
+            .map(|call| wire::OaiRequestToolCall {
+                id: call.id.clone(),
+                kind: wire::OaiToolKind::Function,
+                function: wire::OaiRequestFunctionCall {
+                    name: call.name.clone(),
+                    // 受け取ったときと同じ「JSON 文字列」へ戻す。
+                    arguments: serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".into()),
+                },
+            })
+            .collect(),
+        tool_call_id: None,
     }
 }
 
@@ -238,7 +271,47 @@ mod tests {
         assert!(wire.tool_choice.is_none());
         let last = wire.messages.last().expect("指示文が積まれること");
         assert_eq!(last.role, wire::OaiRole::System);
-        assert!(last.content.contains("JSON Schema"));
+        assert!(last.content.as_deref().unwrap_or_default().contains("JSON Schema"));
+    }
+
+    /// ツール往復の形。`arguments` は**受け取ったときと同じ JSON 文字列**へ戻す。
+    ///
+    /// オブジェクトのまま送り返すと、サーバによっては黙って無視されるか 400 になる。
+    #[test]
+    fn tool_round_trip_restores_arguments_as_a_json_string() {
+        let calls = vec![ToolCall {
+            id: "call_1".into(),
+            name: "remember".into(),
+            args: serde_json::json!({ "note": "覚えること" }),
+        }];
+
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("覚えておいて"),
+                ChatMessage::assistant_tool_calls("", calls),
+                ChatMessage::tool_result("call_1", "remember", "書き留めました。"),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+
+        // 呼び出しを積んだ assistant。本文が空なら content ごと省く。
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(messages[1].get("content").is_none());
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[1]["tool_calls"][0]["type"], "function");
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["arguments"],
+            r#"{"note":"覚えること"}"#,
+            "arguments は JSON 文字列へ戻す"
+        );
+
+        // 結果は role: "tool" + tool_call_id。
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["content"], "書き留めました。");
     }
 
     #[test]

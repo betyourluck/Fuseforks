@@ -60,6 +60,7 @@ use crate::model::{
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use crate::rag::{RagChunk, RagIndex};
+use crate::tool::{AgentTool, ToolContext, ToolRegistry};
 use crate::secret::SecretStore;
 use crate::world::World;
 
@@ -84,6 +85,11 @@ pub struct OrchestratorConfig {
     pub max_hops: u8,
     /// エージェントごとに保持する会話履歴の往復数。
     pub history_turns: usize,
+    /// 1 回の発話処理で許すツール実行の回数。
+    ///
+    /// LangGraph の `recursion_limit` と同じ安全網。モデルが同じツールを
+    /// 同じ引数で呼び続ける行き詰まりは実際に起きるので、上限が要る。
+    pub max_tool_iterations: u8,
     /// エージェント 1 体あたりの受信箱容量。溢れたら送信側にエラーを返す（背圧）。
     pub mailbox_capacity: usize,
     /// イベントバッファの容量。UI の描画が遅れても、この範囲までは取りこぼさない。
@@ -101,6 +107,7 @@ impl Default for OrchestratorConfig {
         Self {
             max_hops: 8,
             history_turns: 8,
+            max_tool_iterations: 6,
             mailbox_capacity: 64,
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),
@@ -128,6 +135,8 @@ struct Shared {
     store: ConfigStore,
     rag: RwLock<RagIndex>,
     log: RwLock<Vec<AgentMessage>>,
+    /// 実行できるツール。将来 MCP サーバーのツールもここへ入る。
+    tools: RwLock<ToolRegistry>,
     config: OrchestratorConfig,
 }
 
@@ -249,6 +258,7 @@ impl Orchestrator {
             store,
             rag: RwLock::new(RagIndex::default()),
             log: RwLock::new(Vec::new()),
+            tools: RwLock::new(ToolRegistry::new()),
             config,
         });
 
@@ -324,6 +334,26 @@ impl Orchestrator {
     /// 登録済み RAG ソース名。
     pub async fn rag_sources(&self) -> Vec<String> {
         self.shared.rag.read().await.sources()
+    }
+
+    /// ツールを登録する。同名は置き換える。
+    ///
+    /// 登録済みバックエンドのキャッシュとは無関係なので、稼働中でも足せる。
+    /// 次の発話から提示される。
+    pub async fn register_tool(&self, tool: Arc<dyn AgentTool>) {
+        self.shared.tools.write().await.register(tool);
+    }
+
+    /// 登録済みツール名。
+    pub async fn tool_names(&self) -> Vec<String> {
+        self.shared
+            .tools
+            .read()
+            .await
+            .names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
     }
 
     // ---- 定義の編集 ---------------------------------------------------------
@@ -786,32 +816,98 @@ async fn handle_message(
     }
     messages.push(ChatMessage::user(&incoming.content));
 
-    // 5. LLM 呼び出し。ツールは提示するだけで強制しない（Auto）。
-    //    呼ぶかどうかの選択そのものが「会話を続けるか終えるか」の表明になる。
-    let request = ChatRequest {
-        model: template.model.clone(),
-        messages,
-        tools: if use_handoff_tools {
-            handoffs.specs()
-        } else {
-            Vec::new()
-        },
-        tool_choice: if use_handoff_tools {
-            crate::llm::ToolChoice::Auto
-        } else {
-            crate::llm::ToolChoice::None
-        },
-        temperature: template.temperature,
-        max_tokens: template.max_output_tokens,
-        effort: template.effort,
-        cacheable_prefix_len: stable_len,
+    // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
+    //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
+    //    転送だけ別扱いにする理由が無い。区別するのは受け取った後の私たち。
+    let mut specs = if use_handoff_tools {
+        handoffs.specs()
+    } else {
+        Vec::new()
     };
-    let backend = shared.backend_for(&template).await?;
-    let response = backend.chat(request).await?;
-    let tokens = response.usage.total();
+    let executable = shared.tools.read().await.specs();
+    specs.extend(executable.iter().cloned());
+    let use_tools = !specs.is_empty() && template.use_tools;
 
-    // 6. 終了か転送かを決める。
-    let outcome = handoffs.decide(&response, use_handoff_tools);
+    // 6. 実行ループ。
+    //    規則は OpenAI Agents SDK と同じ:
+    //    ツールを呼んだら実行して結果を積み、もう一度呼ぶ。
+    //    ツールを呼ばないテキスト出力が出たら、それが最終出力。
+    let backend = shared.backend_for(&template).await?;
+    let mut tokens = 0u64;
+    let mut outcome = Outcome::Finish {
+        content: String::new(),
+    };
+
+    for iteration in 0..shared.config.max_tool_iterations.max(1) {
+        let request = ChatRequest {
+            model: template.model.clone(),
+            messages: messages.clone(),
+            tools: if use_tools { specs.clone() } else { Vec::new() },
+            tool_choice: if use_tools {
+                crate::llm::ToolChoice::Auto
+            } else {
+                crate::llm::ToolChoice::None
+            },
+            temperature: template.temperature,
+            max_tokens: template.max_output_tokens,
+            effort: template.effort,
+            cacheable_prefix_len: stable_len,
+        };
+
+        let response = backend.chat(request).await?;
+        tokens += response.usage.total();
+
+        // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
+        // 結果が返ってくる種類の操作ではない。
+        outcome = handoffs.decide(&response, use_handoff_tools);
+        if matches!(outcome, Outcome::Handoff { .. }) {
+            break;
+        }
+
+        // 実行対象のツール呼び出しを拾う。転送用の名前はここには来ない
+        // （上で Handoff として抜けている）。
+        let calls: Vec<_> = response
+            .tool_calls
+            .iter()
+            .filter(|call| executable.iter().any(|spec| spec.name == call.name))
+            .cloned()
+            .collect();
+
+        if calls.is_empty() {
+            // ツールを呼ばなかった = 最終出力。
+            break;
+        }
+
+        // 呼び出しと結果は**対で**積む。呼び出しを残さずに結果だけ積むと、
+        // プロバイダが「対応する呼び出しが無い結果」として拒否する。
+        messages.push(ChatMessage::assistant_tool_calls(
+            response.text.clone().unwrap_or_default(),
+            calls.clone(),
+        ));
+
+        for call in &calls {
+            let result = execute_tool(shared, agent_id, call).await;
+            shared.emit(CoreEvent::ToolInvoked {
+                agent_id: agent_id.clone(),
+                tool: call.name.clone(),
+                ok: result.is_ok(),
+            });
+            let body = match result {
+                Ok(text) => text,
+                // 失敗しても会話を止めない。モデルが読んで次を決める。
+                Err(err) => format!("ツールの実行に失敗しました: {err}"),
+            };
+            messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
+        }
+
+        // 上限に達したら、次の周回は回さずに今ある本文で終える。
+        if iteration + 1 == shared.config.max_tool_iterations.max(1) {
+            shared.emit(CoreEvent::ToolLimitReached {
+                agent_id: agent_id.clone(),
+                max_iterations: shared.config.max_tool_iterations,
+            });
+        }
+    }
 
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
     {
@@ -867,6 +963,33 @@ async fn handle_message(
     }
 
     Ok(())
+}
+
+/// ツールを 1 本実行する。
+///
+/// 未知の名前でも `Err` にせず文字列を返すのは、モデルが読んで直せるようにするため。
+/// ここで会話ごと落とすと、名前を打ち間違えただけでターンが終わる。
+async fn execute_tool(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    call: &crate::llm::ToolCall,
+) -> CoreResult<String> {
+    let tool = {
+        let registry = shared.tools.read().await;
+        registry.get(&call.name).cloned()
+    };
+
+    let Some(tool) = tool else {
+        return Ok(format!(
+            "`{}` というツールはありません。提示された名前から選んでください。",
+            call.name
+        ));
+    };
+
+    let ctx = ToolContext {
+        agent_id: agent_id.clone(),
+    };
+    tool.call(&ctx, &call.args).await
 }
 
 /// 1 回の応答の行き先。

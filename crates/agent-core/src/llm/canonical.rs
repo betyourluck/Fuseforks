@@ -22,39 +22,81 @@ pub enum Role {
     User,
     /// モデルの応答。
     Assistant,
+    /// ツール実行の結果。直前の [`Role::Assistant`] のツール呼び出しに対応する。
+    Tool,
 }
 
 /// 会話の 1 ターン。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// ツール往復のために `tool_calls` と `tool_call_id` を持つ。ほとんどの発話では
+/// 空のままだが、**別の型に分けるとプロンプトを組む側が場合分けを抱える**。
+/// プロバイダの API がこの形（1 つのメッセージ列に混在させる）を取っているので、
+/// canonical でも同じ形にして翻訳の段差を減らす。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     /// 役割。
     pub role: Role,
-    /// 本文。
+    /// 本文。ツール呼び出しだけの応答では空になりうる。
     pub content: String,
+    /// [`Role::Assistant`] がツールを呼んだとき、その呼び出し。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// [`Role::Tool`] のとき、どの呼び出しへの結果か。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// [`Role::Tool`] のとき、実行したツール名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 impl ChatMessage {
+    /// 役割と本文だけの発話を作る。
+    fn plain(role: Role, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+        }
+    }
+
     /// システムメッセージを作る。
     pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: Role::System,
-            content: content.into(),
-        }
+        Self::plain(Role::System, content)
     }
 
     /// ユーザーメッセージを作る。
     pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: Role::User,
-            content: content.into(),
-        }
+        Self::plain(Role::User, content)
     }
 
     /// アシスタントメッセージを作る。
     pub fn assistant(content: impl Into<String>) -> Self {
+        Self::plain(Role::Assistant, content)
+    }
+
+    /// ツールを呼んだアシスタントの発話を作る。
+    ///
+    /// **呼び出しを履歴へ残さずに結果だけ積むと、プロバイダ側が
+    /// 「対応する呼び出しが無い結果」を拒否する。** 対で積むこと。
+    pub fn assistant_tool_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
-            role: Role::Assistant,
-            content: content.into(),
+            tool_calls,
+            ..Self::plain(Role::Assistant, content)
+        }
+    }
+
+    /// ツール実行の結果を作る。
+    pub fn tool_result(
+        call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            tool_call_id: Some(call_id.into()),
+            tool_name: Some(tool_name.into()),
+            ..Self::plain(Role::Tool, content)
         }
     }
 }
@@ -227,7 +269,7 @@ impl Usage {
 /// `args` は **必ず JSON オブジェクト**。OpenAI 系の「arguments は JSON 文字列」という
 /// 方言は adapter の decode 境界で 1 回だけ解いてから canonical に載せる。
 /// 二重エンコードと未パースの取り違えを、境界で殺しておくための不変条件。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     /// 呼び出し ID。プロバイダが返さなければ空文字。
     pub id: String,

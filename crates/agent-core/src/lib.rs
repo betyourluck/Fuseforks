@@ -69,6 +69,8 @@ pub mod model;
 pub mod orchestrator;
 pub mod rag;
 pub mod secret;
+pub mod tool;
+pub mod tools;
 pub mod world;
 
 pub use config_store::ConfigStore;
@@ -85,4 +87,6 @@ pub use model::{
 pub use orchestrator::{Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
+pub use tool::{AgentTool, ToolContext, ToolRegistry};
+pub use tools::RememberTool;
 pub use world::World;

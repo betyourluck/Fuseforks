@@ -30,12 +30,58 @@ pub enum OaiRole {
 }
 
 /// OpenAI 互換の送信メッセージ。
+///
+/// ツール往復では 2 通りの形を取る:
+/// - assistant がツールを呼んだ発話: `content` は空になりうる。`tool_calls` を持つ
+/// - ツール結果: `role: "tool"` + `tool_call_id` + 結果本文
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OaiMessage {
     /// 役割。
     pub role: OaiRole,
-    /// 本文。
-    pub content: String,
+    /// 本文。ツール呼び出しだけの発話では省く。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// assistant がこの発話で呼んだツール。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<OaiRequestToolCall>,
+    /// `role: "tool"` のとき、対応する呼び出しの ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl OaiMessage {
+    /// 本文だけの発話。
+    pub fn text(role: OaiRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: Some(content.into()),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+}
+
+/// リクエスト側のツール呼び出し（履歴として送り返す形）。
+///
+/// `arguments` は **JSON 文字列**。応答で受け取ったときと同じ形へ戻す必要がある。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OaiRequestToolCall {
+    /// 呼び出し ID。
+    pub id: String,
+    /// 常に `"function"`。
+    #[serde(rename = "type")]
+    pub kind: OaiToolKind,
+    /// 関数呼び出しの中身。
+    pub function: OaiRequestFunctionCall,
+}
+
+/// リクエスト側の関数呼び出し。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OaiRequestFunctionCall {
+    /// 関数名。
+    pub name: String,
+    /// 引数（JSON 文字列）。
+    pub arguments: String,
 }
 
 /// OpenAI 互換のリクエスト本体。
@@ -73,7 +119,10 @@ pub struct OaiTool {
 }
 
 /// ツール種別。現状は関数のみ。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+///
+/// `Deserialize` も持つのは、履歴として送り返す [`OaiRequestToolCall`] が
+/// リクエスト型でありながら往復可能である必要があるため。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OaiToolKind {
     /// 関数呼び出し。
@@ -240,12 +289,45 @@ pub struct AnthropicCacheControl {
 }
 
 /// Anthropic の会話メッセージ。`system` ロールは持てない。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// 本文は常にブロック配列で送る。文字列と配列の両方を受ける API だが、
+/// ツール往復では配列しか使えないので、**形を 1 つに揃えて場合分けを消す**。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AnthropicMessage {
     /// `"user"` または `"assistant"`。
     pub role: &'static str,
-    /// 本文。
-    pub content: String,
+    /// 本文ブロック。
+    pub content: Vec<AnthropicRequestBlock>,
+}
+
+/// リクエスト側のコンテンツブロック。
+///
+/// **ツール結果は `user` ロールのメッセージに載せる**のが Anthropic の形。
+/// OpenAI 互換の `role: "tool"` とは構造が違うので、canonical から翻訳する。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicRequestBlock {
+    /// テキスト。
+    Text {
+        /// 本文。
+        text: String,
+    },
+    /// アシスタントが呼んだツール。履歴として送り返す。
+    ToolUse {
+        /// 呼び出し ID。
+        id: String,
+        /// 関数名。
+        name: String,
+        /// 引数（**オブジェクト**。文字列ではない）。
+        input: serde_json::Value,
+    },
+    /// ツール実行の結果。
+    ToolResult {
+        /// 対応する `tool_use` の ID。
+        tool_use_id: String,
+        /// 結果本文。
+        content: String,
+    },
 }
 
 /// Anthropic のツール定義。引数スキーマのキー名が `input_schema` である点が OpenAI と異なる。
@@ -339,10 +421,7 @@ mod tests {
     fn temperature_is_omitted_when_unset() {
         let req = OaiRequest {
             model: "gpt-4o".into(),
-            messages: vec![OaiMessage {
-                role: OaiRole::User,
-                content: "hi".into(),
-            }],
+            messages: vec![OaiMessage::text(OaiRole::User, "hi")],
             temperature: None,
             max_tokens: 256,
             tools: Vec::new(),

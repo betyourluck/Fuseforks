@@ -14,7 +14,7 @@
 //!
 //! 由来: Kataribe `crates/llm_client/src/anthropic.rs` の設計方針。
 
-use super::canonical::{ChatResponse, Finish, Role, ToolCall, ToolChoice, Usage};
+use super::canonical::{ChatMessage, ChatResponse, Finish, Role, ToolCall, ToolChoice, Usage};
 use super::error::LlmError;
 use super::wire;
 use crate::llm::canonical::ChatRequest;
@@ -40,13 +40,7 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         .messages
         .iter()
         .filter(|m| m.role != Role::System)
-        .map(|m| wire::AnthropicMessage {
-            role: match m.role {
-                Role::Assistant => "assistant",
-                _ => "user",
-            },
-            content: m.content.clone(),
-        })
+        .map(encode_message)
         .collect();
 
     let tools = req
@@ -98,6 +92,54 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
 /// **利得が無い経路でリスクだけ取らない**のが正しい。
 /// 4000 文字は日本語で概ね 1500〜2500 トークンに相当し、最小要件を安全に超える。
 const MIN_CACHEABLE_CHARS: usize = 4_000;
+
+/// canonical の 1 発話を Anthropic の形へ写す。
+///
+/// **ツール結果は `user` ロールに載せる**のが Anthropic の形で、
+/// OpenAI 互換の `role: "tool"` とは構造が違う。この差を吸収するのが adapter の仕事。
+fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
+    // ツール結果。role は user、中身は tool_result ブロック。
+    if message.role == Role::Tool {
+        return wire::AnthropicMessage {
+            role: "user",
+            content: vec![wire::AnthropicRequestBlock::ToolResult {
+                tool_use_id: message.tool_call_id.clone().unwrap_or_default(),
+                content: message.content.clone(),
+            }],
+        };
+    }
+
+    let mut content = Vec::new();
+    // 空のテキストブロックは拒否されるので、中身があるときだけ積む。
+    if !message.content.is_empty() {
+        content.push(wire::AnthropicRequestBlock::Text {
+            text: message.content.clone(),
+        });
+    }
+    for call in &message.tool_calls {
+        content.push(wire::AnthropicRequestBlock::ToolUse {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            // Anthropic の input は最初からオブジェクト。文字列化しない。
+            input: call.args.clone(),
+        });
+    }
+    // 完全に空だと弾かれるため、最低 1 ブロックは残す。
+    if content.is_empty() {
+        content.push(wire::AnthropicRequestBlock::Text {
+            text: String::new(),
+        });
+    }
+
+    wire::AnthropicMessage {
+        role: if message.role == Role::Assistant {
+            "assistant"
+        } else {
+            "user"
+        },
+        content,
+    }
+}
 
 /// system プロンプトをキャッシュ境界で分割する（純関数）。
 ///
@@ -259,6 +301,41 @@ mod tests {
         assert_eq!(json["tool_choice"]["type"], "tool");
         assert_eq!(json["tool_choice"]["name"], "emit_plan");
         assert!(json.get("temperature").is_none());
+    }
+
+    /// ツール往復の形。**OpenAI 互換とは構造が違う**ことを固定する。
+    ///
+    /// 結果は `role: "tool"` ではなく `user` メッセージの `tool_result` ブロック。
+    /// ここを取り違えると、ツールを 1 回呼んだ瞬間に会話が壊れる。
+    #[test]
+    fn tool_round_trip_uses_content_blocks_not_a_tool_role() {
+        let calls = vec![ToolCall {
+            id: "tu_1".into(),
+            name: "remember".into(),
+            args: json!({ "note": "覚えること" }),
+        }];
+
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::user("覚えておいて"),
+            ChatMessage::assistant_tool_calls("", calls),
+            ChatMessage::tool_result("tu_1", "remember", "書き留めました。"),
+        ];
+
+        let json = serde_json::to_value(encode(&req)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+
+        // 呼び出しは assistant の tool_use ブロック。input はオブジェクトのまま。
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["type"], "tool_use");
+        assert_eq!(messages[1]["content"][0]["input"]["note"], "覚えること");
+
+        // 結果は user の tool_result ブロック。
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"][0]["type"], "tool_result");
+        assert_eq!(messages[2]["content"][0]["tool_use_id"], "tu_1");
     }
 
     #[test]

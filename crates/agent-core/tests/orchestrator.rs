@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::event::CoreEvent;
+use agent_core::{ConfigFileKind, RememberTool};
 use agent_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
 };
@@ -146,6 +147,53 @@ impl LlmBackend for AlwaysHandoffBackend {
             usage: Usage {
                 prompt: 10,
                 completion: 5,
+                cache_read: 0,
+            },
+        })
+    }
+}
+
+/// 提示されたツールを 1 回だけ呼び、2 回目以降は本文で終えるバックエンド。
+///
+/// 実行ループ（呼ぶ → 結果を積む → もう一度呼ぶ → 終える）を再現する。
+#[derive(Default)]
+struct ToolCallingBackend {
+    tool: String,
+    args: serde_json::Value,
+    calls: std::sync::Mutex<usize>,
+    /// 最後に受け取ったメッセージ列。結果が積まれたかの確認に使う。
+    last: std::sync::Mutex<Vec<ChatMessage>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for ToolCallingBackend {
+    fn name(&self) -> &str {
+        "tool-calling"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        *self.last.lock().unwrap() = req.messages.clone();
+        let mut calls = self.calls.lock().unwrap();
+        let first = *calls == 0;
+        *calls += 1;
+
+        let tool_calls = if first {
+            vec![ToolCall {
+                id: "call_1".into(),
+                name: self.tool.clone(),
+                args: self.args.clone(),
+            }]
+        } else {
+            Vec::new()
+        };
+
+        Ok(ChatResponse {
+            text: Some(if first { String::new() } else { "終わりました".into() }),
+            tool_calls,
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
                 cache_read: 0,
             },
         })
@@ -490,6 +538,108 @@ async fn restarting_an_agent_starts_a_fresh_conversation() {
     assert!(
         !second.iter().any(|m| m.content == "一回目"),
         "再起動で履歴が残らない: {second:#?}"
+    );
+}
+
+/// ツールを呼んだら実行し、結果を積んでもう一度モデルへ渡すこと。
+///
+/// OpenAI Agents SDK と同じループ。呼び出しと結果は**対で**履歴に残す必要があり、
+/// 結果だけ積むとプロバイダが「対応する呼び出しが無い結果」として拒否する。
+#[tokio::test]
+async fn a_tool_call_is_executed_and_its_result_is_fed_back() {
+    let dir = TempDir::new("tool-loop");
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "remember".into(),
+        args: serde_json::json!({ "note": "相手は簡潔な返答を好む" }),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // モデルは 2 回呼ばれる（1 回目でツール、2 回目で最終出力）。
+    assert_eq!(*backend.calls.lock().unwrap(), 2);
+
+    // 2 回目のプロンプトに、呼び出しと結果が対で入っている。
+    let last = backend.last.lock().unwrap().clone();
+    assert!(
+        last.iter()
+            .any(|m| m.role == Role::Assistant && !m.tool_calls.is_empty()),
+        "呼び出しが履歴に残ること: {last:#?}"
+    );
+    assert!(
+        last.iter()
+            .any(|m| m.role == Role::Tool && m.tool_call_id.as_deref() == Some("call_1")),
+        "結果が対応する ID つきで積まれること: {last:#?}"
+    );
+
+    // 実行そのものが通知される（会話ログには現れないため）。
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::ToolInvoked { tool, ok: true, .. } if tool == "remember"
+        )),
+        "ツール実行が通知されること"
+    );
+
+    // 副作用が実際に起きている。
+    let saved = ConfigStore::new(&dir.0)
+        .read_config(&id, ConfigFileKind::Memory)
+        .await
+        .unwrap();
+    assert!(saved.contains("簡潔な返答"), "Memory.md へ書かれること: {saved}");
+
+    // 最終出力がユーザーへ返る。
+    let log = messages(&events);
+    assert_eq!(log.last().unwrap().content, "終わりました");
+}
+
+/// 未知のツール名は会話を止めず、モデルが読める文字列として返ること。
+#[tokio::test]
+async fn an_unknown_tool_name_does_not_kill_the_turn() {
+    let dir = TempDir::new("tool-unknown");
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "does_not_exist".into(),
+        args: serde_json::json!({}),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    // 提示側にも登録しておかないと、そもそも実行対象として拾われない。
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "やって").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 未知の名前は実行対象に含まれないので、そのまま最終出力として扱われる。
+    assert_eq!(*backend.calls.lock().unwrap(), 1);
+    let log = messages(&events);
+    assert_eq!(log.len(), 2, "会話は成立して終わる: {log:#?}");
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Running,
+        "エージェントは落ちない"
     );
 }
 

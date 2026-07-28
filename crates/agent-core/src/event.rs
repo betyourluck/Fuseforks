@@ -75,6 +75,29 @@ pub enum CoreEvent {
         reason: String,
     },
 
+    /// ツールを実行した。
+    ///
+    /// エージェントが何をしたかは会話ログに現れない（結果はプロンプトの中で消える）。
+    /// **黙って副作用だけ起きる状態を作らない**ために、実行そのものを通知する。
+    #[serde(rename_all = "camelCase")]
+    ToolInvoked {
+        /// 実行したエージェント。
+        agent_id: AgentId,
+        /// ツール名。
+        tool: String,
+        /// 成功したか。
+        ok: bool,
+    },
+
+    /// ツール実行の上限に達して打ち切った。
+    #[serde(rename_all = "camelCase")]
+    ToolLimitReached {
+        /// 対象エージェント。
+        agent_id: AgentId,
+        /// 適用された上限値。
+        max_iterations: u8,
+    },
+
     /// 転送上限に達して発話の連鎖を打ち切った。
     ///
     /// 相互接続されたエージェントは放置すると無限に往復する。打ち切りを
