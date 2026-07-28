@@ -53,10 +53,19 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     )
     .await?;
 
-    // 同梱ツール。外部の能力は将来 MCP 経由で足す（README の未実装表を参照）。
+    // 同梱ツール。
     orchestrator
         .register_tool(Arc::new(RememberTool::new(store)))
         .await;
+
+    // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
+    // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。
+    // そこで起動しなくなるのは筋が悪い（各サーバーの結果は list_mcp_servers で読める）。
+    // `mcp.json` 自体が壊れている場合もここで握る — 設定を直す画面へ到達できないと
+    // 利用者は詰む。
+    if let Err(err) = orchestrator.reload_mcp().await {
+        eprintln!("[concordia] MCP の初期接続に失敗しました: {err}");
+    }
 
     Ok(AppState {
         orchestrator: Arc::new(orchestrator),

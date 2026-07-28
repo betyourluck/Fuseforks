@@ -85,6 +85,15 @@ impl ToolRegistry {
         self.tools.get(name)
     }
 
+    /// ツールを取り除く。無ければ何もしない。
+    ///
+    /// MCP サーバーの再接続で要る。古い接続のツールを消さずに新しいものを
+    /// 登録すると、**繋がっていないサーバーのツールがモデルへ提示され続ける**
+    /// （呼ぶと必ず失敗する幽霊が残る）。
+    pub fn unregister(&mut self, name: &str) {
+        self.tools.remove(name);
+    }
+
     /// 登録数。
     pub fn len(&self) -> usize {
         self.tools.len()

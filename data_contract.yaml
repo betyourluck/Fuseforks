@@ -44,6 +44,32 @@ enums:
       アイコン (agents/{id}/icon.webp) はこの列挙に含めない — テキスト設定と違い
       バイナリで、read/write の型も検証も別物。専用の 3 コマンド
       (get/set/clear_agent_icon) で扱う。
+    mcp_contract: |
+      MCP サーバー宣言 = {workspace}/mcp.json (2026-07-29)。
+      **Claude Desktop の claude_desktop_config.json と同じ `mcpServers` 形式**を採る
+      (利用者が既に持つ設定をそのまま貼れることに実用上の価値がある)。
+      クライアント実装は公式 SDK の rmcp 2.2 (client + transport-child-process のみ、
+      server/macros は使わない)。LLM のワイヤ形は自前で持つがここは SDK に委ねる —
+      MCP は仕様が広く (handshake / capabilities / 通知 / キャンセル / ページング)
+      改訂が速く、自前で持っても得るものが無い。
+      不変条件:
+        - MCP ツールは AgentTool 実装 1 つとして ToolRegistry へ入る。
+          オーケストレーターから見て同梱ツール (remember) と区別が無い
+        - ツール名は `{server}__{tool}` で名前空間を分ける。記号は `_` へ落とし、
+          64 字超は**末尾**を残す (識別力は tool 側にあり、頭を残すと
+          `filesystem__` だけが並んで区別が付かない)
+        - **1 台の失敗で全体を止めない**。接続できないサーバーは McpServerStatus.error
+          に理由を残して次へ進む (外部コマンドは未インストール・パス違い・権限で
+          普通に落ちる)。起動時の接続失敗でアプリの起動も止めない
+        - 接続は 30 秒で打ち切る。応答しないまま生きているサーバーがあり、
+          handshake は待てば返る保証が無い
+        - 再接続時は**古い接続のツールを先に外す**。消さずに登録すると、
+          繋がっていないサーバーのツールがモデルへ提示され続ける (呼ぶと必ず失敗する幽霊)
+        - RunningService は保持し続ける。drop すると接続が畳まれ子プロセスが落ちる
+        - mcp.json が壊れている場合は**空として扱わずエラー**にする。空にすると
+          書き間違えた瞬間に全ツールが黙って消え、原因に辿り着けない
+        - env に秘密を書かせない (mcp.json は平文)。認証が要るサーバーは
+          将来 secret::SecretStore を通す経路を別途用意する
     ordinance_contract: |
       村の条例 = {workspace}/Ordinance.md (2026-07-28)。ワークスペース全体
       (= 村) の規則で、エージェント個別ではなく場に属するため agents/ の外に置く。

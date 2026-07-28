@@ -58,6 +58,11 @@ pub fn run() {
             // 村の条例
             commands::read_ordinance,
             commands::write_ordinance,
+            // MCP
+            commands::read_mcp_config,
+            commands::write_mcp_config,
+            commands::reload_mcp,
+            commands::list_mcp_servers,
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,

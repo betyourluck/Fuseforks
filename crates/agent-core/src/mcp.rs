@@ -31,6 +31,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
@@ -45,6 +46,13 @@ use crate::tool::{AgentTool, ToolContext};
 
 /// ツール名に使える最大長。OpenAI / Anthropic 双方の関数名制限に合わせる。
 const MAX_TOOL_NAME: usize = 64;
+
+/// 1 台へ接続してツール一覧を取るまでの上限。
+///
+/// **アプリの起動が外部コマンドの機嫌に握られてはいけない。** MCP サーバーは
+/// 応答しないまま生きていることがあり（依存の取得待ち、対話的プロンプトで停止など）、
+/// handshake は待てば返る保証が無い。上限で切って「接続できなかった」として先へ進む。
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 1 台の MCP サーバーの起動方法。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,7 +278,19 @@ impl McpManager {
                 continue;
             }
 
-            match connect_one(name, server).await {
+            let attempt = tokio::time::timeout(CONNECT_TIMEOUT, connect_one(name, server))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(CoreError::Mcp {
+                        server: name.clone(),
+                        message: format!(
+                            "{} 秒以内に応答しませんでした",
+                            CONNECT_TIMEOUT.as_secs()
+                        ),
+                    })
+                });
+
+            match attempt {
                 Ok((service, tools)) => {
                     manager.statuses.push(McpServerStatus {
                         name: name.clone(),

@@ -113,6 +113,30 @@ export interface AgentMessage {
   coRecipients?: AgentId[];
 }
 
+/** MCP サーバー 1 台の起動方法（Claude Desktop の設定と同じ形）。 */
+export interface McpServerConfig {
+  command: string;
+  args: string[];
+  /** 追加の環境変数。**秘密は書かないこと** — mcp.json は平文で保存される。 */
+  env: Record<string, string>;
+  /** 設定を消さずに一時停止するための欄。 */
+  enabled: boolean;
+}
+
+/** `mcp.json` 全体。キー名は Claude Desktop 互換。 */
+export interface McpConfig {
+  mcpServers: Record<string, McpServerConfig>;
+}
+
+/** MCP サーバー 1 台の接続状態。 */
+export interface McpServerStatus {
+  name: string;
+  connected: boolean;
+  /** 提供されたツール名（サーバー名で修飾済み）。 */
+  tools: string[];
+  error: string | null;
+}
+
 /** トポロジーの有向辺。 */
 export interface TopologyEdge {
   source: AgentId;

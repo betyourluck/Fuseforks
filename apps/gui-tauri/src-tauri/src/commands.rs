@@ -195,6 +195,37 @@ pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
     Ok(state.workspace.display().to_string())
 }
 
+// ---- MCP ---------------------------------------------------------------------
+
+/// `mcp.json` の宣言を返す。
+#[tauri::command]
+pub async fn read_mcp_config(state: State<'_, AppState>) -> CoreResult<agent_core::McpConfig> {
+    state.orchestrator.mcp_config().await
+}
+
+/// `mcp.json` を書き、その場で接続し直す。
+#[tauri::command]
+pub async fn write_mcp_config(
+    state: State<'_, AppState>,
+    config: agent_core::McpConfig,
+) -> CoreResult<()> {
+    state.orchestrator.set_mcp_config(&config).await
+}
+
+/// MCP サーバーへ接続し直す。設定を変えずに再試行したいときに使う。
+#[tauri::command]
+pub async fn reload_mcp(state: State<'_, AppState>) -> CoreResult<()> {
+    state.orchestrator.reload_mcp().await
+}
+
+/// 各 MCP サーバーの接続状態。
+#[tauri::command]
+pub async fn list_mcp_servers(
+    state: State<'_, AppState>,
+) -> CoreResult<Vec<agent_core::McpServerStatus>> {
+    Ok(state.orchestrator.mcp_statuses().await)
+}
+
 // ---- 村の条例 ----------------------------------------------------------------
 
 /// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。

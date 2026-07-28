@@ -26,6 +26,12 @@ use crate::world::PersistedWorld;
 /// 登録簿の永続化ファイル名。
 const WORLD_FILE: &str = "world.json";
 
+/// MCP サーバー宣言のファイル名。
+///
+/// Claude Desktop の `claude_desktop_config.json` と同じ `mcpServers` 形式を採る
+/// ので、利用者が既に持っている設定をそのまま貼れる。
+const MCP_FILE: &str = "mcp.json";
+
 /// エージェントアイコンのファイル名。**中身は WebP に固定する。**
 ///
 /// 変換（png / jpg → WebP・リサイズ）は UI 層の責務で、コアは受け入れ検証だけを持つ。
@@ -187,6 +193,34 @@ impl ConfigStore {
             .map_err(|e| Self::io_err(&self.root, e))?;
         let path = self.root.join(ORDINANCE_FILE);
         tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| Self::io_err(&path, e))
+    }
+
+    /// MCP サーバー宣言を読む。未作成なら空の集合。
+    ///
+    /// **壊れた JSON は空にせずエラーにする。** 空として扱うと、書き間違えた瞬間に
+    /// 全ツールが黙って消え、利用者は「MCP が動かない」としか分からなくなる。
+    pub async fn read_mcp_config(&self) -> CoreResult<crate::mcp::McpConfig> {
+        let path = self.root.join(MCP_FILE);
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) if text.trim().is_empty() => Ok(crate::mcp::McpConfig::default()),
+            Ok(text) => serde_json::from_str(&text).map_err(CoreError::from),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Ok(crate::mcp::McpConfig::default())
+            }
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// MCP サーバー宣言を書く。
+    pub async fn write_mcp_config(&self, config: &crate::mcp::McpConfig) -> CoreResult<()> {
+        tokio::fs::create_dir_all(&self.root)
+            .await
+            .map_err(|e| Self::io_err(&self.root, e))?;
+        let json = serde_json::to_string_pretty(config)?;
+        let path = self.root.join(MCP_FILE);
+        tokio::fs::write(&path, json)
             .await
             .map_err(|e| Self::io_err(&path, e))
     }

@@ -8,7 +8,10 @@
  *   （ブラウザ環境 = Tauri 外でも crash しない）。
  */
 
-const emit = defineEmits<{ (e: "open-ordinance"): void }>();
+const emit = defineEmits<{
+  (e: "open-ordinance"): void;
+  (e: "open-mcp"): void;
+}>();
 
 async function win(method: "minimize" | "toggleMaximize" | "close") {
   try {
@@ -72,6 +75,31 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M8 21h9a3 3 0 0 0 3-3V5a2 2 0 0 0-2-2H8a3 3 0 0 0-3 3v12" />
         <path d="M5 21a2 2 0 0 1-2-2v-1h7" />
         <path d="M10 8h6M10 12h6" />
+      </svg>
+    </button>
+
+    <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->
+    <button
+      class="tb-btn"
+      title="MCP サーバー（外部ツールの接続）"
+      aria-label="MCP サーバー"
+      @click="emit('open-mcp')"
+    >
+      <!-- プラグ -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M9 2v6M15 2v6" />
+        <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
+        <path d="M12 17v5" />
       </svg>
     </button>
 

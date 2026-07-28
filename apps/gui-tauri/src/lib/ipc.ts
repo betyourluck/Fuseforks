@@ -19,6 +19,8 @@ import type {
   ErrorPayload,
   ModelTemplate,
   ModelTemplateId,
+  McpConfig,
+  McpServerStatus,
   RagChunk,
   TopologyEdge,
 } from "../types";
@@ -168,6 +170,21 @@ export const readOrdinance = () => call<string>("read_ordinance");
 /** 村の条例を書く。次の発話からすべてのエージェントに反映される。 */
 export const writeOrdinance = (content: string) =>
   call<void>("write_ordinance", { content });
+
+// ---- MCP ---------------------------------------------------------------------
+
+/** `mcp.json` の宣言を読む。未作成なら空の集合。 */
+export const readMcpConfig = () => call<McpConfig>("read_mcp_config");
+
+/** `mcp.json` を書き、その場で接続し直す。 */
+export const writeMcpConfig = (config: McpConfig) =>
+  call<void>("write_mcp_config", { config });
+
+/** 設定を変えずに接続し直す。 */
+export const reloadMcp = () => call<void>("reload_mcp");
+
+/** 各 MCP サーバーの接続状態。 */
+export const listMcpServers = () => call<McpServerStatus[]>("list_mcp_servers");
 
 // ---- アイコン ----------------------------------------------------------------
 

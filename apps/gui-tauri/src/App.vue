@@ -21,6 +21,7 @@ import { computed, onMounted, ref } from "vue";
 import AgentList from "./components/AgentList.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
+import McpDialog from "./components/McpDialog.vue";
 import OrdinanceDialog from "./components/OrdinanceDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -36,6 +37,8 @@ const { layout, resize, reset } = usePaneLayout();
 
 /** 村の条例ダイアログの表示状態。 */
 const ordinanceOpen = ref(false);
+/** MCP サーバー管理ダイアログの表示状態。 */
+const mcpOpen = ref(false);
 
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
@@ -48,7 +51,7 @@ onMounted(() => {
 
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-surface-0 text-ink">
-  <TitleBar @open-ordinance="ordinanceOpen = true" />
+  <TitleBar @open-ordinance="ordinanceOpen = true" @open-mcp="mcpOpen = true" />
   <div
     class="grid min-h-0 flex-1 overflow-hidden"
     :style="{ gridTemplateColumns: columns }"
@@ -98,6 +101,8 @@ onMounted(() => {
     <ToastHost />
 
     <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
+
+    <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
     <!--
       初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。

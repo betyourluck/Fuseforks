@@ -20,6 +20,7 @@ import type {
   ConfigFileKind,
   CoreEvent,
   ErrorPayload,
+  McpConfig,
   ModelTemplate,
   TopologyEdge,
 } from "../types";
@@ -458,6 +459,21 @@ export function useOrchestrator() {
       await mutate("モデルテンプレートの削除", () =>
         ipc.deleteModelTemplate(templateId),
       );
+    },
+
+    /** MCP の宣言を保存し、その場で接続し直す。 */
+    async saveMcpConfig(config: McpConfig): Promise<boolean> {
+      const done = await mutate("MCP 設定の保存", () => ipc.writeMcpConfig(config));
+      if (succeeded(done)) {
+        pushToast("info", "MCP サーバーへ接続し直しました", "結果は一覧で確認できます");
+      }
+      return succeeded(done);
+    },
+
+    /** 設定を変えずに MCP へ繋ぎ直す。 */
+    async reloadMcp(): Promise<boolean> {
+      const done = await mutate("MCP の再接続", () => ipc.reloadMcp());
+      return succeeded(done);
     },
 
     /** 村の条例を保存する。次の発話から全エージェントに反映される。 */

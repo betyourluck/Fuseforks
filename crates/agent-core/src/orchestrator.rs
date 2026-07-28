@@ -181,8 +181,10 @@ struct Shared {
     store: ConfigStore,
     rag: RwLock<RagIndex>,
     log: RwLock<Vec<AgentMessage>>,
-    /// 実行できるツール。将来 MCP サーバーのツールもここへ入る。
+    /// 実行できるツール。同梱ツールと MCP サーバー由来のツールが同居する。
     tools: RwLock<ToolRegistry>,
+    /// 接続中の MCP サーバー。接続を保持し続けないと子プロセスが落ちる。
+    mcp: RwLock<crate::mcp::McpManager>,
     config: OrchestratorConfig,
 }
 
@@ -321,6 +323,7 @@ impl Orchestrator {
             rag: RwLock::new(RagIndex::default()),
             log: RwLock::new(Vec::new()),
             tools: RwLock::new(ToolRegistry::new()),
+            mcp: RwLock::new(crate::mcp::McpManager::default()),
             config,
         });
 
@@ -585,6 +588,57 @@ impl Orchestrator {
         // 未登録エージェントのファイルを読めてしまわないよう存在確認を先に行う。
         self.shared.world.read().await.agent(id)?;
         self.shared.store.read_config(id, kind).await
+    }
+
+    // ---- MCP -----------------------------------------------------------------
+
+    /// `mcp.json` の宣言を読む。
+    pub async fn mcp_config(&self) -> CoreResult<crate::mcp::McpConfig> {
+        self.shared.store.read_mcp_config().await
+    }
+
+    /// `mcp.json` を書き、その場で接続し直す。
+    pub async fn set_mcp_config(&self, config: &crate::mcp::McpConfig) -> CoreResult<()> {
+        self.shared.store.write_mcp_config(config).await?;
+        self.reload_mcp().await
+    }
+
+    /// MCP サーバーへ接続し直し、ツール登録簿を入れ替える。
+    ///
+    /// 1 台の失敗で全体を止めない（[`crate::mcp::McpManager::connect_all`]）。
+    /// 各サーバーの結果は [`Orchestrator::mcp_statuses`] で読める。
+    ///
+    /// # Errors
+    /// `mcp.json` が壊れている場合。**空として扱わない** — 書き間違えた瞬間に
+    /// 全ツールが黙って消えると、利用者は原因に辿り着けない。
+    pub async fn reload_mcp(&self) -> CoreResult<()> {
+        let config = self.shared.store.read_mcp_config().await?;
+        let next = crate::mcp::McpManager::connect_all(&config).await;
+
+        // 古い接続のツールを先に外す。消さずに新しいものを登録すると、
+        // 繋がっていないサーバーのツールがモデルへ提示され続ける。
+        let previous = {
+            let mut slot = self.shared.mcp.write().await;
+            std::mem::replace(&mut *slot, next)
+        };
+        {
+            let mut registry = self.shared.tools.write().await;
+            for tool in previous.tools() {
+                registry.unregister(tool.name());
+            }
+            let current = self.shared.mcp.read().await;
+            for tool in current.tools() {
+                registry.register(Arc::clone(tool));
+            }
+        }
+        // 旧接続は登録簿から外し終えてから畳む（畳む間も古い呼び出しは来ない）。
+        previous.shutdown().await;
+        Ok(())
+    }
+
+    /// 各 MCP サーバーの接続状態。UI へそのまま出せる。
+    pub async fn mcp_statuses(&self) -> Vec<crate::mcp::McpServerStatus> {
+        self.shared.mcp.read().await.statuses().to_vec()
     }
 
     // ---- 村の条例 -------------------------------------------------------------

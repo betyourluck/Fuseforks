@@ -668,6 +668,128 @@ async fn asking_another_agent_returns_the_answer_to_the_caller() {
     );
 }
 
+/// 進行役 1 体へ頼む形（orchestrator-workers）が収束すること。
+///
+/// 同報で「みんな自己紹介して」と投げると、全員のターンが**並列に走る**。
+/// 進行役が促そうとした時点で他の答えはまだ存在せず、結果として同じ相手が
+/// 二度答える。一方、**進行役 1 体だけに頼む**と、その 1 体が順に委譲し、
+/// 答えを受け取ってからまとめる — 各エージェントはちょうど 1 回ずつ話し、
+/// 重複が構造的に起こらない。
+/// Anthropic が orchestrator-workers と呼ぶ形と同じ。
+#[tokio::test]
+async fn asking_one_facilitator_converges_without_duplicates() {
+    /// 委譲ツールが提示されていれば**全員へ**委譲し、答えが揃ったらまとめる。
+    #[derive(Default)]
+    struct FacilitatorBackend;
+
+    #[async_trait::async_trait]
+    impl LlmBackend for FacilitatorBackend {
+        fn name(&self) -> &str {
+            "facilitator"
+        }
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            let answered = req.messages.iter().any(|m| m.role == Role::Tool);
+            let asks: Vec<_> = req
+                .tools
+                .iter()
+                .filter(|t| t.name.starts_with("ask_"))
+                .collect();
+
+            if !answered && !asks.is_empty() {
+                return Ok(ChatResponse {
+                    text: Some(String::new()),
+                    tool_calls: asks
+                        .iter()
+                        .enumerate()
+                        .map(|(index, tool)| ToolCall {
+                            id: format!("call_{index}"),
+                            name: tool.name.clone(),
+                            args: serde_json::json!({ "message": "自己紹介をお願いします" }),
+                            extra: None,
+                        })
+                        .collect(),
+                    finish: Finish::ToolUse,
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                });
+            }
+
+            let text = if answered {
+                let collected: Vec<&str> = req
+                    .messages
+                    .iter()
+                    .filter(|m| m.role == Role::Tool)
+                    .map(|m| m.content.as_str())
+                    .collect();
+                format!("みんなの自己紹介です: {}", collected.join(" / "))
+            } else {
+                "わたしの自己紹介です".to_owned()
+            };
+            Ok(ChatResponse {
+                text: Some(text),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            })
+        }
+    }
+
+    let dir = TempDir::new("facilitator");
+    let orchestrator =
+        setup_with(&dir, Arc::new(FacilitatorBackend), OrchestratorConfig::default()).await;
+
+    let (host, b, c) = (
+        AgentId::from("agent_host"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&host, "ザリ"), (&b, "ロボ"), (&c, "ジェミー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+    orchestrator
+        .set_connections(&host, vec![b.clone(), c.clone()])
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    // **進行役 1 体だけ**へ頼む（同報しない）。
+    orchestrator
+        .send_user_message(&host, "みんなに自己紹介するように言って")
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(800)).await;
+    let log = messages(&events);
+
+    // 各ワーカーはちょうど 1 回ずつ答える（重複が起きない）。
+    for worker in [&b, &c] {
+        let spoken: Vec<_> = log
+            .iter()
+            .filter(|m| m.from == Endpoint::Agent { id: worker.clone() })
+            .collect();
+        assert_eq!(spoken.len(), 1, "{worker} の発話が 1 回であること: {spoken:#?}");
+        assert_eq!(
+            spoken[0].to,
+            Endpoint::Agent { id: host.clone() },
+            "答えは進行役へ戻ること"
+        );
+    }
+
+    // 進行役はユーザーへ 1 本にまとめて返す。
+    let final_replies: Vec<_> = log
+        .iter()
+        .filter(|m| m.from == Endpoint::Agent { id: host.clone() } && m.to == Endpoint::User)
+        .collect();
+    assert_eq!(final_replies.len(), 1, "実際: {final_replies:#?}");
+    assert!(
+        final_replies[0].content.contains("みんなの自己紹介です"),
+        "受け取った答えを踏まえてまとめること: {}",
+        final_replies[0].content
+    );
+}
+
 /// 応答しない相手への委譲が、会話を永久に止めないこと。
 ///
 /// 委譲は相手の応答を待って**ブロックする**。相手が停止中なら即座に失敗するが、
