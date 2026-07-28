@@ -85,7 +85,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
 <template>
   <div class="flex h-full flex-col">
     <header
-      class="flex items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
+      class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
     >
       <h2 class="flex-1 font-semibold tracking-wide">エージェント</h2>
       <span class="text-ink-dim tabular-nums">
@@ -135,7 +135,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
       </div>
     </form>
 
-    <div class="flex-1 space-y-2 overflow-y-auto p-3">
+    <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
       <AgentCard
         v-for="agent in agents"
         :key="agent.id"

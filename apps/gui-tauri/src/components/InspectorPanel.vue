@@ -105,7 +105,7 @@ async function openFolder(): Promise<void> {
 
 <template>
   <div class="flex h-full flex-col">
-    <header class="flex items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
+    <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
       <h2 class="flex-1 truncate font-semibold tracking-wide">
         {{ selected ? selected.name : "設定" }}
       </h2>

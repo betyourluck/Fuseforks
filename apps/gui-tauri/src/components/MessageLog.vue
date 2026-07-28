@@ -82,8 +82,12 @@ async function send(): Promise<void> {
 
 <template>
   <div class="flex h-full flex-col">
+    <!--
+      ヘッダと送信欄は `shrink-0`、本文だけが伸縮する。
+      これが無いと、本文が伸びたぶんだけ送信欄が押し下げられて画面外へ沈む。
+    -->
     <header
-      class="flex items-center gap-2 border-b border-line px-3 py-2 text-xs text-ink-dim"
+      class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 text-xs text-ink-dim"
     >
       <h2 class="font-semibold tracking-wide text-ink">会話ログ</h2>
       <span class="tabular-nums">{{ visible.length }} 件</span>
@@ -128,7 +132,7 @@ async function send(): Promise<void> {
     </div>
 
     <form
-      class="flex items-center gap-2 border-t border-line px-3 py-2"
+      class="flex shrink-0 items-center gap-2 border-t border-line px-3 py-2"
       @submit.prevent="send"
     >
       <input

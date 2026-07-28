@@ -4,22 +4,35 @@
  *
  * 左: エージェント一覧 / 中央: トポロジー + 会話ログ / 右: 設定とエディタ
  *
- * グリッドの列幅を固定値にしているのは、ペインごとに情報の密度が違うため。
- * 左は一覧、右はフォームで、どちらも横に伸びても読みやすくならない。
- * 中央のグラフだけが面積を必要とするので、そこに残りを全部渡す。
+ * # 行・列に `minmax(0, ...)` を使う理由
+ *
+ * `1fr` の**最小値は `auto`**、つまり中身の最小コンテンツ幅・高さである。
+ * 中身が大きいとトラックが取り分を超えて伸び、グリッド全体が `h-full` を超過して
+ * 下端や右端が画面外へ押し出される。実際に、会話が伸びると送信欄が画面外へ沈み、
+ * 入力できなくなった。`minmax(0, 1fr)` で最小値を 0 に固定し、
+ * はみ出しは各ペインの内部スクロールに引き受けさせる。
  */
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 
 import AgentList from "./components/AgentList.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 import InspectorPanel from "./components/InspectorPanel.vue";
 import MessageLog from "./components/MessageLog.vue";
+import PaneSplitter from "./components/PaneSplitter.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { useOrchestrator } from "./composables/useOrchestrator";
+import { usePaneLayout } from "./composables/usePaneLayout";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+
+const { layout, resize, reset } = usePaneLayout();
+
+const columns = computed(
+  () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
+);
+const centerRows = computed(() => `minmax(0, 1fr) 2px ${layout.logHeight}px`);
 
 onMounted(() => {
   void orchestrator.init();
@@ -27,7 +40,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="grid h-full grid-cols-[320px_1fr_380px] bg-surface-0 text-ink">
+  <div
+    class="grid h-full overflow-hidden bg-surface-0 text-ink"
+    :style="{ gridTemplateColumns: columns }"
+  >
     <!--
       各区画をエラー境界で包む。1 区画の描画失敗がアプリ全体を白紙にすると、
       再起動するまで何も読めなくなる（会話ログが消えて再起動が要る、という形で
@@ -35,28 +51,55 @@ onMounted(() => {
     -->
 
     <!-- 左ペイン: エージェント一覧 -->
-    <aside class="min-w-0 border-r border-line">
+    <aside class="min-w-0 overflow-hidden">
       <ErrorBoundary label="エージェント一覧">
         <AgentList />
       </ErrorBoundary>
     </aside>
 
+    <PaneSplitter
+      direction="col"
+      label="エージェント一覧の幅"
+      @delta="(px) => resize('leftWidth', px)"
+      @reset="reset"
+    />
+
     <!-- 中央ペイン: グラフィカルマップ（上） + 会話ログ（下） -->
-    <main class="grid min-w-0 grid-rows-[1fr_minmax(200px,34%)]">
-      <section class="min-h-0 border-b border-line">
+    <main
+      class="grid min-w-0 overflow-hidden"
+      :style="{ gridTemplateRows: centerRows }"
+    >
+      <section class="min-h-0 overflow-hidden">
         <ErrorBoundary label="接続マップ">
           <TopologyMap />
         </ErrorBoundary>
       </section>
-      <section class="min-h-0">
+
+      <!-- 下へドラッグするとログが縮む向きなので符号を反転する。 -->
+      <PaneSplitter
+        direction="row"
+        label="会話ログの高さ"
+        @delta="(px) => resize('logHeight', px, -1)"
+        @reset="reset"
+      />
+
+      <section class="min-h-0 overflow-hidden">
         <ErrorBoundary label="会話ログ">
           <MessageLog />
         </ErrorBoundary>
       </section>
     </main>
 
+    <!-- 右ペインは左端につまみがあるので、右へ動かすと幅が縮む。 -->
+    <PaneSplitter
+      direction="col"
+      label="設定パネルの幅"
+      @delta="(px) => resize('rightWidth', px, -1)"
+      @reset="reset"
+    />
+
     <!-- 右ペイン: 設定とエディタ -->
-    <aside class="min-w-0 border-l border-line">
+    <aside class="min-w-0 overflow-hidden">
       <ErrorBoundary label="設定">
         <InspectorPanel />
       </ErrorBoundary>
