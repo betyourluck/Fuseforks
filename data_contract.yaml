@@ -70,6 +70,12 @@ enums:
           書き間違えた瞬間に全ツールが黙って消え、原因に辿り着けない
         - env に秘密を書かせない (mcp.json は平文)。認証が要るサーバーは
           将来 secret::SecretStore を通す経路を別途用意する
+        - **コマンドは PATH から解決する** (rmcp の which-command)。素の名前を
+          Command::new へ渡してはいけない — Windows の PATH には npx.cmd と
+          拡張子なしの npx (Git Bash 用スクリプト) が両方居り、後者に当たると
+          CreateProcess が実行できず program not found になる。
+          「Claude Desktop の設定をそのまま貼れる」はここを解決して初めて成り立つ
+          (failures.md #26、実測で確認)
     ordinance_contract: |
       村の条例 = {workspace}/Ordinance.md (2026-07-28)。ワークスペース全体
       (= 村) の規則で、エージェント個別ではなく場に属するため agents/ の外に置く。
