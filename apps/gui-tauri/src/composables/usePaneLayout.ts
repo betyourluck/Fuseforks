@@ -10,10 +10,16 @@ import { reactive, watch } from "vue";
 
 const STORAGE_KEY = "concordia.layout.v1";
 
-/** 各寸法の下限と上限。これを外れると操作不能な画面ができる。 */
+/**
+ * 各寸法の下限と上限。これを外れると操作不能な画面ができる。
+ *
+ * 会話パネルの上限を広く取っているのは、ここが**読む場所**だから。
+ * 吹き出しは横幅が無いと 1 行あたりの文字数が減り、縦に間延びして読みにくくなる。
+ * 接続マップは全体の形が分かればよいので、幅を譲る側でよい。
+ */
 const BOUNDS = {
   leftWidth: { min: 220, max: 620 },
-  rightWidth: { min: 260, max: 720 },
+  rightWidth: { min: 280, max: 1100 },
 } as const;
 
 export interface PaneLayout {
@@ -25,7 +31,7 @@ export interface PaneLayout {
 
 const DEFAULTS: PaneLayout = {
   leftWidth: 320,
-  rightWidth: 420,
+  rightWidth: 520,
 };
 
 /** 値を下限・上限へ収める。 */

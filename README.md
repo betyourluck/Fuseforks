@@ -53,7 +53,7 @@ ConcordiaOrcehstrator/
             └── components/
                 ├── AgentList.vue / AgentCard.vue      左: エージェント一覧
                 ├── TopologyMap.vue                    中央: 接続マップ
-                ├── ChatPanel.vue                      右: 会話（吹き出し）
+                ├── ChatPanel.vue / ChatInput.vue      右: 会話（吹き出し）
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   モーダル: 設定
                 ├── ModelTemplateDialog.vue            モーダル: モデル
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue
@@ -105,6 +105,16 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 ただし**宛先は落とさない** — ここはオーケストレーションの画面で、
 「誰から誰へ」は本質的な情報だから、吹き出しの外側に宛先と hop を残す。
 会話らしさのために情報を捨てない。
+
+入力欄は Kataribe の `ActionInput.vue` に倣う（`ChatInput.vue`）。
+
+- `rows="1"` から始め、改行するたび**上方向へ伸びる**（下端固定のレイアウトなので）
+- 220px で伸びるのをやめ、内部スクロールへ切り替える
+- 送信ボタンは入力欄の**中**に浮かせ、中身があるときだけ現れる（↵ アイコン）
+- Enter で送信、Shift+Enter で改行
+
+**IME 変換中の Enter は送信しない**（`event.isComposing` を見る）。
+ここを見ないと、日本語の変換を確定した瞬間に未完成の文が飛ぶ。
 
 境界は 2 本のつまみで動かせる（ダブルクリックで既定値へ、矢印キーでも動く）。
 寸法は `localStorage` に保存する。表示の都合であってオーケストレーターの状態では

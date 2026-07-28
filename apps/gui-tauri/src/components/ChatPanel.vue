@@ -16,6 +16,7 @@
  */
 import { computed, nextTick, ref, watch } from "vue";
 
+import ChatInput from "./ChatInput.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
@@ -23,7 +24,6 @@ const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
 const scroller = ref<HTMLElement | null>(null);
-const draft = ref("");
 const filterAgentId = ref<AgentId | "">("");
 
 /** 送信先。選択中のエージェントを既定にする。 */
@@ -36,11 +36,16 @@ const sendTargetName = computed(
 );
 
 /** 送信可能か。停止中のエージェントへは投げられない。 */
-const canSend = computed(() => {
-  if (!sendTarget.value || !draft.value.trim()) return false;
-  return (
-    state.agents.find((a) => a.id === sendTarget.value)?.status === "running"
-  );
+const canSend = computed(
+  () =>
+    !!sendTarget.value &&
+    state.agents.find((a) => a.id === sendTarget.value)?.status === "running",
+);
+
+/** 送信できない理由。押せないボタンに理由を添えないと、故障と区別がつかない。 */
+const blockedReason = computed(() => {
+  if (!sendTarget.value) return "エージェントを選択してください";
+  return `${sendTargetName.value} が稼働していません`;
 });
 
 /** エンドポイントの表示名。 */
@@ -120,10 +125,8 @@ watch(
   },
 );
 
-async function send(): Promise<void> {
+async function send(content: string): Promise<void> {
   if (!canSend.value || !sendTarget.value) return;
-  const content = draft.value;
-  draft.value = "";
   await orchestrator.send(sendTarget.value, content);
 }
 </script>
@@ -202,28 +205,13 @@ async function send(): Promise<void> {
       </p>
     </div>
 
-    <form
-      class="flex shrink-0 items-end gap-2 border-t border-line px-3 py-2"
-      @submit.prevent="send"
-    >
-      <textarea
-        v-model="draft"
-        rows="1"
-        :placeholder="
-          sendTarget ? `${sendTargetName} へ送信…` : 'エージェントを選択してください'
-        "
-        :disabled="!sendTarget"
-        class="min-h-[34px] max-h-32 min-w-0 flex-1 resize-y rounded-lg border border-line bg-surface-1 px-2.5 py-1.5 outline-none focus:border-accent disabled:opacity-40"
-        @keydown.enter.exact.prevent="send"
-      />
-      <button
-        type="submit"
-        :disabled="!canSend"
-        :title="canSend ? '送信（Enter）' : '宛先が稼働していません'"
-        class="h-[34px] shrink-0 rounded-lg bg-accent px-3 font-medium text-surface-0 disabled:opacity-40"
-      >
-        送信
-      </button>
-    </form>
+    <ChatInput
+      :disabled="!canSend"
+      :placeholder="
+        sendTarget ? `${sendTargetName} へ送信…` : 'エージェントを選択してください'
+      "
+      :blocked-reason="blockedReason"
+      @send="send"
+    />
   </div>
 </template>
