@@ -45,6 +45,117 @@ textarea,
   user-select: text;
 }
 
+/*
+ * 会話バブル内の Markdown 描画（ChatPanel の .md-body、v-html で挿す）。
+ *
+ * v-html の中身には Vue の scoped 属性が付かないため、ここ（グローバル）に置く。
+ * バブルは幅 78% の狭い箱なので、見出しは「大きく」ではなく「太く」で階層を示し、
+ * 余白は本文サイズ基準で詰める。
+ */
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body p,
+.md-body ul,
+.md-body ol,
+.md-body pre,
+.md-body blockquote,
+.md-body table {
+  margin: 0.45em 0;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  margin: 0.7em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.md-body h1 {
+  font-size: 1.25em;
+}
+.md-body h2 {
+  font-size: 1.15em;
+}
+.md-body h3 {
+  font-size: 1.05em;
+}
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  font-size: 1em;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.4em;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body li {
+  margin: 0.15em 0;
+}
+.md-body code {
+  background-color: var(--color-surface-0);
+  border: 1px solid var(--color-line);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+.md-body pre {
+  background-color: var(--color-surface-0);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+}
+.md-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.95em;
+}
+.md-body blockquote {
+  border-left: 3px solid var(--color-line);
+  padding-left: 0.8em;
+  color: var(--color-ink-dim);
+}
+.md-body a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--color-line);
+  margin: 0.7em 0;
+}
+.md-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--color-line);
+  padding: 0.25em 0.6em;
+  text-align: left;
+}
+.md-body th {
+  background-color: var(--color-surface-1);
+  font-weight: 600;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

@@ -15,10 +15,12 @@
  * 吹き出しの外側に宛先と hop を残す。会話らしさのために情報を捨てない。
  */
 import { computed, nextTick, ref, watch } from "vue";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import ChatInput from "./ChatInput.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import { collapseRows, type ChatRow } from "../lib/chatRows";
+import { renderMarkdownCached } from "../lib/markdown";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
@@ -157,6 +159,38 @@ function isMine(message: AgentMessage): boolean {
   return message.from.kind === "user";
 }
 
+/**
+ * エージェントの発言だけ Markdown で描画する。
+ * ユーザー発言・システム通知は入力どおりのプレーン表示を保つ —
+ * 「自分が打った文字列」が描画で変形すると、送った内容の確認ができなくなる。
+ */
+function isRenderedAsMarkdown(message: AgentMessage): boolean {
+  return message.from.kind === "agent";
+}
+
+/** 描画済み Markdown（ID キャッシュ付き。発話は不変なので安全）。 */
+function markdownOf(message: AgentMessage): string {
+  return renderMarkdownCached(message.id, message.content);
+}
+
+/**
+ * Markdown 内リンクのクリックを横取りし、外部ブラウザで開く。
+ *
+ * webview 内でそのまま遷移するとアプリ画面ごとリンク先へ置き換わる。
+ * `renderMarkdown` が `target="_blank"` を付けているため既定では何も
+ * 起きないが、それでは「押しても無反応」なので、ここで opener へ渡す。
+ * 開くのは http / https のみ（LLM 出力由来のリンクを信頼しない）。
+ */
+function onMarkdownClick(event: MouseEvent): void {
+  const anchor = (event.target as HTMLElement).closest("a");
+  if (!anchor) return;
+  event.preventDefault();
+  const href = anchor.getAttribute("href") ?? "";
+  if (/^https?:\/\//i.test(href)) {
+    void openUrl(href);
+  }
+}
+
 function timestamp(ms: number): string {
   return new Date(ms).toLocaleTimeString("ja-JP", {
     hour: "2-digit",
@@ -246,7 +280,19 @@ async function send(content: string): Promise<void> {
             <span>→ {{ toLabel(rows[index]) }}</span>
           </p>
 
+          <!--
+            エージェント発言は Markdown 描画（md で返すことが多い）。
+            renderMarkdown は html:false で生 HTML をエスケープするので、
+            LLM 出力を v-html へ挿しても任意タグは注入されない。
+          -->
           <div
+            v-if="isRenderedAsMarkdown(message)"
+            class="md-body selectable rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed break-words text-ink"
+            @click="onMarkdownClick"
+            v-html="markdownOf(message)"
+          />
+          <div
+            v-else
             class="selectable px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap"
             :class="
               isMine(message)
