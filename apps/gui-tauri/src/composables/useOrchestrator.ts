@@ -103,17 +103,39 @@ export function dismissToast(id: number): void {
 }
 
 /**
- * 参照系の IPC を包み、失敗を通知へ変換する。成功なら結果、失敗なら `null`。
+ * IPC の失敗を表す番兵。
+ *
+ * **`null` を失敗の印にしてはいけない。** Rust の `CoreResult<()>` は JSON で
+ * `null` にシリアライズされるため、戻り値が void のコマンド
+ * （`write_ordinance` / `write_agent_config` / `set_agent_icon` …）は
+ * **成功しても `null` を返す**。かつて `null` を失敗と読んでいたせいで、
+ * 保存が成功しているのに「未保存」表示が残り、アイコンを差し替えても
+ * 再起動まで反映されなかった（failures.md #22）。
+ *
+ * 番兵を専用の値にすれば、コマンドの戻り値が何であっても衝突しない。
+ */
+const FAILED = Symbol("ipc-failed");
+
+/** 失敗しなかったか。呼び出し側はこれで成功を判定する。 */
+function succeeded<T>(result: T | typeof FAILED): result is T {
+  return result !== FAILED;
+}
+
+/**
+ * 参照系の IPC を包み、失敗を通知へ変換する。失敗なら [`FAILED`]。
  *
  * 状態を変えない呼び出し専用。変更系は [`mutate`] を使うこと。
  */
-async function guard<T>(label: string, task: () => Promise<T>): Promise<T | null> {
+async function guard<T>(
+  label: string,
+  task: () => Promise<T>,
+): Promise<T | typeof FAILED> {
   try {
     return await task();
   } catch (error) {
     const payload = error as ErrorPayload;
     pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
-    return null;
+    return FAILED;
   }
 }
 
@@ -128,13 +150,16 @@ async function guard<T>(label: string, task: () => Promise<T>): Promise<T | null
  * 判断の対象にしない**のが正しい。このアプリの payload は小さく、
  * 毎回取り直す代償は無視できる。
  */
-async function mutate<T>(label: string, task: () => Promise<T>): Promise<T | null> {
+async function mutate<T>(
+  label: string,
+  task: () => Promise<T>,
+): Promise<T | typeof FAILED> {
   try {
     return await task();
   } catch (error) {
     const payload = error as ErrorPayload;
     pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
-    return null;
+    return FAILED;
   } finally {
     // 再同期自体の失敗で、元の操作の通知を上書きしない。ただし黙殺もしない —
     // 取り直しが落ちると投影が古いまま残るので、痕跡が無いと調査不能になる。
@@ -144,30 +169,52 @@ async function mutate<T>(label: string, task: () => Promise<T>): Promise<T | nul
   }
 }
 
+/** 進行中の取り直し。単一飛行 — 同時に走る取り直しは常に 1 本だけ。 */
+let inflightRefresh: Promise<void> | null = null;
+/** 進行中の 1 本の完了後に走る追走。何本重なっても追加の 1 周に相乗りする。 */
+let trailingRefresh: Promise<void> | null = null;
+
 /**
- * 取り直しの世代番号。
+ * 一覧をコア側から取り直す。
  *
  * refreshAll は「mutate の完了時」と「コアイベント受信時」の 2 系統から呼ばれ、
- * **並行に走る**。IPC の完了順は開始順と一致しないので、古い状態を持った応答が
- * 後から着地すると新しい状態を黙って上書きする。実機では「削除したのに一覧に残る」
- * 「保存したのに表示が戻る」として現れ、再起動まで直らない（failures.md #19）。
- * 各呼び出しに世代を振り、**最後に開始した取り直しだけ**が状態を書けるようにする。
+ * 並行しうる。IPC の完了順は開始順と一致しないので、素朴に並走させると
+ * 古い応答が後から着地して新しい状態を上書きする（failures.md #19）。
+ *
+ * **単一飛行 + 追走 1 周**で直列化する:
+ * - 進行中が無ければ、その場で取り直す
+ * - 進行中が有れば、その完了後にもう 1 周走る追走へ相乗りする。
+ *   進行中の 1 本は自分の変更より**古い**データを持ちうるので、
+ *   それを待つだけでは足りない — 完了後の再取得まで待って初めて
+ *   「await から戻った時点で自分の変更が見えている」を保証できる。
+ *   保存直後に state から下書きを作り直す画面（設定ダイアログ等）はこの保証に
+ *   依存する。世代ガード（古い応答を捨てる方式）はこの保証が無く、
+ *   「保存したのに未保存表示に戻る」を生んだ。
  */
-let refreshEpoch = 0;
+function refreshAll(): Promise<void> {
+  if (inflightRefresh) {
+    trailingRefresh ??= inflightRefresh
+      .catch(() => undefined)
+      .then(() => {
+        trailingRefresh = null;
+        return refreshAll();
+      });
+    return trailingRefresh;
+  }
+  inflightRefresh = fetchAndAssign().finally(() => {
+    inflightRefresh = null;
+  });
+  return inflightRefresh;
+}
 
-/** 一覧をコア側から取り直す。 */
-async function refreshAll(): Promise<void> {
-  const epoch = ++refreshEpoch;
+/** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
+async function fetchAndAssign(): Promise<void> {
   const [agents, edges, templates, ragSources] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listModelTemplates(),
     ipc.listRagSources(),
   ]);
-
-  // 自分より新しい取り直しが始まっていたら、この応答は既に過去のもの。捨てる。
-  if (epoch !== refreshEpoch) return;
-
   state.agents = agents;
   state.edges = edges;
   state.templates = templates;
@@ -324,7 +371,9 @@ export function useOrchestrator() {
     state: readonly(state) as Readonly<OrchestratorState>,
 
     init,
-    refreshAll: () => guard("再読み込み", refreshAll),
+    async refreshAll(): Promise<void> {
+      await guard("再読み込み", refreshAll);
+    },
 
     /** 選択中のエージェントを切り替える。 */
     select(agentId: AgentId | null): void {
@@ -346,7 +395,8 @@ export function useOrchestrator() {
     },
 
     async createAgent(spec: AgentSpec): Promise<AgentSnapshot | null> {
-      return mutate("エージェントの作成", () => ipc.createAgent(spec));
+      const created = await mutate("エージェントの作成", () => ipc.createAgent(spec));
+      return succeeded(created) ? created : null;
     },
 
     async updateAgent(spec: AgentSpec): Promise<void> {
@@ -355,7 +405,7 @@ export function useOrchestrator() {
 
     async deleteAgent(agentId: AgentId): Promise<void> {
       const done = await mutate("エージェントの削除", () => ipc.deleteAgent(agentId));
-      if (done !== null && state.selectedAgentId === agentId) {
+      if (succeeded(done) && state.selectedAgentId === agentId) {
         state.selectedAgentId = null;
       }
     },
@@ -387,12 +437,12 @@ export function useOrchestrator() {
       const done = await mutate("API キーの登録", () =>
         ipc.setModelCredential(templateId, secret),
       );
-      if (done !== null) {
+      if (succeeded(done)) {
         pushToast("info", "API キーを登録しました");
         // 退避の通知は「もう解決したかもしれない」ので、次の失敗で出し直す。
         reportedDegradations.clear();
       }
-      return done !== null;
+      return succeeded(done);
     },
 
     /** API キーを資格情報ストアから削除する。 */
@@ -400,8 +450,8 @@ export function useOrchestrator() {
       const done = await mutate("API キーの削除", () =>
         ipc.clearModelCredential(templateId),
       );
-      if (done !== null) reportedDegradations.clear();
-      return done !== null;
+      if (succeeded(done)) reportedDegradations.clear();
+      return succeeded(done);
     },
 
     async deleteTemplate(templateId: string): Promise<void> {
@@ -413,8 +463,8 @@ export function useOrchestrator() {
     /** 村の条例を保存する。次の発話から全エージェントに反映される。 */
     async saveOrdinance(content: string): Promise<boolean> {
       const done = await mutate("条例の保存", () => ipc.writeOrdinance(content));
-      if (done !== null) pushToast("info", "条例を保存しました", "次の発話から全員に適用されます");
-      return done !== null;
+      if (succeeded(done)) pushToast("info", "条例を保存しました", "次の発話から全員に適用されます");
+      return succeeded(done);
     },
 
     /**
@@ -425,12 +475,12 @@ export function useOrchestrator() {
       const done = await mutate("アイコンの保存", () =>
         ipc.setAgentIcon(agentId, Array.from(bytes)),
       );
-      if (done !== null) {
+      if (succeeded(done)) {
         const old = state.icons[agentId];
         if (old) URL.revokeObjectURL(old);
         state.icons[agentId] = iconUrlOf(Array.from(bytes));
       }
-      return done !== null;
+      return succeeded(done);
     },
 
     /** アイコンを削除する。 */
@@ -438,16 +488,20 @@ export function useOrchestrator() {
       const done = await mutate("アイコンの削除", () =>
         ipc.clearAgentIcon(agentId),
       );
-      if (done !== null) {
+      if (succeeded(done)) {
         const old = state.icons[agentId];
         if (old) URL.revokeObjectURL(old);
         state.icons[agentId] = null;
       }
-      return done !== null;
+      return succeeded(done);
     },
 
-    readConfig: (agentId: AgentId, kind: ConfigFileKind) =>
-      guard("設定ファイルの読み込み", () => ipc.readAgentConfig(agentId, kind)),
+    async readConfig(agentId: AgentId, kind: ConfigFileKind): Promise<string | null> {
+      const text = await guard("設定ファイルの読み込み", () =>
+        ipc.readAgentConfig(agentId, kind),
+      );
+      return succeeded(text) ? text : null;
+    },
 
     async writeConfig(
       agentId: AgentId,
@@ -457,8 +511,8 @@ export function useOrchestrator() {
       const done = await mutate("設定ファイルの保存", () =>
         ipc.writeAgentConfig(agentId, kind, content),
       );
-      if (done !== null) pushToast("info", "保存しました");
-      return done !== null;
+      if (succeeded(done)) pushToast("info", "保存しました");
+      return succeeded(done);
     },
 
     async send(agentId: AgentId, content: string): Promise<void> {

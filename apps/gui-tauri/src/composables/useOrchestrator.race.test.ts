@@ -79,15 +79,41 @@ describe("refreshAll の並行競合", () => {
     const refresh1 = orchestrator.refreshAll();
     const refresh2 = orchestrator.refreshAll();
 
-    // 新しい応答が先に着地する。
+    // 着地順を敵対的にする: 新しい応答が先、古い応答が後
+    // （IPC の完了順は開始順と一致しない）。
     freshResponse.resolve([]);
+    staleResponse.resolve([snapshot("ghost")]);
+    await Promise.all([refresh1, refresh2]);
+
+    // 幽霊が復活してはいけない。単一飛行 + 追走により、
+    // 後から呼んだ取り直しの結果が必ず最後に書かれる。
+    expect(orchestrator.state.agents).toHaveLength(0);
+  });
+
+  it("await から戻った時点で、追走ぶんの取得が完了している", async () => {
+    const orchestrator = useOrchestrator();
+
+    h.listTopology.mockResolvedValue([]);
+    h.listModelTemplates.mockResolvedValue([]);
+    h.listRagSources.mockResolvedValue([]);
+    h.getAgentIcon.mockResolvedValue(null);
+
+    // 取り直し #1 が飛行中に #2 を呼ぶ。#2 は「#1 完了後の再取得」まで待つこと。
+    // 進行中の #1 は #2 の呼び出し元の変更より古いデータを持ちうるので、
+    // #1 への相乗りだけでは「保存したのに古い状態を掴む」が再発する。
+    const first = deferred<unknown[]>();
+    h.listAgents
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce([snapshot("fresh_agent")]);
+
+    const refresh1 = orchestrator.refreshAll();
+    const refresh2 = orchestrator.refreshAll();
+
+    first.resolve([]);
     await refresh2;
 
-    // 古い応答が**後から**着地する（IPC の完了順は保証されない）。
-    staleResponse.resolve([snapshot("ghost")]);
+    // #2 の await 明けには、2 回目の取得結果（呼び出し時点より新しい）が見えている。
+    expect(orchestrator.state.agents).toHaveLength(1);
     await refresh1;
-
-    // 幽霊が復活してはいけない。最後に開始した取り直しだけが状態を書ける。
-    expect(orchestrator.state.agents).toHaveLength(0);
   });
 });
