@@ -195,6 +195,20 @@ pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
     Ok(state.workspace.display().to_string())
 }
 
+// ---- 村の条例 ----------------------------------------------------------------
+
+/// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。
+#[tauri::command]
+pub async fn read_ordinance(state: State<'_, AppState>) -> CoreResult<String> {
+    state.orchestrator.read_ordinance().await
+}
+
+/// 村の条例を書く。次の発話からすべてのエージェントに反映される。
+#[tauri::command]
+pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> CoreResult<()> {
+    state.orchestrator.write_ordinance(&content).await
+}
+
 // ---- アイコン ----------------------------------------------------------------
 
 /// エージェントのアイコン（WebP バイト列）を返す。未設定なら `null`。

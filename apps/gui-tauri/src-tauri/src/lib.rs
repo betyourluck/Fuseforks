@@ -55,6 +55,9 @@ pub fn run() {
             commands::get_agent_icon,
             commands::set_agent_icon,
             commands::clear_agent_icon,
+            // 村の条例
+            commands::read_ordinance,
+            commands::write_ordinance,
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,

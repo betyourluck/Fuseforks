@@ -24,7 +24,7 @@ ConcordiaOrcehstrator/
 │       │   ├── error.rs             CoreError と、UI へ渡す ErrorPayload
 │       │   ├── event.rs             CoreEvent（broadcast で押し出す状態変化）
 │       │   ├── world.rs             登録簿。同期的な純データ構造（ロックを持たない）
-│       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md / icon.webp と world.json の入出力
+│       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md / icon.webp / Ordinance.md と world.json の入出力
 │       │   ├── orchestrator.rs      ★ ライフサイクルとメッセージ配送（Tokio）
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
 │       │   ├── rag.rs               RAG 索引（検索は Rayon 側で走る）
@@ -315,12 +315,20 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 ```text
 {app_data_dir}/workspace/
   world.json                  エージェント定義とモデルテンプレート
+  Ordinance.md                村の条例（全エージェント共通の規則。タイトルバーの 📜 から編集）
   agents/{agent_id}/
     SKILL.md
     Memory.md
     Construct.md
     icon.webp                 エージェントのアイコン（設定時のみ。UI が WebP へ変換して保存）
 ```
+
+### 村の条例
+
+規則は 3 層で積む。**ベンダーの憲法（モデル側、変更不可） > 村の条例 >
+各エージェントの個別設定**。条例は全エージェントのシステムプロンプト最上段に
+入り、保存すると次の発話から反映される。全員が同じ文書で場の規則を受け取るため、
+モデルごとの振る舞いの差（憲法の違い）をアプリ側で揃える正規化層としても働く。
 
 カードの ⚙ から開く設定ダイアログの 📁 ボタンで、そのエージェントの設定フォルダを
 直接開ける。

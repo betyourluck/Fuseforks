@@ -160,6 +160,15 @@ export const writeAgentConfig = (
   content: string,
 ) => call<void>("write_agent_config", { agentId, kind, content });
 
+// ---- 村の条例 ----------------------------------------------------------------
+
+/** 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。 */
+export const readOrdinance = () => call<string>("read_ordinance");
+
+/** 村の条例を書く。次の発話からすべてのエージェントに反映される。 */
+export const writeOrdinance = (content: string) =>
+  call<void>("write_ordinance", { content });
+
 // ---- アイコン ----------------------------------------------------------------
 
 /** エージェントのアイコン（WebP バイト列）を取得する。未設定なら `null`。 */

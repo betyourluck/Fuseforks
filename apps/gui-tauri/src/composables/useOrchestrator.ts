@@ -410,6 +410,13 @@ export function useOrchestrator() {
       );
     },
 
+    /** 村の条例を保存する。次の発話から全エージェントに反映される。 */
+    async saveOrdinance(content: string): Promise<boolean> {
+      const done = await mutate("条例の保存", () => ipc.writeOrdinance(content));
+      if (done !== null) pushToast("info", "条例を保存しました", "次の発話から全員に適用されます");
+      return done !== null;
+    },
+
     /**
      * アイコンを保存する。`bytes` は UI 側で WebP へ変換済みであること。
      * 成功したらキャッシュを手元のバイト列で直接更新する（再フェッチしない）。

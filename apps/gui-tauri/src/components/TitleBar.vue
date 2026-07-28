@@ -8,6 +8,8 @@
  *   （ブラウザ環境 = Tauri 外でも crash しない）。
  */
 
+const emit = defineEmits<{ (e: "open-ordinance"): void }>();
+
 async function win(method: "minimize" | "toggleMaximize" | "close") {
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -47,6 +49,33 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     </div>
 
     <div data-tauri-drag-region class="h-full flex-1"></div>
+
+    <!-- 村の条例。全エージェント共通の規則をここから編集する。 -->
+    <button
+      class="tb-btn"
+      title="村の条例（全エージェント共通の規則）"
+      aria-label="村の条例"
+      @click="emit('open-ordinance')"
+    >
+      <!-- 巻物 -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M8 21h9a3 3 0 0 0 3-3V5a2 2 0 0 0-2-2H8a3 3 0 0 0-3 3v12" />
+        <path d="M5 21a2 2 0 0 1-2-2v-1h7" />
+        <path d="M10 8h6M10 12h6" />
+      </svg>
+    </button>
+
+    <div class="mx-1 h-4 w-px bg-line"></div>
 
     <!-- ウィンドウ操作 -->
     <button class="tb-btn" title="最小化" aria-label="最小化" @click="win('minimize')">

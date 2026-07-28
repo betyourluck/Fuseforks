@@ -566,6 +566,95 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
     );
 }
 
+/// 村の条例（ワークスペース全体の規則）が全エージェントのプロンプト最上段に入ること。
+///
+/// 規則の序列は「ベンダーの憲法 > 村の条例 > 各エージェントの個別設定」。
+/// 条例はモデル間の憲法差（振る舞いの既定値の違い）を吸収する正規化層でもあり、
+/// どのモデルのエージェントも同じ場の規則を同じ位置で受け取る。
+#[tokio::test]
+async fn the_ordinance_prefixes_every_agents_system_prompt() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("ordinance");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .write_config(&id, ConfigFileKind::Construct, "私は挨拶担当です。")
+        .await
+        .unwrap();
+    orchestrator
+        .write_ordinance("ここは Outcasts 村です。雰囲気より検証できる話を大事にします。")
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    let system = requests[0]
+        .iter()
+        .find(|m| m.role == Role::System)
+        .expect("システムプロンプトがあること");
+
+    let ordinance_at = system.content.find("Outcasts 村です").expect("条例が入ること");
+    let construct_at = system.content.find("挨拶担当です").expect("個別設定が入ること");
+    assert!(
+        ordinance_at < construct_at,
+        "条例は個別設定より上に置く（序列がプロンプトの物理順になる）: {}",
+        system.content
+    );
+
+    // 読み戻しの往復。
+    assert_eq!(
+        orchestrator.read_ordinance().await.unwrap(),
+        "ここは Outcasts 村です。雰囲気より検証できる話を大事にします。"
+    );
+}
+
+/// 条例が空なら、プロンプトへ空のセクションを差し込まないこと。
+#[tokio::test]
+async fn an_empty_ordinance_leaves_the_prompt_untouched() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("no-ordinance");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    assert!(
+        requests[0]
+            .iter()
+            .all(|m| !m.content.contains("村の条例")),
+        "未設定の条例は痕跡を残さない"
+    );
+}
+
 /// 受信した発話に**送り手の名前**が封筒として付くこと。
 ///
 /// ユーザーの言葉もエージェントからの転送も、同じ user ロールで届く。

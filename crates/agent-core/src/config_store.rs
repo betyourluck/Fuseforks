@@ -5,6 +5,7 @@
 //! ```text
 //! {workspace}/
 //!   world.json              エージェント定義とモデルテンプレート
+//!   Ordinance.md            村の条例（全エージェント共通の規則。プロンプト最上段に入る）
 //!   agents/{agent_id}/
 //!     SKILL.md              能力・振る舞いの定義
 //!     Memory.md             長期記憶
@@ -36,6 +37,14 @@ const ICON_FILE: &str = "icon.webp";
 /// UI 側は 256px 角へ縮小してから送るため、通常は数十 KB に収まる。
 /// 上限はその 1 桁上に置き、変換を通さず巨大ファイルを流し込む経路を塞ぐ。
 const ICON_MAX_BYTES: usize = 512 * 1024;
+
+/// 村の条例（ワークスペース全体の規則）のファイル名。
+///
+/// エージェント個別ではなく**場**に属するので、`agents/` の外に置く。
+/// 規則の序列は「ベンダーの憲法（モデル側） > 村の条例 > 各エージェントの
+/// 個別設定（Construct / SKILL / Memory）」。序列はそのままプロンプトの
+/// 物理的な順序（条例が最上段）として表現される。
+const ORDINANCE_FILE: &str = "Ordinance.md";
 
 /// 設定ファイルの読み書きを担う。
 #[derive(Debug, Clone)]
@@ -161,6 +170,27 @@ impl ConfigStore {
         }
     }
 
+    /// 村の条例を読む。未設定なら空文字。
+    pub async fn read_ordinance(&self) -> CoreResult<String> {
+        let path = self.root.join(ORDINANCE_FILE);
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => Ok(text),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// 村の条例を書く。
+    pub async fn write_ordinance(&self, content: &str) -> CoreResult<()> {
+        tokio::fs::create_dir_all(&self.root)
+            .await
+            .map_err(|e| Self::io_err(&self.root, e))?;
+        let path = self.root.join(ORDINANCE_FILE);
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| Self::io_err(&path, e))
+    }
+
     /// エージェントの設定ディレクトリごと削除する。存在しなければ何もしない。
     pub async fn remove_agent_dir(&self, id: &AgentId) -> CoreResult<()> {
         let dir = self.agent_dir(id)?;
@@ -171,21 +201,35 @@ impl ConfigStore {
         }
     }
 
-    /// 3 種の設定ファイルを連結して、そのエージェントのシステムプロンプトを組み立てる。
+    /// 設定ファイルを連結して、そのエージェントのシステムプロンプトを組み立てる。
     ///
-    /// 連結順は `Construct` → `Skill` → `Memory` で固定する。
+    /// 連結順は `村の条例` → `Construct` → `Skill` → `Memory` で固定する。
     /// **順序を固定するのはプロンプトキャッシュのため** — 先頭が毎回揺れると
     /// キャッシュのプレフィックスが一致せず、読み取り割引が一切効かなくなる。
+    ///
+    /// 条例を最上段に置くのは、規則の序列（ベンダーの憲法 > 条例 > 個別設定）を
+    /// プロンプトの物理順として表現するため。条例は全エージェント共通なので、
+    /// モデル間の憲法差（振る舞いの既定値の違い）を吸収する正規化層にもなる。
+    /// 編集すると全エージェントのキャッシュが一度無効になるが、それは
+    /// 「場の規則が変わった」ことの正しい代償である。
     ///
     /// 戻り値の第 2 要素は「安定部分の文字数」で、
     /// [`crate::llm::ChatRequest::cacheable_prefix_len`] にそのまま渡せる。
     /// `Memory.md` は対話で書き換わる想定なので、境界はその手前に置く。
     pub async fn compose_system_prompt(&self, spec: &AgentSpec) -> CoreResult<(String, usize)> {
+        let ordinance = self.read_ordinance().await?;
         let construct = self.read_config(&spec.id, ConfigFileKind::Construct).await?;
         let skill = self.read_config(&spec.id, ConfigFileKind::Skill).await?;
         let memory = self.read_config(&spec.id, ConfigFileKind::Memory).await?;
 
         let mut prompt = String::new();
+        if !ordinance.is_empty() {
+            prompt.push_str(
+                "# 村の条例（この場の全員に適用される規則。個別設定より優先される）\n",
+            );
+            prompt.push_str(&ordinance);
+            prompt.push_str("\n\n");
+        }
         prompt.push_str(&format!("# エージェント: {}\n\n", spec.name));
         if !construct.is_empty() {
             prompt.push_str("## Construct\n");

@@ -541,6 +541,19 @@ impl Orchestrator {
         self.shared.store.read_config(id, kind).await
     }
 
+    // ---- 村の条例 -------------------------------------------------------------
+
+    /// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。
+    pub async fn read_ordinance(&self) -> CoreResult<String> {
+        self.shared.store.read_ordinance().await
+    }
+
+    /// 村の条例を書く。次の発話からすべてのエージェントに反映される
+    /// （プロンプトはメッセージごとに組み直すため、再起動は不要）。
+    pub async fn write_ordinance(&self, content: &str) -> CoreResult<()> {
+        self.shared.store.write_ordinance(content).await
+    }
+
     // ---- アイコン -------------------------------------------------------------
 
     /// エージェントのアイコン（WebP バイト列）を読む。未設定なら `None`。
