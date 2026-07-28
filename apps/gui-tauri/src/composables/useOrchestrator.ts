@@ -97,12 +97,9 @@ export function dismissToast(id: number): void {
 }
 
 /**
- * IPC 呼び出しを包み、失敗を通知へ変換する。成功なら結果、失敗なら `null`。
+ * 参照系の IPC を包み、失敗を通知へ変換する。成功なら結果、失敗なら `null`。
  *
- * 失敗時はコア側から一覧を取り直す。真実はコアにあり、ここはその投影でしかないため、
- * **失敗した操作の後に古い投影を残すと、存在しない行をユーザーが押し続けられる**。
- * 実際にそれが起きた: 削除済みのテンプレート行が一覧に残り、押すたびに
- * `MODEL_TEMPLATE_NOT_FOUND` が積み上がった。
+ * 状態を変えない呼び出し専用。変更系は [`mutate`] を使うこと。
  */
 async function guard<T>(label: string, task: () => Promise<T>): Promise<T | null> {
   try {
@@ -110,9 +107,31 @@ async function guard<T>(label: string, task: () => Promise<T>): Promise<T | null
   } catch (error) {
     const payload = error as ErrorPayload;
     pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
-    // 再同期そのものが失敗しても、元の失敗の通知を上書きしない。
-    void refreshAll().catch(() => undefined);
     return null;
+  }
+}
+
+/**
+ * 変更系の IPC を包む。**成否によらず必ずコア側から状態を取り直す。**
+ *
+ * 以前は呼び出しごとに「ここは再同期が要るか」を判断していた。その方式では
+ * 判断を落とした経路だけが古い投影を表示し続ける。実際に接続の更新と並び替えが
+ * 落ちており、削除に失敗したテンプレート行も一覧に残って再クリックを誘発した。
+ *
+ * 真実はコア側にあり、ここはその投影でしかない。**投影を更新するかどうかを
+ * 判断の対象にしない**のが正しい。このアプリの payload は小さく、
+ * 毎回取り直す代償は無視できる。
+ */
+async function mutate<T>(label: string, task: () => Promise<T>): Promise<T | null> {
+  try {
+    return await task();
+  } catch (error) {
+    const payload = error as ErrorPayload;
+    pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
+    return null;
+  } finally {
+    // 再同期自体の失敗で、元の操作の通知を上書きしない。
+    await refreshAll().catch(() => undefined);
   }
 }
 
@@ -183,7 +202,7 @@ function applyEvent(event: CoreEvent): void {
         pushToast(
           "warn",
           `${name} は本物のモデルに接続できていません`,
-          `${event.reason}\n環境変数を設定したら、新しいターミナルからアプリを起動し直してください（実行中のプロセスには反映されません）。`,
+          `${event.reason}\n⚙ の画面で API キーを登録してください。登録すればそのまま復帰します。`,
         );
       }
       break;
@@ -251,53 +270,43 @@ export function useOrchestrator() {
 
     async toggleRunning(agentId: AgentId, running: boolean): Promise<void> {
       // 楽観的に状態を進める。トグルの反応が LLM の応答待ちに引きずられないように。
+      // 確定値は mutate の再同期が上書きする。
       patchAgent(agentId, { status: running ? "starting" : "stopping" });
-      const snapshot = await guard(running ? "起動" : "停止", () =>
+      await mutate(running ? "起動" : "停止", () =>
         ipc.setAgentRunning(agentId, running),
       );
-      if (snapshot) {
-        patchAgent(agentId, snapshot);
-      } else {
-        // 失敗したら投影を捨てて真実を取り直す。
-        void refreshAll();
-      }
     },
 
     async createAgent(spec: AgentSpec): Promise<AgentSnapshot | null> {
-      const created = await guard("エージェントの作成", () => ipc.createAgent(spec));
-      if (created) await refreshAll();
-      return created;
+      return mutate("エージェントの作成", () => ipc.createAgent(spec));
     },
 
     async updateAgent(spec: AgentSpec): Promise<void> {
-      const updated = await guard("設定の保存", () => ipc.updateAgent(spec));
-      if (updated) await refreshAll();
+      await mutate("設定の保存", () => ipc.updateAgent(spec));
     },
 
     async deleteAgent(agentId: AgentId): Promise<void> {
-      const done = await guard("エージェントの削除", () => ipc.deleteAgent(agentId));
-      if (done !== null) {
-        if (state.selectedAgentId === agentId) state.selectedAgentId = null;
-        await refreshAll();
+      const done = await mutate("エージェントの削除", () => ipc.deleteAgent(agentId));
+      if (done !== null && state.selectedAgentId === agentId) {
+        state.selectedAgentId = null;
       }
     },
 
     async setConnections(agentId: AgentId, targets: AgentId[]): Promise<void> {
-      await guard("接続の更新", () => ipc.setConnections(agentId, targets));
+      await mutate("接続の更新", () => ipc.setConnections(agentId, targets));
     },
 
     async reorder(order: AgentId[]): Promise<void> {
       // 並び替えは即座に見た目へ反映しないと操作感が壊れるので、先に order を振る。
       order.forEach((id, index) => patchAgent(id, { order: index }));
       state.agents.sort((a, b) => a.order - b.order);
-      await guard("並び替え", () => ipc.reorderAgents(order));
+      await mutate("並び替え", () => ipc.reorderAgents(order));
     },
 
     async upsertTemplate(template: ModelTemplate): Promise<void> {
-      const done = await guard("モデルテンプレートの保存", () =>
+      await mutate("モデルテンプレートの保存", () =>
         ipc.upsertModelTemplate(template),
       );
-      if (done !== null) await refreshAll();
     },
 
     /**
@@ -307,30 +316,30 @@ export function useOrchestrator() {
      * ここへ控えを持つと、値を保持しない設計が UI 層で崩れる。
      */
     async setCredential(templateId: string, secret: string): Promise<boolean> {
-      const done = await guard("API キーの登録", () =>
+      const done = await mutate("API キーの登録", () =>
         ipc.setModelCredential(templateId, secret),
       );
       if (done !== null) {
         pushToast("info", "API キーを登録しました");
-        await refreshAll();
+        // 退避の通知は「もう解決したかもしれない」ので、次の失敗で出し直す。
+        reportedDegradations.clear();
       }
       return done !== null;
     },
 
     /** API キーを資格情報ストアから削除する。 */
     async clearCredential(templateId: string): Promise<boolean> {
-      const done = await guard("API キーの削除", () =>
+      const done = await mutate("API キーの削除", () =>
         ipc.clearModelCredential(templateId),
       );
-      if (done !== null) await refreshAll();
+      if (done !== null) reportedDegradations.clear();
       return done !== null;
     },
 
     async deleteTemplate(templateId: string): Promise<void> {
-      const done = await guard("モデルテンプレートの削除", () =>
+      await mutate("モデルテンプレートの削除", () =>
         ipc.deleteModelTemplate(templateId),
       );
-      if (done !== null) await refreshAll();
     },
 
     readConfig: (agentId: AgentId, kind: ConfigFileKind) =>
@@ -341,7 +350,7 @@ export function useOrchestrator() {
       kind: ConfigFileKind,
       content: string,
     ): Promise<boolean> {
-      const done = await guard("設定ファイルの保存", () =>
+      const done = await mutate("設定ファイルの保存", () =>
         ipc.writeAgentConfig(agentId, kind, content),
       );
       if (done !== null) pushToast("info", "保存しました");
@@ -349,7 +358,9 @@ export function useOrchestrator() {
     },
 
     async send(agentId: AgentId, content: string): Promise<void> {
-      await guard("送信", () => ipc.sendUserMessage(agentId, content));
+      // 発話は MessageSent イベントで届くので、ここでの再同期は
+      // 送信が拒否された場合に一覧を正しく戻すために効く。
+      await mutate("送信", () => ipc.sendUserMessage(agentId, content));
     },
 
     dismissToast,

@@ -96,13 +96,16 @@ async function saveSecret(): Promise<void> {
   const secret = secretInput.value;
   if (!template || !secret) return;
 
+  const id = template.id;
   savingSecret.value = true;
   try {
     // テンプレート本体が未保存だと、コア側が「未登録」で弾く。先に保存する。
     await orchestrator.upsertTemplate(template);
-    const ok = await orchestrator.setCredential(template.id, secret);
+    const ok = await orchestrator.setCredential(id, secret);
     if (ok) {
-      template.credential = "keyring";
+      // 取得元の切り替えはコア側が行うので、その結果を読み直す。
+      // 手元で `keyring` を代入すると、コアが別の判断をしたときに食い違う。
+      reseedDraft(id);
       credentialStored.value = true;
     }
   } finally {
@@ -118,11 +121,12 @@ async function clearSecret(): Promise<void> {
   if (!template) return;
   if (!confirm(`${template.name} の API キーを削除しますか？`)) return;
 
-  const ok = await orchestrator.clearCredential(template.id);
+  const id = template.id;
+  const ok = await orchestrator.clearCredential(id);
   if (ok) {
-    // 「認証不要」ではなく「未設定」へ戻す。消しただけのテンプレートが
-    // 認証ヘッダ無しで外部へ送られるようになってはいけない。
-    template.credential = "unset";
+    // 取得元は「認証不要」ではなく「未設定」へ戻る（コア側の判断）。
+    // ここでも代入せず、その結果を読み直す。
+    reseedDraft(id);
     credentialStored.value = false;
   }
 }
@@ -194,11 +198,25 @@ function create(): void {
   selectedId.value = null;
 }
 
+/**
+ * 保存後の下書きをコア側の値で作り直す。
+ *
+ * 保存してフォームを閉じる作りだと、**保存した結果が画面から消える**。
+ * ユーザーには「反映されていない」ようにしか見えず、実際に
+ * 「ダイアログを開き直さないと反映されない」という報告になった。
+ * 保存後もその項目に留まり、コアが受け取った値をそのまま表示する。
+ */
+function reseedDraft(id: ModelTemplateId): void {
+  const saved = state.templates.find((t) => t.id === id);
+  draft.value = saved ? { ...saved } : null;
+  selectedId.value = saved ? saved.id : null;
+}
+
 async function save(): Promise<void> {
   if (!draft.value) return;
+  const id = draft.value.id;
   await orchestrator.upsertTemplate(draft.value);
-  selectedId.value = draft.value.id;
-  draft.value = null;
+  reseedDraft(id);
 }
 
 async function remove(template: ModelTemplate): Promise<void> {
