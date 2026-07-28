@@ -36,6 +36,7 @@ pub fn run() {
             commands::list_rag_sources,
             commands::search_rag,
             commands::workspace_path,
+            commands::env_var_is_visible,
             // 定義の編集
             commands::create_agent,
             commands::update_agent,

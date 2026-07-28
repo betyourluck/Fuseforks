@@ -100,6 +100,15 @@ export const searchRag = (sources: string[], query: string, topK: number) =>
 /** ワークスペースの実パスを取得する。 */
 export const workspacePath = () => call<string>("workspace_path");
 
+/**
+ * 環境変数がアプリのプロセスから見えるかを問い合わせる。値は返らない。
+ *
+ * 「登録されているか」ではなく「見えるか」を返すのが要点。Windows では
+ * 設定済みの変数が起動済みプロセスへ伝播しないため、両者は日常的にずれる。
+ */
+export const envVarIsVisible = (name: string) =>
+  call<boolean>("env_var_is_visible", { name });
+
 // ---- 定義の編集 -------------------------------------------------------------
 
 /** エージェントを登録する。 */

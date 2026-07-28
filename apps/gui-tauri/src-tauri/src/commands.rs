@@ -157,6 +157,22 @@ pub async fn write_agent_config(
         .await
 }
 
+/// 指定名の環境変数が **このプロセスから見えるか** だけを返す。
+///
+/// 値は決して返さない。存在の有無だけで、綴り誤りと未設定を保存時点で指摘できる。
+///
+/// 判定対象を「システムに登録されているか」ではなく
+/// 「**この**プロセスから見えるか」にしているのは、実際に鍵を解決するのが
+/// このプロセスだから。Windows では設定済みの変数が起動済みプロセスへ伝播せず、
+/// 「登録はされているのにアプリからは見えない」状態が普通に起きる。
+#[tauri::command]
+pub async fn env_var_is_visible(name: String) -> CoreResult<bool> {
+    if !agent_core::model::is_env_var_name(&name) {
+        return Ok(false);
+    }
+    Ok(std::env::var_os(&name).is_some())
+}
+
 /// ワークスペースのパスを返す。「フォルダを開く」導線で使う。
 #[tauri::command]
 pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {

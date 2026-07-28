@@ -6,8 +6,9 @@
  * **環境変数名だけ**で、実値はプロセスの環境から解決する。
  * 平文で保存される設定ファイルに秘密を書ける場所を、UI からも作らない。
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
+import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { Effort, ModelTemplate, ModelTemplateId, Provider } from "../types";
 
@@ -72,6 +73,30 @@ const apiKeyEnvLooksValid = computed(() => {
   if (!value) return true;
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && value.length <= 128;
 });
+
+/**
+ * 入力された環境変数がアプリのプロセスから見えるか。
+ * `null` は未確認、`true`/`false` は確認済み。
+ *
+ * 綴りを 1 文字間違えただけで、実行時まで気づけないという事故が実際に起きた
+ * （`ANTROPIC_API_KEY`）。保存する前にここで指摘する。
+ */
+const envVarVisible = ref<boolean | null>(null);
+
+watch(
+  () => draft.value?.apiKeyEnv,
+  async (name) => {
+    envVarVisible.value = null;
+    if (!name || !apiKeyEnvLooksValid.value) return;
+    try {
+      envVarVisible.value = await ipc.envVarIsVisible(name);
+    } catch {
+      // 確認できないこと自体は編集を妨げない。保存時にコア側が改めて判断する。
+      envVarVisible.value = null;
+    }
+  },
+  { immediate: true },
+);
 
 const PROVIDERS: { value: Provider | null; label: string }[] = [
   { value: null, label: "自動判定（baseUrl から）" },
@@ -305,6 +330,20 @@ function onTemperature(raw: string): void {
               <p v-if="!apiKeyEnvLooksValid" class="mt-1 text-[11px] text-fail">
                 ここは<strong>変数名</strong>の欄です。キーの実値は保存できません
                 （英大小文字・数字・<code>_</code> のみ、先頭は数字以外）。
+              </p>
+              <p
+                v-else-if="envVarVisible === false"
+                class="mt-1 text-[11px] text-warn"
+              >
+                この変数はアプリから見えません。綴りを確認してください。設定済みなら、
+                ターミナルごと閉じて新しいターミナルから起動し直す必要があります
+                （実行中のプロセスには反映されません）。
+              </p>
+              <p
+                v-else-if="envVarVisible === true"
+                class="mt-1 text-[11px] text-run"
+              >
+                この変数はアプリから見えています。
               </p>
             </div>
 
