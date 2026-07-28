@@ -878,7 +878,22 @@ async fn handle_message(
     //    OpenAI Agents SDK は handoff を「宛先 1 つにつきツール 1 本」で表現し、
     //    `transfer_to_<agent>` という名前を使う。単一ツール + 宛先パラメータより、
     //    名前で選ばせるほうがモデルの学習分布に近い。
-    let targets = spec.connected_agents.clone();
+    //    宛先は ID だけでなく**表示名**も添えて渡す。会話は表示名で流れるので、
+    //    名前と ID を結ぶ情報がプロンプトに無いと、モデルは誰に渡すか推測になる。
+    let targets: Vec<(AgentId, String)> = {
+        let world = shared.world.read().await;
+        spec.connected_agents
+            .iter()
+            .map(|id| {
+                let display = world
+                    .agent(id)
+                    .map(|record| record.spec.name.clone())
+                    // 接続先が消えていても転送経路自体は壊さない。ID で示す。
+                    .unwrap_or_else(|_| id.to_string());
+                (id.clone(), display)
+            })
+            .collect()
+    };
     let handoffs = HandoffTools::build(&targets);
     let use_handoff_tools = template.use_tools && !handoffs.is_empty();
 
@@ -1209,8 +1224,8 @@ impl Outcome {
 
 /// 転送先ごとのツール定義と、その逆引き。
 struct HandoffTools {
-    /// `(ツール名, 転送先)`。名前からの逆引きに使う。
-    entries: Vec<(String, AgentId)>,
+    /// `(ツール名, 転送先, 表示名)`。名前からの逆引きと、説明文の生成に使う。
+    entries: Vec<(String, AgentId, String)>,
 }
 
 impl HandoffTools {
@@ -1220,21 +1235,27 @@ impl HandoffTools {
     /// 関数名の長さ制限（64 文字）を超える場合と、切り詰めで衝突する場合は
     /// 連番へ退避する。名前が壊れるとモデルが呼べなくなるため、
     /// 「たぶん大丈夫」で通さない。
-    fn build(targets: &[AgentId]) -> Self {
+    ///
+    /// **ツール名は ID、説明は表示名**という組み合わせを採る。関数名に使えるのは
+    /// `[a-zA-Z0-9_-]` だけで、日本語の表示名は潰れて識別できなくなる。一方で
+    /// 会話は表示名で流れるので、説明に名前が無いとモデルは
+    /// 「ザリ・ロブステル」と `agent_2` を結び付けられない。実際にそうなっており、
+    /// 宛先の取り違えと「自分で全員のセリフを書く」の原因になっていた。
+    fn build(targets: &[(AgentId, String)]) -> Self {
         const MAX_TOOL_NAME: usize = 64;
         const PREFIX: &str = "transfer_to_";
 
-        let mut entries: Vec<(String, AgentId)> = Vec::with_capacity(targets.len());
-        for (index, target) in targets.iter().enumerate() {
+        let mut entries: Vec<(String, AgentId, String)> = Vec::with_capacity(targets.len());
+        for (index, (target, display)) in targets.iter().enumerate() {
             let natural = format!("{PREFIX}{target}");
             let name = if natural.len() <= MAX_TOOL_NAME
-                && !entries.iter().any(|(existing, _)| *existing == natural)
+                && !entries.iter().any(|(existing, _, _)| *existing == natural)
             {
                 natural
             } else {
                 format!("{PREFIX}agent_{index}")
             };
-            entries.push((name, target.clone()));
+            entries.push((name, target.clone(), display.clone()));
         }
         Self { entries }
     }
@@ -1244,14 +1265,23 @@ impl HandoffTools {
         self.entries.is_empty()
     }
 
+    /// この場に居る相手の一覧（表示名）。手順の説明で名簿として出す。
+    fn roster(&self) -> Vec<&str> {
+        self.entries
+            .iter()
+            .map(|(_, _, display)| display.as_str())
+            .collect()
+    }
+
     /// wire へ載せるツール定義。
     fn specs(&self) -> Vec<ToolSpec> {
         self.entries
             .iter()
-            .map(|(name, target)| ToolSpec {
+            .map(|(name, _, display)| ToolSpec {
                 name: name.clone(),
                 description: format!(
-                    "会話を続ける必要があるとき、`{target}` へメッセージを渡す。\
+                    "**{display}** へメッセージを渡して、会話を続ける。\
+                     相手は自分で考えて返事をするので、返事を代筆しないこと。\
                      自分の応答で用が足りるなら、このツールを呼ばずに本文だけを返すこと。"
                 ),
                 parameters: serde_json::json!({
@@ -1276,14 +1306,26 @@ impl HandoffTools {
     /// 「呼ばない」という選択が終了を意味することがモデルに伝わらない。
     fn protocol_note(&self, tools_available: bool) -> String {
         if tools_available {
-            "## 会話の進め方\n\
-             他のエージェントへ話を渡す必要があるときだけ `transfer_to_*` ツールを呼んでください。\
-             **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
-             全員へ並行して届きます。\
-             自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
-             **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
-             結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
-                .to_owned()
+            format!(
+                "## この場に居る相手\n\
+                 {}\n\
+                 いずれも**自分で考えて発言する別のエージェント**です。あなたが\
+                 彼らの発言を書くことはありません。\n\n\
+                 ## 会話の進め方\n\
+                 まず、届いた発話の送り手を見てください。**あなたに話しかけてきた相手へ、\
+                 あなた自身の言葉で答えるのが基本です。**\n\
+                 他のエージェントの助けが要るときだけ `transfer_to_*` ツールを呼んでください。\
+                 **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
+                 全員へ並行して届きます。\n\
+                 自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
+                 **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
+                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。",
+                self.roster()
+                    .iter()
+                    .map(|name| format!("- {name}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
         } else {
             format!(
                 "## 会話の進め方\n\
@@ -1298,13 +1340,13 @@ impl HandoffTools {
     fn resolve(&self, name: &str) -> Option<&AgentId> {
         self.entries
             .iter()
-            .find(|(tool, _)| tool == name)
-            .map(|(_, target)| target)
+            .find(|(tool, _, _)| tool == name)
+            .map(|(_, target, _)| target)
     }
 
     /// 最初の転送先。ツールを使えない経路の退避先。
     fn first(&self) -> Option<&AgentId> {
-        self.entries.first().map(|(_, target)| target)
+        self.entries.first().map(|(_, target, _)| target)
     }
 
     /// 応答から行き先を決める。

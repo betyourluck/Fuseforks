@@ -230,7 +230,22 @@ impl ConfigStore {
             prompt.push_str(&ordinance);
             prompt.push_str("\n\n");
         }
-        prompt.push_str(&format!("# エージェント: {}\n\n", spec.name));
+        // 自分が誰で、どこまでが自分の役かを明示する。
+        //
+        // 以前はここが `# エージェント: {name}` の見出し 1 行だけだった。見出しは
+        // 指示として弱く、実機では 1 体が 3 人分のセリフを自分で書く「一人三役」が
+        // 起きた。この場には複数のエージェントが居て、それぞれが自分で喋る —
+        // という前提はモデルにとって自明ではない。**役の境界は、書かれていなければ
+        // 存在しない。**
+        prompt.push_str(&format!(
+            "# あなたについて\n\
+             あなたはこの場に参加している **{}** です。\n\
+             - **{} 自身の発言だけを書いてください。** 他のエージェントの発言を\
+             代筆・代弁してはいけません。彼らはそれぞれ自分で発言します。\n\
+             - 発言に自分の名前を書く必要はありません。誰の発言かは自動的に伝わります。\n\
+             - 相手の発言を装って会話を先に進めないでください。\n\n",
+            spec.name, spec.name
+        ));
         if !construct.is_empty() {
             prompt.push_str("## Construct\n");
             prompt.push_str(&construct);
@@ -405,5 +420,25 @@ mod tests {
 
         let loaded = store.load_world().await.unwrap();
         assert!(loaded.agents.is_empty() && loaded.model_templates.is_empty());
+    }
+
+    /// システムプロンプトが「自分は誰か」と「自分の発言だけを書く」を明示すること。
+    ///
+    /// 見出し（`# エージェント: ジェミー`）だけでは指示として弱く、実機では
+    /// 1 体が 3 人分のセリフを自分で書く「一人三役」が起きた。役の境界は
+    /// 書かれていなければ存在しない。
+    #[tokio::test]
+    async fn the_system_prompt_declares_identity_and_forbids_speaking_for_others() {
+        let dir = TempDir::new("identity");
+        let store = ConfigStore::new(&dir.0);
+        let spec = AgentSpec::new("agent_1", "ジェミー", "tpl");
+
+        let (prompt, _) = store.compose_system_prompt(&spec).await.unwrap();
+
+        assert!(prompt.contains("ジェミー"), "自分の名前が入ること");
+        assert!(
+            prompt.contains("代筆") || prompt.contains("代弁"),
+            "他人の発言を書かない規則が入ること: {prompt}"
+        );
     }
 }

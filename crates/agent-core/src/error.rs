@@ -105,6 +105,19 @@ pub enum CoreError {
     #[error(transparent)]
     Llm(#[from] crate::llm::LlmError),
 
+    /// MCP サーバーとのやり取りに失敗した。
+    ///
+    /// MCP サーバーは外部コマンドであり、未インストール・パス違い・権限で
+    /// 普通に落ちる。**どのサーバーか**を必ず伴わせる — 複数台繋がっている状態で
+    /// 「MCP が失敗しました」とだけ言われても、利用者は直しようがない。
+    #[error("MCP サーバー `{server}` との通信に失敗しました: {message}")]
+    Mcp {
+        /// 対象サーバーの設定上の名前。
+        server: String,
+        /// 失敗の説明。
+        message: String,
+    },
+
     /// Rayon 側へ逃がした CPU バウンド処理が失敗した。
     #[error("計算タスクが失敗しました: {0}")]
     Compute(String),
@@ -135,6 +148,7 @@ impl CoreError {
             Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",
             // LLM 境界のコードはそのまま透過させ、UI 側で 1 つの体系として扱えるようにする。
             Self::Llm(err) => err.code(),
+            Self::Mcp { .. } => "MCP_FAILED",
             Self::Compute(_) => "COMPUTE_FAILED",
             Self::Serde(_) => "SERDE_FAILED",
         }

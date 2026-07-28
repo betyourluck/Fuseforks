@@ -22,6 +22,20 @@ keyring = { version = "3", features = [
 ] }
 rayon = "1.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# MCP (Model Context Protocol) の公式 Rust SDK。**クライアント側だけ**を使う。
+#
+# LLM のワイヤ形は自前で持っている（プロンプトキャッシュの制御に踏み込む必要があり、
+# 互換層では機能の交差集合しか使えないため）が、MCP は事情が違う:
+# 仕様が広く（handshake / capabilities / 通知 / キャンセル / ページング）、
+# しかも速い周期で改訂される。自前で持っても得るものが無い。
+#
+# 既定 feature の server / macros は要らない。この app は MCP サーバーではなく
+# **クライアント**であり、繋ぐ先は子プロセスとして起動する stdio サーバー。
+# 将来リモート HTTP サーバーへ繋ぐなら transport-streamable-http-client-reqwest を足す。
+rmcp = { version = "2.2", default-features = false, features = [
+  "client",
+  "transport-child-process",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

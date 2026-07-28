@@ -65,6 +65,7 @@ pub mod config_store;
 pub mod error;
 pub mod event;
 pub mod llm;
+pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod rag;
@@ -80,6 +81,7 @@ pub use llm::{
     BackendFactory, EchoBackend, FixedBackendFactory, HttpBackendFactory, HttpLlmBackend,
     LlmBackend, LlmConfig, LlmError, Provider,
 };
+pub use mcp::{McpConfig, McpManager, McpServerConfig, McpServerStatus};
 pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,

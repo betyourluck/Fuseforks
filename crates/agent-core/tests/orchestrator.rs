@@ -566,6 +566,74 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
     );
 }
 
+/// 転送ツールが**表示名**で相手を指すこと。
+///
+/// 会話は表示名（「ザリ・ロブステル」）で流れるのに、ツールは内部 ID
+/// （`agent_2`）でしか相手を示していなかった。名前と ID を結ぶ情報が
+/// プロンプトのどこにも無く、モデルは「誰に渡せばよいか」を推測するしかない。
+/// 実機では、宛先を取り違える・自分で全員のセリフを書く、として現れた。
+#[tokio::test]
+async fn handoff_tools_identify_targets_by_display_name() {
+    /// リクエストのツール定義を記録するバックエンド。
+    #[derive(Default)]
+    struct ToolSpyBackend {
+        seen: std::sync::Mutex<Vec<agent_core::llm::ToolSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for ToolSpyBackend {
+        fn name(&self) -> &str {
+            "tool-spy"
+        }
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            *self.seen.lock().unwrap() = req.tools.clone();
+            Ok(ChatResponse {
+                text: Some("了解".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            })
+        }
+    }
+
+    let backend = Arc::new(ToolSpyBackend::default());
+    let dir = TempDir::new("handoff-names");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b) = (AgentId::from("agent_1"), AgentId::from("agent_2"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ジェミー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ザリ・ロブステル", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "こんにちは").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let tools = backend.seen.lock().unwrap().clone();
+    let handoff = tools
+        .iter()
+        .find(|t| t.name.starts_with("transfer_to_"))
+        .expect("転送ツールが提示されること");
+
+    assert!(
+        handoff.description.contains("ザリ・ロブステル"),
+        "説明が表示名で相手を示すこと。実際: {}",
+        handoff.description
+    );
+}
+
 /// 村の条例（ワークスペース全体の規則）が全エージェントのプロンプト最上段に入ること。
 ///
 /// 規則の序列は「ベンダーの憲法 > 村の条例 > 各エージェントの個別設定」。
