@@ -284,6 +284,23 @@ events:
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
     「動いたかどうか」ではなく「何をしたか」が見えることが要件。
+  boot_contract: |
+    起動ハンドシェイク = boot_status コマンド (2026-07-29)。
+    ウィンドウを先に出し、オーケストレーターの初期化 (MCP 接続を含む、
+    10 秒超あり) はバックグラウンドで走らせる。setup の block_on は廃止 —
+    その間ウィンドウが 1 枚も出ず、起動と故障を区別できなかった。
+    不変条件:
+      - AppState は初期化が**成功した瞬間**に manage される。それまで
+        State<AppState> を要求するコマンドを呼んではいけない (抽出で失敗する)
+      - boot_status だけは AppHandle + try_state で答えるため、初期化前でも
+        常に { ready, error } を返せる。フロントは ready を確認してから
+        他のコマンドを呼び始める (useOrchestrator.initialize の関門)
+      - 失敗理由は BootError (起動直後に manage 済みの Mutex<Option<String>>)
+        へ入り、フロントは BOOT_FAILED として覆いに表面化する。panic しない —
+        ウィンドウは既に出ており、黙って落ちると起動失敗が無反応に見える
+      - 覆いは 2 段共有: index.html の #app 内 (Vue マウント前) と App.vue
+        (state.ready まで)。同じ .boot-splash / .boot-spinner (style.css) を
+        使い、切り替わりの継ぎ目を見せない
   degradation_rule: |
     設定不備で代替バックエンドへ退避したときは、必ず backendDegraded を出し、
     退避先の応答本文にも理由を書く。さらに退避結果はキャッシュしない

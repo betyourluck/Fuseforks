@@ -11,22 +11,49 @@ use tauri::Manager;
 
 /// アプリケーションを起動する。
 ///
-/// `setup` の中でオーケストレーターを組み立てるのは、ワークスペースのパス解決に
-/// `AppHandle` が要るため。ここでの失敗はウィンドウを出す前に止める
-/// （空の画面を見せてから「実は初期化に失敗していました」と伝えるより誠実）。
+/// オーケストレーターの組み立ては `setup` から**バックグラウンドへ逃がす**。
+/// 以前はここで `block_on` していたが、初期化には MCP サーバーの接続
+/// （外部コマンドの子プロセス起動）が含まれ、10 秒を超えることがある。
+/// その間ウィンドウが 1 枚も出ないと、起動したのか失敗したのか区別できない。
+/// ウィンドウを先に出し、フロントは `boot_status` を訊きながら
+/// 「初期起動中…」の覆いを見せる。
+///
+/// [`state::AppState`] は初期化が成功した瞬間に manage される。それまでの
+/// 失敗理由は [`state::BootError`]（起動直後に manage 済み）へ入るので、
+/// `boot_status` は常に「まだ・できた・失敗した」のどれかを答えられる。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let handle = app.handle().clone();
-            let app_state = tauri::async_runtime::block_on(state::build_state(&handle))?;
+            app.manage(state::BootError::default());
 
-            state::spawn_event_bridge(handle, std::sync::Arc::clone(&app_state.orchestrator));
-            app.manage(app_state);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match state::build_state(&handle).await {
+                    Ok(app_state) => {
+                        state::spawn_event_bridge(
+                            handle.clone(),
+                            std::sync::Arc::clone(&app_state.orchestrator),
+                        );
+                        handle.manage(app_state);
+                    }
+                    Err(err) => {
+                        // ウィンドウは既に出ている。ここで panic せず理由を残し、
+                        // フロントの覆いに「初期化に失敗した」と表示させる。
+                        eprintln!("[concordia] 初期化に失敗しました: {err}");
+                        let slot = handle.state::<state::BootError>();
+                        if let Ok(mut guard) = slot.0.lock() {
+                            *guard = Some(err.to_string());
+                        }
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // 起動ハンドシェイク
+            commands::boot_status,
             // 参照系
             commands::list_agents,
             commands::list_topology,

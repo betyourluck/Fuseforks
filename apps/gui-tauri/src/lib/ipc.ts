@@ -74,6 +74,23 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
+// ---- 起動ハンドシェイク -------------------------------------------------------
+
+/** 起動の進み具合。`commands.rs` の `BootStatus` と一致させること。 */
+export interface BootStatus {
+  ready: boolean;
+  error: string | null;
+}
+
+/**
+ * 初期化が終わったかを問い合わせる。
+ *
+ * バックエンドの初期化（MCP 接続を含む）はバックグラウンドで走っており、
+ * 完了までは他のコマンドを呼んではいけない（状態が未登録で失敗する）。
+ * これだけは初期化前でも常に答えが返る。
+ */
+export const bootStatus = () => call<BootStatus>("boot_status");
+
 // ---- 参照系 -----------------------------------------------------------------
 
 /** 登録済みエージェントを表示順で取得する。 */

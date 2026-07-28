@@ -19,6 +19,34 @@ use tauri::State;
 
 use crate::state::AppState;
 
+// ---- 起動ハンドシェイク -------------------------------------------------------
+
+/// 起動の進み具合。フロントの「初期起動中…」の覆いが判断に使う。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootStatus {
+    /// 初期化が完了し、全コマンドが使える状態か。
+    pub ready: bool,
+    /// 初期化の失敗理由。`null` なら失敗していない（進行中か完了）。
+    pub error: Option<String>,
+}
+
+/// 初期化が終わったかを答える。
+///
+/// **このコマンドだけは `State<AppState>` を要求しない。** 初期化はバックグラウンド
+/// で走っており、完了までは `AppState` が manage されていない — その間に
+/// `State<AppState>` を引くコマンドを呼ぶと抽出の段階で失敗する。フロントは
+/// これで `ready` を確認してから他のコマンドを呼び始める契約。
+#[tauri::command]
+pub fn boot_status(app: tauri::AppHandle) -> BootStatus {
+    use tauri::Manager;
+    let ready = app.try_state::<AppState>().is_some();
+    let error = app
+        .try_state::<crate::state::BootError>()
+        .and_then(|slot| slot.0.lock().ok().and_then(|guard| guard.clone()));
+    BootStatus { ready, error }
+}
+
 // ---- 参照系 -----------------------------------------------------------------
 
 /// 登録済みエージェントを表示順で返す。

@@ -106,6 +106,11 @@ onMounted(() => {
 
     <!--
       初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。
+      バックエンドの初期化（MCP 接続を含む）はバックグラウンドで走っており、
+      10 秒を超えることがある — その間ここがブロック画面として立つ。
+      Vue がマウントするまでの最初の一瞬は index.html 側の同じ見た目の
+      スプラッシュが出ており、継ぎ目なくこの覆いへ引き継がれる。
+
       ただし失敗したときは覆いのまま据え置かない。読み込み中と初期化失敗が
       同じ見た目になると、待てば直るのか壊れているのかを区別する手段が消える。
     -->
@@ -125,13 +130,20 @@ onMounted(() => {
           {{ state.initError.detail }}
         </p>
         <button
+          v-if="state.initError.code !== 'BOOT_FAILED'"
           class="mt-2 rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-surface-0"
           @click="orchestrator.init()"
         >
           再試行
         </button>
       </template>
-      <p v-else class="text-ink-dim">オーケストレーターを起動しています…</p>
+      <template v-else>
+        <span class="boot-spinner" aria-hidden="true" />
+        <p class="text-ink-dim">初期起動中…</p>
+        <p class="text-[11px] text-ink-dim opacity-60">
+          MCP サーバーへの接続に時間がかかることがあります
+        </p>
+      </template>
     </div>
   </div>
   </div>

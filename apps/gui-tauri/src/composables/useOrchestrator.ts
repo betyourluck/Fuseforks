@@ -350,6 +350,24 @@ async function initialize(): Promise<void> {
   state.initError = null;
 
   try {
+    // バックエンドの初期化（MCP 接続を含む）が終わるまで待つ。
+    // ウィンドウは即時に出る設計なので、この間は「初期起動中…」の覆いが見える。
+    // 完了前に他のコマンドを呼ぶと状態未登録で失敗するため、ここが関門になる。
+    for (;;) {
+      const boot = await ipc.bootStatus();
+      if (boot.error) {
+        throw {
+          code: "BOOT_FAILED",
+          message: "バックエンドの初期化に失敗しました。アプリを再起動してください。",
+          detail: boot.error,
+          agentId: null,
+          retryable: false,
+        } satisfies ErrorPayload;
+      }
+      if (boot.ready) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
     // 購読を先に張る。読み込み中に発生したイベントを取りこぼさない。
     unlisten?.();
     unlisten = await listen<CoreEvent>(CORE_EVENT, (e) => applyEvent(e.payload));

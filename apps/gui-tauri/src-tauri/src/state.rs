@@ -25,6 +25,14 @@ pub struct AppState {
     pub workspace: std::path::PathBuf,
 }
 
+/// バックグラウンド初期化の失敗理由。
+///
+/// [`AppState`] は初期化が**成功するまで manage されない**ため、失敗を運ぶ器が
+/// 別に要る。こちらは起動直後（初期化の開始前）に manage しておき、
+/// `boot_status` コマンドが「まだか・失敗したか」を常に答えられるようにする。
+#[derive(Default)]
+pub struct BootError(pub std::sync::Mutex<Option<String>>);
+
 /// アプリ起動時にオーケストレーターを組み立てる。
 ///
 /// バックエンドは [`HttpBackendFactory::echo_on_failure`] で構築する。API キーが

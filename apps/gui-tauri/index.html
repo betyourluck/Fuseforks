@@ -8,7 +8,18 @@
   </head>
 
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <!--
+        Vue がマウントするまでの初期表示。マウント後は App.vue の覆いが
+        同じ見た目（.boot-splash / .boot-spinner は style.css で共有）を
+        引き継ぐため、切り替わりの継ぎ目は見えない。
+        CSS はビルド時に <head> へリンクされるので、この時点で適用済み。
+      -->
+      <div class="boot-splash">
+        <span class="boot-spinner" aria-hidden="true"></span>
+        <p>初期起動中…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

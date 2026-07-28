@@ -46,6 +46,43 @@ textarea,
 }
 
 /*
+ * 起動スプラッシュ。
+ *
+ * バックエンドの初期化（MCP 接続を含む）はバックグラウンドで走り、10 秒を
+ * 超えることがある。その間のブロック画面を 2 段で共有する:
+ * 1. index.html の #app 内（Vue マウント前の最初の一瞬）
+ * 2. App.vue の覆い（マウント後、`state.ready` まで）
+ * 同じクラスを使うことで、切り替わりの継ぎ目が見えない。
+ */
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background-color: var(--color-surface-0);
+  color: var(--color-ink-dim);
+  font-size: 13px;
+}
+
+.boot-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  animation: boot-spin 0.9s linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
  * 会話バブル内の Markdown 描画（ChatPanel の .md-body、v-html で挿す）。
  *
  * v-html の中身には Vue の scoped 属性が付かないため、ここ（グローバル）に置く。
