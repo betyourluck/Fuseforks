@@ -22,6 +22,19 @@ const draft = ref<ModelTemplate | null>(null);
 /** 削除の通信中である行の ID。連打による二重送信を塞ぐ。 */
 const removing = ref<ModelTemplateId | null>(null);
 
+/**
+ * 編集中の下書きが未登録（新規作成）かどうか。
+ *
+ * 識別子は登録済みテンプレートでは変更させない。upsert は ID を鍵にするので、
+ * 変更して保存すると**改名ではなく複製**になり、古い行が残る。実際に
+ * 「削除しても保存しても前回の情報が残る」という形で表面化した。
+ * さらに ID は資格情報ストアの鍵でもあり、エージェントからの参照先でもあるため、
+ * 変えると登録済みキーが孤児になり、参照していたエージェントが宙に浮く。
+ */
+const isNewDraft = computed(
+  () => !!draft.value && !state.templates.some((t) => t.id === draft.value!.id),
+);
+
 /** プロバイダごとの既定 base URL。切り替え時にこの値へ揃える。 */
 const DEFAULT_BASE_URL: Record<string, string> = {
   open_ai_compat: "https://api.openai.com/v1",
@@ -317,10 +330,21 @@ function onTemperature(raw: string): void {
         <div v-if="draft" class="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
           <div class="grid grid-cols-[128px_1fr] items-center gap-x-3 gap-y-2.5">
             <label class="text-ink-dim">識別子</label>
-            <input
-              v-model="draft.id"
-              class="rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
-            />
+            <div>
+              <input
+                v-model="draft.id"
+                :readonly="!isNewDraft"
+                :title="
+                  isNewDraft
+                    ? '作成後は変更できません'
+                    : '登録済みの識別子は変更できません'
+                "
+                class="w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent read-only:opacity-60"
+              />
+              <p v-if="!isNewDraft" class="mt-1 text-[11px] text-ink-dim">
+                識別子は資格情報の鍵とエージェントからの参照先を兼ねるため、作成後は変更できません。
+              </p>
+            </div>
 
             <label class="text-ink-dim">表示名</label>
             <input

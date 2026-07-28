@@ -90,19 +90,32 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
     }
 }
 
+/// プロンプトキャッシュを要求する最小文字数。
+///
+/// キャッシュには最小トークン数があり、それを下回るプレフィックスは
+/// 指示を出しても再利用されない。効かないと分かっている指示は送らない。
+/// 送っても無害なはずのものが実際には拒否されうる以上、
+/// **利得が無い経路でリスクだけ取らない**のが正しい。
+/// 4000 文字は日本語で概ね 1500〜2500 トークンに相当し、最小要件を安全に超える。
+const MIN_CACHEABLE_CHARS: usize = 4_000;
+
 /// system プロンプトをキャッシュ境界で分割する（純関数）。
 ///
-/// `prefix_len` が 0、テキストが空、または境界が末尾以降の場合は単一ブロックにする。
+/// 分割するのは、安定部分が [`MIN_CACHEABLE_CHARS`] 以上あるときだけ。
+/// それ以外は単一ブロックにして `cache_control` を出さない。
 /// 境界は文字数指定だが、マルチバイト文字の途中で切らないよう `char_indices` で丸める。
 fn build_system_blocks(text: &str, prefix_len: usize) -> Vec<wire::AnthropicTextBlock> {
     if text.is_empty() {
         return Vec::new();
     }
 
-    let cut = text
-        .char_indices()
-        .nth(prefix_len)
-        .map(|(byte_idx, _)| byte_idx);
+    let cut = if prefix_len >= MIN_CACHEABLE_CHARS {
+        text.char_indices()
+            .nth(prefix_len)
+            .map(|(byte_idx, _)| byte_idx)
+    } else {
+        None
+    };
 
     match cut {
         // 境界が本文の内側にあるときだけ 2 ブロックへ割る。
@@ -213,14 +226,28 @@ mod tests {
     }
 
     #[test]
-    fn cache_control_is_placed_at_the_declared_boundary() {
+    fn a_short_prefix_is_not_marked_for_caching() {
+        // 最小長を下回る安定部分にキャッシュ指示を出しても再利用されない。
+        // 効かない指示は送らない。
         let w = encode(&request(6));
 
+        assert_eq!(w.system.len(), 1);
+        assert!(w.system[0].cache_control.is_none());
+        assert_eq!(w.system[0].text, "あなたは計画立案担当です。");
+    }
+
+    #[test]
+    fn cache_control_is_placed_at_the_declared_boundary_when_long_enough() {
+        let stable = "指示".repeat(3_000); // 6000 文字
+        let mut req = request(0);
+        req.messages[0] = ChatMessage::system(format!("{stable}可変部分"));
+        req.cacheable_prefix_len = stable.chars().count();
+
+        let w = encode(&req);
+
         assert_eq!(w.system.len(), 2);
-        // 6 *文字* で切る（バイトではない）。マルチバイトの途中で割れないこと。
-        assert_eq!(w.system[0].text, "あなたは計画");
-        assert_eq!(w.system[1].text, "立案担当です。");
         assert!(w.system[0].cache_control.is_some());
+        assert_eq!(w.system[1].text, "可変部分");
         assert!(w.system[1].cache_control.is_none());
     }
 

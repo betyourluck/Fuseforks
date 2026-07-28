@@ -11,6 +11,7 @@
 import { onMounted } from "vue";
 
 import AgentList from "./components/AgentList.vue";
+import ErrorBoundary from "./components/ErrorBoundary.vue";
 import InspectorPanel from "./components/InspectorPanel.vue";
 import MessageLog from "./components/MessageLog.vue";
 import ToastHost from "./components/ToastHost.vue";
@@ -27,24 +28,38 @@ onMounted(() => {
 
 <template>
   <div class="grid h-full grid-cols-[320px_1fr_380px] bg-surface-0 text-ink">
+    <!--
+      各区画をエラー境界で包む。1 区画の描画失敗がアプリ全体を白紙にすると、
+      再起動するまで何も読めなくなる（会話ログが消えて再起動が要る、という形で
+      実際に起きた）。落ちた区画だけを差し替え、残りは生かす。
+    -->
+
     <!-- 左ペイン: エージェント一覧 -->
     <aside class="min-w-0 border-r border-line">
-      <AgentList />
+      <ErrorBoundary label="エージェント一覧">
+        <AgentList />
+      </ErrorBoundary>
     </aside>
 
     <!-- 中央ペイン: グラフィカルマップ（上） + 会話ログ（下） -->
     <main class="grid min-w-0 grid-rows-[1fr_minmax(200px,34%)]">
       <section class="min-h-0 border-b border-line">
-        <TopologyMap />
+        <ErrorBoundary label="接続マップ">
+          <TopologyMap />
+        </ErrorBoundary>
       </section>
       <section class="min-h-0">
-        <MessageLog />
+        <ErrorBoundary label="会話ログ">
+          <MessageLog />
+        </ErrorBoundary>
       </section>
     </main>
 
     <!-- 右ペイン: 設定とエディタ -->
     <aside class="min-w-0 border-l border-line">
-      <InspectorPanel />
+      <ErrorBoundary label="設定">
+        <InspectorPanel />
+      </ErrorBoundary>
     </aside>
 
     <ToastHost />
