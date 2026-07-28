@@ -390,6 +390,16 @@ export function useOrchestrator() {
     state: readonly(state) as Readonly<OrchestratorState>,
 
     init,
+
+    /**
+     * 画面右上の通知を出す。IPC を通らない UI 層の操作
+     * （プラグイン呼び出しなど）が失敗したときの表面化に使う。
+     * ハンドラ内の例外を素通しにすると Vue の ErrorBoundary まで昇り、
+     * 無関係な区画が「表示に失敗しました」ごと落ちる。
+     */
+    notify(level: Toast["level"], title: string, detail?: string): void {
+      pushToast(level, title, detail);
+    },
     async refreshAll(): Promise<void> {
       await guard("再読み込み", refreshAll);
     },

@@ -114,10 +114,24 @@ async function remove(): Promise<void> {
   emit("close");
 }
 
-/** 設定ファイルの置き場をエクスプローラで開く。 */
+/**
+ * 設定ファイルの置き場をエクスプローラで開く。
+ *
+ * 失敗は通知へ落とす。ここで reject を素通しにすると Vue の ErrorBoundary
+ * まで昇り、無関係な「エージェント一覧」の区画が丸ごと落ちたうえに
+ * 失敗の主語まで取り違えられる（実際に起きた。failures.md #28）。
+ */
 async function openFolder(): Promise<void> {
   if (!state.workspace) return;
-  await openPath(`${state.workspace}\\agents\\${props.agentId}`);
+  try {
+    await openPath(`${state.workspace}\\agents\\${props.agentId}`);
+  } catch (error) {
+    orchestrator.notify(
+      "error",
+      "設定フォルダを開けませんでした",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 // ---- アイコン ----------------------------------------------------------------

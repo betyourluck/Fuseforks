@@ -660,3 +660,36 @@ shrink-to-fit の文脈（`items-start` の flex 列、`width: auto` の float�
 `overflow-wrap: anywhere` のほう。チャット UI のように「幅が中身で決まる箱」へ
 ユーザー由来・LLM 由来の任意テキストを流すときは、anywhere + `min-w-0` +
 `max-w-full` を最初から 1 セットで入れる。
+
+---
+
+## #28 「設定フォルダを開く」が拒否され、無関係な区画が巻き添えで落ちた
+
+**症状**: 設定ダイアログの 📁 を押すと `Not allowed to open path ...` で失敗し、
+しかもエラーは「エージェント一覧の表示に失敗しました」として**別の区画**に
+表示され、一覧ペインごと ErrorBoundary に置き換わった。
+
+**真因**: 二段の複合。
+(1) capability に `opener:allow-open-path` を**権限名だけ**で書いていた。
+opener プラグインのパス系権限は、名前がコマンドの呼び出しを許すだけで、
+実際に開けるパスは scope（`allow` の path 列挙）で別途与える必要がある。
+scope 無し = **全パス拒否**であり、「権限を書いたのに動かない」という
+見た目になる。
+(2) `openFolder()` が `openPath` の reject を素通ししていた。ハンドラ内の
+未処理例外は Vue の errorCaptured へ昇り、ダイアログを抱えている
+「エージェント一覧」の ErrorBoundary が区画ごと畳んだ。失敗の主語
+（フォルダを開く操作）とエラーの表示先（一覧の表示）が食い違い、
+原因の探し先を誤らせる。
+
+**処方**:
+- capability の `opener:allow-open-path` を scope 付きオブジェクトにし、
+  `$APPDATA/workspace` と `$APPDATA/workspace/**` だけを許可
+  （開く先はワークスペース配下しかないので、それより広げない）
+- `openFolder()` を try/catch で受け、`useOrchestrator` に公開した
+  `notify()`（IPC を通らない UI 操作の失敗用の通知口）でトーストに落とす
+
+**一般化**: **権限は名前とスコープの 2 段で、名前だけでは付与にならない。**
+scope を要求する権限系（パス・URL）は「書いた = 許可した」と読めてしまうのが
+罠で、動作確認するまで気づけない。もう 1 つ: **操作ハンドラの例外は
+その操作の名前で表面化させる。** ErrorBoundary は描画の失敗の網であって、
+操作の失敗をそこへ流すと主語が入れ替わる。
