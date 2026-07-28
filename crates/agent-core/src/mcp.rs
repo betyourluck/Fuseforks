@@ -326,9 +326,10 @@ async fn connect_one(
     }
     // Windows で子プロセスのコンソール窓が開くのを防ぐ。GUI アプリから
     // MCP サーバーを起動するたびに黒い窓が現れるのは、単純に壊れて見える。
+    // tokio の Command は Windows で creation_flags を直に持つ（std の
+    // CommandExt を use する必要はない）。
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
