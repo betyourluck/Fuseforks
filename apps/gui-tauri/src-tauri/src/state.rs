@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use agent_core::{
-    ConfigStore, CoreEvent, HttpBackendFactory, KeyringSecretStore, Orchestrator,
-    OrchestratorConfig, RememberTool, SecretStore,
+    ConfigStore, CoreEvent, DiffTool, GrepTool, HttpBackendFactory, KeyringSecretStore,
+    Orchestrator, OrchestratorConfig, RememberTool, SecretStore,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -53,10 +53,13 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     )
     .await?;
 
-    // 同梱ツール。
+    // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
+    // 実行時に解決されるため、ここでは登録するだけでよい。
     orchestrator
         .register_tool(Arc::new(RememberTool::new(store)))
         .await;
+    orchestrator.register_tool(Arc::new(GrepTool)).await;
+    orchestrator.register_tool(Arc::new(DiffTool)).await;
 
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
     // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。

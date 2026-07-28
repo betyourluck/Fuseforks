@@ -1317,8 +1317,20 @@ async fn execute_tool(
         ));
     };
 
+    // 作業フォルダ（grep / diff の探索範囲）は呼び出しの瞬間に解決する。
+    // ツール登録時に固定すると、設定変更が次の再登録まで効かない。
+    let work_dir = {
+        let world = shared.world.read().await;
+        world
+            .agent(agent_id)
+            .ok()
+            .and_then(|record| record.spec.work_dir.clone())
+            .map(std::path::PathBuf::from)
+    };
+
     let ctx = ToolContext {
         agent_id: agent_id.clone(),
+        work_dir,
     };
     tool.call(&ctx, &call.args).await
 }

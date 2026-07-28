@@ -58,6 +58,13 @@ export interface AgentSpec {
   ragSources: string[];
   connectedAgents: AgentId[];
   order: number;
+  /**
+   * 同梱ツール（grep / diff）が読める作業フォルダの絶対パス。
+   * `null` なら未設定で、ツールは「設定されていない」と答えるだけになる。
+   * エージェントはプロンプトインジェクションを受けうるため、読める範囲は
+   * ユーザーが明示したフォルダに限る（範囲の強制は Rust 側）。
+   */
+  workDir: string | null;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -73,6 +80,8 @@ export interface AgentSnapshot {
   ragSources: string[];
   connectedAgents: AgentId[];
   order: number;
+  /** 同梱ツール（grep / diff）の作業フォルダ。未設定なら `null`。 */
+  workDir: string | null;
   lastError: ErrorPayload | null;
 }
 

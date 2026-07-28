@@ -157,6 +157,14 @@ entities:
       ragSources: String[]
       connectedAgents: AgentId[]   # 有向グラフの出辺
       order: u32                    # 左ペインの表示順
+      workDir: String | null        # 同梱 grep / diff の探索範囲。null なら未設定でツールは動かない
+    work_dir_invariant: |
+      workDir はユーザーが明示した絶対パス (2026-07-29)。エージェントは
+      プロンプトインジェクションを受けうるため、**読める範囲 = 漏洩しうる範囲**
+      として扱い、同梱ツールの読み取りをこのフォルダの中へ閉じる。
+      強制は設定値の文字列検査ではなく**ツール実行時**の canonicalize + 前方一致
+      (tools/fs.rs)。symlink は辿らない — `..` の検査だけでは symlink 経由の
+      脱出を塞げない。旧 world.json (フィールド不在) は serde(default) で null。
 
   AgentSnapshot:
     description: 定義と実行時統計を畳んだ読み取り専用ビュー
@@ -171,6 +179,7 @@ entities:
       ragSources: String[]
       connectedAgents: AgentId[]
       order: u32
+      workDir: String | null        # 設定ダイアログの編集用に spec から写す
       lastError: ErrorPayload | null
 
   ModelTemplate:
@@ -445,9 +454,38 @@ conversation_termination:
     AgentTool / ToolRegistry (crates/agent-core/src/tool.rs) が差し替え点。
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
-    同梱ツールは Concordia 自身が提供する操作だけに限る (現在は remember のみ)。
+    同梱ツールは Concordia 自身が提供する操作だけに限る
+    (remember / grep / diff の 3 本、下記 bundled_tools_contract)。
     外部の能力は MCP 経由で足す — 何でも同梱するとシングルバイナリに
     世界中の依存が生える。
+    ToolContext は agent_id に加えて work_dir (Option<PathBuf>) を運ぶ (2026-07-29)。
+    解決するのはオーケストレーター (execute_tool) で、**呼び出しの瞬間**に world から
+    引く — ツール登録時に固定すると設定変更が効かない。ツール自身は world を知らない
+    (登録簿の型に依存すると MCP ツールと同じ穴に嵌らなくなる)。
+
+  bundled_tools_contract: |
+    同梱 grep / diff = crates/agent-core/src/tools/fs.rs (2026-07-29)。
+    動機: コーディング用エージェントが最も頻繁に使う道具で、全文読みより
+    桁違いに安い (トークン節約は最重要課題)。MCP filesystem に依存せず
+    誰の環境でも動くことに意味がある。
+    不変条件:
+      - 探索範囲は AgentSpec.workDir の中だけ。未設定なら「設定されていない」と
+        案内を返すだけで何も読めない (エラーにはしない — モデルが読んで
+        利用者に設定を頼める)
+      - 範囲の強制は canonicalize 後の前方一致。symlink は辿らない。
+        「無い」と「外」は区別して返すが、**外側のファイル内容は決して返さない**
+      - 出力は必ず有界: 一致 MAX_MATCHES=100 件 / 1 行 240 字 / 全体 12,000 字 /
+        1 ファイル 2 MiB / 走査 20,000 ファイル。打ち切りは黙って行わず
+        件数を結果に書く (silent truncation は「全部見た」と誤読される)
+      - 隠しディレクトリ (.git 等) と定番のビルド出力 (node_modules / target /
+        dist / build / out / vendor) は走査しない。バイナリ (先頭 4 KiB に NUL)
+        は読まない
+      - 走査は compute::spawn_rayon で Rayon 側へ逃がす (Tokio ワーカーを
+        塞がない。concurrency の規約どおり)
+      - grep のパターンは Rust regex 構文。コンパイル失敗は読める文字列で返す
+      - diff は unified diff (context 3 行)、similar crate。同一内容なら
+        「同一です」と言う (空文字を返すと成功か失敗か区別できない)
+      - 依存の追加は regex / similar の 2 つのみ (どちらも純 Rust)
 
   convergence_prerequisite: |
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の

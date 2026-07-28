@@ -133,6 +133,7 @@ mod tests {
     fn ctx() -> ToolContext {
         ToolContext {
             agent_id: AgentId::from("agent_01"),
+            work_dir: None,
         }
     }
 

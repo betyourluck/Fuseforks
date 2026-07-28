@@ -62,6 +62,7 @@ fn wire_field_sets_are_frozen() {
             "name",
             "order",
             "ragSources",
+            "workDir",
         ],
         "AgentSpec のフィールドが変わった"
     );
@@ -77,6 +78,7 @@ fn wire_field_sets_are_frozen() {
         rag_sources: Vec::new(),
         connected_agents: Vec::new(),
         order: 0,
+        work_dir: None,
         last_error: None,
     };
     assert_eq!(
@@ -93,6 +95,7 @@ fn wire_field_sets_are_frozen() {
             "status",
             "totalTokens",
             "uptimeSecs",
+            "workDir",
         ],
         "AgentSnapshot のフィールドが変わった"
     );
@@ -169,11 +172,29 @@ fn new_agent_spec_payload_deserializes() {
         "modelTemplateId": "template",
         "ragSources": [],
         "connectedAgents": [],
-        "order": 0
+        "order": 0,
+        "workDir": null
     }"#;
 
     let spec: AgentSpec = serde_json::from_str(payload).expect("GUI のエージェント定義が受かること");
     assert_eq!(spec.name, "PlannerAgent");
+    assert_eq!(spec.work_dir, None);
+}
+
+/// `workDir` 導入前に保存された `world.json` も開けること。
+#[test]
+fn agent_spec_saved_before_work_dir_still_loads() {
+    let legacy = r#"{
+        "id": "old_agent",
+        "name": "旧エージェント",
+        "modelTemplateId": "template",
+        "ragSources": [],
+        "connectedAgents": [],
+        "order": 0
+    }"#;
+
+    let spec: AgentSpec = serde_json::from_str(legacy).expect("旧形式も開けること");
+    assert_eq!(spec.work_dir, None);
 }
 
 /// `types.ts` の `Provider` が取りうる全値を Rust 側が受け取れること。

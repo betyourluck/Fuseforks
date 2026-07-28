@@ -55,6 +55,7 @@ function snapshot(id: string) {
     ragSources: [],
     connectedAgents: [],
     order: 0,
+    workDir: null,
     lastError: null,
   };
 }

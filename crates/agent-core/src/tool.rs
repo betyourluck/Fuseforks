@@ -17,6 +17,7 @@
 //! プロンプトへ入り、モデルの出力を経て外へ出うる。
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -33,6 +34,11 @@ use crate::model::AgentId;
 pub struct ToolContext {
     /// 呼び出したエージェント。
     pub agent_id: AgentId,
+    /// 呼び出したエージェントの作業フォルダ（`AgentSpec::work_dir`）。
+    ///
+    /// ツール自身に world を引かせず、オーケストレーターが実行時に解決して渡す。
+    /// ツールが登録簿の型を知ると、MCP ツールと同じ穴に嵌らなくなる。
+    pub work_dir: Option<PathBuf>,
 }
 
 /// 実行可能なツール。

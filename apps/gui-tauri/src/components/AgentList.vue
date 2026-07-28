@@ -63,6 +63,7 @@ async function submitNew(): Promise<void> {
     ragSources: [],
     connectedAgents: [],
     order: state.agents.length,
+    workDir: null,
   };
 
   const created = await orchestrator.createAgent(spec);

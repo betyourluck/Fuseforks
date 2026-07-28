@@ -270,6 +270,7 @@ impl World {
             rag_sources: record.spec.rag_sources.clone(),
             connected_agents: record.spec.connected_agents.clone(),
             order: record.spec.order,
+            work_dir: record.spec.work_dir.clone(),
             last_error: record.last_error.clone(),
         }
     }

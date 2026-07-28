@@ -145,6 +145,15 @@ pub struct AgentSpec {
     /// 左ペインでの表示順。小さいほど上。
     #[serde(default)]
     pub order: u32,
+    /// 同梱ツール（grep / diff）が読める作業フォルダの絶対パス。
+    ///
+    /// `None` なら未設定で、ツールは「設定されていない」と答えるだけになる。
+    /// エージェントはプロンプトインジェクションを受けうるため、読める範囲は
+    /// **ユーザーが明示したフォルダ**に限る。範囲の強制は設定値の検査ではなく
+    /// ツール実行時の canonicalize + 前方一致で行う（symlink 経由の脱出は
+    /// パス文字列の検査では塞げない）。
+    #[serde(default)]
+    pub work_dir: Option<String>,
 }
 
 impl AgentSpec {
@@ -161,6 +170,7 @@ impl AgentSpec {
             rag_sources: Vec::new(),
             connected_agents: Vec::new(),
             order: 0,
+            work_dir: None,
         }
     }
 }
@@ -390,6 +400,8 @@ pub struct AgentSnapshot {
     pub connected_agents: Vec<AgentId>,
     /// 左ペインでの表示順。
     pub order: u32,
+    /// 同梱ツール（grep / diff）の作業フォルダ。未設定なら `None`。
+    pub work_dir: Option<String>,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

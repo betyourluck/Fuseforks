@@ -47,9 +47,21 @@ function seed(): void {
         ragSources: [...source.ragSources],
         connectedAgents: [...source.connectedAgents],
         order: source.order,
+        workDir: source.workDir,
       }
     : null;
 }
+
+/**
+ * 作業フォルダの入力バッファ。空文字と `null`（未設定）を同一視するため、
+ * 保存時に trim して空なら `null` へ落とす。
+ */
+const workDirInput = computed({
+  get: () => draft.value?.workDir ?? "",
+  set: (value: string) => {
+    if (draft.value) draft.value.workDir = value.trim() || null;
+  },
+});
 
 watch(() => props.agentId, seed, { immediate: true });
 
@@ -62,7 +74,8 @@ const dirty = computed(() => {
     current.name !== source.name ||
     current.modelTemplateId !== source.modelTemplateId ||
     current.ragSources.join() !== source.ragSources.join() ||
-    current.connectedAgents.join() !== source.connectedAgents.join()
+    current.connectedAgents.join() !== source.connectedAgents.join() ||
+    current.workDir !== source.workDir
   );
 });
 
@@ -247,6 +260,23 @@ async function removeIcon(): Promise<void> {
               {{ t.name }}（{{ t.model }}）
             </option>
           </select>
+
+          <label class="mb-1 block text-[11px] text-ink-dim">
+            作業フォルダ（grep / diff の探索範囲）
+          </label>
+          <input
+            v-model="workDirInput"
+            spellcheck="false"
+            placeholder="例: D:\Projects\my-app（未設定ならツールは動きません）"
+            class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono text-[11px] outline-none focus:border-accent"
+          />
+          <!--
+            範囲がそのまま「インジェクション時に漏洩しうる範囲」になるので、
+            欄の説明として明示する。強制は Rust 側（canonicalize + 前方一致）。
+          -->
+          <p class="mb-3 text-[10px] text-ink-dim">
+            このフォルダの中だけを同梱ツールが読めます。機密を含むフォルダは指定しないでください。
+          </p>
 
           <label class="mb-1 block text-[11px] text-ink-dim">参照 RAG</label>
           <div class="mb-3 space-y-1">
