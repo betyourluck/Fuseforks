@@ -537,25 +537,10 @@ export function useOrchestrator() {
       await mutate("送信", () => ipc.sendUserMessage(agentId, content));
     },
 
-    /**
-     * 複数エージェントへ同じ内容を同報する。
-     *
-     * コアの配送 API は単一宛先のまま。同報の実体は「N 回呼ぶ」以上のものではなく、
-     * 複数宛先 API をコアへ足すと部分失敗の集約という新しい契約が生まれる。
-     * 各宛先の mailbox は独立なので、1 宛先の失敗は他の配送を妨げない
-     * （Promise.all は最初の失敗を報告するが、他の送信自体は走り切る）。
-     *
-     * 全宛先リストを毎通に添える。受信者は「他の誰が受け取ったか」を知り、
-     * 律儀に転送し合う反響が消える。2 体以上のときだけ意味を持つ
-     * （1 体なら単独宛としてコア側が注記を省く）。
-     */
-    async sendMany(agentIds: AgentId[], content: string): Promise<void> {
-      await mutate("送信", () =>
-        Promise.all(
-          agentIds.map((id) => ipc.sendUserMessage(id, content, agentIds)),
-        ).then(() => undefined),
-      );
-    },
+    // ユーザーからの同報（複数宛先へ一斉送信）は UI から外した。全員のターンが
+    // 並列に走り、誰も他の答えを見ないまま応答するため混乱する。まとめて動かす
+    // 経路は「進行役 1 体に頼む」（orchestrator-workers）に一本化した。
+    // **コア側の同報機構は残っている** — エージェント発の fan-out が使っている。
 
     dismissToast,
   };

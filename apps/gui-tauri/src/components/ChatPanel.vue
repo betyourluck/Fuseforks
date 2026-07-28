@@ -29,58 +29,59 @@ const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
 
 /**
- * 送信の宛先。**複数選べる**（同報）。
+ * 送信の宛先。**1 体だけ**を指名する。
  *
- * オーケストレーションの画面なので、「複数のエージェントへ同時に話しかけて
- * 並列に走らせる」が基本操作になる。左ペインの選択には追随するが、
- * 選択切替は「その相手と話す」という意図の表明なので、同報の組は作り直す。
+ * # なぜ同報をやめたのか
+ *
+ * 以前は複数を選んで同時に話しかけられた。だが同報は全員のターンが**並列**に
+ * 走るため、誰も他の答えを見ないまま応答する。仕切ろうとした個体は
+ * 「もう答え終わっている」を知りようがなく、同じ相手が二度答える。
+ *
+ * 収束する形は **orchestrator-workers** — 進行役 1 体に頼み、その 1 体が
+ * `ask_*` で順に委譲して答えを受け取り、まとめる。各エージェントはちょうど
+ * 1 回ずつ話し、重複が構造的に起こらない（テストで固定してある）。
+ * 確実なほうを既定の道にする。
+ *
+ * **コア側の同報機構は残っている**（`co_recipients` / 注記 / 表示集約）。
+ * エージェント発の fan-out が今も使っており、剥がすとそちらが壊れる。
+ * 「同じ問いを全員へ独立に投げて答えを比べる」用途は、将来それと分かる形で
+ * 戻す余地がある（failures.md / data_contract 参照）。
  */
-const targets = ref<AgentId[]>([]);
+const target = ref<AgentId | null>(null);
 
 watch(
   // 選択が無い間は先頭のエージェントを既定にする（一覧の初回ロードでも発火する）。
   () => state.selectedAgentId ?? state.agents[0]?.id ?? null,
   (id) => {
-    targets.value = id ? [id] : [];
+    target.value = id;
   },
   { immediate: true },
 );
 
-/** 宛先チップの増減。外して宛先ゼロにもできる（送信ボタン側が理由を出す）。 */
-function toggleTarget(id: AgentId): void {
-  targets.value = targets.value.includes(id)
-    ? targets.value.filter((t) => t !== id)
-    : [...targets.value, id];
+/** 宛先を指名する。左ペインの選択とも揃える（見ている相手と話す相手を一致させる）。 */
+function selectTarget(id: AgentId): void {
+  target.value = id;
+  orchestrator.select(id);
 }
 
-/** 停止中の宛先。混ざっていると送信できないので、名前で指摘する。 */
-const stoppedTargets = computed(() =>
-  targets.value
-    .map((id) => state.agents.find((a) => a.id === id))
-    .filter((a) => a && a.status !== "running"),
+/** 宛先のエージェント。 */
+const targetAgent = computed(
+  () => state.agents.find((a) => a.id === target.value) ?? null,
 );
 
 /** 送信可能か。停止中のエージェントへは投げられない。 */
-const canSend = computed(
-  () => targets.value.length > 0 && stoppedTargets.value.length === 0,
-);
+const canSend = computed(() => targetAgent.value?.status === "running");
 
 /** 送信できない理由。押せないボタンに理由を添えないと、故障と区別がつかない。 */
 const blockedReason = computed(() => {
-  if (!targets.value.length) return "宛先を選択してください";
-  const names = stoppedTargets.value.map((a) => a!.name).join("、");
-  return `${names} が稼働していません`;
+  if (!targetAgent.value) return "宛先を選択してください";
+  return `${targetAgent.value.name} が稼働していません`;
 });
 
-/** 入力欄のプレースホルダ。宛先が多いときは名前を数に畳む。 */
-const placeholder = computed(() => {
-  if (!targets.value.length) return "宛先を選択してください";
-  const names = targets.value
-    .map((id) => state.agents.find((a) => a.id === id)?.name ?? id)
-    .filter(Boolean);
-  if (names.length <= 2) return `${names.join("、")} へ送信…`;
-  return `${names.length} 体へ同報…`;
-});
+/** 入力欄のプレースホルダ。 */
+const placeholder = computed(() =>
+  targetAgent.value ? `${targetAgent.value.name} へ送信…` : "宛先を選択してください",
+);
 
 /** エンドポイントの表示名。 */
 function label(endpoint: Endpoint): string {
@@ -178,8 +179,8 @@ watch(
 );
 
 async function send(content: string): Promise<void> {
-  if (!canSend.value) return;
-  await orchestrator.sendMany([...targets.value], content);
+  if (!canSend.value || !target.value) return;
+  await orchestrator.send(target.value, content);
 }
 </script>
 
@@ -269,7 +270,12 @@ async function send(content: string): Promise<void> {
       </p>
     </div>
 
-    <!-- 宛先チップ。複数選ぶと同報になり、各エージェントが並列に走る。 -->
+    <!--
+      宛先チップ。**1 体だけ**を指名する。
+      複数へ同時に話しかける機能は外した — 全員のターンが並列に走り、
+      誰も他の答えを見ないまま応答するため混乱する。まとめて動かしたいときは、
+      進行役 1 体に頼んで `ask_*` で展開させる（orchestrator-workers）。
+    -->
     <div
       class="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 pt-2 text-[10px]"
     >
@@ -280,24 +286,25 @@ async function send(content: string): Promise<void> {
         type="button"
         class="rounded-full border px-2 py-0.5 transition"
         :class="
-          targets.includes(agent.id)
+          target === agent.id
             ? 'border-accent bg-accent/15 text-accent'
             : 'border-line text-ink-dim hover:border-ink-dim hover:text-ink'
         "
         :title="
           agent.status === 'running'
-            ? targets.includes(agent.id)
-              ? '宛先から外す'
-              : '宛先に加える'
-            : `${agent.name} は停止中（宛先に含めると送信できません）`
+            ? `${agent.name} へ話しかける`
+            : `${agent.name} は停止中（送信できません）`
         "
-        @click="toggleTarget(agent.id)"
+        @click="selectTarget(agent.id)"
       >
         <span
           class="mr-1 inline-block size-1.5 rounded-full align-middle"
           :class="agent.status === 'running' ? 'bg-run' : 'bg-ink-dim'"
         />{{ agent.name }}
       </button>
+      <span class="ml-auto text-ink-dim">
+        複数へ動かすときは、進行役 1 体に頼んでください
+      </span>
     </div>
 
     <ChatInput
