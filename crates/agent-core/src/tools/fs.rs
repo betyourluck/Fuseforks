@@ -92,11 +92,18 @@ fn work_dir_missing() -> String {
         .to_owned()
 }
 
-/// 走査対象のファイルを列挙する。順序は決定的（名前順）。
+/// 走査で拾った 1 エントリ。
+struct WalkEntry {
+    path: PathBuf,
+    is_dir: bool,
+}
+
+/// 走査対象を列挙する。順序は決定的（名前順の深さ優先）。
 ///
+/// `include_dirs` はディレクトリ自身も結果へ含めるか（`fd` 用）。
 /// 上限 [`MAX_FILES`] に達したら打ち切り、第 2 戻り値で伝える。
-fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
-    let mut files = Vec::new();
+fn collect_entries(root: &Path, include_dirs: bool) -> (Vec<WalkEntry>, bool) {
+    let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     let mut truncated = false;
 
@@ -116,22 +123,37 @@ fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
             if kind.is_symlink() {
                 continue;
             }
+            if found.len() >= MAX_FILES {
+                truncated = true;
+                return (found, truncated);
+            }
             if kind.is_dir() {
                 // 隠しディレクトリ（.git / .venv 等）と定番のビルド出力を外す。
                 if name.starts_with('.') || SKIP_DIRS.contains(&name.as_str()) {
                     continue;
                 }
+                if include_dirs {
+                    found.push(WalkEntry {
+                        path: path.clone(),
+                        is_dir: true,
+                    });
+                }
                 stack.push(path);
             } else if kind.is_file() {
-                if files.len() >= MAX_FILES {
-                    truncated = true;
-                    return (files, truncated);
-                }
-                files.push(path);
+                found.push(WalkEntry {
+                    path,
+                    is_dir: false,
+                });
             }
         }
     }
-    (files, truncated)
+    (found, truncated)
+}
+
+/// 走査対象のファイルだけを列挙する（grep 用）。
+fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
+    let (entries, truncated) = collect_entries(root, false);
+    (entries.into_iter().map(|e| e.path).collect(), truncated)
 }
 
 /// バイナリらしいファイルか。先頭 4 KiB に NUL が居れば読まない。
@@ -292,6 +314,148 @@ fn run_grep(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bo
     if files_truncated {
         out.push_str(&format!(
             "\n（ファイル数が {MAX_FILES} を超えたため、一部は走査していません）"
+        ));
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+
+/// 作業フォルダ内をファイル名で探すツール（`fd` 相当）。
+pub struct FdTool;
+
+#[async_trait]
+impl AgentTool for FdTool {
+    fn name(&self) -> &str {
+        "fd"
+    }
+
+    fn description(&self) -> String {
+        "作業フォルダ内のファイル・フォルダを**名前**で探す。\
+         **ファイルの場所や存在を知りたいときは、中身を検索する grep より先にこれを使うこと。**\
+         パターンは名前（パスの最後の要素）に対する正規表現で、\
+         結果は相対パスの一覧（フォルダは末尾 `/`）。\
+         探せるのはエージェント設定で指定された作業フォルダの中だけ。"
+            .to_owned()
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "名前に対する正規表現（Rust regex 構文）。例: `\\.md$`、`^config`"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "探索範囲を絞る相対パス（フォルダ）。省略時は作業フォルダ全体"
+                },
+                "case_insensitive": {
+                    "type": "boolean",
+                    "description": "大文字小文字を無視するか。既定は true（名前検索は表記揺れが多い）"
+                }
+            },
+            "required": ["pattern"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String> {
+        let Some(work_dir) = ctx.work_dir.clone() else {
+            return Ok(work_dir_missing());
+        };
+        let Some(pattern) = args.get("pattern").and_then(Value::as_str) else {
+            return Ok("引数 `pattern` が必要です。".into());
+        };
+        let pattern = pattern.to_owned();
+        let rel_path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        // grep と既定が違う: 名前検索は「Readme か README か」のような表記揺れが
+        // 本質的に多く、厳密一致を既定にすると空振り → 再試行の無駄な往復が増える。
+        let case_insensitive = args
+            .get("case_insensitive")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+
+        spawn_rayon(move || run_fd(&work_dir, &pattern, &rel_path, case_insensitive)).await
+    }
+}
+
+/// fd 本体。ブロッキングして良い文脈で呼ぶ。
+fn run_fd(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bool) -> String {
+    let regex = match regex::RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        .size_limit(1 << 20)
+        .build()
+    {
+        Ok(regex) => regex,
+        Err(err) => {
+            return format!("正規表現として解釈できません: {err}\nパターンを直して再試行してください。");
+        }
+    };
+
+    let (start, _) = match resolve_in_work_dir(work_dir, rel_path) {
+        Ok(resolved) => resolved,
+        Err(message) => return message,
+    };
+    if start.is_file() {
+        return "`path` にはフォルダを指定してください（ファイルの中身を探すなら grep）。".into();
+    }
+
+    let root = work_dir.canonicalize().unwrap_or_else(|_| work_dir.to_path_buf());
+    let (entries, walk_truncated) = collect_entries(&start, true);
+
+    let mut hits: Vec<String> = entries
+        .iter()
+        .filter(|entry| {
+            // 一致対象は名前（最後の要素）だけ。相対パス全体に掛けると、一致した
+            // フォルダの配下すべてが道連れでヒットし、一覧がノイズで埋まる。
+            entry
+                .path
+                .file_name()
+                .map(|name| regex.is_match(&name.to_string_lossy()))
+                .unwrap_or(false)
+        })
+        .map(|entry| {
+            let display = entry
+                .path
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| entry.path.display().to_string());
+            if entry.is_dir {
+                format!("{display}/")
+            } else {
+                display
+            }
+        })
+        .collect();
+    hits.sort();
+
+    if hits.is_empty() {
+        return format!(
+            "一致なし（{} エントリを走査）。パターンや範囲を変えて再試行できます。",
+            entries.len()
+        );
+    }
+
+    let total = hits.len();
+    let clipped = total > MAX_MATCHES;
+    hits.truncate(MAX_MATCHES);
+
+    let mut out = format!("{total} 件が一致:\n");
+    out.push_str(&hits.join("\n"));
+    if clipped {
+        out.push_str(&format!(
+            "\n（先頭 {MAX_MATCHES} 件のみ表示。`path` で範囲を絞るか、パターンを具体化してください）"
+        ));
+    }
+    if walk_truncated {
+        out.push_str(&format!(
+            "\n（エントリ数が {MAX_FILES} を超えたため、一部は走査していません）"
         ));
     }
     out
@@ -564,6 +728,118 @@ mod tests {
             .await
             .unwrap();
         assert!(relaxed.contains("a.txt:1"), "{relaxed}");
+    }
+
+    #[tokio::test]
+    async fn fd_without_a_work_dir_explains_how_to_enable_it() {
+        let reply = FdTool
+            .call(&ctx_with(None), &serde_json::json!({ "pattern": "x" }))
+            .await
+            .unwrap();
+        assert!(reply.contains("作業フォルダ"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn fd_finds_files_and_dirs_by_name_and_marks_dirs() {
+        let dir = TempDir::new("fd-hit");
+        dir.write("src/main.rs", "");
+        dir.write("src/config/app.toml", "");
+        dir.write("config.md", "");
+
+        let reply = FdTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "^config" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("config.md"), "{reply}");
+        assert!(reply.contains("src/config/"), "フォルダは末尾スラッシュ: {reply}");
+        assert!(!reply.contains("main.rs"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn fd_matches_the_name_not_the_whole_relative_path() {
+        let dir = TempDir::new("fd-name");
+        dir.write("needle/inner.txt", "");
+        dir.write("other/needle.txt", "");
+
+        let reply = FdTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("needle/"), "{reply}");
+        assert!(reply.contains("other/needle.txt"), "{reply}");
+        assert!(
+            !reply.contains("needle/inner.txt"),
+            "一致フォルダの配下を道連れにしない: {reply}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fd_is_case_insensitive_by_default() {
+        let dir = TempDir::new("fd-case");
+        dir.write("README.md", "");
+
+        let reply = FdTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "readme" }),
+            )
+            .await
+            .unwrap();
+        assert!(reply.contains("README.md"), "{reply}");
+
+        let strict = FdTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "readme", "case_insensitive": false }),
+            )
+            .await
+            .unwrap();
+        assert!(strict.contains("一致なし"), "{strict}");
+    }
+
+    #[tokio::test]
+    async fn fd_rejects_paths_that_escape_the_work_dir() {
+        let parent = TempDir::new("fd-escape");
+        parent.write("secret.txt", "");
+        let inner = parent.0.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let reply = FdTool
+            .call(
+                &ctx_with(Some(&inner)),
+                &serde_json::json!({ "pattern": "secret", "path": ".." }),
+            )
+            .await
+            .unwrap();
+        assert!(!reply.contains("secret.txt"), "囲いの外を列挙しないこと: {reply}");
+    }
+
+    #[tokio::test]
+    async fn fd_output_is_bounded_and_announces_the_cut() {
+        let dir = TempDir::new("fd-cap");
+        for i in 0..150 {
+            dir.write(&format!("needle_{i:03}.txt"), "");
+        }
+
+        let reply = FdTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("150 件が一致"), "{reply}");
+        assert!(reply.contains("先頭 100 件のみ表示"), "黙って切らないこと: {reply}");
+        assert!(reply.lines().count() <= MAX_MATCHES + 3, "{reply}");
     }
 
     #[tokio::test]

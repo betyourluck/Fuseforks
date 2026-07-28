@@ -90,5 +90,5 @@ pub use orchestrator::{Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
-pub use tools::{DiffTool, GrepTool, RememberTool};
+pub use tools::{DiffTool, FdTool, GrepTool, RememberTool};
 pub use world::World;

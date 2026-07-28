@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use agent_core::{
-    ConfigStore, CoreEvent, DiffTool, GrepTool, HttpBackendFactory, KeyringSecretStore,
+    ConfigStore, CoreEvent, DiffTool, FdTool, GrepTool, HttpBackendFactory, KeyringSecretStore,
     Orchestrator, OrchestratorConfig, RememberTool, SecretStore,
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -59,6 +59,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
         .register_tool(Arc::new(RememberTool::new(store)))
         .await;
     orchestrator.register_tool(Arc::new(GrepTool)).await;
+    orchestrator.register_tool(Arc::new(FdTool)).await;
     orchestrator.register_tool(Arc::new(DiffTool)).await;
 
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**

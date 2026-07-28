@@ -7,5 +7,5 @@
 pub mod fs;
 pub mod memory;
 
-pub use fs::{DiffTool, GrepTool};
+pub use fs::{DiffTool, FdTool, GrepTool};
 pub use memory::RememberTool;

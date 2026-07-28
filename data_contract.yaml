@@ -455,7 +455,7 @@ conversation_termination:
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
     同梱ツールは Concordia 自身が提供する操作だけに限る
-    (remember / grep / diff の 3 本、下記 bundled_tools_contract)。
+    (remember / grep / fd / diff の 4 本、下記 bundled_tools_contract)。
     外部の能力は MCP 経由で足す — 何でも同梱するとシングルバイナリに
     世界中の依存が生える。
     ToolContext は agent_id に加えて work_dir (Option<PathBuf>) を運ぶ (2026-07-29)。
@@ -464,7 +464,7 @@ conversation_termination:
     (登録簿の型に依存すると MCP ツールと同じ穴に嵌らなくなる)。
 
   bundled_tools_contract: |
-    同梱 grep / diff = crates/agent-core/src/tools/fs.rs (2026-07-29)。
+    同梱 grep / fd / diff = crates/agent-core/src/tools/fs.rs (2026-07-29)。
     動機: コーディング用エージェントが最も頻繁に使う道具で、全文読みより
     桁違いに安い (トークン節約は最重要課題)。MCP filesystem に依存せず
     誰の環境でも動くことに意味がある。
@@ -482,7 +482,11 @@ conversation_termination:
         は読まない
       - 走査は compute::spawn_rayon で Rayon 側へ逃がす (Tokio ワーカーを
         塞がない。concurrency の規約どおり)
-      - grep のパターンは Rust regex 構文。コンパイル失敗は読める文字列で返す
+      - grep / fd のパターンは Rust regex 構文。コンパイル失敗は読める文字列で返す
+      - fd の一致対象は**名前 (パスの最後の要素) だけ**。相対パス全体に掛けると
+        一致フォルダの配下が道連れでヒットし一覧がノイズで埋まる。フォルダは
+        末尾 `/` で示す。大文字小文字の既定は無視 (grep と逆 — 名前検索は
+        表記揺れが本質的に多く、厳密一致既定は空振り→再試行の往復を増やす)
       - diff は unified diff (context 3 行)、similar crate。同一内容なら
         「同一です」と言う (空文字を返すと成功か失敗か区別できない)
       - 依存の追加は regex / similar の 2 つのみ (どちらも純 Rust)
