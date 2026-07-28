@@ -48,6 +48,24 @@ function onProviderChange(next: string | null): void {
   }
 }
 
+/**
+ * プロバイダと base URL が明らかに食い違っているか。
+ *
+ * 判定するのは「**他社の既定値がそのまま残っている**」という一点だけ。
+ * 自前のプロキシやローカルサーバの URL は正当なので、警告してはいけない。
+ * 実際に `provider: anthropic` + `api.openai.com` の設定が保存され、
+ * 起動しても必ず失敗する状態になっていた。
+ */
+const baseUrlMismatch = computed(() => {
+  const d = draft.value;
+  if (!d?.provider) return null;
+
+  const expected = DEFAULT_BASE_URL[d.provider];
+  if (!expected || d.baseUrl === expected) return null;
+  // 他社の既定値そのものである場合に限って指摘する。
+  return KNOWN_DEFAULTS.includes(d.baseUrl) ? expected : null;
+});
+
 /** API キー欄が環境変数名の書式か。Rust 側の `is_env_var_name` と同じ規則。 */
 const apiKeyEnvLooksValid = computed(() => {
   const value = draft.value?.apiKeyEnv;
@@ -227,11 +245,27 @@ function onTemperature(raw: string): void {
             />
 
             <label class="text-ink-dim">base URL</label>
-            <input
-              v-model="draft.baseUrl"
-              placeholder="https://api.openai.com/v1"
-              class="rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
-            />
+            <div>
+              <input
+                v-model="draft.baseUrl"
+                placeholder="https://api.openai.com/v1"
+                class="w-full rounded border bg-surface-0 px-2 py-1 font-mono outline-none"
+                :class="
+                  baseUrlMismatch
+                    ? 'border-warn focus:border-warn'
+                    : 'border-line focus:border-accent'
+                "
+              />
+              <p v-if="baseUrlMismatch" class="mt-1 text-[11px] text-warn">
+                選択中のプロトコルと送信先が食い違っています。この設定では必ず失敗します。
+                <button
+                  class="ml-1 underline hover:text-ink"
+                  @click="draft.baseUrl = baseUrlMismatch"
+                >
+                  {{ baseUrlMismatch }} に直す
+                </button>
+              </p>
+            </div>
 
             <label class="text-ink-dim">モデル名</label>
             <input
