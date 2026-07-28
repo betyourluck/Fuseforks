@@ -18,6 +18,8 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints.rust]

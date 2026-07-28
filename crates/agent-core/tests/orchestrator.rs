@@ -12,8 +12,36 @@ use agent_core::event::CoreEvent;
 use agent_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
 };
-use agent_core::{ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig};
+use agent_core::llm::{
+    ChatMessage, ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Role, ToolCall, Usage,
+};
+use agent_core::{
+    ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
+};
 use tokio::sync::broadcast::Receiver;
+
+/// 任意のバックエンドでオーケストレーターを組む。
+async fn setup_with(
+    dir: &TempDir,
+    backend: Arc<dyn LlmBackend>,
+    config: OrchestratorConfig,
+) -> Orchestrator {
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::new(backend)),
+        Arc::new(InMemorySecretStore::new()),
+        config,
+    )
+    .await
+    .expect("bootstrap できること");
+
+    orchestrator
+        .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+        .await
+        .unwrap();
+
+    orchestrator
+}
 
 /// テスト用の一時ディレクトリ。終了時に破棄する。
 struct TempDir(PathBuf);
@@ -78,6 +106,77 @@ fn messages(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
             _ => None,
         })
         .collect()
+}
+
+/// 提示された `transfer_to_*` ツールを必ず呼ぶバックエンド。
+///
+/// 「会話が続く」側の経路を再現する。ツールが提示されなければ本文だけを返すので、
+/// 接続先を持たないエージェントでは自然に会話が終わる。
+struct AlwaysHandoffBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for AlwaysHandoffBackend {
+    fn name(&self) -> &str {
+        "always-handoff"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let last_user = req
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.content.as_str())
+            .unwrap_or("");
+        let text = format!("[handoff] {last_user}");
+
+        let tool_calls = match req.tools.first() {
+            Some(tool) => vec![ToolCall {
+                id: "call_1".into(),
+                name: tool.name.clone(),
+                args: serde_json::json!({ "message": text }),
+            }],
+            None => Vec::new(),
+        };
+
+        Ok(ChatResponse {
+            text: Some(text),
+            tool_calls,
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 10,
+                completion: 5,
+                cache_read: 0,
+            },
+        })
+    }
+}
+
+/// 受け取ったリクエストを記録するバックエンド。履歴が積まれるかの検証に使う。
+#[derive(Default)]
+struct RecordingBackend {
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for RecordingBackend {
+    fn name(&self) -> &str {
+        "recording"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.seen.lock().unwrap().push(req.messages.clone());
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+        })
+    }
 }
 
 /// 旧形式（`apiKeyEnv` を持つ設定ファイル）でも開けること。
@@ -244,10 +343,46 @@ async fn message_to_a_leaf_agent_comes_back_to_the_user() {
     assert!(log[1].tokens > 0, "トークンが計上されること");
 }
 
+/// **ツールを呼ばなければ会話は終わる。**
+///
+/// 接続先を持っていても、転送を要求しない応答はそこで完結してユーザーへ返る。
+/// 主要フレームワークが共通して採る「ツール呼び出しの無いテキスト出力が最終出力」
+/// という規則（failures.md #11）。
 #[tokio::test]
-async fn message_is_routed_along_the_configured_topology() {
-    let dir = TempDir::new("routing");
+async fn an_agent_that_does_not_request_a_handoff_ends_the_conversation() {
+    let dir = TempDir::new("finish");
     let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let (a, b) = (AgentId::from("agent_01"), AgentId::from("agent_02"));
+
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "CriticAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "始めて").await.unwrap();
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let log = messages(&events);
+
+    // EchoBackend はツールを呼ばない = 会話終了。b へは渡らない。
+    assert_eq!(log.len(), 2, "接続先があっても転送しない: {log:#?}");
+    assert_eq!(log[1].to, Endpoint::User);
+}
+
+#[tokio::test]
+async fn message_is_routed_when_the_agent_requests_a_handoff() {
+    let dir = TempDir::new("routing");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AlwaysHandoffBackend), OrchestratorConfig::default()).await;
     let (a, b) = (AgentId::from("agent_01"), AgentId::from("agent_02"));
 
     orchestrator
@@ -273,13 +408,89 @@ async fn message_is_routed_along_the_configured_topology() {
     let log = messages(&events);
 
     // user -> a, a -> b, b -> user の 3 件。
+    // b は接続先を持たないのでツールが提示されず、そこで終わる。
     assert_eq!(log.len(), 3, "実際: {log:#?}");
     assert_eq!(log[1].from, Endpoint::Agent { id: a.clone() });
     assert_eq!(log[1].to, Endpoint::Agent { id: b.clone() });
     assert_eq!(log[2].from, Endpoint::Agent { id: b.clone() });
     assert_eq!(log[2].to, Endpoint::User);
-    // b は a の出力を受けて二重に echo する。
-    assert_eq!(log[2].content, "[echo] [echo] 始めて");
+}
+
+/// 履歴が積まれ、次のターンのプロンプトへ入ること。
+///
+/// これが無いとエージェントは毎回コールドスタートになり、
+/// 同じ入力に同じ出力を返し続けて収束しない（failures.md #12）。
+#[tokio::test]
+async fn each_turn_sees_the_previous_exchange() {
+    let dir = TempDir::new("history");
+    let backend = Arc::new(RecordingBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    orchestrator.send_user_message(&id, "二回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+
+    // 1 回目は履歴なし。
+    let first: Vec<&str> = seen[0].iter().map(|m| m.content.as_str()).collect();
+    assert!(!first.iter().any(|c| c.contains("了解")));
+
+    // 2 回目は「一回目」と自分の応答「了解」が入っている。
+    let second = &seen[1];
+    assert!(
+        second
+            .iter()
+            .any(|m| m.role == Role::User && m.content == "一回目"),
+        "前回の受信が履歴に入る: {second:#?}"
+    );
+    assert!(
+        second
+            .iter()
+            .any(|m| m.role == Role::Assistant && m.content == "了解"),
+        "自分の発言が履歴に入る: {second:#?}"
+    );
+}
+
+/// 履歴は起動のたびにクリアされる。
+#[tokio::test]
+async fn restarting_an_agent_starts_a_fresh_conversation() {
+    let dir = TempDir::new("history-reset");
+    let backend = Arc::new(RecordingBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+
+    orchestrator.start_agent(&id).await.unwrap();
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    orchestrator.stop_agent(&id).await.unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+    orchestrator.send_user_message(&id, "二回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    let second = seen.last().unwrap();
+    assert!(
+        !second.iter().any(|m| m.content == "一回目"),
+        "再起動で履歴が残らない: {second:#?}"
+    );
 }
 
 #[tokio::test]
@@ -289,7 +500,7 @@ async fn mutually_connected_agents_stop_at_the_hop_limit() {
         max_hops: 4,
         ..Default::default()
     };
-    let orchestrator = setup(&dir, config).await;
+    let orchestrator = setup_with(&dir, Arc::new(AlwaysHandoffBackend), config).await;
     let (a, b) = (AgentId::from("agent_01"), AgentId::from("agent_02"));
 
     orchestrator

@@ -215,7 +215,39 @@ topology_rules:
     - 循環（相互接続）
   rationale: |
     エージェント同士が往復するのはこのシステムの目的そのもの。
-    トポロジーで循環を禁じるのではなく、無限往復は hop 上限で止めるのが正しい層。
+    トポロジーで循環を禁じるのではなく、終了の機構で止めるのが正しい層。
+
+# ---------------------------------------------------------------------------
+conversation_termination:
+  principle: |
+    会話の終了は 2 層で持つ。片方だけでは足りない (failures.md #11)。
+    主要フレームワーク (OpenAI Agents SDK / AutoGen / LangGraph) はいずれも 2 層。
+  layer_1_semantic:
+    rule: ツール呼び出しの無いテキスト出力が最終出力 (OpenAI Agents SDK と同じ規則)
+    mechanism: |
+      接続先ごとに `transfer_to_<agent>` ツールを 1 本ずつ提示する
+      (名前の慣習も OpenAI Agents SDK に倣う)。tool_choice は Auto。
+      - ツールを呼んだ  → その相手へ転送し、会話が続く
+      - 本文だけ返した  → 会話終了。ユーザーへ返る
+      ツール名が 64 文字を超える / 衝突する場合は transfer_to_agent_{index} へ退避。
+    fallback: |
+      use_tools=false のサーバでは終了マーカー `[[END]]` を使う
+      (AutoGen v0.2 の is_termination_msg 同型)。マーカーが無ければ
+      最初の接続先へ渡す。宛先を選べないため、これは劣化経路。
+    prompt: |
+      ツールを渡すだけでは「呼ばない = 終了」がモデルに伝わらないため、
+      手順を system メッセージで明示する
+      (OpenAI Agents SDK の RECOMMENDED_PROMPT_PREFIX と同じ意図)。
+  layer_2_mechanical:
+    mechanism: hop が max_hops (既定 8) に達したら打ち切り、HopLimitReached を発行
+    note: |
+      LangGraph の recursion_limit と同じ位置づけ。**終わり方ではなく燃料切れ**。
+      これが唯一の終了手段になっている状態は設計の欠落であり、実際にそうなっていた。
+  convergence_prerequisite: |
+    終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
+    履歴を持ち、自分の発言も assistant として見る。履歴が無いと毎回コールドスタートになり、
+    同じ入力に同じ出力を返し続けて原理的に収束しない (failures.md #12)。
+    履歴はプロセス寿命に閉じ、起動時にクリアする (保存しない)。
 
 # ---------------------------------------------------------------------------
 concurrency:

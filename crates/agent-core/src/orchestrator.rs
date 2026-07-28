@@ -10,12 +10,36 @@
 //! - CPU バウンドな部分（RAG 検索・集計）だけが [`crate::compute::spawn_rayon`] 経由で
 //!   Rayon プールへ逃げる。
 //!
-//! # 無限往復の抑止
+//! # 会話の終わり方（2 層）
 //!
-//! 相互接続されたエージェントは、放っておくと際限なく往復して課金を焼き続ける。
+//! 主要フレームワーク（OpenAI Agents SDK / AutoGen / LangGraph）はいずれも、
+//! 会話の終了を **意味的な終了**と**機械的な上限**の 2 層で持つ。
+//! 片方だけでは足りない（failures.md #11）。
+//!
+//! ## 層 1: 意味的な終了 — モデルが決める
+//!
+//! OpenAI Agents SDK の規則を採る:
+//! **ツール呼び出しの無いテキスト出力が最終出力**。
+//!
+//! 接続先を持つエージェントには [`HANDOFF_TOOL`] を提示する。
+//! - ツールを呼んだ → 指定された相手へ転送し、会話が続く
+//! - 本文だけを返した → **会話はそこで終わり**、ユーザーへ返る
+//!
+//! ツール呼び出しを実装しないサーバ向けには、終了マーカー
+//! [`TERMINATION_MARKER`] を用意する（AutoGen v0.2 の `is_termination_msg` 同型）。
+//!
+//! ## 層 2: 機械的な上限 — 安全網
+//!
 //! 各発話は `hop` を持ち、[`OrchestratorConfig::max_hops`] に達した時点で連鎖を打ち切る。
+//! これは LangGraph の `recursion_limit` と同じ位置づけで、**終わり方ではなく燃料切れ**。
 //! 打ち切りは [`CoreEvent::HopLimitReached`] で通知する。黙って止めると
 //! 「なぜ会話が終わったのか」が UI から永久に分からなくなる。
+//!
+//! ## 収束の前提: 履歴
+//!
+//! 終了条件より先に、収束の条件が要る。エージェントは直近 N 往復の履歴を持ち、
+//! 自分の発言も `assistant` として見る。履歴が無いと毎回コールドスタートになり、
+//! 同じ入力に同じ出力を返し続けて原理的に収束しない（failures.md #12）。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -28,7 +52,9 @@ use crate::compute;
 use crate::config_store::ConfigStore;
 use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::event::CoreEvent;
-use crate::llm::{BackendFactory, ChatMessage, ChatRequest, LlmBackend};
+use crate::llm::{
+    BackendFactory, ChatMessage, ChatRequest, ChatResponse, LlmBackend, ToolSpec,
+};
 use crate::model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
@@ -37,11 +63,27 @@ use crate::rag::{RagChunk, RagIndex};
 use crate::secret::SecretStore;
 use crate::world::World;
 
+/// 転送を要求するツールの名前。
+///
+/// このツールを呼ぶかどうかが、そのまま「会話を続けるか終えるか」の表明になる。
+pub const HANDOFF_TOOL: &str = "handoff";
+
+/// ツール呼び出しを実装しないサーバ向けの終了マーカー。
+///
+/// 本文の末尾にこれが現れたら、転送せず会話を終える。
+/// AutoGen v0.2 の `is_termination_msg`（"TERMINATE" を含むか）と同型。
+pub const TERMINATION_MARKER: &str = "[[END]]";
+
 /// オーケストレーターの動作パラメータ。
 #[derive(Debug, Clone)]
 pub struct OrchestratorConfig {
     /// 1 つのユーザー入力から派生する転送の最大回数。
+    ///
+    /// **これは会話の終わり方ではなく安全網**。意味的な終了は
+    /// [`HANDOFF_TOOL`] を呼ばないことで表明される。
     pub max_hops: u8,
+    /// エージェントごとに保持する会話履歴の往復数。
+    pub history_turns: usize,
     /// エージェント 1 体あたりの受信箱容量。溢れたら送信側にエラーを返す（背圧）。
     pub mailbox_capacity: usize,
     /// イベントバッファの容量。UI の描画が遅れても、この範囲までは取りこぼさない。
@@ -58,6 +100,7 @@ impl Default for OrchestratorConfig {
     fn default() -> Self {
         Self {
             max_hops: 8,
+            history_turns: 8,
             mailbox_capacity: 64,
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),
@@ -481,6 +524,9 @@ impl Orchestrator {
             if let Ok(record) = world.agent_mut(id) {
                 record.started_at = Some(std::time::Instant::now());
                 record.last_error = None;
+                // 起動は新しい会話の開始として扱う。前回の文脈を引き継ぐと
+                // 「始め直したつもりが続きだった」という分かりにくい状態になる。
+                record.history.clear();
             }
         }
 
@@ -699,8 +745,21 @@ async fn handle_message(
     // 2. システムプロンプトを組む。安定部分の長さも同時に得る（キャッシュ境界）。
     let (system_prompt, stable_len) = shared.store.compose_system_prompt(&spec).await?;
 
-    // 3. RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
+    // 3. 転送先ごとのツールを組む。
+    //    OpenAI Agents SDK は handoff を「宛先 1 つにつきツール 1 本」で表現し、
+    //    `transfer_to_<agent>` という名前を使う。単一ツール + 宛先パラメータより、
+    //    名前で選ばせるほうがモデルの学習分布に近い。
+    let targets = spec.connected_agents.clone();
+    let handoffs = HandoffTools::build(&targets);
+    let use_handoff_tools = template.use_tools && !handoffs.is_empty();
+
+    // 4. プロンプトを組む。順序は system → 手順 → 参照資料 → 履歴 → 今回の受信。
     let mut messages = vec![ChatMessage::system(system_prompt)];
+    if !handoffs.is_empty() {
+        messages.push(ChatMessage::system(handoffs.protocol_note(use_handoff_tools)));
+    }
+
+    // RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
     if !spec.rag_sources.is_empty() {
         let hits = shared
             .rag
@@ -717,14 +776,31 @@ async fn handle_message(
             messages.push(ChatMessage::system(format!("## 参照資料\n{context}")));
         }
     }
+
+    // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
+    {
+        let world = shared.world.read().await;
+        if let Ok(record) = world.agent(agent_id) {
+            messages.extend(record.history.iter().cloned());
+        }
+    }
     messages.push(ChatMessage::user(&incoming.content));
 
-    // 4. LLM 呼び出し。
+    // 5. LLM 呼び出し。ツールは提示するだけで強制しない（Auto）。
+    //    呼ぶかどうかの選択そのものが「会話を続けるか終えるか」の表明になる。
     let request = ChatRequest {
         model: template.model.clone(),
         messages,
-        tools: Vec::new(),
-        tool_choice: crate::llm::ToolChoice::None,
+        tools: if use_handoff_tools {
+            handoffs.specs()
+        } else {
+            Vec::new()
+        },
+        tool_choice: if use_handoff_tools {
+            crate::llm::ToolChoice::Auto
+        } else {
+            crate::llm::ToolChoice::None
+        },
         temperature: template.temperature,
         max_tokens: template.max_output_tokens,
         effort: template.effort,
@@ -732,64 +808,228 @@ async fn handle_message(
     };
     let backend = shared.backend_for(&template).await?;
     let response = backend.chat(request).await?;
-    let content = response.text.unwrap_or_default();
     let tokens = response.usage.total();
 
-    // 5. 統計を更新する。
+    // 6. 終了か転送かを決める。
+    let outcome = handoffs.decide(&response, use_handoff_tools);
+
+    // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
     {
         let mut world = shared.world.write().await;
         if let Ok(record) = world.agent_mut(agent_id) {
             record.total_tokens += tokens;
+            record.push_exchange(
+                &incoming.content,
+                outcome.spoken(),
+                shared.config.history_turns,
+            );
         }
     }
 
-    // 6. 宛先を決める。接続先が無ければユーザーへ返す。
+    // 8. 記録と転送。
     let next_hop = incoming.hop.saturating_add(1);
-    let targets = spec.connected_agents.clone();
-    let destinations: Vec<Endpoint> = if targets.is_empty() {
-        vec![Endpoint::User]
-    } else {
-        targets
-            .iter()
-            .map(|id| Endpoint::Agent { id: id.clone() })
-            .collect()
+    let (destination, spoken) = match &outcome {
+        Outcome::Finish { content } => (Endpoint::User, content.as_str()),
+        Outcome::Handoff { to, message } => (Endpoint::Agent { id: to.clone() }, message.as_str()),
     };
 
-    // 7. 記録と転送。1 回の生成を複数の宛先へ配るとき、トークンは
-    //    先頭の 1 件にだけ載せる。全件に載せると同じ生成を人数分二重計上してしまう。
-    for (index, destination) in destinations.into_iter().enumerate() {
-        let mut outgoing = AgentMessage::new(
-            Endpoint::Agent {
-                id: agent_id.clone(),
-            },
-            destination.clone(),
-            &content,
-            next_hop,
-        );
-        outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };
-        shared.record(outgoing.clone()).await;
+    let mut outgoing = AgentMessage::new(
+        Endpoint::Agent {
+            id: agent_id.clone(),
+        },
+        destination,
+        spoken,
+        next_hop,
+    );
+    outgoing.tokens = tokens as u32;
+    shared.record(outgoing.clone()).await;
 
-        let Some(target) = destination.agent_id() else {
-            continue;
-        };
+    let Outcome::Handoff { to, .. } = &outcome else {
+        // 会話はここで終わり。ユーザーへ返して転送しない。
+        return Ok(());
+    };
 
-        if next_hop >= shared.config.max_hops {
-            shared.emit(CoreEvent::HopLimitReached {
-                agent_id: agent_id.clone(),
-                max_hops: shared.config.max_hops,
-            });
-            continue;
-        }
+    if next_hop >= shared.config.max_hops {
+        shared.emit(CoreEvent::HopLimitReached {
+            agent_id: agent_id.clone(),
+            max_hops: shared.config.max_hops,
+        });
+        return Ok(());
+    }
 
-        // 転送失敗（宛先停止中・受信箱飽和）は、このエージェント自身の失敗ではない。
-        // 自分を Failed に落とさず、事象として通知するに留める。
-        if let Err(err) = deliver(shared, target, outgoing).await {
-            shared.emit(CoreEvent::AgentFailed {
-                agent_id: target.clone(),
-                error: ErrorPayload::from(&err),
-            });
-        }
+    // 転送失敗（宛先停止中・受信箱飽和）は、このエージェント自身の失敗ではない。
+    // 自分を Failed に落とさず、事象として通知するに留める。
+    if let Err(err) = deliver(shared, to, outgoing).await {
+        shared.emit(CoreEvent::AgentFailed {
+            agent_id: to.clone(),
+            error: ErrorPayload::from(&err),
+        });
     }
 
     Ok(())
+}
+
+/// 1 回の応答の行き先。
+#[derive(Debug, Clone, PartialEq)]
+enum Outcome {
+    /// 会話終了。ユーザーへ返す。
+    Finish {
+        /// 本文。
+        content: String,
+    },
+    /// 転送して会話を続ける。
+    Handoff {
+        /// 転送先。
+        to: AgentId,
+        /// 相手に伝える内容。
+        message: String,
+    },
+}
+
+impl Outcome {
+    /// このターンで実際に発した言葉。履歴へ積むのはこちら。
+    fn spoken(&self) -> &str {
+        match self {
+            Self::Finish { content } => content,
+            Self::Handoff { message, .. } => message,
+        }
+    }
+}
+
+/// 転送先ごとのツール定義と、その逆引き。
+struct HandoffTools {
+    /// `(ツール名, 転送先)`。名前からの逆引きに使う。
+    entries: Vec<(String, AgentId)>,
+}
+
+impl HandoffTools {
+    /// 接続先からツール名を導く。
+    ///
+    /// 名前は OpenAI Agents SDK の慣習に倣って `transfer_to_<agent>`。
+    /// 関数名の長さ制限（64 文字）を超える場合と、切り詰めで衝突する場合は
+    /// 連番へ退避する。名前が壊れるとモデルが呼べなくなるため、
+    /// 「たぶん大丈夫」で通さない。
+    fn build(targets: &[AgentId]) -> Self {
+        const MAX_TOOL_NAME: usize = 64;
+        const PREFIX: &str = "transfer_to_";
+
+        let mut entries: Vec<(String, AgentId)> = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let natural = format!("{PREFIX}{target}");
+            let name = if natural.len() <= MAX_TOOL_NAME
+                && !entries.iter().any(|(existing, _)| *existing == natural)
+            {
+                natural
+            } else {
+                format!("{PREFIX}agent_{index}")
+            };
+            entries.push((name, target.clone()));
+        }
+        Self { entries }
+    }
+
+    /// 転送先が 1 つも無いか。
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// wire へ載せるツール定義。
+    fn specs(&self) -> Vec<ToolSpec> {
+        self.entries
+            .iter()
+            .map(|(name, target)| ToolSpec {
+                name: name.clone(),
+                description: format!(
+                    "会話を続ける必要があるとき、`{target}` へメッセージを渡す。\
+                     自分の応答で用が足りるなら、このツールを呼ばずに本文だけを返すこと。"
+                ),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "相手に伝える内容"
+                        }
+                    },
+                    "required": ["message"],
+                    "additionalProperties": false
+                }),
+            })
+            .collect()
+    }
+
+    /// 手順の説明。
+    ///
+    /// OpenAI Agents SDK が `RECOMMENDED_PROMPT_PREFIX` で同種の説明を
+    /// プロンプトへ足すのと同じ意図。ツールを渡すだけでは、
+    /// 「呼ばない」という選択が終了を意味することがモデルに伝わらない。
+    fn protocol_note(&self, tools_available: bool) -> String {
+        if tools_available {
+            "## 会話の進め方\n\
+             他のエージェントへ話を渡す必要があるときだけ `transfer_to_*` ツールを呼んでください。\
+             自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
+             **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
+             結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
+                .to_owned()
+        } else {
+            format!(
+                "## 会話の進め方\n\
+                 応答は次のエージェントへ渡されます。会話を終えてよいと判断したら、\
+                 本文の末尾に {TERMINATION_MARKER} と書いてください。その時点で会話は終わり、\
+                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
+            )
+        }
+    }
+
+    /// 名前からツールを逆引きする。
+    fn resolve(&self, name: &str) -> Option<&AgentId> {
+        self.entries
+            .iter()
+            .find(|(tool, _)| tool == name)
+            .map(|(_, target)| target)
+    }
+
+    /// 最初の転送先。ツールを使えない経路の退避先。
+    fn first(&self) -> Option<&AgentId> {
+        self.entries.first().map(|(_, target)| target)
+    }
+
+    /// 応答から行き先を決める。
+    ///
+    /// 規則は OpenAI Agents SDK と同じ:
+    /// **ツール呼び出しの無いテキスト出力が最終出力**。
+    fn decide(&self, response: &ChatResponse, tools_available: bool) -> Outcome {
+        let text = response.text.clone().unwrap_or_default();
+
+        if tools_available {
+            for call in &response.tool_calls {
+                let Some(target) = self.resolve(&call.name) else {
+                    continue;
+                };
+                // 引数が欠けていても転送自体は成立させる。本文を代わりに渡す。
+                let message = call
+                    .args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| text.clone());
+                return Outcome::Handoff {
+                    to: target.clone(),
+                    message,
+                };
+            }
+            return Outcome::Finish { content: text };
+        }
+
+        // ツールを使えない経路: 終了マーカーが無ければ最初の相手へ渡す。
+        match (self.first(), text.contains(TERMINATION_MARKER)) {
+            (Some(target), false) => Outcome::Handoff {
+                to: target.clone(),
+                message: text,
+            },
+            _ => Outcome::Finish {
+                content: text.replace(TERMINATION_MARKER, "").trim_end().to_owned(),
+            },
+        }
+    }
 }

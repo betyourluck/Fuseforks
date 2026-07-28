@@ -11,6 +11,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult, ErrorPayload};
+use crate::llm::ChatMessage;
 use crate::model::{
     AgentId, AgentSnapshot, AgentSpec, AgentStatus, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
@@ -30,6 +31,15 @@ pub struct AgentRecord {
     pub total_tokens: u64,
     /// 直近の失敗。
     pub last_error: Option<ErrorPayload>,
+    /// 直近の会話履歴（自分の発言を含む）。
+    ///
+    /// これが無いと、エージェントは毎回コールドスタートになり
+    /// **自分が直前に何を言ったかを知らない**。同じ入力に同じ出力を返し続け、
+    /// 会話が原理的に収束しなくなる（failures.md #12）。
+    ///
+    /// プロセス寿命に閉じる。保存しないのは、再開時に古い文脈が復活すると
+    /// 「新しく始めたつもりが続きだった」という分かりにくい状態になるため。
+    pub history: Vec<ChatMessage>,
 }
 
 impl AgentRecord {
@@ -42,6 +52,7 @@ impl AgentRecord {
             accumulated_uptime_secs: 0,
             total_tokens: 0,
             last_error: None,
+            history: Vec::new(),
         }
     }
 
@@ -51,6 +62,22 @@ impl AgentRecord {
             .started_at
             .map_or(0, |start| start.elapsed().as_secs());
         self.accumulated_uptime_secs + current
+    }
+
+    /// 1 往復を履歴へ積み、直近 `max_turns` 往復だけ残す。
+    ///
+    /// 古いほうから捨てる。長時間の稼働で履歴が際限なく伸びると、
+    /// プロンプトがコンテキスト長を超えて必ず失敗するようになる。
+    pub fn push_exchange(&mut self, received: &str, replied: &str, max_turns: usize) {
+        self.history.push(ChatMessage::user(received));
+        self.history.push(ChatMessage::assistant(replied));
+
+        let limit = max_turns.saturating_mul(2);
+        if limit == 0 {
+            self.history.clear();
+        } else if self.history.len() > limit {
+            self.history.drain(..self.history.len() - limit);
+        }
     }
 }
 
