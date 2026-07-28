@@ -155,6 +155,47 @@ impl LlmBackend for AlwaysHandoffBackend {
     }
 }
 
+/// 委譲（`ask_*`）ツールがあり、まだ結果を受け取っていなければ ask する。
+/// 受け取っていれば、その内容を引用して会話を終える。
+#[derive(Default)]
+struct AskingBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for AskingBackend {
+    fn name(&self) -> &str {
+        "asking"
+    }
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let answered = req.messages.iter().find(|m| m.role == Role::Tool);
+        let ask_tool = req.tools.iter().find(|t| t.name.starts_with("ask_"));
+
+        if let (None, Some(tool)) = (answered, ask_tool) {
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: "call_1".into(),
+                    name: tool.name.clone(),
+                    args: serde_json::json!({ "message": "自己紹介をお願いします" }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            });
+        }
+
+        let text = match answered {
+            Some(result) => format!("受け取りました → {}", result.content),
+            None => "ブラボーの自己紹介です".to_owned(),
+        };
+        Ok(ChatResponse {
+            text: Some(text),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+        })
+    }
+}
+
 /// 提示された転送ツールを**すべて同時に**呼ぶバックエンド。
 ///
 /// Claude / Gemini は 1 応答で複数の tool call を普通に返す（並列ツール呼び出し）。
@@ -563,6 +604,94 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
     assert!(
         log.iter().all(|m| m.to != Endpoint::Agent { id: c.clone() }),
         "宛先外のエージェントは発話の存在を知らない"
+    );
+}
+
+/// 委譲（ask）— 頼んだ答えが**依頼主に戻る**こと。
+///
+/// 転送（handoff）は制御ごと相手へ渡す機構で、相手の答えはユーザーへ返る。
+/// だが「ロボットくん1号、自己紹介をお願いします」のように**答えを受け取って
+/// 自分の話を続けたい**場面では、転送では依頼主が結果を知れない。
+/// OpenAI Agents SDK の agent-as-tool と同じ、委譲の経路を用意する。
+#[tokio::test]
+async fn asking_another_agent_returns_the_answer_to_the_caller() {
+    let dir = TempDir::new("ask");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AskingBackend), OrchestratorConfig::default()).await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "ブラボーに聞いて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let log = messages(&events);
+
+    // アルファがユーザーへ返した最終出力に、ブラボーの答えが載っていること。
+    let final_reply = log
+        .iter()
+        .find(|m| m.from == Endpoint::Agent { id: a.clone() } && m.to == Endpoint::User)
+        .expect("アルファがユーザーへ返すこと");
+    assert!(
+        final_reply.content.contains("ブラボーの自己紹介です"),
+        "頼んだ答えが依頼主へ戻ること。実際: {}",
+        final_reply.content
+    );
+
+    // ブラボーの答えは「ユーザーへの最終出力」ではなく、アルファ宛として記録される。
+    let brabo_reply = log
+        .iter()
+        .find(|m| m.from == Endpoint::Agent { id: b.clone() })
+        .expect("ブラボーの発話が記録されること");
+    assert_eq!(
+        brabo_reply.to,
+        Endpoint::Agent { id: a.clone() },
+        "依頼主へ返した発話として記録されること: {brabo_reply:#?}"
+    );
+}
+
+/// 応答しない相手への委譲が、会話を永久に止めないこと。
+///
+/// 委譲は相手の応答を待って**ブロックする**。相手が停止中なら即座に失敗するが、
+/// 相互に ask し合う配置では待ち合わせが起きうる。上限を持たせて必ず戻す。
+#[tokio::test]
+async fn asking_a_stopped_agent_fails_without_hanging() {
+    let dir = TempDir::new("ask-stopped");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AskingBackend), OrchestratorConfig::default()).await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    // b は起動しない。
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "止まっている相手に頼む").await.unwrap();
+
+    // 会話が返ってくること自体が検証内容（無限に待たない）。
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let log = messages(&events);
+    assert!(
+        log.iter().any(|m| m.to == Endpoint::User),
+        "ユーザーへ何かが返ること: {log:#?}"
     );
 }
 

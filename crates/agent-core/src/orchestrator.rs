@@ -109,6 +109,12 @@ pub struct OrchestratorConfig {
     /// 長い発話 1 つでログ全体が埋まるのを防ぐ。要点だけ見えれば
     /// 「誰が何の話をしていたか」は伝わる。
     pub room_log_excerpt_chars: usize,
+    /// 委譲（`ask_*`）で相手の答えを待つ上限。
+    ///
+    /// 委譲は相手の応答を**待ってブロックする**。相互に委譲し合う配置では
+    /// 待ち合わせが起きうるので、必ず戻る上限が要る。`max_hops` は深さしか
+    /// 縛らず、待ちの時間は縛らない。
+    pub ask_timeout: Duration,
     /// 1 回の応答生成で RAG から引く断片数。
     pub rag_top_k: usize,
 }
@@ -125,7 +131,34 @@ impl Default for OrchestratorConfig {
             log_capacity: 5_000,
             room_log_window: 12,
             room_log_excerpt_chars: 200,
+            ask_timeout: Duration::from_secs(180),
             rag_top_k: 4,
+        }
+    }
+}
+
+/// 受信箱に入る 1 通。発話と、任意の返信路。
+///
+/// # なぜ返信路が要るのか
+///
+/// 転送（handoff）は制御ごと相手へ渡す機構で、相手の答えは**ユーザーへ**返る。
+/// 電話の転送と同じで、渡した側は結果を知らない。だが「〇〇に聞いてきて」という
+/// 依頼では、依頼主が答えを受け取って自分の話を続けたい。
+/// この 2 つは別の機構であり、OpenAI Agents SDK も handoff と agent-as-tool を
+/// 別に持っている。返信路の有無がその区別になる。
+struct Envelope {
+    /// 届いた発話。
+    incoming: AgentMessage,
+    /// 答えを返す先。`None` なら転送・通常配送（答えはユーザーへ）。
+    reply_to: Option<tokio::sync::oneshot::Sender<String>>,
+}
+
+impl Envelope {
+    /// 返信を求めない通常の配送。
+    fn plain(incoming: AgentMessage) -> Self {
+        Self {
+            incoming,
+            reply_to: None,
         }
     }
 }
@@ -135,7 +168,7 @@ struct Shared {
     world: RwLock<World>,
     /// 稼働中エージェントの受信箱。停止時に取り除かれるので、
     /// 「ここに居る = 送信できる」という不変条件が成り立つ。
-    mailboxes: RwLock<HashMap<AgentId, mpsc::Sender<AgentMessage>>>,
+    mailboxes: RwLock<HashMap<AgentId, mpsc::Sender<Envelope>>>,
     events: broadcast::Sender<CoreEvent>,
     factory: Arc<dyn BackendFactory>,
     /// テンプレート ID ごとの構築済みバックエンド。
@@ -800,6 +833,11 @@ fn spawn_stats_ticker(shared: Weak<Shared>) -> JoinHandle<()> {
 /// `try_send` を使うのは背圧を可視化するため。`send().await` にすると、
 /// 詰まった受信箱を待つあいだ送信側のエージェントまで停止して連鎖的に固まる。
 async fn deliver(shared: &Shared, to: &AgentId, message: AgentMessage) -> CoreResult<()> {
+    deliver_envelope(shared, to, Envelope::plain(message)).await
+}
+
+/// 返信路つきの配送。
+async fn deliver_envelope(shared: &Shared, to: &AgentId, envelope: Envelope) -> CoreResult<()> {
     let sender = {
         let mailboxes = shared.mailboxes.read().await;
         mailboxes.get(to).cloned()
@@ -809,7 +847,7 @@ async fn deliver(shared: &Shared, to: &AgentId, message: AgentMessage) -> CoreRe
         agent_id: to.to_string(),
     })?;
 
-    sender.try_send(message).map_err(|err| match err {
+    sender.try_send(envelope).map_err(|err| match err {
         mpsc::error::TrySendError::Full(_) => CoreError::MailboxFull {
             agent_id: to.to_string(),
             capacity: shared.config.mailbox_capacity,
@@ -823,7 +861,7 @@ async fn deliver(shared: &Shared, to: &AgentId, message: AgentMessage) -> CoreRe
 /// エージェント 1 体分の実行ループ。
 async fn agent_loop(
     agent_id: AgentId,
-    mut inbox: mpsc::Receiver<AgentMessage>,
+    mut inbox: mpsc::Receiver<Envelope>,
     mut shutdown: watch::Receiver<bool>,
     shared: Arc<Shared>,
 ) {
@@ -839,9 +877,9 @@ async fn agent_loop(
                 }
             }
             received = inbox.recv() => {
-                let Some(message) = received else { break };
+                let Some(envelope) = received else { break };
 
-                if let Err(err) = handle_message(&shared, &agent_id, message).await {
+                if let Err(err) = handle_message(&shared, &agent_id, envelope).await {
                     let payload = ErrorPayload::from(&err);
                     let fatal = !err.is_retryable();
 
@@ -874,8 +912,9 @@ async fn agent_loop(
 async fn handle_message(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
-    incoming: AgentMessage,
+    envelope: Envelope,
 ) -> CoreResult<()> {
+    let Envelope { incoming, reply_to } = envelope;
     // 1. 定義とテンプレートを取り出す。ロックはここで手放し、LLM 呼び出しは持たずに行う。
     let (spec, template) = {
         let world = shared.world.read().await;
@@ -999,7 +1038,9 @@ async fn handle_message(
     //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
     //    転送だけ別扱いにする理由が無い。区別するのは受け取った後の私たち。
     let mut specs = if use_handoff_tools {
-        handoffs.specs()
+        let mut both = handoffs.specs();
+        both.extend(handoffs.ask_specs());
+        both
     } else {
         Vec::new()
     };
@@ -1044,11 +1085,15 @@ async fn handle_message(
         }
 
         // 実行対象のツール呼び出しを拾う。転送用の名前はここには来ない
-        // （上で Handoff として抜けている）。
+        // （上で Handoff として抜けている）。委譲（`ask_*`）は**結果が返る**ので、
+        // 転送ではなくこちら側 — 実行ツールと同じ扱いでループを回す。
         let calls: Vec<_> = response
             .tool_calls
             .iter()
-            .filter(|call| executable.iter().any(|spec| spec.name == call.name))
+            .filter(|call| {
+                executable.iter().any(|spec| spec.name == call.name)
+                    || (use_handoff_tools && handoffs.resolve_ask(&call.name).is_some())
+            })
             .cloned()
             .collect();
 
@@ -1065,7 +1110,12 @@ async fn handle_message(
         ));
 
         for call in &calls {
-            let result = execute_tool(shared, agent_id, call).await;
+            let result = match handoffs.resolve_ask(&call.name) {
+                Some(target) if use_handoff_tools => {
+                    ask_agent(shared, agent_id, target, call, incoming.hop).await
+                }
+                _ => execute_tool(shared, agent_id, call).await,
+            };
             shared.emit(CoreEvent::ToolInvoked {
                 agent_id: agent_id.clone(),
                 tool: call.name.clone(),
@@ -1111,10 +1161,21 @@ async fn handle_message(
 
     let deliveries = match &outcome {
         Outcome::Finish { content } => {
-            // 会話はここで終わり。ユーザーへ返して転送しない。
-            let mut outgoing = AgentMessage::new(from, Endpoint::User, content, next_hop);
+            // 会話はここで終わり。ただし**誰へ返すか**は、頼まれ方で決まる。
+            // 委譲（ask）で来た発話なら答えは依頼主へ戻る。通常配送ならユーザーへ。
+            let destination = match &reply_to {
+                Some(_) => incoming.from.clone(),
+                None => Endpoint::User,
+            };
+            let mut outgoing = AgentMessage::new(from, destination, content, next_hop);
             outgoing.tokens = tokens as u32;
             shared.record(outgoing).await;
+
+            if let Some(reply_to) = reply_to {
+                // 受け取り手が既に諦めている（タイムアウト）ことはあるので、
+                // 送信の失敗は無視する。こちらの処理は完了している。
+                let _ = reply_to.send(content.clone());
+            }
             return Ok(());
         }
         Outcome::Handoff { deliveries } => deliveries,
@@ -1200,6 +1261,66 @@ async fn execute_tool(
         agent_id: agent_id.clone(),
     };
     tool.call(&ctx, &call.args).await
+}
+
+/// 他のエージェントへ質問し、**答えを待って**返す（委譲）。
+///
+/// 転送との違いは行き先だけ。転送は制御ごと渡してユーザーへ返るが、委譲は
+/// 答えが呼び出し元へ戻り、ツール結果として会話が続く。
+///
+/// **必ず有限時間で戻る。** 相手が応答しない・相互に委譲し合う配置では
+/// 待ち合わせが起きうるので、上限で打ち切って理由を文字列で返す
+/// （ツールの失敗は会話を止めない、という既存の規律に合わせる）。
+async fn ask_agent(
+    shared: &Arc<Shared>,
+    from: &AgentId,
+    to: &AgentId,
+    call: &crate::llm::ToolCall,
+    hop: u8,
+) -> CoreResult<String> {
+    let question = call
+        .args
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned();
+
+    let next_hop = hop.saturating_add(1);
+    if next_hop >= shared.config.max_hops {
+        shared.emit(CoreEvent::HopLimitReached {
+            agent_id: from.clone(),
+            max_hops: shared.config.max_hops,
+        });
+        return Ok("転送の上限に達したため、これ以上は尋ねられません。".to_owned());
+    }
+
+    let mut outgoing = AgentMessage::new(
+        Endpoint::Agent { id: from.clone() },
+        Endpoint::Agent { id: to.clone() },
+        &question,
+        next_hop,
+    );
+    // 質問自体のトークンは呼び出し元のターンに計上済み。二重計上しない。
+    outgoing.tokens = 0;
+    shared.record(outgoing.clone()).await;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let envelope = Envelope {
+        incoming: outgoing,
+        reply_to: Some(tx),
+    };
+
+    if let Err(err) = deliver_envelope(shared, to, envelope).await {
+        // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
+        return Ok(format!("相手に尋ねられませんでした: {err}"));
+    }
+
+    match tokio::time::timeout(shared.config.ask_timeout, rx).await {
+        Ok(Ok(answer)) => Ok(answer),
+        // 相手が答えずにタスクを終えた（停止・失敗）。
+        Ok(Err(_)) => Ok("相手から答えが返りませんでした。".to_owned()),
+        Err(_) => Ok("相手からの答えが時間内に返りませんでした。".to_owned()),
+    }
 }
 
 /// 「居合わせた会話」を組み立てる（広場ログ）。
@@ -1380,6 +1501,49 @@ impl HandoffTools {
             .iter()
             .map(|(_, _, display)| display.as_str())
             .collect()
+    }
+
+    /// 委譲ツールの名前。転送ツールの `transfer_to_` を `ask_` に replace した形。
+    fn ask_name(transfer_name: &str) -> String {
+        transfer_name.replacen("transfer_to_", "ask_", 1)
+    }
+
+    /// 委譲（`ask_*`）のツール定義。
+    ///
+    /// 転送との違いは**答えの行き先**だけ。転送は制御ごと渡してユーザーへ返るが、
+    /// 委譲は答えが自分に戻ってきて、自分の話を続けられる。
+    fn ask_specs(&self) -> Vec<ToolSpec> {
+        self.entries
+            .iter()
+            .map(|(name, _, display)| ToolSpec {
+                name: Self::ask_name(name),
+                description: format!(
+                    "**{display}** に質問し、**その答えを受け取る**。\
+                     答えは自分に戻ってくるので、それを踏まえて話を続けられる。\
+                     相手に話を引き継いで自分は退く場合は、これではなく \
+                     `transfer_to_*` を使うこと。"
+                ),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "相手に尋ねる内容"
+                        }
+                    },
+                    "required": ["message"],
+                    "additionalProperties": false
+                }),
+            })
+            .collect()
+    }
+
+    /// 委譲ツール名から相手を逆引きする。
+    fn resolve_ask(&self, name: &str) -> Option<&AgentId> {
+        self.entries
+            .iter()
+            .find(|(tool, _, _)| Self::ask_name(tool) == name)
+            .map(|(_, target, _)| target)
     }
 
     /// wire へ載せるツール定義。
