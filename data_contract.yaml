@@ -68,6 +68,16 @@ enums:
       サーバー側の 401 (x-api-key header is required) になった (2026-07-28)。
       ローカルで捕まえられるはずの設定不備を、遠くの失敗にしてはいけない。
       同じ理由で clear_credential は not_required ではなく unset へ戻す。
+
+      keyring への出入りはコアだけが書ける (単一書き込み者)。
+      入りは set_credential、出は clear_credential (秘密の削除と一体)。
+      upsert_template はクライアントの credential を素通しにせず正規化する:
+      既存が keyring なら維持、秘密の裏付けが無い keyring 主張は unset へ、
+      unset ⇄ not_required (チェックボックス由来) だけ通す。
+      根拠: キー登録前に開いた UI 下書きで保存し直すと unset が keyring を
+      黙って上書きし、「キーは実在するのに未登録」で退避し続けた (2026-07-28、
+      failures.md #16)。bootstrap は「unset かつ秘密が実在」を keyring へ昇格して
+      書き戻す (この組み合わせは正規の操作では作れない事故の化石だから)。
   Endpoint:
     tagged_union_key: kind
     variants:

@@ -18,6 +18,7 @@ use agent_core::llm::{
 };
 use agent_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
+    SecretStore,
 };
 use tokio::sync::broadcast::Receiver;
 
@@ -323,6 +324,132 @@ async fn deleting_a_template_also_removes_its_stored_credential() {
     orchestrator.remove_template(&id).await.unwrap();
 
     assert!(!orchestrator.has_credential(&id).unwrap());
+}
+
+/// 古い下書きでテンプレートを保存し直しても、`keyring` が `unset` へ巻き戻らないこと。
+///
+/// `credential` はコアが所有する派生状態で、正当な遷移経路は
+/// `set_credential` / `clear_credential` だけ。UI の下書きは登録前の
+/// スナップショットを保持しうるので、upsert がそれを素通しにすると
+/// 「キーは資格情報ストアに実在するのに、設定上は未登録」という
+/// 実際に起きた不整合が再現する（Gemini テンプレートで表面化）。
+#[tokio::test]
+async fn saving_a_stale_template_does_not_downgrade_the_keyring_credential() {
+    let dir = TempDir::new("stale-upsert");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = ModelTemplateId::from("tpl");
+
+    orchestrator.set_credential(&id, "secret-value").await.unwrap();
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::Keyring
+    );
+
+    // 登録前に開いたダイアログの下書き（credential: unset）で保存し直す。
+    let stale = ModelTemplate::new("tpl", "既定", "mock-model");
+    assert_eq!(stale.credential, CredentialSource::Unset);
+    orchestrator.upsert_template(stale).await.unwrap();
+
+    // 秘密は残っているのだから、取得元も keyring のままであること。
+    assert!(orchestrator.has_credential(&id).unwrap());
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::Keyring
+    );
+
+    // 巻き戻りがディスクへ固定されないこと（再起動後も接続できること）。
+    let on_disk = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(on_disk.contains("keyring"));
+}
+
+/// `unset` なのに秘密が実在するテンプレートは、起動時に `keyring` へ昇格すること。
+///
+/// `clear_credential` は秘密の削除と `unset` への遷移を一体で行うので、
+/// 「unset かつ秘密あり」は正規の操作では作れない。過去の巻き戻り事故で
+/// 固定された状態であり、放置するとユーザーはキーを貼り直すまで接続できない。
+#[tokio::test]
+async fn bootstrap_promotes_unset_credential_when_the_secret_already_exists() {
+    let dir = TempDir::new("heal-credential");
+    std::fs::write(
+        dir.0.join("world.json"),
+        r#"{
+            "agents": [],
+            "modelTemplates": [{
+                "id": "tpl", "name": "gemini",
+                "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+                "model": "gemini-3.6-flash", "contextLength": 128000,
+                "temperature": null, "maxOutputTokens": 4096,
+                "credential": "unset",
+                "provider": null, "useTools": true, "effort": null,
+                "requestTimeoutSecs": 120, "maxRetries": 3
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    let secrets = Arc::new(InMemorySecretStore::new());
+    secrets.set("tpl", "secret-value").unwrap();
+
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::echo("[echo]")),
+        secrets,
+        OrchestratorConfig::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::Keyring
+    );
+    // 昇格は起動時にディスクへも書き戻される。
+    let on_disk = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(on_disk.contains("keyring"));
+}
+
+/// 秘密が無いのに `keyring` を主張する下書きは `unset` へ正規化されること。
+///
+/// これを素通しにすると、送信時に「資格情報ストアに見つかりません」という
+/// 一段遠いエラーへずれ込む。設定不備は保存の時点で `unset`（= 未登録の警告表示）に
+/// 引き戻しておく。
+#[tokio::test]
+async fn an_unverified_keyring_claim_is_normalized_to_unset_on_upsert() {
+    let dir = TempDir::new("keyring-claim");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let mut claimed = ModelTemplate::new("tpl2", "無根拠", "mock-model");
+    claimed.credential = CredentialSource::Keyring;
+    orchestrator.upsert_template(claimed).await.unwrap();
+
+    let templates = orchestrator.templates().await;
+    let saved = templates.iter().find(|t| t.id.as_str() == "tpl2").unwrap();
+    assert_eq!(saved.credential, CredentialSource::Unset);
+}
+
+/// 「認証不要」の明示は upsert 経由の正当な遷移として通ること。
+///
+/// ローカル推論サーバ向けのチェックボックスはこの経路しか持たない。
+/// 巻き戻り防止の対象は keyring だけで、unset ⇄ not_required を塞いではいけない。
+#[tokio::test]
+async fn not_required_transitions_still_flow_through_upsert() {
+    let dir = TempDir::new("not-required");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let mut template = ModelTemplate::new("tpl", "既定", "mock-model");
+    template.credential = CredentialSource::NotRequired;
+    orchestrator.upsert_template(template.clone()).await.unwrap();
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::NotRequired
+    );
+
+    template.credential = CredentialSource::Unset;
+    orchestrator.upsert_template(template).await.unwrap();
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::Unset
+    );
 }
 
 #[tokio::test]

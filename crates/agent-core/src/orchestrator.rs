@@ -236,7 +236,23 @@ impl Orchestrator {
         config: OrchestratorConfig,
     ) -> CoreResult<Self> {
         let persisted = store.load_world().await?;
-        let world = World::from_persisted(persisted.clone());
+        let mut world = World::from_persisted(persisted.clone());
+
+        // 「unset なのに秘密が実在する」テンプレートは keyring へ昇格させる。
+        // clear_credential は秘密の削除と unset への遷移を一体で行うので、
+        // この組み合わせは正規の操作では作れない——過去の巻き戻り事故（failures.md #16）が
+        // ディスクへ固定された状態である。放置するとユーザーはキーを貼り直すまで
+        // 接続できず、しかも ⚙ の画面は「登録済み」と表示する（矛盾が見えない）。
+        // 資格情報ストアが応答しない場合は昇格を見送る。起動を止めるほどの事態ではなく、
+        // 次回起動時にまた試せばよい。
+        for mut template in world.templates() {
+            if template.credential == CredentialSource::Unset
+                && secrets.contains(template.id.as_str()).unwrap_or(false)
+            {
+                template.credential = CredentialSource::Keyring;
+                world.upsert_template(template);
+            }
+        }
 
         // 読み込み時の正規化（平文の秘密の除去、宙に浮いた接続の切り離し）で内容が
         // 変わったなら、その場でファイルへ書き戻す。次の編集操作まで待つと、
@@ -419,9 +435,38 @@ impl Orchestrator {
     ///
     /// 構築済みバックエンドのキャッシュを破棄する。これを怠ると、
     /// エンドポイントを直したのに古い接続先へ送り続ける（設定が効かない）。
-    pub async fn upsert_template(&self, template: ModelTemplate) -> CoreResult<()> {
+    pub async fn upsert_template(&self, mut template: ModelTemplate) -> CoreResult<()> {
         let id = template.id.clone();
-        self.shared.world.write().await.upsert_template(template);
+        {
+            let mut world = self.shared.world.write().await;
+
+            // `credential` はコアが所有する派生状態。正当な遷移経路は
+            // `set_credential` / `clear_credential` と、認証不要チェックボックス由来の
+            // unset ⇄ not_required だけ。クライアントの下書きは登録前の古い
+            // スナップショットを保持しうるので、ここで素通しにすると
+            // 「キーは資格情報ストアに実在するのに設定上は未登録」へ巻き戻る
+            // （Gemini テンプレートで実際に起きた。failures.md #16）。
+            template.credential = match (
+                world.template(&id).map(|t| t.credential).ok(),
+                template.credential,
+            ) {
+                // keyring からの離脱は clear_credential（秘密の削除と一体）に限る。
+                (Some(CredentialSource::Keyring), _) => CredentialSource::Keyring,
+                // 秘密の裏付けが無い keyring 主張は未登録へ引き戻す。素通しにすると、
+                // 保存時に捕まえられる設定不備が送信時の「見つかりません」へずれ込む。
+                (previous, CredentialSource::Keyring) => {
+                    if self.shared.secrets.contains(id.as_str()).unwrap_or(false) {
+                        CredentialSource::Keyring
+                    } else {
+                        previous.unwrap_or(CredentialSource::Unset)
+                    }
+                }
+                // unset ⇄ not_required はチェックボックスの正当な遷移。
+                (_, requested) => requested,
+            };
+
+            world.upsert_template(template);
+        }
         self.shared.backends.write().await.remove(&id);
         self.persist().await
     }
