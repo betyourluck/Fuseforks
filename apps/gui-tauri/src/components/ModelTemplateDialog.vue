@@ -2,9 +2,9 @@
 /**
  * モデルテンプレートの管理ダイアログ。
  *
- * API キーの入力欄が無いのは意図的。テンプレートに持たせるのは
- * **環境変数名だけ**で、実値はプロセスの環境から解決する。
- * 平文で保存される設定ファイルに秘密を書ける場所を、UI からも作らない。
+ * API キーはここで入力するが、**この画面には戻ってこない**。
+ * 値は OS の資格情報ストアへ片道で渡り、読み出す API は存在しない。
+ * 表示できるのは「登録済みかどうか」だけ（failures.md #1 / #2）。
  */
 import { computed, ref, watch } from "vue";
 
@@ -275,7 +275,7 @@ function onTemperature(raw: string): void {
           </button>
         </header>
 
-        <ul class="flex-1 overflow-y-auto p-2">
+        <ul class="min-h-0 flex-1 overflow-y-auto p-2">
           <li v-for="template in state.templates" :key="template.id">
             <!--
               選択と削除は兄弟の <button> にする。
@@ -327,8 +327,8 @@ function onTemperature(raw: string): void {
           </button>
         </header>
 
-        <div v-if="draft" class="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
-          <div class="grid grid-cols-[128px_1fr] items-center gap-x-3 gap-y-2.5">
+        <div v-if="draft" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
+          <div class="grid grid-cols-[128px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5">
             <label class="text-ink-dim">識別子</label>
             <div>
               <input

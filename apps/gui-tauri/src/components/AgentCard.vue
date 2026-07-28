@@ -106,7 +106,7 @@ const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
       </button>
     </header>
 
-    <dl class="mt-2 grid grid-cols-[72px_1fr] gap-x-2 gap-y-1 text-[11px]">
+    <dl class="mt-2 grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
       <dt class="text-ink-dim">モデル</dt>
       <dd class="truncate" :title="agent.model">{{ agent.model }}</dd>
 

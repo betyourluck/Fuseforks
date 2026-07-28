@@ -140,7 +140,7 @@ async function openFolder(): Promise<void> {
     <template v-else>
       <div class="max-h-[52%] shrink-0 overflow-y-auto border-b border-line p-3">
         <!-- 概況。編集モードでも変わらない実測値なので常に出す。 -->
-        <dl class="grid grid-cols-[80px_1fr] gap-x-2 gap-y-1 text-[11px]">
+        <dl class="grid grid-cols-[80px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
           <dt class="text-ink-dim">ID</dt>
           <dd class="selectable font-mono">{{ selected.id }}</dd>
           <dt class="text-ink-dim">状態</dt>

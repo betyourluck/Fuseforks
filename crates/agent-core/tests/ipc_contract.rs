@@ -7,7 +7,103 @@
 //! ここに貼る JSON は推測で書かず、TS 側の実装から機械的に写すこと。
 
 use agent_core::llm::{Effort, Provider};
-use agent_core::model::{AgentSpec, CredentialSource, ModelTemplate};
+use agent_core::model::{
+    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, CredentialSource, Endpoint,
+    ModelTemplate,
+};
+
+/// 直列化されたキー集合を並べ替えて返す。
+fn wire_keys<T: serde::Serialize>(value: &T) -> Vec<String> {
+    let json = serde_json::to_value(value).expect("直列化できること");
+    let mut keys: Vec<String> = json
+        .as_object()
+        .expect("オブジェクトであること")
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// ワイヤに出るフィールド集合を固定する。
+///
+/// **このテストが落ちたら、まず `apps/gui-tauri/src/types.ts` を直すこと。**
+/// 型検査は二言語の境界に届かないので、フィールドを増減しても TS 側は黙って古いままになる。
+/// ここで落として「TS も見ろ」と強制するのが目的で、期待値の更新だけして通すのは
+/// このテストの意味を消す行為（failures.md #9 と同じ形）。
+#[test]
+fn wire_field_sets_are_frozen() {
+    assert_eq!(
+        wire_keys(&ModelTemplate::new("tpl", "既定", "gpt-4o")),
+        vec![
+            "baseUrl",
+            "contextLength",
+            "credential",
+            "effort",
+            "id",
+            "maxOutputTokens",
+            "maxRetries",
+            "model",
+            "name",
+            "provider",
+            "requestTimeoutSecs",
+            "temperature",
+            "useTools",
+        ],
+        "ModelTemplate のフィールドが変わった"
+    );
+
+    assert_eq!(
+        wire_keys(&AgentSpec::new("agent_01", "PlannerAgent", "tpl")),
+        vec![
+            "connectedAgents",
+            "id",
+            "modelTemplateId",
+            "name",
+            "order",
+            "ragSources",
+        ],
+        "AgentSpec のフィールドが変わった"
+    );
+
+    let snapshot = AgentSnapshot {
+        id: AgentId::from("agent_01"),
+        name: "PlannerAgent".into(),
+        model: "gpt-4o".into(),
+        model_template_id: "tpl".into(),
+        status: AgentStatus::Idle,
+        uptime_secs: 0,
+        total_tokens: 0,
+        rag_sources: Vec::new(),
+        connected_agents: Vec::new(),
+        order: 0,
+        last_error: None,
+    };
+    assert_eq!(
+        wire_keys(&snapshot),
+        vec![
+            "connectedAgents",
+            "id",
+            "lastError",
+            "model",
+            "modelTemplateId",
+            "name",
+            "order",
+            "ragSources",
+            "status",
+            "totalTokens",
+            "uptimeSecs",
+        ],
+        "AgentSnapshot のフィールドが変わった"
+    );
+
+    let message = AgentMessage::new(Endpoint::User, Endpoint::System, "本文", 0);
+    assert_eq!(
+        wire_keys(&message),
+        vec!["content", "from", "hop", "id", "to", "tokens", "tsMs"],
+        "AgentMessage のフィールドが変わった"
+    );
+}
 
 /// `ModelTemplateDialog.vue` の `blank()` が組み立てる新規テンプレート。
 #[test]
