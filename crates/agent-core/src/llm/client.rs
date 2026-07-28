@@ -102,15 +102,24 @@ impl LlmConfig {
         secrets: &dyn SecretStore,
     ) -> Result<Self, LlmError> {
         let api_key = match template.credential {
-            // ローカル推論サーバは認証不要なことが多い。空キーを許す。
-            CredentialSource::None => String::new(),
+            // 未設定のまま送らない。認証ヘッダ無しで外部へ出すと、ローカルで
+            // 捕まえられるはずの設定不備がサーバー側の 401 になり、原因が遠くなる。
+            CredentialSource::Unset => {
+                return Err(LlmError::Config(format!(
+                    "モデルテンプレート `{}` の API キーが未登録です\
+                     （⚙ の画面でキーを登録するか、認証不要であればその旨を指定してください）",
+                    template.name
+                )));
+            }
+            // 認証不要だとユーザーが明示した場合のみ、空キーで送る。
+            CredentialSource::NotRequired => String::new(),
             CredentialSource::Keyring => secrets
                 .get(template.id.as_str())
                 .map_err(|err| LlmError::Config(err.to_string()))?
                 .ok_or_else(|| {
                     LlmError::Config(format!(
-                        "モデルテンプレート `{}` の API キーが資格情報ストアに未登録です\
-                         （⚙ の画面から登録してください）",
+                        "モデルテンプレート `{}` の API キーが資格情報ストアに見つかりません\
+                         （⚙ の画面から登録し直してください）",
                         template.name
                     ))
                 })?,
@@ -331,13 +340,15 @@ mod tests {
         template
     }
 
+    /// keyring 指定なのにストアが空 = 何らかの理由で消えた状態。
+    /// 「未設定」とは別の文言にして、どちらの状況か区別できるようにする。
     #[test]
-    fn unregistered_credential_fails_before_any_network_call() {
+    fn a_missing_keyring_entry_fails_before_any_network_call() {
         let secrets = InMemorySecretStore::new();
         let err = LlmConfig::from_template(&keyring_template(), &secrets).unwrap_err();
 
         assert_eq!(err.code(), "LLM_CONFIG");
-        assert!(err.to_string().contains("未登録"));
+        assert!(err.to_string().contains("見つかりません"));
     }
 
     #[test]
@@ -351,14 +362,29 @@ mod tests {
     }
 
     #[test]
-    fn template_without_credentials_is_allowed_for_local_servers() {
+    fn explicitly_auth_free_templates_send_an_empty_key() {
         let mut template = ModelTemplate::new("tpl_local", "ローカル", "qwen3");
         template.base_url = "http://localhost:11434/v1/".into();
+        template.credential = CredentialSource::NotRequired;
 
         let config = LlmConfig::from_template(&template, &InMemorySecretStore::new()).unwrap();
         assert_eq!(config.base_url, "http://localhost:11434/v1");
         assert_eq!(config.provider, Provider::OpenAiCompat);
         assert!(config.api_key.is_empty());
+    }
+
+    /// 未設定は「認証不要」と読み替えない。
+    ///
+    /// 読み替えると、キーを入れていないだけのテンプレートが認証ヘッダ無しで
+    /// 外部へ送られ、サーバー側の 401 になる。実際にそれが起きた。
+    #[test]
+    fn an_unset_credential_is_refused_before_the_request_leaves() {
+        let template = ModelTemplate::new("tpl", "既定", "claude-sonnet-5");
+        assert_eq!(template.credential, CredentialSource::Unset);
+
+        let err = LlmConfig::from_template(&template, &InMemorySecretStore::new()).unwrap_err();
+        assert_eq!(err.code(), "LLM_CONFIG");
+        assert!(err.to_string().contains("未登録"));
     }
 
     #[tokio::test]
@@ -382,7 +408,10 @@ mod tests {
             .degraded_reason
             .as_deref()
             .expect("退避理由が付くこと");
-        assert!(reason.contains("未登録"), "原因を名指しすること: {reason}");
+        assert!(
+            reason.contains("見つかりません"),
+            "原因を名指しすること: {reason}"
+        );
 
         // 応答本文自体にも理由が乗る。会話ログだけ見ていても原因に辿り着ける。
         let response = resolution
@@ -395,7 +424,10 @@ mod tests {
             .await
             .unwrap();
         let text = response.text.unwrap_or_default();
-        assert!(text.contains("未登録"), "応答が理由を名乗ること: {text}");
+        assert!(
+            text.contains("見つかりません"),
+            "応答が理由を名乗ること: {text}"
+        );
     }
 
     #[test]

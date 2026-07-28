@@ -54,11 +54,20 @@ enums:
       TS 側と食い違う)。Effort::as_str と serde 値の一致をテストで固定している。
   CredentialSource:
     values:
-      none: 認証不要 (ローカル推論サーバなど)
+      unset: 未設定 (既定)。旧版の "none" もここへ落とす (serde alias)
+      not_required: 認証不要であるとユーザーが明示した (ローカル推論サーバなど)
       keyring: OS の資格情報ストアから取得する。キーはテンプレート ID
     note: |
       秘密そのものを保持するバリアントを持たない。これが
       「平文の設定ファイルに秘密が入らない」ことの構造的な根拠。
+    invariant: |
+      unset のまま送信してはいけない。LlmConfig::from_template が
+      ネットワークへ出る前に LLM_CONFIG で弾く。
+      根拠: 当初この 2 状態を "none" ひとつにまとめており、キー未登録の
+      テンプレートが「認証不要」と解釈されて認証ヘッダ無しで Anthropic へ送られ、
+      サーバー側の 401 (x-api-key header is required) になった (2026-07-28)。
+      ローカルで捕まえられるはずの設定不備を、遠くの失敗にしてはいけない。
+      同じ理由で clear_credential は not_required ではなく unset へ戻す。
   Endpoint:
     tagged_union_key: kind
     variants:

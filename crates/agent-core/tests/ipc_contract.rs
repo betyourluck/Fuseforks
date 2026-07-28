@@ -20,7 +20,7 @@ fn new_model_template_payload_deserializes() {
         "contextLength": 128000,
         "temperature": null,
         "maxOutputTokens": 4096,
-        "credential": "none",
+        "credential": "unset",
         "provider": null,
         "useTools": true,
         "effort": null,
@@ -34,22 +34,34 @@ fn new_model_template_payload_deserializes() {
     assert_eq!(template.base_url, "https://api.openai.com/v1");
     assert_eq!(template.temperature, None);
     assert_eq!(template.provider, None);
-    assert_eq!(template.credential, CredentialSource::None);
+    assert_eq!(template.credential, CredentialSource::Unset);
     assert!(template.use_tools);
 }
 
 /// `types.ts` の `CredentialSource` が取りうる全値を Rust 側が受け取れること。
 #[test]
 fn credential_source_values_match_typescript_union() {
-    // types.ts: export type CredentialSource = "none" | "keyring";
+    // types.ts: export type CredentialSource = "unset" | "not_required" | "keyring";
     for (json, expected) in [
-        (r#""none""#, CredentialSource::None),
+        (r#""unset""#, CredentialSource::Unset),
+        (r#""not_required""#, CredentialSource::NotRequired),
         (r#""keyring""#, CredentialSource::Keyring),
     ] {
         let parsed: CredentialSource = serde_json::from_str(json)
             .unwrap_or_else(|e| panic!("CredentialSource {json} が受からない: {e}"));
         assert_eq!(parsed, expected);
     }
+}
+
+/// 旧版の `"none"` は「認証不要」ではなく「未設定」として読む。
+///
+/// 「認証不要」と読み替えると、キーを入れていないだけのテンプレートが
+/// 認証ヘッダ無しで外部へ送られ、サーバー側の 401 になる。
+#[test]
+fn the_legacy_none_value_maps_to_unset_not_to_not_required() {
+    let parsed: CredentialSource = serde_json::from_str(r#""none""#).unwrap();
+    assert_eq!(parsed, CredentialSource::Unset);
+    assert!(parsed.is_unresolved());
 }
 
 /// `AgentList.vue` の `submitNew()` が組み立てるエージェント定義。

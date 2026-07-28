@@ -120,9 +120,23 @@ async function clearSecret(): Promise<void> {
 
   const ok = await orchestrator.clearCredential(template.id);
   if (ok) {
-    template.credential = "none";
+    // 「認証不要」ではなく「未設定」へ戻す。消しただけのテンプレートが
+    // 認証ヘッダ無しで外部へ送られるようになってはいけない。
+    template.credential = "unset";
     credentialStored.value = false;
   }
+}
+
+/**
+ * 「認証不要」の明示。ローカル推論サーバなど、キーを要求しない接続先で使う。
+ *
+ * 未設定のまま送ることは許さないので、キーを入れない構成では
+ * ここを明示的に立ててもらう。既定でこちらへ倒すと、入れ忘れが
+ * 「要らない」と解釈されて 401 になる。
+ */
+function setAuthNotRequired(notRequired: boolean): void {
+  if (!draft.value) return;
+  draft.value.credential = notRequired ? "not_required" : "unset";
 }
 
 const PROVIDERS: { value: Provider | null; label: string }[] = [
@@ -161,7 +175,7 @@ function blank(): ModelTemplate {
     contextLength: 128000,
     temperature: null,
     maxOutputTokens: 4096,
-    credential: "none",
+    credential: "unset",
     provider: null,
     useTools: true,
     effort: null,
@@ -369,9 +383,28 @@ function onTemperature(raw: string): void {
                   削除
                 </button>
               </p>
-              <p v-else-if="credentialStored === false" class="mt-1 text-[11px] text-warn">
-                未登録です。認証が必要なプロバイダでは、このままだとエコー応答へ退避します。
-              </p>
+
+              <template v-else>
+                <p
+                  v-if="draft.credential === 'unset'"
+                  class="mt-1 text-[11px] text-warn"
+                >
+                  未登録です。このままでは送信前に設定不備として弾かれ、エコー応答へ
+                  退避します。
+                </p>
+                <label class="mt-1.5 flex items-center gap-2 text-[11px] text-ink-dim">
+                  <input
+                    type="checkbox"
+                    :checked="draft.credential === 'not_required'"
+                    @change="
+                      setAuthNotRequired(($event.target as HTMLInputElement).checked)
+                    "
+                  />
+                  <span>
+                    この接続先は認証不要（ローカル推論サーバなど）
+                  </span>
+                </label>
+              </template>
             </div>
 
             <label class="text-ink-dim">コンテキスト長</label>

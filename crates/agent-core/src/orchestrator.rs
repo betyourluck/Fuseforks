@@ -393,6 +393,9 @@ impl Orchestrator {
     }
 
     /// テンプレートの API キーを資格情報ストアから削除する。
+    ///
+    /// 取得元は「未設定」へ戻す。「認証不要」へ落とすと、キーを消しただけの
+    /// テンプレートが認証ヘッダ無しで外部へ送られるようになる。
     pub async fn clear_credential(&self, id: &ModelTemplateId) -> CoreResult<()> {
         self.shared.secrets.delete(id.as_str())?;
 
@@ -400,7 +403,7 @@ impl Orchestrator {
             let mut world = self.shared.world.write().await;
             if let Ok(existing) = world.template(id) {
                 let mut template = existing.clone();
-                template.credential = CredentialSource::None;
+                template.credential = CredentialSource::Unset;
                 world.upsert_template(template);
             }
         }

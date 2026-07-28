@@ -29,8 +29,11 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
  *
  * 秘密そのものを保持するバリアントは存在しない。実値は OS の資格情報ストアにあり、
  * フロントへは「登録済みかどうか」しか返らない。
+ *
+ * `unset`（未設定）と `not_required`（認証不要）は別の状態。まとめると、
+ * キー未登録のテンプレートが認証ヘッダ無しで外部へ送られ、401 になる。
  */
-export type CredentialSource = "none" | "keyring";
+export type CredentialSource = "unset" | "not_required" | "keyring";
 
 /** 発話の送り手・受け手。`kind` による判別共用体。 */
 export type Endpoint =

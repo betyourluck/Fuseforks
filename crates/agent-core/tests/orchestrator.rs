@@ -117,7 +117,7 @@ async fn a_legacy_world_file_still_opens() {
     let templates = orchestrator.templates().await;
     assert_eq!(templates.len(), 1);
     assert_eq!(templates[0].model, "claude-sonnet-5");
-    assert_eq!(templates[0].credential, CredentialSource::None);
+    assert_eq!(templates[0].credential, CredentialSource::Unset);
 }
 
 /// 資格情報の登録・削除が、取得元の切り替えと連動すること。
@@ -146,7 +146,7 @@ async fn registering_a_credential_switches_the_template_to_the_keyring() {
     assert!(!orchestrator.has_credential(&id).unwrap());
     assert_eq!(
         orchestrator.templates().await[0].credential,
-        CredentialSource::None
+        CredentialSource::Unset
     );
 }
 

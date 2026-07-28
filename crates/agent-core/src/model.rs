@@ -169,14 +169,32 @@ impl AgentSpec {
 ///
 /// 「どこから取るか」だけを保持し、**秘密そのものを保持できるバリアントを持たない**。
 /// 平文の設定ファイルに秘密が入りうる経路を、型の段階で存在させないための形。
+///
+/// [`Unset`](Self::Unset) と [`NotRequired`](Self::NotRequired) を分けているのは、
+/// **「まだ入れていない」と「要らない」は別の状態**だから。1 つにまとめると、
+/// キー未登録のテンプレートが「認証不要」と解釈され、認証ヘッダ無しのリクエストが
+/// 外部へ出ていく。ローカルで捕まえられるはずの設定不備が、サーバー側の 401 になる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialSource {
-    /// 認証不要。ローカル推論サーバなど。
+    /// 未設定。既定値。
+    ///
+    /// 旧版の `"none"` もここへ落とす。旧 `"none"` は実質「まだ入れていない」であり、
+    /// 「認証不要」と読み替えると未登録のまま外部へ送ることになる。
     #[default]
-    None,
+    #[serde(alias = "none")]
+    Unset,
+    /// 認証不要であるとユーザーが明示した。ローカル推論サーバなど。
+    NotRequired,
     /// OS の資格情報ストアから取得する。キーはテンプレート ID。
     Keyring,
+}
+
+impl CredentialSource {
+    /// 送信前に設定不備として弾くべき状態か。
+    pub fn is_unresolved(self) -> bool {
+        matches!(self, Self::Unset)
+    }
 }
 
 /// LLM 接続設定のテンプレート。複数登録して各エージェントから参照する。
@@ -211,7 +229,7 @@ pub struct ModelTemplate {
     /// 認証情報の取得元。
     ///
     /// 旧版の `apiKeyEnv`（環境変数名）は廃止した。読み込み時に未知フィールドとして
-    /// 無視され、`credential` は既定の [`CredentialSource::None`] になる。
+    /// 無視され、`credential` は既定の [`CredentialSource::Unset`] になる。
     /// 移行にあたって利用者はキーを画面から入れ直すことになるが、
     /// 旧フィールドは名前しか持っておらず、そこから移せる値が存在しない。
     #[serde(default)]
@@ -266,7 +284,7 @@ impl ModelTemplate {
             context_length: 128_000,
             temperature: None,
             max_output_tokens: 4_096,
-            credential: CredentialSource::None,
+            credential: CredentialSource::Unset,
             provider: None,
             use_tools: true,
             effort: None,
@@ -455,7 +473,7 @@ mod tests {
 
         assert!(!object.contains_key("apiKey"));
         assert!(!object.contains_key("apiKeyEnv"));
-        assert_eq!(object["credential"], "none");
+        assert_eq!(object["credential"], "unset");
     }
 
     #[test]
@@ -473,7 +491,7 @@ mod tests {
         }"#;
 
         let template: ModelTemplate = serde_json::from_str(legacy).expect("旧形式も開けること");
-        assert_eq!(template.credential, CredentialSource::None);
+        assert_eq!(template.credential, CredentialSource::Unset);
         assert_eq!(template.model, "claude-sonnet-5");
     }
 
