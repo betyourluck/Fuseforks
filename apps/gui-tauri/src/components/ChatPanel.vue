@@ -18,6 +18,7 @@ import { computed, nextTick, ref, watch } from "vue";
 
 import ChatInput from "./ChatInput.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
+import { collapseRows, type ChatRow } from "../lib/chatRows";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
@@ -117,51 +118,21 @@ const visible = computed(() => {
   );
 });
 
-/** 表示の 1 行。同報では 1 通の代表 + 残りの宛先を束ねる。 */
-interface Row {
-  message: AgentMessage;
-  /** 代表の宛先以外。同報でなければ空。 */
-  extraTargets: Endpoint[];
-}
-
 /**
- * 同報されたユーザー発話を表示上 1 つに畳む。
- *
- * 同報はログ上「同じ内容のユーザー発話 × 宛先数」として記録される（配送の実体が
- * 宛先ごとに独立なため。これは正しい）。しかし表示でそのまま並べると、
- * 同じ文面の吹き出しが人数分連続して**壊れているように見える**。
- * 表示だけを畳み、宛先は「あなた → 〇〇 他X名」に集約する。
- *
- * 畳むのは**連続する**ユーザー発話で内容が同一のものだけ。時間を置いて
- * 同じ文を送り直した場合は別の発話として残る（送り直しの事実を消さない）。
+ * 表示行。同報・fan-out で複製された発話は 1 行に畳まれる。
+ * 規則は lib/chatRows.ts（純関数、単体テスト付き）。
  */
-const rows = computed<Row[]>(() => {
-  const result: Row[] = [];
-  for (const message of visible.value) {
-    const previous = result[result.length - 1];
-    if (
-      previous &&
-      message.from.kind === "user" &&
-      previous.message.from.kind === "user" &&
-      previous.message.content === message.content
-    ) {
-      previous.extraTargets.push(message.to);
-      continue;
-    }
-    result.push({ message, extraTargets: [] });
-  }
-  return result;
-});
+const rows = computed<ChatRow[]>(() => collapseRows(visible.value));
 
 /** 宛先の表示。同報は「〇〇 他X名」。 */
-function toLabel(row: Row): string {
+function toLabel(row: ChatRow): string {
   const first = label(row.message.to);
   if (!row.extraTargets.length) return first;
   return `${first} 他${row.extraTargets.length}名`;
 }
 
 /** 同報の全宛先（hover で確認できるように）。 */
-function toTitle(row: Row): string {
+function toTitle(row: ChatRow): string {
   if (!row.extraTargets.length) return "";
   return [row.message.to, ...row.extraTargets].map(label).join("、");
 }

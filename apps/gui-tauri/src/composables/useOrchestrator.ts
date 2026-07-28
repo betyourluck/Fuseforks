@@ -467,11 +467,15 @@ export function useOrchestrator() {
      * 複数宛先 API をコアへ足すと部分失敗の集約という新しい契約が生まれる。
      * 各宛先の mailbox は独立なので、1 宛先の失敗は他の配送を妨げない
      * （Promise.all は最初の失敗を報告するが、他の送信自体は走り切る）。
+     *
+     * 全宛先リストを毎通に添える。受信者は「他の誰が受け取ったか」を知り、
+     * 律儀に転送し合う反響が消える。2 体以上のときだけ意味を持つ
+     * （1 体なら単独宛としてコア側が注記を省く）。
      */
     async sendMany(agentIds: AgentId[], content: string): Promise<void> {
       await mutate("送信", () =>
         Promise.all(
-          agentIds.map((id) => ipc.sendUserMessage(id, content)),
+          agentIds.map((id) => ipc.sendUserMessage(id, content, agentIds)),
         ).then(() => undefined),
       );
     },

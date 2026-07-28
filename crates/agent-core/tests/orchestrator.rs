@@ -494,6 +494,207 @@ async fn not_required_transitions_still_flow_through_upsert() {
     );
 }
 
+/// 同報の注記が**受信者にだけ**入り、宛先外には発話の存在ごと見えないこと。
+///
+/// ユーザーが「みんなこんにちは」を同報すると、各受信者は自分しか受け取って
+/// いないように見えるため、律儀に接続先へ転送して反響が起きる（実機で観測）。
+/// 転送を禁止するのではなく、「全員が既に受け取っている」という事実を
+/// 封筒に書くことで、転送する理由そのものを消す。
+#[tokio::test]
+async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("broadcast-note");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b, c) = (
+        AgentId::from("agent_a"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&a, "アルファ"), (&b, "ブラボー"), (&c, "チャーリー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+
+    // UI の同報と同じ形: 宛先 a と b へ 1 通ずつ、同報の全宛先を添えて投入する。
+    // c は宛先に含まれない。
+    for target in [&a, &b] {
+        orchestrator
+            .send_user_message_broadcast(target, "みんなこんにちは", &[a.clone(), b.clone()])
+            .await
+            .unwrap();
+    }
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 受信者のプロンプトに同報の注記が入り、宛先の名前が列挙されること。
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "処理されるのは宛先 2 体ぶんだけ");
+    for messages in &requests {
+        let note = messages
+            .iter()
+            .find(|m| m.role == Role::System && m.content.contains("同報"))
+            .expect("同報の注記が入ること");
+        assert!(note.content.contains("アルファ"), "実際: {}", note.content);
+        assert!(note.content.contains("ブラボー"), "実際: {}", note.content);
+        assert!(
+            !note.content.contains("チャーリー"),
+            "宛先外の名前を列挙しない: {}",
+            note.content
+        );
+        assert!(
+            note.content.contains("転送する必要はありません"),
+            "転送不要の根拠を伝える: {}",
+            note.content
+        );
+    }
+
+    // 宛先外の c には配送されず、ログにも c 宛の発話が存在しない。
+    let log = orchestrator.message_log(None).await;
+    assert!(
+        log.iter().all(|m| m.to != Endpoint::Agent { id: c.clone() }),
+        "宛先外のエージェントは発話の存在を知らない"
+    );
+}
+
+/// 受信した発話に**送り手の名前**が封筒として付くこと。
+///
+/// ユーザーの言葉もエージェントからの転送も、同じ user ロールで届く。
+/// 送り手を書かないと受信側は区別できず、実際にユーザーの発話を
+/// 「他のエージェントが話した言葉」と取り違えた。
+#[tokio::test]
+async fn incoming_messages_carry_the_sender_name() {
+    /// 記録しつつ、最初の 1 回だけ転送するバックエンド。
+    /// user → a （ユーザー発話の封筒）と a → b （エージェント発話の封筒）の
+    /// 両方を 1 本のシナリオで観測する。
+    #[derive(Default)]
+    struct RecordingHandoffBackend {
+        seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+        calls: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for RecordingHandoffBackend {
+        fn name(&self) -> &str {
+            "recording-handoff"
+        }
+
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            self.seen.lock().unwrap().push(req.messages.clone());
+            let mut calls = self.calls.lock().unwrap();
+            let first = *calls == 0;
+            *calls += 1;
+
+            let tool_calls = if first {
+                match req.tools.iter().find(|t| t.name.starts_with("transfer_to_")) {
+                    Some(tool) => vec![ToolCall {
+                        id: "call_1".into(),
+                        name: tool.name.clone(),
+                        args: serde_json::json!({ "message": "アルファからの相談です" }),
+                        extra: None,
+                    }],
+                    None => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
+            Ok(ChatResponse {
+                text: Some("了解".into()),
+                tool_calls,
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            })
+        }
+    }
+
+    let backend = Arc::new(RecordingHandoffBackend::default());
+    let dir = TempDir::new("sender-envelope");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator.create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl")).await.unwrap();
+    orchestrator.create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl")).await.unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "こんにちは").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "a と b の 2 回処理される");
+
+    // a が受けたのはユーザーの言葉。封筒にそう書いてあること。
+    let a_incoming = requests[0].iter().rev().find(|m| m.role == Role::User).unwrap();
+    assert!(
+        a_incoming.content.contains("送り手: ユーザー"),
+        "実際: {}",
+        a_incoming.content
+    );
+
+    // b が受けたのはアルファの言葉。ユーザーの言葉と取り違えないこと。
+    let b_incoming = requests[1].iter().rev().find(|m| m.role == Role::User).unwrap();
+    assert!(
+        b_incoming.content.contains("送り手: アルファ"),
+        "実際: {}",
+        b_incoming.content
+    );
+    assert!(
+        !b_incoming.content.contains("送り手: ユーザー"),
+        "エージェントの転送をユーザーの言葉として偽装しない: {}",
+        b_incoming.content
+    );
+}
+
+/// 単独宛の送信には同報の注記が入らないこと。
+///
+/// 1 対 1 の会話に「同報です」と書くのは嘘であり、モデルの判断を歪める。
+#[tokio::test]
+async fn a_plain_send_carries_no_broadcast_note() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("no-broadcast-note");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0].iter().all(|m| !m.content.contains("同報")),
+        "単独宛に同報の注記を入れない"
+    );
+}
+
 /// 最小の正当な WebP コンテナ（RIFF ヘッダ + "WEBP"）を作る。
 fn webp_bytes(payload: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -645,7 +846,9 @@ async fn message_to_a_leaf_agent_comes_back_to_the_user() {
     assert_eq!(log[1].from, Endpoint::Agent { id: id.clone() });
     // 接続先が無いのでユーザーへ返る。
     assert_eq!(log[1].to, Endpoint::User);
-    assert_eq!(log[1].content, "[echo] 計画を立てて");
+    // EchoBackend は受信した本文をそのまま返す。本文には送り手の封筒が付く
+    // （ユーザーの言葉とエージェントの転送を受信側が区別するため）。
+    assert_eq!(log[1].content, "[echo] 【送り手: ユーザー】\n計画を立てて");
     assert!(log[1].tokens > 0, "トークンが計上されること");
 }
 
@@ -786,6 +989,132 @@ async fn a_single_response_fans_out_to_every_requested_target() {
     assert_eq!(finishes.len(), 2);
 }
 
+/// 同じ内容を複数宛先へ渡す fan-out は、エージェント発の同報として封筒に載ること。
+///
+/// ユーザー同報 (#20) と同じ理屈がエージェント発にも要る。ジェミーが 2 体へ
+/// 同じ挨拶を fan-out したとき、受け手同士が「相手はこれを知らない」と誤解して
+/// 伝言し合う経路は、ユーザー起点と何も変わらない。
+/// 一方、宛先ごとに**内容が違う** fan-out は同報ではないので載せない
+/// （「全員が同じ内容を受け取っている」という注記が嘘になる）。
+#[tokio::test]
+async fn identical_fan_out_is_marked_as_broadcast_but_distinct_messages_are_not() {
+    /// 最初の呼び出しで全 transfer_to_* を同一 message で呼ぶバックエンド。
+    struct IdenticalFanOutBackend;
+
+    #[async_trait::async_trait]
+    impl LlmBackend for IdenticalFanOutBackend {
+        fn name(&self) -> &str {
+            "identical-fan-out"
+        }
+
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            let tool_calls = req
+                .tools
+                .iter()
+                .filter(|tool| tool.name.starts_with("transfer_to_"))
+                .enumerate()
+                .map(|(index, tool)| ToolCall {
+                    id: format!("call_{index}"),
+                    name: tool.name.clone(),
+                    args: serde_json::json!({ "message": "はじめまして、よろしく" }),
+                    extra: None,
+                })
+                .collect();
+            Ok(ChatResponse {
+                text: Some("挨拶します".into()),
+                tool_calls,
+                finish: Finish::Stop,
+                usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+            })
+        }
+    }
+
+    let dir = TempDir::new("identical-fan-out");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(IdenticalFanOutBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let (hub, b, c) = (
+        AgentId::from("agent_hub"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&hub, "Hub"), (&b, "Left"), (&c, "Right")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&hub, vec![b.clone(), c.clone()]).await.unwrap();
+    for id in [&hub, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&hub, "挨拶して").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let log = messages(&events);
+
+    // hub からの 2 通は、どちらも同報として宛先 2 体を封筒に持つ。
+    let deliveries: Vec<_> = log
+        .iter()
+        .filter(|m| m.from == Endpoint::Agent { id: hub.clone() } && m.to != Endpoint::User)
+        .collect();
+    assert_eq!(deliveries.len(), 2, "実際: {log:#?}");
+    for delivery in &deliveries {
+        assert_eq!(
+            delivery.co_recipients.len(),
+            2,
+            "同内容 fan-out は同報の封筒を持つ: {delivery:#?}"
+        );
+        assert!(delivery.co_recipients.contains(&b));
+        assert!(delivery.co_recipients.contains(&c));
+    }
+}
+
+/// 宛先ごとに内容が違う fan-out には同報の封筒が付かないこと。
+#[tokio::test]
+async fn distinct_fan_out_messages_carry_no_broadcast_envelope() {
+    let dir = TempDir::new("distinct-fan-out");
+    // FanOutBackend は宛先ごとに違う本文（ツール名入り）を渡す。
+    let orchestrator =
+        setup_with(&dir, Arc::new(FanOutBackend), OrchestratorConfig::default()).await;
+    let (hub, b, c) = (
+        AgentId::from("agent_hub"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&hub, "Hub"), (&b, "Left"), (&c, "Right")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&hub, vec![b.clone(), c.clone()]).await.unwrap();
+    for id in [&hub, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&hub, "個別に頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let log = messages(&events);
+
+    let deliveries: Vec<_> = log
+        .iter()
+        .filter(|m| m.from == Endpoint::Agent { id: hub.clone() } && m.to != Endpoint::User)
+        .collect();
+    assert_eq!(deliveries.len(), 2);
+    for delivery in &deliveries {
+        assert!(
+            delivery.co_recipients.is_empty(),
+            "内容が違う fan-out は同報ではない: {delivery:#?}"
+        );
+    }
+}
+
 /// 同じ宛先への重複した転送要求は 1 通にまとめられること。
 ///
 /// モデルは同じツールを同じ引数で 2 回呼ぶことがある（実際に起きる）。
@@ -887,12 +1216,13 @@ async fn each_turn_sees_the_previous_exchange() {
     assert!(!first.iter().any(|c| c.contains("了解")));
 
     // 2 回目は「一回目」と自分の応答「了解」が入っている。
+    // 履歴の受信側には送り手の封筒が付く（プロンプトと履歴の形を揃える）。
     let second = &seen[1];
     assert!(
         second
             .iter()
-            .any(|m| m.role == Role::User && m.content == "一回目"),
-        "前回の受信が履歴に入る: {second:#?}"
+            .any(|m| m.role == Role::User && m.content == "【送り手: ユーザー】\n一回目"),
+        "前回の受信が封筒付きで履歴に入る: {second:#?}"
     );
     assert!(
         second

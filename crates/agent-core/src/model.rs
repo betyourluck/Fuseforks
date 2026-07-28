@@ -337,6 +337,14 @@ pub struct AgentMessage {
     pub ts_ms: u64,
     /// ユーザー入力を起点とした転送回数。無限往復を止めるための燃料。
     pub hop: u8,
+    /// 同報の全宛先（受信者自身を含む）。単独宛では空。
+    ///
+    /// 同報であることが受信者に見えないと、各エージェントは「自分しか
+    /// 聞いていない」と判断して接続先へ律儀に転送し、反響が起きる。
+    /// この情報は**宛先本人の封筒にだけ**載る — 宛先外へは配送自体が
+    /// 行われないので、発話の存在ごと見えない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub co_recipients: Vec<AgentId>,
 }
 
 impl AgentMessage {
@@ -350,6 +358,7 @@ impl AgentMessage {
             tokens: 0,
             ts_ms: now_ms(),
             hop,
+            co_recipients: Vec::new(),
         }
     }
 }

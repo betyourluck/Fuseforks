@@ -698,12 +698,33 @@ impl Orchestrator {
     /// - 宛先が稼働していない場合 [`CoreError::NotRunning`]
     /// - 受信箱が飽和している場合 [`CoreError::MailboxFull`]
     pub async fn send_user_message(&self, to: &AgentId, content: &str) -> CoreResult<()> {
-        let message = AgentMessage::new(
+        self.send_user_message_broadcast(to, content, &[]).await
+    }
+
+    /// ユーザー発話を**同報の 1 通として**エージェントへ投入する。
+    ///
+    /// `co_recipients` は同報の全宛先（受信者自身を含む）。UI は宛先ごとに
+    /// このメソッドを呼び、毎回同じリストを渡す。受信者のプロンプトには
+    /// 「全員が既に受け取っている」という注記が入り、転送する理由を消す
+    /// （同報の反響防止）。**宛先外のエージェントへは何も送られない** —
+    /// 同報の存在自体、宛先本人たちしか知らない。
+    ///
+    /// 2 体未満のリストは単独宛と同義なので、注記は付かない。
+    pub async fn send_user_message_broadcast(
+        &self,
+        to: &AgentId,
+        content: &str,
+        co_recipients: &[AgentId],
+    ) -> CoreResult<()> {
+        let mut message = AgentMessage::new(
             Endpoint::User,
             Endpoint::Agent { id: to.clone() },
             content,
             0,
         );
+        if co_recipients.len() >= 2 {
+            message.co_recipients = co_recipients.to_vec();
+        }
         self.shared.record(message.clone()).await;
         deliver(&self.shared, to, message).await
     }
@@ -879,7 +900,53 @@ async fn handle_message(
             messages.extend(record.history.iter().cloned());
         }
     }
-    messages.push(ChatMessage::user(&incoming.content));
+
+    // 送り手の封筒。ユーザーの言葉もエージェントからの転送も同じ user ロールで
+    // 届くため、名前を書かないと受信側は区別できない — 実際にユーザーの発話を
+    // 「他のエージェントが話した言葉」と取り違えた。プロンプトと履歴の両方へ
+    // 同じ形で入れる。履歴に入れないと、次のターンで再び出所不明になる。
+    let sender_label = match &incoming.from {
+        Endpoint::User => "ユーザー".to_owned(),
+        Endpoint::System => "システム".to_owned(),
+        Endpoint::Agent { id } => {
+            let world = shared.world.read().await;
+            world
+                .agent(id)
+                .map(|record| record.spec.name.clone())
+                // 送り手が既に削除されていても発話は成立させる。ID で示す。
+                .unwrap_or_else(|_| id.to_string())
+        }
+    };
+    let attributed = format!("【送り手: {sender_label}】\n{}", incoming.content);
+
+    // 同報の注記。「みんなへ」と呼びかけられたのに自分しか受け取っていないように
+    // 見えると、各エージェントは律儀に接続先へ転送して反響が起きる（実機で観測）。
+    // 転送を禁止するのではなく、「全員が既に受け取っている」という事実を与えて
+    // 転送する理由そのものを消す。プロンプトキャッシュの安定プレフィックス
+    // （system 先頭）には影響しない位置に差す。
+    if incoming.co_recipients.len() >= 2 {
+        let world = shared.world.read().await;
+        let names: Vec<String> = incoming
+            .co_recipients
+            .iter()
+            .map(|id| {
+                world
+                    .agent(id)
+                    .map(|record| record.spec.name.clone())
+                    // 宛先が既に削除されていても注記自体は成立させる。ID で示す。
+                    .unwrap_or_else(|_| id.to_string())
+            })
+            .collect();
+        messages.push(ChatMessage::system(format!(
+            "【同報】この発話はあなたを含む {} 体（{}）へ同時に届いています。\
+             全員が同じ内容を既に受け取っているため、この内容を他のエージェントへ\
+             転送する必要はありません。",
+            names.len(),
+            names.join("、")
+        )));
+    }
+
+    messages.push(ChatMessage::user(&attributed));
 
     // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
     //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
@@ -975,12 +1042,14 @@ async fn handle_message(
     }
 
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
+    //    受信側は封筒（送り手名）付きで積む — プロンプトと履歴の形を揃えないと、
+    //    過去のターンだけ出所不明に戻る。
     {
         let mut world = shared.world.write().await;
         if let Ok(record) = world.agent_mut(agent_id) {
             record.total_tokens += tokens;
             record.push_exchange(
-                &incoming.content,
+                &attributed,
                 &outcome.spoken(),
                 shared.config.history_turns,
             );
@@ -1015,6 +1084,21 @@ async fn handle_message(
             next_hop,
         );
         outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };
+
+        // 同じ内容を複数宛先へ渡す fan-out は、受け手から見ればエージェント発の
+        // 同報。宛先一覧を封筒に載せ、受け手同士が「相手はこれを知らない」と
+        // 誤解して伝言し合う経路（ユーザー同報の反響と同型）を塞ぐ。
+        // 内容が宛先ごとに違う配送は同報ではないので載せない —
+        // 「全員が同じ内容を受け取っている」という注記が嘘になる。
+        let same_content: Vec<AgentId> = deliveries
+            .iter()
+            .filter(|(_, m)| m == message)
+            .map(|(t, _)| t.clone())
+            .collect();
+        if same_content.len() >= 2 {
+            outgoing.co_recipients = same_content;
+        }
+
         shared.record(outgoing.clone()).await;
         queued.push((to, outgoing));
     }

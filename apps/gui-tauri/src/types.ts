@@ -109,6 +109,8 @@ export interface AgentMessage {
   tsMs: number;
   /** ユーザー入力を起点とした転送回数。無限往復を止める燃料。 */
   hop: number;
+  /** 同報の全宛先（受信者自身を含む）。単独宛では省かれる。 */
+  coRecipients?: AgentId[];
 }
 
 /** トポロジーの有向辺。 */

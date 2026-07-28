@@ -180,9 +180,18 @@ export const clearAgentIcon = (agentId: AgentId) =>
 export const setAgentRunning = (agentId: AgentId, running: boolean) =>
   call<AgentSnapshot>("set_agent_running", { agentId, running });
 
-/** ユーザー発話をエージェントへ投入する。 */
-export const sendUserMessage = (agentId: AgentId, content: string) =>
-  call<void>("send_user_message", { agentId, content });
+/**
+ * ユーザー発話をエージェントへ投入する。
+ *
+ * `coRecipients` は同報の全宛先（受信者自身を含む）。同報時だけ渡すと、
+ * 受信者のプロンプトに「全員が既に受け取っている」注記が入り、
+ * 各エージェントが律儀に転送し合う反響を防ぐ。単独宛では省略する。
+ */
+export const sendUserMessage = (
+  agentId: AgentId,
+  content: string,
+  coRecipients?: AgentId[],
+) => call<void>("send_user_message", { agentId, content, coRecipients });
 
 /** RAG 索引に断片を追加する。 */
 export const indexRagChunk = (chunk: RagChunk) =>

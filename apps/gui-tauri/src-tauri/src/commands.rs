@@ -268,15 +268,24 @@ pub async fn set_agent_running(
 }
 
 /// ユーザー発話をエージェントへ投入する。
+///
+/// `co_recipients` は同報の全宛先（受信者自身を含む）。同報時に UI が渡すと、
+/// 受信者のプロンプトに「全員が既に受け取っている」注記が入り、反響を防ぐ。
+/// 省略（単独宛）なら注記は付かない。
 #[tauri::command]
 pub async fn send_user_message(
     state: State<'_, AppState>,
     agent_id: AgentId,
     content: String,
+    co_recipients: Option<Vec<AgentId>>,
 ) -> CoreResult<()> {
     state
         .orchestrator
-        .send_user_message(&agent_id, &content)
+        .send_user_message_broadcast(
+            &agent_id,
+            &content,
+            co_recipients.as_deref().unwrap_or(&[]),
+        )
         .await
 }
 
