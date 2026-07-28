@@ -1,0 +1,18 @@
+# Cargo ワークスペースのビルド成果物（target はルートに集約される）
+/target
+
+# フロントエンド
+node_modules
+dist
+.vite
+
+# 秘密。API キーの実値はモデルテンプレートに書かず、環境変数で渡す方針だが、
+# ローカルの .env を誤ってコミットしないよう二重に塞いでおく。
+.env
+.env.*
+!.env.example
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+*.swp

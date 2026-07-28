@@ -1,0 +1,29 @@
+[package]
+name = "concordia"
+description = "Concordia — マルチエージェント・オーケストレーション GUI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# `_lib` 接尾辞は冗長に見えるが、Windows で bin 名と衝突させないために必要。
+# https://github.com/rust-lang/cargo/issues/8519
+name = "concordia_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# 中核ロジック。依存はこの一方向だけ。agent-core 側は tauri を知らない。
+agent-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tokio.workspace = true
+
+# リリースプロファイルはワークスペースルートで定義している
+# （非ルートパッケージの [profile] は無視されるため）。

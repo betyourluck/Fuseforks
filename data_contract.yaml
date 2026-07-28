@@ -1,0 +1,208 @@
+version: "1.0"
+project: Concordia
+description: |
+  マルチエージェント・オーケストレーションのドメイン名詞（Data-First Grounding）。
+  実装より先にここを正とする。型を増減させたら、下記 3 箇所を必ず同時に直すこと。
+
+# 同一の型が 2 言語に存在する。手で同期させる契約になっている。
+single_source_of_truth:
+  rust: crates/agent-core/src/model.rs
+  rust_events: crates/agent-core/src/event.rs
+  typescript: apps/gui-tauri/src/types.ts
+  serde_policy: |
+    構造体は `rename_all = "camelCase"`、列挙は `rename_all = "snake_case"`。
+    ゆえに TS 側のフィールドはキャメルケース、状態値はスネークケースの文字列になる。
+
+# ---------------------------------------------------------------------------
+identifiers:
+  AgentId:
+    kind: newtype(String)
+    wire: 透過的な文字列
+    constraint: 英数字 / `-` / `_` のみ、1〜64 文字
+    rationale: |
+      設定ファイル置き場のディレクトリ名になる。`.` と `/` を型の入口で弾くことで、
+      IPC 経由のパストラバーサルを構造として封じる。
+  ModelTemplateId:
+    kind: newtype(String)
+    wire: 透過的な文字列
+
+# ---------------------------------------------------------------------------
+enums:
+  AgentStatus:
+    values: [idle, starting, running, stopping, failed]
+    note: |
+      失敗理由はこの列挙に持たせず AgentSnapshot.lastError へ分離する。
+      ワイヤ表現を素の文字列 `"running"` に保ち、UI の分岐を単純にするため。
+  ConfigFileKind:
+    values:
+      skill: SKILL.md
+      memory: Memory.md
+      construct: Construct.md
+    note: |
+      GUI からは列挙値しか受け取らない。任意のファイル名を IPC に載せないことで、
+      書き込み先を閉じた集合に保つ。
+  Provider:
+    values: [open_ai_compat, anthropic]
+    detect: |
+      未指定なら baseUrl から自動判定。`api.anthropic.com` を含めば anthropic、
+      それ以外は open_ai_compat（判定不能なプロキシは安全側で互換に落とす）。
+  Effort:
+    values: [low, medium, high, xhigh, max]
+    note: 未指定ならリクエストに含めない。既定値を勝手に補わない。
+  Endpoint:
+    tagged_union_key: kind
+    variants:
+      - { kind: user }
+      - { kind: system }
+      - { kind: agent, fields: [id] }
+
+# ---------------------------------------------------------------------------
+entities:
+  AgentSpec:
+    description: ユーザーが編集する永続的な定義
+    fields:
+      id: AgentId
+      name: String
+      modelTemplateId: ModelTemplateId
+      ragSources: String[]
+      connectedAgents: AgentId[]   # 有向グラフの出辺
+      order: u32                    # 左ペインの表示順
+
+  AgentSnapshot:
+    description: 定義と実行時統計を畳んだ読み取り専用ビュー
+    fields:
+      id: AgentId
+      name: String
+      model: String                 # テンプレートから解決。欠落時は "<unknown>"
+      modelTemplateId: ModelTemplateId
+      status: AgentStatus
+      uptimeSecs: u64               # 停止しても保持。再起動で加算
+      totalTokens: u64
+      ragSources: String[]
+      connectedAgents: AgentId[]
+      order: u32
+      lastError: ErrorPayload | null
+
+  ModelTemplate:
+    description: LLM 接続設定。複数登録して各エージェントから参照する
+    fields:
+      id: ModelTemplateId
+      name: String
+      baseUrl: String               # パスは adapter が付ける（/chat/completions or /messages）
+      model: String
+      contextLength: u32
+      temperature: f32 | null       # null なら送らない
+      maxOutputTokens: u32
+      apiKeyEnv: String | null      # 環境変数名のみ。実値は保持しない
+      provider: Provider | null     # null なら baseUrl から自動判定
+      useTools: bool
+      effort: Effort | null
+      requestTimeoutSecs: u32
+      maxRetries: u32
+    invariant: |
+      API キーの実値をこの構造体が持てる場所は存在しない。
+      設定ファイルが平文で保存される以上、秘密を書ける穴を構造から取り除く。
+
+  AgentMessage:
+    fields:
+      id: String                    # UUID v4
+      from: Endpoint
+      to: Endpoint
+      content: String
+      tokens: u32                   # 複数宛先へ配る場合、先頭の 1 件にのみ計上
+      tsMs: u64
+      hop: u8                       # ユーザー入力を起点とした転送回数
+    invariant: |
+      1 回の生成を N 宛先へ配るとき tokens を全件に載せると N 重計上になる。
+      先頭のみに載せるのが契約。
+
+  ErrorPayload:
+    fields:
+      code: String                  # 安定した機械可読値。UI の分岐キー
+      message: String
+      detail: String | null         # source 連鎖を平坦化した文字列
+      agentId: String | null
+      retryable: bool
+    codes:
+      - AGENT_NOT_FOUND
+      - DUPLICATE_AGENT
+      - MODEL_TEMPLATE_NOT_FOUND
+      - INVALID_TOPOLOGY
+      - ALREADY_RUNNING
+      - NOT_RUNNING
+      - MAILBOX_FULL
+      - CONFIG_IO
+      - UNSAFE_IDENTIFIER
+      - COMPUTE_FAILED
+      - SERDE_FAILED
+      - LLM_CONFIG
+      - LLM_HTTP
+      - LLM_API
+      - LLM_EMPTY_RESPONSE
+      - LLM_BLOCKED
+      - LLM_NO_STRUCTURED_OUTPUT
+      - LLM_PARSE
+      - IPC_FAILED                  # TS 側のみ（Tauri ブリッジ自体の失敗）
+
+  RagChunk:
+    fields: { id: String, source: String, text: String }
+
+  TopologyEdge:
+    fields: { source: AgentId, target: AgentId }
+
+# ---------------------------------------------------------------------------
+events:
+  channel: "core://event"
+  tagged_union_key: type
+  variants:
+    agentStatusChanged: { agentId, status }
+    agentStatsUpdated: { agentId, uptimeSecs, totalTokens }
+    messageSent: { message }
+    topologyChanged: {}
+    agentFailed: { agentId, error }
+    hopLimitReached: { agentId, maxHops }
+
+# ---------------------------------------------------------------------------
+topology_rules:
+  rejected:
+    - 自己ループ（自分自身への接続）
+    - 未登録エージェントへの接続
+  allowed:
+    - 循環（相互接続）
+  rationale: |
+    エージェント同士が往復するのはこのシステムの目的そのもの。
+    トポロジーで循環を禁じるのではなく、無限往復は hop 上限で止めるのが正しい層。
+
+# ---------------------------------------------------------------------------
+concurrency:
+  tokio:
+    owns: [エージェントのライフサイクル, LLM 呼び出し, メッセージ配送]
+    rationale: I/O バウンド。ネットワーク待ちでスレッドを占有しない
+  rayon:
+    owns: [RAG のベクトル類似検索, ログのトークン集計]
+    rationale: CPU バウンド。Tokio ワーカー上で回すと IPC 応答が詰まる
+  bridge: agent_core::compute::spawn_rayon（oneshot で受け渡し、双方をブロックしない）
+  anti_pattern: |
+    エージェント実行を Rayon に載せてはいけない。Rayon のプールはコア数に固定されるため、
+    そこでネットワークを待つと同時稼働エージェント数がコア数で頭打ちになる。
+
+# ---------------------------------------------------------------------------
+llm_wire:
+  origin: Kataribe crates/llm_client（実運用で踏んだ罠を継承）
+  layers:
+    - orchestrator: canonical 型だけを組む。wire を一切見ない
+    - LlmBackend:   差し替え点（実 HTTP / Echo）
+    - client:       URL・ヘッダ・タイムアウト・再試行。wire の中身を見ない
+    - adapter:      canonical ⇄ wire の純関数。ネットワークを知らない
+    - wire:         プロバイダの生 JSON 形。唯一の真実
+  invariants:
+    - temperature は Option。None ならキーごと省略する（非対応モデルは送ると 400）
+    - OpenAI 系の tool_calls[].function.arguments は JSON *文字列*。decode 境界で 1 回だけ parse
+    - Anthropic の tool_use.input は JSON *オブジェクト*。parse 不要
+    - 応答側の全フィールドに #[serde(default)] を敷く（互換サーバは形がまちまち）
+    - 未知のコンテンツブロックは Other で受ける（新種で丸ごと壊れないため）
+    - text 空 かつ tool_calls 空 かつ finish==Length のときだけ EmptyResponse（推論の空応答）
+    - Blocked を EmptyResponse から分離する（安全フィルタ拒否を診断可能に保つ）
+    - Parse エラーは raw を保持する（却下理由と一緒に差し戻して再生成させる燃料）
+    - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
+    - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）

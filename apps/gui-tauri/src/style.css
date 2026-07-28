@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/*
+ * デザイントークン。
+ * 色を各コンポーネントに直書きせず、ここへ集約しておく。
+ * 3 ペインが同じ配色体系を共有していないと、境界が視覚的に読めなくなる。
+ */
+@theme {
+  --color-surface-0: oklch(0.19 0.012 265);
+  --color-surface-1: oklch(0.23 0.014 265);
+  --color-surface-2: oklch(0.28 0.016 265);
+  --color-line: oklch(0.36 0.018 265);
+  --color-ink: oklch(0.93 0.008 265);
+  --color-ink-dim: oklch(0.68 0.014 265);
+
+  --color-accent: oklch(0.72 0.14 232);
+  --color-run: oklch(0.75 0.16 152);
+  --color-warn: oklch(0.79 0.15 82);
+  --color-fail: oklch(0.68 0.19 25);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--color-surface-0);
+  color: var(--color-ink);
+  font-family:
+    "Inter", "Noto Sans JP", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ネイティブアプリらしさのため、テキスト以外の選択は無効にする。 */
+body {
+  user-select: none;
+}
+input,
+textarea,
+.selectable {
+  user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-line);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* Vue Flow をアプリの配色に合わせる（既定は明るい前提のため）。 */
+.vue-flow__edge-path {
+  stroke: var(--color-line);
+  stroke-width: 1.5;
+}
+.vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:hover .vue-flow__edge-path {
+  stroke: var(--color-accent);
+}
+.vue-flow__handle {
+  background-color: var(--color-line);
+  border: 1px solid var(--color-surface-0);
+  width: 8px;
+  height: 8px;
+}
+.vue-flow__controls-button {
+  background-color: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-line);
+  fill: var(--color-ink);
+}

@@ -1,0 +1,14 @@
+# リポジトリ内は LF に正規化する。
+# Windows の core.autocrlf 既定に任せると、作業ツリーとリポジトリで改行が食い違い、
+# 別 OS から触ったときに全行差分になる。
+* text=auto eol=lf
+
+# バイナリは変換対象から外す。
+*.png binary
+*.ico binary
+*.icns binary
+*.svg text eol=lf
+
+# ロックファイルはレビュー時に折りたたむ。
+Cargo.lock linguist-generated=true
+bun.lock linguist-generated=true

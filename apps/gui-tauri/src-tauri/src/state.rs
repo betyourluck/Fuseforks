@@ -1,0 +1,82 @@
+//! アプリ状態の組み立てと、コアイベントの Tauri への中継。
+//!
+//! この層の役割は 2 つだけ:
+//! 1. [`Orchestrator`] をワークスペースのパスとバックエンドを与えて起こす
+//! 2. `broadcast` で流れてくる [`CoreEvent`] をウィンドウへ転送する
+//!
+//! ここが **agent-core と Tauri の唯一の接点**であり、コア側は Tauri を知らない。
+
+use std::sync::Arc;
+
+use agent_core::{
+    ConfigStore, CoreEvent, EchoBackend, HttpBackendFactory, Orchestrator, OrchestratorConfig,
+};
+use tauri::{AppHandle, Emitter, Manager};
+
+/// フロントエンドが購読するイベント名。
+pub const CORE_EVENT: &str = "core://event";
+
+/// Tauri の管理状態。
+pub struct AppState {
+    /// オーケストレーター本体。
+    pub orchestrator: Arc<Orchestrator>,
+    /// ワークスペースのルート。「フォルダを開く」導線で使う。
+    pub workspace: std::path::PathBuf,
+}
+
+/// アプリ起動時にオーケストレーターを組み立てる。
+///
+/// バックエンドは [`HttpBackendFactory::fallback`] で構築する。API キーが未設定でも
+/// [`EchoBackend`] へ落ちてアプリは動く。ここで `strict` にすると、キーを入れるまで
+/// 画面が沈黙し、設定不備なのか実装不具合なのかユーザーが切り分けられなくなる。
+///
+/// # Errors
+/// ワークスペースのディレクトリを解決・作成できない場合、
+/// または保存済み `world.json` が壊れている場合。
+pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error::Error>> {
+    let workspace = app.path().app_data_dir()?.join("workspace");
+    tokio::fs::create_dir_all(&workspace).await?;
+
+    let factory = Arc::new(HttpBackendFactory::fallback(Arc::new(EchoBackend::new(
+        "[APIキー未設定のためエコー応答]",
+    ))));
+
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&workspace),
+        factory,
+        OrchestratorConfig::default(),
+    )
+    .await?;
+
+    Ok(AppState {
+        orchestrator: Arc::new(orchestrator),
+        workspace,
+    })
+}
+
+/// コアイベントをウィンドウへ中継するタスクを起こす。
+///
+/// `broadcast` の取りこぼし（`Lagged`）では購読を打ち切らない。UI の描画が
+/// 一時的に遅れただけで、以後すべてのイベントが届かなくなるほうが害が大きい。
+/// 取りこぼした事実は残さないが、後続のイベントで状態は追いつく
+/// （スナップショットは常にコア側が真実なので、UI は次の更新で正しくなる）。
+pub fn spawn_event_bridge(app: AppHandle, orchestrator: Arc<Orchestrator>) {
+    tauri::async_runtime::spawn(async move {
+        let mut rx = orchestrator.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let _ = app.emit(CORE_EVENT, &event);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// 型推論のためだけに使う。[`CoreEvent`] が `Serialize` であることをこの層で固定する。
+const _: fn() = || {
+    fn assert_serialize<T: serde::Serialize>() {}
+    assert_serialize::<CoreEvent>();
+};

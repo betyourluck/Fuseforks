@@ -1,0 +1,110 @@
+//! コア層が外へ押し出すイベント。
+//!
+//! GUI 層はこの型を `broadcast` チャネルで購読し、そのまま Tauri イベントとして
+//! ウィンドウへ中継する。**コア層は Tauri を知らない**ため、この境界が唯一の接点になる。
+//!
+//! `broadcast` を選んだ理由は、購読者が 0 でも 2 でも送信側が変わらないこと。
+//! GUI が閉じていてもオーケストレーターは動き続けられる。
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::ErrorPayload;
+use crate::model::{AgentId, AgentMessage, AgentStatus};
+
+/// UI へ通知する状態変化。
+///
+/// `type` タグつきの判別共用体としてシリアライズされるので、
+/// TypeScript 側では discriminated union としてそのまま扱える。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum CoreEvent {
+    /// エージェントのライフサイクル状態が変わった。
+    #[serde(rename_all = "camelCase")]
+    AgentStatusChanged {
+        /// 対象エージェント。
+        agent_id: AgentId,
+        /// 新しい状態。
+        status: AgentStatus,
+    },
+
+    /// 稼働統計が更新された。稼働中のエージェントについて定期的に流れる。
+    #[serde(rename_all = "camelCase")]
+    AgentStatsUpdated {
+        /// 対象エージェント。
+        agent_id: AgentId,
+        /// 累積稼働秒数。
+        uptime_secs: u64,
+        /// 累積トークン数。
+        total_tokens: u64,
+    },
+
+    /// 発話が 1 件確定した。中央ペインのログに追記される。
+    #[serde(rename_all = "camelCase")]
+    MessageSent {
+        /// 確定した発話。
+        message: AgentMessage,
+    },
+
+    /// 接続関係が変わった。グラフの再描画が必要。
+    #[serde(rename_all = "camelCase")]
+    TopologyChanged,
+
+    /// エージェントの実行が失敗した。
+    ///
+    /// 失敗はコマンドの戻り値としてではなく、この経路でも流す。
+    /// エージェントの実行はコマンド呼び出しと非同期に進むため、
+    /// 起動コマンドの `Result` だけでは 3 分後の失敗を UI へ届けられない。
+    #[serde(rename_all = "camelCase")]
+    AgentFailed {
+        /// 対象エージェント。
+        agent_id: AgentId,
+        /// 失敗内容。
+        error: ErrorPayload,
+    },
+
+    /// 転送上限に達して発話の連鎖を打ち切った。
+    ///
+    /// 相互接続されたエージェントは放置すると無限に往復する。打ち切りを
+    /// 黙って行うと「なぜ会話が止まったか」が UI から見えなくなるため明示的に通知する。
+    #[serde(rename_all = "camelCase")]
+    HopLimitReached {
+        /// 打ち切られた時点の発話元。
+        agent_id: AgentId,
+        /// 適用された上限値。
+        max_hops: u8,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn events_serialize_as_tagged_union() {
+        let event = CoreEvent::AgentStatusChanged {
+            agent_id: AgentId::from("agent_01"),
+            status: AgentStatus::Running,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "type": "agentStatusChanged",
+                "agentId": "agent_01",
+                "status": "running"
+            })
+        );
+    }
+
+    #[test]
+    fn hop_limit_event_carries_the_applied_limit() {
+        let event = CoreEvent::HopLimitReached {
+            agent_id: AgentId::from("agent_02"),
+            max_hops: 8,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+
+        assert_eq!(json["type"], "hopLimitReached");
+        assert_eq!(json["maxHops"], 8);
+    }
+}

@@ -1,0 +1,257 @@
+//! Anthropic Messages API adapter。
+//!
+//! OpenAI 互換層を経由せずネイティブ経路を持つ理由は **プロンプトキャッシュ**にある。
+//! 互換層はキャッシュ指示を通せないため、毎ターンのフルプロンプト再送が全額課金になる。
+//! ネイティブなら安定プレフィックス（システム指示 + 役割定義）に `cache_control` を打てて、
+//! 読み取り側が大幅に安くなる。マルチエージェントは同じ system を N 体分毎ターン送るので、
+//! ここの差が運用コストに直結する。
+//!
+//! canonical 側との差分（adapter が吸収する方言）:
+//! - `system` はメッセージ配列に混ぜず、独立したトップレベルフィールド
+//! - ツールの引数スキーマのキーは `parameters` ではなく `input_schema`
+//! - ツール引数 `input` は **JSON オブジェクト**（OpenAI のような JSON 文字列ではない）
+//! - 使用量のキー名が `input_tokens` / `output_tokens` / `cache_read_input_tokens`
+//!
+//! 由来: Kataribe `crates/llm_client/src/anthropic.rs` の設計方針。
+
+use super::canonical::{ChatResponse, Finish, Role, ToolCall, ToolChoice, Usage};
+use super::error::LlmError;
+use super::wire;
+use crate::llm::canonical::ChatRequest;
+
+/// canonical → Anthropic wire。
+///
+/// `cacheable_prefix_len > 0` のとき、system プロンプトを
+/// 「安定部分 + 可変部分」の 2 ブロックに割り、安定部分の末尾に `cache_control` を打つ。
+/// 分割位置は呼び出し側が文字数で宣言する契約にしてある。
+pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
+    // system ロールは Anthropic では messages に混ぜられないため、先に抜き出して連結する。
+    let system_text: String = req
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::System)
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let system = build_system_blocks(&system_text, req.cacheable_prefix_len);
+
+    let messages = req
+        .messages
+        .iter()
+        .filter(|m| m.role != Role::System)
+        .map(|m| wire::AnthropicMessage {
+            role: match m.role {
+                Role::Assistant => "assistant",
+                _ => "user",
+            },
+            content: m.content.clone(),
+        })
+        .collect();
+
+    let tools = req
+        .tools
+        .iter()
+        .map(|t| wire::AnthropicTool {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            input_schema: t.parameters.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        match &req.tool_choice {
+            ToolChoice::None => None,
+            ToolChoice::Auto => Some(wire::AnthropicToolChoice {
+                kind: "auto",
+                name: None,
+            }),
+            ToolChoice::Required => Some(wire::AnthropicToolChoice {
+                kind: "any",
+                name: None,
+            }),
+            ToolChoice::Specific(name) => Some(wire::AnthropicToolChoice {
+                kind: "tool",
+                name: Some(name.clone()),
+            }),
+        }
+    };
+
+    wire::AnthropicRequest {
+        model: req.model.clone(),
+        max_tokens: req.max_tokens,
+        system,
+        messages,
+        temperature: req.temperature,
+        tools,
+        tool_choice,
+    }
+}
+
+/// system プロンプトをキャッシュ境界で分割する（純関数）。
+///
+/// `prefix_len` が 0、テキストが空、または境界が末尾以降の場合は単一ブロックにする。
+/// 境界は文字数指定だが、マルチバイト文字の途中で切らないよう `char_indices` で丸める。
+fn build_system_blocks(text: &str, prefix_len: usize) -> Vec<wire::AnthropicTextBlock> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let cut = text
+        .char_indices()
+        .nth(prefix_len)
+        .map(|(byte_idx, _)| byte_idx);
+
+    match cut {
+        // 境界が本文の内側にあるときだけ 2 ブロックへ割る。
+        Some(idx) if idx > 0 => vec![
+            wire::AnthropicTextBlock {
+                kind: "text",
+                text: text[..idx].to_owned(),
+                cache_control: Some(wire::AnthropicCacheControl {
+                    kind: "ephemeral",
+                }),
+            },
+            wire::AnthropicTextBlock {
+                kind: "text",
+                text: text[idx..].to_owned(),
+                cache_control: None,
+            },
+        ],
+        _ => vec![wire::AnthropicTextBlock {
+            kind: "text",
+            text: text.to_owned(),
+            cache_control: None,
+        }],
+    }
+}
+
+/// Anthropic wire → canonical。
+///
+/// コンテンツブロック列を走査し、テキストは連結、`tool_use` は [`ToolCall`] へ移す。
+/// `input` は既にオブジェクトなので、OpenAI 経路のような文字列 parse は不要。
+pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
+    let usage = resp
+        .usage
+        .as_ref()
+        .map(|u| Usage {
+            // キャッシュ読み取り分を prompt に含めて、プロバイダ間で総量の意味を揃える。
+            prompt: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
+            completion: u.output_tokens,
+            cache_read: u.cache_read_input_tokens,
+        })
+        .unwrap_or_default();
+
+    let finish = match resp.stop_reason.as_deref() {
+        Some("end_turn") | Some("stop_sequence") => Finish::Stop,
+        Some("tool_use") => Finish::ToolUse,
+        Some("max_tokens") => Finish::Length,
+        _ => Finish::Other,
+    };
+
+    let mut text = String::new();
+    let mut tool_calls = Vec::new();
+    for block in resp.content {
+        match block {
+            wire::AnthropicContentBlock::Text { text: chunk } => text.push_str(&chunk),
+            wire::AnthropicContentBlock::ToolUse { id, name, input } => {
+                tool_calls.push(ToolCall {
+                    id,
+                    name,
+                    args: input,
+                });
+            }
+            // thinking など未知のブロックは canonical に写す先がないので落とす。
+            wire::AnthropicContentBlock::Other => {}
+        }
+    }
+
+    Ok(ChatResponse {
+        text: if text.is_empty() { None } else { Some(text) },
+        tool_calls,
+        finish,
+        usage,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::canonical::{ChatMessage, ToolSpec};
+    use serde_json::json;
+
+    fn request(cacheable_prefix_len: usize) -> ChatRequest {
+        ChatRequest {
+            model: "claude-opus-5".into(),
+            messages: vec![
+                ChatMessage::system("あなたは計画立案担当です。"),
+                ChatMessage::user("進捗を教えて"),
+            ],
+            tools: vec![ToolSpec {
+                name: "emit_plan".into(),
+                description: "計画を出力する".into(),
+                parameters: json!({ "type": "object" }),
+            }],
+            tool_choice: ToolChoice::Specific("emit_plan".into()),
+            temperature: None,
+            max_tokens: 1024,
+            effort: None,
+            cacheable_prefix_len,
+        }
+    }
+
+    #[test]
+    fn system_is_lifted_out_of_messages() {
+        let w = encode(&request(0));
+
+        assert_eq!(w.system.len(), 1);
+        assert_eq!(w.system[0].text, "あなたは計画立案担当です。");
+        assert_eq!(w.messages.len(), 1, "system は messages に残らない");
+        assert_eq!(w.messages[0].role, "user");
+    }
+
+    #[test]
+    fn cache_control_is_placed_at_the_declared_boundary() {
+        let w = encode(&request(6));
+
+        assert_eq!(w.system.len(), 2);
+        // 6 *文字* で切る（バイトではない）。マルチバイトの途中で割れないこと。
+        assert_eq!(w.system[0].text, "あなたは計画");
+        assert_eq!(w.system[1].text, "立案担当です。");
+        assert!(w.system[0].cache_control.is_some());
+        assert!(w.system[1].cache_control.is_none());
+    }
+
+    #[test]
+    fn tool_schema_uses_input_schema_key() {
+        let json = serde_json::to_value(encode(&request(0))).unwrap();
+
+        assert_eq!(json["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(json["tool_choice"]["type"], "tool");
+        assert_eq!(json["tool_choice"]["name"], "emit_plan");
+        assert!(json.get("temperature").is_none());
+    }
+
+    #[test]
+    fn decode_normalizes_usage_and_tool_input() {
+        let raw = r#"{
+            "content": [
+                { "type": "text", "text": "了解" },
+                { "type": "tool_use", "id": "tu_1", "name": "emit_plan", "input": { "steps": ["a"] } }
+            ],
+            "stop_reason": "tool_use",
+            "usage": { "input_tokens": 10, "output_tokens": 5,
+                       "cache_read_input_tokens": 90, "cache_creation_input_tokens": 0 }
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+
+        assert_eq!(resp.text.as_deref(), Some("了解"));
+        assert_eq!(resp.finish, Finish::ToolUse);
+        assert_eq!(resp.tool_calls[0].args, json!({ "steps": ["a"] }));
+        // キャッシュ読み取り分を含めた総入力量に正規化される。
+        assert_eq!(resp.usage.prompt, 100);
+        assert_eq!(resp.usage.cache_read, 90);
+    }
+}

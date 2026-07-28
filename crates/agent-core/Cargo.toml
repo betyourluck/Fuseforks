@@ -1,0 +1,25 @@
+[package]
+name = "agent-core"
+description = "Concordia のマルチエージェント・オーケストレーション中核。GUI 層に一切依存しない。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+rayon.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
+
+[lints.rust]
+# GUI 層への逆依存を機械的に禁じるための最低限の衛生設定。
+unsafe_code = "forbid"
+missing_docs = "warn"
