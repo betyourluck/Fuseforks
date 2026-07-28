@@ -43,23 +43,57 @@ impl Drop for TempDir {
     }
 }
 
+/// **Claude Desktop の設定をそのまま貼れる**という主張の検証。
+///
+/// 互換を謳った以上、素の `"command": "npx"`（Claude Desktop の設定に実際に
+/// 書かれている形）で通らなければ嘘になる。Windows では `npx` が拡張子なしの
+/// スクリプトとしても PATH に居るため、ここは実測でしか確かめられない。
+#[tokio::test]
+#[ignore = "外部コマンド (npx) とネットワークに依存する"]
+async fn a_claude_desktop_config_works_verbatim() {
+    let dir = TempDir::new("verbatim");
+    std::fs::write(dir.0.join("hello.txt"), "そのまま貼れる").unwrap();
+
+    let mut servers = BTreeMap::new();
+    servers.insert(
+        "fs".to_owned(),
+        McpServerConfig {
+            // Claude Desktop の設定に書かれているのはこの形。加工しない。
+            command: "npx".to_owned(),
+            args: vec![
+                "-y".to_owned(),
+                "@modelcontextprotocol/server-filesystem".to_owned(),
+                dir.0.display().to_string(),
+            ],
+            env: BTreeMap::new(),
+            enabled: true,
+        },
+    );
+
+    let manager = McpManager::connect_all(&McpConfig { servers }).await;
+    let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
+    assert!(
+        status.connected,
+        "素の `npx` で接続できること（互換の主張が成り立つこと）。理由: {:?}",
+        status.error
+    );
+    manager.shutdown().await;
+}
+
 /// 公式のリファレンス実装（filesystem サーバー）へ実際に繋ぐ。
 ///
-/// `npx` は Windows では `npx.cmd` を起動する必要がある（`Command` は
-/// `.cmd` を PATH 解決しない）。**これは実運用でも踏む罠**なので、
-/// ここで形を確かめておく価値がある。
+/// コマンド名は素のまま渡す（PATH 解決はコア側の責務）。
 #[tokio::test]
 #[ignore = "外部コマンド (npx) とネットワークに依存する"]
 async fn connects_to_a_real_server_and_calls_a_tool() {
     let dir = TempDir::new("filesystem");
     std::fs::write(dir.0.join("hello.txt"), "こんにちは、MCP。").unwrap();
 
-    let command = if cfg!(windows) { "npx.cmd" } else { "npx" };
     let mut servers = BTreeMap::new();
     servers.insert(
         "fs".to_owned(),
         McpServerConfig {
-            command: command.to_owned(),
+            command: "npx".to_owned(),
             args: vec![
                 "-y".to_owned(),
                 "@modelcontextprotocol/server-filesystem".to_owned(),

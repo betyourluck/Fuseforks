@@ -35,6 +35,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rmcp = { version = "2.2", default-features = false, features = [
   "client",
   "transport-child-process",
+  # PATH からコマンドを解決する。**Windows で必須**: 素の `npx` は拡張子なしの
+  # スクリプトとしても PATH に居るため、CreateProcess が実行できず
+  # `program not found` になる。Claude Desktop の設定は素の `npx` で書かれており、
+  # 「そのまま貼れる」と謳う以上ここを解決しないと嘘になる (実測で確認済み)。
+  "which-command",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

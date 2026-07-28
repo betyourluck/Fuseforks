@@ -339,7 +339,19 @@ async fn connect_one(
     name: &str,
     config: &McpServerConfig,
 ) -> CoreResult<(RunningService<RoleClient, ()>, Vec<Arc<dyn AgentTool>>)> {
-    let mut command = tokio::process::Command::new(&config.command);
+    // コマンドは PATH から解決する。**素の名前をそのまま渡してはいけない。**
+    // Windows では `npx` が拡張子なしのスクリプトとしても PATH に居るため、
+    // CreateProcess が実行できず `program not found` になる（実測で確認）。
+    // Claude Desktop の設定は素の `npx` で書かれており、「そのまま貼れる」という
+    // 互換の主張はここを解決して初めて成り立つ。
+    let mut command =
+        rmcp::transport::which_command(&config.command).map_err(|err| CoreError::Mcp {
+            server: name.to_owned(),
+            message: format!(
+                "コマンド `{}` が見つかりません（PATH を確認してください）: {err}",
+                config.command
+            ),
+        })?;
     command.args(&config.args);
     for (key, value) in &config.env {
         command.env(key, value);
