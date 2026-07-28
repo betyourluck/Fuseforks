@@ -566,6 +566,142 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
     );
 }
 
+/// 居合わせた会話（広場ログ）が見えること。
+///
+/// 各エージェントの履歴は私的で、他人の発言は一切見えなかった。
+/// 「みんなに自己紹介して」と頼んでも、互いの自己紹介が届かない。
+/// 村の広場では、話は宛先でなくても聞こえる — ただし**返事をするのは
+/// 呼ばれた人だけ**（聞こえることと反応することは別の軸）。
+#[tokio::test]
+async fn agents_overhear_what_others_said_in_the_room() {
+    /// 転送ツールがあれば渡し、無ければ本文で終える。全リクエストを記録する。
+    #[derive(Default)]
+    struct RoomBackend {
+        seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for RoomBackend {
+        fn name(&self) -> &str {
+            "room"
+        }
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            self.seen.lock().unwrap().push(req.messages.clone());
+            let tool_calls = match req.tools.iter().find(|t| t.name.starts_with("transfer_to_")) {
+                Some(tool) => vec![ToolCall {
+                    id: "call_1".into(),
+                    name: tool.name.clone(),
+                    args: serde_json::json!({ "message": "秘密の合言葉です" }),
+                    extra: None,
+                }],
+                None => Vec::new(),
+            };
+            Ok(ChatResponse {
+                text: Some("了解".into()),
+                tool_calls,
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            })
+        }
+    }
+
+    let backend = Arc::new(RoomBackend::default());
+    let dir = TempDir::new("room-log");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b, c) = (
+        AgentId::from("agent_a"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&a, "アルファ"), (&b, "ブラボー"), (&c, "チャーリー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+    // a → b だけを繋ぐ。c は誰とも繋がっていない「居合わせただけ」の第三者。
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "ブラボーへ伝えて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // ここまでで a → b の発話がログに残っている。次に c へ話しかける。
+    orchestrator.send_user_message(&c, "何か聞こえた？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let last = requests.last().expect("c のリクエスト");
+    let joined = last
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        joined.contains("秘密の合言葉"),
+        "居合わせた会話が見えること。実際:\n{joined}"
+    );
+    assert!(
+        joined.contains("アルファ"),
+        "誰の発言かが分かること。実際:\n{joined}"
+    );
+}
+
+/// ユーザーが宛先を選んだ発話は、宛先外のエージェントには広場ログにも出ないこと。
+///
+/// 「その人が通知に入っていないときは、そのエージェントはメッセージがあったこと
+/// すら知らないべき」（ユーザー指示）。広場ログは**エージェント同士の発話**を
+/// 共有する機構で、ユーザーが選んだ聴衆を迂回する裏口にしてはいけない。
+#[tokio::test]
+async fn a_private_user_message_never_leaks_into_the_room_log() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("room-privacy");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    for (id, name) in [(&a, "アルファ"), (&b, "ブラボー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    // a にだけ内緒話をする。
+    orchestrator.send_user_message(&a, "これはアルファだけに言う内緒話").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    // 次に b へ話しかける。
+    orchestrator.send_user_message(&b, "何か聞いた？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let last = requests.last().expect("b のリクエスト");
+    let joined = last
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        !joined.contains("内緒話"),
+        "ユーザーが選んだ聴衆を広場ログが迂回してはいけない。実際:\n{joined}"
+    );
+}
+
 /// 転送ツールが**表示名**で相手を指すこと。
 ///
 /// 会話は表示名（「ザリ・ロブステル」）で流れるのに、ツールは内部 ID

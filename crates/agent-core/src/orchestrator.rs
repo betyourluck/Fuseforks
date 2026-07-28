@@ -98,6 +98,17 @@ pub struct OrchestratorConfig {
     pub stats_interval: Duration,
     /// 保持するメッセージログの最大件数。超えた分は古いほうから捨てる。
     pub log_capacity: usize,
+    /// プロンプトへ載せる「居合わせた会話」の件数（広場ログ）。
+    ///
+    /// 0 で無効。大きくすると場の見通しは良くなるが、**全エージェントの
+    /// プロンプトが同じだけ膨らむ** — 人数分の乗算で効いてくるので、
+    /// 会話の流れを追える最小限に留める。
+    pub room_log_window: usize,
+    /// 広場ログの 1 発話あたりの表示上限（文字数）。
+    ///
+    /// 長い発話 1 つでログ全体が埋まるのを防ぐ。要点だけ見えれば
+    /// 「誰が何の話をしていたか」は伝わる。
+    pub room_log_excerpt_chars: usize,
     /// 1 回の応答生成で RAG から引く断片数。
     pub rag_top_k: usize,
 }
@@ -112,6 +123,8 @@ impl Default for OrchestratorConfig {
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),
             log_capacity: 5_000,
+            room_log_window: 12,
+            room_log_excerpt_chars: 200,
             rag_top_k: 4,
         }
     }
@@ -921,6 +934,12 @@ async fn handle_message(
         }
     }
 
+    // 居合わせた会話（広場ログ）。自分の履歴より前に置く — 場の背景であって、
+    // 自分とのやり取りではない。
+    if let Some(room) = compose_room_log(shared, agent_id, &shared.config).await {
+        messages.push(ChatMessage::system(room));
+    }
+
     // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
     {
         let world = shared.world.read().await;
@@ -1181,6 +1200,96 @@ async fn execute_tool(
         agent_id: agent_id.clone(),
     };
     tool.call(&ctx, &call.args).await
+}
+
+/// 「居合わせた会話」を組み立てる（広場ログ）。
+///
+/// # なぜ「聞こえる」と「反応する」を分けるのか
+///
+/// 各エージェントの履歴は私的で、他人の発言は一切見えなかった。だが村の広場では、
+/// 話は自分宛でなくても聞こえる。かといって**聞こえるたびに反応させると
+/// 反響が起き、トークンが人数分燃える**（failures.md #20）。
+/// そこで配送（＝ターンの発火）は宛先だけに保ち、**可視性だけを共有する**。
+/// これがこの関数の役割で、ここに載る発話はターンを発火させない。
+///
+/// # 何を載せないか
+///
+/// **ユーザーが宛先を選んだ発話は載せない。** ユーザーは聴衆を選んで話しており、
+/// 広場ログがその選択を迂回する裏口になってはいけない
+/// （「宛先外のエージェントはメッセージがあったことすら知らないべき」）。
+/// 自分が送り手・受け手である発話も載せない — それは既に自分の履歴にある。
+async fn compose_room_log(
+    shared: &Shared,
+    agent_id: &AgentId,
+    config: &OrchestratorConfig,
+) -> Option<String> {
+    if config.room_log_window == 0 {
+        return None;
+    }
+
+    let overheard: Vec<AgentMessage> = {
+        let log = shared.log.read().await;
+        log.iter()
+            .rev()
+            .filter(|message| {
+                // エージェント発の発話だけ。ユーザー発は聴衆が選ばれている。
+                let from_agent = matches!(message.from, Endpoint::Agent { .. });
+                let is_mine = message.from == (Endpoint::Agent { id: agent_id.clone() })
+                    || message.to == (Endpoint::Agent { id: agent_id.clone() });
+                from_agent && !is_mine
+            })
+            .take(config.room_log_window)
+            .cloned()
+            .collect()
+    };
+
+    if overheard.is_empty() {
+        return None;
+    }
+
+    let world = shared.world.read().await;
+    let label = |endpoint: &Endpoint| -> String {
+        match endpoint {
+            Endpoint::User => "ユーザー".to_owned(),
+            Endpoint::System => "システム".to_owned(),
+            Endpoint::Agent { id } => world
+                .agent(id)
+                .map(|record| record.spec.name.clone())
+                .unwrap_or_else(|_| id.to_string()),
+        }
+    };
+
+    // 収集は新しい順なので、表示は古い順へ戻す。
+    let lines: Vec<String> = overheard
+        .iter()
+        .rev()
+        .map(|message| {
+            let excerpt = truncate_chars(&message.content, config.room_log_excerpt_chars);
+            format!(
+                "- {} → {}: {}",
+                label(&message.from),
+                label(&message.to),
+                excerpt
+            )
+        })
+        .collect();
+
+    Some(format!(
+        "## この場で交わされていた会話\n\
+         あなた宛ではありませんが、同じ場に居たので聞こえていた発言です。\
+         **返事をする義務はありません。** 文脈として使ってください。\n{}",
+        lines.join("\n")
+    ))
+}
+
+/// 文字数で切り詰める。マルチバイト文字の途中で切らない。
+fn truncate_chars(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= limit {
+        return trimmed.to_owned();
+    }
+    let head: String = trimmed.chars().take(limit).collect();
+    format!("{head}…")
 }
 
 /// 1 回の応答の行き先。
