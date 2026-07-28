@@ -9,8 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::event::CoreEvent;
-use agent_core::model::{AgentId, AgentSpec, AgentStatus, Endpoint, ModelTemplate};
-use agent_core::{ConfigStore, FixedBackendFactory, Orchestrator, OrchestratorConfig};
+use agent_core::model::{
+    AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
+};
+use agent_core::{ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig};
 use tokio::sync::broadcast::Receiver;
 
 /// テスト用の一時ディレクトリ。終了時に破棄する。
@@ -41,6 +43,7 @@ async fn setup(dir: &TempDir, config: OrchestratorConfig) -> Orchestrator {
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),
         Arc::new(FixedBackendFactory::echo("[echo]")),
+        Arc::new(InMemorySecretStore::new()),
         config,
     )
     .await
@@ -77,17 +80,16 @@ fn messages(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
         .collect()
 }
 
-/// 平文で保存されてしまった API キーは、起動しただけでディスクから消えること。
+/// 旧形式（`apiKeyEnv` を持つ設定ファイル）でも開けること。
 ///
-/// 次の編集操作を待つ設計だと、ユーザーが何もしない限り秘密が残り続ける。
+/// 旧フィールドは環境変数名しか持たず、そこから移せる値が無い。開けなくするより、
+/// 未知フィールドとして無視して「認証情報が未登録」の状態から始めるほうが良い。
 #[tokio::test]
-async fn a_leaked_api_key_is_scrubbed_from_disk_on_startup() {
-    let dir = TempDir::new("scrub");
-    let world_path = dir.0.join("world.json");
+async fn a_legacy_world_file_still_opens() {
+    let dir = TempDir::new("legacy");
 
-    // 入口を塞ぐ前に書かれたファイルを再現する。
     std::fs::write(
-        &world_path,
+        dir.0.join("world.json"),
         r#"{
             "agents": [],
             "modelTemplates": [{
@@ -95,7 +97,7 @@ async fn a_leaked_api_key_is_scrubbed_from_disk_on_startup() {
                 "baseUrl": "https://api.anthropic.com/v1",
                 "model": "claude-sonnet-5", "contextLength": 128000,
                 "temperature": null, "maxOutputTokens": 4096,
-                "apiKeyEnv": "sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY",
+                "apiKeyEnv": "ANTHROPIC_API_KEY",
                 "provider": "anthropic", "useTools": true, "effort": null,
                 "requestTimeoutSecs": 120, "maxRetries": 3
             }]
@@ -103,23 +105,77 @@ async fn a_leaked_api_key_is_scrubbed_from_disk_on_startup() {
     )
     .unwrap();
 
-    // 起動するだけ。編集操作は一切行わない。
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),
         Arc::new(FixedBackendFactory::echo("[echo]")),
+        Arc::new(InMemorySecretStore::new()),
         OrchestratorConfig::default(),
     )
     .await
     .unwrap();
 
-    let on_disk = std::fs::read_to_string(&world_path).unwrap();
-    assert!(!on_disk.contains("sk-ant"), "秘密がファイルに残っている");
-
-    // 秘密以外の設定は保持される。
     let templates = orchestrator.templates().await;
     assert_eq!(templates.len(), 1);
     assert_eq!(templates[0].model, "claude-sonnet-5");
-    assert_eq!(templates[0].api_key_env, None);
+    assert_eq!(templates[0].credential, CredentialSource::None);
+}
+
+/// 資格情報の登録・削除が、取得元の切り替えと連動すること。
+///
+/// 秘密だけ入れて `credential` が `None` のままだと、登録したのに使われない。
+#[tokio::test]
+async fn registering_a_credential_switches_the_template_to_the_keyring() {
+    let dir = TempDir::new("credential");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = ModelTemplateId::from("tpl");
+
+    assert!(!orchestrator.has_credential(&id).unwrap());
+
+    orchestrator.set_credential(&id, "secret-value").await.unwrap();
+
+    assert!(orchestrator.has_credential(&id).unwrap());
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::Keyring
+    );
+    // 秘密は平文の設定ファイルに現れない。
+    let on_disk = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(!on_disk.contains("secret-value"));
+
+    orchestrator.clear_credential(&id).await.unwrap();
+    assert!(!orchestrator.has_credential(&id).unwrap());
+    assert_eq!(
+        orchestrator.templates().await[0].credential,
+        CredentialSource::None
+    );
+}
+
+/// 存在しないテンプレートに対して秘密を書き込ませない。
+#[tokio::test]
+async fn a_credential_cannot_be_stored_for_an_unknown_template() {
+    let dir = TempDir::new("orphan-credential");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let err = orchestrator
+        .set_credential(&ModelTemplateId::from("ghost"), "secret-value")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "MODEL_TEMPLATE_NOT_FOUND");
+}
+
+/// テンプレートを消したら、資格情報ストアの登録も消えること。
+///
+/// 設定だけ消して秘密を残すと、画面のどこからも見えない孤児が OS 側に溜まる。
+#[tokio::test]
+async fn deleting_a_template_also_removes_its_stored_credential() {
+    let dir = TempDir::new("credential-cleanup");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = ModelTemplateId::from("tpl");
+
+    orchestrator.set_credential(&id, "secret-value").await.unwrap();
+    orchestrator.remove_template(&id).await.unwrap();
+
+    assert!(!orchestrator.has_credential(&id).unwrap());
 }
 
 #[tokio::test]
@@ -326,6 +382,7 @@ async fn state_survives_a_restart_but_agents_do_not_auto_start() {
     let reopened = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),
         Arc::new(FixedBackendFactory::echo("[echo]")),
+        Arc::new(InMemorySecretStore::new()),
         OrchestratorConfig::default(),
     )
     .await

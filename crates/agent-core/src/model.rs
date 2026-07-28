@@ -21,26 +21,6 @@ pub fn is_safe_identifier(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// 環境変数名として妥当か判定する。
-///
-/// 許可するのは英数字と `_` のみで、先頭は数字以外、最大 128 文字。
-///
-/// この関数の目的は書式検査ではなく **秘密の混入防止**にある。
-/// API キーの実値（`sk-ant-…` / `sk-…` など）は必ず `-` を含むか極端に長いため、
-/// この規則で機械的に弾ける。入力欄に注意書きを添えるだけでは、
-/// いずれ実値が貼られて平文で保存される。
-pub fn is_env_var_name(value: &str) -> bool {
-    if value.is_empty() || value.len() > 128 {
-        return false;
-    }
-    let mut chars = value.chars();
-    let first = chars.next().unwrap_or('\0');
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return false;
-    }
-    value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// エージェントの一意識別子。
 ///
 /// `String` の newtype にすることで、モデルテンプレート ID や RAG ソース名との
@@ -185,10 +165,25 @@ impl AgentSpec {
     }
 }
 
+/// 秘密の取得元。
+///
+/// 「どこから取るか」だけを保持し、**秘密そのものを保持できるバリアントを持たない**。
+/// 平文の設定ファイルに秘密が入りうる経路を、型の段階で存在させないための形。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialSource {
+    /// 認証不要。ローカル推論サーバなど。
+    #[default]
+    None,
+    /// OS の資格情報ストアから取得する。キーはテンプレート ID。
+    Keyring,
+}
+
 /// LLM 接続設定のテンプレート。複数登録して各エージェントから参照する。
 ///
-/// API キーの実値はここに保持せず、[`ModelTemplate::api_key_env`] に環境変数名だけを持つ。
-/// 設定ファイルが平文で保存される以上、秘密を書ける場所を構造から取り除いておく。
+/// **この構造体は秘密を保持しない。** 保持するのは
+/// [`ModelTemplate::credential`]、すなわち「どこから取るか」だけ。
+/// 設定は平文のファイルに保存されるため、秘密を書ける場所を型から取り除いてある。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelTemplate {
@@ -213,9 +208,14 @@ pub struct ModelTemplate {
     pub temperature: Option<f32>,
     /// 1 応答あたりの最大出力トークン数。
     pub max_output_tokens: u32,
-    /// API キーを保持する環境変数名。実値はここに置かない。
+    /// 認証情報の取得元。
+    ///
+    /// 旧版の `apiKeyEnv`（環境変数名）は廃止した。読み込み時に未知フィールドとして
+    /// 無視され、`credential` は既定の [`CredentialSource::None`] になる。
+    /// 移行にあたって利用者はキーを画面から入れ直すことになるが、
+    /// 旧フィールドは名前しか持っておらず、そこから移せる値が存在しない。
     #[serde(default)]
-    pub api_key_env: Option<String>,
+    pub credential: CredentialSource,
     /// ワイヤプロトコルの明示指定。`None` なら `base_url` から自動判定する。
     #[serde(default)]
     pub provider: Option<crate::llm::Provider>,
@@ -266,7 +266,7 @@ impl ModelTemplate {
             context_length: 128_000,
             temperature: None,
             max_output_tokens: 4_096,
-            api_key_env: None,
+            credential: CredentialSource::None,
             provider: None,
             use_tools: true,
             effort: None,
@@ -444,6 +444,37 @@ mod tests {
         assert!(!is_safe_identifier("agents/01"));
         assert!(!is_safe_identifier(""));
         assert!(!is_safe_identifier(&"a".repeat(MAX_IDENT_LEN + 1)));
+    }
+
+    #[test]
+    fn template_has_no_field_that_can_hold_a_secret() {
+        // 秘密が入りうる場所を型から消したことを、直列化結果で固定する。
+        // 平文の設定ファイルに秘密が現れる経路は「置ける場所があること」から始まる。
+        let json = serde_json::to_value(ModelTemplate::new("tpl", "既定", "gpt-4o")).unwrap();
+        let object = json.as_object().unwrap();
+
+        assert!(!object.contains_key("apiKey"));
+        assert!(!object.contains_key("apiKeyEnv"));
+        assert_eq!(object["credential"], "none");
+    }
+
+    #[test]
+    fn old_templates_with_api_key_env_still_load() {
+        // 旧版のファイルを開けなくしない。未知フィールドは無視し、
+        // credential は既定（認証不要）へ落ちる。
+        let legacy = r#"{
+            "id": "tpl", "name": "旧設定",
+            "baseUrl": "https://api.anthropic.com/v1",
+            "model": "claude-sonnet-5", "contextLength": 128000,
+            "temperature": null, "maxOutputTokens": 4096,
+            "apiKeyEnv": "ANTHROPIC_API_KEY",
+            "provider": "anthropic", "useTools": true, "effort": null,
+            "requestTimeoutSecs": 120, "maxRetries": 3
+        }"#;
+
+        let template: ModelTemplate = serde_json::from_str(legacy).expect("旧形式も開けること");
+        assert_eq!(template.credential, CredentialSource::None);
+        assert_eq!(template.model, "claude-sonnet-5");
     }
 
     #[test]

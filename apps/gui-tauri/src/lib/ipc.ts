@@ -101,13 +101,21 @@ export const searchRag = (sources: string[], query: string, topK: number) =>
 export const workspacePath = () => call<string>("workspace_path");
 
 /**
- * 環境変数がアプリのプロセスから見えるかを問い合わせる。値は返らない。
+ * API キーを OS の資格情報ストアへ登録する。
  *
- * 「登録されているか」ではなく「見えるか」を返すのが要点。Windows では
- * 設定済みの変数が起動済みプロセスへ伝播しないため、両者は日常的にずれる。
+ * 秘密がフロントを通るのはこの 1 本だけで、方向は片道。
+ * 読み出す API は存在しない。
  */
-export const envVarIsVisible = (name: string) =>
-  call<boolean>("env_var_is_visible", { name });
+export const setModelCredential = (templateId: ModelTemplateId, secret: string) =>
+  call<void>("set_model_credential", { templateId, secret });
+
+/** API キーを資格情報ストアから削除する。 */
+export const clearModelCredential = (templateId: ModelTemplateId) =>
+  call<void>("clear_model_credential", { templateId });
+
+/** API キーが登録済みかだけを問い合わせる。値は返らない。 */
+export const modelCredentialExists = (templateId: ModelTemplateId) =>
+  call<boolean>("model_credential_exists", { templateId });
 
 // ---- 定義の編集 -------------------------------------------------------------
 

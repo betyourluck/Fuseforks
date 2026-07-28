@@ -12,6 +12,14 @@ license = "MIT"
 agent-core = { path = "crates/agent-core" }
 
 async-trait = "0.1"
+# OS の資格情報ストア。Windows 資格情報マネージャー / macOS Keychain /
+# freedesktop Secret Service を同一 API で扱う。各 feature は target_os で
+# ゲートされるため、全プラットフォーム分を列挙してよい。
+keyring = { version = "3", features = [
+  "apple-native",
+  "windows-native",
+  "sync-secret-service",
+] }
 rayon = "1.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

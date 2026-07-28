@@ -7,7 +7,7 @@
 //! ここに貼る JSON は推測で書かず、TS 側の実装から機械的に写すこと。
 
 use agent_core::llm::{Effort, Provider};
-use agent_core::model::{AgentSpec, ModelTemplate};
+use agent_core::model::{AgentSpec, CredentialSource, ModelTemplate};
 
 /// `ModelTemplateDialog.vue` の `blank()` が組み立てる新規テンプレート。
 #[test]
@@ -20,7 +20,7 @@ fn new_model_template_payload_deserializes() {
         "contextLength": 128000,
         "temperature": null,
         "maxOutputTokens": 4096,
-        "apiKeyEnv": "OPENAI_API_KEY",
+        "credential": "none",
         "provider": null,
         "useTools": true,
         "effort": null,
@@ -34,7 +34,22 @@ fn new_model_template_payload_deserializes() {
     assert_eq!(template.base_url, "https://api.openai.com/v1");
     assert_eq!(template.temperature, None);
     assert_eq!(template.provider, None);
+    assert_eq!(template.credential, CredentialSource::None);
     assert!(template.use_tools);
+}
+
+/// `types.ts` の `CredentialSource` が取りうる全値を Rust 側が受け取れること。
+#[test]
+fn credential_source_values_match_typescript_union() {
+    // types.ts: export type CredentialSource = "none" | "keyring";
+    for (json, expected) in [
+        (r#""none""#, CredentialSource::None),
+        (r#""keyring""#, CredentialSource::Keyring),
+    ] {
+        let parsed: CredentialSource = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("CredentialSource {json} が受からない: {e}"));
+        assert_eq!(parsed, expected);
+    }
 }
 
 /// `AgentList.vue` の `submitNew()` が組み立てるエージェント定義。

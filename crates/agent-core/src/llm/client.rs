@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
 use super::{BackendResolution, LlmBackend, anthropic, openai_compat, wire};
-use crate::model::ModelTemplate;
+use crate::model::{CredentialSource, ModelTemplate};
+use crate::secret::SecretStore;
 
 /// エラー応答本文をログ・UI に載せる際の最大文字数。
 /// プロバイダによっては HTML を丸ごと返すため、青天井にしない。
@@ -91,18 +92,28 @@ pub struct LlmConfig {
 impl LlmConfig {
     /// GUI が保持する [`ModelTemplate`] から実行時設定を解決する。
     ///
-    /// API キーはテンプレートに実値を持たず、環境変数名だけを持つ契約になっている。
-    /// ここで解決に失敗した場合はネットワークへ出る前に [`LlmError::Config`] で弾く。
-    pub fn from_template(template: &ModelTemplate) -> Result<Self, LlmError> {
-        let api_key = match &template.api_key_env {
-            Some(var) => std::env::var(var).map_err(|_| {
-                LlmError::Config(format!(
-                    "環境変数 `{var}` が未設定です (モデルテンプレート `{}` の API キー)",
-                    template.name
-                ))
-            })?,
+    /// テンプレートは秘密を持たず、「どこから取るか」だけを持つ。実値はここで
+    /// [`SecretStore`] から解決し、失敗した場合はネットワークへ出る前に弾く。
+    ///
+    /// 秘密が生きるのはこの関数の戻り値から HTTP ヘッダまでの区間だけで、
+    /// 設定ファイルにもイベントにもエラーメッセージにも現れない。
+    pub fn from_template(
+        template: &ModelTemplate,
+        secrets: &dyn SecretStore,
+    ) -> Result<Self, LlmError> {
+        let api_key = match template.credential {
             // ローカル推論サーバは認証不要なことが多い。空キーを許す。
-            None => String::new(),
+            CredentialSource::None => String::new(),
+            CredentialSource::Keyring => secrets
+                .get(template.id.as_str())
+                .map_err(|err| LlmError::Config(err.to_string()))?
+                .ok_or_else(|| {
+                    LlmError::Config(format!(
+                        "モデルテンプレート `{}` の API キーが資格情報ストアに未登録です\
+                         （⚙ の画面から登録してください）",
+                        template.name
+                    ))
+                })?,
         };
 
         let provider = template
@@ -243,20 +254,23 @@ impl LlmBackend for HttpLlmBackend {
 /// [`HttpBackendFactory::echo_on_failure`] を使い、キー未設定でもアプリが
 /// 沈黙しないようにする。ただし退避したことと**その理由**は必ず表に出す。
 pub struct HttpBackendFactory {
+    secrets: std::sync::Arc<dyn SecretStore>,
     echo_on_failure: bool,
 }
 
 impl HttpBackendFactory {
     /// 設定不備を素直に失敗させるファクトリ。
-    pub fn strict() -> Self {
+    pub fn strict(secrets: std::sync::Arc<dyn SecretStore>) -> Self {
         Self {
+            secrets,
             echo_on_failure: false,
         }
     }
 
     /// 設定不備のとき、理由を名乗るエコー応答へ退避するファクトリ。
-    pub fn echo_on_failure() -> Self {
+    pub fn echo_on_failure(secrets: std::sync::Arc<dyn SecretStore>) -> Self {
         Self {
+            secrets,
             echo_on_failure: true,
         }
     }
@@ -264,7 +278,9 @@ impl HttpBackendFactory {
 
 impl super::BackendFactory for HttpBackendFactory {
     fn create(&self, template: &ModelTemplate) -> Result<BackendResolution, LlmError> {
-        match LlmConfig::from_template(template).and_then(HttpLlmBackend::new) {
+        match LlmConfig::from_template(template, self.secrets.as_ref())
+            .and_then(HttpLlmBackend::new)
+        {
             Ok(backend) => Ok(BackendResolution::healthy(std::sync::Arc::new(backend))),
 
             Err(err) if self.echo_on_failure => {
@@ -289,6 +305,7 @@ mod tests {
     use super::*;
     use crate::llm::BackendFactory;
     use crate::model::ModelTemplate;
+    use crate::secret::InMemorySecretStore;
 
     #[test]
     fn provider_detection_defaults_to_compat() {
@@ -307,36 +324,56 @@ mod tests {
         );
     }
 
-    #[test]
-    fn missing_api_key_env_fails_before_any_network_call() {
-        let mut template = ModelTemplate::new("tpl_1", "テスト", "gpt-4o");
-        template.api_key_env = Some("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST".into());
-
-        let err = LlmConfig::from_template(&template).unwrap_err();
-        assert_eq!(err.code(), "LLM_CONFIG");
+    fn keyring_template() -> ModelTemplate {
+        let mut template = ModelTemplate::new("tpl_1", "テスト", "claude-sonnet-5");
+        template.base_url = "https://api.anthropic.com/v1".into();
+        template.credential = CredentialSource::Keyring;
+        template
     }
 
     #[test]
-    fn template_without_key_env_is_allowed_for_local_servers() {
+    fn unregistered_credential_fails_before_any_network_call() {
+        let secrets = InMemorySecretStore::new();
+        let err = LlmConfig::from_template(&keyring_template(), &secrets).unwrap_err();
+
+        assert_eq!(err.code(), "LLM_CONFIG");
+        assert!(err.to_string().contains("未登録"));
+    }
+
+    #[test]
+    fn registered_credential_is_resolved_from_the_store() {
+        let secrets = InMemorySecretStore::new();
+        secrets.set("tpl_1", "resolved-secret").unwrap();
+
+        let config = LlmConfig::from_template(&keyring_template(), &secrets).unwrap();
+        assert_eq!(config.api_key, "resolved-secret");
+        assert_eq!(config.provider, Provider::Anthropic);
+    }
+
+    #[test]
+    fn template_without_credentials_is_allowed_for_local_servers() {
         let mut template = ModelTemplate::new("tpl_local", "ローカル", "qwen3");
         template.base_url = "http://localhost:11434/v1/".into();
-        template.api_key_env = None;
 
-        let config = LlmConfig::from_template(&template).unwrap();
+        let config = LlmConfig::from_template(&template, &InMemorySecretStore::new()).unwrap();
         assert_eq!(config.base_url, "http://localhost:11434/v1");
         assert_eq!(config.provider, Provider::OpenAiCompat);
         assert!(config.api_key.is_empty());
     }
 
     #[tokio::test]
-    async fn degraded_fallback_names_the_missing_variable_instead_of_going_quiet() {
-        let mut template = ModelTemplate::new("tpl", "テスト", "gpt-4o");
-        template.api_key_env = Some("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST".into());
+    async fn degraded_fallback_names_the_cause_instead_of_going_quiet() {
+        let secrets = std::sync::Arc::new(InMemorySecretStore::new());
+        let template = keyring_template();
 
         // strict はそのまま失敗させる。
-        assert!(HttpBackendFactory::strict().create(&template).is_err());
+        assert!(
+            HttpBackendFactory::strict(secrets.clone())
+                .create(&template)
+                .is_err()
+        );
 
-        let resolution = HttpBackendFactory::echo_on_failure()
+        let resolution = HttpBackendFactory::echo_on_failure(secrets)
             .create(&template)
             .expect("退避してでもバックエンドは返る");
 
@@ -345,36 +382,48 @@ mod tests {
             .degraded_reason
             .as_deref()
             .expect("退避理由が付くこと");
-        assert!(
-            reason.contains("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST"),
-            "どの環境変数が欠けているか名指しすること: {reason}"
-        );
+        assert!(reason.contains("未登録"), "原因を名指しすること: {reason}");
 
         // 応答本文自体にも理由が乗る。会話ログだけ見ていても原因に辿り着ける。
         let response = resolution
             .backend
             .chat(crate::llm::ChatRequest::plain(
-                "gpt-4o",
+                "claude-sonnet-5",
                 vec![crate::llm::ChatMessage::user("やあ")],
                 64,
             ))
             .await
             .unwrap();
         let text = response.text.unwrap_or_default();
-        assert!(
-            text.contains("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST"),
-            "応答が理由を名乗ること: {text}"
-        );
+        assert!(text.contains("未登録"), "応答が理由を名乗ること: {text}");
     }
 
     #[test]
     fn a_working_template_is_not_reported_as_degraded() {
-        let mut template = ModelTemplate::new("tpl_local", "ローカル", "qwen3");
-        template.base_url = "http://localhost:11434/v1".into();
-        template.api_key_env = None;
+        let secrets = std::sync::Arc::new(InMemorySecretStore::new());
+        secrets.set("tpl_1", "resolved-secret").unwrap();
 
-        let resolution = HttpBackendFactory::echo_on_failure().create(&template).unwrap();
+        let resolution = HttpBackendFactory::echo_on_failure(secrets)
+            .create(&keyring_template())
+            .unwrap();
+
         assert!(resolution.degraded_reason.is_none());
-        assert_eq!(resolution.backend.name(), "openai-compat");
+        assert_eq!(resolution.backend.name(), "anthropic");
+    }
+
+    /// 秘密が拒否経路へ漏れないこと。
+    #[test]
+    fn a_resolved_secret_never_appears_in_error_text() {
+        let secrets = InMemorySecretStore::new();
+        secrets.set("tpl_1", "sk-ant-SUPER-SECRET").unwrap();
+
+        let mut template = keyring_template();
+        // タイムアウト 0 秒で reqwest の構築を失敗させ、エラー経路を通す。
+        template.request_timeout_secs = 0;
+
+        if let Err(err) = LlmConfig::from_template(&template, &secrets).and_then(HttpLlmBackend::new)
+        {
+            assert!(!err.to_string().contains("SUPER-SECRET"));
+        }
     }
 }

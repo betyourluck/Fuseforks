@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+keyring.workspace = true
 rayon.workspace = true
 reqwest.workspace = true
 serde.workspace = true

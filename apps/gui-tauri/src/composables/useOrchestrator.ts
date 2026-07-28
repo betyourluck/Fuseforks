@@ -300,6 +300,32 @@ export function useOrchestrator() {
       if (done !== null) await refreshAll();
     },
 
+    /**
+     * API キーを OS の資格情報ストアへ預ける。
+     *
+     * 秘密は引数として通り抜けるだけで、ストアには入れない。
+     * ここへ控えを持つと、値を保持しない設計が UI 層で崩れる。
+     */
+    async setCredential(templateId: string, secret: string): Promise<boolean> {
+      const done = await guard("API キーの登録", () =>
+        ipc.setModelCredential(templateId, secret),
+      );
+      if (done !== null) {
+        pushToast("info", "API キーを登録しました");
+        await refreshAll();
+      }
+      return done !== null;
+    },
+
+    /** API キーを資格情報ストアから削除する。 */
+    async clearCredential(templateId: string): Promise<boolean> {
+      const done = await guard("API キーの削除", () =>
+        ipc.clearModelCredential(templateId),
+      );
+      if (done !== null) await refreshAll();
+      return done !== null;
+    },
+
     async deleteTemplate(templateId: string): Promise<void> {
       const done = await guard("モデルテンプレートの削除", () =>
         ipc.deleteModelTemplate(templateId),

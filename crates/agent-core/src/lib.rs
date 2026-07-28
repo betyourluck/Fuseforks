@@ -30,7 +30,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use agent_core::{
-//!     ConfigStore, FixedBackendFactory, Orchestrator, OrchestratorConfig,
+//!     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 //!     model::{AgentSpec, ModelTemplate},
 //! };
 //!
@@ -38,8 +38,9 @@
 //! let store = ConfigStore::new("./workspace");
 //! let orchestrator = Orchestrator::bootstrap(
 //!     store,
-//!     // 実運用では HttpBackendFactory を渡す。
+//!     // 実運用では HttpBackendFactory と KeyringSecretStore を渡す。
 //!     Arc::new(FixedBackendFactory::echo("[echo]")),
+//!     Arc::new(InMemorySecretStore::new()),
 //!     OrchestratorConfig::default(),
 //! )
 //! .await?;
@@ -67,6 +68,7 @@ pub mod llm;
 pub mod model;
 pub mod orchestrator;
 pub mod rag;
+pub mod secret;
 pub mod world;
 
 pub use config_store::ConfigStore;
@@ -77,9 +79,10 @@ pub use llm::{
     LlmBackend, LlmConfig, LlmError, Provider,
 };
 pub use model::{
-    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, Endpoint,
-    ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
+    Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 pub use orchestrator::{Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};
+pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use world::World;

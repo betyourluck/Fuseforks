@@ -90,17 +90,7 @@ impl World {
         let known: Vec<AgentId> = persisted.agents.iter().map(|s| s.id.clone()).collect();
 
         let mut world = Self::new();
-        for mut template in persisted.model_templates {
-            // 既に平文の秘密が書き込まれているファイルからの復旧経路。
-            // 読み込んだ時点で落とし、次回の保存でファイルからも消える。
-            // 入口を塞いだ後も、塞ぐ前に書かれた分が残り続けるのを防ぐ。
-            if template
-                .api_key_env
-                .as_deref()
-                .is_some_and(|name| !crate::model::is_env_var_name(name))
-            {
-                template.api_key_env = None;
-            }
+        for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
         }
         for mut spec in persisted.agents {
@@ -304,18 +294,11 @@ impl World {
 
     /// テンプレートを登録または更新する。
     ///
-    /// # Errors
-    /// `api_key_env` が環境変数名の書式でない場合 [`CoreError::ApiKeyMustBeEnvVarName`]。
-    /// 入力欄に注意書きを添えるだけでは実値が貼られて平文で保存されるため、
-    /// **書式検査という構造で入口を塞ぐ**。
-    pub fn upsert_template(&mut self, template: ModelTemplate) -> CoreResult<()> {
-        if let Some(name) = &template.api_key_env
-            && !crate::model::is_env_var_name(name)
-        {
-            return Err(CoreError::ApiKeyMustBeEnvVarName);
-        }
+    /// 秘密の書式検査はもう要らない。[`ModelTemplate`] に秘密を置ける場所が無く、
+    /// 実値は OS の資格情報ストアにしか入らないため、
+    /// この経路を通って平文の設定ファイルへ秘密が入ることは構造上ありえない。
+    pub fn upsert_template(&mut self, template: ModelTemplate) {
         self.templates.insert(template.id.clone(), template);
-        Ok(())
     }
 
     /// テンプレートを削除する。
@@ -364,9 +347,7 @@ mod tests {
 
     fn world_with_two_agents() -> World {
         let mut world = World::new();
-        world
-            .upsert_template(ModelTemplate::new("tpl", "既定", "gpt-4o"))
-            .unwrap();
+        world.upsert_template(ModelTemplate::new("tpl", "既定", "gpt-4o"));
         world
             .register_agent(AgentSpec::new("agent_01", "Planner", "tpl"))
             .unwrap();
@@ -472,68 +453,13 @@ mod tests {
         world.remove_agent(&"agent_02".into()).unwrap();
         // 参照元を消してからテンプレートを消す（正規経路）。
         world.remove_agent(&"agent_01".into()).unwrap();
-        world
-            .upsert_template(ModelTemplate::new("tpl2", "別", "claude-opus-5"))
-            .unwrap();
+        world.upsert_template(ModelTemplate::new("tpl2", "別", "claude-opus-5"));
         world
             .register_agent(AgentSpec::new("agent_09", "Orphan", "tpl2"))
             .unwrap();
         world.remove_template(&"tpl".into()).unwrap();
 
         assert_eq!(world.snapshots()[0].model, "claude-opus-5");
-    }
-
-    /// API キーの実値を貼られても保存させない。
-    ///
-    /// 「入力欄に注意書きを添える」では防げないことが実運用で確認されたため、
-    /// 書式検査で入口を塞いでいる。この経路が生きていることを固定する。
-    #[test]
-    fn api_key_field_rejects_anything_that_is_not_an_env_var_name() {
-        let mut world = World::new();
-
-        let mut with_secret = ModelTemplate::new("tpl", "既定", "claude-sonnet-5");
-        // 実キーは必ず `-` を含むため、環境変数名の書式検査で機械的に落ちる。
-        with_secret.api_key_env = Some("sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY".into());
-
-        let err = world.upsert_template(with_secret).unwrap_err();
-        assert_eq!(err.code(), "API_KEY_MUST_BE_ENV_VAR_NAME");
-        // 拒否したこと自体で秘密を再放流しない。
-        assert!(!err.to_string().contains("sk-ant"));
-
-        let mut proper = ModelTemplate::new("tpl", "既定", "claude-sonnet-5");
-        proper.api_key_env = Some("ANTHROPIC_API_KEY".into());
-        assert!(world.upsert_template(proper).is_ok());
-    }
-
-    /// 入口を塞ぐ前に書き込まれた秘密は、読み込み時点で落とす。
-    #[test]
-    fn loading_scrubs_a_secret_that_was_written_before_the_guard_existed() {
-        let mut leaked = ModelTemplate::new("tpl", "既定", "claude-sonnet-5");
-        leaked.api_key_env = Some("sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY".into());
-
-        let world = World::from_persisted(PersistedWorld {
-            agents: Vec::new(),
-            model_templates: vec![leaked],
-        });
-
-        assert_eq!(world.template(&"tpl".into()).unwrap().api_key_env, None);
-        // 次回の保存でファイルからも消えることを確認する。
-        let persisted = world.to_persisted();
-        assert_eq!(persisted.model_templates[0].api_key_env, None);
-    }
-
-    #[test]
-    fn env_var_name_guard_accepts_names_and_rejects_keys() {
-        use crate::model::is_env_var_name;
-
-        assert!(is_env_var_name("ANTHROPIC_API_KEY"));
-        assert!(is_env_var_name("_private"));
-        assert!(is_env_var_name("OPENAI_API_KEY_2"));
-
-        assert!(!is_env_var_name("sk-ant-api03-abcdef"), "ハイフンを含むキー");
-        assert!(!is_env_var_name("2FA_KEY"), "先頭が数字");
-        assert!(!is_env_var_name(""), "空");
-        assert!(!is_env_var_name(&"A".repeat(129)), "長すぎる");
     }
 
     #[test]

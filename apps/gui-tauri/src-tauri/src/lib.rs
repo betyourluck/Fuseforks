@@ -36,7 +36,10 @@ pub fn run() {
             commands::list_rag_sources,
             commands::search_rag,
             commands::workspace_path,
-            commands::env_var_is_visible,
+            // 資格情報（値を返す経路は存在しない）
+            commands::set_model_credential,
+            commands::clear_model_credential,
+            commands::model_credential_exists,
             // 定義の編集
             commands::create_agent,
             commands::update_agent,

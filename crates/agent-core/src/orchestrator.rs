@@ -30,10 +30,11 @@ use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::event::CoreEvent;
 use crate::llm::{BackendFactory, ChatMessage, ChatRequest, LlmBackend};
 use crate::model::{
-    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, Endpoint,
-    ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
+    Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use crate::rag::{RagChunk, RagIndex};
+use crate::secret::SecretStore;
 use crate::world::World;
 
 /// オーケストレーターの動作パラメータ。
@@ -79,6 +80,8 @@ struct Shared {
     /// `reqwest::Client` は接続プールを抱えるので、発話ごとに作り直すと
     /// TLS ハンドシェイクをやり直すことになる。テンプレート更新時に破棄して整合を取る。
     backends: RwLock<HashMap<ModelTemplateId, Arc<dyn LlmBackend>>>,
+    /// 秘密の保管先。設定ファイルとは別系統で、平文の `world.json` には触れない。
+    secrets: Arc<dyn SecretStore>,
     store: ConfigStore,
     rag: RwLock<RagIndex>,
     log: RwLock<Vec<AgentMessage>>,
@@ -177,6 +180,7 @@ impl Orchestrator {
     pub async fn bootstrap(
         store: ConfigStore,
         factory: Arc<dyn BackendFactory>,
+        secrets: Arc<dyn SecretStore>,
         config: OrchestratorConfig,
     ) -> CoreResult<Self> {
         let persisted = store.load_world().await?;
@@ -198,6 +202,7 @@ impl Orchestrator {
             events,
             factory,
             backends: RwLock::new(HashMap::new()),
+            secrets,
             store,
             rag: RwLock::new(RagIndex::default()),
             log: RwLock::new(Vec::new()),
@@ -343,19 +348,69 @@ impl Orchestrator {
     /// エンドポイントを直したのに古い接続先へ送り続ける（設定が効かない）。
     pub async fn upsert_template(&self, template: ModelTemplate) -> CoreResult<()> {
         let id = template.id.clone();
-        self.shared.world.write().await.upsert_template(template)?;
+        self.shared.world.write().await.upsert_template(template);
         self.shared.backends.write().await.remove(&id);
         self.persist().await
     }
 
     /// モデルテンプレートを削除する。参照中のエージェントが居れば拒否される。
+    ///
+    /// 資格情報ストアの登録も同時に消す。設定だけ消して秘密を残すと、
+    /// 画面のどこからも見えない孤児が OS 側に溜まり続ける。
     pub async fn remove_template(&self, id: &ModelTemplateId) -> CoreResult<()> {
         {
             let mut world = self.shared.world.write().await;
             world.remove_template(id)?;
         }
         self.shared.backends.write().await.remove(id);
+        self.shared.secrets.delete(id.as_str())?;
         self.persist().await
+    }
+
+    // ---- 資格情報 -----------------------------------------------------------
+
+    /// テンプレートの API キーを OS の資格情報ストアへ登録する。
+    ///
+    /// 併せてテンプレートの取得元を [`CredentialSource::Keyring`] に切り替え、
+    /// 構築済みバックエンドのキャッシュを捨てる。登録したのに次の発話まで
+    /// 反映されない、という状態を作らないため。
+    pub async fn set_credential(&self, id: &ModelTemplateId, secret: &str) -> CoreResult<()> {
+        {
+            // 存在しないテンプレートに対して秘密を書き込ませない。
+            let world = self.shared.world.read().await;
+            world.template(id)?;
+        }
+        self.shared.secrets.set(id.as_str(), secret)?;
+
+        {
+            let mut world = self.shared.world.write().await;
+            let mut template = world.template(id)?.clone();
+            template.credential = CredentialSource::Keyring;
+            world.upsert_template(template);
+        }
+        self.shared.backends.write().await.remove(id);
+        self.persist().await
+    }
+
+    /// テンプレートの API キーを資格情報ストアから削除する。
+    pub async fn clear_credential(&self, id: &ModelTemplateId) -> CoreResult<()> {
+        self.shared.secrets.delete(id.as_str())?;
+
+        {
+            let mut world = self.shared.world.write().await;
+            if let Ok(existing) = world.template(id) {
+                let mut template = existing.clone();
+                template.credential = CredentialSource::None;
+                world.upsert_template(template);
+            }
+        }
+        self.shared.backends.write().await.remove(id);
+        self.persist().await
+    }
+
+    /// API キーが登録済みかどうかだけを返す。**値は返さない。**
+    pub fn has_credential(&self, id: &ModelTemplateId) -> CoreResult<bool> {
+        self.shared.secrets.contains(id.as_str())
     }
 
     /// 設定ファイルを読む。

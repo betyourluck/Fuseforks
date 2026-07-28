@@ -24,6 +24,14 @@ export type Provider = "open_ai_compat" | "anthropic";
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
+/**
+ * 認証情報の取得元。
+ *
+ * 秘密そのものを保持するバリアントは存在しない。実値は OS の資格情報ストアにあり、
+ * フロントへは「登録済みかどうか」しか返らない。
+ */
+export type CredentialSource = "none" | "keyring";
+
 /** 発話の送り手・受け手。`kind` による判別共用体。 */
 export type Endpoint =
   | { kind: "user" }
@@ -76,7 +84,11 @@ export interface ModelTemplate {
   /** `null` なら送らない。新しめのモデルは temperature 非対応で 400 を返す。 */
   temperature: number | null;
   maxOutputTokens: number;
-  apiKeyEnv: string | null;
+  /**
+   * 認証情報の取得元。**キーの実値はこの型のどこにも現れない。**
+   * 登録の有無は `model_credential_exists` で別途問い合わせる。
+   */
+  credential: CredentialSource;
   provider: Provider | null;
   useTools: boolean;
   effort: Effort | null;

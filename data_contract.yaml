@@ -48,7 +48,17 @@ enums:
       それ以外は open_ai_compat（判定不能なプロキシは安全側で互換に落とす）。
   Effort:
     values: [low, medium, high, xhigh, max]
-    note: 未指定ならリクエストに含めない。既定値を勝手に補わない。
+    note: |
+      未指定ならリクエストに含めない。既定値を勝手に補わない。
+      XHigh のワイヤ値は `xhigh` (serde の snake_case 変換に任せると `x_high` になり、
+      TS 側と食い違う)。Effort::as_str と serde 値の一致をテストで固定している。
+  CredentialSource:
+    values:
+      none: 認証不要 (ローカル推論サーバなど)
+      keyring: OS の資格情報ストアから取得する。キーはテンプレート ID
+    note: |
+      秘密そのものを保持するバリアントを持たない。これが
+      「平文の設定ファイルに秘密が入らない」ことの構造的な根拠。
   Endpoint:
     tagged_union_key: kind
     variants:
@@ -93,26 +103,30 @@ entities:
       contextLength: u32
       temperature: f32 | null       # null なら送らない
       maxOutputTokens: u32
-      apiKeyEnv: String | null      # 環境変数名のみ。書式検査で実値の混入を拒否する
+      credential: CredentialSource  # 取得元のみ。秘密を持てるフィールドは存在しない
       provider: Provider | null     # null なら baseUrl から自動判定
       useTools: bool
       effort: Effort | null
       requestTimeoutSecs: u32
       maxRetries: u32
     invariant: |
-      apiKeyEnv は `^[A-Za-z_][A-Za-z0-9_]*$` かつ 128 文字以内でなければ受け付けない
-      (model::is_env_var_name)。設定ファイルは平文で保存されるため、実値の混入を
-      書式で機械的に落とす。強制点は 3 箇所:
-        1. World::upsert_template   — 保存時に拒否 (API_KEY_MUST_BE_ENV_VAR_NAME)
-        2. World::from_persisted    — 読み込み時に不正値を None へ落とす (遡及修復)
-        3. Orchestrator::bootstrap  — 正規化で内容が変わったら即座にファイルへ書き戻す
+      ModelTemplate は秘密を保持しない。保持するのは credential (取得元) だけで、
+      実値は OS の資格情報ストア (secret::SecretStore) にのみ存在する。
+      平文の world.json へ秘密が入る経路は、型の段階で存在しない。
+      秘密がプロセス内を通る区間は LlmConfig::from_template から HTTP ヘッダまでで、
+      設定ファイル・イベント・エラーメッセージ・IPC 応答のいずれにも現れない。
     history: |
-      2026-07-28、この欄は型が String で、防御は UI のラベルと注意書きだけだった。
-      実運用の初日に Anthropic の実キーが貼られ、world.json に平文で保存された。
-      **入力欄に書いた注意は制御ではない。** 秘密を受け付けない場所は、
-      検査で受け付けなくして初めて成立する。
-      強制点 2 と 3 は、入口を塞ぐ前に書かれた分を回収するために要る。
-      入口だけ塞ぐと、既に漏れたファイルは編集操作があるまで放置される。
+      この欄は 2 度作り直している。
+      (1) 当初は String 型の apiKeyEnv で、防御は UI のラベルと注意書きだけだった。
+          運用初日に Anthropic の実キーが貼られ world.json に平文で保存された。
+          → 書式検査で入口を塞いだ (注意書きは制御ではない)。
+      (2) 環境変数名を要求する方式そのものが、デスクトップ GUI に不適合だった。
+          利用者に端末操作と再起動を要求し、Windows では設定済みの変数が起動済み
+          プロセスへ伝播しないため「設定したのに効かない」が常態化した。
+          綴りを 1 文字誤っただけ (ANTROPIC_API_KEY) で実行時まで気づけなかった。
+          → 秘密を保持できるフィールドごと廃止し、OS の資格情報ストアへ移した。
+      教訓: 秘密の置き場は「書けないようにする」だけでは足りず、
+      「利用者が正しく置ける場所を用意する」ところまでが設計。
 
   AgentMessage:
     fields:
@@ -144,6 +158,8 @@ entities:
       - MAILBOX_FULL
       - CONFIG_IO
       - UNSAFE_IDENTIFIER
+      - SECRET_STORE_FAILED
+      - CREDENTIAL_MISSING
       - COMPUTE_FAILED
       - SERDE_FAILED
       - LLM_CONFIG

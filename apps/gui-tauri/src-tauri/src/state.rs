@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use agent_core::{
-    ConfigStore, CoreEvent, HttpBackendFactory, Orchestrator, OrchestratorConfig,
+    ConfigStore, CoreEvent, HttpBackendFactory, KeyringSecretStore, Orchestrator,
+    OrchestratorConfig, SecretStore,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -38,11 +39,15 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     let workspace = app.path().app_data_dir()?.join("workspace");
     tokio::fs::create_dir_all(&workspace).await?;
 
-    let factory = Arc::new(HttpBackendFactory::echo_on_failure());
+    // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
+    // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。
+    let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::new());
+    let factory = Arc::new(HttpBackendFactory::echo_on_failure(Arc::clone(&secrets)));
 
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&workspace),
         factory,
+        secrets,
         OrchestratorConfig::default(),
     )
     .await?;

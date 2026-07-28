@@ -67,36 +67,63 @@ const baseUrlMismatch = computed(() => {
   return KNOWN_DEFAULTS.includes(d.baseUrl) ? expected : null;
 });
 
-/** API キー欄が環境変数名の書式か。Rust 側の `is_env_var_name` と同じ規則。 */
-const apiKeyEnvLooksValid = computed(() => {
-  const value = draft.value?.apiKeyEnv;
-  if (!value) return true;
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && value.length <= 128;
-});
-
 /**
- * 入力された環境変数がアプリのプロセスから見えるか。
- * `null` は未確認、`true`/`false` は確認済み。
+ * API キーが資格情報ストアに登録済みか。`null` は未確認。
  *
- * 綴りを 1 文字間違えただけで、実行時まで気づけないという事故が実際に起きた
- * （`ANTROPIC_API_KEY`）。保存する前にここで指摘する。
+ * **値そのものは決して取得しない。** 表示に必要なのは有無だけで、
+ * 値を持ってくると、秘密が UI 層のメモリに載る理由が無いのに載る。
  */
-const envVarVisible = ref<boolean | null>(null);
+const credentialStored = ref<boolean | null>(null);
+/** 入力中の新しいキー。保存が済んだ時点で即座に破棄する。 */
+const secretInput = ref("");
+const savingSecret = ref(false);
 
-watch(
-  () => draft.value?.apiKeyEnv,
-  async (name) => {
-    envVarVisible.value = null;
-    if (!name || !apiKeyEnvLooksValid.value) return;
-    try {
-      envVarVisible.value = await ipc.envVarIsVisible(name);
-    } catch {
-      // 確認できないこと自体は編集を妨げない。保存時にコア側が改めて判断する。
-      envVarVisible.value = null;
+async function refreshCredentialState(templateId: string | undefined): Promise<void> {
+  credentialStored.value = null;
+  if (!templateId) return;
+  try {
+    credentialStored.value = await ipc.modelCredentialExists(templateId);
+  } catch {
+    credentialStored.value = null;
+  }
+}
+
+watch(() => draft.value?.id, refreshCredentialState, { immediate: true });
+
+/** 入力されたキーを資格情報ストアへ預ける。 */
+async function saveSecret(): Promise<void> {
+  const template = draft.value;
+  const secret = secretInput.value;
+  if (!template || !secret) return;
+
+  savingSecret.value = true;
+  try {
+    // テンプレート本体が未保存だと、コア側が「未登録」で弾く。先に保存する。
+    await orchestrator.upsertTemplate(template);
+    const ok = await orchestrator.setCredential(template.id, secret);
+    if (ok) {
+      template.credential = "keyring";
+      credentialStored.value = true;
     }
-  },
-  { immediate: true },
-);
+  } finally {
+    // 成否によらず、入力欄に秘密を残さない。
+    secretInput.value = "";
+    savingSecret.value = false;
+  }
+}
+
+/** 登録済みのキーを削除する。 */
+async function clearSecret(): Promise<void> {
+  const template = draft.value;
+  if (!template) return;
+  if (!confirm(`${template.name} の API キーを削除しますか？`)) return;
+
+  const ok = await orchestrator.clearCredential(template.id);
+  if (ok) {
+    template.credential = "none";
+    credentialStored.value = false;
+  }
+}
 
 const PROVIDERS: { value: Provider | null; label: string }[] = [
   { value: null, label: "自動判定（baseUrl から）" },
@@ -134,7 +161,7 @@ function blank(): ModelTemplate {
     contextLength: 128000,
     temperature: null,
     maxOutputTokens: 4096,
-    apiKeyEnv: "OPENAI_API_KEY",
+    credential: "none",
     provider: null,
     useTools: true,
     effort: null,
@@ -313,37 +340,37 @@ function onTemperature(raw: string): void {
               </option>
             </select>
 
-            <label class="text-ink-dim">API キーの環境変数名</label>
+            <label class="text-ink-dim">API キー</label>
             <div>
-              <input
-                v-model="draft.apiKeyEnv"
-                placeholder="ANTHROPIC_API_KEY"
-                autocomplete="off"
-                spellcheck="false"
-                class="w-full rounded border bg-surface-0 px-2 py-1 font-mono outline-none"
-                :class="
-                  apiKeyEnvLooksValid
-                    ? 'border-line focus:border-accent'
-                    : 'border-fail focus:border-fail'
-                "
-              />
-              <p v-if="!apiKeyEnvLooksValid" class="mt-1 text-[11px] text-fail">
-                ここは<strong>変数名</strong>の欄です。キーの実値は保存できません
-                （英大小文字・数字・<code>_</code> のみ、先頭は数字以外）。
+              <div class="flex gap-2">
+                <input
+                  v-model="secretInput"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :placeholder="
+                    credentialStored ? '新しいキーを貼って上書き' : 'キーを貼り付け'
+                  "
+                  class="min-w-0 flex-1 rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
+                  @keydown.enter.prevent="saveSecret"
+                />
+                <button
+                  class="rounded bg-accent px-2.5 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!secretInput || savingSecret"
+                  @click="saveSecret"
+                >
+                  {{ savingSecret ? "登録中…" : "登録" }}
+                </button>
+              </div>
+
+              <p v-if="credentialStored === true" class="mt-1 text-[11px] text-run">
+                登録済み。OS の資格情報ストアに保存されています。
+                <button class="ml-1 underline text-fail hover:opacity-80" @click="clearSecret">
+                  削除
+                </button>
               </p>
-              <p
-                v-else-if="envVarVisible === false"
-                class="mt-1 text-[11px] text-warn"
-              >
-                この変数はアプリから見えません。綴りを確認してください。設定済みなら、
-                ターミナルごと閉じて新しいターミナルから起動し直す必要があります
-                （実行中のプロセスには反映されません）。
-              </p>
-              <p
-                v-else-if="envVarVisible === true"
-                class="mt-1 text-[11px] text-run"
-              >
-                この変数はアプリから見えています。
+              <p v-else-if="credentialStored === false" class="mt-1 text-[11px] text-warn">
+                未登録です。認証が必要なプロバイダでは、このままだとエコー応答へ退避します。
               </p>
             </div>
 
@@ -405,12 +432,10 @@ function onTemperature(raw: string): void {
           </div>
 
           <p class="rounded border border-line bg-surface-0 p-2 text-[11px] text-ink-dim">
-            API キーの実値は<strong class="text-ink">保存できません</strong>。
-            設定は平文のファイルに書かれるため、書式検査で入口を塞いでいます。
-            ここには環境変数名（例
-            <code class="text-ink">ANTHROPIC_API_KEY</code>）を入れ、実値は OS の
-            環境変数に設定してアプリを起動してください。値が解決できない場合は
-            エコー応答へ退避し、その旨が会話ログに現れます。
+            API キーは <strong class="text-ink">OS の資格情報ストア</strong>
+            （Windows 資格情報マネージャー / macOS キーチェーン / Secret Service）に
+            保存されます。設定ファイルには一切書かれず、この画面へ読み戻す経路も
+            ありません。表示できるのは「登録済みかどうか」だけです。
           </p>
         </div>
 
@@ -426,9 +451,7 @@ function onTemperature(raw: string): void {
             取消
           </button>
           <button
-            class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
-            :disabled="!apiKeyEnvLooksValid"
-            :title="apiKeyEnvLooksValid ? '保存' : 'API キーの環境変数名を修正してください'"
+            class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0"
             @click="save"
           >
             保存

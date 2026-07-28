@@ -72,15 +72,24 @@ pub enum CoreError {
         value: String,
     },
 
-    /// API キーの欄に、環境変数名ではない値が入力された。
+    /// OS の資格情報ストアの操作に失敗した。
     ///
-    /// **入力値はこのエラーに載せない。** 秘密が混入している疑いがあるからこそ拒否しており、
-    /// 拒否の過程でログ・イベント・UI へ流したら本末転倒になる。
-    #[error(
-        "API キーの欄には環境変数名だけを入力してください（例: ANTHROPIC_API_KEY）。\
-         キーの実値は保存しません — 設定ファイルは平文で保存されるためです"
-    )]
-    ApiKeyMustBeEnvVarName,
+    /// **秘密そのものはこのエラーに載せない。** 保管の失敗を伝えるために
+    /// 保管対象を露出させたら本末転倒になる。
+    #[error("資格情報ストアの{operation}に失敗しました: {message}")]
+    SecretStore {
+        /// 失敗した操作（取得 / 保存 / 削除）。
+        operation: &'static str,
+        /// OS 側から得た説明。秘密は含まない。
+        message: String,
+    },
+
+    /// 認証が必要なテンプレートなのに、資格情報ストアにキーが登録されていない。
+    #[error("モデルテンプレート `{template}` の API キーが未登録です（⚙ の画面から登録してください）")]
+    CredentialMissing {
+        /// 対象テンプレートの表示名。
+        template: String,
+    },
 
     /// LLM 境界の失敗。詳細な分類は [`crate::llm::LlmError`] が持つ。
     #[error(transparent)]
@@ -111,7 +120,8 @@ impl CoreError {
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
-            Self::ApiKeyMustBeEnvVarName => "API_KEY_MUST_BE_ENV_VAR_NAME",
+            Self::SecretStore { .. } => "SECRET_STORE_FAILED",
+            Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",
             // LLM 境界のコードはそのまま透過させ、UI 側で 1 つの体系として扱えるようにする。
             Self::Llm(err) => err.code(),
             Self::Compute(_) => "COMPUTE_FAILED",

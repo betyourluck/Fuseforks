@@ -157,20 +157,36 @@ pub async fn write_agent_config(
         .await
 }
 
-/// 指定名の環境変数が **このプロセスから見えるか** だけを返す。
+/// モデルテンプレートの API キーを OS の資格情報ストアへ登録する。
 ///
-/// 値は決して返さない。存在の有無だけで、綴り誤りと未設定を保存時点で指摘できる。
-///
-/// 判定対象を「システムに登録されているか」ではなく
-/// 「**この**プロセスから見えるか」にしているのは、実際に鍵を解決するのが
-/// このプロセスだから。Windows では設定済みの変数が起動済みプロセスへ伝播せず、
-/// 「登録はされているのにアプリからは見えない」状態が普通に起きる。
+/// 併せてテンプレートの取得元を `keyring` に切り替える。
 #[tauri::command]
-pub async fn env_var_is_visible(name: String) -> CoreResult<bool> {
-    if !agent_core::model::is_env_var_name(&name) {
-        return Ok(false);
-    }
-    Ok(std::env::var_os(&name).is_some())
+pub async fn set_model_credential(
+    state: State<'_, AppState>,
+    template_id: ModelTemplateId,
+    secret: String,
+) -> CoreResult<()> {
+    state.orchestrator.set_credential(&template_id, &secret).await
+}
+
+/// モデルテンプレートの API キーを資格情報ストアから削除する。
+#[tauri::command]
+pub async fn clear_model_credential(
+    state: State<'_, AppState>,
+    template_id: ModelTemplateId,
+) -> CoreResult<()> {
+    state.orchestrator.clear_credential(&template_id).await
+}
+
+/// API キーが登録済みかどうかだけを返す。**値は返さない。**
+///
+/// 表示のために値を取り出すと、秘密が UI 層のメモリへ載る理由が無いのに載る。
+#[tauri::command]
+pub async fn model_credential_exists(
+    state: State<'_, AppState>,
+    template_id: ModelTemplateId,
+) -> CoreResult<bool> {
+    state.orchestrator.has_credential(&template_id)
 }
 
 /// ワークスペースのパスを返す。「フォルダを開く」導線で使う。
