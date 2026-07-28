@@ -51,10 +51,12 @@ ConcordiaOrcehstrator/
             ├── composables/useOrchestrator.ts   単一ストア
             ├── App.vue              3 ペインのグリッド
             └── components/
-                ├── AgentList.vue / AgentCard.vue      左ペイン
-                ├── TopologyMap.vue / MessageLog.vue   中央ペイン
-                ├── InspectorPanel.vue / MarkdownEditor.vue   右ペイン
-                └── ModelTemplateDialog.vue / ToastHost.vue
+                ├── AgentList.vue / AgentCard.vue      左: エージェント一覧
+                ├── TopologyMap.vue                    中央: 接続マップ
+                ├── ChatPanel.vue                      右: 会話（吹き出し）
+                ├── AgentSettingsDialog.vue / MarkdownEditor.vue   モーダル: 設定
+                ├── ModelTemplateDialog.vue            モーダル: モデル
+                └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue
 ```
 
 ## クレート分離の保証
@@ -84,6 +86,29 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 > 固定されるため、そこでネットワークを待つと 1 エージェント = 1 スレッド占有となり、
 > 同時稼働数がコア数で頭打ちになる（8 コア機で 9 体目が刺さる）。
 > 要求である「UI をブロックしない」は、この割り方でも完全に満たされる。
+
+---
+
+## 画面の構成
+
+| 位置 | 中身 | 常駐する理由 |
+|---|---|---|
+| 左 | エージェント一覧（状態・稼働時間・トークン・トグル） | 常に見る |
+| 中央 | 接続マップ | 常に見る |
+| 右 | 会話（吹き出し形式） | 常に見る |
+| モーダル | エージェント設定 + 設定ファイル編集（カードの ⚙ から） | **たまに開くもの** |
+| モーダル | モデルテンプレート管理（ヘッダの ⚙ から） | たまに開くもの |
+
+設定を常駐ペインに置かないのは、**たまに開くものが、いつも見るものの面積を奪う**ため。
+
+会話は吹き出しで左右に話者を分け、連続する発言はアバターと名前をまとめる。
+ただし**宛先は落とさない** — ここはオーケストレーションの画面で、
+「誰から誰へ」は本質的な情報だから、吹き出しの外側に宛先と hop を残す。
+会話らしさのために情報を捨てない。
+
+境界は 2 本のつまみで動かせる（ダブルクリックで既定値へ、矢印キーでも動く）。
+寸法は `localStorage` に保存する。表示の都合であってオーケストレーターの状態では
+ないので、`world.json` には混ぜない。
 
 ---
 
@@ -248,7 +273,8 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
     Construct.md
 ```
 
-右ペインの 📁 ボタンから、選択中エージェントの設定フォルダを直接開ける。
+カードの ⚙ から開く設定ダイアログの 📁 ボタンで、そのエージェントの設定フォルダを
+直接開ける。
 
 ---
 

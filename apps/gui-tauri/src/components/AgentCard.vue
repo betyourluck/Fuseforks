@@ -16,6 +16,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "select"): void;
+  (e: "configure"): void;
   (e: "toggle", running: boolean): void;
   (e: "move", direction: -1 | 1): void;
 }>();
@@ -71,6 +72,15 @@ const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
         :title="STATUS_LABELS[agent.status]"
       />
       <h3 class="min-w-0 flex-1 truncate font-medium">{{ agent.name }}</h3>
+
+      <!-- 設定。カード本体のクリック（選択）と混ざらないよう伝播を止める。 -->
+      <button
+        class="shrink-0 rounded px-1 py-0.5 text-ink-dim hover:text-accent"
+        title="設定を開く"
+        @click.stop="emit('configure')"
+      >
+        ⚙
+      </button>
 
       <!-- 並び替え。ドラッグ&ドロップより、押した回数だけ確実に動く方式を採る。 -->
       <div class="flex flex-col leading-none opacity-60 hover:opacity-100">

@@ -14,22 +14,18 @@ const STORAGE_KEY = "concordia.layout.v1";
 const BOUNDS = {
   leftWidth: { min: 220, max: 620 },
   rightWidth: { min: 260, max: 720 },
-  logHeight: { min: 120, max: 900 },
 } as const;
 
 export interface PaneLayout {
   /** 左ペイン（エージェント一覧）の幅。 */
   leftWidth: number;
-  /** 右ペイン（設定）の幅。 */
+  /** 右ペイン（会話）の幅。 */
   rightWidth: number;
-  /** 中央下部（会話ログ）の高さ。 */
-  logHeight: number;
 }
 
 const DEFAULTS: PaneLayout = {
   leftWidth: 320,
-  rightWidth: 380,
-  logHeight: 280,
+  rightWidth: 420,
 };
 
 /** 値を下限・上限へ収める。 */
@@ -48,7 +44,6 @@ function load(): PaneLayout {
     return {
       leftWidth: clamp(parsed.leftWidth ?? DEFAULTS.leftWidth, "leftWidth"),
       rightWidth: clamp(parsed.rightWidth ?? DEFAULTS.rightWidth, "rightWidth"),
-      logHeight: clamp(parsed.logHeight ?? DEFAULTS.logHeight, "logHeight"),
     };
   } catch {
     // 壊れた保存値で画面が開けなくなるほうが害が大きい。

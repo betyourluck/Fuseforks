@@ -2,7 +2,11 @@
 /**
  * 3 ペインのルートレイアウト。
  *
- * 左: エージェント一覧 / 中央: トポロジー + 会話ログ / 右: 設定とエディタ
+ * 左: エージェント一覧 / 中央: 接続マップ / 右: 会話
+ *
+ * エージェントの設定は常駐ペインではなくモーダル（カードの ⚙ から開く）。
+ * 設定は「たまに開いて書き換えるもの」で、会話やマップのように
+ * 常に見ているものではない。常駐させると、いつも見るものの面積を奪う。
  *
  * # 行・列に `minmax(0, ...)` を使う理由
  *
@@ -15,9 +19,8 @@
 import { computed, onMounted } from "vue";
 
 import AgentList from "./components/AgentList.vue";
+import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
-import InspectorPanel from "./components/InspectorPanel.vue";
-import MessageLog from "./components/MessageLog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
@@ -32,7 +35,6 @@ const { layout, resize, reset } = usePaneLayout();
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
 );
-const centerRows = computed(() => `minmax(0, 1fr) 2px ${layout.logHeight}px`);
 
 onMounted(() => {
   void orchestrator.init();
@@ -64,44 +66,25 @@ onMounted(() => {
       @reset="reset"
     />
 
-    <!-- 中央ペイン: グラフィカルマップ（上） + 会話ログ（下） -->
-    <main
-      class="grid min-w-0 overflow-hidden"
-      :style="{ gridTemplateRows: centerRows }"
-    >
-      <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary label="接続マップ">
-          <TopologyMap />
-        </ErrorBoundary>
-      </section>
-
-      <!-- 下へドラッグするとログが縮む向きなので符号を反転する。 -->
-      <PaneSplitter
-        direction="row"
-        label="会話ログの高さ"
-        @delta="(px) => resize('logHeight', px, -1)"
-        @reset="reset"
-      />
-
-      <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary label="会話ログ">
-          <MessageLog />
-        </ErrorBoundary>
-      </section>
+    <!-- 中央ペイン: 接続マップ -->
+    <main class="min-w-0 overflow-hidden">
+      <ErrorBoundary label="接続マップ">
+        <TopologyMap />
+      </ErrorBoundary>
     </main>
 
     <!-- 右ペインは左端につまみがあるので、右へ動かすと幅が縮む。 -->
     <PaneSplitter
       direction="col"
-      label="設定パネルの幅"
+      label="会話パネルの幅"
       @delta="(px) => resize('rightWidth', px, -1)"
       @reset="reset"
     />
 
-    <!-- 右ペイン: 設定とエディタ -->
+    <!-- 右ペイン: 会話 -->
     <aside class="min-w-0 overflow-hidden">
-      <ErrorBoundary label="設定">
-        <InspectorPanel />
+      <ErrorBoundary label="会話">
+        <ChatPanel />
       </ErrorBoundary>
     </aside>
 

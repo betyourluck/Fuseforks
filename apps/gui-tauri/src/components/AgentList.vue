@@ -8,6 +8,7 @@
 import { computed, ref } from "vue";
 
 import AgentCard from "./AgentCard.vue";
+import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentSpec } from "../types";
@@ -16,6 +17,8 @@ const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
 const showTemplates = ref(false);
+/** 設定ダイアログを開いているエージェント。`null` なら閉じている。 */
+const configuring = ref<AgentId | null>(null);
 const creating = ref(false);
 const newName = ref("");
 
@@ -142,6 +145,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         :agent="agent"
         :selected="agent.id === state.selectedAgentId"
         @select="orchestrator.select(agent.id)"
+        @configure="configuring = agent.id"
         @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
         @move="(direction) => move(agent.id, direction)"
       />
@@ -156,5 +160,10 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
     </div>
 
     <ModelTemplateDialog v-if="showTemplates" @close="showTemplates = false" />
+    <AgentSettingsDialog
+      v-if="configuring"
+      :agent-id="configuring"
+      @close="configuring = null"
+    />
   </div>
 </template>
