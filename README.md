@@ -29,6 +29,8 @@ ConcordiaOrcehstrator/
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
 │       │   ├── rag.rs               RAG 索引（検索は Rayon 側で走る）
 │       │   ├── secret.rs            秘密の保管（OS 資格情報ストア / テスト用の in-memory）
+│       │   ├── tool.rs              ★ AgentTool / ToolRegistry（MCP の受け口）
+│       │   ├── tools/memory.rs      同梱ツール: remember（Memory.md へ追記）
 │       │   └── llm/
 │       │       ├── mod.rs           LlmBackend / BackendFactory / EchoBackend
 │       │       ├── canonical.rs     プロバイダ中立の型

@@ -197,7 +197,13 @@ events:
     topologyChanged: {}
     agentFailed: { agentId, error }
     backendDegraded: { modelTemplateId, reason }
+    toolInvoked: { agentId, tool, ok }
+    toolLimitReached: { agentId, maxIterations }
     hopLimitReached: { agentId, maxHops }
+  observability_rule: |
+    ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
+    toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
+    「動いたかどうか」ではなく「何をしたか」が見えることが要件。
   degradation_rule: |
     設定不備で代替バックエンドへ退避したときは、必ず backendDegraded を出し、
     退避先の応答本文にも理由を書く。さらに退避結果はキャッシュしない
@@ -243,6 +249,35 @@ conversation_termination:
     note: |
       LangGraph の recursion_limit と同じ位置づけ。**終わり方ではなく燃料切れ**。
       これが唯一の終了手段になっている状態は設計の欠落であり、実際にそうなっていた。
+  tool_execution: |
+    転送と実行を 1 つのツール集合としてモデルへ提示し、返ってきたものを受け手が区別する。
+      transfer_to_* を呼んだ → 転送してターンを終える (結果は返らない)
+      実行ツールを呼んだ     → 実行し、呼び出しと結果を対で積んでもう一度呼ぶ
+      何も呼ばなかった       → 最終出力
+    上限は max_tool_iterations (既定 6)。同じツールを同じ引数で呼び続ける
+    行き詰まりが実際に起きるため、hop と同様の安全網が要る。
+    不変条件:
+      - 呼び出しと結果は**必ず対で**履歴へ積む。結果だけ積むとプロバイダが
+        「対応する呼び出しが無い結果」として拒否する
+      - ツールの失敗は会話を止めない。エラーは文字列としてモデルへ返す
+        (失敗でターンごと落とすと、引数を間違えただけで会話が終わる)
+      - 未知のツール名も同様に文字列で返す
+      - ツール結果はそのままプロンプトへ入り、モデルの出力を経て外へ出うる。
+        戻り値に内部情報を載せすぎない
+    ワイヤ形は 2 社で構造が違い、adapter が翻訳する:
+      OpenAI 互換 = assistant.tool_calls (arguments は JSON 文字列へ戻す)
+                    + role:"tool" + tool_call_id
+      Anthropic   = assistant の tool_use ブロック (input はオブジェクト)
+                    + **user** メッセージの tool_result ブロック
+
+  tool_extension_point: |
+    AgentTool / ToolRegistry (crates/agent-core/src/tool.rs) が差し替え点。
+    MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
+    条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
+    同梱ツールは Concordia 自身が提供する操作だけに限る (現在は remember のみ)。
+    外部の能力は MCP 経由で足す — 何でも同梱するとシングルバイナリに
+    世界中の依存が生える。
+
   convergence_prerequisite: |
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
     履歴を持ち、自分の発言も assistant として見る。履歴が無いと毎回コールドスタートになり、
