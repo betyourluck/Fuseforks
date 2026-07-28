@@ -107,17 +107,30 @@ impl Shared {
     }
 
     /// テンプレートに対応するバックエンドを取り出す。無ければ組み立てて覚える。
+    ///
+    /// 設定不備で代替へ退避した場合は [`CoreEvent::BackendDegraded`] で必ず通知し、
+    /// **その結果を覚えない**。覚えてしまうと、原因を直しても次の発話で復帰できず、
+    /// テンプレートを保存し直すまで偽の応答が続く。
     async fn backend_for(&self, template: &ModelTemplate) -> CoreResult<Arc<dyn LlmBackend>> {
         if let Some(backend) = self.backends.read().await.get(&template.id) {
             return Ok(Arc::clone(backend));
         }
 
-        let backend = self.factory.create(template)?;
+        let resolution = self.factory.create(template)?;
+
+        if let Some(reason) = resolution.degraded_reason {
+            self.emit(CoreEvent::BackendDegraded {
+                model_template_id: template.id.clone(),
+                reason,
+            });
+            return Ok(resolution.backend);
+        }
+
         self.backends
             .write()
             .await
-            .insert(template.id.clone(), Arc::clone(&backend));
-        Ok(backend)
+            .insert(template.id.clone(), Arc::clone(&resolution.backend));
+        Ok(resolution.backend)
     }
 
     /// 状態を変更し、変化があった場合のみイベントを発行する。

@@ -67,6 +67,8 @@ const state = reactive<OrchestratorState>({
 
 let toastSeq = 0;
 let unlisten: UnlistenFn | null = null;
+/** 既に通知済みの退避（テンプレート ID + 理由）。同じ通知を積み上げない。 */
+const reportedDegradations = new Set<string>();
 /**
  * 初期化済みフラグ。
  *
@@ -167,6 +169,23 @@ function applyEvent(event: CoreEvent): void {
       const name =
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
       pushToast("error", `${name} が失敗しました`, `[${event.error.code}] ${event.error.message}`);
+      break;
+    }
+
+    case "backendDegraded": {
+      // 退避は発話のたびに起きるので、同じ理由の通知は 1 回だけ出す。
+      const key = `${event.modelTemplateId}::${event.reason}`;
+      if (!reportedDegradations.has(key)) {
+        reportedDegradations.add(key);
+        const name =
+          state.templates.find((t) => t.id === event.modelTemplateId)?.name ??
+          event.modelTemplateId;
+        pushToast(
+          "warn",
+          `${name} は本物のモデルに接続できていません`,
+          `${event.reason}\n環境変数を設定したら、新しいターミナルからアプリを起動し直してください（実行中のプロセスには反映されません）。`,
+        );
+      }
       break;
     }
 

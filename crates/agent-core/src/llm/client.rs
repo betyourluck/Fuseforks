@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
-use super::{LlmBackend, anthropic, openai_compat, wire};
+use super::{BackendResolution, LlmBackend, anthropic, openai_compat, wire};
 use crate::model::ModelTemplate;
 
 /// エラー応答本文をログ・UI に載せる際の最大文字数。
@@ -239,35 +239,47 @@ impl LlmBackend for HttpLlmBackend {
 
 /// テンプレートから実 HTTP バックエンドを組み立てるファクトリ。
 ///
-/// API キーの解決に失敗した場合の扱いを [`HttpBackendFactory::fallback`] で選べる。
-/// 初回起動時にキー未設定でもアプリが沈黙しないよう、GUI 層はここに
-/// [`super::EchoBackend`] を指定して「動くが本物ではない」状態を可視化する。
+/// 設定不備のときの扱いを 2 通りから選ぶ。GUI は
+/// [`HttpBackendFactory::echo_on_failure`] を使い、キー未設定でもアプリが
+/// 沈黙しないようにする。ただし退避したことと**その理由**は必ず表に出す。
 pub struct HttpBackendFactory {
-    fallback: Option<std::sync::Arc<dyn LlmBackend>>,
+    echo_on_failure: bool,
 }
 
 impl HttpBackendFactory {
     /// 設定不備を素直に失敗させるファクトリ。
     pub fn strict() -> Self {
-        Self { fallback: None }
+        Self {
+            echo_on_failure: false,
+        }
     }
 
-    /// 設定不備のときに代替バックエンドへ落ちるファクトリ。
-    pub fn fallback(backend: std::sync::Arc<dyn LlmBackend>) -> Self {
+    /// 設定不備のとき、理由を名乗るエコー応答へ退避するファクトリ。
+    pub fn echo_on_failure() -> Self {
         Self {
-            fallback: Some(backend),
+            echo_on_failure: true,
         }
     }
 }
 
 impl super::BackendFactory for HttpBackendFactory {
-    fn create(&self, template: &ModelTemplate) -> Result<std::sync::Arc<dyn LlmBackend>, LlmError> {
-        let built = LlmConfig::from_template(template).and_then(HttpLlmBackend::new);
+    fn create(&self, template: &ModelTemplate) -> Result<BackendResolution, LlmError> {
+        match LlmConfig::from_template(template).and_then(HttpLlmBackend::new) {
+            Ok(backend) => Ok(BackendResolution::healthy(std::sync::Arc::new(backend))),
 
-        match (built, &self.fallback) {
-            (Ok(backend), _) => Ok(std::sync::Arc::new(backend)),
-            (Err(_), Some(fallback)) => Ok(std::sync::Arc::clone(fallback)),
-            (Err(err), None) => Err(err),
+            Err(err) if self.echo_on_failure => {
+                // 退避先の応答そのものに理由を書く。会話ログを見ている人が
+                // 別の画面を探さずに原因へ辿り着けるようにするため。
+                // 「エコー応答」とだけ名乗る実装では、どの設定が欠けているのか
+                // 分からず、キーを直したつもりのまま延々と偽の応答が続く。
+                let reason = err.to_string();
+                Ok(BackendResolution::degraded(
+                    std::sync::Arc::new(super::EchoBackend::new(format!("[エコー応答 / {reason}]"))),
+                    reason,
+                ))
+            }
+
+            Err(err) => Err(err),
         }
     }
 }
@@ -275,7 +287,7 @@ impl super::BackendFactory for HttpBackendFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{BackendFactory, EchoBackend};
+    use crate::llm::BackendFactory;
     use crate::model::ModelTemplate;
 
     #[test]
@@ -316,16 +328,53 @@ mod tests {
         assert!(config.api_key.is_empty());
     }
 
-    #[test]
-    fn factory_falls_back_instead_of_leaving_the_app_silent() {
+    #[tokio::test]
+    async fn degraded_fallback_names_the_missing_variable_instead_of_going_quiet() {
         let mut template = ModelTemplate::new("tpl", "テスト", "gpt-4o");
         template.api_key_env = Some("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST".into());
 
         // strict はそのまま失敗させる。
         assert!(HttpBackendFactory::strict().create(&template).is_err());
 
-        // fallback ありなら代替へ落ちる（設定不備を UI 上で見えるようにするため）。
-        let factory = HttpBackendFactory::fallback(std::sync::Arc::new(EchoBackend::new("[未設定]")));
-        assert_eq!(factory.create(&template).unwrap().name(), "echo");
+        let resolution = HttpBackendFactory::echo_on_failure()
+            .create(&template)
+            .expect("退避してでもバックエンドは返る");
+
+        // 退避したことが戻り値の型に載っている。
+        let reason = resolution
+            .degraded_reason
+            .as_deref()
+            .expect("退避理由が付くこと");
+        assert!(
+            reason.contains("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST"),
+            "どの環境変数が欠けているか名指しすること: {reason}"
+        );
+
+        // 応答本文自体にも理由が乗る。会話ログだけ見ていても原因に辿り着ける。
+        let response = resolution
+            .backend
+            .chat(crate::llm::ChatRequest::plain(
+                "gpt-4o",
+                vec![crate::llm::ChatMessage::user("やあ")],
+                64,
+            ))
+            .await
+            .unwrap();
+        let text = response.text.unwrap_or_default();
+        assert!(
+            text.contains("CONCORDIA_TEST_KEY_THAT_DOES_NOT_EXIST"),
+            "応答が理由を名乗ること: {text}"
+        );
+    }
+
+    #[test]
+    fn a_working_template_is_not_reported_as_degraded() {
+        let mut template = ModelTemplate::new("tpl_local", "ローカル", "qwen3");
+        template.base_url = "http://localhost:11434/v1".into();
+        template.api_key_env = None;
+
+        let resolution = HttpBackendFactory::echo_on_failure().create(&template).unwrap();
+        assert!(resolution.degraded_reason.is_none());
+        assert_eq!(resolution.backend.name(), "openai-compat");
     }
 }

@@ -121,6 +121,11 @@ export type CoreEvent =
   | { type: "messageSent"; message: AgentMessage }
   | { type: "topologyChanged" }
   | { type: "agentFailed"; agentId: AgentId; error: ErrorPayload }
+  | {
+      type: "backendDegraded";
+      modelTemplateId: ModelTemplateId;
+      reason: string;
+    }
   | { type: "hopLimitReached"; agentId: AgentId; maxHops: number };
 
 /** 設定ファイル種別と表示名の対応。Rust 側の実ファイル名と揃えてある。 */

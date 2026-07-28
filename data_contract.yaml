@@ -171,7 +171,15 @@ events:
     messageSent: { message }
     topologyChanged: {}
     agentFailed: { agentId, error }
+    backendDegraded: { modelTemplateId, reason }
     hopLimitReached: { agentId, maxHops }
+  degradation_rule: |
+    設定不備で代替バックエンドへ退避したときは、必ず backendDegraded を出し、
+    退避先の応答本文にも理由を書く。さらに退避結果はキャッシュしない
+    (覚えると原因を直しても復帰できない)。
+    根拠: 環境変数がプロセスへ渡っていないだけの状態で「エコー応答」とだけ名乗る
+    偽の応答が返り続け、どの設定が欠けているのか画面から追えなくなった (2026-07-28)。
+    退避は許すが、黙って退避してはいけない。
 
 # ---------------------------------------------------------------------------
 topology_rules:

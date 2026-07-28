@@ -50,6 +50,36 @@ pub trait LlmBackend: Send + Sync {
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError>;
 }
 
+/// バックエンドの解決結果。
+///
+/// 「組めたか」だけでなく「**要求どおりに組めたか**」を返すのが要点。
+/// 設定不備で代替へ退避したとき、その事実を戻り値の型に載せておかないと、
+/// 呼び出し側は退避を検知できず、応答は返るのに設定が効いていない状態が続く。
+pub struct BackendResolution {
+    /// 実際に使うバックエンド。
+    pub backend: Arc<dyn LlmBackend>,
+    /// 要求どおりに組めなかった場合の理由。`None` なら正常。
+    pub degraded_reason: Option<String>,
+}
+
+impl BackendResolution {
+    /// 要求どおりに組めた場合。
+    pub fn healthy(backend: Arc<dyn LlmBackend>) -> Self {
+        Self {
+            backend,
+            degraded_reason: None,
+        }
+    }
+
+    /// 代替へ退避した場合。
+    pub fn degraded(backend: Arc<dyn LlmBackend>, reason: impl Into<String>) -> Self {
+        Self {
+            backend,
+            degraded_reason: Some(reason.into()),
+        }
+    }
+}
+
 /// モデルテンプレートからバックエンドを組み立てる差し替え点。
 ///
 /// バックエンドを 1 個に固定できないのは、テンプレートごとに
@@ -59,9 +89,9 @@ pub trait BackendFactory: Send + Sync {
     /// テンプレートに対応するバックエンドを作る。
     ///
     /// # Errors
-    /// 設定が不完全でバックエンドを組めない場合（API キー未設定など）。
+    /// 設定が不完全で、代替への退避も許可されていない場合。
     fn create(&self, template: &crate::model::ModelTemplate)
-    -> Result<Arc<dyn LlmBackend>, LlmError>;
+    -> Result<BackendResolution, LlmError>;
 }
 
 /// 常に同じバックエンドを返すファクトリ。テストと初回起動用。
@@ -83,8 +113,9 @@ impl BackendFactory for FixedBackendFactory {
     fn create(
         &self,
         _template: &crate::model::ModelTemplate,
-    ) -> Result<Arc<dyn LlmBackend>, LlmError> {
-        Ok(Arc::clone(&self.0))
+    ) -> Result<BackendResolution, LlmError> {
+        // 意図してこのバックエンドを選んでいるので、退避ではない。
+        Ok(BackendResolution::healthy(Arc::clone(&self.0)))
     }
 }
 

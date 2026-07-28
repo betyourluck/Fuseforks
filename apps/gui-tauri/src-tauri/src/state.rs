@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use agent_core::{
-    ConfigStore, CoreEvent, EchoBackend, HttpBackendFactory, Orchestrator, OrchestratorConfig,
+    ConfigStore, CoreEvent, HttpBackendFactory, Orchestrator, OrchestratorConfig,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -26,9 +26,10 @@ pub struct AppState {
 
 /// アプリ起動時にオーケストレーターを組み立てる。
 ///
-/// バックエンドは [`HttpBackendFactory::fallback`] で構築する。API キーが未設定でも
-/// [`EchoBackend`] へ落ちてアプリは動く。ここで `strict` にすると、キーを入れるまで
-/// 画面が沈黙し、設定不備なのか実装不具合なのかユーザーが切り分けられなくなる。
+/// バックエンドは [`HttpBackendFactory::echo_on_failure`] で構築する。API キーが
+/// 未設定でもアプリは動くが、退避したことと理由は `BackendDegraded` イベントと
+/// 応答本文の両方に現れる。`strict` にすると、キーを入れるまで画面が沈黙し、
+/// 設定不備なのか実装不具合なのか切り分けられなくなる。
 ///
 /// # Errors
 /// ワークスペースのディレクトリを解決・作成できない場合、
@@ -37,9 +38,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     let workspace = app.path().app_data_dir()?.join("workspace");
     tokio::fs::create_dir_all(&workspace).await?;
 
-    let factory = Arc::new(HttpBackendFactory::fallback(Arc::new(EchoBackend::new(
-        "[APIキー未設定のためエコー応答]",
-    ))));
+    let factory = Arc::new(HttpBackendFactory::echo_on_failure());
 
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&workspace),
