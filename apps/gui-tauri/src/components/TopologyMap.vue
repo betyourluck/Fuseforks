@@ -56,16 +56,50 @@ const nodes = computed<Node[]>(() => {
   });
 });
 
-const edges = computed<Edge[]>(() =>
-  state.edges.map((edge) => ({
-    id: `${edge.source}->${edge.target}`,
-    source: edge.source,
-    target: edge.target,
-    animated: state.agents.some(
-      (a) => a.id === edge.source && a.status === "running",
-    ),
-    markerEnd: "arrowclosed",
-  })),
+/**
+ * 辺。**双方向の接続は 2 本ではなく、両端に矢を持つ 1 本にまとめる。**
+ *
+ * 2 本並べると、同じ 2 点を結ぶ線が重なって太い 1 本にしか見えないうえ、
+ * 矢が両端に付いた状態と区別がつかない。だったら初めから 1 本で描いて、
+ * 「双方向である」ことを形で示すほうが正しい。
+ */
+const edges = computed<Edge[]>(() => {
+  const exists = (source: AgentId, target: AgentId) =>
+    state.edges.some((e) => e.source === source && e.target === target);
+
+  const running = (id: AgentId) =>
+    state.agents.some((a) => a.id === id && a.status === "running");
+
+  const seen = new Set<string>();
+  const result: Edge[] = [];
+
+  for (const edge of state.edges) {
+    const bidirectional = exists(edge.target, edge.source);
+    // 双方向は向きを無視した鍵で正規化し、2 周目を弾く。
+    const id = bidirectional
+      ? `${[edge.source, edge.target].sort().join("<->")}`
+      : `${edge.source}->${edge.target}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    result.push({
+      id,
+      source: edge.source,
+      target: edge.target,
+      data: { bidirectional },
+      animated: running(edge.source) || (bidirectional && running(edge.target)),
+      markerEnd: "arrowclosed",
+      // 双方向のときだけ始端にも矢を付ける。
+      markerStart: bidirectional ? "arrowclosed" : undefined,
+    });
+  }
+
+  return result;
+});
+
+/** 双方向にまとまった辺の本数。見出しの内訳に出す。 */
+const bidirectionalCount = computed(
+  () => edges.value.filter((e) => e.data?.bidirectional).length,
 );
 
 /** ノード数が変わったら手動座標を捨てて配置し直す。 */
@@ -92,14 +126,30 @@ async function onConnect(connection: Connection): Promise<void> {
   ]);
 }
 
-/** 選択中の辺を削除する。 */
+/**
+ * 辺を切る。
+ *
+ * 双方向を 1 本で描いている以上、その線を切れば**両方向とも切れる**のが
+ * 見た目と一致する。片方だけ残すなら、設定ダイアログの接続先チェックで行う。
+ */
 async function removeEdge(edge: Edge): Promise<void> {
-  const source = state.agents.find((a) => a.id === edge.source);
-  if (!source) return;
-  await orchestrator.setConnections(
-    source.id,
-    source.connectedAgents.filter((id) => id !== edge.target),
-  );
+  const forward = state.agents.find((a) => a.id === edge.source);
+  const backward = edge.data?.bidirectional
+    ? state.agents.find((a) => a.id === edge.target)
+    : undefined;
+
+  if (forward) {
+    await orchestrator.setConnections(
+      forward.id,
+      forward.connectedAgents.filter((id) => id !== edge.target),
+    );
+  }
+  if (backward) {
+    await orchestrator.setConnections(
+      backward.id,
+      backward.connectedAgents.filter((id) => id !== edge.source),
+    );
+  }
 }
 
 /** ノードの縁の色を状態から決める。 */
@@ -124,9 +174,14 @@ function borderClass(status: string): string {
       class="flex items-center gap-3 border-b border-line px-3 py-2 text-xs text-ink-dim"
     >
       <h2 class="font-semibold tracking-wide text-ink">接続マップ</h2>
-      <span>{{ state.agents.length }} ノード / {{ state.edges.length }} 辺</span>
+      <span>
+        {{ state.agents.length }} ノード / {{ edges.length }} 辺
+        <span v-if="bidirectionalCount" class="text-ink">
+          （うち双方向 {{ bidirectionalCount }}）
+        </span>
+      </span>
       <span class="ml-auto">
-        ハンドルをドラッグで接続 / 辺をクリックで切断
+        ハンドルをドラッグで接続 / 辺をクリックで切断（双方向は両方向とも切れる）
       </span>
     </header>
 

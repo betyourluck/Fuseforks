@@ -57,7 +57,26 @@ textarea,
   background-color: transparent;
 }
 
-/* Vue Flow をアプリの配色に合わせる（既定は明るい前提のため）。 */
+/*
+ * Vue Flow をアプリの配色に合わせる（既定は明るい前提のため）。
+ *
+ * `theme-default.css` の `.vue-flow__node-default` は白背景・枠線・パディング・
+ * 固定幅を持つ。ノードの中身は自前で描いているので、その外側の箱は素通しにする。
+ * 個別に打ち消しているのは、ライブラリ側の既定がどれだけ乗っているかを
+ * 明示するため（`all: unset` だと何を消したのか読めなくなる）。
+ */
+.vue-flow__node-default {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  width: auto;
+  box-shadow: none;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
 .vue-flow__edge-path {
   stroke: var(--color-line);
   stroke-width: 1.5;
@@ -65,6 +84,12 @@ textarea,
 .vue-flow__edge.selected .vue-flow__edge-path,
 .vue-flow__edge:hover .vue-flow__edge-path {
   stroke: var(--color-accent);
+}
+
+/* 矢印は線と同じ色にする。既定は明るい灰色で、線だけ色を変えると継ぎ目が浮く。 */
+.vue-flow__arrowhead * {
+  stroke: var(--color-line);
+  fill: var(--color-line);
 }
 .vue-flow__handle {
   background-color: var(--color-line);
