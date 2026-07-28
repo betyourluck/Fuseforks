@@ -236,7 +236,16 @@ async function send(content: string): Promise<void> {
       </select>
     </header>
 
-    <div ref="scroller" class="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+    <!--
+      overflow-x-hidden は保険。中身は下の折り返し規則（wrap-anywhere /
+      md-body の overflow-wrap: anywhere）で必ず折れるので、通常ここで
+      何かが隠れることはない。長い URL やパスが 1 トークンで来たとき、
+      会話全体に横スクロールバーが生える事故だけを構造で封じる。
+    -->
+    <div
+      ref="scroller"
+      class="min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
+    >
       <div
         v-for="({ message }, index) in rows"
         :key="message.id"
@@ -284,16 +293,25 @@ async function send(content: string): Promise<void> {
             エージェント発言は Markdown 描画（md で返すことが多い）。
             renderMarkdown は html:false で生 HTML をエスケープするので、
             LLM 出力を v-html へ挿しても任意タグは注入されない。
+
+            折り返しは wrap-anywhere（overflow-wrap: anywhere）。break-words では
+            足りない — バブルは shrink-to-fit（列が items-start/end）なので幅の
+            算出が min-content を基準に走り、break-word は min-content を
+            「単語全体の幅」のまま縮めないため、URL やパスのような長い 1 トークンが
+            バブルごと列の外へ押し広げる。anywhere は任意の位置を折り返し候補に
+            数えるので min-content が縮み、幅の算出段階から収まる。
+            min-w-0 は flex item の暗黙の min-width:auto（= min-content）を外し、
+            max-w-full は親列（max-w-[78%]）を超えない上限。三点で 1 セット。
           -->
           <div
             v-if="isRenderedAsMarkdown(message)"
-            class="md-body selectable rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed break-words text-ink"
+            class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
             @click="onMarkdownClick"
             v-html="markdownOf(message)"
           />
           <div
             v-else
-            class="selectable px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap"
+            class="selectable min-w-0 max-w-full px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap"
             :class="
               isMine(message)
                 ? 'rounded-2xl rounded-tr-sm bg-accent text-surface-0'

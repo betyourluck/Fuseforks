@@ -624,3 +624,39 @@ PATH から実体を解決してから起動する。あわせて、コマンド
 互換性ではなく自分の実装だけになる。**主張を書いたら、その主張の文言を
 そのままアサーションにする** — ここでは「加工しない設定で繋がること」を
 テスト名と本文に据えた（`a_claude_desktop_config_works_verbatim`）。
+
+---
+
+## #27 長い URL・パスが折り返されず、会話全体に横スクロールバーが生えた
+
+**症状**: メッセージに長い URL やファイルパス（折り返し位置の無い 1 トークン）が
+入ると、吹き出しが右へはみ出し、会話ペイン全体に横スクロールバーが出た。
+Markdown 描画のインライン `code` に入れたパスでも同じことが起きた。
+別プロジェクト（outcasts）でも同じ形で踏んでいる。
+
+**真因**: 二段の複合。
+(1) 吹き出しの列は `items-start` / `items-end` で shrink-to-fit のため、
+吹き出しの幅は **min-content を基準に**算出される。`break-words`
+（`overflow-wrap: break-word`）は「あふれたら折る」規則で、
+**min-content の算出では単語を折らない** — つまり長い 1 トークンの幅が
+そのまま最小幅になり、折り返しが発動する前に箱ごと親からはみ出す。
+(2) スクローラは `overflow-y: auto` 指定で、CSS の規則により
+`overflow-x` も `visible` から `auto` へ昇格する。はみ出した分が
+そのまま会話全体の横スクロールバーになった。
+
+**処方**: 折り返し規則と幅の上限を 1 セットで入れる。
+- `overflow-wrap: anywhere`（Tailwind の `wrap-anywhere`）— `break-word` と
+  違い**任意の位置を min-content の折り返し候補に数える**ので、
+  幅の算出段階から収まる
+- 吹き出しに `min-w-0`（flex item の暗黙の `min-width: auto` を外す）と
+  `max-w-full`（親列の上限を超えない）
+- フェンスコード（`pre`）だけは折らず `overflow-x: auto` + `max-width: 100%`
+  で**内部スクロール**に引き受けさせる（コードの折り返しは意味を壊す）
+- スクローラに `overflow-x-hidden` の保険（通常は何も隠れない）
+
+**一般化**: **`break-word` は「表示の規則」であって「幅の規則」ではない。**
+shrink-to-fit の文脈（`items-start` の flex 列、`width: auto` の float、
+テーブルセル）では幅の算出が min-content を見るため、折り返しに効くのは
+`overflow-wrap: anywhere` のほう。チャット UI のように「幅が中身で決まる箱」へ
+ユーザー由来・LLM 由来の任意テキストを流すときは、anywhere + `min-w-0` +
+`max-w-full` を最初から 1 セットで入れる。

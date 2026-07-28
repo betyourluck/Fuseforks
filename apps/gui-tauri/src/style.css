@@ -147,13 +147,25 @@ textarea,
   padding: 0.05em 0.3em;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 0.92em;
+  /*
+   * ファイルパスや URL のような折り返し位置の無い 1 トークンが多い。
+   * バブル（wrap-anywhere）から継承はされるが、code だけ別スタイルへ
+   * 差し替えられても壊れないよう、ここでも明示する。
+   */
+  overflow-wrap: anywhere;
 }
 .md-body pre {
   background-color: var(--color-surface-0);
   border: 1px solid var(--color-line);
   border-radius: 6px;
   padding: 0.6em 0.8em;
+  /*
+   * フェンスコードは折り返さず、はみ出しは pre の内部スクロールに引き受け
+   * させる（コードの折り返しは意味を壊す）。会話全体に横スクロールバーを
+   * 生やさないため、幅は必ずバブル内に収める。
+   */
   overflow-x: auto;
+  max-width: 100%;
 }
 .md-body pre code {
   background: none;
