@@ -7,10 +7,11 @@
  * 楽観的更新は最小限（トグルの即時反映のみ）に留めてある。
  */
 
-import { onUnmounted, reactive, readonly, ref } from "vue";
+import { reactive, readonly } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import * as ipc from "../lib/ipc";
+import { toErrorPayload } from "../lib/ipc";
 import type {
   AgentId,
   AgentMessage,
@@ -47,6 +48,8 @@ interface OrchestratorState {
   selectedAgentId: AgentId | null;
   toasts: Toast[];
   ready: boolean;
+  /** 初期化に失敗した理由。`null` なら未発生。 */
+  initError: ErrorPayload | null;
 }
 
 const state = reactive<OrchestratorState>({
@@ -59,11 +62,21 @@ const state = reactive<OrchestratorState>({
   selectedAgentId: null,
   toasts: [],
   ready: false,
+  initError: null,
 });
 
 let toastSeq = 0;
 let unlisten: UnlistenFn | null = null;
-const initialized = ref(false);
+/**
+ * 初期化済みフラグ。
+ *
+ * モジュールスコープに置き、**コンポーネントのアンマウントでは解除しない**。
+ * `useOrchestrator()` は 8 個のコンポーネントから呼ばれるため、
+ * ここで `onUnmounted` を登録すると、モーダルを 1 つ閉じただけで
+ * イベント購読が切れてアプリ全体が更新を受け取らなくなる。
+ * 購読はページの寿命と一致させるのが正しい。
+ */
+let initialized = false;
 
 /** 通知を積む。同じ内容が連続しても潰さない（発生回数が診断の材料になるため）。 */
 function pushToast(level: Toast["level"], title: string, detail?: string): void {
@@ -81,13 +94,22 @@ export function dismissToast(id: number): void {
   if (index >= 0) state.toasts.splice(index, 1);
 }
 
-/** IPC 呼び出しを包み、失敗を通知へ変換する。成功なら結果、失敗なら `null`。 */
+/**
+ * IPC 呼び出しを包み、失敗を通知へ変換する。成功なら結果、失敗なら `null`。
+ *
+ * 失敗時はコア側から一覧を取り直す。真実はコアにあり、ここはその投影でしかないため、
+ * **失敗した操作の後に古い投影を残すと、存在しない行をユーザーが押し続けられる**。
+ * 実際にそれが起きた: 削除済みのテンプレート行が一覧に残り、押すたびに
+ * `MODEL_TEMPLATE_NOT_FOUND` が積み上がった。
+ */
 async function guard<T>(label: string, task: () => Promise<T>): Promise<T | null> {
   try {
     return await task();
   } catch (error) {
     const payload = error as ErrorPayload;
     pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
+    // 再同期そのものが失敗しても、元の失敗の通知を上書きしない。
+    void refreshAll().catch(() => undefined);
     return null;
   }
 }
@@ -164,30 +186,33 @@ function applyEvent(event: CoreEvent): void {
 /**
  * ストアを初期化する。アプリのルートコンポーネントから 1 回だけ呼ぶ。
  *
- * 二重購読を避けるためモジュールスコープのフラグで守っている。
- * HMR で同じコンポーネントが再マウントされたときにイベントが二重に届くのを防ぐ。
+ * 失敗しても例外を投げず、{@link OrchestratorState.initError} に理由を残す。
+ * ここで握り潰したまま `ready` を false に据え置くと、UI は「読み込み中」の
+ * 覆いが外れないだけになり、初期化失敗と処理継続中が見分けられなくなる。
  */
-export function useOrchestrator() {
-  async function init(): Promise<void> {
-    if (initialized.value) return;
-    initialized.value = true;
+async function initialize(): Promise<void> {
+  if (initialized) return;
+  initialized = true;
+  state.initError = null;
 
+  try {
     // 購読を先に張る。読み込み中に発生したイベントを取りこぼさない。
+    unlisten?.();
     unlisten = await listen<CoreEvent>(CORE_EVENT, (e) => applyEvent(e.payload));
 
-    await guard("初期化", async () => {
-      await refreshAll();
-      state.messages = await ipc.listMessages(MESSAGE_LIMIT);
-      state.workspace = await ipc.workspacePath();
-      state.ready = true;
-    });
+    await refreshAll();
+    state.messages = await ipc.listMessages(MESSAGE_LIMIT);
+    state.workspace = await ipc.workspacePath();
+    state.ready = true;
+  } catch (error) {
+    // 再試行できるよう、失敗時はフラグを戻す。
+    initialized = false;
+    state.initError = toErrorPayload(error);
   }
+}
 
-  onUnmounted(() => {
-    unlisten?.();
-    unlisten = null;
-    initialized.value = false;
-  });
+export function useOrchestrator() {
+  const init = initialize;
 
   return {
     state: readonly(state) as Readonly<OrchestratorState>,

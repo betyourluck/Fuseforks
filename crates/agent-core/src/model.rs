@@ -21,6 +21,26 @@ pub fn is_safe_identifier(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// 環境変数名として妥当か判定する。
+///
+/// 許可するのは英数字と `_` のみで、先頭は数字以外、最大 128 文字。
+///
+/// この関数の目的は書式検査ではなく **秘密の混入防止**にある。
+/// API キーの実値（`sk-ant-…` / `sk-…` など）は必ず `-` を含むか極端に長いため、
+/// この規則で機械的に弾ける。入力欄に注意書きを添えるだけでは、
+/// いずれ実値が貼られて平文で保存される。
+pub fn is_env_var_name(value: &str) -> bool {
+    if value.is_empty() || value.len() > 128 {
+        return false;
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap_or('\0');
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// エージェントの一意識別子。
 ///
 /// `String` の newtype にすることで、モデルテンプレート ID や RAG ソース名との

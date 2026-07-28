@@ -47,10 +47,26 @@ export function toErrorPayload(error: unknown): ErrorPayload {
   };
 }
 
+/**
+ * 引数を素の JSON 値へ落とす。
+ *
+ * Tauri v2 の IPC は structured clone を通るため、**Vue の reactive Proxy を
+ * そのまま渡すと `DataCloneError` で弾かれる**。呼び出し側で `toRaw` を
+ * 掛けて回る方式は、新しい画面を足すたびに同じ穴が空くので採らない。
+ * 境界であるここで 1 回だけ正規化し、上位はリアクティブな値を素直に渡せるようにする。
+ *
+ * `undefined` のキーは JSON 化の過程で落ちる。Rust 側は該当引数を `Option` で
+ * 受けており、キーの不在は `None` として解釈されるため、これで整合する。
+ */
+function toPlain(args?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (args === undefined) return undefined;
+  return JSON.parse(JSON.stringify(args)) as Record<string, unknown>;
+}
+
 /** `invoke` の薄いラッパ。失敗は必ず {@link ErrorPayload} として throw する。 */
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    return await invoke<T>(command, args);
+    return await invoke<T>(command, toPlain(args));
   } catch (error) {
     throw toErrorPayload(error);
   }

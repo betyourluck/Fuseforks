@@ -93,15 +93,26 @@ entities:
       contextLength: u32
       temperature: f32 | null       # null なら送らない
       maxOutputTokens: u32
-      apiKeyEnv: String | null      # 環境変数名のみ。実値は保持しない
+      apiKeyEnv: String | null      # 環境変数名のみ。書式検査で実値の混入を拒否する
       provider: Provider | null     # null なら baseUrl から自動判定
       useTools: bool
       effort: Effort | null
       requestTimeoutSecs: u32
       maxRetries: u32
     invariant: |
-      API キーの実値をこの構造体が持てる場所は存在しない。
-      設定ファイルが平文で保存される以上、秘密を書ける穴を構造から取り除く。
+      apiKeyEnv は `^[A-Za-z_][A-Za-z0-9_]*$` かつ 128 文字以内でなければ受け付けない
+      (model::is_env_var_name)。設定ファイルは平文で保存されるため、実値の混入を
+      書式で機械的に落とす。強制点は 3 箇所:
+        1. World::upsert_template   — 保存時に拒否 (API_KEY_MUST_BE_ENV_VAR_NAME)
+        2. World::from_persisted    — 読み込み時に不正値を None へ落とす (遡及修復)
+        3. Orchestrator::bootstrap  — 正規化で内容が変わったら即座にファイルへ書き戻す
+    history: |
+      2026-07-28、この欄は型が String で、防御は UI のラベルと注意書きだけだった。
+      実運用の初日に Anthropic の実キーが貼られ、world.json に平文で保存された。
+      **入力欄に書いた注意は制御ではない。** 秘密を受け付けない場所は、
+      検査で受け付けなくして初めて成立する。
+      強制点 2 と 3 は、入口を塞ぐ前に書かれた分を回収するために要る。
+      入口だけ塞ぐと、既に漏れたファイルは編集操作があるまで放置される。
 
   AgentMessage:
     fields:

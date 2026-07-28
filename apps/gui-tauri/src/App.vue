@@ -49,12 +49,34 @@ onMounted(() => {
 
     <ToastHost />
 
-    <!-- 初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。 -->
+    <!--
+      初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。
+      ただし失敗したときは覆いのまま据え置かない。読み込み中と初期化失敗が
+      同じ見た目になると、待てば直るのか壊れているのかを区別する手段が消える。
+    -->
     <div
       v-if="!state.ready"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-surface-0 text-ink-dim"
+      class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-surface-0 px-8 text-center"
     >
-      オーケストレーターを起動しています…
+      <template v-if="state.initError">
+        <p class="font-medium text-fail">オーケストレーターの起動に失敗しました</p>
+        <p class="selectable max-w-lg text-[12px] text-ink-dim">
+          [{{ state.initError.code }}] {{ state.initError.message }}
+        </p>
+        <p
+          v-if="state.initError.detail"
+          class="selectable max-w-lg text-[11px] text-ink-dim opacity-70"
+        >
+          {{ state.initError.detail }}
+        </p>
+        <button
+          class="mt-2 rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-surface-0"
+          @click="orchestrator.init()"
+        >
+          再試行
+        </button>
+      </template>
+      <p v-else class="text-ink-dim">オーケストレーターを起動しています…</p>
     </div>
   </div>
 </template>

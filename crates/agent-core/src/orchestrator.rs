@@ -167,7 +167,16 @@ impl Orchestrator {
         config: OrchestratorConfig,
     ) -> CoreResult<Self> {
         let persisted = store.load_world().await?;
-        let world = World::from_persisted(persisted);
+        let world = World::from_persisted(persisted.clone());
+
+        // 読み込み時の正規化（平文の秘密の除去、宙に浮いた接続の切り離し）で内容が
+        // 変わったなら、その場でファイルへ書き戻す。次の編集操作まで待つと、
+        // ユーザーが何もしない限りディスク上に古い内容——場合によっては秘密——が残る。
+        let normalized = world.to_persisted();
+        if normalized != persisted {
+            store.save_world(&normalized).await?;
+        }
+
         let (events, _) = broadcast::channel(config.event_capacity);
 
         let shared = Arc::new(Shared {
@@ -321,7 +330,7 @@ impl Orchestrator {
     /// エンドポイントを直したのに古い接続先へ送り続ける（設定が効かない）。
     pub async fn upsert_template(&self, template: ModelTemplate) -> CoreResult<()> {
         let id = template.id.clone();
-        self.shared.world.write().await.upsert_template(template);
+        self.shared.world.write().await.upsert_template(template)?;
         self.shared.backends.write().await.remove(&id);
         self.persist().await
     }

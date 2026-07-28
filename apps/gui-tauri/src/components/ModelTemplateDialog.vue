@@ -18,6 +18,42 @@ const { state } = orchestrator;
 
 const selectedId = ref<ModelTemplateId | null>(state.templates[0]?.id ?? null);
 const draft = ref<ModelTemplate | null>(null);
+/** 削除の通信中である行の ID。連打による二重送信を塞ぐ。 */
+const removing = ref<ModelTemplateId | null>(null);
+
+/** プロバイダごとの既定 base URL。切り替え時にこの値へ揃える。 */
+const DEFAULT_BASE_URL: Record<string, string> = {
+  open_ai_compat: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+};
+
+/** 既知の既定値のいずれかであれば、プロバイダ変更に追随してよいと判断する。 */
+const KNOWN_DEFAULTS = Object.values(DEFAULT_BASE_URL);
+
+/**
+ * プロバイダを変えたとき、base URL が別プロバイダの既定値のままなら差し替える。
+ *
+ * 実際に `provider: anthropic` と `baseUrl: api.openai.com` の組み合わせが
+ * 保存され、Anthropic のモデル名で OpenAI へ送る設定ができてしまっていた。
+ * ユーザーが手で入れた URL（プロキシ等）は正当なので、既定値のときだけ触る。
+ */
+function onProviderChange(next: string | null): void {
+  if (!draft.value) return;
+  draft.value.provider = (next as ModelTemplate["provider"]) ?? null;
+  if (!next) return;
+
+  const preset = DEFAULT_BASE_URL[next];
+  if (preset && KNOWN_DEFAULTS.includes(draft.value.baseUrl)) {
+    draft.value.baseUrl = preset;
+  }
+}
+
+/** API キー欄が環境変数名の書式か。Rust 側の `is_env_var_name` と同じ規則。 */
+const apiKeyEnvLooksValid = computed(() => {
+  const value = draft.value?.apiKeyEnv;
+  if (!value) return true;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && value.length <= 128;
+});
 
 const PROVIDERS: { value: Provider | null; label: string }[] = [
   { value: null, label: "自動判定（baseUrl から）" },
@@ -82,9 +118,18 @@ async function save(): Promise<void> {
 }
 
 async function remove(template: ModelTemplate): Promise<void> {
+  // 連打で 2 回目以降が「存在しません」になるのを、通信中フラグで塞ぐ。
+  if (removing.value) return;
   if (!confirm(`${template.name} を削除しますか？`)) return;
-  await orchestrator.deleteTemplate(template.id);
-  if (selectedId.value === template.id) selectedId.value = null;
+
+  removing.value = template.id;
+  try {
+    await orchestrator.deleteTemplate(template.id);
+    if (selectedId.value === template.id) selectedId.value = null;
+    if (draft.value?.id === template.id) draft.value = null;
+  } finally {
+    removing.value = null;
+  }
 }
 
 /** `temperature` の入力を「空文字 = 送らない」として扱う。 */
@@ -117,27 +162,35 @@ function onTemperature(raw: string): void {
 
         <ul class="flex-1 overflow-y-auto p-2">
           <li v-for="template in state.templates" :key="template.id">
-            <button
-              class="group flex w-full items-center gap-1 rounded px-2 py-1.5 text-left text-[12px]"
+            <!--
+              選択と削除は兄弟の <button> にする。
+              入れ子の <button> は不正な HTML で、内側のクリックが外側にも
+              解釈されうる。実際に削除が意図せず二重発火していた。
+            -->
+            <div
+              class="group flex items-center gap-1 rounded"
               :class="
                 selectedId === template.id ? 'bg-surface-2' : 'hover:bg-surface-2'
               "
-              @click="edit(template)"
             >
-              <span class="min-w-0 flex-1">
+              <button
+                class="min-w-0 flex-1 px-2 py-1.5 text-left text-[12px]"
+                @click="edit(template)"
+              >
                 <span class="block truncate">{{ template.name }}</span>
                 <span class="block truncate text-[10px] text-ink-dim">
                   {{ template.model }}
                 </span>
-              </span>
-              <span
-                class="hidden px-1 text-fail group-hover:inline"
+              </button>
+              <button
+                class="invisible px-2 py-1.5 text-fail group-hover:visible disabled:opacity-40"
                 title="削除"
-                @click.stop="remove(template)"
+                :disabled="removing === template.id"
+                @click="remove(template)"
               >
                 ✕
-              </span>
-            </button>
+              </button>
+            </div>
           </li>
           <li
             v-if="!state.templates.length"
@@ -188,20 +241,38 @@ function onTemperature(raw: string): void {
 
             <label class="text-ink-dim">プロトコル</label>
             <select
-              v-model="draft.provider"
+              :value="draft.provider"
               class="rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
+              @change="
+                onProviderChange(
+                  ($event.target as HTMLSelectElement).value || null,
+                )
+              "
             >
-              <option v-for="p in PROVIDERS" :key="String(p.value)" :value="p.value">
+              <option v-for="p in PROVIDERS" :key="String(p.value)" :value="p.value ?? ''">
                 {{ p.label }}
               </option>
             </select>
 
-            <label class="text-ink-dim">API キー変数</label>
-            <input
-              v-model="draft.apiKeyEnv"
-              placeholder="OPENAI_API_KEY"
-              class="rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
-            />
+            <label class="text-ink-dim">API キーの環境変数名</label>
+            <div>
+              <input
+                v-model="draft.apiKeyEnv"
+                placeholder="ANTHROPIC_API_KEY"
+                autocomplete="off"
+                spellcheck="false"
+                class="w-full rounded border bg-surface-0 px-2 py-1 font-mono outline-none"
+                :class="
+                  apiKeyEnvLooksValid
+                    ? 'border-line focus:border-accent'
+                    : 'border-fail focus:border-fail'
+                "
+              />
+              <p v-if="!apiKeyEnvLooksValid" class="mt-1 text-[11px] text-fail">
+                ここは<strong>変数名</strong>の欄です。キーの実値は保存できません
+                （英大小文字・数字・<code>_</code> のみ、先頭は数字以外）。
+              </p>
+            </div>
 
             <label class="text-ink-dim">コンテキスト長</label>
             <input
@@ -261,10 +332,12 @@ function onTemperature(raw: string): void {
           </div>
 
           <p class="rounded border border-line bg-surface-0 p-2 text-[11px] text-ink-dim">
-            API キーの実値は保存されません。ここには<strong class="text-ink">
-              環境変数名</strong
-            >だけを入れてください。値が解決できない場合はエコー応答へ退避し、その旨が
-            会話ログに現れます。
+            API キーの実値は<strong class="text-ink">保存できません</strong>。
+            設定は平文のファイルに書かれるため、書式検査で入口を塞いでいます。
+            ここには環境変数名（例
+            <code class="text-ink">ANTHROPIC_API_KEY</code>）を入れ、実値は OS の
+            環境変数に設定してアプリを起動してください。値が解決できない場合は
+            エコー応答へ退避し、その旨が会話ログに現れます。
           </p>
         </div>
 
@@ -280,7 +353,9 @@ function onTemperature(raw: string): void {
             取消
           </button>
           <button
-            class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0"
+            class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
+            :disabled="!apiKeyEnvLooksValid"
+            :title="apiKeyEnvLooksValid ? '保存' : 'API キーの環境変数名を修正してください'"
             @click="save"
           >
             保存

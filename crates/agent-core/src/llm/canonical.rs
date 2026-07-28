@@ -75,6 +75,11 @@ pub enum Effort {
     /// 深い推論。
     High,
     /// 非常に深い推論。
+    ///
+    /// serde の `snake_case` 変換では `x_high` になってしまうが、
+    /// プロバイダが受け取るワイヤ値は `xhigh` なので明示的に固定する。
+    /// [`Effort::as_str`] の戻り値と一致していることがこの型の不変条件。
+    #[serde(rename = "xhigh")]
     XHigh,
     /// 上限。
     Max,
@@ -248,6 +253,21 @@ pub struct ChatResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effort_wire_value_matches_as_str() {
+        // serde の出す値と as_str() が食い違うと、設定を保存できても読み戻せない。
+        for effort in [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ] {
+            let json = serde_json::to_string(&effort).unwrap();
+            assert_eq!(json, format!("\"{}\"", effort.as_str()));
+        }
+    }
 
     #[test]
     fn effort_rejects_unknown_values_loudly() {

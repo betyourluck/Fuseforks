@@ -77,6 +77,51 @@ fn messages(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
         .collect()
 }
 
+/// 平文で保存されてしまった API キーは、起動しただけでディスクから消えること。
+///
+/// 次の編集操作を待つ設計だと、ユーザーが何もしない限り秘密が残り続ける。
+#[tokio::test]
+async fn a_leaked_api_key_is_scrubbed_from_disk_on_startup() {
+    let dir = TempDir::new("scrub");
+    let world_path = dir.0.join("world.json");
+
+    // 入口を塞ぐ前に書かれたファイルを再現する。
+    std::fs::write(
+        &world_path,
+        r#"{
+            "agents": [],
+            "modelTemplates": [{
+                "id": "tpl", "name": "既定",
+                "baseUrl": "https://api.anthropic.com/v1",
+                "model": "claude-sonnet-5", "contextLength": 128000,
+                "temperature": null, "maxOutputTokens": 4096,
+                "apiKeyEnv": "sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY",
+                "provider": "anthropic", "useTools": true, "effort": null,
+                "requestTimeoutSecs": 120, "maxRetries": 3
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    // 起動するだけ。編集操作は一切行わない。
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::echo("[echo]")),
+        OrchestratorConfig::default(),
+    )
+    .await
+    .unwrap();
+
+    let on_disk = std::fs::read_to_string(&world_path).unwrap();
+    assert!(!on_disk.contains("sk-ant"), "秘密がファイルに残っている");
+
+    // 秘密以外の設定は保持される。
+    let templates = orchestrator.templates().await;
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].model, "claude-sonnet-5");
+    assert_eq!(templates[0].api_key_env, None);
+}
+
 #[tokio::test]
 async fn lifecycle_transitions_are_guarded_in_both_directions() {
     let dir = TempDir::new("lifecycle");
