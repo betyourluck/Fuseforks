@@ -597,6 +597,14 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
             "転送不要の根拠を伝える: {}",
             note.content
         );
+        // 転送だけを禁じても、「代わりに促す」経路が残る。実機では
+        // 「ユーザーから依頼です、自己紹介お願いします」という**新しい発話**を
+        // 他の参加者へ配って回り、同じ混乱が起きた。
+        assert!(
+            note.content.contains("促す必要もありません"),
+            "発言を促す必要も無いことを伝える: {}",
+            note.content
+        );
     }
 
     // 宛先外の c には配送されず、ログにも c 宛の発話が存在しない。
