@@ -21,6 +21,8 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
+import { compactNumber } from "../lib/format";
+
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABELS, type AgentId } from "../types";
@@ -233,7 +235,7 @@ function borderClass(status: string): string {
             <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
               <span>{{ STATUS_LABELS[data.agent.status as keyof typeof STATUS_LABELS] }}</span>
               <span class="tabular-nums">
-                {{ data.agent.totalTokens.toLocaleString("ja-JP") }} tok
+                {{ compactNumber(data.agent.totalTokens) }} tok
               </span>
             </div>
           </div>

@@ -8,6 +8,7 @@
 import { computed } from "vue";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
+import { compactNumber, exactNumber } from "../lib/format";
 import { STATUS_LABELS, type AgentSnapshot } from "../types";
 
 const props = defineProps<{
@@ -54,8 +55,8 @@ const uptime = computed(() => {
   return h > 0 ? `${h}h ${pad(m)}m ${pad(s)}s` : `${m}m ${pad(s)}s`;
 });
 
-/** 大きな数を読みやすく丸める。 */
-const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
+/** 大きな数を読みやすく丸める。狭い枠なので桁区切りではなく短縮表記にする。 */
+const tokens = computed(() => compactNumber(props.agent.totalTokens));
 
 /**
  * プロンプトキャッシュから読まれた割合。まだ 1 度も喋っていなければ `null`。
@@ -170,7 +171,7 @@ const cacheTone = computed(() => {
         <span
           v-if="cacheRate !== null"
           :class="cacheTone"
-          :title="`入力トークンのうち ${agent.cachedTokens.toLocaleString('ja-JP')} がプロンプトキャッシュから読まれました（0% はキャッシュが効いていないことを示します）`"
+          :title="`累計 ${exactNumber(agent.totalTokens)} のうち ${exactNumber(agent.cachedTokens)} がプロンプトキャッシュから読まれました（0% はキャッシュが効いていないことを示します）`"
           >（キャッシュ {{ cacheRate }}%）</span
         >
       </dd>

@@ -15,6 +15,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
 import { avatarHue, avatarInitial } from "../lib/avatar";
+import { compactNumber } from "../lib/format";
 import { fileToWebpIcon } from "../lib/iconImage";
 import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -337,7 +338,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             <dd>{{ STATUS_LABELS[agent.status] }}</dd>
             <dt class="text-ink-dim">トークン</dt>
             <dd class="tabular-nums">
-              {{ agent.totalTokens.toLocaleString("ja-JP") }}
+              {{ compactNumber(agent.totalTokens) }}
             </dd>
           </dl>
 
