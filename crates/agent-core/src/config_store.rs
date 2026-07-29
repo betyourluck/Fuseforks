@@ -6,10 +6,12 @@
 //! {workspace}/
 //!   world.json              エージェント定義とモデルテンプレート
 //!   Ordinance.md            村の条例（全エージェント共通の規則。プロンプト最上段に入る）
+//!   mcp.json                共通 MCP サーバー宣言（全エージェントに提示）
 //!   agents/{agent_id}/
 //!     SKILL.md              能力・振る舞いの定義
 //!     Memory.md             長期記憶
 //!     Construct.md          構成・制約の宣言
+//!     mcp.json              エージェント別 MCP（このエージェントにだけ提示。Spec 02）
 //!     icon.webp             アイコン（設定時のみ。UI が WebP へ変換して送る）
 //! ```
 //!

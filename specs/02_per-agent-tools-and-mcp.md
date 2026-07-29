@@ -2,9 +2,8 @@
 
 **ID**: 02
 **Date**: 2026-07-30
-**Status**: Draft rev2（rev1 への査読 8 点を反映。査読記録は末尾）
-**Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
-査読承認を前提条件とする — Spec 01 と同じプロセス）
+**Status**: Done（rev2 査読承認 → Phase 0〜5 完了。残タスクは実機確認のみ）
+**Branch**: なし（main へ Phase 単位で直接コミット。Phase 0 は rev2 承認後）
 
 ---
 
@@ -159,28 +158,24 @@
 
 ## Tasks
 
-- [ ] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` の
-      `mcp_contract` を改訂 — 保留欄の `AgentSpec.mcpServers` 案を
-      **per-agent mcp.json 案で置き換え**。ツール収集の最終形（収集順・
-      上書き可能な加算・実行解決順）/ 接続寿命と agent_id 紐付け /
-      失敗の二分類 / 状態の非永続化。`enabledTools` を entities へ追記
-      （null と明示配列の意味の差・新規作成は null 保存・自動除外優先）
-- [ ] Phase 1 — 同梱ツールの提示制御: AgentSpec.enabledTools + work_dir
-      連動の自動除外。提示フィルタは handle_message のツール収集部
-      （共有 registry の specs に対して適用）
-- [ ] Phase 2 — 設定 UI: チェックボックス群（null 表示 / 明示化 /
-      既定に戻す / work_dir 未設定時の disabled + 注記）+
-      ipc_contract / types.ts 追従
-- [ ] Phase 3 — per-agent mcp.json の読み書き: ConfigFileKind::Mcp、
-      write_config の Mcp kind パース検証（保存拒否 = 分類 1）
-- [ ] Phase 4 — 接続寿命と提示・実行: HashMap<AgentId, McpManager> を
-      orchestrator に追加、start/stop/保存時再接続、収集順 3 と
-      実行解決の個別優先、接続状態の IPC + 設定ダイアログ表示
-- [ ] Phase 5 — 台帳整合: README（保留の消化・トークン思想・
-      remember OFF の割り切りの明文化）/ data_contract 補正 /
-      failures.md（罠が出れば）
-- [ ] 実機確認: 雑談役からファイル系を外して基礎トークンが下がること /
-      個別 MCP の接続・停止時の子プロセス終了・壊れ JSON の保存拒否
+- [x] Phase 0 — 契約凍結（98604d2）: mcp_contract 改訂 +
+      enabled_tools_invariant を凍結
+- [x] Phase 1 — 同梱ツールの提示制御（9bca0b2）: enabledTools + 自動除外。
+      ToolsProbeBackend で 4 ケースを固定
+- [x] Phase 2 — 設定 UI（1b0b39e）: チェックボックス群（null の効果表示 /
+      明示化 / 既定に戻す / disabled + 注記）
+- [x] Phase 3 — mcp.json の読み書き（2158383）: ConfigFileKind::Mcp、
+      保存時パース検証（分類 1）、read_agent_mcp_config（分類 1'）
+- [x] Phase 4 — 接続寿命と提示・実行（2a07008）: HashMap<AgentId,
+      AgentMcpState>、start/stop/保存時再接続、merge_tool_specs
+      （同名は個別が勝つ）+ 実行の個別優先、agent_mcp_status IPC +
+      設定ダイアログの状態表示
+- [x] Phase 5 — 台帳整合: README（保留の消化・提示の絞り込みの節・
+      エージェント別 MCP の節・remember OFF の割り切り）/ data_contract は
+      Phase 0 凍結どおり
+- [ ] 実機確認（残タスク）: 雑談役からファイル系を外して基礎トークンが
+      下がること / 個別 MCP の接続・停止時の子プロセス終了・壊れ JSON の
+      保存拒否
 
 ---
 
