@@ -826,6 +826,10 @@ llm_wire:
       表示層への経路は AgentMessage.grounding で、MessageSent イベントが運ぶ
       (Spec 05 Phase 4)。専用イベントを立てないのは、来歴が発話に添う情報であり、
       別便にすると起動時の list_messages 再投影で来歴だけが消えるから。
+      実測 (2026-07-29, gemini-3.6-flash): queries は届くが **sources は空**。
+      参照元 URL は返ってこない。よって出典として出せるのは検索語と、モデルが
+      本文で挙げる発表元の名前だけ。sources が埋まる前提でプロンプト・UI・
+      検証手順を設計しないこと (failures.md #31 追記)。
     grounding_active: |
       接地の判定は ModelTemplate.google_search 単独ではなく
       **grounding_active() = google_search AND effective_provider() == Gemini**。

@@ -45,8 +45,10 @@ function open(uri: string): void {
       >
     </p>
 
+    <!-- 本文に URL が無い返答でも文が成立する形にする。「本文中の URL は」と
+         書くと、URL を書かなかった返答では存在しないものを指してしまう。 -->
     <p v-if="view.sourcesMissing" class="mt-0.5">
-      参照元は返ってきていません（本文中の URL は出典として確認できていません）。
+      参照元は返ってきていません（本文に URL があっても、出典としては確認できていません）。
     </p>
     <ul v-else class="mt-0.5 space-y-0.5">
       <li v-for="source in view.sources" :key="source.uri">
