@@ -2,7 +2,7 @@
 
 **ID**: 04
 **Date**: 2026-07-29
-**Status**: rev3（利用者査読を反映）→ **Phase 0 の承認待ち**
+**Status**: rev3 査読承認 → Phase 0〜2 完了。残タスクは実機確認のみ
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01〜03 と同じプロセス）
 
@@ -183,20 +183,20 @@ Sender は送られないまま `handle_message` の終わりで drop され、�
 
 ## Tasks
 
-- [ ] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` の
+- [x] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` の
       `conversation_termination` へ `parallel_delegation` の節（提示条件・
       失敗の 3 分類・`to` の enum 化・件数の下限 1 と上限なし・
       実行時トポロジーでの再検証・ユーザー同報は凍結のままの関係）を追記
-- [ ] Phase 1 — コア実装: HandoffTools と同族として plan を組み立て、
-      実行ループで解決（`calls` フィルタへの追加を忘れない — Notes 9）。
-      並列配送は既存の ask 封筒（`reply_to` oneshot）を `join_all` で束ねる。
-      **`Outcome::Handoff` 分岐で `reply_to` へ事実を送る修正を同時に入れる**
-      （`ask` の既存バグ。rev3 指摘 4）。
-      テストは Acceptance 全件。**並列性は同時 in-flight 数の最大値で測り、
-      壁時計では測らない**
-- [ ] Phase 2 — 台帳整合: README（工程の 3 流派と立場の宣言・同報凍結との
-      関係）/ data_contract 補正 / failures.md（`ask` の転送時に嘘の文言を
-      返していた件）
+- [x] Phase 1 — コア実装: `HandoffTools` と同族として plan を組み立て、
+      実行ループで解決（`calls` フィルタへ追加 — Notes 9）。並列配送は
+      `tokio::task::JoinSet`（新規依存なし）。`deliver_and_wait()` を切り出して
+      `ask` と配送・失敗の文言を共有し、境界のずれを構造で防いだ。
+      **`Outcome::Handoff` 分岐で `reply_to` へ事実を送る修正も同時に**
+      （`ask` の既存バグ。rev3 指摘 4）。テスト 9 本。
+      **並列性は同時 in-flight 数の最大値で測り、壁時計では測らない**
+- [x] Phase 2 — 台帳整合: README（並列委譲の節 — 工程の 3 流派と立場の宣言・
+      3 経路の比較表・「並列なのは配送であって実行ではない」）/
+      failures.md #35（`ask` の転送時に嘘の文言を返していた件）
 - [ ] 実機確認: ザリに「1〜3 号へそれぞれ◯◯を調べさせて、まとめて」と
       頼み、並列実行 → 束ねた要約が 1 ターンで返ること
 
