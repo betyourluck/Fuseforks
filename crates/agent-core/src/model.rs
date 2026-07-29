@@ -445,6 +445,12 @@ pub enum ConfigFileKind {
     Memory,
     /// 構成・制約の宣言。
     Construct,
+    /// エージェント別の MCP サーバー宣言（Spec 02）。
+    ///
+    /// 他の 3 つと違い自由テキストではない — 書き込み時に JSON パース検証が
+    /// あり、失敗すると保存拒否（mcp_contract の失敗二分類 (1)）。
+    /// プロンプト素材ではないため `compose_system_prompt` には入らない。
+    Mcp,
 }
 
 impl ConfigFileKind {
@@ -454,12 +460,13 @@ impl ConfigFileKind {
             Self::Skill => "SKILL.md",
             Self::Memory => "Memory.md",
             Self::Construct => "Construct.md",
+            Self::Mcp => "mcp.json",
         }
     }
 
     /// 全種別。GUI のタブ生成に使う。
-    pub fn all() -> [Self; 3] {
-        [Self::Skill, Self::Memory, Self::Construct]
+    pub fn all() -> [Self; 4] {
+        [Self::Skill, Self::Memory, Self::Construct, Self::Mcp]
     }
 }
 
@@ -559,6 +566,6 @@ mod tests {
             .into_iter()
             .map(ConfigFileKind::file_name)
             .collect();
-        assert_eq!(names, vec!["SKILL.md", "Memory.md", "Construct.md"]);
+        assert_eq!(names, vec!["SKILL.md", "Memory.md", "Construct.md", "mcp.json"]);
     }
 }

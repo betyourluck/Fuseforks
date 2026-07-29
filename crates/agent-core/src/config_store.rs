@@ -104,12 +104,21 @@ impl ConfigStore {
     }
 
     /// 設定ファイルを書く。親ディレクトリは必要に応じて作る。
+    ///
+    /// # Errors
+    /// `kind` が [`ConfigFileKind::Mcp`] で内容が JSON として不正な場合、
+    /// **書かずに**エラーを返す（mcp_contract の失敗二分類 (1)。UI 保存経路の
+    /// 不変条件: UI 経由の保存後、ディスクは常に正しい JSON か不在）。
+    /// 空文字は「未設定」として許す。
     pub async fn write_config(
         &self,
         id: &AgentId,
         kind: ConfigFileKind,
         content: &str,
     ) -> CoreResult<()> {
+        if kind == ConfigFileKind::Mcp && !content.trim().is_empty() {
+            serde_json::from_str::<crate::mcp::McpConfig>(content).map_err(CoreError::from)?;
+        }
         let dir = self.agent_dir(id)?;
         tokio::fs::create_dir_all(&dir)
             .await
@@ -195,6 +204,22 @@ impl ConfigStore {
         tokio::fs::write(&path, content)
             .await
             .map_err(|e| Self::io_err(&path, e))
+    }
+
+    /// エージェント別の MCP サーバー宣言を読む（`agents/{id}/mcp.json`）。
+    ///
+    /// 未作成・空なら空の集合。**壊れた JSON はエラー**（外部編集起因の
+    /// 失敗二分類 (1')。呼び出し側は起動を止めず、読み込み失敗として保持する）。
+    pub async fn read_agent_mcp_config(&self, id: &AgentId) -> CoreResult<crate::mcp::McpConfig> {
+        let path = self.agent_dir(id)?.join(ConfigFileKind::Mcp.file_name());
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) if text.trim().is_empty() => Ok(crate::mcp::McpConfig::default()),
+            Ok(text) => serde_json::from_str(&text).map_err(CoreError::from),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Ok(crate::mcp::McpConfig::default())
+            }
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
     }
 
     /// MCP サーバー宣言を読む。未作成なら空の集合。
@@ -445,6 +470,50 @@ mod tests {
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(stable.contains("制約A") && stable.contains("能力B"));
         assert!(!stable.contains("記憶C"), "可変部分は境界の外側");
+    }
+
+    /// エージェント別 mcp.json は保存時にパース検証されること（失敗二分類 (1)）。
+    #[tokio::test]
+    async fn agent_mcp_config_writes_are_validated() {
+        let dir = TempDir::new("agent-mcp");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+
+        // 壊れた JSON は書かずに拒否。
+        let err = store
+            .write_config(&id, ConfigFileKind::Mcp, "{ broken")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "SERDE_FAILED");
+        assert!(!dir.0.join("agents/agent_01/mcp.json").exists(), "ディスクに書かない");
+
+        // 正しい宣言は書けて、読み戻せる。
+        let valid = r#"{ "mcpServers": { "memo": { "command": "memo-server", "args": [] } } }"#;
+        store.write_config(&id, ConfigFileKind::Mcp, valid).await.unwrap();
+        let config = store.read_agent_mcp_config(&id).await.unwrap();
+        assert!(config.servers.contains_key("memo"));
+
+        // 空文字は「未設定」として許す。
+        store.write_config(&id, ConfigFileKind::Mcp, "").await.unwrap();
+        assert!(store.read_agent_mcp_config(&id).await.unwrap().servers.is_empty());
+    }
+
+    /// 外部編集で壊れた mcp.json は読み込みエラーになること（失敗二分類 (1')）。
+    #[tokio::test]
+    async fn a_hand_broken_agent_mcp_config_reads_as_an_error_not_as_empty() {
+        let dir = TempDir::new("agent-mcp-broken");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+
+        // 未作成は空の集合（エラーではない）。
+        assert!(store.read_agent_mcp_config(&id).await.unwrap().servers.is_empty());
+
+        // 保存経路を迂回してディスクを直接壊す（外部編集の再現）。
+        std::fs::create_dir_all(dir.0.join("agents/agent_01")).unwrap();
+        std::fs::write(dir.0.join("agents/agent_01/mcp.json"), "{ broken").unwrap();
+
+        let err = store.read_agent_mcp_config(&id).await.unwrap_err();
+        assert_eq!(err.code(), "SERDE_FAILED", "空扱いにせずエラー");
     }
 
     #[tokio::test]

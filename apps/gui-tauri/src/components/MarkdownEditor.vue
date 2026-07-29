@@ -7,7 +7,7 @@
  * 画面上の見た目が一致していることのほうが価値が高い。
  * （HTML 描画を挟むと、任意テキストの描画による XSS 面も抱え込む。）
  */
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { CONFIG_FILE_LABELS, type AgentId, type ConfigFileKind } from "../types";
@@ -27,6 +27,13 @@ const saving = ref(false);
 
 /** 未保存の変更があるか。タブ切り替え時の警告に使う。 */
 const dirty = () => content.value !== original.value;
+
+/** 種別ごとの案内文。mcp.json だけは Markdown ではなく JSON。 */
+const placeholder = computed(() =>
+  kind.value === "mcp"
+    ? "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのエージェント専用の MCP はありません。壊れた JSON は保存できません。"
+    : "Markdown で記述します。空のまま保存すれば、この節はプロンプトに含まれません。",
+);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -90,7 +97,7 @@ watch(
         v-model="content"
         spellcheck="false"
         class="selectable h-full w-full resize-none rounded border border-line bg-surface-1 p-2 font-mono text-[12px] leading-relaxed outline-none focus:border-accent"
-        placeholder="Markdown で記述します。空のまま保存すれば、この節はプロンプトに含まれません。"
+        :placeholder="placeholder"
       />
 
       <pre

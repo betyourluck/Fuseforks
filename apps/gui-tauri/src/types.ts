@@ -16,7 +16,7 @@ export type ModelTemplateId = string;
 export type AgentStatus = "idle" | "starting" | "running" | "stopping" | "failed";
 
 /** 設定ファイルの種別。実ファイル名の解決は Rust 側が行う。 */
-export type ConfigFileKind = "skill" | "memory" | "construct";
+export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp";
 
 /** LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。 */
 export type Provider = "open_ai_compat" | "anthropic";
@@ -203,6 +203,8 @@ export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
   skill: "SKILL.md",
   memory: "Memory.md",
   construct: "Construct.md",
+  /** エージェント別 MCP。保存時に JSON 検証があり、壊れた内容は保存拒否される。 */
+  mcp: "mcp.json",
 };
 
 /** 状態と表示色の対応。 */
