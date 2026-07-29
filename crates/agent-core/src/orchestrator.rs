@@ -269,22 +269,55 @@ impl Shared {
     }
 
     /// 状態を変更し、変化があった場合のみイベントを発行する。
+    ///
+    /// **入退室の通知（Spec 06 P1）もここから出す。** 状態遷移はこの関数しか
+    /// 通らない（単一路）ので、境界判定を呼び出し側へ散らさずに済む。
     async fn set_status(&self, id: &AgentId, status: AgentStatus) {
+        // 変化の判定と、通知に要る材料（旧状態が稼働側だったか・表示名）を
+        // 同じロックの中で取る。ロックの外で読み直すと、連続する遷移と
+        // 競合して「変わった瞬間の名前」ではなくなる。
         let changed = {
             let mut world = self.world.write().await;
             match world.agent_mut(id) {
                 Ok(record) if record.status != status => {
+                    let was_running = record.status == AgentStatus::Running;
                     record.status = status;
-                    true
+                    Some((was_running, record.spec.name.clone()))
                 }
-                _ => false,
+                _ => None,
             }
         };
-        if changed {
-            self.emit(CoreEvent::AgentStatusChanged {
-                agent_id: id.clone(),
-                status,
-            });
+        let Some((was_running, name)) = changed else {
+            return;
+        };
+
+        self.emit(CoreEvent::AgentStatusChanged {
+            agent_id: id.clone(),
+            status,
+        });
+
+        // 入退室の通知。Running / それ以外の境界をまたいだときだけ 1 件。
+        // 起動失敗（Starting → Failed）はどちらも非稼働側なので出ない —
+        // まだ場に現れていなかった者の失敗は入退室ではなく、進行役に
+        // 「居ると思っていた」という誤った信念も発生していない（顔ぶれが示す）。
+        let is_running = status == AgentStatus::Running;
+        if was_running != is_running {
+            // 語彙は状態語彙で統一する（オンライン/オフライン等のチャット風
+            // 語彙を混ぜると、同じ状態に 2 つの言葉が並びモデルが対応を推測する）。
+            // Failed だけ種別を伝える — 理由（last_error）は流さないが、
+            // 失敗と正常停止の区別は進行役の次の一手を変える。
+            let text = if is_running {
+                format!("{id}（{name}）が稼働を開始しました")
+            } else if status == AgentStatus::Failed {
+                format!("{id}（{name}）が失敗により停止しました")
+            } else {
+                format!("{id}（{name}）が停止しました")
+            };
+            // from: System / to: User。User 宛の発話は全エージェントにとって
+            // 他人の会話なので、広場ログの is_mine 判定に誰も掛からず全員に
+            // 見える。配送は起きない（record のみ。ターンを発火させない）。
+            self.record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+                .await;
         }
     }
 }
@@ -1095,9 +1128,32 @@ async fn handle_message(
     //    接地の有無はテンプレート由来（エージェント個別の設定ではない）。
     //    フラグではなく grounding_active() を見る — 互換経路のまま真になっている
     //    設定（world.json の直接編集で作れる）に「検索できます」と教えないため。
+    //
+    //    顔ぶれ（Spec 06 P1.5）はここで組む。順序はツール提示順（=
+    //    connected_agents の保存順）と同一 — 顔ぶれだけ別の整列規則を持つと、
+    //    同じ相手の並びが transfer_to_* と食い違い、モデルに二重管理を強いる。
+    //    形式は agent_id（表示名）: 状態。id はモデルの宛先語彙（ツール名）で、
+    //    無いと表示名 → id の対応をツール説明から二段引きすることになる。
+    let roster: Option<String> = {
+        let world = shared.world.read().await;
+        let entries: Vec<String> = spec
+            .connected_agents
+            .iter()
+            .map(|id| {
+                world
+                    .agent(id)
+                    .map(|record| {
+                        format!("{id}（{}）: {}", record.spec.name, record.status.label())
+                    })
+                    // 接続先が消えていても行は成立させる（ID と不明で示す）。
+                    .unwrap_or_else(|_| format!("{id}: 不明"))
+            })
+            .collect();
+        (!entries.is_empty()).then(|| entries.join(" / "))
+    };
     let (system_prompt, stable_len) = shared
         .store
-        .compose_system_prompt(&spec, template.grounding_active())
+        .compose_system_prompt(&spec, template.grounding_active(), roster.as_deref())
         .await?;
 
     // 3. 転送先ごとのツールを組む。
@@ -1155,6 +1211,16 @@ async fn handle_message(
         && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
     {
         messages.push(ChatMessage::system(room));
+    }
+
+    // 入退室の通知（Spec 06 P1）。**広場ログの gate の外**に置く —
+    // 広場ログのオプトアウトは「場の共有が要らない役から固定費を外す」機能で、
+    // 入退室は場の雑談ではなく配送先の正しさに関わる情報。コストの設定が
+    // 経路の正しさを黙って壊す形にしない。
+    if let Some(notices) =
+        compose_presence_notices(shared, &shared.config, roster.is_some()).await
+    {
+        messages.push(ChatMessage::system(notices));
     }
 
     // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
@@ -1977,6 +2043,59 @@ fn tracing_note(err: &tokio::task::JoinError) {
     eprintln!("[concordia] plan のタスクが異常終了しました: {err}");
 }
 
+/// 入退室の通知を組み立てる（Spec 06 P1）。
+///
+/// System 発の発話（`set_status` が記録する入退室）だけを抽出する。
+/// [`compose_room_log`] と別の関数なのは gate が違うから — 広場ログは
+/// `hearsRoomLog` でオプトアウトできるが、こちらは全員に届く。
+///
+/// # 可視範囲
+///
+/// **広場ログと同じ窓**（`room_log_window` 件の遡り）に従う。窓から押し出された
+/// 通知は見えなくなるが、情報が消えるのではなく時間軸だけが落ちる —
+/// 現在の状態は顔ぶれ（P1.5）が常に持っている（顔ぶれが権威、通知が語り）。
+async fn compose_presence_notices(
+    shared: &Shared,
+    config: &OrchestratorConfig,
+    has_roster: bool,
+) -> Option<String> {
+    if config.room_log_window == 0 {
+        return None;
+    }
+
+    let lines: Vec<String> = {
+        let log = shared.log.read().await;
+        // 生ログの直近 window 件の中から System 発を拾う。
+        // 「System 発だけを window 件」にはしない — それだと古い通知が
+        // 会話に押し出されずいつまでも残り、「窓に従う」という契約が嘘になる。
+        log.iter()
+            .rev()
+            .take(config.room_log_window)
+            .filter(|message| message.from == Endpoint::System)
+            .map(|message| format!("- {}", message.content))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    };
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    // 「顔ぶれが権威、通知が語り」の案内は、顔ぶれの節が実際に出ている
+    // 相手にだけ書く。接続 0 体の個体に存在しない節を指させない。
+    let authority_note = if has_roster {
+        "\n\n現在の状態は「今の顔ぶれ」が正です。"
+    } else {
+        ""
+    };
+    Some(format!(
+        "## 入退室（新しいものが下）\n{}{authority_note}",
+        lines.join("\n")
+    ))
+}
+
 /// 「居合わせた会話」を組み立てる（広場ログ）。
 ///
 /// # なぜ「聞こえる」と「反応する」を分けるのか
@@ -2276,7 +2395,10 @@ impl HandoffTools {
                  全員へ並行して届きます。\n\
                  自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
                  **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
-                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。",
+                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。\n\
+                 転送・委譲が失敗したときは、その**理由**（相手が停止中・時間切れ・\
+                 答えずに会話を渡した など）が結果の文字列で返ります。\
+                 事前の点呼は不要です。",
                 self.roster()
                     .iter()
                     .map(|name| format!("- {name}"))

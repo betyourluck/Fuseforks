@@ -124,6 +124,21 @@ impl AgentStatus {
     pub fn is_active(self) -> bool {
         matches!(self, Self::Starting | Self::Running)
     }
+
+    /// 表示語彙。UI の `STATUS_LABELS`（types.ts）と**同一**であること。
+    ///
+    /// 顔ぶれ（Spec 06）はこの語彙でプロンプトに載る。画面とプロンプトで
+    /// 同じ相手が違う言葉で呼ばれると、利用者とエージェントの会話が
+    /// 噛み合わなくなる（「停止中って出てますよ」「こちらでは Idle です」）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "停止中",
+            Self::Starting => "起動中",
+            Self::Running => "稼働中",
+            Self::Stopping => "停止処理中",
+            Self::Failed => "失敗",
+        }
+    }
 }
 
 /// エージェントの永続的な設定。ユーザーが編集する対象。
@@ -679,6 +694,20 @@ mod tests {
 
         let message: AgentMessage = serde_json::from_value(json).unwrap();
         assert!(message.grounding.is_empty());
+    }
+
+    /// 状態の表示語彙が UI（types.ts の STATUS_LABELS）と一致すること。
+    ///
+    /// 顔ぶれ（Spec 06）はこの語彙でプロンプトに載る。画面とプロンプトで
+    /// 同じ相手が違う言葉で呼ばれると、利用者とエージェントの会話が噛み合わない。
+    /// TS 側を変えたらこのテストも落として直すこと（二言語の契約）。
+    #[test]
+    fn status_labels_match_the_ui_vocabulary() {
+        assert_eq!(AgentStatus::Idle.label(), "停止中");
+        assert_eq!(AgentStatus::Starting.label(), "起動中");
+        assert_eq!(AgentStatus::Running.label(), "稼働中");
+        assert_eq!(AgentStatus::Stopping.label(), "停止処理中");
+        assert_eq!(AgentStatus::Failed.label(), "失敗");
     }
 
     #[test]

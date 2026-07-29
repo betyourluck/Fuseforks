@@ -3536,3 +3536,188 @@ async fn a_worker_that_transfers_reports_the_fact_not_silence() {
         reply.content
     );
 }
+
+// ---------------------------------------------------------------------------
+// 顔ぶれと入退室（Spec 06）
+// ---------------------------------------------------------------------------
+
+/// 常に致命的エラーを返すバックエンド。Running → Failed の遷移を再現する。
+struct FatalBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for FatalBackend {
+    fn name(&self) -> &str {
+        "fatal"
+    }
+    async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        // Config は再試行で回復しない = fatal。エージェントは Failed へ落ちる。
+        Err(LlmError::Config("テスト用の致命エラー".into()))
+    }
+}
+
+/// 稼働中のエージェントを止めると、System 発・User 宛の通知が 1 件だけ記録されること。
+///
+/// Running → Stopping で 1 件、Stopping → Idle は同じ側なので 0 件。
+#[tokio::test]
+async fn stopping_an_agent_records_one_presence_notice() {
+    let dir = TempDir::new("presence-stop");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_b");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.stop_agent(&id).await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    let notices: Vec<_> = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == Endpoint::System)
+        .collect();
+    assert_eq!(notices.len(), 1, "境界をまたぐ遷移 1 回で通知 1 件: {notices:#?}");
+    assert_eq!(notices[0].to, Endpoint::User, "宛先は User（配送なし・全員の広場に載る）");
+    assert_eq!(notices[0].content, "agent_b（ブラボー）が停止しました");
+}
+
+/// 起動は Starting → Running の境界で 1 件だけ通知されること。
+#[tokio::test]
+async fn starting_an_agent_records_one_presence_notice() {
+    let dir = TempDir::new("presence-start");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_b");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.start_agent(&id).await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    let notices: Vec<_> = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == Endpoint::System)
+        .collect();
+    assert_eq!(notices.len(), 1, "Idle → Starting では出さない: {notices:#?}");
+    assert_eq!(notices[0].content, "agent_b（ブラボー）が稼働を開始しました");
+}
+
+/// 致命的な失敗で落ちたときは「失敗により停止」と種別が伝わること。
+///
+/// 理由（last_error の中身）は流さない — 失敗と正常停止の区別だけが
+/// 進行役の次の一手を変える。
+#[tokio::test]
+async fn a_fatal_failure_reports_its_kind_without_the_reason() {
+    let dir = TempDir::new("presence-failed");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(FatalBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let id = AgentId::from("agent_b");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "何か話して").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let notice = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::System)
+        .expect("失敗の通知が出ること");
+    assert_eq!(notice.content, "agent_b（ブラボー）が失敗により停止しました");
+    assert!(
+        !notice.content.contains("致命エラー"),
+        "エラーの理由は流さない: {}",
+        notice.content
+    );
+}
+
+/// 通知は `hearsRoomLog: false` の個体にも届き、顔ぶれは接続順で状態を示すこと。
+///
+/// 広場ログのオプトアウトは固定費の削減で、入退室は配送先の正しさ —
+/// コストの設定が経路の正しさを黙って壊してはいけない（Spec 06 rev3 指摘 A）。
+#[tokio::test]
+async fn presence_reaches_optout_agents_and_roster_lists_by_connection_order() {
+    let dir = TempDir::new("presence-prompt");
+    let backend = Arc::new(RecordingBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let (a, b, c) = (
+        AgentId::from("agent_a"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    let mut spec_a = AgentSpec::new(a.clone(), "アルファ", "tpl");
+    spec_a.hears_room_log = false;
+    orchestrator.create_agent(spec_a).await.unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(c.clone(), "チャーリー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone(), c.clone()]).await.unwrap();
+    for id in [&a, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+    // チャーリーだけ止める。停止の通知が 1 件ログへ入り、顔ぶれは「停止中」になる。
+    orchestrator.stop_agent(&c).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "状況は？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    let request = seen.last().expect("アルファのリクエストが記録されること");
+    let system_texts: Vec<&str> = request
+        .iter()
+        .filter(|m| m.role == Role::System)
+        .map(|m| m.content.as_str())
+        .collect();
+    let joined = system_texts.join("\n---\n");
+
+    // 顔ぶれ: システムプロンプト内・接続順（b, c）・状態は UI と同じ語彙。
+    assert!(
+        joined.contains(
+            "## 今の顔ぶれ\nagent_b（ブラボー）: 稼働中 / agent_c（チャーリー）: 停止中"
+        ),
+        "顔ぶれが接続順・状態つきで載ること: {joined}"
+    );
+
+    // 入退室: オプトアウトしていても届く。
+    assert!(
+        joined.contains("## 入退室"),
+        "通知は hearsRoomLog と独立に届くこと: {joined}"
+    );
+    assert!(
+        joined.contains("agent_c（チャーリー）が停止しました"),
+        "停止の通知が入ること: {joined}"
+    );
+    assert!(
+        joined.contains("「今の顔ぶれ」が正です"),
+        "顔ぶれが権威である案内が付くこと（接続ありの個体）: {joined}"
+    );
+
+    // 広場ログ本体は従来どおり届かない（オプトアウトの効果は保つ）。
+    assert!(
+        !joined.contains("## この場で交わされていた会話"),
+        "広場ログのオプトアウトは壊さないこと: {joined}"
+    );
+
+    // 周知（P2）: 失敗が理由つきで返ることが手順の説明に書かれている。
+    assert!(
+        joined.contains("理由"),
+        "protocol_note に失敗の語彙の周知が入ること: {joined}"
+    );
+}

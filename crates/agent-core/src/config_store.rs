@@ -281,6 +281,7 @@ impl ConfigStore {
         &self,
         spec: &AgentSpec,
         grounded: bool,
+        roster: Option<&str>,
     ) -> CoreResult<(String, usize)> {
         let ordinance = self.read_ordinance().await?;
         let construct = self.read_config(&spec.id, ConfigFileKind::Construct).await?;
@@ -365,7 +366,22 @@ impl ConfigStore {
             prompt.push_str("\n\n");
         }
 
+        // キャッシュの安定境界は**安定素材（条例〜Skill）の末尾**。
+        //
+        // 旧定義は「Memory の直前」だったが、それが「Skill の末尾」と同じ点を
+        // 指せていたのは間に何も無かった間だけ（Spec 06 rev4 指摘 1）。
+        // 顔ぶれを挟む今、境界は**先に**確定させる — 後で数えると顔ぶれが
+        // 安定部分に入り、状態が変わるたびに全エージェントのキャッシュが割れる。
         let stable_len = prompt.chars().count();
+
+        // 今の顔ぶれ（Spec 06 P1.5）。可変部分に置くので stable_len は据え置き。
+        // 順序・形式は呼び出し側（orchestrator）が組む — 状態は World の持ち物で、
+        // ConfigStore はファイルしか知らない。
+        if let Some(roster) = roster {
+            prompt.push_str("## 今の顔ぶれ\n");
+            prompt.push_str(roster);
+            prompt.push_str("\n\n");
+        }
 
         if !memory.is_empty() {
             prompt.push_str("## Memory\n");
@@ -498,11 +514,48 @@ mod tests {
             .unwrap();
 
         let spec = AgentSpec::new(id.clone(), "Planner", "tpl");
-        let (prompt, stable_len) = store.compose_system_prompt(&spec, false).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None).await.unwrap();
 
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(stable.contains("制約A") && stable.contains("能力B"));
         assert!(!stable.contains("記憶C"), "可変部分は境界の外側");
+    }
+
+    /// 顔ぶれが安定境界の外（可変部分）に置かれること（Spec 06 P1.5）。
+    ///
+    /// 旧定義「Memory の直前」は Skill と Memory が隣接していた間だけ
+    /// 「Skill の末尾」と同じ点を指せていた。顔ぶれを挟んだ今、境界が
+    /// 顔ぶれの後ろで確定すると、状態が変わるたびに全エージェントの
+    /// キャッシュが割れる。
+    #[tokio::test]
+    async fn the_roster_lives_outside_the_stable_prefix() {
+        let dir = TempDir::new("prompt-roster");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+        store
+            .write_config(&id, ConfigFileKind::Skill, "能力B")
+            .await
+            .unwrap();
+        let spec = AgentSpec::new(id, "Planner", "tpl");
+
+        let roster = "agent_2（ジェミー）: 稼働中 / agent_3（ロボットくん1号）: 停止中";
+        let (with, stable_with) = store
+            .compose_system_prompt(&spec, false, Some(roster))
+            .await
+            .unwrap();
+        let (without, stable_without) =
+            store.compose_system_prompt(&spec, false, None).await.unwrap();
+
+        // 境界の値は顔ぶれの有無で変わらない（変わればキャッシュキーが揺れる）。
+        assert_eq!(stable_with, stable_without, "顔ぶれは境界を動かさない");
+
+        let stable: String = with.chars().take(stable_with).collect();
+        assert!(!stable.contains("今の顔ぶれ"), "顔ぶれは安定部分に入らない");
+        assert!(
+            with.contains("## 今の顔ぶれ\nagent_2（ジェミー）: 稼働中"),
+            "可変部分には入っていること: {with}"
+        );
+        assert!(!without.contains("今の顔ぶれ"), "無ければ節ごと出さない");
     }
 
     /// 接地を有効にしたエージェントには、URL が手元に来ないことを伝えること。
@@ -516,7 +569,7 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new(AgentId::from("agent_01"), "ジェミー", "tpl");
 
-        let (grounded, stable_len) = store.compose_system_prompt(&spec, true).await.unwrap();
+        let (grounded, stable_len) = store.compose_system_prompt(&spec, true, None).await.unwrap();
         assert!(grounded.contains("URL は、あなたの手元には渡ってきません"));
         assert!(grounded.contains("検索した語"), "代わりに何を言えるかも伝える");
 
@@ -525,7 +578,7 @@ mod tests {
         assert!(stable.contains("接地（Google 検索）について"));
 
         // 接地していないエージェントには出さない。無関係な制約を負わせない。
-        let (plain, _) = store.compose_system_prompt(&spec, false).await.unwrap();
+        let (plain, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
         assert!(!plain.contains("接地（Google 検索）について"));
     }
 
@@ -608,11 +661,11 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
 
         let mut spec = AgentSpec::new("agent_1", "コーダー", "tpl");
-        let (prompt, _) = store.compose_system_prompt(&spec, false).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
         assert!(!prompt.contains("作業フォルダ"), "未設定なら節ごと出さない");
 
         spec.work_dir = Some("D:\\Projects\\my-app".into());
-        let (prompt, stable_len) = store.compose_system_prompt(&spec, false).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None).await.unwrap();
         assert!(prompt.contains("D:\\Projects\\my-app"), "実パスが入ること: {prompt}");
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(
@@ -632,7 +685,7 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new("agent_1", "ジェミー", "tpl");
 
-        let (prompt, _) = store.compose_system_prompt(&spec, false).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
 
         assert!(prompt.contains("ジェミー"), "自分の名前が入ること");
         assert!(
