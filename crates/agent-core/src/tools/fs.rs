@@ -38,10 +38,13 @@ const MAX_MATCHES: usize = 100;
 const MAX_LINE_CHARS: usize = 240;
 
 /// ツール出力全体の上限（文字数）。ツール結果はそのままプロンプトへ入る。
-const MAX_OUTPUT_CHARS: usize = 12_000;
+/// 書き換え系ではこの上限を超える diff は「切り詰め」ではなく**拒否**になる
+/// （write_tools_contract。切り詰めた diff は「何が変わったか」の契約を壊す）。
+pub(crate) const MAX_OUTPUT_CHARS: usize = 12_000;
 
 /// 読み込む 1 ファイルの上限（bytes）。これを超えるファイルは走査しない。
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// 書き換え系（tools/edit.rs）も同じ上限を共有する。
+pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// 1 回の grep で走査するファイル数の上限。病的に広い木で止まらなくなるのを防ぐ。
 const MAX_FILES: usize = 20_000;
@@ -53,7 +56,12 @@ const SKIP_DIRS: [&str; 6] = ["node_modules", "target", "dist", "build", "out", 
 /// 作業フォルダを起点に相対パスを解決し、**フォルダの外なら拒否**する。
 ///
 /// 戻りは (絶対パス, 表示用の相対パス)。エラーはモデルへそのまま返る文字列。
-fn resolve_in_work_dir(work_dir: &Path, user_path: &str) -> Result<(PathBuf, String), String> {
+/// canonicalize は実在するパスでしか成功しないため、この関数を通る限り
+/// **新規ファイルの作成は構造的に不可能**（write_tools_contract の担保の片翼）。
+pub(crate) fn resolve_in_work_dir(
+    work_dir: &Path,
+    user_path: &str,
+) -> Result<(PathBuf, String), String> {
     let root = work_dir.canonicalize().map_err(|_| {
         format!(
             "作業フォルダ `{}` が存在しません。設定を確認してください。",
@@ -85,8 +93,8 @@ fn resolve_in_work_dir(work_dir: &Path, user_path: &str) -> Result<(PathBuf, Str
     Ok((resolved, display))
 }
 
-/// 作業フォルダが未設定のときの案内文。grep / diff で共通。
-fn work_dir_missing() -> String {
+/// 作業フォルダが未設定のときの案内文。全ファイル系ツールで共通。
+pub(crate) fn work_dir_missing() -> String {
     "作業フォルダが設定されていないため、このツールは使えません。\
      利用者に「エージェント設定の『作業フォルダ』欄にフォルダを指定してほしい」と伝えてください。"
         .to_owned()
@@ -157,7 +165,7 @@ fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
 }
 
 /// バイナリらしいファイルか。先頭 4 KiB に NUL が居れば読まない。
-fn looks_binary(bytes: &[u8]) -> bool {
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(4096).any(|&b| b == 0)
 }
 
