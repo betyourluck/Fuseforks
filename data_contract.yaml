@@ -38,9 +38,13 @@ enums:
       skill: SKILL.md
       memory: Memory.md
       construct: Construct.md
+      mcp: mcp.json          # エージェント別 MCP (Spec 02)。書き込みはパース検証つき
     note: |
       GUI からは列挙値しか受け取らない。任意のファイル名を IPC に載せないことで、
       書き込み先を閉じた集合に保つ。
+      mcp (agents/{id}/mcp.json) だけは書き込み時に JSON パース検証があり、
+      失敗すると保存拒否 (mcp_contract の失敗二分類 (1))。他の 3 つは自由テキスト。
+      compose_system_prompt には入らない (プロンプト素材ではなく接続宣言)。
       アイコン (agents/{id}/icon.webp) はこの列挙に含めない — テキスト設定と違い
       バイナリで、read/write の型も検証も別物。専用の 3 コマンド
       (get/set/clear_agent_icon) で扱う。
@@ -76,12 +80,33 @@ enums:
           CreateProcess が実行できず program not found になる。
           「Claude Desktop の設定をそのまま貼れる」はここを解決して初めて成り立つ
           (failures.md #26、実測で確認)
-      未着手 (エージェントごとの振り分け): 現在の mcp.json は全エージェント共通で、
-      ツールは全員へ提示される。共通の道具はこれで正しいが、**エージェントごとに
-      使えるサーバーを分けたい**要求がある (動機 = エージェントごとに別の記憶 DB を
-      持たせたい。同じサーバーでも接続先 DB が違えば全員に同じものを渡すのは誤り)。
-      想定する形は AgentSpec.mcpServers (ragSources と同型の名前の集合)、
-      未指定なら全共通サーバーを引き継ぐ。**共通設定は残したまま個別を足す**。
+      エージェント別 MCP = agents/{agent_id}/mcp.json (Spec 02 rev2 承認、
+      2026-07-30 凍結。旧案 AgentSpec.mcpServers は本案で置き換え):
+        - 形式は共通 mcp.json と同じ (Claude Desktop の mcpServers)。無ければ空集合
+        - **上書き可能な加算モデル**: エージェントには「共通 + 自分の個別」が
+          提示される。共通側の機構・UI は不変。{server}__{tool} が同名なら
+          **個別が勝つ** — 共通と同じサーバーを自分専用の接続先 (別 DB 等) で
+          置き換える正当な手段として位置づける
+        - **ツール収集の最終形** (提示順): 1. 転送・委譲 (トポロジー由来) →
+          2. 共有 registry (同梱 [enabledTools でフィルタ] + 共通 MCP) →
+          3. 個別 MCP (orchestrator の per-agent map)。実行解決は逆引きで
+          **個別 map を先に**引き、無ければ共有 registry。個別ツールは
+          registry に入れない (入れると全員から見え、共通の再接続とも衝突)
+        - **接続寿命はエージェントの稼働に一致**: start_agent で接続、
+          stop_agent で切断。HashMap<AgentId, McpManager> で保持し、
+          stop は自分のエントリだけ畳む。同じコマンドでも**プロセスは
+          共有しない** (接続先が違いうることが個別 MCP の動機そのもの)
+        - **失敗の二分類**: (1) 保存時 JSON パース失敗 = 保存拒否
+          (UI 保存経路の不変条件: UI 経由の保存後、ディスクは常に正しい
+          JSON か不在。外部編集はこの不変条件の外) / (1') 外部編集起因の
+          パース失敗 = 読み込みエラーとして保持し起動は止めない、個別
+          ツール 0 本で稼働 / (2) MCP 接続失敗 = サーバー単位で保持し
+          起動は止めない (共通と同じ規律)
+        - 保存時、稼働中なら個別接続を張り直す。停止中は検証のみ
+          (次回起動で反映)
+        - **接続状態は永続化しない**: プロセス寿命の map + IPC で可視化
+          (状態ファイルはプロセスが消えても「接続済み」を残して嘘をつく)。
+          World の同期純データ原則を守り AgentRecord には入れない
     ordinance_contract: |
       村の条例 = {workspace}/Ordinance.md (2026-07-28)。ワークスペース全体
       (= 村) の規則で、エージェント個別ではなく場に属するため agents/ の外に置く。
@@ -159,6 +184,22 @@ entities:
       order: u32                    # 左ペインの表示順
       workDir: String | null        # 同梱 grep / diff の探索範囲。null なら未設定でツールは動かない
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (6)
+      enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
+    enabled_tools_invariant: |
+      enabledTools は同梱 6 本 (remember / grep / fd / diff / sd / yq) の
+      提示制御 (Spec 02 rev2 承認、2026-07-30 凍結)。MCP 由来・転送・委譲は対象外。
+      - null = 「既定に従う」: 全同梱ツールを提示。**新しい同梱ツールが
+        増えれば自動で提示される**。新規作成時の保存値は null
+        (UI のチェック全 ON は null の効果の表示であって、明示配列 6 本を
+        保存するのではない。利用者がチェックを触った時点で明示配列へ
+        切り替わり、「既定に戻す」で null へ戻せる)
+      - 明示配列 = 「必要な道具だけ」: 列挙した同梱ツールだけを提示。
+        **新しい同梱ツールは自動で増えない** (それが明示の意味)。[] は 0 本
+      - **自動除外が明示より優先**: 作業フォルダ未設定なら、ファイル系 5 本
+        (grep / fd / diff / sd / yq) は enabledTools に関わらず提示しない
+        (使えないツールを見せない。UI は disabled + 注記でチェック状態は保持)
+      - remember を外しても Memory.md の注入は続く (書きのみ不可)。
+        注入の制御手段は「ファイルを空にする」として既に存在する
     work_dir_invariant: |
       workDir はユーザーが明示した絶対パス (2026-07-29)。エージェントは
       プロンプトインジェクションを受けうるため、**読める範囲 = 漏洩しうる範囲**
@@ -187,6 +228,7 @@ entities:
       order: u32
       workDir: String | null        # 設定ダイアログの編集用に spec から写す
       maxToolIterations: u8 | null  # 同上
+      enabledTools: String[] | null # 同上
       lastError: ErrorPayload | null
 
   ModelTemplate:
