@@ -1220,6 +1220,10 @@ async fn handle_message(
     let mut specs = if use_handoff_tools {
         let mut both = handoffs.specs();
         both.extend(handoffs.ask_specs());
+        // 並列委譲は接続先 2 体以上のときだけ載る（Spec 04）。
+        // 1 体しか繋がっていないエージェントには使えない選択肢なので、
+        // そのスキーマを毎ターンの固定費として払わせない。
+        both.extend(handoffs.plan_specs());
         both
     } else {
         Vec::new()
@@ -1312,6 +1316,13 @@ async fn handle_message(
             .filter(|call| {
                 executable.iter().any(|spec| spec.name == call.name)
                     || (use_handoff_tools && handoffs.resolve_ask(&call.name).is_some())
+                    // plan は executable にも resolve_ask にも該当しない。
+                    // ここへ足し忘れると `calls` が空 = 最終出力と読まれ、
+                    // モデルが呼んだのに**何も起きず本文だけ返る**
+                    // （エラーにならないので気づけない）。
+                    || (use_handoff_tools
+                        && handoffs.offers_plan()
+                        && call.name == HandoffTools::PLAN)
             })
             .cloned()
             .collect();
@@ -1329,11 +1340,20 @@ async fn handle_message(
         ));
 
         for call in &calls {
-            let result = match handoffs.resolve_ask(&call.name) {
-                Some(target) if use_handoff_tools => {
-                    ask_agent(shared, agent_id, target, call, incoming.hop).await
+            // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
+            // 上限（`max_tool_iterations`）の消費も 1 回で済む。
+            let result = if use_handoff_tools
+                && handoffs.offers_plan()
+                && call.name == HandoffTools::PLAN
+            {
+                Ok(run_plan(shared, agent_id, &handoffs, call, incoming.hop).await)
+            } else {
+                match handoffs.resolve_ask(&call.name) {
+                    Some(target) if use_handoff_tools => {
+                        ask_agent(shared, agent_id, target, call, incoming.hop).await
+                    }
+                    _ => execute_tool(shared, agent_id, call).await,
                 }
-                _ => execute_tool(shared, agent_id, call).await,
             };
             shared.emit(CoreEvent::ToolInvoked {
                 agent_id: agent_id.clone(),
@@ -1466,6 +1486,35 @@ async fn handle_message(
         }
         Outcome::Handoff { deliveries } => deliveries,
     };
+
+    // 委譲（ask / plan）で来た依頼に、答えを返さず**転送で応じた**場合。
+    //
+    // `reply_to` は上の `Finish` 分岐でしか使われないため、ここで何もしないと
+    // 送信側が drop されるだけになり、依頼主は「相手から答えが返りませんでした。」
+    // を読む。**これは嘘である** — 答えは返っており、宛先が違うだけで会話は
+    // 第三者へ渡っている（そして最終的にユーザーへ流れる）。
+    //
+    // 転送そのものは抑制しない。ワーカーの正当な選択を握り潰すと、
+    // 「呼んだのに何も起きない」という別の穴に変わる。直すのは文言だけ。
+    if let Some(reply_to) = reply_to {
+        let names = {
+            let world = shared.world.read().await;
+            deliveries
+                .iter()
+                .map(|(to, _)| {
+                    world
+                        .agent(to)
+                        .map(|record| record.spec.name.clone())
+                        .unwrap_or_else(|_| to.to_string())
+                })
+                .collect::<Vec<_>>()
+                .join("、")
+        };
+        let _ = reply_to.send(format!(
+            "相手はこの依頼に自分で答えず、{names} へ会話を渡しました。\
+             答えはこちらへ戻りません。必要なら別の相手に頼むか、自分で進めてください。"
+        ));
+    }
 
     // 宛先ごとに 1 通として記録する（fan-out）。トークンは 1 ターンぶんの消費なので、
     // 全通に載せると宛先数で二重計上される。先頭の 1 通にだけ載せる。
@@ -1664,10 +1713,29 @@ async fn ask_agent(
         return Ok("転送の上限に達したため、これ以上は尋ねられません。".to_owned());
     }
 
+    Ok(deliver_and_wait(shared, from, to, &question, next_hop).await)
+}
+
+/// 1 件の依頼を配送し、答えを待つ（`ask` と `plan` の共通部分）。
+///
+/// **切り出してあるのは、2 つの経路で失敗の文言と境界を揃えるため。**
+/// 別々に書くと、同じ配置で ask は通り plan は止まる、という説明できない差が
+/// いずれ生まれる。`hop` の判定は呼び出し側に置く — plan では波全体で
+/// 一様に決まる制約なので、タスクごとに判定すると同じ文字列が人数分並ぶ。
+///
+/// 戻り値は**必ず文字列**。相手が停止中でも無応答でも例外にしない
+/// （ツールの失敗で会話を止めない、という既存の規律）。
+async fn deliver_and_wait(
+    shared: &Arc<Shared>,
+    from: &AgentId,
+    to: &AgentId,
+    question: &str,
+    next_hop: u8,
+) -> String {
     let mut outgoing = AgentMessage::new(
         Endpoint::Agent { id: from.clone() },
         Endpoint::Agent { id: to.clone() },
-        &question,
+        question,
         next_hop,
     );
     // 質問自体のトークンは呼び出し元のターンに計上済み。二重計上しない。
@@ -1682,15 +1750,138 @@ async fn ask_agent(
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
         // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
-        return Ok(format!("相手に尋ねられませんでした: {err}"));
+        return format!("相手に尋ねられませんでした: {err}");
     }
 
     match tokio::time::timeout(shared.config.ask_timeout, rx).await {
-        Ok(Ok(answer)) => Ok(answer),
-        // 相手が答えずにタスクを終えた（停止・失敗）。
-        Ok(Err(_)) => Ok("相手から答えが返りませんでした。".to_owned()),
-        Err(_) => Ok("相手からの答えが時間内に返りませんでした。".to_owned()),
+        Ok(Ok(answer)) => answer,
+        // 相手が答えずにタスクを終えた（停止・失敗）。転送で応じた場合は
+        // handle_message が事実を送るので、ここへは来ない。
+        Ok(Err(_)) => "相手から答えが返りませんでした。".to_owned(),
+        Err(_) => "相手からの答えが時間内に返りませんでした。".to_owned(),
     }
+}
+
+/// 並列委譲（`plan`）を 1 波ぶん実行する（Spec 04）。
+///
+/// # 失敗の 3 分類
+///
+/// 処方が分かれる根拠は「**その値がいつ確定するか**」の 1 点だけ:
+///
+/// - **静的な不正**（波の中で不変・事前に確かめられる）→ **何も配送せず差し戻す**
+/// - **波全体で一様な制約**（波の中で不変・全タスクが同値）→ **1 つの結果文字列**
+/// - **動的な失敗**（配送の瞬間まで確定しない）→ **そのタスクの結果文字列**
+///
+/// 部分実行を避けるのは、「どこまで走ったか」の追跡を利用者に強いるから。
+/// ただし稼働状態は**確かめても配送時には別の値でありうる**ので検証に含めない。
+/// 確かめられないものを検証に含めると、嘘の保証になる。
+///
+/// 戻り値は 3 分類のいずれも `String`。エラーチャネルを使わないのは、
+/// `Err` を返すと実行ループが「ツールの実行に失敗しました」で包み、
+/// モデルが読むべき「なぜ配送されなかったか」が一段深い所へ埋まるため。
+async fn run_plan(
+    shared: &Arc<Shared>,
+    from: &AgentId,
+    handoffs: &HandoffTools,
+    call: &crate::llm::ToolCall,
+    hop: u8,
+) -> String {
+    // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
+    let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
+        return "plan には tasks（依頼の配列）が必要です。何も配送していません。".to_owned();
+    };
+    if tasks.is_empty() {
+        return "plan の tasks が空です。誰にも頼まずに終わりました。\
+                頼む相手が居ないなら、plan を呼ばずに自分で答えてください。"
+            .to_owned();
+    }
+
+    let mut wave: Vec<(AgentId, String)> = Vec::with_capacity(tasks.len());
+    for (index, task) in tasks.iter().enumerate() {
+        let position = index + 1;
+        let (Some(to), Some(message)) = (
+            task.get("to").and_then(serde_json::Value::as_str),
+            task.get("message").and_then(serde_json::Value::as_str),
+        ) else {
+            return format!(
+                "{position} 件目の依頼に to と message の両方が必要です。何も配送していません。"
+            );
+        };
+
+        let target = AgentId::from(to);
+        // 提示はターンの開始時、検証は今。この間に繋ぎ替えは起こりうる。
+        if !handoffs.is_target(&target) {
+            return format!(
+                "{position} 件目の宛先「{to}」は、あなたの接続先ではありません。\
+                 頼めるのは {} です。何も配送していません。",
+                handoffs.roster().join("、")
+            );
+        }
+        if wave.iter().any(|(existing, _)| *existing == target) {
+            return format!(
+                "宛先「{to}」が同じ波に 2 回あります。1 回の plan で同じ相手へ頼めるのは 1 件です。\
+                 2 件目は次の波で頼んでください。何も配送していません。"
+            );
+        }
+        wave.push((target, message.to_owned()));
+    }
+
+    // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す
+    //    （タスク数ぶん同じ文字列を並べない）。判定式は ask_agent と同一。
+    let next_hop = hop.saturating_add(1);
+    if next_hop >= shared.config.max_hops {
+        shared.emit(CoreEvent::HopLimitReached {
+            agent_id: from.clone(),
+            max_hops: shared.config.max_hops,
+        });
+        return "転送の上限に達したため、これ以上は頼めません。何も配送していません。".to_owned();
+    }
+
+    // 3. 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
+    //    直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
+    //    並列なのは**配送**であって実行ではない。各エージェントの受信箱は
+    //    1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
+    let mut set = tokio::task::JoinSet::new();
+    for (index, (target, message)) in wave.iter().enumerate() {
+        let shared = Arc::clone(shared);
+        let from = from.clone();
+        let target = target.clone();
+        let message = message.clone();
+        set.spawn(async move {
+            let answer = deliver_and_wait(&shared, &from, &target, &message, next_hop).await;
+            (index, answer)
+        });
+    }
+
+    let mut answers: Vec<Option<String>> = vec![None; wave.len()];
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok((index, answer)) => answers[index] = Some(answer),
+            // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
+            Err(err) => tracing_note(&err),
+        }
+    }
+
+    // 4. 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
+    //    表示名の一意性がどこも保証されていないから（同名が 2 体いると
+    //    どちらの答えか判別できなくなる）。順序は入力順に戻す。
+    wave.iter()
+        .zip(answers)
+        .map(|((target, _), answer)| {
+            let display = handoffs.display_of(target).unwrap_or_else(|| target.as_str());
+            let body = answer.unwrap_or_else(|| "答えの取得中に問題が起きました。".to_owned());
+            format!("## {target}（{display}）\n{body}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// `JoinSet` のタスク異常を握り潰さずに記録する。
+///
+/// このクレートはログ基盤を持たない（GUI 層に一切依存しない制約）ので、
+/// 標準エラーへ 1 行出すに留める。**黙って捨てない**ことだけが目的。
+fn tracing_note(err: &tokio::task::JoinError) {
+    eprintln!("[concordia] plan のタスクが異常終了しました: {err}");
 }
 
 /// 「居合わせた会話」を組み立てる（広場ログ）。
@@ -2007,6 +2198,104 @@ impl HandoffTools {
                  結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
             )
         }
+    }
+
+    /// 並列委譲ツールの名前（Spec 04）。
+    const PLAN: &'static str = "plan";
+
+    /// `plan` を提示するか。
+    ///
+    /// **接続先 2 体以上のときだけ。** 「進行役フラグ」のような設定は足さない —
+    /// トポロジーがそのまま「進行役かどうか」を決める。1 体しか繋がっていない
+    /// エージェントには `ask_*` で足りるので、使えない選択肢のスキーマを
+    /// 毎ターンの固定費として払わせない。
+    fn offers_plan(&self) -> bool {
+        self.entries.len() >= 2
+    }
+
+    /// 並列委譲（`plan`）のツール定義。
+    ///
+    /// `ask_*` との違いは**並列性と合流**だけ。`ask_*` は 1 体ずつ待つので
+    /// 壁時計が人数倍になり、`transfer_to_*` の fan-out は並列だが答えが
+    /// ユーザーへ散って戻ってこない。その中間が無かった。
+    ///
+    /// **宛先は `enum` で閉じる。** 自由文字列にすると、`build()` が
+    /// 「ツール名は ID、説明は表示名」で解いた問題を作り直すことになる。
+    /// 表示名の一意性はどこも保証していない（`World::register_agent` が
+    /// 拒否するのは ID の重複だけ）ので、名前で指させると同名の 2 体を
+    /// 区別できない。
+    fn plan_specs(&self) -> Vec<ToolSpec> {
+        if !self.offers_plan() {
+            return Vec::new();
+        }
+
+        let ids: Vec<&str> = self
+            .entries
+            .iter()
+            .map(|(_, target, _)| target.as_str())
+            .collect();
+        // ID と表示名の対応表。会話は表示名で流れるので、これが無いと
+        // モデルは「ザリ・ロブステル」と `agent_2` を結び付けられない。
+        let roster = self
+            .entries
+            .iter()
+            .map(|(_, target, display)| format!("{target} = {display}"))
+            .collect::<Vec<_>>()
+            .join(" / ");
+
+        vec![ToolSpec {
+            name: Self::PLAN.to_owned(),
+            description: format!(
+                "複数の相手へ**並列に**頼んで、全員の答えを束ねて受け取る。\
+                 相手ごとに依頼内容を変えられる。\
+                 1 体ずつ順に尋ねる `ask_*` と違い、全員が同時に動くので速い。\
+                 独立した調べもの・作業を配るときはこれを使うこと。\
+                 依頼先: {roster}"
+            ),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "同時に頼む依頼の一覧。同じ相手を 2 回入れないこと",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "to": {
+                                    "type": "string",
+                                    "enum": ids,
+                                    "description": format!("依頼先。{roster}"),
+                                },
+                                "message": {
+                                    "type": "string",
+                                    "description": "その相手への依頼内容"
+                                }
+                            },
+                            "required": ["to", "message"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["tasks"],
+                "additionalProperties": false
+            }),
+        }]
+    }
+
+    /// この波の宛先として妥当か（実行時のトポロジーで見る）。
+    ///
+    /// 提示はターンの開始時、検証は実行時。`set_connections` は稼働中に
+    /// 呼べるので、この 2 点の間に繋ぎ替えが起こりうる。
+    fn is_target(&self, id: &AgentId) -> bool {
+        self.entries.iter().any(|(_, target, _)| target == id)
+    }
+
+    /// 宛先の表示名。束ねの見出しに使う。
+    fn display_of(&self, id: &AgentId) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(_, target, _)| target == id)
+            .map(|(_, _, display)| display.as_str())
     }
 
     /// 名前からツールを逆引きする。

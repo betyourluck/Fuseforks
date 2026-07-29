@@ -203,6 +203,125 @@ impl LlmBackend for AskingBackend {
     }
 }
 
+/// `plan` が提示されていれば全接続先へ 1 波で撒き、結果を受け取ったら終える。
+///
+/// 進行役（orchestrator-workers の要）の役回りをネットワークなしで再現する。
+/// ワーカー側は素の応答を返すだけなので、束ねの形と並列性だけが観測できる。
+struct PlanningBackend {
+    /// 進行役が撒く依頼。`None` なら `plan` の tasks をワーカー数ぶん自動生成する。
+    tasks: Option<serde_json::Value>,
+    /// 同時に処理中だったワーカーの最大数。**並列性はこれで測る**。
+    ///
+    /// 壁時計で測らないのは、この repo が `drain_until_quiet` で既に
+    /// 避けている問題（遅いマシンで取りこぼし・速いマシンで無駄待ち）を
+    /// 持ち込まないため。同時実行数は時間に依存せず並列を直接示す。
+    in_flight: Arc<std::sync::Mutex<(usize, usize)>>,
+    /// ワーカーが 1 回の応答で待つ時間。重なりを作るために要る。
+    worker_delay: Duration,
+}
+
+impl PlanningBackend {
+    fn new() -> Self {
+        Self {
+            tasks: None,
+            in_flight: Arc::new(std::sync::Mutex::new((0, 0))),
+            worker_delay: Duration::from_millis(120),
+        }
+    }
+
+    /// 進行役が撒く tasks を明示する（不正な波の検証用）。
+    fn with_tasks(tasks: serde_json::Value) -> Self {
+        Self {
+            tasks: Some(tasks),
+            ..Self::new()
+        }
+    }
+
+    /// 観測された同時実行数の最大値。
+    fn peak_in_flight(&self) -> usize {
+        self.in_flight.lock().unwrap().1
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for PlanningBackend {
+    fn name(&self) -> &str {
+        "planning"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let usage = Usage {
+            prompt: 1,
+            completion: 1,
+            cache_read: 0,
+        };
+        let plan = req.tools.iter().find(|tool| tool.name == "plan");
+        let answered = req.messages.iter().any(|m| m.role == Role::Tool);
+
+        // 進行役: plan を持っていて、まだ結果を受け取っていない。
+        if let (Some(plan), false) = (plan, answered) {
+            let tasks = self.tasks.clone().unwrap_or_else(|| {
+                // 提示された enum がそのまま接続先の一覧になっている。
+                let ids = plan.parameters["properties"]["tasks"]["items"]["properties"]["to"]
+                    ["enum"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                serde_json::Value::Array(
+                    ids.iter()
+                        .map(|id| {
+                            serde_json::json!({
+                                "to": id,
+                                "message": format!("{} への依頼", id.as_str().unwrap_or(""))
+                            })
+                        })
+                        .collect(),
+                )
+            });
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: "call_plan".into(),
+                    name: "plan".into(),
+                    args: serde_json::json!({ "tasks": tasks }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        // 進行役の 2 周目: 束ねた結果をそのまま最終出力にする（検証しやすい形）。
+        if let Some(result) = req.messages.iter().find(|m| m.role == Role::Tool) {
+            return Ok(ChatResponse {
+                text: Some(format!("まとめ\n{}", result.content)),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        // ワーカー: 在室時間を作って重なりを観測する。
+        {
+            let mut guard = self.in_flight.lock().unwrap();
+            guard.0 += 1;
+            guard.1 = guard.1.max(guard.0);
+        }
+        tokio::time::sleep(self.worker_delay).await;
+        self.in_flight.lock().unwrap().0 -= 1;
+
+        Ok(ChatResponse {
+            text: Some("作業しました".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage,
+            grounding: Default::default(),
+        })
+    }
+}
+
 /// 提示された転送ツールを**すべて同時に**呼ぶバックエンド。
 ///
 /// Claude / Gemini は 1 応答で複数の tool call を普通に返す（並列ツール呼び出し）。
@@ -476,6 +595,165 @@ impl LlmBackend for RecordingBackend {
             grounding: Default::default(),
         })
     }
+}
+
+/// 提示されたツール名だけを記録するバックエンド。提示条件の検証に使う。
+#[derive(Default)]
+struct ToolNameBackend {
+    seen: std::sync::Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for ToolNameBackend {
+    fn name(&self) -> &str {
+        "tool-names"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(req.tools.iter().map(|t| t.name.clone()).collect());
+        Ok(ChatResponse {
+            text: Some("はい".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 依頼に自分で答えず、接続先へ転送してしまうワーカーを含む配置。
+///
+/// 進行役（`plan` を持つ）→ ワーカー（転送ツールを持つ）→ 第三者、の 3 役を
+/// ツールの顔ぶれで見分ける。
+#[derive(Default)]
+struct TransferringWorkerBackend;
+
+/// 依頼主がワーカーへ投げる文面。役の見分けに使う目印。
+const WORKER_REQUEST: &str = "ワーカー宛の調査依頼";
+
+#[async_trait::async_trait]
+impl LlmBackend for TransferringWorkerBackend {
+    fn name(&self) -> &str {
+        "transferring-worker"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let usage = Usage {
+            prompt: 1,
+            completion: 1,
+            cache_read: 0,
+        };
+        let answered = req.messages.iter().any(|m| m.role == Role::Tool);
+        // 役は**受け取った依頼の文面**で見分ける。ツールの顔ぶれでは分けられない —
+        // ワーカーは接続先を持つ以上 `transfer_to_*` と `ask_*` の両方を持つので、
+        // 「ask を持っていれば依頼主」という判定はワーカーにも当たってしまう
+        // （実際に当たって、転送ではなく委譲が起きた）。
+        let incoming = req
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        let is_worker = incoming.contains(WORKER_REQUEST);
+
+        // 依頼主: ask を 1 回だけ投げ、結果を受け取ったらそれを最終出力にする。
+        if let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_"))
+            && !is_worker
+        {
+            if !answered {
+                return Ok(ChatResponse {
+                    text: Some(String::new()),
+                    tool_calls: vec![ToolCall {
+                        id: "call_1".into(),
+                        name: ask.name.clone(),
+                        args: serde_json::json!({ "message": WORKER_REQUEST }),
+                        extra: None,
+                    }],
+                    finish: Finish::ToolUse,
+                    usage,
+                    grounding: Default::default(),
+                });
+            }
+            let result = req
+                .messages
+                .iter()
+                .find(|m| m.role == Role::Tool)
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            return Ok(ChatResponse {
+                text: Some(format!("受領: {result}")),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        // ワーカー: 自分で答えず、接続先へ会話を渡してしまう。
+        if let Some(transfer) = req.tools.iter().find(|t| t.name.starts_with("transfer_to_"))
+            && is_worker
+        {
+            return Ok(ChatResponse {
+                text: Some("私では分かりません".into()),
+                tool_calls: vec![ToolCall {
+                    id: "call_2".into(),
+                    name: transfer.name.clone(),
+                    args: serde_json::json!({ "message": "代わりに答えて" }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        Ok(ChatResponse {
+            text: Some("第三者の答え".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage,
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 進行役 1 体 + ワーカー N 体を組み、全員を起動する。
+async fn setup_facilitator(
+    dir: &TempDir,
+    backend: Arc<dyn LlmBackend>,
+    workers: &[(&str, &str)],
+    config: OrchestratorConfig,
+) -> (Orchestrator, AgentId, Vec<AgentId>) {
+    let orchestrator = setup_with(dir, backend, config).await;
+    let lead = AgentId::from("agent_lead");
+    orchestrator
+        .create_agent(AgentSpec::new(lead.clone(), "進行役", "tpl"))
+        .await
+        .unwrap();
+
+    let mut ids = Vec::new();
+    for (id, name) in workers {
+        let worker = AgentId::from(*id);
+        orchestrator
+            .create_agent(AgentSpec::new(worker.clone(), *name, "tpl"))
+            .await
+            .unwrap();
+        ids.push(worker);
+    }
+    orchestrator.set_connections(&lead, ids.clone()).await.unwrap();
+    orchestrator.start_agent(&lead).await.unwrap();
+    for worker in &ids {
+        orchestrator.start_agent(worker).await.unwrap();
+    }
+    (orchestrator, lead, ids)
 }
 
 /// 接地の来歴を載せて返し、受け取ったリクエストも記録するバックエンド。
@@ -2886,4 +3164,368 @@ async fn state_survives_a_restart_but_agents_do_not_auto_start() {
     assert_eq!(snapshot.rag_sources, vec!["wiki_db".to_string()]);
     // 再起動で勝手に走り出さない（開いた瞬間に課金が始まらない）。
     assert_eq!(snapshot.status, AgentStatus::Idle);
+}
+
+// ---------------------------------------------------------------------------
+// 並列委譲（plan / Spec 04）
+// ---------------------------------------------------------------------------
+
+/// 1 波が並列に届き、束ねた結果が依頼主へ戻ること。
+///
+/// **並列性は壁時計ではなく「同時に処理中だったワーカー数の最大値」で測る。**
+/// 固定時間に依存するテストは遅いマシンで壊れ、速いマシンで無駄に待つ
+/// （この repo が `drain_until_quiet` で既に避けている問題）。
+#[tokio::test]
+async fn plan_delivers_in_parallel_and_bundles_the_answers() {
+    let dir = TempDir::new("plan-parallel");
+    let backend = Arc::new(PlanningBackend::new());
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend.clone(),
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let log = messages(&events);
+
+    assert_eq!(
+        backend.peak_in_flight(),
+        2,
+        "2 体が同時に処理中になること（並列配送の実証）"
+    );
+
+    let summary = log
+        .iter()
+        .find(|m| m.from == Endpoint::Agent { id: lead.clone() } && m.to == Endpoint::User)
+        .expect("進行役がユーザーへ返すこと");
+
+    // 見出しは `agent_id（表示名）`。表示名だけにすると同名の 2 体を区別できない。
+    assert!(summary.content.contains("## agent_w1（一号）"), "{}", summary.content);
+    assert!(summary.content.contains("## agent_w2（二号）"), "{}", summary.content);
+    // 順序は入力順に戻す。
+    let first = summary.content.find("agent_w1").unwrap();
+    let second = summary.content.find("agent_w2").unwrap();
+    assert!(first < second, "束ねの順序が入力順であること: {}", summary.content);
+
+    // 答えはユーザーへ散らない。ワーカーの発話は依頼主宛として記録される。
+    for worker in &workers {
+        let reply = log
+            .iter()
+            .find(|m| m.from == Endpoint::Agent { id: worker.clone() })
+            .unwrap_or_else(|| panic!("{worker} の発話が記録されること"));
+        assert_eq!(
+            reply.to,
+            Endpoint::Agent { id: lead.clone() },
+            "ワーカーの答えは依頼主へ戻ること: {reply:#?}"
+        );
+    }
+}
+
+/// 接続先が 1 体以下なら plan を提示しないこと。
+///
+/// 使えない選択肢のスキーマは毎ターンの固定費になる（トークン節約は最重要課題）。
+#[tokio::test]
+async fn plan_is_not_offered_below_two_connections() {
+    let dir = TempDir::new("plan-not-offered");
+    let backend = Arc::new(ToolNameBackend::default());
+    let (orchestrator, lead, _) = setup_facilitator(
+        &dir,
+        backend.clone(),
+        &[("agent_w1", "一号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "調べて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    let presented = seen.first().expect("リクエストが記録されること");
+    assert!(
+        !presented.iter().any(|name| name == "plan"),
+        "接続 1 体では plan を出さないこと: {presented:?}"
+    );
+    assert!(
+        presented.iter().any(|name| name.starts_with("ask_")),
+        "委譲は出ること（plan の代わりにこちらで足りる）: {presented:?}"
+    );
+}
+
+/// 静的な不正は**何も配送せず**差し戻すこと（部分実行を作らない）。
+#[tokio::test]
+async fn an_invalid_target_cancels_the_whole_wave() {
+    let dir = TempDir::new("plan-invalid-target");
+    // 1 件目は正当、2 件目は接続外。1 件目も配送されてはいけない。
+    let backend = Arc::new(PlanningBackend::with_tasks(serde_json::json!([
+        { "to": "agent_w1", "message": "これは正当" },
+        { "to": "agent_stranger", "message": "接続していない相手" }
+    ])));
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    let log = messages(&events);
+
+    for worker in &workers {
+        assert!(
+            !log.iter().any(|m| m.to == Endpoint::Agent { id: worker.clone() }),
+            "1 件でも不正なら誰にも配送しないこと（{worker} へ届いている）"
+        );
+    }
+    let summary = log
+        .iter()
+        .find(|m| m.to == Endpoint::User)
+        .expect("進行役がユーザーへ返すこと");
+    assert!(
+        summary.content.contains("接続先ではありません"),
+        "理由が読める文言で返ること: {}",
+        summary.content
+    );
+}
+
+/// 同一宛先の重複も静的な不正として全体を差し戻すこと。
+#[tokio::test]
+async fn a_duplicate_target_cancels_the_whole_wave() {
+    let dir = TempDir::new("plan-duplicate");
+    let backend = Arc::new(PlanningBackend::with_tasks(serde_json::json!([
+        { "to": "agent_w1", "message": "1 件目" },
+        { "to": "agent_w1", "message": "2 件目" }
+    ])));
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    let log = messages(&events);
+
+    assert!(
+        !log.iter().any(|m| m.to == Endpoint::Agent { id: workers[0].clone() }),
+        "重複があれば何も配送しないこと"
+    );
+    let summary = log.iter().find(|m| m.to == Endpoint::User).unwrap();
+    assert!(
+        summary.content.contains("2 回あります"),
+        "理由が読める文言で返ること: {}",
+        summary.content
+    );
+}
+
+/// 空の波は静的な不正。通すと何も配送されない空の束ねが返り、hop だけ消える。
+#[tokio::test]
+async fn an_empty_wave_is_refused() {
+    let dir = TempDir::new("plan-empty");
+    let backend = Arc::new(PlanningBackend::with_tasks(serde_json::json!([])));
+    let (orchestrator, lead, _) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+
+    let summary = messages(&events)
+        .into_iter()
+        .find(|m| m.to == Endpoint::User)
+        .expect("進行役がユーザーへ返すこと");
+    assert!(
+        summary.content.contains("tasks が空"),
+        "空の波は理由つきで断ること: {}",
+        summary.content
+    );
+}
+
+/// 1 件だけの波は**許容する**。
+///
+/// 「1 体なら `ask_*` で足りる」はツールの提示条件の話で、波の大きさの話ではない。
+/// 進行役が 2 波目で 1 体にだけ追加調査を頼むのは正当で、そこでツールを
+/// 持ち替えさせる理由が無い。
+#[tokio::test]
+async fn a_single_task_wave_is_allowed() {
+    let dir = TempDir::new("plan-single");
+    let backend = Arc::new(PlanningBackend::with_tasks(serde_json::json!([
+        { "to": "agent_w2", "message": "君だけに頼む" }
+    ])));
+    let (orchestrator, lead, _) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let log = messages(&events);
+
+    assert!(
+        log.iter().any(|m| m.to == Endpoint::Agent { id: AgentId::from("agent_w2") }),
+        "1 件でも通常どおり配送されること"
+    );
+    let summary = log.iter().find(|m| m.to == Endpoint::User).unwrap();
+    assert!(
+        summary.content.contains("## agent_w2（二号）"),
+        "1 件でも束ねの形は同じであること: {}",
+        summary.content
+    );
+}
+
+/// 停止中のワーカーが居ても、生きている側の答えは束ねに入ること（道連れなし）。
+///
+/// 稼働状態は**動的**なので事前検証には含めない。確かめた瞬間と配送の瞬間で
+/// 違いうる値を検証に含めると、嘘の保証になる。
+#[tokio::test]
+async fn a_stopped_worker_does_not_take_down_the_wave() {
+    let dir = TempDir::new("plan-stopped");
+    let backend = Arc::new(PlanningBackend::new());
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+    orchestrator.stop_agent(&workers[1]).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let summary = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::Agent { id: lead.clone() } && m.to == Endpoint::User)
+        .expect("進行役がユーザーへ返すこと");
+
+    assert!(
+        summary.content.contains("作業しました"),
+        "生きている側の答えは束ねに入ること: {}",
+        summary.content
+    );
+    assert!(
+        summary.content.contains("## agent_w2（二号）"),
+        "停止側も見出しごと残ること（黙って消さない）: {}",
+        summary.content
+    );
+    assert!(
+        summary.content.contains("尋ねられませんでした"),
+        "停止側は理由が文字列で入ること: {}",
+        summary.content
+    );
+}
+
+/// hop の上限は**波全体で一様**なので、1 つの結果文字列で返すこと。
+///
+/// タスク数ぶん同じ文字列を並べない。1 回の plan の中で hop は変わらず、
+/// 全タスクが同じ `incoming.hop` を共有する。
+#[tokio::test]
+async fn an_exhausted_hop_refuses_the_whole_wave_once() {
+    let dir = TempDir::new("plan-hop");
+    let backend = Arc::new(PlanningBackend::new());
+    // ユーザー発の hop は 0。進行役の配送は hop 1 になるので、上限 1 で塞がる。
+    let config = OrchestratorConfig {
+        max_hops: 1,
+        ..OrchestratorConfig::default()
+    };
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        config,
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "頼んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    let log = messages(&events);
+
+    for worker in &workers {
+        assert!(
+            !log.iter().any(|m| m.to == Endpoint::Agent { id: worker.clone() }),
+            "hop 切れなら何も配送しないこと"
+        );
+    }
+    let summary = log.iter().find(|m| m.to == Endpoint::User).unwrap();
+    assert_eq!(
+        summary.content.matches("転送の上限").count(),
+        1,
+        "同じ文字列をタスク数ぶん並べないこと: {}",
+        summary.content
+    );
+}
+
+/// 相手が答えずに転送したとき、依頼主に**その事実**が返ること。
+///
+/// 以前は `reply_to` が `Finish` 分岐でしか使われず、`Handoff` では送られない
+/// まま drop されていたため、依頼主は「相手から答えが返りませんでした。」を
+/// 読んでいた。**これは嘘** — 答えは返っており、宛先が違うだけ。
+/// `ask` の既存バグで、`plan` は同じ経路を N 倍踏みやすくする。
+#[tokio::test]
+async fn a_worker_that_transfers_reports_the_fact_not_silence() {
+    let dir = TempDir::new("plan-transfer");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(TransferringWorkerBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b, c) = (
+        AgentId::from("agent_a"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    for (id, name) in [(&a, "依頼主"), (&b, "ワーカー"), (&c, "第三者")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.set_connections(&b, vec![c.clone()]).await.unwrap();
+    for id in [&a, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "ワーカーに聞いて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(700)).await;
+
+    let reply = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::Agent { id: a.clone() } && m.to == Endpoint::User)
+        .expect("依頼主がユーザーへ返すこと");
+
+    assert!(
+        reply.content.contains("会話を渡しました"),
+        "転送した事実が依頼主へ返ること: {}",
+        reply.content
+    );
+    assert!(
+        !reply.content.contains("答えが返りませんでした"),
+        "「答えが返らなかった」は嘘なので使わないこと: {}",
+        reply.content
+    );
 }
