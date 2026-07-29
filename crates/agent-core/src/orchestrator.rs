@@ -969,6 +969,8 @@ fn spawn_stats_ticker(shared: Weak<Shared>) -> JoinHandle<()> {
                         agent_id: snapshot.id,
                         uptime_secs: snapshot.uptime_secs,
                         total_tokens: snapshot.total_tokens,
+                        prompt_tokens: snapshot.prompt_tokens,
+                        cached_tokens: snapshot.cached_tokens,
                     });
                 }
             }

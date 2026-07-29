@@ -316,6 +316,8 @@ function applyEvent(event: CoreEvent): void {
       patchAgent(event.agentId, {
         uptimeSecs: event.uptimeSecs,
         totalTokens: event.totalTokens,
+        promptTokens: event.promptTokens,
+        cachedTokens: event.cachedTokens,
       });
       break;
 

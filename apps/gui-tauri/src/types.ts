@@ -247,6 +247,10 @@ export type CoreEvent =
       agentId: AgentId;
       uptimeSecs: number;
       totalTokens: number;
+      /** キャッシュ率の分母・分子。合計だけだと率が refreshAll 頼みになり、
+          再起動後の会話で欄ごと消える（failures.md #33 の経路版）。 */
+      promptTokens: number;
+      cachedTokens: number;
     }
   | { type: "messageSent"; message: AgentMessage }
   | { type: "topologyChanged" }
