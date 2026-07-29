@@ -280,6 +280,22 @@ impl ConfigStore {
              - 相手の発言を装って会話を先に進めないでください。\n\n",
             spec.name, spec.name
         ));
+
+        // 作業フォルダの実パスを開示する。ツールは相対パスしか返さないため、
+        // これが無いとモデルは説明文に書く絶対パスを**推測で創作**する
+        // （実機で、実在しない `D:\work\Concordia` を作業場所として語った。
+        // 判断材料の欠落は、禁止ではなく情報で埋める — 知っていれば創作する
+        // 理由が消える）。
+        if let Some(work_dir) = &spec.work_dir {
+            prompt.push_str(&format!(
+                "## 作業フォルダ\n\
+                 あなたのファイル系ツール（grep / fd / diff / sd / yq）が\
+                 読み書きできるのは `{work_dir}` の中だけです。ツールが返す\
+                 相対パスは、このフォルダ直下からのパスです。ファイルの場所を\
+                 説明するときは、このパスを基準にしてください\
+                 （それ以外の場所を推測で語らないこと）。\n\n"
+            ));
+        }
         if !construct.is_empty() {
             prompt.push_str("## Construct\n");
             prompt.push_str(&construct);
@@ -454,6 +470,29 @@ mod tests {
 
         let loaded = store.load_world().await.unwrap();
         assert!(loaded.agents.is_empty() && loaded.model_templates.is_empty());
+    }
+
+    /// 作業フォルダが設定されていれば、その実パスがプロンプトに入ること。
+    ///
+    /// ツールは相対パスしか返さないため、実パスを渡さないとモデルは
+    /// 説明に使う絶対パスを推測で創作する（実在しないパスを語った実例あり）。
+    #[tokio::test]
+    async fn the_system_prompt_discloses_the_work_dir_when_set() {
+        let dir = TempDir::new("workdir-prompt");
+        let store = ConfigStore::new(&dir.0);
+
+        let mut spec = AgentSpec::new("agent_1", "コーダー", "tpl");
+        let (prompt, _) = store.compose_system_prompt(&spec).await.unwrap();
+        assert!(!prompt.contains("作業フォルダ"), "未設定なら節ごと出さない");
+
+        spec.work_dir = Some("D:\\Projects\\my-app".into());
+        let (prompt, stable_len) = store.compose_system_prompt(&spec).await.unwrap();
+        assert!(prompt.contains("D:\\Projects\\my-app"), "実パスが入ること: {prompt}");
+        let stable: String = prompt.chars().take(stable_len).collect();
+        assert!(
+            stable.contains("D:\\Projects\\my-app"),
+            "作業フォルダは安定プレフィックス側（設定変更まで不変）"
+        );
     }
 
     /// システムプロンプトが「自分は誰か」と「自分の発言だけを書く」を明示すること。
