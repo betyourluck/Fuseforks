@@ -209,6 +209,33 @@ entities:
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (12)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
+      batchStart: bool              # 一括起動 (▶) の対象か。既定 true
+    batch_start_invariant: |
+      一括起動 = 左ペインヘッダの ▶ で、batchStart が真のエージェントだけを
+      まとめて起こす (2026-07-31、利用者要望)。起動時に 1 体ずつトグルを
+      押す手間の解消。
+      **自動起動ではない。** アプリを開いた時点では誰も走らない —
+      開いただけで課金が始まる作りにしない。▶ を押したときの対象の選択だけを持つ。
+      **稼働状態 (AgentStatus) とは別の軸。** 元の UI は 1 つのトグルに
+      両方を兼ねさせており、「今は止まっているが次の一括起動では起こしたい」を
+      表現できなかった (だから毎回 1 体ずつ押すしかなかった)。
+      カードのトグル = 対象の選択 (永続) / スタンバイボタン = 実際の起動・停止。
+      不変条件:
+        - 既定は true。偽にすると、更新した利用者の ▶ が初回に何もしない
+          ボタンになる (既存の村が全員「対象外」で復元される)
+        - ▶ の役は状態で変わる: 起こせる対象が 1 体でもあれば起動、
+          対象が全員稼働中なら停止。**混在状態では起動を優先**する —
+          そこで全部止めると、動いていた側の会話を巻き添えに殺す
+        - stopping は遷移中なので対象に含めない (叩くと競合する)。
+          starting は停止側に含める (起動の取り消し)
+        - 判定は apps/gui-tauri/src/lib/batchStart.ts の純関数が持つ
+          (唯一の意思決定なのでコンポーネントの外でテストする)
+        - 一括の配送は**直列**。並列にすると N 体ぶんの refreshAll が
+          同時に走って世代ガードの取り直し合戦になり、失敗も N 個の
+          トーストとして同時に出る
+        - **AgentSettingsDialog の seed() にも写す。** 画面に UI は無いが、
+          写さないと設定保存で既定 (true) へ戻り、対象から外していた個体が
+          黙って復帰する (ipc_contract の凍結テストでは捕まらない経路)
     name_invariant: |
       表示名は trim 後の完全一致で村内一意 (Spec 06, 2026-07-30)。
       表示名は会話・束ね (Spec 04) ・入退室通知・顔ぶれの語彙で、重複すると
@@ -272,6 +299,7 @@ entities:
       maxToolIterations: u8 | null  # 同上
       enabledTools: String[] | null # 同上
       hearsRoomLog: bool            # 同上
+      batchStart: bool              # 同上 (一括起動 ▶ の対象か。稼働状態は status)
       lastError: ErrorPayload | null
 
   ModelTemplate:

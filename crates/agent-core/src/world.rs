@@ -338,6 +338,7 @@ impl World {
             max_tool_iterations: record.spec.max_tool_iterations,
             enabled_tools: record.spec.enabled_tools.clone(),
             hears_room_log: record.spec.hears_room_log,
+            batch_start: record.spec.batch_start,
             last_error: record.last_error.clone(),
         }
     }

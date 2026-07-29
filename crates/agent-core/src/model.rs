@@ -196,6 +196,20 @@ pub struct AgentSpec {
     /// 毎ターン最大 `room_log_window × room_log_excerpt_chars` の固定費を絞る。
     #[serde(default = "default_true")]
     pub hears_room_log: bool,
+    /// 一括起動（左ペインの ▶）の対象にするか。
+    ///
+    /// **自動起動ではない。** アプリを開いた時点で勝手に走り出すことはなく、
+    /// 利用者が ▶ を押したときに「どれを起こすか」の選択だけを持つ。
+    /// 起動は明示操作のまま — 開いただけで課金が始まる作りにしない。
+    ///
+    /// 既定は真。村の全員を起こすのが通常で、外すのは例外（重いモデルや
+    /// 実験中の個体）だから、既定が偽だと ▶ が初回に何もしないボタンになる。
+    ///
+    /// **稼働状態ではない**（それは [`AgentStatus`]）。この 2 つを 1 つの
+    /// トグルに兼ねさせていたのが元の UI で、「起動する」と「起動対象に含める」
+    /// を区別できなかった。
+    #[serde(default = "default_true")]
+    pub batch_start: bool,
 }
 
 impl AgentSpec {
@@ -216,6 +230,7 @@ impl AgentSpec {
             max_tool_iterations: None,
             enabled_tools: None,
             hears_room_log: true,
+            batch_start: true,
         }
     }
 }
@@ -502,6 +517,8 @@ pub struct AgentSnapshot {
     pub enabled_tools: Option<Vec<String>>,
     /// 広場ログを受け取るか。
     pub hears_room_log: bool,
+    /// 一括起動（▶）の対象か。稼働状態とは別（`status` がそちら）。
+    pub batch_start: bool,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

@@ -508,6 +508,60 @@ export function useOrchestrator() {
       );
     },
 
+    /**
+     * 一括起動 / 一括停止（左ペインヘッダの ▶ / ■）。
+     *
+     * 対象の決定は `lib/batchStart.ts` の純関数が持ち、ここは配送だけを担う。
+     *
+     * **1 体ずつ順に叩く。** 並列にすると N 体ぶんの `refreshAll` が同時に
+     * 走って世代ガードの取り直し合戦になり、しかも失敗が同時に N 個の
+     * トーストとして出る。起動要求そのものは即座に返る（実際の立ち上げは
+     * コア側で非同期に進む）ので、直列でも待ち時間は増えない。
+     */
+    async runBatch(agentIds: readonly AgentId[], running: boolean): Promise<void> {
+      for (const agentId of agentIds) {
+        patchAgent(agentId, { status: running ? "starting" : "stopping" });
+      }
+      for (const agentId of agentIds) {
+        await mutate(running ? "一括起動" : "一括停止", () =>
+          ipc.setAgentRunning(agentId, running),
+        );
+      }
+    },
+
+    /**
+     * 一括起動の対象に含めるかを切り替える（永続。`world.json` へ入る）。
+     *
+     * **稼働状態は変えない。** この 2 つを混ぜないことが本機構の要点で、
+     * 「今は止まっているが、次の一括起動では起こしたい」を表現できるように
+     * するための分離である。
+     *
+     * 保存は `updateAgent`（spec 全体の差し替え）を通す。専用の IPC を
+     * 足さないのは、1 フィールドごとにコマンドを増やすと同期させる箇所が
+     * 増えるだけだから。
+     */
+    async setBatchStart(agentId: AgentId, batchStart: boolean): Promise<void> {
+      const current = state.agents.find((a) => a.id === agentId);
+      if (!current) return;
+      // 楽観的に反映する（チェックの手応えを IPC 往復に待たせない）。
+      patchAgent(agentId, { batchStart });
+      await mutate("一括起動の対象の保存", () =>
+        ipc.updateAgent({
+          id: current.id,
+          name: current.name,
+          modelTemplateId: current.modelTemplateId,
+          ragSources: [...current.ragSources],
+          connectedAgents: [...current.connectedAgents],
+          order: current.order,
+          workDir: current.workDir,
+          maxToolIterations: current.maxToolIterations,
+          enabledTools: current.enabledTools ? [...current.enabledTools] : null,
+          hearsRoomLog: current.hearsRoomLog,
+          batchStart,
+        }),
+      );
+    },
+
     async createAgent(spec: AgentSpec): Promise<AgentSnapshot | null> {
       const created = await mutate("エージェントの作成", () => ipc.createAgent(spec));
       return succeeded(created) ? created : null;

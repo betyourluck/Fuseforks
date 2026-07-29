@@ -57,6 +57,7 @@ fn wire_field_sets_are_frozen() {
     assert_eq!(
         wire_keys(&AgentSpec::new("agent_01", "PlannerAgent", "tpl")),
         vec![
+            "batchStart",
             "connectedAgents",
             "enabledTools",
             "hearsRoomLog",
@@ -88,11 +89,13 @@ fn wire_field_sets_are_frozen() {
         max_tool_iterations: None,
         enabled_tools: None,
         hears_room_log: true,
+        batch_start: true,
         last_error: None,
     };
     assert_eq!(
         wire_keys(&snapshot),
         vec![
+            "batchStart",
             "cachedTokens",
             "connectedAgents",
             "enabledTools",
@@ -280,6 +283,9 @@ fn agent_spec_saved_before_work_dir_still_loads() {
     let spec: AgentSpec = serde_json::from_str(legacy).expect("旧形式も開けること");
     assert_eq!(spec.work_dir, None);
     assert!(spec.hears_room_log, "フィールド不在は true（現状互換）");
+    // 一括起動の既定も真。偽にすると、更新した利用者の ▶ が初回に
+    // 何もしないボタンになる（既存の村が全員「対象外」で復元される）。
+    assert!(spec.batch_start, "フィールド不在は true（既存の村は全員が対象）");
 }
 
 /// `types.ts` の `Provider` が取りうる全値を Rust 側が受け取れること。

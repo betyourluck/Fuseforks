@@ -58,6 +58,10 @@ function seed(): void {
         maxToolIterations: source.maxToolIterations,
         enabledTools: source.enabledTools ? [...source.enabledTools] : null,
         hearsRoomLog: source.hearsRoomLog,
+        // この画面に UI は無いが、**写さないと保存で既定へ戻る**。
+        // serde の既定が true なので、対象から外していた個体が
+        // 設定を開いて保存しただけで黙って対象へ復帰する。
+        batchStart: source.batchStart,
       }
     : null;
 }

@@ -11,6 +11,7 @@ import AgentCard from "./AgentCard.vue";
 import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { batchAction, batchLabel } from "../lib/batchStart";
 import type { AgentId, AgentSpec } from "../types";
 
 const orchestrator = useOrchestrator();
@@ -29,6 +30,20 @@ const agents = computed(() => [...state.agents].sort((a, b) => a.order - b.order
 const runningCount = computed(
   () => state.agents.filter((a) => a.status === "running").length,
 );
+
+/** 一括ボタンが次に行う操作。規則は lib/batchStart.ts。 */
+const batch = computed(() => batchAction(state.agents));
+
+/** 一括ボタンの記号と説明（押せないときは理由）。 */
+const batchView = computed(() =>
+  batchLabel(batch.value, state.agents.filter((a) => a.batchStart).length),
+);
+
+/** 一括起動 / 一括停止を実行する。 */
+async function runBatch(): Promise<void> {
+  if (batch.value.mode === "none") return;
+  await orchestrator.runBatch(batch.value.targets, batch.value.mode === "start");
+}
 
 /** ID を名前から機械的に導く。衝突したら連番を足す。 */
 function deriveId(name: string): AgentId {
@@ -68,6 +83,8 @@ async function submitNew(): Promise<void> {
     // 新規作成の保存値は null（既定に従う）。UI の全 ON 表示は null の効果。
     enabledTools: null,
     hearsRoomLog: true,
+    // 作ったら一括起動の対象に入れる。外すのが例外側（重いモデル・実験中）。
+    batchStart: true,
   };
 
   const created = await orchestrator.createAgent(spec);
@@ -95,8 +112,28 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
     <header
       class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
     >
-      <h2 class="flex-1 font-semibold tracking-wide">エージェント</h2>
-      <span class="text-ink-dim tabular-nums">
+      <h2 class="font-semibold tracking-wide">エージェント</h2>
+
+      <!--
+        一括起動 / 一括停止。対象は各カードのトグル（batchStart）で選ぶ。
+        起こせる相手が居れば ▶、対象が全員動いていれば ■ へ役が変わる。
+        規則は lib/batchStart.ts（純関数・単体テスト付き）。
+      -->
+      <button
+        class="rounded border px-1.5 py-0.5 leading-none transition-colors disabled:opacity-40"
+        :class="
+          batch.mode === 'stop'
+            ? 'border-line text-warn hover:border-warn'
+            : 'border-line text-run hover:border-run'
+        "
+        :disabled="batch.mode === 'none'"
+        :title="batchView.title"
+        @click="runBatch"
+      >
+        {{ batchView.icon }}
+      </button>
+
+      <span class="flex-1 text-ink-dim tabular-nums">
         {{ runningCount }} / {{ state.agents.length }} 稼働
       </span>
       <button
@@ -154,6 +191,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         @select="orchestrator.select(agent.id)"
         @configure="configuring = agent.id"
         @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
+        @batch-start="(included) => orchestrator.setBatchStart(agent.id, included)"
         @move="(direction) => move(agent.id, direction)"
       />
 

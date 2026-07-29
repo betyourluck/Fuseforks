@@ -90,6 +90,13 @@ export interface AgentSpec {
    * （プライバシー機能ではなくコスト機能）。
    */
   hearsRoomLog: boolean;
+  /**
+   * 一括起動（左ペインの ▶）の対象にするか。既定 true。
+   *
+   * **自動起動ではない** — アプリを開いた時点では誰も走らず、▶ を押したときに
+   * 「どれを起こすか」の選択だけを持つ。**稼働状態とも別**（それは `status`）。
+   */
+  batchStart: boolean;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -113,6 +120,8 @@ export interface AgentSnapshot {
   enabledTools: string[] | null;
   /** 広場ログを受け取るか。 */
   hearsRoomLog: boolean;
+  /** 一括起動（▶）の対象か。稼働状態とは別（それは `status`）。 */
+  batchStart: boolean;
   /**
    * 累積トークンのうち入力（プロンプト）側。
    * **キャッシュ率の分母はこちら。出力はキャッシュできないので、

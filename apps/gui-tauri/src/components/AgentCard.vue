@@ -24,7 +24,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "select"): void;
   (e: "configure"): void;
+  /** スタンバイボタン: この個体の実際の起動・停止。 */
   (e: "toggle", running: boolean): void;
+  /** 対象トグル: 一括起動（▶）に含めるか。稼働状態は変えない。 */
+  (e: "batch-start", included: boolean): void;
   (e: "move", direction: -1 | 1): void;
 }>();
 
@@ -166,19 +169,53 @@ const cacheTone = computed(() => {
         </button>
       </div>
 
-      <!-- 実行・停止トグル -->
+      <!--
+        一括起動の対象トグル。**稼働状態ではない。**
+
+        以前はこのスイッチが起動・停止そのものだったが、それだと
+        「今は止まっているが、次の一括起動では起こしたい」を表現できず、
+        起動のたびに 1 体ずつ押す必要があった。ここは「▶ で起こす顔ぶれ」の
+        選択（永続）で、実際の起動は右隣のスタンバイボタンが担う。
+      -->
       <button
         role="switch"
-        :aria-checked="isOn"
-        :title="isOn ? '停止する' : '実行する'"
+        :aria-checked="agent.batchStart"
+        :title="
+          agent.batchStart
+            ? '一括起動（▶）の対象に含めている。押すと外す'
+            : '一括起動（▶）の対象から外している。押すと含める'
+        "
         class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-        :class="isOn ? 'bg-run' : 'bg-line'"
-        @click.stop="emit('toggle', !isOn)"
+        :class="agent.batchStart ? 'bg-accent' : 'bg-line'"
+        @click.stop="emit('batch-start', !agent.batchStart)"
       >
         <span
           class="absolute top-0.5 size-4 rounded-full bg-surface-0 transition-all"
-          :class="isOn ? 'left-4.5' : 'left-0.5'"
+          :class="agent.batchStart ? 'left-4.5' : 'left-0.5'"
         />
+      </button>
+
+      <!-- スタンバイ（電源）。この個体の実際の起動・停止。
+           色は状態と一致させる（稼働中は緑、停止中は淡色）。 -->
+      <button
+        :title="isOn ? `${agent.name} を停止する` : `${agent.name} を起動する`"
+        class="shrink-0 rounded-full p-1 transition-colors"
+        :class="isOn ? 'text-run hover:bg-surface-2' : 'text-ink-dim hover:text-ink hover:bg-surface-2'"
+        @click.stop="emit('toggle', !isOn)"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+          <line x1="12" y1="2" x2="12" y2="12" />
+        </svg>
       </button>
     </header>
 
