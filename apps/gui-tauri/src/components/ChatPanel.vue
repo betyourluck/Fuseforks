@@ -20,7 +20,12 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
-import { collapseRows, type ChatRow } from "../lib/chatRows";
+import {
+  buildTimeline,
+  collapseRows,
+  type ChatRow,
+  type TimelineEntry,
+} from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
 import { renderMarkdownCached } from "../lib/markdown";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -130,6 +135,45 @@ const visible = computed(() => {
 const rows = computed<ChatRow[]>(() => collapseRows(visible.value));
 
 /**
+ * 表示中のツール実行。エージェント絞り込みに追従させる。
+ *
+ * 発話だけを見ていると、エージェントが何をしたかは分からない —
+ * ツールの結果はプロンプトの中で消えるので、会話ログには現れない。
+ * 「黙って副作用だけ起きた」状態と区別できるようにするための行。
+ */
+const visibleToolRuns = computed(() =>
+  filterAgentId.value
+    ? state.toolRuns.filter((run) => run.agentId === filterAgentId.value)
+    : state.toolRuns,
+);
+
+/** 発話とツール実行を時系列に混ぜた 1 本の並び。規則は lib/chatRows.ts。 */
+const timeline = computed<TimelineEntry[]>(() =>
+  buildTimeline(rows.value, visibleToolRuns.value),
+);
+
+/** 直前の発話と同じ話者か（タイムライン上の位置で見る）。 */
+function continuesTimeline(index: number): boolean {
+  const current = timeline.value[index];
+  if (current.kind !== "message") return false;
+  // 直前の発話行を探す。間にツール行が挟まっても連続とみなす。
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const previous = timeline.value[i];
+    if (previous.kind !== "message") continue;
+    const a = previous.row.message.from;
+    const b = current.row.message.from;
+    if (a.kind !== b.kind) return false;
+    return a.kind !== "agent" || (b.kind === "agent" && a.id === b.id);
+  }
+  return false;
+}
+
+/** ツール実行の主体名。 */
+function toolActor(agentId: AgentId): string {
+  return state.agents.find((a) => a.id === agentId)?.name ?? agentId;
+}
+
+/**
  * 応答を作っている最中のエージェント。末尾に「入力中…」バブルを出す。
  * エージェントで絞り込んでいる間は、その相手の分だけを出す。
  */
@@ -152,20 +196,6 @@ function toLabel(row: ChatRow): string {
 function toTitle(row: ChatRow): string {
   if (!row.extraTargets.length) return "";
   return [row.message.to, ...row.extraTargets].map(label).join("、");
-}
-
-/** 直前の発言と同じ話者か。連続していれば名前とアバターを省く。 */
-function continuesPrevious(index: number): boolean {
-  if (index === 0) return false;
-  const previous = rows.value[index - 1].message;
-  const current = rows.value[index].message;
-  return (
-    previous.from.kind === current.from.kind &&
-    previous.from.kind !== "agent"
-  ) ||
-    (previous.from.kind === "agent" &&
-      current.from.kind === "agent" &&
-      previous.from.id === current.from.id);
 }
 
 /** 自分（ユーザー）の発言か。右寄せにする。 */
@@ -288,47 +318,72 @@ async function newChat(): Promise<void> {
       ref="scroller"
       class="min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
     >
+      <template v-for="(entry, index) in timeline" :key="entry.key">
+      <!--
+        ツール実行の 1 行。発話ではないので吹き出しにせず、淡色の細い行にする。
+
+        出す理由は、**エージェントが何をしたかが会話ログに現れない**こと。
+        ツールの結果はプロンプトの中で消えるので、発話だけを見ていると
+        「黙って副作用だけ起きた」状態と区別がつかない。時系列に混ぜるのは、
+        「調べて」と頼まれた個体が grep を 3 回叩いてから答えた、という
+        因果がそこにしか現れないため。
+      -->
       <div
-        v-for="({ message }, index) in rows"
-        :key="message.id"
+        v-if="entry.kind === 'tool'"
+        class="flex items-center gap-1.5 pl-9 text-[10px] text-ink-dim"
+      >
+        <span
+          class="inline-block size-1.5 shrink-0 rounded-full"
+          :class="entry.run.ok ? 'bg-run' : 'bg-fail'"
+        />
+        <span class="truncate">
+          {{ toolActor(entry.run.agentId) }} が
+          <span class="font-mono text-ink">{{ entry.run.tool }}</span>
+          を実行{{ entry.run.ok ? "" : "（失敗）" }}
+        </span>
+        <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
+      </div>
+
+      <div
+        v-else
         class="flex gap-2"
-        :class="isMine(message) ? 'flex-row-reverse' : 'flex-row'"
+        :class="isMine(entry.row.message) ? 'flex-row-reverse' : 'flex-row'"
       >
         <!-- アバター。連続発言では場所だけ空けて揃える。
              画像が設定されていればそれを、無ければ頭文字の円を出す。 -->
         <div class="w-7 shrink-0">
-          <template v-if="!continuesPrevious(index)">
+          <template v-if="!continuesTimeline(index)">
             <img
-              v-if="iconFor(message.from)"
-              :src="iconFor(message.from)!"
+              v-if="iconFor(entry.row.message.from)"
+              :src="iconFor(entry.row.message.from)!"
               class="size-7 rounded-full object-cover ring-1 ring-line"
-              :title="label(message.from)"
-              :alt="label(message.from)"
+              :title="label(entry.row.message.from)"
+              :alt="label(entry.row.message.from)"
             />
             <div
               v-else
               class="flex size-7 items-center justify-center rounded-full text-[11px] font-semibold text-surface-0"
-              :style="{ backgroundColor: avatarHue(message.from) }"
-              :title="label(message.from)"
+              :style="{ backgroundColor: avatarHue(entry.row.message.from) }"
+              :title="label(entry.row.message.from)"
             >
-              {{ initial(message.from) }}
+              {{ initial(entry.row.message.from) }}
             </div>
           </template>
         </div>
 
         <div
           class="flex min-w-0 max-w-[78%] flex-col"
-          :class="isMine(message) ? 'items-end' : 'items-start'"
+          :class="isMine(entry.row.message) ? 'items-end' : 'items-start'"
         >
           <!-- 誰から誰へ。オーケストレーション画面なので宛先を落とさない。
                同報は「〇〇 他X名」に畳み、全宛先は hover で出す。 -->
           <p
-            v-if="!continuesPrevious(index)"
+            v-if="!continuesTimeline(index)"
             class="mb-0.5 flex gap-1 px-0.5 text-[10px] text-ink-dim"
-            :title="toTitle(rows[index])"
+            :title="toTitle(entry.row)"
           >
-            <span class="font-medium text-ink">{{ label(message.from) }}</span>
-            <span>→ {{ toLabel(rows[index]) }}</span>
+            <span class="font-medium text-ink">{{ label(entry.row.message.from) }}</span>
+            <span>→ {{ toLabel(entry.row) }}</span>
           </p>
 
           <!--
@@ -346,34 +401,35 @@ async function newChat(): Promise<void> {
             max-w-full は親列（max-w-[78%]）を超えない上限。三点で 1 セット。
           -->
           <div
-            v-if="isRenderedAsMarkdown(message)"
+            v-if="isRenderedAsMarkdown(entry.row.message)"
             class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
             @click="onMarkdownClick"
-            v-html="markdownOf(message)"
+            v-html="markdownOf(entry.row.message)"
           />
           <div
             v-else
             class="selectable min-w-0 max-w-full px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap"
             :class="
-              isMine(message)
+              isMine(entry.row.message)
                 ? 'rounded-2xl rounded-tr-sm bg-accent text-surface-0'
                 : 'rounded-2xl rounded-tl-sm bg-surface-2 text-ink'
             "
           >
-            {{ message.content }}
+            {{ entry.row.message.content }}
           </div>
 
           <!-- 接地の来歴。規則は lib/grounding.ts、見た目は GroundingNote.vue。
                接地していない発話（大多数）では null になり、欄ごと出ない。 -->
-          <GroundingNote v-if="grounding(message)" :view="grounding(message)!" />
+          <GroundingNote v-if="grounding(entry.row.message)" :view="grounding(entry.row.message)!" />
 
           <p class="mt-0.5 flex gap-1.5 px-0.5 text-[10px] text-ink-dim tabular-nums">
-            <span>{{ timestamp(message.tsMs) }}</span>
-            <span v-if="message.tokens">{{ message.tokens }} tok</span>
-            <span :title="`転送 ${message.hop} 回目`">h{{ message.hop }}</span>
+            <span>{{ timestamp(entry.row.message.tsMs) }}</span>
+            <span v-if="entry.row.message.tokens">{{ entry.row.message.tokens }} tok</span>
+            <span :title="`転送 ${entry.row.message.hop} 回目`">h{{ entry.row.message.hop }}</span>
           </p>
         </div>
       </div>
+      </template>
 
       <!-- 入力中バブル。応答の生成中（LLM 呼び出し + ツール実行）に出す。 -->
       <div v-for="agent in typingAgents" :key="`typing-${agent.id}`" class="flex gap-2">

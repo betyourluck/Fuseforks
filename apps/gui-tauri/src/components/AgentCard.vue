@@ -8,6 +8,7 @@
 import { computed } from "vue";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
+import type { ToolRun } from "../lib/chatRows";
 import { compactNumber, exactNumber } from "../lib/format";
 import { STATUS_LABELS, type AgentSnapshot } from "../types";
 
@@ -16,6 +17,8 @@ const props = defineProps<{
   selected: boolean;
   /** 設定済みアイコンの object URL。無ければ頭文字の円を出す。 */
   icon?: string | null;
+  /** 直近に実行したツール。まだ 1 度も呼んでいなければ未指定。 */
+  lastTool?: ToolRun | null;
 }>();
 
 const emit = defineEmits<{
@@ -57,6 +60,18 @@ const uptime = computed(() => {
 
 /** 大きな数を読みやすく丸める。狭い枠なので桁区切りではなく短縮表記にする。 */
 const tokens = computed(() => compactNumber(props.agent.totalTokens));
+
+/** 直近ツールの hover 表示。狭い欄に入らない情報（時刻・成否）をここへ逃がす。 */
+const lastToolTitle = computed(() => {
+  const run = props.lastTool;
+  if (!run) return undefined;
+  const at = new Date(run.tsMs).toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${at} に ${run.tool} を実行${run.ok ? "" : "（失敗）"}`;
+});
 
 /**
  * プロンプトキャッシュから読まれた割合。まだ 1 度も喋っていなければ `null`。
@@ -192,6 +207,23 @@ const cacheTone = computed(() => {
 
       <dt class="text-ink-dim">接続</dt>
       <dd class="tabular-nums">{{ agent.connectedAgents.length }} 件</dd>
+
+      <!--
+        直近に実行したツール。**「今この個体が何をしているか」**を出す欄で、
+        履歴を遡る場所ではない（そちらは会話ペインの時系列に混ざる）。
+        ツールの結果はプロンプトの中で消えるため、この欄が無いと
+        「黙って副作用だけ起きた」状態を一覧から読み取れない。
+      -->
+      <template v-if="lastTool">
+        <dt class="text-ink-dim">直近ツール</dt>
+        <dd class="truncate" :title="lastToolTitle">
+          <span
+            class="mr-1 inline-block size-1.5 rounded-full align-middle"
+            :class="lastTool.ok ? 'bg-run' : 'bg-fail'"
+          />
+          <span class="font-mono">{{ lastTool.tool }}</span>
+        </dd>
+      </template>
     </dl>
 
     <!-- 失敗理由はカード内に残す。トースト任せにすると閉じた瞬間に原因が消える。 -->

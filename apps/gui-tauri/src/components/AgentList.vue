@@ -149,6 +149,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         :key="agent.id"
         :agent="agent"
         :icon="state.icons[agent.id]"
+        :last-tool="state.lastTool[agent.id]"
         :selected="agent.id === state.selectedAgentId"
         @select="orchestrator.select(agent.id)"
         @configure="configuring = agent.id"

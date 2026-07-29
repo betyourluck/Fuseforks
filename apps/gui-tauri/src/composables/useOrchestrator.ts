@@ -12,6 +12,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
+import type { ToolRun } from "../lib/chatRows";
 import type {
   AgentId,
   AgentMessage,
@@ -61,6 +62,24 @@ interface OrchestratorState {
    * true のキーだけを持ち、終了イベントでキーごと消す。
    */
   typing: Record<AgentId, true>;
+  /**
+   * 実行されたツールの履歴。会話の時系列に混ぜて表示する。
+   *
+   * **エージェントが何をしたかは会話ログに現れない** — ツールの結果は
+   * プロンプトの中で消えるので、発話だけを見ていると「黙って副作用だけ
+   * 起きた」状態と区別がつかない。コアはそのために `toolInvoked` を撒いており、
+   * ここがその受け手。
+   *
+   * 会話ログと同じ上限で切る（`MESSAGE_LIMIT`）。
+   */
+  toolRuns: ToolRun[];
+  /**
+   * エージェントごとの直近のツール実行。カードに出す。
+   *
+   * 履歴（`toolRuns`）とは別に持つ。一覧は「今この個体が何をしているか」を
+   * 知りたい場所で、時系列を遡る場所ではない。
+   */
+  lastTool: Record<AgentId, ToolRun>;
 }
 
 const state = reactive<OrchestratorState>({
@@ -76,7 +95,12 @@ const state = reactive<OrchestratorState>({
   initError: null,
   icons: {},
   typing: {},
+  toolRuns: [],
+  lastTool: {},
 });
+
+/** ツール実行の連番。イベントに ID が無いので受け手側で振る。 */
+let toolRunSeq = 0;
 
 let toastSeq = 0;
 let unlisten: UnlistenFn | null = null;
@@ -318,10 +342,43 @@ function applyEvent(event: CoreEvent): void {
       }
       break;
 
+    case "toolInvoked": {
+      const run: ToolRun = {
+        id: `tool-${++toolRunSeq}`,
+        agentId: event.agentId,
+        tool: event.tool,
+        ok: event.ok,
+        tsMs: Date.now(),
+      };
+      state.toolRuns.push(run);
+      if (state.toolRuns.length > MESSAGE_LIMIT) {
+        state.toolRuns.splice(0, state.toolRuns.length - MESSAGE_LIMIT);
+      }
+      state.lastTool[event.agentId] = run;
+      break;
+    }
+
+    case "toolLimitReached": {
+      // 打ち切りは会話ログにも本文として現れるが、そちらはモデルの言葉で、
+      // これはこちらが打ち切った事実。設定で直せる種類の詰まりなので、
+      // どの上限に当たったかを数字で出す。
+      const name =
+        state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
+      pushToast(
+        "warn",
+        `${name} がツール実行の上限に達しました`,
+        `上限 ${event.maxIterations} 回。エージェント設定で上げるか、依頼を小さく分けてください`,
+      );
+      break;
+    }
+
     case "conversationCleared":
       // messages は Shared.log の投影。コア側が先にクリアし、この通知で
       // 投影を追従させる（順序は reset_rule で固定）。
       state.messages = [];
+      // ツール実行は会話に紐づく事実なので、会話と一緒に消す。
+      state.toolRuns = [];
+      state.lastTool = {};
       pushToast("info", "新規チャットを開始しました", "会話ログと各エージェントの記憶（履歴）をリセットしました");
       break;
 

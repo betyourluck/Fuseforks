@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { collapseRows } from "./chatRows";
+import { buildTimeline, collapseRows, type ToolRun } from "./chatRows";
 import type { AgentMessage, Endpoint } from "../types";
 
 let seq = 0;
@@ -67,5 +67,51 @@ describe("collapseRows", () => {
       message(user, agent("b"), "こんにちは"),
     ]);
     expect(rows).toHaveLength(3);
+  });
+});
+
+describe("buildTimeline", () => {
+  const run = (id: string, tool: string, tsMs: number, ok = true): ToolRun => ({
+    id,
+    agentId: "a",
+    tool,
+    ok,
+    tsMs,
+  });
+
+  it("発話とツール実行を時刻順に 1 本へ畳む", () => {
+    const rows = collapseRows([
+      { ...message(user, agent("a"), "調べて"), tsMs: 100 },
+      { ...message(agent("a"), user, "調べました"), tsMs: 300 },
+    ]);
+    const timeline = buildTimeline(rows, [run("t1", "grep", 200)]);
+
+    expect(timeline.map((e) => e.kind)).toEqual(["message", "tool", "message"]);
+  });
+
+  it("同時刻ならツールを発話より前に置く（呼んでから答える）", () => {
+    // 時刻の丸めで因果の順序をひっくり返さない。
+    const rows = collapseRows([{ ...message(agent("a"), user, "答え"), tsMs: 500 }]);
+    const timeline = buildTimeline(rows, [run("t1", "grep", 500)]);
+
+    expect(timeline.map((e) => e.kind)).toEqual(["tool", "message"]);
+  });
+
+  it("ツール実行が無ければ発話だけが並ぶ", () => {
+    const rows = collapseRows([message(user, agent("a"), "やあ")]);
+    expect(buildTimeline(rows, [])).toHaveLength(1);
+  });
+
+  it("発話が無くてもツール実行だけで並ぶ", () => {
+    // 応答生成中（まだ発話が確定していない）に見える状態。
+    const timeline = buildTimeline([], [run("t1", "fd", 10), run("t2", "grep", 20)]);
+    expect(timeline.map((e) => e.key)).toEqual(["t1", "t2"]);
+  });
+
+  it("キーは発話 ID とツール実行 ID をそのまま使う", () => {
+    const rows = collapseRows([{ ...message(user, agent("a"), "やあ"), tsMs: 1 }]);
+    const timeline = buildTimeline(rows, [run("t9", "sd", 2)]);
+    expect(timeline[0].key).toBe(rows[0].message.id);
+    expect(timeline[1].key).toBe("t9");
   });
 });
