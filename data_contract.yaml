@@ -185,6 +185,7 @@ entities:
       workDir: String | null        # 同梱 grep / diff の探索範囲。null なら未設定でツールは動かない
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (6)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
+      hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
     enabled_tools_invariant: |
       enabledTools は同梱 6 本 (remember / grep / fd / diff / sd / yq) の
       提示制御 (Spec 02 rev2 承認、2026-07-30 凍結)。MCP 由来・転送・委譲は対象外。
@@ -200,6 +201,14 @@ entities:
         (使えないツールを見せない。UI は disabled + 注記でチェック状態は保持)
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
+    hears_room_log_invariant: |
+      hearsRoomLog は広場ログの**受信側だけ**の設定 (Spec 03 rev2 承認、
+      2026-07-30 凍結)。serde default = true (旧データ・新規作成とも現状互換)。
+      - false なら compose_room_log をスキップ。履歴 (自エージェントが
+        送受信したもの) の注入は従来どおりで、変わるのは広場ログの有無だけ
+      - false にしても、そのエージェントの発話は他エージェントの広場ログに
+        従来どおり載る — プライバシー機能ではなくコスト機能
+        (毎ターン最大 room_log_window × room_log_excerpt_chars の固定費を絞る)
     work_dir_invariant: |
       workDir はユーザーが明示した絶対パス (2026-07-29)。エージェントは
       プロンプトインジェクションを受けうるため、**読める範囲 = 漏洩しうる範囲**
@@ -229,6 +238,7 @@ entities:
       workDir: String | null        # 設定ダイアログの編集用に spec から写す
       maxToolIterations: u8 | null  # 同上
       enabledTools: String[] | null # 同上
+      hearsRoomLog: bool            # 同上
       lastError: ErrorPayload | null
 
   ModelTemplate:
@@ -327,6 +337,7 @@ events:
     agentFailed: { agentId, error }
     backendDegraded: { modelTemplateId, reason }
     agentTyping: { agentId, active }
+    conversationCleared: {}
     toolInvoked: { agentId, tool, ok }
     toolLimitReached: { agentId, maxIterations }
     hopLimitReached: { agentId, maxHops }
@@ -334,6 +345,20 @@ events:
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
     「動いたかどうか」ではなく「何をしたか」が見えることが要件。
+  reset_rule: |
+    conversationCleared = 新規チャット (Spec 03 rev2 承認、2026-07-30 凍結)。
+    reset_conversation の処理順は固定: 1. Shared.log クリア →
+    2. 全 AgentRecord.history クリア → 3. conversationCleared 発行 →
+    4. フロントが messages (Shared.log の投影) を空へ。
+    不変条件:
+      - 消すのは Shared.log と AgentRecord.history の**2 つだけ**。
+        稼働状態・累積統計・Memory.md・エージェント別 MCP 接続
+        (Spec 02 の per-agent map) はすべて維持。AgentRecord ごと
+        クリアしてはいけない (MCP 接続や統計を巻き添えにする)
+      - 飛行中ターンの完了書き込みは**許容** (案 A)。白紙化の直後に
+        飛行中だった発話 1 件が載るのは仕様 — 発話は起きた事実であり
+        ログに残す (hop 打ち切りの「記録してから打ち切る」と同じ規律)。
+        世代管理による破棄は採らない
   typing_rule: |
     agentTyping は発話処理 (LLM 呼び出し + ツール実行) の開始と終了で
     **対になって**流れる (2026-07-29)。処理は数十秒かかりうるため、この間
