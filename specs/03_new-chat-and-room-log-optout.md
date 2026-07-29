@@ -2,7 +2,7 @@
 
 **ID**: 03
 **Date**: 2026-07-30
-**Status**: Draft rev2（rev1 への査読 4 点を反映。査読記録は末尾）
+**Status**: Done（rev2 査読承認 → Phase 0〜3 完了。残タスクは実機確認のみ）
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01 / 02 と同じプロセス）
 
@@ -109,18 +109,15 @@
 
 ## Tasks
 
-- [ ] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` へ
-      `ConversationCleared` イベント / `hearsRoomLog`（受信側だけの設定・
-      既定 true）/ リセットの範囲（会話のみ、統計・稼働・Memory.md 維持）を
-      追記
-- [ ] Phase 1 — 新規チャット: `reset_conversation` + イベント + UI ボタン
-      （確認ダイアログ）+ テスト（ログ・履歴が消え統計が残る / 次ターンの
-      プロンプトに旧文脈が無い）
-- [ ] Phase 2 — 広場ログのオプトアウト: `hearsRoomLog` + compose_room_log
-      のスキップ + UI チェックボックス + テスト（節の有無・受信側限定・
-      旧データ互換）
-- [ ] Phase 3 — 台帳整合: README / data_contract 補正 / ipc_contract 凍結キー
-- [ ] 実機確認: 新規チャット後の白紙応答 / オプトアウト役のトークン減
+- [x] Phase 0 — 契約凍結（0642167）: reset_rule + hears_room_log_invariant
+- [x] Phase 1+2 — 実装（aaf4a41）: reset_conversation + ConversationCleared +
+      UI ボタン / hearsRoomLog + compose_room_log スキップ + 「会話の文脈」
+      セクション。テスト 3 本（リセットの範囲・飛行中完了の許容・
+      オプトアウトの受信側限定）
+- [x] Phase 3 — 台帳整合: README（新規チャット・広場ログの節）/
+      ipc_contract 凍結キー
+- [ ] 実機確認（残タスク）: 新規チャット後の白紙応答 /
+      オプトアウト役のトークン減
 
 ---
 
