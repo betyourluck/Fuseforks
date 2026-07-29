@@ -1254,6 +1254,8 @@ async fn handle_message(
     // 一度も効いていない状態と完全に効いている状態が同じ数字に見える
     // (実際、実機で 5 体全員が無キャッシュのまま数日走っていた。failures.md #33)。
     let mut cached = 0u64;
+    // 入力ぶんも別に数える。キャッシュ率の分母は合計ではなく入力。
+    let mut prompt = 0u64;
     let mut tokens = 0u64;
     let mut outcome = Outcome::Finish {
         content: String::new(),
@@ -1286,6 +1288,7 @@ async fn handle_message(
         let response = backend.chat(request).await?;
         tokens += response.usage.total();
         cached += response.usage.cache_read;
+        prompt += response.usage.prompt;
 
         // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
         // 結果が返ってくる種類の操作ではない。
@@ -1380,6 +1383,7 @@ async fn handle_message(
         if let Ok(response) = backend.chat(request).await {
             tokens += response.usage.total();
         cached += response.usage.cache_read;
+        prompt += response.usage.prompt;
             if let Some(text) = response.text
                 && !text.trim().is_empty()
             {
@@ -1416,6 +1420,7 @@ async fn handle_message(
         if let Ok(record) = world.agent_mut(agent_id) {
             record.total_tokens += tokens;
             record.cached_tokens += cached;
+            record.prompt_tokens += prompt;
             record.push_exchange(
                 &attributed,
                 &outcome.spoken(),

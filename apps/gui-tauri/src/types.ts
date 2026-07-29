@@ -114,9 +114,12 @@ export interface AgentSnapshot {
   /** 広場ログを受け取るか。 */
   hearsRoomLog: boolean;
   /**
-   * 累積入力トークンのうち、プロンプトキャッシュから読まれた分。
-   * 合計だけではキャッシュの効き具合が見えないので、画面では割合を出す。
+   * 累積トークンのうち入力（プロンプト）側。
+   * **キャッシュ率の分母はこちら。出力はキャッシュできないので、
+   * 合計を分母にすると天井が 100% にならず、取り残し量が読めない。**
    */
+  promptTokens: number;
+  /** 入力トークンのうち、プロンプトキャッシュから読まれた分。 */
   cachedTokens: number;
   lastError: ErrorPayload | null;
 }

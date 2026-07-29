@@ -455,6 +455,8 @@ pub struct AgentSnapshot {
     pub uptime_secs: u64,
     /// 累積トークン数。
     pub total_tokens: u64,
+    /// うち入力トークン数。キャッシュ率の分母（出力はキャッシュできない）。
+    pub prompt_tokens: u64,
     /// うちプロンプトキャッシュから読まれた入力トークン数。
     ///
     /// 合計だけではキャッシュの効き具合が見えない（無キャッシュでも同じ数字）。

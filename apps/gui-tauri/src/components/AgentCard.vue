@@ -67,9 +67,18 @@ const tokens = computed(() => compactNumber(props.agent.totalTokens));
  * 効果が分かるように、ここへ出す。
  */
 const cacheRate = computed(() => {
+  // **分母は入力だけ。** 出力はキャッシュできないので、合計を分母にすると
+  // 天井が 100% にならず「あと何が取り残されているか」が読めない。
+  const input = props.agent.promptTokens;
+  if (input <= 0) return null;
+  return Math.round((props.agent.cachedTokens / input) * 100);
+});
+
+/** 出力が占める割合。キャッシュ率の天井を理解するための補助情報。 */
+const outputShare = computed(() => {
   const total = props.agent.totalTokens;
   if (total <= 0) return null;
-  return Math.round((props.agent.cachedTokens / total) * 100);
+  return Math.round(((total - props.agent.promptTokens) / total) * 100);
 });
 
 /** 割合に応じた色。0% は警告色にする — 設定の取りこぼしである可能性が高い。 */
@@ -171,8 +180,8 @@ const cacheTone = computed(() => {
         <span
           v-if="cacheRate !== null"
           :class="cacheTone"
-          :title="`累計 ${exactNumber(agent.totalTokens)} のうち ${exactNumber(agent.cachedTokens)} がプロンプトキャッシュから読まれました（0% はキャッシュが効いていないことを示します）`"
-          >（キャッシュ {{ cacheRate }}%）</span
+          :title="`累計 ${exactNumber(agent.totalTokens)}（入力 ${exactNumber(agent.promptTokens)} / 出力 ${exactNumber(agent.totalTokens - agent.promptTokens)}、出力は全体の ${outputShare}%）。入力のうち ${exactNumber(agent.cachedTokens)} がプロンプトキャッシュから読まれました。出力はキャッシュできないため、割合は入力に対して出しています（0% はキャッシュが効いていないことを示します）`"
+          >（入力の {{ cacheRate }}% をキャッシュ）</span
         >
       </dd>
 

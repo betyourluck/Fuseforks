@@ -29,6 +29,12 @@ pub struct AgentRecord {
     pub accumulated_uptime_secs: u64,
     /// 累積トークン数。
     pub total_tokens: u64,
+    /// うち入力トークン数（プロンプト側）。
+    ///
+    /// キャッシュの効きを測る分母。**出力はキャッシュできない**ので、
+    /// 合計を分母にすると天井が 100% にならず、どこまで取り残しているのかが
+    /// 読めない。入力を分けて持てば「入力の何 % が読み取りで済んだか」になる。
+    pub prompt_tokens: u64,
     /// うちプロンプトキャッシュから読まれた入力トークン数。
     ///
     /// 合計だけでは、**キャッシュが一度も効いていない状態と完全に効いている状態が
@@ -58,6 +64,7 @@ impl AgentRecord {
             started_at: None,
             accumulated_uptime_secs: 0,
             total_tokens: 0,
+            prompt_tokens: 0,
             cached_tokens: 0,
             last_error: None,
             history: Vec::new(),
@@ -293,6 +300,7 @@ impl World {
             status: record.status,
             uptime_secs: record.uptime_secs(),
             total_tokens: record.total_tokens,
+            prompt_tokens: record.prompt_tokens,
             cached_tokens: record.cached_tokens,
             rag_sources: record.spec.rag_sources.clone(),
             connected_agents: record.spec.connected_agents.clone(),
