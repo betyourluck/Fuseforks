@@ -21,6 +21,14 @@ pub enum CoreError {
     #[error("エージェント `{0}` は既に登録されています")]
     DuplicateAgent(String),
 
+    /// 既に同じ表示名のエージェントが登録済み（Spec 06）。
+    ///
+    /// 表示名は会話・束ね・入退室通知・顔ぶれの語彙で、重複すると
+    /// それら全部が「どちらの話か」を失う。ID と違い構造では守られないので、
+    /// 書き込みの入口（登録・改名）で弾く。
+    #[error("表示名 `{0}` は既に使われています。別の名前を付けてください")]
+    DuplicateAgentName(String),
+
     /// 参照されたモデルテンプレートが存在しない。
     #[error("モデルテンプレート `{0}` は登録されていません")]
     ModelTemplateNotFound(String),
@@ -136,6 +144,7 @@ impl CoreError {
         match self {
             Self::AgentNotFound(_) => "AGENT_NOT_FOUND",
             Self::DuplicateAgent(_) => "DUPLICATE_AGENT",
+            Self::DuplicateAgentName(_) => "DUPLICATE_AGENT_NAME",
             Self::ModelTemplateNotFound(_) => "MODEL_TEMPLATE_NOT_FOUND",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",

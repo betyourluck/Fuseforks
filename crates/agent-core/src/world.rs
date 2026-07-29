@@ -146,6 +146,9 @@ impl World {
         for mut spec in persisted.agents {
             spec.connected_agents
                 .retain(|target| *target != spec.id && known.contains(target));
+            // 意図的に register_agent を通さない: 表示名の重複検査（書き込み時は
+            // 拒否）を読み込みには適用しない。過去に作られた重複で world.json が
+            // 開けなくなるのは、検査の目的（新しい重複を作らない）を超える罰になる。
             world.agents.insert(spec.id.clone(), AgentRecord::new(spec));
         }
         world
@@ -161,10 +164,27 @@ impl World {
 
     // ---- エージェント -------------------------------------------------------
 
+    /// 表示名が他のエージェントと衝突していないか。
+    ///
+    /// **表示名は会話・束ね・入退室通知・顔ぶれの語彙**であり、重複すると
+    /// それら全部が「どちらの話か」を失う。ID の一意性は map の鍵で構造的に
+    /// 保たれるが、名前はただのフィールドなので、書き込みの入口で確かめる。
+    ///
+    /// 判定は完全一致（trim 後）。全角/半角の正規化まではしない —
+    /// 「ロボットくん1号」と「ロボットくん１号」を同一視する規則は、
+    /// どこまで畳むかの線引きが恣意的になり、利用者の意図した区別を潰しうる。
+    fn name_taken(&self, name: &str, excluding: &AgentId) -> bool {
+        let name = name.trim();
+        self.agents
+            .iter()
+            .any(|(id, record)| id != excluding && record.spec.name.trim() == name)
+    }
+
     /// エージェントを登録する。
     ///
     /// # Errors
     /// - ID が既に使われている場合 [`CoreError::DuplicateAgent`]
+    /// - 表示名が既に使われている場合 [`CoreError::DuplicateAgentName`]
     /// - ID がパスとして安全でない場合 [`CoreError::UnsafeIdentifier`]
     /// - 参照するモデルテンプレートが無い場合 [`CoreError::ModelTemplateNotFound`]
     /// - 接続先が不正な場合 [`CoreError::InvalidTopology`]
@@ -176,6 +196,9 @@ impl World {
         }
         if self.agents.contains_key(&spec.id) {
             return Err(CoreError::DuplicateAgent(spec.id.to_string()));
+        }
+        if self.name_taken(&spec.name, &spec.id) {
+            return Err(CoreError::DuplicateAgentName(spec.name.clone()));
         }
         if !self.templates.contains_key(&spec.model_template_id) {
             return Err(CoreError::ModelTemplateNotFound(
@@ -192,6 +215,12 @@ impl World {
     pub fn update_agent(&mut self, spec: AgentSpec) -> CoreResult<()> {
         if !self.agents.contains_key(&spec.id) {
             return Err(CoreError::AgentNotFound(spec.id.to_string()));
+        }
+        // 改名も同じ入口で守る。登録時だけ確かめると、重複は改名経由で必ず入る
+        // （外部が書いたデータの転送層では、除外リストは必ずもう一度落ちる —
+        // failures.md #30 と同じ形の穴を、時間差で作らない）。
+        if self.name_taken(&spec.name, &spec.id) {
+            return Err(CoreError::DuplicateAgentName(spec.name.clone()));
         }
         if !self.templates.contains_key(&spec.model_template_id) {
             return Err(CoreError::ModelTemplateNotFound(
@@ -430,6 +459,56 @@ mod tests {
             .register_agent(AgentSpec::new("agent_01", "重複", "tpl"))
             .unwrap_err();
         assert_eq!(err.code(), "DUPLICATE_AGENT");
+    }
+
+    /// 表示名の重複を書き込みの入口で弾くこと（Spec 06）。
+    ///
+    /// 表示名は会話・束ね・入退室通知・顔ぶれの語彙で、重複するとそれら全部が
+    /// 「どちらの話か」を失う。ID と違い構造では守られない。
+    #[test]
+    fn a_duplicate_display_name_is_rejected_on_register() {
+        let mut world = world_with_two_agents();
+        let err = world
+            .register_agent(AgentSpec::new("agent_03", "Planner", "tpl"))
+            .unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT_NAME");
+
+        // 前後の空白だけの違いは同名として扱う（見た目で区別できない）。
+        let err = world
+            .register_agent(AgentSpec::new("agent_03", " Planner ", "tpl"))
+            .unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT_NAME");
+    }
+
+    /// 改名も同じ入口で守ること。登録時だけ確かめると重複は改名経由で必ず入る。
+    #[test]
+    fn renaming_to_an_existing_display_name_is_rejected() {
+        let mut world = world_with_two_agents();
+        let err = world
+            .update_agent(AgentSpec::new("agent_02", "Planner", "tpl"))
+            .unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT_NAME");
+
+        // 自分自身の名前を保ったままの更新は通る（自分は衝突相手ではない）。
+        world
+            .update_agent(AgentSpec::new("agent_02", "Critic", "tpl"))
+            .expect("同名のままの更新は正当");
+    }
+
+    /// 過去に作られた重複を含む world.json は開けること（読み込みは寛容）。
+    ///
+    /// 検査の目的は「新しい重複を作らない」であって、既存データへの罰ではない。
+    #[test]
+    fn a_persisted_world_with_duplicate_names_still_opens() {
+        let persisted = PersistedWorld {
+            agents: vec![
+                AgentSpec::new("agent_01", "ロボットくん", "tpl"),
+                AgentSpec::new("agent_02", "ロボットくん", "tpl"),
+            ],
+            model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
+        };
+        let world = World::from_persisted(persisted);
+        assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
     }
 
     #[test]

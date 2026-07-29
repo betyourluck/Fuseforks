@@ -197,7 +197,7 @@ entities:
     description: ユーザーが編集する永続的な定義
     fields:
       id: AgentId
-      name: String
+      name: String                  # 表示名。trim 後の完全一致で一意 (name_invariant)
       modelTemplateId: ModelTemplateId
       ragSources: String[]
       connectedAgents: AgentId[]   # 有向グラフの出辺
@@ -206,6 +206,14 @@ entities:
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (12)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
+    name_invariant: |
+      表示名は trim 後の完全一致で村内一意 (Spec 06, 2026-07-30)。
+      表示名は会話・束ね (Spec 04) ・入退室通知・顔ぶれの語彙で、重複すると
+      それら全部が「どちらの話か」を失う。書き込みの入口 (register / update) で
+      DUPLICATE_AGENT_NAME として拒否する。**読み込みは寛容** — 過去に作られた
+      重複を含む world.json は開ける (検査の目的は新しい重複を作らないことで、
+      既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
+      線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
       enabledTools は同梱 6 本 (remember / grep / fd / diff / sd / yq) の
       提示制御 (Spec 02 rev2 承認、2026-07-30 凍結)。MCP 由来・転送・委譲は対象外。
@@ -343,6 +351,7 @@ entities:
     codes:
       - AGENT_NOT_FOUND
       - DUPLICATE_AGENT
+      - DUPLICATE_AGENT_NAME   # 表示名の重複 (Spec 06。ID と違い構造で守られない)
       - MODEL_TEMPLATE_NOT_FOUND
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
