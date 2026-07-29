@@ -256,6 +256,39 @@ function timestamp(ms: number): string {
   });
 }
 
+/** コピー直後の合図を出している発話 ID。1.4 秒で戻す。 */
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * 発話の本文をクリップボードへコピーする。
+ *
+ * コピーするのは描画前の**生テキスト**（Markdown ソース）。見た目の HTML を
+ * 渡すと、貼り付け先（エディタ・チャット）で再利用できない。
+ * クリップボード API を WebView が拒否した場合は textarea 経由の旧手法へ
+ * 退避する（プラグイン依存を増やさないための二段構え）。
+ */
+async function copyMessage(message: AgentMessage): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(message.content);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = message.content;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      area.remove();
+    }
+  }
+  copiedId.value = message.id;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copiedId.value = null), 1400);
+}
+
 watch(
   // 入力中バブルの出入りでも追従する。バブルが末尾に生えた瞬間に
   // 見切れると、「入力中」という一番知りたい情報が見えない。
@@ -428,10 +461,29 @@ async function newChat(): Promise<void> {
                接地していない発話（大多数）では null になり、欄ごと出ない。 -->
           <GroundingNote v-if="grounding(entry.row.message)" :view="grounding(entry.row.message)!" />
 
-          <p class="mt-0.5 flex gap-1.5 px-0.5 text-[10px] text-ink-dim tabular-nums">
-            <span>{{ timestamp(entry.row.message.tsMs) }}</span>
+          <!-- hop（転送回数）は常時表示から時刻の hover へ退避した。
+               診断情報であって日常の閲覧には要らない（情報は消さず場所を変える）。
+               空いた席にコピーを置く。コピーするのは生テキスト。 -->
+          <p class="mt-0.5 flex items-center gap-1.5 px-0.5 text-[10px] text-ink-dim tabular-nums">
+            <span :title="`転送 ${entry.row.message.hop} 回目（h${entry.row.message.hop}）`">{{
+              timestamp(entry.row.message.tsMs)
+            }}</span>
             <span v-if="entry.row.message.tokens">{{ entry.row.message.tokens }} tok</span>
-            <span :title="`転送 ${entry.row.message.hop} 回目`">h{{ entry.row.message.hop }}</span>
+            <button
+              type="button"
+              class="rounded px-0.5 leading-none transition-colors"
+              :class="
+                copiedId === entry.row.message.id
+                  ? 'text-run'
+                  : 'text-ink-dim hover:text-accent'
+              "
+              :title="
+                copiedId === entry.row.message.id ? 'コピーしました' : '本文をコピー'
+              "
+              @click.stop="copyMessage(entry.row.message)"
+            >
+              {{ copiedId === entry.row.message.id ? "✓" : "⧉" }}
+            </button>
           </p>
         </div>
       </div>
