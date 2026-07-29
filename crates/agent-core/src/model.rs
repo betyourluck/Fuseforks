@@ -163,6 +163,17 @@ pub struct AgentSpec {
     /// （orchestrator の空応答フォールバック）ので、これは打ち切り頻度の調整。
     #[serde(default)]
     pub max_tool_iterations: Option<u8>,
+    /// 提示する同梱ツール名の集合（Spec 02）。
+    ///
+    /// - `None` = 「既定に従う」— 全同梱ツールを提示。新しい同梱ツールが
+    ///   増えれば自動で提示される。**新規作成時の保存値はこちら**
+    /// - `Some(list)` = 「必要な道具だけ」— 列挙した分だけ提示。
+    ///   新しい同梱ツールは自動で増えない（それが明示の意味）。空なら 0 本
+    ///
+    /// 対象は同梱ツールのみ（MCP 由来・転送・委譲は対象外）。
+    /// 作業フォルダ未設定によるファイル系の自動除外は、このリストより優先される。
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
 }
 
 impl AgentSpec {
@@ -181,6 +192,7 @@ impl AgentSpec {
             order: 0,
             work_dir: None,
             max_tool_iterations: None,
+            enabled_tools: None,
         }
     }
 }
@@ -414,6 +426,8 @@ pub struct AgentSnapshot {
     pub work_dir: Option<String>,
     /// ツール実行回数の個別上限。`None` なら既定値。
     pub max_tool_iterations: Option<u8>,
+    /// 提示する同梱ツール名。`None` なら既定（全提示）。
+    pub enabled_tools: Option<Vec<String>>,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

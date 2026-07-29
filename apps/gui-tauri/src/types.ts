@@ -71,6 +71,13 @@ export interface AgentSpec {
    * 途中で打ち切られやすいので個別に引き上げられる。
    */
   maxToolIterations: number | null;
+  /**
+   * 提示する同梱ツール名。`null` = 既定に従う（全提示。新しい同梱ツールも
+   * 自動で増える）。明示配列 = 必要な道具だけ（自動で増えない）。
+   * 新規作成時の保存値は null。作業フォルダ未設定によるファイル系の
+   * 自動除外は、このリストより優先される（Rust 側で強制）。
+   */
+  enabledTools: string[] | null;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -90,6 +97,8 @@ export interface AgentSnapshot {
   workDir: string | null;
   /** ツール実行回数の個別上限。`null` なら既定値。 */
   maxToolIterations: number | null;
+  /** 提示する同梱ツール名。`null` なら既定（全提示）。 */
+  enabledTools: string[] | null;
   lastError: ErrorPayload | null;
 }
 

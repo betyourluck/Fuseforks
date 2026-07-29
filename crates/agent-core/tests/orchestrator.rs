@@ -9,7 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::event::CoreEvent;
-use agent_core::{ConfigFileKind, RememberTool};
+use agent_core::{
+    AgentTool, ConfigFileKind, DiffTool, FdTool, GrepTool, RememberTool, SdTool, ToolContext,
+    YqTool,
+};
 use agent_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
 };
@@ -373,6 +376,68 @@ impl LlmBackend for SilentToolBackend {
             },
         })
     }
+}
+
+/// 提示されたツール名の集合を記録するバックエンド（提示制御の検証用）。
+#[derive(Default)]
+struct ToolsProbeBackend {
+    /// 呼び出しごとの、提示されたツール名（ソート済み）。
+    presented: std::sync::Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for ToolsProbeBackend {
+    fn name(&self) -> &str {
+        "tools-probe"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let mut names: Vec<String> = req.tools.iter().map(|t| t.name.clone()).collect();
+        names.sort();
+        self.presented.lock().unwrap().push(names);
+
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+        })
+    }
+}
+
+/// MCP 由来ツールの代役（同梱ではない名前空間つきの名前を持つ）。
+struct McpLikeTool;
+
+#[async_trait::async_trait]
+impl AgentTool for McpLikeTool {
+    fn name(&self) -> &str {
+        "memoria__recall"
+    }
+    fn description(&self) -> String {
+        "テスト用の MCP 風ツール".into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    async fn call(&self, _ctx: &ToolContext, _args: &serde_json::Value) -> agent_core::CoreResult<String> {
+        Ok("ok".into())
+    }
+}
+
+/// 同梱 6 本 + MCP 風 1 本を登録する（提示制御テストの土台）。
+async fn register_all_tools(orchestrator: &Orchestrator, dir: &TempDir) {
+    let store = ConfigStore::new(&dir.0);
+    orchestrator.register_tool(Arc::new(RememberTool::new(store))).await;
+    orchestrator.register_tool(Arc::new(GrepTool)).await;
+    orchestrator.register_tool(Arc::new(FdTool)).await;
+    orchestrator.register_tool(Arc::new(DiffTool)).await;
+    orchestrator.register_tool(Arc::new(SdTool)).await;
+    orchestrator.register_tool(Arc::new(YqTool)).await;
+    orchestrator.register_tool(Arc::new(McpLikeTool)).await;
 }
 
 /// 受け取ったリクエストを記録するバックエンド。履歴が積まれるかの検証に使う。
@@ -2139,6 +2204,95 @@ async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
         "打ち切りの理由が読めること: {}",
         reply.content
     );
+}
+
+/// 同梱ツールの提示は enabled_tools と作業フォルダで絞られること。
+///
+/// 使わないツールのスキーマは毎ターンの固定費になる（トークン節約は
+/// 最重要課題）。MCP 由来ツールはこのフィルタの対象外で常に提示される。
+#[tokio::test]
+async fn bundled_tool_presentation_is_gated_by_enabled_tools_and_work_dir() {
+    let dir = TempDir::new("tool-gate");
+    let backend = Arc::new(ToolsProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    register_all_tools(&orchestrator, &dir).await;
+
+    // A: 明示 ["remember"] + 作業フォルダあり → remember と MCP 風だけ。
+    let mut spec_a = AgentSpec::new("agent_a", "選択型", "tpl");
+    spec_a.enabled_tools = Some(vec!["remember".into()]);
+    spec_a.work_dir = Some("D:\\somewhere".into());
+    orchestrator.create_agent(spec_a).await.unwrap();
+
+    // B: 既定 (null) + 作業フォルダ無し → ファイル系 5 本が自動除外。
+    orchestrator
+        .create_agent(AgentSpec::new("agent_b", "既定型", "tpl"))
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    for id in ["agent_a", "agent_b"] {
+        orchestrator.start_agent(&id.into()).await.unwrap();
+        orchestrator.send_user_message(&id.into(), "こんにちは").await.unwrap();
+        drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    }
+
+    let presented = backend.presented.lock().unwrap();
+    let a = &presented[0];
+    assert!(a.contains(&"remember".to_string()), "{a:?}");
+    assert!(a.contains(&"memoria__recall".to_string()), "MCP 由来は対象外: {a:?}");
+    assert!(!a.contains(&"grep".to_string()), "列挙外は提示しない: {a:?}");
+    assert!(!a.contains(&"yq".to_string()), "{a:?}");
+
+    let b = &presented[1];
+    assert!(b.contains(&"remember".to_string()), "{b:?}");
+    assert!(b.contains(&"memoria__recall".to_string()), "{b:?}");
+    for tool in ["grep", "fd", "diff", "sd", "yq"] {
+        assert!(
+            !b.contains(&tool.to_string()),
+            "作業フォルダ未設定ならファイル系は自動除外: {b:?}"
+        );
+    }
+}
+
+/// 自動除外は明示指定より優先され、空配列は同梱 0 本を意味すること。
+#[tokio::test]
+async fn work_dir_auto_exclusion_beats_explicit_selection() {
+    let dir = TempDir::new("tool-gate-2");
+    let backend = Arc::new(ToolsProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    register_all_tools(&orchestrator, &dir).await;
+
+    // C: 明示 ["grep"] だが作業フォルダ無し → 同梱 0 本。
+    let mut spec_c = AgentSpec::new("agent_c", "空振り型", "tpl");
+    spec_c.enabled_tools = Some(vec!["grep".into()]);
+    orchestrator.create_agent(spec_c).await.unwrap();
+
+    // D: 明示 [] + 作業フォルダあり → 同梱 0 本。
+    let mut spec_d = AgentSpec::new("agent_d", "丸腰型", "tpl");
+    spec_d.enabled_tools = Some(Vec::new());
+    spec_d.work_dir = Some("D:\\somewhere".into());
+    orchestrator.create_agent(spec_d).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    for id in ["agent_c", "agent_d"] {
+        orchestrator.start_agent(&id.into()).await.unwrap();
+        orchestrator.send_user_message(&id.into(), "こんにちは").await.unwrap();
+        drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    }
+
+    let presented = backend.presented.lock().unwrap();
+    for (label, tools) in [("C", &presented[0]), ("D", &presented[1])] {
+        for bundled in ["remember", "grep", "fd", "diff", "sd", "yq"] {
+            assert!(
+                !tools.contains(&bundled.to_string()),
+                "{label} に同梱ツールが提示されないこと: {tools:?}"
+            );
+        }
+        assert!(
+            tools.contains(&"memoria__recall".to_string()),
+            "{label} にも MCP 由来は提示: {tools:?}"
+        );
+    }
 }
 
 /// ツール実行の上限はエージェント個別に上書きできること。

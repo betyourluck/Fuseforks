@@ -280,6 +280,7 @@ impl World {
             order: record.spec.order,
             work_dir: record.spec.work_dir.clone(),
             max_tool_iterations: record.spec.max_tool_iterations,
+            enabled_tools: record.spec.enabled_tools.clone(),
             last_error: record.last_error.clone(),
         }
     }

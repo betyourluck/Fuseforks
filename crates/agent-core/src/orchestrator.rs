@@ -1113,7 +1113,10 @@ async fn handle_message(
 
     // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
     //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
-    //    転送だけ別扱いにする理由が無い。区別するのは受け取った後の私たち。
+    //    転送だけ別扱いにする理由が無い。区別するのはこちら側の役目。
+    //    同梱ツールはエージェント個別の提示制御（enabled_tools + 作業フォルダ
+    //    連動の自動除外）を通す — 使わないツールのスキーマは毎ターンの
+    //    固定費になる（トークン節約は最重要課題）。
     let mut specs = if use_handoff_tools {
         let mut both = handoffs.specs();
         both.extend(handoffs.ask_specs());
@@ -1121,7 +1124,14 @@ async fn handle_message(
     } else {
         Vec::new()
     };
-    let executable = shared.tools.read().await.specs();
+    let executable: Vec<ToolSpec> = shared
+        .tools
+        .read()
+        .await
+        .specs()
+        .into_iter()
+        .filter(|tool| is_bundled_tool_presented(&tool.name, &spec))
+        .collect();
     specs.extend(executable.iter().cloned());
     let use_tools = !specs.is_empty() && template.use_tools;
 
@@ -1378,6 +1388,25 @@ async fn handle_message(
     }
 
     Ok(())
+}
+
+/// 同梱ツールをこのエージェントへ提示するか（enabled_tools_invariant）。
+///
+/// - 同梱ツール以外（MCP 由来）は常に提示（このフィルタの対象外）
+/// - 作業フォルダが要るツールは、未設定なら enabled_tools に関わらず
+///   提示しない（自動除外が明示より優先。使えないツールを見せない）
+/// - enabled_tools が None なら既定 = 全提示、Some なら列挙分だけ
+fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
+    if !crate::tools::BUNDLED_TOOL_NAMES.contains(&name) {
+        return true;
+    }
+    if crate::tools::WORK_DIR_TOOL_NAMES.contains(&name) && spec.work_dir.is_none() {
+        return false;
+    }
+    match &spec.enabled_tools {
+        None => true,
+        Some(enabled) => enabled.iter().any(|tool| tool == name),
+    }
 }
 
 /// ツールを 1 本実行する。

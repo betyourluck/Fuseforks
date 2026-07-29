@@ -49,6 +49,7 @@ function seed(): void {
         order: source.order,
         workDir: source.workDir,
         maxToolIterations: source.maxToolIterations,
+        enabledTools: source.enabledTools ? [...source.enabledTools] : null,
       }
     : null;
 }
@@ -92,7 +93,8 @@ const dirty = computed(() => {
     current.ragSources.join() !== source.ragSources.join() ||
     current.connectedAgents.join() !== source.connectedAgents.join() ||
     current.workDir !== source.workDir ||
-    current.maxToolIterations !== source.maxToolIterations
+    current.maxToolIterations !== source.maxToolIterations ||
+    JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools)
   );
 });
 

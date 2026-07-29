@@ -57,6 +57,7 @@ function snapshot(id: string) {
     order: 0,
     workDir: null,
     maxToolIterations: null,
+    enabledTools: null,
     lastError: null,
   };
 }
