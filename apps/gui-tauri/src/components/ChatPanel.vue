@@ -99,7 +99,9 @@ function label(endpoint: Endpoint): string {
     case "user":
       return "あなた";
     case "system":
-      return "システム";
+      // 「システム」ではなくアプリ名を名乗る。入退室通知などは
+      // 匿名の機械音声ではなく、場（Concordia）そのものの声として出す。
+      return "Concordia";
     case "agent":
       return state.agents.find((a) => a.id === endpoint.id)?.name ?? endpoint.id;
   }
@@ -389,7 +391,9 @@ async function newChat(): Promise<void> {
         :class="isMine(entry.row.message) ? 'flex-row-reverse' : 'flex-row'"
       >
         <!-- アバター。連続発言では場所だけ空けて揃える。
-             画像が設定されていればそれを、無ければ頭文字の円を出す。 -->
+             画像が設定されていればそれを、無ければ頭文字の円を出す。
+             Concordia 発（入退室通知など）はブランドマークを出す —
+             エージェントの発言ではなく、場そのものの声だと一目で分かるように。 -->
         <div class="w-7 shrink-0">
           <template v-if="!continuesTimeline(index)">
             <img
@@ -399,6 +403,28 @@ async function newChat(): Promise<void> {
               :title="label(entry.row.message.from)"
               :alt="label(entry.row.message.from)"
             />
+            <div
+              v-else-if="entry.row.message.from.kind === 'system'"
+              class="flex size-7 items-center justify-center rounded-full bg-surface-2 ring-1 ring-line"
+              :title="label(entry.row.message.from)"
+            >
+              <!-- TitleBar と同じブランドマーク（3 ノードの三角形）。 -->
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                class="text-accent"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="5" r="2.4" />
+                <circle cx="5" cy="18" r="2.4" />
+                <circle cx="19" cy="18" r="2.4" />
+                <path d="M10.6 7 6.4 16M13.4 7l4.2 9M7.4 18h9.2" />
+              </svg>
+            </div>
             <div
               v-else
               class="flex size-7 items-center justify-center rounded-full text-[11px] font-semibold text-surface-0"

@@ -1237,7 +1237,9 @@ async fn handle_message(
     // 同じ形で入れる。履歴に入れないと、次のターンで再び出所不明になる。
     let sender_label = match &incoming.from {
         Endpoint::User => "ユーザー".to_owned(),
-        Endpoint::System => "システム".to_owned(),
+        // 表示は UI と同じ「Concordia」。プロンプトと画面で同じ送り手が
+        // 違う名前になると、利用者とエージェントの会話が噛み合わない。
+        Endpoint::System => "Concordia".to_owned(),
         Endpoint::Agent { id } => {
             let world = shared.world.read().await;
             world
@@ -2145,7 +2147,8 @@ async fn compose_room_log(
     let label = |endpoint: &Endpoint| -> String {
         match endpoint {
             Endpoint::User => "ユーザー".to_owned(),
-            Endpoint::System => "システム".to_owned(),
+            // UI と同じ名前（語彙の二重化を作らない）。
+            Endpoint::System => "Concordia".to_owned(),
             Endpoint::Agent { id } => world
                 .agent(id)
                 .map(|record| record.spec.name.clone())
