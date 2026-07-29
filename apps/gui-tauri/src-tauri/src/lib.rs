@@ -90,6 +90,7 @@ pub fn run() {
             commands::write_mcp_config,
             commands::reload_mcp,
             commands::list_mcp_servers,
+            commands::agent_mcp_status,
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,

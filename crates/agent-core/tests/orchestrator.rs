@@ -2295,6 +2295,98 @@ async fn work_dir_auto_exclusion_beats_explicit_selection() {
     }
 }
 
+/// エージェント別 MCP の状態は稼働に紐付き、壊れた mcp.json でも起動が
+/// 止まらないこと（失敗二分類 (1') と (2)）。
+#[tokio::test]
+async fn agent_mcp_state_follows_the_agent_lifecycle() {
+    let dir = TempDir::new("agent-mcp-life");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+
+    // 停止中: 未接続としか答えられない（状態は永続化しない）。
+    let idle = orchestrator.agent_mcp_status(&id).await.unwrap();
+    assert!(!idle.running);
+    assert!(idle.servers.is_empty());
+
+    // 外部編集で壊れた mcp.json（保存経路を迂回してディスクを直接壊す）。
+    std::fs::create_dir_all(dir.0.join("agents/agent_01")).unwrap();
+    std::fs::write(dir.0.join("agents/agent_01/mcp.json"), "{ broken").unwrap();
+
+    // 起動は成功し、読み込み失敗が状態から読める（分類 1'）。
+    orchestrator.start_agent(&id).await.unwrap();
+    let broken = orchestrator.agent_mcp_status(&id).await.unwrap();
+    assert!(broken.running);
+    assert!(broken.load_error.is_some(), "読み込み失敗が保持されること");
+    assert_eq!(orchestrator.snapshot(&id).await.unwrap().status, AgentStatus::Running);
+
+    orchestrator.stop_agent(&id).await.unwrap();
+    assert!(!orchestrator.agent_mcp_status(&id).await.unwrap().running);
+
+    // 起動しないコマンドの宣言 → 起動は成功し、サーバー単位のエラー（分類 2）。
+    std::fs::write(
+        dir.0.join("agents/agent_01/mcp.json"),
+        r#"{ "mcpServers": { "ghost": { "command": "no-such-command-xyz" } } }"#,
+    )
+    .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+    let status = orchestrator.agent_mcp_status(&id).await.unwrap();
+    assert!(status.running);
+    assert!(status.load_error.is_none(), "宣言自体は読めている");
+    assert_eq!(status.servers.len(), 1);
+    assert_eq!(status.servers[0].name, "ghost");
+    assert!(!status.servers[0].connected);
+    assert!(status.servers[0].error.is_some(), "接続失敗が読めること");
+
+    orchestrator.stop_agent(&id).await.unwrap();
+}
+
+/// 稼働中に mcp.json を保存すると個別接続が張り直されること。
+#[tokio::test]
+async fn saving_the_agent_mcp_config_reconnects_while_running() {
+    let dir = TempDir::new("agent-mcp-save");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    assert!(orchestrator.agent_mcp_status(&id).await.unwrap().servers.is_empty());
+
+    // 稼働中の保存 → 新しい宣言で張り直される。
+    orchestrator
+        .write_config(
+            &id,
+            ConfigFileKind::Mcp,
+            r#"{ "mcpServers": { "ghost": { "command": "no-such-command-xyz" } } }"#,
+        )
+        .await
+        .unwrap();
+    let status = orchestrator.agent_mcp_status(&id).await.unwrap();
+    assert_eq!(status.servers.len(), 1, "保存が即座に反映されること");
+
+    // 壊れた JSON は保存拒否（分類 1）で、接続状態は変わらない。
+    let err = orchestrator
+        .write_config(&id, ConfigFileKind::Mcp, "{ broken")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "SERDE_FAILED");
+    assert_eq!(
+        orchestrator.agent_mcp_status(&id).await.unwrap().servers.len(),
+        1,
+        "拒否された保存で接続状態が壊れないこと"
+    );
+
+    orchestrator.stop_agent(&id).await.unwrap();
+}
+
 /// ツール実行の上限はエージェント個別に上書きできること。
 #[tokio::test]
 async fn per_agent_tool_iteration_limits_override_the_default() {

@@ -181,11 +181,38 @@ struct Shared {
     store: ConfigStore,
     rag: RwLock<RagIndex>,
     log: RwLock<Vec<AgentMessage>>,
-    /// 実行できるツール。同梱ツールと MCP サーバー由来のツールが同居する。
+    /// 実行できるツール。同梱ツールと**共通** MCP サーバー由来のツールが同居する。
     tools: RwLock<ToolRegistry>,
-    /// 接続中の MCP サーバー。接続を保持し続けないと子プロセスが落ちる。
+    /// 接続中の共通 MCP サーバー。接続を保持し続けないと子プロセスが落ちる。
     mcp: RwLock<crate::mcp::McpManager>,
+    /// エージェント別 MCP（Spec 02）。キーの有無 = 稼働中の個別接続の有無。
+    ///
+    /// 共有 registry には**入れない** — 入れると全員から見え、共通 MCP の
+    /// 再接続（全入れ替え）とも衝突する。接続寿命はエージェントの稼働に
+    /// 一致し、`stop_agent` は自分のエントリだけを畳む。状態は永続化しない
+    /// （状態ファイルはプロセスが消えても「接続済み」を残して嘘をつく）。
+    agent_mcp: RwLock<HashMap<AgentId, AgentMcpState>>,
     config: OrchestratorConfig,
+}
+
+/// エージェント別 MCP の実行時状態（プロセス寿命）。
+struct AgentMcpState {
+    /// 接続本体。読み込み失敗時は空。
+    manager: crate::mcp::McpManager,
+    /// `mcp.json` の読み込み失敗（外部編集起因。失敗二分類 (1')）。
+    load_error: Option<String>,
+}
+
+/// IPC へ返すエージェント別 MCP の状態。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMcpStatus {
+    /// 稼働中（= 個別接続が存在する）か。停止中は未接続で、次回起動で繋がる。
+    pub running: bool,
+    /// `mcp.json` の読み込み失敗。`None` なら読めている（または未設定）。
+    pub load_error: Option<String>,
+    /// サーバー単位の接続状態（稼働中のみ。停止中は空）。
+    pub servers: Vec<crate::mcp::McpServerStatus>,
 }
 
 impl Shared {
@@ -324,6 +351,7 @@ impl Orchestrator {
             log: RwLock::new(Vec::new()),
             tools: RwLock::new(ToolRegistry::new()),
             mcp: RwLock::new(crate::mcp::McpManager::default()),
+            agent_mcp: RwLock::new(HashMap::new()),
             config,
         });
 
@@ -645,6 +673,27 @@ impl Orchestrator {
         self.shared.mcp.read().await.statuses().to_vec()
     }
 
+    /// エージェント別 MCP の状態（Spec 02）。
+    ///
+    /// 停止中は「未接続」としか答えられない — 接続はエージェントの稼働に
+    /// 紐付き、状態は永続化しない（嘘をつく状態ファイルを持たない）。
+    pub async fn agent_mcp_status(&self, id: &AgentId) -> CoreResult<AgentMcpStatus> {
+        self.shared.world.read().await.agent(id)?;
+        let map = self.shared.agent_mcp.read().await;
+        Ok(match map.get(id) {
+            Some(state) => AgentMcpStatus {
+                running: true,
+                load_error: state.load_error.clone(),
+                servers: state.manager.statuses().to_vec(),
+            },
+            None => AgentMcpStatus {
+                running: false,
+                load_error: None,
+                servers: Vec::new(),
+            },
+        })
+    }
+
     // ---- 村の条例 -------------------------------------------------------------
 
     /// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。
@@ -679,6 +728,9 @@ impl Orchestrator {
     }
 
     /// 設定ファイルを書く。
+    ///
+    /// `mcp.json` の保存で、そのエージェントが**稼働中なら**個別接続を
+    /// 張り直す（Spec 02）。停止中は検証つきの保存だけで、次回起動で反映。
     pub async fn write_config(
         &self,
         id: &AgentId,
@@ -686,7 +738,18 @@ impl Orchestrator {
         content: &str,
     ) -> CoreResult<()> {
         self.shared.world.read().await.agent(id)?;
-        self.shared.store.write_config(id, kind, content).await
+        self.shared.store.write_config(id, kind, content).await?;
+
+        if kind == ConfigFileKind::Mcp {
+            let running = self.tasks.lock().await.contains_key(id);
+            if running {
+                if let Some(old) = self.shared.agent_mcp.write().await.remove(id) {
+                    old.manager.shutdown().await;
+                }
+                connect_agent_mcp(&self.shared, id).await;
+            }
+        }
+        Ok(())
     }
 
     /// 登録簿を永続化する。
@@ -719,6 +782,11 @@ impl Orchestrator {
         }
 
         self.shared.set_status(id, AgentStatus::Starting).await;
+
+        // エージェント別 MCP を接続する（Spec 02）。接続寿命は稼働に一致。
+        // 読み込み失敗・接続失敗でも起動は止めない — 状態として保持され、
+        // agent_mcp_status で読める（共通 MCP と同じ規律）。
+        connect_agent_mcp(&self.shared, id).await;
 
         let (mailbox_tx, mailbox_rx) = mpsc::channel(self.shared.config.mailbox_capacity);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -785,6 +853,12 @@ impl Orchestrator {
         {
             // タイムアウトしてもタスクは自走を続けるが、受信箱は既に外れているので
             // 次のループで停止する。ここで abort しないのは前掲の理由による。
+        }
+
+        // 個別 MCP を畳む（**自分のエントリだけ**。同じコマンドを使う他
+        // エージェントのプロセスは別 spawn なので巻き添えにならない）。
+        if let Some(state) = self.shared.agent_mcp.write().await.remove(id) {
+            state.manager.shutdown().await;
         }
 
         {
@@ -1124,7 +1198,7 @@ async fn handle_message(
     } else {
         Vec::new()
     };
-    let executable: Vec<ToolSpec> = shared
+    let shared_specs: Vec<ToolSpec> = shared
         .tools
         .read()
         .await
@@ -1132,6 +1206,16 @@ async fn handle_message(
         .into_iter()
         .filter(|tool| is_bundled_tool_presented(&tool.name, &spec))
         .collect();
+    // エージェント別 MCP のツールを重ねる（ツール収集の最終形）。
+    // 同名は個別が勝つ — 共通と同じサーバーを自分専用の接続先で
+    // 置き換える正当な手段（上書き可能な加算）。
+    let personal_specs: Vec<ToolSpec> = {
+        let map = shared.agent_mcp.read().await;
+        map.get(agent_id)
+            .map(|state| state.manager.tools().iter().map(|tool| tool.spec()).collect())
+            .unwrap_or_default()
+    };
+    let executable = merge_tool_specs(shared_specs, personal_specs);
     specs.extend(executable.iter().cloned());
     let use_tools = !specs.is_empty() && template.use_tools;
 
@@ -1390,6 +1474,40 @@ async fn handle_message(
     Ok(())
 }
 
+/// 共有ツールと個別 MCP ツールを 1 つの集合へ畳む（純関数）。
+///
+/// 同名は個別が勝つ（上書き可能な加算）。順序は共有 → 個別で安定させる。
+fn merge_tool_specs(shared_specs: Vec<ToolSpec>, personal: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    if personal.is_empty() {
+        return shared_specs;
+    }
+    let mut merged: Vec<ToolSpec> = shared_specs
+        .into_iter()
+        .filter(|spec| !personal.iter().any(|p| p.name == spec.name))
+        .collect();
+    merged.extend(personal);
+    merged
+}
+
+/// エージェント別 MCP を接続して登録する（Spec 02）。
+///
+/// 読み込み失敗（外部編集で壊れた mcp.json = 失敗二分類 (1')）でも
+/// エージェントの起動は止めない。個別ツール 0 本で稼働し、失敗理由は
+/// [`AgentMcpStatus::load_error`] として読める。
+async fn connect_agent_mcp(shared: &Shared, id: &AgentId) {
+    let state = match shared.store.read_agent_mcp_config(id).await {
+        Ok(config) => AgentMcpState {
+            manager: crate::mcp::McpManager::connect_all(&config).await,
+            load_error: None,
+        },
+        Err(err) => AgentMcpState {
+            manager: crate::mcp::McpManager::default(),
+            load_error: Some(err.to_string()),
+        },
+    };
+    shared.agent_mcp.write().await.insert(id.clone(), state);
+}
+
 /// 同梱ツールをこのエージェントへ提示するか（enabled_tools_invariant）。
 ///
 /// - 同梱ツール以外（MCP 由来）は常に提示（このフィルタの対象外）
@@ -1418,9 +1536,23 @@ async fn execute_tool(
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
 ) -> CoreResult<String> {
-    let tool = {
-        let registry = shared.tools.read().await;
-        registry.get(&call.name).cloned()
+    // 実行解決は提示と同じ規則の逆引き: **個別 MCP を先に**引き、
+    // 無ければ共有 registry（同名は個別が勝つ）。個別ツールは registry に
+    // 入っていないため、他エージェントからは名前を知っていても実行できない。
+    let personal = {
+        let map = shared.agent_mcp.read().await;
+        map.get(agent_id).and_then(|state| {
+            state
+                .manager
+                .tools()
+                .iter()
+                .find(|tool| tool.name() == call.name)
+                .cloned()
+        })
+    };
+    let tool = match personal {
+        Some(tool) => Some(tool),
+        None => shared.tools.read().await.get(&call.name).cloned(),
     };
 
     let Some(tool) = tool else {
@@ -1586,6 +1718,36 @@ async fn compose_room_log(
          **返事をする義務はありません。** 文脈として使ってください。\n{}",
         lines.join("\n")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec_named(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.into(),
+            description: String::new(),
+            parameters: serde_json::json!({ "type": "object" }),
+        }
+    }
+
+    /// 同名は個別が勝つ（上書き可能な加算）。順序は共有 → 個別。
+    #[test]
+    fn personal_tools_override_shared_ones_by_name() {
+        let shared = vec![spec_named("grep"), spec_named("memo__recall")];
+        let personal = vec![spec_named("memo__recall"), spec_named("memo__store")];
+
+        let merged = merge_tool_specs(shared, personal);
+        let names: Vec<&str> = merged.iter().map(|s| s.name.as_str()).collect();
+
+        assert_eq!(names, vec!["grep", "memo__recall", "memo__store"]);
+        assert_eq!(
+            merged.iter().filter(|s| s.name == "memo__recall").count(),
+            1,
+            "同名は 1 本に畳まれ、個別側が残る"
+        );
+    }
 }
 
 /// 文字数で切り詰める。マルチバイト文字の途中で切らない。

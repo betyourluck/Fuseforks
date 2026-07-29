@@ -12,6 +12,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentId,
+  AgentMcpStatus,
   AgentMessage,
   AgentSnapshot,
   AgentSpec,
@@ -202,6 +203,10 @@ export const reloadMcp = () => call<void>("reload_mcp");
 
 /** 各 MCP サーバーの接続状態。 */
 export const listMcpServers = () => call<McpServerStatus[]>("list_mcp_servers");
+
+/** エージェント別 MCP の状態。停止中は running: false でサーバー一覧は空。 */
+export const agentMcpStatus = (agentId: AgentId) =>
+  call<AgentMcpStatus>("agent_mcp_status", { agentId });
 
 // ---- アイコン ----------------------------------------------------------------
 

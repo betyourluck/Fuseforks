@@ -254,6 +254,15 @@ pub async fn list_mcp_servers(
     Ok(state.orchestrator.mcp_statuses().await)
 }
 
+/// エージェント別 MCP の状態（Spec 02）。停止中は「未接続」が返る。
+#[tauri::command]
+pub async fn agent_mcp_status(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CoreResult<agent_core::AgentMcpStatus> {
+    state.orchestrator.agent_mcp_status(&agent_id).await
+}
+
 // ---- 村の条例 ----------------------------------------------------------------
 
 /// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。

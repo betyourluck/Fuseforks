@@ -163,6 +163,18 @@ export interface McpServerStatus {
   error: string | null;
 }
 
+/**
+ * エージェント別 MCP の状態（Spec 02）。
+ * 接続はエージェントの稼働に紐付くため、停止中は `running: false` で
+ * サーバー一覧は空になる（状態は永続化されない）。
+ */
+export interface AgentMcpStatus {
+  running: boolean;
+  /** mcp.json の読み込み失敗（外部編集で壊れた場合）。 */
+  loadError: string | null;
+  servers: McpServerStatus[];
+}
+
 /** トポロジーの有向辺。 */
 export interface TopologyEdge {
   source: AgentId;

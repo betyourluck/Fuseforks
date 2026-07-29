@@ -16,8 +16,14 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { fileToWebpIcon } from "../lib/iconImage";
+import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import { STATUS_LABELS, type AgentId, type AgentSpec } from "../types";
+import {
+  STATUS_LABELS,
+  type AgentId,
+  type AgentMcpStatus,
+  type AgentSpec,
+} from "../types";
 
 const props = defineProps<{ agentId: AgentId }>();
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -229,6 +235,25 @@ async function removeIcon(): Promise<void> {
   if (!confirm("アイコン画像を削除しますか？")) return;
   await orchestrator.clearAgentIcon(props.agentId);
 }
+
+// ---- エージェント別 MCP（Spec 02） -----------------------------------------
+
+/**
+ * 個別 MCP の接続状態。接続はエージェントの稼働に紐付くため、
+ * 停止中は「未接続」としか分からない（状態は永続化されない設計）。
+ */
+const mcpStatus = ref<AgentMcpStatus | null>(null);
+
+async function refreshMcpStatus(): Promise<void> {
+  try {
+    mcpStatus.value = await ipc.agentMcpStatus(props.agentId);
+  } catch {
+    // 状態表示は診断用の付加情報。取得失敗でダイアログ全体を壊さない。
+    mcpStatus.value = null;
+  }
+}
+
+watch(() => props.agentId, refreshMcpStatus, { immediate: true });
 </script>
 
 <template>
@@ -405,6 +430,53 @@ async function removeIcon(): Promise<void> {
             remember を外すと長期記憶が自己更新されなくなります（Memory.md の内容は読み込まれ続けます）。
           </p>
           <div class="mb-3" />
+
+          <div class="mb-1 flex items-center gap-2">
+            <label class="block text-[11px] text-ink-dim">個別 MCP</label>
+            <button
+              class="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim hover:border-accent hover:text-accent"
+              title="接続状態を取り直す"
+              @click="refreshMcpStatus"
+            >
+              更新
+            </button>
+          </div>
+          <!--
+            接続はエージェントの稼働に紐付く（状態は永続化しない設計）。
+            編集は右の設定ファイルタブの mcp.json で。
+          -->
+          <div class="mb-3 space-y-1 text-[11px]">
+            <p v-if="!mcpStatus || !mcpStatus.running" class="text-ink-dim">
+              停止中（未接続）。宣言は mcp.json タブで編集でき、起動時に接続されます。
+            </p>
+            <template v-else>
+              <p v-if="mcpStatus.loadError" class="text-fail">
+                mcp.json を読み込めません: {{ mcpStatus.loadError }}
+              </p>
+              <p v-else-if="!mcpStatus.servers.length" class="text-ink-dim">
+                個別サーバーの宣言はありません（mcp.json タブで追加できます）。
+              </p>
+              <div
+                v-for="server in mcpStatus?.servers ?? []"
+                :key="server.name"
+                class="rounded border border-line px-2 py-1"
+              >
+                <p class="flex items-center gap-1.5">
+                  <span
+                    class="inline-block size-1.5 rounded-full"
+                    :class="server.connected ? 'bg-run' : 'bg-fail'"
+                  />
+                  <span class="font-medium">{{ server.name }}</span>
+                  <span v-if="server.connected" class="text-ink-dim">
+                    {{ server.tools.length }} ツール
+                  </span>
+                </p>
+                <p v-if="server.error" class="mt-0.5 text-[10px] text-fail">
+                  {{ server.error }}
+                </p>
+              </div>
+            </template>
+          </div>
 
           <label class="mb-1 block text-[11px] text-ink-dim">参照 RAG</label>
           <div class="mb-3 space-y-1">

@@ -86,7 +86,7 @@ pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
-pub use orchestrator::{Orchestrator, OrchestratorConfig};
+pub use orchestrator::{AgentMcpStatus, Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
