@@ -154,6 +154,15 @@ pub struct AgentSpec {
     /// パス文字列の検査では塞げない）。
     #[serde(default)]
     pub work_dir: Option<String>,
+    /// 1 回の発話処理で許すツール実行の回数（エージェント個別の上乗せ）。
+    ///
+    /// `None` なら [`crate::orchestrator::OrchestratorConfig::max_tool_iterations`]
+    /// の既定値。コーディング用エージェントは調査（grep / fd / 読み比べ）の
+    /// ツール往復が多く、既定の上限では調査の途中で打ち切られやすい。
+    /// 上限に達したときの応答が空にならない保証は別にある
+    /// （orchestrator の空応答フォールバック）ので、これは打ち切り頻度の調整。
+    #[serde(default)]
+    pub max_tool_iterations: Option<u8>,
 }
 
 impl AgentSpec {
@@ -171,6 +180,7 @@ impl AgentSpec {
             connected_agents: Vec::new(),
             order: 0,
             work_dir: None,
+            max_tool_iterations: None,
         }
     }
 }
@@ -402,6 +412,8 @@ pub struct AgentSnapshot {
     pub order: u32,
     /// 同梱ツール（grep / diff）の作業フォルダ。未設定なら `None`。
     pub work_dir: Option<String>,
+    /// ツール実行回数の個別上限。`None` なら既定値。
+    pub max_tool_iterations: Option<u8>,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

@@ -40,6 +40,13 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         .messages
         .iter()
         .filter(|m| m.role != Role::System)
+        // 中身が完全に空の発話は送らない。空のテキストブロックも空の content 配列も
+        // API に拒否される（400: text content blocks must be non-empty）。
+        // 空の assistant 履歴が 1 件混ざるだけで**以後の全リクエストが失敗し続ける**
+        // 毒になる（実機で発生。failures.md #29）。
+        .filter(|m| {
+            m.role == Role::Tool || !m.content.is_empty() || !m.tool_calls.is_empty()
+        })
         .map(encode_message)
         .collect();
 
@@ -124,10 +131,12 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
             input: call.args.clone(),
         });
     }
-    // 完全に空だと弾かれるため、最低 1 ブロックは残す。
+    // ここへ来る発話は encode() で「完全に空」を落とし済みなので、通常この分岐は
+    // 通らない。万一素通りしても**空のテキストブロックは送らない** — 空ブロックは
+    // 空の content 配列と同じく API に拒否され、400 の毒として全ターンに波及する。
     if content.is_empty() {
         content.push(wire::AnthropicRequestBlock::Text {
-            text: String::new(),
+            text: "（発言なし）".to_owned(),
         });
     }
 
@@ -258,6 +267,32 @@ mod tests {
             effort: None,
             cacheable_prefix_len,
         }
+    }
+
+    /// 中身が完全に空の発話はワイヤへ出さない。
+    ///
+    /// 空のテキストブロックは API に 400 で拒否される。空の assistant 履歴が
+    /// 1 件混ざるだけで以後の全リクエストが失敗し続ける（実機で発生、
+    /// failures.md #29）。落とすのは「テキストもツール呼び出しも無い」発話だけで、
+    /// ツール呼び出しだけの発話は正当なので残る。
+    #[test]
+    fn completely_empty_messages_are_dropped_from_the_wire() {
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::system("system"),
+            ChatMessage::user("一回目"),
+            ChatMessage::assistant(""), // 毒: 空の assistant 履歴
+            ChatMessage::user("二回目"),
+        ];
+
+        let w = encode(&req);
+
+        assert_eq!(w.messages.len(), 2, "空の発話は落ちる: {:?}", w.messages);
+        let json = serde_json::to_value(&w.messages).unwrap();
+        assert!(
+            !json.to_string().contains(r#""text":"""#),
+            "空のテキストブロックがワイヤに現れないこと: {json}"
+        );
     }
 
     #[test]

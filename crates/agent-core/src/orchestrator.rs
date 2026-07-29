@@ -1131,7 +1131,15 @@ async fn handle_message(
         content: String::new(),
     };
 
-    for iteration in 0..shared.config.max_tool_iterations.max(1) {
+    // ツール実行の上限。エージェント個別の指定があれば優先する
+    // （コーディング用エージェントは調査のツール往復が多く、既定では足りない）。
+    let max_tool_iterations = spec
+        .max_tool_iterations
+        .unwrap_or(shared.config.max_tool_iterations)
+        .max(1);
+    let mut tool_limit_hit = false;
+
+    for iteration in 0..max_tool_iterations {
         let request = ChatRequest {
             model: template.model.clone(),
             messages: messages.clone(),
@@ -1203,12 +1211,34 @@ async fn handle_message(
         }
 
         // 上限に達したら、次の周回は回さずに今ある本文で終える。
-        if iteration + 1 == shared.config.max_tool_iterations.max(1) {
+        if iteration + 1 == max_tool_iterations {
             shared.emit(CoreEvent::ToolLimitReached {
                 agent_id: agent_id.clone(),
-                max_iterations: shared.config.max_tool_iterations,
+                max_iterations: max_tool_iterations,
             });
+            tool_limit_hit = true;
         }
+    }
+
+    // 最終出力が空なら、正直な文言で置き換える。
+    //
+    // ツール上限で打ち切られた周の応答が「ツール呼び出しだけでテキスト無し」だと、
+    // ここまで content が空のまま来る。空の発話を記録すると (1) UI に空バブルが出る
+    // (2) 履歴に空の assistant が積まれ、**次のターンの API リクエストが
+    // 400 (text content blocks must be non-empty) で落ちてエージェントごと止まる**。
+    // 空という値は連鎖的に毒になる（failures.md #29、実機で発生）。
+    if let Outcome::Finish { content } = &mut outcome
+        && content.trim().is_empty()
+    {
+        *content = if tool_limit_hit {
+            format!(
+                "（ツール実行の上限 {max_tool_iterations} 回に達したため、\
+                 調査の途中で応答をまとめられませんでした。「続けて」と\
+                 送ってもらえれば、ここまでの結果を踏まえて続きから進めます。）"
+            )
+        } else {
+            "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
+        };
     }
 
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。

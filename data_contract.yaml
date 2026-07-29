@@ -158,6 +158,7 @@ entities:
       connectedAgents: AgentId[]   # 有向グラフの出辺
       order: u32                    # 左ペインの表示順
       workDir: String | null        # 同梱 grep / diff の探索範囲。null なら未設定でツールは動かない
+      maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (6)
     work_dir_invariant: |
       workDir はユーザーが明示した絶対パス (2026-07-29)。エージェントは
       プロンプトインジェクションを受けうるため、**読める範囲 = 漏洩しうる範囲**
@@ -180,6 +181,7 @@ entities:
       connectedAgents: AgentId[]
       order: u32
       workDir: String | null        # 設定ダイアログの編集用に spec から写す
+      maxToolIterations: u8 | null  # 同上
       lastError: ErrorPayload | null
 
   ModelTemplate:
@@ -457,8 +459,21 @@ conversation_termination:
       transfer_to_* を呼んだ → 転送してターンを終える (結果は返らない)
       実行ツールを呼んだ     → 実行し、呼び出しと結果を対で積んでもう一度呼ぶ
       何も呼ばなかった       → 最終出力
-    上限は max_tool_iterations (既定 6)。同じツールを同じ引数で呼び続ける
-    行き詰まりが実際に起きるため、hop と同様の安全網が要る。
+    上限は max_tool_iterations (既定 6、AgentSpec.maxToolIterations で
+    エージェント個別に上書き可 — 調査の多いコーディング用は既定では
+    足りない)。同じツールを同じ引数で呼び続ける行き詰まりが実際に
+    起きるため、hop と同様の安全網が要る。
+    空応答の禁止 (2026-07-29, failures.md #29): 上限で打ち切られた周の
+    応答が「ツール呼び出しだけでテキスト無し」だと最終出力が空になる。
+    空の発話は (a) 空バブル (b) 履歴の空 assistant (c) 次リクエストの
+    空テキストブロック → 400 → エージェント停止、と 3 層を伝播する毒。
+    三層で断つ:
+      - orchestrator: 最終出力が空なら正直な文言へ置き換える
+        (上限到達なら「続けてと頼めば続きから進める」)
+      - 履歴: push_exchange は空の発言を「（発言なし）」へ置換して積む
+        (対を崩すと役割の交互性が壊れるため、落とすのではなく置換)
+      - Anthropic wire: テキストもツール呼び出しも無い発話は送らない
+        (空のテキストブロックも空の content 配列も API に拒否される)
     不変条件:
       - 呼び出しと結果は**必ず対で**履歴へ積む。結果だけ積むとプロバイダが
         「対応する呼び出しが無い結果」として拒否する

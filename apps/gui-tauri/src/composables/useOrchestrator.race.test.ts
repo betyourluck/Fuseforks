@@ -56,6 +56,7 @@ function snapshot(id: string) {
     connectedAgents: [],
     order: 0,
     workDir: null,
+    maxToolIterations: null,
     lastError: null,
   };
 }

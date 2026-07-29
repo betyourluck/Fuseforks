@@ -58,6 +58,7 @@ fn wire_field_sets_are_frozen() {
         vec![
             "connectedAgents",
             "id",
+            "maxToolIterations",
             "modelTemplateId",
             "name",
             "order",
@@ -79,6 +80,7 @@ fn wire_field_sets_are_frozen() {
         connected_agents: Vec::new(),
         order: 0,
         work_dir: None,
+        max_tool_iterations: None,
         last_error: None,
     };
     assert_eq!(
@@ -87,6 +89,7 @@ fn wire_field_sets_are_frozen() {
             "connectedAgents",
             "id",
             "lastError",
+            "maxToolIterations",
             "model",
             "modelTemplateId",
             "name",
@@ -173,12 +176,14 @@ fn new_agent_spec_payload_deserializes() {
         "ragSources": [],
         "connectedAgents": [],
         "order": 0,
-        "workDir": null
+        "workDir": null,
+        "maxToolIterations": null
     }"#;
 
     let spec: AgentSpec = serde_json::from_str(payload).expect("GUI のエージェント定義が受かること");
     assert_eq!(spec.name, "PlannerAgent");
     assert_eq!(spec.work_dir, None);
+    assert_eq!(spec.max_tool_iterations, None);
 }
 
 /// `workDir` 導入前に保存された `world.json` も開けること。

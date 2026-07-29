@@ -68,7 +68,15 @@ impl AgentRecord {
     ///
     /// 古いほうから捨てる。長時間の稼働で履歴が際限なく伸びると、
     /// プロンプトがコンテキスト長を超えて必ず失敗するようになる。
+    ///
+    /// **空の発言は空のまま積まない。** 履歴の空メッセージは次のターンの
+    /// リクエストに空テキストブロックとして混入し、プロバイダによっては
+    /// 400 で拒否される（Anthropic の実測。failures.md #29）。往復の対を
+    /// 崩すと役割の交互性が壊れるため、落とすのではなく目印へ置き換える。
     pub fn push_exchange(&mut self, received: &str, replied: &str, max_turns: usize) {
+        let placeholder = "（発言なし）";
+        let received = if received.trim().is_empty() { placeholder } else { received };
+        let replied = if replied.trim().is_empty() { placeholder } else { replied };
         self.history.push(ChatMessage::user(received));
         self.history.push(ChatMessage::assistant(replied));
 
@@ -271,6 +279,7 @@ impl World {
             connected_agents: record.spec.connected_agents.clone(),
             order: record.spec.order,
             work_dir: record.spec.work_dir.clone(),
+            max_tool_iterations: record.spec.max_tool_iterations,
             last_error: record.last_error.clone(),
         }
     }

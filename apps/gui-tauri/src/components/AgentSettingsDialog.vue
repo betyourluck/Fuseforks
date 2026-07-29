@@ -48,6 +48,7 @@ function seed(): void {
         connectedAgents: [...source.connectedAgents],
         order: source.order,
         workDir: source.workDir,
+        maxToolIterations: source.maxToolIterations,
       }
     : null;
 }
@@ -63,6 +64,21 @@ const workDirInput = computed({
   },
 });
 
+/**
+ * ツール実行上限の入力バッファ。空欄 = 既定値（null）。
+ * 0 以下や数値でない入力も null（既定値）へ落とす — 不正値で保存を
+ * 止めるより、既定へ戻る方が復帰しやすい。
+ */
+const maxToolIterationsInput = computed({
+  get: () => draft.value?.maxToolIterations?.toString() ?? "",
+  set: (value: string) => {
+    if (!draft.value) return;
+    const parsed = Number.parseInt(value, 10);
+    draft.value.maxToolIterations =
+      Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, 99) : null;
+  },
+});
+
 watch(() => props.agentId, seed, { immediate: true });
 
 /** 未保存の変更があるか。閉じるときの確認に使う。 */
@@ -75,7 +91,8 @@ const dirty = computed(() => {
     current.modelTemplateId !== source.modelTemplateId ||
     current.ragSources.join() !== source.ragSources.join() ||
     current.connectedAgents.join() !== source.connectedAgents.join() ||
-    current.workDir !== source.workDir
+    current.workDir !== source.workDir ||
+    current.maxToolIterations !== source.maxToolIterations
   );
 });
 
@@ -290,6 +307,22 @@ async function removeIcon(): Promise<void> {
           -->
           <p class="mb-3 text-[10px] text-ink-dim">
             このフォルダの中だけを同梱ツールが読めます。機密を含むフォルダは指定しないでください。
+          </p>
+
+          <label class="mb-1 block text-[11px] text-ink-dim">
+            ツール実行の上限 / ターン
+          </label>
+          <input
+            v-model="maxToolIterationsInput"
+            type="number"
+            min="1"
+            max="99"
+            placeholder="既定: 6"
+            class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
+          />
+          <p class="mb-3 text-[10px] text-ink-dim">
+            1 回の応答で使えるツールの回数。調査の多いコーディング用エージェントは
+            12〜20 に上げると打ち切られにくくなります（そのぶんトークンを使います）。
           </p>
 
           <label class="mb-1 block text-[11px] text-ink-dim">参照 RAG</label>

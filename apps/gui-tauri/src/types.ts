@@ -65,6 +65,12 @@ export interface AgentSpec {
    * ユーザーが明示したフォルダに限る（範囲の強制は Rust 側）。
    */
   workDir: string | null;
+  /**
+   * 1 回の発話処理で許すツール実行の回数。`null` なら既定値（6）。
+   * コーディング用エージェントは調査のツール往復が多く、既定では
+   * 途中で打ち切られやすいので個別に引き上げられる。
+   */
+  maxToolIterations: number | null;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -82,6 +88,8 @@ export interface AgentSnapshot {
   order: number;
   /** 同梱ツール（grep / diff）の作業フォルダ。未設定なら `null`。 */
   workDir: string | null;
+  /** ツール実行回数の個別上限。`null` なら既定値。 */
+  maxToolIterations: number | null;
   lastError: ErrorPayload | null;
 }
 
