@@ -17,7 +17,8 @@ use agent_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
 };
 use agent_core::llm::{
-    ChatMessage, ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Role, ToolCall, Usage,
+    ChatMessage, ChatRequest, ChatResponse, Finish, Grounding, GroundingSource, LlmBackend,
+    LlmError, Role, ToolCall, Usage,
 };
 use agent_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
@@ -474,6 +475,132 @@ impl LlmBackend for RecordingBackend {
             },
             grounding: Default::default(),
         })
+    }
+}
+
+/// 接地の来歴を載せて返し、受け取ったリクエストも記録するバックエンド。
+///
+/// Gemini ネイティブ経路（Spec 05）で `groundingMetadata` が付いた応答が
+/// 返ってくる状況を、ネットワークなしで再現する。
+#[derive(Default)]
+struct GroundedBackend {
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+}
+
+/// テスト内で「これが漏れたら失敗」と判る目印。
+const GROUNDED_URI: &str = "https://example.test/nhk-article-42";
+const GROUNDED_QUERY: &str = "ザリガニ 生息数 2026";
+
+#[async_trait::async_trait]
+impl LlmBackend for GroundedBackend {
+    fn name(&self) -> &str {
+        "grounded"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.seen.lock().unwrap().push(req.messages.clone());
+        Ok(ChatResponse {
+            text: Some("調べた結果をお伝えします".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Grounding {
+                queries: vec![GROUNDED_QUERY.to_owned()],
+                sources: vec![GroundingSource {
+                    uri: GROUNDED_URI.to_owned(),
+                    title: "ザリガニの生息数について".to_owned(),
+                }],
+            },
+        })
+    }
+}
+
+/// 接地の来歴が発話に添って表示層まで届くこと（Spec 05 Phase 4）。
+///
+/// 専用イベントを立てず `MessageSent` に相乗りさせているので、
+/// ここが壊れると来歴は UI から丸ごと消える。
+#[tokio::test]
+async fn grounding_rides_on_the_recorded_message() {
+    let dir = TempDir::new("grounding-ride");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(GroundedBackend::default()),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ジェミー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "最近のニュースを調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let reply = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::Agent { id: a.clone() })
+        .expect("エージェントの発話が記録されること");
+
+    assert_eq!(reply.grounding.queries, vec![GROUNDED_QUERY]);
+    assert_eq!(
+        reply.grounding.sources.iter().map(|s| s.uri.as_str()).collect::<Vec<_>>(),
+        vec![GROUNDED_URI],
+        "参照元が発話に添って届くこと: {:#?}",
+        reply.grounding,
+    );
+}
+
+/// 接地の来歴が**次のターンのプロンプトへ戻らない**こと（Spec 05 Notes 9）。
+///
+/// 接地はそのターンの中で起き、参照元は答えと同時に返る。次ターンの
+/// プロンプトへ入れれば、それは前の話題の出典であり、モデルが今引用したい
+/// 相手ではない。前ターンの URL を現ターンの根拠として見せるのは新種の
+/// 誤帰属で、捏造を別の形へ置き換えるだけになる。
+#[tokio::test]
+async fn grounding_never_returns_to_the_prompt() {
+    let dir = TempDir::new("grounding-no-return");
+    let backend = Arc::new(GroundedBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ジェミー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "最近のニュースを調べて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    // 2 ターン目。1 ターン目の来歴が履歴・広場ログのどちらかに混ざれば、ここで見える。
+    orchestrator.send_user_message(&a, "続けて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    assert!(seen.len() >= 2, "2 ターンぶんのリクエストが記録されること: {}", seen.len());
+    for (turn, messages) in seen.iter().enumerate() {
+        for message in messages {
+            assert!(
+                !message.content.contains(GROUNDED_URI),
+                "参照元 URL がプロンプトへ戻っている（{turn} 周目・{:?}）: {}",
+                message.role,
+                message.content,
+            );
+            assert!(
+                !message.content.contains(GROUNDED_QUERY),
+                "検索語がプロンプトへ戻っている（{turn} 周目・{:?}）: {}",
+                message.role,
+                message.content,
+            );
+        }
     }
 }
 

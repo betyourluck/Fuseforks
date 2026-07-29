@@ -18,8 +18,10 @@ import { computed, nextTick, ref, watch } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import ChatInput from "./ChatInput.vue";
+import GroundingNote from "./GroundingNote.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import { collapseRows, type ChatRow } from "../lib/chatRows";
+import { groundingView, type GroundingView } from "../lib/grounding";
 import { renderMarkdownCached } from "../lib/markdown";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
@@ -203,6 +205,14 @@ function onMarkdownClick(event: MouseEvent): void {
   }
 }
 
+/**
+ * 発話に添える接地の来歴（Spec 05 Phase 4）。規則は lib/grounding.ts。
+ * 接地していない発話では null になり、欄ごと出ない。
+ */
+function grounding(message: AgentMessage): GroundingView | null {
+  return groundingView(message);
+}
+
 function timestamp(ms: number): string {
   return new Date(ms).toLocaleTimeString("ja-JP", {
     hour: "2-digit",
@@ -352,6 +362,10 @@ async function newChat(): Promise<void> {
           >
             {{ message.content }}
           </div>
+
+          <!-- 接地の来歴。規則は lib/grounding.ts、見た目は GroundingNote.vue。
+               接地していない発話（大多数）では null になり、欄ごと出ない。 -->
+          <GroundingNote v-if="grounding(message)" :view="grounding(message)!" />
 
           <p class="mt-0.5 flex gap-1.5 px-0.5 text-[10px] text-ink-dim tabular-nums">
             <span>{{ timestamp(message.tsMs) }}</span>

@@ -58,6 +58,7 @@ ConcordiaOrcehstrator/
                 ├── AgentList.vue / AgentCard.vue      左: エージェント一覧
                 ├── TopologyMap.vue                    中央: 接続マップ
                 ├── ChatPanel.vue / ChatInput.vue      右: 会話（吹き出し）
+                ├── GroundingNote.vue                  発話に添える接地の来歴
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   モーダル: 設定
                 ├── ModelTemplateDialog.vue            モーダル: モデル
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue
@@ -413,6 +414,17 @@ Gemini は OpenAI 互換の口でも動き、関数呼び出しだけならそ�
 > 利用者が「出典URL付きで」と要求した瞬間に競合して折れる。
 > 作業フォルダの実パスを開示するのと同じ処方（判断材料の欠落は情報で埋める）。
 
+接地が起きた発話には、**検索語と参照元を吹き出しの外に添えて出す**。
+モデルの発言ではなくこちらが観測した事実なので、本文と同じ地には置かない。
+参照元が 0 件のときも欄は消さず「参照元は返ってきていません」と書く —
+**空であること自体が「出典は存在しない」の判定**であり、黙って畳むと利用者は
+本文中の URL を出典だと信じてしまう。
+
+来歴は**表示層にだけ**流す。モデルへは戻さない。接地はそのターンの中で起き、
+参照元は答えと同時に返るので、次ターンのプロンプトへ入れても「前の話題の出典」
+にしかならない。前ターンの URL を現ターンの根拠として見せるのは新種の誤帰属で、
+捏造を別の形に置き換えるだけになる（[Spec 05](specs/05_gemini-native-and-grounding.md) Notes 9）。
+
 同梱ツールと MCP ツールのスキーマは、adapter が **Gemini が受け付けるキーだけ**
 残して削ってから送る。Gemini の `parameters` は JSON Schema ではなく OpenAPI 3.0 の
 部分集合で、`$schema` や `additionalProperties` を送ると 400 になる。
@@ -565,7 +577,7 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 |---|---|---|
 | RAG の取り込み UI | `index_rag_chunk` コマンドは通っているが、GUI からの投入口が無い。右ペインの参照 RAG 欄は索引が空だとその旨を表示する | ファイル取り込み・チャンク分割・ソース管理の画面 |
 | 埋め込みモデル | `rag::HashEmbedder` は語をハッシュで次元へ振り分けるだけで、意味的な近さを捉えない。名前でそれを明示している | `Embedder` trait を実装した実モデルへ差し替え |
-| 接地の来歴の可視化 | `ChatResponse.grounding` に検索語と参照元を拾ってあるが、まだイベントにも UI にも出していない | `CoreEvent` へ流す + 実 URL が取れるならプロンプトへ戻す（[Spec 05](specs/05_gemini-native-and-grounding.md) Phase 4） |
+| 接地の来歴の実データ | 配線は通ったが、`groundingMetadata` が実際に飛んでくるかを実機で見ていない。参照元が常に 0 件なら、出せるのは検索語だけと確定する | ジェミーに時事を調べさせ、`sources` に実 URL が入るかを確認する（[Spec 05](specs/05_gemini-native-and-grounding.md) 実機確認） |
 | 個別 MCP の試験接続 | 停止中のエージェントの個別 MCP は「未接続」としか分からない（接続は稼働に紐付く設計） | 保存時に一度試験接続して結果だけ見せる補完（Spec 02 Notes） |
 | ノード座標の永続化 | 手で動かした配置はセッション内のみ。既定は円環自動配置 | 座標を持つなら `world.json` の拡張が要る |
 | 長期記憶（Memoria 接続） | `Memory.md`（remember）は稼働中。多層記憶は未接続だが、**扉は開いている** | 下記の方針で着手する |

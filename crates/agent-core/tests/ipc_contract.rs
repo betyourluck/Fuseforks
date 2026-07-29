@@ -120,6 +120,45 @@ fn wire_field_sets_are_frozen() {
         vec!["content", "from", "hop", "id", "to", "tokens", "tsMs"],
         "AgentMessage のフィールドが変わった"
     );
+
+    // 省略されるフィールド（`skip_serializing_if`）は、空の値では現れない。
+    // 空だけを固定していると、**任意フィールドを足しても凍結が反応しない** —
+    // 実際、`coRecipients` と `grounding` はこの穴を通り抜けられる形で入った。
+    // 値を入れた状態でもう一度固定して、TS 側への追従を強制する。
+    let mut filled = AgentMessage::new(Endpoint::User, Endpoint::System, "本文", 0);
+    filled.co_recipients = vec![AgentId::from("agent_a")];
+    filled.grounding = agent_core::llm::Grounding {
+        queries: vec!["検索語".into()],
+        sources: vec![agent_core::llm::GroundingSource {
+            uri: "https://example.test/a".into(),
+            title: "表題".into(),
+        }],
+    };
+    assert_eq!(
+        wire_keys(&filled),
+        vec![
+            "coRecipients",
+            "content",
+            "from",
+            "grounding",
+            "hop",
+            "id",
+            "to",
+            "tokens",
+            "tsMs",
+        ],
+        "AgentMessage の省略フィールドが変わった"
+    );
+    assert_eq!(
+        wire_keys(&filled.grounding),
+        vec!["queries", "sources"],
+        "Grounding のフィールドが変わった"
+    );
+    assert_eq!(
+        wire_keys(&filled.grounding.sources[0]),
+        vec!["title", "uri"],
+        "GroundingSource のフィールドが変わった"
+    );
 }
 
 /// `ModelTemplateDialog.vue` の `blank()` が組み立てる新規テンプレート。

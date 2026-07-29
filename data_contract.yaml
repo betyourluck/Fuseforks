@@ -308,9 +308,30 @@ entities:
       tokens: u32                   # 複数宛先へ配る場合、先頭の 1 件にのみ計上
       tsMs: u64
       hop: u8                       # ユーザー入力を起点とした転送回数
+      coRecipients: AgentId[]       # 同報の全宛先。単独宛では省かれる (broadcast_note)
+      grounding: Grounding          # 接地の来歴。接地しなければ省かれる (Spec 05 P4)
     invariant: |
       1 回の生成を N 宛先へ配るとき tokens を全件に載せると N 重計上になる。
-      先頭のみに載せるのが契約。
+      先頭のみに載せるのが契約。grounding も同じ理由で先頭の 1 件にのみ載せる
+      (1 ターンぶんの事実であり、宛先ごとの属性ではない)。
+      grounding は**表示層専用**で、プロンプトを組む経路
+      (compose_room_log / push_exchange) は content しか読まない。
+      モデルへ戻さない理由は llm_wire.gemini.grounding と Spec 05 Notes 9 を見よ。
+
+  Grounding:
+    fields:
+      queries: String[]             # モデルが実際に投げた検索語
+      sources: GroundingSource[]    # 参照元。空 = 出典は存在しない
+    invariant: |
+      sources が空であることは情報の欠落ではなく「出典は存在しない」という判定。
+      表示層はこの状態を無表示へ畳まない。畳むと利用者は本文中の URL を出典だと
+      信じるが、その URL は経路を持たないモデルが作ったものでありうる
+      (2026-07-29 にドメインのルート URL + 記事の見出しの偽引用を実測)。
+      1 ターンは複数周に分かれるので、周ごとの記録は Grounding::absorb で
+      畳んで足し合わせる (検索語は文字列、参照元は URL で重複を潰す)。
+
+  GroundingSource:
+    fields: { uri: String, title: String }   # title は取れなければ空文字
 
   ErrorPayload:
     fields:
@@ -802,6 +823,9 @@ llm_wire:
       sources は答えと同時に返るので、次ターンのプロンプトへ入れても
       「前の話題の出典」にしかならない。前ターンの URL を現ターンの根拠として
       見せるのは新種の誤帰属で、捏造を別の形に置き換えるだけ (Spec 05 Notes 9)。
+      表示層への経路は AgentMessage.grounding で、MessageSent イベントが運ぶ
+      (Spec 05 Phase 4)。専用イベントを立てないのは、来歴が発話に添う情報であり、
+      別便にすると起動時の list_messages 再投影で来歴だけが消えるから。
     grounding_active: |
       接地の判定は ModelTemplate.google_search 単独ではなく
       **grounding_active() = google_search AND effective_provider() == Gemini**。

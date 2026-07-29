@@ -300,11 +300,13 @@ pub struct ToolCall {
 /// 実際に、参照元を運ぶ経路を持たないまま「根拠 URL を出せ」と求めた結果、
 /// ドメインのルート URL に記事の見出しを添えた偽の引用が返った（2026-07-29）。
 /// 副作用が起きた事実は、こちらが起こしていなくても記録に残す。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Grounding {
     /// モデルが実際に投げた検索語。
+    #[serde(default)]
     pub queries: Vec<String>,
     /// 参照元。**空なら出典は存在しない**（モデルの言う出典を信じない根拠）。
+    #[serde(default)]
     pub sources: Vec<GroundingSource>,
 }
 
@@ -312,6 +314,25 @@ impl Grounding {
     /// 接地が一切起きていないか。
     pub fn is_empty(&self) -> bool {
         self.queries.is_empty() && self.sources.is_empty()
+    }
+
+    /// 別の記録を畳み込む。検索語は文字列、参照元は URL で重複を潰す。
+    ///
+    /// 1 ターンは複数回の LLM 呼び出しに分かれる（ツールを呼ぶたびに 1 周）。
+    /// 接地はそのうちのどの周でも起こりうるので、**周ごとの記録を捨てずに
+    /// 足し合わせる**。同じ検索語・同じ URL が複数の周で返ることは普通にあり、
+    /// 畳まないと表示に同じ出典が並ぶ。
+    pub fn absorb(&mut self, other: Grounding) {
+        for query in other.queries {
+            if !self.queries.contains(&query) {
+                self.queries.push(query);
+            }
+        }
+        for source in other.sources {
+            if !self.sources.iter().any(|s| s.uri == source.uri) {
+                self.sources.push(source);
+            }
+        }
     }
 }
 
@@ -383,5 +404,62 @@ mod tests {
             cache_read: 80,
         };
         assert_eq!(usage.total(), 125);
+    }
+
+    #[test]
+    fn absorbing_grounding_merges_rounds_without_duplicates() {
+        // 1 ターンは複数周に分かれる。検索した周と関数を呼んだ周が別なら、
+        // 畳まない実装は片方を捨てる。
+        let mut acc = Grounding::default();
+        acc.absorb(Grounding {
+            queries: vec!["ARIB B36".into()],
+            sources: vec![GroundingSource {
+                uri: "https://example.com/a".into(),
+                title: "A".into(),
+            }],
+        });
+        acc.absorb(Grounding {
+            queries: vec!["ARIB B36".into(), "字幕 変換".into()],
+            sources: vec![
+                GroundingSource {
+                    uri: "https://example.com/a".into(),
+                    title: "A（別表題）".into(),
+                },
+                GroundingSource {
+                    uri: "https://example.com/b".into(),
+                    title: "B".into(),
+                },
+            ],
+        });
+
+        assert_eq!(acc.queries, vec!["ARIB B36", "字幕 変換"]);
+        assert_eq!(
+            acc.sources.iter().map(|s| s.uri.as_str()).collect::<Vec<_>>(),
+            vec!["https://example.com/a", "https://example.com/b"],
+        );
+        // 先に入ったほうの表題を残す（後の周で表題だけ変わっても出典は同じ）。
+        assert_eq!(acc.sources[0].title, "A");
+    }
+
+    #[test]
+    fn absorbing_into_an_empty_record_also_dedupes_within_one_round() {
+        // 1 応答の groundingChunks にも同じ URL が複数回並ぶ。周をまたがなくても畳む。
+        let mut acc = Grounding::default();
+        acc.absorb(Grounding {
+            queries: vec!["同じ語".into(), "同じ語".into()],
+            sources: vec![
+                GroundingSource {
+                    uri: "https://example.com/x".into(),
+                    title: "X".into(),
+                },
+                GroundingSource {
+                    uri: "https://example.com/x".into(),
+                    title: "X".into(),
+                },
+            ],
+        });
+
+        assert_eq!(acc.queries.len(), 1);
+        assert_eq!(acc.sources.len(), 1);
     }
 }

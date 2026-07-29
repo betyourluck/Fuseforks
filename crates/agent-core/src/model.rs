@@ -416,6 +416,16 @@ pub struct AgentMessage {
     /// 行われないので、発話の存在ごと見えない。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub co_recipients: Vec<AgentId>,
+    /// この発話を作る過程でプロバイダが代行した接地の来歴（Spec 05 P4）。
+    ///
+    /// **表示層専用。読むのは人間だけで、モデルへは戻さない。**
+    /// プロンプトを組む経路（`compose_room_log` / `push_exchange`）は
+    /// `content` しか見ないので、ここへ足しても発話の中身は変わらない。
+    /// 戻さない理由は時系列 — 接地はそのターンの中で起き、参照元は答えと
+    /// 同時に返る。次ターンのプロンプトへ入れれば、それは前の話題の出典であり、
+    /// モデルが今引用したい相手ではない（Spec 05 Notes 9）。
+    #[serde(default, skip_serializing_if = "crate::llm::Grounding::is_empty")]
+    pub grounding: crate::llm::Grounding,
 }
 
 impl AgentMessage {
@@ -430,6 +440,7 @@ impl AgentMessage {
             ts_ms: now_ms(),
             hop,
             co_recipients: Vec::new(),
+            grounding: crate::llm::Grounding::default(),
         }
     }
 }
@@ -632,6 +643,42 @@ mod tests {
         // チェックを外せば当然無効。
         template.google_search = false;
         assert!(!template.grounding_active());
+    }
+
+    /// 接地しなかった発話に来歴の欄を生やさないこと（Spec 05 Phase 4）。
+    ///
+    /// 全発話の 9 割以上は接地を持たない。空の欄を毎回吐くと、ログの JSON が
+    /// 意味の無いキーで膨らみ、`grounding` が付いている発話を目で探せなくなる。
+    #[test]
+    fn a_message_without_grounding_serializes_without_the_field() {
+        let message = AgentMessage::new(
+            Endpoint::User,
+            Endpoint::Agent {
+                id: AgentId::from("agent_a"),
+            },
+            "こんにちは",
+            0,
+        );
+        let json = serde_json::to_value(&message).unwrap();
+
+        assert!(json.get("grounding").is_none(), "空の来歴は書き出さない: {json}");
+    }
+
+    /// 来歴の欄を持たない旧ログがそのまま読めること。
+    #[test]
+    fn a_message_recorded_before_grounding_still_loads() {
+        let json = serde_json::json!({
+            "id": "m1",
+            "from": { "kind": "user" },
+            "to": { "kind": "agent", "id": "agent_a" },
+            "content": "こんにちは",
+            "tokens": 0,
+            "tsMs": 1_700_000_000_000u64,
+            "hop": 0
+        });
+
+        let message: AgentMessage = serde_json::from_value(json).unwrap();
+        assert!(message.grounding.is_empty());
     }
 
     #[test]

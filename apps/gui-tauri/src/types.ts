@@ -153,6 +153,24 @@ export interface ModelTemplate {
   maxRetries: number;
 }
 
+/** 参照した web ページ 1 件。 */
+export interface GroundingSource {
+  uri: string;
+  /** ページ表題。取れなければ空文字。 */
+  title: string;
+}
+
+/**
+ * プロバイダが代行して実行した接地の記録（Spec 05）。
+ *
+ * **`sources` が空であることが「出典は存在しない」の判定**であり、
+ * モデルが本文で語る出典を信じない根拠になる。表示層はこの区別を潰さない。
+ */
+export interface Grounding {
+  queries: string[];
+  sources: GroundingSource[];
+}
+
 /** 会話ログの 1 発話。 */
 export interface AgentMessage {
   id: string;
@@ -165,6 +183,11 @@ export interface AgentMessage {
   hop: number;
   /** 同報の全宛先（受信者自身を含む）。単独宛では省かれる。 */
   coRecipients?: AgentId[];
+  /**
+   * 接地の来歴。接地が起きなかった発話では省かれる。
+   * **表示専用** — モデルへは戻らない（Spec 05 Notes 9）。
+   */
+  grounding?: Grounding;
 }
 
 /** MCP サーバー 1 台の起動方法（Claude Desktop の設定と同じ形）。 */

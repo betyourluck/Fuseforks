@@ -2,7 +2,7 @@
 
 **ID**: 05
 **Date**: 2026-07-29
-**Status**: rev2 査読承認 → Phase 0〜3 完了。残タスクは Phase 4（来歴の配線）と実機確認
+**Status**: rev2 査読承認 → Phase 0〜4 完了。残タスクは実機確認のみ
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜04 と同じプロセス）
 
 > **本 Spec は例外的に実装先行である。** Spec 01〜04 は「起票 → 査読 → Phase 0
@@ -202,8 +202,12 @@ POST /v1beta/chat/completions  {"tools":[{"type":"google_search"}]}
       テスト 1 本
 - [x] Phase 3 — 台帳整合: README（未実装表の Gemini 行 / 接地の節）/
       failures.md #30・#31
-- [ ] Phase 4 — 来歴の配線: `grounding` を `CoreEvent` と**表示層**へ流す。
-      **プロンプトへは戻さない**（Notes 9）
+- [x] Phase 4 — 来歴の配線: `AgentMessage.grounding` を新設し、`MessageSent` が
+      運ぶ（**専用イベントを立てない** — Notes 10）。オーケストレーターが
+      周をまたいで `Grounding::absorb` で畳み、fan-out では先頭の 1 通にだけ
+      載せる（トークンと同じ規則）。ChatPanel が吹き出しの外へ検索語と参照元を
+      出し、**参照元 0 件のときも欄を消さない**。テスト 8 本
+      （Rust 6 / TS 2 ファイル。うち「プロンプトへ戻らない」を 2 ターン走らせて固定）
 - [ ] 実機確認: ジェミーに時事を調べさせ、URL を作らず検索語と発表元を
       返すこと／`sources` に実 URL が入るかどうか
 
@@ -248,6 +252,15 @@ POST /v1beta/chat/completions  {"tools":[{"type":"google_search"}]}
    ゆえに `sources` の行き先は**表示層**（発話に添えて利用者へ見せる）とし、
    モデルへは返さない。これで Phase 2 の告知（URL は手元に来ない）と
    矛盾しなくなり、`ChatMessage` 側の席も不要なままで済む
+10. **来歴に専用イベントを立てない（Phase 4 で決定）**: `CoreEvent::Grounded`
+    のような変種を足さず、`AgentMessage.grounding` に載せて `MessageSent` に
+    相乗りさせた。別便にすると (a) フロントが発話 ID との対応を自前で持つ必要が
+    あり、(b) 起動時の `list_messages` による再投影で**来歴だけが消える**
+    （イベントは再生されない）。発話に載せればどちらも起きない。
+    `AgentMessage` は履歴・広場ログの原料でもあるが、プロンプトを組む経路は
+    `content` しか読まないので、フィールドを増やしても発話の中身は変わらない。
+    この不変条件は結合テスト `grounding_never_returns_to_the_prompt` で固定した
+    （2 ターン走らせ、全リクエストの本文に URL と検索語が現れないことを確認する）
 
 ---
 

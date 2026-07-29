@@ -1257,6 +1257,9 @@ async fn handle_message(
     // 入力ぶんも別に数える。キャッシュ率の分母は合計ではなく入力。
     let mut prompt = 0u64;
     let mut tokens = 0u64;
+    // 接地の来歴は 1 周ぶんではなく**ターンぶん**で持つ。検索した周と
+    // 関数を呼んだ周は別なので、周ごとに上書きすると先に起きた接地が消える。
+    let mut grounding = crate::llm::Grounding::default();
     let mut outcome = Outcome::Finish {
         content: String::new(),
     };
@@ -1285,10 +1288,13 @@ async fn handle_message(
             cacheable_prefix_len: stable_len,
         };
 
-        let response = backend.chat(request).await?;
+        let mut response = backend.chat(request).await?;
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
+        // 転送で抜ける周の接地も拾う。break の後ろに置くと、検索してから
+        // 転送したターンの来歴が丸ごと落ちる。
+        grounding.absorb(std::mem::take(&mut response.grounding));
 
         // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
         // 結果が返ってくる種類の操作ではない。
@@ -1380,10 +1386,11 @@ async fn handle_message(
             cacheable_prefix_len: stable_len,
         };
         // まとめの失敗でターンごと落とさない。失敗時は下の最終フォールバックが拾う。
-        if let Ok(response) = backend.chat(request).await {
+        if let Ok(mut response) = backend.chat(request).await {
             tokens += response.usage.total();
-        cached += response.usage.cache_read;
-        prompt += response.usage.prompt;
+            cached += response.usage.cache_read;
+            prompt += response.usage.prompt;
+            grounding.absorb(std::mem::take(&mut response.grounding));
             if let Some(text) = response.text
                 && !text.trim().is_empty()
             {
@@ -1445,6 +1452,9 @@ async fn handle_message(
             };
             let mut outgoing = AgentMessage::new(from, destination, content, next_hop);
             outgoing.tokens = tokens as u32;
+            // 接地の来歴は発話に添えて表示層へ渡す（`MessageSent` が運ぶ）。
+            // プロンプトへは戻らない — 組み立て側は `content` しか読まない。
+            outgoing.grounding = grounding;
             shared.record(outgoing).await;
 
             if let Some(reply_to) = reply_to {
@@ -1468,6 +1478,11 @@ async fn handle_message(
             next_hop,
         );
         outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };
+        // 接地も 1 ターンぶんの事実なので、トークンと同じく先頭の 1 通にだけ載せる。
+        // 全通に複製すると、表示で畳んだあとも同じ出典が宛先数ぶん並ぶ。
+        if index == 0 {
+            outgoing.grounding = std::mem::take(&mut grounding);
+        }
 
         // 同じ内容を複数宛先へ渡す fan-out は、受け手から見ればエージェント発の
         // 同報。宛先一覧を封筒に載せ、受け手同士が「相手はこれを知らない」と
