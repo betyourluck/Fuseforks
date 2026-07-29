@@ -1282,6 +1282,10 @@ async fn handle_message(
         .unwrap_or(shared.config.max_tool_iterations)
         .max(1);
     let mut tool_limit_hit = false;
+    // 観測用（Spec 04 Notes 2 のトリガー判定の実測材料）。
+    // llm_rounds は上限の較正（12 で足りているか）、plan_wave は波の因果の追跡。
+    let mut llm_rounds: u32 = 0;
+    let mut plan_wave: u32 = 0;
 
     for iteration in 0..max_tool_iterations {
         let request = ChatRequest {
@@ -1300,6 +1304,7 @@ async fn handle_message(
         };
 
         let mut response = backend.chat(request).await?;
+        llm_rounds += 1;
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
@@ -1353,7 +1358,8 @@ async fn handle_message(
                 && handoffs.offers_plan()
                 && call.name == HandoffTools::PLAN
             {
-                Ok(run_plan(shared, agent_id, &handoffs, call, incoming.hop).await)
+                plan_wave += 1;
+                Ok(run_plan(shared, agent_id, &handoffs, call, incoming.hop, plan_wave).await)
             } else {
                 match handoffs.resolve_ask(&call.name) {
                     Some(target) if use_handoff_tools => {
@@ -1500,6 +1506,16 @@ async fn handle_message(
             );
         }
     }
+
+    // 観測用のターン行（Spec 04 Notes 2 / Notes 12 のトリガー判定の実測材料）。
+    // prompt の伸びは束ねの履歴肥大 (O(N²) 懸念) を、rounds は上限 12 の較正を、
+    // waves は plan の利用実態を、それぞれ将来の判断のために記録する。
+    // 機構は入れない — 測らずに入れると「効いているか分からない機構」が増える。
+    eprintln!(
+        "[concordia] turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
+         waves={plan_wave} prompt={prompt} cached={cached} total={tokens}",
+        incoming.hop,
+    );
 
     // 8. 記録と転送。
     let next_hop = incoming.hop.saturating_add(1);
@@ -1830,6 +1846,7 @@ async fn run_plan(
     handoffs: &HandoffTools,
     call: &crate::llm::ToolCall,
     hop: u8,
+    wave: u32,
 ) -> String {
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
@@ -1841,7 +1858,7 @@ async fn run_plan(
             .to_owned();
     }
 
-    let mut wave: Vec<(AgentId, String)> = Vec::with_capacity(tasks.len());
+    let mut wave_tasks: Vec<(AgentId, String)> = Vec::with_capacity(tasks.len());
     for (index, task) in tasks.iter().enumerate() {
         let position = index + 1;
         let (Some(to), Some(message)) = (
@@ -1862,13 +1879,13 @@ async fn run_plan(
                 handoffs.roster().join("、")
             );
         }
-        if wave.iter().any(|(existing, _)| *existing == target) {
+        if wave_tasks.iter().any(|(existing, _)| *existing == target) {
             return format!(
                 "宛先「{to}」が同じ波に 2 回あります。1 回の plan で同じ相手へ頼めるのは 1 件です。\
                  2 件目は次の波で頼んでください。何も配送していません。"
             );
         }
-        wave.push((target, message.to_owned()));
+        wave_tasks.push((target, message.to_owned()));
     }
 
     // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す
@@ -1882,12 +1899,30 @@ async fn run_plan(
         return "転送の上限に達したため、これ以上は頼めません。何も配送していません。".to_owned();
     }
 
+    // 観測用の波の開始行。宛先と依頼サイズを記録し、後から
+    // 「この波は前の波の結果を読まずに書けたか」を追えるようにする
+    // （Spec 04 Notes 2 の depends_on トリガー判定の材料）。
+    eprintln!(
+        "[concordia] plan wave: agent={from} wave={wave} tasks={} to=[{}] msg_chars={}",
+        wave_tasks.len(),
+        wave_tasks
+            .iter()
+            .map(|(target, _)| target.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        wave_tasks
+            .iter()
+            .map(|(_, message)| message.chars().count())
+            .sum::<usize>(),
+    );
+    let dispatched_at = std::time::Instant::now();
+
     // 3. 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
     //    直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
     //    並列なのは**配送**であって実行ではない。各エージェントの受信箱は
     //    1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
     let mut set = tokio::task::JoinSet::new();
-    for (index, (target, message)) in wave.iter().enumerate() {
+    for (index, (target, message)) in wave_tasks.iter().enumerate() {
         let shared = Arc::clone(shared);
         let from = from.clone();
         let target = target.clone();
@@ -1898,7 +1933,7 @@ async fn run_plan(
         });
     }
 
-    let mut answers: Vec<Option<String>> = vec![None; wave.len()];
+    let mut answers: Vec<Option<String>> = vec![None; wave_tasks.len()];
     while let Some(joined) = set.join_next().await {
         match joined {
             Ok((index, answer)) => answers[index] = Some(answer),
@@ -1910,7 +1945,7 @@ async fn run_plan(
     // 4. 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
     //    表示名の一意性がどこも保証されていないから（同名が 2 体いると
     //    どちらの答えか判別できなくなる）。順序は入力順に戻す。
-    let bundle = wave
+    let bundle = wave_tasks
         .iter()
         .zip(answers)
         .map(|((target, _), answer)| {
@@ -1926,9 +1961,10 @@ async fn run_plan(
     // 波数 × N 体で膨らむ構造なので、上限や要約を入れるかの判断材料をここで取る。
     // 機構は入れない。測らずに入れると「効いているか分からない機構」が増えるだけ。
     eprintln!(
-        "[concordia] plan bundle: agent={from} tasks={} chars={}",
-        wave.len(),
-        bundle.chars().count()
+        "[concordia] plan bundle: agent={from} wave={wave} tasks={} chars={} elapsed_ms={}",
+        wave_tasks.len(),
+        bundle.chars().count(),
+        dispatched_at.elapsed().as_millis(),
     );
     bundle
 }
