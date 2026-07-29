@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agent_core::{
     ConfigStore, CoreEvent, DiffTool, FdTool, GrepTool, HttpBackendFactory, KeyringSecretStore,
-    Orchestrator, OrchestratorConfig, RememberTool, SdTool, SecretStore,
+    Orchestrator, OrchestratorConfig, RememberTool, SdTool, SecretStore, YqTool,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -70,6 +70,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     orchestrator.register_tool(Arc::new(FdTool)).await;
     orchestrator.register_tool(Arc::new(DiffTool)).await;
     orchestrator.register_tool(Arc::new(SdTool)).await;
+    orchestrator.register_tool(Arc::new(YqTool)).await;
 
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
     // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。

@@ -8,6 +8,6 @@ pub mod edit;
 pub mod fs;
 pub mod memory;
 
-pub use edit::SdTool;
+pub use edit::{SdTool, YqTool};
 pub use fs::{DiffTool, FdTool, GrepTool};
 pub use memory::RememberTool;

@@ -31,7 +31,12 @@ use crate::tools::fs::{
 /// 戻りは (絶対パス, 表示用相対パス, 本文)。エラーはモデルへ返す文字列。
 /// 順序は write_tools_contract で凍結されている — ここを一本化することで
 /// sd / yq のエラーメッセージが同じ状況で同じ文言になる。
-fn open_for_edit(work_dir: &Path, user_path: &str) -> Result<(PathBuf, String, String), String> {
+/// `allowed_exts` は検査順序 3（yq の拡張子制限）。`None` なら検査しない（sd）。
+fn open_for_edit(
+    work_dir: &Path,
+    user_path: &str,
+    allowed_exts: Option<&[&str]>,
+) -> Result<(PathBuf, String, String), String> {
     // 1. 境界解決（実在 + 囲い内。canonicalize が新規作成を構造的に封じる）
     let (path, display) = resolve_in_work_dir(work_dir, user_path)?;
 
@@ -40,7 +45,21 @@ fn open_for_edit(work_dir: &Path, user_path: &str) -> Result<(PathBuf, String, S
         return Err(format!("`{user_path}` はファイルではありません。"));
     }
 
-    // 4. サイズ上限（3. 拡張子は yq のみ。呼び出し側で先に検査する）
+    // 3. 拡張子（yq のみ。推測でパースしない）
+    if let Some(allowed) = allowed_exts {
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if !allowed.contains(&ext.as_str()) {
+            return Err(format!(
+                "`{user_path}` は対応していない形式です（対応: {}）。",
+                allowed.join(" / ")
+            ));
+        }
+    }
+
+    // 4. サイズ上限
     let size = path.metadata().map(|m| m.len()).unwrap_or(0);
     if size > MAX_FILE_BYTES {
         return Err(format!(
@@ -161,7 +180,7 @@ fn run_sd(
     apply: bool,
     case_insensitive: bool,
 ) -> String {
-    let (path, display, text) = match open_for_edit(work_dir, user_path) {
+    let (path, display, text) = match open_for_edit(work_dir, user_path, None) {
         Ok(opened) => opened,
         Err(message) => return message,
     };
@@ -215,6 +234,410 @@ fn run_sd(
              この内容で良ければ `apply: true` で書き込んでください。\n{diff}"
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// yq — 構造を保った設定編集
+// ---------------------------------------------------------------------------
+
+/// `a.b[0].c` 形式のパスの 1 区切り。
+#[derive(Debug, Clone, PartialEq)]
+enum PathSeg {
+    /// マップのキー。
+    Key(String),
+    /// 配列のインデックス。
+    Index(usize),
+}
+
+/// パスの表示（エラーメッセージ用）。
+fn seg_display(segs: &[PathSeg]) -> String {
+    let mut out = String::new();
+    for seg in segs {
+        match seg {
+            PathSeg::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            PathSeg::Index(index) => out.push_str(&format!("[{index}]")),
+        }
+    }
+    out
+}
+
+/// `a.b[0].c` を区切り列へ解釈する。
+///
+/// v1 の制限（write_tools_contract）: キーは `[A-Za-z0-9_-]+`、
+/// インデックスは `[数字]` のみ。クォートされたキー（`a."b.c"` 等）は
+/// 非対応として読める文言で拒否する。
+fn parse_key_path(key: &str) -> Result<Vec<PathSeg>, String> {
+    fn err(key: &str) -> String {
+        format!(
+            "`{key}` はパスとして解釈できません。対応する形式は `a.b[0].c`\
+             （キーは英数字・`-`・`_`、インデックスは数字）だけです。\
+             クォートされたキーや記号を含むキーには対応していません。"
+        )
+    }
+
+    if key.is_empty() {
+        return Err(err(key));
+    }
+
+    let mut segs = Vec::new();
+    let mut chars = key.chars().peekable();
+
+    loop {
+        // キー名（先頭が `[` なら省略可 — ルートが配列のケース）。
+        let mut name = String::new();
+        while let Some(&c) = chars.peek() {
+            if c == '.' || c == '[' {
+                break;
+            }
+            if !(c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Err(err(key));
+            }
+            name.push(c);
+            chars.next();
+        }
+        if !name.is_empty() {
+            segs.push(PathSeg::Key(name));
+        } else if !matches!(chars.peek(), Some('[')) {
+            return Err(err(key)); // 空セグメント（`a..b` や末尾ドット）
+        }
+
+        // 続くインデックス列 `[0][1]...`
+        while matches!(chars.peek(), Some('[')) {
+            chars.next();
+            let mut digits = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() {
+                    digits.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if digits.is_empty() || chars.next() != Some(']') {
+                return Err(err(key));
+            }
+            let index: usize = digits.parse().map_err(|_| err(key))?;
+            segs.push(PathSeg::Index(index));
+        }
+
+        match chars.next() {
+            None => break,
+            Some('.') => continue,
+            Some(_) => return Err(err(key)),
+        }
+    }
+
+    if segs.is_empty() {
+        return Err(err(key));
+    }
+    Ok(segs)
+}
+
+/// yq の操作種別。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum YqOp {
+    Get,
+    Set,
+    Remove,
+}
+
+/// TOML / YAML / JSON の値だけを取得・設定・削除するツール（`yq` 相当）。
+pub struct YqTool;
+
+/// yq が受け付ける拡張子（検査順序 3）。
+const YQ_EXTENSIONS: [&str; 4] = ["toml", "yaml", "yml", "json"];
+
+#[async_trait]
+impl AgentTool for YqTool {
+    fn name(&self) -> &str {
+        "yq"
+    }
+
+    fn description(&self) -> String {
+        "TOML / YAML / JSON ファイルの特定の値だけを取得（get）・設定（set）・\
+         削除（remove）する。コメント・キー順・フォーマットは保持されるので、\
+         **設定ファイルの値を変えるときはファイル全体を書き直さずこれを使うこと**。\
+         `key` は `a.b[0].c` 形式のパスのみ（yq のクエリ式は使えない）。\
+         set / remove は既定では書き込まず差分（diff）だけを返す。\
+         確認してから `apply: true` で書き込むこと。\
+         set できるのはスカラー値（文字列・数値・真偽・null）だけ。"
+            .to_owned()
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "対象ファイルの相対パス（.toml / .yaml / .yml / .json）"
+                },
+                "op": {
+                    "type": "string",
+                    "enum": ["get", "set", "remove"],
+                    "description": "操作。get = 値の取得、set = 値の設定、remove = キーの削除"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "対象のパス。`a.b[0].c` 形式（キーは英数字・`-`・`_` のみ）"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "set する値を JSON リテラルで（例: `\"text\"` / `42` / `true` / `null`）。set 時のみ"
+                },
+                "apply": {
+                    "type": "boolean",
+                    "description": "true で書き込む。省略時は preview（差分を返すだけで書かない）。set / remove のみ"
+                }
+            },
+            "required": ["path", "op", "key"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String> {
+        let Some(work_dir) = ctx.work_dir.clone() else {
+            return Ok(work_dir_missing());
+        };
+        let (Some(path), Some(op), Some(key)) = (
+            args.get("path").and_then(Value::as_str),
+            args.get("op").and_then(Value::as_str),
+            args.get("key").and_then(Value::as_str),
+        ) else {
+            return Ok("引数 `path` / `op` / `key` がすべて必要です。".into());
+        };
+        let op = match op {
+            "get" => YqOp::Get,
+            "set" => YqOp::Set,
+            "remove" => YqOp::Remove,
+            other => {
+                return Ok(format!(
+                    "`{other}` という操作はありません。`get` / `set` / `remove` から選んでください。"
+                ));
+            }
+        };
+        let (path, key) = (path.to_owned(), key.to_owned());
+        let value = args.get("value").and_then(Value::as_str).map(str::to_owned);
+        let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
+
+        spawn_rayon(move || run_yq(&work_dir, &path, op, &key, value.as_deref(), apply)).await
+    }
+}
+
+/// yq 本体。ブロッキングして良い文脈で呼ぶ。
+fn run_yq(
+    work_dir: &Path,
+    user_path: &str,
+    op: YqOp,
+    key: &str,
+    value: Option<&str>,
+    apply: bool,
+) -> String {
+    let (path, display, text) = match open_for_edit(work_dir, user_path, Some(&YQ_EXTENSIONS)) {
+        Ok(opened) => opened,
+        Err(message) => return message,
+    };
+
+    let segs = match parse_key_path(key) {
+        Ok(segs) => segs,
+        Err(message) => return message,
+    };
+
+    // set の value は JSON リテラルとして解釈し、スカラーだけを受ける（対称規則）。
+    let new_value = if op == YqOp::Set {
+        let Some(raw) = value else {
+            return "`set` には `value` が必要です（JSON リテラルで指定）。".into();
+        };
+        match serde_json::from_str::<Value>(raw) {
+            Ok(Value::Array(_) | Value::Object(_)) => {
+                return "配列・オブジェクトは set できません（スカラー値のみ）。\
+                        構造の変更はファイルを直接編集してください。"
+                    .into();
+            }
+            Ok(scalar) => Some(scalar),
+            Err(_) => {
+                return format!(
+                    "`{raw}` は JSON リテラルとして解釈できません。\
+                     文字列は `\"引用符\"` で囲んでください（例: \"text\" / 42 / true / null）。"
+                );
+            }
+        }
+    } else {
+        None
+    };
+
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    // 6. 内容の解釈と操作（形式別バックエンド）。
+    // 戻り値: get は Ok(表示文字列)、set / remove は Ok(編集後の全文)。
+    let outcome = match ext.as_str() {
+        "json" => yq_json(&text, op, &segs, new_value.as_ref()),
+        "toml" => yq_toml(&text, op, &segs, new_value.as_ref()),
+        "yaml" | "yml" => yq_yaml(&text, op, &segs, new_value.as_ref()),
+        _ => unreachable!("拡張子は open_for_edit で検査済み"),
+    };
+
+    let after = match outcome {
+        Ok(YqOutcome::Value(shown)) => {
+            return format!("{display} の {} = {shown}", seg_display(&segs));
+        }
+        Ok(YqOutcome::NoChange) => {
+            return format!(
+                "{} は既にその値です。変更なし（書き込みは行っていません）。",
+                seg_display(&segs)
+            );
+        }
+        Ok(YqOutcome::Edited(after)) => after,
+        Err(message) => return message,
+    };
+
+    let diff = unified_diff(&display, &text, &after);
+    if diff.chars().count() > MAX_OUTPUT_CHARS {
+        return format!(
+            "差分が大きすぎるため実行しません（{} 行が変わり、diff が上限 \
+             {MAX_OUTPUT_CHARS} 字を超えます）。対象を絞ってください。",
+            changed_line_count(&text, &after)
+        );
+    }
+
+    if apply {
+        if let Err(err) = std::fs::write(&path, after.as_bytes()) {
+            return format!("`{display}` へ書き込めませんでした: {err}");
+        }
+        format!("適用済み: {} を更新しました。\n{diff}", seg_display(&segs))
+    } else {
+        format!(
+            "preview（未適用）: この内容で良ければ `apply: true` で書き込んでください。\n{diff}"
+        )
+    }
+}
+
+/// 形式別バックエンドの結果。
+enum YqOutcome {
+    /// get の結果（表示用文字列）。
+    Value(String),
+    /// set したが既に同じ値（書かない）。
+    NoChange,
+    /// 編集後の全文。
+    Edited(String),
+}
+
+/// JSON バックエンド。キー順は保持（serde_json の preserve_order feature）、
+/// 整形（インデント・改行）は正規化される — 契約どおりであり、
+/// diff が対象行以外へ及ぶことは許容されている。
+fn yq_json(
+    text: &str,
+    op: YqOp,
+    segs: &[PathSeg],
+    new_value: Option<&Value>,
+) -> Result<YqOutcome, String> {
+    let mut root: Value = serde_json::from_str(text)
+        .map_err(|err| format!("JSON として解釈できません: {err}"))?;
+
+    match op {
+        YqOp::Get => {
+            let target = json_navigate(&root, segs)
+                .ok_or_else(|| format!("`{}` は存在しません。", seg_display(segs)))?;
+            Ok(YqOutcome::Value(target.to_string()))
+        }
+        YqOp::Set => {
+            let new_value = new_value.expect("set は value 検証済み");
+            let target = json_navigate_mut(&mut root, segs)
+                .ok_or_else(|| format!(
+                    "`{}` は存在しません（存在しないキーへの set は行いません — \
+                     パスの綴りを確認してください）。",
+                    seg_display(segs)
+                ))?;
+            if matches!(target, Value::Array(_) | Value::Object(_)) {
+                return Err(format!(
+                    "`{}` は配列またはオブジェクトです。set できるのはスカラー値だけです\
+                    （構造の置き換えは型破壊になるため行いません）。",
+                    seg_display(segs)
+                ));
+            }
+            if target == new_value {
+                return Ok(YqOutcome::NoChange);
+            }
+            *target = new_value.clone();
+            Ok(YqOutcome::Edited(render_json(&root)))
+        }
+        YqOp::Remove => {
+            let (parent_segs, last) = segs.split_at(segs.len() - 1);
+            let parent = json_navigate_mut(&mut root, parent_segs)
+                .ok_or_else(|| format!("`{}` は存在しません。", seg_display(segs)))?;
+            let removed = match (&mut *parent, &last[0]) {
+                (Value::Object(map), PathSeg::Key(key)) => map.shift_remove(key).is_some(),
+                (Value::Array(items), PathSeg::Index(index)) if *index < items.len() => {
+                    items.remove(*index);
+                    true
+                }
+                _ => false,
+            };
+            if !removed {
+                return Err(format!("`{}` は存在しません。", seg_display(segs)));
+            }
+            Ok(YqOutcome::Edited(render_json(&root)))
+        }
+    }
+}
+
+/// JSON を整形して出力する。末尾改行つき（POSIX テキストの慣習に合わせる）。
+fn render_json(root: &Value) -> String {
+    let mut out = serde_json::to_string_pretty(root).unwrap_or_default();
+    out.push('\n');
+    out
+}
+
+/// JSON の読み取りナビゲーション。
+fn json_navigate<'a>(root: &'a Value, segs: &[PathSeg]) -> Option<&'a Value> {
+    let mut current = root;
+    for seg in segs {
+        current = match seg {
+            PathSeg::Key(key) => current.as_object()?.get(key)?,
+            PathSeg::Index(index) => current.as_array()?.get(*index)?,
+        };
+    }
+    Some(current)
+}
+
+/// JSON の可変ナビゲーション。
+fn json_navigate_mut<'a>(root: &'a mut Value, segs: &[PathSeg]) -> Option<&'a mut Value> {
+    let mut current = root;
+    for seg in segs {
+        current = match seg {
+            PathSeg::Key(key) => current.as_object_mut()?.get_mut(key)?,
+            PathSeg::Index(index) => current.as_array_mut()?.get_mut(*index)?,
+        };
+    }
+    Some(current)
+}
+
+/// TOML バックエンド（Phase 3 で実装）。
+fn yq_toml(
+    _text: &str,
+    _op: YqOp,
+    _segs: &[PathSeg],
+    _new_value: Option<&Value>,
+) -> Result<YqOutcome, String> {
+    Err("TOML はまだ対応していません（実装中）。".into())
+}
+
+/// YAML バックエンド（Phase 4 で実装）。
+fn yq_yaml(
+    _text: &str,
+    _op: YqOp,
+    _segs: &[PathSeg],
+    _new_value: Option<&Value>,
+) -> Result<YqOutcome, String> {
+    Err("YAML はまだ対応していません（実装中）。".into())
 }
 
 #[cfg(test)]
@@ -462,5 +885,205 @@ mod tests {
         )
         .await;
         assert!(reply.contains("UTF-8"), "{reply}");
+    }
+
+    // ---- yq ----------------------------------------------------------------
+
+    async fn call_yq(dir: &TempDir, args: serde_json::Value) -> String {
+        YqTool.call(&ctx_with(Some(&dir.0)), &args).await.unwrap()
+    }
+
+    #[test]
+    fn key_paths_parse_and_invalid_forms_are_rejected() {
+        assert_eq!(
+            parse_key_path("a.b[0].c").unwrap(),
+            vec![
+                PathSeg::Key("a".into()),
+                PathSeg::Key("b".into()),
+                PathSeg::Index(0),
+                PathSeg::Key("c".into()),
+            ]
+        );
+        assert_eq!(parse_key_path("[2]").unwrap(), vec![PathSeg::Index(2)]);
+        assert!(parse_key_path("a..b").is_err(), "空セグメント");
+        assert!(parse_key_path("a.\"b.c\"").is_err(), "クォートキーは v1 非対応");
+        assert!(parse_key_path("a.b[").is_err(), "閉じ忘れ");
+        assert!(parse_key_path("").is_err());
+    }
+
+    #[tokio::test]
+    async fn yq_get_reads_a_value_and_missing_keys_are_reported() {
+        let dir = TempDir::new("yq-get");
+        dir.write("c.json", r#"{ "server": { "port": 8080 } }"#);
+
+        let hit = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "get", "key": "server.port" }),
+        )
+        .await;
+        assert!(hit.contains("8080"), "{hit}");
+
+        let miss = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "get", "key": "server.host" }),
+        )
+        .await;
+        assert!(miss.contains("存在しません"), "{miss}");
+    }
+
+    #[tokio::test]
+    async fn yq_set_previews_then_applies_and_preserves_key_order() {
+        let dir = TempDir::new("yq-set");
+        dir.write("c.json", "{\n  \"zebra\": 1,\n  \"alpha\": { \"port\": 8080 }\n}\n");
+
+        let preview = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "alpha.port", "value": "9090" }),
+        )
+        .await;
+        assert!(preview.contains("preview"), "{preview}");
+        assert!(dir.read("c.json").contains("8080"), "preview では書かない");
+
+        let applied = call_yq(
+            &dir,
+            serde_json::json!({
+                "path": "c.json", "op": "set", "key": "alpha.port", "value": "9090", "apply": true
+            }),
+        )
+        .await;
+        assert!(applied.contains("適用済み"), "{applied}");
+
+        let saved = dir.read("c.json");
+        assert!(saved.contains("9090"), "{saved}");
+        let zebra = saved.find("zebra").unwrap();
+        let alpha = saved.find("alpha").unwrap();
+        assert!(zebra < alpha, "キー順（挿入順）が保たれること: {saved}");
+    }
+
+    #[tokio::test]
+    async fn yq_set_with_the_same_value_does_not_write() {
+        let dir = TempDir::new("yq-same");
+        // 整形を意図的に崩したファイル。同値 set で正規化だけが走ると
+        // 「空白差分」が生まれるので、値が同じなら触らないことを固定する。
+        dir.write("c.json", r#"{"port":8080}"#);
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "port", "value": "8080", "apply": true }),
+        )
+        .await;
+
+        assert!(reply.contains("変更なし"), "{reply}");
+        assert_eq!(dir.read("c.json"), r#"{"port":8080}"#, "整形の正規化も起こさない");
+    }
+
+    #[tokio::test]
+    async fn yq_set_rejects_missing_paths_and_containers_and_bad_values() {
+        let dir = TempDir::new("yq-reject");
+        dir.write("c.json", r#"{ "server": { "port": 8080 }, "tags": [1, 2] }"#);
+
+        let missing = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "server.ghost.deep", "value": "1" }),
+        )
+        .await;
+        assert!(missing.contains("存在しません"), "中間キーを生やさない: {missing}");
+
+        let container = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "server", "value": "1" }),
+        )
+        .await;
+        assert!(container.contains("スカラー"), "コンテナ置換は型破壊: {container}");
+
+        let container_value = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "server.port", "value": "[1,2]" }),
+        )
+        .await;
+        assert!(container_value.contains("配列・オブジェクトは set できません"), "{container_value}");
+
+        let bad_literal = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "set", "key": "server.port", "value": "bare-text" }),
+        )
+        .await;
+        assert!(bad_literal.contains("JSON リテラル"), "{bad_literal}");
+
+        assert!(dir.read("c.json").contains("8080"), "拒否経路では書かない");
+    }
+
+    #[tokio::test]
+    async fn yq_can_address_array_elements() {
+        let dir = TempDir::new("yq-array");
+        dir.write("c.json", r#"{ "servers": [ { "port": 1 }, { "port": 2 } ] }"#);
+
+        call_yq(
+            &dir,
+            serde_json::json!({
+                "path": "c.json", "op": "set", "key": "servers[1].port", "value": "22", "apply": true
+            }),
+        )
+        .await;
+
+        let saved = dir.read("c.json");
+        assert!(saved.contains("22"), "{saved}");
+        assert!(saved.contains("\"port\": 1"), "他の要素は触らない: {saved}");
+    }
+
+    #[tokio::test]
+    async fn yq_remove_deletes_a_key() {
+        let dir = TempDir::new("yq-remove");
+        dir.write("c.json", r#"{ "keep": 1, "drop": 2 }"#);
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "remove", "key": "drop", "apply": true }),
+        )
+        .await;
+
+        assert!(reply.contains("適用済み"), "{reply}");
+        let saved = dir.read("c.json");
+        assert!(!saved.contains("drop"), "{saved}");
+        assert!(saved.contains("keep"), "{saved}");
+    }
+
+    #[tokio::test]
+    async fn yq_rejects_unknown_extensions_before_parsing() {
+        let dir = TempDir::new("yq-ext");
+        // 中身は正しい JSON だが拡張子が対象外 — 検査順序 3 が 6 より先。
+        dir.write("c.txt", r#"{ "port": 8080 }"#);
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.txt", "op": "get", "key": "port" }),
+        )
+        .await;
+        assert!(reply.contains("対応していない形式"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn yq_reports_parse_errors_readably() {
+        let dir = TempDir::new("yq-parse");
+        dir.write("c.json", "{ broken");
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.json", "op": "get", "key": "port" }),
+        )
+        .await;
+        assert!(reply.contains("JSON として解釈できません"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn yq_without_a_work_dir_explains_how_to_enable_it() {
+        let reply = YqTool
+            .call(
+                &ctx_with(None),
+                &serde_json::json!({ "path": "c.json", "op": "get", "key": "a" }),
+            )
+            .await
+            .unwrap();
+        assert!(reply.contains("作業フォルダ"), "{reply}");
     }
 }
