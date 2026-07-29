@@ -472,6 +472,40 @@ async fn registering_a_credential_switches_the_template_to_the_keyring() {
     );
 }
 
+/// 貼り付け由来の前後空白・改行は登録時に落とすこと。
+///
+/// 混入すると送信時の 401 (Invalid token 等) としてしか表面化せず、
+/// 利用者は「正しいキーを貼ったのに拒否される」状態から抜けられない。
+#[tokio::test]
+async fn credentials_are_trimmed_before_storage() {
+    let dir = TempDir::new("credential-trim");
+    let secrets = Arc::new(InMemorySecretStore::new());
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::echo("[echo]")),
+        Arc::clone(&secrets) as Arc<dyn agent_core::SecretStore>,
+        OrchestratorConfig::default(),
+    )
+    .await
+    .unwrap();
+    orchestrator
+        .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+        .await
+        .unwrap();
+
+    orchestrator
+        .set_credential(&"tpl".into(), "  uuid:secret-value\n")
+        .await
+        .unwrap();
+
+    use agent_core::SecretStore as _;
+    assert_eq!(
+        secrets.get("tpl").unwrap().as_deref(),
+        Some("uuid:secret-value"),
+        "前後の空白・改行が落ちて保存されること"
+    );
+}
+
 /// 存在しないテンプレートに対して秘密を書き込ませない。
 #[tokio::test]
 async fn a_credential_cannot_be_stored_for_an_unknown_template() {

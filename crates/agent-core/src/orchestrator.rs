@@ -542,6 +542,10 @@ impl Orchestrator {
     /// 構築済みバックエンドのキャッシュを捨てる。登録したのに次の発話まで
     /// 反映されない、という状態を作らないため。
     pub async fn set_credential(&self, id: &ModelTemplateId, secret: &str) -> CoreResult<()> {
+        // 貼り付け由来の前後空白・改行を落とす。正当な API キーの先頭・末尾に
+        // 空白が含まれることはなく、混入すると送信時の 401 (Invalid token 等)
+        // としてしか表面化しない — 登録時に吸収するのが唯一気づける場所。
+        let secret = secret.trim();
         {
             // 存在しないテンプレートに対して秘密を書き込ませない。
             let world = self.shared.world.read().await;
