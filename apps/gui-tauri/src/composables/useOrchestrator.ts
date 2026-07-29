@@ -535,10 +535,16 @@ export function useOrchestrator() {
       await mutate("並び替え", () => ipc.reorderAgents(order));
     },
 
-    async upsertTemplate(template: ModelTemplate): Promise<void> {
-      await mutate("モデルテンプレートの保存", () =>
+    /**
+     * 成否を返す。呼び出し側（ダイアログ）は成功時だけ「保存しました」を
+     * 出す — 失敗時はエラートーストが出るので、そこへ成功表示を重ねると
+     * 画面が矛盾する。
+     */
+    async upsertTemplate(template: ModelTemplate): Promise<boolean> {
+      const done = await mutate("モデルテンプレートの保存", () =>
         ipc.upsertModelTemplate(template),
       );
+      return done !== FAILED;
     },
 
     /**

@@ -114,7 +114,9 @@ async function saveSecret(): Promise<void> {
   savingSecret.value = true;
   try {
     // テンプレート本体が未保存だと、コア側が「未登録」で弾く。先に保存する。
-    await orchestrator.upsertTemplate(template);
+    // 保存に失敗したらここで止める — 続けると「未登録」の 2 つ目のエラーが
+    // 重なり、どちらが本当の原因か読めなくなる。
+    if (!(await orchestrator.upsertTemplate(template))) return;
     const ok = await orchestrator.setCredential(id, secret);
     if (ok) {
       // 取得元の切り替えはコア側が行うので、その結果を読み直す。
@@ -248,11 +250,27 @@ function reseedDraft(id: ModelTemplateId): void {
   selectedId.value = saved ? saved.id : null;
 }
 
+/** 保存の通信中。連打の二重送信を塞ぎ、ボタンの文言も変える。 */
+const saving = ref(false);
+/** 保存直後の合図。reseed された値は打った値と同一で画面に差分が出ないため、
+    これが無いと「押しても無反応」に見える（#6 の処方が作った死角）。 */
+const savedFlash = ref(false);
+let savedTimer: ReturnType<typeof setTimeout> | undefined;
+
 async function save(): Promise<void> {
-  if (!draft.value) return;
+  if (!draft.value || saving.value) return;
   const id = draft.value.id;
-  await orchestrator.upsertTemplate(draft.value);
-  reseedDraft(id);
+  saving.value = true;
+  try {
+    const ok = await orchestrator.upsertTemplate(draft.value);
+    if (!ok) return; // 失敗はエラートーストが説明する。成功表示を重ねない。
+    reseedDraft(id);
+    savedFlash.value = true;
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => (savedFlash.value = false), 1600);
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function remove(template: ModelTemplate): Promise<void> {
@@ -575,11 +593,15 @@ function onTemperature(raw: string): void {
           >
             取消
           </button>
+          <!-- 保存の合図はボタン自身に出す。視線は押した場所にあるので、
+               離れたトーストより確実に届く。成功時だけ緑 + ✓ を 1.6 秒。 -->
           <button
-            class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0"
+            class="rounded px-3 py-1 text-[11px] font-medium text-surface-0 transition-colors disabled:opacity-60"
+            :class="savedFlash ? 'bg-run' : 'bg-accent'"
+            :disabled="saving"
             @click="save"
           >
-            保存
+            {{ saving ? "保存中…" : savedFlash ? "保存しました ✓" : "保存" }}
           </button>
         </div>
       </div>
