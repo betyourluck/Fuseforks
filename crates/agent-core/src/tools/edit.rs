@@ -620,14 +620,229 @@ fn json_navigate_mut<'a>(root: &'a mut Value, segs: &[PathSeg]) -> Option<&'a mu
     Some(current)
 }
 
-/// TOML バックエンド（Phase 3 で実装）。
+// ---- TOML バックエンド ------------------------------------------------------
+
+/// TOML の木の 1 ノード（可変参照）。
+///
+/// toml_edit は `Item`（テーブルの子）と `Value`（インラインの子）と
+/// `Table`（配列テーブルの要素）で型が分かれるため、ナビゲーションは
+/// この 3 態を跨いで進む。
+enum TomlNodeMut<'a> {
+    Item(&'a mut toml_edit::Item),
+    Value(&'a mut toml_edit::Value),
+    Table(&'a mut toml_edit::Table),
+}
+
+/// TOML の木を 1 区切りぶん降りる。
+fn toml_descend<'a>(
+    node: TomlNodeMut<'a>,
+    seg: &PathSeg,
+    full_path: &[PathSeg],
+) -> Result<TomlNodeMut<'a>, String> {
+    let missing = || format!("`{}` は存在しません。", seg_display(full_path));
+
+    match (node, seg) {
+        (TomlNodeMut::Item(item), PathSeg::Key(key)) => item
+            .as_table_like_mut()
+            .and_then(|table| table.get_mut(key))
+            .map(TomlNodeMut::Item)
+            .ok_or_else(missing),
+        (TomlNodeMut::Item(item), PathSeg::Index(index)) => match item {
+            toml_edit::Item::Value(value) => {
+                toml_descend(TomlNodeMut::Value(value), seg, full_path)
+            }
+            toml_edit::Item::ArrayOfTables(tables) => tables
+                .get_mut(*index)
+                .map(TomlNodeMut::Table)
+                .ok_or_else(missing),
+            _ => Err(missing()),
+        },
+        (TomlNodeMut::Value(value), PathSeg::Key(key)) => value
+            .as_inline_table_mut()
+            .and_then(|table| table.get_mut(key))
+            .map(TomlNodeMut::Value)
+            .ok_or_else(missing),
+        (TomlNodeMut::Value(value), PathSeg::Index(index)) => value
+            .as_array_mut()
+            .and_then(|array| array.get_mut(*index))
+            .map(TomlNodeMut::Value)
+            .ok_or_else(missing),
+        (TomlNodeMut::Table(table), PathSeg::Key(key)) => table
+            .get_mut(key)
+            .map(TomlNodeMut::Item)
+            .ok_or_else(missing),
+        (TomlNodeMut::Table(_), PathSeg::Index(_)) => Err(missing()),
+    }
+}
+
+/// TOML のスカラー値を JSON 値へ写す。写せない型（日時・コンテナ）は `None`。
+fn toml_scalar_to_json(value: &toml_edit::Value) -> Option<Value> {
+    match value {
+        toml_edit::Value::String(s) => Some(Value::String(s.value().clone())),
+        toml_edit::Value::Integer(i) => Some(Value::from(*i.value())),
+        toml_edit::Value::Float(f) => serde_json::Number::from_f64(*f.value()).map(Value::Number),
+        toml_edit::Value::Boolean(b) => Some(Value::Bool(*b.value())),
+        _ => None,
+    }
+}
+
+/// JSON スカラーを TOML 値へ写す。
+fn json_scalar_to_toml(value: &Value) -> Result<toml_edit::Value, String> {
+    match value {
+        Value::String(s) => Ok(toml_edit::Value::from(s.as_str())),
+        Value::Bool(b) => Ok(toml_edit::Value::from(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(toml_edit::Value::from(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(toml_edit::Value::from(f))
+            } else {
+                Err(format!("`{n}` は TOML の数値として表現できません。"))
+            }
+        }
+        Value::Null => Err(
+            "TOML に null は存在しません。キーを消したい場合は `remove` を使ってください。".into(),
+        ),
+        Value::Array(_) | Value::Object(_) => unreachable!("スカラーは呼び出し側で検証済み"),
+    }
+}
+
+/// TOML バックエンド。コメント・フォーマットは toml_edit が保持する。
 fn yq_toml(
-    _text: &str,
-    _op: YqOp,
-    _segs: &[PathSeg],
-    _new_value: Option<&Value>,
+    text: &str,
+    op: YqOp,
+    segs: &[PathSeg],
+    new_value: Option<&Value>,
 ) -> Result<YqOutcome, String> {
-    Err("TOML はまだ対応していません（実装中）。".into())
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|err| format!("TOML として解釈できません: {err}"))?;
+
+    // 対象（set / get）または親（remove）まで降りる。
+    let walk_len = match op {
+        YqOp::Remove => segs.len() - 1,
+        _ => segs.len(),
+    };
+    let mut node = TomlNodeMut::Item(doc.as_item_mut());
+    for seg in &segs[..walk_len] {
+        node = toml_descend(node, seg, segs)?;
+    }
+
+    match op {
+        YqOp::Get => {
+            // 表示はスカラーなら JSON 表記、日時は生表記 + 型注記、
+            // コンテナは TOML 表記のまま。
+            let shown = match &node {
+                TomlNodeMut::Item(item) => match item {
+                    toml_edit::Item::Value(value) => toml_value_display(value),
+                    other => other.to_string().trim().to_string(),
+                },
+                TomlNodeMut::Value(value) => toml_value_display(value),
+                TomlNodeMut::Table(table) => table.to_string().trim().to_string(),
+            };
+            Ok(YqOutcome::Value(shown))
+        }
+        YqOp::Set => {
+            let new_json = new_value.expect("set は value 検証済み");
+            let target: &mut toml_edit::Value = match node {
+                TomlNodeMut::Item(item) => match item {
+                    toml_edit::Item::Value(value) => value,
+                    _ => {
+                        return Err(format!(
+                            "`{}` はテーブルです。set できるのはスカラー値だけです。",
+                            seg_display(segs)
+                        ));
+                    }
+                },
+                TomlNodeMut::Value(value) => value,
+                TomlNodeMut::Table(_) => {
+                    return Err(format!(
+                        "`{}` はテーブルです。set できるのはスカラー値だけです。",
+                        seg_display(segs)
+                    ));
+                }
+            };
+
+            match toml_scalar_to_json(target) {
+                Some(current) => {
+                    if &current == new_json {
+                        return Ok(YqOutcome::NoChange);
+                    }
+                }
+                None => {
+                    // 日時・配列・インラインテーブル。型破壊になるため拒否。
+                    return Err(format!(
+                        "`{}` は JSON に写像できない型（日時など）またはコンテナです。\
+                         v1 では set できません。",
+                        seg_display(segs)
+                    ));
+                }
+            }
+
+            let mut replacement = json_scalar_to_toml(new_json)?;
+            // 値の前後の装飾（コメント・空白）は値に付随している。
+            // 引き継がないと `port = 8080 # 説明` の行末コメントが消える。
+            *replacement.decor_mut() = target.decor().clone();
+            *target = replacement;
+            Ok(YqOutcome::Edited(doc.to_string()))
+        }
+        YqOp::Remove => {
+            let missing = || format!("`{}` は存在しません。", seg_display(segs));
+            let removed = match (node, &segs[segs.len() - 1]) {
+                (TomlNodeMut::Item(item), PathSeg::Key(key)) => item
+                    .as_table_like_mut()
+                    .and_then(|table| table.remove(key))
+                    .is_some(),
+                (TomlNodeMut::Item(item), PathSeg::Index(index)) => match item {
+                    toml_edit::Item::Value(value) => remove_from_toml_value(value, *index),
+                    toml_edit::Item::ArrayOfTables(tables) => {
+                        if *index < tables.len() {
+                            tables.remove(*index);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                },
+                (TomlNodeMut::Value(value), PathSeg::Key(key)) => value
+                    .as_inline_table_mut()
+                    .and_then(|table| table.remove(key))
+                    .is_some(),
+                (TomlNodeMut::Value(value), PathSeg::Index(index)) => {
+                    remove_from_toml_value(value, *index)
+                }
+                (TomlNodeMut::Table(table), PathSeg::Key(key)) => table.remove(key).is_some(),
+                (TomlNodeMut::Table(_), PathSeg::Index(_)) => false,
+            };
+            if !removed {
+                return Err(missing());
+            }
+            Ok(YqOutcome::Edited(doc.to_string()))
+        }
+    }
+}
+
+/// TOML 配列から 1 要素を消す。範囲外なら false。
+fn remove_from_toml_value(value: &mut toml_edit::Value, index: usize) -> bool {
+    match value.as_array_mut() {
+        Some(array) if index < array.len() => {
+            array.remove(index);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// TOML 値の表示。スカラーは JSON 表記、日時は生表記 + 型注記。
+fn toml_value_display(value: &toml_edit::Value) -> String {
+    match toml_scalar_to_json(value) {
+        Some(json) => json.to_string(),
+        None => match value {
+            toml_edit::Value::Datetime(dt) => format!("{}（日時型）", dt.value()),
+            other => other.to_string().trim().to_string(),
+        },
+    }
 }
 
 /// YAML バックエンド（Phase 4 で実装）。
@@ -1073,6 +1288,144 @@ mod tests {
         )
         .await;
         assert!(reply.contains("JSON として解釈できません"), "{reply}");
+    }
+
+    // ---- yq: TOML ----------------------------------------------------------
+
+    /// コメントと行末コメントつきの代表的な設定ファイル。
+    const TOML_SAMPLE: &str = "\
+# サーバー設定
+[server]
+port = 8080 # 既定ポート
+host = \"localhost\"
+
+[log]
+level = \"info\"
+tags = [\"a\", \"b\"]
+
+[[workers]]
+name = \"w1\"
+started = 2026-01-01T00:00:00Z
+";
+
+    #[tokio::test]
+    async fn yq_toml_set_changes_only_the_target_and_keeps_comments() {
+        let dir = TempDir::new("toml-set");
+        dir.write("c.toml", TOML_SAMPLE);
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({
+                "path": "c.toml", "op": "set", "key": "server.port", "value": "9090", "apply": true
+            }),
+        )
+        .await;
+        assert!(reply.contains("適用済み"), "{reply}");
+
+        let saved = dir.read("c.toml");
+        assert!(saved.contains("port = 9090 # 既定ポート"), "行末コメントが残ること: {saved}");
+        assert!(saved.contains("# サーバー設定"), "{saved}");
+        // 対象行以外は 1 字も変わらないこと。
+        let expected = TOML_SAMPLE.replace("port = 8080 # 既定ポート", "port = 9090 # 既定ポート");
+        assert_eq!(saved, expected, "diff が対象行のみであること");
+    }
+
+    #[tokio::test]
+    async fn yq_toml_get_reads_scalars_and_datetimes_are_annotated() {
+        let dir = TempDir::new("toml-get");
+        dir.write("c.toml", TOML_SAMPLE);
+
+        let port = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "get", "key": "server.port" }),
+        )
+        .await;
+        assert!(port.contains("8080"), "{port}");
+
+        let tag = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "get", "key": "log.tags[1]" }),
+        )
+        .await;
+        assert!(tag.contains("\"b\""), "{tag}");
+
+        let dt = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "get", "key": "workers[0].started" }),
+        )
+        .await;
+        assert!(dt.contains("日時型"), "型注記が付くこと: {dt}");
+    }
+
+    #[tokio::test]
+    async fn yq_toml_rejects_type_breaking_sets() {
+        let dir = TempDir::new("toml-reject");
+        dir.write("c.toml", TOML_SAMPLE);
+
+        let table = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "set", "key": "server", "value": "1" }),
+        )
+        .await;
+        assert!(table.contains("テーブル"), "{table}");
+
+        let datetime = call_yq(
+            &dir,
+            serde_json::json!({
+                "path": "c.toml", "op": "set", "key": "workers[0].started", "value": "\"2027-01-01\""
+            }),
+        )
+        .await;
+        assert!(datetime.contains("写像できない型"), "{datetime}");
+
+        let null = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "set", "key": "server.port", "value": "null" }),
+        )
+        .await;
+        assert!(null.contains("null は存在しません"), "{null}");
+
+        assert_eq!(dir.read("c.toml"), TOML_SAMPLE, "拒否経路では書かない");
+    }
+
+    #[tokio::test]
+    async fn yq_toml_same_value_set_does_not_write() {
+        let dir = TempDir::new("toml-same");
+        dir.write("c.toml", TOML_SAMPLE);
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({
+                "path": "c.toml", "op": "set", "key": "server.port", "value": "8080", "apply": true
+            }),
+        )
+        .await;
+        assert!(reply.contains("変更なし"), "{reply}");
+        assert_eq!(dir.read("c.toml"), TOML_SAMPLE);
+    }
+
+    #[tokio::test]
+    async fn yq_toml_remove_deletes_a_key_and_array_elements() {
+        let dir = TempDir::new("toml-remove");
+        dir.write("c.toml", TOML_SAMPLE);
+
+        call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "remove", "key": "log.tags[0]", "apply": true }),
+        )
+        .await;
+        let saved = dir.read("c.toml");
+        assert!(!saved.contains("\"a\""), "{saved}");
+        assert!(saved.contains("\"b\""), "{saved}");
+
+        call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.toml", "op": "remove", "key": "log.level", "apply": true }),
+        )
+        .await;
+        let saved = dir.read("c.toml");
+        assert!(!saved.contains("level"), "{saved}");
+        assert!(saved.contains("# サーバー設定"), "他のコメントは残る: {saved}");
     }
 
     #[tokio::test]
