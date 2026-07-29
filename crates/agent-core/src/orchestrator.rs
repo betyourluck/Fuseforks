@@ -89,6 +89,11 @@ pub struct OrchestratorConfig {
     ///
     /// LangGraph の `recursion_limit` と同じ安全網。モデルが同じツールを
     /// 同じ引数で呼び続ける行き詰まりは実際に起きるので、上限が要る。
+    ///
+    /// 既定 12。当初 6 だったが、**通常の調査委譲が 2 セッションで 3 回**
+    /// この上限で溶けた（grep → 絞り込み → 読む、の往復は 6 では足りない）。
+    /// 低い上限は節約ではなく浪費側に働く — 燃えたトークンの成果が出ないまま、
+    /// 再依頼でもう一度同じだけ燃える（2026-07-30 実測）。
     pub max_tool_iterations: u8,
     /// エージェント 1 体あたりの受信箱容量。溢れたら送信側にエラーを返す（背圧）。
     pub mailbox_capacity: usize,
@@ -124,7 +129,7 @@ impl Default for OrchestratorConfig {
         Self {
             max_hops: 8,
             history_turns: 8,
-            max_tool_iterations: 6,
+            max_tool_iterations: 12,
             mailbox_capacity: 64,
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),
@@ -1425,10 +1430,28 @@ async fn handle_message(
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
                 grounding.absorb(std::mem::take(&mut response.grounding));
-                if let Some(text) = response.text
-                    && !text.trim().is_empty()
-                {
-                    outcome = Outcome::Finish { content: text };
+                match response.text {
+                    Some(text) if !text.trim().is_empty() => {
+                        outcome = Outcome::Finish { content: text };
+                    }
+                    // 本文が無いのにツール呼び出しがある = プロバイダが
+                    // `tool_choice: none` を無視した。「空だった」に丸めると、
+                    // モデルの不調と経路の不調が同じ文言になり切り分けられない
+                    // （実機の flash-lite / 互換経路で「本文が空」を観測。
+                    // この分岐はその容疑を次回から名指しするための計器）。
+                    None | Some(_) if !response.tool_calls.is_empty() => {
+                        summary_error = Some(format!(
+                            "モデルが本文ではなくツール呼び出し（{}）で応えました。\
+                             この経路は tool_choice の禁止指定を無視している可能性があります",
+                            response
+                                .tool_calls
+                                .iter()
+                                .map(|call| call.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join("、")
+                        ));
+                    }
+                    _ => {}
                 }
             }
             Err(err) => summary_error = Some(err.to_string()),

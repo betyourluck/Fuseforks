@@ -385,7 +385,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             type="number"
             min="1"
             max="99"
-            placeholder="既定: 6"
+            placeholder="既定: 12"
             class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
           />
           <p class="mb-3 text-[10px] text-ink-dim">

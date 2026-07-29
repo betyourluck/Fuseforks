@@ -203,7 +203,7 @@ entities:
       connectedAgents: AgentId[]   # 有向グラフの出辺
       order: u32                    # 左ペインの表示順
       workDir: String | null        # 同梱 grep / diff の探索範囲。null なら未設定でツールは動かない
-      maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (6)
+      maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (12)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
     enabled_tools_invariant: |
@@ -646,9 +646,12 @@ conversation_termination:
       transfer_to_* を呼んだ → 転送してターンを終える (結果は返らない)
       実行ツールを呼んだ     → 実行し、呼び出しと結果を対で積んでもう一度呼ぶ
       何も呼ばなかった       → 最終出力
-    上限は max_tool_iterations (既定 6、AgentSpec.maxToolIterations で
-    エージェント個別に上書き可 — 調査の多いコーディング用は既定では
-    足りない)。同じツールを同じ引数で呼び続ける行き詰まりが実際に
+    上限は max_tool_iterations (既定 12、AgentSpec.maxToolIterations で
+    エージェント個別に上書き可)。当初の既定 6 は、通常の調査委譲
+    (grep → 絞り込み → 読む) が 2 セッションで 3 回溶ける実測を受けて
+    引き上げた (2026-07-30)。低い上限は節約ではなく浪費側に働く —
+    燃えたトークンの成果が出ないまま、再依頼でもう一度同じだけ燃える。
+    同じツールを同じ引数で呼び続ける行き詰まりが実際に
     起きるため、hop と同様の安全網が要る。
     空応答の禁止 (2026-07-29, failures.md #29): 上限で打ち切られた周の
     応答が「ツール呼び出しだけでテキスト無し」だと最終出力が空になる。
