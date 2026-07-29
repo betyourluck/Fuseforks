@@ -2,9 +2,9 @@
 
 **ID**: 01
 **Date**: 2026-07-29
-**Status**: Draft rev2（rev1 への査読を反映。査読記録は末尾）
-**Branch**: なし（main へ Phase 単位で直接コミット。ただし Phase 0 は本 Spec の
-査読承認を前提条件とする — 「プロセス」の節を参照）
+**Status**: Done（rev2 査読承認 → Phase 0〜5 完了。YAML は Phase 4 の
+PoC 関門で棄却し、契約どおり縮退で着地 — Notes の PoC 記録参照）
+**Branch**: なし（main へ Phase 単位で直接コミット。Phase 0 は rev2 承認後）
 
 ---
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | sd の置換 | `regex`（**既存依存**） | 新規依存ゼロ。sd 本体も内部は regex crate |
 | yq: TOML | `toml_edit` 0.25 | 累計 6.9 億 DL、cargo 本体が使用。コメント・フォーマット完全保持のデファクト |
-| yq: YAML | `yaml-edit` 0.2.3 | rowan ベースの lossless 構文木。`set()` / `remove()` / `set_path()` あり。2026-07 更新で現役だが **0.2 系と若い**（リスク、Phase 4 参照） |
+| yq: YAML | ~~`yaml-edit` 0.2.3~~ | **PoC で棄却（Phase 4）**。先頭コメント消失・数値の文字列化・set_path の構造破壊・clone 間の変更共有を確認。YAML は非対応で縮退着地 |
 | yq: JSON | `serde_json` + `preserve_order`（既存依存 + feature） | キー順保持。JSON にコメントは無いので lossless 論点なし。**整形は正規化される**（P2 Acceptance に明記） |
 | 差分表示 | `similar`（既存依存） | diff ツールと共用 |
 
@@ -208,31 +208,19 @@ Spec の主旨と矛盾する**ため、Phase 0 だけは次を前提条件と�
 
 ## Tasks
 
-- [ ] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` の
-      `bundled_tools_contract` へ書き換え系の安全境界を先に追記する。
-      二段階（読み取り op 除外の注記込み）/ diff 必須 + 12,000 字超は拒否
-      （読み取り系の「切り詰め」との差を例外として明記）/
-      拡張子は yq の追加制限（`additional_restriction: extension`）/
-      1 ファイル / 新規作成なし / 検査順序 1〜6
-- [ ] Phase 1 — sd: 実装 + テスト（preview 不変・apply 一致・境界拒否・
-      ディレクトリ拒否・不正 regex・同文不書き込み・diff 上限拒否・
-      `$$` エスケープ・インラインフラグ優先）。依存追加なし
-- [ ] Phase 2 — yq/JSON: `serde_json` に `preserve_order` feature を付け、
-      path 演算（get/set/remove）と JSON リテラル解釈を実装。
-      path parser（`a.b[0].c`、v1 制限つき）はここで 1 回だけ書き、
-      全形式で共有。set の対称規則（スカラー限定・型破壊拒否・
-      中間キー不生成）もここで共通化する
-- [ ] Phase 3 — yq/TOML: `toml_edit` を追加し JSON と同じ演算を接続。
-      日時型の拒否・コメント保持の Acceptance をここで固定
-- [ ] Phase 4 — yq/YAML: `yaml-edit` を追加。**着手前に PoC**（コメント付き
-      実ファイルで set → diff が対象行のみであることを確認）。0.2 系が
-      期待を満たさなければ、YAML は「未対応」と正直に返す形へ**縮退**して
-      Phase 4 を閉じる（Spec 全体は Done にできる — 縮退も着地）
-- [ ] Phase 5 — 台帳整合: README（同梱ツール表 6 本化・書き換え系の節）/
-      `data_contract.yaml` 実装値補正 / 必要なら failures.md
-- [ ] 全 Phase: `cargo test -p agent-core` 全緑 + 実機（GUI からエージェントに
-      置換と設定編集を依頼し、preview → apply の二段が会話ログに diff として
-      残ること）を確認して Done
+- [x] Phase 0 — 契約凍結（ea29335）: `write_tools_contract` を追記
+- [x] Phase 1 — sd（7232100）: 実装 + テスト 12 本。依存追加なし
+- [x] Phase 2 — yq/JSON（27e87b8）: path parser + set の対称規則の共通化 +
+      serde_json preserve_order。テスト 10 本
+- [x] Phase 3 — yq/TOML（64b0de7）: toml_edit 接続、decor（行末コメント）の
+      引き継ぎ、日時型拒否。「対象行以外が 1 字も変わらない」を全文一致で
+      固定。テスト 5 本
+- [x] Phase 4 — yq/YAML: **PoC 棄却 → 縮退で着地**（詳細は Notes の
+      PoC 記録）。YAML は「対応していない形式」と正直に返し、依存も
+      追加しない
+- [x] Phase 5 — 台帳整合: README / data_contract.yaml / Spec 本文
+- [ ] 実機確認（残タスク）: GUI からエージェントに置換と設定編集を依頼し、
+      preview → apply の二段が会話ログに diff として残ることを確認する
 
 ---
 
@@ -249,6 +237,25 @@ Spec の主旨と矛盾する**ため、Phase 0 だけは次を前提条件と�
 4. **yaml-edit は Phase 4 に隔離のまま維持**: PoC 関門 + 縮退経路つき。
 5. **中間キーの自動生成はしない、で確定**: 誤ったパスへの set が静かに
    新構造を生やすのは事故の形。
+
+### Phase 4 PoC 記録（2026-07-29、yaml-edit 0.2.3 棄却）
+
+コメント・行末コメント付きの実サンプルで検証した結果、4 点で棄却:
+
+1. **先頭コメントの消失**: `# サーバー設定` が `set_path` 後の
+   `to_string()` から消えた。導入動機（コメント保持）そのものが偽
+2. **数値の文字列化**: `set_path("server.port", "9090")` の出力が
+   `port: '9090'`（引用符付き文字列）。型破壊であり契約違反
+3. **`set_path` の構造破壊**: 存在しないパス `server.ghost.deep` への
+   set で、`deep: '1'` がルート階層に漏れた壊れた YAML が生成された
+   （中間ノードの自動生成 + インデント破壊の複合）
+4. **`clone()` 間の変更共有**: clone した Document への編集が
+   元の Document にも反映された（内部が共有参照）。編集ライブラリとして
+   前提が成り立たない
+
+判断: 手動ナビゲーションで回避できるのは 3 の一部だけで、1・2・4 は
+回避不能。契約どおり縮退（YAML 非対応の正直な応答、依存追加なし）を選択。
+コメント保持で信頼できる YAML 編集 crate が現れたら再訪する。
 
 ### rev1 → rev2 の査読反映記録（2026-07-29 査読）
 

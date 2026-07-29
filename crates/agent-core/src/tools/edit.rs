@@ -346,11 +346,16 @@ enum YqOp {
     Remove,
 }
 
-/// TOML / YAML / JSON の値だけを取得・設定・削除するツール（`yq` 相当）。
+/// TOML / JSON の値だけを取得・設定・削除するツール（`yq` 相当）。
+///
+/// YAML は対応しない。候補だった yaml-edit 0.2 は PoC で棄却した —
+/// 先頭コメントの消失・数値の文字列化（型破壊）・`set_path` の構造破壊・
+/// `clone()` 間の変更共有が確認され、「コメントを保持したまま値だけ変える」
+/// という導入動機を満たせない（Spec 01 Phase 4 の記録参照）。
 pub struct YqTool;
 
 /// yq が受け付ける拡張子（検査順序 3）。
-const YQ_EXTENSIONS: [&str; 4] = ["toml", "yaml", "yml", "json"];
+const YQ_EXTENSIONS: [&str; 2] = ["toml", "json"];
 
 #[async_trait]
 impl AgentTool for YqTool {
@@ -359,13 +364,13 @@ impl AgentTool for YqTool {
     }
 
     fn description(&self) -> String {
-        "TOML / YAML / JSON ファイルの特定の値だけを取得（get）・設定（set）・\
+        "TOML / JSON ファイルの特定の値だけを取得（get）・設定（set）・\
          削除（remove）する。コメント・キー順・フォーマットは保持されるので、\
          **設定ファイルの値を変えるときはファイル全体を書き直さずこれを使うこと**。\
          `key` は `a.b[0].c` 形式のパスのみ（yq のクエリ式は使えない）。\
          set / remove は既定では書き込まず差分（diff）だけを返す。\
          確認してから `apply: true` で書き込むこと。\
-         set できるのはスカラー値（文字列・数値・真偽・null）だけ。"
+         set できるのはスカラー値（文字列・数値・真偽・null）だけ。YAML は非対応。"
             .to_owned()
     }
 
@@ -375,7 +380,7 @@ impl AgentTool for YqTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "対象ファイルの相対パス（.toml / .yaml / .yml / .json）"
+                    "description": "対象ファイルの相対パス（.toml / .json）"
                 },
                 "op": {
                     "type": "string",
@@ -481,7 +486,6 @@ fn run_yq(
     let outcome = match ext.as_str() {
         "json" => yq_json(&text, op, &segs, new_value.as_ref()),
         "toml" => yq_toml(&text, op, &segs, new_value.as_ref()),
-        "yaml" | "yml" => yq_yaml(&text, op, &segs, new_value.as_ref()),
         _ => unreachable!("拡張子は open_for_edit で検査済み"),
     };
 
@@ -843,16 +847,6 @@ fn toml_value_display(value: &toml_edit::Value) -> String {
             other => other.to_string().trim().to_string(),
         },
     }
-}
-
-/// YAML バックエンド（Phase 4 で実装）。
-fn yq_yaml(
-    _text: &str,
-    _op: YqOp,
-    _segs: &[PathSeg],
-    _new_value: Option<&Value>,
-) -> Result<YqOutcome, String> {
-    Err("YAML はまだ対応していません（実装中）。".into())
 }
 
 #[cfg(test)]
@@ -1275,6 +1269,22 @@ mod tests {
         )
         .await;
         assert!(reply.contains("対応していない形式"), "{reply}");
+    }
+
+    /// YAML は対応しない（yaml-edit 0.2 を PoC で棄却。Spec 01 Phase 4）。
+    /// 対応形式の列挙に yaml が現れないことも含めて固定する。
+    #[tokio::test]
+    async fn yq_declines_yaml_honestly() {
+        let dir = TempDir::new("yq-yaml");
+        dir.write("c.yaml", "port: 8080\n");
+
+        let reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "c.yaml", "op": "get", "key": "port" }),
+        )
+        .await;
+        assert!(reply.contains("対応していない形式"), "{reply}");
+        assert!(reply.contains("toml / json"), "対応形式を正直に列挙: {reply}");
     }
 
     #[tokio::test]

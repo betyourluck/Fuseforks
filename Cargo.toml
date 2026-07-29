@@ -56,6 +56,10 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
 # 同梱 yq の TOML 編集。コメント・フォーマットを保持する format-preserving parser
 # （cargo 自身が使うデファクト）。
+# なお YAML は対応しない: 候補だった yaml-edit 0.2 は PoC で棄却した
+# （先頭コメント消失・数値の文字列化・set_path の構造破壊・clone 間の変更共有。
+# Spec 01 Phase 4 の記録参照）。コメント保持で信頼できる YAML 編集 crate が
+# 現状のエコシステムに無い。
 toml_edit = "0.25"
 uuid = { version = "1", features = ["v4", "serde"] }
 

@@ -519,8 +519,9 @@ conversation_termination:
         表記揺れが本質的に多く、厳密一致既定は空振り→再試行の往復を増やす)
       - diff は unified diff (context 3 行)、similar crate。同一内容なら
         「同一です」と言う (空文字を返すと成功か失敗か区別できない)
-      - 依存の追加は regex / similar / toml_edit / yaml-edit の 4 つ
-        (すべて純 Rust。toml_edit / yaml-edit は書き換え系 yq 用)
+      - 依存の追加は regex / similar / toml_edit の 3 つ (すべて純 Rust。
+        toml_edit は書き換え系 yq 用。yaml-edit は PoC で棄却し不採用 —
+        write_tools_contract 参照)
 
   write_tools_contract: |
     書き換え系 sd / yq = Spec 01 rev2 承認に基づく契約 (2026-07-29 凍結)。
@@ -534,7 +535,7 @@ conversation_termination:
       - **境界**: 書き込み先も resolve_in_work_dir (canonicalize + 前方一致、
         symlink 不追従) を通す。読める範囲を超えて書き込み範囲を広げない。
         ツール側の追加制限は許す (yq の additional_restriction: extension —
-        .toml / .yaml / .yml / .json 以外は拒否)
+        .toml / .json 以外は拒否)
       - **diff 上限は切り詰めでなく拒否**: 適用結果の diff が 12,000 字を
         超える書き込みは preview / apply とも実行しない。変更統計 (件数・
         行数) と「対象を絞る」案内を返す。読み取り系の「切り詰めて明示」と
@@ -563,10 +564,18 @@ conversation_termination:
       - **yq の key** は a.b[0].c 形式のみ (フル yq 式は受けない)。v1 の
         キーは [A-Za-z0-9_-]+ とインデックス [数字] のみ。クォートキーは
         読める文言で拒否
-      - **yq のフォーマット保持**: TOML = 完全保持 (toml_edit)、
-        YAML = 保持 (yaml-edit)。ただし anchor / alias 入りは round-trip を
-        保証できないため編集拒否 (get は可)、JSON = キー順保持・整形は
-        正規化される (コメント概念なし。対象行以外の diff は契約どおり)
+      - **yq のフォーマット保持**: TOML = 完全保持 (toml_edit。値の decor を
+        引き継ぎ、行末コメントも残る)、JSON = キー順保持・整形は正規化される
+        (コメント概念なし。対象行以外の diff は契約どおり)
+      - **YAML は非対応** (2026-07-29 PoC で yaml-edit 0.2.3 を棄却):
+        先頭コメント消失 / 数値の文字列化 (型破壊) / set_path の構造破壊 /
+        clone 間の変更共有、の 4 点。手動ナビゲーションで回避できない欠陥が
+        含まれるため、「対応していない形式」と正直に返す縮退を選択
+        (Spec 01 Phase 4 の PoC 記録)。信頼できる crate が現れたら再訪
+      - **TOML に null は書けない** (TOML の仕様に null が無い)。null の set は
+        remove を案内する読める文言で拒否
+      - **UTF-8 でないファイルは編集拒否** (書き換え系のみ)。lossy 変換で
+        読んで書き戻すと非 UTF-8 部分が化けたまま固定される = 改竄になる
 
   convergence_prerequisite: |
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
