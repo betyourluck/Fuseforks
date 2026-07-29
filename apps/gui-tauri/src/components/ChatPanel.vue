@@ -23,6 +23,7 @@ import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
   buildTimeline,
   collapseRows,
+  sameEndpoint,
   type ChatRow,
   type TimelineEntry,
 } from "../lib/chatRows";
@@ -152,7 +153,7 @@ const timeline = computed<TimelineEntry[]>(() =>
   buildTimeline(rows.value, visibleToolRuns.value),
 );
 
-/** 直前の発話と同じ話者か（タイムライン上の位置で見る）。 */
+/** 直前の発話と同じ話者・同じ宛先か（タイムライン上の位置で見る）。 */
 function continuesTimeline(index: number): boolean {
   const current = timeline.value[index];
   if (current.kind !== "message") return false;
@@ -163,7 +164,12 @@ function continuesTimeline(index: number): boolean {
     const a = previous.row.message.from;
     const b = current.row.message.from;
     if (a.kind !== b.kind) return false;
-    return a.kind !== "agent" || (b.kind === "agent" && a.id === b.id);
+    const sameFrom = a.kind !== "agent" || (b.kind === "agent" && a.id === b.id);
+    // 宛先が変わったら名前行を省かない。宛先ごとに文面が違う fan-out は
+    // 連続する別々の吹き出しになり、送り手だけで判定すると 2 通目以降の
+    // 「→ 宛先」が画面から消える（実機の plan で発生。この画面は
+    // 「宛先を落とさない」が方針なのに、ここで落ちていた）。
+    return sameFrom && sameEndpoint(previous.row.message.to, current.row.message.to);
   }
   return false;
 }

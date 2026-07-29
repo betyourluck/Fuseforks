@@ -46,7 +46,7 @@ export type TimelineEntry =
   | { kind: "tool"; key: string; run: ToolRun };
 
 /** エンドポイントの同一性。 */
-function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
+export function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
   if (a.kind !== b.kind) return false;
   return a.kind !== "agent" || (b.kind === "agent" && a.id === b.id);
 }
