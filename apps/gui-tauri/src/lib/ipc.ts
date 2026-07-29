@@ -208,6 +208,9 @@ export const listMcpServers = () => call<McpServerStatus[]>("list_mcp_servers");
 export const agentMcpStatus = (agentId: AgentId) =>
   call<AgentMcpStatus>("agent_mcp_status", { agentId });
 
+/** 会話をリセットする（新規チャット）。稼働状態・統計・Memory.md は残る。 */
+export const resetConversation = () => call<void>("reset_conversation");
+
 // ---- アイコン ----------------------------------------------------------------
 
 /** エージェントのアイコン（WebP バイト列）を取得する。未設定なら `null`。 */

@@ -230,6 +230,16 @@ async function send(content: string): Promise<void> {
   if (!canSend.value || !target.value) return;
   await orchestrator.send(target.value, content);
 }
+
+/**
+ * 新規チャット。会話ログと全エージェントの履歴を消す（稼働・統計・
+ * Memory.md は残る）。ログは現状メモリ内のみで復元不能なので確認必須。
+ */
+async function newChat(): Promise<void> {
+  if (!rows.value.length) return;
+  if (!confirm("新規チャットを開始しますか？\n会話ログと各エージェントの記憶（履歴）が消えます（復元できません）。\n長期記憶（Memory.md）と稼働状態は残ります。")) return;
+  await orchestrator.newChat();
+}
 </script>
 
 <template>
@@ -239,6 +249,14 @@ async function send(content: string): Promise<void> {
     >
       <h2 class="font-semibold tracking-wide text-ink">会話</h2>
       <span class="tabular-nums">{{ rows.length }} 件</span>
+      <button
+        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
+        :disabled="!rows.length"
+        title="会話ログと各エージェントの履歴をリセットします（稼働状態と Memory.md は残ります）"
+        @click="newChat"
+      >
+        新規チャット
+      </button>
       <select
         v-model="filterAgentId"
         class="ml-auto min-w-0 rounded border border-line bg-surface-1 px-1.5 py-0.5 outline-none focus:border-accent"

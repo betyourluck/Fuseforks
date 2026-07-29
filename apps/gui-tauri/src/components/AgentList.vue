@@ -67,6 +67,7 @@ async function submitNew(): Promise<void> {
     maxToolIterations: null,
     // 新規作成の保存値は null（既定に従う）。UI の全 ON 表示は null の効果。
     enabledTools: null,
+    hearsRoomLog: true,
   };
 
   const created = await orchestrator.createAgent(spec);

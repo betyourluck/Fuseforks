@@ -96,6 +96,7 @@ pub fn run() {
             commands::stop_agent,
             commands::set_agent_running,
             commands::send_user_message,
+            commands::reset_conversation,
             commands::index_rag_chunk,
         ])
         .run(tauri::generate_context!())

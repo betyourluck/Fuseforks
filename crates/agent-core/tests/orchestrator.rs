@@ -1104,6 +1104,178 @@ async fn agents_overhear_what_others_said_in_the_room() {
     );
 }
 
+/// 広場ログは受信側でオプトアウトできること（Spec 03）。
+///
+/// false でも自分の発話は他者の広場ログに載る（受信側だけの設定）ことは
+/// 逆向きの検証（b には c の存在が見える必要は無いのでここでは a の発話で確認）。
+#[tokio::test]
+async fn an_agent_can_opt_out_of_the_room_log() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("room-optout");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b, c) = (
+        AgentId::from("agent_a"),
+        AgentId::from("agent_b"),
+        AgentId::from("agent_c"),
+    );
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    let mut spec_c = AgentSpec::new(c.clone(), "チャーリー", "tpl");
+    spec_c.hears_room_log = false;
+    orchestrator.create_agent(spec_c).await.unwrap();
+    for id in [&a, &b, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    // a の応答（エージェント発の発話）を広場ログの原料として作る。
+    orchestrator.send_user_message(&a, "挨拶して").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    orchestrator.send_user_message(&b, "どう？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&c, "どう？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let join = |index: usize| -> String {
+        requests[index]
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    assert!(
+        join(1).contains("この場で交わされていた会話"),
+        "既定（true）の b には広場ログが入ること。実際:\n{}",
+        join(1)
+    );
+    assert!(
+        !join(2).contains("この場で交わされていた会話"),
+        "オプトアウトした c には広場ログが入らないこと。実際:\n{}",
+        join(2)
+    );
+}
+
+/// 新規チャットは会話だけを消し、エージェントは消さないこと（Spec 03）。
+#[tokio::test]
+async fn a_new_chat_resets_the_conversation_but_not_the_agent() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("new-chat");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let tokens_before = orchestrator.snapshot(&id).await.unwrap().total_tokens;
+    assert!(tokens_before > 0, "リセット前にトークンが積まれていること");
+    assert!(!orchestrator.message_log(None).await.is_empty());
+
+    orchestrator.reset_conversation().await;
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(200)).await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, CoreEvent::ConversationCleared)),
+        "リセットが通知されること"
+    );
+    assert!(orchestrator.message_log(None).await.is_empty(), "会話ログが消えること");
+    let snapshot = orchestrator.snapshot(&id).await.unwrap();
+    assert_eq!(snapshot.status, AgentStatus::Running, "稼働状態は維持");
+    assert_eq!(snapshot.total_tokens, tokens_before, "累積統計は維持");
+
+    // 次のターンはコールドスタート: 旧履歴がプロンプトに入らない。
+    orchestrator.send_user_message(&id, "二回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let last = requests.last().unwrap();
+    assert!(
+        !last.iter().any(|m| m.content.contains("一回目")),
+        "旧履歴が消えていること: {last:#?}"
+    );
+}
+
+/// リセット中に飛行していたターンの完了書き込みは許容されること（案 A）。
+///
+/// 発話は起きた事実であり、ログに残す（hop 打ち切りの「記録してから
+/// 打ち切る」と同じ規律）。世代管理による破棄は採らない。
+#[tokio::test]
+async fn an_in_flight_turn_may_land_after_a_reset() {
+    /// 応答に時間がかかるバックエンド（飛行中状態を作る）。
+    struct SlowEchoBackend;
+
+    #[async_trait::async_trait]
+    impl LlmBackend for SlowEchoBackend {
+        fn name(&self) -> &str {
+            "slow-echo"
+        }
+        async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok(ChatResponse {
+                text: Some("遅い応答".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            })
+        }
+    }
+
+    let dir = TempDir::new("reset-inflight");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(SlowEchoBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "考えて").await.unwrap();
+    // 飛行中（LLM 応答待ち）にリセットする。
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    orchestrator.reset_conversation().await;
+
+    drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+
+    let log = orchestrator.message_log(None).await;
+    assert_eq!(log.len(), 1, "飛行中だった発話 1 件だけが載ること: {log:#?}");
+    assert!(log[0].content.contains("遅い応答"), "{log:#?}");
+}
+
 /// ユーザーが宛先を選んだ発話は、宛先外のエージェントには広場ログにも出ないこと。
 ///
 /// 「その人が通知に入っていないときは、そのエージェントはメッセージがあったこと

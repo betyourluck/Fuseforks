@@ -318,6 +318,13 @@ function applyEvent(event: CoreEvent): void {
       }
       break;
 
+    case "conversationCleared":
+      // messages は Shared.log の投影。コア側が先にクリアし、この通知で
+      // 投影を追従させる（順序は reset_rule で固定）。
+      state.messages = [];
+      pushToast("info", "新規チャットを開始しました", "会話ログと各エージェントの記憶（履歴）をリセットしました");
+      break;
+
     case "agentFailed": {
       patchAgent(event.agentId, { lastError: event.error });
       const name =
@@ -582,6 +589,11 @@ export function useOrchestrator() {
       // 発話は MessageSent イベントで届くので、ここでの再同期は
       // 送信が拒否された場合に一覧を正しく戻すために効く。
       await mutate("送信", () => ipc.sendUserMessage(agentId, content));
+    },
+
+    /** 会話をリセットする（新規チャット）。表示は conversationCleared が消す。 */
+    async newChat(): Promise<void> {
+      await guard("新規チャット", () => ipc.resetConversation());
     },
 
     // ユーザーからの同報（複数宛先へ一斉送信）は UI から外した。全員のターンが

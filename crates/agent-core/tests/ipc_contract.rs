@@ -58,6 +58,7 @@ fn wire_field_sets_are_frozen() {
         vec![
             "connectedAgents",
             "enabledTools",
+            "hearsRoomLog",
             "id",
             "maxToolIterations",
             "modelTemplateId",
@@ -83,6 +84,7 @@ fn wire_field_sets_are_frozen() {
         work_dir: None,
         max_tool_iterations: None,
         enabled_tools: None,
+        hears_room_log: true,
         last_error: None,
     };
     assert_eq!(
@@ -90,6 +92,7 @@ fn wire_field_sets_are_frozen() {
         vec![
             "connectedAgents",
             "enabledTools",
+            "hearsRoomLog",
             "id",
             "lastError",
             "maxToolIterations",
@@ -181,7 +184,8 @@ fn new_agent_spec_payload_deserializes() {
         "order": 0,
         "workDir": null,
         "maxToolIterations": null,
-        "enabledTools": null
+        "enabledTools": null,
+        "hearsRoomLog": true
     }"#;
 
     let spec: AgentSpec = serde_json::from_str(payload).expect("GUI のエージェント定義が受かること");
@@ -205,6 +209,7 @@ fn agent_spec_saved_before_work_dir_still_loads() {
 
     let spec: AgentSpec = serde_json::from_str(legacy).expect("旧形式も開けること");
     assert_eq!(spec.work_dir, None);
+    assert!(spec.hears_room_log, "フィールド不在は true（現状互換）");
 }
 
 /// `types.ts` の `Provider` が取りうる全値を Rust 側が受け取れること。

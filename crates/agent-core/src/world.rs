@@ -250,6 +250,16 @@ impl World {
         self.agents.len()
     }
 
+    /// 全エージェントの会話履歴をクリアする（新規チャット。Spec 03）。
+    ///
+    /// 触るのは `history` だけ — 稼働状態・累積統計はエージェントの属性で
+    /// あって会話の属性ではない。
+    pub fn clear_histories(&mut self) {
+        for record in self.agents.values_mut() {
+            record.history.clear();
+        }
+    }
+
     /// 表示順に並べた UI 向けスナップショット。
     pub fn snapshots(&self) -> Vec<AgentSnapshot> {
         let mut list: Vec<AgentSnapshot> = self.agents.values().map(|r| self.snapshot_of(r)).collect();
@@ -281,6 +291,7 @@ impl World {
             work_dir: record.spec.work_dir.clone(),
             max_tool_iterations: record.spec.max_tool_iterations,
             enabled_tools: record.spec.enabled_tools.clone(),
+            hears_room_log: record.spec.hears_room_log,
             last_error: record.last_error.clone(),
         }
     }

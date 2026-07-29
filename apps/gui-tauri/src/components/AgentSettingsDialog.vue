@@ -56,6 +56,7 @@ function seed(): void {
         workDir: source.workDir,
         maxToolIterations: source.maxToolIterations,
         enabledTools: source.enabledTools ? [...source.enabledTools] : null,
+        hearsRoomLog: source.hearsRoomLog,
       }
     : null;
 }
@@ -138,7 +139,8 @@ const dirty = computed(() => {
     current.connectedAgents.join() !== source.connectedAgents.join() ||
     current.workDir !== source.workDir ||
     current.maxToolIterations !== source.maxToolIterations ||
-    JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools)
+    JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools) ||
+    current.hearsRoomLog !== source.hearsRoomLog
   );
 });
 
@@ -428,6 +430,17 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           </p>
           <p v-if="!isToolChecked('remember')" class="mb-1 text-[10px] text-warn">
             remember を外すと長期記憶が自己更新されなくなります（Memory.md の内容は読み込まれ続けます）。
+          </p>
+          <div class="mb-3" />
+
+          <label class="mb-1 block text-[11px] text-ink-dim">会話の文脈</label>
+          <label class="flex items-center gap-2 text-[12px]">
+            <input type="checkbox" v-model="draft.hearsRoomLog" />
+            <span>広場の会話が聞こえる</span>
+          </label>
+          <p v-if="!draft.hearsRoomLog" class="mt-0.5 text-[10px] text-ink-dim">
+            他のエージェント同士の会話を文脈として使えなくなります（トークンは減ります）。
+            自分の発言は従来どおり他のエージェントに聞こえます。
           </p>
           <div class="mb-3" />
 

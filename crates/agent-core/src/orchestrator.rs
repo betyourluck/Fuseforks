@@ -391,6 +391,22 @@ impl Orchestrator {
         self.shared.world.read().await.templates()
     }
 
+    /// 会話をリセットする（新規チャット。Spec 03）。
+    ///
+    /// 消すのは `Shared.log` と各エージェントの `history` の**2 つだけ** —
+    /// 稼働状態・累積統計・Memory.md・エージェント別 MCP 接続はすべて維持
+    /// する（リセットするのは「会話」であって「エージェント」ではない）。
+    ///
+    /// 処理順は契約で固定: log クリア → history クリア → イベント発行。
+    /// 飛行中のターンの完了書き込みは**許容**する — 白紙化の直後に飛行中
+    /// だった発話 1 件が載るのは仕様（発話は起きた事実であり、ログに残す。
+    /// hop 打ち切りの「記録してから打ち切る」と同じ規律）。
+    pub async fn reset_conversation(&self) {
+        self.shared.log.write().await.clear();
+        self.shared.world.write().await.clear_histories();
+        self.shared.emit(CoreEvent::ConversationCleared);
+    }
+
     /// メッセージログ。`limit` を指定すると末尾からその件数だけ返す。
     pub async fn message_log(&self, limit: Option<usize>) -> Vec<AgentMessage> {
         let log = self.shared.log.read().await;
@@ -1119,8 +1135,12 @@ async fn handle_message(
     }
 
     // 居合わせた会話（広場ログ）。自分の履歴より前に置く — 場の背景であって、
-    // 自分とのやり取りではない。
-    if let Some(room) = compose_room_log(shared, agent_id, &shared.config).await {
+    // 自分とのやり取りではない。受信側でオプトアウトできる（Spec 03）:
+    // 毎ターン最大 12 件 × 200 字の固定費であり、場の共有が要らない役には
+    // 価値が無い。false でも自分の発話は他者の広場ログに載る（受信側だけの設定）。
+    if spec.hears_room_log
+        && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
+    {
         messages.push(ChatMessage::system(room));
     }
 

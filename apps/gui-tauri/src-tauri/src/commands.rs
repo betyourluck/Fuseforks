@@ -371,6 +371,14 @@ pub async fn send_user_message(
         .await
 }
 
+/// 会話をリセットする（新規チャット）。消えるのは会話ログと履歴だけで、
+/// 稼働状態・統計・Memory.md・個別 MCP 接続は残る。
+#[tauri::command]
+pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
+    state.orchestrator.reset_conversation().await;
+    Ok(())
+}
+
 /// RAG 索引に断片を追加する（動作確認用の投入口）。
 #[tauri::command]
 pub async fn index_rag_chunk(state: State<'_, AppState>, chunk: RagChunk) -> CoreResult<()> {

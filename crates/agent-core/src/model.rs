@@ -174,6 +174,13 @@ pub struct AgentSpec {
     /// 作業フォルダ未設定によるファイル系の自動除外は、このリストより優先される。
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
+    /// 広場ログ（他エージェント同士の会話）を受け取るか（Spec 03）。
+    ///
+    /// **受信側だけの設定。** `false` にしても自分の発話は他エージェントの
+    /// 広場ログに従来どおり載る — プライバシー機能ではなくコスト機能で、
+    /// 毎ターン最大 `room_log_window × room_log_excerpt_chars` の固定費を絞る。
+    #[serde(default = "default_true")]
+    pub hears_room_log: bool,
 }
 
 impl AgentSpec {
@@ -193,6 +200,7 @@ impl AgentSpec {
             work_dir: None,
             max_tool_iterations: None,
             enabled_tools: None,
+            hears_room_log: true,
         }
     }
 }
@@ -428,6 +436,8 @@ pub struct AgentSnapshot {
     pub max_tool_iterations: Option<u8>,
     /// 提示する同梱ツール名。`None` なら既定（全提示）。
     pub enabled_tools: Option<Vec<String>>,
+    /// 広場ログを受け取るか。
+    pub hears_room_log: bool,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

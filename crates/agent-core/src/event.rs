@@ -75,6 +75,14 @@ pub enum CoreEvent {
         reason: String,
     },
 
+    /// 会話がリセットされた（新規チャット。Spec 03）。
+    ///
+    /// 消えるのは会話ログと各エージェントの履歴だけで、稼働状態・統計・
+    /// Memory.md・個別 MCP 接続は残る。フロントはこれを受けて表示中の
+    /// メッセージ（`Shared.log` の投影）を空にする。
+    #[serde(rename_all = "camelCase")]
+    ConversationCleared,
+
     /// エージェントが受信した発話の処理を始めた / 終えた（入力中表示用）。
     ///
     /// 応答の生成には LLM 呼び出しとツール実行が含まれ、数十秒かかりうる。

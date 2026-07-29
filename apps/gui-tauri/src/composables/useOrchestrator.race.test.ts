@@ -58,6 +58,7 @@ function snapshot(id: string) {
     workDir: null,
     maxToolIterations: null,
     enabledTools: null,
+    hearsRoomLog: true,
     lastError: null,
   };
 }

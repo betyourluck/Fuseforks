@@ -78,6 +78,12 @@ export interface AgentSpec {
    * 自動除外は、このリストより優先される（Rust 側で強制）。
    */
   enabledTools: string[] | null;
+  /**
+   * 広場ログ（他エージェント同士の会話）を受け取るか。既定 true。
+   * 受信側だけの設定 — false でも自分の発話は他者の広場ログに載る
+   * （プライバシー機能ではなくコスト機能）。
+   */
+  hearsRoomLog: boolean;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -99,6 +105,8 @@ export interface AgentSnapshot {
   maxToolIterations: number | null;
   /** 提示する同梱ツール名。`null` なら既定（全提示）。 */
   enabledTools: string[] | null;
+  /** 広場ログを受け取るか。 */
+  hearsRoomLog: boolean;
   lastError: ErrorPayload | null;
 }
 
@@ -206,6 +214,7 @@ export type CoreEvent =
       reason: string;
     }
   | { type: "agentTyping"; agentId: AgentId; active: boolean }
+  | { type: "conversationCleared" }
   | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   | { type: "hopLimitReached"; agentId: AgentId; maxHops: number };
