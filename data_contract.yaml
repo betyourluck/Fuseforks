@@ -832,6 +832,13 @@ llm_wire:
     scope: |
       Anthropic ネイティブ経路のみ。OpenAI 互換層はキャッシュ指示を通せないので、
       Gemini / OpenAI 系で観測される cachedTokens はプロバイダ側の暗黙キャッシュ。
+      実測 (2026-07-30): Gemini ネイティブ経路 (gemini-3.6-flash) では暗黙キャッシュが
+      cachedContentTokenCount で実際に報告され、カードの率も動く。
+      互換経路の flash-lite は 0 のまま。残る容疑は (a) 最小プロンプト長の
+      閾値未満 (ワーカーのプロンプトは小さい) / (b) ターン間隔での失効 /
+      (c) 互換シムが prompt_tokens_details を返さない、の 3 つで未決着。
+      切り分けは flash-lite のテンプレートを provider: gemini (ネイティブ) へ
+      切り替えて観測するのが最短 (報告フィールドが変わるため)。
     invariants:
       - キャッシュ対象は **tools + system の安定部分**。ツール定義は system より前に
         置かれ、system に打った cache_control の内側に入る。判定に tools を数えないと
