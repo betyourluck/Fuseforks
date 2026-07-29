@@ -251,7 +251,9 @@ entities:
       modelTemplateId: ModelTemplateId
       status: AgentStatus
       uptimeSecs: u64               # 停止しても保持。再起動で加算
-      totalTokens: u64
+      totalTokens: u64              # 入力 + 出力
+      promptTokens: u64             # うち入力。キャッシュ率の分母
+      cachedTokens: u64             # うちキャッシュ読み取り
       ragSources: String[]
       connectedAgents: AgentId[]
       order: u32
@@ -730,6 +732,34 @@ llm_wire:
     - Parse エラーは raw を保持する（却下理由と一緒に差し戻して再生成させる燃料）
     - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
+
+  prompt_cache:
+    scope: |
+      Anthropic ネイティブ経路のみ。OpenAI 互換層はキャッシュ指示を通せないので、
+      Gemini / OpenAI 系で観測される cachedTokens はプロバイダ側の暗黙キャッシュ。
+    invariants:
+      - キャッシュ対象は **tools + system の安定部分**。ツール定義は system より前に
+        置かれ、system に打った cache_control の内側に入る。判定に tools を数えないと
+        道具を多く提示しているエージェントほど判定を外す (利得が大きいほど切る)
+      - 最小長の判定は**文字数ではなく概算トークン数**で行う。文字数は言語をまたげない
+        (英語 4 文字 ≈ 1 トークン / 日本語 1 文字 ≈ 1 トークン)。
+        当初 4,000 文字で判定しており、日本語設定の実機 5 体全員が足切りされていた
+      - 可変部分が空 (Memory.md 未記入) でも cache_control を打つ。
+        境界探索が末尾を越えて None になる経路で無キャッシュへ落ちていた
+      - TTL は **1 時間**（既定の 5 分ではない）。対話的な使い方では次の発話まで
+        5 分を超え、超えた瞬間に書き込みからやり直しになる。
+        余計な書き込みが 1 回減れば長い TTL のほうが得
+        (1h 書き込み 2.0× < 5m 書き込み 1.25× × 2 回)。
+        anthropic-beta ヘッダ (extended-cache-ttl-2025-04-11) が無いと
+        ttl は黙って無視され既定へ戻る
+      - 状態で揺れるものを **安定部分に入れない**。接続先の稼働状態・顔ぶれ・
+        提示するツール集合など、実行時に変わるものは可変部分か messages 側へ置く
+    observability: |
+      AgentSnapshot に promptTokens / cachedTokens を持ち、カードに
+      「入力の N% をキャッシュ」を出す。**分母は入力**（出力はキャッシュできないので、
+      合計を分母にすると天井が 100% にならず取り残し量が読めない）。
+      0% は警告色。効いていないことが画面から分からない指標は静かに壊れる
+      (failures.md #33 は請求ダッシュボードを見るまで数日気づけなかった)。
 
   gemini_native:
     why: |
