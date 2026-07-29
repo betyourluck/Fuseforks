@@ -116,9 +116,20 @@ enums:
       条例は全エージェント共通なので、モデル間の憲法差 (振る舞いの既定値の違い)
       を吸収する正規化層としても機能する。
       不変条件:
-        - 連結順は 条例 → Construct → Skill → Memory で固定 (プロンプトキャッシュ)
+        - 連結順は 条例 → 自分について → 作業フォルダ → 接地 → Construct → Skill → Memory
+          で固定 (プロンプトキャッシュ)
         - 条例は安定プレフィックスに含まれる。編集すると全エージェントの
           キャッシュが一度無効になるが、それは「場の規則が変わった」正しい代償
+        - **モデルが持っていない情報は、禁止ではなく欠落の告知で埋める** (Spec 05)。
+          実装側が差す節は現在 2 つ:
+            作業フォルダの実パス (spec.work_dir が Some のとき) —
+              無いとモデルは説明に使う絶対パスを推測で創作する
+            接地の制約 (template.google_search が真のとき) —
+              無いとモデルは出典を求められたとき偽の URL を作る (failures.md #31)
+          どちらも「〜するな」ではなく「〜は手元に無い」と書く。禁止は利用者の
+          要求と競合したときに折れるが、事実は競合しない。
+          人格 (SKILL.md) ではなく実装側に置くのは、どちらもワイヤ経路と設定の
+          性質であって、有効にした全員に等しく効くべきものだから
         - 反映は次の発話から (プロンプトはメッセージごとに組み直す。再起動不要)
     icon_contract: |
       アイコンの中身は WebP 固定 (2026-07-28)。png/jpg → WebP の変換と 256px 角への
@@ -128,10 +139,19 @@ enums:
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
   Provider:
-    values: [open_ai_compat, anthropic]
+    values: [open_ai_compat, anthropic, gemini]
     detect: |
       未指定なら baseUrl から自動判定。`api.anthropic.com` を含めば anthropic、
       それ以外は open_ai_compat（判定不能なプロキシは安全側で互換に落とす）。
+      gemini は**自動判定されない（明示選択のみ）**。generativelanguage.googleapis.com は
+      OpenAI 互換としても動いており、自動判定を変えると設定を触っていない
+      エージェントが黙って別のワイヤへ移るため (Spec 05)。
+    paths: |
+      open_ai_compat: {base_url}/chat/completions  + Authorization: Bearer
+      anthropic:      {base_url}/messages          + x-api-key + anthropic-version
+      gemini:         {base_url}/models/{model}:generateContent + x-goog-api-key
+      gemini だけモデル名が URL に埋まるため、Provider::path() は &'static str を
+      返せず String を返す（Spec 05 で全プロバイダの呼び出し側を巻き込んで変更）。
   Effort:
     values: [low, medium, high, xhigh, max]
     note: |
@@ -246,7 +266,7 @@ entities:
     fields:
       id: ModelTemplateId
       name: String
-      baseUrl: String               # パスは adapter が付ける（/chat/completions or /messages）
+      baseUrl: String               # パスは Provider が付ける（Provider.paths 参照）
       model: String
       contextLength: u32
       temperature: f32 | null       # null なら送らない
@@ -255,6 +275,7 @@ entities:
       provider: Provider | null     # null なら baseUrl から自動判定
       useTools: bool
       effort: Effort | null
+      googleSearch: bool            # 既定 false。provider == gemini でのみ効く (Spec 05)
       requestTimeoutSecs: u32
       maxRetries: u32
     invariant: |
@@ -709,3 +730,57 @@ llm_wire:
     - Parse エラーは raw を保持する（却下理由と一緒に差し戻して再生成させる燃料）
     - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
+
+  gemini_native:
+    why: |
+      Google 検索による接地は OpenAI 互換層に露出していない。
+      tools: [{"type":"google_search"}] は 400 Invalid tool type で拒否される
+      (実測 2026-07-29)。接地を使うときだけネイティブ経路が要る。
+      関数呼び出しだけなら互換層で足りる（既存エージェントはそのまま）。
+    invariants:
+      - finishReason "STOP" は終了を意味しない。functionCall を返したときも STOP が
+        来る（finishMessage は "Model generated function call(s)."）。
+        終了判定は parts の中身で行い、finishReason は Length 判定にだけ使う
+      - functionCall（こちらが実行する）と toolCall / toolResponse（Google が
+        実行済み）は別のフィールド。取り違えると実行済みの検索を二重に実行しにいく
+      - part は type タグを持たない判別共用体。どのキーがあるかで種別が決まるので、
+        enum ではなく全フィールド Option の構造体で受ける
+      - system は contents に混ぜず systemInstruction へ分ける。role は user / model の
+        2 値しかなく、ツール結果も user ロールの functionResponse パートとして積む
+      - 思考ブロック（thought: true）は本文に混ぜない（内部独白が利用者に見える）
+      - completion = candidatesTokenCount + thoughtsTokenCount。思考も課金対象で、
+        この数え方でのみ totalTokenCount と一致する（実測）
+      - 組み込みツールと関数呼び出しを併用するなら
+        toolConfig.includeServerSideToolInvocations が必須。欠くと 400 で名指しされる。
+        接地を使うときだけ送る（無関係なキーを常時足さない）
+    schema_subset: |
+      functionDeclarations[].parameters は JSON Schema ではなく OpenAPI 3.0 の部分集合。
+      未知キー（$schema / additionalProperties / exclusiveMinimum 等）は黙って無視されず
+      Unknown name "..." Cannot find field で 400 になる。
+      adapter が**許可リスト**で削る。除外リストにしないのは、MCP ツールのスキーマを
+      接続先のサーバーが書くから — こちらから中身を制限できない
+      （同梱ツールの additionalProperties を潰した直後に MCP の $schema で再発した）。
+      意味を保てるものは写す: const → enum / type 配列 → 単一 type + nullable。
+      $ref / $defs は解決しない（型を推測して埋めるほうが害が大きい。400 として表に出す）。
+    grounding: |
+      ChatResponse.grounding に queries（必ず取れる）と sources（実 URL）を載せる。
+      ChatMessage ではなく ChatResponse に置くのは、後者が履歴に積まれず
+      ラウンドトリップの契約に影響しないから（観測の席を安全に増やせる場所）。
+      **sources が空であることが「出典は存在しない」の判定**であり、
+      モデルが語る出典を信じない根拠になる。
+      **sources はモデルへ返さない（表示層専用）。** 接地はそのターンの中で起き、
+      sources は答えと同時に返るので、次ターンのプロンプトへ入れても
+      「前の話題の出典」にしかならない。前ターンの URL を現ターンの根拠として
+      見せるのは新種の誤帰属で、捏造を別の形に置き換えるだけ (Spec 05 Notes 9)。
+    grounding_active: |
+      接地の判定は ModelTemplate.google_search 単独ではなく
+      **grounding_active() = google_search AND effective_provider() == Gemini**。
+      互換経路のまま真になっている設定は world.json の直接編集で作れてしまい、
+      フラグだけを見ると検索できないモデルに「検索できます」と教えることになる。
+      接地の告知は「持っていない情報を埋める」処方なので、そこで嘘をつくと
+      処方そのものが毒になる (Spec 05 Phase 2.5)。
+      UI はその状態でチェックを隠す代わりに理由と直し方を出す
+      （隠すだけだと真のまま見えなくなる）。
+      未解決: toolCall / toolResponse を履歴へ返す必要があるかは未確認
+      （「検索 → 関数呼び出し → functionResponse → 次の周」が未通過）。
+      確かめる前に ChatMessage 側へ席を作らない。
