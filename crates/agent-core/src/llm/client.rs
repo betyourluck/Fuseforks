@@ -198,6 +198,10 @@ impl HttpLlmBackend {
                     .post(&url)
                     .header("x-api-key", &self.config.api_key)
                     .header("anthropic-version", "2023-06-01")
+                    // 5 分を超えるキャッシュ TTL の要求に必要。無いと ttl が
+                    // 黙って無視され、既定の 5 分に戻る（指定したのに命中率が
+                    // 伸びない、という気づきにくい形で表面化する）。
+                    .header("anthropic-beta", anthropic::EXTENDED_CACHE_BETA)
                     .json(&body)
             }
             Provider::Gemini => {

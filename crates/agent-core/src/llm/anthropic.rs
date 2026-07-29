@@ -113,6 +113,31 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
 /// > **キャッシュが一度も効いていなかった**（failures.md #33）。
 const MIN_CACHEABLE_TOKENS: usize = 2_048;
 
+/// キャッシュの生存期間。
+///
+/// 既定は 5 分だが、**この製品の使われ方には短すぎる**。人が読んで考えて次を
+/// 打つまでの間隔は普通に 5 分を超え、超えた瞬間に次のターンの 1 回目が
+/// また書き込みになる。実機の観測でも、ターン数が増えるほど命中率が
+/// 下がっていた（37% → 24%）。
+///
+/// 損得は明快で、**余計な書き込みが 1 回でも減れば長いほうが得**:
+///
+/// | | 書き込み | 読み取り |
+/// |---|---|---|
+/// | 5 分 | 1.25× | 0.1× |
+/// | 1 時間 | 2.0× | 0.1× |
+///
+/// 5 分で切れて 2 回書くと 2.5×。1 時間なら 1 回で 2.0× + 0.1×。
+/// **1 回の追加書き込みで既に逆転する。**
+const CACHE_TTL: &str = "1h";
+
+/// 5 分を超える TTL を要求するためのベータ機能名。
+///
+/// これを送らないと `ttl` が黙って無視される（既定の 5 分に戻る）。
+/// **黙って効かない**のがこの機構の厄介なところで、指定したつもりで
+/// 命中率だけが伸びない状態になる。
+pub const EXTENDED_CACHE_BETA: &str = "extended-cache-ttl-2025-04-11";
+
 /// 概算のトークン数。
 ///
 /// 正確な数はトークナイザ無しには出せないが、キャッシュ判定は
@@ -215,6 +240,7 @@ fn build_system_blocks(
     let ephemeral = || {
         Some(wire::AnthropicCacheControl {
             kind: "ephemeral",
+            ttl: Some(CACHE_TTL),
         })
     };
 
@@ -398,6 +424,28 @@ mod tests {
         assert!(w.system[0].cache_control.is_some());
         assert_eq!(w.system[1].text, "可変部分");
         assert!(w.system[1].cache_control.is_none());
+    }
+
+    /// 既定の 5 分ではなく 1 時間を要求すること。
+    ///
+    /// 対話的な使い方では次の発話まで 5 分を超えるのが普通で、超えた瞬間に
+    /// 書き込みからやり直しになる。書き込みは読み取りの 10 倍以上なので、
+    /// 余計な書き込みが 1 回でも減れば長い TTL のほうが得。
+    #[test]
+    fn cache_requests_the_extended_ttl_not_the_five_minute_default() {
+        let stable = "指示".repeat(3_000);
+        let mut req = request(0);
+        req.messages[0] = ChatMessage::system(format!("{stable}可変部分"));
+        req.cacheable_prefix_len = stable.chars().count();
+
+        let control = encode(&req).system[0].cache_control.clone().unwrap();
+        assert_eq!(control.kind, "ephemeral");
+        assert_eq!(control.ttl, Some("1h"));
+
+        // ワイヤ形も確認する。ttl が抜けると黙って 5 分へ戻る。
+        let json = serde_json::to_value(encode(&req)).unwrap();
+        assert_eq!(json["system"][0]["cache_control"]["ttl"], "1h");
+        assert_eq!(json["system"][0]["cache_control"]["type"], "ephemeral");
     }
 
     /// 実機の構成（日本語の短い設定 + 十数本のツール）でキャッシュが要求されること。

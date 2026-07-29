@@ -300,6 +300,14 @@ pub struct AnthropicCacheControl {
     /// 常に `"ephemeral"`。
     #[serde(rename = "type")]
     pub kind: &'static str,
+    /// 生存期間。省略時はプロバイダ既定の 5 分。
+    ///
+    /// **対話的な使い方では 5 分は短すぎる。** 人が読んで考えて次を打つまでの
+    /// 間隔がそれを超えると、次のターンの 1 回目はまた書き込みになる。
+    /// 書き込みは読み取りの 10 倍以上のコストなので、**1 回でも余計な書き込みが
+    /// 減れば長い TTL のほうが得**（1h 書き込み 2.0× < 5m 書き込み 1.25× × 2 回）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<&'static str>,
 }
 
 /// Anthropic の会話メッセージ。`system` ロールは持てない。
