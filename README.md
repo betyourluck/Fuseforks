@@ -360,6 +360,41 @@ canonical ⇄ wire の adapter 分離を採る。オーケストレーターは 
 - 本文空 + tool_calls 空 + `finish == length` のときだけ「推論の空応答」として再試行に乗せる
 - パース失敗は **raw を保持**する（却下理由と一緒に差し戻して再生成させる燃料）
 
+プロバイダは 3 つ。OpenAI 互換 / Anthropic ネイティブ / **Gemini ネイティブ**。
+
+Gemini は OpenAI 互換の口でも動き、関数呼び出しだけならそれで足りる。
+ネイティブ経路（`/models/{model}:generateContent` + `x-goog-api-key`）が
+要るのは **Google 検索による接地**を使うときだけで、互換層は
+`google_search` を `400 Invalid tool type` で拒否する。
+
+`generativelanguage.googleapis.com` を **Gemini へ自動判定しない**のは意図的。
+既存のテンプレートはその base URL を互換として使って動いており、判定を変えると
+設定を触っていない利用者のエージェントが黙って別のワイヤへ移る。
+
+### Google 検索による接地
+
+モデルテンプレートの「Google 接地」にチェックを入れると、そのモデルは
+検索で裏を取ってから答える。**関数呼び出しと併用できる**ので、接地を有効に
+しても `transfer_to_*` による委譲や同梱ツールは止まらない。
+
+> **参照した URL は、こちらへ渡ってこない。** 応答に乗るのは検索語と、
+> Google 検索へのリンクだけで、モデルが読んだ記事の URL は含まれない。
+> この事実を伝えないと、モデルは出典を求められたときに**引用の形をした
+> 文字列を作る**。実機では実在する URL と 404 が混ざった、より紛らわしい形で
+> 出た（[failures.md](failures.md) #31）。
+>
+> そこで、接地を有効にしたエージェントのシステムプロンプトには
+> 「URL は手元に来ない／代わりに検索語と発表元は言える」を自動で入れる。
+> **禁止ではなく欠落の告知**にするのが要点で、「URL を書くな」だけだと
+> 利用者が「出典URL付きで」と要求した瞬間に競合して折れる。
+> 作業フォルダの実パスを開示するのと同じ処方（判断材料の欠落は情報で埋める）。
+
+同梱ツールと MCP ツールのスキーマは、adapter が **Gemini が受け付けるキーだけ**
+残して削ってから送る。Gemini の `parameters` は JSON Schema ではなく OpenAPI 3.0 の
+部分集合で、`$schema` や `additionalProperties` を送ると 400 になる。
+除外リストではなく許可リストなのは、**MCP ツールのスキーマは接続先のサーバーが
+書くもので、こちらから中身を制限できない**ため。
+
 API キーは **OS の資格情報ストア**に保存する（Windows 資格情報マネージャー /
 macOS キーチェーン / freedesktop Secret Service）。`ModelTemplate` が持つのは
 `credential`（取得元）だけで、**秘密を保持できるフィールドが存在しない**。
@@ -506,7 +541,7 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 |---|---|---|
 | RAG の取り込み UI | `index_rag_chunk` コマンドは通っているが、GUI からの投入口が無い。右ペインの参照 RAG 欄は索引が空だとその旨を表示する | ファイル取り込み・チャンク分割・ソース管理の画面 |
 | 埋め込みモデル | `rag::HashEmbedder` は語をハッシュで次元へ振り分けるだけで、意味的な近さを捉えない。名前でそれを明示している | `Embedder` trait を実装した実モデルへ差し替え |
-| Gemini adapter | `Provider` は OpenAI 互換と Anthropic の 2 つ。canonical の接続点は開いている | `llm/gemini.rs` を足して `Provider` に 1 バリアント追加 |
+| 接地の来歴の可視化 | `ChatResponse.grounding` に検索語と参照元を拾ってあるが、まだイベントにも UI にも出していない | `CoreEvent` へ流す + 実 URL が取れるならプロンプトへ戻す（[Spec 05](specs/05_gemini-native-and-grounding.md) Phase 4） |
 | 個別 MCP の試験接続 | 停止中のエージェントの個別 MCP は「未接続」としか分からない（接続は稼働に紐付く設計） | 保存時に一度試験接続して結果だけ見せる補完（Spec 02 Notes） |
 | ノード座標の永続化 | 手で動かした配置はセッション内のみ。既定は円環自動配置 | 座標を持つなら `world.json` の拡張が要る |
 | 長期記憶（Memoria 接続） | `Memory.md`（remember）は稼働中。多層記憶は未接続だが、**扉は開いている** | 下記の方針で着手する |
