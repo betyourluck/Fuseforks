@@ -66,6 +66,44 @@ const workDirInput = computed({
 });
 
 /**
+ * 同梱ツールの一覧（表示順）。Rust 側の BUNDLED_TOOL_NAMES /
+ * WORK_DIR_TOOL_NAMES と対応させる（手動同期の契約）。
+ */
+const BUNDLED_TOOLS = [
+  { name: "remember", label: "remember — 長期記憶へ追記", needsWorkDir: false },
+  { name: "grep", label: "grep — 内容の検索", needsWorkDir: true },
+  { name: "fd", label: "fd — 名前でファイル探索", needsWorkDir: true },
+  { name: "diff", label: "diff — 2 ファイル比較", needsWorkDir: true },
+  { name: "sd", label: "sd — 正規表現置換（書き換え）", needsWorkDir: true },
+  { name: "yq", label: "yq — TOML/JSON の値編集（書き換え）", needsWorkDir: true },
+] as const;
+
+/**
+ * ツールのチェック状態。`enabledTools: null` は「既定に従う」= 全 ON 表示。
+ * これは null の**効果の表示**であって、明示配列 6 本を保存するのではない。
+ * 利用者がどれかを触った瞬間に明示配列へ切り替わる（Spec 02）。
+ */
+function isToolChecked(name: string): boolean {
+  const list = draft.value?.enabledTools;
+  return list === null || list === undefined ? true : list.includes(name);
+}
+
+/** ツールの ON/OFF。null（既定）から触ると明示配列へ切り替わる。 */
+function toggleTool(name: string, checked: boolean): void {
+  if (!draft.value) return;
+  const current =
+    draft.value.enabledTools ?? BUNDLED_TOOLS.map((tool) => tool.name as string);
+  draft.value.enabledTools = checked
+    ? [...current.filter((tool) => tool !== name), name]
+    : current.filter((tool) => tool !== name);
+}
+
+/** 作業フォルダが無いため提示されない（チェック不能にして理由を見せる）。 */
+function isToolGated(tool: (typeof BUNDLED_TOOLS)[number]): boolean {
+  return tool.needsWorkDir && !draft.value?.workDir;
+}
+
+/**
  * ツール実行上限の入力バッファ。空欄 = 既定値（null）。
  * 0 以下や数値でない入力も null（既定値）へ落とす — 不正値で保存を
  * 止めるより、既定へ戻る方が復帰しやすい。
@@ -326,6 +364,47 @@ async function removeIcon(): Promise<void> {
             1 回の応答で使えるツールの回数。調査の多いコーディング用エージェントは
             12〜20 に上げると打ち切られにくくなります（そのぶんトークンを使います）。
           </p>
+
+          <div class="mb-1 flex items-center gap-2">
+            <label class="block text-[11px] text-ink-dim">同梱ツール</label>
+            <span class="text-[10px] text-ink-dim opacity-70">
+              {{ draft.enabledTools === null ? "既定（すべて。新ツールも自動追加）" : "個別選択（自動追加なし）" }}
+            </span>
+            <button
+              v-if="draft.enabledTools !== null"
+              class="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim hover:border-accent hover:text-accent"
+              @click="draft.enabledTools = null"
+            >
+              既定に戻す
+            </button>
+          </div>
+          <!--
+            提示しないツールのスキーマは毎ターンの固定費。雑談役からファイル系を
+            外すと基礎トークンが下がる（トークン節約はこの製品の差別化軸）。
+          -->
+          <div class="mb-1 space-y-1">
+            <label
+              v-for="tool in BUNDLED_TOOLS"
+              :key="tool.name"
+              class="flex items-center gap-2 text-[12px]"
+              :class="isToolGated(tool) ? 'opacity-50' : ''"
+            >
+              <input
+                type="checkbox"
+                :checked="isToolChecked(tool.name)"
+                :disabled="isToolGated(tool)"
+                @change="toggleTool(tool.name, ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ tool.label }}</span>
+            </label>
+          </div>
+          <p v-if="!draft.workDir" class="mb-1 text-[10px] text-warn">
+            作業フォルダが未設定のため、ファイル系ツールは提示されません（チェックは保持されます）。
+          </p>
+          <p v-if="!isToolChecked('remember')" class="mb-1 text-[10px] text-warn">
+            remember を外すと長期記憶が自己更新されなくなります（Memory.md の内容は読み込まれ続けます）。
+          </p>
+          <div class="mb-3" />
 
           <label class="mb-1 block text-[11px] text-ink-dim">参照 RAG</label>
           <div class="mb-3 space-y-1">
