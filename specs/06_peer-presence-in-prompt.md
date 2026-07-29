@@ -2,8 +2,7 @@
 
 **ID**: 06
 **Date**: 2026-07-29
-**Status**: Draft rev4（**P0 のみ実装・契約凍結済み**（利用者指示の先行、
-`ab82416`）。P1 以降は査読承認待ち）
+**Status**: **rev4 査読承認 → Phase 0〜3 完了**（2026-07-30）。残は実機確認のみ
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜05 と同じプロセス）
 
 ---
@@ -250,19 +249,19 @@ rev1 の「毎ターン状態行を差し込む」案より優れている点が
 - [x] Phase 0a — P0（表示名の一意性）の契約凍結: **例外として先行凍結済み**
       （利用者指示、`ab82416`。`AgentSpec.name_invariant` に
       `DUPLICATE_AGENT_NAME` / 読み込み寛容 / 正規化しない、を記載済み）
-- [ ] Phase 0b — 残りの契約凍結（**査読承認後**）: `data_contract.yaml` へ
+- [x] Phase 0b — 残りの契約凍結（**査読承認後**）: `data_contract.yaml` へ
       「顔ぶれは可変部分・`agent_id（表示名）` 併記・順序はツール提示順」
       「**`stable_len` 境界の再定義**（安定素材の末尾 = 顔ぶれの直前。
       値は不変）」「入退室は System 発 → User 宛でログへ・文言は状態語彙 3 種」
       「通知の合成は `hearsRoomLog` の gate の外」
       「可視範囲は広場ログの窓・権威は顔ぶれ」
-- [ ] Phase 1 — 入退室の通知: `set_status` の境界判定で `Endpoint::System` 発・
+- [x] Phase 1 — 入退室の通知: `set_status` の境界判定で `Endpoint::System` 発・
       `Endpoint::User` 宛の発話を記録。プロンプト側は**通知（gate 無し）と
       広場ログ（gate あり）の 2 節構成**へ分離
-- [ ] Phase 2 — 顔ぶれ: `compose_system_prompt` に接続先の状態を渡し、
+- [x] Phase 2 — 顔ぶれ: `compose_system_prompt` に接続先の状態を渡し、
       境界確定**後**に 1 行 push。`stable_len` の値の不変をテストで固定
-- [ ] Phase 2.5 — 周知: `protocol_note` に失敗が理由つきで返る旨の 1 行（P2）
-- [ ] Phase 3 — 台帳整合: README（会話の終わり方の節へ 1 段落）
+- [x] Phase 2.5 — 周知: `protocol_note` に失敗が理由つきで返る旨の 1 行（P2）
+- [x] Phase 3 — 台帳整合: README（会話の終わり方の節へ 1 段落）
 - [ ] 実機確認 1（通知）: ロボットくん 1 号を停止した瞬間、会話ログに
       「agent_XX（ロボットくん1号）が停止しました」が 1 行入ること
 - [ ] 実機確認 2（顔ぶれ）: 1 号が停止したままザリに全員へ依頼させ、
