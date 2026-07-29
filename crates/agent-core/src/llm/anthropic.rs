@@ -70,7 +70,14 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         None
     } else {
         match &req.tool_choice {
-            ToolChoice::None => None,
+            // 明示の "none" を送る。欠落（= 既定 auto）に写すと「定義は見せるが
+            // 使わせない」が表現できない — まとめ呼び出し（ツール上限後の 1 回）は
+            // 履歴の tool ブロックのために tools を残す必要があり、そこで使用まで
+            // 許すと打ち切ったはずのツールをもう一度呼んでくる。
+            ToolChoice::None => Some(wire::AnthropicToolChoice {
+                kind: "none",
+                name: None,
+            }),
             ToolChoice::Auto => Some(wire::AnthropicToolChoice {
                 kind: "auto",
                 name: None,
@@ -362,6 +369,22 @@ mod tests {
             effort: None,
             cacheable_prefix_len,
         }
+    }
+
+    /// ツール定義を残したまま使用だけを禁じる形（まとめ呼び出しのワイヤ契約）。
+    ///
+    /// 履歴に tool_use / tool_result ブロックが残る限り tools の定義は必須で、
+    /// 空にすると API が 400 を返す（failures.md #36）。だから「取り上げる」は
+    /// `tools` を消すことではなく、明示の `tool_choice: none` で表現する。
+    /// 欠落（= 既定 auto）に写すと、打ち切ったはずのツールをもう一度呼んでくる。
+    #[test]
+    fn tool_choice_none_is_sent_explicitly_with_tools_kept() {
+        let mut req = request(0);
+        req.tool_choice = ToolChoice::None;
+        let json = serde_json::to_value(encode(&req)).unwrap();
+
+        assert_eq!(json["tool_choice"]["type"], "none");
+        assert_eq!(json["tools"][0]["name"], "emit_plan", "定義は残ること");
     }
 
     /// 中身が完全に空の発話はワイヤへ出さない。

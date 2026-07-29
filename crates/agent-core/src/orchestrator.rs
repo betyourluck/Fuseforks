@@ -1378,7 +1378,11 @@ async fn handle_message(
         }
     }
 
-    // ツール上限で打ち切られてテキストが無いときは、**ツール無しで最後に
+    // まとめ呼び出しが失敗したときの理由。フォールバック文言に載せる（#4 の規律:
+    // 退避には落ちた事実・理由・復帰条件の 3 点を出口に付ける）。
+    let mut summary_error: Option<String> = None;
+
+    // ツール上限で打ち切られてテキストが無いときは、**ツールの使用を禁じて最後に
     // 1 回だけ呼び、ここまでの結果を文章化させる**。
     //
     // 中間のツール結果はこのターンの `messages` にしか存在せず、履歴には
@@ -1395,27 +1399,37 @@ async fn handle_message(
              ここまでのツール結果から分かったことを、最終回答としてまとめてください。\
              調査が途中なら、どこまで分かっていて何が残っているかを書いてください。",
         ));
+        // ツールを取り上げるのは `tools` を消すことではなく `tool_choice` で縛る。
+        // 履歴には直前のツール往復（tool_use / tool_result）が積まれたままなので、
+        // `tools` を空にすると Anthropic が「tool ブロックを含むなら tools の定義が
+        // 必須」の 400 を返し、**まとめはモデルに届く前にワイヤで死ぬ**
+        // （実機で発生。failures.md #36）。定義は残し、使用だけを禁じる。
         let request = ChatRequest {
             model: template.model.clone(),
             messages: messages.clone(),
-            tools: Vec::new(),
+            tools: if use_tools { specs.clone() } else { Vec::new() },
             tool_choice: crate::llm::ToolChoice::None,
             temperature: template.temperature,
             max_tokens: template.max_output_tokens,
             effort: template.effort,
             cacheable_prefix_len: stable_len,
         };
-        // まとめの失敗でターンごと落とさない。失敗時は下の最終フォールバックが拾う。
-        if let Ok(mut response) = backend.chat(request).await {
-            tokens += response.usage.total();
-            cached += response.usage.cache_read;
-            prompt += response.usage.prompt;
-            grounding.absorb(std::mem::take(&mut response.grounding));
-            if let Some(text) = response.text
-                && !text.trim().is_empty()
-            {
-                outcome = Outcome::Finish { content: text };
+        // まとめの失敗でターンごと落とさない。ただし**理由は握り潰さない** —
+        // ここを `if let Ok` で書いていた間、まとめが落ちても理由はログにも
+        // イベントにもフォールバック文言にも残らず、現場から診断不能だった。
+        match backend.chat(request).await {
+            Ok(mut response) => {
+                tokens += response.usage.total();
+                cached += response.usage.cache_read;
+                prompt += response.usage.prompt;
+                grounding.absorb(std::mem::take(&mut response.grounding));
+                if let Some(text) = response.text
+                    && !text.trim().is_empty()
+                {
+                    outcome = Outcome::Finish { content: text };
+                }
             }
+            Err(err) => summary_error = Some(err.to_string()),
         }
     }
 
@@ -1429,10 +1443,16 @@ async fn handle_message(
         && content.trim().is_empty()
     {
         *content = if tool_limit_hit {
+            // 理由を必ず添える。「失敗しました」だけでは、設定を直せば済むのか
+            // ワイヤの障害なのかを利用者が判別できない。
+            let reason = summary_error
+                .as_deref()
+                .map(|err| format!("失敗の理由: {err}。"))
+                .unwrap_or_else(|| "モデルは応答しましたが本文が空でした。".to_owned());
             format!(
                 "（ツール実行の上限 {max_tool_iterations} 回に達し、まとめの生成にも\
-                 失敗しました。エージェント設定で上限を上げるか、依頼を小さく\
-                 分けてください。）"
+                 失敗しました。{reason}\
+                 エージェント設定で上限を上げるか、依頼を小さく分けてください。）"
             )
         } else {
             "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
@@ -1865,7 +1885,8 @@ async fn run_plan(
     // 4. 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
     //    表示名の一意性がどこも保証されていないから（同名が 2 体いると
     //    どちらの答えか判別できなくなる）。順序は入力順に戻す。
-    wave.iter()
+    let bundle = wave
+        .iter()
         .zip(answers)
         .map(|((target, _), answer)| {
             let display = handoffs.display_of(target).unwrap_or_else(|| target.as_str());
@@ -1873,7 +1894,18 @@ async fn run_plan(
             format!("## {target}（{display}）\n{body}")
         })
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join("\n\n");
+
+    // 束ねの大きさを記録する（Spec 04 Notes 7 の「実測してから決める」の実測側）。
+    // 束ねは進行役の履歴に積まれ、以後の波のたびに入力として運ばれる —
+    // 波数 × N 体で膨らむ構造なので、上限や要約を入れるかの判断材料をここで取る。
+    // 機構は入れない。測らずに入れると「効いているか分からない機構」が増えるだけ。
+    eprintln!(
+        "[concordia] plan bundle: agent={from} tasks={} chars={}",
+        wave.len(),
+        bundle.chars().count()
+    );
+    bundle
 }
 
 /// `JoinSet` のタスク異常を握り潰さずに記録する。
@@ -2250,6 +2282,10 @@ impl HandoffTools {
                  相手ごとに依頼内容を変えられる。\
                  1 体ずつ順に尋ねる `ask_*` と違い、全員が同時に動くので速い。\
                  独立した調べもの・作業を配るときはこれを使うこと。\
+                 次の波を出す前に、前の束ねは**自分の言葉で要約**してから頼むこと\
+                 （束ね全文を引きずると入力が波のたびに膨らむ）。\
+                 「会話を渡した」と返ったタスクは**リトライしないこと** — \
+                 仕事は別の経路で続いており、頼み直すと同じ仕事が二重に走る。\
                  依頼先: {roster}"
             ),
             parameters: serde_json::json!({

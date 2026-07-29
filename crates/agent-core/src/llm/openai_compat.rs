@@ -40,7 +40,9 @@ pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
             .collect();
 
         let choice = match &req.tool_choice {
-            ToolChoice::None => None,
+            // 明示の "none"。欠落は既定 auto なので「定義は見せるが使わせない」に
+            // ならない（Anthropic 側と同じ理由。まとめ呼び出しが使う形）。
+            ToolChoice::None => Some(wire::OaiToolChoice::Mode("none")),
             ToolChoice::Auto => Some(wire::OaiToolChoice::Mode("auto")),
             ToolChoice::Required => Some(wire::OaiToolChoice::Mode("required")),
             ToolChoice::Specific(name) => Some(wire::OaiToolChoice::Function {
@@ -259,6 +261,17 @@ mod tests {
             effort: None,
             cacheable_prefix_len: 0,
         }
+    }
+
+    /// ツール定義を残したまま使用だけを禁じる形（まとめ呼び出しのワイヤ契約）。
+    /// 欠落（= 既定 auto）に写すと「定義は見せるが使わせない」が表現できない。
+    #[test]
+    fn encode_sends_explicit_none_with_tools_kept() {
+        let wire = encode(&req_with_tool(ToolChoice::None), true);
+        let json = serde_json::to_value(&wire).unwrap();
+
+        assert_eq!(json["tool_choice"], "none");
+        assert_eq!(json["tools"][0]["function"]["name"], "emit_plan", "定義は残ること");
     }
 
     #[test]

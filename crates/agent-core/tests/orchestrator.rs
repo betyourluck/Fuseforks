@@ -412,12 +412,15 @@ impl LlmBackend for ToolCallingBackend {
     }
 }
 
-/// ツールが提示されている限り**ツール呼び出しだけ**を返すバックエンド。
+/// ツールの使用が許されている限り**ツール呼び出しだけ**を返すバックエンド。
 ///
 /// ツール実行上限による打ち切りの経路を再現する。実機では「調査系の依頼で
 /// モデルがツールを呼び続け、上限に達した周の応答にテキストが無い」形で起きる。
-/// ツールが提示されなければテキストを返す — まとめ呼び出し（tools 無し）に
-/// 対する実モデルの挙動と同じ。
+/// `tool_choice: None`（まとめ呼び出し）ならテキストを返す。
+///
+/// まとめ呼び出しの判定を `tools.is_empty()` にしないのが要点 — まとめでも
+/// **tools は空にならない**（履歴に tool ブロックが残る限り、tools の定義は
+/// ワイヤ契約の一部。空にすると Anthropic が 400 を返す。failures.md #36）。
 #[derive(Default)]
 struct EndlessToolBackend {
     calls: std::sync::Mutex<usize>,
@@ -434,7 +437,11 @@ impl LlmBackend for EndlessToolBackend {
         *calls += 1;
         let n = *calls;
 
-        if req.tools.is_empty() {
+        if req.tool_choice == agent_core::llm::ToolChoice::None {
+            assert!(
+                !req.tools.is_empty(),
+                "まとめ呼び出しでも tools の定義は残ること（空だと実プロバイダで 400）"
+            );
             return Ok(ChatResponse {
                 text: Some("ここまでの調査のまとめです。".into()),
                 tool_calls: Vec::new(),
