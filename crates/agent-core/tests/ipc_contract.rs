@@ -40,6 +40,7 @@ fn wire_field_sets_are_frozen() {
             "contextLength",
             "credential",
             "effort",
+            "googleSearch",
             "id",
             "maxOutputTokens",
             "maxRetries",
@@ -132,6 +133,7 @@ fn new_model_template_payload_deserializes() {
         "provider": null,
         "useTools": true,
         "effort": null,
+        "googleSearch": false,
         "requestTimeoutSecs": 120,
         "maxRetries": 3
     }"#;
@@ -144,6 +146,31 @@ fn new_model_template_payload_deserializes() {
     assert_eq!(template.provider, None);
     assert_eq!(template.credential, CredentialSource::Unset);
     assert!(template.use_tools);
+    assert!(!template.google_search);
+}
+
+/// `googleSearch` の追加前に保存された `world.json` がそのまま読めること。
+///
+/// 既存の村（ザリ・ジェミー・ロボットくん）の設定はこの形で保存されている。
+/// 既定は「接地なし」— 設定を触っていない利用者のリクエストの形を変えない。
+#[test]
+fn model_template_saved_before_google_search_still_loads() {
+    let payload = r#"{
+        "id": "template",
+        "name": "gemini-3.6-flash",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+        "model": "gemini-3.6-flash",
+        "contextLength": 128000,
+        "maxOutputTokens": 4096,
+        "credential": "keyring",
+        "provider": null,
+        "useTools": true
+    }"#;
+
+    let template: ModelTemplate = serde_json::from_str(payload).expect("旧テンプレートが受かること");
+
+    assert!(!template.google_search, "既定は接地なし");
+    assert_eq!(template.provider, None, "自動判定のまま = OpenAI 互換経路");
 }
 
 /// `types.ts` の `CredentialSource` が取りうる全値を Rust 側が受け取れること。
@@ -215,10 +242,11 @@ fn agent_spec_saved_before_work_dir_still_loads() {
 /// `types.ts` の `Provider` が取りうる全値を Rust 側が受け取れること。
 #[test]
 fn provider_values_match_typescript_union() {
-    // types.ts: export type Provider = "open_ai_compat" | "anthropic";
+    // types.ts: export type Provider = "open_ai_compat" | "anthropic" | "gemini";
     for (json, expected) in [
         (r#""open_ai_compat""#, Provider::OpenAiCompat),
         (r#""anthropic""#, Provider::Anthropic),
+        (r#""gemini""#, Provider::Gemini),
     ] {
         let parsed: Provider = serde_json::from_str(json)
             .unwrap_or_else(|e| panic!("Provider {json} が受からない: {e}"));

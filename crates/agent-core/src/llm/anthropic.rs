@@ -14,7 +14,9 @@
 //!
 //! 由来: Kataribe `crates/llm_client/src/anthropic.rs` の設計方針。
 
-use super::canonical::{ChatMessage, ChatResponse, Finish, Role, ToolCall, ToolChoice, Usage};
+use super::canonical::{
+    ChatMessage, ChatResponse, Finish, Grounding, Role, ToolCall, ToolChoice, Usage,
+};
 use super::error::LlmError;
 use super::wire;
 use crate::llm::canonical::ChatRequest;
@@ -240,6 +242,8 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
         tool_calls,
         finish,
         usage,
+        // このプロバイダは接地を代行しない。
+        grounding: Grounding::default(),
     })
 }
 

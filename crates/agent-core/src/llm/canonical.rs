@@ -229,7 +229,7 @@ impl ChatRequest {
 ///
 /// `Length` は空応答防御の判定材料。推論モデルが出力予算を思考に使い切ったときの
 /// 一次シグナルであり、通常の空応答と区別するために必要。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Finish {
     /// 正常終了。
@@ -239,6 +239,9 @@ pub enum Finish {
     /// 出力上限に到達して打ち切られた。
     Length,
     /// 判別不能・プロバイダ固有。
+    ///
+    /// 既定値でもある。**分からないものを「正常終了」に倒さない**ため。
+    #[default]
     Other,
 }
 
@@ -288,8 +291,44 @@ pub struct ToolCall {
     pub extra: Option<Value>,
 }
 
+/// プロバイダが**代行して実行した**接地の記録。
+///
+/// こちらが呼ぶツール（[`ToolCall`]）とは別物。モデルの内部で検索が走り、
+/// 結果が応答に織り込まれて返ってくる経路の痕跡で、実行するものは何も無い。
+///
+/// **これを捨てると、モデルは出典を訊かれたときに作る。**
+/// 実際に、参照元を運ぶ経路を持たないまま「根拠 URL を出せ」と求めた結果、
+/// ドメインのルート URL に記事の見出しを添えた偽の引用が返った（2026-07-29）。
+/// 副作用が起きた事実は、こちらが起こしていなくても記録に残す。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Grounding {
+    /// モデルが実際に投げた検索語。
+    pub queries: Vec<String>,
+    /// 参照元。**空なら出典は存在しない**（モデルの言う出典を信じない根拠）。
+    pub sources: Vec<GroundingSource>,
+}
+
+impl Grounding {
+    /// 接地が一切起きていないか。
+    pub fn is_empty(&self) -> bool {
+        self.queries.is_empty() && self.sources.is_empty()
+    }
+}
+
+/// 参照した web ページ 1 件。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundingSource {
+    /// URL。
+    pub uri: String,
+    /// ページ表題。取れなければ空。
+    pub title: String,
+}
+
 /// プロバイダ中立の応答。
-#[derive(Debug, Clone, PartialEq)]
+///
+/// **履歴には積まれない**（積まれるのは [`ChatMessage`]）。この型に足したフィールドは
+/// ラウンドトリップの契約に影響しないので、観測のための席を安全に増やせる。
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChatResponse {
     /// 本文（ある場合）。
     pub text: Option<String>,
@@ -299,6 +338,8 @@ pub struct ChatResponse {
     pub finish: Finish,
     /// 使用量。
     pub usage: Usage,
+    /// プロバイダが代行した接地の記録。持たないプロバイダでは空。
+    pub grounding: Grounding,
 }
 
 #[cfg(test)]

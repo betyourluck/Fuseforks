@@ -39,6 +39,7 @@ const isNewDraft = computed(
 const DEFAULT_BASE_URL: Record<string, string> = {
   open_ai_compat: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
 };
 
 /** 既知の既定値のいずれかであれば、プロバイダ変更に追随してよいと判断する。 */
@@ -160,7 +161,28 @@ const PROVIDERS: { value: Provider | null; label: string }[] = [
   { value: null, label: "自動判定（baseUrl から）" },
   { value: "open_ai_compat", label: "OpenAI 互換" },
   { value: "anthropic", label: "Anthropic ネイティブ" },
+  { value: "gemini", label: "Gemini ネイティブ" },
 ];
+
+/**
+ * Google 接地のチェックを出してよいか。
+ *
+ * Gemini を**明示選択**したときだけ。自動判定のままだと OpenAI 互換の口へ出て、
+ * `google_search` は 400 で拒否される。押しても効かないチェックを見せない。
+ */
+const supportsGoogleSearch = computed(() => draft.value?.provider === "gemini");
+
+/**
+ * 接地が有効なのに、ワイヤが Gemini ではない状態か。
+ *
+ * UI からは作れないが、`world.json` を直接編集すれば作れる。**隠すだけだと
+ * 真のまま見えなくなる**ので、その時だけ理由を出す。効かない設定が黙って
+ * 残っているのが一番たちが悪い（コアは grounding_active() で無効化するが、
+ * 利用者から見ると「チェックしたのに検索しない」になる）。
+ */
+const strandedGoogleSearch = computed(
+  () => !!draft.value?.googleSearch && draft.value.provider !== "gemini",
+);
 
 const EFFORTS: { value: Effort | null; label: string }[] = [
   { value: null, label: "指定しない（送らない）" },
@@ -196,6 +218,7 @@ function blank(): ModelTemplate {
     provider: null,
     useTools: true,
     effort: null,
+    googleSearch: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
   };
@@ -504,6 +527,33 @@ function onTemperature(raw: string): void {
                 無効にすると、スキーマをプロンプトに載せる経路へ切り替わります
               </span>
             </label>
+
+            <!--
+              Gemini ネイティブを選んだときだけ出す。OpenAI 互換の口では
+              google_search が 400 で拒否されるため、押しても効かない。
+            -->
+            <template v-if="supportsGoogleSearch">
+              <label class="text-ink-dim">Google 接地</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.googleSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  Google 検索で裏取りしてから答えます（同梱ツールや委譲とは併用できます）
+                </span>
+              </label>
+            </template>
+
+            <!--
+              効かない設定が残っている状態。隠すだけだと真のまま見えなくなるので、
+              その時だけ理由と直し方を出す。
+            -->
+            <template v-else-if="strandedGoogleSearch">
+              <label class="text-warn">Google 接地</label>
+              <p class="text-warn">
+                有効になっていますが、<strong>プロトコルが Gemini ではないため働きません</strong>。
+                接地は Gemini ネイティブ経路にしかありません。使うならプロトコルを
+                「Gemini ネイティブ」にしてください。
+              </p>
+            </template>
           </div>
 
           <p class="rounded border border-line bg-surface-0 p-2 text-[11px] text-ink-dim">

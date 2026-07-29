@@ -286,6 +286,16 @@ pub struct ModelTemplate {
     /// 推論の深さ。`None` なら送らない。
     #[serde(default)]
     pub effort: Option<crate::llm::Effort>,
+    /// Google 検索による接地を有効にするか。
+    ///
+    /// **[`crate::llm::Provider::Gemini`] を明示したテンプレートでのみ効く。**
+    /// OpenAI 互換の口は `google_search` を `400 Invalid tool type` で拒否するため、
+    /// 互換経路のまま真にしても接地は起きない（UI 側でも Gemini 選択時だけ出す）。
+    ///
+    /// 関数呼び出しとは併用できる。検索 → 関数呼び出しが 1 応答の中で連鎖するので、
+    /// これを有効にしても `transfer_to_*` による委譲は止まらない（実測 2026-07-29）。
+    #[serde(default)]
+    pub google_search: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -310,6 +320,26 @@ fn default_max_retries() -> u32 {
 }
 
 impl ModelTemplate {
+    /// 実際に使われるワイヤプロトコル。`provider` が未指定なら `base_url` から判定する。
+    pub fn effective_provider(&self) -> crate::llm::Provider {
+        self.provider
+            .unwrap_or_else(|| crate::llm::Provider::detect(&self.base_url))
+    }
+
+    /// Google 検索による接地が**実際に起きる**か。
+    ///
+    /// `google_search` が真でも、ワイヤが Gemini ネイティブでなければ接地は起きない
+    /// （OpenAI 互換の口は `google_search` を 400 で拒否する）。UI はこの組み合わせを
+    /// 作らせないが、`world.json` を直接編集すれば作れてしまう。
+    ///
+    /// **フラグではなくこの関数を判定に使うこと。** フラグだけを見てシステムプロンプトに
+    /// 「検索で裏を取れます」と書くと、検索できないモデルにできると教えることになる。
+    /// 接地の告知は「持っていない情報を埋める」ための節なので、そこで嘘をつくと
+    /// 処方そのものが毒になる。
+    pub fn grounding_active(&self) -> bool {
+        self.google_search && self.effective_provider() == crate::llm::Provider::Gemini
+    }
+
     /// 汎用的な既定値でテンプレートを作る。
     pub fn new(
         id: impl Into<ModelTemplateId>,
@@ -328,6 +358,7 @@ impl ModelTemplate {
             provider: None,
             use_tools: true,
             effort: None,
+            google_search: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
         }
@@ -568,6 +599,32 @@ mod tests {
             serde_json::to_value(&ep).unwrap(),
             serde_json::json!({ "kind": "agent", "id": "agent_02" })
         );
+    }
+
+    /// 接地は「フラグが真」ではなく「実際に Gemini へ出る」ときだけ有効なこと。
+    ///
+    /// UI はこの組み合わせを作らせないが、world.json の直接編集では作れる。
+    /// フラグだけで判定すると、検索できないモデルに「検索できます」と教える。
+    #[test]
+    fn grounding_is_inactive_unless_the_wire_is_actually_gemini() {
+        let mut template = ModelTemplate::new("tpl", "ジェミー", "gemini-3.6-flash");
+        template.base_url = "https://generativelanguage.googleapis.com/v1beta".into();
+        template.google_search = true;
+
+        // provider 未指定 = 自動判定 = OpenAI 互換。接地は起きない。
+        assert_eq!(
+            template.effective_provider(),
+            crate::llm::Provider::OpenAiCompat
+        );
+        assert!(!template.grounding_active(), "互換経路では接地しない");
+
+        // 明示選択して初めて有効になる。
+        template.provider = Some(crate::llm::Provider::Gemini);
+        assert!(template.grounding_active());
+
+        // チェックを外せば当然無効。
+        template.google_search = false;
+        assert!(!template.grounding_active());
     }
 
     #[test]

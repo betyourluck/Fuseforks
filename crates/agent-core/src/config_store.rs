@@ -277,7 +277,11 @@ impl ConfigStore {
     /// 戻り値の第 2 要素は「安定部分の文字数」で、
     /// [`crate::llm::ChatRequest::cacheable_prefix_len`] にそのまま渡せる。
     /// `Memory.md` は対話で書き換わる想定なので、境界はその手前に置く。
-    pub async fn compose_system_prompt(&self, spec: &AgentSpec) -> CoreResult<(String, usize)> {
+    pub async fn compose_system_prompt(
+        &self,
+        spec: &AgentSpec,
+        grounded: bool,
+    ) -> CoreResult<(String, usize)> {
         let ordinance = self.read_ordinance().await?;
         let construct = self.read_config(&spec.id, ConfigFileKind::Construct).await?;
         let skill = self.read_config(&spec.id, ConfigFileKind::Skill).await?;
@@ -323,6 +327,33 @@ impl ConfigStore {
                  （それ以外の場所を推測で語らないこと）。\n\n"
             ));
         }
+        // 接地の作法。**「出典を出すな」ではなく「何が手元に無いか」を伝える。**
+        //
+        // Google 検索による接地は、答えの中身は運んでくるが**参照元 URL を
+        // こちらへ渡さない**（渡ってくるのは検索語だけ）。この事実を伝えないまま
+        // 出典を求められると、モデルは引用の形をした文字列を作る — 実機で、
+        // ドメインのルート URL に記事の見出しを添えた偽の引用が返り、さらに
+        // 2 回目には**実在するものと 404 が混在する**、より紛らわしい形になった
+        // （2026-07-29。半分が本物であることが、残り半分に信憑性を貸す）。
+        //
+        // これは作業フォルダの実パス開示と同じ形の処方で、上の節と同じ理由で
+        // ここに置いている。人格ではなくワイヤ経路の性質なので、SKILL.md では
+        // なく実装側から入れる（接地を有効にした全員に等しく効く）。
+        if grounded {
+            prompt.push_str(
+                "## 接地（Google 検索）について\n\
+                 あなたは Google 検索で裏を取ってから答えられます。ただし\
+                 **参照したページの URL は、あなたの手元には渡ってきません。**\n\
+                 - **URL を書かないでください。** 出典を求められたら\
+                 「URL は取得できない」と正直に答えてください。\n\
+                 - 代わりに、**実際に検索した語**と、**発表元の名前**\
+                 （気象庁・内閣府・◯◯新聞 など）は答えられます。それを示してください。\n\
+                 - もっともらしい URL を組み立ててはいけません。\
+                 実在しない URL は、出典が無いことより有害です\
+                 （受け取った相手が確認済みだと誤解します）。\n\n",
+            );
+        }
+
         if !construct.is_empty() {
             prompt.push_str("## Construct\n");
             prompt.push_str(&construct);
@@ -467,11 +498,35 @@ mod tests {
             .unwrap();
 
         let spec = AgentSpec::new(id.clone(), "Planner", "tpl");
-        let (prompt, stable_len) = store.compose_system_prompt(&spec).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false).await.unwrap();
 
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(stable.contains("制約A") && stable.contains("能力B"));
         assert!(!stable.contains("記憶C"), "可変部分は境界の外側");
+    }
+
+    /// 接地を有効にしたエージェントには、URL が手元に来ないことを伝えること。
+    ///
+    /// 伝えないと、出典を求められたモデルは引用の形をした文字列を作る。
+    /// 実機では実在する URL と 404 が混ざった形で返り、生きている側が
+    /// 死んでいる側に信憑性を貸した（2026-07-29）。
+    #[tokio::test]
+    async fn a_grounded_agent_is_told_it_cannot_cite_urls() {
+        let dir = TempDir::new("prompt-grounded");
+        let store = ConfigStore::new(&dir.0);
+        let spec = AgentSpec::new(AgentId::from("agent_01"), "ジェミー", "tpl");
+
+        let (grounded, stable_len) = store.compose_system_prompt(&spec, true).await.unwrap();
+        assert!(grounded.contains("URL は、あなたの手元には渡ってきません"));
+        assert!(grounded.contains("検索した語"), "代わりに何を言えるかも伝える");
+
+        // 会話ごとに揺れない情報なので、キャッシュの安定部分に入っていること。
+        let stable: String = grounded.chars().take(stable_len).collect();
+        assert!(stable.contains("接地（Google 検索）について"));
+
+        // 接地していないエージェントには出さない。無関係な制約を負わせない。
+        let (plain, _) = store.compose_system_prompt(&spec, false).await.unwrap();
+        assert!(!plain.contains("接地（Google 検索）について"));
     }
 
     /// エージェント別 mcp.json は保存時にパース検証されること（失敗二分類 (1)）。
@@ -553,11 +608,11 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
 
         let mut spec = AgentSpec::new("agent_1", "コーダー", "tpl");
-        let (prompt, _) = store.compose_system_prompt(&spec).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false).await.unwrap();
         assert!(!prompt.contains("作業フォルダ"), "未設定なら節ごと出さない");
 
         spec.work_dir = Some("D:\\Projects\\my-app".into());
-        let (prompt, stable_len) = store.compose_system_prompt(&spec).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false).await.unwrap();
         assert!(prompt.contains("D:\\Projects\\my-app"), "実パスが入ること: {prompt}");
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(
@@ -577,7 +632,7 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new("agent_1", "ジェミー", "tpl");
 
-        let (prompt, _) = store.compose_system_prompt(&spec).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false).await.unwrap();
 
         assert!(prompt.contains("ジェミー"), "自分の名前が入ること");
         assert!(

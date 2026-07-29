@@ -1085,7 +1085,13 @@ async fn handle_message(
     };
 
     // 2. システムプロンプトを組む。安定部分の長さも同時に得る（キャッシュ境界）。
-    let (system_prompt, stable_len) = shared.store.compose_system_prompt(&spec).await?;
+    //    接地の有無はテンプレート由来（エージェント個別の設定ではない）。
+    //    フラグではなく grounding_active() を見る — 互換経路のまま真になっている
+    //    設定（world.json の直接編集で作れる）に「検索できます」と教えないため。
+    let (system_prompt, stable_len) = shared
+        .store
+        .compose_system_prompt(&spec, template.grounding_active())
+        .await?;
 
     // 3. 転送先ごとのツールを組む。
     //    OpenAI Agents SDK は handoff を「宛先 1 つにつきツール 1 本」で表現し、

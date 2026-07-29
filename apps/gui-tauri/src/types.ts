@@ -18,8 +18,14 @@ export type AgentStatus = "idle" | "starting" | "running" | "stopping" | "failed
 /** 設定ファイルの種別。実ファイル名の解決は Rust 側が行う。 */
 export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp";
 
-/** LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。 */
-export type Provider = "open_ai_compat" | "anthropic";
+/**
+ * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
+ *
+ * `gemini` は自動判定されない（明示選択のみ）。Gemini の base URL は
+ * OpenAI 互換としても動いており、自動判定を変えると既存の設定が黙って
+ * 別のワイヤへ移ってしまうため。
+ */
+export type Provider = "open_ai_compat" | "anthropic" | "gemini";
 
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -129,6 +135,12 @@ export interface ModelTemplate {
   provider: Provider | null;
   useTools: boolean;
   effort: Effort | null;
+  /**
+   * Google 検索による接地。**`provider === "gemini"` のときだけ効く。**
+   * OpenAI 互換の口は `google_search` を 400 で拒否するため、互換経路のまま
+   * 真にしても接地は起きない。関数呼び出しとは併用でき、委譲は止まらない。
+   */
+  googleSearch: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
 }

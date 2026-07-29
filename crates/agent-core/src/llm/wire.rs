@@ -427,6 +427,283 @@ pub struct AnthropicUsage {
     pub cache_creation_input_tokens: u64,
 }
 
+// ============================================================================
+// Gemini ネイティブ generateContent
+// ============================================================================
+//
+// OpenAI 互換層（`/chat/completions`）とは**別の口**。互換層は
+// `tools: [{"type":"google_search"}]` を `400 Invalid tool type` で拒否するため、
+// Google 検索による接地を使うにはネイティブ経路が要る（実測 2026-07-29）。
+//
+// 形の要点:
+// - system は `contents` に混ぜず `systemInstruction` へ分ける
+// - role は `user` / `model` の 2 値。ツール結果も `user` ロールの part として積む
+// - part は `type` タグを持たず、**どのキーがあるか**で種別が決まる判別共用体
+// - `functionCall`（こちらが実行する）と `toolCall`（Google が実行済み）は別物
+
+/// Gemini のリクエスト。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiRequest {
+    /// 会話履歴。system は含めない。
+    pub contents: Vec<GeminiContent>,
+    /// システム指示。`contents` とは別枠。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<GeminiContent>,
+    /// 提示するツール。空なら送らない。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<GeminiTool>,
+    /// ツール選択方針。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<GeminiToolConfig>,
+    /// 生成パラメータ。
+    pub generation_config: GeminiGenerationConfig,
+}
+
+/// 1 ロール分の発話。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeminiContent {
+    /// `"user"` / `"model"`。`systemInstruction` では省く。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// 中身。
+    #[serde(default)]
+    pub parts: Vec<GeminiPart>,
+}
+
+/// 発話の構成要素。
+///
+/// **`type` タグが無い判別共用体**なので、enum ではなく全フィールド `Option` の
+/// 構造体で受ける。未知のキーが増えても既知の部分は読めるという性質が、
+/// 応答側フィールドを緩く取る本モジュールの方針と一致する。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiPart {
+    /// 本文。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// 思考ブロックであることの印。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
+    /// 思考署名。**受けた値をそのまま返す**（ラウンドトリップ専用、中身は解釈しない）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+    /// **こちらが実行する**関数呼び出し。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function_call: Option<GeminiFunctionCall>,
+    /// 関数実行の結果（履歴として送る側）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function_response: Option<GeminiFunctionResponse>,
+    /// **Google 側が実行済み**の組み込みツール呼び出し（検索など）。
+    ///
+    /// `functionCall` と取り違えると、実行済みのものを二重に実行しにいく。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<GeminiServerToolCall>,
+    /// 組み込みツールの結果。中身は解釈しない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_response: Option<serde_json::Value>,
+}
+
+/// 関数呼び出し。`args` は **JSON オブジェクト**（OpenAI 系の文字列方言ではない）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeminiFunctionCall {
+    /// 呼び出し ID。返さないモデルもあるので `Option`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 関数名。
+    #[serde(default)]
+    pub name: String,
+    /// 引数オブジェクト。
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+/// 関数実行の結果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeminiFunctionResponse {
+    /// 対応する呼び出しの ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 関数名。
+    pub name: String,
+    /// 結果オブジェクト。文字列を直に置けないので `{"result": ...}` で包む。
+    pub response: serde_json::Value,
+}
+
+/// Google 側が実行した組み込みツールの記録。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiServerToolCall {
+    /// 種別（例: `GOOGLE_SEARCH_WEB`）。
+    #[serde(default)]
+    pub tool_type: String,
+    /// 引数。検索なら `{"queries": [...]}`。
+    #[serde(default)]
+    pub args: serde_json::Value,
+    /// 呼び出し ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// 提示するツール 1 件。
+///
+/// 組み込みツールと関数宣言は**同じ配列に別要素として**並べる。
+/// キー名は実測で通った綴り（`google_search` / `functionDeclarations`）に合わせる。
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GeminiTool {
+    /// Google 検索による接地。有効化は空オブジェクトを置くことで表す。
+    #[serde(rename = "google_search", skip_serializing_if = "Option::is_none")]
+    pub google_search: Option<serde_json::Value>,
+    /// 関数宣言。
+    #[serde(
+        rename = "functionDeclarations",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub function_declarations: Option<Vec<GeminiFunctionDeclaration>>,
+}
+
+/// 関数の宣言。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GeminiFunctionDeclaration {
+    /// 関数名。
+    pub name: String,
+    /// 説明。
+    pub description: String,
+    /// 引数のスキーマ。
+    ///
+    /// **JSON Schema そのものではなく OpenAPI 3.0 の部分集合**で、未知キー
+    /// （`$schema` / `additionalProperties` 等）は 400 で拒否される。
+    /// adapter 側で削ってから載せること。引数を取らない関数では `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+}
+
+/// ツール選択方針。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiToolConfig {
+    /// 関数呼び出しの制御。関数を 1 つも提示していないなら送らない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_calling_config: Option<GeminiFunctionCallingConfig>,
+    /// サーバー側ツールの実行記録を応答に含めるか。
+    ///
+    /// **組み込みツール（`google_search`）と関数呼び出しを併用するなら必須。**
+    /// 欠くと 400 で
+    /// `Please enable tool_config.include_server_side_tool_invocations to use
+    /// Built-in tools with Function calling.` と名指しで断られる（実測 2026-07-29）。
+    ///
+    /// 真にすると応答の parts に `toolCall` / `toolResponse` が現れる。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_server_side_tool_invocations: Option<bool>,
+}
+
+/// 関数呼び出しの制御。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiFunctionCallingConfig {
+    /// `AUTO` / `ANY` / `NONE`。
+    pub mode: &'static str,
+    /// `ANY` のとき呼び出しを許す関数名。特定ツールの強制に使う。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_function_names: Option<Vec<String>>,
+}
+
+/// 生成パラメータ。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiGenerationConfig {
+    /// サンプリング温度。**未設定ならキーごと省く**（OpenAI 系と同じ理由）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// 最大出力トークン数。
+    pub max_output_tokens: u32,
+}
+
+/// Gemini の応答。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiResponse {
+    /// 候補。通常 1 件。
+    #[serde(default)]
+    pub candidates: Vec<GeminiCandidate>,
+    /// 使用量。
+    #[serde(default)]
+    pub usage_metadata: Option<GeminiUsageMetadata>,
+}
+
+/// 応答の候補。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiCandidate {
+    /// 中身。
+    #[serde(default)]
+    pub content: Option<GeminiContent>,
+    /// 終了理由（`STOP` / `MAX_TOKENS` など）。
+    ///
+    /// **`STOP` は終了を意味しない。** 関数呼び出しを返したときも `STOP` が来る
+    /// （実測 2026-07-29: `finishMessage: "Model generated function call(s)."`）。
+    /// 終了判定は parts の中身で行うこと。
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+    /// 接地の来歴（参照した web ページ）。
+    ///
+    /// **モデルが「出典」として語る文字列を信じてはいけない。**
+    /// 実在の URL はここにしか無く、ここが空なら出典は存在しない。
+    /// 空のまま出典を求めると、モデルは引用らしく見える文字列を作る
+    /// （実測 2026-07-29: ドメインのルート URL に記事の見出しが添えられた）。
+    #[serde(default)]
+    pub grounding_metadata: Option<GeminiGroundingMetadata>,
+}
+
+/// 接地の来歴。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiGroundingMetadata {
+    /// 参照元。
+    #[serde(default)]
+    pub grounding_chunks: Vec<GeminiGroundingChunk>,
+    /// モデルが実際に投げた検索語。
+    #[serde(default)]
+    pub web_search_queries: Vec<String>,
+}
+
+/// 参照元 1 件。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GeminiGroundingChunk {
+    /// web ページ。他の種別（検索以外の接地）では欠ける。
+    #[serde(default)]
+    pub web: Option<GeminiGroundingWeb>,
+}
+
+/// 参照した web ページ。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GeminiGroundingWeb {
+    /// URL。
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// ページ表題。
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// Gemini の使用量。キー名が OpenAI とも Anthropic とも違う。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiUsageMetadata {
+    /// 入力トークン数。
+    #[serde(default)]
+    pub prompt_token_count: u64,
+    /// 出力トークン数。
+    #[serde(default)]
+    pub candidates_token_count: u64,
+    /// 思考に使われたトークン数。課金対象。
+    #[serde(default)]
+    pub thoughts_token_count: u64,
+    /// キャッシュから読まれたトークン数。
+    #[serde(default)]
+    pub cached_content_token_count: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

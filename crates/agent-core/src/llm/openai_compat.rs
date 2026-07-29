@@ -9,7 +9,8 @@
 use serde_json::Value;
 
 use super::canonical::{
-    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Role, ToolCall, ToolChoice, Usage,
+    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, Role, ToolCall, ToolChoice,
+    Usage,
 };
 use super::error::LlmError;
 use super::wire;
@@ -169,6 +170,8 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
             tool_calls: Vec::new(),
             finish: Finish::Other,
             usage,
+            // このプロバイダは接地を代行しない。
+            grounding: Grounding::default(),
         });
     };
 
@@ -199,6 +202,8 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
         tool_calls,
         finish,
         usage,
+        // このプロバイダは接地を代行しない。
+        grounding: Grounding::default(),
     })
 }
 
@@ -434,6 +439,7 @@ mod tests {
             tool_calls: Vec::new(),
             finish: Finish::Length,
             usage: Usage::default(),
+            grounding: Grounding::default(),
         };
         assert!(reject_empty_reasoning(base.clone()).is_err());
 

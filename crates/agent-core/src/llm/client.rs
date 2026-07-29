@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
-use super::{BackendResolution, LlmBackend, anthropic, openai_compat, wire};
+use super::{BackendResolution, LlmBackend, anthropic, gemini, openai_compat, wire};
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
 
@@ -35,6 +35,12 @@ pub enum Provider {
     OpenAiCompat,
     /// `POST {base_url}/messages` + `x-api-key` + `anthropic-version`。
     Anthropic,
+    /// `POST {base_url}/models/{model}:generateContent` + `x-goog-api-key`。
+    ///
+    /// Gemini は OpenAI 互換の口も持っており、**関数呼び出しだけならそちらで足りる**。
+    /// この経路が要るのは Google 検索による接地を使うときだけで、互換層は
+    /// `google_search` を `400 Invalid tool type` で拒否する（実測 2026-07-29）。
+    Gemini,
 }
 
 impl Provider {
@@ -43,6 +49,11 @@ impl Provider {
     /// 明示設定があればそちらが優先で、これは未設定時の既定。
     /// 判定できないホスト（自前プロキシなど）は OpenAI 互換に落とす。
     /// 互換を名乗るサーバのほうが圧倒的に多く、外したときの傷が浅いため。
+    ///
+    /// **`generativelanguage.googleapis.com` を Gemini へ倒さないのは意図的。**
+    /// 既存のテンプレートはその base URL を OpenAI 互換として使って動いており、
+    /// 自動判定を変えると、設定を触っていない利用者のエージェントが黙って
+    /// 別のワイヤへ移る。ネイティブ経路は明示選択でだけ有効になる。
     pub fn detect(base_url: &str) -> Self {
         if base_url.contains("api.anthropic.com") {
             Self::Anthropic
@@ -52,10 +63,13 @@ impl Provider {
     }
 
     /// base URL に付けるパス。
-    fn path(self) -> &'static str {
+    ///
+    /// Gemini だけモデル名が URL に埋まるため `&'static str` を返せない。
+    fn path(self, model: &str) -> String {
         match self {
-            Self::OpenAiCompat => "/chat/completions",
-            Self::Anthropic => "/messages",
+            Self::OpenAiCompat => "/chat/completions".to_owned(),
+            Self::Anthropic => "/messages".to_owned(),
+            Self::Gemini => gemini::path(model),
         }
     }
 }
@@ -87,6 +101,8 @@ pub struct LlmConfig {
     pub provider: Provider,
     /// 推論の深さ。`None` なら送らない。
     pub effort: Option<Effort>,
+    /// Google 検索による接地を有効にするか。[`Provider::Gemini`] でのみ効く。
+    pub google_search: bool,
 }
 
 impl LlmConfig {
@@ -125,9 +141,7 @@ impl LlmConfig {
                 })?,
         };
 
-        let provider = template
-            .provider
-            .unwrap_or_else(|| Provider::detect(&template.base_url));
+        let provider = template.effective_provider();
 
         Ok(Self {
             base_url: template.base_url.trim_end_matches('/').to_owned(),
@@ -140,6 +154,7 @@ impl LlmConfig {
             use_tools: template.use_tools,
             provider,
             effort: template.effort,
+            google_search: template.google_search,
         })
     }
 }
@@ -162,7 +177,11 @@ impl HttpLlmBackend {
 
     /// 1 回ぶんの往復。再試行は [`HttpLlmBackend::chat`] 側が担う。
     async fn attempt(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
-        let url = format!("{}{}", self.config.base_url, self.config.provider.path());
+        let url = format!(
+            "{}{}",
+            self.config.base_url,
+            self.config.provider.path(&self.config.model)
+        );
 
         let builder = match self.config.provider {
             Provider::OpenAiCompat => {
@@ -179,6 +198,13 @@ impl HttpLlmBackend {
                     .post(&url)
                     .header("x-api-key", &self.config.api_key)
                     .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+            }
+            Provider::Gemini => {
+                let body = gemini::encode(req, self.config.google_search);
+                self.http
+                    .post(&url)
+                    .header(gemini::AUTH_HEADER, &self.config.api_key)
                     .json(&body)
             }
         };
@@ -217,6 +243,15 @@ impl HttpLlmBackend {
                 let decoded = anthropic::decode(parsed)?;
                 openai_compat::reject_empty_reasoning(decoded)
             }
+            Provider::Gemini => {
+                let parsed: wire::GeminiResponse =
+                    serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                        source,
+                        raw: raw.clone(),
+                    })?;
+                let decoded = gemini::decode(parsed)?;
+                openai_compat::reject_empty_reasoning(decoded)
+            }
         }
     }
 }
@@ -227,6 +262,7 @@ impl LlmBackend for HttpLlmBackend {
         match self.config.provider {
             Provider::OpenAiCompat => "openai-compat",
             Provider::Anthropic => "anthropic",
+            Provider::Gemini => "gemini",
         }
     }
 

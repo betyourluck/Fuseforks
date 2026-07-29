@@ -154,6 +154,7 @@ impl LlmBackend for AlwaysHandoffBackend {
                 completion: 5,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -183,6 +184,7 @@ impl LlmBackend for AskingBackend {
                 }],
                 finish: Finish::ToolUse,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             });
         }
 
@@ -195,6 +197,7 @@ impl LlmBackend for AskingBackend {
             tool_calls: Vec::new(),
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
         })
     }
 }
@@ -235,6 +238,7 @@ impl LlmBackend for FanOutBackend {
                 completion: 5,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -283,6 +287,7 @@ impl LlmBackend for ToolCallingBackend {
                 completion: 1,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -319,6 +324,7 @@ impl LlmBackend for EndlessToolBackend {
                     completion: 1,
                     cache_read: 0,
                 },
+                grounding: Default::default(),
             });
         }
 
@@ -337,6 +343,7 @@ impl LlmBackend for EndlessToolBackend {
                 completion: 1,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -374,6 +381,7 @@ impl LlmBackend for SilentToolBackend {
                 completion: 1,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -405,6 +413,7 @@ impl LlmBackend for ToolsProbeBackend {
                 completion: 1,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -463,6 +472,7 @@ impl LlmBackend for RecordingBackend {
                 completion: 1,
                 cache_read: 0,
             },
+            grounding: Default::default(),
         })
     }
 }
@@ -900,6 +910,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                         .collect(),
                     finish: Finish::ToolUse,
                     usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    grounding: Default::default(),
                 });
             }
 
@@ -919,6 +930,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -1050,6 +1062,7 @@ async fn agents_overhear_what_others_said_in_the_room() {
                 tool_calls,
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -1244,6 +1257,7 @@ async fn an_in_flight_turn_may_land_after_a_reset() {
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -1349,6 +1363,7 @@ async fn handoff_tools_identify_targets_by_display_name() {
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -1527,6 +1542,7 @@ async fn incoming_messages_carry_the_sender_name() {
                 tool_calls,
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -1979,6 +1995,7 @@ async fn identical_fan_out_is_marked_as_broadcast_but_distinct_messages_are_not(
                 tool_calls,
                 finish: Finish::Stop,
                 usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
@@ -2106,6 +2123,7 @@ async fn duplicate_handoff_requests_to_one_target_are_collapsed() {
                 tool_calls,
                 finish: Finish::Stop,
                 usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+                grounding: Default::default(),
             })
         }
     }
