@@ -235,7 +235,7 @@ function borderClass(status: string): string {
             <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
               <span>{{ STATUS_LABELS[data.agent.status as keyof typeof STATUS_LABELS] }}</span>
               <span class="tabular-nums">
-                {{ compactNumber(data.agent.totalTokens) }} tok
+                {{ compactNumber(data.agent.totalTokens) }} tokens
               </span>
             </div>
           </div>

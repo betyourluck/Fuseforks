@@ -494,7 +494,7 @@ async function newChat(): Promise<void> {
             <span :title="`転送 ${entry.row.message.hop} 回目（h${entry.row.message.hop}）`">{{
               timestamp(entry.row.message.tsMs)
             }}</span>
-            <span v-if="entry.row.message.tokens">{{ entry.row.message.tokens }} tok</span>
+            <span v-if="entry.row.message.tokens">{{ entry.row.message.tokens }} tokens</span>
             <button
               type="button"
               class="rounded px-0.5 leading-none transition-colors"
