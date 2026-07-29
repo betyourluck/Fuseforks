@@ -79,6 +79,7 @@ fn wire_field_sets_are_frozen() {
         status: AgentStatus::Idle,
         uptime_secs: 0,
         total_tokens: 0,
+        cached_tokens: 0,
         rag_sources: Vec::new(),
         connected_agents: Vec::new(),
         order: 0,
@@ -91,6 +92,7 @@ fn wire_field_sets_are_frozen() {
     assert_eq!(
         wire_keys(&snapshot),
         vec![
+            "cachedTokens",
             "connectedAgents",
             "enabledTools",
             "hearsRoomLog",

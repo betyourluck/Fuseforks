@@ -36,8 +36,6 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let system = build_system_blocks(&system_text, req.cacheable_prefix_len);
-
     let messages = req
         .messages
         .iter()
@@ -61,6 +59,12 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
             input_schema: t.parameters.clone(),
         })
         .collect::<Vec<_>>();
+
+    // キャッシュされるのは **tools + system の安定部分**（`cache_control` を打った
+    // ブロックまでの全体で、tools は system より前に置かれる）。判定に tools を
+    // 数えないと、**道具を多く提示しているエージェントほど判定を外す** — 提示量が
+    // 多いほどキャッシュの利得は大きいのに、そこで切ってしまう。
+    let system = build_system_blocks(&system_text, req.cacheable_prefix_len, tool_tokens(&tools));
 
     let tool_choice = if tools.is_empty() {
         None
@@ -93,14 +97,54 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
     }
 }
 
-/// プロンプトキャッシュを要求する最小文字数。
+/// プロンプトキャッシュを要求する最小トークン数。
 ///
-/// キャッシュには最小トークン数があり、それを下回るプレフィックスは
-/// 指示を出しても再利用されない。効かないと分かっている指示は送らない。
-/// 送っても無害なはずのものが実際には拒否されうる以上、
-/// **利得が無い経路でリスクだけ取らない**のが正しい。
-/// 4000 文字は日本語で概ね 1500〜2500 トークンに相当し、最小要件を安全に超える。
-const MIN_CACHEABLE_CHARS: usize = 4_000;
+/// キャッシュには最小長があり、それを下回るプレフィックスは指示を出しても
+/// 再利用されない。効かないと分かっている指示は送らない。
+/// 実際の下限はモデル階層で違う（上位ほど小さい）ので、**一番厳しい側**に合わせる。
+///
+/// > 当初はこれを「4,000 **文字**」で判定していた。2 つ外していた。
+/// > (1) 判定対象が system の安定部分だけで、**tools を数えていなかった** —
+/// >     キャッシュされるのは tools + system なのに。
+/// > (2) 文字数の閾値は**言語をまたげない**。英語は 4 文字 ≈ 1 トークンだが
+/// >     日本語は 1 文字 ≈ 1 トークンで、同じ 4,000 でも要求が 4 倍変わる。
+/// >     4,000 は英語で較正された値だった。
+/// > 結果、日本語で設定された実機の 5 体全員が 900〜1,100 文字で足切りされ、
+/// > **キャッシュが一度も効いていなかった**（failures.md #33）。
+const MIN_CACHEABLE_TOKENS: usize = 2_048;
+
+/// 概算のトークン数。
+///
+/// 正確な数はトークナイザ無しには出せないが、キャッシュ判定は
+/// 「最小要件を超えるか」の粗い足切りなので、この粒度で足りる。
+/// ASCII は 4 文字 ≈ 1 トークン、それ以外（日本語・絵文字など）は
+/// 1 文字 ≈ 1 トークンとして数える。**少なめに見積もる側へ倒す** —
+/// 足りないのに要求するより、足りているのに見送るほうが害が小さい。
+fn approx_tokens(text: &str) -> usize {
+    let (ascii, wide) = text
+        .chars()
+        .fold((0usize, 0usize), |(a, w), c| {
+            if c.is_ascii() { (a + 1, w) } else { (a, w + 1) }
+        });
+    ascii / 4 + wide
+}
+
+/// ツール定義がプロンプトに占める概算のトークン数。
+///
+/// ツール定義は **system より前**に置かれ、`cache_control` を system に打つと
+/// まとめてキャッシュ対象に入る。判定に数えないと、道具を多く提示している
+/// エージェントほど判定を外す — 提示量が多いほど利得は大きいのに。
+fn tool_tokens(tools: &[wire::AnthropicTool]) -> usize {
+    tools
+        .iter()
+        .map(|t| {
+            approx_tokens(&t.name)
+                + approx_tokens(&t.description)
+                // スキーマは JSON 文字列として数える（構造は問わない）。
+                + approx_tokens(&t.input_schema.to_string())
+        })
+        .sum()
+}
 
 /// canonical の 1 発話を Anthropic の形へ写す。
 ///
@@ -154,31 +198,42 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
 
 /// system プロンプトをキャッシュ境界で分割する（純関数）。
 ///
-/// 分割するのは、安定部分が [`MIN_CACHEABLE_CHARS`] 以上あるときだけ。
-/// それ以外は単一ブロックにして `cache_control` を出さない。
+/// キャッシュを要求するのは、**tools + 安定部分**の概算トークン数が
+/// [`MIN_CACHEABLE_TOKENS`] 以上のときだけ。`tool_tokens` を足さないと
+/// 道具の多いエージェントほど判定を外す。
+///
 /// 境界は文字数指定だが、マルチバイト文字の途中で切らないよう `char_indices` で丸める。
-fn build_system_blocks(text: &str, prefix_len: usize) -> Vec<wire::AnthropicTextBlock> {
+fn build_system_blocks(
+    text: &str,
+    prefix_len: usize,
+    tool_tokens: usize,
+) -> Vec<wire::AnthropicTextBlock> {
     if text.is_empty() {
         return Vec::new();
     }
 
-    let cut = if prefix_len >= MIN_CACHEABLE_CHARS {
-        text.char_indices()
-            .nth(prefix_len)
-            .map(|(byte_idx, _)| byte_idx)
-    } else {
-        None
+    let ephemeral = || {
+        Some(wire::AnthropicCacheControl {
+            kind: "ephemeral",
+        })
     };
 
-    match cut {
-        // 境界が本文の内側にあるときだけ 2 ブロックへ割る。
-        Some(idx) if idx > 0 => vec![
+    let stable: String = text.chars().take(prefix_len).collect();
+    if tool_tokens + approx_tokens(&stable) < MIN_CACHEABLE_TOKENS {
+        return vec![wire::AnthropicTextBlock {
+            kind: "text",
+            text: text.to_owned(),
+            cache_control: None,
+        }];
+    }
+
+    match text.char_indices().nth(prefix_len) {
+        // 境界が本文の内側にある。安定部分と可変部分の 2 ブロックへ割る。
+        Some((idx, _)) if idx > 0 => vec![
             wire::AnthropicTextBlock {
                 kind: "text",
                 text: text[..idx].to_owned(),
-                cache_control: Some(wire::AnthropicCacheControl {
-                    kind: "ephemeral",
-                }),
+                cache_control: ephemeral(),
             },
             wire::AnthropicTextBlock {
                 kind: "text",
@@ -186,7 +241,17 @@ fn build_system_blocks(text: &str, prefix_len: usize) -> Vec<wire::AnthropicText
                 cache_control: None,
             },
         ],
-        _ => vec![wire::AnthropicTextBlock {
+        // 境界が本文の**末尾以降**にある = 可変部分が空（Memory.md が未記入など）。
+        // 割らずに全体へ `cache_control` を打つ。ここを `None` に落とすと、
+        // 「記憶がまだ空のエージェントだけキャッシュが効かない」という
+        // 気づきにくい欠落になる。
+        None => vec![wire::AnthropicTextBlock {
+            kind: "text",
+            text: text.to_owned(),
+            cache_control: ephemeral(),
+        }],
+        // 境界が先頭（安定部分が空）。打つ場所が無い。
+        Some(_) => vec![wire::AnthropicTextBlock {
             kind: "text",
             text: text.to_owned(),
             cache_control: None,
@@ -333,6 +398,76 @@ mod tests {
         assert!(w.system[0].cache_control.is_some());
         assert_eq!(w.system[1].text, "可変部分");
         assert!(w.system[1].cache_control.is_none());
+    }
+
+    /// 実機の構成（日本語の短い設定 + 十数本のツール）でキャッシュが要求されること。
+    ///
+    /// 当初は system の安定部分だけで判定しており、村の 5 体全員が
+    /// 900〜1,100 文字で足切りされ**キャッシュが一度も効いていなかった**。
+    /// 設定は日本語なのでバイト数の 1/3 しか文字数が無く、4,000 に遠く届かない。
+    /// キャッシュされるのは tools + system なので、判定にも tools を数える。
+    #[test]
+    fn a_real_village_agent_still_gets_caching_thanks_to_its_tools() {
+        // 条例 235 + 固定テンプレ約 300 + SKILL 588 ≒ 1,123 文字（実測値）。
+        let stable = "村".repeat(1_123);
+        let mut req = request(0);
+        req.messages[0] = ChatMessage::system(format!("{stable}記憶"));
+        req.cacheable_prefix_len = stable.chars().count();
+
+        // 同梱 5 + transfer_to_*/ask_* 8 = 13 本。説明文は日本語 2 文程度。
+        req.tools = (0..13)
+            .map(|i| ToolSpec {
+                name: format!("transfer_to_agent_{i}"),
+                description: "相手へメッセージを渡して、会話を続ける。\
+                     相手は自分で考えて返事をするので、返事を代筆しないこと。"
+                    .into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "message": { "type": "string", "description": "伝える内容" } },
+                    "required": ["message"],
+                    "additionalProperties": false
+                }),
+            })
+            .collect();
+
+        let w = encode(&req);
+
+        assert_eq!(w.system.len(), 2, "安定部分と可変部分に割れること");
+        assert!(
+            w.system[0].cache_control.is_some(),
+            "system だけで足切りしない（tools を数えれば最小要件を超える）"
+        );
+    }
+
+    /// 可変部分が空でもキャッシュを要求すること。
+    ///
+    /// `Memory.md` が未記入だと安定部分が本文全体になり、境界の探索が
+    /// 末尾を越えて `None` を返す。ここを無キャッシュに落とすと
+    /// 「記憶がまだ空のエージェントだけ効かない」という気づきにくい欠落になる。
+    #[test]
+    fn an_agent_without_memory_yet_is_still_cached() {
+        let stable = "指示".repeat(3_000);
+        let mut req = request(0);
+        req.messages[0] = ChatMessage::system(stable.clone());
+        req.cacheable_prefix_len = stable.chars().count();
+
+        let w = encode(&req);
+
+        assert_eq!(w.system.len(), 1, "割る先が無いので 1 ブロック");
+        assert!(w.system[0].cache_control.is_some(), "それでもキャッシュは要求する");
+    }
+
+    /// 短すぎるプレフィックスには要求しないこと（効かない指示は送らない）。
+    #[test]
+    fn a_tiny_prompt_with_few_tools_does_not_request_caching() {
+        let mut req = request(0);
+        req.messages[0] = ChatMessage::system("短い指示可変");
+        req.cacheable_prefix_len = 4;
+
+        let w = encode(&req);
+
+        assert_eq!(w.system.len(), 1);
+        assert!(w.system[0].cache_control.is_none());
     }
 
     #[test]

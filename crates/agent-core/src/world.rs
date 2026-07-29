@@ -29,6 +29,13 @@ pub struct AgentRecord {
     pub accumulated_uptime_secs: u64,
     /// 累積トークン数。
     pub total_tokens: u64,
+    /// うちプロンプトキャッシュから読まれた入力トークン数。
+    ///
+    /// 合計だけでは、**キャッシュが一度も効いていない状態と完全に効いている状態が
+    /// 同じ数字に見える**。実機で 5 体全員が無キャッシュのまま数日走っており、
+    /// 気づいたのは請求ダッシュボードのグラフからだった（failures.md #33）。
+    /// 割合を画面に出せば、設定を変えた次のターンで分かる。
+    pub cached_tokens: u64,
     /// 直近の失敗。
     pub last_error: Option<ErrorPayload>,
     /// 直近の会話履歴（自分の発言を含む）。
@@ -51,6 +58,7 @@ impl AgentRecord {
             started_at: None,
             accumulated_uptime_secs: 0,
             total_tokens: 0,
+            cached_tokens: 0,
             last_error: None,
             history: Vec::new(),
         }
@@ -285,6 +293,7 @@ impl World {
             status: record.status,
             uptime_secs: record.uptime_secs(),
             total_tokens: record.total_tokens,
+            cached_tokens: record.cached_tokens,
             rag_sources: record.spec.rag_sources.clone(),
             connected_agents: record.spec.connected_agents.clone(),
             order: record.spec.order,

@@ -455,6 +455,11 @@ pub struct AgentSnapshot {
     pub uptime_secs: u64,
     /// 累積トークン数。
     pub total_tokens: u64,
+    /// うちプロンプトキャッシュから読まれた入力トークン数。
+    ///
+    /// 合計だけではキャッシュの効き具合が見えない（無キャッシュでも同じ数字）。
+    /// 画面では割合として出す。
+    pub cached_tokens: u64,
     /// 参照 RAG ソース。
     pub rag_sources: Vec<String>,
     /// 発話を届けられる相手。

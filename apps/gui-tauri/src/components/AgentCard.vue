@@ -56,6 +56,28 @@ const uptime = computed(() => {
 
 /** 大きな数を読みやすく丸める。 */
 const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
+
+/**
+ * プロンプトキャッシュから読まれた割合。まだ 1 度も喋っていなければ `null`。
+ *
+ * 合計だけでは、**キャッシュが一度も効いていない状態と完全に効いている状態が
+ * 同じ数字に見える**。実機で 5 体全員が無キャッシュのまま数日走っており、
+ * 気づいたのは請求ダッシュボードのグラフからだった。設定を変えた次のターンで
+ * 効果が分かるように、ここへ出す。
+ */
+const cacheRate = computed(() => {
+  const total = props.agent.totalTokens;
+  if (total <= 0) return null;
+  return Math.round((props.agent.cachedTokens / total) * 100);
+});
+
+/** 割合に応じた色。0% は警告色にする — 設定の取りこぼしである可能性が高い。 */
+const cacheTone = computed(() => {
+  const rate = cacheRate.value;
+  if (rate === null) return "text-ink-dim";
+  if (rate === 0) return "text-warn";
+  return "text-ink-dim";
+});
 </script>
 
 <template>
@@ -143,7 +165,15 @@ const tokens = computed(() => props.agent.totalTokens.toLocaleString("ja-JP"));
       <dd class="tabular-nums">{{ uptime }}</dd>
 
       <dt class="text-ink-dim">トークン</dt>
-      <dd class="tabular-nums">{{ tokens }}</dd>
+      <dd class="tabular-nums">
+        {{ tokens }}
+        <span
+          v-if="cacheRate !== null"
+          :class="cacheTone"
+          :title="`入力トークンのうち ${agent.cachedTokens.toLocaleString('ja-JP')} がプロンプトキャッシュから読まれました（0% はキャッシュが効いていないことを示します）`"
+          >（キャッシュ {{ cacheRate }}%）</span
+        >
+      </dd>
 
       <dt class="text-ink-dim">RAG</dt>
       <dd class="truncate">

@@ -1250,6 +1250,10 @@ async fn handle_message(
     //    ツールを呼んだら実行して結果を積み、もう一度呼ぶ。
     //    ツールを呼ばないテキスト出力が出たら、それが最終出力。
     let backend = shared.backend_for(&template).await?;
+    // キャッシュ読み取り分は別に数える。合計だけ見ていると、キャッシュが
+    // 一度も効いていない状態と完全に効いている状態が同じ数字に見える
+    // (実際、実機で 5 体全員が無キャッシュのまま数日走っていた。failures.md #33)。
+    let mut cached = 0u64;
     let mut tokens = 0u64;
     let mut outcome = Outcome::Finish {
         content: String::new(),
@@ -1281,6 +1285,7 @@ async fn handle_message(
 
         let response = backend.chat(request).await?;
         tokens += response.usage.total();
+        cached += response.usage.cache_read;
 
         // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
         // 結果が返ってくる種類の操作ではない。
@@ -1374,6 +1379,7 @@ async fn handle_message(
         // まとめの失敗でターンごと落とさない。失敗時は下の最終フォールバックが拾う。
         if let Ok(response) = backend.chat(request).await {
             tokens += response.usage.total();
+        cached += response.usage.cache_read;
             if let Some(text) = response.text
                 && !text.trim().is_empty()
             {
@@ -1409,6 +1415,7 @@ async fn handle_message(
         let mut world = shared.world.write().await;
         if let Ok(record) = world.agent_mut(agent_id) {
             record.total_tokens += tokens;
+            record.cached_tokens += cached;
             record.push_exchange(
                 &attributed,
                 &outcome.spoken(),

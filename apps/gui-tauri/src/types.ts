@@ -113,6 +113,11 @@ export interface AgentSnapshot {
   enabledTools: string[] | null;
   /** 広場ログを受け取るか。 */
   hearsRoomLog: boolean;
+  /**
+   * 累積入力トークンのうち、プロンプトキャッシュから読まれた分。
+   * 合計だけではキャッシュの効き具合が見えないので、画面では割合を出す。
+   */
+  cachedTokens: number;
   lastError: ErrorPayload | null;
 }
 
