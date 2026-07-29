@@ -1220,21 +1220,58 @@ async fn handle_message(
         }
     }
 
-    // 最終出力が空なら、正直な文言で置き換える。
+    // ツール上限で打ち切られてテキストが無いときは、**ツール無しで最後に
+    // 1 回だけ呼び、ここまでの結果を文章化させる**。
     //
-    // ツール上限で打ち切られた周の応答が「ツール呼び出しだけでテキスト無し」だと、
-    // ここまで content が空のまま来る。空の発話を記録すると (1) UI に空バブルが出る
-    // (2) 履歴に空の assistant が積まれ、**次のターンの API リクエストが
-    // 400 (text content blocks must be non-empty) で落ちてエージェントごと止まる**。
-    // 空という値は連鎖的に毒になる（failures.md #29、実機で発生）。
+    // 中間のツール結果はこのターンの `messages` にしか存在せず、履歴には
+    // 積まれない。まとめずに捨てると、利用者が「続けて」と送るたびに
+    // ゼロから調査をやり直して同じ上限に当たり、トークンだけが燃え続ける
+    // （実機で 3 ターン連続 146k tok を観測）。ここで 1 回のまとめ呼び出しに
+    // 変換すれば、燃えたトークンの成果がそのまま答えになる。
+    if let Outcome::Finish { content } = &outcome
+        && content.trim().is_empty()
+        && tool_limit_hit
+    {
+        messages.push(ChatMessage::system(
+            "ツール実行の上限に達しました。これ以上ツールは使えません。\
+             ここまでのツール結果から分かったことを、最終回答としてまとめてください。\
+             調査が途中なら、どこまで分かっていて何が残っているかを書いてください。",
+        ));
+        let request = ChatRequest {
+            model: template.model.clone(),
+            messages: messages.clone(),
+            tools: Vec::new(),
+            tool_choice: crate::llm::ToolChoice::None,
+            temperature: template.temperature,
+            max_tokens: template.max_output_tokens,
+            effort: template.effort,
+            cacheable_prefix_len: stable_len,
+        };
+        // まとめの失敗でターンごと落とさない。失敗時は下の最終フォールバックが拾う。
+        if let Ok(response) = backend.chat(request).await {
+            tokens += response.usage.total();
+            if let Some(text) = response.text
+                && !text.trim().is_empty()
+            {
+                outcome = Outcome::Finish { content: text };
+            }
+        }
+    }
+
+    // それでも最終出力が空なら、正直な文言で置き換える。
+    //
+    // 空の発話を記録すると (1) UI に空バブルが出る (2) 履歴に空の assistant が
+    // 積まれ、**次のターンの API リクエストが 400 (text content blocks must be
+    // non-empty) で落ちてエージェントごと止まる**。空という値は連鎖的に
+    // 毒になる（failures.md #29、実機で発生）。
     if let Outcome::Finish { content } = &mut outcome
         && content.trim().is_empty()
     {
         *content = if tool_limit_hit {
             format!(
-                "（ツール実行の上限 {max_tool_iterations} 回に達したため、\
-                 調査の途中で応答をまとめられませんでした。「続けて」と\
-                 送ってもらえれば、ここまでの結果を踏まえて続きから進めます。）"
+                "（ツール実行の上限 {max_tool_iterations} 回に達し、まとめの生成にも\
+                 失敗しました。エージェント設定で上限を上げるか、依頼を小さく\
+                 分けてください。）"
             )
         } else {
             "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()

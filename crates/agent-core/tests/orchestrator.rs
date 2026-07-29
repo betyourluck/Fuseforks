@@ -284,10 +284,12 @@ impl LlmBackend for ToolCallingBackend {
     }
 }
 
-/// 何度呼ばれても**ツール呼び出しだけ**を返すバックエンド（テキストを返さない）。
+/// ツールが提示されている限り**ツール呼び出しだけ**を返すバックエンド。
 ///
 /// ツール実行上限による打ち切りの経路を再現する。実機では「調査系の依頼で
 /// モデルがツールを呼び続け、上限に達した周の応答にテキストが無い」形で起きる。
+/// ツールが提示されなければテキストを返す — まとめ呼び出し（tools 無し）に
+/// 対する実モデルの挙動と同じ。
 #[derive(Default)]
 struct EndlessToolBackend {
     calls: std::sync::Mutex<usize>,
@@ -299,10 +301,23 @@ impl LlmBackend for EndlessToolBackend {
         "endless-tool"
     }
 
-    async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse, LlmError> {
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
         let mut calls = self.calls.lock().unwrap();
         *calls += 1;
         let n = *calls;
+
+        if req.tools.is_empty() {
+            return Ok(ChatResponse {
+                text: Some("ここまでの調査のまとめです。".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage {
+                    prompt: 1,
+                    completion: 1,
+                    cache_read: 0,
+                },
+            });
+        }
 
         Ok(ChatResponse {
             text: None,
@@ -313,6 +328,43 @@ impl LlmBackend for EndlessToolBackend {
                 args: serde_json::json!({ "note": format!("調査メモ {n}") }),
                 extra: None,
             }],
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+        })
+    }
+}
+
+/// まとめ要求（tools 無し）にも無言を貫くバックエンド。
+///
+/// まとめ呼び出しまで失敗した最悪経路で、最終フォールバック文言が出ることを
+/// 確かめるために使う。
+#[derive(Default)]
+struct SilentToolBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for SilentToolBackend {
+    fn name(&self) -> &str {
+        "silent-tool"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let tool_calls = if req.tools.is_empty() {
+            Vec::new()
+        } else {
+            vec![ToolCall {
+                id: "call_s".into(),
+                name: "remember".into(),
+                args: serde_json::json!({ "note": "沈黙" }),
+                extra: None,
+            }]
+        };
+        Ok(ChatResponse {
+            text: None,
+            tool_calls,
             finish: Finish::Stop,
             usage: Usage {
                 prompt: 1,
@@ -1959,15 +2011,15 @@ async fn a_tool_call_is_executed_and_its_result_is_fed_back() {
     assert_eq!(log.last().unwrap().content, "終わりました");
 }
 
-/// ツール上限で打ち切られても、**空の応答を記録しない**こと。
+/// ツール上限で打ち切られたら、ツール無しの最終呼び出しで**ここまでの結果を
+/// 文章化**して返すこと。
 ///
-/// 上限の周の応答が「ツール呼び出しだけでテキスト無し」だと、素通しでは
-/// 空のメッセージが記録され、履歴の空 assistant が次のターンの API
-/// リクエストを 400（text content blocks must be non-empty）で落とし、
-/// エージェントごと止まる連鎖毒になる（実機で発生。failures.md #29）。
+/// 中間のツール結果はそのターンにしか存在しない。まとめずに捨てると、
+/// 利用者が「続けて」と送るたびにゼロから調査をやり直して同じ上限に当たり、
+/// トークンだけが燃え続ける（実機で 3 ターン連続 146k tok を観測）。
 #[tokio::test]
-async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
-    let dir = TempDir::new("tool-limit-empty");
+async fn a_tool_limit_cutoff_summarizes_the_findings_so_far() {
+    let dir = TempDir::new("tool-limit-summary");
     let backend = Arc::new(EndlessToolBackend::default());
     let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
     let id = AgentId::from("agent_01");
@@ -1997,11 +2049,10 @@ async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
         .iter()
         .find(|m| matches!(m.from, Endpoint::Agent { .. }))
         .expect("応答が記録されること");
-    assert!(
-        !reply.content.trim().is_empty(),
-        "空の応答を記録しないこと"
+    assert_eq!(
+        reply.content, "ここまでの調査のまとめです。",
+        "打ち切り時はまとめ呼び出しの本文が応答になること"
     );
-    assert!(reply.content.contains("上限"), "打ち切りの理由が読めること: {}", reply.content);
 
     // 毒が残らないこと: 次のターンも普通に処理され、エージェントは落ちない。
     orchestrator.send_user_message(&id, "続けて").await.unwrap();
@@ -2015,6 +2066,44 @@ async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
             .iter()
             .any(|m| matches!(m.from, Endpoint::Agent { .. })),
         "次のターンも応答が返ること"
+    );
+}
+
+/// まとめ呼び出しまで無言だった最悪経路でも、空ではなく読める文言が返ること。
+#[tokio::test]
+async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
+    let dir = TempDir::new("tool-limit-empty");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(SilentToolBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let log = messages(&events);
+    let reply = log
+        .iter()
+        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
+        .expect("応答が記録されること");
+    assert!(!reply.content.trim().is_empty(), "空の応答を記録しないこと");
+    assert!(
+        reply.content.contains("上限"),
+        "打ち切りの理由が読めること: {}",
+        reply.content
     );
 }
 
@@ -2040,8 +2129,8 @@ async fn per_agent_tool_iteration_limits_override_the_default() {
 
     assert_eq!(
         *backend.calls.lock().unwrap(),
-        2,
-        "個別上限 2 でモデル呼び出しが止まること（既定 6 ではなく）"
+        3,
+        "個別上限 2 でツール周回が止まること（既定 6 ではなく。3 回目はまとめ呼び出し）"
     );
     assert!(
         events.iter().any(|e| matches!(
