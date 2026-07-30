@@ -236,7 +236,7 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = openai_compat::decode(parsed)?;
-                openai_compat::reject_empty_reasoning(decoded)
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
             Provider::Anthropic => {
                 let parsed: wire::AnthropicResponse =
@@ -245,7 +245,7 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = anthropic::decode(parsed)?;
-                openai_compat::reject_empty_reasoning(decoded)
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
             Provider::Gemini => {
                 let parsed: wire::GeminiResponse =
@@ -254,7 +254,7 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = gemini::decode(parsed)?;
-                openai_compat::reject_empty_reasoning(decoded)
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
         }
     }

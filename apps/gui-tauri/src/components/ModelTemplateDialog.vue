@@ -215,7 +215,7 @@ function blank(): ModelTemplate {
     model: "gpt-4o",
     contextLength: 128000,
     temperature: null,
-    maxOutputTokens: 4096,
+    maxOutputTokens: 8192,
     credential: "unset",
     provider: null,
     useTools: true,

@@ -405,6 +405,11 @@ entities:
       - LLM_HTTP
       - LLM_API
       - LLM_EMPTY_RESPONSE
+      # 出力上限で本文もツール呼び出しも成立しなかった (finish = length)。
+      # **再試行しない** (同じ入力なら同じ所で切れる) が、**エージェントも
+      # 降ろさない** (次の依頼が小さければ通る)。この 2 つは別の問いで、
+      # CoreError::is_retryable と stops_the_agent に分かれている
+      - LLM_OUTPUT_TRUNCATED
       - LLM_BLOCKED
       - LLM_NO_STRUCTURED_OUTPUT
       - LLM_PARSE

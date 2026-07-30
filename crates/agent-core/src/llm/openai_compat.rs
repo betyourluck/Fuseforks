@@ -212,15 +212,22 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
 /// 空応答の防御（純関数）。
 ///
 /// **本文が空 かつ tool_calls が空 かつ `finish == Length`** のときだけ
-/// [`LlmError::EmptyResponse`] にする。これは推論モデルが出力予算を全部思考に使い切った
-/// 状態であり、再抽選で回復しうるため一過性として再試行に乗せる。
+/// [`LlmError::OutputTruncated`] にする。出力予算を使い切って何も成立しなかった
+/// 状態で、原因は 2 通りある — 推論モデルが思考で使い切った場合と、生成物
+/// （長い本文・大きなツール引数）が上限で切れた場合。**どちらも同じ入力では
+/// 同じ所で切れる**ので、再試行には乗せず理由を返す（`is_transient` が偽）。
+///
+/// 以前は [`LlmError::EmptyResponse`] へ畳んで一過性としていたが、実機で
+/// 2 回連続の同一失敗を観測して改めた（2026-07-31。failures.md #40）。
+/// `limit` を載せるのは、利用者の次の一手が「いくつまで上げるか」だから —
+/// 現在値が分からないと上げ幅を決められない。
 ///
 /// `Length` 以外の空応答はここでは弾かない。通常の空応答は再送しても同じ結果になるため、
 /// 呼び出し側へそのまま返して原因を見せるほうが正しい。
-pub fn reject_empty_reasoning(resp: ChatResponse) -> Result<ChatResponse, LlmError> {
+pub fn reject_empty_reasoning(resp: ChatResponse, limit: u32) -> Result<ChatResponse, LlmError> {
     let text_empty = resp.text.as_deref().is_none_or(|t| t.trim().is_empty());
     if text_empty && resp.tool_calls.is_empty() && resp.finish == Finish::Length {
-        return Err(LlmError::EmptyResponse);
+        return Err(LlmError::OutputTruncated { limit });
     }
     Ok(resp)
 }
@@ -454,12 +461,17 @@ mod tests {
             usage: Usage::default(),
             grounding: Grounding::default(),
         };
-        assert!(reject_empty_reasoning(base.clone()).is_err());
+        let err = reject_empty_reasoning(base.clone(), 4_096).unwrap_err();
+        // 一過性にしない — 上限は入力に対して決定的で、再送すれば同じ所で切れる。
+        assert!(!err.is_transient(), "再試行に乗せないこと");
+        assert_eq!(err.code(), "LLM_OUTPUT_TRUNCATED");
+        // 次の一手が「いくつまで上げるか」なので、現在値を文言に載せる。
+        assert!(err.to_string().contains("4096"), "{err}");
 
         let normal_empty = ChatResponse {
             finish: Finish::Stop,
             ..base
         };
-        assert!(reject_empty_reasoning(normal_empty).is_ok());
+        assert!(reject_empty_reasoning(normal_empty, 4_096).is_ok());
     }
 }

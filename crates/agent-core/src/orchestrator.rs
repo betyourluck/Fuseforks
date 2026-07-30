@@ -1466,6 +1466,11 @@ async fn agent_loop(
             received = inbox.recv() => {
                 let Some(envelope) = received else { break };
 
+                // 失敗しても「何を頼まれたか」だけは履歴へ残せるよう、依頼を控える。
+                // handle_message は envelope ごと受け取るので、ここで取っておかないと
+                // 失敗時に依頼文へ触れる手段が無くなる。
+                let incoming = envelope.incoming.clone();
+
                 // 入力中表示。処理は LLM 呼び出しを含み数十秒かかりうるので、
                 // 開始と終了を対で流す。終了は成功・失敗を問わず必ず流す —
                 // 片方だけだと「入力中…」が出しっぱなしになる。
@@ -1480,8 +1485,12 @@ async fn agent_loop(
                 });
 
                 if let Err(err) = outcome {
+                    // 履歴を先に直す。ここを飛ばすと、依頼が会話ログにしか残らず
+                    // どのプロンプト経路にも載らない（失敗のたびに健忘が起きる）。
+                    record_failed_turn(&shared, &agent_id, &incoming, &err).await;
+
                     let payload = ErrorPayload::from(&err);
-                    let fatal = !err.is_retryable();
+                    let fatal = err.stops_the_agent();
 
                     {
                         let mut world = shared.world.write().await;
@@ -1506,9 +1515,79 @@ async fn agent_loop(
     }
 }
 
+/// 受信した発話へ送り手の封筒を付ける。
+///
+/// ユーザーの言葉もエージェントからの転送も同じ user ロールで届くため、名前を
+/// 書かないと受信側は区別できない — 実際にユーザーの発話を「他のエージェントが
+/// 話した言葉」と取り違えた。**プロンプトと履歴の両方へ同じ形で入れる**ので、
+/// 組み立てはこの 1 箇所に置く（2 箇所で組むと、片方だけ直したときに
+/// 過去のターンだけ出所不明に戻る）。
+async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> String {
+    let sender_label = match &incoming.from {
+        Endpoint::User => "ユーザー".to_owned(),
+        // 表示は UI と同じ「Concordia」。プロンプトと画面で同じ送り手が
+        // 違う名前になると、利用者とエージェントの会話が噛み合わない。
+        Endpoint::System => "Concordia".to_owned(),
+        Endpoint::Agent { id } => {
+            let world = shared.world.read().await;
+            world
+                .agent(id)
+                .map(|record| record.spec.name.clone())
+                // 送り手が既に削除されていても発話は成立させる。ID で示す。
+                .unwrap_or_else(|_| id.to_string())
+        }
+    };
+    format!("【送り手: {sender_label}】\n{}", incoming.content)
+}
+
+/// 失敗したターンの**受信側だけ**を履歴へ残す。
+///
+/// # なぜ要るか（実機で観測、2026-07-31）
+///
+/// 履歴への書き込みは [`handle_message`] の終盤（統計と同じ節）にあり、
+/// 途中の `?` で抜けると**受け取った依頼ごと履歴に残らない**。一方で
+/// 広場ログはユーザー発の発話を対象外にし、自分宛も `is_mine` で除外する
+/// （それらは履歴にある、という前提で組まれている）。両者の前提が噛み合わず、
+/// **失敗したターンの依頼はどのプロンプト経路にも載らない**状態になっていた。
+///
+/// 実害: 出力上限で 1 ターン落ちた直後、進行役が「直前に何を頼まれたか」を
+/// 完全に失い、他のエージェントへ聞いて回った（相手も知らない）。会話ログには
+/// 残って画面には見えているので、利用者からは「なぜ忘れたのか」が分からない。
+///
+/// この repo には既に対になる原則がある — hop 打ち切りの「記録してから打ち切る」と
+/// `reset_rule` の「発話は起きた事実でありログに残す」。失敗経路だけが外れていた。
+///
+/// # 何を積むか
+///
+/// 受信側は成功時と**同じ封筒**（[`attribute_sender`]）で積む。応答側は実際に
+/// 何も言えていないので、失敗した事実を目印として置く — 往復の対を崩すと
+/// 役割の交互性が壊れ、プロバイダによっては 400 で拒否される（failures.md #29）。
+/// ツール結果は積まない。依頼文さえ残れば「何を頼まれたか」は復元でき、
+/// 途中経過まで抱えるのは別の判断（履歴の肥大と引き換えになる）。
+async fn record_failed_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    incoming: &AgentMessage,
+    error: &CoreError,
+) {
+    let attributed = attribute_sender(shared, incoming).await;
+    let note = format!(
+        "（このターンは失敗し、返答できませんでした: {error}。\
+         依頼は未処理のまま残っています）"
+    );
+
+    let mut world = shared.world.write().await;
+    if let Ok(record) = world.agent_mut(agent_id) {
+        record.push_exchange(&attributed, &note, shared.config.history_turns);
+    }
+}
+
 /// 受信した発話を 1 件処理する。
 ///
 /// 手順: プロンプト組み立て → RAG 付与 → LLM 呼び出し → 統計更新 → 記録 → 転送。
+///
+/// **途中で失敗すると履歴は書かれない。** 呼び出し側（[`agent_loop`]）が
+/// [`record_failed_turn`] で受信側だけを残す責任を持つ。
 async fn handle_message(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
@@ -1634,21 +1713,7 @@ async fn handle_message(
     // 届くため、名前を書かないと受信側は区別できない — 実際にユーザーの発話を
     // 「他のエージェントが話した言葉」と取り違えた。プロンプトと履歴の両方へ
     // 同じ形で入れる。履歴に入れないと、次のターンで再び出所不明になる。
-    let sender_label = match &incoming.from {
-        Endpoint::User => "ユーザー".to_owned(),
-        // 表示は UI と同じ「Concordia」。プロンプトと画面で同じ送り手が
-        // 違う名前になると、利用者とエージェントの会話が噛み合わない。
-        Endpoint::System => "Concordia".to_owned(),
-        Endpoint::Agent { id } => {
-            let world = shared.world.read().await;
-            world
-                .agent(id)
-                .map(|record| record.spec.name.clone())
-                // 送り手が既に削除されていても発話は成立させる。ID で示す。
-                .unwrap_or_else(|_| id.to_string())
-        }
-    };
-    let attributed = format!("【送り手: {sender_label}】\n{}", incoming.content);
+    let attributed = attribute_sender(shared, &incoming).await;
 
     // 同報の注記。「みんなへ」と呼びかけられたのに自分しか受け取っていないように
     // 見えると、各エージェントは律儀に接続先へ転送して反響が起きる（実機で観測）。

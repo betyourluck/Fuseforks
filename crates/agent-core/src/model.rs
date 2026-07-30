@@ -295,6 +295,11 @@ pub struct ModelTemplate {
     #[serde(default)]
     pub temperature: Option<f32>,
     /// 1 応答あたりの最大出力トークン数。
+    ///
+    /// **小さすぎる値は診断しにくい失敗を生む。** 上限を超えると本文もツール
+    /// 呼び出しも成立せず、`LLM_OUTPUT_TRUNCATED` になる（失敗の方向が非対称 —
+    /// 大きすぎる値は API が 400 で理由つきに弾くので気づけるが、小さすぎる値は
+    /// 生成物の大きさ次第でしか表に出ない）。既定は 8,192。
     pub max_output_tokens: u32,
     /// 認証情報の取得元。
     ///
@@ -383,7 +388,7 @@ impl ModelTemplate {
             model: model.into(),
             context_length: 128_000,
             temperature: None,
-            max_output_tokens: 4_096,
+            max_output_tokens: 8_192,
             credential: CredentialSource::Unset,
             provider: None,
             use_tools: true,

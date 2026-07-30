@@ -41,10 +41,30 @@ pub enum LlmError {
         body: String,
     },
 
-    /// 応答が空。推論モデルが出力予算を思考に使い切った場合に起きる（`finish_reason=length`）。
+    /// 応答が空。理由が `length` 以外の場合（プロバイダが 200 + 空本文を返した等）。
     /// 再抽選で回復しうるため一過性として扱う。
     #[error("LLM が空の応答を返しました")]
     EmptyResponse,
+
+    /// **出力上限に達して、本文もツール呼び出しも成立しなかった**（`finish = length`）。
+    ///
+    /// 2 種類の原因が同じワイヤ形になる — (a) 推論モデルが出力予算を思考に
+    /// 使い切った、(b) 生成物（長い本文・大きなツール引数）が上限で切れた。
+    /// **どちらも同じ入力を再送すれば同じ所で切れる**ので非一過性として扱う。
+    ///
+    /// 以前は [`Self::EmptyResponse`] に畳んで一過性としていたが、実機で
+    /// 2 回連続の同一失敗を観測した（README 全文の英訳を 1 回のツール引数へ
+    /// 載せようとして `max_output_tokens` の既定 4,096 を超えた。2026-07-31）。
+    /// 再試行はバックオフと課金だけを増やし、画面には「空の応答」としか
+    /// 出ないため、利用者が上限に当たったことに辿り着けなかった。
+    #[error(
+        "出力上限に達し、応答が途中で切れました（{limit} トークン）。\
+         モデルテンプレートの「最大出力トークン」を上げるか、依頼を分割してください"
+    )]
+    OutputTruncated {
+        /// 適用されていた上限。次の一手（どこまで上げるか）の判断材料になる。
+        limit: u32,
+    },
 
     /// プロバイダが応答をブロックした（安全フィルタ・利用規約）。
     /// 同じ入力の再送では回復しないので非一過性。
@@ -95,6 +115,7 @@ impl LlmError {
             Self::Http { .. } => "LLM_HTTP",
             Self::Api { .. } => "LLM_API",
             Self::EmptyResponse => "LLM_EMPTY_RESPONSE",
+            Self::OutputTruncated { .. } => "LLM_OUTPUT_TRUNCATED",
             Self::Blocked { .. } => "LLM_BLOCKED",
             Self::NoStructuredOutput => "LLM_NO_STRUCTURED_OUTPUT",
             Self::Parse { .. } => "LLM_PARSE",
@@ -103,8 +124,10 @@ impl LlmError {
 
     /// 再試行で回復しうるか。
     ///
-    /// 対象は HTTP 障害・429・5xx・推論モデルの空応答のみ。
+    /// 対象は HTTP 障害・429・5xx・理由不明の空応答のみ。
     /// `Blocked` / `Parse` / `Config` は同じ入力を再送しても回復しないため除外する。
+    /// `OutputTruncated` も除外 — 上限は入力に対して決定的なので、再送すれば
+    /// 同じ所で切れる（実機で 2 回連続の同一失敗を観測。2026-07-31）。
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Http { source, .. } => {

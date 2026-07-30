@@ -3553,6 +3553,117 @@ async fn a_worker_that_transfers_reports_the_fact_not_silence() {
 }
 
 // ---------------------------------------------------------------------------
+// 失敗したターンの記憶（2026-07-31 実機観測）
+// ---------------------------------------------------------------------------
+
+/// 1 回目だけ失敗し、以後は受け取ったメッセージを記録して答えるバックエンド。
+struct FailFirstThenRecordingBackend {
+    calls: std::sync::Mutex<usize>,
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+}
+
+impl FailFirstThenRecordingBackend {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::Mutex::new(0),
+            seen: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for FailFirstThenRecordingBackend {
+    fn name(&self) -> &str {
+        "fail-first"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls == 1 {
+                // 出力上限で落ちたときと同じ形（一過性なので稼働は続く）。
+                return Err(LlmError::EmptyResponse);
+            }
+        }
+        self.seen.lock().unwrap().push(req.messages.clone());
+        Ok(ChatResponse {
+            text: Some("承知".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// **失敗したターンでも「何を頼まれたか」は履歴に残ること。**
+///
+/// 履歴の書き込みは handle_message の終盤にあり、途中で落ちると受け取った依頼ごと
+/// 消える。一方で広場ログはユーザー発を対象外にし、自分宛も is_mine で除外する
+/// （履歴にある前提で組まれている）。両者の前提が噛み合わず、失敗したターンの
+/// 依頼が**どのプロンプト経路にも載らない**状態になっていた。
+///
+/// 実機（2026-07-31）: 出力上限で 1 ターン落ちた直後、進行役が直前の依頼を完全に
+/// 失い、他のエージェントへ聞いて回った。会話ログには残っていて画面には見えるので、
+/// 利用者からは「なぜ忘れたのか」が分からない。
+#[tokio::test]
+async fn a_failed_turn_still_remembers_what_was_asked() {
+    let dir = TempDir::new("failed-turn-memory");
+    let backend = Arc::new(FailFirstThenRecordingBackend::new());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let id = AgentId::from("agent_solo");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ひとり", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    // 1 ターン目: 失敗する。
+    orchestrator
+        .send_user_message(&id, "README を英訳して README_en.md に書いて")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 一過性の失敗では稼働を降ろさない（実機と同じ状態）。
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Running,
+        "一過性の失敗で止まらないこと"
+    );
+
+    // 2 ターン目: ユーザーが「続き」を頼む。
+    orchestrator.send_user_message(&id, "先ほどの続きをお願い").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap();
+    let latest = seen.last().expect("2 ターン目のリクエストが記録されること");
+    let joined = latest
+        .iter()
+        .map(|m| m.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        joined.contains("README を英訳して"),
+        "失敗したターンの依頼が次のプロンプトに載ること: {joined}"
+    );
+    // 送り手の封筒は成功時と同じ形で積む（履歴だけ出所不明にしない）。
+    assert!(
+        joined.contains("【送り手: ユーザー】"),
+        "封筒つきで積むこと: {joined}"
+    );
+    // 応答側は「失敗した」と分かる形で埋める（往復の対を崩さない）。
+    assert!(
+        joined.contains("このターンは失敗し"),
+        "失敗した事実も残すこと: {joined}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 波の記録と event（Spec 08 — 波ペイン）
 // ---------------------------------------------------------------------------
 

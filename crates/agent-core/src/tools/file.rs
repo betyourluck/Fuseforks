@@ -23,7 +23,7 @@
 //!   失敗として返す（黙って完全削除へフォールバックしない）
 //! - 上書きは `overwrite: true` の明示が要る（既定は拒否して案内を返す）
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -332,7 +332,7 @@ mod tests {
     use super::*;
     use crate::model::AgentId;
 
-    struct TempDir(PathBuf);
+    struct TempDir(std::path::PathBuf);
 
     impl TempDir {
         fn new(tag: &str) -> Self {

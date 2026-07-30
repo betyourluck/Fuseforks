@@ -216,6 +216,23 @@ impl CoreError {
         }
     }
 
+    /// エージェントの稼働を降ろすべき失敗か。
+    ///
+    /// **[`Self::is_retryable`] とは別の問い。** 再試行の可否は「**この 1 件**を
+    /// もう一度投げて意味があるか」で、こちらは「**以後のすべての依頼**が同じく
+    /// 失敗するか」を問う。設定不備（API キー不在）は後者に当たるので降ろすが、
+    /// 出力上限（[`crate::llm::LlmError::OutputTruncated`]）は当たらない —
+    /// **その依頼の生成物が大きすぎただけ**で、次が小さければ普通に通る。
+    ///
+    /// この 2 つを 1 つの述語に畳んでいると、上限超えのたびにエージェントが
+    /// 停止する（2026-07-31 に分離。failures.md #40）。
+    pub fn stops_the_agent(&self) -> bool {
+        match self {
+            Self::Llm(crate::llm::LlmError::OutputTruncated { .. }) => false,
+            other => !other.is_retryable(),
+        }
+    }
+
     /// 構造化出力のパースに失敗した際の生応答。再生成プロンプトへ添える燃料。
     pub fn raw_output(&self) -> Option<&str> {
         match self {
@@ -300,6 +317,21 @@ mod tests {
         assert_eq!(payload.code, "ALREADY_RUNNING");
         assert_eq!(payload.agent_id.as_deref(), Some("agent_01"));
         assert!(!payload.retryable);
+    }
+
+    /// 出力上限は「この依頼は無理」であって「このエージェントは無理」ではない。
+    #[test]
+    fn output_truncation_is_not_retryable_but_keeps_the_agent_running() {
+        let err = CoreError::Llm(crate::llm::LlmError::OutputTruncated { limit: 4_096 });
+        assert!(!err.is_retryable(), "同じ依頼を再送しても同じ所で切れる");
+        assert!(
+            !err.stops_the_agent(),
+            "依頼が小さければ次は通るので、稼働は降ろさない"
+        );
+
+        // 設定不備は対照的に、以後のすべての依頼が同じく失敗する。
+        let config = CoreError::Llm(crate::llm::LlmError::Config("キー不在".into()));
+        assert!(config.stops_the_agent());
     }
 
     #[test]
