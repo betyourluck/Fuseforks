@@ -164,6 +164,45 @@ fn wire_field_sets_are_frozen() {
     );
 }
 
+/// 波の記録のワイヤ形を固定する（Spec 08 — 波ペイン）。
+///
+/// `list_plan_waves` と `CoreEvent` の plan 3 種がこの型で境界を渡る。
+/// 落ちたら types.ts の `PlanWaveRecord` / `PlanTaskRecord` / `PlanTaskState` を直すこと。
+#[test]
+fn plan_wave_wire_fields_are_frozen() {
+    use agent_core::plan::{PlanTaskState, PlanWaveStore};
+
+    let mut store = PlanWaveStore::default();
+    let id = store.begin_wave(AgentId::from("agent_1"), 1, &[(AgentId::from("agent_2"), 12)], 55);
+    store.resolve_task(id, &AgentId::from("agent_2"), PlanTaskState::Answered, 3);
+    store.finish_wave(id, 40, 9);
+
+    let wave = &store.list()[0];
+    assert_eq!(
+        wire_keys(wave),
+        vec![
+            "agentId",
+            "bundleChars",
+            "elapsedMs",
+            "planId",
+            "startedAtMs",
+            "tasks",
+            "wave",
+        ],
+        "PlanWaveRecord のフィールドが変わった"
+    );
+    assert_eq!(
+        wire_keys(&wave.tasks[0]),
+        vec!["elapsedMs", "msgChars", "state", "to"],
+        "PlanTaskRecord のフィールドが変わった"
+    );
+    // 分類の値は snake_case（TS の union リテラルと一致させる）。
+    assert_eq!(
+        serde_json::to_value(wave.tasks[0].state).unwrap(),
+        serde_json::json!("answered")
+    );
+}
+
 /// `ModelTemplateDialog.vue` の `blank()` が組み立てる新規テンプレート。
 #[test]
 fn new_model_template_payload_deserializes() {

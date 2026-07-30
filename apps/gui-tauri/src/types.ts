@@ -295,6 +295,52 @@ export interface RagChunk {
   text: string;
 }
 
+/**
+ * plan の 1 タスクの解決分類（Spec 08 — 波ペイン）。
+ *
+ * 文言 parse では取らない — コアが型で刻んだ値がそのまま届く。
+ * セル色の対応は data_contract.yaml の PlanTaskState が正。
+ */
+export type PlanTaskState =
+  | "running"
+  | "answered"
+  | "handed_off"
+  | "undeliverable"
+  | "no_answer"
+  | "timed_out";
+
+/** `planWaveStarted` が運ぶタスクの告知形（開始時点で確定している 2 欄だけ）。 */
+export interface PlanTaskAnnounced {
+  to: AgentId;
+  msgChars: number;
+}
+
+/** 波の 1 タスクの記録。同一性は `(planId, to)`（同一宛先の重複は静的な不正）。 */
+export interface PlanTaskRecord {
+  to: AgentId;
+  state: PlanTaskState;
+  /** 配送からこのタスクの解決まで。相手のキュー待ちを含む（並列なのは配送）。 */
+  elapsedMs: number | null;
+  msgChars: number;
+}
+
+/** plan 1 波の実行記録。所有者はコアの in-memory（リング上限 50・プロセス寿命）。 */
+export interface PlanWaveRecord {
+  /** プロセス内で単調増加。1 始まり・0 は予約。 */
+  planId: number;
+  /** 進行役。 */
+  agentId: AgentId;
+  /** ターン内連番（ターンを跨いで重複する。同定は planId の仕事）。 */
+  wave: number;
+  startedAtMs: number;
+  /** 入力順（束ねと同じ。解決順ではない）。 */
+  tasks: PlanTaskRecord[];
+  /** 波の完了時に埋まる。 */
+  bundleChars: number | null;
+  /** 波全体の所要（= キュー待ち込みの最遅 1 体分）。波の完了時に埋まる。 */
+  elapsedMs: number | null;
+}
+
 /** コア層から押し出される状態変化。`type` による判別共用体。 */
 export type CoreEvent =
   | { type: "agentStatusChanged"; agentId: AgentId; status: AgentStatus }
@@ -320,7 +366,29 @@ export type CoreEvent =
   | { type: "conversationCleared" }
   | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
-  | { type: "hopLimitReached"; agentId: AgentId; maxHops: number };
+  | { type: "hopLimitReached"; agentId: AgentId; maxHops: number }
+  // Spec 08（波ペイン）。順序保証は per planId のみ（Started → Resolved* → Finished）。
+  | {
+      type: "planWaveStarted";
+      planId: number;
+      agentId: AgentId;
+      wave: number;
+      tasks: PlanTaskAnnounced[];
+      startedAtMs: number;
+    }
+  | {
+      type: "planTaskResolved";
+      planId: number;
+      to: AgentId;
+      state: PlanTaskState;
+      elapsedMs: number;
+    }
+  | {
+      type: "planWaveFinished";
+      planId: number;
+      bundleChars: number;
+      elapsedMs: number;
+    };
 
 /** 設定ファイル種別と表示名の対応。Rust 側の実ファイル名と揃えてある。 */
 export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {

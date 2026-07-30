@@ -70,6 +70,14 @@ pub async fn list_messages(
     Ok(state.orchestrator.message_log(limit).await)
 }
 
+/// plan 波の記録を返す（Spec 08 — 波ペイン。古い順・実行中の波も含む）。
+#[tauri::command]
+pub async fn list_plan_waves(
+    state: State<'_, AppState>,
+) -> CoreResult<Vec<agent_core::plan::PlanWaveRecord>> {
+    Ok(state.orchestrator.list_plan_waves().await)
+}
+
 /// エージェント別のトークン消費量を返す（Rayon で集計）。
 #[tauri::command]
 pub async fn token_usage(state: State<'_, AppState>) -> CoreResult<HashMap<AgentId, u64>> {

@@ -22,6 +22,7 @@ import type {
   ModelTemplateId,
   McpConfig,
   McpServerStatus,
+  PlanWaveRecord,
   RagChunk,
   Recurrence,
   ScheduleView,
@@ -105,6 +106,9 @@ export const listTopology = () => call<TopologyEdge[]>("list_topology");
 /** メッセージログを取得する。`limit` 指定時は末尾からその件数。 */
 export const listMessages = (limit?: number) =>
   call<AgentMessage[]>("list_messages", { limit });
+
+/** plan 波の記録を取得する（Spec 08 — 波ペイン。古い順・実行中の波も含む）。 */
+export const listPlanWaves = () => call<PlanWaveRecord[]>("list_plan_waves");
 
 /** エージェント別トークン消費量を取得する（Rust 側で Rayon 集計）。 */
 export const tokenUsage = () => call<Record<AgentId, number>>("token_usage");

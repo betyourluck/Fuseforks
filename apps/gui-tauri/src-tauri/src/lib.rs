@@ -91,6 +91,7 @@ pub fn run() {
             commands::list_agents,
             commands::list_topology,
             commands::list_messages,
+            commands::list_plan_waves,
             commands::token_usage,
             commands::list_model_templates,
             commands::list_rag_sources,
