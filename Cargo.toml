@@ -72,6 +72,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 # Spec 01 Phase 4 の記録参照）。コメント保持で信頼できる YAML 編集 crate が
 # 現状のエコシステムに無い。
 toml_edit = "0.25"
+# 同梱 file ツールの削除（Spec 09）。**完全削除の経路を作らない**ための依存で、
+# Windows ごみ箱 / macOS Trash / freedesktop Trash を同一 API で扱う。
+# ファイル操作の本体は std::fs で足りる（create_dir_all / rename / copy /
+# read / write）— crate を足す価値があるのはここだけだった。ごみ箱が使えない
+# 環境では失敗として返し、黙って完全削除へフォールバックしない。
+trash = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # リリースビルドは GUI クレート側の要求（サイズ最適化）に合わせてワークスペース単位で固定する。

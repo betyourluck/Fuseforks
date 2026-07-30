@@ -96,5 +96,5 @@ pub use schedule::{
 };
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
-pub use tools::{DiffTool, FdTool, GrepTool, RememberTool, SdTool, YqTool};
+pub use tools::{DiffTool, FdTool, FileTool, GrepTool, RememberTool, SdTool, YqTool};
 pub use world::World;

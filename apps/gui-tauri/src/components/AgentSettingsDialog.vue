@@ -88,11 +88,16 @@ const BUNDLED_TOOLS = [
   { name: "diff", label: "diff — 2 ファイル比較", needsWorkDir: true },
   { name: "sd", label: "sd — 正規表現置換（書き換え）", needsWorkDir: true },
   { name: "yq", label: "yq — TOML/JSON の値編集（書き換え）", needsWorkDir: true },
+  {
+    name: "file",
+    label: "file — ファイル・フォルダ操作（作成/移動/複製/ごみ箱）",
+    needsWorkDir: true,
+  },
 ] as const;
 
 /**
  * ツールのチェック状態。`enabledTools: null` は「既定に従う」= 全 ON 表示。
- * これは null の**効果の表示**であって、明示配列 6 本を保存するのではない。
+ * これは null の**効果の表示**であって、明示配列 7 本を保存するのではない。
  * 利用者がどれかを触った瞬間に明示配列へ切り替わる（Spec 02）。
  */
 function isToolChecked(name: string): boolean {

@@ -20,6 +20,7 @@ similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml_edit.workspace = true
+trash.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

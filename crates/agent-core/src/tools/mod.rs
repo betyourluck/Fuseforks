@@ -5,20 +5,22 @@
 //! 何でもここへ足すと、シングルバイナリに世界中の依存が生えてくる。
 
 pub mod edit;
+pub mod file;
 pub mod fs;
 pub mod memory;
 
 pub use edit::{SdTool, YqTool};
+pub use file::FileTool;
 pub use fs::{DiffTool, FdTool, GrepTool};
 pub use memory::RememberTool;
 
 /// 同梱ツールの名前一覧。`AgentSpec::enabled_tools` による提示制御の対象は
 /// この集合だけで、MCP 由来・転送・委譲ツールは対象外（enabled_tools_invariant）。
-pub const BUNDLED_TOOL_NAMES: [&str; 6] = ["diff", "fd", "grep", "remember", "sd", "yq"];
+pub const BUNDLED_TOOL_NAMES: [&str; 7] = ["diff", "fd", "file", "grep", "remember", "sd", "yq"];
 
 /// 作業フォルダが無いと動かない同梱ツール。
 ///
 /// 未設定のエージェントには enabled_tools に関わらず**提示しない** —
 /// 呼んでも「未設定です」と答えるだけのツールに、毎ターンスキーマ分の
 /// トークンを払わない（使えないツールを見せない）。
-pub const WORK_DIR_TOOL_NAMES: [&str; 5] = ["diff", "fd", "grep", "sd", "yq"];
+pub const WORK_DIR_TOOL_NAMES: [&str; 6] = ["diff", "fd", "file", "grep", "sd", "yq"];
