@@ -544,6 +544,83 @@ entities:
       要望の「鐘」はその最小の実例。順序は デスクトップ通知 → 1 チャネル で、
       25 チャネル相当の抽象は作らない (別の製品の形)。
 
+  # -------------------------------------------------------------------------
+  # Spec 08 の契約。**2026-07-30 に Phase 0 で凍結** (rev2 査読承認)。
+  # 波ペイン (plan 実行の可視化、Airflow Grid 相当)。実装は Phase 1〜3 で着地。
+  # 描画は読み取り専用 — ここから plan を操作する経路は作らない。
+  PlanTaskState:
+    values: [running, answered, handed_off, undeliverable, no_answer, timed_out]
+    note: |
+      plan の 1 タスクの解決分類。**文言 parse では取らない** (文言を直した瞬間に
+      黙って壊れる)。取得の構造は 2 つ:
+        (1) deliver_and_wait の返り値を String → (String, PlanTaskState) へ。
+            ask 側は分類を捨てるだけ (配送・失敗の文言を ask と共有して境界の
+            ずれを構造で防ぐ、Spec 04 Phase 1 の判断の延長)
+        (2) oneshot チャネルの積み荷を String → Reply { text, kind } へ (下記)
+      セル色の対応 (UI 契約。文言が将来変わっても色はこの表に追従する):
+        running       → 進行アニメーション
+        answered      → 正常色
+        handed_off    → 注意色 (答えではなく「転送した」という事実が返った)
+        undeliverable / no_answer / timed_out → 失敗色
+
+  Reply:
+    fields: { text: String, kind: PlanTaskState }
+    note: |
+      ask / plan の返信 oneshot チャネルの積み荷 (旧: 素の String)。
+      kind は handle_message の Finish / Handoff 分岐が刻む — 転送 (handed_off)
+      は文字列としては普通の答えと同じ経路で返るため、型で刻まないと
+      区別できない。ワイヤには出ない内部型だが Phase 0 で凍結するのは、
+      分類の刻み手を handle_message の 1 箇所に固定するため。
+
+  PlanWaveRecord:
+    description: plan 1 波の実行記録 (Spec 08)。所有者は in-memory、ファイルへ書かない
+    fields:
+      planId: u64                # プロセス内で単調増加。1 始まり・0 は予約
+      agentId: AgentId           # 進行役
+      wave: u32                  # ターン内連番 (stderr の wave= と同じ値のまま)
+      startedAtMs: u64           # epoch ms (壁時計)
+      tasks:                     # 入力順 (束ねと同じ。解決順ではない)
+        to: AgentId              # 波内で一意 (同一宛先の重複 = 静的な不正)
+        state: PlanTaskState
+        elapsedMs: u64 | null    # 配送→そのタスクの解決。相手のキュー待ちを含む
+        msgChars: u32
+      bundleChars: u64 | null    # 波の完了時に埋まる
+      elapsedMs: u64 | null      # 波全体 = キュー待ち込みの最遅 1 体分
+    invariants: |
+      - **タスクの同一性は (planId, to)。** 成立根拠は「同一宛先の重複 =
+        静的な不正」(parallel_delegation の 3 分類 1) — 配送された波の中で
+        to は必ず一意。task_index を持たないのは**この禁止に依存した設計**で、
+        同一宛先を許す将来 Spec は task_index の導入とセットになる
+      - **planId はモデル非公開。** 束ねの文言・plan のツール説明は 1 字も
+        変えない (変えるとプロンプトが変わり、束ねサイズの実測と実機確認の
+        前提が揺れる)。モデルへ載せる判断は Spec 04 Notes 12 の発火条件 (a)
+        (波の因果を追えなくて困った実例) が出たときに別途
+      - **配送ゼロの plan (静的差し戻し / hop 上限) は記録しない。** 波 =
+        配送が起きた単位。stderr の plan wave: も早期 return が eprintln! より
+        前にあり配送ゼロでは出ない (検証済み) — GUI と stderr の数え方は一致
+      - 保持はリングバッファ**上限 50 波**。押し出しは**状態を問わず**古い方から。
+        押し出された波への後続更新は窓の外として無視する (event は普通に飛ぶ
+        ので、投影側の欠けであって配送の欠けではない)。概算 1 波 ≈ 400 byte、
+        50 波 ≈ 20 KB — 律速はメモリではなく「見て意味のある遡り幅」
+      - 計時: startedAtMs は壁時計 (epoch ms)、elapsedMs は単調時計 (Instant)。
+        **計測点は run_plan の JoinSet タスク内** — deliver_and_wait の
+        シグネチャに計時を入れない (ask に不要な荷物を背負わせない)
+      - wire は **camelCase** (CoreEvent の既存 variant と同じ rename_all)
+      - 再起動生存 Spec (README 未実装表) が波の記録を生かす側に置くなら、
+        planId 採番位置の持ち越しもセットで要る (今はプロセス寿命なので不要)
+    projection_rule: |
+      **更新は event (events の plan* 3 種)、再投影は list_plan_waves** (IPC・
+      引数なし・古い順で全記録・**実行中の波も含む** — 完了だけ返すと再読み込みの
+      瞬間に走っていた波が event でしか届かず再投影の穴になる)。
+      フロントの順序規律: (1) event リスナー登録 → (2) list_plan_waves →
+      (3) planId で upsert。この順でないと list と購読の隙間に飛んだ
+      planTaskResolved が欠落する (initialize の「購読を先に張る」と同じ規律。
+      **順序が欠落側の本体で、upsert は重複側の対策**)。タスクの upsert 鍵は
+      (planId, to)。フロントの保持もコアと同じ上限 50・古い方から捨てる。
+      event の順序保証は **per planId のみ** (planWaveStarted →
+      planTaskResolved* → planWaveFinished)。Resolved の相互順序と、
+      波を跨いだ全体順序 (並行する波の Started は交互に来うる) は保証しない。
+
 # ---------------------------------------------------------------------------
 events:
   channel: "core://event"
@@ -564,6 +641,11 @@ events:
     toolInvoked: { agentId, tool, ok }
     toolLimitReached: { agentId, maxIterations }
     hopLimitReached: { agentId, maxHops }
+    # Spec 08 (波ペイン)。順序保証は per planId のみ (Started → Resolved* →
+    # Finished)。再投影との突き合わせ規律は entities の PlanWaveRecord.projection_rule
+    planWaveStarted: { planId, agentId, wave, tasks, startedAtMs }   # tasks = [{to, msgChars}]
+    planTaskResolved: { planId, to, state, elapsedMs }
+    planWaveFinished: { planId, bundleChars, elapsedMs }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
