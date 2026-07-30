@@ -2,7 +2,7 @@
 
 **ID**: 08
 **Date**: 2026-07-30
-**Status**: rev2 査読承認 → Phase 0〜2 完了（契約凍結・コア・IPC 2026-07-30）
+**Status**: rev2 査読承認 → Phase 0〜3 完了（契約凍結・コア・IPC・UI 2026-07-30）
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01〜07 と同じプロセス）
 
@@ -226,8 +226,11 @@ Spec 04 Notes 12 が置いた `plan_id` の発火条件 (b)
       types.ts ミラー（`PlanTaskState` / `PlanTaskRecord` / `PlanWaveRecord` /
       `PlanTaskAnnounced` + `CoreEvent` 3 種）と、`ipc_contract.rs` の
       ワイヤ凍結テスト 1 本を含む
-- [ ] Phase 3 — UI: `usePaneLayout` 拡張 / `App.vue` 中央分割 /
-      `PlanWavePane.vue` / `applyEvent` 配線（リスナー登録 → list → upsert の順）
+- [x] Phase 3 — UI: `usePaneLayout` 拡張 / `App.vue` 中央分割 /
+      `PlanWavePane.vue` / `applyEvent` 配線（リスナー登録 → list → upsert の順）。
+      upsert の合流は「進んでいる方を採る」（記録の遷移は片方向 —
+      running → 解決、null → 値 — なのでこれで正しく合流できる）。
+      投影規律の vitest 1 本（巻き戻し禁止・完了時の running 倒し・上限 50）
 - [ ] Phase 4 — 台帳整合: README（未実装表から「波の実行ビュー」を消し、
       本文へ波ペインの節を追加）/ CLAUDE.md の Spec 状態 /
       Spec 04 Notes 12 へ「発火条件 (b) が成立し Spec 08 で実装」を追記 /

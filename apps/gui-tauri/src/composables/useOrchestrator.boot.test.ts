@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   listModelTemplates: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   listMessages: vi.fn(async () => []),
+  listPlanWaves: vi.fn(async () => []),
   workspacePath: vi.fn(async () => "C:\\workspace"),
   getAgentIcon: vi.fn(async () => null),
 }));

@@ -23,6 +23,7 @@ import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 import McpDialog from "./components/McpDialog.vue";
 import OrdinanceDialog from "./components/OrdinanceDialog.vue";
+import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -45,6 +46,11 @@ const schedulesOpen = ref(false);
 
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
+);
+
+/** 中央ペインの上下分割（Spec 08）。上段 = 接続マップ / 下段 = 波ペイン。 */
+const centerRows = computed(
+  () => `minmax(0, 1fr) 2px ${layout.bottomHeight}px`,
 );
 
 onMounted(() => {
@@ -83,11 +89,30 @@ onMounted(() => {
       @reset="reset"
     />
 
-    <!-- 中央ペイン: 接続マップ -->
-    <main class="min-w-0 overflow-hidden">
-      <ErrorBoundary label="接続マップ">
-        <TopologyMap />
-      </ErrorBoundary>
+    <!-- 中央ペイン: 上段 = 接続マップ（空間の今）/ 下段 = 波ペイン（時間の痕）。 -->
+    <main
+      class="grid min-w-0 overflow-hidden"
+      :style="{ gridTemplateRows: centerRows }"
+    >
+      <section class="min-h-0 overflow-hidden">
+        <ErrorBoundary label="接続マップ">
+          <TopologyMap />
+        </ErrorBoundary>
+      </section>
+
+      <!-- 仕切りは波ペインの上端にあるので、下へ動かすと高さが縮む。 -->
+      <PaneSplitter
+        direction="row"
+        label="波ペインの高さ"
+        @delta="(px) => resize('bottomHeight', px, -1)"
+        @reset="reset"
+      />
+
+      <section class="min-h-0 overflow-hidden">
+        <ErrorBoundary label="波ペイン">
+          <PlanWavePane />
+        </ErrorBoundary>
+      </section>
     </main>
 
     <!-- 右ペインは左端につまみがあるので、右へ動かすと幅が縮む。 -->

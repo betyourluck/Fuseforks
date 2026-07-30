@@ -20,6 +20,9 @@ const STORAGE_KEY = "concordia.layout.v1";
 const BOUNDS = {
   leftWidth: { min: 220, max: 620 },
   rightWidth: { min: 280, max: 1100 },
+  // 波ペイン（Spec 08）。min 80 で「ほぼ消す」が避難路 — 折りたたみ機構は
+  // 持たない（表示状態という別種の値が入り、寸法だけを持つ形が崩れる）。
+  bottomHeight: { min: 80, max: 480 },
 } as const;
 
 export interface PaneLayout {
@@ -27,11 +30,14 @@ export interface PaneLayout {
   leftWidth: number;
   /** 右ペイン（会話）の幅。 */
   rightWidth: number;
+  /** 中央ペイン下段（波ペイン）の高さ。 */
+  bottomHeight: number;
 }
 
 const DEFAULTS: PaneLayout = {
   leftWidth: 320,
   rightWidth: 520,
+  bottomHeight: 160,
 };
 
 /** 値を下限・上限へ収める。 */
@@ -50,6 +56,9 @@ function load(): PaneLayout {
     return {
       leftWidth: clamp(parsed.leftWidth ?? DEFAULTS.leftWidth, "leftWidth"),
       rightWidth: clamp(parsed.rightWidth ?? DEFAULTS.rightWidth, "rightWidth"),
+      // Spec 08 で追加。キーごとの補完なので、追加前の保存値からは既定へ落ちる
+      // （鍵 v1 のままでよい根拠。全置換マージだとここが undefined のまま残る）。
+      bottomHeight: clamp(parsed.bottomHeight ?? DEFAULTS.bottomHeight, "bottomHeight"),
     };
   } catch {
     // 壊れた保存値で画面が開けなくなるほうが害が大きい。

@@ -23,6 +23,7 @@ import type {
   ErrorPayload,
   McpConfig,
   ModelTemplate,
+  PlanWaveRecord,
   TopologyEdge,
 } from "../types";
 
@@ -31,6 +32,9 @@ const CORE_EVENT = "core://event";
 
 /** 画面に保持する発話の上限。超えた分は古いほうから捨てる。 */
 const MESSAGE_LIMIT = 500;
+
+/** 保持する波の上限。コアのリング（PLAN_WAVE_CAPACITY）と同じ規則で切る。 */
+const PLAN_WAVE_LIMIT = 50;
 
 /** 画面右上に出す通知。 */
 export interface Toast {
@@ -80,6 +84,14 @@ interface OrchestratorState {
    * 知りたい場所で、時系列を遡る場所ではない。
    */
   lastTool: Record<AgentId, ToolRun>;
+  /**
+   * plan 波の記録（Spec 08 — 波ペイン）。古い順。
+   *
+   * 突き合わせの鍵は planId、タスクの鍵は (planId, to)。新規チャットでは
+   * **消さない** — reset_rule が消すのは会話ログと履歴の 2 つだけで、
+   * 波の記録は統計と同じ「起きた事実の観測」の側（コアも消していない）。
+   */
+  planWaves: PlanWaveRecord[];
 }
 
 const state = reactive<OrchestratorState>({
@@ -97,6 +109,7 @@ const state = reactive<OrchestratorState>({
   typing: {},
   toolRuns: [],
   lastTool: {},
+  planWaves: [],
 });
 
 /** ツール実行の連番。イベントに ID が無いので受け手側で振る。 */
@@ -301,6 +314,38 @@ function patchAgent(agentId: AgentId, patch: Partial<AgentSnapshot>): void {
 }
 
 /** コアイベントを状態へ反映する。 */
+/**
+ * 波の記録を planId で upsert する（Spec 08 の projection_rule）。
+ *
+ * **順序（リスナー登録 → list → upsert）が欠落側の本体で、upsert は重複側の対策。**
+ * list の応答と event が同じ波を運んできたとき、どちらが新しいかは保証されない —
+ * だが記録の遷移は片方向（running → 解決、null → 値）なので、
+ * 「進んでいる方を採る」だけで正しく合流できる。
+ */
+function upsertPlanWave(incoming: PlanWaveRecord): void {
+  const index = state.planWaves.findIndex((w) => w.planId === incoming.planId);
+  if (index < 0) {
+    state.planWaves.push(incoming);
+    // コアのリングと同じ上限・同じ規則（状態を問わず古い方から）。
+    if (state.planWaves.length > PLAN_WAVE_LIMIT) {
+      state.planWaves.splice(0, state.planWaves.length - PLAN_WAVE_LIMIT);
+    }
+    return;
+  }
+
+  const existing = state.planWaves[index];
+  state.planWaves[index] = {
+    ...incoming,
+    tasks: incoming.tasks.map((task) => {
+      const prev = existing.tasks.find((t) => t.to === task.to);
+      // 解決済みを running で巻き戻さない。
+      return prev && task.state === "running" && prev.state !== "running" ? prev : task;
+    }),
+    bundleChars: incoming.bundleChars ?? existing.bundleChars,
+    elapsedMs: incoming.elapsedMs ?? existing.elapsedMs,
+  };
+}
+
 function applyEvent(event: CoreEvent): void {
   switch (event.type) {
     case "agentStatusChanged":
@@ -419,6 +464,48 @@ function applyEvent(event: CoreEvent): void {
       );
       break;
     }
+
+    case "planWaveStarted":
+      upsertPlanWave({
+        planId: event.planId,
+        agentId: event.agentId,
+        wave: event.wave,
+        startedAtMs: event.startedAtMs,
+        tasks: event.tasks.map((task) => ({
+          to: task.to,
+          state: "running",
+          elapsedMs: null,
+          msgChars: task.msgChars,
+        })),
+        bundleChars: null,
+        elapsedMs: null,
+      });
+      break;
+
+    case "planTaskResolved": {
+      // Started より前に Resolved は来ない（per planId の順序保証）。
+      // 波が無いのはリングから押し出された後だけで、その更新は捨ててよい。
+      const wave = state.planWaves.find((w) => w.planId === event.planId);
+      const task = wave?.tasks.find((t) => t.to === event.to);
+      if (task) {
+        task.state = event.state;
+        task.elapsedMs = event.elapsedMs;
+      }
+      break;
+    }
+
+    case "planWaveFinished": {
+      const wave = state.planWaves.find((w) => w.planId === event.planId);
+      if (wave) {
+        wave.bundleChars = event.bundleChars;
+        wave.elapsedMs = event.elapsedMs;
+        // 完了した波に「実行中」を残さない（コアの finish_wave と同じ後始末）。
+        for (const task of wave.tasks) {
+          if (task.state === "running") task.state = "no_answer";
+        }
+      }
+      break;
+    }
   }
 }
 
@@ -459,6 +546,11 @@ async function initialize(): Promise<void> {
 
     await refreshAll();
     state.messages = await ipc.listMessages(MESSAGE_LIMIT);
+    // 波の再投影（Spec 08）。リスナーは上で登録済みなので、この取得中に
+    // 飛んだ event は取りこぼさない。同じ波が両経路から来たら upsert が合流する。
+    for (const wave of await ipc.listPlanWaves()) {
+      upsertPlanWave(wave);
+    }
     state.workspace = await ipc.workspacePath();
     state.ready = true;
   } catch (error) {
