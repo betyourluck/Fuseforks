@@ -5,6 +5,7 @@
 //! ```text
 //! {workspace}/
 //!   world.json              エージェント定義とモデルテンプレート
+//!   schedules.json          時刻で発火する依頼（Spec 07。エージェント定義ではないので別ファイル）
 //!   Ordinance.md            村の条例（全エージェント共通の規則。プロンプト最上段に入る）
 //!   mcp.json                共通 MCP サーバー宣言（全エージェントに提示）
 //!   agents/{agent_id}/
@@ -23,10 +24,17 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::{AgentId, AgentSpec, ConfigFileKind};
+use crate::schedule::ScheduledTask;
 use crate::world::PersistedWorld;
 
 /// 登録簿の永続化ファイル名。
 const WORLD_FILE: &str = "world.json";
+
+/// 予定の永続化ファイル名（Spec 07）。
+///
+/// `world.json` に入れないのは、予定が**エージェントの定義ではない**から。
+/// `Ordinance.md` / `mcp.json` が別ファイルなのと同じ理由。
+const SCHEDULES_FILE: &str = "schedules.json";
 
 /// MCP サーバー宣言のファイル名。
 ///
@@ -424,6 +432,73 @@ impl ConfigStore {
             .await
             .map_err(|e| Self::io_err(&final_path, e))
     }
+
+    /// 予定を読み込む（Spec 07）。
+    ///
+    /// **1 件ずつ検証し、壊れた 1 件だけを落として残りを開く。** `mcp.json` とは
+    /// 逆の判断で、あちらは「壊れた JSON を空として扱うと全ツールが黙って消える」
+    /// ため全体をエラーにしている。予定は 1 件ずつ独立していて、他の予定を
+    /// 人質にする理由が無い。
+    ///
+    /// # Errors
+    /// - ファイル自体が JSON 配列として読めない場合。**この時は呼び出し側が
+    ///   書き戻しを止める**（読めなかったものを上書きすると、直せば戻ったはずの
+    ///   予定を消す）
+    pub async fn load_schedules(&self) -> CoreResult<LoadedSchedules> {
+        let path = self.root.join(SCHEDULES_FILE);
+        let text = match tokio::fs::read_to_string(&path).await {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(LoadedSchedules::default());
+            }
+            Err(err) => return Err(Self::io_err(&path, err)),
+        };
+
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text)?;
+
+        let mut loaded = LoadedSchedules::default();
+        for row in rows {
+            match serde_json::from_value::<ScheduledTask>(row.clone()) {
+                Ok(task) => match task.recurrence.validate() {
+                    Ok(()) => loaded.tasks.push(task),
+                    Err(err) => loaded.dropped.push(format!("{} を落としました: {err}", task.id)),
+                },
+                Err(err) => loaded
+                    .dropped
+                    .push(format!("読めない予定を 1 件落としました: {err}（{row}）")),
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// 予定を保存する。`save_world` と同じく一時ファイル + rename。
+    ///
+    /// 電源断で壊れると**全予定が消える**ので、原子性は世界と同格に扱う。
+    pub async fn save_schedules(&self, tasks: &[ScheduledTask]) -> CoreResult<()> {
+        tokio::fs::create_dir_all(&self.root)
+            .await
+            .map_err(|e| Self::io_err(&self.root, e))?;
+
+        let json = serde_json::to_string_pretty(tasks)?;
+        let final_path = self.root.join(SCHEDULES_FILE);
+        let temp_path = self.root.join(format!("{SCHEDULES_FILE}.tmp"));
+
+        tokio::fs::write(&temp_path, json)
+            .await
+            .map_err(|e| Self::io_err(&temp_path, e))?;
+        tokio::fs::rename(&temp_path, &final_path)
+            .await
+            .map_err(|e| Self::io_err(&final_path, e))
+    }
+}
+
+/// [`ConfigStore::load_schedules`] の結果。
+#[derive(Debug, Default)]
+pub struct LoadedSchedules {
+    /// 読めて検証も通った予定。
+    pub tasks: Vec<ScheduledTask>,
+    /// 落とした 1 件ごとの理由。利用者へ出すのではなく、起動ログへ残すため。
+    pub dropped: Vec<String>,
 }
 
 #[cfg(test)]

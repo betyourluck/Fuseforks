@@ -75,7 +75,7 @@ pub mod tool;
 pub mod tools;
 pub mod world;
 
-pub use config_store::ConfigStore;
+pub use config_store::{ConfigStore, LoadedSchedules};
 pub use error::{CoreError, CoreResult, ErrorPayload};
 pub use event::CoreEvent;
 pub use llm::{

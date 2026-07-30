@@ -33,6 +33,30 @@ pub enum CoreError {
     #[error("モデルテンプレート `{0}` は登録されていません")]
     ModelTemplateNotFound(String),
 
+    /// 指定 ID の予定が存在しない（Spec 07）。
+    #[error("予定 `{0}` は登録されていません")]
+    ScheduleNotFound(String),
+
+    /// 予定の再現規則が不正（`hour > 23` / `minute > 59` / `everyMinutes == 0`）。
+    #[error("予定の再現規則が不正です: {reason}")]
+    InvalidSchedule {
+        /// 不正と判断した具体的な理由。
+        reason: String,
+    },
+
+    /// `schedules.json` が JSON として読めないため、予定の書き込みを保護している。
+    ///
+    /// 読めなかったファイルへ上書きすると、利用者が直せば戻ったはずの予定を
+    /// 消すことになる。ファイルを直すか削除すれば次の起動から書き込める。
+    #[error(
+        "schedules.json が壊れているため予定を変更できません。\
+         ファイルを修正するか削除してください: {reason}"
+    )]
+    ScheduleStoreBlocked {
+        /// 読み込みが失敗した理由。
+        reason: String,
+    },
+
     /// トポロジー（接続関係）が不正。自己ループや未登録先への接続など。
     #[error("トポロジーが不正です: {reason}")]
     InvalidTopology {
@@ -146,6 +170,9 @@ impl CoreError {
             Self::DuplicateAgent(_) => "DUPLICATE_AGENT",
             Self::DuplicateAgentName(_) => "DUPLICATE_AGENT_NAME",
             Self::ModelTemplateNotFound(_) => "MODEL_TEMPLATE_NOT_FOUND",
+            Self::ScheduleNotFound(_) => "SCHEDULE_NOT_FOUND",
+            Self::InvalidSchedule { .. } => "INVALID_SCHEDULE",
+            Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",

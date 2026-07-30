@@ -384,12 +384,16 @@ entities:
       - DUPLICATE_AGENT
       - DUPLICATE_AGENT_NAME   # 表示名の重複 (Spec 06。ID と違い構造で守られない)
       - MODEL_TEMPLATE_NOT_FOUND
+      - SCHEDULE_NOT_FOUND      # Spec 07
+      - INVALID_SCHEDULE        # Spec 07。hour > 23 / minute > 59 / everyMinutes == 0
+      - SCHEDULE_STORE_BLOCKED  # Spec 07。schedules.json が読めない間は書き込みを保護
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING
       - MAILBOX_FULL
       - CONFIG_IO
       - UNSAFE_IDENTIFIER
+      - INVALID_ICON            # 台帳追従漏れの回収 (2026-07-30。実装は Spec 06 以前から存在)
       - SECRET_STORE_FAILED
       - CREDENTIAL_MISSING
       - COMPUTE_FAILED
@@ -490,6 +494,14 @@ entities:
         (起動すれば動く) だが、猶予超過は「閉じていた」の事後報告で直す手が無く、
         毎朝 9 時の予定が数日分まとめて会話ログへ流れると本物の通知が埋まる
       - 保存は **tmp + rename** (save_world と同じ)。電源断で全予定を失わない
+      - **所有者は in-memory (Shared.schedules) で、ファイルは常にその投影。**
+        書き手が ticker (消化) と UI (追加・削除) の 2 系統あるため、ファイルを
+        読み戻して書く形にすると片方の変更がもう片方に潰される。保存は
+        書き込みロックを持ったまま行い、2 つの保存が tmp ファイルを踏み合わない
+      - **schedules.json 全体が JSON として読めない時は、起動は続けるが書き込みを
+        拒否する** (SCHEDULE_STORE_BLOCKED)。読めなかったファイルへ上書きすると、
+        利用者が直せば戻ったはずの予定を消すことになる。起動を止めないのは
+        mcp.json と同じ判断 (止めると設定を直す画面へ到達できない)
       - 読み込みで **1 件単位に検証**して落とす: hour > 23 / minute > 59 /
         everyMinutes == 0 / 宛先が存在しない。壊れた 1 件で他を人質にしない
         (mcp.json は逆の判断だが、あちらは「空として扱うと全ツールが黙って

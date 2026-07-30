@@ -60,6 +60,7 @@ use crate::model::{
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use crate::rag::{RagChunk, RagIndex};
+use crate::schedule::{Recurrence, ScheduledTask, Tick};
 use crate::tool::{AgentTool, ToolContext, ToolRegistry};
 use crate::secret::SecretStore;
 use crate::world::World;
@@ -101,6 +102,12 @@ pub struct OrchestratorConfig {
     pub event_capacity: usize,
     /// 稼働統計を押し出す間隔。
     pub stats_interval: Duration,
+    /// 予定の発火判定を回す間隔（Spec 07）。
+    ///
+    /// `stats_interval`（1 秒）とは**共用しない**。秒の予定は持たないので
+    /// 30 秒で足りる — 「17:00 の予定が 17:00:29 に飛ぶ」は分単位の予定に
+    /// とって十分な精度で、毎秒全予定を判定するのは無駄なだけ。
+    pub schedule_interval: Duration,
     /// 保持するメッセージログの最大件数。超えた分は古いほうから捨てる。
     pub log_capacity: usize,
     /// プロンプトへ載せる「居合わせた会話」の件数（広場ログ）。
@@ -133,6 +140,7 @@ impl Default for OrchestratorConfig {
             mailbox_capacity: 64,
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),
+            schedule_interval: Duration::from_secs(30),
             log_capacity: 5_000,
             room_log_window: 12,
             room_log_excerpt_chars: 200,
@@ -197,7 +205,33 @@ struct Shared {
     /// 一致し、`stop_agent` は自分のエントリだけを畳む。状態は永続化しない
     /// （状態ファイルはプロセスが消えても「接続済み」を残して嘘をつく）。
     agent_mcp: RwLock<HashMap<AgentId, AgentMcpState>>,
+    /// 時刻で発火する依頼（Spec 07）。**ここが唯一の所有者**で、
+    /// `schedules.json` は常にこの内容の投影として書き出される。
+    /// ticker（消化の記録）と UI（追加・削除）の書き手が 2 つあるため、
+    /// ファイルを読み戻して書く形にすると片方の変更がもう片方に潰される。
+    schedules: RwLock<Vec<ScheduledTask>>,
+    /// `schedules.json` 自体が JSON として読めなかったときの理由。
+    ///
+    /// この状態では予定の**書き込みを拒否する** — 読めなかったものを
+    /// 上書きすると、利用者が直せば戻ったはずの予定を消すことになる。
+    /// 起動は止めない（`mcp.json` と同じ判断: 直す画面へ到達できなくなる）。
+    schedules_blocked: Option<String>,
     config: OrchestratorConfig,
+}
+
+/// スケジューラ層の実行時状態。**意図的に [`Shared`] の外に置く**（Spec 07 Notes 5）。
+///
+/// `Shared` に処理中フラグを足すと Spec 04 の進行役の状態管理と結合して
+/// 複雑度が跳ねる。ここに居るのは「まだ働いている相手に積み増さない」ための
+/// 軽いガードだけで、コアの正しさには関与しない。
+#[derive(Default)]
+struct ScheduleRuntime {
+    /// 予定の配送先として現在ターン処理中のエージェント。
+    ///
+    /// 配送時に入れ、[`CoreEvent::AgentTyping`] の `active: false` で外す。
+    /// イベントを取りこぼしたら**集合を空にする**（fail open）— 塞がったままに
+    /// すると予定が二度と発火しない静かな停止になり、稀な二重発火より悪い。
+    in_flight: Mutex<std::collections::HashSet<AgentId>>,
 }
 
 /// エージェント別 MCP の実行時状態（プロセス寿命）。
@@ -335,6 +369,9 @@ pub struct Orchestrator {
     shared: Arc<Shared>,
     tasks: Mutex<HashMap<AgentId, TaskHandle>>,
     stats_task: JoinHandle<()>,
+    /// スケジューラ層の実行時状態（Spec 07）。ticker タスクと共有する。
+    schedule_runtime: Arc<ScheduleRuntime>,
+    schedule_task: JoinHandle<()>,
 }
 
 impl Orchestrator {
@@ -375,6 +412,38 @@ impl Orchestrator {
             store.save_world(&normalized).await?;
         }
 
+        // 予定の読み込み（Spec 07）。ファイル全体が読めない場合も起動は止めない
+        // （設定を直す画面へ到達できなくなる。mcp.json と同じ判断）が、
+        // 書き込みは拒否する — 上書きすると直せば戻ったはずの予定が消える。
+        let (schedules, schedules_blocked) = match store.load_schedules().await {
+            Ok(loaded) => {
+                for reason in &loaded.dropped {
+                    eprintln!("[concordia] schedule: {reason}");
+                }
+                // 宛先が存在しない予定はここで落とす（World::from_persisted が
+                // 宙に浮いた接続を落とすのと同じ規律）。ディスクへの反映は
+                // 次の保存に任せる — 起動時に書き戻すほどの緊急性（秘密の残留）が無い。
+                let (kept, dangling): (Vec<_>, Vec<_>) = loaded
+                    .tasks
+                    .into_iter()
+                    .partition(|task| world.agent(&task.to).is_ok());
+                for task in &dangling {
+                    eprintln!(
+                        "[concordia] schedule: 宛先 {} が存在しないため予定 {} を落としました",
+                        task.to, task.id
+                    );
+                }
+                (kept, None)
+            }
+            Err(err) => {
+                eprintln!(
+                    "[concordia] schedule: schedules.json が読めないため予定なしで起動します\
+                     （書き込みは保護のため拒否されます）: {err}"
+                );
+                (Vec::new(), Some(err.to_string()))
+            }
+        };
+
         let (events, _) = broadcast::channel(config.event_capacity);
 
         let shared = Arc::new(Shared {
@@ -390,15 +459,25 @@ impl Orchestrator {
             tools: RwLock::new(ToolRegistry::new()),
             mcp: RwLock::new(crate::mcp::McpManager::default()),
             agent_mcp: RwLock::new(HashMap::new()),
+            schedules: RwLock::new(schedules),
+            schedules_blocked,
             config,
         });
 
         let stats_task = spawn_stats_ticker(Arc::downgrade(&shared));
+        let schedule_runtime = Arc::new(ScheduleRuntime::default());
+        let schedule_task = spawn_schedule_ticker(
+            Arc::downgrade(&shared),
+            Arc::clone(&schedule_runtime),
+            shared.events.subscribe(),
+        );
 
         Ok(Self {
             shared,
             tasks: Mutex::new(HashMap::new()),
             stats_task,
+            schedule_runtime,
+            schedule_task,
         })
     }
 
@@ -541,6 +620,21 @@ impl Orchestrator {
         }
         self.shared.store.remove_agent_dir(id).await?;
         self.persist().await?;
+
+        // その宛先の予定も消す（Spec 07。remove_agent が他エージェントからの
+        // 参照を外すのと同じ規律 — 参照の回収まで含めて 1 操作）。
+        // schedules.json が壊れて書き込み保護中でも削除自体は止めない:
+        // in-memory から消せば発火は起きず、ファイルの残骸は保護解除後の
+        // 次の保存で消える。
+        {
+            let mut schedules = self.shared.schedules.write().await;
+            let before = schedules.len();
+            schedules.retain(|task| task.to != *id);
+            if schedules.len() != before && self.shared.schedules_blocked.is_none() {
+                self.shared.store.save_schedules(&schedules).await?;
+            }
+        }
+
         self.shared.emit(CoreEvent::TopologyChanged);
         Ok(())
     }
@@ -973,12 +1067,113 @@ impl Orchestrator {
         self.shared.record(message.clone()).await;
         deliver(&self.shared, to, message).await
     }
+
+    // ---- 予定（Spec 07） -----------------------------------------------------
+
+    /// 登録済みの予定（登録順）。
+    pub async fn schedules(&self) -> Vec<ScheduledTask> {
+        self.shared.schedules.read().await.clone()
+    }
+
+    /// 予定を登録する。
+    ///
+    /// # Errors
+    /// - 再現規則が不正な場合 [`CoreError::InvalidSchedule`]
+    /// - 宛先が未登録の場合 [`CoreError::AgentNotFound`]
+    /// - `schedules.json` が壊れていて書き込みが保護されている場合
+    ///   [`CoreError::ScheduleStoreBlocked`]
+    pub async fn create_schedule(
+        &self,
+        to: AgentId,
+        message: String,
+        recurrence: Recurrence,
+    ) -> CoreResult<ScheduledTask> {
+        self.ensure_schedules_writable()?;
+        recurrence
+            .validate()
+            .map_err(|err| CoreError::InvalidSchedule {
+                reason: err.to_string(),
+            })?;
+        // 宛先の存在確認。停止中は許す（発火時に飛ばす規則が受け止める）が、
+        // 未登録は登録の時点で弾く — 発火するまで誰も気づかない予定を作らせない。
+        self.shared.world.read().await.agent(&to)?;
+
+        let task = ScheduledTask {
+            id: uuid::Uuid::new_v4().to_string(),
+            to,
+            message,
+            recurrence,
+            created_at_ms: crate::model::now_ms(),
+            last_consumed_due_ms: None,
+            enabled: true,
+        };
+
+        let mut schedules = self.shared.schedules.write().await;
+        schedules.push(task.clone());
+        // 書き込みロックを持ったまま保存する。保存を外に出すと、並んだ 2 つの
+        // 変更が互いの内容を tmp ファイルで踏み合う（world.json には無い事情 —
+        // あちらの書き手は UI だけだが、こちらは ticker と UI の 2 系統ある）。
+        self.shared.store.save_schedules(&schedules).await?;
+        Ok(task)
+    }
+
+    /// 予定を削除する。
+    ///
+    /// # Errors
+    /// - 該当 ID が無い場合 [`CoreError::ScheduleNotFound`]
+    pub async fn delete_schedule(&self, id: &str) -> CoreResult<()> {
+        self.ensure_schedules_writable()?;
+        let mut schedules = self.shared.schedules.write().await;
+        let before = schedules.len();
+        schedules.retain(|task| task.id != id);
+        if schedules.len() == before {
+            return Err(CoreError::ScheduleNotFound(id.to_owned()));
+        }
+        self.shared.store.save_schedules(&schedules).await
+    }
+
+    /// 予定の一時停止・再開（Spec 07 の `enabled`）。
+    ///
+    /// # Errors
+    /// - 該当 ID が無い場合 [`CoreError::ScheduleNotFound`]
+    pub async fn set_schedule_enabled(&self, id: &str, enabled: bool) -> CoreResult<()> {
+        self.ensure_schedules_writable()?;
+        let mut schedules = self.shared.schedules.write().await;
+        let task = schedules
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or_else(|| CoreError::ScheduleNotFound(id.to_owned()))?;
+        task.enabled = enabled;
+        self.shared.store.save_schedules(&schedules).await
+    }
+
+    /// 予定の発火判定を 1 回実行する。
+    ///
+    /// 通常はティッカーが `Local::now()` で呼ぶ。**時刻を引数に取るのは
+    /// テストのため**（壁時計に依存するテストを書かない — Spec 04 の規律）。
+    pub async fn run_schedule_tick<Tz: chrono::TimeZone>(&self, now: chrono::DateTime<Tz>) {
+        schedule_tick(&self.shared, &self.schedule_runtime, now).await;
+    }
+
+    /// `schedules.json` が読めない状態での書き込みを拒否する。
+    fn ensure_schedules_writable(&self) -> CoreResult<()> {
+        match &self.shared.schedules_blocked {
+            Some(reason) => Err(CoreError::ScheduleStoreBlocked {
+                reason: reason.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
 }
 
 impl Drop for Orchestrator {
     fn drop(&mut self) {
         // 統計ティッカーは純粋な副作用タスクなので、ここは abort でよい。
         self.stats_task.abort();
+        // 予定ティッカーも同じ。消化の永続化は tick 単位で完結しており、
+        // tick の途中で切っても「消化したのに発火していない」は起きない
+        // （消化の書き込みは配送成功の後）。
+        self.schedule_task.abort();
     }
 }
 
@@ -1014,6 +1209,183 @@ fn spawn_stats_ticker(shared: Weak<Shared>) -> JoinHandle<()> {
             }
         }
     })
+}
+
+/// 予定の発火判定を回すタスクを起こす（Spec 07）。
+///
+/// [`spawn_stats_ticker`] と同じく `Weak` を握る。加えてイベント購読を持ち、
+/// [`CoreEvent::AgentTyping`] の `active: false` で二重発火ガードの集合から
+/// 相手を外す — tick を待たずに処理するので、ガードの解除が最大 30 秒
+/// 遅れることはない。
+///
+/// 最初の tick は 1 間隔ぶん待ってから。`tokio::time::interval` の既定は
+/// 即時発火で、起動の瞬間（フロントの覆いがまだ出ている間）に予定が走るのは
+/// 誰も見ていない発火になる。
+fn spawn_schedule_ticker(
+    shared: Weak<Shared>,
+    runtime: Arc<ScheduleRuntime>,
+    mut events: broadcast::Receiver<CoreEvent>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let interval = match shared.upgrade() {
+            Some(s) => s.config.schedule_interval,
+            None => return,
+        };
+        let mut ticker =
+            tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+        // 眠っていた PC が起きた直後に溜まった tick を連射しない。
+        // 発火規則は「now 以前の直近の予定時刻」を毎回求めるので、
+        // tick を密に打ち直しても同じ判定を繰り返すだけになる。
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let Some(shared) = shared.upgrade() else { break };
+                    schedule_tick(&shared, &runtime, chrono::Local::now()).await;
+                }
+                event = events.recv() => match event {
+                    Ok(CoreEvent::AgentTyping { agent_id, active: false }) => {
+                        runtime.in_flight.lock().await.remove(&agent_id);
+                    }
+                    Ok(_) => {}
+                    // 取りこぼしたら fail open（集合を空にする）。塞がったままに
+                    // すると予定が二度と発火しない静かな停止になり、
+                    // 稀な二重発火より悪い（Spec 07 Notes 5）。
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        runtime.in_flight.lock().await.clear();
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+            }
+        }
+    })
+}
+
+/// 予定 1 巡ぶんの判定と実行（Spec 07 の配線層）。
+///
+/// 判定そのものは [`ScheduledTask::decide`]（純関数）に委ね、ここは
+/// **副作用の順序**だけを持つ: 配送 → 記録 → 消化 → 保存。
+/// 消化の書き込みが配送成功の後にあるので、途中で落ちても
+/// 「消化したのに発火していない」は起きない（逆の「発火したのに消化が
+/// 残っていない」は再発火として現れ、既知の制限に含まれる）。
+async fn schedule_tick<Tz: chrono::TimeZone>(
+    shared: &Arc<Shared>,
+    runtime: &ScheduleRuntime,
+    now: chrono::DateTime<Tz>,
+) {
+    let tasks: Vec<ScheduledTask> = shared.schedules.read().await.clone();
+    let mut consumed: Vec<(String, u64)> = Vec::new();
+
+    for task in tasks {
+        match task.decide(&now) {
+            Tick::Idle => {}
+            Tick::Consume { due_ms } => {
+                // 猶予超過。debug ログのみ — 「閉じていた」の事後報告は直す手が
+                // 無く、数日分まとめて会話ログへ流すと本物の通知が埋まる。
+                eprintln!(
+                    "[concordia] schedule: {}（{}）の予定時刻を猶予超過で消化（発火せず）",
+                    task.id,
+                    task.recurrence.label_ja()
+                );
+                consumed.push((task.id.clone(), due_ms));
+            }
+            Tick::Fire { due_ms } => {
+                let running = shared.mailboxes.read().await.contains_key(&task.to);
+                if !running {
+                    // 停止中へは撒かない。消化して、会話ログへ 1 行だけ残す
+                    // （消化するのでログも 1 回だけになる）。
+                    let name = {
+                        let world = shared.world.read().await;
+                        world
+                            .agent(&task.to)
+                            .map(|record| record.spec.name.clone())
+                            // 宛先が削除済みでも通知は成立させる（ID で示す）。
+                            .unwrap_or_else(|_| task.to.to_string())
+                    };
+                    shared
+                        .record(AgentMessage::new(
+                            Endpoint::System,
+                            Endpoint::User,
+                            format!(
+                                "{}（{name}）への予定「{}」を飛ばしました（停止中）",
+                                task.to,
+                                task.recurrence.label_ja()
+                            ),
+                            0,
+                        ))
+                        .await;
+                    consumed.push((task.id.clone(), due_ms));
+                    continue;
+                }
+
+                // まだ働いている相手に積み増さない（二重発火の軽い護り）。
+                // 消化しないので次の tick で再判定される — 壁時計系は待つうちに
+                // 猶予を超えれば Consume へ倒れる。それで正しい。
+                if runtime.in_flight.lock().await.contains(&task.to) {
+                    continue;
+                }
+
+                // 本文の先頭に由来を書く。封筒（【送り手: Concordia】）だけでは
+                // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
+                // 利用者も定期発火だと分かる。
+                let content = format!(
+                    "【定期実行: {}】\n{}",
+                    task.recurrence.label_ja(),
+                    task.message
+                );
+                // 予定発火はユーザー発話と同格の新しい起点なので hop は 0 —
+                // そこから先の転送・委譲に満額の燃料を渡す。
+                let message = AgentMessage::new(
+                    Endpoint::System,
+                    Endpoint::Agent {
+                        id: task.to.clone(),
+                    },
+                    content,
+                    0,
+                );
+
+                // 配送してから記録する。逆にすると、受信箱が飽和していた場合に
+                // 「配られていない発話」が会話ペインへ残る。
+                match deliver(shared, &task.to, message.clone()).await {
+                    Ok(()) => {
+                        shared.record(message).await;
+                        runtime.in_flight.lock().await.insert(task.to.clone());
+                        consumed.push((task.id.clone(), due_ms));
+                    }
+                    Err(err) => {
+                        // MailboxFull（背圧）: 消化せず次の tick で再試行する。
+                        // NotRunning: 上の running 判定との間で停止された競合。
+                        // どちらも次の tick が正しく拾い直す。
+                        eprintln!(
+                            "[concordia] schedule: {} への配送を見送りました: {err}",
+                            task.to
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if consumed.is_empty() {
+        return;
+    }
+
+    // 消化をまとめて書き込む。書き込みロックを持ったまま保存するのは
+    // CRUD 側（create/delete/set_enabled）と同じ理由 — 書き手が 2 系統ある。
+    let mut schedules = shared.schedules.write().await;
+    for (id, due_ms) in consumed {
+        if let Some(task) = schedules.iter_mut().find(|task| task.id == id) {
+            task.last_consumed_due_ms = Some(due_ms);
+        }
+    }
+    if shared.schedules_blocked.is_none() {
+        if let Err(err) = shared.store.save_schedules(&schedules).await {
+            // 保存失敗は発火を止める理由にならない。in-memory は既に消化済みで
+            // 二重発火は起きず、次の消化で再度保存を試みる。
+            eprintln!("[concordia] schedule: schedules.json の保存に失敗しました: {err}");
+        }
+    }
 }
 
 /// 宛先の受信箱へ届ける。

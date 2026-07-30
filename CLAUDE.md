@@ -47,9 +47,12 @@
 - Spec 07（スケジュール実行 — 時刻で発火する依頼）: **rev2 査読承認 → Phase 0
   完了**（2026-07-31）。`ScheduledTask` / `Recurrence` / `Weekday` と発火の規則は
   `data_contract.yaml` で**凍結済み**。**Phase 1（多重起動の排他・
-  `tauri-plugin-single-instance`・実機確認済み）と Phase 2（発火規則の純関数・
-  `crates/agent-core/src/schedule.rs`・テスト 18 本）も着地**。
-  次は Phase 3（配線: `schedules.json` / 30 秒 ticker / 配送）。
+  `tauri-plugin-single-instance`・実機確認済み）、Phase 2（発火規則の純関数・
+  `schedule.rs`・テスト 18 本）、Phase 3（配線: `schedules.json` /
+  30 秒 ticker / System→Agent 配送 / 結合テスト 8 本）まで着地**。
+  Phase 3 で契約に 2 点追記 — 予定の所有者は in-memory でファイルは投影・
+  読めないファイルは書き込み拒否（`SCHEDULE_STORE_BLOCKED`）。
+  次は Phase 4（UI: 一覧・追加・削除・enabled トグルのモーダル）。
   起点は利用者要望（毎週木曜 17 時に鐘／定期的なサイト監視）。
   rev1 で表に出した制約 2 つ — (1) 今はデーモンではなく起動していない間は
   動かない（**製品の行き先はタスクトレイ常駐**なので限界は将来消える。
