@@ -3647,6 +3647,108 @@ async fn a_stopped_worker_is_recorded_as_undeliverable() {
     );
 }
 
+/// 同一ターン内で 2 波を撒く進行役（波 1 = 全員 → 束ね → 波 2 = 1 体 → 最終出力）。
+///
+/// Spec 04 の「plan → 結果 → plan」往復の再現。周回はツール結果の件数で見分ける。
+struct TwoWaveBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for TwoWaveBackend {
+    fn name(&self) -> &str {
+        "two-wave"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let usage = Usage {
+            prompt: 1,
+            completion: 1,
+            cache_read: 0,
+        };
+
+        if let Some(plan) = req.tools.iter().find(|t| t.name == "plan") {
+            let bundles = req.messages.iter().filter(|m| m.role == Role::Tool).count();
+            let ids = plan.parameters["properties"]["tasks"]["items"]["properties"]["to"]["enum"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+
+            let tasks: Vec<serde_json::Value> = match bundles {
+                // 波 1: 全接続先へ。
+                0 => ids
+                    .iter()
+                    .map(|id| serde_json::json!({ "to": id, "message": "調べて" }))
+                    .collect(),
+                // 波 2: 1 体にだけ追加調査（前の波の結果を見てから、の形）。
+                1 => vec![serde_json::json!({ "to": ids[0], "message": "追加で調べて" })],
+                // 波 2 の束ねを受け取ったら最終出力。
+                _ => {
+                    return Ok(ChatResponse {
+                        text: Some("2 波の結果をまとめました".into()),
+                        tool_calls: Vec::new(),
+                        finish: Finish::Stop,
+                        usage,
+                        grounding: Default::default(),
+                    });
+                }
+            };
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: format!("call_wave_{}", bundles + 1),
+                    name: "plan".into(),
+                    args: serde_json::json!({ "tasks": tasks }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        Ok(ChatResponse {
+            text: Some("作業しました".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage,
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 同一ターン内の 2 波が**両方**記録されること（実機で第二波が出ない報告の再現）。
+#[tokio::test]
+async fn consecutive_waves_in_one_turn_are_both_recorded() {
+    let dir = TempDir::new("plan-two-waves");
+    let (orchestrator, lead, _) = setup_facilitator(
+        &dir,
+        Arc::new(TwoWaveBackend),
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして、足りなければ追加で").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(800)).await;
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 2, "2 波とも記録されること: {waves:#?}");
+    assert_eq!((waves[0].plan_id, waves[0].wave), (1, 1));
+    assert_eq!((waves[1].plan_id, waves[1].wave), (2, 2));
+    assert_eq!(waves[0].tasks.len(), 2);
+    assert_eq!(waves[1].tasks.len(), 1, "波 2 は 1 体だけ");
+    assert!(
+        waves.iter().all(|w| w.bundle_chars.is_some()),
+        "両方の波が完了していること"
+    );
+
+    let started = events
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::PlanWaveStarted { .. }))
+        .count();
+    assert_eq!(started, 2, "PlanWaveStarted が波ごとに流れること");
+}
+
 /// plan の片方だけが転送で応じる進行役 + ワーカー構成。
 ///
 /// 進行役だけが `plan` を持つ（接続 2 体以上）。転送ツールを持つワーカーは
