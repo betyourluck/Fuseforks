@@ -409,6 +409,96 @@ entities:
   TopologyEdge:
     fields: { source: AgentId, target: AgentId }
 
+  # -------------------------------------------------------------------------
+  # Spec 07 の契約案。**まだ凍結していない** (rev2 査読承認後に Phase 0 で確定)。
+  Weekday:
+    values: [mon, tue, wed, thu, fri, sat, sun]
+
+  Recurrence:
+    kind: tag つき判別共用体 (serde tag, rename_all = snake_case)
+    variants: |
+      interval: { everyMinutes: u32 }   # 1 以上。0 は読み込みで弾く
+      daily:    { hour: u8, minute: u8 }                     # 現地時刻
+      weekly:   { weekday: Weekday, hour: u8, minute: u8 }   # 現地時刻
+    note: |
+      cron 式は採らない。0 17 * * 4 は表現力が高い代わりに読めない人には
+      一切読めず、UI も自由入力欄にしかならない。「設定が少なくて分かりやすい」
+      に従い、要望の 2 例 (毎週 X 曜 hh:mm / 定期的に) が言い切れる最小の構造。
+      後から cron 式を足すことはできるが、外すことはできない。
+
+  ScheduledTask:
+    description: 時刻で発火する依頼 (Spec 07)。保存先は {workspace}/schedules.json
+    fields:
+      id: String                  # UUID v4
+      to: AgentId                 # 宛先。自分宛でもワーカー宛でも区別しない
+      message: String             # 届ける依頼の本文
+      recurrence: Recurrence
+      createdAtMs: u64            # interval の起点 (lastFiredMs が null のとき)
+      lastFiredMs: u64 | null     # 消化した予定時刻。発火時刻ではない
+      enabled: bool               # 既定 true。偽なら発火も消化もしない
+    firing_rule: |
+      各 tick で「now 以前にある直近の予定時刻」= due を求めて判定する。
+        enabled == false                  → 何もしない (消化もしない)
+        due が無い                        → 何もしない
+        lastFiredMs >= due                → 既に消化済み
+        **壁時計系**で now - due > GRACE  → 発火せず消化済みにする
+        それ以外                          → 発火し lastFiredMs = due
+      due の算出:
+        壁時計系 (daily / weekly) = カレンダーから逆算
+        間隔系 (interval)        = anchor + every * floor((now - anchor) / every)
+                                   ただし now - anchor < every なら None
+                                   anchor = lastFiredMs ?? createdAtMs
+    invariants: |
+      - **lastFiredMs は「消化した予定時刻」で、発火時刻ではない。** この区別が
+        規則の全体を支える — 飛ばした予定も消化済みにするので、同じ欄で
+        「発火した」と「発火せず飛ばした」の両方を表せる。発火時刻を持つと、
+        飛ばしたことを覚える場所が別に要る
+      - **猶予 (GRACE = 5 分) は壁時計系にだけ適用する。** 間隔の予定に
+        「間違った時刻」は存在しないので猶予を掛ける理由が無い。全種別に掛けると、
+        2 日止まった 10 分ごとの予定が毎 tick 消化されるだけで一度も発火しない
+        (Spec 07 rev1 のバグ)。かつ everyMinutes > GRACE の予定は due を最遅点に
+        直しても依然 skip される — 修正は「最遅点」と「猶予の非適用」の
+        2 つが揃って初めて成立する
+      - **壁時計系は取りこぼしを追いかけない。** 17 時の鐘を 23 時に鳴らすのは
+        「鳴らなかった」より悪い
+      - **間隔系は再開時に 1 回だけ走る** (溜まった回数ぶんは撒かない)。監視は
+        「今の状態」を見る仕事なので、遅れて 1 回見るのは正しく 288 回は無意味
+      - 発火後は lastFiredMs = due (now ではない)。刻みの位相が保たれ、
+        now - due < every が構成上保証されるので連続発火しない
+      - **現地時刻の変換を unwrap しない。** Local.from_local_datetime() は DST で
+        None / Ambiguous を返す。どちらもその回は発火しない扱い。日本に DST は
+        無いが、panic する経路を他のタイムゾーンの利用者に残さない
+      - 発火の配送は from = System / to = Agent / **hop 0**。予定発火はユーザー
+        発話と同格の起点なので、そこから先の転送・委譲に満額の燃料を渡す
+        (System から Agent への配送はこれが最初。Spec 06 は User 宛だけ)
+      - **本文の先頭に由来を書く**: 「【定期実行: 毎週 木曜 17:00】」+ 改行 + 本文。
+        封筒 (【送り手: Concordia】) だけではモデルが人の発話と区別できない。
+        AgentMessage に欄を足さず本文へ書くのは、契約を変えずに済み、
+        会話ペインにも出るので利用者側の可読性も上がるから
+      - **宛先が Running でなければ撒かない** (消化して飛ばす)。停止中へ投げると
+        NotRunning が毎 tick 積まれるだけ。消化するのでログも 1 回だけになる
+      - 保存は **tmp + rename** (save_world と同じ)。電源断で全予定を失わない
+      - 読み込みで **1 件単位に検証**して落とす: hour > 23 / minute > 59 /
+        everyMinutes == 0 / 宛先が存在しない。壊れた 1 件で他を人質にしない
+        (mcp.json は逆の判断だが、あちらは「空として扱うと全ツールが黙って
+        消える」ため全体をエラーにしている。予定は 1 件ずつ独立している)
+      - エージェント削除時、その宛先の予定も消す (remove_agent が他からの参照を
+        外すのと同じ規律)
+      - **二重発火は完全には防がない。** スケジューラ層の HashSet<AgentId> と
+        AgentTyping(active=false) で軽く抑えるが、イベント取りこぼし時は
+        fail open (集合を空にする) — 塞がったままにすると予定が二度と発火しない
+        静かな停止になり、稀な二重発火より悪い
+      - **多重起動を排他する** (tauri-plugin-single-instance)。同じワークスペースを
+        掴んだプロセスが 2 つあると、同じ予定が両方で発火し lastFiredMs を
+        競って書く。**予定より先に入れる**
+    known_limits: |
+      アプリが起動していない間は動かない (デスクトップアプリでありデーモンでは
+      ない)。**この限界は機能の中に書く** — 書かずに「毎週木曜 17 時」と名乗るのは
+      Spec 05 で潰したのと同じ形の嘘。
+      製品の行き先はタスクトレイ常駐なので限界の大部分は将来消えるが、発火規則
+      (取りこぼしを追いかけない / 間隔は 1 回だけ) は常駐後も正しいまま。
+      書き換えが要るのは告知の文言だけ。
+
 # ---------------------------------------------------------------------------
 events:
   channel: "core://event"
