@@ -1102,6 +1102,57 @@ conversation_termination:
         remove を案内する読める文言で拒否
       - **UTF-8 でないファイルは編集拒否** (書き換え系のみ)。lossy 変換で
         読んで書き戻すと非 UTF-8 部分が化けたまま固定される = 改竄になる
+      - **不在の文言は `file` ツールへ案内する** (Spec 09 で追加)。素の
+        「見つかりません」だけだと、モデルは綴りの問題と解釈して同じ操作を
+        繰り返す (実機で 12 ラウンド空転した)。**この 2 つは書き換え専用で
+        新規作成はできない**と明示し、作るなら file の write へ送る
+
+  file_tool_contract: |
+    ファイル・フォルダ操作 file = Spec 09 (2026-07-31 凍結)。
+    動機は実機の空転 — README の英訳を頼んだが道具立てに**新規作成が無く**、
+    エージェントが sd で延々と試み続けた。禁止ではなく**その行動を選ぶ理由を
+    消す**情報を与えるのが処方 (判断材料の欠落型。failures.md #20 と同型)。
+    形: **1 ツール + op の閉じた列挙** (yq の踏襲)。操作ごとにツールを並べると
+    毎ターンのスキーマ固定費が倍々になり、モデルの選択も散る。
+    op と引数:
+      read   { path }                        # 中身を返す (bundled と同じ上限)
+      write  { path, content, overwrite? }   # 既存は overwrite: true が無い限り拒否
+      mkdir  { path }                        # create_dir_all (中間も作る)
+      move   { path, to }                    # 移動・改名。両端とも境界内
+      copy   { path, to }                    # 複製。両端とも境界内
+      remove { path }                        # **OS のごみ箱へ移す** (trash crate)
+    不変条件:
+      - **境界は 2 種類ある。混ぜない。**
+        既存の resolve_in_work_dir = 実在するパス専用 (canonicalize + 前方一致)。
+        **sd / yq はこちらを使い続ける** — その canonicalize が
+        「新規ファイル作成なし」(write_tools_contract) を構造的に担保しており、
+        file が別の解決子を持つことでこの担保は**弱まらない**。
+        新設 resolve_creatable = 実在しない宛先用。3 段で検査する:
+          1. 宛先の**実在する最も深い祖先**を canonicalize し前方一致で検査
+          2. 祖先から宛先までの残り成分に `..` と絶対パス成分が無いこと
+             (canonicalize できない区間は文字列検査しか手が無い。`..` を許すと
+             祖先の検査をすり抜けて外へ出られる)
+          3. symlink は辿らない (リンクを踏むと囲いが破れる。既存と同じ)
+      - **write の上書きは明示ゲート**: 既存ファイルへの write は overwrite: true
+        が無ければ拒否し、部分編集は sd / yq、丸ごと置換は overwrite への案内を返す。
+        preview は持たない — 新規作成は壊すものが無く、上書きはこのゲートが
+        同じ役割を果たす (二段階実行を 2 箇所に持たない)
+      - **削除はごみ箱のみ。完全削除の経路を作らない。** エージェントの操作は
+        取り消せる側へ倒す。ごみ箱が使えない環境では**失敗として返す** —
+        黙って完全削除へフォールバックしない (縮退の方向を安全側に固定)
+      - **move / copy は両端を検査する。** 移動元は実在必須 (resolve_in_work_dir)、
+        宛先は resolve_creatable。片端だけの検査は囲いの穴になる
+      - 読み取りの上限は bundled_tools_contract と共有 (1 ファイル 2 MiB /
+        出力 12,000 字 / バイナリ拒否)。write の content にも同じ上限を掛ける
+      - **append は持たない** (read → write で表現できる)。実測で「追記で足りるのに
+        全文を運ぶのが重い」と分かってから席を作る (確かめる前に席を作らない)
+      - 失敗はすべて Ok(String) でモデルへ返す (ツールの失敗で会話を止めない)。
+        作業フォルダ未設定は work_dir_missing() の共通文言
+      - 依存の追加は **trash のみ**。本体は std::fs で足りる (create_dir_all /
+        rename / copy / read / write)。検討して不採用: walkdir・ignore (探索は
+        fd / grep が自前で持つ)、tempfile (tmp + rename は save_world の自前
+        パターンで足り、本ツールの write に原子性の要求が無い)、fs-err
+        (パス埋め込みは自前 format で既にやっている)
 
   convergence_prerequisite: |
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
