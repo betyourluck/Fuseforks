@@ -314,6 +314,10 @@ entities:
       model: String
       contextLength: u32
       temperature: f32 | null       # null なら送らない
+      # **requestTimeoutSecs と連動する。** 上限だけ上げると「途中で切れる」が
+      # 「タイムアウトする」に変わるだけで、16,000 トークンの生成は既定の 120 秒に
+      # 収まらない。2 つは必ず一緒に動かす。32K 超はストリーミング前提の数字で、
+      # 本製品は非ストリーミング (llm_wire) なので設定だけでは届かない
       maxOutputTokens: u32
       credential: CredentialSource  # 取得元のみ。秘密を持てるフィールドは存在しない
       provider: Provider | null     # null なら baseUrl から自動判定
@@ -740,6 +744,13 @@ conversation_termination:
   principle: |
     会話の終了は 2 層で持つ。片方だけでは足りない (failures.md #11)。
     主要フレームワーク (OpenAI Agents SDK / AutoGen / LangGraph) はいずれも 2 層。
+    **既知の穴 (2026-07-31, failures.md #41)**: 層 2 の歯止めは**全部「回数」建て**で
+    (max_tool_iterations 12 / max_retries 3 / max_hops 8)、コスト建てのものが無い。
+    **回数の上限がコストの上限になるのは、1 単位あたりのコストが一定のときだけ** —
+    ツールループは毎周回すべての履歴を送り直すので単位コストが単調に増え、
+    失敗ループ 1 ターンで 30 万トークン規模になりうる。加えて**同一失敗を検出する
+    仕組みが無い**ため、同じ操作の繰り返しが上限まで走り切る。
+    処方は 3 つ (同一失敗の検出 → 割り込み停止 → トークン予算)。README の未実装表。
   layer_1_semantic:
     rule: ツール呼び出しの無いテキスト出力が最終出力 (OpenAI Agents SDK と同じ規則)
     mechanism: |
