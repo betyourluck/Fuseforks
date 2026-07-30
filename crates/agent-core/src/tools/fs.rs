@@ -93,6 +93,103 @@ pub(crate) fn resolve_in_work_dir(
     Ok((resolved, display))
 }
 
+/// 作業フォルダを起点に**まだ存在しない宛先**を解決し、外なら拒否する（Spec 09）。
+///
+/// [`resolve_in_work_dir`] は canonicalize が成功する = 実在するパスにしか使えない。
+/// 新規作成の宛先は実在しないのが正常系なので、そのままでは全部
+/// 「見つかりません」で落ちる。**囲いの強さを落とさずに**実在しない宛先を
+/// 通すため、3 段で検査する:
+///
+/// 1. 宛先の**実在する最も深い祖先**を canonicalize し、前方一致で囲いの中を確認
+/// 2. 祖先から宛先までの残り成分に `..` と絶対パス成分が無いことを確認
+///    （canonicalize できない区間は文字列検査しか手が無い。`..` を通すと、
+///    実在する祖先の検査をすり抜けて外へ出られる）
+/// 3. symlink は辿らない（1 の canonicalize は祖先までしか及ばないので、
+///    宛先自身が既存の symlink なら別途弾く）
+///
+/// **この関数は `file` ツール専用。** `sd` / `yq` は [`resolve_in_work_dir`] を
+/// 使い続ける — あちらの canonicalize が「新規ファイル作成なし」を構造的に
+/// 担保しており（`write_tools_contract`）、こちらの存在でその担保は弱まらない。
+///
+/// 戻りは (絶対パス, 表示用の相対パス)。パス自体は実在してもしなくてもよい。
+pub(crate) fn resolve_creatable(
+    work_dir: &Path,
+    user_path: &str,
+) -> Result<(PathBuf, String), String> {
+    let root = work_dir.canonicalize().map_err(|_| {
+        format!(
+            "作業フォルダ `{}` が存在しません。設定を確認してください。",
+            work_dir.display()
+        )
+    })?;
+
+    if user_path.trim().is_empty() || user_path == "." {
+        return Err("パスが空です。作業フォルダからの相対パスを指定してください。".to_owned());
+    }
+
+    let outside =
+        || format!("`{user_path}` は作業フォルダの外を指しています。操作できるのは作業フォルダの中だけです。");
+
+    let joined = root.join(user_path);
+    // 絶対パスの user_path は join で root を丸ごと置き換える（Path::join の仕様）。
+    // 検査ではなく結果を見て弾く — 表記の種類（ドライブ文字・UNC・先頭 /）を
+    // 数え上げると必ず漏れる。
+    if !joined.starts_with(&root) {
+        return Err(outside());
+    }
+
+    // 実在する最深の祖先まで遡る。ここまでは canonicalize が効く。
+    let mut existing = joined.as_path();
+    let mut trailing: Vec<&std::ffi::OsStr> = Vec::new();
+    while !existing.exists() {
+        let Some(name) = existing.file_name() else {
+            return Err(outside());
+        };
+        trailing.push(name);
+        let Some(parent) = existing.parent() else {
+            return Err(outside());
+        };
+        existing = parent;
+    }
+
+    let anchor = existing.canonicalize().map_err(|_| outside())?;
+    if !anchor.starts_with(&root) {
+        return Err(outside());
+    }
+
+    // 残り成分の検査。`..` は祖先の検査をすり抜けるので、ここで必ず落とす。
+    // （`joined` の時点では `a/../../x` のような並びが文字列として残っている）
+    for component in joined.strip_prefix(&root).map_err(|_| outside())?.components() {
+        match component {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => return Err(outside()),
+        }
+    }
+
+    // 宛先自身が既存の symlink なら弾く。祖先の canonicalize では追えない
+    // （実在する = ループを抜けるので、リンク先が外でも 1 の検査は通ってしまう）。
+    if joined
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(outside());
+    }
+
+    // 表示は root からの相対。canonicalize 済みの祖先へ残りを積み直すことで、
+    // 途中に混ざった `.` を落とした正規形にする。
+    let mut resolved = anchor;
+    for name in trailing.into_iter().rev() {
+        resolved.push(name);
+    }
+    let display = resolved
+        .strip_prefix(&root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| user_path.to_owned());
+
+    Ok((resolved, display))
+}
+
 /// 作業フォルダが未設定のときの案内文。全ファイル系ツールで共通。
 pub(crate) fn work_dir_missing() -> String {
     "作業フォルダが設定されていないため、このツールは使えません。\
@@ -609,6 +706,95 @@ mod tests {
             agent_id: AgentId::from("agent_01"),
             work_dir: work_dir.map(Path::to_path_buf),
         }
+    }
+
+    // -- resolve_creatable（Spec 09。実在しない宛先の境界検査）------------------
+
+    #[test]
+    fn creatable_accepts_a_new_path_under_an_existing_ancestor() {
+        let dir = TempDir::new("creatable-new");
+        dir.write("src/main.rs", "fn main() {}\n");
+
+        let (path, display) = resolve_creatable(&dir.0, "src/deep/new.txt").unwrap();
+        assert!(!path.exists(), "まだ存在しない宛先を通すこと");
+        assert!(path.starts_with(dir.0.canonicalize().unwrap()));
+        assert_eq!(display, "src/deep/new.txt");
+    }
+
+    #[test]
+    fn creatable_accepts_an_existing_path_too() {
+        // move / copy の宛先は「既にある」こともある（上書き可否は呼び出し側の判断）。
+        let dir = TempDir::new("creatable-existing");
+        dir.write("a.txt", "x");
+
+        let (path, display) = resolve_creatable(&dir.0, "a.txt").unwrap();
+        assert!(path.exists());
+        assert_eq!(display, "a.txt");
+    }
+
+    #[test]
+    fn creatable_rejects_parent_traversal_even_when_the_ancestor_is_inside() {
+        // **この関数の要**。祖先（src/）は囲いの中なので 1 段目の検査は通る。
+        // 残り成分の `..` を見ていないと、ここから外へ出られる。
+        let dir = TempDir::new("creatable-escape");
+        dir.write("src/main.rs", "fn main() {}\n");
+
+        for attempt in [
+            "src/../../escape.txt",
+            "../escape.txt",
+            "src/../../../tmp/escape.txt",
+            "src/sub/../../../escape.txt",
+        ] {
+            let err = resolve_creatable(&dir.0, attempt)
+                .expect_err(&format!("`{attempt}` は拒否されること"));
+            assert!(err.contains("作業フォルダの外"), "{attempt}: {err}");
+        }
+    }
+
+    #[test]
+    fn creatable_rejects_absolute_destinations() {
+        let dir = TempDir::new("creatable-absolute");
+        // join は絶対パスで root を丸ごと置き換える（Path::join の仕様）ので、
+        // 表記を数え上げずに結果で弾く。
+        let absolute = std::env::temp_dir().join("concordia-escape.txt");
+        let err = resolve_creatable(&dir.0, &absolute.to_string_lossy())
+            .expect_err("絶対パスは拒否されること");
+        assert!(err.contains("作業フォルダの外"), "{err}");
+    }
+
+    #[test]
+    fn creatable_rejects_an_empty_path() {
+        let dir = TempDir::new("creatable-empty");
+        for attempt in ["", "   ", "."] {
+            assert!(
+                resolve_creatable(&dir.0, attempt).is_err(),
+                "`{attempt}` は宛先として拒否されること"
+            );
+        }
+    }
+
+    #[test]
+    fn creatable_rejects_a_symlinked_destination() {
+        let dir = TempDir::new("creatable-symlink");
+        let outside = TempDir::new("creatable-outside");
+        outside.write("secret.txt", "秘密");
+
+        // Windows の symlink 作成は権限が要る。作れない環境では検証を諦めるが、
+        // **黙って通さない** — 何を確かめられなかったかを出力に残す。
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(outside.0.join("secret.txt"), dir.0.join("link.txt"));
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(outside.0.join("secret.txt"), dir.0.join("link.txt"));
+
+        if made.is_err() {
+            eprintln!(
+                "[test] symlink を作れないため creatable_rejects_a_symlinked_destination は未検証"
+            );
+            return;
+        }
+
+        let err = resolve_creatable(&dir.0, "link.txt").expect_err("symlink の宛先は拒否されること");
+        assert!(err.contains("作業フォルダの外"), "{err}");
     }
 
     #[tokio::test]
