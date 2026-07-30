@@ -71,6 +71,15 @@
   `chrono` 採用は査読で承認済み。rev2 の査読で入った差分は 2 つだけ —
   `lastFiredMs` → `lastConsumedDueMs` の改名（飛ばした予定も書く欄なので
   「fired」は嘘）と、猶予超過で飛ばした予定を会話ログでなく debug ログへ倒す判断
+- Spec 08（波ペイン — plan 実行の可視化、Airflow Grid 相当）: **Phase 0〜3 完了**
+  （2026-07-30）。残は実機確認 2 本（波が列として現れセルが個別に解決色へ変わる /
+  GUI 再読み込みで波が残る）。rev2 査読（重大 7 / 明確化 6 / 改善 3）を全反映して
+  凍結。`PlanTaskState` / `Reply { text, kind }` / `PlanWaveRecord` /
+  `CoreEvent` 3 種 / `list_plan_waves` は `data_contract.yaml` で**凍結済み**。
+  分類は文言 parse でなく型で運ぶ（刻み手は handle_message の 1 箇所）。
+  `plan_id` は 1 始まり 0 予約・モデル非公開。リング上限 50・in-memory・
+  配送ゼロの plan は記録しない（stderr と数え方一致は検証済み）。
+  Spec 04 Notes 12 の発火条件 (b) の成立が起点（利用者要望 2026-07-30）
 - Spec 06（顔ぶれの提示と入退室の通知）: **Done**（2026-07-31）。実機確認まで
   完了 — ザリは停止中の相手へ一度も投げず、稼働中 3 体だけへ plan を撒いた
   （点呼のトークンが消えた）。実機の村は id↔表示名の番号が全部ずれており、
