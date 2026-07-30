@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 # 中核ロジック。依存はこの一方向だけ。agent-core 側は tauri を知らない。
 agent-core.workspace = true
 
+# 予定一覧の「次回の発火予定時刻」をコア側の現在時刻で評価するため（Spec 07）。
+# カレンダー計算をフロントへ持たせない — 真実が 2 箇所できる。
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

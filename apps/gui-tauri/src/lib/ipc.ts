@@ -23,6 +23,8 @@ import type {
   McpConfig,
   McpServerStatus,
   RagChunk,
+  Recurrence,
+  ScheduleView,
   TopologyEdge,
 } from "../types";
 
@@ -247,3 +249,19 @@ export const sendUserMessage = (
 /** RAG 索引に断片を追加する。 */
 export const indexRagChunk = (chunk: RagChunk) =>
   call<void>("index_rag_chunk", { chunk });
+
+// ---- 予定（Spec 07） ----------------------------------------------------------
+
+/** 登録済みの予定（登録順）。次回発火時刻はコア側で算出済み。 */
+export const listSchedules = () => call<ScheduleView[]>("list_schedules");
+
+/** 予定を登録する。宛先は停止中でもよいが、未登録なら拒否される。 */
+export const createSchedule = (to: AgentId, message: string, recurrence: Recurrence) =>
+  call<ScheduleView>("create_schedule", { to, message, recurrence });
+
+/** 予定を削除する。復元はできない。 */
+export const deleteSchedule = (id: string) => call<void>("delete_schedule", { id });
+
+/** 予定の一時停止・再開。停止中は発火も消化もされない。 */
+export const setScheduleEnabled = (id: string, enabled: boolean) =>
+  call<void>("set_schedule_enabled", { id, enabled });

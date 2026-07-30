@@ -241,6 +241,53 @@ export interface TopologyEdge {
   target: AgentId;
 }
 
+// ---- 予定（Spec 07） ----------------------------------------------------------
+
+/** 曜日。Rust 側 `schedule::Weekday` と同じ表記。 */
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/**
+ * 再現規則。`kind` による判別共用体。
+ *
+ * cron 式は採らない（読めない人には一切読めず、UI も自由入力欄にしかならない）。
+ * 要望の 2 例（毎週 X 曜 hh:mm / 定期的に）が言い切れる最小の構造。
+ */
+export type Recurrence =
+  | { kind: "interval"; everyMinutes: number }
+  | { kind: "daily"; hour: number; minute: number }
+  | { kind: "weekly"; weekday: Weekday; hour: number; minute: number };
+
+/**
+ * 予定一覧の 1 行。`nextDueMs` と `recurrenceLabel` はコア側で算出される —
+ * フロントはカレンダー計算を持たない（真実が 2 箇所できる）。
+ */
+export interface ScheduleView {
+  id: string;
+  to: AgentId;
+  message: string;
+  recurrence: Recurrence;
+  createdAtMs: number;
+  /** 直近に「消化した」予定時刻。発火時刻ではない。 */
+  lastConsumedDueMs: number | null;
+  /** 偽なら発火も消化もしない（設定を消さずに一時停止する欄）。 */
+  enabled: boolean;
+  /** 次回の発火予定時刻（epoch ミリ秒）。求まらなければ null。 */
+  nextDueMs: number | null;
+  /** 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。 */
+  recurrenceLabel: string;
+}
+
+/** 曜日の表示名。Rust 側 `Weekday::label_ja` と同じ語彙。 */
+export const WEEKDAY_LABELS: Record<Weekday, string> = {
+  mon: "月曜",
+  tue: "火曜",
+  wed: "水曜",
+  thu: "木曜",
+  fri: "金曜",
+  sat: "土曜",
+  sun: "日曜",
+};
+
 /** RAG 索引の断片。 */
 export interface RagChunk {
   id: string;

@@ -385,3 +385,80 @@ pub async fn index_rag_chunk(state: State<'_, AppState>, chunk: RagChunk) -> Cor
     state.orchestrator.index_rag_chunk(chunk).await;
     Ok(())
 }
+
+// ---- 予定（Spec 07） -----------------------------------------------------------
+
+/// UI の一覧 1 行ぶんの予定。
+///
+/// `next_due_ms` と `recurrence_label` はコア側で算出して同梱する。
+/// フロントにカレンダー計算を持たせない（真実が 2 箇所できる）ため、
+/// 日本語表記も配送本文と同じ `Recurrence::label_ja` から取る。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleView {
+    /// 予定そのもの（camelCase で平坦化）。
+    #[serde(flatten)]
+    pub task: agent_core::schedule::ScheduledTask,
+    /// 次回の発火予定時刻（epoch ミリ秒）。求まらない場合は `null`。
+    pub next_due_ms: Option<u64>,
+    /// 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。
+    pub recurrence_label: String,
+}
+
+impl ScheduleView {
+    /// 現在時刻で `next_due` を評価して 1 行に整える。
+    fn of(task: agent_core::schedule::ScheduledTask) -> Self {
+        let next_due_ms = task
+            .next_due(&chrono::Local::now())
+            .and_then(|due| u64::try_from(due.timestamp_millis()).ok());
+        let recurrence_label = task.recurrence.label_ja();
+        Self {
+            task,
+            next_due_ms,
+            recurrence_label,
+        }
+    }
+}
+
+/// 登録済みの予定（登録順）。
+#[tauri::command]
+pub async fn list_schedules(state: State<'_, AppState>) -> CoreResult<Vec<ScheduleView>> {
+    Ok(state
+        .orchestrator
+        .schedules()
+        .await
+        .into_iter()
+        .map(ScheduleView::of)
+        .collect())
+}
+
+/// 予定を登録する。
+#[tauri::command]
+pub async fn create_schedule(
+    state: State<'_, AppState>,
+    to: AgentId,
+    message: String,
+    recurrence: agent_core::schedule::Recurrence,
+) -> CoreResult<ScheduleView> {
+    let task = state
+        .orchestrator
+        .create_schedule(to, message, recurrence)
+        .await?;
+    Ok(ScheduleView::of(task))
+}
+
+/// 予定を削除する。復元はできない。
+#[tauri::command]
+pub async fn delete_schedule(state: State<'_, AppState>, id: String) -> CoreResult<()> {
+    state.orchestrator.delete_schedule(&id).await
+}
+
+/// 予定の一時停止・再開。
+#[tauri::command]
+pub async fn set_schedule_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> CoreResult<()> {
+    state.orchestrator.set_schedule_enabled(&id, enabled).await
+}

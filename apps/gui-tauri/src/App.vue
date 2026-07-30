@@ -23,6 +23,7 @@ import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 import McpDialog from "./components/McpDialog.vue";
 import OrdinanceDialog from "./components/OrdinanceDialog.vue";
+import ScheduleDialog from "./components/ScheduleDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ToastHost from "./components/ToastHost.vue";
@@ -39,6 +40,8 @@ const { layout, resize, reset } = usePaneLayout();
 const ordinanceOpen = ref(false);
 /** MCP サーバー管理ダイアログの表示状態。 */
 const mcpOpen = ref(false);
+/** 予定（スケジュール実行）ダイアログの表示状態。 */
+const schedulesOpen = ref(false);
 
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
@@ -51,7 +54,11 @@ onMounted(() => {
 
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-surface-0 text-ink">
-  <TitleBar @open-ordinance="ordinanceOpen = true" @open-mcp="mcpOpen = true" />
+  <TitleBar
+    @open-ordinance="ordinanceOpen = true"
+    @open-mcp="mcpOpen = true"
+    @open-schedules="schedulesOpen = true"
+  />
   <div
     class="grid min-h-0 flex-1 overflow-hidden"
     :style="{ gridTemplateColumns: columns }"
@@ -103,6 +110,8 @@ onMounted(() => {
     <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
 
     <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
+
+    <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
 
     <!--
       初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。

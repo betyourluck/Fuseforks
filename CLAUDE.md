@@ -46,13 +46,13 @@
   本 Spec は例外的に実装先行（Gemini の実挙動が実測でしか決まらなかったため）
 - Spec 07（スケジュール実行 — 時刻で発火する依頼）: **rev2 査読承認 → Phase 0
   完了**（2026-07-31）。`ScheduledTask` / `Recurrence` / `Weekday` と発火の規則は
-  `data_contract.yaml` で**凍結済み**。**Phase 1（多重起動の排他・
-  `tauri-plugin-single-instance`・実機確認済み）、Phase 2（発火規則の純関数・
-  `schedule.rs`・テスト 18 本）、Phase 3（配線: `schedules.json` /
-  30 秒 ticker / System→Agent 配送 / 結合テスト 8 本）まで着地**。
+  `data_contract.yaml` で**凍結済み**。**Phase 1〜5 まで全部着地**
+  （多重起動の排他=実機確認済み / 発火規則の純関数=テスト 18 本 /
+  配線=結合テスト 8 本 / UI=`ScheduleDialog.vue` + IPC 4 本 / README 整合）。
   Phase 3 で契約に 2 点追記 — 予定の所有者は in-memory でファイルは投影・
   読めないファイルは書き込み拒否（`SCHEDULE_STORE_BLOCKED`）。
-  次は Phase 4（UI: 一覧・追加・削除・enabled トグルのモーダル）。
+  **残は実機確認 2 本のみ**（interval 1 分で会話ログに結果 / 停止中スキップの 1 行）。
+  トレイのマーク・チップス通知は利用者判断で別 UI 作業に分離。
   起点は利用者要望（毎週木曜 17 時に鐘／定期的なサイト監視）。
   rev1 で表に出した制約 2 つ — (1) 今はデーモンではなく起動していない間は
   動かない（**製品の行き先はタスクトレイ常駐**なので限界は将来消える。

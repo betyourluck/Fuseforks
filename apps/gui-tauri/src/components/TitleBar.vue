@@ -11,6 +11,7 @@
 const emit = defineEmits<{
   (e: "open-ordinance"): void;
   (e: "open-mcp"): void;
+  (e: "open-schedules"): void;
 }>();
 
 async function win(method: "minimize" | "toggleMaximize" | "close") {
@@ -100,6 +101,30 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M9 2v6M15 2v6" />
         <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
         <path d="M12 17v5" />
+      </svg>
+    </button>
+
+    <!-- 予定。時刻で発火する依頼をここから管理する（Spec 07）。 -->
+    <button
+      class="tb-btn"
+      title="予定（時刻で発火する依頼）"
+      aria-label="予定"
+      @click="emit('open-schedules')"
+    >
+      <!-- 時計 -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3.5 2" />
       </svg>
     </button>
 

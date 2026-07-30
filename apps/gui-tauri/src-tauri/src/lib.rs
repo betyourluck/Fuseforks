@@ -131,6 +131,11 @@ pub fn run() {
             commands::send_user_message,
             commands::reset_conversation,
             commands::index_rag_chunk,
+            // 予定（Spec 07）
+            commands::list_schedules,
+            commands::create_schedule,
+            commands::delete_schedule,
+            commands::set_schedule_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri アプリケーションの起動に失敗しました");
