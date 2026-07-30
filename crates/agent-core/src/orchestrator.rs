@@ -59,6 +59,7 @@ use crate::model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
+use crate::plan::{PlanTaskAnnounced, PlanTaskState, PlanWaveRecord, PlanWaveStore};
 use crate::rag::{RagChunk, RagIndex};
 use crate::schedule::{Recurrence, ScheduledTask, Tick};
 use crate::tool::{AgentTool, ToolContext, ToolRegistry};
@@ -163,7 +164,20 @@ struct Envelope {
     /// 届いた発話。
     incoming: AgentMessage,
     /// 答えを返す先。`None` なら転送・通常配送（答えはユーザーへ）。
-    reply_to: Option<tokio::sync::oneshot::Sender<String>>,
+    reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+}
+
+/// ask / plan の返信路の積み荷（Spec 08 で素の `String` から拡張）。
+///
+/// `kind` は [`handle_message`] の Finish / Handoff 分岐が刻む — 転送は文字列と
+/// しては普通の答えと同じ経路で返るため、型で刻まないと区別できない。
+/// 文言 parse では取らない（文言を直した瞬間に黙って壊れる）。
+/// 分類の刻み手をこの 1 箇所に固定するため、data_contract で凍結している。
+struct Reply {
+    /// 依頼主が読む本文。
+    text: String,
+    /// 解決分類。`Answered`（Finish）か `HandedOff`（Handoff）のどちらか。
+    kind: PlanTaskState,
 }
 
 impl Envelope {
@@ -210,6 +224,9 @@ struct Shared {
     /// ticker（消化の記録）と UI（追加・削除）の書き手が 2 つあるため、
     /// ファイルを読み戻して書く形にすると片方の変更がもう片方に潰される。
     schedules: RwLock<Vec<ScheduledTask>>,
+    /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
+    /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
+    plan_waves: RwLock<PlanWaveStore>,
     /// `schedules.json` 自体が JSON として読めなかったときの理由。
     ///
     /// この状態では予定の**書き込みを拒否する** — 読めなかったものを
@@ -460,6 +477,7 @@ impl Orchestrator {
             mcp: RwLock::new(crate::mcp::McpManager::default()),
             agent_mcp: RwLock::new(HashMap::new()),
             schedules: RwLock::new(schedules),
+            plan_waves: RwLock::new(PlanWaveStore::default()),
             schedules_blocked,
             config,
         });
@@ -531,6 +549,15 @@ impl Orchestrator {
             Some(n) if n < log.len() => log[log.len() - n..].to_vec(),
             _ => log.clone(),
         }
+    }
+
+    /// plan 波の記録（Spec 08 — 波ペイン）。古い順・**実行中の波も含む**。
+    ///
+    /// 完了だけを返すと、再読み込みの瞬間に走っていた波が event でしか届かず
+    /// 再投影の穴になる。フロントの突き合わせ規律（リスナー登録 → list →
+    /// planId upsert）は data_contract の projection_rule が正。
+    pub async fn list_plan_waves(&self) -> Vec<PlanWaveRecord> {
+        self.shared.plan_waves.read().await.list()
     }
 
     /// エージェント別トークン消費量を集計する。
@@ -1981,7 +2008,10 @@ async fn handle_message(
             if let Some(reply_to) = reply_to {
                 // 受け取り手が既に諦めている（タイムアウト）ことはあるので、
                 // 送信の失敗は無視する。こちらの処理は完了している。
-                let _ = reply_to.send(content.clone());
+                let _ = reply_to.send(Reply {
+                    text: content.clone(),
+                    kind: PlanTaskState::Answered,
+                });
             }
             return Ok(());
         }
@@ -2011,10 +2041,13 @@ async fn handle_message(
                 .collect::<Vec<_>>()
                 .join("、")
         };
-        let _ = reply_to.send(format!(
-            "相手はこの依頼に自分で答えず、{names} へ会話を渡しました。\
-             答えはこちらへ戻りません。必要なら別の相手に頼むか、自分で進めてください。"
-        ));
+        let _ = reply_to.send(Reply {
+            text: format!(
+                "相手はこの依頼に自分で答えず、{names} へ会話を渡しました。\
+                 答えはこちらへ戻りません。必要なら別の相手に頼むか、自分で進めてください。"
+            ),
+            kind: PlanTaskState::HandedOff,
+        });
     }
 
     // 宛先ごとに 1 通として記録する（fan-out）。トークンは 1 ターンぶんの消費なので、
@@ -2214,7 +2247,8 @@ async fn ask_agent(
         return Ok("転送の上限に達したため、これ以上は尋ねられません。".to_owned());
     }
 
-    Ok(deliver_and_wait(shared, from, to, &question, next_hop).await)
+    // ask は分類を捨てる（.0）。分類は波ペインの素材で、ask の関心ではない。
+    Ok(deliver_and_wait(shared, from, to, &question, next_hop).await.0)
 }
 
 /// 1 件の依頼を配送し、答えを待つ（`ask` と `plan` の共通部分）。
@@ -2224,15 +2258,17 @@ async fn ask_agent(
 /// いずれ生まれる。`hop` の判定は呼び出し側に置く — plan では波全体で
 /// 一様に決まる制約なので、タスクごとに判定すると同じ文字列が人数分並ぶ。
 ///
-/// 戻り値は**必ず文字列**。相手が停止中でも無応答でも例外にしない
-/// （ツールの失敗で会話を止めない、という既存の規律）。
+/// 戻り値は**必ず文字列と分類の組**。相手が停止中でも無応答でも例外にしない
+/// （ツールの失敗で会話を止めない、という既存の規律）。分類（Spec 08）は
+/// 波ペインのセル色の素材で、`ask` 側は捨てるだけ — 計時も同じ理由で
+/// ここに入れない（plan の観測の関心を ask に背負わせない）。
 async fn deliver_and_wait(
     shared: &Arc<Shared>,
     from: &AgentId,
     to: &AgentId,
     question: &str,
     next_hop: u8,
-) -> String {
+) -> (String, PlanTaskState) {
     let mut outgoing = AgentMessage::new(
         Endpoint::Agent { id: from.clone() },
         Endpoint::Agent { id: to.clone() },
@@ -2251,15 +2287,25 @@ async fn deliver_and_wait(
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
         // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
-        return format!("相手に尋ねられませんでした: {err}");
+        return (
+            format!("相手に尋ねられませんでした: {err}"),
+            PlanTaskState::Undeliverable,
+        );
     }
 
     match tokio::time::timeout(shared.config.ask_timeout, rx).await {
-        Ok(Ok(answer)) => answer,
+        // 答え（Answered）か転送の事実（HandedOff）。刻み手は handle_message。
+        Ok(Ok(reply)) => (reply.text, reply.kind),
         // 相手が答えずにタスクを終えた（停止・失敗）。転送で応じた場合は
         // handle_message が事実を送るので、ここへは来ない。
-        Ok(Err(_)) => "相手から答えが返りませんでした。".to_owned(),
-        Err(_) => "相手からの答えが時間内に返りませんでした。".to_owned(),
+        Ok(Err(_)) => (
+            "相手から答えが返りませんでした。".to_owned(),
+            PlanTaskState::NoAnswer,
+        ),
+        Err(_) => (
+            "相手からの答えが時間内に返りませんでした。".to_owned(),
+            PlanTaskState::TimedOut,
+        ),
     }
 }
 
@@ -2357,10 +2403,39 @@ async fn run_plan(
     );
     let dispatched_at = std::time::Instant::now();
 
+    // 波の記録と告知（Spec 08）。配送ゼロの plan はここへ到達しない（上の
+    // 早期 return）ので、記録と stderr の数え方は構造的に一致する。
+    // 開始時刻だけが壁時計（epoch ms）、所要はすべて単調時計（Instant）。
+    let started_at_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let announced: Vec<(AgentId, u32)> = wave_tasks
+        .iter()
+        .map(|(target, message)| (target.clone(), message.chars().count() as u32))
+        .collect();
+    let plan_id = shared
+        .plan_waves
+        .write()
+        .await
+        .begin_wave(from.clone(), wave, &announced, started_at_ms);
+    shared.emit(CoreEvent::PlanWaveStarted {
+        plan_id,
+        agent_id: from.clone(),
+        wave,
+        tasks: announced
+            .iter()
+            .map(|(to, msg_chars)| PlanTaskAnnounced {
+                to: to.clone(),
+                msg_chars: *msg_chars,
+            })
+            .collect(),
+        started_at_ms,
+    });
+
     // 3. 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
     //    直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
     //    並列なのは**配送**であって実行ではない。各エージェントの受信箱は
     //    1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
+    //    タスクの所要はここで測る — deliver_and_wait に計時を入れない
+    //    （ask に plan の観測の関心を背負わせない）。
     let mut set = tokio::task::JoinSet::new();
     for (index, (target, message)) in wave_tasks.iter().enumerate() {
         let shared = Arc::clone(shared);
@@ -2368,16 +2443,35 @@ async fn run_plan(
         let target = target.clone();
         let message = message.clone();
         set.spawn(async move {
-            let answer = deliver_and_wait(&shared, &from, &target, &message, next_hop).await;
-            (index, answer)
+            let task_started = std::time::Instant::now();
+            let (answer, state) =
+                deliver_and_wait(&shared, &from, &target, &message, next_hop).await;
+            (index, answer, state, task_started.elapsed().as_millis() as u64)
         });
     }
 
     let mut answers: Vec<Option<String>> = vec![None; wave_tasks.len()];
     while let Some(joined) = set.join_next().await {
         match joined {
-            Ok((index, answer)) => answers[index] = Some(answer),
+            Ok((index, answer, state, elapsed_ms)) => {
+                // 解決した順に記録と event を刻む。セルは波の完了を待たず
+                // 個別に色が変わる（全滅まで灰色、にしない）。
+                let to = wave_tasks[index].0.clone();
+                shared
+                    .plan_waves
+                    .write()
+                    .await
+                    .resolve_task(plan_id, &to, state, elapsed_ms);
+                shared.emit(CoreEvent::PlanTaskResolved {
+                    plan_id,
+                    to,
+                    state,
+                    elapsed_ms,
+                });
+                answers[index] = Some(answer);
+            }
             // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
+            // 記録上は finish_wave が Running を NoAnswer に倒す。
             Err(err) => tracing_note(&err),
         }
     }
@@ -2400,12 +2494,27 @@ async fn run_plan(
     // 束ねは進行役の履歴に積まれ、以後の波のたびに入力として運ばれる —
     // 波数 × N 体で膨らむ構造なので、上限や要約を入れるかの判断材料をここで取る。
     // 機構は入れない。測らずに入れると「効いているか分からない機構」が増えるだけ。
+    let bundle_chars = bundle.chars().count() as u64;
+    let elapsed_ms = dispatched_at.elapsed().as_millis() as u64;
     eprintln!(
-        "[concordia] plan bundle: agent={from} wave={wave} tasks={} chars={} elapsed_ms={}",
+        "[concordia] plan bundle: agent={from} wave={wave} tasks={} chars={bundle_chars} \
+         elapsed_ms={elapsed_ms}",
         wave_tasks.len(),
-        bundle.chars().count(),
-        dispatched_at.elapsed().as_millis(),
     );
+
+    // 波の完了（Spec 08）。Running のまま残ったタスク（JoinSet パニックの経路
+    // のみ）は finish_wave が NoAnswer に倒す — 完了した波に永遠の「実行中」を
+    // 残さない。
+    shared
+        .plan_waves
+        .write()
+        .await
+        .finish_wave(plan_id, bundle_chars, elapsed_ms);
+    shared.emit(CoreEvent::PlanWaveFinished {
+        plan_id,
+        bundle_chars,
+        elapsed_ms,
+    });
     bundle
 }
 

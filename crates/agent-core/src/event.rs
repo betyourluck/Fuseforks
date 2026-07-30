@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ErrorPayload;
 use crate::model::{AgentId, AgentMessage, AgentStatus};
+use crate::plan::PlanTaskState;
 
 /// UI へ通知する状態変化。
 ///
@@ -147,6 +148,50 @@ pub enum CoreEvent {
         /// 適用された上限値。
         max_hops: u8,
     },
+
+    /// plan の 1 波が配送された（Spec 08 — 波ペイン）。
+    ///
+    /// 配送ゼロの plan（静的差し戻し・hop 上限）では流れない — 波は
+    /// 「配送が起きた単位」。順序保証は **per planId のみ**
+    /// （Started → Resolved* → Finished）。再投影との突き合わせは
+    /// `list_plan_waves` + planId upsert（data_contract の projection_rule）。
+    #[serde(rename_all = "camelCase")]
+    PlanWaveStarted {
+        /// 波の同定子（プロセス内で単調増加・1 始まり）。
+        plan_id: u64,
+        /// 進行役。
+        agent_id: AgentId,
+        /// ターン内連番（stderr の `wave=` と同じ値）。
+        wave: u32,
+        /// 撒いたタスク（入力順）。
+        tasks: Vec<crate::plan::PlanTaskAnnounced>,
+        /// 波の開始時刻（epoch ms）。
+        started_at_ms: u64,
+    },
+
+    /// plan の 1 タスクが解決した（Spec 08）。波内の相互順序は解決順で、保証しない。
+    #[serde(rename_all = "camelCase")]
+    PlanTaskResolved {
+        /// 波の同定子。
+        plan_id: u64,
+        /// 宛先。タスクの同一性は `(planId, to)`（同一宛先の重複は静的な不正）。
+        to: AgentId,
+        /// 解決分類。
+        state: PlanTaskState,
+        /// 配送からこのタスクの解決まで（相手のキュー待ちを含む）。
+        elapsed_ms: u64,
+    },
+
+    /// plan の 1 波が完了し、束ねが依頼主へ返った（Spec 08）。
+    #[serde(rename_all = "camelCase")]
+    PlanWaveFinished {
+        /// 波の同定子。
+        plan_id: u64,
+        /// 束ねの文字数。
+        bundle_chars: u64,
+        /// 波全体の所要（= キュー待ち込みの最遅 1 体分）。
+        elapsed_ms: u64,
+    },
 }
 
 #[cfg(test)]
@@ -183,6 +228,28 @@ mod tests {
                 "type": "agentTyping",
                 "agentId": "agent_01",
                 "active": true
+            })
+        );
+    }
+
+    #[test]
+    fn plan_events_serialize_with_camel_case_and_snake_case_state() {
+        let event = CoreEvent::PlanTaskResolved {
+            plan_id: 7,
+            to: AgentId::from("agent_02"),
+            state: PlanTaskState::HandedOff,
+            elapsed_ms: 5210,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "type": "planTaskResolved",
+                "planId": 7,
+                "to": "agent_02",
+                // キーは camelCase、分類の値は snake_case (data_contract の enums の流儀)。
+                "state": "handed_off",
+                "elapsedMs": 5210
             })
         );
     }

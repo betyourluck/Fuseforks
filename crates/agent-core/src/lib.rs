@@ -68,6 +68,7 @@ pub mod llm;
 pub mod mcp;
 pub mod model;
 pub mod orchestrator;
+pub mod plan;
 pub mod rag;
 pub mod schedule;
 pub mod secret;

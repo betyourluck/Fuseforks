@@ -2,7 +2,7 @@
 
 **ID**: 08
 **Date**: 2026-07-30
-**Status**: rev2 査読承認 → Phase 0 完了（契約凍結 2026-07-30）
+**Status**: rev2 査読承認 → Phase 0〜1 完了（契約凍結・コア実装 2026-07-30）
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01〜07 と同じプロセス）
 
@@ -214,10 +214,14 @@ Spec 04 Notes 12 が置いた `plan_id` の発火条件 (b)
       `plan_id` の採番規則（プロセス内単調増加・1 始まり 0 予約・モデル非公開）/
       wire の camelCase 明記 / **セル色マッピング表をコメントで併記**
       （rev2 C2 — 文言が変わっても色の対応は契約側に残る）
-- [ ] Phase 1 — コア: oneshot チャネルの積み荷を `Reply { text, kind }` へ、
+- [x] Phase 1 — コア: oneshot チャネルの積み荷を `Reply { text, kind }` へ、
       `deliver_and_wait` が `(String, PlanTaskState)` を返す形へ。
       **計時は `run_plan` の JoinSet タスク内**（deliver_and_wait には入れない）。
       `plan_id` 採番、リングバッファ、event 3 種の発火。分類ごとのテスト
+      （`plan.rs` 単体 7 本 + event 直列化 1 本 + 結合 3 本 + 既存 2 本へ
+      配送ゼロ非記録のアサート追加。実装で 1 点確定 — 完了した波に
+      `running` を残さない: JoinSet パニック経路のみ `finish_wave` が
+      `no_answer` に倒す。契約の invariants へ追記済み）
 - [ ] Phase 2 — IPC: `list_plan_waves`（Tauri command + `ipc.ts` + 型）
 - [ ] Phase 3 — UI: `usePaneLayout` 拡張 / `App.vue` 中央分割 /
       `PlanWavePane.vue` / `applyEvent` 配線（リスナー登録 → list → upsert の順）

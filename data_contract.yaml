@@ -605,6 +605,11 @@ entities:
       - 計時: startedAtMs は壁時計 (epoch ms)、elapsedMs は単調時計 (Instant)。
         **計測点は run_plan の JoinSet タスク内** — deliver_and_wait の
         シグネチャに計時を入れない (ask に不要な荷物を背負わせない)
+      - **完了した波に running を残さない** (Phase 1 実装時に確定)。running の
+        まま finish_wave へ来るのは JoinSet のタスク異常 (パニック) だけで、
+        deliver_and_wait は必ず分類を返す。finish_wave が残った running を
+        no_answer に倒す — UI に永遠の「実行中」セルを残さないための後始末で
+        あって、正常系の分類ではない
       - wire は **camelCase** (CoreEvent の既存 variant と同じ rename_all)
       - 再起動生存 Spec (README 未実装表) が波の記録を生かす側に置くなら、
         planId 採番位置の持ち越しもセットで要る (今はプロセス寿命なので不要)

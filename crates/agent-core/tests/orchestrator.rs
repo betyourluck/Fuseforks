@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::event::CoreEvent;
+use agent_core::plan::PlanTaskState;
 use agent_core::{
     AgentTool, ConfigFileKind, DiffTool, FdTool, GrepTool, RememberTool, SdTool, ToolContext,
     YqTool,
@@ -3300,6 +3301,11 @@ async fn an_invalid_target_cancels_the_whole_wave() {
         "理由が読める文言で返ること: {}",
         summary.content
     );
+    // 波 = 配送が起きた単位（Spec 08）。差し戻しは波として記録しない。
+    assert!(
+        orchestrator.list_plan_waves().await.is_empty(),
+        "配送ゼロの plan は波として記録しないこと"
+    );
 }
 
 /// 同一宛先の重複も静的な不正として全体を差し戻すこと。
@@ -3481,6 +3487,11 @@ async fn an_exhausted_hop_refuses_the_whole_wave_once() {
         "同じ文字列をタスク数ぶん並べないこと: {}",
         summary.content
     );
+    // hop 上限も配送ゼロなので、波として記録しない（Spec 08）。
+    assert!(
+        orchestrator.list_plan_waves().await.is_empty(),
+        "hop 切れの plan は波として記録しないこと"
+    );
 }
 
 /// 相手が答えずに転送したとき、依頼主に**その事実**が返ること。
@@ -3535,6 +3546,239 @@ async fn a_worker_that_transfers_reports_the_fact_not_silence() {
         "「答えが返らなかった」は嘘なので使わないこと: {}",
         reply.content
     );
+}
+
+// ---------------------------------------------------------------------------
+// 波の記録と event（Spec 08 — 波ペイン）
+// ---------------------------------------------------------------------------
+
+/// 波が型付きで記録され、event が per planId の順序で流れること。
+#[tokio::test]
+async fn a_wave_is_recorded_with_typed_states_and_ordered_events() {
+    let dir = TempDir::new("plan-record");
+    let backend = Arc::new(PlanningBackend::new());
+    let (orchestrator, lead, _) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1, "1 波だけ記録されること");
+    let wave = &waves[0];
+    assert_eq!(wave.plan_id, 1, "planId は 1 始まり（0 は予約）");
+    assert_eq!(wave.agent_id, lead);
+    assert_eq!(wave.tasks.len(), 2);
+    assert!(
+        wave.tasks.iter().all(|t| t.state == PlanTaskState::Answered),
+        "全員が答えた波は全タスク answered であること: {:#?}",
+        wave.tasks
+    );
+    assert!(wave.tasks.iter().all(|t| t.elapsed_ms.is_some()));
+    assert!(wave.tasks.iter().all(|t| t.msg_chars > 0));
+    assert!(wave.bundle_chars.is_some(), "完了した波は束ねの大きさを持つこと");
+    assert!(wave.elapsed_ms.is_some(), "完了した波は所要を持つこと");
+
+    // event の順序保証は per planId: Started → Resolved* → Finished。
+    let started = events
+        .iter()
+        .position(|e| matches!(e, CoreEvent::PlanWaveStarted { .. }))
+        .expect("PlanWaveStarted が流れること");
+    let finished = events
+        .iter()
+        .position(|e| matches!(e, CoreEvent::PlanWaveFinished { .. }))
+        .expect("PlanWaveFinished が流れること");
+    let resolved: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e, CoreEvent::PlanTaskResolved { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(resolved.len(), 2, "タスクごとに 1 回ずつ解決が流れること");
+    assert!(
+        resolved.iter().all(|&i| started < i && i < finished),
+        "Started → Resolved* → Finished の順であること \
+         (started={started} resolved={resolved:?} finished={finished})"
+    );
+}
+
+/// 停止中のワーカーは `undeliverable` として**型で**残ること。
+///
+/// 文言 parse ではないことがこのテストの本体 — 文言は束ねの中にしか無く、
+/// 記録は分類だけを持つ。
+#[tokio::test]
+async fn a_stopped_worker_is_recorded_as_undeliverable() {
+    let dir = TempDir::new("plan-record-stopped");
+    let backend = Arc::new(PlanningBackend::new());
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend,
+        &[("agent_w1", "一号"), ("agent_w2", "二号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+    orchestrator.stop_agent(&workers[1]).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1);
+    let tasks = &waves[0].tasks;
+    // 入力順（= 提示 enum の順）を保つ。
+    assert_eq!(tasks[0].to, workers[0]);
+    assert_eq!(tasks[0].state, PlanTaskState::Answered);
+    assert_eq!(tasks[1].to, workers[1]);
+    assert_eq!(
+        tasks[1].state,
+        PlanTaskState::Undeliverable,
+        "停止中は undeliverable と型で残ること"
+    );
+    assert!(
+        tasks.iter().all(|t| t.state != PlanTaskState::Running),
+        "完了した波に「実行中」を残さないこと"
+    );
+}
+
+/// plan の片方だけが転送で応じる進行役 + ワーカー構成。
+///
+/// 進行役だけが `plan` を持つ（接続 2 体以上）。転送ツールを持つワーカーは
+/// 答えず渡し、それ以外は素直に答える — 役の判別にツールの顔ぶれを使えるのは、
+/// この構成ではワーカーの接続が 1 本以下で plan が提示されないから。
+struct HalfTransferringBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for HalfTransferringBackend {
+    fn name(&self) -> &str {
+        "half-transfer"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let usage = Usage {
+            prompt: 1,
+            completion: 1,
+            cache_read: 0,
+        };
+
+        // 進行役: 1 周目は全接続先へ 1 波、2 周目は束ねを最終出力へ。
+        if let Some(plan) = req.tools.iter().find(|t| t.name == "plan") {
+            if let Some(result) = req.messages.iter().find(|m| m.role == Role::Tool) {
+                return Ok(ChatResponse {
+                    text: Some(format!("まとめ\n{}", result.content)),
+                    tool_calls: Vec::new(),
+                    finish: Finish::Stop,
+                    usage,
+                    grounding: Default::default(),
+                });
+            }
+            let ids = plan.parameters["properties"]["tasks"]["items"]["properties"]["to"]["enum"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let tasks: Vec<serde_json::Value> = ids
+                .iter()
+                .map(|id| {
+                    serde_json::json!({
+                        "to": id,
+                        "message": format!("{} への依頼", id.as_str().unwrap_or(""))
+                    })
+                })
+                .collect();
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: "call_plan".into(),
+                    name: "plan".into(),
+                    args: serde_json::json!({ "tasks": tasks }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        // 転送ツールを持つワーカー: 自分で答えず、接続先へ会話を渡す。
+        if let Some(transfer) = req.tools.iter().find(|t| t.name.starts_with("transfer_to_")) {
+            return Ok(ChatResponse {
+                text: Some("私では分かりません".into()),
+                tool_calls: vec![ToolCall {
+                    id: "call_transfer".into(),
+                    name: transfer.name.clone(),
+                    args: serde_json::json!({ "message": "代わりに答えて" }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage,
+                grounding: Default::default(),
+            });
+        }
+
+        Ok(ChatResponse {
+            text: Some("作業しました".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage,
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 転送で応じたタスクは `handed_off` として**型で**残ること。
+///
+/// 転送の答えは文字列としては普通の答えと同じ経路（`reply_to`）で返る —
+/// 型（`Reply.kind`）で刻まないと区別できない、が Spec 08 P1 の核。
+#[tokio::test]
+async fn a_transferring_task_is_recorded_as_handed_off() {
+    let dir = TempDir::new("plan-record-handoff");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(HalfTransferringBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (lead, w1, w2, w3) = (
+        AgentId::from("agent_lead"),
+        AgentId::from("agent_w1"),
+        AgentId::from("agent_w2"),
+        AgentId::from("agent_w3"),
+    );
+    for (id, name) in [(&lead, "進行役"), (&w1, "一号"), (&w2, "二号"), (&w3, "第三者")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&lead, vec![w1.clone(), w2.clone()]).await.unwrap();
+    orchestrator.set_connections(&w2, vec![w3.clone()]).await.unwrap();
+    for id in [&lead, &w1, &w2, &w3] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "手分けして").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(800)).await;
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1);
+    let tasks = &waves[0].tasks;
+    let answered = tasks.iter().find(|t| t.to == w1).expect("一号のタスク");
+    let transferred = tasks.iter().find(|t| t.to == w2).expect("二号のタスク");
+    assert_eq!(answered.state, PlanTaskState::Answered);
+    assert_eq!(
+        transferred.state,
+        PlanTaskState::HandedOff,
+        "転送は handed_off と型で残ること（文言 parse ではない）"
+    );
+    assert!(transferred.elapsed_ms.is_some());
 }
 
 // ---------------------------------------------------------------------------
