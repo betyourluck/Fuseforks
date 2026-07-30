@@ -25,5 +25,13 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tokio.workspace = true
 
+# デスクトップ限定。クレート自体が Android/iOS で空になるので、
+# ここで target を切って mobile ビルドから外す（Spec 07 P0）。
+#
+# **[target.…] 節は必ず [dependencies] より後ろに置く。** 途中へ挟むと、
+# それ以降の依存がすべて target 条件つきとして再分類される（TOML の節の意味論）。
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2.4.3"
+
 # リリースプロファイルはワークスペースルートで定義している
 # （非ルートパッケージの [profile] は無視されるため）。

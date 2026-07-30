@@ -21,9 +21,42 @@ use tauri::Manager;
 /// [`state::AppState`] は初期化が成功した瞬間に manage される。それまでの
 /// 失敗理由は [`state::BootError`]（起動直後に manage 済み）へ入るので、
 /// `boot_status` は常に「まだ・できた・失敗した」のどれかを答えられる。
+/// 2 つ目の起動は [`tauri_plugin_single_instance`] が殺す（Spec 07 P0）。
+/// 同じワークスペースを掴んだプロセスが 2 つ並ぶと、予定が両方で発火し、
+/// `lastConsumedDueMs` を競って書くため消化の記録が壊れる。
+///
+/// **プラグインは登録順に走るので、これを最初に登録する**（プラグインの要件）。
+/// コア側には何も足さない — プロセスの一意性は OS/フレームワークの層の仕事で、
+/// ここでロックファイルを自作すると強制終了後の残留を自分で面倒みることになる。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // このコールバックは**生き残っている側**で走る（2 つ目のプロセスは
+            // プラグインが既に終了させている）。ここでやるのは「起動しなかった」
+            // ことを利用者に伝えることだけ — 無言だと二度押ししたようにしか
+            // 見えず、動くはずのものが動かない理由が画面のどこにも無い。
+            let Some(window) = app
+                .get_webview_window("main")
+                .or_else(|| app.webview_windows().into_values().next())
+            else {
+                eprintln!("[concordia] 2 つ目の起動を止めたが、前面に出すウィンドウが無い");
+                return;
+            };
+
+            // 3 つとも失敗を握り潰す。最小化の解除が効かない環境でも
+            // 前面化は試す価値があり、ここで早期 return すると
+            // 「一部の環境でだけ無反応」という一番読めない形になる。
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(state::BootError::default());
