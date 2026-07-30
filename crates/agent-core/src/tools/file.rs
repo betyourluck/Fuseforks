@@ -49,7 +49,11 @@ impl AgentTool for FileTool {
         "作業フォルダ内のファイル・フォルダを操作する。\
          **新しいファイルを作れる唯一のツール**（翻訳・要約・生成物の書き出しはこれを使う）。\
          op で操作を選ぶ: read（全文を読む）/ write（新規作成・全文置換）/ \
-         mkdir（フォルダ作成）/ move（移動・改名）/ copy（複製）/ remove（ごみ箱へ移す）。\
+         append（末尾に continuation を足す）/ mkdir（フォルダ作成）/ \
+         move（移動・改名）/ copy（複製）/ remove（ごみ箱へ移す）。\
+         **長い文章を書くときは write で書き始め、append で継ぎ足すこと。** \
+         1 回の応答で出せる量には上限があり、write は毎回全文を運ぶので、\
+         長い成果物を write だけで作ろうとすると途中で切れる。\
          既にあるファイルの**一部だけ**を直すなら sd / yq のほうが安く確実。\
          削除はごみ箱へ移すだけで、完全には消さない。"
             .to_owned()
@@ -61,8 +65,8 @@ impl AgentTool for FileTool {
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["read", "write", "mkdir", "move", "copy", "remove"],
-                    "description": "操作。read=読む / write=書く / mkdir=フォルダ作成 / move=移動・改名 / copy=複製 / remove=ごみ箱へ"
+                    "enum": ["read", "write", "append", "mkdir", "move", "copy", "remove"],
+                    "description": "操作。read=読む / write=書く（全文置換）/ append=末尾へ追記 / mkdir=フォルダ作成 / move=移動・改名 / copy=複製 / remove=ごみ箱へ"
                 },
                 "path": {
                     "type": "string",
@@ -70,7 +74,7 @@ impl AgentTool for FileTool {
                 },
                 "content": {
                     "type": "string",
-                    "description": "write で書き込む内容（全文）"
+                    "description": "write で書き込む全文、または append で末尾へ足す続き"
                 },
                 "to": {
                     "type": "string",
@@ -128,6 +132,10 @@ fn run_file(
             Some(content) => run_write(work_dir, user_path, content, overwrite),
             None => "write には `content`（書き込む全文）が必要です。".to_owned(),
         },
+        "append" => match content {
+            Some(content) => run_append(work_dir, user_path, content),
+            None => "append には `content`（末尾へ足す続き）が必要です。".to_owned(),
+        },
         "mkdir" => run_mkdir(work_dir, user_path),
         "move" | "copy" => match to {
             Some(to) => run_transfer(work_dir, user_path, to, overwrite, op == "move"),
@@ -135,7 +143,7 @@ fn run_file(
         },
         "remove" => run_remove(work_dir, user_path),
         other => format!(
-            "`{other}` は使えない操作です。op は read / write / mkdir / move / copy / remove のいずれかです。"
+            "`{other}` は使えない操作です。op は read / write / append / mkdir / move / copy / remove のいずれかです。"
         ),
     }
 }
@@ -213,6 +221,72 @@ fn run_write(work_dir: &Path, user_path: &str, content: &str, overwrite: bool) -
         format!("`{display}` を上書きしました（{chars} 字）。")
     } else {
         format!("`{display}` を作成しました（{chars} 字）。")
+    }
+}
+
+/// 末尾へ継ぎ足す（Spec 09 rev2 で追加）。
+///
+/// # なぜ席を作ったか
+///
+/// 起票時は「`read` → `write(overwrite)` で表現できる」として持たせなかったが、
+/// **実測でその表現が成立しないと分かった**（2026-07-31。failures.md #40 の続き）。
+/// `write` は毎回全文を運ぶので、800 行のファイルを 100 行ずつ 8 回に分けても
+/// 最後の `write` は 800 行を 1 応答で出す必要があり、**出力上限の天井は下がらない**。
+/// 加えて累計出力が 100+200+…+800 ≒ 3,600 行分、元ファイルの 4.5 倍になる。
+/// 分割は「重くなる」のではなく**成立しない**というのが実測の結論で、
+/// 長い成果物を作る経路には追記が構造的に要る。
+///
+/// # 新規作成も許す
+///
+/// 不在なら新規作成として扱う。「まず `write`、次から `append`」を強制すると、
+/// モデルは 1 件目だけ別の op を選ぶ必要があり、間違えたときの失敗
+/// （「ファイルがありません」）が本筋と無関係な所で出る。
+/// **`write` と違って上書きゲートは要らない** — 追記は既存の内容を壊さない。
+fn run_append(work_dir: &Path, user_path: &str, content: &str) -> String {
+    use std::io::Write;
+
+    let (path, display) = match resolve_creatable(work_dir, user_path) {
+        Ok(resolved) => resolved,
+        Err(message) => return message,
+    };
+
+    if path.is_dir() {
+        return format!("`{display}` はフォルダです。ファイルとして追記できません。");
+    }
+    // 追記後の大きさで上限を見る。1 回ぶんだけ見ると、小さな追記の繰り返しで
+    // 無制限に太らせられる（読めなくなるファイルを作らせない）。
+    let existing = path.metadata().map(|m| m.len()).unwrap_or(0);
+    if existing.saturating_add(content.len() as u64) > MAX_FILE_BYTES {
+        return format!(
+            "追記すると `{display}` が大きすぎます（上限 {MAX_FILE_BYTES} bytes）。\
+             ファイルを分けてください。"
+        );
+    }
+
+    if let Some(parent) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        return format!("`{display}` の親フォルダを作れません: {err}");
+    }
+
+    let created = !path.is_file();
+    let opened = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path);
+    let mut handle = match opened {
+        Ok(handle) => handle,
+        Err(err) => return format!("`{display}` を開けません: {err}"),
+    };
+    if let Err(err) = handle.write_all(content.as_bytes()) {
+        return format!("`{display}` へ追記できません: {err}");
+    }
+
+    let chars = content.chars().count();
+    if created {
+        format!("`{display}` を作成し、{chars} 字を書きました。")
+    } else {
+        format!("`{display}` の末尾へ {chars} 字を追記しました（合計 {} bytes）。", existing + content.len() as u64)
     }
 }
 
@@ -451,6 +525,63 @@ mod tests {
         assert!(reply.contains("省略しました"), "落とした量を明示すること: 先頭 80 字 = {}", &reply[..80.min(reply.len())]);
     }
 
+    /// **長い成果物は write で始めて append で継ぎ足せること。**
+    ///
+    /// これができないと、分割しても最後の write が全文を運ぶことになり、
+    /// 出力上限の天井が下がらない（Spec 09 Notes 3 の発火根拠）。
+    #[tokio::test]
+    async fn append_builds_a_long_document_in_chunks() {
+        let dir = TempDir::new("append-chunks");
+
+        let first = call(
+            &dir,
+            serde_json::json!({ "op": "write", "path": "out/README_en.md", "content": "# Title\n" }),
+        )
+        .await;
+        assert!(first.contains("作成しました"), "{first}");
+
+        for chunk in ["## A\nbody a\n", "## B\nbody b\n"] {
+            let reply = call(
+                &dir,
+                serde_json::json!({ "op": "append", "path": "out/README_en.md", "content": chunk }),
+            )
+            .await;
+            assert!(reply.contains("追記しました"), "{reply}");
+        }
+
+        // 継ぎ目が壊れず、順序どおりに積まれること。
+        assert_eq!(
+            dir.read("out/README_en.md"),
+            "# Title\n## A\nbody a\n## B\nbody b\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn append_creates_the_file_when_missing() {
+        // 「1 件目だけ write」を強制すると、間違えたときの失敗が本筋と
+        // 無関係な所（ファイルがありません）で出る。不在は新規作成として扱う。
+        let dir = TempDir::new("append-new");
+        let reply = call(
+            &dir,
+            serde_json::json!({ "op": "append", "path": "new.md", "content": "始まり\n" }),
+        )
+        .await;
+
+        assert!(reply.contains("作成し"), "{reply}");
+        assert_eq!(dir.read("new.md"), "始まり\n");
+    }
+
+    #[tokio::test]
+    async fn append_refuses_to_escape_the_work_dir() {
+        let dir = TempDir::new("append-escape");
+        let reply = call(
+            &dir,
+            serde_json::json!({ "op": "append", "path": "../escape.txt", "content": "x" }),
+        )
+        .await;
+        assert!(reply.contains("作業フォルダの外"), "{reply}");
+    }
+
     #[tokio::test]
     async fn mkdir_creates_intermediate_folders() {
         let dir = TempDir::new("mkdir");
@@ -559,9 +690,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_op_lists_the_available_ones() {
+        // 例に使う op は「実装していないもの」であること。append は rev2 で
+        // 実装されたので、ここが落ちて例の差し替えが必要になった（正しい挙動）。
         let dir = TempDir::new("unknown-op");
-        let reply = call(&dir, serde_json::json!({ "op": "append", "path": "a.txt" })).await;
-        assert!(reply.contains("read") && reply.contains("remove"), "{reply}");
+        let reply = call(&dir, serde_json::json!({ "op": "chmod", "path": "a.txt" })).await;
+        assert!(reply.contains("read") && reply.contains("append"), "{reply}");
     }
 
     #[tokio::test]

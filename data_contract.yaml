@@ -1125,6 +1125,7 @@ conversation_termination:
     op と引数:
       read   { path }                        # 中身を返す (bundled と同じ上限)
       write  { path, content, overwrite? }   # 既存は overwrite: true が無い限り拒否
+      append { path, content }               # 末尾へ継ぎ足す (rev2 で追加)
       mkdir  { path }                        # create_dir_all (中間も作る)
       move   { path, to }                    # 移動・改名。両端とも境界内
       copy   { path, to }                    # 複製。両端とも境界内
@@ -1152,8 +1153,15 @@ conversation_termination:
         宛先は resolve_creatable。片端だけの検査は囲いの穴になる
       - 読み取りの上限は bundled_tools_contract と共有 (1 ファイル 2 MiB /
         出力 12,000 字 / バイナリ拒否)。write の content にも同じ上限を掛ける
-      - **append は持たない** (read → write で表現できる)。実測で「追記で足りるのに
-        全文を運ぶのが重い」と分かってから席を作る (確かめる前に席を作らない)
+      - **append を持つ** (rev2、2026-07-31)。起票時は「read → write で表現できる」
+        として見送ったが、**実測でその表現が成立しないと分かった** —
+        write は毎回全文を運ぶので、800 行を 100 行ずつ 8 回に割っても最後の
+        write は 800 行を 1 応答で出す必要があり、**出力上限の天井が下がらない**。
+        累計出力も元の 4.5 倍 (100+200+…+800)。分割は「重くなる」のではなく
+        **成立しない**、が発火の根拠 (failures.md #40 の続き)。
+        不在なら新規作成として扱い、上書きゲートは掛けない (追記は既存を壊さない)。
+        上限は**追記後の大きさ**で見る (1 回ぶんだけ見ると小さな追記の反復で
+        無制限に太らせられる)
       - 失敗はすべて Ok(String) でモデルへ返す (ツールの失敗で会話を止めない)。
         作業フォルダ未設定は work_dir_missing() の共通文言
       - 依存の追加は **trash のみ**。本体は std::fs で足りる (create_dir_all /
