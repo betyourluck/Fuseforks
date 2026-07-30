@@ -69,6 +69,7 @@ pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod rag;
+pub mod schedule;
 pub mod secret;
 pub mod tool;
 pub mod tools;
@@ -88,6 +89,10 @@ pub use model::{
 };
 pub use orchestrator::{AgentMcpStatus, Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};
+pub use schedule::{
+    GRACE_MINUTES, InvalidRecurrence, Recurrence, ScheduledTask, Tick, Weekday, due_interval,
+    due_wall_clock,
+};
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
 pub use tools::{DiffTool, FdTool, GrepTool, RememberTool, SdTool, YqTool};

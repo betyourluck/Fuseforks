@@ -12,6 +12,17 @@ license = "MIT"
 agent-core = { path = "crates/agent-core" }
 
 async-trait = "0.1"
+# 予定の発火規則（Spec 07）で使うカレンダー計算。「次の木曜 17 時（現地時刻）」は
+# epoch ミリ秒の演算では出せない（曜日・DST・月末）。自前で書くとカレンダーの
+# 再発明になり、必ずどこかで間に合わせになる。
+#
+# 既定 feature のうち wasmbind は要らない（コアは wasm を対象にしない）ので
+# default-features = false にして clock / std だけを取る。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# テスト専用。DST を持つタイムゾーン（America/New_York）を使って、
+# 「存在しない時刻・曖昧な時刻で panic しない」契約を実際に走らせるため。
+# 日本には DST が無いので、実行機の Local ではこの経路を一度も通れない。
+chrono-tz = "0.10"
 # OS の資格情報ストア。Windows 資格情報マネージャー / macOS Keychain /
 # freedesktop Secret Service を同一 API で扱う。各 feature は target_os で
 # ゲートされるため、全プラットフォーム分を列挙してよい。
