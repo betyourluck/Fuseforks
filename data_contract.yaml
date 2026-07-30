@@ -1,5 +1,5 @@
 version: "1.0"
-project: Concordia
+project: Outcasts Concordia  # 正式名 (2026-07-30)。アプリ内表示・System の送り手名は「Concordia」のまま
 description: |
   マルチエージェント・オーケストレーションのドメイン名詞（Data-First Grounding）。
   実装より先にここを正とする。型を増減させたら、下記 3 箇所を必ず同時に直すこと。

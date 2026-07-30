@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+正式名は **Outcasts Concordia**（2026-07-30 決定）。アプリ内表示・System の
+送り手名は「Concordia」のまま。狙いは**エンジニアのホビー + Outcasts への導線** —
+核（agent-core / 契約 / 発火規則）は業務品質、殻（村・キャラ）はホビーの体験、
+両方を中途半端にやるのが唯一の失敗形（README「思想」の節が正）。
+
 ## 台帳の構成（真実の記録先）
 
 - 全体像・設計判断: [README.md](README.md)

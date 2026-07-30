@@ -1,20 +1,65 @@
-# Concordia
+# Outcasts Concordia
 
-複数の AI エージェントが相互に連携・会話するマルチエージェント・オーケストレーション
-デスクトップ GUI。Bun + Tauri v2 + Vue 3 + Rust。
+**AI エージェントの村を、手元で飼う。**
 
-エージェントの稼働状態・トポロジー（接続関係）・参照 RAG・設定ファイル（`SKILL.md` 等）を
-1 画面で視覚化し、制御する。
+Outcasts Concordia は、複数の AI エージェントが相互に連携・会話する
+マルチエージェント・オーケストレーションのデスクトップアプリです。
+エージェントを作り、繋ぎ、話しかけると、村が動き出す —
+委譲し、手分けし、束ね、時刻が来れば勝手に働く。
+その全部が 3 ペインの 1 画面に見えています。
+
+Rust（`agent-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Concordia」。
+
+## 何ができるか
+
+| | |
+|---|---|
+| 🏘️ **村を組む** | エージェントを作って線で繋ぐ。接続マップがそのまま制御盤 |
+| 🤝 **委譲と合流** | 進行役が `ask` で訊き、`plan` でワーカーへ並列に手分けして束ねる |
+| ⏰ **予定** | 「毎週 木曜 17:00」「10 分ごと」で依頼が時刻発火する。cron 式は書かせない |
+| 🔌 **MCP** | Claude Desktop の `mcp.json` を**そのまま貼れる**。共通 + エージェント別 |
+| 🔍 **接地** | Gemini の Google 検索接地に対応。検索した事実と、出典が返らない事実を区別して見せる |
+| 🛠️ **同梱ツール** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq`。作業フォルダの外は構造的に読めない |
+| 🗣️ **広場ログ** | 他人の会話が聞こえる村。聞かない自由もある（コスト設定として） |
+| 🏛️ **村の条例** | 全員のプロンプト最上段に入る共通規則。モデル間の憲法差を揃える正規化層 |
+
+接続先は OpenAI 互換 / Anthropic / Gemini。**base URL は自由**なので、
+Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
+
+## 思想 — おもちゃの形をした本物
+
+このアプリの想定ユーザーは**エンジニアのホビー**である。業務のオーケストレーション
+基盤は狙わない — 業務には人件費という計算があり「人に確認させるより AI で回す」が
+成立するが、個人では自分の時間より API 費のほうが目につく。その非対称は
+アプリ側からは動かせない。
+
+ただし、**ホビー向けだからこそ中身は本物にする**。単純なグループ会話ツールなら
+エンジニアのホビーにもならない。初期の Linux が Solaris 使いからおもちゃ扱い
+されながら、中身が本物の Unix だったから家に持ち帰る価値があった — それと同じ形を
+狙う。
+
+だから設計は 2 層で規律が違う:
+
+- **核（`agent-core` / `data_contract.yaml` / 発火規則）は業務品質。**
+  契約を凍結してから実装し、テストは赤を見てから緑にする。
+  GUI への依存はゼロ（機械的に保証。このクレートだけで headless に動く）
+- **殻（村・キャラクター・3 ペイン）はホビーの体験。**
+  「設定が少なくて分かりやすい」が差別化軸で、cron 式や YAML の壁を利用者に
+  登らせない
+
+両方を中途半端にやるのが唯一の失敗形である。かわいさのために契約を緩めない。
+業務の顔をするために設定を増やさない。
 
 ---
 
 ## ディレクトリ構造
 
 ```text
-ConcordiaOrcehstrator/
+OutcastsConcordia/
 ├── Cargo.toml                       Cargo ワークスペース（resolver 3 / edition 2024）
 ├── data_contract.yaml               ドメイン名詞の台帳（型を変えたら先にここ）
 ├── failures.md                      踏んだ罠の台帳（症状 → 真因 → 処方 → 一般化）
+├── specs/                           仕様（起票 → 査読 → rev 改訂 → Phase 分割で実装）
 │
 ├── crates/
 │   └── agent-core/                  ★ 中核。GUI 層に一切依存しない
@@ -27,6 +72,7 @@ ConcordiaOrcehstrator/
 │       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md / icon.webp / Ordinance.md と world.json の入出力
 │       │   ├── orchestrator.rs      ★ ライフサイクルとメッセージ配送（Tokio）
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
+│       │   ├── schedule.rs          予定の型と発火規則（純関数。時刻もタイムゾーンも引数）
 │       │   ├── rag.rs               RAG 索引（検索は Rayon 側で走る）
 │       │   ├── secret.rs            秘密の保管（OS 資格情報ストア / テスト用の in-memory）
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry（MCP の受け口）
@@ -61,6 +107,8 @@ ConcordiaOrcehstrator/
                 ├── GroundingNote.vue                  発話に添える接地の来歴
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   モーダル: 設定
                 ├── ModelTemplateDialog.vue            モーダル: モデル
+                ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   モーダル: 条例 / MCP / 予定
+                ├── TitleBar.vue                       カスタムタイトルバー（📜 🔌 ⏰）
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue
 ```
 
