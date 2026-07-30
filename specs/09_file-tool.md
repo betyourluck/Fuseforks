@@ -2,7 +2,7 @@
 
 **ID**: 09
 **Date**: 2026-07-31
-**Status**: Draft rev1（査読待ち）
+**Status**: 承認 → Phase 0〜4 完了（2026-07-31）。残は実機確認
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01〜08 と同じプロセス）
 
@@ -116,16 +116,18 @@
 
 ## Tasks
 
-- [ ] Phase 0 — 契約凍結（**査読承認後**）: `data_contract.yaml` へ `file` ツール
+- [x] Phase 0 — 契約凍結: `data_contract.yaml` へ `file_tool_contract`
       （op 列挙・overwrite ゲート・ごみ箱削除・境界の変種 `resolve_creatable` の
-      3 段検査）と `sd` / `yq` の案内文言を追記
-- [ ] Phase 1 — `resolve_creatable` を `tools/fs.rs` へ切り出し（単体テスト:
-      実在祖先の検査・残り成分の `..` 拒否・symlink 拒否）
-- [ ] Phase 2 — `tools/file.rs` 実装 + `trash` 依存追加 + 登録（state.rs /
-      テスト側 setup）。op ごとのテスト
-- [ ] Phase 3 — `sd` / `yq` の不在文言差し替え + テスト追従
-- [ ] Phase 4 — 台帳整合: README（同梱ツールの節）/ CLAUDE.md / failures.md
-      （sd 空転の実機事例を 1 entry — 症状 → 真因 → 処方 → 一般化）
+      3 段検査）と `write_tools_contract` への案内文言を追記
+- [x] Phase 1 — `resolve_creatable` を `tools/fs.rs` へ切り出し（テスト 6 本:
+      新規宛先・既存宛先・`..` 脱出 4 パターン・絶対パス・空・symlink）
+- [x] Phase 2 — `tools/file.rs` 実装 + `trash` 依存追加 + 登録（state.rs /
+      テスト側 setup / UI の同梱ツール一覧）。テスト 14 本
+- [x] Phase 3 — `sd` / `yq` の不在文言差し替え（`open_for_edit` の 1 箇所で
+      両方が直る）+ テスト 1 本
+- [x] Phase 4 — 台帳整合: README（同梱ツール表・`file` の節・未実装表へ
+      コマンド実行と割り込み停止の要望）/ CLAUDE.md / failures.md #39 /
+      Spec 02・07 の本数記述へ続報を追記
 - [ ] 実機確認: README 英訳を再依頼し、`file write` で成果物が作られること。
       空転（同じツールの連続失敗）が起きないこと
 

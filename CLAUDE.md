@@ -71,6 +71,15 @@
   `chrono` 採用は査読で承認済み。rev2 の査読で入った差分は 2 つだけ —
   `lastFiredMs` → `lastConsumedDueMs` の改名（飛ばした予定も書く欄なので
   「fired」は嘘）と、猶予超過で飛ばした予定を会話ログでなく debug ログへ倒す判断
+- Spec 09（file — ファイル・フォルダ操作の同梱ツール）: **Phase 0〜4 完了**
+  （2026-07-31）。残は実機確認（README 英訳の再依頼で `file write` が使われ、
+  空転しないこと）。1 ツール + op 閉じた列挙（read / write / mkdir / move /
+  copy / remove）で `data_contract.yaml` の `file_tool_contract` に**凍結済み**。
+  起点は実機の空転（failures.md #39 — 新規作成が無く sd で 12 ラウンド試み続けた）。
+  **境界が 2 種類あることが実装の核** — `resolve_in_work_dir`（実在パス専用。
+  sd / yq の「新規作成なし」担保はこの canonicalize が根拠なので**触らない**）と
+  新設 `resolve_creatable`（実在しない宛先用の 3 段検査）。削除は `trash` crate で
+  ごみ箱のみ・完全削除の経路なし。依存追加は trash 1 つ（本体は std::fs）
 - Spec 08（波ペイン — plan 実行の可視化、Airflow Grid 相当）: **Phase 0〜3 完了**
   （2026-07-30）。残は実機確認 2 本（波が列として現れセルが個別に解決色へ変わる /
   GUI 再読み込みで波が残る）。rev2 査読（重大 7 / 明確化 6 / 改善 3）を全反映して

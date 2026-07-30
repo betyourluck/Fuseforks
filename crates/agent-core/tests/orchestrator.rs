@@ -11,8 +11,8 @@ use std::time::Duration;
 use agent_core::event::CoreEvent;
 use agent_core::plan::PlanTaskState;
 use agent_core::{
-    AgentTool, ConfigFileKind, DiffTool, FdTool, GrepTool, RememberTool, SdTool, ToolContext,
-    YqTool,
+    AgentTool, ConfigFileKind, DiffTool, FdTool, FileTool, GrepTool, RememberTool, SdTool,
+    ToolContext, YqTool,
 };
 use agent_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
@@ -565,7 +565,10 @@ impl AgentTool for McpLikeTool {
     }
 }
 
-/// 同梱 6 本 + MCP 風 1 本を登録する（提示制御テストの土台）。
+/// 同梱 7 本 + MCP 風 1 本を登録する（提示制御テストの土台）。
+///
+/// **同梱ツールを足したらここにも足すこと。** 登録漏れがあると、提示制御の
+/// テストがそのツールだけ素通しになる（Spec 09 の file で実際に漏れた）。
 async fn register_all_tools(orchestrator: &Orchestrator, dir: &TempDir) {
     let store = ConfigStore::new(&dir.0);
     orchestrator.register_tool(Arc::new(RememberTool::new(store))).await;
@@ -574,6 +577,7 @@ async fn register_all_tools(orchestrator: &Orchestrator, dir: &TempDir) {
     orchestrator.register_tool(Arc::new(DiffTool)).await;
     orchestrator.register_tool(Arc::new(SdTool)).await;
     orchestrator.register_tool(Arc::new(YqTool)).await;
+    orchestrator.register_tool(Arc::new(FileTool)).await;
     orchestrator.register_tool(Arc::new(McpLikeTool)).await;
 }
 
@@ -2826,7 +2830,7 @@ async fn bundled_tool_presentation_is_gated_by_enabled_tools_and_work_dir() {
     spec_a.work_dir = Some("D:\\somewhere".into());
     orchestrator.create_agent(spec_a).await.unwrap();
 
-    // B: 既定 (null) + 作業フォルダ無し → ファイル系 5 本が自動除外。
+    // B: 既定 (null) + 作業フォルダ無し → ファイル系 6 本が自動除外。
     orchestrator
         .create_agent(AgentSpec::new("agent_b", "既定型", "tpl"))
         .await
@@ -2849,7 +2853,7 @@ async fn bundled_tool_presentation_is_gated_by_enabled_tools_and_work_dir() {
     let b = &presented[1];
     assert!(b.contains(&"remember".to_string()), "{b:?}");
     assert!(b.contains(&"memoria__recall".to_string()), "{b:?}");
-    for tool in ["grep", "fd", "diff", "sd", "yq"] {
+    for tool in ["grep", "fd", "diff", "sd", "yq", "file"] {
         assert!(
             !b.contains(&tool.to_string()),
             "作業フォルダ未設定ならファイル系は自動除外: {b:?}"
