@@ -38,7 +38,21 @@ fn open_for_edit(
     allowed_exts: Option<&[&str]>,
 ) -> Result<(PathBuf, String, String), String> {
     // 1. 境界解決（実在 + 囲い内。canonicalize が新規作成を構造的に封じる）
-    let (path, display) = resolve_in_work_dir(work_dir, user_path)?;
+    //
+    // 不在のときは `file` ツールへ**案内する**（Spec 09）。素の「見つかりません」
+    // だけだと、モデルは綴りの問題と解釈して同じ操作を繰り返す — 実機で
+    // 新規作成を sd に頼み、12 ラウンド空転した。禁止ではなく、その行動を
+    // 選ぶ理由を消す情報を与えるのが処方（failures.md #36）。
+    let (path, display) = resolve_in_work_dir(work_dir, user_path).map_err(|message| {
+        if message.contains("見つかりません") {
+            format!(
+                "{message}\nこのツールは既存ファイルの書き換え専用で、新規作成はできません。\
+                 新しく作るなら `file` ツールの op: \"write\" を使ってください。"
+            )
+        } else {
+            message
+        }
+    })?;
 
     // 2. ファイルであること（ディレクトリ・特殊ファイル拒否）
     if !path.is_file() {
@@ -895,6 +909,32 @@ mod tests {
 
     async fn call_sd(dir: &TempDir, args: serde_json::Value) -> String {
         SdTool.call(&ctx_with(Some(&dir.0)), &args).await.unwrap()
+    }
+
+    /// 不在のファイルには **`file` ツールへの案内**を添えること（Spec 09）。
+    ///
+    /// 素の「見つかりません」だけだと、モデルは綴りの問題と解釈して同じ操作を
+    /// 繰り返す（実機で新規作成を sd に頼み 12 ラウンド空転した）。
+    /// 拒否に「次の一手」を必ず添えるのが処方。
+    #[tokio::test]
+    async fn a_missing_file_points_at_the_file_tool_for_creation() {
+        let dir = TempDir::new("sd-missing");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({ "path": "new.md", "pattern": "x", "replacement": "y" }),
+        )
+        .await;
+        assert!(reply.contains("新規作成はできません"), "{reply}");
+        assert!(reply.contains("file"), "作る手段の名前を出すこと: {reply}");
+
+        // yq も同じ経路（open_for_edit）を通るので同時に直る。
+        let yq_reply = call_yq(
+            &dir,
+            serde_json::json!({ "path": "new.toml", "op": "get", "key": "a" }),
+        )
+        .await;
+        assert!(yq_reply.contains("新規作成はできません"), "{yq_reply}");
     }
 
     #[tokio::test]
