@@ -410,7 +410,7 @@ entities:
     fields: { source: AgentId, target: AgentId }
 
   # -------------------------------------------------------------------------
-  # Spec 07 の契約案。**まだ凍結していない** (rev2 査読承認後に Phase 0 で確定)。
+  # Spec 07 の契約。**2026-07-31 に Phase 0 で凍結** (rev2 査読承認)。
   Weekday:
     values: [mon, tue, wed, thu, fri, sat, sun]
 
@@ -433,26 +433,28 @@ entities:
       to: AgentId                 # 宛先。自分宛でもワーカー宛でも区別しない
       message: String             # 届ける依頼の本文
       recurrence: Recurrence
-      createdAtMs: u64            # interval の起点 (lastFiredMs が null のとき)
-      lastFiredMs: u64 | null     # 消化した予定時刻。発火時刻ではない
+      createdAtMs: u64            # interval の起点 (lastConsumedDueMs が null のとき)
+      lastConsumedDueMs: u64 | null     # 消化した予定時刻。発火時刻ではない
       enabled: bool               # 既定 true。偽なら発火も消化もしない
     firing_rule: |
       各 tick で「now 以前にある直近の予定時刻」= due を求めて判定する。
         enabled == false                  → 何もしない (消化もしない)
         due が無い                        → 何もしない
-        lastFiredMs >= due                → 既に消化済み
+        lastConsumedDueMs >= due                → 既に消化済み
         **壁時計系**で now - due > GRACE  → 発火せず消化済みにする
-        それ以外                          → 発火し lastFiredMs = due
+        それ以外                          → 発火し lastConsumedDueMs = due
       due の算出:
         壁時計系 (daily / weekly) = カレンダーから逆算
         間隔系 (interval)        = anchor + every * floor((now - anchor) / every)
                                    ただし now - anchor < every なら None
-                                   anchor = lastFiredMs ?? createdAtMs
+                                   anchor = lastConsumedDueMs ?? createdAtMs
     invariants: |
-      - **lastFiredMs は「消化した予定時刻」で、発火時刻ではない。** この区別が
+      - **lastConsumedDueMs は「消化した予定時刻」で、発火時刻ではない。** この区別が
         規則の全体を支える — 飛ばした予定も消化済みにするので、同じ欄で
         「発火した」と「発火せず飛ばした」の両方を表せる。発火時刻を持つと、
-        飛ばしたことを覚える場所が別に要る
+        飛ばしたことを覚える場所が別に要る。**欄の名前に意味を運ばせる** —
+        rev2 まで lastFiredMs だったが「fired」は飛ばした予定を書く欄として
+        嘘になるため、凍結前に改名した
       - **猶予 (GRACE = 5 分) は壁時計系にだけ適用する。** 間隔の予定に
         「間違った時刻」は存在しないので猶予を掛ける理由が無い。全種別に掛けると、
         2 日止まった 10 分ごとの予定が毎 tick 消化されるだけで一度も発火しない
@@ -463,7 +465,7 @@ entities:
         「鳴らなかった」より悪い
       - **間隔系は再開時に 1 回だけ走る** (溜まった回数ぶんは撒かない)。監視は
         「今の状態」を見る仕事なので、遅れて 1 回見るのは正しく 288 回は無意味
-      - 発火後は lastFiredMs = due (now ではない)。刻みの位相が保たれ、
+      - 発火後は lastConsumedDueMs = due (now ではない)。刻みの位相が保たれ、
         now - due < every が構成上保証されるので連続発火しない
       - **現地時刻の変換を unwrap しない。** Local.from_local_datetime() は DST で
         None / Ambiguous を返す。どちらもその回は発火しない扱い。日本に DST は
@@ -477,6 +479,10 @@ entities:
         会話ペインにも出るので利用者側の可読性も上がるから
       - **宛先が Running でなければ撒かない** (消化して飛ばす)。停止中へ投げると
         NotRunning が毎 tick 積まれるだけ。消化するのでログも 1 回だけになる
+      - **飛ばした理由で行き先を分ける**: 停止中で飛ばしたら会話ログへ 1 行、
+        猶予超過で飛ばしたら debug ログのみ。停止中は利用者が直せる状態
+        (起動すれば動く) だが、猶予超過は「閉じていた」の事後報告で直す手が無く、
+        毎朝 9 時の予定が数日分まとめて会話ログへ流れると本物の通知が埋まる
       - 保存は **tmp + rename** (save_world と同じ)。電源断で全予定を失わない
       - 読み込みで **1 件単位に検証**して落とす: hour > 23 / minute > 59 /
         everyMinutes == 0 / 宛先が存在しない。壊れた 1 件で他を人質にしない
@@ -487,9 +493,12 @@ entities:
       - **二重発火は完全には防がない。** スケジューラ層の HashSet<AgentId> と
         AgentTyping(active=false) で軽く抑えるが、イベント取りこぼし時は
         fail open (集合を空にする) — 塞がったままにすると予定が二度と発火しない
-        静かな停止になり、稀な二重発火より悪い
+        静かな停止になり、稀な二重発火より悪い。
+        **集合の粒度が AgentId なのは、外す契機に使える信号 (AgentTyping) が
+        エージェント単位でしか来ないから。** TaskId 単位にすると、同じ宛先の
+        予定が 2 件あるときどちらを外すか決められず集合が塞がる
       - **多重起動を排他する** (tauri-plugin-single-instance)。同じワークスペースを
-        掴んだプロセスが 2 つあると、同じ予定が両方で発火し lastFiredMs を
+        掴んだプロセスが 2 つあると、同じ予定が両方で発火し lastConsumedDueMs を
         競って書く。**予定より先に入れる**
     known_limits: |
       アプリが起動していない間は動かない (デスクトップアプリでありデーモンでは
