@@ -1,3 +1,5 @@
+**日本語** | [English](README_en.md)
+
 # Outcasts Concordia
 
 **AI エージェントの村を、手元で飼う。**

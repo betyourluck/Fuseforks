@@ -1,3 +1,5 @@
+[日本語](README.md) | **English**
+
 # Outcasts Concordia
 
 **Keep a village of AI agents in your hands.**
