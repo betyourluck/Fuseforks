@@ -326,6 +326,10 @@ pub struct AnthropicMessage {
 ///
 /// **ツール結果は `user` ロールのメッセージに載せる**のが Anthropic の形。
 /// OpenAI 互換の `role: "tool"` とは構造が違うので、canonical から翻訳する。
+///
+/// どの種別も `cache_control` を持てる。**キャッシュの境界を増える側（履歴）へ
+/// 置くために必要**で、system だけに打っていた頃はツールループが毎周
+/// `messages` 全体を素の値段で送り直していた（failures.md #42）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AnthropicRequestBlock {
@@ -333,6 +337,9 @@ pub enum AnthropicRequestBlock {
     Text {
         /// 本文。
         text: String,
+        /// キャッシュ指示。ここまでを再利用対象にする。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
     /// アシスタントが呼んだツール。履歴として送り返す。
     ToolUse {
@@ -342,6 +349,9 @@ pub enum AnthropicRequestBlock {
         name: String,
         /// 引数（**オブジェクト**。文字列ではない）。
         input: serde_json::Value,
+        /// キャッシュ指示。ここまでを再利用対象にする。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
     /// ツール実行の結果。
     ToolResult {
@@ -349,6 +359,9 @@ pub enum AnthropicRequestBlock {
         tool_use_id: String,
         /// 結果本文。
         content: String,
+        /// キャッシュ指示。ここまでを再利用対象にする。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
 }
 

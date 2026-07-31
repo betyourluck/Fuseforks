@@ -36,7 +36,7 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let messages = req
+    let mut messages: Vec<wire::AnthropicMessage> = req
         .messages
         .iter()
         .filter(|m| m.role != Role::System)
@@ -64,7 +64,13 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
     // ブロックまでの全体で、tools は system より前に置かれる）。判定に tools を
     // 数えないと、**道具を多く提示しているエージェントほど判定を外す** — 提示量が
     // 多いほどキャッシュの利得は大きいのに、そこで切ってしまう。
-    let system = build_system_blocks(&system_text, req.cacheable_prefix_len, tool_tokens(&tools));
+    let tool_tokens = tool_tokens(&tools);
+    let system = build_system_blocks(&system_text, req.cacheable_prefix_len, tool_tokens);
+
+    // 境界をもう 1 つ、**増える側**（履歴）の末尾へ回す。安定プレフィックスだけを
+    // 守っても、コストを支配するのは毎周伸びる履歴のほうで、そこに境界が無ければ
+    // 節約の上限は「小さくて変わらない部分」に閉じる（failures.md #42 の一般化 2）。
+    place_message_breakpoint(&mut messages, tool_tokens + approx_tokens(&system_text));
 
     let tool_choice = if tools.is_empty() {
         None
@@ -178,6 +184,64 @@ fn tool_tokens(tools: &[wire::AnthropicTool]) -> usize {
         .sum()
 }
 
+/// キャッシュ指示の値。打ち場所によらず同じ TTL を要求する。
+fn ephemeral() -> Option<wire::AnthropicCacheControl> {
+    Some(wire::AnthropicCacheControl {
+        kind: "ephemeral",
+        ttl: Some(CACHE_TTL),
+    })
+}
+
+/// 会話履歴が占める概算のトークン数。
+///
+/// キャッシュ判定は「最小要件を超えるか」の粗い足切りなので、この粒度で足りる。
+/// ツール引数と結果本文も数える — **長いのはたいていそちら**で、テキストだけを
+/// 数えるとツールループの履歴を実際より小さく見積もる。
+fn message_tokens(messages: &[wire::AnthropicMessage]) -> usize {
+    messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .map(|block| match block {
+            wire::AnthropicRequestBlock::Text { text, .. } => approx_tokens(text),
+            wire::AnthropicRequestBlock::ToolUse { name, input, .. } => {
+                approx_tokens(name) + approx_tokens(&input.to_string())
+            }
+            wire::AnthropicRequestBlock::ToolResult { content, .. } => approx_tokens(content),
+        })
+        .sum()
+}
+
+/// 履歴の末尾へキャッシュの境界を打つ（純関数）。
+///
+/// ツールループは周回ごとに `messages` へ**追記しかしない**ので、次の周の前方一致は
+/// 構造的に保証される。前周の書き込みを読み取りで拾い、その周の増分だけを書く形になる。
+///
+/// `prefix_tokens` は tools + system の概算トークン数。キャッシュされるのは
+/// **tools + system + ここまでの履歴**なので、判定にはその全部を数える。
+///
+/// **打つのは最後の発話の最後のブロック 1 箇所だけ。** 境界の後方探索は
+/// 20 ブロックまでなので、1 周の追記がそれを超えると前周の書き込みを見つけられず、
+/// その周だけ書き直しになる（実機の 2〜3 本並列は 1 周 7 ブロック前後で収まる）。
+///
+/// なお**まとめ呼び出しの周は必ず書き込みになる** — `tool_choice` の変更は
+/// tools / system 層のキャッシュは保つが履歴層は落とすため。1 ターンに 1 回なので
+/// 打ち消す仕掛けは置かない。
+fn place_message_breakpoint(messages: &mut [wire::AnthropicMessage], prefix_tokens: usize) {
+    if prefix_tokens + message_tokens(messages) < MIN_CACHEABLE_TOKENS {
+        return;
+    }
+    let Some(block) = messages.last_mut().and_then(|m| m.content.last_mut()) else {
+        return;
+    };
+    match block {
+        wire::AnthropicRequestBlock::Text { cache_control, .. }
+        | wire::AnthropicRequestBlock::ToolUse { cache_control, .. }
+        | wire::AnthropicRequestBlock::ToolResult { cache_control, .. } => {
+            *cache_control = ephemeral();
+        }
+    }
+}
+
 /// canonical の 1 発話を Anthropic の形へ写す。
 ///
 /// **ツール結果は `user` ロールに載せる**のが Anthropic の形で、
@@ -190,6 +254,7 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
             content: vec![wire::AnthropicRequestBlock::ToolResult {
                 tool_use_id: message.tool_call_id.clone().unwrap_or_default(),
                 content: message.content.clone(),
+                cache_control: None,
             }],
         };
     }
@@ -199,6 +264,7 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
     if !message.content.is_empty() {
         content.push(wire::AnthropicRequestBlock::Text {
             text: message.content.clone(),
+            cache_control: None,
         });
     }
     for call in &message.tool_calls {
@@ -207,6 +273,7 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
             name: call.name.clone(),
             // Anthropic の input は最初からオブジェクト。文字列化しない。
             input: call.args.clone(),
+            cache_control: None,
         });
     }
     // ここへ来る発話は encode() で「完全に空」を落とし済みなので、通常この分岐は
@@ -215,6 +282,7 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
     if content.is_empty() {
         content.push(wire::AnthropicRequestBlock::Text {
             text: "（発言なし）".to_owned(),
+            cache_control: None,
         });
     }
 
@@ -243,13 +311,6 @@ fn build_system_blocks(
     if text.is_empty() {
         return Vec::new();
     }
-
-    let ephemeral = || {
-        Some(wire::AnthropicCacheControl {
-            kind: "ephemeral",
-            ttl: Some(CACHE_TTL),
-        })
-    };
 
     let stable: String = text.chars().take(prefix_len).collect();
     if tool_tokens + approx_tokens(&stable) < MIN_CACHEABLE_TOKENS {
@@ -539,6 +600,106 @@ mod tests {
 
         assert_eq!(w.system.len(), 1);
         assert!(w.system[0].cache_control.is_none());
+    }
+
+    /// 履歴の末尾にも境界を打つこと。
+    ///
+    /// 安定プレフィックスだけを守っても、毎周伸びる履歴は守られない。
+    /// system にしか打っていなかった頃は 1 ターンの入力 2,052,314 トークンのうち
+    /// 1,826,109 が素の値段で通っていた（failures.md #42）。
+    #[test]
+    fn the_history_carries_a_cache_breakpoint_at_its_tail() {
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::system("短い指示"),
+            ChatMessage::user(format!("覚えて{}", "履歴".repeat(3_000))),
+            ChatMessage::assistant("承知"),
+        ];
+
+        let w = encode(&req);
+
+        assert_eq!(w.messages.len(), 2);
+        assert!(
+            matches!(
+                w.messages[1].content.last().unwrap(),
+                wire::AnthropicRequestBlock::Text {
+                    cache_control: Some(_),
+                    ..
+                }
+            ),
+            "末尾に打つこと: {:?}",
+            w.messages[1].content
+        );
+        assert!(
+            matches!(
+                w.messages[0].content.last().unwrap(),
+                wire::AnthropicRequestBlock::Text {
+                    cache_control: None,
+                    ..
+                }
+            ),
+            "打つのは末尾の 1 箇所だけ: {:?}",
+            w.messages[0].content
+        );
+    }
+
+    /// ツールループの周は `tool_result` で終わる。そこにも打てること。
+    ///
+    /// テキストだけを対象にすると、**ツールループの周回だけ境界が抜ける** —
+    /// キャッシュが最も効いてほしい経路がちょうど外れる。
+    #[test]
+    fn a_tool_result_tail_also_carries_the_breakpoint() {
+        let calls = vec![ToolCall {
+            id: "tu_1".into(),
+            name: "remember".into(),
+            args: json!({ "note": "覚えること" }),
+            extra: None,
+        }];
+
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::user("覚えておいて"),
+            ChatMessage::assistant_tool_calls("", calls),
+            ChatMessage::tool_result("tu_1", "remember", "結果".repeat(3_000)),
+        ];
+
+        let json = serde_json::to_value(encode(&req)).unwrap();
+        let last = json["messages"].as_array().unwrap().last().unwrap();
+
+        assert_eq!(last["content"][0]["type"], "tool_result");
+        assert_eq!(last["content"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(last["content"][0]["cache_control"]["ttl"], "1h");
+    }
+
+    /// 短い履歴には要求しないこと（効かない指示は送らない）。
+    #[test]
+    fn a_short_history_is_not_marked_for_caching() {
+        let mut req = request(0);
+        req.messages = vec![ChatMessage::system("短い指示"), ChatMessage::user("やあ")];
+
+        let json = serde_json::to_value(encode(&req)).unwrap().to_string();
+
+        assert!(!json.contains("cache_control"), "効かない指示は送らない: {json}");
+    }
+
+    /// 境界は system と履歴の 2 つだけ。Anthropic の上限は 4 なので枠は残る。
+    #[test]
+    fn a_turn_spends_two_of_the_four_breakpoints() {
+        let stable = "指示".repeat(3_000);
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::system(format!("{stable}可変部分")),
+            ChatMessage::user("進捗を教えて"),
+        ];
+        req.cacheable_prefix_len = stable.chars().count();
+
+        let json = serde_json::to_value(encode(&req)).unwrap().to_string();
+
+        assert_eq!(
+            json.matches(r#""cache_control""#).count(),
+            2,
+            "system の安定部分と履歴の末尾の 2 箇所: {json}"
+        );
     }
 
     #[test]

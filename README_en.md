@@ -375,9 +375,11 @@ Production pitfalls are listed in `llm_wire.invariants` in `data_contract.yaml`.
 
 ### Prompt Cache
 
-On the native Anthropic path, `cache_control` is applied to **tool definitions + the stable part of the system prompt**. In a multi-agent system that sends the same system prompt across agents and turns, this difference maps directly to operating cost.
+On the native Anthropic path, `cache_control` marks **two** boundaries: the end of **tool definitions + the stable part of the system prompt**, and the end of the **conversation history**. In a multi-agent system that sends the same system prompt across agents and turns, this difference maps directly to operating cost.
 
 The decision uses **estimated token count, not character count**, and **includes tool definitions**. Initially it considered only the stable system prompt at 4,000 characters, causing all five Japanese-configured agents to miss the threshold and making the cache never work ([failures.md](failures.md) #33).
+
+The history boundary was added later. Before it, **the tool loop resent the entire history and every tool result at full price on each round** — 1,826,109 of one turn's 2,052,314 input tokens ([failures.md](failures.md) #42). A stable prefix is by definition the small part that does not change, so guarding only that caps the savings at the small part. **Cost is dominated by the part that grows**, and that side needs a boundary too. The wrap-up call still writes rather than reads, because changing `tool_choice` drops the history-layer cache.
 
 **The TTL is one hour.** The default five minutes suits chat speed, but expires on every turn when users read and think before responding. Since writes cost more than ten times reads, **a longer TTL is beneficial whenever it removes one unnecessary write**.
 
