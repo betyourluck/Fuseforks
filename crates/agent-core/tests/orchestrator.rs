@@ -563,6 +563,71 @@ impl AgentTool for StuckTool {
     }
 }
 
+/// 毎周「同じ読み直し 1 本 + 新しい仕事 1 本」を**並列で**呼ぶバックエンド。
+///
+/// 実機の主な形（2026-07-31 のログ）。隣接だけを見る判定はこの形で必ず数えが
+/// 切れて 1 件も発火しなかった。ここで検証するのは 2 つ:
+/// 重複した 1 本だけが止まること、**ターンは止まらない**こと。
+#[derive(Default)]
+struct MixedToolBackend {
+    calls: std::sync::Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for MixedToolBackend {
+    fn name(&self) -> &str {
+        "mixed-tool"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        if req.tool_choice == agent_core::llm::ToolChoice::None {
+            return Ok(ChatResponse {
+                text: Some("まとめました。".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage {
+                    prompt: 1,
+                    completion: 1,
+                    cache_read: 0,
+                },
+                grounding: Default::default(),
+            });
+        }
+
+        let n = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        Ok(ChatResponse {
+            text: None,
+            tool_calls: vec![
+                // 毎周まったく同じ読み直し。
+                ToolCall {
+                    id: format!("stuck_{n}"),
+                    name: "stuck_probe".into(),
+                    args: serde_json::json!({ "path": "存在しない.md" }),
+                    extra: None,
+                },
+                // 毎周ちがう仕事。これがある限り、その周は空振りではない。
+                ToolCall {
+                    id: format!("fresh_{n}"),
+                    name: "remember".into(),
+                    args: serde_json::json!({ "note": format!("調査メモ {n}") }),
+                    extra: None,
+                },
+            ],
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
 /// まとめ要求（tools 無し）にも無言を貫くバックエンド。
 ///
 /// まとめ呼び出しまで失敗した最悪経路で、最終フォールバック文言が出ることを
@@ -2873,8 +2938,7 @@ async fn a_tool_limit_cutoff_summarizes_the_findings_so_far() {
     );
 }
 
-/// 同じツールを同じ引数で呼んで同じ結果が 2 回続いたら、3 回目は**実行せずに**
-/// ループを切ること（failures.md #41 の処方 1）。
+/// **その周のツールが全部止まったら**ループを切ること（failures.md #41 の処方 1）。
 ///
 /// 上限（既定 12 周）まで走らせないことが本体。回数の上限はコストの上限に
 /// ならない（1 周ごとに履歴を送り直すので単位コストが増え続ける）ため、
@@ -2939,6 +3003,75 @@ async fn a_repeated_identical_tool_call_is_blocked_before_the_iteration_limit() 
             .any(|e| matches!(e, CoreEvent::AgentFailed { .. })),
         "打ち切ったターンが次のターンを壊さないこと"
     );
+}
+
+/// 重複した 1 本だけを止め、**ターンは止めない**こと（failures.md #41 の処方 1）。
+///
+/// 実機の主な形は「同じ読み直し 1 本 + 新しい仕事 1 本」の並列呼び出しで、
+/// 隣接だけを見ていた最初の実装はここで数えが切れて 1 件も発火しなかった。
+/// 逆に、重複を見つけるたびにループごと切ると、**並列の 1 本が重複しただけで
+/// 進行中の作業を殺す**。止めるのはその 1 本、というのがこのテストの本体。
+#[tokio::test]
+async fn a_duplicate_call_is_blocked_without_stopping_the_turn() {
+    let dir = TempDir::new("repeat-guard-mixed");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(MixedToolBackend::default()),
+        OrchestratorConfig::default(),
+    )
+    .await;
+    let id = AgentId::from("agent_01");
+
+    let tool = Arc::new(StuckTool::default());
+    orchestrator.register_tool(tool.clone()).await;
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    assert_eq!(
+        tool.runs.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "重複した呼び出しは 3 回目から実行しないこと（間に別の呼び出しが挟まっても）"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::ToolRepeatBlocked { tool, .. } if tool == "stuck_probe"
+        )),
+        "止めたことが通知されること"
+    );
+
+    // ターンは続いている。新しい仕事のほうは上限まで走り切る。
+    let remembers = events
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::ToolInvoked { tool, .. } if tool == "remember"))
+        .count();
+    assert!(
+        remembers > 2,
+        "重複を止めてもターンは続くこと（remember の実行回数: {remembers}）"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, CoreEvent::ToolLimitReached { .. })),
+        "止まらずに走り切った先は上限であること"
+    );
+
+    let log = messages(&events);
+    let reply = log
+        .iter()
+        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
+        .expect("応答が記録されること");
+    assert!(!reply.content.trim().is_empty(), "空の応答を記録しないこと");
 }
 
 /// まとめ呼び出しまで無言だった最悪経路でも、空ではなく読める文言が返ること。

@@ -1620,10 +1620,23 @@ async fn record_failed_turn(
     }
 }
 
-/// 同じ結果が何回続いたら次を実行しないか（failures.md #41 の処方 1）。
+/// 同じ結果が何回返ったら次を実行しないか（failures.md #41 の処方 1）。
 ///
-/// 2 = 「同じ呼び出しで同じ結果が 2 回続いたら、3 回目は実行しない」。
+/// 2 = 「同じ呼び出しに同じ結果が 2 回返ったら、3 回目は実行しない」。
 const REPEAT_BLOCK_AFTER: u32 = 2;
+
+/// 1 つの呼び出し（ツール名 + 引数）について、ターン内で最後に見た結果。
+#[derive(Debug)]
+struct SeenCall {
+    /// ツール名。
+    name: String,
+    /// 引数。等価判定は `serde_json::Value` の中身で行う（キーの並びに依存しない）。
+    args: serde_json::Value,
+    /// 直近にこの呼び出しが返した本文。
+    body: String,
+    /// `body` が**変わらないまま**返ってきた回数。
+    count: u32,
+}
 
 /// 同一のツール呼び出しの繰り返しを検出する（failures.md #41 の処方 1）。
 ///
@@ -1641,49 +1654,85 @@ const REPEAT_BLOCK_AFTER: u32 = 2;
 /// 成功の繰り返しも同じ扱いで止まる。同じ入力に同じ出力が返っている以上、
 /// 3 回目に新しい情報は無い。
 ///
-/// # 連続のみを見る
+/// # 数えるのは「呼び出しごと」であって「隣接」ではない
 ///
-/// 直前の 1 件としか比べない。間に別の呼び出しが挟まると数え直す。
-/// 交互に失敗する形（`sd` → `grep` → `sd` → `grep`）は**検出できない** —
-/// 緩めると正当な再試行まで殺すため、完全一致 + 連続から始める。
+/// 当初は直前の 1 件とだけ比べていた（隣接する 2 回で判定）。**実機では 1 件も
+/// 発火しなかった** — モデルは 1 周に 2〜3 本を並列で呼ぶので、同じ読み直しは
+/// 周をまたいで現れ、間に別の呼び出しが挟まって数えが切れる。実測（2026-07-31）:
+///
+/// ```text
+/// round 24 file(A) → 12054 字   round 2 file(B) → 12045 字
+/// round 25 file(A) → 12054 字   round 3 file(B) → 12045 字 + file(C) + file(D)
+/// round 26 grep    → 別物       round 5 file(B) → 12045 字
+/// round 28 file(A) → 12054 字（3 回目。隣接判定では素通し）
+/// ```
+///
+/// そこで **(ツール名 + 引数) ごとに独立して数える**。一致の条件は
+/// 完全一致のままで、「隣り合っているか」の要求だけを外した。
+/// 同じ呼び出しが**違う結果**を返したら、そこで数え直す（追記が進む・待っていた
+/// 状態が変わる、のように同じ操作が実を結んでいる場合は繰り返しではない）。
+///
+/// # 止めるのはループではなく、その 1 本
+///
+/// 3 回目を実行しないだけで、ターンのツールループは続ける。並列の 1 本が
+/// 重複しただけで、進行中の作業まで殺さない。**その周のツールが全部
+/// ブロックされたとき**（= 新しいことを何もしていない周）だけ打ち切る。
 #[derive(Debug, Default)]
 struct RepeatGuard {
-    /// 直前の呼び出し（ツール名・引数・モデルへ返した本文）。
-    last: Option<(String, serde_json::Value, String)>,
-    /// 直前と同一の呼び出し + 同一の結果が続いた回数。
-    streak: u32,
+    /// ターン内で見た呼び出し。(name, args) につき 1 件。
+    ///
+    /// `Vec` なのは `serde_json::Value` が `Hash` を実装しないため。
+    /// 1 ターンの相異なる呼び出しは高々数十件で、線形走査で足りる。
+    seen: Vec<SeenCall>,
 }
 
 impl RepeatGuard {
     /// この呼び出しを実行せずに止めるか。**実行の前**に引く。
     ///
     /// 結果はまだ無いので、ここで見られるのはツール名と引数だけ。
-    /// 「同じ結果が [`REPEAT_BLOCK_AFTER`] 回続いた呼び出しが、また同じ引数で
-    /// 来た」ときに真を返す。
+    /// 「同じ引数で同じ結果が [`REPEAT_BLOCK_AFTER`] 回返った呼び出しが、
+    /// また同じ引数で来た」ときに真を返す。
     fn blocks(&self, name: &str, args: &serde_json::Value) -> bool {
-        self.streak >= REPEAT_BLOCK_AFTER
-            && self
-                .last
-                .as_ref()
-                .is_some_and(|(last_name, last_args, _)| last_name == name && last_args == args)
+        self.repeats(name, args) >= REPEAT_BLOCK_AFTER
+    }
+
+    /// この呼び出しに同じ結果が返った回数。打ち切りの通知に載せる。
+    fn repeats(&self, name: &str, args: &serde_json::Value) -> u32 {
+        self.find(name, args).map_or(0, |seen| seen.count)
     }
 
     /// 実行した 1 件を記録する。**実行の後**に引く。
     fn observe(&mut self, name: &str, args: &serde_json::Value, body: &str) {
-        let same = self.last.as_ref().is_some_and(|(last_name, last_args, last_body)| {
-            last_name == name && last_args == args && last_body == body
-        });
-        if same {
-            self.streak += 1;
-        } else {
-            self.streak = 1;
-            self.last = Some((name.to_owned(), args.clone(), body.to_owned()));
+        match self.position(name, args) {
+            Some(index) => {
+                let seen = &mut self.seen[index];
+                if seen.body == body {
+                    seen.count += 1;
+                } else {
+                    // 結果が変わった = この呼び出しは行き詰まっていない。数え直す。
+                    seen.body = body.to_owned();
+                    seen.count = 1;
+                }
+            }
+            None => self.seen.push(SeenCall {
+                name: name.to_owned(),
+                args: args.clone(),
+                body: body.to_owned(),
+                count: 1,
+            }),
         }
     }
 
-    /// 連続した回数。打ち切りの通知に載せる。
-    fn streak(&self) -> u32 {
-        self.streak
+    fn find(&self, name: &str, args: &serde_json::Value) -> Option<&SeenCall> {
+        self.seen
+            .iter()
+            .find(|seen| seen.name == name && &seen.args == args)
+    }
+
+    fn position(&self, name: &str, args: &serde_json::Value) -> Option<usize> {
+        self.seen
+            .iter()
+            .position(|seen| seen.name == name && &seen.args == args)
     }
 }
 
@@ -2008,46 +2057,42 @@ async fn handle_message(
             calls.clone(),
         ));
 
+        // この周で実際に走った本数と、繰り返しで止めた本数。
+        // **全部止めた周だけがループの打ち切り条件**（新しいことを何もしていない周）。
+        let mut executed_in_round = 0usize;
+        let mut blocked_in_round: Option<String> = None;
+
         for call in &calls {
-            // 同じ呼び出しで同じ結果が続いたら、ここで実行を止める
+            // 同じ呼び出しに同じ結果が返り続けているなら、この 1 本は実行しない
             // （failures.md #41 の処方 1）。**結果は必ず積む** — 呼び出しだけ
             // 残して結果を落とすと、次のリクエストが「対応する結果が無い
             // 呼び出し」として 400 で拒否される（#29）。
-            if repeat_stop.is_some() {
-                // 同じ周の残りの呼び出し。打ち切りは既に決まっているので実行しない。
-                messages.push(ChatMessage::tool_result(
-                    &call.id,
-                    &call.name,
-                    "同じ操作の繰り返しを検出したため、このターンのツール実行は\
-                     打ち切りました。この呼び出しは実行していません。"
-                        .to_owned(),
-                ));
-                continue;
-            }
+            // 返す本文は短くする。**ここが効きの本体** — 同じ 12,000 字を
+            // もう一度積むと、以後の全周回でそれが再送される。
             if repeat_guard.blocks(&call.name, &call.args) {
-                let streak = repeat_guard.streak();
+                let repeats = repeat_guard.repeats(&call.name, &call.args);
                 shared.emit(CoreEvent::ToolRepeatBlocked {
                     agent_id: agent_id.clone(),
                     tool: call.name.clone(),
-                    repeats: streak,
+                    repeats,
                 });
                 messages.push(ChatMessage::tool_result(
                     &call.id,
                     &call.name,
                     format!(
-                        "`{}` を同じ引数で呼び、同じ結果が {streak} 回続いています。\
-                         同じ結果にしかならないため、この呼び出しは実行しませんでした。\
+                        "`{}` は同じ引数で既に {repeats} 回、同じ結果を返しています。\
+                         もう一度呼んでも同じなので実行しませんでした。\
                          引数か手順を変えるか、**できなかったこと自体を答えとして**\
                          報告してください。",
                         call.name
                     ),
                 ));
                 note!(
-                    "tool blocked: agent={agent_id} round={} name={} repeats={streak}",
+                    "tool blocked: agent={agent_id} round={} name={} repeats={repeats}",
                     iteration + 1,
                     call.name,
                 );
-                repeat_stop = Some(call.name.clone());
+                blocked_in_round.get_or_insert_with(|| call.name.clone());
                 continue;
             }
 
@@ -2096,12 +2141,21 @@ async fn handle_message(
             // 数えるのは**モデルへ返した本文**。同梱ツールの失敗は `Err` ではなく
             // この本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
             repeat_guard.observe(&call.name, &call.args, &body);
+            executed_in_round += 1;
             messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
         }
 
-        // 繰り返しで打ち切ったら、次の周回は回さない。上限到達の通知は出さない
-        // （当たったのは上限ではない。理由を 1 つに保つ）。
-        if repeat_stop.is_some() {
+        // **この周が丸ごと空振りだったときだけ**打ち切る。1 本が重複しただけの
+        // 周は続ける — 並列で呼ばれた残りは新しい仕事をしている。
+        // 上限到達の通知は出さない（当たったのは上限ではない。理由を 1 つに保つ）。
+        if executed_in_round == 0
+            && let Some(tool) = blocked_in_round
+        {
+            note!(
+                "turn cut: agent={agent_id} round={} reason=repeat tool={tool}",
+                iteration + 1,
+            );
+            repeat_stop = Some(tool);
             break;
         }
 
@@ -2989,7 +3043,52 @@ mod tests {
         guard.observe("file", &args, err);
 
         assert!(guard.blocks("file", &args), "3 回目は実行しない");
-        assert_eq!(guard.streak(), 2);
+        assert_eq!(guard.repeats("file", &args), 2);
+    }
+
+    /// **間に別の呼び出しが挟まっても数えは切れない。**
+    ///
+    /// 隣接だけを見ていた最初の実装は、実機で 1 件も発火しなかった
+    /// （2026-07-31 のログ: `file(A)` が round 24・25・28 に出たが、26 の
+    /// `grep` で数えが切れて 3 回目が素通しした）。
+    #[test]
+    fn an_interleaved_call_does_not_clear_the_count() {
+        let sd = serde_json::json!({ "pattern": "a", "replacement": "b" });
+        let grep = serde_json::json!({ "pattern": "a" });
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("sd", &sd, "対象がありません");
+        guard.observe("grep", &grep, "一致なし");
+        guard.observe("sd", &sd, "対象がありません");
+
+        assert!(
+            guard.blocks("sd", &sd),
+            "呼び出しごとに数えるので、挟まれても 2 回は 2 回"
+        );
+        assert!(!guard.blocks("grep", &grep), "挟まった側は 1 回のまま");
+    }
+
+    /// 1 周に並列で複数本呼ばれても同じ（実機の主な形）。
+    ///
+    /// 2026-07-31 のログ: round 2 と round 3 で同じ `file(B)` が呼ばれ、
+    /// round 3 は 3 本の並列呼び出しだった。隣接判定はここで必ず切れる。
+    #[test]
+    fn parallel_calls_in_one_round_do_not_clear_the_count() {
+        let target = serde_json::json!({ "op": "read", "path": "README.md" });
+        let other = serde_json::json!({ "op": "read", "path": "CLAUDE.md" });
+        let third = serde_json::json!({ "op": "read", "path": "failures.md" });
+        let body = "（12,045 字の本文）";
+        let mut guard = RepeatGuard::default();
+
+        // round 2
+        guard.observe("file", &target, body);
+        // round 3（並列 3 本。同じ読み直しが 1 本目に混ざる）
+        guard.observe("file", &target, body);
+        guard.observe("file", &other, "別の本文");
+        guard.observe("file", &third, "また別の本文");
+
+        assert!(guard.blocks("file", &target), "round 5 の 3 回目は実行しない");
+        assert!(!guard.blocks("file", &other), "他の読み込みは巻き添えにしない");
     }
 
     /// 成功でも同じことが起きる。同じ入力に同じ出力が返るなら 3 回目に新しい
@@ -3008,8 +3107,11 @@ mod tests {
 
     /// 結果が変われば止めない。**同じ操作が実を結んでいる**（追記が進む・
     /// 待っていた状態が変わる）ので、繰り返し自体は正当。
+    ///
+    /// 隣接を捨てた後もここは守る必要がある。「呼び出しごとの通算回数」で
+    /// 数えると、実を結んでいる追記まで 3 回目で止まってしまう。
     #[test]
-    fn a_changed_result_clears_the_streak() {
+    fn a_changed_result_clears_the_count() {
         let args = serde_json::json!({ "op": "append", "path": "log.md" });
         let mut guard = RepeatGuard::default();
 
@@ -3018,11 +3120,14 @@ mod tests {
         guard.observe("file", &args, "2 行追記しました。");
 
         assert!(!guard.blocks("file", &args), "結果が変わったら数え直す");
+        assert_eq!(guard.repeats("file", &args), 1);
     }
 
-    /// 引数が変われば止めない。**別の場所を試している**のは行き詰まりではない。
+    /// 引数が変われば別の呼び出しとして数える。**別の場所を試している**のは
+    /// 行き詰まりではない。数えは呼び出しごとに独立しているので、
+    /// 一方を止めてももう一方は素通しする。
     #[test]
-    fn a_changed_argument_clears_the_streak() {
+    fn each_argument_is_counted_independently() {
         let first = serde_json::json!({ "path": "a.md" });
         let second = serde_json::json!({ "path": "b.md" });
         let err = "読めません";
@@ -3033,26 +3138,7 @@ mod tests {
         guard.observe("file", &second, err);
 
         assert!(!guard.blocks("file", &second), "宛先を変えた失敗は繰り返しではない");
-        assert!(
-            !guard.blocks("file", &first),
-            "直前の 1 件としか比べない（古い連続は数え直しで消える）"
-        );
-    }
-
-    /// 間に別のツールが挟まると数え直す。**連続だけを見る**という判定の境界で、
-    /// 交互に失敗する形（sd → grep → sd → grep）は検出できない。緩めると
-    /// 正当な再試行まで殺すため、この穴は既知のまま残している。
-    #[test]
-    fn an_interleaved_call_clears_the_streak() {
-        let sd = serde_json::json!({ "pattern": "a", "replacement": "b" });
-        let grep = serde_json::json!({ "pattern": "a" });
-        let mut guard = RepeatGuard::default();
-
-        guard.observe("sd", &sd, "対象がありません");
-        guard.observe("grep", &grep, "一致なし");
-        guard.observe("sd", &sd, "対象がありません");
-
-        assert!(!guard.blocks("sd", &sd), "挟まれた時点で連続は切れる");
+        assert!(guard.blocks("file", &first), "止まっている側だけを止める");
     }
 
     /// 引数の一致はキーの並びに依存しない（`serde_json::Value` の等価は
