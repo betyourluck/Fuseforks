@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 中央ペイン上部: ノードベースの接続マップ。
+ * 中央ペイン上部: ノードベースの村の地図。
  *
  * トポロジーの真実は「どの辺があるか」だけであり、座標は world.json に保存する
  * 表示設定として分ける。未配置ノードだけはここで円環状に自動配置する。
@@ -161,18 +161,26 @@ function borderClass(status: string): string {
 
 <template>
   <div class="flex h-full flex-col">
+    <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
-      class="flex items-center gap-3 border-b border-line px-3 py-2 text-xs text-ink-dim"
+      class="flex h-[38px] shrink-0 items-center gap-3 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <h2 class="font-semibold tracking-wide text-ink">接続マップ</h2>
+      <!--
+        操作の説明はタイトルのホバーへ置く。**常時表示しない** — 覚えたあとは
+        毎回同じ幅を占めるだけで、状態（ノード数・辺数）を読む邪魔になる。
+        ヘッダに常駐してよいのは「今どうなっているか」で、「どう操作するか」ではない。
+      -->
+      <h2
+        class="cursor-help font-semibold tracking-wide text-ink"
+        title="ハンドルをドラッグで接続 / 辺をクリックで切断（双方向は両方向とも切れる）"
+      >
+        村の地図
+      </h2>
       <span>
         {{ state.agents.length }} ノード / {{ edges.length }} 辺
         <span v-if="bidirectionalCount" class="text-ink">
           （うち双方向 {{ bidirectionalCount }}）
         </span>
-      </span>
-      <span class="ml-auto">
-        ハンドルをドラッグで接続 / 辺をクリックで切断（双方向は両方向とも切れる）
       </span>
     </header>
 

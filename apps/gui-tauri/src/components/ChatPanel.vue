@@ -38,7 +38,7 @@ const { state } = orchestrator;
 const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
 
-/** 送信の宛先。左ペインまたは接続マップで選んだ 1 体。 */
+/** 送信の宛先。左ペインまたは村の地図で選んだ 1 体。 */
 const targetAgent = computed(
   () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
 );
@@ -289,8 +289,9 @@ async function newChat(): Promise<void> {
 
 <template>
   <div class="flex h-full flex-col">
+    <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
-      class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 text-xs text-ink-dim"
+      class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
     >
       <h2 class="font-semibold tracking-wide text-ink">会話</h2>
       <span class="tabular-nums">{{ rows.length }} 件</span>

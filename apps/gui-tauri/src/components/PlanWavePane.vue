@@ -114,12 +114,18 @@ watch(
 
 <template>
   <div class="flex h-full flex-col">
+    <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
-      class="flex items-center gap-3 border-b border-line px-3 py-2 text-xs text-ink-dim"
+      class="flex h-[38px] shrink-0 items-center gap-3 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <h2 class="font-semibold tracking-wide text-ink">波ペイン</h2>
+      <!-- 読み方の説明はタイトルのホバーへ（村の地図と同じ規則）。 -->
+      <h2
+        class="cursor-help font-semibold tracking-wide text-ink"
+        title="plan の実行痕。列 = 波 / 行 = サーヴァント"
+      >
+        波ペイン
+      </h2>
       <span v-if="waves.length">{{ waves.length }} 波（直近 50 波まで・再起動で消える）</span>
-      <span class="ml-auto">plan の実行痕。列 = 波 / 行 = サーヴァント</span>
     </header>
 
     <div

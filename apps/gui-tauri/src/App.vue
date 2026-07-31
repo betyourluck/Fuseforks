@@ -2,7 +2,7 @@
 /**
  * 3 ペインのルートレイアウト。
  *
- * 左: エージェント一覧 / 中央: 接続マップ / 右: 会話
+ * 左: エージェント一覧 / 中央: 村の地図 / 右: 会話
  *
  * エージェントの設定は常駐ペインではなくモーダル（カードの ⚙ から開く）。
  * 設定は「たまに開いて書き換えるもの」で、会話やマップのように
@@ -48,7 +48,7 @@ const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
 );
 
-/** 中央ペインの上下分割（Spec 08）。上段 = 接続マップ / 下段 = 波ペイン。 */
+/** 中央ペインの上下分割（Spec 08）。上段 = 村の地図 / 下段 = 波ペイン。 */
 const centerRows = computed(
   () => `minmax(0, 1fr) 2px ${layout.bottomHeight}px`,
 );
@@ -89,13 +89,13 @@ onMounted(() => {
       @reset="reset"
     />
 
-    <!-- 中央ペイン: 上段 = 接続マップ（空間の今）/ 下段 = 波ペイン（時間の痕）。 -->
+    <!-- 中央ペイン: 上段 = 村の地図（空間の今）/ 下段 = 波ペイン（時間の痕）。 -->
     <main
       class="grid min-w-0 overflow-hidden"
       :style="{ gridTemplateRows: centerRows }"
     >
       <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary label="接続マップ">
+        <ErrorBoundary label="村の地図">
           <TopologyMap />
         </ErrorBoundary>
       </section>

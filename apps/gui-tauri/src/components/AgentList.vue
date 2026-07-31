@@ -104,8 +104,13 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
 
 <template>
   <div class="flex h-full flex-col">
+    <!--
+      ヘッダの高さは 4 ペイン共通で 38px に固定する（タイトルバーと同じ）。
+      **パディングで揃えない** — 中身の高さがペインごとに違う（ボタンを持つ側は
+      テキストだけの側より 6px 高い）ので、padding を合わせても実効高は割れる。
+    -->
     <header
-      class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
+      class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs"
     >
       <h2 class="font-semibold tracking-wide">サーヴァント</h2>
 

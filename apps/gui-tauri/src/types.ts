@@ -9,7 +9,7 @@
 /** エージェント識別子。Rust 側は透過的な newtype なので、ワイヤ上はただの文字列。 */
 export type AgentId = string;
 
-/** 接続マップ上のノード座標。稼働状態と違い、再起動後にも復元する表示設定。 */
+/** 村の地図上のノード座標。稼働状態と違い、再起動後にも復元する表示設定。 */
 export interface TopologyPosition {
   x: number;
   y: number;

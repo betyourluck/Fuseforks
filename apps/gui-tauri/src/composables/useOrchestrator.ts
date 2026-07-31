@@ -700,7 +700,7 @@ export function useOrchestrator() {
       agentId: AgentId,
       position: TopologyPosition,
     ): Promise<void> {
-      await mutate("接続マップ位置の保存", () =>
+      await mutate("村の地図位置の保存", () =>
         ipc.setTopologyPosition(agentId, position),
       );
     },

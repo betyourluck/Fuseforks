@@ -16,7 +16,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 
 | | |
 |---|---|
-| 🏘️ **Build a Village** | Create agents and connect them with lines. The connection map is your control panel |
+| 🏘️ **Build a Village** | Create agents and connect them with lines. The village map is your control panel |
 | 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results |
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
@@ -105,7 +105,7 @@ OutcastsConcordia/
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
-                ├── TopologyMap.vue                    Center-top: connection map
+                ├── TopologyMap.vue                    Center-top: village map
                 ├── PlanWavePane.vue                   Center-bottom: wave pane (plan execution trace)
                 ├── ChatPanel.vue / ChatInput.vue      Right: conversation (speech bubbles)
                 ├── GroundingNote.vue                  Grounding provenance attached to utterances
@@ -148,7 +148,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Position | Content | Reason for Permanence |
 |---|---|---|
 | Left | Agent list (status, uptime, tokens, startup) | Always visible |
-| Upper Center | Topology map | Always visible |
+| Upper Center | Village map | Always visible |
 | Lower Center | Wave pane (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format) | Always visible |
 | Modal | Agent settings + configuration file editing (via ⚙ on agent cards) | **Opened occasionally** |
@@ -159,7 +159,7 @@ Configuration is excluded from persistent panes because **occasionally opened it
 
 **The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `agent-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
 
-Node coordinates moved by hand on the connection map are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
+Node coordinates moved by hand on the village map are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
 
 **Startup is split into two axes** (2026-07-31). The card toggle determines
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).
@@ -239,7 +239,7 @@ Provide one `transfer_to_<agent>` tool per connection destination (following the
 - **Called multiple `transfer_to_*` tools simultaneously → Deliver in parallel to all destinations** (fan-out). Duplicates to the same destination are collapsed into one via first-come-first-served.
 - **Returned only the body text → Conversation ends**. Returns to the user
 
-**User transmissions are limited to a single destination.** Select a single partner in the left pane or on the connection map. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
+**User transmissions are limited to a single destination.** Select a single partner in the left pane or on the village map. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
 
 ### Parallel Delegation — `plan`
 
@@ -384,6 +384,8 @@ The decision uses **estimated token count, not character count**, and **includes
 Its effect is shown in the UI: the card's "N% of input cached" is the metric, and **0% uses a warning color**. Input is the denominator because output cannot be cached in principle; using total tokens would make 100% unattainable.
 
 > Do not put state-varying content in the stable portion. Both destination running state and the set of presented tools split the cache the moment they change. **Presentation stays static; state stays dynamic.**
+
+**Known hole**: the cache boundary exists only on the system side; `messages` (history and tool results) is resent at full price every round. The longer the tool loop runs, the more it costs. Measurements and the fix are in [failures.md](failures.md) #42.
 
 ---
 
