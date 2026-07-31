@@ -4,6 +4,23 @@ description: |
   マルチエージェント・オーケストレーションのドメイン名詞（Data-First Grounding）。
   実装より先にここを正とする。型を増減させたら、下記 3 箇所を必ず同時に直すこと。
 
+# 表示語彙とドメイン語彙は別に持つ (2026-07-31 利用者判断)。
+vocabulary:
+  domain: エージェント
+  display: サーヴァント
+  rule: |
+    **UI に出る文言だけが「サーヴァント」**。型・フィールド・IPC コマンド・
+    イベント名・クレート名 (AgentId / AgentSpec / AgentSnapshot / create_agent /
+    agentStatusChanged / agent-core …) と、この台帳・README・failures.md の
+    地の文は**「エージェント」のまま**。
+    根拠: 世界観の呼称はいつでも変わりうるが、型名を変えると Rust / TS /
+    台帳 3 系統の全同期が要る。**変わりやすいものと変えにくいものを同じ語に
+    束ねない**。ソースコードのコメントも触らない (実装を読む人の語彙は
+    ドメイン側)。
+    追加・変更するときは `apps/gui-tauri/src` の**利用者に見える文字列だけ**を
+    直す。見えるかどうかの判定は「template のテキスト / placeholder / title /
+    alt / aria-label / confirm / pushToast と mutate の label」。
+
 # 同一の型が 2 言語に存在する。手で同期させる契約になっている。
 single_source_of_truth:
   rust: crates/agent-core/src/model.rs

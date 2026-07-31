@@ -282,7 +282,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
         >
           <h2 class="min-w-0 flex-1 truncate font-semibold">
-            {{ agent?.name ?? "エージェント" }}
+            {{ agent?.name ?? "サーヴァント" }}
           </h2>
           <button
             class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
@@ -300,7 +300,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               v-if="iconUrl"
               :src="iconUrl"
               class="size-14 shrink-0 rounded-full object-cover ring-1 ring-line"
-              alt="エージェントのアイコン"
+              alt="サーヴァントのアイコン"
             />
             <div
               v-else
@@ -398,7 +398,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
           />
           <p class="mb-3 text-[10px] text-ink-dim">
-            1 回の応答で使えるツールの回数。調査の多いコーディング用エージェントは
+            1 回の応答で使えるツールの回数。調査の多いコーディング用サーヴァントは
             12〜20 に上げると打ち切られにくくなります（そのぶんトークンを使います）。
           </p>
 
@@ -449,8 +449,8 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             <span>広場の会話が聞こえる</span>
           </label>
           <p v-if="!draft.hearsRoomLog" class="mt-0.5 text-[10px] text-ink-dim">
-            他のエージェント同士の会話を文脈として使えなくなります（トークンは減ります）。
-            自分の発言は従来どおり他のエージェントに聞こえます。
+            他のサーヴァント同士の会話を文脈として使えなくなります（トークンは減ります）。
+            自分の発言は従来どおり他のサーヴァントに聞こえます。
           </p>
           <div class="mb-3" />
 
@@ -520,7 +520,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             </p>
           </div>
 
-          <label class="mb-1 block text-[11px] text-ink-dim">接続先エージェント</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">接続先サーヴァント</label>
           <div class="space-y-1">
             <label
               v-for="other in others"
@@ -537,7 +537,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               <span>{{ other.name }}</span>
             </label>
             <p v-if="!others.length" class="text-[11px] text-ink-dim">
-              他のエージェントがいません。
+              他のサーヴァントがいません。
             </p>
           </div>
         </div>

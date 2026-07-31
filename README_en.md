@@ -100,6 +100,7 @@ OutcastsConcordia/
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
+            ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── composables/useOrchestrator.ts   Single store
             ├── App.vue              3-pane grid
             └── components/
@@ -155,6 +156,8 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Schedule list, addition, and deletion (via ⏰ in header) | Opened occasionally |
 
 Configuration is excluded from persistent panes because **occasionally opened items consume screen area meant for items that are always watched**.
+
+**The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `agent-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
 
 Node coordinates moved by hand on the connection map are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
 

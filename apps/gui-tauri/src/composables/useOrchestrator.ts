@@ -423,7 +423,7 @@ function applyEvent(event: CoreEvent): void {
       pushToast(
         "warn",
         `${name} がツール実行の上限に達しました`,
-        `上限 ${event.maxIterations} 回。エージェント設定で上げるか、依頼を小さく分けてください`,
+        `上限 ${event.maxIterations} 回。サーヴァント設定で上げるか、依頼を小さく分けてください`,
       );
       break;
     }
@@ -448,7 +448,7 @@ function applyEvent(event: CoreEvent): void {
       // ツール実行は会話に紐づく事実なので、会話と一緒に消す。
       state.toolRuns = [];
       state.lastTool = {};
-      pushToast("info", "新規チャットを開始しました", "会話ログと各エージェントの記憶（履歴）をリセットしました");
+      pushToast("info", "新規チャットを開始しました", "会話ログと各サーヴァントの記憶（履歴）をリセットしました");
       break;
 
     case "agentFailed": {
@@ -677,7 +677,7 @@ export function useOrchestrator() {
     },
 
     async createAgent(spec: AgentSpec): Promise<AgentSnapshot | null> {
-      const created = await mutate("エージェントの作成", () => ipc.createAgent(spec));
+      const created = await mutate("サーヴァントの作成", () => ipc.createAgent(spec));
       return succeeded(created) ? created : null;
     },
 
@@ -686,7 +686,7 @@ export function useOrchestrator() {
     },
 
     async deleteAgent(agentId: AgentId): Promise<void> {
-      const done = await mutate("エージェントの削除", () => ipc.deleteAgent(agentId));
+      const done = await mutate("サーヴァントの削除", () => ipc.deleteAgent(agentId));
       if (succeeded(done) && state.selectedAgentId === agentId) {
         state.selectedAgentId = null;
       }

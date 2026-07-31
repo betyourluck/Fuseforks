@@ -77,14 +77,14 @@ onMounted(() => {
 
     <!-- 左ペイン: エージェント一覧 -->
     <aside class="min-w-0 overflow-hidden">
-      <ErrorBoundary label="エージェント一覧">
+      <ErrorBoundary label="サーヴァント一覧">
         <AgentList />
       </ErrorBoundary>
     </aside>
 
     <PaneSplitter
       direction="col"
-      label="エージェント一覧の幅"
+      label="サーヴァント一覧の幅"
       @delta="(px) => resize('leftWidth', px)"
       @reset="reset"
     />

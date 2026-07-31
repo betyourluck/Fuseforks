@@ -383,7 +383,7 @@ function onTemperature(raw: string): void {
                 class="w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent read-only:opacity-60"
               />
               <p v-if="!isNewDraft" class="mt-1 text-[11px] text-ink-dim">
-                識別子は資格情報の鍵とエージェントからの参照先を兼ねるため、作成後は変更できません。
+                識別子は資格情報の鍵とサーヴァントからの参照先を兼ねるため、作成後は変更できません。
               </p>
             </div>
 

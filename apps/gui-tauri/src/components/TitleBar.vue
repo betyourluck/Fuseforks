@@ -58,7 +58,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     <!-- 村の条例。全エージェント共通の規則をここから編集する。 -->
     <button
       class="tb-btn"
-      title="村の条例（全エージェント共通の規則）"
+      title="村の条例（全サーヴァント共通の規則）"
       aria-label="村の条例"
       @click="emit('open-ordinance')"
     >

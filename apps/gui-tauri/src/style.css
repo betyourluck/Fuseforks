@@ -1,5 +1,28 @@
-@import url("https://fonts.googleapis.com/css2?family=DotGothic16&display=swap");
 @import "tailwindcss";
+
+/*
+ * タイトルバーの "Outcasts" にだけ使うドット字体。**同梱する。**
+ *
+ * 以前は Google Fonts を `@import url(https://…)` していた。ビルド後の CSS にも
+ * その行がそのまま残るため、**デスクトップアプリが起動のたびに外部へ取りに行く**
+ * ことになっていた。オフラインでは `font-display: swap` のまま黙って sans-serif へ
+ * 落ち、失敗も出ない。ローカルで完結する製品が、意匠のために外部の可用性へ
+ * 依存する形だった。
+ *
+ * 収録は **Latin サブセットだけ**（10KB）。必要なのは "Outcasts" の 8 文字で、
+ * 日本語グリフ（本体は数 MB）は 1 つも要らない。
+ * DotGothic16 / SIL Open Font License 1.1 — 全文は assets/fonts/DotGothic16-OFL.txt。
+ */
+@font-face {
+  font-family: "DotGothic16";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/dotgothic16-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 :root {
   --c-accent: 168 85 247;

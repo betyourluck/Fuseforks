@@ -72,8 +72,8 @@ function requestClose(): void {
       </header>
 
       <p class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim">
-        この場の<strong class="text-ink">全エージェントに共通で適用される規則</strong>です。
-        各エージェントのシステムプロンプトの最上段（個別設定より上）に入り、
+        この場の<strong class="text-ink">全サーヴァントに共通で適用される規則</strong>です。
+        各サーヴァントのシステムプロンプトの最上段（個別設定より上）に入り、
         保存すると次の発話から反映されます。モデルごとの振る舞いの差を
         揃えたいときの共通ルールもここに書けます。
       </p>

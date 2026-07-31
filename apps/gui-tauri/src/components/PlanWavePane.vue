@@ -119,7 +119,7 @@ watch(
     >
       <h2 class="font-semibold tracking-wide text-ink">波ペイン</h2>
       <span v-if="waves.length">{{ waves.length }} 波（直近 50 波まで・再起動で消える）</span>
-      <span class="ml-auto">plan の実行痕。列 = 波 / 行 = エージェント</span>
+      <span class="ml-auto">plan の実行痕。列 = 波 / 行 = サーヴァント</span>
     </header>
 
     <div
@@ -138,7 +138,7 @@ watch(
         <div
           class="sticky left-0 z-10 border-b border-line bg-surface-0 px-3 py-1.5 text-[11px] text-ink-dim"
         >
-          エージェント
+          サーヴァント
         </div>
         <div
           v-for="wave in waves"

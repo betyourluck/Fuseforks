@@ -31,7 +31,7 @@ const dirty = () => content.value !== original.value;
 /** 種別ごとの案内文。mcp.json だけは Markdown ではなく JSON。 */
 const placeholder = computed(() =>
   kind.value === "mcp"
-    ? "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのエージェント専用の MCP はありません。壊れた JSON は保存できません。"
+    ? "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。"
     : "Markdown で記述します。空のまま保存すれば、この節はプロンプトに含まれません。",
 );
 

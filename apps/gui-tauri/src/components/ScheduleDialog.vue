@@ -166,7 +166,7 @@ function formatNextDue(task: ScheduleView): string {
 
       <!-- 限界の告知（P2）。これを書かずに「毎週木曜 17 時」と名乗るのは嘘になる。 -->
       <p class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim">
-        決まった時刻に、決まった依頼をエージェントへ届けます。結果は会話ペインに出ます。
+        決まった時刻に、決まった依頼をサーヴァントへ届けます。結果は会話ペインに出ます。
         <strong class="text-warn">アプリを起動していない間、予定は動きません。</strong>
         過ぎた予定はさかのぼって実行されません（間隔の予定は再開後に 1 回だけ走ります）。
       </p>
@@ -182,7 +182,7 @@ function formatNextDue(task: ScheduleView): string {
           <!-- 一覧 -->
           <h3 class="mb-1 text-[11px] font-semibold text-ink-dim">登録済みの予定</h3>
           <p v-if="!schedules.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            予定はまだありません。下のフォームから「どのエージェントへ・どんな依頼を・いつ」を
+            予定はまだありません。下のフォームから「どのサーヴァントへ・どんな依頼を・いつ」を
             決めて追加してください。
           </p>
           <ul v-else class="space-y-2">
@@ -226,8 +226,8 @@ function formatNextDue(task: ScheduleView): string {
           <!-- 追加フォーム -->
           <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">予定を追加</h3>
           <p v-if="!agents.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            エージェントが登録されていないため、宛先を選べません。
-            先に左ペインでエージェントを作成してください。
+            サーヴァントが登録されていないため、宛先を選べません。
+            先に左ペインでサーヴァントを作成してください。
           </p>
           <div v-else class="space-y-2 rounded border border-line bg-surface-0 p-3 text-[11px]">
             <label class="flex items-center gap-2">
@@ -236,7 +236,7 @@ function formatNextDue(task: ScheduleView): string {
                 v-model="formTo"
                 class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
               >
-                <option value="" disabled>エージェントを選ぶ</option>
+                <option value="" disabled>サーヴァントを選ぶ</option>
                 <option v-for="agent in agents" :key="agent.id" :value="agent.id">
                   {{ agent.id }}（{{ agent.name }}）
                 </option>

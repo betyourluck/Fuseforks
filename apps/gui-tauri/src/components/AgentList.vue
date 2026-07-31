@@ -140,7 +140,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
       </button>
       <button
         class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
-        title="エージェントを追加"
+        title="サーヴァントを追加"
         @click="creating = !creating"
       >
         ＋
@@ -150,7 +150,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
     <form v-if="creating" class="border-b border-line p-3" @submit.prevent="submitNew">
       <input
         v-model="newName"
-        placeholder="エージェント名（例: PlannerAgent）"
+        placeholder="サーヴァント名（例: PlannerAgent）"
         autofocus
         class="w-full rounded border border-line bg-surface-1 px-2 py-1.5 outline-none focus:border-accent"
       />
@@ -204,7 +204,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         v-if="!agents.length"
         class="px-2 py-8 text-center text-[11px] leading-relaxed text-ink-dim"
       >
-        エージェントがまだありません。<br />
+        サーヴァントがまだありません。<br />
         右上の ＋ から追加してください。
       </p>
     </VueDraggable>

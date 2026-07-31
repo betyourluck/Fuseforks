@@ -101,6 +101,7 @@ OutcastsConcordia/
         └── src/
             ├── types.ts             Rust 型のミラー（手で同期させる契約）
             ├── lib/ipc.ts           型付き invoke ラッパ
+            ├── assets/fonts/        同梱フォント（外部 CDN から取りに行かない）
             ├── composables/useOrchestrator.ts   単一ストア
             ├── App.vue              3 ペインのグリッド
             └── components/
@@ -159,6 +160,14 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 | モーダル | 予定の一覧・追加・削除（ヘッダの ⏰ から） | たまに開くもの |
 
 設定を常駐ペインに置かないのは、**たまに開くものが、いつも見るものの面積を奪う**ため。
+
+**画面に出る呼称は「サーヴァント」、ドメインの語彙は「エージェント」**（2026-07-31）。
+UI の文言だけを世界観の側へ寄せ、型・フィールド・IPC コマンド・イベント名・
+クレート名（`AgentId` / `AgentSpec` / `create_agent` / `agent-core` …）と、この
+README・`data_contract.yaml`・`failures.md` の地の文は「エージェント」のまま置く。
+呼称はいつでも変わりうるが、型名を変えると Rust・TypeScript・台帳の 3 系統を
+同時に直すことになる — **変わりやすいものと変えにくいものを同じ語に束ねない**。
+規則は [data_contract.yaml](data_contract.yaml) の `vocabulary` が正。
 
 接続マップで手で動かしたノードの座標は `world.json` の `topologyPositions` に保存され、
 再起動後も復元する（2026-07-31）。トポロジーの真実は「どの辺があるか」だけなので、

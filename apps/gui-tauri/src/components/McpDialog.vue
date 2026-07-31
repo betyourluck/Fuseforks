@@ -128,7 +128,7 @@ function requestClose(): void {
         外部ツールを <strong class="text-ink">MCP</strong>（Model Context Protocol）で繋ぎます。
         書式は <strong class="text-ink">Claude Desktop と同じ</strong>なので、既存の設定を
         <strong class="text-ink">加工せずそのまま</strong>貼れます（`npx` などのコマンドは
-        PATH から解決します）。保存すると即座に接続し直し、各エージェントが次の発話から
+        PATH から解決します）。保存すると即座に接続し直し、各サーヴァントが次の発話から
         使えるようになります。
         <strong class="text-warn">API キーなどの秘密は書かないでください</strong> —
         このファイルは平文で保存されます。

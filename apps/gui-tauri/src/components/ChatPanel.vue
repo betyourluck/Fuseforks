@@ -282,7 +282,7 @@ async function send(content: string): Promise<void> {
  */
 async function newChat(): Promise<void> {
   if (!rows.value.length) return;
-  if (!confirm("新規チャットを開始しますか？\n会話ログと各エージェントの記憶（履歴）が消えます（復元できません）。\n長期記憶（Memory.md）と稼働状態は残ります。")) return;
+  if (!confirm("新規チャットを開始しますか？\n会話ログと各サーヴァントの記憶（履歴）が消えます（復元できません）。\n長期記憶（Memory.md）と稼働状態は残ります。")) return;
   await orchestrator.newChat();
 }
 </script>
@@ -297,7 +297,7 @@ async function newChat(): Promise<void> {
       <button
         class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
         :disabled="!rows.length"
-        title="会話ログと各エージェントの履歴をリセットします（稼働状態と Memory.md は残ります）"
+        title="会話ログと各サーヴァントの履歴をリセットします（稼働状態と Memory.md は残ります）"
         @click="newChat"
       >
         新規チャット
