@@ -38,45 +38,9 @@ const { state } = orchestrator;
 const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
 
-/**
- * 送信の宛先。**1 体だけ**を指名する。
- *
- * # なぜ同報をやめたのか
- *
- * 以前は複数を選んで同時に話しかけられた。だが同報は全員のターンが**並列**に
- * 走るため、誰も他の答えを見ないまま応答する。仕切ろうとした個体は
- * 「もう答え終わっている」を知りようがなく、同じ相手が二度答える。
- *
- * 収束する形は **orchestrator-workers** — 進行役 1 体に頼み、その 1 体が
- * `ask_*` で順に委譲して答えを受け取り、まとめる。各エージェントはちょうど
- * 1 回ずつ話し、重複が構造的に起こらない（テストで固定してある）。
- * 確実なほうを既定の道にする。
- *
- * **コア側の同報機構は残っている**（`co_recipients` / 注記 / 表示集約）。
- * エージェント発の fan-out が今も使っており、剥がすとそちらが壊れる。
- * 「同じ問いを全員へ独立に投げて答えを比べる」用途は、将来それと分かる形で
- * 戻す余地がある（failures.md / data_contract 参照）。
- */
-const target = ref<AgentId | null>(null);
-
-watch(
-  // 選択が無い間は先頭のエージェントを既定にする（一覧の初回ロードでも発火する）。
-  () => state.selectedAgentId ?? state.agents[0]?.id ?? null,
-  (id) => {
-    target.value = id;
-  },
-  { immediate: true },
-);
-
-/** 宛先を指名する。左ペインの選択とも揃える（見ている相手と話す相手を一致させる）。 */
-function selectTarget(id: AgentId): void {
-  target.value = id;
-  orchestrator.select(id);
-}
-
-/** 宛先のエージェント。 */
+/** 送信の宛先。左ペインまたは接続マップで選んだ 1 体。 */
 const targetAgent = computed(
-  () => state.agents.find((a) => a.id === target.value) ?? null,
+  () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
 );
 
 /** 送信可能か。停止中のエージェントへは投げられない。 */
@@ -308,8 +272,8 @@ watch(
 );
 
 async function send(content: string): Promise<void> {
-  if (!canSend.value || !target.value) return;
-  await orchestrator.send(target.value, content);
+  if (!canSend.value || !state.selectedAgentId) return;
+  await orchestrator.send(state.selectedAgentId, content);
 }
 
 /**
@@ -545,43 +509,6 @@ async function newChat(): Promise<void> {
       <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
         まだ発話がありません。
       </p>
-    </div>
-
-    <!--
-      宛先チップ。**1 体だけ**を指名する。
-      複数へ同時に話しかける機能は外した — 全員のターンが並列に走り、
-      誰も他の答えを見ないまま応答するため混乱する。まとめて動かしたいときは、
-      進行役 1 体に頼んで `ask_*` で展開させる（orchestrator-workers）。
-    -->
-    <div
-      class="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 pt-2 text-[10px]"
-    >
-      <span class="text-ink-dim">宛先</span>
-      <button
-        v-for="agent in state.agents"
-        :key="agent.id"
-        type="button"
-        class="rounded-full border px-2 py-0.5 transition"
-        :class="
-          target === agent.id
-            ? 'border-accent bg-accent/15 text-accent'
-            : 'border-line text-ink-dim hover:border-ink-dim hover:text-ink'
-        "
-        :title="
-          agent.status === 'running'
-            ? `${agent.name} へ話しかける`
-            : `${agent.name} は停止中（送信できません）`
-        "
-        @click="selectTarget(agent.id)"
-      >
-        <span
-          class="mr-1 inline-block size-1.5 rounded-full align-middle"
-          :class="agent.status === 'running' ? 'bg-run' : 'bg-ink-dim'"
-        />{{ agent.name }}
-      </button>
-      <span class="ml-auto text-ink-dim">
-        複数へ動かすときは、進行役 1 体に頼んでください
-      </span>
     </div>
 
     <ChatInput

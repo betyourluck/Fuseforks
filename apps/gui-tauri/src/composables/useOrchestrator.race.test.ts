@@ -121,6 +121,7 @@ describe("refreshAll の並行競合", () => {
 
     // #2 の await 明けには、2 回目の取得結果（呼び出し時点より新しい）が見えている。
     expect(orchestrator.state.agents).toHaveLength(1);
+    expect(orchestrator.state.selectedAgentId).toBe("fresh_agent");
     await refresh1;
   });
 });

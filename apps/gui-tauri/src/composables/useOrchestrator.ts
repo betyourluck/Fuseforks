@@ -264,6 +264,10 @@ async function fetchAndAssign(): Promise<void> {
     ipc.listRagSources(),
   ]);
   state.agents = agents;
+  // 会話の送信先と左右ペインの強調表示を必ず同じ選択状態にする。
+  if (!agents.some((agent) => agent.id === state.selectedAgentId)) {
+    state.selectedAgentId = agents[0]?.id ?? null;
+  }
   state.edges = edges;
   state.topologyPositions = topologyPositions;
   state.templates = templates;

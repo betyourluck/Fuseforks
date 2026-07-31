@@ -234,7 +234,7 @@ Provide one `transfer_to_<agent>` tool per connection destination (following the
 - **Called multiple `transfer_to_*` tools simultaneously → Deliver in parallel to all destinations** (fan-out). Duplicates to the same destination are collapsed into one via first-come-first-served.
 - **Returned only the body text → Conversation ends**. Returns to the user
 
-**User transmissions are limited to a single destination.** Use the destination chip in the conversation pane to select just one partner to speak with. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
+**User transmissions are limited to a single destination.** Select a single partner in the left pane or on the connection map. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
 
 ### Parallel Delegation — `plan`
 
@@ -522,7 +522,7 @@ This was implemented once and **removed from the UI** ([failures.md](failures.md
 It can return under either condition:
 
 1. **A control method that works in parallel is found.** For example: serialize turns, notify recipients who have already replied through an envelope, or give coordination tools only to a facilitator (enforce it structurally).
-2. **Expose it under a name for a different use.** "Send the same question independently to everyone and compare answers" (model comparison) is valid and needs no coordination. If restored, it must be a recognizable feature rather than a side effect of destination chips.
+2. **Expose it under a name for a different use.** "Send the same question independently to everyone and compare answers" (model comparison) is valid and needs no coordination. If restored, it must be a recognizable feature rather than a side effect of destination selection.
 
 | Area | Current state | Next step |
 |---|---|---|
