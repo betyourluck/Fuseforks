@@ -27,7 +27,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 <template>
   <div
     data-tauri-drag-region
-    class="flex h-8 shrink-0 select-none items-center border-b border-line bg-surface-1"
+    class="flex h-[38px] shrink-0 select-none items-center border-b border-line bg-surface-1"
   >
     <div
       data-tauri-drag-region
@@ -49,7 +49,8 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <circle cx="19" cy="18" r="2.4" />
         <path d="M10.6 7 6.4 16M13.4 7l4.2 9M7.4 18h9.2" />
       </svg>
-      Concordia
+      <span class="outcasts-word">Outcasts</span>
+      <span>Concordia</span>
     </div>
 
     <div data-tauri-drag-region class="h-full flex-1"></div>
@@ -156,9 +157,17 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 </template>
 
 <style scoped>
+.outcasts-word {
+  color: rgb(var(--c-accent) / var(--tw-text-opacity, 1));
+  font-family: "DotGothic16", sans-serif;
+  text-shadow:
+    0 0 6px rgba(168, 85, 247, 0.8),
+    0 0 18px rgba(168, 85, 247, 0.4);
+}
+
 .tb-btn {
   width: 44px;
-  height: 32px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
