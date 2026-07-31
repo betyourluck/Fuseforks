@@ -28,7 +28,6 @@ const emit = defineEmits<{
   (e: "toggle", running: boolean): void;
   /** 対象トグル: 一括起動（▶）に含めるか。稼働状態は変えない。 */
   (e: "batch-start", included: boolean): void;
-  (e: "move", direction: -1 | 1): void;
 }>();
 
 /** 状態に対応する表示色。停止・稼働・失敗が一目で分かることを優先する。 */
@@ -148,26 +147,21 @@ const cacheTone = computed(() => {
         title="設定を開く"
         @click.stop="emit('configure')"
       >
-        ⚙
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
       </button>
-
-      <!-- 並び替え。ドラッグ&ドロップより、押した回数だけ確実に動く方式を採る。 -->
-      <div class="flex flex-col leading-none opacity-60 hover:opacity-100">
-        <button
-          class="px-1 text-[10px] hover:text-accent"
-          title="上へ"
-          @click.stop="emit('move', -1)"
-        >
-          ▲
-        </button>
-        <button
-          class="px-1 text-[10px] hover:text-accent"
-          title="下へ"
-          @click.stop="emit('move', 1)"
-        >
-          ▼
-        </button>
-      </div>
 
       <!--
         一括起動の対象トグル。**稼働状態ではない。**
