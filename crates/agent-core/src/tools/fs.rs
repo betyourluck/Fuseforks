@@ -418,7 +418,8 @@ fn run_grep(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bo
     }
     if files_truncated {
         out.push_str(&format!(
-            "\n（ファイル数が {MAX_FILES} を超えたため、一部は走査していません）"
+            "\n（ファイル数が {MAX_FILES} を超えたため、一部は走査していません。\
+             `path` で範囲を絞ってください）"
         ));
     }
     out

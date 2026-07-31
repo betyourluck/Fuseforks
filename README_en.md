@@ -322,6 +322,8 @@ There are seven built-in tools. External capabilities are added through MCP.
 
 Output is always bounded (100 matches, 240 characters per line, 12,000 characters total, and 2 MiB per file). Truncation is never silent: the result reports how many items were dropped. Hidden directories and conventional build outputs (`node_modules` / `target`, etc.) are not scanned.
 
+**Every truncation also names what to do instead.** Reporting only the dropped amount leaves the model with one remaining option — repeating the identical call — which the repeat guard then blocks, taking the whole turn down with it ([failures.md](failures.md) #44, hit on a real run against a 61,891-character ledger). Where no argument can fetch the remainder, as with `file read`, the message must also state that **re-reading returns the same range**; naming an alternative alone leaves room for "maybe calling it again returns the rest."
+
 ### Narrowing What Is Presented (Token Cost Is the Differentiator)
 
 **The schema of an unpresented tool is a fixed cost every turn**, and all agents spend from one person's wallet. Giving every capability to every agent is not a feature but waste. The default should be to give only the tools needed; that is this product's differentiator from large orchestration systems.

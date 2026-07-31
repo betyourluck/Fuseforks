@@ -174,11 +174,19 @@ fn run_read(work_dir: &Path, user_path: &str) -> String {
 
     // 出力は必ず有界。打ち切りは黙って行わず、落とした量を書く
     // （silent truncation は「全部読んだ」と誤読される）。
+    //
+    // **落とした量を書くだけでは足りない。** この op には続きを取る引数が無いので、
+    // 「続きは無い」と「代わりに何をするか」を名指ししないと、モデルは同じ引数で
+    // 読み直すしかなくなる。実機で発生した — 61,891 字の data_contract.yaml を
+    // 読ませたら 2 回同じ結果が返り、3 回目を RepeatGuard が止め、その周のツールが
+    // それ 1 本だったのでターンごと落ちた（failures.md #44）。
     if text.chars().count() > MAX_OUTPUT_CHARS {
         let head: String = text.chars().take(MAX_OUTPUT_CHARS).collect();
         let dropped = text.chars().count() - MAX_OUTPUT_CHARS;
         return format!(
-            "`{display}`（先頭 {MAX_OUTPUT_CHARS} 字。残り {dropped} 字は省略しました）\n{head}"
+            "`{display}`（先頭 {MAX_OUTPUT_CHARS} 字。残り {dropped} 字は省略しました）\n{head}\n\
+             （**続きを読む方法はありません。**同じ引数で読み直しても同じ範囲が返ります。\
+             残りが要るなら `grep` で必要な箇所を探してください）"
         );
     }
     format!("`{display}`\n{text}")
@@ -523,6 +531,30 @@ mod tests {
 
         let reply = call(&dir, serde_json::json!({ "op": "read", "path": "big.txt" })).await;
         assert!(reply.contains("省略しました"), "落とした量を明示すること: 先頭 80 字 = {}", &reply[..80.min(reply.len())]);
+    }
+
+    /// 打ち切りは**次の手まで名指しする**こと。
+    ///
+    /// 落とした量を書くだけでは、続きを取る引数が無いこの op では出口が無い。
+    /// 出口の無い打ち切りに当たったモデルは同じ引数で読み直すしかなく、
+    /// RepeatGuard に止められてターンごと落ちる（実機で発生。failures.md #44）。
+    /// 同梱の他の打ち切り（grep / diff / sd / yq）は 4 つとも名指ししており、
+    /// **`file read` だけが漏れていた**。
+    #[tokio::test]
+    async fn a_cut_read_names_what_to_do_instead() {
+        let dir = TempDir::new("read-long-exit");
+        dir.write("big.txt", &"あ".repeat(MAX_OUTPUT_CHARS + 500));
+
+        let reply = call(&dir, serde_json::json!({ "op": "read", "path": "big.txt" })).await;
+
+        assert!(
+            reply.contains("続きを読む方法はありません"),
+            "読み直しても同じだと明示すること（これが無いと同じ引数で呼び直す）"
+        );
+        assert!(
+            reply.contains("grep"),
+            "代わりに使う道具を名指しすること"
+        );
     }
 
     /// **長い成果物は write で始めて append で継ぎ足せること。**
