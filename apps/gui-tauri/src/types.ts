@@ -9,6 +9,12 @@
 /** エージェント識別子。Rust 側は透過的な newtype なので、ワイヤ上はただの文字列。 */
 export type AgentId = string;
 
+/** 接続マップ上のノード座標。稼働状態と違い、再起動後にも復元する表示設定。 */
+export interface TopologyPosition {
+  x: number;
+  y: number;
+}
+
 /** モデルテンプレート識別子。 */
 export type ModelTemplateId = string;
 
@@ -366,6 +372,9 @@ export type CoreEvent =
   | { type: "conversationCleared" }
   | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
+  /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った
+      （failures.md #41 の処方 1）。上限到達とは別の打ち切りで、直し方も違う。 */
+  | { type: "toolRepeatBlocked"; agentId: AgentId; tool: string; repeats: number }
   | { type: "hopLimitReached"; agentId: AgentId; maxHops: number }
   // Spec 08（波ペイン）。順序保証は per planId のみ（Started → Resolved* → Finished）。
   | {

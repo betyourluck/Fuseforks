@@ -104,6 +104,19 @@ impl AgentRecord {
     }
 }
 
+/// 接続マップ上のノード座標。
+///
+/// 稼働状態と違い、再起動後にも意味が残る表示設定。座標の真実はこの型にだけ置き、
+/// UI は world.json の投影として復元する。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyPosition {
+    /// Vue Flow 座標系の横位置。
+    pub x: f64,
+    /// Vue Flow 座標系の縦位置。
+    pub y: f64,
+}
+
 /// 永続化される世界の状態。
 ///
 /// `Instant` は直列化できないため、保存対象は定義とテンプレートのみ。
@@ -117,6 +130,9 @@ pub struct PersistedWorld {
     /// モデルテンプレート。
     #[serde(default)]
     pub model_templates: Vec<ModelTemplate>,
+    /// 接続マップ上のノード座標。表示設定なので AgentSpec には含めない。
+    #[serde(default)]
+    pub topology_positions: BTreeMap<AgentId, TopologyPosition>,
 }
 
 /// 登録簿本体。
@@ -124,6 +140,7 @@ pub struct PersistedWorld {
 pub struct World {
     agents: BTreeMap<AgentId, AgentRecord>,
     templates: BTreeMap<ModelTemplateId, ModelTemplate>,
+    topology_positions: BTreeMap<AgentId, TopologyPosition>,
 }
 
 impl World {
@@ -140,6 +157,7 @@ impl World {
         let known: Vec<AgentId> = persisted.agents.iter().map(|s| s.id.clone()).collect();
 
         let mut world = Self::new();
+        world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
         }
@@ -152,6 +170,9 @@ impl World {
             world.agents.insert(spec.id.clone(), AgentRecord::new(spec));
         }
         world
+            .topology_positions
+            .retain(|id, _| known.contains(id));
+        world
     }
 
     /// 永続化用の表現へ落とす。
@@ -159,6 +180,7 @@ impl World {
         PersistedWorld {
             agents: self.agents.values().map(|r| r.spec.clone()).collect(),
             model_templates: self.templates.values().cloned().collect(),
+            topology_positions: self.topology_positions.clone(),
         }
     }
 
@@ -243,9 +265,26 @@ impl World {
         if self.agents.remove(id).is_none() {
             return Err(CoreError::AgentNotFound(id.to_string()));
         }
+        self.topology_positions.remove(id);
         for record in self.agents.values_mut() {
             record.spec.connected_agents.retain(|target| target != id);
         }
+        Ok(())
+    }
+
+    /// 接続マップの座標を返す。未配置のエージェントは UI が自動配置する。
+    pub fn topology_positions(&self) -> BTreeMap<AgentId, TopologyPosition> {
+        self.topology_positions.clone()
+    }
+
+    /// 接続マップ上の 1 ノードの座標を保存する。
+    pub fn set_topology_position(
+        &mut self,
+        id: &AgentId,
+        position: TopologyPosition,
+    ) -> CoreResult<()> {
+        self.agent(id)?;
+        self.topology_positions.insert(id.clone(), position);
         Ok(())
     }
 
@@ -507,6 +546,7 @@ mod tests {
                 AgentSpec::new("agent_02", "ロボットくん", "tpl"),
             ],
             model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
+            topology_positions: BTreeMap::new(),
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
@@ -620,6 +660,10 @@ mod tests {
                 AgentSpec::new("agent_02", "Critic", "tpl"),
             ],
             model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
+            topology_positions: BTreeMap::from([
+                (AgentId::from("agent_01"), TopologyPosition { x: 120.0, y: 80.0 }),
+                (AgentId::from("ghost"), TopologyPosition { x: 0.0, y: 0.0 }),
+            ]),
         };
 
         let world = World::from_persisted(persisted);
@@ -627,5 +671,26 @@ mod tests {
 
         assert_eq!(edges.len(), 1, "`ghost` への辺は落ちる");
         assert_eq!(edges[0].target, AgentId::from("agent_02"));
+        assert_eq!(
+            world.topology_positions(),
+            BTreeMap::from([(
+                AgentId::from("agent_01"),
+                TopologyPosition { x: 120.0, y: 80.0 },
+            )]),
+            "存在しないエージェントの座標は復元時に落とす"
+        );
+    }
+
+    #[test]
+    fn topology_positions_round_trip_and_are_removed_with_the_agent() {
+        let mut world = world_with_two_agents();
+        let planner = AgentId::from("agent_01");
+        let position = TopologyPosition { x: 240.0, y: 180.0 };
+
+        world.set_topology_position(&planner, position).unwrap();
+        assert_eq!(world.to_persisted().topology_positions.get(&planner), Some(&position));
+
+        world.remove_agent(&planner).unwrap();
+        assert!(world.topology_positions().is_empty());
     }
 }

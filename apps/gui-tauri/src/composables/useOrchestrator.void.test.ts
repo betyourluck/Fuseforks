@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   listAgents: vi.fn(async () => []),
   listTopology: vi.fn(async () => []),
+  listTopologyPositions: vi.fn(async () => ({})),
   listModelTemplates: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),

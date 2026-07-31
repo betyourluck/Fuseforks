@@ -43,7 +43,7 @@ pub fn run() {
                 .get_webview_window("main")
                 .or_else(|| app.webview_windows().into_values().next())
             else {
-                eprintln!("[concordia] 2 つ目の起動を止めたが、前面に出すウィンドウが無い");
+                agent_core::note!("2 つ目の起動を止めたが、前面に出すウィンドウが無い");
                 return;
             };
 
@@ -74,7 +74,7 @@ pub fn run() {
                     Err(err) => {
                         // ウィンドウは既に出ている。ここで panic せず理由を残し、
                         // フロントの覆いに「初期化に失敗した」と表示させる。
-                        eprintln!("[concordia] 初期化に失敗しました: {err}");
+                        agent_core::note!("初期化に失敗しました: {err}");
                         let slot = handle.state::<state::BootError>();
                         if let Ok(mut guard) = slot.0.lock() {
                             *guard = Some(err.to_string());
@@ -90,6 +90,7 @@ pub fn run() {
             // 参照系
             commands::list_agents,
             commands::list_topology,
+            commands::list_topology_positions,
             commands::list_messages,
             commands::list_plan_waves,
             commands::token_usage,
@@ -107,6 +108,7 @@ pub fn run() {
             commands::delete_agent,
             commands::set_connections,
             commands::reorder_agents,
+            commands::set_topology_position,
             commands::upsert_model_template,
             commands::delete_model_template,
             // 設定ファイル

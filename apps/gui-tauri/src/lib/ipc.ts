@@ -27,6 +27,7 @@ import type {
   Recurrence,
   ScheduleView,
   TopologyEdge,
+  TopologyPosition,
 } from "../types";
 
 /**
@@ -103,6 +104,10 @@ export const listAgents = () => call<AgentSnapshot[]>("list_agents");
 /** トポロジーの全辺を取得する。 */
 export const listTopology = () => call<TopologyEdge[]>("list_topology");
 
+/** 接続マップの保存済みノード座標を取得する。 */
+export const listTopologyPositions = () =>
+  call<Record<AgentId, TopologyPosition>>("list_topology_positions");
+
 /** メッセージログを取得する。`limit` 指定時は末尾からその件数。 */
 export const listMessages = (limit?: number) =>
   call<AgentMessage[]>("list_messages", { limit });
@@ -164,6 +169,10 @@ export const setConnections = (agentId: AgentId, targets: AgentId[]) =>
 /** 左ペインの並び順を確定する。 */
 export const reorderAgents = (order: AgentId[]) =>
   call<void>("reorder_agents", { order });
+
+/** 接続マップ上で移動したノードの座標を保存する。 */
+export const setTopologyPosition = (agentId: AgentId, position: TopologyPosition) =>
+  call<void>("set_topology_position", { agentId, position });
 
 /** モデルテンプレートを登録または更新する。 */
 export const upsertModelTemplate = (template: ModelTemplate) =>

@@ -62,6 +62,7 @@
 
 pub mod compute;
 pub mod config_store;
+pub mod diag;
 pub mod error;
 pub mod event;
 pub mod llm;
@@ -77,6 +78,7 @@ pub mod tools;
 pub mod world;
 
 pub use config_store::{ConfigStore, LoadedSchedules};
+pub use diag::open_log;
 pub use error::{CoreError, CoreResult, ErrorPayload};
 pub use event::CoreEvent;
 pub use llm::{

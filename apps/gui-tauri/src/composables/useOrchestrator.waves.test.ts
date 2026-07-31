@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   bootStatus: vi.fn(async () => ({ ready: true, error: null })),
   listAgents: vi.fn(async () => []),
   listTopology: vi.fn(async () => []),
+  listTopologyPositions: vi.fn(async () => ({})),
   listModelTemplates: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   listMessages: vi.fn(async () => []),

@@ -42,6 +42,7 @@
 //! 同じ入力に同じ出力を返し続けて原理的に収束しない（failures.md #12）。
 
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -50,6 +51,8 @@ use tokio::task::JoinHandle;
 
 use crate::compute;
 use crate::config_store::ConfigStore;
+// 診断の 1 行はここを通す（stderr とログファイルの両方へ出る）。
+use crate::note;
 use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::event::CoreEvent;
 use crate::llm::{
@@ -64,7 +67,7 @@ use crate::rag::{RagChunk, RagIndex};
 use crate::schedule::{Recurrence, ScheduledTask, Tick};
 use crate::tool::{AgentTool, ToolContext, ToolRegistry};
 use crate::secret::SecretStore;
-use crate::world::World;
+use crate::world::{TopologyPosition, World};
 
 /// 転送を要求するツールの名前。
 ///
@@ -91,6 +94,8 @@ pub struct OrchestratorConfig {
     ///
     /// LangGraph の `recursion_limit` と同じ安全網。モデルが同じツールを
     /// 同じ引数で呼び続ける行き詰まりは実際に起きるので、上限が要る。
+    /// その行き詰まりを上限より手前で切るのは [`RepeatGuard`] の側
+    /// （回数の上限はコストの上限にならない。failures.md #41）。
     ///
     /// 既定 12。当初 6 だったが、**通常の調査委譲が 2 セッションで 3 回**
     /// この上限で溶けた（grep → 絞り込み → 読む、の往復は 6 では足りない）。
@@ -435,7 +440,7 @@ impl Orchestrator {
         let (schedules, schedules_blocked) = match store.load_schedules().await {
             Ok(loaded) => {
                 for reason in &loaded.dropped {
-                    eprintln!("[concordia] schedule: {reason}");
+                    note!("schedule: {reason}");
                 }
                 // 宛先が存在しない予定はここで落とす（World::from_persisted が
                 // 宙に浮いた接続を落とすのと同じ規律）。ディスクへの反映は
@@ -445,16 +450,16 @@ impl Orchestrator {
                     .into_iter()
                     .partition(|task| world.agent(&task.to).is_ok());
                 for task in &dangling {
-                    eprintln!(
-                        "[concordia] schedule: 宛先 {} が存在しないため予定 {} を落としました",
+                    note!(
+                        "schedule: 宛先 {} が存在しないため予定 {} を落としました",
                         task.to, task.id
                     );
                 }
                 (kept, None)
             }
             Err(err) => {
-                eprintln!(
-                    "[concordia] schedule: schedules.json が読めないため予定なしで起動します\
+                note!(
+                    "schedule: schedules.json が読めないため予定なしで起動します\
                      （書き込みは保護のため拒否されます）: {err}"
                 );
                 (Vec::new(), Some(err.to_string()))
@@ -681,6 +686,27 @@ impl Orchestrator {
     pub async fn reorder_agents(&self, order: &[AgentId]) -> CoreResult<()> {
         self.shared.world.write().await.reorder(order);
         self.persist().await
+    }
+
+    /// 接続マップの保存済みノード座標を返す。
+    pub async fn topology_positions(&self) -> BTreeMap<AgentId, TopologyPosition> {
+        self.shared.world.read().await.topology_positions()
+    }
+
+    /// 接続マップ上で移動したノードの座標を保存する。
+    pub async fn set_topology_position(
+        &self,
+        id: &AgentId,
+        position: TopologyPosition,
+    ) -> CoreResult<()> {
+        self.shared
+            .world
+            .write()
+            .await
+            .set_topology_position(id, position)?;
+        self.persist().await?;
+        self.shared.emit(CoreEvent::TopologyChanged);
+        Ok(())
     }
 
     /// モデルテンプレートを登録または更新する。
@@ -1310,8 +1336,8 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
             Tick::Consume { due_ms } => {
                 // 猶予超過。debug ログのみ — 「閉じていた」の事後報告は直す手が
                 // 無く、数日分まとめて会話ログへ流すと本物の通知が埋まる。
-                eprintln!(
-                    "[concordia] schedule: {}（{}）の予定時刻を猶予超過で消化（発火せず）",
+                note!(
+                    "schedule: {}（{}）の予定時刻を猶予超過で消化（発火せず）",
                     task.id,
                     task.recurrence.label_ja()
                 );
@@ -1384,8 +1410,8 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
                         // MailboxFull（背圧）: 消化せず次の tick で再試行する。
                         // NotRunning: 上の running 判定との間で停止された競合。
                         // どちらも次の tick が正しく拾い直す。
-                        eprintln!(
-                            "[concordia] schedule: {} への配送を見送りました: {err}",
+                        note!(
+                            "schedule: {} への配送を見送りました: {err}",
                             task.to
                         );
                     }
@@ -1410,7 +1436,7 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
         if let Err(err) = shared.store.save_schedules(&schedules).await {
             // 保存失敗は発火を止める理由にならない。in-memory は既に消化済みで
             // 二重発火は起きず、次の消化で再度保存を試みる。
-            eprintln!("[concordia] schedule: schedules.json の保存に失敗しました: {err}");
+            note!("schedule: schedules.json の保存に失敗しました: {err}");
         }
     }
 }
@@ -1491,6 +1517,18 @@ async fn agent_loop(
 
                     let payload = ErrorPayload::from(&err);
                     let fatal = err.stops_the_agent();
+
+                    // 失敗したターンもログへ出す。**`turn:` 行は成功経路にしか
+                    // 無かった**ため、落ちたターンはログに 1 行も残らず、
+                    // 「まだ飛んでいる」と「2 分前に死んだ」が同じ無音に見えた
+                    // （2026-07-31、ログを入れた初日に詰まった）。
+                    // AgentFailed はトーストへ出るが、トーストは残らない。
+                    note!(
+                        "turn failed: agent={agent_id} hop={} code={} fatal={fatal}: {}",
+                        incoming.hop,
+                        payload.code,
+                        payload.message,
+                    );
 
                     {
                         let mut world = shared.world.write().await;
@@ -1582,6 +1620,73 @@ async fn record_failed_turn(
     }
 }
 
+/// 同じ結果が何回続いたら次を実行しないか（failures.md #41 の処方 1）。
+///
+/// 2 = 「同じ呼び出しで同じ結果が 2 回続いたら、3 回目は実行しない」。
+const REPEAT_BLOCK_AFTER: u32 = 2;
+
+/// 同一のツール呼び出しの繰り返しを検出する（failures.md #41 の処方 1）。
+///
+/// # 判定材料に結果**本文**を使う理由
+///
+/// 台帳の処方は「ツール名 + 引数 + エラー文言」だが、同梱ツールは失敗を
+/// `Err` ではなく **`Ok(<エラー文の本文>)`** で返す（「ツールの失敗は会話を
+/// 止めない」という既存規律の帰結。`file` / `fd` / `grep` / `sd` すべてこの形）。
+/// したがって `Result::is_err` で失敗を数えると、実機で燃えた経路
+/// （`sd` の失敗を 12 周繰り返した failures.md #39）は 1 件も検出できない。
+/// 失敗が型に載っていない以上、**モデルへ返る本文の完全一致**が失敗の
+/// 一致を表す唯一の実体になる。文言を parse して失敗かどうかを推定するのは
+/// やらない（Spec 08 で「分類は文言 parse でなく型で運ぶ」と決めた側の話）。
+///
+/// 成功の繰り返しも同じ扱いで止まる。同じ入力に同じ出力が返っている以上、
+/// 3 回目に新しい情報は無い。
+///
+/// # 連続のみを見る
+///
+/// 直前の 1 件としか比べない。間に別の呼び出しが挟まると数え直す。
+/// 交互に失敗する形（`sd` → `grep` → `sd` → `grep`）は**検出できない** —
+/// 緩めると正当な再試行まで殺すため、完全一致 + 連続から始める。
+#[derive(Debug, Default)]
+struct RepeatGuard {
+    /// 直前の呼び出し（ツール名・引数・モデルへ返した本文）。
+    last: Option<(String, serde_json::Value, String)>,
+    /// 直前と同一の呼び出し + 同一の結果が続いた回数。
+    streak: u32,
+}
+
+impl RepeatGuard {
+    /// この呼び出しを実行せずに止めるか。**実行の前**に引く。
+    ///
+    /// 結果はまだ無いので、ここで見られるのはツール名と引数だけ。
+    /// 「同じ結果が [`REPEAT_BLOCK_AFTER`] 回続いた呼び出しが、また同じ引数で
+    /// 来た」ときに真を返す。
+    fn blocks(&self, name: &str, args: &serde_json::Value) -> bool {
+        self.streak >= REPEAT_BLOCK_AFTER
+            && self
+                .last
+                .as_ref()
+                .is_some_and(|(last_name, last_args, _)| last_name == name && last_args == args)
+    }
+
+    /// 実行した 1 件を記録する。**実行の後**に引く。
+    fn observe(&mut self, name: &str, args: &serde_json::Value, body: &str) {
+        let same = self.last.as_ref().is_some_and(|(last_name, last_args, last_body)| {
+            last_name == name && last_args == args && last_body == body
+        });
+        if same {
+            self.streak += 1;
+        } else {
+            self.streak = 1;
+            self.last = Some((name.to_owned(), args.clone(), body.to_owned()));
+        }
+    }
+
+    /// 連続した回数。打ち切りの通知に載せる。
+    fn streak(&self) -> u32 {
+        self.streak
+    }
+}
+
 /// 受信した発話を 1 件処理する。
 ///
 /// 手順: プロンプト組み立て → RAG 付与 → LLM 呼び出し → 統計更新 → 記録 → 転送。
@@ -1594,6 +1699,20 @@ async fn handle_message(
     envelope: Envelope,
 ) -> CoreResult<()> {
     let Envelope { incoming, reply_to } = envelope;
+    // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
+    // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
+    // LLM の応答を待っている間はログが止まって見える（2026-07-31 に実際に
+    // 詰まった。ツール 4 周目のあと 2 分無音で、生死が判定できなかった）。
+    note!(
+        "turn start: agent={agent_id} hop={} from={} chars={}",
+        incoming.hop,
+        match &incoming.from {
+            Endpoint::User => "user".to_owned(),
+            Endpoint::Agent { id } => id.to_string(),
+            Endpoint::System => "system".to_owned(),
+        },
+        incoming.content.chars().count(),
+    );
     // 1. 定義とテンプレートを取り出す。ロックはここで手放し、LLM 呼び出しは持たずに行う。
     let (spec, template) = {
         let world = shared.world.read().await;
@@ -1814,6 +1933,12 @@ async fn handle_message(
         .unwrap_or(shared.config.max_tool_iterations)
         .max(1);
     let mut tool_limit_hit = false;
+    // 同一失敗の検出（failures.md #41 の処方 1）。ターン内でだけ数える —
+    // ターンを跨ぐ繰り返しは別の問題（依頼が同じなら同じ失敗をもう一度たどるのは
+    // 正しい）で、ここで縛るとやり直しの依頼まで殺す。
+    let mut repeat_guard = RepeatGuard::default();
+    // 繰り返しで打ち切ったツール名。まとめ呼び出しと最終文言の分岐に使う。
+    let mut repeat_stop: Option<String> = None;
     // 観測用（Spec 04 Notes 2 のトリガー判定の実測材料）。
     // llm_rounds は上限の較正（12 で足りているか）、plan_wave は波の因果の追跡。
     let mut llm_rounds: u32 = 0;
@@ -1884,6 +2009,48 @@ async fn handle_message(
         ));
 
         for call in &calls {
+            // 同じ呼び出しで同じ結果が続いたら、ここで実行を止める
+            // （failures.md #41 の処方 1）。**結果は必ず積む** — 呼び出しだけ
+            // 残して結果を落とすと、次のリクエストが「対応する結果が無い
+            // 呼び出し」として 400 で拒否される（#29）。
+            if repeat_stop.is_some() {
+                // 同じ周の残りの呼び出し。打ち切りは既に決まっているので実行しない。
+                messages.push(ChatMessage::tool_result(
+                    &call.id,
+                    &call.name,
+                    "同じ操作の繰り返しを検出したため、このターンのツール実行は\
+                     打ち切りました。この呼び出しは実行していません。"
+                        .to_owned(),
+                ));
+                continue;
+            }
+            if repeat_guard.blocks(&call.name, &call.args) {
+                let streak = repeat_guard.streak();
+                shared.emit(CoreEvent::ToolRepeatBlocked {
+                    agent_id: agent_id.clone(),
+                    tool: call.name.clone(),
+                    repeats: streak,
+                });
+                messages.push(ChatMessage::tool_result(
+                    &call.id,
+                    &call.name,
+                    format!(
+                        "`{}` を同じ引数で呼び、同じ結果が {streak} 回続いています。\
+                         同じ結果にしかならないため、この呼び出しは実行しませんでした。\
+                         引数か手順を変えるか、**できなかったこと自体を答えとして**\
+                         報告してください。",
+                        call.name
+                    ),
+                ));
+                note!(
+                    "tool blocked: agent={agent_id} round={} name={} repeats={streak}",
+                    iteration + 1,
+                    call.name,
+                );
+                repeat_stop = Some(call.name.clone());
+                continue;
+            }
+
             // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
             // 上限（`max_tool_iterations`）の消費も 1 回で済む。
             let result = if use_handoff_tools
@@ -1905,12 +2072,37 @@ async fn handle_message(
                 tool: call.name.clone(),
                 ok: result.is_ok(),
             });
+            let ok = result.is_ok();
             let body = match result {
                 Ok(text) => text,
                 // 失敗しても会話を止めない。モデルが読んで次を決める。
                 Err(err) => format!("ツールの実行に失敗しました: {err}"),
             };
+            // ツール 1 本ごとの実測。**`body_chars` がこの行の主目的** — ツール結果は
+            // 履歴に積まれて以後の全周回で再送されるので、1 本の大きさが
+            // そのターンの入力トークンに周回数ぶん掛かって効く。ターン行の
+            // `rounds` と `prompt` だけでは「何がプロンプトを太らせたか」が
+            // 追えなかった（2026-07-31 の 730,406 トークンの診断で不足した欄）。
+            // `ok` は `Err` だったかどうかで、同梱ツールは失敗も `Ok` の本文で
+            // 返すため `ok=true` のまま失敗していることがある（CoreEvent::ToolInvoked
+            // と同じ意味。判定材料にするなら本文の側を見る）。
+            note!(
+                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={}",
+                iteration + 1,
+                call.name,
+                call.args.to_string().chars().count(),
+                body.chars().count(),
+            );
+            // 数えるのは**モデルへ返した本文**。同梱ツールの失敗は `Err` ではなく
+            // この本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
+            repeat_guard.observe(&call.name, &call.args, &body);
             messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
+        }
+
+        // 繰り返しで打ち切ったら、次の周回は回さない。上限到達の通知は出さない
+        // （当たったのは上限ではない。理由を 1 つに保つ）。
+        if repeat_stop.is_some() {
+            break;
         }
 
         // 上限に達したら、次の周回は回さずに今ある本文で終える。
@@ -1935,15 +2127,25 @@ async fn handle_message(
     // ゼロから調査をやり直して同じ上限に当たり、トークンだけが燃え続ける
     // （実機で 3 ターン連続 146k tok を観測）。ここで 1 回のまとめ呼び出しに
     // 変換すれば、燃えたトークンの成果がそのまま答えになる。
+    //
+    // 繰り返しの打ち切り（failures.md #41 の処方 1）も同じ扱いにする。理由は同じで、
+    // まとめずに終えると利用者が「続けて」と送り、同じ所まで走って同じ所で止まる。
     if let Outcome::Finish { content } = &outcome
         && content.trim().is_empty()
-        && tool_limit_hit
+        && (tool_limit_hit || repeat_stop.is_some())
     {
-        messages.push(ChatMessage::system(
-            "ツール実行の上限に達しました。これ以上ツールは使えません。\
-             ここまでのツール結果から分かったことを、最終回答としてまとめてください。\
-             調査が途中なら、どこまで分かっていて何が残っているかを書いてください。",
-        ));
+        messages.push(ChatMessage::system(match &repeat_stop {
+            Some(tool) => format!(
+                "`{tool}` を同じ引数で繰り返し呼び、同じ結果が返り続けたため、\
+                 ツール実行を打ち切りました。これ以上ツールは使えません。\
+                 ここまでのツール結果から分かったことと、**何ができなかったのか**を\
+                 最終回答としてまとめてください。同じ操作を勧める提案はしないでください。"
+            ),
+            None => "ツール実行の上限に達しました。これ以上ツールは使えません。\
+                 ここまでのツール結果から分かったことを、最終回答としてまとめてください。\
+                 調査が途中なら、どこまで分かっていて何が残っているかを書いてください。"
+                .to_owned(),
+        }));
         // ツールを取り上げるのは `tools` を消すことではなく `tool_choice` で縛る。
         // 履歴には直前のツール往復（tool_use / tool_result）が積まれたままなので、
         // `tools` を空にすると Anthropic が「tool ブロックを含むなら tools の定義が
@@ -2005,17 +2207,29 @@ async fn handle_message(
     if let Outcome::Finish { content } = &mut outcome
         && content.trim().is_empty()
     {
-        *content = if tool_limit_hit {
-            // 理由を必ず添える。「失敗しました」だけでは、設定を直せば済むのか
-            // ワイヤの障害なのかを利用者が判別できない。
-            let reason = summary_error
+        // 理由を必ず添える。「失敗しました」だけでは、設定を直せば済むのか
+        // ワイヤの障害なのかを利用者が判別できない。
+        let reason = || {
+            summary_error
                 .as_deref()
                 .map(|err| format!("失敗の理由: {err}。"))
-                .unwrap_or_else(|| "モデルは応答しましたが本文が空でした。".to_owned());
+                .unwrap_or_else(|| "モデルは応答しましたが本文が空でした。".to_owned())
+        };
+        *content = if let Some(tool) = &repeat_stop {
+            // 打ち切りの理由は上限ではないので、上限の直し方を案内しない
+            // （直しても直らないものを勧めると、次の依頼がそのぶん燃える）。
+            format!(
+                "（`{tool}` を同じ引数で繰り返し呼び、同じ結果が返り続けたため\
+                 ツール実行を打ち切りました。まとめの生成にも失敗しています。{}\
+                 頼み方を変えるか、必要な情報を直接渡してください。）",
+                reason()
+            )
+        } else if tool_limit_hit {
             format!(
                 "（ツール実行の上限 {max_tool_iterations} 回に達し、まとめの生成にも\
-                 失敗しました。{reason}\
-                 エージェント設定で上限を上げるか、依頼を小さく分けてください。）"
+                 失敗しました。{}\
+                 エージェント設定で上限を上げるか、依頼を小さく分けてください。）",
+                reason()
             )
         } else {
             "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
@@ -2043,9 +2257,17 @@ async fn handle_message(
     // prompt の伸びは束ねの履歴肥大 (O(N²) 懸念) を、rounds は上限 12 の較正を、
     // waves は plan の利用実態を、それぞれ将来の判断のために記録する。
     // 機構は入れない — 測らずに入れると「効いているか分からない機構」が増える。
-    eprintln!(
-        "[concordia] turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
-         waves={plan_wave} prompt={prompt} cached={cached} total={tokens}",
+    // stop はループの抜け方。rounds が上限より小さいのに短く終わったターンを
+    // 「モデルが早く答えた」と読み違えないために出す（繰り返しの打ち切りは
+    // rounds を途中で止める唯一の機構）。
+    let stop = match &repeat_stop {
+        Some(tool) => format!("repeat:{tool}"),
+        None if tool_limit_hit => "tool_limit".to_owned(),
+        None => "-".to_owned(),
+    };
+    note!(
+        "turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
+         waves={plan_wave} stop={stop} prompt={prompt} cached={cached} total={tokens}",
         incoming.hop,
     );
 
@@ -2453,8 +2675,8 @@ async fn run_plan(
     // 観測用の波の開始行。宛先と依頼サイズを記録し、後から
     // 「この波は前の波の結果を読まずに書けたか」を追えるようにする
     // （Spec 04 Notes 2 の depends_on トリガー判定の材料）。
-    eprintln!(
-        "[concordia] plan wave: agent={from} wave={wave} tasks={} to=[{}] msg_chars={}",
+    note!(
+        "plan wave: agent={from} wave={wave} tasks={} to=[{}] msg_chars={}",
         wave_tasks.len(),
         wave_tasks
             .iter()
@@ -2561,8 +2783,8 @@ async fn run_plan(
     // 機構は入れない。測らずに入れると「効いているか分からない機構」が増えるだけ。
     let bundle_chars = bundle.chars().count() as u64;
     let elapsed_ms = dispatched_at.elapsed().as_millis() as u64;
-    eprintln!(
-        "[concordia] plan bundle: agent={from} wave={wave} tasks={} chars={bundle_chars} \
+    note!(
+        "plan bundle: agent={from} wave={wave} tasks={} chars={bundle_chars} \
          elapsed_ms={elapsed_ms}",
         wave_tasks.len(),
     );
@@ -2588,7 +2810,7 @@ async fn run_plan(
 /// このクレートはログ基盤を持たない（GUI 層に一切依存しない制約）ので、
 /// 標準エラーへ 1 行出すに留める。**黙って捨てない**ことだけが目的。
 fn tracing_note(err: &tokio::task::JoinError) {
-    eprintln!("[concordia] plan のタスクが異常終了しました: {err}");
+    note!("plan のタスクが異常終了しました: {err}");
 }
 
 /// 入退室の通知を組み立てる（Spec 06 P1）。
@@ -2752,6 +2974,100 @@ mod tests {
             1,
             "同名は 1 本に畳まれ、個別側が残る"
         );
+    }
+
+    /// 同じ呼び出し + 同じ結果が 2 回続いたら、3 回目は実行しない。
+    #[test]
+    fn the_third_identical_call_is_blocked() {
+        let args = serde_json::json!({ "path": "README.en.md" });
+        let err = "`README.en.md` を読めません: 見つかりません";
+        let mut guard = RepeatGuard::default();
+
+        assert!(!guard.blocks("file", &args), "1 回目は素通し");
+        guard.observe("file", &args, err);
+        assert!(!guard.blocks("file", &args), "2 回目も素通し（1 回では判定しない）");
+        guard.observe("file", &args, err);
+
+        assert!(guard.blocks("file", &args), "3 回目は実行しない");
+        assert_eq!(guard.streak(), 2);
+    }
+
+    /// 成功でも同じことが起きる。同じ入力に同じ出力が返るなら 3 回目に新しい
+    /// 情報は無い（同梱ツールは失敗も `Ok` の本文で返すため、失敗と成功を
+    /// 区別する材料がそもそも無い）。
+    #[test]
+    fn identical_successes_are_blocked_too() {
+        let args = serde_json::json!({ "pattern": "fn main" });
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("grep", &args, "src/main.rs:1: fn main() {");
+        guard.observe("grep", &args, "src/main.rs:1: fn main() {");
+
+        assert!(guard.blocks("grep", &args));
+    }
+
+    /// 結果が変われば止めない。**同じ操作が実を結んでいる**（追記が進む・
+    /// 待っていた状態が変わる）ので、繰り返し自体は正当。
+    #[test]
+    fn a_changed_result_clears_the_streak() {
+        let args = serde_json::json!({ "op": "append", "path": "log.md" });
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("file", &args, "1 行追記しました。");
+        guard.observe("file", &args, "1 行追記しました。");
+        guard.observe("file", &args, "2 行追記しました。");
+
+        assert!(!guard.blocks("file", &args), "結果が変わったら数え直す");
+    }
+
+    /// 引数が変われば止めない。**別の場所を試している**のは行き詰まりではない。
+    #[test]
+    fn a_changed_argument_clears_the_streak() {
+        let first = serde_json::json!({ "path": "a.md" });
+        let second = serde_json::json!({ "path": "b.md" });
+        let err = "読めません";
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("file", &first, err);
+        guard.observe("file", &first, err);
+        guard.observe("file", &second, err);
+
+        assert!(!guard.blocks("file", &second), "宛先を変えた失敗は繰り返しではない");
+        assert!(
+            !guard.blocks("file", &first),
+            "直前の 1 件としか比べない（古い連続は数え直しで消える）"
+        );
+    }
+
+    /// 間に別のツールが挟まると数え直す。**連続だけを見る**という判定の境界で、
+    /// 交互に失敗する形（sd → grep → sd → grep）は検出できない。緩めると
+    /// 正当な再試行まで殺すため、この穴は既知のまま残している。
+    #[test]
+    fn an_interleaved_call_clears_the_streak() {
+        let sd = serde_json::json!({ "pattern": "a", "replacement": "b" });
+        let grep = serde_json::json!({ "pattern": "a" });
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("sd", &sd, "対象がありません");
+        guard.observe("grep", &grep, "一致なし");
+        guard.observe("sd", &sd, "対象がありません");
+
+        assert!(!guard.blocks("sd", &sd), "挟まれた時点で連続は切れる");
+    }
+
+    /// 引数の一致はキーの並びに依存しない（`serde_json::Value` の等価は
+    /// 中身で決まる）。プロバイダが並べ替えて返しても同じ呼び出しと数える。
+    #[test]
+    fn argument_equality_ignores_key_order() {
+        let a = serde_json::json!({ "op": "read", "path": "x.md" });
+        let b = serde_json::json!({ "path": "x.md", "op": "read" });
+        let err = "読めません";
+        let mut guard = RepeatGuard::default();
+
+        guard.observe("file", &a, err);
+        guard.observe("file", &b, err);
+
+        assert!(guard.blocks("file", &a), "キーの並びで別物にしない");
     }
 }
 

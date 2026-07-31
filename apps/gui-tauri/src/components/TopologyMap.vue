@@ -2,15 +2,14 @@
 /**
  * 中央ペイン上部: ノードベースの接続マップ。
  *
- * ノードの座標はコア層が持たない。トポロジーの真実は「どの辺があるか」だけであり、
- * 見た目の配置は UI の都合なので、ここで円環状に自動配置している。
- * 手で動かした座標はセッション内でのみ保持する（永続化するなら別途 spec が要る）。
+ * トポロジーの真実は「どの辺があるか」だけであり、座標は world.json に保存する
+ * 表示設定として分ける。未配置ノードだけはここで円環状に自動配置する。
  *
  * 辺の追加・削除はグラフ上の操作をそのままコアへ流す。
  * 自己ループと未登録先はコア側が拒否するので、ここでは事前検査しない
  * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。
  */
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import {
   VueFlow,
   type Connection,
@@ -29,9 +28,6 @@ import { STATUS_LABELS, type AgentId } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
-
-/** 手動で動かしたノード座標。セッション内のみ有効。 */
-const manualPositions = ref<Record<AgentId, { x: number; y: number }>>({});
 
 /** 円環配置の半径。ノード数に応じて広げ、重なりを避ける。 */
 function radiusFor(count: number): number {
@@ -52,7 +48,7 @@ const nodes = computed<Node[]>(() => {
     return {
       id: agent.id,
       type: "default",
-      position: manualPositions.value[agent.id] ?? auto,
+      position: state.topologyPositions[agent.id] ?? auto,
       data: { agent },
       class: agent.id === state.selectedAgentId ? "is-selected" : "",
     };
@@ -105,16 +101,8 @@ const bidirectionalCount = computed(
   () => edges.value.filter((e) => e.data?.bidirectional).length,
 );
 
-/** ノード数が変わったら手動座標を捨てて配置し直す。 */
-watch(
-  () => state.agents.length,
-  () => {
-    manualPositions.value = {};
-  },
-);
-
-function onNodeDragStop(event: NodeDragEvent): void {
-  manualPositions.value[event.node.id] = { ...event.node.position };
+async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
+  await orchestrator.setTopologyPosition(event.node.id, event.node.position);
 }
 
 /** 辺を引いたときの処理。既存の接続先へ追加してコアへ渡す。 */

@@ -24,6 +24,7 @@ import type {
   McpConfig,
   ModelTemplate,
   PlanWaveRecord,
+  TopologyPosition,
   TopologyEdge,
 } from "../types";
 
@@ -47,6 +48,7 @@ export interface Toast {
 interface OrchestratorState {
   agents: AgentSnapshot[];
   edges: TopologyEdge[];
+  topologyPositions: Record<AgentId, TopologyPosition>;
   messages: AgentMessage[];
   templates: ModelTemplate[];
   ragSources: string[];
@@ -97,6 +99,7 @@ interface OrchestratorState {
 const state = reactive<OrchestratorState>({
   agents: [],
   edges: [],
+  topologyPositions: {},
   messages: [],
   templates: [],
   ragSources: [],
@@ -253,14 +256,16 @@ function refreshAll(): Promise<void> {
 
 /** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
 async function fetchAndAssign(): Promise<void> {
-  const [agents, edges, templates, ragSources] = await Promise.all([
+  const [agents, edges, topologyPositions, templates, ragSources] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
+    ipc.listTopologyPositions(),
     ipc.listModelTemplates(),
     ipc.listRagSources(),
   ]);
   state.agents = agents;
   state.edges = edges;
+  state.topologyPositions = topologyPositions;
   state.templates = templates;
   state.ragSources = ragSources;
   await refreshIcons();
@@ -415,6 +420,19 @@ function applyEvent(event: CoreEvent): void {
         "warn",
         `${name} がツール実行の上限に達しました`,
         `上限 ${event.maxIterations} 回。エージェント設定で上げるか、依頼を小さく分けてください`,
+      );
+      break;
+    }
+
+    case "toolRepeatBlocked": {
+      // 上限到達と混ぜない。当たったのは上限ではないので、上限を上げても
+      // 直らない — 直し方が違う打ち切りは、別の文言で出す。
+      const name =
+        state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
+      pushToast(
+        "warn",
+        `${name} が同じ操作の繰り返しで打ち切られました`,
+        `${event.tool} を同じ引数で呼び、同じ結果が ${event.repeats} 回続きました。次の 1 回は実行していません`,
       );
       break;
     }
@@ -672,6 +690,15 @@ export function useOrchestrator() {
 
     async setConnections(agentId: AgentId, targets: AgentId[]): Promise<void> {
       await mutate("接続の更新", () => ipc.setConnections(agentId, targets));
+    },
+
+    async setTopologyPosition(
+      agentId: AgentId,
+      position: TopologyPosition,
+    ): Promise<void> {
+      await mutate("接続マップ位置の保存", () =>
+        ipc.setTopologyPosition(agentId, position),
+      );
     },
 
     async reorder(order: AgentId[]): Promise<void> {

@@ -476,12 +476,105 @@ impl LlmBackend for EndlessToolBackend {
     }
 }
 
+/// 同じツールを**同じ引数で**呼び続けるバックエンド（失敗ループの再現）。
+///
+/// 実機で燃えた形（failures.md #39 / #41）そのもの: 引数を変えずに呼び直し、
+/// 同じ結果を受け取り、また同じ引数で呼ぶ。
+#[derive(Default)]
+struct StuckToolBackend {
+    /// tool_choice: None（まとめ）以外の呼び出し回数。
+    calls: std::sync::Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for StuckToolBackend {
+    fn name(&self) -> &str {
+        "stuck-tool"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        if req.tool_choice == agent_core::llm::ToolChoice::None {
+            return Ok(ChatResponse {
+                text: Some("同じ操作しかできず、目的は果たせませんでした。".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage {
+                    prompt: 1,
+                    completion: 1,
+                    cache_read: 0,
+                },
+                grounding: Default::default(),
+            });
+        }
+
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let n = *calls;
+        Ok(ChatResponse {
+            text: None,
+            tool_calls: vec![ToolCall {
+                // id だけは毎回変わる（実プロバイダと同じ）。同一判定に使わない。
+                id: format!("call_{n}"),
+                name: "stuck_probe".into(),
+                args: serde_json::json!({ "path": "存在しない.md" }),
+                extra: None,
+            }],
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 何度呼んでも同じ本文を返すツール。
+///
+/// **失敗を `Err` ではなく `Ok` の本文で返す**のは同梱ツール（`file` / `sd` /
+/// `grep`）と同じ作法。繰り返し検出がこの形を数えられないと、実機の失敗ループは
+/// 1 件も捕まらない。
+#[derive(Default)]
+struct StuckTool {
+    /// 実行された回数。
+    runs: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for StuckTool {
+    fn name(&self) -> &str {
+        "stuck_probe"
+    }
+    fn description(&self) -> String {
+        "テスト用。いつも同じ失敗を返す".into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    async fn call(
+        &self,
+        _ctx: &ToolContext,
+        _args: &serde_json::Value,
+    ) -> agent_core::CoreResult<String> {
+        self.runs
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok("`存在しない.md` を読めません: 見つかりません".into())
+    }
+}
+
 /// まとめ要求（tools 無し）にも無言を貫くバックエンド。
 ///
 /// まとめ呼び出しまで失敗した最悪経路で、最終フォールバック文言が出ることを
 /// 確かめるために使う。
+///
+/// **note は毎回変える。** 固定にすると `remember` の重複排除で結果本文まで
+/// 同一になり、上限（12 周）へ届く前に繰り返し検出が切ってしまう
+/// （failures.md #41 の処方 1。ここで検証したいのは上限側の経路）。
 #[derive(Default)]
-struct SilentToolBackend;
+struct SilentToolBackend {
+    calls: std::sync::Mutex<usize>,
+}
 
 #[async_trait::async_trait]
 impl LlmBackend for SilentToolBackend {
@@ -490,13 +583,18 @@ impl LlmBackend for SilentToolBackend {
     }
 
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let n = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
         let tool_calls = if req.tools.is_empty() {
             Vec::new()
         } else {
             vec![ToolCall {
-                id: "call_s".into(),
+                id: format!("call_s{n}"),
                 name: "remember".into(),
-                args: serde_json::json!({ "note": "沈黙" }),
+                args: serde_json::json!({ "note": format!("沈黙 {n}") }),
                 extra: None,
             }]
         };
@@ -2775,13 +2873,81 @@ async fn a_tool_limit_cutoff_summarizes_the_findings_so_far() {
     );
 }
 
+/// 同じツールを同じ引数で呼んで同じ結果が 2 回続いたら、3 回目は**実行せずに**
+/// ループを切ること（failures.md #41 の処方 1）。
+///
+/// 上限（既定 12 周）まで走らせないことが本体。回数の上限はコストの上限に
+/// ならない（1 周ごとに履歴を送り直すので単位コストが増え続ける）ため、
+/// 「回数を減らす」のではなく「無駄な回数を発生させない」側で止める。
+#[tokio::test]
+async fn a_repeated_identical_tool_call_is_blocked_before_the_iteration_limit() {
+    let dir = TempDir::new("repeat-guard");
+    let backend = Arc::new(StuckToolBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    let tool = Arc::new(StuckTool::default());
+    orchestrator.register_tool(tool.clone()).await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "PlannerAgent", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "読んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 3 回目は実行していない。上限（12）まで走っていたら 12 になる欄。
+    assert_eq!(
+        tool.runs.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "同じ結果が 2 回続いた時点で実行を止めること"
+    );
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::ToolRepeatBlocked { tool, repeats: 2, .. } if tool == "stuck_probe"
+        )),
+        "繰り返しでの打ち切りが通知されること: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, CoreEvent::ToolLimitReached { .. })),
+        "当たったのは上限ではないので、上限到達は通知しないこと"
+    );
+
+    // 燃えたぶんの成果は答えに変える（上限打ち切りと同じ規律）。
+    let log = messages(&events);
+    let reply = log
+        .iter()
+        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
+        .expect("応答が記録されること");
+    assert_eq!(
+        reply.content, "同じ操作しかできず、目的は果たせませんでした。",
+        "打ち切り後もまとめ呼び出しの本文が応答になること"
+    );
+
+    // 毒が残らないこと（履歴の対が崩れていれば次のターンが 400 で落ちる）。
+    orchestrator.send_user_message(&id, "続けて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, CoreEvent::AgentFailed { .. })),
+        "打ち切ったターンが次のターンを壊さないこと"
+    );
+}
+
 /// まとめ呼び出しまで無言だった最悪経路でも、空ではなく読める文言が返ること。
 #[tokio::test]
 async fn a_tool_limit_cutoff_still_produces_a_non_empty_reply() {
     let dir = TempDir::new("tool-limit-empty");
     let orchestrator = setup_with(
         &dir,
-        Arc::new(SilentToolBackend),
+        Arc::new(SilentToolBackend::default()),
         OrchestratorConfig::default(),
     )
     .await;

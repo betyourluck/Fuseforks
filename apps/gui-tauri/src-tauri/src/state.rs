@@ -48,6 +48,14 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     let workspace = app.path().app_data_dir()?.join("workspace");
     tokio::fs::create_dir_all(&workspace).await?;
 
+    // 診断ログの出口を開く。**失敗しても起動は止めない** — ログが書けないことは
+    // アプリが動かない理由にならず、stderr への出力は残る。
+    // 置き場をワークスペース直下にするのは、「フォルダを開く」導線でそのまま
+    // 辿り着けるから（不具合の報告時に場所を説明せずに済む）。
+    if let Err(err) = agent_core::open_log(&workspace.join("concordia.log")) {
+        eprintln!("[concordia] ログファイルを開けませんでした（stderr のみ）: {err}");
+    }
+
     // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
     // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。
     let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::new());
@@ -80,7 +88,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // `mcp.json` 自体が壊れている場合もここで握る — 設定を直す画面へ到達できないと
     // 利用者は詰む。
     if let Err(err) = orchestrator.reload_mcp().await {
-        eprintln!("[concordia] MCP の初期接続に失敗しました: {err}");
+        agent_core::note!("MCP の初期接続に失敗しました: {err}");
     }
 
     Ok(AppState {

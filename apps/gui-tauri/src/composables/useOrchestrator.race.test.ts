@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   listAgents: vi.fn(),
   listTopology: vi.fn(),
+  listTopologyPositions: vi.fn(),
   listModelTemplates: vi.fn(),
   listRagSources: vi.fn(),
   getAgentIcon: vi.fn(),
@@ -68,6 +69,7 @@ describe("refreshAll の並行競合", () => {
     const orchestrator = useOrchestrator();
 
     h.listTopology.mockResolvedValue([]);
+    h.listTopologyPositions.mockResolvedValue({});
     h.listModelTemplates.mockResolvedValue([]);
     h.listRagSources.mockResolvedValue([]);
     h.getAgentIcon.mockResolvedValue(null);
@@ -98,6 +100,7 @@ describe("refreshAll の並行競合", () => {
     const orchestrator = useOrchestrator();
 
     h.listTopology.mockResolvedValue([]);
+    h.listTopologyPositions.mockResolvedValue({});
     h.listModelTemplates.mockResolvedValue([]);
     h.listRagSources.mockResolvedValue([]);
     h.getAgentIcon.mockResolvedValue(null);

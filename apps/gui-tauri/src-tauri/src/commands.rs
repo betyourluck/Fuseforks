@@ -14,6 +14,7 @@ use agent_core::model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, ConfigFileKind, ModelTemplate,
     ModelTemplateId, TopologyEdge,
 };
+use agent_core::world::TopologyPosition;
 use agent_core::{CoreError, CoreResult, RagChunk};
 use tauri::State;
 
@@ -59,6 +60,14 @@ pub async fn list_agents(state: State<'_, AppState>) -> CoreResult<Vec<AgentSnap
 #[tauri::command]
 pub async fn list_topology(state: State<'_, AppState>) -> CoreResult<Vec<TopologyEdge>> {
     Ok(state.orchestrator.edges().await)
+}
+
+/// 接続マップの保存済みノード座標を返す。
+#[tauri::command]
+pub async fn list_topology_positions(
+    state: State<'_, AppState>,
+) -> CoreResult<HashMap<AgentId, TopologyPosition>> {
+    Ok(state.orchestrator.topology_positions().await.into_iter().collect())
 }
 
 /// メッセージログを返す。`limit` 指定時は末尾からその件数。
@@ -147,6 +156,19 @@ pub async fn set_connections(
 #[tauri::command]
 pub async fn reorder_agents(state: State<'_, AppState>, order: Vec<AgentId>) -> CoreResult<()> {
     state.orchestrator.reorder_agents(&order).await
+}
+
+/// 接続マップ上で移動したノードの座標を保存する。
+#[tauri::command]
+pub async fn set_topology_position(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    position: TopologyPosition,
+) -> CoreResult<()> {
+    state
+        .orchestrator
+        .set_topology_position(&agent_id, position)
+        .await
 }
 
 /// モデルテンプレートを登録または更新する。
