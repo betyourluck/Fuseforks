@@ -6,13 +6,14 @@
  * 別画面にあると「何もできないアプリ」に見えるため。
  */
 import { computed, ref } from "vue";
+import { VueDraggable } from "vue-draggable-plus";
 
 import AgentCard from "./AgentCard.vue";
 import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { batchAction, batchLabel } from "../lib/batchStart";
-import type { AgentId, AgentSpec } from "../types";
+import type { AgentId, AgentSnapshot, AgentSpec } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -95,15 +96,9 @@ async function submitNew(): Promise<void> {
   }
 }
 
-/** カードを 1 つ上下に動かす。 */
-async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
-  const ordered = agents.value.map((a) => a.id);
-  const from = ordered.indexOf(agentId);
-  const to = from + direction;
-  if (from < 0 || to < 0 || to >= ordered.length) return;
-
-  [ordered[from], ordered[to]] = [ordered[to], ordered[from]];
-  await orchestrator.reorder(ordered);
+/** ドラッグライブラリが返した表示順を保存する。 */
+async function reorder(reordered: AgentSnapshot[]): Promise<void> {
+  await orchestrator.reorder(reordered.map((agent) => agent.id));
 }
 </script>
 
@@ -112,7 +107,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
     <header
       class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
     >
-      <h2 class="font-semibold tracking-wide">エージェント</h2>
+      <h2 class="font-semibold tracking-wide">サーヴァント</h2>
 
       <!--
         一括起動 / 一括停止。対象は各カードのトグル（batchStart）で選ぶ。
@@ -180,7 +175,18 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
       </div>
     </form>
 
-    <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+    <VueDraggable
+      :model-value="agents"
+      tag="div"
+      class="min-h-0 flex-1 space-y-2 overflow-y-auto p-3"
+      :animation="150"
+      :force-fallback="true"
+      ghost-class="opacity-40"
+      chosen-class="agent-card--dragging"
+      filter="button, input, textarea"
+      :prevent-on-filter="false"
+      @update:model-value="reorder"
+    >
       <AgentCard
         v-for="agent in agents"
         :key="agent.id"
@@ -192,7 +198,6 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         @configure="configuring = agent.id"
         @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
         @batch-start="(included) => orchestrator.setBatchStart(agent.id, included)"
-        @move="(direction) => move(agent.id, direction)"
       />
 
       <p
@@ -202,7 +207,7 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
         エージェントがまだありません。<br />
         右上の ＋ から追加してください。
       </p>
-    </div>
+    </VueDraggable>
 
     <ModelTemplateDialog v-if="showTemplates" @close="showTemplates = false" />
     <AgentSettingsDialog
@@ -212,3 +217,9 @@ async function move(agentId: AgentId, direction: -1 | 1): Promise<void> {
     />
   </div>
 </template>
+
+<style>
+.agent-card--dragging {
+  border-color: var(--color-accent);
+}
+</style>

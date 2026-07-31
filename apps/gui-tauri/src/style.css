@@ -1,4 +1,11 @@
+@import url("https://fonts.googleapis.com/css2?family=DotGothic16&display=swap");
 @import "tailwindcss";
+
+:root {
+  --c-accent: 168 85 247;
+  --scrollbar-neon: oklch(0.72 0.14 232);
+  --scrollbar-neon-bright: oklch(0.82 0.16 224);
+}
 
 /*
  * デザイントークン。
@@ -206,15 +213,30 @@ textarea,
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-thumb {
   background-color: var(--color-line);
-  border-radius: 5px;
+  border: 1px solid var(--color-surface-0);
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-track {
-  background-color: transparent;
+  background-color: color-mix(in oklab, var(--color-surface-0) 72%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    to bottom,
+    var(--scrollbar-neon-bright),
+    var(--scrollbar-neon)
+  );
+  box-shadow: 0 0 9px color-mix(in oklab, var(--scrollbar-neon) 68%, transparent);
+}
+
+* {
+  scrollbar-color: var(--color-line) var(--color-surface-0);
+  scrollbar-width: thin;
 }
 
 /*
