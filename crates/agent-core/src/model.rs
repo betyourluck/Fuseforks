@@ -671,7 +671,7 @@ mod tests {
             template.effective_provider(),
             crate::llm::Provider::OpenAiCompat
         );
-        assert!(!template.grounding_active(), "互換経路では接地しない");
+        assert!(!template.grounding_active(), "互換経路ではグラウンディングしない");
 
         // 明示選択して初めて有効になる。
         template.provider = Some(crate::llm::Provider::Gemini);

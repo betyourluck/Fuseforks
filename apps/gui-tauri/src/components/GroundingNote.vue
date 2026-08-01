@@ -31,7 +31,7 @@ function open(uri: string): void {
     class="mt-1 min-w-0 max-w-full rounded-lg border border-line bg-surface-1 px-2 py-1.5 text-[10px] leading-relaxed text-ink-dim"
   >
     <p class="flex flex-wrap items-baseline gap-1">
-      <span class="font-medium text-ink">接地</span>
+      <span class="font-medium text-ink">グラウンディング</span>
       <span>Google 検索</span>
     </p>
 

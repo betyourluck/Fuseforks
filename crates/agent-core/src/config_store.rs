@@ -350,7 +350,7 @@ impl ConfigStore {
         // なく実装側から入れる（接地を有効にした全員に等しく効く）。
         if grounded {
             prompt.push_str(
-                "## 接地（Google 検索）について\n\
+                "## グラウンディング（Google 検索）について\n\
                  あなたは Google 検索で裏を取ってから答えられます。ただし\
                  **参照したページの URL は、あなたの手元には渡ってきません。**\n\
                  - **URL を書かないでください。** 出典を求められたら\
@@ -650,11 +650,11 @@ mod tests {
 
         // 会話ごとに揺れない情報なので、キャッシュの安定部分に入っていること。
         let stable: String = grounded.chars().take(stable_len).collect();
-        assert!(stable.contains("接地（Google 検索）について"));
+        assert!(stable.contains("グラウンディング（Google 検索）について"));
 
         // 接地していないエージェントには出さない。無関係な制約を負わせない。
         let (plain, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
-        assert!(!plain.contains("接地（Google 検索）について"));
+        assert!(!plain.contains("グラウンディング（Google 検索）について"));
     }
 
     /// エージェント別 mcp.json は保存時にパース検証されること（失敗二分類 (1)）。

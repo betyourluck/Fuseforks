@@ -551,7 +551,7 @@ function onTemperature(raw: string): void {
               google_search が 400 で拒否されるため、押しても効かない。
             -->
             <template v-if="supportsGoogleSearch">
-              <label class="text-ink-dim">Google 接地</label>
+              <label class="text-ink-dim">Google グラウンディング</label>
               <label class="flex items-center gap-2">
                 <input v-model="draft.googleSearch" type="checkbox" />
                 <span class="text-ink-dim">
@@ -565,10 +565,10 @@ function onTemperature(raw: string): void {
               その時だけ理由と直し方を出す。
             -->
             <template v-else-if="strandedGoogleSearch">
-              <label class="text-warn">Google 接地</label>
+              <label class="text-warn">Google グラウンディング</label>
               <p class="text-warn">
                 有効になっていますが、<strong>プロトコルが Gemini ではないため働きません</strong>。
-                接地は Gemini ネイティブ経路にしかありません。使うならプロトコルを
+                グラウンディングは Gemini ネイティブ経路にしかありません。使うならプロトコルを
                 「Gemini ネイティブ」にしてください。
               </p>
             </template>
