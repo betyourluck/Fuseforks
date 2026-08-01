@@ -4630,3 +4630,401 @@ async fn presence_reaches_optout_agents_and_roster_lists_by_connection_order() {
         "protocol_note に失敗の語彙の周知が入ること: {joined}"
     );
 }
+
+// ---- Spec 10: 割り込み停止（Phase 1 — ターン局所の純機構） ----------------
+
+/// テスト用の即答ツール。割り込みテストでターンを回し続けるための燃料。
+struct BusyTool;
+
+#[async_trait::async_trait]
+impl AgentTool for BusyTool {
+    fn name(&self) -> &str {
+        "busy_probe"
+    }
+    fn description(&self) -> String {
+        "テスト用の即答ツール".into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    async fn call(
+        &self,
+        _ctx: &ToolContext,
+        _args: &serde_json::Value,
+    ) -> agent_core::CoreResult<String> {
+        Ok("ok".into())
+    }
+}
+
+/// ツールを呼び続け、テストが許可するまで応答を返さないバックエンド。
+///
+/// 割り込みの述語は「LLM が呼ばれた回数」— ターンの終了を述語にすると、
+/// 完走した場合でも通ってしまう（Spec 10 検証の設計 / #45 の一般化 4）。
+/// ゲートで 1 呼び出しずつ進めるのは、壁時計に依存せず「割り込みがどの周回の
+/// 前に届いたか」を決定的にするため。
+struct GatedLoopingBackend {
+    /// chat が呼ばれた回数。
+    calls: Arc<std::sync::atomic::AtomicU32>,
+    /// 各呼び出しの開始通知（テスト側はこれを見てから割り込む）。
+    started: tokio::sync::mpsc::UnboundedSender<u32>,
+    /// 応答を返してよい数。`add_permits` で進める。
+    gate: Arc<tokio::sync::Semaphore>,
+    /// 真なら本文だけ返してターンを終える（打ち切り後の「次のターン」用）。
+    plain: Arc<std::sync::atomic::AtomicBool>,
+    /// 直近の chat が受け取った messages（履歴の検証に使う）。
+    last_request: Arc<std::sync::Mutex<Vec<ChatMessage>>>,
+}
+
+impl GatedLoopingBackend {
+    fn new() -> (
+        Arc<Self>,
+        tokio::sync::mpsc::UnboundedReceiver<u32>,
+        Arc<tokio::sync::Semaphore>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let backend = Arc::new(Self {
+            calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            started: tx,
+            gate: Arc::clone(&gate),
+            plain: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_request: Arc::new(std::sync::Mutex::new(Vec::new())),
+        });
+        (backend, rx, gate)
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for GatedLoopingBackend {
+    fn name(&self) -> &str {
+        "gated-looping"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        *self.last_request.lock().unwrap() = req.messages.clone();
+        let _ = self.started.send(n);
+        self.gate.acquire().await.expect("gate は閉じない").forget();
+
+        if self.plain.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(ChatResponse {
+                text: Some("済みました".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            });
+        }
+
+        // 毎回違う引数で呼ぶ。RepeatGuard（#41）に掛けない — ここで測るのは
+        // 割り込みで、繰り返し検出が先に止めるとテストの述語が濁る。
+        Ok(ChatResponse {
+            text: Some(String::new()),
+            tool_calls: vec![ToolCall {
+                id: format!("call_{n}"),
+                name: "busy_probe".into(),
+                args: serde_json::json!({ "round": n }),
+                extra: None,
+            }],
+            finish: Finish::ToolUse,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 割り込みイベントの数を数える。
+fn interruptions(events: &[CoreEvent]) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::TurnInterrupted { .. }))
+        .count()
+}
+
+/// 打ち切りの System 行を集める。
+fn interrupt_notices<'a>(events: &'a [CoreEvent]) -> Vec<&'a agent_core::AgentMessage> {
+    messages(events)
+        .into_iter()
+        .filter(|m| {
+            m.from == Endpoint::System
+                && m.content.contains("ターンをユーザーの指示で打ち切りました")
+        })
+        .collect()
+}
+
+/// **割り込みは周回境界でターンを切り、エージェントは稼働したまま残る。**
+///
+/// 述語は LLM の呼び出し回数（1 回で止まること）。出口 2a の 3 点のうち
+/// (a) System 行と、打ち切りが失敗扱いにならないこと（AgentFailed ゼロ・
+/// Running のまま）も同時に固定する。続けて次の依頼が普通に処理されること、
+/// その履歴に「送った形のままの受信側 + 打ち切り注記」が載っていて
+/// ツールの断片が残っていないこと（#29 / #45 の不変条件）まで見る。
+#[tokio::test]
+async fn an_interrupt_cuts_the_turn_at_the_round_boundary() {
+    let dir = TempDir::new("interrupt-cut");
+    let (backend, mut started, gate) = GatedLoopingBackend::new();
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "ずっと調べ続けて").await.unwrap();
+
+    // 1 周目の LLM 呼び出しが始まった = ターンは確実に飛行中。
+    started.recv().await.expect("1 周目が始まること");
+    orchestrator.interrupt_turn(&id).await;
+    // 飛行中の呼び出しは完走させる（rev1 の判断）— ここで初めて応答を許す。
+    gate.add_permits(1);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(
+        backend.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "割り込み後は次の周回の LLM を呼ばないこと"
+    );
+    assert_eq!(interruptions(&events), 1, "TurnInterrupted は 1 本: {events:?}");
+    let notices = interrupt_notices(&events);
+    assert_eq!(notices.len(), 1, "System 行は 1 本: {notices:#?}");
+    assert!(
+        notices[0].content.contains("agent_01（ザリ）"),
+        "誰のターンかを名指しする: {}",
+        notices[0].content
+    );
+    assert!(
+        notices[0].content.contains("秒"),
+        "要求から検知までの elapsed を含む（Notes 2 の判断材料）: {}",
+        notices[0].content
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, CoreEvent::AgentFailed { .. })),
+        "打ち切りは失敗ではない（不変条件 4）"
+    );
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Running,
+        "稼働は降ろさない"
+    );
+
+    // 次の依頼は普通に処理される（割り込みがターン B へ漏れない — 不変条件 6）。
+    backend.plain.store(true, std::sync::atomic::Ordering::SeqCst);
+    gate.add_permits(10);
+    let mut rx2 = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "元気ですか").await.unwrap();
+    let events2 = drain_until_quiet(&mut rx2, Duration::from_millis(400)).await;
+
+    assert_eq!(interruptions(&events2), 0, "新しいターンは切られない");
+    assert!(
+        messages(&events2)
+            .iter()
+            .any(|m| matches!(m.from, Endpoint::Agent { .. }) && m.content.contains("済みました")),
+        "次のターンは完走して答えが返ること: {events2:?}"
+    );
+
+    // 打ち切られたターンの履歴（次のターンのリクエストに載っている形で検証）。
+    let request = backend.last_request.lock().unwrap().clone();
+    assert!(
+        request
+            .iter()
+            .any(|m| m.role == Role::Assistant
+                && m.content.contains("このターンはユーザーの指示で打ち切られました")),
+        "履歴に打ち切り注記が残ること（失敗の文言ではなく）"
+    );
+    assert!(
+        request
+            .iter()
+            .any(|m| m.role == Role::User
+                && m.content.contains("【送り手: ユーザー】")
+                && m.content.contains("ずっと調べ続けて")),
+        "受信側は送った形のまま積まれること（#45 — attributed へ縮めない）"
+    );
+    assert!(
+        !request.iter().any(|m| m.role == Role::Tool),
+        "打ち切られたターンのツールの断片は履歴に残らないこと（#29）"
+    );
+}
+
+/// **飛行中のターンが無い割り込みは no-op（出口 2c）。**
+///
+/// 何も出さず成功し、あとから始まるターンへ漏れない（不変条件 6 の
+/// 「エージェントに紐づくフラグを置かない」の外形）。
+#[tokio::test]
+async fn an_interrupt_while_idle_is_a_noop_and_does_not_leak() {
+    let dir = TempDir::new("interrupt-noop");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    // 飛行中のターンが無い状態で割り込む。エラーにも通知にもならない。
+    orchestrator.interrupt_turn(&id).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(interruptions(&events), 0, "あとから始まるターンへ漏れない");
+    assert!(interrupt_notices(&events).is_empty(), "System 行も出ない");
+    assert!(
+        messages(&events)
+            .iter()
+            .any(|m| matches!(m.from, Endpoint::Agent { .. })),
+        "ターンは普通に完走する: {events:?}"
+    );
+}
+
+/// **二重割り込みでも出口の行は 1 本（interrupt_all と同じ形の冪等性）。**
+///
+/// 出口の行は切られたターン自身が検知時に書く — 割り込んだ側が書かないから、
+/// 何回要求が重なっても検知は 1 回で行は 1 本になる。
+#[tokio::test]
+async fn a_double_interrupt_writes_one_notice() {
+    let dir = TempDir::new("interrupt-double");
+    let (backend, mut started, gate) = GatedLoopingBackend::new();
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べ続けて").await.unwrap();
+    started.recv().await.expect("1 周目が始まること");
+
+    orchestrator.interrupt_turn(&id).await;
+    orchestrator.interrupt_turn(&id).await;
+    gate.add_permits(1);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    assert_eq!(interruptions(&events), 1, "イベントは 1 本: {events:?}");
+    assert_eq!(interrupt_notices(&events).len(), 1, "System 行も 1 本");
+}
+
+/// 進行役は委譲し、ワーカー側はゲートつきでツールを回し続けるバックエンド。
+///
+/// 役の判別は提示ツールで行う（`ask_*` を持つ側が進行役）。委譲の結果が
+/// 届いたら、その本文を引用して会話を終える。
+struct GatedAskBackend {
+    calls_worker: Arc<std::sync::atomic::AtomicU32>,
+    started: tokio::sync::mpsc::UnboundedSender<u32>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for GatedAskBackend {
+    fn name(&self) -> &str {
+        "gated-ask"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        if let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_")) {
+            // 進行役。結果が届いていればそれを引用して終える。
+            if let Some(result) = req.messages.iter().rev().find(|m| m.role == Role::Tool) {
+                return Ok(ChatResponse {
+                    text: Some(format!("結果: {}", result.content)),
+                    tool_calls: Vec::new(),
+                    finish: Finish::Stop,
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    grounding: Default::default(),
+                });
+            }
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: "ask_1".into(),
+                    name: ask.name.clone(),
+                    args: serde_json::json!({ "message": "調査して" }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            });
+        }
+
+        // ワーカー。ゲートが開くまで応答を返さず、開いたらツールを 1 本呼ぶ。
+        let n = self
+            .calls_worker
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let _ = self.started.send(n);
+        self.gate.acquire().await.expect("gate は閉じない").forget();
+        Ok(ChatResponse {
+            text: Some(String::new()),
+            tool_calls: vec![ToolCall {
+                id: format!("w_{n}"),
+                name: "busy_probe".into(),
+                args: serde_json::json!({ "round": n }),
+                extra: None,
+            }],
+            finish: Finish::ToolUse,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// **打ち切られたワーカーは、依頼主に「打ち切られた」と伝わる（出口 2a の (c)）。**
+///
+/// 依頼主が読むのは契約 P3 の固定文。oneshot が黙って drop されると依頼主は
+/// 「相手から答えが返りませんでした」（NoAnswer の文言）を読むことになる —
+/// それは嘘なので、Reply が届くことを文言で固定する。
+#[tokio::test]
+async fn an_interrupted_worker_reports_the_cut_to_its_asker() {
+    let dir = TempDir::new("interrupt-ask");
+    let (tx, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let backend = Arc::new(GatedAskBackend {
+        calls_worker: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        started: tx,
+        gate: Arc::clone(&gate),
+    });
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend.clone(),
+        &[("agent_w1", "ワーカー")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    let worker = workers[0].clone();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "調査依頼").await.unwrap();
+
+    // ワーカーのターンが始まってから切る。飛行中の呼び出しは完走させる。
+    started.recv().await.expect("ワーカーの 1 周目が始まること");
+    orchestrator.interrupt_turn(&worker).await;
+    gate.add_permits(1);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+
+    assert_eq!(
+        backend.calls_worker.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "ワーカーは割り込み後に LLM を呼ばない"
+    );
+    let final_reply = messages(&events)
+        .into_iter()
+        .find(|m| {
+            matches!(&m.from, Endpoint::Agent { id } if *id == lead) && m.to == Endpoint::User
+        })
+        .expect("進行役は束ねてユーザーへ返す")
+        .content
+        .clone();
+    assert!(
+        final_reply.contains("この依頼はユーザーの指示で打ち切られました"),
+        "依頼主は打ち切りの事実を固定文で読む（NoAnswer の文言ではなく）: {final_reply}"
+    );
+}

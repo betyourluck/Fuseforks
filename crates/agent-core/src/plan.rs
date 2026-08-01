@@ -39,6 +39,12 @@ pub enum PlanTaskState {
     NoAnswer,
     /// 時間内に返らなかった。
     TimedOut,
+    /// 人が止めさせた（Spec 10）。失敗ではない — セル色も失敗色にしない
+    /// （`turn_interrupt` の不変条件 4 と同じ判断）。刻み手は 3 箇所に限る:
+    /// 飛行中の中断（`handle_message` の検知点）・未着手封筒の畳み
+    /// （`agent_loop` のターン開始直後、Phase 2）・`run_plan` の
+    /// `finish_wave`（割り込みで波を閉じるときの running の倒し先、Phase 2）。
+    Interrupted,
 }
 
 /// `PlanWaveStarted` が運ぶタスクの告知形。開始時点で確定している 2 欄だけを持つ

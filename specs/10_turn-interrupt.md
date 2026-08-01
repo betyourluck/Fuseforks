@@ -2,10 +2,17 @@
 
 **ID**: 10
 **Date**: 2026-08-01
-**Status**: **rev2 査読承認**（2026-08-01 LGTM）→ **Phase 0 着手**。
+**Status**: **rev2 査読承認**（2026-08-01 LGTM）→ **Phase 0〜1 完了**（2026-08-01）。
+Phase 0 = 契約凍結 + tokio-util 直接化（b06125d）。
+Phase 1 = ターン局所の純機構 — `TurnHandle { seq, token }`・周回境界の検査・
+`finish_interrupted` / `record_interrupted_turn`・出口 2a / 2c・
+`interrupt_turn(agent_id)`（コア API は Phase 1 へ前倒し。テストが公開面を
+必要としたため。IPC / UI / interrupt_all / stop_agent 高速化は Phase 3 のまま）。
+結合テスト 4 本（周回境界で切れ稼働は残る / idle は no-op で漏れない /
+二重割り込みで行 1 本 / 打ち切られたワーカーの Reply が依頼主へ届く）。
 承認時の追記 2 点は不変条件 2b と P2 へ反映済み
 （2b は `TurnInterrupted` を出さない / 親が先に Interrupted で確定した後の
-子の Reply send 失敗は正常）
+子の Reply send 失敗は正常）。残は Phase 2（波への伝播）〜 Phase 4
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜09 と同じプロセス）
 
 rev2 で入った差分（査読 2026-08-01）:
@@ -312,11 +319,15 @@ round 行が元々 0 本なので「増えない」は証拠にならない。C 
    依頼の可視性は依頼主側の Interrupted セルが担う）
 5. **（解決済み）`record_failed_turn` との関係** — `record_interrupted_turn` を
    新設。P1 に記載
-6. **キャッシュへの影響** — 打ち切りターンは #45 の失敗ターンと同じく attributed
-   だけを積む = キャッシュが 1 回リセットされる。**ただしこれが起きるのは
-   LLM を 1 回以上呼んだターンが中断されたときだけ**（rev2 で限定 — 未着手の
-   畳みは履歴に何も積まないので、リセットも起きない）。打ち切りは例外的な
-   人の操作なので許容する（#45 の「残す穴」と同じ判断）
+6. **キャッシュへの影響 — Phase 1 実装で rev2 の想定より良い事実が確定した。**
+   rev2 は「失敗ターンと同じく attributed だけを積む = リセット 1 回」と
+   書いたが、**打ち切りの検知点では組み立てが済んでいる**ので、失敗経路と
+   違って送った形（`sent_user_turn`）が手元にある。縮める理由が無いので
+   そのまま積む — 受信側の前方一致は切れず、**キャッシュのリセットは
+   起きない**（切られたターンの位置までのプレフィックスは次のターンでも
+   一致する）。attributed へ縮めるのは `record_failed_turn`（組み立て前に
+   落ちうる経路）だけになった。固定は
+   an_interrupt_cuts_the_turn_at_the_round_boundary の履歴検証
 7. **（不変条件 6 へ昇格）割り込みの競合** — seq 束縛として凍結
 8. **拡張か収縮か**（起票時の自問）: 拡張。ただし「止める」方向の拡張で、
    自動で仕事を増やす機構は含まない。収縮側の代替（既存の `stop_agent` だけで

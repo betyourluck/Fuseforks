@@ -232,6 +232,17 @@ struct Shared {
     /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
     /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
     plan_waves: RwLock<PlanWaveStore>,
+    /// 飛行中ターンの割り込みハンドル（Spec 10）。キーの有無 = 飛行中ターンの有無。
+    ///
+    /// `agent_loop` がターン開始時に入れ、終了時に**自分の seq を確かめてから**
+    /// 外す（不変条件 6 — 割り込みの有効範囲はターン seq に束縛。エージェントに
+    /// 紐づくフラグを置くと、ターン A への割り込みが直後のターン B へ漏れる）。
+    /// 1 エージェント 1 飛行中ターン（不変条件 7 — mpsc の順次処理が根拠）なので
+    /// エントリは高々 1 つ。
+    turns: Mutex<HashMap<AgentId, Arc<TurnHandle>>>,
+    /// ターンの通し番号の採番元。プロセス内で単調増加（エージェント間で共有 —
+    /// 個々のエージェントから見ても単調なので seq 束縛の根拠には十分）。
+    turn_seq: std::sync::atomic::AtomicU64,
     /// `schedules.json` 自体が JSON として読めなかったときの理由。
     ///
     /// この状態では予定の**書き込みを拒否する** — 読めなかったものを
@@ -378,6 +389,23 @@ impl Shared {
     }
 }
 
+/// 飛行中ターン 1 つぶんの割り込みハンドル（Spec 10）。
+///
+/// Phase 1 ではトークンは親を持たない単独生成。Phase 2 で封筒のトークンから
+/// `child_token` で導出する形に変わる（親由来と自分宛が 1 トークンに畳み込まれ、
+/// 検査は 1 本で足りる — 2 本を別々に見る設計は見忘れの席になるので採らない）。
+struct TurnHandle {
+    /// ターンの通し番号。割り込みの有効範囲はこの seq に束縛される。
+    seq: u64,
+    /// このターンの協調的キャンセル。検査点は周回境界だけ（契約の不変条件 1）。
+    token: tokio_util::sync::CancellationToken,
+    /// 最初の割り込み要求の時刻。System 行の「要求から N 秒」の起点。
+    ///
+    /// 2 回目以降の要求では上書きしない（利用者が連打しても、計測は
+    /// 最初に押した瞬間から）。`std::sync::Mutex` なのは await を跨がないため。
+    requested_at: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
 /// 稼働中エージェントのタスク制御。
 struct TaskHandle {
     shutdown: watch::Sender<bool>,
@@ -483,6 +511,8 @@ impl Orchestrator {
             agent_mcp: RwLock::new(HashMap::new()),
             schedules: RwLock::new(schedules),
             plan_waves: RwLock::new(PlanWaveStore::default()),
+            turns: Mutex::new(HashMap::new()),
+            turn_seq: std::sync::atomic::AtomicU64::new(1),
             schedules_blocked,
             config,
         });
@@ -1030,6 +1060,36 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// 飛行中のターンを協調的に打ち切る（Spec 10）。
+    ///
+    /// 切るのは**ターン**であってエージェントではない — 稼働は降ろさず、
+    /// 会話も履歴も消えず、次の封筒は普通に処理される。検知は周回境界
+    /// （次の LLM 呼び出しの前）なので、飛行中の呼び出し・実行中のツールは
+    /// 完走してから止まる。
+    ///
+    /// 飛行中のターンが無ければ**何もしない**（出口 2c — 「今の仕事を止めて」に
+    /// 仕事が無いのは成功であって失敗ではない。エラーも通知も出さない）。
+    /// 冪等 — 二重に呼んでも計測の起点（最初の要求時刻）は動かず、
+    /// 出口の行も 1 本のまま（書くのは切られたターン自身なので）。
+    pub async fn interrupt_turn(&self, id: &AgentId) {
+        let handle = {
+            let turns = self.shared.turns.lock().await;
+            turns.get(id).map(Arc::clone)
+        };
+        let Some(handle) = handle else { return };
+
+        // 計測の起点は最初の要求。連打で上書きすると「要求から N 秒」が縮んで、
+        // 検知の遅さ（Notes 2 の判断材料）が実際より小さく記録される。
+        {
+            let mut requested = handle.requested_at.lock().expect("await を跨がない");
+            if requested.is_none() {
+                *requested = Some(std::time::Instant::now());
+            }
+        }
+        handle.token.cancel();
+        note!("interrupt requested: agent={id} seq={}", handle.seq);
+    }
+
     /// エージェントを停止する。処理中の発話は完了を待つ。
     ///
     /// # Errors
@@ -1504,7 +1564,35 @@ async fn agent_loop(
                     agent_id: agent_id.clone(),
                     active: true,
                 });
-                let outcome = handle_message(&shared, &agent_id, envelope).await;
+
+                // ターンの割り込みハンドル（Spec 10）。ターンごとに新しい seq と
+                // トークンを発行する — エージェントに紐づくフラグを置くと、
+                // ターン A への割り込みが直後のターン B へ漏れる（不変条件 6）。
+                let turn = Arc::new(TurnHandle {
+                    seq: shared
+                        .turn_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    token: tokio_util::sync::CancellationToken::new(),
+                    requested_at: std::sync::Mutex::new(None),
+                });
+                shared
+                    .turns
+                    .lock()
+                    .await
+                    .insert(agent_id.clone(), Arc::clone(&turn));
+
+                let outcome = handle_message(&shared, &agent_id, envelope, &turn).await;
+
+                // 自分の seq を確かめてから外す。順次処理（不変条件 7）の下では
+                // 必ず自分だが、seq を見ない remove は「別のターンのハンドルを
+                // 巻き添えで消す」変更に無言で耐えてしまう。
+                {
+                    let mut turns = shared.turns.lock().await;
+                    if turns.get(&agent_id).is_some_and(|h| h.seq == turn.seq) {
+                        turns.remove(&agent_id);
+                    }
+                }
+
                 shared.emit(CoreEvent::AgentTyping {
                     agent_id: agent_id.clone(),
                     active: false,
@@ -1617,6 +1705,134 @@ async fn record_failed_turn(
     let mut world = shared.world.write().await;
     if let Ok(record) = world.agent_mut(agent_id) {
         record.push_exchange(&attributed, &note, shared.config.history_turns);
+    }
+}
+
+/// 打ち切られたターンの消費量。[`finish_interrupted`] へまとめて渡す。
+///
+/// 個別引数にしないのは、u64 が 3 つ並ぶと呼び出し側の取り違えが
+/// コンパイルを通ってしまうため。
+struct TurnSpend {
+    /// 累計トークン（入力 + 出力）。
+    tokens: u64,
+    /// キャッシュから読んだ入力トークン。
+    cached: u64,
+    /// 入力トークン。
+    prompt: u64,
+    /// 打ち切りまでに完走した LLM 呼び出しの周回数。
+    rounds: u32,
+    /// 受信した発話の hop。
+    hop: u8,
+}
+
+/// 割り込みで打ち切られたターンの出口（Spec 10 — 契約の出口 2a）。
+///
+/// 3 点セット: (a) 会話ログへ System の 1 行（要求から検知までの elapsed を
+/// 含む — LLM 呼び出し中の切断を別 Spec で入れるかの判断材料）
+/// (b) 履歴へ [`record_interrupted_turn`] の注記 (c) 依頼主が居れば
+/// `Reply { kind: Interrupted }`。まとめの LLM 呼び出しは**しない**
+/// （打ち切りの直後にもう 1 回課金しない — RepeatGuard の打ち切りと同じ判断）。
+///
+/// 打ち切りは失敗ではない（不変条件 4） — `AgentFailed` を出さず、
+/// `last_error` にも書かず、ステータスは Running のまま。だからこの関数は
+/// `Ok(())` を返す。ここまでに使ったトークンは実際に消費したので統計へ積む。
+async fn finish_interrupted(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+    turn: &TurnHandle,
+    sent_user_turn: &str,
+    spend: TurnSpend,
+) -> CoreResult<()> {
+    let elapsed = turn
+        .requested_at
+        .lock()
+        .expect("await を跨がない")
+        .map(|at| at.elapsed())
+        .unwrap_or_default();
+
+    // (b) 履歴 + 統計。1 回の world ロックで済ませる。
+    record_interrupted_turn(shared, agent_id, sent_user_turn, &spend).await;
+
+    // (a) 会話ログへ System の 1 行。表示名は「切られた本人」— System 行は
+    // 全員の会話ペインに出るので、誰のターンかを名指ししないと読めない。
+    let display = {
+        let world = shared.world.read().await;
+        world
+            .agent(agent_id)
+            .map(|record| record.spec.name.clone())
+            .unwrap_or_else(|_| agent_id.to_string())
+    };
+    shared
+        .record(AgentMessage::new(
+            Endpoint::System,
+            Endpoint::User,
+            format!(
+                "{agent_id}（{display}）のターンをユーザーの指示で打ち切りました\
+                 （要求から {:.1} 秒）",
+                elapsed.as_secs_f64()
+            ),
+            0,
+        ))
+        .await;
+
+    // 出口の行はここ（切られたターン自身）だけが書く。割り込んだ側は書かない —
+    // 二重割り込み・interrupt_all・親トークン経由が重なっても 1 本になる。
+    shared.emit(CoreEvent::TurnInterrupted {
+        agent_id: agent_id.clone(),
+        turn_seq: turn.seq,
+    });
+
+    // (c) 依頼主への返信。文言は契約（P3）の固定文。受け取り手が既に
+    // 諦めている（タイムアウト・親も打ち切り済み）ことはあるので送信の失敗は
+    // 無視する — 「drop は実装バグ」の射程はワーカーが送らないことであって、
+    // 確定済みの親が受け取らないことではない。
+    if let Some(reply_to) = reply_to {
+        let _ = reply_to.send(Reply {
+            text: "この依頼はユーザーの指示で打ち切られました。答えはありません。".to_owned(),
+            kind: PlanTaskState::Interrupted,
+        });
+    }
+
+    note!(
+        "turn interrupted: agent={agent_id} seq={} hop={} rounds={} elapsed_ms={} \
+         prompt={} cached={} total={}",
+        turn.seq,
+        spend.hop,
+        spend.rounds,
+        elapsed.as_millis(),
+        spend.prompt,
+        spend.cached,
+        spend.tokens,
+    );
+    Ok(())
+}
+
+/// 打ち切られたターンの受信側を履歴へ残す（Spec 10 — 出口 2a の (b)）。
+///
+/// [`record_failed_turn`] と**文言を共有しない** — 失敗の文言を使い回すと、
+/// 次のターンの自分が「エラーが起きた」と誤読する。起きたのは指示による
+/// 打ち切りで、依頼そのものは健在。
+///
+/// 受信側は `sent_user_turn`（実際に送った形）をそのまま積む。`attributed`
+/// だけに縮めると送信と保存が食い違い、その位置で前方一致が切れる
+/// （failures.md #45 — 打ち切りの検知点では組み立てが済んでいるので、
+/// 失敗経路と違って送った形が手元にある。縮める理由が無い）。
+async fn record_interrupted_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    sent_user_turn: &str,
+    spend: &TurnSpend,
+) {
+    let note = "（このターンはユーザーの指示で打ち切られました。\
+                依頼は未処理のまま残っています）";
+
+    let mut world = shared.world.write().await;
+    if let Ok(record) = world.agent_mut(agent_id) {
+        record.total_tokens += spend.tokens;
+        record.cached_tokens += spend.cached;
+        record.prompt_tokens += spend.prompt;
+        record.push_exchange(sent_user_turn, note, shared.config.history_turns);
     }
 }
 
@@ -1846,6 +2062,7 @@ async fn handle_message(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     envelope: Envelope,
+    turn: &TurnHandle,
 ) -> CoreResult<()> {
     let Envelope { incoming, reply_to } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
@@ -2148,6 +2365,29 @@ async fn handle_message(
     let mut plan_wave: u32 = 0;
 
     for iteration in 0..max_tool_iterations {
+        // 割り込みの検査点（Spec 10 — 契約の不変条件 1）。周回境界 =
+        // 次の LLM 呼び出しを組み立てる前。ここなら呼び出しと結果の対（#29）が
+        // 必ず揃っており、送信と保存の一致（#45）も壊れない。飛行中の
+        // LLM 呼び出し・実行中のツールは完走させる（rev1 の判断 — 検知の
+        // 遅さは System 行の elapsed で測り、Notes 2 の判断材料にする）。
+        if turn.token.is_cancelled() {
+            return finish_interrupted(
+                shared,
+                agent_id,
+                reply_to,
+                turn,
+                &sent_user_turn,
+                TurnSpend {
+                    tokens,
+                    cached,
+                    prompt,
+                    rounds: llm_rounds,
+                    hop: incoming.hop,
+                },
+            )
+            .await;
+        }
+
         let request = ChatRequest {
             model: template.model.clone(),
             messages: messages.clone(),

@@ -694,9 +694,12 @@ entities:
              (割り込み要求から検知までの elapsed を含む — LLM 呼び出し中の
              切断を別 Spec で入れるかの判断材料) (b) 履歴へ
              record_interrupted_turn の注記 (record_failed_turn の文言を
-             使い回さない — 失敗の文言だと次のターンの自分が誤読する)
+             使い回さない — 失敗の文言だと次のターンの自分が誤読する。
+             受信側は **sent_user_turn を送った形のまま**積む — 検知点では
+             組み立てが済んでいるので attributed へ縮める理由が無く、
+             前方一致も切れない = 打ち切りでキャッシュはリセットされない)
              (c) 依頼主が居れば Reply { kind: interrupted }。3 点とも必須。
-             まとめの LLM 呼び出しはしない
+             まとめの LLM 呼び出しはしない。ここまでに使ったトークンは統計へ積む
          2b. 未着手で畳まれた封筒: (c) の Reply { interrupted } **だけが必須**。
              会話ログへ出さず・履歴へ積まず・turnInterrupted も出さない。
              debug ログへ turn folded: の 1 行 (Spec 07 の猶予超過と同じ判断)。

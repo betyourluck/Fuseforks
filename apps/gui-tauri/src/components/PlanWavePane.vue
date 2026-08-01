@@ -43,6 +43,7 @@ const STATE_LABELS: Record<PlanTaskState, string> = {
   undeliverable: "配送不可",
   no_answer: "無応答",
   timed_out: "時間切れ",
+  interrupted: "打ち切り",
 };
 
 function taskFor(wave: PlanWaveRecord, agentId: AgentId): PlanTaskRecord | undefined {
@@ -61,6 +62,9 @@ function cellClass(taskState: PlanTaskState): string {
     case "answered":
       return "bg-run";
     case "handed_off":
+    case "interrupted":
+      // 注意色。打ち切りは人が止めさせた結果で、失敗ではない
+      // （data_contract の turn_interrupt 不変条件 4 と同じ判断）。
       return "bg-warn";
     default:
       // undeliverable / no_answer / timed_out。失敗の内訳はツールチップで読む。

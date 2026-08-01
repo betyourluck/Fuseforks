@@ -313,7 +313,9 @@ export type PlanTaskState =
   | "handed_off"
   | "undeliverable"
   | "no_answer"
-  | "timed_out";
+  | "timed_out"
+  /** 人が止めさせた（Spec 10）。失敗ではない — セル色も失敗色にしない。 */
+  | "interrupted";
 
 /** `planWaveStarted` が運ぶタスクの告知形（開始時点で確定している 2 欄だけ）。 */
 export interface PlanTaskAnnounced {
@@ -397,7 +399,10 @@ export type CoreEvent =
       planId: number;
       bundleChars: number;
       elapsedMs: number;
-    };
+    }
+  /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
+      流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
+  | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };
 
 /** 設定ファイル種別と表示名の対応。Rust 側の実ファイル名と揃えてある。 */
 export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
