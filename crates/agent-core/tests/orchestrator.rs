@@ -5270,3 +5270,123 @@ async fn a_queued_wave_task_folds_without_starting_and_direct_work_survives() {
         waves[0].tasks
     );
 }
+
+// ---- Spec 10 Phase 3: interrupt_all と stop_agent の高速化 ------------------
+
+/// **interrupt_all は飛行中の全ターンを切り、飛んでいなければ何もしない（冪等）。**
+///
+/// P1 の for 文であること自体が仕様 — 独自の機構を持たないので、固定するのは
+/// 外形だけ: 飛行中 N 体なら TurnInterrupted が N 本、飛行中 0 なら 0 本。
+#[tokio::test]
+async fn interrupt_all_cuts_every_flying_turn_and_is_idempotent() {
+    let dir = TempDir::new("interrupt-all");
+    let (backend, mut started, gate) = GatedLoopingBackend::new();
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    for (id, name) in [("agent_01", "ワン"), ("agent_02", "ツー")] {
+        let aid = AgentId::from(id);
+        orchestrator
+            .create_agent(AgentSpec::new(aid.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(&aid).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&AgentId::from("agent_01"), "調べて")
+        .await
+        .unwrap();
+    orchestrator
+        .send_user_message(&AgentId::from("agent_02"), "調べて")
+        .await
+        .unwrap();
+    started.recv().await.expect("1 体目が飛ぶこと");
+    started.recv().await.expect("2 体目が飛ぶこと");
+
+    orchestrator.interrupt_all().await;
+    gate.add_permits(2);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    assert_eq!(
+        backend.calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "どちらのターンも次の周回の LLM を呼ばない"
+    );
+    assert_eq!(interruptions(&events), 2, "飛行中 2 体で 2 本: {events:?}");
+
+    // 飛行中が居なくなった状態でもう一度。何も出さず成功する。
+    let mut rx2 = orchestrator.subscribe();
+    orchestrator.interrupt_all().await;
+    let events2 = drain_until_quiet(&mut rx2, Duration::from_millis(200)).await;
+    assert_eq!(interruptions(&events2), 0, "冪等: {events2:?}");
+    assert!(interrupt_notices(&events2).is_empty(), "System 行も出ない");
+}
+
+/// **stop_agent は飛行中ターンへ先に割り込み、完走を待たずに停止する（P5）。**
+///
+/// 述語は LLM の呼び出し回数 — 高速化が効かなければ、解放したゲートで
+/// ターンは max_tool_iterations（既定 12）周まで回ってから止まり、calls が
+/// 12 になる。割り込みは Stopping の通知より前に立つ（stop_agent の順序保証）
+/// ので、Stopping を見てからゲートを開ければ競合しない。
+#[tokio::test]
+async fn stop_agent_interrupts_the_flying_turn_instead_of_waiting() {
+    let dir = TempDir::new("interrupt-stop-fast");
+    let (backend, mut started, gate) = GatedLoopingBackend::new();
+    let orchestrator = Arc::new(
+        setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await,
+    );
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べ続けて").await.unwrap();
+    started.recv().await.expect("ターンが飛ぶこと");
+
+    // stop_agent は join でターンの終了を待つのでタスクに逃がす。
+    let stopper = {
+        let orchestrator = Arc::clone(&orchestrator);
+        let id = id.clone();
+        tokio::spawn(async move { orchestrator.stop_agent(&id).await })
+    };
+
+    // Stopping の通知 = 割り込みは既に立っている（stop_agent の順序保証）。
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("Stopping が 5 秒以内に流れること")
+            .expect("イベントチャネルは生きていること");
+        if matches!(
+            &event,
+            CoreEvent::AgentStatusChanged {
+                status: AgentStatus::Stopping,
+                ..
+            }
+        ) {
+            break;
+        }
+    }
+    // 潤沢に開ける。高速化が無ければここで 12 周まで回れてしまう。
+    gate.add_permits(20);
+
+    stopper
+        .await
+        .expect("stop タスクが落ちないこと")
+        .expect("stop_agent が成功すること");
+
+    assert_eq!(
+        backend.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "飛行中だった 1 周だけで止まる（完走の 12 周を待たない）"
+    );
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Idle,
+        "stop_agent 経由は Running へ戻らず Idle へ（不変条件 4 の但し書き）"
+    );
+}

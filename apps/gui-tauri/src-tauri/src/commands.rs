@@ -354,6 +354,23 @@ pub async fn stop_agent(state: State<'_, AppState>, agent_id: AgentId) -> CoreRe
     state.orchestrator.stop_agent(&agent_id).await
 }
 
+/// 飛行中のターンを協調的に打ち切る（Spec 10）。
+///
+/// 切るのはターンであってエージェントではない — 稼働は降ろさず、会話も
+/// 履歴も残る。飛行中のターンが無ければ何もしない（成功）。
+#[tauri::command]
+pub async fn interrupt_turn(state: State<'_, AppState>, agent_id: AgentId) -> CoreResult<()> {
+    state.orchestrator.interrupt_turn(&agent_id).await;
+    Ok(())
+}
+
+/// 村の飛行中ターンを全部打ち切る（Spec 10）。冪等 — 飛行中が 0 でも成功。
+#[tauri::command]
+pub async fn interrupt_all(state: State<'_, AppState>) -> CoreResult<()> {
+    state.orchestrator.interrupt_all().await;
+    Ok(())
+}
+
 /// トグルスイッチ 1 つで起動・停止を切り替える。
 ///
 /// 「既に稼働中」「稼働していない」は、トグル操作の文脈では失敗ではなく

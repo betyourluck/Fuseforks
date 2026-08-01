@@ -1100,6 +1100,20 @@ impl Orchestrator {
         note!("interrupt requested: agent={id} seq={}", handle.seq);
     }
 
+    /// 村の飛行中ターンを全部打ち切る（Spec 10 P4）。
+    ///
+    /// [`Orchestrator::interrupt_turn`] を全員へ適用するだけの薄い皮 —
+    /// **for 文であること自体が仕様**（独自の機構・独自の重複排除を持たない）。
+    /// 冪等: 飛行中ターンが 1 つも無くても成功。進行役とワーカーが親子で
+    /// 二重に切られても、出口の行は各ターンが検知時に 1 回書くだけなので
+    /// 重複しない。
+    pub async fn interrupt_all(&self) {
+        let ids: Vec<AgentId> = self.shared.turns.lock().await.keys().cloned().collect();
+        for id in ids {
+            self.interrupt_turn(&id).await;
+        }
+    }
+
     /// エージェントを停止する。処理中の発話は完了を待つ。
     ///
     /// # Errors
@@ -1111,6 +1125,15 @@ impl Orchestrator {
                 agent_id: id.to_string(),
             })?
         };
+
+        // 飛行中のターンへ**最初に**割り込みを立てる（Spec 10 P5）。これが無いと、
+        // 長いツールループの完走を下の join で最大 30 秒待つ。ステータスは
+        // 不変条件 4 の但し書き側 — Running へ戻さず Stopping → Idle へ進む
+        // （finish_interrupted はステータスに触れないので衝突しない）。
+        // Stopping の通知より前に立てるのは順序の保証のため — 通知を見た側
+        // （UI・テスト）が「割り込みはもう立っている」に依存できる。
+        // 30 秒の上限は割り込みが効かない異常系の網としてそのまま残す。
+        self.interrupt_turn(id).await;
 
         self.shared.set_status(id, AgentStatus::Stopping).await;
         // 受信箱を先に外し、停止処理中に新しい発話が積まれないようにする。

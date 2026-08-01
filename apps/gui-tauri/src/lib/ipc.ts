@@ -247,6 +247,19 @@ export const setAgentRunning = (agentId: AgentId, running: boolean) =>
   call<AgentSnapshot>("set_agent_running", { agentId, running });
 
 /**
+ * 飛行中のターンを協調的に打ち切る（Spec 10）。
+ *
+ * 切るのはターンであってエージェントではない — 稼働は降ろさず、会話も
+ * 履歴も残る。飛行中のターンが無ければ何も起きない（成功）。検知は周回境界
+ * なので、押した瞬間には止まらない — 表示は `interruptPending` が担う。
+ */
+export const interruptTurn = (agentId: AgentId) =>
+  call<void>("interrupt_turn", { agentId });
+
+/** 村の飛行中ターンを全部打ち切る（Spec 10）。冪等 — 飛行中 0 でも成功。 */
+export const interruptAll = () => call<void>("interrupt_all");
+
+/**
  * ユーザー発話をエージェントへ投入する。
  *
  * `coRecipients` は同報の全宛先（受信者自身を含む）。同報時だけ渡すと、

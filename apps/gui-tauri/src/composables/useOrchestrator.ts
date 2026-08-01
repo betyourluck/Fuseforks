@@ -69,6 +69,14 @@ interface OrchestratorState {
    */
   typing: Record<AgentId, true>;
   /**
+   * 打ち切り要求中のエージェント（Spec 10）。停止ボタンを押してから、
+   * コアが周回境界で検知するまでの間の表示に使う — 検知は飛行中の
+   * LLM 呼び出しの完走を待つので、数秒〜分単位の遅れがありうる。
+   * この間なにも変わらないと「押せていない」ように見える。
+   * `turnInterrupted` か `agentTyping` の終了（完走で逃げ切った場合）で消す。
+   */
+  interruptPending: Record<AgentId, true>;
+  /**
    * 実行されたツールの履歴。会話の時系列に混ぜて表示する。
    *
    * **エージェントが何をしたかは会話ログに現れない** — ツールの結果は
@@ -110,6 +118,7 @@ const state = reactive<OrchestratorState>({
   initError: null,
   icons: {},
   typing: {},
+  interruptPending: {},
   toolRuns: [],
   lastTool: {},
   planWaves: [],
@@ -395,7 +404,18 @@ function applyEvent(event: CoreEvent): void {
         state.typing[event.agentId] = true;
       } else {
         delete state.typing[event.agentId];
+        // ターンは何らかの形で終わった。打ち切り要求が検知される前に完走で
+        // 逃げ切った場合、ここで消さないと「停止要求中…」が永遠に残る。
+        delete state.interruptPending[event.agentId];
       }
+      break;
+
+    case "turnInterrupted":
+      // 出口の行（System の 1 行）は会話ログ側に別途届く（messageSent）。
+      // ここでの仕事は「要求中」表示の解除だけ — トーストは出さない。
+      // 利用者が自分で押した操作の完了をトーストで重ねると、波の連鎖では
+      // 1 回の操作に対して人数分の通知が積まれる。
+      delete state.interruptPending[event.agentId];
       break;
 
     case "toolInvoked": {
@@ -620,6 +640,31 @@ export function useOrchestrator() {
       await mutate(running ? "起動" : "停止", () =>
         ipc.setAgentRunning(agentId, running),
       );
+    },
+
+    /**
+     * 飛行中のターンを打ち切る（Spec 10 — 会話ペインの停止ボタン）。
+     *
+     * 検知は周回境界（飛行中の LLM 呼び出しは完走する）なので、押した瞬間には
+     * 止まらない。その間の「押せている」表示は `interruptPending` が担い、
+     * `turnInterrupted` か typing の終了で解除される。
+     */
+    async interruptTurn(agentId: AgentId): Promise<void> {
+      state.interruptPending[agentId] = true;
+      await mutate("ターンの打ち切り", () => ipc.interruptTurn(agentId));
+    },
+
+    /**
+     * 村の飛行中ターンを全部打ち切る（Spec 10 — 全体停止）。
+     *
+     * 要求中の表示は今まさに飛行中の面々にだけ立てる。飛行していない
+     * エージェントは切られないので、立てると解除する契機が来ない。
+     */
+    async interruptAll(): Promise<void> {
+      for (const agentId of Object.keys(state.typing)) {
+        state.interruptPending[agentId] = true;
+      }
+      await mutate("全ターンの打ち切り", () => ipc.interruptAll());
     },
 
     /**

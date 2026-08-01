@@ -130,6 +130,8 @@ pub fn run() {
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,
+            commands::interrupt_turn,
+            commands::interrupt_all,
             commands::set_agent_running,
             commands::send_user_message,
             commands::reset_conversation,

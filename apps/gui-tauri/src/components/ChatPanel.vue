@@ -303,6 +303,19 @@ async function newChat(): Promise<void> {
       >
         新規チャット
       </button>
+      <!--
+        全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
+        押せない — 押しても何も起きないボタンを活性で見せない。
+        稼働は降ろさない（■ の一括停止とは別物）。
+      -->
+      <button
+        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn transition hover:border-warn disabled:opacity-40"
+        :disabled="!typingAgents.length"
+        title="飛行中のターンを全部打ち切ります（稼働は降ろしません。会話と履歴は残ります）"
+        @click="orchestrator.interruptAll()"
+      >
+        全ターン停止
+      </button>
       <select
         v-model="filterAgentId"
         class="ml-auto min-w-0 rounded border border-line bg-surface-1 px-1.5 py-0.5 outline-none focus:border-accent"
@@ -505,6 +518,24 @@ async function newChat(): Promise<void> {
         >
           <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
         </div>
+        <!--
+          ターンの打ち切り（Spec 10）。切りたくなるのは「考え込んでいる相手」を
+          見ているときなので、入力中バブルの隣が最短。検知は周回境界（飛行中の
+          LLM 呼び出しは完走する）ので、押してから止まるまで間がある —
+          その間は「停止要求中…」で「押せている」ことを見せる。
+        -->
+        <button
+          v-if="!state.interruptPending[agent.id]"
+          class="self-center rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-warn hover:text-warn"
+          :title="`${agent.name} のこのターンを打ち切ります（稼働は降ろしません。会話と履歴は残ります）`"
+          :aria-label="`${agent.name} のターンを打ち切る`"
+          @click="orchestrator.interruptTurn(agent.id)"
+        >
+          ■ 停止
+        </button>
+        <span v-else class="self-center text-[10px] text-ink-dim">
+          停止要求中…（実行中の処理が終わり次第止まります）
+        </span>
       </div>
 
       <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
