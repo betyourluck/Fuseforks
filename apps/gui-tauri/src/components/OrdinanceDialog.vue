@@ -11,6 +11,7 @@
  */
 import { onMounted, ref } from "vue";
 
+import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 
@@ -83,12 +84,12 @@ function requestClose(): void {
         <p v-else-if="loadError" class="py-8 text-center text-[11px] text-fail">
           {{ loadError }}
         </p>
-        <textarea
+        <CodeEditor
           v-else
           v-model="text"
-          spellcheck="false"
+          class="h-full"
+          language="markdown"
           placeholder="例:&#10;ここは Outcasts 村です。&#10;- 雰囲気だけの感想より、実装の中身や検証できる話を大事にする&#10;- 相手の発言を繰り返すくらいなら会話を終える&#10;- 丁寧だが率直に。忖度はしない"
-          class="selectable h-full w-full resize-none rounded border border-line bg-surface-0 p-3 font-mono text-[12px] leading-relaxed outline-none focus:border-accent"
         />
       </div>
 

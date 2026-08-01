@@ -12,6 +12,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 
+import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { McpServerStatus } from "../types";
@@ -154,12 +155,11 @@ function requestClose(): void {
             <span v-else-if="dirty" class="ml-auto text-warn">未保存</span>
           </div>
 
-          <textarea
+          <CodeEditor
             v-model="text"
-            spellcheck="false"
+            class="h-64"
+            language="json"
             placeholder="（未設定）右上の「記入例」から始められます"
-            class="selectable h-64 w-full resize-none rounded border bg-surface-0 p-3 font-mono text-[12px] leading-relaxed outline-none"
-            :class="parseError ? 'border-fail focus:border-fail' : 'border-line focus:border-accent'"
           />
 
           <!-- 接続結果。繋がらなかった理由が見えないと利用者は直しようがない。 -->

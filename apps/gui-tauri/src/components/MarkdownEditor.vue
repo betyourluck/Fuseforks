@@ -9,6 +9,7 @@
  */
 import { computed, ref, watch } from "vue";
 
+import CodeEditor from "./CodeEditor.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { CONFIG_FILE_LABELS, type AgentId, type ConfigFileKind } from "../types";
 
@@ -92,11 +93,11 @@ watch(
     <div class="min-h-0 flex-1 p-3">
       <p v-if="loading" class="text-[11px] text-ink-dim">読み込み中…</p>
 
-      <textarea
+      <CodeEditor
         v-else-if="editable"
         v-model="content"
-        spellcheck="false"
-        class="selectable h-full w-full resize-none rounded border border-line bg-surface-1 p-2 font-mono text-[12px] leading-relaxed outline-none focus:border-accent"
+        class="h-full"
+        :language="kind === 'mcp' ? 'json' : 'markdown'"
         :placeholder="placeholder"
       />
 
