@@ -78,6 +78,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M5 21a2 2 0 0 1-2-2v-1h7" />
         <path d="M10 8h6M10 12h6" />
       </svg>
+      <span>条例</span>
     </button>
 
     <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->
@@ -103,6 +104,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
         <path d="M12 17v5" />
       </svg>
+      <span>共通MCP</span>
     </button>
 
     <!-- 予定。時刻で発火する依頼をここから管理する（Spec 07）。 -->
@@ -112,7 +114,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       aria-label="予定"
       @click="emit('open-schedules')"
     >
-      <!-- 時計 -->
+      <!-- カレンダー -->
       <svg
         width="15"
         height="15"
@@ -124,9 +126,10 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         stroke-linejoin="round"
         aria-hidden="true"
       >
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3.5 2" />
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
       </svg>
+      <span>スケジュール</span>
     </button>
 
     <div class="mx-1 h-4 w-px bg-line"></div>
@@ -166,11 +169,13 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 }
 
 .tb-btn {
-  width: 44px;
+  min-width: 44px;
   height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
   background: transparent;
   border: none;
   color: var(--color-ink-dim, #8b93a7);
@@ -178,6 +183,13 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
   transition:
     background 0.15s,
     color 0.15s;
+}
+.tb-btn svg {
+  flex: none;
+}
+.tb-btn span {
+  font-size: 11px;
+  white-space: nowrap;
 }
 .tb-btn:hover {
   background: color-mix(in oklab, currentColor 12%, transparent);
