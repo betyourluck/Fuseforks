@@ -72,11 +72,13 @@ UI ラベル・README — は「**グラウンディング**」、内部の台�
 2. **割り込み停止** — ターンループの周回境界で見る協調的な打ち切り。
    `stop_agent` は飛行中ターンの完了を待つ設計なので別機構が要る。
    plan の波の途中で切ったときの伝播が設計の主戦場。
-   **Spec 10 起票 → rev2 査読承認 → Phase 0〜1 完了（2026-08-01。契約凍結 +
-   tokio-util 直接化 + ターン局所の純機構 = `interrupt_turn(agent_id)` /
-   `TurnHandle { seq, token }` / 周回境界の検査 / 出口 2a・2c。結合テスト 4 本。
-   Phase 1 で確定した改善: 打ち切りターンは sent_user_turn を送った形のまま
-   積むのでキャッシュはリセットされない。残は Phase 2 = 波への伝播〜Phase 4）** —
+   **Spec 10 起票 → rev2 査読承認 → Phase 0〜2 完了（Phase 0〜1 = 2026-08-01、
+   Phase 2 = 2026-08-02。契約凍結 + ターン局所の純機構 + 波への伝播 =
+   `Envelope.cancel` の child_token 連鎖・ターン開始直後の畳み（出口 2b）・
+   `run_plan` join 待ちの select 化・割り込まれた波の Interrupted 確定。
+   結合テスト 6 本。Phase 1 で確定した改善: 打ち切りターンは sent_user_turn を
+   送った形のまま積むのでキャッシュはリセットされない。
+   残は Phase 3 = IPC/UI/interrupt_all/stop_agent 高速化と Phase 4 = 実機確認）** —
    伝播の単位はエージェントでなくターンの因果（波の巻き添え範囲 =
    その波が配送した封筒だけ）。rev1 査読が矛盾 4 件（不変条件 1 の射程 /
    出口 3 点セットの経路別分割 / stop_agent 但し書き / 畳みの Reply 必須）と

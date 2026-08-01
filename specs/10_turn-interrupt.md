@@ -12,7 +12,18 @@ Phase 1 = ターン局所の純機構 — `TurnHandle { seq, token }`・周回�
 二重割り込みで行 1 本 / 打ち切られたワーカーの Reply が依頼主へ届く）。
 承認時の追記 2 点は不変条件 2b と P2 へ反映済み
 （2b は `TurnInterrupted` を出さない / 親が先に Interrupted で確定した後の
-子の Reply send 失敗は正常）。残は Phase 2（波への伝播）〜 Phase 4
+子の Reply send 失敗は正常）。
+**Phase 2 完了**（2026-08-02）— `Envelope.cancel`（ask / plan の配送だけが持つ・
+依頼元ターンの `child_token`）、ワーカーの自ターントークンは封筒からさらに
+子を導出（検査 1 本のまま）、ターン開始直後の畳み（出口 2b）、`run_plan` の
+join 待ちの select 化（biased で cancelled 優先）、割り込まれた波は未解決
+タスクを Interrupted で確定して閉じる（bundleChars=0。frontend の
+no_answer 倒しが誤発火しないよう、finish の前に 1 件ずつ resolve を流す）。
+連鎖で切られたターンの System 行は elapsed の代わりに
+「依頼元の打ち切りに連鎖」（要求時刻が無いのに 0.0 秒と書くのは嘘の計測値）。
+結合テスト 2 本（進行役を切ると波が畳まれワーカーも止まる /
+未着手タスクは LLM を呼ばず畳まれ・同じワーカーのユーザー直の依頼は完走）。
+残は Phase 3（IPC / UI / interrupt_all / stop_agent 高速化）〜 Phase 4
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜09 と同じプロセス）
 
 rev2 で入った差分（査読 2026-08-01）:

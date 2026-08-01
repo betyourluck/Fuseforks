@@ -5028,3 +5028,245 @@ async fn an_interrupted_worker_reports_the_cut_to_its_asker() {
         "依頼主は打ち切りの事実を固定文で読む（NoAnswer の文言ではなく）: {final_reply}"
     );
 }
+
+// ---- Spec 10 Phase 2: 波への伝播 ------------------------------------------
+
+/// 進行役は plan を 1 回だけ撒き、ワーカーはゲートつきで振る舞うバックエンド。
+///
+/// 役の判別は提示ツール（`plan` を持つ側が進行役）。ワーカーの振る舞いは
+/// 依頼文で分岐する — 「直接依頼」を含めば本文だけ返して終わり、それ以外は
+/// `busy_probe` を呼び続ける（周回境界に到達させるため）。
+struct GatedPlanBackend {
+    /// 撒くタスク（テストが宛先を知っているので固定で渡す）。
+    tasks: serde_json::Value,
+    /// ワーカー側の chat が呼ばれた回数。**畳まれた封筒はここに現れない**のが
+    /// 出口 2b の述語（LLM を 1 回も呼ばずに畳む）。
+    calls_worker: Arc<std::sync::atomic::AtomicU32>,
+    /// ワーカー呼び出しの開始通知。
+    started: tokio::sync::mpsc::UnboundedSender<u32>,
+    /// ワーカーの応答ゲート。
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for GatedPlanBackend {
+    fn name(&self) -> &str {
+        "gated-plan"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        if req.tools.iter().any(|t| t.name == "plan") {
+            // 進行役。束ねが返っていれば終える（割り込み経路では到達しない）。
+            if req.messages.iter().any(|m| m.role == Role::Tool) {
+                return Ok(ChatResponse {
+                    text: Some("まとめました".into()),
+                    tool_calls: Vec::new(),
+                    finish: Finish::Stop,
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    grounding: Default::default(),
+                });
+            }
+            return Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![ToolCall {
+                    id: "plan_1".into(),
+                    name: "plan".into(),
+                    args: serde_json::json!({ "tasks": self.tasks }),
+                    extra: None,
+                }],
+                finish: Finish::ToolUse,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            });
+        }
+
+        // ワーカー。開始を通知し、ゲートが開くまで応答を返さない。
+        let n = self
+            .calls_worker
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let _ = self.started.send(n);
+        self.gate.acquire().await.expect("gate は閉じない").forget();
+
+        let direct = req
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .is_some_and(|m| m.content.contains("直接依頼"));
+        if direct {
+            return Ok(ChatResponse {
+                text: Some("済みました".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            });
+        }
+        Ok(ChatResponse {
+            text: Some(String::new()),
+            tool_calls: vec![ToolCall {
+                id: format!("w_{n}"),
+                name: "busy_probe".into(),
+                args: serde_json::json!({ "round": n }),
+                extra: None,
+            }],
+            finish: Finish::ToolUse,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+fn gated_plan_backend(
+    tasks: serde_json::Value,
+) -> (
+    Arc<GatedPlanBackend>,
+    tokio::sync::mpsc::UnboundedReceiver<u32>,
+    Arc<tokio::sync::Semaphore>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let backend = Arc::new(GatedPlanBackend {
+        tasks,
+        calls_worker: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        started: tx,
+        gate: Arc::clone(&gate),
+    });
+    (backend, rx, gate)
+}
+
+/// **進行役を切ると、波の待ちが畳まれ、ワーカーの仕事も連鎖して止まる。**
+///
+/// run_plan の join 待ちは select で抜ける（周回境界だけでは最悪 ask_timeout の
+/// 180 秒が割り込み不能のまま残る — U2）。ワーカーは封筒の子トークン経由で
+/// 自分の周回境界に止まる。波は interrupted で確定して閉じ、running を残さない。
+#[tokio::test]
+async fn interrupting_the_leader_folds_the_wave_and_stops_its_workers() {
+    let dir = TempDir::new("interrupt-wave");
+    let (backend, mut started, gate) = gated_plan_backend(serde_json::json!([
+        { "to": "agent_w1", "message": "調査して" },
+        { "to": "agent_w2", "message": "調査して" }
+    ]));
+    let (orchestrator, lead, _workers) = setup_facilitator(
+        &dir,
+        backend.clone(),
+        &[("agent_w1", "ワン"), ("agent_w2", "ツー")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&lead, "全員で調査").await.unwrap();
+
+    // 両ワーカーの 1 周目が始まった = 波は配送済みで飛行中。
+    started.recv().await.expect("ワーカー 1 体目");
+    started.recv().await.expect("ワーカー 2 体目");
+    orchestrator.interrupt_turn(&lead).await;
+    // 飛行中の呼び出しは完走させる（rev1 の判断）。
+    gate.add_permits(2);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    assert_eq!(
+        backend
+            .calls_worker
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "ワーカーは割り込み後に次の周回の LLM を呼ばない"
+    );
+    assert_eq!(
+        interruptions(&events),
+        3,
+        "進行役 + 飛行中ワーカー 2 体がそれぞれ 1 回ずつ: {events:?}"
+    );
+    assert_eq!(interrupt_notices(&events).len(), 3, "System 行も 3 本");
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1, "波は記録されている");
+    let wave = &waves[0];
+    assert!(
+        wave.tasks
+            .iter()
+            .all(|t| t.state == PlanTaskState::Interrupted),
+        "全タスクが interrupted で確定（no_answer ではない）: {:?}",
+        wave.tasks
+    );
+    assert!(
+        wave.elapsed_ms.is_some(),
+        "波は閉じている（永遠の running を残さない）"
+    );
+    assert_eq!(wave.bundle_chars, Some(0), "束ねは作られていない");
+}
+
+/// **未着手の波タスクは LLM を呼ばずに畳まれ、同じワーカーの別の依頼は生き残る。**
+///
+/// 伝播の単位は「エージェント」ではなく「ターンの因果」— 進行役を切って
+/// 止まってよいのは、その波が生んだ仕事だけ。ワーカーが並行して受けている
+/// ユーザー直の依頼は完走する（巻き添え禁止）。畳まれた封筒はワーカーの
+/// LLM 呼び出し回数に現れず、TurnInterrupted も出さない（出口 2b）。
+#[tokio::test]
+async fn a_queued_wave_task_folds_without_starting_and_direct_work_survives() {
+    let dir = TempDir::new("interrupt-fold");
+    let (backend, mut started, gate) = gated_plan_backend(serde_json::json!([
+        { "to": "agent_w1", "message": "調査して" },
+        { "to": "agent_w2", "message": "調査して" }
+    ]));
+    let (orchestrator, lead, workers) = setup_facilitator(
+        &dir,
+        backend.clone(),
+        &[("agent_w1", "ワン"), ("agent_w2", "ツー")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+    orchestrator.register_tool(Arc::new(BusyTool)).await;
+    let w1 = workers[0].clone();
+
+    let mut rx = orchestrator.subscribe();
+
+    // W1 を先にユーザー直の依頼で塞ぐ。波の W1 宛タスクは受信箱で待つことになる。
+    orchestrator.send_user_message(&w1, "直接依頼です").await.unwrap();
+    started.recv().await.expect("W1 の直接ターンが始まること");
+
+    orchestrator.send_user_message(&lead, "全員で調査").await.unwrap();
+    // W2 は空いているので波のタスクが始まる。W1 宛は queued のまま。
+    started.recv().await.expect("W2 の波ターンが始まること");
+
+    orchestrator.interrupt_turn(&lead).await;
+    gate.add_permits(4);
+
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    assert_eq!(
+        backend
+            .calls_worker
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "W1 の直接ターンと W2 の波ターンだけ。畳まれた W1 宛タスクは LLM を呼ばない"
+    );
+    assert_eq!(
+        interruptions(&events),
+        2,
+        "切られたのは進行役と飛行中の W2 だけ。W1 は切られていない: {events:?}"
+    );
+    assert!(
+        messages(&events).iter().any(|m| {
+            matches!(&m.from, Endpoint::Agent { id } if *id == w1)
+                && m.to == Endpoint::User
+                && m.content.contains("済みました")
+        }),
+        "W1 のユーザー直の依頼は完走する（巻き添え禁止）: {events:?}"
+    );
+
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1);
+    assert!(
+        waves[0]
+            .tasks
+            .iter()
+            .all(|t| t.state == PlanTaskState::Interrupted),
+        "波の両タスクは interrupted で確定: {:?}",
+        waves[0].tasks
+    );
+}

@@ -170,6 +170,14 @@ struct Envelope {
     incoming: AgentMessage,
     /// 答えを返す先。`None` なら転送・通常配送（答えはユーザーへ）。
     reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+    /// 依頼元ターンのキャンセルの手掛かり（Spec 10 Phase 2）。
+    ///
+    /// `ask` / `plan` の配送だけが持つ（依頼元のターントークンの子）。
+    /// 受信側はターン開始直後にこれを見て、キャンセル済みなら **LLM を
+    /// 1 回も呼ばずに畳む**（出口 2b）。飛行中に切られる場合は、ここから
+    /// さらに子を作った自ターンのトークンが周回境界で検知する — 親由来と
+    /// 自分宛が 1 本に畳み込まれるので、検査箇所は増えない。
+    cancel: Option<tokio_util::sync::CancellationToken>,
 }
 
 /// ask / plan の返信路の積み荷（Spec 08 で素の `String` から拡張）。
@@ -186,11 +194,13 @@ struct Reply {
 }
 
 impl Envelope {
-    /// 返信を求めない通常の配送。
+    /// 返信を求めない通常の配送。ユーザー発話・転送・予定の発火が使う —
+    /// どれも「依頼元ターン」を持たないので、キャンセルの手掛かりも持たない。
     fn plain(incoming: AgentMessage) -> Self {
         Self {
             incoming,
             reply_to: None,
+            cancel: None,
         }
     }
 }
@@ -1552,6 +1562,34 @@ async fn agent_loop(
             received = inbox.recv() => {
                 let Some(envelope) = received else { break };
 
+                // 未着手封筒の畳み（Spec 10 — 出口 2b）。依頼元のターンが既に
+                // 切られていれば、**LLM を 1 回も呼ばずに**畳む。会話ログにも
+                // 履歴にも積まず、TurnInterrupted も出さない（ターンは中断されて
+                // いない。始まらなかっただけ）。依頼主への Reply だけが必須 —
+                // 送らずに drop すると親が no_answer に誤分類する（実装バグと定義）。
+                // 親が既に interrupted で確定していれば send は失敗するが、それは
+                // 正常（race の勝敗は分類を変えない）。
+                if envelope.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                    note!(
+                        "turn folded: agent={agent_id} hop={} from={}",
+                        envelope.incoming.hop,
+                        match &envelope.incoming.from {
+                            Endpoint::User => "user".to_owned(),
+                            Endpoint::System => "system".to_owned(),
+                            Endpoint::Agent { id } => id.to_string(),
+                        },
+                    );
+                    if let Some(reply_to) = envelope.reply_to {
+                        let _ = reply_to.send(Reply {
+                            text: "この依頼はユーザーの指示で打ち切られました。\
+                                   答えはありません。"
+                                .to_owned(),
+                            kind: PlanTaskState::Interrupted,
+                        });
+                    }
+                    continue;
+                }
+
                 // 失敗しても「何を頼まれたか」だけは履歴へ残せるよう、依頼を控える。
                 // handle_message は envelope ごと受け取るので、ここで取っておかないと
                 // 失敗時に依頼文へ触れる手段が無くなる。
@@ -1568,11 +1606,21 @@ async fn agent_loop(
                 // ターンの割り込みハンドル（Spec 10）。ターンごとに新しい seq と
                 // トークンを発行する — エージェントに紐づくフラグを置くと、
                 // ターン A への割り込みが直後のターン B へ漏れる（不変条件 6）。
+                //
+                // 封筒がキャンセルの手掛かりを持つなら、自ターンのトークンは
+                // その**子**として作る（Phase 2）。依頼元の打ち切りも自分への
+                // interrupt_turn も同じ 1 本に畳み込まれ、周回境界の検査は
+                // 増えない。上の畳み検査との競合も無い — キャンセル済みの親から
+                // 作った子はキャンセル済みで生まれる（tokio-util の仕様で確認済み）
+                // ので、この隙間で親が切られてもターンは最初の周回境界で止まる。
                 let turn = Arc::new(TurnHandle {
                     seq: shared
                         .turn_seq
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                    token: tokio_util::sync::CancellationToken::new(),
+                    token: match &envelope.cancel {
+                        Some(parent) => parent.child_token(),
+                        None => tokio_util::sync::CancellationToken::new(),
+                    },
                     requested_at: std::sync::Mutex::new(None),
                 });
                 shared
@@ -1744,12 +1792,18 @@ async fn finish_interrupted(
     sent_user_turn: &str,
     spend: TurnSpend,
 ) -> CoreResult<()> {
+    // None = 自分への interrupt_turn ではなく、依頼元の打ち切りが子トークン
+    // 経由で連鎖した（Phase 2）。そのとき「要求から 0.0 秒」と書くと、
+    // 検知が一瞬だったという嘘の計測値になる — 計測が無いことを言葉で言う。
     let elapsed = turn
         .requested_at
         .lock()
         .expect("await を跨がない")
-        .map(|at| at.elapsed())
-        .unwrap_or_default();
+        .map(|at| at.elapsed());
+    let cause = match elapsed {
+        Some(elapsed) => format!("要求から {:.1} 秒", elapsed.as_secs_f64()),
+        None => "依頼元の打ち切りに連鎖".to_owned(),
+    };
 
     // (b) 履歴 + 統計。1 回の world ロックで済ませる。
     record_interrupted_turn(shared, agent_id, sent_user_turn, &spend).await;
@@ -1767,11 +1821,7 @@ async fn finish_interrupted(
         .record(AgentMessage::new(
             Endpoint::System,
             Endpoint::User,
-            format!(
-                "{agent_id}（{display}）のターンをユーザーの指示で打ち切りました\
-                 （要求から {:.1} 秒）",
-                elapsed.as_secs_f64()
-            ),
+            format!("{agent_id}（{display}）のターンをユーザーの指示で打ち切りました（{cause}）"),
             0,
         ))
         .await;
@@ -1800,7 +1850,8 @@ async fn finish_interrupted(
         turn.seq,
         spend.hop,
         spend.rounds,
-        elapsed.as_millis(),
+        // 連鎖（None）は -1。0 と区別する — 0 は「即検知」という実測値。
+        elapsed.map_or(-1, |e| i128::try_from(e.as_millis()).unwrap_or(i128::MAX)),
         spend.prompt,
         spend.cached,
         spend.tokens,
@@ -2064,7 +2115,13 @@ async fn handle_message(
     envelope: Envelope,
     turn: &TurnHandle,
 ) -> CoreResult<()> {
-    let Envelope { incoming, reply_to } = envelope;
+    let Envelope {
+        incoming,
+        reply_to,
+        // 自ターンのトークンは agent_loop が子として導出済み（`turn.token`）。
+        // ここで別々に見ると 2 本の検査になる — 1 本に畳むのが Phase 2 の核。
+        cancel: _,
+    } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
     // LLM の応答を待っている間はログが止まって見える（2026-07-31 に実際に
@@ -2505,11 +2562,20 @@ async fn handle_message(
                 && call.name == HandoffTools::PLAN
             {
                 plan_wave += 1;
-                Ok(run_plan(shared, agent_id, &handoffs, call, incoming.hop, plan_wave).await)
+                Ok(run_plan(
+                    shared,
+                    agent_id,
+                    &handoffs,
+                    call,
+                    incoming.hop,
+                    plan_wave,
+                    &turn.token,
+                )
+                .await)
             } else {
                 match handoffs.resolve_ask(&call.name) {
                     Some(target) if use_handoff_tools => {
-                        ask_agent(shared, agent_id, target, call, incoming.hop).await
+                        ask_agent(shared, agent_id, target, call, incoming.hop, &turn.token).await
                     }
                     _ => execute_tool(shared, agent_id, call).await,
                 }
@@ -2985,6 +3051,7 @@ async fn ask_agent(
     to: &AgentId,
     call: &crate::llm::ToolCall,
     hop: u8,
+    parent: &tokio_util::sync::CancellationToken,
 ) -> CoreResult<String> {
     let question = call
         .args
@@ -3003,7 +3070,9 @@ async fn ask_agent(
     }
 
     // ask は分類を捨てる（.0）。分類は波ペインの素材で、ask の関心ではない。
-    Ok(deliver_and_wait(shared, from, to, &question, next_hop).await.0)
+    Ok(deliver_and_wait(shared, from, to, &question, next_hop, parent)
+        .await
+        .0)
 }
 
 /// 1 件の依頼を配送し、答えを待つ（`ask` と `plan` の共通部分）。
@@ -3023,6 +3092,7 @@ async fn deliver_and_wait(
     to: &AgentId,
     question: &str,
     next_hop: u8,
+    parent: &tokio_util::sync::CancellationToken,
 ) -> (String, PlanTaskState) {
     let mut outgoing = AgentMessage::new(
         Endpoint::Agent { id: from.clone() },
@@ -3038,6 +3108,10 @@ async fn deliver_and_wait(
     let envelope = Envelope {
         incoming: outgoing,
         reply_to: Some(tx),
+        // 依頼元ターンの子（Spec 10 Phase 2）。依頼元が切られたら、この封筒が
+        // 生んだ仕事（未着手の畳み・飛行中の検知）だけが連鎖して止まる。
+        // 受信側の別の依頼は別トークンなので巻き添えにならない。
+        cancel: Some(parent.child_token()),
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -3088,6 +3162,7 @@ async fn run_plan(
     call: &crate::llm::ToolCall,
     hop: u8,
     wave: u32,
+    parent: &tokio_util::sync::CancellationToken,
 ) -> String {
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
@@ -3197,38 +3272,104 @@ async fn run_plan(
         let from = from.clone();
         let target = target.clone();
         let message = message.clone();
+        let parent = parent.clone();
         set.spawn(async move {
             let task_started = std::time::Instant::now();
             let (answer, state) =
-                deliver_and_wait(&shared, &from, &target, &message, next_hop).await;
+                deliver_and_wait(&shared, &from, &target, &message, next_hop, &parent).await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)
         });
     }
 
+    // 進行役のターンが切られたら、波の待ちもここで畳む（Spec 10 — U2）。
+    // 周回境界の検査だけでは、最悪 ask_timeout（既定 180 秒）が割り込み不能の
+    // まま残る。ワーカー側は封筒の子トークンが同じ cancel で連鎖して止まるので、
+    // ここで待ち続けても新しい答えは（打ち切りの報告以外）もう来ない。
+    let mut wave_interrupted = false;
     let mut answers: Vec<Option<String>> = vec![None; wave_tasks.len()];
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok((index, answer, state, elapsed_ms)) => {
-                // 解決した順に記録と event を刻む。セルは波の完了を待たず
-                // 個別に色が変わる（全滅まで灰色、にしない）。
-                let to = wave_tasks[index].0.clone();
+    loop {
+        tokio::select! {
+            biased;
+
+            () = parent.cancelled() => {
+                wave_interrupted = true;
+                break;
+            }
+            joined = set.join_next() => {
+                let Some(joined) = joined else { break };
+                match joined {
+                    Ok((index, answer, state, elapsed_ms)) => {
+                        // 解決した順に記録と event を刻む。セルは波の完了を待たず
+                        // 個別に色が変わる（全滅まで灰色、にしない）。
+                        let to = wave_tasks[index].0.clone();
+                        shared
+                            .plan_waves
+                            .write()
+                            .await
+                            .resolve_task(plan_id, &to, state, elapsed_ms);
+                        shared.emit(CoreEvent::PlanTaskResolved {
+                            plan_id,
+                            to,
+                            state,
+                            elapsed_ms,
+                        });
+                        answers[index] = Some(answer);
+                    }
+                    // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
+                    // 記録上は finish_wave が Running を NoAnswer に倒す。
+                    Err(err) => tracing_note(&err),
+                }
+            }
+        }
+    }
+
+    if wave_interrupted {
+        // set の drop で残りの待ちを畳む。配送済みの封筒はそのまま — ワーカーは
+        // 子トークンで自分の周回境界（または着手時）に止まる。答えは受け取らない
+        // （部分的な束ねを作らない — 束ねると次のターンの進行役が「全員から
+        // 答えが揃った」と誤読する）。
+        drop(set);
+
+        // 未解決のタスクを interrupted で確定させ、波を閉じる。倒し先が
+        // no_answer でないのは、答えなかったのではなく止めさせたから。
+        // frontend は planWaveFinished で残った running を no_answer に倒すので、
+        // その前に 1 件ずつ resolve を流して running を残さない。
+        let folded_at = dispatched_at.elapsed().as_millis() as u64;
+        for (index, (to, _)) in wave_tasks.iter().enumerate() {
+            if answers[index].is_none() {
                 shared
                     .plan_waves
                     .write()
                     .await
-                    .resolve_task(plan_id, &to, state, elapsed_ms);
+                    .resolve_task(plan_id, to, PlanTaskState::Interrupted, folded_at);
                 shared.emit(CoreEvent::PlanTaskResolved {
                     plan_id,
-                    to,
-                    state,
-                    elapsed_ms,
+                    to: to.clone(),
+                    state: PlanTaskState::Interrupted,
+                    elapsed_ms: folded_at,
                 });
-                answers[index] = Some(answer);
             }
-            // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
-            // 記録上は finish_wave が Running を NoAnswer に倒す。
-            Err(err) => tracing_note(&err),
         }
+        // 束ねは作らなかったので 0 文字（「何も束ねていない」の正直な大きさ）。
+        note!(
+            "plan wave interrupted: agent={from} wave={wave} resolved={}/{}",
+            answers.iter().filter(|a| a.is_some()).count(),
+            wave_tasks.len(),
+        );
+        shared
+            .plan_waves
+            .write()
+            .await
+            .finish_wave(plan_id, 0, folded_at);
+        shared.emit(CoreEvent::PlanWaveFinished {
+            plan_id,
+            bundle_chars: 0,
+            elapsed_ms: folded_at,
+        });
+
+        // この文字列は進行役の周回に返るが、直後の周回境界で本人も止まるので
+        // モデルは読まない。読まれる前提の文言にしない（人がログで読む行）。
+        return "plan はユーザーの指示で打ち切られました。".to_owned();
     }
 
     // 4. 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
