@@ -1322,11 +1322,27 @@ llm_wire:
       Gemini / OpenAI 系で観測される cachedTokens はプロバイダ側の暗黙キャッシュ。
       実測 (2026-07-30): Gemini ネイティブ経路 (gemini-3.6-flash) では暗黙キャッシュが
       cachedContentTokenCount で実際に報告され、カードの率も動く。
-      互換経路の flash-lite は 0 のまま。残る容疑は (a) 最小プロンプト長の
-      閾値未満 (ワーカーのプロンプトは小さい) / (b) ターン間隔での失効 /
-      (c) 互換シムが prompt_tokens_details を返さない、の 3 つで未決着。
-      切り分けは flash-lite のテンプレートを provider: gemini (ネイティブ) へ
-      切り替えて観測するのが最短 (報告フィールドが変わるため)。
+      互換経路の flash-lite は 0 のまま。
+
+      **Google 公式に接地した (2026-08-01、ai.google.dev/gemini-api/docs/caching)**:
+      - 暗黙キャッシュは 2.5 以降で既定有効。**指示は要らない**
+      - 最小トークンは **Gemini 3 / 3.1 系 = 4,096 / 2.0・2.5 系 = 2,048**。
+        Implicit と Explicit で**同じ値**。3.6 と Flash-Lite は表に無く未確認
+      - 効く条件は「similar **prefix**」であって同一リクエストではない。
+        公式は stateful / stateless の両方に効くと明記している。
+        「マルチターンでは暗黙キャッシュはほぼ効かない」は**公式の記述と逆**
+      - 閾値未満では Implicit は**無言で 0%**、Explicit は
+        `Cached content is too small` で作成そのものが失敗する
+
+      **有力な読み (未実証)**: 村のワーカーは構造的に閾値未満。failures.md #33 の
+      実測で設定は 900〜1,100 文字 ≈ 約 1,000 トークンで、4,096 の 1/4。
+      会話を数周足しても 2,048 にすら届かない。これが正なら **Explicit Caching は
+      解にならない** — 最小トークンが同じなので作成が失敗する。
+      判定は observability の note_cache_diag が出す周ごとの生の数字で行う。
+
+      Explicit Caching を採らない理由は閾値だけではない: バージョン固定の
+      モデル名 (models/gemini-3.6-flash-001) が要り利用者の自由入力欄と衝突する /
+      TTL という状態を純関数 adapter の外へ持ち込む / キャッシュ作成自体が課金。
     invariants:
       - 境界は **2 箇所**。(1) system の安定部分の末尾 (2) messages の末尾。
         ツール定義は system より前に置かれ、system に打った cache_control の内側に
@@ -1353,6 +1369,26 @@ llm_wire:
         ttl は黙って無視され既定へ戻る
       - 状態で揺れるものを **安定部分に入れない**。接続先の稼働状態・顔ぶれ・
         提示するツール集合など、実行時に変わるものは可変部分か messages 側へ置く
+      - **`Role::System` は「安定なもの」専用の枠。** adapter は Role::System の
+        メッセージを**配列のどこにあっても全部引き抜いて** 1 つの system /
+        systemInstruction へ連結する (gemini.rs / anthropic.rs の encode)。
+        毎ターン変わるものを System で積むと、**配列上の位置に関係なく前方一致の
+        先頭へ戻る** — 位置を変えるだけでは直らない (failures.md #45。
+        並べ替えを先に入れたがワイヤ上は完全な no-op だった)。
+        参照資料 (RAG) / 広場ログ / 入退室 / 同報の注記は System では積まず、
+        **今回の受信と一緒に 1 本の user 発話へ畳む** (別々の user 発話にすると
+        ロールが連続し、交互を要求するプロバイダで壊れる)。
+        固定は volatile_blocks_sit_after_the_history_so_the_cached_prefix_can_grow
+        (位置とロールの両方を見る。**位置だけの検査は壊れた状態でも通る**)
+      - **送った文字列をそのまま履歴へ積む。** 畳んだ文脈を履歴から外すと
+        (「今回だけの文脈を焼き付けない」ため) 送信と保存が食い違い、次のターンで
+        その位置から前方一致が切れる — 載るのは system + tools で頭打ちになる
+        (failures.md #45 第 2 段。実測で cached が 6,465 に張り付き、#42 で測った
+        安定プレフィックス 6,463 とほぼ一致していた = 履歴が 1 通も載っていなかった)。
+        揃えるほうが記録としても正しい (エージェントは実際にその文脈込みで
+        受け取っている)。固定は what_we_send_is_what_the_next_turn_replays_as_history。
+        既知の穴: 失敗ターン (record_failed_turn) は文脈を再構成できないので
+        attributed だけを積む = 失敗のたびにキャッシュが 1 回リセットされる
     bounds: |
       **書き込みになる周が 2 つ残る。どちらも仕様上の限界で、打ち消す仕掛けは置かない。**
 
@@ -1376,6 +1412,29 @@ llm_wire:
       合計を分母にすると天井が 100% にならず取り残し量が読めない）。
       0% は警告色。効いていないことが画面から分からない指標は静かに壊れる
       (failures.md #33 は請求ダッシュボードを見るまで数日気づけなかった)。
+
+      **率だけでは 0% の理由が三つ巴になる** — (a) プロバイダの最小長を下回った
+      (b) 前方一致が壊れた (c) プロバイダが値を返していない。3 つとも処方が違うのに
+      画面では同じ 0% に見える。判別のため `orchestrator.rs` の note_cache_diag が
+      **周ごとの生の数字**を concordia.log へ出す:
+      `cache: agent=… model=… round=N prompt=… cached=… system_chars=…
+      stable_chars=… system_digest=…`
+
+      読み方 — prompt が閾値未満で cached=0 なら (a)。閾値を超えていて cached=0 で
+      **system_digest が前の周から変わっている**なら (b)。どちらでもないなら (c)。
+      system_blocks が 2 を超えていたら可変ブロックが System に混ざっている。
+
+      3 つの罠:
+      - **カードの promptTokens はターンをまたいだ累積**なので閾値との比較に
+        使えない (1 周 1,000 トークンでも 5 周で 5,000 になる)。判定には周ごとの値が要る
+      - **digest は adapter と同じ畳み方で取る** = messages 中の Role::System を
+        全部連結したもの。初版は compose_system_prompt の戻り値だけを測っており、
+        可変ブロックが毎ターン変わっても digest は動かなかった。
+        **その計装で「(b) は否定」と読んだのは誤診**で、検出不能だっただけ (#45)
+      - **「容疑を潰した」と言えるのは、その容疑を検出できる計装があるときだけ。**
+        指標を足したら「この値が変わらないとき、何が起きていないと言えるか」を
+        先に確かめる。別物を測っている指標は「壊れていない」と「見えていない」を
+        画面上で区別できない
 
   gemini_native:
     why: |

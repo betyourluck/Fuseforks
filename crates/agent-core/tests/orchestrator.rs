@@ -1361,29 +1361,35 @@ async fn broadcast_note_names_the_recipients_and_stays_invisible_to_others() {
     let requests = backend.seen.lock().unwrap().clone();
     assert_eq!(requests.len(), 2, "処理されるのは宛先 2 体ぶんだけ");
     for messages in &requests {
+        // 同報かどうかは発話ごとに変わるので System では積まず、最終発話へ
+        // 畳んでいる（System で積むと adapter が先頭へ畳んで前方一致を切る。
+        // failures.md #45）。畳んだ発話には入退室なども同居するので、
+        // **セクション単位**（空行区切り）で注記だけを取り出す — 発話全体で見ると
+        // 「宛先外の名前を列挙しない」の検査が同居した入退室の名前を拾って落ちる。
         let note = messages
             .iter()
-            .find(|m| m.role == Role::System && m.content.contains("同報"))
+            .flat_map(|m| m.content.split("\n\n"))
+            .find(|section| section.contains("同報"))
             .expect("同報の注記が入ること");
-        assert!(note.content.contains("アルファ"), "実際: {}", note.content);
-        assert!(note.content.contains("ブラボー"), "実際: {}", note.content);
+        assert!(note.contains("アルファ"), "実際: {}", note);
+        assert!(note.contains("ブラボー"), "実際: {}", note);
         assert!(
-            !note.content.contains("チャーリー"),
+            !note.contains("チャーリー"),
             "宛先外の名前を列挙しない: {}",
-            note.content
+            note
         );
         assert!(
-            note.content.contains("転送する必要はありません"),
+            note.contains("転送する必要はありません"),
             "転送不要の根拠を伝える: {}",
-            note.content
+            note
         );
         // 転送だけを禁じても、「代わりに促す」経路が残る。実機では
         // 「ユーザーから依頼です、自己紹介お願いします」という**新しい発話**を
         // 他の参加者へ配って回り、同じ混乱が起きた。
         assert!(
-            note.content.contains("促す必要もありません"),
+            note.contains("促す必要もありません"),
             "発言を促す必要も無いことを伝える: {}",
-            note.content
+            note
         );
     }
 
@@ -1760,6 +1766,129 @@ async fn an_agent_can_opt_out_of_the_room_log() {
         !join(2).contains("この場で交わされていた会話"),
         "オプトアウトした c には広場ログが入らないこと。実際:\n{}",
         join(2)
+    );
+}
+
+/// **送った user 発話が、次のターンの履歴にそのまま現れること。**
+///
+/// 食い違うとその位置で前方一致が切れる。プロバイダに依らない — Anthropic の
+/// 明示的な breakpoint も、一致するプレフィックスが無ければ読み取りに落ちない。
+/// 切れた先がどれだけ伸びても載らないので、**会話を続けるほど率が下がる**。
+#[tokio::test]
+async fn what_we_send_is_what_the_next_turn_replays_as_history() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("send-equals-store");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一度目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&id, "二度目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "2 ターン記録されること");
+
+    let sent_first = requests[0]
+        .last()
+        .expect("1 ターン目の最終発話")
+        .content
+        .clone();
+
+    assert!(
+        requests[1].iter().any(|m| m.content == sent_first),
+        "1 ターン目に送った発話が 2 ターン目の履歴へそのまま乗ること。\
+         乗らないとその位置で前方一致が切れ、以後いくら会話が伸びても\
+         キャッシュは system + tools で頭打ちになる。\n\
+         送った: {sent_first:?}\n\
+         2 ターン目の中身: {:?}",
+        requests[1].iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+}
+
+/// 毎ターン変わるブロックは**履歴より後ろ**に置くこと。
+///
+/// プロンプトキャッシュは前方一致で効く。毎ターン変わるものを伸びる履歴より前に
+/// 置くと**そこで一致が切れ、安定プレフィックスが二度と伸びない** — 載るのは
+/// system の 1,500 トークン前後だけになり、Gemini の最小長 4,096 に届かず
+/// 暗黙キャッシュが無言で no-op する（2026-08-01 実測。failures.md #45）。
+///
+/// **順序を戻しても他のテストは 1 本も落ちない**ので、ここで固定する。
+/// 壊れても画面に出るのは「キャッシュ 0%」だけで、原因は請求まで分からない。
+#[tokio::test]
+async fn volatile_blocks_sit_after_the_history_so_the_cached_prefix_can_grow() {
+    let backend = Arc::new(RecordingBackend::default());
+    let dir = TempDir::new("cache-order");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    for id in [&a, &b] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    // a に履歴を作る。
+    orchestrator.send_user_message(&a, "一度目の依頼").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    // b を喋らせて a の広場ログの原料にする（自分の発話は自分の広場ログに載らない）。
+    orchestrator.send_user_message(&b, "別件").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    // a の 2 度目。ここで履歴と広場ログが両方載る。
+    orchestrator.send_user_message(&a, "二度目の依頼").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let last = requests.last().expect("a の 2 度目のリクエストがあること");
+
+    let history_at = last
+        .iter()
+        .position(|m| m.content.contains("一度目の依頼"))
+        .expect("履歴が載ること");
+    let room_at = last
+        .iter()
+        .position(|m| m.content.contains("この場で交わされていた会話"))
+        .expect("広場ログが載ること");
+
+    assert!(
+        room_at > history_at,
+        "広場ログは履歴より後ろに置くこと（前に置くと前方一致がそこで切れる）: \
+         history_at={history_at} room_at={room_at}"
+    );
+
+    // **位置だけでは足りない。** adapter は Role::System のメッセージを配列の
+    // どこにあっても全部引き抜いて 1 つの system / systemInstruction へ連結する
+    // （gemini.rs / anthropic.rs の encode）。System で積んだ時点で、履歴の後ろに
+    // 置いても前方一致の先頭へ戻る — 実際にそれで 1 度直し損ねた（failures.md #45）。
+    assert!(
+        !last
+            .iter()
+            .any(|m| m.role == Role::System && m.content.contains("この場で交わされていた会話")),
+        "広場ログを Role::System で積まないこと（位置に関係なく先頭へ畳まれる）"
     );
 }
 
@@ -2358,7 +2487,21 @@ async fn message_to_a_leaf_agent_comes_back_to_the_user() {
     assert_eq!(log[1].to, Endpoint::User);
     // EchoBackend は受信した本文をそのまま返す。本文には送り手の封筒が付く
     // （ユーザーの言葉とエージェントの転送を受信側が区別するため）。
-    assert_eq!(log[1].content, "[echo] 【送り手: ユーザー】\n計画を立てて");
+    //
+    // 完全一致では見ない — 最終発話には**その周だけの文脈**（入退室・広場ログ・
+    // 参照資料）が前置きされる。System で積むと adapter が先頭へ畳んで前方一致を
+    // 切るので、そちらへは置けない（failures.md #45）。封筒と本文が末尾に、
+    // 壊れずに乗っていることを見る。
+    assert!(
+        log[1].content.starts_with("[echo] "),
+        "実際: {}",
+        log[1].content
+    );
+    assert!(
+        log[1].content.ends_with("【送り手: ユーザー】\n計画を立てて"),
+        "封筒と本文が末尾に壊れずに乗ること。実際: {}",
+        log[1].content
+    );
     assert!(log[1].tokens > 0, "トークンが計上されること");
 }
 
@@ -2769,11 +2912,15 @@ async fn each_turn_sees_the_previous_exchange() {
 
     // 2 回目は「一回目」と自分の応答「了解」が入っている。
     // 履歴の受信側には送り手の封筒が付く（プロンプトと履歴の形を揃える）。
+    //
+    // 完全一致では見ない — 履歴には**送った文字列がそのまま**入り、その周だけの
+    // 文脈（入退室・広場ログ・参照資料）が前置きされる。揃えないと次のターンで
+    // 前方一致がその位置で切れる（failures.md #45）。封筒と本文が末尾に来ることを見る。
     let second = &seen[1];
     assert!(
         second
             .iter()
-            .any(|m| m.role == Role::User && m.content == "【送り手: ユーザー】\n一回目"),
+            .any(|m| m.role == Role::User && m.content.ends_with("【送り手: ユーザー】\n一回目")),
         "前回の受信が封筒付きで履歴に入る: {second:#?}"
     );
     assert!(
@@ -4440,12 +4587,14 @@ async fn presence_reaches_optout_agents_and_roster_lists_by_connection_order() {
 
     let seen = backend.seen.lock().unwrap();
     let request = seen.last().expect("アルファのリクエストが記録されること");
-    let system_texts: Vec<&str> = request
+    // **System だけを見ない。** 毎ターン変わるもの（入退室・広場ログ・参照資料）は
+    // System では積まず最終発話へ畳む — System で積むと adapter が先頭へ畳んで
+    // 前方一致を切るため（failures.md #45）。「届くこと」の検査なので全文で見る。
+    let joined = request
         .iter()
-        .filter(|m| m.role == Role::System)
         .map(|m| m.content.as_str())
-        .collect();
-    let joined = system_texts.join("\n---\n");
+        .collect::<Vec<_>>()
+        .join("\n---\n");
 
     // 顔ぶれ: システムプロンプト内・接続順（b, c）・状態は UI と同じ語彙。
     assert!(

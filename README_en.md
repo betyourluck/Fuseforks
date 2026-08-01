@@ -389,7 +389,9 @@ Its effect is shown in the UI: the card's "N% of input cached" is the metric, an
 
 > Do not put state-varying content in the stable portion. Both destination running state and the set of presented tools split the cache the moment they change. **Presentation stays static; state stays dynamic.**
 
-**Known hole**: the cache boundary exists only on the system side; `messages` (history and tool results) is resent at full price every round. The longer the tool loop runs, the more it costs. Measurements and the fix are in [failures.md](failures.md) #42.
+**And keep the system slot for stable content only.** Adapters lift every system-role message out of the array — **wherever it sits** — and concatenate them into one system prompt. Anything that changes per turn (retrieved references, the room log, presence notices) therefore occupies the head of the prefix regardless of ordering, so moving it later in the array changes nothing. It has to stop being a system message and travel with the current turn instead.
+
+This was a real hole: Gemini agents ran at 0% for days ([failures.md](failures.md) #45). It broke the moment another servant spoke, which means it failed precisely when the app was used as a village. Every provider receives the same assembled messages, so the Anthropic path falls over the same way once the conditions match.
 
 ---
 

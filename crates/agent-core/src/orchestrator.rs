@@ -56,7 +56,7 @@ use crate::note;
 use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::event::CoreEvent;
 use crate::llm::{
-    BackendFactory, ChatMessage, ChatRequest, ChatResponse, LlmBackend, ToolSpec,
+    BackendFactory, ChatMessage, ChatRequest, ChatResponse, LlmBackend, Role, ToolSpec,
 };
 use crate::model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
@@ -1620,6 +1620,106 @@ async fn record_failed_turn(
     }
 }
 
+/// プロンプトキャッシュの診断行を 1 周ごとに残す。
+///
+/// # なぜ率ではなく生の数字が要るか
+///
+/// カードの「入力の N% をキャッシュ」だけでは、**0% の理由が三つ巴**になる —
+/// (a) プロバイダの最小長を下回った (b) 前方一致が壊れた (c) プロバイダが
+/// 値を返していない。この 3 つは処方が全部違うのに、画面上は同じ 0% に見える。
+///
+/// # 累積では判別できない
+///
+/// カードが持つ `promptTokens` は**ターンをまたいだ累積**なので、閾値との
+/// 比較に使えない — 1 周 1,000 トークンのエージェントでも 5 周喋れば 5,000 に
+/// なり、「閾値を超えているのに 0%」と誤読される。判定には**その周の値**が要る。
+///
+/// # ハッシュは system プロンプト全文に掛ける
+///
+/// 安定部分（`stable_len` まで）だけに掛けると、顔ぶれや Memory が変わって
+/// 前方一致が切れた場合 (b) を「変わっていない」と表示してしまう。会話が
+/// キャッシュに載るには **systemInstruction 全体**がバイト一致している必要がある。
+///
+/// ハッシュ値はプロセスをまたいで比較しない（`DefaultHasher` の値は Rust の
+/// 版に依存する）。見るのは**同じセッション内で周ごとに変わったかどうか**だけ。
+fn note_cache_diag(
+    agent_id: &AgentId,
+    model: &str,
+    round: u32,
+    usage: &crate::llm::Usage,
+    system: SystemDigest,
+    history: HistoryDepth,
+) {
+    note!(
+        "cache: agent={agent_id} model={model} round={round} \
+         prompt={} cached={} system_chars={} stable_chars={} system_blocks={} \
+         history_msgs={}/{} system_digest={:016x}",
+        usage.prompt,
+        usage.cache_read,
+        system.chars,
+        system.stable_chars,
+        system.blocks,
+        history.msgs,
+        history.limit,
+        system.digest,
+    );
+}
+
+/// 履歴の通数と上限。**`history_msgs` が `limit` に張り付いていたら窓が滑っている**
+/// = 毎ターン先頭の 1 往復が落ち、前方一致は system の直後で切れる。
+#[derive(Debug, Clone, Copy)]
+struct HistoryDepth {
+    msgs: usize,
+    limit: usize,
+}
+
+/// プロバイダへ実際に渡る system 面の指紋。
+///
+/// # 数えるのは「連結後」でなければならない
+///
+/// adapter は `Role::System` のメッセージを**配列のどこにあっても全部引き抜いて**
+/// 1 つの `system` / `systemInstruction` へ連結する（`gemini.rs` / `anthropic.rs` の
+/// `encode`）。したがって「system プロンプト 1 本」だけを数えても、実際に前方一致の
+/// 先頭を占める文字列とは別物になる。
+///
+/// 初版はまさにそれを数えており、可変ブロック（参照資料・広場ログ・入退室）が
+/// 毎ターン変わっていても digest は動かなかった。**その計装で「前方一致は壊れて
+/// いない」と読んだのは誤診**で、検出不能だっただけ（failures.md #45）。
+#[derive(Debug, Clone, Copy)]
+struct SystemDigest {
+    /// 連結後の文字数。
+    chars: usize,
+    /// 安定部分の文字数（`cacheable_prefix_len` と同じ値）。
+    stable_chars: usize,
+    /// system ブロックの本数。2 本を超えていたら可変ブロックが混ざっている。
+    blocks: usize,
+    /// 連結後の全文のハッシュ。
+    digest: u64,
+}
+
+impl SystemDigest {
+    /// adapter と**同じ畳み方**で数える。ここがズレると指紋の意味が消える。
+    fn of(messages: &[ChatMessage], stable_len: usize) -> Self {
+        use std::hash::{Hash, Hasher};
+
+        let blocks: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| m.content.as_str())
+            .collect();
+        let joined = blocks.join("\n\n");
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        joined.hash(&mut hasher);
+        Self {
+            chars: joined.chars().count(),
+            stable_chars: stable_len,
+            blocks: blocks.len(),
+            digest: hasher.finish(),
+        }
+    }
+}
+
 /// 同じ結果が何回返ったら次を実行しないか（failures.md #41 の処方 1）。
 ///
 /// 2 = 「同じ呼び出しに同じ結果が 2 回返ったら、3 回目は実行しない」。
@@ -1825,13 +1925,49 @@ async fn handle_message(
     let handoffs = HandoffTools::build(&targets);
     let use_handoff_tools = template.use_tools && !handoffs.is_empty();
 
-    // 4. プロンプトを組む。順序は system → 手順 → 参照資料 → 履歴 → 今回の受信。
+    // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
+    //
+    // **`Role::System` は「安定なもの」専用の枠として扱う。** adapter は
+    // Role::System のメッセージを配列のどこにあっても全部引き抜いて 1 つの
+    // system / systemInstruction へ連結するので（gemini.rs / anthropic.rs の
+    // encode）、可変なものを System で積むと**配列上の位置に関係なく前方一致の
+    // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
     let mut messages = vec![ChatMessage::system(system_prompt)];
     if !handoffs.is_empty() {
         messages.push(ChatMessage::system(handoffs.protocol_note(use_handoff_tools)));
     }
 
+    // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
+    //
+    // 通数を控える理由は診断のため。`history_turns` は**滑る窓**で（world.rs の
+    // push_exchange が先頭から drain する）、埋まると毎ターン先頭の 1 往復が落ちる。
+    // 前方一致はそこで切れるので、窓が埋まった瞬間からキャッシュは system 止まりに
+    // なる。窓が上限に張り付いているかは通数を見ないと分からない。
+    let history_msgs = {
+        let world = shared.world.read().await;
+        match world.agent(agent_id) {
+            Ok(record) => {
+                messages.extend(record.history.iter().cloned());
+                record.history.len()
+            }
+            Err(_) => 0,
+        }
+    };
+
+    // ここから下は**毎ターン変わる文脈**。System では積まず、`context` へ溜めて
+    // 最後に今回の受信と一緒に 1 本の user 発話として送る。
+    //
+    // こうする理由は 2 つ。(1) System で積むと adapter が先頭へ畳むので
+    // 前方一致がそこで切れる。(2) user ロールで別々に積むと user が連続し、
+    // ロールの交互を要求するプロバイダで壊れる。**1 本に畳めば両方避けられる。**
+    //
+    // 履歴には入れない（`attributed` だけを積む）— 今回だけの文脈を履歴へ
+    // 焼き付けると、以後の全ターンのプレフィックスに残り続ける。
+    let mut context: Vec<String> = Vec::new();
+
     // RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
+    // **毎ターン必ず変わる**（今回の発話で検索するため）。意味の上でも、
+    // 参照資料は「今回の問いに答えるための材料」なので問いの近くが正しい。
     if !spec.rag_sources.is_empty() {
         let hits = shared
             .rag
@@ -1840,23 +1976,27 @@ async fn handle_message(
             .search(&spec.rag_sources, &incoming.content, shared.config.rag_top_k)
             .await?;
         if !hits.is_empty() {
-            let context = hits
+            let refs = hits
                 .iter()
                 .map(|h| format!("- [{}] {}", h.item.source, h.item.text))
                 .collect::<Vec<_>>()
                 .join("\n");
-            messages.push(ChatMessage::system(format!("## 参照資料\n{context}")));
+            context.push(format!("## 参照資料\n{refs}"));
         }
     }
 
-    // 居合わせた会話（広場ログ）。自分の履歴より前に置く — 場の背景であって、
-    // 自分とのやり取りではない。受信側でオプトアウトできる（Spec 03）:
+    // 居合わせた会話（広場ログ）。受信側でオプトアウトできる（Spec 03）:
     // 毎ターン最大 12 件 × 200 字の固定費であり、場の共有が要らない役には
     // 価値が無い。false でも自分の発話は他者の広場ログに載る（受信側だけの設定）。
+    //
+    // 元は「場の背景であって自分とのやり取りではない」から System の枠で履歴の
+    // **前**に置いていた。その読みは筋が通っていたが、**他人が喋るたびに前方一致が
+    // 切れる**という代償が見えていなかった — 村として使っているときにこそ
+    // キャッシュが効かなくなる。
     if spec.hears_room_log
         && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
     {
-        messages.push(ChatMessage::system(room));
+        context.push(room);
     }
 
     // 入退室の通知（Spec 06 P1）。**広場ログの gate の外**に置く —
@@ -1866,15 +2006,7 @@ async fn handle_message(
     if let Some(notices) =
         compose_presence_notices(shared, &shared.config, roster.is_some()).await
     {
-        messages.push(ChatMessage::system(notices));
-    }
-
-    // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
-    {
-        let world = shared.world.read().await;
-        if let Ok(record) = world.agent(agent_id) {
-            messages.extend(record.history.iter().cloned());
-        }
+        context.push(notices);
     }
 
     // 送り手の封筒。ユーザーの言葉もエージェントからの転送も同じ user ロールで
@@ -1886,8 +2018,10 @@ async fn handle_message(
     // 同報の注記。「みんなへ」と呼びかけられたのに自分しか受け取っていないように
     // 見えると、各エージェントは律儀に接続先へ転送して反響が起きる（実機で観測）。
     // 転送を禁止するのではなく、「全員が既に受け取っている」という事実を与えて
-    // 転送する理由そのものを消す。プロンプトキャッシュの安定プレフィックス
-    // （system 先頭）には影響しない位置に差す。
+    // 転送する理由そのものを消す。
+    //
+    // これも System では積まない。同報かどうかは発話ごとに変わるので、System へ
+    // 入れると adapter が先頭へ畳んで前方一致を切る（failures.md #45）。
     if incoming.co_recipients.len() >= 2 {
         let world = shared.world.read().await;
         let names: Vec<String> = incoming
@@ -1905,7 +2039,7 @@ async fn handle_message(
         // 「ユーザーから依頼です、自己紹介お願いします」という**新しい発話**を
         // 全員へ配って回り、同じ混乱が起きた（促しは転送ではないので注記の射程外だった）。
         // 塞ぐべきは経路ではなく、**他人の分まで面倒を見ようとする動機**のほう。
-        messages.push(ChatMessage::system(format!(
+        context.push(format!(
             "【同報】この発話はあなたを含む {} 体（{}）へ同時に届いています。\
              全員が同じ内容を既に受け取っており、**それぞれが自分で答えます**。\
              したがって、この内容を他のエージェントへ転送する必要はありませんし、\
@@ -1913,10 +2047,30 @@ async fn handle_message(
              あなたは**あなた自身の分だけ**答えてください。",
             names.len(),
             names.join("、")
-        )));
+        ));
     }
 
-    messages.push(ChatMessage::user(&attributed));
+    // 可変の文脈と今回の受信を **1 本の user 発話**に畳んで送る。
+    //
+    // **送った文字列をそのまま履歴へ積む**（下の push_exchange へ渡す）。
+    // 当初は `attributed` だけを積んで「今回だけの文脈を履歴へ焼き付けない」
+    // ようにしたが、それは**送信と保存の食い違い**を作る。次のターンでは履歴側の
+    // 短い文字列がその位置に来るので、**前方一致がそこで切れる** — 以後どれだけ
+    // 会話が伸びてもキャッシュは system + tools で頭打ちになる（failures.md #45）。
+    //
+    // 揃えるほうが記録としても正しい。エージェントは実際にその文脈込みで受け取って
+    // おり、`attributed` だけを積むのは受け取った内容についての嘘になる。
+    context.push(attributed.clone());
+    let sent_user_turn = context.join("\n\n");
+    messages.push(ChatMessage::user(&sent_user_turn));
+
+    // 指紋は**組み終わってから**取る。adapter と同じ畳み方で数えないと、
+    // 実際に前方一致の先頭を占める文字列とは別物を測ることになる。
+    let system_digest = SystemDigest::of(&messages, stable_len);
+    let history_depth = HistoryDepth {
+        msgs: history_msgs,
+        limit: shared.config.history_turns.saturating_mul(2),
+    };
 
     // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
     //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
@@ -2011,6 +2165,14 @@ async fn handle_message(
 
         let mut response = backend.chat(request).await?;
         llm_rounds += 1;
+        note_cache_diag(
+            agent_id,
+            &template.model,
+            llm_rounds,
+            &response.usage,
+            system_digest,
+            history_depth,
+        );
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
@@ -2220,6 +2382,17 @@ async fn handle_message(
         // イベントにもフォールバック文言にも残らず、現場から診断不能だった。
         match backend.chat(request).await {
             Ok(mut response) => {
+                // まとめ呼び出しの周。**ここは必ず書き込みになる** —
+                // tool_choice を None へ変えると履歴層のキャッシュが落ちるため
+                // （failures.md #42 の bounds）。0% でも異常ではない。
+                note_cache_diag(
+                    agent_id,
+                    &template.model,
+                    llm_rounds + 1,
+                    &response.usage,
+                    system_digest,
+                    history_depth,
+                );
                 tokens += response.usage.total();
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
@@ -2291,8 +2464,9 @@ async fn handle_message(
     }
 
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
-    //    受信側は封筒（送り手名）付きで積む — プロンプトと履歴の形を揃えないと、
-    //    過去のターンだけ出所不明に戻る。
+    //    受信側は**送ったものをそのまま**積む — プロンプトと履歴の形を揃えないと、
+    //    過去のターンだけ出所不明に戻るうえ、**その位置で前方一致が切れて
+    //    キャッシュが頭打ちになる**（failures.md #45）。
     {
         let mut world = shared.world.write().await;
         if let Ok(record) = world.agent_mut(agent_id) {
@@ -2300,7 +2474,7 @@ async fn handle_message(
             record.cached_tokens += cached;
             record.prompt_tokens += prompt;
             record.push_exchange(
-                &attributed,
+                &sent_user_turn,
                 &outcome.spoken(),
                 shared.config.history_turns,
             );
