@@ -176,6 +176,9 @@ Initialization failures surface visibly on top of the overlay with a reason prov
 Chat displays conversations in speech bubbles separating speakers by side, grouping consecutive messages under a single avatar and name.
 However, **destinations are never dropped** — since this is an orchestration screen, "who sent it to whom" is essential information, so destinations and hops remain outside the speech bubble. Information is never discarded merely to mimic casual chat.
 
+**In-flight turns can be interrupted mid-way** ([Spec 10](specs/10_turn-interrupt.md)).
+The "■ Stop" button next to a typing bubble cuts that agent's current turn; "Stop all turns" in the header cuts every in-flight turn in the village. What gets cut is the **turn**, not the agent — it stays running, conversation and history survive, and the next request is handled normally. Interrupting a facilitator also stops only the worker tasks spawned by its plan wave (unrelated requests the same workers were handling in parallel are untouched). Detection happens at round boundaries, so the turn stops as soon as the in-flight LLM call or tool finishes — a "stop requested…" indicator covers the gap. The fact of the interruption is recorded as a single System line in the conversation log.
+
 **Conversations can be reset via "New Chat"** (header button, with confirmation).
 This clears only the conversation log and individual agent histories, preserving operational status, cumulative statistics, long-term memory (`Memory.md`), and individual MCP connections — resetting a "conversation" rather than an "agent". This reflects a token philosophy of avoiding continuous charges for old contexts whenever topics switch. It is intentional specification if a response currently being processed appears once immediately afterward (logging utterances as facts that occurred).
 

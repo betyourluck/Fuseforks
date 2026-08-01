@@ -194,6 +194,33 @@ mod tests {
         AgentId::from(id)
     }
 
+    /// `Interrupted` は加算的変更であること（Spec 10 Phase 4）。
+    ///
+    /// 旧レコードの wire 値（interrupted を知らない時代の 6 値）はそのまま読め、
+    /// 新値は snake_case で往復する — マイグレーションは不要。この保証が
+    /// 崩れる変更（値の改名・削除）は、配布済みの記録を読めなくする。
+    #[test]
+    fn interrupted_is_an_additive_wire_value() {
+        // 旧時代の値はそのまま読める。
+        for (wire, expected) in [
+            ("\"running\"", PlanTaskState::Running),
+            ("\"answered\"", PlanTaskState::Answered),
+            ("\"handed_off\"", PlanTaskState::HandedOff),
+            ("\"undeliverable\"", PlanTaskState::Undeliverable),
+            ("\"no_answer\"", PlanTaskState::NoAnswer),
+            ("\"timed_out\"", PlanTaskState::TimedOut),
+        ] {
+            let parsed: PlanTaskState = serde_json::from_str(wire).unwrap();
+            assert_eq!(parsed, expected, "旧値 {wire} が読めること");
+        }
+
+        // 新値は snake_case で往復する。
+        let wire = serde_json::to_string(&PlanTaskState::Interrupted).unwrap();
+        assert_eq!(wire, "\"interrupted\"");
+        let round: PlanTaskState = serde_json::from_str(&wire).unwrap();
+        assert_eq!(round, PlanTaskState::Interrupted);
+    }
+
     #[test]
     fn plan_ids_start_at_one() {
         let mut store = PlanWaveStore::default();
