@@ -585,7 +585,7 @@ entities:
   # 波ペイン (plan 実行の可視化、Airflow Grid 相当)。実装は Phase 1〜3 で着地。
   # 描画は読み取り専用 — ここから plan を操作する経路は作らない。
   PlanTaskState:
-    values: [running, answered, handed_off, undeliverable, no_answer, timed_out]
+    values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted]
     note: |
       plan の 1 タスクの解決分類。**文言 parse では取らない** (文言を直した瞬間に
       黙って壊れる)。取得の構造は 2 つ:
@@ -598,6 +598,14 @@ entities:
         answered      → 正常色
         handed_off    → 注意色 (答えではなく「転送した」という事実が返った)
         undeliverable / no_answer / timed_out → 失敗色
+        interrupted   → 注意色 (Spec 10。人が止めさせた = 失敗ではない。
+                        turn_interrupt の不変条件 4 とここの色は同じ判断を指す)
+      interrupted は **2026-08-01 Spec 10 Phase 0 で追加** (rev2 査読承認)。
+      加算的変更 — 旧レコードのマイグレーションは不要で、既存の finish_wave が
+      旧 running を no_answer へ倒す後始末も変わらず生きる (Phase 4 で回帰固定)。
+      刻み手は 3 箇所に限る: 飛行中の中断 (handle_message の検知点) /
+      未着手封筒の畳み (agent_loop のターン開始直後) / run_plan の
+      finish_wave (割り込みで波を閉じるときの running の倒し先)
 
   Reply:
     fields: { text: String, kind: PlanTaskState }
@@ -662,8 +670,61 @@ entities:
       planTaskResolved* → planWaveFinished)。Resolved の相互順序と、
       波を跨いだ全体順序 (並行する波の Started は交互に来うる) は保証しない。
 
-# ---------------------------------------------------------------------------
-events:
+  # -------------------------------------------------------------------------
+  # Spec 10 の契約。**2026-08-01 Phase 0 で凍結** (rev2 査読承認)。
+  # 割り込み停止 — 飛行中ターンの協調的な打ち切り。実装は Phase 1〜3 で着地。
+  turn_interrupt:
+    api: interrupt_turn(agent_id) / interrupt_all()
+    dependency: |
+      tokio-util 0.7 (tokio_util::sync::CancellationToken)。tokio 本体には
+      無い (1.52.3 実ソースと docs.rs latest の 2 経路で確認)。起票時点で
+      既に間接依存として Cargo.lock に居るため、直接依存への昇格は
+      コンパイル対象を増やさない。child_token の意味論 (親の cancel は全子へ /
+      子の cancel は親へ遡らない / cancel 済みの親から作った子は cancel 済みで
+      生まれる) が伝播設計の根拠 — 3 点目により未着手封筒の畳みは
+      ターン開始時の検査だけで成立する (競合の窓が無い)
+    invariants: |
+      1. **検査点は 2 箇所のみ** — handle_message のツールループ周回境界
+         (run_plan の join 待ちの select はこの待ち時間内の検査点で、見る
+         トークンは同じ) と、ターン開始直後 (未着手封筒の畳み)。どちらの点でも
+         「呼び出しと結果の対」(failures.md #29)・「送信と保存の一致」(#45) は
+         構造的に壊れない。JoinHandle::abort による強制中断は採らない
+      2. **出口は経路ごとに定める**:
+         2a. 飛行中に中断されたターン: (a) 会話ログへ System の 1 行
+             (割り込み要求から検知までの elapsed を含む — LLM 呼び出し中の
+             切断を別 Spec で入れるかの判断材料) (b) 履歴へ
+             record_interrupted_turn の注記 (record_failed_turn の文言を
+             使い回さない — 失敗の文言だと次のターンの自分が誤読する)
+             (c) 依頼主が居れば Reply { kind: interrupted }。3 点とも必須。
+             まとめの LLM 呼び出しはしない
+         2b. 未着手で畳まれた封筒: (c) の Reply { interrupted } **だけが必須**。
+             会話ログへ出さず・履歴へ積まず・turnInterrupted も出さない。
+             debug ログへ turn folded: の 1 行 (Spec 07 の猶予超過と同じ判断)。
+             **Reply を送らない drop は実装バグ** (親が no_answer に誤分類する)。
+             ただし親が先に interrupted で確定した後の send 失敗は正常 —
+             「drop は実装バグ」の射程はワーカーが送らないことであって、
+             確定済みの親が受け取らないことではない。race の勝敗は分類を変えない
+         2c. no-op (飛行中ターンの無い interrupt_turn): 何も出さない。成功
+      3. **伝播はターンの因果を辿る**。エージェント単位で殺さない。巻き添え
+         範囲 = その波が配送した封筒 + そこから派生した委譲のみ。ワーカーの
+         ターンは封筒のトークンから child_token で自分の子を作り、それを
+         自ターンのトークンとする — 親由来と自分宛が 1 トークンに畳み込まれ、
+         検査は 1 本で足りる (2 本を別々に見る設計は見忘れの席になるので禁止)
+      4. **打ち切りは失敗ではない**。AgentFailed を出さない・last_error に
+         書かない・ステータスは Running のまま。ただし stop_agent 経由は
+         この限りではない (Stopping → Idle へ進む)
+      5. **自動では発火しない**。割り込みの起点は人の操作だけ
+      6. **割り込みの有効範囲はターン seq に束縛**。TurnHandle { seq, token } を
+         ターン開始時に発行 (seq は単調増加)。エージェントに紐づくフラグを
+         置かない — ターン A への割り込みが直後のターン B へ漏れる
+      7. **1 エージェント 1 飛行中ターン**。agent_loop の mpsc 順次処理が根拠。
+         interrupt_turn(agent_id) の API はこの前提の上に立つ — 並行ターンを
+         導入する変更は本契約の API を壊すため、セットで改訂が要る
+    interrupt_all: |
+      全エージェントへ interrupt_turn を適用するだけの薄い皮 (for 文であること
+      自体が仕様)。**冪等** — 飛行中ターンが 1 つも無くても成功。進行役と
+      ワーカーが親子で二重に切られても、出口の行は各ターンが検知時に 1 回
+      書くだけなので重複しない (独自の重複排除は持たない)
   channel: "core://event"
   tagged_union_key: type
   variants:
@@ -690,6 +751,12 @@ events:
     planWaveStarted: { planId, agentId, wave, tasks, startedAtMs }   # tasks = [{to, msgChars}]
     planTaskResolved: { planId, to, state, elapsedMs }
     planWaveFinished: { planId, bundleChars, elapsedMs }
+    # Spec 10 (割り込み停止)。**飛行中のターンが中断されたときだけ**出す —
+    # 未着手封筒の畳み (turn_interrupt の出口 2b) では出さない (ターンは
+    # 中断されていない。始まらなかっただけ。出すと「1 中断 = 1 イベント」の
+    # 数えが壊れる)。発行者は切られたターン自身 (検知時に 1 回) なので、
+    # 二重割り込み・interrupt_all・親トークン経由が重なっても 1 本
+    turnInterrupted: { agentId, turnSeq }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。

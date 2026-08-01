@@ -19,6 +19,7 @@ serde_json.workspace = true
 similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 toml_edit.workspace = true
 trash.workspace = true
 uuid.workspace = true

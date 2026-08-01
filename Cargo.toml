@@ -65,6 +65,12 @@ serde_json = { version = "1", features = ["preserve_order"] }
 similar = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+# 割り込み停止（Spec 10）の階層キャンセル。CancellationToken は tokio 本体に
+# 無い（1.52.3 実ソースと docs.rs の 2 経路で確認済み）。child_token の意味論
+# （親の cancel は全子へ / 子は親へ遡らない / cancel 済みの親の子は cancel 済みで
+# 生まれる）が伝播設計の根拠。既に間接依存としてツリーに居るため、直接化で
+# コンパイル対象は増えない。既定 feature だけで sync モジュールが入る。
+tokio-util = "0.7"
 # 同梱 yq の TOML 編集。コメント・フォーマットを保持する format-preserving parser
 # （cargo 自身が使うデファクト）。
 # なお YAML は対応しない: 候補だった yaml-edit 0.2 は PoC で棄却した
