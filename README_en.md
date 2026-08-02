@@ -579,3 +579,19 @@ Launch policy (decided 2026-07-30):
 2. **Do not copy and branch Neo's database.** Development memories are noise in agent operation, bloat recall payloads and token cost every turn, and the memory "I was Neo" becomes a seedbed for confabulation.
 3. **Plant seeds through selective migration**: write most procedures and practices to the file registries `SKILL.md` / `Construct.md`, not Memoria. Write only seeds of experiential knowledge as a small number of distilled entries in the new database. Initial memory may be sparse; an agent's memory should grow from its own experience.
 4. Specify the database path as an **absolute path**. A cwd-dependent NotFound is a known pitfall already encountered on the Memoria side.
+
+---
+
+## License
+
+**AGPL-3.0-or-later** ([LICENSE](LICENSE)). Why this license (2026-08-02):
+
+- **Improvements should flow back** — if you distribute a modified version or
+  offer it as a service over a network, you must publish its source.
+  A better Concordia comes back to the original village.
+- **Private modifications stay private** — using a modified copy on your own
+  machine (including adding personal bundled tools) carries no obligation to
+  publish anything. AGPL obligations trigger only on distribution or network
+  service.
+- Community co-development is welcome. Pull requests are accepted under
+  AGPL-3.0-or-later.
