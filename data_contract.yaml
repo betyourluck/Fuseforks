@@ -158,6 +158,25 @@ enums:
       ワークスペースに書かれる経路を入口で塞ぐ。形式を 1 つに固定することで、
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
+    blackboard_contract: |
+      村の黒板 = 共有作業メモ (2026-08-02 条例で運用開始。機構は読み取り投影のみ)。
+      実体はエージェントの共通 work_dir の `黒板/` フォルダで、書き手は
+      エージェント (file ツール、Spec 09) と人。運用の正は条例 (Ordinance.md):
+      1 人 1 ファイル (`黒板/<表示名>.md`)、進行役だけが `黒板/まとめ.md` を束ねる。
+      GUI 投影は中央下段のタブ「黒板」= IPC list_blackboard →
+      BlackboardNote { dir, name, content, modifiedMs } (blackboard.rs)。
+      不変条件:
+        - **GUI からの書き込み経路は作らない** (書き込み IPC 不在)。条例の
+          「書いてよいのは自分の付箋だけ」を GUI が迂回する口を開けない
+        - **push 注入はしない** (モデルは読みたいときに file read、GUI は
+          表示中の定期再読 10 秒 + 手動更新)。毎ターンの可変注入は増やさない
+          (prompt_cache #45 の規律と、毎ターン可変注入の品質仮説)
+        - `黒板/` 未作成は空として返す (エラーではない)。サブフォルダは無視、
+          読めない 1 枚は黙って飛ばす (1 枚のロック・権限で黒板全体を人質にしない)
+        - 並びは `まとめ.md` 先頭 + ファイル名順。1 枚 256 KB 超は切り詰めて
+          末尾に注記 (IPC ペイロードの上限)
+        - 対象は登録エージェントの work_dir (重複除去)。複数の work_dir が
+          混在しても全部読み、BlackboardNote.dir で区別する
   Provider:
     values: [open_ai_compat, anthropic, gemini]
     detect: |
@@ -583,6 +602,7 @@ entities:
   # -------------------------------------------------------------------------
   # Spec 08 の契約。**2026-07-30 に Phase 0 で凍結** (rev2 査読承認)。
   # 波ペイン (plan 実行の可視化、Airflow Grid 相当)。実装は Phase 1〜3 で着地。
+  # GUI 表示名は 2026-08-02 から「作業状況」(黒板とタブ切り替え。契約は不変)。
   # 描画は読み取り専用 — ここから plan を操作する経路は作らない。
   PlanTaskState:
     values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted]

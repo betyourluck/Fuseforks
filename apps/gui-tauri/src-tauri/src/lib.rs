@@ -121,6 +121,8 @@ pub fn run() {
             // 村の条例
             commands::read_ordinance,
             commands::write_ordinance,
+            // 村の黒板
+            commands::list_blackboard,
             // MCP
             commands::read_mcp_config,
             commands::write_mcp_config,

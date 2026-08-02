@@ -349,6 +349,20 @@ export interface PlanWaveRecord {
   elapsedMs: number | null;
 }
 
+/** 村の黒板の付箋 1 枚（work_dir の `黒板/` 直下。読み取り専用の投影）。 */
+export interface BlackboardNote {
+  /** 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。 */
+  dir: string;
+  /** ファイル名。`まとめ.md` が先頭に来る並びでコアから返る。 */
+  name: string;
+  content: string;
+  /** 最終更新時刻（epoch ms）。取得できない環境では 0。 */
+  modifiedMs: number;
+}
+
+/** 中央下段ペインのタブ。状態は App.vue が持つ。 */
+export type BottomTab = "blackboard" | "waves";
+
 /** コア層から押し出される状態変化。`type` による判別共用体。 */
 export type CoreEvent =
   | { type: "agentStatusChanged"; agentId: AgentId; status: AgentStatus }

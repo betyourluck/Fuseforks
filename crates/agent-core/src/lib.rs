@@ -60,6 +60,7 @@
 //! # }
 //! ```
 
+pub mod blackboard;
 pub mod compute;
 pub mod config_store;
 pub mod diag;
@@ -77,6 +78,7 @@ pub mod tool;
 pub mod tools;
 pub mod world;
 
+pub use blackboard::BlackboardNote;
 pub use config_store::{ConfigStore, LoadedSchedules};
 pub use diag::open_log;
 pub use error::{CoreError, CoreResult, ErrorPayload};

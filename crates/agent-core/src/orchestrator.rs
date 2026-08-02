@@ -948,6 +948,32 @@ impl Orchestrator {
         self.shared.store.write_ordinance(content).await
     }
 
+    // ---- 村の黒板 -------------------------------------------------------------
+
+    /// 村の黒板（work_dir の `黒板/`）を読む。GUI 投影用・読み取り専用。
+    ///
+    /// 対象は登録エージェントの work_dir（先に見つかった順・重複除去）。
+    /// 条例の運用は共通 work_dir が前提だが、複数の work_dir が混在していても
+    /// 全部読み、[`crate::blackboard::BlackboardNote::dir`] で区別できる形で返す。
+    pub async fn read_blackboard(&self) -> CoreResult<Vec<crate::blackboard::BlackboardNote>> {
+        let mut dirs: Vec<String> = Vec::new();
+        for snapshot in self.snapshots().await {
+            if let Some(dir) = snapshot.work_dir {
+                if !dirs.contains(&dir) {
+                    dirs.push(dir);
+                }
+            }
+        }
+
+        let mut notes = Vec::new();
+        for dir in dirs {
+            notes.extend(
+                crate::blackboard::read_blackboard_dir(std::path::Path::new(&dir)).await?,
+            );
+        }
+        Ok(notes)
+    }
+
     // ---- アイコン -------------------------------------------------------------
 
     /// エージェントのアイコン（WebP バイト列）を読む。未設定なら `None`。

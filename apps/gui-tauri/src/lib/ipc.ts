@@ -16,6 +16,7 @@ import type {
   AgentMessage,
   AgentSnapshot,
   AgentSpec,
+  BlackboardNote,
   ConfigFileKind,
   ErrorPayload,
   ModelTemplate,
@@ -203,6 +204,16 @@ export const readOrdinance = () => call<string>("read_ordinance");
 /** 村の条例を書く。次の発話からすべてのエージェントに反映される。 */
 export const writeOrdinance = (content: string) =>
   call<void>("write_ordinance", { content });
+
+// ---- 村の黒板 ----------------------------------------------------------------
+
+/**
+ * 村の黒板（work_dir の `黒板/`）の付箋を読む。
+ *
+ * 読み取り専用 — 書き込みの IPC は存在しない。書くのはエージェント
+ * （file ツール）と人で、条例の「1 人 1 ファイル」運用を GUI が迂回しない。
+ */
+export const listBlackboard = () => call<BlackboardNote[]>("list_blackboard");
 
 // ---- MCP ---------------------------------------------------------------------
 

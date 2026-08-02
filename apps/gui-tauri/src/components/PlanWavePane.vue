@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /**
- * 中央ペイン下段: 波ペイン（Spec 08 — plan 実行の可視化、Airflow Grid 相当）。
+ * 中央ペイン下段: 作業状況タブ（Spec 08 の波ペイン — plan 実行の可視化、
+ * Airflow Grid 相当。GUI 表示名は 2026-08-02 から「作業状況」で、黒板と
+ * タブ切り替え。台帳・テスト内の「波ペイン」はこの部品を指す）。
  *
  * 列 = 波（古い→新しいを左→右）、行 = エージェント、セル = タスクの解決状態。
  * 描くのは**モデルが作った計画の実行痕**であり、編集する場所ではない（読み取り専用）。
@@ -22,10 +24,16 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type {
   AgentId,
+  BottomTab,
   PlanTaskRecord,
   PlanTaskState,
   PlanWaveRecord,
 } from "../types";
+import BottomPaneTabs from "./BottomPaneTabs.vue";
+
+defineProps<{ activeTab: BottomTab }>();
+
+const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -122,13 +130,8 @@ watch(
     <header
       class="flex h-[38px] shrink-0 items-center gap-3 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <!-- 読み方の説明はタイトルのホバーへ（村の地図と同じ規則）。 -->
-      <h2
-        class="cursor-help font-semibold tracking-wide text-ink"
-        title="plan の実行痕。列 = 波 / 行 = サーヴァント"
-      >
-        波ペイン
-      </h2>
+      <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（村の地図と同じ規則）。 -->
+      <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="waves.length">{{ waves.length }} 波（直近 50 波まで・再起動で消える）</span>
     </header>
 

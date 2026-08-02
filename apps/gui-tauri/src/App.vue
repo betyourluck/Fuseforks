@@ -19,6 +19,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import AgentList from "./components/AgentList.vue";
+import BlackboardPane from "./components/BlackboardPane.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 import McpDialog from "./components/McpDialog.vue";
@@ -31,11 +32,19 @@ import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { useOrchestrator } from "./composables/useOrchestrator";
 import { usePaneLayout } from "./composables/usePaneLayout";
+import type { BottomTab } from "./types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
 const { layout, resize, reset } = usePaneLayout();
+
+/**
+ * 中央下段のタブ。既定は作業状況（タブ化以前からの表示を保つ）。
+ * 保存しない — タブは「いま見たいもの」で、レイアウト寸法と違い次回も
+ * 同じとは限らない。
+ */
+const bottomTab = ref<BottomTab>("waves");
 
 /** 村の条例ダイアログの表示状態。 */
 const ordinanceOpen = ref(false);
@@ -48,7 +57,7 @@ const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
 );
 
-/** 中央ペインの上下分割（Spec 08）。上段 = 村の地図 / 下段 = 波ペイン。 */
+/** 中央ペインの上下分割（Spec 08）。上段 = 村の地図 / 下段 = 黒板・作業状況のタブ。 */
 const centerRows = computed(
   () => `minmax(0, 1fr) 2px ${layout.bottomHeight}px`,
 );
@@ -89,7 +98,10 @@ onMounted(() => {
       @reset="reset"
     />
 
-    <!-- 中央ペイン: 上段 = 村の地図（空間の今）/ 下段 = 波ペイン（時間の痕）。 -->
+    <!--
+      中央ペイン: 上段 = 村の地図（空間の今）/ 下段 = タブ切り替え。
+      下段は 黒板（共有作業メモ）と 作業状況（Spec 08 の波ペイン — 時間の痕）。
+    -->
     <main
       class="grid min-w-0 overflow-hidden"
       :style="{ gridTemplateRows: centerRows }"
@@ -100,17 +112,26 @@ onMounted(() => {
         </ErrorBoundary>
       </section>
 
-      <!-- 仕切りは波ペインの上端にあるので、下へ動かすと高さが縮む。 -->
+      <!-- 仕切りは下段ペインの上端にあるので、下へ動かすと高さが縮む。 -->
       <PaneSplitter
         direction="row"
-        label="波ペインの高さ"
+        label="下段ペインの高さ"
         @delta="(px) => resize('bottomHeight', px, -1)"
         @reset="reset"
       />
 
       <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary label="波ペイン">
-          <PlanWavePane />
+        <ErrorBoundary :label="bottomTab === 'waves' ? '作業状況' : '黒板'">
+          <PlanWavePane
+            v-if="bottomTab === 'waves'"
+            :active-tab="bottomTab"
+            @select-tab="bottomTab = $event"
+          />
+          <BlackboardPane
+            v-else
+            :active-tab="bottomTab"
+            @select-tab="bottomTab = $event"
+          />
         </ErrorBoundary>
       </section>
     </main>
