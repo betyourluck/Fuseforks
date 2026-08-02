@@ -3474,9 +3474,15 @@ async fn per_agent_tool_iteration_limits_override_the_default() {
     );
 }
 
-/// 未知のツール名は会話を止めず、モデルが読める文字列として返ること。
+/// 未知のツール名は**捨てずにモデルへ返し**、モデルが自分で直せること。
+///
+/// 以前はここで呼び出しごと落としていた（`tool_result` もログも残らない）。
+/// モデルから見ると「呼んだのに何も起きない」ので、実機では実在しない名前の
+/// 呼び出しが静かに消え、本文だけが答えとして配信された（2026-08-02）。
+/// `execute_tool` には「そのツールはありません」という文言が元からあるのに、
+/// 捨てられた呼び出しはそこへ到達できなかった（到達不能な分岐）。
 #[tokio::test]
-async fn an_unknown_tool_name_does_not_kill_the_turn() {
+async fn an_unknown_tool_name_is_reported_back_so_the_model_can_recover() {
     let dir = TempDir::new("tool-unknown");
     let backend = Arc::new(ToolCallingBackend {
         tool: "does_not_exist".into(),
@@ -3500,8 +3506,21 @@ async fn an_unknown_tool_name_does_not_kill_the_turn() {
     orchestrator.send_user_message(&id, "やって").await.unwrap();
     let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
-    // 未知の名前は実行対象に含まれないので、そのまま最終出力として扱われる。
-    assert_eq!(*backend.calls.lock().unwrap(), 1);
+    // 「無い」と伝えたうえで、もう 1 周モデルに機会を渡す（自己修正の余地）。
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        2,
+        "捨てて終わりにせず、結果を返してもう 1 周回すこと"
+    );
+
+    // モデルの手元に「その名前は無い」が届いていること。
+    let last = backend.last.lock().unwrap().clone();
+    let told = last.iter().any(|m| {
+        m.tool_name.as_deref() == Some("does_not_exist")
+            && m.content.contains("というツールはありません")
+    });
+    assert!(told, "未知の名前は tool_result として返ること: {last:#?}");
+
     let log = messages(&events);
     assert_eq!(log.len(), 2, "会話は成立して終わる: {log:#?}");
     assert_eq!(

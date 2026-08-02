@@ -2716,25 +2716,27 @@ async fn handle_message(
             break;
         }
 
-        // 実行対象のツール呼び出しを拾う。転送用の名前はここには来ない
+        // 実行できる呼び出しか。転送用の名前はここには来ない
         // （上で Handoff として抜けている）。委譲（`ask_*`）は**結果が返る**ので、
         // 転送ではなくこちら側 — 実行ツールと同じ扱いでループを回す。
-        let calls: Vec<_> = response
-            .tool_calls
-            .iter()
-            .filter(|call| {
-                executable.iter().any(|spec| spec.name == call.name)
-                    || (use_handoff_tools && handoffs.resolve_ask(&call.name).is_some())
-                    // plan は executable にも resolve_ask にも該当しない。
-                    // ここへ足し忘れると `calls` が空 = 最終出力と読まれ、
-                    // モデルが呼んだのに**何も起きず本文だけ返る**
-                    // （エラーにならないので気づけない）。
-                    || (use_handoff_tools
-                        && handoffs.offers_plan()
-                        && call.name == HandoffTools::PLAN)
-            })
-            .cloned()
-            .collect();
+        let is_runnable = |call: &crate::llm::ToolCall| {
+            executable.iter().any(|spec| spec.name == call.name)
+                || (use_handoff_tools && handoffs.resolve_ask(&call.name).is_some())
+                // plan は executable にも resolve_ask にも該当しない。
+                // ここへ足し忘れると呼び出しが素通りし、モデルが呼んだのに
+                // **何も起きず本文だけ返る**（エラーにならないので気づけない）。
+                || (use_handoff_tools
+                    && handoffs.offers_plan()
+                    && call.name == HandoffTools::PLAN)
+        };
+
+        // **提示していない名前も捨てない。** 以前はここで filter して落として
+        // いたため、モデルが実在しない名前を呼ぶと呼び出しはログにも
+        // `tool_result` にも残らず消え、モデルは「呼んだのに何も起きない」まま
+        // 本文を書いた。しかも `execute_tool` には「そのツールはありません」と
+        // いう文言が既にあるのに、**捨てられた呼び出しはそこへ到達できない**
+        // （到達不能な分岐だった）。結果を返せばモデルは自分で直せる。
+        let calls: Vec<_> = response.tool_calls.clone();
 
         if calls.is_empty() {
             // ツールを呼ばなかった = 最終出力。
@@ -2801,6 +2803,31 @@ async fn handle_message(
                     call.name,
                 );
                 blocked_in_round.get_or_insert_with(|| call.name.clone());
+                continue;
+            }
+
+            // 提示していない名前。**捨てずに「無い」ことを結果として返す。**
+            //
+            // 判定を RepeatGuard の**後**に置くのは、同じ実在しない名前を呼び
+            // 続けたときに周回の打ち切りへ落ちるようにするため（先に置くと
+            // 同じ結果を返し続けて上限まで回る）。イベントは出さない —
+            // `ToolInvoked` は「ツールが走った」の意味で、走っていないものを
+            // 混ぜると UI の直近ツールが実在しない名前で埋まる。
+            if !is_runnable(call) {
+                let body = format!(
+                    "`{}` というツールはありません。提示された名前から選んでください。",
+                    call.name
+                );
+                note!(
+                    "tool unknown: agent={agent_id} round={} name={}",
+                    iteration + 1,
+                    call.name,
+                );
+                // 数えるのは**モデルへ返した本文**（RepeatGuard の規律と同じ）。
+                repeat_guard.observe(&call.name, &call.args, &body);
+                // 「無い」と伝えるのも新しい情報なので、空振りの周にはしない。
+                executed_in_round += 1;
+                messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
                 continue;
             }
 
