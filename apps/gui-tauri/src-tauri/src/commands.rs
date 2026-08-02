@@ -430,10 +430,13 @@ pub async fn send_user_message(
 
 /// 会話をリセットする（新規チャット）。消えるのは会話ログと履歴だけで、
 /// 稼働状態・統計・Memory.md・個別 MCP 接続は残る。
+///
+/// **Spec 12 で意味が変わった**: 今の会話は捨てられず、閉じて新しい会話が開く
+/// （前の会話はディスクに残り、一覧から戻れる）。飛行中のターンがあると
+/// `SESSION_SWITCH_BLOCKED` で失敗する — 答えが別の会話へ着地するのを防ぐため。
 #[tauri::command]
 pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.reset_conversation().await;
-    Ok(())
+    state.orchestrator.reset_conversation().await
 }
 
 /// RAG 索引に断片を追加する（動作確認用の投入口）。

@@ -160,7 +160,9 @@ enums:
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
     session_store: |
       会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結 →
-      2026-08-03 P1 着地**: session_store.rs に純機構と単体 16 本。配線は P2〜)。
+      2026-08-03 P1 着地** (session_store.rs に純機構と単体 16 本)
+      **→ 同日 P2 着地** (書き込み点 2 種 + 起動時の復元 + セッション API +
+      reset_conversation の委譲。結合 8 本)。残は P3 投影 / P4 要約 / P5 台帳)。
       再起動をまたいで会話を保ち、複数のセッションを持ち、再開できるようにする。
       **保存するのは「会話」であって「実行状態」ではない。**
       backend: **redb 4.1.0** (pure Rust・C 依存なし・2 依存)。
@@ -213,7 +215,14 @@ enums:
           これは正しい記録 (発話は起きた事実) として扱い、**画面には出すが
           履歴には入れない**。再開後は「頼んだが答えが返らなかった」ように見える
         - **セッションの切り替えは飛行中ターンが無いときだけ** (interrupt_all の
-          後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する
+          後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する。
+          拒否は SESSION_SWITCH_BLOCKED (自動で interrupt_all してから切り替える
+          ことはしない — 畳むかどうかは人の判断)。
+          **例外は create_session (新規チャット) だけ** (P2 で確定)。着地先が
+          新しい空のセッションなので既存の記録を汚さず、reset_rule の案 A
+          (飛行中ターンの完了書き込みは許容) がそのまま成立する。
+          resume / fork / continue_latest / 開いているセッションの delete は
+          **前に保存された会話へ無関係な答えが混ざる**ので拒否する
         - **起動時は最新セッションを開く** (updatedAt で判定)。読めない・0 件なら
           **警告 1 行を出して新規セッションを作る** — 起動が止まる経路は作らない
         - **索引は作らない (v1)。** 実測で 20,000 レコードの全走査が 11 ms。
@@ -274,6 +283,25 @@ enums:
         grep がヘッダに引っかからないようにするため)。
         エラーは SESSION_NOT_FOUND / SESSION_STORE_FAILED (operation に
         開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)
+      P2 で着地した配線 (orchestrator.rs・2026-08-03):
+        書き込み点は **2 つだけ** — Shared::record (message) と
+        Shared::push_exchange (exchange)。後者は履歴へ積む処理と保存を
+        **1 つの関数に閉じてある**: 4 箇所 (成功 / 失敗 / 割り込み / 予算切れ) の
+        呼び出し側が別々に保存を書くと、片方だけ更新されて再開後の履歴が
+        実行中の履歴と食い違う (しかもその食い違いは画面に出ない)。
+        保存の失敗は **WARN 1 行で続行** — 保存できないことは会話を止める理由に
+        ならない。保存先が開けなかった起動は sessions=None で普通に動く
+        (会話は再起動で消える。起動が止まる経路は作らない)。
+        起動時の復元は open_session_at_boot: 最新セッション (updatedAt) を開き、
+        会話ログは末尾 log_capacity 件、履歴は exchange から history_turns 往復。
+        宛先エージェントが消えている履歴は捨てて WARN。
+        Orchestrator の API: current_session / list_sessions / create_session /
+        resume_session / continue_latest / fork_session / delete_session /
+        export_session。reset_conversation は create_session への委譲
+        (保存先が無い村だけ旧挙動)。
+        **開いているセッションを delete したら次のセッションへ切り替える**
+        (無ければ新規作成) — 消したまま開きっぱなしにすると、以後の発話が
+        行き先の無いセッションへ書かれ続ける
       実測 (2026-08-02、40,000 レコード・1 件約 600 バイト):
         書き込み 40,000 件 = 271 ms / 後ろから 16 件 = 0.03 ms /
         20,000 件の全走査 = 11 ms / fork 10,000 件のコピー = 55 ms /
@@ -563,6 +591,7 @@ entities:
       - SCHEDULE_STORE_BLOCKED  # Spec 07。schedules.json が読めない間は書き込みを保護
       - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
       - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
+      - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING
@@ -1049,6 +1078,13 @@ entities:
           「この会話を閉じて、新しい会話を始めますか」)。捨てないので警告色は外す
         - 切り替え (resume / fork / continue_latest) も同じ 2 イベントを
           この順で出す。新規チャットだけを特別扱いしない
+        - **飛行中ターンの扱いだけは新規チャットが特別**(P2 で確定)。
+          案 A (完了書き込みは許容) はここでそのまま生きる — 着地先が新しい
+          空のセッションなので、既存の記録を汚さない。既存の会話を開く
+          resume / fork / continue_latest は SESSION_SWITCH_BLOCKED で拒む
+        - **保存先が開けていない村では改訂前の挙動のまま** —
+          メモリを白紙にして conversationCleared だけを出す (sessionSwitched は
+          出さない)。保存できないことは新規チャットを使えなくする理由にならない
   typing_rule: |
     agentTyping は発話処理 (LLM 呼び出し + ツール実行) の開始と終了で
     **対になって**流れる (2026-07-29)。処理は数十秒かかりうるため、この間
@@ -1629,7 +1665,14 @@ conversation_termination:
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
     履歴を持ち、自分の発言も assistant として見る。履歴が無いと毎回コールドスタートになり、
     同じ入力に同じ出力を返し続けて原理的に収束しない (failures.md #12)。
-    履歴はプロセス寿命に閉じ、起動時にクリアする (保存しない)。
+    **履歴の寿命はセッション** (Spec 12 P2 で変更。それ以前はプロセス寿命で、
+    start_agent が毎回クリアしていた)。sessions.redb の exchange レコードから
+    起動時に復元し、**start_agent ではクリアしない**。
+    旧い規律「起動は新しい会話の開始として扱う」は、会話を始め直す手段が他に
+    無かった時期の代用だった。始め直しは「新規チャット」= 新しいセッションが担う。
+    start_agent でクリアすると、**再起動して開いた会話の履歴を、エージェントを
+    起動した瞬間に捨てる** — 起動時に自動起動しない契約と組み合わさって、
+    Spec 12 の S1 (続きから始められる) が原理的に成立しない。
 
 # ---------------------------------------------------------------------------
 concurrency:

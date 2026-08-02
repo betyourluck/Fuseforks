@@ -61,6 +61,20 @@ pub enum CoreError {
     #[error("会話 `{0}` は保存されていません")]
     SessionNotFound(String),
 
+    /// 飛行中のターンがあるため会話を切り替えられない（Spec 12 の不変条件 11）。
+    ///
+    /// 飛行中に切り替えると、**答えが別のセッションへ着地する** — 頼んだ会話と
+    /// 答えが載る会話が食い違い、しかも画面上その 2 つは区別が付かない。
+    /// 自動で打ち切ってから切り替えることはしない（線は人が引く）。
+    #[error(
+        "飛行中のターンが {in_flight} 件あるため会話を切り替えられません。\
+         「■ 停止」または「全ターン停止」で止めてから切り替えてください"
+    )]
+    SessionSwitchBlocked {
+        /// 飛行中のターン数。
+        in_flight: usize,
+    },
+
     /// 会話の保存先（`sessions.redb`）の操作に失敗した（Spec 12）。
     ///
     /// **どの操作で落ちたか**を必ず伴わせる。redb の失敗は開く・読む・書く・
@@ -193,6 +207,7 @@ impl CoreError {
             Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::SessionStore { .. } => "SESSION_STORE_FAILED",
+            Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",

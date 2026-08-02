@@ -103,7 +103,7 @@ UI ラベル・README — は「**グラウンディング**」、内部の台�
    残は (2) 既定天井で健全依頼が完走、のみ（通常運用の 1 依頼で確認できる）。
    これが通れば燃焼対策 3 点は全て Done
 
-## 次の大物: 会話の永続化とセッション管理（Spec 12・rev2 承認 → P0・P1 完了）
+## 次の大物: 会話の永続化とセッション管理（Spec 12・rev2 承認 → P0〜P2 完了）
 
 **Spec 12 は rev2 承認 → P0 完了**（2026-08-02。契約は data_contract の
 `session_store` + `reset_rule` の Spec 12 改訂節 + `sessionSwitched` の加算。
@@ -112,8 +112,10 @@ Spec 03 のヘッダにも改訂を記録）**→ P1 完了**（2026-08-03。
 `create_session` / `append` / `session_meta` / `list_sessions` /
 `latest_session` / `records` / `tail_messages` / `restore_histories` /
 `fork_session` / `delete_session` / `export_session`。単体 16 本・
-workspace 全緑・clippy 新規警告ゼロ）。**残 Phase: P2 配線 / P3 投影 /
-P4 要約（手動）/ P5 台帳と実機確認**。起点は利用者の判断 —
+workspace 全緑・clippy 新規警告ゼロ）**→ P2 完了**（2026-08-03。
+書き込み点 2 種・起動時の復元・セッション API・`reset_conversation` の委譲。
+結合 8 本）。**残 Phase: P3 投影 / P4 要約（手動）/ P5 台帳と実機確認**。
+起点は利用者の判断 —
 「再起動して前回の続きから始められないと、道具として使えない」。
 利用者が Claude Code / Copilot / Cursor / LangGraph / CrewAI を調査した
 資料を提供し、Spec の参考節へ接地済み。
@@ -149,6 +151,22 @@ grep に依存している）。
   だけが空メッセージを持ち、次のターンで 400 になる**（failures.md #29 の再演）
 - **`restore_histories` は `RestoredHistories { histories, summaries }` を返す**。
   要約が履歴の席を持たないことを型で保つ（注入は可変文脈の畳みへ相乗り = #45）
+
+**P2 の実装で決めた 3 点**（2026-08-03）:
+
+- **`start_agent` が履歴をクリアするのをやめた**（既存挙動の変更としては最大）。
+  旧い規律「起動は新しい会話の開始として扱う」は、会話を始め直す手段が他に
+  無かった時期の代用だった。**起動時に自動起動しない契約と組み合わさると、
+  再起動して開いた会話の履歴を、エージェントを起動した瞬間に捨てる** — S1
+  （続きから始められる）が原理的に成立しない。始め直しは「新規チャット」が担う
+- **飛行中ターンの拒否は「既存の会話を開くとき」だけ**。凍結済みの 2 節が
+  衝突して見えた（`reset_rule` の案 A = 完了書き込みは許容 / 不変条件 11 =
+  切り替えは idle のときだけ）。解は**着地先で分ける** — 新規チャットの着地先は
+  新しい空の会話で既存の記録を汚さないので案 A が成立する。resume / fork /
+  continue_latest / 開いている会話の delete は `SESSION_SWITCH_BLOCKED` で拒む。
+  **自動で `interrupt_all` してから切り替えることはしない**（線は人が引く）
+- **保存の失敗は WARN 1 行で続行**し、保存先が開けない起動も普通に通す
+  （その村では会話が再起動で消え、`reset_conversation` は改訂前の挙動へ落ちる）
 
 **実測で決めた**（2026-08-02）: redb 4.1.0 = 2 依存 10 秒ビルド、
 「後ろから 16 件」0.03 ms、20,000 件の全走査 11 ms、fork 55 ms。
