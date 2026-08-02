@@ -950,7 +950,11 @@ export function useOrchestrator() {
     async forkSession(sessionId: string, atSeq: number): Promise<boolean> {
       const done = await guard("会話の分岐", () => ipc.forkSession(sessionId, atSeq));
       if (succeeded(done)) {
-        pushToast("info", "会話を分岐しました", "元の会話はそのまま一覧に残っています");
+        pushToast(
+          "info",
+          "会話を分岐しました",
+          "選んだ依頼を入力欄に戻しました。書き換えて送ってください（元の会話は一覧に残っています）",
+        );
       }
       return succeeded(done);
     },

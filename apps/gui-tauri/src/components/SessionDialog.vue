@@ -14,7 +14,16 @@ import { computed, onMounted, ref } from "vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { ForkPoint } from "../types";
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  /**
+   * 分岐したので、選んだ依頼を入力欄へ差し戻してほしい。
+   *
+   * 依頼そのものは複製先に残していない（残すと返事の付かない依頼が宙に浮く）。
+   * 書き換えて送るところまでが分岐の操作なので、文面は入力欄に置く。
+   */
+  (e: "prefill", payload: { text: string; to: string | null }): void;
+}>();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -63,12 +72,14 @@ async function beginFork(sessionId: string): Promise<void> {
   busy.value = false;
 }
 
-async function fork(atSeq: number): Promise<void> {
+async function fork(point: ForkPoint): Promise<void> {
   if (!forking.value || busy.value) return;
   busy.value = true;
-  const ok = await orchestrator.forkSession(forking.value, atSeq);
+  const ok = await orchestrator.forkSession(forking.value, point.atSeq);
   busy.value = false;
-  if (ok) emit("close");
+  if (!ok) return;
+  emit("prefill", { text: point.text, to: point.to ?? null });
+  emit("close");
 }
 
 async function remove(sessionId: string, title: string): Promise<void> {
@@ -113,8 +124,9 @@ async function exportOne(sessionId: string): Promise<void> {
 
       <p class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim">
         <template v-if="forking">
-          選んだ依頼<strong class="text-ink">まで</strong>を複製して、そこから別の頼み方を
-          試せます。元の会話はそのまま残ります。
+          選んだ依頼を出す<strong class="text-ink">直前まで</strong>を複製し、その依頼の文面を
+          入力欄へ戻します。書き換えて送れば、別の頼み方を試せます。
+          元の会話はそのまま残ります。
         </template>
         <template v-else>
           会話は再起動をまたいで残ります。開き直すと、サーヴァントも前の話を踏まえて答えます。
@@ -131,19 +143,20 @@ async function exportOne(sessionId: string): Promise<void> {
             v-if="!forkPoints.length"
             class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim"
           >
-            この会話にはまだユーザーの依頼がありません。分岐できる地点は、
-            人が出した依頼のところだけです。
+            分岐できる地点がありません。分岐は「その依頼を出す直前へ戻る」操作なので、
+            会話のいちばん先頭の依頼は選べません（その手前は空の会話で、
+            それは「新規チャット」と同じになります）。
           </p>
           <ul v-else class="space-y-1.5">
-            <li v-for="point in forkPoints" :key="point.seq">
+            <li v-for="point in forkPoints" :key="point.atSeq">
               <button
                 class="flex w-full items-center gap-2 rounded border border-line bg-surface-0 p-2 text-left text-[11px] transition hover:border-accent disabled:opacity-40"
                 :disabled="busy"
-                @click="fork(point.seq)"
+                @click="fork(point)"
               >
                 <span class="shrink-0 tabular-nums text-ink-dim">{{ stamp(point.tsMs) }}</span>
                 <span class="min-w-0 flex-1 truncate">{{ point.preview }}</span>
-                <span class="shrink-0 text-accent">ここまでを複製 →</span>
+                <span class="shrink-0 text-accent">この依頼の直前まで →</span>
               </button>
             </li>
           </ul>

@@ -427,13 +427,20 @@ fn session_wire_fields_are_frozen() {
     );
 
     let point = ForkPoint {
-        seq: 7,
+        at_seq: 6,
         preview: "最初の依頼です".into(),
+        text: "最初の依頼\nです".into(),
+        to: Some(AgentId::from("agent_01")),
         ts_ms: 1_785_600_000_000,
     };
     assert_eq!(
         wire_keys(&point),
-        vec!["preview", "seq", "tsMs"],
+        vec!["atSeq", "preview", "text", "to", "tsMs"],
         "ForkPoint のフィールドが変わった"
+    );
+    assert_eq!(
+        wire_keys(&ForkPoint { to: None, ..point }),
+        vec!["atSeq", "preview", "text", "tsMs"],
+        "宛先がエージェントでなければ to は出さない"
     );
 }

@@ -184,14 +184,31 @@ pub struct RestoredHistories {
 /// 候補を**ユーザー発話に限る**のは、それが人にとって会話の節目だから。
 /// 全レコードを並べると入退室の System 行や往復の記録まで候補に出て、
 /// 「どこで切ったのか」が読めなくなる。
+///
+/// **切るのはその発話の「直前」**（`at_seq` = 発話の seq − 1）。S4 は
+/// 「ある地点までは同じで、そこから**別の頼み方**を試したい」なので、
+/// 依頼そのものは複製先に残さず、[`Self::text`] を入力欄へ差し戻して
+/// 書き換えられる状態にする。依頼を含めて複製すると、**返事の付かない依頼が
+/// 宙に浮いたまま残る**（返事と `exchange` はその発話より後に書かれるため）。
+/// 再実行の機構は無いので、その依頼は結局どのみち打ち直すことになる。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkPoint {
-    /// この発話のレコード seq。`fork_session(id, seq)` へそのまま渡せる
-    /// （**この seq を含めて**複製される）。
-    pub seq: u64,
-    /// 発話の先頭。一覧に出す短い手がかり。
+    /// 複製の境界。[`SessionStore::fork_session`] へ**そのまま渡す**
+    /// （この seq を含めて複製 = この依頼を出す直前の状態）。
+    pub at_seq: u64,
+    /// 一覧に出す 1 行（[`FORK_PREVIEW_CHARS`] 字・改行は空白へ潰す）。
     pub preview: String,
+    /// 入力欄へ差し戻す**原文**（改行込み・切り詰めなし）。
+    ///
+    /// [`Self::preview`] と分けてあるのは、潰した文字列を入力欄へ差すと
+    /// 改行が消えて別の依頼になるため。片方から他方を作ると必ずどちらかが壊れる。
+    pub text: String,
+    /// この依頼の宛先エージェント。宛先がエージェントでなければ `None`。
+    ///
+    /// 差し戻した文面を**別のサーヴァントへ送ってしまう**のを防ぐために持つ。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<AgentId>,
     /// 発話時刻（UNIX エポックからのミリ秒）。
     pub ts_ms: u64,
 }
@@ -533,9 +550,13 @@ impl SessionStore {
 
     /// 分岐できる地点を古い順で返す（Spec 12 P3）。
     ///
-    /// 候補は**ユーザー発話だけ**。返る `seq` はその発話自身のもので、
-    /// [`Self::fork_session`] へ渡すと**その発話を含めて**複製される
-    /// （= 「この依頼までは同じで、そこから別の頼み方を試す」）。
+    /// 候補は**ユーザー発話だけ**。返る [`ForkPoint::at_seq`] は
+    /// **その発話の直前**（seq − 1）で、[`Self::fork_session`] へそのまま渡すと
+    /// 「この依頼を出す直前の状態」が複製される。依頼そのものは
+    /// [`ForkPoint::text`] で返し、入力欄へ差し戻して書き換えてもらう。
+    ///
+    /// **seq 0 の発話は候補にしない** — その手前まで複製すると空の会話になり、
+    /// それは「新規チャット」と同じ操作になる。同じ結果へ 2 つの入口を作らない。
     ///
     /// # Errors
     /// セッションが存在しない、または読み込みに失敗した場合。
@@ -548,14 +569,19 @@ impl SessionStore {
             if !matches!(message.from, Endpoint::User) {
                 continue;
             }
+            let Some(at_seq) = seq.checked_sub(1) else {
+                continue;
+            };
             let flattened = message
                 .content
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
             out.push(ForkPoint {
-                seq,
+                at_seq,
                 preview: flattened.chars().take(FORK_PREVIEW_CHARS).collect(),
+                text: message.content.clone(),
+                to: message.to.agent_id().cloned(),
                 ts_ms: message.ts_ms,
             });
         }
@@ -1063,13 +1089,63 @@ mod tests {
 
         let points = store.fork_points(&id).unwrap();
         assert_eq!(points.len(), 2, "System 行と exchange は候補にしない");
-        assert_eq!(points[0].seq, first);
-        assert_eq!(points[0].preview, "最初の依頼 です", "改行は空白へ潰す");
-        assert_eq!(points[1].seq, second);
+        assert_eq!(points[0].at_seq, first - 1, "切るのは発話の直前");
+        assert_eq!(points[0].preview, "最初の依頼 です", "一覧は改行を空白へ潰す");
+        assert_eq!(points[0].text, "最初の依頼\nです", "差し戻すのは原文のまま");
+        assert_eq!(points[0].to.as_ref(), Some(&agent()), "宛先も返す");
+        assert_eq!(points[1].at_seq, second - 1);
+    }
 
-        // 返った seq をそのまま fork へ渡すと、その発話まで含めて複製される。
-        let forked = store.fork_session(&id, points[0].seq).unwrap();
-        assert_eq!(store.tail_messages(&forked, 10).unwrap().len(), 2);
+    /// 分岐すると、選んだ依頼は**複製先に残らない**（入力欄へ差し戻す前提）。
+    ///
+    /// 依頼を含めて複製すると、返事の付かない依頼が宙に浮いたまま残る —
+    /// 返事と exchange はその発話より後に書かれるため。
+    #[test]
+    fn forking_at_a_point_leaves_the_request_out_of_the_copy() {
+        let dir = TempDir::new();
+        let store = SessionStore::open(dir.db()).expect("開けること");
+        let id = store.create_session(None).unwrap();
+
+        store
+            .append(&id, &Record::message(user_message("合言葉はアルファ")))
+            .unwrap();
+        store
+            .append(&id, &Record::message(user_message("合言葉はブラボー")))
+            .unwrap();
+        store
+            .append(&id, &Record::exchange(&agent(), "合言葉はアルファ", "覚えました"))
+            .unwrap();
+
+        let points = store.fork_points(&id).unwrap();
+        let bravo = points
+            .iter()
+            .find(|p| p.text == "合言葉はブラボー")
+            .expect("候補にあること");
+
+        let forked = store.fork_session(&id, bravo.at_seq).unwrap();
+        let messages = store.tail_messages(&forked, 10).unwrap();
+        assert_eq!(messages.len(), 1, "直前までしか複製しない");
+        assert_eq!(messages[0].content, "合言葉はアルファ");
+        assert!(
+            !messages.iter().any(|m| m.content == "合言葉はブラボー"),
+            "選んだ依頼は複製先に残らない（入力欄へ差し戻す）"
+        );
+    }
+
+    /// 先頭の発話は候補にしない（その手前まで = 空の会話 = 新規チャットと同じ）。
+    #[test]
+    fn the_very_first_record_is_not_a_fork_point() {
+        let dir = TempDir::new();
+        let store = SessionStore::open(dir.db()).expect("開けること");
+        let id = store.create_session(None).unwrap();
+        store
+            .append(&id, &Record::message(user_message("いきなり最初の依頼")))
+            .unwrap();
+
+        assert!(
+            store.fork_points(&id).unwrap().is_empty(),
+            "seq 0 の発話は分岐点にしない（同じ結果へ 2 つの入口を作らない）"
+        );
     }
 
     /// 分岐先で要約の覆う境界が生きていること（seq を振り直さない理由の実証）。

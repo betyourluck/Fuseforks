@@ -370,32 +370,32 @@ async fn fork_opens_the_copy_and_leaves_the_source_untouched() {
         .meta
         .record_count;
 
-    // 「2 番目」が書かれた直前で枝を切る。seq は入退室の System 行も数えるので、
-    // 位置を決め打ちせず書き出しから引く。
-    let export = dir.0.join("source.jsonl");
-    orchestrator.export_session(&source, &export).await.unwrap();
-    let text = std::fs::read_to_string(&export).unwrap();
-    let cut = text
-        .lines()
-        .skip(1)
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .find(|line| line["content"] == "2 番目")
-        .expect("2 番目の発話が保存されていること")["seq"]
-        .as_u64()
+    // 「2 番目」を出す**直前**へ戻る。境界の計算はコア（fork_points）に任せる —
+    // UI が seq を自分で引き算する形にすると、境界の意味が 2 箇所に散る。
+    let point = orchestrator
+        .list_fork_points(&source)
+        .await
         .unwrap()
-        - 1;
+        .into_iter()
+        .find(|p| p.text == "2 番目")
+        .expect("2 番目が分岐点として出ること");
+    assert_eq!(
+        point.to.as_ref().map(|a| a.as_str()),
+        Some("agent_01"),
+        "差し戻す文面の宛先も返ること"
+    );
 
-    let forked = orchestrator.fork_session(&source, cut).await.unwrap();
+    let forked = orchestrator.fork_session(&source, point.at_seq).await.unwrap();
 
     assert_eq!(orchestrator.current_session(), forked, "複製した側が開くこと");
     let log = orchestrator.message_log(None).await;
     assert!(
         log.iter().any(|m| m.content == "1 番目"),
-        "at_seq までの会話は載ること: {log:#?}"
+        "直前までの会話は載ること: {log:#?}"
     );
     assert!(
         !log.iter().any(|m| m.content == "2 番目"),
-        "at_seq より後は載らないこと: {log:#?}"
+        "選んだ依頼は複製先に残らないこと（入力欄へ差し戻す）: {log:#?}"
     );
 
     let after = orchestrator

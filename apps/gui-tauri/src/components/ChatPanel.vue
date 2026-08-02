@@ -279,6 +279,22 @@ async function send(content: string): Promise<void> {
 
 /** 会話一覧ダイアログを開いているか（Spec 12）。 */
 const sessionsOpen = ref(false);
+const input = ref<InstanceType<typeof ChatInput> | null>(null);
+
+/**
+ * 分岐したので、選んだ依頼を入力欄へ戻す（Spec 12）。
+ *
+ * 宛先も一緒に戻す — 差し戻した文面を**別のサーヴァントへ送ってしまう**のは、
+ * 元の会話を再現するつもりの操作としては一番痛い間違いになる。
+ * 送信はしない（書き換えるための差し戻しなので）。
+ */
+async function prefill(payload: { text: string; to: string | null }): Promise<void> {
+  if (payload.to && state.agents.some((agent) => agent.id === payload.to)) {
+    orchestrator.select(payload.to);
+  }
+  await nextTick();
+  await input.value?.fill(payload.text);
+}
 
 /**
  * 新規チャット。今の会話を閉じて新しい会話を開く（Spec 12 で意味が変わった）。
@@ -562,13 +578,18 @@ async function newChat(): Promise<void> {
     </div>
 
     <ChatInput
+      ref="input"
       :disabled="!canSend"
       :placeholder="placeholder"
       :blocked-reason="blockedReason"
       @send="send"
     />
 
-    <SessionDialog v-if="sessionsOpen" @close="sessionsOpen = false" />
+    <SessionDialog
+      v-if="sessionsOpen"
+      @close="sessionsOpen = false"
+      @prefill="prefill"
+    />
   </div>
 </template>
 
