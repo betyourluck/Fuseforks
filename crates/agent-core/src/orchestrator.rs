@@ -277,6 +277,13 @@ struct Shared {
     /// ならない（起動が止まる経路は作らない、D1 と同じ規律）。その代わり
     /// 起動時に WARN を 1 行出す。
     sessions: Option<SessionStore>,
+    /// エージェント別の**現役の**要約（Spec 12 P4）。手動要約のときだけ入る。
+    ///
+    /// **履歴（`AgentRecord.history`）の中には置かない。** 置くと、送った文字列と
+    /// 保存した文字列が食い違う（#45）。ここに持って**可変文脈の畳みへ相乗り**
+    /// させれば、できた `sent_user_turn` がそのまま `exchange` として保存される。
+    /// 復元時は `restore_histories` が返す最新の要約で埋め直す。
+    summaries: RwLock<BTreeMap<AgentId, String>>,
     /// いま開いているセッションの ID（Spec 12）。
     ///
     /// **`std::sync::RwLock` で持つ。** 書き込み点（`record` / `push_exchange`）は
@@ -502,6 +509,23 @@ struct TaskHandle {
     join: JoinHandle<()>,
 }
 
+/// 手動要約（Spec 12 P4）の役割指示。
+///
+/// **要約を作るのは本人**（そのエージェント自身のモデル）。別のモデルに
+/// 要約させると、要約の文体と本人の文体が食い違い、次のターンで「自分が書いた
+/// 覚え書き」として読めなくなる。
+const SUMMARY_SYSTEM: &str = "あなたはこれから、自分自身の会話履歴を要約します。\
+     要約は次のターン以降のあなた自身への覚え書きになります。";
+
+/// 手動要約の最終指示。**要約だけを返させる**（前置きが混ざると、そのまま
+/// 次のターンの文脈に載る）。
+const SUMMARY_INSTRUCTION: &str = "ここまでのやり取りを、あなたが続きを進めるための覚え書きとしてまとめてください。\n\
+     - 決まったこと・まだ決まっていないこと・次にやることを落とさない\n\
+     - 固有名詞（ファイル名・ID・数値・URL）はそのまま残す\n\
+     - 挨拶や相槌は落とす\n\
+     - 箇条書きで、自分宛ての覚え書きとして書く\n\
+     要約の本文だけを出力してください（前置きも後書きも要りません）。";
+
 /// 起動時に開くセッションを決め、会話ログと履歴を戻す（Spec 12 P2）。
 ///
 /// 既定は**最新セッション**（`updatedAt` で判定）。読めない・0 件なら警告を
@@ -518,7 +542,7 @@ fn open_session_at_boot(
     world: &mut World,
     log_capacity: usize,
     history_turns: usize,
-) -> Option<(String, Vec<AgentMessage>)> {
+) -> Option<(String, Vec<AgentMessage>, BTreeMap<AgentId, String>)> {
     let existing = match sessions.latest_session() {
         Ok(found) => found,
         Err(err) => {
@@ -553,6 +577,7 @@ fn open_session_at_boot(
     // 履歴: ここが S1 の本丸。画面ではなく、次のターンで LLM へ渡る側。
     let mut restored_agents = 0usize;
     let mut orphaned = 0usize;
+    let mut summaries = BTreeMap::new();
     match sessions.restore_histories(&session_id, history_turns) {
         Ok(restored) => {
             for (agent_id, history) in restored.histories {
@@ -565,6 +590,9 @@ fn open_session_at_boot(
                     Err(_) => orphaned += 1,
                 }
             }
+            // 要約は履歴とは別の口で戻る（Spec 12 P4）。可変文脈へ差す側の材料で、
+            // 履歴の中には置かない。
+            summaries = restored.summaries;
         }
         Err(err) => {
             note!(
@@ -577,11 +605,13 @@ fn open_session_at_boot(
         note!("session: 復元した履歴のうち {orphaned} 体分は、該当エージェントが居ないため捨てました");
     }
     note!(
-        "session: {session_id} を開きました（発話 {} 件 / 履歴 {restored_agents} 体）",
-        log.len()
+        "session: {session_id} を開きました（発話 {} 件 / 履歴 {restored_agents} 体 / \
+         要約 {} 体）",
+        log.len(),
+        summaries.len()
     );
 
-    Some((session_id, log))
+    Some((session_id, log, summaries))
 }
 
 /// マルチエージェント・オーケストレーター。
@@ -691,7 +721,7 @@ impl Orchestrator {
         // 会話の保存先を開き、最後に開いていた会話を戻す（Spec 12）。
         // **開けなくても起動は止めない** — 会話が戻らないことは、アプリが開かない
         // 理由にならない（D1 のフォールバックと同じ規律）。
-        let (sessions, session_id, restored_log) =
+        let (sessions, session_id, restored_log, restored_summaries) =
             match SessionStore::open(store.root().join("sessions.redb")) {
                 Ok(sessions) => {
                     match open_session_at_boot(
@@ -700,8 +730,8 @@ impl Orchestrator {
                         config.log_capacity,
                         config.history_turns,
                     ) {
-                        Some((id, log)) => (Some(sessions), id, log),
-                        None => (None, String::new(), Vec::new()),
+                        Some((id, log, summaries)) => (Some(sessions), id, log, summaries),
+                        None => (None, String::new(), Vec::new(), BTreeMap::new()),
                     }
                 }
                 Err(err) => {
@@ -709,7 +739,7 @@ impl Orchestrator {
                         "WARN session store: 会話を保存できません（この起動では会話は\
                          再起動で消えます）— {err}"
                     );
-                    (None, String::new(), Vec::new())
+                    (None, String::new(), Vec::new(), BTreeMap::new())
                 }
             };
 
@@ -734,6 +764,7 @@ impl Orchestrator {
             turn_seq: std::sync::atomic::AtomicU64::new(1),
             schedules_blocked,
             sessions,
+            summaries: RwLock::new(restored_summaries),
             session_id: std::sync::RwLock::new(session_id),
             config,
         });
@@ -917,6 +948,167 @@ impl Orchestrator {
         self.switch_to(&next).await
     }
 
+    /// いまの会話を要約して続ける（Spec 12 P4）。要約できたエージェント数を返す。
+    ///
+    /// **人が押したときだけ走る。** 自動では要約しない — 要約は LLM 呼び出し
+    /// = トークンで、Spec 11 の天井と競合する（自動で仕事を増やす機構は入れない、
+    /// という Replan 不採用と同じ規律）。
+    ///
+    /// **対象は稼働中のサーヴァントだけ。** 要約の目的は以後のプロンプトを短くする
+    /// ことで、停止中の個体には以後のターンが無い。それでも呼べば、参加していない
+    /// 個体のぶんまで押した人がトークンを払うことになる。履歴は停止しても消えない
+    /// ので、起動してから押せばそのとき要約される。
+    ///
+    /// 稼働中のエージェントごとに 1 回ずつ呼び、`summary` レコードを追加して**その
+    /// エージェントの履歴を畳む**。要約は履歴の席を持たず、次のターンの可変文脈へ
+    /// 差される（#45 との衝突を避けるため）。**元のレコードは消さない** —
+    /// 要約の品質が悪かったときに、書き出しから元の往復を読み戻せる。
+    ///
+    /// **飛行中のターンがあっても拒まない。** 飛行中のターンはそのターンの
+    /// `sent_user_turn` を既に組み終えており、完了時に積む `exchange` は要約が
+    /// 覆う `coversUpToSeq` より後の seq を取る。畳んだ履歴の上に 1 往復が乗るだけで、
+    /// 復元しても同じ形になる。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、または保存に失敗した場合。**個々のエージェントの
+    /// 要約が失敗しても全体は失敗させない**（その相手の履歴は畳まずに残す —
+    /// 要約に失敗した代償が履歴の喪失になるのは最悪の交換）。
+    pub async fn summarize_session(&self) -> CoreResult<usize> {
+        let store = self.sessions()?;
+        let session_id = self.shared.current_session();
+
+        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
+        // 「coversUpToSeq < 自身の seq」が破れる。
+        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
+            return Ok(0);
+        };
+
+        // 材料を先に集める。LLM 呼び出しの間、world のロックは持たない。
+        //
+        // **対象は稼働中のサーヴァントだけ。** 要約の目的は「以後のプロンプトを
+        // 短くする」ことで、停止中の個体には以後のターンが無い。それでも呼べば、
+        // **参加していない個体のぶんまで押した人がトークンを払う**ことになる。
+        // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
+        // 押せばそのとき要約される — 取り逃がしにはならない。
+        let mut skipped = 0usize;
+        let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
+            let world = self.shared.world.read().await;
+            world
+                .snapshots()
+                .into_iter()
+                .filter_map(|snapshot| {
+                    let record = world.agent(&snapshot.id).ok()?;
+                    if record.history.is_empty() {
+                        return None;
+                    }
+                    if !record.status.is_active() {
+                        skipped += 1;
+                        return None;
+                    }
+                    let template = world.template(&record.spec.model_template_id).ok()?.clone();
+                    Some((
+                        snapshot.id.clone(),
+                        record.spec.name.clone(),
+                        template,
+                        record.history.clone(),
+                    ))
+                })
+                .collect()
+        };
+
+        let mut done = 0usize;
+        for (agent_id, name, template, history) in targets {
+            // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
+            let previous = self.shared.summaries.read().await.get(&agent_id).cloned();
+
+            let mut messages = Vec::with_capacity(history.len() + 3);
+            messages.push(ChatMessage::system(SUMMARY_SYSTEM));
+            if let Some(previous) = &previous {
+                messages.push(ChatMessage::user(format!(
+                    "## 前回までの経緯（既存の要約）\n{previous}"
+                )));
+                messages.push(ChatMessage::assistant("承知しました。"));
+            }
+            messages.extend(history);
+            messages.push(ChatMessage::user(SUMMARY_INSTRUCTION));
+
+            let backend = match self.shared.backend_for(&template).await {
+                Ok(backend) => backend,
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）のバックエンドを組めません: {err}");
+                    continue;
+                }
+            };
+            let request = ChatRequest {
+                model: template.model.clone(),
+                messages,
+                // 要約にツールは要らない。提示すると呼びに行く個体が出て、
+                // 1 回で終わるはずの呼び出しがループになる。
+                tools: Vec::new(),
+                tool_choice: crate::llm::ToolChoice::None,
+                temperature: template.temperature,
+                max_tokens: template.max_output_tokens,
+                effort: template.effort,
+                cacheable_prefix_len: 0,
+            };
+            let text = match backend.chat(request).await {
+                Ok(response) => response.text.unwrap_or_default(),
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）の要約に失敗しました: {err}");
+                    continue;
+                }
+            };
+            if text.trim().is_empty() {
+                note!("WARN summarize: {agent_id}（{name}）の要約が空でした（履歴は畳みません）");
+                continue;
+            }
+
+            self.shared.persist(&SessionRecord::summary(
+                &agent_id,
+                text.clone(),
+                covers_up_to_seq,
+            ));
+            self.shared
+                .summaries
+                .write()
+                .await
+                .insert(agent_id.clone(), text);
+            // 畳むのは**保存が済んでから**。先に畳むと、保存に失敗した瞬間に
+            // 履歴も要約も無い状態になる。
+            if let Ok(record) = self.shared.world.write().await.agent_mut(&agent_id) {
+                record.history.clear();
+            }
+            done += 1;
+        }
+
+        if done > 0 || skipped > 0 {
+            // 飛ばした相手が居るなら**必ず言う**。黙って対象外にすると、
+            // 「要約したのに次のターンが短くならない」個体の理由が画面から消える。
+            // 次の道も書く（#44 の規律）— 起動してから押せば要約される。
+            let note = if skipped > 0 {
+                format!(
+                    "（停止中の {skipped} 体は要約していません。起動してからもう一度押すと、\
+                     その相手も要約されます）"
+                )
+            } else {
+                String::new()
+            };
+            self.shared
+                .record(AgentMessage::new(
+                    Endpoint::System,
+                    Endpoint::User,
+                    format!(
+                        "稼働中の {done} 体の記憶を要約しました。以後のやり取りは要約を踏まえて\
+                         続きます（元のやり取りは消えていません — 「会話一覧」の書き出しから\
+                         読めます）{note}"
+                    ),
+                    0,
+                ))
+                .await;
+        }
+        Ok(done)
+    }
+
     /// 会話を JSONL で書き出し、書いたレコード数を返す。
     ///
     /// 読める出口は機構の一部（この企画の診断は grep に依存している）。
@@ -986,6 +1178,9 @@ impl Orchestrator {
                 }
             }
         }
+        // 要約も差し替える（Spec 12 P4）。前の会話の要約が残ると、開いた会話とは
+        // 無関係な「これまでの経緯」が次のターンへ混ざる。
+        *self.shared.summaries.write().await = restored.summaries;
         *self.shared.log.write().await = messages;
 
         self.shared.emit(CoreEvent::ConversationCleared);
@@ -2807,6 +3002,22 @@ async fn handle_message(
     // 履歴には入れない（`attributed` だけを積む）— 今回だけの文脈を履歴へ
     // 焼き付けると、以後の全ターンのプレフィックスに残り続ける。
     let mut context: Vec<String> = Vec::new();
+
+    // これまでの経緯（Spec 12 P4 の手動要約）。作られていれば毎ターン差す。
+    //
+    // **履歴の中に summary 専用の席は作らない。** ここ（可変文脈）へ差せば、
+    // 畳んでできた `sent_user_turn` がそのまま `exchange` として保存されるので、
+    // 送信と保存が食い違わない（failures.md #45）。履歴へ直接積むと、
+    // 保存側は「送った文字列そのもの」を持つ規律なので二重に入る。
+    //
+    // 注入するのは**最新の 1 本だけ**。古い要約はレコードとして残るが、
+    // 痕跡であって現役ではない。
+    if let Some(summary) = shared.summaries.read().await.get(agent_id) {
+        context.push(format!(
+            "## これまでの経緯（要約）\n{summary}\n\n\
+             （この要約より後のやり取りは、下の履歴にそのまま残っています）"
+        ));
+    }
 
     // RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
     // **毎ターン必ず変わる**（今回の発話で検索するため）。意味の上でも、

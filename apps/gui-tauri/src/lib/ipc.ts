@@ -275,6 +275,13 @@ export const deleteSession = (sessionId: string) =>
 export const exportSession = (sessionId: string) =>
   call<string>("export_session", { sessionId });
 
+/**
+ * いまの会話を要約して続ける。要約できたサーヴァント数を返す。
+ *
+ * **人が押したときだけ走る**（LLM 呼び出し = トークンなので自動化しない）。
+ */
+export const summarizeSession = () => call<number>("summarize_session");
+
 // ---- アイコン ----------------------------------------------------------------
 
 /** エージェントのアイコン（WebP バイト列）を取得する。未設定なら `null`。 */

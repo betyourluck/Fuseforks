@@ -146,6 +146,7 @@ pub fn run() {
             commands::fork_session,
             commands::delete_session,
             commands::export_session,
+            commands::summarize_session,
             // 予定（Spec 07）
             commands::list_schedules,
             commands::create_schedule,

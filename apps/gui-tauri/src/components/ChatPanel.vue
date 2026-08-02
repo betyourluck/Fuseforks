@@ -288,6 +288,31 @@ const input = ref<InstanceType<typeof ChatInput> | null>(null);
  * 元の会話を再現するつもりの操作としては一番痛い間違いになる。
  * 送信はしない（書き換えるための差し戻しなので）。
  */
+/** 要約の呼び出し中。二重に押させない（1 体につき 1 回 LLM を呼ぶ）。 */
+const summarizing = ref(false);
+
+/**
+ * 要約して続ける（Spec 12 P4）。**押した時点でトークンを使う**ので確認を出す。
+ *
+ * 自動では走らない。要約は LLM 呼び出しで、トークン予算の天井と競合する。
+ */
+async function summarize(): Promise<void> {
+  if (summarizing.value) return;
+  if (
+    !confirm(
+      "ここまでの会話を要約して続けますか？\n稼働中のサーヴァント 1 体につき 1 回モデルを呼ぶので、トークンを使います（停止中の相手は対象外です）。\n元のやり取りは消えません（「会話一覧」の書き出しから読めます）。",
+    )
+  ) {
+    return;
+  }
+  summarizing.value = true;
+  try {
+    await orchestrator.summarize();
+  } finally {
+    summarizing.value = false;
+  }
+}
+
 async function prefill(payload: { text: string; to: string | null }): Promise<void> {
   if (payload.to && state.agents.some((agent) => agent.id === payload.to)) {
     orchestrator.select(payload.to);
@@ -336,6 +361,18 @@ async function newChat(): Promise<void> {
         @click="sessionsOpen = true"
       >
         会話一覧
+      </button>
+      <!--
+        要約して続ける（Spec 12 P4）。**自動では走らない** — 要約は LLM 呼び出しで、
+        トークン予算の天井と競合する。押した人が費用を承知している状態でだけ走る。
+      -->
+      <button
+        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
+        :disabled="!rows.length || summarizing"
+        title="ここまでの会話を要約して、以後のプロンプトを短くします（稼働中のサーヴァントが対象。トークンを使います。元のやり取りは消えません）"
+        @click="summarize"
+      >
+        {{ summarizing ? "要約中…" : "要約して続ける" }}
       </button>
       <!--
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ

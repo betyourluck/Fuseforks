@@ -970,6 +970,31 @@ export function useOrchestrator() {
       return succeeded(done);
     },
 
+    /**
+     * いまの会話を要約して続ける（Spec 12 P4）。
+     *
+     * サーヴァント 1 体につき 1 回 LLM を呼ぶので、**押した時点でトークンを使う**。
+     * 呼び出し中は数十秒かかりうるため、開始した事実も通知に出す。
+     */
+    async summarize(): Promise<void> {
+      pushToast("info", "要約しています…", "稼働中のサーヴァントごとに 1 回ずつ呼び出します");
+      const count = await guard("要約", () => ipc.summarizeSession());
+      if (!succeeded(count)) return;
+      if (count === 0) {
+        pushToast(
+          "info",
+          "要約するものがありませんでした",
+          "稼働中で、かつ会話のあるサーヴァントが対象です（停止中の相手は起動してから押してください）",
+        );
+        return;
+      }
+      pushToast(
+        "info",
+        `稼働中の ${count} 体の記憶を要約しました`,
+        "以後のやり取りは要約を踏まえて続きます（元のやり取りは消えていません）",
+      );
+    },
+
     /** 会話を JSONL で書き出す。書き出し先のパスを通知に出す。 */
     async exportSession(sessionId: string): Promise<void> {
       const path = await guard("会話の書き出し", () => ipc.exportSession(sessionId));

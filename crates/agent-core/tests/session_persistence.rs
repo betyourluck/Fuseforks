@@ -76,6 +76,71 @@ impl LlmBackend for RecordingBackend {
     }
 }
 
+/// 要約の呼び出しだけ別の本文を返すバックエンド（Spec 12 P4）。
+///
+/// 要約かどうかは**最終 user 発話の末尾**で見分ける。要約の指示文にしか
+/// 現れない一文を鍵にする — 「覚え書き」のような短い語を鍵にすると、
+/// 要約本文そのものを差した通常ターンまで要約と誤判定する（実際に踏んだ）。
+struct SummarizingBackend {
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    /// 要約として返す本文。`None` を入れると「要約に失敗した」経路を再現する。
+    summary: Option<&'static str>,
+}
+
+impl SummarizingBackend {
+    fn new(summary: Option<&'static str>) -> Self {
+        Self {
+            seen: std::sync::Mutex::new(Vec::new()),
+            summary,
+        }
+    }
+
+    /// 要約以外で渡されたプロンプトだけを返す（通常ターンの検査用）。
+    fn turns(&self) -> Vec<Vec<ChatMessage>> {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|messages| !is_summary_request(messages))
+            .cloned()
+            .collect()
+    }
+}
+
+fn is_summary_request(messages: &[ChatMessage]) -> bool {
+    messages
+        .last()
+        .is_some_and(|m| m.content.contains("要約の本文だけを出力してください"))
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for SummarizingBackend {
+    fn name(&self) -> &str {
+        "summarizing"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let summarizing = is_summary_request(&req.messages);
+        self.seen.lock().unwrap().push(req.messages.clone());
+        let text = if summarizing {
+            self.summary.map(str::to_owned)
+        } else {
+            Some("了解".to_owned())
+        };
+        Ok(ChatResponse {
+            text,
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
 /// 応答に時間の掛かるバックエンド。飛行中ターンを作るために使う。
 struct SlowBackend;
 
@@ -521,4 +586,194 @@ async fn deleting_the_open_session_switches_to_another_one() {
     assert_eq!(orchestrator.list_sessions().await.unwrap().len(), 1);
 
     shutdown(orchestrator, &[]).await;
+}
+
+/// **要約の本丸**: 要約した後のターンで、要約がモデルへ渡ること（Spec 12 P4）。
+///
+/// 見るのは画面ではなく `ChatRequest.messages`。要約は**履歴の席を持たず**、
+/// 可変文脈の畳みへ相乗りする — だから畳んだ結果の user 発話の中に現れる。
+#[tokio::test]
+async fn a_summary_is_injected_into_the_next_turn_and_folds_the_history() {
+    let dir = TempDir::new("summarize");
+    let id = AgentId::from("agent_01");
+    let backend = Arc::new(SummarizingBackend::new(Some("・アルファという合言葉を預かった")));
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "合言葉はアルファ")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(
+        orchestrator.summarize_session().await.unwrap(),
+        1,
+        "履歴を持つサーヴァント 1 体が要約されること"
+    );
+
+    orchestrator.send_user_message(&id, "続きです").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let turns = backend.turns();
+    let after = turns.last().expect("要約後のターンがあること");
+    let folded = after
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .expect("最終 user 発話があること");
+    assert!(
+        folded.content.contains("・アルファという合言葉を預かった"),
+        "要約が可変文脈の畳みに乗ること: {folded:#?}"
+    );
+    assert!(
+        !after
+            .iter()
+            .any(|m| m.role == Role::Assistant && m.content == "了解"),
+        "覆われた往復は履歴から畳まれること（要約が肩代わりする）: {after:#?}"
+    );
+
+    // 「coversUpToSeq < 自身の seq」— 自分自身を覆う要約を作らない。
+    let export = dir.0.join("summarized.jsonl");
+    let session_id = orchestrator.current_session();
+    orchestrator.export_session(&session_id, &export).await.unwrap();
+    let text = std::fs::read_to_string(&export).unwrap();
+    let summary = text
+        .lines()
+        .skip(1)
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|line| line["kind"] == "summary")
+        .expect("summary レコードが積まれること");
+    assert!(
+        summary["coversUpToSeq"].as_u64().unwrap() < summary["seq"].as_u64().unwrap(),
+        "自分自身を覆う要約を作らない: {summary}"
+    );
+    assert_eq!(summary["agentId"], "agent_01");
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
+}
+
+/// 要約は再起動をまたいで効く（元のレコードは消えていない）。
+#[tokio::test]
+async fn a_summary_survives_a_restart() {
+    let dir = TempDir::new("summarize-restart");
+    let id = AgentId::from("agent_01");
+
+    {
+        let backend = Arc::new(SummarizingBackend::new(Some("・前回の依頼を預かった")));
+        let orchestrator = boot(&dir, backend).await;
+        start_agent(&orchestrator, &id).await;
+        let mut rx = orchestrator.subscribe();
+        orchestrator.send_user_message(&id, "最初の依頼").await.unwrap();
+        drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+        orchestrator.summarize_session().await.unwrap();
+        shutdown(orchestrator, std::slice::from_ref(&id)).await;
+    }
+
+    let backend = Arc::new(SummarizingBackend::new(Some("・二度目")));
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "続きです").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let turns = backend.turns();
+    let first = turns.first().expect("再起動後に 1 回は呼ばれること");
+    let folded = first
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .expect("最終 user 発話があること");
+    assert!(
+        folded.content.contains("・前回の依頼を預かった"),
+        "要約が復元されて次のターンへ差されること: {folded:#?}"
+    );
+    assert!(
+        !first
+            .iter()
+            .any(|m| m.role == Role::User && m.content.contains("最初の依頼")),
+        "要約が覆った往復は復元しない（最新 summary + それ以降の exchange）: {first:#?}"
+    );
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
+}
+
+/// 要約が空で返ったら**履歴を畳まない**。
+///
+/// 要約に失敗した代償が履歴の喪失になるのは最悪の交換。
+#[tokio::test]
+async fn an_empty_summary_leaves_the_history_alone() {
+    let dir = TempDir::new("summarize-empty");
+    let id = AgentId::from("agent_01");
+    let backend = Arc::new(SummarizingBackend::new(None));
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(
+        orchestrator.summarize_session().await.unwrap(),
+        0,
+        "空の要約は成功として数えない"
+    );
+
+    orchestrator.send_user_message(&id, "続きです").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let turns = backend.turns();
+    let after = turns.last().expect("要約後のターンがあること");
+    assert!(
+        after
+            .iter()
+            .any(|m| m.role == Role::User && m.content.contains("覚えておいて")),
+        "履歴はそのまま残ること: {after:#?}"
+    );
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
+}
+
+/// **停止中のサーヴァントは要約しない**（2026-08-03 の実機指摘）。
+///
+/// 要約の目的は以後のプロンプトを短くすることで、停止中の個体には以後のターンが
+/// 無い。それでも呼べば、参加していない個体のぶんまで押した人がトークンを払う。
+/// 履歴は停止しても消えないので、起動してから押せばそのとき要約される。
+#[tokio::test]
+async fn only_running_servants_are_summarized() {
+    let dir = TempDir::new("summarize-stopped");
+    let id = AgentId::from("agent_01");
+    let backend = Arc::new(SummarizingBackend::new(Some("・要約されたはず")));
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 稼働を降ろす。**履歴は残る**（Spec 12 P2 で start_agent のクリアをやめた）。
+    orchestrator.stop_agent(&id).await.unwrap();
+
+    assert_eq!(
+        orchestrator.summarize_session().await.unwrap(),
+        0,
+        "停止中のサーヴァントは要約しない"
+    );
+    let calls = backend.seen.lock().unwrap().len();
+
+    // 起動し直せば、同じ履歴がそのまま要約の対象になる（取り逃がしにはならない）。
+    orchestrator.start_agent(&id).await.unwrap();
+    assert_eq!(
+        orchestrator.summarize_session().await.unwrap(),
+        1,
+        "起動してから押せば要約される"
+    );
+    assert_eq!(
+        backend.seen.lock().unwrap().len(),
+        calls + 1,
+        "停止中は 1 回もモデルを呼んでいないこと（呼んだのは起動後の 1 回だけ）"
+    );
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
 }

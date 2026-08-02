@@ -548,6 +548,30 @@ impl SessionStore {
         Ok(restored)
     }
 
+    /// 最後に採番された `seq`。レコードが 1 件も無ければ `None`。
+    ///
+    /// 要約（Spec 12 P4）が `coversUpToSeq` を決めるのに使う。**要約を書く前に**
+    /// 取ること — 書いた後だと自分自身を覆う要約になり、
+    /// 「`coversUpToSeq` < 自身の seq」の不変条件が破れる。
+    ///
+    /// # Errors
+    /// セッションが存在しない、または読み込みに失敗した場合。
+    pub fn last_seq(&self, session_id: &str) -> CoreResult<Option<u64>> {
+        self.ensure_exists(session_id)?;
+        let txn = self.db.begin_read().map_err(|e| self.err("開始", e))?;
+        let records = txn.open_table(RECORDS).map_err(|e| self.err("読み込み", e))?;
+        let mut range = records
+            .range((session_id, 0u64)..=(session_id, u64::MAX))
+            .map_err(|e| self.err("読み込み", e))?;
+        match range.next_back() {
+            Some(entry) => {
+                let (key, _) = entry.map_err(|e| self.err("読み込み", e))?;
+                Ok(Some(key.value().1))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// 分岐できる地点を古い順で返す（Spec 12 P3）。
     ///
     /// 候補は**ユーザー発話だけ**。返る [`ForkPoint::at_seq`] は

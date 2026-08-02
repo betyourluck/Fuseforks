@@ -489,6 +489,15 @@ pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> C
     state.orchestrator.delete_session(&session_id).await
 }
 
+/// いまの会話を要約して続ける（Spec 12 P4）。要約できたサーヴァント数を返す。
+///
+/// **人が押したときだけ走る。** 自動では要約しない — 要約は LLM 呼び出し
+/// = トークンで、`token_budget` の天井と競合する。
+#[tauri::command]
+pub async fn summarize_session(state: State<'_, AppState>) -> CoreResult<usize> {
+    state.orchestrator.summarize_session().await
+}
+
 /// 会話を JSONL で書き出し、**書き出し先のパス**を返す。
 ///
 /// 保存先（`sessions.redb`）はバイナリなので、人が読める出口が無いと診断が
