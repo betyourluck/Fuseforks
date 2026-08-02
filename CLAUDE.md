@@ -247,9 +247,12 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
   `plan_id` は 1 始まり 0 予約・モデル非公開。リング上限 50・in-memory・
   配送ゼロの plan は記録しない（stderr と数え方一致は検証済み）。
   Spec 04 Notes 12 の発火条件 (b) の成立が起点（利用者要望 2026-07-30）
-- Spec 11（トークン予算 — 依頼の因果に掛ける自動の天井）: **Draft rev2**
-  （2026-08-02 起票 → 同日査読で実装指摘 7 点 + D1/D2 裁定 → rev2 反映、
-  承認待ち）。実効トークン = 未キャッシュ ×1 + キャッシュ済み ×0.1 +
+- Spec 11（トークン予算 — 依頼の因果に掛ける自動の天井）: **rev2 承認 →
+  P0 完了**（2026-08-02 起票 → 同日査読で実装指摘 7 点 + D1/D2 裁定 →
+  rev2 → LGTM → data_contract の token_budget ブロック凍結 +
+  PlanTaskState へ budget_exhausted 加算。欠落見積もりの分母は UTF-8
+  バイト数 s.len() で確定・tokenBudget は camelCase 自動対応で rename 不要）。
+  残 Phase: P1 純機構 / P2 配線 / P3 投影 / P4 台帳と実機確認。実効トークン = 未キャッシュ ×1 + キャッシュ済み ×0.1 +
   出力 ×4、**内部は milli 建て AtomicU64・切り上げ**（Atomic に浮動小数は
   無い）。try_reserve / consume 分離で**オーバーシュート 1 呼び出し分許容**
   （check→LLM→減算は一体の atomic にできない）。`Envelope.budget` は

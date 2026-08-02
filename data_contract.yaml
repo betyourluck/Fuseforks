@@ -605,7 +605,7 @@ entities:
   # GUI 表示名は 2026-08-02 から「作業状況」(黒板とタブ切り替え。契約は不変)。
   # 描画は読み取り専用 — ここから plan を操作する経路は作らない。
   PlanTaskState:
-    values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted]
+    values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted, budget_exhausted]
     note: |
       plan の 1 タスクの解決分類。**文言 parse では取らない** (文言を直した瞬間に
       黙って壊れる)。取得の構造は 2 つ:
@@ -620,7 +620,12 @@ entities:
         undeliverable / no_answer / timed_out → 失敗色
         interrupted   → 注意色 (Spec 10。人が止めさせた = 失敗ではない。
                         turn_interrupt の不変条件 4 とここの色は同じ判断を指す)
+        budget_exhausted → 失敗色 (Spec 11。天井が止めた = 資源の事実。
+                        人の打ち切り interrupted の注意色と混ぜない)
       interrupted は **2026-08-01 Spec 10 Phase 0 で追加** (rev2 査読承認)。
+      budget_exhausted は **2026-08-02 Spec 11 P0 で追加** (rev2 LGTM)。
+      どちらも加算的変更 — 旧レコードのマイグレーション不要、刻み手は
+      Spec 11 P2 の周回境界の検査点 (token_budget.precedence の順)。
       加算的変更 — 旧レコードのマイグレーションは不要で、既存の finish_wave が
       旧 running を no_answer へ倒す後始末も変わらず生きる (Phase 4 で回帰固定)。
       刻み手は 3 箇所に限る: 飛行中の中断 (handle_message の検知点) /
@@ -750,6 +755,70 @@ entities:
       自体が仕様)。**冪等** — 飛行中ターンが 1 つも無くても成功。進行役と
       ワーカーが親子で二重に切られても、出口の行は各ターンが検知時に 1 回
       書くだけなので重複しない (独自の重複排除は持たない)
+  token_budget:
+    spec: "11 (2026-08-02 rev2 LGTM → P0 凍結。実装は P1〜P3 で着地)"
+    unit: |
+      実効トークン = 未キャッシュ入力 ×1 + キャッシュ済み入力 ×0.1 + 出力 ×4。
+      内部表現は milli 実効トークン (整数。Atomic に浮動小数が無いため):
+        WEIGHT_UNCACHED_MILLI = 1000
+        WEIGHT_CACHED_MILLI   = 100    # Anthropic cache read 価格比が直接の根拠
+        WEIGHT_OUTPUT_MILLI   = 4000
+      純関数の戻りは (milli + 999) / 1000 の切り上げ (保守側)。
+      重みは code constant であって設定ではない — **モデル別・村別の重み設定を
+      作らない**。変えるときは本契約の改定 (= Spec 改定) であり config ではない。
+      素のトークン数を使わないのは、キャッシュ済み入力が支配的な健全ターン
+      (実測 87〜99% cached) を過大に数えて誤爆するため。
+    usage_fallback: |
+      usage 欠落の三規程 (楽観の 0 を作らない):
+        prompt_tokens 欠落     → 送信 UTF-8 バイト数 ÷ 4 (切り上げ)
+        completion_tokens 欠落 → 受信 UTF-8 バイト数 ÷ 4 (切り上げ。0 にしない —
+                                 ツール結果が支配的なターンで 0 見積もりになる穴)
+        cached 区分なし        → 全量を未キャッシュ扱い (保守側)
+      **バイト数 (s.len()) であって chars().count() ではない** — 文字数 ÷ 4 は
+      日本語 (≈1〜2 字/トークン) で約 4 倍の過小になり保守側に反する。UTF-8
+      バイトは日本語 3 バイト/字で過大側に倒れ、O(1) で取れる。
+    ceiling: |
+      world.json の村レベル 1 フィールド tokenBudget (実効トークン建て)。
+      Rust 側は PersistedWorld の Option<u64> フィールド token_budget —
+      rename_all = camelCase が既に効いているので個別の serde rename は不要。
+      None = 天井なし / Some(n) = 天井あり。**0 のマジック値は使わない** —
+      Some(0) は読み込み時に None へ正規化して debug ログへ 1 行。
+      **既定 Some(1_000_000) を書くのは新規 world.json の作成時だけ**。既存の
+      村は None のまま触らない (昨日まで完走していた依頼を今日から止めない)。
+      None の村は起動時に **WARN** 1 行、文言は次の道込み:
+      「トークン予算なし（天井なし）— world.json の tokenBudget に
+      1000000（推奨）を設定できます」。
+      推奨値の目安 (README P4 で案内): 6 体前後 = 1M / 8 段フロー・12 体規模・
+      出力多めのコード生成 = 2〜3M (根拠実測 387K は 6 体編成の値)。
+    pool: |
+      予算は因果に 1 つ (BudgetPool)。根 = ユーザー発話 1 通の**宛先 1 体ごと**
+      (同報は宛先ごとに独立) / 予定の発火 1 回。Envelope.budget は cancel と
+      **独立の**フィールド (Option<Arc<BudgetPool>>) — cancel が None の配送でも
+      予算は運ぶ。転送・波の全配送は**同一の Arc** を指す (新 pool を作った瞬間に
+      天井が蒸発する。delegation-fanout race — arXiv:2606.04056 の本番 63
+      インシデント中 11 件がこの型)。
+      検査は周回境界: try_reserve (残 0 なら打ち切り・atomic) → LLM 呼び出し →
+      consume (fetch_sub・atomic)。**一体の atomic にはできない** (check と減算の
+      間に飛行時間が挟まる) ため、飛行中 1 呼び出し分のオーバーシュートを許容し
+      超過分も数える — 次の周回境界で確実に止まる。尽きの観測は AtomicBool の
+      CAS で一回性を保証 (並列ワーカーが同時に観測しても打ち切り記録は 1 系統)。
+      **残額はモデルへ注入しない** (毎ラウンド可変の注入は prompt_cache の
+      前方一致を割る)。自動の再依頼はしない。
+    exhaustion: |
+      尽きたら新しい LLM 呼び出しと新しい配送を始めない。飛行中の応答・
+      ツール結果は正常に受け取り記録する。分類は budget_exhausted
+      (PlanTaskState / Reply.kind へ加算追加・色は失敗系 — 人が止めた
+      interrupted の注意色と混ぜない。天井が止めたのは資源の事実)。
+      稼働は降ろさない — 閉じるのはターンだけ (turn_interrupt と同型)。
+      System 行は事実 + 次の道 (failures.md #44 の規律):
+      「予算（実効 N トークン）を使い切ったため打ち切りました。続きが要るなら
+      改めて依頼してください（予算は依頼ごとに新しく付きます）」。
+    precedence: |
+      歯止めの優先順位 (同じ周回境界で複数が同時成立したときの分類。検査も
+      この順で行い、先に成立した歯止めが Reply.kind を確定する):
+        cancel (interrupted) > budget_exhausted > RepeatGuard > hop / rounds 上限
+      人の明示停止が最優先、次に資源の事実。race の勝敗が分類を変えない
+      (turn_interrupt と同じ規律) を静的な順序で担保する。
   channel: "core://event"
   tagged_union_key: type
   variants:

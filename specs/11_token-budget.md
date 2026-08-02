@@ -2,8 +2,14 @@
 
 **ID**: 11
 **Date**: 2026-08-02
-**Status**: **Draft rev2**（2026-08-02 査読 1 巡目の実装指摘 7 点 +
-D1/D2 の裁定を全反映。承認待ち）
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0 完了**
+（data_contract の `token_budget` ブロック凍結 + `PlanTaskState` へ
+`budget_exhausted` 加算）。実装は P1 から。
+LGTM 時の微細 2 点も P0 で確定 — (1) 欠落見積もりの分母は
+**UTF-8 バイト数 `s.len()`**（`chars().count()` ÷ 4 は日本語で約 4 倍の
+過小 = 保守側に反する。バイトは日本語 3 バイト/字で過大側・O(1)）
+(2) `tokenBudget` は `PersistedWorld` の `rename_all = camelCase` が既に
+効くので個別の `#[serde(rename)]` 不要（world.rs 実ソースで確認済み）
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜10 と同じプロセス）
 
 rev2 で入った差分（査読 2026-08-02、7 点すべて受諾）:
@@ -138,10 +144,12 @@ Spec 07 の予定発火も因果の根であり、発火 1 回ごとに同じ予
    **内部表現は milli 実効トークン**（Atomic に浮動小数は無い）:
    `milli = 未キャッシュ ×1000 + キャッシュ済み ×100 + 出力 ×4000`、
    純関数の戻りは `(milli + 999) / 1000` の**切り上げ**（保守側）。
-   **usage 欠落の見積もり規程**: prompt_tokens 欠落 = 送信文字数 ÷ 4 /
-   completion_tokens 欠落 = **0 ではなく**受信文字数 ÷ 4（ツール結果が
+   **usage 欠落の見積もり規程**: prompt_tokens 欠落 = 送信 UTF-8 バイト数 ÷ 4 /
+   completion_tokens 欠落 = **0 ではなく**受信 UTF-8 バイト数 ÷ 4（ツール結果が
    支配的なターンで 0 見積もりになる穴を塞ぐ）/ cached 区分が無い
-   プロバイダ = 全量を未キャッシュ扱い（保守側）
+   プロバイダ = 全量を未キャッシュ扱い（保守側）。分母がバイト数
+   （`s.len()`）で文字数でないのは P0 確定 — 文字数 ÷ 4 は日本語で
+   約 4 倍の過小見積もりになる
 3. **検査は周回境界（LLM 呼び出しの前）、オーバーシュートは 1 呼び出し分許容。**
    `try_reserve()`（残額 0 なら打ち切り、判定は atomic）→ LLM 呼び出し →
    `consume(usage)`（fetch_sub、atomic）。check と減算の間に飛行時間が挟まる
