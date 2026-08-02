@@ -119,13 +119,25 @@ log には System 行や他人宛の発話があり、どの history にも入�
 ゆえに**会話ログだけ保存して再開すると、画面は正しいのに全エージェントが
 健忘症で始まり、その 2 つは画面上区別が付かない**。
 
-保存先は `{workspace}/sessions/<id>.jsonl`（追記・2 種別 message/exchange +
-要約の summary）+ `index.json`。SQLite は入れない（村 1 つの規模には過剰）。
-復元しないものは波・予算・MCP 接続・稼働状態（作業の寿命）。
-要約は v1 では**手動のみ**（自動は Spec 11 の天井と競合する）。
-査読論点は D1〜D9（起動時の既定 / 保存粒度 / セッションの単位 / 要約の自動化 /
-上限 / SQLite 不採用 / 保存フィールド / **会話ログへの秘密の混入** /
-Spec 03 の改訂範囲）。
+**rev2 で保存先を redb 1 ファイルへ変更**（2026-08-02 査読）。rev1 の
+`JSONL + index.json` は**真実が 2 つ**になっており、原子性の矛盾も fork の孤児も
+その帰結だった。redb は機構を**減らす**（index.json・temp+rename の自前実装・
+壊れた行の切り捨て・fork の 2 段階が全部消える）。ハイブリッド
+（redb = 索引 / JSONL = 本文）は採らない。
+
+`{workspace}/sessions.redb` にテーブル 2 つ（`sessions` / `records`、
+records のキーは `(session_id, seq)`）。`Record` は **message / exchange /
+summary の 3 種別**。復元しないものは波・予算・MCP 接続・稼働状態（作業の寿命）。
+索引は作らない・要約は手動のみ。**`export_session`（JSONL 書き出し）は P1 の
+完了条件** — 読めない保存先を作るなら出口は機構の一部（この企画の診断は
+grep に依存している）。
+
+**実測で決めた**（2026-08-02）: redb 4.1.0 = 2 依存 10 秒ビルド、
+「後ろから 16 件」0.03 ms、20,000 件の全走査 11 ms、fork 55 ms。
+候補比較は tantivy+lindera = **451 依存**（しかも zstd-sys で C が戻る）、
+rusqlite bundled = 10 依存。**SQLite FTS5 の既定 unicode61 は日本語で 0 件**、
+trigram なら全ヒット — 日本語検索に形態素解析は要らない、が lindera を
+外した根拠。D1〜D9 は全決着、D10（redb のファイル形式更新時の移行）が残る。
 
 ## 観測中（機構を作らず計器だけ置いてある）
 
