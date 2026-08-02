@@ -1613,3 +1613,31 @@ system + tools までで止まる。
 `0,0,0,hit,0,hit`）ではなく、明示的な breakpoint を持つ Anthropic 側で測った。
 **外れたら壊れたと断定できる計器**でしか、破れの有無は決められない。
 最終的には実機すら要らず、結合テスト 1 本で決着した。
+
+## #46 Vue Flow の `<Controls />` を描画したのに、画面には何も出なかった
+
+**症状**: 村の地図へフィットボタンを足すため `@vue-flow/controls` を導入し、
+`<Controls />` をテンプレートへ置いた。ビルドは通り、エラーも警告も出ないのに、
+画面にボタンが表示されない（2026-08-02。実装は codex、調査は別セッション）。
+
+**真因**: `@vue-flow/controls/dist/style.css` を main.ts で読み込んでいなかった。
+Vue Flow は core / controls / minimap がそれぞれ**別体の style.css を持つ**設計で、
+main.ts には core の 2 本（style.css / theme-default.css）しか無かった。
+CSS が無いと `.vue-flow__controls-button` は寸法も背景も持たず、
+**DOM には存在するのに視覚上は何も無い**。パッケージ追加もコンポーネント配置も
+正しく、足りなかったのは import 1 行だけ。
+
+**処方**: main.ts へ `import "@vue-flow/controls/dist/style.css";` を追加。
+既定テーマは白地なので、ダーク配色のトークン（--color-surface-1 / --color-line /
+--color-ink）で `:deep` 上書きも同時に行う。
+
+**一般化 1**: **「エラーが出ない」と「表示される」は別の検査。** CSS 欠落は
+コンパイラ・型検査・ビルドのどれにも掛からず、実行時エラーも出さない。
+描画物の追加は、ブラウザの要素検査で **DOM に居るか**と**高さ・幅が 0 でないか**を
+分けて見ると、この型の欠落を 1 手で切り分けられる（DOM に居れば配線の問題ではなく
+スタイルの問題）。
+
+**一般化 2**: アドオン分割されたライブラリ（@scope/core + @scope/addon 群）は、
+**アドオンごとに CSS も分割されていることがある**。core の CSS を読んでいることは
+アドオンの CSS を読んでいる根拠にならない。導入時は当該アドオンの README の
+import 節を写す。
