@@ -52,7 +52,7 @@ use tokio::task::JoinHandle;
 use crate::budget::BudgetPool;
 use crate::compute;
 use crate::config_store::ConfigStore;
-use crate::session_store::{Record as SessionRecord, SessionStore, SessionSummary};
+use crate::session_store::{ForkPoint, Record as SessionRecord, SessionStore, SessionSummary};
 // 診断の 1 行はここを通す（stderr とログファイルの両方へ出る）。
 use crate::note;
 use crate::error::{CoreError, CoreResult, ErrorPayload};
@@ -870,6 +870,14 @@ impl Orchestrator {
         };
         self.switch_to(&session_id).await?;
         Ok(session_id)
+    }
+
+    /// 分岐できる地点（その会話のユーザー発話）を古い順で返す。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、会話が存在しない、または読み込みに失敗した場合。
+    pub async fn list_fork_points(&self, session_id: &str) -> CoreResult<Vec<ForkPoint>> {
+        self.sessions()?.fork_points(session_id)
     }
 
     /// 会話を `at_seq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。

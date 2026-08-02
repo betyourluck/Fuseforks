@@ -179,6 +179,26 @@ pub struct RestoredHistories {
     pub summaries: BTreeMap<AgentId, String>,
 }
 
+/// 分岐できる地点（Spec 12 P3 — fork の UI が枝を切る位置を選ぶための投影）。
+///
+/// 候補を**ユーザー発話に限る**のは、それが人にとって会話の節目だから。
+/// 全レコードを並べると入退室の System 行や往復の記録まで候補に出て、
+/// 「どこで切ったのか」が読めなくなる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkPoint {
+    /// この発話のレコード seq。`fork_session(id, seq)` へそのまま渡せる
+    /// （**この seq を含めて**複製される）。
+    pub seq: u64,
+    /// 発話の先頭。一覧に出す短い手がかり。
+    pub preview: String,
+    /// 発話時刻（UNIX エポックからのミリ秒）。
+    pub ts_ms: u64,
+}
+
+/// [`ForkPoint::preview`] の長さ（文字数）。
+pub const FORK_PREVIEW_CHARS: usize = 60;
+
 /// `{workspace}/sessions.redb` への読み書き。
 ///
 /// **書き込みトランザクションを `await` を跨いで持たない。** redb は同期 API で
@@ -509,6 +529,37 @@ impl SessionStore {
             restored.summaries.insert(agent, text);
         }
         Ok(restored)
+    }
+
+    /// 分岐できる地点を古い順で返す（Spec 12 P3）。
+    ///
+    /// 候補は**ユーザー発話だけ**。返る `seq` はその発話自身のもので、
+    /// [`Self::fork_session`] へ渡すと**その発話を含めて**複製される
+    /// （= 「この依頼までは同じで、そこから別の頼み方を試す」）。
+    ///
+    /// # Errors
+    /// セッションが存在しない、または読み込みに失敗した場合。
+    pub fn fork_points(&self, session_id: &str) -> CoreResult<Vec<ForkPoint>> {
+        let mut out = Vec::new();
+        for (seq, record) in self.records(session_id)? {
+            let Record::Message(message) = record else {
+                continue;
+            };
+            if !matches!(message.from, Endpoint::User) {
+                continue;
+            }
+            let flattened = message
+                .content
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push(ForkPoint {
+                seq,
+                preview: flattened.chars().take(FORK_PREVIEW_CHARS).collect(),
+                ts_ms: message.ts_ms,
+            });
+        }
+        Ok(out)
     }
 
     /// `at_seq` **までを含めて**複製した新しいセッションを作る。
@@ -986,6 +1037,39 @@ mod tests {
             .unwrap();
         assert_eq!(next, 3, "分岐先の採番は複製した末尾の次から続く");
         assert_eq!(store.records(&id).unwrap().len(), 5, "分岐先へ積んでも元は増えない");
+    }
+
+    /// 分岐点の候補はユーザー発話だけ。System 行や往復の記録は出さない。
+    #[test]
+    fn fork_points_list_user_messages_only() {
+        let dir = TempDir::new();
+        let store = SessionStore::open(dir.db()).expect("開けること");
+        let id = store.create_session(None).unwrap();
+
+        let system = AgentMessage::new(
+            Endpoint::System,
+            Endpoint::User,
+            "agent_01（PlannerAgent）が稼働を開始しました",
+            0,
+        );
+        store.append(&id, &Record::message(system)).unwrap();
+        let first = store
+            .append(&id, &Record::message(user_message("最初の依頼\nです")))
+            .unwrap();
+        store.append(&id, &Record::exchange(&agent(), "送信", "応答")).unwrap();
+        let second = store
+            .append(&id, &Record::message(user_message("次の依頼")))
+            .unwrap();
+
+        let points = store.fork_points(&id).unwrap();
+        assert_eq!(points.len(), 2, "System 行と exchange は候補にしない");
+        assert_eq!(points[0].seq, first);
+        assert_eq!(points[0].preview, "最初の依頼 です", "改行は空白へ潰す");
+        assert_eq!(points[1].seq, second);
+
+        // 返った seq をそのまま fork へ渡すと、その発話まで含めて複製される。
+        let forked = store.fork_session(&id, points[0].seq).unwrap();
+        assert_eq!(store.tail_messages(&forked, 10).unwrap().len(), 2);
     }
 
     /// 分岐先で要約の覆う境界が生きていること（seq を振り直さない理由の実証）。

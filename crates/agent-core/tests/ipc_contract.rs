@@ -380,3 +380,60 @@ fn enums_round_trip_through_json() {
         assert_eq!(back, provider, "往復で壊れる: {json}");
     }
 }
+
+/// 会話（セッション）のワイヤ形を固定する（Spec 12 P3）。
+///
+/// `SessionSummary` / `SessionMeta` / `ForkPoint` は `types.ts` と手で同期させる
+/// 契約にある。`parentId` / `forkedAtSeq` は**分岐で生まれたときだけ出る**
+/// （TS 側では省略可能）ので、両方の形を固定する。
+#[test]
+fn session_wire_fields_are_frozen() {
+    use agent_core::{ForkPoint, SessionMeta, SessionSummary};
+
+    let plain = SessionSummary {
+        id: "1785600000000-abcd1234".into(),
+        meta: SessionMeta {
+            title: "黒板の運用を決めたい".into(),
+            created_at: 1_785_600_000_000,
+            updated_at: 1_785_600_060_000,
+            parent_id: None,
+            forked_at_seq: None,
+            record_count: 12,
+        },
+    };
+    assert_eq!(wire_keys(&plain), vec!["id", "meta"]);
+    assert_eq!(
+        wire_keys(&plain.meta),
+        vec!["createdAt", "recordCount", "title", "updatedAt"],
+        "分岐していない会話は parentId / forkedAtSeq を出さない"
+    );
+
+    let forked = SessionMeta {
+        parent_id: Some("1785600000000-abcd1234".into()),
+        forked_at_seq: Some(7),
+        ..plain.meta.clone()
+    };
+    assert_eq!(
+        wire_keys(&forked),
+        vec![
+            "createdAt",
+            "forkedAtSeq",
+            "parentId",
+            "recordCount",
+            "title",
+            "updatedAt",
+        ],
+        "SessionMeta のフィールドが変わった"
+    );
+
+    let point = ForkPoint {
+        seq: 7,
+        preview: "最初の依頼です".into(),
+        ts_ms: 1_785_600_000_000,
+    };
+    assert_eq!(
+        wire_keys(&point),
+        vec!["preview", "seq", "tsMs"],
+        "ForkPoint のフィールドが変わった"
+    );
+}

@@ -19,6 +19,7 @@ import type {
   BlackboardNote,
   ConfigFileKind,
   ErrorPayload,
+  ForkPoint,
   ModelTemplate,
   ModelTemplateId,
   McpConfig,
@@ -27,6 +28,7 @@ import type {
   RagChunk,
   Recurrence,
   ScheduleView,
+  SessionSummary,
   TopologyEdge,
   TopologyPosition,
 } from "../types";
@@ -234,8 +236,44 @@ export const listMcpServers = () => call<McpServerStatus[]>("list_mcp_servers");
 export const agentMcpStatus = (agentId: AgentId) =>
   call<AgentMcpStatus>("agent_mcp_status", { agentId });
 
-/** 会話をリセットする（新規チャット）。稼働状態・統計・Memory.md は残る。 */
+/**
+ * 新しい会話を開く（新規チャット）。稼働状態・統計・Memory.md は残る。
+ *
+ * **Spec 12 で意味が変わった**: 今の会話は捨てられず、閉じて新しい会話が開く。
+ */
 export const resetConversation = () => call<void>("reset_conversation");
+
+// ---- 会話（セッション。Spec 12） ---------------------------------------------
+
+/** 保存されている会話の一覧（`updatedAt` の新しい順）。 */
+export const listSessions = () => call<SessionSummary[]>("list_sessions");
+
+/** いま開いている会話の ID。保存先が開けていない村では空文字。 */
+export const currentSession = () => call<string>("current_session");
+
+/**
+ * 保存されている会話を開き直す。
+ *
+ * 飛行中のターンがあると `SESSION_SWITCH_BLOCKED` で失敗する。
+ */
+export const resumeSession = (sessionId: string) =>
+  call<void>("resume_session", { sessionId });
+
+/** 分岐できる地点（その会話のユーザー発話）を古い順で返す。 */
+export const listForkPoints = (sessionId: string) =>
+  call<ForkPoint[]>("list_fork_points", { sessionId });
+
+/** `atSeq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。 */
+export const forkSession = (sessionId: string, atSeq: number) =>
+  call<string>("fork_session", { sessionId, atSeq });
+
+/** 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。 */
+export const deleteSession = (sessionId: string) =>
+  call<void>("delete_session", { sessionId });
+
+/** 会話を JSONL で書き出し、**書き出し先のパス**を返す。 */
+export const exportSession = (sessionId: string) =>
+  call<string>("export_session", { sessionId });
 
 // ---- アイコン ----------------------------------------------------------------
 

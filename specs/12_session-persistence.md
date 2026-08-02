@@ -2,8 +2,8 @@
 
 **ID**: 12
 **Date**: 2026-08-02
-**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0・P1・P2 完了**
-（P1・P2 は 2026-08-03）。
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0〜P3 完了**
+（P1〜P3 は 2026-08-03）。残は P4 要約（手動）と P5 実機確認。
 data_contract へ `session_store` ブロックを凍結（backend = redb 4.1.0 /
 テーブル 2 つ / `Record` 3 種別 / `seq` の意味と fork の inclusive /
 summary の `coversUpToSeq < 自身の seq` / 単一ライターは await を跨がない /
@@ -290,6 +290,30 @@ rev2 で入った差分（査読 2026-08-02）:
   片方だけ更新されて再開後の履歴が実行中の履歴と食い違う（P1 の (b) と同じ形）
 - **P3 投影**: 会話ペインのセッション一覧・切り替え・fork・削除の UI、IPC、
   `sessionSwitched` の投影
+  → **完了**（2026-08-03）。IPC 7 本（`list_sessions` / `current_session` /
+  `resume_session` / `list_fork_points` / `fork_session` / `delete_session` /
+  `export_session`）+ `SessionDialog.vue` + 会話ペインの「会話一覧」ボタン。
+  フロント単体 2 本 + ワイヤ形の凍結 1 本（`session_wire_fields_are_frozen`）。
+  実装で決めた 3 点:
+  (a) **分岐は `ForkPoint` の一覧から地点を選ぶ 2 段階にした**。S4 は
+      「ある地点までは同じで」が本体なので、会話まるごとの複製しかできない
+      fork は S4 を満たさない。候補を**ユーザー発話だけ**に絞ったのは、全
+      レコードを並べると入退室の System 行や往復の記録まで候補に出て、
+      「どこで切ったのか」が読めなくなるため（`SessionStore::fork_points` を
+      P3 で追加）
+  (b) **`conversationCleared` では通知を出さないことにした**。この 1 本は
+      新規チャット・開き直し・分岐のどれでも同じように飛ぶので、既存の
+      「新規チャットを開始しました」は開き直しのときに嘘になる。何が起きたかは
+      操作した側が知っているので、通知は操作側が出す
+  (c) **書き出し先は `{workspace}/exports/{session_id}.jsonl` に固定した**。
+      ファイル選択ダイアログのために plugin を足すより、置き場所を 1 つ決めて
+      パスを通知に出すほうが依存も操作も少ない
+  `create_session` の IPC は**作っていない** — 新規チャットは
+  `reset_conversation` が担うので、同じ操作の入口を 2 つ作らない。
+  **実機確認（2026-08-03、利用者）: 会話一覧・開き直し・新規チャットは動作を確認。
+  分岐（2 段階の UI）だけ未確認** — コアの `fork_session` / `fork_points` は
+  単体 1 本 + 結合 1 本で通っているので、残っているのは
+  「分岐点の一覧が出て、押すと複製した側へ切り替わる」画面の経路だけ
 - **P4 要約**: 手動のみ。エージェントごとに要約し `summary` を追加、
   注入は可変文脈の畳みへ相乗り
 - **P5 台帳と実機確認**: README 日英・CLAUDE.md・Spec 03 の改訂・

@@ -138,6 +138,14 @@ pub fn run() {
             commands::send_user_message,
             commands::reset_conversation,
             commands::index_rag_chunk,
+            // 会話（セッション。Spec 12）
+            commands::list_sessions,
+            commands::current_session,
+            commands::resume_session,
+            commands::list_fork_points,
+            commands::fork_session,
+            commands::delete_session,
+            commands::export_session,
             // 予定（Spec 07）
             commands::list_schedules,
             commands::create_schedule,

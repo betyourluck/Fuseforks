@@ -16,6 +16,7 @@ import type { ToolRun } from "../lib/chatRows";
 import type {
   AgentId,
   AgentMessage,
+  ForkPoint,
   AgentSnapshot,
   AgentSpec,
   ConfigFileKind,
@@ -24,6 +25,7 @@ import type {
   McpConfig,
   ModelTemplate,
   PlanWaveRecord,
+  SessionSummary,
   TopologyPosition,
   TopologyEdge,
 } from "../types";
@@ -102,6 +104,16 @@ interface OrchestratorState {
    * 波の記録は統計と同じ「起きた事実の観測」の側（コアも消していない）。
    */
   planWaves: PlanWaveRecord[];
+  /**
+   * 保存されている会話の一覧（Spec 12。`updatedAt` の新しい順）。
+   *
+   * **常時は追いかけない** — 一覧ダイアログを開いたときと、会話が切り替わった
+   * ときだけ取り直す。発話のたびに `updatedAt` が動くので、毎イベントで
+   * 引くと会話中ずっと IPC が往復する（表示していない一覧のために）。
+   */
+  sessions: SessionSummary[];
+  /** いま開いている会話の ID。保存先が開けていない村では空文字。 */
+  currentSessionId: string;
 }
 
 const state = reactive<OrchestratorState>({
@@ -122,6 +134,8 @@ const state = reactive<OrchestratorState>({
   toolRuns: [],
   lastTool: {},
   planWaves: [],
+  sessions: [],
+  currentSessionId: "",
 });
 
 /** ツール実行の連番。イベントに ID が無いので受け手側で振る。 */
@@ -468,7 +482,20 @@ function applyEvent(event: CoreEvent): void {
       // ツール実行は会話に紐づく事実なので、会話と一緒に消す。
       state.toolRuns = [];
       state.lastTool = {};
-      pushToast("info", "新規チャットを開始しました", "会話ログと各サーヴァントの記憶（履歴）をリセットしました");
+      // **ここでは通知を出さない**（Spec 12）。この 1 本は新規チャットでも
+      // 開き直しでも分岐でも同じように飛ぶので、「新規チャットを開始しました」と
+      // 言うと開き直しのときに嘘になる。何が起きたかは操作した側が知っている。
+      break;
+
+    case "sessionSwitched":
+      // 会話が切り替わった（Spec 12）。conversationCleared が空にした直後に
+      // 届くので、**ここでコア側の復元結果を引き直す** — 開き直しと分岐では
+      // コアが会話ログを戻しており、空のままにすると画面だけが白紙に見える。
+      state.currentSessionId = event.sessionId;
+      void guard("会話の読み込み", async () => {
+        state.messages = await ipc.listMessages(MESSAGE_LIMIT);
+        state.sessions = await ipc.listSessions();
+      });
       break;
 
     case "agentFailed": {
@@ -594,6 +621,8 @@ async function initialize(): Promise<void> {
       upsertPlanWave(wave);
     }
     state.workspace = await ipc.workspacePath();
+    // 開いている会話（Spec 12）。一覧はダイアログを開くまで引かない。
+    state.currentSessionId = await ipc.currentSession();
     state.ready = true;
   } catch (error) {
     // 再試行できるよう、失敗時はフラグを戻す。
@@ -878,9 +907,71 @@ export function useOrchestrator() {
       await mutate("送信", () => ipc.sendUserMessage(agentId, content));
     },
 
-    /** 会話をリセットする（新規チャット）。表示は conversationCleared が消す。 */
+    /**
+     * 新しい会話を開く（新規チャット）。表示は conversationCleared が消し、
+     * sessionSwitched が新しい会話を載せる。
+     *
+     * **前の会話は捨てられずディスクに残る**（Spec 12）。
+     */
     async newChat(): Promise<void> {
-      await guard("新規チャット", () => ipc.resetConversation());
+      const done = await guard("新規チャット", () => ipc.resetConversation());
+      if (succeeded(done)) {
+        pushToast("info", "新しい会話を開きました", "前の会話は一覧に残っています");
+      }
+    },
+
+    // ---- 会話（セッション。Spec 12） ---------------------------------------
+
+    /** 会話一覧を取り直す。一覧ダイアログを開いたときに呼ぶ。 */
+    async refreshSessions(): Promise<void> {
+      const listed = await guard("会話一覧の取得", () => ipc.listSessions());
+      if (succeeded(listed)) state.sessions = listed;
+    },
+
+    /**
+     * 保存されている会話を開き直す。
+     *
+     * 飛行中のターンがあるとコアが `SESSION_SWITCH_BLOCKED` で拒む。
+     * その通知は guard がそのまま出す — 直し方（停止してから切り替える）は
+     * エラー文言側に書いてある。
+     */
+    async resumeSession(sessionId: string): Promise<boolean> {
+      const done = await guard("会話を開く", () => ipc.resumeSession(sessionId));
+      return succeeded(done);
+    },
+
+    /** 分岐できる地点（その会話のユーザー発話）。 */
+    async forkPoints(sessionId: string): Promise<ForkPoint[]> {
+      const points = await guard("分岐点の取得", () => ipc.listForkPoints(sessionId));
+      return succeeded(points) ? points : [];
+    },
+
+    /** `atSeq` まで含めて複製し、複製した側を開く。元は不変のまま残る。 */
+    async forkSession(sessionId: string, atSeq: number): Promise<boolean> {
+      const done = await guard("会話の分岐", () => ipc.forkSession(sessionId, atSeq));
+      if (succeeded(done)) {
+        pushToast("info", "会話を分岐しました", "元の会話はそのまま一覧に残っています");
+      }
+      return succeeded(done);
+    },
+
+    /** 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。 */
+    async deleteSession(sessionId: string): Promise<boolean> {
+      const done = await guard("会話の削除", () => ipc.deleteSession(sessionId));
+      if (succeeded(done)) {
+        const listed = await guard("会話一覧の取得", () => ipc.listSessions());
+        if (succeeded(listed)) state.sessions = listed;
+        pushToast("info", "会話を削除しました");
+      }
+      return succeeded(done);
+    },
+
+    /** 会話を JSONL で書き出す。書き出し先のパスを通知に出す。 */
+    async exportSession(sessionId: string): Promise<void> {
+      const path = await guard("会話の書き出し", () => ipc.exportSession(sessionId));
+      if (succeeded(path)) {
+        pushToast("info", "会話を書き出しました", path);
+      }
     },
 
     // ユーザーからの同報（複数宛先へ一斉送信）は UI から外した。全員のターンが

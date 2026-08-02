@@ -439,6 +439,79 @@ pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
     state.orchestrator.reset_conversation().await
 }
 
+// ---- 会話（セッション。Spec 12） ---------------------------------------------
+
+/// 保存されている会話の一覧（`updatedAt` の新しい順）。
+#[tauri::command]
+pub async fn list_sessions(
+    state: State<'_, AppState>,
+) -> CoreResult<Vec<agent_core::SessionSummary>> {
+    state.orchestrator.list_sessions().await
+}
+
+/// いま開いている会話の ID。保存先が開けていない村では空文字。
+#[tauri::command]
+pub async fn current_session(state: State<'_, AppState>) -> CoreResult<String> {
+    Ok(state.orchestrator.current_session())
+}
+
+/// 保存されている会話を開き直す。
+///
+/// 飛行中のターンがあると `SESSION_SWITCH_BLOCKED` で失敗する —
+/// 答えが別の会話へ着地するのを防ぐため。
+#[tauri::command]
+pub async fn resume_session(state: State<'_, AppState>, session_id: String) -> CoreResult<()> {
+    state.orchestrator.resume_session(&session_id).await
+}
+
+/// 分岐できる地点（その会話のユーザー発話）を古い順で返す。
+#[tauri::command]
+pub async fn list_fork_points(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> CoreResult<Vec<agent_core::ForkPoint>> {
+    state.orchestrator.list_fork_points(&session_id).await
+}
+
+/// 会話を `at_seq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。
+#[tauri::command]
+pub async fn fork_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    at_seq: u64,
+) -> CoreResult<String> {
+    state.orchestrator.fork_session(&session_id, at_seq).await
+}
+
+/// 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。
+#[tauri::command]
+pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> CoreResult<()> {
+    state.orchestrator.delete_session(&session_id).await
+}
+
+/// 会話を JSONL で書き出し、**書き出し先のパス**を返す。
+///
+/// 保存先（`sessions.redb`）はバイナリなので、人が読める出口が無いと診断が
+/// grep できなくなる。書き出し先はワークスペース配下の `exports/` に固定する —
+/// ファイル選択ダイアログのために plugin を足すより、置き場所を 1 つ決めて
+/// パスを画面に出すほうが、依存も操作も少ない。
+#[tauri::command]
+pub async fn export_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> CoreResult<String> {
+    let dir = state.workspace.join("exports");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|err| CoreError::ConfigIo {
+            path: "exports".to_owned(),
+            source: err,
+        })?;
+    let dest = dir.join(format!("{session_id}.jsonl"));
+    state.orchestrator.export_session(&session_id, &dest).await?;
+    Ok(dest.display().to_string())
+}
+
 /// RAG 索引に断片を追加する（動作確認用の投入口）。
 #[tauri::command]
 pub async fn index_rag_chunk(state: State<'_, AppState>, chunk: RagChunk) -> CoreResult<()> {

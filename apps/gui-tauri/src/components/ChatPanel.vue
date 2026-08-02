@@ -19,6 +19,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
+import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
   buildTimeline,
@@ -276,13 +277,19 @@ async function send(content: string): Promise<void> {
   await orchestrator.send(state.selectedAgentId, content);
 }
 
+/** 会話一覧ダイアログを開いているか（Spec 12）。 */
+const sessionsOpen = ref(false);
+
 /**
- * 新規チャット。会話ログと全エージェントの履歴を消す（稼働・統計・
- * Memory.md は残る）。ログは現状メモリ内のみで復元不能なので確認必須。
+ * 新規チャット。今の会話を閉じて新しい会話を開く（Spec 12 で意味が変わった）。
+ *
+ * **確認は残すが文言を変えた**（Spec 12 の D9）。捨てないので「復元できません」は
+ * 嘘になり、警告色も外してある。それでも確認を出すのは、画面が白紙になるのが
+ * 意図しない操作だったときに戻す手間が要るため。
  */
 async function newChat(): Promise<void> {
   if (!rows.value.length) return;
-  if (!confirm("新規チャットを開始しますか？\n会話ログと各サーヴァントの記憶（履歴）が消えます（復元できません）。\n長期記憶（Memory.md）と稼働状態は残ります。")) return;
+  if (!confirm("この会話を閉じて、新しい会話を始めますか？\n今の会話は保存され、「会話一覧」からいつでも戻れます。")) return;
   await orchestrator.newChat();
 }
 </script>
@@ -298,10 +305,21 @@ async function newChat(): Promise<void> {
       <button
         class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
         :disabled="!rows.length"
-        title="会話ログと各サーヴァントの履歴をリセットします（稼働状態と Memory.md は残ります）"
+        title="この会話を閉じて、新しい会話を始めます（前の会話は保存され、一覧から戻れます）"
         @click="newChat"
       >
         新規チャット
+      </button>
+      <!--
+        会話一覧（Spec 12）。開く・分岐・書き出し・削除はここに畳む —
+        38px のヘッダに 4 つ足すと、どれも押しにくくなる。
+      -->
+      <button
+        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent"
+        title="保存されている会話の一覧。開き直す・分岐する・書き出す・削除する"
+        @click="sessionsOpen = true"
+      >
+        会話一覧
       </button>
       <!--
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
@@ -549,6 +567,8 @@ async function newChat(): Promise<void> {
       :blocked-reason="blockedReason"
       @send="send"
     />
+
+    <SessionDialog v-if="sessionsOpen" @close="sessionsOpen = false" />
   </div>
 </template>
 
