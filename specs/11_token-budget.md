@@ -2,9 +2,12 @@
 
 **ID**: 11
 **Date**: 2026-08-02
-**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0 完了**
-（data_contract の `token_budget` ブロック凍結 + `PlanTaskState` へ
-`budget_exhausted` 加算）。実装は P1 から。
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0〜P1 完了**。
+P0 = data_contract の `token_budget` ブロック凍結 + `PlanTaskState` へ
+`budget_exhausted` 加算。P1 = `budget.rs`（effective_milli /
+effective_tokens / estimate_tokens / BudgetPool。try_reserve と debit の
+分離・CAS ループの飽和引き算・note_exhausted の一回性。単体 9 本、
+workspace 257 本 green）。残は P2（配線）/ P3（投影）/ P4（台帳・実機確認）。
 LGTM 時の微細 2 点も P0 で確定 — (1) 欠落見積もりの分母は
 **UTF-8 バイト数 `s.len()`**（`chars().count()` ÷ 4 は日本語で約 4 倍の
 過小 = 保守側に反する。バイトは日本語 3 バイト/字で過大側・O(1)）
