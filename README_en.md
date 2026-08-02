@@ -106,7 +106,8 @@ OutcastsConcordia/
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
                 ├── TopologyMap.vue                    Center-top: village map
-                ├── PlanWavePane.vue                   Center-bottom: wave pane (plan execution trace)
+                ├── PlanWavePane.vue                   Center-bottom: Work Status tab (plan execution trace)
+                ├── BlackboardPane.vue / BottomPaneTabs.vue   Center-bottom: Blackboard tab (shared working notes)
                 ├── ChatPanel.vue / ChatInput.vue      Right: conversation (speech bubbles)
                 ├── GroundingNote.vue                  Grounding provenance attached to utterances
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   Modal: settings
@@ -149,7 +150,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 |---|---|---|
 | Left | Agent list (status, uptime, tokens, startup) | Always visible |
 | Upper Center | Village map | Always visible |
-| Lower Center | Wave pane (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
+| Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format) | Always visible |
 | Modal | Agent settings + configuration file editing (via ⚙ on agent cards) | **Opened occasionally** |
 | Modal | Model template management (via ⚙ in header) | Opened occasionally |
@@ -293,8 +294,11 @@ This runs in the same framework as transfers. The model receives transfer and ex
 Call the model
  ├ Called transfer_to_*  -> transfer and end this turn (no result is returned)
  ├ Called an execution tool -> execute it, add the call and result as a pair, then call again
+ ├ Called a name never offered -> answer "no such tool" as a result, then call again
  └ Called no tool -> final output; end the conversation
 ```
+
+The third branch used to be **silently discarded** ([failures.md](failures.md) #47). From the model's side, "I called it and nothing happened," so the body it wrote was delivered instead of the vanished call. Returning the failure as a result lets the model pick a valid name.
 
 The limit is `max_tool_iterations` (default: 12; **it can be overridden per agent through the "Tool Execution Limit" setting**). The initial default was 6, but ordinary research delegation (grep -> narrow down -> read) exhausted it three times across two sessions. A low limit is not a saving: a new request burns the same tokens again without producing the result of the previous effort.
 
@@ -526,6 +530,10 @@ Rules stack in three layers: **vendor constitution (model-side, immutable) > vil
 
 The 📁 button in the Settings dialog opened from an agent card's ⚙ opens that agent's configuration folder directly.
 
+### The Village Blackboard — shared working notes
+
+The other tab at the center-bottom is the **Blackboard**. It is literally the `黒板/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`黒板/<display name>.md`) as a sticky note, and only the coordinator bundles them into `黒板/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
+
 ### Scheduling
 
 From header ⏰, you can register **requests that fire at specified times** ([Spec 07](specs/07_scheduled-tasks.md)). The three forms are "every Thursday at 17:00," "daily at 09:00," and "every 10 minutes"; cron expressions are intentionally not used, since they are unreadable to anyone unfamiliar with them and leave the UI as a free-text input. When fired, the request reaches that agent and the result appears in the conversation pane. The body begins with `[Scheduled: Every Thursday 17:00]`, distinguishing it from human utterances in both the UI and model context.
@@ -565,10 +573,8 @@ It can return under either condition:
 | Long-term memory (Memoria connection) | `Memory.md` (`remember`) works. Multi-layer memory is unconnected, but **the door is open**. | Start according to the policy below |
 | Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. |
 | Command execution tool (user request, 2026-07-31) | Built-in tools stop at file operations (Spec 09). There is no arbitrary command capability. | Permit **only commands registered as Hooks** (user decision, 2026-07-31). Not arbitrary commands plus a denylist of dangerous items: a **closed allowlist** is the design itself. External commands such as `scc` and `tree-sitter` become usable only when registered here. The work-folder boundary does not constrain commands (they can escape with `cd`), so the enclosure must be at registration. |
-| Per-turn token budget ([failures.md](failures.md) #41, remedy 3) | All safeguards are count-based (12 tool calls / 3 retries / 8 hops). Since history is resent every round, unit cost keeps growing and count cannot bound cost. | Make one safeguard cost-based. Anthropic Task Budgets (available with claude-sonnet-5, minimum 20,000) are declarations to the model, not enforcement, and Gemini has no equivalent; the village-wide ceiling belongs in the harness. |
-| Interrupting a running turn (user request, 2026-07-31) | `stop_agent` **waits for an in-flight turn to complete**. It intentionally does not abort a live LLM call because that would discard a paid response and corrupt statistics. Humans cannot stop spinning wheels. | Check an interruption flag cooperatively at turn-loop boundaries. The stopping edge is the end of the one round currently in flight; propagation when stopped during a plan wave is the core design challenge. |
 | Variable store (Airflow Variables/XCom equivalent, user request, 2026-07-30) | Two alternatives are working: `Memory.md` (prose, per agent, persistent) and bundle text (handoff between waves). | Structured values keyed by name. This conflicts with the "few settings" concept, so review should make that tension its main battleground when specified. |
-| Session survival across restart (user request, 2026-07-30) | Conversation logs and statistics are process-lifetime and currently missing persistence. **Agent conversation history being cleared is intentional**: restoring it creates a conversation that continues when the user thought they had begun anew (documented in `world.rs`). | The specification must draw the persistence line: logs and statistics are candidates to survive, histories are candidates to die. |
+| Conversation persistence and session management (user requests, 2026-07-30 / 2026-08-02) | **Design is frozen; implementation is next** ([Spec 12](specs/12_session-persistence.md)). Conversation logs and agent histories are process-lifetime today: closing the app discards them. | Store everything in a single `{workspace}/sessions.redb`, keep several conversations, and switch between them. **The original hypothesis "histories are candidates to die" was refuted**: this village has two layers of history (the village conversation log and each agent's own prompt history), and **neither can be reconstructed from the other**. Persisting only the conversation log yields a screen that looks correct while every agent starts amnesiac. |
 
 ### Long-Term Memory Policy (Decided, Awaiting Connection)
 
