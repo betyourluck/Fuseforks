@@ -5390,3 +5390,236 @@ async fn stop_agent_interrupts_the_flying_turn_instead_of_waiting() {
         "stop_agent 経由は Running へ戻らず Idle へ（不変条件 4 の但し書き）"
     );
 }
+
+// ---- トークン予算（Spec 11） -------------------------------------------------
+
+/// 予算つきの村を組む。`world.json` を bootstrap の**前**に書く —
+/// 天井は world の読み込みでしか入らない（設定 UI を作らない契約）。
+async fn setup_with_budget(
+    dir: &TempDir,
+    backend: Arc<dyn LlmBackend>,
+    ceiling: u64,
+) -> Orchestrator {
+    std::fs::write(
+        dir.0.join("world.json"),
+        format!(r#"{{ "tokenBudget": {ceiling} }}"#),
+    )
+    .unwrap();
+    setup_with(dir, backend, OrchestratorConfig::default()).await
+}
+
+/// S1: 予算が尽きたターンは周回境界で打ち切られ、System 行が 1 本出て、
+/// 稼働は残る（token_budget の exhaustion）。
+///
+/// SilentToolBackend の usage は 1 周あたり prompt 1 + completion 1 =
+/// 実効 5（1×1000 + 1×4000 milli の切り上げ）。天井 5 なので 1 周目で
+/// 使い切り、2 周目の周回境界で止まる。
+#[tokio::test]
+async fn a_turn_is_cut_at_the_round_boundary_when_the_budget_runs_out() {
+    let dir = TempDir::new("budget-cut");
+    let orchestrator = setup_with_budget(
+        &dir,
+        Arc::new(SilentToolBackend {
+            calls: std::sync::Mutex::new(0),
+        }),
+        5,
+    )
+    .await;
+    register_all_tools(&orchestrator, &dir).await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let system_lines: Vec<_> = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == Endpoint::System && m.content.contains("予算"))
+        .cloned()
+        .collect();
+    assert_eq!(system_lines.len(), 1, "System 行はちょうど 1 本: {events:?}");
+    assert!(
+        system_lines[0].content.contains("実効 5 トークン"),
+        "天井の値が事実として載る: {}",
+        system_lines[0].content
+    );
+    assert!(
+        system_lines[0].content.contains("改めて依頼"),
+        "次の道を書く（#44 の規律）: {}",
+        system_lines[0].content
+    );
+
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Running,
+        "予算切れは稼働を降ろさない（閉じるのはターンだけ）"
+    );
+}
+
+/// 予算切れの後でも、次の依頼は**新しい予算**で普通に走る（因果ごとに独立）。
+/// EchoBackend は usage を返さないので、バイト見積もり（usage_fallback）で
+/// 数えられる経路の確認を兼ねる。
+#[tokio::test]
+async fn the_next_request_gets_a_fresh_budget_after_exhaustion() {
+    let dir = TempDir::new("budget-fresh");
+    // 天井 100,000 は echo の 1 ターン（見積もり数百実効）では尽きない。
+    let orchestrator = setup_with_budget(
+        &dir,
+        Arc::new(agent_core::EchoBackend::new("[echo]")),
+        100_000,
+    )
+    .await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一度目").await.unwrap();
+    orchestrator.send_user_message(&id, "二度目").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let replies = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == (Endpoint::Agent { id: id.clone() }))
+        .count();
+    assert_eq!(replies, 2, "健全な依頼は天井の下で普通に完走する: {events:?}");
+}
+
+/// S3: 波の配送前に予算が尽きていたら、配送そのものを始めない。
+/// セルは budget_exhausted で確定し、System 行は因果全体で 1 本だけ
+/// （CAS の初回観測が記録を 1 系統に保つ）。
+///
+/// PlanningBackend の進行役 1 周目（実効 5）で天井 5 を使い切るので、
+/// 波の 2 タスクは deliver_and_wait の事前検査で止まる。
+#[tokio::test]
+async fn an_exhausted_budget_stops_wave_deliveries_before_they_start() {
+    let dir = TempDir::new("budget-wave");
+    std::fs::write(dir.0.join("world.json"), r#"{ "tokenBudget": 5 }"#).unwrap();
+    let (orchestrator, lead, _workers) = setup_facilitator(
+        &dir,
+        Arc::new(PlanningBackend::new()),
+        &[("agent_w1", "1 号"), ("agent_w2", "2 号")],
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&lead, "調べてまとめて")
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let resolved: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::PlanTaskResolved { state, .. } => Some(*state),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(resolved.len(), 2, "2 タスクとも確定する: {events:?}");
+    assert!(
+        resolved.iter().all(|s| *s == PlanTaskState::BudgetExhausted),
+        "配送前の予算切れは budget_exhausted で確定: {resolved:?}"
+    );
+
+    let system_lines = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == Endpoint::System && m.content.contains("予算"))
+        .count();
+    assert_eq!(system_lines, 1, "System 行は因果全体で 1 本だけ");
+}
+
+/// 転送は予算を**同一の Arc のまま**引き継ぐ。引き継がれなければ転送先は
+/// 新品の予算（または天井なし）で普通に応答してしまう — delegation-fanout
+/// race（token_budget の pool、arXiv:2606.04056 の 63 件中 11 件）を
+/// 再現させない側の固定。
+#[tokio::test]
+async fn a_handoff_inherits_the_same_budget_pool() {
+    let dir = TempDir::new("budget-handoff");
+    std::fs::write(dir.0.join("world.json"), r#"{ "tokenBudget": 5 }"#).unwrap();
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(AlwaysHandoffBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let a = AgentId::from("agent_01");
+    let b = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "取次", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "受け手", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .set_connections(&a, vec![b.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "よろしく").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    // 転送先 B のターンは、引き継いだ予算の残 0 を周回境界で観測して止まる。
+    let system_lines: Vec<_> = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == Endpoint::System && m.content.contains("予算"))
+        .cloned()
+        .collect();
+    assert_eq!(system_lines.len(), 1, "System 行が 1 本出る: {events:?}");
+    assert!(
+        system_lines[0].content.contains("agent_02"),
+        "止まったのは転送**先**のターン（= 予算が引き継がれた証拠）: {}",
+        system_lines[0].content
+    );
+    let b_replies = messages(&events)
+        .into_iter()
+        .filter(|m| m.from == (Endpoint::Agent { id: b.clone() }))
+        .count();
+    assert_eq!(
+        b_replies, 0,
+        "転送先は LLM を呼ばずに止まる（新品の予算を作らない）"
+    );
+}
+
+/// ceiling 契約の後方互換: 既定 1,000,000 を書くのは**新規 world.json だけ**。
+/// 既存の村（tokenBudget なし）は None のまま触らない。
+#[tokio::test]
+async fn the_default_ceiling_is_written_only_to_a_fresh_world_file() {
+    // 新規の村: bootstrap が world.json を作り、既定値が入る。
+    let fresh = TempDir::new("budget-fresh-world");
+    let _ = setup(&fresh, OrchestratorConfig::default()).await;
+    let written = std::fs::read_to_string(fresh.0.join("world.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        json["tokenBudget"].as_u64(),
+        Some(1_000_000),
+        "新規の村には既定の天井が入る: {written}"
+    );
+
+    // 既存の村（天井なし）: 黙って書き足さない。
+    let legacy = TempDir::new("budget-legacy-world");
+    std::fs::write(legacy.0.join("world.json"), r#"{ "agents": [] }"#).unwrap();
+    let _ = setup(&legacy, OrchestratorConfig::default()).await;
+    let kept = std::fs::read_to_string(legacy.0.join("world.json")).unwrap();
+    assert!(
+        !kept.contains("tokenBudget"),
+        "既存の村へ天井を黙って足さない（後方互換）: {kept}"
+    );
+}

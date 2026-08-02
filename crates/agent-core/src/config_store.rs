@@ -400,6 +400,15 @@ impl ConfigStore {
         Ok((prompt, stable_len))
     }
 
+    /// `world.json` が実在するか。
+    ///
+    /// [`Self::load_world`] は不在を空の世界として返すため、呼んだ後からは
+    /// 「新規の村」と「空の村」を区別できない。新規にだけ既定値を書く判断
+    /// （Spec 11 の tokenBudget）は、load の前にこれで見る。
+    pub fn world_exists(&self) -> bool {
+        self.root.join(WORLD_FILE).exists()
+    }
+
     /// 登録簿を読み込む。ファイルが無ければ空の状態を返す。
     pub async fn load_world(&self) -> CoreResult<PersistedWorld> {
         let path = self.root.join(WORLD_FILE);

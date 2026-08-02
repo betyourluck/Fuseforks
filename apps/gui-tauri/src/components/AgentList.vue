@@ -137,18 +137,45 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         {{ runningCount }} / {{ state.agents.length }} 稼働
       </span>
       <button
-        class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         title="モデルテンプレートを管理"
+        aria-label="モデルテンプレートを管理"
         @click="showTemplates = true"
       >
-        ⚙
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3a3.5 3.5 0 0 0-3.5 3.5c0 .7.2 1.4.6 2L12 12l2.9-3.5c.4-.6.6-1.3.6-2A3.5 3.5 0 0 0 12 3Z" />
+          <path d="M8.5 8.5A3.5 3.5 0 0 0 5 12c0 .7.2 1.4.6 2L9 16.9l3-4.9" />
+          <path d="M15.5 8.5A3.5 3.5 0 0 1 19 12c0 .7-.2 1.4-.6 2L15 16.9l-3-4.9" />
+          <circle cx="12" cy="12" r="1.5" />
+          <path d="M9 16.9 8.1 20 12 18.5l3.9 1.5-.9-3.1" />
+        </svg>
       </button>
       <button
-        class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         title="サーヴァントを追加"
+        aria-label="サーヴァントを追加"
         @click="creating = !creating"
       >
-        ＋
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
       </button>
     </header>
 

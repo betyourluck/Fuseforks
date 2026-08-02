@@ -49,6 +49,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
+use crate::budget::BudgetPool;
 use crate::compute;
 use crate::config_store::ConfigStore;
 // 診断の 1 行はここを通す（stderr とログファイルの両方へ出る）。
@@ -178,6 +179,14 @@ struct Envelope {
     /// さらに子を作った自ターンのトークンが周回境界で検知する — 親由来と
     /// 自分宛が 1 本に畳み込まれるので、検査箇所は増えない。
     cancel: Option<tokio_util::sync::CancellationToken>,
+    /// 依頼の因果が共有するトークン予算（Spec 11）。**`cancel` と独立** —
+    /// cancel を持たない配送（転送・予定発火）でも予算は運ぶ。
+    ///
+    /// 根（ユーザー発話の宛先ごと / 予定の発火ごと）で生まれ、因果内の
+    /// 全配送が**同一の Arc** を指す。転送先・波の配送で新しいプールを
+    /// 作ってはならない（天井が蒸発する — delegation-fanout race、
+    /// `token_budget` 契約の pool）。`None` = 天井なしの村。
+    budget: Option<Arc<BudgetPool>>,
 }
 
 /// ask / plan の返信路の積み荷（Spec 08 で素の `String` から拡張）。
@@ -195,12 +204,14 @@ struct Reply {
 
 impl Envelope {
     /// 返信を求めない通常の配送。ユーザー発話・転送・予定の発火が使う —
-    /// どれも「依頼元ターン」を持たないので、キャンセルの手掛かりも持たない。
-    fn plain(incoming: AgentMessage) -> Self {
+    /// どれも「依頼元ターン」を持たないので、キャンセルの手掛かりは持たないが、
+    /// **予算は持つ**（根で生まれたか、転送元のターンから引き継いだもの）。
+    fn plain(incoming: AgentMessage, budget: Option<Arc<BudgetPool>>) -> Self {
         Self {
             incoming,
             reply_to: None,
             cancel: None,
+            budget,
         }
     }
 }
@@ -445,8 +456,19 @@ impl Orchestrator {
         secrets: Arc<dyn SecretStore>,
         config: OrchestratorConfig,
     ) -> CoreResult<Self> {
+        // world.json の有無は load の**前**に見る（load は不在を空の世界として
+        // 返すため、後からは新規と空を区別できない）。
+        let fresh_world = !store.world_exists();
         let persisted = store.load_world().await?;
         let mut world = World::from_persisted(persisted.clone());
+
+        // トークン予算の既定値は**新規の村にだけ**書く（Spec 11 の ceiling 契約。
+        // 既存の村へ黙って天井を足すと、昨日まで完走していた依頼が今日から
+        // 止まる — それはパッチでやってよい変更ではない）。下の正規化
+        // 書き戻しが world.json への実書き込みを担う。
+        if fresh_world {
+            world.set_token_budget(Some(crate::budget::DEFAULT_CEILING));
+        }
 
         // 「unset なのに秘密が実在する」テンプレートは keyring へ昇格させる。
         // clear_credential は秘密の削除と unset への遷移を一体で行うので、
@@ -470,6 +492,17 @@ impl Orchestrator {
         let normalized = world.to_persisted();
         if normalized != persisted {
             store.save_world(&normalized).await?;
+        }
+
+        // 天井なしの村は起動のたびに WARN で可視化する（安全装置は opt-in でも、
+        // 危険な状態を警告で見せれば実質 opt-out に近づく）。次の道を書く —
+        // 警告だけ出して直し方を言わないのは #44 で払った代償の再演になる。
+        if world.token_budget().is_none() {
+            note!(
+                "WARN token budget: この村に天井がありません — world.json の \
+                 tokenBudget に 1000000（推奨）を設定すると、依頼 1 つあたりの\
+                 トークン消費に自動の上限が掛かります"
+            );
         }
 
         // 予定の読み込み（Spec 07）。ファイル全体が読めない場合も起動は止めない
@@ -1237,7 +1270,10 @@ impl Orchestrator {
             message.co_recipients = co_recipients.to_vec();
         }
         self.shared.record(message.clone()).await;
-        deliver(&self.shared, to, message).await
+        // 因果の根 — 予算はここで生まれる（Spec 11）。同報は宛先ごとに
+        // このメソッドが呼ばれるので、宛先ごとに独立した予算になる（契約どおり）。
+        let budget = new_root_budget(&self.shared).await;
+        deliver(&self.shared, to, message, budget).await
     }
 
     // ---- 予定（Spec 07） -----------------------------------------------------
@@ -1517,9 +1553,14 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
                     0,
                 );
 
+                // 因果の根 — 予定の発火 1 回ごとに独立した予算が付く（Spec 11 S4。
+                // 人が見ていない時間の安全の本体）。配送を見送った tick では
+                // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
+                let budget = new_root_budget(shared).await;
+
                 // 配送してから記録する。逆にすると、受信箱が飽和していた場合に
                 // 「配られていない発話」が会話ペインへ残る。
-                match deliver(shared, &task.to, message.clone()).await {
+                match deliver(shared, &task.to, message.clone(), budget).await {
                     Ok(()) => {
                         shared.record(message).await;
                         runtime.in_flight.lock().await.insert(task.to.clone());
@@ -1560,12 +1601,31 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
     }
 }
 
+/// 因果の根の予算を作る（Spec 11）。村に天井が無ければ `None`。
+///
+/// 呼ぶのは根の 2 箇所（ユーザー発話の宛先ごと / 予定の発火ごと）だけ。
+/// 因果の途中で呼ぶと予算が分裂して天井が蒸発する — 途中は必ず
+/// 封筒・ターンからの引き継ぎで運ぶ。
+async fn new_root_budget(shared: &Shared) -> Option<Arc<BudgetPool>> {
+    shared
+        .world
+        .read()
+        .await
+        .token_budget()
+        .map(|ceiling| Arc::new(BudgetPool::new(ceiling)))
+}
+
 /// 宛先の受信箱へ届ける。
 ///
 /// `try_send` を使うのは背圧を可視化するため。`send().await` にすると、
 /// 詰まった受信箱を待つあいだ送信側のエージェントまで停止して連鎖的に固まる。
-async fn deliver(shared: &Shared, to: &AgentId, message: AgentMessage) -> CoreResult<()> {
-    deliver_envelope(shared, to, Envelope::plain(message)).await
+async fn deliver(
+    shared: &Shared,
+    to: &AgentId,
+    message: AgentMessage,
+    budget: Option<Arc<BudgetPool>>,
+) -> CoreResult<()> {
+    deliver_envelope(shared, to, Envelope::plain(message, budget)).await
 }
 
 /// 返信路つきの配送。
@@ -1936,6 +1996,85 @@ async fn record_interrupted_turn(
     }
 }
 
+/// トークン予算で打ち切られたターンの出口（Spec 11 — `token_budget` の
+/// exhaustion）。[`finish_interrupted`]（Spec 10 の出口 2a）と同じ 3 点セットの
+/// 形だが、資源の事実なので文言と分類が違う:
+/// (a) 会話ログへ System の 1 行 — ただし**因果全体で 1 回だけ**
+/// （`note_exhausted` の CAS が初回観測を決める。波の 6 体が同時に尽きても
+/// 通知は 6 行にならない） (b) 履歴へ注記 (c) 依頼主が居れば
+/// `Reply { kind: BudgetExhausted }`。まとめの LLM 呼び出しはしない —
+/// 尽きたら新しい呼び出しを始めない、が契約そのもの。
+/// 稼働は降ろさない（閉じるのはターンだけ）。次の依頼は新しい予算で普通に走る。
+async fn finish_budget_exhausted(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+    pool: &Arc<BudgetPool>,
+    sent_user_turn: &str,
+    spend: TurnSpend,
+) -> CoreResult<()> {
+    // (b) 履歴 + 統計。ここまでに使ったトークンは実際に消費したので積む。
+    {
+        let note = "（このターンはトークン予算の上限で打ち切られました。\
+                    依頼は未処理のまま残っています）";
+        let mut world = shared.world.write().await;
+        if let Ok(record) = world.agent_mut(agent_id) {
+            record.total_tokens += spend.tokens;
+            record.cached_tokens += spend.cached;
+            record.prompt_tokens += spend.prompt;
+            record.push_exchange(sent_user_turn, note, shared.config.history_turns);
+        }
+    }
+
+    // (a) System の 1 行。文言は契約の固定文（事実 + 次の道 — #44 の規律）。
+    // 書くのは因果で最初に尽きを観測したターンだけ。
+    if pool.note_exhausted() {
+        let display = {
+            let world = shared.world.read().await;
+            world
+                .agent(agent_id)
+                .map(|record| record.spec.name.clone())
+                .unwrap_or_else(|_| agent_id.to_string())
+        };
+        shared
+            .record(AgentMessage::new(
+                Endpoint::System,
+                Endpoint::User,
+                format!(
+                    "予算（実効 {} トークン）を使い切ったため、{agent_id}（{display}）の\
+                     ターンを打ち切りました。続きが要るなら改めて依頼してください\
+                     （予算は依頼ごとに新しく付きます）",
+                    pool.ceiling_effective()
+                ),
+                0,
+            ))
+            .await;
+    }
+
+    // (c) 依頼主への返信。送信の失敗は無視する（相手が先に確定していることは
+    // ある — race の勝敗は分類を変えない）。
+    if let Some(reply_to) = reply_to {
+        let _ = reply_to.send(Reply {
+            text: "この依頼はトークン予算の上限で打ち切られました。答えはありません。"
+                .to_owned(),
+            kind: PlanTaskState::BudgetExhausted,
+        });
+    }
+
+    note!(
+        "turn budget exhausted: agent={agent_id} hop={} rounds={} ceiling={} spent={} \
+         prompt={} cached={} total={}",
+        spend.hop,
+        spend.rounds,
+        pool.ceiling_effective(),
+        pool.spent_effective(),
+        spend.prompt,
+        spend.cached,
+        spend.tokens,
+    );
+    Ok(())
+}
+
 /// プロンプトキャッシュの診断行を 1 周ごとに残す。
 ///
 /// # なぜ率ではなく生の数字が要るか
@@ -2170,6 +2309,9 @@ async fn handle_message(
         // 自ターンのトークンは agent_loop が子として導出済み（`turn.token`）。
         // ここで別々に見ると 2 本の検査になる — 1 本に畳むのが Phase 2 の核。
         cancel: _,
+        // 因果の予算（Spec 11）。このターンの全消費をここから引き、
+        // このターンが生む全配送（ask / plan / 転送）へ同じ Arc を渡す。
+        budget,
     } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
@@ -2494,6 +2636,30 @@ async fn handle_message(
             .await;
         }
 
+        // 予算の検査（Spec 11）。cancel の**後**に見る — 同時成立の分類は
+        // 優先順位 cancel > budget_exhausted（token_budget.precedence）。
+        // try_reserve → LLM → debit の分離により、飛行中 1 呼び出し分の
+        // オーバーシュートは許容して数える（一体の atomic にはできない）。
+        if let Some(pool) = &budget
+            && !pool.try_reserve()
+        {
+            return finish_budget_exhausted(
+                shared,
+                agent_id,
+                reply_to,
+                pool,
+                &sent_user_turn,
+                TurnSpend {
+                    tokens,
+                    cached,
+                    prompt,
+                    rounds: llm_rounds,
+                    hop: incoming.hop,
+                },
+            )
+            .await;
+        }
+
         let request = ChatRequest {
             model: template.model.clone(),
             messages: messages.clone(),
@@ -2522,6 +2688,23 @@ async fn handle_message(
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
+        // 実測 usage ぶんを予算から引く（Spec 11 の consume 側）。usage が
+        // 欠けた応答（テストバックエンド・異常応答）はバイト数で保守的に
+        // 見積もる — 楽観の 0 を作らない（usage_fallback の三規程）。
+        if let Some(pool) = &budget {
+            if response.usage.total() > 0 {
+                pool.debit(&response.usage);
+            } else {
+                let sent: usize = messages.iter().map(|m| m.content.len()).sum();
+                let received: usize = response.text.as_deref().map_or(0, str::len)
+                    + response
+                        .tool_calls
+                        .iter()
+                        .map(|call| call.args.to_string().len())
+                        .sum::<usize>();
+                pool.debit(&crate::budget::normalized_usage(&response.usage, sent, received));
+            }
+        }
         // 転送で抜ける周の接地も拾う。break の後ろに置くと、検索してから
         // 転送したターンの来歴が丸ごと落ちる。
         grounding.absorb(std::mem::take(&mut response.grounding));
@@ -2619,12 +2802,22 @@ async fn handle_message(
                     incoming.hop,
                     plan_wave,
                     &turn.token,
+                    budget.as_ref(),
                 )
                 .await)
             } else {
                 match handoffs.resolve_ask(&call.name) {
                     Some(target) if use_handoff_tools => {
-                        ask_agent(shared, agent_id, target, call, incoming.hop, &turn.token).await
+                        ask_agent(
+                            shared,
+                            agent_id,
+                            target,
+                            call,
+                            incoming.hop,
+                            &turn.token,
+                            budget.as_ref(),
+                        )
+                        .await
                     }
                     _ => execute_tool(shared, agent_id, call).await,
                 }
@@ -2705,6 +2898,29 @@ async fn handle_message(
         && content.trim().is_empty()
         && (tool_limit_hit || repeat_stop.is_some())
     {
+        // 予算が尽きていたら、まとめの 1 回も呼ばない（尽きたら新しい LLM
+        // 呼び出しを始めない — token_budget の exhaustion。打ち切りの直後に
+        // もう 1 回課金しない、という割り込みのまとめ省略と同じ判断でもある）。
+        if let Some(pool) = &budget
+            && !pool.try_reserve()
+        {
+            return finish_budget_exhausted(
+                shared,
+                agent_id,
+                reply_to,
+                pool,
+                &sent_user_turn,
+                TurnSpend {
+                    tokens,
+                    cached,
+                    prompt,
+                    rounds: llm_rounds,
+                    hop: incoming.hop,
+                },
+            )
+            .await;
+        }
+
         messages.push(ChatMessage::system(match &repeat_stop {
             Some(tool) => format!(
                 "`{tool}` を同じ引数で繰り返し呼び、同じ結果が返り続けたため、\
@@ -2751,6 +2967,21 @@ async fn handle_message(
                 tokens += response.usage.total();
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
+                // まとめ呼び出しも同じ財布から引く（Spec 11）。
+                if let Some(pool) = &budget {
+                    if response.usage.total() > 0 {
+                        pool.debit(&response.usage);
+                    } else {
+                        let sent: usize = messages.iter().map(|m| m.content.len()).sum();
+                        let received: usize =
+                            response.text.as_deref().map_or(0, str::len);
+                        pool.debit(&crate::budget::normalized_usage(
+                            &response.usage,
+                            sent,
+                            received,
+                        ));
+                    }
+                }
                 grounding.absorb(std::mem::take(&mut response.grounding));
                 match response.text {
                     Some(text) if !text.trim().is_empty() => {
@@ -2969,7 +3200,9 @@ async fn handle_message(
     // 自分を Failed に落とさず、事象として通知するに留める。
     // 1 宛先の失敗で残りを道連れにしない——枝は独立している。
     for (to, outgoing) in queued {
-        if let Err(err) = deliver(shared, to, outgoing).await {
+        // 転送・fan-out は**同じ因果の続き** — 予算は同一の Arc を引き継ぐ
+        // （新しいプールを作った瞬間に天井が蒸発する。token_budget の pool）。
+        if let Err(err) = deliver(shared, to, outgoing, budget.clone()).await {
             shared.emit(CoreEvent::AgentFailed {
                 agent_id: to.clone(),
                 error: ErrorPayload::from(&err),
@@ -3101,6 +3334,7 @@ async fn ask_agent(
     call: &crate::llm::ToolCall,
     hop: u8,
     parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
 ) -> CoreResult<String> {
     let question = call
         .args
@@ -3119,9 +3353,11 @@ async fn ask_agent(
     }
 
     // ask は分類を捨てる（.0）。分類は波ペインの素材で、ask の関心ではない。
-    Ok(deliver_and_wait(shared, from, to, &question, next_hop, parent)
-        .await
-        .0)
+    Ok(
+        deliver_and_wait(shared, from, to, &question, next_hop, parent, budget)
+            .await
+            .0,
+    )
 }
 
 /// 1 件の依頼を配送し、答えを待つ（`ask` と `plan` の共通部分）。
@@ -3142,7 +3378,20 @@ async fn deliver_and_wait(
     question: &str,
     next_hop: u8,
     parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
 ) -> (String, PlanTaskState) {
+    // 予算が尽きていたら配送そのものを始めない（token_budget の exhaustion —
+    // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
+    // 先に尽きたらここで止まる）。
+    if let Some(pool) = budget
+        && !pool.try_reserve()
+    {
+        return (
+            "トークン予算の上限に達したため、配送していません。".to_owned(),
+            PlanTaskState::BudgetExhausted,
+        );
+    }
+
     let mut outgoing = AgentMessage::new(
         Endpoint::Agent { id: from.clone() },
         Endpoint::Agent { id: to.clone() },
@@ -3161,6 +3410,8 @@ async fn deliver_and_wait(
         // 生んだ仕事（未着手の畳み・飛行中の検知）だけが連鎖して止まる。
         // 受信側の別の依頼は別トークンなので巻き添えにならない。
         cancel: Some(parent.child_token()),
+        // 依頼元と同じ因果 = 同一の Arc（新しいプールを作らない）。
+        budget: budget.cloned(),
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -3204,6 +3455,7 @@ async fn deliver_and_wait(
 /// 戻り値は 3 分類のいずれも `String`。エラーチャネルを使わないのは、
 /// `Err` を返すと実行ループが「ツールの実行に失敗しました」で包み、
 /// モデルが読むべき「なぜ配送されなかったか」が一段深い所へ埋まるため。
+#[allow(clippy::too_many_arguments)]
 async fn run_plan(
     shared: &Arc<Shared>,
     from: &AgentId,
@@ -3212,6 +3464,7 @@ async fn run_plan(
     hop: u8,
     wave: u32,
     parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
 ) -> String {
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
@@ -3322,10 +3575,22 @@ async fn run_plan(
         let target = target.clone();
         let message = message.clone();
         let parent = parent.clone();
+        // 波の全タスクが**同一の**プールを指す（clone は Arc の複製であって
+        // プールの複製ではない）。タスクごとに新しいプールを作ると天井が
+        // 人数倍に化ける — delegation-fanout race（token_budget の pool）。
+        let budget = budget.cloned();
         set.spawn(async move {
             let task_started = std::time::Instant::now();
-            let (answer, state) =
-                deliver_and_wait(&shared, &from, &target, &message, next_hop, &parent).await;
+            let (answer, state) = deliver_and_wait(
+                &shared,
+                &from,
+                &target,
+                &message,
+                next_hop,
+                &parent,
+                budget.as_ref(),
+            )
+            .await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)
         });
     }

@@ -45,6 +45,11 @@ pub enum PlanTaskState {
     /// （`agent_loop` のターン開始直後、Phase 2）・`run_plan` の
     /// `finish_wave`（割り込みで波を閉じるときの running の倒し先、Phase 2）。
     Interrupted,
+    /// トークン予算の天井が止めた（Spec 11）。資源の事実なので色は失敗系 —
+    /// 人の打ち切り（`Interrupted` の注意色）と混ぜない。優先順位は
+    /// `token_budget.precedence`（cancel > budget_exhausted > RepeatGuard >
+    /// hop / rounds）。
+    BudgetExhausted,
 }
 
 /// `PlanWaveStarted` が運ぶタスクの告知形。開始時点で確定している 2 欄だけを持つ

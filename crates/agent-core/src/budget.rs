@@ -60,6 +60,28 @@ pub fn estimate_tokens(utf8_len: usize) -> u64 {
     (utf8_len as u64).div_ceil(4)
 }
 
+/// usage が報告されなかった応答を、見積もりで埋めた usage へ正規化する。
+///
+/// 「欠落」の判定は `total() == 0`（canonical の [`Usage`] は adapter が値を
+/// 埋めなかったとき全欄 0 の `Default` になり、欄ごとの「無い」と「0」は
+/// 区別できない）。実プロバイダは usage を返すので、ここへ落ちるのは
+/// 主にテストバックエンドと異常応答。
+///
+/// - prompt 欠落 → 送信 UTF-8 バイト数 ÷ 4（切り上げ）
+/// - completion 欠落 → 受信 UTF-8 バイト数 ÷ 4（切り上げ。0 にしない —
+///   ツール結果が支配的なターンで 0 見積もりになる穴）
+/// - cached 区分なし → 全量を未キャッシュ扱い（`cache_read = 0` のまま）
+pub fn normalized_usage(reported: &Usage, sent_utf8_len: usize, received_utf8_len: usize) -> Usage {
+    if reported.total() > 0 {
+        return *reported;
+    }
+    Usage {
+        prompt: estimate_tokens(sent_utf8_len),
+        completion: estimate_tokens(received_utf8_len),
+        cache_read: 0,
+    }
+}
+
 /// 依頼 1 つの因果が共有する予算プール。
 ///
 /// 根（ユーザー発話の宛先 1 体ごと / 予定の発火 1 回）で 1 つ生まれ、
@@ -181,6 +203,18 @@ mod tests {
         // cache_read > prompt（壊れた usage）でも引き算が wrap せず、
         // キャッシュ分だけが数えられる。
         assert_eq!(effective_milli(&usage(5, 9, 0)), 900);
+    }
+
+    #[test]
+    fn missing_usage_is_estimated_from_bytes_but_reported_usage_is_trusted() {
+        // 欠落（全欄 0）: 送信 8 バイト → 2、受信 5 バイト → 2。
+        let estimated = normalized_usage(&Usage::default(), 8, 5);
+        assert_eq!(estimated, usage(2, 0, 2));
+        // 報告あり: バイト数は無視してそのまま信じる。
+        let reported = usage(100, 40, 7);
+        assert_eq!(normalized_usage(&reported, 8, 5), reported);
+        // 欠落かつ受信も空: completion は 0 のまま（見積もる材料が無い）。
+        assert_eq!(normalized_usage(&Usage::default(), 8, 0).completion, 0);
     }
 
     #[test]

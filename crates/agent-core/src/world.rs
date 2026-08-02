@@ -133,6 +133,14 @@ pub struct PersistedWorld {
     /// 接続マップ上のノード座標。表示設定なので AgentSpec には含めない。
     #[serde(default)]
     pub topology_positions: BTreeMap<AgentId, TopologyPosition>,
+    /// トークン予算の天井（Spec 11。実効トークン建て・村レベル）。
+    ///
+    /// `None` = 天井なし / `Some(n)` = 天井あり。**0 のマジック値は使わない** —
+    /// `Some(0)` は読み込みで `None` へ正規化される。既定 `Some(1_000_000)` を
+    /// 書くのは新規 world.json の作成時だけ（既存の村の挙動を黙って変えない）。
+    /// `rename_all = camelCase` によりファイル上は `tokenBudget`（個別 rename 不要）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
 }
 
 /// 登録簿本体。
@@ -141,6 +149,8 @@ pub struct World {
     agents: BTreeMap<AgentId, AgentRecord>,
     templates: BTreeMap<ModelTemplateId, ModelTemplate>,
     topology_positions: BTreeMap<AgentId, TopologyPosition>,
+    /// トークン予算の天井（Spec 11）。意味論は [`PersistedWorld::token_budget`]。
+    token_budget: Option<u64>,
 }
 
 impl World {
@@ -157,6 +167,15 @@ impl World {
         let known: Vec<AgentId> = persisted.agents.iter().map(|s| s.id.clone()).collect();
 
         let mut world = Self::new();
+        // Some(0) は「即打ち切りの村」ではなく不正値 — None（天井なし）へ倒す
+        // （token_budget 契約の ceiling。0 のマジック値を作らない）。
+        world.token_budget = match persisted.token_budget {
+            Some(0) => {
+                crate::note!("token budget: tokenBudget=0 は不正値のため天井なしとして扱います");
+                None
+            }
+            other => other,
+        };
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
@@ -181,7 +200,18 @@ impl World {
             agents: self.agents.values().map(|r| r.spec.clone()).collect(),
             model_templates: self.templates.values().cloned().collect(),
             topology_positions: self.topology_positions.clone(),
+            token_budget: self.token_budget,
         }
+    }
+
+    /// トークン予算の天井（実効トークン建て）。`None` = 天井なし。
+    pub fn token_budget(&self) -> Option<u64> {
+        self.token_budget
+    }
+
+    /// トークン予算の天井を差し替える（新規 world.json への既定値書き込み用）。
+    pub fn set_token_budget(&mut self, ceiling: Option<u64>) {
+        self.token_budget = ceiling;
     }
 
     // ---- エージェント -------------------------------------------------------
@@ -547,9 +577,34 @@ mod tests {
             ],
             model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
             topology_positions: BTreeMap::new(),
+            token_budget: None,
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
+    }
+
+    /// `tokenBudget: 0` は「即打ち切りの村」ではなく不正値 — 読み込みで
+    /// 天井なし（`None`）へ倒す（token_budget 契約の ceiling。マジック値を
+    /// 作らない）。正の値と `None` はそのまま通る。
+    #[test]
+    fn a_zero_token_budget_normalizes_to_none_on_load() {
+        let zero = PersistedWorld {
+            token_budget: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(World::from_persisted(zero).token_budget(), None);
+
+        let set = PersistedWorld {
+            token_budget: Some(1_000_000),
+            ..Default::default()
+        };
+        let world = World::from_persisted(set);
+        assert_eq!(world.token_budget(), Some(1_000_000));
+        // 保存表現へも往復する（新規の村の既定値がディスクへ届く経路）。
+        assert_eq!(world.to_persisted().token_budget, Some(1_000_000));
+
+        let unset = PersistedWorld::default();
+        assert_eq!(World::from_persisted(unset).token_budget(), None);
     }
 
     #[test]
@@ -664,6 +719,7 @@ mod tests {
                 (AgentId::from("agent_01"), TopologyPosition { x: 120.0, y: 80.0 }),
                 (AgentId::from("ghost"), TopologyPosition { x: 0.0, y: 0.0 }),
             ]),
+            token_budget: None,
         };
 
         let world = World::from_persisted(persisted);

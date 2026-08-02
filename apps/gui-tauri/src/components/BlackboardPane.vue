@@ -74,11 +74,24 @@ function formatTime(ms: number): string {
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="notes.length">{{ notes.length }} 枚</span>
       <button
-        class="ml-auto rounded px-2 py-0.5 text-[11px] text-ink-dim hover:text-ink"
+        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         title="黒板を読み直す（表示中は自動でも読み直します）"
+        aria-label="黒板を読み直す"
         @click="refresh"
       >
-        更新
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 3v6h-6" />
+        </svg>
       </button>
     </header>
 
