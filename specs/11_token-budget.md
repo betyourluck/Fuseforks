@@ -2,12 +2,23 @@
 
 **ID**: 11
 **Date**: 2026-08-02
-**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0〜P1 完了**。
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0〜P4 の機械側完了**（同日）。
 P0 = data_contract の `token_budget` ブロック凍結 + `PlanTaskState` へ
 `budget_exhausted` 加算。P1 = `budget.rs`（effective_milli /
-effective_tokens / estimate_tokens / BudgetPool。try_reserve と debit の
-分離・CAS ループの飽和引き算・note_exhausted の一回性。単体 9 本、
-workspace 257 本 green）。残は P2（配線）/ P3（投影）/ P4（台帳・実機確認）。
+effective_tokens / estimate_tokens / normalized_usage / BudgetPool。
+try_reserve と debit の分離・CAS ループの飽和引き算・note_exhausted の
+一回性。単体 10 本）。P2 = 配線（根 2 箇所の new_root_budget /
+`Envelope.budget` / 周回境界の検査と debit / まとめ呼び出しの検査 /
+deliver_and_wait の事前検査 / finish_budget_exhausted の 3 点セット /
+world.json の tokenBudget 読み書きと Some(0) 正規化・新規のみ既定 1M・
+None は起動 WARN。結合 5 本）。P3 = 投影（types.ts / ラベル「予算切れ」/
+失敗色 / 加算的変更の回帰）。P4 = README 日英へ節 + 村規模別の推奨値
+ガイド。テストは agent-core 単体 260 + 結合 86 + フロント 57、全緑。
+**残は実機確認 2 本のみ**:
+(1) 天井を小さく（例 50000）した村で調査依頼 → 会話ペインの System 行
+    「予算（実効 N トークン）を使い切ったため…」と作業状況ペインの
+    「予算切れ」セル（失敗色）を観測
+(2) 天井を既定（1M）へ戻して健全な 6 体依頼が完走することを観測
 LGTM 時の微細 2 点も P0 で確定 — (1) 欠落見積もりの分母は
 **UTF-8 バイト数 `s.len()`**（`chars().count()` ÷ 4 は日本語で約 4 倍の
 過小 = 保守側に反する。バイトは日本語 3 バイト/字で過大側・O(1)）

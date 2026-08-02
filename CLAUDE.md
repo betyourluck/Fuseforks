@@ -95,11 +95,12 @@ UI ラベル・README — は「**グラウンディング**」、内部の台�
    **優先度が上がった**（2026-08-02）— 利用者の村の運用図（8 段フロー、
    人が関与するのは最初と最後だけ）の自律度は、自動の天井があって初めて安全。
    燃焼対策 3 点のうち 1（RepeatGuard）と 2（Spec 10）は Done、これが最後。
-   **Spec 11 として起票済み**（2026-08-02 Draft rev1、査読待ち）— 因果
-   （ユーザー発話の宛先ごと / 予定の発火ごと）に実効トークン建ての天井、
-   検査は周回境界、`budget_exhausted` を加算追加、既定 1M・world.json の
-   1 フィールド・設定 UI なし。査読論点は D1〜D6（重み固定 / 既定値の適用 /
-   累積天井なし / 残額表示なし / 警告線なし / hop 上限と直交）
+   **Spec 11 として同日に起票 → rev2 承認 → P0〜P4 の機械側まで完了**
+   （2026-08-02）— 因果（ユーザー発話の宛先ごと / 予定の発火ごと）に
+   実効トークン建ての天井、検査は周回境界、`budget_exhausted` を加算追加、
+   既定 1M は新規 world.json のみ・既存は起動 WARN・設定 UI なし。
+   **残は実機確認 2 本**（小天井で止まる / 既定天井で健全依頼が完走）。
+   これが通れば燃焼対策 3 点は全て Done
 
 ## 村の黒板（共有作業メモ）— 条例で運用開始（2026-08-02）、Spec 未起票
 
@@ -252,9 +253,16 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
   rev2 → LGTM → data_contract の token_budget ブロック凍結 +
   PlanTaskState へ budget_exhausted 加算 → budget.rs の純機構
   単体 9 本。欠落見積もりの分母は UTF-8 バイト数 s.len() で確定・
-  tokenBudget は camelCase 自動対応で rename 不要）。
-  残 Phase: P2 配線（根での生成 / Envelope.budget / 周回境界の検査 /
-  協調停止の出口 / System 行）/ P3 投影 / P4 台帳と実機確認。実効トークン = 未キャッシュ ×1 + キャッシュ済み ×0.1 +
+  tokenBudget は camelCase 自動対応で rename 不要）→ **P2〜P4 の機械側も
+  同日完了**。P2 配線 = 根 2 箇所（ユーザー発話の宛先ごと / 予定発火）で
+  new_root_budget、Envelope.budget は cancel と独立の Option<Arc<BudgetPool>>、
+  周回境界で try_reserve → LLM → debit（usage 欠落はバイト見積もり）、
+  deliver_and_wait の事前検査（尽きたら配送を始めない）、
+  finish_budget_exhausted（System 行は note_exhausted の CAS で因果 1 本）。
+  P3 投影 = 「予算切れ」ラベル・失敗色・加算的変更の回帰。P4 = README 日英
+  （村規模別の推奨値ガイド込み）。結合 5 本（S1 打ち切り / 新予算で再走 /
+  波の配送前停止 / 転送の同一 Arc / 既定値は新規 world.json だけ）。
+  **残は実機確認 2 本のみ**（小天井で止まる / 既定天井で健全依頼が完走）。実効トークン = 未キャッシュ ×1 + キャッシュ済み ×0.1 +
   出力 ×4、**内部は milli 建て AtomicU64・切り上げ**（Atomic に浮動小数は
   無い）。try_reserve / consume 分離で**オーバーシュート 1 呼び出し分許容**
   （check→LLM→減算は一体の atomic にできない）。`Envelope.budget` は

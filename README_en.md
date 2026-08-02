@@ -276,6 +276,15 @@ Each utterance has a `hop`, and upon reaching `max_hops` (default 8), the chain 
 
 > At first, only Layer 2 existed, and the design transferred whenever it produced a response. The model had no way to finish. A round trip that merely conveyed one sentence consumed about 1,200 tokens. See [failures.md](failures.md) #11 for details and sources.
 
+#### Token Budget — an automatic ceiling per request ([Spec 11](specs/11_token-budget.md))
+
+While `hop` bounds *depth*, this bounds *spend* — an orthogonal brake. Each request causality (one of your utterances per recipient, or one scheduled firing) gets a budget denominated in effective tokens, shared by every turn that cascades from it via ask / plan / handoff. When it runs out, the turn is cut at the round boundary and a single System line appears in the conversation (how much was spent, and that you can simply ask again). Agents stay running; the next request gets a fresh budget.
+
+- **Effective tokens** = uncached input ×1 + cached input ×0.1 + output ×4. Proportional to real cost rather than raw counts, so a healthy long job with 87–99% cache hits is not falsely cut.
+- **One setting**: `tokenBudget` in `world.json` (effective tokens). Freshly created villages get a default of 1,000,000. **Existing villages are not silently changed** — a startup WARN points you to the setting instead.
+- **Guidance**: ~6 agents run fine under 1,000,000 (a measured healthy 6-agent request ≈ 250K effective). Villages running 8-stage flows, ~12 agents, or output-heavy code generation should use 2,000,000–3,000,000.
+- The remaining balance is never injected into prompts, and there is no automatic retry. The ceiling counts silently and only speaks when exhausted.
+
 ### Tool Execution Loop
 
 This runs in the same framework as transfers. The model receives transfer and execution tools as one set, and the receiver distinguishes the returned calls.
