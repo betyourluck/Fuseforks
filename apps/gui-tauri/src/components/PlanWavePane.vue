@@ -52,6 +52,7 @@ const STATE_LABELS: Record<PlanTaskState, string> = {
   no_answer: "無応答",
   timed_out: "時間切れ",
   interrupted: "打ち切り",
+  budget_exhausted: "予算切れ",
 };
 
 function taskFor(wave: PlanWaveRecord, agentId: AgentId): PlanTaskRecord | undefined {
@@ -75,7 +76,9 @@ function cellClass(taskState: PlanTaskState): string {
       // （data_contract の turn_interrupt 不変条件 4 と同じ判断）。
       return "bg-warn";
     default:
-      // undeliverable / no_answer / timed_out。失敗の内訳はツールチップで読む。
+      // undeliverable / no_answer / timed_out / budget_exhausted。
+      // 予算切れは資源の事実なので失敗系（人の打ち切りの注意色と混ぜない —
+      // data_contract の token_budget.exhaustion）。内訳はツールチップで読む。
       return "bg-fail";
   }
 }

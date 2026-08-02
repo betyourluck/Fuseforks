@@ -315,7 +315,9 @@ export type PlanTaskState =
   | "no_answer"
   | "timed_out"
   /** 人が止めさせた（Spec 10）。失敗ではない — セル色も失敗色にしない。 */
-  | "interrupted";
+  | "interrupted"
+  /** トークン予算の天井が止めた（Spec 11）。資源の事実なので色は失敗系。 */
+  | "budget_exhausted";
 
 /** `planWaveStarted` が運ぶタスクの告知形（開始時点で確定している 2 欄だけ）。 */
 export interface PlanTaskAnnounced {

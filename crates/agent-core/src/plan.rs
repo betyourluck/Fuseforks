@@ -226,6 +226,30 @@ mod tests {
         assert_eq!(round, PlanTaskState::Interrupted);
     }
 
+    /// `BudgetExhausted` も加算的変更であること（Spec 11 P3 — 旧 7 値が
+    /// そのまま読め、新値が snake_case で往復する）。
+    #[test]
+    fn budget_exhausted_is_an_additive_wire_value() {
+        // interrupted までの旧 7 値はそのまま読める。
+        for (wire, expected) in [
+            ("\"running\"", PlanTaskState::Running),
+            ("\"answered\"", PlanTaskState::Answered),
+            ("\"handed_off\"", PlanTaskState::HandedOff),
+            ("\"undeliverable\"", PlanTaskState::Undeliverable),
+            ("\"no_answer\"", PlanTaskState::NoAnswer),
+            ("\"timed_out\"", PlanTaskState::TimedOut),
+            ("\"interrupted\"", PlanTaskState::Interrupted),
+        ] {
+            let parsed: PlanTaskState = serde_json::from_str(wire).unwrap();
+            assert_eq!(parsed, expected, "旧値 {wire} が読めること");
+        }
+
+        let wire = serde_json::to_string(&PlanTaskState::BudgetExhausted).unwrap();
+        assert_eq!(wire, "\"budget_exhausted\"");
+        let round: PlanTaskState = serde_json::from_str(&wire).unwrap();
+        assert_eq!(round, PlanTaskState::BudgetExhausted);
+    }
+
     #[test]
     fn plan_ids_start_at_one() {
         let mut store = PlanWaveStore::default();
