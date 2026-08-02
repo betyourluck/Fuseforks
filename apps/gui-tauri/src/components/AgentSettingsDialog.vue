@@ -285,11 +285,22 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             {{ agent?.name ?? "サーヴァント" }}
           </h2>
           <button
-            class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+            class="flex size-6 items-center justify-center rounded border border-line hover:border-accent hover:text-accent"
             title="設定フォルダを開く"
             @click="openFolder"
           >
-            📁
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+            </svg>
           </button>
         </header>
 
