@@ -2,7 +2,18 @@
 
 **ID**: 03
 **Date**: 2026-07-30
-**Status**: Done（rev2 査読承認 → Phase 0〜3 完了。残タスクは実機確認のみ）
+**Status**: Done（rev2 査読承認 → Phase 0〜3 完了。残タスクは実機確認のみ）。
+**2026-08-02 に Spec 12 が「新規チャット」の意味を改訂**（P0 で凍結済み）—
+**捨てるのではなく、今のセッションを閉じて新しいセッションを開く**。
+本 Spec の処理順（log → history → `conversationCleared`）と
+「消すのは 2 つだけ」の不変条件は**そのまま生きる**。変わるのは
+(1) `reset_conversation` が `create_session` への委譲になる
+(2) `conversationCleared` に続けて `sessionSwitched` を出す
+（`conversationCleared` の意味は変えない — 会話ペインを空にする唯一の指示路）
+(3) 確認ダイアログは残すが文言を変える（「破棄しますか」→「この会話を閉じて、
+新しい会話を始めますか」）、捨てないので警告色は外す。
+差分の正は `data_contract.yaml` の `reset_rule`（Spec 12 改訂節）と
+`session_store`。
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01 / 02 と同じプロセス）
 

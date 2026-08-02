@@ -158,6 +158,113 @@ enums:
       ワークスペースに書かれる経路を入口で塞ぐ。形式を 1 つに固定することで、
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
+    session_store: |
+      会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結**。実装は P1〜)。
+      再起動をまたいで会話を保ち、複数のセッションを持ち、再開できるようにする。
+      **保存するのは「会話」であって「実行状態」ではない。**
+      backend: **redb 4.1.0** (pure Rust・C 依存なし・2 依存)。
+      path: {workspace}/sessions.redb の**1 ファイル**。
+      **index ファイルを別に持たない** — JSONL + index.json 案は「真実が 2 つ」に
+      なり、原子性の破れと fork の孤児がその帰結だった (rev1 の構成のバグ)。
+      redb は機構を**減らす**: index.json / temp+rename の自前実装 /
+      壊れた行の切り捨て / fork の 2 段階が消える。
+      **ハイブリッド (redb=索引 + JSONL=本文) は採らない** (永続化を 2 種類
+      管理する最悪の形)。
+      tables (2 つだけ):
+        sessions: TableDefinition<&str, &[u8]>        # key = session_id, value = SessionMeta(JSON)
+        records:  TableDefinition<(&str, u64), &[u8]> # key = (session_id, seq), value = Record(JSON)
+      SessionMeta (JSON):
+        { title, createdAt, updatedAt, parentId?, forkedAtSeq?, recordCount }
+        title は自動生成 (最初のユーザー発話の先頭 30 字)。
+        parentId / forkedAtSeq は fork で生まれたときだけ入る。
+        「最新」の判定は **updatedAt** で行う (session_id の辞書順に依存しない)。
+      Record は **3 種別で閉じる** (kind の閉じた列挙。2 種別ではない):
+        message  : AgentMessage **丸ごと** (grounding / coRecipients も含む —
+                   再開後の表示に要る)
+        exchange : { agentId, sent, replied } — 履歴 1 往復。
+                   **sent は実際に送った文字列そのもの** (#45 の規律を保存側へ延長)
+        summary  : { agentId, text, coversUpToSeq } — 要約 1 本
+      seq:
+        - u64。**セッション内で 0 から単調増加**。セッションを跨いで共有しない
+        - fork は **at_seq を含めて (inclusive)** コピーする
+        - 採番は書き込みトランザクションの中で行う (同じ seq を 2 度使わない)
+      不変条件:
+        - **セッションの単位は村** (エージェント別ではない)。1 セッション =
+          村の会話ログ + 全エージェントの履歴 + 要約。エージェント別に切ると、
+          同じ波に参加した 2 体が別々の会話に属し、束ねの因果が切れる
+        - **1 トランザクション = 1 つの原子的な変更**。メタデータ更新と
+          レコード追加は同じトランザクションで行う。temp+rename は使わない
+        - **書き込みトランザクションを await を跨いで持たない。** redb は同期 API で
+          書き込みは 1 本に直列化される。トランザクションを持ったまま LLM 呼び出しや
+          ファイル I/O を待つと村全体が固まる。書くのは 2 点だけ
+          (Shared::record の中 / push_exchange と同じ点) で、どちらも短く閉じる
+        - **滑る窓はロード時に再適用する。** records には全 exchange が残り、
+          復元時に history_turns の窓で切る。窓を広げたら次の復元から効く
+          (保存時に切ると、設定を広げても過去は戻らない)。
+          実測: 後ろから 16 件の逆順範囲走査が 0.03 ms (20,000 件のテーブル)
+        - **Shared.log の 5,000 件はメモリ上の上限であって保存の上限ではない。**
+          ファイルには全量が残り、起動時に読むのは末尾 5,000 件
+        - **復元しないもの**: plan の波 (Spec 08 が in-memory と凍結) /
+          BudgetPool (因果ごと・Spec 11) / MCP 接続 / TurnHandle /
+          稼働状態 (bootstrap は自動起動しない) / 累積統計 (プロセス寿命)
+        - **半端なターンを許容する。** message は投入時、exchange はターン完了時に
+          書かれるので、飛行中に落ちると「message はあるが exchange が無い」が残る。
+          これは正しい記録 (発話は起きた事実) として扱い、**画面には出すが
+          履歴には入れない**。再開後は「頼んだが答えが返らなかった」ように見える
+        - **セッションの切り替えは飛行中ターンが無いときだけ** (interrupt_all の
+          後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する
+        - **起動時は最新セッションを開く** (updatedAt で判定)。読めない・0 件なら
+          **警告 1 行を出して新規セッションを作る** — 起動が止まる経路は作らない
+        - **索引は作らない (v1)。** 実測で 20,000 レコードの全走査が 11 ms。
+          索引が要るのは 1 桁上から。純 Rust の全文検索 (tantivy + lindera =
+          **451 依存**、しかも zstd-sys で C が戻る) も採らない
+        - **export_session (JSONL 書き出し) は P1 の完了条件。** redb は
+          バイナリなので、人が読める出口が無いと grep 診断ができなくなる
+          (failures.md #47 は concordia.log の grep で解けた)。
+          読めない保存先を作るなら、出口は機構の一部
+      要約 (summary) の規律:
+        - **coversUpToSeq < その summary 自身の seq** を不変条件とする
+          (自分自身を覆う要約を作らない)
+        - 復元は「**最新の summary** + coversUpToSeq **より後**の exchange」。
+          古い summary はレコードとして残るが復元には使わない (痕跡であって現役ではない)
+        - **要約の要約を許す。** 新しい summary は前の summary の本文を入力に
+          取れる。coversUpToSeq は単調増加するので参照が循環しない
+        - **注入は既存の可変文脈の畳みに相乗りさせる。** history に summary 専用の
+          席を作らない — 次のターンの context (入退室通知・広場ログと同じ場所) へ
+          要約を差し、その結果できた sent_user_turn がそのまま exchange として
+          保存される。これで #45 (送信と保存の一致) と衝突しない
+        - **自動では要約しない (v1)。** 人が押したときだけ。自動要約は LLM 呼び出し
+          = トークンで、token_budget の天井と競合する (Replan 不採用と同じ規律)
+      上限:
+        - セッション数: 無制限。**200 を超えたら起動時に WARN 1 行** (削除しない)
+        - 1 セッションのレコード数: 無制限。**50,000 を超えたら WARN** (要約を促す)
+        - ファイルは**自動で縮まない** (copy-on-write)。compact() は持つが
+          v1 では呼ばない — 呼ぶなら明示操作。実測でファイルは実データの約 2 倍
+      権限:
+        - unix: sessions.redb を 0o600、親ディレクトリを 0o700
+        - **Windows では設定しない。** {workspace} は %APPDATA% 配下で既に
+          ユーザー私有の ACL 下にあり、POSIX 権限の API が無い。
+          chmod しようとするほうがバグ
+        - .gitignore へ sessions.redb を**保険として**足す。{workspace} は既定で
+          %APPDATA% 配下なのでリポジトリには入らない —
+          黒板 (work_dir 配下に生まれる) とは理由が違う
+        - **会話はディスクに平文で残る**ことを README へ明記する。伏せ字保存は
+          会話の再現性を壊し、検出警告は誤検出が続けば無視される。
+          代わりに export_session で中身を確認できる経路を保つ
+      API (P2 で配線):
+        create_session / resume_session(id) / continue_latest /
+        fork_session(id, at_seq) / list_sessions / delete_session /
+        export_session(id) → JSONL。
+        reset_conversation は **create_session への委譲**になる (reset_rule の
+        Spec 12 改訂節を見よ)
+      実測 (2026-08-02、40,000 レコード・1 件約 600 バイト):
+        書き込み 40,000 件 = 271 ms / 後ろから 16 件 = 0.03 ms /
+        20,000 件の全走査 = 11 ms / fork 10,000 件のコピー = 55 ms /
+        ファイル 64.3 MB。
+        比較: SQLite FTS5 の既定 unicode61 は**日本語で 0 件ヒット**、
+        tokenize='trigram' なら全ヒット — 日本語検索に形態素解析は要らない
+        (lindera の 451 依存を外した根拠)
+
     blackboard_contract: |
       村の黒板 = 共有作業メモ (2026-08-02 条例で運用開始。機構は読み取り投影のみ)。
       実体はエージェントの共通 work_dir の `黒板/` フォルダで、書き手は
@@ -851,6 +958,12 @@ entities:
     # 数えが壊れる)。発行者は切られたターン自身 (検知時に 1 回) なので、
     # 二重割り込み・interrupt_all・親トークン経由が重なっても 1 本
     turnInterrupted: { agentId, turnSeq }
+    # Spec 12 (会話の永続化)。**加算的変更** — conversationCleared の意味は
+    # 変えない (「会話ペインを空にせよ」の表示指示のまま)。意味を変えると
+    # 既存 UI が誤動作するため、開いたセッションの告知は別イベントにする。
+    # 新規チャット・resume・fork・continue_latest のすべてがこれを出す
+    # (「今どのセッションを見ているか」の唯一の通知路)。
+    sessionSwitched: { sessionId }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
@@ -901,6 +1014,22 @@ entities:
         飛行中だった発話 1 件が載るのは仕様 — 発話は起きた事実であり
         ログに残す (hop 打ち切りの「記録してから打ち切る」と同じ規律)。
         世代管理による破棄は採らない
+    **Spec 12 による改訂 (2026-08-02 rev2 承認、P0 で凍結)**:
+      新規チャットは**捨てるのではなく、今のセッションを閉じて新しい
+      セッションを開く**。上の処理順と不変条件は**そのまま生きる** —
+      メモリ上の Shared.log と AgentRecord.history をクリアする点も、
+      消すのが 2 つだけである点も変わらない。変わるのは
+      「クリアした内容がディスクに残っており、一覧から戻れる」ことだけ。
+      追加の不変条件:
+        - reset_conversation は create_session への委譲になる。UI の
+          「新規チャット」という名前は残す (利用者の語彙を変えない)
+        - conversationCleared に続けて sessionSwitched を出す。
+          **conversationCleared を出さない選択は採らない** — 会話ペインを
+          空にする指示はこれが唯一の経路で、意味を変えると既存 UI が誤動作する
+        - 確認ダイアログは**残すが文言を変える** (「破棄しますか」→
+          「この会話を閉じて、新しい会話を始めますか」)。捨てないので警告色は外す
+        - 切り替え (resume / fork / continue_latest) も同じ 2 イベントを
+          この順で出す。新規チャットだけを特別扱いしない
   typing_rule: |
     agentTyping は発話処理 (LLM 呼び出し + ツール実行) の開始と終了で
     **対になって**流れる (2026-07-29)。処理は数十秒かかりうるため、この間

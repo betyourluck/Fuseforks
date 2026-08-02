@@ -2,7 +2,16 @@
 
 **ID**: 12
 **Date**: 2026-08-02
-**Status**: **Draft rev2**（査読 1 巡目の 10 点をすべて反映 + 保存先を redb へ変更。承認待ち）
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0 完了**。
+data_contract へ `session_store` ブロックを凍結（backend = redb 4.1.0 /
+テーブル 2 つ / `Record` 3 種別 / `seq` の意味と fork の inclusive /
+summary の `coversUpToSeq < 自身の seq` / 単一ライターは await を跨がない /
+権限は unix のみ / 上限 / API 一覧 / 実測値）＋ `reset_rule` へ Spec 03 の
+改訂節を加算 ＋ `sessionSwitched` イベントを加算。
+LGTM 時の明記 3 点も凍結済み — `seq` は 0 から単調増加の u64・fork は
+`at_seq` **inclusive** / `coversUpToSeq < summary 自身の seq` /
+`SessionMeta { title, createdAt, updatedAt, parentId?, forkedAtSeq?,
+recordCount }`。実装は P1 から。
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜11 と同じプロセス）
 
 rev2 で入った差分（査読 2026-08-02）:

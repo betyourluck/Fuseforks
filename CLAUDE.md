@@ -103,9 +103,13 @@ UI ラベル・README — は「**グラウンディング**」、内部の台�
    残は (2) 既定天井で健全依頼が完走、のみ（通常運用の 1 依頼で確認できる）。
    これが通れば燃焼対策 3 点は全て Done
 
-## 次の大物: 会話の永続化とセッション管理（Spec 12・査読待ち）
+## 次の大物: 会話の永続化とセッション管理（Spec 12・rev2 承認 → P0 完了）
 
-**Spec 12 を起票**（2026-08-02 Draft rev1）。起点は利用者の判断 —
+**Spec 12 は rev2 承認 → P0 完了**（2026-08-02。契約は data_contract の
+`session_store` + `reset_rule` の Spec 12 改訂節 + `sessionSwitched` の加算。
+Spec 03 のヘッダにも改訂を記録）。**残 Phase: P1 純機構（redb の読み書き・
+seq 採番・滑る窓の再適用・fork・`export_session`）/ P2 配線 / P3 投影 /
+P4 要約（手動）/ P5 台帳と実機確認**。起点は利用者の判断 —
 「再起動して前回の続きから始められないと、道具として使えない」。
 利用者が Claude Code / Copilot / Cursor / LangGraph / CrewAI を調査した
 資料を提供し、Spec の参考節へ接地済み。
