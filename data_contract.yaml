@@ -159,7 +159,8 @@ enums:
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
     session_store: |
-      会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結**。実装は P1〜)。
+      会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結 →
+      2026-08-03 P1 着地**: session_store.rs に純機構と単体 16 本。配線は P2〜)。
       再起動をまたいで会話を保ち、複数のセッションを持ち、再開できるようにする。
       **保存するのは「会話」であって「実行状態」ではない。**
       backend: **redb 4.1.0** (pure Rust・C 依存なし・2 依存)。
@@ -257,6 +258,22 @@ enums:
         export_session(id) → JSONL。
         reset_conversation は **create_session への委譲**になる (reset_rule の
         Spec 12 改訂節を見よ)
+      P1 で着地した純機構 (session_store.rs・2026-08-03):
+        SessionStore::open / create_session(title?) / append(session_id, &Record) → seq /
+        session_meta / list_sessions (updatedAt 降順) / latest_session / records /
+        tail_messages(session_id, limit) / restore_histories(session_id, history_turns) /
+        fork_session(source_id, at_seq) / delete_session /
+        export_session(session_id, &mut dyn Write) / export_session_to_file。
+        restore_histories は **RestoredHistories { histories, summaries }** を返す —
+        要約が履歴の席を持たないことを型で保つ (注入は可変文脈の畳みに相乗り)。
+        1 往復 → ChatMessage 対の変換は **world::exchange_pair の 1 実装**を
+        押し込む側 (push_exchange) と読み戻す側で共有する。分けて書くと復元した
+        履歴だけが空メッセージを持ち、次のターンで 400 になる (failures.md #29)。
+        export の JSONL は 1 行目が {"session":{id, meta}}、2 行目以降が
+        {"seq":N,"kind":...} — **ヘッダ行は kind を持たない** (`"kind":"message"` の
+        grep がヘッダに引っかからないようにするため)。
+        エラーは SESSION_NOT_FOUND / SESSION_STORE_FAILED (operation に
+        開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)
       実測 (2026-08-02、40,000 レコード・1 件約 600 バイト):
         書き込み 40,000 件 = 271 ms / 後ろから 16 件 = 0.03 ms /
         20,000 件の全走査 = 11 ms / fork 10,000 件のコピー = 55 ms /
@@ -544,6 +561,8 @@ entities:
       - SCHEDULE_NOT_FOUND      # Spec 07
       - INVALID_SCHEDULE        # Spec 07。hour > 23 / minute > 59 / everyMinutes == 0
       - SCHEDULE_STORE_BLOCKED  # Spec 07。schedules.json が読めない間は書き込みを保護
+      - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
+      - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING

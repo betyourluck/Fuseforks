@@ -57,6 +57,24 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 指定 ID の会話セッションが `sessions.redb` に存在しない（Spec 12）。
+    #[error("会話 `{0}` は保存されていません")]
+    SessionNotFound(String),
+
+    /// 会話の保存先（`sessions.redb`）の操作に失敗した（Spec 12）。
+    ///
+    /// **どの操作で落ちたか**を必ず伴わせる。redb の失敗は開く・読む・書く・
+    /// commit のどこでも起きえて、原因（ロック競合 / 破損 / 権限）が段によって違う。
+    #[error("会話の保存先 `{path}` の{operation}に失敗しました: {reason}")]
+    SessionStore {
+        /// 対象パス。
+        path: String,
+        /// 失敗した操作（開く / 読み込み / 書き込み / 確定）。
+        operation: &'static str,
+        /// redb 側から得た説明。
+        reason: String,
+    },
+
     /// トポロジー（接続関係）が不正。自己ループや未登録先への接続など。
     #[error("トポロジーが不正です: {reason}")]
     InvalidTopology {
@@ -173,6 +191,8 @@ impl CoreError {
             Self::ScheduleNotFound(_) => "SCHEDULE_NOT_FOUND",
             Self::InvalidSchedule { .. } => "INVALID_SCHEDULE",
             Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",
+            Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
+            Self::SessionStore { .. } => "SESSION_STORE_FAILED",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",

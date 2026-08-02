@@ -103,12 +103,16 @@ UI ラベル・README — は「**グラウンディング**」、内部の台�
    残は (2) 既定天井で健全依頼が完走、のみ（通常運用の 1 依頼で確認できる）。
    これが通れば燃焼対策 3 点は全て Done
 
-## 次の大物: 会話の永続化とセッション管理（Spec 12・rev2 承認 → P0 完了）
+## 次の大物: 会話の永続化とセッション管理（Spec 12・rev2 承認 → P0・P1 完了）
 
 **Spec 12 は rev2 承認 → P0 完了**（2026-08-02。契約は data_contract の
 `session_store` + `reset_rule` の Spec 12 改訂節 + `sessionSwitched` の加算。
-Spec 03 のヘッダにも改訂を記録）。**残 Phase: P1 純機構（redb の読み書き・
-seq 採番・滑る窓の再適用・fork・`export_session`）/ P2 配線 / P3 投影 /
+Spec 03 のヘッダにも改訂を記録）**→ P1 完了**（2026-08-03。
+`crates/agent-core/src/session_store.rs`。`SessionStore::open` /
+`create_session` / `append` / `session_meta` / `list_sessions` /
+`latest_session` / `records` / `tail_messages` / `restore_histories` /
+`fork_session` / `delete_session` / `export_session`。単体 16 本・
+workspace 全緑・clippy 新規警告ゼロ）。**残 Phase: P2 配線 / P3 投影 /
 P4 要約（手動）/ P5 台帳と実機確認**。起点は利用者の判断 —
 「再起動して前回の続きから始められないと、道具として使えない」。
 利用者が Claude Code / Copilot / Cursor / LangGraph / CrewAI を調査した
@@ -135,6 +139,16 @@ summary の 3 種別**。復元しないものは波・予算・MCP 接続・稼
 索引は作らない・要約は手動のみ。**`export_session`（JSONL 書き出し）は P1 の
 完了条件** — 読めない保存先を作るなら出口は機構の一部（この企画の診断は
 grep に依存している）。
+
+**P1 の実装で決めた 3 点**（2026-08-03）:
+
+- **`fork` は seq を振り直さない**。振り直すと `summary.coversUpToSeq` の指す
+  境界がずれ、複製した側だけ要約の覆う範囲が変わる
+- **1 往復 → `ChatMessage` 対の変換を `world::exchange_pair` の 1 実装に統一した**。
+  押し込む側（`push_exchange`）と読み戻す側で規律が分かれると、**復元した履歴
+  だけが空メッセージを持ち、次のターンで 400 になる**（failures.md #29 の再演）
+- **`restore_histories` は `RestoredHistories { histories, summaries }` を返す**。
+  要約が履歴の席を持たないことを型で保つ（注入は可変文脈の畳みへ相乗り = #45）
 
 **実測で決めた**（2026-08-02）: redb 4.1.0 = 2 依存 10 秒ビルド、
 「後ろから 16 件」0.03 ms、20,000 件の全走査 11 ms、fork 55 ms。

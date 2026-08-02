@@ -2,7 +2,7 @@
 
 **ID**: 12
 **Date**: 2026-08-02
-**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0 完了**。
+**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0・P1 完了**（P1 は 2026-08-03）。
 data_contract へ `session_store` ブロックを凍結（backend = redb 4.1.0 /
 テーブル 2 つ / `Record` 3 種別 / `seq` の意味と fork の inclusive /
 summary の `coversUpToSeq < 自身の seq` / 単一ライターは await を跨がない /
@@ -249,6 +249,17 @@ rev2 で入った差分（査読 2026-08-02）:
 - **P1 純機構**: `session_store.rs`（redb の読み書き・`seq` 採番・
   滑る窓の再適用・`fork` のコピー・`export_session`）。単体テスト。
   **`export_session` は P1 の完了条件**（読めない保存先を先に作らない）
+  → **完了**（2026-08-03）。単体 16 本・workspace 全緑（278 + 結合）・
+  clippy 新規警告ゼロ。実装で決めた 3 点:
+  (a) **`fork` は seq を振り直さない** — 振り直すと `summary.coversUpToSeq` の
+      指す境界がずれ、複製した側だけ要約の覆う範囲が変わる
+  (b) **1 往復 → `ChatMessage` 対の変換を `world::exchange_pair` へ切り出した** —
+      押し込む側（`push_exchange`）と読み戻す側で規律が分かれると、**復元した
+      履歴だけが空メッセージを持って次のターンで 400 になる**（failures.md #29）
+  (c) **`restore_histories` は `RestoredHistories { histories, summaries }` を返す** —
+      要約が履歴の席を持たないことを型で保つ（注入は可変文脈の畳みに相乗り）
+  エラーは `SESSION_NOT_FOUND` / `SESSION_STORE_FAILED` を追加（data_contract の
+  `ErrorPayload.codes` へ加算済み）。`.gitignore` へ `sessions.redb` を保険として追加
 - **P2 配線**: `record` / `push_exchange` の書き込み点、bootstrap での復元、
   `reset_conversation` の意味変更、セッション API
   （`create_session` / `resume_session` / `continue_latest` /

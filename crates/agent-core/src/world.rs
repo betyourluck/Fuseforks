@@ -89,11 +89,9 @@ impl AgentRecord {
     /// 400 で拒否される（Anthropic の実測。failures.md #29）。往復の対を
     /// 崩すと役割の交互性が壊れるため、落とすのではなく目印へ置き換える。
     pub fn push_exchange(&mut self, received: &str, replied: &str, max_turns: usize) {
-        let placeholder = "（発言なし）";
-        let received = if received.trim().is_empty() { placeholder } else { received };
-        let replied = if replied.trim().is_empty() { placeholder } else { replied };
-        self.history.push(ChatMessage::user(received));
-        self.history.push(ChatMessage::assistant(replied));
+        let [user, assistant] = exchange_pair(received, replied);
+        self.history.push(user);
+        self.history.push(assistant);
 
         let limit = max_turns.saturating_mul(2);
         if limit == 0 {
@@ -102,6 +100,24 @@ impl AgentRecord {
             self.history.drain(..self.history.len() - limit);
         }
     }
+}
+
+/// 1 往復を [`ChatMessage`] の対（user → assistant）へ落とす。
+///
+/// **空の発言は空のまま積まない。** 履歴の空メッセージは次のターンのリクエストに
+/// 空テキストブロックとして混入し、プロバイダによっては 400 で拒否される
+/// （Anthropic の実測。failures.md #29）。往復の対を崩すと役割の交互性が壊れるため、
+/// 落とすのではなく目印へ置き換える。
+///
+/// [`AgentRecord::push_exchange`]（実行中に積む側）と
+/// [`crate::session_store::SessionStore::restore_histories`]（保存から読み戻す側）が
+/// **同じ規律で組む**必要があるため、実装をここ 1 箇所に置く。分けて書くと、
+/// 復元した履歴だけが空メッセージを持って次のターンで 400 になる。
+pub fn exchange_pair(received: &str, replied: &str) -> [ChatMessage; 2] {
+    let placeholder = "（発言なし）";
+    let received = if received.trim().is_empty() { placeholder } else { received };
+    let replied = if replied.trim().is_empty() { placeholder } else { replied };
+    [ChatMessage::user(received), ChatMessage::assistant(replied)]
 }
 
 /// 接続マップ上のノード座標。
