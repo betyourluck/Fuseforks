@@ -63,9 +63,13 @@ function formatTime(ms: number): string {
 
 <template>
   <div class="flex h-full flex-col">
-    <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
+    <!--
+      高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。
+      下線は引かない — VS Code のパネル（問題 / 出力）と同じで、タブと中身の
+      間に境界線を置かない（2026-08-02 利用者指定。下段タブの 2 ペイン共通）。
+    -->
     <header
-      class="flex h-[38px] shrink-0 items-center gap-3 border-b border-line px-3 text-xs text-ink-dim"
+      class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
     >
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="notes.length">{{ notes.length }} 枚</span>

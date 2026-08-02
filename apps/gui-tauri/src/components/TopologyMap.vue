@@ -238,7 +238,12 @@ function borderClass(status: string): string {
         </template>
 
         <Background :gap="18" :size="1" pattern-color="#3a4152" />
-        <Controls />
+        <!--
+          フィット（全ノードを画面に収める）だけを出す。ズームはホイール・
+          ピンチで足り、操作ボタンを増やすと地図の面積を奪う（ヘッダの
+          「常駐してよいのは状態だけ」と同じ判断）。
+        -->
+        <Controls :show-zoom="false" :show-interactive="false" />
       </VueFlow>
     </div>
   </div>
@@ -251,5 +256,23 @@ function borderClass(status: string): string {
 }
 :deep(.vue-flow__node) {
   cursor: pointer;
+}
+
+/* Controls の既定テーマは白地なので、アプリのダーク配色へ合わせる。 */
+:deep(.vue-flow__controls) {
+  box-shadow: none;
+}
+:deep(.vue-flow__controls-button) {
+  width: 24px;
+  height: 24px;
+  background-color: var(--color-surface-1);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+}
+:deep(.vue-flow__controls-button:hover) {
+  background-color: var(--color-surface-2);
+}
+:deep(.vue-flow__controls-button svg) {
+  fill: var(--color-ink);
 }
 </style>

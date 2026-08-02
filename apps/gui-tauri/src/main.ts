@@ -1,8 +1,11 @@
 import { createApp } from "vue";
 
 // Vue Flow の既定スタイル。style.css の上書きより先に読み込む必要がある。
+// controls は自前の style.css を別に持つ — これを読まないと `<Controls />` の
+// ボタンは DOM に居ても寸法・背景を持たず、見えない（実際に起きた）。
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
 import "./style.css";
 
 import App from "./App.vue";
