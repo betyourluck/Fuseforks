@@ -5642,3 +5642,98 @@ async fn the_default_ceiling_is_written_only_to_a_fresh_world_file() {
         "既存の村へ天井を黙って足さない（後方互換）: {kept}"
     );
 }
+
+// ---- 漏れたツール呼び出しの計器（L0） ---------------------------------------
+
+/// ツール呼び出しを**本文テキストとして**返すバックエンド。
+///
+/// 本文は 2026-08-02 の実機ログから採った実物 — 先頭の `<invoke name="` が
+/// 無い形（削ったのは API 側）。合成した理想形で試すと、実機で発火しない
+/// 検出器を「動く」と誤認する（failures.md #47 の一般化 3）。
+struct LeakedToolCallBackend;
+
+const LEAKED_TEXT: &str = "MCP_DOCKER__fetch\">\n\
+     <parameter name=\"url\">https://news.yahoo.co.jp/topics/top-picks</parameter>\n\
+     <parameter name=\"max_length\">4000</parameter>\n\
+     </invoke>";
+
+#[async_trait::async_trait]
+impl LlmBackend for LeakedToolCallBackend {
+    fn name(&self) -> &str {
+        "leaked-tool-call"
+    }
+
+    async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        Ok(ChatResponse {
+            text: Some(LEAKED_TEXT.to_owned()),
+            // ネイティブの呼び出しは無い — ハーネスから見れば「最終出力」。
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 計器が**実機の経路で**発火すること（failures.md #47 の L0）。
+///
+/// 単体テストは文字列判定しか見ない。この企画は「単体は緑なのに実機で
+/// 一度も発火しない計器」を既に踏んでいる（RepeatGuard 初版、#41 の一般化 4）。
+/// ここでは実際にターンを走らせ、ログファイルへ 1 行出ることまで確かめる。
+///
+/// 併せて **L0 が挙動を変えないこと**も固定する（漏れた本文はそのまま
+/// 答えとして配信される）。ここを変えるのは L1（自動修復）の仕事で、
+/// そのとき壊れるべきテストとして残す。
+#[tokio::test]
+async fn the_leak_instrument_fires_on_a_real_turn() {
+    // ログはテスト用の一時ディレクトリの外へ置く。SINK はプロセスで 1 つ
+    // （OnceLock）なので、掴んだままのファイルを消しに行かせない。
+    let log_path = std::env::temp_dir().join(format!(
+        "concordia-leak-probe-{}.log",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    agent_core::open_log(&log_path).expect("ログを開けること");
+
+    let dir = TempDir::new("leak-instrument");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(LeakedToolCallBackend),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "ニュースを取ってきて")
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let written = std::fs::read_to_string(&log_path).expect("ログを読めること");
+    assert!(
+        written.contains("text tool call leaked"),
+        "漏れた本文で計器が発火すること: {written}"
+    );
+
+    // 挙動は変えない（L0 は計器）。漏れた本文はそのまま答えになる。
+    let reply = messages(&events)
+        .into_iter()
+        .find(|m| m.from == (Endpoint::Agent { id: id.clone() }))
+        .expect("答えが 1 通あること")
+        .clone();
+    assert_eq!(reply.content, LEAKED_TEXT, "L0 は本文へ手を入れない");
+}
