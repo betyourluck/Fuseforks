@@ -61,6 +61,7 @@
 //! ```
 
 pub mod blackboard;
+pub mod budget;
 pub mod compute;
 pub mod config_store;
 pub mod diag;
@@ -79,6 +80,7 @@ pub mod tools;
 pub mod world;
 
 pub use blackboard::BlackboardNote;
+pub use budget::BudgetPool;
 pub use config_store::{ConfigStore, LoadedSchedules};
 pub use diag::open_log;
 pub use error::{CoreError, CoreResult, ErrorPayload};
