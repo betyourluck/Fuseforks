@@ -2738,6 +2738,23 @@ async fn handle_message(
 
         if calls.is_empty() {
             // ツールを呼ばなかった = 最終出力。
+            //
+            // ただし本文にツール呼び出しの XML が漏れているなら、それは
+            // 「呼ばなかった」ではなく「呼び損ねた」— 生の XML が答えとして
+            // 配信される。挙動は変えずに**気づける**ようにする（計器）。
+            if let Some(text) = &response.text
+                && looks_like_leaked_tool_call(text)
+            {
+                note!(
+                    "text tool call leaked: agent={agent_id} round={} chars={} head={}",
+                    iteration + 1,
+                    text.chars().count(),
+                    text.chars()
+                        .take(160)
+                        .collect::<String>()
+                        .replace(['\n', '\r'], " "),
+                );
+            }
             break;
         }
 
@@ -3245,6 +3262,23 @@ async fn connect_agent_mcp(shared: &Shared, id: &AgentId) {
         },
     };
     shared.agent_mcp.write().await.insert(id.clone(), state);
+}
+
+/// 本文が「テキストとして漏れたツール呼び出し」を含むか（計器用の純関数）。
+///
+/// モデルがネイティブの `tool_use` ブロックではなく本文へツール呼び出しの XML を
+/// 書いてしまう既知の揺らぎがある。ハーネスから見ると「ツールを呼ばなかった」=
+/// 最終出力なので、**生の XML がそのまま利用者へ配信され、ログには何も残らない**。
+///
+/// # 開始タグは既に食われている前提で見る
+///
+/// 実機の観測（2026-08-02、claude-opus-5 + MCP 27 本）では、届いた本文は
+/// `MCP_DOCKER__fetch">\n<parameter name="url">…</parameter>\n</invoke>` の形で、
+/// **先頭の `<invoke name="` が無い**（削ったのは API 側。こちらの adapter は
+/// JSON のブロックを走査するだけで XML を解釈しない）。`<invoke` だけを探す
+/// 検出器は実機で一度も発火しない — 閉じタグと `<parameter` を主に据える。
+fn looks_like_leaked_tool_call(text: &str) -> bool {
+    text.contains("</invoke>") || text.contains("<parameter name=") || text.contains("<invoke ")
 }
 
 /// 同梱ツールをこのエージェントへ提示するか（enabled_tools_invariant）。
@@ -3880,6 +3914,40 @@ mod tests {
             description: String::new(),
             parameters: serde_json::json!({ "type": "object" }),
         }
+    }
+
+    /// 漏れたツール呼び出しの検出は、**開始タグが食われた実物の形**で発火すること。
+    ///
+    /// 2026-08-02 の実機ログがこの形。`<invoke` だけを探す検出器はここで
+    /// 素通りし、計器としては存在しないのと同じになる。
+    #[test]
+    fn the_leak_detector_fires_on_the_shape_actually_observed() {
+        let observed = "MCP_DOCKER__fetch\">\n\
+                        <parameter name=\"url\">https://news.yahoo.co.jp/topics/top-picks</parameter>\n\
+                        <parameter name=\"max_length\">4000</parameter>\n\
+                        </invoke>";
+        assert!(
+            looks_like_leaked_tool_call(observed),
+            "先頭の <invoke name=\" が無い実物で発火すること"
+        );
+
+        // 開始タグが残っている形でも発火する。
+        assert!(looks_like_leaked_tool_call(
+            "<invoke name=\"fetch\"><parameter name=\"url\">x</parameter></invoke>"
+        ));
+    }
+
+    /// 普通の答えでは発火しないこと（誤検出はログを無意味にする）。
+    #[test]
+    fn the_leak_detector_stays_quiet_on_ordinary_answers() {
+        assert!(!looks_like_leaked_tool_call(
+            "調べました。fetch で取得した結果は次のとおりです。\n\n- 1 件目\n- 2 件目"
+        ));
+        // コードブロック中の HTML/XML は普通に出てくるが、ツール呼び出しの形では
+        // ないので黙っていること。
+        assert!(!looks_like_leaked_tool_call(
+            "```html\n<div class=\"x\"><span>値</span></div>\n```"
+        ));
     }
 
     /// 同名は個別が勝つ（上書き可能な加算）。順序は共有 → 個別。
