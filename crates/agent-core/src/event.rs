@@ -100,6 +100,21 @@ pub enum CoreEvent {
     #[serde(rename_all = "camelCase")]
     ConversationCleared,
 
+    /// 開いているセッションが変わった（Spec 12 — 会話の永続化）。
+    ///
+    /// **加算的変更。** [`CoreEvent::ConversationCleared`] の意味は変えない
+    /// （「会話ペインを空にせよ」という表示指示のまま）。意味を変えると既存 UI が
+    /// 誤動作するので、開いたセッションの告知は別のイベントにしてある。
+    ///
+    /// 新規チャット・`resume_session`・`fork_session`・`continue_latest` の
+    /// **すべて**がこれを出す（「今どのセッションを見ているか」の唯一の通知路）。
+    /// 順序は `ConversationCleared` → `SessionSwitched` で固定。
+    #[serde(rename_all = "camelCase")]
+    SessionSwitched {
+        /// 開いたセッションの ID。
+        session_id: String,
+    },
+
     /// エージェントが受信した発話の処理を始めた / 終えた（入力中表示用）。
     ///
     /// 応答の生成には LLM 呼び出しとツール実行が含まれ、数十秒かかりうる。

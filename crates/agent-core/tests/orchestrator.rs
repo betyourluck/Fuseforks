@@ -1919,7 +1919,7 @@ async fn a_new_chat_resets_the_conversation_but_not_the_agent() {
     assert!(tokens_before > 0, "リセット前にトークンが積まれていること");
     assert!(!orchestrator.message_log(None).await.is_empty());
 
-    orchestrator.reset_conversation().await;
+    orchestrator.reset_conversation().await.unwrap();
     let events = drain_until_quiet(&mut rx, Duration::from_millis(200)).await;
 
     assert!(
@@ -1990,7 +1990,7 @@ async fn an_in_flight_turn_may_land_after_a_reset() {
     orchestrator.send_user_message(&id, "考えて").await.unwrap();
     // 飛行中（LLM 応答待ち）にリセットする。
     tokio::time::sleep(Duration::from_millis(50)).await;
-    orchestrator.reset_conversation().await;
+    orchestrator.reset_conversation().await.unwrap();
 
     drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
 

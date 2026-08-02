@@ -75,6 +75,7 @@ pub mod plan;
 pub mod rag;
 pub mod schedule;
 pub mod secret;
+pub mod session_store;
 pub mod tool;
 pub mod tools;
 pub mod world;
@@ -101,6 +102,9 @@ pub use schedule::{
     due_wall_clock,
 };
 pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
+pub use session_store::{
+    ForkPoint, Record, RestoredHistories, SessionMeta, SessionStore, SessionSummary,
+};
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
 pub use tools::{DiffTool, FdTool, FileTool, GrepTool, RememberTool, SdTool, YqTool};
 pub use world::World;

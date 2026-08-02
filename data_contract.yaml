@@ -159,7 +159,14 @@ enums:
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
     session_store: |
-      会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結**。実装は P1〜)。
+      会話の永続化 (Spec 12。**2026-08-02 rev2 承認 → P0 で凍結 →
+      2026-08-03 P1 着地** (session_store.rs に純機構と単体 17 本)
+      **→ 同日 P2 着地** (書き込み点 2 種 + 起動時の復元 + セッション API +
+      reset_conversation の委譲。結合 8 本)
+      **→ 同日 P3 着地** (IPC 7 本 + SessionDialog.vue + sessionSwitched の投影。
+      フロント 2 本 + ワイヤ形の凍結 1 本)
+      **→ 同日 P4 着地** (手動要約。summarize_session + 可変文脈への注入。結合 3 本)。
+      残は P5 実機確認)。
       再起動をまたいで会話を保ち、複数のセッションを持ち、再開できるようにする。
       **保存するのは「会話」であって「実行状態」ではない。**
       backend: **redb 4.1.0** (pure Rust・C 依存なし・2 依存)。
@@ -212,7 +219,14 @@ enums:
           これは正しい記録 (発話は起きた事実) として扱い、**画面には出すが
           履歴には入れない**。再開後は「頼んだが答えが返らなかった」ように見える
         - **セッションの切り替えは飛行中ターンが無いときだけ** (interrupt_all の
-          後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する
+          後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する。
+          拒否は SESSION_SWITCH_BLOCKED (自動で interrupt_all してから切り替える
+          ことはしない — 畳むかどうかは人の判断)。
+          **例外は create_session (新規チャット) だけ** (P2 で確定)。着地先が
+          新しい空のセッションなので既存の記録を汚さず、reset_rule の案 A
+          (飛行中ターンの完了書き込みは許容) がそのまま成立する。
+          resume / fork / continue_latest / 開いているセッションの delete は
+          **前に保存された会話へ無関係な答えが混ざる**ので拒否する
         - **起動時は最新セッションを開く** (updatedAt で判定)。読めない・0 件なら
           **警告 1 行を出して新規セッションを作る** — 起動が止まる経路は作らない
         - **索引は作らない (v1)。** 実測で 20,000 レコードの全走査が 11 ms。
@@ -235,6 +249,36 @@ enums:
           保存される。これで #45 (送信と保存の一致) と衝突しない
         - **自動では要約しない (v1)。** 人が押したときだけ。自動要約は LLM 呼び出し
           = トークンで、token_budget の天井と競合する (Replan 不採用と同じ規律)
+      P4 で着地した要約 (2026-08-03):
+        API: Orchestrator::summarize_session() → 要約できたエージェント数。
+        **対象は稼働中 (AgentStatus::is_active) のサーヴァントだけ**
+        (2026-08-03 の実機指摘で修正。初版は停止中にも呼んでいた)。要約の目的は
+        以後のプロンプトを短くすることで、停止中の個体には以後のターンが無い。
+        それでも呼べば**参加していない個体のぶんまで押した人がトークンを払う**。
+        履歴は停止しても消えない (P2 で start_agent のクリアをやめた) ので、
+        起動してから押せばそのとき要約される — 取り逃がしにはならない。
+        飛ばした相手が居たら System 行に**必ず書く** (黙って対象外にすると、
+        「要約したのに次のターンが短くならない」個体の理由が画面から消える)。
+        IPC summarize_session / 会話ペインの「要約して続ける」ボタン (確認つき)。
+        **要約を作るのは本人** (そのエージェント自身のモデル・テンプレート) —
+        別のモデルに書かせると要約の文体と本人の文体が食い違い、次のターンで
+        「自分が書いた覚え書き」として読めなくなる。ツールは提示しない
+        (提示すると呼びに行く個体が出て、1 回で終わる呼び出しがループになる)。
+        **境界は書く前に取る** (SessionStore::last_seq) — 書いた後だと
+        自分自身を覆う要約になり coversUpToSeq < 自身の seq が破れる。
+        現役の要約は Shared.summaries (BTreeMap<AgentId, String>) に持ち、
+        **履歴には置かない**。注入は handle_message の可変文脈 context の先頭へ
+        「## これまでの経緯（要約）」として差す — 畳んでできた sent_user_turn が
+        そのまま exchange として保存されるので #45 と衝突しない。
+        復元は restore_histories の summaries から (bootstrap と switch_to の両方)。
+        **畳むのは保存が済んでから** — 先に畳むと保存に失敗した瞬間に履歴も要約も
+        無い状態になる。**空の要約・失敗した要約では畳まない**
+        (要約に失敗した代償が履歴の喪失になるのは最悪の交換) し、成功数にも数えない。
+        個々の失敗で全体は失敗させない (WARN 1 行で次のエージェントへ進む)。
+        **飛行中ターンがあっても拒まない** — そのターンは sent_user_turn を組み
+        終えており、完了時の exchange は coversUpToSeq より後の seq を取る。
+        完了時に System 行を 1 本記録する (要約は会話の外形を変えるので、
+        いつ畳んだかがログに残らないと後から読めない)
       上限:
         - セッション数: 無制限。**200 を超えたら起動時に WARN 1 行** (削除しない)
         - 1 セッションのレコード数: 無制限。**50,000 を超えたら WARN** (要約を促す)
@@ -257,6 +301,71 @@ enums:
         export_session(id) → JSONL。
         reset_conversation は **create_session への委譲**になる (reset_rule の
         Spec 12 改訂節を見よ)
+      P1 で着地した純機構 (session_store.rs・2026-08-03):
+        SessionStore::open / create_session(title?) / append(session_id, &Record) → seq /
+        session_meta / list_sessions (updatedAt 降順) / latest_session / records /
+        tail_messages(session_id, limit) / restore_histories(session_id, history_turns) /
+        fork_session(source_id, at_seq) / delete_session /
+        export_session(session_id, &mut dyn Write) / export_session_to_file。
+        restore_histories は **RestoredHistories { histories, summaries }** を返す —
+        要約が履歴の席を持たないことを型で保つ (注入は可変文脈の畳みに相乗り)。
+        1 往復 → ChatMessage 対の変換は **world::exchange_pair の 1 実装**を
+        押し込む側 (push_exchange) と読み戻す側で共有する。分けて書くと復元した
+        履歴だけが空メッセージを持ち、次のターンで 400 になる (failures.md #29)。
+        export の JSONL は 1 行目が {"session":{id, meta}}、2 行目以降が
+        {"seq":N,"kind":...} — **ヘッダ行は kind を持たない** (`"kind":"message"` の
+        grep がヘッダに引っかからないようにするため)。
+        エラーは SESSION_NOT_FOUND / SESSION_STORE_FAILED (operation に
+        開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)
+      P2 で着地した配線 (orchestrator.rs・2026-08-03):
+        書き込み点は **2 つだけ** — Shared::record (message) と
+        Shared::push_exchange (exchange)。後者は履歴へ積む処理と保存を
+        **1 つの関数に閉じてある**: 4 箇所 (成功 / 失敗 / 割り込み / 予算切れ) の
+        呼び出し側が別々に保存を書くと、片方だけ更新されて再開後の履歴が
+        実行中の履歴と食い違う (しかもその食い違いは画面に出ない)。
+        保存の失敗は **WARN 1 行で続行** — 保存できないことは会話を止める理由に
+        ならない。保存先が開けなかった起動は sessions=None で普通に動く
+        (会話は再起動で消える。起動が止まる経路は作らない)。
+        起動時の復元は open_session_at_boot: 最新セッション (updatedAt) を開き、
+        会話ログは末尾 log_capacity 件、履歴は exchange から history_turns 往復。
+        宛先エージェントが消えている履歴は捨てて WARN。
+        Orchestrator の API: current_session / list_sessions / create_session /
+        resume_session / continue_latest / fork_session / delete_session /
+        export_session。reset_conversation は create_session への委譲
+        (保存先が無い村だけ旧挙動)。
+        **開いているセッションを delete したら次のセッションへ切り替える**
+        (無ければ新規作成) — 消したまま開きっぱなしにすると、以後の発話が
+        行き先の無いセッションへ書かれ続ける
+      P3 で着地した投影 (2026-08-03):
+        IPC 7 本: list_sessions / current_session / resume_session /
+        list_fork_points / fork_session / delete_session / export_session。
+        **create_session の IPC は作らない** — 新規チャットは reset_conversation が
+        担うので、同じ操作の入口を 2 つ作らない。
+        UI は会話ペインのヘッダに「会話一覧」ボタン + SessionDialog.vue
+        (開く / 分岐 / 書き出し / 削除の 4 つ)。分岐は ForkPoint の一覧から
+        地点を選ぶ 2 段階で、**選んだ依頼の文面は入力欄へ差し戻す**
+        (SessionDialog → ChatPanel の prefill → ChatInput.fill)。
+        ChatInput は fill(text) だけを defineExpose する — 下書きの所有権は
+        入力欄に閉じたままにしたいので、v-model を親へ生やさない。
+        差し戻しは**送信しない**し、宛先 (ForkPoint.to) も一緒に選び直す
+        (差し戻した文面を別のサーヴァントへ送るのが一番痛い間違いになる)。
+        **投影の要点**: conversationCleared が messages を空にした直後に
+        sessionSwitched が届くので、**そこで list_messages を引き直す** —
+        開き直しと分岐ではコアが会話ログを戻しており、空のままにすると
+        画面だけが白紙に見える。
+        **conversationCleared では通知を出さない** (P3 で変更)。この 1 本は
+        新規チャット・開き直し・分岐のどれでも同じように飛ぶので、
+        「新規チャットを開始しました」と言うと開き直しのときに嘘になる。
+        何が起きたかは操作した側が知っているので、通知は操作側が出す。
+        **一覧は常時追いかけない** — ダイアログを開いたときと切り替わったときだけ
+        引く (発話のたびに updatedAt が動くので、毎イベントで引くと会話中ずっと
+        IPC が往復する)。
+        export の書き出し先は {workspace}/exports/{session_id}.jsonl に固定
+        (ファイル選択ダイアログのために plugin を足すより、置き場所を 1 つ決めて
+        パスを通知に出すほうが依存も操作も少ない)。
+        新規チャットの確認ダイアログは**残すが文言を変えた** (D9) —
+        「この会話を閉じて、新しい会話を始めますか？／今の会話は保存され、
+        「会話一覧」からいつでも戻れます」。捨てないので警告色は外した
       実測 (2026-08-02、40,000 レコード・1 件約 600 バイト):
         書き込み 40,000 件 = 271 ms / 後ろから 16 件 = 0.03 ms /
         20,000 件の全走査 = 11 ms / fork 10,000 件のコピー = 55 ms /
@@ -544,6 +653,9 @@ entities:
       - SCHEDULE_NOT_FOUND      # Spec 07
       - INVALID_SCHEDULE        # Spec 07。hour > 23 / minute > 59 / everyMinutes == 0
       - SCHEDULE_STORE_BLOCKED  # Spec 07。schedules.json が読めない間は書き込みを保護
+      - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
+      - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
+      - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING
@@ -802,6 +914,44 @@ entities:
       planTaskResolved* → planWaveFinished)。Resolved の相互順序と、
       波を跨いだ全体順序 (並行する波の Started は交互に来うる) は保証しない。
 
+  SessionSummary:
+    description: 会話一覧の 1 行 (Spec 12)。所有者は sessions.redb、GUI は投影
+    fields:
+      id: String                   # {epoch_ms}-{短い乱数}。時刻順に読めるだけで、並びの根拠ではない
+      meta: SessionMeta
+  SessionMeta:
+    fields:
+      title: String                # 最初のユーザー発話の先頭 30 字 (文字数。バイトではない)
+      createdAt: u64               # epoch ms
+      updatedAt: u64               # epoch ms。**一覧の並びと「最新」の判定はこれ**
+      parentId: String | 省略       # 分岐で生まれたときだけ出る
+      forkedAtSeq: u64 | 省略       # 同上。**この seq を含めて**複製された
+      recordCount: u64
+  ForkPoint:
+    description: 分岐できる地点 (Spec 12 P3)。fork の UI が枝を切る位置を選ぶための投影
+    fields:
+      atSeq: u64                   # fork_session(id, atSeq) へそのまま渡す = その発話の直前 (seq - 1)
+      preview: String              # 一覧に出す 1 行。先頭 60 字・改行は空白へ潰す
+      text: String                 # 入力欄へ差し戻す**原文**。改行込み・切り詰めなし
+      to: AgentId | 省略            # その依頼の宛先。宛先がエージェントでなければ出さない
+      tsMs: u64
+    invariant: |
+      候補は**ユーザー発話だけ**。全レコードを並べると入退室の System 行や
+      往復の記録まで候補に出て、「どこで切ったのか」が読めなくなる。
+      **切るのはその発話の「直前」**で、依頼そのものは複製先に残さない
+      (2026-08-03 実機の観察で確定)。依頼を含めて複製すると、**返事の付かない
+      依頼が宙に浮いたまま残る** — 返事と exchange はその発話より後に書かれるため。
+      再実行の機構は無いので、その依頼はどのみち打ち直すことになる。
+      代わりに text を入力欄へ差し戻し、書き換えて送れる状態にする
+      (S4「そこから**別の頼み方**を試したい」がそのまま操作になる)。
+      **preview と text を分けてある**のは、潰した文字列を入力欄へ差すと改行が
+      消えて別の依頼になるため。片方から他方を作ると必ずどちらかが壊れる。
+      **先頭の発話 (seq 0) は候補にしない** — その手前まで複製すると空の会話で、
+      それは「新規チャット」と同じ操作になる (同じ結果へ 2 つの入口を作らない)。
+      wire は camelCase。**ipc_contract.rs の session_wire_fields_are_frozen が
+      3 型のフィールド集合を固定している** (parentId / forkedAtSeq / to は
+      出ない形もあるので、両方を固定してある)。
+
   # -------------------------------------------------------------------------
   # Spec 10 の契約。**2026-08-01 Phase 0 で凍結** (rev2 査読承認)。
   # 割り込み停止 — 飛行中ターンの協調的な打ち切り。実装は Phase 1〜3 で着地。
@@ -1030,6 +1180,13 @@ entities:
           「この会話を閉じて、新しい会話を始めますか」)。捨てないので警告色は外す
         - 切り替え (resume / fork / continue_latest) も同じ 2 イベントを
           この順で出す。新規チャットだけを特別扱いしない
+        - **飛行中ターンの扱いだけは新規チャットが特別**(P2 で確定)。
+          案 A (完了書き込みは許容) はここでそのまま生きる — 着地先が新しい
+          空のセッションなので、既存の記録を汚さない。既存の会話を開く
+          resume / fork / continue_latest は SESSION_SWITCH_BLOCKED で拒む
+        - **保存先が開けていない村では改訂前の挙動のまま** —
+          メモリを白紙にして conversationCleared だけを出す (sessionSwitched は
+          出さない)。保存できないことは新規チャットを使えなくする理由にならない
   typing_rule: |
     agentTyping は発話処理 (LLM 呼び出し + ツール実行) の開始と終了で
     **対になって**流れる (2026-07-29)。処理は数十秒かかりうるため、この間
@@ -1610,7 +1767,14 @@ conversation_termination:
     終了条件より先に収束の条件が要る。エージェントは直近 history_turns (既定 8) 往復の
     履歴を持ち、自分の発言も assistant として見る。履歴が無いと毎回コールドスタートになり、
     同じ入力に同じ出力を返し続けて原理的に収束しない (failures.md #12)。
-    履歴はプロセス寿命に閉じ、起動時にクリアする (保存しない)。
+    **履歴の寿命はセッション** (Spec 12 P2 で変更。それ以前はプロセス寿命で、
+    start_agent が毎回クリアしていた)。sessions.redb の exchange レコードから
+    起動時に復元し、**start_agent ではクリアしない**。
+    旧い規律「起動は新しい会話の開始として扱う」は、会話を始め直す手段が他に
+    無かった時期の代用だった。始め直しは「新規チャット」= 新しいセッションが担う。
+    start_agent でクリアすると、**再起動して開いた会話の履歴を、エージェントを
+    起動した瞬間に捨てる** — 起動時に自動起動しない契約と組み合わさって、
+    Spec 12 の S1 (続きから始められる) が原理的に成立しない。
 
 # ---------------------------------------------------------------------------
 concurrency:

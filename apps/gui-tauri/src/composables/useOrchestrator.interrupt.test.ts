@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
   listMessages: vi.fn(async () => []),
   listPlanWaves: vi.fn(async () => []),
   workspacePath: vi.fn(async () => "C:\\workspace"),
+  currentSession: vi.fn(async () => "session_1"),
+  listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
   interruptTurn: vi.fn(async () => {}),
   interruptAll: vi.fn(async () => {}),

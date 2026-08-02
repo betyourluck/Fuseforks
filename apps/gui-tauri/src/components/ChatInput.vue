@@ -63,6 +63,27 @@ function onEnter(event: KeyboardEvent): void {
   event.preventDefault();
   void send();
 }
+
+/**
+ * 外から文面を差し込む（Spec 12 — 分岐したときに、選んだ依頼を戻す）。
+ *
+ * **送信はしない。** 差した文面は書き換えられる状態で置くのが目的で、
+ * 分岐の用途はそもそも「別の頼み方を試す」こと。カーソルは末尾へ置く。
+ *
+ * 下書きの所有権は入力欄に閉じたままにしたいので、`v-model` を親へ生やさず
+ * この 1 メソッドだけを公開する。
+ */
+async function fill(payload: string): Promise<void> {
+  text.value = payload;
+  await nextTick();
+  autoGrow();
+  const el = area.value;
+  if (!el) return;
+  el.focus();
+  el.setSelectionRange(payload.length, payload.length);
+}
+
+defineExpose({ fill });
 </script>
 
 <template>

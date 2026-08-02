@@ -52,6 +52,7 @@ use tokio::task::JoinHandle;
 use crate::budget::BudgetPool;
 use crate::compute;
 use crate::config_store::ConfigStore;
+use crate::session_store::{ForkPoint, Record as SessionRecord, SessionStore, SessionSummary};
 // 診断の 1 行はここを通す（stderr とログファイルの両方へ出る）。
 use crate::note;
 use crate::error::{CoreError, CoreResult, ErrorPayload};
@@ -270,6 +271,26 @@ struct Shared {
     /// 上書きすると、利用者が直せば戻ったはずの予定を消すことになる。
     /// 起動は止めない（`mcp.json` と同じ判断: 直す画面へ到達できなくなる）。
     schedules_blocked: Option<String>,
+    /// 会話の保存先（Spec 12）。開けなかった場合だけ `None`。
+    ///
+    /// **`None` でも村は普通に動く** — 保存できないことは会話を止める理由に
+    /// ならない（起動が止まる経路は作らない、D1 と同じ規律）。その代わり
+    /// 起動時に WARN を 1 行出す。
+    sessions: Option<SessionStore>,
+    /// エージェント別の**現役の**要約（Spec 12 P4）。手動要約のときだけ入る。
+    ///
+    /// **履歴（`AgentRecord.history`）の中には置かない。** 置くと、送った文字列と
+    /// 保存した文字列が食い違う（#45）。ここに持って**可変文脈の畳みへ相乗り**
+    /// させれば、できた `sent_user_turn` がそのまま `exchange` として保存される。
+    /// 復元時は `restore_histories` が返す最新の要約で埋め直す。
+    summaries: RwLock<BTreeMap<AgentId, String>>,
+    /// いま開いているセッションの ID（Spec 12）。
+    ///
+    /// **`std::sync::RwLock` で持つ。** 書き込み点（`record` / `push_exchange`）は
+    /// どちらも `world` の write guard を握った同期文脈にあり、そこから
+    /// `await` する経路を作りたくない。中身は短い文字列で、ロックは
+    /// clone するあいだしか握らない。
+    session_id: std::sync::RwLock<String>,
     config: OrchestratorConfig,
 }
 
@@ -314,7 +335,11 @@ impl Shared {
         let _ = self.events.send(event);
     }
 
-    /// ログへ追記し、[`CoreEvent::MessageSent`] を発行する。
+    /// ログへ追記し、保存先へ書き、[`CoreEvent::MessageSent`] を発行する。
+    ///
+    /// `Shared.log` の [`OrchestratorConfig::log_capacity`] は**メモリ上の上限で
+    /// あって保存の上限ではない**（Spec 12）。リングから落ちた発話もファイルには
+    /// 残り、起動時に末尾 `log_capacity` 件だけを読み戻す。
     async fn record(&self, message: AgentMessage) {
         {
             let mut log = self.log.write().await;
@@ -326,7 +351,58 @@ impl Shared {
             }
             log.push(message.clone());
         }
+        self.persist(&SessionRecord::message(message.clone()));
         self.emit(CoreEvent::MessageSent { message });
+    }
+
+    /// いま開いているセッションの ID。
+    fn current_session(&self) -> String {
+        match self.session_id.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// 開いているセッションを差し替える。以後の書き込みは新しい側へ着地する。
+    fn set_session(&self, session_id: &str) {
+        match self.session_id.write() {
+            Ok(mut guard) => *guard = session_id.to_owned(),
+            Err(poisoned) => *poisoned.into_inner() = session_id.to_owned(),
+        }
+    }
+
+    /// レコードを 1 件保存する。**失敗しても村は止めない。**
+    ///
+    /// 保存できないこと（ディスク満杯・権限・ファイル破損）は、会話を続けない
+    /// 理由にならない。代わりに WARN を 1 行出す — 黙って落とすと、再開したとき
+    /// 初めて欠落に気づくことになる。
+    ///
+    /// redb の書き込みは同期で 1 本に直列化されるが、1 件の追記は短い
+    /// （実測 40,000 件で 271 ms = 1 件あたり約 7 マイクロ秒）。**トランザクションを
+    /// `await` を跨いで持たない**という契約は、この関数が同期で閉じることで守られる。
+    fn persist(&self, record: &SessionRecord) {
+        let Some(store) = self.sessions.as_ref() else {
+            return;
+        };
+        let session_id = self.current_session();
+        if let Err(err) = store.append(&session_id, record) {
+            note!("WARN session store: 会話 `{session_id}` へ保存できませんでした: {err}");
+        }
+    }
+
+    /// 1 往復を履歴へ積み、**同じ内容を保存先へも書く**。
+    ///
+    /// 押し込む側と保存側を別々に書かない。分けると片方だけ更新される経路が生まれ、
+    /// 再開後の履歴が実行中の履歴と食い違う — しかもその食い違いは画面に出ない。
+    /// 呼び出し側は `world` の write guard を既に握っているので、guard を受け取る形にしてある。
+    fn push_exchange(&self, world: &mut World, agent_id: &AgentId, sent: &str, replied: &str) {
+        // 既に消えたエージェントの往復は積まないし、保存もしない。
+        // 保存だけ残ると、復元時に宛先の無い exchange が出てくる。
+        let Ok(record) = world.agent_mut(agent_id) else {
+            return;
+        };
+        record.push_exchange(sent, replied, self.config.history_turns);
+        self.persist(&SessionRecord::exchange(agent_id, sent, replied));
     }
 
     /// テンプレートに対応するバックエンドを取り出す。無ければ組み立てて覚える。
@@ -433,6 +509,111 @@ struct TaskHandle {
     join: JoinHandle<()>,
 }
 
+/// 手動要約（Spec 12 P4）の役割指示。
+///
+/// **要約を作るのは本人**（そのエージェント自身のモデル）。別のモデルに
+/// 要約させると、要約の文体と本人の文体が食い違い、次のターンで「自分が書いた
+/// 覚え書き」として読めなくなる。
+const SUMMARY_SYSTEM: &str = "あなたはこれから、自分自身の会話履歴を要約します。\
+     要約は次のターン以降のあなた自身への覚え書きになります。";
+
+/// 手動要約の最終指示。**要約だけを返させる**（前置きが混ざると、そのまま
+/// 次のターンの文脈に載る）。
+const SUMMARY_INSTRUCTION: &str = "ここまでのやり取りを、あなたが続きを進めるための覚え書きとしてまとめてください。\n\
+     - 決まったこと・まだ決まっていないこと・次にやることを落とさない\n\
+     - 固有名詞（ファイル名・ID・数値・URL）はそのまま残す\n\
+     - 挨拶や相槌は落とす\n\
+     - 箇条書きで、自分宛ての覚え書きとして書く\n\
+     要約の本文だけを出力してください（前置きも後書きも要りません）。";
+
+/// 起動時に開くセッションを決め、会話ログと履歴を戻す（Spec 12 P2）。
+///
+/// 既定は**最新セッション**（`updatedAt` で判定）。読めない・0 件なら警告を
+/// 1 行出して新規セッションを作る — **起動が止まる経路は作らない**（D1）。
+/// セッションを 1 つも用意できなかったときだけ `None` を返し、呼び出し側は
+/// 保存なしで起動する。
+///
+/// 復元は 2 層を**別々に**戻す。会話ログ（`Shared.log`）は末尾 `log_capacity` 件、
+/// 履歴（`AgentRecord.history`）は `exchange` から `history_turns` 往復。
+/// **片方から他方は作れない** — 会話ログだけ戻すと画面は正しいのに全員が
+/// 健忘症で始まり、その 2 つは画面上区別が付かない。
+fn open_session_at_boot(
+    sessions: &SessionStore,
+    world: &mut World,
+    log_capacity: usize,
+    history_turns: usize,
+) -> Option<(String, Vec<AgentMessage>, BTreeMap<AgentId, String>)> {
+    let existing = match sessions.latest_session() {
+        Ok(found) => found,
+        Err(err) => {
+            note!("WARN session store: 会話の一覧を読めませんでした（新しい会話で始めます）: {err}");
+            None
+        }
+    };
+
+    let session_id = match existing {
+        Some(id) => id,
+        None => match sessions.create_session(None) {
+            Ok(id) => id,
+            Err(err) => {
+                note!(
+                    "WARN session store: 会話を作れませんでした（この起動では会話は\
+                     再起動で消えます）— {err}"
+                );
+                return None;
+            }
+        },
+    };
+
+    // 会話ログ: リングと同じ形（末尾 log_capacity 件）で画面へ戻す。
+    let log = match sessions.tail_messages(&session_id, log_capacity) {
+        Ok(messages) => messages,
+        Err(err) => {
+            note!("WARN session store: 会話ログを読めませんでした（画面は空で始まります）: {err}");
+            Vec::new()
+        }
+    };
+
+    // 履歴: ここが S1 の本丸。画面ではなく、次のターンで LLM へ渡る側。
+    let mut restored_agents = 0usize;
+    let mut orphaned = 0usize;
+    let mut summaries = BTreeMap::new();
+    match sessions.restore_histories(&session_id, history_turns) {
+        Ok(restored) => {
+            for (agent_id, history) in restored.histories {
+                match world.agent_mut(&agent_id) {
+                    Ok(record) => {
+                        record.history = history;
+                        restored_agents += 1;
+                    }
+                    // 会話の後で消されたエージェント。履歴の行き先が無いので捨てる。
+                    Err(_) => orphaned += 1,
+                }
+            }
+            // 要約は履歴とは別の口で戻る（Spec 12 P4）。可変文脈へ差す側の材料で、
+            // 履歴の中には置かない。
+            summaries = restored.summaries;
+        }
+        Err(err) => {
+            note!(
+                "WARN session store: 履歴を復元できませんでした（エージェントは前回の\
+                 話を覚えていない状態で始まります）: {err}"
+            );
+        }
+    }
+    if orphaned > 0 {
+        note!("session: 復元した履歴のうち {orphaned} 体分は、該当エージェントが居ないため捨てました");
+    }
+    note!(
+        "session: {session_id} を開きました（発話 {} 件 / 履歴 {restored_agents} 体 / \
+         要約 {} 体）",
+        log.len(),
+        summaries.len()
+    );
+
+    Some((session_id, log, summaries))
+}
+
 /// マルチエージェント・オーケストレーター。
 ///
 /// GUI 層はこの型のメソッドだけを呼ぶ。内部の並行制御は外へ漏れない。
@@ -537,6 +718,31 @@ impl Orchestrator {
             }
         };
 
+        // 会話の保存先を開き、最後に開いていた会話を戻す（Spec 12）。
+        // **開けなくても起動は止めない** — 会話が戻らないことは、アプリが開かない
+        // 理由にならない（D1 のフォールバックと同じ規律）。
+        let (sessions, session_id, restored_log, restored_summaries) =
+            match SessionStore::open(store.root().join("sessions.redb")) {
+                Ok(sessions) => {
+                    match open_session_at_boot(
+                        &sessions,
+                        &mut world,
+                        config.log_capacity,
+                        config.history_turns,
+                    ) {
+                        Some((id, log, summaries)) => (Some(sessions), id, log, summaries),
+                        None => (None, String::new(), Vec::new(), BTreeMap::new()),
+                    }
+                }
+                Err(err) => {
+                    note!(
+                        "WARN session store: 会話を保存できません（この起動では会話は\
+                         再起動で消えます）— {err}"
+                    );
+                    (None, String::new(), Vec::new(), BTreeMap::new())
+                }
+            };
+
         let (events, _) = broadcast::channel(config.event_capacity);
 
         let shared = Arc::new(Shared {
@@ -548,7 +754,7 @@ impl Orchestrator {
             secrets,
             store,
             rag: RwLock::new(RagIndex::default()),
-            log: RwLock::new(Vec::new()),
+            log: RwLock::new(restored_log),
             tools: RwLock::new(ToolRegistry::new()),
             mcp: RwLock::new(crate::mcp::McpManager::default()),
             agent_mcp: RwLock::new(HashMap::new()),
@@ -557,6 +763,9 @@ impl Orchestrator {
             turns: Mutex::new(HashMap::new()),
             turn_seq: std::sync::atomic::AtomicU64::new(1),
             schedules_blocked,
+            sessions,
+            summaries: RwLock::new(restored_summaries),
+            session_id: std::sync::RwLock::new(session_id),
             config,
         });
 
@@ -604,20 +813,381 @@ impl Orchestrator {
         self.shared.world.read().await.templates()
     }
 
-    /// 会話をリセットする（新規チャット。Spec 03）。
+    /// 会話をリセットする（新規チャット。Spec 03 → **Spec 12 で改訂**）。
+    ///
+    /// **捨てるのではなく、今の会話を閉じて新しい会話を開く。** 前の会話は
+    /// ディスクに残り、一覧から戻れる。UI の「新規チャット」という名前は残す
+    /// （利用者の語彙を変えない）。
     ///
     /// 消すのは `Shared.log` と各エージェントの `history` の**2 つだけ** —
     /// 稼働状態・累積統計・Memory.md・エージェント別 MCP 接続はすべて維持
     /// する（リセットするのは「会話」であって「エージェント」ではない）。
     ///
-    /// 処理順は契約で固定: log クリア → history クリア → イベント発行。
-    /// 飛行中のターンの完了書き込みは**許容**する — 白紙化の直後に飛行中
-    /// だった発話 1 件が載るのは仕様（発話は起きた事実であり、ログに残す。
-    /// hop 打ち切りの「記録してから打ち切る」と同じ規律）。
-    pub async fn reset_conversation(&self) {
+    /// 飛行中ターンの完了書き込みは**許容**する（Spec 03 の案 A は改訂後も
+    /// そのまま生きる） — 白紙化の直後に飛行中だった発話 1 件が載るのは仕様。
+    /// 着地先は新しい空の会話なので、既存の記録を汚さない。
+    ///
+    /// **保存先が開けていない村では、改訂前の挙動のまま**メモリを白紙にして
+    /// [`CoreEvent::ConversationCleared`] だけを出す。保存できないことは、
+    /// 新規チャットを使えなくする理由にならない。
+    ///
+    /// # Errors
+    /// 保存先への書き込みに失敗した場合。
+    pub async fn reset_conversation(&self) -> CoreResult<()> {
+        if self.shared.sessions.is_none() {
+            self.shared.log.write().await.clear();
+            self.shared.world.write().await.clear_histories();
+            self.shared.emit(CoreEvent::ConversationCleared);
+            return Ok(());
+        }
+        self.create_session().await.map(|_| ())
+    }
+
+    // ---- セッション（Spec 12 — 会話の永続化） -------------------------------
+
+    /// いま開いている会話の ID。保存先が開けていない村では空文字。
+    pub fn current_session(&self) -> String {
+        self.shared.current_session()
+    }
+
+    /// 保存されている会話の一覧（`updatedAt` の新しい順）。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、または読み込みに失敗した場合。
+    pub async fn list_sessions(&self) -> CoreResult<Vec<SessionSummary>> {
+        self.sessions()?.list_sessions()
+    }
+
+    /// 新しい会話を開く。今の会話は閉じるだけで、消えない。
+    ///
+    /// **切り替えの中でここだけは飛行中ターンを拒まない**（Spec 03 の案 A が
+    /// Spec 12 改訂後もそのまま生きる）。着地先が「新しい空の会話」なので、
+    /// 飛行中だった答えが後から載っても失うものが無い — 発話は起きた事実であり、
+    /// メモリとディスクの両方に同じ形で残る。既存の会話を開く
+    /// [`Orchestrator::resume_session`] / [`Orchestrator::fork_session`] は
+    /// 事情が違い（**前に保存された会話へ無関係な答えが混ざる**）、そちらは拒む。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、または書き込みに失敗した場合。
+    pub async fn create_session(&self) -> CoreResult<String> {
+        let session_id = self.sessions()?.create_session(None)?;
+        self.switch_to(&session_id).await?;
+        Ok(session_id)
+    }
+
+    /// 保存されている会話を開き直す。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、会話が存在しない、飛行中のターンがある、
+    /// または読み込みに失敗した場合。
+    pub async fn resume_session(&self, session_id: &str) -> CoreResult<()> {
+        self.ensure_idle_for_switch().await?;
+        if self.sessions()?.session_meta(session_id)?.is_none() {
+            return Err(CoreError::SessionNotFound(session_id.to_owned()));
+        }
+        self.switch_to(session_id).await
+    }
+
+    /// 最後に更新された会話を開き直す。1 件も無ければ新しく作る。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、飛行中のターンがある、または読み書きに失敗した場合。
+    pub async fn continue_latest(&self) -> CoreResult<String> {
+        self.ensure_idle_for_switch().await?;
+        let store = self.sessions()?;
+        let session_id = match store.latest_session()? {
+            Some(id) => id,
+            None => store.create_session(None)?,
+        };
+        self.switch_to(&session_id).await?;
+        Ok(session_id)
+    }
+
+    /// 分岐できる地点（その会話のユーザー発話）を古い順で返す。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、会話が存在しない、または読み込みに失敗した場合。
+    pub async fn list_fork_points(&self, session_id: &str) -> CoreResult<Vec<ForkPoint>> {
+        self.sessions()?.fork_points(session_id)
+    }
+
+    /// 会話を `at_seq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、分岐元が存在しない、飛行中のターンがある、
+    /// または書き込みに失敗した場合。
+    pub async fn fork_session(&self, session_id: &str, at_seq: u64) -> CoreResult<String> {
+        self.ensure_idle_for_switch().await?;
+        let forked = self.sessions()?.fork_session(session_id, at_seq)?;
+        self.switch_to(&forked).await?;
+        Ok(forked)
+    }
+
+    /// 会話を消す。
+    ///
+    /// **開いている会話を消した場合は、次の会話へ切り替える**（無ければ新規を作る）。
+    /// 消したまま開きっぱなしにすると、以後の発話が行き先の無いセッションへ
+    /// 書かれ続ける。開いていない会話の削除は、飛行中ターンがあっても通る
+    /// （着地先は変わらないため）。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、開いている会話を消すのに飛行中のターンがある、
+    /// または書き込みに失敗した場合。
+    pub async fn delete_session(&self, session_id: &str) -> CoreResult<()> {
+        let store = self.sessions()?;
+        if session_id != self.shared.current_session() {
+            return store.delete_session(session_id);
+        }
+
+        self.ensure_idle_for_switch().await?;
+        store.delete_session(session_id)?;
+        let next = match store.latest_session()? {
+            Some(id) => id,
+            None => store.create_session(None)?,
+        };
+        self.switch_to(&next).await
+    }
+
+    /// いまの会話を要約して続ける（Spec 12 P4）。要約できたエージェント数を返す。
+    ///
+    /// **人が押したときだけ走る。** 自動では要約しない — 要約は LLM 呼び出し
+    /// = トークンで、Spec 11 の天井と競合する（自動で仕事を増やす機構は入れない、
+    /// という Replan 不採用と同じ規律）。
+    ///
+    /// **対象は稼働中のサーヴァントだけ。** 要約の目的は以後のプロンプトを短くする
+    /// ことで、停止中の個体には以後のターンが無い。それでも呼べば、参加していない
+    /// 個体のぶんまで押した人がトークンを払うことになる。履歴は停止しても消えない
+    /// ので、起動してから押せばそのとき要約される。
+    ///
+    /// 稼働中のエージェントごとに 1 回ずつ呼び、`summary` レコードを追加して**その
+    /// エージェントの履歴を畳む**。要約は履歴の席を持たず、次のターンの可変文脈へ
+    /// 差される（#45 との衝突を避けるため）。**元のレコードは消さない** —
+    /// 要約の品質が悪かったときに、書き出しから元の往復を読み戻せる。
+    ///
+    /// **飛行中のターンがあっても拒まない。** 飛行中のターンはそのターンの
+    /// `sent_user_turn` を既に組み終えており、完了時に積む `exchange` は要約が
+    /// 覆う `coversUpToSeq` より後の seq を取る。畳んだ履歴の上に 1 往復が乗るだけで、
+    /// 復元しても同じ形になる。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、または保存に失敗した場合。**個々のエージェントの
+    /// 要約が失敗しても全体は失敗させない**（その相手の履歴は畳まずに残す —
+    /// 要約に失敗した代償が履歴の喪失になるのは最悪の交換）。
+    pub async fn summarize_session(&self) -> CoreResult<usize> {
+        let store = self.sessions()?;
+        let session_id = self.shared.current_session();
+
+        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
+        // 「coversUpToSeq < 自身の seq」が破れる。
+        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
+            return Ok(0);
+        };
+
+        // 材料を先に集める。LLM 呼び出しの間、world のロックは持たない。
+        //
+        // **対象は稼働中のサーヴァントだけ。** 要約の目的は「以後のプロンプトを
+        // 短くする」ことで、停止中の個体には以後のターンが無い。それでも呼べば、
+        // **参加していない個体のぶんまで押した人がトークンを払う**ことになる。
+        // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
+        // 押せばそのとき要約される — 取り逃がしにはならない。
+        let mut skipped = 0usize;
+        let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
+            let world = self.shared.world.read().await;
+            world
+                .snapshots()
+                .into_iter()
+                .filter_map(|snapshot| {
+                    let record = world.agent(&snapshot.id).ok()?;
+                    if record.history.is_empty() {
+                        return None;
+                    }
+                    if !record.status.is_active() {
+                        skipped += 1;
+                        return None;
+                    }
+                    let template = world.template(&record.spec.model_template_id).ok()?.clone();
+                    Some((
+                        snapshot.id.clone(),
+                        record.spec.name.clone(),
+                        template,
+                        record.history.clone(),
+                    ))
+                })
+                .collect()
+        };
+
+        let mut done = 0usize;
+        for (agent_id, name, template, history) in targets {
+            // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
+            let previous = self.shared.summaries.read().await.get(&agent_id).cloned();
+
+            let mut messages = Vec::with_capacity(history.len() + 3);
+            messages.push(ChatMessage::system(SUMMARY_SYSTEM));
+            if let Some(previous) = &previous {
+                messages.push(ChatMessage::user(format!(
+                    "## 前回までの経緯（既存の要約）\n{previous}"
+                )));
+                messages.push(ChatMessage::assistant("承知しました。"));
+            }
+            messages.extend(history);
+            messages.push(ChatMessage::user(SUMMARY_INSTRUCTION));
+
+            let backend = match self.shared.backend_for(&template).await {
+                Ok(backend) => backend,
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）のバックエンドを組めません: {err}");
+                    continue;
+                }
+            };
+            let request = ChatRequest {
+                model: template.model.clone(),
+                messages,
+                // 要約にツールは要らない。提示すると呼びに行く個体が出て、
+                // 1 回で終わるはずの呼び出しがループになる。
+                tools: Vec::new(),
+                tool_choice: crate::llm::ToolChoice::None,
+                temperature: template.temperature,
+                max_tokens: template.max_output_tokens,
+                effort: template.effort,
+                cacheable_prefix_len: 0,
+            };
+            let text = match backend.chat(request).await {
+                Ok(response) => response.text.unwrap_or_default(),
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）の要約に失敗しました: {err}");
+                    continue;
+                }
+            };
+            if text.trim().is_empty() {
+                note!("WARN summarize: {agent_id}（{name}）の要約が空でした（履歴は畳みません）");
+                continue;
+            }
+
+            self.shared.persist(&SessionRecord::summary(
+                &agent_id,
+                text.clone(),
+                covers_up_to_seq,
+            ));
+            self.shared
+                .summaries
+                .write()
+                .await
+                .insert(agent_id.clone(), text);
+            // 畳むのは**保存が済んでから**。先に畳むと、保存に失敗した瞬間に
+            // 履歴も要約も無い状態になる。
+            if let Ok(record) = self.shared.world.write().await.agent_mut(&agent_id) {
+                record.history.clear();
+            }
+            done += 1;
+        }
+
+        if done > 0 || skipped > 0 {
+            // 飛ばした相手が居るなら**必ず言う**。黙って対象外にすると、
+            // 「要約したのに次のターンが短くならない」個体の理由が画面から消える。
+            // 次の道も書く（#44 の規律）— 起動してから押せば要約される。
+            let note = if skipped > 0 {
+                format!(
+                    "（停止中の {skipped} 体は要約していません。起動してからもう一度押すと、\
+                     その相手も要約されます）"
+                )
+            } else {
+                String::new()
+            };
+            self.shared
+                .record(AgentMessage::new(
+                    Endpoint::System,
+                    Endpoint::User,
+                    format!(
+                        "稼働中の {done} 体の記憶を要約しました。以後のやり取りは要約を踏まえて\
+                         続きます（元のやり取りは消えていません — 「会話一覧」の書き出しから\
+                         読めます）{note}"
+                    ),
+                    0,
+                ))
+                .await;
+        }
+        Ok(done)
+    }
+
+    /// 会話を JSONL で書き出し、書いたレコード数を返す。
+    ///
+    /// 読める出口は機構の一部（この企画の診断は grep に依存している）。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、会話が存在しない、または書き出しに失敗した場合。
+    pub async fn export_session(
+        &self,
+        session_id: &str,
+        dest: impl AsRef<std::path::Path>,
+    ) -> CoreResult<u64> {
+        self.sessions()?.export_session_to_file(session_id, dest)
+    }
+
+    /// 保存先を借りる。開けていなければ、直し方を添えて失敗を返す。
+    fn sessions(&self) -> CoreResult<&SessionStore> {
+        self.shared
+            .sessions
+            .as_ref()
+            .ok_or_else(|| CoreError::SessionStore {
+                path: self
+                    .shared
+                    .store
+                    .root()
+                    .join("sessions.redb")
+                    .display()
+                    .to_string(),
+                operation: "開く",
+                reason: "起動時に開けませんでした（起動ログの WARN 行に理由が出ています）"
+                    .to_owned(),
+            })
+    }
+
+    /// 切り替えの前提。**飛行中のターンがあれば拒否する**（Spec 12 の不変条件 11）。
+    ///
+    /// 自動で `interrupt_all` を呼んでから切り替えることは**しない** —
+    /// 飛行中のターンを畳むかどうかは人の判断で、機械が黙って決める場面ではない。
+    async fn ensure_idle_for_switch(&self) -> CoreResult<()> {
+        let in_flight = self.shared.turns.lock().await.len();
+        if in_flight > 0 {
+            return Err(CoreError::SessionSwitchBlocked { in_flight });
+        }
+        Ok(())
+    }
+
+    /// メモリ上の会話を差し替えて、指定した会話を開いた状態にする。
+    ///
+    /// 処理順は契約で固定: **log クリア → history クリア → 復元 →
+    /// `conversationCleared` → `sessionSwitched`**。
+    /// `conversationCleared` を出さない選択は採らない — 会話ペインを空にする
+    /// 指示はこれが唯一の経路で、意味を変えると既存 UI が誤動作する。
+    async fn switch_to(&self, session_id: &str) -> CoreResult<()> {
+        let store = self.sessions()?;
+
         self.shared.log.write().await.clear();
         self.shared.world.write().await.clear_histories();
+        // ここで差し替える。以後の書き込みは新しい側へ着地する。
+        self.shared.set_session(session_id);
+
+        let messages = store.tail_messages(session_id, self.shared.config.log_capacity)?;
+        let restored = store.restore_histories(session_id, self.shared.config.history_turns)?;
+        {
+            let mut world = self.shared.world.write().await;
+            for (agent_id, history) in restored.histories {
+                if let Ok(record) = world.agent_mut(&agent_id) {
+                    record.history = history;
+                }
+            }
+        }
+        // 要約も差し替える（Spec 12 P4）。前の会話の要約が残ると、開いた会話とは
+        // 無関係な「これまでの経緯」が次のターンへ混ざる。
+        *self.shared.summaries.write().await = restored.summaries;
+        *self.shared.log.write().await = messages;
+
         self.shared.emit(CoreEvent::ConversationCleared);
+        self.shared.emit(CoreEvent::SessionSwitched {
+            session_id: session_id.to_owned(),
+        });
+        Ok(())
     }
 
     /// メッセージログ。`limit` を指定すると末尾からその件数だけ返す。
@@ -1104,9 +1674,14 @@ impl Orchestrator {
             if let Ok(record) = world.agent_mut(id) {
                 record.started_at = Some(std::time::Instant::now());
                 record.last_error = None;
-                // 起動は新しい会話の開始として扱う。前回の文脈を引き継ぐと
-                // 「始め直したつもりが続きだった」という分かりにくい状態になる。
-                record.history.clear();
+                // **履歴は消さない**（Spec 12 で変更。それ以前はここで clear していた）。
+                //
+                // 旧い規律は「起動は新しい会話の開始として扱う」で、会話を始め直す
+                // 手段が他に無かった時期の代用だった。会話の寿命がセッションに
+                // なった今、始め直しは「新規チャット」= 新しいセッションが担う。
+                // ここで消すと、**再起動して開いた会話の履歴を、エージェントを
+                // 起動した瞬間に捨てることになる** — 起動時に自動起動しない契約と
+                // 組み合わさって、S1（続きから始められる）が原理的に成立しない。
             }
         }
 
@@ -1860,9 +2435,7 @@ async fn record_failed_turn(
     );
 
     let mut world = shared.world.write().await;
-    if let Ok(record) = world.agent_mut(agent_id) {
-        record.push_exchange(&attributed, &note, shared.config.history_turns);
-    }
+    shared.push_exchange(&mut world, agent_id, &attributed, &note);
 }
 
 /// 打ち切られたターンの消費量。[`finish_interrupted`] へまとめて渡す。
@@ -1992,8 +2565,8 @@ async fn record_interrupted_turn(
         record.total_tokens += spend.tokens;
         record.cached_tokens += spend.cached;
         record.prompt_tokens += spend.prompt;
-        record.push_exchange(sent_user_turn, note, shared.config.history_turns);
     }
+    shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
 }
 
 /// トークン予算で打ち切られたターンの出口（Spec 11 — `token_budget` の
@@ -2022,8 +2595,8 @@ async fn finish_budget_exhausted(
             record.total_tokens += spend.tokens;
             record.cached_tokens += spend.cached;
             record.prompt_tokens += spend.prompt;
-            record.push_exchange(sent_user_turn, note, shared.config.history_turns);
         }
+        shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
     }
 
     // (a) System の 1 行。文言は契約の固定文（事実 + 次の道 — #44 の規律）。
@@ -2429,6 +3002,22 @@ async fn handle_message(
     // 履歴には入れない（`attributed` だけを積む）— 今回だけの文脈を履歴へ
     // 焼き付けると、以後の全ターンのプレフィックスに残り続ける。
     let mut context: Vec<String> = Vec::new();
+
+    // これまでの経緯（Spec 12 P4 の手動要約）。作られていれば毎ターン差す。
+    //
+    // **履歴の中に summary 専用の席は作らない。** ここ（可変文脈）へ差せば、
+    // 畳んでできた `sent_user_turn` がそのまま `exchange` として保存されるので、
+    // 送信と保存が食い違わない（failures.md #45）。履歴へ直接積むと、
+    // 保存側は「送った文字列そのもの」を持つ規律なので二重に入る。
+    //
+    // 注入するのは**最新の 1 本だけ**。古い要約はレコードとして残るが、
+    // 痕跡であって現役ではない。
+    if let Some(summary) = shared.summaries.read().await.get(agent_id) {
+        context.push(format!(
+            "## これまでの経緯（要約）\n{summary}\n\n\
+             （この要約より後のやり取りは、下の履歴にそのまま残っています）"
+        ));
+    }
 
     // RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
     // **毎ターン必ず変わる**（今回の発話で検索するため）。意味の上でも、
@@ -3103,12 +3692,8 @@ async fn handle_message(
             record.total_tokens += tokens;
             record.cached_tokens += cached;
             record.prompt_tokens += prompt;
-            record.push_exchange(
-                &sent_user_turn,
-                &outcome.spoken(),
-                shared.config.history_turns,
-            );
         }
+        shared.push_exchange(&mut world, agent_id, &sent_user_turn, &outcome.spoken());
     }
 
     // 観測用のターン行（Spec 04 Notes 2 / Notes 12 のトリガー判定の実測材料）。

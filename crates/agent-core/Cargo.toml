@@ -11,6 +11,7 @@ async-trait.workspace = true
 chrono.workspace = true
 keyring.workspace = true
 rayon.workspace = true
+redb.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 rmcp.workspace = true

@@ -50,8 +50,15 @@ pub struct AgentRecord {
     /// **自分が直前に何を言ったかを知らない**。同じ入力に同じ出力を返し続け、
     /// 会話が原理的に収束しなくなる（failures.md #12）。
     ///
-    /// プロセス寿命に閉じる。保存しないのは、再開時に古い文脈が復活すると
-    /// 「新しく始めたつもりが続きだった」という分かりにくい状態になるため。
+    /// **セッションの寿命に閉じる**（Spec 12 で変更。それ以前はプロセス寿命だった）。
+    ///
+    /// `sessions.redb` の `exchange` レコードから再起動時に復元される。
+    /// **会話ログからは復元できない** — ここには #45 の規律で「送った文字列
+    /// そのもの」（畳んだ可変文脈込み）が入り、その文字列は `Shared.log` の
+    /// どこにも無い。会話ログだけ戻すと、画面は正しいのに全員が健忘症で始まる。
+    ///
+    /// 始め直したいときは「新規チャット」（= 新しいセッション）を使う。
+    /// エージェントの起動・停止では消えない。
     pub history: Vec<ChatMessage>,
 }
 
@@ -89,11 +96,9 @@ impl AgentRecord {
     /// 400 で拒否される（Anthropic の実測。failures.md #29）。往復の対を
     /// 崩すと役割の交互性が壊れるため、落とすのではなく目印へ置き換える。
     pub fn push_exchange(&mut self, received: &str, replied: &str, max_turns: usize) {
-        let placeholder = "（発言なし）";
-        let received = if received.trim().is_empty() { placeholder } else { received };
-        let replied = if replied.trim().is_empty() { placeholder } else { replied };
-        self.history.push(ChatMessage::user(received));
-        self.history.push(ChatMessage::assistant(replied));
+        let [user, assistant] = exchange_pair(received, replied);
+        self.history.push(user);
+        self.history.push(assistant);
 
         let limit = max_turns.saturating_mul(2);
         if limit == 0 {
@@ -102,6 +107,24 @@ impl AgentRecord {
             self.history.drain(..self.history.len() - limit);
         }
     }
+}
+
+/// 1 往復を [`ChatMessage`] の対（user → assistant）へ落とす。
+///
+/// **空の発言は空のまま積まない。** 履歴の空メッセージは次のターンのリクエストに
+/// 空テキストブロックとして混入し、プロバイダによっては 400 で拒否される
+/// （Anthropic の実測。failures.md #29）。往復の対を崩すと役割の交互性が壊れるため、
+/// 落とすのではなく目印へ置き換える。
+///
+/// [`AgentRecord::push_exchange`]（実行中に積む側）と
+/// [`crate::session_store::SessionStore::restore_histories`]（保存から読み戻す側）が
+/// **同じ規律で組む**必要があるため、実装をここ 1 箇所に置く。分けて書くと、
+/// 復元した履歴だけが空メッセージを持って次のターンで 400 になる。
+pub fn exchange_pair(received: &str, replied: &str) -> [ChatMessage; 2] {
+    let placeholder = "（発言なし）";
+    let received = if received.trim().is_empty() { placeholder } else { received };
+    let replied = if replied.trim().is_empty() { placeholder } else { replied };
+    [ChatMessage::user(received), ChatMessage::assistant(replied)]
 }
 
 /// 接続マップ上のノード座標。

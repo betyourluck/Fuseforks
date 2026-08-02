@@ -351,6 +351,46 @@ export interface PlanWaveRecord {
   elapsedMs: number | null;
 }
 
+/** 保存された会話 1 本の表題と系譜（Spec 12）。 */
+export interface SessionMeta {
+  /** 最初のユーザー発話の先頭 30 字から自動生成される。 */
+  title: string;
+  createdAt: number;
+  /** 一覧の並びと「最新」の判定はこれで行う（ID の辞書順に依存させない）。 */
+  updatedAt: number;
+  /** 分岐で生まれたときだけ入る。 */
+  parentId?: string;
+  /** 分岐した地点の seq（**この seq を含む**）。分岐で生まれたときだけ入る。 */
+  forkedAtSeq?: number;
+  recordCount: number;
+}
+
+/** 会話一覧の 1 行。 */
+export interface SessionSummary {
+  id: string;
+  meta: SessionMeta;
+}
+
+/**
+ * 分岐できる地点（Spec 12）。候補は**ユーザー発話だけ**で、
+ * **先頭の発話は含まない**（その手前は空の会話＝新規チャットと同じになるため）。
+ *
+ * 切るのはその発話の**直前**。依頼そのものは複製先に残さず、{@link ForkPoint.text}
+ * を入力欄へ差し戻して書き換えてもらう — 依頼を含めて複製すると、返事の付かない
+ * 依頼が宙に浮いたまま残る（返事はその発話より後に書かれるため）。
+ */
+export interface ForkPoint {
+  /** `forkSession(id, atSeq)` へそのまま渡す（= この依頼を出す直前の状態）。 */
+  atSeq: number;
+  /** 一覧に出す 1 行（60 字・改行は空白へ潰してある）。 */
+  preview: string;
+  /** 入力欄へ差し戻す**原文**（改行込み・切り詰めなし）。 */
+  text: string;
+  /** この依頼の宛先。差し戻した文面を別のサーヴァントへ送らないために持つ。 */
+  to?: AgentId;
+  tsMs: number;
+}
+
 /** 村の黒板の付箋 1 枚（work_dir の `黒板/` 直下。読み取り専用の投影）。 */
 export interface BlackboardNote {
   /** 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。 */
@@ -388,6 +428,13 @@ export type CoreEvent =
     }
   | { type: "agentTyping"; agentId: AgentId; active: boolean }
   | { type: "conversationCleared" }
+  /**
+   * 開いている会話が変わった（Spec 12）。**加算的変更** —
+   * `conversationCleared` の意味は「会話ペインを空にせよ」のまま変えない。
+   * 新規チャット・resume・fork・continueLatest のすべてがこの順
+   * （`conversationCleared` → `sessionSwitched`）で 2 本出る。
+   */
+  | { type: "sessionSwitched"; sessionId: string }
   | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った

@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
     },
   ]),
   workspacePath: vi.fn(async () => "C:\\workspace"),
+  currentSession: vi.fn(async () => "session_1"),
+  listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
   handler: null as ((e: { payload: CoreEvent }) => void) | null,
 }));
