@@ -103,7 +103,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="agent-list flex h-full flex-col">
     <!--
       ヘッダの高さは 4 ペイン共通で 38px に固定する（タイトルバーと同じ）。
       **パディングで揃えない** — 中身の高さがペインごとに違う（ボタンを持つ側は
@@ -137,7 +137,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         {{ $t("agentList.runningSummary", { running: runningCount, total: state.agents.length }) }}
       </span>
       <button
-        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.manageTemplates')"
         :aria-label="$t('agentList.manageTemplates')"
         @click="showTemplates = true"
@@ -158,9 +158,10 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
           <circle cx="12" cy="12" r="1.5" />
           <path d="M9 16.9 8.1 20 12 18.5l3.9 1.5-.9-3.1" />
         </svg>
+        <span class="agent-list-action-label">{{ $t("agentList.modelRegistration") }}</span>
       </button>
       <button
-        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.addServant')"
         :aria-label="$t('agentList.addServant')"
         @click="creating = !creating"
@@ -176,6 +177,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         >
           <path d="M12 5v14M5 12h14" />
         </svg>
+        <span class="agent-list-action-label">{{ $t("agentList.addServantLabel") }}</span>
       </button>
     </header>
 
@@ -251,6 +253,17 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
 </template>
 
 <style>
+.agent-list {
+  container-type: inline-size;
+  container-name: agent-list;
+}
+
+@container agent-list (max-width: 329px) {
+  .agent-list-action-label {
+    display: none;
+  }
+}
+
 .agent-card--dragging {
   border-color: var(--color-accent);
 }
