@@ -423,9 +423,15 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             新規作成のときにしか起きない（role_contract 凍結 4。上書きは
             取り消せないので、既存の Construct.md を雛形で潰さない）。
             その旨を注記に書く — 書かないと「役職を変えたのに中身が変わらない」
-            と読まれる。役職が 1 つも無い村では出さない（選べない選択肢を並べない）。
+            と読まれる。
+
+            **出す条件は「村に役職がある」か「この個体が役職を持っている」。**
+            前半は「選べない選択肢を並べない」ため。後半を入れないと、役職を
+            全部削除した村で**個体に残った孤児の `role_id` を外す入口が消える**
+            （動作には影響しないが、「選べるのに変えられない」と同じ形の穴。
+            failures.md #53）。
           -->
-          <template v-if="state.roles.length">
+          <template v-if="state.roles.length || draft.roleId">
             <label class="mb-1 block text-[11px] text-ink-dim">
               {{ $t("agentSettings.role") }}
             </label>
