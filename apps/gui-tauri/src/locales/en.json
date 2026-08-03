@@ -37,20 +37,22 @@
     "title": "System settings",
     "close": "Close",
     "loading": "Loading…",
-    "groupVillage": "Village settings",
-    "groupScreen": "This screen",
-    "menuTokenBudget": "Token ceiling",
+    "groupGeneral": "General",
+    "groupCost": "Cost management",
+    "groupUi": "User interface",
     "menuLanguage": "Language",
-    "menuEdgeConfirm": "Edge-delete confirmation",
+    "menuTokenLimit": "Token limit",
+    "menuMessages": "Message visibility",
+    "villageScope": "This setting is stored in the village configuration (world.json), so it travels with the village when you share it.",
     "tokenBudget": {
-      "heading": "Token ceiling (effective tokens)",
+      "heading": "Token limit (effective tokens)",
       "help": "The sum of uncached ×1 + cached ×0.1 + output ×4. Managed internally in milli units; displayed as a rounded-up integer. When a single request's token spend reaches this value, the request is cut off automatically.",
-      "hasCeiling": "With ceiling",
+      "hasCeiling": "With limit",
       "unit": "effective tokens / request",
-      "invalid": "Enter an integer of 1 or more (0 cannot remove the ceiling — choose \"No ceiling\" instead).",
+      "invalid": "Enter an integer of 1 or more (0 cannot remove the limit — choose \"No limit\" instead).",
       "guideline": "Guide: village of ~6 = 1,000,000 / 12-servant scale or output-heavy code generation = 2,000,000–3,000,000",
-      "noCeiling": "No ceiling",
-      "noCeilingWarning": "In a village without a ceiling, a single request keeps burning tokens when a failure loop occurs. Setting a limit is recommended.",
+      "noCeiling": "No limit",
+      "noCeilingWarning": "In a village without a limit, a single request keeps burning tokens when a failure loop occurs. Setting a limit is recommended.",
       "saved": "Saved. Takes effect from the next request (no restart needed).",
       "save": "Save",
       "saving": "Saving…"
@@ -63,12 +65,16 @@
       "save": "Save",
       "saving": "Saving…"
     },
-    "edgeConfirm": {
-      "heading": "Edge-delete confirmation",
-      "intro": "On the village map, clicking a connection (edge) deletes it. Connections cannot be restored.",
-      "checkbox": "Show a confirmation dialog before deleting",
-      "offWarning": "While confirmation is off, a single click on an edge removes the connection.",
-      "instantNote": "Changes are saved immediately (this setting belongs to this screen only)."
+    "messages": {
+      "heading": "Message visibility",
+      "intro": "Confirmations and notices that can be suppressed are collected here.",
+      "instantNote": "Changes are saved immediately, on this machine only (not part of the village configuration).",
+      "edgeDelete": {
+        "heading": "Deleting a connection (edge)",
+        "intro": "On the village map, clicking a connection (edge) deletes it. Connections cannot be restored.",
+        "checkbox": "Show a confirmation dialog before deleting",
+        "offWarning": "While confirmation is off, a single click on an edge removes the connection."
+      }
     }
   },
   "common": {
@@ -492,7 +498,7 @@
     "SESSION_NOT_FOUND": "The conversation is not stored",
     "SESSION_STORE_FAILED": "A session-store operation failed",
     "SESSION_SWITCH_BLOCKED": "Cannot switch conversations while turns are in flight",
-    "INVALID_TOKEN_BUDGET": "0 cannot be set as the token ceiling (choose No ceiling instead)",
+    "INVALID_TOKEN_BUDGET": "0 cannot be set as the token limit (choose No limit instead)",
     "INVALID_TOPOLOGY": "The topology is invalid",
     "ALREADY_RUNNING": "Already running",
     "NOT_RUNNING": "Not running",

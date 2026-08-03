@@ -6,8 +6,14 @@
  * 右がその設定のページ。**未実装の設定はメニューに並べない** — 目録に載せて
  * 触れないのは、できないことをできると見せる嘘になる。
  *
- * 保存の挙動はページごとに正直に書く: 村の設定（天井・言語）は「保存」を押した
- * ときだけ IPC で書き、この画面の設定（線削除の確認）は即保存。
+ * **分類は主題で切る**（全般 / コスト管理 / ユーザーインターフェース）。初版は
+ * 保存先（`world.json` か `localStorage` か）で切っていたが、それは実装の都合が
+ * そのまま目録に出た形で読みにくかった（2026-08-03 の実機指摘）。保存先は
+ * 分類ではなく各ページの注記で示す — 村に保存される設定は配布すると付いて回る、
+ * という利用者に実害のある事実だけが伝わればよい。
+ *
+ * 保存の挙動もページごとに正直に書く: 村の設定（天井・言語）は「保存」を押した
+ * ときだけ IPC で書き、端末側の設定（メッセージ表示/非表示）は即保存。
  * 触らず閉じたら `world.json` も `localStorage` も書き換わらない。
  */
 import { computed, onMounted, ref } from "vue";
@@ -23,11 +29,18 @@ const emit = defineEmits<{ (e: "close"): void }>();
 
 const { t } = useI18n();
 
-/** 左メニューの選択。村の設定 = 天井・言語 / この画面の設定 = 線削除の確認。 */
-type Page = "tokenBudget" | "language" | "edgeConfirm";
-const page = ref<Page>("tokenBudget");
+/** 左メニューの選択。既定は目録の先頭（全般 → 言語）。 */
+type Page = "language" | "tokenBudget" | "messages";
+const page = ref<Page>("language");
 
-/** この画面の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
+/**
+ * 村（`world.json`）に保存されるページ。読み込みに IPC が要る側でもあるので、
+ * 「読み込み中…」の覆いと村の注記はこの 1 つの定義から引く。
+ */
+const VILLAGE_PAGES: Page[] = ["language", "tokenBudget"];
+const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
+
+/** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
 const { settings } = useUiSettings();
 
 const loading = ref(true);
@@ -158,14 +171,7 @@ function selectPage(next: Page): void {
       <div class="flex min-h-0 flex-1">
         <!-- 左メニュー = 設定できるものの目録（S2）。 -->
         <nav class="w-44 shrink-0 overflow-y-auto border-r border-line bg-surface-0 py-2 text-[11px]">
-          <p class="px-3 pb-1 pt-1 font-semibold text-ink-dim">{{ $t("settings.groupVillage") }}</p>
-          <button
-            class="menu-item"
-            :class="{ active: page === 'tokenBudget' }"
-            @click="selectPage('tokenBudget')"
-          >
-            {{ $t("settings.menuTokenBudget") }}
-          </button>
+          <p class="px-3 pb-1 pt-1 font-semibold text-ink-dim">{{ $t("settings.groupGeneral") }}</p>
           <button
             class="menu-item"
             :class="{ active: page === 'language' }"
@@ -173,78 +179,35 @@ function selectPage(next: Page): void {
           >
             {{ $t("settings.menuLanguage") }}
           </button>
-          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupScreen") }}</p>
+
+          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupCost") }}</p>
           <button
             class="menu-item"
-            :class="{ active: page === 'edgeConfirm' }"
-            @click="selectPage('edgeConfirm')"
+            :class="{ active: page === 'tokenBudget' }"
+            @click="selectPage('tokenBudget')"
           >
-            {{ $t("settings.menuEdgeConfirm") }}
+            {{ $t("settings.menuTokenLimit") }}
+          </button>
+
+          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'messages' }"
+            @click="selectPage('messages')"
+          >
+            {{ $t("settings.menuMessages") }}
           </button>
         </nav>
 
         <!-- 右ページ -->
         <div class="min-h-0 flex-1 overflow-y-auto p-4 text-[11px]">
-          <!-- 読み込み待ちは IPC を持つページ（村の設定）だけ。localStorage のページは即描く。 -->
-          <p
-            v-if="loading && (page === 'tokenBudget' || page === 'language')"
-            class="py-8 text-center text-ink-dim"
-          >
+          <!-- 読み込み待ちは IPC を持つページ（村に保存される側）だけ。
+               localStorage のページは即描く。 -->
+          <p v-if="loading && isVillagePage" class="py-8 text-center text-ink-dim">
             {{ $t("settings.loading") }}
           </p>
 
-          <template v-else-if="page === 'tokenBudget'">
-            <h3 class="mb-1 text-xs font-semibold text-ink">
-              {{ $t("settings.tokenBudget.heading") }}
-            </h3>
-            <!-- ヘルプ文言は settings_contract で凍結（rev3 D1 — 素の値は出さない）。 -->
-            <p class="mb-3 text-ink-dim">{{ $t("settings.tokenBudget.help") }}</p>
-
-            <p v-if="error" class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail">
-              {{ error }}
-            </p>
-
-            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
-              <label class="flex items-center gap-2">
-                <input v-model="hasCeiling" type="radio" :value="true" />
-                <span>{{ $t("settings.tokenBudget.hasCeiling") }}</span>
-                <input
-                  v-model.number="ceilingInput"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :disabled="!hasCeiling"
-                  class="w-32 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent disabled:opacity-40"
-                />
-                <span class="text-ink-dim">{{ $t("settings.tokenBudget.unit") }}</span>
-              </label>
-              <p v-if="hasCeiling && !ceilingValid" class="pl-6 text-fail">
-                {{ $t("settings.tokenBudget.invalid") }}
-              </p>
-              <p class="pl-6 text-ink-dim">{{ $t("settings.tokenBudget.guideline") }}</p>
-
-              <label class="flex items-center gap-2">
-                <input v-model="hasCeiling" type="radio" :value="false" />
-                <span>{{ $t("settings.tokenBudget.noCeiling") }}</span>
-              </label>
-              <!-- 天井なしはその場で赤く示す（機構 3 — 起動 WARN を待たせない）。 -->
-              <p v-if="!hasCeiling" class="pl-6 text-fail">
-                {{ $t("settings.tokenBudget.noCeilingWarning") }}
-              </p>
-
-              <div class="flex items-center justify-end gap-2 pt-1">
-                <span v-if="savedNote" class="text-run">{{ savedNote }}</span>
-                <button
-                  class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
-                  :disabled="!ceilingValid || !ceilingDirty || busy"
-                  @click="saveCeiling"
-                >
-                  {{ busy ? $t("settings.tokenBudget.saving") : $t("settings.tokenBudget.save") }}
-                </button>
-              </div>
-            </div>
-          </template>
-
+          <!-- 全般 -->
           <template v-else-if="page === 'language'">
             <h3 class="mb-1 text-xs font-semibold text-ink">
               {{ $t("settings.language.heading") }}
@@ -280,24 +243,89 @@ function selectPage(next: Page): void {
                 </button>
               </div>
             </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
           </template>
 
-          <template v-else-if="page === 'edgeConfirm'">
+          <!-- コスト管理 -->
+          <template v-else-if="page === 'tokenBudget'">
             <h3 class="mb-1 text-xs font-semibold text-ink">
-              {{ $t("settings.edgeConfirm.heading") }}
+              {{ $t("settings.tokenBudget.heading") }}
             </h3>
-            <p class="mb-3 text-ink-dim">{{ $t("settings.edgeConfirm.intro") }}</p>
+            <!-- ヘルプ文言は settings_contract で凍結（rev3 D1 — 素の値は出さない）。 -->
+            <p class="mb-3 text-ink-dim">{{ $t("settings.tokenBudget.help") }}</p>
+
+            <p v-if="error" class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail">
+              {{ error }}
+            </p>
 
             <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
               <label class="flex items-center gap-2">
+                <input v-model="hasCeiling" type="radio" :value="true" />
+                <span>{{ $t("settings.tokenBudget.hasCeiling") }}</span>
+                <input
+                  v-model.number="ceilingInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :disabled="!hasCeiling"
+                  class="w-32 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent disabled:opacity-40"
+                />
+                <span class="text-ink-dim">{{ $t("settings.tokenBudget.unit") }}</span>
+              </label>
+              <p v-if="hasCeiling && !ceilingValid" class="pl-6 text-fail">
+                {{ $t("settings.tokenBudget.invalid") }}
+              </p>
+              <p class="pl-6 text-ink-dim">{{ $t("settings.tokenBudget.guideline") }}</p>
+
+              <label class="flex items-center gap-2">
+                <input v-model="hasCeiling" type="radio" :value="false" />
+                <span>{{ $t("settings.tokenBudget.noCeiling") }}</span>
+              </label>
+              <!-- 制限なしはその場で赤く示す（機構 3 — 起動 WARN を待たせない）。 -->
+              <p v-if="!hasCeiling" class="pl-6 text-fail">
+                {{ $t("settings.tokenBudget.noCeilingWarning") }}
+              </p>
+
+              <div class="flex items-center justify-end gap-2 pt-1">
+                <span v-if="savedNote" class="text-run">{{ savedNote }}</span>
+                <button
+                  class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!ceilingValid || !ceilingDirty || busy"
+                  @click="saveCeiling"
+                >
+                  {{ busy ? $t("settings.tokenBudget.saving") : $t("settings.tokenBudget.save") }}
+                </button>
+              </div>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+          </template>
+
+          <!--
+            ユーザーインターフェース: 非表示にできるメッセージの一覧。
+            **節を足せば項目が増える形**にしてあるが、機構としての切り替えは
+            いまも線の削除 1 つだけ（settings_contract）。1 つ足すたびに
+            「便利さと安全のどちらかを機械が決められない」の検討が要る。
+          -->
+          <template v-else-if="page === 'messages'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.messages.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.messages.intro") }}</p>
+
+            <section class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <h4 class="font-semibold text-ink">
+                {{ $t("settings.messages.edgeDelete.heading") }}
+              </h4>
+              <p class="text-ink-dim">{{ $t("settings.messages.edgeDelete.intro") }}</p>
+              <label class="flex items-center gap-2">
                 <input v-model="settings.confirmEdgeDelete" type="checkbox" />
-                <span>{{ $t("settings.edgeConfirm.checkbox") }}</span>
+                <span>{{ $t("settings.messages.edgeDelete.checkbox") }}</span>
               </label>
               <p v-if="!settings.confirmEdgeDelete" class="pl-6 text-warn">
-                {{ $t("settings.edgeConfirm.offWarning") }}
+                {{ $t("settings.messages.edgeDelete.offWarning") }}
               </p>
-              <p class="pl-6 text-ink-dim">{{ $t("settings.edgeConfirm.instantNote") }}</p>
-            </div>
+            </section>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.messages.instantNote") }}</p>
           </template>
         </div>
       </div>
