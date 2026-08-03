@@ -5984,6 +5984,8 @@ fn a_role(id: &str, name: &str, defaults: agent_core::AgentRoleDefaults) -> agen
         id: id.into(),
         name: name.into(),
         description: "テスト用".into(),
+        // 色はプロンプトに載らないので、コア側のテストでは常に None で足りる。
+        color: None,
         defaults,
     }
 }
@@ -6248,6 +6250,7 @@ async fn the_roster_carries_the_role_name_but_never_the_description() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: "この文字列はプロンプトに出てはいけない".into(),
+            color: None,
             defaults: agent_core::AgentRoleDefaults::default(),
         })
         .await
@@ -6362,6 +6365,7 @@ async fn adding_a_role_does_not_move_the_stable_prefix() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
+            color: None,
             defaults: agent_core::AgentRoleDefaults {
                 construct: "この本文は既存の個体へ入ってはいけない".into(),
                 max_tool_iterations: Some(99),
@@ -6416,6 +6420,7 @@ async fn every_role_display_change_leaves_one_system_line() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
+            color: None,
             defaults: agent_core::AgentRoleDefaults::default(),
         })
         .await
@@ -6443,6 +6448,7 @@ async fn every_role_display_change_leaves_one_system_line() {
             id: "researcher".into(),
             name: "コード調査役".into(),
             description: String::new(),
+            color: None,
             defaults: agent_core::AgentRoleDefaults::default(),
         })
         .await
@@ -6469,6 +6475,7 @@ async fn an_update_that_keeps_the_role_stays_silent() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
+            color: None,
             defaults: agent_core::AgentRoleDefaults::default(),
         })
         .await

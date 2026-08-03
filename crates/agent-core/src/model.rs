@@ -180,6 +180,39 @@ impl From<String> for AgentRoleId {
     }
 }
 
+/// 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
+///
+/// # なぜ自由な色文字列にしないか
+///
+/// 1. **配色は `style.css` の `@theme` 1 箇所で決める**という規律を保つため。
+///    `world.json` に生の色が入ると、配色がテーマの外へ漏れる
+/// 2. **読みやすさを構造で保証するため。** 明度と彩度は実装側で固定し、
+///    変わるのは色相だけ（`avatarHue` と同じ形）。自由入力にすると
+///    暗い背景に暗い色を選べてしまい、読めないバッジが作れる
+/// 3. 村を配ったときに**受け取った側のテーマでも成立する**
+///
+/// `None` = 色なし（既定の枠線と字色。今までのバッジと同じ見た目）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoleColor {
+    /// 赤。
+    Red,
+    /// 橙。
+    Orange,
+    /// 琥珀。
+    Amber,
+    /// 緑。
+    Green,
+    /// 青緑。
+    Teal,
+    /// 青。
+    Blue,
+    /// 菫。
+    Violet,
+    /// 桃。
+    Pink,
+}
+
 /// 役職（Spec 14）。**雛形**と**ラベル**の 2 役を兼ねる。
 ///
 /// 兼ねるが、混ぜない — [`AgentRoleDefaults`] は**新規作成のときだけ**効き
@@ -203,6 +236,16 @@ pub struct AgentRole {
     /// そちらは安定部なのでキャッシュが効く。
     #[serde(default)]
     pub description: String,
+    /// バッジの色。`None` = 色なし（既定の枠線と字色）。
+    ///
+    /// **`name` と同じ「参照」側**（`defaults` ではない）。色を変えると
+    /// **既にいる全個体のバッジが追従する** — 表示の属性であって、
+    /// 作成時にコピーされる設定ではないため（機構 3 の分割）。
+    ///
+    /// **プロンプトには入らない。** 顔ぶれに載るのは役職名だけで、色は
+    /// 画面のためだけにある（`role_contract` 凍結 6）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<RoleColor>,
     /// 新規作成のときだけ流し込まれる既定値。
     #[serde(default)]
     pub defaults: AgentRoleDefaults,

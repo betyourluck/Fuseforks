@@ -993,6 +993,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             description: String::new(),
+            color: None,
             defaults: crate::model::AgentRoleDefaults::default(),
         }
     }

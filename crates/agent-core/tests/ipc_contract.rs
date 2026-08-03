@@ -81,10 +81,32 @@ fn wire_field_sets_are_frozen() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
+            color: None,
             defaults: AgentRoleDefaults::default(),
         }),
+        // color は skip_serializing_if なので、None では現れない。
         vec!["defaults", "description", "id", "name"],
         "Role のフィールドが変わった"
+    );
+
+    // 値が入った状態でも固定する。**空だけを固定していると、任意フィールドを
+    // 足しても凍結が反応しない**（AgentMessage の coRecipients / grounding が
+    // 実際にこの穴を通り抜けた）。
+    assert_eq!(
+        wire_keys(&AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: "説明".into(),
+            color: Some(agent_core::RoleColor::Teal),
+            defaults: AgentRoleDefaults::default(),
+        }),
+        vec!["color", "defaults", "description", "id", "name"],
+        "Role の省略フィールドが変わった"
+    );
+    // 色の値は lowercase（TS の union リテラルと一致させる）。
+    assert_eq!(
+        serde_json::to_value(agent_core::RoleColor::Violet).unwrap(),
+        serde_json::json!("violet")
     );
 
     assert_eq!(

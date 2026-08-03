@@ -120,6 +120,23 @@ export interface AgentSpec {
 export type RoleId = string;
 
 /**
+ * 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
+ *
+ * 対応する CSS 変数は `style.css` の `--color-role-*`。明度と彩度は固定で、
+ * 変わるのは色相だけ — 自由入力にすると暗い背景に暗い色を選べてしまい、
+ * 読めないバッジが作れる（`avatarHue` と同じ形）。
+ */
+export type RoleColor =
+  | "red"
+  | "orange"
+  | "amber"
+  | "green"
+  | "teal"
+  | "blue"
+  | "violet"
+  | "pink";
+
+/**
  * 役職（Spec 14）。**雛形**と**ラベル**の 2 役を兼ねる。
  *
  * `defaults` は**新規作成のときだけ**流し込まれ（コピー）、`name` は
@@ -135,6 +152,14 @@ export interface Role {
    * 読み手は「どの雛形を選ぶか」を決める人だけ。
    */
   description: string;
+  /**
+   * バッジの色。`null` / 未設定 = 色なし（既定の枠線と字色）。
+   *
+   * **`name` と同じ「参照」側**（`defaults` ではない）。色を変えると
+   * **既にいる全個体のバッジが追従する** — 表示の属性であって、作成時に
+   * コピーされる設定ではない。**プロンプトには入らない。**
+   */
+  color: RoleColor | null;
   defaults: RoleDefaults;
 }
 

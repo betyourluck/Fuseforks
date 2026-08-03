@@ -30,7 +30,7 @@ import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import type { Role } from "../types";
+import type { Role, RoleColor } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -46,6 +46,29 @@ const { state, refreshAll } = useOrchestrator();
  * 作られた個体の設定で決まる。
  */
 const BUNDLED_TOOLS = ["remember", "grep", "fd", "diff", "sd", "yq", "file"] as const;
+
+/**
+ * バッジの色（Spec 14）。**閉じた列挙**で、色値は `style.css` の
+ * `--color-role-*` にしかない。自由入力にすると暗い背景に暗い色を選べてしまい、
+ * 読めないバッジが作れる — 明度と彩度を固定して色相だけ変える形にしてある。
+ *
+ * 並びは色相の順。**Rust 側の `RoleColor` と 1 対 1**（手動同期の契約）。
+ */
+const ROLE_COLORS: RoleColor[] = [
+  "red",
+  "orange",
+  "amber",
+  "green",
+  "teal",
+  "blue",
+  "violet",
+  "pink",
+];
+
+/** 色見本の CSS 値。`roleLabel.ts` と同じ規則で組む（生の色を書かない）。 */
+function swatch(color: RoleColor): string {
+  return `var(--color-role-${color})`;
+}
 
 const busy = ref(false);
 const error = ref("");
@@ -63,6 +86,7 @@ function blank(): Role {
     id: "",
     name: "",
     description: "",
+    color: null,
     defaults: {
       construct: "",
       modelTemplateId: null,
@@ -198,7 +222,19 @@ async function remove(role: Role): Promise<void> {
               class="flex items-center gap-2 rounded border border-line px-2 py-1.5"
             >
               <div class="min-w-0 flex-1">
-                <p class="truncate font-medium text-ink">{{ role.name }}</p>
+                <p class="truncate">
+                  <span
+                    class="rounded border px-1 py-px text-[10px] leading-none"
+                    :class="role.color ? '' : 'border-line text-ink-dim'"
+                    :style="
+                      role.color
+                        ? { borderColor: swatch(role.color), color: swatch(role.color) }
+                        : undefined
+                    "
+                  >
+                    {{ role.name }}
+                  </span>
+                </p>
                 <p class="truncate text-ink-dim">
                   {{ role.description || $t("roles.noDescription") }}
                 </p>
@@ -248,6 +284,39 @@ async function remove(role: Role): Promise<void> {
             />
             <span class="mt-0.5 block text-ink-dim">{{ $t("roles.fields.nameHelp") }}</span>
           </label>
+
+          <div class="mb-2">
+            <span class="mb-0.5 block text-ink-dim">{{ $t("roles.fields.color") }}</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                class="rounded border px-1.5 py-0.5 text-[10px] leading-none"
+                :class="
+                  draft.color === null ? 'border-accent text-accent' : 'border-line text-ink-dim'
+                "
+                @click="draft.color = null"
+              >
+                {{ $t("roles.fields.noColor") }}
+              </button>
+              <!--
+                色見本は**バッジそのものの見た目**で出す — 小さな丸で選ばせると、
+                選んだ結果が一覧や地図でどう見えるかが選ぶ時点で分からない。
+              -->
+              <button
+                v-for="c in ROLE_COLORS"
+                :key="c"
+                type="button"
+                class="rounded border px-1.5 py-0.5 text-[10px] leading-none"
+                :style="{ borderColor: swatch(c), color: swatch(c) }"
+                :class="draft.color === c ? 'ring-1' : 'opacity-60'"
+                :title="c"
+                @click="draft.color = c"
+              >
+                {{ draft.name || $t("roles.fields.colorSample") }}
+              </button>
+            </div>
+            <span class="mt-0.5 block text-ink-dim">{{ $t("roles.fields.colorHelp") }}</span>
+          </div>
 
           <label class="mb-2 block">
             <span class="mb-0.5 block text-ink-dim">{{ $t("roles.fields.description") }}</span>

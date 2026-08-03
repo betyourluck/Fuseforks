@@ -515,9 +515,24 @@ enums:
       村を配ると役職も付いて回る。
 
         Role { id: RoleId, name: String, description: String,
-               defaults: RoleDefaults }
+               color: Option<RoleColor>, defaults: RoleDefaults }
 
       description は**人が読む説明**でプロンプトには入らない (凍結 6)。
+
+      **color は `name` と同じ「参照」側**で `defaults` ではない (凍結 3 の分割)。
+      表示の属性なので、色を変えると**既にいる全個体のバッジが即座に追従する**。
+      **プロンプトには入らない** — 顔ぶれに載るのは名前だけで、色は画面のためだけ。
+
+      **RoleColor は閉じた列挙** (red / orange / amber / green / teal / blue /
+      violet / pink)。自由な色文字列を採らない理由は 3 つ:
+        - 配色は style.css の @theme 1 箇所で決める規律を保つ。world.json に
+          生の色が入ると配色がテーマの外へ漏れる
+        - **読みやすさを構造で保証する。** 明度と彩度を実装側で固定し、変わるのは
+          色相だけ (avatarHue と同じ形)。自由入力は暗い背景に暗い色を選べてしまい、
+          読めないバッジが作れる
+        - 村を配ったとき、受け取った側のテーマでも成立する
+      色値は `--color-role-{名前}` の CSS 変数にしかない。**列挙を増やしたら
+      style.css も足す** (手動同期の契約)。
 
       ## 凍結 2. 雛形が持つ欄 — AgentSpec の全欄を 3 分割する
 

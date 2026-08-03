@@ -12,7 +12,7 @@ import { avatarHue, avatarInitial } from "../lib/avatar";
 import type { ToolRun } from "../lib/chatRows";
 import { formatError } from "../lib/errorText";
 import { compactNumber, exactNumber } from "../lib/format";
-import { roleLabel } from "../lib/roleLabel";
+import { roleBadge } from "../lib/roleLabel";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABEL_KEYS, type AgentSnapshot } from "../types";
 
@@ -46,7 +46,7 @@ const { state } = useOrchestrator();
  * `Construct.md` も道具も手で変えられるので、「調査役」のまま中身が別の個体は
  * 正当な操作で生まれる。`title` にもそう書く — 画面の言葉と仕様の言葉を分けない。
  */
-const role = computed(() => roleLabel(props.agent.roleId, state.roles));
+const role = computed(() => roleBadge(props.agent.roleId, state.roles));
 
 /** 状態に対応する表示色。停止・稼働・失敗が一目で分かることを優先する。 */
 const statusColor = computed(() => {
@@ -163,10 +163,12 @@ const cacheTone = computed(() => {
       <!-- 役職バッジ（Spec 14）。名前の直後に置く — 「誰が」の一部だから。 -->
       <span
         v-if="role"
-        class="shrink-0 rounded border border-line px-1 py-px text-[10px] leading-none text-ink-dim"
-        :title="$t('roles.badgeTitle', { name: role })"
+        class="shrink-0 rounded border px-1 py-px text-[10px] leading-none"
+        :class="role.color ? '' : 'border-line text-ink-dim'"
+        :style="role.color ? { borderColor: role.color, color: role.color } : undefined"
+        :title="$t('roles.badgeTitle', { name: role.name })"
       >
-        {{ role }}
+        {{ role.name }}
       </span>
       <span class="min-w-0 flex-1"></span>
 

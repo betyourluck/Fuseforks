@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { roleLabel } from "./roleLabel";
+import { roleBadge, roleLabel } from "./roleLabel";
 import type { Role } from "../types";
 
-function role(id: string, name: string): Role {
+function role(id: string, name: string, color: Role["color"] = null): Role {
   return {
     id,
     name,
     description: "",
+    color,
     defaults: {
       construct: "",
       modelTemplateId: null,
@@ -42,5 +43,31 @@ describe("roleLabel", () => {
   it("改名は表示に追従する（名前は参照であってコピーではない）", () => {
     const renamed = [role("researcher", "コード調査役")];
     expect(roleLabel("researcher", renamed)).toBe("コード調査役");
+  });
+});
+
+describe("roleBadge（色つき）", () => {
+  it("色なしの役職では color が付かない（既定の枠線・字色をそのまま使う）", () => {
+    const badge = roleBadge("researcher", ROLES);
+    expect(badge).toEqual({ name: "調査役", color: undefined });
+  });
+
+  it("色ありの役職は CSS 変数を返す。**生の色値を組み立てない**", () => {
+    // 配色は style.css の @theme にしか無い、という規律をここで留める。
+    const colored = [role("reviewer", "査読役", "teal")];
+    expect(roleBadge("reviewer", colored)).toEqual({
+      name: "査読役",
+      color: "var(--color-role-teal)",
+    });
+  });
+
+  it("引けない id は null（色の有無に関係なく表示ごと省く）", () => {
+    expect(roleBadge("消えた役職", ROLES)).toBeNull();
+    expect(roleBadge(null, ROLES)).toBeNull();
+  });
+
+  it("roleLabel は roleBadge の名前と一致する（2 実装に割れない）", () => {
+    const colored = [role("reviewer", "査読役", "pink")];
+    expect(roleLabel("reviewer", colored)).toBe(roleBadge("reviewer", colored)!.name);
   });
 });

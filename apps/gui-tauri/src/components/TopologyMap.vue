@@ -22,7 +22,7 @@ import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
 import { compactNumber } from "../lib/format";
-import { roleLabel } from "../lib/roleLabel";
+import { roleBadge } from "../lib/roleLabel";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
@@ -40,8 +40,8 @@ const { settings } = useUiSettings();
  * ノードに出す役職名。引けなければ `null` で**バッジごと描かない**
  * （`role_contract` 凍結 5 — 3 箇所は `roleLabel` の 1 実装を通す）。
  */
-function roleOf(agent: { roleId: string | null }): string | null {
-  return roleLabel(agent.roleId, state.roles);
+function roleOf(agent: { roleId: string | null }) {
+  return roleBadge(agent.roleId, state.roles);
 }
 
 /** 円環配置の半径。ノード数に応じて広げ、重なりを避ける。 */
@@ -275,10 +275,16 @@ function borderClass(status: string): string {
               -->
               <span
                 v-if="roleOf(data.agent)"
-                class="rounded border border-line px-1 py-px leading-none"
-                :title="$t('roles.badgeTitle', { name: roleOf(data.agent) })"
+                class="rounded border px-1 py-px leading-none"
+                :class="roleOf(data.agent)!.color ? '' : 'border-line'"
+                :style="
+                  roleOf(data.agent)!.color
+                    ? { borderColor: roleOf(data.agent)!.color, color: roleOf(data.agent)!.color }
+                    : undefined
+                "
+                :title="$t('roles.badgeTitle', { name: roleOf(data.agent)!.name })"
               >
-                {{ roleOf(data.agent) }}
+                {{ roleOf(data.agent)!.name }}
               </span>
               <span>{{ $t(STATUS_LABEL_KEYS[data.agent.status as keyof typeof STATUS_LABEL_KEYS]) }}</span>
               <span class="tabular-nums">

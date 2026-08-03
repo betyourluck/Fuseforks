@@ -626,7 +626,11 @@
       "name": "Role name",
       "nameHelp": "The name shown on badges and in the roster. Renaming it updates every display.",
       "description": "Description",
-      "descriptionHelp": "For whoever picks a template on this screen. It is never sent to servants."
+      "descriptionHelp": "For whoever picks a template on this screen. It is never sent to servants.",
+      "color": "Badge color",
+      "noColor": "No color",
+      "colorSample": "Sample",
+      "colorHelp": "Used for badges in the list and on the village map. Changing it applies immediately to every servant holding this role."
     },
     "defaults": {
       "heading": "Defaults applied when creating with this role",
