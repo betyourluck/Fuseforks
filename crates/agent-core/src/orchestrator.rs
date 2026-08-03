@@ -1021,7 +1021,16 @@ impl Orchestrator {
             // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
             let previous = self.shared.summaries.read().await.get(&agent_id).cloned();
 
-            let mut messages = Vec::with_capacity(history.len() + 3);
+            // 畳む前の通数と文字数。ログに出す — 「4 往復を要約に置き換えた」のか
+            // 「40 往復ぶんか」で、要約の効きの読み方がまるで違う。
+            //
+            // **文字数のほうが本体**（2026-08-03 の実機で判明）。要約が畳んだ履歴より
+            // 大きくなることが実際に起きる（opus が 1 往復を 1,163 字に書き広げた）。
+            // しかも要約は滑る窓と違って落ちないので、**膨らんだぶんは以後の全ターンに
+            // 乗り続ける**。通数だけでは、その損得が 1 行から読めない。
+            let history_msgs = history.len();
+            let history_chars: usize = history.iter().map(|m| m.content.chars().count()).sum();
+            let mut messages = Vec::with_capacity(history_msgs + 3);
             messages.push(ChatMessage::system(SUMMARY_SYSTEM));
             if let Some(previous) = &previous {
                 messages.push(ChatMessage::user(format!(
@@ -1051,13 +1060,50 @@ impl Orchestrator {
                 effort: template.effort,
                 cacheable_prefix_len: 0,
             };
-            let text = match backend.chat(request).await {
-                Ok(response) => response.text.unwrap_or_default(),
+            let response = match backend.chat(request).await {
+                Ok(response) => response,
                 Err(err) => {
                     note!("WARN summarize: {agent_id}（{name}）の要約に失敗しました: {err}");
                     continue;
                 }
             };
+
+            // **使ったトークンは必ず数える。** 要約はターンループの外で走る
+            // LLM 呼び出しなので、ここで積まないと**押した人が払った分がどの
+            // 数字にも現れない** — カードの累計にも、村の集計にも、ログにも。
+            // 失敗した呼び出しぶんも課金されるが、それは response が無いので
+            // 数えられない（プロバイダが usage を返さない経路と同じ扱い）。
+            let usage = response.usage;
+            if let Ok(record) = self.shared.world.write().await.agent_mut(&agent_id) {
+                record.total_tokens += usage.total();
+                record.prompt_tokens += usage.prompt;
+                record.cached_tokens += usage.cache_read;
+            }
+            let text = response.text.unwrap_or_default();
+            // ターンの `turn:` 行と対になる 1 行。要約は会話ログに 1 行しか
+            // 残らないので、**何にいくら掛かったか**はここにしか出ない。
+            let summary_chars = text.chars().count();
+            note!(
+                "summarize: agent={agent_id} model={} covers_up_to={covers_up_to_seq} \
+                 folded_msgs={history_msgs} folded_chars={history_chars} \
+                 summary_chars={summary_chars} prompt={} cached={} total={}",
+                template.model,
+                usage.prompt,
+                usage.cache_read,
+                usage.total()
+            );
+            // 短くならなかった要約は、以後の全ターンで払い続ける固定費になる
+            // （履歴は滑る窓で落ちるが、要約は落ちない）。**機構では止めない** —
+            // 止めると「要約したのに畳まれない」状態が画面から読めなくなる。
+            // 計器だけ置いて、頻度を見てから決める。
+            if summary_chars >= history_chars {
+                note!(
+                    "WARN summarize: {agent_id}（{name}）の要約が元の履歴より長くなりました\
+                     （{history_chars} 字 → {summary_chars} 字）。この会話ではプロンプトは\
+                     短くなりません — 畳む履歴が増えてから押すほうが効きます"
+                );
+            }
+
             if text.trim().is_empty() {
                 note!("WARN summarize: {agent_id}（{name}）の要約が空でした（履歴は畳みません）");
                 continue;

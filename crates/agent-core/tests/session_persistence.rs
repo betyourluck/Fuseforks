@@ -777,3 +777,37 @@ async fn only_running_servants_are_summarized() {
 
     shutdown(orchestrator, std::slice::from_ref(&id)).await;
 }
+
+/// 要約に使ったトークンは**必ず統計へ積む**（2026-08-03 の実機ログで判明）。
+///
+/// 要約はターンループの外で走る LLM 呼び出しなので、ここで積まないと
+/// **押した人が払った分がどの数字にも現れない** — カードの累計にも、村の集計にも。
+#[tokio::test]
+async fn summarizing_counts_the_tokens_it_spends() {
+    let dir = TempDir::new("summarize-tokens");
+    let id = AgentId::from("agent_01");
+    let backend = Arc::new(SummarizingBackend::new(Some("・要約")));
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let before = orchestrator.snapshot(&id).await.unwrap();
+    assert_eq!(orchestrator.summarize_session().await.unwrap(), 1);
+    let after = orchestrator.snapshot(&id).await.unwrap();
+
+    assert!(
+        after.total_tokens > before.total_tokens,
+        "要約ぶんが累計へ載ること（{} → {}）",
+        before.total_tokens,
+        after.total_tokens
+    );
+    assert!(
+        after.prompt_tokens > before.prompt_tokens,
+        "入力側も数えること（キャッシュ率の分母が狂わないように）"
+    );
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
+}
