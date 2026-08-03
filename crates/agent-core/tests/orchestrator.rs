@@ -6493,3 +6493,76 @@ async fn an_update_that_keeps_the_role_stays_silent() {
         "役職表示が動かない更新では 1 行も増えない"
     );
 }
+
+/// **自分の役職名はプロンプトに入らない**（Spec 14 の D6・2026-08-04 利用者裁定）。
+///
+/// 顔ぶれに載るのは**他人**の役職だけで、自分の役職名はどこにも現れない。
+///
+/// # なぜ入れないか
+///
+/// **ペルソナが役職名に引きずられる**ため。人格は `Construct.md` / `SKILL.md` に
+/// 書かれた文章が担っており、そこへ「あなたは助役です」と label を差し込むと、
+/// モデルは語のもつ含意（従属的・補佐的）へ寄る。**役職は人が読む飾りであり、
+/// 雛形の名前**であって、本人の自己認識の材料ではない。
+///
+/// 実機で観測した形（2026-08-04）: バッジが「助役」のザリに自分の役職を訊くと
+/// 「進行役（オーケストレーター）」と答えた。**`SKILL.md` の役割定義から答えて
+/// おり、ラベルは読んでいない** — これが意図した状態。
+///
+/// このテストは**親切心で足されるのを防ぐ**ためにある。顔ぶれに自分を含める、
+/// 「# あなたについて」へ役職を書く、のどちらをやってもここが落ちる。
+#[tokio::test]
+async fn an_agent_never_sees_its_own_role_name_only_the_roles_of_others() {
+    let dir = TempDir::new("role-self-blind");
+    let backend = Arc::new(PromptProbeBackend {
+        systems: std::sync::Mutex::new(Vec::new()),
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    for (id, name) in [("deputy", "助役"), ("librarian", "司書")] {
+        orchestrator
+            .upsert_role(agent_core::AgentRole {
+                id: id.into(),
+                name: name.into(),
+                description: String::new(),
+                color: None,
+                defaults: agent_core::AgentRoleDefaults::default(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let me = AgentId::from("agent_01");
+    let peer = AgentId::from("agent_02");
+
+    let mut my_spec = AgentSpec::new(me.clone(), "ザリ", "tpl");
+    my_spec.role_id = Some("deputy".into());
+    orchestrator.create_agent(my_spec).await.unwrap();
+
+    let mut peer_spec = AgentSpec::new(peer.clone(), "ジェミー", "tpl");
+    peer_spec.role_id = Some("librarian".into());
+    orchestrator.create_agent(peer_spec).await.unwrap();
+
+    orchestrator
+        .set_connections(&me, vec![peer.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&me).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&me, "自分の役職は？").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let systems = backend.systems.lock().unwrap();
+    let system = systems.first().expect("1 ターン分の記録があること");
+
+    assert!(
+        system.contains("司書"),
+        "他人の役職は顔ぶれに載る（S3 の材料）: {system}"
+    );
+    assert!(
+        !system.contains("助役"),
+        "**自分の役職名はプロンプトのどこにも現れない**（D6）。\
+         顔ぶれに自分を含めたか、「# あなたについて」へ役職を書いたのでは: {system}"
+    );
+}
