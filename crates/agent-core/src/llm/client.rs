@@ -123,7 +123,8 @@ impl LlmConfig {
             CredentialSource::Unset => {
                 return Err(LlmError::Config(format!(
                     "モデルテンプレート `{}` の API キーが未登録です\
-                     （⚙ の画面でキーを登録するか、認証不要であればその旨を指定してください）",
+                     （「モデルテンプレートを管理」の画面でキーを登録するか、\
+                     認証不要であればその旨を指定してください）",
                     template.name
                 )));
             }
@@ -135,7 +136,7 @@ impl LlmConfig {
                 .ok_or_else(|| {
                     LlmError::Config(format!(
                         "モデルテンプレート `{}` の API キーが資格情報ストアに見つかりません\
-                         （⚙ の画面から登録し直してください）",
+                         （「モデルテンプレートを管理」の画面から登録し直してください）",
                         template.name
                     ))
                 })?,

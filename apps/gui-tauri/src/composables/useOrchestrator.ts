@@ -517,7 +517,7 @@ function applyEvent(event: CoreEvent): void {
         pushToast(
           "warn",
           `${name} は本物のモデルに接続できていません`,
-          `${event.reason}\n⚙ の画面で API キーを登録してください。登録すればそのまま復帰します。`,
+          `${event.reason}\n「モデルテンプレートを管理」の画面で API キーを登録してください。登録すればそのまま復帰します。`,
         );
       }
       break;

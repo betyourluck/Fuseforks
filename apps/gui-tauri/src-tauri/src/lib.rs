@@ -123,6 +123,9 @@ pub fn run() {
             commands::write_ordinance,
             // 村の黒板
             commands::list_blackboard,
+            // 村の設定（Spec 13）
+            commands::get_token_budget,
+            commands::set_token_budget,
             // MCP
             commands::read_mcp_config,
             commands::write_mcp_config,

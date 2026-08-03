@@ -217,6 +217,19 @@ export const writeOrdinance = (content: string) =>
  */
 export const listBlackboard = () => call<BlackboardNote[]>("list_blackboard");
 
+// ---- 村の設定（Spec 13） -------------------------------------------------------
+
+/** トークン予算の天井（実効トークン建て）。`null` = 天井なし。 */
+export const getTokenBudget = () => call<number | null>("get_token_budget");
+
+/**
+ * トークン予算の天井を差し替える。**次の依頼から効く**（再起動不要 —
+ * settings_contract の即時反映）。`0` は `INVALID_TOKEN_BUDGET` で拒否されるが、
+ * 入力段でも弾くこと（「保存したのに黙って別の値になる」を画面に作らない）。
+ */
+export const setTokenBudget = (ceiling: number | null) =>
+  call<void>("set_token_budget", { ceiling });
+
 // ---- MCP ---------------------------------------------------------------------
 
 /** `mcp.json` の宣言を読む。未作成なら空の集合。 */

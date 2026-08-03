@@ -5413,7 +5413,8 @@ async fn stop_agent_interrupts_the_flying_turn_instead_of_waiting() {
 // ---- トークン予算（Spec 11） -------------------------------------------------
 
 /// 予算つきの村を組む。`world.json` を bootstrap の**前**に書く —
-/// 天井は world の読み込みでしか入らない（設定 UI を作らない契約）。
+/// 起動時の天井は world の読み込みで入る（起動後の変更は Spec 13 の
+/// `set_token_budget` が担う。settings_contract）。
 async fn setup_with_budget(
     dir: &TempDir,
     backend: Arc<dyn LlmBackend>,
@@ -5512,6 +5513,130 @@ async fn the_next_request_gets_a_fresh_budget_after_exhaustion() {
         .filter(|m| m.from == (Endpoint::Agent { id: id.clone() }))
         .count();
     assert_eq!(replies, 2, "健全な依頼は天井の下で普通に完走する: {events:?}");
+}
+
+// ---- 村の設定（Spec 13 P1） --------------------------------------------------
+
+/// Spec 13 S1: 画面から保存した天井は**次の依頼から**効く。
+///
+/// `set_token_budget` はメモリの `World` を変えてから `world.json` へ書き戻す
+/// （settings_contract の即時反映 — `world.json` は所有者ではなく投影）。
+/// 再起動もホットリロード用の別機構も要らないことを、保存 → 依頼 → 打ち切りの
+/// 連鎖で確かめる。
+#[tokio::test]
+async fn a_ceiling_saved_via_settings_applies_from_the_next_request() {
+    let dir = TempDir::new("budget-settings-apply");
+    // 起動時は余裕のある天井。SilentToolBackend の 1 周 = 実効 5
+    // （prompt 1 ×1 + completion 1 ×4）なので 100,000 では尽きない。
+    let orchestrator = setup_with_budget(
+        &dir,
+        Arc::new(SilentToolBackend {
+            calls: std::sync::Mutex::new(0),
+        }),
+        100_000,
+    )
+    .await;
+    register_all_tools(&orchestrator, &dir).await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    // 保存 = メモリと world.json の両方が変わる。
+    orchestrator.set_token_budget(Some(5)).await.unwrap();
+    assert_eq!(orchestrator.token_budget().await, Some(5));
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    assert_eq!(
+        json["tokenBudget"].as_u64(),
+        Some(5),
+        "world.json へ書き戻される（投影）"
+    );
+
+    // 次の依頼は新しい天井 5 の下で走り、2 周目の周回境界で打ち切られる。
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let cut = messages(&events)
+        .into_iter()
+        .any(|m| m.from == Endpoint::System && m.content.contains("実効 5 トークン"));
+    assert!(
+        cut,
+        "保存した天井が再起動なしで次の依頼の打ち切りに使われる: {events:?}"
+    );
+}
+
+/// Spec 13: 天井を「なし」へ戻すと、次の依頼は打ち切られずに完走する。
+/// `None` の投影は `world.json` から `tokenBudget` キーごと消えること。
+#[tokio::test]
+async fn clearing_the_ceiling_removes_the_cut_and_the_projection() {
+    let dir = TempDir::new("budget-settings-clear");
+    // 天井 5 のままなら 2 周目で打ち切られる編成（上のテストと同じ）。
+    let orchestrator = setup_with_budget(
+        &dir,
+        Arc::new(SilentToolBackend {
+            calls: std::sync::Mutex::new(0),
+        }),
+        5,
+    )
+    .await;
+    register_all_tools(&orchestrator, &dir).await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    orchestrator.set_token_budget(None).await.unwrap();
+    assert_eq!(orchestrator.token_budget().await, None);
+    let kept = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(
+        !kept.contains("tokenBudget"),
+        "None はキーごと消える（0 のマジック値を作らない）: {kept}"
+    );
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "調べて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+    let cut = messages(&events)
+        .into_iter()
+        .any(|m| m.from == Endpoint::System && m.content.contains("予算"));
+    assert!(!cut, "天井なしへ戻した依頼は打ち切られない: {events:?}");
+}
+
+/// Spec 13: 0 は設定経路で拒否される（INVALID_TOKEN_BUDGET）。
+///
+/// 読み込み時の `Some(0) → None` 正規化に任せて受け付けると
+/// 「保存したのに黙って別の値になる」— メモリもファイルも変えずに弾く。
+#[tokio::test]
+async fn setting_a_zero_ceiling_is_rejected_without_touching_anything() {
+    let dir = TempDir::new("budget-settings-zero");
+    let orchestrator = setup_with_budget(
+        &dir,
+        Arc::new(agent_core::EchoBackend::new("[echo]")),
+        7,
+    )
+    .await;
+
+    let err = orchestrator.set_token_budget(Some(0)).await.unwrap_err();
+    assert_eq!(err.code(), "INVALID_TOKEN_BUDGET");
+    assert_eq!(
+        orchestrator.token_budget().await,
+        Some(7),
+        "拒否はメモリを変えない"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    assert_eq!(
+        json["tokenBudget"].as_u64(),
+        Some(7),
+        "拒否はファイルも変えない"
+    );
 }
 
 /// S3: 波の配送前に予算が尽きていたら、配送そのものを始めない。

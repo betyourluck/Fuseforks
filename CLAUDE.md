@@ -356,7 +356,17 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
 どちらも仕様上の限界なので打ち消す仕掛けは置かない（data_contract の
 `prompt_cache.bounds`）。
 
-## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0 完了・次は P1**）
+## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P1 完了・次は P2**）
+
+**P1 完了**（2026-08-03）— コア `token_budget` / `set_token_budget`（persist 経路は
+`upsert_template` と同じ、`Some(0)` は新設 `INVALID_TOKEN_BUDGET` で拒否）、
+IPC 2 本、`SettingsDialog.vue`（2 ペイン + 左メニュー。**未実装ページは目録に
+並べない**）、TitleBar に COG + 「システム設定」。結合 3 本（保存 → 依頼 →
+新天井で打ち切り = 再起動なしで効く / なしへ戻すとキーごと消える / 0 拒否は
+メモリもファイルも触らない）。⚙ 文言の回収は予定 3 箇所 + 実行時 4 箇所
+（error.rs / client.rs ×2 / useOrchestrator.ts）— **COG を入れた時点で
+「⚙ の画面」は間違った行き先を指すようになる**ため全て
+「「モデルテンプレートを管理」の画面」へ統一。README 日英の ⚙ 8 箇所は P5 で回収。
 
 **P0 完了**（2026-08-03）— `data_contract.yaml` の `settings_contract`
 （ConfigFileKind 配下、`session_store` / `blackboard_contract` と同じ棚）。

@@ -89,6 +89,15 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// トークン予算の天井として受け付けられない値（Spec 13）。
+    ///
+    /// `0` は「即打ち切りの村」ではなく不正値（`token_budget` 契約の ceiling —
+    /// 0 のマジック値を作らない。天井なしは `None` で表現する）。読み込み時の
+    /// `Some(0) → None` 正規化は外部編集の遡及回収であって、設定経路の代役では
+    /// ない — ここで受け付けて黙って倒すと「保存したのに別の値になる」。
+    #[error("トークン天井に 0 は設定できません。天井を外すには「天井なし」を選んでください")]
+    InvalidTokenBudget,
+
     /// トポロジー（接続関係）が不正。自己ループや未登録先への接続など。
     #[error("トポロジーが不正です: {reason}")]
     InvalidTopology {
@@ -159,7 +168,7 @@ pub enum CoreError {
     },
 
     /// 認証が必要なテンプレートなのに、資格情報ストアにキーが登録されていない。
-    #[error("モデルテンプレート `{template}` の API キーが未登録です（⚙ の画面から登録してください）")]
+    #[error("モデルテンプレート `{template}` の API キーが未登録です（「モデルテンプレートを管理」の画面から登録してください）")]
     CredentialMissing {
         /// 対象テンプレートの表示名。
         template: String,
@@ -208,6 +217,7 @@ impl CoreError {
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::SessionStore { .. } => "SESSION_STORE_FAILED",
             Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
+            Self::InvalidTokenBudget => "INVALID_TOKEN_BUDGET",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",

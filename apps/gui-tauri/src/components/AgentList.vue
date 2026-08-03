@@ -187,7 +187,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         class="w-full rounded border border-line bg-surface-1 px-2 py-1.5 outline-none focus:border-accent"
       />
       <p v-if="!state.templates.length" class="mt-1.5 text-[11px] text-warn">
-        モデルテンプレートが未登録です。⚙ から先に 1 件登録してください。
+        モデルテンプレートが未登録です。上の「モデルテンプレートを管理」ボタンから先に 1 件登録してください。
       </p>
       <div class="mt-2 flex justify-end gap-2">
         <button

@@ -655,7 +655,7 @@ impl Orchestrator {
         // clear_credential は秘密の削除と unset への遷移を一体で行うので、
         // この組み合わせは正規の操作では作れない——過去の巻き戻り事故（failures.md #16）が
         // ディスクへ固定された状態である。放置するとユーザーはキーを貼り直すまで
-        // 接続できず、しかも ⚙ の画面は「登録済み」と表示する（矛盾が見えない）。
+        // 接続できず、しかもテンプレートの画面は「登録済み」と表示する（矛盾が見えない）。
         // 資格情報ストアが応答しない場合は昇格を見送る。起動を止めるほどの事態ではなく、
         // 次回起動時にまた試せばよい。
         for mut template in world.templates() {
@@ -1449,6 +1449,31 @@ impl Orchestrator {
         }
         self.shared.backends.write().await.remove(id);
         self.shared.secrets.delete(id.as_str())?;
+        self.persist().await
+    }
+
+    // ---- 村の設定 (Spec 13) -------------------------------------------------
+
+    /// トークン予算の天井（実効トークン建て）を返す。`None` = 天井なし。
+    pub async fn token_budget(&self) -> Option<u64> {
+        self.shared.world.read().await.token_budget()
+    }
+
+    /// トークン予算の天井を差し替え、`world.json` へ書き戻す。
+    ///
+    /// 天井は依頼のたびに `new_root_budget` が `World` から読むので、
+    /// **次の依頼から効く**。再起動は要らない（`settings_contract` の即時反映 —
+    /// `world.json` は所有者ではなく投影）。
+    ///
+    /// # Errors
+    /// - `Some(0)` は [`CoreError::InvalidTokenBudget`]。読み込み時の
+    ///   `Some(0) → None` 正規化は外部編集の遡及回収であって、この経路で
+    ///   受け付けて黙って倒すと「保存したのに別の値になる」
+    pub async fn set_token_budget(&self, ceiling: Option<u64>) -> CoreResult<()> {
+        if ceiling == Some(0) {
+            return Err(CoreError::InvalidTokenBudget);
+        }
+        self.shared.world.write().await.set_token_budget(ceiling);
         self.persist().await
     }
 

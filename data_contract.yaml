@@ -723,6 +723,7 @@ entities:
       - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
       - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
       - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
+      - INVALID_TOKEN_BUDGET    # Spec 13。set_token_budget の Some(0)。0 のマジック値を作らない
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING

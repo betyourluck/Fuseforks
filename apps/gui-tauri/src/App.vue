@@ -4,7 +4,7 @@
  *
  * 左: エージェント一覧 / 中央: 村の地図 / 右: 会話
  *
- * エージェントの設定は常駐ペインではなくモーダル（カードの ⚙ から開く）。
+ * エージェントの設定は常駐ペインではなくモーダル（カードの鉛筆から開く）。
  * 設定は「たまに開いて書き換えるもの」で、会話やマップのように
  * 常に見ているものではない。常駐させると、いつも見るものの面積を奪う。
  *
@@ -26,6 +26,7 @@ import McpDialog from "./components/McpDialog.vue";
 import OrdinanceDialog from "./components/OrdinanceDialog.vue";
 import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
@@ -53,6 +54,8 @@ const ordinanceOpen = ref(false);
 const mcpOpen = ref(false);
 /** 予定（スケジュール実行）ダイアログの表示状態。 */
 const schedulesOpen = ref(false);
+/** システム設定ダイアログの表示状態（Spec 13）。 */
+const settingsOpen = ref(false);
 
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
@@ -74,6 +77,7 @@ onMounted(() => {
     @open-ordinance="ordinanceOpen = true"
     @open-mcp="mcpOpen = true"
     @open-schedules="schedulesOpen = true"
+    @open-settings="settingsOpen = true"
   />
   <div
     class="grid min-h-0 flex-1 overflow-hidden"
@@ -162,6 +166,8 @@ onMounted(() => {
     <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
     <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
+
+    <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
 
     <!--
       初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。

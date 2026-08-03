@@ -317,6 +317,25 @@ pub async fn list_blackboard(
     state.orchestrator.read_blackboard().await
 }
 
+// ---- 村の設定（Spec 13） -------------------------------------------------------
+
+/// トークン予算の天井（実効トークン建て）。`null` = 天井なし。
+#[tauri::command]
+pub async fn get_token_budget(state: State<'_, AppState>) -> CoreResult<Option<u64>> {
+    Ok(state.orchestrator.token_budget().await)
+}
+
+/// トークン予算の天井を差し替える。メモリの `World` を変えてから `world.json` へ
+/// 書き戻すので、**次の依頼から効く**（settings_contract の即時反映）。
+/// `0` は `INVALID_TOKEN_BUDGET` で拒否（UI 側の入力検査との二重化）。
+#[tauri::command]
+pub async fn set_token_budget(
+    state: State<'_, AppState>,
+    ceiling: Option<u64>,
+) -> CoreResult<()> {
+    state.orchestrator.set_token_budget(ceiling).await
+}
+
 // ---- アイコン ----------------------------------------------------------------
 
 /// エージェントのアイコン（WebP バイト列）を返す。未設定なら `null`。

@@ -12,6 +12,7 @@ const emit = defineEmits<{
   (e: "open-ordinance"): void;
   (e: "open-mcp"): void;
   (e: "open-schedules"): void;
+  (e: "open-settings"): void;
 }>();
 
 async function win(method: "minimize" | "toggleMaximize" | "close") {
@@ -130,6 +131,34 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
       </svg>
       <span>スケジュール</span>
+    </button>
+
+    <!-- システム設定。村の設定（天井など）をここから開く（Spec 13）。
+         COG はカードの設定ボタンが鉛筆へ変わって空いた（rev3 D8）。 -->
+    <button
+      class="tb-btn"
+      title="システム設定（村の設定）"
+      aria-label="システム設定"
+      @click="emit('open-settings')"
+    >
+      <!-- 歯車（COG） -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+        />
+      </svg>
+      <span>システム設定</span>
     </button>
 
     <div class="mx-1 h-4 w-px bg-line"></div>

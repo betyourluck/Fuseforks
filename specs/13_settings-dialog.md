@@ -2,12 +2,37 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 承認 → P0 完了（契約凍結）。次は P1（村の設定）**
+**Status**: **rev3 承認 → P0〜P1 完了。次は P2（線削除の確認）**
 （rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
 P0 で具体名を 2 つ確定: 言語は `world.json` の `language`（"ja" | "en"）、
-画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true））
+画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true）。
+P1 も同日完了 — 下の「P1 の実装記録」）
+
+## P1 の実装記録（2026-08-03）
+
+- **コア**: `Orchestrator::token_budget` / `set_token_budget`（`World` を変えてから
+  `persist` = `upsert_template` と同じ経路）。`Some(0)` は新設の
+  `CoreError::InvalidTokenBudget`（code `INVALID_TOKEN_BUDGET`、
+  `ErrorPayload.codes` へ追記済み）で拒否 — 読み込み時の正規化に任せると
+  「保存したのに黙って別の値になる」。結合テスト 3 本:
+  保存 → 依頼 → 実効 5 で打ち切り（再起動なしで効く）/ なしへ戻すと打ち切られず
+  `world.json` からキーごと消える / 0 はメモリもファイルも変えずに拒否
+- **IPC 2 本**: `get_token_budget` / `set_token_budget`（commands.rs は薄い転送層のまま）
+- **UI**: `SettingsDialog.vue`（2 ペイン・左メニュー）+ TitleBar「スケジュール」右に
+  COG SVG + 「システム設定」。天井ページはラジオ「天井あり（数値）/ 天井なし」、
+  0・非整数は入力段で弾き、**天井なしを選ぶと fail 色でその場に警告**（起動 WARN を
+  待たせない）。保存成功時に「次の依頼から効きます」を明示。
+  **左メニューに未実装ページは並べない** — 目録に載せて触れないのは、できないことを
+  できると見せる嘘になる（P2 で「線削除の確認」、P3 で「言語」が項目ごと増える）
+- **⚙ 文言の回収**は予定の 3 箇所に加えて実行時文言 4 箇所が見つかった
+  （`error.rs` の `CredentialMissing` / `client.rs` の Config 2 本 /
+  `useOrchestrator.ts` の backendDegraded トースト）。**COG をタイトルバーへ
+  入れた時点で「⚙ の画面」は「存在しない」から「システム設定という別の画面を
+  指す」へ悪化する**ため、全部「「モデルテンプレートを管理」の画面」へ置換した。
+  README 日英の ⚙ 8 箇所は P5（台帳）で回収する。failures.md の ⚙ は当時の
+  記録なので触らない
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜12 と同じプロセス）
 
 ## rev3 で入った差分（利用者裁定 2026-08-03）
