@@ -30,6 +30,7 @@ import {
 } from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
 import { renderMarkdownCached } from "../lib/markdown";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
@@ -298,13 +299,13 @@ const summarizing = ref(false);
  */
 async function summarize(): Promise<void> {
   if (summarizing.value) return;
-  if (
-    !confirm(
-      "ここまでの会話を要約して続けますか？\n稼働中のサーヴァント 1 体につき 1 回モデルを呼ぶので、トークンを使います（停止中の相手は対象外です）。\n元のやり取りは消えません（「会話一覧」の書き出しから読めます）。",
-    )
-  ) {
-    return;
-  }
+  const ok = await askConfirm({
+    title: "ここまでの会話を要約して続けますか？",
+    message:
+      "稼働中のサーヴァント 1 体につき 1 回モデルを呼ぶので、トークンを使います（停止中の相手は対象外です）。\n元のやり取りは消えません（「会話一覧」の書き出しから読めます）。",
+    confirmLabel: "要約する",
+  });
+  if (!ok) return;
   summarizing.value = true;
   try {
     await orchestrator.summarize();
@@ -330,7 +331,12 @@ async function prefill(payload: { text: string; to: string | null }): Promise<vo
  */
 async function newChat(): Promise<void> {
   if (!rows.value.length) return;
-  if (!confirm("この会話を閉じて、新しい会話を始めますか？\n今の会話は保存され、「会話一覧」からいつでも戻れます。")) return;
+  const ok = await askConfirm({
+    title: "この会話を閉じて、新しい会話を始めますか？",
+    message: "今の会話は保存され、「会話一覧」からいつでも戻れます。",
+    confirmLabel: "新しい会話を始める",
+  });
+  if (!ok) return;
   await orchestrator.newChat();
 }
 </script>
@@ -436,9 +442,16 @@ async function newChat(): Promise<void> {
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
         押せない — 押しても何も起きないボタンを活性で見せない。
         稼働は降ろさない（■ の一括停止とは別物）。
+
+        色は**意味トークン `fail`** を使う（生の `red-500` ではない）。配色は
+        style.css の `@theme` 1 箇所で決まっている状態を保つ — ここだけ生の
+        パレットを混ぜると、テーマを変えたときにこのボタンだけ取り残される。
+        ホバーは `fail-hot`（ネオン寄りの赤）＋淡い光。他のボタンのように
+        淡い下地（`bg-fail/10`）にしなかったのは、24px のアイコンでは
+        面積が小さすぎて変化が見えないため（実機で確認）。
       -->
       <button
-        class="chat-action grid size-6 place-items-center rounded text-red-500 transition-colors hover:text-red-400 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-500 disabled:opacity-40"
+        class="chat-action chat-action-danger grid size-6 place-items-center rounded text-fail transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fail disabled:opacity-40"
         :disabled="!typingAgents.length"
         title="飛行中のターンを全部打ち切ります（稼働は降ろしません。会話と履歴は残ります）"
         aria-label="全ターン停止"
@@ -706,6 +719,18 @@ async function newChat(): Promise<void> {
 
 .chat-action-label {
   display: none;
+}
+
+/*
+ * 全ターン停止だけ、触れた瞬間にネオン寄りの赤へ上げる。
+ *
+ * **押せるときだけ光らせる**（`:not(:disabled)`）。飛行中のターンが無いときは
+ * 押しても何も起きないので、触れて反応すると「押せる」という嘘になる。
+ * 光は色そのものの drop-shadow で、暗い下地でも輪郭が滲まない程度に留める。
+ */
+.chat-action-danger:hover:not(:disabled) {
+  color: var(--color-fail-hot);
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--color-fail-hot) 55%, transparent));
 }
 
 @container chat-panel (min-width: 600px) {

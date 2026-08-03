@@ -28,6 +28,7 @@ import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import TitleBar from "./components/TitleBar.vue";
+import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { useOrchestrator } from "./composables/useOrchestrator";
@@ -152,6 +153,9 @@ onMounted(() => {
     </aside>
 
     <ToastHost />
+    <!-- 確認ダイアログ（はい／いいえ）。ブラウザの confirm() は使わない —
+         WebView のネイティブダイアログは localhost を名乗る。 -->
+    <ConfirmHost />
 
     <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
 

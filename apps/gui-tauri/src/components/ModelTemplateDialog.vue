@@ -9,6 +9,7 @@
 import { computed, ref, watch } from "vue";
 
 import * as ipc from "../lib/ipc";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { Effort, ModelTemplate, ModelTemplateId, Provider } from "../types";
 
@@ -135,7 +136,13 @@ async function saveSecret(): Promise<void> {
 async function clearSecret(): Promise<void> {
   const template = draft.value;
   if (!template) return;
-  if (!confirm(`${template.name} の API キーを削除しますか？`)) return;
+  const confirmed = await askConfirm({
+    title: `${template.name} の API キーを削除しますか？`,
+    message: "OS の資格情報ストアから消えます。このテンプレートを使うサーヴァントは接続できなくなります。",
+    confirmLabel: "削除する",
+    danger: true,
+  });
+  if (!confirmed) return;
 
   const id = template.id;
   const ok = await orchestrator.clearCredential(id);
@@ -276,7 +283,13 @@ async function save(): Promise<void> {
 async function remove(template: ModelTemplate): Promise<void> {
   // 連打で 2 回目以降が「存在しません」になるのを、通信中フラグで塞ぐ。
   if (removing.value) return;
-  if (!confirm(`${template.name} を削除しますか？`)) return;
+  const ok = await askConfirm({
+    title: `${template.name} を削除しますか？`,
+    message: "このテンプレートを参照しているサーヴァントは、モデルを選び直すまで動きません。",
+    confirmLabel: "削除する",
+    danger: true,
+  });
+  if (!ok) return;
 
   removing.value = template.id;
   try {

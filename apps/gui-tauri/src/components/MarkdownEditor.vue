@@ -10,6 +10,7 @@
 import { computed, ref, watch } from "vue";
 
 import CodeEditor from "./CodeEditor.vue";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { CONFIG_FILE_LABELS, type AgentId, type ConfigFileKind } from "../types";
 
@@ -52,9 +53,20 @@ async function save(): Promise<void> {
 }
 
 /** タブを切り替える。未保存なら確認する。 */
-function switchTo(next: ConfigFileKind): void {
+async function switchTo(next: ConfigFileKind): Promise<void> {
   if (next === kind.value) return;
-  if (dirty() && !confirm("未保存の変更があります。破棄して切り替えますか？")) return;
+  if (
+    dirty() &&
+    !(await askConfirm({
+      title: "未保存の変更を破棄して切り替えますか？",
+      message: "編集中の内容は保存されません。",
+      confirmLabel: "破棄して切り替える",
+      cancelLabel: "編集を続ける",
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   kind.value = next;
 }
 

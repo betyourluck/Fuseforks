@@ -14,6 +14,7 @@ import { computed, onMounted, ref } from "vue";
 
 import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { McpServerStatus } from "../types";
 
@@ -98,8 +99,19 @@ async function reconnect(): Promise<void> {
   }
 }
 
-function requestClose(): void {
-  if (dirty.value && !confirm("未保存の変更があります。破棄して閉じますか？")) return;
+async function requestClose(): Promise<void> {
+  if (
+    dirty.value &&
+    !(await askConfirm({
+      title: "未保存の変更を破棄して閉じますか？",
+      message: "編集中の内容は保存されません。",
+      confirmLabel: "破棄して閉じる",
+      cancelLabel: "編集を続ける",
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   emit("close");
 }
 </script>

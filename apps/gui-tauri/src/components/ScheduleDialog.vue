@@ -12,6 +12,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import * as ipc from "../lib/ipc";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { WEEKDAY_LABELS, type Recurrence, type ScheduleView, type Weekday } from "../types";
 
@@ -100,10 +101,14 @@ async function add(): Promise<void> {
 }
 
 async function remove(task: ScheduleView): Promise<void> {
-  // 会話ログのリセットと同じ流儀: 復元できない操作は確認を挟む。
-  if (!confirm(`この予定を削除しますか？\n${task.recurrenceLabel} → ${agentLabel(task.to)}`)) {
-    return;
-  }
+  // 復元できない操作は確認を挟む（アプリ内のダイアログ。ブラウザの confirm は使わない）。
+  const ok = await askConfirm({
+    title: "この予定を削除しますか？",
+    message: `${task.recurrenceLabel} → ${agentLabel(task.to)}`,
+    confirmLabel: "削除する",
+    danger: true,
+  });
+  if (!ok) return;
   busy.value = true;
   error.value = "";
   try {

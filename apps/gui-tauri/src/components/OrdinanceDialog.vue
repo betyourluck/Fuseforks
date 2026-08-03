@@ -13,6 +13,7 @@ import { onMounted, ref } from "vue";
 
 import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -52,9 +53,19 @@ async function save(): Promise<void> {
   }
 }
 
-function requestClose(): void {
-  if (text.value !== saved.value && !confirm("未保存の変更があります。破棄して閉じますか？"))
+async function requestClose(): Promise<void> {
+  if (
+    text.value !== saved.value &&
+    !(await askConfirm({
+      title: "未保存の変更を破棄して閉じますか？",
+      message: "編集中の条例は保存されません。",
+      confirmLabel: "破棄して閉じる",
+      cancelLabel: "編集を続ける",
+      danger: true,
+    }))
+  ) {
     return;
+  }
   emit("close");
 }
 </script>

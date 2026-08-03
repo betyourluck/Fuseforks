@@ -11,6 +11,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { ForkPoint } from "../types";
 
@@ -85,8 +86,13 @@ async function fork(point: ForkPoint): Promise<void> {
 async function remove(sessionId: string, title: string): Promise<void> {
   if (busy.value) return;
   const label = titleOf(sessionId, title);
-  // 削除だけは戻せない。ここは警告色のまま残す。
-  if (!confirm(`「${label}」を削除しますか？\nこの会話の発話と履歴は元に戻せません。`)) return;
+  const ok = await askConfirm({
+    title: `「${label}」を削除しますか？`,
+    message: "この会話の発話と履歴は元に戻せません。残したいなら先に「書き出し」を。",
+    confirmLabel: "削除する",
+    danger: true,
+  });
+  if (!ok) return;
   busy.value = true;
   await orchestrator.deleteSession(sessionId);
   busy.value = false;
