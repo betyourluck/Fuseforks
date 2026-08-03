@@ -1,0 +1,74 @@
+{
+  "app": {
+    "bootFailed": "Failed to start the orchestrator",
+    "booting": "Starting up…",
+    "bootingHint": "Connecting to MCP servers may take a while",
+    "retry": "Retry",
+    "regions": {
+      "agentList": "Servant list",
+      "map": "Village map",
+      "waves": "Work status",
+      "blackboard": "Blackboard",
+      "chat": "Conversation"
+    },
+    "splitters": {
+      "left": "Servant list width",
+      "bottom": "Bottom pane height",
+      "right": "Conversation panel width"
+    }
+  },
+  "titleBar": {
+    "ordinance": "Ordinance",
+    "ordinanceTitle": "Village ordinance (rules shared by all servants)",
+    "ordinanceAria": "Village ordinance",
+    "mcp": "Shared MCP",
+    "mcpTitle": "MCP servers (external tool connections)",
+    "mcpAria": "MCP servers",
+    "schedules": "Schedules",
+    "schedulesTitle": "Schedules (requests fired by the clock)",
+    "schedulesAria": "Schedules",
+    "settings": "Settings",
+    "settingsTitle": "System settings (village settings)",
+    "minimize": "Minimize",
+    "maximize": "Maximize / restore",
+    "close": "Close"
+  },
+  "settings": {
+    "title": "System settings",
+    "close": "Close",
+    "loading": "Loading…",
+    "groupVillage": "Village settings",
+    "groupScreen": "This screen",
+    "menuTokenBudget": "Token ceiling",
+    "menuLanguage": "Language",
+    "menuEdgeConfirm": "Edge-delete confirmation",
+    "tokenBudget": {
+      "heading": "Token ceiling (effective tokens)",
+      "help": "The sum of uncached ×1 + cached ×0.1 + output ×4. Managed internally in milli units; displayed as a rounded-up integer. When a single request's token spend reaches this value, the request is cut off automatically.",
+      "hasCeiling": "With ceiling",
+      "unit": "effective tokens / request",
+      "invalid": "Enter an integer of 1 or more (0 cannot remove the ceiling — choose \"No ceiling\" instead).",
+      "guideline": "Guide: village of ~6 = 1,000,000 / 12-servant scale or output-heavy code generation = 2,000,000–3,000,000",
+      "noCeiling": "No ceiling",
+      "noCeilingWarning": "In a village without a ceiling, a single request keeps burning tokens when a failure loop occurs. Setting a limit is recommended.",
+      "saved": "Saved. Takes effect from the next request (no restart needed).",
+      "save": "Save",
+      "saving": "Saving…"
+    },
+    "language": {
+      "heading": "Language",
+      "help": "Display language of the UI. The switch takes effect the moment you save.",
+      "promptNote": "Instructions to servants (system prompts and tool descriptions) are not translated — translating them would change the prompts. System lines in the conversation log stay in the language they were written in.",
+      "saved": "Saved.",
+      "save": "Save",
+      "saving": "Saving…"
+    },
+    "edgeConfirm": {
+      "heading": "Edge-delete confirmation",
+      "intro": "On the village map, clicking a connection (edge) deletes it. Connections cannot be restored.",
+      "checkbox": "Show a confirmation dialog before deleting",
+      "offWarning": "While confirmation is off, a single click on an edge removes the connection.",
+      "instantNote": "Changes are saved immediately (this setting belongs to this screen only)."
+    }
+  }
+}

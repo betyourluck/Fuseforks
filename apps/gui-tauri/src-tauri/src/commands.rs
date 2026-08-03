@@ -336,6 +336,22 @@ pub async fn set_token_budget(
     state.orchestrator.set_token_budget(ceiling).await
 }
 
+/// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
+#[tauri::command]
+pub async fn get_language(state: State<'_, AppState>) -> CoreResult<agent_core::world::Language> {
+    Ok(state.orchestrator.language().await)
+}
+
+/// UI の表示言語を差し替える。未知の値は serde の段階で弾かれる。
+/// コアは言語で分岐しないため、システムプロンプトは変わらない。
+#[tauri::command]
+pub async fn set_language(
+    state: State<'_, AppState>,
+    language: agent_core::world::Language,
+) -> CoreResult<()> {
+    state.orchestrator.set_language(language).await
+}
+
 // ---- アイコン ----------------------------------------------------------------
 
 /// エージェントのアイコン（WebP バイト列）を返す。未設定なら `null`。

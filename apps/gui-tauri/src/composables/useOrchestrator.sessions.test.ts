@@ -48,6 +48,7 @@ const h = vi.hoisted(() => ({
   listPlanWaves: vi.fn(async () => []),
   workspacePath: vi.fn(async () => "C:\\workspace"),
   currentSession: vi.fn(async () => "session_1"),
+  getLanguage: vi.fn(async () => "ja"),
   listSessions: vi.fn(async () => [] as SessionSummary[]),
   getAgentIcon: vi.fn(async () => null),
   handler: null as ((e: { payload: CoreEvent }) => void) | null,

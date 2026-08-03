@@ -140,6 +140,51 @@ pub struct TopologyPosition {
     pub y: f64,
 }
 
+/// UI の表示言語（Spec 13 の settings_contract）。
+///
+/// **コアはこの値で分岐しない。** 多言語化 3 層の (2) は「コアは日本語のまま返し、
+/// UI が `ErrorPayload.code` で引いて訳す」（案 A — コアは言語を知らない）。
+/// コアの仕事は村の共有物としての保存だけ。System 行は会話ログに保存されるため、
+/// この値はペイン幅と同じ棚（`localStorage`）には置けない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    /// 日本語。
+    Ja,
+    /// 英語。
+    En,
+}
+
+impl Language {
+    /// OS のロケール文字列から確定させる（純関数 — 検出は呼び出し側の責務）。
+    ///
+    /// `ja-JP` / `ja_JP` / `ja` の表記揺れは前方一致で吸収する。日本語以外は
+    /// すべて英語へ倒す（選択肢は 2 つだけ。settings_contract）。
+    pub fn from_os_locale(locale: Option<&str>) -> Self {
+        match locale {
+            Some(s) if s.starts_with("ja") => Language::Ja,
+            _ => Language::En,
+        }
+    }
+
+    /// ワイヤ値（`"ja"` / `"en"`）から読む。未知の値は `None`。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ja" => Some(Language::Ja),
+            "en" => Some(Language::En),
+            _ => None,
+        }
+    }
+
+    /// ワイヤ値。serde の `lowercase` と一致をテストで固定している。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Language::Ja => "ja",
+            Language::En => "en",
+        }
+    }
+}
+
 /// 永続化される世界の状態。
 ///
 /// `Instant` は直列化できないため、保存対象は定義とテンプレートのみ。
@@ -164,6 +209,14 @@ pub struct PersistedWorld {
     /// `rename_all = camelCase` によりファイル上は `tokenBudget`（個別 rename 不要）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
+    /// UI の表示言語（Spec 13。`"ja"` / `"en"`）。
+    ///
+    /// **生の文字列で受ける**（`tokenBudget` の `Some(0)` と同じ判断） —
+    /// 手編集の未知の値で world.json が開けなくなるのは罰が重すぎる。
+    /// 解釈と正規化は [`World::from_persisted`] が担い、不正値は「未確定」として
+    /// 起動時に OS から確定し直される。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// 登録簿本体。
@@ -174,6 +227,8 @@ pub struct World {
     topology_positions: BTreeMap<AgentId, TopologyPosition>,
     /// トークン予算の天井（Spec 11）。意味論は [`PersistedWorld::token_budget`]。
     token_budget: Option<u64>,
+    /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
+    language: Option<Language>,
 }
 
 impl World {
@@ -198,6 +253,21 @@ impl World {
                 None
             }
             other => other,
+        };
+        // 未知の言語コードは「未確定」へ倒す（起動時に OS から確定し直される —
+        // 黙って ja / en のどちらかへ貼り付けるより、未確定と同じ道を通すほうが
+        // 手編集した人の意図（何かを変えたかった）に近い挙動になる）。
+        world.language = match persisted.language.as_deref() {
+            Some(raw) => {
+                let parsed = Language::parse(raw);
+                if parsed.is_none() {
+                    crate::note!(
+                        "language: `{raw}` は未知の値のため未確定として扱います（ja / en のみ）"
+                    );
+                }
+                parsed
+            }
+            None => None,
         };
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
@@ -224,6 +294,7 @@ impl World {
             model_templates: self.templates.values().cloned().collect(),
             topology_positions: self.topology_positions.clone(),
             token_budget: self.token_budget,
+            language: self.language.map(|l| l.as_str().to_string()),
         }
     }
 
@@ -235,6 +306,16 @@ impl World {
     /// トークン予算の天井を差し替える（新規 world.json への既定値書き込み用）。
     pub fn set_token_budget(&mut self, ceiling: Option<u64>) {
         self.token_budget = ceiling;
+    }
+
+    /// UI の表示言語。`None` = 未確定（起動時の確定前だけ観測される）。
+    pub fn language(&self) -> Option<Language> {
+        self.language
+    }
+
+    /// UI の表示言語を確定させる。
+    pub fn set_language(&mut self, language: Language) {
+        self.language = Some(language);
     }
 
     // ---- エージェント -------------------------------------------------------
@@ -601,9 +682,58 @@ mod tests {
             model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
             topology_positions: BTreeMap::new(),
             token_budget: None,
+            language: None,
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
+    }
+
+    /// 言語の読み込みは寛容に、書き出しは正規形で（Spec 13 の settings_contract）。
+    ///
+    /// 未知の値は「未確定」へ倒す — 黙って ja / en のどちらかへ貼り付けると、
+    /// 手編集した人の「何かを変えたかった」意図ごと消える。未確定は起動時に
+    /// OS から確定し直される（tokenBudget=0 → None と同じ道）。
+    #[test]
+    fn an_unknown_language_normalizes_to_undetermined_on_load() {
+        let unknown = PersistedWorld {
+            language: Some("jp".into()),
+            ..Default::default()
+        };
+        assert_eq!(World::from_persisted(unknown).language(), None);
+
+        let valid = PersistedWorld {
+            language: Some("en".into()),
+            ..Default::default()
+        };
+        assert_eq!(World::from_persisted(valid).language(), Some(Language::En));
+
+        let mut world = World::new();
+        world.set_language(Language::Ja);
+        assert_eq!(world.to_persisted().language.as_deref(), Some("ja"));
+    }
+
+    /// OS ロケールの表記揺れ（`ja-JP` / `ja_JP` / `ja`）は前方一致で吸収し、
+    /// 日本語以外は取得失敗も含めてすべて英語へ倒す（選択肢は 2 つだけ）。
+    #[test]
+    fn os_locale_variants_resolve_to_two_languages_only() {
+        for ja in ["ja", "ja-JP", "ja_JP"] {
+            assert_eq!(Language::from_os_locale(Some(ja)), Language::Ja, "{ja}");
+        }
+        for other in ["en-US", "zh-Hans-CN", "de-DE", "fr"] {
+            assert_eq!(Language::from_os_locale(Some(other)), Language::En, "{other}");
+        }
+        assert_eq!(Language::from_os_locale(None), Language::En);
+    }
+
+    /// `as_str` と serde の直列化値の一致を固定する（Effort の `xhigh` で
+    /// 実際に食い違った形 — ワイヤ値の二重定義はテストでしか守れない）。
+    #[test]
+    fn language_wire_values_match_serde() {
+        for lang in [Language::Ja, Language::En] {
+            let json = serde_json::to_value(lang).unwrap();
+            assert_eq!(json.as_str(), Some(lang.as_str()));
+            assert_eq!(Language::parse(lang.as_str()), Some(lang));
+        }
     }
 
     /// `tokenBudget: 0` は「即打ち切りの村」ではなく不正値 — 読み込みで
@@ -743,6 +873,7 @@ mod tests {
                 (AgentId::from("ghost"), TopologyPosition { x: 0.0, y: 0.0 }),
             ]),
             token_budget: None,
+            language: None,
         };
 
         let world = World::from_persisted(persisted);

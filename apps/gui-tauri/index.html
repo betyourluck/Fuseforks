@@ -63,9 +63,11 @@
         引き継ぐため、切り替わりの継ぎ目は見えない。
         CSS はビルド時に <head> へリンクされるので、この時点で適用済み。
       -->
+      <!-- ここは i18n の到達前（言語は world.json にあり IPC が要る）。
+           確定できない場所では選ばず、二言語を併記する。 -->
       <div class="boot-splash">
         <span class="boot-spinner" aria-hidden="true"></span>
-        <p>初期起動中…</p>
+        <p>初期起動中… / Starting up…</p>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

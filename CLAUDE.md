@@ -356,7 +356,19 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
 どちらも仕様上の限界なので打ち消す仕掛けは置かない（data_contract の
 `prompt_cache.bounds`）。
 
-## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P2 完了・次は P3**）
+## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P3a 完了・次は P3b**）
+
+**P3a 完了**（2026-08-03）— 村民 5 体 + ジェミーの i18n 調査と突き合わせ、
+「判断次第」3 点は凍結済み契約で決着（A-4 訳さない / rust-i18n 不採用 = 案 A /
+タイトルはブランド名）。コア `world::Language`（生 String で受けて未知は
+未確定へ・sys-locale で初回確定・**再起動で再判定しない**）+ IPC 2 本 +
+vue-i18n 11 基盤（辞書 `locales/{ja,en}.json`・**鍵集合一致テスト**）+
+言語設定ページ（保存 → 成功 → setLocale の順）+ 代表 3 ファイル差し替え
+（TitleBar / App / SettingsDialog）。結合 2 本 = 確定保存・再判定なし /
+**言語切り替え前後で system ブロック不変**（PromptProbeBackend）。
+**P3b 残**: 残り 18 コンポーネント + useOrchestrator トースト + index.html
+`<title>`（一覧は Spec の P3 設計記録）。将来言語 zh-Hans / de / fr は
+辞書追加 + 契約の選択肢改訂で足せる形にしてある。
 
 **P2 完了**（2026-08-03）— `useUiSettings.ts`（`concordia.settings.v1`、書き込みは
 watch = 値が変わったときだけなので「触らず閉じたら不変」が構造で成立。boolean

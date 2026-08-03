@@ -2,13 +2,67 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 承認 → P0〜P2 完了。次は P3（多言語化: UI 文言）**
+**Status**: **rev3 承認 → P0〜P3a 完了。次は P3b（残りコンポーネントの全数差し替え）**
 （rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
 P0 で具体名を 2 つ確定: 言語は `world.json` の `language`（"ja" | "en"）、
 画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true）。
 P1 も同日完了 — 下の「P1 の実装記録」）
+
+## P3 の設計記録（2026-08-03。村民調査との突き合わせ）
+
+利用者が村民 5 体 + ジェミーの i18n 調査を提供した。**調査が「判断次第」とした
+点のうち 3 つは凍結済みの契約が既に答えを持っていた**:
+
+- **A-4（LLM プロンプト層）は訳さない** — rev2 で凍結済み（Spec 08 と衝突）。
+  4号の所見どおり
+- **A-3 / A-2（コア・commands.rs のエラー文）は rust-i18n を採らない** —
+  P4 の案 A 固定（コアは日本語のまま返し、UI が `ErrorPayload.code` で引いて
+  訳す）。`locales/ja.yml` + rust-i18n はコアが言語を知る構成になり D5 と衝突
+- **ウィンドウタイトルは訳さない** — `tauri.conf.json` の title は「Concordia」=
+  ブランド名で、言語の外。`set_title()` もちらつき問題も発生しない
+
+採ったもの: **vue-i18n**（利用者判断。将来 zh-Hans / de / fr を足す前提 —
+辞書 1 枚 + 契約の選択肢改訂で足せる形）、`main.ts` への注入・`index.html` の
+`<html lang>`・ロケール表記揺れの正規化（調査 B・C-1 の指摘）。
+ロケール検出は plugin-os ではなく**コア側の sys-locale**（world.json の
+`language` を確定させるのはコアの bootstrap で、Webview を経由する理由が無い）。
+
+**P3 は P3a / P3b に分割**（文字列 300 超の全数差し替えを 1 コミットに
+しない）。P3a = 基盤 + 言語設定 + 代表 3 ファイル。**P3b の残リスト**:
+ChatPanel / AgentSettingsDialog / ModelTemplateDialog / AgentCard / AgentList /
+ChatInput / OrdinanceDialog / McpDialog / ScheduleDialog / SessionDialog /
+BlackboardPane / PlanWavePane / MarkdownEditor / PaneSplitter / ErrorBoundary /
+ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator の
+トースト文言 + `index.html` の `<title>`。
+
+## P3a の実装記録（2026-08-03）
+
+- **コア**: `world::Language`（serde lowercase・`as_str` 一致テスト）。
+  `PersistedWorld.language` は**生の `Option<String>`** で受け、未知の値は
+  「未確定」へ倒して note 1 行（serde enum で受けると手編集の 1 語で
+  world.json ごと開けなくなる）。bootstrap が未確定のときだけ
+  `sys_locale::get_locale()` から確定し、正規化書き戻しが保存を担う。
+  **確定済みの値は再起動で再判定しない**（結合テストで固定 — 利用者の選択が
+  OS より勝つ）。`set_language` は World の 1 フィールドと投影だけを変える
+- **結合テスト**: `PromptProbeBackend`（`Role::System` の本文を記録）で
+  **言語切り替えの前後で system ブロックが 1 字も変わらない**を機械的に固定
+  （検証の設計「system_digest 同一」の結合版）
+- **IPC 2 本**: `get_language` / `set_language`（未知の値は serde 段階で拒否）
+- **フロント基盤**: vue-i18n 11（legacy: false・globalInjection）。仮ロケールは
+  `ja` で始まり、boot 完了時（覆いが外れる前）に `setLocale` が確定を映す。
+  `setLocale` は `<html lang>` も追従（node 環境ガード付き）。
+  **辞書の鍵集合の ja / en 一致 + 空文字なしをテストで固定**（訳の漏れは
+  fallback に吸われて画面から読めない — テストでしか見えない）
+- **言語ページ**: 保存 → IPC 成功 → `setLocale` の順（先に切り替えると失敗時に
+  画面と world.json が食い違う）。選択肢ラベル（日本語 / English）は**訳さない**
+- **代表 3 ファイル差し替え**: TitleBar / App（境界ラベル・起動覆い含む）/
+  SettingsDialog 全文言。useOrchestrator のテスト 4 本のモックへ `getLanguage`
+  を追加
+- **index.html のスプラッシュは二言語併記**（`初期起動中… / Starting up…`）。
+  i18n の到達前（言語は world.json にあり IPC が要る）なので、確定できない
+  場所では選ばず併記する
 
 ## P2 の実装記録（2026-08-03）
 

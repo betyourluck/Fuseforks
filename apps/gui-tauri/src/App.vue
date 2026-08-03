@@ -91,14 +91,14 @@ onMounted(() => {
 
     <!-- 左ペイン: エージェント一覧 -->
     <aside class="min-w-0 overflow-hidden">
-      <ErrorBoundary label="サーヴァント一覧">
+      <ErrorBoundary :label="$t('app.regions.agentList')">
         <AgentList />
       </ErrorBoundary>
     </aside>
 
     <PaneSplitter
       direction="col"
-      label="サーヴァント一覧の幅"
+      :label="$t('app.splitters.left')"
       @delta="(px) => resize('leftWidth', px)"
       @reset="reset"
     />
@@ -112,7 +112,7 @@ onMounted(() => {
       :style="{ gridTemplateRows: centerRows }"
     >
       <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary label="村の地図">
+        <ErrorBoundary :label="$t('app.regions.map')">
           <TopologyMap />
         </ErrorBoundary>
       </section>
@@ -120,13 +120,15 @@ onMounted(() => {
       <!-- 仕切りは下段ペインの上端にあるので、下へ動かすと高さが縮む。 -->
       <PaneSplitter
         direction="row"
-        label="下段ペインの高さ"
+        :label="$t('app.splitters.bottom')"
         @delta="(px) => resize('bottomHeight', px, -1)"
         @reset="reset"
       />
 
       <section class="min-h-0 overflow-hidden">
-        <ErrorBoundary :label="bottomTab === 'waves' ? '作業状況' : '黒板'">
+        <ErrorBoundary
+          :label="bottomTab === 'waves' ? $t('app.regions.waves') : $t('app.regions.blackboard')"
+        >
           <PlanWavePane
             v-if="bottomTab === 'waves'"
             :active-tab="bottomTab"
@@ -144,14 +146,14 @@ onMounted(() => {
     <!-- 右ペインは左端につまみがあるので、右へ動かすと幅が縮む。 -->
     <PaneSplitter
       direction="col"
-      label="会話パネルの幅"
+      :label="$t('app.splitters.right')"
       @delta="(px) => resize('rightWidth', px, -1)"
       @reset="reset"
     />
 
     <!-- 右ペイン: 会話 -->
     <aside class="min-w-0 overflow-hidden">
-      <ErrorBoundary label="会話">
+      <ErrorBoundary :label="$t('app.regions.chat')">
         <ChatPanel />
       </ErrorBoundary>
     </aside>
@@ -184,7 +186,7 @@ onMounted(() => {
       class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-surface-0 px-8 text-center"
     >
       <template v-if="state.initError">
-        <p class="font-medium text-fail">オーケストレーターの起動に失敗しました</p>
+        <p class="font-medium text-fail">{{ $t("app.bootFailed") }}</p>
         <p class="selectable max-w-lg text-[12px] text-ink-dim">
           [{{ state.initError.code }}] {{ state.initError.message }}
         </p>
@@ -199,14 +201,14 @@ onMounted(() => {
           class="mt-2 rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-surface-0"
           @click="orchestrator.init()"
         >
-          再試行
+          {{ $t("app.retry") }}
         </button>
       </template>
       <template v-else>
         <span class="boot-spinner" aria-hidden="true" />
-        <p class="text-ink-dim">初期起動中…</p>
+        <p class="text-ink-dim">{{ $t("app.booting") }}</p>
         <p class="text-[11px] text-ink-dim opacity-60">
-          MCP サーバーへの接続に時間がかかることがあります
+          {{ $t("app.bootingHint") }}
         </p>
       </template>
     </div>

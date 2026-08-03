@@ -9,8 +9,10 @@ import "@vue-flow/controls/dist/style.css";
 import "./style.css";
 
 import App from "./App.vue";
+import { i18n } from "./i18n";
 
 const app = createApp(App);
+app.use(i18n);
 
 /**
  * 境界で捕まえきれなかった例外の最後の受け皿。

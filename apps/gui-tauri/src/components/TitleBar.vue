@@ -59,8 +59,8 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     <!-- 村の条例。全エージェント共通の規則をここから編集する。 -->
     <button
       class="tb-btn"
-      title="村の条例（全サーヴァント共通の規則）"
-      aria-label="村の条例"
+      :title="$t('titleBar.ordinanceTitle')"
+      :aria-label="$t('titleBar.ordinanceAria')"
       @click="emit('open-ordinance')"
     >
       <!-- 巻物 -->
@@ -79,14 +79,14 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M5 21a2 2 0 0 1-2-2v-1h7" />
         <path d="M10 8h6M10 12h6" />
       </svg>
-      <span>条例</span>
+      <span>{{ $t("titleBar.ordinance") }}</span>
     </button>
 
     <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->
     <button
       class="tb-btn"
-      title="MCP サーバー（外部ツールの接続）"
-      aria-label="MCP サーバー"
+      :title="$t('titleBar.mcpTitle')"
+      :aria-label="$t('titleBar.mcpAria')"
       @click="emit('open-mcp')"
     >
       <!-- プラグ -->
@@ -105,14 +105,14 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
         <path d="M12 17v5" />
       </svg>
-      <span>共通MCP</span>
+      <span>{{ $t("titleBar.mcp") }}</span>
     </button>
 
     <!-- 予定。時刻で発火する依頼をここから管理する（Spec 07）。 -->
     <button
       class="tb-btn"
-      title="予定（時刻で発火する依頼）"
-      aria-label="予定"
+      :title="$t('titleBar.schedulesTitle')"
+      :aria-label="$t('titleBar.schedulesAria')"
       @click="emit('open-schedules')"
     >
       <!-- カレンダー -->
@@ -130,15 +130,15 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <rect x="3" y="5" width="18" height="16" rx="2" />
         <path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
       </svg>
-      <span>スケジュール</span>
+      <span>{{ $t("titleBar.schedules") }}</span>
     </button>
 
     <!-- システム設定。村の設定（天井など）をここから開く（Spec 13）。
          COG はカードの設定ボタンが鉛筆へ変わって空いた（rev3 D8）。 -->
     <button
       class="tb-btn"
-      title="システム設定（村の設定）"
-      aria-label="システム設定"
+      :title="$t('titleBar.settingsTitle')"
+      :aria-label="$t('titleBar.settings')"
       @click="emit('open-settings')"
     >
       <!-- 歯車（COG） -->
@@ -158,28 +158,38 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
           d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
         />
       </svg>
-      <span>システム設定</span>
+      <span>{{ $t("titleBar.settings") }}</span>
     </button>
 
     <div class="mx-1 h-4 w-px bg-line"></div>
 
     <!-- ウィンドウ操作 -->
-    <button class="tb-btn" title="最小化" aria-label="最小化" @click="win('minimize')">
+    <button
+      class="tb-btn"
+      :title="$t('titleBar.minimize')"
+      :aria-label="$t('titleBar.minimize')"
+      @click="win('minimize')"
+    >
       <svg width="11" height="11" viewBox="0 0 10 10">
         <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1.2" />
       </svg>
     </button>
     <button
       class="tb-btn"
-      title="最大化 / 元に戻す"
-      aria-label="最大化 / 元に戻す"
+      :title="$t('titleBar.maximize')"
+      :aria-label="$t('titleBar.maximize')"
       @click="win('toggleMaximize')"
     >
       <svg width="11" height="11" viewBox="0 0 10 10">
         <rect x="0.6" y="0.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
       </svg>
     </button>
-    <button class="tb-btn tb-close" title="閉じる" aria-label="閉じる" @click="win('close')">
+    <button
+      class="tb-btn tb-close"
+      :title="$t('titleBar.close')"
+      :aria-label="$t('titleBar.close')"
+      @click="win('close')"
+    >
       <svg width="11" height="11" viewBox="0 0 10 10">
         <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2" />
         <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2" />

@@ -651,6 +651,16 @@ impl Orchestrator {
             world.set_token_budget(Some(crate::budget::DEFAULT_CEILING));
         }
 
+        // 言語が未確定（新規の村 / 追記前の村 / 手編集の不正値）なら OS から
+        // 確定する（Spec 13 の settings_contract — 「自動」の選択肢は無く、
+        // 初回に ja / en のどちらかへ確定して保存する）。下の正規化書き戻しが
+        // world.json への実書き込みを担う。コアはこの値で分岐しない。
+        if world.language().is_none() {
+            world.set_language(crate::world::Language::from_os_locale(
+                sys_locale::get_locale().as_deref(),
+            ));
+        }
+
         // 「unset なのに秘密が実在する」テンプレートは keyring へ昇格させる。
         // clear_credential は秘密の削除と unset への遷移を一体で行うので、
         // この組み合わせは正規の操作では作れない——過去の巻き戻り事故（failures.md #16）が
@@ -1474,6 +1484,27 @@ impl Orchestrator {
             return Err(CoreError::InvalidTokenBudget);
         }
         self.shared.world.write().await.set_token_budget(ceiling);
+        self.persist().await
+    }
+
+    /// UI の表示言語。bootstrap が必ず確定させるので、未確定は起こらない
+    /// （防御の既定は従来の見た目 = 日本語）。
+    pub async fn language(&self) -> crate::world::Language {
+        self.shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja)
+    }
+
+    /// UI の表示言語を差し替え、`world.json` へ書き戻す。
+    ///
+    /// コアはこの値で分岐しない（settings_contract の案 A）ので、
+    /// プロンプト・バックエンド・履歴のどれにも触らない — 変わるのは
+    /// `World` の 1 フィールドと投影だけ。
+    pub async fn set_language(&self, language: crate::world::Language) -> CoreResult<()> {
+        self.shared.world.write().await.set_language(language);
         self.persist().await
     }
 

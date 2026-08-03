@@ -5609,6 +5609,119 @@ async fn clearing_the_ceiling_removes_the_cut_and_the_projection() {
     assert!(!cut, "天井なしへ戻した依頼は打ち切られない: {events:?}");
 }
 
+/// システムプロンプト（`Role::System` の本文）を呼び出しごとに記録する
+/// バックエンド（言語切り替えの不変検証用）。
+struct PromptProbeBackend {
+    /// 呼び出しごとの、system ブロックを連結した文字列。
+    systems: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for PromptProbeBackend {
+    fn name(&self) -> &str {
+        "prompt-probe"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let system: String = req
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+        self.systems.lock().unwrap().push(system);
+
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+            },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// Spec 13: 起動時に言語が OS から確定され、`world.json` へ保存される
+/// （settings_contract — 「自動」の選択肢は無く、初回に確定する）。
+/// テスト機の OS 言語には依存しない — 確定先が ja / en のどちらかであることと、
+/// **再起動で再判定されない**（確定済みの値が残る）ことを見る。
+#[tokio::test]
+async fn the_language_is_determined_once_and_persisted() {
+    let dir = TempDir::new("language-determine");
+    let _ = setup(&dir, OrchestratorConfig::default()).await;
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    let determined = json["language"].as_str().expect("起動で確定される").to_string();
+    assert!(
+        determined == "ja" || determined == "en",
+        "確定先は 2 択のどちらか: {determined}"
+    );
+
+    // 確定済みの村を反対の言語へ書き換えてから再起動 — OS で上書きされないこと。
+    let flipped = if determined == "ja" { "en" } else { "ja" };
+    let mut edited: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    edited["language"] = serde_json::Value::String(flipped.into());
+    std::fs::write(dir.0.join("world.json"), edited.to_string()).unwrap();
+
+    let _ = setup(&dir, OrchestratorConfig::default()).await;
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    assert_eq!(
+        json["language"].as_str(),
+        Some(flipped),
+        "確定済みの言語は起動で再判定されない（利用者の選択が勝つ）"
+    );
+}
+
+/// Spec 13: 言語の切り替えはシステムプロンプトに触らない（多言語化 3 層の (3) —
+/// 「system_digest が切り替えの前後で同一」の結合版。訳すのは UI 文言だけで、
+/// モデルへの入力は 1 字も変わらない）。
+#[tokio::test]
+async fn switching_the_language_leaves_the_system_prompt_untouched() {
+    let dir = TempDir::new("language-prompt");
+    let backend = Arc::new(PromptProbeBackend {
+        systems: std::sync::Mutex::new(Vec::new()),
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    orchestrator
+        .set_language(agent_core::world::Language::En)
+        .await
+        .unwrap();
+
+    orchestrator.send_user_message(&id, "二度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let systems = backend.systems.lock().unwrap();
+    assert_eq!(systems.len(), 2, "2 ターン分の記録があること");
+    assert_eq!(
+        systems[0], systems[1],
+        "言語切り替えの前後で system ブロックは 1 字も変わらない"
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
+    assert_eq!(json["language"].as_str(), Some("en"), "投影は切り替わる");
+}
+
 /// Spec 13: 0 は設定経路で拒否される（INVALID_TOKEN_BUDGET）。
 ///
 /// 読み込み時の `Some(0) → None` 正規化に任せて受け付けると

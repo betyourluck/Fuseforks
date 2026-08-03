@@ -405,6 +405,12 @@ export interface BlackboardNote {
 /** 中央下段ペインのタブ。状態は App.vue が持つ。 */
 export type BottomTab = "blackboard" | "waves";
 
+/**
+ * UI の表示言語（Spec 13）。Rust 側 `world::Language` の serde 値と一致させる。
+ * 選択肢は 2 つだけ — 「自動」は無く、初回起動時に OS から確定して保存される。
+ */
+export type Language = "ja" | "en";
+
 /** コア層から押し出される状態変化。`type` による判別共用体。 */
 export type CoreEvent =
   | { type: "agentStatusChanged"; agentId: AgentId; status: AgentStatus }

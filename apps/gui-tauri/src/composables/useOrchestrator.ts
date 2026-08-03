@@ -12,6 +12,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
+import { setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
   AgentId,
@@ -623,6 +624,9 @@ async function initialize(): Promise<void> {
     state.workspace = await ipc.workspacePath();
     // 開いている会話（Spec 12）。一覧はダイアログを開くまで引かない。
     state.currentSessionId = await ipc.currentSession();
+    // 表示言語（Spec 13）。world.json で確定済みの値を映す — 覆いが外れる前に
+    // 当てることで、確定言語と違う文言が一瞬見える継ぎ目を作らない。
+    setLocale(await ipc.getLanguage());
     state.ready = true;
   } catch (error) {
     // 再試行できるよう、失敗時はフラグを戻す。

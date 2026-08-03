@@ -53,6 +53,10 @@ redb = "4.1"
 # 独自のミニ構文を発明するより標準の regex を渡すほうが失敗が少ない。
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# UI 言語の初回確定（Spec 13）。Webview の navigator.language は OS 設定と
+# ズレるため、OS のロケールを直接読む。使うのは起動時の 1 回だけで、
+# コアは確定した値で分岐しない（settings_contract の案 A）。依存ゼロの小 crate。
+sys-locale = "0.3"
 # MCP (Model Context Protocol) の公式 Rust SDK。**クライアント側だけ**を使う。
 #
 # LLM のワイヤ形は自前で持っている（プロンプトキャッシュの制御に踏み込む必要があり、

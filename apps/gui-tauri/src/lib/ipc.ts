@@ -20,6 +20,7 @@ import type {
   ConfigFileKind,
   ErrorPayload,
   ForkPoint,
+  Language,
   ModelTemplate,
   ModelTemplateId,
   McpConfig,
@@ -229,6 +230,16 @@ export const getTokenBudget = () => call<number | null>("get_token_budget");
  */
 export const setTokenBudget = (ceiling: number | null) =>
   call<void>("set_token_budget", { ceiling });
+
+/** UI の表示言語。bootstrap が初回に OS から確定済みなので、必ず値が返る。 */
+export const getLanguage = () => call<Language>("get_language");
+
+/**
+ * UI の表示言語を差し替える。保存されるのは `world.json` の 1 フィールドだけで、
+ * システムプロンプトは変わらない（settings_contract の多言語化 3 層）。
+ */
+export const setLanguage = (language: Language) =>
+  call<void>("set_language", { language });
 
 // ---- MCP ---------------------------------------------------------------------
 
