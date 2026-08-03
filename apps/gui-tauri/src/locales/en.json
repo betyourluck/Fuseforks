@@ -588,5 +588,9 @@
       "summarize": "Summarization",
       "exportSession": "Exporting the conversation"
     }
+  },
+  "statusBar": {
+    "clockTitle": "Current date and time (same format as the diagnostic log prefix)",
+    "clockAria": "Current date and time"
   }
 }

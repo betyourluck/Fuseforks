@@ -24,6 +24,8 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file`. Structurally read-protected outside the work folder |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
+| 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
+| ⚙️ **System Settings** | Language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
 The connection target is OpenAI-compatible / Anthropic / Gemini. **The base URL is flexible**,
 so it connects directly to local LLMs like Ollama or LM Studio.
@@ -101,7 +103,9 @@ OutcastsConcordia/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
+            ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
             ├── composables/useOrchestrator.ts   Single store
+            ├── composables/useUiSettings.ts     This-screen settings (stored on the device)
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
@@ -113,8 +117,10 @@ OutcastsConcordia/
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   Modal: settings
                 ├── ModelTemplateDialog.vue            Modal: model templates
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
-                ├── TitleBar.vue                       Custom title bar (📜 🔌 ⏰)
-                └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue
+                ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
+                ├── TitleBar.vue                       Custom title bar (Ordinance, MCP, Schedule, System Settings)
+                ├── StatusBar.vue                      Bottom: date and time (same format as the diagnostic log)
+                └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
 ## Crate Separation Guarantee
@@ -152,11 +158,21 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Upper Center | Village map | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format) | Always visible |
-| Modal | Agent settings + configuration file editing (via ⚙ on agent cards) | **Opened occasionally** |
-| Modal | Model template management (via ⚙ in header) | Opened occasionally |
-| Modal | Schedule list, addition, and deletion (via ⏰ in header) | Opened occasionally |
+| Bottom | Status bar (date and time) | Always visible (a 22px strip) |
+| Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
+| Modal | Model template management (from the agent list header) | Opened occasionally |
+| Modal | Schedule list, addition, and deletion (from "Schedule" in the title bar) | Opened occasionally |
+| Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
+| Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
 
 Configuration is excluded from persistent panes because **occasionally opened items consume screen area meant for items that are always watched**.
+
+**Buttons are referenced by name, not by glyph.** This README used to say "via ⚙", and when the
+icons were replaced with SVGs, only the prose was left behind. Emoji are font-dependent — their
+shape and size vary per environment — and they do not inherit `currentColor`, so they cannot follow
+the theme ([Spec 13](specs/13_settings-dialog.md) rev3 D8 made "no emoji for permanent elements" a
+mechanism). From here on, the ledgers point at a button's **label and location**: the description
+stays true even when the artwork changes.
 
 **The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `agent-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
 
@@ -285,7 +301,7 @@ Each utterance has a `hop`, and upon reaching `max_hops` (default 8), the chain 
 While `hop` bounds *depth*, this bounds *spend* — an orthogonal brake. Each request causality (one of your utterances per recipient, or one scheduled firing) gets a budget denominated in effective tokens, shared by every turn that cascades from it via ask / plan / handoff. When it runs out, the turn is cut at the round boundary and a single System line appears in the conversation (how much was spent, and that you can simply ask again). Agents stay running; the next request gets a fresh budget.
 
 - **Effective tokens** = uncached input ×1 + cached input ×0.1 + output ×4. Proportional to real cost rather than raw counts, so a healthy long job with 87–99% cache hits is not falsely cut.
-- **One setting**: `tokenBudget` in `world.json` (effective tokens). Freshly created villages get a default of 1,000,000. **Existing villages are not silently changed** — a startup WARN points you to the setting instead.
+- **One setting**: `tokenBudget` (effective tokens). **Change it from "System Settings" > "Cost Management" in the title bar** ([Spec 13](specs/13_settings-dialog.md)); saving takes effect **from the next request**, with no restart. It lives in `world.json`, so it is stored in the village and travels with it when shared. Freshly created villages get a default of 1,000,000. **Existing villages are not silently changed** — a startup WARN points you to the setting instead.
 - **Guidance**: ~6 agents run fine under 1,000,000 (a measured healthy 6-agent request ≈ 250K effective). Villages running 8-stage flows, ~12 agents, or output-heavy code generation should use 2,000,000–3,000,000.
 - The remaining balance is never injected into prompts, and there is no automatic retry. The ceiling counts silently and only speaks when exhausted.
 
@@ -478,7 +494,7 @@ The app works even without an API key. `HttpBackendFactory::echo_on_failure` fal
 
 > When the implementation identified itself only as an "echo response," fake replies continued because settings had not reached the backend, and the cause could not be found. **Fallback is allowed, but silent fallback is not.**
 
-To connect to an LLM, create a model template from ⚙, paste a key in the `API Key` field, and press `Register`. **Everything is completed inside the app.** No terminal operation or restart is needed.
+To connect to an LLM, create a model template from the agent list header, paste a key in the `API Key` field, and press `Register`. **Everything is completed inside the app.** No terminal operation or restart is needed.
 
 Changing `Protocol` updates the `base URL` default (`https://api.openai.com/v1` for OpenAI-compatible, `https://api.anthropic.com/v1` for Anthropic). A manually entered URL is never overwritten.
 
@@ -490,9 +506,11 @@ Agent settings reside in the OS application-data area.
 {app_data_dir}/workspace/
   world.json                  Agent definitions, model templates, and connection-map coordinates
   concordia.log               Diagnostic log (below; rotates one generation to concordia.log.old at 8 MB)
-  schedules.json              Schedules (time-triggered requests; managed from header ⏰)
-  Ordinance.md                Village ordinance (rules shared by all agents; edit from title bar 📜)
-  mcp.json                    Shared MCP server declaration (presented to every agent; edit from header 📡)
+  schedules.json              Schedules (time-triggered requests; managed from "Schedule" in the title bar)
+  Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
+  mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
+  sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
+  exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list)
   agents/{agent_id}/
     SKILL.md
     Memory.md
@@ -518,6 +536,10 @@ The primary purpose of a `tool` line is **`body_chars`**. Tool results are added
 
 Only these observation lines are logged; **prompt bodies, tool-result bodies, and credentials are not**. Logs are plaintext, readable by anyone opening the workspace, and are treated like `world.json`. This must not break the boundary that secrets belong only in the OS credential store ([failures.md](failures.md) #1).
 
+**The status bar at the bottom of the screen prints the time in this same prefix format** (`2026-08-03 22:15:03`). This is a management tool, so a screenshot needs to carry **which moment it shows**; matching the format means **you can find the corresponding log line by eye from the time in the captured screen** (only the milliseconds are extra on the log side).
+
+This clock alone **does not follow the language setting**. English locale formatting would render `8/3/2026, 10:15:03 PM`, which at once (1) reorders month and day depending on the reader's country, (2) requires reading AM/PM, and (3) no longer lines up with the log. **This is not a missed translation but a deliberate fix for correlation.**
+
 ### Per-Agent MCP
 
 `agents/{id}/mcp.json` can declare MCP servers **dedicated** to that agent (the same Claude Desktop `mcpServers` format as the shared file). The motivation is giving every agent a different memory database: even with the same server, distributing one connection target to everyone is wrong when destinations differ.
@@ -531,7 +553,7 @@ Only these observation lines are logged; **prompt bodies, tool-result bodies, an
 
 Rules stack in three layers: **vendor constitution (model-side, immutable) > village ordinance > individual agent settings**. The ordinance enters the top of every agent's system prompt and applies from the next utterance after saving. Since everyone receives the same document as the rules of the place, it is also a normalization layer that aligns behavior differences between models.
 
-The 📁 button in the Settings dialog opened from an agent card's ⚙ opens that agent's configuration folder directly.
+The folder button in the Settings dialog — opened from an agent card's settings button — opens that agent's configuration folder directly.
 
 ### The Village Blackboard — shared working notes
 
@@ -539,7 +561,7 @@ The other tab at the center-bottom is the **Blackboard**. It is literally the `�
 
 ### Scheduling
 
-From header ⏰, you can register **requests that fire at specified times** ([Spec 07](specs/07_scheduled-tasks.md)). The three forms are "every Thursday at 17:00," "daily at 09:00," and "every 10 minutes"; cron expressions are intentionally not used, since they are unreadable to anyone unfamiliar with them and leave the UI as a free-text input. When fired, the request reaches that agent and the result appears in the conversation pane. The body begins with `[Scheduled: Every Thursday 17:00]`, distinguishing it from human utterances in both the UI and model context.
+From "Schedule" in the title bar, you can register **requests that fire at specified times** ([Spec 07](specs/07_scheduled-tasks.md)). The three forms are "every Thursday at 17:00," "daily at 09:00," and "every 10 minutes"; cron expressions are intentionally not used, since they are unreadable to anyone unfamiliar with them and leave the UI as a free-text input. When fired, the request reaches that agent and the result appears in the conversation pane. The body begins with `[Scheduled: Every Thursday 17:00]`, distinguishing it from human utterances in both the UI and model context.
 
 **Limits (the UI says the same):**
 
@@ -550,6 +572,37 @@ From header ⏰, you can register **requests that fire at specified times** ([Sp
 **Known limitation**: duplicate firing is not completely prevented. A light guard avoids adding work while the previous firing is still running for that agent, but releases the guard when an event is lost. Leaving it closed would silently stop the schedule forever, which is worse than rare duplicate firing. Inbox capacity (64) is the final backpressure.
 
 Multiple instances are mutually exclusive: launching a second Concordia brings the existing window to the front and exits the second process. This structurally closes the path where two processes fire the same schedule at once, so it is implemented **before the scheduling mechanism itself**.
+
+### System Settings
+
+Opened from "System Settings" in the title bar ([Spec 13](specs/13_settings-dialog.md)). Two panes —
+a left menu and a right page — where **the left menu is itself the catalog of what can be configured**.
+The aim is not to add settings, but to **surface settings that already existed with no place to touch them**.
+
+| Page | Content |
+|---|---|
+| General | Language (Japanese / English). Inferred from the OS on first launch only; never re-inferred afterwards |
+| Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited" |
+| User Interface | Message visibility — currently just the confirmation dialog for **deleting a connection (line)** |
+
+- **There are two storage locations.** Language and token limit are **stored in the village**
+  (`world.json`), so they travel with it when shared. Screen settings are **stored on the device**,
+  so opening the same village on another PC gives different values. Each page states which one applies
+- **Unimplemented pages are not listed in the left menu.** Listing something you cannot touch
+  would be a lie that shows the impossible as possible
+- **Orchestrator internals are not exposed** (history depth, hop limit, public-square-log window, and
+  others). This is the substance of "do not add settings"; the line between exposed and hidden is
+  frozen as `settings_contract` in `data_contract.yaml`
+- **Deleting a line on the map was the only destructive action with no confirmation** (the other six
+  always had one). On by default: cutting a line once is recoverable, but losing one without knowing
+  the setting exists is not
+
+Localization covers two of three layers. **UI text** and **error text returned by the core** are
+translated; **system prompts and tool descriptions are not** — translating those is not translation
+but a change of prompt, and it collides with the discipline of not altering a single character of the
+bundling text ([Spec 08](specs/08_plan-wave-pane.md)). System lines in the conversation log are not
+translated either (records should stay in the language they happened in; retranslating them would put
+the exported JSONL and the screen out of sync).
 
 ---
 

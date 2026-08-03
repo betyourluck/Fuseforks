@@ -2,7 +2,8 @@
 /**
  * 3 ペインのルートレイアウト。
  *
- * 左: エージェント一覧 / 中央: 村の地図 / 右: 会話
+ * 上: タイトルバー / 左: エージェント一覧 / 中央: 村の地図 / 右: 会話 /
+ * 下: ステータスバー（時計）
  *
  * エージェントの設定は常駐ペインではなくモーダル（カードの鉛筆から開く）。
  * 設定は「たまに開いて書き換えるもの」で、会話やマップのように
@@ -28,6 +29,7 @@ import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
+import StatusBar from "./components/StatusBar.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
@@ -214,5 +216,12 @@ onMounted(() => {
       </template>
     </div>
   </div>
+
+  <!--
+    フッターのステータスバー。今は時計だけ。**グリッドの外**（flex 列の末尾）に
+    置くのは、3 ペインの分割規則（`minmax(0, 1fr)` と仕切り）に巻き込まないため。
+    `shrink-0` なので、縮むのは上のグリッド側。
+  -->
+  <StatusBar />
   </div>
 </template>

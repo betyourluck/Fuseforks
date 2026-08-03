@@ -588,5 +588,9 @@
       "summarize": "要約",
       "exportSession": "会話の書き出し"
     }
+  },
+  "statusBar": {
+    "clockTitle": "現在の日付と時刻（診断ログの行頭と同じ形式）",
+    "clockAria": "現在の日付と時刻"
   }
 }
