@@ -13,7 +13,7 @@ import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { batchAction, batchLabel } from "../lib/batchStart";
-import type { AgentId, AgentSnapshot, AgentSpec } from "../types";
+import type { AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -61,6 +61,9 @@ function deriveId(name: string): AgentId {
   return `${base}_${n}`;
 }
 
+/** 新規作成で選ぶ役職。`null` = 役職なし（今までどおりの作成）。 */
+const newRoleId = ref<RoleId | null>(null);
+
 async function submitNew(): Promise<void> {
   const name = newName.value.trim();
   if (!name) return;
@@ -86,11 +89,14 @@ async function submitNew(): Promise<void> {
     hearsRoomLog: true,
     // 作ったら一括起動の対象に入れる。外すのが例外側（重いモデル・実験中）。
     batchStart: true,
-    // 役職は P3 の作成 UI で選ばせる（Spec 14）。P1 の時点では常に無し。
-    roleId: null,
+    // 役職（Spec 14）。**設定の流し込みはコアがやる** — ここで前埋めしない。
+    // このフォームは名前しか集めないので、上書きされて困る編集値が存在しない
+    // （P2 で立てた D5 は、フォームがこの形である限り起きない）。
+    roleId: newRoleId.value,
   };
 
   const created = await orchestrator.createAgent(spec);
+  newRoleId.value = null;
   if (created) {
     orchestrator.select(created.id);
     newName.value = "";
@@ -190,6 +196,21 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         autofocus
         class="w-full rounded border border-line bg-surface-1 px-2 py-1.5 outline-none focus:border-accent"
       />
+      <!--
+        役職（Spec 14）。選ぶと設定が入った状態で作られる。**選ばなくてもよい** —
+        既定は「役職なし」で、それが今までどおりの作成経路。
+        役職が 1 つも無い村では出さない（選べない選択肢を並べない）。
+      -->
+      <select
+        v-if="state.roles.length"
+        v-model="newRoleId"
+        class="mt-1.5 w-full rounded border border-line bg-surface-1 px-2 py-1.5 outline-none focus:border-accent"
+      >
+        <option :value="null">{{ $t("agentList.noRole") }}</option>
+        <option v-for="role in state.roles" :key="role.id" :value="role.id">
+          {{ role.name }}
+        </option>
+      </select>
       <p v-if="!state.templates.length" class="mt-1.5 text-[11px] text-warn">
         {{ $t("agentList.noTemplates") }}
       </p>

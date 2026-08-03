@@ -12,6 +12,8 @@ import { avatarHue, avatarInitial } from "../lib/avatar";
 import type { ToolRun } from "../lib/chatRows";
 import { formatError } from "../lib/errorText";
 import { compactNumber, exactNumber } from "../lib/format";
+import { roleLabel } from "../lib/roleLabel";
+import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABEL_KEYS, type AgentSnapshot } from "../types";
 
 const { t } = useI18n();
@@ -33,6 +35,18 @@ const emit = defineEmits<{
   /** 対象トグル: 一括起動（▶）に含めるか。稼働状態は変えない。 */
   (e: "batch-start", included: boolean): void;
 }>();
+
+const { state } = useOrchestrator();
+
+/**
+ * 役職バッジの文言。引けなければ `null` で、**バッジごと描かない**
+ * （`role_contract` 凍結 5 — `[不明]` とは書かない）。
+ *
+ * **このバッジは由来であって、現在の中身を保証しない**（機構 8）。作成後に
+ * `Construct.md` も道具も手で変えられるので、「調査役」のまま中身が別の個体は
+ * 正当な操作で生まれる。`title` にもそう書く — 画面の言葉と仕様の言葉を分けない。
+ */
+const role = computed(() => roleLabel(props.agent.roleId, state.roles));
 
 /** 状態に対応する表示色。停止・稼働・失敗が一目で分かることを優先する。 */
 const statusColor = computed(() => {
@@ -145,7 +159,16 @@ const cacheTone = computed(() => {
           :title="$t(STATUS_LABEL_KEYS[agent.status])"
         />
       </div>
-      <h3 class="min-w-0 flex-1 truncate font-medium">{{ agent.name }}</h3>
+      <h3 class="min-w-0 truncate font-medium">{{ agent.name }}</h3>
+      <!-- 役職バッジ（Spec 14）。名前の直後に置く — 「誰が」の一部だから。 -->
+      <span
+        v-if="role"
+        class="shrink-0 rounded border border-line px-1 py-px text-[10px] leading-none text-ink-dim"
+        :title="$t('roles.badgeTitle', { name: role })"
+      >
+        {{ role }}
+      </span>
+      <span class="min-w-0 flex-1"></span>
 
       <!-- 設定。カード本体のクリック（選択）と混ざらないよう伝播を止める。 -->
       <button

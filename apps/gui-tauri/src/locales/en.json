@@ -75,7 +75,9 @@
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on an edge removes the connection."
       }
-    }
+    },
+    "groupServants": "Servants",
+    "menuRoles": "Roles"
   },
   "common": {
     "close": "Close"
@@ -131,7 +133,8 @@
     "cancel": "Cancel",
     "create": "Create",
     "emptyLine1": "No servants yet.",
-    "emptyLine2": "Add one with the + button in the top right."
+    "emptyLine2": "Add one with the + button in the top right.",
+    "noRole": "No role"
   },
   "agentCard": {
     "lastToolRanAt": "Ran {tool} at {time}",
@@ -594,5 +597,40 @@
   "statusBar": {
     "clockTitle": "Current date and time (same format as the diagnostic log prefix)",
     "clockAria": "Current date and time"
+  },
+  "roles": {
+    "heading": "Roles",
+    "help": "Templates for creating servants. Pick a role when creating one and it starts with its settings already filled in. The role name appears as a badge on cards and on the map.",
+    "empty": "No roles yet.",
+    "noDescription": "(no description)",
+    "add": "Add role",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "badgeTitle": "This servant was created from the \"{name}\" template. It does not guarantee the current settings, which can be changed after creation.",
+    "editNote": "Editing here does not change servants that already exist, because settings are copied at creation time. Only the role name on the badge follows.",
+    "confirmDeleteTitle": "Delete the role \"{name}\"?",
+    "confirmDeleteBody": "Servants created from this role keep working unchanged, since their settings were copied at creation time. Only the role badge disappears.",
+    "fields": {
+      "id": "ID",
+      "idHelp": "Cannot be changed later. Letters, digits, - and _ are allowed.",
+      "idInvalid": "Use only letters, digits, - and _, up to 64 characters.",
+      "name": "Role name",
+      "nameHelp": "The name shown on badges and in the roster. Renaming it updates every display.",
+      "description": "Description",
+      "descriptionHelp": "For whoever picks a template on this screen. It is never sent to servants."
+    },
+    "defaults": {
+      "heading": "Defaults applied when creating with this role",
+      "help": "These values are applied to a new servant. Connections and the work folder are deliberately excluded: lines are drawn by people, and the work folder differs per machine.",
+      "construct": "Construct.md body",
+      "modelTemplate": "Model template",
+      "noOpinion": "Not specified",
+      "maxToolIterations": "Tool call limit",
+      "tools": "Built-in tools to offer",
+      "ragSources": "RAG sources to reference"
+    }
   }
 }

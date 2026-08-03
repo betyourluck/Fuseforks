@@ -22,6 +22,7 @@ import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
 import { compactNumber } from "../lib/format";
+import { roleLabel } from "../lib/roleLabel";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
@@ -34,6 +35,14 @@ const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const { settings } = useUiSettings();
+
+/**
+ * ノードに出す役職名。引けなければ `null` で**バッジごと描かない**
+ * （`role_contract` 凍結 5 — 3 箇所は `roleLabel` の 1 実装を通す）。
+ */
+function roleOf(agent: { roleId: string | null }): string | null {
+  return roleLabel(agent.roleId, state.roles);
+}
 
 /** 円環配置の半径。ノード数に応じて広げ、重なりを避ける。 */
 function radiusFor(count: number): number {
@@ -258,6 +267,19 @@ function borderClass(status: string): string {
               </div>
             </div>
             <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
+              <!--
+                役職バッジ（Spec 14）。名前行ではなくこの行へ置く — 名前とモデル名は
+                どちらも truncate で幅を奪い合っており、3 つ目を足すと全部読めなくなる。
+                この行は元からチップの並びなので、短い語（3〜5 字）が収まる。
+                **状態より前**に置くのは、役職が「誰か」の側で状態が「今どうか」の側だから。
+              -->
+              <span
+                v-if="roleOf(data.agent)"
+                class="rounded border border-line px-1 py-px leading-none"
+                :title="$t('roles.badgeTitle', { name: roleOf(data.agent) })"
+              >
+                {{ roleOf(data.agent) }}
+              </span>
               <span>{{ $t(STATUS_LABEL_KEYS[data.agent.status as keyof typeof STATUS_LABEL_KEYS]) }}</span>
               <span class="tabular-nums">
                 {{ compactNumber(data.agent.totalTokens) }} tokens
