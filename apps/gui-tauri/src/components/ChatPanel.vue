@@ -336,7 +336,7 @@ async function newChat(): Promise<void> {
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="chat-panel flex h-full flex-col">
     <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
       class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
@@ -344,35 +344,93 @@ async function newChat(): Promise<void> {
       <h2 class="font-semibold tracking-wide text-ink">会話</h2>
       <span class="tabular-nums">{{ rows.length }} 件</span>
       <button
-        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
+        class="chat-action grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40"
         :disabled="!rows.length"
         title="この会話を閉じて、新しい会話を始めます（前の会話は保存され、一覧から戻れます）"
+        aria-label="新規チャット"
         @click="newChat"
       >
-        新規チャット
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M5 4h10a3 3 0 0 1 3 3v4" />
+          <path d="M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h7" />
+          <path d="M7 9h6M7 13h4M18 15v6M15 18h6" />
+        </svg>
+        <span class="chat-action-label">新規チャット</span>
       </button>
       <!--
         会話一覧（Spec 12）。開く・分岐・書き出し・削除はここに畳む —
         38px のヘッダに 4 つ足すと、どれも押しにくくなる。
       -->
       <button
-        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent"
+        class="chat-action grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         title="保存されている会話の一覧。開き直す・分岐する・書き出す・削除する"
+        aria-label="会話一覧"
         @click="sessionsOpen = true"
       >
-        会話一覧
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2M7 4 4 7" />
+        </svg>
+        <span class="chat-action-label">会話一覧</span>
       </button>
       <!--
         要約して続ける（Spec 12 P4）。**自動では走らない** — 要約は LLM 呼び出しで、
         トークン予算の天井と競合する。押した人が費用を承知している状態でだけ走る。
       -->
       <button
-        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-accent hover:text-accent disabled:opacity-40"
+        class="chat-action grid size-6 place-items-center rounded transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40"
+        :class="summarizing ? 'cursor-wait text-warn' : 'text-ink-dim hover:text-accent'"
         :disabled="!rows.length || summarizing"
-        title="ここまでの会話を要約して、以後のプロンプトを短くします（稼働中のサーヴァントが対象。トークンを使います。元のやり取りは消えません）"
+        :title="summarizing ? '会話を要約中です' : 'ここまでの会話を要約して、以後のプロンプトを短くします（稼働中のサーヴァントが対象。トークンを使います。元のやり取りは消えません）'"
+        :aria-label="summarizing ? '会話を要約中' : '要約して続ける'"
         @click="summarize"
       >
-        {{ summarizing ? "要約中…" : "要約して続ける" }}
+        <svg
+          v-if="!summarizing"
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M5 4h14v16H5zM8 8h8M8 12h5M8 16h3" />
+          <path d="m14 16 2 2 4-5" />
+        </svg>
+        <svg
+          v-else
+          class="size-4 animate-spin"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+          <path d="M20 4v5h-5" />
+        </svg>
+        <span class="chat-action-label">{{ summarizing ? "要約中…" : "要約して続ける" }}</span>
       </button>
       <!--
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
@@ -380,12 +438,22 @@ async function newChat(): Promise<void> {
         稼働は降ろさない（■ の一括停止とは別物）。
       -->
       <button
-        class="rounded border border-line px-1.5 py-0.5 text-[10px] text-warn transition hover:border-warn disabled:opacity-40"
+        class="chat-action grid size-6 place-items-center rounded text-red-500 transition-colors hover:text-red-400 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-500 disabled:opacity-40"
         :disabled="!typingAgents.length"
         title="飛行中のターンを全部打ち切ります（稼働は降ろしません。会話と履歴は残ります）"
+        aria-label="全ターン停止"
         @click="orchestrator.interruptAll()"
       >
-        全ターン停止
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.3" />
+          <path d="m7 7 10 10" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+        </svg>
+        <span class="chat-action-label">全ターン停止</span>
       </button>
       <select
         v-model="filterAgentId"
@@ -631,6 +699,29 @@ async function newChat(): Promise<void> {
 </template>
 
 <style scoped>
+.chat-panel {
+  container-type: inline-size;
+  container-name: chat-panel;
+}
+
+.chat-action-label {
+  display: none;
+}
+
+@container chat-panel (min-width: 600px) {
+  .chat-action {
+    display: inline-flex;
+    width: auto;
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .chat-action-label {
+    display: inline;
+    font-size: 10px;
+  }
+}
+
 /* 入力中バブルの 3 点アニメーション。位相を 1/6 周期ずつずらして波にする。 */
 .typing-bubble {
   display: inline-flex;
