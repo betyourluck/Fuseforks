@@ -32,6 +32,7 @@ import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
+import { formatError } from "./lib/errorText";
 import { useOrchestrator } from "./composables/useOrchestrator";
 import { usePaneLayout } from "./composables/usePaneLayout";
 import type { BottomTab } from "./types";
@@ -188,7 +189,7 @@ onMounted(() => {
       <template v-if="state.initError">
         <p class="font-medium text-fail">{{ $t("app.bootFailed") }}</p>
         <p class="selectable max-w-lg text-[12px] text-ink-dim">
-          [{{ state.initError.code }}] {{ state.initError.message }}
+          {{ formatError(state.initError) }}
         </p>
         <p
           v-if="state.initError.detail"

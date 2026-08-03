@@ -14,6 +14,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import { formatError } from "../lib/errorText";
 import { setLocale } from "../i18n";
 import { useUiSettings } from "../composables/useUiSettings";
 import type { Language } from "../types";
@@ -83,7 +84,7 @@ async function load(): Promise<void> {
     languageInput.value = language;
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     loading.value = false;
   }
@@ -102,7 +103,7 @@ async function saveCeiling(): Promise<void> {
     savedNote.value = t("settings.tokenBudget.saved");
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     busy.value = false;
   }
@@ -122,7 +123,7 @@ async function saveLanguage(): Promise<void> {
     savedNote.value = t("settings.language.saved");
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     busy.value = false;
   }

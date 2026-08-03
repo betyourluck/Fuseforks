@@ -13,6 +13,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import { formatError } from "../lib/errorText";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { WEEKDAY_LABEL_KEYS, type Recurrence, type ScheduleView, type Weekday } from "../types";
@@ -78,7 +79,7 @@ async function load(): Promise<void> {
     schedules.value = await ipc.listSchedules();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     loading.value = false;
   }
@@ -96,7 +97,7 @@ async function add(): Promise<void> {
     await load();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     busy.value = false;
   }
@@ -121,7 +122,7 @@ async function remove(task: ScheduleView): Promise<void> {
     await load();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     busy.value = false;
   }
@@ -135,7 +136,7 @@ async function toggleEnabled(task: ScheduleView): Promise<void> {
     await load();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
-    error.value = `[${payload.code}] ${payload.message}`;
+    error.value = formatError(payload);
   } finally {
     busy.value = false;
   }

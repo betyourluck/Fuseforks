@@ -10,6 +10,7 @@ import { useI18n } from "vue-i18n";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import type { ToolRun } from "../lib/chatRows";
+import { formatError } from "../lib/errorText";
 import { compactNumber, exactNumber } from "../lib/format";
 import { STATUS_LABEL_KEYS, type AgentSnapshot } from "../types";
 
@@ -274,7 +275,7 @@ const cacheTone = computed(() => {
       class="mt-2 rounded border border-fail/40 bg-fail/10 px-2 py-1 text-[11px] text-fail"
       :title="agent.lastError.detail ?? undefined"
     >
-      [{{ agent.lastError.code }}] {{ agent.lastError.message }}
+      {{ formatError(agent.lastError) }}
     </p>
   </article>
 </template>

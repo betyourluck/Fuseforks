@@ -2,7 +2,7 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 承認 → P0〜P3 完了（P3b 含む）。次は P4（コアの文言）**
+**Status**: **rev3 承認 → P0〜P4 完了。次は P5（台帳と実機確認）**
 （rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
@@ -36,6 +36,25 @@ ChatInput / OrdinanceDialog / McpDialog / ScheduleDialog / SessionDialog /
 BlackboardPane / PlanWavePane / MarkdownEditor / PaneSplitter / ErrorBoundary /
 ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator の
 トースト文言 + `index.html` の `<title>`。
+
+## P4 の実装記録（2026-08-03）
+
+- **コアのコード変更ゼロ**（案 A の目標どおり — コアは言語を知らない）。
+  UI 側に `errors.{code}` の辞書 31 本と `formatError`（`lib/errorText.ts`）:
+  日本語 = `message` そのまま / 他言語 = 訳語 + **原文併記** / 未知 code = 原文へ。
+  原文併記は `message` の可変部（テンプレート名・件数）を失わないためで、
+  不具合報告の grep もこれで成立し続ける
+- 表示箇所 10 箇所（App の起動失敗 / AgentCard の lastError / BlackboardPane /
+  SettingsDialog ×3 / ScheduleDialog ×4 / useOrchestrator のトースト detail ×3）を
+  `formatError` へ集約。`[code] message` の手組みは残っていない
+- **System 行は訳さない（P4 決定・spec 起票時の表の (2) から外した）**。
+  System 行は UI 文言ではなく会話ログの一部で、モデルの発話が UI 言語に
+  追従しない以上、System 行だけ追従すると記録の中で整合しない。表示時に訳すには
+  kind + params の構造化（ワイヤ + session_store の加算）が要り、やるなら別 Spec。
+  D5 の「過去の記録は当時の言語で残るのが正しい」をここまで延長した判断で、
+  **利用者の異論があれば差し戻せる**（コアに触っていないので撤回コストは低い）
+- vitest 3 本（ja 素通し / 訳語 + 原文併記 / 未知 code のフォールバック）。
+  辞書パリティテストが errors.* も自動で覆う
 
 ## P3b の実装記録（2026-08-03）
 

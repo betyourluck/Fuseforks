@@ -12,6 +12,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
+import { formatError } from "../lib/errorText";
 import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
@@ -208,7 +209,7 @@ async function guard<T>(
     pushToast(
       "error",
       i18n.global.t("orchestrator.opFailed", { op: i18n.global.t(labelKey) }),
-      `[${payload.code}] ${payload.message}`,
+      formatError(payload),
     );
     return FAILED;
   }
@@ -236,7 +237,7 @@ async function mutate<T>(
     pushToast(
       "error",
       i18n.global.t("orchestrator.opFailed", { op: i18n.global.t(labelKey) }),
-      `[${payload.code}] ${payload.message}`,
+      formatError(payload),
     );
     return FAILED;
   } finally {
@@ -517,7 +518,7 @@ function applyEvent(event: CoreEvent): void {
       pushToast(
         "error",
         i18n.global.t("orchestrator.agentFailed", { name }),
-        `[${event.error.code}] ${event.error.message}`,
+        formatError(event.error),
       );
       break;
     }

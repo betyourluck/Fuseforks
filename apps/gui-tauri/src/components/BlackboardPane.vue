@@ -12,6 +12,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import { listBlackboard, toErrorPayload } from "../lib/ipc";
+import { formatError } from "../lib/errorText";
 import { renderMarkdown } from "../lib/markdown";
 import type { BlackboardNote, BottomTab, ErrorPayload } from "../types";
 import BottomPaneTabs from "./BottomPaneTabs.vue";
@@ -99,7 +100,7 @@ function formatTime(ms: number): string {
       v-if="error"
       class="flex flex-1 items-center justify-center px-6 text-center text-xs text-fail"
     >
-      [{{ error.code }}] {{ error.message }}
+      {{ formatError(error) }}
     </div>
 
     <div
