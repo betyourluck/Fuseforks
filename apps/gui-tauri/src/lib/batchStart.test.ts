@@ -84,11 +84,11 @@ describe("batchLabel", () => {
   });
 
   it("押せないときは理由を出す（対象なしと遷移中を区別する）", () => {
-    expect(batchLabel({ mode: "none", targets: [] }, 0).title).toContain(
-      "対象がありません",
+    expect(batchLabel({ mode: "none", targets: [] }, 0).titleKey).toBe(
+      "agentList.batchNoTargets",
     );
-    expect(batchLabel({ mode: "none", targets: [] }, 2).title).toContain(
-      "変更中",
+    expect(batchLabel({ mode: "none", targets: [] }, 2).titleKey).toBe(
+      "agentList.batchAllTransitioning",
     );
   });
 });

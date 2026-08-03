@@ -15,6 +15,7 @@
  * 吹き出しの外側に宛先と hop を残す。会話らしさのために情報を捨てない。
  */
 import { computed, nextTick, ref, watch } from "vue";
+import { Translation as I18nT, useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import ChatInput from "./ChatInput.vue";
@@ -34,6 +35,7 @@ import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -50,20 +52,22 @@ const canSend = computed(() => targetAgent.value?.status === "running");
 
 /** 送信できない理由。押せないボタンに理由を添えないと、故障と区別がつかない。 */
 const blockedReason = computed(() => {
-  if (!targetAgent.value) return "宛先を選択してください";
-  return `${targetAgent.value.name} が稼働していません`;
+  if (!targetAgent.value) return t("chat.selectTarget");
+  return t("chat.notRunning", { name: targetAgent.value.name });
 });
 
 /** 入力欄のプレースホルダ。 */
 const placeholder = computed(() =>
-  targetAgent.value ? `${targetAgent.value.name} へ送信…` : "宛先を選択してください",
+  targetAgent.value
+    ? t("chat.sendTo", { name: targetAgent.value.name })
+    : t("chat.selectTarget"),
 );
 
 /** エンドポイントの表示名。 */
 function label(endpoint: Endpoint): string {
   switch (endpoint.kind) {
     case "user":
-      return "あなた";
+      return t("chat.you");
     case "system":
       // 「システム」ではなくアプリ名を名乗る。入退室通知などは
       // 匿名の機械音声ではなく、場（Concordia）そのものの声として出す。
@@ -163,13 +167,13 @@ const typingAgents = computed(() =>
 function toLabel(row: ChatRow): string {
   const first = label(row.message.to);
   if (!row.extraTargets.length) return first;
-  return `${first} 他${row.extraTargets.length}名`;
+  return t("chat.toOthers", { name: first, count: row.extraTargets.length });
 }
 
 /** 同報の全宛先（hover で確認できるように）。 */
 function toTitle(row: ChatRow): string {
   if (!row.extraTargets.length) return "";
-  return [row.message.to, ...row.extraTargets].map(label).join("、");
+  return [row.message.to, ...row.extraTargets].map(label).join(t("chat.nameSeparator"));
 }
 
 /** 自分（ユーザー）の発言か。右寄せにする。 */
@@ -300,10 +304,9 @@ const summarizing = ref(false);
 async function summarize(): Promise<void> {
   if (summarizing.value) return;
   const ok = await askConfirm({
-    title: "ここまでの会話を要約して続けますか？",
-    message:
-      "稼働中のサーヴァント 1 体につき 1 回モデルを呼ぶので、トークンを使います（停止中の相手は対象外です）。\n元のやり取りは消えません（「会話一覧」の書き出しから読めます）。",
-    confirmLabel: "要約する",
+    title: t("chat.summarizeConfirmTitle"),
+    message: t("chat.summarizeConfirmMessage"),
+    confirmLabel: t("chat.summarizeConfirmLabel"),
   });
   if (!ok) return;
   summarizing.value = true;
@@ -332,9 +335,9 @@ async function prefill(payload: { text: string; to: string | null }): Promise<vo
 async function newChat(): Promise<void> {
   if (!rows.value.length) return;
   const ok = await askConfirm({
-    title: "この会話を閉じて、新しい会話を始めますか？",
-    message: "今の会話は保存され、「会話一覧」からいつでも戻れます。",
-    confirmLabel: "新しい会話を始める",
+    title: t("chat.newChatConfirmTitle"),
+    message: t("chat.newChatConfirmMessage"),
+    confirmLabel: t("chat.newChatConfirmLabel"),
   });
   if (!ok) return;
   await orchestrator.newChat();
@@ -347,13 +350,13 @@ async function newChat(): Promise<void> {
     <header
       class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <h2 class="font-semibold tracking-wide text-ink">会話</h2>
-      <span class="tabular-nums">{{ rows.length }} 件</span>
+      <h2 class="font-semibold tracking-wide text-ink">{{ $t("chat.heading") }}</h2>
+      <span class="tabular-nums">{{ $t("chat.count", { count: rows.length }) }}</span>
       <button
         class="chat-action grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40"
         :disabled="!rows.length"
-        title="この会話を閉じて、新しい会話を始めます（前の会話は保存され、一覧から戻れます）"
-        aria-label="新規チャット"
+        :title="$t('chat.newChatTitle')"
+        :aria-label="$t('chat.newChat')"
         @click="newChat"
       >
         <svg
@@ -370,7 +373,7 @@ async function newChat(): Promise<void> {
           <path d="M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h7" />
           <path d="M7 9h6M7 13h4M18 15v6M15 18h6" />
         </svg>
-        <span class="chat-action-label">新規チャット</span>
+        <span class="chat-action-label">{{ $t("chat.newChat") }}</span>
       </button>
       <!--
         会話一覧（Spec 12）。開く・分岐・書き出し・削除はここに畳む —
@@ -378,8 +381,8 @@ async function newChat(): Promise<void> {
       -->
       <button
         class="chat-action grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        title="保存されている会話の一覧。開き直す・分岐する・書き出す・削除する"
-        aria-label="会話一覧"
+        :title="$t('chat.sessionsTitle')"
+        :aria-label="$t('chat.sessions')"
         @click="sessionsOpen = true"
       >
         <svg
@@ -395,7 +398,7 @@ async function newChat(): Promise<void> {
           <circle cx="12" cy="12" r="9" />
           <path d="M12 7v5l3 2M7 4 4 7" />
         </svg>
-        <span class="chat-action-label">会話一覧</span>
+        <span class="chat-action-label">{{ $t("chat.sessions") }}</span>
       </button>
       <!--
         要約して続ける（Spec 12 P4）。**自動では走らない** — 要約は LLM 呼び出しで、
@@ -405,8 +408,8 @@ async function newChat(): Promise<void> {
         class="chat-action grid size-6 place-items-center rounded transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40"
         :class="summarizing ? 'cursor-wait text-warn' : 'text-ink-dim hover:text-accent'"
         :disabled="!rows.length || summarizing"
-        :title="summarizing ? '会話を要約中です' : 'ここまでの会話を要約して、以後のプロンプトを短くします（稼働中のサーヴァントが対象。トークンを使います。元のやり取りは消えません）'"
-        :aria-label="summarizing ? '会話を要約中' : '要約して続ける'"
+        :title="summarizing ? $t('chat.summarizingTitle') : $t('chat.summarizeTitle')"
+        :aria-label="summarizing ? $t('chat.summarizingAria') : $t('chat.summarize')"
         @click="summarize"
       >
         <svg
@@ -436,7 +439,7 @@ async function newChat(): Promise<void> {
           <path d="M20 12a8 8 0 1 1-2.3-5.7" />
           <path d="M20 4v5h-5" />
         </svg>
-        <span class="chat-action-label">{{ summarizing ? "要約中…" : "要約して続ける" }}</span>
+        <span class="chat-action-label">{{ summarizing ? $t("chat.summarizingShort") : $t("chat.summarize") }}</span>
       </button>
       <!--
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
@@ -453,8 +456,8 @@ async function newChat(): Promise<void> {
       <button
         class="chat-action chat-action-danger grid size-6 place-items-center rounded text-fail transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fail disabled:opacity-40"
         :disabled="!typingAgents.length"
-        title="飛行中のターンを全部打ち切ります（稼働は降ろしません。会話と履歴は残ります）"
-        aria-label="全ターン停止"
+        :title="$t('chat.interruptAllTitle')"
+        :aria-label="$t('chat.interruptAll')"
         @click="orchestrator.interruptAll()"
       >
         <svg
@@ -466,13 +469,13 @@ async function newChat(): Promise<void> {
           <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.3" />
           <path d="m7 7 10 10" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
         </svg>
-        <span class="chat-action-label">全ターン停止</span>
+        <span class="chat-action-label">{{ $t("chat.interruptAll") }}</span>
       </button>
       <select
         v-model="filterAgentId"
         class="ml-auto min-w-0 rounded border border-line bg-surface-1 px-1.5 py-0.5 outline-none focus:border-accent"
       >
-        <option value="">すべて</option>
+        <option value="">{{ $t("chat.filterAll") }}</option>
         <option v-for="agent in state.agents" :key="agent.id" :value="agent.id">
           {{ agent.name }}
         </option>
@@ -507,11 +510,17 @@ async function newChat(): Promise<void> {
           class="inline-block size-1.5 shrink-0 rounded-full"
           :class="entry.run.ok ? 'bg-run' : 'bg-fail'"
         />
-        <span class="truncate">
-          {{ toolActor(entry.run.agentId) }} が
-          <span class="font-mono text-ink">{{ entry.run.tool }}</span>
-          を実行{{ entry.run.ok ? "" : "（失敗）" }}
-        </span>
+        <I18nT
+          :keypath="entry.run.ok ? 'chat.toolRan' : 'chat.toolRanFailed'"
+          tag="span"
+          class="truncate"
+          scope="global"
+        >
+          <template #name>{{ toolActor(entry.run.agentId) }}</template>
+          <template #tool>
+            <span class="font-mono text-ink">{{ entry.run.tool }}</span>
+          </template>
+        </I18nT>
         <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
       </div>
 
@@ -621,10 +630,10 @@ async function newChat(): Promise<void> {
                診断情報であって日常の閲覧には要らない（情報は消さず場所を変える）。
                空いた席にコピーを置く。コピーするのは生テキスト。 -->
           <p class="mt-0.5 flex items-center gap-1.5 px-0.5 text-[10px] text-ink-dim tabular-nums">
-            <span :title="`転送 ${entry.row.message.hop} 回目（h${entry.row.message.hop}）`">{{
+            <span :title="$t('chat.hopTitle', { hop: entry.row.message.hop })">{{
               timestamp(entry.row.message.tsMs)
             }}</span>
-            <span v-if="entry.row.message.tokens">{{ entry.row.message.tokens }} tokens</span>
+            <span v-if="entry.row.message.tokens">{{ $t("chat.tokens", { count: entry.row.message.tokens }) }}</span>
             <button
               type="button"
               class="rounded px-0.5 leading-none transition-colors"
@@ -634,7 +643,7 @@ async function newChat(): Promise<void> {
                   : 'text-ink-dim hover:text-accent'
               "
               :title="
-                copiedId === entry.row.message.id ? 'コピーしました' : '本文をコピー'
+                copiedId === entry.row.message.id ? $t('chat.copied') : $t('chat.copy')
               "
               @click.stop="copyMessage(entry.row.message)"
             >
@@ -666,7 +675,7 @@ async function newChat(): Promise<void> {
         </div>
         <div
           class="typing-bubble rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2.5"
-          :title="`${agent.name} が応答を作成しています`"
+          :title="$t('chat.typingTitle', { name: agent.name })"
         >
           <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
         </div>
@@ -679,19 +688,19 @@ async function newChat(): Promise<void> {
         <button
           v-if="!state.interruptPending[agent.id]"
           class="self-center rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:border-warn hover:text-warn"
-          :title="`${agent.name} のこのターンを打ち切ります（稼働は降ろしません。会話と履歴は残ります）`"
-          :aria-label="`${agent.name} のターンを打ち切る`"
+          :title="$t('chat.interruptTurnTitle', { name: agent.name })"
+          :aria-label="$t('chat.interruptTurnAria', { name: agent.name })"
           @click="orchestrator.interruptTurn(agent.id)"
         >
-          ■ 停止
+          {{ $t("chat.interruptTurn") }}
         </button>
         <span v-else class="self-center text-[10px] text-ink-dim">
-          停止要求中…（実行中の処理が終わり次第止まります）
+          {{ $t("chat.interruptPending") }}
         </span>
       </div>
 
       <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
-        まだ発話がありません。
+        {{ $t("chat.empty") }}
       </p>
     </div>
 

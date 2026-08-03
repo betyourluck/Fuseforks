@@ -6,11 +6,14 @@
  * カードが縦に積まれたとき値の位置が揃わないと一覧として読めないため。
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import type { ToolRun } from "../lib/chatRows";
 import { compactNumber, exactNumber } from "../lib/format";
-import { STATUS_LABELS, type AgentSnapshot } from "../types";
+import { STATUS_LABEL_KEYS, type AgentSnapshot } from "../types";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   agent: AgentSnapshot;
@@ -72,7 +75,9 @@ const lastToolTitle = computed(() => {
     minute: "2-digit",
     second: "2-digit",
   });
-  return `${at} に ${run.tool} を実行${run.ok ? "" : "（失敗）"}`;
+  return run.ok
+    ? t("agentCard.lastToolRanAt", { time: at, tool: run.tool })
+    : t("agentCard.lastToolRanAtFailed", { time: at, tool: run.tool });
 });
 
 /**
@@ -136,7 +141,7 @@ const cacheTone = computed(() => {
         <span
           class="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-surface-1"
           :class="statusColor"
-          :title="STATUS_LABELS[agent.status]"
+          :title="$t(STATUS_LABEL_KEYS[agent.status])"
         />
       </div>
       <h3 class="min-w-0 flex-1 truncate font-medium">{{ agent.name }}</h3>
@@ -144,7 +149,7 @@ const cacheTone = computed(() => {
       <!-- 設定。カード本体のクリック（選択）と混ざらないよう伝播を止める。 -->
       <button
         class="shrink-0 rounded px-1 py-0.5 text-ink-dim hover:text-accent"
-        title="設定を開く"
+        :title="$t('agentCard.openSettings')"
         @click.stop="emit('configure')"
       >
         <svg
@@ -176,8 +181,8 @@ const cacheTone = computed(() => {
         :aria-checked="agent.batchStart"
         :title="
           agent.batchStart
-            ? '一括起動（▶）の対象に含めている。押すと外す'
-            : '一括起動（▶）の対象から外している。押すと含める'
+            ? $t('agentCard.batchIncluded')
+            : $t('agentCard.batchExcluded')
         "
         class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
         :class="agent.batchStart ? 'bg-accent' : 'bg-line'"
@@ -192,7 +197,7 @@ const cacheTone = computed(() => {
       <!-- スタンバイ（電源）。この個体の実際の起動・停止。
            色は状態と一致させる（稼働中は緑、停止中は淡色）。 -->
       <button
-        :title="isOn ? `${agent.name} を停止する` : `${agent.name} を起動する`"
+        :title="isOn ? $t('agentCard.stop', { name: agent.name }) : $t('agentCard.start', { name: agent.name })"
         class="shrink-0 rounded-full p-1 transition-colors"
         :class="isOn ? 'text-run hover:bg-surface-2' : 'text-ink-dim hover:text-ink hover:bg-surface-2'"
         @click.stop="emit('toggle', !isOn)"
@@ -214,20 +219,26 @@ const cacheTone = computed(() => {
     </header>
 
     <dl class="mt-2 grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
-      <dt class="text-ink-dim">モデル</dt>
+      <dt class="text-ink-dim">{{ $t("agentCard.model") }}</dt>
       <dd class="truncate" :title="agent.model">{{ agent.model }}</dd>
 
-      <dt class="text-ink-dim">稼働時間</dt>
+      <dt class="text-ink-dim">{{ $t("agentCard.uptime") }}</dt>
       <dd class="tabular-nums">{{ uptime }}</dd>
 
-      <dt class="text-ink-dim">トークン</dt>
+      <dt class="text-ink-dim">{{ $t("agentCard.tokens") }}</dt>
       <dd class="tabular-nums">
         {{ tokens }}
         <span
           v-if="cacheRate !== null"
           :class="cacheTone"
-          :title="`累計 ${exactNumber(agent.totalTokens)}（入力 ${exactNumber(agent.promptTokens)} / 出力 ${exactNumber(agent.totalTokens - agent.promptTokens)}、出力は全体の ${outputShare}%）。入力のうち ${exactNumber(agent.cachedTokens)} がプロンプトキャッシュから読まれました。出力はキャッシュできないため、割合は入力に対して出しています（0% はキャッシュが効いていないことを示します）`"
-          >（入力の {{ cacheRate }}% をキャッシュ）</span
+          :title="$t('agentCard.cacheDetail', {
+            total: exactNumber(agent.totalTokens),
+            input: exactNumber(agent.promptTokens),
+            output: exactNumber(agent.totalTokens - agent.promptTokens),
+            outputShare,
+            cached: exactNumber(agent.cachedTokens),
+          })"
+          >{{ $t("agentCard.cacheRate", { rate: cacheRate }) }}</span
         >
       </dd>
 
@@ -236,8 +247,8 @@ const cacheTone = computed(() => {
         {{ agent.ragSources.length ? agent.ragSources.join(", ") : "—" }}
       </dd>
 
-      <dt class="text-ink-dim">接続</dt>
-      <dd class="tabular-nums">{{ agent.connectedAgents.length }} 件</dd>
+      <dt class="text-ink-dim">{{ $t("agentCard.connections") }}</dt>
+      <dd class="tabular-nums">{{ $t("agentCard.connectionsCount", { count: agent.connectedAgents.length }) }}</dd>
 
       <!--
         直近に実行したツール。**「今この個体が何をしているか」**を出す欄で、
@@ -246,7 +257,7 @@ const cacheTone = computed(() => {
         「黙って副作用だけ起きた」状態を一覧から読み取れない。
       -->
       <template v-if="lastTool">
-        <dt class="text-ink-dim">直近ツール</dt>
+        <dt class="text-ink-dim">{{ $t("agentCard.lastTool") }}</dt>
         <dd class="truncate" :title="lastToolTitle">
           <span
             class="mr-1 inline-block size-1.5 rounded-full align-middle"

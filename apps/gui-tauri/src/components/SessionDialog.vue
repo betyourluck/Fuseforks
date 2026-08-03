@@ -10,6 +10,7 @@
  * コアのエラー文言（`SESSION_SWITCH_BLOCKED`）がそのまま通知に出る。
  */
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   (e: "prefill", payload: { text: string; to: string | null }): void;
 }>();
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -55,7 +57,7 @@ function stamp(ms: number): string {
 
 function titleOf(id: string, title: string): string {
   // 表題は最初のユーザー発話から採るので、まだ誰も話していない会話は空になる。
-  return title || `（まだ発話のない会話 ${id.slice(-8)}）`;
+  return title || t("session.untitled", { id: id.slice(-8) });
 }
 
 async function open(sessionId: string): Promise<void> {
@@ -87,9 +89,9 @@ async function remove(sessionId: string, title: string): Promise<void> {
   if (busy.value) return;
   const label = titleOf(sessionId, title);
   const ok = await askConfirm({
-    title: `「${label}」を削除しますか？`,
-    message: "この会話の発話と履歴は元に戻せません。残したいなら先に「書き出し」を。",
-    confirmLabel: "削除する",
+    title: t("session.deleteConfirmTitle", { title: label }),
+    message: t("session.deleteConfirmMessage"),
+    confirmLabel: t("session.deleteAction"),
     danger: true,
   });
   if (!ok) return;
@@ -116,32 +118,34 @@ async function exportOne(sessionId: string): Promise<void> {
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
         <h2 class="flex-1 font-semibold">
-          {{ forking ? "分岐する地点を選ぶ" : "会話" }}
+          {{ forking ? $t("session.forkTitle") : $t("session.title") }}
         </h2>
         <button
           v-if="forking"
           class="rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim hover:border-accent hover:text-accent"
           @click="forking = null"
         >
-          ← 一覧へ戻る
+          {{ $t("session.backToList") }}
         </button>
         <button class="px-1 text-ink-dim hover:text-ink" @click="emit('close')">✕</button>
       </header>
 
       <p class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim">
         <template v-if="forking">
-          選んだ依頼を出す<strong class="text-ink">直前まで</strong>を複製し、その依頼の文面を
-          入力欄へ戻します。書き換えて送れば、別の頼み方を試せます。
-          元の会話はそのまま残ります。
+          {{ $t("session.forkNoticeBefore")
+          }}<strong class="text-ink">{{ $t("session.forkNoticeStrong") }}</strong
+          >{{ $t("session.forkNoticeAfter") }}
         </template>
         <template v-else>
-          会話は再起動をまたいで残ります。開き直すと、サーヴァントも前の話を踏まえて答えます。
-          <strong class="text-warn">切り替えは、飛行中のターンが無いときだけできます。</strong>
+          {{ $t("session.listNoticeIntro") }}
+          <strong class="text-warn">{{ $t("session.listNoticeLimit") }}</strong>
         </template>
       </p>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-3">
-        <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">読み込み中…</p>
+        <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">
+          {{ $t("session.loading") }}
+        </p>
 
         <!-- 分岐点の選択 -->
         <template v-else-if="forking">
@@ -149,9 +153,7 @@ async function exportOne(sessionId: string): Promise<void> {
             v-if="!forkPoints.length"
             class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim"
           >
-            分岐できる地点がありません。分岐は「その依頼を出す直前へ戻る」操作なので、
-            会話のいちばん先頭の依頼は選べません（その手前は空の会話で、
-            それは「新規チャット」と同じになります）。
+            {{ $t("session.forkEmpty") }}
           </p>
           <ul v-else class="space-y-1.5">
             <li v-for="point in forkPoints" :key="point.atSeq">
@@ -162,7 +164,7 @@ async function exportOne(sessionId: string): Promise<void> {
               >
                 <span class="shrink-0 tabular-nums text-ink-dim">{{ stamp(point.tsMs) }}</span>
                 <span class="min-w-0 flex-1 truncate">{{ point.preview }}</span>
-                <span class="shrink-0 text-accent">この依頼の直前まで →</span>
+                <span class="shrink-0 text-accent">{{ $t("session.forkPointAction") }}</span>
               </button>
             </li>
           </ul>
@@ -174,7 +176,7 @@ async function exportOne(sessionId: string): Promise<void> {
             v-if="!sessions.length"
             class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim"
           >
-            保存された会話はまだありません。
+            {{ $t("session.empty") }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -195,50 +197,52 @@ async function exportOne(sessionId: string): Promise<void> {
                   v-if="session.id === state.currentSessionId"
                   class="shrink-0 rounded border border-accent px-1 text-[10px] text-accent"
                 >
-                  表示中
+                  {{ $t("session.current") }}
                 </span>
               </div>
               <div class="mt-1 flex items-center gap-2 text-[10px] text-ink-dim">
                 <span class="tabular-nums">{{ stamp(session.meta.updatedAt) }}</span>
-                <span class="tabular-nums">{{ session.meta.recordCount }} 件</span>
+                <span class="tabular-nums">
+                  {{ $t("session.recordCount", { count: session.meta.recordCount }) }}
+                </span>
                 <!-- 分岐で生まれた会話は、どこから枝分かれしたかを出す。
                      出さないと同じ表題が並んだときに区別が付かない。 -->
                 <span v-if="session.meta.parentId" class="text-accent">
-                  分岐（seq {{ session.meta.forkedAtSeq }} まで）
+                  {{ $t("session.forkedFrom", { seq: session.meta.forkedAtSeq }) }}
                 </span>
 
                 <span class="ml-auto flex shrink-0 gap-1">
                   <button
                     class="rounded border border-line px-1.5 py-0.5 transition hover:border-accent hover:text-accent disabled:opacity-40"
                     :disabled="busy || session.id === state.currentSessionId"
-                    title="この会話を開きます（飛行中のターンがあると拒否されます）"
+                    :title="$t('session.openTitle')"
                     @click="open(session.id)"
                   >
-                    開く
+                    {{ $t("session.open") }}
                   </button>
                   <button
                     class="rounded border border-line px-1.5 py-0.5 transition hover:border-accent hover:text-accent disabled:opacity-40"
                     :disabled="busy"
-                    title="ある地点までを複製して、そこから別の頼み方を試します"
+                    :title="$t('session.forkBtnTitle')"
                     @click="beginFork(session.id)"
                   >
-                    分岐
+                    {{ $t("session.fork") }}
                   </button>
                   <button
                     class="rounded border border-line px-1.5 py-0.5 transition hover:border-accent hover:text-accent disabled:opacity-40"
                     :disabled="busy"
-                    title="JSONL で書き出します（保存先はバイナリなので、読める出口を用意しています）"
+                    :title="$t('session.exportTitle')"
                     @click="exportOne(session.id)"
                   >
-                    書き出し
+                    {{ $t("session.export") }}
                   </button>
                   <button
                     class="rounded border border-line px-1.5 py-0.5 text-fail transition hover:border-fail disabled:opacity-40"
                     :disabled="busy"
-                    title="この会話を削除します（元に戻せません）"
+                    :title="$t('session.deleteBtnTitle')"
                     @click="remove(session.id, session.meta.title)"
                   >
-                    削除
+                    {{ $t("session.delete") }}
                   </button>
                 </span>
               </div>

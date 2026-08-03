@@ -10,6 +10,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+
+import { i18n } from "../i18n";
 import type {
   AgentId,
   AgentMcpStatus,
@@ -51,7 +53,8 @@ export function toErrorPayload(error: unknown): ErrorPayload {
   }
   return {
     code: "IPC_FAILED",
-    message: typeof error === "string" ? error : "IPC 呼び出しに失敗しました",
+    message:
+      typeof error === "string" ? error : i18n.global.t("orchestrator.ipcFailed"),
     detail: error instanceof Error ? error.message : null,
     agentId: null,
     retryable: false,

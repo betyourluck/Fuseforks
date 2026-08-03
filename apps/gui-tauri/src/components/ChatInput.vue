@@ -109,8 +109,8 @@ defineExpose({ fill });
         v-show="text.trim()"
         type="button"
         :disabled="!canSend"
-        aria-label="送信"
-        :title="canSend ? '送信（Enter）' : (blockedReason ?? '送信できません')"
+        :aria-label="$t('chatInput.send')"
+        :title="canSend ? $t('chatInput.sendEnter') : (blockedReason ?? $t('chatInput.cannotSend'))"
         class="absolute right-2 bottom-2 grid size-8 place-items-center rounded-lg bg-accent text-surface-0 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         @click="send"
       >
@@ -132,7 +132,7 @@ defineExpose({ fill });
     </div>
 
     <p class="mt-1 px-1 text-[10px] text-ink-dim">
-      Enter で送信 / Shift+Enter で改行
+      {{ $t("chatInput.hint") }}
     </p>
   </div>
 </template>

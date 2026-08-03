@@ -72,11 +72,11 @@ function formatTime(ms: number): string {
       class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
     >
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
-      <span v-if="notes.length">{{ notes.length }} 枚</span>
+      <span v-if="notes.length">{{ $t("blackboard.noteCount", { count: notes.length }) }}</span>
       <button
         class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        title="黒板を読み直す（表示中は自動でも読み直します）"
-        aria-label="黒板を読み直す"
+        :title="$t('blackboard.refreshTitle')"
+        :aria-label="$t('blackboard.refresh')"
         @click="refresh"
       >
         <svg
@@ -106,7 +106,7 @@ function formatTime(ms: number): string {
       v-else-if="loaded && notes.length === 0"
       class="flex flex-1 items-center justify-center px-6 text-center text-xs text-ink-dim"
     >
-      黒板にはまだ何も書かれていません（work_dir の `黒板/` フォルダに付箋が置かれると、ここに映ります）。
+      {{ $t("blackboard.empty") }}
     </div>
 
     <!-- 付箋を縦に並べる。まとめ.md はコア側の並びで先頭に来る。 -->

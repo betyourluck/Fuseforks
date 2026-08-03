@@ -43,7 +43,7 @@ const TONE = {
         <span class="flex-1 font-medium">{{ toast.title }}</span>
         <button
           class="opacity-60 hover:opacity-100"
-          title="閉じる"
+          :title="$t('common.close')"
           @click="orchestrator.dismissToast(toast.id)"
         >
           ✕

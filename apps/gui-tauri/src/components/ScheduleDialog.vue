@@ -10,14 +10,16 @@
  * （Spec 05 で潰したのと同じ形）。
  */
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import { WEEKDAY_LABELS, type Recurrence, type ScheduleView, type Weekday } from "../types";
+import { WEEKDAY_LABEL_KEYS, type Recurrence, type ScheduleView, type Weekday } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -103,9 +105,12 @@ async function add(): Promise<void> {
 async function remove(task: ScheduleView): Promise<void> {
   // 復元できない操作は確認を挟む（アプリ内のダイアログ。ブラウザの confirm は使わない）。
   const ok = await askConfirm({
-    title: "この予定を削除しますか？",
-    message: `${task.recurrenceLabel} → ${agentLabel(task.to)}`,
-    confirmLabel: "削除する",
+    title: t("schedule.deleteConfirmTitle"),
+    message: t("schedule.deleteConfirmMessage", {
+      recurrence: task.recurrenceLabel,
+      target: agentLabel(task.to),
+    }),
+    confirmLabel: t("schedule.deleteAction"),
     danger: true,
   });
   if (!ok) return;
@@ -141,11 +146,11 @@ async function toggleEnabled(task: ScheduleView): Promise<void> {
 /** 宛先の表示。id と表示名の併記（Spec 06 の規律 — 番号がずれた村で効いた）。 */
 function agentLabel(id: string): string {
   const agent = state.agents.find((a) => a.id === id);
-  return agent ? `${id}（${agent.name}）` : id;
+  return agent ? t("schedule.agentLabel", { id, name: agent.name }) : id;
 }
 
 function formatNextDue(task: ScheduleView): string {
-  if (!task.enabled) return "停止中";
+  if (!task.enabled) return t("schedule.paused");
   if (task.nextDueMs === null) return "—";
   return new Date(task.nextDueMs).toLocaleString("ja-JP", {
     month: "numeric",
@@ -165,19 +170,21 @@ function formatNextDue(task: ScheduleView): string {
       class="flex h-[640px] w-[760px] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
-        <h2 class="flex-1 font-semibold">予定（スケジュール実行）</h2>
+        <h2 class="flex-1 font-semibold">{{ $t("schedule.title") }}</h2>
         <button class="px-1 text-ink-dim hover:text-ink" @click="emit('close')">✕</button>
       </header>
 
       <!-- 限界の告知（P2）。これを書かずに「毎週木曜 17 時」と名乗るのは嘘になる。 -->
       <p class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim">
-        決まった時刻に、決まった依頼をサーヴァントへ届けます。結果は会話ペインに出ます。
-        <strong class="text-warn">アプリを起動していない間、予定は動きません。</strong>
-        過ぎた予定はさかのぼって実行されません（間隔の予定は再開後に 1 回だけ走ります）。
+        {{ $t("schedule.noticeIntro") }}
+        <strong class="text-warn">{{ $t("schedule.noticeLimit") }}</strong>
+        {{ $t("schedule.noticeCatchUp") }}
       </p>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-3">
-        <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">読み込み中…</p>
+        <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">
+          {{ $t("schedule.loading") }}
+        </p>
 
         <template v-else>
           <p v-if="error" class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-[11px] text-fail">
@@ -185,10 +192,9 @@ function formatNextDue(task: ScheduleView): string {
           </p>
 
           <!-- 一覧 -->
-          <h3 class="mb-1 text-[11px] font-semibold text-ink-dim">登録済みの予定</h3>
+          <h3 class="mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("schedule.listHeading") }}</h3>
           <p v-if="!schedules.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            予定はまだありません。下のフォームから「どのサーヴァントへ・どんな依頼を・いつ」を
-            決めて追加してください。
+            {{ $t("schedule.empty") }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -202,8 +208,11 @@ function formatNextDue(task: ScheduleView): string {
                 <span class="rounded bg-surface-1 px-1.5 py-0.5 text-ink-dim">
                   {{ task.recurrenceLabel }}
                 </span>
-                <span class="ml-auto text-ink-dim" :title="task.enabled ? '次回の発火予定' : '一時停止中'">
-                  次回: {{ formatNextDue(task) }}
+                <span
+                  class="ml-auto text-ink-dim"
+                  :title="task.enabled ? $t('schedule.nextDueTitle') : $t('schedule.pausedTitle')"
+                >
+                  {{ $t("schedule.nextDue", { time: formatNextDue(task) }) }}
                 </span>
               </div>
               <p class="mt-1 truncate text-ink-dim" :title="task.message">
@@ -215,59 +224,58 @@ function formatNextDue(task: ScheduleView): string {
                   :disabled="busy"
                   @click="toggleEnabled(task)"
                 >
-                  {{ task.enabled ? "一時停止" : "再開" }}
+                  {{ task.enabled ? $t("schedule.pause") : $t("schedule.resume") }}
                 </button>
                 <button
                   class="rounded border border-line px-2 py-0.5 text-fail hover:border-fail disabled:opacity-40"
                   :disabled="busy"
                   @click="remove(task)"
                 >
-                  削除
+                  {{ $t("schedule.delete") }}
                 </button>
               </div>
             </li>
           </ul>
 
           <!-- 追加フォーム -->
-          <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">予定を追加</h3>
+          <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("schedule.addHeading") }}</h3>
           <p v-if="!agents.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            サーヴァントが登録されていないため、宛先を選べません。
-            先に左ペインでサーヴァントを作成してください。
+            {{ $t("schedule.noAgents") }}
           </p>
           <div v-else class="space-y-2 rounded border border-line bg-surface-0 p-3 text-[11px]">
             <label class="flex items-center gap-2">
-              <span class="w-14 shrink-0 text-ink-dim">宛先</span>
+              <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.to") }}</span>
               <select
                 v-model="formTo"
                 class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
               >
-                <option value="" disabled>サーヴァントを選ぶ</option>
+                <option value="" disabled>{{ $t("schedule.selectServant") }}</option>
                 <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-                  {{ agent.id }}（{{ agent.name }}）
+                  {{ $t("schedule.agentLabel", { id: agent.id, name: agent.name }) }}
                 </option>
               </select>
             </label>
 
             <label class="flex items-start gap-2">
-              <span class="w-14 shrink-0 pt-1 text-ink-dim">依頼</span>
+              <span class="w-14 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.request") }}</span>
               <textarea
                 v-model="formMessage"
                 rows="2"
-                placeholder="例: 今日の予定をまとめて"
+                :placeholder="$t('schedule.requestPlaceholder')"
                 class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
               />
             </label>
 
             <div class="flex items-center gap-2">
-              <span class="w-14 shrink-0 text-ink-dim">繰り返し</span>
+              <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.recurrence") }}</span>
               <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="weekly" /> 毎週
+                <input v-model="formKind" type="radio" value="weekly" /> {{ $t("schedule.weekly") }}
               </label>
               <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="daily" /> 毎日
+                <input v-model="formKind" type="radio" value="daily" /> {{ $t("schedule.daily") }}
               </label>
               <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="interval" /> 分ごと
+                <input v-model="formKind" type="radio" value="interval" /> {{ $t("schedule.interval") }}
               </label>
             </div>
 
@@ -277,8 +285,8 @@ function formatNextDue(task: ScheduleView): string {
                   v-model="formWeekday"
                   class="rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                 >
-                  <option v-for="(label, value) in WEEKDAY_LABELS" :key="value" :value="value">
-                    {{ label }}
+                  <option v-for="(labelKey, value) in WEEKDAY_LABEL_KEYS" :key="value" :value="value">
+                    {{ $t(labelKey) }}
                   </option>
                 </select>
               </template>
@@ -290,7 +298,7 @@ function formatNextDue(task: ScheduleView): string {
                   max="23"
                   class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                 />
-                <span class="text-ink-dim">時</span>
+                <span class="text-ink-dim">{{ $t("schedule.hourSuffix") }}</span>
                 <input
                   v-model.number="formMinute"
                   type="number"
@@ -298,7 +306,7 @@ function formatNextDue(task: ScheduleView): string {
                   max="59"
                   class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                 />
-                <span class="text-ink-dim">分</span>
+                <span class="text-ink-dim">{{ $t("schedule.minuteSuffix") }}</span>
               </template>
               <template v-else>
                 <input
@@ -307,7 +315,7 @@ function formatNextDue(task: ScheduleView): string {
                   min="1"
                   class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                 />
-                <span class="text-ink-dim">分ごと</span>
+                <span class="text-ink-dim">{{ $t("schedule.everyMinutesSuffix") }}</span>
               </template>
             </div>
 
@@ -317,7 +325,7 @@ function formatNextDue(task: ScheduleView): string {
                 :disabled="!formValid || busy"
                 @click="add"
               >
-                {{ busy ? "追加中…" : "追加" }}
+                {{ busy ? $t("schedule.adding") : $t("schedule.add") }}
               </button>
             </div>
           </div>

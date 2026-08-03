@@ -67,7 +67,7 @@ function onKeydown(event: KeyboardEvent): void {
     tabindex="0"
     :aria-label="label"
     :aria-orientation="direction === 'col' ? 'vertical' : 'horizontal'"
-    :title="`${label}（ダブルクリックで既定値へ）`"
+    :title="$t('paneSplitter.hint', { label })"
     class="group relative shrink-0 transition-colors"
     :class="[
       direction === 'col' ? 'cursor-col-resize' : 'cursor-row-resize',

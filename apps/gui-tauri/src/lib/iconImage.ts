@@ -6,6 +6,7 @@
  * 両方持っているため。コア層に画像処理クレートを足すより、既にある機能を使う。
  * コア側は「WebP であること・サイズ上限」だけを検証する（契約は data_contract.yaml）。
  */
+import { i18n } from "../i18n";
 
 /** 出力アイコンの一辺（px）。表示は最大でも 28px 程度なので、Retina を見込んでも十分。 */
 const ICON_SIZE = 256;
@@ -30,13 +31,13 @@ export async function fileToWebpIcon(file: File): Promise<Uint8Array> {
     canvas.width = ICON_SIZE;
     canvas.height = ICON_SIZE;
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("canvas 2D コンテキストを取得できません");
+    if (!context) throw new Error(i18n.global.t("uiErrors.canvasContext"));
     context.drawImage(bitmap, sx, sy, side, side, 0, 0, ICON_SIZE, ICON_SIZE);
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/webp", WEBP_QUALITY),
     );
-    if (!blob) throw new Error("WebP への変換に失敗しました");
+    if (!blob) throw new Error(i18n.global.t("uiErrors.webpConversion"));
     return new Uint8Array(await blob.arrayBuffer());
   } finally {
     // ImageBitmap は GC 任せにせず明示的に解放する（デコード済みピクセルを持つ）。

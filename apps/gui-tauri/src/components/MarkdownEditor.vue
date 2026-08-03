@@ -8,6 +8,7 @@
  * （HTML 描画を挟むと、任意テキストの描画による XSS 面も抱え込む。）
  */
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import CodeEditor from "./CodeEditor.vue";
 import { askConfirm } from "../composables/useConfirm";
@@ -19,6 +20,7 @@ const props = defineProps<{
   editable: boolean;
 }>();
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 
 const kind = ref<ConfigFileKind>("skill");
@@ -32,9 +34,7 @@ const dirty = () => content.value !== original.value;
 
 /** 種別ごとの案内文。mcp.json だけは Markdown ではなく JSON。 */
 const placeholder = computed(() =>
-  kind.value === "mcp"
-    ? "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。"
-    : "Markdown で記述します。空のまま保存すれば、この節はプロンプトに含まれません。",
+  kind.value === "mcp" ? t("editor.mcpPlaceholder") : t("editor.markdownPlaceholder"),
 );
 
 async function load(): Promise<void> {
@@ -58,10 +58,10 @@ async function switchTo(next: ConfigFileKind): Promise<void> {
   if (
     dirty() &&
     !(await askConfirm({
-      title: "未保存の変更を破棄して切り替えますか？",
-      message: "編集中の内容は保存されません。",
-      confirmLabel: "破棄して切り替える",
-      cancelLabel: "編集を続ける",
+      title: t("editor.discardSwitchTitle"),
+      message: t("editor.discardSwitchMessage"),
+      confirmLabel: t("editor.discardSwitchConfirm"),
+      cancelLabel: t("editor.keepEditing"),
       danger: true,
     }))
   ) {
@@ -99,11 +99,11 @@ watch(
         {{ fileLabel }}
       </button>
 
-      <span v-if="dirty()" class="ml-auto text-[11px] text-warn">未保存</span>
+      <span v-if="dirty()" class="ml-auto text-[11px] text-warn">{{ $t("editor.unsaved") }}</span>
     </div>
 
     <div class="min-h-0 flex-1 p-3">
-      <p v-if="loading" class="text-[11px] text-ink-dim">読み込み中…</p>
+      <p v-if="loading" class="text-[11px] text-ink-dim">{{ $t("editor.loading") }}</p>
 
       <CodeEditor
         v-else-if="editable"
@@ -116,7 +116,7 @@ watch(
       <pre
         v-else
         class="selectable h-full w-full overflow-auto rounded border border-line/50 bg-surface-1 p-2 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-words text-ink-dim"
-        >{{ content || "（未作成）" }}</pre
+        >{{ content || $t("editor.notCreated") }}</pre
       >
     </div>
 
@@ -126,14 +126,14 @@ watch(
         :disabled="!dirty()"
         @click="content = original"
       >
-        変更を破棄
+        {{ $t("editor.discard") }}
       </button>
       <button
         class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
         :disabled="!dirty() || saving"
         @click="save"
       >
-        {{ saving ? "保存中…" : "保存" }}
+        {{ saving ? $t("editor.saving") : $t("editor.save") }}
       </button>
     </div>
   </section>

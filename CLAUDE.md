@@ -356,7 +356,16 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
 どちらも仕様上の限界なので打ち消す仕掛けは置かない（data_contract の
 `prompt_cache.bounds`）。
 
-## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P3a 完了・次は P3b**）
+## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P3 完了・次は P4**）
+
+**P3b 完了**（2026-08-03）— 残り全コンポーネント + useOrchestrator + index.html を
+辞書化（並列 4 分担、辞書はフラグメント統合で競合ゼロ）。機構の変更 3 つ:
+`STATUS_LABELS`/`WEEKDAY_LABELS` → `*_LABEL_KEYS`（辞書キーの表）、`batchLabel` は
+`titleKey`+`titleParams` を返す（純関数は i18n を知らない）、`guard`/`mutate` の
+`${label}に失敗しました` 連結を `opFailed` + `op.*` の 2 段へ（語順が言語を
+またげない）。意図的な残り: 言語名ラベル・実ファイル名・console ログ・コア産
+文字列（P4）。既知の残: toLocaleString("ja-JP") の日時整形は言語に追従しない。
+検収は機械 2 段（テンプレート走査 + リテラル走査）で完了。
 
 **P3a 完了**（2026-08-03）— 村民 5 体 + ジェミーの i18n 調査と突き合わせ、
 「判断次第」3 点は凍結済み契約で決着（A-4 訳さない / rust-i18n 不採用 = 案 A /

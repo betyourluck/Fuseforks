@@ -2,7 +2,7 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 承認 → P0〜P3a 完了。次は P3b（残りコンポーネントの全数差し替え）**
+**Status**: **rev3 承認 → P0〜P3 完了（P3b 含む）。次は P4（コアの文言）**
 （rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
@@ -36,6 +36,34 @@ ChatInput / OrdinanceDialog / McpDialog / ScheduleDialog / SessionDialog /
 BlackboardPane / PlanWavePane / MarkdownEditor / PaneSplitter / ErrorBoundary /
 ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator の
 トースト文言 + `index.html` の `<title>`。
+
+## P3b の実装記録（2026-08-03）
+
+残り全コンポーネント + ストア + `index.html` を辞書化した。**作業は並列 4 分担**
+（一覧・地図系 / 会話・編集系 / 設定ダイアログ系 / ストア系）で、辞書ファイルは
+競合を避けるため各担当にはフラグメント（ja / en の鍵集合一致）で返させて統合した。
+
+- **共有ラベル表は辞書キーの表へ**: `STATUS_LABELS` → `STATUS_LABEL_KEYS` /
+  `WEEKDAY_LABELS` → `WEEKDAY_LABEL_KEYS`（値は `labels.status.*` 等のキー。
+  表示側が `$t` で引く）。改名により参照側の置き換え漏れはコンパイルで落ちる
+- **`batchLabel` は文言でなく `titleKey` + `titleParams` を返す** — 純関数の層は
+  i18n インスタンスを知らないまま、翻訳は表示側の責務（テストもキー比較へ変更）
+- **`guard` / `mutate` の `${label}に失敗しました` 連結を廃止** — 語順が言語を
+  またげない。`labelKey` を受けて `orchestrator.opFailed`（`{op}に失敗しました` /
+  `{op} failed`）+ `orchestrator.op.*` の 2 段で組む
+- **語順が畳めない文は `I18nT`（named slots）**（ChatPanel のツール行・
+  条例 / MCP の説明段落・強調入りの注意書き）
+- **`index.html` の `<title>` はブランド名のみ**（説明的な副題は言語を選ぶ）。
+  スプラッシュは二言語併記のまま
+- 訳さないもの（意図的な残り）: 言語名ラベル（日本語 / English）/
+  `CONFIG_FILE_LABELS`（実ファイル名）/ console.* の開発者ログ /
+  コアから届く文字列（P4 の射程）
+- **既知の残**: `toLocaleString("ja-JP")` / `toLocaleTimeString("ja-JP")` の
+  数値・日時整形は言語設定に追従しない（表示形式のロケール化は別作業。
+  桁区切りは ja / en とも同形なので実害は日時の並びだけ）
+- 検収は機械 2 段: テンプレート部の生日本語テキスト・静的属性の正規表現走査 =
+  意図的な 1 件（言語名）のみ / コメント行を除く文字列リテラル走査 =
+  console ログ 3 件のみ。vitest 69 全緑・vue-tsc + vite ビルド通過
 
 ## P3a の実装記録（2026-08-03）
 

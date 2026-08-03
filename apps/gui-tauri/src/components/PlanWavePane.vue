@@ -20,6 +20,7 @@
  * バーの長さ比較は「実行が並列」という誤読を誘う。所要は数字（ツールチップ）で出す。
  */
 import { computed, nextTick, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type {
@@ -35,6 +36,8 @@ defineProps<{ activeTab: BottomTab }>();
 
 const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 
+const { t } = useI18n();
+
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -43,16 +46,16 @@ const rows = computed(() => [...state.agents].sort((a, b) => a.order - b.order))
 
 const waves = computed(() => state.planWaves);
 
-/** 分類の表示語彙。色の対応は data_contract.yaml の PlanTaskState が正。 */
-const STATE_LABELS: Record<PlanTaskState, string> = {
-  running: "実行中",
-  answered: "応答",
-  handed_off: "転送",
-  undeliverable: "配送不可",
-  no_answer: "無応答",
-  timed_out: "時間切れ",
-  interrupted: "打ち切り",
-  budget_exhausted: "予算切れ",
+/** 分類の表示語彙（辞書キー）。色の対応は data_contract.yaml の PlanTaskState が正。 */
+const STATE_LABEL_KEYS: Record<PlanTaskState, string> = {
+  running: "waves.state.running",
+  answered: "waves.state.answered",
+  handed_off: "waves.state.handed_off",
+  undeliverable: "waves.state.undeliverable",
+  no_answer: "waves.state.no_answer",
+  timed_out: "waves.state.timed_out",
+  interrupted: "waves.state.interrupted",
+  budget_exhausted: "waves.state.budget_exhausted",
 };
 
 function taskFor(wave: PlanWaveRecord, agentId: AgentId): PlanTaskRecord | undefined {
@@ -91,19 +94,26 @@ function formatMs(ms: number): string {
 function waveTitle(wave: PlanWaveRecord): string {
   const lines = [
     `planId ${wave.planId}`,
-    `開始 ${new Date(wave.startedAtMs).toLocaleTimeString()}`,
+    t("waves.startedAt", { time: new Date(wave.startedAtMs).toLocaleTimeString() }),
   ];
-  if (wave.elapsedMs !== null) lines.push(`所要 ${formatMs(wave.elapsedMs)}（最遅 1 体分）`);
-  if (wave.bundleChars !== null) lines.push(`束ね ${wave.bundleChars} 字`);
+  if (wave.elapsedMs !== null)
+    lines.push(t("waves.elapsedSlowest", { duration: formatMs(wave.elapsedMs) }));
+  if (wave.bundleChars !== null)
+    lines.push(t("waves.bundleChars", { count: wave.bundleChars }));
   return lines.join("\n");
 }
 
 function cellTitle(task: PlanTaskRecord): string {
   const lines = [
-    `${task.to}（${displayName(task.to)}）: ${STATE_LABELS[task.state]}`,
-    `依頼 ${task.msgChars} 字`,
+    t("waves.cellState", {
+      id: task.to,
+      name: displayName(task.to),
+      state: t(STATE_LABEL_KEYS[task.state]),
+    }),
+    t("waves.requestChars", { count: task.msgChars }),
   ];
-  if (task.elapsedMs !== null) lines.push(`所要 ${formatMs(task.elapsedMs)}（キュー待ち込み）`);
+  if (task.elapsedMs !== null)
+    lines.push(t("waves.elapsedQueued", { duration: formatMs(task.elapsedMs) }));
   return lines.join("\n");
 }
 
@@ -139,14 +149,14 @@ watch(
     >
       <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（村の地図と同じ規則）。 -->
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
-      <span v-if="waves.length">{{ waves.length }} 波（直近 50 波まで・再起動で消える）</span>
+      <span v-if="waves.length">{{ $t("waves.waveCount", { count: waves.length }) }}</span>
     </header>
 
     <div
       v-if="waves.length === 0"
       class="flex flex-1 items-center justify-center text-xs text-ink-dim"
     >
-      plan の実行はまだありません。
+      {{ $t("waves.empty") }}
     </div>
 
     <div v-else ref="scroller" class="min-h-0 flex-1 overflow-auto">
@@ -158,7 +168,7 @@ watch(
         <div
           class="sticky left-0 z-10 border-b border-line bg-surface-0 px-3 py-1.5 text-[11px] text-ink-dim"
         >
-          サーヴァント
+          {{ $t("waves.servant") }}
         </div>
         <div
           v-for="wave in waves"
@@ -168,7 +178,7 @@ watch(
         >
           <span class="block truncate text-ink">{{ displayName(wave.agentId) }}</span>
           <span class="block text-[10px]">
-            波{{ wave.wave
+            {{ $t("waves.waveN", { n: wave.wave })
             }}<template v-if="wave.elapsedMs !== null"> · {{ formatMs(wave.elapsedMs) }}</template>
           </span>
         </div>
@@ -177,7 +187,7 @@ watch(
         <template v-for="agent in rows" :key="agent.id">
           <div
             class="sticky left-0 z-10 truncate border-b border-line/50 bg-surface-0 px-3 py-1.5 text-[11px] text-ink"
-            :title="`${agent.id}（${agent.name}）`"
+            :title="$t('waves.agentTitle', { id: agent.id, name: agent.name })"
           >
             {{ agent.name }}
           </div>

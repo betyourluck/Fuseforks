@@ -31,12 +31,12 @@ function open(uri: string): void {
     class="mt-1 min-w-0 max-w-full rounded-lg border border-line bg-surface-1 px-2 py-1.5 text-[10px] leading-relaxed text-ink-dim"
   >
     <p class="flex flex-wrap items-baseline gap-1">
-      <span class="font-medium text-ink">グラウンディング</span>
-      <span>Google 検索</span>
+      <span class="font-medium text-ink">{{ $t("grounding.heading") }}</span>
+      <span>{{ $t("grounding.engine") }}</span>
     </p>
 
     <p v-if="view.queries.length" class="mt-0.5 wrap-anywhere">
-      <span class="mr-1">検索語</span>
+      <span class="mr-1">{{ $t("grounding.queries") }}</span>
       <span
         v-for="query in view.queries"
         :key="query"
@@ -48,7 +48,7 @@ function open(uri: string): void {
     <!-- 本文に URL が無い返答でも文が成立する形にする。「本文中の URL は」と
          書くと、URL を書かなかった返答では存在しないものを指してしまう。 -->
     <p v-if="view.sourcesMissing" class="mt-0.5">
-      参照元は返ってきていません（本文に URL があっても、出典としては確認できていません）。
+      {{ $t("grounding.sourcesMissing") }}
     </p>
     <ul v-else class="mt-0.5 space-y-0.5">
       <li v-for="source in view.sources" :key="source.uri">

@@ -36,13 +36,15 @@ function retry(): void {
 
 <template>
   <div v-if="failure" class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-    <p class="text-[12px] font-medium text-fail">{{ label }}の表示に失敗しました</p>
+    <p class="text-[12px] font-medium text-fail">
+      {{ $t("errorBoundary.renderFailed", { label }) }}
+    </p>
     <p class="selectable max-w-md text-[11px] break-words text-ink-dim">{{ failure }}</p>
     <button
       class="mt-1 rounded border border-line px-3 py-1 text-[11px] hover:border-accent hover:text-accent"
       @click="retry"
     >
-      再描画
+      {{ $t("errorBoundary.retry") }}
     </button>
   </div>
   <slot v-else :key="attempt" />

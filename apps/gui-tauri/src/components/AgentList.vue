@@ -112,7 +112,7 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
     <header
       class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs"
     >
-      <h2 class="font-semibold tracking-wide">サーヴァント</h2>
+      <h2 class="font-semibold tracking-wide">{{ $t("agentList.heading") }}</h2>
 
       <!--
         一括起動 / 一括停止。対象は各カードのトグル（batchStart）で選ぶ。
@@ -127,19 +127,19 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
             : 'border-line text-run hover:border-run'
         "
         :disabled="batch.mode === 'none'"
-        :title="batchView.title"
+        :title="$t(batchView.titleKey, batchView.titleParams ?? {})"
         @click="runBatch"
       >
         {{ batchView.icon }}
       </button>
 
       <span class="flex-1 text-ink-dim tabular-nums">
-        {{ runningCount }} / {{ state.agents.length }} 稼働
+        {{ $t("agentList.runningSummary", { running: runningCount, total: state.agents.length }) }}
       </span>
       <button
         class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        title="モデルテンプレートを管理"
-        aria-label="モデルテンプレートを管理"
+        :title="$t('agentList.manageTemplates')"
+        :aria-label="$t('agentList.manageTemplates')"
         @click="showTemplates = true"
       >
         <svg
@@ -161,8 +161,8 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
       </button>
       <button
         class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        title="サーヴァントを追加"
-        aria-label="サーヴァントを追加"
+        :title="$t('agentList.addServant')"
+        :aria-label="$t('agentList.addServant')"
         @click="creating = !creating"
       >
         <svg
@@ -182,12 +182,12 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
     <form v-if="creating" class="border-b border-line p-3" @submit.prevent="submitNew">
       <input
         v-model="newName"
-        placeholder="サーヴァント名（例: PlannerAgent）"
+        :placeholder="$t('agentList.namePlaceholder')"
         autofocus
         class="w-full rounded border border-line bg-surface-1 px-2 py-1.5 outline-none focus:border-accent"
       />
       <p v-if="!state.templates.length" class="mt-1.5 text-[11px] text-warn">
-        モデルテンプレートが未登録です。上の「モデルテンプレートを管理」ボタンから先に 1 件登録してください。
+        {{ $t("agentList.noTemplates") }}
       </p>
       <div class="mt-2 flex justify-end gap-2">
         <button
@@ -195,14 +195,14 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
           class="rounded px-2 py-1 text-ink-dim hover:text-ink"
           @click="creating = false"
         >
-          取消
+          {{ $t("agentList.cancel") }}
         </button>
         <button
           type="submit"
           class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
           :disabled="!newName.trim()"
         >
-          作成
+          {{ $t("agentList.create") }}
         </button>
       </div>
     </form>
@@ -236,8 +236,8 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
         v-if="!agents.length"
         class="px-2 py-8 text-center text-[11px] leading-relaxed text-ink-dim"
       >
-        サーヴァントがまだありません。<br />
-        右上の ＋ から追加してください。
+        {{ $t("agentList.emptyLine1") }}<br />
+        {{ $t("agentList.emptyLine2") }}
       </p>
     </VueDraggable>
 

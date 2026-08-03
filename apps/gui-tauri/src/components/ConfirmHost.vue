@@ -78,7 +78,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           class="rounded border border-line px-3 py-1 text-ink-dim transition hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
           @click="answer(false)"
         >
-          {{ current.cancelLabel ?? "いいえ" }}
+          {{ current.cancelLabel ?? $t("confirm.no") }}
         </button>
         <button
           ref="confirmButton"
@@ -90,7 +90,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           "
           @click="answer(true)"
         >
-          {{ current.confirmLabel ?? "はい" }}
+          {{ current.confirmLabel ?? $t("confirm.yes") }}
         </button>
       </div>
     </div>

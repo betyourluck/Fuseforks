@@ -10,6 +10,7 @@
  * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   VueFlow,
   type Connection,
@@ -26,7 +27,9 @@ import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
-import { STATUS_LABELS, type AgentId } from "../types";
+import { STATUS_LABEL_KEYS, type AgentId } from "../types";
+
+const { t } = useI18n();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -123,7 +126,7 @@ async function onConnect(connection: Connection): Promise<void> {
 /** 宛先の表示。id と表示名の併記（Spec 06 の規律）。 */
 function agentLabel(id: string): string {
   const agent = state.agents.find((a) => a.id === id);
-  return agent ? `${id}（${agent.name}）` : id;
+  return agent ? t("map.agentLabel", { id, name: agent.name }) : id;
 }
 
 /**
@@ -140,11 +143,11 @@ async function removeEdge(edge: Edge): Promise<void> {
   if (settings.confirmEdgeDelete) {
     const arrow = edge.data?.bidirectional ? "⇄" : "→";
     const ok = await askConfirm({
-      title: "この接続（線）を削除しますか？",
+      title: t("map.confirmDeleteTitle"),
       message:
         `${agentLabel(edge.source)} ${arrow} ${agentLabel(edge.target)}` +
-        (edge.data?.bidirectional ? "\n双方向の接続なので、両方向とも切れます。" : ""),
-      confirmLabel: "削除する",
+        (edge.data?.bidirectional ? `\n${t("map.bidirectionalNote")}` : ""),
+      confirmLabel: t("map.confirmDeleteLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -198,14 +201,14 @@ function borderClass(status: string): string {
       -->
       <h2
         class="cursor-help font-semibold tracking-wide text-ink"
-        title="ハンドルをドラッグで接続 / 辺をクリックで切断（双方向は両方向とも切れる）"
+        :title="$t('map.headingHelp')"
       >
-        村の地図
+        {{ $t("map.heading") }}
       </h2>
       <span>
-        {{ state.agents.length }} ノード / {{ edges.length }} 辺
+        {{ $t("map.summary", { nodes: state.agents.length, edges: edges.length }) }}
         <span v-if="bidirectionalCount" class="text-ink">
-          （うち双方向 {{ bidirectionalCount }}）
+          {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
         </span>
       </span>
     </header>
@@ -255,7 +258,7 @@ function borderClass(status: string): string {
               </div>
             </div>
             <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
-              <span>{{ STATUS_LABELS[data.agent.status as keyof typeof STATUS_LABELS] }}</span>
+              <span>{{ $t(STATUS_LABEL_KEYS[data.agent.status as keyof typeof STATUS_LABEL_KEYS]) }}</span>
               <span class="tabular-nums">
                 {{ compactNumber(data.agent.totalTokens) }} tokens
               </span>

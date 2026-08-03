@@ -67,28 +67,35 @@ export function batchAction(agents: readonly AgentSnapshot[]): BatchAction {
   return { mode: "none", targets: [] };
 }
 
-/** ボタンの見た目（記号と説明）。`none` は無効表示の理由も返す。 */
+/**
+ * ボタンの見た目（記号と説明の辞書キー）。`none` は無効表示の理由も返す。
+ *
+ * 文字列そのものではなく辞書キー + 引数を返す（Spec 13 P3）。純関数の層は
+ * i18n インスタンスを知らないままにし、翻訳は表示側（`$t`）の責務に置く。
+ */
 export function batchLabel(
   action: BatchAction,
   eligibleCount: number,
-): { icon: string; title: string } {
+): { icon: string; titleKey: string; titleParams?: Record<string, unknown> } {
   switch (action.mode) {
     case "start":
       return {
         icon: "▶",
-        title: `対象の ${action.targets.length} 体を一括起動`,
+        titleKey: "agentList.batchStart",
+        titleParams: { count: action.targets.length },
       };
     case "stop":
       return {
         icon: "■",
-        title: `稼働中の ${action.targets.length} 体を一括停止`,
+        titleKey: "agentList.batchStop",
+        titleParams: { count: action.targets.length },
       };
     case "none":
       return {
         icon: "▶",
-        title: eligibleCount
-          ? "対象が全員 状態の変更中です"
-          : "一括起動の対象がありません（カードのトグルで選んでください）",
+        titleKey: eligibleCount
+          ? "agentList.batchAllTransitioning"
+          : "agentList.batchNoTargets",
       };
   }
 }

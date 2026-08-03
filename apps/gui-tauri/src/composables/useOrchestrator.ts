@@ -12,7 +12,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
-import { setLocale } from "../i18n";
+import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
   AgentId,
@@ -198,14 +198,18 @@ function succeeded<T>(result: T | typeof FAILED): result is T {
  * 状態を変えない呼び出し専用。変更系は [`mutate`] を使うこと。
  */
 async function guard<T>(
-  label: string,
+  labelKey: string,
   task: () => Promise<T>,
 ): Promise<T | typeof FAILED> {
   try {
     return await task();
   } catch (error) {
     const payload = error as ErrorPayload;
-    pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
+    pushToast(
+      "error",
+      i18n.global.t("orchestrator.opFailed", { op: i18n.global.t(labelKey) }),
+      `[${payload.code}] ${payload.message}`,
+    );
     return FAILED;
   }
 }
@@ -222,14 +226,18 @@ async function guard<T>(
  * 毎回取り直す代償は無視できる。
  */
 async function mutate<T>(
-  label: string,
+  labelKey: string,
   task: () => Promise<T>,
 ): Promise<T | typeof FAILED> {
   try {
     return await task();
   } catch (error) {
     const payload = error as ErrorPayload;
-    pushToast("error", `${label}に失敗しました`, `[${payload.code}] ${payload.message}`);
+    pushToast(
+      "error",
+      i18n.global.t("orchestrator.opFailed", { op: i18n.global.t(labelKey) }),
+      `[${payload.code}] ${payload.message}`,
+    );
     return FAILED;
   } finally {
     // 再同期自体の失敗で、元の操作の通知を上書きしない。ただし黙殺もしない —
@@ -457,8 +465,8 @@ function applyEvent(event: CoreEvent): void {
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
       pushToast(
         "warn",
-        `${name} がツール実行の上限に達しました`,
-        `上限 ${event.maxIterations} 回。サーヴァント設定で上げるか、依頼を小さく分けてください`,
+        i18n.global.t("orchestrator.toolLimit", { name }),
+        i18n.global.t("orchestrator.toolLimitDetail", { max: event.maxIterations }),
       );
       break;
     }
@@ -470,8 +478,11 @@ function applyEvent(event: CoreEvent): void {
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
       pushToast(
         "warn",
-        `${name} が同じ操作の繰り返しで打ち切られました`,
-        `${event.tool} を同じ引数で呼び、同じ結果が ${event.repeats} 回続きました。次の 1 回は実行していません`,
+        i18n.global.t("orchestrator.repeatBlocked", { name }),
+        i18n.global.t("orchestrator.repeatBlockedDetail", {
+          tool: event.tool,
+          repeats: event.repeats,
+        }),
       );
       break;
     }
@@ -493,7 +504,7 @@ function applyEvent(event: CoreEvent): void {
       // 届くので、**ここでコア側の復元結果を引き直す** — 開き直しと分岐では
       // コアが会話ログを戻しており、空のままにすると画面だけが白紙に見える。
       state.currentSessionId = event.sessionId;
-      void guard("会話の読み込み", async () => {
+      void guard("orchestrator.op.loadSession", async () => {
         state.messages = await ipc.listMessages(MESSAGE_LIMIT);
         state.sessions = await ipc.listSessions();
       });
@@ -503,7 +514,11 @@ function applyEvent(event: CoreEvent): void {
       patchAgent(event.agentId, { lastError: event.error });
       const name =
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
-      pushToast("error", `${name} が失敗しました`, `[${event.error.code}] ${event.error.message}`);
+      pushToast(
+        "error",
+        i18n.global.t("orchestrator.agentFailed", { name }),
+        `[${event.error.code}] ${event.error.message}`,
+      );
       break;
     }
 
@@ -517,8 +532,8 @@ function applyEvent(event: CoreEvent): void {
           event.modelTemplateId;
         pushToast(
           "warn",
-          `${name} は本物のモデルに接続できていません`,
-          `${event.reason}\n「モデルテンプレートを管理」の画面で API キーを登録してください。登録すればそのまま復帰します。`,
+          i18n.global.t("orchestrator.degraded", { name }),
+          i18n.global.t("orchestrator.degradedDetail", { reason: event.reason }),
         );
       }
       break;
@@ -529,8 +544,8 @@ function applyEvent(event: CoreEvent): void {
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
       pushToast(
         "warn",
-        "転送上限に達したため会話を打ち切りました",
-        `${name} / 上限 ${event.maxHops} 回`,
+        i18n.global.t("orchestrator.hopLimit"),
+        i18n.global.t("orchestrator.hopLimitDetail", { name, max: event.maxHops }),
       );
       break;
     }
@@ -600,7 +615,7 @@ async function initialize(): Promise<void> {
       if (boot.error) {
         throw {
           code: "BOOT_FAILED",
-          message: "バックエンドの初期化に失敗しました。アプリを再起動してください。",
+          message: i18n.global.t("orchestrator.bootFailed"),
           detail: boot.error,
           agentId: null,
           retryable: false,
@@ -653,7 +668,7 @@ export function useOrchestrator() {
       pushToast(level, title, detail);
     },
     async refreshAll(): Promise<void> {
-      await guard("再読み込み", refreshAll);
+      await guard("orchestrator.op.refresh", refreshAll);
     },
 
     /** 選択中のエージェントを切り替える。 */
@@ -670,7 +685,7 @@ export function useOrchestrator() {
       // 楽観的に状態を進める。トグルの反応が LLM の応答待ちに引きずられないように。
       // 確定値は mutate の再同期が上書きする。
       patchAgent(agentId, { status: running ? "starting" : "stopping" });
-      await mutate(running ? "起動" : "停止", () =>
+      await mutate(running ? "orchestrator.op.start" : "orchestrator.op.stop", () =>
         ipc.setAgentRunning(agentId, running),
       );
     },
@@ -684,7 +699,7 @@ export function useOrchestrator() {
      */
     async interruptTurn(agentId: AgentId): Promise<void> {
       state.interruptPending[agentId] = true;
-      await mutate("ターンの打ち切り", () => ipc.interruptTurn(agentId));
+      await mutate("orchestrator.op.interruptTurn", () => ipc.interruptTurn(agentId));
     },
 
     /**
@@ -697,7 +712,7 @@ export function useOrchestrator() {
       for (const agentId of Object.keys(state.typing)) {
         state.interruptPending[agentId] = true;
       }
-      await mutate("全ターンの打ち切り", () => ipc.interruptAll());
+      await mutate("orchestrator.op.interruptAll", () => ipc.interruptAll());
     },
 
     /**
@@ -715,8 +730,9 @@ export function useOrchestrator() {
         patchAgent(agentId, { status: running ? "starting" : "stopping" });
       }
       for (const agentId of agentIds) {
-        await mutate(running ? "一括起動" : "一括停止", () =>
-          ipc.setAgentRunning(agentId, running),
+        await mutate(
+          running ? "orchestrator.op.batchStart" : "orchestrator.op.batchStop",
+          () => ipc.setAgentRunning(agentId, running),
         );
       }
     },
@@ -737,7 +753,7 @@ export function useOrchestrator() {
       if (!current) return;
       // 楽観的に反映する（チェックの手応えを IPC 往復に待たせない）。
       patchAgent(agentId, { batchStart });
-      await mutate("一括起動の対象の保存", () =>
+      await mutate("orchestrator.op.saveBatchStart", () =>
         ipc.updateAgent({
           id: current.id,
           name: current.name,
@@ -755,30 +771,36 @@ export function useOrchestrator() {
     },
 
     async createAgent(spec: AgentSpec): Promise<AgentSnapshot | null> {
-      const created = await mutate("サーヴァントの作成", () => ipc.createAgent(spec));
+      const created = await mutate("orchestrator.op.createAgent", () =>
+        ipc.createAgent(spec),
+      );
       return succeeded(created) ? created : null;
     },
 
     async updateAgent(spec: AgentSpec): Promise<void> {
-      await mutate("設定の保存", () => ipc.updateAgent(spec));
+      await mutate("orchestrator.op.saveAgent", () => ipc.updateAgent(spec));
     },
 
     async deleteAgent(agentId: AgentId): Promise<void> {
-      const done = await mutate("サーヴァントの削除", () => ipc.deleteAgent(agentId));
+      const done = await mutate("orchestrator.op.deleteAgent", () =>
+        ipc.deleteAgent(agentId),
+      );
       if (succeeded(done) && state.selectedAgentId === agentId) {
         state.selectedAgentId = null;
       }
     },
 
     async setConnections(agentId: AgentId, targets: AgentId[]): Promise<void> {
-      await mutate("接続の更新", () => ipc.setConnections(agentId, targets));
+      await mutate("orchestrator.op.setConnections", () =>
+        ipc.setConnections(agentId, targets),
+      );
     },
 
     async setTopologyPosition(
       agentId: AgentId,
       position: TopologyPosition,
     ): Promise<void> {
-      await mutate("村の地図位置の保存", () =>
+      await mutate("orchestrator.op.savePosition", () =>
         ipc.setTopologyPosition(agentId, position),
       );
     },
@@ -787,7 +809,7 @@ export function useOrchestrator() {
       // 並び替えは即座に見た目へ反映しないと操作感が壊れるので、先に order を振る。
       order.forEach((id, index) => patchAgent(id, { order: index }));
       state.agents.sort((a, b) => a.order - b.order);
-      await mutate("並び替え", () => ipc.reorderAgents(order));
+      await mutate("orchestrator.op.reorder", () => ipc.reorderAgents(order));
     },
 
     /**
@@ -796,7 +818,7 @@ export function useOrchestrator() {
      * 画面が矛盾する。
      */
     async upsertTemplate(template: ModelTemplate): Promise<boolean> {
-      const done = await mutate("モデルテンプレートの保存", () =>
+      const done = await mutate("orchestrator.op.saveTemplate", () =>
         ipc.upsertModelTemplate(template),
       );
       return done !== FAILED;
@@ -809,11 +831,11 @@ export function useOrchestrator() {
      * ここへ控えを持つと、値を保持しない設計が UI 層で崩れる。
      */
     async setCredential(templateId: string, secret: string): Promise<boolean> {
-      const done = await mutate("API キーの登録", () =>
+      const done = await mutate("orchestrator.op.setCredential", () =>
         ipc.setModelCredential(templateId, secret),
       );
       if (succeeded(done)) {
-        pushToast("info", "API キーを登録しました");
+        pushToast("info", i18n.global.t("orchestrator.credentialSaved"));
         // 退避の通知は「もう解決したかもしれない」ので、次の失敗で出し直す。
         reportedDegradations.clear();
       }
@@ -822,7 +844,7 @@ export function useOrchestrator() {
 
     /** API キーを資格情報ストアから削除する。 */
     async clearCredential(templateId: string): Promise<boolean> {
-      const done = await mutate("API キーの削除", () =>
+      const done = await mutate("orchestrator.op.clearCredential", () =>
         ipc.clearModelCredential(templateId),
       );
       if (succeeded(done)) reportedDegradations.clear();
@@ -830,30 +852,44 @@ export function useOrchestrator() {
     },
 
     async deleteTemplate(templateId: string): Promise<void> {
-      await mutate("モデルテンプレートの削除", () =>
+      await mutate("orchestrator.op.deleteTemplate", () =>
         ipc.deleteModelTemplate(templateId),
       );
     },
 
     /** MCP の宣言を保存し、その場で接続し直す。 */
     async saveMcpConfig(config: McpConfig): Promise<boolean> {
-      const done = await mutate("MCP 設定の保存", () => ipc.writeMcpConfig(config));
+      const done = await mutate("orchestrator.op.saveMcp", () =>
+        ipc.writeMcpConfig(config),
+      );
       if (succeeded(done)) {
-        pushToast("info", "MCP サーバーへ接続し直しました", "結果は一覧で確認できます");
+        pushToast(
+          "info",
+          i18n.global.t("orchestrator.mcpReconnected"),
+          i18n.global.t("orchestrator.mcpReconnectedDetail"),
+        );
       }
       return succeeded(done);
     },
 
     /** 設定を変えずに MCP へ繋ぎ直す。 */
     async reloadMcp(): Promise<boolean> {
-      const done = await mutate("MCP の再接続", () => ipc.reloadMcp());
+      const done = await mutate("orchestrator.op.reloadMcp", () => ipc.reloadMcp());
       return succeeded(done);
     },
 
     /** 村の条例を保存する。次の発話から全エージェントに反映される。 */
     async saveOrdinance(content: string): Promise<boolean> {
-      const done = await mutate("条例の保存", () => ipc.writeOrdinance(content));
-      if (succeeded(done)) pushToast("info", "条例を保存しました", "次の発話から全員に適用されます");
+      const done = await mutate("orchestrator.op.saveOrdinance", () =>
+        ipc.writeOrdinance(content),
+      );
+      if (succeeded(done)) {
+        pushToast(
+          "info",
+          i18n.global.t("orchestrator.ordinanceSaved"),
+          i18n.global.t("orchestrator.ordinanceSavedDetail"),
+        );
+      }
       return succeeded(done);
     },
 
@@ -862,7 +898,7 @@ export function useOrchestrator() {
      * 成功したらキャッシュを手元のバイト列で直接更新する（再フェッチしない）。
      */
     async setAgentIcon(agentId: AgentId, bytes: Uint8Array): Promise<boolean> {
-      const done = await mutate("アイコンの保存", () =>
+      const done = await mutate("orchestrator.op.saveIcon", () =>
         ipc.setAgentIcon(agentId, Array.from(bytes)),
       );
       if (succeeded(done)) {
@@ -875,7 +911,7 @@ export function useOrchestrator() {
 
     /** アイコンを削除する。 */
     async clearAgentIcon(agentId: AgentId): Promise<boolean> {
-      const done = await mutate("アイコンの削除", () =>
+      const done = await mutate("orchestrator.op.clearIcon", () =>
         ipc.clearAgentIcon(agentId),
       );
       if (succeeded(done)) {
@@ -887,7 +923,7 @@ export function useOrchestrator() {
     },
 
     async readConfig(agentId: AgentId, kind: ConfigFileKind): Promise<string | null> {
-      const text = await guard("設定ファイルの読み込み", () =>
+      const text = await guard("orchestrator.op.readConfig", () =>
         ipc.readAgentConfig(agentId, kind),
       );
       return succeeded(text) ? text : null;
@@ -898,17 +934,17 @@ export function useOrchestrator() {
       kind: ConfigFileKind,
       content: string,
     ): Promise<boolean> {
-      const done = await mutate("設定ファイルの保存", () =>
+      const done = await mutate("orchestrator.op.saveConfig", () =>
         ipc.writeAgentConfig(agentId, kind, content),
       );
-      if (succeeded(done)) pushToast("info", "保存しました");
+      if (succeeded(done)) pushToast("info", i18n.global.t("orchestrator.saved"));
       return succeeded(done);
     },
 
     async send(agentId: AgentId, content: string): Promise<void> {
       // 発話は MessageSent イベントで届くので、ここでの再同期は
       // 送信が拒否された場合に一覧を正しく戻すために効く。
-      await mutate("送信", () => ipc.sendUserMessage(agentId, content));
+      await mutate("orchestrator.op.send", () => ipc.sendUserMessage(agentId, content));
     },
 
     /**
@@ -918,9 +954,15 @@ export function useOrchestrator() {
      * **前の会話は捨てられずディスクに残る**（Spec 12）。
      */
     async newChat(): Promise<void> {
-      const done = await guard("新規チャット", () => ipc.resetConversation());
+      const done = await guard("orchestrator.op.newChat", () =>
+        ipc.resetConversation(),
+      );
       if (succeeded(done)) {
-        pushToast("info", "新しい会話を開きました", "前の会話は一覧に残っています");
+        pushToast(
+          "info",
+          i18n.global.t("orchestrator.newChatOpened"),
+          i18n.global.t("orchestrator.newChatOpenedDetail"),
+        );
       }
     },
 
@@ -928,7 +970,9 @@ export function useOrchestrator() {
 
     /** 会話一覧を取り直す。一覧ダイアログを開いたときに呼ぶ。 */
     async refreshSessions(): Promise<void> {
-      const listed = await guard("会話一覧の取得", () => ipc.listSessions());
+      const listed = await guard("orchestrator.op.listSessions", () =>
+        ipc.listSessions(),
+      );
       if (succeeded(listed)) state.sessions = listed;
     },
 
@@ -940,24 +984,30 @@ export function useOrchestrator() {
      * エラー文言側に書いてある。
      */
     async resumeSession(sessionId: string): Promise<boolean> {
-      const done = await guard("会話を開く", () => ipc.resumeSession(sessionId));
+      const done = await guard("orchestrator.op.resumeSession", () =>
+        ipc.resumeSession(sessionId),
+      );
       return succeeded(done);
     },
 
     /** 分岐できる地点（その会話のユーザー発話）。 */
     async forkPoints(sessionId: string): Promise<ForkPoint[]> {
-      const points = await guard("分岐点の取得", () => ipc.listForkPoints(sessionId));
+      const points = await guard("orchestrator.op.forkPoints", () =>
+        ipc.listForkPoints(sessionId),
+      );
       return succeeded(points) ? points : [];
     },
 
     /** `atSeq` まで含めて複製し、複製した側を開く。元は不変のまま残る。 */
     async forkSession(sessionId: string, atSeq: number): Promise<boolean> {
-      const done = await guard("会話の分岐", () => ipc.forkSession(sessionId, atSeq));
+      const done = await guard("orchestrator.op.forkSession", () =>
+        ipc.forkSession(sessionId, atSeq),
+      );
       if (succeeded(done)) {
         pushToast(
           "info",
-          "会話を分岐しました",
-          "選んだ依頼を入力欄に戻しました。書き換えて送ってください（元の会話は一覧に残っています）",
+          i18n.global.t("orchestrator.sessionForked"),
+          i18n.global.t("orchestrator.sessionForkedDetail"),
         );
       }
       return succeeded(done);
@@ -965,11 +1015,15 @@ export function useOrchestrator() {
 
     /** 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。 */
     async deleteSession(sessionId: string): Promise<boolean> {
-      const done = await guard("会話の削除", () => ipc.deleteSession(sessionId));
+      const done = await guard("orchestrator.op.deleteSession", () =>
+        ipc.deleteSession(sessionId),
+      );
       if (succeeded(done)) {
-        const listed = await guard("会話一覧の取得", () => ipc.listSessions());
+        const listed = await guard("orchestrator.op.listSessions", () =>
+          ipc.listSessions(),
+        );
         if (succeeded(listed)) state.sessions = listed;
-        pushToast("info", "会話を削除しました");
+        pushToast("info", i18n.global.t("orchestrator.sessionDeleted"));
       }
       return succeeded(done);
     },
@@ -981,29 +1035,37 @@ export function useOrchestrator() {
      * 呼び出し中は数十秒かかりうるため、開始した事実も通知に出す。
      */
     async summarize(): Promise<void> {
-      pushToast("info", "要約しています…", "稼働中のサーヴァントごとに 1 回ずつ呼び出します");
-      const count = await guard("要約", () => ipc.summarizeSession());
+      pushToast(
+        "info",
+        i18n.global.t("orchestrator.summarizing"),
+        i18n.global.t("orchestrator.summarizingDetail"),
+      );
+      const count = await guard("orchestrator.op.summarize", () =>
+        ipc.summarizeSession(),
+      );
       if (!succeeded(count)) return;
       if (count === 0) {
         pushToast(
           "info",
-          "要約するものがありませんでした",
-          "稼働中で、かつ会話のあるサーヴァントが対象です（停止中の相手は起動してから押してください）",
+          i18n.global.t("orchestrator.summarizeEmpty"),
+          i18n.global.t("orchestrator.summarizeEmptyDetail"),
         );
         return;
       }
       pushToast(
         "info",
-        `稼働中の ${count} 体の記憶を要約しました`,
-        "以後のやり取りは要約を踏まえて続きます（元のやり取りは消えていません）",
+        i18n.global.t("orchestrator.summarized", { count }),
+        i18n.global.t("orchestrator.summarizedDetail"),
       );
     },
 
     /** 会話を JSONL で書き出す。書き出し先のパスを通知に出す。 */
     async exportSession(sessionId: string): Promise<void> {
-      const path = await guard("会話の書き出し", () => ipc.exportSession(sessionId));
+      const path = await guard("orchestrator.op.exportSession", () =>
+        ipc.exportSession(sessionId),
+      );
       if (succeeded(path)) {
-        pushToast("info", "会話を書き出しました", path);
+        pushToast("info", i18n.global.t("orchestrator.sessionExported"), path);
       }
     },
 

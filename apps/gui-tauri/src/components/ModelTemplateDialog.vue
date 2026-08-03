@@ -7,6 +7,7 @@
  * 表示できるのは「登録済みかどうか」だけ（failures.md #1 / #2）。
  */
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
@@ -15,6 +16,7 @@ import type { Effort, ModelTemplate, ModelTemplateId, Provider } from "../types"
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -137,9 +139,9 @@ async function clearSecret(): Promise<void> {
   const template = draft.value;
   if (!template) return;
   const confirmed = await askConfirm({
-    title: `${template.name} の API キーを削除しますか？`,
-    message: "OS の資格情報ストアから消えます。このテンプレートを使うサーヴァントは接続できなくなります。",
-    confirmLabel: "削除する",
+    title: t("modelTemplate.deleteKeyTitle", { name: template.name }),
+    message: t("modelTemplate.deleteKeyMessage"),
+    confirmLabel: t("modelTemplate.deleteAction"),
     danger: true,
   });
   if (!confirmed) return;
@@ -166,11 +168,11 @@ function setAuthNotRequired(notRequired: boolean): void {
   draft.value.credential = notRequired ? "not_required" : "unset";
 }
 
-const PROVIDERS: { value: Provider | null; label: string }[] = [
-  { value: null, label: "自動判定（baseUrl から）" },
-  { value: "open_ai_compat", label: "OpenAI 互換" },
-  { value: "anthropic", label: "Anthropic ネイティブ" },
-  { value: "gemini", label: "Gemini ネイティブ" },
+const PROVIDERS: { value: Provider | null; labelKey: string }[] = [
+  { value: null, labelKey: "modelTemplate.providerAuto" },
+  { value: "open_ai_compat", labelKey: "modelTemplate.providerOpenAiCompat" },
+  { value: "anthropic", labelKey: "modelTemplate.providerAnthropic" },
+  { value: "gemini", labelKey: "modelTemplate.providerGemini" },
 ];
 
 /**
@@ -194,7 +196,8 @@ const strandedGoogleSearch = computed(
 );
 
 const EFFORTS: { value: Effort | null; label: string }[] = [
-  { value: null, label: "指定しない（送らない）" },
+  // null の表示は辞書キー modelTemplate.effortNone で引く（テンプレート側で分岐）。
+  { value: null, label: "" },
   { value: "low", label: "low" },
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
@@ -217,7 +220,7 @@ function blank(): ModelTemplate {
   }
   return {
     id,
-    name: "新しいテンプレート",
+    name: t("modelTemplate.newTemplateName"),
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
     contextLength: 128000,
@@ -284,9 +287,9 @@ async function remove(template: ModelTemplate): Promise<void> {
   // 連打で 2 回目以降が「存在しません」になるのを、通信中フラグで塞ぐ。
   if (removing.value) return;
   const ok = await askConfirm({
-    title: `${template.name} を削除しますか？`,
-    message: "このテンプレートを参照しているサーヴァントは、モデルを選び直すまで動きません。",
-    confirmLabel: "削除する",
+    title: t("modelTemplate.deleteTemplateTitle", { name: template.name }),
+    message: t("modelTemplate.deleteTemplateMessage"),
+    confirmLabel: t("modelTemplate.deleteAction"),
     danger: true,
   });
   if (!ok) return;
@@ -319,10 +322,10 @@ function onTemperature(raw: string): void {
       <!-- 一覧 -->
       <div class="flex w-56 shrink-0 flex-col border-r border-line">
         <header class="flex items-center border-b border-line px-3 py-2 text-xs">
-          <h2 class="flex-1 font-semibold">モデルテンプレート</h2>
+          <h2 class="flex-1 font-semibold">{{ $t("modelTemplate.title") }}</h2>
           <button
             class="rounded border border-line px-1.5 hover:border-accent hover:text-accent"
-            title="追加"
+            :title="$t('modelTemplate.addTitle')"
             @click="create"
           >
             ＋
@@ -353,7 +356,7 @@ function onTemperature(raw: string): void {
               </button>
               <button
                 class="invisible px-2 py-1.5 text-fail group-hover:visible disabled:opacity-40"
-                title="削除"
+                :title="$t('modelTemplate.deleteTitle')"
                 :disabled="removing === template.id"
                 @click="remove(template)"
               >
@@ -365,7 +368,7 @@ function onTemperature(raw: string): void {
             v-if="!state.templates.length"
             class="px-2 py-6 text-center text-[11px] text-ink-dim"
           >
-            未登録です。
+            {{ $t("modelTemplate.empty") }}
           </li>
         </ul>
       </div>
@@ -374,7 +377,7 @@ function onTemperature(raw: string): void {
       <div class="flex min-w-0 flex-1 flex-col">
         <header class="flex items-center border-b border-line px-3 py-2 text-xs">
           <h3 class="flex-1 truncate font-semibold">
-            {{ draft ? draft.name : (current?.name ?? "選択してください") }}
+            {{ draft ? draft.name : (current?.name ?? $t("modelTemplate.selectPrompt")) }}
           </h3>
           <button class="px-1 text-ink-dim hover:text-ink" @click="emit('close')">
             ✕
@@ -383,24 +386,24 @@ function onTemperature(raw: string): void {
 
         <div v-if="draft" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
           <div class="grid grid-cols-[128px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5">
-            <label class="text-ink-dim">識別子</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.id") }}</label>
             <div>
               <input
                 v-model="draft.id"
                 :readonly="!isNewDraft"
                 :title="
                   isNewDraft
-                    ? '作成後は変更できません'
-                    : '登録済みの識別子は変更できません'
+                    ? $t('modelTemplate.idNewTitle')
+                    : $t('modelTemplate.idLockedTitle')
                 "
                 class="w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent read-only:opacity-60"
               />
               <p v-if="!isNewDraft" class="mt-1 text-[11px] text-ink-dim">
-                識別子は資格情報の鍵とサーヴァントからの参照先を兼ねるため、作成後は変更できません。
+                {{ $t("modelTemplate.idLockedHint") }}
               </p>
             </div>
 
-            <label class="text-ink-dim">表示名</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.displayName") }}</label>
             <input
               v-model="draft.name"
               class="rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
@@ -419,23 +422,23 @@ function onTemperature(raw: string): void {
                 "
               />
               <p v-if="baseUrlMismatch" class="mt-1 text-[11px] text-warn">
-                選択中のプロトコルと送信先が食い違っています。この設定では必ず失敗します。
+                {{ $t("modelTemplate.baseUrlMismatch") }}
                 <button
                   class="ml-1 underline hover:text-ink"
                   @click="draft.baseUrl = baseUrlMismatch"
                 >
-                  {{ baseUrlMismatch }} に直す
+                  {{ $t("modelTemplate.fixBaseUrl", { url: baseUrlMismatch }) }}
                 </button>
               </p>
             </div>
 
-            <label class="text-ink-dim">モデル名</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.model") }}</label>
             <input
               v-model="draft.model"
               class="rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
             />
 
-            <label class="text-ink-dim">プロトコル</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.protocol") }}</label>
             <select
               :value="draft.provider"
               class="rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
@@ -446,11 +449,11 @@ function onTemperature(raw: string): void {
               "
             >
               <option v-for="p in PROVIDERS" :key="String(p.value)" :value="p.value ?? ''">
-                {{ p.label }}
+                {{ $t(p.labelKey) }}
               </option>
             </select>
 
-            <label class="text-ink-dim">API キー</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.apiKey") }}</label>
             <div>
               <div class="flex gap-2">
                 <input
@@ -459,7 +462,9 @@ function onTemperature(raw: string): void {
                   autocomplete="off"
                   spellcheck="false"
                   :placeholder="
-                    credentialStored ? '新しいキーを貼って上書き' : 'キーを貼り付け'
+                    credentialStored
+                      ? $t('modelTemplate.keyPlaceholderStored')
+                      : $t('modelTemplate.keyPlaceholder')
                   "
                   class="min-w-0 flex-1 rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent"
                   @keydown.enter.prevent="saveSecret"
@@ -469,14 +474,14 @@ function onTemperature(raw: string): void {
                   :disabled="!secretInput || savingSecret"
                   @click="saveSecret"
                 >
-                  {{ savingSecret ? "登録中…" : "登録" }}
+                  {{ savingSecret ? $t("modelTemplate.registering") : $t("modelTemplate.register") }}
                 </button>
               </div>
 
               <p v-if="credentialStored === true" class="mt-1 text-[11px] text-run">
-                登録済み。OS の資格情報ストアに保存されています。
+                {{ $t("modelTemplate.keyStored") }}
                 <button class="ml-1 underline text-fail hover:opacity-80" @click="clearSecret">
-                  削除
+                  {{ $t("modelTemplate.delete") }}
                 </button>
               </p>
 
@@ -485,8 +490,7 @@ function onTemperature(raw: string): void {
                   v-if="draft.credential === 'unset'"
                   class="mt-1 text-[11px] text-warn"
                 >
-                  未登録です。このままでは送信前に設定不備として弾かれ、エコー応答へ
-                  退避します。
+                  {{ $t("modelTemplate.keyMissing") }}
                 </p>
                 <label class="mt-1.5 flex items-center gap-2 text-[11px] text-ink-dim">
                   <input
@@ -497,20 +501,20 @@ function onTemperature(raw: string): void {
                     "
                   />
                   <span>
-                    この接続先は認証不要（ローカル推論サーバなど）
+                    {{ $t("modelTemplate.authNotRequired") }}
                   </span>
                 </label>
               </template>
             </div>
 
-            <label class="text-ink-dim">コンテキスト長</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.contextLength") }}</label>
             <input
               v-model.number="draft.contextLength"
               type="number"
               class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
             />
 
-            <label class="text-ink-dim">最大出力</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.maxOutput") }}</label>
             <input
               v-model.number="draft.maxOutputTokens"
               type="number"
@@ -522,40 +526,40 @@ function onTemperature(raw: string): void {
               :value="draft.temperature ?? ''"
               type="number"
               step="0.1"
-              placeholder="空欄 = 送らない"
+              :placeholder="$t('modelTemplate.temperaturePlaceholder')"
               class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
               @input="onTemperature(($event.target as HTMLInputElement).value)"
             />
 
-            <label class="text-ink-dim">推論の深さ</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.effort") }}</label>
             <select
               v-model="draft.effort"
               class="rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
             >
               <option v-for="e in EFFORTS" :key="String(e.value)" :value="e.value">
-                {{ e.label }}
+                {{ e.value === null ? $t("modelTemplate.effortNone") : e.label }}
               </option>
             </select>
 
-            <label class="text-ink-dim">タイムアウト(秒)</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.timeout") }}</label>
             <input
               v-model.number="draft.requestTimeoutSecs"
               type="number"
               class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
             />
 
-            <label class="text-ink-dim">最大試行回数</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.maxRetries") }}</label>
             <input
               v-model.number="draft.maxRetries"
               type="number"
               class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
             />
 
-            <label class="text-ink-dim">ツール呼び出し</label>
+            <label class="text-ink-dim">{{ $t("modelTemplate.toolCalls") }}</label>
             <label class="flex items-center gap-2">
               <input v-model="draft.useTools" type="checkbox" />
               <span class="text-ink-dim">
-                無効にすると、スキーマをプロンプトに載せる経路へ切り替わります
+                {{ $t("modelTemplate.toolCallsHint") }}
               </span>
             </label>
 
@@ -564,11 +568,11 @@ function onTemperature(raw: string): void {
               google_search が 400 で拒否されるため、押しても効かない。
             -->
             <template v-if="supportsGoogleSearch">
-              <label class="text-ink-dim">Google グラウンディング</label>
+              <label class="text-ink-dim">{{ $t("modelTemplate.googleSearch") }}</label>
               <label class="flex items-center gap-2">
                 <input v-model="draft.googleSearch" type="checkbox" />
                 <span class="text-ink-dim">
-                  Google 検索で裏取りしてから答えます（同梱ツールや委譲とは併用できます）
+                  {{ $t("modelTemplate.googleSearchHint") }}
                 </span>
               </label>
             </template>
@@ -578,25 +582,24 @@ function onTemperature(raw: string): void {
               その時だけ理由と直し方を出す。
             -->
             <template v-else-if="strandedGoogleSearch">
-              <label class="text-warn">Google グラウンディング</label>
+              <label class="text-warn">{{ $t("modelTemplate.googleSearch") }}</label>
               <p class="text-warn">
-                有効になっていますが、<strong>プロトコルが Gemini ではないため働きません</strong>。
-                グラウンディングは Gemini ネイティブ経路にしかありません。使うならプロトコルを
-                「Gemini ネイティブ」にしてください。
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedStrong") }}</strong
+                >{{ $t("modelTemplate.strandedAfter") }}
               </p>
             </template>
           </div>
 
           <p class="rounded border border-line bg-surface-0 p-2 text-[11px] text-ink-dim">
-            API キーは <strong class="text-ink">OS の資格情報ストア</strong>
-            （Windows 資格情報マネージャー / macOS キーチェーン / Secret Service）に
-            保存されます。設定ファイルには一切書かれず、この画面へ読み戻す経路も
-            ありません。表示できるのは「登録済みかどうか」だけです。
+            {{ $t("modelTemplate.keyStoreBefore")
+            }}<strong class="text-ink">{{ $t("modelTemplate.keyStoreStrong") }}</strong
+            >{{ $t("modelTemplate.keyStoreAfter") }}
           </p>
         </div>
 
         <div v-else class="flex-1 p-6 text-center text-[11px] text-ink-dim">
-          左の一覧から選ぶか、＋ で新規作成してください。
+          {{ $t("modelTemplate.noSelection") }}
         </div>
 
         <div v-if="draft" class="flex justify-end gap-2 border-t border-line px-4 py-2.5">
@@ -604,7 +607,7 @@ function onTemperature(raw: string): void {
             class="rounded px-2 py-1 text-[11px] text-ink-dim hover:text-ink"
             @click="draft = null"
           >
-            取消
+            {{ $t("modelTemplate.cancel") }}
           </button>
           <!-- 保存の合図はボタン自身に出す。視線は押した場所にあるので、
                離れたトーストより確実に届く。成功時だけ緑 + ✓ を 1.6 秒。 -->
@@ -614,7 +617,13 @@ function onTemperature(raw: string): void {
             :disabled="saving"
             @click="save"
           >
-            {{ saving ? "保存中…" : savedFlash ? "保存しました ✓" : "保存" }}
+            {{
+              saving
+                ? $t("modelTemplate.saving")
+                : savedFlash
+                  ? $t("modelTemplate.saved")
+                  : $t("modelTemplate.save")
+            }}
           </button>
         </div>
       </div>

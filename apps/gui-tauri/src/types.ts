@@ -283,15 +283,18 @@ export interface ScheduleView {
   recurrenceLabel: string;
 }
 
-/** 曜日の表示名。Rust 側 `Weekday::label_ja` と同じ語彙。 */
-export const WEEKDAY_LABELS: Record<Weekday, string> = {
-  mon: "月曜",
-  tue: "火曜",
-  wed: "水曜",
-  thu: "木曜",
-  fri: "金曜",
-  sat: "土曜",
-  sun: "日曜",
+/**
+ * 曜日の辞書キー。表示は `$t(WEEKDAY_LABEL_KEYS[w])` で引く（Spec 13 P3）。
+ * 日本語の語彙は Rust 側 `Weekday::label_ja` と同じ。
+ */
+export const WEEKDAY_LABEL_KEYS: Record<Weekday, string> = {
+  mon: "labels.weekday.mon",
+  tue: "labels.weekday.tue",
+  wed: "labels.weekday.wed",
+  thu: "labels.weekday.thu",
+  fri: "labels.weekday.fri",
+  sat: "labels.weekday.sat",
+  sun: "labels.weekday.sun",
 };
 
 /** RAG 索引の断片。 */
@@ -482,11 +485,11 @@ export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
   mcp: "mcp.json",
 };
 
-/** 状態と表示色の対応。 */
-export const STATUS_LABELS: Record<AgentStatus, string> = {
-  idle: "停止中",
-  starting: "起動中",
-  running: "稼働中",
-  stopping: "停止処理中",
-  failed: "失敗",
+/** 状態の辞書キー。表示は `$t(STATUS_LABEL_KEYS[s])` で引く（Spec 13 P3）。 */
+export const STATUS_LABEL_KEYS: Record<AgentStatus, string> = {
+  idle: "labels.status.idle",
+  starting: "labels.status.starting",
+  running: "labels.status.running",
+  stopping: "labels.status.stopping",
+  failed: "labels.status.failed",
 };

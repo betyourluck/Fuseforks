@@ -11,6 +11,7 @@
  * コアの検査に引っかかる。
  */
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
@@ -21,7 +22,7 @@ import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
-  STATUS_LABELS,
+  STATUS_LABEL_KEYS,
   type AgentId,
   type AgentMcpStatus,
   type AgentSpec,
@@ -30,6 +31,7 @@ import {
 const props = defineProps<{ agentId: AgentId }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 
@@ -83,15 +85,15 @@ const workDirInput = computed({
  * WORK_DIR_TOOL_NAMES と対応させる（手動同期の契約）。
  */
 const BUNDLED_TOOLS = [
-  { name: "remember", label: "remember — 長期記憶へ追記", needsWorkDir: false },
-  { name: "grep", label: "grep — 内容の検索", needsWorkDir: true },
-  { name: "fd", label: "fd — 名前でファイル探索", needsWorkDir: true },
-  { name: "diff", label: "diff — 2 ファイル比較", needsWorkDir: true },
-  { name: "sd", label: "sd — 正規表現置換（書き換え）", needsWorkDir: true },
-  { name: "yq", label: "yq — TOML/JSON の値編集（書き換え）", needsWorkDir: true },
+  { name: "remember", labelKey: "agentSettings.tools.remember", needsWorkDir: false },
+  { name: "grep", labelKey: "agentSettings.tools.grep", needsWorkDir: true },
+  { name: "fd", labelKey: "agentSettings.tools.fd", needsWorkDir: true },
+  { name: "diff", labelKey: "agentSettings.tools.diff", needsWorkDir: true },
+  { name: "sd", labelKey: "agentSettings.tools.sd", needsWorkDir: true },
+  { name: "yq", labelKey: "agentSettings.tools.yq", needsWorkDir: true },
   {
     name: "file",
-    label: "file — ファイル・フォルダ操作（作成/移動/複製/ごみ箱）",
+    labelKey: "agentSettings.tools.file",
     needsWorkDir: true,
   },
 ] as const;
@@ -166,10 +168,10 @@ async function requestClose(): Promise<void> {
   if (
     dirty.value &&
     !(await askConfirm({
-      title: "未保存の変更を破棄して閉じますか？",
-      message: "編集中の内容は保存されません。",
-      confirmLabel: "破棄して閉じる",
-      cancelLabel: "編集を続ける",
+      title: t("agentSettings.discardTitle"),
+      message: t("agentSettings.discardMessage"),
+      confirmLabel: t("agentSettings.discardConfirm"),
+      cancelLabel: t("agentSettings.discardCancel"),
       danger: true,
     }))
   ) {
@@ -196,9 +198,9 @@ async function remove(): Promise<void> {
   const target = agent.value;
   if (!target) return;
   const ok = await askConfirm({
-    title: `${target.name} を削除しますか？`,
-    message: "設定ファイル（SKILL.md・Memory.md・mcp.json・アイコン）も消えます。元に戻せません。",
-    confirmLabel: "削除する",
+    title: t("agentSettings.deleteTitle", { name: target.name }),
+    message: t("agentSettings.deleteMessage"),
+    confirmLabel: t("agentSettings.deleteAction"),
     danger: true,
   });
   if (!ok) return;
@@ -220,7 +222,7 @@ async function openFolder(): Promise<void> {
   } catch (error) {
     orchestrator.notify(
       "error",
-      "設定フォルダを開けませんでした",
+      t("agentSettings.openFolderFailed"),
       error instanceof Error ? error.message : String(error),
     );
   }
@@ -254,7 +256,8 @@ async function onIconPicked(event: Event): Promise<void> {
     await orchestrator.setAgentIcon(props.agentId, bytes);
   } catch (error) {
     // 変換の失敗（壊れた画像など）は IPC まで到達しないので、ここで表示する。
-    iconError.value = error instanceof Error ? error.message : "変換に失敗しました";
+    iconError.value =
+      error instanceof Error ? error.message : t("agentSettings.iconConvertFailed");
   } finally {
     iconBusy.value = false;
   }
@@ -262,9 +265,9 @@ async function onIconPicked(event: Event): Promise<void> {
 
 async function removeIcon(): Promise<void> {
   const ok = await askConfirm({
-    title: "アイコン画像を削除しますか？",
-    message: "頭文字の丸い表示に戻ります。",
-    confirmLabel: "削除する",
+    title: t("agentSettings.iconRemoveTitle"),
+    message: t("agentSettings.iconRemoveMessage"),
+    confirmLabel: t("agentSettings.deleteAction"),
     danger: true,
   });
   if (!ok) return;
@@ -305,11 +308,11 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs"
         >
           <h2 class="min-w-0 flex-1 truncate font-semibold">
-            {{ agent?.name ?? "サーヴァント" }}
+            {{ agent?.name ?? $t("agentSettings.fallbackName") }}
           </h2>
           <button
             class="flex size-6 items-center justify-center rounded border border-line hover:border-accent hover:text-accent"
-            title="設定フォルダを開く"
+            :title="$t('agentSettings.openFolderTitle')"
             @click="openFolder"
           >
             <svg
@@ -334,7 +337,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               v-if="iconUrl"
               :src="iconUrl"
               class="size-14 shrink-0 rounded-full object-cover ring-1 ring-line"
-              alt="サーヴァントのアイコン"
+              :alt="$t('agentSettings.iconAlt')"
             />
             <div
               v-else
@@ -351,17 +354,23 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
                   :disabled="iconBusy"
                   @click="iconInput?.click()"
                 >
-                  {{ iconBusy ? "変換中…" : iconUrl ? "画像を変更" : "画像を選ぶ" }}
+                  {{
+                    iconBusy
+                      ? $t("agentSettings.iconConverting")
+                      : iconUrl
+                        ? $t("agentSettings.iconChange")
+                        : $t("agentSettings.iconChoose")
+                  }}
                 </button>
                 <button
                   v-if="iconUrl"
                   class="rounded border border-fail/60 px-2 py-1 text-fail hover:bg-fail/10"
                   @click="removeIcon"
                 >
-                  削除
+                  {{ $t("agentSettings.delete") }}
                 </button>
               </div>
-              <p class="mt-1 text-ink-dim">png / jpg を選ぶと WebP に変換して保存します。</p>
+              <p class="mt-1 text-ink-dim">{{ $t("agentSettings.iconHint") }}</p>
               <p v-if="iconError" class="mt-0.5 text-fail">{{ iconError }}</p>
             </div>
 
@@ -377,9 +386,9 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           <dl class="grid grid-cols-[80px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
             <dt class="text-ink-dim">ID</dt>
             <dd class="selectable truncate font-mono">{{ agent.id }}</dd>
-            <dt class="text-ink-dim">状態</dt>
-            <dd>{{ STATUS_LABELS[agent.status] }}</dd>
-            <dt class="text-ink-dim">トークン</dt>
+            <dt class="text-ink-dim">{{ $t("agentSettings.status") }}</dt>
+            <dd>{{ $t(STATUS_LABEL_KEYS[agent.status]) }}</dd>
+            <dt class="text-ink-dim">{{ $t("agentSettings.tokens") }}</dt>
             <dd class="tabular-nums">
               {{ compactNumber(agent.totalTokens) }}
             </dd>
@@ -387,29 +396,29 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
 
           <hr class="my-3 border-line" />
 
-          <label class="mb-1 block text-[11px] text-ink-dim">名前</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.name") }}</label>
           <input
             v-model="draft.name"
             class="mb-3 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
           />
 
-          <label class="mb-1 block text-[11px] text-ink-dim">使用モデル</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.model") }}</label>
           <select
             v-model="draft.modelTemplateId"
             class="mb-3 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
           >
-            <option v-for="t in state.templates" :key="t.id" :value="t.id">
-              {{ t.name }}（{{ t.model }}）
+            <option v-for="tpl in state.templates" :key="tpl.id" :value="tpl.id">
+              {{ $t("agentSettings.modelOption", { name: tpl.name, model: tpl.model }) }}
             </option>
           </select>
 
           <label class="mb-1 block text-[11px] text-ink-dim">
-            作業フォルダ（grep / diff の探索範囲）
+            {{ $t("agentSettings.workDir") }}
           </label>
           <input
             v-model="workDirInput"
             spellcheck="false"
-            placeholder="例: D:\Projects\my-app（未設定ならツールは動きません）"
+            :placeholder="$t('agentSettings.workDirPlaceholder')"
             class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono text-[11px] outline-none focus:border-accent"
           />
           <!--
@@ -417,36 +426,39 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             欄の説明として明示する。強制は Rust 側（canonicalize + 前方一致）。
           -->
           <p class="mb-3 text-[10px] text-ink-dim">
-            このフォルダの中だけを同梱ツールが読めます。機密を含むフォルダは指定しないでください。
+            {{ $t("agentSettings.workDirHint") }}
           </p>
 
           <label class="mb-1 block text-[11px] text-ink-dim">
-            ツール実行の上限 / ターン
+            {{ $t("agentSettings.maxTools") }}
           </label>
           <input
             v-model="maxToolIterationsInput"
             type="number"
             min="1"
             max="99"
-            placeholder="既定: 12"
+            :placeholder="$t('agentSettings.maxToolsPlaceholder')"
             class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
           />
           <p class="mb-3 text-[10px] text-ink-dim">
-            1 回の応答で使えるツールの回数。調査の多いコーディング用サーヴァントは
-            12〜20 に上げると打ち切られにくくなります（そのぶんトークンを使います）。
+            {{ $t("agentSettings.maxToolsHint") }}
           </p>
 
           <div class="mb-1 flex items-center gap-2">
-            <label class="block text-[11px] text-ink-dim">同梱ツール</label>
+            <label class="block text-[11px] text-ink-dim">{{ $t("agentSettings.bundledTools") }}</label>
             <span class="text-[10px] text-ink-dim opacity-70">
-              {{ draft.enabledTools === null ? "既定（すべて。新ツールも自動追加）" : "個別選択（自動追加なし）" }}
+              {{
+                draft.enabledTools === null
+                  ? $t("agentSettings.toolsDefault")
+                  : $t("agentSettings.toolsCustom")
+              }}
             </span>
             <button
               v-if="draft.enabledTools !== null"
               class="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim hover:border-accent hover:text-accent"
               @click="draft.enabledTools = null"
             >
-              既定に戻す
+              {{ $t("agentSettings.toolsReset") }}
             </button>
           </div>
           <!--
@@ -466,36 +478,35 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
                 :disabled="isToolGated(tool)"
                 @change="toggleTool(tool.name, ($event.target as HTMLInputElement).checked)"
               />
-              <span>{{ tool.label }}</span>
+              <span>{{ $t(tool.labelKey) }}</span>
             </label>
           </div>
           <p v-if="!draft.workDir" class="mb-1 text-[10px] text-warn">
-            作業フォルダが未設定のため、ファイル系ツールは提示されません（チェックは保持されます）。
+            {{ $t("agentSettings.noWorkDirWarn") }}
           </p>
           <p v-if="!isToolChecked('remember')" class="mb-1 text-[10px] text-warn">
-            remember を外すと長期記憶が自己更新されなくなります（Memory.md の内容は読み込まれ続けます）。
+            {{ $t("agentSettings.rememberOffWarn") }}
           </p>
           <div class="mb-3" />
 
-          <label class="mb-1 block text-[11px] text-ink-dim">会話の文脈</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.context") }}</label>
           <label class="flex items-center gap-2 text-[12px]">
             <input type="checkbox" v-model="draft.hearsRoomLog" />
-            <span>広場の会話が聞こえる</span>
+            <span>{{ $t("agentSettings.hearsRoomLog") }}</span>
           </label>
           <p v-if="!draft.hearsRoomLog" class="mt-0.5 text-[10px] text-ink-dim">
-            他のサーヴァント同士の会話を文脈として使えなくなります（トークンは減ります）。
-            自分の発言は従来どおり他のサーヴァントに聞こえます。
+            {{ $t("agentSettings.hearsRoomLogHint") }}
           </p>
           <div class="mb-3" />
 
           <div class="mb-1 flex items-center gap-2">
-            <label class="block text-[11px] text-ink-dim">個別 MCP</label>
+            <label class="block text-[11px] text-ink-dim">{{ $t("agentSettings.mcp") }}</label>
             <button
               class="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-dim hover:border-accent hover:text-accent"
-              title="接続状態を取り直す"
+              :title="$t('agentSettings.mcpRefreshTitle')"
               @click="refreshMcpStatus"
             >
-              更新
+              {{ $t("agentSettings.refresh") }}
             </button>
           </div>
           <!--
@@ -504,14 +515,14 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           -->
           <div class="mb-3 space-y-1 text-[11px]">
             <p v-if="!mcpStatus || !mcpStatus.running" class="text-ink-dim">
-              停止中（未接続）。宣言は mcp.json タブで編集でき、起動時に接続されます。
+              {{ $t("agentSettings.mcpIdle") }}
             </p>
             <template v-else>
               <p v-if="mcpStatus.loadError" class="text-fail">
-                mcp.json を読み込めません: {{ mcpStatus.loadError }}
+                {{ $t("agentSettings.mcpLoadError", { error: mcpStatus.loadError }) }}
               </p>
               <p v-else-if="!mcpStatus.servers.length" class="text-ink-dim">
-                個別サーバーの宣言はありません（mcp.json タブで追加できます）。
+                {{ $t("agentSettings.mcpEmpty") }}
               </p>
               <div
                 v-for="server in mcpStatus?.servers ?? []"
@@ -525,7 +536,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
                   />
                   <span class="font-medium">{{ server.name }}</span>
                   <span v-if="server.connected" class="text-ink-dim">
-                    {{ server.tools.length }} ツール
+                    {{ $t("agentSettings.mcpToolCount", { count: server.tools.length }) }}
                   </span>
                 </p>
                 <p v-if="server.error" class="mt-0.5 text-[10px] text-fail">
@@ -535,7 +546,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             </template>
           </div>
 
-          <label class="mb-1 block text-[11px] text-ink-dim">参照 RAG</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.rag") }}</label>
           <div class="mb-3 space-y-1">
             <label
               v-for="source in state.ragSources"
@@ -550,11 +561,11 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               <span>{{ source }}</span>
             </label>
             <p v-if="!state.ragSources.length" class="text-[11px] text-ink-dim">
-              索引済みの RAG ソースがありません。
+              {{ $t("agentSettings.ragEmpty") }}
             </p>
           </div>
 
-          <label class="mb-1 block text-[11px] text-ink-dim">接続先サーヴァント</label>
+          <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.connections") }}</label>
           <div class="space-y-1">
             <label
               v-for="other in others"
@@ -571,7 +582,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               <span>{{ other.name }}</span>
             </label>
             <p v-if="!others.length" class="text-[11px] text-ink-dim">
-              他のサーヴァントがいません。
+              {{ $t("agentSettings.othersEmpty") }}
             </p>
           </div>
         </div>
@@ -581,15 +592,15 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             class="rounded border border-fail/60 px-2 py-1 text-[11px] text-fail hover:bg-fail/10"
             @click="remove"
           >
-            削除
+            {{ $t("agentSettings.delete") }}
           </button>
-          <span v-if="dirty" class="text-[11px] text-warn">未保存</span>
+          <span v-if="dirty" class="text-[11px] text-warn">{{ $t("agentSettings.unsaved") }}</span>
           <button
             class="ml-auto rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
             :disabled="!dirty"
             @click="save"
           >
-            保存
+            {{ $t("agentSettings.save") }}
           </button>
         </div>
       </div>
@@ -599,7 +610,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
         <header
           class="flex shrink-0 items-center border-b border-line px-3 py-2.5 text-xs"
         >
-          <h3 class="flex-1 font-semibold">設定ファイル</h3>
+          <h3 class="flex-1 font-semibold">{{ $t("agentSettings.configFiles") }}</h3>
           <button class="px-1 text-ink-dim hover:text-ink" @click="requestClose">
             ✕
           </button>
