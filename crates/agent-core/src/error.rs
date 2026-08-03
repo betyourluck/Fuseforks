@@ -33,6 +33,14 @@ pub enum CoreError {
     #[error("モデルテンプレート `{0}` は登録されていません")]
     ModelTemplateNotFound(String),
 
+    /// 参照された役職が存在しない（Spec 14）。
+    ///
+    /// **表示側はこれをエラーとして出さない。** 役職が引けないときは表示ごと
+    /// 省く（`role_contract` 凍結 5）ので、この型が利用者に届くのは
+    /// 「削除しようとした役職が既に無い」のような明示操作のときだけ。
+    #[error("役職 `{0}` は登録されていません")]
+    RoleNotFound(String),
+
     /// 指定 ID の予定が存在しない（Spec 07）。
     #[error("予定 `{0}` は登録されていません")]
     ScheduleNotFound(String),
@@ -213,6 +221,7 @@ impl CoreError {
             Self::DuplicateAgent(_) => "DUPLICATE_AGENT",
             Self::DuplicateAgentName(_) => "DUPLICATE_AGENT_NAME",
             Self::ModelTemplateNotFound(_) => "MODEL_TEMPLATE_NOT_FOUND",
+            Self::RoleNotFound(_) => "ROLE_NOT_FOUND",
             Self::ScheduleNotFound(_) => "SCHEDULE_NOT_FOUND",
             Self::InvalidSchedule { .. } => "INVALID_SCHEDULE",
             Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",

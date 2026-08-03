@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::llm::ChatMessage;
 use crate::model::{
-    AgentId, AgentSnapshot, AgentSpec, AgentStatus, ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentId, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, AgentStatus, ModelTemplate,
+    ModelTemplateId, TopologyEdge,
 };
 
 /// 1 エージェントの定義と実行時状態。
@@ -217,6 +218,12 @@ pub struct PersistedWorld {
     /// 起動時に OS から確定し直される。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 役職（Spec 14）。エージェントの雛形と、場に見えるラベル。
+    ///
+    /// **村の共有物**なので `world.json` に住む — 村を配ると役職も付いて回る。
+    /// `#[serde(default)]` なので、役職を 1 つも持たない既存の村もそのまま開く。
+    #[serde(default)]
+    pub roles: Vec<AgentRole>,
 }
 
 /// 登録簿本体。
@@ -229,6 +236,8 @@ pub struct World {
     token_budget: Option<u64>,
     /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
     language: Option<Language>,
+    /// 役職（Spec 14）。意味論は [`PersistedWorld::roles`]。
+    roles: BTreeMap<AgentRoleId, AgentRole>,
 }
 
 impl World {
@@ -273,6 +282,14 @@ impl World {
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
         }
+        // 役職は**検査せずそのまま読む**。壊れた役職があっても world.json が
+        // 開けなくなるほうが害が大きいのはテンプレートと同じ。加えて、
+        // 役職を指す role_id が引けなくても**サーヴァントの動作は変わらない**
+        // （設定の中身は作成時にコピー済み）ので、孤児の掃除も要らない。
+        // 表示側が「引けなければ表示ごと省く」で受ける（role_contract 凍結 5）。
+        for role in persisted.roles {
+            world.roles.insert(role.id.clone(), role);
+        }
         for mut spec in persisted.agents {
             spec.connected_agents
                 .retain(|target| *target != spec.id && known.contains(target));
@@ -295,6 +312,7 @@ impl World {
             topology_positions: self.topology_positions.clone(),
             token_budget: self.token_budget,
             language: self.language.map(|l| l.as_str().to_string()),
+            roles: self.roles.values().cloned().collect(),
         }
     }
 
@@ -512,6 +530,7 @@ impl World {
             enabled_tools: record.spec.enabled_tools.clone(),
             hears_room_log: record.spec.hears_room_log,
             batch_start: record.spec.batch_start,
+            role_id: record.spec.role_id.clone(),
             last_error: record.last_error.clone(),
         }
     }
@@ -608,6 +627,61 @@ impl World {
     pub fn templates(&self) -> Vec<ModelTemplate> {
         self.templates.values().cloned().collect()
     }
+
+    // ---- 役職（Spec 14） ----------------------------------------------------
+
+    /// 役職を登録または更新する。
+    ///
+    /// **既存のサーヴァントには何も起きない。** `AgentRoleDefaults` は新規作成の
+    /// ときにコピーされる（`role_contract` 凍結 4 — 流し込みの発火点は新規作成
+    /// ただ 1 つ）ので、ここで中身を書き換えても既に居る個体の設定は変わらない。
+    /// 変わるのは `name` を参照している**表示だけ**。
+    pub fn upsert_role(&mut self, role: AgentRole) {
+        self.roles.insert(role.id.clone(), role);
+    }
+
+    /// 役職を削除する。
+    ///
+    /// **参照中でも拒まない。** [`World::remove_template`] とはここが決定的に
+    /// 違う — テンプレートを参照したまま消すとそのエージェントは起動した瞬間に
+    /// 必ず失敗するが、**役職はコピー済みなので消してもサーヴァントの動作は
+    /// 1 ミリも変わらない**（`role_id` が引けなくなり、バッジと顔ぶれの
+    /// `[...]` が消えるだけ）。これがコピー方式の効き所で、参照方式なら
+    /// 削除が全個体の人格を消すことになる。
+    ///
+    /// # Errors
+    /// 未登録の id なら [`CoreError::RoleNotFound`]。
+    pub fn remove_role(&mut self, id: &AgentRoleId) -> CoreResult<()> {
+        if self.roles.remove(id).is_none() {
+            return Err(CoreError::RoleNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 役職を借用する。
+    ///
+    /// # Errors
+    /// 未登録の id なら [`CoreError::RoleNotFound`]。**表示側はこの失敗を
+    /// エラーとして出さず、役職の表示ごと省く**（`role_contract` 凍結 5）。
+    pub fn role(&self, id: &AgentRoleId) -> CoreResult<&AgentRole> {
+        self.roles
+            .get(id)
+            .ok_or_else(|| CoreError::RoleNotFound(id.to_string()))
+    }
+
+    /// 役職の表示名を引く。**引けなければ `None`**（`[不明]` とは書かない）。
+    ///
+    /// バッジ・地図・顔ぶれの 3 箇所はこの 1 実装を通す（`role_contract`
+    /// 凍結 5）。3 箇所で規則が分かれると「画面のバッジは消えたのにプロンプトには
+    /// `[不明]` が残る」が生まれる。
+    pub fn role_label(&self, id: Option<&AgentRoleId>) -> Option<&str> {
+        self.roles.get(id?).map(|role| role.name.as_str())
+    }
+
+    /// 全役職。
+    pub fn roles(&self) -> Vec<AgentRole> {
+        self.roles.values().cloned().collect()
+    }
 }
 
 #[cfg(test)]
@@ -683,6 +757,7 @@ mod tests {
             topology_positions: BTreeMap::new(),
             token_budget: None,
             language: None,
+            roles: Vec::new(),
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
@@ -874,6 +949,7 @@ mod tests {
             ]),
             token_budget: None,
             language: None,
+            roles: Vec::new(),
         };
 
         let world = World::from_persisted(persisted);
@@ -902,5 +978,119 @@ mod tests {
 
         world.remove_agent(&planner).unwrap();
         assert!(world.topology_positions().is_empty());
+    }
+
+    // ---- 役職（Spec 14 P1） -------------------------------------------------
+
+    fn with_template() -> World {
+        let mut world = World::new();
+        world.upsert_template(ModelTemplate::new("tpl", "既定", "gpt-4o"));
+        world
+    }
+
+    fn role(id: &str, name: &str) -> AgentRole {
+        AgentRole {
+            id: id.into(),
+            name: name.into(),
+            description: String::new(),
+            defaults: crate::model::AgentRoleDefaults::default(),
+        }
+    }
+
+    /// **参照中の役職も削除できる。** `remove_template` との決定的な差。
+    ///
+    /// テンプレートを参照したまま消すとそのエージェントは起動した瞬間に必ず
+    /// 失敗するが、役職は作成時にコピー済みなので**消しても動作は変わらない**
+    /// （`role_contract` 凍結 5）。参照方式なら削除が全個体の人格を消す。
+    #[test]
+    fn a_role_in_use_can_still_be_removed() {
+        let mut world = with_template();
+        world.upsert_role(role("researcher", "調査役"));
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+        spec.role_id = Some("researcher".into());
+        world.register_agent(spec).unwrap();
+
+        world.remove_role(&"researcher".into()).unwrap();
+
+        // 個体は生きていて、設定も無傷。消えたのは表示だけ。
+        let record = world.agent(&"agent_1".into()).unwrap();
+        assert_eq!(record.spec.model_template_id, "tpl".into());
+        assert_eq!(record.spec.role_id, Some("researcher".into()));
+        assert_eq!(world.role_label(record.spec.role_id.as_ref()), None);
+    }
+
+    /// 引けない `role_id` は **`None`**。`[不明]` のような代替表示を作らない
+    /// （`role_contract` 凍結 5 — 存在しない役は判断材料にならず、顔ぶれでは
+    /// 毎ターンぶんのトークンを払うだけになる）。
+    #[test]
+    fn role_label_returns_none_for_unknown_or_absent_ids() {
+        let mut world = World::new();
+        world.upsert_role(role("researcher", "調査役"));
+
+        assert_eq!(world.role_label(Some(&"researcher".into())), Some("調査役"));
+        assert_eq!(world.role_label(Some(&"missing".into())), None);
+        assert_eq!(world.role_label(None), None);
+    }
+
+    /// 役職を**改名すると表示が追従する**（名前は参照）。
+    #[test]
+    fn renaming_a_role_moves_every_label() {
+        let mut world = World::new();
+        world.upsert_role(role("researcher", "調査役"));
+        world.upsert_role(role("researcher", "コード調査役"));
+
+        assert_eq!(
+            world.role_label(Some(&"researcher".into())),
+            Some("コード調査役")
+        );
+        assert_eq!(world.roles().len(), 1, "改名で増えない（id が同じ）");
+    }
+
+    /// 未登録の削除は `RoleNotFound`。
+    #[test]
+    fn removing_an_unknown_role_is_an_error() {
+        let mut world = World::new();
+        let err = world.remove_role(&"missing".into()).unwrap_err();
+        assert_eq!(err.code(), "ROLE_NOT_FOUND");
+    }
+
+    /// 役職は `world.json` を往復する（村の共有物）。
+    #[test]
+    fn roles_round_trip_through_persistence() {
+        let mut world = World::new();
+        world.upsert_role(role("researcher", "調査役"));
+
+        let restored = World::from_persisted(world.to_persisted());
+
+        assert_eq!(restored.roles().len(), 1);
+        assert_eq!(
+            restored.role_label(Some(&"researcher".into())),
+            Some("調査役")
+        );
+    }
+
+    /// 役職を 1 つも持たない既存の村もそのまま開く（`#[serde(default)]`）。
+    #[test]
+    fn a_world_without_roles_still_opens() {
+        let json = r#"{"agents":[],"modelTemplates":[],"topologyPositions":{}}"#;
+        let persisted: PersistedWorld = serde_json::from_str(json).unwrap();
+        assert!(persisted.roles.is_empty());
+        assert!(World::from_persisted(persisted).roles().is_empty());
+    }
+
+    /// **孤児の `role_id` は掃除しない。** 復元時に引けなくても、設定の中身は
+    /// コピー済みなので動作に影響が無い。表示側が「引けなければ省く」で受ける。
+    #[test]
+    fn an_orphan_role_id_survives_restore_without_cleanup() {
+        let mut world = with_template();
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+        spec.role_id = Some("消えた役職".into());
+        world.register_agent(spec).unwrap();
+
+        let restored = World::from_persisted(world.to_persisted());
+        let record = restored.agent(&"agent_1".into()).unwrap();
+
+        assert_eq!(record.spec.role_id, Some("消えた役職".into()));
+        assert_eq!(restored.role_label(record.spec.role_id.as_ref()), None);
     }
 }

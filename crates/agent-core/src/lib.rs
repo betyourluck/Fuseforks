@@ -93,7 +93,8 @@ pub use llm::{
 pub use mcp::{McpConfig, McpManager, McpServerConfig, McpServerStatus};
 pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
-    Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentRole, AgentRoleDefaults, AgentRoleId, Endpoint, ModelTemplate, ModelTemplateId,
+    TopologyEdge,
 };
 pub use orchestrator::{AgentMcpStatus, Orchestrator, OrchestratorConfig};
 pub use rag::{RagChunk, RagIndex};

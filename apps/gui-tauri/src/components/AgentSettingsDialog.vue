@@ -65,6 +65,9 @@ function seed(): void {
         // serde の既定が true なので、対象から外していた個体が
         // 設定を開いて保存しただけで黙って対象へ復帰する。
         batchStart: source.batchStart,
+        // 同上。この画面に役職を変える UI は無いが（P3）、写さないと
+        // 設定を保存しただけでバッジが消える。
+        roleId: source.roleId,
       }
     : null;
 }

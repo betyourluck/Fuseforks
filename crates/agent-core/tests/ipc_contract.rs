@@ -8,8 +8,8 @@
 
 use agent_core::llm::{Effort, Provider};
 use agent_core::model::{
-    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, CredentialSource, Endpoint,
-    ModelTemplate,
+    AgentId, AgentMessage, AgentRole, AgentRoleDefaults, AgentSnapshot, AgentSpec, AgentStatus,
+    CredentialSource, Endpoint, ModelTemplate,
 };
 
 /// 直列化されたキー集合を並べ替えて返す。
@@ -67,9 +67,41 @@ fn wire_field_sets_are_frozen() {
             "name",
             "order",
             "ragSources",
+            "roleId",
             "workDir",
         ],
         "AgentSpec のフィールドが変わった"
+    );
+
+    // 役職（Spec 14）。**雛形とラベルの 2 役**を分けて凍結する — defaults に
+    // 欄が増えると「役職を選んだら何が入るか」が変わり、入れてはいけない欄
+    // （connectedAgents / workDir …）が紛れ込む経路にもなる。
+    assert_eq!(
+        wire_keys(&AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: String::new(),
+            defaults: AgentRoleDefaults::default(),
+        }),
+        vec!["defaults", "description", "id", "name"],
+        "Role のフィールドが変わった"
+    );
+
+    assert_eq!(
+        wire_keys(&AgentRoleDefaults::default()),
+        vec![
+            "construct",
+            "enabledTools",
+            "maxToolIterations",
+            "modelTemplateId",
+            "ragSources",
+        ],
+        concat!(
+            "RoleDefaults のフィールドが変わった。",
+            "**入れてはいけない 5 欄が紛れていないか確認すること** — ",
+            "connectedAgents（線は人が引く）/ workDir（端末ごとに違う絶対パス）/ ",
+            "order / batchStart / hearsRoomLog（役職でなく運用の選択）"
+        )
     );
 
     let snapshot = AgentSnapshot {
@@ -90,6 +122,7 @@ fn wire_field_sets_are_frozen() {
         enabled_tools: None,
         hears_room_log: true,
         batch_start: true,
+        role_id: None,
         last_error: None,
     };
     assert_eq!(
@@ -109,6 +142,7 @@ fn wire_field_sets_are_frozen() {
             "order",
             "promptTokens",
             "ragSources",
+            "roleId",
             "status",
             "totalTokens",
             "uptimeSecs",

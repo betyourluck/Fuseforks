@@ -13,6 +13,7 @@ function agent(
     name: id,
     model: "mock",
     modelTemplateId: "tpl",
+    roleId: null,
     status,
     uptimeSecs: 0,
     totalTokens: 0,

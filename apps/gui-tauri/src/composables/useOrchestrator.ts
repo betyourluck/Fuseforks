@@ -767,6 +767,8 @@ export function useOrchestrator() {
           enabledTools: current.enabledTools ? [...current.enabledTools] : null,
           hearsRoomLog: current.hearsRoomLog,
           batchStart,
+          // 投影から spec を組み直す経路。**写さないと保存のたびに役職が外れる**。
+          roleId: current.roleId,
         }),
       );
     },

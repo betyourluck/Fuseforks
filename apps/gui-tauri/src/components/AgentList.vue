@@ -86,6 +86,8 @@ async function submitNew(): Promise<void> {
     hearsRoomLog: true,
     // 作ったら一括起動の対象に入れる。外すのが例外側（重いモデル・実験中）。
     batchStart: true,
+    // 役職は P3 の作成 UI で選ばせる（Spec 14）。P1 の時点では常に無し。
+    roleId: null,
   };
 
   const created = await orchestrator.createAgent(spec);

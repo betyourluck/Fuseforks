@@ -141,6 +141,166 @@ impl AgentStatus {
     }
 }
 
+/// 役職の一意識別子（Spec 14）。
+///
+/// **表示名ではなく id で指す。** 役職を改名してもサーヴァント側の参照は
+/// 切れない — 変わりやすいもの（表示名）と変わりにくいもの（id）を同じ語に
+/// 縛らないため（`AgentId` と表示名の関係と同じ形。`failures.md` #51 一般化 2）。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentRoleId(String);
+
+impl AgentRoleId {
+    /// 検証なしで生成する。
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// 内部文字列を借用する。
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AgentRoleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for AgentRoleId {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl From<String> for AgentRoleId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+/// 役職（Spec 14）。**雛形**と**ラベル**の 2 役を兼ねる。
+///
+/// 兼ねるが、混ぜない — [`AgentRoleDefaults`] は**新規作成のときだけ**効き
+/// （そこで `AgentSpec` と `Construct.md` へ**コピー**される）、
+/// [`AgentRole::name`] は**動いている間ずっと**効く（`role_id` から**参照**で引かれる）。
+///
+/// この非対称が Spec 14 の核。中身を参照にすると「後から直すと全員に効く共有
+/// 規則」の層が条例と 2 つになり、名前をコピーにすると改名が伝わらない。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRole {
+    /// 一意識別子。
+    pub id: AgentRoleId,
+    /// 画面に表示する名前。バッジと顔ぶれの行に出る。
+    pub name: String,
+    /// 人が読む説明。**プロンプトには入らない**（`role_contract` 凍結 6）。
+    ///
+    /// 読み手は「どの雛形を選ぶか」を決める人だけ。顔ぶれは毎ターン・全員ぶんを
+    /// 素の値段で払うので、名前（3〜5 トークン）ではなく説明（50〜200）を
+    /// 載せると固定費になる。自分の役職の説明は `Construct.md` に全文入っており、
+    /// そちらは安定部なのでキャッシュが効く。
+    #[serde(default)]
+    pub description: String,
+    /// 新規作成のときだけ流し込まれる既定値。
+    #[serde(default)]
+    pub defaults: AgentRoleDefaults,
+}
+
+/// 役職が持つ既定値（Spec 14。`role_contract` 凍結 2 の「入れる」5 欄）。
+///
+/// **`AgentSpec` の全 11 欄のうち、ここに来るのは 4 欄だけ**（+ `construct` は
+/// ファイルなので `AgentSpec` の欄ではない）。入れない 5 欄と、その理由:
+///
+/// - `connected_agents` — 入れると**役職を選んだ瞬間に線が引かれる**。
+///   「線は人が引く」（AdaptOrch を採らなかった根拠）が崩れる
+/// - `work_dir` — 絶対パスで端末ごとに違う。村を配ると存在しないパスを指す
+/// - `order` — 左ペインの並び順。役職の性質ではない
+/// - `batch_start` — 一括起動の対象。運用の選択
+/// - `hears_room_log` — コスト設定（Spec 03）。村の懐事情で決まる
+///
+/// `id` / `name` は個体固有なので対象外。**11 = 対象外 2 + 入れる 4 + 入れない 5。**
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRoleDefaults {
+    /// `Construct.md` へ書き込む本文。役職の本体。
+    #[serde(default)]
+    pub construct: String,
+    /// 使用するモデルテンプレート。`None` = 役職として意見を持たない。
+    ///
+    /// **ここだけ存在検査が掛かる**（`role_contract` 凍結 2）。`world.json` に
+    /// 宣言された登録簿なので、無い id はその場で分かる。
+    #[serde(default)]
+    pub model_template_id: Option<ModelTemplateId>,
+    /// 参照する RAG ソース名。
+    ///
+    /// **存在検査は掛けない。そのまま写す。** `RagIndex` は断片を索引した瞬間に
+    /// キーが生える実行時の器で、宣言された登録簿が無い。作成時点では索引が
+    /// ほぼ必ず空なので、検査すると「調査役を作る → あとで資料を食わせる」
+    /// という正しい順序を壊す。
+    #[serde(default)]
+    pub rag_sources: Vec<String>,
+    /// 提示する同梱ツール名の集合。`None` = 既定に従う（全同梱ツール）。
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
+    /// 1 回の発話処理で許すツール実行の回数。`None` = 既定に従う。
+    #[serde(default)]
+    pub max_tool_iterations: Option<u8>,
+}
+
+impl AgentRoleDefaults {
+    /// 既定値を `AgentSpec` へ流し込む（**新規作成のときだけ呼ぶ**）。
+    ///
+    /// `role_contract` 凍結 4 のとおり、**流し込みの発火点は新規作成ただ 1 つ**。
+    /// 既存のサーヴァントに役職を付けるときは `role_id` だけを差し替え、
+    /// この関数は呼ばない（上書きは取り消せない）。
+    ///
+    /// **触るのは 4 欄だけ。** `connected_agents` / `work_dir` / `order` /
+    /// `batch_start` / `hears_room_log` には一切代入しない。
+    ///
+    /// `template_exists` はモデルテンプレートの存在判定。純関数に保つため
+    /// `World` を直接受けない（テストが登録簿を組まずに書ける）。
+    ///
+    /// 戻りは**参照先が見つからず落とした欄の説明**。空でなければ呼び出し側が
+    /// WARN を 1 行出す。**黙って落とさない** — `World::from_persisted` が
+    /// 未登録先への接続を黙って落とすのは復元の場面で、こちらは人が今まさに
+    /// 操作している最中なので、黙ると「入れたはずの設定が入っていない」が
+    /// 見えない。`Construct.md` へ書く本文は [`Self::construct`] を直接読む
+    /// （戻り値に同じものを載せると、2 つの真実ができる）。
+    #[must_use = "落とした欄を捨てると「入れたはずの設定が入っていない」が見えなくなる"]
+    pub fn apply_to(
+        &self,
+        spec: &mut AgentSpec,
+        template_exists: impl Fn(&ModelTemplateId) -> bool,
+    ) -> Vec<String> {
+        let mut dropped = Vec::new();
+
+        if let Some(template_id) = &self.model_template_id {
+            if template_exists(template_id) {
+                spec.model_template_id = template_id.clone();
+            } else {
+                // その欄だけ落とす。作成そのものは通す — 役職 1 つが壊れている
+                // ことでサーヴァントを作れなくしない。
+                dropped.push(format!("モデルテンプレート `{template_id}`"));
+            }
+        }
+
+        // 検査しない（RagIndex は実行時に育つ器で、宣言された登録簿が無い）。
+        if !self.rag_sources.is_empty() {
+            spec.rag_sources = self.rag_sources.clone();
+        }
+        if self.enabled_tools.is_some() {
+            spec.enabled_tools = self.enabled_tools.clone();
+        }
+        if self.max_tool_iterations.is_some() {
+            spec.max_tool_iterations = self.max_tool_iterations;
+        }
+
+        dropped
+    }
+}
+
 /// エージェントの永続的な設定。ユーザーが編集する対象。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -210,6 +370,20 @@ pub struct AgentSpec {
     /// を区別できなかった。
     #[serde(default = "default_true")]
     pub batch_start: bool,
+    /// この個体が**どの役職を雛形にして作られたか**（Spec 14）。
+    ///
+    /// **表示のためだけに持つ。** 実行経路でこの値を読んで分岐する箇所は
+    /// 1 つも無い（`role_contract` 凍結 7）。設定の中身は作成時に
+    /// [`AgentRoleDefaults::apply_to`] でコピー済みなので、**役職を削除しても
+    /// このサーヴァントの動作は 1 ミリも変わらない**（バッジが消えるだけ）。
+    ///
+    /// **バッジは由来であって現在の中身を保証しない。** 作成後に
+    /// `Construct.md` も `enabled_tools` も手で変えられるため、`role_id` が
+    /// 「調査役」のまま中身が別、という個体が正当な操作で生まれる。これは
+    /// コピー方式の必然で、**実装しても落ちないのでテストでは出ない** —
+    /// ゆえに言葉のほうを実態に合わせてある（`role_contract` 凍結の外）。
+    #[serde(default)]
+    pub role_id: Option<AgentRoleId>,
 }
 
 impl AgentSpec {
@@ -231,6 +405,7 @@ impl AgentSpec {
             enabled_tools: None,
             hears_room_log: true,
             batch_start: true,
+            role_id: None,
         }
     }
 }
@@ -524,6 +699,18 @@ pub struct AgentSnapshot {
     pub hears_room_log: bool,
     /// 一括起動（▶）の対象か。稼働状態とは別（`status` がそちら）。
     pub batch_start: bool,
+    /// どの役職を雛形にして作られたか（Spec 14）。`None` = 役職なし。
+    ///
+    /// **投影にも載せる理由が 2 つある。**
+    ///
+    /// 1. **バッジはカードに出る**（S2）。カードが描くのはこの投影なので、
+    ///    ここに無いと画面に出しようがない
+    /// 2. **無いと保存のたびに消える。** 設定ダイアログと一括起動トグルは
+    ///    投影から `AgentSpec` を組み直して `update_agent` へ渡す作りで、
+    ///    投影に無い欄は往復のたびに既定値へ落ちる。P1 の型検査がこの経路を
+    ///    3 箇所で捕まえた（`AgentSpec` にだけ足して投影に足さないと、
+    ///    **設定を保存した瞬間に役職が外れる**）
+    pub role_id: Option<AgentRoleId>,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }
@@ -739,5 +926,131 @@ mod tests {
             .map(ConfigFileKind::file_name)
             .collect();
         assert_eq!(names, vec!["SKILL.md", "Memory.md", "Construct.md", "mcp.json"]);
+    }
+
+    // ---- 役職の流し込み（Spec 14 P1） ---------------------------------------
+
+    /// 契約の分類表（`role_contract` 凍結 2）で「入れない」とした 5 欄。
+    ///
+    /// **名指しで持つ。** rev1 の査読が「線と場所が入らないこと」では対象が
+    /// 曖昧でテストに落とせないと指摘した箇所で、ここが表と実装の唯一の接点。
+    const NEVER_APPLIED: [&str; 5] = [
+        "connected_agents",
+        "work_dir",
+        "order",
+        "batch_start",
+        "hears_room_log",
+    ];
+
+    fn full_defaults() -> AgentRoleDefaults {
+        AgentRoleDefaults {
+            construct: "あなたは調査役です。".into(),
+            model_template_id: Some("tpl".into()),
+            rag_sources: vec!["docs".into()],
+            enabled_tools: Some(vec!["grep".into()]),
+            max_tool_iterations: Some(24),
+        }
+    }
+
+    /// 触ってよい 4 欄が入る。
+    #[test]
+    fn apply_to_fills_the_four_spec_fields() {
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
+        let dropped = full_defaults().apply_to(&mut spec, |_| true);
+
+        assert!(dropped.is_empty());
+        assert_eq!(spec.model_template_id, "tpl".into());
+        assert_eq!(spec.rag_sources, vec!["docs".to_string()]);
+        assert_eq!(spec.enabled_tools, Some(vec!["grep".to_string()]));
+        assert_eq!(spec.max_tool_iterations, Some(24));
+    }
+
+    /// **入れない 5 欄は流し込み後も既定のまま。**
+    ///
+    /// `connected_agents` が入ると「役職を選んだ瞬間に線が引かれる」で
+    /// **線は人が引く**が崩れ、`work_dir` が入ると村を配ったとき存在しない
+    /// パスを指す。この 2 つが契約の主眼（`role_contract` 凍結 2）。
+    #[test]
+    fn apply_to_never_touches_the_five_excluded_fields() {
+        let baseline = AgentSpec::new("agent_1", "ザリ", "既定");
+        let mut spec = baseline.clone();
+        let _ = full_defaults().apply_to(&mut spec, |_| true);
+
+        assert_eq!(
+            spec.connected_agents, baseline.connected_agents,
+            "{} は雛形から入ってはいけない（線は人が引く）",
+            NEVER_APPLIED[0]
+        );
+        assert_eq!(spec.work_dir, baseline.work_dir, "{}", NEVER_APPLIED[1]);
+        assert_eq!(spec.order, baseline.order, "{}", NEVER_APPLIED[2]);
+        assert_eq!(spec.batch_start, baseline.batch_start, "{}", NEVER_APPLIED[3]);
+        assert_eq!(
+            spec.hears_room_log, baseline.hears_room_log,
+            "{}",
+            NEVER_APPLIED[4]
+        );
+    }
+
+    /// 分類表の数が実装と合う。**11 = 対象外 2 + 入れる 4 + 入れない 5。**
+    ///
+    /// rev1 は箇条書き 4 本を「4 欄」と数えて実体の 6 フィールドとズレた。
+    /// 数え落としは要約から生まれるので、数そのものをテストで留める。
+    #[test]
+    fn the_classification_table_adds_up() {
+        const AGENT_SPEC_FIELDS: usize = 11;
+        const EXEMPT: usize = 2; // id / name
+        const APPLIED: usize = 4; // model_template_id / rag_sources / enabled_tools / max_tool_iterations
+        assert_eq!(AGENT_SPEC_FIELDS, EXEMPT + APPLIED + NEVER_APPLIED.len());
+    }
+
+    /// 未登録のモデルテンプレートは**その欄だけ落ちる**。他は入る。
+    #[test]
+    fn missing_template_drops_only_that_field() {
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
+        let dropped = full_defaults().apply_to(&mut spec, |_| false);
+
+        assert_eq!(dropped.len(), 1);
+        assert!(dropped[0].contains("tpl"), "落とした欄の名前が分かること");
+        // 落ちたのはテンプレートだけ。作成そのものは通り、他の欄は入っている。
+        assert_eq!(spec.model_template_id, "既定".into());
+        assert_eq!(spec.rag_sources, vec!["docs".to_string()]);
+        assert_eq!(spec.enabled_tools, Some(vec!["grep".to_string()]));
+    }
+
+    /// **`rag_sources` には存在検査を掛けない。**
+    ///
+    /// `RagIndex` は断片を索引した瞬間にキーが生える実行時の器で、宣言された
+    /// 登録簿が無い。作成時点の索引はほぼ必ず空なので、検査すると
+    /// 「調査役を作る → あとで資料を食わせる」という正しい順序を壊す。
+    #[test]
+    fn rag_sources_are_copied_without_any_existence_check() {
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
+        let defaults = AgentRoleDefaults {
+            rag_sources: vec!["まだ索引していない資料".into()],
+            ..AgentRoleDefaults::default()
+        };
+        let dropped = defaults.apply_to(&mut spec, |_| false);
+
+        assert!(dropped.is_empty(), "索引が空でも落とさない");
+        assert_eq!(spec.rag_sources, vec!["まだ索引していない資料".to_string()]);
+    }
+
+    /// 空の既定値は何も上書きしない（役職が意見を持たない欄はそのまま）。
+    #[test]
+    fn empty_defaults_leave_the_spec_untouched() {
+        let baseline = AgentSpec::new("agent_1", "ザリ", "既定");
+        let mut spec = baseline.clone();
+        let dropped = AgentRoleDefaults::default().apply_to(&mut spec, |_| true);
+
+        assert!(dropped.is_empty());
+        assert_eq!(spec, baseline);
+    }
+
+    /// 流し込みは `role_id` を触らない（付けるのは呼び出し側の責務）。
+    #[test]
+    fn apply_to_does_not_set_role_id() {
+        let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
+        let _ = full_defaults().apply_to(&mut spec, |_| true);
+        assert_eq!(spec.role_id, None);
     }
 }

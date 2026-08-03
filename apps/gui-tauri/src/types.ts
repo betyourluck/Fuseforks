@@ -103,6 +103,67 @@ export interface AgentSpec {
    * 「どれを起こすか」の選択だけを持つ。**稼働状態とも別**（それは `status`）。
    */
   batchStart: boolean;
+  /**
+   * この個体が**どの役職を雛形にして作られたか**（Spec 14）。`null` = 役職なし。
+   *
+   * **表示のためだけに持つ。** 設定の中身は作成時にコピー済みなので、
+   * 役職を削除してもこのサーヴァントの動作は変わらない（バッジが消えるだけ）。
+   *
+   * **バッジは由来であって現在の中身を保証しない** — 作成後に Construct.md も
+   * enabledTools も手で変えられるため、roleId が「調査役」のまま中身が別、
+   * という個体が正当な操作で生まれる。コピー方式の必然（role_contract 凍結の外）。
+   */
+  roleId: RoleId | null;
+}
+
+/** 役職の一意識別子（Spec 14）。表示名ではなく id で指すので、改名で参照が切れない。 */
+export type RoleId = string;
+
+/**
+ * 役職（Spec 14）。**雛形**と**ラベル**の 2 役を兼ねる。
+ *
+ * `defaults` は**新規作成のときだけ**流し込まれ（コピー）、`name` は
+ * `roleId` から毎回引かれる（参照）。この非対称が Spec 14 の核 —
+ * 中身を参照にすると「後から直すと全員に効く共有規則」の層が条例と 2 つになり、
+ * 名前をコピーにすると改名が伝わらない。
+ */
+export interface Role {
+  id: RoleId;
+  name: string;
+  /**
+   * 人が読む説明。**プロンプトには入らない**（role_contract 凍結 6）。
+   * 読み手は「どの雛形を選ぶか」を決める人だけ。
+   */
+  description: string;
+  defaults: RoleDefaults;
+}
+
+/**
+ * 役職が持つ既定値（role_contract 凍結 2 の「入れる」5 欄）。
+ *
+ * `AgentSpec` の 11 欄のうちここに来るのは 4 欄だけ（+ construct はファイル）。
+ * **入れない 5 欄**: connectedAgents（入れると役職を選んだ瞬間に線が引かれ、
+ * 「線は人が引く」が崩れる）/ workDir（端末ごとに違う絶対パス）/ order /
+ * batchStart / hearsRoomLog（いずれも役職ではなく運用の選択）。
+ */
+export interface RoleDefaults {
+  /** `Construct.md` へ書き込む本文。役職の本体。 */
+  construct: string;
+  /**
+   * 使用するモデルテンプレート。`null` = 役職として意見を持たない。
+   * **ここだけ存在検査が掛かる**（world.json に宣言された登録簿なので）。
+   */
+  modelTemplateId: ModelTemplateId | null;
+  /**
+   * 参照する RAG ソース名。**存在検査は掛けない。**
+   * RAG の索引は断片を索引した瞬間にキーが生える実行時の器で、宣言された
+   * 登録簿が無い。検査すると「作ってから資料を食わせる」順序を壊す。
+   */
+  ragSources: string[];
+  /** 提示する同梱ツール名。`null` = 既定に従う。 */
+  enabledTools: string[] | null;
+  /** 1 回の発話処理で許すツール実行の回数。`null` = 既定に従う。 */
+  maxToolIterations: number | null;
 }
 
 /** UI へ渡るエージェントの現在像（定義 + 実行時統計）。 */
@@ -128,6 +189,15 @@ export interface AgentSnapshot {
   hearsRoomLog: boolean;
   /** 一括起動（▶）の対象か。稼働状態とは別（それは `status`）。 */
   batchStart: boolean;
+  /**
+   * どの役職を雛形にして作られたか（Spec 14）。`null` = 役職なし。
+   *
+   * **投影に載せる理由が 2 つある。** (1) バッジはカードに出るので、
+   * 投影に無いと画面に出しようがない (2) 設定ダイアログと一括起動トグルは
+   * 投影から `AgentSpec` を組み直して保存する作りなので、**投影に無い欄は
+   * 保存のたびに消える**。
+   */
+  roleId: RoleId | null;
   /**
    * 累積トークンのうち入力（プロンプト）側。
    * **キャッシュ率の分母はこちら。出力はキャッシュできないので、
