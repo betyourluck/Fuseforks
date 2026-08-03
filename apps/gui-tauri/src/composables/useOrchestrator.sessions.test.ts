@@ -43,6 +43,7 @@ const h = vi.hoisted(() => ({
   listTopology: vi.fn(async () => []),
   listTopologyPositions: vi.fn(async () => ({})),
   listModelTemplates: vi.fn(async () => []),
+  listRoles: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   listMessages: vi.fn(async () => [] as AgentMessage[]),
   listPlanWaves: vi.fn(async () => []),

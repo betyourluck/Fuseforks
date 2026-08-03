@@ -26,6 +26,7 @@ import type {
   ErrorPayload,
   McpConfig,
   ModelTemplate,
+  Role,
   PlanWaveRecord,
   SessionSummary,
   TopologyPosition,
@@ -55,6 +56,13 @@ interface OrchestratorState {
   topologyPositions: Record<AgentId, TopologyPosition>;
   messages: AgentMessage[];
   templates: ModelTemplate[];
+  /**
+   * 登録済みの役職（Spec 14）。バッジの表示名はここから引く。
+   *
+   * **役職の目録はプロンプトに入らない**（role_contract 凍結 6）。読み手は
+   * 「どの雛形を選ぶか」を決める人だけなので、投影も画面のためだけに持つ。
+   */
+  roles: Role[];
   ragSources: string[];
   workspace: string;
   selectedAgentId: AgentId | null;
@@ -124,6 +132,7 @@ const state = reactive<OrchestratorState>({
   topologyPositions: {},
   messages: [],
   templates: [],
+  roles: [],
   ragSources: [],
   workspace: "",
   selectedAgentId: null,
@@ -289,11 +298,12 @@ function refreshAll(): Promise<void> {
 
 /** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
 async function fetchAndAssign(): Promise<void> {
-  const [agents, edges, topologyPositions, templates, ragSources] = await Promise.all([
+  const [agents, edges, topologyPositions, templates, roles, ragSources] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listTopologyPositions(),
     ipc.listModelTemplates(),
+    ipc.listRoles(),
     ipc.listRagSources(),
   ]);
   state.agents = agents;
@@ -304,6 +314,7 @@ async function fetchAndAssign(): Promise<void> {
   state.edges = edges;
   state.topologyPositions = topologyPositions;
   state.templates = templates;
+  state.roles = roles;
   state.ragSources = ragSources;
   await refreshIcons();
 }

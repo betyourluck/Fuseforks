@@ -95,6 +95,7 @@ pub fn run() {
             commands::list_plan_waves,
             commands::token_usage,
             commands::list_model_templates,
+            commands::list_roles,
             commands::list_rag_sources,
             commands::search_rag,
             commands::workspace_path,
@@ -111,6 +112,8 @@ pub fn run() {
             commands::set_topology_position,
             commands::upsert_model_template,
             commands::delete_model_template,
+            commands::upsert_role,
+            commands::delete_role,
             // 設定ファイル
             commands::read_agent_config,
             commands::write_agent_config,

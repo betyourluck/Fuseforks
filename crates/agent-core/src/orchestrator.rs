@@ -61,8 +61,8 @@ use crate::llm::{
     BackendFactory, ChatMessage, ChatRequest, ChatResponse, LlmBackend, Role, ToolSpec,
 };
 use crate::model::{
-    AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
-    Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, AgentStatus,
+    ConfigFileKind, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use crate::plan::{PlanTaskAnnounced, PlanTaskState, PlanWaveRecord, PlanWaveStore};
 use crate::rag::{RagChunk, RagIndex};
@@ -1316,15 +1316,97 @@ impl Orchestrator {
     // ---- 定義の編集 ---------------------------------------------------------
 
     /// エージェントを登録する。
-    pub async fn create_agent(&self, spec: AgentSpec) -> CoreResult<AgentSnapshot> {
+    /// エージェントを新規登録する。
+    ///
+    /// **`spec.role_id` が指す役職があれば、ここで既定値を流し込む**（Spec 14）。
+    /// `role_contract` 凍結 4 のとおり、**流し込みの発火点はこの 1 箇所だけ** —
+    /// `update_agent` も `upsert_role` も既存の個体には触らない。ゆえに
+    /// 「既存の個体は変わらない」があらゆる操作について成立する。
+    ///
+    /// 役職が引けないときは**流し込まずに作る**（`role_id` は残す）。存在しない
+    /// 役職を指したまま作成そのものを拒むと、村を配った先で役職が欠けている
+    /// だけで新規作成ができなくなる。
+    pub async fn create_agent(&self, mut spec: AgentSpec) -> CoreResult<AgentSnapshot> {
         let id = spec.id.clone();
+
+        // 流し込みは登録の前。register_agent が id の安全性と重複を弾くので、
+        // 弾かれる spec に対してファイルを書きに行かずに済む。
+        let construct = {
+            let world = self.shared.world.read().await;
+            match spec.role_id.clone().and_then(|rid| world.role(&rid).ok().cloned()) {
+                Some(role) => {
+                    let dropped = role
+                        .defaults
+                        .apply_to(&mut spec, |tid| world.template(tid).is_ok());
+                    // **黙って落とさない。** 人が今まさに操作している最中なので、
+                    // 黙ると「入れたはずの設定が入っていない」が見えない。
+                    if !dropped.is_empty() {
+                        crate::note!(
+                            "role apply: 役職 `{}` の {} は参照先が無いため入れませんでした",
+                            role.name,
+                            dropped.join(" / ")
+                        );
+                    }
+                    role.defaults.construct.clone()
+                }
+                None => String::new(),
+            }
+        };
+
         {
             let mut world = self.shared.world.write().await;
             world.register_agent(spec)?;
         }
+
+        // Construct.md は `AgentSpec` の欄ではないので、ここでしか書けない。
+        // **登録の後**に書くのは、id の検査を通った後でないとディレクトリを
+        // 作る先が確定しないため。書き込みの失敗で登録を巻き戻さない —
+        // 個体は既に村に居り、本文は設定ダイアログから書き直せる。
+        if !construct.trim().is_empty() {
+            if let Err(err) = self
+                .shared
+                .store
+                .write_config(&id, ConfigFileKind::Construct, &construct)
+                .await
+            {
+                crate::note!("role apply: Construct.md を書けませんでした: {err}");
+            }
+        }
+
         self.persist().await?;
         self.shared.emit(CoreEvent::TopologyChanged);
         self.snapshot(&id).await
+    }
+
+    // ---- 役職 (Spec 14) -----------------------------------------------------
+
+    /// 登録済みの役職一覧。
+    pub async fn list_roles(&self) -> Vec<AgentRole> {
+        self.shared.world.read().await.roles()
+    }
+
+    /// 役職を登録または更新する。
+    ///
+    /// **既存のサーヴァントには何も起きない**（`role_contract` 凍結 4）。
+    /// 中身はコピー済みなので、変わるのは `name` を参照している表示だけ。
+    pub async fn upsert_role(&self, role: AgentRole) -> CoreResult<()> {
+        {
+            let mut world = self.shared.world.write().await;
+            world.upsert_role(role);
+        }
+        self.persist().await
+    }
+
+    /// 役職を削除する。**参照中でも拒まない**（`remove_template` との決定的な差）。
+    ///
+    /// 役職はコピー済みなので、消してもサーヴァントの動作は変わらない —
+    /// バッジと顔ぶれの `[...]` が消えるだけ（`role_contract` 凍結 5）。
+    pub async fn remove_role(&self, id: &AgentRoleId) -> CoreResult<()> {
+        {
+            let mut world = self.shared.world.write().await;
+            world.remove_role(id)?;
+        }
+        self.persist().await
     }
 
     /// エージェント定義を差し替える。

@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   listTopology: vi.fn(async () => []),
   listTopologyPositions: vi.fn(async () => ({})),
   listModelTemplates: vi.fn(async () => []),
+  listRoles: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
   // Tauri は Rust の () を null として返す。成功しても null。

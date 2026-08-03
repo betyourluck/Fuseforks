@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use agent_core::model::{
-    AgentId, AgentMessage, AgentSnapshot, AgentSpec, ConfigFileKind, ModelTemplate,
-    ModelTemplateId, TopologyEdge,
+    AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, ConfigFileKind,
+    ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use agent_core::world::TopologyPosition;
 use agent_core::{CoreError, CoreResult, RagChunk};
@@ -187,6 +187,33 @@ pub async fn delete_model_template(
     template_id: ModelTemplateId,
 ) -> CoreResult<()> {
     state.orchestrator.remove_template(&template_id).await
+}
+
+// ---- 役職 (Spec 14) ---------------------------------------------------------
+
+/// 登録済みの役職一覧。
+#[tauri::command]
+pub async fn list_roles(state: State<'_, AppState>) -> CoreResult<Vec<AgentRole>> {
+    Ok(state.orchestrator.list_roles().await)
+}
+
+/// 役職を登録または更新する。
+///
+/// **既存のサーヴァントには何も起きない**（role_contract 凍結 4 — 流し込みの
+/// 発火点は新規作成ただ 1 つ）。中身はコピー済みなので、変わるのは表示名を
+/// 参照しているバッジと顔ぶれだけ。
+#[tauri::command]
+pub async fn upsert_role(state: State<'_, AppState>, role: AgentRole) -> CoreResult<()> {
+    state.orchestrator.upsert_role(role).await
+}
+
+/// 役職を削除する。**参照中でも拒まない**（モデルテンプレートとの決定的な差）。
+///
+/// 役職はコピー済みなので、消してもサーヴァントの動作は変わらない —
+/// バッジと顔ぶれの `[...]` が消えるだけ（role_contract 凍結 5）。
+#[tauri::command]
+pub async fn delete_role(state: State<'_, AppState>, role_id: AgentRoleId) -> CoreResult<()> {
+    state.orchestrator.remove_role(&role_id).await
 }
 
 // ---- 設定ファイル -----------------------------------------------------------

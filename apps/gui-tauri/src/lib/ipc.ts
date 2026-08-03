@@ -25,6 +25,8 @@ import type {
   Language,
   ModelTemplate,
   ModelTemplateId,
+  Role,
+  RoleId,
   McpConfig,
   McpServerStatus,
   PlanWaveRecord,
@@ -188,6 +190,28 @@ export const upsertModelTemplate = (template: ModelTemplate) =>
 /** モデルテンプレートを削除する。参照中のエージェントが居れば拒否される。 */
 export const deleteModelTemplate = (templateId: ModelTemplateId) =>
   call<void>("delete_model_template", { templateId });
+
+// ---- 役職（Spec 14） --------------------------------------------------------
+
+/** 登録済みの役職一覧。 */
+export const listRoles = () => call<Role[]>("list_roles");
+
+/**
+ * 役職を登録または更新する。
+ *
+ * **既存のサーヴァントには何も起きない** — 既定値は新規作成のときにコピー
+ * されるので（role_contract 凍結 4）、ここで中身を直しても既に居る個体の設定は
+ * 変わらない。変わるのは名前を参照しているバッジと顔ぶれだけ。
+ */
+export const upsertRole = (role: Role) => call<void>("upsert_role", { role });
+
+/**
+ * 役職を削除する。**参照中でも拒まない**（モデルテンプレートとの決定的な差）。
+ *
+ * 役職はコピー済みなので、消してもサーヴァントの動作は変わらない —
+ * バッジと顔ぶれの役職表示が消えるだけ。
+ */
+export const deleteRole = (roleId: RoleId) => call<void>("delete_role", { roleId });
 
 // ---- 設定ファイル -----------------------------------------------------------
 

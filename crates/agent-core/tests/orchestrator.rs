@@ -5975,3 +5975,256 @@ async fn the_leak_instrument_fires_on_a_real_turn() {
         .clone();
     assert_eq!(reply.content, LEAKED_TEXT, "L0 は本文へ手を入れない");
 }
+
+// ---- 役職（Spec 14 P2） -----------------------------------------------------
+
+/// 役職を 1 件作る補助。
+fn a_role(id: &str, name: &str, defaults: agent_core::AgentRoleDefaults) -> agent_core::AgentRole {
+    agent_core::AgentRole {
+        id: id.into(),
+        name: name.into(),
+        description: "テスト用".into(),
+        defaults,
+    }
+}
+
+/// S1: 役職を選んで作ると**設定が入った状態で始まる**。
+///
+/// 触るのは 4 欄と `Construct.md` だけで、**入れない 5 欄は既定のまま**。
+#[tokio::test]
+async fn creating_with_a_role_fills_the_settings_and_writes_construct() {
+    let dir = TempDir::new("role-create");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    orchestrator
+        .upsert_template(ModelTemplate::new("fast", "速い", "mock-fast"))
+        .await
+        .unwrap();
+    orchestrator
+        .upsert_role(a_role(
+            "researcher",
+            "調査役",
+            agent_core::AgentRoleDefaults {
+                construct: "あなたは調査役です。".into(),
+                model_template_id: Some("fast".into()),
+                rag_sources: vec!["docs".into()],
+                enabled_tools: Some(vec!["grep".into()]),
+                max_tool_iterations: Some(24),
+            },
+        ))
+        .await
+        .unwrap();
+
+    let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    let created = orchestrator.create_agent(spec).await.unwrap();
+
+    // 入る 4 欄。
+    assert_eq!(created.model_template_id, "fast".into());
+    assert_eq!(created.rag_sources, vec!["docs".to_string()]);
+    assert_eq!(created.enabled_tools, Some(vec!["grep".to_string()]));
+    assert_eq!(created.max_tool_iterations, Some(24));
+    // ラベルは残る（バッジの足場）。
+    assert_eq!(created.role_id, Some("researcher".into()));
+
+    // 入れない 5 欄は既定のまま。**線と場所が雛形から入らないこと**が主眼。
+    let baseline = AgentSpec::new("agent_1", "ザリ", "tpl");
+    assert_eq!(created.connected_agents, baseline.connected_agents);
+    assert_eq!(created.work_dir, baseline.work_dir);
+    assert_eq!(created.order, baseline.order);
+    assert_eq!(created.batch_start, baseline.batch_start);
+    assert_eq!(created.hears_room_log, baseline.hears_room_log);
+
+    // Construct.md は AgentSpec の欄ではないので、ここでしか書けない。
+    let construct = orchestrator
+        .read_config(&"agent_1".into(), ConfigFileKind::Construct)
+        .await
+        .unwrap();
+    assert_eq!(construct, "あなたは調査役です。");
+}
+
+/// 凍結 4: **コピーの発火点は新規作成ただ 1 つ。**
+///
+/// 役職の中身を後から直しても、既に居る個体は 1 欄も変わらない。
+#[tokio::test]
+async fn editing_a_role_never_touches_existing_agents() {
+    let dir = TempDir::new("role-copy");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    orchestrator
+        .upsert_template(ModelTemplate::new("fast", "速い", "mock-fast"))
+        .await
+        .unwrap();
+    orchestrator
+        .upsert_role(a_role(
+            "researcher",
+            "調査役",
+            agent_core::AgentRoleDefaults {
+                construct: "初版".into(),
+                max_tool_iterations: Some(24),
+                ..Default::default()
+            },
+        ))
+        .await
+        .unwrap();
+
+    let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    orchestrator.create_agent(spec).await.unwrap();
+
+    // 役職の中身を丸ごと差し替える。
+    orchestrator
+        .upsert_role(a_role(
+            "researcher",
+            "調査役",
+            agent_core::AgentRoleDefaults {
+                construct: "二版".into(),
+                model_template_id: Some("fast".into()),
+                max_tool_iterations: Some(99),
+                ..Default::default()
+            },
+        ))
+        .await
+        .unwrap();
+
+    let after = orchestrator.snapshot(&"agent_1".into()).await.unwrap();
+    assert_eq!(after.max_tool_iterations, Some(24), "既存の個体は変わらない");
+    assert_eq!(after.model_template_id, "tpl".into());
+    let construct = orchestrator
+        .read_config(&"agent_1".into(), ConfigFileKind::Construct)
+        .await
+        .unwrap();
+    assert_eq!(construct, "初版", "Construct.md も書き換わらない");
+}
+
+/// 凍結 5: **役職を削除しても個体の動作は変わらない。**
+///
+/// `remove_template` は参照中を拒むが、役職は拒まない。コピー済みだから。
+#[tokio::test]
+async fn deleting_a_role_in_use_leaves_the_agent_working() {
+    let dir = TempDir::new("role-delete");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    orchestrator
+        .upsert_role(a_role(
+            "researcher",
+            "調査役",
+            agent_core::AgentRoleDefaults {
+                construct: "本文".into(),
+                max_tool_iterations: Some(24),
+                ..Default::default()
+            },
+        ))
+        .await
+        .unwrap();
+    let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    orchestrator.create_agent(spec).await.unwrap();
+
+    // 参照中でも通る（テンプレートならここで InvalidTopology になる）。
+    orchestrator.remove_role(&"researcher".into()).await.unwrap();
+
+    let after = orchestrator.snapshot(&"agent_1".into()).await.unwrap();
+    assert_eq!(after.max_tool_iterations, Some(24), "設定は無傷");
+    assert_eq!(after.role_id, Some("researcher".into()), "id は残る");
+    assert!(orchestrator.list_roles().await.is_empty());
+    let construct = orchestrator
+        .read_config(&"agent_1".into(), ConfigFileKind::Construct)
+        .await
+        .unwrap();
+    assert_eq!(construct, "本文", "Construct.md も残る");
+}
+
+/// 参照先の欠落は**その欄だけ落として作成は通す**。
+///
+/// `rag_sources` には検査を掛けない（索引は実行時に育つ器で、宣言された
+/// 登録簿が無い）。ここを検査すると「作ってから資料を食わせる」が壊れる。
+#[tokio::test]
+async fn a_missing_template_drops_one_field_but_the_agent_is_still_created() {
+    let dir = TempDir::new("role-dangling");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    orchestrator
+        .upsert_role(a_role(
+            "researcher",
+            "調査役",
+            agent_core::AgentRoleDefaults {
+                model_template_id: Some("存在しない".into()),
+                rag_sources: vec!["まだ索引していない資料".into()],
+                max_tool_iterations: Some(24),
+                ..Default::default()
+            },
+        ))
+        .await
+        .unwrap();
+
+    let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    let created = orchestrator.create_agent(spec).await.unwrap();
+
+    assert_eq!(
+        created.model_template_id,
+        "tpl".into(),
+        "落ちるのはこの欄だけ"
+    );
+    assert_eq!(
+        created.rag_sources,
+        vec!["まだ索引していない資料".to_string()],
+        "索引が空でも rag_sources は落とさない"
+    );
+    assert_eq!(created.max_tool_iterations, Some(24));
+}
+
+/// 存在しない役職を指していても**作成そのものは通る**。
+///
+/// 村を配った先で役職が欠けているだけで新規作成ができなくなるのは罰が重い。
+#[tokio::test]
+async fn creating_with_an_unknown_role_still_works() {
+    let dir = TempDir::new("role-unknown");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let mut spec = AgentSpec::new("agent_1", "ザリ", "tpl");
+    spec.role_id = Some("居ない役職".into());
+    let created = orchestrator.create_agent(spec).await.unwrap();
+
+    assert_eq!(created.role_id, Some("居ない役職".into()));
+    assert_eq!(created.model_template_id, "tpl".into());
+}
+
+/// 役職なしの作成経路は**今までどおり**（`Option` なので後方互換）。
+#[tokio::test]
+async fn creating_without_a_role_is_unchanged() {
+    let dir = TempDir::new("role-none");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let created = orchestrator
+        .create_agent(AgentSpec::new("agent_1", "ザリ", "tpl"))
+        .await
+        .unwrap();
+
+    assert_eq!(created.role_id, None);
+    let construct = orchestrator
+        .read_config(&"agent_1".into(), ConfigFileKind::Construct)
+        .await
+        .unwrap();
+    assert!(construct.is_empty(), "役職が無ければ Construct.md は書かない");
+}
+
+/// 役職は `world.json` を往復する（村の共有物）。
+#[tokio::test]
+async fn roles_survive_a_restart() {
+    let dir = TempDir::new("role-persist");
+    {
+        let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+        orchestrator
+            .upsert_role(a_role(
+                "researcher",
+                "調査役",
+                agent_core::AgentRoleDefaults::default(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let reopened = setup(&dir, OrchestratorConfig::default()).await;
+    let roles = reopened.list_roles().await;
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].name, "調査役");
+}
