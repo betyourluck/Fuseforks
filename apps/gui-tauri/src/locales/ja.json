@@ -370,7 +370,10 @@
     "discardCancel": "編集を続ける",
     "unsaved": "未保存",
     "save": "保存",
-    "configFiles": "設定ファイル"
+    "configFiles": "設定ファイル",
+    "role": "役職",
+    "noRole": "役職なし",
+    "roleHelp": "ここで変えられるのは役職の名札だけです。設定（Construct.md やモデル）は作成時にコピーされるため、役職を変えても中身は変わりません。"
   },
   "modelTemplate": {
     "title": "モデルテンプレート",

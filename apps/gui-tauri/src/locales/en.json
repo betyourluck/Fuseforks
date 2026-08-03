@@ -370,7 +370,10 @@
     "discardCancel": "Keep editing",
     "unsaved": "Unsaved",
     "save": "Save",
-    "configFiles": "Configuration files"
+    "configFiles": "Configuration files",
+    "role": "Role",
+    "noRole": "No role",
+    "roleHelp": "This changes only the role label. Settings (Construct.md, model, and so on) are copied at creation time, so changing the role here does not change them."
   },
   "modelTemplate": {
     "title": "Model templates",

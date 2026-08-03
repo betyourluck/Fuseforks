@@ -156,7 +156,10 @@ const dirty = computed(() => {
     current.workDir !== source.workDir ||
     current.maxToolIterations !== source.maxToolIterations ||
     JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools) ||
-    current.hearsRoomLog !== source.hearsRoomLog
+    current.hearsRoomLog !== source.hearsRoomLog ||
+    // 役職だけを変えたときも保存できること。**入れ忘れると、選び直しても
+    // 保存ボタンが有効にならず「変えられない」と読まれる。**
+    current.roleId !== source.roleId
   );
 });
 
@@ -414,6 +417,29 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               {{ $t("agentSettings.modelOption", { name: tpl.name, model: tpl.model }) }}
             </option>
           </select>
+
+          <!--
+            役職（Spec 14）。**ここで変わるのはラベルだけ** — 設定の流し込みは
+            新規作成のときにしか起きない（role_contract 凍結 4。上書きは
+            取り消せないので、既存の Construct.md を雛形で潰さない）。
+            その旨を注記に書く — 書かないと「役職を変えたのに中身が変わらない」
+            と読まれる。役職が 1 つも無い村では出さない（選べない選択肢を並べない）。
+          -->
+          <template v-if="state.roles.length">
+            <label class="mb-1 block text-[11px] text-ink-dim">
+              {{ $t("agentSettings.role") }}
+            </label>
+            <select
+              v-model="draft.roleId"
+              class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
+            >
+              <option :value="null">{{ $t("agentSettings.noRole") }}</option>
+              <option v-for="role in state.roles" :key="role.id" :value="role.id">
+                {{ role.name }}
+              </option>
+            </select>
+            <p class="mb-3 text-[10px] text-ink-dim">{{ $t("agentSettings.roleHelp") }}</p>
+          </template>
 
           <label class="mb-1 block text-[11px] text-ink-dim">
             {{ $t("agentSettings.workDir") }}
