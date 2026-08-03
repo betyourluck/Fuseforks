@@ -2,8 +2,12 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 — 査読承認・残る未決なし。P0 の契約凍結から着手できる**
-（2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定）
+**Status**: **rev3 承認 → P0 完了（契約凍結）。次は P1（村の設定）**
+（rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
+P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
+機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
+P0 で具体名を 2 つ確定: 言語は `world.json` の `language`（"ja" | "en"）、
+画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true））
 **Branch**: なし（main へ Phase 単位で直接コミット — Spec 01〜12 と同じプロセス）
 
 ## rev3 で入った差分（利用者裁定 2026-08-03）

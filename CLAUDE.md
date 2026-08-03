@@ -356,7 +356,19 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
 どちらも仕様上の限界なので打ち消す仕掛けは置かない（data_contract の
 `prompt_cache.bounds`）。
 
-## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認・未決ゼロ**）
+## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0 完了・次は P1**）
+
+**P0 完了**（2026-08-03）— `data_contract.yaml` の `settings_contract`
+（ConfigFileKind 配下、`session_store` / `blackboard_contract` と同じ棚）。
+凍結 5 点: 置き場の 2 分割・OrchestratorConfig を出さない線・言語の 3 層・
+アイコン規約（SVG）・即時反映の定義。P0 で具体名を 2 つ確定 —
+言語は `world.json` の `language`（"ja" | "en"）、画面設定は `localStorage` の
+`concordia.settings.v1`（`confirmEdgeDelete`、既定 true。命名は
+`concordia.layout.v1` に揃えた）。**data_contract.yaml は既存の `- **` 箇条書き
+66 箇所が YAML alias と誤読される既知の件（別セッション task_62bfa37a）で
+strict パーサでは元から通らない — settings_contract はリテラルブロックなので
+無関係**（前半だけの切り出しパースで検証済み）。次は P1: 天井の読み書き
+IPC 2 本 + `SettingsDialog.vue` の骨格（2 ペイン + 左メニュー + COG 入口）。
 
 起点は利用者の言葉（2026-08-03）— 「**僕もなにが設定できるのか分かりやすい**」。
 主目的は**既にある設定の可視化**。トークンの天井（Spec 11）は `world.json` の
