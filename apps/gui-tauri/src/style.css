@@ -28,6 +28,38 @@
   --c-accent: 168 85 247;
   --scrollbar-neon: oklch(0.72 0.14 232);
   --scrollbar-neon-bright: oklch(0.82 0.16 224);
+
+  /*
+   * 役職バッジの色（Spec 14）。**明度と彩度を固定し、色相だけを変える。**
+   *
+   * 自由な色入力にしない理由は 3 つ: (1) 配色を style.css の外へ漏らさない
+   * (2) 暗い背景に暗い色を選べる形にすると「読めないバッジ」が作れる —
+   * L/C を固定すれば読みやすさが構造で保証される（avatarHue と同じ形）
+   * (3) 村を配ったとき受け取った側でも成立する。
+   *
+   * 値は `RoleColor` の閉じた列挙（red / orange / amber / green / teal /
+   * blue / violet / pink）と 1 対 1。**列挙を増やしたらここも足す。**
+   *
+   * # なぜ @theme ではなく :root か（2026-08-04 実機で判明）
+   *
+   * **Tailwind v4 の `@theme` は「使われていない変数」を出力から落とす。**
+   * この色は `var(--color-role-${色})` と**実行時に組み立てて**使うので、
+   * スキャナからは 1 つも使われていないように見え、全部消える。
+   * 実際に実機では白ばかりになり、**teal だけが残った** —
+   * テストに `"var(--color-role-teal)"` という文字列リテラルがあり、
+   * それをスキャナが「使用」と読んだせい（テストが偶然 1 色だけ延命していた）。
+   *
+   * `@theme` に置くべきなのは `text-accent` のような**ユーティリティを生やす**色で、
+   * ここはユーティリティを使わない実行時選択の値。`--scrollbar-neon` と同じ棚。
+   */
+  --color-role-red: oklch(0.74 0.15 25);
+  --color-role-orange: oklch(0.74 0.15 55);
+  --color-role-amber: oklch(0.74 0.15 85);
+  --color-role-green: oklch(0.74 0.15 145);
+  --color-role-teal: oklch(0.74 0.15 185);
+  --color-role-blue: oklch(0.74 0.15 245);
+  --color-role-violet: oklch(0.74 0.15 295);
+  --color-role-pink: oklch(0.74 0.15 340);
 }
 
 /*
@@ -56,26 +88,6 @@
    * 生のパレットや brightness フィルタで作ると、配色が @theme の外へ漏れる。
    */
   --color-fail-hot: oklch(0.78 0.24 25);
-
-  /*
-   * 役職バッジの色（Spec 14）。**明度と彩度を固定し、色相だけを変える。**
-   *
-   * 自由な色入力にしない理由は 3 つ: (1) 配色を @theme の外へ漏らさない
-   * (2) 暗い背景に暗い色を選べる形にすると「読めないバッジ」が作れる —
-   * L/C を固定すれば読みやすさが構造で保証される（avatarHue と同じ形）
-   * (3) 村を配ったとき受け取った側でも成立する。
-   *
-   * 値は `RoleColor` の閉じた列挙（red / orange / amber / green / teal /
-   * blue / violet / pink）と 1 対 1。**列挙を増やしたらここも足す。**
-   */
-  --color-role-red: oklch(0.74 0.15 25);
-  --color-role-orange: oklch(0.74 0.15 55);
-  --color-role-amber: oklch(0.74 0.15 85);
-  --color-role-green: oklch(0.74 0.15 145);
-  --color-role-teal: oklch(0.74 0.15 185);
-  --color-role-blue: oklch(0.74 0.15 245);
-  --color-role-violet: oklch(0.74 0.15 295);
-  --color-role-pink: oklch(0.74 0.15 340);
 }
 
 html,
