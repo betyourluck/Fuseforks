@@ -119,7 +119,8 @@ OutcastsConcordia/
                 ├── ModelTemplateDialog.vue            モーダル: モデル
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   モーダル: 条例 / MCP / 予定
                 ├── SettingsDialog.vue / SessionDialog.vue    モーダル: システム設定 / 会話一覧
-                ├── TitleBar.vue                       カスタムタイトルバー（条例・MCP・予定・システム設定）
+                ├── RoleDialog.vue                     モーダル: 役職（サーヴァントの雛形）
+                ├── TitleBar.vue                       カスタムタイトルバー（条例・役職・MCP・予定・システム設定）
                 ├── StatusBar.vue                      最下段: 日付と時刻（診断ログと同じ形式）
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
@@ -165,6 +166,7 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 | 最下段 | ステータスバー（日付と時刻） | 常に見る（22px の帯） |
 | モーダル | エージェント設定 + 設定ファイル編集（カードの設定ボタンから） | **たまに開くもの** |
 | モーダル | モデルテンプレート管理（エージェント一覧のヘッダから） | たまに開くもの |
+| モーダル | 役職の一覧・追加・編集・削除（タイトルバーの「役職」から。[Spec 14](specs/14_role-label.md)） | たまに開くもの |
 | モーダル | 予定の一覧・追加・削除（タイトルバーの「予定」から） | たまに開くもの |
 | モーダル | システム設定（タイトルバーの「システム設定」から。[Spec 13](specs/13_settings-dialog.md)） | たまに開くもの |
 | モーダル | 会話の一覧・分岐・書き出し（会話ペインの「会話一覧」から。[Spec 12](specs/12_session-persistence.md)） | たまに開くもの |

@@ -31,7 +31,10 @@
     "settingsTitle": "System settings (village settings)",
     "minimize": "Minimize",
     "maximize": "Maximize / restore",
-    "close": "Close"
+    "close": "Close",
+    "roles": "Roles",
+    "rolesTitle": "Manage roles (servant templates)",
+    "rolesAria": "Roles"
   },
   "settings": {
     "title": "System settings",
@@ -75,9 +78,7 @@
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on an edge removes the connection."
       }
-    },
-    "groupServants": "Servants",
-    "menuRoles": "Roles"
+    }
   },
   "common": {
     "close": "Close"
@@ -599,6 +600,8 @@
     "clockAria": "Current date and time"
   },
   "roles": {
+    "title": "Roles",
+    "close": "Close",
     "heading": "Roles",
     "help": "Templates for creating servants. Pick a role when creating one and it starts with its settings already filled in. The role name appears as a badge on cards and on the map.",
     "empty": "No roles yet.",
@@ -631,6 +634,7 @@
       "maxToolIterations": "Tool call limit",
       "tools": "Built-in tools to offer",
       "ragSources": "RAG sources to reference"
-    }
+    },
+    "villageScope": "Roles are stored in the village (world.json), so they travel with it when shared."
   }
 }

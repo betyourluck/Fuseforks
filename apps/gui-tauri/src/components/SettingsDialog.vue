@@ -23,7 +23,6 @@ import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { setLocale } from "../i18n";
 import { useUiSettings } from "../composables/useUiSettings";
-import RolesPage from "./RolesPage.vue";
 import type { Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -31,7 +30,7 @@ const emit = defineEmits<{ (e: "close"): void }>();
 const { t } = useI18n();
 
 /** 左メニューの選択。既定は目録の先頭（全般 → 言語）。 */
-type Page = "language" | "tokenBudget" | "roles" | "messages";
+type Page = "language" | "tokenBudget" | "messages";
 const page = ref<Page>("language");
 
 /**
@@ -190,13 +189,6 @@ function selectPage(next: Page): void {
             {{ $t("settings.menuTokenLimit") }}
           </button>
 
-          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">
-            {{ $t("settings.groupServants") }}
-          </p>
-          <button class="menu-item" :class="{ active: page === 'roles' }" @click="selectPage('roles')">
-            {{ $t("settings.menuRoles") }}
-          </button>
-
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
           <button
             class="menu-item"
@@ -306,12 +298,6 @@ function selectPage(next: Page): void {
               </div>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
-          </template>
-
-          <!-- サーヴァント: 役職（Spec 14）。CRUD は子コンポーネントへ切り出す —
-               この画面は「目録 + ページ」の器で、CRUD を抱えると器が読めなくなる。 -->
-          <template v-else-if="page === 'roles'">
-            <RolesPage />
           </template>
 
           <!--

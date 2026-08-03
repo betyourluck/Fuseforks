@@ -28,6 +28,7 @@ import OrdinanceDialog from "./components/OrdinanceDialog.vue";
 import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
+import RoleDialog from "./components/RoleDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import StatusBar from "./components/StatusBar.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -53,6 +54,8 @@ const bottomTab = ref<BottomTab>("waves");
 
 /** 村の条例ダイアログの表示状態。 */
 const ordinanceOpen = ref(false);
+/** 役職ダイアログの表示状態（Spec 14）。条例と同じ「村の内容物」の棚。 */
+const rolesOpen = ref(false);
 /** MCP サーバー管理ダイアログの表示状態。 */
 const mcpOpen = ref(false);
 /** 予定（スケジュール実行）ダイアログの表示状態。 */
@@ -78,6 +81,7 @@ onMounted(() => {
   <div class="flex h-full flex-col overflow-hidden bg-surface-0 text-ink">
   <TitleBar
     @open-ordinance="ordinanceOpen = true"
+    @open-roles="rolesOpen = true"
     @open-mcp="mcpOpen = true"
     @open-schedules="schedulesOpen = true"
     @open-settings="settingsOpen = true"
@@ -167,6 +171,8 @@ onMounted(() => {
     <ConfirmHost />
 
     <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
+
+    <RoleDialog v-if="rolesOpen" @close="rolesOpen = false" />
 
     <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 

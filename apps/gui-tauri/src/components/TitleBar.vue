@@ -10,6 +10,7 @@
 
 const emit = defineEmits<{
   (e: "open-ordinance"): void;
+  (e: "open-roles"): void;
   (e: "open-mcp"): void;
   (e: "open-schedules"): void;
   (e: "open-settings"): void;
@@ -80,6 +81,37 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M10 8h6M10 12h6" />
       </svg>
       <span>{{ $t("titleBar.ordinance") }}</span>
+    </button>
+
+    <!--
+      役職（Spec 14）。**条例の右**に置く — どちらも「この村がどういう村か」を
+      決めるもので、システム設定（アプリがどう振る舞うか）とは棚が違う。
+      初版はシステム設定の左メニューへ入れたが、それは `world.json` に住むこと
+      （= 保存先）で分類した誤りで、実機で差し戻した（D1・2026-08-04）。
+    -->
+    <button
+      class="tb-btn"
+      :title="$t('titleBar.rolesTitle')"
+      :aria-label="$t('titleBar.rolesAria')"
+      @click="emit('open-roles')"
+    >
+      <!-- 名札（バッジ）。役職はサーヴァントに付く札そのもの。 -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="3" y="6" width="18" height="14" rx="2" />
+        <path d="M9 3h6v3H9z" />
+        <path d="M7 12h4M7 16h7" />
+      </svg>
+      <span>{{ $t("titleBar.roles") }}</span>
     </button>
 
     <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->

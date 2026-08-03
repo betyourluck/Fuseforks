@@ -118,7 +118,8 @@ OutcastsConcordia/
                 ├── ModelTemplateDialog.vue            Modal: model templates
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
-                ├── TitleBar.vue                       Custom title bar (Ordinance, MCP, Schedule, System Settings)
+                ├── RoleDialog.vue                     Modal: roles (servant templates)
+                ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Schedule, System Settings)
                 ├── StatusBar.vue                      Bottom: date and time (same format as the diagnostic log)
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
@@ -161,6 +162,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Bottom | Status bar (date and time) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
+| Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
 | Modal | Schedule list, addition, and deletion (from "Schedule" in the title bar) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |

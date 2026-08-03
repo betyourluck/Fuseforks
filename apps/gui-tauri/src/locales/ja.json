@@ -31,7 +31,10 @@
     "settingsTitle": "システム設定（村の設定）",
     "minimize": "最小化",
     "maximize": "最大化 / 元に戻す",
-    "close": "閉じる"
+    "close": "閉じる",
+    "roles": "役職",
+    "rolesTitle": "役職を管理（サーヴァントの雛形）",
+    "rolesAria": "役職"
   },
   "settings": {
     "title": "システム設定",
@@ -75,9 +78,7 @@
         "checkbox": "削除する前に確認ダイアログを出す",
         "offWarning": "確認なしの間は、線を 1 回クリックしただけで接続が消えます。"
       }
-    },
-    "groupServants": "サーヴァント",
-    "menuRoles": "役職"
+    }
   },
   "common": {
     "close": "閉じる"
@@ -599,6 +600,8 @@
     "clockAria": "現在の日付と時刻"
   },
   "roles": {
+    "title": "役職",
+    "close": "閉じる",
     "heading": "役職",
     "help": "サーヴァントを作るときの雛形です。役職を選んで作ると、設定が入った状態で始まります。カードと地図には役職名のバッジが出ます。",
     "empty": "役職はまだありません。",
@@ -631,6 +634,7 @@
       "maxToolIterations": "ツール実行回数の上限",
       "tools": "使う同梱ツール",
       "ragSources": "参照する RAG ソース"
-    }
+    },
+    "villageScope": "役職は村（world.json）に保存されます。村を配ると役職も一緒に付いて回ります。"
   }
 }
