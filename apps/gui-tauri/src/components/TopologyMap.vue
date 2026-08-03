@@ -23,11 +23,14 @@ import { Controls } from "@vue-flow/controls";
 import { compactNumber } from "../lib/format";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
+import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { useUiSettings } from "../composables/useUiSettings";
 import { STATUS_LABELS, type AgentId } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const { settings } = useUiSettings();
 
 /** 円環配置の半径。ノード数に応じて広げ、重なりを避ける。 */
 function radiusFor(count: number): number {
@@ -117,13 +120,36 @@ async function onConnect(connection: Connection): Promise<void> {
   ]);
 }
 
+/** 宛先の表示。id と表示名の併記（Spec 06 の規律）。 */
+function agentLabel(id: string): string {
+  const agent = state.agents.find((a) => a.id === id);
+  return agent ? `${id}（${agent.name}）` : id;
+}
+
 /**
  * 辺を切る。
  *
  * 双方向を 1 本で描いている以上、その線を切れば**両方向とも切れる**のが
  * 見た目と一致する。片方だけ残すなら、設定ダイアログの接続先チェックで行う。
+ *
+ * 線は棚卸しで**唯一、確認なしで消える破壊的操作**だった（Spec 13 S4 —
+ * 誤クリックで失った実害報告あり。接続は元に戻せない）。確認は既定 ON で、
+ * システム設定「線削除の確認」から切れる。
  */
 async function removeEdge(edge: Edge): Promise<void> {
+  if (settings.confirmEdgeDelete) {
+    const arrow = edge.data?.bidirectional ? "⇄" : "→";
+    const ok = await askConfirm({
+      title: "この接続（線）を削除しますか？",
+      message:
+        `${agentLabel(edge.source)} ${arrow} ${agentLabel(edge.target)}` +
+        (edge.data?.bidirectional ? "\n双方向の接続なので、両方向とも切れます。" : ""),
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
+  }
+
   const forward = state.agents.find((a) => a.id === edge.source);
   const backward = edge.data?.bidirectional
     ? state.agents.find((a) => a.id === edge.target)

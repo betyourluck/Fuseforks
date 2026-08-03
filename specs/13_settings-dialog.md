@@ -2,13 +2,28 @@
 
 **ID**: 13
 **Date**: 2026-08-03
-**Status**: **rev3 承認 → P0〜P1 完了。次は P2（線削除の確認）**
+**Status**: **rev3 承認 → P0〜P2 完了。次は P3（多言語化: UI 文言）**
 （rev3 は 2026-08-03。rev2 の反論 2 点は査読側が受け入れ、D1 / D6 / D8 は利用者裁定で確定。
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
 P0 で具体名を 2 つ確定: 言語は `world.json` の `language`（"ja" | "en"）、
 画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true）。
 P1 も同日完了 — 下の「P1 の実装記録」）
+
+## P2 の実装記録（2026-08-03）
+
+- **`useUiSettings.ts`**（`concordia.settings.v1`）。書き込みは watch で
+  **値が変わったときだけ** — 「触らず閉じたら localStorage 不変」が構造で成立する。
+  boolean 以外の保存値（手編集の文字列など）は既定へ落とす（`??` で素通しに
+  すると真でも偽でもない値が確認の分岐へ流れ込む）。vitest 4 本
+- **`TopologyMap.removeEdge`** の先頭で `settings.confirmEdgeDelete` を見て
+  `askConfirm`（Spec 12 P3 の機構）。文言は id（表示名）併記（Spec 06 の規律）で、
+  双方向の線には「両方向とも切れます」を添える（1 本で描く設計の帰結を
+  確認の場で言う）
+- **SettingsDialog** へ「この画面の設定 > 線削除の確認」を追加。チェックの変更は
+  即保存で、その旨をページに明記（天井の「保存」ボタンとの差を黙らせない）。
+  読み込み待ちの表示は IPC を持つページ（天井）だけに限定 —
+  localStorage のページは即描く
 
 ## P1 の実装記録（2026-08-03）
 

@@ -356,7 +356,13 @@ Verify 段は**条例へ書いた**（2026-08-02、「束ねの検証」節。�
 どちらも仕様上の限界なので打ち消す仕掛けは置かない（data_contract の
 `prompt_cache.bounds`）。
 
-## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P1 完了・次は P2**）
+## 次の Spec: システム設定ダイアログ（Spec 13・**rev3 承認 → P0〜P2 完了・次は P3**）
+
+**P2 完了**（2026-08-03）— `useUiSettings.ts`（`concordia.settings.v1`、書き込みは
+watch = 値が変わったときだけなので「触らず閉じたら不変」が構造で成立。boolean
+以外は既定へ落とす）+ `TopologyMap.removeEdge` の先頭に `askConfirm`（既定 ON・
+id 併記・双方向は「両方向とも切れます」）+ SettingsDialog「この画面の設定 >
+線削除の確認」（即保存を明記）。vitest 4 本追加（63→67）。
 
 **P1 完了**（2026-08-03）— コア `token_budget` / `set_token_budget`（persist 経路は
 `upsert_template` と同じ、`Some(0)` は新設 `INVALID_TOKEN_BUDGET` で拒否）、

@@ -13,12 +13,16 @@
 import { computed, onMounted, ref } from "vue";
 
 import * as ipc from "../lib/ipc";
+import { useUiSettings } from "../composables/useUiSettings";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
-/** 左メニューの選択。P1 は村の設定 = トークン天井の 1 ページだけ。 */
-type Page = "tokenBudget";
+/** 左メニューの選択。村の設定 = トークン天井 / この画面の設定 = 線削除の確認。 */
+type Page = "tokenBudget" | "edgeConfirm";
 const page = ref<Page>("tokenBudget");
+
+/** この画面の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
+const { settings } = useUiSettings();
 
 const loading = ref(true);
 const busy = ref(false);
@@ -110,11 +114,22 @@ async function save(): Promise<void> {
           >
             トークン天井
           </button>
+          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">この画面の設定</p>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'edgeConfirm' }"
+            @click="page = 'edgeConfirm'"
+          >
+            線削除の確認
+          </button>
         </nav>
 
         <!-- 右ページ -->
         <div class="min-h-0 flex-1 overflow-y-auto p-4 text-[11px]">
-          <p v-if="loading" class="py-8 text-center text-ink-dim">読み込み中…</p>
+          <!-- 読み込み待ちは IPC を持つページ（天井）だけ。localStorage のページは即描く。 -->
+          <p v-if="page === 'tokenBudget' && loading" class="py-8 text-center text-ink-dim">
+            読み込み中…
+          </p>
 
           <template v-else-if="page === 'tokenBudget'">
             <h3 class="mb-1 text-xs font-semibold text-ink">トークン天井（実効トークン）</h3>
@@ -171,6 +186,25 @@ async function save(): Promise<void> {
                   {{ busy ? "保存中…" : "保存" }}
                 </button>
               </div>
+            </div>
+          </template>
+
+          <template v-else-if="page === 'edgeConfirm'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">線削除の確認</h3>
+            <p class="mb-3 text-ink-dim">
+              村の地図では、接続（線）をクリックするとその接続が削除されます。
+              接続は元に戻せません。
+            </p>
+
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-center gap-2">
+                <input v-model="settings.confirmEdgeDelete" type="checkbox" />
+                <span>削除する前に確認ダイアログを出す</span>
+              </label>
+              <p v-if="!settings.confirmEdgeDelete" class="pl-6 text-warn">
+                確認なしの間は、線を 1 回クリックしただけで接続が消えます。
+              </p>
+              <p class="pl-6 text-ink-dim">変更はすぐに保存されます（この画面だけの設定です）。</p>
             </div>
           </template>
         </div>
