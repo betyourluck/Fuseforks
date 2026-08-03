@@ -6228,3 +6228,261 @@ async fn roles_survive_a_restart() {
     assert_eq!(roles.len(), 1);
     assert_eq!(roles[0].name, "調査役");
 }
+
+// ---- 役職と顔ぶれ（Spec 14 P4） ----------------------------------------------
+
+/// 顔ぶれの行に**役職名だけ**が載る（`role_contract` 凍結 6）。
+///
+/// 説明は載らない — 顔ぶれは毎ターン・全員ぶんを素の値段で払うので、
+/// 名前 3〜5 トークンに対し説明 50〜200 は以後の全ターンに乗る固定費になる。
+#[tokio::test]
+async fn the_roster_carries_the_role_name_but_never_the_description() {
+    let dir = TempDir::new("roster-role");
+    let backend = Arc::new(PromptProbeBackend {
+        systems: std::sync::Mutex::new(Vec::new()),
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    orchestrator
+        .upsert_role(agent_core::AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: "この文字列はプロンプトに出てはいけない".into(),
+            defaults: agent_core::AgentRoleDefaults::default(),
+        })
+        .await
+        .unwrap();
+
+    let planner = AgentId::from("agent_01");
+    let worker = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(planner.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    let mut worker_spec = AgentSpec::new(worker.clone(), "ジェミー", "tpl");
+    worker_spec.role_id = Some("researcher".into());
+    orchestrator.create_agent(worker_spec).await.unwrap();
+    orchestrator
+        .set_connections(&planner, vec![worker.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&planner).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&planner, "点呼").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let systems = backend.systems.lock().unwrap();
+    let system = systems.first().expect("1 ターン分の記録があること");
+    assert!(system.contains("［調査役］"), "顔ぶれに役職名が載る: {system}");
+    assert!(
+        !system.contains("この文字列はプロンプトに出てはいけない"),
+        "説明はプロンプトに載らない（凍結 6）"
+    );
+}
+
+/// **役職が引けない個体は `［...］` ごと省く**（`role_contract` 凍結 5）。
+///
+/// `［不明］` とは書かない — 存在しない役は判断材料にならず、顔ぶれでは
+/// 毎ターンぶんのトークンを払うだけになる。バッジ側と同じ規則。
+#[tokio::test]
+async fn an_unresolvable_role_is_omitted_from_the_roster_entirely() {
+    let dir = TempDir::new("roster-role-gone");
+    let backend = Arc::new(PromptProbeBackend {
+        systems: std::sync::Mutex::new(Vec::new()),
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let planner = AgentId::from("agent_01");
+    let worker = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(planner.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    let mut worker_spec = AgentSpec::new(worker.clone(), "ジェミー", "tpl");
+    worker_spec.role_id = Some("居ない役職".into());
+    orchestrator.create_agent(worker_spec).await.unwrap();
+    orchestrator
+        .set_connections(&planner, vec![worker.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&planner).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&planner, "点呼").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let systems = backend.systems.lock().unwrap();
+    let system = systems.first().expect("1 ターン分の記録があること");
+    assert!(!system.contains("不明］"), "［不明］を作らない: {system}");
+    assert!(!system.contains("［］"), "空の括弧も残さない: {system}");
+    assert!(
+        system.contains("agent_02（ジェミー）: 停止中"),
+        "役職の表示だけが落ちて、行そのものは今までどおり: {system}"
+    );
+}
+
+/// **役職名を足しても `stable_len` は動かない**（`role_contract` 凍結 6）。
+///
+/// 顔ぶれは `stable_len` の**後ろ**（可変部）にあるので、キャッシュの安定境界は
+/// 動かない。ここが破れると、役職を 1 つ足しただけで全エージェントの
+/// プロンプトキャッシュが割れる。
+#[tokio::test]
+async fn adding_a_role_does_not_move_the_stable_prefix() {
+    let dir = TempDir::new("roster-stable");
+    let backend = Arc::new(PromptProbeBackend {
+        systems: std::sync::Mutex::new(Vec::new()),
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let planner = AgentId::from("agent_01");
+    let worker = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(planner.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(worker.clone(), "ジェミー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .set_connections(&planner, vec![worker.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&planner).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&planner, "一度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 役職を作り、相手に付ける（**設定は流し込まれない** — update_agent は
+    // ラベルだけを差し替える。凍結 4）。
+    orchestrator
+        .upsert_role(agent_core::AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: String::new(),
+            defaults: agent_core::AgentRoleDefaults {
+                construct: "この本文は既存の個体へ入ってはいけない".into(),
+                max_tool_iterations: Some(99),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    let mut worker_spec = AgentSpec::new(worker.clone(), "ジェミー", "tpl");
+    worker_spec.role_id = Some("researcher".into());
+    orchestrator.update_agent(worker_spec).await.unwrap();
+
+    orchestrator.send_user_message(&planner, "二度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 既存の個体には流し込まれていない（凍結 4 の結合版）。
+    let after = orchestrator.snapshot(&worker).await.unwrap();
+    assert_eq!(after.max_tool_iterations, None, "既存の個体は設定が変わらない");
+    let construct = orchestrator
+        .read_config(&worker, ConfigFileKind::Construct)
+        .await
+        .unwrap();
+    assert!(construct.is_empty(), "Construct.md も書かれない");
+
+    let systems = backend.systems.lock().unwrap();
+    assert_eq!(systems.len(), 2, "2 ターン分の記録があること");
+    assert_ne!(systems[0], systems[1], "顔ぶれの行は変わっている");
+
+    // **安定部（顔ぶれの直前まで）は 1 字も変わらない。**
+    let stable = |s: &String| s.split("## 今の顔ぶれ").next().unwrap().to_owned();
+    assert_eq!(
+        stable(&systems[0]),
+        stable(&systems[1]),
+        "役職を足しても安定プレフィックスは動かない（キャッシュが割れない）"
+    );
+    assert!(systems[1].contains("［調査役］"), "可変部にだけ現れる");
+}
+
+/// 機構 7: 役職表示が変わると System 行が 1 本出る。
+/// **付与・改名・削除の 3 経路とも**（判定は「表示名が変わったか」の 1 点）。
+#[tokio::test]
+async fn every_role_display_change_leaves_one_system_line() {
+    let dir = TempDir::new("role-system-line");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .upsert_role(agent_core::AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: String::new(),
+            defaults: agent_core::AgentRoleDefaults::default(),
+        })
+        .await
+        .unwrap();
+
+    let lines = |messages: Vec<agent_core::model::AgentMessage>| -> Vec<String> {
+        messages
+            .into_iter()
+            .filter(|m| m.from == Endpoint::System && m.content.contains("役職"))
+            .map(|m| m.content)
+            .collect()
+    };
+
+    // (1) 付与。
+    let mut spec = AgentSpec::new(id.clone(), "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    orchestrator.update_agent(spec).await.unwrap();
+    let after_assign = lines(orchestrator.message_log(None).await);
+    assert_eq!(after_assign.len(), 1, "付与で 1 本");
+    assert!(after_assign[0].contains("調査役"));
+
+    // (2) 改名（役職側を直す。個体は触っていない）。
+    orchestrator
+        .upsert_role(agent_core::AgentRole {
+            id: "researcher".into(),
+            name: "コード調査役".into(),
+            description: String::new(),
+            defaults: agent_core::AgentRoleDefaults::default(),
+        })
+        .await
+        .unwrap();
+    let after_rename = lines(orchestrator.message_log(None).await);
+    assert_eq!(after_rename.len(), 2, "改名でも 1 本増える");
+    assert!(after_rename[1].contains("コード調査役"));
+
+    // (3) 削除。
+    orchestrator.remove_role(&"researcher".into()).await.unwrap();
+    let after_delete = lines(orchestrator.message_log(None).await);
+    assert_eq!(after_delete.len(), 3, "削除でも 1 本増える");
+    assert!(after_delete[2].contains("外れました"), "{}", after_delete[2]);
+}
+
+/// 表示が変わらない更新では System 行を出さない（同じ役職のまま設定だけ直す）。
+#[tokio::test]
+async fn an_update_that_keeps_the_role_stays_silent() {
+    let dir = TempDir::new("role-silent");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .upsert_role(agent_core::AgentRole {
+            id: "researcher".into(),
+            name: "調査役".into(),
+            description: String::new(),
+            defaults: agent_core::AgentRoleDefaults::default(),
+        })
+        .await
+        .unwrap();
+    let mut spec = AgentSpec::new(id.clone(), "ザリ", "tpl");
+    spec.role_id = Some("researcher".into());
+    orchestrator.create_agent(spec.clone()).await.unwrap();
+
+    let before = orchestrator.message_log(None).await.len();
+    spec.hears_room_log = false; // 役職以外を変える
+    orchestrator.update_agent(spec).await.unwrap();
+    assert_eq!(
+        orchestrator.message_log(None).await.len(),
+        before,
+        "役職表示が動かない更新では 1 行も増えない"
+    );
+}

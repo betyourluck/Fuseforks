@@ -1390,11 +1390,43 @@ impl Orchestrator {
     /// **既存のサーヴァントには何も起きない**（`role_contract` 凍結 4）。
     /// 中身はコピー済みなので、変わるのは `name` を参照している表示だけ。
     pub async fn upsert_role(&self, role: AgentRole) -> CoreResult<()> {
+        // 改名は**その役職を持つ全個体**の表示を動かすので、影響範囲を先に取る
+        // （機構 7 の発火は「表示名が変わったか」の 1 点で、操作の種類では分けない）。
+        let affected = self.holders_of(&role.id, &role.name).await;
         {
             let mut world = self.shared.world.write().await;
             world.upsert_role(role);
         }
+        for (id, before) in affected {
+            let after = {
+                let world = self.shared.world.read().await;
+                world
+                    .agent(&id)
+                    .ok()
+                    .and_then(|record| world.role_label(record.spec.role_id.as_ref()))
+                    .map(str::to_owned)
+            };
+            self.announce_role_change(&id, before.as_deref(), after.as_deref())
+                .await;
+        }
         self.persist().await
+    }
+
+    /// その役職を持つ個体と、**変更前の**表示名の対。
+    ///
+    /// `new_name` は使わない（比較は `announce_role_change` が変更後に行う）が、
+    /// 呼び出し側の意図を型で示すために受ける。
+    async fn holders_of(&self, role_id: &AgentRoleId, _new_name: &str) -> Vec<(AgentId, Option<String>)> {
+        let world = self.shared.world.read().await;
+        world
+            .snapshots()
+            .into_iter()
+            .filter(|snapshot| snapshot.role_id.as_ref() == Some(role_id))
+            .map(|snapshot| {
+                let before = world.role_label(snapshot.role_id.as_ref()).map(str::to_owned);
+                (snapshot.id, before)
+            })
+            .collect()
     }
 
     /// 役職を削除する。**参照中でも拒まない**（`remove_template` との決定的な差）。
@@ -1402,9 +1434,15 @@ impl Orchestrator {
     /// 役職はコピー済みなので、消してもサーヴァントの動作は変わらない —
     /// バッジと顔ぶれの `[...]` が消えるだけ（`role_contract` 凍結 5）。
     pub async fn remove_role(&self, id: &AgentRoleId) -> CoreResult<()> {
+        let affected = self.holders_of(id, "").await;
         {
             let mut world = self.shared.world.write().await;
             world.remove_role(id)?;
+        }
+        // 削除後は引けなくなるので after は必ず None。
+        for (agent_id, before) in affected {
+            self.announce_role_change(&agent_id, before.as_deref(), None)
+                .await;
         }
         self.persist().await
     }
@@ -1415,13 +1453,61 @@ impl Orchestrator {
     /// （プロンプトはメッセージごとに組み直すため）。
     pub async fn update_agent(&self, spec: AgentSpec) -> CoreResult<AgentSnapshot> {
         let id = spec.id.clone();
-        {
+        // 役職表示（Spec 14）。**設定は 1 欄も流し込まない** — 流し込みの発火点は
+        // 新規作成ただ 1 つ（role_contract 凍結 4）。ここで見るのは表示だけ。
+        let (before, after) = {
             let mut world = self.shared.world.write().await;
+            let before = world
+                .agent(&id)
+                .ok()
+                .and_then(|record| world.role_label(record.spec.role_id.as_ref()))
+                .map(str::to_owned);
             world.update_agent(spec)?;
-        }
+            let after = world
+                .agent(&id)
+                .ok()
+                .and_then(|record| world.role_label(record.spec.role_id.as_ref()))
+                .map(str::to_owned);
+            (before, after)
+        };
+        self.announce_role_change(&id, before.as_deref(), after.as_deref())
+            .await;
         self.persist().await?;
         self.shared.emit(CoreEvent::TopologyChanged);
         self.snapshot(&id).await
+    }
+
+    /// 役職表示が変わったことを System 行 1 本で場に流す（Spec 14 機構 7）。
+    ///
+    /// **判定は「表示名が変わったか」の 1 点。** 付与・変更（改名を含む）・削除を
+    /// 操作の種類で分けない — 分けると「改名だけ通知が出ない」のような穴が空く。
+    /// 他のサーヴァントから見れば、どれも「あの個体の役職表示が変わった」で同じ事象。
+    ///
+    /// **これは保証ではない。** 届くのは `compose_presence_notices` 経由なので、
+    /// 広場ログをオプトアウトした個体には届かず、窓から押し出されれば消える。
+    /// 「自己申告する」を仕様の約束にはしない（Spec 14 機構 7）。
+    async fn announce_role_change(&self, id: &AgentId, before: Option<&str>, after: Option<&str>) {
+        if before == after {
+            return;
+        }
+        let name = {
+            let world = self.shared.world.read().await;
+            match world.agent(id) {
+                Ok(record) => record.spec.name.clone(),
+                // 個体が消えていれば知らせる相手の話題も消えている。
+                Err(_) => return,
+            }
+        };
+        let text = match (before, after) {
+            (None, Some(now)) => format!("{id}（{name}）の役職が「{now}」になりました"),
+            (Some(_), Some(now)) => format!("{id}（{name}）の役職が「{now}」になりました"),
+            (Some(was), None) => format!("{id}（{name}）の役職「{was}」が外れました"),
+            (None, None) => return,
+        };
+        // 入退室通知と同じ経路（from: System / to: User。record のみで配送しない）。
+        self.shared
+            .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+            .await;
     }
 
     /// エージェントを削除する。稼働中なら先に停止する。
@@ -3111,7 +3197,24 @@ async fn handle_message(
                 world
                     .agent(id)
                     .map(|record| {
-                        format!("{id}（{}）: {}", record.spec.name, record.status.label())
+                        // 役職（Spec 14）。**名前だけ**を出す — 説明はプロンプトに
+                        // 入れない（role_contract 凍結 6。顔ぶれは毎ターン・全員ぶんを
+                        // 素の値段で払うので、名前 3〜5 トークンに対し説明 50〜200 は
+                        // 以後の全ターンに乗る固定費になる）。
+                        //
+                        // **引けなければ `[...]` ごと省く**（凍結 5）。`[不明]` とは
+                        // 書かない — 存在しない役は判断材料にならず、毎ターンぶんの
+                        // トークンを払うだけになる。バッジ側（カード・地図）と
+                        // 同じ規則で、3 箇所の扱いを揃えてある。
+                        let role = world
+                            .role_label(record.spec.role_id.as_ref())
+                            .map(|name| format!("［{name}］"))
+                            .unwrap_or_default();
+                        format!(
+                            "{id}（{}）{role}: {}",
+                            record.spec.name,
+                            record.status.label()
+                        )
                     })
                     // 接続先が消えていても行は成立させる（ID と不明で示す）。
                     .unwrap_or_else(|_| format!("{id}: 不明"))
