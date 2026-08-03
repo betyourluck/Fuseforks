@@ -205,12 +205,26 @@ async function remove(role: Role): Promise<void> {
         </button>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-y-auto p-4 text-[11px]">
+      <!--
+        説明の帯。**条例 / 共通 MCP / スケジュールと同じ形**（見出しの下に
+        `bg-surface-0` の 1 段）。ここだけ本文内に見出しと説明を置いていたのを
+        揃えた（2026-08-04 実機の指摘）。`h2` と同じ語の `h3` も落とす —
+        タイトルが「役職」なのに本文の先頭でもう一度「役職」と書いていた。
+      -->
+      <p
+        class="shrink-0 border-b border-line bg-surface-0 px-3 py-2 text-[11px] text-ink-dim"
+      >
+        {{ $t("roles.help") }}
+      </p>
 
-        <h3 class="mb-1 text-xs font-semibold text-ink">{{ $t("roles.heading") }}</h3>
-        <p class="mb-3 text-ink-dim">{{ $t("roles.help") }}</p>
-
-        <p v-if="error" class="mb-2 rounded border border-fail px-2 py-1 text-fail">{{ error }}</p>
+      <div class="min-h-0 flex-1 overflow-y-auto p-3 text-[11px]">
+        <!-- エラーの書式もスケジュール／MCP と揃える（selectable = 貼って報告できる）。 -->
+        <p
+          v-if="error"
+          class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-[11px] text-fail"
+        >
+          {{ error }}
+        </p>
 
         <!-- 一覧 -->
         <template v-if="!draft">

@@ -605,7 +605,6 @@
   "roles": {
     "title": "Roles",
     "close": "Close",
-    "heading": "Roles",
     "help": "Templates for creating servants. Pick a role when creating one and it starts with its settings already filled in. The role name appears as a badge on cards and on the map.",
     "empty": "No roles yet.",
     "noDescription": "(no description)",
