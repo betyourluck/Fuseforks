@@ -2,7 +2,7 @@
 
 **ID**: 15
 **Date**: 2026-08-04
-**Status**: **Draft rev4**（利用者裁定で骨格を再変更。査読待ち。P0〜P4 は一部やり直し）
+**Status**: **Draft rev4**（利用者裁定で骨格を再変更 → D8〜D10 も裁定済み。**未決ゼロ・P0' に入れる状態**）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 **rev の経緯**: rev1（コマンド名の許可リスト）= 査読で拒否 → rev2 / rev3（登録制）=
@@ -124,17 +124,32 @@ allow / deny へ移っても 1 文字も弱まらない。**ここは譲らな�
 - **`pending` は同じファイルの中に置く。** 人は 1 つのファイルを開いて、
   行を `allow` か `deny` へ動かすだけで済む。別ファイルにすると
   **「見る場所」と「直す場所」が分かれる**
-- **`timeoutSecs` はファイル 1 つに 1 つ**（既定 60 / 上限 3600）。rev3 は登録ごとに
-  持っていたが、allow はパターンなので「この登録の」に相当するものが無い
+- **`pending` の上限は 1 体あたり 20 件、押し出しは `firstRequestedAtMs` の古い順**
+  （**D9 裁定済み**）。rev3 は村全体で 50 件だったが、per-agent になったので小さくてよい。
+  同一の `(command, args)` は `count++` で畳み、`firstRequestedAtMs` は最初のまま
+- **人と機械が同じファイルを書く。** `mcp.json` は人しか書かないので無かった形
+  （Notes 4）。処方は**全文上書きにしない** — エージェントが `pending` を足すときは
+  **`read` → `pending` だけを差分適用 → `write_atomic` を 3 回までリトライ**。
+  人の手編集で `allow` / `deny` / `timeoutSecs` が変わっていても**その変更を壊さない**。
+  競合したら WARN を 1 行
+- **`timeoutSecs` はファイル 1 つに 1 つ**（既定 60 / 上限 3600。**D8 裁定済み**）。
+  パターンごとに持たせると**パターンと時間の対応表がもう 1 つ増え**、S2 の
+  「書いたとおりに効く」を壊す。`cargo build` が長いのは実例だが、まずはファイル全体を
+  300 秒などへ上げれば済む。**将来必要なら `timeoutOverrides: { "cargo build *": 600 }`
+  を足す余地はある**（今は作らない — 空の欄は「何を入れるべきか」を問い続ける）
 - **不正 JSON は拒否**（`mcp.json` と同じ扱い）。空として扱うと
   **allow が黙って消えて全部 pending になる**か、**deny が黙って消える**かのどちらかで、
   後者は危険側へ倒れる
 
 **パターン構文は 2 つだけ**:
 
-1. **完全一致** — `"ruff"` は `command == "ruff"` かつ `args` が空のときだけ一致
+1. **完全一致** — `"ruff"` は `command == "ruff"` かつ **`args` が空のときだけ**一致
 2. **末尾 `*`** — `"ruff check *"` は「`command` が `ruff`、`args` の先頭が
    `check`、以降は自由」。**`*` は末尾にしか置けない**
+
+> **`"ruff"` は引数なしにしか一致しない。任意の引数を許すなら `"ruff *"` と書く。**
+> これを書かないと「`ruff` を許可したのに `ruff check` が通らない」で必ず躓く
+> （利用者の指摘 2026-08-04）。UI と拒否文面の両方でこの差に触れる。
 
 **中間のワイルドカードを持たない。** `ruff * --fix` のような形を許すと、
 照合はパターンマッチの実装になり、`*` が何個の引数に対応するかの規則が要る。
@@ -222,7 +237,7 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 | IPC 5 本 + `CommandRegistryPane.vue` | **捨てる**。`mcp.json` と同じ編集経路へ寄せる |
 | `defaultEnabledTools.test.ts` | **残る** |
 
-- [ ] Phase 0' — 契約改訂: `command_tool_contract` を allow / deny / pending へ
+- [x] Phase 0' — 完了（2026-08-04）。契約改訂: `command_tool_contract` を allow / deny / pending へ
       書き直す。`ConfigFileKind` へ `Command` を追加。
       **凍結を撤回した箇所には撤回したと書く**（閉じた許容・除外リストを作らない・
       `program` は絶対パス・fail closed の 4 点）
@@ -276,18 +291,16 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 
 ---
 
-## 未決（査読で裁定がほしい）
+## 未決 — **ゼロ**（D8〜D10 は 2026-08-04 に利用者裁定）
 
-- **D8**: `timeoutSecs` を `command.json` に 1 つ持つ形でよいか。allow のパターンごとに
-  持たせる案もあるが、`cargo build` だけ長くしたいときにパターンと時間の対応表が
-  もう 1 つ増える
-- **D9**: `pending` の上限と押し出し規則（rev3 は 50 件・古い順）。
-  per-agent になったので 1 体あたりの上限は小さくてよいかもしれない
-- **D10**: `command.json` を持たない個体の既定は「全部 pending」でよいか
-  （＝ `allow` も `deny` も空）。`run` を `enabledTools` で ON にしただけでは
-  何も実行できず、**最初の 1 回は必ず pending を経由する**
-
----
+- **D8 `timeoutSecs` はファイルに 1 つ。** per-pattern にすると対応表がもう 1 つ増え、
+  「書いたとおりに効く」を壊す。将来は `timeoutOverrides` を足す余地を残す（今は作らない）
+- **D9 `pending` は per-agent 20 件・古い順に押し出し。** 同一 `(command, args)` は
+  `count++` で畳み、`firstRequestedAtMs` は最初のまま
+- **D10 `command.json` を持たない個体は「全部 pending」。** **これが fail closed** —
+  `enabledTools` に `run` を入れても `allow` が空なら S1 の 2 段ゲートで**提示されず、
+  実行もできない**。「利用者が許可したものを憶える」という思想とも整合する。
+  **初回の手間は欠点ではなく仕様**
 
 ## 付録: rev1〜rev3 の実装記録
 

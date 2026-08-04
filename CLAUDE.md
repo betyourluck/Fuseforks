@@ -773,7 +773,7 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev4 起票・査読待ち。P0〜P4 は一部やり直し**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev4 未決ゼロ → P0' 完了・残 P1'〜P5**）
 
 **2026-08-04 に利用者裁定で骨格が再変更された。** 登録制（登録名でしか呼べない）を
 やめ、**エージェント別の allow / deny リスト**へ。置き場は
@@ -803,8 +803,28 @@ python を走らせる。処方は「構造的に決まる」と言わず、**�
 捨てる: `CommandRegistry` 型 / `load_commands` 系 / IPC 5 本 /
 `CommandRegistryPane.vue`（`mcp.json` と同じ編集経路へ寄せるので専用画面が要らない）。
 
-**未決 3 件を査読へ回した**: D8 タイムアウトの粒度 / D9 `pending` の上限と押し出し /
-D10 `command.json` を持たない個体の既定（＝最初の 1 回は必ず pending を経由する）。
+**D8〜D10 は 2026-08-04 に利用者裁定で確定**（村の査読には出さない）:
+**D8** `timeoutSecs` はファイルに 1 つ（per-pattern にすると対応表がもう 1 つ増え
+「書いたとおりに効く」を壊す。将来は `timeoutOverrides` を足す余地だけ残す）/
+**D9** `pending` は per-agent 20 件・`firstRequestedAtMs` の古い順に押し出し /
+**D10** `command.json` を持たない個体は「全部 pending」= **これが fail closed**
+（`enabledTools` に `run` を入れても `allow` が空なら提示されず実行もできない。
+**初回の手間は欠点ではなく仕様**）。
+
+**パターン構文は完全一致と末尾 `*` の 2 つだけ。** 中間ワイルドカードを持たないのは、
+`*` が何個の引数に対応するかの規則が要り**書いた人の意図と照合結果がずれる場所が
+増える**ため。**`"ruff"` は引数なしにしか一致せず、任意引数を許すなら `"ruff *"`** —
+この差を UI と拒否文面の両方に書く（書かないと「ruff を許可したのに ruff check が
+通らない」で必ず躓く。利用者の指摘）。**deny が allow に優先**し、
+**モデルへは allow だけを列挙して deny は見せない**（禁止の一覧を毎ターン積むと
+トークンを払って禁止の方法を教えることになる）。
+
+**P0' 完了**（2026-08-04）— `command_tool_contract` を allow / deny / pending へ
+全面改訂し、`ConfigFileKind` へ `command` を追加。**rev3 から撤回した凍結 4 点
+（閉じた許容 / 除外リストを作らない / 実行ファイル名を書けない / `program` は絶対パスで
+fail closed）を「撤回した」と明記した** — 書かないと次に読む人は生きている凍結だと
+読む（#56 の逆向きの事故）。`ConfigFileKind` の note にも
+**「command だけは人と機械の両方が書く」**を追記（`mcp.json` は人しか書かない）。
 
 **Notes 4 が本 Spec で初めて出る形**: `pending` を `command.json` に置くと
 **機械が書くファイルを人が編集する**ことになり、衝突しうる（人が編集中に
