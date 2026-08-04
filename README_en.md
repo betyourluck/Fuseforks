@@ -122,7 +122,7 @@ OutcastsConcordia/
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Schedule, System Settings)
-                ├── StatusBar.vue                      Bottom: date and time (same format as the diagnostic log)
+                ├── StatusBar.vue                      Bottom: date, time (same format as the diagnostic log) and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 

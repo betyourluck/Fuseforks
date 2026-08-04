@@ -605,7 +605,9 @@
   },
   "statusBar": {
     "clockTitle": "Current date and time (same format as the diagnostic log prefix)",
-    "clockAria": "Current date and time"
+    "clockAria": "Current date and time",
+    "versionTitle": "Version of this build (nearest git tag; 0.0.0 when untagged)",
+    "versionAria": "Version {version}"
   },
   "roles": {
     "title": "Roles",

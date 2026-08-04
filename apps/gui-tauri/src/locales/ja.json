@@ -605,7 +605,9 @@
   },
   "statusBar": {
     "clockTitle": "現在の日付と時刻（診断ログの行頭と同じ形式）",
-    "clockAria": "現在の日付と時刻"
+    "clockAria": "現在の日付と時刻",
+    "versionTitle": "このビルドの版番号（git の直近タグ。タグが無ければ 0.0.0）",
+    "versionAria": "版番号 {version}"
   },
   "roles": {
     "title": "役職",

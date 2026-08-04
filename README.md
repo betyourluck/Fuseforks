@@ -123,7 +123,7 @@ OutcastsConcordia/
                 ├── SettingsDialog.vue / SessionDialog.vue    モーダル: システム設定 / 会話一覧
                 ├── RoleDialog.vue                     モーダル: 役職（サーヴァントの雛形）
                 ├── TitleBar.vue                       カスタムタイトルバー（条例・役職・MCP・予定・システム設定）
-                ├── StatusBar.vue                      最下段: 日付と時刻（診断ログと同じ形式）
+                ├── StatusBar.vue                      最下段: 日付と時刻（診断ログと同じ形式）と版番号
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
@@ -165,7 +165,7 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 | 中央上段 | 村の地図 | 常に見る |
 | 中央下段 | タブ切り替え: **黒板**（村の共有作業メモの閲覧） / **作業状況**（plan の実行痕。[Spec 08](specs/08_plan-wave-pane.md) の波ペイン） | 常に見る（仕切りで高さ 80px まで縮められる） |
 | 右 | 会話（吹き出し形式） | 常に見る |
-| 最下段 | ステータスバー（日付と時刻） | 常に見る（22px の帯） |
+| 最下段 | ステータスバー（日付と時刻・版番号） | 常に見る（22px の帯） |
 | モーダル | エージェント設定 + 設定ファイル編集（カードの設定ボタンから） | **たまに開くもの** |
 | モーダル | モデルテンプレート管理（エージェント一覧のヘッダから） | たまに開くもの |
 | モーダル | 役職の一覧・追加・編集・削除（タイトルバーの「役職」から。[Spec 14](specs/14_role-label.md)） | たまに開くもの |
