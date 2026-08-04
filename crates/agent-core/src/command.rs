@@ -6,7 +6,7 @@
 //!
 //! # allow / deny / 未知 の 3 状態
 //!
-//! [`CommandPolicy`] は `agents/{id}/command.json` に住み、**`mcp.json` と同じ棚**で
+//! [`CommandPolicy`] は `agents/{id}/shell.json` に住み、**`mcp.json` と同じ棚**で
 //! 人が直す。allow に一致すれば承認なしで実行、deny に一致すれば拒否して
 //! **承認要求も積まない**、どちらにも無ければ拒否して `pending` へ積む。
 //!
@@ -86,7 +86,7 @@ pub struct PendingCommand {
     pub count: u32,
 }
 
-/// `agents/{id}/command.json` の中身。
+/// `agents/{id}/shell.json` の中身。
 ///
 /// **`mcp.json` と同じ棚**に置き、同じ編集手段（`ConfigFileKind`）で人が直す。
 /// **人と機械の両方が書く唯一のファイル**なので、書き込みは全文上書きにせず
@@ -119,7 +119,7 @@ fn policy_version() -> u32 {
 }
 
 impl Default for CommandPolicy {
-    /// **`command.json` を持たない個体の既定。**
+    /// **`shell.json` を持たない個体の既定。**
     ///
     /// `allow` が空なので**何も実行できず、`run` はモデルへ提示すらされない** —
     /// これが fail closed（D10）。初回の手間は欠点ではなく仕様。

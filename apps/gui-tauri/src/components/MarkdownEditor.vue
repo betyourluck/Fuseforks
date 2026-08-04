@@ -13,7 +13,12 @@ import { useI18n } from "vue-i18n";
 import CodeEditor from "./CodeEditor.vue";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import { CONFIG_FILE_LABELS, type AgentId, type ConfigFileKind } from "../types";
+import {
+  CONFIG_FILE_LABELS,
+  CONFIG_FILE_TEMPLATES,
+  type AgentId,
+  type ConfigFileKind,
+} from "../types";
 
 const props = defineProps<{
   agentId: AgentId;
@@ -36,8 +41,8 @@ const dirty = () => content.value !== original.value;
 const placeholder = computed(() =>
   kind.value === "mcp"
     ? t("editor.mcpPlaceholder")
-    : kind.value === "command"
-      ? t("editor.commandPlaceholder")
+    : kind.value === "shell"
+      ? t("editor.shellPlaceholder")
       : t("editor.markdownPlaceholder"),
 );
 
@@ -47,6 +52,25 @@ async function load(): Promise<void> {
   content.value = text ?? "";
   original.value = content.value;
   loading.value = false;
+}
+
+/** この種別のひな型。無ければ `null`（Markdown の 3 つ）。 */
+const template = computed(() => CONFIG_FILE_TEMPLATES[kind.value] ?? null);
+
+/**
+ * ひな型を出せるのは**未入力のときだけ**。
+ *
+ * 既に何か書かれているところへ出すと、押したときに何が起きるかが読めない
+ * （上書きなのか追記なのか）。**空のときしか出さなければ、押した結果は 1 つ。**
+ */
+const canUseTemplate = computed(
+  () => props.editable && template.value !== null && content.value.trim() === "",
+);
+
+/** ひな型をテキストエリアへ入れる。**保存はしない** — 中身を見てから人が押す。 */
+function insertTemplate(): void {
+  if (!canUseTemplate.value || template.value === null) return;
+  content.value = template.value;
 }
 
 async function save(): Promise<void> {
@@ -103,6 +127,13 @@ watch(
         {{ fileLabel }}
       </button>
 
+      <button
+        v-if="canUseTemplate"
+        class="ml-auto rounded border border-line px-2 py-0.5 text-[11px] text-ink-dim hover:border-accent hover:text-accent"
+        @click="insertTemplate"
+      >
+        {{ $t("editor.insertTemplate") }}
+      </button>
       <span v-if="dirty()" class="ml-auto text-[11px] text-warn">{{ $t("editor.unsaved") }}</span>
     </div>
 
@@ -113,7 +144,7 @@ watch(
         v-else-if="editable"
         v-model="content"
         class="h-full"
-        :language="kind === 'mcp' ? 'json' : 'markdown'"
+        :language="kind === 'mcp' || kind === 'shell' ? 'json' : 'markdown'"
         :placeholder="placeholder"
       />
 

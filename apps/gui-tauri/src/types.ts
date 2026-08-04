@@ -22,7 +22,7 @@ export type ModelTemplateId = string;
 export type AgentStatus = "idle" | "starting" | "running" | "stopping" | "failed";
 
 /** 設定ファイルの種別。実ファイル名の解決は Rust 側が行う。 */
-export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "command";
+export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "shell";
 
 /**
  * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
@@ -584,7 +584,8 @@ export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
    * **人と機械の両方が書く唯一の設定ファイル** — エージェントが `pending` を
    * 足すので、開きっぱなしにしていると画面の内容が古くなることがある。
    */
-  command: "command.json",
+  /** **名前は shell だが実行はシェルを介さない**（機構は command + args 配列のまま）。 */
+  shell: "shell.json",
 };
 
 /** 状態の辞書キー。表示は `$t(STATUS_LABEL_KEYS[s])` で引く（Spec 13 P3）。 */
@@ -594,4 +595,28 @@ export const STATUS_LABEL_KEYS: Record<AgentStatus, string> = {
   running: "labels.status.running",
   stopping: "labels.status.stopping",
   failed: "labels.status.failed",
+};
+
+/**
+ * 未入力の設定ファイルに入れるひな型（Spec 15 rev4 で追加）。
+ *
+ * **空欄から書き始めさせない。** JSON の設定ファイルは「どの鍵が要るか」を
+ * 知らないと 1 文字も書けない。**外殻だけを入れて中身は空**にするのは、
+ * ひな型が既定値のふりをして意図しない設定を作らないため
+ * （`allow` に例を入れると、消し忘れがそのまま許可になる）。
+ */
+export const CONFIG_FILE_TEMPLATES: Partial<Record<ConfigFileKind, string>> = {
+  mcp: `{
+  "mcpServers": {
+  }
+}
+`,
+  shell: `{
+  "version": 1,
+  "allow": [],
+  "deny": [],
+  "pending": [],
+  "timeoutSecs": 60
+}
+`,
 };

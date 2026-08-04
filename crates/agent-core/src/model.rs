@@ -783,7 +783,11 @@ pub enum ConfigFileKind {
     /// **`mcp` と違い、人と機械の両方が書く唯一の設定ファイル** —
     /// エージェントが `pending` を足すので、書き込みは全文上書きにせず
     /// `pending` だけを差分適用する（`command_tool_contract`）。
-    Command,
+    ///
+    /// **ファイル名は `shell.json` だが、実行はシェルを介さない**（利用者命名、
+    /// 2026-08-04）。「シェルコマンドの許可設定」として読める名前を採ったもので、
+    /// 機構は `command` + `args` 配列のまま — `&&` も `|` も構造的に存在しない。
+    Shell,
 }
 
 impl ConfigFileKind {
@@ -794,7 +798,7 @@ impl ConfigFileKind {
             Self::Memory => "Memory.md",
             Self::Construct => "Construct.md",
             Self::Mcp => "mcp.json",
-            Self::Command => "command.json",
+            Self::Shell => "shell.json",
         }
     }
 

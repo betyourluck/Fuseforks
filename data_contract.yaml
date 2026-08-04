@@ -56,14 +56,14 @@ enums:
       memory: Memory.md
       construct: Construct.md
       mcp: mcp.json          # エージェント別 MCP (Spec 02)。書き込みはパース検証つき
-      command: command.json  # エージェント別 allow/deny (Spec 15 rev4)。同じくパース検証つき
+      shell: shell.json      # エージェント別 allow/deny (Spec 15 rev4)。同じくパース検証つき
     note: |
       GUI からは列挙値しか受け取らない。任意のファイル名を IPC に載せないことで、
       書き込み先を閉じた集合に保つ。
-      mcp (agents/{id}/mcp.json) と command (agents/{id}/command.json) は書き込み時に
+      mcp (agents/{id}/mcp.json) と shell (agents/{id}/shell.json) は書き込み時に
       JSON パース検証があり、失敗すると保存拒否 (mcp_contract の失敗二分類 (1))。
       他の 3 つは自由テキスト。
-      **command だけは人と機械の両方が書く** (Spec 15 rev4)。エージェントが pending を
+      **shell だけは人と機械の両方が書く** (Spec 15 rev4)。エージェントが pending を
       足すので、書き込みは全文上書きにせず read → pending だけ差分適用 → write_atomic を
       3 回までリトライする。mcp は人しか書かないのでこの問題が無かった。
       compose_system_prompt には入らない (プロンプト素材ではなく接続宣言)。
@@ -2210,7 +2210,9 @@ conversation_termination:
         **「構造的に決まる」とは言わない。代わりに決まった結果を毎回見せる**。
         resolve_program は毎回呼び、**キャッシュしない** (PATH を直したら
         次の実行から変わってほしい)
-      - **置き場は agents/{id}/command.json** (ConfigFileKind::Command)。
+      - **置き場は agents/{id}/shell.json** (ConfigFileKind::Shell)。
+        **ファイル名は shell だが実行はシェルを介さない** (利用者命名 2026-08-04。
+        「シェルコマンドの許可設定」として読める名前で、機構は command + args 配列)。
         村で 1 つ共有しない。`{ version, allow[], deny[], pending[], timeoutSecs }`。
         **pending も同じファイルの中**に置く — 人は 1 つのファイルを開いて行を
         allow か deny へ動かすだけで済む (別ファイルだと「見る場所」と
@@ -2228,9 +2230,15 @@ conversation_termination:
       - **不正 JSON は拒否** (mcp.json と同じ扱い)。空として扱うと allow が黙って
         消えて全部 pending になるか、**deny が黙って消える**かのどちらかで、
         後者は危険側へ倒れる
-      - **command.json を持たない個体は「全部 pending」**。**これが fail closed** —
+      - **shell.json を持たない個体は「全部 pending」**。**これが fail closed** —
         enabledTools に run を入れても allow が空なら提示されず実行もできない。
         **初回の手間は欠点ではなく仕様**
+      - **未入力のときは UI がひな型を出す** (2026-08-04 利用者要望)。
+        mcp.json / shell.json とも**外殻だけで中身は空**。ひな型に例を入れないのは、
+        **消し忘れがそのまま許可になる**ため (allow に "ruff *" が入ったひな型は、
+        押しただけで ruff を許した村を作る)。ボタンは**空のときしか出さない** —
+        既に書かれているところへ出すと、押した結果が上書きか追記か読めない。
+        入れるのはテキストエリアまでで、**保存はしない** (中身を見てから人が押す)
       - **提示は 2 段ゲート**: (1) enabledTools に run があるか【既定 OFF】
         (2) allow が 1 件以上あるか。**モデルへは allow のパターンだけを列挙し、
         deny は見せない** — 見せると禁止の一覧を毎ターン積むことになり、

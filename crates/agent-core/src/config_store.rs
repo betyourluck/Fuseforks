@@ -135,7 +135,7 @@ impl ConfigStore {
                     serde_json::from_str::<crate::mcp::McpConfig>(content)
                         .map_err(CoreError::from)?;
                 }
-                ConfigFileKind::Command => {
+                ConfigFileKind::Shell => {
                     serde_json::from_str::<crate::command::CommandPolicy>(content)
                         .map_err(CoreError::from)?;
                 }

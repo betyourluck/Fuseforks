@@ -259,7 +259,8 @@
     "discard": "Discard changes",
     "saving": "Saving…",
     "save": "Save",
-    "commandPlaceholder": "Only calls matching allow are executed; deny wins over allow.\nCalls in neither list are recorded under pending — move them to allow or deny here.\nA trailing * means \"any remaining arguments\"; a pattern without * matches only a call with no arguments.\nThis is not a safety mechanism: allowing a command permits everything that command can do.\n\n{'{'}\n  \"version\": 1,\n  \"allow\": [\"ruff *\", \"cargo test *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n{'}'}\n"
+    "insertTemplate": "Insert template",
+    "shellPlaceholder": "Only calls matching allow are executed; deny wins over allow.\nCalls in neither list are recorded under pending — move them to allow or deny here.\nA trailing * means \"any remaining arguments\"; a pattern without * matches only a call with no arguments.\nThis is not a safety mechanism: allowing a command permits everything that command can do.\n\n{'{'}\n  \"version\": 1,\n  \"allow\": [\"ruff *\", \"cargo test *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n{'}'}\n"
   },
   "ordinance": {
     "title": "Village Ordinance",
