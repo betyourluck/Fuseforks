@@ -259,7 +259,7 @@
     "discard": "変更を破棄",
     "saving": "保存中…",
     "save": "保存",
-    "commandPlaceholder": "{\n  \"version\": 1,\n  \"allow\": [\"ruff *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n}\n\nallow に一致する呼び出しだけが実行されます。deny は allow より優先。\nどちらにも無い呼び出しは pending に記録されるので、ここで allow か deny へ動かしてください。\n末尾の * は「以降の引数は自由」。* が無いパターンは引数なしの呼び出しにしか一致しません。\nこれは安全装置ではありません — 許可したコマンドにできること全部を許しています。"
+    "commandPlaceholder": "allow に一致する呼び出しだけが実行されます。deny は allow より優先。\nどちらにも無い呼び出しは pending に記録されるので、ここで allow か deny へ動かしてください。\n末尾の * は「以降の引数は自由」。* が無いパターンは引数なしの呼び出しにしか一致しません。\nこれは安全装置ではありません — 許可したコマンドにできること全部を許しています。\n\n{'{'}\n  \"version\": 1,\n  \"allow\": [\"ruff *\", \"cargo test *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n{'}'}\n"
   },
   "ordinance": {
     "title": "村の条例",
