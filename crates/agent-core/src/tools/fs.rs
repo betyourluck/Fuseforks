@@ -303,7 +303,9 @@ impl AgentTool for GrepTool {
          検索できるのはエージェント設定で指定された作業フォルダの中だけ。\
          **「何件あるか」だけを知りたいときは `count_only: true`** — \
          一致行を返さずファイル別と全体の件数だけを返すので、\
-         パターンを変えて何度も叩き直す必要がなくなる。"
+         パターンを変えて何度も叩き直す必要がなくなる。\
+         `include` でファイル名を**正規表現**で絞れる（例: `\\.rs$`。**glob ではない**）。\
+         `context: 1〜3` で一致行の前後も返る（一致行は `:`、前後の行は `-`）。"
             .to_owned()
     }
 
@@ -326,6 +328,14 @@ impl AgentTool for GrepTool {
                 "count_only": {
                     "type": "boolean",
                     "description": "true で一致行を返さず件数だけを返す。既定は false"
+                },
+                "include": {
+                    "type": "string",
+                    "description": "対象を**ファイル名**で絞る正規表現（**glob ではない**。例: `\\.rs$`）。省略時は全ファイル"
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "一致行の前後も返す行数（0〜3、既定 0）。一致行は `:`、前後の行は `-` で区切られる"
                 }
             },
             "required": ["pattern"],
@@ -354,13 +364,78 @@ impl AgentTool for GrepTool {
             .get("count_only")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let include = args
+            .get("include")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        // 負値は `as_u64` が弾く。**clamp せずエラー**にするのは `run_grep` の側。
+        let Some(context) = args
+            .get("context")
+            .map_or(Some(0usize), |value| value.as_u64().map(|n| n as usize))
+        else {
+            return Ok(format!(
+                "`context` は 0〜{MAX_CONTEXT} の整数で指定してください。"
+            ));
+        };
 
         // 走査は I/O + CPU の塊なので Rayon 側へ逃がし、Tokio ワーカーを空ける。
         spawn_rayon(move || {
-            run_grep(&work_dir, &pattern, &rel_path, case_insensitive, count_only)
+            run_grep(
+                &work_dir,
+                &pattern,
+                &rel_path,
+                case_insensitive,
+                count_only,
+                include.as_deref(),
+                context,
+            )
         })
         .await
     }
+}
+
+/// `context` の上限（Spec 16 D3）。`diff` の unified diff と同じ値。
+const MAX_CONTEXT: usize = 3;
+
+/// `include` のコンパイル。**glob 形の誤りを名指しで返す**（Spec 16 D1）。
+///
+/// モデルは習慣で `*.rs` と書く。これは Rust regex として**コンパイルに失敗する**
+/// ので、空振り（一致ゼロ）ではなく**その場で直せる文面**を返せる。
+/// 空振りで返すと、モデルはパターンの側を疑って再検索し周が増える。
+fn compile_include(pattern: &str, case_insensitive: bool) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        // `pattern` と同じ上限。片方だけ緩めない。
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|err| {
+            if pattern.starts_with('*') || pattern.contains("*.") {
+                format!(
+                    "`include` は glob ではなく正規表現です。\
+                     `*.rs` ではなく `\\.rs$` と書いてください（元のエラー: {err}）"
+                )
+            } else {
+                format!("`include` を正規表現として解釈できません: {err}")
+            }
+        })
+}
+
+/// 一致行の集合から、前後 `context` 行を含む窓を作って重なりを畳む。
+///
+/// **同じファイルの中だけで畳む**（Spec 16 D8）。跨ぐと行番号の意味が変わる。
+/// 戻りは 0 始まりの行番号の閉区間で、開始位置の昇順。
+fn merge_windows(matches: &[usize], context: usize, line_count: usize) -> Vec<(usize, usize)> {
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for &line in matches {
+        let start = line.saturating_sub(context);
+        let end = (line + context).min(line_count.saturating_sub(1));
+        match merged.last_mut() {
+            // 隣接（+1）も畳む — 間に 1 行だけ挟んで区切ると読みにくいだけ。
+            Some(last) if start <= last.1 + 1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
 }
 
 /// ファイル別の件数を「多い順」に並べる。同数はパス順で安定させる。
@@ -387,7 +462,15 @@ fn run_grep(
     rel_path: &str,
     case_insensitive: bool,
     count_only: bool,
+    include: Option<&str>,
+    context: usize,
 ) -> String {
+    // **範囲外は clamp せずエラー**（Spec 16 D7）。丸めると、指定した値と効いた値が
+    // 食い違ったまま出力が返り、モデルは 4 行分の文脈を見たつもりで読む。
+    if context > MAX_CONTEXT {
+        return format!("`context` は 0〜{MAX_CONTEXT} で指定してください（指定値: {context}）。");
+    }
+
     let regex = match regex::RegexBuilder::new(pattern)
         .case_insensitive(case_insensitive)
         // 破滅的な巨大パターンでメモリを食い潰さないための上限（regex 既定の 10 倍未満）。
@@ -398,6 +481,12 @@ fn run_grep(
         Err(err) => {
             return format!("正規表現として解釈できません: {err}\nパターンを直して再試行してください。");
         }
+    };
+
+    let include = match include.map(|p| compile_include(p, case_insensitive)) {
+        Some(Ok(regex)) => Some(regex),
+        Some(Err(message)) => return message,
+        None => None,
     };
 
     let (start, _) = match resolve_in_work_dir(work_dir, rel_path) {
@@ -411,10 +500,26 @@ fn run_grep(
         collect_files(&start)
     };
 
+    // **`include` は walk の後・read の前**（Spec 16 Notes 1）。
+    // read は減るが walk は減らないので、`MAX_FILES` の打ち切りには効かない。
+    let files: Vec<PathBuf> = match &include {
+        None => files,
+        Some(regex) => files
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| regex.is_match(name))
+            })
+            .collect(),
+    };
+
     let root = work_dir.canonicalize().unwrap_or_else(|_| work_dir.to_path_buf());
     let mut lines: Vec<String> = Vec::new();
     let mut per_file: Vec<(String, usize)> = Vec::new();
     let mut total_matches = 0usize;
+    // 表示した**一致行**の数。文脈行は数えない（Spec 16 D4）。
+    let mut shown_matches = 0usize;
     let mut output_chars = 0usize;
     let mut clipped = false;
 
@@ -434,30 +539,69 @@ fn run_grep(
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| file.display().to_string());
 
-        let mut file_matches = 0usize;
-        for (index, line) in text.lines().enumerate() {
-            if !regex.is_match(line) {
-                continue;
-            }
-            file_matches += 1;
-            total_matches += 1;
-            // **表示は止めても数えるのは止めない。** 走査そのものは一致ゼロの
-            // grep でも全ファイルに及ぶので、数え続けても最悪コストは変わらない。
-            // 表示件数を総数として返すと「何件あるか」を読み手が誤り、
-            // 確かめるための grep が周を食う（一致行の列挙と件数の集計は別の問い）。
-            if count_only || clipped {
-                continue;
-            }
-            if lines.len() >= MAX_MATCHES || output_chars > MAX_OUTPUT_CHARS {
-                clipped = true;
-                continue;
-            }
-            let entry = format!("{display}:{}: {}", index + 1, clip_line(line));
-            output_chars += entry.chars().count();
-            lines.push(entry);
+        let file_lines: Vec<&str> = text.lines().collect();
+        let hits: Vec<usize> = file_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| regex.is_match(line))
+            .map(|(index, _)| index)
+            .collect();
+
+        // **表示は止めても数えるのは止めない。** 走査そのものは一致ゼロの
+        // grep でも全ファイルに及ぶので、数え続けても最悪コストは変わらない。
+        // 表示件数を総数として返すと「何件あるか」を読み手が誤り、
+        // 確かめるための grep が周を食う（一致行の列挙と件数の集計は別の問い）。
+        total_matches += hits.len();
+        if !hits.is_empty() {
+            per_file.push((display.clone(), hits.len()));
         }
-        if file_matches > 0 {
-            per_file.push((display, file_matches));
+        if count_only || clipped || hits.is_empty() {
+            continue;
+        }
+
+        // **数えるのは一致行だけ。文脈行は文字数の枠だけを食う**（Spec 16 D4）。
+        let room = MAX_MATCHES.saturating_sub(shown_matches);
+        if room == 0 || output_chars > MAX_OUTPUT_CHARS {
+            clipped = true;
+            continue;
+        }
+        let shown_hits = &hits[..room.min(hits.len())];
+        if shown_hits.len() < hits.len() {
+            clipped = true;
+        }
+
+        // 窓は**このファイルの中だけ**で畳む（Spec 16 D8）。
+        let windows = merge_windows(shown_hits, context, file_lines.len());
+        let mut previous_end: Option<usize> = None;
+        for (start, end) in windows {
+            // `--` は context > 0 のとき、**同じファイル内で離れた窓の間**だけ。
+            // ファイルが変わるところでは出さない（パスが行頭にあり既に区切れている）。
+            if context > 0
+                && let Some(last_end) = previous_end
+                && start > last_end + 1
+            {
+                lines.push("--".to_owned());
+                output_chars += 2;
+            }
+            for (offset, line) in file_lines[start..=end].iter().enumerate() {
+                let index = start + offset;
+                let is_hit = shown_hits.binary_search(&index).is_ok();
+                let separator = if is_hit { ':' } else { '-' };
+                // 文脈行にも 240 字のクリップを掛ける（1 本の長い行で枠が飛ばないように）。
+                let entry = format!("{display}:{}{separator} {}", index + 1, clip_line(line));
+                output_chars += entry.chars().count();
+                lines.push(entry);
+                if is_hit {
+                    shown_matches += 1;
+                }
+            }
+            previous_end = Some(end);
+            // **打ち切りは窓の境界で行う。** ブロックの途中では切らない
+            // （Spec 17 D3 と同じ — 切ってよいのは一覧であって中身ではない）。
+            if output_chars > MAX_OUTPUT_CHARS {
+                clipped = true;
+                break;
+            }
         }
     }
 
@@ -472,26 +616,41 @@ fn run_grep(
     let mut out = String::new();
     if count_only {
         out.push_str(&format!("全 {total_matches} 件が一致（{files_hit} ファイル）。\n"));
+        // **黙って無視しない**（Spec 16 S3）。指定した引数が効かなかったことは、
+        // 指定した側に伝わらないと次の手が選べない。拒否にしないのは、件数は
+        // 正しく返せるのにその周の答えが無くなるため。
+        if context > 0 {
+            out.push_str("（`count_only` では行を返さないため `context` は無視しました）\n");
+        }
         out.push_str(&format_per_file(&mut per_file));
     } else if clipped {
         out.push_str(&format!(
-            "全 {total_matches} 件が一致（{files_hit} ファイル）。うち先頭 {} 件を表示:\n",
-            lines.len()
+            "全 {total_matches} 件が一致（{files_hit} ファイル）。うち先頭 {shown_matches} 件を表示:\n"
         ));
         out.push_str(&lines.join("\n"));
+        // **表示の打ち切り。** ここでは `include` が効く（read するファイルが減る）。
         out.push_str(
             "\n（表示上限に達したため一致行を打ち切りました。総数は上の数字が正しい。\
-             行が要らないなら `count_only: true`、絞るなら `path` かパターンを具体化してください）\n",
+             行が要らないなら `count_only: true`、絞るなら `include` でファイル名を、\
+             `path` で場所を、またはパターンを具体化してください",
         );
+        if context > 0 {
+            out.push_str("。`context` を下げると表示できる一致が増えます");
+        }
+        out.push_str("）\n");
         out.push_str(&format_per_file(&mut per_file));
     } else {
         out.push_str(&format!("{total_matches} 件が一致:\n"));
         out.push_str(&lines.join("\n"));
     }
     if files_truncated {
+        // **走査の打ち切り。`include` は効かない**（Spec 16 D6）— 名前で絞るのは
+        // read の前だが walk の後なので、走査するファイル数そのものは減らない。
+        // ここで `include` を案内すると、直らない方法を試させることになる。
         out.push_str(&format!(
             "\n（ファイル数が {MAX_FILES} を超えたため、一部は走査していません。\
-             `path` で範囲を絞ってください）"
+             `path` で場所を絞ってください。**`include` では直りません** — \
+             名前での絞り込みは読むファイルを減らすだけで、走査するファイルは減りません）"
         ));
     }
     out
@@ -1229,5 +1388,243 @@ mod tests {
             .unwrap();
         assert!(!escape.contains("外側"), "囲いの外の内容が漏れないこと: {escape}");
         assert!(!escape.contains("---"), "diff として成立させないこと: {escape}");
+    }
+
+    // ---- include / context（Spec 16） --------------------------------------
+
+    /// `include` はファイル名で対象を絞る。
+    #[tokio::test]
+    async fn include_narrows_the_scan_to_matching_file_names() {
+        let dir = TempDir::new("grep-include");
+        dir.write("a.rs", "needle in code\n");
+        dir.write("b.md", "needle in prose\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "include": "\\.rs$" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("a.rs"), "{reply}");
+        assert!(!reply.contains("b.md"), "台帳側が混じっている: {reply}");
+        assert!(reply.contains("1 件が一致"), "{reply}");
+    }
+
+    /// **`include` の一致対象は名前だけ。** フォルダ名に一致しても配下は巻き込まない。
+    #[tokio::test]
+    async fn include_matches_the_file_name_not_the_path() {
+        let dir = TempDir::new("grep-include-dir");
+        // `run.json` という名前の**フォルダ**の下にファイルを置く。
+        dir.write("run.json/inside.txt", "needle\n");
+        dir.write("other.txt", "needle\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "include": "run\\.json" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("一致なし"), "配下を巻き込んでいる: {reply}");
+    }
+
+    /// **glob 形の誤りは名指しで返す**（Spec 16 D1）。
+    ///
+    /// 空振り（一致ゼロ）で返すと、モデルはパターンの側を疑って再検索し周が増える。
+    #[tokio::test]
+    async fn a_glob_shaped_include_is_named_rather_than_silently_missing() {
+        let dir = TempDir::new("grep-include-glob");
+        dir.write("a.rs", "needle\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "include": "*.rs" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("glob ではなく正規表現"), "{reply}");
+        assert!(reply.contains("\\.rs$"), "直し方が書かれていない: {reply}");
+    }
+
+    /// `context` で前後の行が `-` 付きで返る。**一致行の `:` は変わらない。**
+    #[tokio::test]
+    async fn context_returns_neighbouring_lines_marked_with_a_dash() {
+        let dir = TempDir::new("grep-context");
+        dir.write("a.txt", "one\ntwo\nneedle\nfour\nfive\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 1 }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("a.txt:3: needle"), "一致行は `:`: {reply}");
+        assert!(reply.contains("a.txt:2- two"), "前の行は `-`: {reply}");
+        assert!(reply.contains("a.txt:4- four"), "後の行は `-`: {reply}");
+        assert!(!reply.contains("one"), "窓の外は出ないこと: {reply}");
+    }
+
+    /// **範囲外の `context` はエラー。clamp しない**（Spec 16 D7）。
+    #[tokio::test]
+    async fn an_out_of_range_context_is_an_error_rather_than_clamped() {
+        let dir = TempDir::new("grep-context-range");
+        dir.write("a.txt", "needle\n");
+
+        let too_big = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 4 }),
+            )
+            .await
+            .unwrap();
+        assert!(too_big.contains("0〜3 で指定"), "{too_big}");
+        assert!(!too_big.contains("needle"), "走らせないこと: {too_big}");
+
+        let negative = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": -1 }),
+            )
+            .await
+            .unwrap();
+        assert!(negative.contains("0〜3"), "{negative}");
+    }
+
+    /// 重なった窓は畳み、同じ行を 2 回出さない（Spec 16 D5）。
+    #[tokio::test]
+    async fn overlapping_windows_are_merged_without_repeating_a_line() {
+        let dir = TempDir::new("grep-merge");
+        dir.write("a.txt", "one\nneedle\nmiddle\nneedle\nfive\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 1 }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            reply.matches("a.txt:3- middle").count(),
+            1,
+            "重なった行が 2 回出ている: {reply}"
+        );
+        assert!(!reply.contains("--"), "畳んだので区切りは要らない: {reply}");
+    }
+
+    /// **`--` は同じファイル内で離れた窓の間だけ**（Spec 16 D8）。
+    ///
+    /// ファイルが変わるところでは出さない（パスが行頭にあり既に区切れている）。
+    #[tokio::test]
+    async fn the_separator_appears_only_between_distant_windows_of_one_file() {
+        let dir = TempDir::new("grep-separator");
+        dir.write(
+            "a.txt",
+            "needle\nx\nx\nx\nx\nx\nneedle\n",
+        );
+        dir.write("b.txt", "needle\n");
+
+        let split = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 1, "path": "a.txt" }),
+            )
+            .await
+            .unwrap();
+        assert!(split.contains("\n--\n"), "離れた窓の間には出ること: {split}");
+
+        let across = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 0 }),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !across.contains("--"),
+            "context 0 とファイル跨ぎでは出さないこと: {across}"
+        );
+    }
+
+    /// **`context` を変えても総数は変わらない**（Spec 16 D4）。
+    ///
+    /// 数えるのは一致行だけで、文脈行は文字数の枠しか食わない。
+    #[tokio::test]
+    async fn context_does_not_change_the_reported_total() {
+        let dir = TempDir::new("grep-total");
+        dir.write("a.txt", "one\nneedle\nthree\nfour\nneedle\nsix\n");
+
+        let bare = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle" }),
+            )
+            .await
+            .unwrap();
+        let padded = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 1 }),
+            )
+            .await
+            .unwrap();
+
+        assert!(bare.contains("2 件が一致"), "{bare}");
+        assert!(padded.contains("2 件が一致"), "{padded}");
+    }
+
+    /// ファイルの端で窓がはみ出しても落ちない。
+    #[tokio::test]
+    async fn a_window_at_either_edge_of_a_file_is_clamped_safely() {
+        let dir = TempDir::new("grep-edge");
+        dir.write("a.txt", "needle\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "context": 3 }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("a.txt:1: needle"), "{reply}");
+    }
+
+    /// **`count_only` は `include` で絞った結果を数える。**
+    ///
+    /// `context` は集計モードでは出力に現れない（返すのは件数だけなので、
+    /// 無視されたことが結果から読める）。
+    #[tokio::test]
+    async fn count_only_counts_within_the_include_filter() {
+        let dir = TempDir::new("grep-count-include");
+        dir.write("a.rs", "needle\nneedle\n");
+        dir.write("b.md", "needle\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({
+                    "pattern": "needle", "include": "\\.rs$",
+                    "count_only": true, "context": 2
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("全 2 件が一致"), "{reply}");
+        assert!(!reply.contains("b.md"), "{reply}");
+        assert!(!reply.contains("needle"), "行は返さないこと: {reply}");
+        // **黙って無視しない**（Spec 16 S3）。
+        assert!(
+            reply.contains("`context` は無視しました"),
+            "無視した旨が出ていない: {reply}"
+        );
     }
 }

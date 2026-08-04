@@ -348,7 +348,7 @@ There are eight built-in tools. External capabilities are added through MCP.
 | Tool | What it does | Scope |
 |---|---|---|
 | `remember` | Append one line to `Memory.md` (self-updating long-term memory) | Calling agent's configuration folder |
-| `grep` | Find **lines** matching a regular expression (`path:line number: content`). `count_only: true` returns **counts only** | **Work folder only** |
+| `grep` | Find **lines** matching a regular expression (`path:line number: content`). `count_only: true` returns **counts only**, `include` narrows by **file name**, `context: 1–3` also returns **surrounding lines** | **Work folder only** |
 | `fd` | Find files and folders by **name** (relative path list; folders end in `/`) | **Work folder only** |
 | `diff` | Compare two files as a unified diff | **Work folder only** |
 | `sd` | **Replace** content in a file with a regular expression (editing). `paths` previews diffs across **several files at once** (preview only, up to 20) | **Work folder only** |
@@ -390,6 +390,10 @@ you must enable it per agent *and* have at least one `allow` pattern.
 `grep` / `fd` / `diff` are built in because these are the tools coding agents use most often, and they are dramatically cheaper and faster than reading entire files. Token efficiency is one of this product's primary concerns. MCP filesystem servers also support search, but it matters that these work in every environment without an external process.
 
 For `grep`, **the cap applies to what is displayed, not to what is counted**. Even when matches exceed 100, the total returned is the real total, along with a per-file breakdown. (Returning the displayed count as the total would force a second search just to learn how many matches exist.) When only the count is needed, pass `count_only: true` to omit the matching lines.
+
+**`include` narrows the search by file name** ([Spec 16](specs/16_grep-precision.md)). When the same term appears across `.md`, `.rs`, and `.yaml`, the 100-match budget fills up with prose and the code matches fall off the end. **It takes a regular expression, not a glob** — write `\.rs$`, not `*.rs`. Every pattern in `grep` / `fd` / `sd` is a Rust regular expression, and mixing two pattern languages inside one tool guarantees they get confused; a glob-shaped `include` fails to compile and comes back with a message naming the mistake, so it never silently returns nothing. **It narrows which files are read, not which are walked** — when the 20,000-file scan limit is hit, only `path` fixes that; `include` does not.
+
+**`context: 1–3` also returns the lines around each match.** A matching line is prefixed `path:line number:` while surrounding lines use `path:line number-`, so **the two are distinguishable by the separator** — without that, context lines get reported as matches. This removes a whole round trip that would otherwise re-read the file just to see what surrounds a hit.
 
 `fd` matches **only names** (the final path component). Matching against whole relative paths would pull in every descendant of a matching directory and fill the list with noise. Matching is case-insensitive by default: name searches inherently have varied spelling, and exact matching by default creates unnecessary miss-and-retry cycles. This is deliberately the reverse of `grep`.
 
