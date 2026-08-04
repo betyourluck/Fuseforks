@@ -2,7 +2,26 @@
 
 **ID**: 04
 **Date**: 2026-07-29
-**Status**: rev3 査読承認 → Phase 0〜2 完了。残タスクは実機確認のみ
+**Status**: **Done**（2026-08-04 実機確認まで完了）。rev3 査読承認 → Phase 0〜2 完了（2026-07-29）
+
+**実機確認の記録**（2026-08-04、`concordia.log`）: 束ねて返る完走を観測した。
+
+```text
+13:16:58  plan wave:   agent=agent wave=1 tasks=6 to=[agent_2,agent_5,agent_4,agent_6,agent_7,agent_3] msg_chars=1412
+13:17:15  plan bundle: agent=agent wave=1 tasks=6 chars=3630 elapsed_ms=17360
+13:17:15  tool: agent=agent round=3 name=plan ok=true body_chars=3630
+13:17:54  turn: agent=agent hop=0 rounds=5/36 waves=1 stop=- prompt=106379 cached=78825
+```
+
+**配送 → 合流 → 進行役が束ねを `plan` の戻り値として受け取り、正常終了**（`stop=-`）
+まで揃っている。同じ形が 2026-08-03 の 20:47（5 体・4,201 字・`rounds=10/36
+stop=-`）と 22:35（3 体・3,093 字）にもあり、**計 3 回**。
+
+**観測が遅れた理由も記録しておく**: 台帳が「束ねて返る完走は未観測のまま」と
+書いていたため、**探す側がその記述を信じて実機のログを見に行かなかった**。
+実際には 8/3 の時点で既に写っていた。**「未観測」と書いた台帳は、観測された
+かどうかを自動では知らない** — 残タスクとして書いた項目は、期限ではなく
+**次にその領域を触ったときに実測で確かめ直す**のが正しい扱い。
 **Branch**: なし（main へ Phase 単位で直接コミット。契約凍結 Phase は本 Spec の
 査読承認を前提条件とする — Spec 01〜03 と同じプロセス）
 
