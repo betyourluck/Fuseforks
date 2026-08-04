@@ -1769,6 +1769,94 @@ async fn an_agent_can_opt_out_of_the_room_log() {
     );
 }
 
+/// 広場ログが**抜粋である**ことと、全文の取り方をモデルへ書くこと。
+///
+/// 起点は実機（2026-08-04）— 利用者が「チャットの全文が渡っていない、途中で
+/// 途切れているとソネットが報告する」と言った。原因は広場ログの 200 字打ち切りで
+/// 機構は設計どおりだったが、届く本文には `…` しか無く、**「省略された」のか
+/// 「相手がそこで言い終えた」のかを区別できない**。
+///
+/// 打ち切りは母数と次の手を書く規律（failures.md #44 / #55）は、同梱ツールだけで
+/// なく**プロンプト合成にも掛かる**。#55 の一般化 1 —「黙って切らない」は
+/// 「切ったと言う」ではなく「切る前の量を言う」。
+#[tokio::test]
+async fn the_room_log_declares_it_is_an_excerpt_and_how_to_get_the_full_text() {
+    #[derive(Default)]
+    struct LongBackend {
+        seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for LongBackend {
+        fn name(&self) -> &str {
+            "long"
+        }
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            self.seen.lock().unwrap().push(req.messages.clone());
+            Ok(ChatResponse {
+                text: Some("あ".repeat(500)),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            })
+        }
+    }
+
+    let backend = Arc::new(LongBackend::default());
+    let dir = TempDir::new("room-excerpt");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    for id in [&a, &b] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    // a に 500 字を喋らせ、b の広場ログの原料にする。
+    orchestrator.send_user_message(&a, "長く話して").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&b, "どう？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.seen.lock().unwrap().clone();
+    let joined = requests[1]
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        joined.contains("この場で交わされていた会話"),
+        "前提: b に広場ログが載ること。実際:\n{joined}"
+    );
+    assert!(
+        joined.contains("抜粋"),
+        "抜粋であることを明示すること（`…` だけでは省略と読めない）。実際:\n{joined}"
+    );
+    assert!(
+        joined.contains("全 500 字"),
+        "切った行に元の長さを書くこと（母数が無いと「全部見た」と読まれる = #55）。実際:\n{joined}"
+    );
+    assert!(
+        joined.contains("ask"),
+        "全文を得る次の手を書くこと（#44。歯止めの先に道が要る）。実際:\n{joined}"
+    );
+}
+
 /// **送った user 発話が、次のターンの履歴にそのまま現れること。**
 ///
 /// 食い違うとその位置で前方一致が切れる。プロバイダに依らない — Anthropic の

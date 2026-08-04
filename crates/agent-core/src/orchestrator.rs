@@ -4781,24 +4781,53 @@ async fn compose_room_log(
     };
 
     // 収集は新しい順なので、表示は古い順へ戻す。
+    //
+    // 切った行には**元の長さ**を添える。`…` だけでは「省略された」のか
+    // 「相手がそこで言い終えた」のかをモデルが区別できず、抜粋を発言の全体だと
+    // 読む（実機で観測、2026-08-04）。#55 の一般化 1 —「黙って切らない」は
+    // 「切ったと言う」ではなく「切る前の量を言う」。
+    let mut clipped = 0usize;
     let lines: Vec<String> = overheard
         .iter()
         .rev()
         .map(|message| {
+            let full_chars = message.content.trim().chars().count();
             let excerpt = truncate_chars(&message.content, config.room_log_excerpt_chars);
+            let tail = if full_chars > config.room_log_excerpt_chars {
+                clipped += 1;
+                format!("（全 {full_chars} 字）")
+            } else {
+                String::new()
+            };
             format!(
-                "- {} → {}: {}",
+                "- {} → {}: {}{}",
                 label(&message.from),
                 label(&message.to),
-                excerpt
+                excerpt,
+                tail
             )
         })
         .collect();
 
+    // 次の手は「本人へ ask」しかない。広場ログは読み直す経路を持たないので、
+    // それを書かないと同じ抜粋を眺め続けることになる（#44）。
+    let notice = if clipped > 0 {
+        format!(
+            "うち {clipped} 件は途中で切れています（行末の「全 N 字」が元の長さ）。\
+             **全文が要るなら、その発言をした相手へ `ask` で尋ねてください** — \
+             ここで読み直す方法はありません。"
+        )
+    } else {
+        String::new()
+    };
+
     Some(format!(
         "## この場で交わされていた会話\n\
          あなた宛ではありませんが、同じ場に居たので聞こえていた発言です。\
-         **返事をする義務はありません。** 文脈として使ってください。\n{}",
+         **返事をする義務はありません。** 文脈として使ってください。\n\
+         直近 {} 件まで・各行は先頭 {} 字の抜粋です。{notice}\n{}",
+        config.room_log_window,
+        config.room_log_excerpt_chars,
         lines.join("\n")
     ))
 }
