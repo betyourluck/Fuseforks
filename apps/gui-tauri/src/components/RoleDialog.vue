@@ -26,6 +26,8 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import CodeEditor from "./CodeEditor.vue";
+
 import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { askConfirm } from "../composables/useConfirm";
@@ -344,14 +346,16 @@ async function remove(role: Role): Promise<void> {
           <p class="mb-1 mt-4 text-xs font-semibold text-ink">{{ $t("roles.defaults.heading") }}</p>
           <p class="mb-2 text-ink-dim">{{ $t("roles.defaults.help") }}</p>
 
-          <label class="mb-2 block">
+          <div class="mb-2">
             <span class="mb-0.5 block text-ink-dim">{{ $t("roles.defaults.construct") }}</span>
-            <textarea
-              v-model="draft.defaults.construct"
-              rows="6"
-              class="w-full rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-            ></textarea>
-          </label>
+            <div class="h-48 overflow-hidden rounded border border-line">
+              <CodeEditor
+                v-model="draft.defaults.construct"
+                class="h-full"
+                language="markdown"
+              />
+            </div>
+          </div>
 
           <label class="mb-2 block">
             <span class="mb-0.5 block text-ink-dim">{{ $t("roles.defaults.modelTemplate") }}</span>
