@@ -773,7 +773,25 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**Draft rev3・Phase 0 に入れる状態**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0 完了・残 P1〜P5**）
+
+**P0 完了**（2026-08-04）— `data_contract.yaml` へ `command_tool_contract`
+（`file_tool_contract` の隣）。不変条件 15 本 + 置き場 2 ファイル。あわせて
+`enabled_tools_invariant` へ**破壊的変更**を記録した（`null` の意味を
+「全同梱ツール」から「既定集合 `DEFAULT_ENABLED_TOOLS`」へ変え、
+`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}`。着地は P3。移行は不要で、
+`null` の解釈が変わるだけで**既存個体は `run` を得ない**のが移行の目的）。
+
+**P0 で既存の追従漏れを 2 件回収した** — 契約を書く前に隣の記述を読んだので出た:
+`tool_extension_point` が同梱ツールを**「4 本」**のままにしていた（Spec 01 の
+`sd` / `yq` と Spec 09 の `file` が入っておらず、**同じファイルの
+`enabled_tools_invariant` は 7 本**＝ 1 つの契約ファイルの中で本数が 2 つあった）/
+`specs/02` に Spec 09 の続報が無かった（Spec 09 Phase 4 は「Spec 02・07 の
+本数記述へ続報を追記」と書いたが、**実際に入ったのは 07 だけ**）。
+**一般化: 数の記述は、増えた名前で grep しても引っかからない。**
+`file` で全台帳を引いても「4 本」「6 本」は出てこない — #51 の grep 規律は
+**名前**を対象にしており、**名前の個数を述べた文**は網の外。集合に要素を足したら
+`\d 本` / `\d 個` / `seven` のような**数量表現でも引く**。
 
 起点は利用者の要望（2026-08-04）—「エージェントに python とか Lint、curl を
 使わせたい」。同梱ツールは読む系と書く系で閉じており、**書いたものを走らせて
