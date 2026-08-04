@@ -78,8 +78,7 @@
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on an edge removes the connection."
       }
-    },
-    "menuCommands": "Command registry"
+    }
   },
   "common": {
     "close": "Close"
@@ -259,7 +258,8 @@
     "notCreated": "(not created)",
     "discard": "Discard changes",
     "saving": "Saving…",
-    "save": "Save"
+    "save": "Save",
+    "commandPlaceholder": "{\n  \"version\": 1,\n  \"allow\": [\"ruff *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n}\n\nOnly calls matching allow are executed; deny wins over allow.\nCalls in neither list are recorded under pending — move them to allow or deny here.\nA trailing * means \"any remaining arguments\". A pattern without * matches only a call with no arguments.\nThis is not a safety mechanism: allowing a command permits everything that command can do."
   },
   "ordinance": {
     "title": "Village Ordinance",
@@ -645,30 +645,5 @@
       "ragSources": "RAG sources to reference"
     },
     "villageScope": "Roles are stored in the village (world.json), so they travel with it when shared."
-  },
-  "commands": {
-    "heading": "Command registry",
-    "help": "Agents can only run commands registered here. They cannot write an executable name — they can only call a registered name.",
-    "notASafetyMechanism": "Registration reduces approval overhead; it is not a safety mechanism. Registering a command permits everything that command can do. The work-folder limit and trash-only deletion do not constrain registered commands.",
-    "requested": "Commands agents asked for",
-    "requestCount": "{count} times",
-    "adopt": "Register",
-    "dismiss": "Dismiss",
-    "untitled": "(unnamed)",
-    "none": "No registrations",
-    "add": "Add",
-    "remove": "Delete this registration",
-    "save": "Save",
-    "name": "Name (what agents call)",
-    "description": "Description (when to call it)",
-    "program": "Executable (absolute path)",
-    "resolve": "Find on PATH",
-    "args": "Fixed arguments (one per line)",
-    "allowExtraArgs": "Let agents append arguments",
-    "interpreterWarning": "This executable can run arbitrary code. Allowing appended arguments lets agents run anything.",
-    "timeoutSecs": "Timeout (seconds, 1-3600)",
-    "cwd": "Working folder (optional)",
-    "cwdPlaceholder": "Defaults to the calling agent's work folder",
-    "notFoundOnPath": "`{name}` was not found on PATH."
   }
 }

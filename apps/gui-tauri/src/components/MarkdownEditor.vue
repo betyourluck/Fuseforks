@@ -34,7 +34,11 @@ const dirty = () => content.value !== original.value;
 
 /** 種別ごとの案内文。mcp.json だけは Markdown ではなく JSON。 */
 const placeholder = computed(() =>
-  kind.value === "mcp" ? t("editor.mcpPlaceholder") : t("editor.markdownPlaceholder"),
+  kind.value === "mcp"
+    ? t("editor.mcpPlaceholder")
+    : kind.value === "command"
+      ? t("editor.commandPlaceholder")
+      : t("editor.markdownPlaceholder"),
 );
 
 async function load(): Promise<void> {

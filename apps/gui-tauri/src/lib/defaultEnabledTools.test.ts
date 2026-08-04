@@ -11,16 +11,23 @@
  * 画面では ON に見えるのに提示されない（またはその逆）になり、
  * 「更新しただけで実行能力が増えない」という約束が画面から読めなくなる。
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error @types/node を入れない方針のため（vite.config.ts と同じ扱い）
+import { readFileSync } from "node:fs";
+// @ts-expect-error 同上
+import { dirname, resolve } from "node:path";
+// @ts-expect-error 同上
+import { fileURLToPath } from "node:url";
+
+/** このファイルの位置。`__dirname` は ESM に無いので URL から起こす。 */
+const here = dirname(fileURLToPath(import.meta.url));
 
 const rustSource = readFileSync(
-  resolve(__dirname, "../../../../crates/agent-core/src/tools/mod.rs"),
+  resolve(here, "../../../../crates/agent-core/src/tools/mod.rs"),
   "utf-8",
 );
 const vueSource = readFileSync(
-  resolve(__dirname, "../components/AgentSettingsDialog.vue"),
+  resolve(here, "../components/AgentSettingsDialog.vue"),
   "utf-8",
 );
 

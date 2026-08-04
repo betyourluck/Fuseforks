@@ -22,7 +22,7 @@ export type ModelTemplateId = string;
 export type AgentStatus = "idle" | "starting" | "running" | "stopping" | "failed";
 
 /** 設定ファイルの種別。実ファイル名の解決は Rust 側が行う。 */
-export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp";
+export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "command";
 
 /**
  * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
@@ -578,6 +578,13 @@ export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
   construct: "Construct.md",
   /** エージェント別 MCP。保存時に JSON 検証があり、壊れた内容は保存拒否される。 */
   mcp: "mcp.json",
+  /**
+   * エージェント別のコマンド許容規則（Spec 15 rev4）。同じく JSON 検証あり。
+   *
+   * **人と機械の両方が書く唯一の設定ファイル** — エージェントが `pending` を
+   * 足すので、開きっぱなしにしていると画面の内容が古くなることがある。
+   */
+  command: "command.json",
 };
 
 /** 状態の辞書キー。表示は `$t(STATUS_LABEL_KEYS[s])` で引く（Spec 13 P3）。 */
@@ -588,55 +595,3 @@ export const STATUS_LABEL_KEYS: Record<AgentStatus, string> = {
   stopping: "labels.status.stopping",
   failed: "labels.status.failed",
 };
-
-// ---- 登録済みコマンド（Spec 15）-----------------------------------------------
-
-/**
- * 1 件の登録。`commands.json` に入る形そのもの。
- *
- * **エージェントは実行ファイル名を書けない。書けるのは `name` だけ** —
- * これが閉じた許容の実装で、`PATH` 解決の曖昧性と Windows のコマンド名正規化が
- * 問題ごと消える理由でもある。
- */
-export interface CommandRegistration {
-  /** エージェントが呼ぶときの名前。登録簿の中で一意。 */
-  name: string;
-  /** モデルへ提示する説明。**いつ呼ぶべきか**を書く。 */
-  description: string;
-  /** 実行ファイルの**絶対パス**。登録時に解決して記録する。 */
-  program: string;
-  /** 常に渡す引数。エージェントの `extraArgs` は**この後ろへ足される**。 */
-  args: string[];
-  /**
-   * エージェントが引数を足せるか。
-   *
-   * **汎用インタプリタ（python / node / sh）で true にすると任意コード実行になる。**
-   * 画面は警告を出すが止めない — **警告リストは除外リストではない**
-   * （許容の判定に一切関与しない）。
-   */
-  allowExtraArgs: boolean;
-  /** タイムアウト（秒）。既定 60 / 上限 3600。 */
-  timeoutSecs: number;
-  /** 実行時の作業フォルダ。`null` なら呼んだエージェントの作業フォルダ。 */
-  cwd: string | null;
-}
-
-/** 一覧で返る 1 件。`unavailable` は「登録はあるが使えない」理由。 */
-export interface CommandView extends CommandRegistration {
-  /** 使えない理由。`null` なら使える。 */
-  unavailable: string | null;
-}
-
-/** エージェントが呼んだが登録が無かった記録。 */
-export interface CommandRequestView {
-  /** 呼ばれた登録名。 */
-  name: string;
-  /** エージェントが渡そうとした**追加引数だけ**。 */
-  attemptedExtraArgs: string[];
-  /** 呼んだエージェント。 */
-  agentId: AgentId;
-  /** 最初に要求された時刻（epoch ミリ秒）。 */
-  firstRequestedAtMs: number;
-  /** 要求された回数。 */
-  count: number;
-}

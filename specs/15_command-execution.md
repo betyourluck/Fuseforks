@@ -245,11 +245,11 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
       **旧 `CommandRegistry` 系は P3' まで残す**（下記 P1' 記録）。当初の記述:
       `command.rs` を `CommandPolicy` へ。パターン照合の純機構
       （完全一致 / 末尾 `*` / deny 優先 / 正規化 3 段）+ `pending` の畳みと上限。単体
-- [ ] Phase 2' — `tools/run.rs` の解決部分を差し替え（`resolve_program` を実行時に使う /
+- [x] Phase 2' — 完了（2026-08-04）。`tools/run.rs` の解決部分を差し替え（`resolve_program` を実行時に使う /
       解決したフルパスを出す）。**実行の機構は触らない**
-- [ ] Phase 3' — 配線: `ConfigFileKind::Command` の読み書き、`RunTool` が
+- [x] Phase 3' — 完了（2026-08-04）。配線: `ConfigFileKind::Command` の読み書き、`RunTool` が
       per-agent のポリシーを引く、`spec_for` が allow を列挙。IPC 5 本を撤去。結合
-- [ ] Phase 4' — `CommandRegistryPane.vue` を撤去し、`AgentSettingsDialog` の
+- [x] Phase 4' — 完了（2026-08-04）。`CommandRegistryPane.vue` を撤去し、`AgentSettingsDialog` の
       設定ファイル編集へ `command.json` を追加。`run` の行と警告は残す
 - [ ] Phase 5 — 台帳整合 + 実機確認（下記）
 
@@ -320,6 +320,39 @@ P2'〜P4' で移す。モジュール doc の冒頭に「2 つの機構が同居
 - **`offers_anything()` を `CommandPolicy` に置いた。** 提示の 2 段ゲートの
   2 段目（`allow` が 1 件以上）は**ポリシーの性質**であって配線の都合ではない。
   `run.rs` 側で `!policy.allow.is_empty()` と書くと、判定が 2 箇所に散る
+
+## P2'〜P4' 実装記録（2026-08-04）
+
+**P2'**: `ConfigFileKind::Command` を追加し、`write_config` の JSON 検証を
+mcp と command の 2 種へ広げた。`RunTool` は登録簿を持たず**呼び出しの瞬間に
+ファイルを読む**。`run_program` は `run_registered` から名前と引数だけを変え、
+中身（`env_clear` / 出力の固定枠 / 木ごと kill / タイムアウト / cancel）は
+1 行も触っていない。
+
+**`AgentTool::spec_for` を async にした（P2' の最大の発見）。** 同期のままだと
+`spec_for` はファイルを読めず写しを持つ設計になるが、**その写しは `call` でしか
+埋まらない** — つまり一度も呼ばれていないツールは永久に提示されない。
+結合テストが `allow を書いたら提示されること` で落ちて初めて見えた。
+async にすると**提示も判定も同じ経路でファイルを読み、写しごと消える**。
+一般化: **「読めないから写しを持つ」は、写しを埋める経路が別に要る**。
+その経路が自分自身の呼び出しだと、鶏と卵になる。
+
+**P3'**: `command.rs` から rev3 の 6 型と単体 15 本、`config_store.rs` から
+I/O 4 本・ワイヤ形 2 つ・store テスト 7 本を撤去。`write_atomic` は残る
+（Spec 15 とは独立した改善）。
+
+**P4'**: `CommandRegistryPane.vue` と rev3 の IPC ラッパ・型・辞書を撤去し、
+**`command.json` を既存の設定ファイルタブへ足しただけ**（`CONFIG_FILE_LABELS` へ
+1 行）。`mcp.json` と同じ棚に置く判断が、UI の作業をほぼゼロにした。
+
+**P4 のコミットは `npm run build` が壊れていた。** `defaultEnabledTools.test.ts` を
+足したあと build → test の順で走らせたため、**新しいテストファイルが型検査に
+一度も載っていなかった**。この repo は `@types/node` を入れない方針で、
+既存テストは `@ts-expect-error` で Node の API を通している（`vite.config.ts` と
+同じ扱い）— **作法に気づかず `@types/node` を入れると、既存 2 ファイルの
+`@ts-expect-error` が「不要」になって別のエラーが出る**。
+一般化: **テストを足したら、テストではなくビルドを先に回す。**
+順序を逆にすると、その回のビルドは新しいファイルを見ていない。
 
 ## 未決 — **ゼロ**（D8〜D10 は 2026-08-04 に利用者裁定）
 

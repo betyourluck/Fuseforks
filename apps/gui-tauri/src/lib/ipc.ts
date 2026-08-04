@@ -19,9 +19,6 @@ import type {
   AgentSnapshot,
   AgentSpec,
   BlackboardNote,
-  CommandRegistration,
-  CommandRequestView,
-  CommandView,
   ConfigFileKind,
   ErrorPayload,
   ForkPoint,
@@ -401,31 +398,3 @@ export const deleteSchedule = (id: string) => call<void>("delete_schedule", { id
 /** 予定の一時停止・再開。停止中は発火も消化もされない。 */
 export const setScheduleEnabled = (id: string, enabled: boolean) =>
   call<void>("set_schedule_enabled", { id, enabled });
-
-// ---- 登録済みコマンド（Spec 15）-----------------------------------------------
-
-/** 登録済みコマンドの一覧。`unavailable` が入っていれば今は使えない。 */
-export const listCommands = () => call<CommandView[]>("list_commands");
-
-/**
- * 登録簿をまるごと保存する。戻りは落とした・丸めた登録の説明（空なら全部通った）。
- *
- * **保存のたびにコア側が実在検査を掛け直す** — パスを直したらその場で有効へ戻る。
- */
-export const saveCommands = (commands: CommandRegistration[]) =>
-  call<string[]>("save_commands", { commands });
-
-/**
- * `PATH` から実行ファイルの絶対パスを引く（登録画面の補助）。
- *
- * 記録するのは**解決後の絶対パス**で、実行時に `PATH` は引き直さない。
- */
-export const resolveCommandProgram = (name: string) =>
-  call<string | null>("resolve_command_program", { name });
-
-/** エージェントが呼んだが登録が無かったものの一覧。 */
-export const listCommandRequests = () => call<CommandRequestView[]>("list_command_requests");
-
-/** 登録要求を 1 つ取り下げる（登録したか、要らないと判断したとき）。 */
-export const dismissCommandRequest = (name: string) =>
-  call<void>("dismiss_command_request", { name });
