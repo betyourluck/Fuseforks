@@ -13,6 +13,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
 import { avatarHue, avatarInitial } from "../lib/avatar";
@@ -82,6 +83,25 @@ const workDirInput = computed({
     if (draft.value) draft.value.workDir = value.trim() || null;
   },
 });
+
+/**
+ * ネイティブのフォルダ選択ダイアログで作業フォルダを選ぶ。
+ *
+ * **手打ちを残したまま、ボタンを足す形にする。** 打てなくすると、
+ * 設定を配ったり別の端末で開いたりしたときにパスを直す手段が消える。
+ *
+ * 選ばれたパスは**そのまま入力欄へ入れる**（存在の検査はしない）— 実在の強制は
+ * Rust 側の `canonicalize` + 前方一致が持っており、ここで先回りすると
+ * 同じ規律が 2 箇所に生える。取り消し（`null`）のときは何もしない。
+ */
+async function pickWorkDir(): Promise<void> {
+  const picked = await openDialog({
+    directory: true,
+    multiple: false,
+    defaultPath: draft.value?.workDir ?? undefined,
+  });
+  if (typeof picked === "string") workDirInput.value = picked;
+}
 
 /**
  * 同梱ツールの一覧（表示順）。Rust 側の BUNDLED_TOOL_NAMES /
@@ -474,12 +494,26 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           <label class="mb-1 block text-[11px] text-ink-dim">
             {{ $t("agentSettings.workDir") }}
           </label>
-          <input
-            v-model="workDirInput"
-            spellcheck="false"
-            :placeholder="$t('agentSettings.workDirPlaceholder')"
-            class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono text-[11px] outline-none focus:border-accent"
-          />
+          <div class="mb-1 flex gap-1">
+            <input
+              v-model="workDirInput"
+              spellcheck="false"
+              :placeholder="$t('agentSettings.workDirPlaceholder')"
+              class="min-w-0 flex-1 rounded border border-line bg-surface-0 px-2 py-1 font-mono text-[11px] outline-none focus:border-accent"
+            />
+            <!--
+              手打ちは残す（配った村を別の端末で開いたときに直す手段が要る）。
+              ボタンはネイティブのダイアログを開いて、選ばれたパスを欄へ入れるだけ。
+            -->
+            <button
+              type="button"
+              class="shrink-0 rounded border border-line px-2 py-1 text-[11px] hover:border-accent"
+              :title="$t('agentSettings.workDirBrowse')"
+              @click="pickWorkDir"
+            >
+              {{ $t("agentSettings.workDirBrowse") }}
+            </button>
+          </div>
           <!--
             範囲がそのまま「インジェクション時に漏洩しうる範囲」になるので、
             欄の説明として明示する。強制は Rust 側（canonicalize + 前方一致）。

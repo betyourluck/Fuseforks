@@ -330,6 +330,7 @@
     "workDir": "Working folder (search scope for grep / diff)",
     "workDirPlaceholder": "e.g. D:\\Projects\\my-app (tools stay inactive until set)",
     "workDirHint": "Bundled tools can read only inside this folder. Do not point it at folders containing secrets.",
+    "workDirBrowse": "Browse…",
     "maxTools": "Tool call limit / turn",
     "maxToolsPlaceholder": "Default: 12",
     "maxToolsHint": "How many tool calls one response may use. For research-heavy coding servants, raising it to 12–20 makes truncation less likely (at the cost of more tokens).",

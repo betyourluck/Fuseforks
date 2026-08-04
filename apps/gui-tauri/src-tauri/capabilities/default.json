@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "メインウィンドウの権限。decorations:false のカスタム TitleBar 用に window 操作権限を付与。opener の open-path は権限名だけでは全パス拒否 — scope（許可パス）を書いて初めて通る。開けるのはワークスペース配下（$APPDATA = app_data_dir）だけに絞る。",
+  "description": "メインウィンドウの権限。decorations:false のカスタム TitleBar 用に window 操作権限を付与。opener の open-path は権限名だけでは全パス拒否 — scope（許可パス）を書いて初めて通る。開けるのはワークスペース配下（$APPDATA = app_data_dir）だけに絞る。dialog:allow-open には scope を書かない — 返るのは人がネイティブのダイアログで選んだパスだけで、選択そのものが人の操作。作業フォルダは端末ごとに任意の絶対パスなので、ここを絞ると設定できない村が出る。",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
+    "dialog:allow-open",
     {
       "identifier": "opener:allow-open-path",
       "allow": [

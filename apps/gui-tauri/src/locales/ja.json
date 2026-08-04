@@ -330,6 +330,7 @@
     "workDir": "作業フォルダ（grep / diff の探索範囲）",
     "workDirPlaceholder": "例: D:\\Projects\\my-app（未設定ならツールは動きません）",
     "workDirHint": "このフォルダの中だけを同梱ツールが読めます。機密を含むフォルダは指定しないでください。",
+    "workDirBrowse": "参照…",
     "maxTools": "ツール実行の上限 / ターン",
     "maxToolsPlaceholder": "既定: 12",
     "maxToolsHint": "1 回の応答で使えるツールの回数。調査の多いコーディング用サーヴァントは 12〜20 に上げると打ち切られにくくなります（そのぶんトークンを使います）。",

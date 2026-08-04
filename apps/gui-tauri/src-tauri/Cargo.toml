@@ -25,6 +25,10 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
+# 作業フォルダを選ぶネイティブダイアログ（パスを返すだけ。開く側は opener）。
+# 絶対パスを手で打たせると、区切り文字と綴りの取り違えがそのまま
+# 「作業フォルダが存在しません」になり、直す手掛かりが画面に無い。
+tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio.workspace = true
 
