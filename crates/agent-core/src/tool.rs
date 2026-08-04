@@ -88,7 +88,7 @@ pub trait AgentTool: Send + Sync {
     /// `WORK_DIR_TOOL_NAMES` による自動除外は名前の集合で書かれているが、
     /// 「登録が 1 件も実行可能でない」のような**中身を見ないと決まらない除外**は
     /// 名前の集合では書けない。
-    fn spec_for(&self, _ctx: &ToolContext) -> Option<ToolSpec> {
+    async fn spec_for(&self, _ctx: &ToolContext) -> Option<ToolSpec> {
         Some(self.spec())
     }
 }
@@ -147,8 +147,14 @@ impl ToolRegistry {
 
     /// **その個体へ**提示する定義。[`AgentTool::spec_for`] が `None` を返した
     /// ツールは落ちる。順は [`Self::specs`] と同じく名前順で安定。
-    pub fn specs_for(&self, ctx: &ToolContext) -> Vec<ToolSpec> {
-        self.tools.values().filter_map(|tool| tool.spec_for(ctx)).collect()
+    pub async fn specs_for(&self, ctx: &ToolContext) -> Vec<ToolSpec> {
+        let mut specs = Vec::with_capacity(self.tools.len());
+        for tool in self.tools.values() {
+            if let Some(spec) = tool.spec_for(ctx).await {
+                specs.push(spec);
+            }
+        }
+        specs
     }
 }
 

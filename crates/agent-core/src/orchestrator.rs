@@ -3443,6 +3443,7 @@ async fn handle_message(
         .read()
         .await
         .specs_for(&presentation_ctx)
+        .await
         .into_iter()
         .filter(|tool| is_bundled_tool_presented(&tool.name, &spec))
         .collect();

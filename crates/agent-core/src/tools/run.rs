@@ -1,37 +1,41 @@
-//! 登録済みコマンドを実行するツール（Spec 15）。
+//! 許可されたコマンドを実行するツール（Spec 15 rev4）。
 //!
 //! # シェルを介さない
 //!
 //! `cmd /c` / `sh -c` を経由せず、実行ファイル + 引数配列で起動する。
-//! シェルへ 1 本の文字列を渡すと登録との照合は文字列のパースでしか効かず、
-//! `registered && rm -rf ..` から実行対象の集合を取り出すには shell の文法を
+//! シェルへ 1 本の文字列を渡すと allow / deny の照合は文字列のパースでしか効かず、
+//! `allowed && rm -rf ..` から実行対象の集合を取り出すには shell の文法を
 //! 実装することになる。**パースで守る境界は必ず抜けられる。**
 //!
-//! # エージェントは実行ファイル名を書けない
+//! **argv 配列で受ければ、照合対象も argv 配列になる** — `&&` も `|` も
+//! `$(...)` も構造的に存在しない。登録制から allow / deny へ変えても、
+//! この根拠は 1 文字も弱まらない。
 //!
-//! 書けるのは登録名だけ。これが閉じた許容の実装で、PATH 解決の曖昧性と
-//! Windows のコマンド名正規化（`python` / `python.exe` / `PATHEXT` /
-//! 大文字小文字）が問題ごと消える理由でもある。
+//! # PATH は実行時に引く
+//!
+//! 登録制と違い絶対パスを持たないので、**「構造的に決まる」とは言えない**。
+//! 代わりに**解決した結果を毎回、結果本文とログへ出す**。キャッシュしないのは、
+//! `PATH` を直したら次の実行から変わってほしいため。
 //!
 //! # ここは安全機構ではない
 //!
-//! 囲いは**登録ただ 1 つ**。作業フォルダ境界も、ごみ箱限定も、環境変数の遮断も
-//! 境界ではない（`command_tool_contract`）。`env_clear` は環境変数経路だけを閉じ、
-//! `~/.aws/credentials` はファイル経路で読める。
+//! 囲いは **allow / deny ただ 1 つ**。作業フォルダ境界も、ごみ箱限定も、
+//! 環境変数の遮断も境界ではない（`command_tool_contract`）。`env_clear` は
+//! 環境変数経路だけを閉じ、`~/.aws/credentials` はファイル経路で読める。
+//! **deny も網羅できない** — `rm` を弾いても `python -c` が残る。
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
 use serde_json::Value;
-use tokio::sync::RwLock;
 
-use crate::command::{CommandRegistry, CommandRequestLog, RegisteredCommand};
+use crate::command::{CommandPolicy, Decision};
 use crate::config_store::ConfigStore;
 use crate::error::CoreResult;
 use crate::llm::ToolSpec;
+use crate::model::{AgentId, ConfigFileKind};
 use crate::tool::{AgentTool, ToolContext};
 use crate::tools::fs::MAX_OUTPUT_CHARS;
 
@@ -60,37 +64,68 @@ const PASSED_ENV: [&str; 7] = [
     "LANG",
 ];
 
-/// 登録済みコマンドを実行するツール。
+/// 許可されたコマンドを実行するツール。
+///
+/// **ポリシーは呼び出しの瞬間にファイルから読む。** 保持しないのは、利用者が
+/// `command.json` を手で直したら**次のターンから効いてほしい**ため
+/// （`ToolContext.work_dir` を「呼び出しの瞬間に world から引く」のと同じ考え方）。
 pub struct RunTool {
-    commands: Arc<RwLock<CommandRegistry>>,
-    requests: Arc<RwLock<CommandRequestLog>>,
     store: ConfigStore,
 }
 
 impl RunTool {
-    /// 登録簿・登録要求・保存先を渡して作る。
-    pub fn new(
-        commands: Arc<RwLock<CommandRegistry>>,
-        requests: Arc<RwLock<CommandRequestLog>>,
-        store: ConfigStore,
-    ) -> Self {
-        Self { commands, requests, store }
+    /// 設定ファイルの置き場を指定して作る。
+    pub fn new(store: ConfigStore) -> Self {
+        Self { store }
     }
 
-    /// 登録要求を積んで保存する。**保存に失敗しても実行の答えは変えない**
-    /// （WARN 1 行で続行する既存の規律）。
-    async fn note_request(&self, name: &str, extra: &[String], ctx: &ToolContext, now_ms: u64) {
-        let evicted = {
-            let mut log = self.requests.write().await;
-            log.record(name, extra, &ctx.agent_id, now_ms)
-        };
-        if let Some(note) = evicted {
-            crate::note!("command request evicted: {note}");
+    /// `agents/{id}/command.json` を読む。無ければ既定（**全部 pending**）。
+    ///
+    /// 壊れた JSON は**既定へ落とす**（`allow` が消えるので安全側）。
+    async fn load(&self, id: &AgentId) -> CommandPolicy {
+        let text = self
+            .store
+            .read_config(id, ConfigFileKind::Command)
+            .await
+            .unwrap_or_default();
+        if text.trim().is_empty() {
+            return CommandPolicy::default();
         }
-        let snapshot = self.requests.read().await.clone();
-        if let Err(err) = self.store.save_command_requests(&snapshot).await {
-            crate::note!("command request save failed: {err}");
+        match serde_json::from_str::<CommandPolicy>(&text) {
+            Ok(policy) => policy,
+            Err(err) => {
+                crate::note!("command policy broken: agent={id} err={err}");
+                CommandPolicy::default()
+            }
         }
+    }
+
+    /// `pending` を 1 件足して書き戻す。
+    ///
+    /// **全文上書きにしない。** 人が `allow` / `deny` / `timeoutSecs` を編集して
+    /// いても壊さないよう、**毎回読み直してから `pending` だけを差分適用**する。
+    /// 競合したら 3 回まで retry し、それでも駄目なら WARN 1 行で続行
+    /// （保存の失敗で実行の答えを変えない）。
+    async fn note_pending(&self, id: &AgentId, command: &str, args: &[String]) {
+        for _ in 0..3 {
+            let mut fresh = self.load(id).await;
+            let evicted = fresh.note_pending(command, args, crate::command::now_ms());
+            if let Some(note) = evicted {
+                crate::note!("command pending evicted: agent={id} {note}");
+            }
+            let Ok(text) = serde_json::to_string_pretty(&fresh) else {
+                return;
+            };
+            if self
+                .store
+                .write_config(id, ConfigFileKind::Command, &text)
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
+        crate::note!("command pending save failed: agent={id} command={command}");
     }
 }
 
@@ -102,85 +137,68 @@ impl AgentTool for RunTool {
 
     fn description(&self) -> String {
         // 個体を知らない既定の説明。実際に提示されるのは `spec_for` の側で、
-        // そこで**その個体から実行できる登録だけ**を列挙する。
-        "利用者が登録したコマンドを実行する。登録名でしか呼べない。".to_owned()
+        // そこで**その個体の allow だけ**を列挙する。
+        "利用者が許可したコマンドを実行する。".to_owned()
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "name": {
+                "command": {
                     "type": "string",
-                    "description": "実行する登録名。説明に列挙されているものだけ"
+                    "description": "実行ファイル名。パス区切り（/ \\ :）を含めてはいけない"
                 },
-                "extraArgs": {
+                "args": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "登録の引数の**後ろへ足す**引数。登録が追加引数を許していなければ拒否される"
+                    "description": "引数。シェルは介さないので、パイプやリダイレクトは使えない"
                 }
             },
-            "required": ["name"],
+            "required": ["command"],
             "additionalProperties": false
         })
     }
 
-    /// **その個体から実行できる登録だけ**を列挙する。1 件も無ければ提示しない。
-    fn spec_for(&self, ctx: &ToolContext) -> Option<ToolSpec> {
-        // description は同期なので、ここだけ blocking read を使う。
-        // 登録簿の更新は稀（利用者が設定画面を触ったとき）で、競合しない。
-        let registry = self.commands.try_read().ok()?;
-        let work_dir = ctx.work_dir.as_deref();
-        let runnable = registry.runnable(work_dir);
-        if runnable.is_empty() {
+    /// **その個体の `allow` だけ**を列挙する。1 件も無ければ提示しない。
+    ///
+    /// `deny` は見せない — 見せると「やってはいけないこと」の一覧を毎ターン積む
+    /// ことになり、**トークンを払って禁止の方法を教える**形になる。
+    async fn spec_for(&self, ctx: &ToolContext) -> Option<ToolSpec> {
+        // **提示も判定も同じ経路でファイルを読む。** 写しを持つと、
+        // 「利用者が今さっき許可したのに提示されない」が生まれる。
+        let policy = self.load(&ctx.agent_id).await;
+        if !policy.offers_anything() {
             return None;
         }
 
-        let mut lines = String::from(
-            "利用者が登録したコマンドを実行する。**登録名でしか呼べない**（実行ファイル名は書けない）。\n\
-             実行できる登録:\n",
+        let mut text = String::from(
+            "利用者が許可したコマンドを実行する。**シェルは介さない**（パイプ・\
+             リダイレクト・変数展開は使えない）。実行できるのは次のパターンに\
+             一致する呼び出しだけ:\n",
         );
-        for entry in &runnable {
-            lines.push_str(&format!(
-                "- `{}`: {}{}\n",
-                entry.spec.name,
-                if entry.spec.description.trim().is_empty() {
-                    "(説明なし)"
-                } else {
-                    entry.spec.description.trim()
-                },
-                if entry.spec.allow_extra_args {
-                    "（extraArgs を足せます）"
-                } else {
-                    "（extraArgs は受け付けません）"
-                }
-            ));
+        for pattern in &policy.allow {
+            text.push_str(&format!("- `{pattern}`\n"));
         }
-
-        // 使えない登録は**名前を出さず件数だけ**。使えないものにスキーマ分の
-        // トークンを払わず、次の手（#44）だけを渡す。
-        let hidden = registry.unrunnable_count(work_dir);
-        if hidden > 0 {
-            lines.push_str(&format!(
-                "他に {hidden} 件の登録がありますが、今は使えません\
-                 （作業フォルダ未設定か、実行ファイルが見つかりません）。\
-                 必要なら利用者に設定を頼んでください。\n"
-            ));
-        }
+        text.push_str(
+            "パターン末尾の `*` は「以降の引数は自由」。`*` が無いパターンは\
+             **引数なしの呼び出しにしか一致しない**。\
+             一致しない呼び出しは実行されず、利用者への要求として記録される。\n",
+        );
 
         Some(ToolSpec {
             name: self.name().to_owned(),
-            description: lines,
+            description: text,
             parameters: self.parameters(),
         })
     }
 
     async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String> {
-        let Some(name) = args.get("name").and_then(Value::as_str) else {
-            return Ok("引数 `name` が必要です。".into());
+        let Some(command) = args.get("command").and_then(Value::as_str) else {
+            return Ok("引数 `command` が必要です。".into());
         };
-        let extra: Vec<String> = args
-            .get("extraArgs")
+        let argv: Vec<String> = args
+            .get("args")
             .and_then(Value::as_array)
             .map(|items| {
                 items
@@ -190,75 +208,92 @@ impl AgentTool for RunTool {
             })
             .unwrap_or_default();
 
-        let entry = { self.commands.read().await.get(name).cloned() };
+        // **判定は必ずファイルを読み直す。** 利用者が今さっき許可したものが
+        // その周で通ってほしい。
+        let policy = self.load(&ctx.agent_id).await;
 
-        let Some(entry) = entry else {
-            // **未登録。** ここだけが登録要求を積む経路。
-            let now_ms = crate::command::now_ms();
-            self.note_request(name, &extra, ctx, now_ms).await;
+        // 文面は 3 つとも別にする（#44。理由が違えば次の手も違う）。
+        match policy.decide(command, &argv) {
+            Decision::Malformed => {
+                return Ok(format!(
+                    "`{command}` は実行ファイル名として受け付けられません\
+                     （パス区切り `/` `\\` `:` を含めないでください）。\n\
+                     名前だけで呼び直してください（探索は PATH に任せます）。"
+                ));
+            }
+            Decision::Denied => {
+                return Ok(format!(
+                    "`{command}` は利用者が禁止しています。\n\
+                     **この呼び出しは何度試しても通りません。** 別の手段で進めてください。"
+                ));
+            }
+            Decision::Unknown => {
+                self.note_pending(&ctx.agent_id, command, &argv).await;
+                return Ok(format!(
+                    "`{command}` は許可されていないため実行しませんでした。\
+                     利用者への要求として記録しました。\n\
+                     利用者が `agents/{}/command.json` の `allow` へ追加すると、\
+                     次から実行できます。\n\
+                     **このターンでは実行できません。** 利用者へ依頼するか、\
+                     別の手段で進めてください。",
+                    ctx.agent_id
+                ));
+            }
+            Decision::Allowed => {}
+        }
+
+        let Some(cwd) = ctx.work_dir.clone() else {
+            return Ok(
+                "作業フォルダが設定されていないため実行できません。\
+                 利用者にエージェント設定の「作業フォルダ」欄を設定してもらってください。"
+                    .into(),
+            );
+        };
+
+        // **実行時に PATH で解決する。** 登録制と違い絶対パスを持っていないので、
+        // 「構造的に決まる」とは言えない — 代わりに**決まった結果を毎回見せる**。
+        // キャッシュしないのは、PATH を直したら次の実行から変わってほしいため。
+        let Some(program) = resolve_program(command) else {
             return Ok(format!(
-                "`{name}` は登録されていないため実行しませんでした。\n\
-                 利用者が「システム設定 > コマンドの登録」で追加すると、次から実行できます。\n\
-                 利用者へ依頼するか、別の手段で進めてください。\
-                 **このターンでは実行できません**（登録されるまで、同じ呼び出しは何度でも失敗します）。"
+                "`{command}` が PATH に見つかりません。\n\
+                 利用者に、そのコマンドがこの端末へ入っているか確かめてもらってください。"
             ));
         };
 
-        // **登録済みだが追加引数を許していない。** 未登録とは別の答えにする —
-        // 同じ文面だとモデルは「登録待ち」と読むが、実際は引数を外せばその周で通る。
-        // 登録要求には積まない（登録は既にある）。
-        if !extra.is_empty() && !entry.spec.allow_extra_args {
-            return Ok(format!(
-                "`{name}` は登録されていますが、追加引数を受け付けない設定です。\n\
-                 **引数なしで呼び直せばこの周で実行できます。**\
-                 追加引数がどうしても必要なら、利用者に登録の変更を頼んでください。"
-            ));
-        }
+        crate::note!(
+            "run: agent={} command={command} resolved={} args={}",
+            ctx.agent_id,
+            program.display(),
+            argv.len()
+        );
 
-        if let Some(reason) = entry.unavailable {
-            return Ok(format!(
-                "`{name}` は登録されていますが実行できません: {}（{}）。\n\
-                 利用者に登録し直してもらってください。",
-                reason.reason_ja(),
-                entry.spec.program.display()
-            ));
-        }
-
-        let Some(cwd) = entry.resolve_cwd(ctx.work_dir.as_deref()) else {
-            return Ok(format!(
-                "`{name}` の作業フォルダが決まりません。\n\
-                 利用者がエージェント設定で作業フォルダを設定するか、\
-                 登録に作業フォルダを指定すると実行できます。"
-            ));
-        };
-
-        // **実行時にも実在を見る。** 起動時検証だけだと、アプリを開いたまま
-        // 環境を入れ替えたときに素通りする。
-        if !entry.spec.program.is_file() {
-            return Ok(format!(
-                "`{name}` の実行ファイルが見つかりません（{}）。\n\
-                 利用者に登録し直してもらってください。",
-                entry.spec.program.display()
-            ));
-        }
-
-        run_registered(&entry, &extra, &cwd, ctx.cancel.clone()).await
+        run_program(
+            command,
+            &program,
+            &argv,
+            &cwd,
+            policy.timeout_secs(),
+            ctx.cancel.clone(),
+        )
+        .await
     }
 }
 
-/// 1 件の登録を実際に走らせる。**モデルへ返す文字列を組み立てるところまで。**
+/// 1 本のコマンドを実際に走らせる。**モデルへ返す文字列を組み立てるところまで。**
 ///
 /// 単体テストから直接呼べるよう、ツールから切り離してある。
-pub(crate) async fn run_registered(
-    entry: &RegisteredCommand,
-    extra: &[String],
+/// **rev4 で解決の側だけを差し替え、この関数の中身は触っていない。**
+pub(crate) async fn run_program(
+    label: &str,
+    program: &Path,
+    argv: &[String],
     cwd: &Path,
+    timeout_secs: u64,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> CoreResult<String> {
-    let full_args = entry.full_args(extra);
-    let mut command = tokio::process::Command::new(&entry.spec.program);
+    let mut command = tokio::process::Command::new(program);
     command
-        .args(&full_args)
+        .args(argv)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -277,15 +312,11 @@ pub(crate) async fn run_registered(
     let child = match command.group_spawn() {
         Ok(child) => child,
         Err(err) => {
-            return Ok(format!(
-                "`{}` を起動できませんでした: {err}\n\
-                 利用者に登録を確かめてもらってください。",
-                entry.spec.name
-            ));
+            return Ok(format!("`{label}` を起動できませんでした: {err}"));
         }
     };
 
-    let timeout = std::time::Duration::from_secs(entry.timeout_secs());
+    let timeout = std::time::Duration::from_secs(timeout_secs);
     let waited = match cancel {
         Some(token) => {
             tokio::select! {
@@ -299,22 +330,19 @@ pub(crate) async fn run_registered(
     let output = match waited {
         Waited::Finished(Ok(Ok(output))) => output,
         Waited::Finished(Ok(Err(err))) => {
-            return Ok(format!("`{}` の実行に失敗しました: {err}", entry.spec.name));
+            return Ok(format!("`{label}` の実行に失敗しました: {err}"));
         }
         Waited::Finished(Err(_elapsed)) => {
             // タイムアウト。木ごと落とす。
             return Ok(format!(
-                "`{}` は {} 秒で終わらなかったため中断しました（プロセスは停止済み）。\n\
-                 時間のかかる処理なら、利用者に登録のタイムアウトを延ばしてもらってください。",
-                entry.spec.name,
-                entry.timeout_secs()
+                "`{label}` は {timeout_secs} 秒で終わらなかったため中断しました\
+                 （プロセスは停止済み）。\n\
+                 時間のかかる処理なら、利用者に `command.json` の `timeoutSecs` を\
+                 延ばしてもらってください。"
             ));
         }
         Waited::Cancelled => {
-            return Ok(format!(
-                "`{}` は利用者の打ち切りにより停止しました。",
-                entry.spec.name
-            ));
+            return Ok(format!("`{label}` は利用者の打ち切りにより停止しました。"));
         }
     };
 
@@ -325,7 +353,8 @@ pub(crate) async fn run_registered(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let mut body = format!("終了コード: {code}\n");
+    // **どのバイナリが走ったかを毎回見せる**（PATH で変わるため）。
+    let mut body = format!("実行: {}\n終了コード: {code}\n", program.display());
     body.push_str(&section("stdout", &stdout, STDOUT_CHARS));
     body.push_str(&section("stderr", &stderr, STDERR_CHARS));
     Ok(body)
@@ -388,7 +417,7 @@ pub fn resolve_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{CommandRegistration, DEFAULT_TIMEOUT_SECS};
+    use crate::command::DEFAULT_TIMEOUT_SECS;
 
     /// テスト用に「必ず在る」実行ファイルを 1 つ選ぶ。
     fn shell_program() -> PathBuf {
@@ -399,71 +428,61 @@ mod tests {
         }
     }
 
-    /// 標準出力へ 1 行出すだけの登録。**シェルを引数として起動しているだけで、
-    /// `run` 自身がシェルを介しているわけではない**（テストの都合）。
-    fn echo_entry(text: &str, timeout_secs: u64) -> RegisteredCommand {
-        let args = if cfg!(windows) {
+    /// 標準出力へ 1 行出すだけの引数列。**`run` 自身がシェルを介しているわけでは
+    /// ない** — シェルを引数として起動しているだけ（テストの都合）。
+    fn echo_args(text: &str) -> Vec<String> {
+        if cfg!(windows) {
             vec!["/C".to_string(), format!("echo {text}")]
         } else {
             vec!["-c".to_string(), format!("echo {text}")]
-        };
-        RegisteredCommand {
-            spec: CommandRegistration {
-                name: "echo".into(),
-                description: String::new(),
-                program: shell_program(),
-                args,
-                allow_extra_args: false,
-                timeout_secs,
-                cwd: None,
-            },
-            unavailable: None,
         }
     }
 
-    fn sleeper(secs: u32, timeout_secs: u64) -> RegisteredCommand {
-        let args = if cfg!(windows) {
+    fn sleep_args(secs: u32) -> Vec<String> {
+        if cfg!(windows) {
             vec!["/C".to_string(), format!("ping -n {} 127.0.0.1 > NUL", secs + 1)]
         } else {
             vec!["-c".to_string(), format!("sleep {secs}")]
-        };
-        RegisteredCommand {
-            spec: CommandRegistration {
-                name: "sleep".into(),
-                description: String::new(),
-                program: shell_program(),
-                args,
-                allow_extra_args: false,
-                timeout_secs,
-                cwd: None,
-            },
-            unavailable: None,
         }
     }
 
     #[tokio::test]
-    async fn it_returns_the_exit_code_and_stdout() {
-        let entry = echo_entry("hello-concordia", DEFAULT_TIMEOUT_SECS);
-        let out = run_registered(&entry, &[], Path::new("."), None).await.unwrap();
+    async fn it_returns_the_resolved_path_exit_code_and_stdout() {
+        let program = shell_program();
+        let out = run_program(
+            "echo",
+            &program,
+            &echo_args("hello-concordia"),
+            Path::new("."),
+            DEFAULT_TIMEOUT_SECS,
+            None,
+        )
+        .await
+        .unwrap();
+
         assert!(out.contains("終了コード: 0"), "{out}");
         assert!(out.contains("hello-concordia"), "{out}");
+        assert!(
+            out.contains(&program.display().to_string()),
+            "どのバイナリが走ったかを毎回見せること（PATH で変わるため）: {out}"
+        );
     }
 
     #[tokio::test]
     async fn a_timeout_stops_the_process_and_says_how_to_fix_it() {
-        let entry = sleeper(30, 1);
-        let out = run_registered(&entry, &[], Path::new("."), None).await.unwrap();
+        let out = run_program("sleep", &shell_program(), &sleep_args(30), Path::new("."), 1, None)
+            .await
+            .unwrap();
         assert!(out.contains("秒で終わらなかった"), "{out}");
         assert!(
-            out.contains("タイムアウトを延ばして"),
-            "次の手を書くこと（#44）: {out}"
+            out.contains("timeoutSecs"),
+            "次の手を書くこと（#44。直す場所の名前まで出す）: {out}"
         );
     }
 
     #[tokio::test]
     async fn a_cancelled_run_stops_without_waiting_for_the_timeout() {
         let token = tokio_util::sync::CancellationToken::new();
-        let entry = sleeper(30, 3600);
         let handle = token.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -471,9 +490,16 @@ mod tests {
         });
 
         let started = std::time::Instant::now();
-        let out = run_registered(&entry, &[], Path::new("."), Some(token))
-            .await
-            .unwrap();
+        let out = run_program(
+            "sleep",
+            &shell_program(),
+            &sleep_args(30),
+            Path::new("."),
+            3600,
+            Some(token),
+        )
+        .await
+        .unwrap();
 
         assert!(out.contains("打ち切り"), "{out}");
         assert!(
@@ -499,18 +525,6 @@ mod tests {
     #[test]
     fn an_empty_stream_is_stated_not_omitted() {
         assert_eq!(section("stderr", "   ", STDERR_CHARS), "stderr: (なし)\n");
-    }
-
-    #[tokio::test]
-    async fn extra_args_are_appended_to_the_registered_args() {
-        let mut entry = echo_entry("base", DEFAULT_TIMEOUT_SECS);
-        entry.spec.allow_extra_args = true;
-        // `echo base` の後ろへ `extra` を足す形になる（シェル引数として連結される）。
-        let out = run_registered(&entry, &["extra".to_string()], Path::new("."), None)
-            .await
-            .unwrap();
-        assert!(out.contains("base"), "{out}");
-        assert!(out.contains("extra"), "登録の引数を置き換えないこと: {out}");
     }
 
     #[test]

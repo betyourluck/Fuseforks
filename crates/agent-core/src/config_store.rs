@@ -139,8 +139,21 @@ impl ConfigStore {
         kind: ConfigFileKind,
         content: &str,
     ) -> CoreResult<()> {
-        if kind == ConfigFileKind::Mcp && !content.trim().is_empty() {
-            serde_json::from_str::<crate::mcp::McpConfig>(content).map_err(CoreError::from)?;
+        if !content.trim().is_empty() {
+            // JSON の設定ファイルは書き込み時にパース検証する。壊れた JSON を
+            // 保存すると、次の起動で **allow が黙って消えて全部 pending になる**か
+            // **deny が黙って消える**かのどちらかで、後者は危険側へ倒れる。
+            match kind {
+                ConfigFileKind::Mcp => {
+                    serde_json::from_str::<crate::mcp::McpConfig>(content)
+                        .map_err(CoreError::from)?;
+                }
+                ConfigFileKind::Command => {
+                    serde_json::from_str::<crate::command::CommandPolicy>(content)
+                        .map_err(CoreError::from)?;
+                }
+                _ => {}
+            }
         }
         let dir = self.agent_dir(id)?;
         tokio::fs::create_dir_all(&dir)

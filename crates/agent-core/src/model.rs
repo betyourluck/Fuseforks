@@ -777,6 +777,13 @@ pub enum ConfigFileKind {
     /// あり、失敗すると保存拒否（mcp_contract の失敗二分類 (1)）。
     /// プロンプト素材ではないため `compose_system_prompt` には入らない。
     Mcp,
+    /// エージェント別のコマンド許容規則（Spec 15 rev4）。
+    ///
+    /// `mcp` と同じく JSON で、書き込み時にパース検証がある。
+    /// **`mcp` と違い、人と機械の両方が書く唯一の設定ファイル** —
+    /// エージェントが `pending` を足すので、書き込みは全文上書きにせず
+    /// `pending` だけを差分適用する（`command_tool_contract`）。
+    Command,
 }
 
 impl ConfigFileKind {
@@ -787,6 +794,7 @@ impl ConfigFileKind {
             Self::Memory => "Memory.md",
             Self::Construct => "Construct.md",
             Self::Mcp => "mcp.json",
+            Self::Command => "command.json",
         }
     }
 

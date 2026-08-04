@@ -6681,52 +6681,31 @@ impl LlmBackend for ToolSpecBackend {
     }
 }
 
-/// `run` を登録した村を 1 つ組む。戻りは (orchestrator, 登録簿, 登録要求)。
-async fn setup_with_run(
-    dir: &TempDir,
-    backend: Arc<dyn LlmBackend>,
-    registrations: Vec<agent_core::CommandRegistration>,
-) -> (
-    Orchestrator,
-    Arc<tokio::sync::RwLock<agent_core::CommandRegistry>>,
-    Arc<tokio::sync::RwLock<agent_core::CommandRequestLog>>,
-) {
+/// `run` を登録した村を 1 つ組む。ポリシーは `agents/{id}/command.json` に書く。
+async fn setup_with_run(dir: &TempDir, backend: Arc<dyn LlmBackend>) -> Orchestrator {
     let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
-    let (mut registry, _) = agent_core::CommandRegistry::from_registrations(registrations);
-    // 実在検査は「必ず在る」ことにする（プロセス起動まではしないテスト）。
-    let _ = registry.mark_availability(|_| true);
-
-    let commands = Arc::new(tokio::sync::RwLock::new(registry));
-    let requests = Arc::new(tokio::sync::RwLock::new(
-        agent_core::CommandRequestLog::default(),
-    ));
     orchestrator
-        .register_tool(Arc::new(agent_core::RunTool::new(
-            Arc::clone(&commands),
-            Arc::clone(&requests),
-            ConfigStore::new(&dir.0),
-        )))
+        .register_tool(Arc::new(agent_core::RunTool::new(ConfigStore::new(&dir.0))))
         .await;
     // 既定集合の変更が**他の同梱ツールに波及していない**ことを見るための比較対象。
-    // `setup_with` は同梱ツールを 1 本も登録しない（GUI 側の仕事）ので、明示的に足す。
+    // `setup_with` は同梱ツールを 1 本も登録しない（GUI 側の仕事）。
     orchestrator.register_tool(Arc::new(agent_core::GrepTool)).await;
-    (orchestrator, commands, requests)
+    orchestrator
 }
 
-fn registration(name: &str, cwd: Option<&str>) -> agent_core::CommandRegistration {
-    agent_core::CommandRegistration {
-        name: name.to_owned(),
-        description: "テスト用".to_owned(),
-        program: if cfg!(windows) {
-            std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe")
-        } else {
-            std::path::PathBuf::from("/bin/sh")
-        },
-        args: Vec::new(),
-        allow_extra_args: false,
-        timeout_secs: 60,
-        cwd: cwd.map(std::path::PathBuf::from),
-    }
+/// `agents/{id}/command.json` を書く。
+async fn write_policy(orchestrator: &Orchestrator, id: &AgentId, allow: &[&str]) {
+    let policy = serde_json::json!({
+        "version": 1,
+        "allow": allow,
+        "deny": [],
+        "pending": [],
+        "timeoutSecs": 60,
+    });
+    orchestrator
+        .write_config(id, ConfigFileKind::Command, &policy.to_string())
+        .await
+        .unwrap();
 }
 
 /// **既定では `run` を提示しない**（Spec 15 の破壊的変更）。
@@ -6739,19 +6718,14 @@ fn registration(name: &str, cwd: Option<&str>) -> agent_core::CommandRegistratio
 async fn run_is_not_presented_to_agents_that_did_not_ask_for_it() {
     let backend = Arc::new(ToolSpecBackend::default());
     let dir = TempDir::new("run-default-off");
-    let (orchestrator, _, _) = setup_with_run(
-        &dir,
-        Arc::clone(&backend) as Arc<dyn LlmBackend>,
-        vec![registration("test", Some("."))],
-    )
-    .await;
+    let orchestrator = setup_with_run(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
 
     let id = AgentId::from("agent_a");
     let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
     spec.work_dir = Some(dir.0.display().to_string());
-    // enabled_tools は None のまま = 「既定に従う」。
-    assert!(spec.enabled_tools.is_none());
+    assert!(spec.enabled_tools.is_none(), "既定に従う個体であること");
     orchestrator.create_agent(spec).await.unwrap();
+    write_policy(&orchestrator, &id, &["ruff *"]).await;
     orchestrator.start_agent(&id).await.unwrap();
 
     let mut rx = orchestrator.subscribe();
@@ -6767,21 +6741,15 @@ async fn run_is_not_presented_to_agents_that_did_not_ask_for_it() {
     assert!(names.contains(&"grep"), "他の同梱ツールは既定のまま: {names:?}");
 }
 
-/// **明示しても、実行できる登録が無ければ提示しない。**
+/// **オプトインしていても `allow` が空なら提示しない**（fail closed = D10）。
 ///
-/// 提示は 2 段ゲート（`enabledTools` に `run` があるか × 実行可能な登録が
-/// 1 件以上あるか）。使えないツールにスキーマ分のトークンを毎ターン払わない。
+/// 提示は 2 段ゲート（`enabledTools` に `run` があるか × `allow` が 1 件以上あるか）。
+/// `command.json` を持たない個体は何も実行できず、`run` は提示すらされない。
 #[tokio::test]
-async fn run_needs_both_the_opt_in_and_a_runnable_registration() {
+async fn run_needs_both_the_opt_in_and_a_non_empty_allow_list() {
     let backend = Arc::new(ToolSpecBackend::default());
     let dir = TempDir::new("run-gate");
-    // 登録ゼロで始める。
-    let (orchestrator, commands, _) = setup_with_run(
-        &dir,
-        Arc::clone(&backend) as Arc<dyn LlmBackend>,
-        Vec::new(),
-    )
-    .await;
+    let orchestrator = setup_with_run(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
 
     let id = AgentId::from("agent_a");
     let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
@@ -6791,86 +6759,81 @@ async fn run_needs_both_the_opt_in_and_a_runnable_registration() {
     orchestrator.start_agent(&id).await.unwrap();
 
     let mut rx = orchestrator.subscribe();
+    // command.json 無し = allow が空。
     orchestrator.send_user_message(&id, "1 回目").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
-    // 登録を 1 件足す。**同じ実体を見ているので次のターンから載る。**
-    {
-        let (registry, _) =
-            agent_core::CommandRegistry::from_registrations(vec![registration("test", Some("."))]);
-        *commands.write().await = registry;
-    }
+    // 利用者が許可を書く。**次のターンから効く**（呼び出しの瞬間に読むため）。
+    write_policy(&orchestrator, &id, &["ruff check *"]).await;
     orchestrator.send_user_message(&id, "2 回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&id, "3 回目").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
     let tools = backend.tools.lock().unwrap().clone();
     let first: Vec<&str> = tools[0].iter().map(|t| t.name.as_str()).collect();
-    let second: Vec<&str> = tools[1].iter().map(|t| t.name.as_str()).collect();
-
     assert!(
         !first.contains(&"run"),
-        "オプトインしていても登録 0 件なら提示しないこと: {first:?}"
-    );
-    assert!(
-        second.contains(&"run"),
-        "登録を足したら次のターンから載ること: {second:?}"
+        "allow が空なら提示しないこと（fail closed）: {first:?}"
     );
 
-    let described = tools[1]
+    let last = tools.last().unwrap();
+    let described = last
         .iter()
         .find(|t| t.name == "run")
         .map(|t| t.description.clone())
-        .unwrap();
+        .expect("allow を書いたら提示されること");
+    assert!(described.contains("`ruff check *`"), "allow を列挙すること: {described}");
     assert!(
-        described.contains("`test`"),
-        "実行できる登録を列挙すること: {described}"
+        described.contains("引数なしの呼び出しにしか一致しない"),
+        "`*` の有無の差を書くこと（利用者の指摘）: {described}"
     );
 }
 
-/// **`cwd` が決まらない登録は列挙に出ず、件数だけが伝わる。**
+/// **`deny` はモデルへ見せない。**
 ///
-/// 実行できない登録の名前を見せると、モデルはそれを呼び、拒否され、
-/// 他に手が無ければ同じ呼び出しを繰り返す。件数と次の手だけを渡す（#44）。
+/// 見せると「やってはいけないこと」の一覧を毎ターン積むことになり、
+/// **トークンを払って禁止の方法を教える**形になる。
 #[tokio::test]
-async fn unrunnable_registrations_are_counted_not_named() {
+async fn the_deny_list_is_never_shown_to_the_model() {
     let backend = Arc::new(ToolSpecBackend::default());
-    let dir = TempDir::new("run-hidden");
-    let (orchestrator, _, _) = setup_with_run(
-        &dir,
-        Arc::clone(&backend) as Arc<dyn LlmBackend>,
-        vec![
-            registration("fixed", Some(".")),
-            // cwd も個体の work_dir も無いので実行できない。
-            registration("floating", None),
-        ],
-    )
-    .await;
+    let dir = TempDir::new("run-deny-hidden");
+    let orchestrator = setup_with_run(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
 
     let id = AgentId::from("agent_a");
     let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
+    spec.work_dir = Some(dir.0.display().to_string());
     spec.enabled_tools = Some(vec!["run".into()]);
-    // work_dir は設定しない。
     orchestrator.create_agent(spec).await.unwrap();
+
+    let policy = serde_json::json!({
+        "version": 1,
+        "allow": ["ruff *"],
+        "deny": ["shutdown *", "format-disk *"],
+        "pending": [],
+        "timeoutSecs": 60,
+    });
+    orchestrator
+        .write_config(&id, ConfigFileKind::Command, &policy.to_string())
+        .await
+        .unwrap();
     orchestrator.start_agent(&id).await.unwrap();
 
     let mut rx = orchestrator.subscribe();
-    orchestrator.send_user_message(&id, "やあ").await.unwrap();
+    orchestrator.send_user_message(&id, "1 回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&id, "2 回目").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
     let tools = backend.tools.lock().unwrap().clone();
-    let described = tools[0]
+    let described = tools
+        .last()
+        .unwrap()
         .iter()
         .find(|t| t.name == "run")
         .map(|t| t.description.clone())
-        .expect("`fixed` が実行できるので run は提示される");
-
-    assert!(described.contains("`fixed`"), "{described}");
-    assert!(
-        !described.contains("floating"),
-        "実行できない登録の名前は出さないこと: {described}"
-    );
-    assert!(
-        described.contains("他に 1 件"),
-        "件数と次の手だけを渡すこと: {described}"
-    );
+        .expect("allow があるので提示される");
+    assert!(described.contains("`ruff *`"), "{described}");
+    assert!(!described.contains("shutdown"), "deny を見せないこと: {described}");
+    assert!(!described.contains("format-disk"), "deny を見せないこと: {described}");
 }
