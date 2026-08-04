@@ -241,7 +241,9 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
       書き直す。`ConfigFileKind` へ `Command` を追加。
       **凍結を撤回した箇所には撤回したと書く**（閉じた許容・除外リストを作らない・
       `program` は絶対パス・fail closed の 4 点）
-- [ ] Phase 1' — `command.rs` を `CommandPolicy` へ。パターン照合の純機構
+- [x] Phase 1' — 完了（2026-08-04）。単体 15 本（旧 15 本と合わせて 30 本）。
+      **旧 `CommandRegistry` 系は P3' まで残す**（下記 P1' 記録）。当初の記述:
+      `command.rs` を `CommandPolicy` へ。パターン照合の純機構
       （完全一致 / 末尾 `*` / deny 優先 / 正規化 3 段）+ `pending` の畳みと上限。単体
 - [ ] Phase 2' — `tools/run.rs` の解決部分を差し替え（`resolve_program` を実行時に使う /
       解決したフルパスを出す）。**実行の機構は触らない**
@@ -290,6 +292,34 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
    変わってほしい**（キャッシュすると「直したのに古いのが走る」が生まれる）
 
 ---
+
+## P1' 実装記録（2026-08-04）
+
+`command.rs` へ `CommandPolicy` / `PendingCommand` / `Decision` と純機構
+（`decide` / `note_pending` / `merge_pending_into` / `normalize_command` /
+`pattern_matches`）。単体 15 本、workspace 346 本全緑、clippy 新規警告ゼロ。
+
+**旧 `CommandRegistry` 系を同じファイルに残した。** 今消すと `config_store` /
+`run.rs` / `state.rs` / IPC / Vue / 結合テストが同時に壊れ、**1 コミットが巨大に
+なってどこで壊れたか読めなくなる**。新しい機構を先に置いて単体で固め、配線は
+P2'〜P4' で移す。モジュール doc の冒頭に「2 つの機構が同居している（移行中）」と
+書き、rev3 の設計記録には**「rev4 で撤回済み」**を付けた。
+
+**実装で決めた 4 点**:
+
+- **`Decision` は 4 値**（`Allowed` / `Denied` / `Unknown` / `Malformed`）。
+  `Malformed` はパス区切りを含む `command` で、**照合の前に落ちる** —
+  「拒否された」と「そもそも照合できない」を同じ値にすると、モデルへ返す文面が
+  1 つに縮む（#44 の「理由ごとに次の手が違う」）
+- **パターン側の先頭も `normalize_command` に通す。** 利用者が `Python.exe` と
+  書いても効く。片側だけ正規化すると、**正規化したはずの照合が書き方で外れる**
+- **`merge_pending_into` は「人の編集を必ず勝たせる」向きに書いた。**
+  `fresh.pending = self.pending` の 1 行だが、**引数の向きが逆だと人の編集が
+  機械の古い値で潰れる**。名前を `merge_pending_into(fresh)` にして、
+  どちらへ移すのかを呼び出し側から読めるようにした
+- **`offers_anything()` を `CommandPolicy` に置いた。** 提示の 2 段ゲートの
+  2 段目（`allow` が 1 件以上）は**ポリシーの性質**であって配線の都合ではない。
+  `run.rs` 側で `!policy.allow.is_empty()` と書くと、判定が 2 箇所に散る
 
 ## 未決 — **ゼロ**（D8〜D10 は 2026-08-04 に利用者裁定）
 
