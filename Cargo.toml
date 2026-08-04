@@ -6,8 +6,9 @@ members = ["apps/gui-tauri/src-tauri", "crates/agent-core"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-# AGPL-3.0-or-later (2026-08-02 公開に合わせて MIT から変更。README「ライセンス」節が意図の正)。
-license = "AGPL-3.0-or-later"
+# MPL-2.0 (2026-08-05 に AGPL-3.0-or-later から変更。MIT → AGPL → MPL の 3 つ目。
+# README「ライセンス」節が意図の正)。
+license = "MPL-2.0"
 
 [workspace.dependencies]
 agent-core = { path = "crates/agent-core" }

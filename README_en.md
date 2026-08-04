@@ -763,14 +763,21 @@ Launch policy (decided 2026-07-30):
 
 ## License
 
-**AGPL-3.0-or-later** ([LICENSE](LICENSE)). Why this license (2026-08-02):
+**MPL-2.0** ([LICENSE](LICENSE)). Why this license (2026-08-05):
 
-- **Improvements should flow back** — if you distribute a modified version or
-  offer it as a service over a network, you must publish its source.
-  A better Concordia comes back to the original village.
+- **Improvements should flow back** — if you distribute a version in which you
+  have **modified files from this distribution**, you must publish the source of
+  **those files**. A better Concordia comes back to the original village.
+- **The obligation stops at the file boundary** — a Larger Work that merely
+  includes Concordia can be distributed **under your own terms** (§3.3), and
+  files you write yourself are outside the scope from the start.
 - **Private modifications stay private** — using a modified copy on your own
-  machine (including adding personal bundled tools) carries no obligation to
-  publish anything. AGPL obligations trigger only on distribution or network
-  service.
-- Community co-development is welcome. Pull requests are accepted under
-  AGPL-3.0-or-later.
+  machine carries no obligation to publish anything. The obligation triggers
+  only on distribution.
+- Community co-development is welcome. Pull requests are accepted under MPL-2.0.
+
+**Changed from AGPL-3.0-or-later** (MIT → AGPL → MPL, the third). AGPL also
+triggers on network use and asks anyone embedding the project to publish the
+whole, which was **too strong for something meant to be used as a tool**. What
+was actually wanted is one thing — "if someone makes a good fix, I want to use
+it too" — and file-level copyleft is enough for that.
