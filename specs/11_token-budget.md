@@ -2,7 +2,18 @@
 
 **ID**: 11
 **Date**: 2026-08-02
-**Status**: **rev2 査読承認（2026-08-02 LGTM）→ P0〜P4 の機械側完了**（同日）。
+**Status**: **Done**（2026-08-04 実機確認 2 本とも完了）。rev2 承認 → P0〜P4 完了（2026-08-02）
+
+**実機確認の記録**
+
+1. **小天井で止まる**（2026-08-02）—
+   `turn budget exhausted: agent=agent hop=0 rounds=1 ceiling=50000 spent=50000`
+2. **既定天井で健全依頼が完走**（2026-08-04）— 天井 1,000,000 の村で 6 体へ撒く
+   依頼が `stop=-` で完走し、`budget exhausted` は 1 件も出ていない。
+   **実効 110,157（素 166,085・7 ターン）で天井の 11.0%**、余裕 889,843。
+   内訳は進行役 52,496 / ジェミー 11,880 + 18,593 / ロボットくん 5 体 27,187。
+   **起票時の見積もり（健全 6 体依頼 = 実効 ≈ 250K）より小さく、既定 1M の
+   余裕は見積もりどおり以上**だった
 P0 = data_contract の `token_budget` ブロック凍結 + `PlanTaskState` へ
 `budget_exhausted` 加算。P1 = `budget.rs`（effective_milli /
 effective_tokens / estimate_tokens / normalized_usage / BudgetPool。
