@@ -9,11 +9,12 @@
 use std::sync::Arc;
 
 use agent_core::{
-    ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
-    KeyringSecretStore, Orchestrator, OrchestratorConfig, RememberTool, SdTool, SecretStore,
-    YqTool,
+    CommandRegistry, CommandRequestLog, ConfigStore, CoreEvent, DiffTool, FdTool, FileTool,
+    GrepTool, HttpBackendFactory, KeyringSecretStore, Orchestrator, OrchestratorConfig,
+    RememberTool, RunTool, SdTool, SecretStore, YqTool,
 };
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::RwLock;
 
 /// フロントエンドが購読するイベント名。
 pub const CORE_EVENT: &str = "core://event";
@@ -24,6 +25,13 @@ pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
     /// ワークスペースのルート。「フォルダを開く」導線で使う。
     pub workspace: std::path::PathBuf,
+    /// 登録済みコマンド（Spec 15）。`RunTool` と設定画面が同じ実体を見る —
+    /// 登録を足したら**次のターンから**提示に載る。
+    pub commands: Arc<RwLock<CommandRegistry>>,
+    /// エージェントが出した登録要求（Spec 15）。
+    pub command_requests: Arc<RwLock<CommandRequestLog>>,
+    /// 設定ファイルの置き場。登録簿の保存に使う。
+    pub store: ConfigStore,
 }
 
 /// バックグラウンド初期化の失敗理由。
@@ -73,7 +81,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
     // 実行時に解決されるため、ここでは登録するだけでよい。
     orchestrator
-        .register_tool(Arc::new(RememberTool::new(store)))
+        .register_tool(Arc::new(RememberTool::new(store.clone())))
         .await;
     orchestrator.register_tool(Arc::new(GrepTool)).await;
     orchestrator.register_tool(Arc::new(FdTool)).await;
@@ -81,6 +89,35 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     orchestrator.register_tool(Arc::new(SdTool)).await;
     orchestrator.register_tool(Arc::new(YqTool)).await;
     orchestrator.register_tool(Arc::new(FileTool)).await;
+
+    // 登録済みコマンド（Spec 15）。**実在検査はここで 1 回**（起動時）。
+    // 失敗した登録はメモリ上で無効化するだけで、**ファイルは書き換えない** —
+    // 書き換えると、配布した村を別の端末で一度開いて閉じただけで登録が消える。
+    let loaded = store.load_commands().await;
+    for note in &loaded.dropped {
+        eprintln!("[concordia] コマンド登録: {note}");
+    }
+    let mut registry = loaded.registry;
+    for note in registry.mark_availability(|program| program.is_file()) {
+        eprintln!("[concordia] コマンド登録: {note}");
+    }
+    let commands = Arc::new(RwLock::new(registry));
+
+    let loaded_requests = store.load_command_requests().await;
+    for note in &loaded_requests.dropped {
+        eprintln!("[concordia] コマンド登録要求: {note}");
+    }
+    let command_requests = Arc::new(RwLock::new(loaded_requests.log));
+
+    // **登録が 0 件でも登録しておく。** 提示するかは `spec_for` が個体ごとに
+    // 決める（登録 0 件なら自分を落とす）ので、ここで出し分ける必要はない。
+    orchestrator
+        .register_tool(Arc::new(RunTool::new(
+            Arc::clone(&commands),
+            Arc::clone(&command_requests),
+            store.clone(),
+        )))
+        .await;
 
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
     // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。
@@ -94,6 +131,9 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     Ok(AppState {
         orchestrator: Arc::new(orchestrator),
         workspace,
+        commands,
+        command_requests,
+        store,
     })
 }
 

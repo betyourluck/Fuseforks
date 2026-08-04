@@ -3430,11 +3430,19 @@ async fn handle_message(
     } else {
         Vec::new()
     };
+    // 提示は**個体別に解決する**。`spec_for` を持つツール（Spec 15 の `run`）は、
+    // その個体から実行できる登録だけを列挙し、1 件も無ければ自分を落とす。
+    // 名前の集合（`WORK_DIR_TOOL_NAMES`）では書けない除外がここに入る。
+    let presentation_ctx = ToolContext {
+        agent_id: agent_id.clone(),
+        work_dir: spec.work_dir.clone().map(std::path::PathBuf::from),
+        cancel: None,
+    };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
         .read()
         .await
-        .specs()
+        .specs_for(&presentation_ctx)
         .into_iter()
         .filter(|tool| is_bundled_tool_presented(&tool.name, &spec))
         .collect();
@@ -3739,7 +3747,7 @@ async fn handle_message(
                         )
                         .await
                     }
-                    _ => execute_tool(shared, agent_id, call).await,
+                    _ => execute_tool(shared, agent_id, call, &turn.token).await,
                 }
             };
             shared.emit(CoreEvent::ToolInvoked {
@@ -4185,7 +4193,11 @@ fn looks_like_leaked_tool_call(text: &str) -> bool {
 /// - 同梱ツール以外（MCP 由来）は常に提示（このフィルタの対象外）
 /// - 作業フォルダが要るツールは、未設定なら enabled_tools に関わらず
 ///   提示しない（自動除外が明示より優先。使えないツールを見せない）
-/// - enabled_tools が None なら既定 = 全提示、Some なら列挙分だけ
+/// - enabled_tools が None なら**既定集合**（`DEFAULT_ENABLED_TOOLS`）、
+///   Some なら列挙分だけ
+///
+/// **`None` は「全同梱ツール」ではない**（Spec 15 の破壊的変更）。`run` だけが
+/// 既定集合の外に居るので、更新しただけで実行能力が増えることはない。
 fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
     if !crate::tools::BUNDLED_TOOL_NAMES.contains(&name) {
         return true;
@@ -4194,7 +4206,7 @@ fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
         return false;
     }
     match &spec.enabled_tools {
-        None => true,
+        None => crate::tools::DEFAULT_ENABLED_TOOLS.contains(&name),
         Some(enabled) => enabled.iter().any(|tool| tool == name),
     }
 }
@@ -4207,6 +4219,7 @@ async fn execute_tool(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> CoreResult<String> {
     // 実行解決は提示と同じ規則の逆引き: **個別 MCP を先に**引き、
     // 無ければ共有 registry（同名は個別が勝つ）。個別ツールは registry に
@@ -4248,9 +4261,11 @@ async fn execute_tool(
     let ctx = ToolContext {
         agent_id: agent_id.clone(),
         work_dir,
-        // P3 でターンのトークンを渡す。ここが `None` の間、`run` の打ち切りは
-        // タイムアウトまで効かない（Spec 15 P2 の記録を参照）。
-        cancel: None,
+        // ターンのトークンを渡す。**見るのは `run` だけ**（外部プロセスを
+        // 起動するツールは、周回境界まで待つと最長 1 時間走り続ける）。
+        // Spec 10 の不変条件 1（検査点は周回境界だけ）はターンループの話で、
+        // 葉で 1 箇所見ることはその構造を変えない。
+        cancel: Some(cancel.clone()),
     };
     tool.call(&ctx, &call.args).await
 }

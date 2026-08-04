@@ -773,7 +773,7 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P2 完了・残 P3〜P5**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P3 完了・残 P4〜P5**）
 
 **P2 完了**（2026-08-04）— `tools/run.rs`、単体 7 本、workspace 463 本全緑。
 依存に `command-group 5.0.1`（`unsafe_code = "forbid"` なので Job Object /
@@ -797,8 +797,24 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   判断は「**葉で 1 箇所だけ見るのは、周回境界の検査を増やすことではない**」
   （ターンループの構造は変わらず、止められない待ちを 1 つ潰すだけ）
 
-**P3 へ送る宿題**: `execute_tool` の `ToolContext` は今 `cancel: None` で、
-**打ち切りはタイムアウトまで効かない**。実機確認 (6) はそれまで検証できない。
+**P3 完了**（2026-08-04）— コア: `DEFAULT_ENABLED_TOOLS` 新設（`BUNDLED_TOOL_NAMES` は
+7 → 8 本）/ `is_bundled_tool_presented` の `None` 分岐を既定集合へ /
+`ToolRegistry::specs_for` / `execute_tool` へターンのトークンを渡す。
+アプリ: `AppState` が登録簿・登録要求・`ConfigStore` を持ち起動時に実在検査 /
+`RunTool` の登録 / IPC 5 本。結合 3 本、workspace 466 本全緑。
+**P2 の宿題（`cancel: None`）は解消** — 打ち切りがタイムアウトを待たずに効く。
+
+**P3 で決めた 4 点**: 登録 0 件でも `RunTool` は登録する（提示の判断は `spec_for` に
+1 箇所だけ持たせる。`state.rs` で出し分けると**同じ規則が 2 箇所に生える**）/
+`save_commands` は保存のたびに実在検査を掛け直す（パスを直したらその場で戻る）/
+**`AppState` と `RunTool` が同じ `Arc<RwLock<CommandRegistry>>` を見る**ので
+登録を足したら次のターンから載る（`ToolContext.work_dir` を「呼び出しの瞬間に
+引く」のと同じ考え方で、登録時に固定しない）/ `resolve_command_program` は
+登録画面の補助で実行時には使わない。
+
+**テストで分かったこと**: `setup_with`（結合テストの土台）は**同梱ツールを 1 本も
+登録しない** — 登録は GUI 側（`state.rs`）の仕事。既定集合の変更が他の同梱ツールへ
+波及していないことを見るには、比較対象を明示的に足す必要があった。
 
 **P1 完了**（2026-08-04）— `crates/agent-core/src/command.rs`（型 + 純機構）+
 `config_store.rs` の I/O 4 本。単体 15 + store 8 本、workspace 456 本全緑。

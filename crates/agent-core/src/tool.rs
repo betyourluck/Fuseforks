@@ -144,6 +144,12 @@ impl ToolRegistry {
     pub fn names(&self) -> Vec<&str> {
         self.tools.keys().map(String::as_str).collect()
     }
+
+    /// **その個体へ**提示する定義。[`AgentTool::spec_for`] が `None` を返した
+    /// ツールは落ちる。順は [`Self::specs`] と同じく名前順で安定。
+    pub fn specs_for(&self, ctx: &ToolContext) -> Vec<ToolSpec> {
+        self.tools.values().filter_map(|tool| tool.spec_for(ctx)).collect()
+    }
 }
 
 #[cfg(test)]

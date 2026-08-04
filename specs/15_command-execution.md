@@ -356,7 +356,8 @@ S4 の「`run` は安全機構を増やさない」と同じ線の上にある�
       「P2 実装記録」**。当初の記述: `tools/run.rs`（登録名の解決・`allowExtraArgs` の検査・
       プロセス起動・`env_clear` + 明示コピー・出力の分配と有界化・
       タイムアウト・**プロセス木ごとの kill**）。単体
-- [ ] Phase 3 — 配線: `DEFAULT_ENABLED_TOOLS` / `BUNDLED_TOOL_NAMES` の新設と
+- [x] Phase 3 — 完了（2026-08-04）。結合 3 本 + IPC 5 本。**P2 の宿題（`cancel: None`）も
+      解消**。詳細は「P3 実装記録」。当初の記述: 配線: `DEFAULT_ENABLED_TOOLS` / `BUNDLED_TOOL_NAMES` の新設と
       差し替え、登録（0 件なら非提示）、IPC（登録簿の読み書き・登録要求の取得）。
       結合
 - [ ] Phase 4 — UI: システム設定へ「コマンドの登録」ページ（Spec 13 の器）。
@@ -537,6 +538,36 @@ clippy 新規警告ゼロ。依存に `command-group 5.0.1` を追加。
 **打ち切りはタイムアウトまで効かない**。ターンのトークン（`TurnHandle.token`）を
 渡すのは P3 の配線。実機確認 (6)「Spec 10 の打ち切りで子プロセスが残らない」は
 それまで検証できない。
+
+## P3 実装記録（2026-08-04）
+
+コア: `DEFAULT_ENABLED_TOOLS` 新設（`BUNDLED_TOOL_NAMES` は 7 → 8 本）/
+`is_bundled_tool_presented` の `None` 分岐を既定集合へ / `ToolRegistry::specs_for` /
+`execute_tool` へターンのトークンを渡す。
+アプリ: `AppState` が登録簿・登録要求・`ConfigStore` を持ち、起動時に実在検査 /
+`RunTool` の登録 / IPC 5 本（`list_commands` / `save_commands` /
+`resolve_command_program` / `list_command_requests` / `dismiss_command_request`）。
+結合 3 本、workspace 463 → 466 本全緑、clippy 新規警告ゼロ。
+
+**P2 の宿題を解消した。** `execute_tool` の `ToolContext.cancel` に
+`turn.token` を渡したので、**打ち切りがタイムアウトを待たずに効く**。
+実機確認 (6) が検証可能になった。
+
+**実装で決めた 4 点**:
+
+- **登録が 0 件でも `RunTool` は登録する。** 提示するかは `spec_for` が個体ごとに
+  決めるので、`state.rs` で出し分けると**同じ規則が 2 箇所に生える**
+- **`save_commands` は保存のたびに実在検査を掛け直す。** 利用者がパスを直したら
+  その場で有効へ戻ってほしい（次の起動まで待たせない）
+- **`AppState` と `RunTool` が同じ `Arc<RwLock<CommandRegistry>>` を見る。**
+  登録を足したら**次のターンから**提示に載る。`ToolContext.work_dir` を
+  「呼び出しの瞬間に world から引く」のと同じ考え方で、**登録時に固定しない**
+- **`resolve_command_program`（`which` 相当）は IPC に置いた。** 登録画面の補助で、
+  **実行時には使わない**（`program` は絶対パスで記録済み）
+
+**テストで分かったこと**: `setup_with`（結合テストの土台）は**同梱ツールを 1 本も
+登録しない** — 登録は GUI 側（`state.rs`）の仕事だった。既定集合の変更が他の
+同梱ツールへ波及していないことを見るには、比較対象を明示的に足す必要があった。
 
 ## 未決 — **ゼロ**（D1〜D7 すべて裁定済み）
 

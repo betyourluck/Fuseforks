@@ -83,7 +83,10 @@ pub mod world;
 
 pub use blackboard::BlackboardNote;
 pub use budget::BudgetPool;
-pub use config_store::{ConfigStore, LoadedSchedules};
+pub use command::{
+    CommandRegistration, CommandRegistry, CommandRequest, CommandRequestLog, Unavailable,
+};
+pub use config_store::{ConfigStore, LoadedCommandRequests, LoadedCommands, LoadedSchedules};
 pub use diag::open_log;
 pub use error::{CoreError, CoreResult, ErrorPayload};
 pub use event::CoreEvent;
@@ -108,5 +111,6 @@ pub use session_store::{
     ForkPoint, Record, RestoredHistories, SessionMeta, SessionStore, SessionSummary,
 };
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
-pub use tools::{DiffTool, FdTool, FileTool, GrepTool, RememberTool, SdTool, YqTool};
+pub use tools::run::resolve_program;
+pub use tools::{DiffTool, FdTool, FileTool, GrepTool, RememberTool, RunTool, SdTool, YqTool};
 pub use world::World;

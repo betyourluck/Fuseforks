@@ -18,7 +18,23 @@ pub use run::RunTool;
 
 /// 同梱ツールの名前一覧。`AgentSpec::enabled_tools` による提示制御の対象は
 /// この集合だけで、MCP 由来・転送・委譲ツールは対象外（enabled_tools_invariant）。
-pub const BUNDLED_TOOL_NAMES: [&str; 7] = ["diff", "fd", "file", "grep", "remember", "sd", "yq"];
+pub const BUNDLED_TOOL_NAMES: [&str; 8] =
+    ["diff", "fd", "file", "grep", "remember", "run", "sd", "yq"];
+
+/// `enabled_tools: None`（既定に従う）で提示する集合。
+///
+/// **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}`。** `run` だけが
+/// 既定集合の外に居る（Spec 15、破壊的変更）。
+///
+/// `run` を他の 7 本と同じ扱いにすると、**アプリを更新した瞬間に全個体が
+/// コマンド実行能力を得る**。`batch_start_invariant` が「開いただけで課金が
+/// 始まる作りにしない」と言うのと同じ形で、**更新しただけで実行能力が増える
+/// 作りにしない**。
+///
+/// 移行は不要 — 既存の `world.json` は書き換えず、`None` の解釈が変わるだけで
+/// **既存個体は `run` を得ない**のが移行の目的。
+pub const DEFAULT_ENABLED_TOOLS: [&str; 7] =
+    ["diff", "fd", "file", "grep", "remember", "sd", "yq"];
 
 /// 作業フォルダが無いと動かない同梱ツール。
 ///

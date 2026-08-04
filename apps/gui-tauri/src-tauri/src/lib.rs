@@ -160,6 +160,12 @@ pub fn run() {
             commands::create_schedule,
             commands::delete_schedule,
             commands::set_schedule_enabled,
+            // 登録済みコマンド（Spec 15）
+            commands::list_commands,
+            commands::save_commands,
+            commands::resolve_command_program,
+            commands::list_command_requests,
+            commands::dismiss_command_request,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri アプリケーションの起動に失敗しました");

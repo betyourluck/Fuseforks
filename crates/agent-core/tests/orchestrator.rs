@@ -6654,3 +6654,223 @@ async fn an_agent_never_sees_its_own_role_name_only_the_roles_of_others() {
          顔ぶれに自分を含めたか、「# あなたについて」へ役職を書いたのでは: {system}"
     );
 }
+
+// ---- 登録済みコマンド（Spec 15 P3）------------------------------------------
+
+/// **提示されたツール定義**を記録する背骨。`RecordingBackend` は本文しか
+/// 見ておらず、提示の検証には `req.tools` が要る。
+#[derive(Default)]
+struct ToolSpecBackend {
+    tools: std::sync::Mutex<Vec<Vec<agent_core::llm::ToolSpec>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for ToolSpecBackend {
+    fn name(&self) -> &str {
+        "toolspec"
+    }
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.tools.lock().unwrap().push(req.tools.clone());
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// `run` を登録した村を 1 つ組む。戻りは (orchestrator, 登録簿, 登録要求)。
+async fn setup_with_run(
+    dir: &TempDir,
+    backend: Arc<dyn LlmBackend>,
+    registrations: Vec<agent_core::CommandRegistration>,
+) -> (
+    Orchestrator,
+    Arc<tokio::sync::RwLock<agent_core::CommandRegistry>>,
+    Arc<tokio::sync::RwLock<agent_core::CommandRequestLog>>,
+) {
+    let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
+    let (mut registry, _) = agent_core::CommandRegistry::from_registrations(registrations);
+    // 実在検査は「必ず在る」ことにする（プロセス起動まではしないテスト）。
+    let _ = registry.mark_availability(|_| true);
+
+    let commands = Arc::new(tokio::sync::RwLock::new(registry));
+    let requests = Arc::new(tokio::sync::RwLock::new(
+        agent_core::CommandRequestLog::default(),
+    ));
+    orchestrator
+        .register_tool(Arc::new(agent_core::RunTool::new(
+            Arc::clone(&commands),
+            Arc::clone(&requests),
+            ConfigStore::new(&dir.0),
+        )))
+        .await;
+    // 既定集合の変更が**他の同梱ツールに波及していない**ことを見るための比較対象。
+    // `setup_with` は同梱ツールを 1 本も登録しない（GUI 側の仕事）ので、明示的に足す。
+    orchestrator.register_tool(Arc::new(agent_core::GrepTool)).await;
+    (orchestrator, commands, requests)
+}
+
+fn registration(name: &str, cwd: Option<&str>) -> agent_core::CommandRegistration {
+    agent_core::CommandRegistration {
+        name: name.to_owned(),
+        description: "テスト用".to_owned(),
+        program: if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe")
+        } else {
+            std::path::PathBuf::from("/bin/sh")
+        },
+        args: Vec::new(),
+        allow_extra_args: false,
+        timeout_secs: 60,
+        cwd: cwd.map(std::path::PathBuf::from),
+    }
+}
+
+/// **既定では `run` を提示しない**（Spec 15 の破壊的変更）。
+///
+/// `enabledTools: null` の意味を「全同梱ツール」から「既定集合」へ変えた。
+/// これが守られていないと、**アプリを更新した瞬間に全個体がコマンド実行能力を
+/// 得る** — `batch_start_invariant`（開いただけで課金が始まる作りにしない）と
+/// 同じ形で、更新しただけで実行能力が増える作りにしない。
+#[tokio::test]
+async fn run_is_not_presented_to_agents_that_did_not_ask_for_it() {
+    let backend = Arc::new(ToolSpecBackend::default());
+    let dir = TempDir::new("run-default-off");
+    let (orchestrator, _, _) = setup_with_run(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        vec![registration("test", Some("."))],
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
+    spec.work_dir = Some(dir.0.display().to_string());
+    // enabled_tools は None のまま = 「既定に従う」。
+    assert!(spec.enabled_tools.is_none());
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "やあ").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let tools = backend.tools.lock().unwrap().clone();
+    let names: Vec<&str> = tools[0].iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        !names.contains(&"run"),
+        "既定集合の外に居ること（更新しただけで実行能力が増えない）: {names:?}"
+    );
+    assert!(names.contains(&"grep"), "他の同梱ツールは既定のまま: {names:?}");
+}
+
+/// **明示しても、実行できる登録が無ければ提示しない。**
+///
+/// 提示は 2 段ゲート（`enabledTools` に `run` があるか × 実行可能な登録が
+/// 1 件以上あるか）。使えないツールにスキーマ分のトークンを毎ターン払わない。
+#[tokio::test]
+async fn run_needs_both_the_opt_in_and_a_runnable_registration() {
+    let backend = Arc::new(ToolSpecBackend::default());
+    let dir = TempDir::new("run-gate");
+    // 登録ゼロで始める。
+    let (orchestrator, commands, _) = setup_with_run(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        Vec::new(),
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
+    spec.work_dir = Some(dir.0.display().to_string());
+    spec.enabled_tools = Some(vec!["run".into(), "grep".into()]);
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "1 回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 登録を 1 件足す。**同じ実体を見ているので次のターンから載る。**
+    {
+        let (registry, _) =
+            agent_core::CommandRegistry::from_registrations(vec![registration("test", Some("."))]);
+        *commands.write().await = registry;
+    }
+    orchestrator.send_user_message(&id, "2 回目").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let tools = backend.tools.lock().unwrap().clone();
+    let first: Vec<&str> = tools[0].iter().map(|t| t.name.as_str()).collect();
+    let second: Vec<&str> = tools[1].iter().map(|t| t.name.as_str()).collect();
+
+    assert!(
+        !first.contains(&"run"),
+        "オプトインしていても登録 0 件なら提示しないこと: {first:?}"
+    );
+    assert!(
+        second.contains(&"run"),
+        "登録を足したら次のターンから載ること: {second:?}"
+    );
+
+    let described = tools[1]
+        .iter()
+        .find(|t| t.name == "run")
+        .map(|t| t.description.clone())
+        .unwrap();
+    assert!(
+        described.contains("`test`"),
+        "実行できる登録を列挙すること: {described}"
+    );
+}
+
+/// **`cwd` が決まらない登録は列挙に出ず、件数だけが伝わる。**
+///
+/// 実行できない登録の名前を見せると、モデルはそれを呼び、拒否され、
+/// 他に手が無ければ同じ呼び出しを繰り返す。件数と次の手だけを渡す（#44）。
+#[tokio::test]
+async fn unrunnable_registrations_are_counted_not_named() {
+    let backend = Arc::new(ToolSpecBackend::default());
+    let dir = TempDir::new("run-hidden");
+    let (orchestrator, _, _) = setup_with_run(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        vec![
+            registration("fixed", Some(".")),
+            // cwd も個体の work_dir も無いので実行できない。
+            registration("floating", None),
+        ],
+    )
+    .await;
+
+    let id = AgentId::from("agent_a");
+    let mut spec = AgentSpec::new(id.clone(), "アルファ", "tpl");
+    spec.enabled_tools = Some(vec!["run".into()]);
+    // work_dir は設定しない。
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "やあ").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let tools = backend.tools.lock().unwrap().clone();
+    let described = tools[0]
+        .iter()
+        .find(|t| t.name == "run")
+        .map(|t| t.description.clone())
+        .expect("`fixed` が実行できるので run は提示される");
+
+    assert!(described.contains("`fixed`"), "{described}");
+    assert!(
+        !described.contains("floating"),
+        "実行できない登録の名前は出さないこと: {described}"
+    );
+    assert!(
+        described.contains("他に 1 件"),
+        "件数と次の手だけを渡すこと: {described}"
+    );
+}
