@@ -24,6 +24,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file`. Structurally read-protected outside the work folder |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
+| 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and on the map |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
 | ⚙️ **System Settings** | Language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
@@ -208,7 +209,7 @@ This clears only the conversation log and individual agent histories from the sc
 By default, every agent receives the latest 12 messages × 200 characters of "conversations exchanged in the plaza" each turn. Excluding roles that do not require shared context eliminates that fixed overhead. **This is a receiver-side setting only**; opting out does not stop an agent's own utterances from being heard by others (it is a cost feature, not a privacy feature).
 
 **Agents are aware of each other's operational status** ([Spec 06](specs/06_peer-presence-in-prompt.md)).
-While humans could see UI status indicators, agents could not, forcing coordinators to spend tokens on roll-call queries like "try throwing this and see what happens." The prescription has two layers: **roster as authority, notifications as narrative**. The roster occupies a single line in the variable portion of the system prompt (`agent_id (display name): running`, listed in connection order; cache stability boundaries are established right before the roster, so cache hits remain unbroken even when status changes).
+While humans could see UI status indicators, agents could not, forcing coordinators to spend tokens on roll-call queries like "try throwing this and see what happens." The prescription has two layers: **roster as authority, notifications as narrative**. The roster occupies a single line in the variable portion of the system prompt (`agent_id (display name) [role]: running`, listed in connection order; the role appears only when one is assigned. Cache stability boundaries are established right before the roster, so cache hits remain unbroken even when status or role changes).
 Entries and exits stream into the conversation log in the same format as chat notifications (triggered only on change, preserving order, independent of `hearsRoomLog` — plaza opt-out is a cost feature and must not break delivery correctness). Failures report **only the type**, stating "Stopped due to failure" — the reason (`last_error`) is diagnostic info for the user, and leaking it to other agents would expose internal details outside the conversation.
 
 **Tools executed by agents appear interspersed within the conversation timeline.**
@@ -506,7 +507,7 @@ Agent settings reside in the OS application-data area.
 
 ```text
 {app_data_dir}/workspace/
-  world.json                  Agent definitions, model templates, and connection-map coordinates
+  world.json                  Agent definitions, model templates, roles, and connection-map coordinates
   concordia.log               Diagnostic log (below; rotates one generation to concordia.log.old at 8 MB)
   schedules.json              Schedules (time-triggered requests; managed from "Schedule" in the title bar)
   Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
@@ -560,6 +561,45 @@ The folder button in the Settings dialog — opened from an agent card's setting
 ### The Village Blackboard — shared working notes
 
 The other tab at the center-bottom is the **Blackboard**. It is literally the `黒板/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`黒板/<display name>.md`) as a sticky note, and only the coordinator bundles them into `黒板/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
+
+### Roles
+
+A **template for creating servants** and a **label visible in the village**
+([Spec 14](specs/14_role-label.md)). Managed from "Roles" in the title bar.
+
+Pick a role when creating a servant and it starts with its settings filled in.
+Five things are applied: the `Construct.md` body, the model template, RAG sources,
+built-in tools, and the tool-call limit. **Connections and the work folder are
+deliberately excluded.** Letting a template draw lines would break "**lines are
+drawn by people**," and the work folder is an absolute path that differs per
+machine, so sharing a village would ship a broken reference.
+
+- **Settings are copied; the role name is referenced.** This asymmetry is the core
+  of the design. Editing a role later **does not change servants that already
+  exist** (we do not create a second layer with the same nature as the ordinance),
+  while **renaming a role updates every display**
+- **Applying happens only at creation.** You can attach a role to an existing
+  servant, but that changes **only the nameplate** — not a single setting is
+  overwritten, because overwriting cannot be undone
+- **Deleting a role does not break servants.** Their settings were copied, so
+  behavior is unchanged; only the badge and the roster label disappear. This is
+  the opposite of model templates, which refuse deletion while referenced — and
+  it is exactly what the copy approach buys
+- **Badge colors come from a closed set of 8.** Lightness and chroma are fixed and
+  only the hue varies, so an unreadable color cannot be chosen. Changing a color
+  reaches every servant holding that role immediately
+
+**A badge states provenance, not current content.** `Construct.md` and the tools
+can be edited after creation, so a servant badged "Researcher" whose insides are
+something else can arise through legitimate operations. The badge answers only
+"**which template was this made from**" and promises nothing beyond that.
+
+**A servant does not know its own role name. This is by design.** The roster
+carries the roles of **others** only; a servant's own role appears nowhere in its
+prompt. Persona is carried by the prose in `Construct.md` / `SKILL.md`, and
+injecting a role name there **pulls the model toward that word's connotations**
+(write "Deputy" and it starts behaving deferentially). A role is a label for
+people and for other servants, not material for self-identity.
 
 ### Scheduling
 
