@@ -351,7 +351,7 @@ There are eight built-in tools. External capabilities are added through MCP.
 | `grep` | Find **lines** matching a regular expression (`path:line number: content`). `count_only: true` returns **counts only** | **Work folder only** |
 | `fd` | Find files and folders by **name** (relative path list; folders end in `/`) | **Work folder only** |
 | `diff` | Compare two files as a unified diff | **Work folder only** |
-| `sd` | **Replace** content in a file with a regular expression (editing) | **Work folder only** |
+| `sd` | **Replace** content in a file with a regular expression (editing). `paths` previews diffs across **several files at once** (preview only, up to 20) | **Work folder only** |
 | `yq` | Get / set / remove only TOML or JSON values (editing) | **Work folder only** |
 | `file` | File and folder operations (`read` / `write` / `append` / `mkdir` / `move` / `copy` / `remove`). [Spec 09](specs/09_file-tool.md) | **Work folder only** |
 | `run` | Execute allowed commands ([Spec 15](specs/15_command-execution.md)). **Off by default** | **Unrestricted** (the allowlist is the only enclosure) |
@@ -361,7 +361,7 @@ There are eight built-in tools. External capabilities are added through MCP.
 
 **Only commands matching a per-agent allowlist can run**
 ([Spec 15](specs/15_command-execution.md)). Configure it under
-Agent settings → config files → `shell.json`; press "Insert template" when empty.
+Agent settings → config files → `run.json`; press "Insert template" when empty.
 
 There are three states: a call matching `allow` runs without approval; a call
 matching `deny` is refused **and not recorded** (so a decision you already made
@@ -415,7 +415,8 @@ Writing broadens the damage class from disclosure to **tampering**, so it has a 
 
 - **Two-stage execution**: preview is the default; it returns a diff of the result and **does not write**. `apply: true` performs the write and must still return the applied diff. **No path writes silently**; every change remains in the conversation log as a diff.
 - Writes whose diff exceeds 12,000 characters are **rejected**, not truncated. A truncated diff breaks the contract of knowing what changed.
-- One file per invocation; no creating new files; identical text or values are not written.
+- **Writes touch one file per invocation**; no creating new files; identical text or values are not written.
+- **`sd` accepts `paths` to preview diffs across several files at once** ([Spec 17](specs/17_batch-sd-preview.md), up to 20). This is **preview only — writes still go one file at a time**. What "one file per invocation" protects is the blast radius of a single injection, so widening a read-only preview does not weaken it. Editing ten files drops from ten previews plus ten applies to **one preview plus ten applies**. When the output limit is reached, **no diff is ever cut mid-way**; the batch simply shows fewer files and reports how many matches remain.
 - `yq` supports TOML and JSON only. It preserves comments, key ordering, and formatting while changing only values (including TOML end-of-line comments). `set` accepts scalars only, and rejects type destruction such as setting a table, setting a datetime, or automatically creating intermediate keys. **YAML is unsupported**: the candidate yaml-edit library was rejected in a PoC because it lost comments, types, and structure (see Spec 01 Phase 4).
 
 ### File and Folder Operations (`file`)
