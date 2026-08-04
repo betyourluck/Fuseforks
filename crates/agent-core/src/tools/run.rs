@@ -263,7 +263,7 @@ impl AgentTool for RunTool {
         crate::note!(
             "run: agent={} command={command} resolved={} args={}",
             ctx.agent_id,
-            program.display(),
+            display_path(&program),
             argv.len()
         );
 
@@ -354,7 +354,7 @@ pub(crate) async fn run_program(
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // **どのバイナリが走ったかを毎回見せる**（PATH で変わるため）。
-    let mut body = format!("実行: {}\n終了コード: {code}\n", program.display());
+    let mut body = format!("実行: {}\n終了コード: {code}\n", display_path(program));
     body.push_str(&section("stdout", &stdout, STDOUT_CHARS));
     body.push_str(&section("stderr", &stderr, STDERR_CHARS));
     Ok(body)
@@ -383,6 +383,22 @@ fn section(label: &str, text: &str, limit: usize) -> String {
          （表示上限に達したため打ち切りました。**続きを読む方法はありません** — \
          再実行しても同じ出力とは限りません。出力を絞る引数があるなら使ってください）\n"
     )
+}
+
+/// 表示用にパスを整える。**Windows の冗長プレフィックスを剥がす。**
+///
+/// `canonicalize()` は Windows で `\\?\C:\...` を返す。これがそのまま結果本文へ
+/// 入ると、**モデルが読むテキストに OS の内部表現が漏れる**（実機で観測、
+/// 2026-08-04 — `resolved=\\?\C:\Windows\System32\curl.exe`）。
+/// Spec 09 Notes 1 が「観測されたら `dunce` を入れる」と書いた条件だが、
+/// **crate を足さずに済む** — 剥がすのは前置 4 文字だけ。ただし UNC 形
+/// （`\\?\UNC\...`）は**触らない**（剥がすと別のホストを指す）。
+pub(crate) fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with(r"UNC\") => rest.to_owned(),
+        _ => text,
+    }
 }
 
 /// 実行ファイルの解決に使う `which` 相当。登録時に 1 回だけ呼ぶ想定で、
@@ -525,6 +541,18 @@ mod tests {
     #[test]
     fn an_empty_stream_is_stated_not_omitted() {
         assert_eq!(section("stderr", "   ", STDERR_CHARS), "stderr: (なし)\n");
+    }
+
+    #[test]
+    fn the_verbatim_prefix_never_reaches_the_model() {
+        // canonicalize が返す Windows の冗長形。モデルの読む本文へ漏らさない。
+        assert_eq!(display_path(Path::new(r"\\?\C:\bin\x.exe")), r"C:\bin\x.exe");
+        // UNC は剥がさない（剥がすと別のホストを指す）。
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\host\share\x")),
+            r"\\?\UNC\host\share\x"
+        );
+        assert_eq!(display_path(Path::new("/usr/bin/x")), "/usr/bin/x");
     }
 
     #[test]
