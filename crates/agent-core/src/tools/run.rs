@@ -212,8 +212,23 @@ impl AgentTool for RunTool {
         // その周で通ってほしい。
         let policy = self.load(&ctx.agent_id).await;
 
+        // **判断は必ず 1 行残す。** 通ったときだけログに出す形にしていたので、
+        // 「deny が効いたのか、deny を書く前に積まれた行が残っているのか」を
+        // 実機のログから区別できなかった（2026-08-04 の利用者報告）。
+        // 機構が動いているかどうかは、動いた記録が無ければ確かめられない（#58 の同型）。
+        let decision = policy.decide(command, &argv);
+        crate::note!(
+            "run decision: agent={} command={command} args={} decision={decision:?} \
+             allow={} deny={} pending={}",
+            ctx.agent_id,
+            argv.len(),
+            policy.allow.len(),
+            policy.deny.len(),
+            policy.pending.len(),
+        );
+
         // 文面は 3 つとも別にする（#44。理由が違えば次の手も違う）。
-        match policy.decide(command, &argv) {
+        match decision {
             Decision::Malformed => {
                 return Ok(format!(
                     "`{command}` は実行ファイル名として受け付けられません\
