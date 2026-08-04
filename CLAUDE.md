@@ -689,6 +689,39 @@ CI がタグから書き換える側。
   設定できない村が出る（`opener:allow-open-path` を `$APPDATA/workspace` に
   絞ってあるのとは求められているものが逆）
 
+## リリースビルド（`.github/workflows/build.yml`・2026-08-05 着地）
+
+**`v*.*` タグの push だけで走る。** 通常のコミットでは走らない — 3 OS 分の
+Tauri ビルドは重く、毎コミットで回すと待ち時間と CI 時間の両方を食う。
+Kataribe（`D:\Github\Kataribe\.github\workflows\build.yml`）を写し、
+**この村の構造に合わせて 4 点を変えた**。
+
+| Kataribe | この村 | 理由 |
+|---|---|---|
+| `setup-node` + `npm ci` | **`setup-bun` + `bun install --frozen-lockfile`** | `tauri.conf.json` の `beforeBuildCommand` が `bun run build` |
+| `rust-cache` に workspace 2 つ | **1 つ（既定のルートのみ）** | ルート 1 ワークスペース（`members = apps/gui-tauri/src-tauri, crates/agent-core`）で target も 1 つ |
+| artifact は `app/src-tauri/target/…` | **`target/release/bundle/`** | 同上。**bundle はルートの target 配下に出る** |
+| `node -e` で version 書き換え | **`bun -e`** | node は runner に最初から入っているが、**この workflow が明示的に用意しているのは bun だけ** |
+
+**版番号の経路は 2 本あり、独立している**（Kataribe と同じ設計）:
+
+- **配布物に乗る版** = `tauri.conf.json` の `version`。**CI がタグから書き換える**
+  （`X.Y` なら `.0` を補って 3 要素 semver にする。Tauri が 3 要素を要求する）。
+  **CI 内だけの書き換えでコミットはしない**
+- **画面に出る版** = `__APP_VERSION__`。`vite.config.ts` が
+  `git describe --tags --abbrev=0` から取る。**タグを打ったコミットをビルドするので
+  両者は同じ値になる**
+
+**フロントとコアのテストを Tauri ビルドの手前に置く**（`cargo test --workspace` →
+`bun run test` → `tauri-action`）。壊れていればそこで落ち、**3 OS 分の重いビルドに
+進まない**。
+
+**ロックファイルが 2 つある**（`bun.lock` と `package-lock.json`、どちらも追跡済み）。
+**2026-08-05 に実際に食い違った** — `npm install` で `@tauri-apps/plugin-dialog` を
+足したとき `package-lock.json` だけが更新され、`bun.lock` は古いままだった。
+ビルドの入口は `bun` なので、**そのまま CI へ出していれば依存が入らず落ちていた**。
+`bun install` で追いつかせたが、**どちらか 1 つに寄せるかは未決**。
+
 ## システム設定への追加候補（2026-08-03 利用者。小出しに来る前提）
 
 Spec 13 の器（左メニュー = 目録 / メッセージ表示/非表示のページ）へ後から

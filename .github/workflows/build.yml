@@ -1,0 +1,133 @@
+name: Build
+
+# main のコミットに打った v*.* タグ（例: v0.1 / v0.1.0）の push でトリガー。
+# タグはリリース時にだけ打つので、実質「リリースビルド」として働く。
+# 通常のコミットでは走らない — 3 OS 分の Tauri ビルドは重く、
+# 毎コミットで回すと待ち時間と CI 時間の両方を食う。
+on:
+  push:
+    tags:
+      - "v*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    # tauri-action が GitHub Release を作成（= installer を Assets に添付）するのに要る。
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      # タグから版を復元するため、浅いクローンでもタグ自体は要る。
+      # actions/checkout はトリガーとなったタグを取ってくるので追加設定は不要。
+      - uses: actions/checkout@v4
+
+      # タグ v0.1.0 → APP_VERSION=0.1.0（先頭の v を除去）。
+      # 後続の step で ${{ env.APP_VERSION }} を参照できる。
+      - name: Extract version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then
+            echo "タグからバージョンを取れない: $GITHUB_REF_NAME"
+            exit 1
+          fi
+          # Tauri は 3 要素 semver (X.Y.Z) を要求する。タグが v0.1 のように短ければ 0 で補う。
+          case "$VERSION" in
+            *.*.*) ;;                          # 既に X.Y.Z
+            *.*)   VERSION="${VERSION}.0" ;;   # X.Y → X.Y.0
+            *)     VERSION="${VERSION}.0.0" ;; # X   → X.0.0
+          esac
+          echo "APP_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "semver: ${VERSION}"
+
+      # フロントは bun で回す（tauri.conf.json の beforeBuildCommand が `bun run build`）。
+      # npm ではない — package-lock.json も追跡しているが、ビルドの入口は bun.lock。
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # **ワークスペースはルートに 1 つだけ**（members = apps/gui-tauri/src-tauri,
+      # crates/agent-core）。target もルートに 1 つなので、キャッシュ対象も 1 つでよい。
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      # Linux は Tauri（WebKitGTK）のシステム依存が要る。Windows / macOS は不要。
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl wget file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # **コアのテストを先に走らせる。** 壊れていればここで落ち、
+      # 重い Tauri ビルドに進まない（3 OS 分の時間を無駄にしない）。
+      - name: Test workspace
+        run: cargo test --workspace
+
+      - name: Install frontend dependencies
+        working-directory: ./apps/gui-tauri
+        run: bun install --frozen-lockfile
+
+      # フロントの単体テスト。ここも Tauri ビルドの手前に置く。
+      - name: Test frontend
+        working-directory: ./apps/gui-tauri
+        run: bun run test
+
+      # 配布ビルドの version をタグに揃える（installer に正しい版番号が乗る）。
+      # **CI 内だけの書き換えでコミットはしない。**
+      #
+      # 画面に出る版（StatusBar の `Version:`）はこことは別経路で、
+      # vite.config.ts が `git describe --tags` から取る。タグを打った
+      # コミットをビルドしているので、両者は同じ値になる。
+      #
+      # 実行は bun。node は runner に最初から入っているが、**この workflow が
+      # 明示的に用意しているのは bun だけ**なので、宣言していない道具に依存しない。
+      - name: Sync app version to tag
+        working-directory: ./apps/gui-tauri/src-tauri
+        shell: bash
+        run: |
+          bun -e "const f='tauri.conf.json';const fs=require('fs');const j=JSON.parse(fs.readFileSync(f));j.version=process.env.APP_VERSION;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
+
+      # Tauri アプリをビルドし、タグの GitHub Release に installer を添付する。
+      # projectPath で src-tauri の親を指す。tagName を渡すと Release を作成/更新し、
+      # 3 OS の bundle が同じ Release の Assets に集まる（永続リンクになる）。
+      - name: Build Tauri app (+ GitHub Release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ./apps/gui-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: "Outcasts Concordia ${{ github.ref_name }}"
+          releaseBody: "各 OS の installer を下の Assets からダウンロードしてください。"
+          releaseDraft: false
+          prerelease: false
+
+      # 各 OS の installer/bundle を成果物としても残す。
+      # **ワークスペースがルートに 1 つなので、bundle もルートの target 配下**
+      # （apps/gui-tauri/src-tauri/target ではない）。
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: concordia-${{ env.APP_VERSION }}-${{ matrix.platform }}
+          path: target/release/bundle/
+          retention-days: 7
