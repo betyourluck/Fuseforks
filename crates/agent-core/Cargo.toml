@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+command-group.workspace = true
 keyring.workspace = true
 rayon.workspace = true
 redb.workspace = true

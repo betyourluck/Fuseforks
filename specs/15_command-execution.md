@@ -351,7 +351,9 @@ S4 の「`run` は安全機構を増やさない」と同じ線の上にある�
       畳む・上限 50 件は `firstRequestedAtMs` の古い順に捨てる・
       **書き込みは temp + rename**・不正 JSON は空として WARN し
       `commands.json` には影響させない・時刻は引数で受ける）。単体
-- [ ] Phase 2 — `tools/run.rs`（登録名の解決・`allowExtraArgs` の検査・
+- [x] Phase 2 — 完了（2026-08-04）。`crates/agent-core/src/tools/run.rs`、単体 7 本、
+      `command-group 5.0.1` 追加。**契約が実装を見ずに書けていなかった点 2 つは
+      「P2 実装記録」**。当初の記述: `tools/run.rs`（登録名の解決・`allowExtraArgs` の検査・
       プロセス起動・`env_clear` + 明示コピー・出力の分配と有界化・
       タイムアウト・**プロセス木ごとの kill**）。単体
 - [ ] Phase 3 — 配線: `DEFAULT_ENABLED_TOOLS` / `BUNDLED_TOOL_NAMES` の新設と
@@ -490,6 +492,51 @@ clippy 新規警告ゼロ。
 `save_schedules` が個別に書いており、今回の 2 本を足すと**同じ 8 行が 4 箇所**に
 なるところだった。既存 2 本も同じ経路へ寄せた（`world_save_is_atomic_and_leaves_no_temp_file`
 が回帰を留めている）。
+
+## P2 実装記録（2026-08-04）
+
+`crates/agent-core/src/tools/run.rs`。単体 7 本、workspace 456 → 463 本全緑、
+clippy 新規警告ゼロ。依存に `command-group 5.0.1` を追加。
+
+**契約が実装を見ずに書けていなかった点が 2 つ出た。** どちらも P0 の凍結時には
+見えず、実装して初めて分かった形。
+
+1. **`description()` は個体を知らない。** 契約は「**列挙するのも実行可能な登録
+   だけ**」と凍結したが、`AgentTool::description(&self) -> String` は
+   `ToolContext` を受け取らないので、**その個体の `work_dir` に依存する列挙が
+   書けない**。`enabled_tools` と `WORK_DIR_TOOL_NAMES` による除外は
+   オーケストレーター側で**名前の集合**として実装されているが、
+   「登録が 1 件も実行可能でない」は**中身を見ないと決まらない除外**で、
+   名前の集合では書けない。
+   処方: **`AgentTool::spec_for(&self, ctx) -> Option<ToolSpec>` を追加**
+   （既定は `spec()`。`None` で非提示）。加算的で、他の 7 本は 1 行も変わらない。
+   **これは Spec 14 P1 の「`AgentSnapshot` にも `role_id` が要る」と同型** —
+   契約に欄や規則を足したら「**それを運ぶ経路が既にあるか**」を実装前に問う
+2. **Spec 10 の不変条件 1 と衝突しかけた。** 「検査点は周回境界だけ」を守ると、
+   打ち切りを押しても走っているコマンドは**最長 `timeoutSecs`（上限 1 時間）
+   走り続ける** — 実機で観測した「要求から 0.0 秒」がそこだけ破れる。
+   処方: **`ToolContext.cancel: Option<CancellationToken>` を追加**し、
+   **`run` だけが見る**。判断は「**葉で 1 箇所だけ見るのは、周回境界の検査を
+   増やすことではない**」— ターンループの構造は変わらず、止められない待ちを
+   1 つ潰すだけ。不変条件 1 の趣旨（検査を散らさない）は保たれている
+
+**そのほか実装で決めた 4 点**:
+
+- **出力の枠は融通しない**（`STDERR_CHARS = 4_000` / `STDOUT_CHARS = 8_000`）。
+  stderr が短くても stdout の枠は広がらない。融通すると stderr の長さで
+  stdout の打ち切り位置が変わり、**RepeatGuard の完全一致が壊れる**
+- **打ち切り文に「続きを読む方法はありません」を書く。** `run` は
+  `file read` 以上に続きが取れない（**再実行しても同じ出力とは限らない**）ので、
+  #58 の規律をそのまま適用した
+- **`now_ms()` は `command.rs` に 1 つだけ置く。** `CommandRequestLog::record` が
+  時刻を引数で受ける規律（`schedule.rs`）は保ち、**壁時計を読む縁を 1 箇所に集める**
+- **`resolve_program`（`which` 相当）は登録時にだけ使う。** 実行時は絶対パスを
+  そのまま起動する。Windows の `PATHEXT` 展開はここに閉じ込めた
+
+**P3 へ送る宿題が 1 つ**: `execute_tool` の `ToolContext` は今 `cancel: None` で、
+**打ち切りはタイムアウトまで効かない**。ターンのトークン（`TurnHandle.token`）を
+渡すのは P3 の配線。実機確認 (6)「Spec 10 の打ち切りで子プロセスが残らない」は
+それまで検証できない。
 
 ## 未決 — **ゼロ**（D1〜D7 すべて裁定済み）
 

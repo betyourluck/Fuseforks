@@ -1975,6 +1975,21 @@ conversation_termination:
     解決するのはオーケストレーター (execute_tool) で、**呼び出しの瞬間**に world から
     引く — ツール登録時に固定すると設定変更が効かない。ツール自身は world を知らない
     (登録簿の型に依存すると MCP ツールと同じ穴に嵌らなくなる)。
+    **ToolContext.cancel: Option<CancellationToken> を追加** (2026-08-04、Spec 15 P2)。
+    **ほとんどのツールは見ない。** Spec 10 の不変条件 1「検査点は周回境界だけ」は
+    そのまま維持し、例外は**外部プロセスを起動するツール** (run) だけ —
+    周回境界まで待つと最長 timeoutSecs (上限 1 時間) 走り続け、
+    「要求から 0.0 秒」で止まる Spec 10 の約束がそこだけ破れる。
+    **葉で 1 箇所だけ見るのは、周回境界の検査を増やすことではない**
+    (ターンループの構造は変わらず、止められない待ちを 1 つ潰すだけ)。
+    **AgentTool::spec_for(&self, ctx) -> Option<ToolSpec> を追加** (同上)。
+    既定は spec() で、**個体で提示内容が変わるツールだけが上書きする**。
+    None を返したらそのツールを提示しない。
+    根拠: description() は ToolContext を受け取らないので、
+    **個体別の提示 (run が「その個体から実行できる登録だけ」を列挙する) は
+    この穴でしか書けない**。WORK_DIR_TOOL_NAMES による自動除外は名前の集合で
+    書けるが、「登録が 1 件も実行可能でない」のような**中身を見ないと決まらない
+    除外**は名前の集合では書けない。
 
   bundled_tools_contract: |
     同梱 grep / fd / diff = crates/agent-core/src/tools/fs.rs (2026-07-29)。

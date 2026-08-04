@@ -134,6 +134,7 @@ mod tests {
         ToolContext {
             agent_id: AgentId::from("agent_01"),
             work_dir: None,
+            cancel: None,
         }
     }
 

@@ -904,6 +904,7 @@ mod tests {
         ToolContext {
             agent_id: AgentId::from("agent_01"),
             work_dir: work_dir.map(Path::to_path_buf),
+            cancel: None,
         }
     }
 

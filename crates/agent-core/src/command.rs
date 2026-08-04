@@ -29,6 +29,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::AgentId;
 
+/// 壁時計を読む**唯一の場所**。
+///
+/// [`CommandRequestLog::record`] は `now_ms` を引数で受け取る（`schedule.rs` と
+/// 同じ規律 — 内部で壁時計を読むと、テストが特定の時刻でだけ落ちるものになる）。
+/// その引数を作るのは**呼び出しの縁**の仕事で、ここに 1 つだけ置く。
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
 /// 登録要求の保持上限。超えたら `first_requested_at_ms` の**古い順**に捨てる。
 ///
 /// `run` では RepeatGuard の効きが落ちる（同じコマンドが違う出力を返す）ので、

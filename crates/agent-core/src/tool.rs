@@ -39,6 +39,16 @@ pub struct ToolContext {
     /// ツール自身に world を引かせず、オーケストレーターが実行時に解決して渡す。
     /// ツールが登録簿の型を知ると、MCP ツールと同じ穴に嵌らなくなる。
     pub work_dir: Option<PathBuf>,
+    /// このターンの協調的キャンセル（Spec 10）。**ほとんどのツールは見ない。**
+    ///
+    /// Spec 10 の不変条件 1 は「検査点は周回境界だけ」で、ツールの内側では
+    /// 見ないのが原則。例外は**外部プロセスを起動するツール**（Spec 15 の `run`）で、
+    /// 周回境界まで待つと最長 `timeoutSecs`（上限 1 時間）走り続ける。
+    /// 「要求から 0.0 秒」で止まる Spec 10 の約束が、そこだけ破れる。
+    ///
+    /// **葉で 1 箇所だけ見るのは、周回境界の検査を増やすことではない** —
+    /// ターンループの構造は変わらず、止められない待ちを 1 つ潰すだけ。
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
 }
 
 /// 実行可能なツール。
@@ -66,6 +76,20 @@ pub trait AgentTool: Send + Sync {
             description: self.description(),
             parameters: self.parameters(),
         }
+    }
+
+    /// **その個体へ**提示する定義。既定は [`Self::spec`]（誰に対しても同じ）。
+    ///
+    /// 上書きするのは、提示する内容が個体で変わるツールだけ（Spec 15 の `run` は
+    /// 「その個体から実行できる登録」だけを列挙する）。`description()` は
+    /// [`ToolContext`] を受け取らないので、**個体別の提示はこの穴でしか書けない**。
+    ///
+    /// `None` を返したら**そのツールを提示しない**。既存の
+    /// `WORK_DIR_TOOL_NAMES` による自動除外は名前の集合で書かれているが、
+    /// 「登録が 1 件も実行可能でない」のような**中身を見ないと決まらない除外**は
+    /// 名前の集合では書けない。
+    fn spec_for(&self, _ctx: &ToolContext) -> Option<ToolSpec> {
+        Some(self.spec())
     }
 }
 

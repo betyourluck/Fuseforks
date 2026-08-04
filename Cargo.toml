@@ -85,7 +85,14 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # 実績のある純 Rust 実装に任せる（similar は insta 等でも使われる定番）。
 similar = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "process"] }
+# 登録済みコマンドの実行（Spec 15）でプロセスを**木ごと**止めるため。
+# tokio::process::Child::kill は対象 PID にしか効かず孫が残る（pytest が起動した
+# 子が生き残る）。Windows は Job Object の JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE、
+# Unix は setsid + kill(-pgid) が要るが、どちらも unsafe を書くことになる —
+# このクレートは unsafe_code = "forbid" なので自前では書けない。trash を足した
+# ときと同じ判断で、安全側の挙動を自前の unsafe で書かない。
+command-group = { version = "5", features = ["with-tokio"] }
 # 割り込み停止（Spec 10）の階層キャンセル。CancellationToken は tokio 本体に
 # 無い（1.52.3 実ソースと docs.rs の 2 経路で確認済み）。child_token の意味論
 # （親の cancel は全子へ / 子は親へ遡らない / cancel 済みの親の子は cancel 済みで

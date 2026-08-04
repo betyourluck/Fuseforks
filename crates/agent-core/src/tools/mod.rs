@@ -8,11 +8,13 @@ pub mod edit;
 pub mod file;
 pub mod fs;
 pub mod memory;
+pub mod run;
 
 pub use edit::{SdTool, YqTool};
 pub use file::FileTool;
 pub use fs::{DiffTool, FdTool, GrepTool};
 pub use memory::RememberTool;
+pub use run::RunTool;
 
 /// 同梱ツールの名前一覧。`AgentSpec::enabled_tools` による提示制御の対象は
 /// この集合だけで、MCP 由来・転送・委譲ツールは対象外（enabled_tools_invariant）。

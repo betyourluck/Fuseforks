@@ -4248,6 +4248,9 @@ async fn execute_tool(
     let ctx = ToolContext {
         agent_id: agent_id.clone(),
         work_dir,
+        // P3 でターンのトークンを渡す。ここが `None` の間、`run` の打ち切りは
+        // タイムアウトまで効かない（Spec 15 P2 の記録を参照）。
+        cancel: None,
     };
     tool.call(&ctx, &call.args).await
 }

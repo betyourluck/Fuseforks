@@ -773,7 +773,32 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P1 完了・残 P2〜P5**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P2 完了・残 P3〜P5**）
+
+**P2 完了**（2026-08-04）— `tools/run.rs`、単体 7 本、workspace 463 本全緑。
+依存に `command-group 5.0.1`（`unsafe_code = "forbid"` なので Job Object /
+`setsid` を自前で書けない。`trash` と同じ判断）。
+
+**契約が実装を見ずに書けていなかった点が 2 つ出た**（どちらも P0 の凍結時には
+見えなかった）:
+
+- **`description()` は個体を知らない。** 契約は「実行可能な登録だけ列挙」と凍結したが、
+  `AgentTool::description(&self) -> String` は `ToolContext` を受け取らない。
+  `enabled_tools` / `WORK_DIR_TOOL_NAMES` の除外は**名前の集合**で書かれているが、
+  「登録が 1 件も実行可能でない」は**中身を見ないと決まらない除外**で名前では書けない。
+  処方は **`AgentTool::spec_for(&self, ctx) -> Option<ToolSpec>`**（既定は `spec()`、
+  `None` で非提示。加算的で他の 7 本は 1 行も変わらない）。
+  **Spec 14 P1 の「`AgentSnapshot` にも `role_id` が要る」と同型** —
+  **契約に欄や規則を足したら「それを運ぶ経路が既にあるか」を実装前に問う**
+- **Spec 10 の不変条件 1 と衝突しかけた。** 「検査点は周回境界だけ」を守ると、
+  打ち切りを押しても走っているコマンドは**最長 `timeoutSecs`（上限 1 時間）走り続ける** —
+  実機で観測した「要求から 0.0 秒」がそこだけ破れる。処方は
+  **`ToolContext.cancel: Option<CancellationToken>` を追加し、`run` だけが見る**。
+  判断は「**葉で 1 箇所だけ見るのは、周回境界の検査を増やすことではない**」
+  （ターンループの構造は変わらず、止められない待ちを 1 つ潰すだけ）
+
+**P3 へ送る宿題**: `execute_tool` の `ToolContext` は今 `cancel: None` で、
+**打ち切りはタイムアウトまで効かない**。実機確認 (6) はそれまで検証できない。
 
 **P1 完了**（2026-08-04）— `crates/agent-core/src/command.rs`（型 + 純機構）+
 `config_store.rs` の I/O 4 本。単体 15 + store 8 本、workspace 456 本全緑。
