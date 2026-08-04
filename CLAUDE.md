@@ -773,7 +773,21 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0 完了・残 P1〜P5**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P1 完了・残 P2〜P5**）
+
+**P1 完了**（2026-08-04）— `crates/agent-core/src/command.rs`（型 + 純機構）+
+`config_store.rs` の I/O 4 本。単体 15 + store 8 本、workspace 456 本全緑。
+`schedule.rs`（型 + 純機構）と `config_store.rs`（I/O）の分業を踏襲。
+**実装で決めた 7 点は Spec の「P1 実装記録」**。要点だけ:
+**`load_commands` は `Err` を返さず空 + `dropped` で返す**（閉じた許容なので
+「空 = 何も実行できない」が安全側。読めない登録簿で起動を止めない）/
+**`Unavailable` は 2 値**（`ProgramNotAbsolute` / `ProgramMissing` — 理由ごとに
+次の手が違う）/ **`mark_availability` は実在判定の述語を注入**（`apply_to` の
+`template_exists` と同じ形。無効印は毎回付け直すのでパスを直せば復活する）/
+**`get` は無効な登録も返す**（「登録が無い」と「登録はあるが使えない」は別の答え）。
+**併せて `write_atomic` を切り出した** — temp + rename が `save_world` /
+`save_schedules` に個別に書かれており、今回の 2 本で**同じ 8 行が 4 箇所**に
+なるところだった。既存 2 本も寄せた。
 
 **P0 完了**（2026-08-04）— `data_contract.yaml` へ `command_tool_contract`
 （`file_tool_contract` の隣）。不変条件 15 本 + 置き場 2 ファイル。あわせて

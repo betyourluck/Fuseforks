@@ -62,6 +62,7 @@
 
 pub mod blackboard;
 pub mod budget;
+pub mod command;
 pub mod compute;
 pub mod config_store;
 pub mod diag;

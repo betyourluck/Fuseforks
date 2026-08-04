@@ -342,7 +342,9 @@ S4 の「`run` は安全機構を増やさない」と同じ線の上にある�
       `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` と定義し直す。
       既存の `world.json` は移行不要（`null` の解釈が変わるだけで、
       **既存個体は `run` を得ない**のが移行の目的）
-- [ ] Phase 1 — 登録簿の store（読み書き・**起動時に `program` の実在を検証し、
+- [x] Phase 1 — 完了（2026-08-04）。`crates/agent-core/src/command.rs`（型 + 純機構）
+      + `config_store.rs` の I/O 4 本。単体 15 + 8 本。**実装で決めた 7 点は下記 P1 記録**。
+      当初の記述: 登録簿の store（読み書き・**起動時に `program` の実在を検証し、
       失敗した登録はメモリ上で無効化して WARN。ファイルは書き換えない**・
       不正 JSON は空として起動 WARN）+ 登録要求の store
       （**`command_requests.json` は別ファイル**・`(name, attemptedExtraArgs)` で
@@ -454,6 +456,40 @@ S4 の「`run` は安全機構を増やさない」と同じ線の上にある�
      別に探す（`\d 本` / `\d 個` / `seven` のような数量表現で引く）
 
 ---
+
+## P1 実装記録（2026-08-04）
+
+`crates/agent-core/src/command.rs` に型と純機構、`config_store.rs` に I/O 4 本
+（`load_commands` / `save_commands` / `load_command_requests` /
+`save_command_requests`）。`schedule.rs`（型 + 純機構）と `config_store.rs`（I/O）の
+分業をそのまま踏襲。単体 15 本 + store 8 本。workspace 443 → 456 本全緑、
+clippy 新規警告ゼロ。
+
+**実装で決めた 7 点**:
+
+1. **`load_commands` は `Err` を返さない。空 + `dropped` で返す。**
+   `load_schedules` は `Err` を返して呼び出し側に書き戻しを止めさせるが、
+   コマンドは**閉じた許容なので「空 = 何も実行できない」が安全側**。
+   読めない登録簿で起動を止める理由が無い（直せば次の起動で戻る）
+2. **1 件ずつの読み取り失敗は、その 1 件だけを落とす。** ファイル全体が JSON として
+   壊れているときだけ空にする。予定と同じ扱いで、**壊れた 1 件が他を人質にしない**
+3. **`Unavailable` は 2 値**（`ProgramNotAbsolute` / `ProgramMissing`）。
+   1 つに畳むと「登録し直してください」と「別の端末の村を開いた可能性があります」が
+   同じ文面になる。**理由ごとに次の手が違う**（#44）
+4. **`mark_availability` は実在判定の述語を受け取り、自分では `fs` を触らない**
+   （`AgentRoleDefaults::apply_to` の `template_exists` と同じ形）。テストが
+   実ファイルを置かずに書ける。**無効印は毎回付け直す**ので、パスを直せば復活する
+5. **`get` は無効な登録も返す。** 「登録が無い」と「登録はあるが使えない」は
+   別の答えで、モデルへ返す文面が違う。フィルタするのは `runnable` の側
+6. **タイムアウトの範囲外は登録を落とさず丸めて WARN。** 落とすのは罰が重い
+   （`timeoutSecs` の書き間違いでコマンドごと消える）。ただし黙って丸めない
+7. **同名は最初の 1 件を採り、後を落とす。** 後勝ちにすると、どちらが効いているかを
+   利用者がファイルから読めない
+
+**併せて `write_atomic` を切り出した。** temp + rename は `save_world` /
+`save_schedules` が個別に書いており、今回の 2 本を足すと**同じ 8 行が 4 箇所**に
+なるところだった。既存 2 本も同じ経路へ寄せた（`world_save_is_atomic_and_leaves_no_temp_file`
+が回帰を留めている）。
 
 ## 未決 — **ゼロ**（D1〜D7 すべて裁定済み）
 
