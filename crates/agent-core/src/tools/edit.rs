@@ -111,6 +111,87 @@ fn changed_line_count(before: &str, after: &str) -> usize {
         .count()
 }
 
+/// batch preview で一度に扱えるファイル数の上限（Spec 17 D3）。
+///
+/// **超えたら打ち切らずに拒否する。** preview の目的は「何を apply するか決める」
+/// ことなので、**一部しか映っていない preview は残りを見ないまま apply させる**。
+const MAX_BATCH_PATHS: usize = 20;
+
+/// 1 ファイル分の preview 結果（Spec 17 の 2 パス構成の 1 パス目）。
+///
+/// **全ファイル分を先に作ってから連結する。** 逐次描画にすると、上限で止めた時点で
+/// 「残りのファイルに何件の一致があるか」が分からない。
+struct FilePreview {
+    /// 作業フォルダからの相対パス（`resolve_in_work_dir` の正規化済み表示名）。
+    display: String,
+    status: PreviewStatus,
+}
+
+/// [`FilePreview`] の中身。**一致ゼロもスキップも捨てずに持つ**（Spec 17 D4）。
+enum PreviewStatus {
+    /// 置換できる。
+    Diff { match_count: usize, diff: String },
+    /// 一致ゼロ。
+    NoMatch,
+    /// 一致はあるが置換後も同一（既存の同文不書き込みと同じ扱い）。
+    Unchanged { match_count: usize },
+    /// このファイル単体の diff が上限を超えた。**切り詰めずに統計だけ返す。**
+    TooLarge {
+        match_count: usize,
+        changed_lines: usize,
+    },
+    /// 検査順序 2〜5 で落ちた。文言は単一ファイルのときと同一。
+    Skipped { reason: String },
+}
+
+impl FilePreview {
+    fn match_count(&self) -> usize {
+        match &self.status {
+            PreviewStatus::Diff { match_count, .. }
+            | PreviewStatus::Unchanged { match_count }
+            | PreviewStatus::TooLarge { match_count, .. } => *match_count,
+            PreviewStatus::NoMatch | PreviewStatus::Skipped { .. } => 0,
+        }
+    }
+
+    fn is_skipped(&self) -> bool {
+        matches!(self.status, PreviewStatus::Skipped { .. })
+    }
+
+    fn is_no_match(&self) -> bool {
+        matches!(self.status, PreviewStatus::NoMatch)
+    }
+
+    /// 1 ファイル分の出力。**呼ぶ側はこれを丸ごと出すか 1 字も出さないかのどちらか**
+    /// にする（Spec 17 D3 — 切っているのは一覧であって diff ではない）。
+    ///
+    /// **見出しは `===` で始める。`---` は使えない** — unified diff のヘッダ行が
+    /// `--- {ファイル名}` なので、同じ前置にすると**束ねの見出しと diff の
+    /// ヘッダが区別できなくなる**（P1 の実装中にテストで露見した）。
+    fn chunk(&self) -> String {
+        let display = &self.display;
+        match &self.status {
+            PreviewStatus::Diff { match_count, diff } => {
+                format!("=== {display}: {match_count} 件を置換します\n{diff}\n")
+            }
+            PreviewStatus::NoMatch => format!("=== {display}: 一致はありません\n"),
+            PreviewStatus::Unchanged { match_count } => format!(
+                "=== {display}: {match_count} 件が一致しましたが、置換後も内容が同一です（変更なし）\n"
+            ),
+            PreviewStatus::TooLarge {
+                match_count,
+                changed_lines,
+            } => format!(
+                "=== {display}: 差分が大きすぎるため省略しました\
+                 （{match_count} 件の置換で {changed_lines} 行が変わり、\
+                 diff が上限 {MAX_OUTPUT_CHARS} 字を超えます）。\
+                 パターンを具体化するか、範囲を分けて置換してください\n"
+            ),
+            PreviewStatus::Skipped { reason } => format!("=== {display}: スキップ — {reason}\n"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 /// 正規表現でファイル内を置換するツール（`sd` 相当）。
@@ -123,11 +204,14 @@ impl AgentTool for SdTool {
     }
 
     fn description(&self) -> String {
-        "作業フォルダ内の 1 ファイルを正規表現で置換する。\
+        "作業フォルダ内のファイルを正規表現で置換する。\
          **既定では書き込まず、適用した場合の差分（diff）だけを返す。**\
          差分を確認してから `apply: true` で実際に書き込むこと。\
          置換文字列では `$1` や `$name` でキャプチャを参照できる。\
-         リテラルの `$` は `$$` と書く。対象は 1 回の呼び出しで 1 ファイルだけ。"
+         リテラルの `$` は `$$` と書く。\
+         `paths` に複数のファイルを渡すと差分をまとめて確認できる（最大 20 件）— \
+         **これは preview 専用で、書き込みは 1 回の呼び出しで 1 ファイルだけ**\
+         （`path` で 1 つずつ `apply: true` を指定する）。"
             .to_owned()
     }
 
@@ -137,7 +221,12 @@ impl AgentTool for SdTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "対象ファイルの相対パス"
+                    "description": "対象ファイルの相対パス。書き込む（apply: true）ときはこちら"
+                },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "複数ファイルの差分をまとめて確認する（最大 20 件）。**preview 専用で `apply` とは併用できない**。`path` とは同時に指定できない"
                 },
                 "pattern": {
                     "type": "string",
@@ -156,7 +245,7 @@ impl AgentTool for SdTool {
                     "description": "大文字小文字を無視するか。既定は false"
                 }
             },
-            "required": ["path", "pattern", "replacement"],
+            "required": ["pattern", "replacement"],
             "additionalProperties": false
         })
     }
@@ -165,24 +254,257 @@ impl AgentTool for SdTool {
         let Some(work_dir) = ctx.work_dir.clone() else {
             return Ok(work_dir_missing());
         };
-        let (Some(path), Some(pattern), Some(replacement)) = (
-            args.get("path").and_then(Value::as_str),
+        let (Some(pattern), Some(replacement)) = (
             args.get("pattern").and_then(Value::as_str),
             args.get("replacement").and_then(Value::as_str),
         ) else {
-            return Ok("引数 `path` / `pattern` / `replacement` がすべて必要です。".into());
+            return Ok("引数 `pattern` / `replacement` が必要です。".into());
         };
-        let (path, pattern, replacement) =
-            (path.to_owned(), pattern.to_owned(), replacement.to_owned());
+        let (pattern, replacement) = (pattern.to_owned(), replacement.to_owned());
         let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
         let case_insensitive = args
             .get("case_insensitive")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        spawn_rayon(move || run_sd(&work_dir, &path, &pattern, &replacement, apply, case_insensitive))
-            .await
+        // 振り分けはここ 1 箇所だけ（Spec 17 Phase 1）。**単数は既存の `run_sd` へ
+        // そのまま流し、`run_multi` からは `run_sd` を呼ばない** — 単数を 1 要素の
+        // 配列として通すと出力書式が単数のときにも変わってしまう。
+        let path = args.get("path").and_then(Value::as_str).map(str::to_owned);
+        let paths = args.get("paths").and_then(Value::as_array);
+
+        let paths = match paths {
+            None => None,
+            Some(items) => {
+                let mut collected = Vec::with_capacity(items.len());
+                for item in items {
+                    let Some(text) = item.as_str() else {
+                        return Ok("`paths` の要素は文字列で指定してください。".into());
+                    };
+                    collected.push(text.to_owned());
+                }
+                Some(collected)
+            }
+        };
+
+        match (path, paths) {
+            (Some(_), Some(_)) => Ok(
+                "`path` と `paths` は同時に指定できません。\
+                 まとめて差分を見るなら `paths`、書き込むなら `path` を使ってください."
+                    .into(),
+            ),
+            (None, None) => {
+                Ok("`path` か `paths` のどちらかが必要です。".into())
+            }
+            // **`paths` に書き込みの経路は存在しない。** 検査で塞いでいるのではなく、
+            // ここから `apply` へ至る道を作っていない（Spec 17 D2）。
+            (None, Some(_)) if apply => Ok(
+                "まとめて書き込むことはできません。差分を確認したら、\
+                 `path` で 1 ファイルずつ `apply: true` を指定してください。"
+                    .into(),
+            ),
+            (None, Some(paths)) => {
+                spawn_rayon(move || {
+                    run_multi(&work_dir, &paths, &pattern, &replacement, case_insensitive)
+                })
+                .await
+            }
+            (Some(path), None) => {
+                spawn_rayon(move || {
+                    run_sd(
+                        &work_dir,
+                        &path,
+                        &pattern,
+                        &replacement,
+                        apply,
+                        case_insensitive,
+                    )
+                })
+                .await
+            }
+        }
     }
+}
+
+/// batch preview 本体（Spec 17）。**`run_sd` を呼ばない。**
+///
+/// 単数を「1 要素の配列」として通すと出力書式が単数のときにも変わり、既存の
+/// 期待値が全部動く。振り分けは [`SdTool::call`] の 1 箇所だけに置く。
+///
+/// 手順は Spec 17 の凍結どおり **resolve → 重複除去 → 件数検査 → 各ファイル →
+/// 連結**。順序を入れ替えると、重複を並べるだけで上限に当てられる。
+fn run_multi(
+    work_dir: &Path,
+    user_paths: &[String],
+    pattern: &str,
+    replacement: &str,
+    case_insensitive: bool,
+) -> String {
+    if user_paths.is_empty() {
+        return "`paths` が空です。対象のファイルを 1 つ以上指定してください。".into();
+    }
+
+    // 1. 境界解決。**1 件でも落ちたら呼び出し全体を拒否する**（Spec 17 S3）。
+    //
+    // `resolve_in_work_dir` は canonicalize が成功してから前方一致で外を判定する
+    // ので、**実在しない外側パスは「無い」として返り「外」と区別できない**
+    // （戻りが Result<_, String>）。まとめて拒否すれば区別が要らなくなる。
+    // paths に実在しないパスが混じるのはモデルが取り違えた印で、黙って飛ばすと
+    // その 1 件は直されないまま残る。
+    let mut resolved: Vec<(PathBuf, String)> = Vec::with_capacity(user_paths.len());
+    for user_path in user_paths {
+        match resolve_in_work_dir(work_dir, user_path) {
+            Ok(pair) => resolved.push(pair),
+            Err(message) => {
+                return format!(
+                    "`{user_path}` を解決できないため、この呼び出し全体を中止しました\
+                     （どのファイルも読んでいません）。\n{message}\n\
+                     `paths` の中身を確かめて出し直してください。"
+                );
+            }
+        }
+    }
+
+    // 2. 重複除去。**正規化済みのパスで畳む** — `./a.md` と `a.md` は文字列としては
+    // 違うが同じファイルで、畳まないと同じ diff が 2 回出て枠を食う。順序は保つ。
+    let mut seen: Vec<PathBuf> = Vec::with_capacity(resolved.len());
+    let mut unique: Vec<(PathBuf, String)> = Vec::with_capacity(resolved.len());
+    for (path, display) in resolved {
+        if seen.contains(&path) {
+            continue;
+        }
+        seen.push(path.clone());
+        unique.push((path, display));
+    }
+    let duplicates = user_paths.len() - unique.len();
+
+    // 3. 件数検査は**重複を畳んだ後**に掛ける（実体が 20 件なら通すのが正しい）。
+    if unique.len() > MAX_BATCH_PATHS {
+        return format!(
+            "対象が {} 件で上限 {MAX_BATCH_PATHS} 件を超えています\
+             （重複を除いた実体の件数です）。`paths` を分けて実行してください。",
+            unique.len()
+        );
+    }
+
+    // 4. 内容の解釈。**パターンは呼び出しの属性なのでファイルごとに数えない** —
+    // 壊れた正規表現は全ファイルで同じように落ちるので、同じ文言を N 回並べるより
+    // 呼び出し全体の拒否として 1 回返すほうが次の手が読める。
+    let regex = match regex::RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        .size_limit(1 << 20)
+        .build()
+    {
+        Ok(regex) => regex,
+        Err(err) => {
+            return format!(
+                "正規表現として解釈できません: {err}\nパターンを直して再試行してください。"
+            );
+        }
+    };
+
+    // 5. 1 パス目 — 全ファイル分の preview を作る（上限 20 件なのでメモリは問題ない）。
+    let previews: Vec<FilePreview> = unique
+        .into_iter()
+        .map(|(_, display)| preview_one(work_dir, &display, &regex, replacement))
+        .collect();
+
+    // 6. 2 パス目 — 数えながらファイル境界で連結する。
+    render_multi(&previews, duplicates)
+}
+
+/// 1 ファイル分の preview を作る。**検査順序 2〜5 は `open_for_edit` に任せる**
+/// ので、スキップの文言は単一ファイルのときと 1 字も変わらない。
+fn preview_one(
+    work_dir: &Path,
+    display: &str,
+    regex: &regex::Regex,
+    replacement: &str,
+) -> FilePreview {
+    let display = display.to_owned();
+    let (_, _, text) = match open_for_edit(work_dir, &display, None) {
+        Ok(opened) => opened,
+        Err(reason) => {
+            return FilePreview {
+                display,
+                status: PreviewStatus::Skipped { reason },
+            };
+        }
+    };
+
+    let match_count = regex.find_iter(&text).count();
+    if match_count == 0 {
+        return FilePreview {
+            display,
+            status: PreviewStatus::NoMatch,
+        };
+    }
+
+    let replaced = regex.replace_all(&text, replacement).into_owned();
+    if replaced == text {
+        return FilePreview {
+            display,
+            status: PreviewStatus::Unchanged { match_count },
+        };
+    }
+
+    let diff = unified_diff(&display, &text, &replaced);
+    if diff.chars().count() > MAX_OUTPUT_CHARS {
+        // 単一経路と同じ判断 — **切り詰めた diff は作らない。**
+        return FilePreview {
+            display,
+            status: PreviewStatus::TooLarge {
+                match_count,
+                changed_lines: changed_line_count(&text, &replaced),
+            },
+        };
+    }
+
+    FilePreview {
+        display,
+        status: PreviewStatus::Diff { match_count, diff },
+    }
+}
+
+/// 2 パス目。**ファイル境界でしか止めない**（Spec 17 D3）。
+fn render_multi(previews: &[FilePreview], duplicates: usize) -> String {
+    let skipped = previews.iter().filter(|p| p.is_skipped()).count();
+    let no_match = previews.iter().filter(|p| p.is_no_match()).count();
+    let matched = previews.len() - skipped - no_match;
+
+    let mut out = format!(
+        "preview（未適用）: 対象 {} / 一致 {matched} / 一致なし {no_match} / スキップ {skipped}\n\
+         書き込むときは `path` で 1 ファイルずつ `apply: true` を指定してください。\n",
+        previews.len()
+    );
+    if duplicates > 0 {
+        out.push_str(&format!(
+            "（同じファイルを指す指定が {duplicates} 件あったため 1 件に畳みました）\n"
+        ));
+    }
+    let mut used = out.chars().count();
+
+    for (index, preview) in previews.iter().enumerate() {
+        let chunk = preview.chunk();
+        let chunk_chars = chunk.chars().count();
+        if used + chunk_chars > MAX_OUTPUT_CHARS {
+            let rest = &previews[index..];
+            let rest_matches: usize = rest.iter().map(FilePreview::match_count).sum();
+            // 打ち切り文は枠の外へはみ出してよい。**diff を切らないことが上限の
+            // 目的**で、次の手を書いた 1 行を削ると「もう一度呼べば残りが来るかも」
+            // が残る（failures.md #44）。
+            out.push_str(&format!(
+                "\n（上限 {MAX_OUTPUT_CHARS} 字に達したため、残り {} ファイルは表示していません\
+                 （一致は合計 {rest_matches} 件）。**表示した diff はどれも途中で切っていません。**\
+                 `paths` を分けて実行してください）\n",
+                rest.len()
+            ));
+            break;
+        }
+        out.push_str(&chunk);
+        used += chunk_chars;
+    }
+    out
 }
 
 /// sd 本体。ブロッキングして良い文脈で呼ぶ。
@@ -1489,5 +1811,388 @@ started = 2026-01-01T00:00:00Z
             .await
             .unwrap();
         assert!(reply.contains("作業フォルダ"), "{reply}");
+    }
+
+    // ---- batch preview（Spec 17） ------------------------------------------
+
+    /// 複数ファイルの差分が 1 回の呼び出しで返る。
+    #[tokio::test]
+    async fn paths_previews_every_file_in_one_call() {
+        let dir = TempDir::new("multi-basic");
+        dir.write("a.md", "old a\n");
+        dir.write("b.md", "old b\n");
+        dir.write("c.md", "old c\n");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "b.md", "c.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("対象 3 / 一致 3"), "{reply}");
+        for name in ["a.md", "b.md", "c.md"] {
+            assert!(reply.contains(name), "{name} が出ていない: {reply}");
+        }
+        assert_eq!(dir.read("a.md"), "old a\n", "preview は書かないこと");
+    }
+
+    /// **`paths` に書き込みの経路は存在しない。**
+    ///
+    /// 検査で塞いでいるのではなく、`apply` へ至る道を作っていない（Spec 17 D2）。
+    #[tokio::test]
+    async fn paths_can_never_write_even_with_apply() {
+        let dir = TempDir::new("multi-apply");
+        dir.write("a.md", "old a\n");
+        dir.write("b.md", "old b\n");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "b.md"],
+                "pattern": "old", "replacement": "new", "apply": true
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("まとめて書き込むことはできません"), "{reply}");
+        assert_eq!(dir.read("a.md"), "old a\n", "1 ファイルも書き換わらないこと");
+        assert_eq!(dir.read("b.md"), "old b\n", "1 ファイルも書き換わらないこと");
+    }
+
+    /// 引数の取り違えは全体拒否（Spec 17 D9）。
+    #[tokio::test]
+    async fn path_and_paths_are_mutually_exclusive_and_neither_is_an_error() {
+        let dir = TempDir::new("multi-args");
+        dir.write("a.md", "old\n");
+
+        let both = call_sd(
+            &dir,
+            serde_json::json!({
+                "path": "a.md", "paths": ["a.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+        assert!(both.contains("同時に指定できません"), "{both}");
+
+        let neither = call_sd(
+            &dir,
+            serde_json::json!({ "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+        assert!(neither.contains("どちらかが必要です"), "{neither}");
+
+        let empty = call_sd(
+            &dir,
+            serde_json::json!({ "paths": [], "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+        assert!(empty.contains("空です"), "{empty}");
+    }
+
+    /// 一致ゼロを黙って落とさない（Spec 17 D4）。
+    ///
+    /// 落とすと「そのファイルは処理された」と読まれる。
+    #[tokio::test]
+    async fn files_without_matches_are_listed_rather_than_dropped() {
+        let dir = TempDir::new("multi-nomatch");
+        dir.write("hit.md", "old\n");
+        dir.write("miss.md", "nothing here\n");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["hit.md", "miss.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("対象 2 / 一致 1 / 一致なし 1"), "{reply}");
+        assert!(reply.contains("miss.md: 一致はありません"), "{reply}");
+    }
+
+    /// **全件が一致ゼロ / 全件スキップでも、名前と理由を必ず出す**（査読 [D]）。
+    ///
+    /// ヘッダだけだと「何も起きなかった」と読まれるが、10 件渡して 10 件とも
+    /// バイナリだったのは「実行された」である。
+    #[tokio::test]
+    async fn an_all_skipped_batch_still_names_every_file_and_reason() {
+        let dir = TempDir::new("multi-allskip");
+        std::fs::write(dir.0.join("x.bin"), [0u8, 1, 2, 3, 0, 5]).unwrap();
+        std::fs::write(dir.0.join("y.bin"), [0u8, 9, 9, 9, 0, 1]).unwrap();
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["x.bin", "y.bin"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("スキップ 2"), "{reply}");
+        assert!(reply.contains("x.bin: スキップ"), "{reply}");
+        assert!(reply.contains("y.bin: スキップ"), "{reply}");
+        assert!(reply.contains("バイナリ"), "理由が出ていない: {reply}");
+    }
+
+    /// 重複は**正規化パス**で畳む（Spec 17 D8）。
+    ///
+    /// 文字列比較では `./a.md` と `a.md` が別物になり、同じ diff が 2 回出て枠を食う。
+    #[tokio::test]
+    async fn duplicate_paths_are_folded_by_resolved_path_and_announced() {
+        let dir = TempDir::new("multi-dup");
+        dir.write("a.md", "old\n");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "./a.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("対象 1"), "畳まれていない: {reply}");
+        assert!(reply.contains("1 件あったため"), "{reply}");
+        assert_eq!(
+            reply.matches("=== a.md").count(),
+            1,
+            "diff が 2 回出ている: {reply}"
+        );
+    }
+
+    /// 件数検査は**重複を畳んだ後**（Spec 17 D8 の順序）。
+    ///
+    /// 逆にすると、重複を並べるだけで上限に当てられる。
+    #[tokio::test]
+    async fn the_limit_counts_unique_files_not_raw_arguments() {
+        let dir = TempDir::new("multi-dup-limit");
+        let mut paths = Vec::new();
+        for index in 0..20 {
+            let name = format!("f{index}.md");
+            dir.write(&name, "old\n");
+            paths.push(name);
+        }
+        paths.push("f0.md".to_owned()); // 21 件目は重複なので実体は 20
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({ "paths": paths, "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+
+        assert!(reply.contains("対象 20"), "実体 20 件は通ること: {reply}");
+        assert!(!reply.contains("上限 20 件を超えています"), "{reply}");
+    }
+
+    /// 実体が上限を超えたら**打ち切らずに拒否**（Spec 17 D3）。
+    #[tokio::test]
+    async fn more_than_twenty_unique_files_is_refused_without_running() {
+        let dir = TempDir::new("multi-limit");
+        let mut paths = Vec::new();
+        for index in 0..21 {
+            let name = format!("f{index}.md");
+            dir.write(&name, "old\n");
+            paths.push(name);
+        }
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({ "paths": paths, "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+
+        assert!(reply.contains("21 件で上限 20 件"), "{reply}");
+        assert!(!reply.contains("=== f0.md"), "走らせないこと: {reply}");
+    }
+
+    /// 1 ファイルの diff 超過は**そのファイルだけ**統計に落とす（Spec 17 D3）。
+    ///
+    /// 他のファイルの diff は普通に出る。
+    #[tokio::test]
+    async fn an_oversized_file_is_summarised_without_hiding_the_others() {
+        let dir = TempDir::new("multi-oversize");
+        let big = "needle\n".repeat(4_000);
+        dir.write("big.md", &big);
+        dir.write("small.md", "needle\n");
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["big.md", "small.md"],
+                "pattern": "needle", "replacement": "replaced"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("big.md: 差分が大きすぎるため省略"), "{reply}");
+        assert!(reply.contains("small.md: 1 件を置換します"), "{reply}");
+        assert!(reply.contains("+replaced"), "小さい方の diff は出ること: {reply}");
+        assert_eq!(dir.read("big.md"), big, "書き込まないこと");
+    }
+
+    /// **合計が上限に達したらファイル境界で止める。切った diff を作らない。**
+    ///
+    /// これが Spec 17 D3 の核 — `write_tools_contract` の
+    /// 「diff 上限は切り詰めでなく拒否」を preview の束ねでも保つ。
+    #[tokio::test]
+    async fn the_batch_stops_at_a_file_boundary_and_never_cuts_a_diff() {
+        let dir = TempDir::new("multi-clip");
+        // 1 ファイルでは上限に届かないが、束ねると超える大きさにする。
+        let body = "needle\n".repeat(400);
+        let mut paths = Vec::new();
+        for index in 0..8 {
+            let name = format!("f{index}.md");
+            dir.write(&name, &body);
+            paths.push(name);
+        }
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({ "paths": paths, "pattern": "needle", "replacement": "pin" }),
+        )
+        .await;
+
+        assert!(reply.contains("表示していません"), "打ち切りが起きること: {reply}");
+        assert!(reply.contains("一致は合計"), "残りの件数が出ること: {reply}");
+
+        // **途中で切れた diff が無い**ことを、最後の diff 行が完全な行である
+        // ことで確かめる（文字数で切ると必ずここが欠ける）。
+        let last_diff_line = reply
+            .lines()
+            .rfind(|line| line.starts_with('+') || line.starts_with('-'))
+            .expect("diff 行があること");
+        assert!(
+            last_diff_line == "+pin" || last_diff_line == "-needle",
+            "diff の行が途中で切れている: {last_diff_line:?}"
+        );
+    }
+
+    /// **resolve 段で落ちたら呼び出し全体を拒否**（Spec 17 S3）。
+    ///
+    /// 実在しないパスと囲いの外は `resolve_in_work_dir` の戻り値では区別できない
+    /// （どちらも `Result<_, String>`）ので、まとめて拒否する。
+    #[tokio::test]
+    async fn any_unresolvable_path_aborts_the_whole_call() {
+        let dir = TempDir::new("multi-resolve");
+        dir.write("a.md", "old\n");
+
+        let missing = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "nope.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+        assert!(missing.contains("呼び出し全体を中止"), "{missing}");
+        assert!(
+            !missing.contains("=== a.md"),
+            "他のファイルも返さないこと: {missing}"
+        );
+
+        let outside = dir.0.parent().unwrap().join("outside-batch.txt");
+        std::fs::write(&outside, "秘密\n").unwrap();
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "../outside-batch.txt"],
+                "pattern": "秘密", "replacement": "x"
+            }),
+        )
+        .await;
+        assert!(reply.contains("呼び出し全体を中止"), "{reply}");
+        assert!(!reply.contains("秘密\n"), "外側の内容を返さないこと: {reply}");
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    /// 検査順序 2〜5 で落ちたものは**そのファイルだけ**飛ばす。
+    #[tokio::test]
+    async fn a_binary_file_is_skipped_while_the_rest_still_previews() {
+        let dir = TempDir::new("multi-binary");
+        dir.write("text.md", "old\n");
+        std::fs::write(dir.0.join("blob.bin"), [0u8, 1, 2, 3, 0, 5]).unwrap();
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["text.md", "blob.bin"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+
+        assert!(reply.contains("blob.bin: スキップ"), "{reply}");
+        assert!(reply.contains("text.md: 1 件を置換します"), "{reply}");
+    }
+
+    /// preview は 1 ファイルも触らない（査読 小 4）。mtime で確かめる。
+    #[tokio::test]
+    async fn a_batch_preview_leaves_every_mtime_untouched() {
+        let dir = TempDir::new("multi-mtime");
+        dir.write("a.md", "old a\n");
+        dir.write("b.md", "old b\n");
+        let before: Vec<_> = ["a.md", "b.md"]
+            .iter()
+            .map(|name| {
+                std::fs::metadata(dir.0.join(name))
+                    .unwrap()
+                    .modified()
+                    .unwrap()
+            })
+            .collect();
+
+        let reply = call_sd(
+            &dir,
+            serde_json::json!({
+                "paths": ["a.md", "b.md"],
+                "pattern": "old", "replacement": "new"
+            }),
+        )
+        .await;
+        assert!(reply.contains("preview"), "{reply}");
+
+        for (index, name) in ["a.md", "b.md"].iter().enumerate() {
+            let after = std::fs::metadata(dir.0.join(name))
+                .unwrap()
+                .modified()
+                .unwrap();
+            assert_eq!(before[index], after, "{name} の mtime が動いている");
+        }
+    }
+
+    /// **`paths` が 1 件でも複数の書式で返す**（Spec 17 D9・査読 小 1）。
+    ///
+    /// 件数で書式が変わると、1 件のときだけ違う経路になる。
+    #[tokio::test]
+    async fn a_single_element_paths_still_uses_the_batch_format() {
+        let dir = TempDir::new("multi-one");
+        dir.write("a.md", "old\n");
+
+        let batch = call_sd(
+            &dir,
+            serde_json::json!({ "paths": ["a.md"], "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+        let single = call_sd(
+            &dir,
+            serde_json::json!({ "path": "a.md", "pattern": "old", "replacement": "new" }),
+        )
+        .await;
+
+        assert!(batch.contains("対象 1 / 一致 1"), "{batch}");
+        assert!(
+            !single.contains("対象 1"),
+            "単数の書式は変わっていないこと: {single}"
+        );
+        assert!(
+            single.starts_with("preview（未適用）: 1 件を置換します"),
+            "{single}"
+        );
     }
 }
