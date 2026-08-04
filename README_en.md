@@ -346,7 +346,7 @@ There are seven built-in tools. External capabilities are added through MCP.
 | Tool | What it does | Scope |
 |---|---|---|
 | `remember` | Append one line to `Memory.md` (self-updating long-term memory) | Calling agent's configuration folder |
-| `grep` | Find **lines** matching a regular expression (`path:line number: content`) | **Work folder only** |
+| `grep` | Find **lines** matching a regular expression (`path:line number: content`). `count_only: true` returns **counts only** | **Work folder only** |
 | `fd` | Find files and folders by **name** (relative path list; folders end in `/`) | **Work folder only** |
 | `diff` | Compare two files as a unified diff | **Work folder only** |
 | `sd` | **Replace** content in a file with a regular expression (editing) | **Work folder only** |
@@ -354,6 +354,8 @@ There are seven built-in tools. External capabilities are added through MCP.
 | `file` | File and folder operations (`read` / `write` / `append` / `mkdir` / `move` / `copy` / `remove`). [Spec 09](specs/09_file-tool.md) | **Work folder only** |
 
 `grep` / `fd` / `diff` are built in because these are the tools coding agents use most often, and they are dramatically cheaper and faster than reading entire files. Token efficiency is one of this product's primary concerns. MCP filesystem servers also support search, but it matters that these work in every environment without an external process.
+
+For `grep`, **the cap applies to what is displayed, not to what is counted**. Even when matches exceed 100, the total returned is the real total, along with a per-file breakdown. (Returning the displayed count as the total would force a second search just to learn how many matches exist.) When only the count is needed, pass `count_only: true` to omit the matching lines.
 
 `fd` matches **only names** (the final path component). Matching against whole relative paths would pull in every descendant of a matching directory and fill the list with noise. Matching is case-insensitive by default: name searches inherently have varied spelling, and exact matching by default creates unnecessary miss-and-retry cycles. This is deliberately the reverse of `grep`.
 

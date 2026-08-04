@@ -20,6 +20,11 @@
 //! 一致件数・1 行の長さ・全体の文字数のすべてに上限を敷く。巨大な一致で
 //! プロンプトを埋めると、節約のためのツールが逆に課金を膨らませる。
 //! 打ち切りは黙って行わず、何件落としたかを結果に書く。
+//!
+//! **上限は表示に掛け、数えには掛けない。** 表示した件数を総数として返すと、
+//! 読み手は「何件あるか」を誤り、確かめるための再検索が周を食う。
+//! 走査は一致ゼロの grep でも全ファイルに及ぶので、数え続けても最悪コストは
+//! 変わらない — 打ち切って節約できるのは出力だけで、走査ではない。
 
 use std::path::{Path, PathBuf};
 
@@ -48,6 +53,10 @@ pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// 1 回の grep で走査するファイル数の上限。病的に広い木で止まらなくなるのを防ぐ。
 const MAX_FILES: usize = 20_000;
+
+/// ファイル別の件数を並べる最大ファイル数（件数の多い順）。
+/// 内訳そのものが出力を埋めては本末転倒なので、ここにも上限を敷く。
+const MAX_COUNT_FILES: usize = 20;
 
 /// 名前で走査から外すディレクトリ。ビルド成果物と依存の置き場は
 /// 一致してもノイズにしかならず、走査時間だけを食う。
@@ -291,7 +300,10 @@ impl AgentTool for GrepTool {
         "作業フォルダ内のファイルから、正規表現に一致する行を探す。\
          **ファイルの中身を知りたいときは、全文を読む前にまずこれで当たりを付けること** — \
          一致行だけが返るので速くて安い。結果は `パス:行番号: 内容` の形式。\
-         検索できるのはエージェント設定で指定された作業フォルダの中だけ。"
+         検索できるのはエージェント設定で指定された作業フォルダの中だけ。\
+         **「何件あるか」だけを知りたいときは `count_only: true`** — \
+         一致行を返さずファイル別と全体の件数だけを返すので、\
+         パターンを変えて何度も叩き直す必要がなくなる。"
             .to_owned()
     }
 
@@ -310,6 +322,10 @@ impl AgentTool for GrepTool {
                 "case_insensitive": {
                     "type": "boolean",
                     "description": "大文字小文字を無視するか。既定は false"
+                },
+                "count_only": {
+                    "type": "boolean",
+                    "description": "true で一致行を返さず件数だけを返す。既定は false"
                 }
             },
             "required": ["pattern"],
@@ -334,14 +350,44 @@ impl AgentTool for GrepTool {
             .get("case_insensitive")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let count_only = args
+            .get("count_only")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         // 走査は I/O + CPU の塊なので Rayon 側へ逃がし、Tokio ワーカーを空ける。
-        spawn_rayon(move || run_grep(&work_dir, &pattern, &rel_path, case_insensitive)).await
+        spawn_rayon(move || {
+            run_grep(&work_dir, &pattern, &rel_path, case_insensitive, count_only)
+        })
+        .await
     }
 }
 
+/// ファイル別の件数を「多い順」に並べる。同数はパス順で安定させる。
+fn format_per_file(per_file: &mut [(String, usize)]) -> String {
+    per_file.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let shown = per_file.len().min(MAX_COUNT_FILES);
+    let mut out = String::from("ファイル別の件数:\n");
+    for (path, count) in &per_file[..shown] {
+        out.push_str(&format!("  {path}: {count} 件\n"));
+    }
+    if per_file.len() > shown {
+        out.push_str(&format!(
+            "  （ほか {} ファイル。件数の多い順に {shown} 件だけ表示しています）\n",
+            per_file.len() - shown
+        ));
+    }
+    out
+}
+
 /// grep 本体。ブロッキングして良い文脈で呼ぶ。
-fn run_grep(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bool) -> String {
+fn run_grep(
+    work_dir: &Path,
+    pattern: &str,
+    rel_path: &str,
+    case_insensitive: bool,
+    count_only: bool,
+) -> String {
     let regex = match regex::RegexBuilder::new(pattern)
         .case_insensitive(case_insensitive)
         // 破滅的な巨大パターンでメモリを食い潰さないための上限（regex 既定の 10 倍未満）。
@@ -367,11 +413,12 @@ fn run_grep(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bo
 
     let root = work_dir.canonicalize().unwrap_or_else(|_| work_dir.to_path_buf());
     let mut lines: Vec<String> = Vec::new();
+    let mut per_file: Vec<(String, usize)> = Vec::new();
     let mut total_matches = 0usize;
     let mut output_chars = 0usize;
     let mut clipped = false;
 
-    'files: for file in &files {
+    for file in &files {
         if let Ok(meta) = file.metadata()
             && meta.len() > MAX_FILE_BYTES
         {
@@ -387,34 +434,59 @@ fn run_grep(work_dir: &Path, pattern: &str, rel_path: &str, case_insensitive: bo
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| file.display().to_string());
 
+        let mut file_matches = 0usize;
         for (index, line) in text.lines().enumerate() {
             if !regex.is_match(line) {
                 continue;
             }
+            file_matches += 1;
             total_matches += 1;
-            if total_matches > MAX_MATCHES || output_chars > MAX_OUTPUT_CHARS {
+            // **表示は止めても数えるのは止めない。** 走査そのものは一致ゼロの
+            // grep でも全ファイルに及ぶので、数え続けても最悪コストは変わらない。
+            // 表示件数を総数として返すと「何件あるか」を読み手が誤り、
+            // 確かめるための grep が周を食う（一致行の列挙と件数の集計は別の問い）。
+            if count_only || clipped {
+                continue;
+            }
+            if lines.len() >= MAX_MATCHES || output_chars > MAX_OUTPUT_CHARS {
                 clipped = true;
-                break 'files;
+                continue;
             }
             let entry = format!("{display}:{}: {}", index + 1, clip_line(line));
             output_chars += entry.chars().count();
             lines.push(entry);
         }
+        if file_matches > 0 {
+            per_file.push((display, file_matches));
+        }
     }
 
-    if lines.is_empty() {
+    if total_matches == 0 {
         return format!(
             "一致なし（{} ファイルを走査）。パターンや範囲を変えて再試行できます。",
             files.len()
         );
     }
 
-    let mut out = format!("{} 件が一致:\n", lines.len());
-    out.push_str(&lines.join("\n"));
-    if clipped {
+    let files_hit = per_file.len();
+    let mut out = String::new();
+    if count_only {
+        out.push_str(&format!("全 {total_matches} 件が一致（{files_hit} ファイル）。\n"));
+        out.push_str(&format_per_file(&mut per_file));
+    } else if clipped {
         out.push_str(&format!(
-            "\n（表示上限に達したため打ち切りました。`path` で範囲を絞るか、パターンを具体化してください）"
+            "全 {total_matches} 件が一致（{files_hit} ファイル）。うち先頭 {} 件を表示:\n",
+            lines.len()
         ));
+        out.push_str(&lines.join("\n"));
+        out.push_str(
+            "\n（表示上限に達したため一致行を打ち切りました。総数は上の数字が正しい。\
+             行が要らないなら `count_only: true`、絞るなら `path` かパターンを具体化してください）\n",
+        );
+        out.push_str(&format_per_file(&mut per_file));
+    } else {
+        out.push_str(&format!("{total_matches} 件が一致:\n"));
+        out.push_str(&lines.join("\n"));
     }
     if files_truncated {
         out.push_str(&format!(
@@ -885,6 +957,64 @@ mod tests {
             reply.lines().count() <= MAX_MATCHES + 4,
             "上限を大きく超えないこと: {} 行",
             reply.lines().count()
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_reports_the_true_total_when_it_clips() {
+        let dir = TempDir::new("total");
+        let body: String = (0..500).map(|i| format!("needle {i}\n")).collect();
+        dir.write("big.txt", &body);
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            reply.contains("500"),
+            "打ち切っても総数を書くこと（表示件数だけでは何件あるか分からない）: {reply}"
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_breaks_the_count_down_by_file_when_it_clips() {
+        let dir = TempDir::new("perfile");
+        dir.write("many.txt", &(0..300).map(|i| format!("needle {i}\n")).collect::<String>());
+        dir.write("few.txt", "needle a\nneedle b\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle" }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("many.txt: 300"), "ファイル別の件数を書くこと: {reply}");
+        assert!(reply.contains("few.txt: 2"), "打ち切りの外のファイルも数えること: {reply}");
+    }
+
+    #[tokio::test]
+    async fn grep_count_only_returns_totals_without_matching_lines() {
+        let dir = TempDir::new("countonly");
+        dir.write("a.txt", "needle one\nneedle two\n");
+
+        let reply = GrepTool
+            .call(
+                &ctx_with(Some(&dir.0)),
+                &serde_json::json!({ "pattern": "needle", "count_only": true }),
+            )
+            .await
+            .unwrap();
+
+        assert!(reply.contains("a.txt: 2"), "ファイル別の件数を書くこと: {reply}");
+        assert!(
+            !reply.contains("needle one"),
+            "集計モードでは一致行そのものを返さないこと: {reply}"
         );
     }
 
