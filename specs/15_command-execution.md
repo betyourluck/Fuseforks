@@ -251,7 +251,11 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
       per-agent のポリシーを引く、`spec_for` が allow を列挙。IPC 5 本を撤去。結合
 - [x] Phase 4' — 完了（2026-08-04）。`CommandRegistryPane.vue` を撤去し、`AgentSettingsDialog` の
       設定ファイル編集へ `command.json` を追加。`run` の行と警告は残す
-- [ ] Phase 5 — 台帳整合 + 実機確認（下記）
+- [x] Phase 5 — 完了（2026-08-04）。README 日英へ「コマンド実行（run）」の節を新設し、
+      「意図的に未実装の部分」の行を撤去。冒頭の同梱ツール表へ `run` を足し、
+      **「作業フォルダの外は構造的に読めない」を「`run` 以外は」へ**訂正。
+      削除の節（ごみ箱のみ）にも `run` の但し書き。英語版の「seven built-in tools」を
+      eight へ。**deny 側の `*` 書き忘れの危険を README に厚く書いた**（#61）
 
 **実機確認**:
 

@@ -21,7 +21,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
-| 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file`. Structurally read-protected outside the work folder |
+| 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `run`. **Everything except `run`** is structurally unable to read outside the work folder |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and on the map |
@@ -343,7 +343,7 @@ When a round cut off by the limit has no text response, the model is called **on
 
 Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects.
 
-There are seven built-in tools. External capabilities are added through MCP.
+There are eight built-in tools. External capabilities are added through MCP.
 
 | Tool | What it does | Scope |
 |---|---|---|
@@ -354,6 +354,38 @@ There are seven built-in tools. External capabilities are added through MCP.
 | `sd` | **Replace** content in a file with a regular expression (editing) | **Work folder only** |
 | `yq` | Get / set / remove only TOML or JSON values (editing) | **Work folder only** |
 | `file` | File and folder operations (`read` / `write` / `append` / `mkdir` / `move` / `copy` / `remove`). [Spec 09](specs/09_file-tool.md) | **Work folder only** |
+| `run` | Execute allowed commands ([Spec 15](specs/15_command-execution.md)). **Off by default** | **Unrestricted** (the allowlist is the only enclosure) |
+
+
+### Command execution (`run`)
+
+**Only commands matching a per-agent allowlist can run**
+([Spec 15](specs/15_command-execution.md)). Configure it under
+Agent settings → config files → `shell.json`; press "Insert template" when empty.
+
+There are three states: a call matching `allow` runs without approval; a call
+matching `deny` is refused **and not recorded** (so a decision you already made
+does not reappear every time); a call in neither list is refused and recorded
+under `pending`, where you move the line to `allow` or `deny`.
+
+Patterns are exact match plus a trailing `*`. `"ruff"` matches **only a call with
+no arguments**; write `"ruff *"` to allow any arguments, or `"ruff check *"` to pin
+the leading ones. **Forgetting `*` is more dangerous on `deny`**: on `allow` the
+command simply fails and you notice, but on `deny` the thing you meant to block
+silently keeps passing. There are no mid-pattern wildcards.
+
+**No shell is involved.** Agents write an executable name and an argument array,
+and matching runs against that array, so `&&`, `|` and `$(...)` structurally do
+not exist — pipes and redirection are unavailable.
+
+**`run` is off by default.** Updating the app never grants command execution;
+you must enable it per agent *and* have at least one `allow` pattern.
+
+> **This is not a safety mechanism.** Putting `python *` in `allow` lets that agent
+> run arbitrary code. The work-folder limit, trash-only deletion and environment
+> scrubbing **do not constrain `run`**, and `deny` cannot enumerate danger
+> (blocking `rm` leaves `python -c`). The value of `deny` is **remembering a
+> decision you already made**, not stopping hostile input.
 
 `grep` / `fd` / `diff` are built in because these are the tools coding agents use most often, and they are dramatically cheaper and faster than reading entire files. Token efficiency is one of this product's primary concerns. MCP filesystem servers also support search, but it matters that these work in every environment without an external process.
 
@@ -700,7 +732,6 @@ It can return under either condition:
 | Per-agent MCP test connection | A stopped agent's MCP only shows "not connected" because connections are tied to operation. | At save time, connect once for testing and show only the result (Spec 02 Notes) |
 | Long-term memory (Memoria connection) | `Memory.md` (`remember`) works. Multi-layer memory is unconnected, but **the door is open**. | Start according to the policy below |
 | Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. |
-| Command execution tool (user request, 2026-07-31) | Built-in tools stop at file operations (Spec 09). There is no arbitrary command capability. | Permit **only commands registered as Hooks** (user decision, 2026-07-31). Not arbitrary commands plus a denylist of dangerous items: a **closed allowlist** is the design itself. External commands such as `scc` and `tree-sitter` become usable only when registered here. The work-folder boundary does not constrain commands (they can escape with `cd`), so the enclosure must be at registration. |
 | Variable store (Airflow Variables/XCom equivalent, user request, 2026-07-30) | Two alternatives are working: `Memory.md` (prose, per agent, persistent) and bundle text (handoff between waves). | Structured values keyed by name. This conflicts with the "few settings" concept, so review should make that tension its main battleground when specified. |
 | Conversation persistence and session management (user requests, 2026-07-30 / 2026-08-02) | **Implemented; only "Summarize and continue" is still unverified on the real app** ([Spec 12](specs/12_session-persistence.md), phases P0–P4 done). Close and reopen the app and the previous conversation comes back, with agents answering in light of what was said before. "Conversations" in the chat pane header lists saved conversations: reopen, fork (go back to just before a request, with its text returned to the input box), export, delete. "New chat" now opens a new conversation instead of discarding the current one. "Summarize and continue" shortens subsequent prompts for running servants (manual only — it costs tokens, so it never runs on its own). **Conversations are stored on disk in plain text.** | Store everything in a single `{workspace}/sessions.redb`, keep several conversations, and switch between them. **The original hypothesis "histories are candidates to die" was refuted**: this village has two layers of history (the village conversation log and each agent's own prompt history), and **neither can be reconstructed from the other**. Persisting only the conversation log yields a screen that looks correct while every agent starts amnesiac. |
 

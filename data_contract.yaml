@@ -814,7 +814,7 @@ entities:
       既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
       線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
-      enabledTools は同梱 7 本 (remember / grep / fd / diff / sd / yq / file) の
+      enabledTools は同梱 8 本 (remember / grep / fd / diff / sd / yq / file / run) の
       提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
       MCP 由来・転送・委譲は対象外。
       - null = 「既定に従う」: **既定集合 DEFAULT_ENABLED_TOOLS を提示**。
@@ -1965,9 +1965,10 @@ conversation_termination:
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
     同梱ツールは Concordia 自身が提供する操作だけに限る
-    (**現在 7 本** = remember / grep / fd / diff / sd / yq / file。
-    下記 bundled_tools_contract / write_tools_contract / file_tool_contract。
-    Spec 15 P3 で run が入って 8 本になる)。
+    (**現在 8 本** = remember / grep / fd / diff / sd / yq / file / run。
+    下記 bundled_tools_contract / write_tools_contract / file_tool_contract /
+    command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
+    = DEFAULT_ENABLED_TOOLS は 7 本)。
     **2026-08-04 に 4 本 → 7 本へ訂正した** — Spec 01 の sd / yq と Spec 09 の
     file を足したとき、この行だけが追従していなかった。同じファイルの
     enabled_tools_invariant は 7 本と書いており、**1 つの契約ファイルの中で
