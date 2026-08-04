@@ -378,19 +378,18 @@ impl AgentTool for GrepTool {
             ));
         };
 
+        let query = GrepQuery {
+            pattern,
+            rel_path,
+            case_insensitive,
+            count_only,
+            include,
+            context,
+            agent_id: ctx.agent_id.clone(),
+        };
+
         // 走査は I/O + CPU の塊なので Rayon 側へ逃がし、Tokio ワーカーを空ける。
-        spawn_rayon(move || {
-            run_grep(
-                &work_dir,
-                &pattern,
-                &rel_path,
-                case_insensitive,
-                count_only,
-                include.as_deref(),
-                context,
-            )
-        })
-        .await
+        spawn_rayon(move || run_grep(&work_dir, &query)).await
     }
 }
 
@@ -456,15 +455,34 @@ fn format_per_file(per_file: &mut [(String, usize)]) -> String {
 }
 
 /// grep 本体。ブロッキングして良い文脈で呼ぶ。
-fn run_grep(
-    work_dir: &Path,
-    pattern: &str,
-    rel_path: &str,
+/// `grep` の 1 回の呼び出し。
+///
+/// 引数を束ねているのは、`include` / `context` を足した時点で `run_grep` の
+/// 引数が 8 本になったため（`too_many_arguments`）。抑制で黙らせず、
+/// 「1 回の問い」という単位を型にした。
+struct GrepQuery {
+    pattern: String,
+    rel_path: String,
     case_insensitive: bool,
     count_only: bool,
-    include: Option<&str>,
+    include: Option<String>,
     context: usize,
-) -> String {
+    agent_id: crate::model::AgentId,
+}
+
+fn run_grep(work_dir: &Path, query: &GrepQuery) -> String {
+    let GrepQuery {
+        pattern,
+        rel_path,
+        case_insensitive,
+        count_only,
+        include,
+        context,
+        agent_id,
+    } = query;
+    let (case_insensitive, count_only, context) = (*case_insensitive, *count_only, *context);
+    let (pattern, rel_path) = (pattern.as_str(), rel_path.as_str());
+    let include = include.as_deref();
     // **範囲外は clamp せずエラー**（Spec 16 D7）。丸めると、指定した値と効いた値が
     // 食い違ったまま出力が返り、モデルは 4 行分の文脈を見たつもりで読む。
     if context > MAX_CONTEXT {
@@ -483,10 +501,35 @@ fn run_grep(
         }
     };
 
-    let include = match include.map(|p| compile_include(p, case_insensitive)) {
-        Some(Ok(regex)) => Some(regex),
-        Some(Err(message)) => return message,
+    // **`include` を使った呼び出しは、結果に関わらず 1 行残す**（2026-08-05）。
+    //
+    // `tool:` 行は `args_chars` しか書かないので、**引数の中身はどの計器にも
+    // 載っていない** — glob 形（`*.rs`）を書いたか、名指しの拒否を読んで
+    // `\.rs$` へ直したかが実機のログから読めなかった。`run decision:` を足したのと
+    // 同じ判断で、**機構が動いているかどうかは動いた記録が無ければ確かめられない**
+    // （`failures.md` #58 の同型）。
+    //
+    // 出すのは `include` があるときだけ。省略した呼び出しでは 1 行も増えない。
+    let include = match include {
         None => None,
+        Some(source) => {
+            let compiled = compile_include(source, case_insensitive);
+            let outcome = match &compiled {
+                Ok(_) => "ok",
+                // 予測できる誤り（glob 形）と、それ以外の構文エラーを分ける。
+                Err(_) if source.starts_with('*') || source.contains("*.") => "glob",
+                Err(_) => "invalid",
+            };
+            crate::note!(
+                "grep include: agent={} pattern={} outcome={outcome}",
+                agent_id,
+                clip_line(source)
+            );
+            match compiled {
+                Ok(regex) => Some(regex),
+                Err(message) => return message,
+            }
+        }
     };
 
     let (start, _) = match resolve_in_work_dir(work_dir, rel_path) {

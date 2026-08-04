@@ -2048,6 +2048,14 @@ conversation_termination:
            **文脈行にも MAX_LINE_CHARS (240 字) のクリップを掛ける**。
            **打ち切りは窓の境界で行い、ブロックの途中で切らない**
            (Spec 17 D3 と同じ — 切ってよいのは一覧であってブロックの中身ではない)
+        6. **include を使った呼び出しは結果に関わらず `grep include:` を 1 行残す**
+           (2026-08-05 追加)。`agent` / `pattern` / `outcome`
+           (ok | glob | invalid)。**include を省いた呼び出しでは 1 行も増えない**。
+           理由: `tool:` 行は args_chars しか書かないので**引数の中身がどの計器にも
+           載っておらず**、D1 の賭け (モデルは `*.rs` と書くが名指しの拒否を読んで
+           直せる) が当たったかを実機のログから読めなかった。
+           `run decision:` と同じ判断 — **機構が動いているかどうかは、動いた記録が
+           無ければ確かめられない** (failures.md #58 の同型)
         5. **打ち切り文は種別ごとに分ける**。表示の打ち切り
            (MAX_MATCHES / MAX_OUTPUT_CHARS) は include / path / パターン具体化 /
            count_only を案内し、context > 0 なら「context を下げると表示できる
