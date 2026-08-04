@@ -336,7 +336,7 @@ pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> Cor
 
 // ---- 村の黒板 ----------------------------------------------------------------
 
-/// 村の黒板（work_dir の `黒板/`）の付箋を読む。GUI に書き込み経路は無い。
+/// 村の黒板（work_dir の `blackboard/`）の付箋を読む。GUI に書き込み経路は無い。
 #[tauri::command]
 pub async fn list_blackboard(
     state: State<'_, AppState>,

@@ -489,7 +489,7 @@ export interface ForkPoint {
   tsMs: number;
 }
 
-/** 村の黒板の付箋 1 枚（work_dir の `黒板/` 直下。読み取り専用の投影）。 */
+/** 村の黒板の付箋 1 枚（work_dir の `blackboard/` 直下。読み取り専用の投影）。 */
 export interface BlackboardNote {
   /** 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。 */
   dir: string;

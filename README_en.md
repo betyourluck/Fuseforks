@@ -627,7 +627,7 @@ The folder button in the Settings dialog — opened from an agent card's setting
 
 ### The Village Blackboard — shared working notes
 
-The other tab at the center-bottom is the **Blackboard**. It is literally the `黒板/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`黒板/<display name>.md`) as a sticky note, and only the coordinator bundles them into `黒板/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
+The other tab at the center-bottom is the **Blackboard**. It is literally the `blackboard/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`blackboard/<display name>.md`) as a sticky note, and only the coordinator bundles them into `blackboard/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
 
 ### Roles
 
