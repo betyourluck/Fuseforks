@@ -773,7 +773,7 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P3 完了・残 P4〜P5**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P4 完了・残 P5 のみ**）
 
 **P2 完了**（2026-08-04）— `tools/run.rs`、単体 7 本、workspace 463 本全緑。
 依存に `command-group 5.0.1`（`unsafe_code = "forbid"` なので Job Object /
@@ -815,6 +815,28 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
 **テストで分かったこと**: `setup_with`（結合テストの土台）は**同梱ツールを 1 本も
 登録しない** — 登録は GUI 側（`state.rs`）の仕事。既定集合の変更が他の同梱ツールへ
 波及していないことを見るには、比較対象を明示的に足す必要があった。
+
+**P4 完了**（2026-08-04）— `CommandRegistryPane.vue`（CRUD は 1 ファイル 1 責務で
+切り出し。`RoleDialog.vue` の前例）+ システム設定へ 1 ページ + `AgentSettingsDialog`
+へ `run` の行 + IPC 5 本 + 型 3 つ + 辞書 ja/en。vitest 112 → 116 本。
+
+**実装で穴が 1 つ出た**: `AgentSettingsDialog` の `isToolChecked` は
+`enabledTools: null` のとき**無条件に `true`** を返していた（「null は全部 ON」の
+旧い前提のまま）。`run` を一覧へ足しただけだと**既定 OFF なのに画面ではチェックが
+付いて見え**、コアと画面が食い違う。しかも**保存するまで気づけない**。
+処方は Vue 側にも `DEFAULT_ENABLED_TOOLS` を置き、`isToolChecked` と `toggleTool` を
+そこから引くこと。**この手動同期は `defaultEnabledTools.test.ts` で機械に留めた** —
+Rust の `tools/mod.rs` と `.vue` を両方読み、2 つの表が一致することと
+**`run` が既定集合の外に居ること**を検査する（名前の並びのずれはコンパイラにも
+lint にも引っかからない = #51 と同じ性質。`roleColorTokens.test.ts` が
+ビルド成果物を走査したのと同じ形）。
+
+**P4 で決めた 3 点**: 警告リストはコードに直書きし**判定には一切使わない**
+（D6 の「警告リストは除外リストではない」を画面でも守る）/ 引数は**1 行 1 引数**で
+編集する（空白区切りにするとシェルの引用規則が要り、「シェルを介さない」設計と
+衝突する）/ 登録要求から作る下書きは**名前だけ**（何を固定引数にして何を
+`allowExtraArgs` に回すかは利用者の判断で、機械が決めると閉じた許容の粒度が
+勝手に決まる）。
 
 **P1 完了**（2026-08-04）— `crates/agent-core/src/command.rs`（型 + 純機構）+
 `config_store.rs` の I/O 4 本。単体 15 + store 8 本、workspace 456 本全緑。

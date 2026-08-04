@@ -360,7 +360,10 @@ S4 の「`run` は安全機構を増やさない」と同じ線の上にある�
       解消**。詳細は「P3 実装記録」。当初の記述: 配線: `DEFAULT_ENABLED_TOOLS` / `BUNDLED_TOOL_NAMES` の新設と
       差し替え、登録（0 件なら非提示）、IPC（登録簿の読み書き・登録要求の取得）。
       結合
-- [ ] Phase 4 — UI: システム設定へ「コマンドの登録」ページ（Spec 13 の器）。
+- [x] Phase 4 — 完了（2026-08-04）。`CommandRegistryPane.vue` + システム設定の
+      「コスト管理」群へ 1 ページ + `AgentSettingsDialog` へ `run` の行 +
+      IPC ラッパ 5 本 + 型 3 つ + 辞書 ja/en。vitest 112 → 116 本。
+      詳細は「P4 実装記録」。当初の記述: システム設定へ「コマンドの登録」ページ（Spec 13 の器）。
       `allowExtraArgs` を汎用インタプリタに立てるときの警告。
       `AgentSettingsDialog` の同梱ツール一覧へ `run`（既定 OFF の表示）
 - [ ] Phase 5 — 台帳整合。**回収対象を明示列挙する**（rev1 は数え落としていた）:
@@ -568,6 +571,42 @@ clippy 新規警告ゼロ。依存に `command-group 5.0.1` を追加。
 **テストで分かったこと**: `setup_with`（結合テストの土台）は**同梱ツールを 1 本も
 登録しない** — 登録は GUI 側（`state.rs`）の仕事だった。既定集合の変更が他の
 同梱ツールへ波及していないことを見るには、比較対象を明示的に足す必要があった。
+
+## P4 実装記録（2026-08-04）
+
+`CommandRegistryPane.vue`（CRUD を 1 ファイル 1 責務で切り出し。`RoleDialog.vue` の
+前例）+ `SettingsDialog` へ 1 ページ + `AgentSettingsDialog` へ `run` の行 +
+`ipc.ts` 5 本 + `types.ts` 3 つ + 辞書 ja/en。vitest 112 → 116 本、
+`vue-tsc` + `vite build` 通過。
+
+**実装で見つけた穴が 1 つ**: `AgentSettingsDialog` の `isToolChecked` は
+`enabledTools: null` のとき**無条件に `true`** を返していた（「null は全部 ON」の
+旧い前提そのまま）。`run` を一覧へ足しただけだと、**既定 OFF なのに画面では
+チェックが付いて見える**。コアと画面が食い違い、しかも**保存するまで気づけない**。
+処方は Vue 側にも `DEFAULT_ENABLED_TOOLS` を置き、`isToolChecked` と `toggleTool` の
+両方をそこから引くこと。
+
+**その手動同期を機械で留めた**（`defaultEnabledTools.test.ts`）。Rust の
+`tools/mod.rs` と `AgentSettingsDialog.vue` を両方読み、
+`BUNDLED_TOOL_NAMES` と `DEFAULT_ENABLED_TOOLS` が一致すること・**`run` が既定集合の
+外に居ること**・既定集合が同梱ツールの部分集合であることを検査する。
+**名前の並びのずれはコンパイラにも lint にも引っかからない**（`failures.md` #51 と
+同じ性質）ので、`roleColorTokens.test.ts` がビルド成果物を走査したのと同じ形で
+ソースを走査する。
+
+**そのほか決めた 3 点**:
+
+- **警告リストはコードに直書きし、判定には一切使わない。** 汎用インタプリタ
+  （python / node / sh …）に追加引数を許すと警告を出すが、**登録は止めない**し
+  **一覧に無いものを安全とも言わない**（D6 の「警告リストは除外リストではない」を
+  画面でも守る）
+- **引数は 1 行 1 引数で編集する。** 空白区切りにするとシェルの引用規則が要り、
+  「シェルを介さない」設計と衝突する（画面だけシェル風の書き味にすると、
+  利用者は `"a b"` が 1 引数になると期待する）
+- **登録要求から作る下書きは名前だけ。** エージェントが渡そうとした引数は
+  一覧に表示するが、**登録の `args` へ自動で入れない** — 何を固定引数にして
+  何を `allowExtraArgs` に回すかは利用者の判断で、そこを機械が決めると
+  閉じた許容の粒度が勝手に決まる
 
 ## 未決 — **ゼロ**（D1〜D7 すべて裁定済み）
 

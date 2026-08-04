@@ -99,7 +99,28 @@ const BUNDLED_TOOLS = [
     labelKey: "agentSettings.tools.file",
     needsWorkDir: true,
   },
+  // Spec 15。**既定集合の外**なので、`enabledTools: null` でもチェックが付かない。
+  // 作業フォルダは提示条件の一部だが `needsWorkDir` では表せない
+  // （登録に `cwd` があれば作業フォルダ無しでも実行できる）ため false。
+  { name: "run", labelKey: "agentSettings.tools.run", needsWorkDir: false },
 ] as const;
+
+/**
+ * `enabledTools: null`（既定に従う）で提示される集合。
+ *
+ * **Rust 側の `DEFAULT_ENABLED_TOOLS` と対応させる**（手動同期の契約。
+ * `BUNDLED_TOOL_NAMES` と対応する `BUNDLED_TOOLS` と同じ扱い）。
+ * `run` だけがここに居ないので、**更新しただけで実行能力が増えない**。
+ */
+const DEFAULT_ENABLED_TOOLS: readonly string[] = [
+  "remember",
+  "grep",
+  "fd",
+  "diff",
+  "sd",
+  "yq",
+  "file",
+];
 
 /**
  * ツールのチェック状態。`enabledTools: null` は「既定に従う」= 全 ON 表示。
@@ -108,14 +129,17 @@ const BUNDLED_TOOLS = [
  */
 function isToolChecked(name: string): boolean {
   const list = draft.value?.enabledTools;
-  return list === null || list === undefined ? true : list.includes(name);
+  // **`null` は「全部 ON」ではない。** 既定集合に居るものだけが ON
+  // （Spec 15 で `run` を既定の外へ出した）。
+  return list === null || list === undefined
+    ? DEFAULT_ENABLED_TOOLS.includes(name)
+    : list.includes(name);
 }
 
 /** ツールの ON/OFF。null（既定）から触ると明示配列へ切り替わる。 */
 function toggleTool(name: string, checked: boolean): void {
   if (!draft.value) return;
-  const current =
-    draft.value.enabledTools ?? BUNDLED_TOOLS.map((tool) => tool.name as string);
+  const current = draft.value.enabledTools ?? [...DEFAULT_ENABLED_TOOLS];
   draft.value.enabledTools = checked
     ? [...current.filter((tool) => tool !== name), name]
     : current.filter((tool) => tool !== name);
@@ -521,6 +545,9 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           </p>
           <p v-if="!isToolChecked('remember')" class="mb-1 text-[10px] text-warn">
             {{ $t("agentSettings.rememberOffWarn") }}
+          </p>
+          <p v-if="isToolChecked('run')" class="mb-1 text-[10px] text-warn">
+            {{ $t("agentSettings.runOnWarn") }}
           </p>
           <div class="mb-3" />
 

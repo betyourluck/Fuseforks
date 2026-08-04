@@ -23,6 +23,7 @@ import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { setLocale } from "../i18n";
 import { useUiSettings } from "../composables/useUiSettings";
+import CommandRegistryPane from "./CommandRegistryPane.vue";
 import type { Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -30,7 +31,7 @@ const emit = defineEmits<{ (e: "close"): void }>();
 const { t } = useI18n();
 
 /** 左メニューの選択。既定は目録の先頭（全般 → 言語）。 */
-type Page = "language" | "tokenBudget" | "messages";
+type Page = "language" | "tokenBudget" | "messages" | "commands";
 const page = ref<Page>("language");
 
 /**
@@ -189,6 +190,14 @@ function selectPage(next: Page): void {
             {{ $t("settings.menuTokenLimit") }}
           </button>
 
+          <button
+            class="menu-item"
+            :class="{ active: page === 'commands' }"
+            @click="selectPage('commands')"
+          >
+            {{ $t("settings.menuCommands") }}
+          </button>
+
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
           <button
             class="menu-item"
@@ -306,6 +315,11 @@ function selectPage(next: Page): void {
             いまも線の削除 1 つだけ（settings_contract）。1 つ足すたびに
             「便利さと安全のどちらかを機械が決められない」の検討が要る。
           -->
+          <!-- コマンドの登録（Spec 15）。CRUD は 1 ファイル 1 責務で切り出す。 -->
+          <template v-else-if="page === 'commands'">
+            <CommandRegistryPane />
+          </template>
+
           <template v-else-if="page === 'messages'">
             <h3 class="mb-1 text-xs font-semibold text-ink">
               {{ $t("settings.messages.heading") }}
