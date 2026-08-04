@@ -64,6 +64,7 @@ OutcastsConcordia/
 ├── Cargo.toml                       Cargo ワークスペース（resolver 3 / edition 2024）
 ├── data_contract.yaml               ドメイン名詞の台帳（型を変えたら先にここ）
 ├── failures.md                      踏んだ罠の台帳（症状 → 真因 → 処方 → 一般化）
+├── concordia_icon.png               アプリアイコンの元画像（下記の手順で再生成する）
 ├── specs/                           仕様（起票 → 査読 → rev 改訂 → Phase 分割で実装）
 │
 ├── crates/
@@ -837,6 +838,28 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
     mcp.json                  エージェント別 MCP（このエージェントにだけ提示。設定ファイルタブから編集）
     icon.webp                 エージェントのアイコン（設定時のみ。UI が WebP へ変換して保存）
 ```
+
+### アプリのアイコン
+
+実行ファイルとタスクバーのアイコンは `apps/gui-tauri/src-tauri/icons/` の生成物で、
+**元画像はリポジトリ直下の `concordia_icon.png`**。作り直すときは Tauri の CLI に
+生成させる（サイズごとに手で書き出さない）。
+
+```bash
+npx tauri icon <正方形の PNG>
+```
+
+- **入力は正方形でなければならない。** `concordia_icon.png` は 1245×1272 なので、
+  **切り取らず左右へ透明の余白を足して 1272×1272 にしてから**渡した
+  （切ると絵が 27px 分失われる）
+- 生成される `icons/android/` と `icons/ios/` は**消してよい** — このアプリは
+  デスクトップ専用で、`tauri.conf.json` の `bundle.icon` もデスクトップ用の
+  5 つしか参照していない
+- **`tauri.conf.json` は触らない。** 生成物のファイル名は既存の参照と同じ
+
+**アプリ内のタイトルバーのマークはこれとは別**（`TitleBar.vue` に直接書かれた
+SVG）。アイコンを差し替えても画面の中は変わらない — 実行ファイルの見た目と
+画面の中の意匠は、変える理由が違うので繋げていない。
 
 ### 診断ログ
 

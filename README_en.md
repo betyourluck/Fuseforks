@@ -63,6 +63,7 @@ OutcastsConcordia/
 ├── Cargo.toml                       Cargo workspace (resolver 3 / edition 2024)
 ├── data_contract.yaml               Registry of domain nouns (change types here first)
 ├── failures.md                      Registry of pitfalls encountered (symptom → root cause → remedy → generalization)
+├── concordia_icon.png               Source image for the app icon (regenerate with the steps below)
 ├── specs/                           Specifications (filed → reviewed → rev iterated → Phase split for implementation)
 │
 ├── crates/
@@ -521,6 +522,31 @@ Agent settings reside in the OS application-data area.
     mcp.json                  Per-agent MCP (presented only to this agent; edit in the configuration-files tab)
     icon.webp                 Agent icon (only when configured; UI converts and stores it as WebP)
 ```
+
+### Application Icon
+
+The executable and taskbar icons are the generated files under
+`apps/gui-tauri/src-tauri/icons/`; the **source image is `concordia_icon.png` at
+the repository root**. To regenerate, let the Tauri CLI do it (never export each
+size by hand).
+
+```bash
+npx tauri icon <square PNG>
+```
+
+- **The input must be square.** `concordia_icon.png` is 1245×1272, so it was
+  padded with transparency to 1272×1272 — **not cropped** (cropping would lose
+  27px of artwork)
+- The generated `icons/android/` and `icons/ios/` directories **can be deleted**:
+  this app is desktop-only, and `bundle.icon` in `tauri.conf.json` references only
+  the five desktop entries
+- **Do not edit `tauri.conf.json`.** The generated filenames match the existing
+  references
+
+**The mark in the in-app title bar is separate** (an SVG written directly in
+`TitleBar.vue`). Replacing the icon does not change anything inside the window —
+the look of the executable and the look of the interface change for different
+reasons, so they are deliberately not coupled.
 
 ### Diagnostic Log
 
