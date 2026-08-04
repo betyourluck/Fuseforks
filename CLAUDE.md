@@ -773,7 +773,43 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev3 承認 → P0〜P4 完了・残 P5 のみ**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev4 起票・査読待ち。P0〜P4 は一部やり直し**）
+
+**2026-08-04 に利用者裁定で骨格が再変更された。** 登録制（登録名でしか呼べない）を
+やめ、**エージェント別の allow / deny リスト**へ。置き場は
+`agents/{id}/command.json` で **`mcp.json` と同じ棚**（`ConfigFileKind` に 1 つ足す）。
+3 状態 = allow なら即実行 / **deny なら拒否して承認要求を積まない** /
+どちらにも無ければ拒否して `pending` へ積む。
+
+**これは 2026-07-31 の「閉じた許容・除外リストではない」判断を覆すもので、
+覆したことを Spec に書いた上で覆している。** rev1 が拒否されたのは
+**気づかずに**反転したから（#56）で、今回は判断を持っている本人が明示的に覆した。
+**台帳の役目は判断を凍らせることではなく、覆すときに覆したと分かるようにすること。**
+
+**シェル非経由は 1 文字も弱まらない** — エージェントは `command` + `args` 配列を
+書き、**照合も argv 配列に対して行う**ので `&&` も `|` も `$(...)` も構造的に
+存在しない。rev1〜rev3 でシェルを退けた根拠はそのまま生きている。
+
+**戻ってきた宿題が 2 つ**（rev1 査読の CRITICAL 1 / MAJOR 6 が指摘し、登録制では
+消えていたもの）: (a) **PATH 解決の曖昧性** — `allow: ["python"]` はその時の PATH の
+python を走らせる。処方は「構造的に決まる」と言わず、**解決したフルパスを毎回
+結果とログに出す** (b) **Windows のコマンド名正規化** — パス区切りを含む `command` は
+照合前に拒否 / 小文字化して比較 / `PATHEXT` を剥がしてから比較。
+
+**残せるもの / 捨てるものは Spec の Tasks に表で数えた**（#51 (b) の実装版）。
+残る: `run.rs` の実行機構（プロセス起動・`env_clear`・出力の分配・木ごと kill）/
+`write_atomic` / `AgentTool::spec_for` / `ToolContext.cancel` /
+`DEFAULT_ENABLED_TOOLS` の分離 / `defaultEnabledTools.test.ts`。
+捨てる: `CommandRegistry` 型 / `load_commands` 系 / IPC 5 本 /
+`CommandRegistryPane.vue`（`mcp.json` と同じ編集経路へ寄せるので専用画面が要らない）。
+
+**未決 3 件を査読へ回した**: D8 タイムアウトの粒度 / D9 `pending` の上限と押し出し /
+D10 `command.json` を持たない個体の既定（＝最初の 1 回は必ず pending を経由する）。
+
+**Notes 4 が本 Spec で初めて出る形**: `pending` を `command.json` に置くと
+**機械が書くファイルを人が編集する**ことになり、衝突しうる（人が編集中に
+エージェントが `pending` を足す）。処方は書き込みを**読み直してから差分適用**に
+すること。`mcp.json` は人しか書かないのでこの問題が無かった。
 
 **P2 完了**（2026-08-04）— `tools/run.rs`、単体 7 本、workspace 463 本全緑。
 依存に `command-group 5.0.1`（`unsafe_code = "forbid"` なので Job Object /
