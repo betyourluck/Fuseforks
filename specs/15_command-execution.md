@@ -9,6 +9,16 @@
 承認・P0〜P4 実装済み → **rev4（エージェント別の allow / deny）= 2026-08-04 の
 利用者裁定**。
 
+**改訂（2026-08-05）: 設定ファイル名を `run.json` に確定した。**
+`command.json`（P0'）→ `shell.json`（P4）→ **`run.json`** の 3 つ目。
+**設定する対象の名前をそのまま採る**＝`mcp.json` と同じ規則。`shell` を降ろした
+理由は**弁解の doc コメントを必要とする名前だった**こと（`ConfigFileKind::Shell` の
+直上に「ファイル名は `shell.json` だが、実行はシェルを介さない」と書いてあった）。
+**互換読み込みも起動 WARN も作らない** — 該当する村が利用者の手元の 2 体だけで、
+一度も鳴らない機構は空の欄になる（利用者判断）。**本文中の記述はすべて `run.json`
+へ揃えてある**（旧名は `failures.md` #62 と `data_contract.yaml` の
+`ConfigFileKind` note から辿れる）。
+
 ---
 
 ## 7/31 判断を覆すことの記録
@@ -46,7 +56,7 @@
 - **allow / deny / 未知 の 3 状態**（利用者裁定）。**deny は承認要求を出さない** —
   「要らない」と決めたものが毎回画面へ並ぶのは、承認の形骸化を招く
 - **エージェント別**（同裁定）。村で 1 つ共有しない。置き場は
-  `agents/{id}/command.json` で、**`mcp.json` と同じ棚**
+  `agents/{id}/run.json` で、**`mcp.json` と同じ棚**
 - **シェルは介さない**（rev1 から一貫）。エージェントは `command` と `args` 配列を
   書き、**照合も argv 配列に対して行う**
 - **`run` は安全機構ではない。** allow に `python` を入れた時点で任意コード実行を
@@ -99,12 +109,12 @@ allow / deny へ移っても 1 文字も弱まらない。**ここは譲らな�
 **トークンを払って禁止の方法を教える**形になる（禁止は例外との戦いが続くが、
 理由の消えた行動は選ばれない、の規律）。
 
-### S2: `command.json`（エージェント別）
+### S2: `run.json`（エージェント別）
 
 > 利用者として、このサーヴァントに何を走らせてよいかを自分で決めたい。
 > `mcp.json` と同じように直接編集したい。
 
-**置き場**: `agents/{id}/command.json`。`ConfigFileKind::Command` を 1 つ足し、
+**置き場**: `agents/{id}/run.json`。`ConfigFileKind::Run` を 1 つ足し、
 既存の設定ファイル編集経路（`read_agent_config` / `write_agent_config`）へ乗せる。
 **専用の CRUD 画面を作らない** — `mcp.json` と同じ棚に置くことが利用者の要望で、
 同じ棚なら同じ編集手段が付いてくる。
@@ -183,7 +193,7 @@ allow / deny は「書いたとおりに効く」ことが最優先。
 
 - deny: 「利用者が禁止しています。**この呼び出しは何度試しても通りません。**
   別の手段で進めてください」
-- 未知: 「利用者へ許可を頼んでください。`agents/{id}/command.json` の `allow` へ
+- 未知: 「利用者へ許可を頼んでください。`agents/{id}/run.json` の `allow` へ
   追加すると次から実行できます」
 - 実行ファイルが見つからない: 「`{command}` が `PATH` に見つかりません」
 
@@ -229,7 +239,7 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 |---|---|
 | `tools/run.rs` のプロセス起動・`env_clear`・出力の分配・木ごと kill・タイムアウト | **そのまま残る**（実行の機構は変わらない） |
 | `command.rs` の `CommandRegistry` / `RegisteredCommand` | **捨てる**。`CommandPolicy`（allow/deny/pending）へ置き換え |
-| `command.rs` の `CommandRequestLog` | **形を変えて残る**（`pending` として `command.json` の中へ） |
+| `command.rs` の `CommandRequestLog` | **形を変えて残る**（`pending` として `run.json` の中へ） |
 | `config_store.rs` の `load/save_commands` | **捨てる**。`ConfigFileKind::Command` の読み書きへ |
 | `write_atomic` の切り出し | **残る**（Spec 15 とは独立した改善） |
 | `AgentTool::spec_for` / `ToolContext.cancel` | **残る**（判定材料が変わるだけ） |
@@ -250,7 +260,7 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 - [x] Phase 3' — 完了（2026-08-04）。配線: `ConfigFileKind::Command` の読み書き、`RunTool` が
       per-agent のポリシーを引く、`spec_for` が allow を列挙。IPC 5 本を撤去。結合
 - [x] Phase 4' — 完了（2026-08-04）。`CommandRegistryPane.vue` を撤去し、`AgentSettingsDialog` の
-      設定ファイル編集へ `command.json` を追加。`run` の行と警告は残す
+      設定ファイル編集へ `run.json` を追加。`run` の行と警告は残す
 - [x] Phase 5 — 完了（2026-08-04）。README 日英へ「コマンド実行（run）」の節を新設し、
       「意図的に未実装の部分」の行を撤去。冒頭の同梱ツール表へ `run` を足し、
       **「作業フォルダの外は構造的に読めない」を「`run` 以外は」へ**訂正。
@@ -263,7 +273,7 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 2. ✅ **解決したフルパスが結果とログに出る**（同上。**同時に `\?\` 前置の漏れを発見 = failures.md #60**）
 3. ✅ deny に一致すると拒否され、**`pending` に積まれない**（`deny` が空のまま `pending` も空 = 積む経路が deny を通っていない）
 4. ✅ どちらにも無いと拒否され、**`pending` に積まれる**（2026-08-04、`git log` が積まれた）
-5. ✅ `shell.json` を手で編集して `allow` へ移すと、次のターンで通る（同上。**`allow` へ移す = 行を動かすだけ**という設計が実機で成立）
+5. ✅ `run.json` を手で編集して `allow` へ移すと、次のターンで通る（同上。**`allow` へ移す = 行を動かすだけ**という設計が実機で成立）
 6. `python` と `python.exe` と `Python` が同じ扱いになる（Windows）
 7. `./python` のようなパス付きは照合前に拒否される
 8. タイムアウト超過で kill され、**孫プロセスも残らない**
@@ -285,7 +295,7 @@ allow / deny では戻る。**rev1 の査読が CRITICAL 1 / MAJOR 6 として�
 3. **パターンの中間ワイルドカードを持たない**（S2）。査読で最も反論が来る点。
    `ruff * --fix` を書きたくなるが、`*` が何個の引数に対応するかの規則が要り、
    **書いた人の意図と照合結果がずれる場所が増える**
-4. **`pending` を `command.json` に置くと、機械が書くファイルを人が編集する**形になる。
+4. **`pending` を `run.json` に置くと、機械が書くファイルを人が編集する**形になる。
    衝突の可能性がある（人が編集中にエージェントが `pending` を足す）。
    処方は書き込みを**読み直してから差分適用**にする（全文上書きにしない）。
    `mcp.json` は人しか書かないのでこの問題が無かった — **本 Spec で初めて出る形**
@@ -346,7 +356,7 @@ I/O 4 本・ワイヤ形 2 つ・store テスト 7 本を撤去。`write_atomic`
 （Spec 15 とは独立した改善）。
 
 **P4'**: `CommandRegistryPane.vue` と rev3 の IPC ラッパ・型・辞書を撤去し、
-**`command.json` を既存の設定ファイルタブへ足しただけ**（`CONFIG_FILE_LABELS` へ
+**`run.json` を既存の設定ファイルタブへ足しただけ**（`CONFIG_FILE_LABELS` へ
 1 行）。`mcp.json` と同じ棚に置く判断が、UI の作業をほぼゼロにした。
 
 **P4 のコミットは `npm run build` が壊れていた。** `defaultEnabledTools.test.ts` を
@@ -364,7 +374,7 @@ I/O 4 本・ワイヤ形 2 つ・store テスト 7 本を撤去。`write_atomic`
   「書いたとおりに効く」を壊す。将来は `timeoutOverrides` を足す余地を残す（今は作らない）
 - **D9 `pending` は per-agent 20 件・古い順に押し出し。** 同一 `(command, args)` は
   `count++` で畳み、`firstRequestedAtMs` は最初のまま
-- **D10 `command.json` を持たない個体は「全部 pending」。** **これが fail closed** —
+- **D10 `run.json` を持たない個体は「全部 pending」。** **これが fail closed** —
   `enabledTools` に `run` を入れても `allow` が空なら S1 の 2 段ゲートで**提示されず、
   実行もできない**。「利用者が許可したものを憶える」という思想とも整合する。
   **初回の手間は欠点ではなく仕様**

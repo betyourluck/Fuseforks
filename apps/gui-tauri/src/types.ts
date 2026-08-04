@@ -22,7 +22,7 @@ export type ModelTemplateId = string;
 export type AgentStatus = "idle" | "starting" | "running" | "stopping" | "failed";
 
 /** 設定ファイルの種別。実ファイル名の解決は Rust 側が行う。 */
-export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "shell";
+export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "run";
 
 /**
  * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
@@ -584,8 +584,7 @@ export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
    * **人と機械の両方が書く唯一の設定ファイル** — エージェントが `pending` を
    * 足すので、開きっぱなしにしていると画面の内容が古くなることがある。
    */
-  /** **名前は shell だが実行はシェルを介さない**（機構は command + args 配列のまま）。 */
-  shell: "shell.json",
+  run: "run.json",
 };
 
 /** 状態の辞書キー。表示は `$t(STATUS_LABEL_KEYS[s])` で引く（Spec 13 P3）。 */
@@ -611,7 +610,7 @@ export const CONFIG_FILE_TEMPLATES: Partial<Record<ConfigFileKind, string>> = {
   }
 }
 `,
-  shell: `{
+  run: `{
   "version": 1,
   "allow": [],
   "deny": [],

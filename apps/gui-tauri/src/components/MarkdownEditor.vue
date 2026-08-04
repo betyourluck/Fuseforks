@@ -41,8 +41,8 @@ const dirty = () => content.value !== original.value;
 const placeholder = computed(() =>
   kind.value === "mcp"
     ? t("editor.mcpPlaceholder")
-    : kind.value === "shell"
-      ? t("editor.shellPlaceholder")
+    : kind.value === "run"
+      ? t("editor.runPlaceholder")
       : t("editor.markdownPlaceholder"),
 );
 
@@ -144,7 +144,7 @@ watch(
         v-else-if="editable"
         v-model="content"
         class="h-full"
-        :language="kind === 'mcp' || kind === 'shell' ? 'json' : 'markdown'"
+        :language="kind === 'mcp' || kind === 'run' ? 'json' : 'markdown'"
         :placeholder="placeholder"
       />
 

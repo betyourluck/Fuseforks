@@ -784,10 +784,11 @@ pub enum ConfigFileKind {
     /// エージェントが `pending` を足すので、書き込みは全文上書きにせず
     /// `pending` だけを差分適用する（`command_tool_contract`）。
     ///
-    /// **ファイル名は `shell.json` だが、実行はシェルを介さない**（利用者命名、
-    /// 2026-08-04）。「シェルコマンドの許可設定」として読める名前を採ったもので、
-    /// 機構は `command` + `args` 配列のまま — `&&` も `|` も構造的に存在しない。
-    Shell,
+    /// **ファイル名は `run.json`** — 設定する対象（`run` ツール）の名前をそのまま
+    /// 採る（`mcp.json` と同じ規則）。旧名 `shell.json` は 2026-08-05 に改名した。
+    /// 実行はシェルを介さず `command` + `args` 配列のままなので、`shell` を
+    /// 名乗ると**弁解の doc コメントが要る名前**になっていた。
+    Run,
 }
 
 impl ConfigFileKind {
@@ -798,13 +799,24 @@ impl ConfigFileKind {
             Self::Memory => "Memory.md",
             Self::Construct => "Construct.md",
             Self::Mcp => "mcp.json",
-            Self::Shell => "shell.json",
+            Self::Run => "run.json",
         }
     }
 
-    /// 全種別。GUI のタブ生成に使う。
-    pub fn all() -> [Self; 4] {
-        [Self::Skill, Self::Memory, Self::Construct, Self::Mcp]
+    /// 全種別。**ファイル名の一覧をテストで固定するために使う** —
+    /// GUI のタブは TypeScript 側の `CONFIG_FILE_LABELS` が生やしている。
+    ///
+    /// 種別を足したらここの長さも直すこと。**`[Self; N]` の `N` は、足した
+    /// バリアント名で grep しても引っかからない**（Spec 15 で `Run` を足した
+    /// とき、ここが 4 のまま取り残された）。
+    pub fn all() -> [Self; 5] {
+        [
+            Self::Skill,
+            Self::Memory,
+            Self::Construct,
+            Self::Mcp,
+            Self::Run,
+        ]
     }
 }
 
@@ -980,7 +992,16 @@ mod tests {
             .into_iter()
             .map(ConfigFileKind::file_name)
             .collect();
-        assert_eq!(names, vec!["SKILL.md", "Memory.md", "Construct.md", "mcp.json"]);
+        assert_eq!(
+            names,
+            vec![
+                "SKILL.md",
+                "Memory.md",
+                "Construct.md",
+                "mcp.json",
+                "run.json",
+            ]
+        );
     }
 
     // ---- 役職の流し込み（Spec 14 P1） ---------------------------------------

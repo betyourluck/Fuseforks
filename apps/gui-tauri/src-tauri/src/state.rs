@@ -83,7 +83,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     orchestrator.register_tool(Arc::new(FileTool)).await;
 
     // コマンド実行（Spec 15 rev4）。**ポリシーはエージェント別の
-    // `agents/{id}/command.json` に住み、呼び出しの瞬間に読む** — 起動時に
+    // `agents/{id}/run.json` に住み、呼び出しの瞬間に読む** — 起動時に
     // 読み込んで保持しない（利用者が手で直したら次のターンから効いてほしい）。
     // **登録が 0 件でも登録しておく。** 提示するかは `spec_for` が個体ごとに
     // 決める（`allow` が空なら自分を落とす）ので、ここで出し分けない。

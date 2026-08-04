@@ -6681,7 +6681,7 @@ impl LlmBackend for ToolSpecBackend {
     }
 }
 
-/// `run` を登録した村を 1 つ組む。ポリシーは `agents/{id}/shell.json` に書く。
+/// `run` を登録した村を 1 つ組む。ポリシーは `agents/{id}/run.json` に書く。
 async fn setup_with_run(dir: &TempDir, backend: Arc<dyn LlmBackend>) -> Orchestrator {
     let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
     orchestrator
@@ -6693,7 +6693,7 @@ async fn setup_with_run(dir: &TempDir, backend: Arc<dyn LlmBackend>) -> Orchestr
     orchestrator
 }
 
-/// `agents/{id}/shell.json` を書く。
+/// `agents/{id}/run.json` を書く。
 async fn write_policy(orchestrator: &Orchestrator, id: &AgentId, allow: &[&str]) {
     let policy = serde_json::json!({
         "version": 1,
@@ -6703,7 +6703,7 @@ async fn write_policy(orchestrator: &Orchestrator, id: &AgentId, allow: &[&str])
         "timeoutSecs": 60,
     });
     orchestrator
-        .write_config(id, ConfigFileKind::Shell, &policy.to_string())
+        .write_config(id, ConfigFileKind::Run, &policy.to_string())
         .await
         .unwrap();
 }
@@ -6744,7 +6744,7 @@ async fn run_is_not_presented_to_agents_that_did_not_ask_for_it() {
 /// **オプトインしていても `allow` が空なら提示しない**（fail closed = D10）。
 ///
 /// 提示は 2 段ゲート（`enabledTools` に `run` があるか × `allow` が 1 件以上あるか）。
-/// `command.json` を持たない個体は何も実行できず、`run` は提示すらされない。
+/// `run.json` を持たない個体は何も実行できず、`run` は提示すらされない。
 #[tokio::test]
 async fn run_needs_both_the_opt_in_and_a_non_empty_allow_list() {
     let backend = Arc::new(ToolSpecBackend::default());
@@ -6759,7 +6759,7 @@ async fn run_needs_both_the_opt_in_and_a_non_empty_allow_list() {
     orchestrator.start_agent(&id).await.unwrap();
 
     let mut rx = orchestrator.subscribe();
-    // shell.json 無し = allow が空。
+    // run.json 無し = allow が空。
     orchestrator.send_user_message(&id, "1 回目").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
@@ -6814,7 +6814,7 @@ async fn the_deny_list_is_never_shown_to_the_model() {
         "timeoutSecs": 60,
     });
     orchestrator
-        .write_config(&id, ConfigFileKind::Shell, &policy.to_string())
+        .write_config(&id, ConfigFileKind::Run, &policy.to_string())
         .await
         .unwrap();
     orchestrator.start_agent(&id).await.unwrap();

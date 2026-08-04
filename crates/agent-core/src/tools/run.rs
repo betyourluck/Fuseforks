@@ -67,7 +67,7 @@ const PASSED_ENV: [&str; 7] = [
 /// 許可されたコマンドを実行するツール。
 ///
 /// **ポリシーは呼び出しの瞬間にファイルから読む。** 保持しないのは、利用者が
-/// `shell.json` を手で直したら**次のターンから効いてほしい**ため
+/// `run.json` を手で直したら**次のターンから効いてほしい**ため
 /// （`ToolContext.work_dir` を「呼び出しの瞬間に world から引く」のと同じ考え方）。
 pub struct RunTool {
     store: ConfigStore,
@@ -79,13 +79,13 @@ impl RunTool {
         Self { store }
     }
 
-    /// `agents/{id}/shell.json` を読む。無ければ既定（**全部 pending**）。
+    /// `agents/{id}/run.json` を読む。無ければ既定（**全部 pending**）。
     ///
     /// 壊れた JSON は**既定へ落とす**（`allow` が消えるので安全側）。
     async fn load(&self, id: &AgentId) -> CommandPolicy {
         let text = self
             .store
-            .read_config(id, ConfigFileKind::Shell)
+            .read_config(id, ConfigFileKind::Run)
             .await
             .unwrap_or_default();
         if text.trim().is_empty() {
@@ -118,7 +118,7 @@ impl RunTool {
             };
             if self
                 .store
-                .write_config(id, ConfigFileKind::Shell, &text)
+                .write_config(id, ConfigFileKind::Run, &text)
                 .await
                 .is_ok()
             {
@@ -247,7 +247,7 @@ impl AgentTool for RunTool {
                 return Ok(format!(
                     "`{command}` は許可されていないため実行しませんでした。\
                      利用者への要求として記録しました。\n\
-                     利用者が `agents/{}/shell.json` の `allow` へ追加すると、\
+                     利用者が `agents/{}/run.json` の `allow` へ追加すると、\
                      次から実行できます。\n\
                      **このターンでは実行できません。** 利用者へ依頼するか、\
                      別の手段で進めてください。",
@@ -352,7 +352,7 @@ pub(crate) async fn run_program(
             return Ok(format!(
                 "`{label}` は {timeout_secs} 秒で終わらなかったため中断しました\
                  （プロセスは停止済み）。\n\
-                 時間のかかる処理なら、利用者に `command.json` の `timeoutSecs` を\
+                 時間のかかる処理なら、利用者に `run.json` の `timeoutSecs` を\
                  延ばしてもらってください。"
             ));
         }
