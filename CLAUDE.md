@@ -773,7 +773,7 @@ rev1 の査読が**実装したら落ちる矛盾を 10 件**出し、rev2 で�
   残るのは履歴の残り香だけ。役職変更の System 行は
   `compose_presence_notices` 経由で届くが**保証ではない**ので約束にしない
 
-## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev4 未決ゼロ → P0'〜P4' 完了・残 P5 のみ**）
+## コマンド実行（[Spec 15](specs/15_command-execution.md)・**rev4 未決ゼロ → P0'〜P4' 完了。実機確認 11 件のうち 5 件達成・残 P5**）
 
 **2026-08-04 に利用者裁定で骨格が再変更された。** 登録制（登録名でしか呼べない）を
 やめ、**エージェント別の allow / deny リスト**へ。置き場は
@@ -818,6 +818,14 @@ python を走らせる。処方は「構造的に決まる」と言わず、**�
 通らない」で必ず躓く。利用者の指摘）。**deny が allow に優先**し、
 **モデルへは allow だけを列挙して deny は見せない**（禁止の一覧を毎ターン積むと
 トークンを払って禁止の方法を教えることになる）。
+
+**実機で動いた**（2026-08-04）— ザリが `curl` を実行し、`git log` が `pending` へ
+積まれ、人が `allow` へ行を動かすと次のターンで通った。**11 件のうち (1)〜(5) 達成。**
+`shell.json` は `allow: ["git status *", "git log *"] / pending: []`。
+**「1 つのファイルを開いて行を allow か deny へ動かすだけ」という設計が実機で成立した。**
+初走行で `canonicalize()` の `\?\` 前置がモデルの読む本文へ漏れているのが見え、
+`display_path` で塞いだ（`failures.md` #60。**Spec 09 Notes 1 が 1 週間前に
+「観測されたら」と予告していた条件が、別 Spec で満たされた**）。
 
 **P0' 完了**（2026-08-04）— `command_tool_contract` を allow / deny / pending へ
 全面改訂し、`ConfigFileKind` へ `command` を追加。**rev3 から撤回した凍結 4 点
