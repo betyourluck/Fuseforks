@@ -12,7 +12,7 @@ defineProps<{ active: BottomTab }>();
 
 const emit = defineEmits<{ (e: "select", tab: BottomTab): void }>();
 
-/** 読み方の説明はラベルのホバーへ（村の地図と同じ規則）。 */
+/** 読み方の説明はラベルのホバーへ（サーヴァントの絆と同じ規則）。 */
 const TABS: Array<{ id: BottomTab; labelKey: string; titleKey: string }> = [
   {
     id: "blackboard",

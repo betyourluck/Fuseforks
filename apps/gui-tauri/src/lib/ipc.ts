@@ -112,7 +112,7 @@ export const listAgents = () => call<AgentSnapshot[]>("list_agents");
 /** トポロジーの全辺を取得する。 */
 export const listTopology = () => call<TopologyEdge[]>("list_topology");
 
-/** 村の地図の保存済みノード座標を取得する。 */
+/** サーヴァントの絆の保存済みノード座標を取得する。 */
 export const listTopologyPositions = () =>
   call<Record<AgentId, TopologyPosition>>("list_topology_positions");
 
@@ -171,7 +171,7 @@ export const setConnections = (agentId: AgentId, targets: AgentId[]) =>
 export const reorderAgents = (order: AgentId[]) =>
   call<void>("reorder_agents", { order });
 
-/** 村の地図上で移動したノードの座標を保存する。 */
+/** サーヴァントの絆で移動したノードの座標を保存する。 */
 export const setTopologyPosition = (agentId: AgentId, position: TopologyPosition) =>
   call<void>("set_topology_position", { agentId, position });
 

@@ -16,7 +16,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 
 | | |
 |---|---|
-| 🏘️ **Build a Village** | Create agents and connect them with lines. The village map is your control panel |
+| 🏘️ **Build a Village** | Create agents and tie them together. **Kizuna** is your control panel |
 | 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results |
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
@@ -24,7 +24,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
-| 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and on the map |
+| 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
 | ⚙️ **System Settings** | Language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
@@ -111,7 +111,7 @@ OutcastsConcordia/
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
-                ├── TopologyMap.vue                    Center-top: village map
+                ├── TopologyMap.vue                    Center-top: Kizuna (the servant ties)
                 ├── PlanWavePane.vue                   Center-bottom: Work Status tab (plan execution trace)
                 ├── BlackboardPane.vue / BottomPaneTabs.vue   Center-bottom: Blackboard tab (shared working notes)
                 ├── ChatPanel.vue / ChatInput.vue      Right: conversation (speech bubbles)
@@ -158,7 +158,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Position | Content | Reason for Permanence |
 |---|---|---|
 | Left | Agent list (status, uptime, tokens, startup) | Always visible |
-| Upper Center | Village map | Always visible |
+| Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format) | Always visible |
 | Bottom | Status bar (date and time) | Always visible (a 22px strip) |
@@ -180,7 +180,11 @@ stays true even when the artwork changes.
 
 **The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `agent-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
 
-Node coordinates moved by hand on the village map are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
+**The upper-center pane, "Kizuna" (絆 — bonds between servants), shows who can speak to whom** (renamed 2026-08-05; formerly "village map"). The name comes from the *Kizuna* system in KOEI TECMO's *Romance of the Three Kingdoms XIII*: as there, **the ties themselves are the mechanism, not decoration**. Without a tie an utterance does not arrive; draw one and it does. The pane keeps the name `Kizuna` in English too — *ties* and *connections* are used as common nouns in prose, but **the name on screen is Kizuna**.
+
+**Only the label changed; the types did not** — `TopologyEdge` / `topologyPositions` / `TopologyMap.vue` / `list_topology` are untouched, following the same discipline as "servant vs. agent" above: do not bind what changes easily to what changes with difficulty. (The wave pane set the precedent when its display name became "Work status" while its contract stayed put.)
+
+Node coordinates moved by hand in Kizuna are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
 
 **Startup is split into two axes** (2026-07-31). The card toggle determines
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).
@@ -268,7 +272,7 @@ Provide one `transfer_to_<agent>` tool per connection destination (following the
 - **Called multiple `transfer_to_*` tools simultaneously → Deliver in parallel to all destinations** (fan-out). Duplicates to the same destination are collapsed into one via first-come-first-served.
 - **Returned only the body text → Conversation ends**. Returns to the user
 
-**User transmissions are limited to a single destination.** Select a single partner in the left pane or on the village map. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
+**User transmissions are limited to a single destination.** Select a single partner in the left pane or in Kizuna. When you want to run multiple partners simultaneously, ask one acting as a facilitator and have them deploy via `ask_*` / `plan` (orchestrator-workers). Broadcasts run everyone's turns in parallel, and everyone responds without seeing anyone else's answers, causing confusion — whereas orchestrator-workers have each agent speak exactly once, preventing duplicates structurally.
 
 ### Parallel Delegation — `plan`
 
@@ -740,7 +744,7 @@ The aim is not to add settings, but to **surface settings that already existed w
 - **Orchestrator internals are not exposed** (history depth, hop limit, public-square-log window, and
   others). This is the substance of "do not add settings"; the line between exposed and hidden is
   frozen as `settings_contract` in `data_contract.yaml`
-- **Deleting a line on the map was the only destructive action with no confirmation** (the other six
+- **Cutting a tie in Kizuna was the only destructive action with no confirmation** (the other six
   always had one). On by default: cutting a line once is recoverable, but losing one without knowing
   the setting exists is not
 

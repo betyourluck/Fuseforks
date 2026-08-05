@@ -6,7 +6,7 @@
     "retry": "Retry",
     "regions": {
       "agentList": "Servant list",
-      "map": "Village map",
+      "map": "Kizuna",
       "waves": "Work status",
       "blackboard": "Blackboard",
       "chat": "Conversation"
@@ -83,10 +83,10 @@
       "intro": "Confirmations and notices that can be suppressed are collected here.",
       "instantNote": "Changes are saved immediately, on this machine only (not part of the village configuration).",
       "edgeDelete": {
-        "heading": "Deleting a connection (edge)",
-        "intro": "On the village map, clicking a connection (edge) deletes it. Connections cannot be restored.",
+        "heading": "Cutting a tie",
+        "intro": "In Kizuna, clicking a tie cuts it. A cut tie cannot be restored.",
         "checkbox": "Show a confirmation dialog before deleting",
-        "offWarning": "While confirmation is off, a single click on an edge removes the connection."
+        "offWarning": "While confirmation is off, a single click on a tie cuts it."
       }
     }
   },
@@ -207,14 +207,14 @@
     "agentTitle": "{id} ({name})"
   },
   "map": {
-    "heading": "Village map",
-    "headingHelp": "Drag a handle to connect / click an edge to disconnect (a bidirectional edge cuts both directions)",
-    "summary": "{nodes} nodes / {edges} edges",
+    "heading": "Kizuna",
+    "headingHelp": "Drag a handle to form a tie / click a tie to cut it (a bidirectional tie cuts both ways)",
+    "summary": "{nodes} servants / {edges} ties",
     "bidirectional": "({count} bidirectional)",
     "agentLabel": "{id} ({name})",
-    "confirmDeleteTitle": "Delete this connection (edge)?",
-    "bidirectionalNote": "This is a bidirectional connection, so both directions will be cut.",
-    "confirmDeleteLabel": "Delete"
+    "confirmDeleteTitle": "Cut this tie?",
+    "bidirectionalNote": "This is a bidirectional tie, so both directions will be cut.",
+    "confirmDeleteLabel": "Cut the tie"
   },
   "chat": {
     "heading": "Chat",
@@ -592,7 +592,7 @@
       "saveAgent": "Saving the settings",
       "deleteAgent": "Deleting the servant",
       "setConnections": "Updating connections",
-      "savePosition": "Saving the map position",
+      "savePosition": "Saving the Kizuna layout",
       "reorder": "Reordering",
       "saveTemplate": "Saving the model template",
       "setCredential": "Registering the API key",
@@ -625,7 +625,7 @@
   "roles": {
     "title": "Roles",
     "close": "Close",
-    "help": "Templates for creating servants. Pick a role when creating one and it starts with its settings already filled in. The role name appears as a badge on cards and on the map.",
+    "help": "Templates for creating servants. Pick a role when creating one and it starts with its settings already filled in. The role name appears as a badge on cards and in Kizuna.",
     "empty": "No roles yet.",
     "noDescription": "(no description)",
     "add": "Add role",
@@ -649,11 +649,11 @@
       "color": "Badge color",
       "noColor": "No color",
       "colorSample": "Sample",
-      "colorHelp": "Used for badges in the list and on the village map. Changing it applies immediately to every servant holding this role."
+      "colorHelp": "Used for badges in the list and in Kizuna. Changing it applies immediately to every servant holding this role."
     },
     "defaults": {
       "heading": "Defaults applied when creating with this role",
-      "help": "These values are applied to a new servant. Connections and the work folder are deliberately excluded: lines are drawn by people, and the work folder differs per machine.",
+      "help": "These values are applied to a new servant. Ties and the work folder are deliberately excluded: ties are formed by people, and the work folder differs per machine.",
       "construct": "Construct.md body",
       "modelTemplate": "Model template",
       "noOpinion": "Not specified",

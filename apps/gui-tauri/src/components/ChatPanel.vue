@@ -42,7 +42,7 @@ const { state } = orchestrator;
 const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
 
-/** 送信の宛先。左ペインまたは村の地図で選んだ 1 体。 */
+/** 送信の宛先。左ペインまたはサーヴァントの絆で選んだ 1 体。 */
 const targetAgent = computed(
   () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
 );

@@ -18,7 +18,7 @@ export type Theme = "dark" | "light";
 
 export interface UiSettings {
   /**
-   * 村の地図で接続（線）を削除する前に確認を出すか。
+   * サーヴァントの絆で絆（線）を切る前に確認を出すか。
    *
    * **既定 ON**（settings_contract で凍結）— 棚卸しで他 6 種の破壊的操作は
    * すべて確認ありで、線だけ無いのは整合性の破れだった。OFF は 1 回切れば

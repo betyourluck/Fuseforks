@@ -147,7 +147,7 @@ watch(
     <header
       class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
     >
-      <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（村の地図と同じ規則）。 -->
+      <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（サーヴァントの絆と同じ規則）。 -->
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="waves.length">{{ $t("waves.waveCount", { count: waves.length }) }}</span>
     </header>
