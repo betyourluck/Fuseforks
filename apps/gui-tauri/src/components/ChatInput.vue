@@ -104,14 +104,22 @@ defineExpose({ fill });
         @keydown.enter.exact="onEnter"
       />
 
-      <!-- 送信。中身があるときだけ現れる。 -->
+      <!-- 送信。中身があるときだけ現れる。
+
+           下の余白は `bottom-1`（4px）。1 行のときの入力欄は
+           `py-2.5`（10px×2）+ 行の高さ 19.5px ≈ 40px で、ボタンは 32px なので
+           上下に 4px ずつ残ると中央に来る。`bottom-2`（8px）だとボタンの上端が
+           入力欄の上端に接し、**下だけ余って見えた**（実機の指摘）。
+
+           複数行へ伸びたときは下端に寄る — 伸びる方向は下なので、
+           **書いている行の隣にボタンが残る**（中央に置くと文章の途中を指す）。 -->
       <button
         v-show="text.trim()"
         type="button"
         :disabled="!canSend"
         :aria-label="$t('chatInput.send')"
         :title="canSend ? $t('chatInput.sendEnter') : (blockedReason ?? $t('chatInput.cannotSend'))"
-        class="absolute right-2 bottom-2 grid size-8 place-items-center rounded-lg bg-accent text-surface-0 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+        class="absolute right-2 bottom-1 grid size-8 place-items-center rounded-lg bg-accent text-surface-0 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         @click="send"
       >
         <!-- ↵ -->
