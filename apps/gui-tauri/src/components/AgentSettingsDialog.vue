@@ -119,6 +119,9 @@ const BUNDLED_TOOLS = [
     labelKey: "agentSettings.tools.file",
     needsWorkDir: true,
   },
+  // Spec 18。境界は作業フォルダではなく「参照 RAG」の宣言（提示条件は
+  // Rust 側の spec_for が持つ = 宣言が空または全滅なら出ない）ため false。
+  { name: "rag", labelKey: "agentSettings.tools.rag", needsWorkDir: false },
   // Spec 15。**既定集合の外**なので、`enabledTools: null` でもチェックが付かない。
   // 作業フォルダは提示条件の一部だが `needsWorkDir` では表せない
   // （登録に `cwd` があれば作業フォルダ無しでも実行できる）ため false。
@@ -140,6 +143,7 @@ const DEFAULT_ENABLED_TOOLS: readonly string[] = [
   "sd",
   "yq",
   "file",
+  "rag",
 ];
 
 /**

@@ -40,7 +40,7 @@ const MAX_MATCHES: usize = 100;
 
 /// 一致行 1 本の表示上限（文字数）。minify 済み JS のような 1 行の塊で
 /// 出力全体が埋まるのを防ぐ。
-const MAX_LINE_CHARS: usize = 240;
+pub(crate) const MAX_LINE_CHARS: usize = 240;
 
 /// ツール出力全体の上限（文字数）。ツール結果はそのままプロンプトへ入る。
 /// 書き換え系ではこの上限を超える diff は「切り詰め」ではなく**拒否**になる
@@ -52,7 +52,7 @@ pub(crate) const MAX_OUTPUT_CHARS: usize = 12_000;
 pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// 1 回の grep で走査するファイル数の上限。病的に広い木で止まらなくなるのを防ぐ。
-const MAX_FILES: usize = 20_000;
+pub(crate) const MAX_FILES: usize = 20_000;
 
 /// ファイル別の件数を並べる最大ファイル数（件数の多い順）。
 /// 内訳そのものが出力を埋めては本末転倒なので、ここにも上限を敷く。
@@ -264,8 +264,12 @@ fn collect_entries(root: &Path, include_dirs: bool) -> (Vec<WalkEntry>, bool) {
     (found, truncated)
 }
 
-/// 走査対象のファイルだけを列挙する（grep 用）。
-fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
+/// 走査対象のファイルだけを列挙する（grep / rag 共用）。
+///
+/// `pub(crate)` なのは走査の規律（symlink 不追従・隠しフォルダと
+/// [`SKIP_DIRS`] の除外・[`MAX_FILES`] の打ち切り）を 2 箇所に生やさないため —
+/// 別実装を持つと**片方だけ直る**（Spec 18 D8。#55 / #58 と同型）。
+pub(crate) fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
     let (entries, truncated) = collect_entries(root, false);
     (entries.into_iter().map(|e| e.path).collect(), truncated)
 }
@@ -276,7 +280,7 @@ pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
 }
 
 /// 一致行を表示上限へ丸める。
-fn clip_line(line: &str) -> String {
+pub(crate) fn clip_line(line: &str) -> String {
     let trimmed = line.trim_end();
     if trimmed.chars().count() <= MAX_LINE_CHARS {
         return trimmed.to_owned();
@@ -981,6 +985,7 @@ mod tests {
             agent_id: AgentId::from("agent_01"),
             work_dir: work_dir.map(Path::to_path_buf),
             cancel: None,
+            rag_roots: Vec::new(),
         }
     }
 

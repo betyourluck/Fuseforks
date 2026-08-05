@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agent_core::{
     ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
-    KeyringSecretStore, Orchestrator, OrchestratorConfig, RememberTool, RunTool, SdTool,
+    KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool, RememberTool, RunTool, SdTool,
     SecretStore, YqTool,
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -81,6 +81,11 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     orchestrator.register_tool(Arc::new(SdTool)).await;
     orchestrator.register_tool(Arc::new(YqTool)).await;
     orchestrator.register_tool(Arc::new(FileTool)).await;
+
+    // 見出し索引（Spec 18）。宣言フォルダは各エージェントの rag_sources から
+    // 呼び出しの瞬間に解決される。**宣言が空でも登録しておく** — 提示するかは
+    // spec_for が個体ごとに決める（run と同じで、ここで出し分けない）。
+    orchestrator.register_tool(Arc::new(RagTool)).await;
 
     // コマンド実行（Spec 15 rev4）。**ポリシーはエージェント別の
     // `agents/{id}/run.json` に住み、呼び出しの瞬間に読む** — 起動時に

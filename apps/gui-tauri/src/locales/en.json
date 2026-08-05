@@ -346,6 +346,7 @@
       "sd": "sd — regex replace (writes files)",
       "yq": "yq — edit TOML/JSON values (writes files)",
       "file": "file — file and folder operations (create/move/copy/trash)",
+      "rag": "rag — heading index over reference folders (read-only)",
       "run": "run (execute registered commands)"
     },
     "noWorkDirWarn": "No working folder is set, so file tools are not offered (your checkmarks are kept).",

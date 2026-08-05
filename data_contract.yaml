@@ -828,12 +828,12 @@ entities:
       既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
       線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
-      enabledTools は同梱 8 本 (remember / grep / fd / diff / sd / yq / file / run) の
-      提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
-      MCP 由来・転送・委譲は対象外。
+      enabledTools は同梱 9 本 (remember / grep / fd / diff / sd / yq / file /
+      rag / run) の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09、
+      rag は Spec 18 で追加)。MCP 由来・転送・委譲は対象外。
       - null = 「既定に従う」: **既定集合 DEFAULT_ENABLED_TOOLS を提示**。
         新規作成時の保存値は null (UI のチェック全 ON は null の効果の表示で
-        あって、明示配列 7 本を保存するのではない。利用者がチェックを触った
+        あって、明示配列 8 本を保存するのではない。利用者がチェックを触った
         時点で明示配列へ切り替わり、「既定に戻す」で null へ戻せる)
       - **【破壊的変更・Spec 15 P3 で着地】null の意味を「全同梱ツール」から
         「既定集合」へ変える。** それまでは
@@ -860,6 +860,10 @@ entities:
         「作業フォルダがあるときだけ提示し、かつその中しか触らない」ツールの集合で、
         境界を破る run を入れると集合の不変条件が壊れる)。run の提示は
         **実行可能な登録が 1 件以上あるか**で決まる = command_tool_contract 参照
+      - **rag は既定集合に入るが WORK_DIR_TOOL_NAMES には入れない** (Spec 18。
+        境界が work_dir ではなく rag_sources の宣言)。提示は spec_for の 2 段
+        ゲート = **宣言が空または全ルート無効なら提示しない** (rag_tool_contract)。
+        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` の等式は 9 = 8 + 1 で不変
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
     hears_room_log_invariant: |

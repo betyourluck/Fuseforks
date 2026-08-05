@@ -49,6 +49,16 @@ pub struct ToolContext {
     /// **葉で 1 箇所だけ見るのは、周回境界の検査を増やすことではない** —
     /// ターンループの構造は変わらず、止められない待ちを 1 つ潰すだけ。
     pub cancel: Option<tokio_util::sync::CancellationToken>,
+    /// 見出し索引を張るフォルダの宣言（Spec 18、`AgentSpec::rag_sources`）。
+    /// **見るのは `rag` だけ。**
+    ///
+    /// `work_dir` と同じ理由でここに乗る — `rag_sources` は `World` の中に住み、
+    /// ツール自身に world を引かせない以上、オーケストレーターが実行時に解決して
+    /// 渡すしかない（`run` が自分で `run.json` を引けるのは、あれが
+    /// `ConfigStore` のファイルだから）。宣言そのものを運び、実在検査は
+    /// ツール側が呼び出しごとに掛け直す（無効化であって削除ではない —
+    /// パスを直せばその場で復活する）。
+    pub rag_roots: Vec<PathBuf>,
 }
 
 /// 実行可能なツール。

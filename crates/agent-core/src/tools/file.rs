@@ -366,7 +366,7 @@ fn run_transfer(
     }
 
     let result = if is_move {
-        std::fs::rename(&source, &dest).map(|()| ())
+        std::fs::rename(&source, &dest)
     } else {
         std::fs::copy(&source, &dest).map(|_| ())
     };
@@ -455,6 +455,7 @@ mod tests {
             agent_id: AgentId::from("agent_01"),
             work_dir: work_dir.map(Path::to_path_buf),
             cancel: None,
+            rag_roots: Vec::new(),
         }
     }
 

@@ -111,5 +111,7 @@ pub use session_store::{
 };
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
 pub use tools::run::resolve_program;
-pub use tools::{DiffTool, FdTool, FileTool, GrepTool, RememberTool, RunTool, SdTool, YqTool};
+pub use tools::{
+    DiffTool, FdTool, FileTool, GrepTool, RagTool, RememberTool, RunTool, SdTool, YqTool,
+};
 pub use world::World;

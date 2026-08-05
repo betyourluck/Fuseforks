@@ -1135,13 +1135,9 @@ fn yq_toml(
                     .is_some(),
                 (TomlNodeMut::Item(item), PathSeg::Index(index)) => match item {
                     toml_edit::Item::Value(value) => remove_from_toml_value(value, *index),
-                    toml_edit::Item::ArrayOfTables(tables) => {
-                        if *index < tables.len() {
-                            tables.remove(*index);
-                            true
-                        } else {
-                            false
-                        }
+                    toml_edit::Item::ArrayOfTables(tables) if *index < tables.len() => {
+                        tables.remove(*index);
+                        true
                     }
                     _ => false,
                 },
@@ -1227,6 +1223,7 @@ mod tests {
             agent_id: AgentId::from("agent_01"),
             work_dir: work_dir.map(Path::to_path_buf),
             cancel: None,
+            rag_roots: Vec::new(),
         }
     }
 

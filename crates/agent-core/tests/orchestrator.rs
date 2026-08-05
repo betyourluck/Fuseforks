@@ -4849,7 +4849,7 @@ fn interruptions(events: &[CoreEvent]) -> usize {
 }
 
 /// 打ち切りの System 行を集める。
-fn interrupt_notices<'a>(events: &'a [CoreEvent]) -> Vec<&'a agent_core::AgentMessage> {
+fn interrupt_notices(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
     messages(events)
         .into_iter()
         .filter(|m| {

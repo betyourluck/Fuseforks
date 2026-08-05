@@ -42,6 +42,7 @@ fn ctx(work_dir: &Path) -> ToolContext {
         agent_id: AgentId::from("agent_05"),
         work_dir: Some(work_dir.to_path_buf()),
         cancel: None,
+        rag_roots: Vec::new(),
     }
 }
 

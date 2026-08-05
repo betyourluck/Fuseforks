@@ -81,10 +81,8 @@ pub fn parse_headings(md: &str) -> Vec<HeadingFlat> {
                     });
                 }
             }
-            Event::Text(text) | Event::Code(text) => {
-                if current_level.is_some() {
-                    current_text.push_str(&text);
-                }
+            Event::Text(text) | Event::Code(text) if current_level.is_some() => {
+                current_text.push_str(&text);
             }
             _ => {}
         }
@@ -190,19 +188,11 @@ pub enum SectionResolution {
 /// ところで打ち切る — 完全一致が 1 件あるのに部分一致まで見ると、
 /// 短い問い合わせが常に曖昧になる。
 pub fn resolve_section(flat: &[HeadingFlat], query: &str) -> SectionResolution {
-    let tiers: [(MatchMode, Box<dyn Fn(&HeadingFlat) -> bool>); 3] = [
-        (MatchMode::Exact, Box::new(|h: &HeadingFlat| h.title == query)),
-        (MatchMode::CaseInsensitive, {
-            let q = query.to_lowercase();
-            Box::new(move |h: &HeadingFlat| h.title.to_lowercase() == q)
-        }),
-        (MatchMode::Substring, {
-            let q = query.to_lowercase();
-            Box::new(move |h: &HeadingFlat| h.title.to_lowercase().contains(&q))
-        }),
-    ];
-
-    for (mode, predicate) in tiers {
+    fn tier(
+        flat: &[HeadingFlat],
+        mode: MatchMode,
+        predicate: impl Fn(&HeadingFlat) -> bool,
+    ) -> Option<SectionResolution> {
         let hits: Vec<usize> = flat
             .iter()
             .enumerate()
@@ -210,12 +200,17 @@ pub fn resolve_section(flat: &[HeadingFlat], query: &str) -> SectionResolution {
             .map(|(i, _)| i)
             .collect();
         match hits.len() {
-            0 => {}
-            1 => return SectionResolution::Found { index: hits[0], mode },
-            _ => return SectionResolution::Ambiguous(hits),
+            0 => None,
+            1 => Some(SectionResolution::Found { index: hits[0], mode }),
+            _ => Some(SectionResolution::Ambiguous(hits)),
         }
     }
-    SectionResolution::NotFound
+
+    let lower = query.to_lowercase();
+    tier(flat, MatchMode::Exact, |h| h.title == query)
+        .or_else(|| tier(flat, MatchMode::CaseInsensitive, |h| h.title.to_lowercase() == lower))
+        .or_else(|| tier(flat, MatchMode::Substring, |h| h.title.to_lowercase().contains(&lower)))
+        .unwrap_or(SectionResolution::NotFound)
 }
 
 /// 節の本文が占める行範囲（0 始まりの半開区間）を返す。

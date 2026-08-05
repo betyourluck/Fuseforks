@@ -3437,6 +3437,9 @@ async fn handle_message(
         agent_id: agent_id.clone(),
         work_dir: spec.work_dir.clone().map(std::path::PathBuf::from),
         cancel: None,
+        // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
+        // （空または全滅なら提示しない）をここから判定する。
+        rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -4248,20 +4251,29 @@ async fn execute_tool(
         ));
     };
 
-    // 作業フォルダ（grep / diff の探索範囲）は呼び出しの瞬間に解決する。
-    // ツール登録時に固定すると、設定変更が次の再登録まで効かない。
-    let work_dir = {
+    // 作業フォルダ（grep / diff の探索範囲）と宣言フォルダ（rag）は
+    // 呼び出しの瞬間に解決する。ツール登録時に固定すると、設定変更が
+    // 次の再登録まで効かない。
+    let (work_dir, rag_roots) = {
         let world = shared.world.read().await;
-        world
-            .agent(agent_id)
-            .ok()
-            .and_then(|record| record.spec.work_dir.clone())
-            .map(std::path::PathBuf::from)
+        let record = world.agent(agent_id).ok();
+        (
+            record
+                .as_ref()
+                .and_then(|record| record.spec.work_dir.clone())
+                .map(std::path::PathBuf::from),
+            record
+                .map(|record| {
+                    record.spec.rag_sources.iter().map(std::path::PathBuf::from).collect()
+                })
+                .unwrap_or_default(),
+        )
     };
 
     let ctx = ToolContext {
         agent_id: agent_id.clone(),
         work_dir,
+        rag_roots,
         // ターンのトークンを渡す。**見るのは `run` だけ**（外部プロセスを
         // 起動するツールは、周回境界まで待つと最長 1 時間走り続ける）。
         // Spec 10 の不変条件 1（検査点は周回境界だけ）はターンループの話で、

@@ -135,6 +135,7 @@ mod tests {
             agent_id: AgentId::from("agent_01"),
             work_dir: None,
             cancel: None,
+            rag_roots: Vec::new(),
         }
     }
 
