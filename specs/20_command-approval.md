@@ -2,10 +2,9 @@
 
 **ID**: 20
 **Date**: 2026-08-05
-**Status**: **rev2 承認（2026-08-05）→ P0〜P3 完了 + P4 の実機指摘 2 件を反映
-→ P4 の検収 4 件を観測 + 検収 5 の機構を修正（2026-08-06）**。
-残は書き直した検収 5'（`run` にチェック・`allow` が空の個体で提示 →
-要求 → 承認 → 通る）の実機確認のみ
+**Status**: **Done（2026-08-06）**。rev2 承認（2026-08-05）→ P0〜P3 →
+P4 の実機指摘 2 件を反映 → 検収 5 件すべて観測（うち 5 は**項目ではなく機構が
+誤っていた**ので、閉じた輪を切ってから 5' として書き直し観測した）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -311,7 +310,21 @@ D1 の裏返し。まとめて承認は**粒度の決定を飛ばす**ので、�
 
    5'. `run` にチェックがあり `allow` が空の個体でコマンドを呼ばせる →
        **提示はされ、実行はされず、承認画面に 1 件出る** → 承認 →
-       次のターンで通る
+       次のターンで通る — **観測済み**（2026-08-06、`agent_8`）
+
+   ```text
+   05:16:56 agent=agent_8 command=python decision=Unknown allow=0 deny=0
+   05:17:31 agent=agent_8 command=python decision=Allowed allow=1 deny=0
+   05:22:15 agent=agent_8 command=python decision=Unknown allow=1 deny=0
+   05:22:35 agent=agent_8 command=python decision=Allowed allow=2 deny=0
+   ```
+
+   **決定的なのは 1 行目** — `allow=0` で `run decision:` の行が出ること自体が
+   「提示され、モデルが呼び、`call()` まで届いた」証拠になる（修正前は
+   提示されないので実行フィルタで弾かれ、**この行は原理的に存在し得ない**）。
+   35 秒後に `allow=1 decision=Allowed` で承認が効いている。
+   3〜4 行目は `allow=1` のまま別の引数（`python --version`）が `Unknown` に
+   なり承認で `allow=2` — **完全一致パターンの粒度**も同時に読める。
 
 **検収 5 は踏めなかった（2026-08-06）— 項目ではなく機構が誤っていた**
 
