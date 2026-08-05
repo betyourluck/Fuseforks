@@ -8,13 +8,31 @@
  *   （ブラウザ環境 = Tauri 外でも crash しない）。
  */
 
+import { computed } from "vue";
+
+import { useOrchestrator } from "../composables/useOrchestrator";
+
+const { state } = useOrchestrator();
+
 const emit = defineEmits<{
   (e: "open-ordinance"): void;
   (e: "open-roles"): void;
   (e: "open-mcp"): void;
+  (e: "open-command-approval"): void;
   (e: "open-schedules"): void;
   (e: "open-settings"): void;
 }>();
+
+/**
+ * 判断待ちの**村の合計**（Spec 20 D3）。
+ *
+ * 個体ごとの最大値ではなく合計。承認画面が村全体を 1 画面で扱うので、
+ * 入口の数も村全体の判断待ち件数を指すのが素直。**丸めない** — 溜まりすぎが
+ * 数で見えること自体に意味がある。
+ */
+const pendingCount = computed(() =>
+  state.commandRequests.reduce((sum, view) => sum + view.pending.length, 0),
+);
 
 async function win(method: "minimize" | "toggleMaximize" | "close") {
   try {
@@ -114,6 +132,35 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       <span>{{ $t("titleBar.roles") }}</span>
     </button>
 
+    <!-- コマンド承認（Spec 20）。判断待ちの件数は**村の合計**を出す。
+         0 件でも入口は消さない — 消えると「機能が無い」と読める。 -->
+    <button
+      class="tb-btn"
+      :title="$t('titleBar.commandApprovalTitle')"
+      :aria-label="$t('titleBar.commandApprovalAria')"
+      @click="emit('open-command-approval')"
+    >
+      <!-- チェック付きの四角。「見て、決める」ものであることを形で示す。 -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="m8 12 3 3 5-6" />
+      </svg>
+      <span>{{ $t("titleBar.commandApproval") }}</span>
+      <span
+        v-if="pendingCount > 0"
+        class="ml-1 rounded-full bg-accent px-1.5 text-[10px] font-semibold text-surface-0"
+      >{{ pendingCount }}</span>
+    </button>
     <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->
     <button
       class="tb-btn"

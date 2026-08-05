@@ -18,7 +18,9 @@ import type {
   AgentMessage,
   AgentSnapshot,
   AgentSpec,
+  ApprovalOutcome,
   BlackboardNote,
+  CommandPolicyView,
   ConfigFileKind,
   ErrorPayload,
   ForkPoint,
@@ -260,6 +262,32 @@ export const getLanguage = () => call<Language>("get_language");
 export const setLanguage = (language: Language) =>
   call<void>("set_language", { language });
 
+// ---- コマンドの承認（Spec 20） ------------------------------------------------
+
+/** 全サーヴァントの判断待ち要求。読めなかった個体は `broken: true` で返る。 */
+export const listCommandRequests = () =>
+  call<CommandPolicyView[]>("list_command_requests");
+
+/**
+ * 判断待ちの 1 件を承認して `allow` へ入れる。
+ *
+ * **粒度は `open` だけで指定する。** パターン文字列を送る口は無い —
+ * あると「粒度は機械が決めない」が「粒度を GUI が何でも決められる」へ反転する。
+ */
+export const approveCommand = (
+  agentId: AgentId,
+  command: string,
+  args: string[],
+  open: boolean,
+) => call<ApprovalOutcome>("approve_command", { agentId, command, args, open });
+
+/** 判断待ちの 1 件を却下して `deny` へ入れる。 */
+export const rejectCommand = (
+  agentId: AgentId,
+  command: string,
+  args: string[],
+  open: boolean,
+) => call<ApprovalOutcome>("reject_command", { agentId, command, args, open });
 // ---- 利用者（Spec 19） --------------------------------------------------------
 
 /**

@@ -21,6 +21,8 @@ import type {
   ForkPoint,
   AgentSnapshot,
   AgentSpec,
+  ApprovalOutcome,
+  CommandPolicyView,
   ConfigFileKind,
   CoreEvent,
   ErrorPayload,
@@ -81,6 +83,13 @@ interface OrchestratorState {
    * 画面が区別できなくなる。
    */
   userName: string | null;
+  /**
+   * 判断待ちのコマンド要求（Spec 20）。タイトルバーのバッジと承認画面が読む。
+   *
+   * **バッジが要るので共有状態に置く** — ダイアログの中だけで引くと、
+   * 開かない限り件数が分からず「run.json を開かないと気づけない」今と変わらない。
+   */
+  commandRequests: CommandPolicyView[];
   /** 利用者のアイコンの object URL（Spec 19）。`null` = 未設定。 */
   userIcon: string | null;
   /**
@@ -147,6 +156,7 @@ const state = reactive<OrchestratorState>({
   ready: false,
   initError: null,
   icons: {},
+  commandRequests: [],
   userName: null,
   userIcon: null,
   typing: {},
@@ -663,6 +673,7 @@ async function initialize(): Promise<void> {
     setLocale(await ipc.getLanguage());
     // 利用者の呼び名とアイコン（Spec 19）。会話ペインの自分の行に出るので、
     // 覆いが外れる前に当てておく（言語と同じ理由）。
+    state.commandRequests = await ipc.listCommandRequests();
     state.userName = await ipc.getUserName();
     const userIconBytes = await ipc.getUserIcon();
     state.userIcon =
@@ -936,6 +947,55 @@ export function useOrchestrator() {
       return succeeded(done);
     },
 
+    /**
+     * 判断待ちの要求を引き直す（Spec 20）。
+     *
+     * 承認画面を開いたときと、承認・却下のあとに呼ぶ。**`mutate` の
+     * `refreshAll` には混ぜない** — 承認画面を開いていない間は誰も見ないので、
+     * 全操作のたびに全個体の run.json を読むのは払いすぎ。
+     */
+    async refreshCommandRequests(): Promise<boolean> {
+      const views = await guard("orchestrator.op.listCommandRequests", () =>
+        ipc.listCommandRequests(),
+      );
+      if (succeeded(views)) state.commandRequests = views;
+      return succeeded(views);
+    },
+
+    /**
+     * 判断待ちの 1 件を承認する（Spec 20）。粒度は `open` だけで決まる。
+     *
+     * 戻りが `"notFound"` なら**許容は 1 行も増えていない** — 押し出しなどで
+     * 一覧から消えた後に押された。呼び出し側が一覧を引き直して告げる。
+     */
+    async approveCommand(
+      agentId: AgentId,
+      command: string,
+      args: string[],
+      open: boolean,
+    ): Promise<ApprovalOutcome | null> {
+      const outcome = await mutate("orchestrator.op.approveCommand", () =>
+        ipc.approveCommand(agentId, command, args, open),
+      );
+      if (!succeeded(outcome)) return null;
+      await this.refreshCommandRequests();
+      return outcome;
+    },
+
+    /** 判断待ちの 1 件を却下する（Spec 20）。`deny` へ入る。 */
+    async rejectCommand(
+      agentId: AgentId,
+      command: string,
+      args: string[],
+      open: boolean,
+    ): Promise<ApprovalOutcome | null> {
+      const outcome = await mutate("orchestrator.op.rejectCommand", () =>
+        ipc.rejectCommand(agentId, command, args, open),
+      );
+      if (!succeeded(outcome)) return null;
+      await this.refreshCommandRequests();
+      return outcome;
+    },
     /**
      * 利用者の呼び名を保存する（Spec 19）。`null` で既定へ戻す。
      *

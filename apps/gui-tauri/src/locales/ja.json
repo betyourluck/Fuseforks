@@ -34,7 +34,10 @@
     "close": "閉じる",
     "roles": "役職",
     "rolesTitle": "役職を管理（サーヴァントの雛形）",
-    "rolesAria": "役職"
+    "rolesAria": "役職",
+    "commandApproval": "コマンド承認",
+    "commandApprovalTitle": "サーヴァントが要求したコマンドを承認・却下する",
+    "commandApprovalAria": "コマンド承認を開く"
   },
   "settings": {
     "title": "システム設定",
@@ -625,7 +628,10 @@
       "forkSession": "会話の分岐",
       "deleteSession": "会話の削除",
       "summarize": "要約",
-      "exportSession": "会話の書き出し"
+      "exportSession": "会話の書き出し",
+      "listCommandRequests": "判断待ちの取得",
+      "approveCommand": "コマンドの承認",
+      "rejectCommand": "コマンドの却下"
     }
   },
   "statusBar": {
@@ -673,5 +679,20 @@
       "tools": "使う同梱ツール"
     },
     "villageScope": "役職は村（world.json）に保存されます。村を配ると役職も一緒に付いて回ります。"
+  },
+  "commandApproval": {
+    "title": "コマンド承認",
+    "close": "閉じる",
+    "help": "サーヴァントが呼んで拒否されたコマンドです。何を許すかを選んでから、承認か却下を押してください。承認したものは以後そのまま実行され、却下したものは二度と一覧に出ません。",
+    "loading": "読み込み中…",
+    "empty": "判断待ちの要求はありません。",
+    "broken": "この村人の run.json が読めません（JSON として壊れています）。設定ファイルから直してください。壊れたファイルは書き換えずに残してあります。",
+    "exact": "この呼び出しだけ",
+    "prefix": "この先頭に続く任意の引数",
+    "approve": "承認",
+    "reject": "却下",
+    "count": "{count} 回",
+    "gone": "この要求はもう一覧にありません（新しい要求に押し出されました）。許可も禁止も増えていません。",
+    "presentNote": "許可が 1 件でも入ると、そのサーヴァントは次のターンからコマンドを実行する道具を持ちます。細かく決めたいときは、設定ファイルの run.json を直接編集できます。"
   }
 }

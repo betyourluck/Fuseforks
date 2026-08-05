@@ -362,6 +362,49 @@ pub async fn set_language(
     state.orchestrator.set_language(language).await
 }
 
+// ---- コマンドの承認（Spec 20） ------------------------------------------------
+
+/// 全サーヴァントの判断待ち要求。読めなかった個体は `broken: true` で返る。
+#[tauri::command]
+pub async fn list_command_requests(
+    state: State<'_, AppState>,
+) -> CoreResult<Vec<agent_core::CommandPolicyView>> {
+    Ok(state.orchestrator.command_policies().await)
+}
+
+/// 判断待ちの 1 件を承認して `allow` へ入れる。
+///
+/// **粒度は `open` だけで指定する。** パターン文字列を受け取らないのは、
+/// 受け取ると「粒度は機械が決めない」が**「粒度を GUI が何でも決められる」へ
+/// 反転する**ため（`*` 1 文字も送れてしまう）。
+#[tauri::command]
+pub async fn approve_command(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    command: String,
+    args: Vec<String>,
+    open: bool,
+) -> CoreResult<agent_core::ApprovalOutcome> {
+    state
+        .orchestrator
+        .approve_command(&agent_id, &command, &args, open)
+        .await
+}
+
+/// 判断待ちの 1 件を却下して `deny` へ入れる。
+#[tauri::command]
+pub async fn reject_command(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    command: String,
+    args: Vec<String>,
+    open: bool,
+) -> CoreResult<agent_core::ApprovalOutcome> {
+    state
+        .orchestrator
+        .reject_command(&agent_id, &command, &args, open)
+        .await
+}
 // ---- 利用者（Spec 19） --------------------------------------------------------
 
 /// 利用者の呼び名を返す。未設定なら `null`。

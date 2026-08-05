@@ -564,6 +564,33 @@ export type CoreEvent =
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };
 
 /** 設定ファイル種別と表示名の対応。Rust 側の実ファイル名と揃えてある。 */
+/**
+ * 判断待ちのコマンド要求 1 件（Spec 20）。`command.rs` の `PendingCommand` の写し。
+ */
+export interface PendingCommand {
+  command: string;
+  args: string[];
+  /** 最初に要求された時刻。**畳んでも更新しない**（いつから欲しがっているかが消える）。 */
+  firstRequestedAtMs: number;
+  /** 要求された回数。 */
+  count: number;
+}
+
+/**
+ * 承認画面へ渡す 1 体分の投影（Spec 20）。`command.rs` の `CommandPolicyView` の写し。
+ *
+ * `broken` は `run.json` が読めなかったこと。**既定で埋めて「判断待ちゼロ」に
+ * 見せない** — 壊れている事実が画面から消える。
+ */
+export interface CommandPolicyView {
+  agentId: AgentId;
+  name: string;
+  pending: PendingCommand[];
+  broken: boolean;
+}
+
+/** 承認・却下の結果（Spec 20）。`NotFound` は「もう一覧に無い」。 */
+export type ApprovalOutcome = "applied" | "notFound";
 export const CONFIG_FILE_LABELS: Record<ConfigFileKind, string> = {
   skill: "SKILL.md",
   memory: "Memory.md",

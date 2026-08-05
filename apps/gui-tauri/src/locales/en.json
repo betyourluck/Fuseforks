@@ -34,7 +34,10 @@
     "close": "Close",
     "roles": "Roles",
     "rolesTitle": "Manage roles (servant templates)",
-    "rolesAria": "Roles"
+    "rolesAria": "Roles",
+    "commandApproval": "Commands",
+    "commandApprovalTitle": "Approve or reject commands requested by servants",
+    "commandApprovalAria": "Open command approval"
   },
   "settings": {
     "title": "System settings",
@@ -625,7 +628,10 @@
       "forkSession": "Forking the conversation",
       "deleteSession": "Deleting the conversation",
       "summarize": "Summarization",
-      "exportSession": "Exporting the conversation"
+      "exportSession": "Exporting the conversation",
+      "listCommandRequests": "Loading the pending requests",
+      "approveCommand": "Approving the command",
+      "rejectCommand": "Rejecting the command"
     }
   },
   "statusBar": {
@@ -673,5 +679,20 @@
       "tools": "Built-in tools to offer"
     },
     "villageScope": "Roles are stored in the village (world.json), so they travel with it when shared."
+  },
+  "commandApproval": {
+    "title": "Command Approval",
+    "close": "Close",
+    "help": "Commands a servant tried to run and was refused. Choose what to permit, then approve or reject. Approved entries run directly from then on; rejected ones never appear here again.",
+    "loading": "Loading…",
+    "empty": "No requests are waiting.",
+    "broken": "This servant's run.json cannot be read (it is not valid JSON). Fix it from the configuration files. The broken file has been left untouched.",
+    "exact": "This call only",
+    "prefix": "Any arguments after this prefix",
+    "approve": "Approve",
+    "reject": "Reject",
+    "count": "{count}x",
+    "gone": "This request is no longer listed (newer requests pushed it out). Nothing was added to the permitted or forbidden lists.",
+    "presentNote": "Once even one entry is permitted, that servant gains the command-running tool from its next turn. For finer control, edit run.json directly from the configuration files."
   }
 }

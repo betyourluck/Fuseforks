@@ -135,6 +135,10 @@ pub fn run() {
             commands::get_user_icon,
             commands::set_user_icon,
             commands::clear_user_icon,
+            // コマンドの承認（Spec 20）
+            commands::list_command_requests,
+            commands::approve_command,
+            commands::reject_command,
             // MCP
             commands::read_mcp_config,
             commands::write_mcp_config,

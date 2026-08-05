@@ -36,6 +36,7 @@ const h = vi.hoisted(() => ({
   workspacePath: vi.fn(async () => "C:\\workspace"),
   currentSession: vi.fn(async () => "session_1"),
   getLanguage: vi.fn(async () => "ja"),
+  listCommandRequests: vi.fn(async () => []),
   getUserName: vi.fn(async () => null),
   getUserIcon: vi.fn(async () => null),
   listSessions: vi.fn(async () => []),

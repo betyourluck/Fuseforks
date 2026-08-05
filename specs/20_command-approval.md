@@ -2,7 +2,7 @@
 
 **ID**: 20
 **Date**: 2026-08-05
-**Status**: **rev2 承認（2026-08-05）→ P0〜P1 完了**。次は P2（IPC と画面）
+**Status**: **rev2 承認（2026-08-05）→ P0〜P2 完了**。次は P3（台帳）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -334,6 +334,35 @@ fail closed にしかならない。**危険なのは読みではなく、落と
 `a_policy_update_never_clobbers_the_human_edits`（`config_store`）が
 「人が書いた `allow` / `deny` / `timeoutSecs` が機械の書き込みで消えない」を
 見ている。移さなければ、撤去した本人が #62 と同型の穴を新しく開けていた。
+## P2 実装記録（2026-08-05）
+
+IPC 3 本（`list_command_requests` / `approve_command` / `reject_command`）+
+`lib/ipc.ts` + `types.ts` の写し 3 型 + `useOrchestrator` の
+`state.commandRequests` と action 3 本 + `CommandApprovalDialog.vue` +
+`TitleBar` の入口とバッジ + 辞書 ja/en。vitest 135 → **140 本**、
+型検査・ビルド通過、workspace 全緑・clippy 新規警告ゼロ。
+
+**実装で決めた 3 点**:
+
+- **`refreshCommandRequests` を `mutate` の `refreshAll` に混ぜない。**
+  混ぜると**あらゆる操作のたびに全個体の `run.json` を読む** — 承認画面を
+  開いていない間は誰も見ないので払いすぎ。引き直すのは「画面を開いたとき」と
+  「承認・却下のあと」だけ
+- **バッジは共有状態から出す**（`state.commandRequests`）。ダイアログの中だけで
+  引くと、**開かない限り件数が分からず**「`run.json` を開かないと気づけない」
+  今と何も変わらない
+- **画面もパターン文字列を組み立てるが、それは表示のためだけ。** 送るのは
+  `open: bool` だけで、`allow` に入るのはコアが組んだ側。**同じ規則が 2 箇所に
+  あるのは承知のうえ**で、ラベルに結果を出すことが D1 の処方（当てずっぽうを
+  隠さない）そのものだから。**判定には一切使わない**ことをコメントで固定した
+
+**`init()` に IPC を 1 本足すと、モックにその口が無い 4 ファイルが落ちる。**
+Spec 19 P3 と同じ形で、**壊れ方として正しい** — モックが自動で穴埋めされると、
+初期化の増加が誰にも見えないまま通る。
+
+**vitest には「並び順を問わない」検証だけを置いた**（査読・軽微 4）。
+Notes 2 で並びを未定にしてあるので、テストが先に順序を固定すると、
+**決めた時点で壊れるのはテストのほう**。
 ## Notes
 
 1. **`pending` の上限（20 件）に触らない。** 承認画面ができても上限は要る —
