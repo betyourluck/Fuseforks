@@ -362,7 +362,10 @@
     "mcpEmpty": "個別サーバーの宣言はありません（mcp.json タブで追加できます）。",
     "mcpToolCount": "{count} ツール",
     "rag": "参照 RAG",
-    "ragEmpty": "索引済みの RAG ソースがありません。",
+    "ragEmpty": "資料フォルダは宣言されていません（宣言が無いと rag ツールは提示されません）。",
+    "ragBrowse": "フォルダを追加…",
+    "ragRemove": "外す",
+    "ragHint": "宣言したフォルダの Markdown を rag ツールが見出し索引で読めます（読み取り専用・作業フォルダの外も可）。宣言した範囲はこのサーヴァントから丸ごと読めるため、機密を含むフォルダは指定しないでください。",
     "connections": "接続先サーヴァント",
     "othersEmpty": "他のサーヴァントがいません。",
     "delete": "削除",
@@ -646,8 +649,7 @@
       "modelTemplate": "モデルテンプレート",
       "noOpinion": "指定しない",
       "maxToolIterations": "ツール実行回数の上限",
-      "tools": "使う同梱ツール",
-      "ragSources": "参照する RAG ソース"
+      "tools": "使う同梱ツール"
     },
     "villageScope": "役職は村（world.json）に保存されます。村を配ると役職も一緒に付いて回ります。"
   }

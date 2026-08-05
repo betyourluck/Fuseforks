@@ -251,19 +251,23 @@ pub struct AgentRole {
     pub defaults: AgentRoleDefaults,
 }
 
-/// 役職が持つ既定値（Spec 14。`role_contract` 凍結 2 の「入れる」5 欄）。
+/// 役職が持つ既定値（Spec 14。`role_contract` 凍結 2 の「入れる」4 欄）。
 ///
-/// **`AgentSpec` の全 11 欄のうち、ここに来るのは 4 欄だけ**（+ `construct` は
-/// ファイルなので `AgentSpec` の欄ではない）。入れない 5 欄と、その理由:
+/// **`AgentSpec` の全 11 欄のうち、ここに来るのは 3 欄だけ**（+ `construct` は
+/// ファイルなので `AgentSpec` の欄ではない）。入れない 6 欄と、その理由:
 ///
 /// - `connected_agents` — 入れると**役職を選んだ瞬間に線が引かれる**。
 ///   「線は人が引く」（AdaptOrch を採らなかった根拠）が崩れる
 /// - `work_dir` — 絶対パスで端末ごとに違う。村を配ると存在しないパスを指す
+/// - `rag_sources` — **Spec 18 で `work_dir` と同じ性質になった**（意味が
+///   「索引済みソース名」から「フォルダの絶対パス」へ変わった）。雛形に入れると
+///   村を配ったとき壊れた参照を配る。旧データの `defaults.ragSources` は
+///   空配列しか存在しない（索引に入れる経路が無かった）ので移行は不要
 /// - `order` — 左ペインの並び順。役職の性質ではない
 /// - `batch_start` — 一括起動の対象。運用の選択
 /// - `hears_room_log` — コスト設定（Spec 03）。村の懐事情で決まる
 ///
-/// `id` / `name` は個体固有なので対象外。**11 = 対象外 2 + 入れる 4 + 入れない 5。**
+/// `id` / `name` は個体固有なので対象外。**11 = 対象外 2 + 入れる 3 + 入れない 6。**
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRoleDefaults {
@@ -276,14 +280,6 @@ pub struct AgentRoleDefaults {
     /// 宣言された登録簿なので、無い id はその場で分かる。
     #[serde(default)]
     pub model_template_id: Option<ModelTemplateId>,
-    /// 参照する RAG ソース名。
-    ///
-    /// **存在検査は掛けない。そのまま写す。** `RagIndex` は断片を索引した瞬間に
-    /// キーが生える実行時の器で、宣言された登録簿が無い。作成時点では索引が
-    /// ほぼ必ず空なので、検査すると「調査役を作る → あとで資料を食わせる」
-    /// という正しい順序を壊す。
-    #[serde(default)]
-    pub rag_sources: Vec<String>,
     /// 提示する同梱ツール名の集合。`None` = 既定に従う（全同梱ツール）。
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
@@ -299,8 +295,8 @@ impl AgentRoleDefaults {
     /// 既存のサーヴァントに役職を付けるときは `role_id` だけを差し替え、
     /// この関数は呼ばない（上書きは取り消せない）。
     ///
-    /// **触るのは 4 欄だけ。** `connected_agents` / `work_dir` / `order` /
-    /// `batch_start` / `hears_room_log` には一切代入しない。
+    /// **触るのは 3 欄だけ。** `connected_agents` / `work_dir` / `rag_sources` /
+    /// `order` / `batch_start` / `hears_room_log` には一切代入しない。
     ///
     /// `template_exists` はモデルテンプレートの存在判定。純関数に保つため
     /// `World` を直接受けない（テストが登録簿を組まずに書ける）。
@@ -329,10 +325,6 @@ impl AgentRoleDefaults {
             }
         }
 
-        // 検査しない（RagIndex は実行時に育つ器で、宣言された登録簿が無い）。
-        if !self.rag_sources.is_empty() {
-            spec.rag_sources = self.rag_sources.clone();
-        }
         if self.enabled_tools.is_some() {
             spec.enabled_tools = self.enabled_tools.clone();
         }
@@ -354,7 +346,14 @@ pub struct AgentSpec {
     pub name: String,
     /// 使用するモデルテンプレート。
     pub model_template_id: ModelTemplateId,
-    /// 参照する RAG ソース名の一覧。
+    /// 見出し索引を張るフォルダの絶対パスの列（Spec 18 で意味を変更。
+    /// 旧「索引済みソース名」— 実体は常に空だったので移行は不要）。
+    ///
+    /// **work_dir の内外を問わない読み取り専用の宣言**で、囲いの単位は領域では
+    /// なく宣言（`rag_tool_contract`）。実在検査はツール側が呼び出しごとに掛け、
+    /// **無効化であって削除ではない** — ここから消すのは人だけ。
+    /// 検査を保存時に掛けない理由は work_dir と同じで、配布先の端末で開いて
+    /// 保存しただけで宣言が消える事故を作らない。
     #[serde(default)]
     pub rag_sources: Vec<String>,
     /// このエージェントが発話を届けられる相手。有向グラフの出辺。
@@ -726,7 +725,8 @@ pub struct AgentSnapshot {
     /// 合計だけではキャッシュの効き具合が見えない（無キャッシュでも同じ数字）。
     /// 画面では割合として出す。
     pub cached_tokens: u64,
-    /// 参照 RAG ソース。
+    /// 見出し索引を張るフォルダ（Spec 18）。設定ダイアログが投影から
+    /// `AgentSpec` を組み直して保存するので、投影に無い欄は保存のたびに消える。
     pub rag_sources: Vec<String>,
     /// 発話を届けられる相手。
     pub connected_agents: Vec<AgentId>,
@@ -1006,13 +1006,16 @@ mod tests {
 
     // ---- 役職の流し込み（Spec 14 P1） ---------------------------------------
 
-    /// 契約の分類表（`role_contract` 凍結 2）で「入れない」とした 5 欄。
+    /// 契約の分類表（`role_contract` 凍結 2）で「入れない」とした 6 欄。
     ///
     /// **名指しで持つ。** rev1 の査読が「線と場所が入らないこと」では対象が
     /// 曖昧でテストに落とせないと指摘した箇所で、ここが表と実装の唯一の接点。
-    const NEVER_APPLIED: [&str; 5] = [
+    /// `rag_sources` は Spec 18（意味が絶対パスへ変わり、`work_dir` と同じ
+    /// 「端末ごとに違う」性質になった）でこちら側へ移った。
+    const NEVER_APPLIED: [&str; 6] = [
         "connected_agents",
         "work_dir",
+        "rag_sources",
         "order",
         "batch_start",
         "hears_room_log",
@@ -1022,32 +1025,31 @@ mod tests {
         AgentRoleDefaults {
             construct: "あなたは調査役です。".into(),
             model_template_id: Some("tpl".into()),
-            rag_sources: vec!["docs".into()],
             enabled_tools: Some(vec!["grep".into()]),
             max_tool_iterations: Some(24),
         }
     }
 
-    /// 触ってよい 4 欄が入る。
+    /// 触ってよい 3 欄が入る。
     #[test]
-    fn apply_to_fills_the_four_spec_fields() {
+    fn apply_to_fills_the_three_spec_fields() {
         let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
         let dropped = full_defaults().apply_to(&mut spec, |_| true);
 
         assert!(dropped.is_empty());
         assert_eq!(spec.model_template_id, "tpl".into());
-        assert_eq!(spec.rag_sources, vec!["docs".to_string()]);
         assert_eq!(spec.enabled_tools, Some(vec!["grep".to_string()]));
         assert_eq!(spec.max_tool_iterations, Some(24));
     }
 
-    /// **入れない 5 欄は流し込み後も既定のまま。**
+    /// **入れない 6 欄は流し込み後も既定のまま。**
     ///
     /// `connected_agents` が入ると「役職を選んだ瞬間に線が引かれる」で
-    /// **線は人が引く**が崩れ、`work_dir` が入ると村を配ったとき存在しない
-    /// パスを指す。この 2 つが契約の主眼（`role_contract` 凍結 2）。
+    /// **線は人が引く**が崩れ、`work_dir` / `rag_sources` が入ると村を配った
+    /// とき存在しないパスを指す（`role_contract` 凍結 2。後者は Spec 18 で
+    /// こちら側へ移った — **決定を文章だけで残すと、次に誰かが親切心で足す**）。
     #[test]
-    fn apply_to_never_touches_the_five_excluded_fields() {
+    fn apply_to_never_touches_the_six_excluded_fields() {
         let baseline = AgentSpec::new("agent_1", "ザリ", "既定");
         let mut spec = baseline.clone();
         let _ = full_defaults().apply_to(&mut spec, |_| true);
@@ -1058,16 +1060,17 @@ mod tests {
             NEVER_APPLIED[0]
         );
         assert_eq!(spec.work_dir, baseline.work_dir, "{}", NEVER_APPLIED[1]);
-        assert_eq!(spec.order, baseline.order, "{}", NEVER_APPLIED[2]);
-        assert_eq!(spec.batch_start, baseline.batch_start, "{}", NEVER_APPLIED[3]);
+        assert_eq!(spec.rag_sources, baseline.rag_sources, "{}", NEVER_APPLIED[2]);
+        assert_eq!(spec.order, baseline.order, "{}", NEVER_APPLIED[3]);
+        assert_eq!(spec.batch_start, baseline.batch_start, "{}", NEVER_APPLIED[4]);
         assert_eq!(
             spec.hears_room_log, baseline.hears_room_log,
             "{}",
-            NEVER_APPLIED[4]
+            NEVER_APPLIED[5]
         );
     }
 
-    /// 分類表の数が実装と合う。**11 = 対象外 2 + 入れる 4 + 入れない 5。**
+    /// 分類表の数が実装と合う。**11 = 対象外 2 + 入れる 3 + 入れない 6。**
     ///
     /// rev1 は箇条書き 4 本を「4 欄」と数えて実体の 6 フィールドとズレた。
     /// 数え落としは要約から生まれるので、数そのものをテストで留める。
@@ -1075,7 +1078,7 @@ mod tests {
     fn the_classification_table_adds_up() {
         const AGENT_SPEC_FIELDS: usize = 11;
         const EXEMPT: usize = 2; // id / name
-        const APPLIED: usize = 4; // model_template_id / rag_sources / enabled_tools / max_tool_iterations
+        const APPLIED: usize = 3; // model_template_id / enabled_tools / max_tool_iterations
         assert_eq!(AGENT_SPEC_FIELDS, EXEMPT + APPLIED + NEVER_APPLIED.len());
     }
 
@@ -1089,26 +1092,19 @@ mod tests {
         assert!(dropped[0].contains("tpl"), "落とした欄の名前が分かること");
         // 落ちたのはテンプレートだけ。作成そのものは通り、他の欄は入っている。
         assert_eq!(spec.model_template_id, "既定".into());
-        assert_eq!(spec.rag_sources, vec!["docs".to_string()]);
         assert_eq!(spec.enabled_tools, Some(vec!["grep".to_string()]));
     }
 
-    /// **`rag_sources` には存在検査を掛けない。**
+    /// **旧データの `defaults.ragSources` は読み飛ばして壊れない**（Spec 18 D10）。
     ///
-    /// `RagIndex` は断片を索引した瞬間にキーが生える実行時の器で、宣言された
-    /// 登録簿が無い。作成時点の索引はほぼ必ず空なので、検査すると
-    /// 「調査役を作る → あとで資料を食わせる」という正しい順序を壊す。
+    /// 実データには空配列しか存在しない（索引に入れる経路が無かった）ので
+    /// 移行は不要だが、「欄が消えても旧 JSON が読める」ことは serde の
+    /// 挙動であって契約ではない — ここで契約へ昇格させて留める。
     #[test]
-    fn rag_sources_are_copied_without_any_existence_check() {
-        let mut spec = AgentSpec::new("agent_1", "ザリ", "既定");
-        let defaults = AgentRoleDefaults {
-            rag_sources: vec!["まだ索引していない資料".into()],
-            ..AgentRoleDefaults::default()
-        };
-        let dropped = defaults.apply_to(&mut spec, |_| false);
-
-        assert!(dropped.is_empty(), "索引が空でも落とさない");
-        assert_eq!(spec.rag_sources, vec!["まだ索引していない資料".to_string()]);
+    fn legacy_rag_sources_in_role_defaults_are_ignored() {
+        let json = r#"{ "construct": "", "ragSources": [], "enabledTools": null }"#;
+        let parsed: AgentRoleDefaults = serde_json::from_str(json).expect("旧形が読めること");
+        assert_eq!(parsed, AgentRoleDefaults::default());
     }
 
     /// 空の既定値は何も上書きしない（役職が意見を持たない欄はそのまま）。

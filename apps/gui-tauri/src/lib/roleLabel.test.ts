@@ -12,7 +12,6 @@ function role(id: string, name: string, color: Role["color"] = null): Role {
     defaults: {
       construct: "",
       modelTemplateId: null,
-      ragSources: [],
       enabledTools: null,
       maxToolIterations: null,
     },

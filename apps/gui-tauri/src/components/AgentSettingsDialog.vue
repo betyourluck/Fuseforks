@@ -241,11 +241,25 @@ function toggleConnection(targetId: AgentId, connected: boolean): void {
     : draft.value.connectedAgents.filter((id) => id !== targetId);
 }
 
-function toggleRag(source: string, enabled: boolean): void {
+/**
+ * 参照 RAG のフォルダを追加する（Spec 18）。作業フォルダの「参照…」と同じ
+ * `dialog` プラグインで、選ばれたパスは**そのまま宣言へ入れる**（実在の検査は
+ * しない — Rust 側が呼び出しごとに掛け、無効なら印を付ける。ここで先回りすると
+ * 同じ規律が 2 箇所に生える）。同じフォルダの二重宣言だけは畳む。
+ */
+async function addRagSource(): Promise<void> {
   if (!draft.value) return;
-  draft.value.ragSources = enabled
-    ? [...draft.value.ragSources, source]
-    : draft.value.ragSources.filter((s) => s !== source);
+  const picked = await openDialog({ directory: true, multiple: false });
+  if (typeof picked !== "string") return;
+  if (!draft.value.ragSources.includes(picked)) {
+    draft.value.ragSources = [...draft.value.ragSources, picked];
+  }
+}
+
+/** 宣言からフォルダを外す。**消せるのは人だけ**（rag_tool_contract）。 */
+function removeRagSource(source: string): void {
+  if (!draft.value) return;
+  draft.value.ragSources = draft.value.ragSources.filter((s) => s !== source);
 }
 
 async function remove(): Promise<void> {
@@ -648,21 +662,31 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
 
           <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.rag") }}</label>
           <div class="mb-3 space-y-1">
-            <label
-              v-for="source in state.ragSources"
+            <div
+              v-for="source in draft.ragSources"
               :key="source"
               class="flex items-center gap-2 text-[12px]"
             >
-              <input
-                type="checkbox"
-                :checked="draft.ragSources.includes(source)"
-                @change="toggleRag(source, ($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{ source }}</span>
-            </label>
-            <p v-if="!state.ragSources.length" class="text-[11px] text-ink-dim">
+              <span class="min-w-0 flex-1 truncate" :title="source">{{ source }}</span>
+              <button
+                type="button"
+                class="shrink-0 rounded border border-line px-1.5 py-0.5 text-[11px] hover:bg-panel"
+                @click="removeRagSource(source)"
+              >
+                {{ $t("agentSettings.ragRemove") }}
+              </button>
+            </div>
+            <p v-if="!draft.ragSources.length" class="text-[11px] text-ink-dim">
               {{ $t("agentSettings.ragEmpty") }}
             </p>
+            <button
+              type="button"
+              class="rounded border border-line px-2 py-0.5 text-[11px] hover:bg-panel"
+              @click="addRagSource"
+            >
+              {{ $t("agentSettings.ragBrowse") }}
+            </button>
+            <p class="text-[10px] text-ink-dim">{{ $t("agentSettings.ragHint") }}</p>
           </div>
 
           <label class="mb-1 block text-[11px] text-ink-dim">{{ $t("agentSettings.connections") }}</label>

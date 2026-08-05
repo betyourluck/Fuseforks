@@ -15,7 +15,7 @@ use agent_core::model::{
     ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use agent_core::world::TopologyPosition;
-use agent_core::{CoreError, CoreResult, RagChunk};
+use agent_core::{CoreError, CoreResult};
 use tauri::State;
 
 use crate::state::AppState;
@@ -97,23 +97,6 @@ pub async fn token_usage(state: State<'_, AppState>) -> CoreResult<HashMap<Agent
 #[tauri::command]
 pub async fn list_model_templates(state: State<'_, AppState>) -> CoreResult<Vec<ModelTemplate>> {
     Ok(state.orchestrator.templates().await)
-}
-
-/// 登録済み RAG ソース名を返す。
-#[tauri::command]
-pub async fn list_rag_sources(state: State<'_, AppState>) -> CoreResult<Vec<String>> {
-    Ok(state.orchestrator.rag_sources().await)
-}
-
-/// RAG を検索する（右ペインのプレビュー用）。
-#[tauri::command]
-pub async fn search_rag(
-    state: State<'_, AppState>,
-    sources: Vec<String>,
-    query: String,
-    top_k: usize,
-) -> CoreResult<Vec<RagChunk>> {
-    state.orchestrator.search_rag(&sources, &query, top_k).await
 }
 
 // ---- 定義の編集 -------------------------------------------------------------
@@ -581,13 +564,6 @@ pub async fn export_session(
     let dest = dir.join(format!("{session_id}.jsonl"));
     state.orchestrator.export_session(&session_id, &dest).await?;
     Ok(dest.display().to_string())
-}
-
-/// RAG 索引に断片を追加する（動作確認用の投入口）。
-#[tauri::command]
-pub async fn index_rag_chunk(state: State<'_, AppState>, chunk: RagChunk) -> CoreResult<()> {
-    state.orchestrator.index_rag_chunk(chunk).await;
-    Ok(())
 }
 
 // ---- 予定（Spec 07） -----------------------------------------------------------

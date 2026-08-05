@@ -6097,7 +6097,6 @@ async fn creating_with_a_role_fills_the_settings_and_writes_construct() {
             agent_core::AgentRoleDefaults {
                 construct: "あなたは調査役です。".into(),
                 model_template_id: Some("fast".into()),
-                rag_sources: vec!["docs".into()],
                 enabled_tools: Some(vec!["grep".into()]),
                 max_tool_iterations: Some(24),
             },
@@ -6109,18 +6108,18 @@ async fn creating_with_a_role_fills_the_settings_and_writes_construct() {
     spec.role_id = Some("researcher".into());
     let created = orchestrator.create_agent(spec).await.unwrap();
 
-    // 入る 4 欄。
+    // 入る 3 欄（rag_sources は Spec 18 D10 で雛形から外れた）。
     assert_eq!(created.model_template_id, "fast".into());
-    assert_eq!(created.rag_sources, vec!["docs".to_string()]);
     assert_eq!(created.enabled_tools, Some(vec!["grep".to_string()]));
     assert_eq!(created.max_tool_iterations, Some(24));
     // ラベルは残る（バッジの足場）。
     assert_eq!(created.role_id, Some("researcher".into()));
 
-    // 入れない 5 欄は既定のまま。**線と場所が雛形から入らないこと**が主眼。
+    // 入れない 6 欄は既定のまま。**線と場所が雛形から入らないこと**が主眼。
     let baseline = AgentSpec::new("agent_1", "ザリ", "tpl");
     assert_eq!(created.connected_agents, baseline.connected_agents);
     assert_eq!(created.work_dir, baseline.work_dir);
+    assert_eq!(created.rag_sources, baseline.rag_sources);
     assert_eq!(created.order, baseline.order);
     assert_eq!(created.batch_start, baseline.batch_start);
     assert_eq!(created.hears_room_log, baseline.hears_room_log);
@@ -6224,9 +6223,6 @@ async fn deleting_a_role_in_use_leaves_the_agent_working() {
 }
 
 /// 参照先の欠落は**その欄だけ落として作成は通す**。
-///
-/// `rag_sources` には検査を掛けない（索引は実行時に育つ器で、宣言された
-/// 登録簿が無い）。ここを検査すると「作ってから資料を食わせる」が壊れる。
 #[tokio::test]
 async fn a_missing_template_drops_one_field_but_the_agent_is_still_created() {
     let dir = TempDir::new("role-dangling");
@@ -6237,7 +6233,6 @@ async fn a_missing_template_drops_one_field_but_the_agent_is_still_created() {
             "調査役",
             agent_core::AgentRoleDefaults {
                 model_template_id: Some("存在しない".into()),
-                rag_sources: vec!["まだ索引していない資料".into()],
                 max_tool_iterations: Some(24),
                 ..Default::default()
             },
@@ -6253,11 +6248,6 @@ async fn a_missing_template_drops_one_field_but_the_agent_is_still_created() {
         created.model_template_id,
         "tpl".into(),
         "落ちるのはこの欄だけ"
-    );
-    assert_eq!(
-        created.rag_sources,
-        vec!["まだ索引していない資料".to_string()],
-        "索引が空でも rag_sources は落とさない"
     );
     assert_eq!(created.max_tool_iterations, Some(24));
 }

@@ -97,8 +97,6 @@ pub fn run() {
             commands::token_usage,
             commands::list_model_templates,
             commands::list_roles,
-            commands::list_rag_sources,
-            commands::search_rag,
             commands::workspace_path,
             // 資格情報（値を返す経路は存在しない）
             commands::set_model_credential,
@@ -146,7 +144,6 @@ pub fn run() {
             commands::set_agent_running,
             commands::send_user_message,
             commands::reset_conversation,
-            commands::index_rag_chunk,
             // 会話（セッション。Spec 12）
             commands::list_sessions,
             commands::current_session,

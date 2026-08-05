@@ -30,7 +30,6 @@ import type {
   McpConfig,
   McpServerStatus,
   PlanWaveRecord,
-  RagChunk,
   Recurrence,
   ScheduleView,
   SessionSummary,
@@ -129,13 +128,6 @@ export const tokenUsage = () => call<Record<AgentId, number>>("token_usage");
 
 /** モデルテンプレート一覧を取得する。 */
 export const listModelTemplates = () => call<ModelTemplate[]>("list_model_templates");
-
-/** RAG ソース名一覧を取得する。 */
-export const listRagSources = () => call<string[]>("list_rag_sources");
-
-/** RAG を検索する。 */
-export const searchRag = (sources: string[], query: string, topK: number) =>
-  call<RagChunk[]>("search_rag", { sources, query, topK });
 
 /** ワークスペースの実パスを取得する。 */
 export const workspacePath = () => call<string>("workspace_path");
@@ -378,10 +370,6 @@ export const sendUserMessage = (
   content: string,
   coRecipients?: AgentId[],
 ) => call<void>("send_user_message", { agentId, content, coRecipients });
-
-/** RAG 索引に断片を追加する。 */
-export const indexRagChunk = (chunk: RagChunk) =>
-  call<void>("index_rag_chunk", { chunk });
 
 // ---- 予定（Spec 07） ----------------------------------------------------------
 

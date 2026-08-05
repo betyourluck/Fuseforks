@@ -116,12 +116,12 @@ fn wire_field_sets_are_frozen() {
             "enabledTools",
             "maxToolIterations",
             "modelTemplateId",
-            "ragSources",
         ],
         concat!(
             "RoleDefaults のフィールドが変わった。",
-            "**入れてはいけない 5 欄が紛れていないか確認すること** — ",
+            "**入れてはいけない 6 欄が紛れていないか確認すること** — ",
             "connectedAgents（線は人が引く）/ workDir（端末ごとに違う絶対パス）/ ",
+            "ragSources（Spec 18 D10 で workDir と同じ性質になった）/ ",
             "order / batchStart / hearsRoomLog（役職でなく運用の選択）"
         )
     );

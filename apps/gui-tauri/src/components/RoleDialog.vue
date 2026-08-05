@@ -92,7 +92,6 @@ function blank(): Role {
     defaults: {
       construct: "",
       modelTemplateId: null,
-      ragSources: [],
       enabledTools: null,
       maxToolIterations: null,
     },
@@ -135,14 +134,6 @@ function setTool(tool: string, checked: boolean): void {
   draft.value.defaults.enabledTools = checked
     ? [...new Set([...current, tool])]
     : current.filter((name) => name !== tool);
-}
-
-function setRagSource(source: string, enabled: boolean): void {
-  if (!draft.value) return;
-  const current = draft.value.defaults.ragSources;
-  draft.value.defaults.ragSources = enabled
-    ? [...new Set([...current, source])]
-    : current.filter((name) => name !== source);
 }
 
 async function save(): Promise<void> {
@@ -394,20 +385,9 @@ async function remove(role: Role): Promise<void> {
             </label>
           </div>
 
-          <template v-if="state.ragSources.length">
-            <p class="mb-1 mt-3 text-ink-dim">{{ $t("roles.defaults.ragSources") }}</p>
-            <div class="mb-2 space-y-1">
-              <label v-for="source in state.ragSources" :key="source" class="flex items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  :checked="draft.defaults.ragSources.includes(source)"
-                  @change="setRagSource(source, ($event.target as HTMLInputElement).checked)"
-                />
-                <span>{{ source }}</span>
-              </label>
-            </div>
-          </template>
-
+          <!-- 参照 RAG は雛形に入れない（Spec 18 D10）。フォルダの絶対パスは
+               端末ごとに違い、雛形に入れると村を配ったとき壊れた参照を配る —
+               work_dir を入れなかった理由と同じ。 -->
           <p class="mt-3 text-ink-dim">{{ $t("roles.editNote") }}</p>
 
           <div class="mt-3 flex justify-end gap-2">

@@ -63,7 +63,6 @@ interface OrchestratorState {
    * 「どの雛形を選ぶか」を決める人だけなので、投影も画面のためだけに持つ。
    */
   roles: Role[];
-  ragSources: string[];
   workspace: string;
   selectedAgentId: AgentId | null;
   toasts: Toast[];
@@ -133,7 +132,6 @@ const state = reactive<OrchestratorState>({
   messages: [],
   templates: [],
   roles: [],
-  ragSources: [],
   workspace: "",
   selectedAgentId: null,
   toasts: [],
@@ -298,13 +296,12 @@ function refreshAll(): Promise<void> {
 
 /** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
 async function fetchAndAssign(): Promise<void> {
-  const [agents, edges, topologyPositions, templates, roles, ragSources] = await Promise.all([
+  const [agents, edges, topologyPositions, templates, roles] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listTopologyPositions(),
     ipc.listModelTemplates(),
     ipc.listRoles(),
-    ipc.listRagSources(),
   ]);
   state.agents = agents;
   // 会話の送信先と左右ペインの強調表示を必ず同じ選択状態にする。
@@ -315,7 +312,6 @@ async function fetchAndAssign(): Promise<void> {
   state.topologyPositions = topologyPositions;
   state.templates = templates;
   state.roles = roles;
-  state.ragSources = ragSources;
   await refreshIcons();
 }
 

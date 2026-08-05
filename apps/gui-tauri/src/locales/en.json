@@ -361,8 +361,11 @@
     "mcpLoadError": "Cannot read mcp.json: {error}",
     "mcpEmpty": "No per-servant server declarations (add them in the mcp.json tab).",
     "mcpToolCount": "{count} tools",
-    "rag": "RAG sources",
-    "ragEmpty": "No indexed RAG sources.",
+    "rag": "RAG folders",
+    "ragEmpty": "No reference folders are declared (without a declaration the rag tool is not offered).",
+    "ragBrowse": "Add folder…",
+    "ragRemove": "Remove",
+    "ragHint": "The rag tool can read Markdown in declared folders through a heading index (read-only; outside the working folder is allowed). Everything in a declared folder becomes readable by this servant, so do not declare folders containing secrets.",
     "connections": "Connected servants",
     "othersEmpty": "There are no other servants.",
     "delete": "Delete",
@@ -646,8 +649,7 @@
       "modelTemplate": "Model template",
       "noOpinion": "Not specified",
       "maxToolIterations": "Tool call limit",
-      "tools": "Built-in tools to offer",
-      "ragSources": "RAG sources to reference"
+      "tools": "Built-in tools to offer"
     },
     "villageScope": "Roles are stored in the village (world.json), so they travel with it when shared."
   }

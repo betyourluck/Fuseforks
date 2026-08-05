@@ -67,6 +67,11 @@ export interface AgentSpec {
   id: AgentId;
   name: string;
   modelTemplateId: ModelTemplateId;
+  /**
+   * 見出し索引（rag ツール）を張るフォルダの絶対パスの列（Spec 18）。
+   * 読み取り専用の宣言で、work_dir の内外を問わない。実在検査は Rust 側が
+   * 呼び出しごとに掛ける（無効化であって削除ではない — ここから消すのは人だけ）。
+   */
   ragSources: string[];
   connectedAgents: AgentId[];
   order: number;
@@ -179,12 +184,6 @@ export interface RoleDefaults {
    * **ここだけ存在検査が掛かる**（world.json に宣言された登録簿なので）。
    */
   modelTemplateId: ModelTemplateId | null;
-  /**
-   * 参照する RAG ソース名。**存在検査は掛けない。**
-   * RAG の索引は断片を索引した瞬間にキーが生える実行時の器で、宣言された
-   * 登録簿が無い。検査すると「作ってから資料を食わせる」順序を壊す。
-   */
-  ragSources: string[];
   /** 提示する同梱ツール名。`null` = 既定に従う。 */
   enabledTools: string[] | null;
   /** 1 回の発話処理で許すツール実行の回数。`null` = 既定に従う。 */
