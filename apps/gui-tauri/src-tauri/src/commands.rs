@@ -362,6 +362,47 @@ pub async fn set_language(
     state.orchestrator.set_language(language).await
 }
 
+// ---- 利用者（Spec 19） --------------------------------------------------------
+
+/// 利用者の呼び名を返す。未設定なら `null`。
+///
+/// **未設定を既定値へ倒さない** — 画面が「まだ設定していない」ことを示せるように
+/// するため（`language` と違い、未設定が正常な状態）。
+#[tauri::command]
+pub async fn get_user_name(state: State<'_, AppState>) -> CoreResult<Option<String>> {
+    Ok(state.orchestrator.user_name().await)
+}
+
+/// 利用者の呼び名を設定する。`null` で既定（「ユーザー」）へ戻す。
+///
+/// 次のターンの封筒から効く。**過去の履歴と会話ログは直さない**
+/// （`user_identity_contract` 凍結 8）。
+#[tauri::command]
+pub async fn set_user_name(
+    state: State<'_, AppState>,
+    name: Option<String>,
+) -> CoreResult<()> {
+    state.orchestrator.set_user_name(name.as_deref()).await
+}
+
+/// 利用者のアイコン（WebP バイト列）を返す。未設定なら `null`。
+#[tauri::command]
+pub async fn get_user_icon(state: State<'_, AppState>) -> CoreResult<Option<Vec<u8>>> {
+    state.orchestrator.user_icon().await
+}
+
+/// 利用者のアイコンを設定する。検証はエージェントのアイコンと同じ述語を通る。
+#[tauri::command]
+pub async fn set_user_icon(state: State<'_, AppState>, data: Vec<u8>) -> CoreResult<()> {
+    state.orchestrator.set_user_icon(&data).await
+}
+
+/// 利用者のアイコンを削除する。
+#[tauri::command]
+pub async fn clear_user_icon(state: State<'_, AppState>) -> CoreResult<()> {
+    state.orchestrator.clear_user_icon().await
+}
+
 // ---- アイコン ----------------------------------------------------------------
 
 /// エージェントのアイコン（WebP バイト列）を返す。未設定なら `null`。

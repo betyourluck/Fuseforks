@@ -183,7 +183,19 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
 `InvalidUserName` / `DEFAULT_USER_LABEL` / `attribute_sender` の分岐。単体 5 + 結合 2）。
 **P2 完了**（`{workspace}/user/icon.webp`。`validate_icon` / `write_icon_at` /
 `read_icon_at` / `delete_icon_at` を切り出して**エージェントと利用者で 1 実装を共有**。
-単体 2）。残 Phase: P3〜P5。
+単体 2）。**P3 完了**（IPC 5 本 + `state.userName` / `state.userIcon` +
+システム設定「全般 > ユーザー」+ `ChatPanel` の表示名とアイコン + 辞書 ja/en。
+vitest 127 → 132）。残 Phase: P4〜P5。
+
+**P3 で「変更系 IPC の呼び方が 2 経路ある」を踏んだ。** `saveLanguage` は
+**生の `ipc` + try/catch** で書かれているが、`orchestrator.*` の action は
+`mutate` を通り**例外を飲んで `false` を返す**。`saveLanguage` の形を写して
+`orchestrator.setUserName` を try/catch で包むと、**catch へ入らないまま
+「保存済み」と表示される**。**成否は戻り値で見る。** 使い分けの基準は
+**投影を持つか** — 呼び名は `state.userName` を会話ペインが読むので
+`orchestrator` 経由、言語は反映先が `setLocale`（グローバルな i18n）で投影が
+無いので生の `ipc` でよい。**これはテストではなく実機でしか出ない**
+（コアは正しく拒否し、画面だけが嘘をつく）。
 
 **P1 で「同じ事故の処方でも 3 点すべてが常に要るわけではない」が出た。**
 `api_key_env` の処方は (1) 保存時に拒否 (2) 読み込み時に不正値を落とす

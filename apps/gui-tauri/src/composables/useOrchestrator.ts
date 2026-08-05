@@ -75,6 +75,15 @@ interface OrchestratorState {
    */
   icons: Record<AgentId, string | null>;
   /**
+   * 利用者の呼び名（Spec 19）。`null` = 未設定で、画面は `chat.you` へ落ちる。
+   *
+   * **既定値を入れない** — 入れると「未設定」と「既定と同じ名前を設定した」を
+   * 画面が区別できなくなる。
+   */
+  userName: string | null;
+  /** 利用者のアイコンの object URL（Spec 19）。`null` = 未設定。 */
+  userIcon: string | null;
+  /**
    * 応答を作っている最中のエージェント。会話ペインの「入力中…」表示に使う。
    * true のキーだけを持ち、終了イベントでキーごと消す。
    */
@@ -138,6 +147,8 @@ const state = reactive<OrchestratorState>({
   ready: false,
   initError: null,
   icons: {},
+  userName: null,
+  userIcon: null,
   typing: {},
   interruptPending: {},
   toolRuns: [],
@@ -650,6 +661,12 @@ async function initialize(): Promise<void> {
     // 表示言語（Spec 13）。world.json で確定済みの値を映す — 覆いが外れる前に
     // 当てることで、確定言語と違う文言が一瞬見える継ぎ目を作らない。
     setLocale(await ipc.getLanguage());
+    // 利用者の呼び名とアイコン（Spec 19）。会話ペインの自分の行に出るので、
+    // 覆いが外れる前に当てておく（言語と同じ理由）。
+    state.userName = await ipc.getUserName();
+    const userIconBytes = await ipc.getUserIcon();
+    state.userIcon =
+      userIconBytes && userIconBytes.length ? iconUrlOf(userIconBytes) : null;
     state.ready = true;
   } catch (error) {
     // 再試行できるよう、失敗時はフラグを戻す。
@@ -915,6 +932,45 @@ export function useOrchestrator() {
         const old = state.icons[agentId];
         if (old) URL.revokeObjectURL(old);
         state.icons[agentId] = iconUrlOf(Array.from(bytes));
+      }
+      return succeeded(done);
+    },
+
+    /**
+     * 利用者の呼び名を保存する（Spec 19）。`null` で既定へ戻す。
+     *
+     * **書式の検査はコアに任せる。** フロントで先回りすると同じ規律が 2 箇所に
+     * 生え、片方だけ直したときに画面とコアが食い違う（`run.json` の
+     * `resolve_in_work_dir` と同じ判断）。
+     */
+    async setUserName(name: string | null): Promise<boolean> {
+      const done = await mutate("orchestrator.op.saveUserName", () =>
+        ipc.setUserName(name),
+      );
+      if (succeeded(done)) state.userName = name;
+      return succeeded(done);
+    },
+
+    /** 利用者のアイコンを保存する。`bytes` は UI 側で WebP へ変換済みであること。 */
+    async setUserIcon(bytes: Uint8Array): Promise<boolean> {
+      const done = await mutate("orchestrator.op.saveIcon", () =>
+        ipc.setUserIcon(Array.from(bytes)),
+      );
+      if (succeeded(done)) {
+        if (state.userIcon) URL.revokeObjectURL(state.userIcon);
+        state.userIcon = iconUrlOf(Array.from(bytes));
+      }
+      return succeeded(done);
+    },
+
+    /** 利用者のアイコンを削除する。 */
+    async clearUserIcon(): Promise<boolean> {
+      const done = await mutate("orchestrator.op.clearIcon", () =>
+        ipc.clearUserIcon(),
+      );
+      if (succeeded(done)) {
+        if (state.userIcon) URL.revokeObjectURL(state.userIcon);
+        state.userIcon = null;
       }
       return succeeded(done);
     },

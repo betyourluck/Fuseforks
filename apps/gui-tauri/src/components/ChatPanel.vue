@@ -67,7 +67,10 @@ const placeholder = computed(() =>
 function label(endpoint: Endpoint): string {
   switch (endpoint.kind) {
     case "user":
-      return t("chat.you");
+      // 呼び名（Spec 19）を設定していればそれを出す。**設定したら言語に追従しない** —
+      // サーヴァントが読む封筒と画面で同じ送り手が違う名前になると、会話が噛み合わない。
+      // 未設定のときだけ言語に追従する（`chat.you`）。
+      return state.userName ?? t("chat.you");
     case "system":
       // 「システム」ではなくアプリ名を名乗る。入退室通知などは
       // 匿名の機械音声ではなく、場（Concordia）そのものの声として出す。
@@ -87,9 +90,19 @@ function avatarHue(endpoint: Endpoint): string {
   return hueOfName(label(endpoint));
 }
 
-/** エージェントに設定されたアイコン。無ければ頭文字の円にフォールバックする。 */
+/** 設定されたアイコン。無ければ頭文字の円にフォールバックする。 */
 function iconFor(endpoint: Endpoint): string | null {
-  return endpoint.kind === "agent" ? (state.icons[endpoint.id] ?? null) : null;
+  switch (endpoint.kind) {
+    case "agent":
+      return state.icons[endpoint.id] ?? null;
+    // 利用者のアイコン（Spec 19）。置き場は違う（`user/icon.webp`）が、
+    // 表示側の扱いはエージェントと同じ object URL。
+    case "user":
+      return state.userIcon;
+    // Concordia（場そのものの声）にはアイコンを持たせない。
+    case "system":
+      return null;
+  }
 }
 
 const visible = computed(() => {

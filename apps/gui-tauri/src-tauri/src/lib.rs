@@ -130,6 +130,11 @@ pub fn run() {
             commands::set_token_budget,
             commands::get_language,
             commands::set_language,
+            commands::get_user_name,
+            commands::set_user_name,
+            commands::get_user_icon,
+            commands::set_user_icon,
+            commands::clear_user_icon,
             // MCP
             commands::read_mcp_config,
             commands::write_mcp_config,

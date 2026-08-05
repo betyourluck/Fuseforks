@@ -20,24 +20,35 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import { avatarHue, avatarInitial } from "../lib/avatar";
 import { formatError } from "../lib/errorText";
+import { fileToWebpIcon } from "../lib/iconImage";
 import { setLocale } from "../i18n";
+import { askConfirm } from "../composables/useConfirm";
+import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
 import type { Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const { t } = useI18n();
+const orchestrator = useOrchestrator();
+const { state } = orchestrator;
 
-/** 左メニューの選択。既定は目録の先頭（全般 → 言語）。 */
-type Page = "language" | "tokenBudget" | "theme" | "messages";
-const page = ref<Page>("language");
+/**
+ * 左メニューの選択。既定は**目録の先頭**（settings_contract）。
+ *
+ * 指す先は Spec 19 で「全般 → 言語」から「全般 → ユーザー」へ動いた。
+ * **規則（先頭）は不変で、指す先だけが動く。**
+ */
+type Page = "user" | "language" | "tokenBudget" | "theme" | "messages";
+const page = ref<Page>("user");
 
 /**
  * 村（`world.json`）に保存されるページ。読み込みに IPC が要る側でもあるので、
  * 「読み込み中…」の覆いと村の注記はこの 1 つの定義から引く。
  */
-const VILLAGE_PAGES: Page[] = ["language", "tokenBudget"];
+const VILLAGE_PAGES: Page[] = ["user", "language", "tokenBudget"];
 const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
@@ -84,6 +95,59 @@ const languageInput = ref<Language>("ja");
 
 const languageDirty = computed(() => languageInput.value !== savedLanguage.value);
 
+// ---- 利用者の呼び名（村の設定。Spec 19） --------------------------------------
+
+/** 保存済みの呼び名。`null` = 未設定。差分検出の基準。 */
+const savedUserName = ref<string | null>(null);
+/** フォームの状態。空文字は「未設定へ戻す」を表す。 */
+const userNameInput = ref("");
+
+/** フォームが表す呼び名。空白だけの入力は未設定と同じ扱いにする。 */
+const formUserName = computed<string | null>(() => {
+  const trimmed = userNameInput.value.trim();
+  return trimmed === "" ? null : trimmed;
+});
+
+const userNameDirty = computed(() => formUserName.value !== savedUserName.value);
+
+// ---- 利用者のアイコン（Spec 19） -----------------------------------------------
+
+const userIconInput = ref<HTMLInputElement | null>(null);
+const iconBusy = ref(false);
+const iconError = ref("");
+
+/** アバターの頭文字と色は未設定時の表示名から引く（3 画面共通の規則）。 */
+const avatarName = computed(() => formUserName.value ?? t("chat.you"));
+
+async function onUserIconPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  // 同じファイルを選び直しても change が飛ぶよう、値は毎回捨てる。
+  input.value = "";
+  if (!file) return;
+
+  iconBusy.value = true;
+  iconError.value = "";
+  try {
+    const bytes = await fileToWebpIcon(file);
+    await orchestrator.setUserIcon(bytes);
+  } catch (e) {
+    // 変換の失敗は画像側の問題なので、村の設定の error とは別枠に出す。
+    iconError.value = e instanceof Error ? e.message : t("agentSettings.iconConvertFailed");
+  } finally {
+    iconBusy.value = false;
+  }
+}
+
+async function removeUserIcon(): Promise<void> {
+  const ok = await askConfirm({
+    title: t("settings.user.iconRemoveTitle"),
+    message: t("settings.user.iconRemoveMessage"),
+  });
+  if (!ok) return;
+  await orchestrator.clearUserIcon();
+}
+
 // ---- 読み書き ------------------------------------------------------------------
 
 async function load(): Promise<void> {
@@ -98,6 +162,12 @@ async function load(): Promise<void> {
     const language = await ipc.getLanguage();
     savedLanguage.value = language;
     languageInput.value = language;
+
+    // 呼び名は起動時に投影へ載っているが、ここでも引き直す — このダイアログは
+    // 別の窓で変えられた後に開かれることがある。
+    const userName = await ipc.getUserName();
+    savedUserName.value = userName;
+    userNameInput.value = userName ?? "";
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
@@ -120,6 +190,35 @@ async function saveCeiling(): Promise<void> {
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
+  } finally {
+    busy.value = false;
+  }
+}
+
+/**
+ * 呼び名を保存する（Spec 19）。
+ *
+ * **書式の検査はコアに任せる**（空 / `】` / 制御文字 / 32 字超）。フロントで
+ * 先回りすると同じ規律が 2 箇所に生え、片方だけ直したときに画面とコアが食い違う。
+ * 天井の 0 を入力段で弾いているのとは事情が違う — あちらは「保存したのに黙って
+ * 別の値になる」正規化を打ち消すためで、こちらは拒否がそのまま返ってくる。
+ */
+async function saveUserName(): Promise<void> {
+  if (!userNameDirty.value || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  savedNote.value = "";
+  try {
+    // **`orchestrator` 経由で呼ぶ**（生の `ipc` ではなく）— 会話ペインの投影
+    // `state.userName` を同時に更新するため。`mutate` は例外を飲んで `false` を
+    // 返すので、**成否は戻り値で見る**（`saveLanguage` の生 IPC + try/catch とは
+    // 経路が違う）。拒否の理由は `mutate` が通知で出す。
+    if (await orchestrator.setUserName(formUserName.value)) {
+      savedUserName.value = formUserName.value;
+      // 保存できた場合だけ正規化後の値を欄へ映す（前後の空白が消える）。
+      userNameInput.value = formUserName.value ?? "";
+      savedNote.value = t("settings.user.saved");
+    }
   } finally {
     busy.value = false;
   }
@@ -177,6 +276,13 @@ function selectPage(next: Page): void {
           <p class="px-3 pb-1 pt-1 font-semibold text-ink-dim">{{ $t("settings.groupGeneral") }}</p>
           <button
             class="menu-item"
+            :class="{ active: page === 'user' }"
+            @click="selectPage('user')"
+          >
+            {{ $t("settings.menuUser") }}
+          </button>
+          <button
+            class="menu-item"
             :class="{ active: page === 'language' }"
             @click="selectPage('language')"
           >
@@ -217,7 +323,99 @@ function selectPage(next: Page): void {
             {{ $t("settings.loading") }}
           </p>
 
-          <!-- 全般 -->
+          <!-- 全般 > ユーザー（Spec 19） -->
+          <template v-else-if="page === 'user'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.user.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.user.help") }}</p>
+
+            <p v-if="error" class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail">
+              {{ error }}
+            </p>
+
+            <!-- アイコン。丸抜きのプレビューが会話ペインと同じ見た目になる。 -->
+            <div class="mb-3 flex items-center gap-3 rounded border border-line bg-surface-0 p-3">
+              <img
+                v-if="state.userIcon"
+                :src="state.userIcon"
+                class="size-14 shrink-0 rounded-full object-cover ring-1 ring-line"
+                :alt="$t('settings.user.iconAlt')"
+              />
+              <div
+                v-else
+                class="flex size-14 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-surface-0"
+                :style="{ backgroundColor: avatarHue(avatarName) }"
+              >
+                {{ avatarInitial(avatarName) }}
+              </div>
+
+              <div class="min-w-0">
+                <div class="flex gap-2">
+                  <button
+                    class="rounded border border-line px-2 py-1 hover:border-accent hover:text-accent disabled:opacity-40"
+                    :disabled="iconBusy"
+                    @click="userIconInput?.click()"
+                  >
+                    {{
+                      iconBusy
+                        ? $t("agentSettings.iconConverting")
+                        : state.userIcon
+                          ? $t("agentSettings.iconChange")
+                          : $t("agentSettings.iconChoose")
+                    }}
+                  </button>
+                  <button
+                    v-if="state.userIcon"
+                    class="rounded border border-fail/60 px-2 py-1 text-fail hover:bg-fail/10"
+                    @click="removeUserIcon"
+                  >
+                    {{ $t("agentSettings.delete") }}
+                  </button>
+                </div>
+                <p class="mt-1 text-ink-dim">{{ $t("agentSettings.iconHint") }}</p>
+                <p v-if="iconError" class="mt-0.5 text-fail">{{ iconError }}</p>
+              </div>
+
+              <input
+                ref="userIconInput"
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="onUserIconPicked"
+              />
+            </div>
+
+            <!-- 呼び名。**保存は明示的**（アイコンは即保存）— 入力中の 1 文字ごとに
+                 封筒が変わると、途中の名前でサーヴァントに呼ばれる周ができる。 -->
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label class="block">
+                <span class="mb-1 block text-ink-dim">{{ $t("settings.user.nameLabel") }}</span>
+                <input
+                  v-model="userNameInput"
+                  type="text"
+                  :placeholder="$t('chat.you')"
+                  class="w-64 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  @keyup.enter="saveUserName"
+                />
+              </label>
+              <p class="text-ink-dim">{{ $t("settings.user.nameHint") }}</p>
+
+              <div class="flex items-center justify-end gap-2 pt-1">
+                <span v-if="savedNote" class="text-run">{{ savedNote }}</span>
+                <button
+                  class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!userNameDirty || busy"
+                  @click="saveUserName"
+                >
+                  {{ busy ? $t("settings.language.saving") : $t("settings.language.save") }}
+                </button>
+              </div>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+          </template>
+
+          <!-- 全般 > 言語 -->
           <template v-else-if="page === 'language'">
             <h3 class="mb-1 text-xs font-semibold text-ink">
               {{ $t("settings.language.heading") }}

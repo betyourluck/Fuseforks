@@ -43,6 +43,7 @@
     "groupGeneral": "General",
     "groupCost": "Cost management",
     "groupUi": "User interface",
+    "menuUser": "User",
     "menuLanguage": "Language",
     "menuTokenLimit": "Token limit",
     "menuTheme": "Theme",
@@ -57,6 +58,16 @@
       "deviceNote": "The theme is stored on this device. Until you choose, it follows your OS setting."
     },
     "villageScope": "This setting is stored in the village configuration (world.json), so it travels with the village when you share it.",
+    "user": {
+      "heading": "User",
+      "help": "Your own name and icon. The name is included in the messages servants read, and is also your display name on screen.",
+      "nameLabel": "Name",
+      "nameHint": "Servants address you by this name. Leave it empty to fall back to the default (\"You\"). Up to 32 characters; the character 】 and line breaks are not allowed.",
+      "saved": "Name saved",
+      "iconAlt": "Your icon",
+      "iconRemoveTitle": "Remove your icon?",
+      "iconRemoveMessage": "The chat pane falls back to a circle with your initial."
+    },
     "tokenBudget": {
       "heading": "Token limit (effective tokens)",
       "help": "The sum of uncached ×1 + cached ×0.1 + output ×4. Managed internally in milli units; displayed as a rounded-up integer. When a single request's token spend reaches this value, the request is cut off automatically.",
@@ -602,6 +613,7 @@
       "reloadMcp": "Reconnecting MCP",
       "saveOrdinance": "Saving the ordinance",
       "saveIcon": "Saving the icon",
+      "saveUserName": "Saving your name",
       "clearIcon": "Deleting the icon",
       "readConfig": "Reading the configuration file",
       "saveConfig": "Saving the configuration file",

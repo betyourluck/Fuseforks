@@ -260,6 +260,35 @@ export const getLanguage = () => call<Language>("get_language");
 export const setLanguage = (language: Language) =>
   call<void>("set_language", { language });
 
+// ---- 利用者（Spec 19） --------------------------------------------------------
+
+/**
+ * 利用者の呼び名。`null` = 未設定。
+ *
+ * **未設定を既定値へ倒さずそのまま返す** — 画面が「まだ設定していない」ことを
+ * 示せるようにするため。封筒の既定（「ユーザー」）はコアが持つ。
+ */
+export const getUserName = () => call<string | null>("get_user_name");
+
+/**
+ * 利用者の呼び名を差し替える。`null` で既定へ戻す。
+ *
+ * 書式（空 / `】` / 制御文字 / 32 字超）はコアが拒否する（`INVALID_USER_NAME`）。
+ * **フロントで先回りして検査しない** — 同じ規律が 2 箇所に生える。
+ */
+export const setUserName = (name: string | null) =>
+  call<void>("set_user_name", { name });
+
+/** 利用者のアイコン（WebP バイト列）。未設定なら `null`。 */
+export const getUserIcon = () => call<number[] | null>("get_user_icon");
+
+/** 利用者のアイコンを設定する。`data` は UI 側で WebP へ変換済みであること。 */
+export const setUserIcon = (data: number[]) =>
+  call<void>("set_user_icon", { data });
+
+/** 利用者のアイコンを削除する。 */
+export const clearUserIcon = () => call<void>("clear_user_icon");
+
 // ---- MCP ---------------------------------------------------------------------
 
 /** `mcp.json` の宣言を読む。未作成なら空の集合。 */

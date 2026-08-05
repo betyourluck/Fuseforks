@@ -50,6 +50,8 @@ const h = vi.hoisted(() => ({
   workspacePath: vi.fn(async () => "C:\\workspace"),
   currentSession: vi.fn(async () => "session_1"),
   getLanguage: vi.fn(async () => "ja"),
+  getUserName: vi.fn(async () => null),
+  getUserIcon: vi.fn(async () => null),
   listSessions: vi.fn(async () => [] as SessionSummary[]),
   getAgentIcon: vi.fn(async () => null),
   handler: null as ((e: { payload: CoreEvent }) => void) | null,

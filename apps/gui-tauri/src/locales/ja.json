@@ -43,6 +43,7 @@
     "groupGeneral": "全般",
     "groupCost": "コスト管理",
     "groupUi": "ユーザーインターフェース",
+    "menuUser": "ユーザー",
     "menuLanguage": "言語",
     "menuTokenLimit": "トークン制限",
     "menuTheme": "テーマ",
@@ -57,6 +58,16 @@
       "deviceNote": "配色はこの端末に保存されます。選ぶまでは OS の設定に追従します。"
     },
     "villageScope": "この設定は村（world.json）に保存されます。村を配ると設定も一緒に付いて回ります。",
+    "user": {
+      "heading": "ユーザー",
+      "help": "あなた自身の呼び名とアイコンです。呼び名はサーヴァントが読む発話にも入り、画面の表示名にもなります。",
+      "nameLabel": "呼び名",
+      "nameHint": "サーヴァントはこの名前であなたを呼びます。空にすると既定（「あなた」）に戻ります。32 字まで。記号「】」・改行は使えません。",
+      "saved": "呼び名を保存しました",
+      "iconAlt": "あなたのアイコン",
+      "iconRemoveTitle": "アイコンを削除しますか？",
+      "iconRemoveMessage": "会話ペインの表示は頭文字の丸に戻ります。"
+    },
     "tokenBudget": {
       "heading": "トークン制限（実効トークン）",
       "help": "未キャッシュ×1 + キャッシュ済み×0.1 + 出力×4 を合算した値。内部では milli 単位で管理し、表示は切り上げた整数です。依頼 1 つあたりのトークン消費がこの値に達すると、その依頼は自動で打ち切られます。",
@@ -602,6 +613,7 @@
       "reloadMcp": "MCP の再接続",
       "saveOrdinance": "条例の保存",
       "saveIcon": "アイコンの保存",
+      "saveUserName": "呼び名の保存",
       "clearIcon": "アイコンの削除",
       "readConfig": "設定ファイルの読み込み",
       "saveConfig": "設定ファイルの保存",
