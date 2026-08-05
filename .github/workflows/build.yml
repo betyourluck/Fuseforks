@@ -50,7 +50,7 @@ jobs:
           echo "semver: ${VERSION}"
 
       # フロントは bun で回す（tauri.conf.json の beforeBuildCommand が `bun run build`）。
-      # npm ではない — package-lock.json も追跡しているが、ビルドの入口は bun.lock。
+      # ロックファイルは bun.lock 1 つだけ（package-lock.json は 2026-08-05 に削除した）。
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
