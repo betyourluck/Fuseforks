@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CommandPolicyView } from "../types";
+import type { CommandPolicyView, CoreEvent } from "../types";
 
 const view = (pending: string[], broken = false): CommandPolicyView => ({
   agentId: "agent_a",
@@ -25,6 +25,7 @@ const view = (pending: string[], broken = false): CommandPolicyView => ({
 });
 
 const h = vi.hoisted(() => ({
+  bootStatus: vi.fn(async () => ({ ready: true, error: null })),
   listAgents: vi.fn(async () => []),
   listTopology: vi.fn(async () => []),
   listTopologyPositions: vi.fn(async () => ({})),
@@ -32,12 +33,28 @@ const h = vi.hoisted(() => ({
   listRoles: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
+  listMessages: vi.fn(async () => []),
+  listPlanWaves: vi.fn(async () => []),
+  tokenUsage: vi.fn(async () => ({})),
+  workspacePath: vi.fn(async () => "C:\workspace"),
+  currentSession: vi.fn(async () => "session_1"),
+  getLanguage: vi.fn(async () => "ja"),
+  getUserName: vi.fn(async () => null),
+  getUserIcon: vi.fn(async () => null),
+  listSessions: vi.fn(async () => []),
   listCommandRequests: vi.fn(),
   approveCommand: vi.fn(),
   rejectCommand: vi.fn(),
+  /** `listen` で捕まえたイベントハンドラ。ここへ流し込んで検証する。 */
+  handler: null as ((e: { payload: CoreEvent }) => void) | null,
 }));
 
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_name: string, cb: (e: { payload: CoreEvent }) => void) => {
+    h.handler = cb;
+    return () => {};
+  }),
+}));
 
 vi.mock("../lib/ipc", () => ({
   ...h,
@@ -53,9 +70,11 @@ vi.mock("../lib/ipc", () => ({
 import { useOrchestrator } from "./useOrchestrator";
 
 describe("コマンド承認の投影", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     h.listCommandRequests.mockResolvedValue([view(["git", "curl"])]);
+    // `listen` の登録は init() で起きる。イベント経路を検証するので通しておく。
+    await useOrchestrator().init();
   });
 
   it("引き直すと一覧が投影に載る", async () => {
@@ -96,6 +115,32 @@ describe("コマンド承認の投影", () => {
     ).resolves.toBeNull();
     // 失敗したのだから、判断待ちは消えていない。
     expect(orchestrator.state.commandRequests[0].pending).toHaveLength(2);
+  });
+
+  it("`run` が呼ばれたら引き直す（バッジが開かなくても動く）", async () => {
+    const orchestrator = useOrchestrator();
+    await orchestrator.refreshCommandRequests();
+    h.listCommandRequests.mockClear();
+
+    // 実機の指摘（2026-08-05）— 引き直しが起動時と承認後しか無かったので、
+    // サーヴァントが積んでも件数が動かなかった。
+    h.handler?.({
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "run", ok: true },
+    });
+    await Promise.resolve();
+    expect(h.listCommandRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it("`run` 以外のツールでは引き直さない（判断待ちは増えない）", async () => {
+    const orchestrator = useOrchestrator();
+    await orchestrator.refreshCommandRequests();
+    h.listCommandRequests.mockClear();
+
+    h.handler?.({
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true },
+    });
+    await Promise.resolve();
+    expect(h.listCommandRequests).not.toHaveBeenCalled();
   });
 
   it("読めなかった個体は broken のまま運ぶ（既定で埋めない）", async () => {

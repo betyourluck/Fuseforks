@@ -228,6 +228,8 @@ impl CommandPolicy {
     /// 戻りは捨てた要求の説明。空でなければ呼び出し側が WARN を出す。
     #[must_use = "捨てた要求を黙って消すと「頼んだのに画面に出ない」が見えなくなる"]
     pub fn note_pending(&mut self, command: &str, args: &[String], now_ms: u64) -> Option<String> {
+        // 人が手で `allow` / `deny` を足していたら、その時点で決着している。
+        self.prune_settled();
         if let Some(existing) = self
             .pending
             .iter_mut()
@@ -258,6 +260,34 @@ impl CommandPolicy {
             "登録要求が上限 {MAX_PENDING} 件を超えたため、最も古い `{}` を捨てました",
             removed.command
         ))
+    }
+
+    /// 決着済みの判断待ちを落とす（Spec 20 P4 の実機指摘）。
+    ///
+    /// **`pending` に残ってよいのは、いま判定して `Unknown` のものだけ。**
+    /// 広いパターンで 1 件承認すると、その `allow` 行が**別の判断待ちを覆う**が、
+    /// 覆われた側は誰も消さないので一覧に残り続けていた。実機のログで
+    /// `allow=5 のまま decision=Allowed / pending=1` が観測され、`allow` には
+    /// `curl -sI *` と `curl -sI https://www.yahoo.co.jp/` が並んだ —
+    /// **もう許可済みの要求を承認して、冗長な行を増やしていた。**
+    ///
+    /// 判定は既存の [`Self::decide`] をそのまま使う。**新しい規則を作らない** —
+    /// 「一覧に出るべきか」と「実行してよいか」は同じ問いの裏表なので、
+    /// 別の述語を置くと 2 つの答えがずれる余地が生まれる。
+    ///
+    /// 人が `run.json` を手で編集して `allow` を足した場合も、次に `run` が
+    /// 呼ばれた時点で掃除される（`note_pending` からも呼ぶ）。
+    fn prune_settled(&mut self) {
+        let settled: Vec<usize> = self
+            .pending
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| self.decide(&p.command, &p.args) != Decision::Unknown)
+            .map(|(i, _)| i)
+            .collect();
+        for index in settled.into_iter().rev() {
+            self.pending.remove(index);
+        }
     }
 
     /// 承認: `pending` の 1 件を消し、パターンを `allow` へ足す（Spec 20）。
@@ -302,6 +332,9 @@ impl CommandPolicy {
         if !target.iter().any(|p| p == &pattern) {
             target.push(pattern);
         }
+        // **足したパターンが覆う判断待ちを、ここで落とす。** 残すと「もう許可
+        // 済みの要求」が一覧に並び、押せば冗長な行が増える（実機で起きた）。
+        self.prune_settled();
         ApprovalOutcome::Applied
     }
 }
@@ -640,6 +673,66 @@ mod tests {
         assert_eq!(p.approve("./python", &[], false), ApprovalOutcome::NotFound);
         assert!(p.allow.is_empty());
         assert_eq!(p.pending.len(), 1, "消しもしない（判断できないものは残す）");
+    }
+
+    /// **広いパターンで承認すると、それが覆う判断待ちも一覧から消える。**
+    ///
+    /// 実機で踏んだ形（2026-08-05）: `curl -sI https://…` が判断待ちに残ったまま
+    /// 別の要求を `curl -sI *` で承認したので、**もう許可済みの要求が一覧に
+    /// 並び続け**、押すと `allow` に冗長な行が増えた。
+    #[test]
+    fn approving_broadly_also_clears_the_requests_it_now_covers() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("curl", &args(&["-sI", "https://a.example"]), 1);
+        let _ = p.note_pending("curl", &args(&["-sI", "https://b.example"]), 2);
+        let _ = p.note_pending("git", &args(&["log"]), 3);
+        assert_eq!(p.pending.len(), 3);
+
+        // 1 件目を「先頭に続く任意の引数」で承認する。
+        assert_eq!(
+            p.approve("curl", &args(&["-sI", "https://a.example"]), true),
+            ApprovalOutcome::Applied
+        );
+        assert_eq!(p.allow, vec!["curl -sI *"]);
+        assert_eq!(
+            p.pending.len(),
+            1,
+            "覆われた curl の要求も消え、無関係な git だけが残る"
+        );
+        assert_eq!(p.pending[0].command, "git");
+    }
+
+    /// 却下でも同じ（`deny` が覆う判断待ちは消える）。
+    #[test]
+    fn rejecting_broadly_also_clears_the_requests_it_now_covers() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("rm", &args(&["-rf", "/tmp/a"]), 1);
+        let _ = p.note_pending("rm", &args(&["-rf", "/tmp/b"]), 2);
+
+        assert_eq!(
+            p.reject("rm", &args(&["-rf", "/tmp/a"]), true),
+            ApprovalOutcome::Applied
+        );
+        assert_eq!(p.deny, vec!["rm -rf *"]);
+        assert!(p.pending.is_empty(), "覆われた側も消える");
+    }
+
+    /// 人が手で `allow` を足していたら、次の `note_pending` で掃除される。
+    ///
+    /// **画面を開かなくても一覧が自己修復する。** 直接編集の経路を残している以上、
+    /// そちらで決着した要求が残り続けると一覧が信用できなくなる。
+    #[test]
+    fn a_hand_written_allow_settles_the_pending_on_the_next_call() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("ruff", &args(&["check"]), 1);
+        assert_eq!(p.pending.len(), 1);
+
+        // 人が run.json を直接編集した、という状況。
+        p.allow.push("ruff *".into());
+
+        let _ = p.note_pending("curl", &args(&["https://example.com"]), 2);
+        assert_eq!(p.pending.len(), 1, "決着済みの ruff は落ちる");
+        assert_eq!(p.pending[0].command, "curl");
     }
 
     /// 同じパターンを二度承認しても `allow` は増えない。

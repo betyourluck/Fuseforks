@@ -277,6 +277,27 @@ async function mutate<T>(
   }
 }
 
+/**
+ * 判断待ちのコマンド要求を引き直す（Spec 20）。
+ *
+ * **`refreshAll` には混ぜない** — あらゆる操作のたびに全個体の `run.json` を
+ * 読むのは払いすぎ。引くのは (1) 起動時 (2) 承認・却下のあと
+ * (3) **`run` が呼ばれたとき**の 3 つだけ。
+ *
+ * (3) が要るのは実機の指摘（2026-08-05）— それまで引き直しが (1)(2) しか
+ * 無かったので、**サーヴァントが判断待ちを積んでも件数が動かなかった**。
+ * バッジは「開かなくても気づける」ために置いたのに、開くまで気づけない状態
+ * だった。**`run` の呼び出しは判断待ちが増える唯一の経路**なので、そこだけを
+ * 見れば足りる（他のツールでは増えない）。
+ */
+async function refreshCommandRequests(): Promise<boolean> {
+  const views = await guard("orchestrator.op.listCommandRequests", () =>
+    ipc.listCommandRequests(),
+  );
+  if (succeeded(views)) state.commandRequests = views;
+  return succeeded(views);
+}
+
 /** 進行中の取り直し。単一飛行 — 同時に走る取り直しは常に 1 本だけ。 */
 let inflightRefresh: Promise<void> | null = null;
 /** 進行中の 1 本の完了後に走る追走。何本重なっても追加の 1 周に相乗りする。 */
@@ -483,6 +504,11 @@ function applyEvent(event: CoreEvent): void {
         state.toolRuns.splice(0, state.toolRuns.length - MESSAGE_LIMIT);
       }
       state.lastTool[event.agentId] = run;
+      // `run` は判断待ちが増える唯一の経路。押し出されて消えることもあるので、
+      // 成否によらず引き直す（拒否されたときにこそ増える）。
+      if (event.tool === "run") {
+        void refreshCommandRequests();
+      }
       break;
     }
 
@@ -954,13 +980,7 @@ export function useOrchestrator() {
      * `refreshAll` には混ぜない** — 承認画面を開いていない間は誰も見ないので、
      * 全操作のたびに全個体の run.json を読むのは払いすぎ。
      */
-    async refreshCommandRequests(): Promise<boolean> {
-      const views = await guard("orchestrator.op.listCommandRequests", () =>
-        ipc.listCommandRequests(),
-      );
-      if (succeeded(views)) state.commandRequests = views;
-      return succeeded(views);
-    },
+    refreshCommandRequests,
 
     /**
      * 判断待ちの 1 件を承認する（Spec 20）。粒度は `open` だけで決まる。
