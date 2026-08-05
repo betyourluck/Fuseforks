@@ -231,12 +231,16 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 </template>
 
 <style scoped>
+/*
+ * ワードマーク。色も光も `style.css` のトークンから引く（テーマで変わる）。
+ * ライトでは光をほぼ消す — 明るい地の発光は「光」ではなく「にじみ」に見える。
+ */
 .outcasts-word {
-  color: rgb(var(--c-accent) / var(--tw-text-opacity, 1));
+  color: var(--color-wordmark);
   font-family: "DotGothic16", sans-serif;
   text-shadow:
-    0 0 6px rgba(168, 85, 247, 0.8),
-    0 0 18px rgba(168, 85, 247, 0.4);
+    0 0 6px var(--wordmark-glow-near),
+    0 0 18px var(--wordmark-glow-far);
 }
 
 .tb-btn {
@@ -249,7 +253,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
   padding: 0 10px;
   background: transparent;
   border: none;
-  color: var(--color-ink-dim, #8b93a7);
+  color: var(--color-ink-dim);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -264,7 +268,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 }
 .tb-btn:hover {
   background: color-mix(in oklab, currentColor 12%, transparent);
-  color: var(--color-ink, #e6e9f2);
+  color: var(--color-ink);
 }
 .tb-close:hover {
   background: #e53935;

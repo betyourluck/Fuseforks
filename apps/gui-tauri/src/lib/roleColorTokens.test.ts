@@ -65,9 +65,18 @@ describe("役職色の CSS 変数", () => {
 
   it("明度と彩度が全色で揃っている（読みやすさを構造で保証する）", () => {
     // 色相だけを変える規律。1 色でも L/C がずれると、その色だけ読みにくくなる。
-    const found = [...css.matchAll(/--color-role-[a-z]+:\s*oklch\(([\d.]+) ([\d.]+) [\d.]+\)/g)];
-    expect(found).toHaveLength(ROLE_COLORS.length);
-    const pairs = new Set(found.map((m) => `${m[1]} ${m[2]}`));
-    expect(pairs.size, `明度/彩度が揃っていない: ${[...pairs].join(" / ")}`).toBe(1);
+    //
+    // **2026-08-05 に検査から構造へ変えた。** 元は 8 色それぞれに書かれた
+    // L/C の値が 1 種類であることを数えていたが、テーマを増やすと同じ値を
+    // 2 セット書くことになり、ずれる余地が倍になる。共有の変数を参照する形なら
+    // **ずれること自体ができない** — ここが見るのは「参照になっているか」だけ。
+    // テーマ側の定義漏れは `theme.test.ts` が見る。
+    const found = [
+      ...css.matchAll(/--color-role-[a-z]+:\s*oklch\(var\(--role-l\) var\(--role-c\) [\d.]+\)/g),
+    ];
+    expect(
+      found,
+      "役職色が --role-l / --role-c を参照していない（L/C を直接書くとテーマごとにずれる）",
+    ).toHaveLength(ROLE_COLORS.length);
   });
 });

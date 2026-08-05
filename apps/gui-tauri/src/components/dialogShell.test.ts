@@ -37,7 +37,9 @@ function source(name: string): string {
 
 describe("タイトルバーのダイアログの外枠", () => {
   it.each(TITLE_BAR_DIALOGS)("%s: 画面全体を覆う同じ背景を持つ", (name) => {
-    expect(source(name)).toContain("fixed inset-0 z-40 flex items-center justify-center bg-black/60");
+    // 覆いは `bg-scrim`（2026-08-05。旧 `bg-black/60` は唯一残っていた
+    // 生のパレットで、ライトでは黒 60% が重すぎるためトークンへ移した）。
+    expect(source(name)).toContain("fixed inset-0 z-40 flex items-center justify-center bg-scrim");
   });
 
   it.each(TITLE_BAR_DIALOGS)("%s: 見出しの帯が同じ形", (name) => {

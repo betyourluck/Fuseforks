@@ -15,7 +15,10 @@
 export function avatarHue(name: string): string {
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.codePointAt(0)!) % 360;
-  return `oklch(0.62 0.13 ${hash})`;
+  // 明度と彩度は `style.css` が持つ（テーマで変わる）。**ここに数値を書かない** —
+  // アバターの上に載る文字は `text-surface-0` で、その明度はテーマで反転する。
+  // 背景の明度だけが固定だと、片方のテーマで頭文字が読めなくなる。
+  return `oklch(var(--avatar-l) var(--avatar-c) ${hash})`;
 }
 
 /** アバターに出す頭文字。 */

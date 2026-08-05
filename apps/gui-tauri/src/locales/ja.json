@@ -45,7 +45,17 @@
     "groupUi": "ユーザーインターフェース",
     "menuLanguage": "言語",
     "menuTokenLimit": "トークン制限",
+    "menuTheme": "テーマ",
     "menuMessages": "メッセージ表示/非表示",
+    "theme": {
+      "heading": "テーマ",
+      "intro": "画面の配色を選びます。選んだ瞬間に切り替わります。",
+      "dark": "ダーク",
+      "darkNote": "暗い地に明るい文字。暗い部屋や長時間の作業向け。",
+      "light": "ライト",
+      "lightNote": "明るい地に濃い文字。明るい部屋や資料と並べる作業向け。",
+      "deviceNote": "配色はこの端末に保存されます。選ぶまでは OS の設定に追従します。"
+    },
     "villageScope": "この設定は村（world.json）に保存されます。村を配ると設定も一緒に付いて回ります。",
     "tokenBudget": {
       "heading": "トークン制限（実効トークン）",

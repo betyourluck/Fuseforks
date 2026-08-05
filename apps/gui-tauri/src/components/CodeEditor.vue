@@ -19,6 +19,8 @@ import {
 } from "@codemirror/view";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import { useUiSettings, type Theme } from "../composables/useUiSettings";
+
 type EditorLanguage = "markdown" | "json";
 
 const props = withDefaults(
@@ -37,7 +39,10 @@ const host = ref<HTMLElement | null>(null);
 const languageCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
+const themeCompartment = new Compartment();
 let editor: EditorView | null = null;
+
+const { settings } = useUiSettings();
 
 function languageExtension(language: EditorLanguage) {
   return language === "json" ? [json(), linter(jsonParseLinter())] : markdown();
@@ -47,41 +52,52 @@ function readOnlyExtension(readonly: boolean) {
   return [EditorState.readOnly.of(readonly), EditorView.editable.of(!readonly)];
 }
 
-const editorTheme = EditorView.theme(
-  {
-    "&": {
-      height: "100%",
-      backgroundColor: "var(--color-surface-0)",
-      color: "var(--color-ink)",
-      fontSize: "12px",
-    },
-    ".cm-scroller": {
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      lineHeight: "1.6",
-      overflow: "auto",
-    },
-    ".cm-content": { padding: "10px 0", caretColor: "var(--color-accent)" },
-    ".cm-line": { padding: "0 10px" },
-    ".cm-gutters": {
-      backgroundColor: "var(--color-surface-1)",
-      color: "var(--color-ink-dim)",
-      borderRight: "1px solid var(--color-line)",
-    },
-    ".cm-activeLine": { backgroundColor: "color-mix(in oklab, var(--color-accent) 8%, transparent)" },
-    ".cm-activeLineGutter": { backgroundColor: "color-mix(in oklab, var(--color-accent) 12%, transparent)" },
-    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-      backgroundColor: "color-mix(in oklab, var(--color-accent) 35%, transparent)",
-    },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-accent)" },
-    ".cm-tooltip": {
-      border: "1px solid var(--color-line)",
-      backgroundColor: "var(--color-surface-1)",
-    },
-    ".cm-panels": { backgroundColor: "var(--color-surface-1)", color: "var(--color-ink)" },
-    ".cm-textfield": { backgroundColor: "var(--color-surface-0)", color: "var(--color-ink)" },
+/**
+ * エディタの配色。**色はすべて `style.css` のトークンを引く**ので、値そのものは
+ * テーマに自動で追従する。
+ *
+ * ただし `dark` フラグだけは追従しない — CodeMirror はこの真偽値で
+ * `&dark` / `&light` の**別系統の既定**（検索一致の強調・補完候補の選択色・
+ * プレースホルダ・特殊文字）を選ぶ。ここを固定すると、その 4 つだけが
+ * 反対のテーマの色で残る。`var()` で書けない値がライブラリの中にあるので、
+ * **フラグを差し替える経路**（compartment）を持つ。
+ */
+function editorTheme(theme: Theme) {
+  return EditorView.theme(THEME_SPEC, { dark: theme === "dark" });
+}
+
+const THEME_SPEC = {
+  "&": {
+    height: "100%",
+    backgroundColor: "var(--color-surface-0)",
+    color: "var(--color-ink)",
+    fontSize: "12px",
   },
-  { dark: true },
-);
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    lineHeight: "1.6",
+    overflow: "auto",
+  },
+  ".cm-content": { padding: "10px 0", caretColor: "var(--color-accent)" },
+  ".cm-line": { padding: "0 10px" },
+  ".cm-gutters": {
+    backgroundColor: "var(--color-surface-1)",
+    color: "var(--color-ink-dim)",
+    borderRight: "1px solid var(--color-line)",
+  },
+  ".cm-activeLine": { backgroundColor: "color-mix(in oklab, var(--color-accent) 8%, transparent)" },
+  ".cm-activeLineGutter": { backgroundColor: "color-mix(in oklab, var(--color-accent) 12%, transparent)" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+    backgroundColor: "color-mix(in oklab, var(--color-accent) 35%, transparent)",
+  },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-accent)" },
+  ".cm-tooltip": {
+    border: "1px solid var(--color-line)",
+    backgroundColor: "var(--color-surface-1)",
+  },
+  ".cm-panels": { backgroundColor: "var(--color-surface-1)", color: "var(--color-ink)" },
+  ".cm-textfield": { backgroundColor: "var(--color-surface-0)", color: "var(--color-ink)" },
+};
 
 onMounted(() => {
   if (!host.value) return;
@@ -115,7 +131,7 @@ onMounted(() => {
         languageCompartment.of(languageExtension(props.language)),
         readOnlyCompartment.of(readOnlyExtension(props.readonly)),
         placeholderCompartment.of(placeholder(props.placeholder)),
-        editorTheme,
+        themeCompartment.of(editorTheme(settings.theme)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const value = update.state.doc.toString();
@@ -148,6 +164,13 @@ watch(
 watch(
   () => props.placeholder,
   (value) => editor?.dispatch({ effects: placeholderCompartment.reconfigure(placeholder(value)) }),
+);
+
+// 開いたままテーマを切り替えても追従させる（設定ダイアログと編集画面は同時に
+// 開きうる）。色は `var()` が勝手に追うので、差し替えるのは `dark` フラグだけ。
+watch(
+  () => settings.theme,
+  (theme) => editor?.dispatch({ effects: themeCompartment.reconfigure(editorTheme(theme)) }),
 );
 
 onBeforeUnmount(() => editor?.destroy());

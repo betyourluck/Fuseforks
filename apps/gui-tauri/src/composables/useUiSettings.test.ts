@@ -83,6 +83,66 @@ describe("この画面の設定", () => {
     expect(storage.writes).toBe(1);
     expect(JSON.parse(storage.dump(STORAGE_KEY) ?? "{}")).toEqual({
       confirmEdgeDelete: false,
+      theme: "dark",
     });
+  });
+});
+
+/**
+ * 配色（2026-08-05）。**選ぶまでは OS に追従し、保存もしない。**
+ *
+ * 言語（Spec 13）の「初回に確定して再判定しない」とは規律が違う — あちらは
+ * `world.json` に住み System 行として会話ログへ焼き付くので、後から解釈が
+ * 変わると保存済みの内容と食い違う。配色は端末側の見た目だけなので、
+ * 選ぶまで OS に従うほうが「一般はライトを好む」という実態に合う。
+ */
+describe("配色", () => {
+  /** `matchMedia` の代役。テスト環境（node）には無い。 */
+  function stubOs(prefersLight: boolean) {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: prefersLight && query.includes("light"),
+    }));
+  }
+
+  it("保存が無ければ OS の設定に従い、読むだけでは書かない", async () => {
+    for (const [prefersLight, expected] of [
+      [true, "light"],
+      [false, "dark"],
+    ] as const) {
+      const storage = fakeStorage();
+      stubOs(prefersLight);
+      const { useUiSettings } = await freshModule(storage);
+
+      expect(useUiSettings().settings.theme).toBe(expected);
+      await nextTick();
+      expect(storage.writes, "選ぶまでは保存しない").toBe(0);
+    }
+  });
+
+  it("`matchMedia` が無い環境ではダークへ倒す（これまでの見た目）", async () => {
+    const storage = fakeStorage();
+    const { useUiSettings } = await freshModule(storage);
+    expect(useUiSettings().settings.theme).toBe("dark");
+  });
+
+  it("選んだ値は読み戻し、OS より優先する", async () => {
+    const storage = fakeStorage({
+      [STORAGE_KEY]: JSON.stringify({ confirmEdgeDelete: true, theme: "light" }),
+    });
+    stubOs(false); // OS はダークでも、選択が勝つ
+    const { useUiSettings } = await freshModule(storage);
+
+    expect(useUiSettings().settings.theme).toBe("light");
+  });
+
+  it("2 値のどちらでもない保存値は OS へ戻す（既定の定数へ落とさない）", async () => {
+    // 定数へ落とすと、手編集で壊れた設定が「利用者はダークを選んだ」状態になる。
+    const storage = fakeStorage({
+      [STORAGE_KEY]: JSON.stringify({ theme: "solarized" }),
+    });
+    stubOs(true);
+    const { useUiSettings } = await freshModule(storage);
+
+    expect(useUiSettings().settings.theme).toBe("light");
   });
 });

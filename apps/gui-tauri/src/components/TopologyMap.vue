@@ -294,7 +294,8 @@ function borderClass(status: string): string {
           </div>
         </template>
 
-        <Background :gap="18" :size="1" pattern-color="#3a4152" />
+        <!-- 点の色は style.css が与える（SVG の属性に var() は書けないため）。 -->
+        <Background :gap="18" :size="1" />
         <!--
           フィット（全ノードを画面に収める）だけを出す。ズームはホイール・
           ピンチで足り、操作ボタンを増やすと地図の面積を奪う（ヘッダの

@@ -45,7 +45,17 @@
     "groupUi": "User interface",
     "menuLanguage": "Language",
     "menuTokenLimit": "Token limit",
+    "menuTheme": "Theme",
     "menuMessages": "Message visibility",
+    "theme": {
+      "heading": "Theme",
+      "intro": "Choose the colour scheme. It switches the moment you pick one.",
+      "dark": "Dark",
+      "darkNote": "Light text on a dark ground. Suits dim rooms and long sessions.",
+      "light": "Light",
+      "lightNote": "Dark text on a light ground. Suits bright rooms and working alongside documents.",
+      "deviceNote": "The theme is stored on this device. Until you choose, it follows your OS setting."
+    },
     "villageScope": "This setting is stored in the village configuration (world.json), so it travels with the village when you share it.",
     "tokenBudget": {
       "heading": "Token limit (effective tokens)",

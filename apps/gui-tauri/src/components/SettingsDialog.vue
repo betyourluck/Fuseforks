@@ -22,7 +22,7 @@ import { useI18n } from "vue-i18n";
 import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { setLocale } from "../i18n";
-import { useUiSettings } from "../composables/useUiSettings";
+import { useUiSettings, type Theme } from "../composables/useUiSettings";
 import type { Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -30,7 +30,7 @@ const emit = defineEmits<{ (e: "close"): void }>();
 const { t } = useI18n();
 
 /** 左メニューの選択。既定は目録の先頭（全般 → 言語）。 */
-type Page = "language" | "tokenBudget" | "messages";
+type Page = "language" | "tokenBudget" | "theme" | "messages";
 const page = ref<Page>("language");
 
 /**
@@ -42,6 +42,9 @@ const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
 const { settings } = useUiSettings();
+
+/** 配色の選択肢。`Theme` と 1 対 1（増やしたら `style.css` にも足す）。 */
+const THEME_OPTIONS: Theme[] = ["dark", "light"];
 
 const loading = ref(true);
 const busy = ref(false);
@@ -151,7 +154,7 @@ function selectPage(next: Page): void {
 
 <template>
   <div
-    class="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-40 flex items-center justify-center bg-scrim"
     @click.self="emit('close')"
   >
     <div
@@ -190,6 +193,13 @@ function selectPage(next: Page): void {
           </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'theme' }"
+            @click="selectPage('theme')"
+          >
+            {{ $t("settings.menuTheme") }}
+          </button>
           <button
             class="menu-item"
             :class="{ active: page === 'messages' }"
@@ -301,6 +311,34 @@ function selectPage(next: Page): void {
           </template>
 
           <!--
+            テーマ。**選んだ瞬間に反映する**（保存ボタンを持たない）— 見た目の
+            設定は結果を見て決めるものなので、押すまで変わらないと選べない。
+          -->
+          <template v-else-if="page === 'theme'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.theme.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.theme.intro") }}</p>
+
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label
+                v-for="option in THEME_OPTIONS"
+                :key="option"
+                class="flex items-start gap-2"
+              >
+                <input v-model="settings.theme" type="radio" :value="option" class="mt-0.5" />
+                <span>
+                  <span class="text-ink">{{ $t(`settings.theme.${option}`) }}</span>
+                  <span class="block text-ink-dim">
+                    {{ $t(`settings.theme.${option}Note`) }}
+                  </span>
+                </span>
+              </label>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.theme.deviceNote") }}</p>
+          </template>
+
+          <!--
             ユーザーインターフェース: 非表示にできるメッセージの一覧。
             **節を足せば項目が増える形**にしてあるが、機構としての切り替えは
             いまも線の削除 1 つだけ（settings_contract）。1 つ足すたびに
@@ -339,17 +377,17 @@ function selectPage(next: Page): void {
   width: 100%;
   padding: 5px 12px;
   text-align: left;
-  color: var(--color-ink-dim, #8b93a7);
+  color: var(--color-ink-dim);
   background: transparent;
   border: none;
   cursor: pointer;
 }
 .menu-item:hover {
-  color: var(--color-ink, #e6e9f2);
+  color: var(--color-ink);
   background: color-mix(in oklab, currentColor 8%, transparent);
 }
 .menu-item.active {
-  color: var(--color-ink, #e6e9f2);
+  color: var(--color-ink);
   background: color-mix(in oklab, currentColor 12%, transparent);
   font-weight: 600;
 }

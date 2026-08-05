@@ -24,10 +24,63 @@
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/*
+ * # テーマ（2026-08-05）
+ *
+ * **配色は明度の入れ替えだけで成立させる。** 色相（265 = 冷たい灰青）は
+ * 両テーマで共通で、動くのは L と、彩度を持つ色の L/C だけ。こうすると
+ * 「ライトのときだけ別の色に見える」箇所が構造的に生まれない。
+ *
+ * ## surface の意味は「奥行き」であって明るさではない
+ *
+ * `surface-0` = **最も奥**（ページ地・コードブロックのような沈んだ面）、
+ * `surface-1` = パネル・入力欄・ダイアログ、`surface-2` = **最も手前**
+ * （選択中・ホバー・相手の吹き出し）。ダークでは奥ほど暗く、ライトでは
+ * 奥ほど暗い灰 → 手前が白、と**向きが逆になる**。数字を「明るさの順」と
+ * 読むと、ライトを足したときに手前と奥が入れ替わる。
+ *
+ * ## 切り替えの機構
+ *
+ * `@theme` はダークの値を持ち、**ユーティリティ（`bg-surface-0` 等）を
+ * 生やす側**。Tailwind v4 はユーティリティを `var(--color-…)` 参照で出力するので、
+ * 変数を上書きすれば再ビルドなしで色が変わる。ライトは
+ * `:root[data-theme="light"]` の**素の CSS**で上書きする — 素の CSS は
+ * レイヤ外なので `@layer theme` に必ず勝つ（特異度に頼らない）。
+ * 属性を付けるのは `useUiSettings`。属性が無ければダーク（JS が動かなくても
+ * 現状と同じ見た目になる側へ倒す）。
+ *
+ * **トークンを足したら両方に足す。** 片方だけだと、そのトークンを使った
+ * 場所だけが反対のテーマの色で残る（`theme.test.ts` が機械で留めている）。
+ */
 :root {
-  --c-accent: 168 85 247;
+  color-scheme: dark;
+
+  /*
+   * **個体ごとに色相だけが変わる色**の明度と彩度。役職バッジ（Spec 14）と
+   * アバターが共有する。ここを 1 箇所に置くのは、8 色 + 名前ハッシュの
+   * 無限の色相すべてで読みやすさを揃えるため — 個々の色に L/C を書くと
+   * 「その色だけ読みにくい」がいつか必ず生まれる。
+   *
+   * ライトでは L を下げる。役職バッジは**文字色と枠線**として使われるので
+   * （`AgentCard.vue`）、白地に L=0.74 では読めない。
+   */
+  --role-l: 0.74;
+  --role-c: 0.15;
+  /* アバターは**背景**で、上に載る文字は `text-surface-0`。surface-0 が
+     テーマで反転するので、背景の L も一緒に反転させて対比を保つ。 */
+  --avatar-l: 0.62;
+  --avatar-c: 0.13;
+
   --scrollbar-neon: oklch(0.72 0.14 232);
   --scrollbar-neon-bright: oklch(0.82 0.16 224);
+
+  /*
+   * タイトルバーの "Outcasts"（ドット字体 + 発光）。ライトでは**光らせない** —
+   * 明るい地に発光を重ねると、光ではなく「にじんだ文字」に見える。
+   */
+  --color-wordmark: oklch(0.63 0.24 303);
+  --wordmark-glow-near: oklch(0.63 0.24 303 / 0.8);
+  --wordmark-glow-far: oklch(0.63 0.24 303 / 0.4);
 
   /*
    * 役職バッジの色（Spec 14）。**明度と彩度を固定し、色相だけを変える。**
@@ -39,6 +92,10 @@
    *
    * 値は `RoleColor` の閉じた列挙（red / orange / amber / green / teal /
    * blue / violet / pink）と 1 対 1。**列挙を増やしたらここも足す。**
+   *
+   * L/C を直接書かず `--role-l` / `--role-c` を参照するのは、テーマごとに
+   * 8 行ずつ書くと**色ごとに L がずれる余地が生まれる**ため。参照にすれば
+   * 「全色で揃っている」は検査ではなく構造になる。
    *
    * # なぜ @theme ではなく :root か（2026-08-04 実機で判明）
    *
@@ -52,14 +109,14 @@
    * `@theme` に置くべきなのは `text-accent` のような**ユーティリティを生やす**色で、
    * ここはユーティリティを使わない実行時選択の値。`--scrollbar-neon` と同じ棚。
    */
-  --color-role-red: oklch(0.74 0.15 25);
-  --color-role-orange: oklch(0.74 0.15 55);
-  --color-role-amber: oklch(0.74 0.15 85);
-  --color-role-green: oklch(0.74 0.15 145);
-  --color-role-teal: oklch(0.74 0.15 185);
-  --color-role-blue: oklch(0.74 0.15 245);
-  --color-role-violet: oklch(0.74 0.15 295);
-  --color-role-pink: oklch(0.74 0.15 340);
+  --color-role-red: oklch(var(--role-l) var(--role-c) 25);
+  --color-role-orange: oklch(var(--role-l) var(--role-c) 55);
+  --color-role-amber: oklch(var(--role-l) var(--role-c) 85);
+  --color-role-green: oklch(var(--role-l) var(--role-c) 145);
+  --color-role-teal: oklch(var(--role-l) var(--role-c) 185);
+  --color-role-blue: oklch(var(--role-l) var(--role-c) 245);
+  --color-role-violet: oklch(var(--role-l) var(--role-c) 295);
+  --color-role-pink: oklch(var(--role-l) var(--role-c) 340);
 }
 
 /*
@@ -86,8 +143,57 @@
    * 「ink-dim → accent」のように既存トークン間を移動するのに対し、
    * 危険操作は最初から fail で、移動先が無いため。ここを各コンポーネントで
    * 生のパレットや brightness フィルタで作ると、配色が @theme の外へ漏れる。
+   *
+   * **ライトでは逆に暗くする** — 「強める」は明度の絶対値ではなく、
+   * 地から遠ざかる向きのこと。
    */
   --color-fail-hot: oklch(0.78 0.24 25);
+
+  /*
+   * ダイアログの覆い。以前は各ダイアログが `bg-black/60` と生で書いていた
+   * （唯一残っていた生のパレット）。トークンにしたのは、ライトで黒 60% が
+   * 重すぎるため — テーマごとに濃さを変える必要が出た時点で、
+   * 生の値はもう「同じもの」ではない。
+   */
+  --color-scrim: oklch(0 0 0 / 0.6);
+}
+
+/*
+ * ライトテーマ。**上の `@theme` にある色トークンをすべて上書きする**
+ * （1 つでも漏らすと、そのトークンを使った場所だけ暗いまま残る）。
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* 奥 → 手前。ダークと**向きが逆**（上の「surface の意味」を参照）。 */
+  --color-surface-0: oklch(0.925 0.006 265);
+  --color-surface-1: oklch(0.972 0.004 265);
+  --color-surface-2: oklch(1 0 0);
+  --color-line: oklch(0.855 0.012 265);
+  --color-ink: oklch(0.27 0.016 265);
+  /* 0.5 より上げると surface-0（0.925）の上で 4.5:1 を割る。 */
+  --color-ink-dim: oklch(0.485 0.018 265);
+
+  /* accent は `text-accent` と `bg-accent text-surface-0` の両方で使う。
+     白地の文字としても、明るい文字を載せる地としても成立する明度を選ぶ。 */
+  --color-accent: oklch(0.52 0.16 232);
+  --color-run: oklch(0.55 0.15 152);
+  --color-warn: oklch(0.55 0.12 82);
+  --color-fail: oklch(0.53 0.2 25);
+  --color-fail-hot: oklch(0.45 0.21 25);
+  --color-scrim: oklch(0.3 0.02 265 / 0.38);
+
+  --role-l: 0.52;
+  --role-c: 0.16;
+  --avatar-l: 0.55;
+  --avatar-c: 0.14;
+
+  --scrollbar-neon: oklch(0.62 0.12 232);
+  --scrollbar-neon-bright: oklch(0.52 0.14 224);
+
+  --color-wordmark: oklch(0.48 0.22 303);
+  --wordmark-glow-near: oklch(0.48 0.22 303 / 0.2);
+  --wordmark-glow-far: oklch(0.48 0.22 303 / 0.08);
 }
 
 html,
@@ -321,6 +427,19 @@ textarea,
   color: inherit;
   font-size: inherit;
   text-align: left;
+}
+
+/*
+ * 地図の点描の背景。`<Background>` は色を **SVG の presentation attribute**
+ * （`fill="…"`）として置くので、**そこに `var()` は書けない**（属性値は
+ * CSS 変数の置換を受けない）。CSS 規則は presentation attribute に必ず
+ * 勝つので、色はここで与える — こうすればテーマに自動で追従し、
+ * コンポーネント側から生の色（旧 `pattern-color="#3a4152"`）が消える。
+ */
+.vue-flow__background circle,
+.vue-flow__background path {
+  fill: var(--color-line);
+  stroke: var(--color-line);
 }
 
 .vue-flow__edge-path {

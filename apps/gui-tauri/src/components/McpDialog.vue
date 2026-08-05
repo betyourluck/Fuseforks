@@ -120,7 +120,7 @@ async function requestClose(): Promise<void> {
 
 <template>
   <div
-    class="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-40 flex items-center justify-center bg-scrim"
     @click.self="requestClose"
   >
     <div

@@ -56,7 +56,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   -->
   <div
     v-if="current"
-    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-[60] flex items-center justify-center bg-scrim"
     @click.self="answer(false)"
   >
     <div
