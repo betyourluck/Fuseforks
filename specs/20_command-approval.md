@@ -2,7 +2,7 @@
 
 **ID**: 20
 **Date**: 2026-08-05
-**Status**: **rev2 承認（2026-08-05）→ P0 完了**。次は P1（コアの純機構と API）
+**Status**: **rev2 承認（2026-08-05）→ P0〜P1 完了**。次は P2（IPC と画面）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -297,6 +297,43 @@ D1 の裏返し。まとめて承認は**粒度の決定を飛ばす**ので、�
 4. 却下 → 同じコマンドを呼んでも**もう一覧に出ない**
 5. `allow` が空の個体で 1 件目を承認 → **次のターンから `run` が提示される**
 
+## P1 実装記録（2026-08-05）
+
+`command.rs` に `PendingCommand::pattern` / `ApprovalOutcome` / `CommandPolicyView` /
+`CommandPolicy::approve` / `reject`（共通実装 `resolve`）、`merge_pending_into` を撤去。
+`config_store.rs` に `read_command_policy` / `update_command_policy`。
+`orchestrator.rs` に `command_policies` / `approve_command` / `reject_command`。
+単体 8 本追加（370 → 378）。workspace 全緑・clippy 新規警告ゼロ。
+
+**着手前に、この Spec が共有しようとしていた機構がデータを壊していた**（PoC で確認）。
+壊れた `run.json` を持つ個体でサーヴァントが未宣言のコマンドを呼ぶと、
+**人が書いた `allow` と `deny` が両方消える**。`RunTool::load` が壊れた JSON を
+既定へ落とし、`note_pending` が**その既定を書き戻していた**。
+
+**読みとしては正しかった** — `allow` も `deny` も同時に消えるので全部 pending =
+fail closed にしかならない。**危険なのは読みではなく、落とした既定を書くこと。**
+`failures.md` #70 / 契約も同じ誤りを持っていたので訂正した（旧記述は
+「deny が黙って消えるので危険側」= **片方だけ消える前提**で書かれていた）。
+
+**実装で決めた 4 点**:
+
+- **読みの経路を 2 つに分けた。** 照合用（`RunTool::load`）は既定へ落として
+  fail closed を保ち、書き戻す経路（`read_command_policy`）は `Err` を返して
+  **壊れたファイルを 1 バイトも変えない**。同じ戻り値を両方に使うと、
+  片方の理由でもう片方が正当化される
+- **retry ループを `ConfigStore::update_command_policy` の 1 実装に畳んだ。**
+  `RunTool::note_pending` と承認経路が同じ 8 行を持つところだった
+  （Spec 19 P2 の `write_icon` と同じ判断）
+- **`CommandPolicyView.broken` を足した**（Spec に無かった）。読めなかった個体を
+  既定で返すと、画面には**「判断待ちゼロ・許可ゼロ」に見えて壊れが消える**。
+  読めなかった事実は畳まずに運ぶ
+- **`approve` と `reject` は `resolve` の 1 実装**。違うのは入れる先だけなので、
+  2 つ書くと片方だけ直る余地が生まれる
+
+**`merge_pending_into` の撤去で消える保証は移し替えた**（査読・軽微 2）。
+`a_policy_update_never_clobbers_the_human_edits`（`config_store`）が
+「人が書いた `allow` / `deny` / `timeoutSecs` が機械の書き込みで消えない」を
+見ている。移さなければ、撤去した本人が #62 と同型の穴を新しく開けていた。
 ## Notes
 
 1. **`pending` の上限（20 件）に触らない。** 承認画面ができても上限は要る —

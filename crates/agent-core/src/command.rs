@@ -86,6 +86,61 @@ pub struct PendingCommand {
     pub count: u32,
 }
 
+impl PendingCommand {
+    /// 承認・却下で `allow` / `deny` へ入れるパターン（Spec 20 D1）。
+    ///
+    /// - `open == false` … この呼び出しだけ（完全一致）
+    /// - `open == true` … **第 1 引数までを固定**して、以降を任意にする
+    ///
+    /// **末尾 `*` は 0 個以上に一致する**ので、開いた側は完全一致の
+    /// スーパーセットになる（`ruff *` は引数なしの `ruff` にも当たる）。
+    /// この性質が崩れると「承認したのに通らない」が起きる。
+    ///
+    /// **「第 1 引数まで」は当てずっぽう**（`ls -la /tmp` は旗を固定する）。
+    /// 隠さないために、**画面は結果の文字列そのものを出す**契約になっている。
+    pub fn pattern(&self, open: bool) -> String {
+        if !open {
+            return std::iter::once(self.command.as_str())
+                .chain(self.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+        match self.args.first() {
+            None => format!("{} *", self.command),
+            Some(first) => format!("{} {first} *", self.command),
+        }
+    }
+}
+
+/// 承認・却下の結果（Spec 20）。
+///
+/// **`NotFound` を黙って捨てない。** 押したのに何も起きない画面は、壊れているのか
+/// 成功したのかを利用者が区別できない（`failures.md` #44 の「歯止めの先に道が
+/// 無い」と同型）。画面まで運んで「もう一覧にありません」と告げる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ApprovalOutcome {
+    /// `pending` から消し、`allow` / `deny` へ入れた。
+    Applied,
+    /// 該当の要求が `pending` に無かった。**許容は 1 行も増えていない。**
+    NotFound,
+}
+/// 承認画面へ渡す 1 体分の投影（Spec 20）。
+///
+/// **`broken` を持つのは、読めなかったことを画面で言うため。** 既定を返して
+/// 「判断待ちゼロ」に見せると、**壊れている事実が画面から消える**。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandPolicyView {
+    /// 対象のサーヴァント。
+    pub agent_id: crate::model::AgentId,
+    /// 表示名（画面は ID ではなく名前で束ねる）。
+    pub name: String,
+    /// 判断待ちの要求。読めなかった場合は空。
+    pub pending: Vec<PendingCommand>,
+    /// `run.json` が壊れていて読めなかった。
+    pub broken: bool,
+}
 /// `agents/{id}/run.json` の中身。
 ///
 /// **`mcp.json` と同じ棚**に置き、同じ編集手段（`ConfigFileKind`）で人が直す。
@@ -205,13 +260,49 @@ impl CommandPolicy {
         ))
     }
 
-    /// 人が編集した内容へ、機械が持っている `pending` だけを移す。
+    /// 承認: `pending` の 1 件を消し、パターンを `allow` へ足す（Spec 20）。
+    pub fn approve(&mut self, command: &str, args: &[String], open: bool) -> ApprovalOutcome {
+        self.resolve(command, args, open, true)
+    }
+
+    /// 却下: `pending` の 1 件を消し、パターンを `deny` へ足す（Spec 20）。
     ///
-    /// **全文上書きにしない**ための経路。`allow` / `deny` / `timeout_secs` は
-    /// **読み直した側（人の編集）を必ず勝たせる** — 機械が持っている古い値で
-    /// 人の変更を潰さない。
-    pub fn merge_pending_into(&self, fresh: &mut Self) {
-        fresh.pending = self.pending.clone();
+    /// **`pending` から消すだけにしない。** 消すだけだと次の呼び出しでまた積まれ、
+    /// 同じものを何度も却下することになる（`Decision::Denied` の doc が正）。
+    pub fn reject(&mut self, command: &str, args: &[String], open: bool) -> ApprovalOutcome {
+        self.resolve(command, args, open, false)
+    }
+
+    /// 承認と却下の共通実装。**入れる先が違うだけ**なので 1 つに畳む。
+    fn resolve(
+        &mut self,
+        command: &str,
+        args: &[String],
+        open: bool,
+        allow_it: bool,
+    ) -> ApprovalOutcome {
+        // 照合と同じ正規化を通す。`pending` へ手で書かれたパス区切り入りを
+        // `allow` へ移すと、**何にも一致しない死んだ行**が増える（D8）。
+        if normalize_command(command).is_none() {
+            return ApprovalOutcome::NotFound;
+        }
+        let Some(index) = self
+            .pending
+            .iter()
+            .position(|p| p.command == command && p.args == args)
+        else {
+            // **`pending` に無いものは許容へ入れない**（D9）。承認画面は
+            // 「実際に要求されたものだけ」を許容へ変える装置で、ここが緩むと
+            // 閉じた許容が「GUI から任意に書ける許容」になる。
+            return ApprovalOutcome::NotFound;
+        };
+        let pattern = self.pending[index].pattern(open);
+        self.pending.remove(index);
+        let target = if allow_it { &mut self.allow } else { &mut self.deny };
+        if !target.iter().any(|p| p == &pattern) {
+            target.push(pattern);
+        }
+        ApprovalOutcome::Applied
     }
 }
 
@@ -471,20 +562,95 @@ mod tests {
         assert!(p.pending.iter().any(|x| x.command == "overflow"));
     }
 
+    /// 承認の 2 択が生む文字列（D1 の表そのもの）。
     #[test]
-    fn merging_keeps_the_human_edits_and_only_moves_pending() {
-        let mut machine = CommandPolicy::default();
-        let _ = machine.note_pending("cargo", &args(&["test"]), 100);
-        machine.allow.push("古い".into());
+    fn the_pattern_follows_the_two_choices() {
+        let p = |cmd: &str, a: &[&str]| PendingCommand {
+            command: cmd.to_owned(),
+            args: a.iter().map(|s| (*s).to_owned()).collect(),
+            first_requested_at_ms: 0,
+            count: 1,
+        };
+        assert_eq!(p("ruff", &[]).pattern(false), "ruff");
+        assert_eq!(p("ruff", &[]).pattern(true), "ruff *");
+        assert_eq!(
+            p("git", &["log", "--oneline", "-5"]).pattern(false),
+            "git log --oneline -5"
+        );
+        assert_eq!(p("git", &["log", "--oneline", "-5"]).pattern(true), "git log *");
+        assert_eq!(p("cargo", &["test", "--", "--nocapture"]).pattern(true), "cargo test *");
+    }
 
-        // 人が手で編集した側（読み直した結果）。
-        let mut fresh = CommandPolicy { timeout_secs: 300, ..policy(&["ruff *"], &["rm *"]) };
-        machine.merge_pending_into(&mut fresh);
+    /// 承認は `pending` から消して `allow` へ入れ、却下は `deny` へ入れる。
+    #[test]
+    fn approving_moves_one_request_and_rejecting_fills_deny() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("git", &args(&["log", "--oneline"]), 1);
+        let _ = p.note_pending("rm", &args(&["-rf", "/"]), 2);
 
-        assert_eq!(fresh.allow, vec!["ruff *"], "人の編集を機械の古い値で潰さないこと");
-        assert_eq!(fresh.deny, vec!["rm *"]);
-        assert_eq!(fresh.timeout_secs, 300);
-        assert_eq!(fresh.pending.len(), 1, "pending だけが移ること");
+        assert_eq!(
+            p.approve("git", &args(&["log", "--oneline"]), true),
+            ApprovalOutcome::Applied
+        );
+        assert_eq!(p.allow, vec!["git log *"]);
+        assert_eq!(p.pending.len(), 1, "承認した 1 件だけが消える");
+
+        assert_eq!(
+            p.reject("rm", &args(&["-rf", "/"]), false),
+            ApprovalOutcome::Applied
+        );
+        assert_eq!(p.deny, vec!["rm -rf /"]);
+        assert!(p.pending.is_empty());
+
+        // 却下したものは deny に載るので、次に呼ばれても pending へは積まれない。
+        assert_eq!(p.decide("rm", &args(&["-rf", "/"])), Decision::Denied);
+    }
+
+    /// **`pending` に無いものは許容へ入れない**（D9）。
+    ///
+    /// 押し出しや積み替えで消えた後に押されても、`allow` は 1 行も増えない。
+    /// ここが緩むと、閉じた許容が「GUI から任意に書ける許容」になる。
+    #[test]
+    fn an_unknown_request_changes_nothing_and_says_so() {
+        let mut p = policy(&["ruff *"], &["rm *"]);
+        assert_eq!(p.approve("curl", &args(&["https://example.com"]), true), ApprovalOutcome::NotFound);
+        assert_eq!(p.reject("curl", &[], false), ApprovalOutcome::NotFound);
+        assert_eq!(p.allow, vec!["ruff *"], "許容は 1 行も増えない");
+        assert_eq!(p.deny, vec!["rm *"]);
+
+        // 引数まで含めて一致しないと消せない（`git log` と `git log -5` は別）。
+        let _ = p.note_pending("git", &args(&["log"]), 1);
+        assert_eq!(p.approve("git", &args(&["log", "-5"]), false), ApprovalOutcome::NotFound);
+        assert_eq!(p.pending.len(), 1);
+    }
+
+    /// パス区切りを含む `command` は承認できない（D8）。
+    ///
+    /// 機械は積まないが、人が `run.json` へ手で書ける。通すと**何にも一致しない
+    /// 死んだ行**が `allow` に増え、「書いてあるのに拒否され続ける」状態になる。
+    #[test]
+    fn a_path_like_command_cannot_be_approved() {
+        let mut p = CommandPolicy::default();
+        p.pending.push(PendingCommand {
+            command: "./python".to_owned(),
+            args: Vec::new(),
+            first_requested_at_ms: 1,
+            count: 1,
+        });
+        assert_eq!(p.approve("./python", &[], false), ApprovalOutcome::NotFound);
+        assert!(p.allow.is_empty());
+        assert_eq!(p.pending.len(), 1, "消しもしない（判断できないものは残す）");
+    }
+
+    /// 同じパターンを二度承認しても `allow` は増えない。
+    #[test]
+    fn the_same_pattern_is_not_added_twice() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("git", &args(&["log"]), 1);
+        assert_eq!(p.approve("git", &args(&["log"]), true), ApprovalOutcome::Applied);
+        let _ = p.note_pending("git", &args(&["log", "-5"]), 2);
+        assert_eq!(p.approve("git", &args(&["log", "-5"]), true), ApprovalOutcome::Applied);
+        assert_eq!(p.allow, vec!["git log *"], "同じ文字列は 1 行だけ");
     }
 
     #[test]

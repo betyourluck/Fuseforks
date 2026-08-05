@@ -83,7 +83,9 @@ pub mod world;
 
 pub use blackboard::BlackboardNote;
 pub use budget::BudgetPool;
-pub use command::{CommandPolicy, Decision, PendingCommand};
+pub use command::{
+    ApprovalOutcome, CommandPolicy, CommandPolicyView, Decision, PendingCommand,
+};
 pub use config_store::{ConfigStore, LoadedSchedules};
 pub use diag::open_log;
 pub use error::{CoreError, CoreResult, ErrorPayload};

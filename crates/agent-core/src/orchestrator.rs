@@ -51,6 +51,7 @@ use tokio::task::JoinHandle;
 
 use crate::budget::BudgetPool;
 use crate::compute;
+use crate::command::{ApprovalOutcome, CommandPolicyView};
 use crate::config_store::ConfigStore;
 use crate::session_store::{ForkPoint, Record as SessionRecord, SessionStore, SessionSummary};
 // 診断の 1 行はここを通す（stderr とログファイルの両方へ出る）。
@@ -1838,6 +1839,70 @@ impl Orchestrator {
     /// （プロンプトはメッセージごとに組み直すため、再起動は不要）。
     pub async fn write_ordinance(&self, content: &str) -> CoreResult<()> {
         self.shared.store.write_ordinance(content).await
+    }
+
+    // ---- コマンドの承認（Spec 20） ---------------------------------------------
+
+    /// 全サーヴァントの `run.json` を読む。承認画面の投影用。
+    ///
+    /// **壊れている個体は `Err` を畳んで飛ばす**（既定を返さない）。既定を返すと
+    /// 画面には「判断待ちゼロ・許可ゼロ」に見え、**壊れていることが分からない**。
+    /// 読めなかった事実は `broken` に載せて画面へ運ぶ。
+    pub async fn command_policies(&self) -> Vec<CommandPolicyView> {
+        let mut views = Vec::new();
+        for snapshot in self.snapshots().await {
+            let view = match self.shared.store.read_command_policy(&snapshot.id).await {
+                Ok(policy) => CommandPolicyView {
+                    agent_id: snapshot.id,
+                    name: snapshot.name,
+                    pending: policy.pending,
+                    broken: false,
+                },
+                Err(_) => CommandPolicyView {
+                    agent_id: snapshot.id,
+                    name: snapshot.name,
+                    pending: Vec::new(),
+                    broken: true,
+                },
+            };
+            views.push(view);
+        }
+        views
+    }
+
+    /// `pending` の 1 件を承認して `allow` へ入れる（Spec 20）。
+    ///
+    /// **粒度は `open` だけで決まる。** パターン文字列を外から受け取らないのは、
+    /// 受け取ると「粒度は機械が決めない」が**「粒度を GUI が何でも決められる」へ
+    /// 反転する**ため（`*` 1 文字も送れてしまう）。
+    ///
+    /// `allow` の 1 件目が入ると、**次のターンからそのサーヴァントへ `run` が
+    /// 提示される**（2 段ゲートの 2 段目が開く）。
+    pub async fn approve_command(
+        &self,
+        id: &AgentId,
+        command: &str,
+        args: &[String],
+        open: bool,
+    ) -> CoreResult<ApprovalOutcome> {
+        self.shared
+            .store
+            .update_command_policy(id, |policy| policy.approve(command, args, open))
+            .await
+    }
+
+    /// `pending` の 1 件を却下して `deny` へ入れる（Spec 20）。
+    pub async fn reject_command(
+        &self,
+        id: &AgentId,
+        command: &str,
+        args: &[String],
+        open: bool,
+    ) -> CoreResult<ApprovalOutcome> {
+        self.shared
+            .store
+            .update_command_policy(id, |policy| policy.reject(command, args, open))
+            .await
     }
 
     // ---- 村の黒板 -------------------------------------------------------------

@@ -35,7 +35,7 @@ use crate::command::{CommandPolicy, Decision};
 use crate::config_store::ConfigStore;
 use crate::error::CoreResult;
 use crate::llm::ToolSpec;
-use crate::model::{AgentId, ConfigFileKind};
+use crate::model::AgentId;
 use crate::tool::{AgentTool, ToolContext};
 use crate::tools::fs::MAX_OUTPUT_CHARS;
 
@@ -79,19 +79,16 @@ impl RunTool {
         Self { store }
     }
 
-    /// `agents/{id}/run.json` を読む。無ければ既定（**全部 pending**）。
+    /// 照合のために `run.json` を読む。**判定は必ず fail closed 側へ倒す。**
     ///
-    /// 壊れた JSON は**既定へ落とす**（`allow` が消えるので安全側）。
+    /// 未作成・空・壊れた JSON はすべて既定（`allow` も `deny` も空 = 全部
+    /// pending）。**読みでは既定へ落としてよい** — 何も実行できなくなるだけで、
+    /// 危険側へは倒れない。
+    ///
+    /// **書き戻す経路では既定へ落とさない**（`update_command_policy`）。
+    /// 落とした既定をファイルへ書くと、人が書いた `allow` / `deny` が消える。
     async fn load(&self, id: &AgentId) -> CommandPolicy {
-        let text = self
-            .store
-            .read_config(id, ConfigFileKind::Run)
-            .await
-            .unwrap_or_default();
-        if text.trim().is_empty() {
-            return CommandPolicy::default();
-        }
-        match serde_json::from_str::<CommandPolicy>(&text) {
+        match self.store.read_command_policy(id).await {
             Ok(policy) => policy,
             Err(err) => {
                 crate::note!("command policy broken: agent={id} err={err}");
@@ -102,30 +99,26 @@ impl RunTool {
 
     /// `pending` を 1 件足して書き戻す。
     ///
-    /// **全文上書きにしない。** 人が `allow` / `deny` / `timeoutSecs` を編集して
-    /// いても壊さないよう、**毎回読み直してから `pending` だけを差分適用**する。
-    /// 競合したら 3 回まで retry し、それでも駄目なら WARN 1 行で続行
-    /// （保存の失敗で実行の答えを変えない）。
+    /// **全文上書きにしない。** 読み直し → 差分適用 → 3 回 retry は
+    /// `ConfigStore::update_command_policy` が持つ（承認経路と同じ 1 実装）。
+    /// 失敗は WARN 1 行で続行する — **保存の失敗で実行の答えを変えない**。
+    ///
+    /// **壊れた JSON では何も書かない。** 以前はここで既定へ落として書き戻して
+    /// おり、実測で人の `allow` / `deny` が両方消えた。
     async fn note_pending(&self, id: &AgentId, command: &str, args: &[String]) {
-        for _ in 0..3 {
-            let mut fresh = self.load(id).await;
-            let evicted = fresh.note_pending(command, args, crate::command::now_ms());
-            if let Some(note) = evicted {
-                crate::note!("command pending evicted: agent={id} {note}");
-            }
-            let Ok(text) = serde_json::to_string_pretty(&fresh) else {
-                return;
-            };
-            if self
-                .store
-                .write_config(id, ConfigFileKind::Run, &text)
-                .await
-                .is_ok()
-            {
-                return;
+        let result = self
+            .store
+            .update_command_policy(id, |policy| {
+                policy.note_pending(command, args, crate::command::now_ms())
+            })
+            .await;
+        match result {
+            Ok(Some(note)) => crate::note!("command pending evicted: agent={id} {note}"),
+            Ok(None) => {}
+            Err(err) => {
+                crate::note!("command pending save failed: agent={id} command={command} err={err}")
             }
         }
-        crate::note!("command pending save failed: agent={id} command={command}");
     }
 }
 
@@ -477,6 +470,39 @@ mod tests {
         }
     }
 
+    /// **壊れた `run.json` を、既定で上書きしない。**
+    ///
+    /// 旧実装は読みで既定へ落とし、その既定を書き戻していた。実測で人が書いた
+    /// `allow: ["git log *"]` と `deny: ["rm *"]` が**両方消えた**。
+    /// 読みの寛容さ（fail closed）と書きの寛容さ（データ損失）は別物。
+    #[tokio::test]
+    async fn a_broken_policy_is_never_overwritten_with_the_default() {
+        let dir = std::env::temp_dir().join(format!(
+            "concordia-broken-policy-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("agents").join("agent_01")).unwrap();
+        let path = dir.join("agents").join("agent_01").join("run.json");
+        let broken = r#"{"allow":["git log *"],"deny":["rm *"]} oops"#;
+        std::fs::write(&path, broken).unwrap();
+
+        let tool = RunTool::new(ConfigStore::new(&dir));
+        let id = AgentId::from("agent_01");
+        tool.note_pending(&id, "cargo", &["test".to_string()]).await;
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            broken,
+            "壊れたファイルは 1 バイトも変えない（人が直せる状態のまま残す）"
+        );
+        // 照合側は既定へ落ちるので、実行は許されない（fail closed は保つ）。
+        assert_eq!(tool.load(&id).await.decide("git", &["log".to_string()]), Decision::Unknown);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[tokio::test]
     async fn it_returns_the_resolved_path_exit_code_and_stdout() {
         let program = shell_program();

@@ -22,6 +22,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::command::CommandPolicy;
 use crate::error::{CoreError, CoreResult};
 use crate::model::{AgentId, AgentSpec, ConfigFileKind};
 use crate::schedule::ScheduledTask;
@@ -267,6 +268,53 @@ impl ConfigStore {
     /// エージェントのアイコンを削除する。未設定でも成功として扱う（削除は冪等）。
     pub async fn delete_icon(&self, id: &AgentId) -> CoreResult<()> {
         Self::delete_icon_at(self.agent_dir(id)?.join(ICON_FILE)).await
+    }
+
+    /// `run.json` を読む（Spec 20 で共有化）。
+    ///
+    /// **未作成・空は既定**（`allow` が空 = 全部 pending = fail closed）。
+    /// **壊れた JSON は `Err`。既定へ落とさない。**
+    ///
+    /// # 落とすと何が起きるか
+    ///
+    /// 読むだけなら既定へ落としても安全側（`allow` も `deny` も消えるので
+    /// 全部 pending になる）。**壊れるのは、その既定を書き戻したとき** —
+    /// 人が書いた `allow` / `deny` が丸ごと消えたファイルで上書きされる。
+    /// 実測で `allow: ["git log *"]` / `deny: ["rm *"]` が両方消えた。
+    /// **読みの寛容さと書きの寛容さは別物**なので、`Err` を返せる形にして
+    /// 判断を呼び出し側へ渡す。
+    pub async fn read_command_policy(&self, id: &AgentId) -> CoreResult<CommandPolicy> {
+        let text = self.read_config(id, ConfigFileKind::Run).await?;
+        if text.trim().is_empty() {
+            return Ok(CommandPolicy::default());
+        }
+        serde_json::from_str::<CommandPolicy>(&text).map_err(CoreError::from)
+    }
+
+    /// `run.json` を**読み直してから**変更を適用して書き戻す（Spec 20 で共有化）。
+    ///
+    /// **全文上書きにしない**ための唯一の経路。人が `allow` / `deny` /
+    /// `timeoutSecs` を編集していても、その編集の上へ差分だけを乗せる。
+    /// 書き込みに失敗したら最大 3 回まで読み直しからやり直す。
+    ///
+    /// **壊れた JSON では何もせず `Err`。** 上の doc のとおり、ここで既定へ
+    /// 落として書くと人の編集が消える。
+    pub async fn update_command_policy<T>(
+        &self,
+        id: &AgentId,
+        mut apply: impl FnMut(&mut CommandPolicy) -> T,
+    ) -> CoreResult<T> {
+        let mut last = None;
+        for _ in 0..3 {
+            let mut policy = self.read_command_policy(id).await?;
+            let outcome = apply(&mut policy);
+            let text = serde_json::to_string_pretty(&policy).map_err(CoreError::from)?;
+            match self.write_config(id, ConfigFileKind::Run, &text).await {
+                Ok(()) => return Ok(outcome),
+                Err(err) => last = Some(err),
+            }
+        }
+        Err(last.expect("3 回とも失敗したなら理由が 1 つは残っている"))
     }
 
     /// 村の条例を読む。未設定なら空文字。
@@ -669,6 +717,76 @@ mod tests {
         assert_eq!(store.read_icon(&id).await.unwrap(), None);
     }
 
+    /// **人の手編集を機械が潰さない**（`update_command_policy` は毎回読み直す）。
+    ///
+    /// この保証は `merge_pending_into` のテストが担っていた。Spec 20 で
+    /// あの関数を撤去したので、**保証をここへ移し替える** — 移さないと
+    /// 「誰も覆っていない不変条件」が残る（failures.md #62 と同型）。
+    #[tokio::test]
+    async fn a_policy_update_never_clobbers_the_human_edits() {
+        let dir = TempDir::new("policy-update");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+
+        // 人が allow / deny / timeoutSecs を書いた状態。
+        store
+            .write_config(
+                &id,
+                ConfigFileKind::Run,
+                r#"{"allow":["git log *"],"deny":["rm *"],"timeoutSecs":300}"#,
+            )
+            .await
+            .unwrap();
+
+        // 機械が pending を 1 件足す。
+        store
+            .update_command_policy(&id, |policy| {
+                let _ = policy.note_pending("cargo", &["test".to_owned()], 42);
+            })
+            .await
+            .unwrap();
+
+        let after = store.read_command_policy(&id).await.unwrap();
+        assert_eq!(after.allow, vec!["git log *"], "人の allow が残る");
+        assert_eq!(after.deny, vec!["rm *"]);
+        assert_eq!(after.timeout_secs, 300, "人の timeoutSecs が残る");
+        assert_eq!(after.pending.len(), 1);
+    }
+
+    /// 壊れた JSON は `Err`。**既定へ落とさない**（落として書くと人の編集が消える）。
+    #[tokio::test]
+    async fn a_broken_policy_reads_as_an_error_not_as_the_default() {
+        let dir = TempDir::new("policy-broken");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+        let path = dir.0.join("agents").join("agent_01");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("run.json"), "{ oops").unwrap();
+
+        assert!(store.read_command_policy(&id).await.is_err());
+        assert!(
+            store.update_command_policy(&id, |_| ()).await.is_err(),
+            "壊れていたら書き込みへ進まない"
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.join("run.json")).unwrap(),
+            "{ oops",
+            "1 バイトも変えない"
+        );
+    }
+
+    /// 未作成は既定として読める（fail closed = allow が空）。
+    #[tokio::test]
+    async fn a_missing_policy_reads_as_the_fail_closed_default() {
+        let dir = TempDir::new("policy-missing");
+        let store = ConfigStore::new(&dir.0);
+        let policy = store
+            .read_command_policy(&AgentId::from("agent_01"))
+            .await
+            .unwrap();
+        assert!(policy.allow.is_empty());
+        assert!(!policy.offers_anything(), "run は提示されない");
+    }
     #[tokio::test]
     async fn missing_config_reads_as_empty_string() {
         let dir = TempDir::new("missing");
