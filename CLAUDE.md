@@ -75,7 +75,12 @@ Concordia のテイストから降りてシステム用語にする**。UI ラ�
 
 **Spec 01〜17 のうち、実装が残っているものは無い。** 2026-08-05 に Spec 16 / 17 が
 P0〜P3 まで着地し、**リポジトリは公開できる状態になった**（MPL-2.0・リリース
-workflow・版番号表示）。**Spec 18 は rev3 承認・未決ゼロ**で、実装は次セッション。
+workflow・版番号表示）。**Spec 18 は rev3 承認 → P0〜P4 まで同日完了**
+（コミット `703ffd9` / `40ea4ff` / `747af23` / `55dfc03` / `bbe6083`。
+P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
+**残: P5（README 日英 — 旧 RAG の記述の回収と同梱ツール表 8 → 9 本）と実機確認 3 件**
+（Acceptance: specs/ を宣言して outline → search → read で全文を読まずに答える /
+specs/ と blackboard/ の差 / 宣言外の拒否から宣言済みへの切り替え）。
 
 **2026-08-05 に入ったもの（14 コミット）**:
 
@@ -141,8 +146,16 @@ batch-sd** — **rev2 承認 → P0〜P3 完了。残るは実機確認 3 件の
 **`run decision:` を足したのと同じ形**で、結合テスト 1 本
 （`tests/grep_include_log.rs`）で留めた。**Spec は切っていない** —
 既存の判断を見えるようにするだけで、決めることが無いため
-(3) **[Spec 18](specs/18_bundled-doc-index.md) 見出し索引の同梱** — **rev3 承認・未決ゼロ。
-実装は次セッション**（2026-08-05 利用者判断）。Manuale（MCP サーバー・
+(3) **[Spec 18](specs/18_bundled-doc-index.md) 見出し索引の同梱** — **rev3 承認 →
+P0〜P4 完了（2026-08-05）。残は P5（README 日英）と実機確認 3 件**。
+実装は同日のセッションで完走した（利用者が「次セッション」判断を覆して指示）。
+着地の要点: `doc_index.rs`（純機構・単体 12 本）+ `tools/rag.rs`（単体 8 本・
+2 段ゲート / 節経路つき search / 超過拒否 / 宣言外拒否）+ `ToolContext.rag_roots` +
+定数 9/8 本 + D10（役職から除去・分類 2+3+6）+ 旧 RAG 撤去（P4 単独コミット）。
+**実装で 1 つ穴が出た** — Spec の削除一覧は `rag.rs` の 3 型しか数えておらず、
+**その型しか使っていない隣の機構**（`compute.rs` の `top_k_similar` /
+`cosine_similarity` / `Scored`・`OrchestratorConfig.rag_top_k`）を数えていなかった。
+撤去の grep は型名だけでなく**その型を運ぶ関数の呼び出し元**まで 1 段辿る。Manuale（MCP サーバー・
 1,685 行）の核を `AgentTool` 1 本として取り込み、**使われていない同梱 RAG
 （`rag.rs`）を置き換える**。新規依存は **`pulldown-cmark` 1 本だけ** —
 `rmcp` / `git2`（唯一の C 依存）/ `ignore` / `grep-*` は同梱すると全部落ちる
