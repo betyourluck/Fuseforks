@@ -1649,6 +1649,33 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// 利用者の呼び名（Spec 19）。`None` = 未設定。
+    ///
+    /// 未設定を既定値へ倒さずそのまま返すのは、**画面が「未設定である」ことを
+    /// 示せるようにする**ため（`language` と違い、こちらは未設定が正常な状態）。
+    pub async fn user_name(&self) -> Option<String> {
+        self.shared
+            .world
+            .read()
+            .await
+            .user_name()
+            .map(str::to_owned)
+    }
+
+    /// 利用者の呼び名を差し替え、`world.json` へ書き戻す。`None` で既定へ戻す。
+    ///
+    /// 次のターンの封筒から効く（`attribute_sender` は呼び出しのたびに `World`
+    /// から引く）。**過去の履歴と会話ログの `【送り手: 旧名】` は直さない** —
+    /// 残り香を消す機構は作らない（`user_identity_contract` 凍結 8）。
+    ///
+    /// # Errors
+    /// 書式が受け入れ条件を満たさない場合 [`CoreError::InvalidUserName`]。
+    /// **拒否したときはメモリもファイルも触らない。**
+    pub async fn set_user_name(&self, name: Option<&str>) -> CoreResult<()> {
+        self.shared.world.write().await.set_user_name(name)?;
+        self.persist().await
+    }
+
     // ---- 資格情報 -----------------------------------------------------------
 
     /// テンプレートの API キーを OS の資格情報ストアへ登録する。
@@ -2616,6 +2643,13 @@ async fn agent_loop(
     }
 }
 
+/// 呼び名が未設定のときに封筒へ入る名前（`user_identity_contract` 凍結 2）。
+///
+/// **言語に追従させない。** 会話ペインの表示名（`chat.you`）は追従するが、
+/// こちらは追従しない — この非対称は Spec 19 の起票時からある既存の挙動で、
+/// 揃えると既存の村の履歴の途中で送り手名が変わる。
+pub const DEFAULT_USER_LABEL: &str = "ユーザー";
+
 /// 受信した発話へ送り手の封筒を付ける。
 ///
 /// ユーザーの言葉もエージェントからの転送も同じ user ロールで届くため、名前を
@@ -2625,7 +2659,14 @@ async fn agent_loop(
 /// 過去のターンだけ出所不明に戻る）。
 async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> String {
     let sender_label = match &incoming.from {
-        Endpoint::User => "ユーザー".to_owned(),
+        // 利用者が呼び名を設定していればそれを使う（Spec 19）。
+        // **設定していないときは言語に追従させず既定のまま** — 追従させると
+        // 既存の en の村で封筒が変わり、同じ会話の履歴の途中で送り手名が
+        // 切り替わる（履歴は保存済みの文字列なので遡って直らない）。
+        Endpoint::User => {
+            let world = shared.world.read().await;
+            world.user_name().unwrap_or(DEFAULT_USER_LABEL).to_owned()
+        }
         // 表示は UI と同じ「Concordia」。プロンプトと画面で同じ送り手が
         // 違う名前になると、利用者とエージェントの会話が噛み合わない。
         Endpoint::System => "Concordia".to_owned(),

@@ -6536,6 +6536,148 @@ async fn adding_a_role_does_not_move_the_stable_prefix() {
     assert!(systems[1].contains("［調査役］"), "可変部にだけ現れる");
 }
 
+/// 呼び名を設定すると封筒が変わり、**system ブロックには 1 文字も現れない**
+/// （`user_identity_contract` 凍結 2 / 3 / 6）。
+///
+/// 呼び名が system に現れないことが、`stable_len` が動かないことの証明になる —
+/// 安定境界は system ブロックの中の位置なので、そこに無い文字列は境界を動かせない。
+/// **ここが破れると、呼び名を変えただけで全エージェントのキャッシュが割れる。**
+#[tokio::test]
+async fn setting_a_user_name_changes_the_envelope_but_never_enters_the_system_block() {
+    /// 呼び出しごとにメッセージ列を丸ごと控えるバックエンド。
+    /// `PromptProbeBackend` は system しか見ないので、封筒（user ロール）が要る
+    /// この検査には使えない。
+    #[derive(Default)]
+    struct FullProbeBackend {
+        turns: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for FullProbeBackend {
+        fn name(&self) -> &str {
+            "full-probe"
+        }
+
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            self.turns.lock().unwrap().push(req.messages.clone());
+            Ok(ChatResponse {
+                text: Some("了解".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage {
+                    prompt: 1,
+                    completion: 1,
+                    cache_read: 0,
+                },
+                grounding: Default::default(),
+            })
+        }
+    }
+
+    let dir = TempDir::new("user-name-envelope");
+    let backend = Arc::new(FullProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "一度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    orchestrator.set_user_name(Some("たかはし")).await.unwrap();
+
+    orchestrator.send_user_message(&id, "二度目").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let turns = backend.turns.lock().unwrap();
+    assert_eq!(turns.len(), 2, "2 ターン分の記録があること");
+
+    // その周に届いた発話 = 最後の user ロール。
+    let incoming = |turn: &Vec<ChatMessage>| -> String {
+        turn.iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .expect("user ロールの発話")
+            .content
+            .clone()
+    };
+    let system = |turn: &Vec<ChatMessage>| -> String {
+        turn.iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n---\n")
+    };
+
+    assert!(
+        incoming(&turns[0]).contains("【送り手: ユーザー】"),
+        "未設定なら既定の呼び名: {}",
+        incoming(&turns[0])
+    );
+    assert!(
+        incoming(&turns[1]).contains("【送り手: たかはし】"),
+        "設定したら封筒が変わる: {}",
+        incoming(&turns[1])
+    );
+    assert!(
+        !incoming(&turns[1]).contains("【送り手: ユーザー】"),
+        "新しい封筒に既定が混ざらない"
+    );
+
+    // **凍結 6。** 呼び名は毎ターンの user ロール本文にしか入らない。
+    for (i, turn) in turns.iter().enumerate() {
+        assert!(
+            !system(turn).contains("たかはし"),
+            "{i} ターン目の system に呼び名が漏れている（stable_len が動く）"
+        );
+    }
+}
+
+/// 呼び名の拒否は**メモリもファイルも触らない**（`user_identity_contract` 凍結 4）。
+///
+/// 「保存したのに黙って別の値になる」も「拒否したのに前の値が消える」も作らない。
+#[tokio::test]
+async fn a_rejected_user_name_touches_neither_memory_nor_the_file() {
+    let dir = TempDir::new("user-name-reject");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    orchestrator.set_user_name(Some("  たかはし  ")).await.unwrap();
+    assert_eq!(
+        orchestrator.user_name().await.as_deref(),
+        Some("たかはし"),
+        "保存経路でも trim される"
+    );
+    let saved = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(saved.contains("\"userName\""), "camelCase で書かれる: {saved}");
+    assert!(saved.contains("たかはし"));
+
+    for bad in ["", "   ", "だめ】", "だめ\nです", &"あ".repeat(33)] {
+        let err = orchestrator.set_user_name(Some(bad)).await.unwrap_err();
+        assert_eq!(err.code(), "INVALID_USER_NAME", "拒否されるべき: {bad:?}");
+    }
+    assert_eq!(
+        orchestrator.user_name().await.as_deref(),
+        Some("たかはし"),
+        "拒否しても前の値が残る"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.0.join("world.json")).unwrap(),
+        saved,
+        "拒否でファイルは 1 バイトも変わらない"
+    );
+
+    // 既定へ戻すと欄ごと消える（skip_serializing_if）。
+    orchestrator.set_user_name(None).await.unwrap();
+    assert_eq!(orchestrator.user_name().await, None);
+    let cleared = std::fs::read_to_string(dir.0.join("world.json")).unwrap();
+    assert!(!cleared.contains("userName"), "未設定は欄ごと書かない: {cleared}");
+}
+
 /// 機構 7: 役職表示が変わると System 行が 1 本出る。
 /// **付与・改名・削除の 3 経路とも**（判定は「表示名が変わったか」の 1 点）。
 #[tokio::test]

@@ -186,6 +186,50 @@ impl Language {
     }
 }
 
+/// 利用者の呼び名の字数上限（`user_identity_contract` 凍結 4）。
+///
+/// 呼び名は封筒 `【送り手: {名前}】` として**毎ターン・全宛先**に乗るので、
+/// 長い名前は全ターンの固定費になる。
+pub const USER_NAME_MAX_CHARS: usize = 32;
+
+/// 封筒の閉じ括弧。呼び名に含めると 1 つの発話に封筒が 2 つあるように読める。
+const USER_NAME_RESERVED: char = '】';
+
+/// 利用者の呼び名を正規化して検証する（`user_identity_contract` 凍結 4）。
+///
+/// 成功したら **trim 済みの文字列**を返す。失敗したら拒否の理由を返す —
+/// **理由に入力値そのものを載せない**（拒否の過程で壊れた値を再放流しない）。
+///
+/// 純関数として切り出してあるのは、保存経路（`set_user_name`）と読み込み経路
+/// （[`World::from_persisted`] の遡及回収）の**両方が同じ述語を通す**ため。
+/// 入口だけを塞ぐと、塞ぐ前に手で書かれた値がそのまま封筒へ流れる。
+///
+/// # 字数はコードポイントで数える
+///
+/// [`str::len`] は UTF-8 のバイト長なので、日本語なら**上限の 1/3 で発火する**。
+/// `MAX_*_CHARS` という名前の定数を `len()` と突き合わせる誤りは、この村の査読で
+/// 2 回続けて出ている（ASCII だけのテストでは通ってしまう）。
+pub fn normalize_user_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err("空にはできません。呼び名を消すには「既定へ戻す」を選んでください".to_owned());
+    }
+    if name.contains(USER_NAME_RESERVED) {
+        return Err(format!("`{USER_NAME_RESERVED}` は使えません（送り手の表示に使う記号です）"));
+    }
+    if name.chars().any(char::is_control) {
+        return Err("改行や制御文字は使えません（呼び名は 1 行で表示されます）".to_owned());
+    }
+    // **バイト長ではなくコードポイント数**で数える（上の doc）。
+    let chars = name.chars().count();
+    if chars > USER_NAME_MAX_CHARS {
+        return Err(format!(
+            "{USER_NAME_MAX_CHARS} 字以内にしてください（現在 {chars} 字）"
+        ));
+    }
+    Ok(name.to_owned())
+}
+
 /// 永続化される世界の状態。
 ///
 /// `Instant` は直列化できないため、保存対象は定義とテンプレートのみ。
@@ -218,6 +262,17 @@ pub struct PersistedWorld {
     /// 起動時に OS から確定し直される。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 利用者の呼び名（Spec 19。`None` = 未設定 = 封筒は既定の「ユーザー」）。
+    ///
+    /// **村の共有物なので `world.json` に住む** — 封筒 `【送り手: {名前}】` は
+    /// `AgentRecord.history` と `session_store` の両方へ**文字列そのもの**として
+    /// 入るので、`language` と同じ理由で `localStorage` には置けない。
+    ///
+    /// **生の文字列で受ける**（`language` と同じ判断）。手編集で書式が壊れていても
+    /// `world.json` ごと開けなくなるのは罰が重すぎる。検証と正規化は
+    /// [`World::from_persisted`] が [`normalize_user_name`] を通して担う。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_name: Option<String>,
     /// 役職（Spec 14）。エージェントの雛形と、場に見えるラベル。
     ///
     /// **村の共有物**なので `world.json` に住む — 村を配ると役職も付いて回る。
@@ -236,6 +291,9 @@ pub struct World {
     token_budget: Option<u64>,
     /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
     language: Option<Language>,
+    /// 利用者の呼び名（Spec 19）。意味論は [`PersistedWorld::user_name`]。
+    /// **ここに入るのは検証を通った値だけ**（読み込みでも保存でも同じ述語を通す）。
+    user_name: Option<String>,
     /// 役職（Spec 14）。意味論は [`PersistedWorld::roles`]。
     roles: BTreeMap<AgentRoleId, AgentRole>,
 }
@@ -278,6 +336,25 @@ impl World {
             }
             None => None,
         };
+        // 手編集で書式が壊れた呼び名は落とす（未設定へ倒す）。**入口を塞ぐだけでは
+        // 足りない** — 塞ぐ前に書かれた値はそのまま封筒へ流れる。api_key_env の
+        // 事故の処方 (2)「読み込み時に不正値を落とす」の写し。
+        //
+        // **ファイルへは書き戻さない。** 呼び名は秘密ではないので、ディスクに残る
+        // 害は「起動のたびに WARN が出る」だけで、むしろ手で直す手掛かりになる
+        // （api_key_env が書き戻しを要したのは、残るのが秘密だったから）。
+        // 次に何かを保存した時点で to_persisted が None を書いて消える。
+        world.user_name = match persisted.user_name.as_deref() {
+            Some(raw) => match normalize_user_name(raw) {
+                Ok(name) => Some(name),
+                Err(reason) => {
+                    // **理由だけを出し、値は出さない**（拒否の過程で再放流しない）。
+                    crate::note!("user name: 保存された呼び名を未設定として扱います（{reason}）");
+                    None
+                }
+            },
+            None => None,
+        };
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
@@ -312,6 +389,7 @@ impl World {
             topology_positions: self.topology_positions.clone(),
             token_budget: self.token_budget,
             language: self.language.map(|l| l.as_str().to_string()),
+            user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
         }
     }
@@ -334,6 +412,27 @@ impl World {
     /// UI の表示言語を確定させる。
     pub fn set_language(&mut self, language: Language) {
         self.language = Some(language);
+    }
+
+    /// 利用者の呼び名。`None` = 未設定（封筒は既定の「ユーザー」になる）。
+    pub fn user_name(&self) -> Option<&str> {
+        self.user_name.as_deref()
+    }
+
+    /// 利用者の呼び名を差し替える。`None` で既定へ戻す。
+    ///
+    /// # Errors
+    /// 書式が受け入れ条件を満たさない場合 [`CoreError::InvalidUserName`]。
+    /// **拒否したときは 1 バイトも変更しない**（「保存したのに別の値になる」を作らない）。
+    pub fn set_user_name(&mut self, name: Option<&str>) -> CoreResult<()> {
+        self.user_name = match name {
+            Some(raw) => Some(
+                normalize_user_name(raw)
+                    .map_err(|reason| CoreError::InvalidUserName { reason })?,
+            ),
+            None => None,
+        };
+        Ok(())
     }
 
     // ---- エージェント -------------------------------------------------------
@@ -757,6 +856,7 @@ mod tests {
             topology_positions: BTreeMap::new(),
             token_budget: None,
             language: None,
+            user_name: None,
             roles: Vec::new(),
         };
         let world = World::from_persisted(persisted);
@@ -785,6 +885,90 @@ mod tests {
         let mut world = World::new();
         world.set_language(Language::Ja);
         assert_eq!(world.to_persisted().language.as_deref(), Some("ja"));
+    }
+
+    /// 呼び名の受け入れ条件 4 つ（`user_identity_contract` 凍結 4）。
+    #[test]
+    fn a_user_name_is_rejected_when_empty_reserved_control_or_too_long() {
+        assert!(normalize_user_name("").is_err(), "空");
+        assert!(normalize_user_name("   ").is_err(), "空白のみ");
+        assert!(normalize_user_name("た】か").is_err(), "封筒の閉じ括弧");
+        assert!(normalize_user_name("た\nか").is_err(), "改行");
+        assert!(normalize_user_name("た\tか").is_err(), "タブ");
+
+        assert_eq!(normalize_user_name("  たかはし  ").unwrap(), "たかはし");
+        // 封筒の開き括弧は通す — 閉じないので封筒の境界は壊れない。
+        assert_eq!(normalize_user_name("【ぬし").unwrap(), "【ぬし");
+    }
+
+    /// **字数はコードポイントで数える。**
+    ///
+    /// `str::len` は UTF-8 のバイト長で、日本語は 1 字 3 バイト — 上限の 1/3 で
+    /// 発火する。この村の査読で 2 回続けて出た誤りで、**ASCII だけのテストでは
+    /// 通ってしまう**ので、境界は必ず日本語で踏む。
+    #[test]
+    fn a_user_name_is_measured_in_chars_not_bytes() {
+        let at_limit = "あ".repeat(USER_NAME_MAX_CHARS);
+        assert_eq!(at_limit.chars().count(), USER_NAME_MAX_CHARS);
+        assert!(
+            at_limit.len() > USER_NAME_MAX_CHARS,
+            "バイト長は上限を超えている（超えていないとこのテストが誤りを検出できない）"
+        );
+        assert!(normalize_user_name(&at_limit).is_ok(), "ちょうど上限は通る");
+
+        let over = "あ".repeat(USER_NAME_MAX_CHARS + 1);
+        assert!(normalize_user_name(&over).is_err(), "1 字超過は拒否");
+    }
+
+    /// 拒否の理由に**入力値そのものを載せない**（拒否の過程で再放流しない）。
+    #[test]
+    fn a_rejection_reason_never_echoes_the_input() {
+        let secret = "ひみつ".repeat(20);
+        let reason = normalize_user_name(&secret).unwrap_err();
+        assert!(!reason.contains("ひみつ"), "理由に入力値が出ている: {reason}");
+    }
+
+    /// 手編集で壊れた呼び名は読み込みで未設定へ倒す。
+    ///
+    /// **入口（`set_user_name`）を塞ぐだけでは足りない** — 塞ぐ前に書かれた値は
+    /// そのまま封筒へ流れる。api_key_env の処方 (2) の写し。
+    #[test]
+    fn a_malformed_stored_user_name_falls_back_to_unset() {
+        let broken = PersistedWorld {
+            user_name: Some("こわれ】た".into()),
+            ..Default::default()
+        };
+        assert_eq!(World::from_persisted(broken).user_name(), None);
+
+        let padded = PersistedWorld {
+            user_name: Some("  たかはし  ".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            World::from_persisted(padded).user_name(),
+            Some("たかはし"),
+            "読み込みでも trim される（保存経路と同じ述語を通る）"
+        );
+    }
+
+    /// 拒否したときは 1 バイトも変えない（「保存したのに別の値になる」を作らない）。
+    #[test]
+    fn a_rejected_user_name_leaves_the_previous_value_intact() {
+        let mut world = World::new();
+        world.set_user_name(Some("たかはし")).unwrap();
+        assert_eq!(world.user_name(), Some("たかはし"));
+
+        let err = world.set_user_name(Some("だめ】")).unwrap_err();
+        assert_eq!(err.code(), "INVALID_USER_NAME");
+        assert_eq!(world.user_name(), Some("たかはし"), "拒否で巻き戻らない");
+
+        world.set_user_name(None).unwrap();
+        assert_eq!(world.user_name(), None, "None は既定へ戻す（検証しない）");
+        assert_eq!(
+            world.to_persisted().user_name,
+            None,
+            "未設定はファイルへ書かない（skip_serializing_if）"
+        );
     }
 
     /// OS ロケールの表記揺れ（`ja-JP` / `ja_JP` / `ja`）は前方一致で吸収し、
@@ -949,6 +1133,7 @@ mod tests {
             ]),
             token_budget: None,
             language: None,
+            user_name: None,
             roles: Vec::new(),
         };
 

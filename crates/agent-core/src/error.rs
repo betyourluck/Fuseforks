@@ -165,6 +165,23 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 利用者の呼び名が受け入れ条件を満たさない（`user_identity_contract` 凍結 4）。
+    ///
+    /// 呼び名は封筒 `【送り手: {名前}】` としてサーヴァントのプロンプトと履歴の
+    /// 両方へ入るので、書式が壊れると 1 つの発話が 2 つに読める。**注意書きでは
+    /// 塞げない** — `api_key_env` は 4 箇所に注意文を置いて型は素の `String` の
+    /// ままで、実キーが平文で保存された。
+    ///
+    /// **`reason` に入力値そのものを載せない。** 拒否の過程で壊れた値を再放流
+    /// しないため、載せてよいのは規則と字数だけ。
+    // 文言は UI の語彙で書く（`InvalidTokenBudget` と同じ。settings_contract の
+    // 用語境界 — このメッセージは利用者に見える）。
+    #[error("呼び名を受け付けられません: {reason}")]
+    InvalidUserName {
+        /// 拒否した具体的な理由。**入力値は含めない。**
+        reason: String,
+    },
+
     /// OS の資格情報ストアの操作に失敗した。
     ///
     /// **秘密そのものはこのエラーに載せない。** 保管の失敗を伝えるために
@@ -236,6 +253,7 @@ impl CoreError {
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
             Self::InvalidIcon { .. } => "INVALID_ICON",
+            Self::InvalidUserName { .. } => "INVALID_USER_NAME",
             Self::SecretStore { .. } => "SECRET_STORE_FAILED",
             Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",
             // LLM 境界のコードはそのまま透過させ、UI 側で 1 つの体系として扱えるようにする。
