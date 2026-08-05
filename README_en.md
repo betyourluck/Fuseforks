@@ -734,11 +734,26 @@ The aim is not to add settings, but to **surface settings that already existed w
 |---|---|
 | General | Language (Japanese / English). Inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited" |
-| User Interface | Message visibility — currently just the confirmation dialog for **deleting a connection (line)** |
+| User Interface | **Theme** (Dark / Light) and message visibility — the latter is still just the confirmation dialog for **cutting a tie** |
 
+- **The theme switches the moment you pick one** (there is no Save button — appearance is
+  chosen by looking at the result, so a setting that waits for a click cannot be chosen).
+  **Until you choose, it follows the OS setting and is not persisted.** This is the opposite
+  discipline from language, which is inferred once and never re-inferred, and the reason is
+  where each lives: **language sits in `world.json` and is burned into the conversation log as
+  System lines**, so a later change of interpretation would contradict what was already saved.
+  The theme is device-local appearance only, so following the OS until an explicit choice
+  harms no one.
+- All colours live in one place in `style.css`. Dark is the `@theme` block (the side that
+  generates utilities); light overrides the variables from `:root[data-theme="light"]`.
+  **Role badges and avatars take only lightness and chroma from the theme** — a badge is used
+  as *text* colour, so a light hue is unreadable on a light ground. **Adding a token to only
+  one theme leaves exactly the places that use it in the other theme's colour**, so
+  `theme.test.ts` checks mechanically that both themes define the same set.
 - **There are two storage locations.** Language and token limit are **stored in the village**
-  (`world.json`), so they travel with it when shared. Screen settings are **stored on the device**,
-  so opening the same village on another PC gives different values. Each page states which one applies
+  (`world.json`), so they travel with it when shared. Screen settings (theme, confirmations)
+  are **stored on the device**, so opening the same village on another PC gives different
+  values. Each page states which one applies
 - **Unimplemented pages are not listed in the left menu.** Listing something you cannot touch
   would be a lie that shows the impossible as possible
 - **Orchestrator internals are not exposed** (history depth, hop limit, public-square-log window, and
