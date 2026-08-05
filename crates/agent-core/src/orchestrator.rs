@@ -1662,6 +1662,25 @@ impl Orchestrator {
             .map(str::to_owned)
     }
 
+    /// 利用者のアイコン（WebP バイト列）。未設定なら `None`（Spec 19）。
+    pub async fn user_icon(&self) -> CoreResult<Option<Vec<u8>>> {
+        self.shared.store.read_user_icon().await
+    }
+
+    /// 利用者のアイコンを保存する（Spec 19）。
+    ///
+    /// # Errors
+    /// WebP でない・サイズ上限超過の場合 [`CoreError::InvalidIcon`]。
+    /// 検証は**エージェントのアイコンと同じ述語**を通る（`icon_contract`）。
+    pub async fn set_user_icon(&self, bytes: &[u8]) -> CoreResult<()> {
+        self.shared.store.write_user_icon(bytes).await
+    }
+
+    /// 利用者のアイコンを削除する。未設定でも成功（Spec 19）。
+    pub async fn clear_user_icon(&self) -> CoreResult<()> {
+        self.shared.store.delete_user_icon().await
+    }
+
     /// 利用者の呼び名を差し替え、`world.json` へ書き戻す。`None` で既定へ戻す。
     ///
     /// 次のターンの封筒から効く（`attribute_sender` は呼び出しのたびに `World`

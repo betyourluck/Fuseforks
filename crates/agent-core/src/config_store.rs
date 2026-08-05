@@ -42,11 +42,21 @@ const SCHEDULES_FILE: &str = "schedules.json";
 /// ので、利用者が既に持っている設定をそのまま貼れる。
 const MCP_FILE: &str = "mcp.json";
 
-/// エージェントアイコンのファイル名。**中身は WebP に固定する。**
+/// アイコンのファイル名。**中身は WebP に固定する。**
 ///
 /// 変換（png / jpg → WebP・リサイズ）は UI 層の責務で、コアは受け入れ検証だけを持つ。
 /// 形式を 1 つに固定すると、表示側は MIME 判定なしで `image/webp` として扱える。
+///
+/// **アイコンは 2 種類ある**（`icon_contract`）— エージェントの
+/// `agents/{id}/icon.webp` と利用者の `user/icon.webp`（Spec 19）。
+/// **ファイル名も検証も共有し、違うのは親フォルダだけ。**
 const ICON_FILE: &str = "icon.webp";
+
+/// 利用者の設定を置くフォルダ名（Spec 19）。
+///
+/// `agents/` と並ぶ位置に置く。**`AgentId` に「利用者」を表す特別な値を作らない** —
+/// 作ると、その値が `world.agents` の検索や `Endpoint::Agent` の照合へ漏れる。
+const USER_DIR: &str = "user";
 
 /// アイコンの許容上限（bytes）。
 ///
@@ -155,12 +165,7 @@ impl ConfigStore {
 
     /// エージェントのアイコンを読む。未設定なら `None`。
     pub async fn read_icon(&self, id: &AgentId) -> CoreResult<Option<Vec<u8>>> {
-        let path = self.agent_dir(id)?.join(ICON_FILE);
-        match tokio::fs::read(&path).await {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(Self::io_err(&path, err)),
-        }
+        Self::read_icon_at(self.agent_dir(id)?.join(ICON_FILE)).await
     }
 
     /// エージェントのアイコンを書く。
@@ -170,6 +175,16 @@ impl ConfigStore {
     /// IPC から来る任意のバイト列をそのまま書くと、ワークスペースが
     /// 「画像のふりをした何か」の置き場になる。マジック番号とサイズで入口を絞る。
     pub async fn write_icon(&self, id: &AgentId, bytes: &[u8]) -> CoreResult<()> {
+        let dir = self.agent_dir(id)?;
+        Self::write_icon_at(dir, bytes).await
+    }
+
+    /// アイコンの受け入れ検証（`icon_contract`）。
+    ///
+    /// **2 種類のアイコンが同じ述語を通る。** 種類ごとに書き込み関数を分けても、
+    /// 検証だけは 1 実装にする — 2 箇所に書くと、片方の上限を変えたときに
+    /// もう片方が古い値のまま通し続ける。
+    fn validate_icon(bytes: &[u8]) -> CoreResult<()> {
         if bytes.len() > ICON_MAX_BYTES {
             return Err(CoreError::InvalidIcon {
                 reason: format!(
@@ -187,8 +202,14 @@ impl ConfigStore {
                 reason: "WebP 形式ではありません（UI 側で変換してから送る契約）".to_owned(),
             });
         }
+        Ok(())
+    }
 
-        let dir = self.agent_dir(id)?;
+    /// 検証してから、指定フォルダへアイコンを書く。
+    ///
+    /// 親フォルダの解決だけが呼び出し側の責務で、**検証と書き込みはここに 1 つ**。
+    async fn write_icon_at(dir: PathBuf, bytes: &[u8]) -> CoreResult<()> {
+        Self::validate_icon(bytes)?;
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|e| Self::io_err(&dir, e))?;
@@ -198,14 +219,54 @@ impl ConfigStore {
             .map_err(|e| Self::io_err(&path, e))
     }
 
-    /// エージェントのアイコンを削除する。未設定でも成功として扱う（削除は冪等）。
-    pub async fn delete_icon(&self, id: &AgentId) -> CoreResult<()> {
-        let path = self.agent_dir(id)?.join(ICON_FILE);
+    /// アイコンを読む共通実装。未設定なら `None`。
+    async fn read_icon_at(path: PathBuf) -> CoreResult<Option<Vec<u8>>> {
+        match tokio::fs::read(&path).await {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// アイコンを削除する共通実装。未設定でも成功（削除は冪等）。
+    async fn delete_icon_at(path: PathBuf) -> CoreResult<()> {
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(Self::io_err(&path, err)),
         }
+    }
+
+    /// 利用者のアイコンのパス（`{workspace}/user/icon.webp`）。
+    fn user_icon_path(&self) -> PathBuf {
+        self.root.join(USER_DIR).join(ICON_FILE)
+    }
+
+    /// 利用者のアイコンを読む。未設定なら `None`（Spec 19）。
+    pub async fn read_user_icon(&self) -> CoreResult<Option<Vec<u8>>> {
+        Self::read_icon_at(self.user_icon_path()).await
+    }
+
+    /// 利用者のアイコンを書く（Spec 19）。
+    ///
+    /// # Errors
+    /// WebP でない・サイズ上限超過の場合 [`CoreError::InvalidIcon`]。
+    /// **検証はエージェントのアイコンと同じ述語**（`validate_icon`）を通る。
+    pub async fn write_user_icon(&self, bytes: &[u8]) -> CoreResult<()> {
+        Self::write_icon_at(self.root.join(USER_DIR), bytes).await
+    }
+
+    /// 利用者のアイコンを削除する。未設定でも成功として扱う（Spec 19）。
+    ///
+    /// **利用者は削除されない**ので、エージェントのような「設定ディレクトリごと
+    /// 消える」連鎖が無い。消えるのはここを明示的に呼んだときだけ。
+    pub async fn delete_user_icon(&self) -> CoreResult<()> {
+        Self::delete_icon_at(self.user_icon_path()).await
+    }
+
+    /// エージェントのアイコンを削除する。未設定でも成功として扱う（削除は冪等）。
+    pub async fn delete_icon(&self, id: &AgentId) -> CoreResult<()> {
+        Self::delete_icon_at(self.agent_dir(id)?.join(ICON_FILE)).await
     }
 
     /// 村の条例を読む。未設定なら空文字。
@@ -541,6 +602,71 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// 最小の WebP コンテナ（マジック番号だけを満たすバイト列）。
+    fn webp(payload: &[u8]) -> Vec<u8> {
+        let mut bytes = b"RIFF\0\0\0\0WEBP".to_vec();
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    /// 利用者のアイコンは `{workspace}/user/icon.webp` を往復する（Spec 19）。
+    ///
+    /// フォルダが無くても書ける・消したら `None`・削除は冪等。
+    #[tokio::test]
+    async fn a_user_icon_roundtrips_through_its_own_folder() {
+        let dir = TempDir::new("user-icon");
+        let store = ConfigStore::new(&dir.0);
+
+        assert_eq!(store.read_user_icon().await.unwrap(), None, "未設定は None");
+        // 未設定でも削除は成功する（冪等）。
+        store.delete_user_icon().await.unwrap();
+
+        let bytes = webp(b"chikara");
+        // `user/` は存在しないが、書き込みが作る。
+        store.write_user_icon(&bytes).await.unwrap();
+        assert_eq!(store.read_user_icon().await.unwrap(), Some(bytes));
+        assert!(
+            dir.0.join("user").join("icon.webp").exists(),
+            "置き場は {{workspace}}/user/icon.webp"
+        );
+
+        store.delete_user_icon().await.unwrap();
+        assert_eq!(store.read_user_icon().await.unwrap(), None);
+    }
+
+    /// **検証は 2 種類のアイコンで 1 実装を共有する**（`icon_contract`）。
+    ///
+    /// 切り出した述語を戻して片方だけに書き直すと、このテストが落ちる。
+    /// 2 箇所に書くと、片方の上限を変えたときにもう片方が古い値のまま通し続ける。
+    #[tokio::test]
+    async fn both_icon_kinds_share_one_validator() {
+        let dir = TempDir::new("icon-validator");
+        let store = ConfigStore::new(&dir.0);
+        let id = AgentId::from("agent_01");
+
+        // WebP でないバイト列。
+        let not_webp = b"\x89PNG\r\n\x1a\n and some more bytes".to_vec();
+        for err in [
+            store.write_icon(&id, &not_webp).await.unwrap_err(),
+            store.write_user_icon(&not_webp).await.unwrap_err(),
+        ] {
+            assert_eq!(err.code(), "INVALID_ICON", "WebP でないものは両方とも拒否");
+        }
+
+        // 上限超過。
+        let oversized = webp(&vec![0u8; ICON_MAX_BYTES]);
+        for err in [
+            store.write_icon(&id, &oversized).await.unwrap_err(),
+            store.write_user_icon(&oversized).await.unwrap_err(),
+        ] {
+            assert_eq!(err.code(), "INVALID_ICON", "上限超過は両方とも拒否");
+        }
+
+        // 拒否した側にファイルは残らない。
+        assert_eq!(store.read_user_icon().await.unwrap(), None);
+        assert_eq!(store.read_icon(&id).await.unwrap(), None);
     }
 
     #[tokio::test]

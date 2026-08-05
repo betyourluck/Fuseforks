@@ -2,7 +2,7 @@
 
 **ID**: 19
 **Date**: 2026-08-05
-**Status**: **rev1 承認（2026-08-05）→ P0〜P1 完了**。次は P2（コア・アイコン）
+**Status**: **rev1 承認（2026-08-05）→ P0〜P2 完了**。次は P3（IPC と画面）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## P0 実装記録（2026-08-05）
@@ -66,6 +66,32 @@ Notes 3 は答えを得るためだけなら Phase 2 で足りたが、そこで
 **先に主張してから** `is_ok()` を見る。この 1 行が無いと、実装を `len()` へ
 戻してもテストが緑のままになる。`MAX_*_CHARS` を `len()` と突き合わせる誤りは
 この村の査読で 2 回続けて出ており、**どちらも ASCII だけのテストを通っていた**。
+
+## P2 実装記録（2026-08-05）
+
+`config_store.rs` に `USER_DIR` / `validate_icon` / `write_icon_at` / `read_icon_at` /
+`delete_icon_at` / `user_icon_path` / `read_user_icon` / `write_user_icon` /
+`delete_user_icon`、`orchestrator.rs` に `user_icon` / `set_user_icon` /
+`clear_user_icon`。単体 2 本（368 本全緑）。workspace 全緑・clippy 新規警告ゼロ。
+
+**実装で決めた 3 点**:
+
+- **切り出しは検証だけでなく read / delete まで広げた。** P1 の計画は
+  `validate_icon` の切り出しだけだったが、`read_icon` と `delete_icon` も
+  「パスを組んで同じ 5 行を書く」形で、利用者側でもう一度書くことになっていた。
+  結果として **`read_icon` / `delete_icon` / `write_icon` の 3 本とも本体が 1 行**に
+  なり、**違うのは親フォルダの解決だけ**という構造が形として出た
+- **`AgentId` に特別な値を作らない**を `USER_DIR` の doc に書いた。作ると
+  その値が `world.agents` の検索と `Endpoint::Agent` の照合へ漏れる。
+  `agent_dir` は `id.is_safe()` を通すが、`user_icon_path` は定数なので検査が要らない
+- **`{workspace}` 直下を列挙している箇所はゼロ**を実測で確かめた
+  （`read_dir` の呼び出しは `blackboard.rs` の `work_dir/blackboard/` と
+  `tools/fs.rs` の work_dir 内だけ）。**`user/` を足しても既存の走査に影響しない**
+
+**共有をテストで留めた** — `both_icon_kinds_share_one_validator` は WebP でない
+バイト列と上限超過を**両方の入口へ通して**同じ `INVALID_ICON` を要求する。
+述語を戻して片方だけに書き直すと落ちる。**「片方の上限を変えたときにもう片方が
+古い値のまま通し続ける」は、テストが無ければ画面にも出ない種類の壊れ方。**
 
 ## Goal
 

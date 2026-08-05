@@ -181,7 +181,9 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
 **封筒は毎ターンの user ロール本文なので `stable_len` は動かない**（呼び名を
 変えても全員のキャッシュは割れない）。**P1 完了**（`normalize_user_name` /
 `InvalidUserName` / `DEFAULT_USER_LABEL` / `attribute_sender` の分岐。単体 5 + 結合 2）。
-残 Phase: P2〜P5。
+**P2 完了**（`{workspace}/user/icon.webp`。`validate_icon` / `write_icon_at` /
+`read_icon_at` / `delete_icon_at` を切り出して**エージェントと利用者で 1 実装を共有**。
+単体 2）。残 Phase: P3〜P5。
 
 **P1 で「同じ事故の処方でも 3 点すべてが常に要るわけではない」が出た。**
 `api_key_env` の処方は (1) 保存時に拒否 (2) 読み込み時に不正値を落とす
