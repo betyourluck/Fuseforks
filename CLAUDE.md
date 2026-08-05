@@ -120,6 +120,34 @@ Concordia のテイストから降りてシステム用語にする**。UI ラ�
 発光させる**（旧: 既定が `--color-line` でホバーだけ accent = 常時見えるべきものを
 操作したときだけ見せていた）。`failures.md` #65 はその改修で自分が入れた退行。
 
+## カードから絆を引く（[Spec 21](specs/21_drag-to-connect.md)・2026-08-06。rev2 承認 → P0〜P1 + P3 完了）
+
+起点は利用者 —「編集ダイアログを開いて絆をつなげるのは面倒」。リストのカードを
+絆の地図のノードへ drop すると絆が張られる（3 つ目の入口。線は人が引く、は不変）。
+
+- **機構は保留コミット** — `@update:model-value` は配列を保留するだけ、`@end` の
+  素の `elementFromPoint` + `closest(".vue-flow__node")` で確定 or 破棄。
+  発火順 `update → end` は同梱 Sortable の `_onDrop` と playground 実走の両方で確定
+- **破棄だけでは DOM が移動後の並びのまま残る** — ソース読み
+  「vue-draggable-plus が emit 前に差し戻す」は実走で反証された。
+  `insertBefore(children[oldIndex])` の手動差し戻しが要る（P0 実測 3）
+- 追加規則は `lib/kizunaDrop.ts` の `tieAddition` に 1 実装（`TopologyMap.onConnect` の
+  ハンドルドラッグと drop の 2 経路が共有）。**接続済みは方向付き**（`A→B` があっても
+  `B→A` は張れる = 両端矢へ）。自己 no-op は新規規則だが、この版の Vue Flow は
+  ハンドル経路で自己接続の `@connect` を発火させない（対照実験済み）ので実効は
+  drop 経路の防御のみ
+- **D2（ドラッグ中のノードハイライト）は保留** — fps 47.5〜52.9 で基準 60 未達
+  （毎フレーム分身を display トグルする素朴実装での数字）。分身へ
+  `pointer-events: none` を 1 回打つ最適化後に P2 冒頭で再計測。
+  代替の copy カーソル（地図の矩形判定のみ）は P1 で入れた
+- **査読の前提 2 点を実測で訂正して採用**した経緯は Spec の rev2 Notes 6 —
+  矢印は既にある（`markerEnd` / `markerStart`）/ 逆向きの追加は両端矢へ変わる
+- 罠: 合成されていない（非表示の）ページでは Vue Flow のノード初期化が rAF 待ちで
+  止まり、全ノード `visibility: hidden` のまま `elementFromPoint` に当たらない
+- 残: **P2（D2 の再計測、条件付き）と P4 実機確認 7 件**。ネイティブ DnD 不発の
+  仮説は未実測のまま（機構はどちらでも成立。`force-fallback` コメントの断定形は
+  P4 の裏取りまで保留）。vitest 142 → 151
+
 ## 現在地（2026-08-05）
 
 **Spec 01〜17 のうち、実装が残っているものは無い。** 2026-08-05 に Spec 16 / 17 が
