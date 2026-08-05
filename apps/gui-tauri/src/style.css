@@ -442,19 +442,52 @@ textarea,
   stroke: var(--color-line);
 }
 
+/*
+ * 辺（2026-08-05 実機の指摘。**両テーマ共通**）。
+ *
+ * **既定を accent にし、ホバーでは色を変えず光らせる。**
+ *
+ * 以前は既定が `--color-line`（枠線と同じ灰）で、ダークでもライトでも地に
+ * 沈んで「どこが繋がっているか」が読めなかった。**線は村の構造そのもの**で、
+ * パネルの縁と同じ重みに落とすものではない。ホバーのときだけ accent にして
+ * いたのは、常時見えるべきものを操作したときだけ見せていた形。
+ *
+ * ホバーで**色を変えない**のは、色が変わると「別のもの」に見えるため。
+ * 変えるのは強さ（太さと発光）だけにすると、同じ辺が強調されたと読める。
+ * 発光を 2 段の drop-shadow で作るのは ChatPanel の削除ボタンと同じ手で、
+ * 芯（近く・濃い）と滲み（遠く・薄い）を分けないと「ボワッと」にならない。
+ */
 .vue-flow__edge-path {
-  stroke: var(--color-line);
+  stroke: var(--color-accent);
   stroke-width: 1.5;
+  transition:
+    stroke-width 0.15s,
+    filter 0.15s;
 }
+/*
+ * **`stroke` をここでも書くのは省略ではなく必須。** Vue Flow の既定に
+ * `.vue-flow__edge.selected/:focus .vue-flow__edge-path { stroke: #555 }` があり、
+ * 上の既定（`.vue-flow__edge-path`）より特異度が高い。強さだけを変えるつもりで
+ * `stroke` を落とすと、**選択とフォーカスのときだけ灰色に戻る**。
+ */
 .vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:focus .vue-flow__edge-path,
+.vue-flow__edge:focus-visible .vue-flow__edge-path,
 .vue-flow__edge:hover .vue-flow__edge-path {
   stroke: var(--color-accent);
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--color-accent) 75%, transparent))
+    drop-shadow(0 0 8px color-mix(in oklab, var(--color-accent) 45%, transparent));
 }
 
-/* 矢印は線と同じ色にする。既定は明るい灰色で、線だけ色を変えると継ぎ目が浮く。 */
+/*
+ * 矢印は線と同じ色にする。既定は明るい灰色で、線だけ色を変えると継ぎ目が浮く。
+ * **マーカーは `<defs>` で全辺が共有する**ので、ホバーの発光までは追従できない
+ * （個別に持たせるには辺ごとにマーカーを複製することになる）。
+ */
 .vue-flow__arrowhead * {
-  stroke: var(--color-line);
-  fill: var(--color-line);
+  stroke: var(--color-accent);
+  fill: var(--color-accent);
 }
 .vue-flow__handle {
   background-color: var(--color-line);
