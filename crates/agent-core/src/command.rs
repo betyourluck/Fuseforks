@@ -268,7 +268,21 @@ fn pattern_matches(pattern: &str, tokens: &[String]) -> bool {
         return false;
     }
 
+    // **`*` 単独のパターンは何にも一致させない。** 理由は 2 つ:
+    //
+    // - `parts.len() == 1` だと下の `&parts[1..parts.len() - 1]` が
+    //   `&parts[1..0]` になり **panic する**（start > end）。到達条件は
+    //   「コマンド自体が `*`」で、モデルが書けば起こる
+    // - 仮に通したら「何でも許す」= **開いた許容**になり、閉じた許容という
+    //   設計の本体と正面から衝突する。落とすのが正しい挙動でもある
+    if parts.len() == 1 && parts[0] == "*" {
+        return false;
+    }
+
     let open = *parts.last().unwrap() == "*";
+    // `*` は **0 個以上**の引数に一致する（`ruff *` は引数なしの `ruff` にも当たる）。
+    // つまり開いたパターンは完全一致のスーパーセットで、承認の 2 択が
+    // 「狭い / 広い」として成立する。
     let fixed = if open { &parts[1..parts.len() - 1] } else { &parts[1..] };
 
     if open {
@@ -285,6 +299,37 @@ fn pattern_matches(pattern: &str, tokens: &[String]) -> bool {
 mod tests {
     use super::*;
 
+    /// **`*` は 0 個以上の引数に一致する。**
+    ///
+    /// ここが 1 個以上だと、`ruff *` を承認したのに `ruff` 自体が通らない。
+    /// 承認の 2 択（完全一致 / 末尾 `*`）は**広いほうが狭いほうのスーパーセット**
+    /// であることが前提なので、この性質が崩れると 2 択の意味が壊れる。
+    #[test]
+    fn a_trailing_star_matches_zero_or_more_args() {
+        let p = policy(&["ruff *"], &[]);
+        assert_eq!(p.decide("ruff", &[]), Decision::Allowed, "引数なしにも当たる");
+        assert_eq!(p.decide("ruff", &args(&["check"])), Decision::Allowed);
+        assert_eq!(
+            p.decide("ruff", &args(&["check", "src/"])),
+            Decision::Allowed,
+            "個数は問わない"
+        );
+    }
+
+    /// `*` 単独のパターンは**何にも一致せず、panic もしない**。
+    ///
+    /// 旧実装は `&parts[1..0]` で落ちた（要素 1 個のとき先頭と末尾が同じになる）。
+    /// 落とす先を「一致しない」にしたのは、通せば**開いた許容**になるため。
+    #[test]
+    fn a_bare_star_pattern_matches_nothing_and_never_panics() {
+        let p = policy(&["*"], &[]);
+        assert_eq!(p.decide("*", &[]), Decision::Unknown, "自分自身にも当たらない");
+        assert_eq!(p.decide("git", &args(&["log"])), Decision::Unknown);
+
+        // deny 側でも同じ（deny が先に評価されるので、こちらも落ちない）。
+        let d = policy(&[], &["*"]);
+        assert_eq!(d.decide("*", &[]), Decision::Unknown);
+    }
     fn policy(allow: &[&str], deny: &[&str]) -> CommandPolicy {
         CommandPolicy {
             allow: allow.iter().map(|s| (*s).to_owned()).collect(),
