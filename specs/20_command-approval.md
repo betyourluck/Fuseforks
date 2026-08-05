@@ -2,7 +2,7 @@
 
 **ID**: 20
 **Date**: 2026-08-05
-**Status**: **rev2**（rev1 査読の指摘 8 点を反映。**うち 1 点は理由を訂正して採用**）
+**Status**: **rev2 承認（2026-08-05）→ P0 完了**。次は P1（コアの純機構と API）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -77,6 +77,17 @@ impl PendingCommand {
 | `git log --oneline -5` | `git log --oneline -5` | `git log *` |
 | `cargo test -- --nocapture` | `cargo test -- --nocapture` | `cargo test *` |
 | `ls -la /tmp` | `ls -la /tmp` | `ls -la *` |
+
+**末尾 `*` は 0 個以上の引数に一致する**（rev2 追記。査読の推奨。**実測で確認** —
+`allow: ["ruff *"]` に対し `ruff`（引数なし）は `Allowed`）。**この性質が
+2 択の前提**で、`*` が 1 個以上だと**広いほうが狭いほうのスーパーセットでなくなり**、
+「`ruff *` を承認したのに `ruff` 自体が通らない」が起きる。`command.rs` の
+コメントとテスト `a_trailing_star_matches_zero_or_more_args` で固定した。
+
+**この確認の副産物として、`*` 単独のパターンで panic するのを見つけて直した**
+（`failures.md` #69。`&parts[1..parts.len()-1]` が要素 1 個で `&parts[1..0]` に
+なる）。承認経路が作るパターンは必ずコマンド名で始まるので**この Spec は
+その入力を生まない**が、人が `run.json` へ手で書ける以上、先に潰した。
 
 **既定は完全一致（狭いほう）。** 広いほうを既定にすると、押し慣れた指が
 毎回広い許容を作る。
@@ -209,13 +220,19 @@ D1 の裏返し。まとめて承認は**粒度の決定を飛ばす**ので、�
 
 ## Tasks
 
-### Phase 0 — 契約
+### Phase 0 — 契約（**完了 2026-08-05**）
 
-- `data_contract.yaml` の `command_tool_contract` へ**承認経路**を追記:
-  粒度の 2 択（既定は完全一致）/ 却下は `deny` へ入れる / 差分適用と retry /
-  1 件ずつ / 撤去する `merge_pending_into`
+- `data_contract.yaml` の `command_tool_contract` へ**「承認の画面」節を新設**。
+  凍結 10 点 — 粒度の 2 択と既定 / 文字列化はコアの 1 箇所で IPC は `open` まで /
+  当てずっぽうを画面に出す / 却下は `deny` へ / `NotFound` は告げる /
+  差分適用と retry と `merge_pending_into` 撤去 / 「全部承認」を作らない /
+  入口とバッジ / 承認で提示が始まること
 - Spec 15 の「初回の手間は仕様」との関係を明記（**取り除くのは書き写しであって
   判断ではない**）
+- **`*` の意味論を既存の箇条書きへ 1 件追加**（0 個以上・`*` 単独は不一致）。
+  これは承認の話ではなく**照合の話**なので、承認の節ではなく `run.json` の
+  規則の側へ置いた — **節の所属を「どの機構の性質か」で決める**
+  （failures.md #58 の「規律は書いた節で射程が決まる」の逆向きの適用）
 
 ### Phase 1 — コアの純機構と API
 
