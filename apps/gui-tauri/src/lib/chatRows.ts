@@ -45,6 +45,25 @@ export type TimelineEntry =
   | { kind: "message"; key: string; row: ChatRow }
   | { kind: "tool"; key: string; run: ToolRun };
 
+/**
+ * 場からの告知か（吹き出しではなく細い 1 行で出す対象）。
+ *
+ * **判定は宛先で決まる。** `AgentMessage` に種別の欄は無いが、**宛先が既に
+ * その区別を持っている**:
+ *
+ * - **System → User** は `record` だけで**配送されない告知**（起動・停止・
+ *   役職変更・打ち切り・予算切れ・要約・予定のスキップ）。出来事の記録であって
+ *   誰かの発言ではない
+ * - **System → Agent** は**予定の発火**で、実際に配送されてターンを起こす。
+ *   これは依頼そのものなので吹き出しのまま
+ *
+ * 文面で見分けようとすると 12 箇所の書式に依存して壊れる。**宛先は構造なので
+ * 文面を変えても壊れない。**
+ */
+export function isSystemNotice(message: AgentMessage): boolean {
+  return message.from.kind === "system" && message.to.kind === "user";
+}
+
 /** エンドポイントの同一性。 */
 export function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
   if (a.kind !== b.kind) return false;

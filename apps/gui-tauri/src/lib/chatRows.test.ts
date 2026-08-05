@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTimeline, collapseRows, type ToolRun } from "./chatRows";
+import {
+  buildTimeline,
+  collapseRows,
+  isSystemNotice,
+  type ToolRun,
+} from "./chatRows";
 import type { AgentMessage, Endpoint } from "../types";
 
 let seq = 0;
@@ -113,5 +118,36 @@ describe("buildTimeline", () => {
     const timeline = buildTimeline(rows, [run("t9", "sd", 2)]);
     expect(timeline[0].key).toBe(rows[0].message.id);
     expect(timeline[1].key).toBe("t9");
+  });
+});
+
+describe("場からの告知の判定（吹き出しにしない行）", () => {
+  const at = (from: Endpoint, to: Endpoint): AgentMessage => ({
+    id: "m",
+    from,
+    to,
+    content: "agent_01（ザリ）が起動しました",
+    tokens: 0,
+    tsMs: 0,
+    hop: 0,
+    coRecipients: [],
+  });
+
+  it("System → User は告知（細い行）", () => {
+    expect(isSystemNotice(at({ kind: "system" }, { kind: "user" }))).toBe(true);
+  });
+
+  it("System → Agent は発話（吹き出しのまま）", () => {
+    // 予定の発火。配送されてターンを起こすので、出来事の記録ではなく依頼そのもの。
+    expect(
+      isSystemNotice(at({ kind: "system" }, { kind: "agent", id: "agent_01" })),
+    ).toBe(false);
+  });
+
+  it("System 発でなければ告知ではない", () => {
+    expect(isSystemNotice(at({ kind: "user" }, { kind: "agent", id: "a" }))).toBe(false);
+    expect(
+      isSystemNotice(at({ kind: "agent", id: "a" }, { kind: "user" })),
+    ).toBe(false);
   });
 });

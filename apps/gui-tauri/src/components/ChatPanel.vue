@@ -25,6 +25,7 @@ import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
   buildTimeline,
   collapseRows,
+  isSystemNotice,
   sameEndpoint,
   type ChatRow,
   type TimelineEntry,
@@ -535,6 +536,24 @@ async function newChat(): Promise<void> {
           </template>
         </I18nT>
         <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
+      </div>
+
+      <!--
+        場からの告知（起動・停止・役職変更・打ち切り・予算切れ・要約）。
+        ツール実行と同じ細い行にする — **これは誰かの発言ではなく出来事の記録**で、
+        吹き出しにすると発言と同じ重さで並び、会話そのものが読みにくくなる。
+        判定は `isSystemNotice`（宛先が User = 配送されない告知）。
+        予定の発火は System → Agent なので、ここには落ちず吹き出しのまま。
+      -->
+      <div
+        v-else-if="entry.kind === 'message' && isSystemNotice(entry.row.message)"
+        class="flex items-center gap-1.5 pl-9 text-[10px] text-ink-dim"
+      >
+        <span class="inline-block size-1.5 shrink-0 rounded-full bg-accent" />
+        <span class="selectable truncate">{{ entry.row.message.content }}</span>
+        <span class="ml-auto shrink-0 tabular-nums">
+          {{ timestamp(entry.row.message.tsMs) }}
+        </span>
       </div>
 
       <div

@@ -203,6 +203,14 @@ Chat displays conversations in speech bubbles separating speakers by side, group
 ([Spec 19](specs/19_user-identity.md)); unset, they fall back to "You" and a circle with your initial.
 However, **destinations are never dropped** — since this is an orchestration screen, "who sent it to whom" is essential information, so destinations and hops remain outside the speech bubble. Information is never discarded merely to mimic casual chat.
 
+**Tool executions and notices from the venue** (start, stop, role change, interruption,
+budget exhaustion, summarisation) **are not drawn as bubbles but as thin single lines.**
+Neither is anyone's utterance — they are *records of events*, and giving them the weight
+of a bubble makes the conversation itself harder to read. Whether something is a notice
+**is decided by its destination**: addressed from the venue to you it is a record, while
+addressed from the venue to a servant (a schedule firing) it is a request that really
+arrives, so it keeps its bubble.
+
 **In-flight turns can be interrupted mid-way** ([Spec 10](specs/10_turn-interrupt.md)).
 The "■ Stop" button next to a typing bubble cuts that agent's current turn; "Stop all turns" in the header cuts every in-flight turn in the village. What gets cut is the **turn**, not the agent — it stays running, conversation and history survive, and the next request is handled normally. Interrupting a facilitator also stops only the worker tasks spawned by its plan wave (unrelated requests the same workers were handling in parallel are untouched). Detection happens at round boundaries, so the turn stops as soon as the in-flight LLM call or tool finishes — a "stop requested…" indicator covers the gap. The fact of the interruption is recorded as a single System line in the conversation log.
 
