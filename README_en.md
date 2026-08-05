@@ -121,7 +121,8 @@ OutcastsConcordia/
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
-                ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Schedule, System Settings)
+                ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
+                ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
                 ├── StatusBar.vue                      Bottom: date, time (same format as the diagnostic log) and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
@@ -165,6 +166,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
+| Modal | Command approval (from "Commands" in the title bar, [Spec 20](specs/20_command-approval.md)) | Opened occasionally |
 | Modal | Schedule list, addition, and deletion (from "Schedule" in the title bar) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
@@ -381,7 +383,23 @@ Agent settings → config files → `run.json`; press "Insert template" when emp
 There are three states: a call matching `allow` runs without approval; a call
 matching `deny` is refused **and not recorded** (so a decision you already made
 does not reappear every time); a call in neither list is refused and recorded
-under `pending`, where you move the line to `allow` or `deny`.
+under `pending`, where **you press approve or reject** in "Commands" on the title bar
+([Spec 20](specs/20_command-approval.md)). Every servant's waiting requests gather in
+one screen, and the entry shows **the village-wide total**. You never have to open the
+JSON and copy lines by hand (direct editing of `run.json` remains available for finer
+control).
+
+- **Approving asks what to permit**: this call only (exact match), or any arguments
+  after this prefix (trailing `*`). **The narrow one is the default**, and the
+  resulting pattern is shown literally so you can check it before pressing.
+- **Rejecting writes to `deny`**, not merely removing it from the list — removal alone
+  would let the same command queue up again on the next call.
+- **There is no "approve all."** Bulk approval skips the decision of *what* to permit,
+  which is the substance of allow-listing.
+- **Once even one entry is permitted, that servant can run commands from its next
+  turn** (before that, the tool is not even offered to it).
+- **Pressing a request that has already been pushed out does nothing** (waiting
+  requests are capped at 20 per servant, oldest discarded). The screen says so.
 
 Patterns are exact match plus a trailing `*`. `"ruff"` matches **only a call with
 no arguments**; write `"ruff *"` to allow any arguments, or `"ruff check *"` to pin
