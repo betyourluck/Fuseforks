@@ -21,7 +21,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
-| 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `run`. **Everything except `run`** is structurally unable to read outside the work folder |
+| 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and on the map |
@@ -78,7 +78,7 @@ OutcastsConcordia/
 │       │   ├── orchestrator.rs      ★ Lifecycle and message routing (Tokio)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
-│       │   ├── rag.rs               RAG indexing (search runs on Rayon side)
+│       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
@@ -144,7 +144,7 @@ Notifications sent to the GUI merely stream `CoreEvent` into a `broadcast` chann
 | Task | Runtime | Reason |
 |---|---|---|
 | Agent execution, LLM invocation, and message delivery | **Tokio** | I/O-bound. Prevents blocking threads during idle waits. |
-| RAG similarity search and log aggregation | **Rayon** | CPU-bound. Maximizes throughput using all available cores. |
+| Log token aggregation | **Rayon** | CPU-bound. Maximizes throughput using all available cores. |
 
 The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, ensuring neither side blocks.
 
@@ -343,7 +343,7 @@ When a round cut off by the limit has no text response, the model is called **on
 
 Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects.
 
-There are eight built-in tools. External capabilities are added through MCP.
+There are nine built-in tools. External capabilities are added through MCP.
 
 | Tool | What it does | Scope |
 |---|---|---|
@@ -354,6 +354,7 @@ There are eight built-in tools. External capabilities are added through MCP.
 | `sd` | **Replace** content in a file with a regular expression (editing). `paths` previews diffs across **several files at once** (preview only, up to 20) | **Work folder only** |
 | `yq` | Get / set / remove only TOML or JSON values (editing) | **Work folder only** |
 | `file` | File and folder operations (`read` / `write` / `append` / `mkdir` / `move` / `copy` / `remove`). [Spec 09](specs/09_file-tool.md) | **Work folder only** |
+| `rag` | Query Markdown in **declared reference folders** through a heading index ([Spec 18](specs/18_bundled-doc-index.md)). Declaring a folder offers the tool automatically | **Declared folders only** (read-only; independent of the work folder) |
 | `run` | Execute allowed commands ([Spec 15](specs/15_command-execution.md)). **Off by default** | **Unrestricted** (the allowlist is the only enclosure) |
 
 
@@ -387,6 +388,39 @@ you must enable it per agent *and* have at least one `allow` pattern.
 > (blocking `rm` leaves `python -c`). The value of `deny` is **remembering a
 > decision you already made**, not stopping hostile input.
 
+### Heading index (`rag`)
+
+**Queries the Markdown in declared folders through the heading hierarchy the
+author wrote** ([Spec 18](specs/18_bundled-doc-index.md)). Add folders under
+"RAG folders" in agent settings and the `rag` tool is **offered automatically** —
+there is no checkbox; **the declaration itself is the switch** (remove every
+folder and the tool disappears). It exists for material that belongs to no work
+folder — standards, specifications, papers — and forms an axis independent of
+the work folder.
+
+Three ops: `outline` (folder listing plus each file's heading tree) →
+`search` (matching lines **with the section path they belong to**) →
+`read` (the body of one section, addressed by heading). The intended shape is
+to locate by structure before reading anything in full.
+
+- **No vector database, no embedding model.** The variable that matters is not
+  how you retrieve but **how you cut** — at headings a human placed, not at
+  boundaries a splitter guessed (the PageIndex idea; this mechanism replaced and
+  removed the old bundled RAG, whose `HashEmbedder` index was permanently empty)
+- **It only works on documents whose headings carry real structure.** On rough
+  notes or generated Markdown it is barely better than `grep`
+- **Read-only.** There is no write path. Declared folders may lie outside the
+  work folder — a reference pile like `D:\ManualeRAG` can be pointed at directly
+- **If you run a serious personal knowledge base, MCP is the primary road.**
+  Notion and Obsidian connect naturally over MCP; the built-in index is not a
+  substitute — it is here because this product decided to treat "who knows what"
+  as a first-class axis
+
+> **The declaration is an enclosure, not a safety mechanism.** A declared folder
+> is readable in its entirety by that agent. Under prompt injection, what was
+> read can travel via `ask` / `plan` to **every reachable agent and each of
+> their model providers**. Do not declare folders containing secrets.
+
 `grep` / `fd` / `diff` are built in because these are the tools coding agents use most often, and they are dramatically cheaper and faster than reading entire files. Token efficiency is one of this product's primary concerns. MCP filesystem servers also support search, but it matters that these work in every environment without an external process.
 
 For `grep`, **the cap applies to what is displayed, not to what is counted**. Even when matches exceed 100, the total returned is the real total, along with a per-file breakdown. (Returning the displayed count as the total would force a second search just to learn how many matches exist.) When only the count is needed, pass `count_only: true` to omit the matching lines.
@@ -407,8 +441,9 @@ Output is always bounded (100 matches, 240 characters per line, 12,000 character
 
 **The schema of an unpresented tool is a fixed cost every turn**, and all agents spend from one person's wallet. Giving every capability to every agent is not a feature but waste. The default should be to give only the tools needed; that is this product's differentiator from large orchestration systems.
 
-- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (all tools are presented, and newly built-in tools are added automatically); an explicit selection presents only the needed tools and does not grow automatically.
+- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (the default set is presented; new tools that join the default set appear automatically, and `run` sits outside it); an explicit selection presents only the needed tools and does not grow automatically.
 - **If no work folder is configured, the six file tools are not presented regardless of selection**. Do not pay schema cost for tools that can only answer "not configured."
+- **`rag` is outside this mechanism.** It has no checkbox; its presentation is decided solely by the "RAG folders" declaration (only a human can write the declaration, so the declaration itself is the opt-in — two switches for one intent create the trap of enabling one and wondering why nothing appears, which a real run hit on day one).
 - Removing `remember` stops **only writing**. `Memory.md` still enters the prompt; to remove that injection, empty the file instead of duplicating control mechanisms whose effects cannot be distinguished.
 
 Tools return **relative paths only**, so the agent is given the work folder's real path in its system prompt. Without it, models invent absolute paths for their explanations (a real instance described a nonexistent path as its work location). Missing decision material is filled by information, not prohibition.
@@ -635,11 +670,14 @@ A **template for creating servants** and a **label visible in the village**
 ([Spec 14](specs/14_role-label.md)). Managed from "Roles" in the title bar.
 
 Pick a role when creating a servant and it starts with its settings filled in.
-Five things are applied: the `Construct.md` body, the model template, RAG sources,
-built-in tools, and the tool-call limit. **Connections and the work folder are
-deliberately excluded.** Letting a template draw lines would break "**lines are
-drawn by people**," and the work folder is an absolute path that differs per
-machine, so sharing a village would ship a broken reference.
+Four things are applied: the `Construct.md` body, the model template,
+built-in tools, and the tool-call limit. **Connections, the work folder, and
+RAG folders are deliberately excluded.** Letting a template draw lines would
+break "**lines are drawn by people**," and the work folder and RAG folders are
+absolute paths that differ per machine, so sharing a village would ship broken
+references (RAG sources were originally on the "applied" side; they moved here
+when [Spec 18](specs/18_bundled-doc-index.md) changed their meaning to absolute
+paths).
 
 - **Settings are copied; the role name is referenced.** This asymmetry is the core
   of the design. Editing a role later **does not change servants that already
@@ -732,8 +770,6 @@ It can return under either condition:
 
 | Area | Current state | Next step |
 |---|---|---|
-| RAG ingestion UI | The `index_rag_chunk` command works, but there is no GUI entry point. The right-pane RAG reference area says so when the index is empty. | A screen for file ingestion, chunking, and source management |
-| Embedding model | `rag::HashEmbedder` merely hashes words into dimensions and cannot capture semantic closeness. Its name makes that explicit. | Replace it with a real model implementing the `Embedder` trait |
 | Per-agent MCP test connection | A stopped agent's MCP only shows "not connected" because connections are tied to operation. | At save time, connect once for testing and show only the result (Spec 02 Notes) |
 | Long-term memory (Memoria connection) | `Memory.md` (`remember`) works. Multi-layer memory is unconnected, but **the door is open**. | Start according to the policy below |
 | Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. |
