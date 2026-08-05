@@ -50,6 +50,12 @@ rayon = "1.10"
 # 実測（2026-08-03 の追加時）: Cargo.lock に増えたのは **redb の 1 行だけ**。
 # 見積もりの「2 依存」は既にツリーに居たため、コンパイル対象は実質 1 crate 増。
 redb = "4.1"
+# 同梱 rag ツール（Spec 18）の見出し抽出。Markdown の `#` 階層を索引にする。
+# Manuale の依存のうち同梱で生き残ったのはこれ 1 本だけ — rmcp(server) / git2 /
+# ignore / grep-* は AgentTool 化と既存の collect_files / regex で全部落ちた。
+# 自前パースを書かないのは、setext 見出し・コードブロック内の `#`・インライン
+# コードの扱いを正しくやるのが実質 CommonMark パーサの再発明になるため。
+pulldown-cmark = { version = "0.13", default-features = false }
 # 同梱 grep ツールの検索構文。モデルは正規表現でパターンを書く学習分布を持つので、
 # 独自のミニ構文を発明するより標準の regex を渡すほうが失敗が少ない。
 regex = "1"

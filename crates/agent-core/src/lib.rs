@@ -66,6 +66,7 @@ pub mod command;
 pub mod compute;
 pub mod config_store;
 pub mod diag;
+pub mod doc_index;
 pub mod error;
 pub mod event;
 pub mod llm;
