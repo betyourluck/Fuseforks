@@ -73,4 +73,14 @@ describe("同梱ツールの名前表", () => {
       expect(bundled.has(name)).toBe(true);
     }
   });
+
+  it("rag は enabledTools の対象外（提示は宣言だけが決める = Spec 18 D13）", () => {
+    // rev3 の D7（既定集合に入れる）は利用者裁定で覆された。実機の初日、
+    // 全個体が明示配列の村では「フォルダを宣言しても誰にも rag が出ない」
+    // が起きた — 親切心でどちらかの表へ戻すと同じ穴が黙って開く。
+    expect(rustList("BUNDLED_TOOL_NAMES")).not.toContain("rag");
+    expect(rustList("DEFAULT_ENABLED_TOOLS")).not.toContain("rag");
+    expect(vueBundled()).not.toContain("rag");
+    expect(vueDefaults()).not.toContain("rag");
+  });
 });

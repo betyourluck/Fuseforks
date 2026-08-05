@@ -830,12 +830,13 @@ entities:
       既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
       線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
-      enabledTools は同梱 9 本 (remember / grep / fd / diff / sd / yq / file /
-      rag / run) の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09、
-      rag は Spec 18 で追加)。MCP 由来・転送・委譲は対象外。
+      enabledTools は同梱 8 本 (remember / grep / fd / diff / sd / yq / file / run)
+      の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
+      MCP 由来・転送・委譲は対象外。**rag も対象外** (Spec 18 D13 — 提示は
+      rag_sources の宣言だけが決める。詳細は rag_tool_contract)。
       - null = 「既定に従う」: **既定集合 DEFAULT_ENABLED_TOOLS を提示**。
         新規作成時の保存値は null (UI のチェック全 ON は null の効果の表示で
-        あって、明示配列 8 本を保存するのではない。利用者がチェックを触った
+        あって、明示配列 7 本を保存するのではない。利用者がチェックを触った
         時点で明示配列へ切り替わり、「既定に戻す」で null へ戻せる)
       - **【破壊的変更・Spec 15 P3 で着地】null の意味を「全同梱ツール」から
         「既定集合」へ変える。** それまでは
@@ -862,10 +863,11 @@ entities:
         「作業フォルダがあるときだけ提示し、かつその中しか触らない」ツールの集合で、
         境界を破る run を入れると集合の不変条件が壊れる)。run の提示は
         **実行可能な登録が 1 件以上あるか**で決まる = command_tool_contract 参照
-      - **rag は既定集合に入るが WORK_DIR_TOOL_NAMES には入れない** (Spec 18。
-        境界が work_dir ではなく rag_sources の宣言)。提示は spec_for の 2 段
-        ゲート = **宣言が空または全ルート無効なら提示しない** (rag_tool_contract)。
-        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` の等式は 9 = 8 + 1 で不変
+      - **rag はこの機構の対象外** (Spec 18 D13 で 2 段ゲートから宣言のみへ)。
+        BUNDLED_TOOL_NAMES / DEFAULT_ENABLED_TOOLS / WORK_DIR_TOOL_NAMES の
+        どれにも入らず、提示は **rag_sources の宣言が空または全ルート無効なら
+        提示しない** の 1 点だけで決まる (rag_tool_contract)。
+        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` の等式は 8 = 7 + 1
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
     hears_room_log_invariant: |
@@ -2415,16 +2417,20 @@ conversation_termination:
       - **各ルートの解決は canonicalize + 前方一致・symlink 不追従**
         (resolve_in_work_dir と同じ規律の**別関数**。あれは work_dir 起点の関数で、
         流用すると「新規作成なし」の担保を持つ側の意味が濁る)
-      - **提示は 2 段ゲート**: (1) enabledTools に rag があるか【既定 ON】
-        (2) rag_sources が空でなく、かつ 1 本以上のルートが有効か。
-        **空または全滅なら提示しない。** rag は WORK_DIR_TOOL_NAMES に入れない
-        (あの集合は「work_dir の中しか触らない」ツールの集合で、別の境界を持つ
-        ものを入れると不変条件が壊れる。run と同じ判断)
-      - **rag は DEFAULT_ENABLED_TOOLS に入れる** (既定 ON)。run を外した理由
-        (外部プロセス起動という別種の危険) は rag に当たらない — 読むだけで、
-        人が宣言したフォルダしか読めない。2 段ゲートが「宣言なしでは出ない」を
-        既に保証している。BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run} の
-        等式は不変 (9 = 8 + 1)
+      - **提示は宣言ただ 1 つで決まる** (rag_sources が空でなく、かつ 1 本以上の
+        ルートが有効なら提示。**空または全滅なら提示しない**)。
+        **enabledTools の対象外** — BUNDLED_TOOL_NAMES にも DEFAULT_ENABLED_TOOLS
+        にも入れず、is_bundled_tool_presented を素通りする (MCP 由来・転送・委譲と
+        同じ側)。rag は WORK_DIR_TOOL_NAMES にも入れない (境界が別)
+      - **【D13・利用者裁定 2026-08-05】rev3 の D7「DEFAULT_ENABLED_TOOLS に
+        入れる (2 段ゲートの 1 段目 = enabledTools)」を覆した。** 宣言を書けるのは
+        人だけなので**宣言そのものがオプトイン**であり、チェックボックスは同じ
+        意図に対する 2 つ目のスイッチだった。実機で初日に踏んだ — 既存の村は
+        全個体が enabledTools 明示配列 (Spec 02 の頃の履歴) で、明示配列に
+        新ツールは自動で増えないため、**フォルダを宣言しても誰にも rag が
+        出なかった** (ゲート 1 で落ち、ゲート 2 に到達しない)。処方は警告の
+        追加ではなくスイッチの一本化 — 穴を表示で覆うのではなく、穴ごと消す。
+        BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run} の等式は 8 = 7 + 1 へ戻る
       - **宣言されたルートは実在検査を掛ける。無効化であって削除ではない。**
         検査は起動時と呼び出し時の両方 (起動時だけだと、開いたまま外付けドライブを
         外した村が素通りする)。落ちたルートは無効印を付けるだけでファイルからは

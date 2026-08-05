@@ -346,7 +346,6 @@
       "sd": "sd — regex replace (writes files)",
       "yq": "yq — edit TOML/JSON values (writes files)",
       "file": "file — file and folder operations (create/move/copy/trash)",
-      "rag": "rag — heading index over reference folders (read-only)",
       "run": "run (execute registered commands)"
     },
     "noWorkDirWarn": "No working folder is set, so file tools are not offered (your checkmarks are kept).",
@@ -365,7 +364,7 @@
     "ragEmpty": "No reference folders are declared (without a declaration the rag tool is not offered).",
     "ragBrowse": "Add folder…",
     "ragRemove": "Remove",
-    "ragHint": "The rag tool can read Markdown in declared folders through a heading index (read-only; outside the working folder is allowed). Everything in a declared folder becomes readable by this servant, so do not declare folders containing secrets.",
+    "ragHint": "Declaring a folder automatically offers the rag tool, which reads its Markdown through a heading index (read-only; outside the working folder is allowed). Removing every folder removes the tool. Everything in a declared folder becomes readable by this servant, so do not declare folders containing secrets.",
     "connections": "Connected servants",
     "othersEmpty": "There are no other servants.",
     "delete": "Delete",
@@ -382,7 +381,7 @@
     "role": "Role",
     "noRole": "No role",
     "roleHelp": "This changes only the role label. Settings (Construct.md, model, and so on) are copied at creation time, so changing the role here does not change them.",
-    "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain registered commands. Only commands added under Settings > Command registry can run, and the tool is not offered while the registry is empty."
+    "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run, and the tool is not offered while allow is empty. Non-matching calls are recorded as pending; move a line to allow and it passes from the next turn."
   },
   "modelTemplate": {
     "title": "Model templates",

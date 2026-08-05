@@ -3395,6 +3395,60 @@ async fn bundled_tool_presentation_is_gated_by_enabled_tools_and_work_dir() {
     }
 }
 
+/// `rag` の提示は**宣言だけ**が決める（Spec 18 D13。enabledTools の対象外）。
+///
+/// 実機で初日に踏んだ形の回帰: 既存の村は全個体が enabledTools 明示配列で、
+/// 明示配列に新ツールは自動で増えない。rev3 の D7（既定集合に入れる = 2 段
+/// ゲートの 1 段目）のままでは、**フォルダを宣言しても誰にも rag が出なかった**。
+/// 利用者裁定でスイッチを宣言 1 本に畳んだ — このテストが無いと、次に誰かが
+/// 親切心で rag を BUNDLED_TOOL_NAMES へ戻したとき同じ穴が黙って開く。
+#[tokio::test]
+async fn rag_presentation_follows_the_declaration_not_enabled_tools() {
+    let dir = TempDir::new("rag-gate");
+    let backend = Arc::new(ToolsProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    register_all_tools(&orchestrator, &dir).await;
+    orchestrator.register_tool(Arc::new(agent_core::RagTool)).await;
+
+    // 宣言に使う実在フォルダ（Markdown が 1 枚ある）。
+    let docs = dir.0.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("a.md"), "# 見出し\n").unwrap();
+
+    // E: 明示配列に rag が**無い** + 宣言あり → それでも提示される。
+    let mut spec_e = AgentSpec::new("agent_e", "明示型", "tpl");
+    spec_e.enabled_tools = Some(vec!["remember".into()]);
+    spec_e.rag_sources = vec![docs.display().to_string()];
+    orchestrator.create_agent(spec_e).await.unwrap();
+
+    // F: 既定 (null) + 宣言なし → 提示されない。
+    orchestrator
+        .create_agent(AgentSpec::new("agent_f", "宣言なし型", "tpl"))
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    for id in ["agent_e", "agent_f"] {
+        orchestrator.start_agent(&id.into()).await.unwrap();
+        orchestrator.send_user_message(&id.into(), "こんにちは").await.unwrap();
+        drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    }
+
+    let presented = backend.presented.lock().unwrap();
+    let e = &presented[0];
+    assert!(
+        e.contains(&"rag".to_string()),
+        "明示配列に rag が無くても、宣言があれば提示される: {e:?}"
+    );
+    assert!(!e.contains(&"grep".to_string()), "明示配列の効きは他ツールで不変: {e:?}");
+
+    let f = &presented[1];
+    assert!(
+        !f.contains(&"rag".to_string()),
+        "宣言が無ければ既定 (null) でも提示されない: {f:?}"
+    );
+}
+
 /// 自動除外は明示指定より優先され、空配列は同梱 0 本を意味すること。
 #[tokio::test]
 async fn work_dir_auto_exclusion_beats_explicit_selection() {
