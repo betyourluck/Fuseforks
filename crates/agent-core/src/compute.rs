@@ -6,13 +6,16 @@
 //! Rayon のスレッドプールは物理コア数に固定されるため、そこでネットワークを待つと
 //! 同時稼働エージェント数がコア数で頭打ちになる。
 //!
-//! 一方で RAG のベクトル検索やログ集計は純粋な **CPU バウンド**で、
-//! これを Tokio のワーカースレッド上で回すと、その間 IPC コマンドも
-//! エージェントの応答処理も進まなくなる（UI が固まる）。
+//! 一方でログ集計は純粋な **CPU バウンド**で、これを Tokio のワーカー
+//! スレッド上で回すと、その間 IPC コマンドもエージェントの応答処理も
+//! 進まなくなる（UI が固まる）。
 //!
 //! そこで役割を割る:
 //! - Tokio: エージェントのライフサイクル、メッセージ配送、LLM 呼び出し
-//! - Rayon: ベクトル類似度、集計、その他の純計算
+//! - Rayon: 集計、その他の純計算
+//!
+//! （ベクトル類似検索は旧同梱 RAG の機構で、Spec 18 が索引を見出しへ
+//! 置き換えた際に `rag.rs` ごと撤去した。）
 //!
 //! 橋渡しは [`spawn_rayon`] が担う。`oneshot` チャネルで結果を受け取るので、
 //! **Tokio 側のスレッドはブロックされず**、Rayon 側も async を知らずに済む。
@@ -55,80 +58,6 @@ where
 
     rx.await
         .map_err(|_| CoreError::Compute("Rayon ワーカーが結果を返す前に終了しました".to_owned()))
-}
-
-/// 2 本のベクトルのコサイン類似度。
-///
-/// 次元が異なる、またはどちらかがゼロベクトルの場合は 0.0 を返す。
-/// ここでパニックさせると、壊れた 1 件のインデックスが検索全体を落とすことになる。
-///
-/// # 精度について
-/// `f32` の仮数部は 24 ビットなので、成分の絶対値が 4000 を超えるあたりから
-/// 二乗和の精度が落ちて順位が入れ替わりうる。埋め込みベクトルは正規化済みの
-/// 小さい値で来る前提であり、生のスケールが大きい値を入れる用途では `f64` を検討すること。
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-
-    let (mut dot, mut norm_a, mut norm_b) = (0.0f32, 0.0f32, 0.0f32);
-    for (x, y) in a.iter().zip(b.iter()) {
-        dot += x * y;
-        norm_a += x * x;
-        norm_b += y * y;
-    }
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a.sqrt() * norm_b.sqrt())
-}
-
-/// 類似度つきの検索結果 1 件。
-#[derive(Debug, Clone, PartialEq)]
-pub struct Scored<T> {
-    /// 元の要素。
-    pub item: T,
-    /// コサイン類似度。
-    pub score: f32,
-}
-
-/// コーパス全体を走査して上位 `k` 件を返す（Rayon 並列）。
-///
-/// 件数が増えるほど並列化が効く。逐次実装との差が出るのは概ね数千件以上からで、
-/// それ未満でも Rayon のワークスティーリングは小さいオーバーヘッドで済む。
-///
-/// # Arguments
-/// * `query` - 問い合わせベクトル
-/// * `corpus` - `(要素, 埋め込みベクトル)` の並び
-/// * `k` - 返す件数
-pub fn top_k_similar<T: Clone + Send + Sync>(
-    query: &[f32],
-    corpus: &[(T, Vec<f32>)],
-    k: usize,
-) -> Vec<Scored<T>> {
-    if k == 0 || corpus.is_empty() {
-        return Vec::new();
-    }
-
-    let mut scored: Vec<Scored<T>> = corpus
-        .par_iter()
-        .map(|(item, embedding)| Scored {
-            item: item.clone(),
-            score: cosine_similarity(query, embedding),
-        })
-        .collect();
-
-    // 部分ソートで済ませる。全体ソートは k << n のとき無駄が大きい。
-    let take = k.min(scored.len());
-    scored.select_nth_unstable_by(take - 1, |a, b| {
-        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    scored.truncate(take);
-    scored.sort_unstable_by(|a, b| {
-        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    scored
 }
 
 /// メッセージログをエージェント別のトークン消費量に畳み込む（Rayon 並列）。
@@ -178,36 +107,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cosine_handles_degenerate_inputs_without_panicking() {
-        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]), 1.0);
-        assert_eq!(cosine_similarity(&[], &[]), 0.0);
-        assert_eq!(cosine_similarity(&[1.0], &[1.0, 2.0]), 0.0, "次元不一致");
-        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 1.0]), 0.0, "ゼロベクトル");
-    }
-
-    #[test]
-    fn top_k_returns_highest_scores_in_order() {
-        let corpus = vec![
-            ("遠い", vec![0.0, 1.0]),
-            ("近い", vec![1.0, 0.0]),
-            ("中間", vec![1.0, 1.0]),
-        ];
-        let hits = top_k_similar(&[1.0, 0.0], &corpus, 2);
-
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].item, "近い");
-        assert_eq!(hits[1].item, "中間");
-        assert!(hits[0].score > hits[1].score);
-    }
-
-    #[test]
-    fn top_k_clamps_to_corpus_size() {
-        let corpus = vec![("only", vec![1.0])];
-        assert_eq!(top_k_similar(&[1.0], &corpus, 10).len(), 1);
-        assert!(top_k_similar(&[1.0], &corpus, 0).is_empty());
-    }
-
-    #[test]
     fn token_usage_is_grouped_by_sending_agent() {
         let mk = |from: &str, tokens: u32| {
             let mut m = AgentMessage::new(
@@ -236,18 +135,26 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_rayon_returns_the_computed_value() {
-        // 直交する詰め物 5000 件に、類似度の順序が明確な 3 件を混ぜる。
-        let mut corpus: Vec<(&str, Vec<f32>)> =
-            (0..5_000).map(|_| ("filler", vec![0.0, 1.0])).collect();
-        corpus.push(("near", vec![1.0, 0.0]));
-        corpus.push(("mid", vec![1.0, 1.0]));
-        corpus.push(("far", vec![1.0, 3.0]));
+        // Rayon 側で par_iter を回し、結果が oneshot 経由で戻ることを見る。
+        let messages: Vec<AgentMessage> = (0..5_000)
+            .map(|i| {
+                let mut m = AgentMessage::new(
+                    Endpoint::Agent {
+                        id: AgentId::from("a"),
+                    },
+                    Endpoint::User,
+                    "本文",
+                    0,
+                );
+                m.tokens = u32::from(i % 2 == 0);
+                m
+            })
+            .collect();
 
-        let hits = spawn_rayon(move || top_k_similar(&[1.0, 0.0], &corpus, 3))
+        let usage = spawn_rayon(move || aggregate_token_usage(&messages))
             .await
             .expect("Rayon 側が結果を返すこと");
 
-        let items: Vec<&str> = hits.iter().map(|h| h.item).collect();
-        assert_eq!(items, vec!["near", "mid", "far"]);
+        assert_eq!(usage.get(&AgentId::from("a")), Some(&2_500));
     }
 }

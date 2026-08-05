@@ -1029,8 +1029,12 @@ entities:
       - LLM_PARSE
       - IPC_FAILED                  # TS 側のみ（Tauri ブリッジ自体の失敗）
 
-  RagChunk:
-    fields: { id: String, source: String, text: String }
+  # RagChunk は **Spec 18 Phase 4 で型ごと撤回** (2026-08-05)。
+  # 旧同梱 RAG (rag.rs = HashEmbedder + in-memory 索引) の断片型で、取り込み
+  # 導線が無く索引は常に空だった。見出し索引 (rag_tool_contract) が置き換え、
+  # ワイヤの写し (types.ts / commands.rs / ipc.ts) も同時に消えた。
+  # 凍結されたワイヤ型の撤回なのでここに痕跡を残す — 消すと次に読む人は
+  # 「元から無かった」と読む (failures.md #56 の逆向き)。
 
   TopologyEdge:
     fields: { source: AgentId, target: AgentId }
@@ -2478,7 +2482,7 @@ concurrency:
     owns: [エージェントのライフサイクル, LLM 呼び出し, メッセージ配送]
     rationale: I/O バウンド。ネットワーク待ちでスレッドを占有しない
   rayon:
-    owns: [RAG のベクトル類似検索, ログのトークン集計]
+    owns: [ログのトークン集計]  # ベクトル類似検索は Spec 18 で rag.rs ごと撤去
     rationale: CPU バウンド。Tokio ワーカー上で回すと IPC 応答が詰まる
   bridge: agent_core::compute::spawn_rayon（oneshot で受け渡し、双方をブロックしない）
   anti_pattern: |

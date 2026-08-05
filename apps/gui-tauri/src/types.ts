@@ -391,13 +391,6 @@ export const WEEKDAY_LABEL_KEYS: Record<Weekday, string> = {
   sun: "labels.weekday.sun",
 };
 
-/** RAG 索引の断片。 */
-export interface RagChunk {
-  id: string;
-  source: string;
-  text: string;
-}
-
 /**
  * plan の 1 タスクの解決分類（Spec 08 — 波ペイン）。
  *

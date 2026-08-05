@@ -65,7 +65,6 @@ use crate::model::{
     ConfigFileKind, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use crate::plan::{PlanTaskAnnounced, PlanTaskState, PlanWaveRecord, PlanWaveStore};
-use crate::rag::{RagChunk, RagIndex};
 use crate::schedule::{Recurrence, ScheduledTask, Tick};
 use crate::tool::{AgentTool, ToolContext, ToolRegistry};
 use crate::secret::SecretStore;
@@ -135,8 +134,6 @@ pub struct OrchestratorConfig {
     /// 待ち合わせが起きうるので、必ず戻る上限が要る。`max_hops` は深さしか
     /// 縛らず、待ちの時間は縛らない。
     pub ask_timeout: Duration,
-    /// 1 回の応答生成で RAG から引く断片数。
-    pub rag_top_k: usize,
 }
 
 impl Default for OrchestratorConfig {
@@ -153,7 +150,6 @@ impl Default for OrchestratorConfig {
             room_log_window: 12,
             room_log_excerpt_chars: 200,
             ask_timeout: Duration::from_secs(180),
-            rag_top_k: 4,
         }
     }
 }
@@ -233,7 +229,6 @@ struct Shared {
     /// 秘密の保管先。設定ファイルとは別系統で、平文の `world.json` には触れない。
     secrets: Arc<dyn SecretStore>,
     store: ConfigStore,
-    rag: RwLock<RagIndex>,
     log: RwLock<Vec<AgentMessage>>,
     /// 実行できるツール。同梱ツールと**共通** MCP サーバー由来のツールが同居する。
     tools: RwLock<ToolRegistry>,
@@ -763,7 +758,6 @@ impl Orchestrator {
             backends: RwLock::new(HashMap::new()),
             secrets,
             store,
-            rag: RwLock::new(RagIndex::default()),
             log: RwLock::new(restored_log),
             tools: RwLock::new(ToolRegistry::new()),
             mcp: RwLock::new(crate::mcp::McpManager::default()),
@@ -1270,27 +1264,6 @@ impl Orchestrator {
     pub async fn token_usage_by_agent(&self) -> CoreResult<HashMap<AgentId, u64>> {
         let log = self.shared.log.read().await.clone();
         compute::spawn_rayon(move || compute::aggregate_token_usage(&log)).await
-    }
-
-    /// RAG 索引を検索する（診断・プレビュー用）。
-    pub async fn search_rag(
-        &self,
-        sources: &[String],
-        query: &str,
-        k: usize,
-    ) -> CoreResult<Vec<RagChunk>> {
-        let hits = self.shared.rag.read().await.search(sources, query, k).await?;
-        Ok(hits.into_iter().map(|h| h.item).collect())
-    }
-
-    /// RAG 索引に断片を追加する。
-    pub async fn index_rag_chunk(&self, chunk: RagChunk) {
-        self.shared.rag.write().await.insert(chunk);
-    }
-
-    /// 登録済み RAG ソース名。
-    pub async fn rag_sources(&self) -> Vec<String> {
-        self.shared.rag.read().await.sources()
     }
 
     /// ツールを登録する。同名は置き換える。
@@ -3306,25 +3279,9 @@ async fn handle_message(
         ));
     }
 
-    // RAG。Rayon 側で検索するので、この待ち時間に他エージェントも進む。
-    // **毎ターン必ず変わる**（今回の発話で検索するため）。意味の上でも、
-    // 参照資料は「今回の問いに答えるための材料」なので問いの近くが正しい。
-    if !spec.rag_sources.is_empty() {
-        let hits = shared
-            .rag
-            .read()
-            .await
-            .search(&spec.rag_sources, &incoming.content, shared.config.rag_top_k)
-            .await?;
-        if !hits.is_empty() {
-            let refs = hits
-                .iter()
-                .map(|h| format!("- [{}] {}", h.item.source, h.item.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            context.push(format!("## 参照資料\n{refs}"));
-        }
-    }
+    // 参照資料の push 注入は Spec 18 で廃止した（pull のみ = モデルが `rag`
+    // ツールで読みに行く）。撤去自体は挙動を変えていない — 旧 RagIndex には
+    // 取り込み導線が無く索引は常に空で、この位置の注入は一度も発火しなかった。
 
     // 居合わせた会話（広場ログ）。受信側でオプトアウトできる（Spec 03）:
     // 毎ターン最大 12 件 × 200 字の固定費であり、場の共有が要らない役には

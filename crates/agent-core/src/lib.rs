@@ -19,7 +19,7 @@
 //! | 担当 | ランタイム | 理由 |
 //! |---|---|---|
 //! | エージェント実行・LLM 呼び出し・配送 | Tokio | I/O バウンド。待機中にスレッドを占有しない |
-//! | RAG 類似検索・ログ集計 | Rayon | CPU バウンド。コア数ぶんの並列で焼き切る |
+//! | ログのトークン集計 | Rayon | CPU バウンド。コア数ぶんの並列で焼き切る |
 //!
 //! エージェントを Rayon に載せない理由は、Rayon のプールがコア数に固定されるため。
 //! ネットワーク待ちでスレッドを塞ぐと、同時稼働エージェント数がコア数で頭打ちになる。
@@ -74,7 +74,6 @@ pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod plan;
-pub mod rag;
 pub mod schedule;
 pub mod secret;
 pub mod session_store;
@@ -100,7 +99,6 @@ pub use model::{
     TopologyEdge,
 };
 pub use orchestrator::{AgentMcpStatus, Orchestrator, OrchestratorConfig};
-pub use rag::{RagChunk, RagIndex};
 pub use schedule::{
     GRACE_MINUTES, InvalidRecurrence, Recurrence, ScheduledTask, Tick, Weekday, due_interval,
     due_wall_clock,
