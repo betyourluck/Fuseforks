@@ -22,6 +22,7 @@ import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
 import { compactNumber } from "../lib/format";
+import { tieAddition } from "../lib/kizunaDrop";
 import { roleBadge } from "../lib/roleLabel";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
@@ -120,16 +121,15 @@ async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
   await orchestrator.setTopologyPosition(event.node.id, event.node.position);
 }
 
-/** 辺を引いたときの処理。既存の接続先へ追加してコアへ渡す。 */
+/**
+ * 辺を引いたときの処理。追加の規則は lib/kizunaDrop の 1 実装
+ * （リストからのカード drop と共有。Spec 21）。
+ */
 async function onConnect(connection: Connection): Promise<void> {
-  const source = state.agents.find((a) => a.id === connection.source);
-  if (!source || !connection.target) return;
-
-  if (source.connectedAgents.includes(connection.target)) return;
-  await orchestrator.setConnections(source.id, [
-    ...source.connectedAgents,
-    connection.target,
-  ]);
+  if (!connection.target) return;
+  const next = tieAddition(state.agents, connection.source, connection.target);
+  if (!next) return;
+  await orchestrator.setConnections(connection.source, next);
 }
 
 /** 宛先の表示。id と表示名の併記（Spec 06 の規律）。 */

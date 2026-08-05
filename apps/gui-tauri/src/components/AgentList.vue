@@ -13,6 +13,7 @@ import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { batchAction, batchLabel } from "../lib/batchStart";
+import { dropPoint, tieAddition } from "../lib/kizunaDrop";
 import type { AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
 
 const orchestrator = useOrchestrator();
@@ -104,9 +105,89 @@ async function submitNew(): Promise<void> {
   }
 }
 
-/** ドラッグライブラリが返した表示順を保存する。 */
-async function reorder(reordered: AgentSnapshot[]): Promise<void> {
-  await orchestrator.reorder(reordered.map((agent) => agent.id));
+// ---- カードのドラッグ（並び替え + 地図への絆 drop。Spec 21）----
+//
+// Sortable の発火順は update:model-value → end（Spec 21 P0 実測 1）。
+// 並び替えをその場で確定すると、地図で終わった drop を取り消せないので、
+// update では保留するだけにして end のヒットテストで確定か破棄を決める。
+
+/** Sortable の end イベントのうち、この画面が使う形。 */
+interface DragEndEvent {
+  item?: HTMLElement;
+  from?: HTMLElement;
+  oldIndex?: number;
+  originalEvent?: MouseEvent | TouchEvent;
+}
+
+/** ドラッグ中の並び替え結果。end で確定するまでコアへは渡さない。 */
+let pendingOrder: AgentSnapshot[] | null = null;
+
+function holdReorder(reordered: AgentSnapshot[]): void {
+  pendingOrder = reordered;
+}
+
+/** ドラッグ開始時に測った地図の矩形。copy カーソルの判定に使う。 */
+let mapRect: DOMRect | null = null;
+
+function trackPointer(event: PointerEvent): void {
+  if (!mapRect) return;
+  const inside =
+    event.clientX >= mapRect.left &&
+    event.clientX <= mapRect.right &&
+    event.clientY >= mapRect.top &&
+    event.clientY <= mapRect.bottom;
+  document.body.classList.toggle("kizuna-drop-target", inside);
+}
+
+function onDragStart(): void {
+  // 矩形判定だけの安い検査（D2 の連続ヒットテストとは別物。Phase 1 の範囲）。
+  mapRect = document.querySelector(".vue-flow")?.getBoundingClientRect() ?? null;
+  document.addEventListener("pointermove", trackPointer);
+}
+
+async function onDragEnd(evt: DragEndEvent): Promise<void> {
+  document.removeEventListener("pointermove", trackPointer);
+  document.body.classList.remove("kizuna-drop-target");
+  mapRect = null;
+
+  const pending = pendingOrder;
+  pendingOrder = null;
+
+  // 分身はイベント配送前に除去済みなので素の elementFromPoint でよい
+  // （Spec 21 P0 実測 2）。closest はハンドル・ラベル等の子要素から辿るため。
+  const point = dropPoint(evt.originalEvent);
+  const node = point
+    ? (document.elementFromPoint(point.x, point.y)?.closest(".vue-flow__node") ?? null)
+    : null;
+
+  if (!node) {
+    // リスト内（または地図でもノードでもない場所）で終わった drop。
+    // 並び替えだけを確定する。座標が取れなかったときもこちら = 既存挙動。
+    if (pending) await orchestrator.reorder(pending.map((agent) => agent.id));
+    return;
+  }
+
+  // 地図のノードで終わった drop — 並び替えは確定しない。state を変えない
+  // だけでは DOM が移動後の並びのまま残る（Spec 21 P0 実測 3）ので、
+  // カードを元の位置へ差し戻す。
+  if (pending && evt.item && evt.from && typeof evt.oldIndex === "number") {
+    evt.from.removeChild(evt.item);
+    evt.from.insertBefore(evt.item, evt.from.children[evt.oldIndex] ?? null);
+  }
+
+  const source = typeof evt.oldIndex === "number" ? agents.value[evt.oldIndex] : undefined;
+  const targetId = node.getAttribute("data-id") as AgentId | null;
+  if (!source || !targetId) return;
+
+  const next = tieAddition(state.agents, source.id, targetId);
+  if (!next) {
+    // 接続済み（方向付き）か自分自身。無音にしない（D3）—
+    // 「届いたが張られなかった」ことをノードのパルスで返す。
+    node.classList.add("kizuna-pulse");
+    window.setTimeout(() => node.classList.remove("kizuna-pulse"), 400);
+    return;
+  }
+  await orchestrator.setConnections(source.id, next);
 }
 </script>
 
@@ -232,6 +313,12 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
       </div>
     </form>
 
+    <!--
+      force-fallback を外さないこと。Tauri の既定 dragDropEnabled=true は
+      Windows WebView2 でページ内のネイティブ DnD と衝突する報告があり、
+      外すと並び替えごと動かなくなる（Spec 21。断定形への裏取りは P4 の実機で）。
+      Spec 21 の絆 drop も fallback の座標を前提にしている。
+    -->
     <VueDraggable
       :model-value="agents"
       tag="div"
@@ -242,7 +329,9 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
       chosen-class="agent-card--dragging"
       filter="button, input, textarea"
       :prevent-on-filter="false"
-      @update:model-value="reorder"
+      @update:model-value="holdReorder"
+      @start="onDragStart"
+      @end="onDragEnd"
     >
       <AgentCard
         v-for="agent in agents"
@@ -289,5 +378,30 @@ async function reorder(reordered: AgentSnapshot[]): Promise<void> {
 
 .agent-card--dragging {
   border-color: var(--color-accent);
+}
+
+/*
+ * カード drop の視覚応答（Spec 21）。対象は地図側の要素だが、効果の持ち主は
+ * この画面の drop 経路なので、ここに置く（TopologyMap の style は scoped）。
+ */
+
+/* ドラッグ中、地図の矩形に入ったら「落とせる」を示す（D2 の代替。矩形判定のみ）。 */
+body.kizuna-drop-target,
+body.kizuna-drop-target * {
+  cursor: copy !important;
+}
+
+/* 張られなかった drop（接続済み・自分自身）への応答。無音にしない（D3）。 */
+.vue-flow__node.kizuna-pulse {
+  animation: kizuna-pulse 0.4s ease-out;
+}
+
+@keyframes kizuna-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-accent);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+  }
 }
 </style>
