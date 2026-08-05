@@ -161,8 +161,25 @@ impl AgentTool for RunTool {
         // **提示も判定も同じ経路でファイルを読む。** 写しを持つと、
         // 「利用者が今さっき許可したのに提示されない」が生まれる。
         let policy = self.load(&ctx.agent_id).await;
-        if !policy.offers_anything() {
-            return None;
+
+        // **`allow` が空でも提示する**（2026-08-06 利用者裁定）。提示しないと
+        // 呼び出しがフィルタで弾かれ、`pending` へ 1 件も積めない —
+        // 承認画面に何も出ず、**1 件目だけは人が JSON を手で書くしかない**
+        // 閉じた輪になっていた。**fail closed は実行についての性質**で、
+        // `decide` が単独で守る（提示しても `allow` に無いものは 1 つも走らない）。
+        if !policy.allows_anything() {
+            return Some(ToolSpec {
+                name: self.name().to_owned(),
+                description: String::from(
+                    "利用者が許可したコマンドを実行する。**シェルは介さない**（パイプ・\
+                     リダイレクト・変数展開は使えない）。\n\
+                     **いま許可されているコマンドは 1 つも無いので、この道具では\
+                     何も実行できない。** 呼ぶと利用者への要求として記録され、\
+                     利用者が承認すれば次のターンから実行できるようになる。\
+                     急ぐなら利用者へ依頼するか、別の手段で進めること。\n",
+                ),
+                parameters: self.parameters(),
+            });
         }
 
         let mut text = String::from(
@@ -503,6 +520,52 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// **`allow` が空でも `run` を提示する。**（2026-08-06 利用者裁定）
+    ///
+    /// 提示しないと呼び出しがフィルタで弾かれ、`pending` へ 1 件も積めない。
+    /// 承認画面に何も出ないので、**1 件目だけは人が JSON を手で書くしかない**
+    /// 閉じた輪になっていた（allow 空 → 非提示 → 呼べない → pending 空 →
+    /// 承認できない → allow 空のまま）。
+    ///
+    /// **このテストが留めているのは「親切心で 2 段目のゲートを戻さない」こと。**
+    /// 決定を文章だけで残すと、次に読む人が fail closed のつもりで足す
+    /// （Spec 18 D13 と同じ形）。**fail closed は `decide` が単独で守る。**
+    #[tokio::test]
+    async fn it_is_offered_even_when_nothing_is_allowed_yet() {
+        let dir = std::env::temp_dir().join(format!(
+            "concordia-empty-allow-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let tool = RunTool::new(ConfigStore::new(&dir));
+        let ctx = ToolContext {
+            agent_id: AgentId::from("agent_01"),
+            work_dir: Some(dir.clone()),
+            cancel: None,
+            rag_roots: Vec::new(),
+        };
+
+        let spec = tool
+            .spec_for(&ctx)
+            .await
+            .expect("allow が空でも提示する（要求を積む経路がここにしか無い）");
+        assert!(
+            spec.description.contains("何も実行できない"),
+            "提示する以上、いま何もできないことを本文で言い切る: {}",
+            spec.description
+        );
+
+        // 提示しても実行はされない。fail closed は decide が守る。
+        let policy = tool.load(&ctx.agent_id).await;
+        assert_eq!(policy.decide("cargo", &["test".to_string()]), Decision::Unknown);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn it_returns_the_resolved_path_exit_code_and_stdout() {
         let program = shell_program();

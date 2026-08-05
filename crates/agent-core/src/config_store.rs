@@ -785,7 +785,7 @@ mod tests {
             .await
             .unwrap();
         assert!(policy.allow.is_empty());
-        assert!(!policy.offers_anything(), "run は提示されない");
+        assert!(!policy.allows_anything(), "何も実行できない");
     }
     #[tokio::test]
     async fn missing_config_reads_as_empty_string() {

@@ -6927,12 +6927,18 @@ async fn run_is_not_presented_to_agents_that_did_not_ask_for_it() {
     assert!(names.contains(&"grep"), "他の同梱ツールは既定のまま: {names:?}");
 }
 
-/// **オプトインしていても `allow` が空なら提示しない**（fail closed = D10）。
+/// **オプトインしていれば `allow` が空でも提示する。実行はできない。**
 ///
-/// 提示は 2 段ゲート（`enabledTools` に `run` があるか × `allow` が 1 件以上あるか）。
-/// `run.json` を持たない個体は何も実行できず、`run` は提示すらされない。
+/// 提示を決めるのは `enabledTools` の 1 段だけ（2026-08-06 利用者裁定で
+/// 2 段目 = `allow` が 1 件以上、を撤回した）。**fail closed は提示ではなく
+/// `decide` が守る** — 提示しても `allow` に無い呼び出しは 1 つも走らない。
+///
+/// 撤回の理由は、2 段目があると**閉じた輪**になっていたこと:
+/// allow 空 → 非提示 → 呼び出しがフィルタで弾かれる → `pending` へ積めない →
+/// 承認画面に何も出ない → `allow` は空のまま。**1 件目だけは人が JSON を手で
+/// 書くしかなかった**（承認画面がその手間を引き受けられていなかった）。
 #[tokio::test]
-async fn run_needs_both_the_opt_in_and_a_non_empty_allow_list() {
+async fn run_is_offered_on_opt_in_alone_but_runs_nothing_until_allowed() {
     let backend = Arc::new(ToolSpecBackend::default());
     let dir = TempDir::new("run-gate");
     let orchestrator = setup_with_run(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
@@ -6957,10 +6963,18 @@ async fn run_needs_both_the_opt_in_and_a_non_empty_allow_list() {
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
     let tools = backend.tools.lock().unwrap().clone();
-    let first: Vec<&str> = tools[0].iter().map(|t| t.name.as_str()).collect();
+    let first = tools[0]
+        .iter()
+        .find(|t| t.name == "run")
+        .map(|t| t.description.clone())
+        .expect("allow が空でも提示すること（要求を積む経路がここにしか無い）");
     assert!(
-        !first.contains(&"run"),
-        "allow が空なら提示しないこと（fail closed）: {first:?}"
+        first.contains("何も実行できない"),
+        "提示する以上、いま何もできないことを本文で言い切ること: {first}"
+    );
+    assert!(
+        !first.contains("- `"),
+        "許可が無いのにパターンの箇条書きを出さないこと: {first}"
     );
 
     let last = tools.last().unwrap();

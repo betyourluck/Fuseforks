@@ -213,8 +213,14 @@ impl CommandPolicy {
         self.timeout_secs.clamp(1, MAX_TIMEOUT_SECS)
     }
 
-    /// `run` をモデルへ提示するか（2 段ゲートの 2 段目）。
-    pub fn offers_anything(&self) -> bool {
+    /// 実行できるパターンを 1 件でも持っているか。
+    ///
+    /// **提示の判定には使わない**（2026-08-06 利用者裁定で 2 段ゲートの
+    /// 2 段目を撤回した）。`run` は `enabledTools` にチェックがあれば提示され、
+    /// `allow` が空でも「要求は積める」— 積めないと承認画面へ 1 件も出ず、
+    /// **1 件目だけは人が JSON を手で書くしかない**という閉じた輪になっていた。
+    /// 実行できるかどうかは [`Self::decide`] が単独で決める。
+    pub fn allows_anything(&self) -> bool {
         !self.allow.is_empty()
     }
 
@@ -553,13 +559,14 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_policy_allows_nothing_and_offers_nothing() {
+    fn an_empty_policy_allows_nothing_but_still_takes_requests() {
         let p = CommandPolicy::default();
-        assert_eq!(p.decide("ruff", &[]), Decision::Unknown);
-        assert!(
-            !p.offers_anything(),
-            "allow が空なら run は提示されない（fail closed）"
+        assert_eq!(
+            p.decide("ruff", &[]),
+            Decision::Unknown,
+            "allow が空なら何も実行できない（fail closed は decide が守る）"
         );
+        assert!(!p.allows_anything());
     }
 
     #[test]
