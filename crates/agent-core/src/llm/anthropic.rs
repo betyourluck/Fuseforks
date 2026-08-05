@@ -378,6 +378,7 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
 
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut dropped: Vec<&'static str> = Vec::new();
     for block in resp.content {
         match block {
             wire::AnthropicContentBlock::Text { text: chunk } => text.push_str(&chunk),
@@ -391,9 +392,29 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
                     extra: None,
                 });
             }
-            // thinking など未知のブロックは canonical に写す先がないので落とす。
-            wire::AnthropicContentBlock::Other => {}
+            // 本文にもツール呼び出しにも写せないブロック。**落とすが、数える。**
+            wire::AnthropicContentBlock::Thinking => dropped.push("thinking"),
+            wire::AnthropicContentBlock::RedactedThinking => dropped.push("redacted_thinking"),
+            wire::AnthropicContentBlock::Other => dropped.push("unknown"),
         }
+    }
+
+    // **落としたブロックがあり、しかも本文が空なら、そのターンは画面から
+    // 何も読めない。** 実機で出力 399 トークンを使って本文もツール呼び出しも
+    // 無いターンが 2 回続き、どの計器にも痕跡が無かった（2026-08-06）。
+    //
+    // ここは #47 の L0 と同じ立場 — **挙動は変えず、気づけるようにするだけ**。
+    // 頻度を見てから機構を足すかを決める（thinking を本文へ昇格させる、
+    // 再試行する等は、1〜2 回の観測で作ると効いているか分からない機構が増える）。
+    if !dropped.is_empty() {
+        crate::note!(
+            "dropped content blocks: kinds={} count={} output_tokens={} text_chars={} tool_calls={}",
+            dropped.join("+"),
+            dropped.len(),
+            usage.completion,
+            text.chars().count(),
+            tool_calls.len(),
+        );
     }
 
     Ok(ChatResponse {
@@ -746,6 +767,47 @@ mod tests {
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[2]["content"][0]["type"], "tool_result");
         assert_eq!(messages[2]["content"][0]["tool_use_id"], "tu_1");
+    }
+
+    /// **本文以外のブロックだけが返ったターンを、空として黙って通さない。**
+    ///
+    /// 実機で出力 399 トークン・本文なし・ツール呼び出しなしが 2 回続き、
+    /// **どの計器にも痕跡が無かった**（2026-08-06）。decode は写す先が無い
+    /// ブロックを落とすが、落としたことは数えて 1 行出す（#47 の L0 と同じ立場 —
+    /// 挙動は変えず、気づけるようにするだけ）。
+    #[test]
+    fn thinking_only_responses_decode_to_no_text_and_are_counted() {
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "…" },
+                { "type": "redacted_thinking", "data": "…" }
+            ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 399 }
+        });
+        let resp: wire::AnthropicResponse = serde_json::from_value(raw).unwrap();
+        let out = decode(resp).unwrap();
+
+        assert!(out.text.is_none(), "本文は無い（写す先が無いので落とす）");
+        assert!(out.tool_calls.is_empty());
+        assert_eq!(
+            out.usage.completion, 399,
+            "出力トークンは数えられている — ここが 0 なら、消えたのはトークンではなく計器のほう"
+        );
+    }
+
+    /// thinking と本文が並んでいれば、本文はそのまま取れる（既存の挙動を保つ）。
+    #[test]
+    fn thinking_alongside_text_still_yields_the_text() {
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "…" },
+                { "type": "text", "text": "了解" }
+            ],
+            "stop_reason": "end_turn"
+        });
+        let resp: wire::AnthropicResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(decode(resp).unwrap().text.as_deref(), Some("了解"));
     }
 
     #[test]

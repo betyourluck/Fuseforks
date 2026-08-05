@@ -3557,6 +3557,12 @@ async fn handle_message(
     // 入力ぶんも別に数える。キャッシュ率の分母は合計ではなく入力。
     let mut prompt = 0u64;
     let mut tokens = 0u64;
+    // 最後の LLM 応答が使った出力トークン。**空本文の診断に使う。**
+    //
+    // 本文もツール呼び出しも無いのに出力トークンだけがある場合、モデルは
+    // **本文以外のブロック**（拡張思考など）だけを返している。実機で 2 回
+    // 続けて起き、「本文が返りませんでした」としか出せなかった（2026-08-06）。
+    let mut last_completion = 0u64;
     // 接地の来歴は 1 周ぶんではなく**ターンぶん**で持つ。検索した周と
     // 関数を呼んだ周は別なので、周ごとに上書きすると先に起きた接地が消える。
     let mut grounding = crate::llm::Grounding::default();
@@ -3655,6 +3661,7 @@ async fn handle_message(
             system_digest,
             history_depth,
         );
+        last_completion = response.usage.completion;
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
@@ -3717,14 +3724,15 @@ async fn handle_message(
             if let Some(text) = &response.text
                 && looks_like_leaked_tool_call(text)
             {
+                // **本文そのものは出さない。** 漏れた XML はモデルが書いた文章で、
+                // そこには利用者が渡した秘密が入りうる — 実機で
+                // `Authorization: Bearer …` を丸ごとログへ書いた（2026-08-06）。
+                // 計器の目的は「漏れたか」と「どの形か」で、本文は要らない。
                 note!(
-                    "text tool call leaked: agent={agent_id} round={} chars={} head={}",
+                    "text tool call leaked: agent={agent_id} round={} chars={} markers={}",
                     iteration + 1,
                     text.chars().count(),
-                    text.chars()
-                        .take(160)
-                        .collect::<String>()
-                        .replace(['\n', '\r'], " "),
+                    leaked_markers(text).join("+"),
                 );
             }
             break;
@@ -3978,6 +3986,7 @@ async fn handle_message(
                     system_digest,
                     history_depth,
                 );
+                last_completion = response.usage.completion;
                 tokens += response.usage.total();
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
@@ -4059,7 +4068,20 @@ async fn handle_message(
                 reason()
             )
         } else {
-            "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
+            // **観測できた事実だけを書く。** 出力トークンがあるのに本文も
+            // ツール呼び出しも無いなら、モデルは**本文以外のブロック**
+            // （拡張思考など）だけを返している。種別は `dropped content blocks:`
+            // の 1 行がログに残す — ここで「thinking です」と断定しない
+            // （見たのはトークン数であって、ブロックの中身ではない）。
+            if last_completion > 0 {
+                format!(
+                    "（モデルは出力 {last_completion} トークンを使いましたが、\
+                     本文もツール呼び出しも返しませんでした。\
+                     もう一度頼んでみてください。繰り返すなら頼み方を変えてください。）"
+                )
+            } else {
+                "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
+            }
         };
     }
 
@@ -4271,7 +4293,27 @@ async fn connect_agent_mcp(shared: &Shared, id: &AgentId) {
 /// JSON のブロックを走査するだけで XML を解釈しない）。`<invoke` だけを探す
 /// 検出器は実機で一度も発火しない — 閉じタグと `<parameter` を主に据える。
 fn looks_like_leaked_tool_call(text: &str) -> bool {
-    text.contains("</invoke>") || text.contains("<parameter name=") || text.contains("<invoke ")
+    !leaked_markers(text).is_empty()
+}
+
+/// 漏れを検出した目印の一覧（計器に出す）。
+///
+/// **本文の代わりにこれを出す。** どの目印で当たったかが分かれば形は追えるし、
+/// **モデルが書いた文章をログへ再放流しない** — そこには利用者が渡した秘密が
+/// 入りうる（実機で `Authorization: Bearer …` を丸ごと書いた）。
+///
+/// `<invoke ` だけを探すと実機で一度も発火しない（届く本文は先頭の
+/// `<invoke name="` が食われて途中から始まる）ので、3 つとも見る。
+fn leaked_markers(text: &str) -> Vec<&'static str> {
+    [
+        ("</invoke>", "close"),
+        ("<parameter name=", "param"),
+        ("<invoke ", "open"),
+    ]
+    .into_iter()
+    .filter(|(needle, _)| text.contains(needle))
+    .map(|(_, label)| label)
+    .collect()
 }
 
 /// 同梱ツールをこのエージェントへ提示するか（enabled_tools_invariant）。

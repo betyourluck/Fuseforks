@@ -426,6 +426,12 @@ pub enum AnthropicContentBlock {
         #[serde(default)]
         input: serde_json::Value,
     },
+    /// 拡張思考。**本文ではない**ので canonical へは写さないが、
+    /// **落としたことは数える** — 実機で「出力 399 トークンあり・本文なし・
+    /// ツール呼び出しなし」のターンが出たとき、どの計器にも載らなかった。
+    Thinking,
+    /// 伏せられた拡張思考。扱いは [`Self::Thinking`] と同じ。
+    RedactedThinking,
     /// 未知の種別。将来のブロック種別で丸ごと壊れないための受け皿。
     #[serde(other)]
     Other,
@@ -758,13 +764,27 @@ mod tests {
         assert!(resp.usage.is_none());
     }
 
+    /// 本文以外のブロックが来ても壊れず、**種別を取り違えない**。
+    ///
+    /// `thinking` は 2026-08-06 に `Other` から専用の枝へ移した — 落とすのは
+    /// 同じだが、**落とした種別をログへ出す**ために名前が要る（実機で
+    /// 「出力トークンだけがあって本文が無い」ターンの原因が読めなかった）。
     #[test]
-    fn anthropic_unknown_content_block_does_not_break_parsing() {
-        let raw = r#"{"content":[{"type":"thinking","thinking":"..."},{"type":"text","text":"ok"}]}"#;
+    fn anthropic_non_text_blocks_are_typed_not_lumped_together() {
+        let raw = r#"{"content":[
+            {"type":"thinking","thinking":"..."},
+            {"type":"redacted_thinking","data":"..."},
+            {"type":"some_future_block","x":1},
+            {"type":"text","text":"ok"}
+        ]}"#;
         let resp: AnthropicResponse = serde_json::from_str(raw).expect("未知ブロックを許容すること");
 
-        assert_eq!(resp.content.len(), 2);
-        assert!(matches!(resp.content[0], AnthropicContentBlock::Other));
-        assert!(matches!(&resp.content[1], AnthropicContentBlock::Text { text } if text == "ok"));
+        assert_eq!(resp.content.len(), 4);
+        assert!(matches!(resp.content[0], AnthropicContentBlock::Thinking));
+        assert!(matches!(resp.content[1], AnthropicContentBlock::RedactedThinking));
+        // **本当に未知のものだけが `Other`。** thinking を一緒くたにすると、
+        // ログの `kinds=` が「unknown」しか言えなくなる。
+        assert!(matches!(resp.content[2], AnthropicContentBlock::Other));
+        assert!(matches!(&resp.content[3], AnthropicContentBlock::Text { text } if text == "ok"));
     }
 }
