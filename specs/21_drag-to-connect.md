@@ -201,8 +201,45 @@ Phase ごと削除 — 代替の `copy` カーソルは Phase 1 で入ってい�
    Phase 2 から Phase 1 へ移動（Phase 2 は D2 が落ちたら削除されるので、
    そこに置くと代替も一緒に消える）
 
-## P0 実測記録
+## P0 実測記録（2026-08-06。playground = `poc21.html` + `Poc21.vue`、
+vite dev 1420。合成 Pointer/Mouse イベント + 実マウスの併用。破棄済み）
 
-（捨てブランチの結論をここへ書く。**特に `@end` と `@update:model-value` の
-発火順** — フラグを `@end` で立てても `reorder` が既に呼ばれた後、という
-ケースの有無を console.log で確定させる）
+1. **発火順は `update:model-value` → `end` で確定**（同梱 Sortable の
+   `_onDrop` L1015→1025 + 実走ログの両方）。査読の懸念どおり `@end` の
+   フラグでは間に合わない。**機構は「保留コミット」で確定** —
+   `@update:model-value` は配列を保留するだけ、`@end` のヒットテストで
+   確定（`orchestrator.reorder`）or 破棄
+2. **終端ヒットテストは素の `elementFromPoint` で成立**。Sortable は分身を
+   イベント配送**より前**に DOM から除去する（`_onDrop` 冒頭 + 実走で
+   `ghost-in-dom(at update/at end)=false`）。実走で `nodeId=node_x` /
+   `node_y` に命中。**終端 1 回に `display: none` の定石は不要**。
+   `closest(".vue-flow__node")` は必要（ハンドル・pane 対策）
+3. **破棄時の DOM 差し戻しは必要**（rev2 のとおり）。ソース読みでは
+   vue-draggable-plus が emit 前に差し戻して見えたが、**実走で反証** —
+   破棄後の DOM は移動後の並びのまま残る（`dom-order=[a,b,d,c]` vs
+   `state=[a,b,c,d]` を観測）。Phase 1 は
+   `evt.from.insertBefore(evt.item, evt.from.children[oldIndex])` を実装する。
+   確定（コミット）側は Vue の flush 後に DOM と state の一致を観測済み
+4. **リストを縦断せず地図で落とすと `update` 自体が発火しない**
+   （`old=new` の実走）— 保留が無いので破棄も要らず、自然に no-op
+5. **D2 は条件付き** — 機構は成立（ドラッグ中の連続ヒットテストで
+   `hoverHits` 増加を観測）だが **fps 47.5〜52.9 で基準 60 に未達**。
+   ただし毎フレーム分身を `display` トグルする素朴実装での数字。
+   処方候補: 分身へ `pointer-events: none` を**ドラッグ開始時に 1 回**打てば
+   `elementFromPoint` が分身をスキップし、トグルが消える。
+   **Phase 2 冒頭でこの最適化後に再計測して合否を出す。S4 はそれまで保留**
+6. **自己接続はハンドル経路に届かない** — この版の Vue Flow は
+   self-connect で `@connect` を発火しない（接続ラインは出るが drop で
+   発火せず。対照実験の X→Y は発火）。共有関数の自己 no-op は drop 経路の
+   防御であって、**ハンドル経路の観測可能な挙動は変わらない**（Notes 4 の
+   「既存挙動の変更」は実質ゼロに縮んだ。ただしライブラリ更新で変わりうる
+   ので no-op 自体は入れる）
+7. **ネイティブ DnD の仮説は未実測のまま**（ブラウザでは検証不能、実アプリの
+   WebView2 が要る）。機構はどちらでも成立するため Phase 1 を阻まない。
+   `force-fallback` コメントの文言は **P4 の実機で 1 回裏取りしてから断定形に
+   する**（それまでは「Tauri の既定 dragDropEnabled=true と衝突する報告がある」
+   の形で書く）
+8. **罠を 1 つ記録**: 合成 (composited) されていないページでは Vue Flow の
+   ノード初期化が rAF 待ちで止まり、全ノードが `visibility: hidden` のまま
+   `elementFromPoint` に当たらない。ヘッドレス検証や自動テストでこの経路を
+   確かめるときは、ページが可視であることを先に確認する
