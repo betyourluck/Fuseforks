@@ -26,7 +26,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
-| ⚙️ **System Settings** | Language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
+| ⚙️ **System Settings** | Your own name and icon, language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
 The connection target is OpenAI-compatible / Anthropic / Gemini. **The base URL is flexible**,
 so it connects directly to local LLMs like Ollama or LM Studio.
@@ -199,6 +199,8 @@ Initialization now runs in the background, displaying a blocking screen with a C
 Initialization failures surface visibly on top of the overlay with a reason provided — making it visually distinguishable whether one should wait or if something is broken.
 
 Chat displays conversations in speech bubbles separating speakers by side, grouping consecutive messages under a single avatar and name.
+**The name and icon on your own rows come from "System Settings" > "General" > "User"**
+([Spec 19](specs/19_user-identity.md)); unset, they fall back to "You" and a circle with your initial.
 However, **destinations are never dropped** — since this is an orchestration screen, "who sent it to whom" is essential information, so destinations and hops remain outside the speech bubble. Information is never discarded merely to mimic casual chat.
 
 **In-flight turns can be interrupted mid-way** ([Spec 10](specs/10_turn-interrupt.md)).
@@ -601,6 +603,8 @@ Agent settings reside in the OS application-data area.
     Construct.md
     mcp.json                  Per-agent MCP (presented only to this agent; edit in the configuration-files tab)
     icon.webp                 Agent icon (only when configured; UI converts and stores it as WebP)
+  user/
+    icon.webp                 Your icon (only when configured; same handling as above, different location)
 ```
 
 ### Application Icon
@@ -729,13 +733,25 @@ Multiple instances are mutually exclusive: launching a second Concordia brings t
 Opened from "System Settings" in the title bar ([Spec 13](specs/13_settings-dialog.md)). Two panes —
 a left menu and a right page — where **the left menu is itself the catalog of what can be configured**.
 The aim is not to add settings, but to **surface settings that already existed with no place to touch them**.
+Two things have since been added into this frame: the theme, and your own name and icon.
 
 | Page | Content |
 |---|---|
-| General | Language (Japanese / English). Inferred from the OS on first launch only; never re-inferred afterwards |
+| General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited" |
 | User Interface | **Theme** (Dark / Light) and message visibility — the latter is still just the confirmation dialog for **cutting a tie** |
 
+- **Your name is both the display name on screen and the name servants read**
+  ([Spec 19](specs/19_user-identity.md)). Leave it unset and the screen says "You" while
+  servants receive your messages as coming from "ユーザー". Set it and
+  **both become the same name and stop following the interface language** — if the same
+  person carried a different name on screen and in front of a servant, the conversation
+  would stop lining up. **Up to 32 characters**; the character 】 and line breaks are
+  rejected, because that character delimits the sender in the message a servant receives,
+  and one utterance containing it would read as two. **Changing your name does not rewrite
+  the old name already recorded in past conversations** — records stay as they were written.
+- **Your name and icon are stored in the village**, so they travel with it when shared.
+  Whoever receives it can correct the name from this page.
 - **The theme switches the moment you pick one** (there is no Save button — appearance is
   chosen by looking at the result, so a setting that waits for a click cannot be chosen).
   **Until you choose, it follows the OS setting and is not persisted.** This is the opposite
