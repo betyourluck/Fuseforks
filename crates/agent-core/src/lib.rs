@@ -60,6 +60,7 @@
 //! # }
 //! ```
 
+pub mod attachment;
 pub mod blackboard;
 pub mod budget;
 pub mod command;
@@ -82,6 +83,7 @@ pub mod tool;
 pub mod tools;
 pub mod world;
 
+pub use attachment::{Attachment, AttachmentStore, GcReport, validate_attachment};
 pub use blackboard::BlackboardNote;
 pub use budget::BudgetPool;
 pub use command::{

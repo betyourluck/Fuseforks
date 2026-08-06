@@ -165,6 +165,18 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 添付画像が受け入れ条件を満たさない（`attachment_contract` 凍結 4 / Spec 23）。
+    ///
+    /// アイコンとは**別の変種**にする — 上限も文言も違うものを 1 つに畳むと、
+    /// 画面の辞書が「どちらの上限の話か」を区別できなくなる。共有するのは
+    /// WebP のマジックバイト判定（`attachment::is_webp`）だけ。
+    // 文言は UI の語彙で書く（このメッセージは利用者に見える）。
+    #[error("画像を受け付けられません: {reason}")]
+    InvalidAttachment {
+        /// 拒否した具体的な理由。
+        reason: String,
+    },
+
     /// 利用者の呼び名が受け入れ条件を満たさない（`user_identity_contract` 凍結 4）。
     ///
     /// 呼び名は封筒 `【送り手: {名前}】` としてサーヴァントのプロンプトと履歴の
@@ -253,6 +265,7 @@ impl CoreError {
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
             Self::InvalidIcon { .. } => "INVALID_ICON",
+            Self::InvalidAttachment { .. } => "INVALID_ATTACHMENT",
             Self::InvalidUserName { .. } => "INVALID_USER_NAME",
             Self::SecretStore { .. } => "SECRET_STORE_FAILED",
             Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",

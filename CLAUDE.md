@@ -1095,7 +1095,7 @@ CI がタグから書き換える側。
   設定できない村が出る（`opener:allow-open-path` を `$APPDATA/workspace` に
   絞ってあるのとは求められているものが逆）
 
-## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0 完了。次は P1**）
+## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P1 完了。次は P2**）
 
 起点は利用者 —「**おそらく僕はコストの面で使いたくない機能だが、無ければ
 『どうして無いの？』と聞かれそうな機能だ。なので機能は入れておきたい**」。
@@ -1125,8 +1125,15 @@ CI がタグから書き換える側。
   明記しているのに WebP が通った** — 文書は将来の実装の予告でもあるので、
   JPEG フォールバックは保険として維持。`data_contract.yaml` へ
   `attachment_contract`（凍結 9 本）+ `prompt_cache` へ「画像は安定プレフィックスに
-  入らない」を追記。**次は P1**（`Attachment` 型 + `validate_attachment` +
-  アニメーション WebP の VP8X 判定 + GC）
+  入らない」を追記
+- **P1 完了**（2026-08-06）— `attachment.rs` 新設（`validate_attachment` は検証と
+  同時に寸法を返す / GC は `gc_plan` 純関数 + I/O の 2 層で**現在時刻は引数** /
+  アニメーション判定は **VP8X フラグと ANIM チャンクの両方** — フラグだけだと
+  細工ファイルが素通り / VP8X キャンバス寸法がビットストリームに勝つ）。
+  `is_webp` を切り出して `validate_icon` と共有（上限は共有しない —
+  凍結 4 の述語境界）。`CoreError::InvalidAttachment` は `InvalidIcon` と別変種。
+  単体 16 本（agent-core 401 → 417）。**次は P2**（ワイヤ 3 adapter +
+  添付なしバイト等価の凍結テスト）
 
 ## 右クリックメニューの抑止（2026-08-06 着地。Spec 不要と判断）
 

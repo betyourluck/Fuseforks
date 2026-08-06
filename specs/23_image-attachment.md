@@ -2,7 +2,7 @@
 
 **ID**: 23
 **Date**: 2026-08-06
-**Status**: **rev3 承認 → P0 完了（2026-08-06。実測 + `attachment_contract`）→ 次は P1**。
+**Status**: **rev3 承認 → P0〜P1 完了（2026-08-06）→ 次は P2（ワイヤ）**。
 未決はゼロ — **D1 は利用者裁定で「1 ターン限り」に確定**、**D3 の既定は
 P0 の実測で WebP に確定**（5 系統 × 2 形式 = 10 通りすべて通過。下記「P0 実測結果」。
 JPEG フォールバックは保険として維持 — xAI は公式文書が jpg/png のみと明記しており、
@@ -223,9 +223,27 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
     形式とフォールバック（D3）/ 転送時の System 行（D6）/ 広場ログは存在のみ（D7）/
     ネイティブ Gemini 非対応（D8）/ **保持期間と容量上限（D9）** / 入口 2 つ（D4）。
     `prompt_cache` の invariants へ**画像は安定プレフィックスに入らない**ことを追記済み
-- **P1 コア（純機構）**: `Attachment` 型 + `validate_attachment`（形式マジック・
+- **P1 コア（純機構）** — **完了（2026-08-06。`attachment.rs` 新設・単体 16 本・
+  workspace 全緑・clippy 警告ゼロ）**: `Attachment` 型 + `validate_attachment`（形式マジック・
   **アニメーション WebP の拒否**・サイズ・寸法）+ `{workspace}/attachments/` の
   読み書き + **GC**（D9）。
+
+  **P1 実装記録（実装で決めた 5 点）**:
+  1. **置き場は `attachment.rs` 新設で、`ConfigStore` には足さない** — 添付は
+     設定ではない（`sessions.redb` が `SessionStore` を別に持つのと同じ分業）。
+     `is_webp` は `attachment.rs` 側に置き、`validate_icon` が参照する向き
+  2. **`validate_attachment` は検証と同時に寸法 `(w, h)` を返す** — 別々の関数に
+     すると 2 回パースするか、検証を通さず寸法だけ読む経路が生える
+  3. **GC は `gc_plan`（純関数）+ I/O の 2 層。現在時刻は引数で受け取る**
+     （`schedule.rs` / `clock.ts` と同じ規律）。期限切れのテストは mtime を
+     細工せず **now を 31 日進める**ことで再現した — 時刻の注入は
+     テストの道具を 1 つ減らす
+  4. **アニメーション判定は VP8X フラグと ANIM / ANMF チャンクの両方を見る** —
+     フラグだけだと、フラグを 0 にした細工ファイルが素通りする
+  5. **VP8X のキャンバス寸法がビットストリーム寸法に勝つ** — 食い違う細工
+     ファイルで大きい方を見逃さない。エラーは `InvalidAttachment`（`InvalidIcon` と
+     **別変種** — 上限も文言も違うものを畳むと、画面の辞書がどちらの上限の話かを
+     区別できない）
   **`validate_icon` はパラメータ化しない**（rev3: 査読 5 を**採るが方法を変える**）—
   あの関数の doc は「**2 種類のアイコンが同じ述語を通る。2 箇所に書くと、片方の
   上限を変えたときにもう片方が古い値のまま通し続ける**」と書いており、
@@ -329,6 +347,10 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
 
 ## 改訂履歴
 
+- **P1 完了**（2026-08-06）: `attachment.rs` 新設（`Attachment` / `validate_attachment` /
+  `AttachmentStore` / `gc_plan` + `GcReport`）+ `CoreError::InvalidAttachment` +
+  `validate_icon` の magic 判定を `is_webp` へ共有。単体 16 本
+  （agent-core 401 → 417）。実装で決めた 5 点は Tasks の P1 実装記録
 - **P0 完了**（2026-08-06）: 5 系統 × WebP / JPEG の実測 10 通り全部通過 —
   **D3 の既定は WebP で確定**（表と読み方 3 点は「P0 実測結果」）。
   実測 5 本目はローカル互換の代わりに実在の互換層（さくら / Qwen3-VL）で取った。

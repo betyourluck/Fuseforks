@@ -195,10 +195,11 @@ impl ConfigStore {
                 ),
             });
         }
-        // WebP コンテナの magic: 先頭 "RIFF" + オフセット 8 から "WEBP"。
-        let is_webp =
-            bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP";
-        if !is_webp {
+        // WebP のマジックバイト判定は添付（Spec 23）と共有する。
+        // 共有するのは**この述語だけ** — 上限（ICON_MAX_BYTES）は共有しない。
+        // 上限まで一般化すると「2 種類のアイコンが 1 つの上限を共有する」という
+        // この関数の不変条件が消える。
+        if !crate::attachment::is_webp(bytes) {
             return Err(CoreError::InvalidIcon {
                 reason: "WebP 形式ではありません（UI 側で変換してから送る契約）".to_owned(),
             });
