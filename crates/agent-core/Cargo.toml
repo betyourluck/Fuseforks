@@ -35,7 +35,17 @@ async-trait.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
+# `net` / `io-util` はテスト専用。JPEG フォールバック（Spec 23 D3）の配線は
+# HTTP の応答コードで分岐するので、ループバックに最小のスタブを立てて踏む。
+# **配布物の依存は増えない**（dev-dependencies なので）。
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "macros",
+  "time",
+  "test-util",
+  "net",
+  "io-util",
+] }
 
 [lints.rust]
 # GUI 層への逆依存を機械的に禁じるための最低限の衛生設定。
