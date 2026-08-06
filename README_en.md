@@ -310,6 +310,16 @@ A 1568px 16:9 image costs 1,792 vision tokens per turn — 14,336 across 8 turns
 If you want the model to look again, attach it again: an explicit action has clearer
 causality than automatic retention.
 
+**The fact that an image was there does survive.** Only the picture is dropped; the
+servant keeps a line saying "one image arrived on this turn, and it is not visible from
+the next turn on." So when you later ask it to "show that image to X," it can answer
+**"I no longer have it — please attach it again, addressed to X."**
+
+Before that line existed, a servant *remembered the description it had written but did
+not know an image had ever existed*. Asked to forward it, the recipient received a body
+with no explanation. **An image not being forwarded matters less than nobody being able
+to tell why**, so the fact alone is kept.
+
 ### People who never use it never pay for it
 
 **No tool is added.** An image is a kind of input, not a capability, so neither the tool

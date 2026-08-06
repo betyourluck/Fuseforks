@@ -7613,10 +7613,37 @@ async fn an_attached_image_reaches_the_model_once_and_never_again() {
         );
     }
 
+    // 1 ターン目の本文に「添付があった」という印が入っている。
+    assert!(
+        first_user.content.contains("【添付】"),
+        "添付の事実が本文へ書かれること: {}",
+        first_user.content
+    );
+
     // 2 ターン目: どの発話にも画像が無い（履歴の 1 ターン目は文字列に畳まれている）。
     assert!(
         requests[1].messages.iter().all(|m| m.attachments.is_empty()),
         "2 ターン目のリクエストに画像ブロックが無いこと（D1）"
+    );
+
+    // **画像は消えるが、画像があった事実は履歴に残る**（2026-08-06 の裁定）。
+    //
+    // ここが両方成り立たないと、モデルは「自分が書いた説明は覚えているのに、
+    // 画像という物があったことを知らない」状態になる。実機では、その状態で
+    // 「あの画像を誰々に見せて」と頼まれた転送先が、理由の書かれていない本文
+    // だけを受け取った。**印は `sent_user_turn` の一部なので #45 の規律で
+    // そのまま履歴へ載る** — 画像そのものは入らないので D1 は不変。
+    assert!(
+        requests[1]
+            .messages
+            .iter()
+            .any(|m| m.content.contains("【添付】")),
+        "2 ターン目の履歴に添付の事実が残ること: {:?}",
+        requests[1]
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
     );
 }
 
