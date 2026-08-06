@@ -416,9 +416,15 @@ defineExpose({ fill });
          左右は `left-3 right-3` で入力欄の `px-3` に揃える。
          横位置はカーソルに追わせない — textarea のカーソル座標を取るには
          ミラー要素が要り、割に合わない。 -->
+    <!-- 擦りガラス。**色は生の値ではなくトークンにアルファを掛ける**
+         （`bg-surface-1/80`）ので、`color-mix` へ展開されてライトテーマの
+         上書きにも自動で追従する（配色は `style.css` の 1 箇所、の規律を保つ）。
+         ぼかしを強めに取るのは見た目のためだけではない — 背後の吹き出しや
+         アクセント色が透けたまま残ると、10px のフォルダ名の可読性が落ちる。
+         **ぼかしが背後を均すことで、透過と可読性が両立する。** -->
     <div
       v-if="popupVisible"
-      class="absolute right-3 bottom-full left-3 z-20 mb-1 overflow-hidden rounded-lg bg-surface-1 shadow-lg ring-1 ring-line"
+      class="absolute right-3 bottom-full left-3 z-20 mb-1 overflow-hidden rounded-lg bg-surface-1/80 shadow-lg ring-1 ring-line backdrop-blur-xl"
     >
       <!-- 作業フォルダが無い（D3）。候補を出す代わりに理由を出す。 -->
       <p v-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
