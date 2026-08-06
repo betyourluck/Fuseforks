@@ -1097,6 +1097,11 @@ entities:
       # 「タイムアウトする」に変わるだけで、16,000 トークンの生成は既定の 120 秒に
       # 収まらない。2 つは必ず一緒に動かす。32K 超はストリーミング前提の数字で、
       # 本製品は非ストリーミング (llm_wire) なので設定だけでは届かない
+      # OpenAI 互換ワイヤでの欄名はモデルで割れる — gpt-5 系 / o 系は
+      # max_completion_tokens、他は max_tokens。常に片方だけ送る
+      # (openai_compat::uses_max_completion_tokens。旧欄は 400
+      # unsupported_parameter で拒否され、新欄は知らない互換サーバがある。
+      # failures.md #76)
       maxOutputTokens: u32
       credential: CredentialSource  # 取得元のみ。秘密を持てるフィールドは存在しない
       provider: Provider | null     # null なら baseUrl から自動判定

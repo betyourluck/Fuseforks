@@ -59,15 +59,39 @@ pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
         (Vec::new(), None)
     };
 
+    // 出力上限は常に片方の欄だけで送る（欄名の選択は uses_max_completion_tokens）。
+    let (max_tokens, max_completion_tokens) = if uses_max_completion_tokens(&req.model) {
+        (None, Some(req.max_tokens))
+    } else {
+        (Some(req.max_tokens), None)
+    };
+
     wire::OaiRequest {
         model: req.model.clone(),
         messages,
         temperature: req.temperature,
-        max_tokens: req.max_tokens,
+        max_tokens,
+        max_completion_tokens,
         tools,
         tool_choice,
         reasoning_effort: reasoning_effort(&req.model, req.effort),
     }
+}
+
+/// OpenAI の o 系推論モデルか（o1 / o3 / o4-mini ...）。
+fn is_o_series(model: &str) -> bool {
+    model.starts_with('o') && model.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+}
+
+/// 出力上限をどちらの欄名で送るかを決める（純関数）。
+///
+/// gpt-5 系と o 系は思考トークンを含めて上限を管理する方式へ移っており、
+/// 旧欄 `max_tokens` を送ると 400 `unsupported_parameter` で拒否する
+/// （2026-08-06 実機、gpt-5.6-luna）。一方で互換サーバ（llama.cpp / vLLM /
+/// gpt-oss 系）には新欄 `max_completion_tokens` を知らないものがあるため、
+/// 全面的な置き換えはできない。`reasoning_effort` と同じくモデル名で送り分ける。
+pub fn uses_max_completion_tokens(model: &str) -> bool {
+    model.starts_with("gpt-5") || is_o_series(model)
 }
 
 /// canonical の 1 発話を OpenAI 互換の形へ写す。
@@ -125,9 +149,8 @@ fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
 /// 思考が出力予算を食い潰して空応答になることがある。既定を持つのは adapter の責務。
 pub fn reasoning_effort(model: &str, effort: Option<Effort>) -> Option<&'static str> {
     let is_grok_reasoning = model.starts_with("grok-4.3") || model.starts_with("grok-4.5");
-    let is_oai_reasoning = model.starts_with('o') && model.chars().nth(1).is_some_and(|c| c.is_ascii_digit());
 
-    if !is_grok_reasoning && !is_oai_reasoning {
+    if !is_grok_reasoning && !is_o_series(model) {
         return None;
     }
 
@@ -407,6 +430,35 @@ mod tests {
             json["messages"][0]["tool_calls"][0].get("extra_content").is_none(),
             "署名の無い呼び出しに extra_content キーを生やさない"
         );
+    }
+
+    /// gpt-5 系には `max_completion_tokens`、それ以外には `max_tokens` を送る。
+    ///
+    /// 旧欄は gpt-5 系 / o 系が 400 (`unsupported_parameter`) で拒否し、
+    /// 新欄は知らない互換サーバがあるので、ワイヤには**常に片方だけ**現れる。
+    #[test]
+    fn token_limit_field_splits_by_model_family() {
+        let mut req = req_with_tool(ToolChoice::Auto);
+        req.model = "gpt-5.6-luna".into();
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        assert_eq!(json["max_completion_tokens"], 512);
+        assert!(json.get("max_tokens").is_none(), "旧欄を送ると 400 unsupported_parameter");
+
+        req.model = "gpt-oss-120b".into();
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        assert_eq!(json["max_tokens"], 512);
+        assert!(json.get("max_completion_tokens").is_none(), "新欄を知らない互換サーバが落ちる");
+    }
+
+    #[test]
+    fn uses_max_completion_tokens_targets_only_openai_new_families() {
+        assert!(uses_max_completion_tokens("gpt-5.6-terra"));
+        assert!(uses_max_completion_tokens("gpt-5.6-luna"));
+        assert!(uses_max_completion_tokens("o3-mini"));
+        assert!(!uses_max_completion_tokens("gpt-4o"));
+        assert!(!uses_max_completion_tokens("grok-4.3"));
+        assert!(!uses_max_completion_tokens("gpt-oss-120b"));
+        assert!(!uses_max_completion_tokens("gemini-3.5-flash-lite"));
     }
 
     #[test]

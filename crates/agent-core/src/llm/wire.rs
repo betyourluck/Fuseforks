@@ -105,8 +105,16 @@ pub struct OaiRequest {
     /// 新しめのモデルは非対応で、送ると 400 を返す。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    /// 最大出力トークン数。
-    pub max_tokens: u32,
+    /// 最大出力トークン数。**モデルにより欄名が割れる** — gpt-5 系と o 系は
+    /// この欄を 400 `unsupported_parameter` で拒否し `max_completion_tokens` を
+    /// 要求する。逆に互換サーバ（llama.cpp / vLLM 等）には新欄を知らないものが
+    /// あるため、常にどちらか**片方だけ**を送る（選ぶのは
+    /// [`super::openai_compat::uses_max_completion_tokens`]）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// 推論系モデル用の出力上限（思考トークン込み）。`max_tokens` と排他。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u32>,
     /// ツール定義。空なら送らない。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<OaiTool>,
@@ -741,7 +749,8 @@ mod tests {
             model: "gpt-4o".into(),
             messages: vec![OaiMessage::text(OaiRole::User, "hi")],
             temperature: None,
-            max_tokens: 256,
+            max_tokens: Some(256),
+            max_completion_tokens: None,
             tools: Vec::new(),
             tool_choice: None,
             reasoning_effort: None,
@@ -751,6 +760,7 @@ mod tests {
         assert!(json.get("temperature").is_none(), "temperature キーごと省略される");
         assert!(json.get("tools").is_none(), "空の tools は送らない");
         assert!(json.get("reasoning_effort").is_none());
+        assert!(json.get("max_completion_tokens").is_none(), "未使用側の上限欄は送らない");
     }
 
     #[test]

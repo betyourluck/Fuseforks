@@ -1157,6 +1157,20 @@ CI がタグから書き換える側。
 `window.addEventListener(\`contextmenu\`, …)` が**条件ごと消えて無条件**になっており、
 dev では丸ごと消える）。`import.meta.env.DEV` は Vite の定数なので実行時コストはゼロ。
 
+## 出力上限の欄名の送り分け（2026-08-06 着地。Spec 不要と判断）
+
+起点は利用者の実機報告 — gpt-5.6-luna が `max_tokens` を
+`400 unsupported_parameter` で拒否しターンごと落ちる（`failures.md` #76）。
+OpenAI の新世代（gpt-5 系 / o 系）は `max_completion_tokens` を要求する。
+
+`OaiRequest` の上限欄を排他 2 本（`Option` + `skip_serializing_if`）にし、
+`openai_compat::uses_max_completion_tokens`（純関数・モデル名で判定）が
+送り分ける。**全面置き換えは不可** — 互換サーバ（llama.cpp / vLLM /
+gpt-oss 系）には新欄を知らないものがある。**同じ構造体の `temperature`
+（明示時のみ送る）と `reasoning_effort`（モデル名で送り分け）に続く 3 例目**で、
+処方の形は既にあった。契約は `ModelTemplate.maxOutputTokens` の注記
+（型・IPC・画面は不変。設定値の意味も不変で、ワイヤに出るときの欄名だけが割れる）。
+
 ## リリースビルド（`.github/workflows/build.yml`・2026-08-05 着地）
 
 **`v*.*` タグの push だけで走る。** 通常のコミットでは走らない — 3 OS 分の
