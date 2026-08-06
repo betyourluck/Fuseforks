@@ -31,6 +31,7 @@ import {
   applyCompletion,
   findTrigger,
   rankCandidates,
+  splitForDisplay,
   type Candidate,
   type Trigger,
 } from "../lib/pathComplete";
@@ -106,11 +107,17 @@ const selectedIndex = ref(0);
 /** 作業フォルダが無い個体では候補を出さない（D3）。 */
 const hasWorkDir = computed(() => !!props.workDir);
 
-/** 表示する候補（順位付け済み）。 */
+/**
+ * 表示する候補（順位付け済み + 表示用の分割）。
+ *
+ * **`base` と `dir` を分けて持つ** — 照合が basename 優先なら表示もそうで
+ * なければ、打っている対象が行の中で埋もれる（D5）。
+ */
 const suggestions = computed(() =>
-  trigger.value && hasWorkDir.value
+  (trigger.value && hasWorkDir.value
     ? rankCandidates(candidates.value, trigger.value.query)
-    : [],
+    : []
+  ).map((item) => ({ ...item, ...splitForDisplay(item.candidate.id) })),
 );
 
 /**
@@ -406,7 +413,7 @@ defineExpose({ fill });
          取るにはミラー要素が要り、割に合わない（添付チップと同じ位置）。 -->
     <div
       v-if="popupVisible"
-      class="mb-1 overflow-hidden rounded-lg bg-surface-1 ring-1 ring-line"
+      class="mb-1 overflow-hidden rounded-lg bg-surface-1 shadow-lg ring-1 ring-line"
     >
       <!-- 作業フォルダが無い（D3）。候補を出す代わりに理由を出す。 -->
       <p v-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
@@ -419,22 +426,39 @@ defineExpose({ fill });
         {{ $t("chatInput.completeFailed") }}
       </p>
       <template v-else>
-        <ul class="max-h-56 overflow-y-auto">
+        <!-- 1 行は「アイコン + ファイル名 + フォルダ（薄く）」。
+             **ファイル名が主**なのは、人がそれを打っているから（D5）。
+             フルパスを 1 本で出すと、目が先頭のフォルダから読み始めることになる。 -->
+        <ul class="max-h-72 overflow-y-auto py-0.5">
           <li v-for="(item, index) in suggestions" :key="item.candidate.id">
             <button
               type="button"
-              class="block w-full truncate px-2.5 py-1.5 text-left text-[11px] transition"
-              :class="
-                index === selectedIndex
-                  ? 'bg-accent text-surface-0'
-                  : 'text-ink hover:bg-surface-2'
-              "
+              class="flex w-full items-center gap-2 px-2.5 py-1 text-left transition"
+              :class="index === selectedIndex ? 'bg-surface-2' : ''"
               :title="item.candidate.id"
               @mouseenter="selectedIndex = index"
               @mousedown.prevent
               @click="confirmCandidate(item.candidate)"
             >
-              {{ item.candidate.id }}
+              <!-- ファイルの印。**絵文字は使わない**（恒久要素の規律。
+                   `currentColor` を継承しないとテーマの配色に追従しない）。 -->
+              <svg
+                viewBox="0 0 24 24"
+                class="size-3.5 shrink-0 text-ink-dim"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                <path d="M14 3v5h5" />
+              </svg>
+              <span class="truncate text-[11px] text-ink">{{ item.base }}</span>
+              <span v-if="item.dir" class="truncate text-[10px] text-ink-dim">
+                {{ item.dir }}
+              </span>
             </button>
           </li>
         </ul>

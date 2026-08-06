@@ -153,6 +153,21 @@ export function rankCandidates(
 }
 
 /**
+ * 表示用に「ファイル名」と「その上のフォルダ」へ割る。
+ *
+ * **照合が basename 優先なら、表示も basename が主でなければならない**
+ * （Spec 24 D5）。`specs/24_foo.md` を 1 本の文字列で出すと、**打っている
+ * 対象が行の中で埋もれる** — 人はファイル名を打っているのに、目は先頭の
+ * ディレクトリから読み始めることになる。
+ */
+export function splitForDisplay(id: string): { base: string; dir: string } {
+  const slash = id.lastIndexOf("/");
+  return slash < 0
+    ? { base: id, dir: "" }
+    : { base: id.slice(slash + 1), dir: id.slice(0, slash) };
+}
+
+/**
  * 候補を確定したときの、入力欄の新しい状態を返す。
  *
  * **`@` は残す。** 消すと本文が `specs/foo.md` になり、**それが補完で

@@ -5,6 +5,7 @@ import {
   applyCompletion,
   findTrigger,
   rankCandidates,
+  splitForDisplay,
   type Candidate,
 } from "./pathComplete";
 
@@ -102,6 +103,26 @@ describe("rankCandidates", () => {
     const many = files(...Array.from({ length: 50 }, (_, i) => `f${i}.md`));
     expect(rankCandidates(many, "f")).toHaveLength(MAX_SUGGESTIONS);
     expect(rankCandidates(many, "f", 3)).toHaveLength(3);
+  });
+});
+
+describe("splitForDisplay", () => {
+  it("ファイル名とフォルダへ割る（表示は basename が主）", () => {
+    expect(splitForDisplay("specs/24_path-completion.md")).toEqual({
+      base: "24_path-completion.md",
+      dir: "specs",
+    });
+  });
+
+  it("深い階層はフォルダ側にまとめる", () => {
+    expect(splitForDisplay("crates/agent-core/src/lib.rs")).toEqual({
+      base: "lib.rs",
+      dir: "crates/agent-core/src",
+    });
+  });
+
+  it("直下のファイルはフォルダが空", () => {
+    expect(splitForDisplay("README.md")).toEqual({ base: "README.md", dir: "" });
   });
 });
 
