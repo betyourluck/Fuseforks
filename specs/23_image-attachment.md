@@ -2,7 +2,7 @@
 
 **ID**: 23
 **Date**: 2026-08-06
-**Status**: **rev3 承認 → P0〜P2 完了（2026-08-06）→ 次は P3（配線）**。
+**Status**: **rev3 承認 → P0〜P3 完了（2026-08-06）→ 次は P4（フロント）**。
 未決はゼロ — **D1 は利用者裁定で「1 ターン限り」に確定**、**D3 の既定は
 P0 の実測で WebP に確定**（5 系統 × 2 形式 = 10 通りすべて通過。下記「P0 実測結果」。
 JPEG フォールバックは保険として維持 — xAI は公式文書が jpg/png のみと明記しており、
@@ -283,11 +283,37 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   5. **gemini は添付を組み立てず、添付あり = 添付なしのバイト等価をテストで凍結**
      （D8。`inline_data` を生やす退行はテストが先に落ちる）。バイト等価の golden は
      文字列リテラルで固定（openai / anthropic）
-- **P3 配線**: `send_user_message` へ `attachments`（加算・省略可）+
+- **P3 配線** — **完了（2026-08-06。結合 3 + 単体 2 = agent-core 423 → 425・
+  結合 119 → 122・workspace 585 全緑・clippy 警告ゼロ）**:
+  `send_user_message` へ `attachments`（加算・省略可）+
   `AgentMessage.attachments` + 保存 + そのターンだけプロンプトへ展開 +
   **履歴へは入れない**（D1）+ **転送時の System 行**（D6）+ 400 時の JPEG 再試行（D3）。
   結合: 画像が 1 ターン目に届く / 2 ターン目のリクエストに画像ブロックが無い /
   転送先へ渡らず System 行が出る / WebP 400 で JPEG へ落ちる
+
+  **P3 実装記録（実装で決めた 6 点）**:
+  1. **保存は発話の記録より前**。検証に落ちたら発話ごと拒否 —
+     「画像なしで送信されました」は送った人の意図と黙って食い違う。
+     D5 の 2 枚拒否も同じ入口（`send_user_message_with_attachments`）
+  2. **D1 は構造で成立** — 展開（`load_turn_attachments`）が読むのは
+     `incoming.attachments` だけで、履歴の発話は `String` なので画像を持てない。
+     読めなかった参照（GC 済み）は**黙って抜かず本文で断る**（「画像は見えて
+     いない前提で答えてください」）+ `attachment missing:` の 1 行
+  3. **D6 は `note_dropped_attachment` の 1 実装を 3 経路が共有**
+     （handoff の配送構築 / `ask_agent` の question / `run_plan` の各 task）。
+     経路ごとに書くと文言がずれて grep が割れる
+  4. **D3 の再試行は `LlmBackend::chat` の最外周**（バックオフの外）。発火条件は
+     「OpenAiCompat × 400 × WebP 添付あり」の 3 条件 — 画像と無関係な 400 で
+     もう 1 回課金しないことをテストで凍結。両形式拒否は
+     「この接続先は画像を受け付けません」を 400 本文へ前置して返す。
+     `attachment fallback:` の 1 行が出る。**HTTP 経路ごと踏む結合は書いていない**
+     （スタブサーバが要る）— 変換（`with_jpeg_attachments`）と発火条件を単体で
+     凍結し、実機は P6 の 5 が担う
+  5. **GC は bootstrap で 1 回**（D9）。`attachment gc: removed=… remaining=…
+     bytes=…` の 1 行。失敗しても起動は止めない
+  6. **依存の実測**: 増えたのは 9 crate（image / image-webp / zune-jpeg /
+     zune-core / moxcms / pxfm / bytemuck / byteorder-lite / quick-error）で
+     **全部純 Rust・C 依存なし**。base64 は既にツリーに居た（282 → 291）
 - **P4 フロント**: `ChatInput.vue` の貼り付け + 「参照…」+ **WebWorker で縮小・
   WebP 変換**（rev2。査読 6 — メインスレッドを止めない）+ **元ファイル 10MB の
   事前拒否** + 添付チップ（×で外す）+ S4 の注記 + `ChatPanel` の表示 + 辞書 ja/en
@@ -366,6 +392,12 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
 
 ## 改訂履歴
 
+- **P3 完了**（2026-08-06）: `send_user_message_with_attachments` +
+  `AgentMessage.attachments`（参照）+ `Shared.attachments` + 起動時 GC +
+  D1（展開は受信の参照だけ・履歴は文字列）+ D6（`note_dropped_attachment` の
+  1 実装 × 3 経路）+ D3（client の JPEG 再試行）+ IPC `attachments` 加算。
+  依存 +9 crate（全部純 Rust）。結合 3 + 単体 2。実装で決めた 6 点は
+  Tasks の P3 実装記録
 - **P2 完了**（2026-08-06）: `ChatMessage.attachments` + `ImageMediaType` /
   `ImageAttachment`（canonical）+ `OaiContent` enum 化 +
   `AnthropicRequestBlock::Image` + gemini は素通り（D8）。バイト等価 golden ×

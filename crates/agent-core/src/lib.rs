@@ -103,7 +103,7 @@ pub use model::{
     AgentRole, AgentRoleDefaults, AgentRoleId, RoleColor, Endpoint, ModelTemplate, ModelTemplateId,
     TopologyEdge,
 };
-pub use orchestrator::{AgentMcpStatus, Orchestrator, OrchestratorConfig};
+pub use orchestrator::{AgentMcpStatus, AttachmentUpload, Orchestrator, OrchestratorConfig};
 pub use schedule::{
     GRACE_MINUTES, InvalidRecurrence, Recurrence, ScheduledTask, Tick, Weekday, due_interval,
     due_wall_clock,

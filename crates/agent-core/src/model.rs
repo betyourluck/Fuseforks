@@ -678,6 +678,14 @@ pub struct AgentMessage {
     /// モデルが今引用したい相手ではない（Spec 05 Notes 9）。
     #[serde(default, skip_serializing_if = "crate::llm::Grounding::is_empty")]
     pub grounding: crate::llm::Grounding,
+    /// この発話に添付された画像の**参照**（Spec 23 / `attachment_contract`）。
+    ///
+    /// 実体は `{workspace}/attachments/{id}.webp`。base64 をここへ積まないので、
+    /// 会話ログにも redb にも画像データは入らない。**プロンプトへ展開されるのは
+    /// この発話が宛先へ届くターンの 1 回だけ**（D1）— 履歴
+    /// （`AgentRecord.history` / `Record::Exchange`）はこの欄を読まない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::attachment::Attachment>,
 }
 
 impl AgentMessage {
@@ -693,6 +701,7 @@ impl AgentMessage {
             hop,
             co_recipients: Vec::new(),
             grounding: crate::llm::Grounding::default(),
+            attachments: Vec::new(),
         }
     }
 }

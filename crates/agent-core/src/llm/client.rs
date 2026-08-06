@@ -261,6 +261,68 @@ impl HttpLlmBackend {
     }
 }
 
+impl HttpLlmBackend {
+    /// 指数バックオフつきの往復（JPEG フォールバックの内側）。
+    async fn chat_with_backoff(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
+        let attempts = self.config.max_retries.max(1);
+        let mut last_error: Option<LlmError> = None;
+
+        for attempt in 0..attempts {
+            match self.attempt(req).await {
+                Ok(resp) => return Ok(resp),
+                Err(err) if err.is_transient() && attempt + 1 < attempts => {
+                    // 200ms, 400ms, 800ms, ... 上限 5s。
+                    let backoff =
+                        Duration::from_millis(200u64.saturating_mul(1 << attempt)).min(Duration::from_secs(5));
+                    tokio::time::sleep(backoff).await;
+                    last_error = Some(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(last_error.unwrap_or(LlmError::EmptyResponse))
+    }
+}
+
+/// WebP の添付を JPEG へ再エンコードしたリクエストを作る（Spec 23 D3 の純関数）。
+///
+/// 変換できない添付が 1 つでもあれば `None` — 半分だけ変換した形で
+/// 再送しても、拒否された WebP が残っている限り同じ 400 が返る。
+fn with_jpeg_attachments(req: &ChatRequest) -> Option<ChatRequest> {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut converted = req.clone();
+    let mut any = false;
+    for message in &mut converted.messages {
+        for attachment in &mut message.attachments {
+            if attachment.media_type != super::canonical::ImageMediaType::Webp {
+                continue;
+            }
+            let bytes = engine.decode(&attachment.data).ok()?;
+            let decoded =
+                image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).ok()?;
+            // JPEG はアルファを持てないので RGB へ落としてから書く。
+            let rgb = image::DynamicImage::ImageRgb8(decoded.to_rgb8());
+            let mut jpeg = std::io::Cursor::new(Vec::new());
+            rgb.write_to(&mut jpeg, image::ImageFormat::Jpeg).ok()?;
+            attachment.data = engine.encode(jpeg.into_inner());
+            attachment.media_type = super::canonical::ImageMediaType::Jpeg;
+            any = true;
+        }
+    }
+    any.then_some(converted)
+}
+
+/// リクエストに WebP の添付が載っているか（D3 の発火条件の半分）。
+fn has_webp_attachments(req: &ChatRequest) -> bool {
+    req.messages.iter().any(|m| {
+        m.attachments
+            .iter()
+            .any(|a| a.media_type == super::canonical::ImageMediaType::Webp)
+    })
+}
+
 #[async_trait]
 impl LlmBackend for HttpLlmBackend {
     fn name(&self) -> &str {
@@ -276,25 +338,45 @@ impl LlmBackend for HttpLlmBackend {
     /// 再試行するのは [`LlmError::is_transient`] が真のものだけ。
     /// 安全フィルタによる拒否やスキーマ不一致は、同じ入力を再送しても回復しないため
     /// 即座に呼び出し側へ返す。無駄な再試行は課金とレイテンシだけを増やす。
+    ///
+    /// **例外が 1 つ**（Spec 23 D3）: `OpenAiCompat` で WebP の添付つき
+    /// リクエストが 400 で拒否されたときだけ、**JPEG へ再エンコードして
+    /// 1 回だけ**再送する。互換サーバには WebP のデコーダを持たないものが
+    /// あり（xAI は公式文書上 jpg/png のみ）、形式を変えれば通る可能性がある。
+    /// それでも落ちたら「画像を受け付けない接続先」として理由を本文へ書く。
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-        let attempts = self.config.max_retries.max(1);
-        let mut last_error: Option<LlmError> = None;
-
-        for attempt in 0..attempts {
-            match self.attempt(&req).await {
-                Ok(resp) => return Ok(resp),
-                Err(err) if err.is_transient() && attempt + 1 < attempts => {
-                    // 200ms, 400ms, 800ms, ... 上限 5s。
-                    let backoff =
-                        Duration::from_millis(200u64.saturating_mul(1 << attempt)).min(Duration::from_secs(5));
-                    tokio::time::sleep(backoff).await;
-                    last_error = Some(err);
+        match self.chat_with_backoff(&req).await {
+            Err(LlmError::Api { status: 400, body })
+                if self.config.provider == Provider::OpenAiCompat
+                    && has_webp_attachments(&req) =>
+            {
+                let Some(jpeg_req) = with_jpeg_attachments(&req) else {
+                    return Err(LlmError::Api { status: 400, body });
+                };
+                crate::note!(
+                    "attachment fallback: model={} retrying with jpeg after 400",
+                    self.config.model,
+                );
+                match self.chat_with_backoff(&jpeg_req).await {
+                    Ok(resp) => Ok(resp),
+                    // 両形式とも拒否 = この接続先は画像を受け付けない。
+                    // 生の 400 本文だけでは利用者が「画像が原因」へ辿り着けない。
+                    Err(LlmError::Api {
+                        status: 400,
+                        body: second,
+                    }) => Err(LlmError::Api {
+                        status: 400,
+                        body: format!(
+                            "この接続先は画像を受け付けません（WebP と JPEG の両方が\
+                             拒否されました）。画像なしで送り直してください。\
+                             プロバイダの応答: {second}"
+                        ),
+                    }),
+                    Err(other) => Err(other),
                 }
-                Err(err) => return Err(err),
             }
+            other => other,
         }
-
-        Err(last_error.unwrap_or(LlmError::EmptyResponse))
     }
 }
 
@@ -482,6 +564,63 @@ mod tests {
 
         assert!(resolution.degraded_reason.is_none());
         assert_eq!(resolution.backend.name(), "anthropic");
+    }
+
+    /// WebP の添付が JPEG へ再エンコードされること（Spec 23 D3 の変換部）。
+    ///
+    /// 実 WebP を image crate で作る — 手組みのヘッダだけではデコーダが
+    /// 本文を要求して落ちる。変換後は media_type が jpeg になり、
+    /// data は JPEG のマジック（FF D8）で始まる。
+    #[test]
+    fn jpeg_fallback_converts_webp_attachments() {
+        use crate::llm::canonical::{ChatMessage, ImageAttachment, ImageMediaType};
+        use base64::Engine as _;
+
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            4,
+            4,
+            image::Rgb([255, 0, 0]),
+        ));
+        let mut webp = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut webp, image::ImageFormat::WebP).unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(webp.into_inner());
+
+        let req = ChatRequest::plain(
+            "gpt-x",
+            vec![ChatMessage::user_with_attachments(
+                "見て",
+                vec![ImageAttachment {
+                    media_type: ImageMediaType::Webp,
+                    data,
+                }],
+            )],
+            64,
+        );
+        assert!(has_webp_attachments(&req));
+
+        let jpeg = with_jpeg_attachments(&req).expect("変換できること");
+        let att = &jpeg.messages[0].attachments[0];
+        assert_eq!(att.media_type, ImageMediaType::Jpeg);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&att.data)
+            .unwrap();
+        assert_eq!(&bytes[0..2], &[0xFF, 0xD8], "JPEG のマジックで始まること");
+        // 元のリクエストは無傷（clone してから変換している）。
+        assert_eq!(
+            req.messages[0].attachments[0].media_type,
+            ImageMediaType::Webp
+        );
+    }
+
+    /// 添付の無いリクエストではフォールバックの発火条件が立たないこと。
+    /// ここが崩れると、画像と無関係な 400（パラメータ誤りなど）まで
+    /// もう 1 回課金して再送する。
+    #[test]
+    fn requests_without_webp_attachments_do_not_arm_the_fallback() {
+        use crate::llm::canonical::ChatMessage;
+        let req = ChatRequest::plain("gpt-x", vec![ChatMessage::user("hi")], 64);
+        assert!(!has_webp_attachments(&req));
+        assert!(with_jpeg_attachments(&req).is_none());
     }
 
     /// 秘密が拒否経路へ漏れないこと。

@@ -1095,7 +1095,7 @@ CI がタグから書き換える側。
   設定できない村が出る（`opener:allow-open-path` を `$APPDATA/workspace` に
   絞ってあるのとは求められているものが逆）
 
-## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P2 完了。次は P3**）
+## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P3 完了。次は P4**）
 
 起点は利用者 —「**おそらく僕はコストの面で使いたくない機能だが、無ければ
 『どうして無いの？』と聞かれそうな機能だ。なので機能は入れておきたい**」。
@@ -1139,8 +1139,18 @@ CI がタグから書き換える側。
   `AnthropicRequestBlock::Image`（画像はテキストより前 / breakpoint に Image の腕 /
   `message_tokens` は Image を 0 = 少なめ側）+ **#29 の空発話フィルタに添付を追加**
   （画像だけの発話は空ではない）+ gemini は素通りをテストで凍結（D8）。
-  **バイト等価は golden 文字列リテラルで固定**。単体 6 本（417 → 423）。
-  **次は P3**（`send_user_message` の配線 + D1 + D6 + JPEG 再試行）
+  **バイト等価は golden 文字列リテラルで固定**。単体 6 本（417 → 423）
+- **P3 完了**（2026-08-06）— **保存は発話の記録より前**（検証に落ちたら発話ごと
+  拒否。「画像なしで送信」は意図と黙って食い違う）/ **D1 は構造で成立**
+  （展開が読むのは受信の参照だけ。履歴は `String` なので画像を持てない。
+  GC 済みは本文で断る）/ **D6 は `note_dropped_attachment` 1 実装を
+  handoff・ask・plan の 3 経路が共有** / **D3 の JPEG 再試行は
+  `LlmBackend::chat` の最外周**（発火は OpenAiCompat × 400 × WebP 添付の
+  3 条件 — 無関係な 400 で再課金しない）/ 起動時 GC + 計器 3 行
+  （`attachment gc:` / `attachment missing:` / `attachment fallback:`）。
+  **依存 +9 crate・全部純 Rust**（image / image-webp / zune-jpeg ほか。
+  base64 は既にツリーに居た）。結合 3 + 単体 2（lib 425・結合 122）。
+  **次は P4**（ChatInput の貼り付け + WebWorker 変換 + 添付チップ + ChatPanel 表示）
 
 ## 右クリックメニューの抑止（2026-08-06 着地。Spec 不要と判断）
 

@@ -7488,3 +7488,214 @@ async fn the_deny_list_is_never_shown_to_the_model() {
     assert!(!described.contains("shutdown"), "deny を見せないこと: {described}");
     assert!(!described.contains("format-disk"), "deny を見せないこと: {described}");
 }
+
+// ============================================================================
+// 画像の添付（Spec 23 P3）
+// ============================================================================
+
+/// 受け取った [`ChatRequest`] を丸ごと記録するバックエンド（添付の検証用）。
+#[derive(Default)]
+struct RequestProbeBackend {
+    /// 呼び出しごとのリクエスト。
+    requests: std::sync::Mutex<Vec<ChatRequest>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for RequestProbeBackend {
+    fn name(&self) -> &str {
+        "request-probe"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.requests.lock().unwrap().push(req);
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        })
+    }
+}
+
+/// 検証を通る最小の WebP（VP8L・16×16）。
+fn tiny_webp() -> Vec<u8> {
+    let packed: u32 = (16 - 1) | ((16 - 1) << 14);
+    let mut payload = vec![0x2F];
+    payload.extend_from_slice(&packed.to_le_bytes());
+    let mut chunk = Vec::new();
+    chunk.extend_from_slice(b"VP8L");
+    chunk.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    chunk.extend_from_slice(&payload);
+    if payload.len() % 2 == 1 {
+        chunk.push(0);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((chunk.len() + 4) as u32).to_le_bytes());
+    out.extend_from_slice(b"WEBP");
+    out.extend_from_slice(&chunk);
+    out
+}
+
+/// 添付は 1 ターン目のリクエストにだけ載り、2 ターン目には載らない（D1）。
+///
+/// 履歴（`AgentRecord.history`）は「送った文字列そのもの」なので、画像は
+/// 構造的に持てない — このテストはその帰結を配線ごしに凍結する。
+#[tokio::test]
+async fn an_attached_image_reaches_the_model_once_and_never_again() {
+    let dir = TempDir::new("attach-once");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "この画像は何？",
+            &[],
+            vec![agent_core::AttachmentUpload {
+                file_name: "shot.png".into(),
+                bytes: tiny_webp(),
+            }],
+        )
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 会話ログの発話には**参照だけ**が載り、実体がファイルとして存在する。
+    let sent = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::User)
+        .expect("ユーザー発話が記録されること");
+    assert_eq!(sent.attachments.len(), 1);
+    assert!(
+        dir.0
+            .join("attachments")
+            .join(format!("{}.webp", sent.attachments[0].id))
+            .exists(),
+        "実体は {{workspace}}/attachments/ に居ること"
+    );
+
+    orchestrator.send_user_message(&a, "ありがとう").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "2 ターン = 2 呼び出し");
+
+    // 1 ターン目: 最後の user 発話に画像が 1 枚（WebP・base64 が実体と一致）。
+    let first_user = requests[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .expect("user 発話があること");
+    assert_eq!(first_user.attachments.len(), 1);
+    assert_eq!(
+        first_user.attachments[0].media_type,
+        agent_core::llm::ImageMediaType::Webp
+    );
+    {
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&first_user.attachments[0].data)
+                .unwrap(),
+            tiny_webp(),
+            "ワイヤに載る base64 は保存した実体と同じバイト列"
+        );
+    }
+
+    // 2 ターン目: どの発話にも画像が無い（履歴の 1 ターン目は文字列に畳まれている）。
+    assert!(
+        requests[1].messages.iter().all(|m| m.attachments.is_empty()),
+        "2 ターン目のリクエストに画像ブロックが無いこと（D1）"
+    );
+}
+
+/// 1 発話 1 枚の上限（D5）。2 枚は発話ごと拒否され、何も書かれない。
+#[tokio::test]
+async fn a_second_attachment_is_rejected_before_anything_is_written() {
+    let dir = TempDir::new("attach-limit");
+    let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let upload = || agent_core::AttachmentUpload {
+        file_name: "x.png".into(),
+        bytes: tiny_webp(),
+    };
+    let err = orchestrator
+        .send_user_message_with_attachments(&a, "2 枚見て", &[], vec![upload(), upload()])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ATTACHMENT");
+    assert!(
+        !dir.0.join("attachments").exists(),
+        "拒否した発話の画像が書かれていないこと"
+    );
+}
+
+/// 転送では画像が渡らず、そのことが届く本文の先頭で断られる（D6）。
+#[tokio::test]
+async fn a_transfer_notes_the_dropped_image_in_its_body() {
+    let dir = TempDir::new("attach-transfer");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AlwaysHandoffBackend), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    let b = AgentId::from("agent_b");
+    for (id, name) in [(&a, "ザリ"), (&b, "ブラボー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "この画像をブラボーに見せて",
+            &[],
+            vec![agent_core::AttachmentUpload {
+                file_name: "shot.png".into(),
+                bytes: tiny_webp(),
+            }],
+        )
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+
+    let forwarded = messages(&events)
+        .into_iter()
+        .find(|m| {
+            m.from == Endpoint::Agent { id: a.clone() }
+                && m.to == Endpoint::Agent { id: b.clone() }
+        })
+        .expect("A から B への転送があること");
+    assert!(
+        forwarded.content.starts_with("（画像 1 枚は転送されません）"),
+        "転送の本文が添付の脱落を先頭で断ること: {}",
+        forwarded.content
+    );
+    assert!(
+        forwarded.attachments.is_empty(),
+        "転送に画像の参照が付かないこと"
+    );
+}

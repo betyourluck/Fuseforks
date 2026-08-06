@@ -187,6 +187,19 @@ struct Envelope {
     budget: Option<Arc<BudgetPool>>,
 }
 
+/// 送信時に受け取る添付画像の生データ（Spec 23）。
+///
+/// UI 層が WebP へ変換した後のバイト列で、検証と保存はコア側
+/// （[`crate::attachment::AttachmentStore::save`]）がもう一度行う。
+/// IPC から届くバイト列を検証なしでディスクへ書かないため。
+#[derive(Debug, Clone)]
+pub struct AttachmentUpload {
+    /// 元ファイル名（表示用。パス解決には使わない）。
+    pub file_name: String,
+    /// WebP のバイト列。
+    pub bytes: Vec<u8>,
+}
+
 /// ask / plan の返信路の積み荷（Spec 08 で素の `String` から拡張）。
 ///
 /// `kind` は [`handle_message`] の Finish / Handoff 分岐が刻む — 転送は文字列と
@@ -230,6 +243,8 @@ struct Shared {
     /// 秘密の保管先。設定ファイルとは別系統で、平文の `world.json` には触れない。
     secrets: Arc<dyn SecretStore>,
     store: ConfigStore,
+    /// 添付画像の置き場（Spec 23）。`{workspace}/attachments/`。
+    attachments: crate::attachment::AttachmentStore,
     log: RwLock<Vec<AgentMessage>>,
     /// 実行できるツール。同梱ツールと**共通** MCP サーバー由来のツールが同居する。
     tools: RwLock<ToolRegistry>,
@@ -751,6 +766,23 @@ impl Orchestrator {
 
         let (events, _) = broadcast::channel(config.event_capacity);
 
+        // 添付の置き場（Spec 23）。起動時に保持期間と容量の GC を掛ける（D9）。
+        // 失敗しても起動は止めない — 消せなかった古いファイルは次の起動でまた
+        // 候補になるだけで、会話の正しさには関わらない。
+        let attachments = crate::attachment::AttachmentStore::new(store.root());
+        match attachments.gc(std::time::SystemTime::now()).await {
+            Ok(report) if report.removed > 0 || report.remaining_files > 0 => {
+                note!(
+                    "attachment gc: removed={} remaining={} bytes={}",
+                    report.removed,
+                    report.remaining_files,
+                    report.remaining_bytes,
+                );
+            }
+            Ok(_) => {}
+            Err(err) => note!("attachment gc failed: {err}"),
+        }
+
         let shared = Arc::new(Shared {
             world: RwLock::new(world),
             mailboxes: RwLock::new(HashMap::new()),
@@ -759,6 +791,7 @@ impl Orchestrator {
             backends: RwLock::new(HashMap::new()),
             secrets,
             store,
+            attachments,
             log: RwLock::new(restored_log),
             tools: RwLock::new(ToolRegistry::new()),
             mcp: RwLock::new(crate::mcp::McpManager::default()),
@@ -2232,12 +2265,49 @@ impl Orchestrator {
         content: &str,
         co_recipients: &[AgentId],
     ) -> CoreResult<()> {
+        self.send_user_message_with_attachments(to, content, co_recipients, Vec::new())
+            .await
+    }
+
+    /// 添付画像つきのユーザー発話を投入する（Spec 23）。
+    ///
+    /// 画像はここで検証して `{workspace}/attachments/` へ保存し、発話には
+    /// **参照だけ**を載せる。上限は 1 発話 1 枚（D5）。
+    ///
+    /// # Errors
+    /// 2 枚以上・検証に落ちる画像は [`CoreError::InvalidAttachment`]
+    /// （何も書かず、発話も投入しない）。
+    pub async fn send_user_message_with_attachments(
+        &self,
+        to: &AgentId,
+        content: &str,
+        co_recipients: &[AgentId],
+        uploads: Vec<AttachmentUpload>,
+    ) -> CoreResult<()> {
+        if uploads.len() > 1 {
+            return Err(CoreError::InvalidAttachment {
+                reason: "1 つの発話に添付できる画像は 1 枚までです".to_owned(),
+            });
+        }
+        // 保存は発話の記録より**前**。検証に落ちたら発話ごと拒否する —
+        // 「画像なしで送信されました」は、送った人の意図と黙って食い違う。
+        let mut attachments = Vec::with_capacity(uploads.len());
+        for upload in &uploads {
+            attachments.push(
+                self.shared
+                    .attachments
+                    .save(&upload.file_name, &upload.bytes)
+                    .await?,
+            );
+        }
+
         let mut message = AgentMessage::new(
             Endpoint::User,
             Endpoint::Agent { id: to.clone() },
             content,
             0,
         );
+        message.attachments = attachments;
         if co_recipients.len() >= 2 {
             message.co_recipients = co_recipients.to_vec();
         }
@@ -2807,6 +2877,57 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
         }
     };
     format!("【送り手: {sender_label}】\n{}", incoming.content)
+}
+
+/// このターンの受信に付いた添付参照を、ワイヤへ載せる形へ展開する（Spec 23）。
+///
+/// 読むのは `incoming.attachments` だけ — 履歴の発話は文字列なので、
+/// **画像がプロンプトへ載るのはこの 1 ターン限り**（D1）が構造で成立する。
+/// 読めなかった参照は抜いて返し、数の差は呼び出し側が本文で断る。
+async fn load_turn_attachments(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    incoming: &AgentMessage,
+) -> Vec<crate::llm::ImageAttachment> {
+    use base64::Engine as _;
+    let mut loaded = Vec::with_capacity(incoming.attachments.len());
+    for reference in &incoming.attachments {
+        match shared.attachments.read(&reference.id).await {
+            Ok(Some(bytes)) => loaded.push(crate::llm::ImageAttachment {
+                // 置き場の実体は常に WebP（保存時の検証が保証する）。
+                // JPEG はワイヤ上のフォールバック（D3）でしか現れない。
+                media_type: crate::llm::ImageMediaType::Webp,
+                data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            }),
+            Ok(None) => {
+                note!(
+                    "attachment missing: agent={agent_id} id={} file={}",
+                    reference.id,
+                    reference.file_name,
+                );
+            }
+            Err(err) => {
+                note!(
+                    "attachment read failed: agent={agent_id} id={} err={err}",
+                    reference.id,
+                );
+            }
+        }
+    }
+    loaded
+}
+
+/// 委譲・転送で添付が落ちることを、届く本文の先頭で断る（Spec 23 D6）。
+///
+/// `ask` / `plan` / `transfer_to_*` は画像を運ばない。黙って落とすと、
+/// 転送先がなぜ画像を見られないのか誰にも診断できない — 「歯止めの先に
+/// 道を書く」（#44）と Spec 12 P4 の「飛ばした相手が居たら必ず書く」の同型。
+fn note_dropped_attachment(message: &str, incoming_had_attachments: bool) -> String {
+    if incoming_had_attachments {
+        format!("（画像 1 枚は転送されません）\n\n{message}")
+    } else {
+        message.to_owned()
+    }
 }
 
 /// 失敗したターンの**受信側だけ**を履歴へ残す。
@@ -3516,6 +3637,20 @@ async fn handle_message(
         ));
     }
 
+    // 添付画像を実体へ展開する（Spec 23）。読むのは**このターンの受信に付いた
+    // 参照だけ**で、履歴の発話は `String` なので構造的に画像を持てない（D1）。
+    // 読めなかった参照（GC 済み・ファイル欠損）は黙って抜かずに本文で断る —
+    // モデルが「画像を見た」ふりで答える形が一番診断しにくい（#44 の同型）。
+    let image_attachments = load_turn_attachments(shared, agent_id, &incoming).await;
+    if incoming.attachments.len() > image_attachments.len() {
+        context.push(
+            "【添付】この発話には画像が添付されていましたが、保持期間を過ぎて\
+             削除されたため読み込めませんでした。画像は見えていない前提で\
+             答えてください。"
+                .to_owned(),
+        );
+    }
+
     // 可変の文脈と今回の受信を **1 本の user 発話**に畳んで送る。
     //
     // **送った文字列をそのまま履歴へ積む**（下の push_exchange へ渡す）。
@@ -3526,9 +3661,16 @@ async fn handle_message(
     //
     // 揃えるほうが記録としても正しい。エージェントは実際にその文脈込みで受け取って
     // おり、`attributed` だけを積むのは受け取った内容についての嘘になる。
+    //
+    // 画像は文字列ではないので畳めない — `ChatMessage.attachments` の席で運び、
+    // adapter が画像ブロックへ組む（テキストより前）。履歴へ積まれるのは
+    // `sent_user_turn` の文字列だけなので、**画像は履歴に残らない**（D1）。
     context.push(attributed.clone());
     let sent_user_turn = context.join("\n\n");
-    messages.push(ChatMessage::user(&sent_user_turn));
+    messages.push(ChatMessage::user_with_attachments(
+        &sent_user_turn,
+        image_attachments,
+    ));
 
     // 指紋は**組み終わってから**取る。adapter と同じ畳み方で数えないと、
     // 実際に前方一致の先頭を占める文字列とは別物を測ることになる。
@@ -3878,6 +4020,7 @@ async fn handle_message(
                     plan_wave,
                     &turn.token,
                     budget.as_ref(),
+                    !incoming.attachments.is_empty(),
                 )
                 .await)
             } else if spec.hears_room_log
@@ -3900,6 +4043,7 @@ async fn handle_message(
                             incoming.hop,
                             &turn.token,
                             budget.as_ref(),
+                            !incoming.attachments.is_empty(),
                         )
                         .await
                     }
@@ -4252,7 +4396,8 @@ async fn handle_message(
         let mut outgoing = AgentMessage::new(
             from.clone(),
             Endpoint::Agent { id: to.clone() },
-            message,
+            // 依頼元のターンに画像が付いていたら、届かないことを本文で断る（D6）。
+            note_dropped_attachment(message, !incoming.attachments.is_empty()),
             next_hop,
         );
         outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };
@@ -4477,6 +4622,7 @@ async fn execute_tool(
 /// **必ず有限時間で戻る。** 相手が応答しない・相互に委譲し合う配置では
 /// 待ち合わせが起きうるので、上限で打ち切って理由を文字列で返す
 /// （ツールの失敗は会話を止めない、という既存の規律に合わせる）。
+#[allow(clippy::too_many_arguments)]
 async fn ask_agent(
     shared: &Arc<Shared>,
     from: &AgentId,
@@ -4485,13 +4631,16 @@ async fn ask_agent(
     hop: u8,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
+    drops_attachment: bool,
 ) -> CoreResult<String> {
-    let question = call
-        .args
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_owned();
+    // 依頼元のターンに画像が付いていたら、届かないことを本文で断る（D6）。
+    let question = note_dropped_attachment(
+        call.args
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        drops_attachment,
+    );
 
     let next_hop = hop.saturating_add(1);
     if next_hop >= shared.config.max_hops {
@@ -4615,6 +4764,7 @@ async fn run_plan(
     wave: u32,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
+    drops_attachment: bool,
 ) -> String {
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
@@ -4653,7 +4803,8 @@ async fn run_plan(
                  2 件目は次の波で頼んでください。何も配送していません。"
             );
         }
-        wave_tasks.push((target, message.to_owned()));
+        // 依頼元のターンに画像が付いていたら、届かないことを各依頼の本文で断る（D6）。
+        wave_tasks.push((target, note_dropped_attachment(message, drops_attachment)));
     }
 
     // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す

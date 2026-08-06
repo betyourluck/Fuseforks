@@ -31,8 +31,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 pub use canonical::{
-    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingSource, Role,
-    ToolCall, ToolChoice, ToolSpec, Usage,
+    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingSource,
+    ImageAttachment, ImageMediaType, Role, ToolCall, ToolChoice, ToolSpec, Usage,
 };
 pub use client::{HttpBackendFactory, HttpLlmBackend, LlmConfig, Provider};
 pub use error::LlmError;

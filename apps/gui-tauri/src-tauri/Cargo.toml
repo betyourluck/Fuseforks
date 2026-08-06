@@ -19,6 +19,10 @@ tauri-build = { version = "2", features = [] }
 # 中核ロジック。依存はこの一方向だけ。agent-core 側は tauri を知らない。
 agent-core.workspace = true
 
+# IPC で届く添付画像の base64 復号（Spec 23）。復号は IPC 境界で 1 回、
+# 検証と保存はコア側（AttachmentStore::save）。
+base64.workspace = true
+
 # 予定一覧の「次回の発火予定時刻」をコア側の現在時刻で評価するため（Spec 07）。
 # カレンダー計算をフロントへ持たせない — 真実が 2 箇所できる。
 chrono.workspace = true

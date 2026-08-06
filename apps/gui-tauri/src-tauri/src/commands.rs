@@ -546,15 +546,45 @@ pub async fn send_user_message(
     agent_id: AgentId,
     content: String,
     co_recipients: Option<Vec<AgentId>>,
+    attachments: Option<Vec<AttachmentPayload>>,
 ) -> CoreResult<()> {
+    // 添付は base64 で届く（Spec 23）。復号はここで 1 回、検証と保存はコアが行う。
+    let mut uploads = Vec::new();
+    for payload in attachments.unwrap_or_default() {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&payload.data_base64)
+            .map_err(|_| agent_core::CoreError::InvalidAttachment {
+                reason: "画像データを読み取れません（base64 の復号に失敗）".to_owned(),
+            })?;
+        uploads.push(agent_core::AttachmentUpload {
+            file_name: payload.file_name,
+            bytes,
+        });
+    }
     state
         .orchestrator
-        .send_user_message_broadcast(
+        .send_user_message_with_attachments(
             &agent_id,
             &content,
             co_recipients.as_deref().unwrap_or(&[]),
+            uploads,
         )
         .await
+}
+
+/// IPC で届く添付画像 1 枚（Spec 23）。
+///
+/// UI 層が WebP へ変換・縮小した後のデータで、コア側の
+/// `AttachmentStore::save` がもう一度検証する（IPC から届くバイト列を
+/// 検証なしで書かない）。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentPayload {
+    /// 元ファイル名（表示用）。
+    pub file_name: String,
+    /// WebP データの base64。
+    pub data_base64: String,
 }
 
 /// 会話をリセットする（新規チャット）。消えるのは会話ログと履歴だけで、
