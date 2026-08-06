@@ -21,6 +21,7 @@ use agent_core::llm::{
     ChatMessage, ChatRequest, ChatResponse, Finish, Grounding, GroundingSource, LlmBackend,
     LlmError, Role, ToolCall, Usage,
 };
+use agent_core::error::CoreError;
 use agent_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
     SecretStore,
@@ -5084,6 +5085,78 @@ async fn a_fatal_failure_reports_its_kind_without_the_reason() {
         !notice.content.contains("致命エラー"),
         "エラーの理由は流さない: {}",
         notice.content
+    );
+}
+
+/// 失敗で降りた個体を、停止を挟まず ON だけで再稼働できること。
+///
+/// `agent_loop` は自分の登録（`Orchestrator::tasks`）に手が届かないので、
+/// 失敗して抜けても登録が残る。回収しないと ON が `AlreadyRunning` で弾かれ、
+/// **画面のトグルは OFF に見えているのにアプリを再起動するまで戻せない**。
+#[tokio::test]
+async fn a_failed_agent_starts_again_without_restarting_the_app() {
+    let dir = TempDir::new("failed-restart");
+    let orchestrator =
+        setup_with(&dir, Arc::new(FatalBackend), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_b");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "何か話して").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let failed = orchestrator.snapshot(&id).await.unwrap();
+    assert_eq!(failed.status, AgentStatus::Failed);
+    assert!(failed.last_error.is_some(), "失敗の理由が残ること");
+
+    // 画面のトグルは Failed を OFF と見せるので、押すと start_agent が呼ばれる。
+    orchestrator
+        .start_agent(&id)
+        .await
+        .expect("失敗した個体も ON だけで戻せること");
+
+    let restarted = orchestrator.snapshot(&id).await.unwrap();
+    assert_eq!(restarted.status, AgentStatus::Running);
+    assert!(restarted.last_error.is_none(), "直前の失敗表示は起動で消えること");
+}
+
+/// 失敗で降りた個体は配送を受け付けないこと。
+///
+/// **`mailboxes` の登録は残ったままである**（外すのは `stop_agent` だけ）。
+/// それでも断れるのは、`agent_loop` が抜けた時点で受信側が落ち、`try_send` が
+/// `Closed` を返すから — つまり守っているのは登録の掃除ではなくチャネルの寿命。
+/// この 1 段が無いと、発話は読む者の居ない待ち行列へ積まれて返事が永久に来ない。
+#[tokio::test]
+async fn a_failed_agent_stops_accepting_messages() {
+    let dir = TempDir::new("failed-delivery");
+    let orchestrator =
+        setup_with(&dir, Arc::new(FatalBackend), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_b");
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "何か話して").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    assert_eq!(
+        orchestrator.snapshot(&id).await.unwrap().status,
+        AgentStatus::Failed
+    );
+
+    let err = orchestrator
+        .send_user_message(&id, "まだ居ますか")
+        .await
+        .expect_err("失敗した個体へは配送できないこと");
+    assert!(
+        matches!(err, CoreError::NotRunning { .. }),
+        "黙って飲まずに断ること: {err:?}"
     );
 }
 

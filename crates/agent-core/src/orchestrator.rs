@@ -1994,10 +1994,37 @@ impl Orchestrator {
     /// - 既に稼働中なら [`CoreError::AlreadyRunning`]
     pub async fn start_agent(&self, id: &AgentId) -> CoreResult<()> {
         let mut tasks = self.tasks.lock().await;
-        if tasks.contains_key(id) {
-            return Err(CoreError::AlreadyRunning {
-                agent_id: id.to_string(),
-            });
+        if let Some(existing) = tasks.get(id) {
+            // 稼働中なら断る。**ただし「登録がある」と「走っている」は別**
+            // （失敗して自分から降りたタスクの登録は残る）。
+            if !existing.join.is_finished() {
+                return Err(CoreError::AlreadyRunning {
+                    agent_id: id.to_string(),
+                });
+            }
+
+            // 失敗して降りた残骸をここで回収する（reap）。`agent_loop` は
+            // `tasks` に手が届かない（Orchestrator が持つ）ので自分の登録を
+            // 消せず、停止経路の `stop_agent` に当たる後始末が失敗経路には
+            // 無かった。回収しないと ON が `AlreadyRunning` で弾かれ、
+            // **画面のトグルは OFF に見えたままアプリを再起動するまで戻せない**。
+            if let Some(dead) = tasks.remove(id) {
+                let _ = dead.join.await; // 完了済みなので即座に返る
+            }
+
+            // `stop_agent` が join のあとに畳むものを、ここで畳む。
+            // 個別 MCP を落とさずに起動し直すと、子プロセスが 1 世代ぶん残る。
+            if let Some(state) = self.shared.agent_mcp.write().await.remove(id) {
+                state.manager.shutdown().await;
+            }
+            let mut world = self.shared.world.write().await;
+            if let Ok(record) = world.agent_mut(id) {
+                // 失敗した瞬間までを稼働時間に含める。畳まないと `started_at` が
+                // 残り、停止しているのにカードの稼働時間が増え続ける。
+                if let Some(started) = record.started_at.take() {
+                    record.accumulated_uptime_secs += started.elapsed().as_secs();
+                }
+            }
         }
 
         {

@@ -50,6 +50,14 @@ enums:
     note: |
       失敗理由はこの列挙に持たせず AgentSnapshot.lastError へ分離する。
       ワイヤ表現を素の文字列 `"running"` に保ち、UI の分岐を単純にするため。
+
+      failed は idle と同じ「停止している」側で、**start_agent で再稼働できる**
+      (2026-08-06。failures.md #78)。UI のトグルは failed を OFF として描くので、
+      押すと start_agent が呼ばれる — ここを塞ぐと、画面は OFF に見えているのに
+      アプリを再起動するまで戻せない状態になる。
+      失敗経路には stop_agent に当たる後始末が無く、tasks の登録・個別 MCP・
+      started_at が残る。これを畳むのは次の start_agent の冒頭 (reap) で、
+      「登録がある」と「走っている」を JoinHandle::is_finished で区別する。
   ConfigFileKind:
     values:
       skill: SKILL.md
