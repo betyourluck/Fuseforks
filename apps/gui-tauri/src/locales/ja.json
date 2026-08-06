@@ -182,7 +182,15 @@
     "send": "送信",
     "sendEnter": "送信（Enter）",
     "cannotSend": "送信できません",
-    "hint": "Enter で送信 / Shift+Enter で改行"
+    "hint": "Enter で送信 / Shift+Enter で改行",
+    "attach": "画像を添付（貼り付けも可）",
+    "attachNote": "この画像は今回のみモデルへ渡ります。2 ターン目以降はモデルからは見えません（画面には残ります）。",
+    "attachScaled": "長辺 {px}px へ縮小しました。",
+    "attachRemove": "添付を外す",
+    "attachConverting": "画像を変換中…",
+    "attachTooLarge": "画像が大きすぎます（上限 10MB）",
+    "attachConvertedTooLarge": "変換後の画像が大きすぎます（上限 2MB）",
+    "attachFailed": "画像を読み込めませんでした"
   },
   "bottomTabs": {
     "blackboard": "黒板",
@@ -268,7 +276,8 @@
     "tokens": "{count} tokens",
     "copied": "コピーしました",
     "copy": "本文をコピー",
-    "empty": "まだ発話がありません。"
+    "empty": "まだ発話がありません。",
+    "attachmentDeleted": "画像は保持期間を過ぎて削除されました"
   },
   "editor": {
     "mcpPlaceholder": "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。",
@@ -547,6 +556,7 @@
     "CONFIG_IO": "設定ファイルの入出力に失敗しました",
     "UNSAFE_IDENTIFIER": "識別子に使えない文字が含まれています",
     "INVALID_ICON": "アイコン画像を受け付けられません",
+    "INVALID_ATTACHMENT": "画像を受け付けられません",
     "SECRET_STORE_FAILED": "資格情報ストアの操作に失敗しました",
     "CREDENTIAL_MISSING": "API キーが未登録です",
     "COMPUTE_FAILED": "計算タスクが失敗しました",

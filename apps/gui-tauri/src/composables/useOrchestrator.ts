@@ -22,6 +22,7 @@ import type {
   AgentSnapshot,
   AgentSpec,
   ApprovalOutcome,
+  AttachmentPayload,
   CommandPolicyView,
   ConfigFileKind,
   CoreEvent,
@@ -1087,10 +1088,16 @@ export function useOrchestrator() {
       return succeeded(done);
     },
 
-    async send(agentId: AgentId, content: string): Promise<void> {
+    async send(
+      agentId: AgentId,
+      content: string,
+      attachments?: AttachmentPayload[],
+    ): Promise<void> {
       // 発話は MessageSent イベントで届くので、ここでの再同期は
       // 送信が拒否された場合に一覧を正しく戻すために効く。
-      await mutate("orchestrator.op.send", () => ipc.sendUserMessage(agentId, content));
+      await mutate("orchestrator.op.send", () =>
+        ipc.sendUserMessage(agentId, content, undefined, attachments),
+      );
     },
 
     /**

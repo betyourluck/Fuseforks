@@ -2,7 +2,7 @@
 
 **ID**: 23
 **Date**: 2026-08-06
-**Status**: **rev3 承認 → P0〜P3 完了（2026-08-06）→ 次は P4（フロント）**。
+**Status**: **rev3 承認 → P0〜P4 完了（2026-08-06）→ 残は P5（台帳）と P6（実機確認）**。
 未決はゼロ — **D1 は利用者裁定で「1 ターン限り」に確定**、**D3 の既定は
 P0 の実測で WebP に確定**（5 系統 × 2 形式 = 10 通りすべて通過。下記「P0 実測結果」。
 JPEG フォールバックは保険として維持 — xAI は公式文書が jpg/png のみと明記しており、
@@ -314,9 +314,31 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   6. **依存の実測**: 増えたのは 9 crate（image / image-webp / zune-jpeg /
      zune-core / moxcms / pxfm / bytemuck / byteorder-lite / quick-error）で
      **全部純 Rust・C 依存なし**。base64 は既にツリーに居た（282 → 291）
-- **P4 フロント**: `ChatInput.vue` の貼り付け + 「参照…」+ **WebWorker で縮小・
+- **P4 フロント** — **完了（2026-08-06。vitest 164 全緑・vue-tsc + vite build 緑・
+  ブラウザプレビューで添付ボタンの描画とコンソールエラー無しを確認）**:
+  `ChatInput.vue` の貼り付け + 「参照…」+ **WebWorker で縮小・
   WebP 変換**（rev2。査読 6 — メインスレッドを止めない）+ **元ファイル 10MB の
   事前拒否** + 添付チップ（×で外す）+ S4 の注記 + `ChatPanel` の表示 + 辞書 ja/en
+
+  **P4 実装記録（実装で決めた 6 点）**:
+  1. **2 枚目は拒否ではなく置き換え**（D5 の画面側）— チップが 1 枚しか出ない
+     画面で拒否にすると、置き換えたつもりの操作が黙って無視される
+  2. **worker の `convertToBlob({type: "image/webp"})` は希望であって保証ではない** —
+     エンコーダを持たない環境では別形式が返る。`isWebpBytes`（コアの `is_webp` と
+     同じ規則）で確かめ、正直に失敗する。純関数（`fitWithin` / `bytesToBase64` /
+     `isWebpBytes`）は `lib/attachment.ts` に置いて worker が import する
+     （規則を 2 箇所に書かない）。vitest 7 本
+  3. **表示の読み口 `read_attachment` IPC を追加** — P3 の「配線」に含める
+     べきだった漏れ（書く経路だけ作って読む経路が無かった）。アイコンと同じ
+     `Vec<u8>` + object URL の形で、キャッシュは ChatPanel ローカル。
+     `null` = GC 済みはプレースホルダの枠 — **消えたことを消えたと言う**
+  4. **画像だけの発話では空のテキストバブルを出さない**（本文があるか添付が
+     無いときだけバブルを描く）
+  5. **変換エラーは `AttachmentError.kind` で辞書を引く** — 生の例外文字列を
+     画面に出さない（tooLarge / convertedTooLarge / convertFailed の 3 種）
+  6. **貼り付けはクリップボードに画像があるときだけ横取り** — テキストの
+     貼り付けは textarea の既定動作のまま。2MB の門はフロントでも見るが
+     **門の本体はコア**（IPC を直接叩く経路はコアが塞ぐ）
 - **P5 台帳**: README 日英 + CLAUDE.md + ディレクトリ木（`attachments/`）
 - **P6 実機確認**（画面・ログで観測できる項目だけ — #68）:
   1. 貼り付けた画像をサーヴァントが説明できる
@@ -392,6 +414,11 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
 
 ## 改訂履歴
 
+- **P4 完了**（2026-08-06）: `ChatInput.vue`（貼り付け + 参照… + チップ +
+  S4 注記）+ `workers/imageConvert.ts`（WebWorker 変換）+ `lib/attachment.ts`
+  （純関数 + worker 窓口。vitest 7 本）+ `ChatPanel.vue` の表示 +
+  `read_attachment` IPC（P3 の読み口の漏れを回収）+ 辞書 ja/en。
+  実装で決めた 6 点は Tasks の P4 実装記録
 - **P3 完了**（2026-08-06）: `send_user_message_with_attachments` +
   `AgentMessage.attachments`（参照）+ `Shared.attachments` + 起動時 GC +
   D1（展開は受信の参照だけ・履歴は文字列）+ D6（`note_dropped_attachment` の

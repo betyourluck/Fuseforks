@@ -573,6 +573,16 @@ pub async fn send_user_message(
         .await
 }
 
+/// 添付画像の実体（WebP バイト列）を返す（Spec 23。表示用）。
+/// `null` は「保持期間を過ぎて削除された」— UI はプレースホルダの枠を出す。
+#[tauri::command]
+pub async fn read_attachment(
+    state: State<'_, AppState>,
+    id: String,
+) -> CoreResult<Option<Vec<u8>>> {
+    state.orchestrator.read_attachment(&id).await
+}
+
 /// IPC で届く添付画像 1 枚（Spec 23）。
 ///
 /// UI 層が WebP へ変換・縮小した後のデータで、コア側の

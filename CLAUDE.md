@@ -1095,7 +1095,7 @@ CI がタグから書き換える側。
   設定できない村が出る（`opener:allow-open-path` を `$APPDATA/workspace` に
   絞ってあるのとは求められているものが逆）
 
-## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P3 完了。次は P4**）
+## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P4 完了。残は P5 台帳 + P6 実機確認**）
 
 起点は利用者 —「**おそらく僕はコストの面で使いたくない機能だが、無ければ
 『どうして無いの？』と聞かれそうな機能だ。なので機能は入れておきたい**」。
@@ -1149,8 +1149,14 @@ CI がタグから書き換える側。
   3 条件 — 無関係な 400 で再課金しない）/ 起動時 GC + 計器 3 行
   （`attachment gc:` / `attachment missing:` / `attachment fallback:`）。
   **依存 +9 crate・全部純 Rust**（image / image-webp / zune-jpeg ほか。
-  base64 は既にツリーに居た）。結合 3 + 単体 2（lib 425・結合 122）。
-  **次は P4**（ChatInput の貼り付け + WebWorker 変換 + 添付チップ + ChatPanel 表示）
+  base64 は既にツリーに居た）。結合 3 + 単体 2（lib 425・結合 122）
+- **P4 完了**（2026-08-06）— `ChatInput.vue`（貼り付け + 参照… + チップ + S4 注記。
+  **2 枚目は拒否ではなく置き換え**）+ `workers/imageConvert.ts`（**convertToBlob の
+  type は希望であって保証ではない** — `isWebpBytes` で確かめて正直に失敗）+
+  **`read_attachment` IPC を追加**（P3 の読み口の漏れ。書く経路だけ作って
+  読む経路が無かった）+ GC 済みはプレースホルダ（消えたことを消えたと言う）+
+  辞書 ja/en（`INVALID_ATTACHMENT` 含む）。vitest 164 全緑（+7）・build 緑。
+  **残: P5（README 日英 + ディレクトリ木）と P6 実機確認 4 件**
 
 ## 右クリックメニューの抑止（2026-08-06 着地。Spec 不要と判断）
 

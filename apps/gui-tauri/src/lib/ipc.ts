@@ -19,6 +19,7 @@ import type {
   AgentSnapshot,
   AgentSpec,
   ApprovalOutcome,
+  AttachmentPayload,
   BlackboardNote,
   CommandPolicyView,
   ConfigFileKind,
@@ -426,7 +427,17 @@ export const sendUserMessage = (
   agentId: AgentId,
   content: string,
   coRecipients?: AgentId[],
-) => call<void>("send_user_message", { agentId, content, coRecipients });
+  attachments?: AttachmentPayload[],
+) => call<void>("send_user_message", { agentId, content, coRecipients, attachments });
+
+/**
+ * 添付画像の実体（WebP バイト列）を読む（Spec 23）。
+ *
+ * `null` は「保持期間を過ぎて削除された」（D9）— エラーではなく通常の答えで、
+ * 表示側はプレースホルダの枠を出す。
+ */
+export const readAttachment = (id: string) =>
+  call<number[] | null>("read_attachment", { id });
 
 // ---- 予定（Spec 07） ----------------------------------------------------------
 

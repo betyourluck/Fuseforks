@@ -1975,6 +1975,17 @@ impl Orchestrator {
         self.shared.store.read_icon(id).await
     }
 
+    /// 添付画像の実体（WebP バイト列）を読む（Spec 23。表示用）。
+    ///
+    /// `None` は「保持期間を過ぎて削除された」（D9）— エラーではなく
+    /// 通常の答えで、UI はプレースホルダの枠を出す。
+    ///
+    /// # Errors
+    /// id が UUID の字種でない場合 [`CoreError::UnsafeIdentifier`]。
+    pub async fn read_attachment(&self, id: &str) -> CoreResult<Option<Vec<u8>>> {
+        self.shared.attachments.read(id).await
+    }
+
     /// エージェントのアイコンを設定する。中身の検証（WebP・サイズ上限）は store が担う。
     pub async fn set_agent_icon(&self, id: &AgentId, bytes: &[u8]) -> CoreResult<()> {
         self.shared.world.read().await.agent(id)?;

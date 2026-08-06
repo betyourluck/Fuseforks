@@ -14,7 +14,7 @@
  * 画面である。エージェント同士の発話は「誰から誰へ」が本質的な情報なので、
  * 吹き出しの外側に宛先と hop を残す。会話らしさのために情報を捨てない。
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -34,6 +34,8 @@ import { groundingView, type GroundingView } from "../lib/grounding";
 import { renderMarkdownCached } from "../lib/markdown";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { readAttachment } from "../lib/ipc";
+import type { PendingAttachment } from "../lib/attachment";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
 const { t } = useI18n();
@@ -291,9 +293,51 @@ watch(
   },
 );
 
-async function send(content: string): Promise<void> {
+async function send(content: string, attachments: PendingAttachment[]): Promise<void> {
   if (!canSend.value || !state.selectedAgentId) return;
-  await orchestrator.send(state.selectedAgentId, content);
+  await orchestrator.send(
+    state.selectedAgentId,
+    content,
+    // IPC には変換済みの base64 だけを載せる（寸法などの表示情報はコアが
+    // 保存時に自分で読み直す — 2 つの真実を作らない）。
+    attachments.map((a) => ({ fileName: a.fileName, dataBase64: a.dataBase64 })),
+  );
+}
+
+// ---- 添付画像の表示（Spec 23） ----------------------------------------------
+
+/**
+ * 添付 id → object URL の投影キャッシュ。
+ * `null` = 実体が無い（GC 済み。D9 のプレースホルダを出す）、
+ * キー不在 = 未取得（`ensureAttachment` が裏で読みに行く）。
+ */
+const attachmentUrls = reactive<Record<string, string | null>>({});
+const attachmentLoading = new Set<string>();
+
+/** 添付の実体を（初回だけ）読みに行く。描画は reactive の更新で追い付く。 */
+function ensureAttachment(id: string): void {
+  if (id in attachmentUrls || attachmentLoading.has(id)) return;
+  attachmentLoading.add(id);
+  void readAttachment(id)
+    .then((bytes) => {
+      attachmentUrls[id] = bytes
+        ? URL.createObjectURL(
+            new Blob([new Uint8Array(bytes)], { type: "image/webp" }),
+          )
+        : null;
+    })
+    .catch(() => {
+      attachmentUrls[id] = null;
+    })
+    .finally(() => {
+      attachmentLoading.delete(id);
+    });
+}
+
+/** 描画用: 添付の現在の状態。undefined = 読み込み中。 */
+function attachmentUrl(id: string): string | null | undefined {
+  ensureAttachment(id);
+  return attachmentUrls[id];
 }
 
 /** 会話一覧ダイアログを開いているか（Spec 12）。 */
@@ -636,6 +680,28 @@ async function newChat(): Promise<void> {
             min-w-0 は flex item の暗黙の min-width:auto（= min-content）を外し、
             max-w-full は親列（max-w-[78%]）を超えない上限。三点で 1 セット。
           -->
+          <!-- 添付画像（Spec 23）。実体は attachments/ のファイルで、ここは
+               参照から object URL を引いて出す。実体が消えていたら（D9 の GC）
+               プレースホルダの枠 — 何も出さないと「添付したはずの画像が
+               無かったことになる」ので、消えたことを消えたと言う。 -->
+          <template v-for="att in entry.row.message.attachments ?? []" :key="att.id">
+            <img
+              v-if="attachmentUrl(att.id)"
+              :src="attachmentUrl(att.id)!"
+              :alt="att.fileName"
+              :title="att.fileName"
+              class="mb-1 max-h-64 max-w-full rounded-2xl object-contain ring-1 ring-line"
+              :width="att.width"
+              :height="att.height"
+            />
+            <div
+              v-else-if="attachmentUrl(att.id) === null"
+              class="mb-1 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] text-ink-dim ring-1 ring-line"
+            >
+              {{ $t("chat.attachmentDeleted") }}
+            </div>
+          </template>
+
           <div
             v-if="isRenderedAsMarkdown(entry.row.message)"
             class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
@@ -643,7 +709,9 @@ async function newChat(): Promise<void> {
             v-html="markdownOf(entry.row.message)"
           />
           <div
-            v-else
+            v-else-if="
+              entry.row.message.content || !entry.row.message.attachments?.length
+            "
             class="selectable min-w-0 max-w-full px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap"
             :class="
               isMine(entry.row.message)

@@ -280,6 +280,24 @@ export interface Grounding {
   sources: GroundingSource[];
 }
 
+/**
+ * 添付画像の参照（Spec 23）。実体は `{workspace}/attachments/{id}.webp` に
+ * あり、表示は `read_attachment` で引く。base64 は発話に載らない。
+ */
+export interface Attachment {
+  id: string;
+  width: number;
+  height: number;
+  /** 元ファイル名（表示用）。 */
+  fileName: string;
+}
+
+/** 送信時に IPC へ載せる添付画像（Spec 23）。UI が WebP へ変換済みの形。 */
+export interface AttachmentPayload {
+  fileName: string;
+  dataBase64: string;
+}
+
 /** 会話ログの 1 発話。 */
 export interface AgentMessage {
   id: string;
@@ -297,6 +315,8 @@ export interface AgentMessage {
    * **表示専用** — モデルへは戻らない（Spec 05 Notes 9）。
    */
   grounding?: Grounding;
+  /** 添付画像の参照（Spec 23）。無い発話では省かれる。 */
+  attachments?: Attachment[];
 }
 
 /** MCP サーバー 1 台の起動方法（Claude Desktop の設定と同じ形）。 */

@@ -152,6 +152,7 @@ pub fn run() {
             commands::interrupt_all,
             commands::set_agent_running,
             commands::send_user_message,
+            commands::read_attachment,
             commands::reset_conversation,
             // 会話（セッション。Spec 12）
             commands::list_sessions,

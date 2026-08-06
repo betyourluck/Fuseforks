@@ -182,7 +182,15 @@
     "send": "Send",
     "sendEnter": "Send (Enter)",
     "cannotSend": "Cannot send",
-    "hint": "Enter to send / Shift+Enter for a new line"
+    "hint": "Enter to send / Shift+Enter for a new line",
+    "attach": "Attach an image (paste also works)",
+    "attachNote": "This image is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
+    "attachScaled": "Scaled down to {px}px on the long edge.",
+    "attachRemove": "Remove attachment",
+    "attachConverting": "Converting image…",
+    "attachTooLarge": "The image is too large (limit: 10MB)",
+    "attachConvertedTooLarge": "The converted image is too large (limit: 2MB)",
+    "attachFailed": "Could not read the image"
   },
   "bottomTabs": {
     "blackboard": "Blackboard",
@@ -268,7 +276,8 @@
     "tokens": "{count} tokens",
     "copied": "Copied",
     "copy": "Copy text",
-    "empty": "No messages yet."
+    "empty": "No messages yet.",
+    "attachmentDeleted": "This image was deleted after its retention period"
   },
   "editor": {
     "mcpPlaceholder": "JSON in the same mcpServers format as Claude Desktop. Leave it empty if this servant has no dedicated MCP. Broken JSON cannot be saved.",
@@ -547,6 +556,7 @@
     "CONFIG_IO": "Configuration file I/O failed",
     "UNSAFE_IDENTIFIER": "The identifier contains characters that cannot be used",
     "INVALID_ICON": "The icon image was rejected",
+    "INVALID_ATTACHMENT": "The image was rejected",
     "SECRET_STORE_FAILED": "An OS credential-store operation failed",
     "CREDENTIAL_MISSING": "The API key is not registered",
     "COMPUTE_FAILED": "A compute task failed",
