@@ -303,6 +303,15 @@ struct Shared {
     /// `await` する経路を作りたくない。中身は短い文字列で、ロックは
     /// clone するあいだしか握らない。
     session_id: std::sync::RwLock<String>,
+    /// 外部からの依頼の同時実行を 1 本に絞るゲート（Spec 25 D7）。
+    ///
+    /// **外部入口は新しい因果の根**で、hop は 0 から始まり予算プールも新品に
+    /// なる。ゆえに `max_hops` もトークンの天井も**扉を通る閉路を塞げない**
+    /// （通るたびにリセットされる）。同時 1 本にすると、村が自分自身を MCP
+    /// サーバーとして登録した閉路は 2 周目で必ず busy に当たって切れ、窓口が
+    /// 自分のターンの完了を待つデッドロックも即座に解ける。併走による予算の
+    /// 二重消費も同じ 1 つの機構で消える。
+    external_gate: tokio::sync::Semaphore,
     config: OrchestratorConfig,
 }
 
@@ -805,6 +814,7 @@ impl Orchestrator {
             sessions,
             summaries: RwLock::new(restored_summaries),
             session_id: std::sync::RwLock::new(session_id),
+            external_gate: tokio::sync::Semaphore::new(1),
             config,
         });
 
@@ -1730,6 +1740,20 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// 外部からの依頼を受ける窓口（Spec 25 D2）。`None` = 未設定。
+    pub async fn reception(&self) -> Option<AgentId> {
+        self.shared.world.read().await.reception().cloned()
+    }
+
+    /// 窓口を差し替える。`None` で未設定へ戻す（Spec 25 D2）。
+    ///
+    /// # Errors
+    /// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]。
+    pub async fn set_reception(&self, agent_id: Option<&AgentId>) -> CoreResult<()> {
+        self.shared.world.write().await.set_reception(agent_id)?;
+        self.persist().await
+    }
+
     // ---- 資格情報 -----------------------------------------------------------
 
     /// テンプレートの API キーを OS の資格情報ストアへ登録する。
@@ -2362,6 +2386,79 @@ impl Orchestrator {
         deliver(&self.shared, to, message, budget).await
     }
 
+    // ---- 外部からの依頼（Spec 25） -------------------------------------------
+
+    /// 外部の MCP クライアントからの依頼を窓口へ渡し、答えを待つ（Spec 25）。
+    ///
+    /// **オーケストレーションの機構は 1 つも増えない。** 外部の呼び出しは
+    /// 構造的に「あるサーヴァントが別のサーヴァントへ `ask` する」のと同じで、
+    /// [`deliver_and_wait`] をそのまま通る（待ち方も失敗の分類も既存のまま）。
+    /// 増えるのは送り手が [`Endpoint::External`] であることだけ。
+    ///
+    /// # 因果の根
+    ///
+    /// 外部依頼は**予算の根の 3 種類目**（ユーザー発話 / 予定の発火 / これ）。
+    /// hop は 0 から始まり、予算プールも新品になる。**だからこそ `max_hops` と
+    /// トークンの天井は、扉を通る閉路を塞げない** — 塞ぐのは冒頭の同時 1 本の
+    /// ゲートで、それが唯一の歯止め（`mcp_server_contract` 凍結 5）。
+    ///
+    /// # Errors
+    /// - 窓口が未設定 [`CoreError::ExternalReceptionUnset`]
+    /// - 窓口が削除済み [`CoreError::AgentNotFound`]
+    /// - 窓口が停止中 [`CoreError::NotRunning`]
+    /// - 別の外部依頼を処理中 [`CoreError::ExternalBusy`]
+    pub async fn ask_external(&self, client: &str, message: &str) -> CoreResult<String> {
+        // D7 — 同時 1 本。**待たずに即断る**（待つと閉路のデッドロックが
+        // ask_timeout ぶん居座り、呼ぶ側からは「重い依頼」と区別が付かない）。
+        // permit はこの関数を抜けるまで握る = 答えが返るまで次を通さない。
+        let _permit = self
+            .shared
+            .external_gate
+            .try_acquire()
+            .map_err(|_| CoreError::ExternalBusy)?;
+
+        let to = {
+            let world = self.shared.world.read().await;
+            let Some(to) = world.reception().cloned() else {
+                return Err(CoreError::ExternalReceptionUnset);
+            };
+            // 窓口が削除されていれば「見つからない」を返す。**「未設定」へ
+            // 畳まない** — 設定し直すのと初めて設定するのでは人の次の手が違う。
+            world.agent(&to)?;
+            to
+        };
+        // 停止中は黙って待たない（S6）。受信箱の有無が稼働の判定
+        // （「ここに居る = 送信できる」の不変条件）。
+        if !self.shared.mailboxes.read().await.contains_key(&to) {
+            return Err(CoreError::NotRunning {
+                agent_id: to.to_string(),
+            });
+        }
+
+        // 自己申告の名乗りはここで 1 回だけ正規化する。**プロンプトへ入る前**で
+        // なければ意味がない（`mcp_server_contract` 凍結 6）。
+        let from = Endpoint::External {
+            client: crate::world::normalize_client_name(client),
+        };
+        let budget = new_root_budget(&self.shared).await;
+        // 因果の根なので親トークンを持たない。打ち切りは既存の
+        // `interrupt_turn` / `interrupt_all` が窓口のターンに効く。
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (answer, _state) = deliver_and_wait(
+            &self.shared,
+            &from,
+            &to,
+            message,
+            0,
+            &cancel,
+            budget.as_ref(),
+        )
+        .await;
+        // 分類は捨てる（`ask` と同じ）。**失敗も文字列で返る** — 相手が
+        // 答えなかった・時間切れだったは会話の事実であって、扉の故障ではない。
+        Ok(answer)
+    }
+
     // ---- 予定（Spec 07） -----------------------------------------------------
 
     /// 登録済みの予定（登録順）。
@@ -2772,6 +2869,7 @@ async fn agent_loop(
                             Endpoint::User => "user".to_owned(),
                             Endpoint::System => "system".to_owned(),
                             Endpoint::Agent { id } => id.to_string(),
+                            Endpoint::External { client } => format!("external:{client}"),
                         },
                     );
                     if let Some(reply_to) = envelope.reply_to {
@@ -2919,6 +3017,13 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
                 // 送り手が既に削除されていても発話は成立させる。ID で示す。
                 .unwrap_or_else(|_| id.to_string())
         }
+        // 外部の MCP クライアント（Spec 25 D6）。**名前だけでは足りない** —
+        // 呼び名は利用者も自由に付けられるので、`【送り手: Claude Code】` は
+        // 「そういう呼び名の人間」と読める。相手が人間でないことが分かって
+        // 初めて「噛み砕いた説明も聞き返しも要らない」という判断ができるので、
+        // 種別を明示する。**乗るのは外部依頼のターンだけ**で、全員の毎ターンに
+        // 乗る固定費ではない。
+        Endpoint::External { client } => format!("{client}（外部クライアント）"),
     };
     format!("【送り手: {sender_label}】\n{}", incoming.content)
 }
@@ -3473,6 +3578,7 @@ async fn handle_message(
             Endpoint::User => "user".to_owned(),
             Endpoint::Agent { id } => id.to_string(),
             Endpoint::System => "system".to_owned(),
+            Endpoint::External { client } => format!("external:{client}"),
         },
         incoming.content.chars().count(),
     );
@@ -4718,11 +4824,17 @@ async fn ask_agent(
     }
 
     // ask は分類を捨てる（.0）。分類は波ペインの素材で、ask の関心ではない。
-    Ok(
-        deliver_and_wait(shared, from, to, &question, next_hop, parent, budget)
-            .await
-            .0,
+    Ok(deliver_and_wait(
+        shared,
+        &Endpoint::Agent { id: from.clone() },
+        to,
+        &question,
+        next_hop,
+        parent,
+        budget,
     )
+    .await
+    .0)
 }
 
 /// 1 件の依頼を配送し、答えを待つ（`ask` と `plan` の共通部分）。
@@ -4738,7 +4850,7 @@ async fn ask_agent(
 /// ここに入れない（plan の観測の関心を ask に背負わせない）。
 async fn deliver_and_wait(
     shared: &Arc<Shared>,
-    from: &AgentId,
+    from: &Endpoint,
     to: &AgentId,
     question: &str,
     next_hop: u8,
@@ -4757,12 +4869,11 @@ async fn deliver_and_wait(
         );
     }
 
-    let mut outgoing = AgentMessage::new(
-        Endpoint::Agent { id: from.clone() },
-        Endpoint::Agent { id: to.clone() },
-        question,
-        next_hop,
-    );
+    // 送り手は `Endpoint` で受ける（Spec 25）。**ここに `Endpoint::Agent` を
+    // 焼き込んでいたので、外部依頼が「サーヴァント発」に化けていた** —
+    // 待ち方・失敗の分類・予算の検査は 1 字も変えずに、送り手だけを広げる。
+    let mut outgoing =
+        AgentMessage::new(from.clone(), Endpoint::Agent { id: to.clone() }, question, next_hop);
     // 質問自体のトークンは呼び出し元のターンに計上済み。二重計上しない。
     outgoing.tokens = 0;
     shared.record(outgoing.clone()).await;
@@ -4938,7 +5049,7 @@ async fn run_plan(
     let mut set = tokio::task::JoinSet::new();
     for (index, (target, message)) in wave_tasks.iter().enumerate() {
         let shared = Arc::clone(shared);
-        let from = from.clone();
+        let from = Endpoint::Agent { id: from.clone() };
         let target = target.clone();
         let message = message.clone();
         let parent = parent.clone();
@@ -5184,6 +5295,10 @@ fn endpoint_label(world: &crate::world::World, endpoint: &Endpoint) -> String {
             .agent(id)
             .map(|record| record.spec.name.clone())
             .unwrap_or_else(|_| id.to_string()),
+        // 窓口が外へ返した答えは他のサーヴァントの広場ログに載る
+        // （`mcp_server_contract` 凍結 9 — User 宛の返答と同じ扱い）ので、
+        // 宛先の名前もここで解決される。
+        Endpoint::External { client } => client.clone(),
     }
 }
 

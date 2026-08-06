@@ -194,6 +194,22 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 外部からの依頼を受ける窓口が未設定（Spec 25 D2）。
+    ///
+    /// **「窓口が消えた」とは別のエラーにする** — 前者は設定し直す操作、
+    /// 後者は初めて設定する操作で、人がとる次の手が違う。窓口が削除済みの
+    /// 場合は [`Self::AgentNotFound`] が返る（`mcp_server_contract` 凍結 7）。
+    #[error("外部からの依頼を受け取る窓口が設定されていません（システム設定で選んでください）")]
+    ExternalReceptionUnset,
+
+    /// 別の外部依頼を処理中（Spec 25 D7 — 同時 1 本）。
+    ///
+    /// **待たせずに即断る。** 待つと、村が自分自身を MCP サーバーとして
+    /// 登録した閉路のデッドロックが `ask_timeout` ぶん居座り、呼ぶ側からは
+    /// 「重い依頼で遅い」と区別が付かなくなる。
+    #[error("別の外部依頼を処理中です。終わってからもう一度お試しください")]
+    ExternalBusy,
+
     /// OS の資格情報ストアの操作に失敗した。
     ///
     /// **秘密そのものはこのエラーに載せない。** 保管の失敗を伝えるために
@@ -267,6 +283,8 @@ impl CoreError {
             Self::InvalidIcon { .. } => "INVALID_ICON",
             Self::InvalidAttachment { .. } => "INVALID_ATTACHMENT",
             Self::InvalidUserName { .. } => "INVALID_USER_NAME",
+            Self::ExternalReceptionUnset => "EXTERNAL_RECEPTION_UNSET",
+            Self::ExternalBusy => "EXTERNAL_BUSY",
             Self::SecretStore { .. } => "SECRET_STORE_FAILED",
             Self::CredentialMissing { .. } => "CREDENTIAL_MISSING",
             // LLM 境界のコードはそのまま透過させ、UI 側で 1 つの体系として扱えるようにする。

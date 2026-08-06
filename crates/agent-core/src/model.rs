@@ -630,10 +630,30 @@ pub enum Endpoint {
         /// 対象エージェント ID。
         id: AgentId,
     },
+    /// 外部の MCP クライアント（Spec 25）。
+    ///
+    /// **`User` に畳まない。** 封筒 `【送り手: X】` はモデルが読む入力の一部で、
+    /// 送り手が誰かによって答え方が変わることを期待して置いてある機構
+    /// （Spec 06 / Spec 19）。外の LLM を利用者に見せかけると、その機構を
+    /// 自分で無効化することになる — 外の LLM は噛み砕いた説明も聞き返しも
+    /// 要らず、構造化した答えを受け取れる。
+    External {
+        /// 呼び出し側の自己申告（MCP の `clientInfo.name`）。
+        ///
+        /// **トークンを持つ任意のローカルプロセスが名乗れる**ので、ここは
+        /// 攻撃者が書ける文字列がプロンプトへ入る唯一の経路になる。
+        /// 入るのは [`crate::world::normalize_client_name`] を通した値だけ
+        /// （`mcp_server_contract` 凍結 6）。
+        client: String,
+    },
 }
 
 impl Endpoint {
     /// エージェントを指す場合、その ID を返す。
+    ///
+    /// **`_ => None` はワイルドカードなので、variant を足してもコンパイラは
+    /// ここを指さない**（`mcp_server_contract` 凍結 10）。`External` が
+    /// `None` になるのは正しい — 外部クライアントはエージェントではない。
     pub fn agent_id(&self) -> Option<&AgentId> {
         match self {
             Self::Agent { id } => Some(id),

@@ -230,6 +230,32 @@ pub fn normalize_user_name(raw: &str) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
+/// 外部クライアントの名乗りが受け入れ条件を満たさないときの既定ラベル
+/// （`mcp_server_contract` 凍結 6）。
+pub const DEFAULT_EXTERNAL_CLIENT: &str = "external";
+
+/// 外部 MCP クライアントの名乗りを、封筒へ入れられる形に正規化する（Spec 25）。
+///
+/// **検査は [`normalize_user_name`] と同じ述語**（`】`・制御文字・字数）。
+/// 共有するのは述語であって処方ではない — **落ちたときは拒否ではなく既定
+/// ラベルへ落とす**。`clientInfo.name` は呼び出し側が対話的に直せない値なので、
+/// 拒否すると扉ごと使えなくなる（`mcp_server_contract` 凍結 6）。
+///
+/// 落としたことは WARN 1 行で残す。**理由だけを出し、値は出さない** —
+/// [`normalize_user_name`] の理由は入力値を含まない契約なので、そのまま
+/// ログへ流してよい（拒否の過程で壊れた値を再放流しない）。
+pub fn normalize_client_name(raw: &str) -> String {
+    match normalize_user_name(raw) {
+        Ok(name) => name,
+        Err(reason) => {
+            crate::note!(
+                "mcp client: 名乗りを `{DEFAULT_EXTERNAL_CLIENT}` として扱います（{reason}）"
+            );
+            DEFAULT_EXTERNAL_CLIENT.to_owned()
+        }
+    }
+}
+
 /// 永続化される世界の状態。
 ///
 /// `Instant` は直列化できないため、保存対象は定義とテンプレートのみ。
@@ -279,6 +305,20 @@ pub struct PersistedWorld {
     /// `#[serde(default)]` なので、役職を 1 つも持たない既存の村もそのまま開く。
     #[serde(default)]
     pub roles: Vec<AgentRole>,
+    /// 外部からの依頼を受ける窓口（Spec 25。`None` = 未設定）。
+    ///
+    /// **村の内容物なので `world.json` に住む** — どの個体が窓口かは村ごとに
+    /// 違う（進行役はトポロジーの帰結であって固定の役ではない）。サーバーの
+    /// ON/OFF・ポート・トークンは**アプリの設定**なので
+    /// `{app_data_dir}/mcp_server.json` 側にあり、置き場が割れるのは正しい
+    /// （#52 の境界「村の内容物か、アプリの設定か」）。**この分離の帰結として
+    /// 村を配っても扉は開かない**（配るのは workspace だけ）。
+    ///
+    /// **削除済みのエージェントを指していても落とさない。** 読み出し側が
+    /// 「窓口が見つからない」と報告するほうが、黙って「未設定」へ化けるより
+    /// 診断になる（役職 `role_id` と同じ読み時解決）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reception: Option<AgentId>,
 }
 
 /// 登録簿本体。
@@ -296,6 +336,8 @@ pub struct World {
     user_name: Option<String>,
     /// 役職（Spec 14）。意味論は [`PersistedWorld::roles`]。
     roles: BTreeMap<AgentRoleId, AgentRole>,
+    /// 外部からの依頼を受ける窓口（Spec 25）。意味論は [`PersistedWorld::reception`]。
+    reception: Option<AgentId>,
 }
 
 impl World {
@@ -355,6 +397,10 @@ impl World {
             },
             None => None,
         };
+        // **窓口は検査せずそのまま読む**（役職と同じ判断）。指す先が消えていても
+        // 落とさない — 読み出し側が「窓口が見つからない」と報告するほうが、
+        // 「未設定」へ黙って化けるより診断になる。
+        world.reception = persisted.reception.clone();
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
@@ -391,7 +437,34 @@ impl World {
             language: self.language.map(|l| l.as_str().to_string()),
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
+            reception: self.reception.clone(),
         }
+    }
+
+    /// 外部からの依頼を受ける窓口（Spec 25）。`None` = 未設定。
+    ///
+    /// **存在検査はしない** — 指す先が消えていても値をそのまま返し、
+    /// 「見つからない」の報告は呼び出し側が担う（読み時解決）。
+    pub fn reception(&self) -> Option<&AgentId> {
+        self.reception.as_ref()
+    }
+
+    /// 窓口を差し替える。`None` で未設定へ戻す。
+    ///
+    /// # Errors
+    /// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]。
+    /// **書き込みの入口でだけ確かめる** — 予定の登録（`create_schedule`）と
+    /// 同じ形で、「呼ばれるまで誰も気づかない設定」を作らせない。
+    /// **拒否したときは 1 バイトも変更しない。**
+    pub fn set_reception(&mut self, agent_id: Option<&AgentId>) -> CoreResult<()> {
+        self.reception = match agent_id {
+            Some(id) => {
+                self.agent(id)?;
+                Some(id.clone())
+            }
+            None => None,
+        };
+        Ok(())
     }
 
     /// トークン予算の天井（実効トークン建て）。`None` = 天井なし。
@@ -858,6 +931,7 @@ mod tests {
             language: None,
             user_name: None,
             roles: Vec::new(),
+            reception: None,
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
@@ -1135,6 +1209,7 @@ mod tests {
             language: None,
             user_name: None,
             roles: Vec::new(),
+            reception: None,
         };
 
         let world = World::from_persisted(persisted);

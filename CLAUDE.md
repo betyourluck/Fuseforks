@@ -468,7 +468,7 @@ P0 の IPC に `kind` が無く、**目的と逆に将来 IPC を壊す形**に�
   （`.gitignore` にある `blackboard/` は `fd` にも補完にも出る）。
   **`ignore` crate は Spec 18 で「同梱すると落ちる」と判断して外した経緯がある**
 
-**[Spec 25](specs/25_mcp-server.md) 起票 → rev3 承認 → P0 完了（2026-08-07。次は P1）** —
+**[Spec 25](specs/25_mcp-server.md) 起票 → rev3 承認 → P0・P1 完了（2026-08-07。次は P2）** —
 **Concordia を MCP サーバーにし、Claude Code や CLI からチャットを投げられるようにする。**
 起点は利用者 —「**シングルショット業務ではオーケストレーションを頼むより Neo に
 頼んだほうが正確だし速い。なので Neo の補完機能として Concordia を使えるようにしたい**」。
@@ -547,9 +547,31 @@ initialize → tools/list → tools/call 完走。**stdio シム案は死んだ*
 上げる村は `.mcp.json` の `timeout`（ms・サーバー単位）を併記）。
 **副産物** — rmcp の `StreamableHttpServerConfig` は `allowed_hosts` 既定 =
 loopback 3 種（DNS rebinding 対策）と `allowed_origins` を最初から持つ。
-D1 の検査は bind 127.0.0.1 だけ自前で、残りは rmcp の機構に乗る。**次は P1**
-（`Endpoint::External` + `deliver_and_wait` の `from` 一般化 + 正規化 + 入口 +
-窓口の設定欄。結合 8 本は Spec の P1 節が正）。
+D1 の検査は bind 127.0.0.1 だけ自前で、残りは rmcp の機構に乗る。
+
+**P1 完了**（2026-08-07。結合 12 本・rust 427 + 122・clippy 警告ゼロ）。
+`Endpoint::External { client }` / `world::normalize_client_name` /
+`world.json` の `reception` / `Orchestrator::ask_external` /
+`deliver_and_wait` の `from` 一般化。**次に触る人が要る判断 4 点**:
+
+- **封筒は名前だけでは足りなかった。** `【送り手: Claude Code】` は
+  「そういう呼び名の人間」とも読める（**呼び名は利用者が自由に付けられる**）。
+  D6 の目的は相手が人間でないと分かることなので
+  **`【送り手: {client}（外部クライアント）】`** と種別を明示した。
+  乗るのは外部依頼のターンだけで、全員の毎ターンに乗る固定費ではない
+- **「窓口が見つからない」と「窓口が未設定」を別のエラーで返す**
+  （`AGENT_NOT_FOUND` / `EXTERNAL_RECEPTION_UNSET`）。設定し直すのと初めて
+  設定するのでは人の次の手が違う。**だから削除時に `reception` を掃除しない** —
+  掃除すると 2 つの状態が 1 つに畳まれて診断が消える
+- **ワイルドカード 6 箇所は編集ゼロだった**（全部そのままで正しい挙動）。
+  代わりに**テストで凍結**した — **編集しないものこそ、次に読む人が
+  「対応漏れ」と読んで分岐を足しに来る**（`is_visible_in_room_log` に
+  External の分岐を足すと、依頼が不可視である根拠のほうが壊れる）
+- **ミューテーション 3 回で赤を確かめた**（#84 と同じ規律）。決定的だったのは
+  (a) **D7 のゲートを外すと busy のテストが 180 秒ハングして失敗する** —
+  `ask_timeout` ぶん居座るので、**ゲートが塞いでいるのは「拒否」ではなく
+  「待ち」そのもの**だと赤で読める。(b) 正規化を外す → 名乗りの 2 本
+  (c) `from` を `Agent` へ焼き戻す → 3 本。**3 つとも別のテストが落ちた**
 
 **待ち行列（2026-08-05 更新）**: (1) **[Spec 17](specs/17_batch-sd-preview.md)
 batch-sd** — **rev2 承認 → P0〜P3 完了。残るは実機確認 3 件のみ**

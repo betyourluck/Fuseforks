@@ -218,6 +218,33 @@ fn wire_field_sets_are_frozen() {
         vec!["title", "uri"],
         "GroundingSource のフィールドが変わった"
     );
+
+    // `Endpoint` のワイヤ形（Spec 25 で 4 つ目の variant が入った）。
+    // **タグは `kind` で、内容は同じ階層に平坦化される** — TS 側の判別共用体が
+    // これに一致していないと、外部依頼の発話だけ描画が落ちる。
+    assert_eq!(
+        serde_json::to_value(Endpoint::User).unwrap(),
+        serde_json::json!({ "kind": "user" })
+    );
+    assert_eq!(
+        serde_json::to_value(Endpoint::System).unwrap(),
+        serde_json::json!({ "kind": "system" })
+    );
+    assert_eq!(
+        serde_json::to_value(Endpoint::Agent {
+            id: AgentId::from("agent_a")
+        })
+        .unwrap(),
+        serde_json::json!({ "kind": "agent", "id": "agent_a" })
+    );
+    assert_eq!(
+        serde_json::to_value(Endpoint::External {
+            client: "Claude Code".to_owned()
+        })
+        .unwrap(),
+        serde_json::json!({ "kind": "external", "client": "Claude Code" }),
+        "Endpoint::External のワイヤ形が変わった（types.ts の Endpoint を直すこと）"
+    );
 }
 
 /// 波の記録のワイヤ形を固定する（Spec 08 — 波ペイン）。
