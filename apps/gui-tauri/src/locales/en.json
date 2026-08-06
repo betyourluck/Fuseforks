@@ -190,7 +190,11 @@
     "attachConverting": "Converting image…",
     "attachTooLarge": "The image is too large (limit: 10MB)",
     "attachConvertedTooLarge": "The converted image is too large (limit: 2MB)",
-    "attachFailed": "Could not read the image"
+    "attachFailed": "Could not read the image",
+    "completeNoWorkDir": "This servant has no work folder set, so file completion is unavailable.",
+    "completeLoading": "Looking for files…",
+    "completeFailed": "Could not load the file list.",
+    "completeTruncated": "The candidate list hit its limit. Some files are not shown here."
   },
   "bottomTabs": {
     "blackboard": "Blackboard",

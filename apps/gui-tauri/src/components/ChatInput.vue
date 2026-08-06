@@ -18,7 +18,7 @@
  * 2 枚目を選んだら**置き換える**（チップが 1 枚しか出ない画面で「2 枚目は
  * 拒否」にすると、置き換えたつもりの操作が黙って無視される）。
  */
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import {
@@ -27,7 +27,16 @@ import {
   convertImageFile,
   type PendingAttachment,
 } from "../lib/attachment";
+import {
+  applyCompletion,
+  findTrigger,
+  rankCandidates,
+  type Candidate,
+  type Trigger,
+} from "../lib/pathComplete";
+import { listWorkDirFiles } from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import type { AgentId } from "../types";
 
 const props = defineProps<{
   /** 送信できない状態か。 */
@@ -36,6 +45,15 @@ const props = defineProps<{
   placeholder: string;
   /** 送信できないときの理由。ボタンの `title` に出す。 */
   blockedReason?: string;
+  /** 宛先のサーヴァント。パス補完の候補源を決める（Spec 24 D3）。 */
+  agentId?: AgentId | null;
+  /**
+   * 宛先の作業フォルダ。`null` なら候補を出さず理由を出す。
+   *
+   * **判定をここでするのは、フロントが既にこの情報を持っているから**
+   * （`AgentSnapshot.workDir`）。未設定なら IPC を呼ばずに済む（D3）。
+   */
+  workDir?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -70,6 +88,144 @@ const attachmentSize = computed(() => {
   return `${Math.max(1, Math.round(attachment.value.bytes / 1024))} KB`;
 });
 
+// ---- パス補完（Spec 24 P2） -------------------------------------------------
+
+/** 検出中の `@` クエリ。`null` なら補完は閉じている。 */
+const trigger = ref<Trigger | null>(null);
+/** 候補の全件。`@` を開いた瞬間に 1 回だけ取る（D6）。 */
+const candidates = ref<Candidate[]>([]);
+/** 走査が上限で打ち切られたか（D4。真なら画面に出す）。 */
+const candidatesTruncated = ref(false);
+/** 候補の取得中。 */
+const loadingCandidates = ref(false);
+/** 候補の取得に失敗したか。**トーストは出さない** — 打鍵のたびに鳴る。 */
+const candidatesFailed = ref(false);
+/** 反転表示している候補の位置。 */
+const selectedIndex = ref(0);
+
+/** 作業フォルダが無い個体では候補を出さない（D3）。 */
+const hasWorkDir = computed(() => !!props.workDir);
+
+/** 表示する候補（順位付け済み）。 */
+const suggestions = computed(() =>
+  trigger.value && hasWorkDir.value
+    ? rankCandidates(candidates.value, trigger.value.query)
+    : [],
+);
+
+/**
+ * 補完のポップアップが**キー操作を奪う**状態か。
+ *
+ * **候補が 1 件も無いときは奪わない** — 一致しないクエリを打っている最中に
+ * Enter が飲まれると、送信できない理由が画面から読めなくなる。
+ * 「作業フォルダが無い」「打ち切り」の注記だけを出しているときも同じ。
+ */
+const popupCaptures = computed(() => !!trigger.value && suggestions.value.length > 0);
+
+/** 枠自体を出すか（候補ゼロでも理由を出すことがある）。 */
+const popupVisible = computed(
+  () =>
+    !!trigger.value &&
+    (suggestions.value.length > 0 ||
+      !hasWorkDir.value ||
+      loadingCandidates.value ||
+      candidatesFailed.value),
+);
+
+/** カーソル位置から `@` を検出し直す。 */
+function refreshTrigger(): void {
+  const el = area.value;
+  if (!el || props.disabled) {
+    trigger.value = null;
+    return;
+  }
+  trigger.value = findTrigger(text.value, el.selectionStart ?? 0);
+}
+
+/** 補完を閉じ、取った候補も捨てる。 */
+function closeCompletion(): void {
+  trigger.value = null;
+  candidates.value = [];
+  candidatesTruncated.value = false;
+  candidatesFailed.value = false;
+}
+
+// 開いた瞬間に 1 回だけ取る（D6）。**開いている間は取り直さない** —
+// 一覧が打鍵の途中で入れ替わると、絞り込みの結果が揺れる。
+watch(
+  () => trigger.value !== null,
+  async (open) => {
+    if (!open) {
+      candidates.value = [];
+      candidatesTruncated.value = false;
+      candidatesFailed.value = false;
+      return;
+    }
+    selectedIndex.value = 0;
+    // 作業フォルダが無いなら呼ばない（判定に必要な情報を既に持っている）。
+    if (!props.agentId || !hasWorkDir.value) return;
+    loadingCandidates.value = true;
+    candidatesFailed.value = false;
+    try {
+      const listing = await listWorkDirFiles(props.agentId);
+      candidates.value = listing.paths.map((id) => ({ id, kind: "file" as const }));
+      candidatesTruncated.value = listing.truncated;
+    } catch {
+      // 生の ipc を直に呼んでいるので、失敗はここで受ける。
+      // **トーストにしない** — `@` は打鍵のたびに開きうる。
+      candidatesFailed.value = true;
+    } finally {
+      loadingCandidates.value = false;
+    }
+  },
+);
+
+// 絞り込みで件数が減ったとき、反転が範囲外に残らないようにする。
+watch(suggestions, (list) => {
+  if (selectedIndex.value >= list.length) selectedIndex.value = 0;
+});
+
+/** 候補を確定して本文へ挿す。 */
+async function confirmCandidate(candidate: Candidate): Promise<void> {
+  const el = area.value;
+  const current = trigger.value;
+  if (!el || !current) return;
+  const result = applyCompletion(
+    text.value,
+    current,
+    el.selectionStart ?? text.value.length,
+    candidate,
+  );
+  text.value = result.text;
+  closeCompletion();
+  await nextTick();
+  autoGrow();
+  el.focus();
+  el.setSelectionRange(result.caret, result.caret);
+}
+
+/** ↑↓ で選択を動かす。端では巻き戻す。 */
+function moveSelection(delta: number, event: KeyboardEvent): void {
+  if (!popupCaptures.value) return;
+  event.preventDefault();
+  const count = suggestions.value.length;
+  selectedIndex.value = (selectedIndex.value + delta + count) % count;
+}
+
+/** Esc で閉じる。開いていなければ何もしない（他の Esc の邪魔をしない）。 */
+function onEscape(event: KeyboardEvent): void {
+  if (!trigger.value) return;
+  event.preventDefault();
+  closeCompletion();
+}
+
+/** Tab で確定（VS Code と同じ作法）。 */
+function onTab(event: KeyboardEvent): void {
+  if (!popupCaptures.value) return;
+  event.preventDefault();
+  void confirmCandidate(suggestions.value[selectedIndex.value].candidate);
+}
+
 /** 内容ぴったりの高さへ合わせる。 */
 function autoGrow(): void {
   const el = area.value;
@@ -85,6 +241,7 @@ async function send(): Promise<void> {
   const files = attachment.value ? [attachment.value] : [];
   text.value = "";
   attachment.value = null;
+  closeCompletion();
   // 空にした後で高さを最小へ戻す。
   await nextTick();
   autoGrow();
@@ -92,14 +249,29 @@ async function send(): Promise<void> {
 }
 
 /**
- * Enter の扱い。
+ * Enter の扱い。**意味が 3 つあるので、順序を仕様として固定する**
+ * （Spec 24 P2 の表）。
  *
- * `event.isComposing` を見るのは日本語入力のため。IME で変換中の Enter は
- * 「変換の確定」であって送信ではない。ここを見ないと、変換を確定した瞬間に
- * 未完成の文が飛ぶ。
+ * | 順 | 条件 | 意味 |
+ * |---|---|---|
+ * | 1 | `event.isComposing` | IME の変換確定 |
+ * | 2 | 補完が候補を出している | 候補の確定（送信しない） |
+ * | 3 | それ以外 | 送信 |
+ *
+ * **1 が最優先なのがこの村に固有の点。** 日本語入力では「変換確定の Enter」が
+ * 最も頻度が高く、ここを 2 番目に置くと**日本語でだけ壊れる** —
+ * 変換を確定した瞬間に候補が入るか、未完成の文が飛ぶ。
+ * 型検査にも既存のテストにも掛からない種類なので、順序をここへ書いておく。
+ *
+ * 補完を開いたまま送りたいときは `Esc` → `Enter` の 2 打鍵（VS Code と同じ）。
  */
 function onEnter(event: KeyboardEvent): void {
   if (event.isComposing) return;
+  if (popupCaptures.value) {
+    event.preventDefault();
+    void confirmCandidate(suggestions.value[selectedIndex.value].candidate);
+    return;
+  }
   event.preventDefault();
   void send();
 }
@@ -166,6 +338,7 @@ function onFilePicked(event: Event): void {
  */
 async function fill(payload: string): Promise<void> {
   text.value = payload;
+  closeCompletion();
   await nextTick();
   autoGrow();
   const el = area.value;
@@ -229,6 +402,53 @@ defineExpose({ fill });
       </p>
     </div>
 
+    <!-- パス補完（Spec 24）。置き場は入力欄の直上 — textarea のカーソル座標を
+         取るにはミラー要素が要り、割に合わない（添付チップと同じ位置）。 -->
+    <div
+      v-if="popupVisible"
+      class="mb-1 overflow-hidden rounded-lg bg-surface-1 ring-1 ring-line"
+    >
+      <!-- 作業フォルダが無い（D3）。候補を出す代わりに理由を出す。 -->
+      <p v-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
+        {{ $t("chatInput.completeNoWorkDir") }}
+      </p>
+      <p v-else-if="loadingCandidates" class="px-2.5 py-2 text-[11px] text-ink-dim">
+        {{ $t("chatInput.completeLoading") }}
+      </p>
+      <p v-else-if="candidatesFailed" class="px-2.5 py-2 text-[11px] text-warn">
+        {{ $t("chatInput.completeFailed") }}
+      </p>
+      <template v-else>
+        <ul class="max-h-56 overflow-y-auto">
+          <li v-for="(item, index) in suggestions" :key="item.candidate.id">
+            <button
+              type="button"
+              class="block w-full truncate px-2.5 py-1.5 text-left text-[11px] transition"
+              :class="
+                index === selectedIndex
+                  ? 'bg-accent text-surface-0'
+                  : 'text-ink hover:bg-surface-2'
+              "
+              :title="item.candidate.id"
+              @mouseenter="selectedIndex = index"
+              @mousedown.prevent
+              @click="confirmCandidate(item.candidate)"
+            >
+              {{ item.candidate.id }}
+            </button>
+          </li>
+        </ul>
+        <!-- 打ち切り（D4）。候補に出ないファイルがあるのに黙っていると
+             「打っても出ないから無い」と読まれる。 -->
+        <p
+          v-if="candidatesTruncated"
+          class="border-t border-line px-2.5 py-1.5 text-[10px] text-ink-dim"
+        >
+          {{ $t("chatInput.completeTruncated") }}
+        </p>
+      </template>
+    </div>
+
     <div
       class="relative rounded-xl bg-surface-1 ring-1 ring-transparent transition focus-within:ring-accent/60"
       :class="{ 'opacity-40': disabled }"
@@ -241,8 +461,15 @@ defineExpose({ fill });
         :placeholder="placeholder"
         class="selectable block w-full resize-none bg-transparent py-2.5 pr-12 pl-11 text-[12px] leading-relaxed text-ink outline-none placeholder:text-ink-dim disabled:cursor-not-allowed"
         :style="{ maxHeight: `${MAX_HEIGHT_PX}px`, overflowY: 'auto' }"
-        @input="autoGrow"
+        @input="autoGrow(); refreshTrigger()"
+        @click="refreshTrigger"
+        @keyup="refreshTrigger"
+        @blur="closeCompletion"
         @keydown.enter.exact="onEnter"
+        @keydown.down="moveSelection(1, $event)"
+        @keydown.up="moveSelection(-1, $event)"
+        @keydown.esc="onEscape"
+        @keydown.tab="onTab"
         @paste="onPaste"
       />
 

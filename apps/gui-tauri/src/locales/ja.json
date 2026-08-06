@@ -190,7 +190,11 @@
     "attachConverting": "画像を変換中…",
     "attachTooLarge": "画像が大きすぎます（上限 10MB）",
     "attachConvertedTooLarge": "変換後の画像が大きすぎます（上限 2MB）",
-    "attachFailed": "画像を読み込めませんでした"
+    "attachFailed": "画像を読み込めませんでした",
+    "completeNoWorkDir": "このサーヴァントには作業フォルダが設定されていないため、ファイルを補完できません。",
+    "completeLoading": "ファイルを探しています…",
+    "completeFailed": "ファイル一覧を取得できませんでした。",
+    "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。"
   },
   "bottomTabs": {
     "blackboard": "黒板",

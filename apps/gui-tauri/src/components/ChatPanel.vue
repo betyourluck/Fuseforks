@@ -809,6 +809,8 @@ async function newChat(): Promise<void> {
       :disabled="!canSend"
       :placeholder="placeholder"
       :blocked-reason="blockedReason"
+      :agent-id="targetAgent?.id ?? null"
+      :work-dir="targetAgent?.workDir ?? null"
       @send="send"
     />
 
