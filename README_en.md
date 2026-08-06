@@ -23,6 +23,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
+| 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
@@ -80,12 +81,14 @@ OutcastsConcordia/
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
+│       │   ├── attachment.rs        Image attachments: validation, storage, GC (pure mechanics; dimensions read from the WebP header)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
 │       │   ├── tools/fs.rs          Built-in tool: grep / fd / diff (read-only. restricted to work folder)
 │       │   ├── tools/edit.rs        Built-in tool: sd / yq (write. preview default + diff required)
 │       │   ├── tools/file.rs        Built-in tool: file (create / move / copy / trash. new files only here)
+│       │   ├── tools/rag.rs         Built-in tool: rag (heading index over declared reference folders. read-only)
 │       │   └── llm/
 │       │       ├── mod.rs           LlmBackend / BackendFactory / EchoBackend
 │       │       ├── canonical.rs     Provider-neutral types
@@ -105,6 +108,8 @@ OutcastsConcordia/
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
+            ├── lib/attachment.ts    Attachment pure functions (scaling math / base64 / WebP check)
+            ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
             ├── composables/useOrchestrator.ts   Single store
@@ -278,6 +283,70 @@ The truth resides in the core, and the `state` of `useOrchestrator` is merely it
 2. **Screens with drafts being edited must be recreated with the core's values after saving.** After saving and closing the form, the saved result would disappear from the screen, making it look as though it was "not reflected." Stay on that item even after saving, and display the values received by the core as they are (`reseedDraft` in `ModelTemplateDialog`).
 
 Do not substitute values locally with the assumption that "it should be like this." It causes discrepancies when the core makes a different judgment (for example, the source of retrieval after key deletion is `Unset` rather than `NotRequired`).
+
+---
+
+## Image Attachments ([Spec 23](specs/23_image-attachment.md))
+
+**Paste** an image into the input box (Ctrl+V) or **pick** one with the clip button on
+the left, and the addressed servant sees it and answers. Drag-and-drop is deliberately
+not an entry point — Tauri intercepts in-page drops (and Ctrl+V is the main path for
+screenshots anyway).
+
+**One image per utterance. The UI scales it to 1568px on the long edge and converts it
+to WebP before sending.** Conversion runs in a WebWorker, so picking a large image never
+freezes the screen. Source files above 10 MB, and converted files above 2 MB, are refused.
+
+### It reaches the model exactly once
+
+**An attached image is sent to the model only on the turn it arrives.** From the second
+turn on, the model can no longer see it (**it stays visible on screen**). The input box
+says the same thing next to the attachment chip.
+
+This is design, not a limitation, and the reason is cost. History is a sliding window of
+the last 8 exchanges, so keeping the image would **resend the same picture up to 8 times**.
+A 1568px 16:9 image costs 1,792 vision tokens per turn — 14,336 across 8 turns. That
+**breaks the one-to-one correspondence between what you pay and the act of attaching**.
+If you want the model to look again, attach it again: an explicit action has clearer
+causality than automatic retention.
+
+### People who never use it never pay for it
+
+**No tool is added.** An image is a kind of input, not a capability, so neither the tool
+schemas nor the system prompt grow by a single character. For utterances without an
+attachment, the wire output is **byte-for-byte identical** to what it was before this
+feature existed (tests pin this for all three adapters). In a village that never attaches
+an image, nothing sent and nothing paid changes.
+
+### Where images do not go
+
+| Path | Image | What happens instead |
+|---|---|---|
+| User → servant | **Delivered** | — |
+| Servant → servant (`ask` / `plan` / transfer) | Dropped | The delivered body is prefixed with "(the 1 image is not forwarded)" |
+| Plaza log (excerpts of others' conversations) | Dropped | Only its existence is noted, as "(1 image)" |
+| Gemini's native path | Dropped | Refused on screen (that path exists solely for Google Search grounding) |
+
+**Never drop silently** is the rule here. If the recipient cannot diagnose *why* it cannot
+see an image, a mechanism working correctly is indistinguishable from a broken one.
+
+### Where the bodies live, and how long
+
+Images enter neither the conversation log nor the conversation store (`sessions.redb`).
+The body lives at `{workspace}/attachments/{uuid}.webp`, and the utterance carries only a
+reference. **On startup, anything older than 30 days — and, beyond a 500 MB total, the
+oldest first — is deleted.** A deleted image becomes a "this image was deleted after its
+retention period" placeholder in the conversation pane; showing nothing would make it look
+as if the attachment had never happened.
+
+### Provider coverage (measured 2026-08-06)
+
+WebP and JPEG were sent to five endpoints — Anthropic, OpenAI, the Gemini compatibility
+layer, xAI, and a Sakura-hosted Qwen3-VL — and **all ten combinations read the image
+correctly**. Hence WebP is the default. Some compatibility servers may still lack a WebP
+decoder (xAI's own documentation lists only jpg/png), so **on a 400 the request is
+re-encoded to JPEG and sent once more.** If both are refused, the screen says this
+endpoint does not accept images.
 
 ---
 
@@ -634,6 +703,7 @@ Agent settings reside in the OS application-data area.
   mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
   sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
   exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list)
+  attachments/{uuid}.webp     Attached image bodies (Spec 23; auto-deleted after 30 days / above 500 MB total)
   agents/{agent_id}/
     SKILL.md
     Memory.md
