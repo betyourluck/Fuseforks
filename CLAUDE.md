@@ -457,7 +457,7 @@ P0 の IPC に `kind` が無く、**目的と逆に将来 IPC を壊す形**に�
   （`.gitignore` にある `blackboard/` は `fd` にも補完にも出る）。
   **`ignore` crate は Spec 18 で「同梱すると落ちる」と判断して外した経緯がある**
 
-**[Spec 25](specs/25_mcp-server.md) 起票 → rev3（2026-08-07。承認待ち）** —
+**[Spec 25](specs/25_mcp-server.md) 起票 → rev3 承認 → P0 完了（2026-08-07。次は P1）** —
 **Concordia を MCP サーバーにし、Claude Code や CLI からチャットを投げられるようにする。**
 起点は利用者 —「**シングルショット業務ではオーケストレーションを頼むより Neo に
 頼んだほうが正確だし速い。なので Neo の補完機能として Concordia を使えるようにしたい**」。
@@ -526,6 +526,19 @@ bind 127.0.0.1 固定 + Origin 検査（MCP Streamable HTTP 仕様の DNS rebind
 **査読の前提 1 点は実測で訂正** — 「workspace 切り替え時のライフサイクル」は
 実行時に存在しない（`state.rs:48` で起動時固定）。問いは「ON のまま窓口が
 消える」形で P2 に定義した。
+
+**P0 完了**（2026-08-07。実測 2 本 + `mcp_server_contract` 凍結）。
+rmcp 2.2 server + axum の probe（scratchpad・使い捨て）を実物の Claude Code から
+叩いた — (1) **streamable HTTP を受ける**（`--mcp-config` の `type:http` で
+initialize → tools/list → tools/call 完走。**stdio シム案は死んだ**）
+(2) **180 秒の呼び出しが既定設定のまま完走**（クライアント計 196 秒。
+`ask_timeout` 既定 180 秒 ≤ 実測保持時間なので既定同士で S1 は切られない。
+上げる村は `.mcp.json` の `timeout`（ms・サーバー単位）を併記）。
+**副産物** — rmcp の `StreamableHttpServerConfig` は `allowed_hosts` 既定 =
+loopback 3 種（DNS rebinding 対策）と `allowed_origins` を最初から持つ。
+D1 の検査は bind 127.0.0.1 だけ自前で、残りは rmcp の機構に乗る。**次は P1**
+（`Endpoint::External` + `deliver_and_wait` の `from` 一般化 + 正規化 + 入口 +
+窓口の設定欄。結合 8 本は Spec の P1 節が正）。
 
 **待ち行列（2026-08-05 更新）**: (1) **[Spec 17](specs/17_batch-sd-preview.md)
 batch-sd** — **rev2 承認 → P0〜P3 完了。残るは実機確認 3 件のみ**

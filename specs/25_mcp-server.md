@@ -2,7 +2,7 @@
 
 **ID**: 25
 **Date**: 2026-08-07
-**Status**: **rev3（査読 12 点を反映。承認待ち → P0 から着手）**
+**Status**: **rev3 承認 → P0 完了（2026-08-07。実測 2 本合格 + `mcp_server_contract` 凍結）→ 次は P1**
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -235,15 +235,25 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
 
 ## Tasks
 
-- **P0 契約 + 実測**:
+- **P0 契約 + 実測**: **完了**（2026-08-07）
   - ~~`rmcp` の server feature の実測~~ **済み**（+7 crate。上記）
-  - **Claude Code が `--transport http` でこの形のサーバーを受けるかを先に叩く** —
-    `rmcp` の HTTP サーバーの実物と Claude Code の設定を突き合わせる。
-    **同時に、長い呼び出し（分単位）がクライアント側で切られないか・
-    タイムアウトを伸ばせるかを実測する**（`MCP_TIMEOUT` 系。切られるなら
-    S1 が主戦場でだけ失敗する — 答えは会話ペインにだけ残る）。
-    ここが通らなければ stdio シム案へ倒れるので、**P1 より前に確かめる**
-  - `data_contract` へ `mcp_server_contract`。凍結:
+  - ~~Claude Code が `--transport http` で受けるか~~ **合格** — rmcp 2.2 の
+    server + `transport-streamable-http-server` + axum の probe（scratchpad・
+    使い捨て）に対し、`--mcp-config` の `{"type":"http","url":…}` で
+    initialize → tools/list → tools/call が完走し、ツールの戻り文字列が
+    そのまま返った。**stdio シム案（Notes 3）は死んだ**
+  - ~~長い呼び出しが切られないか~~ **合格** — `delay_secs=180` の呼び出しが
+    **既定設定のまま**完走（クライアント計 196 秒。「2 分で自動バックグラウンド化」
+    も経路を壊さない）。サーバー側も curl 直で 180 秒保持を確認
+    （SSE keep-alive 15 秒間隔）。**`ask_timeout` 既定 180 秒 ≤ クライアントの
+    実測保持時間**なので既定同士で S1 は切られない。`ask_timeout` を上げる村は
+    `.mcp.json` の `timeout`（ms・サーバー単位）を併記する
+  - **副産物**: rmcp の `StreamableHttpServerConfig` が Host 検査
+    （`allowed_hosts` 既定 = loopback 3 種 = DNS rebinding 対策）と
+    `allowed_origins` を**最初から持っている** — D1 の検査は bind だけ自前で
+    残りは rmcp の機構に乗る
+  - ~~`data_contract` へ `mcp_server_contract`~~ **凍結済み**（2026-08-07。
+    以下の一覧のとおり）。凍結:
     **扉は 1 枚・名前 `ask_concordia`・引数は `message` だけ**（D4）/
     **トークン必須・置き場は `{app_data_dir}/mcp_server.json`（workspace の外）・
     生成はサーバー ON の時点**（D1）/ **ON/OFF・ポートも同じファイル、

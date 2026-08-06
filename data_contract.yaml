@@ -3057,6 +3057,65 @@ llm_wire:
     - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
 
+  mcp_server_contract: |
+    Concordia を MCP サーバーにする (Spec 25 rev3 承認 2026-08-07)。外部の LLM
+    (Claude Code / Copilot / CLI) がチャットを 1 本投げ、窓口のサーヴァントが
+    オーケストレーションして束ねた答えを返す。実装は rmcp 2.2 の
+    server + transport-streamable-http-server を GUI プロセス内で開く
+    (村は 1 プロセスにしか居ない — single_instance / redb 単一書き手 /
+    稼働個体はメモリ。別プロセスの MCP サーバーは構造的に不可)。
+
+    凍結 (P0 実測 2026-08-07 で確定):
+      1. **扉は 1 枚。ツール名 `ask_concordia`・引数は `message` だけ。**
+         宛先 (`to`) も roster も出さない — 村の状態は外からブラックボックス。
+      2. **トークン必須。localhost でも省かない。** 置き場は
+         **`{app_data_dir}/mcp_server.json`** (workspace の**外**・端末側・
+         Rust 可読)。ON/OFF・ポートも同じファイル。**窓口の agent_id だけは
+         `world.json`** (村の内容物 — #52 の境界)。帰結:
+         **村 (workspace) を配っても扉は開かない。**
+      3. **トークンの生成はサーバーを ON にした時点** (起動時ではない —
+         OFF の村ではポートも開かずトークンも作らない)。毎起動の再生成はしない
+         (クライアント側の設定が毎回無効になる)。再生成は明示ボタン。
+      4. **bind は 127.0.0.1 固定。** Host / Origin 検査は rmcp の
+         StreamableHttpServerConfig が持つ (allowed_hosts 既定 =
+         localhost/127.0.0.1/::1 = DNS rebinding 対策。実測で確認)。
+      5. **同時外部依頼は 1 本まで。2 本目は「処理中」で即拒否 (busy)。**
+         効き先 3 つ: 併走の予算二重消費 / 自己登録の閉路 / 自己呼び出しの
+         デッドロック。**外部入口は新しい因果の根で hop も予算も新品になる —
+         max_hops と token_budget は閉路が扉を通るたびにリセットされ、
+         どちらも効かない** (rev2 の「既に塞いでいる」は誤りだった)。
+      6. **`Endpoint::External { client }` を新設** (User に見せかけない —
+         `【送り手: X】` はモデルが読む入力で、相手が人間かどうかは振る舞いを
+         変える情報)。`client` = clientInfo.name の自己申告 =
+         **攻撃者が書ける文字列がプロンプトへ入る唯一の新しい経路**。
+         normalize_user_name と同じ検査を通し、**落ちたら拒否ではなく既定
+         ラベル `external` へフォールバック** (呼び出し側が対話的に直せない値)。
+      7. **窓口未設定・停止中でもサーバーは HTTP を受け、ツールが理由を返す**
+         (ポートが開いていなければ理由は返せない)。
+      8. **待ちは素直に待つ** (start+poll にしない)。上限は ask_timeout
+         (既定 180 秒) に揃える。**外部依頼は予算の根の 3 種類目**
+         (ユーザー発話 / 予定発火 / 外部依頼)。
+      9. 広場ログ: **依頼 (from=External) は不可視** — is_visible_in_room_log は
+         from が Agent でない発話を既に落とすので**編集ゼロ**(テストで凍結)。
+         **窓口の返答 (from=Agent, to=External) は User 宛の返答と同じ扱いで可視。**
+      10. Endpoint のワイヤ形 (serde tag="kind") に variant が 1 つ増える。
+          redb の既存レコードに新 variant は現れないので移行不要。
+          **網羅 match はコンパイラが指すが、ワイルドカード・matches!・== の
+          6 箇所は指さない** — 挙動の表は Spec 25 D6 が正。
+
+    P0 実測 (2026-08-07。probe = rmcp 2.2 server + axum / scratchpad):
+      - **Claude Code は streamable HTTP を受ける** — `--mcp-config` の
+        {"type":"http","url":...} で initialize → tools/list → tools/call が
+        完走し、ツールの戻り文字列がそのまま返った。stdio シム案は死んだ
+      - **180 秒のツール呼び出しが既定設定のまま完走** (クライアント計 196 秒。
+        「2 分で自動バックグラウンド化」も経路を壊さない)。サーバー側も
+        curl 直で 180 秒保持を確認 (SSE keep-alive 15 秒間隔)。
+        ask_timeout 既定 180 秒 ≤ クライアントの実測保持時間なので、既定同士の
+        組み合わせで S1 は切られない。ask_timeout を上げるなら
+        .mcp.json の "timeout" (ms・サーバー単位) を併記する
+      - 認証ヘッダは `claude mcp add --transport http --header
+        "Authorization: Bearer ..."` / .mcp.json の headers 欄で通る
+
   prompt_cache:
     scope: |
       Anthropic ネイティブ経路のみ。OpenAI 互換層はキャッシュ指示を通せないので、
