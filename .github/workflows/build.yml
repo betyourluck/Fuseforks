@@ -122,12 +122,10 @@ jobs:
           releaseDraft: false
           prerelease: false
 
-      # 各 OS の installer/bundle を成果物としても残す。
-      # **ワークスペースがルートに 1 つなので、bundle もルートの target 配下**
-      # （apps/gui-tauri/src-tauri/target ではない）。
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: concordia-${{ env.APP_VERSION }}-${{ matrix.platform }}
-          path: target/release/bundle/
-          retention-days: 7
+      # **artifact のアップロードは意図的に置いていない。** installer は上の
+      # tauri-action が Release の Assets へ添付済みで（ストレージ枠の外・無期限）、
+      # artifact は同じものの 7 日限りの複製にしかならない。しかも private リポの
+      # Actions ストレージ無料枠は 500 MB で、bundle/ 丸ごと（ubuntu は
+      # deb + rpm + AppImage で約 195 MB）を 3 OS × 数タグ積むと必ず超える —
+      # 実際に v0.0.5 のビルドが 679 MB / 500 MB の超過で落ちた（2026-08-07）。
+      # 成果物が要るときは Release の Assets から取ること。
