@@ -111,16 +111,39 @@ fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
     if message.role == Role::Tool {
         return wire::OaiMessage {
             role,
-            content: Some(message.content.clone()),
+            content: Some(wire::OaiContent::Text(message.content.clone())),
             tool_calls: Vec::new(),
             tool_call_id: message.tool_call_id.clone(),
         };
     }
 
+    // 添付画像つきの発話だけブロック列にする（Spec 23 P2）。
+    // **添付が無ければ必ず素の文字列** — 常にブロック列を作ると、配列の content を
+    // 知らない互換サーバで添付ゼロの発話まで落ちる。画像はテキストより前。
+    let content = if message.attachments.is_empty() {
+        // 本文が空のまま送ると `content` が必須のサーバで 400 になる。省くほうが安全。
+        (!message.content.is_empty()).then(|| wire::OaiContent::Text(message.content.clone()))
+    } else {
+        let mut parts: Vec<wire::OaiContentPart> = message
+            .attachments
+            .iter()
+            .map(|a| wire::OaiContentPart::ImageUrl {
+                image_url: wire::OaiImageUrl {
+                    url: format!("data:{};base64,{}", a.media_type.as_str(), a.data),
+                },
+            })
+            .collect();
+        if !message.content.is_empty() {
+            parts.push(wire::OaiContentPart::Text {
+                text: message.content.clone(),
+            });
+        }
+        Some(wire::OaiContent::Blocks(parts))
+    };
+
     wire::OaiMessage {
         role,
-        // 本文が空のまま送ると `content` が必須のサーバで 400 になる。省くほうが安全。
-        content: (!message.content.is_empty()).then(|| message.content.clone()),
+        content,
         tool_calls: message
             .tool_calls
             .iter()
@@ -343,7 +366,52 @@ mod tests {
         assert!(wire.tool_choice.is_none());
         let last = wire.messages.last().expect("指示文が積まれること");
         assert_eq!(last.role, wire::OaiRole::System);
-        assert!(last.content.as_deref().unwrap_or_default().contains("JSON Schema"));
+        assert!(
+            last.content
+                .as_ref()
+                .and_then(wire::OaiContent::as_text)
+                .unwrap_or_default()
+                .contains("JSON Schema")
+        );
+    }
+
+    /// **添付なしのエンコード結果はバイト等価**（Spec 23 P2 の凍結）。
+    ///
+    /// `content` を enum にしても、添付が無い発話は今日までの素の文字列と
+    /// 1 バイトも変わらないこと。「常に Blocks を作る」実装への退行は
+    /// ここで落ちる（配列の content を知らない互換サーバを守る）。
+    #[test]
+    fn encoding_without_attachments_matches_the_golden_bytes() {
+        let req = ChatRequest::plain("gpt-4o", vec![ChatMessage::user("こんにちは")], 256);
+        assert_eq!(
+            serde_json::to_string(&encode(&req, true)).unwrap(),
+            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"こんにちは"}],"max_tokens":256}"#
+        );
+    }
+
+    /// 添付つきはブロック列になり、画像が先・テキストが後（Spec 23 P2）。
+    #[test]
+    fn attachments_become_a_data_url_block_before_text() {
+        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
+        let req = ChatRequest::plain(
+            "gpt-4o",
+            vec![ChatMessage::user_with_attachments(
+                "何が見える？",
+                vec![ImageAttachment {
+                    media_type: ImageMediaType::Webp,
+                    data: "QUJD".into(),
+                }],
+            )],
+            256,
+        );
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        assert_eq!(
+            json["messages"][0]["content"],
+            serde_json::json!([
+                {"type":"image_url","image_url":{"url":"data:image/webp;base64,QUJD"}},
+                {"type":"text","text":"何が見える？"}
+            ])
+        );
     }
 
     /// ツール往復の形。`arguments` は**受け取ったときと同じ JSON 文字列**へ戻す。

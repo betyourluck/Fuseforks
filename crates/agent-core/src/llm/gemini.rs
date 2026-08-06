@@ -251,6 +251,12 @@ fn config(mode: &'static str, allowed: Option<Vec<String>>) -> wire::GeminiFunct
 ///
 /// ツール結果が `user` ロールになるのが最大の差。`tool` という役割が存在せず、
 /// 「モデルへ渡す入力」は全部 `user` に畳まれる。
+///
+/// **添付画像（`ChatMessage.attachments`）はこの経路では組み立てない**
+/// （Spec 23 D8 / `attachment_contract` 凍結 7）。ネイティブ経路が要るのは
+/// Google 検索の接地だけで、画像と接地を同時に使う経路は作らない。
+/// 断りは送信の入口（画面）が出す — ここで `inline_data` を生やすと、
+/// その凍結を実装が黙って追い越す。
 fn encode_message(message: &ChatMessage) -> wire::GeminiContent {
     match message.role {
         Role::Tool => wire::GeminiContent {
@@ -474,6 +480,28 @@ mod tests {
         assert_eq!(wire.contents[0].role.as_deref(), Some("user"));
         let sys = wire.system_instruction.expect("systemInstruction が要る");
         assert_eq!(sys.parts[0].text.as_deref(), Some("あなたはザリ"));
+    }
+
+    /// **ネイティブ経路は添付を組み立てない**（Spec 23 D8 の凍結）。
+    ///
+    /// 添付つきでも添付なしとワイヤがバイト等価であること。ここへ
+    /// `inline_data` を生やすと「画像と接地を同時に使う経路は作らない」の
+    /// 凍結を実装が黙って追い越すので、このテストが先に落ちる。
+    #[test]
+    fn attachments_are_ignored_on_the_native_path() {
+        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
+        let base = request(vec![ChatMessage::user("こんにちは")]);
+        let with = request(vec![ChatMessage::user_with_attachments(
+            "こんにちは",
+            vec![ImageAttachment {
+                media_type: ImageMediaType::Webp,
+                data: "QUJD".into(),
+            }],
+        )]);
+        assert_eq!(
+            serde_json::to_string(&encode(&base, false)).unwrap(),
+            serde_json::to_string(&encode(&with, false)).unwrap(),
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 **ID**: 23
 **Date**: 2026-08-06
-**Status**: **rev3 承認 → P0〜P1 完了（2026-08-06）→ 次は P2（ワイヤ）**。
+**Status**: **rev3 承認 → P0〜P2 完了（2026-08-06）→ 次は P3（配線）**。
 未決はゼロ — **D1 は利用者裁定で「1 ターン限り」に確定**、**D3 の既定は
 P0 の実測で WebP に確定**（5 系統 × 2 形式 = 10 通りすべて通過。下記「P0 実測結果」。
 JPEG フォールバックは保険として維持 — xAI は公式文書が jpg/png のみと明記しており、
@@ -255,7 +255,8 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   `VP8X` チャンクのフラグを見る必要があり、これは新規実装（無料ではない）。
   単体: 非対応形式を拒否 / アニメーション WebP を拒否 / 上限超を拒否 / 往復 /
   GC が期限内を消さない・期限切れを消す / **`validate_icon` の挙動が変わっていない**
-- **P2 ワイヤ**: `ChatMessage.attachments`（加算）+ 3 adapter。
+- **P2 ワイヤ** — **完了（2026-08-06。単体 6 本追加 = agent-core 417 → 423・
+  workspace 580 全緑・clippy 警告ゼロ）**: `ChatMessage.attachments`（加算）+ 3 adapter。
   **`OaiMessage.content` は `enum OaiContent { Text(String), Blocks(Vec<..>) }`
   にして、添付が無ければ必ず `Text` を構築する**（rev2。査読 4 — ただし
   機序は査読の説明と違う。`#[serde(untagged)]` は*シリアライズ*では variant が
@@ -264,6 +265,24 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   `AnthropicRequestBlock` へ `Image` variant。**画像はテキストより前に置く**。
   単体: **添付なしのエンコード結果が現行とバイト等価** × 3 adapter /
   添付ありは provider 別の golden file（rev2。査読 3）
+
+  **P2 実装記録（実装で決めた 5 点）**:
+  1. **canonical に `ImageMediaType`（webp / jpeg の閉じた列挙）+
+     `ImageAttachment { media_type, data: base64 済み文字列 }`** — adapter は
+     純関数なので、ファイル読みと base64 化はプロンプトを組む側（P3）の責務
+  2. **decode は無傷** — 応答側は `OaiResponseMessage` という別型で、
+     `content` の enum 化はリクエスト側だけに閉じた
+  3. **#29 の空発話フィルタに「添付があるか」を足した** — 本文なしの画像だけの
+     発話は「空」ではない。空テキストのフォールバック（発言なし）も入らない
+     ことをテストで凍結
+  4. **`message_tokens` は Image を 0 と数える** — 視覚トークンは寸法（28px
+     パッチ数）からしか出ず adapter は base64 しか持たない。「少なめに見積もる
+     側へ倒す」というこの関数の既定の向きに一致。`place_message_breakpoint` には
+     Image の腕を足した（「種別は問わない」— 画像だけの発話では末尾ブロックが
+     Image になる）
+  5. **gemini は添付を組み立てず、添付あり = 添付なしのバイト等価をテストで凍結**
+     （D8。`inline_data` を生やす退行はテストが先に落ちる）。バイト等価の golden は
+     文字列リテラルで固定（openai / anthropic）
 - **P3 配線**: `send_user_message` へ `attachments`（加算・省略可）+
   `AgentMessage.attachments` + 保存 + そのターンだけプロンプトへ展開 +
   **履歴へは入れない**（D1）+ **転送時の System 行**（D6）+ 400 時の JPEG 再試行（D3）。
@@ -347,6 +366,11 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
 
 ## 改訂履歴
 
+- **P2 完了**（2026-08-06）: `ChatMessage.attachments` + `ImageMediaType` /
+  `ImageAttachment`（canonical）+ `OaiContent` enum 化 +
+  `AnthropicRequestBlock::Image` + gemini は素通り（D8）。バイト等価 golden ×
+  2 + 添付あり golden × 2 + gemini 等価 + 画像だけの発話の 3 点をテストで凍結。
+  単体 6 本（agent-core 417 → 423）。実装で決めた 5 点は Tasks の P2 実装記録
 - **P1 完了**（2026-08-06）: `attachment.rs` 新設（`Attachment` / `validate_attachment` /
   `AttachmentStore` / `gc_plan` + `GcReport`）+ `CoreError::InvalidAttachment` +
   `validate_icon` の magic 判定を `is_webp` へ共有。単体 16 本

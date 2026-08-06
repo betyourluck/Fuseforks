@@ -26,6 +26,42 @@ pub enum Role {
     Tool,
 }
 
+/// 添付画像のワイヤ上の形式（Spec 23 / `attachment_contract` 凍結 4）。
+///
+/// **閉じた列挙。** ファイル上の実体は常に WebP だが、互換層が WebP を
+/// 拒んだときの 1 回だけの JPEG 再送（D3）があるため、ワイヤへは 2 形式が乗る。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageMediaType {
+    /// WebP（既定。P0 実測で 5 系統すべて通過）。
+    Webp,
+    /// JPEG（互換層が WebP を 400 で拒んだときのフォールバック）。
+    Jpeg,
+}
+
+impl ImageMediaType {
+    /// ワイヤに載せる MIME 文字列。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Webp => "image/webp",
+            Self::Jpeg => "image/jpeg",
+        }
+    }
+}
+
+/// この発話と一緒にモデルへ渡す画像（Spec 23）。
+///
+/// **`data` は base64 済みの文字列。** adapter は純関数（ネットワークも
+/// ファイルも知らない）なので、実体の読み出しと base64 化は
+/// プロンプトを組む側（orchestrator）の責務。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    /// ワイヤ上の形式。
+    pub media_type: ImageMediaType,
+    /// base64 エンコード済みの画像データ。
+    pub data: String,
+}
+
 /// 会話の 1 ターン。
 ///
 /// ツール往復のために `tool_calls` と `tool_call_id` を持つ。ほとんどの発話では
@@ -47,6 +83,13 @@ pub struct ChatMessage {
     /// [`Role::Tool`] のとき、実行したツール名。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    /// この発話と一緒に渡す添付画像（Spec 23。通常は空）。
+    ///
+    /// **1 ターン限り**（D1）— プロンプトを組む側が現在の発話にだけ付け、
+    /// 履歴として積む [`ChatMessage`] には入れない。`skip_serializing_if` により、
+    /// 添付が無い発話のシリアライズ結果は欄の追加前と 1 バイトも変わらない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ImageAttachment>,
 }
 
 impl ChatMessage {
@@ -58,6 +101,18 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// 添付画像つきのユーザーメッセージを作る（Spec 23）。
+    pub fn user_with_attachments(
+        content: impl Into<String>,
+        attachments: Vec<ImageAttachment>,
+    ) -> Self {
+        Self {
+            attachments,
+            ..Self::plain(Role::User, content)
         }
     }
 

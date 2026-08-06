@@ -1095,7 +1095,7 @@ CI がタグから書き換える側。
   設定できない村が出る（`opener:allow-open-path` を `$APPDATA/workspace` に
   絞ってあるのとは求められているものが逆）
 
-## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P1 完了。次は P2**）
+## 画像の添付（[Spec 23](specs/23_image-attachment.md)・2026-08-06 **rev3 承認 → P0〜P2 完了。次は P3**）
 
 起点は利用者 —「**おそらく僕はコストの面で使いたくない機能だが、無ければ
 『どうして無いの？』と聞かれそうな機能だ。なので機能は入れておきたい**」。
@@ -1132,8 +1132,15 @@ CI がタグから書き換える側。
   細工ファイルが素通り / VP8X キャンバス寸法がビットストリームに勝つ）。
   `is_webp` を切り出して `validate_icon` と共有（上限は共有しない —
   凍結 4 の述語境界）。`CoreError::InvalidAttachment` は `InvalidIcon` と別変種。
-  単体 16 本（agent-core 401 → 417）。**次は P2**（ワイヤ 3 adapter +
-  添付なしバイト等価の凍結テスト）
+  単体 16 本（agent-core 401 → 417）
+- **P2 完了**（2026-08-06）— canonical へ `ImageMediaType` / `ImageAttachment`
+  （**data は base64 済み文字列** — adapter は純関数なので実体読みは P3 の責務）+
+  `OaiContent` enum 化（**decode は無傷** — 応答側は `OaiResponseMessage` の別型）+
+  `AnthropicRequestBlock::Image`（画像はテキストより前 / breakpoint に Image の腕 /
+  `message_tokens` は Image を 0 = 少なめ側）+ **#29 の空発話フィルタに添付を追加**
+  （画像だけの発話は空ではない）+ gemini は素通りをテストで凍結（D8）。
+  **バイト等価は golden 文字列リテラルで固定**。単体 6 本（417 → 423）。
+  **次は P3**（`send_user_message` の配線 + D1 + D6 + JPEG 再試行）
 
 ## 右クリックメニューの抑止（2026-08-06 着地。Spec 不要と判断）
 

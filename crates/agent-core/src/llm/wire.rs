@@ -29,6 +29,55 @@ pub enum OaiRole {
     Tool,
 }
 
+/// OpenAI 互換の送信メッセージの本文。
+///
+/// **添付が無ければ必ず [`Text`](Self::Text) を構築する**（Spec 23 P2）。
+/// `#[serde(untagged)]` はシリアライズでは variant がそのまま形を決めるので、
+/// `Text` は今日までの素の文字列と 1 バイトも変わらない。**危ないのは構築側** —
+/// 「常に `Blocks` を作る」実装にすると添付ゼロの発話でも配列が出て、
+/// 素の文字列しか受けない互換サーバで全ターンが落ちる。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OaiContent {
+    /// 素の文字列（既定。添付が無い発話はすべてこちら）。
+    Text(String),
+    /// ブロック列（添付画像つきの発話だけ）。
+    Blocks(Vec<OaiContentPart>),
+}
+
+impl OaiContent {
+    /// 素の文字列なら参照を返す。ブロック列なら `None`。
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            Self::Blocks(_) => None,
+        }
+    }
+}
+
+/// ブロック列の 1 要素（`content` が配列のときの形）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OaiContentPart {
+    /// テキスト。
+    Text {
+        /// 本文。
+        text: String,
+    },
+    /// 画像（data URL）。
+    ImageUrl {
+        /// `image_url` オブジェクト。
+        image_url: OaiImageUrl,
+    },
+}
+
+/// 画像参照。`url` に `data:image/webp;base64,...` の data URL を入れる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OaiImageUrl {
+    /// data URL（または http URL。この村は data URL しか作らない）。
+    pub url: String,
+}
+
 /// OpenAI 互換の送信メッセージ。
 ///
 /// ツール往復では 2 通りの形を取る:
@@ -43,7 +92,7 @@ pub struct OaiMessage {
     pub role: OaiRole,
     /// 本文。ツール呼び出しだけの発話では省く。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<OaiContent>,
     /// assistant がこの発話で呼んだツール。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<OaiRequestToolCall>,
@@ -57,7 +106,7 @@ impl OaiMessage {
     pub fn text(role: OaiRole, content: impl Into<String>) -> Self {
         Self {
             role,
-            content: Some(content.into()),
+            content: Some(OaiContent::Text(content.into())),
             tool_calls: Vec::new(),
             tool_call_id: None,
         }
@@ -371,6 +420,27 @@ pub enum AnthropicRequestBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
     },
+    /// 添付画像（Spec 23）。**テキストより前に置く**（公式の推奨）。
+    Image {
+        /// 画像の実体（base64）。
+        source: AnthropicImageSource,
+        /// キャッシュ指示。ここまでを再利用対象にする。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
+    },
+}
+
+/// Anthropic の画像ソース。この村は base64 だけを使う
+/// （URL は外部から到達できる場所へ画像を置くことになる — Spec 23 Notes 8）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnthropicImageSource {
+    /// 常に `"base64"`。
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    /// `image/webp` など。
+    pub media_type: String,
+    /// base64 エンコード済みデータ。
+    pub data: String,
 }
 
 /// Anthropic のツール定義。引数スキーマのキー名が `input_schema` である点が OpenAI と異なる。
