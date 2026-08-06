@@ -38,6 +38,7 @@ import type {
   SessionSummary,
   TopologyEdge,
   TopologyPosition,
+  WorkDirListing,
 } from "../types";
 
 /**
@@ -438,6 +439,16 @@ export const sendUserMessage = (
  */
 export const readAttachment = (id: string) =>
   call<number[] | null>("read_attachment", { id });
+
+/**
+ * 入力欄のパス補完に渡すファイル一覧（Spec 24）。
+ *
+ * **`@` を打った瞬間に 1 回だけ呼び、補完が開いている間は呼び直さない**（D6）。
+ * 作業フォルダが未設定なら空の一覧が返るが、**その判定は呼ぶ前にできる** —
+ * `AgentSnapshot.workDir` がフロントにあるので、未設定なら呼ばずに理由を出す。
+ */
+export const listWorkDirFiles = (agentId: AgentId) =>
+  call<WorkDirListing>("list_work_dir_files", { agentId });
 
 // ---- 予定（Spec 07） ----------------------------------------------------------
 

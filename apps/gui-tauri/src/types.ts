@@ -292,6 +292,20 @@ export interface Attachment {
   fileName: string;
 }
 
+/**
+ * 入力欄のパス補完に渡す、作業フォルダのファイル一覧（Spec 24）。
+ *
+ * **種別は持たない。** 将来サーヴァントの `@` 言及を足すとき、その候補は
+ * `state.agents` から組めるので IPC が要らない — 候補の合流はフロントで起きるので、
+ * 種別を持つのは補完の `Candidate` 型のほう（Spec 24 D2）。
+ */
+export interface WorkDirListing {
+  /** 作業フォルダ起点の相対パス。区切りは `/`、ソート済み。 */
+  paths: string[];
+  /** 上限で打ち切られたか。**真なら画面に出す**（Spec 24 D4）。 */
+  truncated: boolean;
+}
+
 /** 送信時に IPC へ載せる添付画像（Spec 23）。UI が WebP へ変換済みの形。 */
 export interface AttachmentPayload {
   fileName: string;

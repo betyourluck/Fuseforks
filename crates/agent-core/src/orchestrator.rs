@@ -64,6 +64,7 @@ use crate::llm::{
 use crate::model::{
     AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, AgentStatus,
     ConfigFileKind, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId, TopologyEdge,
+    WorkDirListing,
 };
 use crate::plan::{PlanTaskAnnounced, PlanTaskState, PlanWaveRecord, PlanWaveStore};
 use crate::schedule::{Recurrence, ScheduledTask, Tick};
@@ -1973,6 +1974,38 @@ impl Orchestrator {
     pub async fn agent_icon(&self, id: &AgentId) -> CoreResult<Option<Vec<u8>>> {
         self.shared.world.read().await.agent(id)?;
         self.shared.store.read_icon(id).await
+    }
+
+    /// 入力欄のパス補完へ渡すファイル一覧（Spec 24）。
+    ///
+    /// 作業フォルダが**未設定なら空の一覧**を返す。UI はそもそも
+    /// `AgentSnapshot.workDir` を持っているので、未設定のときは呼ばずに
+    /// 理由を出せる（`AgentSettingsDialog` の `noWorkDirWarn` と同じ形）—
+    /// **判断に必要な情報を既に持っている層で判断する。**
+    ///
+    /// **囲いはここに無い**（Spec 24 Notes 5）。返すのは候補であって権限ではなく、
+    /// 挿入されたパスを実際に読むのは `file` / `grep` で、あちらが
+    /// `resolve_in_work_dir` で境界を守る。**ここに検査を足すと同じ規律が
+    /// 2 箇所に生える**（「参照…」ボタンで選ばれたパスを検査しないのと同じ判断）。
+    pub async fn list_work_dir_files(&self, id: &AgentId) -> CoreResult<WorkDirListing> {
+        let work_dir = {
+            let world = self.shared.world.read().await;
+            world.agent(id)?.spec.work_dir.clone()
+        };
+        let Some(work_dir) = work_dir else {
+            return Ok(WorkDirListing {
+                paths: Vec::new(),
+                truncated: false,
+            });
+        };
+        // 走査は同期 I/O なので blocking へ逃がす。20,000 件の走査で
+        // ランタイムのワーカーを塞ぐと、その間ほかのエージェントのターンが止まる。
+        let (paths, truncated) = tokio::task::spawn_blocking(move || {
+            crate::tools::fs::relative_file_paths(std::path::Path::new(&work_dir))
+        })
+        .await
+        .unwrap_or_else(|_| (Vec::new(), false));
+        Ok(WorkDirListing { paths, truncated })
     }
 
     /// 添付画像の実体（WebP バイト列）を読む（Spec 23。表示用）。

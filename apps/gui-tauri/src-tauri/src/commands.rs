@@ -573,6 +573,20 @@ pub async fn send_user_message(
         .await
 }
 
+/// 入力欄のパス補完に渡すファイル一覧（Spec 24）。
+///
+/// 作業フォルダ起点の相対パス（`/` 区切り・ソート済み）と、上限で打ち切ったか。
+/// **候補の種別は載せない** — 将来サーヴァントの `@` 言及を足すときも、
+/// その候補は `AgentSnapshot` からフロントのローカル状態だけで組めるので、
+/// この IPC には `"file"` 以外が永久に入らない（Spec 24 D2）。
+#[tauri::command]
+pub async fn list_work_dir_files(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CoreResult<agent_core::WorkDirListing> {
+    state.orchestrator.list_work_dir_files(&agent_id).await
+}
+
 /// 添付画像の実体（WebP バイト列）を返す（Spec 23。表示用）。
 /// `null` は「保持期間を過ぎて削除された」— UI はプレースホルダの枠を出す。
 #[tauri::command]

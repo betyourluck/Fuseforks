@@ -274,6 +274,34 @@ pub(crate) fn collect_files(root: &Path) -> (Vec<PathBuf>, bool) {
     (entries.into_iter().map(|e| e.path).collect(), truncated)
 }
 
+/// 作業フォルダのファイルを**相対パスの文字列**として列挙する（Spec 24 の補完用）。
+///
+/// [`collect_files`] の隣に置くのは、走査の規律と**相対表示への変換**を
+/// 同じ場所に留めるため。区切りは `/` に揃える（`resolve_in_work_dir` と
+/// `rag::rel_display` の既存の作法）。
+///
+/// **並びはソート済み。** 走査の順は決定的だがスタック由来で人には読めないので、
+/// 補完の同点破りが安定するようここで整える。
+///
+/// # 読めないフォルダの扱い
+///
+/// `root` が存在しない・読めないときは**空の一覧**を返す（[`collect_entries`] が
+/// 読めないディレクトリを飛ばす規律のまま）。**ここでは理由を作らない** —
+/// 作業フォルダが壊れていることは `resolve_in_work_dir` が
+/// 「作業フォルダ `X` が存在しません」と**既に名指しで報告する**ので、
+/// 2 つ目の報告経路を生やすと同じ規律が 2 箇所に住む。
+/// 補完は候補を出せないだけで、原因は道具を使った瞬間に画面へ出る。
+pub(crate) fn relative_file_paths(root: &Path) -> (Vec<String>, bool) {
+    let (paths, truncated) = collect_files(root);
+    let mut rel: Vec<String> = paths
+        .iter()
+        .filter_map(|p| p.strip_prefix(root).ok())
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    rel.sort();
+    (rel, truncated)
+}
+
 /// バイナリらしいファイルか。先頭 4 KiB に NUL が居れば読まない。
 pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(4096).any(|&b| b == 0)
@@ -987,6 +1015,43 @@ mod tests {
             cancel: None,
             rag_roots: Vec::new(),
         }
+    }
+
+    // -- relative_file_paths（Spec 24。補完の候補源）----------------------------
+
+    /// 補完へ渡す一覧は**相対・`/` 区切り・ソート済み**。
+    ///
+    /// 3 つとも崩れると、補完の順位が打鍵ごとに揺れるか、挿した文字列が
+    /// そのままツール引数にならなくなる（同梱ツールの `path` は相対パス）。
+    #[test]
+    fn relative_paths_are_relative_slashed_and_sorted() {
+        let dir = TempDir::new("rel-paths");
+        dir.write("b.txt", "b");
+        dir.write("a.txt", "a");
+        dir.write("sub/deep/c.txt", "c");
+        // 隠しフォルダは走査の規律どおり落ちる（補完も同じ集合を使う）。
+        dir.write(".git/HEAD", "ref");
+
+        let (paths, truncated) = relative_file_paths(&dir.0);
+
+        assert!(!truncated);
+        assert_eq!(paths, vec!["a.txt", "b.txt", "sub/deep/c.txt"]);
+        assert!(
+            paths.iter().all(|p| !p.contains('\\')),
+            "区切りは / に揃えること: {paths:?}"
+        );
+    }
+
+    /// 読めないフォルダは**空の一覧**（例外にしない）。
+    ///
+    /// 壊れた作業フォルダは `resolve_in_work_dir` が名指しで報告するので、
+    /// ここに 2 つ目の報告経路を作らない。
+    #[test]
+    fn an_unreadable_root_yields_an_empty_listing() {
+        let dir = TempDir::new("rel-missing");
+        let (paths, truncated) = relative_file_paths(&dir.0.join("does-not-exist"));
+        assert!(paths.is_empty());
+        assert!(!truncated);
     }
 
     // -- resolve_creatable（Spec 09。実在しない宛先の境界検査）------------------

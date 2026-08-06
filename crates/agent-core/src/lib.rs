@@ -101,7 +101,7 @@ pub use mcp::{McpConfig, McpManager, McpServerConfig, McpServerStatus};
 pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     AgentRole, AgentRoleDefaults, AgentRoleId, RoleColor, Endpoint, ModelTemplate, ModelTemplateId,
-    TopologyEdge,
+    TopologyEdge, WorkDirListing,
 };
 pub use orchestrator::{AgentMcpStatus, AttachmentUpload, Orchestrator, OrchestratorConfig};
 pub use schedule::{
