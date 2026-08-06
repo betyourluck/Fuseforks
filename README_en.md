@@ -79,6 +79,7 @@ OutcastsConcordia/
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
+│       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
@@ -235,7 +236,7 @@ This clears only the conversation log and individual agent histories from the sc
 **Plaza logs can be opted out per agent** (Settings → "Conversation Context" → "Can hear plaza conversations").
 By default, every agent receives the latest 12 messages × 200 characters of "conversations exchanged in the plaza" each turn. Excluding roles that do not require shared context eliminates that fixed overhead. **This is a receiver-side setting only**; opting out does not stop an agent's own utterances from being heard by others (it is a cost feature, not a privacy feature).
 
-**When an utterance is cut at 200 characters, the log says so and gives the original length.** Passing a bare `…` lets an agent read it as "the speaker finished there" and treat the excerpt as the whole utterance. The log also tells the agent to `ask` the original speaker when the full text is needed, because plaza logs offer no way to re-read them.
+**When an utterance is cut at 200 characters, the log says so and gives the original length.** Passing a bare `…` lets an agent read it as "the speaker finished there" and treat the excerpt as the whole utterance. **Each clipped line now starts with an utterance ID, and passing that ID to the `room_log` tool returns the full text verbatim** ([Spec 22](specs/22_room-log-pull.md)). The previous guidance — `ask` the original speaker — spent the speaker's turn and tokens and returned a **retelling** rather than the original; the tool reads the conversation log directly. Only utterances longer than 20,000 characters are truncated, with `ask` remaining as the fallback for the remainder. The tool is offered only to agents that hear the plaza log (opting out removes both the excerpts and the tool). **A user's message addressed to someone else stays unreadable even with its ID** — "recipients outside the address must not even know the message exists" holds on the pull path too.
 
 **Agents are aware of each other's operational status** ([Spec 06](specs/06_peer-presence-in-prompt.md)).
 While humans could see UI status indicators, agents could not, forcing coordinators to spend tokens on roll-call queries like "try throwing this and see what happens." The prescription has two layers: **roster as authority, notifications as narrative**. The roster occupies a single line in the variable portion of the system prompt (`agent_id (display name) [role]: running`, listed in connection order; the role appears only when one is assigned. Cache stability boundaries are established right before the roster, so cache hits remain unbroken even when status or role changes).

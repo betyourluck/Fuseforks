@@ -16,7 +16,10 @@ D3 truncated + 母数 + ask / RepeatGuard 3 回目）。結合 112 → 117 本�
 **P3 完了**（同日。抜粋の切れた行へ行頭 `[ID]`（衝突時は伸長・universe は
 可視リング全体）+ notice を `ask` → `room_log` へ差し替え。S1 と truncated の
 テストは**表示された取っ手をプロンプトから拾って渡す**形へ強化 —
-表示 → 解決の往復そのものを検証。workspace 全緑・clippy 警告ゼロ）
+表示 → 解決の往復そのものを検証。workspace 全緑・clippy 警告ゼロ）→
+**P4 完了**（同日。README 日英の広場ログ節 + ディレクトリ木へ `room_log.rs` +
+CLAUDE.md の 4 層表・待ち行列・実機確認表 + `failures.md` #58 へ続報。
+grep 語彙「読み直す経路」の残存は撤回記録そのもののみ）。**残は P5 のみ**
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
