@@ -8,7 +8,11 @@
 最後の 1 件は P0 の予定に無く、契約内 grep が拾った追従）→ **P1 完了**
 （同日。`room_log.rs` 新設 — `is_visible_in_room_log` / `resolve_message` /
 `display_id`。`compose_room_log` の filter を述語の 1 実装へ差し替え。
-単体 13 本・workspace 全緑・clippy 新規警告ゼロ）
+単体 13 本・workspace 全緑・clippy 新規警告ゼロ）→ **P2 完了**（同日。
+ツール合成 + `is_runnable` の腕 + ディスパッチ + `read_room_log` + 計器。
+`endpoint_label` を `compose_room_log` から切り出して封筒の名前解決も 1 実装へ。
+結合 5 本（S1 前置読み / S2 不可視は not_found 同文面 / S3 opt-out 非提示 /
+D3 truncated + 母数 + ask / RepeatGuard 3 回目）。結合 112 → 117 本）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal

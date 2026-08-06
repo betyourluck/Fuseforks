@@ -1857,6 +1857,380 @@ async fn the_room_log_declares_it_is_an_excerpt_and_how_to_get_the_full_text() {
     );
 }
 
+/// 広場ログの全文読み（Spec 22）の検証用バックエンド。
+///
+/// 依頼文で役を分ける — 「語って」なら `story` を返し（広場ログの原料）、
+/// 「全文を読んで」なら `room_log { id }` を呼ぶ。ID は実行時の UUID なので
+/// 事前に書けず、テストが `MessageSent` イベントから埋める。
+struct RoomLogReadingBackend {
+    /// 読みに行く発話 ID（前置でよい）。
+    id: std::sync::Mutex<String>,
+    /// 話者役が返す本文。
+    story: String,
+    /// 最後に受け取ったメッセージ列（tool_result の確認用）。
+    last: std::sync::Mutex<Vec<ChatMessage>>,
+}
+
+impl RoomLogReadingBackend {
+    fn new(story: impl Into<String>) -> Self {
+        Self {
+            id: std::sync::Mutex::new(String::new()),
+            story: story.into(),
+            last: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for RoomLogReadingBackend {
+    fn name(&self) -> &str {
+        "room-log-reading"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        *self.last.lock().unwrap() = req.messages.clone();
+        let done = |text: String| ChatResponse {
+            text: Some(text),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            grounding: Default::default(),
+        };
+        // ツール結果が積まれていれば締める。
+        if req.messages.iter().any(|m| m.role == Role::Tool) {
+            return Ok(done("読み終えました".into()));
+        }
+        let prompt = req
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if prompt.contains("語って") {
+            return Ok(done(self.story.clone()));
+        }
+        if prompt.contains("全文を読んで") {
+            return Ok(ChatResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_room".into(),
+                    name: "room_log".into(),
+                    args: serde_json::json!({ "id": *self.id.lock().unwrap() }),
+                    extra: None,
+                }],
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            });
+        }
+        Ok(done("了解".into()))
+    }
+}
+
+/// `room_log` の読み手（c）の tool_result 本文を取り出す。
+fn room_log_result(backend: &RoomLogReadingBackend) -> String {
+    backend
+        .last
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .expect("room_log の結果が積まれること")
+        .content
+        .clone()
+}
+
+/// S1（Spec 22）: 居合わせた発言の全文が、表示と同じ 8 字の前置で読めること。
+///
+/// 発言者へ尋ねる（`ask` = 相手のターン消費 + 再話）のではなく、リングの
+/// content がそのまま返る — 原文性の検証なので抜粋（200 字）より長い本文で
+/// **全文**の到達を見る。
+#[tokio::test]
+async fn a_full_overheard_message_can_be_read_by_its_displayed_id() {
+    let story = "秘密の合言葉はブラボー。".repeat(40); // 480 字 — 抜粋では必ず切れる
+    let backend = Arc::new(RoomLogReadingBackend::new(story.clone()));
+    let dir = TempDir::new("room-pull-ok");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, c) = (AgentId::from("agent_a"), AgentId::from("agent_c"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(c.clone(), "チャーリー", "tpl"))
+        .await
+        .unwrap();
+    for id in [&a, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "語って").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let spoken = messages(&events)
+        .into_iter()
+        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
+        .expect("アルファの発話が記録されること")
+        .clone();
+    // 表示 ID と同じ 8 字の前置で引く（全長でしか引けない実装を弾く）。
+    *backend.id.lock().unwrap() = spoken.id.chars().take(8).collect();
+
+    orchestrator.send_user_message(&c, "全文を読んで").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let result = room_log_result(&backend);
+    assert!(
+        result.contains(&story),
+        "原文がそのまま返ること（抜粋ではなく全文）。実際:\n{result}"
+    );
+    assert!(
+        result.contains("アルファ"),
+        "封筒に送り手の表示名が入ること。実際:\n{result}"
+    );
+}
+
+/// S2（Spec 22）: 自分宛でないユーザー発話は、ID を直接知っていても読めないこと。
+///
+/// 文面は not_found と**同一** — 「見つかったが読めない」と答えると、
+/// エラーメッセージ経由で発話の存在が漏れる（凍結「宛先外はメッセージが
+/// あったことすら知らないべき」）。
+#[tokio::test]
+async fn a_users_private_message_reads_as_not_found() {
+    let backend = Arc::new(RoomLogReadingBackend::new(""));
+    let dir = TempDir::new("room-pull-hidden");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, c) = (AgentId::from("agent_a"), AgentId::from("agent_c"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(c.clone(), "チャーリー", "tpl"))
+        .await
+        .unwrap();
+    for id in [&a, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&a, "ゼブラの件は内密に")
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let private = messages(&events)
+        .into_iter()
+        .find(|m| matches!(m.from, Endpoint::User))
+        .expect("ユーザー発話が記録されること")
+        .clone();
+    *backend.id.lock().unwrap() = private.id.clone();
+
+    orchestrator.send_user_message(&c, "全文を読んで").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let result = room_log_result(&backend);
+    assert!(
+        result.contains("見つかりません"),
+        "not_found と同じ文面で返ること。実際:\n{result}"
+    );
+    assert!(
+        !result.contains("ゼブラ") && !result.contains("内密"),
+        "本文が 1 字も漏れないこと。実際:\n{result}"
+    );
+}
+
+/// S3（Spec 22）: hears_room_log = false の個体には `room_log` が提示されないこと。
+///
+/// opt-out は抜粋と読み取りの両方に効く — 抜粋が届かない個体は ID を知る
+/// 経路が無く、ツールだけ出しても呼びようがない（hears_room_log_invariant）。
+#[tokio::test]
+async fn an_opted_out_agent_is_not_offered_the_room_log_tool() {
+    let backend = Arc::new(ToolsProbeBackend {
+        presented: Default::default(),
+    });
+    let dir = TempDir::new("room-pull-optout");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, c) = (AgentId::from("agent_a"), AgentId::from("agent_c"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    let mut spec_c = AgentSpec::new(c.clone(), "チャーリー", "tpl");
+    spec_c.hears_room_log = false;
+    orchestrator.create_agent(spec_c).await.unwrap();
+    for id in [&a, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "どう？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    orchestrator.send_user_message(&c, "どう？").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let presented = backend.presented.lock().unwrap().clone();
+    assert!(
+        presented[0].iter().any(|name| name == "room_log"),
+        "既定（true）の a には提示されること。実際: {:?}",
+        presented[0]
+    );
+    assert!(
+        !presented[1].iter().any(|name| name == "room_log"),
+        "オプトアウトした c には提示されないこと。実際: {:?}",
+        presented[1]
+    );
+}
+
+/// D3（Spec 22）: 上限超の発話は打ち切りの 3 点セットで返ること。
+///
+/// 母数（全 N 字中）が無いと「ここまでが全部」と読まれ（#55）、次の手
+/// （`ask`）が無いと同じ抜粋を眺め続ける（#44）。原文性が構造で成立するのは
+/// 上限までなので、次の手だけは従来経路へ戻る。
+#[tokio::test]
+async fn an_oversized_message_is_truncated_with_the_total_and_a_next_step() {
+    let story = "あ".repeat(20_050); // ROOM_LOG_READ_MAX_CHARS (20,000) を超える
+    let backend = Arc::new(RoomLogReadingBackend::new(story));
+    let dir = TempDir::new("room-pull-truncated");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::clone(&backend) as Arc<dyn LlmBackend>,
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let (a, c) = (AgentId::from("agent_a"), AgentId::from("agent_c"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(c.clone(), "チャーリー", "tpl"))
+        .await
+        .unwrap();
+    for id in [&a, &c] {
+        orchestrator.start_agent(id).await.unwrap();
+    }
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "語って").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let spoken = messages(&events)
+        .into_iter()
+        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
+        .expect("アルファの発話")
+        .clone();
+    *backend.id.lock().unwrap() = spoken.id.clone();
+
+    orchestrator.send_user_message(&c, "全文を読んで").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let result = room_log_result(&backend);
+    assert!(
+        result.contains("全 20050 字中"),
+        "母数を書くこと（#55 — 切る前の量を言う）。実際の末尾:\n{}",
+        result.chars().skip(result.chars().count().saturating_sub(200)).collect::<String>()
+    );
+    assert!(
+        result.contains("ask"),
+        "次の手（発言した相手へ ask）を書くこと（#44）"
+    );
+}
+
+/// RepeatGuard（Spec 22 Notes 6）: ターン内で同じ ID を読み続けると 3 回目が
+/// 止まること。
+///
+/// `room_log` は同じ引数に必ず同じ本文を返す（内容不変）ので、完全一致の
+/// 数えがそのまま効く側 — 除外や限定は足さない。ターン跨ぎの再読は guard が
+/// ターン関数のローカル変数なので最初から数えに入らない。
+#[tokio::test]
+async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
+    struct StuckRoomLogBackend {
+        calls: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for StuckRoomLogBackend {
+        fn name(&self) -> &str {
+            "stuck-room-log"
+        }
+
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            if req.tool_choice == agent_core::llm::ToolChoice::None {
+                return Ok(ChatResponse {
+                    text: Some("同じ発言しか読めませんでした。".into()),
+                    tool_calls: Vec::new(),
+                    finish: Finish::Stop,
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    grounding: Default::default(),
+                });
+            }
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            Ok(ChatResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: format!("call_{}", *calls),
+                    name: "room_log".into(),
+                    // 実在しない ID — not_found の本文は決定的なので
+                    // 完全一致の数えがそのまま効く。
+                    args: serde_json::json!({ "id": "ffffffff" }),
+                    extra: None,
+                }],
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            })
+        }
+    }
+
+    let dir = TempDir::new("room-pull-repeat");
+    let orchestrator = setup_with(
+        &dir,
+        Arc::new(StuckRoomLogBackend {
+            calls: std::sync::Mutex::new(0),
+        }),
+        OrchestratorConfig::default(),
+    )
+    .await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "読んで").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            CoreEvent::ToolRepeatBlocked { tool, repeats: 2, .. } if tool == "room_log"
+        )),
+        "3 回目が実行されずに止まること: {events:?}"
+    );
+}
+
 /// **送った user 発話が、次のターンの履歴にそのまま現れること。**
 ///
 /// 食い違うとその位置で前方一致が切れる。プロバイダに依らない — Anthropic の

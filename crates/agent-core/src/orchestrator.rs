@@ -3515,6 +3515,13 @@ async fn handle_message(
     } else {
         Vec::new()
     };
+    // 広場ログの全文読み（Spec 22 — `room_log_pull` 契約）。提示は
+    // hears_room_log ただ 1 点で決まる — 抜粋が届かない個体は ID を知る経路が
+    // 無い。ログが空かどうかでは揺らさない（提示は静的・状態は動的）。
+    // enabledTools の対象外（`ask_*` / `rag` と同じ側）。
+    if spec.hears_room_log {
+        specs.push(room_log_tool_spec());
+    }
     // 提示は**個体別に解決する**。`spec_for` を持つツール（Spec 15 の `run`）は、
     // その個体から実行できる登録だけを列挙し、1 件も無ければ自分を落とす。
     // 名前の集合（`WORK_DIR_TOOL_NAMES`）では書けない除外がここに入る。
@@ -3708,6 +3715,9 @@ async fn handle_message(
                 || (use_handoff_tools
                     && handoffs.offers_plan()
                     && call.name == HandoffTools::PLAN)
+                // room_log も orchestrator 合成（Spec 22）なので executable に
+                // 居ない。条件は提示（spec_for 相当）と同じ式に揃える。
+                || (spec.hears_room_log && call.name == crate::room_log::ROOM_LOG_TOOL_NAME)
         };
 
         // **提示していない名前も捨てない。** 以前はここで filter して落として
@@ -3830,6 +3840,15 @@ async fn handle_message(
                     budget.as_ref(),
                 )
                 .await)
+            } else if spec.hears_room_log
+                && call.name == crate::room_log::ROOM_LOG_TOOL_NAME
+            {
+                // 広場ログの全文読み（Spec 22）。名前一致でここが勝つのは
+                // `transfer_to_*` / `ask_*` と同じ規則 — orchestrator 合成の
+                // 名前は registry（MCP 由来の同名）より先に解決される。
+                // hears_room_log = false の個体では素通りして registry 側へ
+                // 落ちる（その個体にこのツールは合成されていない）。
+                Ok(read_room_log(shared, agent_id, call).await)
             } else {
                 match handoffs.resolve_ask(&call.name) {
                     Some(target) if use_handoff_tools => {
@@ -4896,6 +4915,144 @@ async fn compose_presence_notices(
 /// 広場ログがその選択を迂回する裏口になってはいけない
 /// （「宛先外のエージェントはメッセージがあったことすら知らないべき」）。
 /// 自分が送り手・受け手である発話も載せない — それは既に自分の履歴にある。
+/// Endpoint の表示名（UI と同じ語彙 — 二重化を作らない）。
+///
+/// 抜粋（`compose_room_log`）と全文読み（`read_room_log`）が名前の解決を
+/// 共有する。削除済みエージェントは ID で表す。
+fn endpoint_label(world: &crate::world::World, endpoint: &Endpoint) -> String {
+    match endpoint {
+        Endpoint::User => "ユーザー".to_owned(),
+        Endpoint::System => "Concordia".to_owned(),
+        Endpoint::Agent { id } => world
+            .agent(id)
+            .map(|record| record.spec.name.clone())
+            .unwrap_or_else(|_| id.to_string()),
+    }
+}
+
+/// `room_log` ツールの定義（Spec 22）。
+///
+/// スキーマは提示される個体の毎ターンに乗る固定費なので最小に保つ。
+fn room_log_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: crate::room_log::ROOM_LOG_TOOL_NAME.into(),
+        description: "「この場で交わされていた会話」の切れた抜粋を全文で読む。\
+                      抜粋の行頭に表示されている ID をそのまま指定する。"
+            .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "発話 ID（抜粋の行頭に [ ] で表示されているもの）"
+                }
+            },
+            "required": ["id"]
+        }),
+    }
+}
+
+/// `room_log` ツールの本体（Spec 22 — `room_log_pull` 契約）。
+/// 抜粋の行頭 ID から発話の全文を返す。
+///
+/// 失敗も本文で返す（同梱ツールと同じ作法 — RepeatGuard が数えられる形）。
+/// 可視でない発話は「見つからない」と**同じ文面** — 存在をエラーメッセージ
+/// 経由で教えると「宛先外はメッセージがあったことすら知らないべき」の凍結が
+/// 破れる。区別は計器（人向けログ）にだけ出す。
+async fn read_room_log(
+    shared: &Shared,
+    agent_id: &AgentId,
+    call: &crate::llm::ToolCall,
+) -> String {
+    use crate::room_log::{ROOM_LOG_READ_MAX_CHARS, RoomLogLookup};
+
+    let requested = call
+        .args
+        .get("id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+
+    // 解決の結果。`Found` の借用をロックの外へ持ち出さないため、要る欄だけ複製する。
+    enum Resolved {
+        Full(Endpoint, Endpoint, String),
+        Ambiguous,
+        NotFound { hidden: bool },
+    }
+    let resolved = {
+        let log = shared.log.read().await;
+        match crate::room_log::resolve_message(&log, agent_id, &requested) {
+            RoomLogLookup::Found(message) => Resolved::Full(
+                message.from.clone(),
+                message.to.clone(),
+                message.content.clone(),
+            ),
+            RoomLogLookup::Ambiguous { .. } => Resolved::Ambiguous,
+            RoomLogLookup::NotFound { hidden_match } => Resolved::NotFound {
+                hidden: hidden_match,
+            },
+        }
+    };
+
+    let (outcome, body) = match resolved {
+        Resolved::Full(from, to, content) => {
+            let header = {
+                let world = shared.world.read().await;
+                format!(
+                    "【送り手: {} → {}】",
+                    endpoint_label(&world, &from),
+                    endpoint_label(&world, &to)
+                )
+            };
+            // 「全 N 字」の数え方は抜粋（compose_room_log）と揃える —
+            // 抜粋の母数とここの母数がずれると、切れていない発話を
+            // 「まだ続きがある」と読ませる。
+            let full_chars = content.trim().chars().count();
+            if full_chars > ROOM_LOG_READ_MAX_CHARS {
+                // 打ち切りの 3 点セット（何が起きたか + 母数 + 次の手）。
+                // 次の手だけは `ask` へ戻る — 原文性が構造で成立するのは
+                // 上限まで（`room_log_pull` 契約）。
+                let shown = truncate_chars(&content, ROOM_LOG_READ_MAX_CHARS);
+                (
+                    "truncated",
+                    format!(
+                        "{header}\n{shown}\n\n（全 {full_chars} 字中、先頭 \
+                         {ROOM_LOG_READ_MAX_CHARS} 字までを表示しました。続きが必要なら、\
+                         発言した相手へ `ask` で尋ねてください）"
+                    ),
+                )
+            } else {
+                ("ok", format!("{header}\n{}", content.trim()))
+            }
+        }
+        Resolved::Ambiguous => (
+            "ambiguous",
+            // 候補は列挙しない — 列挙は可視でない発話の ID が漏れる余地を作る。
+            "その ID では発言を一意に特定できませんでした。\
+             抜粋の行頭に表示されている ID をそのまま指定してください。"
+                .to_owned(),
+        ),
+        Resolved::NotFound { hidden } => (
+            // モデル向け文面は hidden の有無で変えない。変えると存在が漏れる。
+            if hidden { "not_visible" } else { "not_found" },
+            "指定された ID に一致する発言は見つかりませんでした。\
+             抜粋の行頭に表示されている ID をそのまま指定してください。"
+                .to_owned(),
+        ),
+    };
+
+    // 計器（`room_log_pull` 契約の D5）。本文はログへ書かない（#71 —
+    // モデル出力を運ぶ計器は秘密の転送経路になる）。not_visible / not_found の
+    // 区別はこの行だけで、モデル向け文面は同一。
+    note!(
+        "room_log read: agent={agent_id} id={} outcome={outcome} chars={}",
+        if requested.is_empty() { "-" } else { &requested },
+        body.chars().count(),
+    );
+    body
+}
+
 async fn compose_room_log(
     shared: &Shared,
     agent_id: &AgentId,
@@ -4922,17 +5079,7 @@ async fn compose_room_log(
     }
 
     let world = shared.world.read().await;
-    let label = |endpoint: &Endpoint| -> String {
-        match endpoint {
-            Endpoint::User => "ユーザー".to_owned(),
-            // UI と同じ名前（語彙の二重化を作らない）。
-            Endpoint::System => "Concordia".to_owned(),
-            Endpoint::Agent { id } => world
-                .agent(id)
-                .map(|record| record.spec.name.clone())
-                .unwrap_or_else(|_| id.to_string()),
-        }
-    };
+    let label = |endpoint: &Endpoint| endpoint_label(&world, endpoint);
 
     // 収集は新しい順なので、表示は古い順へ戻す。
     //

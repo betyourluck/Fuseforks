@@ -6,6 +6,16 @@
 
 use crate::model::{AgentId, AgentMessage, Endpoint};
 
+/// モデルへ提示するツール名。orchestrator 合成側（`ask_*` と同じ棚）が使う。
+pub const ROOM_LOG_TOOL_NAME: &str = "room_log";
+
+/// `room_log` ツールが 1 回で返す本文の上限（文字数）。
+///
+/// **原文性が構造で成立するのはここまで**（`room_log_pull` 契約）。超過は
+/// 打ち切りの 3 点セット（何が起きたか + 母数 + 次の手）で返し、次の手だけは
+/// 従来の「発言した相手へ `ask`」へ戻る。
+pub const ROOM_LOG_READ_MAX_CHARS: usize = 20_000;
+
 /// 広場ログの可視述語。**「抜粋に載る条件」と「読める条件」は同じ問いの裏表**
 /// なので、`compose_room_log`（抜粋）と `room_log` ツール（全文読み）の両方が
 /// この 1 実装を呼ぶ（`room_log_pull` 契約）。別の述語を置くと答えがずれる。
