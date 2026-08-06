@@ -23,6 +23,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
+| 📎 **Path Completion** | Type `@` to pick a file from the work folder. **Only the path is inserted**, and the rounds a servant spends searching disappear |
 | 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
@@ -109,6 +110,7 @@ OutcastsConcordia/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
             ├── lib/attachment.ts    Attachment pure functions (scaling math / base64 / WebP check)
+            ├── lib/pathComplete.ts  `@` path completion (trigger detection / ranking / commit)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -357,6 +359,69 @@ correctly**. Hence WebP is the default. Some compatibility servers may still lac
 decoder (xAI's own documentation lists only jpg/png), so **on a 400 the request is
 re-encoded to JPEG and sent once more.** If both are refused, the screen says this
 endpoint does not accept images.
+
+---
+
+## Path Completion in the Input Box ([Spec 24](specs/24_path-completion.md))
+
+Type `@` in the input box and the **files in the addressed servant's work folder**
+appear as candidates. Type part of a filename to narrow them down; picking one
+inserts **its relative path** into the message.
+
+```text
+@24_path      →  @specs/24_path-completion.md
+```
+
+**Only the path goes in — the file's contents are not expanded.** The servant reads
+it with the `file` tool if it needs to, and pays nothing if it doesn't.
+
+### Why the contents stay out
+
+**Because the two histories have different lifetimes.** A tool result exists only
+for the turn it happened in, whereas your own message rides along in the prompt for
+**the last 8 exchanges**. Embedding contents in the message would **resend a
+10,000-token file up to 8 times**.
+
+Passing just the path means **the existing `file` tool's lifetime already satisfies
+that condition** — where image attachments needed a purpose-built "this turn only"
+mechanism, this one needs none.
+
+**The cost is stated plainly**: when the contents are needed, one `file` round trip
+remains. **What disappears is the *searching*, not the *reading*.** That still pays —
+the rounds a servant spends hunting with `fd` or `grep` vanish, and with them the
+**full prompt resend that every extra round costs**.
+
+### What never appears as a candidate
+
+The walk shares its rules with `fd` and `grep` (one implementation, not two):
+
+- **Hidden folders** (`.git`, `.github`, anything starting with `.`)
+- `node_modules` / `target` / `dist` / `build` / `out` / `vendor`
+- Anything past the **20,000-entry** limit (the cut-off is shown in the list)
+
+**Not being offered is not the same as not being readable.** Type
+`.github/workflows/build.yml` by hand and the `file` tool reads it. **Completion
+offers candidates; it is not a boundary** — the boundary lives on the reading side,
+where the work folder's outside is structurally unreachable.
+
+Note that **`.gitignore` is not consulted.** The list above is matched by name, so a
+folder that is git-ignored but absent from that list still shows up.
+
+### `@` is not reserved for files
+
+When mentions of servants arrive later (user broadcasts), they will ride on **the
+same `@`**. Only files appear today, but the symbol is not pinned to files.
+
+### Enter means three things
+
+| Situation | Enter |
+|---|---|
+| Mid-conversion in a Japanese IME | **Commits the conversion** (neither sends nor picks) |
+| Completion is showing candidates | **Picks the candidate** |
+| Otherwise | Sends |
+
+To send while the completion is open, close it with `Esc` first. When no candidate
+matches, completion does not capture keys, so Enter sends as usual.
 
 ---
 
