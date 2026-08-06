@@ -72,9 +72,9 @@ pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
         temperature: req.temperature,
         max_tokens,
         max_completion_tokens,
+        reasoning_effort: reasoning_effort(&req.model, req.effort, !tools.is_empty()),
         tools,
         tool_choice,
-        reasoning_effort: reasoning_effort(&req.model, req.effort),
     }
 }
 
@@ -147,7 +147,28 @@ fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
 ///
 /// 推論モデルに対して明示しない場合、プロバイダ側の既定（常時深い思考）が適用され、
 /// 思考が出力予算を食い潰して空応答になることがある。既定を持つのは adapter の責務。
-pub fn reasoning_effort(model: &str, effort: Option<Effort>) -> Option<&'static str> {
+///
+/// `sends_function_tools` は**この周で `tools` を実際に送るか**。gpt-5 系は
+/// `/v1/chat/completions` で「function tools と思考の併用」を拒否するため、
+/// その周だけ `none` で固定する（下の分岐を参照）。
+pub fn reasoning_effort(
+    model: &str,
+    effort: Option<Effort>,
+    sends_function_tools: bool,
+) -> Option<&'static str> {
+    // gpt-5 系は `/v1/chat/completions` で function tools と思考を併用できず、
+    // 400 `Function tools with reasoning_effort are not supported` を返す
+    // （2026-08-06 実機 gpt-5.6-luna）。**キーを省いても回避できない** —
+    // 省くとサーバ側の既定の思考が効き、同じ 400 になる。エラー本文が挙げる
+    // 2 つの逃げ道（`/v1/responses` へ移る / `none` を明示する）のうち後者を採る。
+    // 前者は Chat Completions とは別 API で、ワイヤを丸ごともう 1 本持つことになる。
+    //
+    // **ツールを送らない周では触らない。** 制約は併用に掛かっており思考自体では
+    // ないので、一律に止めるとツールを持たない個体の思考まで殺す。
+    if model.starts_with("gpt-5") {
+        return sends_function_tools.then_some("none");
+    }
+
     let is_grok_reasoning = model.starts_with("grok-4.3") || model.starts_with("grok-4.5");
 
     if !is_grok_reasoning && !is_o_series(model) {
@@ -463,11 +484,45 @@ mod tests {
 
     #[test]
     fn reasoning_effort_targets_only_reasoning_models() {
-        assert_eq!(reasoning_effort("gpt-4o", Some(Effort::High)), None);
-        assert_eq!(reasoning_effort("grok-4.3-mini", None), Some("none"));
-        assert_eq!(reasoning_effort("grok-4.5", None), Some("low"));
+        assert_eq!(reasoning_effort("gpt-4o", Some(Effort::High), true), None);
+        assert_eq!(reasoning_effort("grok-4.3-mini", None, true), Some("none"));
+        assert_eq!(reasoning_effort("grok-4.5", None, true), Some("low"));
         // 未対応の段階は high へ丸める。
-        assert_eq!(reasoning_effort("grok-4.5", Some(Effort::Max)), Some("high"));
+        assert_eq!(reasoning_effort("grok-4.5", Some(Effort::Max), true), Some("high"));
+    }
+
+    /// gpt-5 系へツール定義を送る周では `reasoning_effort: "none"` を**明示する**。
+    ///
+    /// 省略すると**サーバ側の既定**が効き、`/v1/chat/completions` は
+    /// 「function tools と思考は併用できない」として 400 を返す
+    /// （2026-08-06 実機 gpt-5.6-luna）。**送っていないから安全、にはならない。**
+    #[test]
+    fn gpt5_with_function_tools_must_pin_reasoning_effort_to_none() {
+        let mut req = req_with_tool(ToolChoice::Auto);
+        req.model = "gpt-5.6-luna".into();
+        req.effort = Some(Effort::High);
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+
+        assert_eq!(json["tools"][0]["function"]["name"], "emit_plan");
+        assert_eq!(
+            json["reasoning_effort"], "none",
+            "利用者が段階を選んでいても、ツールを送る周では none で固定するしかない"
+        );
+    }
+
+    /// ツール定義を送らない周では触らない（サーバ既定の思考をそのまま使う）。
+    ///
+    /// 制約は「function tools との併用」に掛かっており、思考そのものではない。
+    /// 一律に `none` を送ると、ツールを持たない個体の思考まで止めてしまう。
+    #[test]
+    fn gpt5_without_function_tools_keeps_the_server_default() {
+        let mut req = req_with_tool(ToolChoice::Auto);
+        req.model = "gpt-5.6-luna".into();
+        req.tools.clear();
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+
+        assert!(json.get("tools").is_none());
+        assert!(json.get("reasoning_effort").is_none(), "触らない");
     }
 
     #[test]

@@ -1157,19 +1157,33 @@ CI がタグから書き換える側。
 `window.addEventListener(\`contextmenu\`, …)` が**条件ごと消えて無条件**になっており、
 dev では丸ごと消える）。`import.meta.env.DEV` は Vite の定数なので実行時コストはゼロ。
 
-## 出力上限の欄名の送り分け（2026-08-06 着地。Spec 不要と判断）
+## OpenAI 互換のパラメータ差の吸収（2026-08-06 着地。Spec 不要と判断）
 
-起点は利用者の実機報告 — gpt-5.6-luna が `max_tokens` を
-`400 unsupported_parameter` で拒否しターンごと落ちる（`failures.md` #76）。
-OpenAI の新世代（gpt-5 系 / o 系）は `max_completion_tokens` を要求する。
+起点は利用者の実機報告 — **gpt-5.6-luna が 2 つの 400 で連続して落ちた**。
+どちらも `openai_compat.rs` の純関数 1 本で吸収し、型・IPC・画面は 1 つも
+変えていない（決めることが無いので Spec は切っていない）。
 
-`OaiRequest` の上限欄を排他 2 本（`Option` + `skip_serializing_if`）にし、
-`openai_compat::uses_max_completion_tokens`（純関数・モデル名で判定）が
-送り分ける。**全面置き換えは不可** — 互換サーバ（llama.cpp / vLLM /
-gpt-oss 系）には新欄を知らないものがある。**同じ構造体の `temperature`
-（明示時のみ送る）と `reasoning_effort`（モデル名で送り分け）に続く 3 例目**で、
-処方の形は既にあった。契約は `ModelTemplate.maxOutputTokens` の注記
-（型・IPC・画面は不変。設定値の意味も不変で、ワイヤに出るときの欄名だけが割れる）。
+| 症状 | 処方 | 純関数 |
+|---|---|---|
+| `max_tokens` を `unsupported_parameter` で拒否（#76） | 上限欄を排他 2 本にして送り分け | `uses_max_completion_tokens` |
+| `reasoning_effort` と function tools は併用不可（#77） | tools を送る周だけ `none` を明示 | `reasoning_effort`（引数を 1 つ追加） |
+
+- **どちらも全面置き換えにしない。** 新欄 `max_completion_tokens` を知らない
+  互換サーバ（llama.cpp / vLLM / gpt-oss 系）があり、思考の停止も
+  「ツールを送る周」だけに掛かる。**`temperature`（明示時のみ送る）と
+  `reasoning_effort`（モデル名で送り分け）に続く 3・4 例目**で、処方の形は既にあった
+- **#77 の核は「送っていないパラメータの名前で拒否された」こと。**
+  **省略は「無効」ではなく「サーバ既定を採る」** — 黙っている間、値を決めていたのは
+  サーバだった。「送っていないから責任範囲の外」という読みが誤り
+- **画面の思考段階は要求であって保証ではない。** gpt-5 系はツールを送る周で
+  利用者の選択を `none` へ上書きする（プロバイダの制約で回避経路が無い）。
+  丸め（xhigh / max → high）と同じ扱いで、`data_contract` の `Effort` note に層を
+  分けて書いた — **canonical は「未指定なら送らない」、ワイヤは adapter が決める**
+- **契約が既に嘘になっていたのを 1 件回収した**。`Effort` の note の
+  「既定値を勝手に補わない」は、grok-4.3 へ `none` / o 系へ `low` を**以前から
+  補っていた**ので、今回の変更が来る前から実装と食い違っていた
+- **1 つ直すと次が出る形。** 400 はパラメータを 1 つずつしか教えないので、
+  **1 件直した時点では「直った」と言えない** — 実機で 1 周通るまでが 1 件
 
 ## リリースビルド（`.github/workflows/build.yml`・2026-08-05 着地）
 

@@ -904,9 +904,22 @@ enums:
   Effort:
     values: [low, medium, high, xhigh, max]
     note: |
-      未指定ならリクエストに含めない。既定値を勝手に補わない。
+      canonical (ChatRequest.effort) は未指定なら null のまま運ぶ。
       XHigh のワイヤ値は `xhigh` (serde の snake_case 変換に任せると `x_high` になり、
       TS 側と食い違う)。Effort::as_str と serde 値の一致をテストで固定している。
+
+      ワイヤへ出すかどうかと値の決定は adapter の責務で、モデル名で割れる
+      (openai_compat::reasoning_effort)。「未指定なら送らない」は canonical の
+      規律であって、ワイヤの規律ではない:
+        - 推論制御を持たないモデル: 送らない (解釈できず 400 になる)
+        - grok-4.3 系 / o 系: 未指定でも既定を補う (none / low)。
+          補わないとプロバイダ既定の深い思考が出力予算を食い潰し空応答になる
+        - gpt-5 系: tools を送る周だけ `none` で固定する。**利用者が段階を
+          選んでいても上書きする** — /v1/chat/completions は function tools と
+          思考の併用を 400 で拒否し、キーの省略では回避できない (省略は
+          サーバ既定の思考として扱われる)。tools を送らない周では触らない
+      値の丸めも adapter が持つ (xhigh / max を受け付けない先へは high)。
+      すなわち画面の段階は要求であって保証ではない (failures.md #77)。
   CredentialSource:
     values:
       unset: 未設定 (既定)。旧版の "none" もここへ落とす (serde alias)
