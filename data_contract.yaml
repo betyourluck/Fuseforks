@@ -3114,6 +3114,23 @@ llm_wire:
           **網羅 match はコンパイラが指すが、ワイルドカード・matches!・== の
           6 箇所は指さない** — 挙動の表は Spec 25 D6 が正。
 
+    P2 実装 (2026-08-07。`apps/gui-tauri/src-tauri/src/mcp_server.rs`):
+      - 依存は実測 **+19 crate** (317 → 336。axum / rmcp-macros / schemars /
+        rand / chacha20 ほか。**全部純 Rust**で C 依存は増えない)
+      - `mcp_server.json` が**読めないときは書き込みを拒む** (schedules.json と
+        同じ規律)。既定値を書き戻すと合鍵とポートを消す = #70 の再演になる
+      - 合鍵は `Uuid::new_v4().simple()` の 32 桁 16 進。Unix では 0600 へ絞る
+        (**Windows では何もしない** — ACL を自前で組むと効いているつもりで
+        効いていない形になる)
+      - `Authorization: Bearer` の検査は axum の middleware で**扉の内側へ入る前**。
+        突き合わせは定数時間 (**効くのは別利用者のプロセスに対してだけ** —
+        同じ利用者のプロセスは設定ファイルそのものを読める)
+      - `allowed_origins` を loopback の 2 つで**明示的に埋める** (rmcp の既定は
+        空 = Origin 検査が無効)。Origin ヘッダの無い要求 (CLI) は通る
+      - 状態は `enabled` と `listening` を**別に持つ** — ポートが埋まっていると
+        「ON なのに開いていない」が起こるので 1 つの真偽値に畳まない。
+        bind の失敗は保存の失敗ではないので、エラーにせず `lastError` で返す
+
     P0 実測 (2026-08-07。probe = rmcp 2.2 server + axum / scratchpad):
       - **Claude Code は streamable HTTP を受ける** — `--mcp-config` の
         {"type":"http","url":...} で initialize → tools/list → tools/call が

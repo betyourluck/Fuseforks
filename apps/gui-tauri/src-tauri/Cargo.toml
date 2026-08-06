@@ -36,6 +36,19 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio.workspace = true
 
+# 外の LLM から依頼を受ける扉（Spec 25）。**MCP サーバー側は GUI に住む** —
+# 村は 1 プロセスの中にしかおらず（single_instance / redb の単一書き手 /
+# 稼働個体はメモリ）、別プロセスのサーバーは構造的に成立しない。
+rmcp.workspace = true
+# `StreamableHttpService` は tower の Service なので、載せる HTTP サーバーが要る。
+# 既定 feature は落とす（json / query / form は 1 つも使わない）。
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# 扉の合鍵の生成。v4 = 122 bit の乱数で、既に依存ツリーに居る。
+uuid.workspace = true
+# 扉の停止（rmcp の StreamableHttpServerConfig が CancellationToken を取る）。
+# 既にツリーに居るので新規クレートはゼロ。
+tokio-util = { version = "0.7", default-features = false }
+
 # デスクトップ限定。クレート自体が Android/iOS で空になるので、
 # ここで target を切って mobile ビルドから外す（Spec 07 P0）。
 #
@@ -43,6 +56,11 @@ tokio.workspace = true
 # それ以降の依存がすべて target 条件つきとして再分類される（TOML の節の意味論）。
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.3"
+
+[dev-dependencies]
+# 合鍵の層を要求 1 本で叩く（ServiceExt::oneshot）。既にツリーに居るので新規はゼロ。
+# **[target.…] より後ろに置く**のは上と同じ理由（節は次の見出しまで続く）。
+tower = { version = "0.5", default-features = false, features = ["util"] }
 
 # リリースプロファイルはワークスペースルートで定義している
 # （非ルートパッケージの [profile] は無視されるため）。

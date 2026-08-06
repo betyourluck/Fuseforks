@@ -263,6 +263,90 @@ pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
     Ok(state.workspace.display().to_string())
 }
 
+// ---- 外の LLM から依頼を受ける扉（Spec 25） ------------------------------------
+
+/// 扉の現在の状態を返す。
+///
+/// **合鍵をそのまま返す。** ここは他の秘密（API キー）と扱いが逆で、
+/// `model_credential_exists` が値を返さないのに対し、こちらは**画面に出して
+/// クライアントの設定へ貼ってもらう**ためにある値。存在を隠す意味が無い。
+#[tauri::command]
+pub async fn mcp_server_status(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::mcp_server::McpServerStatus> {
+    let last_error = state
+        .mcp_server_error
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    Ok(state.mcp_server.lock().await.status(last_error))
+}
+
+/// 扉の ON / OFF とポートを設定して、その場で反映する。
+///
+/// **ON にした時点で合鍵を生成する**（`mcp_server_contract` 凍結 3）。
+///
+/// # Errors
+/// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
+/// **ポートを掴めなかったのはエラーにしない** — 設定は保存されており、
+/// 直すのはポート番号なので、状態の `lastError` として画面へ出す。
+#[tauri::command]
+pub async fn set_mcp_server(
+    state: State<'_, AppState>,
+    enabled: bool,
+    port: u16,
+) -> CoreResult<crate::mcp_server::McpServerStatus> {
+    let mut manager = state.mcp_server.lock().await;
+    let last_error = manager
+        .apply(enabled, port)
+        .await
+        .map_err(|reason| CoreError::ConfigIo {
+            path: crate::mcp_server::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    if let Ok(mut slot) = state.mcp_server_error.lock() {
+        *slot = last_error.clone();
+    }
+    Ok(manager.status(last_error))
+}
+
+/// 合鍵を作り直す（開いていれば新しい鍵で開き直す）。
+///
+/// # Errors
+/// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn regenerate_mcp_server_token(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::mcp_server::McpServerStatus> {
+    let mut manager = state.mcp_server.lock().await;
+    let last_error = manager
+        .regenerate_token()
+        .await
+        .map_err(|reason| CoreError::ConfigIo {
+            path: crate::mcp_server::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    if let Ok(mut slot) = state.mcp_server_error.lock() {
+        *slot = last_error.clone();
+    }
+    Ok(manager.status(last_error))
+}
+
+/// 外部からの依頼を受ける窓口（未設定なら `None`）。
+#[tauri::command]
+pub async fn get_reception(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {
+    Ok(state.orchestrator.reception().await)
+}
+
+/// 窓口を差し替える。`None` で未設定へ戻す。
+///
+/// # Errors
+/// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]。
+#[tauri::command]
+pub async fn set_reception(state: State<'_, AppState>, agent_id: Option<AgentId>) -> CoreResult<()> {
+    state.orchestrator.set_reception(agent_id.as_ref()).await
+}
+
 // ---- MCP ---------------------------------------------------------------------
 
 /// `mcp.json` の宣言を返す。

@@ -84,6 +84,11 @@ sys-locale = "0.3"
 # 将来リモート HTTP サーバーへ繋ぐなら transport-streamable-http-client-reqwest を足す。
 rmcp = { version = "2.2", default-features = false, features = [
   "client",
+  # Spec 25 — 村を MCP **サーバー**にする側（外の LLM から依頼を受ける扉）。
+  # クライアント側とは向きが逆で、同じ crate の別の顔を使う。
+  "server",
+  "macros",
+  "transport-streamable-http-server",
   "transport-child-process",
   # PATH からコマンドを解決する。**Windows で必須**: 素の `npx` は拡張子なしの
   # スクリプトとしても PATH に居るため、CreateProcess が実行できず

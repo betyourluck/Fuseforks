@@ -5,6 +5,9 @@
 //! `agent-core` 側にあり、このクレートを外しても中核は単体で動く。
 
 mod commands;
+// 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
+// **公開しているのは扉の部品であって、扉そのものではない。**
+pub mod mcp_server;
 mod state;
 
 use tauri::Manager;
@@ -98,6 +101,12 @@ pub fn run() {
             commands::list_model_templates,
             commands::list_roles,
             commands::workspace_path,
+            // 外の LLM から依頼を受ける扉（Spec 25）
+            commands::mcp_server_status,
+            commands::set_mcp_server,
+            commands::regenerate_mcp_server_token,
+            commands::get_reception,
+            commands::set_reception,
             // 資格情報（値を返す経路は存在しない）
             commands::set_model_credential,
             commands::clear_model_credential,

@@ -2,7 +2,7 @@
 
 **ID**: 25
 **Date**: 2026-08-07
-**Status**: **rev3 承認 → P0・P1 完了（2026-08-07）→ 次は P2（MCP サーバー本体）**
+**Status**: **rev3 承認 → P0・P1・P2 完了（2026-08-07）→ 次は P3（画面）**
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -298,14 +298,37 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
   **外部の依頼が他のサーヴァントの広場ログに出ない・窓口の返答は
   User 宛と同じ扱いで出る（対で凍結）** / **fork 候補に External の依頼が
   出ない** / **2 本目の外部依頼が busy で即返る**
-- **P2 MCP サーバー**: `rmcp` の server + HTTP transport、トークン検査、
-  **127.0.0.1 bind + Origin 検査**、**同時 1 本の直列化**、
+- **P2 MCP サーバー**: **完了**（2026-08-07。`mcp_server.rs` +
+  IPC 5 本・単体 6 + 結合 2・workspace 611 全緑・clippy 警告ゼロ）。
+  実装で決めた 5 点:
+  - **依存は実測 +19 crate**（317 → 336。axum / rmcp-macros / schemars /
+    rand / chacha20 ほか。**全部純 Rust**）。P0 の +7 は rmcp だけの数字で、
+    HTTP を載せる側と派生マクロがその倍を持ってくる
+  - **`mcp_server.json` が読めないときは書き込みを拒む**（`schedules.json` と
+    同じ規律）。既定値を書き戻すと合鍵とポートを消す = **#70 の再演**になる
+  - **状態は `enabled` と `listening` を別に持つ** — ポートが埋まっていると
+    「ON なのに開いていない」が起こるので、1 つの真偽値に畳まない。
+    **bind の失敗は保存の失敗ではない**ので、エラーにせず `lastError` で返す
+    （設定は保存済みで、直すのはポート番号）
+  - **`allowed_origins` を loopback の 2 つで明示的に埋める** — rmcp の既定は
+    **空 = Origin 検査が無効**。Host 検査（loopback 3 種）は既定のまま乗る
+  - **合鍵の検査は「実際に HTTP を話して」テストした** — 述語の単体テストは
+    層を張り忘れても緑のまま。**素通しの層に差し替えるミューテーションで
+    拒否側だけが赤**になることを確かめた（通る側と対で見ないと、
+    全部拒否する実装でも緑になる）
+- ~~**P2 MCP サーバー**~~: `rmcp` の server + HTTP transport、トークン検査、
+  **127.0.0.1 bind + Origin 検査**、**同時 1 本の直列化**（コアの
+  `external_gate` が既に持つので P2 では何も足さない）、
   起動と停止のライフサイクル（ON→OFF でポートを閉じる /
   **ON のまま窓口が削除・停止されたらツールが理由を返す** — workspace は
   起動時固定なので「village をまたぐ」形のライフサイクルは存在しない）
 - **P3 システム設定 + 会話ペイン**: ON/OFF・ポート・トークン表示と再生成・
   窓口の選択 + `ChatPanel` の `External` の描画（`client` ラベル / 左置き /
-  `isMine` は偽）+ 辞書 ja/en
+  `isMine` は偽）+ 辞書 ja/en。
+  **IPC 5 本は P2 で入れた**（`mcp_server_status` / `set_mcp_server` /
+  `regenerate_mcp_server_token` / `get_reception` / `set_reception`）—
+  呼び出し元の無いまま置くと `dead_code` を `allow` で覆うことになり、
+  本当に死んだコードが隠れる。P3 は画面と辞書だけ
 - **P4 台帳**: README 日英 + CLAUDE.md
 - **P5 実機確認**（画面・ログで観測できる項目だけ — #68）:
   1. Claude Code から呼んで答えが返る

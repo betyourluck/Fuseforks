@@ -24,6 +24,14 @@ pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
     /// ワークスペースのルート。「フォルダを開く」導線で使う。
     pub workspace: std::path::PathBuf,
+    /// 外の LLM から依頼を受ける扉（Spec 25）。
+    ///
+    /// **設定は workspace の外**（`{app_data_dir}/mcp_server.json`）に住むので、
+    /// `ConfigStore` ではなくこちらが持つ。開け閉めは 1 本の Mutex で直列化する
+    /// （ポートの bind と解放が交差すると「開いているのに繋がらない」が出る）。
+    pub mcp_server: tokio::sync::Mutex<crate::mcp_server::McpServerManager>,
+    /// 直近の扉の起動失敗（ポート衝突など）。画面へそのまま出す。
+    pub mcp_server_error: std::sync::Mutex<Option<String>>,
 }
 
 /// バックグラウンド初期化の失敗理由。
@@ -105,9 +113,23 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
         agent_core::note!("MCP の初期接続に失敗しました: {err}");
     }
 
+    let orchestrator = Arc::new(orchestrator);
+
+    // 外の LLM から依頼を受ける扉（Spec 25）。**設定は workspace の外**
+    // （`{app_data_dir}/mcp_server.json`）— 村を配っても扉は開かない、を
+    // 置き場で成立させている。既定は OFF なので、多くの村ではここは何もしない。
+    //
+    // **開けなくても起動は止めない**（MCP クライアントの初期接続と同じ判断）。
+    let app_data_dir = app.path().app_data_dir()?;
+    let mut mcp_server =
+        crate::mcp_server::McpServerManager::load(&app_data_dir, Arc::clone(&orchestrator));
+    let mcp_server_error = mcp_server.start_if_enabled().await;
+
     Ok(AppState {
-        orchestrator: Arc::new(orchestrator),
+        orchestrator,
         workspace,
+        mcp_server: tokio::sync::Mutex::new(mcp_server),
+        mcp_server_error: std::sync::Mutex::new(mcp_server_error),
     })
 }
 
