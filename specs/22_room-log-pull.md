@@ -2,8 +2,10 @@
 
 **ID**: 22
 **Date**: 2026-08-06
-**Status**: Draft rev2（rev1 査読の Must Fix 3 点 + 仕様の穴 2 点を反映。
-うち 1 点は実測で前提を訂正して採用 — Notes 6）
+**Status**: rev2 承認（2026-08-06）→ **P0 完了**（同日。`data_contract.yaml` へ
+`room_log_pull` を凍結 + `room_log` 節の「読み直す経路を持たない」を撤回明記 +
+`hears_room_log_invariant` へ「false ならツールも提示しない」を追記 —
+最後の 1 件は P0 の予定に無く、契約内 grep が拾った追従）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
