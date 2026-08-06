@@ -358,7 +358,7 @@ defineExpose({ fill });
 </script>
 
 <template>
-    <div class="shrink-0 border-t border-line px-3 py-2.5">
+    <div class="relative shrink-0 border-t border-line px-3 py-2.5">
     <!-- 添付チップ（Spec 23）。× で外せる。S4 の注記をすぐ下に置く —
          「1 ターン限り」は設定ではなく仕様なので、添付のたびに見える場所で言う。 -->
     <div v-if="attachment || converting" class="mb-2 px-1">
@@ -409,11 +409,16 @@ defineExpose({ fill });
       </p>
     </div>
 
-    <!-- パス補完（Spec 24）。置き場は入力欄の直上 — textarea のカーソル座標を
-         取るにはミラー要素が要り、割に合わない（添付チップと同じ位置）。 -->
+    <!-- パス補完（Spec 24）。**入力欄の上へ浮かせる**（`absolute` + `bottom-full`）。
+         流し込みで置くと、開くたびに入力欄が下へ動いて**会話の表示が縮む** —
+         打鍵のたびにレイアウトが跳ねるのは、補完のように頻繁に開閉する部品では
+         そのまま使い勝手の悪さになる。浮かせれば会話ログの上に重なるだけで済む。
+         左右は `left-3 right-3` で入力欄の `px-3` に揃える。
+         横位置はカーソルに追わせない — textarea のカーソル座標を取るには
+         ミラー要素が要り、割に合わない。 -->
     <div
       v-if="popupVisible"
-      class="mb-1 overflow-hidden rounded-lg bg-surface-1 shadow-lg ring-1 ring-line"
+      class="absolute right-3 bottom-full left-3 z-20 mb-1 overflow-hidden rounded-lg bg-surface-1 shadow-lg ring-1 ring-line"
     >
       <!-- 作業フォルダが無い（D3）。候補を出す代わりに理由を出す。 -->
       <p v-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
