@@ -12,7 +12,11 @@
 ツール合成 + `is_runnable` の腕 + ディスパッチ + `read_room_log` + 計器。
 `endpoint_label` を `compose_room_log` から切り出して封筒の名前解決も 1 実装へ。
 結合 5 本（S1 前置読み / S2 不可視は not_found 同文面 / S3 opt-out 非提示 /
-D3 truncated + 母数 + ask / RepeatGuard 3 回目）。結合 112 → 117 本）
+D3 truncated + 母数 + ask / RepeatGuard 3 回目）。結合 112 → 117 本）→
+**P3 完了**（同日。抜粋の切れた行へ行頭 `[ID]`（衝突時は伸長・universe は
+可視リング全体）+ notice を `ask` → `room_log` へ差し替え。S1 と truncated の
+テストは**表示された取っ手をプロンプトから拾って渡す**形へ強化 —
+表示 → 解決の往復そのものを検証。workspace 全緑・clippy 警告ゼロ）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal

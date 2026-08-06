@@ -1852,8 +1852,12 @@ async fn the_room_log_declares_it_is_an_excerpt_and_how_to_get_the_full_text() {
         "切った行に元の長さを書くこと（母数が無いと「全部見た」と読まれる = #55）。実際:\n{joined}"
     );
     assert!(
-        joined.contains("ask"),
-        "全文を得る次の手を書くこと（#44。歯止めの先に道が要る）。実際:\n{joined}"
+        joined.contains("room_log"),
+        "全文を得る次の手を書くこと（#44。Spec 22 で ask から room_log ツールへ差し替え）。実際:\n{joined}"
+    );
+    assert!(
+        joined.contains("] アルファ → ユーザー"),
+        "切れた行の行頭に取っ手（表示 ID）が付くこと（Spec 22 の D2）。実際:\n{joined}"
     );
 }
 
@@ -1910,12 +1914,21 @@ impl LlmBackend for RoomLogReadingBackend {
             return Ok(done(self.story.clone()));
         }
         if prompt.contains("全文を読んで") {
+            // 抜粋に取っ手（行頭の `[ID]`）が表示されていればそれを使う —
+            // 表示 → 解決の往復をそのまま検証する（Spec 22 P3）。無ければ
+            // テストが埋めた ID（不可視の発話など、表示されない ID の検証用）。
+            let displayed = prompt
+                .split("- [")
+                .nth(1)
+                .and_then(|rest| rest.split(']').next())
+                .map(str::to_owned);
+            let id = displayed.unwrap_or_else(|| self.id.lock().unwrap().clone());
             return Ok(ChatResponse {
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_room".into(),
                     name: "room_log".into(),
-                    args: serde_json::json!({ "id": *self.id.lock().unwrap() }),
+                    args: serde_json::json!({ "id": id }),
                     extra: None,
                 }],
                 finish: Finish::Stop,
@@ -1940,11 +1953,13 @@ fn room_log_result(backend: &RoomLogReadingBackend) -> String {
         .clone()
 }
 
-/// S1（Spec 22）: 居合わせた発言の全文が、表示と同じ 8 字の前置で読めること。
+/// S1（Spec 22）: 居合わせた発言の全文が、**抜粋に表示された取っ手**で読めること。
 ///
-/// 発言者へ尋ねる（`ask` = 相手のターン消費 + 再話）のではなく、リングの
-/// content がそのまま返る — 原文性の検証なので抜粋（200 字）より長い本文で
-/// **全文**の到達を見る。
+/// 読み手のバックエンドはプロンプトの行頭 `[ID]` を拾ってそのまま渡す —
+/// 表示 → 解決の往復そのものを検証する（表示時解消の約束「表示された通りに
+/// 打てば一意に決まる」）。発言者へ尋ねる（`ask` = 相手のターン消費 + 再話）の
+/// ではなくリングの content がそのまま返る — 原文性の検証なので抜粋
+/// （200 字）より長い本文で**全文**の到達を見る。
 #[tokio::test]
 async fn a_full_overheard_message_can_be_read_by_its_displayed_id() {
     let story = "秘密の合言葉はブラボー。".repeat(40); // 480 字 — 抜粋では必ず切れる
@@ -1972,15 +1987,9 @@ async fn a_full_overheard_message_can_be_read_by_its_displayed_id() {
 
     let mut rx = orchestrator.subscribe();
     orchestrator.send_user_message(&a, "語って").await.unwrap();
-    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
-    let spoken = messages(&events)
-        .into_iter()
-        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
-        .expect("アルファの発話が記録されること")
-        .clone();
-    // 表示 ID と同じ 8 字の前置で引く（全長でしか引けない実装を弾く）。
-    *backend.id.lock().unwrap() = spoken.id.chars().take(8).collect();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
+    // ID はバックエンドが c のプロンプトに表示された取っ手から拾う。
     orchestrator.send_user_message(&c, "全文を読んで").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
@@ -2131,14 +2140,9 @@ async fn an_oversized_message_is_truncated_with_the_total_and_a_next_step() {
 
     let mut rx = orchestrator.subscribe();
     orchestrator.send_user_message(&a, "語って").await.unwrap();
-    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
-    let spoken = messages(&events)
-        .into_iter()
-        .find(|m| matches!(m.from, Endpoint::Agent { .. }))
-        .expect("アルファの発話")
-        .clone();
-    *backend.id.lock().unwrap() = spoken.id.clone();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
+    // ID はバックエンドが表示された取っ手から拾う（S1 と同じ経路）。
     orchestrator.send_user_message(&c, "全文を読んで").await.unwrap();
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 

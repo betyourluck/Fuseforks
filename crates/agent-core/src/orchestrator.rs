@@ -5062,16 +5062,36 @@ async fn compose_room_log(
         return None;
     }
 
-    let overheard: Vec<AgentMessage> = {
+    // 取っ手（表示 ID）は**切れた行だけ**に付ける（Spec 22 の D2 — 全文が
+    // 既に見えている行に取っ手は要らず、「ID がある = 続きがある」が行の形で
+    // 読める）。一意性は**ツールが解決に使う集合と同じもの**（可視述語を通した
+    // リング全体）で測る — 窓内だけで測ると、窓の外の可視発話と衝突した前置を
+    // 表示してしまい「表示された通りに打てば一意」が破れる。ロックを持って
+    // いる間に計算するのは、リング全 ID の複製を避けるため。
+    let (overheard, handles): (Vec<AgentMessage>, Vec<Option<String>>) = {
         let log = shared.log.read().await;
-        log.iter()
+        let overheard: Vec<AgentMessage> = log
+            .iter()
             .rev()
             // 述語は room_log.rs の 1 実装（Spec 22 — 抜粋に載る条件と
             // `room_log` ツールで読める条件は同じ問いの裏表）。
             .filter(|message| crate::room_log::is_visible_in_room_log(agent_id, message))
             .take(config.room_log_window)
             .cloned()
-            .collect()
+            .collect();
+        let universe: Vec<&str> = log
+            .iter()
+            .filter(|message| crate::room_log::is_visible_in_room_log(agent_id, message))
+            .map(|message| message.id.as_str())
+            .collect();
+        let handles = overheard
+            .iter()
+            .map(|message| {
+                (message.content.trim().chars().count() > config.room_log_excerpt_chars)
+                    .then(|| crate::room_log::display_id(&message.id, &universe))
+            })
+            .collect();
+        (overheard, handles)
     };
 
     if overheard.is_empty() {
@@ -5090,33 +5110,34 @@ async fn compose_room_log(
     let mut clipped = 0usize;
     let lines: Vec<String> = overheard
         .iter()
+        .zip(handles.iter())
         .rev()
-        .map(|message| {
+        .map(|(message, handle)| {
             let full_chars = message.content.trim().chars().count();
             let excerpt = truncate_chars(&message.content, config.room_log_excerpt_chars);
-            let tail = if full_chars > config.room_log_excerpt_chars {
-                clipped += 1;
-                format!("（全 {full_chars} 字）")
-            } else {
-                String::new()
+            let (prefix, tail) = match handle {
+                Some(id) => {
+                    clipped += 1;
+                    (format!("[{id}] "), format!("（全 {full_chars} 字）"))
+                }
+                None => (String::new(), String::new()),
             };
             format!(
-                "- {} → {}: {}{}",
+                "- {prefix}{} → {}: {excerpt}{tail}",
                 label(&message.from),
                 label(&message.to),
-                excerpt,
-                tail
             )
         })
         .collect();
 
-    // 次の手は「本人へ ask」しかない。広場ログは読み直す経路を持たないので、
-    // それを書かないと同じ抜粋を眺め続けることになる（#44）。
+    // 次の手は行頭の ID を `room_log` ツールへ渡すこと（Spec 22 — 旧文面
+    // 「本人へ ask」は撤回。上限超・リング溢れのときだけツール側の返答が
+    // ask へ誘導する）。書かないと同じ抜粋を眺め続けることになる（#44）。
     let notice = if clipped > 0 {
         format!(
             "うち {clipped} 件は途中で切れています（行末の「全 N 字」が元の長さ）。\
-             **全文が要るなら、その発言をした相手へ `ask` で尋ねてください** — \
-             ここで読み直す方法はありません。"
+             **全文が要るなら、行頭の [ ] 内の ID をそのまま `room_log` ツールに\
+             指定してください。**"
         )
     } else {
         String::new()
