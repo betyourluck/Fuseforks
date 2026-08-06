@@ -64,10 +64,17 @@ export function isSystemNotice(message: AgentMessage): boolean {
   return message.from.kind === "system" && message.to.kind === "user";
 }
 
-/** エンドポイントの同一性。 */
+/**
+ * エンドポイントの同一性。
+ *
+ * **中身を持つ種別は中身まで見る**（`agent` の id / `external` の client）。
+ * 種別だけで畳むと、別のクライアントからの依頼が同じ送り手として束ねられる。
+ */
 export function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
   if (a.kind !== b.kind) return false;
-  return a.kind !== "agent" || (b.kind === "agent" && a.id === b.id);
+  if (a.kind === "agent") return b.kind === "agent" && a.id === b.id;
+  if (a.kind === "external") return b.kind === "external" && a.client === b.client;
+  return true;
 }
 
 /**

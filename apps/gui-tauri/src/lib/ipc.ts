@@ -26,6 +26,7 @@ import type {
   ErrorPayload,
   ForkPoint,
   Language,
+  McpHostStatus,
   ModelTemplate,
   ModelTemplateId,
   Role,
@@ -135,6 +136,31 @@ export const listModelTemplates = () => call<ModelTemplate[]>("list_model_templa
 
 /** ワークスペースの実パスを取得する。 */
 export const workspacePath = () => call<string>("workspace_path");
+
+// ---- 外の LLM から依頼を受ける扉（Spec 25） ----------------------------------
+
+/**
+ * 扉の状態を取得する。
+ *
+ * **合鍵をそのまま返す。** API キー（`modelCredentialExists` が存在しか返さない）
+ * とは扱いが逆で、こちらは画面に出してクライアントの設定へ貼るための値。
+ */
+export const mcpHostStatus = () => call<McpHostStatus>("mcp_host_status");
+
+/** 扉の ON / OFF とポートを保存し、その場で反映する。ON にすると合鍵ができる。 */
+export const setMcpHost = (enabled: boolean, port: number) =>
+  call<McpHostStatus>("set_mcp_host", { enabled, port });
+
+/** 合鍵を作り直す（開いていれば新しい鍵で開き直す）。 */
+export const regenerateMcpHostToken = () =>
+  call<McpHostStatus>("regenerate_mcp_host_token");
+
+/** 外部からの依頼を受ける窓口。未設定なら `null`。 */
+export const getReception = () => call<AgentId | null>("get_reception");
+
+/** 窓口を差し替える。`null` で未設定へ戻す。 */
+export const setReception = (agentId: AgentId | null) =>
+  call<void>("set_reception", { agentId });
 
 /**
  * API キーを OS の資格情報ストアへ登録する。

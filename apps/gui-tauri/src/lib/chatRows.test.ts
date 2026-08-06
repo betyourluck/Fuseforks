@@ -151,3 +151,33 @@ describe("場からの告知の判定（吹き出しにしない行）", () => {
     ).toBe(false);
   });
 });
+
+describe("外部クライアントの発話（Spec 25）", () => {
+  const external = (client: string): Endpoint => ({ kind: "external", client });
+
+  it("外部からの依頼は場からの告知ではない（吹き出しのまま）", () => {
+    expect(isSystemNotice(message(external("Claude Code"), agent("a"), "外からの依頼"))).toBe(
+      false,
+    );
+  });
+
+  it("**別のクライアントは別の送り手として扱う** — 種別だけで畳まない", () => {
+    // **宛先を変えるのが要点。** 同じ宛先にすると `foldsInto` の宛先重複の
+    // 判定で先に落ち、送り手を比べていなくてもテストが通ってしまう
+    // （最初に書いた版がこれで、ミューテーションで気づいた）。
+    const rows = collapseRows([
+      message(external("Claude Code"), agent("a"), "同じ本文"),
+      message(external("Copilot"), agent("b"), "同じ本文"),
+    ]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("同じクライアントの同報は 1 行に畳む（user と同じ規律）", () => {
+    const rows = collapseRows([
+      message(external("Claude Code"), agent("a"), "同じ本文"),
+      message(external("Claude Code"), agent("b"), "同じ本文"),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].extraTargets).toEqual([agent("b")]);
+  });
+});

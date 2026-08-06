@@ -271,9 +271,9 @@ pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
 /// `model_credential_exists` が値を返さないのに対し、こちらは**画面に出して
 /// クライアントの設定へ貼ってもらう**ためにある値。存在を隠す意味が無い。
 #[tauri::command]
-pub async fn mcp_server_status(
+pub async fn mcp_host_status(
     state: State<'_, AppState>,
-) -> CoreResult<crate::mcp_server::McpServerStatus> {
+) -> CoreResult<crate::mcp_server::McpHostStatus> {
     let last_error = state
         .mcp_server_error
         .lock()
@@ -291,11 +291,11 @@ pub async fn mcp_server_status(
 /// **ポートを掴めなかったのはエラーにしない** — 設定は保存されており、
 /// 直すのはポート番号なので、状態の `lastError` として画面へ出す。
 #[tauri::command]
-pub async fn set_mcp_server(
+pub async fn set_mcp_host(
     state: State<'_, AppState>,
     enabled: bool,
     port: u16,
-) -> CoreResult<crate::mcp_server::McpServerStatus> {
+) -> CoreResult<crate::mcp_server::McpHostStatus> {
     let mut manager = state.mcp_server.lock().await;
     let last_error = manager
         .apply(enabled, port)
@@ -315,9 +315,9 @@ pub async fn set_mcp_server(
 /// # Errors
 /// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
 #[tauri::command]
-pub async fn regenerate_mcp_server_token(
+pub async fn regenerate_mcp_host_token(
     state: State<'_, AppState>,
-) -> CoreResult<crate::mcp_server::McpServerStatus> {
+) -> CoreResult<crate::mcp_server::McpHostStatus> {
     let mut manager = state.mcp_server.lock().await;
     let last_error = manager
         .regenerate_token()

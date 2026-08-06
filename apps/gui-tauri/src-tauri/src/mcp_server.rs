@@ -370,7 +370,7 @@ pub struct McpServerManager {
 /// 画面へ返す現在の状態（P3 の IPC がそのまま使う形）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerStatus {
+pub struct McpHostStatus {
     /// 設定上の ON / OFF。
     pub enabled: bool,
     /// 実際に待ち受けているか。**`enabled` と別に持つ** — ポートが埋まっていると
@@ -397,8 +397,8 @@ impl McpServerManager {
     }
 
     /// 現在の状態。
-    pub fn status(&self, last_error: Option<String>) -> McpServerStatus {
-        McpServerStatus {
+    pub fn status(&self, last_error: Option<String>) -> McpHostStatus {
+        McpHostStatus {
             enabled: self.store.config().enabled,
             listening: self.running.is_some(),
             port: self.store.config().port,

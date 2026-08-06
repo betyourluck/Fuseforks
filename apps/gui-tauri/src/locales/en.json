@@ -102,6 +102,31 @@
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on a tie cuts it."
       }
+    },
+    "groupIntegration": "Integration",
+    "menuMcpHost": "MCP server",
+    "mcpHost": {
+      "heading": "MCP server (accept requests from external LLMs)",
+      "lead": "Lets MCP clients such as Claude Code send a single request to this village. The reception servant receives it and returns a consolidated answer.",
+      "enable": "Enable the MCP server",
+      "enableHint": "Disabled by default. A token is generated when you enable it.",
+      "port": "Port",
+      "portHint": "Listens on 127.0.0.1 only (other machines cannot connect).",
+      "token": "Token",
+      "tokenHint": "Paste this into your client configuration. Any process that knows this value can send requests to the village.",
+      "tokenNotYet": "Not generated yet (enabling the server creates one)",
+      "regenerate": "Regenerate token",
+      "regenerateConfirm": "Regenerate the token? Clients configured with the current value will stop connecting.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "reception": "Reception",
+      "receptionHint": "The servant that first receives external requests. While unset, requests are answered with that reason.",
+      "receptionNone": "Not set",
+      "listening": "Listening on 127.0.0.1:{port}",
+      "notListening": "Not listening",
+      "clientConfig": "Example client configuration",
+      "concurrencyNote": "Only one request is processed at a time. A second request while busy is refused immediately rather than queued.",
+      "scopeNote": "These settings are stored on this machine (they do not travel with a copied village). Only the reception is stored in the village."
     }
   },
   "common": {
@@ -281,7 +306,8 @@
     "copied": "Copied",
     "copy": "Copy text",
     "empty": "No messages yet.",
-    "attachmentDeleted": "This image was deleted after its retention period"
+    "attachmentDeleted": "This image was deleted after its retention period",
+    "externalBadge": "external"
   },
   "editor": {
     "mcpPlaceholder": "JSON in the same mcpServers format as Claude Desktop. Leave it empty if this servant has no dedicated MCP. Broken JSON cannot be saved.",
@@ -573,7 +599,9 @@
     "LLM_BLOCKED": "The model blocked the response",
     "LLM_NO_STRUCTURED_OUTPUT": "No structured output was produced",
     "LLM_PARSE": "Failed to parse the model response",
-    "IPC_FAILED": "The IPC call failed"
+    "IPC_FAILED": "The IPC call failed",
+    "EXTERNAL_RECEPTION_UNSET": "Reception is not set",
+    "EXTERNAL_BUSY": "Another external request is in progress"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

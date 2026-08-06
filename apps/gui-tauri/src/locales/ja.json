@@ -102,6 +102,31 @@
         "checkbox": "削除する前に確認ダイアログを出す",
         "offWarning": "確認なしの間は、線を 1 回クリックしただけで絆が切れます。"
       }
+    },
+    "groupIntegration": "外部連携",
+    "menuMcpHost": "MCP サーバー",
+    "mcpHost": {
+      "heading": "MCP サーバー（外部の LLM から依頼を受ける）",
+      "lead": "Claude Code などの MCP クライアントから、この村へ依頼を 1 通送れるようにします。窓口のサーヴァントが受け取り、束ねた答えを返します。",
+      "enable": "MCP サーバーを有効にする",
+      "enableHint": "既定は無効です。有効にした時点でトークンを生成します。",
+      "port": "ポート",
+      "portHint": "待ち受けは 127.0.0.1 のみです（他の端末からは接続できません）。",
+      "token": "トークン",
+      "tokenHint": "クライアントの設定へ貼り付けてください。この値を知っているプロセスは村へ依頼を送れます。",
+      "tokenNotYet": "まだ生成されていません（有効にすると作られます）",
+      "regenerate": "トークンを作り直す",
+      "regenerateConfirm": "トークンを作り直しますか？ 現在の値を設定しているクライアントは繋がらなくなります。",
+      "copy": "コピー",
+      "copied": "コピーしました",
+      "reception": "窓口",
+      "receptionHint": "外部からの依頼を最初に受け取るサーヴァントです。未設定のときは、依頼にその理由を返します。",
+      "receptionNone": "未設定",
+      "listening": "待ち受け中: 127.0.0.1:{port}",
+      "notListening": "待ち受けていません",
+      "clientConfig": "クライアント側の設定例",
+      "concurrencyNote": "同時に処理できる依頼は 1 件です。処理中の 2 件目は待たずに断られます。",
+      "scopeNote": "この設定は端末に保存されます（村を配っても一緒には付いていきません）。窓口だけは村に保存されます。"
     }
   },
   "common": {
@@ -281,7 +306,8 @@
     "copied": "コピーしました",
     "copy": "本文をコピー",
     "empty": "まだ発話がありません。",
-    "attachmentDeleted": "画像は保持期間を過ぎて削除されました"
+    "attachmentDeleted": "画像は保持期間を過ぎて削除されました",
+    "externalBadge": "外部"
   },
   "editor": {
     "mcpPlaceholder": "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。",
@@ -573,7 +599,9 @@
     "LLM_BLOCKED": "モデルが応答を拒否しました",
     "LLM_NO_STRUCTURED_OUTPUT": "構造化出力が得られませんでした",
     "LLM_PARSE": "モデル応答の解析に失敗しました",
-    "IPC_FAILED": "IPC 呼び出しに失敗しました"
+    "IPC_FAILED": "IPC 呼び出しに失敗しました",
+    "EXTERNAL_RECEPTION_UNSET": "窓口が未設定です",
+    "EXTERNAL_BUSY": "別の外部依頼を処理中です"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",

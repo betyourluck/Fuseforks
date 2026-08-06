@@ -102,9 +102,9 @@ pub fn run() {
             commands::list_roles,
             commands::workspace_path,
             // 外の LLM から依頼を受ける扉（Spec 25）
-            commands::mcp_server_status,
-            commands::set_mcp_server,
-            commands::regenerate_mcp_server_token,
+            commands::mcp_host_status,
+            commands::set_mcp_host,
+            commands::regenerate_mcp_host_token,
             commands::get_reception,
             commands::set_reception,
             // 資格情報（値を返す経路は存在しない）

@@ -47,11 +47,45 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
  */
 export type CredentialSource = "unset" | "not_required" | "keyring";
 
-/** 発話の送り手・受け手。`kind` による判別共用体。 */
+/**
+ * 発話の送り手・受け手。`kind` による判別共用体。
+ *
+ * `external` は外部の MCP クライアント（Spec 25）。**`user` に畳まない** —
+ * 封筒 `【送り手: X】` はサーヴァントが読む入力の一部で、相手が人間かどうかは
+ * 答え方を変える情報になる。`client` は `clientInfo.name` の自己申告だが、
+ * コア側の `normalize_client_name` を通った値しかここへ来ない。
+ */
 export type Endpoint =
   | { kind: "user" }
   | { kind: "system" }
-  | { kind: "agent"; id: AgentId };
+  | { kind: "agent"; id: AgentId }
+  | { kind: "external"; client: string };
+
+/**
+ * 村が**自分で立てている** MCP サーバーの状態（Spec 25）。
+ *
+ * **`McpServerStatus` とは別物。** あちらは村が**接続しに行く**先のサーバーの
+ * 状態（Spec 02）で、向きが逆。英語ではどちらも "MCP server status" になるので、
+ * こちらを host（立てている側）と名付けて区別する。
+ */
+export interface McpHostStatus {
+  /** 設定上の ON / OFF。 */
+  enabled: boolean;
+  /**
+   * 実際に待ち受けているか。
+   *
+   * **`enabled` と別に持つ** — ポートが埋まっていると「ON なのに開いていない」が
+   * 起こるので、1 つの真偽値に畳まない。
+   */
+  listening: boolean;
+  port: number;
+  /** 合鍵。未生成なら `null`。 */
+  token: string | null;
+  /** 設定ファイルが読めない理由（`null` 以外の間は保存できない）。 */
+  blocked: string | null;
+  /** 直近の起動の失敗理由（ポート衝突など）。 */
+  lastError: string | null;
+}
 
 /** GUI 境界を越えるエラー表現。`code` は安定した機械可読値。 */
 export interface ErrorPayload {

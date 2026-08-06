@@ -80,7 +80,22 @@ function label(endpoint: Endpoint): string {
       return "Concordia";
     case "agent":
       return state.agents.find((a) => a.id === endpoint.id)?.name ?? endpoint.id;
+    case "external":
+      // 外部の MCP クライアント（Spec 25）。**名乗りをそのまま出す** —
+      // サーヴァントが読む封筒には「（外部クライアント）」が付くが、画面は
+      // 別の欄（バッジ）で種別を示すので、名前を二重に飾らない。
+      return endpoint.client;
   }
+}
+
+/**
+ * 外部の LLM からの依頼か（Spec 25）。
+ *
+ * **利用者の発話と見分けが付く必要がある** — 会話ログを後から読む人にとって、
+ * 「自分が頼んだこと」と「外の道具が頼んだこと」は別の出来事。
+ */
+function isExternal(message: AgentMessage): boolean {
+  return message.from.kind === "external";
 }
 
 /** アバターに出す 1 文字。 */
@@ -104,6 +119,10 @@ function iconFor(endpoint: Endpoint): string | null {
       return state.userIcon;
     // Concordia（場そのものの声）にはアイコンを持たせない。
     case "system":
+      return null;
+    // 外部クライアントもアイコンを持たない。**利用者のアイコンを流用しない** —
+    // 流用すると、外の道具が頼んだことが自分の依頼に見える。
+    case "external":
       return null;
   }
 }
@@ -663,6 +682,15 @@ async function newChat(): Promise<void> {
             :title="toTitle(entry.row)"
           >
             <span class="font-medium text-ink">{{ label(entry.row.message.from) }}</span>
+            <!-- 外の LLM からの依頼だと一目で分かるようにする（Spec 25 D6）。
+                 **名前だけでは足りない** — 呼び名は利用者が自由に付けられるので、
+                 送り手名だけでは「そういう呼び名の人間」と読めてしまう。 -->
+            <span
+              v-if="isExternal(entry.row.message)"
+              class="rounded-sm bg-surface-2 px-1 text-[9px] text-ink-dim ring-1 ring-line"
+            >
+              {{ $t("chat.externalBadge") }}
+            </span>
             <span>→ {{ toLabel(entry.row) }}</span>
           </p>
 

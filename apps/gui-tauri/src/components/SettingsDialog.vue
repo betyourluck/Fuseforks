@@ -27,7 +27,7 @@ import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
-import type { Language } from "../types";
+import type { AgentId, Language, McpHostStatus } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -41,14 +41,14 @@ const { state } = orchestrator;
  * 指す先は Spec 19 で「全般 → 言語」から「全般 → ユーザー」へ動いた。
  * **規則（先頭）は不変で、指す先だけが動く。**
  */
-type Page = "user" | "language" | "tokenBudget" | "theme" | "messages";
+type Page = "user" | "language" | "tokenBudget" | "mcpHost" | "theme" | "messages";
 const page = ref<Page>("user");
 
 /**
  * 村（`world.json`）に保存されるページ。読み込みに IPC が要る側でもあるので、
  * 「読み込み中…」の覆いと村の注記はこの 1 つの定義から引く。
  */
-const VILLAGE_PAGES: Page[] = ["user", "language", "tokenBudget"];
+const VILLAGE_PAGES: Page[] = ["user", "language", "tokenBudget", "mcpHost"];
 const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
@@ -148,6 +148,103 @@ async function removeUserIcon(): Promise<void> {
   await orchestrator.clearUserIcon();
 }
 
+// ---- MCP サーバー（扉。Spec 25） ----------------------------------------------
+
+/**
+ * 扉の状態。`null` = まだ読んでいない。
+ *
+ * **保存済みの値と入力欄を分けない** — このページの操作（ON/OFF・ポート）は
+ * 押した時点で反映する形にしてあり、「保存していない状態」を持たない。
+ * トークン天井と規律が違うのは、扉は**開いたか開かないかが結果**で、
+ * 押すまで分からないものを溜めても意味が無いため。
+ */
+const mcpHost = ref<McpHostStatus | null>(null);
+/** ポートだけは入力中の値を持つ（打っている途中で bind し直さない）。 */
+const portInput = ref(39641);
+const tokenCopied = ref(false);
+
+/** 窓口（`world.json`）。`null` = 未設定。 */
+const receptionInput = ref<AgentId | "">("");
+
+const portValid = computed(
+  () => Number.isInteger(portInput.value) && portInput.value >= 1024 && portInput.value <= 65535,
+);
+
+/** 扉の設定を適用する（ON にした時点で合鍵ができる）。 */
+async function applyMcpHost(enabled: boolean): Promise<void> {
+  if (busy.value || !portValid.value) return;
+  busy.value = true;
+  error.value = "";
+  savedNote.value = "";
+  tokenCopied.value = false;
+  try {
+    mcpHost.value = await ipc.setMcpHost(enabled, portInput.value);
+  } catch (e) {
+    error.value = formatError(ipc.toErrorPayload(e));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function regenerateToken(): Promise<void> {
+  if (busy.value) return;
+  const ok = await askConfirm({
+    title: t("settings.mcpHost.regenerate"),
+    message: t("settings.mcpHost.regenerateConfirm"),
+  });
+  if (!ok) return;
+  busy.value = true;
+  error.value = "";
+  tokenCopied.value = false;
+  try {
+    mcpHost.value = await ipc.regenerateMcpHostToken();
+  } catch (e) {
+    error.value = formatError(ipc.toErrorPayload(e));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function copyToken(): Promise<void> {
+  const token = mcpHost.value?.token;
+  if (!token) return;
+  await navigator.clipboard.writeText(token);
+  tokenCopied.value = true;
+}
+
+/** 窓口を保存する。**選んだ瞬間に反映する**（保存ボタンを置かない）。 */
+async function saveReception(): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await ipc.setReception(receptionInput.value === "" ? null : receptionInput.value);
+  } catch (e) {
+    error.value = formatError(ipc.toErrorPayload(e));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** クライアントへ貼る設定の例。**合鍵をそのまま埋める**（貼るための値なので）。 */
+const clientConfigSample = computed(() => {
+  const token = mcpHost.value?.token ?? "<token>";
+  const port = mcpHost.value?.port ?? portInput.value;
+  return JSON.stringify(
+    {
+      mcpServers: {
+        concordia: {
+          type: "http",
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+});
+
 // ---- 読み書き ------------------------------------------------------------------
 
 async function load(): Promise<void> {
@@ -168,6 +265,12 @@ async function load(): Promise<void> {
     const userName = await ipc.getUserName();
     savedUserName.value = userName;
     userNameInput.value = userName ?? "";
+
+    // 扉（Spec 25）。**設定ファイルの置き場が違う**（村の外）が、読む口は同じ。
+    const host = await ipc.mcpHostStatus();
+    mcpHost.value = host;
+    portInput.value = host.port;
+    receptionInput.value = (await ipc.getReception()) ?? "";
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
@@ -296,6 +399,17 @@ function selectPage(next: Page): void {
             @click="selectPage('tokenBudget')"
           >
             {{ $t("settings.menuTokenLimit") }}
+          </button>
+
+          <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">
+            {{ $t("settings.groupIntegration") }}
+          </p>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'mcpHost' }"
+            @click="selectPage('mcpHost')"
+          >
+            {{ $t("settings.menuMcpHost") }}
           </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
@@ -506,6 +620,123 @@ function selectPage(next: Page): void {
               </div>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+          </template>
+
+          <!--
+            外部連携 > MCP サーバー（Spec 25）。**押した時点で反映する** —
+            扉は「開いたか開かないか」が結果なので、保存を溜めると
+            ポートが埋まっていたことに気づくのが遅れる。
+          -->
+          <template v-else-if="page === 'mcpHost'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.mcpHost.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.mcpHost.lead") }}</p>
+
+            <p
+              v-if="error"
+              class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail"
+            >
+              {{ error }}
+            </p>
+            <!-- 設定ファイルが読めないときは、保存できない理由をそのまま出す。 -->
+            <p
+              v-if="mcpHost?.blocked"
+              class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail"
+            >
+              {{ mcpHost.blocked }}
+            </p>
+
+            <div class="space-y-3 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  :checked="mcpHost?.enabled ?? false"
+                  :disabled="busy || !portValid || !!mcpHost?.blocked"
+                  @change="applyMcpHost(($event.target as HTMLInputElement).checked)"
+                />
+                <span>{{ $t("settings.mcpHost.enable") }}</span>
+              </label>
+              <p class="pl-6 text-ink-dim">{{ $t("settings.mcpHost.enableHint") }}</p>
+
+              <!-- **ON と「待ち受け中」を別に出す。** ポートが埋まっていると
+                   設定は ON のまま開いていない状態になる。 -->
+              <p v-if="mcpHost?.listening" class="pl-6 text-run">
+                {{ $t("settings.mcpHost.listening", { port: mcpHost.port }) }}
+              </p>
+              <p v-else-if="mcpHost?.enabled" class="pl-6 text-fail">
+                {{ $t("settings.mcpHost.notListening") }}
+              </p>
+              <p v-if="mcpHost?.lastError" class="selectable pl-6 text-fail">
+                {{ mcpHost.lastError }}
+              </p>
+
+              <label class="flex items-center gap-2">
+                <span class="w-20 text-ink-dim">{{ $t("settings.mcpHost.port") }}</span>
+                <input
+                  v-model.number="portInput"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  step="1"
+                  class="w-28 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  @change="mcpHost?.enabled && applyMcpHost(true)"
+                />
+              </label>
+              <p class="pl-[5.5rem] text-ink-dim">{{ $t("settings.mcpHost.portHint") }}</p>
+
+              <div class="space-y-1">
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.token") }}</p>
+                <div v-if="mcpHost?.token" class="flex items-center gap-2">
+                  <code
+                    class="selectable min-w-0 flex-1 truncate rounded border border-line bg-surface-1 px-2 py-1"
+                  >
+                    {{ mcpHost.token }}
+                  </code>
+                  <button class="rounded border border-line px-2 py-1" @click="copyToken">
+                    {{ tokenCopied ? $t("settings.mcpHost.copied") : $t("settings.mcpHost.copy") }}
+                  </button>
+                  <button
+                    class="rounded border border-line px-2 py-1"
+                    :disabled="busy"
+                    @click="regenerateToken"
+                  >
+                    {{ $t("settings.mcpHost.regenerate") }}
+                  </button>
+                </div>
+                <p v-else class="text-ink-dim">{{ $t("settings.mcpHost.tokenNotYet") }}</p>
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.tokenHint") }}</p>
+              </div>
+
+              <div class="space-y-1">
+                <label class="flex items-center gap-2">
+                  <span class="w-20 text-ink-dim">{{ $t("settings.mcpHost.reception") }}</span>
+                  <select
+                    v-model="receptionInput"
+                    class="rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                    :disabled="busy"
+                    @change="saveReception"
+                  >
+                    <option value="">{{ $t("settings.mcpHost.receptionNone") }}</option>
+                    <option v-for="agent in state.agents" :key="agent.id" :value="agent.id">
+                      {{ agent.name }}
+                    </option>
+                  </select>
+                </label>
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.receptionHint") }}</p>
+              </div>
+
+              <div v-if="mcpHost?.token" class="space-y-1">
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.clientConfig") }}</p>
+                <pre
+                  class="selectable overflow-x-auto rounded border border-line bg-surface-1 p-2 text-[10px]"
+                  >{{ clientConfigSample }}</pre
+                >
+              </div>
+
+              <p class="text-ink-dim">{{ $t("settings.mcpHost.concurrencyNote") }}</p>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.mcpHost.scopeNote") }}</p>
           </template>
 
           <!--
