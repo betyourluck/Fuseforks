@@ -4909,13 +4909,9 @@ async fn compose_room_log(
         let log = shared.log.read().await;
         log.iter()
             .rev()
-            .filter(|message| {
-                // エージェント発の発話だけ。ユーザー発は聴衆が選ばれている。
-                let from_agent = matches!(message.from, Endpoint::Agent { .. });
-                let is_mine = message.from == (Endpoint::Agent { id: agent_id.clone() })
-                    || message.to == (Endpoint::Agent { id: agent_id.clone() });
-                from_agent && !is_mine
-            })
+            // 述語は room_log.rs の 1 実装（Spec 22 — 抜粋に載る条件と
+            // `room_log` ツールで読める条件は同じ問いの裏表）。
+            .filter(|message| crate::room_log::is_visible_in_room_log(agent_id, message))
             .take(config.room_log_window)
             .cloned()
             .collect()

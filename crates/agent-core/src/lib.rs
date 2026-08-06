@@ -74,6 +74,7 @@ pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod plan;
+pub mod room_log;
 pub mod schedule;
 pub mod secret;
 pub mod session_store;
