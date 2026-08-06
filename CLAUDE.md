@@ -190,11 +190,22 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
 | `c7695e6` / `c291db6` | **Spec 18 起票**（+ Goal 差し替え） |
 
 **タグは利用者が打つ**（`v*.*` の push だけで 3 OS のリリースビルドが走る）。
-**現在 `v0.0.4` = `3703e63`（Spec 23 Done。2026-08-06）** — 画面は `Version: 0.0.4`。
-既往は `v0.0.1` / `v0.0.2`（`96e0478`）/ `v0.0.3`（Spec 20 Done）。
-**v0.0.4 は依存が 9 crate 増えてから最初のリリースビルド**（`image` /
-`image-webp` / `zune-jpeg` ほか。Spec 23 P3）。**純 Rust なので落ちないはず、は
-実測ではない** — 3 OS が緑になるまでは見立てのまま。
+タグの履歴（**「現在」を 1 つ書くと次のタグで腐るので、列挙が正** — #67 の処方）:
+
+- `v0.0.1` / `v0.0.2`（`96e0478`）/ `v0.0.3`（Spec 20 Done）
+- `v0.0.4` = `3703e63`（Spec 23 Done）— **依存 +9 crate（`image` ほか・純 Rust）後の
+  最初のリリースビルドで、3 OS 緑を実測済み**
+- `v0.0.5` = `2a0e47a`（Spec 24 Done + Spec 25 rev3 + build.yml 修正。2026-08-07）—
+  **打った日に GitHub 側の障害**（イベント配送の遅延 + Releases API の一時 403
+  「Resource not accessible by integration」）で 2 度失敗し、障害回復後の
+  打ち直しで 3 OS 緑。**「タグの消して同名再作成」は発火しないことがある** —
+  確実に再発火させるには新しいタグオブジェクト（annotate し直し）で push する。
+  この際 v0.0.2〜0.0.4 の release と artifact は整理で削除済み（installer は
+  タグからリビルドで再現可能）
+
+**リリースの installer は Release Assets が正で、artifact には残さない**
+（`2a0e47a` で `Upload artifacts` step を撤去。Release Assets と同じものの
+7 日限りの複製で、ストレージ枠を食うだけだった）。
 
 | 残っている実機確認 | 何を見るか |
 |---|---|
