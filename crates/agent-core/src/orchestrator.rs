@@ -2017,14 +2017,27 @@ impl Orchestrator {
             if let Some(state) = self.shared.agent_mcp.write().await.remove(id) {
                 state.manager.shutdown().await;
             }
-            let mut world = self.shared.world.write().await;
-            if let Ok(record) = world.agent_mut(id) {
-                // 失敗した瞬間までを稼働時間に含める。畳まないと `started_at` が
-                // 残り、停止しているのにカードの稼働時間が増え続ける。
-                if let Some(started) = record.started_at.take() {
-                    record.accumulated_uptime_secs += started.elapsed().as_secs();
+            let had_error = {
+                let mut world = self.shared.world.write().await;
+                match world.agent_mut(id) {
+                    Ok(record) => {
+                        // 失敗した瞬間までを稼働時間に含める。畳まないと
+                        // `started_at` が残り、停止しているのにカードの
+                        // 稼働時間が増え続ける。
+                        if let Some(started) = record.started_at.take() {
+                            record.accumulated_uptime_secs += started.elapsed().as_secs();
+                        }
+                        record.last_error.is_some()
+                    }
+                    Err(_) => false,
                 }
-            }
+            };
+
+            // 回収したことを 1 行残す。**これが無いと、失敗からの復帰は
+            // 「再起動の行が無いのに次のターンが始まっている」という
+            // 不在からの推測でしか読めない** — 沈黙を根拠に使う形になる
+            // （failures.md #77 の一般化 1）。
+            note!("agent reaped: agent={id} had_error={had_error}");
         }
 
         {
