@@ -23,6 +23,7 @@ import { Controls } from "@vue-flow/controls";
 
 import { compactNumber } from "../lib/format";
 import { tieAddition } from "../lib/kizunaDrop";
+import { drawDirection } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
 
 import { avatarHue, avatarInitial } from "../lib/avatar";
@@ -85,6 +86,13 @@ const edges = computed<Edge[]>(() => {
   const running = (id: AgentId) =>
     state.agents.some((a) => a.id === id && a.status === "running");
 
+  /**
+   * 左ペインでの並び順。**引けなければ末尾へ**（消えた個体の辺が残っていても
+   * 描画順が揺れないように、`NaN` を作らない）。
+   */
+  const orderOf = (id: AgentId) =>
+    state.agents.find((a) => a.id === id)?.order ?? Number.MAX_SAFE_INTEGER;
+
   const seen = new Set<string>();
   const result: Edge[] = [];
 
@@ -97,10 +105,18 @@ const edges = computed<Edge[]>(() => {
     if (seen.has(id)) continue;
     seen.add(id);
 
+    // 描画方向は左ペインの並びに合わせる（規則と根拠は `lib/kizunaEdges.ts`）。
+    const [source, target] = drawDirection(
+      edge.source,
+      edge.target,
+      bidirectional,
+      orderOf,
+    );
+
     result.push({
       id,
-      source: edge.source,
-      target: edge.target,
+      source,
+      target,
       data: { bidirectional },
       animated: running(edge.source) || (bidirectional && running(edge.target)),
       markerEnd: "arrowclosed",
