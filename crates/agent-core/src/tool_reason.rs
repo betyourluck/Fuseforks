@@ -67,6 +67,23 @@ pub enum ReasonState {
     Excluded,
 }
 
+/// 計器へ出す状態の名前。
+///
+/// **`reason_chars` だけでは 3 つの状態が 0 に畳まれる**（書かなかった /
+/// 外部なので尋ねていない / 対象外）。**畳んだ時点で後から区別できない** —
+/// 実機の初日に、尋ねていない 2 件を「短い理由」として平均に混ぜる誤りを踏んだ。
+///
+/// **本文は出さない**（`failures.md` #71）。ここが出すのは**閉じた列挙の名前**で、
+/// モデルが書いた文字列ではない。
+pub fn kind_label(state: &ReasonState) -> &'static str {
+    match state {
+        ReasonState::Written { .. } => "written",
+        ReasonState::Omitted => "omitted",
+        ReasonState::Unsupported => "unsupported",
+        ReasonState::Excluded => "excluded",
+    }
+}
+
 /// 引数から理由を読む。
 ///
 /// 返すのは（状態, **トリム後・切り詰め前**の文字数）。

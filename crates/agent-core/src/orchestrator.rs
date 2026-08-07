@@ -4322,6 +4322,8 @@ async fn handle_message(
                 }
             };
             let (reason, reason_chars) = reason;
+            // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
+            let reason_kind = crate::tool_reason::kind_label(&reason);
             shared.emit(CoreEvent::ToolInvoked {
                 agent_id: agent_id.clone(),
                 tool: call.name.clone(),
@@ -4346,8 +4348,13 @@ async fn handle_message(
             // モデルの出力を記録する計器は秘密の転送経路になる（failures.md #71）。
             // 切り詰め後を出すと「モデルが上限を超えて書くか」が全部 60 に
             // 貼り付いて測れなくなる。
+            //
+            // **`reason=` を併記するのは、字数だけでは 3 つの状態が 0 に畳まれるため**
+            // （書かなかった / 外部なので尋ねていない / 対象外）。**畳むと後から
+            // 区別できない** — 実機の初日に、尋ねていない 2 件を「短い理由」として
+            // 平均へ混ぜる誤りを踏んだ（Spec 27 の P4 実装記録）。
             note!(
-                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason_chars={reason_chars}",
+                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}",
                 iteration + 1,
                 call.name,
                 call.args.to_string().chars().count(),
