@@ -158,6 +158,10 @@ ScheduledTask:
   createdAtMs: u64      # 作成時刻。interval の起点（rev2 指摘 2）
   lastConsumedDueMs: u64 | null   # 直近に「消化した」予定時刻（発火時刻ではない）
   enabled: bool         # 既定 true。偽なら発火も消化もしない（rev2 で採用）
+  # 続報（2026-08-08・Spec 28 P0）: probe / sessionMode / summarizeAfter の
+  # 3 欄が加算された（前判定コマンド・新規チャット・完了後の自動要約）。
+  # **Recurrence と decide は 1 ミリも変わっていない** — 挟まるのは
+  # Tick::Fire の後段・配送の直前。現況は specs/28_schedule-probe.md が正。
 
 Recurrence:  # tag つき判別共用体
   interval: { everyMinutes: u32 }              # n 分ごと（1 以上）
