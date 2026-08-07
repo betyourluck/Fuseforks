@@ -2,7 +2,7 @@
 
 **ID**: 27
 **Date**: 2026-08-07
-**Status**: **rev3**（査読 7 点を反映し、未決 3 件を決着）。未承認。
+**Status**: **rev3 承認 → P0 完了**（2026-08-07）。残は P1〜P4。
 **rev2 の査読で D2 の判定基準が割れていることが出た。基準を純化した結果、
 `remember` の扱いは表を変えずに根拠だけが入れ替わった** — 「引数が自然言語か」
 ではなく「**引数が既に別の形で画面へ出ているか**」。
@@ -340,12 +340,18 @@ enum ReasonState {
     意図的に載る**（D8）。**これは実装ではなく凍結**
   - **説明文で読み手を明かさない**（D9）。**傾向であって保証ではないと書く**
 
-  あわせて `event.rs:134` の doc（「エージェントが何をしたかは会話ログに
-  現れない」）へ、**この Spec で埋めた範囲**を追記する。
+  **完了（2026-08-07）。** `data_contract.yaml` の `command_tool_contract` と
+  `rag_tool_contract` の間へ挿入。**総数を書かず列挙**で通した。
+
+  **`event.rs:134` の doc への追記は P1 へ送った。** rev3 は P0 に置いていたが、
+  **`ToolInvoked` に欄が生える前に「この Spec で埋めた範囲」を書くと、
+  存在しない欄を説明する doc になる**。doc は型の隣にあり、**型と一緒に動くのが
+  正しい単位**。P0 は契約（実装より先に凍結するもの）、doc は実装の一部。
 
 - **P1 コア** — `AgentTool::wants_reason`（既定 true / `McpTool` が false）+
   `specs_for` での注入 + トリムと切り詰め（純関数）+ `ToolInvoked` へ
-  `reason: ReasonState` + `tool:` 行へ `reason_chars`。単体で留めるのは:
+  `reason: ReasonState` + `tool:` 行へ `reason_chars` +
+  **`event.rs:134` の doc の追記**（P0 から送られたぶん）。単体で留めるのは:
 
   - **注入されるツールの名前を列挙して突き合わせる**（**本数で数えない** —
     `defaultEnabledTools.test.ts` が Rust と Vue の 2 つの表を名前で
