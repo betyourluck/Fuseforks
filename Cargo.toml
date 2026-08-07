@@ -133,6 +133,12 @@ toml_edit = "0.25"
 # 環境では失敗として返し、黙って完全削除へフォールバックしない。
 trash = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
+# 予定の前判定（Spec 28）の承認鍵。鍵は
+# SHA-256(canonical_json({args, command, cwd, villageId})) で契約に凍結してある。
+# **既に間接依存としてツリーに居るため、直接化でコンパイル対象は増えない**
+# （tokio-util を直接化したときと同じ判断）。自前で書かない理由も同じで、
+# このクレートは unsafe_code = "forbid" 以前に、暗号ハッシュを自作する場所ではない。
+sha2 = "0.10"
 
 # リリースビルドは GUI クレート側の要求（サイズ最適化）に合わせてワークスペース単位で固定する。
 [profile.release]

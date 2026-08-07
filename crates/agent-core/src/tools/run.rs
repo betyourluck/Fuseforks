@@ -24,11 +24,9 @@
 //! 環境変数経路だけを閉じ、`~/.aws/credentials` はファイル経路で読める。
 //! **deny も網羅できない** — `rm` を弾いても `python -c` が残る。
 
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
 
 use async_trait::async_trait;
-use command_group::AsyncCommandGroup;
 use serde_json::Value;
 
 use crate::command::{CommandPolicy, Decision};
@@ -36,6 +34,7 @@ use crate::config_store::ConfigStore;
 use crate::error::CoreResult;
 use crate::llm::ToolSpec;
 use crate::model::AgentId;
+use crate::process::{Ran, display_path, resolve_program};
 use crate::tool::{AgentTool, ToolContext};
 use crate::tools::fs::MAX_OUTPUT_CHARS;
 
@@ -48,21 +47,6 @@ const STDERR_CHARS: usize = 4_000;
 
 /// stdout に確保する文字数。`STDERR_CHARS + STDOUT_CHARS == MAX_OUTPUT_CHARS`。
 const STDOUT_CHARS: usize = MAX_OUTPUT_CHARS - STDERR_CHARS;
-
-/// 子プロセスへ渡す環境変数の名前。
-///
-/// `env_clear` してからこの名前だけを親からコピーする。**これは安全対策ではない** —
-/// `PATH` を渡す以上、子プロセスは端末上の任意の実行ファイルへ届く。可用性のための
-/// 選択で、`echo $ANTHROPIC_API_KEY` のような最も稚拙な経路を 1 つ閉じるだけ。
-const PASSED_ENV: [&str; 7] = [
-    "PATH",
-    "SYSTEMROOT",
-    "TEMP",
-    "TMP",
-    "HOME",
-    "USERPROFILE",
-    "LANG",
-];
 
 /// 許可されたコマンドを実行するツール。
 ///
@@ -316,79 +300,43 @@ pub(crate) async fn run_program(
     timeout_secs: u64,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> CoreResult<String> {
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(argv)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    // **親の環境を丸ごと渡さない。** 名前を指定した分だけコピーする。
-    command.env_clear();
-    for key in PASSED_ENV {
-        if let Ok(value) = std::env::var(key) {
-            command.env(key, value);
-        }
-    }
-
-    // **木ごと起動する。** 直接 spawn すると孫（pytest が起動した子）が
-    // kill から漏れる。
-    let child = match command.group_spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            return Ok(format!("`{label}` を起動できませんでした: {err}"));
-        }
-    };
-
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let waited = match cancel {
-        Some(token) => {
-            tokio::select! {
-                result = tokio::time::timeout(timeout, child.wait_with_output()) => Waited::Finished(result),
-                () = token.cancelled() => Waited::Cancelled,
+    // 起動と待ちは crate::process が持つ（Spec 28 で予定の前判定と共有した）。
+    // **ここに残っているのはモデルへ返す本文の組み立てだけ。**
+    let (code, stdout, stderr) =
+        match crate::process::spawn_and_wait(program, argv, cwd, timeout_secs, cancel).await {
+            Ran::Finished {
+                code,
+                stdout,
+                stderr,
+            } => (
+                code.map_or_else(|| "シグナルで終了".to_owned(), |c| c.to_string()),
+                stdout,
+                stderr,
+            ),
+            Ran::SpawnFailed(err) => {
+                return Ok(format!("`{label}` を起動できませんでした: {err}"));
             }
-        }
-        None => Waited::Finished(tokio::time::timeout(timeout, child.wait_with_output()).await),
-    };
-
-    let output = match waited {
-        Waited::Finished(Ok(Ok(output))) => output,
-        Waited::Finished(Ok(Err(err))) => {
-            return Ok(format!("`{label}` の実行に失敗しました: {err}"));
-        }
-        Waited::Finished(Err(_elapsed)) => {
-            // タイムアウト。木ごと落とす。
-            return Ok(format!(
-                "`{label}` は {timeout_secs} 秒で終わらなかったため中断しました\
-                 （プロセスは停止済み）。\n\
-                 時間のかかる処理なら、利用者に `run.json` の `timeoutSecs` を\
-                 延ばしてもらってください。"
-            ));
-        }
-        Waited::Cancelled => {
-            return Ok(format!("`{label}` は利用者の打ち切りにより停止しました。"));
-        }
-    };
-
-    let code = output
-        .status
-        .code()
-        .map_or_else(|| "シグナルで終了".to_owned(), |c| c.to_string());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+            Ran::WaitFailed(err) => {
+                return Ok(format!("`{label}` の実行に失敗しました: {err}"));
+            }
+            Ran::TimedOut => {
+                return Ok(format!(
+                    "`{label}` は {timeout_secs} 秒で終わらなかったため中断しました\
+                     （プロセスは停止済み）。\n\
+                     時間のかかる処理なら、利用者に `run.json` の `timeoutSecs` を\
+                     延ばしてもらってください。"
+                ));
+            }
+            Ran::Cancelled => {
+                return Ok(format!("`{label}` は利用者の打ち切りにより停止しました。"));
+            }
+        };
 
     // **どのバイナリが走ったかを毎回見せる**（PATH で変わるため）。
     let mut body = format!("実行: {}\n終了コード: {code}\n", display_path(program));
     body.push_str(&section("stdout", &stdout, STDOUT_CHARS));
     body.push_str(&section("stderr", &stderr, STDERR_CHARS));
     Ok(body)
-}
-
-/// 待ちの結果。`tokio::select!` の腕を型で分ける（`Result` の入れ子を読ませない）。
-enum Waited {
-    Finished(Result<std::io::Result<std::process::Output>, tokio::time::error::Elapsed>),
-    Cancelled,
 }
 
 /// 出力を 1 節に整える。**打ち切りは母数と「続きが取れない」ことまで書く**
@@ -410,53 +358,10 @@ fn section(label: &str, text: &str, limit: usize) -> String {
     )
 }
 
-/// 表示用にパスを整える。**Windows の冗長プレフィックスを剥がす。**
-///
-/// `canonicalize()` は Windows で `\\?\C:\...` を返す。これがそのまま結果本文へ
-/// 入ると、**モデルが読むテキストに OS の内部表現が漏れる**（実機で観測、
-/// 2026-08-04 — `resolved=\\?\C:\Windows\System32\curl.exe`）。
-/// Spec 09 Notes 1 が「観測されたら `dunce` を入れる」と書いた条件だが、
-/// **crate を足さずに済む** — 剥がすのは前置 4 文字だけ。ただし UNC 形
-/// （`\\?\UNC\...`）は**触らない**（剥がすと別のホストを指す）。
-pub(crate) fn display_path(path: &Path) -> String {
-    let text = path.display().to_string();
-    match text.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with(r"UNC\") => rest.to_owned(),
-        _ => text,
-    }
-}
-
-/// 実行ファイルの解決に使う `which` 相当。登録時に 1 回だけ呼ぶ想定で、
-/// **実行時には使わない**（`program` は絶対パスで記録済み）。
-pub fn resolve_program(name: &str) -> Option<PathBuf> {
-    let candidate = Path::new(name);
-    if candidate.is_absolute() {
-        return candidate.is_file().then(|| candidate.to_path_buf());
-    }
-    let path = std::env::var_os("PATH")?;
-    let exts: Vec<String> = if cfg!(windows) {
-        std::env::var("PATHEXT")
-            .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into())
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .collect()
-    } else {
-        vec![String::new()]
-    };
-    for dir in std::env::split_paths(&path) {
-        for ext in &exts {
-            let candidate = dir.join(format!("{name}{ext}"));
-            if candidate.is_file() {
-                return candidate.canonicalize().ok().or(Some(candidate));
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::command::DEFAULT_TIMEOUT_SECS;
 

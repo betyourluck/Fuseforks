@@ -76,7 +76,9 @@ pub mod model;
 pub mod orchestrator;
 pub mod plan;
 pub mod room_log;
+pub mod process;
 pub mod schedule;
+pub mod schedule_probe;
 pub mod secret;
 pub mod sender_envelope;
 pub mod session_store;
@@ -115,7 +117,7 @@ pub use session_store::{
     ForkPoint, Record, RestoredHistories, SessionMeta, SessionStore, SessionSummary,
 };
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
-pub use tools::run::resolve_program;
+pub use process::resolve_program;
 pub use tools::{
     DiffTool, FdTool, FileTool, GrepTool, RagTool, RememberTool, RunTool, SdTool, YqTool,
 };

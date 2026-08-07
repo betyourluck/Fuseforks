@@ -27,6 +27,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "sys-locale",
  "thiserror 2.0.19",
