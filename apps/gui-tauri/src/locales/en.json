@@ -197,7 +197,7 @@
   },
   "agentCard": {
     "lastToolRanAt": "Ran {tool} at {time}",
-    "lastToolRanAtFailed": "Ran {tool} at {time} (failed)",
+    "lastToolRanAtFailed": "Ran {tool} at {time} (returned an error)",
     "openSettings": "Open settings",
     "batchIncluded": "Included in batch start (▶). Click to exclude",
     "batchExcluded": "Excluded from batch start (▶). Click to include",
@@ -306,7 +306,6 @@
     "toolRan": "{name} ran {tool}",
     "toolRanFailed": "{name} ran {tool} (returned an error)",
     "toolOkTitle": "Whether the tool returned an error, not whether the side effect succeeded",
-    "toolReasonLead": "intent: ",
     "reasonOmitted": "no reason given",
     "reasonUnsupported": "external tool",
     "typingTitle": "{name} is composing a response",

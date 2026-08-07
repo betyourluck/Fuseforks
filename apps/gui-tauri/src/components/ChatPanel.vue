@@ -643,15 +643,19 @@ async function newChat(): Promise<void> {
           :title="reasonTitle(entry.run)"
         >
           <!--
-            前置は**本文があるときだけ**。`unsupported` に付けると
-            「意図: 外部ツール」になり、**道具の出自を意図として読ませる**。
+            **前置きの語は置かない**（利用者判断 2026-08-07）— 「意図:」のような
+            標識を足すと、**1 行しかない帯の幅を説明で食う**。理由は
+            `font-semibold` + `text-ink` で、書かれなかった側は斜体の淡色。
+            **書式そのものが種別を示すので、語で言い直さない。**
           -->
-          <span v-if="reasonOf(entry.run)?.kind === 'text'" class="text-ink-dim">{{
-            t("chat.toolReasonLead")
-          }}</span>
-          <span :class="reasonOf(entry.run)?.kind === 'text' ? 'text-ink' : 'italic'">{{
-            reasonText(entry.run)
-          }}</span>
+          <span
+            :class="
+              reasonOf(entry.run)?.kind === 'text'
+                ? 'font-semibold text-ink'
+                : 'italic'
+            "
+            >{{ reasonText(entry.run) }}</span
+          >
         </span>
         <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
       </div>

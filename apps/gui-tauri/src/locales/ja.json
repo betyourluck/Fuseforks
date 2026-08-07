@@ -197,7 +197,7 @@
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool} を実行",
-    "lastToolRanAtFailed": "{time} に {tool} を実行（失敗）",
+    "lastToolRanAtFailed": "{time} に {tool} を実行（エラーで返った）",
     "openSettings": "設定を開く",
     "batchIncluded": "一括起動（▶）の対象に含めている。押すと外す",
     "batchExcluded": "一括起動（▶）の対象から外している。押すと含める",
@@ -306,7 +306,6 @@
     "toolRan": "{name} が {tool} を実行",
     "toolRanFailed": "{name} が {tool} を実行（エラーで返った）",
     "toolOkTitle": "ツールの返り値がエラーだったかどうか。副作用が成功したかではありません",
-    "toolReasonLead": "意図: ",
     "reasonOmitted": "理由なし",
     "reasonUnsupported": "外部ツール",
     "typingTitle": "{name} が応答を作成しています",
