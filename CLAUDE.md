@@ -2657,14 +2657,36 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   決まった値は判定から運ぶ。後段で計算し直せる形にすると、入力が変わった
   ときだけ食い違う。**
 
-  **残の中身**: **P2b = `summarizeAfter` の配線**（対象「待って完了した個体」を
-  正しく取るには因果の参加者集合を封筒で運ぶ — `Envelope` へ 1 欄 +
-  signature 6 箇所 + `deliver_and_wait` での記録 + 根のターン完了の検知。
-  **前判定の配線と混ぜない**）。**現状この欄は保存・往復するだけでまだ効かない**。
-  **P2c = 承認ファイルの実体**（`{app_data_dir}/probe_approvals.json`）**と IPC**
-  （コア側は `ProbeApprovals` の口・`set_probe_approvals` / `village_id()` まで
-  用意済み。IPC は既定の `ScheduleOptions` を渡している = 画面に入口が無い
-  ことの表明で、`schedules.json` を手で書いた予定は既に読み込み側が受け付ける）。
+  **P2b も同日に着地**（`73564d6`）— `summarizeAfter` の対象「待って完了した
+  個体」を、**因果の参加者集合を封筒で運ぶ**形にした（`Envelope` へ 1 欄 +
+  `deliver_and_wait` が**答えを受け取った瞬間だけ**書き込む）。
+  **予算プールに相乗りさせない** — `handoff` も同一の予算 Arc を継承するので、
+  予算の伝播で代用すると `handoff` 先まで対象に入る。完了の検知は
+  `AgentTyping { active: false }` に相乗り（別の完了検知を作ると片方だけが
+  取りこぼす形が生まれる）。`summarize_session` の本体も `Shared` へ下ろして
+  `summarize_agents(only)` へ割った。
+
+  **P2b でテスト側の誤りを 1 つ踏んだ** — `drain_until_quiet` の静穏窓を
+  1200 ms にしたが、**`stats_interval` が 1 秒**なので統計イベントで
+  **窓が原理的に閉じない**。**一般化: 「静かになるまで待つ」テストの窓は、
+  その系で最も短い定期イベントの周期より短くする。** 長くすると「失敗」では
+  なく「永久に返らない」として現れ、**実装のデッドロックと区別が付かない**
+  （実際まず実装側を疑った）。
+
+  **P2c も同日に着地**（`a51c8d4`）— `probe_approvals.rs`（GUI 層・単体 7 本）+
+  `AppState` への保持 + IPC 2 本（`create_schedule` の `options` /
+  `approve_schedule_probe`）+ フロントの型とワイヤ。
+  **`only_hashes_are_written_to_disk` が守っているものが本体** —
+  原文を書くとこのファイルが「この端末で実行できるコマンドの一覧」になる。
+  Windows で ACL を組まない判断（`mcp_server.rs` と同じ）は、
+  **守る対象そのものを消してある**ことが前提。
+  掃除は `retain_for`（**時計で切らない** — 判定に壁時計を持ち込むと
+  テストが時刻に依存する）。保存の並びは固定（`HashSet` の反復順のまま書くと
+  同じ内容で保存し直すたびにファイルが変わり、**差分が嘘をつく**）。
+
+  **残は P3（画面の入口と承認導線）/ P4（README 日英）/ P5（実機 8 件）。**
+  `ScheduleView.probeApproved` は既に載っているので、画面は
+  「未承認の行に承認の導線を出す」を書くだけで済む。
   **查読の前提を実測で訂正した点が 3 つ** — 飛行中チェックは宛先個体単位
   （`orchestrator.rs:2754`）/ handoff は予算の同一 Arc を継承
   （`tests/orchestrator.rs:6415`）/ workspace はパス固定なのでパス salt は
