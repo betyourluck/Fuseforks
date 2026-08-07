@@ -642,7 +642,13 @@ async function newChat(): Promise<void> {
           class="min-w-0 truncate"
           :title="reasonTitle(entry.run)"
         >
-          <span class="text-ink-dim">{{ t("chat.toolReasonLead") }}</span>
+          <!--
+            前置は**本文があるときだけ**。`unsupported` に付けると
+            「意図: 外部ツール」になり、**道具の出自を意図として読ませる**。
+          -->
+          <span v-if="reasonOf(entry.run)?.kind === 'text'" class="text-ink-dim">{{
+            t("chat.toolReasonLead")
+          }}</span>
           <span :class="reasonOf(entry.run)?.kind === 'text' ? 'text-ink' : 'italic'">{{
             reasonText(entry.run)
           }}</span>
