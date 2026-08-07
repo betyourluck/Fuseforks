@@ -680,7 +680,9 @@
     "clockTitle": "Current date and time (same format as the diagnostic log prefix)",
     "clockAria": "Current date and time",
     "versionTitle": "Version of this build (nearest git tag; 0.0.0 when untagged)",
-    "versionAria": "Version {version}"
+    "versionAria": "Version {version}",
+    "mcpHost": "MCP server listening :{port}",
+    "mcpHostTitle": "Accepting requests from external LLMs (127.0.0.1:{port}). Turn it off under Settings > Integration > MCP server when not in use."
   },
   "roles": {
     "title": "Roles",

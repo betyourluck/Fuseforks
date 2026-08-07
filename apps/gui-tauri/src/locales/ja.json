@@ -680,7 +680,9 @@
     "clockTitle": "現在の日付と時刻（診断ログの行頭と同じ形式）",
     "clockAria": "現在の日付と時刻",
     "versionTitle": "このビルドの版番号（git の直近タグ。タグが無ければ 0.0.0）",
-    "versionAria": "版番号 {version}"
+    "versionAria": "版番号 {version}",
+    "mcpHost": "MCP サーバー 待ち受け中 :{port}",
+    "mcpHostTitle": "外部の LLM から依頼を受け付けています（127.0.0.1:{port}）。使わないときはシステム設定の「外部連携 > MCP サーバー」で切ってください。"
   },
   "roles": {
     "title": "役職",

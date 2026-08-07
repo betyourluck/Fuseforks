@@ -27,7 +27,7 @@ import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
-import type { AgentId, Language, McpHostStatus } from "../types";
+import type { AgentId, Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -151,14 +151,15 @@ async function removeUserIcon(): Promise<void> {
 // ---- MCP サーバー（扉。Spec 25） ----------------------------------------------
 
 /**
- * 扉の状態。`null` = まだ読んでいない。
+ * 扉の状態。**真実は共有状態**（`state.mcpHost`）で、ここはその読み口。
+ * ステータスバーも同じ値を読むので、片方だけが古くなる形を作らない。
  *
  * **保存済みの値と入力欄を分けない** — このページの操作（ON/OFF・ポート）は
  * 押した時点で反映する形にしてあり、「保存していない状態」を持たない。
  * トークン天井と規律が違うのは、扉は**開いたか開かないかが結果**で、
  * 押すまで分からないものを溜めても意味が無いため。
  */
-const mcpHost = ref<McpHostStatus | null>(null);
+const mcpHost = computed(() => state.mcpHost);
 /** ポートだけは入力中の値を持つ（打っている途中で bind し直さない）。 */
 const portInput = ref(39641);
 const tokenCopied = ref(false);
@@ -178,7 +179,7 @@ async function applyMcpHost(enabled: boolean): Promise<void> {
   savedNote.value = "";
   tokenCopied.value = false;
   try {
-    mcpHost.value = await ipc.setMcpHost(enabled, portInput.value);
+    await orchestrator.setMcpHost(enabled, portInput.value);
   } catch (e) {
     error.value = formatError(ipc.toErrorPayload(e));
   } finally {
@@ -197,7 +198,7 @@ async function regenerateToken(): Promise<void> {
   error.value = "";
   tokenCopied.value = false;
   try {
-    mcpHost.value = await ipc.regenerateMcpHostToken();
+    await orchestrator.regenerateMcpHostToken();
   } catch (e) {
     error.value = formatError(ipc.toErrorPayload(e));
   } finally {
@@ -266,10 +267,9 @@ async function load(): Promise<void> {
     savedUserName.value = userName;
     userNameInput.value = userName ?? "";
 
-    // 扉（Spec 25）。**設定ファイルの置き場が違う**（村の外）が、読む口は同じ。
-    const host = await ipc.mcpHostStatus();
-    mcpHost.value = host;
-    portInput.value = host.port;
+    // 扉（Spec 25）。状態は起動時に共有状態へ載っているので、ここでは
+    // ポート入力の初期値を合わせるだけ。
+    portInput.value = state.mcpHost?.port ?? portInput.value;
     receptionInput.value = (await ipc.getReception()) ?? "";
   } catch (e) {
     const payload = ipc.toErrorPayload(e);

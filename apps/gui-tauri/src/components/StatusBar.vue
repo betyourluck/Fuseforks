@@ -23,16 +23,32 @@
  * （スリープ復帰後もその場で正しい時刻に戻る）。秒まで出すのは、ログ側が
  * ミリ秒精度で、分までだと突き合わせの候補が 1 分ぶん残るため。
  *
- * # 左側が空いていること
+ * # 左側
  *
- * 意図的に空けてある。ステータスバーは「常に見えている細い帯」で、
- * 常駐させるだけの価値がある情報しか置かない器。増やすときは
- * **常に見る必要があるか**を毎回問う（設定ダイアログの左メニューと同じ規律 —
- * 器を作ることと、器を埋めることは別）。
+ * MCP サーバー（Spec 25）が待ち受けている間だけ、その旨を出す。
+ * 起点は利用者 —「**誰もいないのにつけっぱなしにしないように**」。
+ *
+ * ここは「常に見えている細い帯」で、常駐させるだけの価値がある情報しか
+ * 置かない器（増やすときは**常に見る必要があるか**を毎回問う）。扉が満たすのは、
+ * **開いていることが他のどの画面にも出ない**から — 設定を開くまで気づけず、
+ * 気づけない状態のまま同じ端末の任意のプロセスが村へ依頼を投げられる。
+ *
+ * **開いているときだけ出す。** OFF のときに「OFF です」と出すと、印が常に
+ * 画面にあることになり、**印が付いていること自体の意味が消える**。
+ *
+ * **`enabled` ではなく `listening` で出す。** 設定が ON でもポートが埋まって
+ * いれば開いていない。ここで見せたいのは「実際に受け付けている」ことで、
+ * 「そう設定してある」ことではない（食い違いの診断は設定ページが担う）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { formatClock } from "../lib/clock";
+import { useOrchestrator } from "../composables/useOrchestrator";
+
+const { state } = useOrchestrator();
+
+/** 扉が実際に開いているか（Spec 25）。 */
+const listening = computed(() => state.mcpHost?.listening === true);
 
 /** 現在時刻。1 秒ごとにティッカーが差し替える。 */
 const now = ref(new Date());
@@ -74,8 +90,23 @@ onBeforeUnmount(() => {
 
 <template>
   <footer
-    class="flex h-[22px] shrink-0 select-none items-center justify-end border-t border-line bg-surface-1 px-3 text-[11px] text-ink-dim"
+    class="flex h-[22px] shrink-0 select-none items-center border-t border-line bg-surface-1 px-3 text-[11px] text-ink-dim"
   >
+    <!--
+      MCP サーバーが待ち受けている間だけ左端に出す（Spec 25）。
+      **開いているときだけ**なので、印があること自体が信号になる。
+      点は色だけに頼らない補助（帯が細いので、文言と併せて読ませる）。
+    -->
+    <span
+      v-if="listening"
+      class="mr-auto flex items-center gap-1.5 text-accent"
+      :title="$t('statusBar.mcpHostTitle', { port: state.mcpHost?.port ?? 0 })"
+    >
+      <span class="size-1.5 rounded-full bg-accent" aria-hidden="true" />
+      {{ $t("statusBar.mcpHost", { port: state.mcpHost?.port ?? 0 }) }}
+    </span>
+    <!-- 扉が閉じている間は左が空くので、右寄せを保つ詰め物を置く。 -->
+    <span v-else class="mr-auto" />
     <!--
       tabular-nums は必須。等幅でないと桁の太さが毎秒変わり、
       1 秒ごとに時計の幅が揺れて隣が動く。

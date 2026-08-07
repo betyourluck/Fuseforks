@@ -23,6 +23,15 @@ const h = vi.hoisted(() => ({
   listCommandRequests: vi.fn(async () => []),
   getUserName: vi.fn(async () => null),
   getUserIcon: vi.fn(async () => null),
+  // 扉（Spec 25）。既定は OFF なので、起動直後の素の村はこの形。
+  mcpHostStatus: vi.fn(async () => ({
+    enabled: false,
+    listening: false,
+    port: 39641,
+    token: null,
+    blocked: null,
+    lastError: null,
+  })),
   listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
 }));

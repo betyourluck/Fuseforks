@@ -28,6 +28,7 @@ import type {
   CoreEvent,
   ErrorPayload,
   McpConfig,
+  McpHostStatus,
   ModelTemplate,
   Role,
   PlanWaveRecord,
@@ -93,6 +94,14 @@ interface OrchestratorState {
   commandRequests: CommandPolicyView[];
   /** 利用者のアイコンの object URL（Spec 19）。`null` = 未設定。 */
   userIcon: string | null;
+  /**
+   * 外の LLM から依頼を受ける扉の状態（Spec 25）。`null` = まだ読んでいない。
+   *
+   * **共有状態に置くのはステータスバーが読むから。** 扉が開いていることは
+   * 設定を開かないと分からない状態で、開けっぱなしに気づけない — 常に
+   * 見えている帯に出す価値がある数少ない情報（`StatusBar` の規律）。
+   */
+  mcpHost: McpHostStatus | null;
   /**
    * 応答を作っている最中のエージェント。会話ペインの「入力中…」表示に使う。
    * true のキーだけを持ち、終了イベントでキーごと消す。
@@ -160,6 +169,7 @@ const state = reactive<OrchestratorState>({
   commandRequests: [],
   userName: null,
   userIcon: null,
+  mcpHost: null,
   typing: {},
   interruptPending: {},
   toolRuns: [],
@@ -705,6 +715,10 @@ async function initialize(): Promise<void> {
     const userIconBytes = await ipc.getUserIcon();
     state.userIcon =
       userIconBytes && userIconBytes.length ? iconUrlOf(userIconBytes) : null;
+    // 扉（Spec 25）。**起動時に 1 回読めば足りる** — 状態が変わる点は
+    // 起動・設定の適用・合鍵の作り直しの 3 つで、どれもこの composable を通る。
+    // 定期的に引き直す理由が無い（`refreshAll` にも混ぜない）。
+    state.mcpHost = await ipc.mcpHostStatus();
     state.ready = true;
   } catch (error) {
     // 再試行できるよう、失敗時はフラグを戻す。
@@ -1030,6 +1044,29 @@ export function useOrchestrator() {
       );
       if (succeeded(done)) state.userName = name;
       return succeeded(done);
+    },
+
+    /**
+     * 扉の ON / OFF とポートを適用する（Spec 25）。
+     *
+     * **投影を持つので `orchestrator` 経由にする** — ステータスバーが
+     * `state.mcpHost` を読むため、生の `ipc` で呼ぶと画面の片方だけが古くなる
+     * （Spec 19 P3 の「使い分けの基準は投影を持つか」）。
+     *
+     * `null` を返すのは失敗したときだけ。**bind の失敗は失敗ではない** —
+     * 設定は保存されており、開かなかった理由は `lastError` に載る。
+     */
+    async setMcpHost(enabled: boolean, port: number): Promise<McpHostStatus | null> {
+      const status = await ipc.setMcpHost(enabled, port);
+      state.mcpHost = status;
+      return status;
+    },
+
+    /** 扉の合鍵を作り直す（開いていれば新しい鍵で開き直す）。 */
+    async regenerateMcpHostToken(): Promise<McpHostStatus> {
+      const status = await ipc.regenerateMcpHostToken();
+      state.mcpHost = status;
+      return status;
     },
 
     /** 利用者のアイコンを保存する。`bytes` は UI 側で WebP へ変換済みであること。 */
