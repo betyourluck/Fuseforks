@@ -944,8 +944,8 @@ Three things have since been added into this frame: the theme, your own name and
   servants receive your messages as coming from "ユーザー". Set it and
   **both become the same name and stop following the interface language** — if the same
   person carried a different name on screen and in front of a servant, the conversation
-  would stop lining up. **Up to 32 characters**; the character 】 and line breaks are
-  rejected, because that character delimits the sender in the message a servant receives,
+  would stop lining up. **Up to 32 characters**; the characters 【 】 ［ ］ and line breaks
+  are rejected, because those delimit the sender in the message a servant receives,
   and one utterance containing it would read as two. **Changing your name does not rewrite
   the old name already recorded in past conversations** — records stay as they were written.
 - **Your name and icon are stored in the village**, so they travel with it when shared.
@@ -1019,11 +1019,26 @@ client. **Whether the other party is human changes how to answer**, so an outsid
 never disguised as you — knowing the caller needs no simplification and will not ask
 follow-up questions lets a servant adjust accordingly.
 
+**This is a signal, not enforcement** ([Spec 26](specs/26_sender-envelope-integrity.md)).
+The sender travels as a single line placed at the **start** of the message a servant
+receives, and whether a model reads that line and changes its behaviour is up to the model.
+In practice both happened: one servant correctly judged the caller non-human, while another
+**quoted that very line verbatim and stated it does not use it for that judgement**. The
+signal guarantees that the information arrives — nothing beyond that.
+
+**What is enforced instead: a message body cannot claim to be the sender.** Write the
+sender syntax into a request body and it arrives in a form that shows it came from the body
+(`【送り手: ユーザー】` becomes `【送り手（本文）: ユーザー】`). **A pasted conversation
+log still reads normally** — rejecting it would make quoting impossible, and silently
+deleting it would corrupt the log. This is the half that does not depend on a model
+following a rule, added after measuring that the signal above did not always land.
+
 **The external client's name and icon are configurable.** Leave them unset and the name the
 client declares for itself (`Claude Code`, say) is used as-is. Set them and both the screen
 and the name reaching servants become your value, which means **the client's self-declared
-string no longer reaches the prompt** — that string is the one value a caller can write
-freely, so configuring a name closes that path. The icon is kept separate from your own:
+string no longer reaches the prompt** — that string is a value a caller can write freely,
+so configuring a name closes that path. **A caller can write one other thing: the request
+body itself** — that path is closed by the paragraph above. The icon is kept separate from your own:
 sharing one face would make an outside tool's request look like your own.
 
 ---
