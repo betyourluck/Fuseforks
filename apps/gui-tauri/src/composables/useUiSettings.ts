@@ -26,6 +26,18 @@ export interface UiSettings {
    */
   confirmEdgeDelete: boolean;
   /**
+   * ウィンドウを閉じる前に確認を出すか（2026-08-08 利用者要望）。
+   *
+   * **既定 ON。ON のときは常に聞く** — 「何か走っているときだけ聞く」は
+   * 冗長だと利用者が裁定した（2026-08-08）。加えて、**チェックボックスが
+   * 「確認する」なのに聞かない場合があると壊れて見える**。
+   *
+   * **小言にしないのは中身の側の仕事。** この村はタスクトレイに常駐しないので、
+   * 閉じると**飛行中のターン・MCP の扉・予定の発火がすべて止まる**。
+   * その事実はいまどの画面にも出ておらず、**このダイアログが唯一言う場所**になる。
+   */
+  confirmClose: boolean;
+  /**
    * 配色（2026-08-05 利用者要望）。
    *
    * **既定は OS の設定から毎回決める。選ぶまで保存しない。** 起点は
@@ -52,6 +64,7 @@ function osTheme(): Theme {
 
 const DEFAULTS: UiSettings = {
   confirmEdgeDelete: true,
+  confirmClose: true,
   // 参照時に評価するため、実体は load() で入れる（モジュール読み込み順に依存しない）。
   theme: "dark",
 };
@@ -70,6 +83,10 @@ function load(): UiSettings {
         typeof parsed.confirmEdgeDelete === "boolean"
           ? parsed.confirmEdgeDelete
           : DEFAULTS.confirmEdgeDelete,
+      confirmClose:
+        typeof parsed.confirmClose === "boolean"
+          ? parsed.confirmClose
+          : DEFAULTS.confirmClose,
       // **保存済みが 2 値のどちらかでなければ OS へ戻す。** 既定値の定数へ
       // 落とすと、手編集で壊れた村が「利用者はダークを選んだ」状態になる。
       theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : osTheme(),

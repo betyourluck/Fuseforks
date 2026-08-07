@@ -18,6 +18,8 @@
  * はみ出しは各ペインの内部スクロールに引き受けさせる。
  */
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import AgentList from "./components/AgentList.vue";
 import BlackboardPane from "./components/BlackboardPane.vue";
@@ -36,13 +38,18 @@ import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
+import { closeConfirmLines } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
+import { askConfirm } from "./composables/useConfirm";
 import { useOrchestrator } from "./composables/useOrchestrator";
 import { usePaneLayout } from "./composables/usePaneLayout";
+import { useUiSettings } from "./composables/useUiSettings";
 import type { BottomTab } from "./types";
 
+const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const { settings } = useUiSettings();
 
 const { layout, resize, reset } = usePaneLayout();
 
@@ -74,8 +81,42 @@ const centerRows = computed(
   () => `minmax(0, 1fr) 2px ${layout.bottomHeight}px`,
 );
 
+/**
+ * 閉じる前の確認（2026-08-08 利用者要望）。**既定 ON で、ON なら常に聞く。**
+ *
+ * `preventDefault()` のあと **`destroy()` を呼ぶ** — `close()` だと
+ * 同じイベントがもう一度発火して**無限ループ**になる
+ * （capability に `core:window:allow-destroy` を足したのはこのため）。
+ *
+ * ここに置くのは、**中身が村の状態を要る**から（稼働中の数・扉の開閉）。
+ * 判定は純関数（`closeConfirmLines`）に出し、ここは訳語を引いて繋ぐだけ。
+ */
+async function registerCloseGuard(): Promise<void> {
+  const win = getCurrentWindow();
+  await win.onCloseRequested(async (event) => {
+    if (!settings.confirmClose) return;
+    event.preventDefault();
+
+    const lines = closeConfirmLines({
+      runningAgents: state.agents.filter((a) => a.status === "running").length,
+      mcpListening: state.mcpHost?.listening === true,
+    });
+    const ok = await askConfirm({
+      title: t("closeConfirm.title"),
+      message: lines.map((line) => t(line.key, line.params ?? {})).join("\n"),
+      confirmLabel: t("closeConfirm.confirm"),
+      cancelLabel: t("closeConfirm.cancel"),
+      // **飛行中のターンは戻らない。** 初期フォーカスを取り消し側へ寄せる。
+      danger: true,
+    });
+    if (ok) await win.destroy();
+  });
+}
+
 onMounted(() => {
   void orchestrator.init();
+  // 失敗しても画面は使える（確認が付かないだけ）。閉じられなくなるほうが害が大きい。
+  void registerCloseGuard().catch(() => undefined);
 });
 </script>
 

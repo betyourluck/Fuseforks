@@ -81,10 +81,35 @@ describe("この画面の設定", () => {
     await nextTick();
 
     expect(storage.writes).toBe(1);
+    // **保存形は丸ごと固定する。** 鍵が 1 つ増えただけでここが赤くなるのは
+    // 意図した網 — `settings_contract` は置き場の鍵を列挙しており、
+    // **黙って増えると契約と実装が食い違う**（#67 の列挙の規律を機械で留めている）。
     expect(JSON.parse(storage.dump(STORAGE_KEY) ?? "{}")).toEqual({
       confirmEdgeDelete: false,
+      confirmClose: true,
       theme: "dark",
     });
+  });
+
+  it("閉じる確認の既定は ON、壊れた値は既定へ落とす", async () => {
+    // 既定 ON は他 6 種の破壊的操作と揃える判断（線の削除と同じ）。
+    const fresh = await freshModule(fakeStorage());
+    expect(fresh.useUiSettings().settings.confirmClose).toBe(true);
+
+    for (const raw of ["{壊れている", JSON.stringify({ confirmClose: "yes" })]) {
+      const storage = fakeStorage({ [STORAGE_KEY]: raw });
+      const { useUiSettings } = await freshModule(storage);
+      expect(useUiSettings().settings.confirmClose).toBe(true);
+    }
+  });
+
+  it("OFF にした値は保存され、読み戻せる", async () => {
+    // 既定と同じ値だけを検査すると、**読み込みを丸ごと消した実装でも緑になる**。
+    const storage = fakeStorage({
+      [STORAGE_KEY]: JSON.stringify({ confirmClose: false }),
+    });
+    const { useUiSettings } = await freshModule(storage);
+    expect(useUiSettings().settings.confirmClose).toBe(false);
   });
 });
 

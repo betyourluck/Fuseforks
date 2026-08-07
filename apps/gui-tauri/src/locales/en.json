@@ -101,6 +101,12 @@
         "intro": "In Kizuna, clicking a tie cuts it. A cut tie cannot be restored.",
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on a tie cuts it."
+      },
+      "closeWindow": {
+        "heading": "Closing the window",
+        "intro": "This app does not stay in the tray. Closing it stops the servants and the schedules.",
+        "checkbox": "Ask for confirmation before closing",
+        "offWarning": "While confirmation is off, one click on the close button quits."
       }
     },
     "groupIntegration": "Integration",
@@ -766,5 +772,14 @@
     "handoff": "hand off",
     "ask": "ask {name}",
     "transfer": "hand off to {name}"
+  },
+  "closeConfirm": {
+    "title": "Quit Concordia?",
+    "lead": "Nothing in this village runs while the app is closed.",
+    "running": "Turns in flight for {count} running servant(s) will be lost.",
+    "mcp": "The MCP server door closes (external requests stop arriving).",
+    "schedules": "Schedules will not fire — they only run while this app is open.",
+    "confirm": "Quit",
+    "cancel": "Stay open"
   }
 }

@@ -519,11 +519,21 @@ enums:
           言語は村の共有物 — localStorage には置けない。
           **userName も同じ理由で world.json** — 封筒 `【送り手: {名前}】` が
           AgentRecord.history と session_store の両方へ文字列そのものとして入る
-        - **端末に保存 → localStorage "concordia.settings.v1"**:
+        - **端末に保存 → localStorage "concordia.settings.v1"**。
+          **総数を書かず鍵を列挙する** (#67 — 追記そのものが更新になる形):
           confirmEdgeDelete (boolean。**既定 true** = 絆を切るときに確認を出す。
-          確認ダイアログは Spec 12 P3 の askConfirm) と
+          確認ダイアログは Spec 12 P3 の askConfirm) /
+          confirmClose (boolean。**既定 true** = ウィンドウを閉じる前に確認を出す。
+          2026-08-08 追加。**ON なら常に聞く** — 「何か走っているときだけ聞く」は
+          冗長だと利用者が裁定し、加えて**チェックボックスが「確認する」なのに
+          聞かない場合があると壊れて見える**。小言にしないのは**中身**の側の仕事で、
+          閉じると止まるもの (飛行中のターン / MCP の扉 / 予定) を
+          そのときの状態から数えて出す。**この村はタスクトレイに常駐しない**ので、
+          予定が止まる事実は**他のどの画面にも出ておらず、ここが唯一言う場所**) /
           theme ("dark" | "light"。2026-08-05 追加)。表示の都合であって
-          村の状態ではない (usePaneLayout の「表示の都合は localStorage」と同じ棚)
+          村の状態ではない (usePaneLayout の「表示の都合は localStorage」と同じ棚)。
+          **保存形は useUiSettings.test.ts が丸ごと固定している** —
+          鍵が黙って増えると契約と実装が食い違うため
       不変条件:
         - **左メニューの分類は主題で切る。保存先で切らない** (2026-08-03 の実機
           指摘で rev3 から変更)。分類は 全般 (ユーザー / 言語) /

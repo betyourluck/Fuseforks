@@ -953,6 +953,26 @@ function selectPage(next: Page): void {
                 {{ $t("settings.messages.edgeDelete.offWarning") }}
               </p>
             </section>
+
+            <!--
+              閉じる確認（2026-08-08 利用者要望）。**ON なら常に聞く** —
+              「何か走っているときだけ」は冗長で、しかもチェックボックスが
+              「確認する」なのに聞かない場合があると壊れて見える。
+              小言にしないのは**ダイアログの中身**の側の仕事（App.vue）。
+            -->
+            <section class="mt-3 space-y-2 rounded border border-line bg-surface-0 p-3">
+              <h4 class="font-semibold text-ink">
+                {{ $t("settings.messages.closeWindow.heading") }}
+              </h4>
+              <p class="text-ink-dim">{{ $t("settings.messages.closeWindow.intro") }}</p>
+              <label class="flex items-center gap-2">
+                <input v-model="settings.confirmClose" type="checkbox" />
+                <span>{{ $t("settings.messages.closeWindow.checkbox") }}</span>
+              </label>
+              <p v-if="!settings.confirmClose" class="pl-6 text-warn">
+                {{ $t("settings.messages.closeWindow.offWarning") }}
+              </p>
+            </section>
             <p class="mt-2 text-ink-dim">{{ $t("settings.messages.instantNote") }}</p>
           </template>
         </div>
