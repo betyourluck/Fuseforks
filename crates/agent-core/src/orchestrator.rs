@@ -189,7 +189,26 @@ struct Envelope {
     /// 作ってはならない（天井が蒸発する — delegation-fanout race、
     /// `token_budget` 契約の pool）。`None` = 天井なしの村。
     budget: Option<Arc<BudgetPool>>,
+    /// この因果で**待って答えを返し終えた**個体（Spec 28 の `summarizeAfter`）。
+    ///
+    /// 予算と同じ経路を運ばれるが、**予算とは別の Arc**。理由は
+    /// **書き込む場所が違う**こと — 予算はどの配送でも消費されるのに対し、
+    /// ここへ入るのは [`deliver_and_wait`] が**答えを受け取った**ときだけ。
+    /// `handoff` は待たないので入らない（渡した先が終わったかを観測する点が
+    /// 無いため、要約の対象にしない）。
+    ///
+    /// **予算プールに相乗りさせない。** `handoff` も同一の予算 Arc を継承する
+    /// ので（`a_handoff_inherits_the_same_budget_pool` が凍結）、予算の伝播で
+    /// 代用すると `handoff` 先まで対象に入る。
+    ///
+    /// `None` = 参加者を数える必要のない因果（利用者の発話・要約しない予定）。
+    participants: Option<Participants>,
 }
+
+/// 因果に参加して答えを返し終えた個体の集合（Spec 28）。
+///
+/// `std::sync::Mutex` なのは、入れるのが `await` を跨がない 1 行だから。
+type Participants = Arc<std::sync::Mutex<std::collections::HashSet<AgentId>>>;
 
 /// 送信時に受け取る添付画像の生データ（Spec 23）。
 ///
@@ -221,12 +240,17 @@ impl Envelope {
     /// 返信を求めない通常の配送。ユーザー発話・転送・予定の発火が使う —
     /// どれも「依頼元ターン」を持たないので、キャンセルの手掛かりは持たないが、
     /// **予算は持つ**（根で生まれたか、転送元のターンから引き継いだもの）。
-    fn plain(incoming: AgentMessage, budget: Option<Arc<BudgetPool>>) -> Self {
+    fn plain(
+        incoming: AgentMessage,
+        budget: Option<Arc<BudgetPool>>,
+        participants: Option<Participants>,
+    ) -> Self {
         Self {
             incoming,
             reply_to: None,
             cancel: None,
             budget,
+            participants,
         }
     }
 }
@@ -354,6 +378,16 @@ struct ScheduleRuntime {
     /// だから（`in_flight` が `AgentId` 単位なのは、外す契機に使える信号
     /// `AgentTyping` がエージェント単位でしか来ないため — 事情が逆）。
     probing: Mutex<std::collections::HashSet<String>>,
+    /// 根のターンの完了を待っている要約（Spec 28 の `summarizeAfter`）。
+    ///
+    /// キーは**発火の宛先**（因果の根）。`AgentTyping { active: false }` を
+    /// 受けた時点で取り出し、集めた参加者ごと要約へ渡す。
+    ///
+    /// **`in_flight` と同じ合図に相乗りしている。** 別の完了検知を作ると、
+    /// 片方だけが取りこぼす形が生まれる（イベントの取りこぼしで `in_flight` が
+    /// fail open で空にされるとき、こちらだけ残ると要約が永遠に待つ）。
+    /// ゆえに**取りこぼしでは一緒に捨てる** — 要約は次の発火でやり直せる。
+    pending_summaries: Mutex<HashMap<AgentId, Participants>>,
 }
 
 /// 前判定コマンドの実行が端末で承認されているかを答える。
@@ -432,6 +466,209 @@ impl Shared {
         }
     }
 
+    async fn summarize_agents(&self, only: Option<&std::collections::HashSet<AgentId>>) -> CoreResult<usize> {
+        let store = self.session_store()?;
+        let session_id = self.current_session();
+
+        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
+        // 「coversUpToSeq < 自身の seq」が破れる。
+        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
+            return Ok(0);
+        };
+
+        // 材料を先に集める。LLM 呼び出しの間、world のロックは持たない。
+        //
+        // **対象は稼働中のサーヴァントだけ。** 要約の目的は「以後のプロンプトを
+        // 短くする」ことで、停止中の個体には以後のターンが無い。それでも呼べば、
+        // **参加していない個体のぶんまで押した人がトークンを払う**ことになる。
+        // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
+        // 押せばそのとき要約される — 取り逃がしにはならない。
+        let mut skipped = 0usize;
+        let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
+            let world = self.world.read().await;
+            world
+                .snapshots()
+                .into_iter()
+                .filter_map(|snapshot| {
+                    // **対象の指定があればそれだけ**（Spec 28 D7 — 予定の因果に
+                    // 参加して答えを返し終えた個体）。指定が無ければ稼働中の全員
+                    // （人が「要約して続ける」を押した従来の経路）。
+                    if only.is_some_and(|ids| !ids.contains(&snapshot.id)) {
+                        return None;
+                    }
+                    let record = world.agent(&snapshot.id).ok()?;
+                    if record.history.is_empty() {
+                        return None;
+                    }
+                    if !record.status.is_active() {
+                        skipped += 1;
+                        return None;
+                    }
+                    let template = world.template(&record.spec.model_template_id).ok()?.clone();
+                    Some((
+                        snapshot.id.clone(),
+                        record.spec.name.clone(),
+                        template,
+                        record.history.clone(),
+                    ))
+                })
+                .collect()
+        };
+
+        let mut done = 0usize;
+        for (agent_id, name, template, history) in targets {
+            // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
+            let previous = self.summaries.read().await.get(&agent_id).cloned();
+
+            // 畳む前の通数と文字数。ログに出す — 「4 往復を要約に置き換えた」のか
+            // 「40 往復ぶんか」で、要約の効きの読み方がまるで違う。
+            //
+            // **文字数のほうが本体**（2026-08-03 の実機で判明）。要約が畳んだ履歴より
+            // 大きくなることが実際に起きる（opus が 1 往復を 1,163 字に書き広げた）。
+            // しかも要約は滑る窓と違って落ちないので、**膨らんだぶんは以後の全ターンに
+            // 乗り続ける**。通数だけでは、その損得が 1 行から読めない。
+            let history_msgs = history.len();
+            let history_chars: usize = history.iter().map(|m| m.content.chars().count()).sum();
+            let mut messages = Vec::with_capacity(history_msgs + 3);
+            messages.push(ChatMessage::system(SUMMARY_SYSTEM));
+            if let Some(previous) = &previous {
+                messages.push(ChatMessage::user(format!(
+                    "## 前回までの経緯（既存の要約）\n{previous}"
+                )));
+                messages.push(ChatMessage::assistant("承知しました。"));
+            }
+            messages.extend(history);
+            messages.push(ChatMessage::user(SUMMARY_INSTRUCTION));
+
+            let backend = match self.backend_for(&template).await {
+                Ok(backend) => backend,
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）のバックエンドを組めません: {err}");
+                    continue;
+                }
+            };
+            let request = ChatRequest {
+                model: template.model.clone(),
+                messages,
+                // 要約にツールは要らない。提示すると呼びに行く個体が出て、
+                // 1 回で終わるはずの呼び出しがループになる。
+                tools: Vec::new(),
+                tool_choice: crate::llm::ToolChoice::None,
+                temperature: template.temperature,
+                max_tokens: template.max_output_tokens,
+                effort: template.effort,
+                cacheable_prefix_len: 0,
+            };
+            let response = match backend.chat(request).await {
+                Ok(response) => response,
+                Err(err) => {
+                    note!("WARN summarize: {agent_id}（{name}）の要約に失敗しました: {err}");
+                    continue;
+                }
+            };
+
+            // **使ったトークンは必ず数える。** 要約はターンループの外で走る
+            // LLM 呼び出しなので、ここで積まないと**押した人が払った分がどの
+            // 数字にも現れない** — カードの累計にも、村の集計にも、ログにも。
+            // 失敗した呼び出しぶんも課金されるが、それは response が無いので
+            // 数えられない（プロバイダが usage を返さない経路と同じ扱い）。
+            let usage = response.usage;
+            if let Ok(record) = self.world.write().await.agent_mut(&agent_id) {
+                record.total_tokens += usage.total();
+                record.prompt_tokens += usage.prompt;
+                record.cached_tokens += usage.cache_read;
+            }
+            let text = response.text.unwrap_or_default();
+            // ターンの `turn:` 行と対になる 1 行。要約は会話ログに 1 行しか
+            // 残らないので、**何にいくら掛かったか**はここにしか出ない。
+            let summary_chars = text.chars().count();
+            note!(
+                "summarize: agent={agent_id} model={} covers_up_to={covers_up_to_seq} \
+                 folded_msgs={history_msgs} folded_chars={history_chars} \
+                 summary_chars={summary_chars} prompt={} cached={} total={}",
+                template.model,
+                usage.prompt,
+                usage.cache_read,
+                usage.total()
+            );
+            // 短くならなかった要約は、以後の全ターンで払い続ける固定費になる
+            // （履歴は滑る窓で落ちるが、要約は落ちない）。**機構では止めない** —
+            // 止めると「要約したのに畳まれない」状態が画面から読めなくなる。
+            // 計器だけ置いて、頻度を見てから決める。
+            if summary_chars >= history_chars {
+                note!(
+                    "WARN summarize: {agent_id}（{name}）の要約が元の履歴より長くなりました\
+                     （{history_chars} 字 → {summary_chars} 字）。この会話ではプロンプトは\
+                     短くなりません — 畳む履歴が増えてから押すほうが効きます"
+                );
+            }
+
+            if text.trim().is_empty() {
+                note!("WARN summarize: {agent_id}（{name}）の要約が空でした（履歴は畳みません）");
+                continue;
+            }
+
+            self.persist(&SessionRecord::summary(
+                &agent_id,
+                text.clone(),
+                covers_up_to_seq,
+            ));
+            self.summaries
+                .write()
+                .await
+                .insert(agent_id.clone(), text);
+            // 畳むのは**保存が済んでから**。先に畳むと、保存に失敗した瞬間に
+            // 履歴も要約も無い状態になる。
+            if let Ok(record) = self.world.write().await.agent_mut(&agent_id) {
+                record.history.clear();
+            }
+            done += 1;
+        }
+
+        if done > 0 || skipped > 0 {
+            // 飛ばした相手が居るなら**必ず言う**。黙って対象外にすると、
+            // 「要約したのに次のターンが短くならない」個体の理由が画面から消える。
+            // 次の道も書く（#44 の規律）— 起動してから押せば要約される。
+            let note = if skipped > 0 {
+                format!(
+                    "（停止中の {skipped} 体は要約していません。起動してからもう一度押すと、\
+                     その相手も要約されます）"
+                )
+            } else {
+                String::new()
+            };
+            // **文言を経路で分ける。** 予定の完了後に走った要約を「押しました」の
+            // 文面で出すと、押していない人が自分の操作だと読む。
+            let headline = if only.is_some() {
+                format!("予定の完了後に {done} 体の記憶を要約しました。")
+            } else {
+                format!("稼働中の {done} 体の記憶を要約しました。")
+            };
+            self.record(AgentMessage::new(
+                Endpoint::System,
+                Endpoint::User,
+                format!(
+                    "{headline}以後のやり取りは要約を踏まえて続きます\
+                     （元のやり取りは消えていません — 「会話一覧」の書き出しから\
+                     読めます）{note}"
+                ),
+                0,
+            ))
+            .await;
+        }
+        Ok(done)
+    }
+
+
+    /// 会話の保存先。開けていなければエラー。
+    fn session_store(&self) -> CoreResult<&SessionStore> {
+        self.sessions.as_ref().ok_or_else(|| CoreError::SessionStore {
+            path: self.store.root().join("sessions.redb").display().to_string(),
+            operation: "open",
+            reason: "会話の保存先が開けていません".to_owned(),
+        })
+    }
+
     /// 会話を開き、投影（広場ログ・履歴・要約）を張り直す。
     ///
     /// **`Orchestrator::switch_to` の本体。** 予定の発火（Spec 28 の
@@ -441,11 +678,7 @@ impl Shared {
     /// # Errors
     /// 保存先が開けていない、または読み込みに失敗した場合。
     async fn open_session(&self, session_id: &str) -> CoreResult<()> {
-        let store = self.sessions.as_ref().ok_or_else(|| CoreError::SessionStore {
-            path: self.store.root().join("sessions.redb").display().to_string(),
-            operation: "open",
-            reason: "会話の保存先が開けていません".to_owned(),
-        })?;
+        let store = self.session_store()?;
 
         self.log.write().await.clear();
         self.world.write().await.clear_histories();
@@ -1119,185 +1352,11 @@ impl Orchestrator {
     /// 要約が失敗しても全体は失敗させない**（その相手の履歴は畳まずに残す —
     /// 要約に失敗した代償が履歴の喪失になるのは最悪の交換）。
     pub async fn summarize_session(&self) -> CoreResult<usize> {
-        let store = self.sessions()?;
-        let session_id = self.shared.current_session();
-
-        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
-        // 「coversUpToSeq < 自身の seq」が破れる。
-        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
-            return Ok(0);
-        };
-
-        // 材料を先に集める。LLM 呼び出しの間、world のロックは持たない。
-        //
-        // **対象は稼働中のサーヴァントだけ。** 要約の目的は「以後のプロンプトを
-        // 短くする」ことで、停止中の個体には以後のターンが無い。それでも呼べば、
-        // **参加していない個体のぶんまで押した人がトークンを払う**ことになる。
-        // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
-        // 押せばそのとき要約される — 取り逃がしにはならない。
-        let mut skipped = 0usize;
-        let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
-            let world = self.shared.world.read().await;
-            world
-                .snapshots()
-                .into_iter()
-                .filter_map(|snapshot| {
-                    let record = world.agent(&snapshot.id).ok()?;
-                    if record.history.is_empty() {
-                        return None;
-                    }
-                    if !record.status.is_active() {
-                        skipped += 1;
-                        return None;
-                    }
-                    let template = world.template(&record.spec.model_template_id).ok()?.clone();
-                    Some((
-                        snapshot.id.clone(),
-                        record.spec.name.clone(),
-                        template,
-                        record.history.clone(),
-                    ))
-                })
-                .collect()
-        };
-
-        let mut done = 0usize;
-        for (agent_id, name, template, history) in targets {
-            // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
-            let previous = self.shared.summaries.read().await.get(&agent_id).cloned();
-
-            // 畳む前の通数と文字数。ログに出す — 「4 往復を要約に置き換えた」のか
-            // 「40 往復ぶんか」で、要約の効きの読み方がまるで違う。
-            //
-            // **文字数のほうが本体**（2026-08-03 の実機で判明）。要約が畳んだ履歴より
-            // 大きくなることが実際に起きる（opus が 1 往復を 1,163 字に書き広げた）。
-            // しかも要約は滑る窓と違って落ちないので、**膨らんだぶんは以後の全ターンに
-            // 乗り続ける**。通数だけでは、その損得が 1 行から読めない。
-            let history_msgs = history.len();
-            let history_chars: usize = history.iter().map(|m| m.content.chars().count()).sum();
-            let mut messages = Vec::with_capacity(history_msgs + 3);
-            messages.push(ChatMessage::system(SUMMARY_SYSTEM));
-            if let Some(previous) = &previous {
-                messages.push(ChatMessage::user(format!(
-                    "## 前回までの経緯（既存の要約）\n{previous}"
-                )));
-                messages.push(ChatMessage::assistant("承知しました。"));
-            }
-            messages.extend(history);
-            messages.push(ChatMessage::user(SUMMARY_INSTRUCTION));
-
-            let backend = match self.shared.backend_for(&template).await {
-                Ok(backend) => backend,
-                Err(err) => {
-                    note!("WARN summarize: {agent_id}（{name}）のバックエンドを組めません: {err}");
-                    continue;
-                }
-            };
-            let request = ChatRequest {
-                model: template.model.clone(),
-                messages,
-                // 要約にツールは要らない。提示すると呼びに行く個体が出て、
-                // 1 回で終わるはずの呼び出しがループになる。
-                tools: Vec::new(),
-                tool_choice: crate::llm::ToolChoice::None,
-                temperature: template.temperature,
-                max_tokens: template.max_output_tokens,
-                effort: template.effort,
-                cacheable_prefix_len: 0,
-            };
-            let response = match backend.chat(request).await {
-                Ok(response) => response,
-                Err(err) => {
-                    note!("WARN summarize: {agent_id}（{name}）の要約に失敗しました: {err}");
-                    continue;
-                }
-            };
-
-            // **使ったトークンは必ず数える。** 要約はターンループの外で走る
-            // LLM 呼び出しなので、ここで積まないと**押した人が払った分がどの
-            // 数字にも現れない** — カードの累計にも、村の集計にも、ログにも。
-            // 失敗した呼び出しぶんも課金されるが、それは response が無いので
-            // 数えられない（プロバイダが usage を返さない経路と同じ扱い）。
-            let usage = response.usage;
-            if let Ok(record) = self.shared.world.write().await.agent_mut(&agent_id) {
-                record.total_tokens += usage.total();
-                record.prompt_tokens += usage.prompt;
-                record.cached_tokens += usage.cache_read;
-            }
-            let text = response.text.unwrap_or_default();
-            // ターンの `turn:` 行と対になる 1 行。要約は会話ログに 1 行しか
-            // 残らないので、**何にいくら掛かったか**はここにしか出ない。
-            let summary_chars = text.chars().count();
-            note!(
-                "summarize: agent={agent_id} model={} covers_up_to={covers_up_to_seq} \
-                 folded_msgs={history_msgs} folded_chars={history_chars} \
-                 summary_chars={summary_chars} prompt={} cached={} total={}",
-                template.model,
-                usage.prompt,
-                usage.cache_read,
-                usage.total()
-            );
-            // 短くならなかった要約は、以後の全ターンで払い続ける固定費になる
-            // （履歴は滑る窓で落ちるが、要約は落ちない）。**機構では止めない** —
-            // 止めると「要約したのに畳まれない」状態が画面から読めなくなる。
-            // 計器だけ置いて、頻度を見てから決める。
-            if summary_chars >= history_chars {
-                note!(
-                    "WARN summarize: {agent_id}（{name}）の要約が元の履歴より長くなりました\
-                     （{history_chars} 字 → {summary_chars} 字）。この会話ではプロンプトは\
-                     短くなりません — 畳む履歴が増えてから押すほうが効きます"
-                );
-            }
-
-            if text.trim().is_empty() {
-                note!("WARN summarize: {agent_id}（{name}）の要約が空でした（履歴は畳みません）");
-                continue;
-            }
-
-            self.shared.persist(&SessionRecord::summary(
-                &agent_id,
-                text.clone(),
-                covers_up_to_seq,
-            ));
-            self.shared
-                .summaries
-                .write()
-                .await
-                .insert(agent_id.clone(), text);
-            // 畳むのは**保存が済んでから**。先に畳むと、保存に失敗した瞬間に
-            // 履歴も要約も無い状態になる。
-            if let Ok(record) = self.shared.world.write().await.agent_mut(&agent_id) {
-                record.history.clear();
-            }
-            done += 1;
-        }
-
-        if done > 0 || skipped > 0 {
-            // 飛ばした相手が居るなら**必ず言う**。黙って対象外にすると、
-            // 「要約したのに次のターンが短くならない」個体の理由が画面から消える。
-            // 次の道も書く（#44 の規律）— 起動してから押せば要約される。
-            let note = if skipped > 0 {
-                format!(
-                    "（停止中の {skipped} 体は要約していません。起動してからもう一度押すと、\
-                     その相手も要約されます）"
-                )
-            } else {
-                String::new()
-            };
-            self.shared
-                .record(AgentMessage::new(
-                    Endpoint::System,
-                    Endpoint::User,
-                    format!(
-                        "稼働中の {done} 体の記憶を要約しました。以後のやり取りは要約を踏まえて\
-                         続きます（元のやり取りは消えていません — 「会話一覧」の書き出しから\
-                         読めます）{note}"
-                    ),
-                    0,
-                ))
-                .await;
-        }
-        Ok(done)
+        // 本体は Shared に置いてある。予定の完了後の自動要約（Spec 28 の
+        // `summarizeAfter`）が Orchestrator を持たない場所から呼ぶ必要があり、
+        // **同じ規律を 2 箇所に書かない**ために下ろした。
+        self.sessions()?;
+        self.shared.summarize_agents(None).await
     }
 
     /// 会話を JSONL で書き出し、書いたレコード数を返す。
@@ -2494,7 +2553,9 @@ impl Orchestrator {
         // 因果の根 — 予算はここで生まれる（Spec 11）。同報は宛先ごとに
         // このメソッドが呼ばれるので、宛先ごとに独立した予算になる（契約どおり）。
         let budget = new_root_budget(&self.shared).await;
-        deliver(&self.shared, to, message, budget).await
+        // 利用者の発話は参加者を数えない — 自動要約は予定の発火だけの機能で、
+        // 人が話している間に履歴を畳むのは「押していない操作」になる。
+        deliver(&self.shared, to, message, budget, None).await
     }
 
     // ---- 外部からの依頼（Spec 25） -------------------------------------------
@@ -2563,6 +2624,8 @@ impl Orchestrator {
             0,
             &cancel,
             budget.as_ref(),
+            // 外部依頼は予定ではないので参加者を数えない（自動要約の対象外）。
+            None,
         )
         .await;
         // 分類は捨てる（`ask` と同じ）。**失敗も文字列で返る** — 相手が
@@ -2770,6 +2833,19 @@ fn spawn_schedule_ticker(
                 event = events.recv() => match event {
                     Ok(CoreEvent::AgentTyping { agent_id, active: false }) => {
                         runtime.in_flight.lock().await.remove(&agent_id);
+                        // 根のターンが終わった = この因果で待った相手は全員
+                        // 答え終わっている（`ask` / `plan` は答えを待って初めて
+                        // 呼び出し元のターンが進むため）。ここが自動要約の起点。
+                        let pending = runtime.pending_summaries.lock().await.remove(&agent_id);
+                        if let Some(participants) = pending
+                            && let Some(shared) = shared.upgrade()
+                        {
+                            // **切り離す。** ここで待つと、要約の LLM 呼び出しの間
+                            // ティッカーが止まる（前判定と同じ理由）。
+                            tokio::spawn(async move {
+                                summarize_causality(&shared, &agent_id, &participants).await;
+                            });
+                        }
                     }
                     Ok(_) => {}
                     // 取りこぼしたら fail open（集合を空にする）。塞がったままに
@@ -2777,6 +2853,9 @@ fn spawn_schedule_ticker(
                     // 稀な二重発火より悪い（Spec 07 Notes 5）。
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         runtime.in_flight.lock().await.clear();
+                        // **要約待ちも一緒に捨てる。** 完了の合図を取りこぼした以上、
+                        // 待ち続けても起点は二度と来ない。要約は次の発火でやり直せる。
+                        runtime.pending_summaries.lock().await.clear();
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
@@ -2960,6 +3039,12 @@ async fn deliver_scheduled(
     task: &ScheduledTask,
     appendix: String,
 ) -> bool {
+    // 参加者を数えるのは `summarizeAfter` の予定だけ（Spec 28 D7）。
+    // **数えない因果では `None` を運ぶ** — 使わない集合を全因果で作ると、
+    // 「この欄は何のためにあるのか」が読めなくなる。
+    let participants: Option<Participants> = task
+        .summarize_after
+        .then(|| Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())));
     // 本文の先頭に由来を書く。封筒（【送り手: Concordia】）だけでは
     // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
     // 利用者も定期発火だと分かる。
@@ -2988,10 +3073,20 @@ async fn deliver_scheduled(
     // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
     let budget = new_root_budget(shared).await;
 
-    match deliver(shared, &task.to, message.clone(), budget).await {
+    match deliver(shared, &task.to, message.clone(), budget, participants.clone()).await {
         Ok(()) => {
             shared.record(message).await;
             runtime.in_flight.lock().await.insert(task.to.clone());
+            // 根のターンが終わったら要約する（Spec 28 D7）。**ここでは待たない** —
+            // 待つと予定のループが 1 件の依頼に塞がれる。完了の合図は
+            // `AgentTyping { active: false }` で、ティッカーが既に聴いている。
+            if let Some(participants) = participants {
+                runtime
+                    .pending_summaries
+                    .lock()
+                    .await
+                    .insert(task.to.clone(), participants);
+            }
             true
         }
         Err(err) => {
@@ -3165,6 +3260,31 @@ async fn probe_once(
     }
 }
 
+/// 予定の因果が終わったので、参加した個体を要約する（Spec 28 の `summarizeAfter`）。
+///
+/// **対象は「根 + 待って答えを返し終えた個体」。** `handoff` で渡した先は入らない —
+/// 渡した側は待っていないので、終わったことを観測する点が無い。
+///
+/// **人が押す「要約して続ける」との違いは対象だけ**で、要約そのものの規律
+/// （本人のモデルが書く / ツールは提示しない / 保存が済んでから畳む / 空なら
+/// 畳まない）は 1 つも変えていない。
+async fn summarize_causality(shared: &Shared, root: &AgentId, participants: &Participants) {
+    let mut targets = match participants.lock() {
+        Ok(set) => set.clone(),
+        // 毒されたロックで要約を諦める理由が無い（中身は名前の集合だけ）。
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    // **根は必ず対象。** 依頼を受けて答えた本人で、履歴が最も伸びている。
+    targets.insert(root.clone());
+
+    match shared.summarize_agents(Some(&targets)).await {
+        Ok(0) => {}
+        Ok(done) => note!("schedule summarize: root={root} agents={done}"),
+        // 要約できないことは、次の発火を止める理由にならない。
+        Err(err) => note!("WARN schedule summarize: root={root} に失敗しました: {err}"),
+    }
+}
+
 /// 因果の根の予算を作る（Spec 11）。村に天井が無ければ `None`。
 ///
 /// 呼ぶのは根の 2 箇所（ユーザー発話の宛先ごと / 予定の発火ごと）だけ。
@@ -3188,8 +3308,9 @@ async fn deliver(
     to: &AgentId,
     message: AgentMessage,
     budget: Option<Arc<BudgetPool>>,
+    participants: Option<Participants>,
 ) -> CoreResult<()> {
-    deliver_envelope(shared, to, Envelope::plain(message, budget)).await
+    deliver_envelope(shared, to, Envelope::plain(message, budget, participants)).await
 }
 
 /// 返信路つきの配送。
@@ -3996,6 +4117,10 @@ async fn handle_message(
         // 因果の予算（Spec 11）。このターンの全消費をここから引き、
         // このターンが生む全配送（ask / plan / 転送）へ同じ Arc を渡す。
         budget,
+        // 因果の参加者（Spec 28）。**このターンが `ask` / `plan` で待った相手**
+        // だけがここへ入る。予算と同じ経路で下流へ渡すが、書き込むのは
+        // `deliver_and_wait` が答えを受け取った瞬間だけ。
+        participants,
     } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
@@ -4631,6 +4756,7 @@ async fn handle_message(
                     plan_wave,
                     &turn.token,
                     budget.as_ref(),
+                    participants.as_ref(),
                     !incoming.attachments.is_empty(),
                 )
                 .await)
@@ -4654,6 +4780,7 @@ async fn handle_message(
                             incoming.hop,
                             &turn.token,
                             budget.as_ref(),
+                            participants.as_ref(),
                             !incoming.attachments.is_empty(),
                         )
                         .await
@@ -5068,7 +5195,11 @@ async fn handle_message(
     for (to, outgoing) in queued {
         // 転送・fan-out は**同じ因果の続き** — 予算は同一の Arc を引き継ぐ
         // （新しいプールを作った瞬間に天井が蒸発する。token_budget の pool）。
-        if let Err(err) = deliver(shared, to, outgoing, budget.clone()).await {
+        // **参加者は引き継ぐが、転送先はここでは数に入らない** — 数えるのは
+        // 「待って答えを返した」個体で、転送は待たない（Spec 28 D7）。
+        // 引き継ぐのは、転送先がさらに `ask` で待ったときにその相手を拾うため。
+        if let Err(err) = deliver(shared, to, outgoing, budget.clone(), participants.clone()).await
+        {
             shared.emit(CoreEvent::AgentFailed {
                 agent_id: to.clone(),
                 error: ErrorPayload::from(&err),
@@ -5295,6 +5426,7 @@ async fn ask_agent(
     hop: u8,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
     drops_attachment: bool,
 ) -> CoreResult<String> {
     // 依頼元のターンに画像が付いていたら、届かないことを本文で断る（D6）。
@@ -5324,6 +5456,7 @@ async fn ask_agent(
         next_hop,
         parent,
         budget,
+        participants,
     )
     .await
     .0)
@@ -5340,6 +5473,12 @@ async fn ask_agent(
 /// （ツールの失敗で会話を止めない、という既存の規律）。分類（Spec 08）は
 /// 波ペインのセル色の素材で、`ask` 側は捨てるだけ — 計時も同じ理由で
 /// ここに入れない（plan の観測の関心を ask に背負わせない）。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "因果の付随物（予算・打ち切り・参加者）は 1 つの構造体へ畳めるが、\
+              畳むと『どの配送が何を運ぶか』が呼び出し側から読めなくなる。\
+              ask / plan の 2 つのハンドラも同じ理由で許容済み"
+)]
 async fn deliver_and_wait(
     shared: &Arc<Shared>,
     from: &Endpoint,
@@ -5348,6 +5487,7 @@ async fn deliver_and_wait(
     next_hop: u8,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
 ) -> (String, PlanTaskState) {
     // 予算が尽きていたら配送そのものを始めない（token_budget の exhaustion —
     // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
@@ -5380,6 +5520,8 @@ async fn deliver_and_wait(
         cancel: Some(parent.child_token()),
         // 依頼元と同じ因果 = 同一の Arc（新しいプールを作らない）。
         budget: budget.cloned(),
+        // 参加者も同じ因果を運ぶ。**入れるのは答えが返った後**（下）。
+        participants: participants.cloned(),
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -5392,7 +5534,21 @@ async fn deliver_and_wait(
 
     match tokio::time::timeout(shared.config.ask_timeout, rx).await {
         // 答え（Answered）か転送の事実（HandedOff）。刻み手は handle_message。
-        Ok(Ok(reply)) => (reply.text, reply.kind),
+        Ok(Ok(reply)) => {
+            // **ここが「待って完了した」の唯一の観測点**（Spec 28 D7）。
+            // `handoff` はこの関数を通らないので、渡した先は入らない。
+            //
+            // **転送の事実（HandedOff）では数えない。** 返ってきたのは
+            // 「別の人へ回した」という事実であって、この個体が仕事を
+            // 終えた証拠ではない — 履歴が伸びていないので要約する物が無い。
+            if reply.kind == PlanTaskState::Answered
+                && let Some(set) = participants
+                && let Ok(mut set) = set.lock()
+            {
+                set.insert(to.clone());
+            }
+            (reply.text, reply.kind)
+        }
         // 相手が答えずにタスクを終えた（停止・失敗）。転送で応じた場合は
         // handle_message が事実を送るので、ここへは来ない。
         Ok(Err(_)) => (
@@ -5433,6 +5589,7 @@ async fn run_plan(
     wave: u32,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
     drops_attachment: bool,
 ) -> String {
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
@@ -5549,6 +5706,9 @@ async fn run_plan(
         // プールの複製ではない）。タスクごとに新しいプールを作ると天井が
         // 人数倍に化ける — delegation-fanout race（token_budget の pool）。
         let budget = budget.cloned();
+        // 参加者の集合も波の全タスクが同一の Arc を指す。**答えを返した
+        // タスクだけが自分を書き込む**ので、波の中で誰が答えたかがそのまま残る。
+        let participants = participants.cloned();
         set.spawn(async move {
             let task_started = std::time::Instant::now();
             let (answer, state) = deliver_and_wait(
@@ -5559,6 +5719,7 @@ async fn run_plan(
                 next_hop,
                 &parent,
                 budget.as_ref(),
+                participants.as_ref(),
             )
             .await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)

@@ -87,6 +87,10 @@ async fn setup(dir: &TempDir) -> Orchestrator {
     orchestrator
 }
 
+/// 一定時間静かになるまでイベントを集める。
+///
+/// **`quiet` は `stats_interval`（1 秒）より短くする。** 統計イベントが毎秒
+/// 流れているので、1 秒以上の窓は原理的に閉じず、テストが永久に返らない。
 async fn drain_until_quiet(rx: &mut Receiver<CoreEvent>, quiet: Duration) -> Vec<CoreEvent> {
     let mut events = Vec::new();
     while let Ok(Ok(event)) = tokio::time::timeout(quiet, rx.recv()).await {
@@ -464,6 +468,99 @@ async fn a_probe_is_persisted_and_reloads() {
     let restored = tasks[0].probe.as_ref().expect("前判定が戻ること");
     assert_eq!(restored.expect, "CHANGED");
     assert_eq!(tasks[0].session_mode, SessionMode::Fresh);
+}
+
+/// `summarizeAfter` は**因果に参加した個体だけ**を畳む。
+///
+/// 負の対照が本体 — 同じ村で稼働しているのに**この発火に関わっていない**個体の
+/// 履歴は残る。これが崩れると、予定が「関与していない個体のぶんまで払う」形になり、
+/// Spec 12 P4 の規律と衝突する。
+#[tokio::test]
+async fn summarize_after_folds_only_the_agents_in_the_causality() {
+    let dir = TempDir::new("summarize");
+    let orchestrator = setup(&dir).await;
+
+    // 発火に関わらない 2 体目。**先に会話させて履歴を作っておく** —
+    // 履歴が空の個体は元から対象外なので、それでは負の対照にならない。
+    let bystander = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(bystander.clone(), "そばの人", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&bystander).await.unwrap();
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&bystander, "こんにちは")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    orchestrator
+        .create_schedule(
+            AgentId::from("agent_01"),
+            "見張って".into(),
+            THU_17,
+            ScheduleOptions {
+                probe: None,
+                session_mode: SessionMode::Continue,
+                summarize_after: true,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .run_schedule_tick(jst_at(2026, 7, 30, 17, 0, 29))
+        .await;
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(900)).await;
+
+    let sent = messages(&events);
+    let summary_line = sent
+        .iter()
+        .find(|m| m.content.contains("予定の完了後に"))
+        .unwrap_or_else(|| {
+            panic!("自動要約の System 行が出ること（「押しました」の文面と分けてある）: {sent:?}")
+        });
+
+    // **体数がそのまま負の対照**。因果の根 1 体だけが畳まれ、同じ村で稼働して
+    // いる（履歴もある）そばの人は数に入らない。2 体になったら、予定が
+    // 関わっていない個体のぶんまで払っている。
+    assert!(
+        summary_line.content.contains("予定の完了後に 1 体の記憶を要約しました"),
+        "畳むのは因果の根だけであること: {}",
+        summary_line.content
+    );
+}
+
+/// `summarizeAfter` が偽なら、**要約は 1 度も走らない**。
+#[tokio::test]
+async fn without_the_flag_nothing_is_summarised() {
+    let dir = TempDir::new("nosummarize");
+    let orchestrator = setup(&dir).await;
+    orchestrator
+        .create_schedule(
+            AgentId::from("agent_01"),
+            "見張って".into(),
+            THU_17,
+            ScheduleOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .run_schedule_tick(jst_at(2026, 7, 30, 17, 0, 29))
+        .await;
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(900)).await;
+
+    assert!(
+        !messages(&events)
+            .iter()
+            .any(|m| m.content.contains("要約しました")),
+        "既定では要約しない: {:?}",
+        messages(&events)
+    );
 }
 
 /// 村の識別子は**起動をまたいで変わらない**（変わると全承認が外れる）。

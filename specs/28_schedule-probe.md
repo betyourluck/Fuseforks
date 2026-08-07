@@ -569,15 +569,57 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
   「プロセスを起こしていない」を読む（配送だけ見ると、実行してから結果を
   捨てる実装でも緑になる）。
 
-  ### P2b / P2c に残っているもの
+  ### P2b 実装記録（`summarizeAfter` — 因果の参加者を運ぶ。2026-08-08 完了）
 
-  - **P2b `summarizeAfter` の配線。** 対象「待って完了した個体」を正しく取るには
-    **因果の参加者集合を封筒で運ぶ**必要がある（`Envelope` へ 1 欄 +
-    signature 6 箇所 + `deliver_and_wait` での記録 + 根のターン完了の検知）。
-    **前判定の配線と混ぜない** — 契約と実装が食い違う典型の形になる。
-    **現状は欄が保存・往復するだけで、まだ効かない**
-  - **P2c 承認ファイルの実体**（`{app_data_dir}/probe_approvals.json`）**と
-    IPC**。コア側は `ProbeApprovals` の口と `Orchestrator::set_probe_approvals` /
+  **対象の定義（根 + `deliver_and_wait` で待って答えを返し終えた個体）を、
+  そのまま観測点にした。**
+
+  - **`Envelope` へ `participants: Option<Participants>` を加算**
+    （`Arc<std::sync::Mutex<HashSet<AgentId>>>`）。予算とまったく同じ経路を
+    運ばれるが、**予算プールに相乗りさせない** — `handoff` も同一の予算 Arc を
+    継承する（`a_handoff_inherits_the_same_budget_pool` が凍結）ので、
+    予算の伝播で代用すると `handoff` 先まで対象に入る
+  - **書き込む場所は 1 箇所だけ**: `deliver_and_wait` が答えを受け取った瞬間。
+    しかも **`PlanTaskState::Answered` のときだけ**入れる —
+    `HandedOff`（別の人へ回した事実）で数えると、履歴が伸びていない個体を
+    要約することになる
+  - **数えない因果では `None` を運ぶ**（利用者の発話・`summarizeAfter` が
+    偽の予定・外部依頼）。使わない集合を全因果で作ると、
+    「この欄は何のためにあるのか」が読めなくなる
+  - **完了の検知は `AgentTyping { active: false }` に相乗り**した。
+    ティッカーが既に聴いている合図で、`in_flight` と同じ場所で外れる。
+    **別の完了検知を作ると、片方だけが取りこぼす形が生まれる** — イベントの
+    取りこぼしで `in_flight` が fail open で空にされるとき、こちらだけ残ると
+    要約が永遠に待つ。ゆえに**取りこぼしでは一緒に捨てる**（要約は次の発火で
+    やり直せる）
+  - **`summarize_session` の本体も `Shared` へ下ろした**（`switch_to` と同じ
+    判断）。`summarize_agents(only: Option<&HashSet<AgentId>>)` へ割り、
+    人が押す従来の経路は `None` で呼ぶ。**要約そのものの規律は 1 つも
+    変えていない**（本人のモデルが書く / ツールは提示しない / 保存が済んでから
+    畳む / 空なら畳まない）
+  - **System 行の文言を経路で分けた** —「予定の完了後に N 体の…」/
+    「稼働中の N 体の…」。**押していない操作を「押しました」の文面で出すと、
+    人が自分の操作だと読む**
+
+  **テスト側の誤りで 1 度ハングさせた**（`failures.md` 級ではないのでここに
+  記録）。`drain_until_quiet` の静穏窓を 1200 ms にしたところ、
+  **`stats_interval` が 1 秒**なので統計イベントが毎秒流れ、**窓が原理的に
+  閉じない**。P2a のテストが 900 ms だったのは同じ理由で、写すときに
+  数字だけ変えて根拠を落とした。**一般化: 「静かになるまで待つ」テストの窓は、
+  その系で最も短い定期イベントの周期より短くする。** 長くすると
+  「失敗」ではなく「永久に返らない」として現れ、実装のデッドロックと
+  区別が付かない（実際、最初は実装側を疑った）。ヘルパーの doc に
+  条件を書いて留めた。
+
+  **負の対照の作り方**: 参加者だけが畳まれることは、**System 行の体数**で
+  読む（同じ村で稼働していて履歴もある個体を 1 体用意し、`1 体` であることを
+  見る）。**畳まれたことを直接読む公開 API は無い**ので、
+  「畳まれた数」を観測点にした。
+
+  ### P2c に残っているもの
+
+  - **承認ファイルの実体**（`{app_data_dir}/probe_approvals.json`）**と IPC**。
+    コア側は `ProbeApprovals` の口と `Orchestrator::set_probe_approvals` /
     `village_id()` まで用意した。**IPC は今のところ既定の
     `ScheduleOptions` を渡している**（画面に入口が無いことの表明で、
     `schedules.json` を手で書いた予定は既に読み込み側が受け付ける）
