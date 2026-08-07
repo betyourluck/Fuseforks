@@ -8,6 +8,7 @@ mod commands;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
 // **公開しているのは扉の部品であって、扉そのものではない。**
 pub mod mcp_server;
+pub mod probe_approvals;
 mod state;
 
 use tauri::Manager;
@@ -181,6 +182,7 @@ pub fn run() {
             // 予定（Spec 07）
             commands::list_schedules,
             commands::create_schedule,
+            commands::approve_schedule_probe,
             commands::delete_schedule,
             commands::set_schedule_enabled,
         ])

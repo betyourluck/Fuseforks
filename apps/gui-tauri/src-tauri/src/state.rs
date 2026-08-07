@@ -32,6 +32,13 @@ pub struct AppState {
     pub mcp_server: tokio::sync::Mutex<crate::mcp_server::McpServerManager>,
     /// 直近の扉の起動失敗（ポート衝突など）。画面へそのまま出す。
     pub mcp_server_error: std::sync::Mutex<Option<String>>,
+    /// 予定の前判定をこの端末で実行してよいかの記録（Spec 28）。
+    ///
+    /// **workspace の外**（`{app_data_dir}/probe_approvals.json`）に住む —
+    /// 村の中に置くと承認ごと配布され、他人が用意したコマンドが受け取った側で
+    /// 黙って走る。コアへは `ProbeApprovals` として差し込んであり、
+    /// **書き戻す口はここ（IPC の層）にしかない**。
+    pub probe_approvals: Arc<crate::probe_approvals::ApprovalStore>,
 }
 
 /// バックグラウンド初期化の失敗理由。
@@ -125,11 +132,20 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
         crate::mcp_server::McpServerManager::load(&app_data_dir, Arc::clone(&orchestrator));
     let mcp_server_error = mcp_server.start_if_enabled().await;
 
+    // 前判定の承認（Spec 28）。**同じ棚（app_data_dir）に置く理由も同じ** —
+    // 村を配っても承認は付いてこない。差し込むまで前判定は 1 本も走らないので、
+    // **ここを忘れると「全部 unapproved」という安全側で止まる**。
+    let probe_approvals = Arc::new(crate::probe_approvals::ApprovalStore::load(&app_data_dir));
+    orchestrator
+        .set_probe_approvals(Arc::clone(&probe_approvals) as Arc<dyn agent_core::orchestrator::ProbeApprovals>)
+        .await;
+
     Ok(AppState {
         orchestrator,
         workspace,
         mcp_server: tokio::sync::Mutex::new(mcp_server),
         mcp_server_error: std::sync::Mutex::new(mcp_server_error),
+        probe_approvals,
     })
 }
 

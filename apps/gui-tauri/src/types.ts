@@ -426,6 +426,42 @@ export type Recurrence =
   | { kind: "weekly"; weekday: Weekday; hour: number; minute: number };
 
 /**
+ * 配送の前に走らせる判定（Spec 28）。**LLM を通さない。**
+ *
+ * 判定は stdout の 1 行目（トリム後）と `expect` の完全一致だけ。
+ * **exit code は判定に使わない** — 監視の慣習は異常を非 0 で表すため
+ * （`echo CHANGED; exit 1` が発火しないと主戦場で永遠に沈黙する）。
+ */
+export interface ScheduleProbe {
+  /** 実行ファイル名またはパス。空は保存時に拒否される。 */
+  command: string;
+  /** 引数の配列。**順序は意味を持つ**（承認鍵にもそのまま入る）。 */
+  args: string[];
+  /** stdout の 1 行目と完全一致させる合図。空は保存時に拒否される。 */
+  expect: string;
+  /** 打ち切りまでの秒数（既定 60・上限 3600）。 */
+  timeoutSecs: number;
+  /** 作業フォルダ（絶対パス）。null なら workspace。 */
+  cwd: string | null;
+}
+
+/** 配送をどの会話へ積むか（Spec 28）。 */
+export type SessionMode = "continue" | "fresh";
+
+/**
+ * 予定を作るときの追加の指定（Spec 28）。
+ *
+ * **既定値の欄はワイヤに現れない**（Rust 側が `skip_serializing_if` で落とす）。
+ * 受け取り側は「欄が無い = 既定」として読むこと — 前判定を持たない既存の予定を
+ * 読んで保存し直してもファイルが 1 バイトも変わらない、を成立させている。
+ */
+export interface ScheduleOptions {
+  probe?: ScheduleProbe | null;
+  sessionMode?: SessionMode;
+  summarizeAfter?: boolean;
+}
+
+/**
  * 予定一覧の 1 行。`nextDueMs` と `recurrenceLabel` はコア側で算出される —
  * フロントはカレンダー計算を持たない（真実が 2 箇所できる）。
  */
@@ -439,10 +475,24 @@ export interface ScheduleView {
   lastConsumedDueMs: number | null;
   /** 偽なら発火も消化もしない（設定を消さずに一時停止する欄）。 */
   enabled: boolean;
+  /** 前判定（Spec 28）。既定（無し）ならワイヤに現れない。 */
+  probe?: ScheduleProbe | null;
+  /** 配送先の会話。既定（continue）ならワイヤに現れない。 */
+  sessionMode?: SessionMode;
+  /** 因果の完了後に参加した個体を要約するか。既定（偽）ならワイヤに現れない。 */
+  summarizeAfter?: boolean;
   /** 次回の発火予定時刻（epoch ミリ秒）。求まらなければ null。 */
   nextDueMs: number | null;
   /** 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。 */
   recurrenceLabel: string;
+  /**
+   * 前判定がこの端末で承認済みか（Spec 28）。**前判定が無ければ常に真**。
+   *
+   * 偽の行は発火しても実行されない（`unapproved` で消化される）。
+   * **画面はここを見て承認の導線を出す** — 出さないと「動かないが理由が
+   * 分からない」になる。
+   */
+  probeApproved: boolean;
 }
 
 /**

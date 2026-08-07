@@ -841,19 +841,35 @@ pub struct ScheduleView {
     pub next_due_ms: Option<u64>,
     /// 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。
     pub recurrence_label: String,
+    /// 前判定がこの端末で承認済みか（Spec 28）。**前判定が無ければ常に真**。
+    ///
+    /// 偽の行は発火しても `unapproved` で消化される。**画面がその理由を出せる
+    /// ようにここへ載せる** — 出さないと「動かないが理由が分からない」になる。
+    pub probe_approved: bool,
 }
 
 impl ScheduleView {
     /// 現在時刻で `next_due` を評価して 1 行に整える。
-    fn of(task: agent_core::schedule::ScheduledTask) -> Self {
+    fn of(
+        task: agent_core::schedule::ScheduledTask,
+        approvals: &crate::probe_approvals::ApprovalStore,
+        village_id: &str,
+    ) -> Self {
         let next_due_ms = task
             .next_due(&chrono::Local::now())
             .and_then(|due| u64::try_from(due.timestamp_millis()).ok());
         let recurrence_label = task.recurrence.label_ja();
+        let probe_approved = task.probe.as_ref().is_none_or(|probe| {
+            agent_core::orchestrator::ProbeApprovals::is_approved(
+                approvals,
+                &probe.approval_key(village_id),
+            )
+        });
         Self {
             task,
             next_due_ms,
             recurrence_label,
+            probe_approved,
         }
     }
 }
@@ -861,36 +877,95 @@ impl ScheduleView {
 /// 登録済みの予定（登録順）。
 #[tauri::command]
 pub async fn list_schedules(state: State<'_, AppState>) -> CoreResult<Vec<ScheduleView>> {
+    let village_id = state.orchestrator.village_id().await;
     Ok(state
         .orchestrator
         .schedules()
         .await
         .into_iter()
-        .map(ScheduleView::of)
+        .map(|task| ScheduleView::of(task, &state.probe_approvals, &village_id))
         .collect())
 }
 
 /// 予定を登録する。
+///
+/// **前判定を伴う登録は、ここで承認も書く**（Spec 28 D10）。書いた人 =
+/// 承認した人なので、追加の確認ダイアログは出さない — 自分がいま書いた
+/// コマンドへの同意をもう一度問うのは、同じ意図の 2 つ目のスイッチになる。
+///
+/// **順序は 承認 → schedules。** 逆にすると、schedules だけ書けて承認が
+/// 書けなかったとき、正当な前判定が `unapproved` で 1 回ぶんの発火を失う。
+/// 承認だけ書けた残骸は**何も参照しない鍵**なので無害で、次の保存の掃除が拾う。
 #[tauri::command]
 pub async fn create_schedule(
     state: State<'_, AppState>,
     to: AgentId,
     message: String,
     recurrence: agent_core::schedule::Recurrence,
+    options: Option<agent_core::schedule::ScheduleOptions>,
 ) -> CoreResult<ScheduleView> {
-    // 前判定・セッション・要約の指定は P3（画面）で載せる。**ここで既定を
-    // 渡しているのは「まだ入口が無い」ことの表明**で、`schedules.json` を
-    // 手で書いた予定は既に読み込み側が受け付けている（Spec 28 P2a）。
+    let options = options.unwrap_or_default();
+    let village_id = state.orchestrator.village_id().await;
+
+    if let Some(probe) = &options.probe {
+        // **人のクリックだけがここへ到達する。** モデルは IPC を呼べないので、
+        // `schedules.json` を `file write` で書いても承認は付かない。
+        state
+            .probe_approvals
+            .approve(probe.approval_key(&village_id))
+            .map_err(|reason| agent_core::CoreError::ConfigIo {
+                path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
+                source: std::io::Error::other(reason),
+            })?;
+    }
+
     let task = state
         .orchestrator
-        .create_schedule(
-            to,
-            message,
-            recurrence,
-            agent_core::schedule::ScheduleOptions::default(),
-        )
+        .create_schedule(to, message, recurrence, options)
         .await?;
-    Ok(ScheduleView::of(task))
+
+    // 使われなくなった承認を落とす（**時計ではなく参照で**肥大化を止める）。
+    // 失敗しても登録は成立しているので、警告に留める。
+    if let Err(reason) = state
+        .probe_approvals
+        .retain_for(&state.orchestrator.schedules().await, &village_id)
+    {
+        agent_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
+    }
+
+    Ok(ScheduleView::of(task, &state.probe_approvals, &village_id))
+}
+
+/// 既存の予定の前判定を、この端末で実行してよいと承認する（Spec 28 D10）。
+///
+/// **配られた村・手で書いた `schedules.json` の前判定はここを通るまで走らない。**
+/// 画面がコマンド行の原文（`command` / `args` / `cwd`）を出したうえで、
+/// 人が中身を見て押す。
+///
+/// # Errors
+/// 該当 ID が無い、前判定を持たない、または承認ファイルへ書けない場合。
+#[tauri::command]
+pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> CoreResult<()> {
+    let village_id = state.orchestrator.village_id().await;
+    let tasks = state.orchestrator.schedules().await;
+    let task = tasks
+        .iter()
+        .find(|task| task.id == id)
+        .ok_or_else(|| agent_core::CoreError::ScheduleNotFound(id.clone()))?;
+    let probe = task
+        .probe
+        .as_ref()
+        .ok_or_else(|| agent_core::CoreError::InvalidSchedule {
+            reason: "この予定は前判定を持ちません".to_owned(),
+        })?;
+
+    state
+        .probe_approvals
+        .approve(probe.approval_key(&village_id))
+        .map_err(|reason| agent_core::CoreError::ConfigIo {
+            path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })
 }
 
 /// 予定を削除する。復元はできない。

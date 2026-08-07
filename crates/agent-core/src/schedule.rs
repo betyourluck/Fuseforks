@@ -332,7 +332,11 @@ pub struct ScheduledTask {
 /// 残して「あとから設定する」経路を足すと、**片方だけを通る作り方が生える**
 /// （Spec 14 P2 の「流し込みは `create_agent` の中だけ」と同じ判断）。
 /// `Default` があるので、前判定を使わない呼び出しは 1 語で済む。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// **IPC のワイヤ形でもある**（画面から 3 欄をまとめて渡す）。欄を省いた
+/// 呼び出しが既定へ落ちるよう、`Deserialize` は `default` を敷く。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ScheduleOptions {
     /// 配送の前に走らせる判定。
     pub probe: Option<ScheduleProbe>,

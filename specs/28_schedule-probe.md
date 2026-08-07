@@ -616,13 +616,35 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
   見る）。**畳まれたことを直接読む公開 API は無い**ので、
   「畳まれた数」を観測点にした。
 
-  ### P2c に残っているもの
+  ### P2c 実装記録（承認ファイルの実体と IPC。2026-08-08 完了）
 
-  - **承認ファイルの実体**（`{app_data_dir}/probe_approvals.json`）**と IPC**。
-    コア側は `ProbeApprovals` の口と `Orchestrator::set_probe_approvals` /
-    `village_id()` まで用意した。**IPC は今のところ既定の
-    `ScheduleOptions` を渡している**（画面に入口が無いことの表明で、
-    `schedules.json` を手で書いた予定は既に読み込み側が受け付ける）
+  新設は `apps/gui-tauri/src-tauri/src/probe_approvals.rs`（単体 7 本）。
+  `AppState` へ `probe_approvals` を持たせ、起動時にコアへ差し込む。
+  IPC は `create_schedule` に `options` を足し、`approve_schedule_probe` を新設。
+  フロントは型（`ScheduleProbe` / `SessionMode` / `ScheduleOptions` /
+  `ScheduleView.probeApproved`）とワイヤまで。**画面の入口は P3。**
+
+  次に触る人が要る判断が 4 点:
+
+  - **`ScheduleView` へ `probeApproved` を載せた。** 未承認の行は発火しても
+    実行されないので、**画面がその理由を出せないと「動かないが理由が
+    分からない」になる**。承認の有無は端末側にしかないので、
+    フロントが自分で判定する経路は無い
+  - **掃除は `create_schedule` の後で `retain_for`。** 現在の予定のどの前判定にも
+    一致しない鍵を落とす。**時計で切らない**（判定に壁時計を持ち込むと
+    テストが時刻に依存する — `schedule.rs` の「内部で `Local::now()` を
+    呼ばない」と同じ規律）。予定を消せば承認も消えるので、肥大化はこれで止まる
+  - **保存の並びを固定した**（`sort_unstable`）。`HashSet` の反復順のまま書くと、
+    同じ内容で保存し直すたびにファイルが変わり、**差分が「何か変わった」と
+    嘘をつく**
+  - **読めない承認ファイルへは書き戻さない**（#70）。空として扱うのは
+    安全側（全部が `unapproved` になるだけ）だが、既定を書き戻すと
+    **壊れる前に人が承認した記録を捨てる**
+
+  **`only_hashes_are_written_to_disk` が守っているものが本体**: 原文を書くと、
+  このファイルが**「この端末で実行できるコマンドの一覧」**になる。
+  Windows で ACL を組まない判断（`mcp_server.rs` と同じ）は、
+  **守る対象そのものを消してある**ことが前提になっている。
 
   結合で留めるのは:
 

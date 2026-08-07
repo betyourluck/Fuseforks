@@ -35,6 +35,7 @@ import type {
   McpServerStatus,
   PlanWaveRecord,
   Recurrence,
+  ScheduleOptions,
   ScheduleView,
   SessionSummary,
   TopologyEdge,
@@ -498,9 +499,30 @@ export const listWorkDirFiles = (agentId: AgentId) =>
 /** 登録済みの予定（登録順）。次回発火時刻はコア側で算出済み。 */
 export const listSchedules = () => call<ScheduleView[]>("list_schedules");
 
-/** 予定を登録する。宛先は停止中でもよいが、未登録なら拒否される。 */
-export const createSchedule = (to: AgentId, message: string, recurrence: Recurrence) =>
-  call<ScheduleView>("create_schedule", { to, message, recurrence });
+/**
+ * 予定を登録する。宛先は停止中でもよいが、未登録なら拒否される。
+ *
+ * **`options.probe` を伴う登録は、この呼び出しが承認も書く**（Spec 28 D10）—
+ * 書いた人 = 承認した人なので、追加の確認は出さない。
+ * **承認を書く経路はこの IPC だけ**で、`schedules.json` を直接書いても承認は
+ * 付かない（配られた村の前判定が黙って走らないのはこれが根拠）。
+ */
+export const createSchedule = (
+  to: AgentId,
+  message: string,
+  recurrence: Recurrence,
+  options?: ScheduleOptions,
+) => call<ScheduleView>("create_schedule", { to, message, recurrence, options });
+
+/**
+ * 既存の予定の前判定を、この端末で実行してよいと承認する（Spec 28 D10）。
+ *
+ * 配られた村・手で書いた `schedules.json` の前判定はここを通るまで走らない。
+ * **押す前にコマンド行の原文を画面へ出すこと** — 中身を見ずに押せる形にすると、
+ * 承認が「読まずにクリックする儀式」に落ちる。
+ */
+export const approveScheduleProbe = (id: string) =>
+  call<void>("approve_schedule_probe", { id });
 
 /** 予定を削除する。復元はできない。 */
 export const deleteSchedule = (id: string) => call<void>("delete_schedule", { id });
