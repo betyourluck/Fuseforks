@@ -4,6 +4,7 @@ import {
   buildTimeline,
   collapseRows,
   isSystemNotice,
+  reasonDisplay,
   type ToolRun,
 } from "./chatRows";
 import type { AgentMessage, Endpoint } from "../types";
@@ -81,6 +82,7 @@ describe("buildTimeline", () => {
     agentId: "a",
     tool,
     ok,
+    reason: { kind: "omitted" },
     tsMs,
   });
 
@@ -179,5 +181,42 @@ describe("外部クライアントの発話（Spec 25）", () => {
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0].extraTargets).toEqual([agent("b")]);
+  });
+});
+
+describe("reasonDisplay", () => {
+  it("書かれた理由は本文をそのまま返す", () => {
+    expect(reasonDisplay({ kind: "written", text: "綴りを確かめるため" })).toEqual({
+      kind: "text",
+      text: "綴りを確かめるため",
+    });
+  });
+
+  it("書かれなかったときは辞書の鍵を返す（純関数は訳語を知らない）", () => {
+    // `batchLabel` が titleKey を返すのと同じ形。訳語をここで組むと、
+    // 表示規則が i18n の外側と内側に割れる。
+    expect(reasonDisplay({ kind: "omitted" })).toEqual({
+      kind: "labelKey",
+      key: "chat.reasonOmitted",
+    });
+  });
+
+  it("外部ツールと対象外を同じ扱いにしない", () => {
+    // **ここを畳むと `ask_agent_3` に「外部ツール」と出て嘘になる。**
+    // 片方だけを見ると、両方 null を返す実装でも両方 labelKey を返す実装でも
+    // 通ってしまうので、**対で見る**。
+    expect(reasonDisplay({ kind: "unsupported" })).toEqual({
+      kind: "labelKey",
+      key: "chat.reasonUnsupported",
+    });
+    expect(reasonDisplay({ kind: "excluded" })).toBeNull();
+  });
+
+  it("行を出さないことと空文字は別物", () => {
+    // 空文字を返すと「理由が空である」という別の主張になり、
+    // ask の行に「意図: 」だけが残る。
+    const display = reasonDisplay({ kind: "excluded" });
+    expect(display).toBeNull();
+    expect(display).not.toEqual({ kind: "text", text: "" });
   });
 });

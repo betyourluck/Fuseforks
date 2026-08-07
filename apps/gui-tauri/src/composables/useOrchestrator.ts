@@ -520,6 +520,7 @@ function applyEvent(event: CoreEvent): void {
         agentId: event.agentId,
         tool: event.tool,
         ok: event.ok,
+        reason: event.reason,
         tsMs: Date.now(),
       };
       state.toolRuns.push(run);

@@ -2463,8 +2463,9 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - Spec 01（sd / yq 書き換え系）〜 03（新規チャット + 広場ログ）: **Done**
-- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0〜P1 完了**（2026-08-07。
-  lib 455 / 結合 124 全緑・clippy 警告ゼロ）。契約は `data_contract.yaml` の
+- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0〜P2 完了**（2026-08-07。
+  lib 455 / 結合 124 / vitest 196 全緑・clippy 警告ゼロ・build 緑。
+  **残は P3 台帳と P4 実機 6 件**）。契約は `data_contract.yaml` の
   `tool_reason_contract`（`command_tool_contract` の隣）。
   実装は `crates/agent-core/src/tool_reason.rs`（純機構）+ `wants_reason` +
   `ToolRegistry::specs_for` での注入。**次に触る人が要る判断は Spec の P1 実装記録**。

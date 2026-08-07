@@ -9,7 +9,7 @@
  * ChatPanel から切り出した純関数。表示規則はコンポーネントの外でテストする。
  */
 
-import type { AgentId, AgentMessage, Endpoint } from "../types";
+import type { AgentId, AgentMessage, Endpoint, ReasonState } from "../types";
 
 /** 表示の 1 行。同報では 1 通の代表 + 残りの宛先を束ねる。 */
 export interface ChatRow {
@@ -29,9 +29,45 @@ export interface ToolRun {
   id: string;
   agentId: AgentId;
   tool: string;
+  /** **返り値が `Ok` だったか。副作用の成否ではない**（Spec 27 D11）。 */
   ok: boolean;
+  /** モデルが書いた 1 行の意図（Spec 27）。**自己申告であって監査証跡ではない。** */
+  reason: ReasonState;
   /** 受信時刻。コアは時刻を載せないので、受け取った側で打つ。 */
   tsMs: number;
+}
+
+/**
+ * 理由の行に何を出すか。
+ *
+ * **純関数は i18n を知らない**ので、訳語ではなく**辞書の鍵**を返す
+ * （`batchLabel` が `titleKey` を返すのと同じ形）。
+ *
+ * `null` は**行そのものを出さない**という意味。空文字と混同しないこと —
+ * 空文字を返すと「理由が空である」という別の主張になる。
+ */
+export type ReasonDisplay =
+  | { kind: "text"; text: string }
+  | { kind: "labelKey"; key: string }
+  | null;
+
+/**
+ * 理由の状態を表示へ落とす。
+ *
+ * **`kind` で分岐し、推測しない**（Spec 27 D10）。`unsupported` と `excluded` を
+ * 同じ扱いにしないのは、**`ask_agent_3` に「外部ツール」と出すのが嘘**だから。
+ */
+export function reasonDisplay(reason: ReasonState): ReasonDisplay {
+  switch (reason.kind) {
+    case "written":
+      return { kind: "text", text: reason.text };
+    case "omitted":
+      return { kind: "labelKey", key: "chat.reasonOmitted" };
+    case "unsupported":
+      return { kind: "labelKey", key: "chat.reasonUnsupported" };
+    case "excluded":
+      return null;
+  }
 }
 
 /**

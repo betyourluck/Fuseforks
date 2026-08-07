@@ -569,6 +569,29 @@ export type BottomTab = "blackboard" | "waves";
  */
 export type Language = "ja" | "en";
 
+/**
+ * ツール呼び出しの理由の状態（Spec 27）。Rust 側 `tool_reason::ReasonState` の写し。
+ *
+ * **`string | null` にしない。** 空欄が 3 種類あり、`null` では区別できない —
+ * **フロントには「このツールは理由を持てるはずか」を知る手段が原理的に無い**
+ * （`wants_reason` はコアにしかなく、MCP 接続は動的）。**推測せず `kind` で分岐する。**
+ */
+export type ReasonState =
+  /** モデルが書いた。トリム済みで、超過していれば切り詰め済み。 */
+  | { kind: "written"; text: string }
+  /** 尋ねたが書かなかった。画面には「理由なし」。 */
+  | { kind: "omitted" }
+  /** 外部（MCP）のスキーマなので尋ねていない。画面には「外部ツール」。 */
+  | { kind: "unsupported" }
+  /**
+   * この村の判断で対象外にしているツール（`ask` / `handoff` / `plan` /
+   * `room_log`）。**画面には理由の行を出さない。**
+   *
+   * `unsupported` と分けるのは**ラベルが嘘になる**ため —
+   * `ask_agent_3` に「外部ツール」と出すのは誤り。
+   */
+  | { kind: "excluded" };
+
 /** コア層から押し出される状態変化。`type` による判別共用体。 */
 export type CoreEvent =
   | { type: "agentStatusChanged"; agentId: AgentId; status: AgentStatus }
@@ -599,7 +622,20 @@ export type CoreEvent =
    * （`conversationCleared` → `sessionSwitched`）で 2 本出る。
    */
   | { type: "sessionSwitched"; sessionId: string }
-  | { type: "toolInvoked"; agentId: AgentId; tool: string; ok: boolean }
+  | {
+      type: "toolInvoked";
+      agentId: AgentId;
+      tool: string;
+      /**
+       * **返り値が `Ok` だったか。副作用が成功したかではない。**
+       *
+       * 同梱ツールは失敗を `Err` ではなく `Ok(<エラー文>)` で返すので、
+       * **`ok=true` のまま失敗している行が常態**。表示も「成功 / 失敗」と
+       * 書かない（Spec 27 D11）。
+       */
+      ok: boolean;
+      reason: ReasonState;
+    }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った
       （failures.md #41 の処方 1）。上限到達とは別の打ち切りで、直し方も違う。 */

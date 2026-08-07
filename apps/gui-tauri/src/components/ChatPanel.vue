@@ -26,9 +26,12 @@ import {
   buildTimeline,
   collapseRows,
   isSystemNotice,
+  reasonDisplay,
   sameEndpoint,
   type ChatRow,
+  type ReasonDisplay,
   type TimelineEntry,
+  type ToolRun,
 } from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
 import { renderMarkdownCached } from "../lib/markdown";
@@ -186,6 +189,34 @@ function continuesTimeline(index: number): boolean {
 /** ツール実行の主体名。 */
 function toolActor(agentId: AgentId): string {
   return state.agents.find((a) => a.id === agentId)?.name ?? agentId;
+}
+
+/**
+ * 理由の行に何を出すか（Spec 27）。`null` なら行そのものを出さない。
+ *
+ * **判定は純関数に任せて、ここでは訳語だけを引く** — `kind` による分岐を
+ * テンプレートへ持ち込むと、規則がテストの外へ出る。
+ */
+function reasonOf(run: ToolRun): ReasonDisplay {
+  return reasonDisplay(run.reason);
+}
+
+/** 理由の表示文字列。本文はそのまま、それ以外は辞書から引く。 */
+function reasonText(run: ToolRun): string {
+  const display = reasonOf(run);
+  if (!display) return "";
+  return display.kind === "text" ? display.text : t(display.key);
+}
+
+/**
+ * 省略された理由の全文をホバーで出す。
+ *
+ * 上限 60 字で切り詰めているのは**コア側**なので、ここに出せるのも
+ * 切り詰め後の文字列 — **`title` に全文が入るわけではない**。
+ * それでも付けるのは、幅の都合で `truncate` された分がここで読めるため。
+ */
+function reasonTitle(run: ToolRun): string {
+  return reasonText(run);
 }
 
 /**
@@ -588,11 +619,12 @@ async function newChat(): Promise<void> {
         <span
           class="inline-block size-1.5 shrink-0 rounded-full"
           :class="entry.run.ok ? 'bg-run' : 'bg-fail'"
+          :title="t('chat.toolOkTitle')"
         />
         <I18nT
           :keypath="entry.run.ok ? 'chat.toolRan' : 'chat.toolRanFailed'"
           tag="span"
-          class="truncate"
+          class="shrink-0"
           scope="global"
         >
           <template #name>{{ toolActor(entry.run.agentId) }}</template>
@@ -600,6 +632,21 @@ async function newChat(): Promise<void> {
             <span class="font-mono text-ink">{{ entry.run.tool }}</span>
           </template>
         </I18nT>
+        <!--
+          理由（Spec 27）。**モデルの自己申告であって監査証跡ではない** ——
+          「意図」として成否から視覚的に分ける（成否のドットは左端、理由はこちら）。
+          `excluded`（ask / plan など）は行そのものを出さない。
+        -->
+        <span
+          v-if="reasonOf(entry.run)"
+          class="min-w-0 truncate"
+          :title="reasonTitle(entry.run)"
+        >
+          <span class="text-ink-dim">{{ t("chat.toolReasonLead") }}</span>
+          <span :class="reasonOf(entry.run)?.kind === 'text' ? 'text-ink' : 'italic'">{{
+            reasonText(entry.run)
+          }}</span>
+        </span>
         <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
       </div>
 

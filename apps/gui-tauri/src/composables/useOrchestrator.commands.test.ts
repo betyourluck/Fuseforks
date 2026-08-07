@@ -125,7 +125,7 @@ describe("コマンド承認の投影", () => {
     // 実機の指摘（2026-08-05）— 引き直しが起動時と承認後しか無かったので、
     // サーヴァントが積んでも件数が動かなかった。
     h.handler?.({
-      payload: { type: "toolInvoked", agentId: "agent_a", tool: "run", ok: true },
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "run", ok: true, reason: { kind: "excluded" } },
     });
     await Promise.resolve();
     expect(h.listCommandRequests).toHaveBeenCalledTimes(1);
@@ -137,7 +137,7 @@ describe("コマンド承認の投影", () => {
     h.listCommandRequests.mockClear();
 
     h.handler?.({
-      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true },
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true, reason: { kind: "excluded" } },
     });
     await Promise.resolve();
     expect(h.listCommandRequests).not.toHaveBeenCalled();
