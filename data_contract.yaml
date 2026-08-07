@@ -176,8 +176,12 @@ enums:
       ワークスペースに書かれる経路を入口で塞ぐ。形式を 1 つに固定することで、
       表示側は MIME 判定なしで image/webp として扱える。
       エージェント削除は設定ディレクトリごと消すため、アイコンの孤児は残らない。
-      **アイコンは 2 種類ある** (2026-08-05、Spec 19):
-      エージェントの `agents/{id}/icon.webp` と利用者の `user/icon.webp`。
+      **アイコンの置き場は列挙で持つ** (総数を書くと次の 1 つで腐る — #67 の処方):
+      - エージェント: `agents/{id}/icon.webp`
+      - 利用者: `user/icon.webp` (2026-08-05、Spec 19)
+      - 外部クライアント: `external/icon.webp` (2026-08-07、Spec 25 D8)。
+        **利用者と共用しない** — 共用すると「外の道具が頼んだこと」と
+        「自分の依頼」が同じ顔で並ぶ
       **上の検証 (マジック番号 + 512 KB) は 1 実装を共有する** — 書き込み関数を
       種類ごとに分けても、検証だけは同じ述語を通す。2 箇所に書くと、
       片方の上限を変えたときにもう片方が古い値のまま通し続ける。
@@ -1151,6 +1155,17 @@ enums:
       - { kind: user }
       - { kind: system }
       - { kind: agent, fields: [id] }
+      - { kind: external, fields: [client] }   # Spec 25。外部の MCP クライアント
+    note: |
+      **external を user に畳まない** (mcp_server_contract 凍結 6)。封筒
+      `【送り手: X】` はモデルが読む入力の一部で、相手が人間かどうかは答え方を
+      変える情報。client は clientInfo.name の自己申告で、入るのは
+      world::normalize_client_name を通った値だけ。
+      **表示名は client そのものではない** — world.json の external_name が
+      設定されていればそちらが勝つ (D8)。解決は orchestrator の external_label
+      1 実装で、封筒と広場ログが共有する。**Endpoint 側は名乗りのまま据え置く**
+      (記録は監査の材料で、呼び名はその表示規則)。
+      ワイヤ形は ipc_contract.rs が 4 variant とも凍結している。
 
 # ---------------------------------------------------------------------------
 entities:

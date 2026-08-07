@@ -98,14 +98,16 @@ OutcastsConcordia/
 │       │       ├── anthropic.rs     Anthropic Messages API adapter
 │       │       ├── client.rs        HTTP core (URL / headers / retry)
 │       │       └── error.rs         LlmError (retry decision axis)
-│       └── tests/orchestrator.rs    Integration tests (no network required)
+│       ├── tests/orchestrator.rs    Integration tests (no network required)
+│       └── tests/external_ask.rs    Integration tests: requests from external LLMs (Spec 25)
 │
 └── apps/
     └── gui-tauri/                   ★ The shell. Depends on agent-core
         ├── src-tauri/src/
         │   ├── lib.rs               Window launch and IPC command registration
         │   ├── state.rs             Orchestrator assembly + event relay
-        │   └── commands.rs          IPC commands (thin forwarding layer)
+        │   ├── commands.rs          IPC commands (thin forwarding layer)
+        │   └── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
@@ -131,7 +133,7 @@ OutcastsConcordia/
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
-                ├── StatusBar.vue                      Bottom: date, time (same format as the diagnostic log) and version
+                ├── StatusBar.vue                      Bottom: MCP server listening state, date, time (same format as the diagnostic log), and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
@@ -170,7 +172,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format) | Always visible |
-| Bottom | Status bar (date and time) | Always visible (a 22px strip) |
+| Bottom | Status bar (**MCP server listening state**, date and time, version) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
@@ -787,7 +789,20 @@ Agent settings reside in the OS application-data area.
     icon.webp                 Agent icon (only when configured; UI converts and stores it as WebP)
   user/
     icon.webp                 Your icon (only when configured; same handling as above, different location)
+  external/
+    icon.webp                 External client icon (only when configured; Spec 25; kept separate from yours)
 ```
+
+**Only the door's settings live outside the workspace** (`{app_data_dir}/mcp_server.json`).
+
+```text
+{app_data_dir}/mcp_server.json    MCP server enabled/disabled, port, and token (Spec 25)
+```
+
+What you hand over when sharing a village is the workspace, so **keeping this one file
+outside is what makes "sharing a village does not open its door" hold** (the key does not
+travel with it). Only the chosen reception servant lives in `world.json` — who receives is
+a per-village question, while enabled/port are per-machine ones.
 
 ### Application Icon
 
@@ -915,12 +930,13 @@ Multiple instances are mutually exclusive: launching a second Concordia brings t
 Opened from "System Settings" in the title bar ([Spec 13](specs/13_settings-dialog.md)). Two panes —
 a left menu and a right page — where **the left menu is itself the catalog of what can be configured**.
 The aim is not to add settings, but to **surface settings that already existed with no place to touch them**.
-Two things have since been added into this frame: the theme, and your own name and icon.
+Three things have since been added into this frame: the theme, your own name and icon, and the MCP server.
 
 | Page | Content |
 |---|---|
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited" |
+| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default |
 | User Interface | **Theme** (Dark / Light) and message visibility — the latter is still just the confirmation dialog for **cutting a tie** |
 
 - **Your name is both the display name on screen and the name servants read**
@@ -967,6 +983,48 @@ but a change of prompt, and it collides with the discipline of not altering a si
 bundling text ([Spec 08](specs/08_plan-wave-pane.md)). System lines in the conversation log are not
 translated either (records should stay in the language they happened in; retranslating them would put
 the exported JSONL and the screen out of sync).
+
+### Accepting requests from external LLMs ([Spec 25](specs/25_mcp-server.md))
+
+An MCP client such as Claude Code can **send a single request to this village and receive
+a consolidated answer**. A reception servant takes it, distributes and verifies it across
+other servants when that helps, and returns one answer.
+
+**This is a complement, not a general-purpose API.** For a single-shot inference the caller
+is faster and more accurate answering it themselves; this village earns its keep only on
+questions that need multiple viewpoints, divided investigation, and mutual verification.
+So **exactly one door opens** (the tool `ask_concordia`, whose only argument is the request
+text), and neither the village roster nor its settings are visible from outside.
+
+**Disabled by default.** In a village that enables it:
+
+- **It listens on `127.0.0.1` only** (other machines cannot connect)
+- **A token is required.** It is generated the moment you enable the server and shown in
+  System Settings. Unlike an API key it appears on screen, because its purpose is to be
+  pasted into a client's configuration
+- **Only one request is processed at a time.** A second one is refused on the spot rather
+  than queued. This is not politeness but a **brake**: it cuts both the infinite chain you
+  could build by registering the village in its own `mcp.json`, and the deadlock of a
+  reception servant waiting on itself
+- **While open it shows in the left of the status bar.** Leaving that state visible only
+  inside a settings dialog is how a door stays open with nobody around
+- **The door's settings (enabled, port, token) are stored outside the village.**
+  So **sharing a village does not open its door** — what travels is the workspace only.
+  The reception servant is the one part stored in the village (who receives is a
+  per-village question)
+
+**A request from outside is treated as distinct from your own message.** The conversation
+pane marks it "external", and what reaches a servant reads as a request from an external
+client. **Whether the other party is human changes how to answer**, so an outside tool is
+never disguised as you — knowing the caller needs no simplification and will not ask
+follow-up questions lets a servant adjust accordingly.
+
+**The external client's name and icon are configurable.** Leave them unset and the name the
+client declares for itself (`Claude Code`, say) is used as-is. Set them and both the screen
+and the name reaching servants become your value, which means **the client's self-declared
+string no longer reaches the prompt** — that string is the one value a caller can write
+freely, so configuring a name closes that path. The icon is kept separate from your own:
+sharing one face would make an outside tool's request look like your own.
 
 ---
 
