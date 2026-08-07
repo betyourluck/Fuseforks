@@ -13,6 +13,7 @@ import type { ToolRun } from "../lib/chatRows";
 import { formatError } from "../lib/errorText";
 import { compactNumber, exactNumber } from "../lib/format";
 import { roleBadge } from "../lib/roleLabel";
+import { toolLabel } from "../lib/toolLabel";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { STATUS_LABEL_KEYS, type AgentSnapshot } from "../types";
 
@@ -81,7 +82,25 @@ const uptime = computed(() => {
 /** 大きな数を読みやすく丸める。狭い枠なので桁区切りではなく短縮表記にする。 */
 const tokens = computed(() => compactNumber(props.agent.totalTokens));
 
-/** 直近ツールの hover 表示。狭い欄に入らない情報（時刻・成否）をここへ逃がす。 */
+/**
+ * 直近ツールの表示指示（2026-08-08）。
+ *
+ * **カードは宛先の表示名を引けない** — `AgentCard` は自分 1 体しか知らないので、
+ * `ask_agent_3` の相手が誰かを解決できない。**id のまま出す**のが正直で、
+ * 会話ペイン（村ぜんぶを知っている側）だけが名前へ解ける。
+ */
+const lastToolLabel = computed(() =>
+  props.lastTool ? toolLabel(props.lastTool.tool, (id) => id) : null,
+);
+
+/** カードに出すツール名。外部は識別子のまま、それ以外は辞書から引く。 */
+const lastToolName = computed(() => {
+  const label = lastToolLabel.value;
+  if (!label) return "";
+  return label.kind === "external" ? label.id : t(label.key, { name: label.target ?? "" });
+});
+
+/** 直近ツールの hover 表示。狭い欄に入らない情報（時刻・成否・識別子）をここへ逃がす。 */
 const lastToolTitle = computed(() => {
   const run = props.lastTool;
   if (!run) return undefined;
@@ -90,9 +109,11 @@ const lastToolTitle = computed(() => {
     minute: "2-digit",
     second: "2-digit",
   });
+  // 識別子を併記するのは、撮った画面から `concordia.log` の `name=` を引けるようにするため。
+  const named = `${lastToolName.value}（${run.tool}）`;
   return run.ok
-    ? t("agentCard.lastToolRanAt", { time: at, tool: run.tool })
-    : t("agentCard.lastToolRanAtFailed", { time: at, tool: run.tool });
+    ? t("agentCard.lastToolRanAt", { time: at, tool: named })
+    : t("agentCard.lastToolRanAtFailed", { time: at, tool: named });
 });
 
 /**
@@ -289,7 +310,7 @@ const cacheTone = computed(() => {
             class="mr-1 inline-block size-1.5 rounded-full align-middle"
             :class="lastTool.ok ? 'bg-run' : 'bg-fail'"
           />
-          <span class="font-mono">{{ lastTool.tool }}</span>
+          <span :class="lastToolLabel?.kind === 'external' ? 'font-mono' : ''">{{ lastToolName }}</span>
         </dd>
       </template>
     </dl>

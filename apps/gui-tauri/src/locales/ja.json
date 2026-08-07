@@ -196,8 +196,8 @@
     "noRole": "役職を選ばない"
   },
   "agentCard": {
-    "lastToolRanAt": "{time} に {tool} を実行",
-    "lastToolRanAtFailed": "{time} に {tool} を実行（エラーで返った）",
+    "lastToolRanAt": "{time} に {tool}",
+    "lastToolRanAtFailed": "{time} に {tool}（エラーで返った）",
     "openSettings": "設定を開く",
     "batchIncluded": "一括起動（▶）の対象に含めている。押すと外す",
     "batchExcluded": "一括起動（▶）の対象から外している。押すと含める",
@@ -303,8 +303,8 @@
     "interruptAll": "全ターン停止",
     "interruptAllTitle": "飛行中のターンを全部打ち切ります（稼働は降ろしません。会話と履歴は残ります）",
     "filterAll": "すべて",
-    "toolRan": "{name} が {tool} を実行",
-    "toolRanFailed": "{name} が {tool} を実行（エラーで返った）",
+    "toolRan": "{name}: {tool}",
+    "toolRanFailed": "{name}: {tool}（エラーで返った）",
     "toolOkTitle": "ツールの返り値がエラーだったかどうか。副作用が成功したかではありません",
     "reasonOmitted": "理由なし",
     "reasonUnsupported": "外部ツール",
@@ -750,5 +750,21 @@
     "count": "{count} 回",
     "gone": "この要求はもう一覧にありません（新しい要求に押し出されました）。許可も禁止も増えていません。",
     "presentNote": "許可が 1 件でも入ると、そのサーヴァントは次のターンからコマンドを実行する道具を持ちます。細かく決めたいときは、設定ファイルの run.json を直接編集できます。"
+  },
+  "tools": {
+    "remember": "覚える",
+    "grep": "中を検索する",
+    "fd": "ファイルを探す",
+    "diff": "差分を取る",
+    "sd": "文字列を置き換える",
+    "yq": "設定を書き換える",
+    "file": "ファイルを読み書きする",
+    "rag": "資料を引く",
+    "run": "コマンドを実行する",
+    "plan": "手分けして頼む",
+    "room_log": "会話をたどる",
+    "handoff": "引き継ぐ",
+    "ask": "{name} に尋ねる",
+    "transfer": "{name} へ引き継ぐ"
   }
 }

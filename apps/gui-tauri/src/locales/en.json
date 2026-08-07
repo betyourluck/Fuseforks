@@ -196,8 +196,8 @@
     "noRole": "No role"
   },
   "agentCard": {
-    "lastToolRanAt": "Ran {tool} at {time}",
-    "lastToolRanAtFailed": "Ran {tool} at {time} (returned an error)",
+    "lastToolRanAt": "{tool} at {time}",
+    "lastToolRanAtFailed": "{tool} at {time} (returned an error)",
     "openSettings": "Open settings",
     "batchIncluded": "Included in batch start (▶). Click to exclude",
     "batchExcluded": "Excluded from batch start (▶). Click to include",
@@ -303,8 +303,8 @@
     "interruptAll": "Stop all turns",
     "interruptAllTitle": "Interrupts all in-flight turns (servants stay running; the conversation and history are kept)",
     "filterAll": "All",
-    "toolRan": "{name} ran {tool}",
-    "toolRanFailed": "{name} ran {tool} (returned an error)",
+    "toolRan": "{name}: {tool}",
+    "toolRanFailed": "{name}: {tool} (returned an error)",
     "toolOkTitle": "Whether the tool returned an error, not whether the side effect succeeded",
     "reasonOmitted": "no reason given",
     "reasonUnsupported": "external tool",
@@ -750,5 +750,21 @@
     "count": "{count}x",
     "gone": "This request is no longer listed (newer requests pushed it out). Nothing was added to the permitted or forbidden lists.",
     "presentNote": "Once even one entry is permitted, that servant gains the command-running tool from its next turn. For finer control, edit run.json directly from the configuration files."
+  },
+  "tools": {
+    "remember": "remember something",
+    "grep": "search inside files",
+    "fd": "find files",
+    "diff": "compare files",
+    "sd": "replace text",
+    "yq": "edit settings",
+    "file": "read or write files",
+    "rag": "look up references",
+    "run": "run a command",
+    "plan": "split the work",
+    "room_log": "read the room log",
+    "handoff": "hand off",
+    "ask": "ask {name}",
+    "transfer": "hand off to {name}"
   }
 }

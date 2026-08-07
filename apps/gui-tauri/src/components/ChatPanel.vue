@@ -34,6 +34,7 @@ import {
   type ToolRun,
 } from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
+import { toolLabel, type ToolLabel } from "../lib/toolLabel";
 import { renderMarkdownCached } from "../lib/markdown";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -189,6 +190,17 @@ function continuesTimeline(index: number): boolean {
 /** ツール実行の主体名。 */
 function toolActor(agentId: AgentId): string {
   return state.agents.find((a) => a.id === agentId)?.name ?? agentId;
+}
+
+/** ツール名の表示指示（2026-08-08）。委譲の宛先は表示名へ、引けなければ id のまま。 */
+function toolLabelOf(run: ToolRun): ToolLabel {
+  return toolLabel(run.tool, (id) => toolActor(id as AgentId));
+}
+
+/** 画面に出すツール名。外部は識別子のまま、それ以外は辞書から引く。 */
+function toolName(run: ToolRun): string {
+  const label = toolLabelOf(run);
+  return label.kind === "external" ? label.id : t(label.key, { name: label.target ?? "" });
 }
 
 /**
@@ -629,7 +641,19 @@ async function newChat(): Promise<void> {
         >
           <template #name>{{ toolActor(entry.run.agentId) }}</template>
           <template #tool>
-            <span class="font-mono text-ink">{{ entry.run.tool }}</span>
+            <!--
+              **外部（MCP）は識別子のまま等幅で出す** — 名付けたのは接続先で、
+              訳語を当てると何が走ったかについて嘘になる。**書体が出自を示す。**
+              `title` に識別子を残すのは、撮った画面から `concordia.log` の
+              `name=` を引けるようにするため。
+            -->
+            <span
+              :class="
+                toolLabelOf(entry.run).kind === 'external' ? 'font-mono text-ink' : 'text-ink'
+              "
+              :title="entry.run.tool"
+              >{{ toolName(entry.run) }}</span
+            >
           </template>
         </I18nT>
         <!--
