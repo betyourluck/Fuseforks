@@ -81,10 +81,11 @@ function label(endpoint: Endpoint): string {
     case "agent":
       return state.agents.find((a) => a.id === endpoint.id)?.name ?? endpoint.id;
     case "external":
-      // 外部の MCP クライアント（Spec 25）。**名乗りをそのまま出す** —
-      // サーヴァントが読む封筒には「（外部クライアント）」が付くが、画面は
-      // 別の欄（バッジ）で種別を示すので、名前を二重に飾らない。
-      return endpoint.client;
+      // 外部の MCP クライアント（Spec 25）。人が呼び名を設定していればそれ、
+      // 無ければ**呼び出し側の名乗り**へ落ちる（コアの `external_label` と
+      // 同じ規則 — 封筒と画面で違う名前になると会話が噛み合わない）。
+      // 種別はバッジが示すので、名前を二重に飾らない。
+      return state.externalName ?? endpoint.client;
   }
 }
 
@@ -120,10 +121,11 @@ function iconFor(endpoint: Endpoint): string | null {
     // Concordia（場そのものの声）にはアイコンを持たせない。
     case "system":
       return null;
-    // 外部クライアントもアイコンを持たない。**利用者のアイコンを流用しない** —
-    // 流用すると、外の道具が頼んだことが自分の依頼に見える。
+    // 外部クライアントは**専用の**アイコン（Spec 25）。**利用者のアイコンを
+    // 流用しない** — 流用すると、外の道具が頼んだことが自分の依頼に見える。
+    // 専用に持たせるのは逆で、区別を強くする側に働く。
     case "external":
-      return null;
+      return state.externalIcon;
   }
 }
 

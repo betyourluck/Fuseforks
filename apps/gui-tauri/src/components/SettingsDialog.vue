@@ -227,6 +227,82 @@ async function saveReception(): Promise<void> {
   }
 }
 
+// ---- 外部クライアントの呼び名とアイコン（Spec 25） ----------------------------
+
+/** 保存済みの呼び名。`null` = 未設定（名乗りへ落ちる）。差分検出の基準。 */
+const savedExternalName = ref<string | null>(null);
+const externalNameInput = ref("");
+
+/** フォームが表す呼び名。空白だけの入力は未設定と同じ扱い（呼び名と同じ規則）。 */
+const formExternalName = computed<string | null>(() => {
+  const trimmed = externalNameInput.value.trim();
+  return trimmed === "" ? null : trimmed;
+});
+
+const externalNameDirty = computed(
+  () => formExternalName.value !== savedExternalName.value,
+);
+
+/**
+ * アバターの頭文字と色の元になる名前。
+ *
+ * 未設定のときは**名乗りが分かっていない**（依頼が来るまで不明）ので、
+ * 種別の語へ落とす。会話ペインでは実際の名乗りが使われる — ここだけは
+ * 「まだ誰も来ていない」状態を描くしかない。
+ */
+const externalAvatarName = computed(
+  () => formExternalName.value ?? t("settings.mcpHost.externalNameFallback"),
+);
+
+const externalIconInput = ref<HTMLInputElement | null>(null);
+
+async function saveExternalName(): Promise<void> {
+  if (!externalNameDirty.value || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  savedNote.value = "";
+  try {
+    // **`orchestrator` 経由の 1 本だけ**（生の `ipc` と併用しない — 2 回書くと
+    // 片方が失敗したときに画面とコアが食い違う）。`mutate` は例外を飲んで
+    // `false` を返すので、**成否は戻り値で見る**。書式の検査はコアに任せる
+    // （呼び名と同じ述語を通る）ので、フロントに同じ規律を生やさない。
+    if (await orchestrator.setExternalName(formExternalName.value)) {
+      savedExternalName.value = formExternalName.value;
+      // 保存できた場合だけ正規化後の値を欄へ映す（前後の空白が消える）。
+      externalNameInput.value = formExternalName.value ?? "";
+      savedNote.value = t("settings.mcpHost.nameSaved");
+    }
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function onExternalIconPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  iconBusy.value = true;
+  iconError.value = "";
+  try {
+    const bytes = await fileToWebpIcon(file);
+    await orchestrator.setExternalIcon(bytes);
+  } catch (e) {
+    iconError.value = e instanceof Error ? e.message : t("agentSettings.iconConvertFailed");
+  } finally {
+    iconBusy.value = false;
+  }
+}
+
+async function removeExternalIcon(): Promise<void> {
+  const ok = await askConfirm({
+    title: t("settings.user.iconRemoveTitle"),
+    message: t("settings.user.iconRemoveMessage"),
+  });
+  if (!ok) return;
+  await orchestrator.clearExternalIcon();
+}
+
 /** クライアントへ貼る設定の例。**合鍵をそのまま埋める**（貼るための値なので）。 */
 const clientConfigSample = computed(() => {
   const token = mcpHost.value?.token ?? "<token>";
@@ -270,6 +346,8 @@ async function load(): Promise<void> {
     // 扉（Spec 25）。状態は起動時に共有状態へ載っているので、ここでは
     // ポート入力の初期値を合わせるだけ。
     portInput.value = state.mcpHost?.port ?? portInput.value;
+    savedExternalName.value = state.externalName;
+    externalNameInput.value = state.externalName ?? "";
     receptionInput.value = (await ipc.getReception()) ?? "";
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
@@ -724,6 +802,89 @@ function selectPage(next: Page): void {
                   </select>
                 </label>
                 <p class="text-ink-dim">{{ $t("settings.mcpHost.receptionHint") }}</p>
+              </div>
+
+              <!-- 外部クライアントの呼び名とアイコン（Spec 25）。
+                   **アイコンは即保存・呼び名は明示保存** — 入力中の 1 文字ごとに
+                   封筒が変わると、途中の名前でサーヴァントに呼ばれる周ができる
+                   （利用者の呼び名と同じ規律）。 -->
+              <div class="space-y-2 border-t border-line pt-3">
+                <p class="text-ink">{{ $t("settings.mcpHost.identity") }}</p>
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.identityHint") }}</p>
+
+                <div class="flex items-center gap-3">
+                  <img
+                    v-if="state.externalIcon"
+                    :src="state.externalIcon"
+                    class="size-12 shrink-0 rounded-full object-cover ring-1 ring-line"
+                    :alt="$t('settings.mcpHost.iconAlt')"
+                  />
+                  <div
+                    v-else
+                    class="flex size-12 shrink-0 items-center justify-center rounded-full text-base font-semibold text-surface-0"
+                    :style="{ backgroundColor: avatarHue(externalAvatarName) }"
+                  >
+                    {{ avatarInitial(externalAvatarName) }}
+                  </div>
+
+                  <div class="min-w-0">
+                    <div class="flex gap-2">
+                      <button
+                        class="rounded border border-line px-2 py-1 hover:border-accent hover:text-accent disabled:opacity-40"
+                        :disabled="iconBusy"
+                        @click="externalIconInput?.click()"
+                      >
+                        {{
+                          iconBusy
+                            ? $t("agentSettings.iconConverting")
+                            : state.externalIcon
+                              ? $t("agentSettings.iconChange")
+                              : $t("agentSettings.iconChoose")
+                        }}
+                      </button>
+                      <button
+                        v-if="state.externalIcon"
+                        class="rounded border border-fail/60 px-2 py-1 text-fail hover:bg-fail/10"
+                        @click="removeExternalIcon"
+                      >
+                        {{ $t("agentSettings.delete") }}
+                      </button>
+                    </div>
+                    <p class="mt-1 text-ink-dim">{{ $t("agentSettings.iconHint") }}</p>
+                    <p v-if="iconError" class="mt-0.5 text-fail">{{ iconError }}</p>
+                  </div>
+
+                  <input
+                    ref="externalIconInput"
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    @change="onExternalIconPicked"
+                  />
+                </div>
+
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">
+                    {{ $t("settings.mcpHost.externalName") }}
+                  </span>
+                  <input
+                    v-model="externalNameInput"
+                    type="text"
+                    :maxlength="32"
+                    :placeholder="$t('settings.mcpHost.externalNamePlaceholder')"
+                    class="min-w-0 flex-1 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                    @keydown.enter.prevent="saveExternalName"
+                  />
+                  <button
+                    class="shrink-0 rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                    :disabled="!externalNameDirty || busy"
+                    @click="saveExternalName"
+                  >
+                    {{ $t("settings.mcpHost.nameSave") }}
+                  </button>
+                </label>
+                <p class="text-ink-dim">{{ $t("settings.mcpHost.externalNameHint") }}</p>
+                <span v-if="savedNote" class="text-run">{{ savedNote }}</span>
               </div>
 
               <div v-if="mcpHost?.token" class="space-y-1">

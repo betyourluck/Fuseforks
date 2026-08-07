@@ -32,6 +32,9 @@ const h = vi.hoisted(() => ({
     blocked: null,
     lastError: null,
   })),
+  // 外部クライアントの呼び名とアイコン（Spec 25）。既定はどちらも未設定。
+  getExternalName: vi.fn(async () => null),
+  getExternalIcon: vi.fn(async () => null),
   listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
 }));

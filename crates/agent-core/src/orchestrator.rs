@@ -1740,6 +1740,44 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// 外部クライアントの呼び名（Spec 25）。`None` = 未設定（名乗りへ落ちる）。
+    pub async fn external_name(&self) -> Option<String> {
+        self.shared
+            .world
+            .read()
+            .await
+            .external_name()
+            .map(str::to_owned)
+    }
+
+    /// 外部クライアントの呼び名を差し替える。`None` で未設定へ戻す（Spec 25）。
+    ///
+    /// # Errors
+    /// 書式が受け入れ条件を満たさない場合 [`CoreError::InvalidUserName`]。
+    pub async fn set_external_name(&self, name: Option<&str>) -> CoreResult<()> {
+        self.shared.world.write().await.set_external_name(name)?;
+        self.persist().await
+    }
+
+    /// 外部クライアントのアイコン（WebP バイト列）。未設定なら `None`（Spec 25）。
+    pub async fn external_icon(&self) -> CoreResult<Option<Vec<u8>>> {
+        self.shared.store.read_external_icon().await
+    }
+
+    /// 外部クライアントのアイコンを保存する（Spec 25）。
+    ///
+    /// # Errors
+    /// WebP でない・サイズ上限超過の場合 [`CoreError::InvalidIcon`]。
+    /// **検証はエージェント・利用者と同じ述語**（`icon_contract`）を通る。
+    pub async fn set_external_icon(&self, bytes: &[u8]) -> CoreResult<()> {
+        self.shared.store.write_external_icon(bytes).await
+    }
+
+    /// 外部クライアントのアイコンを削除する（Spec 25）。
+    pub async fn clear_external_icon(&self) -> CoreResult<()> {
+        self.shared.store.delete_external_icon().await
+    }
+
     /// 外部からの依頼を受ける窓口（Spec 25 D2）。`None` = 未設定。
     pub async fn reception(&self) -> Option<AgentId> {
         self.shared.world.read().await.reception().cloned()
@@ -2982,6 +3020,22 @@ async fn agent_loop(
     }
 }
 
+/// 外部クライアントの表示名を解決する（Spec 25）。
+///
+/// 人が設定した呼び名があればそれ、無ければ**呼び出し側の名乗り**へ落ちる。
+///
+/// **1 実装に閉じる。** 封筒（`attribute_sender`）と広場ログの名前解決
+/// （`endpoint_label`）が同じ規則を通す必要があり、2 箇所で組むと
+/// 「画面では設定した名前、プロンプトでは名乗り」という食い違いが生まれる
+/// （Spec 19 の `attribute_sender` を 1 箇所に置いた理由と同じ）。
+///
+/// **設定するとモデルが読む名前が自己申告から人の決めた値へ変わる** —
+/// `clientInfo.name` は攻撃者が書ける唯一の新しい経路（`mcp_server_contract`
+/// 凍結 6）なので、設定はその経路を**閉じる**側に効く。
+fn external_label<'a>(world: &'a World, client: &'a str) -> &'a str {
+    world.external_name().unwrap_or(client)
+}
+
 /// 呼び名が未設定のときに封筒へ入る名前（`user_identity_contract` 凍結 2）。
 ///
 /// **言語に追従させない。** 会話ペインの表示名（`chat.you`）は追従するが、
@@ -3023,7 +3077,10 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
         // 初めて「噛み砕いた説明も聞き返しも要らない」という判断ができるので、
         // 種別を明示する。**乗るのは外部依頼のターンだけ**で、全員の毎ターンに
         // 乗る固定費ではない。
-        Endpoint::External { client } => format!("{client}（外部クライアント）"),
+        Endpoint::External { client } => {
+            let world = shared.world.read().await;
+            format!("{}（外部クライアント）", external_label(&world, client))
+        }
     };
     format!("【送り手: {sender_label}】\n{}", incoming.content)
 }
@@ -5297,8 +5354,8 @@ fn endpoint_label(world: &crate::world::World, endpoint: &Endpoint) -> String {
             .unwrap_or_else(|_| id.to_string()),
         // 窓口が外へ返した答えは他のサーヴァントの広場ログに載る
         // （`mcp_server_contract` 凍結 9 — User 宛の返答と同じ扱い）ので、
-        // 宛先の名前もここで解決される。
-        Endpoint::External { client } => client.clone(),
+        // 宛先の名前もここで解決される。**封筒と同じ述語を通す。**
+        Endpoint::External { client } => external_label(world, client).to_owned(),
     }
 }
 

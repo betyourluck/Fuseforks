@@ -319,6 +319,20 @@ pub struct PersistedWorld {
     /// 診断になる（役職 `role_id` と同じ読み時解決）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reception: Option<AgentId>,
+    /// 外部クライアントの呼び名（Spec 25。`None` = 未設定 = 名乗りをそのまま使う）。
+    ///
+    /// **村の共有物なので `world.json` に住む** — 呼び名と同じ理由で、封筒
+    /// `【送り手: {名前}（外部クライアント）】` は履歴と `session_store` の
+    /// 両方へ**文字列そのもの**として焼き付く。
+    ///
+    /// **設定すると、モデルが読む名前が自己申告から人が決めた値へ変わる** —
+    /// `clientInfo.name` は攻撃者が書ける唯一の経路（`mcp_server_contract`
+    /// 凍結 6）なので、**設定はその経路を閉じる側に効く**。
+    ///
+    /// 検証と正規化は [`World::from_persisted`] が [`normalize_user_name`] を
+    /// 通して担う（呼び名と**同じ述語** — 封筒の制約が同じだから）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_name: Option<String>,
 }
 
 /// 登録簿本体。
@@ -338,6 +352,9 @@ pub struct World {
     roles: BTreeMap<AgentRoleId, AgentRole>,
     /// 外部からの依頼を受ける窓口（Spec 25）。意味論は [`PersistedWorld::reception`]。
     reception: Option<AgentId>,
+    /// 外部クライアントの呼び名（Spec 25）。意味論は [`PersistedWorld::external_name`]。
+    /// **ここに入るのは検証を通った値だけ**（読み込みでも保存でも同じ述語）。
+    external_name: Option<String>,
 }
 
 impl World {
@@ -401,6 +418,19 @@ impl World {
         // 落とさない — 読み出し側が「窓口が見つからない」と報告するほうが、
         // 「未設定」へ黙って化けるより診断になる。
         world.reception = persisted.reception.clone();
+        // 外部クライアントの呼び名も呼び名と同じ扱い（手編集で壊れた値は落とす）。
+        world.external_name = match persisted.external_name.as_deref() {
+            Some(raw) => match normalize_user_name(raw) {
+                Ok(name) => Some(name),
+                Err(reason) => {
+                    crate::note!(
+                        "external name: 保存された呼び名を未設定として扱います（{reason}）"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
@@ -438,7 +468,35 @@ impl World {
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
             reception: self.reception.clone(),
+            external_name: self.external_name.clone(),
         }
+    }
+
+    /// 外部クライアントの呼び名（Spec 25）。`None` = 未設定。
+    ///
+    /// 未設定のときの表示・封筒は**呼び出し側の名乗り**（`Endpoint::External`
+    /// の `client`）へ落ちる。落ち先は呼び出し側が持っているので、ここでは返さない。
+    pub fn external_name(&self) -> Option<&str> {
+        self.external_name.as_deref()
+    }
+
+    /// 外部クライアントの呼び名を差し替える。`None` で未設定へ戻す。
+    ///
+    /// # Errors
+    /// 書式が受け入れ条件を満たさない場合 [`CoreError::InvalidUserName`]。
+    ///
+    /// **利用者の呼び名と同じエラーを返す。** 制約も理由の文面も同一
+    /// （封筒へ入る値という一点で決まる）で、エラーは編集中の欄の隣に出るので、
+    /// 名詞だけが違う変種を増やしても人の次の手は変わらない。
+    pub fn set_external_name(&mut self, name: Option<&str>) -> CoreResult<()> {
+        self.external_name = match name {
+            Some(raw) => Some(
+                normalize_user_name(raw)
+                    .map_err(|reason| CoreError::InvalidUserName { reason })?,
+            ),
+            None => None,
+        };
+        Ok(())
     }
 
     /// 外部からの依頼を受ける窓口（Spec 25）。`None` = 未設定。
@@ -932,6 +990,7 @@ mod tests {
             user_name: None,
             roles: Vec::new(),
             reception: None,
+            external_name: None,
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
@@ -1210,6 +1269,7 @@ mod tests {
             user_name: None,
             roles: Vec::new(),
             reception: None,
+            external_name: None,
         };
 
         let world = World::from_persisted(persisted);

@@ -103,6 +103,16 @@ interface OrchestratorState {
    */
   mcpHost: McpHostStatus | null;
   /**
+   * 外部クライアントの呼び名（Spec 25）。`null` = 未設定で、表示は
+   * **呼び出し側の名乗り**（`Endpoint::External` の `client`）へ落ちる。
+   *
+   * **既定値を入れない** — 入れると「未設定」と「名乗りと同じ名前を設定した」を
+   * 画面が区別できなくなる（`userName` と同じ判断）。
+   */
+  externalName: string | null;
+  /** 外部クライアントのアイコンの object URL（Spec 25）。`null` = 未設定。 */
+  externalIcon: string | null;
+  /**
    * 応答を作っている最中のエージェント。会話ペインの「入力中…」表示に使う。
    * true のキーだけを持ち、終了イベントでキーごと消す。
    */
@@ -170,6 +180,8 @@ const state = reactive<OrchestratorState>({
   userName: null,
   userIcon: null,
   mcpHost: null,
+  externalName: null,
+  externalIcon: null,
   typing: {},
   interruptPending: {},
   toolRuns: [],
@@ -719,6 +731,12 @@ async function initialize(): Promise<void> {
     // 起動・設定の適用・合鍵の作り直しの 3 つで、どれもこの composable を通る。
     // 定期的に引き直す理由が無い（`refreshAll` にも混ぜない）。
     state.mcpHost = await ipc.mcpHostStatus();
+    // 外部クライアントの呼び名とアイコン（Spec 25）。会話ペインの外部の行に
+    // 出るので、覆いが外れる前に当てておく（利用者の呼び名と同じ理由）。
+    state.externalName = await ipc.getExternalName();
+    const externalIconBytes = await ipc.getExternalIcon();
+    state.externalIcon =
+      externalIconBytes && externalIconBytes.length ? iconUrlOf(externalIconBytes) : null;
     state.ready = true;
   } catch (error) {
     // 再試行できるよう、失敗時はフラグを戻す。
@@ -1077,6 +1095,45 @@ export function useOrchestrator() {
       if (succeeded(done)) {
         if (state.userIcon) URL.revokeObjectURL(state.userIcon);
         state.userIcon = iconUrlOf(Array.from(bytes));
+      }
+      return succeeded(done);
+    },
+
+    /**
+     * 外部クライアントの呼び名を保存する（Spec 25）。`null` で未設定へ戻す。
+     *
+     * **次のターンの封筒から効く。** 設定すると、サーヴァントが読む送り手名が
+     * 自己申告から人の決めた値へ変わる（`clientInfo.name` は攻撃者が書ける
+     * 唯一の経路なので、設定はそれを閉じる側に効く）。
+     */
+    async setExternalName(name: string | null): Promise<boolean> {
+      const done = await mutate("orchestrator.op.saveExternalName", () =>
+        ipc.setExternalName(name),
+      );
+      if (succeeded(done)) state.externalName = name;
+      return succeeded(done);
+    },
+
+    /** 外部クライアントのアイコンを保存する（WebP へ変換済みであること）。 */
+    async setExternalIcon(bytes: Uint8Array): Promise<boolean> {
+      const done = await mutate("orchestrator.op.saveIcon", () =>
+        ipc.setExternalIcon(Array.from(bytes)),
+      );
+      if (succeeded(done)) {
+        if (state.externalIcon) URL.revokeObjectURL(state.externalIcon);
+        state.externalIcon = iconUrlOf(Array.from(bytes));
+      }
+      return succeeded(done);
+    },
+
+    /** 外部クライアントのアイコンを削除する。 */
+    async clearExternalIcon(): Promise<boolean> {
+      const done = await mutate("orchestrator.op.clearIcon", () =>
+        ipc.clearExternalIcon(),
+      );
+      if (succeeded(done)) {
+        if (state.externalIcon) URL.revokeObjectURL(state.externalIcon);
+        state.externalIcon = null;
       }
       return succeeded(done);
     },

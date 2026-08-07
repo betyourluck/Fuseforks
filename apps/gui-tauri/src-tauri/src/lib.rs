@@ -105,6 +105,11 @@ pub fn run() {
             commands::mcp_host_status,
             commands::set_mcp_host,
             commands::regenerate_mcp_host_token,
+            commands::get_external_name,
+            commands::set_external_name,
+            commands::get_external_icon,
+            commands::set_external_icon,
+            commands::clear_external_icon,
             commands::get_reception,
             commands::set_reception,
             // 資格情報（値を返す経路は存在しない）

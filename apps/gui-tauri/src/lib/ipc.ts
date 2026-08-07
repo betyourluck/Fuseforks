@@ -155,6 +155,23 @@ export const setMcpHost = (enabled: boolean, port: number) =>
 export const regenerateMcpHostToken = () =>
   call<McpHostStatus>("regenerate_mcp_host_token");
 
+/** 外部クライアントの呼び名。未設定なら `null`（名乗りをそのまま使う）。 */
+export const getExternalName = () => call<string | null>("get_external_name");
+
+/** 外部クライアントの呼び名を設定する。`null` で未設定へ戻す。 */
+export const setExternalName = (name: string | null) =>
+  call<void>("set_external_name", { name });
+
+/** 外部クライアントのアイコン（WebP バイト列）。未設定なら `null`。 */
+export const getExternalIcon = () => call<number[] | null>("get_external_icon");
+
+/** 外部クライアントのアイコンを設定する。 */
+export const setExternalIcon = (data: number[]) =>
+  call<void>("set_external_icon", { data });
+
+/** 外部クライアントのアイコンを削除する。 */
+export const clearExternalIcon = () => call<void>("clear_external_icon");
+
 /** 外部からの依頼を受ける窓口。未設定なら `null`。 */
 export const getReception = () => call<AgentId | null>("get_reception");
 

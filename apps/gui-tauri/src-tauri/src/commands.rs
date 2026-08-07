@@ -332,6 +332,42 @@ pub async fn regenerate_mcp_host_token(
     Ok(manager.status(last_error))
 }
 
+/// 外部クライアントの呼び名（未設定なら `null` = 名乗りをそのまま使う）。
+#[tauri::command]
+pub async fn get_external_name(state: State<'_, AppState>) -> CoreResult<Option<String>> {
+    Ok(state.orchestrator.external_name().await)
+}
+
+/// 外部クライアントの呼び名を設定する。`null` で未設定へ戻す。
+///
+/// **次のターンの封筒から効く。** 過去の履歴と会話ログは直さない
+/// （利用者の呼び名と同じ規律）。
+#[tauri::command]
+pub async fn set_external_name(
+    state: State<'_, AppState>,
+    name: Option<String>,
+) -> CoreResult<()> {
+    state.orchestrator.set_external_name(name.as_deref()).await
+}
+
+/// 外部クライアントのアイコン（WebP バイト列）を返す。未設定なら `null`。
+#[tauri::command]
+pub async fn get_external_icon(state: State<'_, AppState>) -> CoreResult<Option<Vec<u8>>> {
+    state.orchestrator.external_icon().await
+}
+
+/// 外部クライアントのアイコンを設定する。検証は他のアイコンと同じ述語を通る。
+#[tauri::command]
+pub async fn set_external_icon(state: State<'_, AppState>, data: Vec<u8>) -> CoreResult<()> {
+    state.orchestrator.set_external_icon(&data).await
+}
+
+/// 外部クライアントのアイコンを削除する。
+#[tauri::command]
+pub async fn clear_external_icon(state: State<'_, AppState>) -> CoreResult<()> {
+    state.orchestrator.clear_external_icon().await
+}
+
 /// 外部からの依頼を受ける窓口（未設定なら `None`）。
 #[tauri::command]
 pub async fn get_reception(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {

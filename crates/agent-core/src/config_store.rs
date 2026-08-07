@@ -59,6 +59,12 @@ const ICON_FILE: &str = "icon.webp";
 /// 作ると、その値が `world.agents` の検索や `Endpoint::Agent` の照合へ漏れる。
 const USER_DIR: &str = "user";
 
+/// 外部クライアントの設定を置くフォルダ名（Spec 25）。
+///
+/// `user/` と並ぶ位置に置く。**利用者のフォルダを共用しない** — 共用すると
+/// 「外の道具が頼んだこと」と「自分の依頼」が同じ顔で並ぶ。
+const EXTERNAL_DIR: &str = "external";
+
 /// アイコンの許容上限（bytes）。
 ///
 /// UI 側は 256px 角へ縮小してから送るため、通常は数十 KB に収まる。
@@ -264,6 +270,31 @@ impl ConfigStore {
     /// 消える」連鎖が無い。消えるのはここを明示的に呼んだときだけ。
     pub async fn delete_user_icon(&self) -> CoreResult<()> {
         Self::delete_icon_at(self.user_icon_path()).await
+    }
+
+    /// 外部クライアントのアイコンのパス（`{workspace}/external/icon.webp`）。
+    fn external_icon_path(&self) -> PathBuf {
+        self.root.join(EXTERNAL_DIR).join(ICON_FILE)
+    }
+
+    /// 外部クライアントのアイコンを読む。未設定なら `None`（Spec 25）。
+    pub async fn read_external_icon(&self) -> CoreResult<Option<Vec<u8>>> {
+        Self::read_icon_at(self.external_icon_path()).await
+    }
+
+    /// 外部クライアントのアイコンを書く（Spec 25）。
+    ///
+    /// # Errors
+    /// WebP でない・サイズ上限超過の場合 [`CoreError::InvalidIcon`]。
+    /// **検証はエージェント・利用者と同じ述語**（`validate_icon`）を通る。
+    /// 上限が 1 つであること自体が不変条件なので、ここで別の値を持たせない。
+    pub async fn write_external_icon(&self, bytes: &[u8]) -> CoreResult<()> {
+        Self::write_icon_at(self.root.join(EXTERNAL_DIR), bytes).await
+    }
+
+    /// 外部クライアントのアイコンを削除する。未設定でも成功として扱う（Spec 25）。
+    pub async fn delete_external_icon(&self) -> CoreResult<()> {
+        Self::delete_icon_at(self.external_icon_path()).await
     }
 
     /// エージェントのアイコンを削除する。未設定でも成功として扱う（削除は冪等）。

@@ -544,3 +544,100 @@ async fn setting_reception_to_unknown_agent_is_rejected() {
         "拒否したときは 1 バイトも変更しない"
     );
 }
+
+/// 外部クライアントの呼び名を設定すると、**封筒がその名前になる**（Spec 25）。
+///
+/// **見るのは表示ではなく入力。** `【送り手: X（外部クライアント）】` は
+/// モデルが読むプロンプトの一部なので、設定が届いていなければ意味が無い。
+#[tokio::test]
+async fn configured_external_name_reaches_the_envelope() {
+    let dir = TempDir::new("extname");
+    let (orchestrator, _id) = setup_with_reception(&dir).await;
+    orchestrator.set_external_name(Some("Neo")).await.unwrap();
+
+    let answer = orchestrator.ask_external("Claude Code", "やあ").await.unwrap();
+
+    assert!(
+        answer.ends_with("【送り手: Neo（外部クライアント）】\nやあ"),
+        "設定した呼び名が封筒に載ること。実際: {answer}"
+    );
+    assert!(
+        !answer.contains("Claude Code"),
+        "名乗りは封筒に出ないこと（設定が上書きする）。実際: {answer}"
+    );
+
+    // **記録には名乗りが残る。** 誰が実際に呼んだかは監査の材料で、
+    // 呼び名はその表示規則にすぎない（`Endpoint::External` は据え置き）。
+    let log = orchestrator.message_log(None).await;
+    let request = log
+        .iter()
+        .find(|m| matches!(m.from, Endpoint::External { .. }))
+        .unwrap();
+    assert_eq!(
+        request.from,
+        Endpoint::External {
+            client: "Claude Code".to_owned()
+        },
+        "記録は名乗りのまま（表示規則で上書きしない）"
+    );
+}
+
+/// 未設定なら**名乗りへ落ちる**（既存の挙動を変えない）。
+#[tokio::test]
+async fn unset_external_name_falls_back_to_the_declared_name() {
+    let dir = TempDir::new("extname-unset");
+    let (orchestrator, _id) = setup_with_reception(&dir).await;
+    assert_eq!(orchestrator.external_name().await, None);
+
+    let answer = orchestrator.ask_external("Claude Code", "やあ").await.unwrap();
+    assert!(
+        answer.ends_with("【送り手: Claude Code（外部クライアント）】\nやあ"),
+        "実際: {answer}"
+    );
+}
+
+/// 呼び名の検査は**利用者の呼び名と同じ述語**を通る（封筒の制約が同じだから）。
+#[tokio::test]
+async fn external_name_is_validated_like_the_user_name() {
+    let dir = TempDir::new("extname-invalid");
+    let (orchestrator, _id) = setup_with_reception(&dir).await;
+
+    let err = orchestrator
+        .set_external_name(Some("こわれ】た"))
+        .await
+        .expect_err("封筒を壊す文字は拒否されること");
+    assert_eq!(err.code(), "INVALID_USER_NAME", "実際: {err:?}");
+    assert_eq!(
+        orchestrator.external_name().await,
+        None,
+        "拒否したときは 1 バイトも変更しない"
+    );
+}
+
+/// アイコンは**利用者とも役職とも別の置き場**（`{workspace}/external/`）。
+///
+/// 検証は同じ述語（`validate_icon`）を通る — 上限が 1 つであること自体が
+/// 不変条件なので、ここで別の値を持たせない。
+#[tokio::test]
+async fn external_icon_has_its_own_folder_and_shares_the_predicate() {
+    let dir = TempDir::new("exticon");
+    let (orchestrator, _id) = setup_with_reception(&dir).await;
+
+    assert_eq!(orchestrator.external_icon().await.unwrap(), None, "未設定は None");
+    // 未設定でも削除は成功（冪等）。
+    orchestrator.clear_external_icon().await.unwrap();
+
+    // 最小の WebP（`validate_icon` が見るのはマジックバイト）。
+    let webp = {
+        let mut bytes = b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec();
+        bytes.extend_from_slice(&[0u8; 32]);
+        bytes
+    };
+    orchestrator.set_external_icon(&webp).await.unwrap();
+    assert_eq!(orchestrator.external_icon().await.unwrap(), Some(webp));
+    // **利用者のアイコンは別物**（流用すると外の道具の依頼が自分の依頼に見える）。
+    assert_eq!(orchestrator.user_icon().await.unwrap(), None);
+
+    orchestrator.clear_external_icon().await.unwrap();
+    assert_eq!(orchestrator.external_icon().await.unwrap(), None);
+}

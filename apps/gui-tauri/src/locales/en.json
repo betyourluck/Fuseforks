@@ -126,7 +126,16 @@
       "notListening": "Not listening",
       "clientConfig": "Example client configuration",
       "concurrencyNote": "Only one request is processed at a time. A second request while busy is refused immediately rather than queued.",
-      "scopeNote": "These settings are stored on this machine (they do not travel with a copied village). Only the reception is stored in the village."
+      "scopeNote": "These settings are stored on this machine (they do not travel with a copied village). Only the reception is stored in the village.",
+      "identity": "How the external client appears",
+      "identityHint": "The name and icon shown in the conversation pane. Setting a name also changes the sender name servants read (otherwise the client’s self-declared name is used).",
+      "externalName": "Name",
+      "externalNamePlaceholder": "Not set (use the client’s declared name)",
+      "externalNameHint": "Up to 32 characters. Takes effect from the next turn (past conversation logs are not rewritten).",
+      "externalNameFallback": "External",
+      "iconAlt": "External client icon",
+      "nameSave": "Save",
+      "nameSaved": "Saved"
     }
   },
   "common": {
