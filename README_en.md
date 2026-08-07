@@ -22,6 +22,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
+| 🪧 **Tool Reasons** | When a servant reaches for a tool, **what it is reaching for it for** appears as one line in the conversation. It is **the model's own account**, not an audit record |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 📎 **Path Completion** | Type `@` to pick a file from the work folder. **Only the path is inserted**, and the rounds a servant spends searching disappear |
 | 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
@@ -514,7 +515,7 @@ When a round cut off by the limit has no text response, the model is called **on
 
 **Calls and results are always added to history as a pair.** Adding only a result makes providers reject it as a result without its corresponding call. The wire formats differ entirely between the two providers (OpenAI-compatible uses `role: "tool"` + `tool_call_id`; Anthropic uses a `tool_result` block in a `user` message), so adapters perform the translation.
 
-Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects.
+Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects. **That announcement also carries the one-line reason the model wrote** (see "Tool reasons" below).
 
 There are nine built-in tools. External capabilities are added through MCP.
 
@@ -530,6 +531,37 @@ There are nine built-in tools. External capabilities are added through MCP.
 | `rag` | Query Markdown in **declared reference folders** through a heading index ([Spec 18](specs/18_bundled-doc-index.md)). Declaring a folder offers the tool automatically | **Declared folders only** (read-only; independent of the work folder) |
 | `run` | Execute allowed commands ([Spec 15](specs/15_command-execution.md)). **Off by default** | **Unrestricted** (the allowlist is the only enclosure) |
 
+
+### Tool reasons ([Spec 27](specs/27_tool-call-reason.md))
+
+In the conversation pane, each tool row shows **why** it ran next to **what** ran.
+The model writes that line itself, **up to 60 characters** (anything longer is trimmed).
+
+**Nobody guarantees that the line is true.** It was written by the very agent that ran the
+tool, and there is no path that verifies it. **What you can confirm is that nothing happened
+silently**; you cannot confirm that it did what it said. The former is what this mechanism is
+for; the latter is a different problem.
+
+**Two kinds of tools show no reason.**
+
+| No reason | On screen | Why |
+|---|---|---|
+| MCP-provided (`MCP_DOCKER__fetch` and friends) | **"external tool"** | The schema belongs to the server. Adding our own field and forwarding it makes servers that declare `additionalProperties: false` reject the call |
+| `ask` / `plan` / `room_log` | **the row is absent** | Their arguments already appear as messages in the conversation. A reason would put a summary next to text that is already on screen |
+
+**"No reason given" and "external tool" are different states.** The first means the model
+did not write one; the second means we never asked. Collapsing them into one blank makes
+external tools look like the ones running silently.
+
+**The outcome reads "returned" / "returned an error", never "succeeded" / "failed".**
+Built-in tools report failure in the **body** rather than as a return error, so the outcome
+marker only means "did the return value carry an error" — **whether the side effect
+succeeded is a separate question**, and the screen cannot answer it.
+
+**Villages that never use it still pay.** Unlike image attachments or path completion, this is
+on for everyone by default. Measured over 969 tool calls across 355 turns in
+`concordia.log`, it adds **1.5–2.2% effective tokens on turns that call tools**, and
+**zero on turns that call none**.
 
 ### Command execution (`run`)
 

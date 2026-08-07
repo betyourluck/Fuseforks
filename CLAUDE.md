@@ -2463,9 +2463,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - Spec 01（sd / yq 書き換え系）〜 03（新規チャット + 広場ログ）: **Done**
-- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0〜P2 完了**（2026-08-07。
+- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0〜P3 完了**（2026-08-07。
   lib 455 / 結合 124 / vitest 196 全緑・clippy 警告ゼロ・build 緑。
-  **残は P3 台帳と P4 実機 6 件**）。契約は `data_contract.yaml` の
+  **残は P4 実機 6 件中 2 件** — 画面の目視と、`Omitted` の経路）。
+  **実機で計器の穴を 1 つ塞いだ** — `reason_chars` だけでは
+  「書かなかった / 外部で尋ねていない / 対象外」の 3 状態が全部 0 に畳まれる。
+  **私自身が分布の平均を 20.8 → 14.3 へ誤って引き下げた**ので、
+  `reason=written|omitted|unsupported|excluded` を併記した（#72 と同型）。
+  **実測: Written のみで中央 19・平均 20.8・切り詰めゼロ**（起票時の仮定は 30 字）。
+  契約は `data_contract.yaml` の
   `tool_reason_contract`（`command_tool_contract` の隣）。
   実装は `crates/agent-core/src/tool_reason.rs`（純機構）+ `wants_reason` +
   `ToolRegistry::specs_for` での注入。**次に触る人が要る判断は Spec の P1 実装記録**。
