@@ -846,6 +846,11 @@ pub struct ScheduleView {
     /// 偽の行は発火しても `unapproved` で消化される。**画面がその理由を出せる
     /// ようにここへ載せる** — 出さないと「動かないが理由が分からない」になる。
     pub probe_approved: bool,
+    /// 直近 1 回の判定の結末（Spec 28 D8）。まだ 1 度も走っていなければ `null`。
+    ///
+    /// **プロセス寿命**（再起動で消える）。再起動後の診断は `concordia.log` の
+    /// `schedule probe:` 行が担う — 第 2 の永続ファイルは作らない。
+    pub last_probe: Option<agent_core::schedule_probe::ProbeReport>,
 }
 
 impl ScheduleView {
@@ -854,7 +859,9 @@ impl ScheduleView {
         task: agent_core::schedule::ScheduledTask,
         approvals: &crate::probe_approvals::ApprovalStore,
         village_id: &str,
+        reports: &std::collections::HashMap<String, agent_core::schedule_probe::ProbeReport>,
     ) -> Self {
+        let last_probe = reports.get(&task.id).cloned();
         let next_due_ms = task
             .next_due(&chrono::Local::now())
             .and_then(|due| u64::try_from(due.timestamp_millis()).ok());
@@ -870,6 +877,7 @@ impl ScheduleView {
             next_due_ms,
             recurrence_label,
             probe_approved,
+            last_probe,
         }
     }
 }
@@ -878,12 +886,13 @@ impl ScheduleView {
 #[tauri::command]
 pub async fn list_schedules(state: State<'_, AppState>) -> CoreResult<Vec<ScheduleView>> {
     let village_id = state.orchestrator.village_id().await;
+    let reports = state.orchestrator.probe_reports().await;
     Ok(state
         .orchestrator
         .schedules()
         .await
         .into_iter()
-        .map(|task| ScheduleView::of(task, &state.probe_approvals, &village_id))
+        .map(|task| ScheduleView::of(task, &state.probe_approvals, &village_id, &reports))
         .collect())
 }
 
@@ -933,7 +942,13 @@ pub async fn create_schedule(
         agent_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
 
-    Ok(ScheduleView::of(task, &state.probe_approvals, &village_id))
+    let reports = state.orchestrator.probe_reports().await;
+    Ok(ScheduleView::of(
+        task,
+        &state.probe_approvals,
+        &village_id,
+        &reports,
+    ))
 }
 
 /// 既存の予定の前判定を、この端末で実行してよいと承認する（Spec 28 D10）。

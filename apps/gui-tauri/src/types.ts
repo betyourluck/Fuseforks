@@ -448,6 +448,23 @@ export interface ScheduleProbe {
 /** 配送をどの会話へ積むか（Spec 28）。 */
 export type SessionMode = "continue" | "fresh";
 
+/** 前判定 1 回の結末（Spec 28 D8）。 */
+export type ProbeOutcome = "match" | "no_match" | "error" | "timeout" | "unapproved";
+
+/**
+ * 直近 1 回の判定の結末（Spec 28 D8）。
+ *
+ * **プロセス寿命**（再起動で消える）。`schedules.json` へは書かない —
+ * 機械が書く欄を人が編集するファイルへ増やすと衝突面が広がる。
+ * 再起動後の診断は `concordia.log` の `schedule probe:` 行が担う。
+ */
+export interface ProbeReport {
+  outcome: ProbeOutcome;
+  /** 失敗理由。**値を持つのは `outcome === "error"` のときだけ**（他は `-`）。 */
+  reason: string;
+  atMs: number;
+}
+
 /**
  * 予定を作るときの追加の指定（Spec 28）。
  *
@@ -493,6 +510,8 @@ export interface ScheduleView {
    * 分からない」になる。
    */
   probeApproved: boolean;
+  /** 直近 1 回の判定（Spec 28 D8）。まだ 1 度も走っていなければ null。 */
+  lastProbe: ProbeReport | null;
 }
 
 /**

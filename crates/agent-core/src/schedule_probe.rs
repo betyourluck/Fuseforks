@@ -320,6 +320,23 @@ impl ProbeError {
     }
 }
 
+/// 直近 1 回の判定の結末（画面へ出す用）。
+///
+/// **`schedules.json` へは書かない。** 機械が書く欄を人が編集するファイルへ
+/// 増やすと衝突面が広がる（`run.json` が pending でその形を踏んでいる）。
+/// 再起動で消えるのは承知のうえで、**再起動後の診断は `concordia.log` が担う**
+/// （`schedule probe:` の 1 行に outcome と reason が残っている）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeReport {
+    /// 結末（`match` / `no_match` / `error` / `timeout` / `unapproved`）。
+    pub outcome: String,
+    /// 失敗理由。**値を持つのは `outcome == "error"` のときだけ**（他は `-`）。
+    pub reason: String,
+    /// 判定した時刻（epoch ミリ秒）。
+    pub at_ms: u64,
+}
+
 /// 依頼文へ前判定の出力を添える。
 ///
 /// **付記しないとサーヴァントが同じ情報を取りに行く周回が発生し、

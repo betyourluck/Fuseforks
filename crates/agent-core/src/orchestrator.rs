@@ -388,6 +388,15 @@ struct ScheduleRuntime {
     /// fail open で空にされるとき、こちらだけ残ると要約が永遠に待つ）。
     /// ゆえに**取りこぼしでは一緒に捨てる** — 要約は次の発火でやり直せる。
     pending_summaries: Mutex<HashMap<AgentId, Participants>>,
+    /// 予定ごとの**直近 1 回**の判定の結末（Spec 28 D8）。
+    ///
+    /// **画面のためだけに持つ。** 不一致・失敗は会話ログへ流さない（5 分ごとの
+    /// 監視で毎回 System 行が出ると本物の通知が埋まる）が、**沈黙にもしない** —
+    /// 特に `error` / `timeout` は人が直せるので、どこかに出す価値がある。
+    ///
+    /// プロセス寿命（波の記録と同じ）。**再起動後は `concordia.log` の
+    /// `schedule probe:` 行が診断を担う**ので、第 2 の永続ファイルは作らない。
+    last_probe: Mutex<HashMap<String, crate::schedule_probe::ProbeReport>>,
 }
 
 /// 前判定コマンドの実行が端末で承認されているかを答える。
@@ -2695,6 +2704,15 @@ impl Orchestrator {
         *self.shared.probe_approvals.write().await = Some(approvals);
     }
 
+    /// 予定ごとの直近 1 回の判定の結末（Spec 28 D8）。プロセス寿命。
+    ///
+    /// **不一致・失敗は会話ログへ流さない**（監視の頻度で本物の通知が埋まる）
+    /// が、画面には出す — `error` / `timeout` は人が直せるので、
+    /// どこにも出さないと「動かないが理由が分からない」になる。
+    pub async fn probe_reports(&self) -> HashMap<String, crate::schedule_probe::ProbeReport> {
+        self.schedule_runtime.last_probe.lock().await.clone()
+    }
+
     /// この村の識別子（`{workspace}/village_id`）。承認鍵の salt。
     ///
     /// GUI は承認を書くときにこの値で鍵を組む。**コアが持っている値をそのまま
@@ -3131,7 +3149,7 @@ async fn probe_and_deliver(
     let Some(probe) = task.probe.clone() else {
         return;
     };
-    let (outcome, appendix) = run_probe(shared, &task.id, &probe).await;
+    let (outcome, appendix) = run_probe(shared, runtime, &task.id, &probe).await;
     runtime.probing.lock().await.remove(&task.id);
 
     if !outcome.delivers() {
@@ -3147,12 +3165,27 @@ async fn probe_and_deliver(
 ///
 /// **計器は必ず 1 行出す**（`outcome` と字数だけ。stdout の中身は 1 文字も
 /// 出さない — `failures.md` #71: 計器は秘密の転送経路になる）。
-async fn run_probe(shared: &Shared, task_id: &str, probe: &ScheduleProbe) -> (ProbeOutcome, String) {
+async fn run_probe(
+    shared: &Shared,
+    runtime: &ScheduleRuntime,
+    task_id: &str,
+    probe: &ScheduleProbe,
+) -> (ProbeOutcome, String) {
     let (outcome, appendix, exit, resolved, chars) = probe_once(shared, probe).await;
     note!(
         "schedule probe: id={task_id} outcome={} exit={exit} reason={} resolved={resolved} stdout_chars={chars}",
         outcome.as_str(),
         outcome.reason(),
+    );
+    // 画面へ出す用に直近の結末を残す（Spec 28 D8）。**ログとは別の器**で、
+    // 「いま何が起きているか」は画面、「何が起きてきたか」はログが持つ。
+    runtime.last_probe.lock().await.insert(
+        task_id.to_owned(),
+        crate::schedule_probe::ProbeReport {
+            outcome: outcome.as_str().to_owned(),
+            reason: outcome.reason().to_owned(),
+            at_ms: crate::model::now_ms(),
+        },
     );
     (outcome, appendix)
 }
