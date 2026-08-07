@@ -739,7 +739,8 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
   （テストの静穏窓・`toEqual` の固定しすぎ・辞書のエスケープ）ので、
   実装記録に残して #51 のような一般則には昇格させていない。
 
-- **P5 実機確認** — **検収 1・2 を観測（2026-08-08）。残 6 件。**
+- **P5 実機確認** — **検収 1・2・3・7・8 を観測（2026-08-08）。残 3 件**
+  （4・4' 未承認 / 5 probe の重なり / 6 fresh の確定）。
 
   ### P5 観測記録（2026-08-08 07:56〜08:00）
 
@@ -766,6 +767,45 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
     `python dummy.py` を使っており、`probe_approvals.json` の鍵は **1 件だけ**。
     合図が違っても 1 回の承認で両方走る（「承認したのは**何が走るか**であって
     **何を合図と見るか**ではない」）
+
+  ### P5 観測記録その 2（2026-08-08 08:06〜08:11）— 検収 3・7・8
+
+  ```text
+  08:06:47.952 schedule probe: outcome=error exit=- reason=not_found resolved=- stdout_chars=0
+  08:11:48.148 schedule probe: outcome=match exit=1 reason=- resolved=…\python.exe stdout_chars=9
+  08:11:48.158 turn start: agent=agent_2 hop=0 from=system chars=27
+  08:11:52.473 summarize: agent=agent_2 folded_msgs=2 folded_chars=149 summary_chars=113
+  08:11:52.490 schedule summarize: root=agent_2 agents=1
+  ```
+
+  **検収 3（exit 非 0 でも発火）合格。** **`exit=1` なのに `outcome=match`**
+  で、10 ms 後に `turn start:`。**rev1 で書いて査読で撤回した「exit 非 0 は
+  判定不能 = 不発火」の逆が実機で通った** — 監視の主戦場
+  （`print(...); sys.exit(1)`）が動く。`stdout_chars=9` は**観測前に書いた予測**
+  （`CHANGED\r\n` = 7 + 2）と 1 文字も違わなかった（#85 の規律）。
+
+  **検収 7（summarizeAfter）合格。決定的なのは `agents=1`。**
+  **村では 9 体が稼働中なのに、畳まれたのは因果の根 1 体だけ** —
+  P2b で参加者集合を封筒で運んだ判断（予算プールに相乗りさせない）が、
+  実機の負の対照として読める。`summary_chars=113 < folded_chars=149` なので
+  膨らみの WARN も出ていない。画面の System 行「予定の完了後に 1 体の記憶を
+  要約しました」は、**文言を経路で分けた**判断の実物。
+
+  **検収 8（error の reason）合格。しかも診断を実際に解いた。**
+  利用者が `echo CHANGED` を前判定に置いて `not_found` を踏んだ。
+  **原因（Windows の `echo` は `cmd.exe` の組み込みで、単体の実行ファイルが
+  無い）を特定できたのは、`reason=not_found` という閉じた列挙があったから** —
+  `spawn_failed` や `cwd_missing` なら全く違う場所を探していた。
+  D8 の「`outcome=error` だけでは何を直せばよいか読めない = 直せる沈黙を
+  作らない」が、**書いた当日に効いた**。あわせて `exit=-` / `resolved=-` も
+  正しく空で、「値を持つのは意味があるときだけ」が両方向で読める。
+
+  **躓きの形を記録しておく（次に同じ質問が来る）**: 前判定はシェルを介さない
+  ので、**シェルの組み込み（`echo` / `dir`）は指定できず、`;` / `&&` / `|` /
+  `$(...)` も効かない**（`;exit 1` は `echo` への引数の文字列になるだけ）。
+  Windows で最も確実なのは `python` + `-c` + 1 行のコード。
+  **UI か README への 1 行の追記は今は入れない** — 躓きが 1 回なので、
+  頻度を見てから決める（#47 で L1 / L2 を作らなかったのと同じ判断）。
 
   **検収 6（fresh）の状況証拠**: 起動時のログは `発話 9 件`、画面は「会話 2 件」。
   一致した側の予定は `sessionMode: fresh` なので切り替わったと読めるが、
