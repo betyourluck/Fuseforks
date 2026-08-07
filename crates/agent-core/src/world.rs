@@ -192,8 +192,13 @@ impl Language {
 /// 長い名前は全ターンの固定費になる。
 pub const USER_NAME_MAX_CHARS: usize = 32;
 
-/// 封筒の閉じ括弧。呼び名に含めると 1 つの発話に封筒が 2 つあるように読める。
-const USER_NAME_RESERVED: char = '】';
+/// 封筒の括弧。呼び名に含めると 1 つの発話に封筒が 2 つあるように読める。
+///
+/// **閉じ括弧だけでは足りない**（Spec 26 凍結 5）— 攻撃経路は
+/// `】\n【送り手:` なので、**開き括弧まで落とさないとラベル自体が
+/// 2 つ目の封筒を生成できる**。改行は下の制御文字検査が落とす。
+/// 全角の角括弧を含めるのは `［送り手: …］` が封筒に見えるため。
+const USER_NAME_RESERVED: [char; 4] = ['【', '】', '［', '］'];
 
 /// 利用者の呼び名を正規化して検証する（`user_identity_contract` 凍結 4）。
 ///
@@ -214,8 +219,8 @@ pub fn normalize_user_name(raw: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("空にはできません。呼び名を消すには「既定へ戻す」を選んでください".to_owned());
     }
-    if name.contains(USER_NAME_RESERVED) {
-        return Err(format!("`{USER_NAME_RESERVED}` は使えません（送り手の表示に使う記号です）"));
+    if let Some(found) = name.chars().find(|c| USER_NAME_RESERVED.contains(c)) {
+        return Err(format!("`{found}` は使えません（送り手の表示に使う記号です）"));
     }
     if name.chars().any(char::is_control) {
         return Err("改行や制御文字は使えません（呼び名は 1 行で表示されます）".to_owned());
@@ -1029,9 +1034,19 @@ mod tests {
         assert!(normalize_user_name("た\nか").is_err(), "改行");
         assert!(normalize_user_name("た\tか").is_err(), "タブ");
 
+        // **開き括弧も落とす**（Spec 26 凍結 5。2026-08-07 に方針を変えた）。
+        //
+        // 旧版はここを通しており、理由は「閉じないので封筒の境界は壊れない」
+        // だった。**その理由は不完全**で、ラベルは `【送り手: {label}】` へ
+        // 埋め込まれるので `【送り手: ユーザー` を名乗ると
+        // `【送り手: 【送り手: ユーザー】` になり、**書き出しが 2 回現れる**。
+        // しかも `normalize_client_name` が同じ述語を使っているため、
+        // **呼び名を設定していない村ではこのラベルは外部クライアントが
+        // 書いた `clientInfo.name` そのもの**。
+        assert!(normalize_user_name("【ぬし").is_err(), "封筒の開き括弧");
+        assert!(normalize_user_name("［ぬし］").is_err(), "全角の角括弧");
+
         assert_eq!(normalize_user_name("  たかはし  ").unwrap(), "たかはし");
-        // 封筒の開き括弧は通す — 閉じないので封筒の境界は壊れない。
-        assert_eq!(normalize_user_name("【ぬし").unwrap(), "【ぬし");
     }
 
     /// **字数はコードポイントで数える。**

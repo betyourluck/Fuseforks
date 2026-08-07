@@ -78,6 +78,7 @@ pub mod plan;
 pub mod room_log;
 pub mod schedule;
 pub mod secret;
+pub mod sender_envelope;
 pub mod session_store;
 pub mod tool;
 pub mod tools;

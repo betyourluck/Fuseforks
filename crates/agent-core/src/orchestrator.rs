@@ -3082,7 +3082,37 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
             format!("{}（外部クライアント）", external_label(&world, client))
         }
     };
-    format!("【送り手: {sender_label}】\n{}", incoming.content)
+    // **本文が封筒を名乗れないようにしてから組み立てる**（Spec 26 D1）。
+    // 素の本文を渡すと、本文が書いた封筒と本物が並ぶ — 2026-08-07 の実機で、
+    // 受け取った個体が本物のほうを「自己申告」として切り捨てた。
+    //
+    // **無害化は全 `Endpoint` に掛ける**（D2）。外部だけに掛けると、
+    // サーヴァントの発話が封筒構文を引用して広場ログ経由で別の個体へ届く
+    // 経路が残る（実機で観測済み — ミュゼの回答が
+    // `claude-code（外部クライアント）` を含んでザリの広場ログに乗った）。
+    let (body, defused) = crate::sender_envelope::defuse(&incoming.content);
+    if defused > 0 {
+        // **`from` を出す**。origin 別に数えないと「通常は出ない」が判定に
+        // ならない — 利用者が会話ログを貼り付ける経路は正当で、日常的に出る。
+        crate::note!(
+            "sender envelope escaped: from={} count={defused}",
+            endpoint_kind(&incoming.from)
+        );
+    }
+    crate::sender_envelope::wrap(&sender_label, &body)
+}
+
+/// 計器へ出す送り手の種別。**表示名ではなく種別**（誰が名乗ったかではなく、
+/// どの経路から来たかを数えるため）。
+///
+/// 網羅 match にしてあるので、`Endpoint` に variant が増えたらここが落ちる。
+fn endpoint_kind(from: &Endpoint) -> &'static str {
+    match from {
+        Endpoint::User => "user",
+        Endpoint::System => "system",
+        Endpoint::Agent { .. } => "agent",
+        Endpoint::External { .. } => "external",
+    }
 }
 
 /// このターンの受信に付いた添付参照を、ワイヤへ載せる形へ展開する（Spec 23）。
