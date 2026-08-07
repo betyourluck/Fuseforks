@@ -2463,8 +2463,19 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - Spec 01（sd / yq 書き換え系）〜 03（新規チャット + 広場ログ）: **Done**
-- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0 完了**（2026-08-07）。
-  契約は `data_contract.yaml` の `tool_reason_contract`（`command_tool_contract` の隣）。
+- Spec 27（ツール呼び出しの理由表示）: **rev3 承認 → P0〜P1 完了**（2026-08-07。
+  lib 455 / 結合 124 全緑・clippy 警告ゼロ）。契約は `data_contract.yaml` の
+  `tool_reason_contract`（`command_tool_contract` の隣）。
+  実装は `crates/agent-core/src/tool_reason.rs`（純機構）+ `wants_reason` +
+  `ToolRegistry::specs_for` での注入。**次に触る人が要る判断は Spec の P1 実装記録**。
+  **`ReasonState` は実装で 4 値になった**（凍結の 3 値では足りず、契約も訂正）—
+  **合成側も `ToolInvoked` を発行する**ので、3 値だと `ask_agent_3` に
+  「外部ツール」と出て**画面のラベルが嘘になる**。
+  **ミューテーション 2 回で赤を確かめ、1 回目で自分のテストの穴が出た** —
+  `Excluded` を主張するテストが 1 本も無く、**提示側の検査は発行側を
+  1 ミリも守っていなかった**。**一般化: 「A が生えない」を確かめるテストは、
+  「B が入る」を確かめたことにならない**（同じ機構の提示側と発行側は別経路で、
+  片方だけ留めるともう片方は既定値のまま何にでも化ける）。
   **`event.rs` の doc への追記は P0 から P1 へ送った** — `ToolInvoked` に欄が
   生える前に書くと**存在しない欄を説明する doc になる**。doc は型の隣にあり、
   **型と一緒に動くのが正しい単位**（P0 は実装より先に凍結するもの、doc は実装の一部）。

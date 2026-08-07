@@ -2,7 +2,8 @@
 
 **ID**: 27
 **Date**: 2026-08-07
-**Status**: **rev3 承認 → P0 完了**（2026-08-07）。残は P1〜P4。
+**Status**: **rev3 承認 → P0〜P1 完了**（2026-08-07）。残は P2〜P4。
+lib 455 / 結合 124 全緑・clippy 警告ゼロ。
 **rev2 の査読で D2 の判定基準が割れていることが出た。基準を純化した結果、
 `remember` の扱いは表を変えずに根拠だけが入れ替わった** — 「引数が自然言語か」
 ではなく「**引数が既に別の形で画面へ出ているか**」。
@@ -265,9 +266,10 @@ fn wants_reason(&self) -> bool { true }
 
 ```rust
 enum ReasonState {
-    Written(String),  // モデルが書いた（トリム済み・切り詰め済み）
-    Omitted,          // 自前のツールだが書かなかった
-    Unsupported,      // McpTool 由来で、そもそも聞いていない
+    Written { text: String },  // モデルが書いた（トリム済み・切り詰め済み）
+    Omitted,                   // 尋ねたが書かなかった
+    Unsupported,               // McpTool 由来で、そもそも尋ねていない
+    Excluded,                  // この村の判断で対象外（合成側）— P1 で追加
 }
 ```
 
@@ -275,7 +277,15 @@ enum ReasonState {
 **MCP 接続は動的**なので、**フロントには「このツールは理由を持てるはずか」を
 知る手段が無い**。判定材料をワイヤで運ぶ。
 
-表示は **`Omitted` = 「理由なし」/ `Unsupported` = 「外部ツール」**（S3）。
+表示は **`Omitted` = 「理由なし」/ `Unsupported` = 「外部ツール」/
+`Excluded` = 理由の行を出さない**（S3）。
+
+**`Excluded` は P1 の実装で足した。rev3 の凍結（3 値）では足りなかった。**
+合成側（`ask` / `plan` / `room_log`）も **`ToolInvoked` を発行する**
+（`orchestrator.rs` の emit は分岐の**後ろ**にある）。3 値だと合成側を
+`Unsupported` に落とすしかなく、**`ask_agent_3` に「外部ツール」と出る** —
+**画面のラベルが嘘になる**。**契約を書いた時点で「発行するのは registry 経由の
+呼び出しだけ」と暗に仮定しており、そこを数えていなかった。**
 
 ### D11 `ok` は監査証跡ではない。理由と対で書く
 
@@ -374,6 +384,48 @@ enum ReasonState {
 
   **rev2 の「注入が 1 箇所で済むか P1 で実装して確かめる」は削除**
   （D5 で `specs_for` へ移したので、`spec_for` 上書きの罠が構造的に消えた）。
+
+  ### P1 実装記録（2026-08-07 完了。lib 455 / 結合 124 全緑）
+
+  新設は `crates/agent-core/src/tool_reason.rs`（純機構・単体 13 本）。
+  触ったのは `tool.rs`（`wants_reason` + `specs_for` の注入 + 単体 4 本）/
+  `mcp.rs`（オプトアウト）/ `event.rs`（欄と doc）/ `orchestrator.rs`
+  （決定と計器）/ 結合 3 本。**次に触る人が要る判断が 4 点**:
+
+  - **`ReasonState` は 4 値になった**（D10 参照）。**rev3 の凍結 3 値では
+    足りなかった** — 合成側も `ToolInvoked` を発行するので、3 値だと
+    `ask_agent_3` に「外部ツール」と出て**画面のラベルが嘘になる**。
+    `data_contract.yaml` の該当行も訂正した
+  - **分岐の条件を書き写して先に判定しない。** 理由の既定を `Excluded` に置き、
+    **registry へ落ちた枝だけが上書きする**形にした。条件をもう一度書くと
+    **同じ規律が 2 箇所に生えて片方だけ古くなる**。この形なら**枝が増えても
+    既定へ落ちる**（合成側が増えたときに何もしなくて済む）
+  - **`registry_reason` の解決順は `execute_tool` と同じ**（個別 MCP → 共有
+    registry）。**順が食い違うと、実行したツールと理由を引いたツールが
+    別物になる**
+  - **オプトアウトの一覧はソース走査で留めた**（`only_mcp_opts_out_of_the_reason_field`）。
+    `wants_reason` を上書きしているファイルが `mcp.rs` だけであることを固定する。
+    **本数で数えない**（#62）。`defaultEnabledTools.test.ts` と同じ形
+
+  **ミューテーション 2 回で赤を確かめた**（一発で緑になったので、通った理由を数えた）。
+  **どちらも踏む前に予測を書いてから走らせた**（#85 — 数字を見てから解釈すると
+  どんな値でも辻褄が合う）。
+
+  | 変異 | 予測 | 実測 |
+  |---|---|---|
+  | 理由の既定を `Excluded` → `Unsupported` | plan の 1 行だけ赤 | **plan だけ FAILED**。スキーマ側の検査と結合 1 本は緑のまま |
+  | `specs_for` の `wants_reason` の門を外す | 外す側 2 本だけ赤 | **`specs_for_leaves_opted_out_tools_untouched` と `opting_out_does_not_leak_to_the_neighbours` が FAILED**。足す側と走査テストは緑 |
+
+  **1 回目で自分のテストの穴が出た。** `Excluded` を主張するテストが
+  **1 本も無かった** — スキーマ側の検査（`synthesized_tools_do_not_gain_a_reason_field`）は
+  **提示**しか見ておらず、**発行**の側は誰も見ていない。
+  既定を `Unsupported` にしても素通りする＝**`ask_agent_3` に「外部ツール」と出る**、
+  D10 を作った当の穴が開いたままだった。
+  `plan_delivers_in_parallel_and_bundles_the_answers` へ 1 行足して塞いだ。
+
+  **一般化: 「A が生えない」を確かめるテストは、「B が入る」を確かめたことに
+  ならない。** 同じ機構の**提示側と発行側**は別の経路で、
+  **片方だけを留めると、もう片方は既定値のまま何にでも化ける。**
 
 - **P2 GUI** — `chatRows.ts` に `ReasonState` を通し、`ChatPanel.vue` の
   ツール行へ 1 行。**フロントは推測せず enum で分岐**（D10）—

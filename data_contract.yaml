@@ -3019,13 +3019,20 @@ conversation_termination:
       - **合成側 (ask / handoff / plan / room_log) は AgentTool を実装していない** —
         orchestrator.rs で ToolSpec を直接組む。**理由欄が生える経路は無い**。
         **編集ゼロだがテストで留める** (次に読む人が親切心で足す)
-      - **空欄は 2 種類ある。ReasonState の 3 値で運ぶ**:
-        Written(String) = モデルが書いた / Omitted = 自前だが書かなかった /
-        Unsupported = McpTool 由来でそもそも聞いていない。
-        **Option<String> にしない** — None が 2 つの意味を持ち、
+      - **空欄は 3 種類ある。ReasonState の 4 値で運ぶ**
+        (**P1 の実装で 3 値では足りないと分かり、rev3 の凍結を訂正した**):
+        Written(String) = モデルが書いた / Omitted = 尋ねたが書かなかった /
+        Unsupported = McpTool 由来でそもそも尋ねていない /
+        **Excluded = この村の判断で対象外にしているツール** (合成側)。
+        **Option<String> にしない** — None が複数の意味を持ち、
         **フロントには「このツールは理由を持てるはずか」を知る手段が原理的に無い**
         (wants_reason はコアにしかなく、MCP 接続は動的)。
-        表示は Omitted =「理由なし」/ Unsupported =「外部ツール」
+        表示は Omitted =「理由なし」/ Unsupported =「外部ツール」/
+        **Excluded = 理由の行を出さない**。
+        **Unsupported と Excluded を畳めない理由は画面のラベルが嘘になること** —
+        ask_agent_3 に「外部ツール」と出すのは誤り。**契約を書いた時点では
+        合成側も ToolInvoked を発行することを数えていなかった**
+        (発行するのは registry 経由の呼び出しだけだと暗に仮定していた)
       - **CoreEvent::ToolInvoked への加算。既存 3 欄は動かさない**
       - **理由が届かない先は永続共有・永続保存・未来の自分**:
         広場ログ (Shared.log は AgentMessage = 発話だけ) / 履歴

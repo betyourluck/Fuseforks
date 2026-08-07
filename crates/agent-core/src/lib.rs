@@ -81,6 +81,7 @@ pub mod secret;
 pub mod sender_envelope;
 pub mod session_store;
 pub mod tool;
+pub mod tool_reason;
 pub mod tools;
 pub mod world;
 

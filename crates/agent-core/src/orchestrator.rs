@@ -4263,6 +4263,15 @@ async fn handle_message(
                 continue;
             }
 
+            // 理由（Spec 27）の既定は `Excluded` = **合成側**（plan / room_log /
+            // ask / handoff）。あれらは `AgentTool` を実装しておらず、
+            // **引数が発話として会話ペインに出る**ので理由は重複になる。
+            // registry へ落ちた呼び出しだけが下で上書きする。
+            //
+            // **条件を書き写して先に判定しない。** 分岐の条件をここでもう一度
+            // 書くと、同じ規律が 2 箇所に生えて片方だけ古くなる。
+            // 既定値 + 実際に通った枝での上書きなら、**枝が増えても既定へ落ちる**。
+            let mut reason = (crate::tool_reason::ReasonState::Excluded, 0usize);
             // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
             // 上限（`max_tool_iterations`）の消費も 1 回で済む。
             let result = if use_handoff_tools
@@ -4306,13 +4315,18 @@ async fn handle_message(
                         )
                         .await
                     }
-                    _ => execute_tool(shared, agent_id, call, &turn.token).await,
+                    _ => {
+                        reason = registry_reason(shared, agent_id, call).await;
+                        execute_tool(shared, agent_id, call, &turn.token).await
+                    }
                 }
             };
+            let (reason, reason_chars) = reason;
             shared.emit(CoreEvent::ToolInvoked {
                 agent_id: agent_id.clone(),
                 tool: call.name.clone(),
                 ok: result.is_ok(),
+                reason,
             });
             let ok = result.is_ok();
             let body = match result {
@@ -4328,8 +4342,12 @@ async fn handle_message(
             // `ok` は `Err` だったかどうかで、同梱ツールは失敗も `Ok` の本文で
             // 返すため `ok=true` のまま失敗していることがある（CoreEvent::ToolInvoked
             // と同じ意味。判定材料にするなら本文の側を見る）。
+            // `reason_chars` は**トリム後・切り詰め前**（Spec 27 D3）。本文は出さない —
+            // モデルの出力を記録する計器は秘密の転送経路になる（failures.md #71）。
+            // 切り詰め後を出すと「モデルが上限を超えて書くか」が全部 60 に
+            // 貼り付いて測れなくなる。
             note!(
-                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={}",
+                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason_chars={reason_chars}",
                 iteration + 1,
                 call.name,
                 call.args.to_string().chars().count(),
@@ -4809,6 +4827,43 @@ fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
 ///
 /// 未知の名前でも `Err` にせず文字列を返すのは、モデルが読んで直せるようにするため。
 /// ここで会話ごと落とすと、名前を打ち間違えただけでターンが終わる。
+/// registry へ落ちた呼び出しの理由を決める（Spec 27）。
+///
+/// 返すのは（状態, **トリム後・切り詰め前**の文字数）。
+///
+/// **解決の順は [`execute_tool`] と同じ**（個別 MCP → 共有 registry）。
+/// 順が食い違うと、**実行したツールと理由を引いたツールが別物になる**。
+///
+/// - 引けて `wants_reason` = 真 → 引数から読む（`Written` か `Omitted`）
+/// - 引けて偽 → `Unsupported`（[`crate::mcp::McpTool`] だけ）
+/// - 引けない → 呼び出し側の既定 `Excluded` のまま（ここへは来ない）
+async fn registry_reason(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    call: &crate::llm::ToolCall,
+) -> (crate::tool_reason::ReasonState, usize) {
+    let personal = {
+        let map = shared.agent_mcp.read().await;
+        map.get(agent_id).and_then(|state| {
+            state
+                .manager
+                .tools()
+                .iter()
+                .find(|tool| tool.name() == call.name)
+                .cloned()
+        })
+    };
+    let tool = match personal {
+        Some(tool) => Some(tool),
+        None => shared.tools.read().await.get(&call.name).cloned(),
+    };
+    match tool {
+        Some(tool) if tool.wants_reason() => crate::tool_reason::read(&call.args),
+        Some(_) => (crate::tool_reason::ReasonState::Unsupported, 0),
+        None => (crate::tool_reason::ReasonState::Excluded, 0),
+    }
+}
+
 async fn execute_tool(
     shared: &Arc<Shared>,
     agent_id: &AgentId,

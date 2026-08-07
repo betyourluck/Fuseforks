@@ -4196,6 +4196,23 @@ async fn plan_delivers_in_parallel_and_bundles_the_answers() {
         "2 体が同時に処理中になること（並列配送の実証）"
     );
 
+    // 合成側の呼び出しは `Excluded` として通知される（Spec 27 D10）。
+    // **`Unsupported` に落とすと画面に「外部ツール」と出て嘘になる。**
+    // スキーマ側の検査（synthesized_tools_do_not_gain_a_reason_field）は
+    // **提示**しか見ないので、**発行**の側はここでしか固定できない。
+    let plan_reason = events
+        .iter()
+        .find_map(|e| match e {
+            CoreEvent::ToolInvoked { tool, reason, .. } if tool == "plan" => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("plan の実行が通知されること");
+    assert_eq!(
+        plan_reason,
+        agent_core::tool_reason::ReasonState::Excluded,
+        "合成側は Excluded（理由の行を出さない）であること"
+    );
+
     let summary = log
         .iter()
         .find(|m| m.from == Endpoint::Agent { id: lead.clone() } && m.to == Endpoint::User)
@@ -7725,4 +7742,169 @@ async fn a_transfer_notes_the_dropped_image_in_its_body() {
         forwarded.attachments.is_empty(),
         "転送に画像の参照が付かないこと"
     );
+}
+
+/// 理由（Spec 27）はイベントへ届き、**次のターンの履歴にも広場ログにも残らない**。
+///
+/// 届かない先は**永続共有・永続保存・未来の自分**で、
+/// **同じターンの同じ個体のループ内には意図的に載る**（そこに積まれないと
+/// ツール呼び出しが成立しない）。だから確かめるのは「次のターン」でなければならない。
+#[tokio::test]
+async fn the_reason_reaches_the_event_but_not_the_next_turn() {
+    const REASON: &str = "設定ファイルの綴りを確かめるため";
+
+    let dir = TempDir::new("tool-reason");
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "remember".into(),
+        args: serde_json::json!({ "note": "相手は簡潔な返答を好む", "reason": REASON }),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "A", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 1. イベントには届く。
+    let written = events.iter().find_map(|e| match e {
+        CoreEvent::ToolInvoked {
+            reason: agent_core::tool_reason::ReasonState::Written { text },
+            ..
+        } => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(written.as_deref(), Some(REASON), "理由がイベントに乗ること");
+
+    // 2. **ToolInvoked 以外のどのイベントにも乗らない。** 広場ログ（MessagePosted）を
+    //    名指しで見るより強い — 新しいイベント種別が増えても、そこへ漏れれば赤くなる。
+    let others: Vec<_> = events
+        .iter()
+        .filter(|e| !matches!(e, CoreEvent::ToolInvoked { .. }))
+        .collect();
+    assert!(
+        !format!("{others:#?}").contains(REASON),
+        "理由は ToolInvoked 以外のイベントに乗らないこと: {others:#?}"
+    );
+
+    // 3. 次のターンのプロンプトに残らない。
+    //    **`session_store` も同じ (sent, replied) の対を書く**（`push_exchange` が
+    //    `record.push_exchange` と `SessionRecord::exchange` へ同じ 2 つを渡す）ので、
+    //    ここが緑なら保存側も同じ根拠で緑。**別々の機構ではない。**
+    orchestrator.send_user_message(&id, "ありがとう").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let next = backend.last.lock().unwrap().clone();
+    assert!(
+        !next.iter().any(|m| m.content.contains(REASON)),
+        "理由は次のターンのプロンプトに残らないこと: {next:#?}"
+    );
+}
+
+/// 合成側（`ask_*` / `transfer_to_*` / `plan`）に理由欄が生えないこと。
+///
+/// あれらは `AgentTool` を実装しておらず `orchestrator.rs` で `ToolSpec` を
+/// 直接組むので、注入の漏斗（`ToolRegistry::specs_for`）を通らない。
+/// **構造で安全なものほどテストで留める** — 次に読む人が親切心で足す。
+///
+/// **同梱ツールと対で見る。** 片方だけを見ると
+/// 「全部に足す実装」も「全部に足さない実装」も緑になる。
+#[tokio::test]
+async fn synthesized_tools_do_not_gain_a_reason_field() {
+    #[derive(Default)]
+    struct SpyBackend {
+        seen: std::sync::Mutex<Vec<agent_core::llm::ToolSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmBackend for SpyBackend {
+        fn name(&self) -> &str {
+            "reason-spy"
+        }
+        async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+            *self.seen.lock().unwrap() = req.tools.clone();
+            Ok(ChatResponse {
+                text: Some("了解".into()),
+                tool_calls: Vec::new(),
+                finish: Finish::Stop,
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                grounding: Default::default(),
+            })
+        }
+    }
+
+    let dir = TempDir::new("reason-spy");
+    let backend = Arc::new(SpyBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let (a, b, c) = (
+        AgentId::from("agent_01"),
+        AgentId::from("agent_02"),
+        AgentId::from("agent_03"),
+    );
+
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    for (id, name) in [(&a, "A"), (&b, "B"), (&c, "C")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    // 2 体以上へ繋ぐと `plan` が生える。
+    orchestrator
+        .set_connections(&a, vec![b.clone(), c.clone()])
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "顔ぶれを教えて").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap().clone();
+    let key = agent_core::tool_reason::REASON_KEY;
+    let has_reason = |spec: &agent_core::llm::ToolSpec| {
+        spec.parameters
+            .get("properties")
+            .and_then(|p| p.get(key))
+            .is_some()
+    };
+
+    let synthesized: Vec<_> = seen
+        .iter()
+        .filter(|s| {
+            s.name.starts_with("ask_")
+                || s.name.starts_with("transfer_to_")
+                || s.name == "plan"
+                || s.name == "room_log"
+        })
+        .collect();
+    assert!(
+        !synthesized.is_empty(),
+        "合成側が 1 本も提示されていないと、この検査は何も判定しない: {:?}",
+        seen.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+    for spec in &synthesized {
+        assert!(
+            !has_reason(spec),
+            "合成側に理由欄が生えないこと: {}",
+            spec.name
+        );
+    }
+
+    // 対の側。同じ提示の中に理由欄を持つツールが居ることまで見る。
+    let remember = seen
+        .iter()
+        .find(|s| s.name == "remember")
+        .expect("同梱ツールが提示されていること");
+    assert!(has_reason(remember), "同梱ツールには理由欄が生えること");
 }

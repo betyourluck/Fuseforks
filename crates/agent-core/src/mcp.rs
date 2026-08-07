@@ -221,6 +221,18 @@ impl AgentTool for McpTool {
         self.parameters.clone()
     }
 
+    /// **理由欄を足さない**（Spec 27 D5）。
+    ///
+    /// このスキーマは**サーバーが宣言したもの**で、こちらの欄を生やすと
+    /// そのまま `tools/call` の引数として転送される。
+    /// `additionalProperties: false` を宣言しているサーバーは**呼び出しごと拒否する**。
+    ///
+    /// **画面では `ReasonState::Unsupported`（「外部ツール」）として出る** —
+    /// 「モデルが書かなかった」ではなく「こちらが尋ねていない」。
+    fn wants_reason(&self) -> bool {
+        false
+    }
+
     async fn call(&self, _ctx: &ToolContext, args: &Value) -> CoreResult<String> {
         // MCP の arguments はオブジェクト。オブジェクト以外は引数なしとして送る
         // （モデルが `null` や文字列を寄越すことは実際にある）。
