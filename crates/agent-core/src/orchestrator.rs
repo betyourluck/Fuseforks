@@ -67,7 +67,10 @@ use crate::model::{
     WorkDirListing,
 };
 use crate::plan::{PlanTaskAnnounced, PlanTaskState, PlanWaveRecord, PlanWaveStore};
-use crate::schedule::{Recurrence, ScheduledTask, Tick};
+use crate::schedule::{Recurrence, ScheduleOptions, ScheduledTask, Tick};
+use crate::schedule_probe::{
+    Judgement, ProbeError, ProbeOutcome, ScheduleProbe, SessionMode, compose_body, judge,
+};
 use crate::tool::{AgentTool, ToolContext, ToolRegistry};
 use crate::secret::SecretStore;
 use crate::world::{TopologyPosition, World};
@@ -263,6 +266,18 @@ struct Shared {
     /// ticker（消化の記録）と UI（追加・削除）の書き手が 2 つあるため、
     /// ファイルを読み戻して書く形にすると片方の変更がもう片方に潰される。
     schedules: RwLock<Vec<ScheduledTask>>,
+    /// 前判定の実行が端末で承認されているかを答える口（Spec 28）。
+    ///
+    /// **未設定なら 1 件も承認されていない扱い**（fail closed）。承認の実体は
+    /// GUI 層が `{app_data_dir}` に持つので、コア単体（テスト・ヘッドレス）では
+    /// 前判定つきの予定は走らない。**それが安全側**で、
+    /// 「注入し忘れたら全部走る」の逆を選んである。
+    probe_approvals: RwLock<Option<Arc<dyn ProbeApprovals>>>,
+    /// この村の識別子（`{workspace}/village_id`）。承認鍵に混ざる。
+    ///
+    /// 起動時に 1 度だけ解決して持つ — **発火のたびにファイルを読むと、
+    /// 途中で差し替えられた識別子で承認が通る窓**ができる。
+    village_id: RwLock<String>,
     /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
     /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
     plan_waves: RwLock<PlanWaveStore>,
@@ -328,6 +343,31 @@ struct ScheduleRuntime {
     /// イベントを取りこぼしたら**集合を空にする**（fail open）— 塞がったままに
     /// すると予定が二度と発火しない静かな停止になり、稀な二重発火より悪い。
     in_flight: Mutex<std::collections::HashSet<AgentId>>,
+    /// **前判定が走行中の予定 ID**（Spec 28）。
+    ///
+    /// `timeoutSecs` の上限は 3600 秒あるので、5 分ごとの予定では probe が
+    /// 次の予定時刻をまたぐ。走行中に来た発火は**消化せずスキップ**する
+    /// （宛先が飛行中のときと同じ倒し方）。**これが無いとプロセスが積み上がり、
+    /// 村ごと重くなる。**
+    ///
+    /// 粒度が予定 ID なのは、外す契機が probe の完了という**予定単位の事実**
+    /// だから（`in_flight` が `AgentId` 単位なのは、外す契機に使える信号
+    /// `AgentTyping` がエージェント単位でしか来ないため — 事情が逆）。
+    probing: Mutex<std::collections::HashSet<String>>,
+}
+
+/// 前判定コマンドの実行が端末で承認されているかを答える。
+///
+/// **実装は GUI 層に置く**（`{app_data_dir}/probe_approvals.json`）。コアは
+/// workspace しか知らないので、**承認を workspace の中に置くと承認ごと配布され、
+/// 防御にならない**（攻撃者が書けるファイルに承認を書く形になる）。
+///
+/// **読むだけの口。** 書き込みは `tauri::command` の層に閉じてあり、
+/// ここから承認を足す経路は無い — モデルが `schedules.json` を `file write` で
+/// 書いても承認は付かない（Spec 28 D10）。
+pub trait ProbeApprovals: Send + Sync {
+    /// この鍵の前判定を、この端末で実行してよいか。
+    fn is_approved(&self, key: &str) -> bool;
 }
 
 /// エージェント別 MCP の実行時状態（プロセス寿命）。
@@ -390,6 +430,48 @@ impl Shared {
             Ok(mut guard) => *guard = session_id.to_owned(),
             Err(poisoned) => *poisoned.into_inner() = session_id.to_owned(),
         }
+    }
+
+    /// 会話を開き、投影（広場ログ・履歴・要約）を張り直す。
+    ///
+    /// **`Orchestrator::switch_to` の本体。** 予定の発火（Spec 28 の
+    /// `sessionMode: fresh`）は `Orchestrator` を持たずに切り替える必要があるので、
+    /// 規律を 2 箇所に書かないためにここへ置いてある。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、または読み込みに失敗した場合。
+    async fn open_session(&self, session_id: &str) -> CoreResult<()> {
+        let store = self.sessions.as_ref().ok_or_else(|| CoreError::SessionStore {
+            path: self.store.root().join("sessions.redb").display().to_string(),
+            operation: "open",
+            reason: "会話の保存先が開けていません".to_owned(),
+        })?;
+
+        self.log.write().await.clear();
+        self.world.write().await.clear_histories();
+        // ここで差し替える。以後の書き込みは新しい側へ着地する。
+        self.set_session(session_id);
+
+        let messages = store.tail_messages(session_id, self.config.log_capacity)?;
+        let restored = store.restore_histories(session_id, self.config.history_turns)?;
+        {
+            let mut world = self.world.write().await;
+            for (agent_id, history) in restored.histories {
+                if let Ok(record) = world.agent_mut(&agent_id) {
+                    record.history = history;
+                }
+            }
+        }
+        // 要約も差し替える（Spec 12 P4）。前の会話の要約が残ると、開いた会話とは
+        // 無関係な「これまでの経緯」が次のターンへ混ざる。
+        *self.summaries.write().await = restored.summaries;
+        *self.log.write().await = messages;
+
+        self.emit(CoreEvent::ConversationCleared);
+        self.emit(CoreEvent::SessionSwitched {
+            session_id: session_id.to_owned(),
+        });
+        Ok(())
     }
 
     /// レコードを 1 件保存する。**失敗しても村は止めない。**
@@ -793,6 +875,18 @@ impl Orchestrator {
             Err(err) => note!("attachment gc failed: {err}"),
         }
 
+        // 村の識別子（Spec 28）。**予定のティッカーが回り始める前**に確定させる —
+        // 発火の途中で解決すると、識別子が未確定の窓で承認鍵が組めない。
+        // 読めない・書けない村では空文字にして続ける（**空は承認鍵が一致しない側**
+        // なので、前判定が走らなくなるだけで危険側へは倒れない）。
+        let village_id = match store.village_id().await {
+            Ok(id) => id,
+            Err(err) => {
+                note!("WARN village_id を確定できません（前判定は実行されません）: {err}");
+                String::new()
+            }
+        };
+
         let shared = Arc::new(Shared {
             world: RwLock::new(world),
             mailboxes: RwLock::new(HashMap::new()),
@@ -807,6 +901,8 @@ impl Orchestrator {
             mcp: RwLock::new(crate::mcp::McpManager::default()),
             agent_mcp: RwLock::new(HashMap::new()),
             schedules: RwLock::new(schedules),
+            probe_approvals: RwLock::new(None),
+            village_id: RwLock::new(village_id),
             plan_waves: RwLock::new(PlanWaveStore::default()),
             turns: Mutex::new(HashMap::new()),
             turn_seq: std::sync::atomic::AtomicU64::new(1),
@@ -1256,33 +1352,10 @@ impl Orchestrator {
     /// `conversationCleared` を出さない選択は採らない — 会話ペインを空にする
     /// 指示はこれが唯一の経路で、意味を変えると既存 UI が誤動作する。
     async fn switch_to(&self, session_id: &str) -> CoreResult<()> {
-        let store = self.sessions()?;
-
-        self.shared.log.write().await.clear();
-        self.shared.world.write().await.clear_histories();
-        // ここで差し替える。以後の書き込みは新しい側へ着地する。
-        self.shared.set_session(session_id);
-
-        let messages = store.tail_messages(session_id, self.shared.config.log_capacity)?;
-        let restored = store.restore_histories(session_id, self.shared.config.history_turns)?;
-        {
-            let mut world = self.shared.world.write().await;
-            for (agent_id, history) in restored.histories {
-                if let Ok(record) = world.agent_mut(&agent_id) {
-                    record.history = history;
-                }
-            }
-        }
-        // 要約も差し替える（Spec 12 P4）。前の会話の要約が残ると、開いた会話とは
-        // 無関係な「これまでの経緯」が次のターンへ混ざる。
-        *self.shared.summaries.write().await = restored.summaries;
-        *self.shared.log.write().await = messages;
-
-        self.shared.emit(CoreEvent::ConversationCleared);
-        self.shared.emit(CoreEvent::SessionSwitched {
-            session_id: session_id.to_owned(),
-        });
-        Ok(())
+        // 本体は Shared に置いてある。予定の発火（Spec 28 の `sessionMode: fresh`）
+        // が Orchestrator を持たずに切り替える必要があり、**同じ規律を 2 箇所に
+        // 書かないため**に下ろした。
+        self.shared.open_session(session_id).await
     }
 
     /// メッセージログ。`limit` を指定すると末尾からその件数だけ返す。
@@ -2516,13 +2589,9 @@ impl Orchestrator {
         to: AgentId,
         message: String,
         recurrence: Recurrence,
+        options: ScheduleOptions,
     ) -> CoreResult<ScheduledTask> {
         self.ensure_schedules_writable()?;
-        recurrence
-            .validate()
-            .map_err(|err| CoreError::InvalidSchedule {
-                reason: err.to_string(),
-            })?;
         // 宛先の存在確認。停止中は許す（発火時に飛ばす規則が受け止める）が、
         // 未登録は登録の時点で弾く — 発火するまで誰も気づかない予定を作らせない。
         self.shared.world.read().await.agent(&to)?;
@@ -2535,7 +2604,15 @@ impl Orchestrator {
             created_at_ms: crate::model::now_ms(),
             last_consumed_due_ms: None,
             enabled: true,
+            probe: options.probe,
+            session_mode: options.session_mode,
+            summarize_after: options.summarize_after,
         };
+        // **組み立てた 1 件をまとめて検証する。** 欄ごとに検証を書くと、
+        // 欄が増えたときにここを直す仕事が生える（読み込み側と同じ述語を通す）。
+        task.validate().map_err(|err| CoreError::InvalidSchedule {
+            reason: err.to_string(),
+        })?;
 
         let mut schedules = self.shared.schedules.write().await;
         schedules.push(task.clone());
@@ -2544,6 +2621,23 @@ impl Orchestrator {
         // あちらの書き手は UI だけだが、こちらは ticker と UI の 2 系統ある）。
         self.shared.store.save_schedules(&schedules).await?;
         Ok(task)
+    }
+
+    /// 前判定の承認を答える口を差し込む（Spec 28）。
+    ///
+    /// **差し込むまで前判定は 1 本も走らない**（承認を確かめる手段が無いので
+    /// `unapproved` へ倒れる）。実体は GUI 層が `{app_data_dir}` に持つ —
+    /// workspace に置くと承認ごと配布され、防御にならない。
+    pub async fn set_probe_approvals(&self, approvals: Arc<dyn ProbeApprovals>) {
+        *self.shared.probe_approvals.write().await = Some(approvals);
+    }
+
+    /// この村の識別子（`{workspace}/village_id`）。承認鍵の salt。
+    ///
+    /// GUI は承認を書くときにこの値で鍵を組む。**コアが持っている値をそのまま
+    /// 使わせる** — 2 箇所で読むと、片方がファイルを読み直して食い違う。
+    pub async fn village_id(&self) -> String {
+        self.shared.village_id.read().await.clone()
     }
 
     /// 予定を削除する。
@@ -2691,20 +2785,41 @@ fn spawn_schedule_ticker(
     })
 }
 
-/// 予定 1 巡ぶんの判定と実行（Spec 07 の配線層）。
+/// 予定 1 巡ぶんの判定と実行（Spec 07 の配線層 + Spec 28 の前判定）。
 ///
 /// 判定そのものは [`ScheduledTask::decide`]（純関数）に委ね、ここは
 /// **副作用の順序**だけを持つ: 配送 → 記録 → 消化 → 保存。
 /// 消化の書き込みが配送成功の後にあるので、途中で落ちても
 /// 「消化したのに発火していない」は起きない（逆の「発火したのに消化が
 /// 残っていない」は再発火として現れ、既知の制限に含まれる）。
+///
+/// ## 前判定つきの予定だけ経路が別なのはなぜか（Spec 28 P2）
+///
+/// **この関数はティッカーの `select!` の中で await されている。** 前判定を
+/// ここで待つと、`timeoutSecs`（上限 3600 秒）のあいだ**ティッカーごと止まり**、
+/// 同じループが担っている [`CoreEvent::AgentTyping`] の排出まで止まる
+/// （`in_flight` が掃除されず、受信が lag して fail open を誘発する）。
+/// ゆえに前判定つきの予定は**切り離したタスクへ出す**。
+///
+/// 帰結として:
+/// - **前判定つきは、決めた時点で消化する。** どの結末でも消化するので
+///   （Spec 28 D1）、結末を待たずに書いてよい
+/// - **束ねる配送は前判定なしの予定だけ**。前判定つきは結末が出た順に
+///   独立して配送する — 非同期に散る結末を「同じ tick」として束ねられない
 async fn schedule_tick<Tz: chrono::TimeZone>(
     shared: &Arc<Shared>,
-    runtime: &ScheduleRuntime,
+    runtime: &Arc<ScheduleRuntime>,
     now: chrono::DateTime<Tz>,
 ) {
     let tasks: Vec<ScheduledTask> = shared.schedules.read().await.clone();
     let mut consumed: Vec<(String, u64)> = Vec::new();
+    // 前判定なしの発火。**判定を全件済ませてから**セッションを 1 回だけ
+    // 切り替えて一括配送する（Spec 28 D6）。
+    //
+    // **消化する予定時刻は判定から運ぶ。** 配送の時点で引き直すと、
+    // 判定に使った時刻と消化に書く時刻が別物になる（tick の `now` は
+    // 引数で受け取っており、実時計とは限らない）。
+    let mut candidates: Vec<(ScheduledTask, u64)> = Vec::new();
 
     for task in tasks {
         match task.decide(&now) {
@@ -2755,51 +2870,33 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
                     continue;
                 }
 
-                // 本文の先頭に由来を書く。封筒（【送り手: Concordia】）だけでは
-                // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
-                // 利用者も定期発火だと分かる。
-                let content = format!(
-                    "【定期実行: {}】\n{}",
-                    task.recurrence.label_ja(),
-                    task.message
-                );
-                // 予定発火はユーザー発話と同格の新しい起点なので hop は 0 —
-                // そこから先の転送・委譲に満額の燃料を渡す。
-                let message = AgentMessage::new(
-                    Endpoint::System,
-                    Endpoint::Agent {
-                        id: task.to.clone(),
-                    },
-                    content,
-                    0,
-                );
+                // 前判定が走っている予定へ 2 本目を出さない（Spec 28）。
+                // **消化しない**のは上と同じ理由 — 走り終われば次の tick が拾う。
+                // ここを塞がないと、間隔より長い前判定でプロセスが積み上がる。
+                if task.probe.is_some() && runtime.probing.lock().await.contains(&task.id) {
+                    continue;
+                }
 
-                // 因果の根 — 予定の発火 1 回ごとに独立した予算が付く（Spec 11 S4。
-                // 人が見ていない時間の安全の本体）。配送を見送った tick では
-                // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
-                let budget = new_root_budget(shared).await;
-
-                // 配送してから記録する。逆にすると、受信箱が飽和していた場合に
-                // 「配られていない発話」が会話ペインへ残る。
-                match deliver(shared, &task.to, message.clone(), budget).await {
-                    Ok(()) => {
-                        shared.record(message).await;
-                        runtime.in_flight.lock().await.insert(task.to.clone());
+                match task.probe {
+                    // 前判定なし。従来どおり束ねる側へ回す。
+                    None => candidates.push((task, due_ms)),
+                    // 前判定あり。**結末を待たずに消化して**切り離す
+                    // （どの結末でも消化するので、待つ理由が無い）。
+                    Some(_) => {
                         consumed.push((task.id.clone(), due_ms));
-                    }
-                    Err(err) => {
-                        // MailboxFull（背圧）: 消化せず次の tick で再試行する。
-                        // NotRunning: 上の running 判定との間で停止された競合。
-                        // どちらも次の tick が正しく拾い直す。
-                        note!(
-                            "schedule: {} への配送を見送りました: {err}",
-                            task.to
-                        );
+                        runtime.probing.lock().await.insert(task.id.clone());
+                        let shared = Arc::clone(shared);
+                        let runtime = Arc::clone(runtime);
+                        tokio::spawn(async move {
+                            probe_and_deliver(&shared, &runtime, task).await;
+                        });
                     }
                 }
             }
         }
     }
+
+    deliver_batch(shared, runtime, candidates, &mut consumed).await;
 
     if consumed.is_empty() {
         return;
@@ -2819,6 +2916,252 @@ async fn schedule_tick<Tz: chrono::TimeZone>(
             // 二重発火は起きず、次の消化で再度保存を試みる。
             note!("schedule: schedules.json の保存に失敗しました: {err}");
         }
+    }
+}
+
+/// 前判定なしの発火をまとめて配送する（Spec 28 D6）。
+///
+/// **セッションの切り替えは全件ぶん 1 回だけ。** 1 件ずつ切り替えると、
+/// 同じ時刻に複数の予定が発火した村で画面が続けて 2 回切り替わる。
+/// `fresh` が 1 件でもあれば新しい会話を 1 つ作り、**この tick の配送は
+/// `continue` のぶんも含めて全部そこへ積む** — セッションは村全体の単位なので、
+/// 同時刻の発火が同じ会話に載るほうが一貫している。
+async fn deliver_batch(
+    shared: &Arc<Shared>,
+    runtime: &ScheduleRuntime,
+    candidates: Vec<(ScheduledTask, u64)>,
+    consumed: &mut Vec<(String, u64)>,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    if candidates
+        .iter()
+        .any(|(task, _)| task.session_mode == SessionMode::Fresh)
+    {
+        start_fresh_session(shared).await;
+    }
+    for (task, due_ms) in candidates {
+        // **消化するのは配送できたときだけ**（従来の規律を維持）。
+        // 背圧で見送った回は消化せず、次の tick が拾い直す。
+        if deliver_scheduled(shared, runtime, &task, String::new()).await {
+            consumed.push((task.id.clone(), due_ms));
+        }
+    }
+}
+
+/// 発火 1 件を配送する。配送できたら真。
+///
+/// **配送してから記録する。** 逆にすると、受信箱が飽和していた場合に
+/// 「配られていない発話」が会話ペインへ残る。
+async fn deliver_scheduled(
+    shared: &Arc<Shared>,
+    runtime: &ScheduleRuntime,
+    task: &ScheduledTask,
+    appendix: String,
+) -> bool {
+    // 本文の先頭に由来を書く。封筒（【送り手: Concordia】）だけでは
+    // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
+    // 利用者も定期発火だと分かる。
+    let base = format!(
+        "【定期実行: {}】\n{}",
+        task.recurrence.label_ja(),
+        task.message
+    );
+    // 前判定の出力を添える。**添えないとサーヴァントが同じ情報を取りに行く
+    // 周回が発生し、トークン節約という目的と逆行する**（Spec 28 D3）。
+    let content = compose_body(&base, &appendix);
+
+    // 予定発火はユーザー発話と同格の新しい起点なので hop は 0 —
+    // そこから先の転送・委譲に満額の燃料を渡す。
+    let message = AgentMessage::new(
+        Endpoint::System,
+        Endpoint::Agent {
+            id: task.to.clone(),
+        },
+        content,
+        0,
+    );
+
+    // 因果の根 — 予定の発火 1 回ごとに独立した予算が付く（Spec 11 S4。
+    // 人が見ていない時間の安全の本体）。配送を見送った tick では
+    // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
+    let budget = new_root_budget(shared).await;
+
+    match deliver(shared, &task.to, message.clone(), budget).await {
+        Ok(()) => {
+            shared.record(message).await;
+            runtime.in_flight.lock().await.insert(task.to.clone());
+            true
+        }
+        Err(err) => {
+            // MailboxFull（背圧）: 消化せず次の tick で再試行する。
+            // NotRunning: 上の running 判定との間で停止された競合。
+            // どちらも次の tick が正しく拾い直す。
+            note!("schedule: {} への配送を見送りました: {err}", task.to);
+            false
+        }
+    }
+}
+
+/// 新しい会話を起こす（`sessionMode: fresh`）。
+///
+/// **失敗しても発火は止めない。** 会話が切り替わらないだけで、依頼は届く —
+/// 「新しい会話で始められなかったから今日の監視を落とす」は交換として悪い。
+async fn start_fresh_session(shared: &Arc<Shared>) {
+    let Some(store) = shared.sessions.as_ref() else {
+        // 保存先の無い村では会話の単位そのものが無い。黙って続ける。
+        return;
+    };
+    match store.create_session(None) {
+        Ok(session_id) => {
+            if let Err(err) = shared.open_session(&session_id).await {
+                note!("WARN schedule: 新しい会話へ切り替えられませんでした: {err}");
+            }
+        }
+        Err(err) => note!("WARN schedule: 新しい会話を起こせませんでした: {err}"),
+    }
+}
+
+/// 前判定を走らせ、一致したら配送する（Spec 28）。**切り離したタスクで動く。**
+///
+/// 消化は呼び出し元が済ませてある — ここでの結末は「配送するかどうか」だけを
+/// 決める。**走り終えたら必ず `probing` から外す**（外し忘れるとその予定は
+/// 二度と発火しない静かな停止になる）。
+async fn probe_and_deliver(
+    shared: &Arc<Shared>,
+    runtime: &Arc<ScheduleRuntime>,
+    task: ScheduledTask,
+) {
+    let Some(probe) = task.probe.clone() else {
+        return;
+    };
+    let (outcome, appendix) = run_probe(shared, &task.id, &probe).await;
+    runtime.probing.lock().await.remove(&task.id);
+
+    if !outcome.delivers() {
+        return;
+    }
+    if task.session_mode == SessionMode::Fresh {
+        start_fresh_session(shared).await;
+    }
+    deliver_scheduled(shared, runtime, &task, appendix).await;
+}
+
+/// 前判定 1 本を走らせて結末と付記を返す。
+///
+/// **計器は必ず 1 行出す**（`outcome` と字数だけ。stdout の中身は 1 文字も
+/// 出さない — `failures.md` #71: 計器は秘密の転送経路になる）。
+async fn run_probe(shared: &Shared, task_id: &str, probe: &ScheduleProbe) -> (ProbeOutcome, String) {
+    let (outcome, appendix, exit, resolved, chars) = probe_once(shared, probe).await;
+    note!(
+        "schedule probe: id={task_id} outcome={} exit={exit} reason={} resolved={resolved} stdout_chars={chars}",
+        outcome.as_str(),
+        outcome.reason(),
+    );
+    (outcome, appendix)
+}
+
+/// 前判定の本体。計器へ出す値も一緒に返す。
+async fn probe_once(
+    shared: &Shared,
+    probe: &ScheduleProbe,
+) -> (ProbeOutcome, String, String, String, usize) {
+    // 承認の確認が先。**未承認ならプロセスを 1 つも起こさない** —
+    // 起こしてから捨てる形にすると、承認の意味が「結果を使わない」に落ちる。
+    let approved = {
+        let key = probe.approval_key(&shared.village_id.read().await.clone());
+        match shared.probe_approvals.read().await.as_ref() {
+            Some(store) => store.is_approved(&key),
+            // 注入されていない = 承認を確かめる手段が無い。**走らせない側へ倒す。**
+            None => false,
+        }
+    };
+    if !approved {
+        return (
+            ProbeOutcome::Unapproved,
+            String::new(),
+            "-".to_owned(),
+            "-".to_owned(),
+            0,
+        );
+    }
+
+    // 作業フォルダ。**検査は実行時だけ**（読み込みで弾くと、村を配った先で
+    // 存在しないパスを指しているだけでスケジュール全体が読めなくなる）。
+    let cwd = probe
+        .cwd
+        .as_ref()
+        .map_or_else(|| shared.store.root().to_path_buf(), std::path::PathBuf::from);
+    if !cwd.is_dir() {
+        return (
+            ProbeOutcome::Error(ProbeError::CwdMissing),
+            String::new(),
+            "-".to_owned(),
+            "-".to_owned(),
+            0,
+        );
+    }
+
+    // **PATH は実行のたびに引き直す**（直したら次の実行から変わってほしい）。
+    let Some(program) = crate::process::resolve_program(&probe.command) else {
+        return (
+            ProbeOutcome::Error(ProbeError::NotFound),
+            String::new(),
+            "-".to_owned(),
+            "-".to_owned(),
+            0,
+        );
+    };
+    let resolved = crate::process::display_path(&program);
+
+    // 打ち切りは probe 側のトークンを持たない — 人の「全ターン停止」は
+    // サーヴァントのターンを止めるもので、前判定は因果の外にある。
+    let ran =
+        crate::process::spawn_and_wait(&program, &probe.args, &cwd, probe.timeout_secs, None).await;
+
+    match ran {
+        crate::process::Ran::Finished { code, stdout, .. } => {
+            let chars = stdout.chars().count();
+            let exit = code.map_or_else(|| "-".to_owned(), |c| c.to_string());
+            match judge(&stdout, &probe.expect) {
+                Judgement::Match { appendix } => {
+                    (ProbeOutcome::Match, appendix, exit, resolved, chars)
+                }
+                Judgement::NoMatch => {
+                    (ProbeOutcome::NoMatch, String::new(), exit, resolved, chars)
+                }
+                Judgement::SignalTruncated => (
+                    ProbeOutcome::Error(ProbeError::SignalTruncated),
+                    String::new(),
+                    exit,
+                    resolved,
+                    chars,
+                ),
+            }
+        }
+        crate::process::Ran::TimedOut => (
+            ProbeOutcome::Timeout,
+            String::new(),
+            "-".to_owned(),
+            resolved,
+            0,
+        ),
+        crate::process::Ran::SpawnFailed(_) | crate::process::Ran::WaitFailed(_) => (
+            ProbeOutcome::Error(ProbeError::SpawnFailed),
+            String::new(),
+            "-".to_owned(),
+            resolved,
+            0,
+        ),
+        // 前っ判定にトークンを渡していないので、この腕は構造上通らない。
+        crate::process::Ran::Cancelled => (
+            ProbeOutcome::Error(ProbeError::SpawnFailed),
+            String::new(),
+            "-".to_owned(),
+            resolved,
+            0,
+        ),
     }
 }
 

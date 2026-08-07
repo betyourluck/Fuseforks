@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use agent_core::event::CoreEvent;
 use agent_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
-use agent_core::schedule::{Recurrence, Weekday};
+use agent_core::schedule::{Recurrence, ScheduleOptions, Weekday};
 use agent_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
@@ -125,7 +125,7 @@ async fn fires_once_with_origin_prefix() {
     orchestrator.start_agent(&agent).await.unwrap();
 
     orchestrator
-        .create_schedule(agent.clone(), "今の時刻を言って".into(), THU_17)
+        .create_schedule(agent.clone(), "今の時刻を言って".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap();
 
@@ -193,7 +193,7 @@ async fn skips_stopped_target_with_single_notice() {
     // start しない = 停止中。
 
     orchestrator
-        .create_schedule(agent.clone(), "今の時刻を言って".into(), THU_17)
+        .create_schedule(agent.clone(), "今の時刻を言って".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap();
 
@@ -245,6 +245,7 @@ async fn grace_expiry_is_silent_in_conversation() {
             agent.clone(),
             "点検".into(),
             Recurrence::Daily { hour: 9, minute: 0 },
+            ScheduleOptions::default(),
         )
         .await
         .unwrap();
@@ -285,13 +286,14 @@ async fn create_rejects_invalid_input() {
             agent.clone(),
             "x".into(),
             Recurrence::Daily { hour: 99, minute: 0 },
+            ScheduleOptions::default(),
         )
         .await
         .unwrap_err();
     assert_eq!(err.code(), "INVALID_SCHEDULE");
 
     let err = orchestrator
-        .create_schedule(AgentId::from("ghost"), "x".into(), THU_17)
+        .create_schedule(AgentId::from("ghost"), "x".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap_err();
     assert_eq!(err.code(), "AGENT_NOT_FOUND", "未登録の宛先は登録時点で弾く");
@@ -316,7 +318,7 @@ async fn disabled_schedule_is_dormant_but_recoverable() {
     orchestrator.start_agent(&agent).await.unwrap();
 
     let task = orchestrator
-        .create_schedule(agent.clone(), "点検".into(), THU_17)
+        .create_schedule(agent.clone(), "点検".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap();
     orchestrator
@@ -368,7 +370,7 @@ async fn delete_agent_removes_its_schedules() {
             .unwrap();
     }
     orchestrator
-        .create_schedule(a.clone(), "a の予定".into(), THU_17)
+        .create_schedule(a.clone(), "a の予定".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap();
     orchestrator
@@ -376,6 +378,7 @@ async fn delete_agent_removes_its_schedules() {
             b.clone(),
             "b の予定".into(),
             Recurrence::Interval { every_minutes: 10 },
+            ScheduleOptions::default(),
         )
         .await
         .unwrap();
@@ -405,7 +408,7 @@ async fn schedules_survive_restart_and_broken_rows_are_dropped() {
             .await
             .unwrap();
         orchestrator
-            .create_schedule(agent.clone(), "点検".into(), THU_17)
+            .create_schedule(agent.clone(), "点検".into(), THU_17, ScheduleOptions::default())
             .await
             .unwrap();
     }
@@ -454,7 +457,7 @@ async fn corrupt_file_blocks_writes_but_not_boot() {
         .await
         .unwrap();
     let err = orchestrator
-        .create_schedule(agent, "x".into(), THU_17)
+        .create_schedule(agent, "x".into(), THU_17, ScheduleOptions::default())
         .await
         .unwrap_err();
     assert_eq!(

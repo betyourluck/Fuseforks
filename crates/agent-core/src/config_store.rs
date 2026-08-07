@@ -37,6 +37,24 @@ const WORLD_FILE: &str = "world.json";
 /// `Ordinance.md` / `mcp.json` が別ファイルなのと同じ理由。
 const SCHEDULES_FILE: &str = "schedules.json";
 
+/// 村の識別子のファイル名（Spec 28）。
+///
+/// **村の内容物**なので配布に載る（`world.json` と同じ棚）。
+/// **人に見せる名前ではない** — 表示名や村の説明に使わないこと。
+/// 使い始めると「読みやすい id」への要望が生まれ、乱数である性質が壊れる。
+const VILLAGE_ID_FILE: &str = "village_id";
+
+/// 村の識別子として受け付けられる書式か（UUID の 16 進小文字 + ハイフン 36 字）。
+///
+/// **厳密な UUID の構文検査まではしない。** ここが守っているのは
+/// 「承認鍵に混ぜても壊れない字」であって、版番号やバリアントの正しさではない。
+fn is_village_id(text: &str) -> bool {
+    text.len() == 36
+        && text
+            .chars()
+            .all(|c| c == '-' || (c.is_ascii_hexdigit() && !c.is_ascii_uppercase()))
+}
+
 /// MCP サーバー宣言のファイル名。
 ///
 /// Claude Desktop の `claude_desktop_config.json` と同じ `mcpServers` 形式を採る
@@ -94,6 +112,35 @@ impl ConfigStore {
     /// ワークスペースのルートパス。
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// この村の識別子（`{workspace}/village_id`）。無ければ作る。
+    ///
+    /// **村の内容物なので配布に載る。** 秘密ではないが、**攻撃者が被害者の値を
+    /// 知り得ない**ことに意味がある — 前判定の承認鍵に混ぜてあるので、
+    /// 差し替えた村は別の識別子を運び、承認が構造的に外れる（Spec 28 D10）。
+    ///
+    /// **絶対パスでは代用できない。** この村の workspace は
+    /// `{app_data_dir}/workspace` に固定されており、村の入れ替えは「別のパスを
+    /// 開く」ではなく**同じパスの中身の差し替え**として起きる。パスを鍵に混ぜても
+    /// 同一機では常に同じ値になり、差し替えを 1 件も止められない。
+    ///
+    /// 書式に合わない中身は**作り直す** — 検査に落ちた識別子を返すと、
+    /// その村では承認鍵が永遠に組めない。
+    ///
+    /// # Errors
+    /// 読み書きに失敗した場合 [`CoreError::ConfigIo`]。
+    pub async fn village_id(&self) -> CoreResult<String> {
+        let path = self.root.join(VILLAGE_ID_FILE);
+        if let Ok(text) = tokio::fs::read_to_string(&path).await {
+            let trimmed = text.trim();
+            if is_village_id(trimmed) {
+                return Ok(trimmed.to_owned());
+            }
+        }
+        let fresh = uuid::Uuid::new_v4().to_string();
+        self.write_atomic(VILLAGE_ID_FILE, &fresh).await?;
+        Ok(fresh)
     }
 
     /// エージェントの設定ディレクトリを解決する。
@@ -610,7 +657,7 @@ impl ConfigStore {
         let mut loaded = LoadedSchedules::default();
         for row in rows {
             match serde_json::from_value::<ScheduledTask>(row.clone()) {
-                Ok(task) => match task.recurrence.validate() {
+                Ok(task) => match task.validate() {
                     Ok(()) => loaded.tasks.push(task),
                     Err(err) => loaded.dropped.push(format!("{} を落としました: {err}", task.id)),
                 },

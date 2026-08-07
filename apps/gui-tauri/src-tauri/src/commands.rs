@@ -878,9 +878,17 @@ pub async fn create_schedule(
     message: String,
     recurrence: agent_core::schedule::Recurrence,
 ) -> CoreResult<ScheduleView> {
+    // 前判定・セッション・要約の指定は P3（画面）で載せる。**ここで既定を
+    // 渡しているのは「まだ入口が無い」ことの表明**で、`schedules.json` を
+    // 手で書いた予定は既に読み込み側が受け付けている（Spec 28 P2a）。
     let task = state
         .orchestrator
-        .create_schedule(to, message, recurrence)
+        .create_schedule(
+            to,
+            message,
+            recurrence,
+            agent_core::schedule::ScheduleOptions::default(),
+        )
         .await?;
     Ok(ScheduleView::of(task))
 }

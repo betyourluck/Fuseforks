@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::AgentId;
+use crate::schedule_probe::{ScheduleProbe, SessionMode};
 
 /// 壁時計系の予定に許す遅れ（分）。
 ///
@@ -311,6 +312,63 @@ pub struct ScheduledTask {
     /// 消化もしないので、再開したときは**その時点の直近の予定**から拾える。
     #[serde(default = "enabled_default")]
     pub enabled: bool,
+    /// 配送の前に走らせる判定（Spec 28）。`None` なら従来どおり無条件に配送する。
+    ///
+    /// **`decide` はこの欄を見ない。** 発火規則（Spec 07）は 1 ミリも変わらず、
+    /// probe が挟まるのは [`Tick::Fire`] と決まった**後**・配送の**直前**。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<ScheduleProbe>,
+    /// 配送をどの会話へ積むか（Spec 28）。
+    #[serde(default, skip_serializing_if = "is_default_session_mode")]
+    pub session_mode: SessionMode,
+    /// 発火の因果が終わったら、参加した個体の履歴を要約して畳むか（Spec 28）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub summarize_after: bool,
+}
+
+/// 予定を作るときの追加の指定（Spec 28）。
+///
+/// **作成の入口を 2 つにしないための器。** `create_schedule` を 3 引数のまま
+/// 残して「あとから設定する」経路を足すと、**片方だけを通る作り方が生える**
+/// （Spec 14 P2 の「流し込みは `create_agent` の中だけ」と同じ判断）。
+/// `Default` があるので、前判定を使わない呼び出しは 1 語で済む。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScheduleOptions {
+    /// 配送の前に走らせる判定。
+    pub probe: Option<ScheduleProbe>,
+    /// 配送をどの会話へ積むか。
+    pub session_mode: SessionMode,
+    /// 因果の完了後に参加した個体を要約するか。
+    pub summarize_after: bool,
+}
+
+/// 予定 1 件として受け付けられない値。
+///
+/// 発火規則と前判定でエラーの型が別なので、読み込み側が 1 つで受けられるよう
+/// 畳んである。**畳むのは表示のためで、原因は失われない**（`#[from]`）。
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum InvalidTask {
+    /// 再現規則が不正。
+    #[error(transparent)]
+    Recurrence(#[from] InvalidRecurrence),
+    /// 前判定が不正。
+    #[error(transparent)]
+    Probe(#[from] crate::schedule_probe::InvalidProbe),
+}
+
+/// 既定の [`SessionMode`] かどうか。**既定値は直列化しない。**
+///
+/// `#[serde(default)]` だけだと、probe を持たない既存の `schedules.json` を
+/// 読んで保存した瞬間に 3 欄が書き足され、**「既存の予定は 1 バイトも
+/// 変わらない」が保存経路で嘘になる**（Spec 28 S5）。読みだけを見て
+/// 「加算的だから安全」と言えないのはここ。
+fn is_default_session_mode(mode: &SessionMode) -> bool {
+    *mode == SessionMode::Continue
+}
+
+/// 偽かどうか（`skip_serializing_if` 用）。
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// `enabled` の既定値（真）。
@@ -319,6 +377,22 @@ fn enabled_default() -> bool {
 }
 
 impl ScheduledTask {
+    /// 読み込み時の検証。**発火規則と前判定の両方を見る。**
+    ///
+    /// 呼び出し元（`load_schedules`）が `recurrence.validate()` だけを呼ぶ形に
+    /// していると、**欄が増えたときに検証の呼び出し側を直す仕事が生える**。
+    /// 1 件の妥当性は 1 件の型に聞く。
+    ///
+    /// # Errors
+    /// 再現規則または前判定の値が受け付けられない場合。
+    pub fn validate(&self) -> Result<(), InvalidTask> {
+        self.recurrence.validate()?;
+        if let Some(probe) = &self.probe {
+            probe.validate()?;
+        }
+        Ok(())
+    }
+
     /// 間隔系の起点（消化済みがあればそれ、無ければ作成時刻）。
     pub fn anchor_ms(&self) -> u64 {
         self.last_consumed_due_ms.unwrap_or(self.created_at_ms)
@@ -454,6 +528,9 @@ mod tests {
             created_at_ms: created.timestamp_millis() as u64,
             last_consumed_due_ms: None,
             enabled: true,
+            probe: None,
+            session_mode: SessionMode::Continue,
+            summarize_after: false,
         }
     }
 
@@ -769,6 +846,9 @@ mod tests {
                 created_at_ms: 0,
                 last_consumed_due_ms: None,
                 enabled: true,
+                probe: None,
+                session_mode: SessionMode::Continue,
+                summarize_after: false,
             };
 
             // 02:30 は存在しないので、この日は発火も消化もしない。
@@ -793,6 +873,9 @@ mod tests {
                 created_at_ms: 0,
                 last_consumed_due_ms: None,
                 enabled: true,
+                probe: None,
+                session_mode: SessionMode::Continue,
+                summarize_after: false,
             };
 
             assert_eq!(t.decide(&now), Tick::Idle);
