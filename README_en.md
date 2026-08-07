@@ -19,6 +19,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🏘️ **Build a Village** | Create agents and tie them together. **Kizuna** is your control panel |
 | 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results |
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
+| 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
 | 🔍 **Grounding** | Support for Gemini's Google Search grounding. Display distinguishes between searched facts, their sources, and facts that went unfound |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
@@ -81,6 +82,8 @@ OutcastsConcordia/
 │       │   ├── orchestrator.rs      ★ Lifecycle and message routing (Tokio)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
+│       │   ├── schedule_probe.rs    Schedule pre-check (pure functions: judgement, appendix, approval key. Spec 28)
+│       │   ├── process.rs           Spawning and awaiting a child process (shared by the run tool and pre-checks)
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
 │       │   ├── attachment.rs        Image attachments: validation, storage, GC (pure mechanics; dimensions read from the WebP header)
@@ -108,12 +111,14 @@ OutcastsConcordia/
         │   ├── lib.rs               Window launch and IPC command registration
         │   ├── state.rs             Orchestrator assembly + event relay
         │   ├── commands.rs          IPC commands (thin forwarding layer)
-        │   └── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
+        │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
+        │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
             ├── lib/attachment.ts    Attachment pure functions (scaling math / base64 / WebP check)
             ├── lib/pathComplete.ts  `@` path completion (trigger detection / ranking / commit)
+            ├── lib/scheduleProbe.ts Pre-check display rules (pure functions; returns dictionary keys)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -178,7 +183,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
 | Modal | Command approval (from "Commands" in the title bar, [Spec 20](specs/20_command-approval.md)) | Opened occasionally |
-| Modal | Schedule list, addition, and deletion (from "Schedule" in the title bar) | Opened occasionally |
+| Modal | Schedule list, addition, deletion, pre-checks and approvals (from "Schedule" in the title bar) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
 
@@ -808,6 +813,7 @@ Agent settings reside in the OS application-data area.
   world.json                  Agent definitions, model templates, roles, and connection-map coordinates
   concordia.log               Diagnostic log (below; rotates one generation to concordia.log.old at 8 MB)
   schedules.json              Schedules (time-triggered requests; managed from "Schedule" in the title bar)
+  village_id                  This village's identifier (Spec 28; a random value that binds pre-check approvals to this village)
   Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
   mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
   sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
@@ -825,16 +831,20 @@ Agent settings reside in the OS application-data area.
     icon.webp                 External client icon (only when configured; Spec 25; kept separate from yours)
 ```
 
-**Only the door's settings live outside the workspace** (`{app_data_dir}/mcp_server.json`).
+**Per-machine settings are the only ones that live outside the workspace.**
 
 ```text
-{app_data_dir}/mcp_server.json    MCP server enabled/disabled, port, and token (Spec 25)
+{app_data_dir}/mcp_server.json       MCP server enabled/disabled, port, and token (Spec 25)
+{app_data_dir}/probe_approvals.json  Whether a schedule's pre-check may run on this machine (Spec 28)
 ```
 
-What you hand over when sharing a village is the workspace, so **keeping this one file
-outside is what makes "sharing a village does not open its door" hold** (the key does not
-travel with it). Only the chosen reception servant lives in `world.json` — who receives is
+What you hand over when sharing a village is the workspace, so **keeping these two outside
+is what makes "sharing a village neither opens its door nor runs the commands it carried"
+hold**. Only the chosen reception servant lives in `world.json` — who receives is
 a per-village question, while enabled/port are per-machine ones.
+
+**The approval file holds hashes only**, never the command text. Writing the text would turn
+the file itself into a list of commands that may run on this machine.
 
 ### Application Icon
 
@@ -956,6 +966,30 @@ From "Schedule" in the title bar, you can register **requests that fire at speci
 **Known limitation**: duplicate firing is not completely prevented. A light guard avoids adding work while the previous firing is still running for that agent, but releases the guard when an event is lost. Leaving it closed would silently stop the schedule forever, which is worse than rare duplicate firing. Inbox capacity (64) is the final backpressure.
 
 Multiple instances are mutually exclusive: launching a second Concordia brings the existing window to the front and exits the second process. This structurally closes the path where two processes fire the same schedule at once, so it is implemented **before the scheduling mechanism itself**.
+
+#### Checking with a command before asking (pre-check)
+
+For monitoring, "nothing changed" is the common case, yet having a servant do the checking spends tokens every time. At five-minute intervals that is 288 runs a day; if something changes once, **287 of them were wasted**.
+
+A schedule can therefore carry a **pre-check** ([Spec 28](specs/28_schedule-probe.md)). When the time comes, a command runs first, and the request reaches the servant **only if the first line of its output equals the signal you configured**. The decision runs one process and **never calls a model**, so runs that do not match cost no tokens at all.
+
+- **Put the signal on the first line. Any following lines are attached to the request** — what changed arrives as material for the decision, removing the round trip a servant would otherwise spend fetching the same information.
+- **The exit code is not used for the decision.** Monitoring scripts normally signal trouble with `exit 1`; deciding on the exit code would make the most natural form never fire.
+- Commands **do not go through a shell** (executable plus an argument array). The argument field takes one argument per line.
+- Runs that do not match, and runs that fail, **do not appear in the conversation log** (a System line every five minutes would bury real notifications). The latest result is shown in the schedule list.
+
+**Commands that arrive with a shared village never run until you approve them.** Schedules are village content and travel with it, but **approvals are stored on this machine only** (outside the village). A pre-check you wrote yourself in the UI is approved as you save it; anything else is listed as "not approved yet" so you can read the command before approving it.
+
+**This closes the path where a shared village runs commands silently** — it cannot vouch for what an approved command then does (the same property as the `run` allow list).
+
+#### Before and after a firing (new conversation / summary)
+
+Keeping one conversation for a long-running monitor makes the log sent each time grow. Two options are available per schedule:
+
+- **Start a new conversation each time** — the whole village switches to a new conversation. The previous one is kept and can be reopened from the conversation list.
+- **Summarise memories when finished** — summarises only the servants involved in that request, never charging the schedule for uninvolved ones.
+
+**The two run in opposite directions, so do not read them as one.** A new conversation *discards* history (keeping it in another conversation and switching away). A summary *stays*, and unlike the sliding window it never falls off — so it is a fixed cost carried by every later turn.
 
 ### System Settings
 
