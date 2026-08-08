@@ -848,7 +848,7 @@ pub struct ScheduleView {
     pub probe_approved: bool,
     /// 直近 1 回の判定の結末（Spec 28 D8）。まだ 1 度も走っていなければ `null`。
     ///
-    /// **プロセス寿命**（再起動で消える）。再起動後の診断は `concordia.log` の
+    /// **プロセス寿命**（再起動で消える）。再起動後の診断は `fuseforks.log` の
     /// `schedule probe:` 行が担う — 第 2 の永続ファイルは作らない。
     pub last_probe: Option<agent_core::schedule_probe::ProbeReport>,
 }

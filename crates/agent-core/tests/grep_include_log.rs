@@ -55,7 +55,7 @@ fn ctx(work_dir: &Path) -> ToolContext {
 async fn an_include_call_always_leaves_one_line_with_its_outcome() {
     let dir = TempDir::new();
     std::fs::write(dir.0.join("a.rs"), "needle\n").unwrap();
-    let log = dir.0.join("concordia.log");
+    let log = dir.0.join("fuseforks.log");
     agent_core::open_log(&log).expect("開けること");
 
     // 1. glob 形 — 拒否され、`outcome=glob` が残る。

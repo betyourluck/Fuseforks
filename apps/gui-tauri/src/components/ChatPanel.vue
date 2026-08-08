@@ -704,7 +704,7 @@ async function newChat(): Promise<void> {
             <!--
               **外部（MCP）は識別子のまま等幅で出す** — 名付けたのは接続先で、
               訳語を当てると何が走ったかについて嘘になる。**書体が出自を示す。**
-              `title` に識別子を残すのは、撮った画面から `concordia.log` の
+              `title` に識別子を残すのは、撮った画面から `fuseforks.log` の
               `name=` を引けるようにするため。
             -->
             <span

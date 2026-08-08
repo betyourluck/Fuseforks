@@ -394,7 +394,7 @@ struct ScheduleRuntime {
     /// 監視で毎回 System 行が出ると本物の通知が埋まる）が、**沈黙にもしない** —
     /// 特に `error` / `timeout` は人が直せるので、どこかに出す価値がある。
     ///
-    /// プロセス寿命（波の記録と同じ）。**再起動後は `concordia.log` の
+    /// プロセス寿命（波の記録と同じ）。**再起動後は `fuseforks.log` の
     /// `schedule probe:` 行が診断を担う**ので、第 2 の永続ファイルは作らない。
     last_probe: Mutex<HashMap<String, crate::schedule_probe::ProbeReport>>,
 }

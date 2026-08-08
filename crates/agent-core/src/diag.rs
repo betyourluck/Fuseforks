@@ -2,7 +2,7 @@
 //!
 //! # なぜ stderr だけでは足りなかったか
 //!
-//! `[concordia]` 行は `eprintln!` で stderr にだけ出ていた。stderr は
+//! `[fuseforks]` 行は `eprintln!` で stderr にだけ出ていた。stderr は
 //! `tauri dev` を起こした端末にしか残らないため、**利用者が貼らない限り
 //! 誰も読めない**。実際、1 ターンで入力 730,406 トークンを使った経路の診断が、
 //! ログを手で貼ってもらうまで進まなかった（2026-07-31）。
@@ -12,7 +12,7 @@
 //!
 //! # 載せるもの・載せないもの
 //!
-//! 載せるのは `[concordia]` 行だけ — ターンの集計・ツール 1 本ごとの実測・
+//! 載せるのは `[fuseforks]` 行だけ — ターンの集計・ツール 1 本ごとの実測・
 //! 予定の発火・plan の波。**プロンプト本文・ツール結果の本文・資格情報は
 //! 載せない**。ログは平文で、ワークスペースを開けば誰でも読める場所に置く
 //! （`world.json` と同じ扱い）。秘密の置き場は OS の資格情報ストアだけ、
@@ -116,10 +116,10 @@ pub fn open_log(path: &Path) -> std::io::Result<()> {
 
 /// 1 行出す。stderr へは必ず、ファイルへは開いていれば。
 ///
-/// 呼び出し側は `[concordia]` を付けない（ここで付ける）。
+/// 呼び出し側は `[fuseforks]` を付けない（ここで付ける）。
 /// 通常は [`note!`](crate::note) マクロ経由で呼ぶ。
 pub fn note(line: &str) {
-    eprintln!("[concordia] {line}");
+    eprintln!("[fuseforks] {line}");
     let Some(sink) = SINK.get() else {
         return;
     };
@@ -130,7 +130,7 @@ pub fn note(line: &str) {
         Err(poisoned) => poisoned.into_inner(),
     };
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    sink.write_line(&format!("{stamp} [concordia] {line}"));
+    sink.write_line(&format!("{stamp} [fuseforks] {line}"));
 }
 
 /// 診断の 1 行を出す。`format!` と同じ書式を取る。
@@ -156,7 +156,7 @@ mod tests {
         fn new(tag: &str) -> Self {
             let path = std::env::temp_dir()
                 .join(format!("fuseforks-diag-{tag}-{}", std::process::id()))
-                .join("concordia.log");
+                .join("fuseforks.log");
             Self(path)
         }
         fn read(&self) -> String {

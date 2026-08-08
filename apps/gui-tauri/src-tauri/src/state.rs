@@ -67,8 +67,8 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // アプリが動かない理由にならず、stderr への出力は残る。
     // 置き場をワークスペース直下にするのは、「フォルダを開く」導線でそのまま
     // 辿り着けるから（不具合の報告時に場所を説明せずに済む）。
-    if let Err(err) = agent_core::open_log(&workspace.join("concordia.log")) {
-        eprintln!("[concordia] ログファイルを開けませんでした（stderr のみ）: {err}");
+    if let Err(err) = agent_core::open_log(&workspace.join("fuseforks.log")) {
+        eprintln!("[fuseforks] ログファイルを開けませんでした（stderr のみ）: {err}");
     }
 
     // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 #[test]
 fn notes_reach_the_log_file_after_open() {
     let dir: PathBuf = std::env::temp_dir().join(format!("fuseforks-diag-it-{}", std::process::id()));
-    let path = dir.join("concordia.log");
+    let path = dir.join("fuseforks.log");
     let _guard = scopeguard(dir.clone());
 
     agent_core::open_log(&path).expect("開けること");
@@ -21,7 +21,7 @@ fn notes_reach_the_log_file_after_open() {
     let body = std::fs::read_to_string(&path).expect("読めること");
     assert!(body.contains("起動しました"), "起動の区切りが残ること: {body}");
     assert!(
-        body.contains("[concordia] turn: agent=agent_01 rounds=19"),
+        body.contains("[fuseforks] turn: agent=agent_01 rounds=19"),
         "行が接頭辞つきで残ること: {body}"
     );
     // 時刻はファイル側にだけ付ける（stderr の見え方は変えない）。

@@ -324,7 +324,7 @@ impl ProbeError {
 ///
 /// **`schedules.json` へは書かない。** 機械が書く欄を人が編集するファイルへ
 /// 増やすと衝突面が広がる（`run.json` が pending でその形を踏んでいる）。
-/// 再起動で消えるのは承知のうえで、**再起動後の診断は `concordia.log` が担う**
+/// 再起動で消えるのは承知のうえで、**再起動後の診断は `fuseforks.log` が担う**
 /// （`schedule probe:` の 1 行に outcome と reason が残っている）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

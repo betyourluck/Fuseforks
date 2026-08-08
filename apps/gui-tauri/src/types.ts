@@ -456,7 +456,7 @@ export type ProbeOutcome = "match" | "no_match" | "error" | "timeout" | "unappro
  *
  * **プロセス寿命**（再起動で消える）。`schedules.json` へは書かない —
  * 機械が書く欄を人が編集するファイルへ増やすと衝突面が広がる。
- * 再起動後の診断は `concordia.log` の `schedule probe:` 行が担う。
+ * 再起動後の診断は `fuseforks.log` の `schedule probe:` 行が担う。
  */
 export interface ProbeReport {
   outcome: ProbeOutcome;

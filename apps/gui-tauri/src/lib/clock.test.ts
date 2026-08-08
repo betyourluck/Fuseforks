@@ -18,6 +18,9 @@ describe("formatClock", () => {
 
   it("診断ログの行頭と同じ形になる（スクショとログの突き合わせ）", () => {
     // diag.rs は `%Y-%m-%d %H:%M:%S%.3f`。ミリ秒だけログ側に多い。
+    // **`[concordia]` は改名前の実ログ行（2026-07-31）で、追従漏れではない**
+    // （Spec 30 D6）。接頭辞は現在 `[fuseforks]` だが、この検査が見るのは
+    // 行頭の時刻だけ — 改名をまたいで書式が変わっていないことも同時に示す。
     const line = "2026-07-31 04:34:12.481 [concordia] turn: agent=agent";
     const shown = formatClock(new Date(2026, 6, 31, 4, 34, 12));
     expect(line.startsWith(shown)).toBe(true);

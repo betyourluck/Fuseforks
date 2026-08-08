@@ -109,7 +109,7 @@ const lastToolTitle = computed(() => {
     minute: "2-digit",
     second: "2-digit",
   });
-  // 識別子を併記するのは、撮った画面から `concordia.log` の `name=` を引けるようにするため。
+  // 識別子を併記するのは、撮った画面から `fuseforks.log` の `name=` を引けるようにするため。
   const named = `${lastToolName.value}（${run.tool}）`;
   return run.ok
     ? t("agentCard.lastToolRanAt", { time: at, tool: named })
