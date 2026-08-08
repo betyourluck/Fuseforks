@@ -111,9 +111,13 @@ async function apply(): Promise<void> {
 </script>
 
 <template>
+  <!--
+    適用中は閉じさせない。閉じても走っているループは止まらないので、
+    **結果を見られないまま副作用だけ進む**形になる（外側のクリックと ✕ の両方）。
+  -->
   <div
     class="fixed inset-0 z-40 flex items-center justify-center bg-scrim"
-    @click.self="emit('close')"
+    @click.self="busy || emit('close')"
   >
     <div
       class="flex h-[560px] w-[560px] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
@@ -121,8 +125,9 @@ async function apply(): Promise<void> {
       <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
         <h2 class="flex-1 font-semibold">{{ $t("batchWorkDir.title") }}</h2>
         <button
-          class="rounded px-1.5 text-ink-dim hover:text-accent"
+          class="rounded px-1.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
           :title="$t('common.close')"
+          :disabled="busy"
           @click="emit('close')"
         >
           ✕
@@ -133,7 +138,29 @@ async function apply(): Promise<void> {
         {{ $t("batchWorkDir.intro") }}
       </p>
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-[11px]">
+      <!--
+        適用中は一覧を出さない（2026-08-08 利用者要望）。**行が 1 つずつ
+        書き換わるのを見せない**ため — `update_agent` は 1 体ごとに
+        `TopologyChanged` を発行し、フロントはそのイベントで毎回
+        `refreshAll()` する（`useOrchestrator.ts` の `topologyChanged`）。
+        ゆえに逐次適用の途中経過がそのまま一覧に出る。
+        **イベント由来の再同期を止めない**のは、それが投影の真実性を支えて
+        いるから — 止めるのではなく**見せない**ほうが機構が増えない。
+      -->
+      <div
+        v-if="busy"
+        class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3 text-[11px] text-ink-dim"
+      >
+        <svg class="size-6 animate-spin text-accent" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25" />
+          <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <p v-if="progress" class="tabular-nums">
+          {{ $t("batchWorkDir.progress", { done: progress[0], total: progress[1] }) }}
+        </p>
+      </div>
+
+      <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-[11px]">
         <div class="mb-1.5 flex items-center gap-2">
           <span class="flex-1 text-ink-dim">
             {{ $t("batchWorkDir.selected", { count: targets.length, total: agents.length }) }}
@@ -213,10 +240,8 @@ async function apply(): Promise<void> {
         </div>
 
         <div class="flex items-center gap-2">
-          <span v-if="progress" class="flex-1 text-ink-dim tabular-nums">
-            {{ $t("batchWorkDir.progress", { done: progress[0], total: progress[1] }) }}
-          </span>
-          <span v-else class="flex-1" />
+          <!-- 進捗は一覧の場所に出す（上のブロック）。ここで二重に出さない。 -->
+          <span class="flex-1" />
           <button
             class="rounded border border-accent px-2.5 py-1 text-accent hover:bg-accent hover:text-surface-0 disabled:cursor-not-allowed disabled:border-line disabled:text-ink-dim disabled:hover:bg-transparent"
             :disabled="!applicable || busy"
