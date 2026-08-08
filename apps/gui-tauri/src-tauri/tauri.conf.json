@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "concordia",
+  "productName": "fuseforks",
   "version": "0.1.0",
   "identifier": "jp.outcasts.concordia",
   "build": {

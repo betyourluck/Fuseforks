@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// stderr だけに出していた間、この行は端末を持っている人にしか読めなかった。
 #[test]
 fn notes_reach_the_log_file_after_open() {
-    let dir: PathBuf = std::env::temp_dir().join(format!("concordia-diag-it-{}", std::process::id()));
+    let dir: PathBuf = std::env::temp_dir().join(format!("fuseforks-diag-it-{}", std::process::id()));
     let path = dir.join("concordia.log");
     let _guard = scopeguard(dir.clone());
 

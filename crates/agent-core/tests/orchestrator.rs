@@ -57,7 +57,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "concordia-it-{tag}-{}",
+            "fuseforks-it-{tag}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -6541,7 +6541,7 @@ async fn the_leak_instrument_fires_on_a_real_turn() {
     // ログはテスト用の一時ディレクトリの外へ置く。SINK はプロセスで 1 つ
     // （OnceLock）なので、掴んだままのファイルを消しに行かせない。
     let log_path = std::env::temp_dir().join(format!(
-        "concordia-leak-probe-{}.log",
+        "fuseforks-leak-probe-{}.log",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

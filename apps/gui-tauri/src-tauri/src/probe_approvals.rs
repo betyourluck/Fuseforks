@@ -176,7 +176,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "concordia-approvals-{tag}-{}",
+            "fuseforks-approvals-{tag}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

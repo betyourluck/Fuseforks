@@ -1191,7 +1191,7 @@ mod tests {
     impl TempDir {
         fn new(tag: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "concordia-edit-{tag}-{}",
+                "fuseforks-edit-{tag}-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

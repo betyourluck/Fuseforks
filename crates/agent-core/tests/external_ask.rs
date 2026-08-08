@@ -24,7 +24,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "concordia-external-{tag}-{}-{}",
+            "fuseforks-external-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

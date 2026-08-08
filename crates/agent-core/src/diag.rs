@@ -155,7 +155,7 @@ mod tests {
     impl TempLog {
         fn new(tag: &str) -> Self {
             let path = std::env::temp_dir()
-                .join(format!("concordia-diag-{tag}-{}", std::process::id()))
+                .join(format!("fuseforks-diag-{tag}-{}", std::process::id()))
                 .join("concordia.log");
             Self(path)
         }

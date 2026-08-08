@@ -30,7 +30,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "concordia-presence-{tag}-{}",
+            "fuseforks-presence-{tag}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

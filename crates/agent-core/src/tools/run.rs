@@ -400,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn a_broken_policy_is_never_overwritten_with_the_default() {
         let dir = std::env::temp_dir().join(format!(
-            "concordia-broken-policy-{}",
+            "fuseforks-broken-policy-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -438,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn it_is_offered_even_when_nothing_is_allowed_yet() {
         let dir = std::env::temp_dir().join(format!(
-            "concordia-empty-allow-{}",
+            "fuseforks-empty-allow-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

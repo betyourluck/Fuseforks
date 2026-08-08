@@ -826,7 +826,7 @@ mod tests {
     impl TempDir {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "concordia-session-{}",
+                "fuseforks-session-{}",
                 uuid::Uuid::new_v4().simple()
             ));
             std::fs::create_dir_all(&path).expect("一時フォルダを作れること");

@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn unreadable_config_blocks_writes_instead_of_overwriting() {
         let dir = std::env::temp_dir().join(format!(
-            "concordia-mcpcfg-{}-{}",
+            "fuseforks-mcpcfg-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -582,7 +582,7 @@ mod tests {
     #[test]
     fn config_roundtrips_through_the_file() {
         let dir = std::env::temp_dir().join(format!(
-            "concordia-mcpcfg-rt-{}-{}",
+            "fuseforks-mcpcfg-rt-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

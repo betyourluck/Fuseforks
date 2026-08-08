@@ -985,7 +985,7 @@ mod tests {
     impl TempDir {
         fn new(tag: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "concordia-fs-{tag}-{}",
+                "fuseforks-fs-{tag}-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -1102,7 +1102,7 @@ mod tests {
         let dir = TempDir::new("creatable-absolute");
         // join は絶対パスで root を丸ごと置き換える（Path::join の仕様）ので、
         // 表記を数え上げずに結果で弾く。
-        let absolute = std::env::temp_dir().join("concordia-escape.txt");
+        let absolute = std::env::temp_dir().join("fuseforks-escape.txt");
         let err = resolve_creatable(&dir.0, &absolute.to_string_lossy())
             .expect_err("絶対パスは拒否されること");
         assert!(err.contains("作業フォルダの外"), "{err}");

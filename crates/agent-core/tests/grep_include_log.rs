@@ -23,7 +23,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "concordia-grep-include-log-{}",
+            "fuseforks-grep-include-log-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();

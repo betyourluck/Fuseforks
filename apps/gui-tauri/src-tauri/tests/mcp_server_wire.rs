@@ -23,7 +23,7 @@ fn door(token: &str) -> axum::Router {
         .route("/mcp", axum::routing::any(|| async { "inside" }))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(token.to_owned()),
-            concordia_lib::mcp_server::require_bearer_token,
+            fuseforks_lib::mcp_server::require_bearer_token,
         ))
 }
 

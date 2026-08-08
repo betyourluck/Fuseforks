@@ -117,7 +117,7 @@ jobs:
         with:
           projectPath: ./apps/gui-tauri
           tagName: ${{ github.ref_name }}
-          releaseName: "Outcasts Concordia ${{ github.ref_name }}"
+          releaseName: "Outcasts Fuseforks ${{ github.ref_name }}"
           releaseBody: "各 OS の installer を下の Assets からダウンロードしてください。"
           releaseDraft: false
           prerelease: false
