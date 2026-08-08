@@ -29,6 +29,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concor
 | 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
+| 📁 **Change work folders together** | When you point the whole village at another project, set every checked servant's work folder in one go. **Running servants pick it up from their next message** |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
 | ⚙️ **System Settings** | Your own name and icon, language, token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
@@ -135,6 +136,7 @@ OutcastsConcordia/
                 ├── GroundingNote.vue                  Grounding provenance attached to utterances
                 ├── AgentSettingsDialog.vue / MarkdownEditor.vue   Modal: settings
                 ├── ModelTemplateDialog.vue            Modal: model templates
+                ├── BatchWorkDirDialog.vue             Modal: change work folders together (from the list footer)
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
@@ -175,7 +177,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 
 | Position | Content | Reason for Permanence |
 |---|---|---|
-| Left | Agent list (status, uptime, tokens, startup) | Always visible |
+| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) | Always visible |
@@ -675,6 +677,24 @@ Output is always bounded (100 matches, 240 characters per line, 12,000 character
 - Removing `remember` stops **only writing**. `Memory.md` still enters the prompt; to remove that injection, empty the file instead of duplicating control mechanisms whose effects cannot be distinguished.
 
 Tools return **relative paths only**, so the agent is given the work folder's real path in its system prompt. Without it, models invent absolute paths for their explanations (a real instance described a nonexistent path as its work location). Missing decision material is filled by information, not prohibition.
+
+### Changing Work Folders Together ([Spec 29](specs/29_batch-workdir.md))
+
+When you point the whole village at another project, "Change work folders together"
+in the **agent list footer** sets the work folder of every checked servant in one go.
+**Running servants need not be stopped** — they pick it up from their next message.
+
+- The list shows each servant's **current value** before the change, so you never
+  overwrite without knowing what each one was pointing at
+- **Whether the folder exists is not checked here.** As with the single-agent
+  setting, the enclosure is not a check at save time but the boundary applied
+  **when a tool runs**. A nonexistent path saves fine, and the tool says so by name
+  when it is used
+- If one servant fails the rest continue, and **the result names each one**
+  ("7 changed / 1 failed (agent_5: …)")
+- It doubles as **the first thing you do with a village someone shared with you**:
+  work folders are absolute paths, so a shared village points everyone at paths
+  that do not exist on your machine — this fixes all of them at once
 
 ### Safety Boundary for Editing Tools (`sd` / `yq`)
 
