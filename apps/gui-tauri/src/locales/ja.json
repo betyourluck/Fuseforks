@@ -819,7 +819,7 @@
     "transfer": "{name} へ引き継ぐ"
   },
   "closeConfirm": {
-    "title": "Concordia を終了しますか？",
+    "title": "Fuseforks を終了しますか？",
     "lead": "閉じている間、この村では何も動きません。",
     "running": "稼働中のサーヴァント {count} 体の、処理中のターンは失われます。",
     "mcp": "MCP サーバーの扉が閉じます（外部からの依頼は届かなくなります）。",

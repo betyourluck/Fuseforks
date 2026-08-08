@@ -1,7 +1,7 @@
 /**
  * この画面の設定（settings_contract の「画面の設定」側。Spec 13 P2）。
  *
- * 保存先は localStorage `concordia.settings.v1`。村の状態ではなく**表示・操作の
+ * 保存先は localStorage `fuseforks.settings.v1`。村の状態ではなく**表示・操作の
  * 都合**なので、`world.json` には混ぜない（usePaneLayout と同じ棚 —
  * 混ぜると設定を配布したときに相手の操作の好みまで押し付けることになる）。
  *
@@ -11,7 +11,7 @@
 
 import { reactive, watch } from "vue";
 
-const STORAGE_KEY = "concordia.settings.v1";
+const STORAGE_KEY = "fuseforks.settings.v1";
 
 /** 配色。`style.css` の `:root[data-theme="light"]` と 1 対 1。 */
 export type Theme = "dark" | "light";

@@ -182,6 +182,20 @@ probe 承認（`probe_approvals.json`）は移行後もそのまま効く** — 
 `ask_concordia` と直接書いている箇所があれば、そこは手で直す。
 **この村のリポジトリには 4 箇所**（`mcp_server.rs` 3 / `tests/mcp_server_wire.rs` 1）。
 
+**外へ出る名前は `ask_concordia` だけではなかった**（実装時に数え直して 3 つ）:
+
+| 場所 | 何 |
+|---|---|
+| `mcp_server.rs:236` | ツール名 `ask_concordia` |
+| `mcp_server.rs:273` | **`info.server_info.name = "Concordia"`** — サーバー自身の名乗り |
+| `mcp_server.rs:237` / `:276` | ツールの説明文と `instructions`（**モデルが読む**） |
+
+`SettingsDialog.vue` が組み立てるクライアント設定の例（`mcpServers` の鍵
+`concordia`）も変える。**既に貼った人の設定は壊れない** — あれは貼る側の
+ローカルな鍵で、こちらは次に貼る人への見本。
+
+**型名 `ConcordiaTools` も同じコミットで `FuseforksTools` にする。**
+
 ### D4. `Endpoint::System`（D）→ `"Fuseforks"`。既存ログの混在は受け入れる
 
 **変える。** 新しい発話の封筒は `【送り手: Fuseforks】` になる。
@@ -193,9 +207,22 @@ probe 承認（`probe_approvals.json`）は移行後もそのまま効く** — 
 **`stable_len` は動かない。** 封筒は毎ターンの user ロール本文なので、
 安定プレフィックスの外にある（Spec 19 で実測済み）— **全員のキャッシュは割れない。**
 
-**表示名も同時に変える**: `index.html` の `<title>`、辞書 ja/en の
-`Concordia を終了しますか？` / `Quit Concordia?`。CLAUDE.md 冒頭の
-「アプリ内表示・System の送り手名は『Concordia』のまま」は**本 Spec で失効する**。
+**表示名も同時に変える。起票時に 2 箇所と書いたが、実測すると 5 箇所あった**:
+
+| 場所 | 何 |
+|---|---|
+| `apps/gui-tauri/index.html:8` | `<title>` |
+| **`tauri.conf.json:15`** | `app.windows[0].title`（**実際の窓の題**。`index.html` は WebView 側で、こちらが窓枠側） |
+| **`TitleBar.vue:73`** | `<span>Concordia</span>`（画面に出るワードマーク） |
+| **`ChatPanel.vue:89`** | `return "Concordia"` — **`Endpoint::System` の UI 側の対**。`orchestrator.rs:3560` のコメントが「表示は UI と同じ」と書いており、**片方だけ変えるとその根拠が壊れる** |
+| 辞書 ja/en `822` | `Concordia を終了しますか？` / `Quit Concordia?` |
+
+CLAUDE.md 冒頭の「アプリ内表示・System の送り手名は『Concordia』のまま」は
+**本 Spec で失効する**。
+
+**`Endpoint::System` の側を留めているテストは 1 本も無い**（改名しても 685 本が
+全部緑のまま）。**足さない** — これは外へ出るワイヤではなく表示で、しかも
+**P5 の検収 5 が封筒を実機で直接見る**。読み口が既にあるものに網を二重に張らない。
 
 ### D5. ログは `fuseforks.log` / 接頭辞は `[fuseforks]` へ変える
 
@@ -267,6 +294,29 @@ Spec には**押さえるべき名前の一覧**として残す。
 「変え忘れ」と「意図的な据え置き」が区別できなくなる** — D6 の判定を後から
 掛けられる状態を保つ。
 
+### D9. `localStorage` の鍵も変える — **これが 5 つ目の「repo の外」だった**
+
+**起票時に数え落としていた。** 画面設定の保存先は `localStorage` の 4 鍵で、
+どれも `concordia.` で始まる:
+
+`concordia.settings.v1`（テーマ・線削除の確認・入退室の表示・閉じる前の確認・
+リサイズ後の自動フィット）/ `concordia.layout.v1`（ペイン幅）/
+`concordia.chatCleared.v1` / `concordia.workDirHistory.v1`
+
+**`{app_data_dir}` と OS の資格情報ストアと同じ性質**で、`git revert` の射程外に
+副作用が出る。**A〜D と同じ扱いにする。**
+
+**変える。移行は書かない。** 失われるのはテーマの選択・ペイン幅・作業フォルダの
+履歴・会話の表示クリア状態だけで、**村の内容物は 1 つも含まれない**（あれは
+`world.json` 側）。**`localStorage` から読み直して書き移すコードは、
+Rust から読めない場所に増える 1 本目の移行機構**になる。
+
+**帰結を検収へ書く**（P5 の 1 に合流）: 改名後の初回起動で**テーマが OS 追従へ
+戻り、ペイン幅が既定へ戻る**。これは不具合ではない。
+
+**`.v1` の版は上げない。** 版が意味するのは「保存形が変わったか」で、
+名前空間が変わったこととは別。上げると**同じ形のデータに 2 つの版番号が付く**。
+
 ## Phases
 
 ### P0 — 凍結
@@ -287,9 +337,19 @@ Spec には**押さえるべき名前の一覧**として残す。
 ### P2 — 副作用が repo の外へ出る 4 点（**単独コミット**）
 
 - A `identifier` / B `SERVICE_NAME` / C `ask_concordia` / D `Endpoint::System`
-- 表示名（`index.html` の `<title>`、辞書 ja/en）も同じコミットへ
-- 検収: 上と同じ + **`mcp_server_wire.rs` がツール名の改名で赤くなること**を
-  先に確かめる（緑のままなら、その網はツール名を留めていない）
+  / **D9 `localStorage` の 4 鍵**
+- 表示名 5 箇所（D4 の表）も同じコミットへ
+- **検収の書き方を 1 つ誤っていた。** rev1 は「`mcp_server_wire.rs` がツール名の
+  改名で赤くなることを先に確かめる」と書いたが、**あのテストはツール名を
+  1 つも主張していない**（合鍵が要求の経路に挟まっているかだけを見ており、
+  `ask_concordia` は doc コメントに出るだけ）。**改名しても 685 本すべて緑のまま。**
+  `#68`（合格条件が存在しない項目を書かない）を本 Spec で引用しておきながら
+  同じ形を踏んだ
+- **処方は凍結テストの新設**: `the_door_declares_one_tool_under_a_frozen_name`
+  （`ToolRouter::list_all()` の名前一覧を `["ask_fuseforks"]` と完全一致で固定）。
+  **件数まで固定するのは「扉は 1 枚だけ」（Spec 25 凍結 1）も同時に留めるため。**
+  **ミューテーションで赤を確かめる** — 名前を `ask_village` にすると 1 本だけ
+  落ち、失敗行が `left: ["ask_village"]` と誤った名前をそのまま出す
 
 ### P3 — ログ（`fuseforks.log` / `[fuseforks]`）
 
@@ -316,6 +376,7 @@ Spec には**押さえるべき名前の一覧**として残す。
 | | 何を見るか | 読み口 |
 |---|---|---|
 | **1** | 改名後のアプリを起動すると **`%APPDATA%\jp.outcasts.fuseforks\workspace\` が生まれ、`fuseforks.log` の行頭が `[fuseforks]`** | エクスプローラ + ログの 1 行目 |
+| **1'** | **同じ起動でテーマが OS 追従へ戻り、ペイン幅が既定へ戻る**（D9 の帰結。不具合ではない） | 画面。**戻らなければ D9 が効いていない** |
 | **2** | **旧フォルダをリネームした村で、会話・条例・予定・probe 承認が復元する** | 会話一覧に過去のセッションが並ぶ / `schedule probe:` が `outcome=no_match` を出す（`unapproved` ではない = `village_id` が一緒に移った証拠） |
 | **3** | **API キーが「未登録」表示になり、貼り直すと依頼が通る** | 設定画面の登録状態 → `turn:` の行が出る |
 | **4** | 外部クライアントの `tools/list` に **`ask_fuseforks`** が出て、呼ぶと返る | Claude Code から実行 |

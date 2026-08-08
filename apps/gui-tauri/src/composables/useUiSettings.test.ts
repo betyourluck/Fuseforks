@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
-const STORAGE_KEY = "concordia.settings.v1";
+const STORAGE_KEY = "fuseforks.settings.v1";
 
 /** localStorage の代役。書き込み回数を数える。 */
 function fakeStorage(initial?: Record<string, string>) {

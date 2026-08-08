@@ -310,7 +310,7 @@ const clientConfigSample = computed(() => {
   return JSON.stringify(
     {
       mcpServers: {
-        concordia: {
+        fuseforks: {
           type: "http",
           url: `http://127.0.0.1:${port}/mcp`,
           headers: { Authorization: `Bearer ${token}` },

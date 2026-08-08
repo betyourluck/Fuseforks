@@ -8,7 +8,7 @@
 
 import { reactive, watch } from "vue";
 
-const STORAGE_KEY = "concordia.layout.v1";
+const STORAGE_KEY = "fuseforks.layout.v1";
 
 /**
  * 各寸法の下限と上限。これを外れると操作不能な画面ができる。

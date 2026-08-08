@@ -21,7 +21,7 @@
 
 import { reactive, watch } from "vue";
 
-const STORAGE_KEY = "concordia.chatCleared.v1";
+const STORAGE_KEY = "fuseforks.chatCleared.v1";
 
 /** 会話 ID → その時刻以前を隠す（`tsMs`）。 */
 type Boundaries = Record<string, number>;

@@ -22,7 +22,7 @@ Thumbs.db
 # リポジトリの内容物ではない — コミットすると作業メモが公開リポジトリへ漏れる。
 blackboard/
 
-# 会話の保存先（Spec 12）。既定では {workspace} = %APPDATA%\jp.outcasts.concordia\ の
+# 会話の保存先（Spec 12）。既定では {workspace} = %APPDATA%\jp.outcasts.fuseforks\ の
 # 配下に生まれるのでリポジトリには入らないが、workspace をリポジトリ内へ置く運用の
 # 保険として塞いでおく。**会話はディスクに平文で残る**（伏せ字保存は会話の再現性を
 # 壊すため採らない。中身は export_session で確認できる）。

@@ -208,12 +208,12 @@ fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 
 /// 外の LLM へ提示するツール。**扉は 1 枚だけ**（`mcp_server_contract` 凍結 1）。
 #[derive(Clone)]
-struct ConcordiaTools {
+struct FuseforksTools {
     orchestrator: Arc<Orchestrator>,
     tool_router: ToolRouter<Self>,
 }
 
-/// `ask_concordia` の引数。**`message` だけ**（凍結 1）。
+/// `ask_fuseforks` の引数。**`message` だけ**（凍結 1）。
 ///
 /// 宛先を受け取らないのは、村の状態が外からブラックボックスだから —
 /// 呼ぶ側は誰が居るか知らないので宛先を選べない。窓口は村の側の設定で決まる。
@@ -224,7 +224,7 @@ struct AskParams {
 }
 
 #[tool_router]
-impl ConcordiaTools {
+impl FuseforksTools {
     fn new(orchestrator: Arc<Orchestrator>) -> Self {
         Self {
             orchestrator,
@@ -233,15 +233,15 @@ impl ConcordiaTools {
     }
 
     #[tool(
-        name = "ask_concordia",
-        description = "Concordia の村（複数の LLM サーヴァントによるオーケストレーション）へ依頼を 1 通送り、\
+        name = "ask_fuseforks",
+        description = "Fuseforks の村（複数の LLM サーヴァントによるオーケストレーション）へ依頼を 1 通送り、\
                        束ねられた答えを受け取る。窓口のサーヴァントが受け取り、必要に応じて他のサーヴァントへ\
                        分配・検証してから 1 つの答えにまとめる。\n\
                        単発の推論には向かない（自分で答えたほうが速く正確）。\
                        複数の視点・分担調査・相互検証が効く問いに使うこと。\n\
                        返答まで数分かかることがある。同時に処理できる依頼は 1 件だけ。"
     )]
-    async fn ask_concordia(
+    async fn ask_fuseforks(
         &self,
         Parameters(params): Parameters<AskParams>,
         peer: Peer<RoleServer>,
@@ -266,14 +266,14 @@ impl ConcordiaTools {
 // `Self::tool_router()` で、ツール呼び出しのたびにルーターを組み直す
 // （提示は 1 本きりなので実害は小さいが、組んで持っているものを使わない形になる）。
 #[tool_handler(router = self.tool_router)]
-impl rmcp::ServerHandler for ConcordiaTools {
+impl rmcp::ServerHandler for FuseforksTools {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         let mut info = rmcp::model::ServerInfo::default();
         info.capabilities = rmcp::model::ServerCapabilities::builder().enable_tools().build();
-        info.server_info.name = "Concordia".into();
+        info.server_info.name = "Fuseforks".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
         info.instructions = Some(
-            "Concordia はマルチエージェント・オーケストレーターです。\
+            "Fuseforks はマルチエージェント・オーケストレーターです。\
              提示されるツールは 1 本だけで、村へ依頼を投げて答えを受け取ります。\
              村の顔ぶれや設定は外からは見えません。"
                 .into(),
@@ -325,7 +325,7 @@ pub async fn start(
     config.cancellation_token = cancel.clone();
 
     let service = StreamableHttpService::new(
-        move || Ok(ConcordiaTools::new(Arc::clone(&orchestrator))),
+        move || Ok(FuseforksTools::new(Arc::clone(&orchestrator))),
         Arc::new(LocalSessionManager::default()),
         config,
     );
@@ -496,6 +496,25 @@ pub async fn require_bearer_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **外へ宣言するツール名を凍結する**（Spec 25 凍結 1 / Spec 30 D3）。
+    ///
+    /// この名前は外部クライアントが `tools/call` に書く唯一の面なのに、
+    /// **改名してもコンパイラにも既存のテストにも掛からなかった** —
+    /// `mcp_server_wire.rs` は合鍵が要求の経路に挟まっているかだけを見ており、
+    /// 名前を 1 つも主張しない（doc コメントに書いてあるだけだった）。
+    ///
+    /// 件数まで固定するのは「扉は 1 枚だけ」（凍結 1）も同時に留めるため。
+    /// ツールを 1 本足すと、その判断をした人がこの行で必ず立ち止まる。
+    #[test]
+    fn the_door_declares_one_tool_under_a_frozen_name() {
+        let names: Vec<String> = FuseforksTools::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        assert_eq!(names, vec!["ask_fuseforks".to_owned()]);
+    }
 
     #[test]
     fn token_comparison_rejects_wrong_and_truncated_keys() {

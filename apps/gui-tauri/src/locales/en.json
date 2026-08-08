@@ -819,7 +819,7 @@
     "transfer": "hand off to {name}"
   },
   "closeConfirm": {
-    "title": "Quit Concordia?",
+    "title": "Quit Fuseforks?",
     "lead": "Nothing in this village runs while the app is closed.",
     "running": "Turns in flight for {count} running servant(s) will be lost.",
     "mcp": "The MCP server door closes (external requests stop arriving).",

@@ -3063,7 +3063,7 @@ async fn deliver_scheduled(
     let participants: Option<Participants> = task
         .summarize_after
         .then(|| Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())));
-    // 本文の先頭に由来を書く。封筒（【送り手: Concordia】）だけでは
+    // 本文の先頭に由来を書く。封筒（【送り手: Fuseforks】）だけでは
     // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
     // 利用者も定期発火だと分かる。
     let base = format!(
@@ -3557,9 +3557,9 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
             let world = shared.world.read().await;
             world.user_name().unwrap_or(DEFAULT_USER_LABEL).to_owned()
         }
-        // 表示は UI と同じ「Concordia」。プロンプトと画面で同じ送り手が
+        // 表示は UI と同じ「Fuseforks」。プロンプトと画面で同じ送り手が
         // 違う名前になると、利用者とエージェントの会話が噛み合わない。
-        Endpoint::System => "Concordia".to_owned(),
+        Endpoint::System => "Fuseforks".to_owned(),
         Endpoint::Agent { id } => {
             let world = shared.world.read().await;
             world
@@ -5984,7 +5984,7 @@ async fn compose_presence_notices(
 fn endpoint_label(world: &crate::world::World, endpoint: &Endpoint) -> String {
     match endpoint {
         Endpoint::User => "ユーザー".to_owned(),
-        Endpoint::System => "Concordia".to_owned(),
+        Endpoint::System => "Fuseforks".to_owned(),
         Endpoint::Agent { id } => world
             .agent(id)
             .map(|record| record.spec.name.clone())

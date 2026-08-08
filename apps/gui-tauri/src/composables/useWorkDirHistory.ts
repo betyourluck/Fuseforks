@@ -14,7 +14,7 @@
 
 import { reactive, watch } from "vue";
 
-const STORAGE_KEY = "concordia.workDirHistory.v1";
+const STORAGE_KEY = "fuseforks.workDirHistory.v1";
 
 /**
  * 覚えておく件数。**消すのではなく順序で表す**ので、同じ場所を往復する

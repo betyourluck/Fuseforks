@@ -85,8 +85,8 @@ function label(endpoint: Endpoint): string {
       return state.userName ?? t("chat.you");
     case "system":
       // 「システム」ではなくアプリ名を名乗る。入退室通知などは
-      // 匿名の機械音声ではなく、場（Concordia）そのものの声として出す。
-      return "Concordia";
+      // 匿名の機械音声ではなく、場（Fuseforks）そのものの声として出す。
+      return "Fuseforks";
     case "agent":
       return state.agents.find((a) => a.id === endpoint.id)?.name ?? endpoint.id;
     case "external":
@@ -127,7 +127,7 @@ function iconFor(endpoint: Endpoint): string | null {
     // 表示側の扱いはエージェントと同じ object URL。
     case "user":
       return state.userIcon;
-    // Concordia（場そのものの声）にはアイコンを持たせない。
+    // Fuseforks（場そのものの声）にはアイコンを持たせない。
     case "system":
       return null;
     // 外部クライアントは**専用の**アイコン（Spec 25）。**利用者のアイコンを
@@ -769,7 +769,7 @@ async function newChat(): Promise<void> {
       >
         <!-- アバター。連続発言では場所だけ空けて揃える。
              画像が設定されていればそれを、無ければ頭文字の円を出す。
-             Concordia 発（入退室通知など）はブランドマークを出す —
+             Fuseforks 発（入退室通知など）はブランドマークを出す —
              エージェントの発言ではなく、場そのものの声だと一目で分かるように。 -->
         <div class="w-7 shrink-0">
           <template v-if="!continuesTimeline(index)">

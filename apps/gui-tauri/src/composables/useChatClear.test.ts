@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
-const STORAGE_KEY = "concordia.chatCleared.v1";
+const STORAGE_KEY = "fuseforks.chatCleared.v1";
 
 function fakeStorage(initial?: Record<string, string>) {
   const map = new Map(Object.entries(initial ?? {}));

@@ -21,7 +21,7 @@ use std::sync::Mutex;
 use crate::error::{CoreError, CoreResult};
 
 /// 資格情報ストアのサービス名。OS 上ではこの名前で束ねられる。
-pub const SERVICE_NAME: &str = "jp.outcasts.concordia";
+pub const SERVICE_NAME: &str = "jp.outcasts.fuseforks";
 
 /// 秘密の保管先。
 ///

@@ -70,7 +70,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
         <path d="M10.6 7 6.4 16M13.4 7l4.2 9M7.4 18h9.2" />
       </svg>
       <span class="outcasts-word">Outcasts</span>
-      <span>Concordia</span>
+      <span>Fuseforks</span>
     </div>
 
     <div data-tauri-drag-region class="h-full flex-1"></div>

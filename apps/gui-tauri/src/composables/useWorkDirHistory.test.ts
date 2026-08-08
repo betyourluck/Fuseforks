@@ -11,7 +11,7 @@ import { nextTick } from "vue";
 
 import { pushHistory, WORK_DIR_HISTORY_MAX } from "./useWorkDirHistory";
 
-const STORAGE_KEY = "concordia.workDirHistory.v1";
+const STORAGE_KEY = "fuseforks.workDirHistory.v1";
 
 function fakeStorage(initial?: Record<string, string>) {
   const map = new Map(Object.entries(initial ?? {}));
