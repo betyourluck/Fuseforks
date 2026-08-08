@@ -5928,7 +5928,15 @@ async fn compose_presence_notices(
         log.iter()
             .rev()
             .take(config.room_log_window)
-            .filter(|message| message.from == Endpoint::System)
+            // **from だけでなく to も見る。** System 発には入退室のほかに
+            // 「予定の配送」（System → Agent）が居り、from だけで拾うと
+            // **他人宛の依頼文が全員のプロンプトへ入る**（実機で観測。
+            // 広場ログを切った個体が自分宛でない予定の本文を読めていた）。
+            //
+            // ここは `hears_room_log` でオプトアウトできない経路なので、
+            // **宛先付きの発話が混ざるとオプトアウトを迂回する**。
+            // 通知は「場に向けた告知」= User 宛だけ、が正しい射程。
+            .filter(|message| message.from == Endpoint::System && message.to == Endpoint::User)
             .map(|message| format!("- {}", message.content))
             .collect::<Vec<_>>()
             .into_iter()
