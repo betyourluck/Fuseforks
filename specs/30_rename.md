@@ -338,8 +338,12 @@ Rust から読めない場所に増える 1 本目の移行機構**になる。
 2. `git remote set-url origin https://github.com/betyourluck/Fuseforks.git`
 3. **作業フォルダのリネームは最後**。エディタ・端末・エージェントが旧パスを
    掴んでいる間はできない
-4. **村の `work_dir` を全個体まとめて `D:\Github\Fuseforks` へ** —
-   **Spec 29 の一括切り替えの最初の実用例**になる。8〜9 体を 1 回で移せる
+4. **repo を向いている個体が居れば** `work_dir` をまとめて `D:\Github\Fuseforks`
+   へ。**ただし実測では要らなかった**（2026-08-09）— 窓口のザリの `work_dir` は
+   `D:\Outcasts.jp` で、`fd` が 19 件を普通に返した。
+   **起票時の「この村自身の work_dir が repo を向いている」は思い込みだった。**
+   全個体を数えたわけではないので、向いている個体が居れば Spec 29 の一括切り替えで
+   移す（**その場合が一括切り替えの最初の実用例**になる）
 5. **予定の前判定に repo 内の `cwd` を使っているものがあれば `unapproved` へ
    落ちる** — 承認鍵は `SHA-256(canonical_json({args, command, cwd, villageId}))`
    で、`cwd` が変われば別の鍵（Spec 28 D10）。再承認すればよい
