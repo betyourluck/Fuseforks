@@ -88,6 +88,7 @@ describe("この画面の設定", () => {
       confirmEdgeDelete: false,
       confirmClose: true,
       showPresenceNotices: true,
+      autoFitOnResize: false,
       theme: "dark",
     });
   });
@@ -111,6 +112,19 @@ describe("この画面の設定", () => {
     });
     const { useUiSettings } = await freshModule(storage);
     expect(useUiSettings().settings.confirmClose).toBe(false);
+  });
+
+  it("リサイズ後の自動フィットは既定 OFF で、ON を読み戻せる", async () => {
+    // **既定 OFF はオプトイン**（既定を変えると既存の村の見え方が黙って変わる）。
+    // 他の 2 つが既定 ON なので、ここだけ向きが逆であることを対で見る。
+    const fresh = await freshModule(fakeStorage());
+    expect(fresh.useUiSettings().settings.autoFitOnResize).toBe(false);
+
+    const storage = fakeStorage({
+      [STORAGE_KEY]: JSON.stringify({ autoFitOnResize: true }),
+    });
+    const { useUiSettings } = await freshModule(storage);
+    expect(useUiSettings().settings.autoFitOnResize).toBe(true);
   });
 
   it("入退室の表示は既定 ON で、OFF を読み戻せる", async () => {

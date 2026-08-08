@@ -55,6 +55,21 @@ export interface UiSettings {
    */
   showPresenceNotices: boolean;
   /**
+   * サーヴァントの絆で、**ペインの大きさが変わった後に Fit を掛け直すか**
+   * （2026-08-08 利用者要望）。
+   *
+   * **既定 OFF。** 掛けるのは「変化のたび」ではなく**リサイズの後だけ**だが、
+   * それでも panzoom で寄せた視点が窓の大きさを変えた瞬間に戻る。
+   * 既定を ON にすると既存の村の見え方が黙って変わるので、オプトインにする
+   * （`showPresenceNotices` と同じ判断）。
+   *
+   * **Vue Flow に「追従し続ける」プロパティは無い**（1.48.2 が持つのは
+   * 初期化時 1 回の `fitViewOnInit` と命令的な `fitView()` だけ）。ここが
+   * 見ているのは**コンテナの箱の変化だけ**で、ノードの移動や辺の増減では
+   * 発火しない — ドラッグ中に視点が動くと Spec 21 の drop の座標とずれる。
+   */
+  autoFitOnResize: boolean;
+  /**
    * 配色（2026-08-05 利用者要望）。
    *
    * **既定は OS の設定から毎回決める。選ぶまで保存しない。** 起点は
@@ -83,6 +98,7 @@ const DEFAULTS: UiSettings = {
   confirmEdgeDelete: true,
   confirmClose: true,
   showPresenceNotices: true,
+  autoFitOnResize: false,
   // 参照時に評価するため、実体は load() で入れる（モジュール読み込み順に依存しない）。
   theme: "dark",
 };
@@ -109,6 +125,10 @@ function load(): UiSettings {
         typeof parsed.showPresenceNotices === "boolean"
           ? parsed.showPresenceNotices
           : DEFAULTS.showPresenceNotices,
+      autoFitOnResize:
+        typeof parsed.autoFitOnResize === "boolean"
+          ? parsed.autoFitOnResize
+          : DEFAULTS.autoFitOnResize,
       // **保存済みが 2 値のどちらかでなければ OS へ戻す。** 既定値の定数へ
       // 落とすと、手編集で壊れた村が「利用者はダークを選んだ」状態になる。
       theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : osTheme(),

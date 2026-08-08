@@ -288,7 +288,8 @@
     "agentLabel": "{id}（{name}）",
     "confirmDeleteTitle": "この絆を切りますか？",
     "bidirectionalNote": "双方向の絆なので、両方向とも切れます。",
-    "confirmDeleteLabel": "絆を切る"
+    "confirmDeleteLabel": "絆を切る",
+    "autoFit": "ペインの大きさが変わったら自動でフィット"
   },
   "chat": {
     "heading": "会話",

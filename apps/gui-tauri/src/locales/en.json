@@ -288,7 +288,8 @@
     "agentLabel": "{id} ({name})",
     "confirmDeleteTitle": "Cut this tie?",
     "bidirectionalNote": "This is a bidirectional tie, so both directions will be cut.",
-    "confirmDeleteLabel": "Cut the tie"
+    "confirmDeleteLabel": "Cut the tie",
+    "autoFit": "Fit automatically after the pane is resized"
   },
   "chat": {
     "heading": "Chat",

@@ -9,10 +9,11 @@
  * 自己ループと未登録先はコア側が拒否するので、ここでは事前検査しない
  * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。
  */
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   VueFlow,
+  useVueFlow,
   type Connection,
   type Edge,
   type Node,
@@ -37,6 +38,45 @@ const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const { settings } = useUiSettings();
+const { fitView } = useVueFlow();
+
+/**
+ * ペインの大きさが変わった後に Fit を掛け直す（2026-08-08 利用者要望）。
+ *
+ * **見ているのはコンテナの箱だけ。** ノードの移動でも辺の増減でも発火しない —
+ * ドラッグ中に視点が動くと Spec 21 の drop が使う `elementFromPoint` の座標と
+ * 画面がずれる。**Vue Flow に「追従し続ける」プロパティは無い**ので
+ * （1.48.2 は初期化時 1 回の `fitViewOnInit` と命令的な `fitView()` だけ）、
+ * リサイズという 1 点に絞って自前で繋ぐ。
+ */
+const canvas = ref<HTMLElement | null>(null);
+let observer: ResizeObserver | null = null;
+let settle: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 落ち着いてから 1 回だけ掛ける。**仕切りのドラッグ中は毎フレーム発火する**ので、
+ * そのたびに掛けると視点が追いかけ続けて操作感が悪くなる（利用者の言葉も
+ * 「大きさが変わった**後**に」）。
+ */
+function scheduleFit(): void {
+  if (!settings.autoFitOnResize) return;
+  if (settle) clearTimeout(settle);
+  settle = setTimeout(() => {
+    settle = null;
+    fitView();
+  }, 120);
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== "function" || !canvas.value) return;
+  observer = new ResizeObserver(scheduleFit);
+  observer.observe(canvas.value);
+});
+
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  if (settle) clearTimeout(settle);
+});
 
 /**
  * ノードに出す役職名。引けなければ `null` で**バッジごと描かない**
@@ -238,7 +278,7 @@ function borderClass(status: string): string {
       </span>
     </header>
 
-    <div class="min-h-0 flex-1">
+    <div ref="canvas" class="min-h-0 flex-1">
       <VueFlow
         :nodes="nodes"
         :edges="edges"
@@ -317,7 +357,38 @@ function borderClass(status: string): string {
           ピンチで足り、操作ボタンを増やすと地図の面積を奪う（ヘッダの
           「常駐してよいのは状態だけ」と同じ判断）。
         -->
-        <Controls :show-zoom="false" :show-interactive="false" />
+        <Controls :show-zoom="false" :show-interactive="false">
+          <!--
+            Fit の**上**に自動 Fit のトグル（`#top` スロット）。ボタンを増やす
+            判断は下の Controls のコメントと逆向きに見えるが、これは
+            **操作ではなく状態の切り替え**で、押した後は押さないもの。
+          -->
+          <template #top>
+            <button
+              class="vue-flow__controls-button"
+              :class="{ 'is-on': settings.autoFitOnResize }"
+              :title="$t('map.autoFit')"
+              :aria-label="$t('map.autoFit')"
+              :aria-pressed="settings.autoFitOnResize"
+              @click="settings.autoFitOnResize = !settings.autoFitOnResize"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+                <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+                <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+                <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+              </svg>
+            </button>
+          </template>
+        </Controls>
       </VueFlow>
     </div>
   </div>
@@ -342,6 +413,12 @@ function borderClass(status: string): string {
   background-color: var(--color-surface-1);
   border: 1px solid var(--color-line);
   border-radius: 4px;
+}
+
+/* 自動 Fit が入っているときだけ、枠と字を accent で示す（押した状態の印）。 */
+.vue-flow__controls-button.is-on {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 :deep(.vue-flow__controls-button:hover) {
   background-color: var(--color-surface-2);
