@@ -2,7 +2,10 @@
 
 **ID**: 29
 **Date**: 2026-08-08
-**Status**: **rev2（査読 10 件を反映 — 採用 7 / 訂正して採用 2 / 反証 1。査読待ち）**
+**Status**: **rev2 承認（2026-08-08）→ P1 着手**。査読 10 件 = 採用 7 /
+訂正して採用 2 / 反証 1。**#4 の欄名・#5 の前例・#7 のタイムアウトは
+査読側が誤りを認定**（「#1 で自分が使った規律で #7 を処方していた」）。
+承認時の注記 2 件は P2 の実装条件へ（下記 P2 の欄）。
 **Branch**: なし（main へ直接コミット）。**コミット単位は P1 と P2 で分ける** —
 P1（`snapshotToSpec` の切り出し）は挙動不変のリファクタリングとして 1 コミット、
 P2（一括変更の機能）は別の 1 コミット。revert の単位を分けるため（Spec 18 D12）。
@@ -166,9 +169,14 @@ rev1 は「Spec 14 P3 の二分法のどちらでもなく一覧の道具」と*
 /** 投影から spec を組み直す。overrides で差し替える欄だけを指定する。 */
 export function snapshotToSpec(
   snapshot: AgentSnapshot,
-  overrides?: Partial<AgentSpec>,
+  overrides?: Partial<Omit<AgentSpec, "id">>,
 ): AgentSpec;
 ```
+
+（承認時の推奨を反映して **`id` だけ `Omit`** — `id` を上書きすると
+`update_agent` の宛先そのものが変わり、正当な使い道が 1 つも無い。
+査読の推奨は `'id' | 'createdAt'` だったが **`createdAt` はフロントの
+`AgentSpec` に存在しない**ので `id` のみ）
 
 - **P1**: `AgentSettingsDialog.seed()`（overrides なし = 全欄の複写）と
   `useOrchestrator.setBatchStart()`（`{ batchStart: next }`）を置き換える。
@@ -193,7 +201,14 @@ export function snapshotToSpec(
   パス入力 + 参照… + 適用 + 進捗 + 結果表示）+ 配線 + 辞書 ja/en + vitest。
   **部分失敗の結果表示はここで固定する**（査読 #9 — モックした `update_agent`
   が 1 件失敗を返すケースで「7 体 / 1 体 + 名指し」の表示を検証する。
-  実機で削除競合を再現するのは任意）。**別コミット 1 つ**
+  実機で削除競合を再現するのは任意）。**別コミット 1 つ**。
+  **承認時の注記 2 件をここで満たす**:
+  (A) **表示と適用の時刻差** — 現在値表示は開いた時点の値、適用は最新の
+  投影から。適用の完了時に一覧を読み直して表示も揃える（表示だけ古い状態を
+  適用後に残さない）
+  (B) **trim の所在は 1 箇所** — `const trimmed = input.trim()` を適用処理の
+  冒頭で 1 回だけ行い、`snapshotToSpec(snap, { workDir: trimmed })` へ渡す。
+  D2/D3 の層分け（中身は見ない・有無だけ見る）が実装で崩れない形
 - **P3**: 台帳（README 日英の画面構成表・「何ができるか」表・CLAUDE.md の
   マイルストーン 7 の行）
 - **P4**: 実機確認

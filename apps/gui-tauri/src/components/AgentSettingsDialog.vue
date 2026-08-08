@@ -16,6 +16,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
+import { snapshotToSpec } from "../lib/agentSpec";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { compactNumber } from "../lib/format";
 import { fileToWebpIcon } from "../lib/iconImage";
@@ -47,30 +48,16 @@ const others = computed(() =>
 
 const draft = ref<AgentSpec | null>(null);
 
-/** スナップショットから下書きを起こす。 */
+/**
+ * スナップショットから下書きを起こす。
+ *
+ * 全欄の複写は `snapshotToSpec` の 1 実装（Spec 29 D4）。この画面に UI の無い
+ * 欄（`batchStart` / `roleId`）も**写さないと保存で既定へ戻る**が、その規律は
+ * 複写の実装が 1 箇所になったことで、ここではなくあちらが持つ。
+ */
 function seed(): void {
   const source = agent.value;
-  draft.value = source
-    ? {
-        id: source.id,
-        name: source.name,
-        modelTemplateId: source.modelTemplateId,
-        ragSources: [...source.ragSources],
-        connectedAgents: [...source.connectedAgents],
-        order: source.order,
-        workDir: source.workDir,
-        maxToolIterations: source.maxToolIterations,
-        enabledTools: source.enabledTools ? [...source.enabledTools] : null,
-        hearsRoomLog: source.hearsRoomLog,
-        // この画面に UI は無いが、**写さないと保存で既定へ戻る**。
-        // serde の既定が true なので、対象から外していた個体が
-        // 設定を開いて保存しただけで黙って対象へ復帰する。
-        batchStart: source.batchStart,
-        // 同上。この画面に役職を変える UI は無いが（P3）、写さないと
-        // 設定を保存しただけでバッジが消える。
-        roleId: source.roleId,
-      }
-    : null;
+  draft.value = source ? snapshotToSpec(source) : null;
 }
 
 /**

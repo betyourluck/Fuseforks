@@ -10,6 +10,7 @@
 import { reactive, readonly } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import { snapshotToSpec } from "../lib/agentSpec";
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
 import { formatError } from "../lib/errorText";
@@ -849,22 +850,10 @@ export function useOrchestrator() {
       if (!current) return;
       // 楽観的に反映する（チェックの手応えを IPC 往復に待たせない）。
       patchAgent(agentId, { batchStart });
+      // 全欄の複写は snapshotToSpec の 1 実装（Spec 29 D4）。
+      // 「写さないと保存のたびに欄が既定へ戻る」の規律はあちらが持つ。
       await mutate("orchestrator.op.saveBatchStart", () =>
-        ipc.updateAgent({
-          id: current.id,
-          name: current.name,
-          modelTemplateId: current.modelTemplateId,
-          ragSources: [...current.ragSources],
-          connectedAgents: [...current.connectedAgents],
-          order: current.order,
-          workDir: current.workDir,
-          maxToolIterations: current.maxToolIterations,
-          enabledTools: current.enabledTools ? [...current.enabledTools] : null,
-          hearsRoomLog: current.hearsRoomLog,
-          batchStart,
-          // 投影から spec を組み直す経路。**写さないと保存のたびに役職が外れる**。
-          roleId: current.roleId,
-        }),
+        ipc.updateAgent(snapshotToSpec(current, { batchStart })),
       );
     },
 
