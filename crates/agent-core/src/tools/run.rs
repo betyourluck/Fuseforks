@@ -477,7 +477,7 @@ mod tests {
         let out = run_program(
             "echo",
             &program,
-            &echo_args("hello-concordia"),
+            &echo_args("hello-fuseforks"),
             Path::new("."),
             DEFAULT_TIMEOUT_SECS,
             None,
@@ -486,7 +486,7 @@ mod tests {
         .unwrap();
 
         assert!(out.contains("終了コード: 0"), "{out}");
-        assert!(out.contains("hello-concordia"), "{out}");
+        assert!(out.contains("hello-fuseforks"), "{out}");
         assert!(
             out.contains(&program.display().to_string()),
             "どのバイナリが走ったかを毎回見せること（PATH で変わるため）: {out}"

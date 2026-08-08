@@ -180,7 +180,7 @@ Spec 04 Notes 12 が置いた `plan_id` の発火条件 (b)
   **前提の確認済み**（rev2 指摘 7）: `load()` は全置換マージではなく
   **キーごとの `?? DEFAULTS` + `clamp`** で復元している。`bottomHeight` も
   同じ形で 1 行足す — 保存済みの旧 JSON からは既定値へ落ち、範囲外の
-  保存値は読み込み時に丸まる。localStorage の鍵 `concordia.layout.v1` は
+  保存値は読み込み時に丸まる。localStorage の鍵 `fuseforks.layout.v1` は
   上げない
 - **再投影と購読の順序規律**（rev2 指摘 3）: (1) event リスナー登録 →
   (2) `list_plan_waves` 取得 → (3) `planId` で upsert。この順でないと

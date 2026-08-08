@@ -519,7 +519,7 @@ mod tests {
 
     impl TempDocs {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("concordia_rag_test_{name}_{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("fuseforks_rag_test_{name}_{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self { dir }
@@ -563,7 +563,7 @@ mod tests {
         // 宣言が空 → 提示しない。
         assert!(tool.spec_for(&ctx_with(vec![])).await.is_none());
         // 実在しない宣言だけ → 提示しない（全滅）。
-        let ghost = ctx_with(vec![PathBuf::from("Z:/no/such/dir/concordia")]);
+        let ghost = ctx_with(vec![PathBuf::from("Z:/no/such/dir/fuseforks")]);
         assert!(tool.spec_for(&ghost).await.is_none());
         // 生きた宣言 → 提示し、フォルダを列挙する。
         let live = ctx_with(vec![docs.dir.clone()]);
@@ -674,7 +674,7 @@ mod tests {
     async fn invalid_root_is_reported_not_dropped() {
         let docs = TempDocs::new("invalid_note");
         docs.write("a.md", DOC);
-        let ghost = PathBuf::from("Z:/no/such/dir/concordia");
+        let ghost = PathBuf::from("Z:/no/such/dir/fuseforks");
         let ctx = ctx_with(vec![docs.dir.clone(), ghost]);
         let out = call(&RagTool, &ctx, serde_json::json!({ "op": "outline" })).await;
         assert!(out.contains("a.md"), "生きたルートは動き続ける");

@@ -10,7 +10,7 @@
 P0 は同日完了 — `data_contract.yaml` の `settings_contract`（ConfigFileKind 配下、
 機構の要点 1〜9 のうち凍結対象 5 点 + rev3 の文言凍結を反映）。
 P0 で具体名を 2 つ確定: 言語は `world.json` の `language`（"ja" | "en"）、
-画面設定は `localStorage` の `concordia.settings.v1`（`confirmEdgeDelete`、既定 true）。
+画面設定は `localStorage` の `fuseforks.settings.v1`（`confirmEdgeDelete`、既定 true）。
 P1 も同日完了 — 下の「P1 の実装記録」）
 
 ## P3 の設計記録（2026-08-03。村民調査との突き合わせ）
@@ -23,7 +23,7 @@ P1 も同日完了 — 下の「P1 の実装記録」）
 - **A-3 / A-2（コア・commands.rs のエラー文）は rust-i18n を採らない** —
   P4 の案 A 固定（コアは日本語のまま返し、UI が `ErrorPayload.code` で引いて
   訳す）。`locales/ja.yml` + rust-i18n はコアが言語を知る構成になり D5 と衝突
-- **ウィンドウタイトルは訳さない** — `tauri.conf.json` の title は「Concordia」=
+- **ウィンドウタイトルは訳さない** — `tauri.conf.json` の title は「Fuseforks」=
   ブランド名で、言語の外。`set_title()` もちらつき問題も発生しない
 
 採ったもの: **vue-i18n**（利用者判断。将来 zh-Hans / de / fr を足す前提 —
@@ -43,7 +43,7 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 ## 実機の指摘で分類を改稿（2026-08-03、P4 の後）
 
 利用者が実機で触っての指摘: 「**あまりにも砕けすぎていて逆にわかりづらい**。
-システム設定なので Concordia のテイストとは別にシステム用語でいい」。
+システム設定なので Fuseforks のテイストとは別にシステム用語でいい」。
 
 **真因は分類の切り口**だった。初版は 村の設定 / この画面の設定 =
 **保存先（`world.json` か `localStorage` か）で切っており**、実装の都合が
@@ -152,7 +152,7 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 
 ## P2 の実装記録（2026-08-03）
 
-- **`useUiSettings.ts`**（`concordia.settings.v1`）。書き込みは watch で
+- **`useUiSettings.ts`**（`fuseforks.settings.v1`）。書き込みは watch で
   **値が変わったときだけ** — 「触らず閉じたら localStorage 不変」が構造で成立する。
   boolean 以外の保存値（手編集の文字列など）は既定へ落とす（`??` で素通しに
   すると真でも偽でもない値が確認の分岐へ流れ込む）。vitest 4 本

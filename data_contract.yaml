@@ -1,5 +1,5 @@
 version: "1.0"
-project: Outcasts Concordia  # 正式名 (2026-07-30)。アプリ内表示・System の送り手名は「Concordia」のまま
+project: Outcasts Fuseforks  # 正式名 (2026-08-09 改名。旧 Outcasts Concordia)。アプリ内表示・System の送り手名も「Fuseforks」(Spec 30 D4)
 description: |
   マルチエージェント・オーケストレーションのドメイン名詞（Data-First Grounding）。
   実装より先にここを正とする。型を増減させたら、下記 3 箇所を必ず同時に直すこと。
@@ -519,7 +519,7 @@ enums:
           言語は村の共有物 — localStorage には置けない。
           **userName も同じ理由で world.json** — 封筒 `【送り手: {名前}】` が
           AgentRecord.history と session_store の両方へ文字列そのものとして入る
-        - **端末に保存 → localStorage "concordia.settings.v1"**。
+        - **端末に保存 → localStorage "fuseforks.settings.v1"**。
           **総数を書かず鍵を列挙する** (#67 — 追記そのものが更新になる形):
           confirmEdgeDelete (boolean。**既定 true** = 絆を切るときに確認を出す。
           確認ダイアログは Spec 12 P3 の askConfirm) /
@@ -551,7 +551,7 @@ enums:
           村の状態ではない (usePaneLayout の「表示の都合は localStorage」と同じ棚)。
           **保存形は useUiSettings.test.ts が丸ごと固定している** —
           鍵が黙って増えると契約と実装が食い違うため
-        - **端末に保存 → localStorage "concordia.chatCleared.v1"**
+        - **端末に保存 → localStorage "fuseforks.chatCleared.v1"**
           (2026-08-08 追加)。会話 ID → その時刻 (tsMs) 以前を会話ペインに出さない。
           **消すのは表示だけで中身は 1 件も消さない** — sessions.redb にも
           shared.log にも残り、**押しても送信量は減らない**。
@@ -574,7 +574,7 @@ enums:
           (2026-08-05 に「全般 → 言語」から**「全般 → ユーザー」へ移った**。
           Spec 19 が全般の先頭にユーザーを置いたため。
           **「目録の先頭」という規則は不変で、指す先だけが動く**)
-        - **システム設定ダイアログの語彙は Concordia のテイストから降りる**
+        - **システム設定ダイアログの語彙は Fuseforks のテイストから降りる**
           (2026-08-03 利用者判断)。UI ラベルは システム用語 =
           「トークン制限」「制限あり / 制限なし」、内部の台帳・コード・設計語・
           ログは「天井 / ceiling」のまま。CLAUDE.md の用語境界
@@ -687,7 +687,7 @@ enums:
       足すと同じ規律が 2 箇所に生える。**検証を述語へ切り出し、両方が通る形にする**
       (icon_contract の「1 実装を共有する」が正)。分かれてよいのは親フォルダだけ。
 
-      **localStorage の concordia.settings.v1 には置かない。** 判定材料は
+      **localStorage の fuseforks.settings.v1 には置かない。** 判定材料は
       settings_contract の境界 (村に保存 / 端末に保存) で、決め手は
       **会話ログへ焼き付くか**。呼び名は封筒として AgentRecord.history と
       session_store の両方へ文字列そのものが入る (prompt_cache #45 =
@@ -717,7 +717,7 @@ enums:
 
       根拠は attribute_sender の既存 doc — 「プロンプトと画面で同じ送り手が
       違う名前になると、利用者とエージェントの会話が噛み合わない」
-      (Endpoint::System を UI と同じ「Concordia」にした判断)。利用者にも同じ規律。
+      (Endpoint::System を UI と同じ「Fuseforks」にした判断)。利用者にも同じ規律。
 
       アイコンは会話ペインで agent と同じ経路 (state.icons と同型の objectURL
       キャッシュ)。設定が無ければ頭文字の円へ落ちる。
@@ -1559,7 +1559,7 @@ entities:
         発話と同格の起点なので、そこから先の転送・委譲に満額の燃料を渡す
         (System から Agent への配送はこれが最初。Spec 06 は User 宛だけ)
       - **本文の先頭に由来を書く**: 「【定期実行: 毎週 木曜 17:00】」+ 改行 + 本文。
-        封筒 (【送り手: Concordia】) だけではモデルが人の発話と区別できない。
+        封筒 (【送り手: Fuseforks】) だけではモデルが人の発話と区別できない。
         AgentMessage に欄を足さず本文へ書くのは、契約を変えずに済み、
         会話ペインにも出るので利用者側の可読性も上がるから
       - **宛先が Running でなければ撒かない** (消化して飛ばす)。停止中へ投げると
@@ -1810,7 +1810,7 @@ entities:
       **不一致・失敗は会話ログへ流さない** (猶予超過と同じ判断 — 5 分ごとの監視で
       毎回 System 行が出ると本物の通知が埋まる)。画面はスケジュールダイアログに
       最後の判定 (outcome・reason・時刻) を出す (in-memory・波の記録と同じ寿命)。
-      **再起動後の診断は concordia.log が担う。probe_last.json のような第 2 の
+      **再起動後の診断は fuseforks.log が担う。probe_last.json のような第 2 の
       永続ファイルは作らない** — reason 付きの行が既に永続しており複製になる。
       機械が書く永続ファイルを増やすことは、人が編集するファイルとの衝突面を
       増やすことでもある。
@@ -1876,7 +1876,7 @@ entities:
       - **承認鍵は外から再計算して一致した** (canonical 形の裏取り)
       - **前判定は宛先が稼働していないと到達しない。** Tick::Fire は probe より先に
         mailboxes を見て、停止中は shared.record (会話ペイン) で消化して continue —
-        **note! ではないので concordia.log は完全に沈黙し、lastConsumedDueMs だけが
+        **note! ではないので fuseforks.log は完全に沈黙し、lastConsumedDueMs だけが
         動く**。ログの沈黙には理由が 2 つある (未承認 / 未到達)
 
   # Spec 28 P0 で新設 (2026-08-08)。承認の束縛先として立てた識別子だが、
@@ -2207,8 +2207,8 @@ entities:
     同じ文言で出すと利用者が設定をいじって同じ所で止まる。
     ToolRun は Rust に対応する型が無いフロント固有の投影なので、ミラー契約の
     types.ts ではなく lib/chatRows.ts に置く。
-    診断ログ (2026-07-31): `[concordia]` 行は stderr と
-    workspace/concordia.log の両方へ出る (diag::note)。stderr だけだった間は
+    診断ログ (2026-07-31): `[fuseforks]` 行は stderr と
+    workspace/fuseforks.log の両方へ出る (diag::note)。stderr だけだった間は
     `tauri dev` の端末にしか残らず、利用者が貼らない限り誰も読めなかった
     (1 ターン 730,406 トークンの診断がそこで止まった)。
     行の種類は turn start / turn / turn failed / tool / tool blocked /
@@ -2220,7 +2220,7 @@ entities:
       - 載せるのは観測行だけ。**プロンプト本文・ツール結果の本文・資格情報は
         載せない** (ログは平文でワークスペースに置かれる。failures.md #1)
       - 書き込みの失敗は握り潰す。診断の機構がターンを落とさない
-      - 8MB で concordia.log.old へ 1 世代だけ回す。世代を増やさないのは、
+      - 8MB で fuseforks.log.old へ 1 世代だけ回す。世代を増やさないのは、
         上限を「2 ファイルぶん」で言い切るため
       - 時刻はファイル側にだけ付ける (stderr の見え方を変えない)
       - tool 行の body_chars がこの計器の主目的。ツール結果は履歴に積まれて
@@ -2590,7 +2590,7 @@ conversation_termination:
           だけ 1 行 (grep include: / run decision: と同じ形)。truncated の率が
           上限 20,000 字の妥当性、ambiguous の率が ID 桁数の将来判断の材料。
           **本文はログへ書かない** (#71 — モデル出力を運ぶ計器は秘密の転送
-          経路になる)。concordia.log 側では not_found と not_visible を
+          経路になる)。fuseforks.log 側では not_found と not_visible を
           区別してよい (人向け。**モデル向け文面は同一のまま**)
         - **原本には一切書かない**。管理エージェント・要約・再編成を置かない —
           書く機構が存在しなければ、要約による無言の圧縮 (condense) と
@@ -2611,8 +2611,8 @@ conversation_termination:
       根拠: ユーザーの言葉もエージェントからの転送も同じ user ロールで届くため、
       名前が無いと受信側は区別できない (実際にユーザーの発話を「他のエージェント
       が話した言葉」と取り違えた)。名前は Endpoint から解決する
-      (User=「ユーザー」/ System=「Concordia」/ Agent=表示名、削除済みなら ID)。
-      System の表示は UI・プロンプトとも「Concordia」で統一 (2026-07-31、利用者
+      (User=「ユーザー」/ System=「Fuseforks」/ Agent=表示名、削除済みなら ID)。
+      System の表示は UI・プロンプトとも「Fuseforks」で統一 (2026-07-31、利用者
       指示で「システム」から改名)。場そのものの声としてアプリ名を名乗る。
       不変条件:
         - プロンプトと履歴の形を揃える。履歴に封筒を入れないと、
@@ -2795,7 +2795,7 @@ conversation_termination:
     AgentTool / ToolRegistry (crates/agent-core/src/tool.rs) が差し替え点。
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
-    同梱ツールは Concordia 自身が提供する操作だけに限る
+    同梱ツールは Fuseforks 自身が提供する操作だけに限る
     (**現在 8 本** = remember / grep / fd / diff / sd / yq / file / run。
     下記 bundled_tools_contract / write_tools_contract / file_tool_contract /
     command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
@@ -2942,7 +2942,7 @@ conversation_termination:
         2. **paths は明示列挙のみ**。glob も正規表現も受けない。ファイルの発見は
            grep / fd の仕事で、sd に持たせると同じ仕事が 2 箇所に生える。
            明示列挙なら**対象集合が呼び出しの中に literal で残る** =
-           preview を読む人も concordia.log も RepeatGuard も対象を正確に数えられる
+           preview を読む人も fuseforks.log も RepeatGuard も対象を正確に数えられる
         3. **path と paths の同時指定は拒否。両方無し・空配列も拒否**
            (「対象 0 件」を成功として返すと一致ゼロと区別が付かない)
         4. **枠の扱いは 3 段。diff は 1 本も切り詰めない**:
@@ -3542,7 +3542,7 @@ llm_wire:
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
 
   mcp_server_contract: |
-    Concordia を MCP サーバーにする (Spec 25 rev3 承認 2026-08-07)。外部の LLM
+    Fuseforks を MCP サーバーにする (Spec 25 rev3 承認 2026-08-07)。外部の LLM
     (Claude Code / Copilot / CLI) がチャットを 1 本投げ、窓口のサーヴァントが
     オーケストレーションして束ねた答えを返す。実装は rmcp 2.2 の
     server + transport-streamable-http-server を GUI プロセス内で開く
@@ -3550,8 +3550,13 @@ llm_wire:
     稼働個体はメモリ。別プロセスの MCP サーバーは構造的に不可)。
 
     凍結 (P0 実測 2026-08-07 で確定):
-      1. **扉は 1 枚。ツール名 `ask_concordia`・引数は `message` だけ。**
+      1. **扉は 1 枚。ツール名 `ask_fuseforks`・引数は `message` だけ。**
          宛先 (`to`) も roster も出さない — 村の状態は外からブラックボックス。
+         **名前は 2026-08-09 に `ask_concordia` から改名した (Spec 30 D3)。**
+         クライアント設定は壊れない (`.mcp.json` に書くのは接続先で、ツール名は
+         tools/list で毎回発見される)。**件数と名前は
+         `the_door_declares_one_tool_under_a_frozen_name` が留める** —
+         改名しても他のテストは 1 本も落ちなかった。
       2. **トークン必須。localhost でも省かない。** 置き場は
          **`{app_data_dir}/mcp_server.json`** (workspace の**外**・端末側・
          Rust 可読)。ON/OFF・ポートも同じファイル。**窓口の agent_id だけは
@@ -3820,7 +3825,7 @@ llm_wire:
       **率だけでは 0% の理由が三つ巴になる** — (a) プロバイダの最小長を下回った
       (b) 前方一致が壊れた (c) プロバイダが値を返していない。3 つとも処方が違うのに
       画面では同じ 0% に見える。判別のため `orchestrator.rs` の note_cache_diag が
-      **周ごとの生の数字**を concordia.log へ出す:
+      **周ごとの生の数字**を fuseforks.log へ出す:
       `cache: agent=… model=… round=N prompt=… cached=… system_chars=…
       stable_chars=… system_digest=…`
 

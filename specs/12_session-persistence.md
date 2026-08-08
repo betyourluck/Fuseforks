@@ -55,7 +55,7 @@ rev2 で入った差分（査読 2026-08-02）:
    `ReadableDatabase` trait の import が要るなど 2.x とは違う。凍結する形は
    実際にビルドして測った（下記「実測」）
 2. **`700 / 600` のパーミッションは Windows では効かない**。`{workspace}` は
-   `%APPDATA%\jp.outcasts.concordia\` で、Windows では既にユーザー私有の ACL 下に
+   `%APPDATA%\jp.outcasts.fuseforks\` で、Windows では既にユーザー私有の ACL 下に
    ある。POSIX 権限の設定は **unix でのみ**適用し、Windows では「既定の ACL に
    依存する」と書くのが正直。また `sessions.redb` は `{workspace}` 配下で
    **work_dir（リポジトリ）ではない**ので、黒板（`黒板/`）のように
@@ -98,7 +98,7 @@ rev2 で入った差分（査読 2026-08-02）:
 | `AgentRecord.history` | エージェント個別のプロンプト履歴 | `Vec<ChatMessage>` | 滑る窓 8 往復 | **LLM へ送るリクエスト本体** |
 
 - 単一エージェントの道具では「会話ログ = モデルの文脈」なので、ログを保存すれば
-  再開できる。**Concordia では一致しない**
+  再開できる。**Fuseforks では一致しない**
 - **`log` から `history` は復元できない** — `push_exchange` は #45 の規律で
   「**送った文字列をそのまま**」積む。そこには畳んだ可変文脈（入退室通知・
   広場ログ・顔ぶれ・送り手名）が含まれ、`log` のどこにも無い

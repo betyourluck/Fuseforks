@@ -208,7 +208,7 @@ pub user_name: Option<String>`（ファイル上は `userName`）。`World` は
 `user_name: Option<String>` を持ち、`user_name()` / `set_user_name()` で読み書きする。
 **`language` の隣**に置く。
 
-**`localStorage` の `concordia.settings.v1` には置かない。** `settings_contract` が
+**`localStorage` の `fuseforks.settings.v1` には置かない。** `settings_contract` が
 凍結した境界は「村に保存＝配ると付いて回る / 端末に保存」で、判定材料は
 **会話ログへ焼き付くかどうか**。呼び名は `attribute_sender` が組む封筒として
 `AgentRecord.history` と `session_store` の両方へ**文字列そのもの**が入る（#45 の
@@ -255,7 +255,7 @@ pub user_name: Option<String>`（ファイル上は `userName`）。`World` は
 
 理由は `attribute_sender` の doc コメントが既に書いている —
 「プロンプトと画面で同じ送り手が違う名前になると、利用者とエージェントの会話が
-噛み合わない」（`Endpoint::System` を UI と同じ「Concordia」にした根拠）。
+噛み合わない」（`Endpoint::System` を UI と同じ「Fuseforks」にした根拠）。
 利用者にも同じ規律を適用する。
 
 ### D5: 呼び名は書式検査で拒否する。注意書きでは足りない

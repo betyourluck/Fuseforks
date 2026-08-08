@@ -275,9 +275,9 @@ export function snapshotToSpec(
 覚えておく機構が欲しいわけではない。
 
 - **原本は適用したパスの履歴**（`localStorage` の
-  `concordia.workDirHistory.v1`）。**端末の都合なので村には持たせない** —
+  `fuseforks.workDirHistory.v1`）。**端末の都合なので村には持たせない** —
   `work_dir` は絶対パスで端末ごとに違い、村を配ると壊れる欄
-  （`concordia.settings.v1` / `concordia.chatCleared.v1` と同じ棚）
+  （`fuseforks.settings.v1` / `fuseforks.chatCleared.v1` と同じ棚）
 - **記録するのは「適用した」瞬間だけ。** 入力しただけ・参照…で選んだだけでは
   積まない — 履歴の意味を「使ったことがあるパス」に保つ
 - **いま各個体が向いているフォルダは履歴に混ぜない。** それは**すぐ上の

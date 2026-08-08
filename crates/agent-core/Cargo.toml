@@ -1,6 +1,6 @@
 [package]
 name = "agent-core"
-description = "Concordia のマルチエージェント・オーケストレーション中核。GUI 層に一切依存しない。"
+description = "Fuseforks のマルチエージェント・オーケストレーション中核。GUI 層に一切依存しない。"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

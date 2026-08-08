@@ -1,4 +1,4 @@
-# Spec: 外部の LLM から村へ依頼する — Concordia を MCP サーバーにする
+# Spec: 外部の LLM から村へ依頼する — Fuseforks を MCP サーバーにする
 
 **ID**: 25
 **Date**: 2026-08-07
@@ -7,7 +7,7 @@
 
 ## Goal
 
-Claude Code や Copilot、各社の CLI から **Concordia へチャットを 1 本投げ、
+Claude Code や Copilot、各社の CLI から **Fuseforks へチャットを 1 本投げ、
 窓口のサーヴァントがオーケストレーションして結果を返す**。
 
 起点は利用者の言葉（2026-08-07）:
@@ -19,7 +19,7 @@ Claude Code や Copilot、各社の CLI から **Concordia へチャットを 1 
 > 正確だし速い。なので Neo の補完機能として Concordia を使えるようにしたい。**
 
 **この Goal の形が全部の判断を決める**（Spec 23 と同じ構造）。目的は
-「Concordia をリモート操作できる汎用 API にする」ではなく、
+「Fuseforks をリモート操作できる汎用 API にする」ではなく、
 **効く領域でだけ使える口を 1 つ開けること**。だから:
 
 - **開くのは扉 1 枚だけ** — チャットを投げて答えを受け取る。それ以外は出さない
@@ -88,7 +88,7 @@ chacha20  pastey  rand  rand_core  ref-cast  ref-cast-impl  sse-stream
 **GUI の中で HTTP の MCP サーバーを開き、ツールを 1 本だけ提示する。**
 
 ```text
-Claude Code ──HTTP(MCP)──▶ 動いている Concordia
+Claude Code ──HTTP(MCP)──▶ 動いている Fuseforks
                              └─ 窓口サーヴァント（システム設定で指定）
                                   └─ ask / plan / 検証（既存の経路）
                              ◀── 束ねた答えを 1 本の文字列で返す
@@ -137,14 +137,14 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
   **S1 が主戦場（分単位のオーケストレーション）でだけ失敗する**ので、
   P0 で「長い呼び出しが切られないか・伸ばせるか」を実測する。
   足りないと実測で出たら 2 段化を別 Spec で。
-- **D4 提示するツールは 1 本。名前は `ask_concordia`。引数は `message` だけ。**
+- **D4 提示するツールは 1 本。名前は `ask_fuseforks`。引数は `message` だけ。**
   名前は外部 I/F なので P0 で凍結する（rev3 査読 12 — 外部の LLM のツール一覧に
   並ぶので、「村」では何のことか分からない。**製品名が取っ手になる**）。
   **`to`（宛先）も出さない** — 村の状態がブラックボックスなら、呼ぶ側は
   誰が居るか知らないので宛先を選べない。**窓口は村の側の設定で決まる**(D2)。
   `village_roster()` のような覗き口も作らない（利用者裁定）。
   **範囲を絞るのは礼儀ではなく位置づけの問題** — 村の設定・セッション・条例まで
-  外から触れると、Concordia は「オーケストレーションの道具」から
+  外から触れると、Fuseforks は「オーケストレーションの道具」から
   「リモート管理される何か」に変わる。
 - **D5 既定 OFF。** サーバーを開くのはシステム設定の明示的な操作。
   開けていない村では**ポートも開かず、トークンも作らない**（生成が ON 時なので
@@ -236,7 +236,7 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
      新品になるため、**`max_hops` と天井は閉路が扉を通るたびにリセットされ、
      どちらも効かない**（rev2 の Notes 3「既に塞いでいる」は誤りだった）。
      村の `mcp.json` に自分自身を登録すると
-     `ask_concordia → 窓口 → 村の MCP クライアント → ask_concordia …` の
+     `ask_fuseforks → 窓口 → 村の MCP クライアント → ask_fuseforks …` の
      無限連鎖が組めるが、**上限 1 なら 2 周目が必ず busy に当たって切れる**
   3. **自己呼び出しのデッドロック**を解く — 窓口は飛行中ターンの中から
      ツールで自分の受信箱へ配送し、自分のターンの完了を待つ形になる。
@@ -244,9 +244,9 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
 
 ## Stories
 
-- S1 Claude Code から `ask_concordia("…")` を呼ぶと、窓口のサーヴァントが
+- S1 Claude Code から `ask_fuseforks("…")` を呼ぶと、窓口のサーヴァントが
   受け取り、必要なら `plan` で撒いて検証し、**束ねた答えが戻り値として返る**
-- S2 その依頼と答えが**Concordia の会話ペインにも残る**ので、人は後から
+- S2 その依頼と答えが**Fuseforks の会話ペインにも残る**ので、人は後から
   「外の LLM が何を頼んだか」を読める
 - S3 サーバーを開いていない村では、ポートも開かず何も増えない
 - S4 トークンが違う呼び出しは拒否される
@@ -275,7 +275,7 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
     残りは rmcp の機構に乗る
   - ~~`data_contract` へ `mcp_server_contract`~~ **凍結済み**（2026-08-07。
     以下の一覧のとおり）。凍結:
-    **扉は 1 枚・名前 `ask_concordia`・引数は `message` だけ**（D4）/
+    **扉は 1 枚・名前 `ask_fuseforks`・引数は `message` だけ**（D4）/
     **トークン必須・置き場は `{app_data_dir}/mcp_server.json`（workspace の外）・
     生成はサーバー ON の時点**（D1）/ **ON/OFF・ポートも同じファイル、
     窓口だけ `world.json`**（D1/D2）/ **村を配っても扉は開かない**（D1 の帰結）/
@@ -435,7 +435,7 @@ Claude Code ──HTTP(MCP)──▶ 動いている Concordia
   （`compute.rs:90` はワイルドカードで指されない。指さない 6 箇所の挙動を
   表で凍結）/ 広場ログは依頼（不可視・編集ゼロ）と返答（User 宛と同じで可視）を
   分けて対で凍結。ほか — `deliver_and_wait` の `from` 一般化を計上 /
-  `ask_concordia` を P0 凍結へ / クライアント側タイムアウトの実測を P0 へ /
+  `ask_fuseforks` を P0 凍結へ / クライアント側タイムアウトの実測を P0 へ /
   bind 127.0.0.1 + Origin 検査 / 正規化の失敗は `external` へフォールバック /
   External の左置き描画。**査読の前提 1 点は実測で訂正** — 「workspace 切り替え時の
   ライフサイクル」は実行時に存在しない（`state.rs:48` で起動時固定）。
