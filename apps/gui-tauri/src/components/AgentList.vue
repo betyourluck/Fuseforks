@@ -272,32 +272,6 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         </svg>
         <span class="agent-list-action-label">{{ $t("agentList.modelRegistration") }}</span>
       </button>
-      <!--
-        作業フォルダの一括切り替え（Spec 29）。「モデル登録」の隣に置くのは、
-        一覧ヘッダが**個体をまとめて扱う道具**の置き場として既に前例を持つため。
-      -->
-      <button
-        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        :title="$t('agentList.batchWorkDir')"
-        :aria-label="$t('agentList.batchWorkDir')"
-        @click="showBatchWorkDir = true"
-      >
-        <svg
-          class="size-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v3" />
-          <path d="M3 7v11a2 2 0 0 0 2 2h8" />
-          <path d="m16 19 2 2 4-4" />
-        </svg>
-        <span class="agent-list-action-label">{{ $t("agentList.batchWorkDir") }}</span>
-      </button>
       <button
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.addServant')"
@@ -404,6 +378,40 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         {{ $t("agentList.emptyLine2") }}
       </p>
     </VueDraggable>
+
+    <!--
+      一覧のフッター（Spec 29。**アプリのステータスバーとは別物** — この帯は
+      左ペインの中に住む）。ヘッダと分けたのは置き場の都合ではなく**役の違い**:
+      ヘッダの「モデル登録」「追加」は*作る・登録する*側、こちらは
+      **既にいる個体をまとめて扱う**側（利用者裁定 2026-08-08）。
+      一覧の直下にあるので、対象が目の前にある状態で押せる。
+    -->
+    <footer
+      class="flex shrink-0 items-center gap-2 border-t border-line px-3 py-1.5 text-xs"
+    >
+      <button
+        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        :title="$t('agentList.batchWorkDir')"
+        :aria-label="$t('agentList.batchWorkDir')"
+        @click="showBatchWorkDir = true"
+      >
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v3" />
+          <path d="M3 7v11a2 2 0 0 0 2 2h8" />
+          <path d="m16 19 2 2 4-4" />
+        </svg>
+        <span class="agent-list-action-label">{{ $t("agentList.batchWorkDir") }}</span>
+      </button>
+    </footer>
 
     <ModelTemplateDialog v-if="showTemplates" @close="showTemplates = false" />
     <BatchWorkDirDialog v-if="showBatchWorkDir" @close="showBatchWorkDir = false" />
