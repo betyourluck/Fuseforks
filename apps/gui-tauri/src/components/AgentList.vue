@@ -5,13 +5,14 @@
  * 新規作成はここに置く。エージェントが 0 体のとき、作成導線が
  * 別画面にあると「何もできないアプリ」に見えるため。
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 
 import AgentCard from "./AgentCard.vue";
 import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { inListOrder } from "../lib/agentNav";
 import { batchAction, batchLabel } from "../lib/batchStart";
 import { dropPoint, tieAddition } from "../lib/kizunaDrop";
 import type { AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
@@ -26,7 +27,27 @@ const creating = ref(false);
 const newName = ref("");
 
 /** 表示順に並べたエージェント。 */
-const agents = computed(() => [...state.agents].sort((a, b) => a.order - b.order));
+// 並び順は lib/agentNav.ts と共有する。**別々に整列すると、Alt+↑↓ の移動が
+// 画面の並びと違う順で飛ぶ**（同じ規則を 2 箇所に書かない）。
+const agents = computed(() => inListOrder(state.agents));
+
+/**
+ * 選択が変わったら、そのカードを見える位置へ寄せる（Alt+↑↓ 用）。
+ *
+ * **`block: "nearest"` にするのは、既に見えているときに動かさないため** —
+ * クリックで選んだときも同じ watch を通るので、毎回中央へ寄せると画面が跳ねる。
+ * 9 体並ぶ村では一覧がスクロールするので、これが無いと選択だけ動いて見えない。
+ */
+watch(
+  () => state.selectedAgentId,
+  async (id) => {
+    if (!id) return;
+    await nextTick();
+    document
+      .querySelector(`[data-agent-id="${id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  },
+);
 
 /** 稼働中の数。ヘッダの要約に出す。 */
 const runningCount = computed(
@@ -336,6 +357,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       <AgentCard
         v-for="agent in agents"
         :key="agent.id"
+        :data-agent-id="agent.id"
         :agent="agent"
         :icon="state.icons[agent.id]"
         :last-tool="state.lastTool[agent.id]"

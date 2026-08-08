@@ -503,6 +503,8 @@ defineExpose({ fill });
         rows="1"
         :disabled="disabled"
         :placeholder="placeholder"
+        data-chat-input
+
         class="selectable block w-full resize-none bg-transparent py-2.5 pr-12 pl-11 text-[12px] leading-relaxed text-ink outline-none placeholder:text-ink-dim disabled:cursor-not-allowed"
         :style="{ maxHeight: `${MAX_HEIGHT_PX}px`, overflowY: 'auto' }"
         @input="autoGrow(); refreshTrigger()"

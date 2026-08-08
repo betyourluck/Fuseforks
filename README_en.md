@@ -276,6 +276,7 @@ Input fields follow Kataribe's `ActionInput.vue` (`ChatInput.vue`).
 - Stops growing at 220px and switches to internal scrolling
 - The send button floats **inside** the input field and appears only when content is present (↵ icon)
 - Enter to send, Shift+Enter for a line break
+- **Alt + ↑↓ moves the selection in the servant list** (works even while typing in the input box)
 
 **Enter during IME conversion does not trigger sending** (`event.isComposing` is checked).
 Without this check, unfinished sentences would fly off the moment Japanese conversion is finalized.

@@ -17,7 +17,7 @@
  * 入力できなくなった。`minmax(0, 1fr)` で最小値を 0 に固定し、
  * はみ出しは各ペインの内部スクロールに引き受けさせる。
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -38,6 +38,7 @@ import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
+import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
 import { closeConfirmLines } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { askConfirm } from "./composables/useConfirm";
@@ -113,11 +114,35 @@ async function registerCloseGuard(): Promise<void> {
   });
 }
 
+/**
+ * Alt + ↑↓ でサーヴァント一覧の選択を移す（マイルストーン 8）。
+ *
+ * **窓ごと聴くのは、入力欄にフォーカスがあるときも効かせるため**（利用者の要件 —
+ * 「入力欄にフォーカスしている状態で切り替えられないと、あまり意味がない」）。
+ * ゆえに**どこで効かせないか**は `isNavigableFocus` の閉じた許容が決める。
+ *
+ * 規則は `lib/agentNav.ts` の純関数 3 本で、ここは配線だけ。
+ */
+function onNavKey(event: KeyboardEvent): void {
+  const delta = agentNavDelta(event);
+  if (delta === null) return;
+  if (!isNavigableFocus(document.activeElement)) return;
+
+  const next = nextAgentId(state.agents, state.selectedAgentId, delta);
+  if (next === null) return;
+  // 入力欄では Alt+↑↓ が段落移動になる環境があるので、拾ったら必ず止める。
+  event.preventDefault();
+  orchestrator.select(next);
+}
+
 onMounted(() => {
   void orchestrator.init();
   // 失敗しても画面は使える（確認が付かないだけ）。閉じられなくなるほうが害が大きい。
   void registerCloseGuard().catch(() => undefined);
+  window.addEventListener("keydown", onNavKey);
 });
+
+onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
 </script>
 
 <template>
