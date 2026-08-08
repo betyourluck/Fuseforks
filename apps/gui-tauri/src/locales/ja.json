@@ -206,7 +206,7 @@
     "emptyLine1": "サーヴァントがまだありません。",
     "emptyLine2": "右上の ＋ から追加してください。",
     "noRole": "役職を選ばない",
-    "batchWorkDir": "作業フォルダ"
+    "batchWorkDir": "作業フォルダ一括切り替え"
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",

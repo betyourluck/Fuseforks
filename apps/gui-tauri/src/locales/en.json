@@ -206,7 +206,7 @@
     "emptyLine1": "No servants yet.",
     "emptyLine2": "Add one with the + button in the top right.",
     "noRole": "No role",
-    "batchWorkDir": "Work folder"
+    "batchWorkDir": "Change work folders together"
   },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",
