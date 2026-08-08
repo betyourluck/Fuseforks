@@ -205,7 +205,8 @@
     "create": "Create",
     "emptyLine1": "No servants yet.",
     "emptyLine2": "Add one with the + button in the top right.",
-    "noRole": "No role"
+    "noRole": "No role",
+    "batchWorkDir": "Work folder"
   },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",
@@ -824,5 +825,19 @@
     "schedules": "Schedules will not fire — they only run while this app is open.",
     "confirm": "Quit",
     "cancel": "Stay open"
+  },
+  "batchWorkDir": {
+    "title": "Change work folders together",
+    "intro": "Sets the work folder of every checked servant to the path you enter. Running servants pick it up from their next message. Whether the folder exists is not checked here (you find out when a tool uses it).",
+    "selected": "{count} of {total} selected",
+    "selectAll": "Select all",
+    "clearAll": "Clear all",
+    "unset": "Not set",
+    "placeholder": "e.g. D:\\Github\\MyProject",
+    "browse": "Browse…",
+    "apply": "Apply",
+    "progress": "Applying… {done} / {total}",
+    "resultOk": "{count} changed",
+    "resultFailed": "{count} failed"
   }
 }

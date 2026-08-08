@@ -205,7 +205,8 @@
     "create": "作成",
     "emptyLine1": "サーヴァントがまだありません。",
     "emptyLine2": "右上の ＋ から追加してください。",
-    "noRole": "役職を選ばない"
+    "noRole": "役職を選ばない",
+    "batchWorkDir": "作業フォルダ"
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",
@@ -824,5 +825,19 @@
     "schedules": "予定は発火しません — 予定はこのアプリが動いている間だけ動きます。",
     "confirm": "終了する",
     "cancel": "閉じない"
+  },
+  "batchWorkDir": {
+    "title": "作業フォルダの一括切り替え",
+    "intro": "チェックしたサーヴァントの作業フォルダを、入力したパスへまとめて変更します。稼働中でも次の発話から反映されます。フォルダが実在するかはここでは確かめません（ツールを使うときに確かめられます）。",
+    "selected": "{count} / {total} 体を選択中",
+    "selectAll": "全選択",
+    "clearAll": "全解除",
+    "unset": "未設定",
+    "placeholder": "例: D:\\Github\\MyProject",
+    "browse": "参照…",
+    "apply": "適用",
+    "progress": "適用中… {done} / {total}",
+    "resultOk": "変更 {count} 体",
+    "resultFailed": "失敗 {count} 体"
   }
 }

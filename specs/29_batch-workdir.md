@@ -209,6 +209,15 @@ export function snapshotToSpec(
   (B) **trim の所在は 1 箇所** — `const trimmed = input.trim()` を適用処理の
   冒頭で 1 回だけ行い、`snapshotToSpec(snap, { workDir: trimmed })` へ渡す。
   D2/D3 の層分け（中身は見ない・有無だけ見る）が実装で崩れない形
+
+  **P2 の実装で 1 つ決まった（`mutate()` を通さない）**: `useOrchestrator` の
+  変更系は `mutate` を通り、**`finally` で必ず `refreshAll()` を呼ぶ**。
+  8 体を `orchestrator.updateAgent` で回すと**全状態の再同期が 8 回**走り、
+  失敗のたびにトーストが 8 枚出る。さらに `updateAgent` は `Promise<void>` で
+  **成否を捨てている**ので、個体ごとの成功/失敗が読めない。
+  一括は **`ipc.updateAgent` を直接呼び、個体ごとに `try/catch` し、
+  読み直しは最後に 1 回**（`orchestrator.refreshAll()`）。これが承認時の
+  注記 A（適用後に一覧の現在値表示も揃う）をそのまま満たす
 - **P3**: 台帳（README 日英の画面構成表・「何ができるか」表・CLAUDE.md の
   マイルストーン 7 の行）
 - **P4**: 実機確認
