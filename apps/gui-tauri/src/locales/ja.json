@@ -107,6 +107,12 @@
         "intro": "このアプリはタスクトレイに常駐しません。閉じるとサーヴァントも予定も止まります。",
         "checkbox": "閉じる前に確認ダイアログを出す",
         "offWarning": "確認なしの間は、閉じるボタンを 1 回押しただけで終了します。"
+      },
+      "presence": {
+        "heading": "入退室の通知",
+        "intro": "サーヴァントが稼働を開始・停止したことを会話ペインに出すかどうかです。表示だけの設定で、サーヴァントへ届く内容は変わりません。",
+        "checkbox": "入退室の通知を会話ペインに出す",
+        "failureNote": "失敗による停止は、この設定に関わらず常に出ます。サーヴァント一覧は今の状態しか示さないので、落ちた記録が残るのは会話ペインだけです。"
       }
     },
     "groupIntegration": "外部連携",
@@ -234,7 +240,8 @@
     "completeNoWorkDir": "このサーヴァントには作業フォルダが設定されていないため、ファイルを補完できません。",
     "completeLoading": "ファイルを探しています…",
     "completeFailed": "ファイル一覧を取得できませんでした。",
-    "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。"
+    "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。",
+    "clearView": "会話ペインの表示を消す（表示だけ。会話は残り、サーヴァントへ届く内容も変わりません）"
   },
   "bottomTabs": {
     "blackboard": "黒板",
@@ -325,7 +332,9 @@
     "copy": "本文をコピー",
     "empty": "まだ発話がありません。",
     "attachmentDeleted": "画像は保持期間を過ぎて削除されました",
-    "externalBadge": "外部"
+    "externalBadge": "外部",
+    "clearedNote": "これより前の {count} 件は表示していません（会話は残っています）",
+    "clearedRestore": "すべて表示"
   },
   "editor": {
     "mcpPlaceholder": "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。",

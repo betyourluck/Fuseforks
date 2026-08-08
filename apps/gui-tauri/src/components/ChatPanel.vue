@@ -34,10 +34,13 @@ import {
   type ToolRun,
 } from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
+import { isPresenceNotice } from "../lib/presenceNotice";
 import { toolLabel, type ToolLabel } from "../lib/toolLabel";
 import { renderMarkdownCached } from "../lib/markdown";
 import { askConfirm } from "../composables/useConfirm";
+import { useChatClear } from "../composables/useChatClear";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { useUiSettings } from "../composables/useUiSettings";
 import { readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
@@ -45,6 +48,8 @@ import type { AgentId, AgentMessage, Endpoint } from "../types";
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const { settings } = useUiSettings();
+const chatClear = useChatClear();
 
 const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
@@ -133,14 +138,46 @@ function iconFor(endpoint: Endpoint): string | null {
   }
 }
 
-const visible = computed(() => {
-  if (!filterAgentId.value) return state.messages;
-  return state.messages.filter(
-    (m) =>
+/**
+ * 表示クリアの境界（2026-08-08）。**この時刻以前は出さない。**
+ * 中身は消していないので、`state.messages` は素通しのまま。
+ */
+const clearedAt = computed(() => chatClear.clearedAt(state.currentSessionId));
+
+/** クリアで隠れている発話の数。0 なら案内の行ごと出さない。 */
+const hiddenByClear = computed(
+  () => state.messages.filter((m) => m.tsMs <= clearedAt.value).length,
+);
+
+const visible = computed(() =>
+  state.messages.filter((m) => {
+    // 3 つは直交する。絞り込みは宛先、クリアは時刻、入退室は種別で切る。
+    if (m.tsMs <= clearedAt.value) return false;
+    if (!settings.showPresenceNotices && isPresenceNotice(m)) return false;
+    if (!filterAgentId.value) return true;
+    return (
       (m.from.kind === "agent" && m.from.id === filterAgentId.value) ||
-      (m.to.kind === "agent" && m.to.id === filterAgentId.value),
+      (m.to.kind === "agent" && m.to.id === filterAgentId.value)
+    );
+  }),
+);
+
+/**
+ * 表示クリアを実行する。**境界は「いま見えている最後の行の時刻」** で、
+ * `Date.now()` は使わない — 壁時計だと押した瞬間に届いた発話が境界の
+ * どちら側に落ちるか実行のたびに変わる。
+ *
+ * 発話とツール実行の両方を見るのは、時間軸に両方が並んでいるから
+ * （片方だけで境界を決めると、もう片方が 1 件だけ残る）。
+ */
+function clearChatView(): void {
+  const last = Math.max(
+    0,
+    ...state.messages.map((m) => m.tsMs),
+    ...state.toolRuns.map((run) => run.tsMs),
   );
-});
+  if (last > 0) chatClear.clear(state.currentSessionId, last);
+}
 
 /**
  * 表示行。同報・fan-out で複製された発話は 1 行に畳まれる。
@@ -156,9 +193,13 @@ const rows = computed<ChatRow[]>(() => collapseRows(visible.value));
  * 「黙って副作用だけ起きた」状態と区別できるようにするための行。
  */
 const visibleToolRuns = computed(() =>
-  filterAgentId.value
-    ? state.toolRuns.filter((run) => run.agentId === filterAgentId.value)
-    : state.toolRuns,
+  state.toolRuns.filter(
+    (run) =>
+      // 発話と同じ境界で切る。片方だけ残ると、消したはずの周のツール行が
+      // 宙に浮いて並ぶ。
+      run.tsMs > clearedAt.value &&
+      (!filterAgentId.value || run.agentId === filterAgentId.value),
+  ),
 );
 
 /** 発話とツール実行を時系列に混ぜた 1 本の並び。規則は lib/chatRows.ts。 */
@@ -614,6 +655,25 @@ async function newChat(): Promise<void> {
       ref="scroller"
       class="min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
     >
+      <!--
+        表示クリアの案内。**消していないことを画面で言い、そこから戻せる。**
+        黙って消すと、押した人は会話ごと失われたと読む（実際は残っている）。
+        件数を出すのは「何がどれだけ隠れているか」が唯一の手掛かりだから。
+      -->
+      <p
+        v-if="hiddenByClear"
+        class="flex items-center justify-center gap-2 py-1 text-[10px] text-ink-dim"
+      >
+        <span>{{ $t("chat.clearedNote", { count: hiddenByClear }) }}</span>
+        <button
+          type="button"
+          class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+          @click="chatClear.restore(state.currentSessionId)"
+        >
+          {{ $t("chat.clearedRestore") }}
+        </button>
+      </p>
+
       <template v-for="(entry, index) in timeline" :key="entry.key">
       <!--
         ツール実行の 1 行。発話ではないので吹き出しにせず、淡色の細い行にする。
@@ -922,7 +982,9 @@ async function newChat(): Promise<void> {
       :blocked-reason="blockedReason"
       :agent-id="targetAgent?.id ?? null"
       :work-dir="targetAgent?.workDir ?? null"
+      :can-clear="timeline.length > 0"
       @send="send"
+      @clear-view="clearChatView"
     />
 
     <SessionDialog

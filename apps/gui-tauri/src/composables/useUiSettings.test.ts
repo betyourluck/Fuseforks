@@ -87,6 +87,7 @@ describe("この画面の設定", () => {
     expect(JSON.parse(storage.dump(STORAGE_KEY) ?? "{}")).toEqual({
       confirmEdgeDelete: false,
       confirmClose: true,
+      showPresenceNotices: true,
       theme: "dark",
     });
   });
@@ -110,6 +111,19 @@ describe("この画面の設定", () => {
     });
     const { useUiSettings } = await freshModule(storage);
     expect(useUiSettings().settings.confirmClose).toBe(false);
+  });
+
+  it("入退室の表示は既定 ON で、OFF を読み戻せる", async () => {
+    // 既定 ON = これまでどおり出す。隠すほうがオプトインなのは、
+    // 既定を変えると既存の村の画面が黙って変わるため。
+    const fresh = await freshModule(fakeStorage());
+    expect(fresh.useUiSettings().settings.showPresenceNotices).toBe(true);
+
+    const storage = fakeStorage({
+      [STORAGE_KEY]: JSON.stringify({ showPresenceNotices: false }),
+    });
+    const { useUiSettings } = await freshModule(storage);
+    expect(useUiSettings().settings.showPresenceNotices).toBe(false);
   });
 });
 

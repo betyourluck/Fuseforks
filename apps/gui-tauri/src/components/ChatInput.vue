@@ -55,10 +55,19 @@ const props = defineProps<{
    * （`AgentSnapshot.workDir`）。未設定なら IPC を呼ばずに済む（D3）。
    */
   workDir?: string | null;
+  /**
+   * 表示クリアを押せるか（出す行が 1 つでもあるか）。
+   *
+   * **判定はここでしない** — 何が見えているかを知っているのは会話ペインの側で、
+   * 入力欄は「押されたことを伝える」だけ。ここで数えると同じ規律が 2 箇所に生える。
+   */
+  canClear?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "send", text: string, attachments: PendingAttachment[]): void;
+  /** 表示クリア。**中身は消さない**ので、実際に隠すのは会話ペインの側。 */
+  (e: "clearView"): void;
 }>();
 
 const { t } = useI18n();
@@ -577,8 +586,35 @@ defineExpose({ fill });
       </button>
     </div>
 
-    <p class="mt-1 px-1 text-[10px] text-ink-dim">
-      {{ $t("chatInput.hint") }}
-    </p>
+    <div class="mt-1 flex items-center gap-2 px-1 text-[10px] text-ink-dim">
+      <p>{{ $t("chatInput.hint") }}</p>
+      <!--
+        表示クリア。**中身は消さない**ので `title` で言い切る（押した人が
+        「軽くなった」と読むのを防ぐ — モデルが読む量は 1 バイトも変わらない）。
+        アイコンは SVG。絵文字は環境で字形と大きさが変わり `currentColor` を
+        継承しないので、恒久要素には使わない（Spec 13 の規律）。
+      -->
+      <button
+        type="button"
+        class="ml-auto rounded p-0.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        :disabled="!canClear"
+        :title="$t('chatInput.clearView')"
+        :aria-label="$t('chatInput.clearView')"
+        @click="emit('clearView')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          class="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="m15 5 5 5-8 8H7l-4-4z" />
+          <path d="M21 20h-11" />
+        </svg>
+      </button>
+    </div>
   </div>
 </template>

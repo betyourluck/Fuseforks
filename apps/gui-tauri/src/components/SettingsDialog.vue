@@ -973,6 +973,23 @@ function selectPage(next: Page): void {
                 {{ $t("settings.messages.closeWindow.offWarning") }}
               </p>
             </section>
+            <!--
+              入退室の通知（2026-08-08）。**表示だけの設定**なので、
+              intro でモデルへ届く量が変わらないことを言い切る。
+            -->
+            <section class="space-y-1.5">
+              <h4 class="font-semibold text-ink">
+                {{ $t("settings.messages.presence.heading") }}
+              </h4>
+              <p class="text-ink-dim">{{ $t("settings.messages.presence.intro") }}</p>
+              <label class="flex items-center gap-2">
+                <input v-model="settings.showPresenceNotices" type="checkbox" />
+                <span>{{ $t("settings.messages.presence.checkbox") }}</span>
+              </label>
+              <p class="pl-6 text-ink-dim">
+                {{ $t("settings.messages.presence.failureNote") }}
+              </p>
+            </section>
             <p class="mt-2 text-ink-dim">{{ $t("settings.messages.instantNote") }}</p>
           </template>
         </div>

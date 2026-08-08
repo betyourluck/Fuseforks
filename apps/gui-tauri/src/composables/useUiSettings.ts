@@ -38,6 +38,23 @@ export interface UiSettings {
    */
   confirmClose: boolean;
   /**
+   * 入退室の通知（`… が稼働を開始しました` ほか）を会話ペインに出すか
+   * （2026-08-08 利用者要望）。
+   *
+   * **既定 ON = これまでどおり出す。** 隠すほうをオプトインにしたのは、
+   * 既定を変えると既存の村の画面が黙って変わるため。
+   *
+   * **これは表示だけの設定で、モデルへ届く量は 1 バイトも変わらない。**
+   * 入退室がプロンプトへ乗る経路は `compose_presence_notices`（コア）で、
+   * そちらは生ログの直近 `room_log_window` 件から System 発を拾う別の機構。
+   * 隠すと減ると読まれると誤解になるので、説明文でも言い切る。
+   *
+   * **失敗による停止は隠さない**（`presenceNotice.ts` の述語が外している）。
+   * カードは「いまの状態」しか示さないので、過去に落ちた事実の置き場が
+   * 会話ログしか無い。
+   */
+  showPresenceNotices: boolean;
+  /**
    * 配色（2026-08-05 利用者要望）。
    *
    * **既定は OS の設定から毎回決める。選ぶまで保存しない。** 起点は
@@ -65,6 +82,7 @@ function osTheme(): Theme {
 const DEFAULTS: UiSettings = {
   confirmEdgeDelete: true,
   confirmClose: true,
+  showPresenceNotices: true,
   // 参照時に評価するため、実体は load() で入れる（モジュール読み込み順に依存しない）。
   theme: "dark",
 };
@@ -87,6 +105,10 @@ function load(): UiSettings {
         typeof parsed.confirmClose === "boolean"
           ? parsed.confirmClose
           : DEFAULTS.confirmClose,
+      showPresenceNotices:
+        typeof parsed.showPresenceNotices === "boolean"
+          ? parsed.showPresenceNotices
+          : DEFAULTS.showPresenceNotices,
       // **保存済みが 2 値のどちらかでなければ OS へ戻す。** 既定値の定数へ
       // 落とすと、手編集で壊れた村が「利用者はダークを選んだ」状態になる。
       theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : osTheme(),

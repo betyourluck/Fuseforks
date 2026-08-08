@@ -107,6 +107,12 @@
         "intro": "This app does not stay in the tray. Closing it stops the servants and the schedules.",
         "checkbox": "Ask for confirmation before closing",
         "offWarning": "While confirmation is off, one click on the close button quits."
+      },
+      "presence": {
+        "heading": "Join and leave notices",
+        "intro": "Whether servants starting and stopping show up in the chat pane. This is a display setting only; it does not change what servants receive.",
+        "checkbox": "Show join and leave notices in the chat pane",
+        "failureNote": "Stops caused by a failure are always shown, whatever this is set to. The servant list only shows the current state, so the chat pane is the only place a past failure leaves a trace."
       }
     },
     "groupIntegration": "Integration",
@@ -234,7 +240,8 @@
     "completeNoWorkDir": "This servant has no work folder set, so file completion is unavailable.",
     "completeLoading": "Looking for files…",
     "completeFailed": "Could not load the file list.",
-    "completeTruncated": "The candidate list hit its limit. Some files are not shown here."
+    "completeTruncated": "The candidate list hit its limit. Some files are not shown here.",
+    "clearView": "Clear the chat view (display only — the conversation stays, and servants still receive it)"
   },
   "bottomTabs": {
     "blackboard": "Blackboard",
@@ -325,7 +332,9 @@
     "copy": "Copy text",
     "empty": "No messages yet.",
     "attachmentDeleted": "This image was deleted after its retention period",
-    "externalBadge": "external"
+    "externalBadge": "external",
+    "clearedNote": "Earlier messages hidden: {count} (the conversation is still there)",
+    "clearedRestore": "Show all"
   },
   "editor": {
     "mcpPlaceholder": "JSON in the same mcpServers format as Claude Desktop. Leave it empty if this servant has no dedicated MCP. Broken JSON cannot be saved.",

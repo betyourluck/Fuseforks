@@ -124,6 +124,7 @@ OutcastsConcordia/
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
             ├── composables/useOrchestrator.ts   Single store
             ├── composables/useUiSettings.ts     This-screen settings (stored on the device)
+            ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
@@ -177,7 +178,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Left | Agent list (status, uptime, tokens, startup) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
-| Right | Chat (speech bubble format) | Always visible |
+| Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) | Always visible |
 | Bottom | Status bar (**MCP server listening state**, date and time, version) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
@@ -1003,7 +1004,7 @@ Three things have since been added into this frame: the theme, your own name and
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited" |
 | Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default |
-| User Interface | **Theme** (Dark / Light) and message visibility — the latter is still just the confirmation dialog for **cutting a tie** |
+| User Interface | **Theme** (Dark / Light) and message visibility. The latter now has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
 
 - **Your name is both the display name on screen and the name servants read**
   ([Spec 19](specs/19_user-identity.md)). Leave it unset and the screen says "You" while
