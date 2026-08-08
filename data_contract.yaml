@@ -1681,8 +1681,23 @@ entities:
       保存順序は **承認 → schedules.json**。逆順だと schedules だけ書けて
       正当な probe が unapproved で due を失う。承認だけ書けた残骸は
       何も参照しない鍵で無害。
-      **掃除は保存のたび** — 現在の schedules.json のどの probe にも一致しない
-      承認を落とす。削除・書き換えに追従するので肥大化しない。
+      **掃除を通す IPC は create_schedule と delete_schedule の 2 つ**
+      (総数ではなく列挙 — 増えたら行を足すことが更新になる。failures.md #67)。
+      現在の schedules.json のどの probe にも一致しない承認を落とす。
+      **set_schedule_enabled は通さない** — 一時停止は「いまは動かさない」で
+      あって取り消しではなく、再開のたびに押し直させると D10 の目的を超える。
+      **delete_schedule の順序は schedules → 承認** (create と逆)。
+      create は「承認だけ書けた残骸は無害」なので承認が先だが、削除は
+      **予定だけ消えて承認が残るほうが危険**なので予定を先に消す。
+      **この掃除は肥大化対策であると同時に、承認を取り消す唯一の経路**
+      (破棄の導線がもう 1 つ = ファイルごと削除)。**取り消しの側が本体** —
+      予定を消したのに承認が端末に残ると、GUI を通らない経路 (配られた村・
+      手書きの schedules.json) で同じコマンド行が入ったとき人が押していないのに
+      走る。初版は create からしか呼んでおらず、契約と doc の
+      「保存のたび」「予定を消せば承認も消える」が実装と食い違っていた
+      (failures.md #88)。配線は tests/probe_approval_pruning.rs が
+      **commands.rs を走査して**留める (retain_for の単体テストは
+      呼ばれていることを保証しない)。
       **時計ベースの GC は作らない** (「30 日未参照」は判定に壁時計を持ち込み、
       テストが時刻に依存する)。
       **読めない probe_approvals.json は空として扱い (全 probe が unapproved =
@@ -1813,6 +1828,28 @@ entities:
       **fresh の切り替えはログに 1 行も出ない** (open_session は note! を持たず、
       session: の行は起動時だけ)。画面では分かるので実害は無いが、
       **ログだけでは手動の新規チャットと区別が付かない**。
+
+      **承認の実機観測 (2026-08-08 16:41〜17:01。検収 4 / 4')**。手で置いた
+      schedules.json 1 本が、**コマンド行を 1 文字も変えないまま 3 回状態を変えた**:
+        16:45:32 / 16:46:32  outcome=unapproved exit=- reason=- resolved=- stdout_chars=0
+        16:47:37〜16:53:13   outcome=no_match exit=0 resolved=…\Python313\python.exe stdout_chars=13
+        16:56:10〜16:59:10   outcome=unapproved   (village_id だけ差し替え)
+        17:00:57 / 17:01:27  outcome=no_match     (village_id を戻した)
+      - **走っていないことはマーカーで見る。** probe 行の存在だけでは
+        「実行してから結果を捨てた」実装と区別が付かない (rev1 査読)。
+        **コマンド本人にファイルを 1 行書かせる**と、無いことが走っていないこと
+        そのものになる。resolved=- も同じ向き (実行ファイルの解決すらしていない)
+      - **4' で probe_approvals.json は 1 バイトも変わらない。** 旧 salt の鍵は
+        残ったまま、新 salt の鍵が無いだけ。**承認は消えていない・届かなくなった** —
+        差し替え防御が「記録の消去」ではなく「鍵の付け替え」で成立している
+      - **再起動だけでは失効しない**対照を同じ走行で取ってある (16:51 の再起動後も
+        no_match が継続)。これが無いと 4' を「再起動したから」と読める
+      - **stdout_chars は \r を落とす前の生の長さ** (PROBE28-RAN\r\n = 13)
+      - **承認鍵は外から再計算して一致した** (canonical 形の裏取り)
+      - **前判定は宛先が稼働していないと到達しない。** Tick::Fire は probe より先に
+        mailboxes を見て、停止中は shared.record (会話ペイン) で消化して continue —
+        **note! ではないので concordia.log は完全に沈黙し、lastConsumedDueMs だけが
+        動く**。ログの沈黙には理由が 2 つある (未承認 / 未到達)
 
   # Spec 28 P0 で新設 (2026-08-08)。承認の束縛先として立てた識別子だが、
   # 用途を承認に限定しない形で 1 つの棚にしてある。

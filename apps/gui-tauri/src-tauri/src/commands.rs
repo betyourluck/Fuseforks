@@ -984,9 +984,28 @@ pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> C
 }
 
 /// 予定を削除する。復元はできない。
+///
+/// **前判定の承認も一緒に落とす。** ここが承認を取り消す唯一の経路で、
+/// 残すと「予定を消したのに端末には承認が残る」状態になる — そのあと
+/// **GUI を通らない経路**（配られた村・手書きの `schedules.json`）で同じ
+/// `command` / `args` / `cwd` が入ってくると、人が押していないのに走る。
+///
+/// **順序は schedules → 承認。** [`create_schedule`] と逆なのは、守る向きが
+/// 逆だから — あちらは「承認だけ書けた残骸は無害」なので承認を先に書く。
+/// こちらは**予定だけ消えて承認が残るほうが危険**なので、予定を消してから掃除する。
 #[tauri::command]
 pub async fn delete_schedule(state: State<'_, AppState>, id: String) -> CoreResult<()> {
-    state.orchestrator.delete_schedule(&id).await
+    state.orchestrator.delete_schedule(&id).await?;
+
+    // 掃除に失敗しても削除は成立しているので、警告に留める（create 側と同じ）。
+    let village_id = state.orchestrator.village_id().await;
+    if let Err(reason) = state
+        .probe_approvals
+        .retain_for(&state.orchestrator.schedules().await, &village_id)
+    {
+        agent_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
+    }
+    Ok(())
 }
 
 /// 予定の一時停止・再開。
