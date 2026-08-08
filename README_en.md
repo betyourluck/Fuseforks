@@ -1,16 +1,16 @@
 [日本語](README.md) | **English**
 
-# Outcasts Concordia
+# Outcasts Fuseforks
 
 **Keep a village of AI agents in your hands.**
 
-Outcasts Concordia is a desktop application for multi-agent orchestration, where multiple
+Outcasts Fuseforks is a desktop application for multi-agent orchestration, where multiple
 AI agents coordinate and converse with each other.
 Create agents, connect them, and talk to them — the village springs to life.
 They delegate, divide work, bundle results, and work on their own when the time comes.
 Everything is visible in a single screen across 3 panes.
 
-Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Concordia."
+Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
 
 ## What You Can Do
 
@@ -68,7 +68,7 @@ OutcastsConcordia/
 ├── Cargo.toml                       Cargo workspace (resolver 3 / edition 2024)
 ├── data_contract.yaml               Registry of domain nouns (change types here first)
 ├── failures.md                      Registry of pitfalls encountered (symptom → root cause → remedy → generalization)
-├── concordia_icon.png               Source image for the app icon (regenerate with the steps below)
+├── fuseforks_icon.png               Source image for the app icon (regenerate with the steps below)
 ├── specs/                           Specifications (filed → reviewed → rev iterated → Phase split for implementation)
 │
 ├── crates/
@@ -463,7 +463,7 @@ Only "scattering in parallel, waiting for all, and bundling" was missing from th
 | Fan-out of `transfer_to_*` | Parallel | **Scatters to the user** (does not converge) |
 | `plan` ([Spec 04](specs/04_plan-parallel-delegation.md)) | **Parallel** | **Bundled and returned to the requester** |
 
-There are three schools of thought on **who creates the process** — humans writing statically (Airflow style), high-level models creating dynamically, and emergence (no planning). Since Concordia's concept is "few settings and easy to understand," **the path of having humans write DAGs is not adopted**.
+There are three schools of thought on **who creates the process** — humans writing statically (Airflow style), high-level models creating dynamically, and emergence (no planning). Since Fuseforks's concept is "few settings and easy to understand," **the path of having humans write DAGs is not adopted**.
 
 What is adopted is **the model creates the plan, and the code guarantees the execution**. When a facilitator declares a wave of "which worker to ask for what," parallel delivery, convergence, timeout, aggregation, and fuel are deterministically handled on the code side. Seeing the wave results and issuing the next wave is again the model's job, and this round-trip serves as a dynamic alternative to multi-stage DAGs. Not having all stages declared in advance is because it breaks down when "the second wave depends on the results of the first wave" (which would merely reinvent cumulative errors of sequential improvisation in planning within the schema).
 
@@ -835,10 +835,32 @@ Changing `Protocol` updates the `base URL` default (`https://api.openai.com/v1` 
 
 Agent settings reside in the OS application-data area.
 
+> **Carrying over a village created before the rename (`Concordia` → `Fuseforks`)**
+>
+> `{app_data_dir}` is derived from the application identifier, so the rename changes
+> where the app looks. **Rename the whole old folder and it opens as before.**
+>
+> | OS | Old → New |
+> |---|---|
+> | Windows | `%APPDATA%\jp.outcasts.concordia\` → `%APPDATA%\jp.outcasts.fuseforks\` |
+> | macOS | `~/Library/Application Support/jp.outcasts.concordia/` → `.../jp.outcasts.fuseforks/` |
+> | Linux | `~/.local/share/jp.outcasts.concordia/` → `.../jp.outcasts.fuseforks/` |
+>
+> **Do not move `workspace/` alone.** Schedule-probe approvals
+> (`probe_approvals.json`) include `workspace/village_id` in their key, so approvals
+> left outside the folder all have to be granted again.
+>
+> **API keys must be re-entered.** The credential-store service name changes too, so
+> keys registered under the old name become invisible to the app (they are not
+> deleted; remove them with the OS credential manager if unwanted).
+>
+> **Theme, pane widths, and work-folder history reset to defaults** (the display
+> settings are stored under a renamed key). No village content lives there.
+
 ```text
 {app_data_dir}/workspace/
   world.json                  Agent definitions, model templates, roles, and connection-map coordinates
-  concordia.log               Diagnostic log (below; rotates one generation to concordia.log.old at 8 MB)
+  fuseforks.log               Diagnostic log (below; rotates one generation to fuseforks.log.old at 8 MB)
   schedules.json              Schedules (time-triggered requests; managed from "Schedule" in the title bar)
   village_id                  This village's identifier (Spec 28; a random value that binds pre-check approvals to this village)
   Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
@@ -876,7 +898,7 @@ the file itself into a list of commands that may run on this machine.
 ### Application Icon
 
 The executable and taskbar icons are the generated files under
-`apps/gui-tauri/src-tauri/icons/`; the **source image is `concordia_icon.png` at
+`apps/gui-tauri/src-tauri/icons/`; the **source image is `fuseforks_icon.png` at
 the repository root**. To regenerate, let the Tauri CLI do it (never export each
 size by hand).
 
@@ -884,7 +906,7 @@ size by hand).
 npx tauri icon <square PNG>
 ```
 
-- **The input must be square.** `concordia_icon.png` is 1245×1272, so it was
+- **The input must be square.** `fuseforks_icon.png` is 1245×1272, so it was
   padded with transparency to 1272×1272 — **not cropped** (cropping would lose
   27px of artwork)
 - The generated `icons/android/` and `icons/ios/` directories **can be deleted**:
@@ -900,7 +922,10 @@ reasons, so they are deliberately not coupled.
 
 ### Diagnostic Log
 
-Observation lines beginning with `[concordia]` go to both stderr and `workspace/concordia.log`. Stderr remains only in the terminal that launched `tauri dev`; **nobody could read it until a user pasted it**. Diagnosing a path that used 730,406 input tokens in one turn could not proceed until the log was copied manually (2026-07-31).
+Observation lines beginning with `[fuseforks]` go to both stderr and `workspace/fuseforks.log`. Stderr remains only in the terminal that launched `tauri dev`; **nobody could read it until a user pasted it**. Diagnosing a path that used 730,406 input tokens in one turn could not proceed until the log was copied manually (2026-07-31).
+
+The two lines below were **emitted before the rename (2026-07-31)**, so their prefix
+is still `[concordia]`. The format itself did not change across the rename.
 
 ```text
 2026-07-31 04:34:12.481 [concordia] tool: agent=agent round=7 name=file ok=true args_chars=118 body_chars=8304
@@ -992,7 +1017,7 @@ From "Schedule" in the title bar, you can register **requests that fire at speci
 
 **Known limitation**: duplicate firing is not completely prevented. A light guard avoids adding work while the previous firing is still running for that agent, but releases the guard when an event is lost. Leaving it closed would silently stop the schedule forever, which is worse than rare duplicate firing. Inbox capacity (64) is the final backpressure.
 
-Multiple instances are mutually exclusive: launching a second Concordia brings the existing window to the front and exits the second process. This structurally closes the path where two processes fire the same schedule at once, so it is implemented **before the scheduling mechanism itself**.
+Multiple instances are mutually exclusive: launching a second Fuseforks brings the existing window to the front and exits the second process. This structurally closes the path where two processes fire the same schedule at once, so it is implemented **before the scheduling mechanism itself**.
 
 #### Checking with a command before asking (pre-check)
 
@@ -1086,7 +1111,7 @@ other servants when that helps, and returns one answer.
 **This is a complement, not a general-purpose API.** For a single-shot inference the caller
 is faster and more accurate answering it themselves; this village earns its keep only on
 questions that need multiple viewpoints, divided investigation, and mutual verification.
-So **exactly one door opens** (the tool `ask_concordia`, whose only argument is the request
+So **exactly one door opens** (the tool `ask_fuseforks`, whose only argument is the request
 text), and neither the village roster nor its settings are visible from outside.
 
 **Disabled by default.** In a village that enables it:
@@ -1186,9 +1211,9 @@ Launch policy (decided 2026-07-30):
 
 - **Improvements should flow back** — if you distribute a version in which you
   have **modified files from this distribution**, you must publish the source of
-  **those files**. A better Concordia comes back to the original village.
+  **those files**. A better Fuseforks comes back to the original village.
 - **The obligation stops at the file boundary** — a Larger Work that merely
-  includes Concordia can be distributed **under your own terms** (§3.3), and
+  includes Fuseforks can be distributed **under your own terms** (§3.3), and
   files you write yourself are outside the scope from the start.
 - **Private modifications stay private** — using a modified copy on your own
   machine carries no obligation to publish anything. The obligation triggers

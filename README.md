@@ -1,16 +1,16 @@
 **日本語** | [English](README_en.md)
 
-# Outcasts Concordia
+# Outcasts Fuseforks
 
 **AI エージェントの村を、手元で飼う。**
 
-Outcasts Concordia は、複数の AI エージェントが相互に連携・会話する
+Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会話する
 マルチエージェント・オーケストレーションのデスクトップアプリです。
 エージェントを作り、繋ぎ、話しかけると、村が動き出す —
 委譲し、手分けし、束ね、時刻が来れば勝手に働く。
 その全部が 3 ペインの 1 画面に見えています。
 
-Rust（`agent-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Concordia」。
+Rust（`agent-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
 
 ## 何ができるか
 
@@ -69,7 +69,7 @@ OutcastsConcordia/
 ├── Cargo.toml                       Cargo ワークスペース（resolver 3 / edition 2024）
 ├── data_contract.yaml               ドメイン名詞の台帳（型を変えたら先にここ）
 ├── failures.md                      踏んだ罠の台帳（症状 → 真因 → 処方 → 一般化）
-├── concordia_icon.png               アプリアイコンの元画像（下記の手順で再生成する）
+├── fuseforks_icon.png               アプリアイコンの元画像（下記の手順で再生成する）
 ├── specs/                           仕様（起票 → 査読 → rev 改訂 → Phase 分割で実装）
 │
 ├── crates/
@@ -566,7 +566,7 @@ OpenAI Agents SDK の規則を採る。**ツール呼び出しの無いテキス
 | `plan`（[Spec 04](specs/04_plan-parallel-delegation.md)） | **並列** | **束ねて依頼主へ戻る** |
 
 工程を**誰が作るか**には 3 流派がある — 人間が静的に書く（Airflow 型）、
-高位モデルが動的に作る、創発（計画なし）。Concordia は「設定が少なくて
+高位モデルが動的に作る、創発（計画なし）。Fuseforks は「設定が少なくて
 分かりやすい」がコンセプトなので、**人間に DAG を書かせる道は採らない**。
 
 採るのは **計画はモデルが作り、実行の保証はコードが持つ**。進行役が
@@ -1200,10 +1200,32 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 
 エージェント設定は OS のアプリデータ領域に置かれる。
 
+> **改名（`Concordia` → `Fuseforks`）より前の村を引き継ぐ場合**
+>
+> `{app_data_dir}` はアプリの識別子から決まるので、改名でアプリが見に行く先が
+> 変わる。**旧いフォルダを丸ごとリネームすれば、そのまま開ける。**
+>
+> | OS | 旧 → 新 |
+> |---|---|
+> | Windows | `%APPDATA%\jp.outcasts.concordia\` → `%APPDATA%\jp.outcasts.fuseforks\` |
+> | macOS | `~/Library/Application Support/jp.outcasts.concordia/` → `.../jp.outcasts.fuseforks/` |
+> | Linux | `~/.local/share/jp.outcasts.concordia/` → `.../jp.outcasts.fuseforks/` |
+>
+> **`workspace/` だけを移さないこと。** 予定の前判定の承認
+> （`probe_approvals.json`）は `workspace/village_id` を鍵に含めており、
+> 承認だけがフォルダの外に残ると全部やり直しになる。
+>
+> **API キーは貼り直しが要る。** 資格情報ストアのサービス名も変わるため、
+> 旧い名前で登録した鍵はアプリから見えなくなる（消えてはいない。不要なら
+> OS の資格情報マネージャーで消す）。
+>
+> **テーマ・ペイン幅・作業フォルダの履歴は初期値へ戻る**（画面設定の保存先も
+> 名前が変わるため）。村の中身はここには入っていない。
+
 ```text
 {app_data_dir}/workspace/
   world.json                  エージェント定義・モデルテンプレート・役職・絆の座標
-  concordia.log               診断ログ（下記。8MB で concordia.log.old へ 1 世代だけ回る）
+  fuseforks.log               診断ログ（下記。8MB で fuseforks.log.old へ 1 世代だけ回る）
   schedules.json              予定（時刻で発火する依頼。タイトルバーの「予定」から管理）
   village_id                  この村の識別子（Spec 28。前判定の承認をこの村に束ねるための乱数）
   Ordinance.md                村の条例（全エージェント共通の規則。タイトルバーの「条例」から編集）
@@ -1241,14 +1263,14 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 ### アプリのアイコン
 
 実行ファイルとタスクバーのアイコンは `apps/gui-tauri/src-tauri/icons/` の生成物で、
-**元画像はリポジトリ直下の `concordia_icon.png`**。作り直すときは Tauri の CLI に
+**元画像はリポジトリ直下の `fuseforks_icon.png`**。作り直すときは Tauri の CLI に
 生成させる（サイズごとに手で書き出さない）。
 
 ```bash
 npx tauri icon <正方形の PNG>
 ```
 
-- **入力は正方形でなければならない。** `concordia_icon.png` は 1245×1272 なので、
+- **入力は正方形でなければならない。** `fuseforks_icon.png` は 1245×1272 なので、
   **切り取らず左右へ透明の余白を足して 1272×1272 にしてから**渡した
   （切ると絵が 27px 分失われる）
 - 生成される `icons/android/` と `icons/ios/` は**消してよい** — このアプリは
@@ -1262,10 +1284,13 @@ SVG）。アイコンを差し替えても画面の中は変わらない — 実
 
 ### 診断ログ
 
-`[concordia]` で始まる観測行は stderr と `workspace/concordia.log` の両方へ出る。
+`[fuseforks]` で始まる観測行は stderr と `workspace/fuseforks.log` の両方へ出る。
 stderr は `tauri dev` を起こした端末にしか残らず、**利用者が貼らない限り誰も
 読めなかった** — 1 ターンで入力 730,406 トークンを使った経路の診断が、
 ログを手で貼ってもらうまで進まなかった（2026-07-31）。
+
+下の 2 行は**改名前（2026-07-31）に実際に出た行**なので接頭辞が `[concordia]`
+のままになっている。書式は改名をまたいで変わっていない。
 
 ```text
 2026-07-31 04:34:12.481 [concordia] tool: agent=agent round=7 name=file ok=true args_chars=118 body_chars=8304
@@ -1387,7 +1412,7 @@ stderr は `tauri dev` を起こした端末にしか残らず、**利用者が�
 塞がったままにすると予定が二度と発火しない静かな停止になり、稀な二重発火より悪い。
 受信箱の容量（64）が最後の背圧になる。
 
-多重起動は排他される: 2 つ目の Concordia を起動すると、既存のウィンドウが
+多重起動は排他される: 2 つ目の Fuseforks を起動すると、既存のウィンドウが
 前面に出て 2 つ目は終了する。同じ予定を 2 つのプロセスが同時に発火させる
 経路を構造的に塞ぐため、**予定の機構より先に**入れてある。
 
@@ -1495,7 +1520,7 @@ Claude Code のような MCP クライアントから、**この村へ依頼を 
 
 **位置づけは「補完」で、汎用の API ではない。** 単発の推論なら呼ぶ側が自分で
 答えたほうが速く正確で、この村が効くのは複数の視点・分担調査・相互検証が
-要る問いに限られる。だから**開く扉は 1 枚だけ**（ツール `ask_concordia`、
+要る問いに限られる。だから**開く扉は 1 枚だけ**（ツール `ask_fuseforks`、
 引数は依頼文だけ）で、村の顔ぶれも設定も外からは見えない。
 
 **既定は無効。** 有効にした村では次のようになる。
@@ -1613,9 +1638,9 @@ Memoria サーバーを 1 エントリ書くだけでよい。
 **MPL-2.0**（[LICENSE](LICENSE)）。選定の意図（2026-08-05）:
 
 - **改良は還流してほしい** — この配布物に含まれるファイルを**書き換えて**
-  配る場合は、**そのファイルの**ソース公開が必要です。良くなった Concordia は、
+  配る場合は、**そのファイルの**ソース公開が必要です。良くなった Fuseforks は、
   元の村にも還ってくる形にしています
-- **義務はファイル単位で止まる** — Concordia を部品として組み込んだより大きな
+- **義務はファイル単位で止まる** — Fuseforks を部品として組み込んだより大きな
   成果物（MPL の言う Larger Work）は、**あなたの条件で配れます**（§3.3）。
   新しく書き足したファイルは最初から対象外です
 - **私的な改変は私的なまま** — 自分のマシンで自分用に改変して使う分には
