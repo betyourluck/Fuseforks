@@ -321,7 +321,38 @@ Rust から読めない場所に増える 1 本目の移行機構**になる。
 **`.v1` の版は上げない。** 版が意味するのは「保存形が変わったか」で、
 名前空間が変わったこととは別。上げると**同じ形のデータに 2 つの版番号が付く**。
 
-### D10. リポジトリ名 `OutcastsConcordia` は本 Spec では変えない（未決として残す）
+### D10. リポジトリ名も変える → **`Fuseforks`**（2026-08-09 利用者裁定）
+
+**`betyourluck/OutcastsConcordia` → `betyourluck/Fuseforks`。ローカルの作業
+フォルダも `D:\Github\Fuseforks` へ。**
+
+**`OutcastsFuseforks` にしない理由は将来の逃げ道。** `origin` は個人アカウントで
+**`Outcasts` は org ではない**（実測）。後から org `Outcasts` を作ったとき、
+`Fuseforks` は `Outcasts/Fuseforks` へそのまま移せるが、`OutcastsFuseforks` は
+`Outcasts/OutcastsFuseforks` になって名前が重なる。`Outcasts` は正式名・
+`jp.outcasts.fuseforks`・リリース名に既に載っており、スラッグにまで要らない。
+
+**手順（repo の外の作業。実行はこの順でないと壊れる）**
+
+1. GitHub で rename（旧 URL はリダイレクトが張られるが当てにしない）
+2. `git remote set-url origin https://github.com/betyourluck/Fuseforks.git`
+3. **作業フォルダのリネームは最後**。エディタ・端末・エージェントが旧パスを
+   掴んでいる間はできない
+4. **村の `work_dir` を全個体まとめて `D:\Github\Fuseforks` へ** —
+   **Spec 29 の一括切り替えの最初の実用例**になる。8〜9 体を 1 回で移せる
+5. **予定の前判定に repo 内の `cwd` を使っているものがあれば `unapproved` へ
+   落ちる** — 承認鍵は `SHA-256(canonical_json({args, command, cwd, villageId}))`
+   で、`cwd` が変われば別の鍵（Spec 28 D10）。再承認すればよい
+
+**作り直しが要るもの・要らないもの（実測 2026-08-09）**
+
+| | 実測 |
+|---|---|
+| `node_modules` | **絶対パスの埋め込みゼロ**。`.bin` のシム（`vite` / `.exe` / `.cmd` / `.bunx`）も vite の `deps/_metadata.json` も 0 件。**`bun install` は不要**（走らせても 2.5 秒で、`--frozen-lockfile` が lock の整合を見るので害はない） |
+| `target/` | **`target/debug/*.d` に旧パスが入る**（`concordia.d` / `concordia_lib.d` に各 1 件）。cargo が検出して**フルリビルド**する。壊れはしない |
+| `.git` | 作業ツリーの絶対パスを持たない。フォルダごと動かせる |
+
+### D10 の旧記述（起票時。**利用者裁定で覆った**）
 
 **フォルダ名も GitHub のリポジトリ名も `OutcastsConcordia` のまま。**
 README 日英のディレクトリ木の 1 行目に**事実として残る**。
@@ -392,15 +423,23 @@ identifier と同じ理由でここにも掛かる。
 
 ## P4 実測 — 残った `concordia` の内訳（凍結。2026-08-09）
 
-**`git grep -i concordia` は 289 → 85 出現**（本 Spec 自身の 67 出現を除いた数。
-本 Spec は旧名を論じる文書なので数えない）。**85 はすべて意図して残したもので、
-追従漏れはゼロ。** 次に誰かが grep して驚いたとき、この表と突き合わせる。
+**`git grep -i concordia` は 289 → 81 出現**（本 Spec 自身を除いた数。本 Spec は
+旧名を論じる文書なので数えない）。**81 はすべて意図して残したもので、追従漏れは
+ゼロ。** 次に誰かが grep して驚いたとき、この表と突き合わせる。
+
+**改名は 3 度目**（利用者 2026-08-09）— `ConcordiaOrchestrator` →
+`Outcasts Concordia` → `Outcasts Fuseforks`。**1 度目の化石はこの台帳に残っている**
+（`failures.md:236` の `ConcordiaOrcehstrator`、綴り誤りごと）。D6 で「記録だから
+触らない」と判定した 1 件が、そのまま前々回の改名の痕跡だった。
+**利用者の言葉「僕は慣れているよ」は、本 Spec がコストを重く見積もっていたことの
+訂正でもある** — `identifier` を変える判断も移行コードを書かない判断も、
+どちらも安全側に寄せすぎていた側から見直してちょうど良かった。
 
 | 種別 | 出現 | なぜ残すか |
 |---|---|---|
 | `concordia.log` / `[concordia]` | **52** | 当時のログの実物を指す。書き換えると台帳が嘘になる |
 | `jp.outcasts.concordia` | **6** | **移行手順が名指しする旧パス**（README 日英）。旧名でなければ手順が成立しない |
-| `OutcastsConcordia` | **4** | **実在するリポジトリのフォルダ名**（D10。未決） |
+| ~~`OutcastsConcordia`~~ | **0** | **D10 の裁定でゼロになった**（リポジトリも作業フォルダも `Fuseforks` へ）。README 日英のディレクトリ木は先に `Fuseforks/` へ書き換えてある — **フォルダの実リネームが済むまでの数時間だけ、木が現実より先行する** |
 | 利用者の言葉の引用 | 4 | `specs/07:38` / `specs/24:20` / `specs/25:19` / `CLAUDE.md:904`。**当時そう言った** |
 | 過去の観測・決定の記録 | 9 | `.concordia` 案の却下（2026-08-05）/ 実機の `D:\work\Concordia`（幻覚の実物）/ `ConcordiaOrcehstrator` の綴り誤り / `cargo license` の実測 2 件 / `concordia.exe` の操作表 / handoff 型の観察 / 請求ダッシュボードの観測 / 2026-07-31 の改名の記録 |
 | 改名そのものを語る文 | 10 | 本 Spec への参照、`data_contract` の凍結の改訂履歴、README の移行の見出し、`clock.test.ts` の注釈 |

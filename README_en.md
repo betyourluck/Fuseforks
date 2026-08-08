@@ -64,7 +64,7 @@ Don't add configuration to look businesslike.
 ## Directory Structure
 
 ```text
-OutcastsConcordia/
+Fuseforks/
 ├── Cargo.toml                       Cargo workspace (resolver 3 / edition 2024)
 ├── data_contract.yaml               Registry of domain nouns (change types here first)
 ├── failures.md                      Registry of pitfalls encountered (symptom → root cause → remedy → generalization)

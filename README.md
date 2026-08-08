@@ -65,7 +65,7 @@ Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
 ## ディレクトリ構造
 
 ```text
-OutcastsConcordia/
+Fuseforks/
 ├── Cargo.toml                       Cargo ワークスペース（resolver 3 / edition 2024）
 ├── data_contract.yaml               ドメイン名詞の台帳（型を変えたら先にここ）
 ├── failures.md                      踏んだ罠の台帳（症状 → 真因 → 処方 → 一般化）
