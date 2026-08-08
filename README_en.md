@@ -695,6 +695,11 @@ in the **agent list footer** sets the work folder of every checked servant in on
 - It doubles as **the first thing you do with a village someone shared with you**:
   work folders are absolute paths, so a shared village points everyone at paths
   that do not exist on your machine — this fixes all of them at once
+- **Recently used folders** appear as clickable entries (up to 8). A path is
+  remembered only when **an apply succeeded for at least one servant** — typing
+  it or picking it in the browser does not. **Folders currently in use are not
+  mixed in**: those are already listed just above, so the history covers
+  "nobody points there now, but I will go back"
 
 ### Safety Boundary for Editing Tools (`sd` / `yq`)
 

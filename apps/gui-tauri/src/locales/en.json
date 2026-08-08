@@ -838,6 +838,7 @@
     "apply": "Apply",
     "progress": "Applying… {done} / {total}",
     "resultOk": "{count} changed",
-    "resultFailed": "{count} failed"
+    "resultFailed": "{count} failed",
+    "historyHeading": "Recently used"
   }
 }

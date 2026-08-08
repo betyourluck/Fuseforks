@@ -21,12 +21,14 @@ import { applyWorkDir, canApply, type BatchSummary } from "../lib/batchWorkDir";
 import { formatError } from "../lib/errorText";
 import * as ipc from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { useWorkDirHistory } from "../composables/useWorkDirHistory";
 import type { AgentId } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const { history, remember } = useWorkDirHistory();
 
 /** 一覧の並びは左ペインと同じ（`inListOrder` の 1 実装を共有）。 */
 const agents = computed(() => inListOrder(state.agents));
@@ -96,6 +98,9 @@ async function apply(): Promise<void> {
         progress.value = [done, total];
       },
     );
+    // **1 体でも通ったときだけ覚える。** 全滅したパスを履歴へ残すと、
+    // 「使ったことがあるパス」という履歴の意味が崩れる。
+    if (summary.value.succeeded > 0) remember(trimmed);
   } finally {
     busy.value = false;
     progress.value = null;
@@ -182,6 +187,29 @@ async function apply(): Promise<void> {
           >
             {{ $t("batchWorkDir.browse") }}
           </button>
+        </div>
+
+        <!--
+          履歴（Spec 29 の追加）。**押せる行として出す** — datalist だと
+          入力欄に隠れて「履歴がある」ことが画面から読めず、要望
+          （毎回探す手間を消す）を満たさない。
+          **いま各個体が向いているフォルダは混ぜない** — それはすぐ上の一覧に
+          出ているので、混ぜると同じ情報が 2 箇所に並ぶ。
+        -->
+        <div v-if="history.length" class="space-y-0.5">
+          <p class="text-ink-dim">{{ $t("batchWorkDir.historyHeading") }}</p>
+          <div class="flex flex-wrap gap-1">
+            <button
+              v-for="entry in history"
+              :key="entry"
+              class="max-w-full truncate rounded border border-line px-1.5 py-0.5 font-mono text-ink-dim hover:border-accent hover:text-accent disabled:opacity-40"
+              :disabled="busy"
+              :title="entry"
+              @click="path = entry"
+            >
+              {{ entry }}
+            </button>
+          </div>
         </div>
 
         <div class="flex items-center gap-2">

@@ -838,6 +838,7 @@
     "apply": "適用",
     "progress": "適用中… {done} / {total}",
     "resultOk": "変更 {count} 体",
-    "resultFailed": "失敗 {count} 体"
+    "resultFailed": "失敗 {count} 体",
+    "historyHeading": "最近使ったフォルダ"
   }
 }
