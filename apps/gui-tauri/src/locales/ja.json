@@ -166,9 +166,13 @@
   },
   "grounding": {
     "heading": "グラウンディング",
-    "engine": "Google 検索",
+    "engine": {
+      "google": "Google 検索",
+      "xai": "Live Search（xAI）"
+    },
     "queries": "検索語",
-    "sourcesMissing": "参照元は返ってきていません（本文に URL があっても、出典としては確認できていません）。"
+    "sourcesMissing": "参照元は返ってきていません（本文に URL があっても、出典としては確認できていません）。",
+    "sources": "参照元 {count} 件"
   },
   "labels": {
     "status": {

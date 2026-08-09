@@ -322,11 +322,19 @@ export interface GroundingSource {
  * **`sources` が空であることが「出典は存在しない」の判定**であり、
  * モデルが本文で語る出典を信じない根拠になる。表示層はこの区別を潰さない。
  */
+/**
+ * 接地の機構（Spec 31 D5）。閉じた列挙。
+ *
+ * `engine` 欄を持たない古い記録は `google` として読む（Spec 31 以前の接地は
+ * すべて Spec 05 の Google 検索由来。コア側の serde 既定と同じ向き）。
+ */
+export type GroundingEngine = "google" | "xai";
+
 export interface Grounding {
   queries: string[];
   sources: GroundingSource[];
-  /** どの機構が接地したか（Spec 31 D5）。閉じた列挙。表示のエンジン名はここから辞書で引く。 */
-  engine: "google" | "xai";
+  /** どの機構が接地したか（Spec 31 D5）。表示のエンジン名はここから辞書で引く。 */
+  engine: GroundingEngine;
 }
 
 /**

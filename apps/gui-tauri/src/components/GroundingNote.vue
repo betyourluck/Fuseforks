@@ -32,7 +32,10 @@ function open(uri: string): void {
   >
     <p class="flex flex-wrap items-baseline gap-1">
       <span class="font-medium text-ink">{{ $t("grounding.heading") }}</span>
-      <span>{{ $t("grounding.engine") }}</span>
+      <!-- エンジン名は記録から引く。固定文にすると、Google 以外で接地した
+           発話が「Google 検索」と名乗る（実機で Grok の X 検索が誤って
+           そう出ていた）。 -->
+      <span>{{ $t(`grounding.engine.${view.engine}`) }}</span>
     </p>
 
     <p v-if="view.queries.length" class="mt-0.5 wrap-anywhere">
@@ -50,17 +53,24 @@ function open(uri: string): void {
     <p v-if="view.sourcesMissing" class="mt-0.5">
       {{ $t("grounding.sourcesMissing") }}
     </p>
-    <ul v-else class="mt-0.5 space-y-0.5">
-      <li v-for="source in view.sources" :key="source.uri">
+    <!--
+      **1 行ずつではなく横へ流す。** X 検索は同じホストの投稿を数十件返すので
+      （実機で 45 件）、縦に積むと来歴だけで画面を埋める。件数を先に出すのは、
+      読む前に規模が分かるようにするため — 打ち切りはしない（黙って減らすと
+      「これで全部」と読まれる）。
+    -->
+    <p v-else class="mt-0.5 wrap-anywhere">
+      <span class="mr-1">{{ $t("grounding.sources", { count: view.sources.length }) }}</span>
+      <template v-for="(source, index) in view.sources" :key="source.uri">
         <button
           type="button"
-          class="text-left wrap-anywhere text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid"
+          class="text-left text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid"
           :title="source.uri"
           @click="open(source.uri)"
         >
-          {{ sourceLabel(source) }}
-        </button>
-      </li>
-    </ul>
+          {{ sourceLabel(source) }}</button
+        ><span v-if="index < view.sources.length - 1" class="mr-1">,</span>
+      </template>
+    </p>
   </div>
 </template>

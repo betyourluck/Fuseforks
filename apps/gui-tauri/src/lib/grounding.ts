@@ -13,10 +13,18 @@
  * ChatPanel から切り出した純関数。表示規則はコンポーネントの外でテストする。
  */
 
-import type { AgentMessage, GroundingSource } from "../types";
+import type { AgentMessage, GroundingEngine, GroundingSource } from "../types";
 
 /** 表示に必要な形へ畳んだ接地の来歴。 */
 export interface GroundingView {
+  /**
+   * どの機構が接地したか。表示名はここから辞書で引く（Spec 31 D5）。
+   *
+   * **欄を持たない古い発話は `google` として読む** — `engine` は Spec 31 で
+   * 足した欄で、それ以前の記録はすべて Spec 05 の Google 検索由来。
+   * コア側の serde 既定と同じ向きに揃えてある。
+   */
+  engine: GroundingEngine;
   /** モデルが実際に投げた検索語。 */
   queries: string[];
   /** 参照元。`sourcesMissing` が真ならここは空。 */
@@ -41,6 +49,7 @@ export function groundingView(message: AgentMessage): GroundingView | null {
   if (!queries.length && !sources.length) return null;
 
   return {
+    engine: grounding.engine ?? "google",
     queries,
     sources,
     sourcesMissing: sources.length === 0,
@@ -60,15 +69,38 @@ export function isOpenableUrl(uri: string): boolean {
 }
 
 /**
- * 参照元の表示ラベル。表題が空なら URL のホスト名で代用する。
+ * 参照元の表示ラベル。表題が空なら URL から作る。
  *
  * 空文字のリンクは押せる場所が消えるので、必ず何かを返す。
+ *
+ * # なぜホスト名だけでは足りないか
+ *
+ * xAI の X 検索は**同じホストの投稿を数十件**返す（実機で 45 件。すべて
+ * `x.com`）。ホスト名で代用すると、並んだ全部が同じ文字列になり
+ * **リンクの区別が付かない**。X の status URL は投稿者を経路に持っているので、
+ * そこを取って `@handle` を出す。
+ *
+ * **投稿者名は URL から読んだ値であって、本人性の検証ではない。**
+ * それでも「どのアカウントの投稿か」は URL の一部として確実に正しく、
+ * 45 個の同じ文字列よりは判断材料になる。
  */
 export function sourceLabel(source: GroundingSource): string {
   if (source.title.trim()) return source.title;
   try {
-    return new URL(source.uri).hostname;
+    const url = new URL(source.uri);
+    const handle = xHandle(url);
+    return handle ?? url.hostname;
   } catch {
     return source.uri;
   }
+}
+
+/** X の投稿 URL から `@handle` を取る。投稿 URL でなければ `null`。 */
+function xHandle(url: URL): string | null {
+  if (!/^(www\.)?(x|twitter)\.com$/i.test(url.hostname)) return null;
+  // /{handle}/status/{id} だけを投稿と見なす。プロフィールや検索結果の URL を
+  // 投稿として扱うと、押した先が想像と違うものになる。
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[1].toLowerCase() !== "status") return null;
+  return `@${parts[0]}`;
 }

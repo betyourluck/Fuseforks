@@ -79,3 +79,59 @@ describe("sourceLabel", () => {
     expect(sourceLabel({ uri: "??", title: "" })).toBe("??");
   });
 });
+
+describe("sourceLabel", () => {
+  const src = (uri: string, title = "") => ({ uri, title });
+
+  it("表題があればそれを使う", () => {
+    expect(sourceLabel(src("https://techcrunch.com/a", "TechCrunch"))).toBe(
+      "TechCrunch",
+    );
+  });
+
+  it("表題が無ければホスト名で代用する", () => {
+    expect(sourceLabel(src("https://techcrunch.com/2026/08/08/x"))).toBe(
+      "techcrunch.com",
+    );
+  });
+
+  // X 検索は同じホストの投稿を数十件返す（実機 45 件）。ホスト名で代用すると
+  // 並んだ全部が "x.com" になり、リンクの区別が付かない。
+  it("X の投稿は投稿者で見分けられる", () => {
+    expect(
+      sourceLabel(src("https://x.com/hayakawagomi/status/2086373869552845150")),
+    ).toBe("@hayakawagomi");
+    expect(sourceLabel(src("https://twitter.com/someone/status/1"))).toBe(
+      "@someone",
+    );
+  });
+
+  // プロフィールや検索結果を投稿として扱うと、押した先が想像と違うものになる。
+  it("投稿以外の x.com はホスト名のまま", () => {
+    expect(sourceLabel(src("https://x.com/hayakawagomi"))).toBe("x.com");
+    expect(sourceLabel(src("https://x.com/search?q=ai"))).toBe("x.com");
+  });
+
+  // 空文字を返すとリンクの押せる場所が消える。
+  it("URL として読めなくても必ず何かを返す", () => {
+    expect(sourceLabel(src("not a url"))).toBe("not a url");
+  });
+});
+
+describe("groundingView の engine", () => {
+  it("記録の engine をそのまま運ぶ", () => {
+    const view = groundingView(
+      message({ engine: "xai", queries: ["x"], sources: [] }),
+    );
+    expect(view?.engine).toBe("xai");
+  });
+
+  // engine は Spec 31 で足した欄。それ以前の記録はすべて Google 検索由来で、
+  // コア側の serde 既定と同じ向きに揃える。
+  it("欄を持たない古い記録は google として読む", () => {
+    // redb に保存済みの発話は engine を持たない。型では必須だが、
+    // ワイヤから来る実データには欠けうる — その形をそのまま作って読ませる。
+    const legacy = { queries: ["x"], sources: [] } as unknown as Grounding;
+    expect(groundingView(message(legacy))?.engine).toBe("google");
+  });
+});

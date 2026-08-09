@@ -166,9 +166,13 @@
   },
   "grounding": {
     "heading": "Grounding",
-    "engine": "Google Search",
+    "engine": {
+      "google": "Google Search",
+      "xai": "Live Search (xAI)"
+    },
     "queries": "Queries",
-    "sourcesMissing": "No sources were returned (URLs in the reply are not confirmed citations)."
+    "sourcesMissing": "No sources were returned (URLs in the reply are not confirmed citations).",
+    "sources": "Sources ({count})"
   },
   "labels": {
     "status": {
