@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { groundingView, isOpenableUrl, sourceLabel } from "./grounding";
+import {
+  groundingView,
+  isOpenableUrl,
+  sourceIcon,
+  sourceLabel,
+} from "./grounding";
 import type { AgentMessage, Grounding } from "../types";
 
 function message(grounding?: Grounding): AgentMessage {
@@ -133,5 +138,30 @@ describe("groundingView の engine", () => {
     // ワイヤから来る実データには欠けうる — その形をそのまま作って読ませる。
     const legacy = { queries: ["x"], sources: [] } as unknown as Grounding;
     expect(groundingView(message(legacy))?.engine).toBe("google");
+  });
+});
+
+describe("sourceIcon", () => {
+  const src = (uri: string, title = "") => ({ uri, title });
+
+  it("X の投稿にだけ付く", () => {
+    expect(sourceIcon(src("https://x.com/someone/status/1"))).toBe("x");
+    expect(sourceIcon(src("https://twitter.com/someone/status/1"))).toBe("x");
+  });
+
+  // ラベルが x.com のままの URL にアイコンを添えると [X] x.com になり、
+  // 同じことを 2 回言う。アイコンが意味を足すのは @handle のときだけ。
+  it("投稿以外の x.com には付かない", () => {
+    expect(sourceIcon(src("https://x.com/someone"))).toBeNull();
+    expect(sourceIcon(src("https://x.com/search?q=ai"))).toBeNull();
+  });
+
+  it("表題を持つ参照元には付かない（表題が何のページか語っている）", () => {
+    expect(sourceIcon(src("https://x.com/a/status/1", "ある投稿"))).toBeNull();
+  });
+
+  it("X 以外には付かない", () => {
+    expect(sourceIcon(src("https://techcrunch.com/a"))).toBeNull();
+    expect(sourceIcon(src("not a url"))).toBeNull();
   });
 });

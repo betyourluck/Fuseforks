@@ -16,7 +16,12 @@
  */
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-import { isOpenableUrl, sourceLabel, type GroundingView } from "../lib/grounding";
+import {
+  isOpenableUrl,
+  sourceIcon,
+  sourceLabel,
+  type GroundingView,
+} from "../lib/grounding";
 
 defineProps<{ view: GroundingView }>();
 
@@ -68,7 +73,24 @@ function open(uri: string): void {
           :title="source.uri"
           @click="open(source.uri)"
         >
-          {{ sourceLabel(source) }}</button
+          <!--
+            X の投稿だけに付くマーク。**`fill` は `currentColor`** —
+            原本は fill 指定が無く、SVG の既定である黒になる。ダーク背景では
+            見えず、テーマにも追従しない（Auto Fit のアイコンで踏んだのと
+            同じ形。もらった図形もそのままでは置かない）。
+          -->
+          <svg
+            v-if="sourceIcon(source) === 'x'"
+            class="mr-0.5 inline-block size-2.5 align-[-0.1em]"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+            />
+          </svg>{{ sourceLabel(source) }}</button
         ><span v-if="index < view.sources.length - 1" class="mr-1">,</span>
       </template>
     </p>

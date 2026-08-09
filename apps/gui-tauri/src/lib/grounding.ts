@@ -95,6 +95,23 @@ export function sourceLabel(source: GroundingSource): string {
   }
 }
 
+/**
+ * 参照元に添えるアイコンの種別。無ければ `null`。
+ *
+ * **返すのは X の投稿だけ。** プロフィールや検索結果の x.com には付けない —
+ * それらのラベルはホスト名（`x.com`）のままなので、アイコンを添えると
+ * `[X] x.com` になって同じことを 2 回言う。アイコンが意味を足すのは、
+ * ラベルが `@handle` になっていて**ホストがどこか読めない**ときだけ。
+ */
+export function sourceIcon(source: GroundingSource): "x" | null {
+  if (source.title.trim()) return null;
+  try {
+    return xHandle(new URL(source.uri)) ? "x" : null;
+  } catch {
+    return null;
+  }
+}
+
 /** X の投稿 URL から `@handle` を取る。投稿 URL でなければ `null`。 */
 function xHandle(url: URL): string | null {
   if (!/^(www\.)?(x|twitter)\.com$/i.test(url.hostname)) return null;
