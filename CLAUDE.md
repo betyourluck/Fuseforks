@@ -945,6 +945,9 @@ OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。�
   1 つ目が最も安く 3 社へ同時に効く。Live Search の 1 手目は実装ではなく
   **Grok へ 1 回投げて citations の有無を見ること**（Spec 05 の `sources` 空の前例。
   返らなければ Gemini への受け渡し物が無く 2 段検証が成立しない）。
+  **→ 観測済み（2026-08-09。citations は返る = 判定 A。ただし legacy は 410 で
+  死んでおり採用の前提は `/v1/responses` の 4 本目のワイヤ。詳細は
+  「最優先は xAI の Live Search」の節の実測ブロックが正）**。
   多モーダルは Spec 23 D8（画像は互換経路のみ）を覆す変更で、
   **D1「渡るのは 1 ターンだけ」は据え置きが効く**（画像 1 枚 14,336〜38,272
   トークンの実測から、音声・動画は桁が上がる）
@@ -981,9 +984,37 @@ OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。�
 **上の分類で Live Search を「実質は遠隔のツール」に置いたのは誤りの可能性が高い。**
 xAI の Live Search は `/v1/chat/completions` の**リクエスト・パラメータ**で、
 応答に citations が乗る形だと理解している = **「ワイヤの形が変わる」側**で、
-**この村が既に 2 つ通した棚**。**ただし一次資料に当てていない。着手時の最初の確認点。**
+**この村が既に 2 つ通した棚**。~~ただし一次資料に当てていない。着手時の最初の確認点。~~
 **接続経路は既にある** — Spec 23 P0 で xAI に画像を通した実測が残っている
 （公式文書が jpg/png のみと書いてあるのに WebP が通った）。
+
+**↑ この理解は 2026-08-09 の実測で覆った。probe 4 発の観測が正**（使い捨て
+script・実鍵・grok-4.5。予測を先に書いてから観測）:
+
+- **legacy の `search_parameters` は HTTP 410 Gone** —
+  `"Live search is deprecated. Please switch to the Agent Tools API"` と
+  **サーバー自身が後継を名指しして断る**。「リクエスト・パラメータ」の理解は過去形
+- **現行は `/v1/responses`（Responses API）のサーバー側ツール
+  `{"type": "web_search"}` / `{"type": "x_search"}`**。つまり
+  **採用の前提 = 4 本目のワイヤ**で、OpenAI の節の「思考の復活と web 検索が
+  同じ 1 本で解ける」の**同じ 1 本に xAI も合流した**（回収先が 2 社 4 機能）
+- **citations は返る（判定 A）。** 場所は応答トップの `citations` 欄ではなく
+  **本文 `output_text` への `annotations`（`type: "url_citation"`）**。実物は
+  TechCrunch の日付つき記事 URL。**ただし `start_index` / `end_index` が全部 0**
+  = 主張単位ではなくメッセージ単位。rapidtables や YouTube も混ざるので
+  **出典の選別はこちら側の仕事**
+- **`x_search` は X の実 status URL + 反応の実数を返す**（いいね・リポスト・
+  ブックマーク数が本文に乗る。inline の `[[1]](url)` 形式でも来る）。
+  「実在するかしないかで検証できる」の受け渡し物が実物で確認できた
+- **decode の罠 2 つ**: `x_search` の output 種別は **`custom_tool_call`**
+  （`web_search` は `web_search_call` — 型名が揃っていない）/
+  `output` は `reasoning` × N が interleave し **thinking トークンがこの経路では
+  流れる**（web probe で reasoning 1,075 tokens）
+- **コストの形**: 検索結果がプロンプトへ注入されるので入力が膨らむ
+  （web probe = input 98,213 うち cached 62,720。`usage` に
+  `cost_in_usd_ticks` / `server_side_tool_usage_details` が生える）。
+  1 回目の x_search は 180 秒 timeout 内に ConnectionReset で落ち、
+  **問いを小さくした再試行で通った** — 検索の重い問いは分単位を見込む
 
 **採否を決めるのは「動くか」ではなく「citations が本当に返るか」。**
 **Spec 05 の Google Search Grounding は、実装が完走したのに `sources` が空だった** —
