@@ -75,21 +75,24 @@ export function isOpenableUrl(uri: string): boolean {
  *
  * # なぜホスト名だけでは足りないか
  *
- * xAI の X 検索は**同じホストの投稿を数十件**返す（実機で 45 件。すべて
- * `x.com`）。ホスト名で代用すると、並んだ全部が同じ文字列になり
- * **リンクの区別が付かない**。X の status URL は投稿者を経路に持っているので、
- * そこを取って `@handle` を出す。
+ * xAI の X 検索は**同じホストの投稿を数十件**返す（実機で 45 件・77 件。
+ * すべて `x.com`）。ホスト名で代用すると、並んだ全部が同じ文字列になり
+ * **リンクの区別が付かない**。
  *
- * **投稿者名は URL から読んだ値であって、本人性の検証ではない。**
- * それでも「どのアカウントの投稿か」は URL の一部として確実に正しく、
- * 45 個の同じ文字列よりは判断材料になる。
+ * X の status URL は 2 つの形を取る:
+ * - `/{handle}/status/{id}` — 投稿者が読める。`@handle` を出す
+ * - `/{i}/status/{id}` — **X の匿名形式。`i` は投稿者ではない**。
+ *   実測ではこちらが支配的で、77 件すべてがこの形だった（2026-08-10）。
+ *   投稿 ID の末尾を出して区別する
+ *
+ * **どちらも URL から読んだ値であって、本人性の検証ではない。**
+ * それでも URL の一部として確実に正しく、同じ文字列が並ぶよりは判断材料になる。
  */
 export function sourceLabel(source: GroundingSource): string {
   if (source.title.trim()) return source.title;
   try {
     const url = new URL(source.uri);
-    const handle = xHandle(url);
-    return handle ?? url.hostname;
+    return xPostLabel(url) ?? url.hostname;
   } catch {
     return source.uri;
   }
@@ -106,18 +109,40 @@ export function sourceLabel(source: GroundingSource): string {
 export function sourceIcon(source: GroundingSource): "x" | null {
   if (source.title.trim()) return null;
   try {
-    return xHandle(new URL(source.uri)) ? "x" : null;
+    return xPost(new URL(source.uri)) ? "x" : null;
   } catch {
     return null;
   }
 }
 
-/** X の投稿 URL から `@handle` を取る。投稿 URL でなければ `null`。 */
-function xHandle(url: URL): string | null {
+/**
+ * X の投稿 URL を `/{先頭}/status/{id}` に分解する。投稿 URL でなければ `null`。
+ *
+ * プロフィールや検索結果の URL を投稿として扱わないのは、押した先が
+ * 想像と違うものになるため。
+ */
+function xPost(url: URL): { head: string; id: string } | null {
   if (!/^(www\.)?(x|twitter)\.com$/i.test(url.hostname)) return null;
-  // /{handle}/status/{id} だけを投稿と見なす。プロフィールや検索結果の URL を
-  // 投稿として扱うと、押した先が想像と違うものになる。
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts.length < 3 || parts[1].toLowerCase() !== "status") return null;
-  return `@${parts[0]}`;
+  if (!/^\d+$/.test(parts[2])) return null;
+  return { head: parts[0], id: parts[2] };
+}
+
+/**
+ * X の投稿の表示ラベル。
+ *
+ * **`i` はハンドルではない** — `x.com/i/status/{id}` は X の匿名形式で、
+ * `@i` と出すと全件が同じ嘘のアカウント名になる（実機で 77 件すべてが
+ * この形だった）。その場合は投稿 ID の末尾で区別する。
+ */
+function xPostLabel(url: URL): string | null {
+  const post = xPost(url);
+  if (!post) return null;
+  if (post.head.toLowerCase() === "i") {
+    // 先頭を省いたことを `…` で示す。全長を出しても人には読めず、
+    // 短くしたことを黙ると ID そのものだと読まれる。
+    return `…${post.id.slice(-6)}`;
+  }
+  return `@${post.head}`;
 }

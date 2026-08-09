@@ -106,9 +106,25 @@ describe("sourceLabel", () => {
     expect(
       sourceLabel(src("https://x.com/hayakawagomi/status/2086373869552845150")),
     ).toBe("@hayakawagomi");
-    expect(sourceLabel(src("https://twitter.com/someone/status/1"))).toBe(
+    expect(sourceLabel(src("https://twitter.com/someone/status/12"))).toBe(
       "@someone",
     );
+  });
+
+  // x.com/i/status/{id} は X の匿名形式で、i は投稿者ではない。
+  // @i と出すと全件が同じ嘘のアカウント名になる（実機で 77 件すべてこの形）。
+  it("匿名形式は @i ではなく投稿 ID の末尾で区別する", () => {
+    expect(sourceLabel(src("https://x.com/i/status/2017492617358151695"))).toBe(
+      "…151695",
+    );
+    // 別の投稿は別のラベルになる（区別が付くことがこの表示の存在理由）。
+    expect(sourceLabel(src("https://x.com/i/status/2017492617358999999"))).toBe(
+      "…999999",
+    );
+  });
+
+  it("status の後ろが数字でなければ投稿として扱わない", () => {
+    expect(sourceLabel(src("https://x.com/i/status/foo"))).toBe("x.com");
   });
 
   // プロフィールや検索結果を投稿として扱うと、押した先が想像と違うものになる。
@@ -147,6 +163,8 @@ describe("sourceIcon", () => {
   it("X の投稿にだけ付く", () => {
     expect(sourceIcon(src("https://x.com/someone/status/1"))).toBe("x");
     expect(sourceIcon(src("https://twitter.com/someone/status/1"))).toBe("x");
+    // 匿名形式にも付く（ラベルが投稿 ID なので、ホストがどこか読めない）。
+    expect(sourceIcon(src("https://x.com/i/status/20174926173581"))).toBe("x");
   });
 
   // ラベルが x.com のままの URL にアイコンを添えると [X] x.com になり、
