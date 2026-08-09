@@ -51,6 +51,8 @@ Fuseforks/
 │       │       ├── wire.rs          Provider raw JSON (single source of truth)
 │       │       ├── openai_compat.rs OpenAI-compatible adapter (encode/decode pure functions)
 │       │       ├── anthropic.rs     Anthropic Messages API adapter
+│       │       ├── gemini.rs        Gemini native adapter (Google Search grounding)
+│       │       ├── xai_responses.rs xAI Responses adapter (Grok Live Search)
 │       │       ├── client.rs        HTTP core (URL / headers / retry)
 │       │       └── error.rs         LlmError (retry decision axis)
 │       ├── tests/orchestrator.rs    Integration tests (no network required)
@@ -735,6 +737,58 @@ Provenance flows **only to the presentation layer**. It never returns to the mod
 
 Schemas for built-in and MCP tools are filtered by adapters to retain **only keys Gemini accepts**. Gemini's `parameters` are a subset of OpenAPI 3.0, not JSON Schema; sending `$schema` or `additionalProperties` returns 400. This is an allowlist, not a denylist, because **MCP tool schemas are written by connected servers and cannot be constrained internally**.
 
+---
+
+### Grok Live Search ([Spec 31](specs/31_grok-live-search.md))
+
+Set the model template's **protocol to "xAI native (Responses)"** and the
+**Live Search (web)** and **Live Search (X)** switches appear under
+"Vendor-specific skills". A model with either checked searches before it answers.
+
+**Using a fourth wire at `/v1/responses` is a constraint, not a preference.**
+The older `search_parameters` on `/v1/chat/completions` now returns **HTTP 410
+Gone**, with the server itself naming its successor API (measured 2026-08-09).
+Function calling alone works fine on the OpenAI-compatible endpoint, so existing
+Grok agents **keep running on the compatible path until you switch the protocol
+explicitly** — it is never auto-detected, so a village you did not touch never
+silently moves to another wire (the same discipline as Gemini).
+
+**web and X are separate switches.** They are separate tools with separate
+billing counters and separate response item types; folding them into one would
+mean a village that only wants web search also opens the X surface.
+
+> **Sources come back the opposite way from Google Search.** Gemini returns no
+> source URLs; Grok **does** — for X search they are the post URLs themselves,
+> so a human can check whether they exist.
+>
+> But what comes back is the fact that **something was posted, not that it is
+> true**. Search result text is injected into the prompt on xAI's side, so
+> **the village's tool layer never sees it** — and since anyone can post on X,
+> this is also a path for an attacker's text to enter a prompt. The remedy is
+> operational rather than mechanical: **do not let the agent that fetched
+> something judge whether it is true** (the ordinance's verification step
+> applies unchanged).
+
+Provenance uses the same container as Google Search, and the **engine name is
+read from the record** (a fixed string would make anything grounded by another
+engine claim to be "Google Search"). X posts carry a post ID in the URL, so
+**sources flow horizontally rather than one per line, distinguished by the X
+mark and the tail of the ID** — one search returns dozens (45 and 77 in the
+field), and stacking them vertically fills the pane with provenance alone.
+**The count comes first, and nothing is truncated.**
+
+**A turn that searches costs an order of magnitude more input tokens**, because
+results are injected into the prompt: 98,213 in one measured turn, of which
+62,720 were cached. In a village with a small token limit
+([Spec 11](specs/11_token-budget.md)) one search can exhaust it, so the measured
+figure sits next to the checkbox.
+
+**Thinking blocks that come back are currently discarded** (only their kind and
+volume are logged). Receiving them is a separate piece of work covering all
+three providers at once.
+
+### Where API Keys Live
+
 API keys are stored in the **OS credential store** (Windows Credential Manager / macOS Keychain / freedesktop Secret Service). `ModelTemplate` holds only `credential` (the retrieval source); **no field exists that can contain a secret**. At the type level, there is no path for a secret to enter plaintext `world.json`.
 
 ```rust
@@ -750,8 +804,6 @@ pub enum CredentialSource {
 Secrets pass through the process only from `LlmConfig::from_template` to the HTTP headers. They never appear in configuration files, events, error messages, or IPC responses. The UI receives only whether one is registered; **there is no API to read its value**.
 
 > This was rebuilt twice. Initially, `apiKeyEnv` was a `String`, and the only defense was a UI label and warning text. A real key was pasted on the first day of use and persisted in plaintext. The next design required an environment variable name, but that did not fit a desktop GUI: it required terminal work and restart, and on Windows configured variables do not propagate to an already-running process. **Warnings are not controls. It is not enough to make writing impossible; the design must provide a correct place for the user to put the value.**
-
----
 
 ## Operation
 
@@ -895,7 +947,7 @@ Rules stack in three layers: **vendor constitution (model-side, immutable) > vil
 
 The folder button in the Settings dialog — opened from an agent card's settings button — opens that agent's configuration folder directly.
 
-### The Village Blackboard — shared working notes
+#### The Village Blackboard — shared working notes
 
 The other tab at the center-bottom is the **Blackboard**. It is literally the `blackboard/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`blackboard/<display name>.md`) as a sticky note, and only the coordinator bundles them into `blackboard/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
 
