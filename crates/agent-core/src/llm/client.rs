@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
-use super::{BackendResolution, LlmBackend, anthropic, gemini, openai_compat, wire};
+use super::{BackendResolution, LlmBackend, anthropic, gemini, openai_compat, wire, xai_responses};
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
 
@@ -41,6 +41,12 @@ pub enum Provider {
     /// この経路が要るのは Google 検索による接地を使うときだけで、互換層は
     /// `google_search` を `400 Invalid tool type` で拒否する（実測 2026-07-29）。
     Gemini,
+    /// `POST {base_url}/responses` + `Authorization: Bearer`（Spec 31）。
+    ///
+    /// xAI も OpenAI 互換の口を持っており、**関数呼び出しだけならそちらで足りる**。
+    /// この経路が要るのは Grok の Live Search を使うときだけで、legacy の
+    /// `search_parameters` は HTTP 410 Gone（実測 2026-08-09）。Gemini と同じ構図の 2 例目。
+    XaiResponses,
 }
 
 impl Provider {
@@ -70,6 +76,7 @@ impl Provider {
             Self::OpenAiCompat => "/chat/completions".to_owned(),
             Self::Anthropic => "/messages".to_owned(),
             Self::Gemini => gemini::path(model),
+            Self::XaiResponses => "/responses".to_owned(),
         }
     }
 }
@@ -103,6 +110,11 @@ pub struct LlmConfig {
     pub effort: Option<Effort>,
     /// Google 検索による接地を有効にするか。[`Provider::Gemini`] でのみ効く。
     pub google_search: bool,
+    /// Grok の Live Search（web 検索）。[`Provider::XaiResponses`] でのみ効く。
+    /// 値は [`ModelTemplate::xai_web_search_active`] の判定済み（AND 述語の 1 実装）。
+    pub xai_web_search: bool,
+    /// Grok の Live Search（X 検索）。[`Provider::XaiResponses`] でのみ効く。
+    pub xai_x_search: bool,
 }
 
 impl LlmConfig {
@@ -156,6 +168,10 @@ impl LlmConfig {
             provider,
             effort: template.effort,
             google_search: template.google_search,
+            // フラグそのものではなく AND 述語を通した値を持つ。ワイヤ側は
+            // XaiResponses でしか読まないが、判定の実装を 2 箇所にしない (Spec 31 D4)。
+            xai_web_search: template.xai_web_search_active(),
+            xai_x_search: template.xai_x_search_active(),
         })
     }
 }
@@ -212,6 +228,19 @@ impl HttpLlmBackend {
                     .header(gemini::AUTH_HEADER, &self.config.api_key)
                     .json(&body)
             }
+            Provider::XaiResponses => {
+                let body = xai_responses::encode(
+                    req,
+                    self.config.use_tools,
+                    self.config.xai_web_search,
+                    self.config.xai_x_search,
+                );
+                let mut b = self.http.post(&url).json(&body);
+                if !self.config.api_key.is_empty() {
+                    b = b.bearer_auth(&self.config.api_key);
+                }
+                b
+            }
         };
 
         let response = builder.send().await.map_err(LlmError::from)?;
@@ -255,6 +284,15 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = gemini::decode(parsed)?;
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
+            }
+            Provider::XaiResponses => {
+                let parsed: wire::XaiResponse =
+                    serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                        source,
+                        raw: raw.clone(),
+                    })?;
+                let decoded = xai_responses::decode(parsed)?;
                 openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
         }
@@ -330,6 +368,7 @@ impl LlmBackend for HttpLlmBackend {
             Provider::OpenAiCompat => "openai-compat",
             Provider::Anthropic => "anthropic",
             Provider::Gemini => "gemini",
+            Provider::XaiResponses => "xai-responses",
         }
     }
 
@@ -452,6 +491,14 @@ mod tests {
         // 判定不能なホストは互換に落とす（安全側）。
         assert_eq!(
             Provider::detect("http://localhost:8080/v1"),
+            Provider::OpenAiCompat
+        );
+        // api.x.ai を XaiResponses へ倒さないのは意図的（Spec 31 P1 / 契約）。
+        // 既存の互換運用の村（grok-* を open_ai_compat で回している個体）を
+        // 黙って別のワイヤへ移さない。gemini と同じ理由の 2 例目。
+        // **親切心でここへ自動判定を足すと、その村の全ターンが新ワイヤへ移る。**
+        assert_eq!(
+            Provider::detect("https://api.x.ai/v1"),
             Provider::OpenAiCompat
         );
     }

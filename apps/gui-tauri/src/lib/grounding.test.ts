@@ -19,13 +19,13 @@ function message(grounding?: Grounding): AgentMessage {
 describe("groundingView", () => {
   it("接地していない発話は null（大多数の発話に欄を出さない）", () => {
     expect(groundingView(message())).toBeNull();
-    expect(groundingView(message({ queries: [], sources: [] }))).toBeNull();
+    expect(groundingView(message({ engine: "google" as const, queries: [], sources: [] }))).toBeNull();
   });
 
   it("検索語と参照元をそのまま渡す", () => {
     const view = groundingView(
       message({
-        queries: ["ザリガニ 生息数"],
+        engine: "google" as const, queries: ["ザリガニ 生息数"],
         sources: [{ uri: "https://example.test/a", title: "生息数の記事" }],
       }),
     );
@@ -37,7 +37,7 @@ describe("groundingView", () => {
   it("検索は起きたが参照元が空なら sourcesMissing を立てる", () => {
     // 「接地していない」ではなく「出典が存在しない」。文言が正反対になるので
     // null へ畳んではいけない。
-    const view = groundingView(message({ queries: ["時事"], sources: [] }));
+    const view = groundingView(message({ engine: "google" as const, queries: ["時事"], sources: [] }));
     expect(view).not.toBeNull();
     expect(view?.sourcesMissing).toBe(true);
   });

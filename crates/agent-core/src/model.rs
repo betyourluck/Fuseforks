@@ -548,6 +548,20 @@ pub struct ModelTemplate {
     /// これを有効にしても `transfer_to_*` による委譲は止まらない（実測 2026-07-29）。
     #[serde(default)]
     pub google_search: bool,
+    /// Grok の Live Search（web 検索）を有効にするか（Spec 31）。
+    ///
+    /// **[`crate::llm::Provider::XaiResponses`] を明示したテンプレートでのみ効く。**
+    /// 名前にベンダー接頭辞を持つのは `google_search` と同じ理由 — 素の
+    /// `web_search` は provider 中立に読め、後続の OpenAI web search と衝突する。
+    /// 判定はフラグ単独ではなく [`ModelTemplate::xai_web_search_active`] を使うこと。
+    #[serde(default)]
+    pub xai_web_search: bool,
+    /// Grok の Live Search（X 検索）を有効にするか（Spec 31）。
+    ///
+    /// `xai_web_search` と別トグルなのは、別ツール・別課金・別 output 種別と
+    /// 実測済みのため（1 つに畳むと web だけ欲しい村が X の攻撃面まで開ける）。
+    #[serde(default)]
+    pub xai_x_search: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -592,6 +606,21 @@ impl ModelTemplate {
         self.google_search && self.effective_provider() == crate::llm::Provider::Gemini
     }
 
+    /// Grok の Live Search（web 検索）が**実際に効く**か（Spec 31 D4）。
+    ///
+    /// [`ModelTemplate::grounding_active`] と同型の AND 述語。フラグ単独を
+    /// 判定に使わない — 互換経路のまま真になっている設定は `world.json` の
+    /// 直接編集で作れてしまい、フラグだけを見ると検索できないモデルに
+    /// 「検索できます」と教えることになる。
+    pub fn xai_web_search_active(&self) -> bool {
+        self.xai_web_search && self.effective_provider() == crate::llm::Provider::XaiResponses
+    }
+
+    /// Grok の Live Search（X 検索）が**実際に効く**か（Spec 31 D4）。
+    pub fn xai_x_search_active(&self) -> bool {
+        self.xai_x_search && self.effective_provider() == crate::llm::Provider::XaiResponses
+    }
+
     /// 汎用的な既定値でテンプレートを作る。
     pub fn new(
         id: impl Into<ModelTemplateId>,
@@ -611,6 +640,8 @@ impl ModelTemplate {
             use_tools: true,
             effort: None,
             google_search: false,
+            xai_web_search: false,
+            xai_x_search: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
         }
@@ -986,6 +1017,35 @@ mod tests {
         // チェックを外せば当然無効。
         template.google_search = false;
         assert!(!template.grounding_active());
+    }
+
+    /// Live Search の AND 述語（Spec 31 D4）。`grounding_active` と同型で、
+    /// フラグが真でも provider が互換のままなら効かない — `world.json` の
+    /// 手編集で作れる「互換 + トグル真」の組を、フラグ単独で読む実装は
+    /// 検索できないモデルに「検索できます」と教えることになる。
+    #[test]
+    fn xai_live_search_requires_both_the_toggle_and_the_wire() {
+        let mut template = ModelTemplate::new("tpl", "イクス", "grok-4.5");
+        template.base_url = "https://api.x.ai/v1".into();
+        template.xai_web_search = true;
+        template.xai_x_search = true;
+
+        // provider 未指定 = 自動判定 = OpenAI 互換（api.x.ai は自動判定しない — 契約）。
+        assert_eq!(
+            template.effective_provider(),
+            crate::llm::Provider::OpenAiCompat
+        );
+        assert!(!template.xai_web_search_active(), "互換経路では検索しない");
+        assert!(!template.xai_x_search_active());
+
+        // 明示選択して初めて有効になる。2 つのトグルは独立。
+        template.provider = Some(crate::llm::Provider::XaiResponses);
+        assert!(template.xai_web_search_active());
+        assert!(template.xai_x_search_active());
+
+        template.xai_x_search = false;
+        assert!(template.xai_web_search_active(), "web は x と独立に効く");
+        assert!(!template.xai_x_search_active());
     }
 
     /// 接地しなかった発話に来歴の欄を生やさないこと（Spec 05 Phase 4）。

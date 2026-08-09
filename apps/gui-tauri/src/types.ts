@@ -292,6 +292,15 @@ export interface ModelTemplate {
    * 真にしても接地は起きない。関数呼び出しとは併用でき、委譲は止まらない。
    */
   googleSearch: boolean;
+  /**
+   * Grok の Live Search（web 検索 / X 検索。Spec 31）。
+   * **`provider === "xai_responses"` のときだけ効く。** 互換経路のまま真にしても
+   * 検索は起きない（判定はコアの AND 述語 — フラグ単独を読まない）。
+   * 別トグルなのは別ツール・別課金・別 output 種別のため（1 つに畳むと
+   * web だけ欲しい村が X の攻撃面まで開ける）。
+   */
+  xaiWebSearch: boolean;
+  xaiXSearch: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
 }
@@ -312,6 +321,8 @@ export interface GroundingSource {
 export interface Grounding {
   queries: string[];
   sources: GroundingSource[];
+  /** どの機構が接地したか（Spec 31 D5）。閉じた列挙。表示のエンジン名はここから辞書で引く。 */
+  engine: "google" | "xai";
 }
 
 /**

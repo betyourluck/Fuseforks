@@ -363,6 +363,25 @@ pub struct Grounding {
     /// 参照元。**空なら出典は存在しない**（モデルの言う出典を信じない根拠）。
     #[serde(default)]
     pub sources: Vec<GroundingSource>,
+    /// どの機構が接地したか（Spec 31 D5）。表示のエンジン名はここから辞書で引く。
+    #[serde(default)]
+    pub engine: GroundingEngine,
+}
+
+/// 接地エンジンの閉じた列挙（Spec 31 D5）。
+///
+/// 自由文字列にしないのは役職の色と同じ理由 — 開いた値は表示層に分岐を漏らす。
+/// serde 既定が [`GroundingEngine::Google`] なのは後方互換のため:
+/// `engine` 欄の無い既存レコード（`sessions.redb` に保存済みの `AgentMessage`）は
+/// すべて Spec 05 の Google 検索由来なので、既定で正しく読める。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundingEngine {
+    /// Gemini の Google 検索グラウンディング（Spec 05）。
+    #[default]
+    Google,
+    /// xAI の Live Search（Agent Tools。Spec 31）。
+    Xai,
 }
 
 impl Grounding {
@@ -378,6 +397,12 @@ impl Grounding {
     /// 足し合わせる**。同じ検索語・同じ URL が複数の周で返ることは普通にあり、
     /// 畳まないと表示に同じ出典が並ぶ。
     pub fn absorb(&mut self, other: Grounding) {
+        // engine は「最初に接地した側」を採る。1 ターンの provider は固定なので
+        // 実際に食い違うことは無いが、空の器が既定値 (Google) のまま
+        // xAI の記録を吸うと engine だけが噓になる。
+        if self.is_empty() {
+            self.engine = other.engine;
+        }
         for query in other.queries {
             if !self.queries.contains(&query) {
                 self.queries.push(query);
@@ -468,6 +493,7 @@ mod tests {
         let mut acc = Grounding::default();
         acc.absorb(Grounding {
             queries: vec!["ARIB B36".into()],
+            engine: GroundingEngine::Google,
             sources: vec![GroundingSource {
                 uri: "https://example.com/a".into(),
                 title: "A".into(),
@@ -485,6 +511,7 @@ mod tests {
                     title: "B".into(),
                 },
             ],
+            engine: Default::default(),
         });
 
         assert_eq!(acc.queries, vec!["ARIB B36", "字幕 変換"]);
@@ -512,6 +539,7 @@ mod tests {
                     title: "X".into(),
                 },
             ],
+            engine: Default::default(),
         });
 
         assert_eq!(acc.queries.len(), 1);

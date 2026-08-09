@@ -50,6 +50,8 @@ fn wire_field_sets_are_frozen() {
             "requestTimeoutSecs",
             "temperature",
             "useTools",
+            "xaiWebSearch",
+            "xaiXSearch",
         ],
         "ModelTemplate のフィールドが変わった"
     );
@@ -192,6 +194,7 @@ fn wire_field_sets_are_frozen() {
             uri: "https://example.test/a".into(),
             title: "表題".into(),
         }],
+        engine: agent_core::llm::GroundingEngine::default(),
     };
     assert_eq!(
         wire_keys(&filled),
@@ -210,7 +213,7 @@ fn wire_field_sets_are_frozen() {
     );
     assert_eq!(
         wire_keys(&filled.grounding),
-        vec!["queries", "sources"],
+        vec!["engine", "queries", "sources"],
         "Grounding のフィールドが変わった"
     );
     assert_eq!(

@@ -1,0 +1,528 @@
+//! xAI Responses（`/v1/responses`）の encode / decode（Spec 31）。
+//!
+//! Grok の Live Search（Agent Tools の `web_search` / `x_search`）は
+//! `/chat/completions` に存在しない。legacy の `search_parameters` は
+//! HTTP 410 Gone で、サーバー自身が Agent Tools API への移行を名指しして断る
+//! （実測 2026-08-09）。検索を使うときだけこの経路が要る。
+//! 関数呼び出しだけなら互換層で足りる（既存エージェントはそのまま）—
+//! `gemini` と同じ構図の 2 例目。
+//!
+//! 凍結は `data_contract.yaml` の `xai_responses` が正。ここに写している要点:
+//! - `include: ["no_inline_citations"]` を常送（本文の無汚染と出典の網羅が同じ 1 手）
+//! - 検索呼び出しは `web_search_call` / `x_search_call` / `custom_tool_call` の
+//!   3 名を同じ腕で受け、どの名で来たかを計器に残す
+//! - `reasoning` は本文へ混ぜず数えて捨てる（受け取りは thinking の Spec で）
+//! - 出典は annotations の 1 系統。`action.sources` は読まない
+
+use super::canonical::{
+    ChatRequest, ChatResponse, Finish, Grounding, GroundingEngine, GroundingSource, Role,
+    ToolCall, ToolChoice, Usage,
+};
+use super::error::LlmError;
+use super::wire;
+use serde_json::Value;
+
+/// canonical → xAI Responses wire。
+///
+/// `use_tools` が偽、または `tool_choice` が [`ToolChoice::None`] のときは
+/// **関数ツールも検索ツールも送らない**（契約 — 「ツールを使わせない」は
+/// server-side tool にも及ぶ。summarize の呼び出しで検索が走ると、押した人が
+/// 検索の注入 input まで払う）。
+pub fn encode(
+    req: &ChatRequest,
+    use_tools: bool,
+    web_search: bool,
+    x_search: bool,
+) -> wire::XaiRequest {
+    let mut input = Vec::new();
+    for message in &req.messages {
+        match message.role {
+            Role::System => input.push(wire::XaiInputItem::Message {
+                role: "system",
+                content: message.content.clone(),
+            }),
+            // 添付画像はこのワイヤでは送らない（Spec 23 D8 — 画像は互換経路のみ。
+            // gemini ネイティブが素通しする挙動をテストで凍結したのと同じ棚）。
+            Role::User => input.push(wire::XaiInputItem::Message {
+                role: "user",
+                content: message.content.clone(),
+            }),
+            Role::Assistant => {
+                if !message.content.is_empty() {
+                    input.push(wire::XaiInputItem::Message {
+                        role: "assistant",
+                        content: message.content.clone(),
+                    });
+                }
+                for call in &message.tool_calls {
+                    input.push(wire::XaiInputItem::FunctionCall {
+                        kind: "function_call",
+                        call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        // canonical の args はオブジェクト。ワイヤの方言
+                        // 「arguments は JSON 文字列」へは encode 境界で 1 回だけ戻す。
+                        arguments: call.args.to_string(),
+                    });
+                }
+            }
+            Role::Tool => input.push(wire::XaiInputItem::FunctionCallOutput {
+                kind: "function_call_output",
+                call_id: message.tool_call_id.clone().unwrap_or_default(),
+                output: message.content.clone(),
+            }),
+        }
+    }
+
+    let offer_tools = use_tools && req.tool_choice != ToolChoice::None;
+    let mut tools = Vec::new();
+    if offer_tools {
+        if web_search {
+            tools.push(wire::XaiTool::Server { kind: "web_search" });
+        }
+        if x_search {
+            tools.push(wire::XaiTool::Server { kind: "x_search" });
+        }
+        for spec in &req.tools {
+            tools.push(wire::XaiTool::Function {
+                kind: "function",
+                name: spec.name.clone(),
+                description: spec.description.clone(),
+                parameters: spec.parameters.clone(),
+            });
+        }
+    }
+
+    let tool_choice = match &req.tool_choice {
+        ToolChoice::None | ToolChoice::Auto => None,
+        ToolChoice::Required => Some(Value::String("required".into())),
+        ToolChoice::Specific(name) => {
+            Some(serde_json::json!({ "type": "function", "name": name }))
+        }
+    };
+
+    wire::XaiRequest {
+        model: req.model.clone(),
+        input,
+        tools,
+        include: vec!["no_inline_citations"],
+        max_output_tokens: req.max_tokens,
+        temperature: req.temperature,
+        tool_choice,
+    }
+}
+
+/// 検索呼び出しとして受ける output 種別（契約 — 3 名を同じ腕で受ける）。
+///
+/// 公式文書は `x_search_call`、実ワイヤの観測は `custom_tool_call`
+/// （移行途中の未文書挙動と読む）。どの名で来たかは計器に残す。
+const SEARCH_CALL_KINDS: [&str; 3] = ["web_search_call", "x_search_call", "custom_tool_call"];
+
+/// xAI Responses wire → canonical。
+///
+/// `arguments` は JSON 文字列なのでここで 1 回だけ parse して以後はオブジェクトとして
+/// 運ぶ（`openai_compat::decode` と同じ境界規律）。壊れた arguments は raw を保持した
+/// [`LlmError::Parse`] にする。
+pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
+    let mut texts: Vec<String> = Vec::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut grounding = Grounding {
+        engine: GroundingEngine::Xai,
+        ..Grounding::default()
+    };
+    let mut search_counts: Vec<(String, u32)> = Vec::new();
+    let mut reasoning_count = 0u32;
+    let mut dropped: Vec<String> = Vec::new();
+
+    for item in resp.output {
+        match item.kind.as_str() {
+            "message" => {
+                for part in item.content.unwrap_or_default() {
+                    if let Some(text) = part.text {
+                        if !text.is_empty() {
+                            texts.push(text);
+                        }
+                    }
+                    for ann in part.annotations {
+                        if ann.kind != "url_citation" {
+                            continue;
+                        }
+                        let Some(url) = ann.url else { continue };
+                        if grounding.sources.iter().any(|s| s.uri == url) {
+                            continue;
+                        }
+                        // title が URL の複製で返ることがある（実測）。表題としては
+                        // 空と同じなので空文字へ落とす（表示側が URL を二重に出さない）。
+                        let title = ann.title.filter(|t| t != &url).unwrap_or_default();
+                        grounding.sources.push(GroundingSource { uri: url, title });
+                    }
+                }
+            }
+            "reasoning" => reasoning_count += 1,
+            kind if SEARCH_CALL_KINDS.contains(&kind) => {
+                if let Some(query) = item.action.and_then(|a| a.query)
+                    && !grounding.queries.contains(&query)
+                {
+                    grounding.queries.push(query);
+                }
+                match search_counts.iter_mut().find(|(name, _)| name == kind) {
+                    Some((_, count)) => *count += 1,
+                    None => search_counts.push((kind.to_owned(), 1)),
+                }
+            }
+            "function_call" => {
+                let raw = item.arguments.unwrap_or_default();
+                let args: Value = serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                    source,
+                    raw: raw.clone(),
+                })?;
+                tool_calls.push(ToolCall {
+                    id: item.call_id.unwrap_or_default(),
+                    name: item.name.unwrap_or_default(),
+                    args,
+                    extra: None,
+                });
+            }
+            other => dropped.push(other.to_owned()),
+        }
+    }
+
+    let usage = resp
+        .usage
+        .as_ref()
+        .map(|u| Usage {
+            prompt: u.input_tokens,
+            completion: u.output_tokens,
+            cache_read: u
+                .input_tokens_details
+                .as_ref()
+                .map(|d| d.cached_tokens)
+                .unwrap_or_default(),
+        })
+        .unwrap_or_default();
+
+    // 未知種別と reasoning は数えてから捨てる（#72 — 受け皿が底なしだと、
+    // そこへ落ちたものは存在しなかったことになる）。
+    if reasoning_count > 0 || !dropped.is_empty() {
+        crate::note!(
+            "dropped content blocks: kinds={} count={} output_tokens={} text_chars={} tool_calls={}",
+            {
+                let mut kinds: Vec<String> = Vec::new();
+                if reasoning_count > 0 {
+                    kinds.push(format!("reasoning:{reasoning_count}"));
+                }
+                kinds.extend(dropped.iter().cloned());
+                kinds.join("+")
+            },
+            reasoning_count as usize + dropped.len(),
+            usage.completion,
+            texts.iter().map(|t| t.chars().count()).sum::<usize>(),
+            tool_calls.len(),
+        );
+    }
+
+    // 検索の計器。検索を使った呼び出しのときだけ 1 行（`grep include:` と同じ形）。
+    // 正の値は呼び出し回数、ticks は補助の生値のまま — 換算しない（契約）。
+    if !search_counts.is_empty() {
+        let names = search_counts
+            .iter()
+            .map(|(name, count)| format!("{name}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let ticks = resp
+            .usage
+            .as_ref()
+            .and_then(|u| u.cost_in_usd_ticks)
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        crate::note!(
+            "xai search: calls={} names={} sources={} queries={} ticks={}",
+            search_counts.iter().map(|(_, c)| c).sum::<u32>(),
+            names,
+            grounding.sources.len(),
+            grounding.queries.len(),
+            ticks,
+        );
+    }
+
+    let text = if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join("\n\n"))
+    };
+
+    let finish = if !tool_calls.is_empty() {
+        Finish::ToolUse
+    } else {
+        match resp.status.as_deref() {
+            Some("completed") => Finish::Stop,
+            Some("incomplete")
+                if resp
+                    .incomplete_details
+                    .as_ref()
+                    .and_then(|d| d.reason.as_deref())
+                    == Some("max_output_tokens") =>
+            {
+                Finish::Length
+            }
+            _ => Finish::Other,
+        }
+    };
+
+    Ok(ChatResponse {
+        text,
+        tool_calls,
+        finish,
+        usage,
+        grounding,
+    })
+}
+
+/// 履歴の assistant メッセージが空本文 + tool_calls のとき、encode が
+/// input へ何を出すかの補助（テストの読みやすさのため公開はしない）。
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::canonical::{ChatMessage, ToolSpec};
+
+    fn spec(name: &str) -> ToolSpec {
+        ToolSpec {
+            name: name.into(),
+            description: "テスト用".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }
+    }
+
+    fn base_request() -> ChatRequest {
+        ChatRequest {
+            model: "grok-4.5".into(),
+            messages: vec![
+                ChatMessage::system("あなたは検証用の応答者です"),
+                ChatMessage::user("AAPL の現在価格を教えて"),
+            ],
+            tools: vec![spec("get_price")],
+            tool_choice: ToolChoice::Auto,
+            temperature: None,
+            max_tokens: 1024,
+            effort: None,
+            cacheable_prefix_len: 0,
+        }
+    }
+
+    /// golden: リクエスト全体の形を文字列で固定する。
+    /// include の常送・tools の同居・temperature 省略が 1 本で読める。
+    #[test]
+    fn encode_golden_includes_no_inline_citations_and_flat_tools() {
+        let req = base_request();
+        let body = encode(&req, true, true, false);
+        let json = serde_json::to_string(&body).unwrap();
+        assert_eq!(
+            json,
+            r#"{"model":"grok-4.5","input":[{"role":"system","content":"あなたは検証用の応答者です"},{"role":"user","content":"AAPL の現在価格を教えて"}],"tools":[{"type":"web_search"},{"type":"function","name":"get_price","description":"テスト用","parameters":{"type":"object","properties":{}}}],"include":["no_inline_citations"],"max_output_tokens":1024}"#
+        );
+    }
+
+    /// ToolChoice::None では検索ツールも関数ツールも送らない（契約）。
+    /// summarize の呼び出しで検索が走ると、押した人が注入 input まで払う。
+    #[test]
+    fn tool_choice_none_sends_no_tools_at_all() {
+        let mut req = base_request();
+        req.tool_choice = ToolChoice::None;
+        let body = encode(&req, true, true, true);
+        assert!(body.tools.is_empty());
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("web_search"), "検索ツールが漏れている: {json}");
+    }
+
+    /// use_tools = false も同じ（互換サーバ向けフォールバックの規律を写す）。
+    #[test]
+    fn use_tools_false_sends_no_tools() {
+        let body = encode(&base_request(), false, true, true);
+        assert!(body.tools.is_empty());
+    }
+
+    /// トグルが偽なら対応するサーバー側ツールが tools に入らない。
+    /// 両方偽 + 関数ツールありでは関数だけが並ぶ。
+    #[test]
+    fn server_tools_follow_their_toggles() {
+        let body = encode(&base_request(), true, false, true);
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("web_search"));
+        assert!(json.contains("x_search"));
+
+        let body = encode(&base_request(), true, false, false);
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("_search"));
+        assert!(json.contains(r#""type":"function""#));
+    }
+
+    /// 関数往復の再送形。assistant の tool_calls → function_call item、
+    /// Role::Tool → function_call_output item。args はオブジェクト → JSON 文字列へ。
+    #[test]
+    fn tool_roundtrip_history_encodes_as_call_and_output_items() {
+        let mut req = base_request();
+        let mut assistant = ChatMessage::assistant("");
+        assistant.tool_calls.push(ToolCall {
+            id: "call-1".into(),
+            name: "get_price".into(),
+            args: serde_json::json!({"symbol": "AAPL"}),
+            extra: None,
+        });
+        req.messages.push(assistant);
+        req.messages.push(ChatMessage::tool_result(
+            "call-1",
+            "get_price",
+            r#"{"price": 231.5}"#,
+        ));
+
+        let body = encode(&req, true, false, false);
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(json.contains(
+            r#"{"type":"function_call","call_id":"call-1","name":"get_price","arguments":"{\"symbol\":\"AAPL\"}"}"#
+        ));
+        assert!(json.contains(
+            r#"{"type":"function_call_output","call_id":"call-1","output":"{\"price\": 231.5}"}"#
+        ));
+    }
+
+    /// probe の実応答から要点を写した decode golden。
+    /// 複数 message の連結・annotations → sources・usage の対応が 1 本で読める。
+    #[test]
+    fn decode_collects_messages_annotations_and_usage() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "reasoning"},
+                {"type": "web_search_call", "status": "completed",
+                 "action": {"type": "search", "query": "xAI latest news"}},
+                {"type": "message", "role": "assistant", "content": [
+                    {"type": "output_text", "text": "最新の記事を確認中です。", "annotations": []}
+                ]},
+                {"type": "message", "role": "assistant", "content": [
+                    {"type": "output_text", "text": "xAI が Grok 4.5 を発表しました。",
+                     "annotations": [
+                        {"type": "url_citation", "url": "https://x.ai/news",
+                         "title": "https://x.ai/news", "start_index": 0, "end_index": 0},
+                        {"type": "url_citation", "url": "https://techcrunch.com/a",
+                         "title": "TechCrunch", "start_index": 0, "end_index": 0}
+                     ]}
+                ]}
+            ],
+            "usage": {
+                "input_tokens": 98213,
+                "output_tokens": 1415,
+                "input_tokens_details": {"cached_tokens": 62720},
+                "cost_in_usd_ticks": 1582920000,
+                "server_side_tool_usage_details": {"web_search_calls": 1}
+            }
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+
+        assert_eq!(
+            decoded.text.as_deref(),
+            Some("最新の記事を確認中です。\n\nxAI が Grok 4.5 を発表しました。")
+        );
+        assert_eq!(decoded.finish, Finish::Stop);
+        assert_eq!(decoded.usage.prompt, 98213);
+        assert_eq!(decoded.usage.completion, 1415);
+        assert_eq!(decoded.usage.cache_read, 62720);
+        assert_eq!(decoded.grounding.engine, GroundingEngine::Xai);
+        assert_eq!(decoded.grounding.queries, vec!["xAI latest news"]);
+        assert_eq!(decoded.grounding.sources.len(), 2);
+        // title が URL の複製なら空へ落ちる。実表題はそのまま残る。
+        assert_eq!(decoded.grounding.sources[0].title, "");
+        assert_eq!(decoded.grounding.sources[1].title, "TechCrunch");
+    }
+
+    /// 検索呼び出し 3 名を同じ腕で受ける（契約）。custom_tool_call は実ワイヤの
+    /// 観測名、x_search_call は公式文書名 — どちらが来ても検索として数える。
+    #[test]
+    fn all_three_search_call_kinds_are_accepted() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "web_search_call", "action": {"type": "search", "query": "a"}},
+                {"type": "x_search_call", "action": {"type": "search", "query": "b"}},
+                {"type": "custom_tool_call", "action": {"type": "search", "query": "c"}},
+                {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.grounding.queries, vec!["a", "b", "c"]);
+        assert_eq!(decoded.text.as_deref(), Some("ok"));
+    }
+
+    /// function_call は ToolCall へ。arguments は境界で 1 回だけ parse される。
+    #[test]
+    fn function_call_decodes_to_tool_call_with_parsed_args() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "function_call", "call_id": "call-9", "name": "get_price",
+                 "arguments": "{\"symbol\":\"AAPL\"}", "status": "completed"}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.finish, Finish::ToolUse);
+        assert_eq!(decoded.tool_calls.len(), 1);
+        assert_eq!(decoded.tool_calls[0].id, "call-9");
+        assert_eq!(
+            decoded.tool_calls[0].args,
+            serde_json::json!({"symbol": "AAPL"})
+        );
+    }
+
+    /// 壊れた arguments は raw を保持した Parse エラー（openai_compat と同じ境界規律）。
+    #[test]
+    fn broken_function_arguments_fail_loudly_with_raw() {
+        let raw = r#"{
+            "output": [
+                {"type": "function_call", "call_id": "c", "name": "f", "arguments": "{oops"}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let err = decode(resp).unwrap_err();
+        assert!(matches!(err, LlmError::Parse { raw, .. } if raw == "{oops"));
+    }
+
+    /// 未知の output 種別は応答全体を落とさず、数えられて捨てられる（#72）。
+    /// reasoning も同じ経路（本文へ混ぜない）。
+    #[test]
+    fn unknown_and_reasoning_items_are_counted_not_fatal() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "reasoning"},
+                {"type": "some_future_item", "x": 1},
+                {"type": "message", "content": [{"type": "output_text", "text": "本文", "annotations": []}]}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.text.as_deref(), Some("本文"));
+        assert_eq!(decoded.finish, Finish::Stop);
+    }
+
+    /// 打ち切りは incomplete_details.reason で判定する。
+    #[test]
+    fn incomplete_with_max_output_tokens_maps_to_length() {
+        let raw = r#"{
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": []
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.finish, Finish::Length);
+    }
+
+    /// status が読めない応答を「正常終了」に倒さない（Finish::Other の既定と同じ向き）。
+    #[test]
+    fn missing_status_is_other_not_stop() {
+        let raw = r#"{"output": [{"type": "message", "content": [{"type": "output_text", "text": "x", "annotations": []}]}]}"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(decode(resp).unwrap().finish, Finish::Other);
+    }
+}

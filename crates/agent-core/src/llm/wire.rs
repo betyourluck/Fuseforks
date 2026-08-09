@@ -809,6 +809,226 @@ pub struct GeminiUsageMetadata {
     pub cached_content_token_count: u64,
 }
 
+// ============================================================================
+// xAI Responses（`/v1/responses`。Spec 31）
+// ============================================================================
+//
+// OpenAI 互換層（`/chat/completions`）とは**別の口**。Grok の Live Search
+// （Agent Tools の `web_search` / `x_search`）は互換層に存在せず、legacy の
+// `search_parameters` は HTTP 410 Gone でサーバー自身が後継を名指しして断る
+// （実測 2026-08-09）。検索を使うときだけこの経路が要る。
+//
+// 形の要点（すべて実 probe で確認。data_contract の `xai_responses` が正）:
+// - リクエストは `messages` ではなく `input`（メッセージと関数往復の混在列）
+// - `include: ["no_inline_citations"]` を常送 — 本文の `[[N]](url)` 汚染を防ぎ、
+//   annotations が「参照した分」から「触れた全 URL」へ増える（2 → 18 件を実測）
+// - 応答は `output` 配列。`message` / `reasoning` / 検索呼び出し / `function_call`
+//   が interleave する。検索呼び出しの型名は 3 つ観測されうる
+//   （`web_search_call` / `x_search_call` / `custom_tool_call`）
+// - トップレベル `citations` 欄は生の REST に存在しない（SDK の集約属性）
+
+/// xAI Responses へのリクエスト。
+#[derive(Debug, Serialize)]
+pub struct XaiRequest {
+    /// モデル名。
+    pub model: String,
+    /// 会話とツール往復の混在列（`messages` に相当）。
+    pub input: Vec<XaiInputItem>,
+    /// 空なら欄ごと省く（`tools: []` を送る意味は無い）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<XaiTool>,
+    /// 契約により `["no_inline_citations"]` 固定。
+    pub include: Vec<&'static str>,
+    /// 最大出力トークン数。
+    pub max_output_tokens: u32,
+    /// サンプリング温度。`None` なら送らない（canonical の規律）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// ツール選択方針。`required` / `{type: function, name}` のときだけ送る。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+/// `input` の 1 要素。メッセージと関数往復が同じ列に混在する。
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum XaiInputItem {
+    /// 通常の発話。`type` 欄は省略可能（role で判別される）。
+    Message {
+        /// "system" / "user" / "assistant"。
+        role: &'static str,
+        /// 本文。
+        content: String,
+    },
+    /// 履歴として再送する assistant の関数呼び出し。
+    FunctionCall {
+        /// 常に `"function_call"`。
+        #[serde(rename = "type")]
+        kind: &'static str,
+        /// 呼び出し ID（応答の `call_id` をそのまま返す）。
+        call_id: String,
+        /// 関数名。
+        name: String,
+        /// JSON 文字列（canonical の `args` オブジェクトを encode 時に文字列化）。
+        arguments: String,
+    },
+    /// 関数実行の結果。
+    FunctionCallOutput {
+        /// 常に `"function_call_output"`。
+        #[serde(rename = "type")]
+        kind: &'static str,
+        /// 対応する呼び出しの ID。
+        call_id: String,
+        /// 実行結果の本文。
+        output: String,
+    },
+}
+
+/// `tools` の 1 要素。サーバー側ツールと関数ツールが同居できる（実測 2026-08-10）。
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum XaiTool {
+    /// サーバー側ツール（`web_search` / `x_search`）。
+    Server {
+        /// `"web_search"` / `"x_search"`。
+        #[serde(rename = "type")]
+        kind: &'static str,
+    },
+    /// 関数ツール。OpenAI 互換層と違い、`function` の入れ子ではなく flat。
+    Function {
+        /// 常に `"function"`。
+        #[serde(rename = "type")]
+        kind: &'static str,
+        /// 関数名。
+        name: String,
+        /// モデルへ渡す説明。
+        description: String,
+        /// 引数の JSON Schema。
+        parameters: serde_json::Value,
+    },
+}
+
+/// xAI Responses の応答。
+#[derive(Debug, Deserialize)]
+pub struct XaiResponse {
+    /// 応答の本体列。message / reasoning / 検索呼び出し / function_call が interleave する。
+    #[serde(default)]
+    pub output: Vec<XaiOutputItem>,
+    /// "completed" / "incomplete" など。
+    #[serde(default)]
+    pub status: Option<String>,
+    /// `status: "incomplete"` のときの理由。
+    #[serde(default)]
+    pub incomplete_details: Option<XaiIncompleteDetails>,
+    /// 使用量。返さない応答でも壊れないよう `Option`。
+    #[serde(default)]
+    pub usage: Option<XaiUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+/// 打ち切りの理由（`max_output_tokens` なら Length へ写す）。
+pub struct XaiIncompleteDetails {
+    /// 理由の文字列。
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// `output` の 1 要素。
+///
+/// `type` タグはあるが、腕を enum で閉じると未知種別で応答全体の parse が落ちる。
+/// Gemini の part と同じく**全フィールド Option の構造体**で受け、`kind` 文字列で
+/// 分岐する（未知種別は数えてから捨てる — #72）。
+#[derive(Debug, Deserialize)]
+pub struct XaiOutputItem {
+    /// 種別。message / reasoning / web_search_call / x_search_call / custom_tool_call / function_call ほか。
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// `message` のとき。テキスト片と出典の列。
+    #[serde(default)]
+    pub content: Option<Vec<XaiContentPart>>,
+    /// `function_call` のとき。呼び出し ID。
+    #[serde(default)]
+    pub call_id: Option<String>,
+    /// `function_call` のとき。関数名。
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `function_call` のとき。JSON 文字列（decode 境界で 1 回だけ解く）。
+    #[serde(default)]
+    pub arguments: Option<String>,
+    /// 検索呼び出しのとき。`query` が検索語を運ぶ。
+    #[serde(default)]
+    pub action: Option<XaiSearchAction>,
+}
+
+#[derive(Debug, Deserialize)]
+/// `message` の中身 1 片（`output_text` など）。
+pub struct XaiContentPart {
+    /// 片の種別。読むのは `output_text` だけ。
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// 本文。
+    #[serde(default)]
+    pub text: Option<String>,
+    /// 出典（`url_citation`）。
+    #[serde(default)]
+    pub annotations: Vec<XaiAnnotation>,
+}
+
+/// 出典 1 件。`no_inline_citations` では位置（start/end_index）が全部 0 なので
+/// 位置は受けない — 印の座標であって主張の座標ではない（契約）。
+#[derive(Debug, Deserialize)]
+pub struct XaiAnnotation {
+    /// 種別。読むのは `url_citation` だけ。
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// 出典 URL。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 表題。URL の複製で返ることがある（decode 側が空へ落とす）。
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// 検索呼び出しの中身。`query` が実際の検索語（`Grounding.queries` の原料）。
+#[derive(Debug, Deserialize)]
+pub struct XaiSearchAction {
+    /// 検索語。
+    #[serde(default)]
+    pub query: Option<String>,
+}
+
+/// 使用量。回数の欄は観測名（`server_side_tool_usage_details`）と公式文書名
+/// （`server_side_tool_usage`）の**どちらで来ても読める**ようにする（契約）。
+#[derive(Debug, Deserialize)]
+pub struct XaiUsage {
+    /// 入力トークン数（検索結果の注入込み）。
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// 出力トークン数（reasoning 込み）。
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// 入力トークンの内訳。
+    #[serde(default)]
+    pub input_tokens_details: Option<XaiInputTokensDetails>,
+    /// 補助の生値。単位が未検証なので換算しない（契約）。
+    #[serde(default)]
+    pub cost_in_usd_ticks: Option<u64>,
+    /// 回数の欄（観測名）。
+    #[serde(default)]
+    pub server_side_tool_usage_details: Option<serde_json::Value>,
+    /// 回数の欄（公式文書名）。
+    #[serde(default)]
+    pub server_side_tool_usage: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+/// 入力トークンの内訳。
+pub struct XaiInputTokensDetails {
+    /// キャッシュから読まれたトークン数。
+    #[serde(default)]
+    pub cached_tokens: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -231,6 +231,8 @@ function blank(): ModelTemplate {
     useTools: true,
     effort: null,
     googleSearch: false,
+    xaiWebSearch: false,
+    xaiXSearch: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
   };

@@ -968,6 +968,7 @@ impl LlmBackend for GroundedBackend {
                     uri: GROUNDED_URI.to_owned(),
                     title: "ザリガニの生息数について".to_owned(),
                 }],
+                engine: Default::default(),
             },
         })
     }

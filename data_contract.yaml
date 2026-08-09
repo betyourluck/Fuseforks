@@ -3955,6 +3955,18 @@ llm_wire:
         未知種別は数えてから捨てる (dropped 計器。tool_execution #72 の処方)
       - reasoning ブロックは本文へ混ぜず、種別と tokens を数えて捨てる
         (Spec 31 D7。受け取りは thinking の Spec で 3 社まとめて)
+      - 関数ツールは flat 形 {"type":"function", name, description, parameters} で
+        tools 配列に検索ツールと**同居できる** (実測 2026-08-10: 併用で 400 は
+        出ない — gpt-5 系の chat/completions が拒む組を、この口は受ける)。
+        応答の function_call item (call_id / name / arguments = JSON 文字列) を
+        ToolCall へ。結果は input へ {"type":"function_call_output", call_id,
+        output} で返す (roundtrip 実測済み — 返した値で答えることを確認)
+      - tool_choice が None の呼び出し (summarize 等) では検索ツールも関数ツールも
+        **どちらも送らない**。「ツールを使わせない」は server-side tool にも及ぶ —
+        要約の呼び出しで検索が走ると、押した人が検索の注入 input まで払う
+      - web_search_call.action.query を Grounding.queries へ入れる。
+        action.sources は読まない — 出典の正は annotations の 1 系統
+        (2 系統から足すと同じ URL の重複排除規則が 2 箇所に生える)
       - live_search_active(tool) = トグル AND effective_provider() == XaiResponses。
         フラグ単独を判定に使わない (gemini_native.grounding_active と同型。
         互換経路のまま真の world.json 手編集で「検索できないモデルに検索できると

@@ -2,8 +2,10 @@
 
 **ID**: 31
 **Date**: 2026-08-10
-**Status**: rev2（査読 7 点 → 採用 4 / 訂正して採用 2 / 実測で機構を訂正 1。
-2026-08-10。**査読の指摘 1・3・4 は対の再 probe で決着** — 下記接地の追記）
+**Status**: rev2 承認 → **P0〜P1 完了**（2026-08-10。P0 = 契約凍結 `5c3c5e1` +
+関数ツールの追補 / P1 = `llm/xai_responses.rs` + wire 型 + `Provider::XaiResponses` +
+`GroundingEngine` + テンプレート 2 欄と AND 述語。査読 7 点 → 採用 4 /
+訂正して採用 2 / 実測で機構を訂正 1 — 指摘 1・3・4 は対の再 probe で決着）
 **Branch**: なし（main へ直接コミット。Phase ごと）
 
 ## Goal
@@ -162,6 +164,46 @@ decode は未知欄を無視する寛容な形にし、**どちらの名で来�
 - **P4**: README / DETAIL 日英 + `data_contract` の回収（**数えるのはファイル単位** —
   #51 (b)。台帳は日英 4 ファイル）
 - **P5**: 実機
+
+## P1 実装記録（2026-08-10）
+
+**着手前に probe 3 発で関数ツールの可否を測った** — P0 の decode 契約は
+message / reasoning / 検索 3 名しか凍結しておらず、関数が通らないなら
+「Grok ワイヤの個体は検索専任」という別の獣になるため（新規個体の既定は
+同梱ツール 8 本 — 通らないのに送ると全ターンが壊れる）。結果は全部通った:
+
+- flat 形 `{"type":"function", name, ...}` で提示 → `function_call`
+  （`call_id` / `arguments` = JSON 文字列）が返る
+- `function_call_output` を input へ返す roundtrip も完走（返した値で答えた）
+- **検索ツールと関数ツールは同居できる**（gpt-5 系の chat/completions が
+  400 で拒む組を、この口は受ける）
+- 副産物: **`web_search_call.action.query` が検索語を運ぶ** —
+  `Grounding.queries` の原料。`action.sources` は読まない（出典の正は
+  annotations の 1 系統 — 契約へ追補）
+
+実装で決めた 4 点:
+
+- **`ToolChoice::None` では検索ツールも送らない**（契約へ追補）。
+  「ツールを使わせない」は server-side tool にも及ぶ — summarize の呼び出しで
+  検索が走ると、押した人が検索の注入 input（実測 10 万規模）まで払う
+- **接地の告知（`compose_system_prompt` の `grounded`）は Gemini 専用のまま。**
+  あの文面は「参照 URL は手元に渡らない」と教える処方で、**xAI では URL が
+  渡るので流用すると嘘になる**。`grounding_active()` が Gemini 限定なので
+  XaiResponses では自然に告知なし = 正しい。xAI 用の告知を出すか
+  （出すなら「出典は画面に自動表示される」の向き）は **P3 の決めどころ**
+- **添付画像はこのワイヤでは送らない**（Spec 23 D8 — 画像は互換経路のみ。
+  gemini ネイティブと同じ棚）
+- **`XaiAnnotation.title` が URL の複製で返る**（実測）ので decode で空へ落とす
+  （表示側が URL を二重に出さない）
+
+**`ipc_contract` の凍結網が 2 段で TS 追従を強制した** — `Grounding.engine` で
+1 回、`ModelTemplate` の 2 欄で 1 回。どちらも「期待値を直すのではなく、
+TS 側へ欄を足してから期待値を直す」の順で消化（`useUiSettings.test.ts` の
+前例と同じ扱い。網は緩めない）。
+
+単体 11 本（encode golden / ToolChoice::None / トグル独立 / roundtrip 再送形 /
+decode golden / 検索 3 名 / function_call / 壊れた arguments / 未知種別 /
+Length / status 不明は Other）+ model の AND 述語 1 本 + detect の現状維持 1 本。
 
 ## 検収（書く前に読み口の実在を数えた — #68 / #90 の規律）
 
