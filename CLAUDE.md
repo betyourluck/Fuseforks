@@ -274,6 +274,10 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
 - `v0.0.8` = `47b1cb7`（**Spec 28 Done + Spec 29 起票から Done まで** +
   マイルストーン 8 着地 + 会話ペインを静かにする + 絆ペインの自動フィット。
   2026-08-08。**34 コミット**）— **利用者の言葉「これでほぼ v0.1.0」**
+- **`v0.1.0` = `a516f78`（2026-08-09）— このタグでリポジトリを public にした。**
+  内容は **Spec 30 Done**（改名 `Concordia` → `Fuseforks`。検収 5 まで観測）+
+  **README を入口へ縮めて詳細を `DETAIL.md` へ分割**（1,655 → 148 行）+
+  `images/`（ロゴとスクリーンショット）。**残るマイルストーンは公表（v0.2.0）**
 
 **リリースの installer は Release Assets が正で、artifact には残さない**
 （`2a0e47a` で `Upload artifacts` step を撤去。Release Assets と同じものの
@@ -458,9 +462,30 @@ allow 空 → offers_anything() = false → spec_for が None → run は提示�
 `bun.lock` へ寄せた。下記「リリースビルド」の節）。
 
 **公開の段取り（利用者 2026-08-05）**: **v0.1.0 で public、v0.2.0 で公表。**
-前提の MPL 化は済んでいる。履歴の秘密走査（`*.json` / `*.toml` / `*.yaml` /
-`.env*` を `sk-` / `AIza` / `xox?-` / `ghp_` / PEM で）は該当ゼロだが、
-**Markdown と Rust ソースは射程外**なので public 直前に一度全文で見る。
+**public は 2026-08-09 に着地**（`v0.1.0` = `a516f78`）。**残るのは公表だけ。**
+
+**履歴の秘密走査は 2026-08-09 に全文で完了し、実キーはゼロだった。**
+初回（2026-08-05）は `*.json` / `*.toml` / `*.yaml` / `.env*` だけで
+**Markdown と Rust が射程外**だったので、今回は**拡張子を絞らず 459 コミット・
+244 追跡ファイルの追加行を全部**走査した（`sk-ant-` / `sk-` / `AIza` / `xai-` /
+`xox?-` / `ghp_` / `gho_` / `github_pat_` / `AKIA` / `outcast_sk_` / PEM）。
+
+- 当たったのは **7 行すべてが試験具か doc コメント**
+  （`sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY` ×3 / `sk-ant-api03-abcdef` /
+  `sk-ant-SUPER-SECRET` / 説明文の `sk-ant-…` ×2）。出所は `world.rs` と
+  `tests/orchestrator.rs` = **書式検査そのもののテスト**
+- `AIza` / `ghp_` / `xox?-` に当たった各 3 行は、**この CLAUDE.md が走査
+  パターンを列挙している文**。鍵ではない
+- **村の実データは 1 度も追跡されていない**（`world.json` / `sessions.redb` /
+  `*.log` / `village_id` / `probe_approvals.json` を履歴の追加ファイル全件で確認。
+  唯一当たる `probe_approvals.rs` はソース）
+- **計器の検定を先に取った**（`failures.md` #90 の処方）— 同じ走査で
+  `Fuseforks` が 130 行・`sk-ant-` が 7 行出ることを見てから 0 を読んだ。
+  **走査が空振りしていないことを確かめずに「該当ゼロ」と書かない**
+
+**#1 の実キー漏洩はリポジトリではなく `%APPDATA%` の `world.json` で起きた**ので、
+この結果と矛盾しない。**公開後の走査は取り返しがつかない** — 次に別の村を公開する
+ときは、この順序（走査 → public）を守ること。
 
 **[Spec 24](specs/24_path-completion.md) Done（2026-08-07。起票から 1 日）** —
 入力欄で `@` からファイルパスを補完する。起点は利用者「Claude Code や Copilot の
@@ -903,6 +928,39 @@ grep して出てきても追従漏れではない。
 | Anthropic **Prompt Caching** | **実装済み**（`place_message_breakpoint`。ターンをまたいで 99% を実測） |
 | Thinking Mode | **半分** — `reasoning_effort` で制御はするが、**返る thinking ブロックは捨てている**（`dropped content blocks: kinds=thinking` の計器つき） |
 | Vision Input | **画像は実装済み**（Spec 23。互換層で 5 系統実測）。音声・動画は未 |
+
+**「半分」の中身はプロバイダで非対称だった**（2026-08-09 に実装で数え直し）。
+OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。要求できるが
+受け取れない）のに対し、**Anthropic は `thinking` / `budget_tokens` を送っておらず
+要求もできない** — `anthropic.rs:418` が `Thinking` / `RedactedThinking` を
+`dropped` へ入れて捨てているだけ。xAI の Reasoning Mode も同じ棚。
+**受け取り側は `decode` の捨てている行 1 箇所**なので、3 社ぶんが 1 つの Spec に
+収まる形。
+
+**v0.2.0 の取り込み裁定（2026-08-09 利用者。13 件の一覧を三分した）**:
+
+- **作らない（既にある 4 件）**: Search Grounding / Prompt Caching /
+  Tool Use with MCP（Spec 25 で両方向）/ Vision Input（画像のみ）
+- **順番は 受け取り（Thinking 3 社）→ Live Search → 多モーダル（音声・動画・PDF）**。
+  1 つ目が最も安く 3 社へ同時に効く。Live Search の 1 手目は実装ではなく
+  **Grok へ 1 回投げて citations の有無を見ること**（Spec 05 の `sources` 空の前例。
+  返らなければ Gemini への受け渡し物が無く 2 段検証が成立しない）。
+  多モーダルは Spec 23 D8（画像は互換経路のみ）を覆す変更で、
+  **D1「渡るのは 1 ターンだけ」は据え置きが効く**（画像 1 枚 14,336〜38,272
+  トークンの実測から、音声・動画は桁が上がる）
+- **Structured Outputs は未実装**。`NoStructuredOutput` は名前が似ているだけ
+  （強制ツール呼び出しが空振りしたときのエラー）。内部の構造化はツール呼び出しで
+  足りており、効くのは利用者のワークフロー側
+- **Gemini Context Caching は Anthropic と形が違う** — あちらは本文に境界を
+  打つだけ、こちらは**事前に cache を作る API 呼び出しが要る**
+- **見送り（ワイヤの欄ではない）**: Computer Use（実行ループごと要る +
+  画面操作に許可リストは書けず `run` の閉じた許容と衝突）/ Code Interpreter
+  （遠隔サンドボックスで同梱ツール層と競合）/ **Realtime API はこの村の単位と
+  衝突する**（予算・打ち切り・キャッシュ・広場ログは全部「ターン」に載っており、
+  E2E 音声ストリームはターンの外側）
+- **英語化（マイルストーン 6）との順番は機能が先** — 各社機能はツール説明を
+  増やすので、英語化を先にすると増えたぶんを訳し直す。公表の期日が英語化に
+  縛られるなら逆
 
 **一覧は性質で 3 つに割れ、コストが桁で違う。** Spec を切るときはここで分けること:
 
