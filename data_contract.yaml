@@ -1129,17 +1129,22 @@ enums:
           rev で潰したのと同じ誤り — 保存先での分類は実装の都合が目録に出る)。
           これは入口の話で、置き場そのものは凍結 1
   Provider:
-    values: [open_ai_compat, anthropic, gemini]
+    values: [open_ai_compat, anthropic, gemini, xai_responses]
     detect: |
       未指定なら baseUrl から自動判定。`api.anthropic.com` を含めば anthropic、
       それ以外は open_ai_compat（判定不能なプロキシは安全側で互換に落とす）。
       gemini は**自動判定されない（明示選択のみ）**。generativelanguage.googleapis.com は
       OpenAI 互換としても動いており、自動判定を変えると設定を触っていない
       エージェントが黙って別のワイヤへ移るため (Spec 05)。
+      xai_responses も**自動判定されない（明示選択のみ。Spec 31 D2/P1）** —
+      api.x.ai は OpenAI 互換としても動いており、既存の互換運用の村
+      （grok-* を open_ai_compat で回している個体）を黙って別のワイヤへ移さない。
+      gemini と同じ理由の 2 例目。
     paths: |
       open_ai_compat: {base_url}/chat/completions  + Authorization: Bearer
       anthropic:      {base_url}/messages          + x-api-key + anthropic-version
       gemini:         {base_url}/models/{model}:generateContent + x-goog-api-key
+      xai_responses:  {base_url}/responses         + Authorization: Bearer
       gemini だけモデル名が URL に埋まるため、Provider::path() は &'static str を
       返せず String を返す（Spec 05 で全プロバイダの呼び出し側を巻き込んで変更）。
   Effort:
@@ -1373,6 +1378,13 @@ entities:
       useTools: bool
       effort: Effort | null
       googleSearch: bool            # 既定 false。provider == gemini でのみ効く (Spec 05)
+      # 2 欄とも既定 false。provider == xai_responses でのみ効く (Spec 31)。
+      # 名前にベンダー接頭辞を持つのは googleSearch と同じ理由 — 素の webSearch は
+      # provider 中立に読め、後続の OpenAI web search と衝突する。別トグルなのは
+      # 別ツール・別課金・別 output 種別と実測済みのため (1 つに畳むと web だけ
+      # 欲しい村が X の攻撃面まで開ける — Spec 31 D3)
+      xaiWebSearch: bool
+      xaiXSearch: bool
       requestTimeoutSecs: u32
       maxRetries: u32
     invariant: |
@@ -1417,6 +1429,7 @@ entities:
     fields:
       queries: String[]             # モデルが実際に投げた検索語
       sources: GroundingSource[]    # 参照元。空 = 出典は存在しない
+      engine: GroundingEngine       # どの機構が接地したか。閉じた列挙 (Spec 31 D5)
     invariant: |
       sources が空であることは情報の欠落ではなく「出典は存在しない」という判定。
       表示層はこの状態を無表示へ畳まない。畳むと利用者は本文中の URL を出典だと
@@ -1427,6 +1440,15 @@ entities:
 
   GroundingSource:
     fields: { uri: String, title: String }   # title は取れなければ空文字
+
+  GroundingEngine:
+    values: [google, xai]
+    note: |
+      表示の「エンジン」ラベルはこの値から辞書で引く (grounding.engine の
+      「Google 検索」固定を Spec 31 P3 で置き換える)。自由文字列にしないのは
+      役職の色と同じ理由 — 開いた値は表示層に分岐を漏らす。
+      serde 既定は google: engine 欄の無い既存レコード (sessions.redb に保存済みの
+      AgentMessage) はすべて Spec 05 の Google 検索由来なので、既定で正しく読める。
 
   ErrorPayload:
     fields:
@@ -3905,3 +3927,46 @@ llm_wire:
       未解決: toolCall / toolResponse を履歴へ返す必要があるかは未確認
       （「検索 → 関数呼び出し → functionResponse → 次の周」が未通過）。
       確かめる前に ChatMessage 側へ席を作らない。
+
+  xai_responses:
+    why: |
+      Grok の Live Search (現行名 Agent Tools の web_search / x_search) は
+      /v1/chat/completions に存在しない。legacy の search_parameters は
+      HTTP 410 Gone で、サーバー自身が Agent Tools API への移行を名指しして断る
+      (実測 2026-08-09)。検索を使うときだけ /v1/responses ワイヤが要る。
+      関数呼び出しだけなら互換層で足りる（既存エージェントはそのまま）—
+      gemini_native と同じ構図の 2 例目。
+    invariants: |
+      - encode は include: ["no_inline_citations"] を**常に送る** (Spec 31 D1/D5)。
+        省くと本文へ [[N]](url) の markdown が混入し、annotations は
+        「本文で参照した分」に痩せる。無効時は「調べて触れた全 URL」が届く
+        (対 probe 実測: 2 件 → 18 件)。本文の無汚染と出典の網羅が同じ 1 手
+      - トップレベル citations 欄は REST の生応答に**存在しない** (2 回測って
+        2 回なし)。公式の response.citations は SDK の集約属性であって
+        生ワイヤの欄ではない。包括リストは annotations (url_citation) で受ける
+      - annotations の全件を Grounding.sources へ入れ、URL で重複を潰す
+        (Grounding::absorb の既存規律)。start_index / end_index は
+        [[N]](url) という**印の文字位置**であって主張の位置ではない。
+        no_inline_citations では (0, 0) — 読まない・表示で主張単位を偽らない
+      - decode の output 種別は message / reasoning / 検索呼び出しの 3 系。
+        検索呼び出しは web_search_call / x_search_call / custom_tool_call の
+        **3 名を同じ腕で受ける** (公式文書は x_search_call、実ワイヤの観測は
+        custom_tool_call — 移行途中の未文書挙動)。どの名で来たかを計器に残す。
+        未知種別は数えてから捨てる (dropped 計器。tool_execution #72 の処方)
+      - reasoning ブロックは本文へ混ぜず、種別と tokens を数えて捨てる
+        (Spec 31 D7。受け取りは thinking の Spec で 3 社まとめて)
+      - live_search_active(tool) = トグル AND effective_provider() == XaiResponses。
+        フラグ単独を判定に使わない (gemini_native.grounding_active と同型。
+        互換経路のまま真の world.json 手編集で「検索できないモデルに検索できると
+        教える」が再演する)
+      - 計器は検索を使った呼び出しのときだけ 1 行 (grep include: と同じ形)。
+        正の値は呼び出し回数 — usage の server_side_tool_usage_details (観測名) /
+        server_side_tool_usage (公式文書名) の**どちらで来ても読める**寛容 decode。
+        cost_in_usd_ticks は補助として生値のまま書き、換算した金額は出さない
+        (tick の単位が未検証。確かめていない換算は計器が嘘の桁を運ぶ)
+    reserved: |
+      ツールのフィルタ引数は公式に存在するが、欄は今作らない (Spec 31 Notes 4。
+      空の欄は「何を入れるべきか」を問い続ける — Spec 15 D7 と同じ判断)。
+      将来足すときの名前だけ残す: web_search.allowed_domains /
+      x_search.allowed_x_handles (上限 20) / from_date / to_date。
+      いずれも tools 配列の要素への加算で、ワイヤの破壊的変更にはならない。
