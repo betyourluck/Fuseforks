@@ -1,6 +1,6 @@
 [日本語](README.md) | **English**
 
-# <img src="images/logo_310x310.webp" alt="Outcasts Fuseforks Logo" width="32" align="center" /> Outcasts Fuseforks
+# <img src="images/logo_310x310.webp" alt="Outcasts Fuseforks Logo" width="32" align="middle" /> Outcasts Fuseforks
 
   [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app)
   [![Vue](https://img.shields.io/badge/Vue.js-3.0-4FC08D?style=for-the-badge&logo=vue.js&logoColor=white)](https://vuejs.org)
