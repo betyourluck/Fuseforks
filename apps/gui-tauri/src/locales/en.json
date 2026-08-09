@@ -530,7 +530,16 @@
     "deleteKeyMessage": "It will be removed from the OS credential store. Servants using this template will no longer be able to connect.",
     "deleteTemplateTitle": "Delete {name}?",
     "deleteTemplateMessage": "Servants referencing this template will not run until they are given another model.",
-    "deleteAction": "Delete"
+    "deleteAction": "Delete",
+    "providerXaiResponses": "xAI native (Responses)",
+    "vendorSkills": "Vendor-specific skills",
+    "xaiWebSearch": "Live Search (web)",
+    "xaiWebSearchHint": "Searches the web before answering (source URLs are returned)",
+    "xaiXSearch": "Live Search (X)",
+    "xaiXSearchHint": "Searches posts on X. Post URLs and real engagement counts come back, but what is returned is that something was posted — not that it is true",
+    "xaiSearchCost": "A turn that searches costs an order of magnitude more input tokens, because results are injected into the prompt (measured: 98,213, of which 62,720 cached). In a village with a small token limit, one search can exhaust it.",
+    "strandedXaiStrong": "it does nothing because the protocol is not xAI native (Responses)",
+    "strandedXaiAfter": ". Live Search exists only on the Responses path. To use it, set the protocol to \"xAI native (Responses)\"."
   },
   "schedule": {
     "title": "Schedules (timed requests)",

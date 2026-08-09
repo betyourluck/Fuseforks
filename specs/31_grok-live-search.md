@@ -2,10 +2,11 @@
 
 **ID**: 31
 **Date**: 2026-08-10
-**Status**: rev2 承認 → **P0〜P1 完了**（2026-08-10。P0 = 契約凍結 `5c3c5e1` +
-関数ツールの追補 / P1 = `llm/xai_responses.rs` + wire 型 + `Provider::XaiResponses` +
-`GroundingEngine` + テンプレート 2 欄と AND 述語。査読 7 点 → 採用 4 /
-訂正して採用 2 / 実測で機構を訂正 1 — 指摘 1・3・4 は対の再 probe で決着）
+**Status**: rev2 承認 → **P0〜P2 完了**（2026-08-10。P0 = 契約凍結 `5c3c5e1` /
+P1 = `llm/xai_responses.rs` + wire 型 + `Provider::XaiResponses` +
+`GroundingEngine` + AND 述語（`4bf7435`）/ P2 = モデル登録の「固有スキル」。
+査読 7 点 → 採用 4 / 訂正して採用 2 / 実測で機構を訂正 1 —
+指摘 1・3・4 は対の再 probe で決着）
 **Branch**: なし（main へ直接コミット。Phase ごと）
 
 ## Goal
@@ -205,6 +206,59 @@ TS 側へ欄を足してから期待値を直す」の順で消化（`useUiSetti
 decode golden / 検索 3 名 / function_call / 壊れた arguments / 未知種別 /
 Length / status 不明は Other）+ model の AND 述語 1 本 + detect の現状維持 1 本。
 
+## P2 実装記録（2026-08-10）
+
+**着手前に既定 URL 表の影響を数えて、実装を止めて先に直した。**
+`api.x.ai/v1` を `DEFAULT_BASE_URL` へ足すと、その URL が「既知の既定値」に
+入るため、**いま互換経路で動いている Grok 個体（イクス）の設定に
+「base URL が食い違う」という嘘の警告が出る**。しかも同じ形の誤検知が
+**Gemini 互換運用では既に発生していた** — `generativelanguage.googleapis.com`
+は OpenAI 互換の口も持つのに、`provider: open_ai_compat` のままだと
+「他社の既定値」として弾かれる。
+
+| ケース | 現行 | x.ai を足した後（修正前） |
+|---|---|---|
+| Grok を互換で運用（イクスの実物） | 無警告 | **警告** ← 新規の退行 |
+| Gemini を互換で運用 | **警告** | **警告** ← 既存の誤検知 |
+| 本当に食い違い（anthropic + openai の URL） | 警告 | 警告 |
+
+**一般化: 「既知の値の集合」に要素を足す変更は、その集合を*否定*に使っている
+述語を先に数える。** 追加は集合の意味を広げるが、`!includes(x)` 側の判定は
+黙って厳しくなる。ここでは「既定値の一覧」が「切り替え時の追随」（肯定）と
+「他社の設定が残っている」（否定）の 2 つに使い回されており、**足したい理由は
+前者にしか無かった**。
+
+処方は `ALSO_SERVES_COMPAT`（互換の口も同時に持つホストの既定 URL）を持ち、
+`provider: open_ai_compat` のときだけ免除すること。**免除は互換側だけ** —
+ネイティブを選んだのに別ホストなら従来どおり指摘する。
+
+**判定を `lib/providerSkills.ts` の純関数へ切り出した**（SFC の computed の
+ままでは赤で示せない）。`baseUrlMismatch` / `presetBaseUrlFor` /
+`providerSkills` の 3 本 + 単体 14 本。**ミューテーションで実測** — 免除を
+外すと**予測どおり 1 本だけ**が赤（`1 failed | 13 passed`）。
+
+そのほかの判断:
+
+- **表示条件と stranded は 1 本の純関数から対で引く**（`SkillVisibility`）。
+  2 つの computed に分けると、スキルが増えるたびに対を書き足す形になり、
+  片方だけ足した状態が「押しても効かないチェック」または「黙って消える設定」
+  として現れる
+- **stranded の行はスキルごとに 1 本**。まとめて 1 つの警告にすると
+  どれを直せばよいかが読めない
+- **検索のコスト注記を画面へ入れた**（実測値つき）。天井（Spec 11）の小さい村は
+  検索 1 回で尽きうるので、押す前に言う。README ではなく画面なのは、
+  押す判断をする場所がここだから
+- **TS の `Provider` union に `xai_responses` を足した**。doc も「gemini と
+  xai_responses は自動判定されない」へ揃えた（Rust 側の doc と同じ文）
+
+**Notes 1 を実装で 1 つ広げた（要裁定）** — 「固有スキル」の見出しは
+`anyOffered` で描くので、**Gemini を選んだときも Google グラウンディングの
+上に出る**。起票時は「Gemini を寄せるかは Spec の外」と書いていたが、
+見出しを Grok 限定にすると**同じダイアログの同じ位置で、Gemini だけ見出しの
+無い裸の行**になる。Gemini の挙動・欄・辞書は 1 つも変えていない
+（増えたのは見出し 1 行が出る条件だけ）。**元へ戻すなら `anyOffered` から
+`google.offered` を落とす 1 語。**
+
 ## 検収（書く前に読み口の実在を数えた — #68 / #90 の規律）
 
 | | 何を見るか | 読み口 |
@@ -218,7 +272,9 @@ Length / status 不明は Other）+ model の AND 述語 1 本 + detect の現�
 ## Notes
 
 1. **「固有スキル」カテゴリは構想（CLAUDE.md「各社固有機能」の節）の最初の実装**。
-   Gemini の Google 検索を後からこのカテゴリへ寄せるかは、この Spec の外
+   ~~Gemini の Google 検索を後からこのカテゴリへ寄せるかは、この Spec の外~~ →
+   **P2 で見出しの射程を広げた**（Gemini でも見出しが出る。理由と戻し方は
+   P2 実装記録の末尾）
 2. probe の使い捨て script は scratchpad にあり、リポジトリへは入れない。
    golden にするのは応答 JSON の形だけ
 3. **既存の互換運用の村は自動では新ワイヤへ乗らない**（P1 — `Provider::detect` は

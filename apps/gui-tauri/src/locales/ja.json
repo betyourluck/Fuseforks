@@ -530,7 +530,16 @@
     "deleteKeyMessage": "OS の資格情報ストアから消えます。このテンプレートを使うサーヴァントは接続できなくなります。",
     "deleteTemplateTitle": "{name} を削除しますか？",
     "deleteTemplateMessage": "このテンプレートを参照しているサーヴァントは、モデルを選び直すまで動きません。",
-    "deleteAction": "削除する"
+    "deleteAction": "削除する",
+    "providerXaiResponses": "xAI ネイティブ（Responses）",
+    "vendorSkills": "固有スキル",
+    "xaiWebSearch": "Live Search（web）",
+    "xaiWebSearchHint": "web を検索して裏を取ってから答えます（出典の URL が返ります）",
+    "xaiXSearch": "Live Search（X）",
+    "xaiXSearchHint": "X の投稿を検索します。投稿の URL と反応の実数が返りますが、返るのは「そう投稿された」という事実であって内容の真偽ではありません",
+    "xaiSearchCost": "検索した回は、結果が入力へ注ぎ込まれるぶんトークンが桁で増えます（実測 98,213 / うちキャッシュ 62,720）。トークン制限の小さい村では 1 回で尽きることがあります。",
+    "strandedXaiStrong": "プロトコルが xAI ネイティブ（Responses）ではないため効きません",
+    "strandedXaiAfter": "。Live Search は Responses 経路にしかありません。使うならプロトコルを「xAI ネイティブ（Responses）」にしてください。"
   },
   "schedule": {
     "title": "予定（スケジュール実行）",

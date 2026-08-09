@@ -10,6 +10,11 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import {
+  baseUrlMismatch as checkBaseUrlMismatch,
+  presetBaseUrlFor,
+  providerSkills,
+} from "../lib/providerSkills";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import type { Effort, ModelTemplate, ModelTemplateId, Provider } from "../types";
@@ -38,32 +43,16 @@ const isNewDraft = computed(
   () => !!draft.value && !state.templates.some((t) => t.id === draft.value!.id),
 );
 
-/** プロバイダごとの既定 base URL。切り替え時にこの値へ揃える。 */
-const DEFAULT_BASE_URL: Record<string, string> = {
-  open_ai_compat: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-  gemini: "https://generativelanguage.googleapis.com/v1beta",
-};
-
-/** 既知の既定値のいずれかであれば、プロバイダ変更に追随してよいと判断する。 */
-const KNOWN_DEFAULTS = Object.values(DEFAULT_BASE_URL);
-
 /**
  * プロバイダを変えたとき、base URL が別プロバイダの既定値のままなら差し替える。
- *
- * 実際に `provider: anthropic` と `baseUrl: api.openai.com` の組み合わせが
- * 保存され、Anthropic のモデル名で OpenAI へ送る設定ができてしまっていた。
- * ユーザーが手で入れた URL（プロキシ等）は正当なので、既定値のときだけ触る。
+ * 判定は `lib/providerSkills` の純関数（テストで留めてある）。
  */
 function onProviderChange(next: string | null): void {
   if (!draft.value) return;
   draft.value.provider = (next as ModelTemplate["provider"]) ?? null;
-  if (!next) return;
 
-  const preset = DEFAULT_BASE_URL[next];
-  if (preset && KNOWN_DEFAULTS.includes(draft.value.baseUrl)) {
-    draft.value.baseUrl = preset;
-  }
+  const preset = presetBaseUrlFor(next, draft.value.baseUrl);
+  if (preset) draft.value.baseUrl = preset;
 }
 
 /**
@@ -74,15 +63,9 @@ function onProviderChange(next: string | null): void {
  * 実際に `provider: anthropic` + `api.openai.com` の設定が保存され、
  * 起動しても必ず失敗する状態になっていた。
  */
-const baseUrlMismatch = computed(() => {
-  const d = draft.value;
-  if (!d?.provider) return null;
-
-  const expected = DEFAULT_BASE_URL[d.provider];
-  if (!expected || d.baseUrl === expected) return null;
-  // 他社の既定値そのものである場合に限って指摘する。
-  return KNOWN_DEFAULTS.includes(d.baseUrl) ? expected : null;
-});
+const baseUrlMismatch = computed(() =>
+  draft.value ? checkBaseUrlMismatch(draft.value.provider, draft.value.baseUrl) : null,
+);
 
 /**
  * API キーが資格情報ストアに登録済みか。`null` は未確認。
@@ -173,26 +156,23 @@ const PROVIDERS: { value: Provider | null; labelKey: string }[] = [
   { value: "open_ai_compat", labelKey: "modelTemplate.providerOpenAiCompat" },
   { value: "anthropic", labelKey: "modelTemplate.providerAnthropic" },
   { value: "gemini", labelKey: "modelTemplate.providerGemini" },
+  { value: "xai_responses", labelKey: "modelTemplate.providerXaiResponses" },
 ];
 
 /**
- * Google 接地のチェックを出してよいか。
- *
- * Gemini を**明示選択**したときだけ。自動判定のままだと OpenAI 互換の口へ出て、
- * `google_search` は 400 で拒否される。押しても効かないチェックを見せない。
+ * 固有スキルの出し分け（Spec 31 D3 / D4）。表示条件と「効かない設定が残って
+ * いる」の判定は対なので、1 本の純関数から両方引く。判定は provider であって
+ * モデル名ではない（D2 — モデル名で分けると `Provider::detect` と 2 系統になる）。
  */
-const supportsGoogleSearch = computed(() => draft.value?.provider === "gemini");
-
-/**
- * 接地が有効なのに、ワイヤが Gemini ではない状態か。
- *
- * UI からは作れないが、`world.json` を直接編集すれば作れる。**隠すだけだと
- * 真のまま見えなくなる**ので、その時だけ理由を出す。効かない設定が黙って
- * 残っているのが一番たちが悪い（コアは grounding_active() で無効化するが、
- * 利用者から見ると「チェックしたのに検索しない」になる）。
- */
-const strandedGoogleSearch = computed(
-  () => !!draft.value?.googleSearch && draft.value.provider !== "gemini",
+const skills = computed(() =>
+  providerSkills(
+    draft.value ?? {
+      provider: null,
+      googleSearch: false,
+      xaiWebSearch: false,
+      xaiXSearch: false,
+    },
+  ),
 );
 
 const EFFORTS: { value: Effort | null; label: string }[] = [
@@ -566,10 +546,22 @@ function onTemperature(raw: string): void {
             </label>
 
             <!--
+              固有スキル（Spec 31）。**そのワイヤを明示選択したときだけ**出す。
+              判定は provider であってモデル名ではない（D2）。見出しを置くのは、
+              ここから先が「そのプロバイダにしか無い能力」だと読める必要が
+              あるため — 上のトークン上限や思考段階は全社共通の欄で、性質が違う。
+            -->
+            <template v-if="skills.anyOffered">
+              <div class="col-span-2 mt-1 border-t border-line pt-2 text-[11px] font-medium text-ink-dim">
+                {{ $t("modelTemplate.vendorSkills") }}
+              </div>
+            </template>
+
+            <!--
               Gemini ネイティブを選んだときだけ出す。OpenAI 互換の口では
               google_search が 400 で拒否されるため、押しても効かない。
             -->
-            <template v-if="supportsGoogleSearch">
+            <template v-if="skills.google.offered">
               <label class="text-ink-dim">{{ $t("modelTemplate.googleSearch") }}</label>
               <label class="flex items-center gap-2">
                 <input v-model="draft.googleSearch" type="checkbox" />
@@ -580,15 +572,69 @@ function onTemperature(raw: string): void {
             </template>
 
             <!--
-              効かない設定が残っている状態。隠すだけだと真のまま見えなくなるので、
-              その時だけ理由と直し方を出す。
+              Grok の Live Search（Spec 31 D3）。web と X を**別トグル**にするのは、
+              別ツール・別課金・別 output 種別と実測済みのため。1 つに畳むと
+              web だけ欲しい村が X の攻撃面まで一緒に開けることになる。
             -->
-            <template v-else-if="strandedGoogleSearch">
+            <template v-if="skills.xaiWeb.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.xaiWebSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.xaiWebSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.xaiWebSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <template v-if="skills.xaiX.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.xaiXSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.xaiXSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.xaiXSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!--
+              検索は入力トークンを桁で増やす（実測 98,213 / うちキャッシュ 62,720）。
+              天井（Spec 11）の小さい村では 1 回で尽きうるので、押す前に言う。
+            -->
+            <template v-if="skills.xaiWeb.offered || skills.xaiX.offered">
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.xaiSearchCost") }}
+              </div>
+            </template>
+
+            <!--
+              効かない設定が残っている状態。隠すだけだと真のまま見えなくなるので、
+              その時だけ理由と直し方を出す。スキルごとに 1 行 — まとめて 1 つの
+              警告にすると、どれを直せばよいかが読めなくなる。
+            -->
+            <template v-if="skills.google.stranded">
               <label class="text-warn">{{ $t("modelTemplate.googleSearch") }}</label>
               <p class="text-warn">
                 {{ $t("modelTemplate.strandedBefore")
                 }}<strong>{{ $t("modelTemplate.strandedStrong") }}</strong
                 >{{ $t("modelTemplate.strandedAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.xaiWeb.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.xaiWebSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedXaiStrong") }}</strong
+                >{{ $t("modelTemplate.strandedXaiAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.xaiX.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.xaiXSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedXaiStrong") }}</strong
+                >{{ $t("modelTemplate.strandedXaiAfter") }}
               </p>
             </template>
           </div>

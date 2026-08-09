@@ -27,11 +27,15 @@ export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "run";
 /**
  * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
  *
- * `gemini` は自動判定されない（明示選択のみ）。Gemini の base URL は
- * OpenAI 互換としても動いており、自動判定を変えると既存の設定が黙って
- * 別のワイヤへ移ってしまうため。
+ * `gemini` と `xai_responses` は自動判定されない（明示選択のみ）。どちらの
+ * base URL も OpenAI 互換としても動いており、自動判定を変えると既存の設定が
+ * 黙って別のワイヤへ移ってしまうため。
  */
-export type Provider = "open_ai_compat" | "anthropic" | "gemini";
+export type Provider =
+  | "open_ai_compat"
+  | "anthropic"
+  | "gemini"
+  | "xai_responses";
 
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
