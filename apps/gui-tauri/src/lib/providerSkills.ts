@@ -77,6 +77,28 @@ export function presetBaseUrlFor(
   return preset === currentBaseUrl ? null : preset;
 }
 
+/**
+ * そのワイヤで**常に効く**（設定を持たない）固有スキル。返すのは**辞書キー
+ * そのもの**で、ラベルが `modelTemplate.{key}`、説明が `modelTemplate.{key}Hint`。
+ * テンプレート側で組み立てないのは、鍵の作り方が 2 箇所に散ると
+ * 辞書の鍵集合テストが拾えない綴りずれが生まれるため。
+ *
+ * **チェックボックスで見せてはいけない。** 操作できないものを操作の形で
+ * 出すのは、「押しても効かないチェックを見せない」の裏返しの嘘になる
+ * （無効化したチェックも同じ — 何かすれば有効にできる、と読める）。
+ *
+ * **載せるのは「このアプリがそのプロバイダ固有の機構を実際に使っている」もの
+ * だけ。** サーバー側が勝手にやる最適化は載せない — OpenAI 互換 / Gemini /
+ * xAI はいずれも `cached_tokens` を**読んでいるだけ**で、こちらは何も送って
+ * いない。それを固有スキルとして並べると、アプリの働きではないものを
+ * 働きとして見せることになる。
+ */
+export function passiveSkills(provider: ModelTemplate["provider"]): string[] {
+  // Anthropic だけが cache_control を実際に組み立てている
+  // （`anthropic::place_message_breakpoint` / `build_system_blocks`）。
+  return provider === "anthropic" ? ["passivePromptCache"] : [];
+}
+
 /** 固有スキルの 1 つぶんの表示状態。 */
 export interface SkillVisibility {
   /** チェックボックスを出すか（そのワイヤを明示選択している）。 */
@@ -109,7 +131,13 @@ export function providerSkills(draft: Pick<
   google: SkillVisibility;
   xaiWeb: SkillVisibility;
   xaiX: SkillVisibility;
-  /** どれか 1 つでも出るか（カテゴリ見出しを描くかの判定）。 */
+  /** 設定を持たない固有スキルの辞書キー。 */
+  passive: string[];
+  /**
+   * 見出しを描くか。**パッシブだけの provider（Anthropic）でも描く** —
+   * 見出しは「ここから先はこのプロバイダにしか無い能力」の区切りで、
+   * 操作できるかどうかとは別。
+   */
   anyOffered: boolean;
 } {
   const onGemini = draft.provider === "gemini";
@@ -119,10 +147,14 @@ export function providerSkills(draft: Pick<
   const xaiWeb = visibility(draft.xaiWebSearch, onXai);
   const xaiX = visibility(draft.xaiXSearch, onXai);
 
+  const passive = passiveSkills(draft.provider);
+
   return {
     google,
     xaiWeb,
     xaiX,
-    anyOffered: google.offered || xaiWeb.offered || xaiX.offered,
+    passive,
+    anyOffered:
+      google.offered || xaiWeb.offered || xaiX.offered || passive.length > 0,
   };
 }

@@ -597,6 +597,26 @@ function onTemperature(raw: string): void {
             </template>
 
             <!--
+              パッシブな固有スキル（設定を持たず、そのワイヤなら常に効く）。
+              **チェックボックスは置かない** — 操作できないものを操作の形で
+              出すのは「押しても効かないチェックを見せない」の裏返しの嘘になる。
+              無効化したチェックも同じで、何かすれば有効にできると読める。
+              バッジの見た目は会話ペインの「外部」と同じものを使う（同じ規律を
+              2 箇所で持たない）。
+            -->
+            <template v-for="key in skills.passive" :key="key">
+              <label class="text-ink-dim">{{ $t(`modelTemplate.${key}`) }}</label>
+              <div class="flex items-start gap-2">
+                <span
+                  class="mt-px shrink-0 rounded-sm bg-surface-2 px-1 text-[9px] text-ink-dim ring-1 ring-line"
+                >
+                  {{ $t("modelTemplate.passiveBadge") }}
+                </span>
+                <span class="text-ink-dim">{{ $t(`modelTemplate.${key}Hint`) }}</span>
+              </div>
+            </template>
+
+            <!--
               検索は入力トークンを桁で増やす（実測 98,213 / うちキャッシュ 62,720）。
               天井（Spec 11）の小さい村では 1 回で尽きうるので、押す前に言う。
             -->

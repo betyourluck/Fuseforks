@@ -539,7 +539,10 @@
     "xaiXSearchHint": "X の投稿を検索します。投稿の URL と反応の実数が返りますが、返るのは「そう投稿された」という事実であって内容の真偽ではありません",
     "xaiSearchCost": "検索した回は、結果が入力へ注ぎ込まれるぶんトークンが桁で増えます（実測 98,213 / うちキャッシュ 62,720）。トークン制限の小さい村では 1 回で尽きることがあります。",
     "strandedXaiStrong": "プロトコルが xAI ネイティブ（Responses）ではないため効きません",
-    "strandedXaiAfter": "。Live Search は Responses 経路にしかありません。使うならプロトコルを「xAI ネイティブ（Responses）」にしてください。"
+    "strandedXaiAfter": "。Live Search は Responses 経路にしかありません。使うならプロトコルを「xAI ネイティブ（Responses）」にしてください。",
+    "passiveBadge": "パッシブ",
+    "passivePromptCache": "プロンプトキャッシュ",
+    "passivePromptCacheHint": "共通の前置き（条例・役職・顔ぶれ）を 1 時間キャッシュし、以後のターンの入力費を下げます。2,048 トークンを超える依頼で効きます。"
   },
   "schedule": {
     "title": "予定（スケジュール実行）",

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BASE_URL,
   baseUrlMismatch,
+  passiveSkills,
   presetBaseUrlFor,
   providerSkills,
 } from "./providerSkills";
@@ -130,5 +131,29 @@ describe("providerSkills", () => {
     expect(s.xaiWeb.offered && s.xaiX.offered).toBe(true);
     expect(s.xaiWeb.stranded).toBe(false);
     expect(s.xaiX.stranded).toBe(false);
+  });
+});
+
+describe("passiveSkills", () => {
+  // 載せるのは「このアプリがそのプロバイダ固有の機構を実際に使っている」ものだけ。
+  // Anthropic だけが cache_control を組み立てている（place_message_breakpoint）。
+  it("Anthropic はプロンプトキャッシュを持つ", () => {
+    expect(passiveSkills("anthropic")).toEqual(["passivePromptCache"]);
+  });
+
+  // 互換 / Gemini / xAI は usage の cached_tokens を**読んでいるだけ**で、
+  // こちらは何も送っていない。サーバー側の最適化をアプリの働きとして並べない。
+  it("読んでいるだけのプロバイダには載せない", () => {
+    for (const p of ["open_ai_compat", "gemini", "xai_responses", null] as const) {
+      expect(passiveSkills(p)).toEqual([]);
+    }
+  });
+
+  // 見出しは「操作できるか」ではなく「固有の能力があるか」で描く。
+  it("パッシブだけの provider でも見出しは出る", () => {
+    const s = providerSkills(draft({ provider: "anthropic" }));
+    expect(s.anyOffered).toBe(true);
+    expect(s.google.offered || s.xaiWeb.offered || s.xaiX.offered).toBe(false);
+    expect(s.passive).toEqual(["passivePromptCache"]);
   });
 });
