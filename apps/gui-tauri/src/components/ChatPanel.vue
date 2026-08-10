@@ -20,6 +20,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
+import ThinkingNote from "./ThinkingNote.vue";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
@@ -34,6 +35,7 @@ import {
   type ToolRun,
 } from "../lib/chatRows";
 import { groundingView, type GroundingView } from "../lib/grounding";
+import { thinkingView, type ThinkingView } from "../lib/thinkingNote";
 import { isPresenceNotice } from "../lib/presenceNotice";
 import { toolLabel, type ToolLabel } from "../lib/toolLabel";
 import { renderMarkdownCached } from "../lib/markdown";
@@ -340,6 +342,16 @@ function onMarkdownClick(event: MouseEvent): void {
  */
 function grounding(message: AgentMessage): GroundingView | null {
   return groundingView(message);
+}
+
+/**
+ * 思考の要約。規則は lib/thinkingNote.ts、見た目は ThinkingNote.vue。
+ *
+ * **接地とは別の枠**（Spec 33 D6）— 出典は検証できる外部の指し先、
+ * 要約は検証できない内部の申告で、同じ枠だと後者に前者の信用が乗る。
+ */
+function thinking(message: AgentMessage): ThinkingView | null {
+  return thinkingView(message);
 }
 
 function timestamp(ms: number): string {
@@ -896,6 +908,11 @@ async function newChat(): Promise<void> {
           <!-- 接地の来歴。規則は lib/grounding.ts、見た目は GroundingNote.vue。
                接地していない発話（大多数）では null になり、欄ごと出ない。 -->
           <GroundingNote v-if="grounding(entry.row.message)" :view="grounding(entry.row.message)!" />
+
+          <!-- 思考の要約。**接地とは別の枠**（Spec 33 D6）。要約が返らない回は
+               普通にあり（ツールループの回がほぼそれ）、そこでは欄ごと出ない。
+               出ないことは「思考しなかった」ではない — 量は turn: 行が持つ。 -->
+          <ThinkingNote v-if="thinking(entry.row.message)" :view="thinking(entry.row.message)!" />
 
           <!-- hop（転送回数）は常時表示から時刻の hover へ退避した。
                診断情報であって日常の閲覧には要らない（情報は消さず場所を変える）。

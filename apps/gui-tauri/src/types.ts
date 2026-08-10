@@ -386,6 +386,14 @@ export interface AgentMessage {
    * **表示専用** — モデルへは戻らない（Spec 05 Notes 9）。
    */
   grounding?: Grounding;
+  /**
+   * モデルが返した思考の要約（Spec 33）。無い発話では省かれる。
+   *
+   * **表示専用 — モデルへは戻らない。** 履歴（プロンプト）へ積まないことは
+   * コア側で型が保証している（`ChatMessage` にこの欄が無い）。
+   * **英語で返る**（問いが日本語でも。3 社とも実測）。
+   */
+  reasoningSummary?: string[];
   /** 添付画像の参照（Spec 23）。無い発話では省かれる。 */
   attachments?: Attachment[];
 }

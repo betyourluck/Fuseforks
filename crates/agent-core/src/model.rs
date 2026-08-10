@@ -1254,3 +1254,41 @@ mod tests {
         assert_eq!(spec.role_id, None);
     }
 }
+
+#[cfg(test)]
+mod spec33_wire_shape {
+    use super::*;
+
+    /// 思考の要約は **`reasoningSummary`** としてワイヤへ出る（Spec 33 P3）。
+    ///
+    /// フロントの `AgentMessage` は camelCase を前提にしており、ここが
+    /// snake_case だと**画面には何も出ないのに誰も落ちない**。
+    /// 型はどちらも自分たちのものなので、コンパイラも lint も教えない。
+    #[test]
+    fn the_summary_is_camel_cased_on_the_wire_and_omitted_when_empty() {
+        let mut message = AgentMessage::new(
+            Endpoint::Agent {
+                id: AgentId::from("agent_01"),
+            },
+            Endpoint::User,
+            "答え",
+            0,
+        );
+
+        // 空なら欄ごと出ない（要約が無い発話が大多数なので、記録を膨らませない）。
+        let empty = serde_json::to_value(&message).unwrap();
+        assert!(empty.get("reasoningSummary").is_none());
+
+        message.reasoning_summary = vec!["I'm working through it.".to_owned()];
+        let filled = serde_json::to_value(&message).unwrap();
+        assert_eq!(
+            filled["reasoningSummary"],
+            serde_json::json!(["I'm working through it."]),
+            "フロントが読む鍵は camelCase"
+        );
+        assert!(
+            filled.get("reasoning_summary").is_none(),
+            "snake_case では出ない（出ていたら画面に何も映らない）"
+        );
+    }
+}
