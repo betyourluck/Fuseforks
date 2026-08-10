@@ -258,3 +258,121 @@ async fn disabling_handoff_removes_only_transfer_tools() {
         "plan は残る（消すと進行役が手分けできなくなる）: {restricted_round:?}"
     );
 }
+
+/// ツールを呼んだだけの応答（本文は空）を返すバックエンド。
+///
+/// **転送を切った個体がここで転送してはいけない。** 実機ではこの形で
+/// 空の本文が最初の接続先へ配送された（2026-08-11。判定側の未検査）。
+struct AsksThenEmptyBackend;
+
+#[async_trait::async_trait]
+impl LlmBackend for AsksThenEmptyBackend {
+    fn name(&self) -> &str {
+        "asks-then-empty"
+    }
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let ask = req.tools.iter().find(|t| t.name.starts_with("ask_"));
+        let tool_calls = match ask {
+            // 既に結果を受け取っていれば終わる。
+            Some(tool) if !req.messages.iter().any(|m| m.tool_call_id.is_some()) => {
+                vec![ToolCall {
+                    id: "call_1".into(),
+                    name: tool.name.clone(),
+                    args: serde_json::json!({ "message": "調べて" }),
+                    extra: None,
+                }]
+            }
+            _ => Vec::new(),
+        };
+        Ok(ChatResponse {
+            // **本文は空。** 旧経路へ落ちると、この空文字が転送される。
+            text: Some(String::new()),
+            finish: if tool_calls.is_empty() {
+                Finish::Stop
+            } else {
+                Finish::ToolUse
+            },
+            tool_calls,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+                reasoning: 0,
+            },
+            grounding: Default::default(),
+            reasoning_summary: Vec::new(),
+        })
+    }
+}
+
+/// **転送を切った個体は、どんな応答でも転送で抜けない。**
+///
+/// 提示の検査（上のテスト）は**判定側を 1 ミリも守らない** — 提示していない
+/// 道具でも、判定が別の経路で転送を作れば配送は起きる。実機で起きたのがこれで、
+/// `decide` の引数に「ツールを使えるか」と「転送を出すか」を畳んで渡していた
+/// ため、転送を切った個体がツール非対応モデル用の旧経路（終了マーカーが
+/// 無ければ最初の相手へ渡す）へ落ちていた。
+#[tokio::test]
+async fn a_restricted_agent_never_hands_off_even_with_empty_text() {
+    let dir = TempDir::new("nofallback");
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::new(Arc::new(AsksThenEmptyBackend))),
+        Arc::new(InMemorySecretStore::new()),
+        OrchestratorConfig {
+            schedule_interval: Duration::from_secs(3600),
+            ..OrchestratorConfig::default()
+        },
+    )
+    .await
+    .expect("bootstrap できること");
+    orchestrator
+        .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+        .await
+        .unwrap();
+
+    let worker = AgentId::from("agent_02");
+    orchestrator
+        .create_agent(AgentSpec::new(worker.clone(), "ワーカー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&worker).await.unwrap();
+
+    let coordinator = AgentId::from("agent_01");
+    let mut spec = AgentSpec::new(coordinator.clone(), "進行役", "tpl");
+    spec.connected_agents = vec![worker.clone()];
+    spec.allow_handoff = false;
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&coordinator).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    let mut sent: Vec<(String, String)> = Vec::new();
+    orchestrator
+        .send_user_message(&coordinator, "調べて")
+        .await
+        .unwrap();
+    while let Ok(Ok(event)) = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+        if let agent_core::event::CoreEvent::MessageSent { message } = event {
+            sent.push((format!("{:?}", message.from), format!("{:?}", message.to)));
+        }
+    }
+
+    // **判定は「答えがどちらへ戻ったか」**。委譲の依頼も転送も、進行役から
+    // ワーカーへの配送として 1 通記録される（画面の「ザリ → イクス」がそれ）ので、
+    // **配送の有無では区別できない**。区別が付くのは戻りの向きだけ。
+    //
+    // 正の対照: ワーカーの答えが**進行役へ**戻っている。
+    assert!(
+        sent.iter()
+            .any(|(from, to)| from.contains("agent_02") && to.contains("agent_01")),
+        "委譲の答えは依頼主へ戻る（戻っていないなら以下は何も検査しない）: {sent:?}"
+    );
+    // 本題: ワーカーの答えが利用者へ流れていない。
+    // 旧経路へ落ちると `reply_to` を持たない配送になり、ここが `User` になる。
+    assert!(
+        !sent
+            .iter()
+            .any(|(from, to)| from.contains("agent_02") && to == "User"),
+        "転送を切った個体の依頼で、答えが利用者へ逸れてはいけない: {sent:?}"
+    );
+}

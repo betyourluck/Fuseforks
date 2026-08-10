@@ -4680,7 +4680,7 @@ async fn handle_message(
         // 提示していない道具の呼び出しは拾わない。**提示集合と判定集合を
         // 揃える** — ずれると「出していないのに効く」か「出したのに効かない」の
         // どちらかになる（Spec 20 で踏んだ形）。
-        outcome = handoffs.decide(&response, offer_transfer);
+        outcome = handoffs.decide(&response, use_handoff_tools, offer_transfer);
         if matches!(outcome, Outcome::Handoff { .. }) {
             break;
         }
@@ -6851,10 +6851,23 @@ impl HandoffTools {
     /// tool call を普通に返すので、最初の 1 本で打ち切ると残りが黙って消える。
     /// 同じ宛先への重複は先勝ちで 1 通に畳む——モデルは同じツールを
     /// 同じ引数で 2 回呼ぶことがあり、素通しにすると受け手の履歴が汚れる。
-    fn decide(&self, response: &ChatResponse, tools_available: bool) -> Outcome {
+    /// `tools_available` は**そもそもツールを使える個体か**、
+    /// `offer_transfer` は**転送を提示しているか**。**2 つは別の概念**で、
+    /// 1 つの引数に畳んではいけない。
+    ///
+    /// 畳むと、転送を切った**ツール対応の個体**が下の旧経路
+    /// （ツール非対応モデル向けの、終了マーカーが無ければ最初の相手へ渡す形）へ
+    /// 落ちる。実機では `ask_*` を呼んだ周の空の本文が最初の接続先へ配送され、
+    /// **依頼した相手ではない個体が空の依頼を受け取った**（2026-08-11）。
+    fn decide(&self, response: &ChatResponse, tools_available: bool, offer_transfer: bool) -> Outcome {
         let text = response.text.clone().unwrap_or_default();
 
         if tools_available {
+            // 転送を出していない個体は**転送で抜けない**。委譲（`ask_*`）と
+            // `plan` はツール実行の側で回るので、ここは常に終了でよい。
+            if !offer_transfer {
+                return Outcome::Finish { content: text };
+            }
             let mut deliveries: Vec<(AgentId, String)> = Vec::new();
             for call in &response.tool_calls {
                 let Some(target) = self.resolve(&call.name) else {
