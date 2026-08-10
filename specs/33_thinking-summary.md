@@ -2,10 +2,13 @@
 
 **ID**: 33
 **Date**: 2026-08-10
-**Status**: **rev2 承認 → P0 完了**（2026-08-10。契約は `data_contract.yaml` の
+**Status**: **rev3**（P1 の作業中に**社を数え落としていた**のが出て改訂 =
+**Spec 32 rev3 と同じ形の再演**。**Gemini が 3 社目**で、しかも
+**Anthropic と同型**（要求しないと本文が来ない）だった。利用者裁定で範囲を
+**3 社**へ拡張。rev2 承認 → P0 完了 → rev3。契約は `data_contract.yaml` の
 `llm_wire.reasoning_summary`。凍結したのは **`reasoning_summary` だけ**で、
 **D2-b（ワイヤ上の産物の往復）は未凍結**のまま残してある。
-査読 8 点 → 採用 5 / 訂正して採用 3 / 反証 0。
+rev2 = 査読 8 点 → 採用 5 / 訂正して採用 3 / 反証 0。
 rev1 からの最大の変更は **D2 の分割** — `reasoning_summary`（表示物）と
 Anthropic の `thinking + signature`（ワイヤの往復物）を**同じ決定に混ぜていた**。
 分けないと P0 で凍結した契約を P2 の測定が壊す）
@@ -63,17 +66,49 @@ Anthropic の `thinking + signature`（ワイヤの往復物）を**同じ決定
 - **`thinking` ブロックを落として `tool_result` を返しても 200**（戻す対照も 200）。
   **各 1 サンプル、かつ `display` を送っていない条件**での観測
 
-### 両社に共通
+### Gemini（`gemini-3.6-flash`。2 発。**rev3 で範囲へ入った**）
 
-- **要約は英語で返る**（問いが日本語でも）
+| | `thought:true` の part | 本文 | `thoughtsTokenCount` |
+|---|---|---|---|
+| **既定（いまの村と同じ形）** | **出ない** | — | 3,773 |
+| **`thinkingConfig.includeThoughts: true`** | **出る** | **1,754 字** | 2,994 |
+
+- **既定では `thought: true` の part がそもそも返ってこない。**
+  `gemini.rs` の `if part.thought == Some(true) { continue; }` は
+  **現行の設定では一度も発火しない防御コード**だった
+- **rev2 の起票時に「Gemini は本文を持たない」と暗黙に仮定していたのが誤り。**
+  正しくは**「要求していないから来ない」** — Anthropic と同じ形
+- **要求しなくても思考ぶんは払っている**（3,773 トークン）。
+  Spec 32 が数えた `reasoning` はこの数字
+
+### 3 社に共通
+
+- **要約は英語で返る**（問いが日本語でも）。**3 社とも**なので、
+  1 社の癖ではなく**この領域の性質**（D7 の根拠が強まった）
 - **要約は生の思考ではない** — xAI は `reasoning_tokens` 1,118〜3,685 に対し
-  最大 1,367 字、Anthropic は 4,096 トークンに対し 3,475 字
+  最大 1,367 字、Anthropic は 4,096 トークンに対し 3,475 字、
+  Gemini は 2,994 トークンに対し 1,754 字
+- **「要求しないと本文が来ない」のが 3 社中 2 社**（Anthropic / Gemini）。
+  **xAI だけが既定で返す**
 
 ## 決定（D）
 
-### D1: 範囲は xAI と Anthropic
+### D1: 範囲は **ネイティブ 3 ワイヤすべて**（xAI / Anthropic / Gemini）
 
-Goal の 2 段（技術と規模）が根拠。OpenAI 互換は Spec 34。
+Goal の 2 段（技術と規模）が根拠。**OpenAI 互換だけが Spec 34。**
+
+**rev2 は 2 社だった。** 数え落としの機序は Spec 32 rev2 と同じで、
+**「新しい作業が要る社」で列挙した** — xAI は欄を読む、Anthropic は
+`display` を送る、と数えたところで、Gemini は**どちらの形にも見えなかった**
+（実際は Anthropic と同型だった）。
+
+**入れる根拠 3 つ**（利用者裁定 2026-08-10）:
+
+- **機構が Anthropic と同型**（フラグを送る + 欄を読む）。**設計は 1 つも増えず
+  Phase が 1 つ増えるだけ**
+- 入れないと**ネイティブ 3 ワイヤのうち 2 つだけ思考が出る**。
+  画面から見て理由が読めない
+- **既に払っている**（実測 3,773 トークン）。Spec 32 の Goal と同じ論法
 
 ### D2-a: `reasoning_summary` は**両社とも常に履歴へ積まない**（不変）
 
@@ -108,12 +143,18 @@ Goal の 2 段（技術と規模）が根拠。OpenAI 互換は Spec 34。
 
 **この決定は P0 で凍結しない**（査読 2）。P0 が凍結するのは D2-a まで。
 
-### D3: 送信側が変わるのは Anthropic だけ。既定は常送、ただし P2 でガードの要否を測る
+### D3: 送信側が変わるのは **Anthropic と Gemini**。既定は常送、ただしガードの要否を測る
 
 | | 送るもの | 理由 |
 |---|---|---|
 | **xAI** | **何も足さない** | `summary:"auto"` は効果ゼロを 4 対 4 で実測 |
 | **Anthropic** | `thinking: {"type":"adaptive","display":"summarized"}` | 送らないと `thinking` が空 |
+| **Gemini** | `generationConfig.thinkingConfig.includeThoughts: true` | 送らないと `thought` part が**出ない** |
+
+**`includeThoughts` は接地（`google_search`）とは独立に送る** —
+Gemini の `tool_config.includeServerSideToolInvocations` は「接地を使うときだけ
+送る」規律だが（無関係なキーを常時足さない）、思考は**接地の有無と無関係に
+常に起きている**ので条件が違う。
 
 **トグルにしない。** 思考ぶんは `display` に関わらず払っており、`summarized` は
 **既に払ったものを返してもらうだけ**。トグルを置くと
@@ -173,14 +214,18 @@ Spec 05 が `sources` の空を受けて縮小したのと同じ規律。
 ## Phases
 
 - **P0**: 契約凍結 — **`reasoning_summary` に限定**（欄・履歴に積まない・
-  空は 0 字・送信側は Anthropic だけ）。**`thinking` の往復に関する契約は
-  凍結しない**（D2-b。P1 / P2 の測定後に別途）
-- **P1**: **xAI** — **冒頭で D2-b の対を測る**（`reasoning` item を落として
-  次のターンを投げる / 戻す）。その後 `XaiOutputItem` に `summary` +
-  canonical の席 + `absorb` の配線。**表示なし**
-- **P2**: **Anthropic** — **冒頭で 3 つ測る**（(1) `summarized` を送った応答で
+  空は 0 字・送信側が変わる社）。**`thinking` の往復に関する契約は
+  凍結しない**（D2-b。各社の測定後に別途）。
+  **rev3 で「送信側は Anthropic だけ」を訂正**（Gemini も要る）
+- **P1**: **xAI** — **D2-b は本番の実績で決着**（下記 P1 実装記録）。
+  `XaiOutputItem` に `summary` + canonical の席 + 配線。**表示なし**
+- **P2a**: **Anthropic** — **冒頭で 3 つ測る**（(1) `summarized` を送った応答で
   D2-b の対 (2) 課金の 3 対 (3) 5 世代以外への `display` 送信）→ 送信側の実装 +
   受け取り。**測定結果を Spec へ書いてから実装へ入る**
+- **P2b**: **Gemini** — `thinkingConfig.includeThoughts` + `thought` part の捕獲
+  （**現状は発火しない防御コードの `continue` を捕獲へ変える**）。
+  **冒頭で D2-b の対を測る**。**`thoughtSignature` の往復は既に実装済み**
+  （`ToolCall::extra`）なので、**問いは「思考の本文まで戻す要求があるか」**に絞られる
 - **P3**: **表示** — **D7 の確定が入口条件**。`AgentMessage` → 画面。
   語は D5、0 字は描かない（D4）、枠は接地と分ける（D6）、辞書 ja/en
 - **P4**: 台帳 — README / DETAIL 日英 + `data_contract` の回収
@@ -194,9 +239,11 @@ Spec 32 の検収 1 は probe の産物（差 3〜5）を合格条件にして�
 
 1. **xAI のターンで要約が画面に出る。** 同じターンの `turn:` 行の `reasoning=` が
    非ゼロであることと**対で読む**（量と中身が同じターンに揃う）
-2. **Anthropic のターンで要約が出る。** `display` を送る前後で**同じ問いを
-   1 回ずつ**投げ、**前は出ず後は出る**ことを対で見る
-   （片方だけでは「元から出ていた」と区別が付かない）
+2. **Anthropic と Gemini のターンで要約が出る。** それぞれ**フラグを送る前後で
+   同じ問いを 1 回ずつ**投げ、**前は出ず後は出る**ことを対で見る
+   （片方だけでは「元から出ていた」と区別が付かない）。
+   **2 社を 1 項目に畳まない** — 送るフラグも欄も別なので、
+   片方だけ通っても気づけなくなる
 3. **要約が 0 字のターンで枠ごと出ない**（D4）。**ツールを使うターンで踏める** —
    実測でそこが `thinking_tokens=34` / 要約 0 字だった
 4. **短形（1 字以上だが薄い）のターンでも壊れずに出る**（D4 の後半。

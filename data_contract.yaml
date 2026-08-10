@@ -3647,14 +3647,30 @@ llm_wire:
     **probe の産物である数字が表示規則になる**（failures.md #92 と同じ罠）。
     しかも「再掲だけか」は内容の判断で、ハーネスには決められない。
 
-    **凍結 3: 送信側が変わるのは Anthropic だけ。**
+    **凍結 3: 送信側が変わるのは Anthropic と Gemini。**
+    ~~Anthropic だけ~~ **取り消し (Spec 33 rev3)** — P1 の作業中に
+    **Gemini が 3 社目**だと分かった。**「新しい作業が要る社」で列挙したので、
+    どちらの形にも見えなかった Gemini が網の外に落ちた**
+    （Spec 32 rev2 の数え落としと同じ機序）。
+
       xAI       何も足さない。reasoning: {"summary":"auto"} は効果ゼロを
-                4 対 4 で実測（短形/長形の分布が既定 2:2 / auto 2:2 で一致）
+                4 対 4 で実測（短形/長形の分布が既定 2:2 / auto 2:2 で一致）。
+                **3 社で唯一、既定で本文が返る**
       Anthropic thinking: {"type":"adaptive","display":"summarized"}
                 5 世代の既定は display: "omitted" で、signature は
                 368〜16,328 字あるのに thinking テキストが 0 字になる。
                 **budget_tokens は 400**（サーバー自身が adaptive と
                 output_config.effort を名指しする）
+      Gemini    generationConfig.thinkingConfig.includeThoughts: true
+                **既定では thought: true の part がそもそも返らない**
+                （実測。part は答えの 1 つだけ）。ゆえに
+                `if part.thought == Some(true) { continue; }` は
+                **現行の設定では一度も発火しない防御コード**。
+                **要求しなくても思考ぶんは払っている**（実測 3,773 トークン）。
+                includeThoughts は**接地とは独立に常に送る** —
+                tool_config.includeServerSideToolInvocations の
+                「接地を使うときだけ送る」規律とは条件が違い、思考は接地の
+                有無と無関係に常に起きている
     **トグルにしない** — 思考ぶんは display に関わらず払っており、summarized は
     「既に払ったものを返してもらう」だけ（実測 1 対で thinking_tokens
     4,090 対 4,096 = 差 6。**1 対なので「同程度」までしか言わない**）。
@@ -3673,8 +3689,9 @@ llm_wire:
     出典は**検証できる外部の指し先**、要約は**検証できない内部の申告**。
     同じ枠に並べると後者に前者の信用が乗る。
 
-    **要約は英語で返る**（問いが日本語でも。両社で実測）。画面での断り方は
-    Spec 33 D7 で未決 — **P3 の入口条件**（注記の有無で枠の構造が変わる）。
+    **要約は英語で返る**（問いが日本語でも。**3 社とも実測** = 1 社の癖ではなく
+    この領域の性質）。画面での断り方は Spec 33 D7 で未決 —
+    **P3 の入口条件**（注記の有無で枠の構造が変わる）。
 
   mcp_server_contract: |
     Fuseforks を MCP サーバーにする (Spec 25 rev3 承認 2026-08-07)。外部の LLM
