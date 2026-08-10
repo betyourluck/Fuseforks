@@ -153,6 +153,13 @@ pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
         generation_config: wire::GeminiGenerationConfig {
             temperature: req.temperature,
             max_output_tokens: req.max_tokens,
+            // **常に送る**（Spec 33 D3）。送らないと思考の part が返らないが、
+            // 思考自体は起きていて課金もされている — 返し方だけを変える欄。
+            // 接地（`google_search`）とは独立で、あちらの「使うときだけ送る」
+            // 規律とは条件が違う（思考は接地の有無と無関係に常に起きている）。
+            thinking_config: wire::GeminiThinkingConfig {
+                include_thoughts: true,
+            },
         },
     }
 }
@@ -378,6 +385,7 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
 
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut reasoning_summary: Vec<String> = Vec::new();
 
     for part in candidate.content.map(|c| c.parts).unwrap_or_default() {
         // Google が代行した組み込みツール。実行するものは無いが、
@@ -398,8 +406,19 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             }
             continue;
         }
-        // 思考ブロックは本文ではない。混ぜると利用者に内部独白が見える。
+        // 思考の part は**答えの本文ではない**。`text` へ混ぜると内部の独白が
+        // 答えとして表示される。**要約としては受け取る**（Spec 33）。
+        //
+        // **0 字は入れない**（`reasoning_summary` 契約の凍結 2）。
+        // なお `thoughtSignature` はこの part ではなく `functionCall` の part に
+        // 付いており、その往復は既に `ToolCall::extra` で成立している —
+        // **思考の本文まで戻す要求は無い**（落とす / 戻すの対で実測）。
         if part.thought == Some(true) {
+            if let Some(chunk) = part.text
+                && !chunk.is_empty()
+            {
+                reasoning_summary.push(chunk);
+            }
             continue;
         }
         if let Some(chunk) = part.text {
@@ -433,12 +452,7 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         finish,
         usage,
         grounding,
-        // **Gemini は本 Spec（33）の範囲外**だが、思考の本文を**持っている
-        // 可能性がある** — 上の `part.thought == Some(true)` の枝が
-        // `part.text` へ到達する前に捨てている。取れるかどうかは未測定で、
-        // 「捨てている」ことは自分のコードから、「中身がある」ことは
-        // 相手のワイヤからしか言えない（`failures.md` #93）。
-        reasoning_summary: Vec::new(),
+        reasoning_summary,
     })
 }
 
@@ -624,6 +638,67 @@ mod tests {
             97,
             "差は本文（candidatesTokenCount）でなければならない"
         );
+    }
+
+    /// `includeThoughts` は**常に送る**（Spec 33 D3）。
+    ///
+    /// 送らないと `thought: true` の part がそもそも返らない（実測 — 既定の応答は
+    /// 答えの part 1 つだけ）。**モデルによるガードは要らない** —
+    /// `gemini-3.5-flash-lite` / `gemini-3.6-flash` の双方が 200 で受けた。
+    #[test]
+    fn thinking_config_is_always_requested() {
+        let req = ChatRequest::plain("gemini-3.6-flash", vec![ChatMessage::user("問い")], 512);
+        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        assert_eq!(
+            json["generationConfig"]["thinkingConfig"],
+            serde_json::json!({ "includeThoughts": true })
+        );
+        // 接地を使わない要求でも送る（`includeServerSideToolInvocations` と違い、
+        // 思考は接地の有無と無関係に起きているため）。
+        assert!(json.get("toolConfig").is_none(), "接地なしでは toolConfig は出ない");
+    }
+
+    /// 思考の part は**要約として**受け取り、**答えの本文へは混ぜない**（Spec 33）。
+    #[test]
+    fn thought_parts_become_the_summary_not_the_answer() {
+        let raw = r#"{
+          "candidates":[{
+            "content":{"role":"model","parts":[
+              {"text":"**Logical Deduction**\nOkay, here's my read.","thought":true},
+              {"text":"犯人は A です"}
+            ]},
+            "finishReason":"STOP"
+          }],
+          "usageMetadata":{"promptTokenCount":64,"candidatesTokenCount":10,"thoughtsTokenCount":2994}
+        }"#;
+        let out = decode(serde_json::from_str::<wire::GeminiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(out.text.as_deref(), Some("犯人は A です"), "本文は混ざらない");
+        assert_eq!(
+            out.reasoning_summary,
+            vec!["**Logical Deduction**\nOkay, here's my read.".to_owned()]
+        );
+        assert_eq!(out.usage.reasoning, 2_994);
+    }
+
+    /// 空の思考 part は列へ入れない（`reasoning_summary` 契約の凍結 2）。
+    /// **答えだけの応答**（`includeThoughts` が効かない回）でも壊れない。
+    #[test]
+    fn an_empty_or_absent_thought_part_yields_no_summary() {
+        let raw = r#"{
+          "candidates":[{
+            "content":{"role":"model","parts":[
+              {"text":"","thought":true},
+              {"text":"2 です"}
+            ]},
+            "finishReason":"STOP"
+          }],
+          "usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}
+        }"#;
+        let out = decode(serde_json::from_str::<wire::GeminiResponse>(raw).unwrap()).unwrap();
+
+        assert!(out.reasoning_summary.is_empty());
+        assert_eq!(out.text.as_deref(), Some("2 です"));
     }
 
     #[test]

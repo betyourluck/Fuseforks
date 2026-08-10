@@ -786,6 +786,24 @@ pub struct GeminiGenerationConfig {
     pub temperature: Option<f32>,
     /// 最大出力トークン数。
     pub max_output_tokens: u32,
+    /// 思考の返し方（Spec 33）。
+    pub thinking_config: GeminiThinkingConfig,
+}
+
+/// 思考の設定（Spec 33）。
+///
+/// **`include_thoughts` を送らないと `thought: true` の part がそもそも返らない**
+/// （実測。既定では答えの part 1 つだけ）。**思考自体は送信の有無に関わらず
+/// 起きており**（実測 `thoughtsTokenCount` 3,773）、この欄は返し方だけを変える。
+///
+/// **モデルによるガードは要らない** — `gemini-3.5-flash-lite` と
+/// `gemini-3.6-flash` の双方が 200 で受けた（Anthropic の `adaptive` は
+/// 旧世代で 400 になるので、そちらだけガードがある）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiThinkingConfig {
+    /// 思考の part を応答へ含めるか。
+    pub include_thoughts: bool,
 }
 
 /// Gemini の応答。
