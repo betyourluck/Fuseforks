@@ -38,6 +38,7 @@ function snapshot(): AgentSnapshot {
     maxToolIterations: 24,
     enabledTools: ["grep", "fd"],
     hearsRoomLog: false,
+    allowHandoff: false,
     batchStart: false,
     roleId: "role_auditor",
   };
@@ -58,6 +59,7 @@ describe("snapshotToSpec", () => {
       maxToolIterations: 24,
       enabledTools: ["grep", "fd"],
       hearsRoomLog: false,
+    allowHandoff: false,
       batchStart: false,
       roleId: "role_auditor",
     });

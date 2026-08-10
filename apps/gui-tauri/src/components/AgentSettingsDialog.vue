@@ -191,6 +191,7 @@ const dirty = computed(() => {
     current.maxToolIterations !== source.maxToolIterations ||
     JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools) ||
     current.hearsRoomLog !== source.hearsRoomLog ||
+    current.allowHandoff !== source.allowHandoff ||
     // 役職だけを変えたときも保存できること。**入れ忘れると、選び直しても
     // 保存ボタンが有効にならず「変えられない」と読まれる。**
     current.roleId !== source.roleId
@@ -586,6 +587,13 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           </p>
           <p v-if="isToolChecked('run')" class="mb-1 text-[10px] text-warn">
             {{ $t("agentSettings.runOnWarn") }}
+          </p>
+          <label class="flex items-center gap-2 text-[12px]">
+            <input type="checkbox" v-model="draft.allowHandoff" />
+            <span>{{ $t("agentSettings.allowHandoff") }}</span>
+          </label>
+          <p v-if="!draft.allowHandoff" class="mt-0.5 text-[10px] text-ink-dim">
+            {{ $t("agentSettings.allowHandoffHint") }}
           </p>
           <div class="mb-3" />
 

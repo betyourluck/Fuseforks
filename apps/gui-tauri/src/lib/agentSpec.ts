@@ -39,6 +39,7 @@ export function snapshotToSpec(
     maxToolIterations: snapshot.maxToolIterations,
     enabledTools: snapshot.enabledTools ? [...snapshot.enabledTools] : null,
     hearsRoomLog: snapshot.hearsRoomLog,
+    allowHandoff: snapshot.allowHandoff,
     batchStart: snapshot.batchStart,
     roleId: snapshot.roleId,
     ...overrides,

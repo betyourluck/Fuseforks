@@ -59,6 +59,7 @@ fn wire_field_sets_are_frozen() {
     assert_eq!(
         wire_keys(&AgentSpec::new("agent_01", "PlannerAgent", "tpl")),
         vec![
+            "allowHandoff",
             "batchStart",
             "connectedAgents",
             "enabledTools",
@@ -145,6 +146,7 @@ fn wire_field_sets_are_frozen() {
         max_tool_iterations: None,
         enabled_tools: None,
         hears_room_log: true,
+        allow_handoff: true,
         batch_start: true,
         role_id: None,
         last_error: None,
@@ -152,6 +154,7 @@ fn wire_field_sets_are_frozen() {
     assert_eq!(
         wire_keys(&snapshot),
         vec![
+            "allowHandoff",
             "batchStart",
             "cachedTokens",
             "connectedAgents",

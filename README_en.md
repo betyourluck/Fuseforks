@@ -32,6 +32,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fusefo
 | 🧠 **Thinking summary** | The model's own summary of its reasoning, collapsed in a **frame separate from the answer**. Sources are verifiable pointers; a summary is an unverifiable claim — they are not mixed |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🪧 **Tool Reasons** | When a servant reaches for a tool, **what it is reaching for it for** appears as one line in the conversation. It is **the model's own account**, not an audit record |
+| 🎚️ **Handoff toggle** | Deny a coordinator the tool that passes the conversation on. **Delegation (ask and receive) and splitting work remain**, so answers come back instead of drifting to the user |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 📎 **Path Completion** | Type `@` to pick a file from the work folder. **Only the path is inserted**, and the rounds a servant spends searching disappear |
 | 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |

@@ -111,6 +111,7 @@ async function submitNew(): Promise<void> {
     // 新規作成の保存値は null（既定に従う）。UI の全 ON 表示は null の効果。
     enabledTools: null,
     hearsRoomLog: true,
+    allowHandoff: true,
     // 作ったら一括起動の対象に入れる。外すのが例外側（重いモデル・実験中）。
     batchStart: true,
     // 役職（Spec 14）。**設定の流し込みはコアがやる** — ここで前埋めしない。

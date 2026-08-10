@@ -140,6 +140,14 @@ export interface AgentSpec {
    */
   hearsRoomLog: boolean;
   /**
+   * 転送（`transfer_to_*`）をこの個体へ提示するか。**既定は真。**
+   *
+   * 偽にすると**転送だけ**が消え、委譲（`ask_*`）と並列委譲（`plan`）は残る。
+   * 転送の答えは利用者へ流れ、委譲の答えは依頼主へ戻る — 進行役が前者を
+   * 選ぶとオーケストレーションが成立しないので、道具の側で選べなくする。
+   */
+  allowHandoff: boolean;
+  /**
    * 一括起動（左ペインの ▶）の対象にするか。既定 true。
    *
    * **自動起動ではない** — アプリを開いた時点では誰も走らず、▶ を押したときに
@@ -249,6 +257,14 @@ export interface AgentSnapshot {
   enabledTools: string[] | null;
   /** 広場ログを受け取るか。 */
   hearsRoomLog: boolean;
+  /**
+   * 転送（`transfer_to_*`）をこの個体へ提示するか。**既定は真。**
+   *
+   * 偽にすると**転送だけ**が消え、委譲（`ask_*`）と並列委譲（`plan`）は残る。
+   * 転送の答えは利用者へ流れ、委譲の答えは依頼主へ戻る — 進行役が前者を
+   * 選ぶとオーケストレーションが成立しないので、道具の側で選べなくする。
+   */
+  allowHandoff: boolean;
   /** 一括起動（▶）の対象か。稼働状態とは別（それは `status`）。 */
   batchStart: boolean;
   /**

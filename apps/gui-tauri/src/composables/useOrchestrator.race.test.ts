@@ -61,6 +61,7 @@ function snapshot(id: string) {
     maxToolIterations: null,
     enabledTools: null,
     hearsRoomLog: true,
+    allowHandoff: true,
     lastError: null,
   };
 }

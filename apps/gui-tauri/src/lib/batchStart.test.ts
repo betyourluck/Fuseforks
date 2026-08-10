@@ -26,6 +26,7 @@ function agent(
     maxToolIterations: null,
     enabledTools: null,
     hearsRoomLog: true,
+    allowHandoff: true,
     batchStart,
     lastError: null,
   };

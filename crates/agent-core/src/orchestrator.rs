@@ -4261,7 +4261,15 @@ async fn handle_message(
             .collect()
     };
     let handoffs = HandoffTools::build(&targets);
+    // 委譲（`ask_*`）と並列委譲（`plan`）を出す条件。**転送とは分ける。**
     let use_handoff_tools = template.use_tools && !handoffs.is_empty();
+    // **転送（`transfer_to_*`）だけを個体ごとに落とせる**（既定は真）。
+    //
+    // 分ける理由は、2 つの道具の**答えの行き先が逆**だから — 委譲は依頼主へ
+    // 戻り、転送は利用者へ流れる。進行役が意図と違うほうを選ぶと
+    // オーケストレーションが成立しない（実機で頻発）。
+    // **`ask` と `plan` はこのフラグに触らない** — 消すのは転送だけ。
+    let offer_transfer = use_handoff_tools && spec.allow_handoff;
 
     // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
     //
@@ -4272,7 +4280,7 @@ async fn handle_message(
     // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
     let mut messages = vec![ChatMessage::system(system_prompt)];
     if !handoffs.is_empty() {
-        messages.push(ChatMessage::system(handoffs.protocol_note(use_handoff_tools)));
+        messages.push(ChatMessage::system(handoffs.protocol_note(use_handoff_tools, offer_transfer)));
     }
 
     // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
@@ -4460,7 +4468,12 @@ async fn handle_message(
     //    連動の自動除外）を通す — 使わないツールのスキーマは毎ターンの
     //    固定費になる（トークン節約は最重要課題）。
     let mut specs = if use_handoff_tools {
-        let mut both = handoffs.specs();
+        // 転送は `offer_transfer` のときだけ。委譲と `plan` は常に載る。
+        let mut both = if offer_transfer {
+            handoffs.specs()
+        } else {
+            Vec::new()
+        };
         both.extend(handoffs.ask_specs());
         // 並列委譲は接続先 2 体以上のときだけ載る（Spec 04）。
         // 1 体しか繋がっていないエージェントには使えない選択肢なので、
@@ -4664,7 +4677,10 @@ async fn handle_message(
 
         // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
         // 結果が返ってくる種類の操作ではない。
-        outcome = handoffs.decide(&response, use_handoff_tools);
+        // 提示していない道具の呼び出しは拾わない。**提示集合と判定集合を
+        // 揃える** — ずれると「出していないのに効く」か「出したのに効かない」の
+        // どちらかになる（Spec 20 で踏んだ形）。
+        outcome = handoffs.decide(&response, offer_transfer);
         if matches!(outcome, Outcome::Handoff { .. }) {
             break;
         }
@@ -6663,8 +6679,24 @@ impl HandoffTools {
     /// OpenAI Agents SDK が `RECOMMENDED_PROMPT_PREFIX` で同種の説明を
     /// プロンプトへ足すのと同じ意図。ツールを渡すだけでは、
     /// 「呼ばない」という選択が終了を意味することがモデルに伝わらない。
-    fn protocol_note(&self, tools_available: bool) -> String {
+    fn protocol_note(&self, tools_available: bool, offer_transfer: bool) -> String {
         if tools_available {
+            // **提示していない道具を手順で名指ししない。** 転送を落とした個体に
+            // 「`transfer_to_*` を呼んでください」と書くと、存在しないツールを
+            // 探させることになる（提示集合と手順が食い違う）。
+            let delegation = if offer_transfer {
+                "他のエージェントの助けが要るときだけ `transfer_to_*` ツールを呼んでください。\
+                 **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
+                 全員へ並行して届きます。\n\
+                 相手の答えを受け取って自分の話を続けたいときは、`transfer_to_*` ではなく \
+                 `ask_*` を使ってください — **答えが自分に戻ります**。"
+            } else {
+                "他のエージェントの助けが要るときは `ask_*` ツールを呼んでください。\
+                 **答えは自分に戻ってくる**ので、それを踏まえて自分の言葉でまとめてください。\
+                 **複数の相手へ同時に訊くときは、それぞれの `ask_*` を同じ応答の中で呼んでください**。\n\
+                 **あなたは会話を他のエージェントへ引き渡せません。**\
+                 最後にまとめて答えるのはあなたです。"
+            };
             format!(
                 "## この場に居る相手\n\
                  {}\n\
@@ -6673,15 +6705,12 @@ impl HandoffTools {
                  ## 会話の進め方\n\
                  まず、届いた発話の送り手を見てください。**あなたに話しかけてきた相手へ、\
                  あなた自身の言葉で答えるのが基本です。**\n\
-                 他のエージェントの助けが要るときだけ `transfer_to_*` ツールを呼んでください。\
-                 **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
-                 全員へ並行して届きます。\n\
+                 {delegation}\n\
                  自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
                  **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
                  結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。\n\
-                 転送・委譲が失敗したときは、その**理由**（相手が停止中・時間切れ・\
-                 答えずに会話を渡した など）が結果の文字列で返ります。\
-                 事前の点呼は不要です。",
+                 委譲が失敗したときは、その**理由**（相手が停止中・時間切れ など）が\
+                 結果の文字列で返ります。事前の点呼は不要です。",
                 self.roster()
                     .iter()
                     .map(|name| format!("- {name}"))

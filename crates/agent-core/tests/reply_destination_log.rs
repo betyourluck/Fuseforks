@@ -10,8 +10,9 @@
 //! その相手の答えが `reply: … to=user` になること。
 //! 片方だけでは「常に出る実装」と区別が付かない。
 //!
-//! **診断の出口はプロセスで 1 つ**（`OnceLock`）なので、**このファイルは
-//! 1 テストだけ**にする（`tests/diag.rs` と同じ制約）。
+//! **診断の出口はプロセスで 1 つ**（`OnceLock`）なので、**ログを読むテストは
+//! このファイルに 1 つだけ**にする（`tests/diag.rs` と同じ制約）。
+//! 2 本目（提示の検査）はログを読まないので同居できる。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -144,5 +145,116 @@ async fn a_handoff_is_logged_and_the_reply_goes_to_the_user() {
         body.contains("reply: agent=agent_02") && body.contains("to=user"),
         "転送された側の答えは reply_to を持たないので user へ返る:
 {body}"
+    );
+}
+
+/// 提示されたツール名を覚えるだけのバックエンド。
+struct ToolProbe {
+    seen: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for ToolProbe {
+    fn name(&self) -> &str {
+        "tool-probe"
+    }
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(req.tools.iter().map(|t| t.name.clone()).collect());
+        Ok(ChatResponse {
+            text: Some("了解".into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+                reasoning: 0,
+            },
+            grounding: Default::default(),
+            reasoning_summary: Vec::new(),
+        })
+    }
+}
+
+/// `allow_handoff = false` は**転送だけ**を落とす。
+///
+/// **委譲（`ask_*`）と並列委譲（`plan`）は残る** — ここが本題で、
+/// 1 つのフラグで 3 つとも消すと「進行役が誰にも頼めない」に化ける。
+/// 正の対照（既定の個体には 3 つとも出る）と並べて見る。
+#[tokio::test]
+async fn disabling_handoff_removes_only_transfer_tools() {
+    let dir = TempDir::new("gate");
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let orchestrator = Orchestrator::bootstrap(
+        ConfigStore::new(&dir.0),
+        Arc::new(FixedBackendFactory::new(Arc::new(ToolProbe {
+            seen: Arc::clone(&seen),
+        }))),
+        Arc::new(InMemorySecretStore::new()),
+        OrchestratorConfig {
+            schedule_interval: Duration::from_secs(3600),
+            ..OrchestratorConfig::default()
+        },
+    )
+    .await
+    .expect("bootstrap できること");
+    orchestrator
+        .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+        .await
+        .unwrap();
+
+    // 接続先 2 体（`plan` は 2 体以上でだけ生える）。
+    for id in ["agent_02", "agent_03"] {
+        orchestrator
+            .create_agent(AgentSpec::new(AgentId::from(id), id, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(&AgentId::from(id)).await.unwrap();
+    }
+
+    let permissive = AgentId::from("agent_01");
+    let mut spec = AgentSpec::new(permissive.clone(), "既定", "tpl");
+    spec.connected_agents = vec![AgentId::from("agent_02"), AgentId::from("agent_03")];
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&permissive).await.unwrap();
+
+    let restricted = AgentId::from("agent_04");
+    let mut spec = AgentSpec::new(restricted.clone(), "進行役", "tpl");
+    spec.connected_agents = vec![AgentId::from("agent_02"), AgentId::from("agent_03")];
+    spec.allow_handoff = false;
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&restricted).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    for target in [&permissive, &restricted] {
+        orchestrator.send_user_message(target, "やあ").await.unwrap();
+        while tokio::time::timeout(Duration::from_millis(400), rx.recv())
+            .await
+            .is_ok()
+        {}
+    }
+
+    let rounds = seen.lock().unwrap().clone();
+    let has = |names: &Vec<String>, prefix: &str| names.iter().any(|n| n.starts_with(prefix));
+
+    // 正の対照: 既定の個体には 3 つとも出る。
+    let default_round = rounds
+        .iter()
+        .find(|names| has(names, "transfer_to_"))
+        .expect("既定の個体には転送が出ること（出ないなら検査が空振り）");
+    assert!(has(default_round, "ask_"));
+    assert!(default_round.iter().any(|n| n == "plan"));
+
+    // 本題: 転送だけが消え、委譲と plan は残る。
+    let restricted_round = rounds
+        .iter()
+        .find(|names| !has(names, "transfer_to_") && has(names, "ask_"))
+        .expect("転送を落とした個体の周があること");
+    assert!(
+        restricted_round.iter().any(|n| n == "plan"),
+        "plan は残る（消すと進行役が手分けできなくなる）: {restricted_round:?}"
     );
 }

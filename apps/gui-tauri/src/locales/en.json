@@ -482,7 +482,9 @@
     "role": "Role",
     "noRole": "No role",
     "roleHelp": "This changes only the role label. Settings (Construct.md, model, and so on) are copied at creation time, so changing the role here does not change them.",
-    "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run. The tool is offered even while allow is empty, but nothing can be executed in that state — non-matching calls are recorded as pending, so approving one from \"Command approval\" in the title bar lets it pass from the next turn."
+    "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run. The tool is offered even while allow is empty, but nothing can be executed in that state — non-matching calls are recorded as pending, so approving one from \"Command approval\" in the title bar lets it pass from the next turn.",
+    "allowHandoff": "Allow handoff (pass the conversation on)",
+    "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator."
   },
   "modelTemplate": {
     "title": "Model templates",

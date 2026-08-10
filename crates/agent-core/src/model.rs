@@ -398,6 +398,23 @@ pub struct AgentSpec {
     /// 毎ターン最大 `room_log_window × room_log_excerpt_chars` の固定費を絞る。
     #[serde(default = "default_true")]
     pub hears_room_log: bool,
+    /// **転送**（`transfer_to_*`）をこの個体に提示するか。
+    ///
+    /// 転送は「相手に話を引き継いで自分は退く」道具で、**答えは依頼主へ戻らず
+    /// 利用者へ流れる**。一方 **委譲（`ask_*`）は答えが必ず自分へ戻る**
+    /// （戻り先は `reply_to` が決めており、モデルは触れない）。
+    ///
+    /// **進行役でこれを偽にする**のが用途。実機で、進行役が「報告してください」
+    /// と書きながら転送を選び、ワーカーの答えが利用者へ返って
+    /// オーケストレーションが成立しない事象が頻発した（2026-08-11）。
+    /// ツールの説明では防げない — **説明を読んだうえで選んでいる**
+    /// （`failures.md` #84 の一般化がそのまま当たる）。
+    ///
+    /// **既定は真。** 既存の村の挙動を変えないため、そして転送自体は正当だから
+    /// （利用者の質問を適任へ回す経路がこれ）。偽にしても
+    /// **委譲と並列委譲（`plan`）は残る** — 消えるのは転送だけ。
+    #[serde(default = "default_true")]
+    pub allow_handoff: bool,
     /// 一括起動（左ペインの ▶）の対象にするか。
     ///
     /// **自動起動ではない。** アプリを開いた時点で勝手に走り出すことはなく、
@@ -446,6 +463,7 @@ impl AgentSpec {
             max_tool_iterations: None,
             enabled_tools: None,
             hears_room_log: true,
+            allow_handoff: true,
             batch_start: true,
             role_id: None,
         }
@@ -839,6 +857,11 @@ pub struct AgentSnapshot {
     pub enabled_tools: Option<Vec<String>>,
     /// 広場ログを受け取るか。
     pub hears_room_log: bool,
+    /// 転送（`transfer_to_*`）を提示するか。**偽でも委譲と `plan` は残る。**
+    ///
+    /// **投影にも要る** — 設定ダイアログは投影から `AgentSpec` を組み直して
+    /// 保存するので、ここに無い欄は**保存のたびに既定へ戻る**（Spec 14 P1）。
+    pub allow_handoff: bool,
     /// 一括起動（▶）の対象か。稼働状態とは別（`status` がそちら）。
     pub batch_start: bool,
     /// どの役職を雛形にして作られたか（Spec 14）。`None` = 役職なし。
