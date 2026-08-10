@@ -2949,13 +2949,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- Spec 33（思考の要約を受け取って表示する — xAI と Anthropic）:
+- Spec 33（思考の要約を受け取って表示する — ネイティブ 3 ワイヤ）:
   **Draft rev2**（2026-08-10 起票 → 査読 8 点 → 採用 5 / 訂正して採用 3 / 反証 0）。
   **rev2 の要点は「同じ語で 2 つの物を指していた」3 件の分離** —
   `履歴に積まない`（表示物 / ワイヤの往復物）/ `runtime 計測は要らない`
   （証明 / 傍証）/ `空`（0 字 / 内容が薄い）。**語を分けると決定も分かれた。**
   **数と本文は別の口**（OpenAI 互換は `/v1/chat/completions` で数は取れるが
-  本文は来ない = Spec 32 の「4 社で数える」と矛盾しない）。**範囲は 2 社**で、OpenAI 互換は
+  本文は来ない = Spec 32 の「4 社で数える」と矛盾しない）。**範囲はネイティブ 3 ワイヤ**（rev3 で 2 社から拡張 — **Gemini が 3 社目**で、
+  `thinkingConfig.includeThoughts` を送らないと `thought` part がそもそも返らない。
+  **Spec 32 rev2 と同じ数え落とし**を同じセッションで 2 回踏んだ）。OpenAI 互換は
   Spec 34。**送信側が変わるのは Anthropic だけ** — 5 世代の既定は
   `display: "omitted"` で、`thinking: {"type":"adaptive","display":"summarized"}`
   を送らないと `thinking` テキストが 0 字（`signature` は 368〜16,328 字ある）。
