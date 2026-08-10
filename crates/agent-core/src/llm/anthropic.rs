@@ -111,7 +111,61 @@ pub fn encode(req: &ChatRequest) -> wire::AnthropicRequest {
         temperature: req.temperature,
         tools,
         tool_choice,
+        thinking: thinking_request(&req.model),
     }
+}
+
+/// 拡張思考の要求を組む（純関数。Spec 33 D3）。
+///
+/// **5 世代のモデルにだけ送る。** 旧世代へ `type: "adaptive"` を送ると
+/// `400 adaptive thinking is not supported on this model`（実測 2026-08-10、
+/// `claude-haiku-4-5`）。拒否されるのは `display` ではなく **thinking の形そのもの**。
+///
+/// **旧世代へ旧形式（`enabled` + `budget_tokens`）を送る道は採らない。**
+/// 通ることは実測済み（272 字の要約が返った）だが、**旧世代は何も送らなければ
+/// 思考しない**（同日実測 — `thinking` ブロックも `output_tokens_details` も
+/// 出ない）。つまり旧形式を送るのは*見せる*ことではなく**思考を有効化して
+/// コストを増やす**ことで、受け取りの Spec の目的から外れる。
+///
+/// 5 世代へ常に送るのは逆に**払っているものを見せるだけ**だから —
+/// あちらは何も送らなくても思考しており（Spec 32 P4 で出力 2,048 トークン
+/// 全部が思考の応答を観測）、`display` の既定 `"omitted"` が本文を伏せている。
+/// 課金は `display` に依存しない（5 観測すべてで差がばらつきに埋もれた）。
+///
+/// 判定をモデル名で行うのは `reasoning_effort` と同じ**「同じワイヤ内の方言の
+/// 吸収」**で、Spec 31 D2 が禁じた「ワイヤの選択に名前を使う」には当たらない。
+fn thinking_request(model: &str) -> Option<wire::AnthropicThinking> {
+    is_five_generation(model).then_some(wire::AnthropicThinking {
+        kind: "adaptive",
+        display: "summarized",
+    })
+}
+
+/// 5 世代の Anthropic モデルか（`claude-sonnet-5` / `claude-opus-5` /
+/// `claude-fable-5` と、その日付サフィックス付き）。
+///
+/// **確認できたものだけを真にする。** 一次資料では Opus 4.7 も `adaptive` を
+/// 受けるとされるが**測っていない**ので偽に倒す — 外すと 400 でターンが落ちるが、
+/// 内側へ倒しすぎても失うのは要約の表示だけ（#93 の逆側の用心）。
+/// **世代は位置で決まる。部分一致で数えない。**
+///
+/// 最初にこれを `contains("-5-")` で書いて外した — `claude-haiku-4-5-20251001`
+/// （4.5 世代）と `claude-3-5-sonnet` の両方に当たる。**版番号は語の中に
+/// 何度も現れるので、「5 が含まれるか」は世代の判定にならない。**
+///
+/// 形は `claude-{系統}-5[-{日付}]`:
+/// - 2 番目の区画が系統名（英字）
+/// - 3 番目の区画がちょうど `"5"`
+/// - それ以降があるなら日付（全部数字）
+fn is_five_generation(model: &str) -> bool {
+    let parts: Vec<&str> = model.split('-').collect();
+    let [prefix, family, generation, rest @ ..] = parts.as_slice() else {
+        return false;
+    };
+    *prefix == "claude"
+        && family.chars().all(|c| c.is_ascii_alphabetic())
+        && *generation == "5"
+        && rest.iter().all(|s| s.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// プロンプトキャッシュを要求する最小トークン数。
@@ -412,6 +466,7 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
 
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut reasoning_summary: Vec<String> = Vec::new();
     let mut dropped: Vec<&'static str> = Vec::new();
     for block in resp.content {
         match block {
@@ -427,7 +482,18 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
                 });
             }
             // 本文にもツール呼び出しにも写せないブロック。**落とすが、数える。**
-            wire::AnthropicContentBlock::Thinking => dropped.push("thinking"),
+            // 要約は受け取る（Spec 33）。**答えの本文へは混ぜない** —
+            // 内部の独白が答えとして表示される。`dropped` へは従来どおり
+            // 数え上げる（本文でないものが来た事実は、要約が取れても変わらない）。
+            //
+            // **0 字は入れない**。`display` を送っていない要求と、思考が短い回で
+            // 起きる（`reasoning_summary` 契約の凍結 2）。
+            wire::AnthropicContentBlock::Thinking { thinking } => {
+                if !thinking.is_empty() {
+                    reasoning_summary.push(thinking);
+                }
+                dropped.push("thinking");
+            }
             wire::AnthropicContentBlock::RedactedThinking => dropped.push("redacted_thinking"),
             wire::AnthropicContentBlock::Other => dropped.push("unknown"),
         }
@@ -458,7 +524,7 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
         usage,
         // このプロバイダは接地を代行しない。
         grounding: Grounding::default(),
-        reasoning_summary: Vec::new(),
+        reasoning_summary,
     })
 }
 
@@ -544,7 +610,24 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&encode(&req)).unwrap(),
-            r#"{"model":"claude-opus-5","max_tokens":512,"system":[{"type":"text","text":"s"}],"messages":[{"role":"user","content":[{"type":"text","text":"こんにちは"}]}]}"#
+            r#"{"model":"claude-opus-5","max_tokens":512,"system":[{"type":"text","text":"s"}],"messages":[{"role":"user","content":[{"type":"text","text":"こんにちは"}]}],"thinking":{"type":"adaptive","display":"summarized"}}"#
+        );
+    }
+
+    /// **Spec 33 が golden を 1 度だけ動かした。** 5 世代へ `thinking` を送る
+    /// ようになったため。**旧世代の形は 1 バイトも動いていない**ことを、
+    /// 同じ golden の形で別に留める — 「送らない」は省略であって、
+    /// 空オブジェクトを送ることではない。
+    #[test]
+    fn an_older_model_keeps_the_pre_spec33_bytes() {
+        let req = ChatRequest::plain(
+            "claude-haiku-4-5-20251001",
+            vec![ChatMessage::system("s"), ChatMessage::user("こんにちは")],
+            512,
+        );
+        assert_eq!(
+            serde_json::to_string(&encode(&req)).unwrap(),
+            r#"{"model":"claude-haiku-4-5-20251001","max_tokens":512,"system":[{"type":"text","text":"s"}],"messages":[{"role":"user","content":[{"type":"text","text":"こんにちは"}]}]}"#
         );
     }
 
@@ -929,6 +1012,84 @@ mod tests {
         );
         // 内数。外数で実装すると 4,197 になる。
         assert_eq!(out.usage.total(), 2_149);
+    }
+
+    /// 5 世代へは `thinking` を送り、旧世代へは**キーごと省く**（Spec 33 D3）。
+    ///
+    /// 省いた形が Spec 33 より前と**バイト等価**であることまで見る —
+    /// 旧世代の村のワイヤを 1 バイトも動かさないのが「送らない」の意味。
+    #[test]
+    fn thinking_is_requested_only_for_five_generation_models() {
+        for model in [
+            "claude-sonnet-5",
+            "claude-opus-5",
+            "claude-fable-5",
+            "claude-sonnet-5-20260101",
+        ] {
+            let req = ChatRequest::plain(model, vec![ChatMessage::user("問い")], 1_024);
+            let json = serde_json::to_value(encode(&req)).unwrap();
+            assert_eq!(
+                json["thinking"],
+                serde_json::json!({ "type": "adaptive", "display": "summarized" }),
+                "{model} は 5 世代"
+            );
+        }
+
+        for model in ["claude-haiku-4-5-20251001", "claude-3-5-sonnet", "gpt-4o"] {
+            let req = ChatRequest::plain(model, vec![ChatMessage::user("問い")], 1_024);
+            let json = serde_json::to_value(encode(&req)).unwrap();
+            assert!(
+                json.get("thinking").is_none(),
+                "{model} へは thinking のキーごと送らない（adaptive は 400 になる）"
+            );
+        }
+    }
+
+    /// 思考の要約を受け取る（Spec 33）。**答えの本文へは混ぜない。**
+    ///
+    /// 落としたことは従来どおり数える — 要約が取れても、
+    /// 「本文でないブロックが来た」事実は変わらない。
+    #[test]
+    fn thinking_text_is_captured_as_a_summary_not_as_the_answer() {
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "I'm working through a logic puzzle.",
+                  "signature": "Eo8CC…" },
+                { "type": "text", "text": "答えは B です" }
+            ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 100,
+                       "output_tokens_details": { "thinking_tokens": 80 } }
+        });
+        let out = decode(serde_json::from_value::<wire::AnthropicResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(out.text.as_deref(), Some("答えは B です"), "本文は混ざらない");
+        assert_eq!(
+            out.reasoning_summary,
+            vec!["I'm working through a logic puzzle.".to_owned()]
+        );
+        assert_eq!(out.usage.reasoning, 80);
+    }
+
+    /// **0 字の要約は入れない**（`reasoning_summary` 契約の凍結 2）。
+    ///
+    /// `display` を送っていない要求（5 世代の既定は `"omitted"`）と、
+    /// 思考が短い回で起きる。実測では**ツール併用の回がほぼこれ**。
+    #[test]
+    fn an_omitted_thinking_block_yields_no_summary_but_is_still_counted() {
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "", "signature": "EoYxCok…" },
+                { "type": "text", "text": "はい" }
+            ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 50,
+                       "output_tokens_details": { "thinking_tokens": 34 } }
+        });
+        let out = decode(serde_json::from_value::<wire::AnthropicResponse>(raw).unwrap()).unwrap();
+
+        assert!(out.reasoning_summary.is_empty(), "0 字は列へ入れない");
+        assert_eq!(out.usage.reasoning, 34, "数は取れている（中身が無いだけ）");
     }
 
     /// 内訳欄を持たない応答（古い API 版・互換の中継）では 0 に落ちる。

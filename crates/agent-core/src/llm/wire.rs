@@ -350,6 +350,12 @@ pub struct AnthropicRequest {
     /// ツール選択の強制。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<AnthropicToolChoice>,
+    /// 拡張思考の要求（Spec 33）。**5 世代のモデルにだけ送る。**
+    ///
+    /// `None` のときはキーごと省く — 旧世代へ送ると 400 になり、
+    /// **省いた形は Spec 33 より前と 1 バイトも変わらない**。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<AnthropicThinking>,
 }
 
 /// システムプロンプトのテキストブロック。
@@ -518,15 +524,41 @@ pub enum AnthropicContentBlock {
         #[serde(default)]
         input: serde_json::Value,
     },
-    /// 拡張思考。**本文ではない**ので canonical へは写さないが、
-    /// **落としたことは数える** — 実機で「出力 399 トークンあり・本文なし・
-    /// ツール呼び出しなし」のターンが出たとき、どの計器にも載らなかった。
-    Thinking,
+    /// 拡張思考。**答えの本文ではない**ので `text` へは混ぜないが、
+    /// **要約として受け取る**（Spec 33）。落としたことも従来どおり数える —
+    /// 実機で「出力 399 トークンあり・本文なし・ツール呼び出しなし」のターンが
+    /// 出たとき、どの計器にも載らなかった。
+    ///
+    /// **`thinking` は 0 字のことがある** — `display` を送っていない要求
+    /// （5 世代の既定は `"omitted"`）と、思考が短い回。`signature` は
+    /// どちらの場合も 368〜16,328 字ある（実測）。
+    Thinking {
+        /// 思考の要約。**英語で返る**（問いが日本語でも。実測）。
+        #[serde(default)]
+        thinking: String,
+    },
     /// 伏せられた拡張思考。扱いは [`Self::Thinking`] と同じ。
     RedactedThinking,
     /// 未知の種別。将来のブロック種別で丸ごと壊れないための受け皿。
     #[serde(other)]
     Other,
+}
+
+/// 拡張思考の要求（Spec 33）。
+///
+/// **`type: "adaptive"` は 5 世代のモデルにしか無い** — 旧世代へ送ると
+/// `400 adaptive thinking is not supported on this model`（実測）。
+/// 旧形式の `{"type":"enabled","budget_tokens":N}` は**送らない**
+/// （旧世代は既定で思考しないので、送ることは*見せる*ことではなく
+/// **思考を有効化してコストを増やす**ことになる）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AnthropicThinking {
+    /// 常に `"adaptive"`。
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    /// 思考の返し方。`"summarized"` を送らないと 5 世代の既定
+    /// `"omitted"` が効き、**`signature` だけで本文が 0 字**になる（実測）。
+    pub display: &'static str,
 }
 
 /// Anthropic の使用量。キー名が OpenAI と全く異なるため adapter で正規化する。
@@ -1147,7 +1179,11 @@ mod tests {
         let resp: AnthropicResponse = serde_json::from_str(raw).expect("未知ブロックを許容すること");
 
         assert_eq!(resp.content.len(), 4);
-        assert!(matches!(resp.content[0], AnthropicContentBlock::Thinking));
+        // Spec 33: `thinking` の本文まで受ける（要約の受け取り）。
+        assert!(matches!(
+            &resp.content[0],
+            AnthropicContentBlock::Thinking { thinking } if thinking == "..."
+        ));
         assert!(matches!(resp.content[1], AnthropicContentBlock::RedactedThinking));
         // **本当に未知のものだけが `Other`。** thinking を一緒くたにすると、
         // ログの `kinds=` が「unknown」しか言えなくなる。
