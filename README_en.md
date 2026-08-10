@@ -29,6 +29,7 @@ Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fusefo
 | 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
 | 🔍 **Grounding** | Gemini's Google Search and Grok's Live Search (web / X). **The display distinguishes between searched facts, their sources, and facts that went unfound** |
+| 🧠 **Thinking summary** | The model's own summary of its reasoning, collapsed in a **frame separate from the answer**. Sources are verifiable pointers; a summary is an unverifiable claim — they are not mixed |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🪧 **Tool Reasons** | When a servant reaches for a tool, **what it is reaching for it for** appears as one line in the conversation. It is **the model's own account**, not an audit record |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |

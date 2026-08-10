@@ -784,8 +784,26 @@ results are injected into the prompt: 98,213 in one measured turn, of which
 ([Spec 11](specs/11_token-budget.md)) one search can exhaust it, so the measured
 figure sits next to the checkbox.
 
-**The text of thinking that comes back is still discarded** (only its kind and
-volume are logged). **The token count spent on thinking is now measured**
+**The thinking summary is received and shown** ([Spec 33](specs/33_thinking-summary.md)).
+It sits below the bubble in the chat pane, collapsed, in a **frame separate from
+the grounding record** — sources are verifiable external pointers while a summary
+is an unverifiable internal claim, so putting them in one frame would lend the
+latter the credibility of the former. It is **collapsed by default** (measurements
+reach 3,700 characters, and it comes back in English). Turns with no summary show
+no frame at all.
+
+**Two of the three providers return nothing unless asked.** Only xAI returns it by
+default; Anthropic needs `thinking.display: "summarized"` and Gemini needs
+`thinkingConfig.includeThoughts`. **Thinking happens and is billed either way**, so
+these fields change only how it is returned. **Anthropic is asked only on
+5-generation models** (older ones reject it with a 400, and they do not think by default).
+
+**Fidelity differs by an order of magnitude between providers** (measured): xAI and
+Anthropic return under 10% of their thinking, while **Gemini returns 75–85%**. The
+label is "thinking summary" for all three (an understatement for Gemini, but it errs
+in the safe direction — it never claims more than what came back).
+
+**The token count spent on thinking is also measured**
 ([Spec 32](specs/32_thinking-reception.md)) — via `reasoning=` on the `turn`
 line and a field on `Usage`. It is available for **all four providers: Gemini,
 xAI, OpenAI-compatible, and Anthropic**.
