@@ -2,9 +2,12 @@
 
 **ID**: 32
 **Date**: 2026-08-10
-**Status**: **Draft rev2**（査読 8 点 → 採用 6 / 訂正して採用 1 / 反証 1。
-rev1 からの最大の変更は**範囲の確定** — 本 Spec は「数える」まで。
-要約本文の受け取りと表示は Spec 33、OpenAI の Responses ワイヤは Spec 34 へ送る）
+**Status**: **rev3**（P0 の作業中に**社を数え落としていた**のが出て改訂。
+rev2 は 3 社で数えていたが **Gemini が 4 社目**で、しかも
+**思考トークンを既に読んでいる唯一の社**だった。検収 2 の対照も同時に壊れていた。
+rev2 = 査読 8 点 → 採用 6 / 訂正して採用 1 / 反証 1。rev1 からの最大の変更は
+**範囲の確定** — 本 Spec は「数える」まで。要約本文の受け取りと表示は Spec 33、
+OpenAI の Responses ワイヤは Spec 34 へ送る）
 **Branch**: なし（main へ直接コミット。Phase ごと）
 
 ## Goal
@@ -35,9 +38,10 @@ rev1 からの最大の変更は**範囲の確定** — 本 Spec は「数える
 | **xAI** | `"reasoning" => reasoning_count += 1` で**数えるだけ**。`XaiOutputItem` に payload を受ける欄が**無い**。usage の `reasoning_tokens` も読んでいない | `llm/xai_responses.rs` / `llm/wire.rs` |
 | **Anthropic** | decode が `Thinking` / `RedactedThinking` を `dropped` へ入れる。**ユニット変種**で本文を deserialize すらしない。**`budget_tokens` は実装に 1 つも無い**（`anthropic.rs` の 3 件はテスト 2 + decode 1）= **要求していないので今は 1 件も返っていない** | `llm/anthropic.rs` / `llm/wire.rs` |
 | **OpenAI 互換** | 思考は `/v1/chat/completions` に**来ない**。`reject_empty_reasoning` は「思考だけで本文が空」を検出する**別の門**で、受け取りではない | `llm/openai_compat.rs` |
+| **Gemini** | **既に読んでいる。** `completion: candidates_token_count + thoughts_token_count` と**足し込んでおり**、`data_contract` に「この数え方でのみ `totalTokenCount` と一致する（実測）」と凍結済み。**分離されていないだけで、数字は手元にある** | `llm/gemini.rs` / `llm/wire.rs` の `thoughts_token_count` / `data_contract.yaml` |
 
 **Spec 31 D7 の「decode の捨てている行は 1 箇所なので、そちらで一括して拾う」は
-誤り。** 実測は **3 社 3 形**。P0 で当該行に取り消し線を入れて回収する
+誤り。** 実測は **4 社 4 形**。P0 で当該行に取り消し線を入れて回収する
 （`specs/15:282` の前例）。CLAUDE.md の同じ記述も同時に回収する。
 
 ### `reasoning_tokens` は `output_tokens` の内数（8/8。査読 2 の決着）
@@ -111,17 +115,24 @@ pub reasoning: u64,
 「常に出す実装」との対照になる。**省くと対照が取れず、機構が効いているか読めない**
 （Spec 31 で `queries=0` が真因を教えたのと同じ形）。
 
-### D4: 3 社の扱いは非対称。P1 の完了条件は社ごとに違う（査読 3）
+### D4: 4 社の扱いは非対称。P1 の完了条件は社ごとに違う（査読 3。rev3 で 4 社目を追加）
 
-**「3 社共通」とは呼ばない。**
+**「共通」とは呼ばない。**
 
 | 社 | P1 の完了条件 |
 |---|---|
+| **Gemini** | **`thoughts_token_count` を `Usage.reasoning` へも入れる**（`completion` への足し込みは**そのまま**）。既に読んでいるので**最も安い**。`data_contract` の「この数え方でのみ `totalTokenCount` と一致する」を壊さないことを回帰で留める |
 | **xAI** | `usage.output_tokens_details.reasoning_tokens` を読み、`Usage.reasoning` へ入れる |
 | **Anthropic** | **usage に同じ数字があるかを数え、結果を Spec へ書く。** 無ければ 0 のまま（要求していないので現状は返らない — D5） |
 | **OpenAI 互換** | 同上。**思考が来ない経路なので 0 が正しい**可能性が高い |
 
 **観測結果を書くことが完了条件**で、値が取れることは完了条件ではない。
+
+**rev2 は Gemini を数え落としていた。** 起票時に数えたのは「思考を捨てている
+社」だけで、**足し込んでいる社**が網の外にあった。`Thinking` / `reasoning` で
+grep すると `llm/` の 3 社が出るが、Gemini の欄名は `thoughts_token_count` で
+**同じ語では引けない**（#62 と同型 — 名前で引く網は、別の名前を持つ同じ概念を
+拾わない）。**同じ概念に社ごとの呼び名があるときは、概念の側から数える。**
 
 ### D5: 送信側には何も足さない
 
@@ -142,9 +153,10 @@ pub reasoning: u64,
 - **P0**: 契約凍結 — `data_contract.yaml` へ `Usage.reasoning`（内数・0 の意味・
   `total()` 不変）と `turn:` 行の形式。**Spec 31 D7 と CLAUDE.md の
   「decode の 1 箇所」を取り消し線で回収**
-- **P1**: 実装 — `Usage` に欄 + `wire.rs` の `XaiUsage` に
-  `output_tokens_details.reasoning_tokens` + xAI decode の配線 + `turn:` 行 +
-  カードの累計と村の集計。**Anthropic / OpenAI 互換の usage を数えて結果を書く**（D4）
+- **P1**: 実装 — `Usage` に欄 + **Gemini の `thoughts_token_count` を入れる**（最も安い）+
+  `wire.rs` の `XaiUsage` に `output_tokens_details.reasoning_tokens` + xAI decode の
+  配線 + `turn:` 行 + カードの累計と村の集計。
+  **Anthropic / OpenAI 互換の usage を数えて結果を書く**（D4）
 - **P2**: 台帳 — README / DETAIL 日英 + `data_contract` の回収
   （**数えるのはファイル単位** — #51 (b)。台帳は日英 4 ファイル）
 - **P3**: 実機
@@ -155,8 +167,12 @@ pub reasoning: u64,
    **`(total - prompt)` と `reasoning` の差が 3〜5 に収まる**
    （`total - prompt` が `completion`。差は本文のトークン数で、実測の範囲。
    外れたら読み口が違う）
-2. **思考を使わないモデル（`gemini-3.5-flash-lite` 等）の同じ行に `reasoning=0` が出る**
-   — 1 の対照。**片方だけでは「常に 0 を出す実装」と区別が付かない**
+2. **`reasoning=0` が出るモデルの同じ行で 0 が出る** — 1 の対照。
+   **片方だけでは「常に 0 を出す実装」と区別が付かない**。
+   **対照のモデルは実測で選ぶ。`gemini-3.5-flash-lite` は使わない** —
+   Gemini は `thoughtsTokenCount` を返す経路を持っており（golden の実測値は
+   `thoughtsTokenCount: 407` 対 `candidatesTokenCount: 97`）、**0 が出る保証が無い**。
+   候補は OpenAI 互換（構造的に来ない）。**確かめられない項目は書かない**（#68）
 3. カードの累計トークンが**変わらない**（D2 の否定的検収。`total()` を触っていない
    ことが画面で読める）
 4. Anthropic のターンで `reasoning=0` が出る — **D4 の観測そのもの**。

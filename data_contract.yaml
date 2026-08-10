@@ -3563,6 +3563,45 @@ llm_wire:
     - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
 
+  usage: |
+    canonical の Usage（Spec 32 P0 凍結 2026-08-10）。欄は prompt / completion /
+    cache_read / **reasoning**。
+
+    **reasoning は completion の内数。** 外数ではない。実測で決めた（Spec 32 の
+    probe 8 発・grok-4.5）: 8/8 で `output_tokens - reasoning_tokens` = 3〜5 で、
+    同じ応答の本文が 4〜8 字だった。**外数ならこの差は本文と無関係に開く。**
+
+      Usage::total() = prompt + completion  ← **変えない**
+      実効トークンの重み（未キャッシュ ×1 / キャッシュ済み ×0.1 / 出力 ×4）も不変
+
+    **reasoning を total へ足すと二重計数になり、トークン天井（Spec 11）の
+    実効値が跳ねる。** 思考ぶんは既に出力として ×4 で乗っており、分離しても
+    課金の扱いは 1 ミリも変わらない。Spec 32 が変えるのは**見え方だけ**。
+
+    **型は u64 であって Option<u64> ではない。**「取れない」と「0 だった」を型で
+    分けると表示側が 2 状態を扱うことになる。対照の検収（思考を使わない経路でも
+    reasoning=0 の行が出る）は**両方 0 で出る**ことを要求するので、区別は害になる。
+
+    供給元は社ごとに欄名が違う。**同じ概念に社ごとの呼び名があるので、
+    名前で grep しても揃わない**（Spec 32 rev2 は `thoughts_token_count` を
+    数え落として Gemini を 3 社の外に置いていた。#62 と同型）:
+
+      Gemini        usageMetadata.thoughtsTokenCount
+                    **completion への足し込みは維持する** — `completion =
+                    candidatesTokenCount + thoughtsTokenCount` でのみ
+                    totalTokenCount と一致する（既存の実測。下の gemini 節が正）
+      xAI Responses usage.output_tokens_details.reasoning_tokens
+                    （output_tokens は既に内数を含む。足し込まない）
+      Anthropic     未観測。要求（thinking / budget_tokens）を送っていないので
+                    現状は 0 のまま。Spec 32 P1 で数える
+      OpenAI 互換   /v1/chat/completions には来ない。0 が正しい
+
+    計器: `turn:` 行へ **reasoning= を常に出す（0 も出す）**。
+    現行の形は `turn: agent=… hop=… rounds=…/… waves=… stop=… prompt=…
+    cached=… total=…` で、**output という欄は存在しない** — total= の隣へ足す。
+    **条件付きで省かない** — 思考を使わない経路で 0 が出ることが「常に出す実装」
+    との対照になり、省くと機構が効いているか読めなくなる。
+
   mcp_server_contract: |
     Fuseforks を MCP サーバーにする (Spec 25 rev3 承認 2026-08-07)。外部の LLM
     (Claude Code / Copilot / CLI) がチャットを 1 本投げ、窓口のサーヴァントが
@@ -3954,7 +3993,9 @@ llm_wire:
         custom_tool_call — 移行途中の未文書挙動)。どの名で来たかを計器に残す。
         未知種別は数えてから捨てる (dropped 計器。tool_execution #72 の処方)
       - reasoning ブロックは本文へ混ぜず、種別と tokens を数えて捨てる
-        (Spec 31 D7。受け取りは thinking の Spec で 3 社まとめて)
+        (Spec 31 D7)。**受け取りは 4 社 3 Spec に分かれた** — 思考トークンを
+        数える (Spec 32。この節の usage.reasoning が正) / 要約の受け取りと表示
+        (Spec 33) / OpenAI の Responses ワイヤ (Spec 34)
       - 関数ツールは flat 形 {"type":"function", name, description, parameters} で
         tools 配列に検索ツールと**同居できる** (実測 2026-08-10: 併用で 400 は
         出ない — gpt-5 系の chat/completions が拒む組を、この口は受ける)。

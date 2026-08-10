@@ -784,8 +784,10 @@ results are injected into the prompt: 98,213 in one measured turn, of which
 figure sits next to the checkbox.
 
 **Thinking blocks that come back are currently discarded** (only their kind and
-volume are logged). Receiving them is a separate piece of work covering all
-three providers at once.
+volume are logged). **Gemini is the exception: its thinking token count is
+already read and folded into the output token count.** Receiving them splits
+into three specs — counting thinking tokens (Spec 32), receiving and displaying
+the summary (Spec 33), and the OpenAI Responses wire (Spec 34).
 
 ### Where API Keys Live
 

@@ -136,8 +136,16 @@ Spec 26 一般化 3「自由入力欄は 1 つとは限らない」の実例で�
 ### D7: `reasoning` は本 Spec では受け取らず、数える
 
 `dropped content blocks:` と同型の計器で種別と tokens を 1 行出す（#72 の処方）。
-thinking の受け取りは 3 社まとめて別 Spec（v0.2.0 裁定の「受け取りが最初」の項。
-この村の decode の捨てている行は 1 箇所なので、そちらで一括して拾う）。
+thinking の受け取りは別 Spec（v0.2.0 裁定の「受け取りが最初」の項）。
+
+~~3 社まとめて。この村の decode の捨てている行は 1 箇所なので、そちらで一括して拾う。~~
+**取り消し（2026-08-10。Spec 32 の起票時にコードで数えて誤りと分かった）** —
+実測は **4 社 4 形**で、1 箇所ではない: xAI は decode が数えるだけで
+`XaiOutputItem` に payload の欄が無い / Anthropic は `Thinking` がユニット変種で、
+しかも `budget_tokens` を送っていないので**そもそも返っていない** / OpenAI 互換は
+`/v1/chat/completions` に**来ない**（4 本目のワイヤが要る）/ **Gemini は
+`thoughts_token_count` を既に読んで `completion` へ足し込んでおり、捨てていない**。
+**「捨てている行」で数えたので、足し込んでいる Gemini が網の外に落ちていた。**
 
 ### D8: コストの計器
 

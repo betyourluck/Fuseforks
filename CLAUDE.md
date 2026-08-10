@@ -222,9 +222,33 @@ Live Search の分類（遠隔のツール → 実際はワイヤ）/ status URL
 （1 件の実ハンドルから一般化 → 実測は 77/77 が匿名形式）/ **集合へ要素を足す
 影響**（否定側だけ数えて肯定側で踏んだ = #91）。
 
-**v0.2.0 の残りは Thinking の受け取り（3 社まとめて）と多モーダル。**
-Thinking は捨てている `decode` の行が 1 箇所なので最も安く、Spec 31 の走行で
-**xAI 経路でも `kinds=reasoning:16` として思考が流れている**ことを実測済み。
+**v0.2.0 の残りは Thinking と多モーダル。** Thinking は
+**[Spec 32](specs/32_thinking-reception.md)（思考トークンを数える）→
+Spec 33（要約の受け取りと表示）→ Spec 34（OpenAI の Responses ワイヤ）**の 3 本に割れた。
+
+~~3 社まとめて。捨てている `decode` の行が 1 箇所なので最も安い。~~
+**取り消し（2026-08-10。Spec 32 の起票時にコードで数えた）** — 実測は
+**4 社 4 形**で、1 箇所ではない:
+
+| 社 | 現状 | P1 の重さ |
+|---|---|---|
+| **Gemini** | **既に読んでいる**（`thoughts_token_count` を `completion` へ足し込み。`data_contract` に「この数え方でのみ `totalTokenCount` と一致する」と凍結済み） | **最も安い** |
+| **xAI** | decode が数えるだけ（`XaiOutputItem` に payload の欄が無い） | 中 |
+| **Anthropic** | `Thinking` がユニット変種。**`budget_tokens` を送っていないので、そもそも返っていない** | 要求側の実装が先 |
+| **OpenAI 互換** | `/v1/chat/completions` に**来ない** | **4 本目のワイヤそのもの** = Spec 34 |
+
+**数え落とした機序**: 「**捨てている**行」で数えたので、**足し込んでいる** Gemini が
+網の外に落ちた。しかも Gemini の欄名は `thoughts_token_count` で、
+`Thinking` / `reasoning` の grep では 1 件も出ない。**同じ概念に社ごとの呼び名が
+あるときは、名前ではなく概念の側から数える**（#62 と同型）。
+
+**Spec 32 の probe 8 発（2026-08-10・grok-4.5）で確定したこと**:
+**`reasoning` は `completion` の内数**（8/8 で差 3〜5 = 本文のトークン数）/
+**出力の 99% 以上が思考で本文は 4〜8 字**（払ったものの 99% がどの画面にも出ていない）/
+xAI の `reasoning` item は `summary` を持ち、**`signature` も `encrypted_content` も
+無い = 往復の要求が無い** / **`reasoning: {"summary":"auto"}` は効かない**
+（短形と長形の分布が既定 2:2・auto 2:2 で一致。1 対 1 で止めていれば
+「auto を送ると痩せる」という逆の実装をしていた）。
 
 以下は 2026-08-08 時点の記録。
 
@@ -956,7 +980,7 @@ grep して出てきても追従漏れではない。
 |---|---|
 | Google Search Grounding | **実装済み**（Spec 05。`sources` が空という実測つき） |
 | Anthropic **Prompt Caching** | **実装済み**（`place_message_breakpoint`。ターンをまたいで 99% を実測） |
-| Thinking Mode | **半分** — `reasoning_effort` で制御はするが、**返る thinking ブロックは捨てている**（`dropped content blocks: kinds=thinking` の計器つき） |
+| Thinking Mode | **半分**（社ごとに非対称。上の 4 社 4 形の表が正）— `reasoning_effort` で制御はするが、**返る thinking ブロックは捨てている**（`dropped content blocks: kinds=thinking` の計器つき）。**例外は Gemini で、思考トークンだけは既に読んで `completion` へ足し込んでいる**。[Spec 32](specs/32_thinking-reception.md) で数を分離する |
 | Vision Input | **画像は実装済み**（Spec 23。互換層で 5 系統実測）。音声・動画は未 |
 | xAI **Live Search**（web / X） | **実装済み**（[Spec 31](specs/31_grok-live-search.md)。4 本目のワイヤ `/v1/responses`。citations が実 URL で返る = Spec 05 と逆） |
 
@@ -965,14 +989,18 @@ OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。�
 受け取れない）のに対し、**Anthropic は `thinking` / `budget_tokens` を送っておらず
 要求もできない** — `anthropic.rs:418` が `Thinking` / `RedactedThinking` を
 `dropped` へ入れて捨てているだけ。xAI の Reasoning Mode も同じ棚。
-**受け取り側は `decode` の捨てている行 1 箇所**なので、3 社ぶんが 1 つの Spec に
-収まる形。
+~~受け取り側は `decode` の捨てている行 1 箇所なので、3 社ぶんが 1 つの Spec に収まる形。~~
+**取り消し（2026-08-10。Spec 32 P0）** — この数え直しは**「捨てている社」しか
+数えていなかった**。**Gemini が 4 社目**で、`thoughts_token_count` を
+**既に読んで `completion` へ足し込んでいる**（捨てていないので、
+捨てている行を探す走査には 1 件も出ない）。**現在地の節の 4 社 4 形の表が正。**
 
 **v0.2.0 の取り込み裁定（2026-08-09 利用者。13 件の一覧を三分した）**:
 
 - **作らない（既にある 4 件）**: Search Grounding / Prompt Caching /
   Tool Use with MCP（Spec 25 で両方向）/ Vision Input（画像のみ）
-- **順番は 受け取り（Thinking 3 社）→ ~~Live Search~~ → 多モーダル（音声・動画・PDF）**。
+- **順番は 受け取り（Thinking。~~3 社~~ → **4 社 3 Spec**へ割れた。Spec 32 → 33 → 34）
+  → ~~Live Search~~ → 多モーダル（音声・動画・PDF）**。
   **Live Search は 2026-08-10 に着地した**（Spec 31。順番を飛ばしたのは利用者の
   優先指示による）。**残るのは Thinking の受け取りと多モーダル。**
   1 つ目が最も安く 3 社へ同時に効く。Live Search の 1 手目は実装ではなく
@@ -2910,6 +2938,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- Spec 32（思考トークンを数える — `reasoning` を `completion` から分離）:
+  **rev3 → P0 完了**（2026-08-10。起票 `59063bb`。査読 8 点 → 採用 6 /
+  訂正して採用 1 / 反証 1）。**範囲は「数える」まで**で、要約本文は Spec 33、
+  OpenAI の Responses ワイヤは Spec 34 へ決定として引き渡した。
+  **rev3 は P0 の作業中に出た数え落としの回収** — rev2 は 3 社で数えており、
+  **Gemini（思考トークンを既に読んでいる唯一の社）が網の外**にあった。
+  検収 2 の対照に `gemini-3.5-flash-lite` を置いていたのも同時に壊れていた（#68）
 - Spec 31（Grok の Live Search — `/v1/responses` ワイヤと「固有スキル」）:
   **rev2 承認 → P0〜P5 完了 = Done**（2026-08-10。**起票から Done まで 1 日**。
   査読 7 点のうち 3 点を**対の再 probe で決着**させ、`no_inline_citations` の
