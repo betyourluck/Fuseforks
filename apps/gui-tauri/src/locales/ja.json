@@ -176,7 +176,7 @@
   },
   "thinking": {
     "heading": "思考の要約",
-    "size": "{chars} 字 / {rounds} 周ぶん",
+    "size": "{chars} 字 / {count} 件",
     "verbatim": "モデルが出した要約（原文）。答えの本文ではありません。"
   },
   "labels": {

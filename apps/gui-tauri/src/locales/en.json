@@ -176,7 +176,7 @@
   },
   "thinking": {
     "heading": "Thinking summary",
-    "size": "{chars} chars across {rounds} round(s)",
+    "size": "{chars} chars in {count} block(s)",
     "verbatim": "The model's own summary, verbatim. This is not the answer itself."
   },
   "labels": {

@@ -5117,6 +5117,23 @@ async fn handle_message(
         None if tool_limit_hit => "tool_limit".to_owned(),
         None => "-".to_owned(),
     };
+    // 思考の要約を**受け取った回だけ** 1 行（`xai search:` と同じ形）。
+    //
+    // **量を数えないと、捕獲したものが存在しなかったことになる**（#72 の裏返し —
+    // あちらは捨てたものを数えなかった）。実機で `kinds=reasoning:36` を観測して
+    // おり、**1 応答に数十件入りうる**。件数と字数の分布は、表示を畳むかどうか・
+    // 保存が膨らまないかの判断材料になる。
+    if !reasoning_summary.is_empty() {
+        note!(
+            "reasoning summary: agent={agent_id} items={} chars={}",
+            reasoning_summary.len(),
+            reasoning_summary
+                .iter()
+                .map(|s| s.chars().count())
+                .sum::<usize>(),
+        );
+    }
+
     note!(
         // `reasoning` は `total` の内数（Spec 32 D2）。**0 でも必ず出す** —
         // 思考を使わない経路で 0 が出ることが「常に 0 を出す実装」との対照になり、

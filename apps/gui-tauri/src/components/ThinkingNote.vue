@@ -27,8 +27,14 @@ import type { ThinkingView } from "../lib/thinkingNote";
 
 const props = defineProps<{ view: ThinkingView }>();
 
-/** 周をまたいだ要約が複数あるか（見出しの言い回しが変わる）。 */
-const rounds = computed(() => props.view.summaries.length);
+/**
+ * 要約の**件数**。
+ *
+ * **「周」ではない。** 1 応答に `reasoning` item が複数入り、実機のログでは
+ * **1 応答で最大 36 個**を観測している（`kinds=reasoning:36`）。
+ * 周の数と読める語を出すと、**1 周のターンで「36 周ぶん」と書く**ことになる。
+ */
+const count = computed(() => props.view.summaries.length);
 </script>
 
 <template>
@@ -38,7 +44,7 @@ const rounds = computed(() => props.view.summaries.length);
     <summary class="cursor-pointer list-none select-none">
       <span class="font-medium text-ink">{{ $t("thinking.heading") }}</span>
       <span class="ml-1 tabular-nums">{{
-        $t("thinking.size", { chars: view.chars, rounds })
+        $t("thinking.size", { chars: view.chars, count })
       }}</span>
     </summary>
 
