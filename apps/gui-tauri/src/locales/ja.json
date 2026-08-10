@@ -255,7 +255,7 @@
   },
   "bottomTabs": {
     "blackboard": "黒板",
-    "blackboardTitle": "村の黒板（共有作業メモ）。work_dir の 黒板/ を表示するだけで、ここからは書けない",
+    "blackboardTitle": "村の黒板（共有作業メモ）。work_dir の blackboard/ を表示するだけで、ここからは書けない",
     "waves": "作業状況",
     "wavesTitle": "plan の実行痕。列 = 波 / 行 = サーヴァント",
     "switcher": "下段ペインの切り替え"
@@ -264,7 +264,7 @@
     "noteCount": "{count} 枚",
     "refresh": "黒板を読み直す",
     "refreshTitle": "黒板を読み直す（表示中は自動でも読み直します）",
-    "empty": "黒板にはまだ何も書かれていません（work_dir の `黒板/` フォルダに付箋が置かれると、ここに映ります）。"
+    "empty": "黒板にはまだ何も書かれていません（work_dir の `blackboard/` フォルダに付箋が置かれると、ここに映ります）。"
   },
   "waves": {
     "state": {

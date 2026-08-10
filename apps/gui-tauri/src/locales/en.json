@@ -255,7 +255,7 @@
   },
   "bottomTabs": {
     "blackboard": "Blackboard",
-    "blackboardTitle": "The village blackboard (shared working notes). Shows the 黒板/ folder under work_dir; nothing can be written from here",
+    "blackboardTitle": "The village blackboard (shared working notes). Shows the blackboard/ folder under work_dir; nothing can be written from here",
     "waves": "Work status",
     "wavesTitle": "Execution traces of plan. Columns = waves / rows = servants",
     "switcher": "Switch bottom pane"
@@ -264,7 +264,7 @@
     "noteCount": "{count} notes",
     "refresh": "Reload the blackboard",
     "refreshTitle": "Reload the blackboard (it also refreshes automatically while shown)",
-    "empty": "Nothing has been written on the blackboard yet (notes placed in the 黒板/ folder under work_dir will appear here)."
+    "empty": "Nothing has been written on the blackboard yet (notes placed in the `blackboard/` folder under work_dir will appear here)."
   },
   "waves": {
     "state": {
