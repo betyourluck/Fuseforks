@@ -130,6 +130,7 @@ trigger it.
 | [data_contract.yaml](data_contract.yaml) | The domain contract. **It takes precedence over the implementation** |
 | [specs/](specs) | Specifications. Drafted, reviewed, then implemented in phases |
 | [failures.md](failures.md) | Traps stepped in (symptom → root cause → prescription → generalization) |
+| [PRIVACY_en.md](PRIVACY_en.md) | Privacy policy (**the developer receives nothing**) |
 
 > The two documents above are written in Japanese.
 

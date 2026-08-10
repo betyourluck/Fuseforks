@@ -133,6 +133,7 @@ cd apps/gui-tauri && bun run test
 | [data_contract.yaml](data_contract.yaml) | ドメイン契約。**実装よりここが正** |
 | [specs/](specs) | 仕様。起票 → 査読 → Phase 分割で実装 |
 | [failures.md](failures.md) | 踏んだ罠（症状 → 真因 → 処方 → 一般化） |
+| [PRIVACY.md](PRIVACY.md) | プライバシーポリシー（**開発者は何も受け取らない**） |
 
 ## ライセンス
 
