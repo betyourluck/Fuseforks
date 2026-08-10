@@ -928,6 +928,7 @@ grep して出てきても追従漏れではない。
 | Anthropic **Prompt Caching** | **実装済み**（`place_message_breakpoint`。ターンをまたいで 99% を実測） |
 | Thinking Mode | **半分** — `reasoning_effort` で制御はするが、**返る thinking ブロックは捨てている**（`dropped content blocks: kinds=thinking` の計器つき） |
 | Vision Input | **画像は実装済み**（Spec 23。互換層で 5 系統実測）。音声・動画は未 |
+| xAI **Live Search**（web / X） | **実装済み**（[Spec 31](specs/31_grok-live-search.md)。4 本目のワイヤ `/v1/responses`。citations が実 URL で返る = Spec 05 と逆） |
 
 **「半分」の中身はプロバイダで非対称だった**（2026-08-09 に実装で数え直し）。
 OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。要求できるが
@@ -941,7 +942,9 @@ OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。�
 
 - **作らない（既にある 4 件）**: Search Grounding / Prompt Caching /
   Tool Use with MCP（Spec 25 で両方向）/ Vision Input（画像のみ）
-- **順番は 受け取り（Thinking 3 社）→ Live Search → 多モーダル（音声・動画・PDF）**。
+- **順番は 受け取り（Thinking 3 社）→ ~~Live Search~~ → 多モーダル（音声・動画・PDF）**。
+  **Live Search は 2026-08-10 に着地した**（Spec 31。順番を飛ばしたのは利用者の
+  優先指示による）。**残るのは Thinking の受け取りと多モーダル。**
   1 つ目が最も安く 3 社へ同時に効く。Live Search の 1 手目は実装ではなく
   **Grok へ 1 回投げて citations の有無を見ること**（Spec 05 の `sources` 空の前例。
   返らなければ Gemini への受け渡し物が無く 2 段検証が成立しない）。
@@ -970,13 +973,17 @@ OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。�
 | 種別 | 例 | この村での意味 |
 |---|---|---|
 | **ワイヤの形が変わる** | Grounding / ネイティブ多モーダル / Structured Outputs / thinking ブロック / Citations / Search Domain Filter | **canonical 層が吸収できる。既に 2 つ通した実績がある** |
-| **実質は遠隔のツール** | Code Interpreter / Computer Use / Live Search・X | **同梱ツール層と競合する。** Computer Use は座標つき行動が返るので**実行ループごと要る** — ワイヤの欄ではない |
+| **実質は遠隔のツール** | Code Interpreter / Computer Use | **同梱ツール層と競合する。** Computer Use は座標つき行動が返るので**実行ループごと要る** — ワイヤの欄ではない。**Live Search をここに置いたのは誤りで、Spec 31 で「ワイヤの形が変わる」側だと確定した**（サーバー側ツールだが、返るのは結果であって行動ではない） |
 | **見えないコスト最適化** | Context Caching / Prompt Caching | 利用者には現れない。**Anthropic 側は既に入っている** |
 
 **1 番目は素直に伸ばせる / 3 番目は既にやっている / 2 番目だけが別の獣。**
 公開後に回すなら、**2 番目を切り離しておくと Spec が小さく保てる。**
 
-### 最優先は xAI の Live Search（2026-08-08 利用者）
+### 最優先は xAI の Live Search（2026-08-08 利用者）— **Done（2026-08-10）**
+
+**[Spec 31](specs/31_grok-live-search.md) が正。** 起票から Done まで 1 日で、
+実機の検収 9 項目すべて観測。以下はこの節の起票時の記録で、**採否の判断は
+「citations が返るか」だったところ、判定 A（返る）で決着した**。
 
 理由は技術ではなく**流通** —「**ファイナンス系の需要を取れる。彼らは SNS で
 拡散力があるから一般に Concordia を普及させる力になる**」。
@@ -2873,6 +2880,12 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- Spec 31（Grok の Live Search — `/v1/responses` ワイヤと「固有スキル」）:
+  **rev2 承認 → P0〜P5 完了 = Done**（2026-08-10。**起票から Done まで 1 日**。
+  査読 7 点のうち 3 点を**対の再 probe で決着**させ、`no_inline_citations` の
+  常送で「本文の無汚染」と「出典の網羅」を同じ 1 手で取った）。
+  **`failures.md` #91 を派生**（既知の値の集合へ 1 つ足したら、その集合を読む
+  述語が 2 つとも意味を変えた）
 - Spec 28（スケジュールの前判定と前後処理 — probe / sessionMode /
   summarizeAfter）: **rev3 承認 → P0〜P5 完了 = Done**
   （実機確認 8 件すべて観測。2026-08-08。起票から
