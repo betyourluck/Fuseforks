@@ -452,6 +452,20 @@ pub struct ChatResponse {
     pub usage: Usage,
     /// プロバイダが代行した接地の記録。持たないプロバイダでは空。
     pub grounding: Grounding,
+    /// モデルが返した**思考の要約**（Spec 33）。1 応答に複数入りうるので列。
+    ///
+    /// **量は [`Usage::reasoning`]、中身はこちら。別の欄・別の口**
+    /// （OpenAI 互換は `/v1/chat/completions` で数は取れるが本文は来ない）。
+    ///
+    /// **[`ChatMessage`] へは積まない**（`reasoning_summary` 契約の凍結 1）—
+    /// 履歴へ入れると滑る窓 8 往復で最大 8 回再送され、実測 3,475 字が
+    /// 固定費になる。**この型に席があって `ChatMessage` に無いこと自体が
+    /// その保証**（Spec 23 D1 と同じ形で、型で閉じている）。
+    ///
+    /// **空文字は入れない** — 0 字は「要約が無い」であって表示するものが無い。
+    /// 要約が付かない回があったことは `dropped content blocks:` の計器が
+    /// 別に数えているので、ここを空で埋めても診断は増えない。
+    pub reasoning_summary: Vec<String>,
 }
 
 #[cfg(test)]

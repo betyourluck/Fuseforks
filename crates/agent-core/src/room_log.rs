@@ -150,6 +150,7 @@ mod tests {
             hop: 0,
             co_recipients: Vec::new(),
             grounding: crate::llm::Grounding::default(),
+            reasoning_summary: Vec::new(),
             attachments: Vec::new(),
         }
     }

@@ -259,6 +259,7 @@ impl agent_core::llm::LlmBackend for GatedBackend {
                 reasoning: 0,
             },
             grounding: agent_core::llm::Grounding::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -441,6 +442,7 @@ impl agent_core::llm::LlmBackend for LoopingBackend {
                 reasoning: 0,
             },
             grounding: agent_core::llm::Grounding::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }

@@ -181,6 +181,7 @@ impl LlmBackend for EchoBackend {
             },
             // このプロバイダは接地を代行しない。
             grounding: Grounding::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }

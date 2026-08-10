@@ -151,6 +151,7 @@ pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
     };
     let mut search_counts: Vec<(String, u32)> = Vec::new();
     let mut reasoning_count = 0u32;
+    let mut reasoning_summary: Vec<String> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
 
     for item in resp.output {
@@ -177,7 +178,24 @@ pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
                     }
                 }
             }
-            "reasoning" => reasoning_count += 1,
+            "reasoning" => {
+                reasoning_count += 1;
+                // 要約は既定で入る（Spec 33）。**空文字は落とす** — 0 字は
+                // 表示するものが無いという意味で、列へ入れても枠が増えるだけ。
+                // 短形（129 字の再掲）は落とさない：長さで切ると probe の
+                // 産物が表示規則になる（`failures.md` #92 と同じ罠）。
+                for part in item.summary.iter().flatten() {
+                    if part.kind != "summary_text" {
+                        continue;
+                    }
+                    let Some(text) = part.text.as_ref() else {
+                        continue;
+                    };
+                    if !text.is_empty() {
+                        reasoning_summary.push(text.clone());
+                    }
+                }
+            }
             kind if SEARCH_CALL_KINDS.contains(&kind) => {
                 if let Some(query) = search_query(&item)
                     && !grounding.queries.contains(&query)
@@ -300,6 +318,7 @@ pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
         finish,
         usage,
         grounding,
+        reasoning_summary,
     })
 }
 
@@ -612,6 +631,57 @@ mod tests {
 
         assert_eq!(decoded.usage.reasoning, 0);
         assert_eq!(decoded.usage.completion, 2);
+    }
+
+    /// 思考の要約は `reasoning` item の `summary[].text` から取る（Spec 33）。
+    /// **既定で入る**ので送信側の変更は要らない。
+    #[test]
+    fn reasoning_summaries_are_captured_from_the_item() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "summary": [
+                    {"type": "summary_text", "text": "The problem is a logic puzzle…"}
+                ]},
+                {"type": "message", "content": [{"type": "output_text", "text": "Bです", "annotations": []}]}
+            ]
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(
+            decoded.reasoning_summary,
+            vec!["The problem is a logic puzzle…"]
+        );
+        assert_eq!(decoded.text.as_deref(), Some("Bです"));
+    }
+
+    /// **空文字は入れない**（0 字は表示するものが無い）。一方
+    /// **短形は落とさない** — 129 字と 919 字の間に線を引くと、probe の産物が
+    /// 表示規則になる（`failures.md` #92 と同じ罠。`reasoning_summary` 契約の凍結 2）。
+    ///
+    /// 短形の実物は「問いの再掲だけ」で内容は薄いが、**薄いことは利用者が読めば
+    /// 分かる**。ハーネスが中身の質を判定しない。
+    #[test]
+    fn empty_summaries_are_dropped_but_short_ones_are_kept() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "summary": [
+                    {"type": "summary_text", "text": ""},
+                    {"type": "summary_text", "text": "The problem is in Japanese: 3 人の…"},
+                    {"type": "some_future_part", "text": "読まない種別"}
+                ]},
+                {"type": "reasoning"},
+                {"type": "message", "content": [{"type": "output_text", "text": "答え", "annotations": []}]}
+            ]
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(
+            decoded.reasoning_summary,
+            vec!["The problem is in Japanese: 3 人の…"],
+            "空は落ち、短形は残り、未知の片は読まない。summary を持たない item も落ちない"
+        );
     }
 
     /// 打ち切りは incomplete_details.reason で判定する。

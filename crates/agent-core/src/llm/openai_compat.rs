@@ -248,6 +248,7 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
             usage,
             // このプロバイダは接地を代行しない。
             grounding: Grounding::default(),
+            reasoning_summary: Vec::new(),
         });
     };
 
@@ -280,6 +281,7 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
         usage,
         // このプロバイダは接地を代行しない。
         grounding: Grounding::default(),
+        reasoning_summary: Vec::new(),
     })
 }
 
@@ -677,6 +679,7 @@ mod tests {
             finish: Finish::Length,
             usage: Usage::default(),
             grounding: Grounding::default(),
+            reasoning_summary: Vec::new(),
         };
         let err = reject_empty_reasoning(base.clone(), 4_096).unwrap_err();
         // 一過性にしない — 上限は入力に対して決定的で、再送すれば同じ所で切れる。

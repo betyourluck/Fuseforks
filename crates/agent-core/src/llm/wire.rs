@@ -994,6 +994,25 @@ pub struct XaiOutputItem {
     /// `{"query": "...", "limit": "5"}` の形で検索語が入る。`action` は無い。
     #[serde(default)]
     pub input: Option<String>,
+    /// `reasoning` のとき、思考の要約（Spec 33）。
+    ///
+    /// **既定で入る** — `reasoning: {"summary":"auto"}` を送っても分布は変わらない
+    /// （実測 4 対 4）。中身は 2 形あり、短形（129 字 = 問いの再掲だけ）と
+    /// 長形（919〜1,367 字）。**どちらも「空」ではない**ので長さで切らない
+    /// （`reasoning_summary` 契約の凍結 2）。
+    #[serde(default)]
+    pub summary: Option<Vec<XaiSummaryPart>>,
+}
+
+/// `reasoning` item の要約 1 片。
+#[derive(Debug, Deserialize)]
+pub struct XaiSummaryPart {
+    /// 片の種別。読むのは `summary_text` だけ。
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// 要約の本文。**英語で返る**（問いが日本語でも。実測）。
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

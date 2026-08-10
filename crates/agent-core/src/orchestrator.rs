@@ -4521,6 +4521,12 @@ async fn handle_message(
     // 接地の来歴は 1 周ぶんではなく**ターンぶん**で持つ。検索した周と
     // 関数を呼んだ周は別なので、周ごとに上書きすると先に起きた接地が消える。
     let mut grounding = crate::llm::Grounding::default();
+    // 思考の要約も**ターンぶん**で持つ（Spec 33）。周ごとに要約が返るので、
+    // 上書きすると最後の周ぶんしか残らない。接地と同じ理由・同じ寿命だが、
+    // **畳み方は違う** — 接地は URL と検索語で重複を潰すが、要約は周ごとに
+    // 別の文章なので**そのまま並べる**（同じ文が 2 度出るなら、それは
+    // モデルが 2 周とも同じことを考えた事実）。
+    let mut reasoning_summary: Vec<String> = Vec::new();
     let mut outcome = Outcome::Finish {
         content: String::new(),
     };
@@ -4641,6 +4647,7 @@ async fn handle_message(
         // 転送で抜ける周の接地も拾う。break の後ろに置くと、検索してから
         // 転送したターンの来歴が丸ごと落ちる。
         grounding.absorb(std::mem::take(&mut response.grounding));
+        reasoning_summary.append(&mut response.reasoning_summary);
 
         // 転送の要求は「会話を渡す」ことなので、ここでループを抜ける。
         // 結果が返ってくる種類の操作ではない。
@@ -5004,6 +5011,7 @@ async fn handle_message(
                     }
                 }
                 grounding.absorb(std::mem::take(&mut response.grounding));
+                reasoning_summary.append(&mut response.reasoning_summary);
                 match response.text {
                     Some(text) if !text.trim().is_empty() => {
                         outcome = Outcome::Finish { content: text };
@@ -5138,6 +5146,9 @@ async fn handle_message(
             // 接地の来歴は発話に添えて表示層へ渡す（`MessageSent` が運ぶ）。
             // プロンプトへは戻らない — 組み立て側は `content` しか読まない。
             outgoing.grounding = grounding;
+            // 思考の要約も同じ経路で表示層へ渡す。**履歴へは載らない** —
+            // 積む先の `ChatMessage` にこの欄が無い（型で閉じている）。
+            outgoing.reasoning_summary = reasoning_summary;
             shared.record(outgoing).await;
 
             if let Some(reply_to) = reply_to {
@@ -5201,6 +5212,8 @@ async fn handle_message(
         // 全通に複製すると、表示で畳んだあとも同じ出典が宛先数ぶん並ぶ。
         if index == 0 {
             outgoing.grounding = std::mem::take(&mut grounding);
+            // 要約も同じ理由で先頭の 1 通だけ（1 ターンぶんの事実）。
+            outgoing.reasoning_summary = std::mem::take(&mut reasoning_summary);
         }
 
         // 同じ内容を複数宛先へ渡す fan-out は、受け手から見ればエージェント発の

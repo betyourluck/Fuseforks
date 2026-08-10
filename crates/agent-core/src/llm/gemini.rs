@@ -354,6 +354,7 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             finish: Finish::Other,
             usage,
             grounding: Grounding::default(),
+            reasoning_summary: Vec::new(),
         });
     };
 
@@ -432,6 +433,12 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         finish,
         usage,
         grounding,
+        // **Gemini は本 Spec（33）の範囲外**だが、思考の本文を**持っている
+        // 可能性がある** — 上の `part.thought == Some(true)` の枝が
+        // `part.text` へ到達する前に捨てている。取れるかどうかは未測定で、
+        // 「捨てている」ことは自分のコードから、「中身がある」ことは
+        // 相手のワイヤからしか言えない（`failures.md` #93）。
+        reasoning_summary: Vec::new(),
     })
 }
 

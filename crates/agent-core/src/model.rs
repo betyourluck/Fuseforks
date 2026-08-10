@@ -729,6 +729,21 @@ pub struct AgentMessage {
     /// モデルが今引用したい相手ではない（Spec 05 Notes 9）。
     #[serde(default, skip_serializing_if = "crate::llm::Grounding::is_empty")]
     pub grounding: crate::llm::Grounding,
+    /// この発話を作る過程でモデルが返した**思考の要約**（Spec 33）。
+    ///
+    /// **表示層専用。読むのは人間だけで、モデルへは戻さない** — `grounding` と
+    /// 同じ棚だが、**理由は違う**。接地は「前の話題の出典を今の引用相手として
+    /// 渡さない」という時系列の話（Spec 05 Notes 9）で、こちらは**コスト** —
+    /// 履歴（`AgentRecord.history` / `Record::Exchange`）へ入れると滑る窓
+    /// 8 往復で最大 8 回再送され、実測 3,475 字が固定費になる。
+    ///
+    /// **積めないことは型で閉じている**（`reasoning_summary` 契約の凍結 1）—
+    /// 履歴に載るのは `ChatMessage` で、あちらにこの欄は無い。
+    ///
+    /// **空文字は入らない**（0 字は「要約が無い」であって表示するものが無い）。
+    /// 1 応答に複数の要約が入りうるので列。**内容は英語**（3 社とも実測）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_summary: Vec<String>,
     /// この発話に添付された画像の**参照**（Spec 23 / `attachment_contract`）。
     ///
     /// 実体は `{workspace}/attachments/{id}.webp`。base64 をここへ積まないので、
@@ -752,6 +767,7 @@ impl AgentMessage {
             hop,
             co_recipients: Vec::new(),
             grounding: crate::llm::Grounding::default(),
+            reasoning_summary: Vec::new(),
             attachments: Vec::new(),
         }
     }

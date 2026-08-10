@@ -458,6 +458,7 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
         usage,
         // このプロバイダは接地を代行しない。
         grounding: Grounding::default(),
+        reasoning_summary: Vec::new(),
     })
 }
 

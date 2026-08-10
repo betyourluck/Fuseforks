@@ -2,7 +2,7 @@
 
 **ID**: 33
 **Date**: 2026-08-10
-**Status**: **rev3**（P1 の作業中に**社を数え落としていた**のが出て改訂 =
+**Status**: **rev3 → P0〜P1 完了**（P1 の作業中に**社を数え落としていた**のが出て改訂 =
 **Spec 32 rev3 と同じ形の再演**。**Gemini が 3 社目**で、しかも
 **Anthropic と同型**（要求しないと本文が来ない）だった。利用者裁定で範囲を
 **3 社**へ拡張。rev2 承認 → P0 完了 → rev3。契約は `data_contract.yaml` の
@@ -231,6 +231,62 @@ Spec 05 が `sources` の空を受けて縮小したのと同じ規律。
 - **P4**: 台帳 — README / DETAIL 日英 + `data_contract` の回収
   （**数えるのはファイル単位** — #51 (b)）
 - **P5**: 実機
+
+## P1 実装記録（2026-08-10。xAI）
+
+lib 498 → 500 / 結合 +1 本（`tests/reasoning_summary.rs`）/ clippy 警告ゼロ。
+
+### D2-b は **probe ではなく本番の実績**で決着した
+
+`xai_responses::encode` は canonical から `message` / `function_call` /
+`function_call_output` だけを組み、**`reasoning` item を 1 度も送り返していない**。
+つまり**この村は既に「落として送る」側で稼働している**。
+
+実機のログ（`agent_10` = `grok-4.5` / `XaiResponses`）:
+
+```text
+13:45:42 dropped content blocks: kinds=reasoning:1 … tool_calls=1
+13:45:46 dropped content blocks: kinds=reasoning:1 … tool_calls=4
+13:45:50 dropped content blocks: kinds=reasoning:1 … tool_calls=3
+13:46:01 dropped content blocks: kinds=reasoning:1 … tool_calls=2
+13:46:22 dropped content blocks: kinds=reasoning:1 … tool_calls=1
+13:46:38 dropped content blocks: kinds=reasoning:1 … tool_calls=0
+13:46:38 turn: agent=agent_10 … rounds=6/14 … stop=-
+```
+
+**6 周とも reasoning item を落としており、6 周が普通に完走している。**
+`kinds=reasoning:N` は `xai_responses::decode` しか出さないので、
+**ワイヤが Responses であることと落としたことが同じ 1 行で読める**。
+別の走行に `rounds=14/14`（prompt 3.7M）もある。
+
+**probe より強い** — Anthropic の D2-b は各 1 サンプルだが、こちらは
+**8 ターン・数十周ぶんの実績**。査読 8 が求めた「方法の対称」は、
+**xAI 側のほうが強い形で満たされた**。
+
+### 実装で決めた 3 点
+
+- **周ごとの畳み方が接地と違う。** 接地は URL と検索語で重複を潰すが、
+  要約は**そのまま並べる** — 同じ文が 2 度出るなら、それは
+  **モデルが 2 周とも同じことを考えた事実**であって重複ではない
+- **`AgentMessage` の doc に「`grounding` と同じ棚だが理由が違う」と書いた。**
+  接地は時系列（前の話題の出典を今の引用相手として渡さない）、
+  要約は**コスト**。**同じ場所に置く 2 つは、置いた理由まで同じとは限らない**
+- **空文字は decode で落とす。** 「要約が付かない回があった」ことは
+  `dropped content blocks:` の計器が別に数えているので、
+  ここを空で埋めても診断は増えない
+
+### テストは「型の主張」ではなく「経路」を留めた
+
+D2-a の証明は型（席が無ければ積めない）だが、**型だけでは配線が繋がって
+いるか分からない**。`tests/reasoning_summary.rs` は 2 ターン走らせ、
+**正の対照を 2 段**置いた:
+
+1. 要約が `AgentMessage` に載る（載らなければ配線が死んでいる）
+2. **2 ターン目のプロンプトに前の答えの本文が入っている**
+   （これが無いと「履歴そのものが空」の実装でも本題の assert が通る）
+
+**ミューテーションで赤を確かめた** — `outgoing.reasoning_summary` の代入を
+外すと**予測どおり正の対照 1 本だけ**が `left: 0 / right: 1` で落ちる。
 
 ## 検収（#68 / #80 / #92 / #93 の規律。**数字を条件にしない**）
 

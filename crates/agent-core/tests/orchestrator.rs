@@ -159,6 +159,7 @@ impl LlmBackend for AlwaysHandoffBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -189,6 +190,7 @@ impl LlmBackend for AskingBackend {
                 finish: Finish::ToolUse,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -202,6 +204,7 @@ impl LlmBackend for AskingBackend {
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -293,6 +296,7 @@ impl LlmBackend for PlanningBackend {
                 finish: Finish::ToolUse,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -304,6 +308,7 @@ impl LlmBackend for PlanningBackend {
                 finish: Finish::Stop,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -322,6 +327,7 @@ impl LlmBackend for PlanningBackend {
             finish: Finish::Stop,
             usage,
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -364,6 +370,7 @@ impl LlmBackend for FanOutBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -414,6 +421,7 @@ impl LlmBackend for ToolCallingBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -459,6 +467,7 @@ impl LlmBackend for EndlessToolBackend {
                     reasoning: 0,
                 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -479,6 +488,7 @@ impl LlmBackend for EndlessToolBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -512,6 +522,7 @@ impl LlmBackend for StuckToolBackend {
                     reasoning: 0,
                 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -535,6 +546,7 @@ impl LlmBackend for StuckToolBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -601,6 +613,7 @@ impl LlmBackend for MixedToolBackend {
                     reasoning: 0,
                 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -635,6 +648,7 @@ impl LlmBackend for MixedToolBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -685,6 +699,7 @@ impl LlmBackend for SilentToolBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -718,6 +733,7 @@ impl LlmBackend for ToolsProbeBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -782,6 +798,7 @@ impl LlmBackend for RecordingBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -814,6 +831,7 @@ impl LlmBackend for ToolNameBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -871,6 +889,7 @@ impl LlmBackend for TransferringWorkerBackend {
                     finish: Finish::ToolUse,
                     usage,
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
             let result = req
@@ -885,6 +904,7 @@ impl LlmBackend for TransferringWorkerBackend {
                 finish: Finish::Stop,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -903,6 +923,7 @@ impl LlmBackend for TransferringWorkerBackend {
                 finish: Finish::ToolUse,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -912,6 +933,7 @@ impl LlmBackend for TransferringWorkerBackend {
             finish: Finish::Stop,
             usage,
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -978,6 +1000,7 @@ impl LlmBackend for GroundedBackend {
                 cache_read: 0,
                 reasoning: 0,
             },
+            reasoning_summary: Vec::new(),
             grounding: Grounding {
                 queries: vec![GROUNDED_QUERY.to_owned()],
                 sources: vec![GroundingSource {
@@ -1515,6 +1538,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                     finish: Finish::ToolUse,
                     usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
 
@@ -1535,6 +1559,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -1667,6 +1692,7 @@ async fn agents_overhear_what_others_said_in_the_room() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -1817,6 +1843,7 @@ async fn the_room_log_declares_it_is_an_excerpt_and_how_to_get_the_full_text() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -1917,6 +1944,7 @@ impl LlmBackend for RoomLogReadingBackend {
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         };
         // ツール結果が積まれていれば締める。
         if req.messages.iter().any(|m| m.role == Role::Tool) {
@@ -1952,6 +1980,7 @@ impl LlmBackend for RoomLogReadingBackend {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
         Ok(done("了解".into()))
@@ -2202,6 +2231,7 @@ async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
                     finish: Finish::Stop,
                     usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
             let mut calls = self.calls.lock().unwrap();
@@ -2219,6 +2249,7 @@ async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -2451,6 +2482,7 @@ async fn an_in_flight_turn_may_land_after_a_reset() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -2557,6 +2589,7 @@ async fn handoff_tools_identify_targets_by_display_name() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -2736,6 +2769,7 @@ async fn incoming_messages_carry_the_sender_name() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -3203,6 +3237,7 @@ async fn identical_fan_out_is_marked_as_broadcast_but_distinct_messages_are_not(
                 finish: Finish::Stop,
                 usage: Usage { prompt: 10, completion: 5, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -3331,6 +3366,7 @@ async fn duplicate_handoff_requests_to_one_target_are_collapsed() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 10, completion: 5, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -4613,6 +4649,7 @@ impl LlmBackend for FailFirstThenRecordingBackend {
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -4824,6 +4861,7 @@ impl LlmBackend for TwoWaveBackend {
                         finish: Finish::Stop,
                         usage,
                         grounding: Default::default(),
+                        reasoning_summary: Vec::new(),
                     });
                 }
             };
@@ -4838,6 +4876,7 @@ impl LlmBackend for TwoWaveBackend {
                 finish: Finish::ToolUse,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -4847,6 +4886,7 @@ impl LlmBackend for TwoWaveBackend {
             finish: Finish::Stop,
             usage,
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -4915,6 +4955,7 @@ impl LlmBackend for HalfTransferringBackend {
                     finish: Finish::Stop,
                     usage,
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
             let ids = plan.parameters["properties"]["tasks"]["items"]["properties"]["to"]["enum"]
@@ -4941,6 +4982,7 @@ impl LlmBackend for HalfTransferringBackend {
                 finish: Finish::ToolUse,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -4957,6 +4999,7 @@ impl LlmBackend for HalfTransferringBackend {
                 finish: Finish::ToolUse,
                 usage,
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -4966,6 +5009,7 @@ impl LlmBackend for HalfTransferringBackend {
             finish: Finish::Stop,
             usage,
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -5361,6 +5405,7 @@ impl LlmBackend for GatedLoopingBackend {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -5377,6 +5422,7 @@ impl LlmBackend for GatedLoopingBackend {
             finish: Finish::ToolUse,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -5585,6 +5631,7 @@ impl LlmBackend for GatedAskBackend {
                     finish: Finish::Stop,
                     usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
             return Ok(ChatResponse {
@@ -5598,6 +5645,7 @@ impl LlmBackend for GatedAskBackend {
                 finish: Finish::ToolUse,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -5619,6 +5667,7 @@ impl LlmBackend for GatedAskBackend {
             finish: Finish::ToolUse,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -5712,6 +5761,7 @@ impl LlmBackend for GatedPlanBackend {
                     finish: Finish::Stop,
                     usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
+                    reasoning_summary: Vec::new(),
                 });
             }
             return Ok(ChatResponse {
@@ -5725,6 +5775,7 @@ impl LlmBackend for GatedPlanBackend {
                 finish: Finish::ToolUse,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
 
@@ -5749,6 +5800,7 @@ impl LlmBackend for GatedPlanBackend {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             });
         }
         Ok(ChatResponse {
@@ -5762,6 +5814,7 @@ impl LlmBackend for GatedPlanBackend {
             finish: Finish::ToolUse,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -6272,6 +6325,7 @@ impl LlmBackend for PromptProbeBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -6544,6 +6598,7 @@ impl LlmBackend for LeakedToolCallBackend {
                 reasoning: 0,
             },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -7060,6 +7115,7 @@ async fn setting_a_user_name_changes_the_envelope_but_never_enters_the_system_bl
                     reasoning: 0,
                 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
@@ -7353,6 +7409,7 @@ impl LlmBackend for ToolSpecBackend {
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -7553,6 +7610,7 @@ impl LlmBackend for RequestProbeBackend {
             finish: Finish::Stop,
             usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
+            reasoning_summary: Vec::new(),
         })
     }
 }
@@ -7859,6 +7917,7 @@ async fn synthesized_tools_do_not_gain_a_reason_field() {
                 finish: Finish::Stop,
                 usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
+                reasoning_summary: Vec::new(),
             })
         }
     }
