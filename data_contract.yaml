@@ -3964,9 +3964,15 @@ llm_wire:
       - tool_choice が None の呼び出し (summarize 等) では検索ツールも関数ツールも
         **どちらも送らない**。「ツールを使わせない」は server-side tool にも及ぶ —
         要約の呼び出しで検索が走ると、押した人が検索の注入 input まで払う
-      - web_search_call.action.query を Grounding.queries へ入れる。
-        action.sources は読まない — 出典の正は annotations の 1 系統
-        (2 系統から足すと同じ URL の重複排除規則が 2 箇所に生える)
+      - 検索語は **2 つの形で来る**。片方だけを読むと、もう片方の経路で
+        queries が黙って空になる (実機の 2 走行がどちらも queries=0 だった):
+          * web_search_call: action.query に素の文字列
+          * custom_tool_call (x_search の実体): **input に JSON 文字列**で
+            {"query": "...", "limit": "5"}。action は持たない
+        取れないときは黙って諦める — 検索語が無いことは失敗ではない
+        (応答そのものは届いている)。action.sources は読まない —
+        出典の正は annotations の 1 系統 (2 系統から足すと同じ URL の
+        重複排除規則が 2 箇所に生える)
       - live_search_active(tool) = トグル AND effective_provider() == XaiResponses。
         フラグ単独を判定に使わない (gemini_native.grounding_active と同型。
         互換経路のまま真の world.json 手編集で「検索できないモデルに検索できると
