@@ -313,6 +313,17 @@ pub struct Usage {
     pub completion: u64,
     /// キャッシュから読まれた入力トークン数。
     pub cache_read: u64,
+    /// うち思考（reasoning / thinking）に使われたトークン数。
+    ///
+    /// **[`Self::completion`] の内数**であって外数ではない（Spec 32 P0 凍結。
+    /// 実測 8/8 で `completion - reasoning` が本文のトークン数と一致した）。
+    /// **[`Self::total`] へ足さない** — 足すと二重計上になり、トークン天井
+    /// （Spec 11）の実効値が跳ねる。思考ぶんは既に出力として ×4 で乗っている。
+    ///
+    /// 取れないプロバイダでは 0。**`Option` にしない** —「取れない」と
+    /// 「0 だった」を型で分けると表示側が 2 状態を扱うことになり、
+    /// 「思考を使わない経路でも 0 の行が出る」という対照が組めなくなる。
+    pub reasoning: u64,
 }
 
 impl Usage {
@@ -482,8 +493,25 @@ mod tests {
             prompt: 100,
             completion: 25,
             cache_read: 80,
+            reasoning: 0,
         };
         assert_eq!(usage.total(), 125);
+    }
+
+    /// 思考ぶんは `completion` の**内数**なので、合計に 1 つも足さない
+    /// （Spec 32 D2）。足すと二重計上でトークン天井の実効値が跳ねる。
+    ///
+    /// **`reasoning` を `completion` と同じ大きさにして測る** — 外数の実装なら
+    /// 合計が倍になるので、この 1 本で内数/外数のどちらで実装されたかが割れる。
+    #[test]
+    fn reasoning_is_inside_completion_and_never_added_to_total() {
+        let usage = Usage {
+            prompt: 100,
+            completion: 25,
+            cache_read: 80,
+            reasoning: 25,
+        };
+        assert_eq!(usage.total(), 125, "内数なので上のテストと同じ値でなければならない");
     }
 
     #[test]

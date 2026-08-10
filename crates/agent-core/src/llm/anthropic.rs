@@ -388,6 +388,13 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
             prompt: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
             completion: u.output_tokens,
             cache_read: u.cache_read_input_tokens,
+            // **Anthropic の usage には思考ぶんの欄が無い**（Spec 32 P1 で数えた。
+            // `AnthropicUsage` は input / output / cache_read / cache_creation の
+            // 4 欄だけ）。思考は `output_tokens` に畳まれており、**分離できない**。
+            // しかも今は `thinking` / `budget_tokens` を送っていないので、
+            // 拡張思考そのものが起きていない。0 は「無かった」ではなく
+            // **「この経路では数えられない」**であることを、ここに記録しておく。
+            reasoning: 0,
         })
         .unwrap_or_default();
 

@@ -253,6 +253,12 @@ pub struct OaiUsage {
     /// 入力トークンの内訳。
     #[serde(default)]
     pub prompt_tokens_details: Option<OaiPromptTokensDetails>,
+    /// 出力トークンの内訳（Spec 32）。
+    ///
+    /// **思考の「本文」は `/chat/completions` に来ないが、「数」は来ることがある。**
+    /// 推論モデルがこの欄で `reasoning_tokens` を返す。欄が無ければ 0 に落ちる。
+    #[serde(default)]
+    pub completion_tokens_details: Option<OaiCompletionTokensDetails>,
 }
 
 /// 入力トークンの内訳。`cached_tokens > 0` はプロンプト先頭がキャッシュから読まれたことを示す。
@@ -261,6 +267,14 @@ pub struct OaiPromptTokensDetails {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_tokens: u64,
+}
+
+/// 出力トークンの内訳。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct OaiCompletionTokensDetails {
+    /// 思考に使われたトークン数。**`completion_tokens` の内数**。
+    #[serde(default)]
+    pub reasoning_tokens: u64,
 }
 
 /// 応答候補。
@@ -1014,6 +1028,9 @@ pub struct XaiUsage {
     /// 入力トークンの内訳。
     #[serde(default)]
     pub input_tokens_details: Option<XaiInputTokensDetails>,
+    /// 出力トークンの内訳。思考ぶんはここにしか出ない（Spec 32）。
+    #[serde(default)]
+    pub output_tokens_details: Option<XaiOutputTokensDetails>,
     /// 補助の生値。単位が未検証なので換算しない（契約）。
     #[serde(default)]
     pub cost_in_usd_ticks: Option<u64>,
@@ -1031,6 +1048,15 @@ pub struct XaiInputTokensDetails {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+/// 出力トークンの内訳。
+pub struct XaiOutputTokensDetails {
+    /// 思考に使われたトークン数。**`output_tokens` の内数**
+    /// （実測 8/8 で差は本文のトークン数だった。Spec 32 P0）。
+    #[serde(default)]
+    pub reasoning_tokens: u64,
 }
 
 #[cfg(test)]

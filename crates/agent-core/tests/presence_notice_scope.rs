@@ -80,6 +80,7 @@ impl LlmBackend for FullPromptProbe {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })

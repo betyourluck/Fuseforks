@@ -161,6 +161,62 @@ grep すると `llm/` の 3 社が出るが、Gemini の欄名は `thoughts_toke
   （**数えるのはファイル単位** — #51 (b)。台帳は日英 4 ファイル）
 - **P3**: 実機
 
+## P1 実装記録（2026-08-10）
+
+lib 455 → 496（+41。うち新規 6）/ 結合 124 / clippy 警告ゼロ。
+
+### D4 の観測結果 — 4 社のうち **3 社で数が取れる**
+
+| 社 | 欄 | 結果 |
+|---|---|---|
+| **Gemini** | `usageMetadata.thoughtsTokenCount` | **取れる。** `completion` への足し込みは維持し、同じ値を内数として `reasoning` にも入れた |
+| **xAI** | `usage.output_tokens_details.reasoning_tokens` | **取れる。** 欄を `wire.rs` へ新設（`XaiOutputTokensDetails`） |
+| **OpenAI 互換** | `usage.completion_tokens_details.reasoning_tokens` | **取れる（rev3 の見立てが裏返った）** |
+| **Anthropic** | **無い** | **構造的に取れない**（下記） |
+
+**rev3 の「OpenAI 互換は思考が来ない経路なので 0 が正しい可能性が高い」は
+半分だけ正しかった。** 来ないのは**本文**で、**数は来る** — 推論モデルは
+`completion_tokens_details.reasoning_tokens` を返す。**「受け取れない」と
+「数えられない」を同じ語で考えていたのが誤り**で、この 2 つは独立していた。
+
+**ただしこれは仕様に基づく実装で、実機の応答で確かめていない**（テストは合成
+JSON）。**空想と実測の境界はここ** — 裏取りは P3 の実機で取る。
+
+**Anthropic だけが本当に取れない。** `AnthropicUsage` は
+`input_tokens` / `output_tokens` / `cache_read_input_tokens` /
+`cache_creation_input_tokens` の **4 欄しか無く**、思考は `output_tokens` に
+畳まれている。**0 は「思考が無かった」ではなく「この経路では数えられない」** —
+その旨を decode のコメントに残した（`reasoning: 0` の行が将来
+「未実装だから 0」と読まれると、欄を探しに行く無駄が生まれる）。
+
+### 実装で決めた 3 点
+
+- **`normalized_usage`（usage 欠落時のバイト見積もり）では思考ぶんを見積もらない。**
+  バイト数から出せるのは受け取った**本文**の量で、思考は本文に現れないので
+  推定する材料が無い。保守側へ倒す（大きめに入れる）と、**天井には効かないのに
+  計器だけが嘘の桁を運ぶ**（Spec 31 D8 で tick を換算しなかったのと同じ規律）
+- **`turn:` 行は `total=` の隣へ 1 語**。`reasoning=` は 0 でも必ず出す（D3）
+- **周ごとの加算は既存の 3 つ（`prompt` / `cached` / `tokens`）と同じ 2 箇所**。
+  ツールループの周とまとめ呼び出しの周で、片方に足し忘れると
+  **まとめ呼び出しの思考だけが消える**
+
+### ミューテーションで赤を確かめた（一発で通ったので）
+
+`Usage::total()` に `reasoning` を足す変異（= 外数の実装）。
+**予測「4 本が赤・`budget` は落ちない」を先に書いてから実行し、
+1 本も違わなかった**:
+
+- `canonical::reasoning_is_inside_completion_and_never_added_to_total`
+- `gemini::function_call_returns_tool_use_despite_stop_finish_reason`
+- `openai_compat::reasoning_tokens_are_read_when_the_breakdown_is_present`
+- `xai_responses::reasoning_tokens_are_read_as_a_share_of_output`
+
+**`budget` が落ちないことが設計を語っている** — `effective_milli` は
+`total()` を経由せず `prompt` / `cache_read` / `completion` を直接読むので、
+**合計の定義を壊しても天井は動かない**。逆に言えば、天井を守っているのは
+`total()` ではなく `effective_milli` の 3 欄で、そちらは
+`reasoning_does_not_change_the_effective_cost` が別に留めている。
+
 ## 検収（書く前に読み口の実在を数える — #68 / #80 の規律）
 
 1. `grok-4.5` のターンの `turn:` 行に `reasoning=` が出て、
@@ -169,14 +225,26 @@ grep すると `llm/` の 3 社が出るが、Gemini の欄名は `thoughts_toke
    外れたら読み口が違う）
 2. **`reasoning=0` が出るモデルの同じ行で 0 が出る** — 1 の対照。
    **片方だけでは「常に 0 を出す実装」と区別が付かない**。
-   **対照のモデルは実測で選ぶ。`gemini-3.5-flash-lite` は使わない** —
-   Gemini は `thoughtsTokenCount` を返す経路を持っており（golden の実測値は
-   `thoughtsTokenCount: 407` 対 `candidatesTokenCount: 97`）、**0 が出る保証が無い**。
-   候補は OpenAI 互換（構造的に来ない）。**確かめられない項目は書かない**（#68）
-3. カードの累計トークンが**変わらない**（D2 の否定的検収。`total()` を触っていない
+   **対照のモデルは実測で選ぶ**。除外が 2 つある（どちらも #68 —
+   確かめられない項目は書かない）:
+   - **`gemini-3.5-flash-lite` は使わない** — Gemini は `thoughtsTokenCount` を
+     返す経路を持つ（golden の実測は `thoughtsTokenCount: 407` 対
+     `candidatesTokenCount: 97`）
+   - **OpenAI 互換の推論モデル（`gpt-5.6-*`）も使わない** — P1 で
+     `completion_tokens_details.reasoning_tokens` を読むようにしたので、
+     **0 が出る保証が消えた**（rev3 の候補が実装で無効になった）
+
+   残る候補は**推論しないモデル**（`gpt-4o` 系 / ローカル互換サーバ）と
+   **Anthropic**（欄が無いので構造的に 0）。**Anthropic を対照にするのが最も強い** —
+   4 の観測と 1 本で兼ねられる
+3. **`reasoning` が非ゼロで出る社が 3 社そろう**（Gemini / xAI / OpenAI 互換）。
+   **OpenAI 互換は仕様に基づく実装で実機の応答を見ていない**ので、
+   ここが唯一の裏取りになる
+4. カードの累計トークンが**変わらない**（D2 の否定的検収。`total()` を触っていない
    ことが画面で読める）
-4. Anthropic のターンで `reasoning=0` が出る — **D4 の観測そのもの**。
-   0 であることが「要求していないから返らない」の裏取りになる
+5. Anthropic のターンで `reasoning=0` が出る — **D4 の観測そのもの**。
+   0 であることが「**欄が無いので数えられない**」の裏取りになる
+   （「要求していないから返らない」ではない。P1 で `AnthropicUsage` を数えた）
 
 ## 引き継ぎ（決定。Spec 33 / 34 の骨格）
 

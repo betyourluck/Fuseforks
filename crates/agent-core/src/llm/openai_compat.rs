@@ -230,6 +230,13 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
                 .prompt_tokens_details
                 .as_ref()
                 .map_or(0, |d| d.cached_tokens),
+            // 思考の**本文**はこの口に来ないが、**数**は来ることがある
+            // （推論モデルが completion_tokens_details で返す）。Spec 32 D4 の
+            // 「数えて結果を書く」はここ。欄が無い互換サーバでは 0 に落ちる。
+            reasoning: u
+                .completion_tokens_details
+                .as_ref()
+                .map_or(0, |d| d.reasoning_tokens),
         })
         .unwrap_or_default();
 
@@ -548,6 +555,41 @@ mod tests {
         assert!(!uses_max_completion_tokens("grok-4.3"));
         assert!(!uses_max_completion_tokens("gpt-oss-120b"));
         assert!(!uses_max_completion_tokens("gemini-3.5-flash-lite"));
+    }
+
+    /// 思考の**本文**は `/chat/completions` に来ないが、**数**は来ることがある
+    /// （推論モデルが `completion_tokens_details` で返す）。Spec 32 D4 の
+    /// 「OpenAI 互換は 0 が正しい」は**内訳欄を持たない応答に限った話**で、
+    /// 欄が来たら読む。
+    #[test]
+    fn reasoning_tokens_are_read_when_the_breakdown_is_present() {
+        let raw = r#"{
+            "choices": [{"message": {"role": "assistant", "content": "はい"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 250,
+                "completion_tokens_details": {"reasoning_tokens": 240}
+            }
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::OaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(decoded.usage.reasoning, 240);
+        // 内数。外数で実装すると 590 になる。
+        assert_eq!(decoded.usage.total(), 350);
+    }
+
+    /// 内訳欄を持たない互換サーバ（llama.cpp / vLLM ほか）では 0 に落ちる。
+    /// **欄が無いことは失敗ではない。**
+    #[test]
+    fn a_compat_server_without_the_breakdown_reads_as_zero_reasoning() {
+        let raw = r#"{
+            "choices": [{"message": {"role": "assistant", "content": "はい"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 250}
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::OaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(decoded.usage.reasoning, 0);
+        assert_eq!(decoded.usage.completion, 250);
     }
 
     #[test]

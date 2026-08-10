@@ -79,6 +79,11 @@ pub fn normalized_usage(reported: &Usage, sent_utf8_len: usize, received_utf8_le
         prompt: estimate_tokens(sent_utf8_len),
         completion: estimate_tokens(received_utf8_len),
         cache_read: 0,
+        // 思考ぶんは**見積もらない**。バイト数から出せるのは受け取った本文の量で、
+        // 思考は本文に現れないので、推定する材料がそもそも無い。ここで
+        // 保守側へ倒す（大きめに入れる）と、天井には効かないのに計器だけが
+        // 嘘の桁を運ぶ（Spec 31 D8 で tick を換算しなかったのと同じ規律）。
+        reasoning: 0,
     }
 }
 
@@ -175,6 +180,10 @@ mod tests {
             prompt,
             completion,
             cache_read,
+            // 予算の計算は思考ぶんを見ない（内数なので completion に入っている）。
+            // ここを 0 以外にしても実効トークンが動かないことは
+            // `reasoning_does_not_change_the_effective_cost` が留める。
+            reasoning: 0,
         }
     }
 
@@ -196,6 +205,23 @@ mod tests {
         // キャッシュ済み 1 トークン = 100 milli。切り捨てなら 0 になるが、
         // 保守側の規程は 1 を数える。
         assert_eq!(effective_tokens(&usage(1, 1, 0)), 1);
+    }
+
+    /// 思考ぶんは `completion` の内数なので、**実効トークンを 1 ミリも動かさない**
+    /// （Spec 32 D2 / `data_contract` の `llm_wire.usage`）。
+    ///
+    /// これが破れると、思考するモデルの村だけ天井が早く尽きる。
+    /// `effective_milli` が `reasoning` を読む実装に変えると、この 1 本が落ちる。
+    #[test]
+    fn reasoning_does_not_change_the_effective_cost() {
+        let mut with_thinking = usage(1_000, 0, 500);
+        with_thinking.reasoning = 499; // 実測の比率（出力のほぼ全部が思考）
+
+        assert_eq!(
+            effective_milli(&with_thinking),
+            effective_milli(&usage(1_000, 0, 500)),
+            "内数なので、思考ぶんを入れても実効トークンは変わらない"
+        );
     }
 
     #[test]

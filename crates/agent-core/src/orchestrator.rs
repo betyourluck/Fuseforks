@@ -4509,6 +4509,9 @@ async fn handle_message(
     // 入力ぶんも別に数える。キャッシュ率の分母は合計ではなく入力。
     let mut prompt = 0u64;
     let mut tokens = 0u64;
+    // 出力のうち思考に使われたぶん。**`tokens` の内数**なので、ここで数えても
+    // 合計は 1 つも動かない（Spec 32 D2）。ターンぶんで持つのは他の 3 つと同じ。
+    let mut reasoning = 0u64;
     // 最後の LLM 応答が使った出力トークン。**空本文の診断に使う。**
     //
     // 本文もツール呼び出しも無いのに出力トークンだけがある場合、モデルは
@@ -4617,6 +4620,7 @@ async fn handle_message(
         tokens += response.usage.total();
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
+        reasoning += response.usage.reasoning;
         // 実測 usage ぶんを予算から引く（Spec 11 の consume 側）。usage が
         // 欠けた応答（テストバックエンド・異常応答）はバイト数で保守的に
         // 見積もる — 楽観の 0 を作らない（usage_fallback の三規程）。
@@ -4983,6 +4987,7 @@ async fn handle_message(
                 tokens += response.usage.total();
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
+                reasoning += response.usage.reasoning;
                 // まとめ呼び出しも同じ財布から引く（Spec 11）。
                 if let Some(pool) = &budget {
                     if response.usage.total() > 0 {
@@ -5105,8 +5110,12 @@ async fn handle_message(
         None => "-".to_owned(),
     };
     note!(
+        // `reasoning` は `total` の内数（Spec 32 D2）。**0 でも必ず出す** —
+        // 思考を使わない経路で 0 が出ることが「常に 0 を出す実装」との対照になり、
+        // 省くと機構が効いているか読めなくなる（D3）。
         "turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
-         waves={plan_wave} stop={stop} prompt={prompt} cached={cached} total={tokens}",
+         waves={plan_wave} stop={stop} prompt={prompt} cached={cached} total={tokens} \
+         reasoning={reasoning}",
         incoming.hop,
     );
 

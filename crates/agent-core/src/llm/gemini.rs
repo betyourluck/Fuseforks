@@ -340,6 +340,10 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             // totalTokenCount == prompt + candidates + thoughts が成り立つ。
             completion: u.candidates_token_count + u.thoughts_token_count,
             cache_read: u.cached_content_token_count,
+            // 内数として**同じ値をもう 1 度**入れる（Spec 32）。足し込みは上の
+            // 行のまま触らない — `completion` の数え方を変えると
+            // totalTokenCount との一致（実測で凍結済み）が壊れる。
+            reasoning: u.thoughts_token_count,
         })
         .unwrap_or_default();
 
@@ -606,6 +610,13 @@ mod tests {
         // 思考も課金対象の出力として数える（実測の totalTokenCount と一致する数え方）。
         assert_eq!(decoded.usage.completion, 504);
         assert_eq!(decoded.usage.total(), 674);
+        // Spec 32: 思考ぶんを**内数として**別に持つ。足し込み（504）は変えない。
+        assert_eq!(decoded.usage.reasoning, 407);
+        assert_eq!(
+            decoded.usage.completion - decoded.usage.reasoning,
+            97,
+            "差は本文（candidatesTokenCount）でなければならない"
+        );
     }
 
     #[test]

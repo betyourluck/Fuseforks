@@ -70,6 +70,7 @@ impl LlmBackend for RecordingBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -135,6 +136,7 @@ impl LlmBackend for SummarizingBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -160,6 +162,7 @@ impl LlmBackend for SlowBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })

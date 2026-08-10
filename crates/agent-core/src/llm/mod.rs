@@ -176,6 +176,8 @@ impl LlmBackend for EchoBackend {
                 prompt: (prompt_chars / 4) as u64,
                 completion,
                 cache_read: 0,
+                // Echo バックエンドは思考しない。
+                reasoning: 0,
             },
             // このプロバイダは接地を代行しない。
             grounding: Grounding::default(),

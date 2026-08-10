@@ -256,6 +256,7 @@ impl agent_core::llm::LlmBackend for GatedBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: agent_core::llm::Grounding::default(),
         })
@@ -437,6 +438,7 @@ impl agent_core::llm::LlmBackend for LoopingBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: agent_core::llm::Grounding::default(),
         })

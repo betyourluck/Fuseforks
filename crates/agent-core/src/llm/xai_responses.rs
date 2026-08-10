@@ -217,6 +217,12 @@ pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
                 .as_ref()
                 .map(|d| d.cached_tokens)
                 .unwrap_or_default(),
+            // `output_tokens` の内数。足さない（Spec 32 P0）。
+            reasoning: u
+                .output_tokens_details
+                .as_ref()
+                .map(|d| d.reasoning_tokens)
+                .unwrap_or_default(),
         })
         .unwrap_or_default();
 
@@ -563,6 +569,49 @@ mod tests {
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.text.as_deref(), Some("本文"));
         assert_eq!(decoded.finish, Finish::Stop);
+    }
+
+    /// 思考トークンは `output_tokens_details.reasoning_tokens` にしか出ない。
+    /// **`output_tokens` の内数**なので足さない（Spec 32 D2）。
+    ///
+    /// 数字は 2026-08-10 の probe の実測形（output 1,497 / reasoning 1,494 /
+    /// 差 3 = 本文のトークン数）。
+    #[test]
+    fn reasoning_tokens_are_read_as_a_share_of_output() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "reasoning"},
+                {"type": "message", "content": [{"type": "output_text", "text": "Bです", "annotations": []}]}
+            ],
+            "usage": {
+                "input_tokens": 801,
+                "input_tokens_details": {"cached_tokens": 768},
+                "output_tokens": 1497,
+                "output_tokens_details": {"reasoning_tokens": 1494}
+            }
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(decoded.usage.completion, 1_497);
+        assert_eq!(decoded.usage.reasoning, 1_494);
+        // 内数なので合計は prompt + completion のまま。外数で実装すると 3,792 になる。
+        assert_eq!(decoded.usage.total(), 2_298);
+    }
+
+    /// `output_tokens_details` を持たない応答（検索なしの短いターン・互換の
+    /// 中継サーバ）でも落ちない。**欄が無いことは 0 であって失敗ではない。**
+    #[test]
+    fn missing_output_token_details_reads_as_zero_reasoning() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "はい", "annotations": []}]}],
+            "usage": {"input_tokens": 10, "output_tokens": 2}
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(decoded.usage.reasoning, 0);
+        assert_eq!(decoded.usage.completion, 2);
     }
 
     /// 打ち切りは incomplete_details.reason で判定する。

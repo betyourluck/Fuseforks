@@ -156,6 +156,7 @@ impl LlmBackend for AlwaysHandoffBackend {
                 prompt: 10,
                 completion: 5,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -186,7 +187,7 @@ impl LlmBackend for AskingBackend {
                     extra: None,
                 }],
                 finish: Finish::ToolUse,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -199,7 +200,7 @@ impl LlmBackend for AskingBackend {
             text: Some(text),
             tool_calls: Vec::new(),
             finish: Finish::Stop,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -256,6 +257,7 @@ impl LlmBackend for PlanningBackend {
             prompt: 1,
             completion: 1,
             cache_read: 0,
+            reasoning: 0,
         };
         let plan = req.tools.iter().find(|tool| tool.name == "plan");
         let answered = req.messages.iter().any(|m| m.role == Role::Tool);
@@ -359,6 +361,7 @@ impl LlmBackend for FanOutBackend {
                 prompt: 10,
                 completion: 5,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -408,6 +411,7 @@ impl LlmBackend for ToolCallingBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -452,6 +456,7 @@ impl LlmBackend for EndlessToolBackend {
                     prompt: 1,
                     completion: 1,
                     cache_read: 0,
+                    reasoning: 0,
                 },
                 grounding: Default::default(),
             });
@@ -471,6 +476,7 @@ impl LlmBackend for EndlessToolBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -503,6 +509,7 @@ impl LlmBackend for StuckToolBackend {
                     prompt: 1,
                     completion: 1,
                     cache_read: 0,
+                    reasoning: 0,
                 },
                 grounding: Default::default(),
             });
@@ -525,6 +532,7 @@ impl LlmBackend for StuckToolBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -590,6 +598,7 @@ impl LlmBackend for MixedToolBackend {
                     prompt: 1,
                     completion: 1,
                     cache_read: 0,
+                    reasoning: 0,
                 },
                 grounding: Default::default(),
             });
@@ -623,6 +632,7 @@ impl LlmBackend for MixedToolBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -672,6 +682,7 @@ impl LlmBackend for SilentToolBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -704,6 +715,7 @@ impl LlmBackend for ToolsProbeBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -767,6 +779,7 @@ impl LlmBackend for RecordingBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -798,6 +811,7 @@ impl LlmBackend for ToolNameBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -825,6 +839,7 @@ impl LlmBackend for TransferringWorkerBackend {
             prompt: 1,
             completion: 1,
             cache_read: 0,
+            reasoning: 0,
         };
         let answered = req.messages.iter().any(|m| m.role == Role::Tool);
         // 役は**受け取った依頼の文面**で見分ける。ツールの顔ぶれでは分けられない —
@@ -961,6 +976,7 @@ impl LlmBackend for GroundedBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Grounding {
                 queries: vec![GROUNDED_QUERY.to_owned()],
@@ -1497,7 +1513,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                         })
                         .collect(),
                     finish: Finish::ToolUse,
-                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
                 });
             }
@@ -1517,7 +1533,7 @@ async fn asking_one_facilitator_converges_without_duplicates() {
                 text: Some(text),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -1649,7 +1665,7 @@ async fn agents_overhear_what_others_said_in_the_room() {
                 text: Some("了解".into()),
                 tool_calls,
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -1799,7 +1815,7 @@ async fn the_room_log_declares_it_is_an_excerpt_and_how_to_get_the_full_text() {
                 text: Some("あ".repeat(500)),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -1899,7 +1915,7 @@ impl LlmBackend for RoomLogReadingBackend {
             text: Some(text),
             tool_calls: Vec::new(),
             finish: Finish::Stop,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         };
         // ツール結果が積まれていれば締める。
@@ -1934,7 +1950,7 @@ impl LlmBackend for RoomLogReadingBackend {
                     extra: None,
                 }],
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -2184,7 +2200,7 @@ async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
                     text: Some("同じ発言しか読めませんでした。".into()),
                     tool_calls: Vec::new(),
                     finish: Finish::Stop,
-                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
                 });
             }
@@ -2201,7 +2217,7 @@ async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
                     extra: None,
                 }],
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -2433,7 +2449,7 @@ async fn an_in_flight_turn_may_land_after_a_reset() {
                 text: Some("遅い応答".into()),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -2539,7 +2555,7 @@ async fn handoff_tools_identify_targets_by_display_name() {
                 text: Some("了解".into()),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -2718,7 +2734,7 @@ async fn incoming_messages_carry_the_sender_name() {
                 text: Some("了解".into()),
                 tool_calls,
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -3185,7 +3201,7 @@ async fn identical_fan_out_is_marked_as_broadcast_but_distinct_messages_are_not(
                 text: Some("挨拶します".into()),
                 tool_calls,
                 finish: Finish::Stop,
-                usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+                usage: Usage { prompt: 10, completion: 5, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -3313,7 +3329,7 @@ async fn duplicate_handoff_requests_to_one_target_are_collapsed() {
                 text: Some("渡します".into()),
                 tool_calls,
                 finish: Finish::Stop,
-                usage: Usage { prompt: 10, completion: 5, cache_read: 0 },
+                usage: Usage { prompt: 10, completion: 5, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
@@ -4595,7 +4611,7 @@ impl LlmBackend for FailFirstThenRecordingBackend {
             text: Some("承知".into()),
             tool_calls: Vec::new(),
             finish: Finish::Stop,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -4782,6 +4798,7 @@ impl LlmBackend for TwoWaveBackend {
             prompt: 1,
             completion: 1,
             cache_read: 0,
+            reasoning: 0,
         };
 
         if let Some(plan) = req.tools.iter().find(|t| t.name == "plan") {
@@ -4886,6 +4903,7 @@ impl LlmBackend for HalfTransferringBackend {
             prompt: 1,
             completion: 1,
             cache_read: 0,
+            reasoning: 0,
         };
 
         // 進行役: 1 周目は全接続先へ 1 波、2 周目は束ねを最終出力へ。
@@ -5341,7 +5359,7 @@ impl LlmBackend for GatedLoopingBackend {
                 text: Some("済みました".into()),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -5357,7 +5375,7 @@ impl LlmBackend for GatedLoopingBackend {
                 extra: None,
             }],
             finish: Finish::ToolUse,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -5565,7 +5583,7 @@ impl LlmBackend for GatedAskBackend {
                     text: Some(format!("結果: {}", result.content)),
                     tool_calls: Vec::new(),
                     finish: Finish::Stop,
-                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
                 });
             }
@@ -5578,7 +5596,7 @@ impl LlmBackend for GatedAskBackend {
                     extra: None,
                 }],
                 finish: Finish::ToolUse,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -5599,7 +5617,7 @@ impl LlmBackend for GatedAskBackend {
                 extra: None,
             }],
             finish: Finish::ToolUse,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -5692,7 +5710,7 @@ impl LlmBackend for GatedPlanBackend {
                     text: Some("まとめました".into()),
                     tool_calls: Vec::new(),
                     finish: Finish::Stop,
-                    usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                    usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                     grounding: Default::default(),
                 });
             }
@@ -5705,7 +5723,7 @@ impl LlmBackend for GatedPlanBackend {
                     extra: None,
                 }],
                 finish: Finish::ToolUse,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -5729,7 +5747,7 @@ impl LlmBackend for GatedPlanBackend {
                 text: Some("済みました".into()),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             });
         }
@@ -5742,7 +5760,7 @@ impl LlmBackend for GatedPlanBackend {
                 extra: None,
             }],
             finish: Finish::ToolUse,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -6251,6 +6269,7 @@ impl LlmBackend for PromptProbeBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -6522,6 +6541,7 @@ impl LlmBackend for LeakedToolCallBackend {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                reasoning: 0,
             },
             grounding: Default::default(),
         })
@@ -7037,6 +7057,7 @@ async fn setting_a_user_name_changes_the_envelope_but_never_enters_the_system_bl
                     prompt: 1,
                     completion: 1,
                     cache_read: 0,
+                    reasoning: 0,
                 },
                 grounding: Default::default(),
             })
@@ -7330,7 +7351,7 @@ impl LlmBackend for ToolSpecBackend {
             text: Some("了解".into()),
             tool_calls: Vec::new(),
             finish: Finish::Stop,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -7530,7 +7551,7 @@ impl LlmBackend for RequestProbeBackend {
             text: Some("了解".into()),
             tool_calls: Vec::new(),
             finish: Finish::Stop,
-            usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+            usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
             grounding: Default::default(),
         })
     }
@@ -7836,7 +7857,7 @@ async fn synthesized_tools_do_not_gain_a_reason_field() {
                 text: Some("了解".into()),
                 tool_calls: Vec::new(),
                 finish: Finish::Stop,
-                usage: Usage { prompt: 1, completion: 1, cache_read: 0 },
+                usage: Usage { prompt: 1, completion: 1, cache_read: 0, reasoning: 0 },
                 grounding: Default::default(),
             })
         }
