@@ -3599,12 +3599,15 @@ llm_wire:
                     推論モデルはこの欄を返す）。内訳欄を持たない互換サーバ
                     （llama.cpp / vLLM ほか）では 0 に落ちる。
                     **ただし実機の応答では未確認**（テストは合成 JSON。Spec 32 P3）
-      Anthropic     **欄が無い。構造的に取れない。** AnthropicUsage は input /
-                    output / cache_read / cache_creation の 4 欄だけで、思考は
-                    output_tokens に畳まれている。**ここでの 0 は「思考が
-                    無かった」ではなく「この経路では数えられない」** — 将来
-                    reasoning: 0 の行を「未実装だから 0」と読んで無い欄を
-                    探しに行かないよう、decode のコメントにも同じことを書いた
+      Anthropic     usage.output_tokens_details.thinking_tokens
+                    ~~欄が無い。構造的に取れない~~ **取り消し (Spec 32 P4)** —
+                    P1 の判定は **AnthropicUsage (当時 4 欄) を読んで下した**もので、
+                    **実際のワイヤはそれより多くの欄を返していた**。
+                    **`thinking` を 1 つも送っていない要求の応答にも付く**
+                    (claude-sonnet-5 は既定で思考する。実測 5/5)。
+                    実測で output_tokens == thinking_tokens == max_tokens の応答
+                    (本文が 1 ブロックも無いターン) を観測 = failures.md #72 の
+                    「出力トークンだけがあって本文が無い」の正体
 
     計器: `turn:` 行へ **reasoning= を常に出す（0 も出す）**。
     形は `turn: agent=… hop=… rounds=…/… waves=… stop=… prompt=…

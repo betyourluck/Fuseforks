@@ -715,7 +715,8 @@ This was a real hole: Gemini agents ran at 0% for days ([failures.md](failures.m
 
 ---
 
-There are three providers: OpenAI-compatible, Anthropic native, and **Gemini native**.
+The providers are: OpenAI-compatible, Anthropic native, **Gemini native**, and
+**xAI native (Responses)** ([Spec 31](specs/31_grok-live-search.md)).
 
 Gemini also works through its OpenAI-compatible endpoint, which is sufficient for function calling alone. The native path (`/models/{model}:generateContent` + `x-goog-api-key`) is needed only for **Google Search grounding**, because the compatibility layer rejects `google_search` with `400 Invalid tool type`.
 
@@ -786,10 +787,14 @@ figure sits next to the checkbox.
 **The text of thinking that comes back is still discarded** (only its kind and
 volume are logged). **The token count spent on thinking is now measured**
 ([Spec 32](specs/32_thinking-reception.md)) — via `reasoning=` on the `turn`
-line and a field on `Usage`. It is available for **three providers: Gemini,
-xAI, and OpenAI-compatible**. **Anthropic is the one that cannot report it**:
-its usage has no field for thinking, which is folded into output tokens. A 0
-there means "not measurable on this path", not "no thinking happened".
+line and a field on `Usage`. It is available for **all four providers: Gemini,
+xAI, OpenAI-compatible, and Anthropic**.
+
+**A 0 from Anthropic does not mean "thinking was never switched on".**
+claude-sonnet-5 **thinks by default, with nothing requested**. In one
+measurement it spent **all 2,048 output tokens on thinking and returned not a
+single character of text** — that is what a turn that costs money and comes
+back empty actually is, and the amount is now readable as a number.
 
 The reason for measuring it: **most of what was paid for never reached the
 screen.** In one measurement (`grok-4.5`), 1,494 of 1,497 output tokens went to

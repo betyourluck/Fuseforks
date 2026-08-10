@@ -388,13 +388,18 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
             prompt: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
             completion: u.output_tokens,
             cache_read: u.cache_read_input_tokens,
-            // **Anthropic の usage には思考ぶんの欄が無い**（Spec 32 P1 で数えた。
-            // `AnthropicUsage` は input / output / cache_read / cache_creation の
-            // 4 欄だけ）。思考は `output_tokens` に畳まれており、**分離できない**。
-            // しかも今は `thinking` / `budget_tokens` を送っていないので、
-            // 拡張思考そのものが起きていない。0 は「無かった」ではなく
-            // **「この経路では数えられない」**であることを、ここに記録しておく。
-            reasoning: 0,
+            // `output_tokens` の内数。足さない。
+            //
+            // **Spec 32 P1 はここを 0 で固定し、「Anthropic は usage に欄が無く
+            // 構造的に取れない」と契約へ書いた。それは誤りだった**（P4 で訂正）。
+            // 見ていたのは `AnthropicUsage`（当時 4 欄）で、**実際のワイヤは
+            // それより多くの欄を返していた**。しかも
+            // **`thinking` を 1 つも送っていない要求の応答にも付く** —
+            // claude-sonnet-5 は既定で思考する（実測 5/5）。
+            reasoning: u
+                .output_tokens_details
+                .as_ref()
+                .map_or(0, |d| d.thinking_tokens),
         })
         .unwrap_or_default();
 
@@ -890,6 +895,54 @@ mod tests {
             out.usage.completion, 399,
             "出力トークンは数えられている — ここが 0 なら、消えたのはトークンではなく計器のほう"
         );
+    }
+
+    /// **#72 の実物**（実測 2026-08-10。probe D の応答そのままの形）。
+    ///
+    /// **`thinking` を 1 つも送っていない要求**に対し、claude-sonnet-5 が
+    /// 出力 2,048 トークン**全部**を思考に使い、本文を 1 ブロックも返さなかった。
+    /// `output_tokens == thinking_tokens == max_tokens` が同時に成り立つ。
+    ///
+    /// Spec 32 P1 はこの欄を読まず `reasoning: 0` で固定し、契約へ
+    /// 「Anthropic は構造的に取れない」と書いた。**P4 で訂正した誤り。**
+    #[test]
+    fn a_turn_that_spent_everything_on_thinking_reports_it_as_reasoning() {
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "", "signature": "EoYxCokBCBAY…" }
+            ],
+            "stop_reason": "max_tokens",
+            "usage": {
+                "input_tokens": 101,
+                "output_tokens": 2048,
+                "output_tokens_details": { "thinking_tokens": 2048 }
+            }
+        });
+        let out = decode(serde_json::from_value::<wire::AnthropicResponse>(raw).unwrap()).unwrap();
+
+        assert!(out.text.is_none());
+        assert_eq!(out.usage.completion, 2_048);
+        assert_eq!(
+            out.usage.reasoning, 2_048,
+            "本文ゼロのターンで、払ったものが全部思考だったと読める"
+        );
+        // 内数。外数で実装すると 4,197 になる。
+        assert_eq!(out.usage.total(), 2_149);
+    }
+
+    /// 内訳欄を持たない応答（古い API 版・互換の中継）では 0 に落ちる。
+    /// **欄が無いことは失敗ではない。**
+    #[test]
+    fn a_response_without_the_breakdown_reads_as_zero_reasoning() {
+        let raw = serde_json::json!({
+            "content": [{ "type": "text", "text": "はい" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        });
+        let out = decode(serde_json::from_value::<wire::AnthropicResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(out.usage.reasoning, 0);
+        assert_eq!(out.usage.completion, 5);
     }
 
     /// thinking と本文が並んでいれば、本文はそのまま取れる（既存の挙動を保つ）。

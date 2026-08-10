@@ -544,6 +544,24 @@ pub struct AnthropicUsage {
     /// キャッシュ書き込みに要したトークン数。
     #[serde(default)]
     pub cache_creation_input_tokens: u64,
+    /// 出力トークンの内訳（Spec 32 P4）。
+    ///
+    /// **`thinking` を送っていない要求の応答にも付く** — claude-sonnet-5 は
+    /// 既定で思考するため（実測 2026-08-10。5/5 の応答に出た）。
+    #[serde(default)]
+    pub output_tokens_details: Option<AnthropicOutputTokensDetails>,
+}
+
+/// Anthropic の出力トークンの内訳。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AnthropicOutputTokensDetails {
+    /// 思考に使われたトークン数。**`output_tokens` の内数**。
+    ///
+    /// 実測で `output_tokens == thinking_tokens == max_tokens` の応答
+    /// （本文が 1 ブロックも無いターン）を観測している — `failures.md` #72 の
+    /// 「出力トークンだけがあって本文が無い」の正体。
+    #[serde(default)]
+    pub thinking_tokens: u64,
 }
 
 // ============================================================================

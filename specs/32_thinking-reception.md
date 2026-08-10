@@ -40,7 +40,7 @@ OpenAI の Responses ワイヤは Spec 34 へ送る）
 | 社 | 現状 | 出典 |
 |---|---|---|
 | **xAI** | `"reasoning" => reasoning_count += 1` で**数えるだけ**。`XaiOutputItem` に payload を受ける欄が**無い**。usage の `reasoning_tokens` も読んでいない | `llm/xai_responses.rs` / `llm/wire.rs` |
-| **Anthropic** | decode が `Thinking` / `RedactedThinking` を `dropped` へ入れる。**ユニット変種**で本文を deserialize すらしない。**`budget_tokens` は実装に 1 つも無い**（`anthropic.rs` の 3 件はテスト 2 + decode 1）= **要求していないので今は 1 件も返っていない** | `llm/anthropic.rs` / `llm/wire.rs` |
+| **Anthropic** | decode が `Thinking` / `RedactedThinking` を `dropped` へ入れる。**ユニット変種**で本文を deserialize すらしない。~~`budget_tokens` が無い = 要求していないので今は 1 件も返っていない~~ **後半は誤り（P4 で訂正）** — **要求しなくても既定で思考しており、数も返っている** | `llm/anthropic.rs` / `llm/wire.rs` |
 | **OpenAI 互換** | 思考は `/v1/chat/completions` に**来ない**。`reject_empty_reasoning` は「思考だけで本文が空」を検出する**別の門**で、受け取りではない | `llm/openai_compat.rs` |
 | **Gemini** | **既に読んでいる。** `completion: candidates_token_count + thoughts_token_count` と**足し込んでおり**、`data_contract` に「この数え方でのみ `totalTokenCount` と一致する（実測）」と凍結済み。**分離されていないだけで、数字は手元にある** | `llm/gemini.rs` / `llm/wire.rs` の `thoughts_token_count` / `data_contract.yaml` |
 
@@ -176,7 +176,7 @@ lib 455 → 496（+41。うち新規 6）/ 結合 124 / clippy 警告ゼロ。
 | **Gemini** | `usageMetadata.thoughtsTokenCount` | **取れる。** `completion` への足し込みは維持し、同じ値を内数として `reasoning` にも入れた |
 | **xAI** | `usage.output_tokens_details.reasoning_tokens` | **取れる。** 欄を `wire.rs` へ新設（`XaiOutputTokensDetails`） |
 | **OpenAI 互換** | `usage.completion_tokens_details.reasoning_tokens` | **取れる（rev3 の見立てが裏返った）** |
-| **Anthropic** | **無い** | **構造的に取れない**（下記） |
+| **Anthropic** | ~~無い~~ `usage.output_tokens_details.thinking_tokens` | ~~構造的に取れない~~ **取り消し（P4）— 取れる。判定を自分の型で下した誤り（`failures.md` #93）** |
 
 **rev3 の「OpenAI 互換は思考が来ない経路なので 0 が正しい可能性が高い」は
 半分だけ正しかった。** 来ないのは**本文**で、**数は来る** — 推論モデルは
@@ -228,9 +228,10 @@ JSON）。**空想と実測の境界はここ** — 裏取りは P3 の実機で
 各 2 件 / `data_contract` 8 件がヒットすることを見てから残りを読んだ。
 
 - **`data_contract` の `llm_wire.usage`** — P0 で「未観測」と書いた 2 社を
-  P1 の結果で置き換えた（OpenAI 互換は**数は来る**／Anthropic は**欄が無い**）。
-  `turn:` 行の形も着地形へ
-- **DETAIL 日英** — 思考の節（3 社で取れる／Anthropic だけ取れない／
+  P1 の結果で置き換えた（OpenAI 互換は**数は来る**／~~Anthropic は欄が無い~~
+  **← P4 で取り消し**）。`turn:` 行の形も着地形へ
+- **DETAIL 日英** — 思考の節（~~3 社で取れる／Anthropic だけ取れない~~
+  **← P4 で 4 社すべてへ訂正**／
   数えた理由 = 出力 1,497 のうち 1,494 が思考で本文は 4 字）とログの節
 - **ログの実例は書き換えない。** DETAIL のサンプル行は**改名前に実際に出た行**
   なので、`reasoning=` を後から書き足すと**実物の記録が嘘になる**。
@@ -266,17 +267,21 @@ JSON）。**空想と実測の境界はここ** — 裏取りは P3 の実機で
      `completion_tokens_details.reasoning_tokens` を読むようにしたので、
      **0 が出る保証が消えた**（rev3 の候補が実装で無効になった）
 
-   残る候補は**推論しないモデル**（`gpt-4o` 系 / ローカル互換サーバ）と
-   **Anthropic**（欄が無いので構造的に 0）。**Anthropic を対照にするのが最も強い** —
-   4 の観測と 1 本で兼ねられる
+   ~~残る候補は Anthropic（欄が無いので構造的に 0）。Anthropic を対照にするのが
+   最も強い~~ **取り消し（P4）— Anthropic は非ゼロを返す側になった。**
+   **対照は 3 度候補を失っている**（Gemini → OpenAI 互換の推論モデル →
+   Anthropic）。いずれも「0 が出る」の根拠が**測る前の思い込み**だった。
+   **残るのは実測で 0 だったものだけ** — `gpt-5.6-terra`（#77 で
+   ツールを送る周は `reasoning_effort:"none"` を強制するので思考しない）
 3. **`reasoning` が非ゼロで出る社が 3 社そろう**（Gemini / xAI / OpenAI 互換）。
    **OpenAI 互換は仕様に基づく実装で実機の応答を見ていない**ので、
    ここが唯一の裏取りになる
 4. カードの累計トークンが**変わらない**（D2 の否定的検収。`total()` を触っていない
    ことが画面で読める）
-5. Anthropic のターンで `reasoning=0` が出る — **D4 の観測そのもの**。
-   0 であることが「**欄が無いので数えられない**」の裏取りになる
-   （「要求していないから返らない」ではない。P1 で `AnthropicUsage` を数えた）
+5. ~~Anthropic のターンで `reasoning=0` が出る~~ **書き直し（P4）** —
+   **Anthropic のターンで `reasoning` が非ゼロで出る**。
+   **P3 で観測した `agent` の `reasoning=0` は、0 を固定していた実装の産物**で、
+   対照として無効。**P4 の実機で取り直す**
 
 ## P3 観測結果（2026-08-10 19:58〜20:00。4 社 5 ターン）
 
@@ -321,7 +326,9 @@ JSON）。**空想と実測の境界はここ** — 裏取りは P3 の実機で
 
 ### 検収 2・5 合格。ただし **2 つの 0 は理由が違う**
 
-- `agent`（Anthropic）= **構造的な 0**。usage に欄が無い
+- `agent`（Anthropic）= ~~構造的な 0。usage に欄が無い~~
+  **取り消し（P4）— これは実装が 0 を固定していたから出た 0** で、
+  観測ではなく**自分が書いた定数を読んでいた**。対照としては無効
 - `agent_8`（`gpt-5.6-terra`）= **思考していない 0**。gpt-5 系はツールを送る周で
   `reasoning_effort: "none"` を強制している（#77 / `openai_compat.rs`）ので、
   **既存の機構と辻褄が合う**。`completion=44` の小ささもこれで説明できる
@@ -352,6 +359,62 @@ JSON）。**空想と実測の境界はここ** — 裏取りは P3 の実機で
 `reasoning_is_inside_completion_and_never_added_to_total` が留めており、
 **外数の実装に変えると 4 本が赤になることをミューテーションで確かめてある**。
 画面の確認はその裏取りであって、根拠そのものではない。
+
+## P4 実装記録（2026-08-10。**P1 の凍結を訂正した**）
+
+Spec 33 の 1 手目として打った Anthropic の probe（D4 / 引き継ぎ節）が、
+**P1 で凍結した契約を 1 つ falsify した**。
+
+### 訂正 1: `budget_tokens` は過去形だった
+
+```text
+400 "thinking.type.enabled" is not supported for this model.
+    Use "thinking.type.adaptive" and "output_config.effort"
+```
+
+**サーバー自身が後継を名指しする** — Spec 31 の `search_parameters` → 410 Gone と
+**同じ形**。`output_config.effort` は `canonical.rs` の doc に名前だけあり実装は無い。
+
+### 訂正 2: **「Anthropic は欄が無く構造的に取れない」は誤り**（`failures.md` #93）
+
+`usage.output_tokens_details.thinking_tokens` が**実在した**（5/5 の応答に出た）。
+P1 の判定材料は `AnthropicUsage`（当時 4 欄）で、**実際のワイヤはそれより多くの
+欄を返していた** — 「無い」の根拠は**自分がまだ書いていないこと**だった。
+
+**同じコミットの中で 3 社は正しくやっている**（ワイヤの欄名を先に確かめてから
+型を足した）。**Anthropic だけ手順が逆**で、既にある型を読んで「無い」と結論した。
+
+### 決定的な観測: **claude-sonnet-5 は既定で思考している**
+
+probe D（**`thinking` も `output_config` も送らない = いまの村と同じ形**）:
+
+```text
+content ブロック: ["thinking"]      ← text が 1 つも無い
+usage: output_tokens=2048  output_tokens_details={"thinking_tokens":2048}
+```
+
+**出力 2,048 トークン全部を思考に使い、本文をゼロで終えた**（`max_tokens` 到達）。
+**`failures.md` #72 の正体がこれ** — 当時「thinking だけに使ったと読める」と
+書いた推測が実物で確認された。**Spec 32 の目的から見て、最も数えるべき社で
+0 を出していた。**
+
+### 往復の要求は観測されなかった（Spec 33 の D2 に効く）
+
+C（thinking を落として `tool_result`）が **HTTP 200**、C'（戻す・対照）も 200。
+**「戻さないと拒否される」は再現しなかった** — 予測と逆。
+**ただし各 1 サンプル**なので、Spec 33 では条件を変えて測り直す。
+
+### Spec 33 に効く制約: **Anthropic は読める思考文を返していない**
+
+`thinking` ブロックは **`signature` が 368〜8,380 字ある一方、`thinking` テキストは
+0 字**だった（4 回とも）。**表示するものが無い**可能性が高い。
+
+### ミューテーション
+
+`reasoning` を 0 固定へ戻す変異で、**予測「1 本だけ赤」が的中**
+（欄なしのテストは 0 固定でも通るので、対で置いた 2 本のうち 1 本だけが落ちる）。
+
+lib 496 → 498 / clippy 警告ゼロ。
 
 ## 引き継ぎ（決定。Spec 33 / 34 の骨格）
 

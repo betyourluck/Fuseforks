@@ -228,8 +228,7 @@ Live Search の分類（遠隔のツール → 実際はワイヤ）/ status URL
 **v0.2.0 の残りは Thinking の本文と多モーダル。** Thinking は
 **[Spec 32](specs/32_thinking-reception.md)（思考トークンを数える）→
 Spec 33（要約の受け取りと表示）→ Spec 34（OpenAI の Responses ワイヤ）**の 3 本に割れ、
-**Spec 32 は Done**（2026-08-10。4 社のうち **Gemini / xAI / OpenAI 互換の 3 社で
-思考トークンが取れ、Anthropic だけは usage に欄が無く構造的に取れない**）。
+**Spec 32 は Done**（2026-08-10。**P4 まで含めて 4 社すべてで思考トークンが取れる**）。
 
 ~~3 社まとめて。捨てている `decode` の行が 1 箇所なので最も安い。~~
 **取り消し（2026-08-10。Spec 32 の起票時にコードで数えた）** — 実測は
@@ -239,7 +238,7 @@ Spec 33（要約の受け取りと表示）→ Spec 34（OpenAI の Responses �
 |---|---|---|
 | **Gemini** | **既に読んでいる**（`thoughts_token_count` を `completion` へ足し込み。`data_contract` に「この数え方でのみ `totalTokenCount` と一致する」と凍結済み） | **最も安い** |
 | **xAI** | decode が数えるだけ（`XaiOutputItem` に payload の欄が無い） | 中 |
-| **Anthropic** | `Thinking` がユニット変種。**`budget_tokens` を送っていないので、そもそも返っていない** | 要求側の実装が先 |
+| **Anthropic** | ~~`budget_tokens` を送っていないので、そもそも返っていない~~ **取り消し（P4）** — `usage.output_tokens_details.thinking_tokens` が**実在し、何も送らなくても付く**（claude-sonnet-5 は**既定で思考する**）。P1 が「欄が無い」と判定したのは**自分の型を見て相手のワイヤを見なかった**から（`failures.md` #93） | **数はもう取れている**。本文の要求は Spec 33 |
 | **OpenAI 互換** | `/v1/chat/completions` に**来ない** | **4 本目のワイヤそのもの** = Spec 34 |
 
 **数え落とした機序**: 「**捨てている**行」で数えたので、**足し込んでいる** Gemini が
@@ -991,9 +990,16 @@ grep して出てきても追従漏れではない。
 
 **「半分」の中身はプロバイダで非対称だった**（2026-08-09 に実装で数え直し）。
 OpenAI 互換は `reasoning_effort` を**送れる**（`openai_compat.rs:75`。要求できるが
-受け取れない）のに対し、**Anthropic は `thinking` / `budget_tokens` を送っておらず
-要求もできない** — `anthropic.rs:418` が `Thinking` / `RedactedThinking` を
-`dropped` へ入れて捨てているだけ。xAI の Reasoning Mode も同じ棚。
+受け取れない）のに対し、**Anthropic は思考の制御を 1 つも送っていない** —
+decode が `Thinking` / `RedactedThinking` を `dropped` へ入れて捨てているだけ。
+xAI の Reasoning Mode も同じ棚。
+
+**ただし「送っていない = 思考していない」ではない**（Spec 32 P4 の実測）—
+**claude-sonnet-5 は既定で思考する**。何も送らない要求で
+**出力 2,048 トークン全部を思考に使い本文をゼロで終えた**応答を観測しており、
+これが `failures.md` #72（出力トークンだけがあって本文が無いターン）の正体。
+**送る側の現行形は `thinking: {type: "adaptive"}` + `output_config.effort`** で、
+~~`budget_tokens`~~ は 400 で拒否される（サーバー自身が後継を名指しする）。
 ~~受け取り側は `decode` の捨てている行 1 箇所なので、3 社ぶんが 1 つの Spec に収まる形。~~
 **取り消し（2026-08-10。Spec 32 P0）** — この数え直しは**「捨てている社」しか
 数えていなかった**。**Gemini が 4 社目**で、`thoughts_token_count` を
