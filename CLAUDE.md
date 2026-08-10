@@ -23,6 +23,11 @@
   同梱ツール・ワイヤ層・運用）
 - ドメイン契約（実装より先にここが正）: [data_contract.yaml](data_contract.yaml)
 - 踏んだ罠（症状 → 真因 → 処方 → 一般化）: [failures.md](failures.md)
+- プライバシーポリシー（**外向け**。Microsoft Store の登録に使う）:
+  [PRIVACY.md](PRIVACY.md) / [PRIVACY_en.md](PRIVACY_en.md) —
+  **実装に接地させて書いてある**（updater 無し / 計測系の依存 0 件 /
+  キーは OS の資格情報ストア / ログに本文と認証情報を書かない）。
+  **機能を足したら「外部へ送るもの」が増えていないか数える**
 - 仕様: `specs/NN_*.md`（起票 → 査読 → rev 改訂 → Phase 分割で main 直コミット）
 
 機構・enum・フィールド・API を変えたら、その名前で全台帳を grep して
@@ -202,9 +207,31 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
   （機構はどちらでも成立。`force-fallback` コメントは断定形にしない形で維持）。
   vitest 142 → 151
 
-## 現在地（2026-08-10 更新）
+## 現在地（2026-08-11 更新）
 
-**`v0.1.1` = `b417dde` を打った**（public 済み。origin と同期）。この版の中身は
+**タグは `v0.1.1` = `b417dde` のまま。** その後 origin へ 28 コミット積んである
+（**未タグ**。次に打つときは Thinking の 2 本と転送の切り替えが入る）。
+
+**2026-08-11 に着地したもの**:
+
+- **[Spec 32](specs/32_thinking-reception.md) Done** — 思考トークンを数える。
+  **4 社すべてで `reasoning=` が出る**（`turn:` 行と `Usage`）
+- **[Spec 33](specs/33_thinking-summary.md) Done** — 思考の要約を受け取って
+  画面へ出す。**ネイティブ 3 ワイヤ**（xAI / Anthropic / Gemini）。
+  **忠実度は社ごとに桁で違う**（xAI・Anthropic は 1 割未満、**Gemini は 74〜84%**）
+- **転送を個体ごとに切れるようにした**（下記の節）。実機で
+  「委譲したのに答えが利用者へ返る」が直り、**進行役が `rounds=2/36` で
+  訊いてまとめる**形が観測できた
+- **プライバシーポリシーを日英で追加**（Microsoft Store の登録用）
+- **計器を 2 つ**（`handoff:` / `reply:`）。**転送はそれまでどのログ行にも
+  出ていなかった**
+
+**次のセッションは [Spec 34](specs/) の起票から**（OpenAI の Responses ワイヤ =
+`Provider::OpenAiResponses`。**Spec 31 P1 と同規模**）。その後が多モーダル。
+
+以下は 2026-08-10 時点の記録。
+
+**`v0.1.1` = `b417dde` を打った**（public 済み）。この版の中身は
 **[Spec 31](specs/31_grok-live-search.md) Done = Grok の Live Search** で、
 **起票から Done まで 1 日**・実機の検収 9 項目すべて観測。
 
