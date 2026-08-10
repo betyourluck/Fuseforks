@@ -783,11 +783,20 @@ results are injected into the prompt: 98,213 in one measured turn, of which
 ([Spec 11](specs/11_token-budget.md)) one search can exhaust it, so the measured
 figure sits next to the checkbox.
 
-**Thinking blocks that come back are currently discarded** (only their kind and
-volume are logged). **Gemini is the exception: its thinking token count is
-already read and folded into the output token count.** Receiving them splits
-into three specs — counting thinking tokens (Spec 32), receiving and displaying
-the summary (Spec 33), and the OpenAI Responses wire (Spec 34).
+**The text of thinking that comes back is still discarded** (only its kind and
+volume are logged). **The token count spent on thinking is now measured**
+([Spec 32](specs/32_thinking-reception.md)) — via `reasoning=` on the `turn`
+line and a field on `Usage`. It is available for **three providers: Gemini,
+xAI, and OpenAI-compatible**. **Anthropic is the one that cannot report it**:
+its usage has no field for thinking, which is folded into output tokens. A 0
+there means "not measurable on this path", not "no thinking happened".
+
+The reason for measuring it: **most of what was paid for never reached the
+screen.** In one measurement (`grok-4.5`), 1,494 of 1,497 output tokens went to
+thinking and **the visible answer was four characters long**.
+
+Receiving the thinking **text** splits into two further specs — receiving and
+displaying the summary (Spec 33), and the OpenAI Responses wire (Spec 34).
 
 ### Where API Keys Live
 
@@ -921,6 +930,11 @@ is still `[concordia]`. The format itself did not change across the rename.
 2026-07-31 04:34:12.481 [concordia] tool: agent=agent round=7 name=file ok=true args_chars=118 body_chars=8304
 2026-07-31 04:35:02.117 [concordia] turn: agent=agent hop=0 rounds=19/36 waves=1 stop=- prompt=730406 cached=116334 total=748424
 ```
+
+A `turn` line carries **one more field than this example**: a trailing
+`reasoning=` (tokens spent on thinking during that turn). Spec 32 added it, so
+older logs do not have it. It is **a share of `total=`**, so the total does not
+move at all.
 
 There are eight line kinds: `turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>`), `turn failed` (a turn that died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
 
