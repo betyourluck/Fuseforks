@@ -25,7 +25,9 @@ export const KNOWN_DEFAULTS = Object.values(DEFAULT_BASE_URL);
  * **OpenAI 互換の口も同時に持つ**ホストの既定 URL。
  *
  * `provider: open_ai_compat` のまま使うのは正当な運用なので、
- * [`baseUrlMismatch`] は食い違いとして指摘しない。
+ * **[`baseUrlMismatch`] は指摘せず、[`presetBaseUrlFor`] は書き換えない。**
+ * 用途が 2 つあるのが要点 — 一方は「他社の設定が残っている」の判定（否定）、
+ * もう一方は「上書きしてよい既定値か」の判定（肯定）。同じ免除が両方に要る。
  *
  * これを持たない実装は誤検知する。Gemini は互換の口も持っており
  * （`Provider::detect` の doc が「generativelanguage.googleapis.com は OpenAI
@@ -66,6 +68,12 @@ export function baseUrlMismatch(
  * 実際に `provider: anthropic` と `baseUrl: api.openai.com` の組み合わせが
  * 保存され、Anthropic のモデル名で OpenAI へ送る設定ができてしまっていた。
  * ユーザーが手で入れた URL（プロキシ等）は正当なので、既定値のときだけ触る。
+ *
+ * **互換の口も持つホストは、互換へ切り替えても書き換えない。**
+ * `api.x.ai` を選んだまま互換へ戻すのは正当な構成（この村の Grok 個体が
+ * 現にそう動いていた）で、書き換えると**xAI の鍵を持って OpenAI へ送る**
+ * 設定が黙って出来上がる。実機で 401
+ * `Incorrect API key provided: xai-…` を踏んだ（2026-08-10）。
  */
 export function presetBaseUrlFor(
   provider: string | null,
@@ -74,6 +82,9 @@ export function presetBaseUrlFor(
   if (!provider) return null;
   const preset = DEFAULT_BASE_URL[provider];
   if (!preset || !KNOWN_DEFAULTS.includes(currentBaseUrl)) return null;
+  if (provider === "open_ai_compat" && ALSO_SERVES_COMPAT.includes(currentBaseUrl)) {
+    return null;
+  }
   return preset === currentBaseUrl ? null : preset;
 }
 

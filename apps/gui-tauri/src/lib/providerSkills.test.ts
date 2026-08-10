@@ -78,6 +78,29 @@ describe("presetBaseUrlFor", () => {
       presetBaseUrlFor("xai_responses", DEFAULT_BASE_URL.xai_responses),
     ).toBeNull();
   });
+
+  // ここが実機で落ちた。互換へ戻したときに api.x.ai を api.openai.com へ
+  // 書き換えると、**xAI の鍵を持って OpenAI へ送る**設定が黙って出来上がり、
+  // 401 Incorrect API key provided: xai-… になる（2026-08-10 実機）。
+  it("互換の口も持つホストは、互換へ戻しても書き換えない", () => {
+    expect(
+      presetBaseUrlFor("open_ai_compat", DEFAULT_BASE_URL.xai_responses),
+    ).toBeNull();
+    // Gemini でも同じ（こちらは P2 以前からの既存バグだった）。
+    expect(
+      presetBaseUrlFor("open_ai_compat", DEFAULT_BASE_URL.gemini),
+    ).toBeNull();
+  });
+
+  // ただし免除は互換側だけ。他社のネイティブへ移すときは従来どおり揃える。
+  it("ネイティブへ切り替えるときは既定へ揃える", () => {
+    expect(presetBaseUrlFor("anthropic", DEFAULT_BASE_URL.xai_responses)).toBe(
+      DEFAULT_BASE_URL.anthropic,
+    );
+    expect(
+      presetBaseUrlFor("xai_responses", DEFAULT_BASE_URL.open_ai_compat),
+    ).toBe(DEFAULT_BASE_URL.xai_responses);
+  });
 });
 
 describe("providerSkills", () => {
