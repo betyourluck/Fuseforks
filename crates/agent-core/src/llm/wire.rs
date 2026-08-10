@@ -955,9 +955,13 @@ pub struct XaiOutputItem {
     /// `function_call` のとき。JSON 文字列（decode 境界で 1 回だけ解く）。
     #[serde(default)]
     pub arguments: Option<String>,
-    /// 検索呼び出しのとき。`query` が検索語を運ぶ。
+    /// 検索呼び出しのとき。`query` が検索語を運ぶ（`web_search_call` の形）。
     #[serde(default)]
     pub action: Option<XaiSearchAction>,
+    /// `custom_tool_call`（x_search の実体）のとき、引数の **JSON 文字列**。
+    /// `{"query": "...", "limit": "5"}` の形で検索語が入る。`action` は無い。
+    #[serde(default)]
+    pub input: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

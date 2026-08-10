@@ -117,6 +117,26 @@ pub fn encode(
 /// （移行途中の未文書挙動と読む）。どの名で来たかは計器に残す。
 const SEARCH_CALL_KINDS: [&str; 3] = ["web_search_call", "x_search_call", "custom_tool_call"];
 
+/// 検索呼び出しの item から検索語を取る。**2 つの形がある**（どちらも実測）:
+///
+/// - `web_search_call`: `action.query` に素の文字列
+/// - `custom_tool_call`（x_search の実体）: **`input` に JSON 文字列**で
+///   `{"query": "...", "limit": "5"}` が入る。`action` は無い
+///
+/// 片方だけを読むと、もう片方の経路で `queries` が**黙って空になる**
+/// （実機の 2 走行がどちらも `queries=0` だった）。検索語は「何を調べたか」を
+/// 人へ見せる唯一の材料なので、空は情報の欠落として現れる。
+fn search_query(item: &wire::XaiOutputItem) -> Option<String> {
+    if let Some(query) = item.action.as_ref().and_then(|a| a.query.clone()) {
+        return Some(query);
+    }
+    let raw = item.input.as_ref()?;
+    let parsed: Value = serde_json::from_str(raw).ok()?;
+    // 形が違えば黙って諦める — 検索語が取れないことは失敗ではない
+    // （応答そのものは正しく届いている）。
+    Some(parsed.get("query")?.as_str()?.to_owned())
+}
+
 /// xAI Responses wire → canonical。
 ///
 /// `arguments` は JSON 文字列なのでここで 1 回だけ parse して以後はオブジェクトとして
@@ -159,7 +179,7 @@ pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
             }
             "reasoning" => reasoning_count += 1,
             kind if SEARCH_CALL_KINDS.contains(&kind) => {
-                if let Some(query) = item.action.and_then(|a| a.query)
+                if let Some(query) = search_query(&item)
                     && !grounding.queries.contains(&query)
                 {
                     grounding.queries.push(query);
@@ -432,6 +452,46 @@ mod tests {
         // title が URL の複製なら空へ落ちる。実表題はそのまま残る。
         assert_eq!(decoded.grounding.sources[0].title, "");
         assert_eq!(decoded.grounding.sources[1].title, "TechCrunch");
+    }
+
+    /// x_search の実体（`custom_tool_call`）は `action` を持たず、
+    /// **`input` の JSON 文字列**に検索語が入る。片方だけを読むと、
+    /// もう片方の経路で `queries` が黙って空になる（実機の 2 走行が
+    /// どちらも `queries=0` だった）。
+    #[test]
+    fn custom_tool_call_carries_its_query_in_the_input_json() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "custom_tool_call", "name": "x_semantic_search",
+                 "call_id": "xs_call-1",
+                 "input": "{\"query\":\"AI latest news\",\"limit\":\"5\"}"},
+                {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.grounding.queries, vec!["AI latest news"]);
+        // 検索呼び出しとして数えられており、ツール呼び出しへは漏れていない。
+        assert!(decoded.tool_calls.is_empty());
+    }
+
+    /// `input` が JSON でない・`query` を持たない形でも落ちない。
+    /// 検索語が取れないことは失敗ではない（応答そのものは届いている）。
+    #[test]
+    fn unreadable_search_input_yields_no_query_but_still_decodes() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "custom_tool_call", "input": "not json"},
+                {"type": "custom_tool_call", "input": "{\"limit\":\"5\"}"},
+                {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
+            ]
+        }"#;
+        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert!(decoded.grounding.queries.is_empty());
+        assert_eq!(decoded.text.as_deref(), Some("ok"));
     }
 
     /// 検索呼び出し 3 名を同じ腕で受ける（契約）。custom_tool_call は実ワイヤの
