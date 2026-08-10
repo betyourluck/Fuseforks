@@ -4554,14 +4554,22 @@ async fn an_exhausted_hop_refuses_the_whole_wave_once() {
     );
 }
 
-/// 相手が答えずに転送したとき、依頼主に**その事実**が返ること。
+/// **委譲で呼ばれたワーカーは、会話を第三者へ渡せない。**
 ///
-/// 以前は `reply_to` が `Finish` 分岐でしか使われず、`Handoff` では送られない
-/// まま drop されていたため、依頼主は「相手から答えが返りませんでした。」を
-/// 読んでいた。**これは嘘** — 答えは返っており、宛先が違うだけ。
-/// `ask` の既存バグで、`plan` は同じ経路を N 倍踏みやすくする。
+/// このテストは元々「相手が答えずに転送したとき、依頼主に**その事実**が返る」
+/// を凍結していた（`reply_to` が `Handoff` では drop され、依頼主が
+/// 「答えが返りませんでした」という嘘を読んでいた Spec 04 の既存バグ）。
+///
+/// **2026-08-11 に、その状況ごと消した** — 委譲で呼ばれたターンには
+/// `transfer_to_*` を提示しない。答えを待っている口があるのに転送すると
+/// **1 つの依頼が 2 本に分裂する**（実機で観測。詳細は
+/// `tests/delegated_turn_never_transfers.rs`）。
+///
+/// **バックエンドは 1 行も変えていない** — 同じ「転送したがるワーカー」が、
+/// 転送ツールを渡されないので自分で答える。**変わったのは提示だけ**で、
+/// モデル側の意欲は変わっていないことが、この対照で読める。
 #[tokio::test]
-async fn a_worker_that_transfers_reports_the_fact_not_silence() {
+async fn a_worker_asked_for_an_answer_cannot_hand_the_conversation_away() {
     let dir = TempDir::new("plan-transfer");
     let orchestrator = setup_with(
         &dir,
@@ -4596,9 +4604,18 @@ async fn a_worker_that_transfers_reports_the_fact_not_silence() {
         .find(|m| m.from == Endpoint::Agent { id: a.clone() } && m.to == Endpoint::User)
         .expect("依頼主がユーザーへ返すこと");
 
+    // 正の対照。ワーカーの本文が依頼主の答えに載っている（`受領: ` は
+    // 依頼主が `ask` の結果を貼る書式）。**これが無いと以下は何も証明しない** —
+    // ワーカーが黙った実装でも「渡しました」は出ないので緑になる。
     assert!(
-        reply.content.contains("会話を渡しました"),
-        "転送した事実が依頼主へ返ること: {}",
+        reply.content.starts_with("受領: "),
+        "ワーカーの答えが依頼主へ戻っていること: {}",
+        reply.content
+    );
+    // 本題。転送は起きていない。
+    assert!(
+        !reply.content.contains("会話を渡しました"),
+        "委譲で呼ばれたワーカーは会話を渡せないこと: {}",
         reply.content
     );
     assert!(
@@ -5018,6 +5035,17 @@ impl LlmBackend for HalfTransferringBackend {
 ///
 /// 転送の答えは文字列としては普通の答えと同じ経路（`reply_to`）で返る —
 /// 型（`Reply.kind`）で刻まないと区別できない、が Spec 08 P1 の核。
+///
+/// **2026-08-11 に経路が 1 本になった。** 委譲（`ask` / `plan`）で呼ばれた
+/// ターンには `transfer_to_*` を提示しなくなったので、**ツールを使える個体は
+/// 転送で抜けられない**。`HandedOff` に到達するのは
+/// **ツール非対応モデルの旧経路**（終了マーカーが無ければ最初の相手へ渡す）
+/// だけで、二号をそのテンプレートへ移してある。
+/// **バックエンドは 1 行も変えていない** — 転送ツールが提示されないので、
+/// 同じコードが末尾の「本文だけを返す」腕へ落ち、旧経路が拾う。
+///
+/// **この variant はまだ死んでいない**、が凍結の中身。
+/// 撤去しに来た人はここで赤を見る。
 #[tokio::test]
 async fn a_transferring_task_is_recorded_as_handed_off() {
     let dir = TempDir::new("plan-record-handoff");
@@ -5027,6 +5055,9 @@ async fn a_transferring_task_is_recorded_as_handed_off() {
         OrchestratorConfig::default(),
     )
     .await;
+    let mut no_tools = ModelTemplate::new("tpl_notools", "ツール非対応", "mock-model");
+    no_tools.use_tools = false;
+    orchestrator.upsert_template(no_tools).await.unwrap();
 
     let (lead, w1, w2, w3) = (
         AgentId::from("agent_lead"),
@@ -5034,12 +5065,16 @@ async fn a_transferring_task_is_recorded_as_handed_off() {
         AgentId::from("agent_w2"),
         AgentId::from("agent_w3"),
     );
-    for (id, name) in [(&lead, "進行役"), (&w1, "一号"), (&w2, "二号"), (&w3, "第三者")] {
+    for (id, name) in [(&lead, "進行役"), (&w1, "一号"), (&w3, "第三者")] {
         orchestrator
             .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
             .await
             .unwrap();
     }
+    orchestrator
+        .create_agent(AgentSpec::new(w2.clone(), "二号", "tpl_notools"))
+        .await
+        .unwrap();
     orchestrator.set_connections(&lead, vec![w1.clone(), w2.clone()]).await.unwrap();
     orchestrator.set_connections(&w2, vec![w3.clone()]).await.unwrap();
     for id in [&lead, &w1, &w2, &w3] {

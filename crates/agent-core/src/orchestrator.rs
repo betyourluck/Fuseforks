@@ -4263,13 +4263,27 @@ async fn handle_message(
     let handoffs = HandoffTools::build(&targets);
     // 委譲（`ask_*`）と並列委譲（`plan`）を出す条件。**転送とは分ける。**
     let use_handoff_tools = template.use_tools && !handoffs.is_empty();
-    // **転送（`transfer_to_*`）だけを個体ごとに落とせる**（既定は真）。
+    // **委譲（`ask` / `plan`）で呼ばれたターンか。** 真なら答えを待っている
+    // 相手が居る（`reply_to` はその戻り口）。
+    let awaiting_reply = reply_to.is_some();
+    // **転送（`transfer_to_*`）を提示するか。** 落ちる理由は 2 つある。
     //
-    // 分ける理由は、2 つの道具の**答えの行き先が逆**だから — 委譲は依頼主へ
-    // 戻り、転送は利用者へ流れる。進行役が意図と違うほうを選ぶと
-    // オーケストレーションが成立しない（実機で頻発）。
-    // **`ask` と `plan` はこのフラグに触らない** — 消すのは転送だけ。
-    let offer_transfer = use_handoff_tools && spec.allow_handoff;
+    // 1. **個体の設定**（`allow_handoff`。既定は真）。分ける理由は 2 つの道具の
+    //    **答えの行き先が逆**だから — 委譲は依頼主へ戻り、転送は利用者へ流れる。
+    //    進行役が意図と違うほうを選ぶとオーケストレーションが成立しない。
+    // 2. **委譲で呼ばれたターンでは、設定に関わらず提示しない。** 答えを待って
+    //    いる口があるのに転送すると、その口には「答えは戻りません」の定型文が
+    //    返り、中身は**別の因果**として宛先の受信箱へ積まれる。**1 つの依頼が
+    //    2 本に分裂する。** 実機では依頼主自身へ転送された回があり
+    //    （`handoff: agent=agent_3 to=agent`）、依頼主は空を読んで「答えが
+    //    無かった」と報告し、その報告が済んだ 3 分後に同じ答えが新しい依頼と
+    //    して届いて余分に 2 ターン走った。**モデルの意図は正しく、道具だけが
+    //    違う** — 説明文では防げないので、選べなくする（#84 の一般化）。
+    //
+    // **`ask` と `plan` はどちらの理由でも落ちない** — 消すのは転送だけ。
+    // 委譲で呼ばれた個体が、さらに別の個体へ `ask` して答えを束ねる経路は
+    // 残る（囲いは `max_hops` とトークン天井が同じ因果に載っていること）。
+    let offer_transfer = use_handoff_tools && spec.allow_handoff && !awaiting_reply;
 
     // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
     //
@@ -4280,7 +4294,11 @@ async fn handle_message(
     // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
     let mut messages = vec![ChatMessage::system(system_prompt)];
     if !handoffs.is_empty() {
-        messages.push(ChatMessage::system(handoffs.protocol_note(use_handoff_tools, offer_transfer)));
+        messages.push(ChatMessage::system(handoffs.protocol_note(
+            use_handoff_tools,
+            offer_transfer,
+            awaiting_reply,
+        )));
     }
 
     // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
@@ -6679,7 +6697,27 @@ impl HandoffTools {
     /// OpenAI Agents SDK が `RECOMMENDED_PROMPT_PREFIX` で同種の説明を
     /// プロンプトへ足すのと同じ意図。ツールを渡すだけでは、
     /// 「呼ばない」という選択が終了を意味することがモデルに伝わらない。
-    fn protocol_note(&self, tools_available: bool, offer_transfer: bool) -> String {
+    fn protocol_note(&self, tools_available: bool, offer_transfer: bool, awaiting_reply: bool) -> String {
+        // **答えがどこへ返るか。** 委譲（`ask` / `plan`）で来たターンは依頼主へ
+        // 戻り、それ以外は利用者へ流れる（`Outcome::Finish` の `destination` が
+        // `reply_to` の有無で決まるのと**同じ 1 つの事実**）。
+        //
+        // 分けるのは、**起きないことを起きると書かない**ため。委譲で呼ばれた
+        // ターンに「結果が人間へ返ります」と書くと、この村で実際に起きた
+        // 取り違え（答えの行き先）を手順の文の側から助長する。
+        //
+        // **文言は保証ではない**（#84）。取り違えを構造で塞ぐのは
+        // `offer_transfer` の側で、ここは嘘を書かないためだけに分けている。
+        //
+        // **`tools_available == false` の枝ではこれを使わない。** あちらは
+        // ツール非対応モデルの旧経路で、委譲で呼ばれても終了マーカーが無ければ
+        // 最初の相手へ渡る — **挙動が違うので同じ文は当てられない**
+        // （当てると「頼んだ相手へ戻ります」が新しい嘘になる）。
+        let ending = if awaiting_reply {
+            "その時点であなたの仕事は終わり、**あなたに頼んだ相手へ答えが戻ります**。"
+        } else {
+            "その時点で会話は終わり、結果が人間へ返ります。"
+        };
         if tools_available {
             // **提示していない道具を手順で名指ししない。** 転送を落とした個体に
             // 「`transfer_to_*` を呼んでください」と書くと、存在しないツールを
@@ -6707,8 +6745,8 @@ impl HandoffTools {
                  あなた自身の言葉で答えるのが基本です。**\n\
                  {delegation}\n\
                  自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
-                 **ツールを呼ばずに本文だけを返してください**。その時点で会話は終わり、\
-                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。\n\
+                 **ツールを呼ばずに本文だけを返してください**。{ending}\
+                 同じ内容を繰り返すくらいなら、会話を終えてください。\n\
                  委譲が失敗したときは、その**理由**（相手が停止中・時間切れ など）が\
                  結果の文字列で返ります。事前の点呼は不要です。",
                 self.roster()
