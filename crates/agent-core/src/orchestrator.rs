@@ -4135,6 +4135,24 @@ impl RepeatGuard {
 ///
 /// **途中で失敗すると履歴は書かれない。** 呼び出し側（[`agent_loop`]）が
 /// [`record_failed_turn`] で受信側だけを残す責任を持つ。
+/// **ログ行に出す**宛先・送り手の表記（**1 実装**）。
+///
+/// `turn start:` / `reply:` / `handoff:` が同じ書式を共有する。別々に書くと、
+/// 同じ発話の送り手と宛先が違う綴りで出て、grep で追えなくなる。
+///
+/// **画面用の [`endpoint_label`] とは別物。** あちらは表示名（人が読む名前）を
+/// `World` から引くが、こちらは **id のまま**出す — ログは表示名の改名を
+/// またいで grep できる必要がある（`fuseforks.log` の `name=` を識別子で
+/// 残した判断と同じ。CLAUDE.md「識別子は `title` に残す」）。
+fn endpoint_log_label(endpoint: &Endpoint) -> String {
+    match endpoint {
+        Endpoint::User => "user".to_owned(),
+        Endpoint::Agent { id } => id.to_string(),
+        Endpoint::System => "system".to_owned(),
+        Endpoint::External { client } => format!("external:{client}"),
+    }
+}
+
 async fn handle_message(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
@@ -4162,12 +4180,7 @@ async fn handle_message(
     note!(
         "turn start: agent={agent_id} hop={} from={} chars={}",
         incoming.hop,
-        match &incoming.from {
-            Endpoint::User => "user".to_owned(),
-            Endpoint::Agent { id } => id.to_string(),
-            Endpoint::System => "system".to_owned(),
-            Endpoint::External { client } => format!("external:{client}"),
-        },
+        endpoint_log_label(&incoming.from),
         incoming.content.chars().count(),
     );
     // 1. 定義とテンプレートを取り出す。ロックはここで手放し、LLM 呼び出しは持たずに行う。
@@ -5158,6 +5171,18 @@ async fn handle_message(
                 Some(_) => incoming.from.clone(),
                 None => Endpoint::User,
             };
+            // **答えがどこへ行ったか**を残す。これが無いと「委譲したのに
+            // ユーザーへ返った」という報告を、ログから確かめる手段が無い
+            // （実際に確かめられず、診断に何往復もかかった）。
+            //
+            // `to=user` なら `reply_to` が無かった = 転送で来た依頼だった証拠、
+            // `to=<agent_id>` なら委譲が戻っている証拠。**判定の材料は宛先だけ**で、
+            // 依頼文の中身を読む必要が無い。
+            note!(
+                "reply: agent={agent_id} to={} hop={next_hop} chars={}",
+                endpoint_log_label(&destination),
+                content.chars().count(),
+            );
             let mut outgoing = AgentMessage::new(from, destination, content, next_hop);
             outgoing.tokens = tokens as u32;
             // 接地の来歴は発話に添えて表示層へ渡す（`MessageSent` が運ぶ）。
@@ -5180,6 +5205,21 @@ async fn handle_message(
         }
         Outcome::Handoff { deliveries } => deliveries,
     };
+
+    // **転送はどのログ行にも出ていなかった。**`transfer_to_*` は `tool:` 行を
+    // 出す前にループを抜けるので（上の `Outcome::Handoff` の break）、
+    // **`name=transfer_to_*` で grep しても構造的に 0 件しか返らない** —
+    // 「使われていない」と「見えていない」が同じ 0 に畳まれていた
+    // （`failures.md` #90 の再演。肯定の対照を `ask_*` で取ったが、
+    // **対照を取った家族が違った**）。
+    note!(
+        "handoff: agent={agent_id} to={} hop={next_hop}",
+        deliveries
+            .iter()
+            .map(|(to, _)| to.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
 
     // 委譲（ask / plan）で来た依頼に、答えを返さず**転送で応じた**場合。
     //
