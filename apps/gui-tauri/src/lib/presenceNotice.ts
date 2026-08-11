@@ -21,7 +21,7 @@
 import type { AgentMessage } from "../types";
 
 /**
- * 定常の入退室の文末。コア（`orchestrator.rs` の `set_status`）が組む文字列と
+ * 定常の入退室の文末。コア（`orchestrator/mod.rs` の `set_status`）が組む文字列と
  * 1 対 1 で、`presenceNotice.test.ts` が実ソースと突き合わせている。
  */
 export const PRESENCE_SUFFIXES = ["が稼働を開始しました", "が停止しました"] as const;

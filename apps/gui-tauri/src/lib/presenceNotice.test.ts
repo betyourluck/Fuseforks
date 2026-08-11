@@ -77,7 +77,7 @@ describe("isPresenceNotice", () => {
 
 describe("コア側の文言との一致", () => {
   const rustSource = readFileSync(
-    resolve(here, "../../../../crates/agent-core/src/orchestrator.rs"),
+    resolve(here, "../../../../crates/agent-core/src/orchestrator/mod.rs"),
     "utf-8",
   );
 
