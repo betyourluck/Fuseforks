@@ -373,22 +373,59 @@ impl Orchestrator {
     /// 条例の運用は共通 work_dir が前提だが、複数の work_dir が混在していても
     /// 全部読み、[`crate::blackboard::BlackboardNote::dir`] で区別できる形で返す。
     pub async fn read_blackboard(&self) -> CoreResult<Vec<crate::blackboard::BlackboardNote>> {
-        let mut dirs: Vec<String> = Vec::new();
-        for snapshot in self.snapshots().await {
-            if let Some(dir) = snapshot.work_dir {
-                if !dirs.contains(&dir) {
-                    dirs.push(dir);
-                }
-            }
-        }
-
         let mut notes = Vec::new();
-        for dir in dirs {
+        // **読みと削除で同じ列挙を使う。** 2 箇所に書くと、
+        // 「画面に出ているのに消せない付箋」が生まれる余地ができる。
+        for dir in self.blackboard_dirs().await {
             notes.extend(
                 crate::blackboard::read_blackboard_dir(std::path::Path::new(&dir)).await?,
             );
         }
         Ok(notes)
+    }
+
+    /// 黒板の付箋を 1 枚ごみ箱へ移す（2026-08-12 の UI 追加）。
+    ///
+    /// **`dir` は「いまサーヴァントが向いている work_dir」のどれかでなければ
+    /// 受け付けない。** GUI から任意のパスを渡せる形にすると、黒板の削除が
+    /// **どこのファイルでも消せる口**になる（囲いは `resolve_in_work_dir` が
+    /// ツール側で持っているが、この IPC はその外にある）。
+    pub async fn delete_blackboard_note(&self, dir: &str, name: &str) -> CoreResult<()> {
+        if !self.blackboard_dirs().await.iter().any(|known| known == dir) {
+            return Err(crate::error::CoreError::BlackboardDeleteFailed {
+                name: name.to_owned(),
+                reason: "その作業フォルダは黒板の対象ではありません".to_owned(),
+            });
+        }
+        crate::blackboard::delete_note(std::path::Path::new(dir), name).await
+    }
+
+    /// 黒板の付箋を全部ごみ箱へ移す。戻り値は移した枚数。
+    ///
+    /// **1 枚失敗したらそこで止める。** 半分消えた状態で成功を返すと、
+    /// 画面は空に見えるのに実体が残る（次の再読で戻ってくる）。
+    pub async fn clear_blackboard(&self) -> CoreResult<usize> {
+        let mut removed = 0usize;
+        for dir in self.blackboard_dirs().await {
+            for note in crate::blackboard::read_blackboard_dir(std::path::Path::new(&dir)).await? {
+                crate::blackboard::delete_note(std::path::Path::new(&dir), &note.name).await?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// 黒板を持ちうる work_dir の一覧（重複なし）。
+    async fn blackboard_dirs(&self) -> Vec<String> {
+        let mut dirs: Vec<String> = Vec::new();
+        for snapshot in self.snapshots().await {
+            if let Some(dir) = snapshot.work_dir
+                && !dirs.contains(&dir)
+            {
+                dirs.push(dir);
+            }
+        }
+        dirs
     }
 
     // ---- アイコン -------------------------------------------------------------

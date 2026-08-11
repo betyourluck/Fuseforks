@@ -140,6 +140,8 @@ pub fn run() {
             commands::write_ordinance,
             // 村の黒板
             commands::list_blackboard,
+            commands::delete_blackboard_note,
+            commands::clear_blackboard,
             // 村の設定（Spec 13）
             commands::get_token_budget,
             commands::set_token_budget,

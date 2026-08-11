@@ -439,12 +439,37 @@ pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> Cor
 
 // ---- 村の黒板 ----------------------------------------------------------------
 
-/// 村の黒板（work_dir の `blackboard/`）の付箋を読む。GUI に書き込み経路は無い。
+/// 村の黒板（work_dir の `blackboard/`）の付箋を読む。
+///
+/// **GUI に「内容を書く」経路は無い**（契約の凍結）。削除だけは在る（下記）。
 #[tauri::command]
 pub async fn list_blackboard(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<agent_core::BlackboardNote>> {
     state.orchestrator.read_blackboard().await
+}
+
+/// 付箋を 1 枚**ごみ箱へ移す**（2026-08-12 の UI 追加）。
+///
+/// **完全削除はしない。** `file` ツールの remove と同じ規律で、ごみ箱が
+/// 使えない環境では消さずに失敗を返す。**取り消せるからこそ、画面側で
+/// 個別削除に確認を付けていない。**
+///
+/// `dir` は一覧が返した `BlackboardNote.dir` をそのまま渡す。コア側が
+/// 「いまサーヴァントが向いている work_dir のどれか」であることを検査する。
+#[tauri::command]
+pub async fn delete_blackboard_note(
+    dir: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> CoreResult<()> {
+    state.orchestrator.delete_blackboard_note(&dir, &name).await
+}
+
+/// 付箋を全部ごみ箱へ移す。戻り値は移した枚数。
+#[tauri::command]
+pub async fn clear_blackboard(state: State<'_, AppState>) -> CoreResult<usize> {
+    state.orchestrator.clear_blackboard().await
 }
 
 // ---- 村の設定（Spec 13） -------------------------------------------------------

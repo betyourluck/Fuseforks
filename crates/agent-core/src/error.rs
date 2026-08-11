@@ -148,6 +148,19 @@ pub enum CoreError {
         source: std::io::Error,
     },
 
+    /// 黒板の付箋を消せなかった（Spec 無し・2026-08-12 の UI 追加）。
+    ///
+    /// **完全削除へは倒さない。** ごみ箱が使えない環境（一部の Linux 構成・
+    /// ネットワークドライブ）でこれが出る。`file` ツールの remove と同じ規律で、
+    /// **取り消せない操作へ勝手に格上げしない**。
+    #[error("黒板の付箋 `{name}` をごみ箱へ移せませんでした: {reason}")]
+    BlackboardDeleteFailed {
+        /// 対象のファイル名。
+        name: String,
+        /// 失敗の理由。
+        reason: String,
+    },
+
     /// エージェント ID などの識別子が命名規約に反しており、パスとして安全でない。
     #[error("識別子 `{value}` は使用できません（許可: 英数字・`-`・`_`、1〜64 文字）")]
     UnsafeIdentifier {
@@ -279,6 +292,7 @@ impl CoreError {
             Self::NotRunning { .. } => "NOT_RUNNING",
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::ConfigIo { .. } => "CONFIG_IO",
+            Self::BlackboardDeleteFailed { .. } => "BLACKBOARD_DELETE_FAILED",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
             Self::InvalidIcon { .. } => "INVALID_ICON",
             Self::InvalidAttachment { .. } => "INVALID_ATTACHMENT",

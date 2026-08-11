@@ -48,6 +48,56 @@ pub struct BlackboardNote {
     pub modified_ms: u64,
 }
 
+/// 付箋のファイル名として受け付けてよいか（パスとして安全か）。
+///
+/// **GUI から来る値なので、ここが唯一の関門。** `blackboard/` 直下の平置きの
+/// ファイル名だけを通す — 区切り文字も `..` も入れさせない。
+/// **`read_blackboard_dir` が返した `name` をそのまま返してくる**のが正常系だが、
+/// **正常系だけを想定した検査は検査ではない**。
+fn is_safe_note_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name)
+}
+
+/// 付箋 1 枚を**ごみ箱へ移す**（2026-08-12 の UI 追加）。
+///
+/// **完全削除はしない。** `file` ツールの remove と同じ規律で、
+/// ごみ箱が使えない環境では**消さずに失敗を返す** — 取り消せない操作へ
+/// 勝手に格上げしない。**取り消せるからこそ、個別削除に確認を付けていない。**
+///
+/// **これは「書き込み」ではない。** 契約の凍結「GUI からの書き込み経路は
+/// 作らない」が守っているのは**条例の「書いてよいのは自分の付箋だけ」を
+/// GUI が迂回しないこと**で、削除は誰かの名前で内容を書く操作ではない。
+/// むしろ**人にしかできない後始末**で、work_dir を移した個体の付箋は
+/// 本人が消せない（`resolve_in_work_dir` が届かない）。
+pub async fn delete_note(work_dir: &Path, name: &str) -> CoreResult<()> {
+    if !is_safe_note_name(name) {
+        return Err(CoreError::BlackboardDeleteFailed {
+            name: name.to_owned(),
+            reason: "付箋のファイル名として受け付けられません".to_owned(),
+        });
+    }
+    let path = work_dir.join(BLACKBOARD_DIR).join(name);
+    // 既に無いものを消せと言われたら成功として扱う（同じ結末なので、
+    // 2 人が同時に消したときに片方だけ赤くする理由が無い）。
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let owned = name.to_owned();
+    // trash はブロッキング。ワーカーを塞ぐと他のサーヴァントのターンが止まる。
+    tokio::task::spawn_blocking(move || trash::delete(&path))
+        .await
+        .map_err(|err| CoreError::BlackboardDeleteFailed {
+            name: owned.clone(),
+            reason: err.to_string(),
+        })?
+        .map_err(|err| CoreError::BlackboardDeleteFailed {
+            name: owned,
+            reason: err.to_string(),
+        })
+}
+
 /// `{work_dir}/blackboard/` 直下のファイルを読む。フォルダが無ければ空。
 ///
 /// - サブフォルダは無視する（付箋は 1 人 1 ファイルの平置きが条例の形）
@@ -135,6 +185,47 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// **GUI から来る名前は `blackboard/` 直下の平置きだけ通す。**
+    /// ここが唯一の関門で、通ると `work_dir.join(BLACKBOARD_DIR).join(name)` が
+    /// 黒板の外を指しうる。**正常系（一覧が返した name）だけを想定した検査は
+    /// 検査ではない。**
+    #[test]
+    fn only_flat_note_names_are_accepted() {
+        assert!(is_safe_note_name("ザリ.md"));
+        assert!(is_safe_note_name("まとめ.md"));
+
+        for bad in [
+            "",
+            "..",
+            "../world.json",
+            "sub/note.md",
+            // Rust の raw 文字列。**普通の文字列だと \n が改行になり、
+            // Windows の区切りとして検査されないまま通ってしまう**（実際に踏んだ）。
+            r"sub\note.md",
+            "/etc/passwd",
+            ".hidden",
+            ".",
+        ] {
+            assert!(!is_safe_note_name(bad), "通してはいけない名前が通った: {bad}");
+        }
+    }
+
+    /// 無い付箋を消せと言われたら成功。**同じ結末なので、2 人が同時に消した
+    /// ときに片方だけ赤くする理由が無い**（10 秒ごとの自動再読と削除は競合する）。
+    #[tokio::test]
+    async fn deleting_a_missing_note_is_not_an_error() {
+        let dir = TempDir::new("bb-del-missing");
+        delete_note(&dir.0, "居ない.md").await.unwrap();
+    }
+
+    /// 危ない名前は**ファイルへ触る前に**落ちる。
+    #[tokio::test]
+    async fn unsafe_names_are_rejected_before_touching_the_disk() {
+        let dir = TempDir::new("bb-del-unsafe");
+        let err = delete_note(&dir.0, "../world.json").await.unwrap_err();
+        assert_eq!(err.code(), "BLACKBOARD_DELETE_FAILED");
     }
 
     #[tokio::test]

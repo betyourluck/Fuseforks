@@ -1068,7 +1068,11 @@ The folder button in the Settings dialog — opened from an agent card's setting
 
 #### The Village Blackboard — shared working notes
 
-The other tab at the center-bottom is the **Blackboard**. It is literally the `blackboard/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`blackboard/<display name>.md`) as a sticky note, and only the coordinator bundles them into `blackboard/まとめ.md`. The GUI is **read-only** (no write path exists), and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
+The other tab at the center-bottom is the **Blackboard**. It is literally the `blackboard/` folder inside the shared work folder, written by the agents (with the `file` tool) and by you. The way it is used lives in the village ordinance: one file per agent (`blackboard/<display name>.md`) as a sticky note, and only the coordinator bundles them into `blackboard/まとめ.md`. **There is no path for the GUI to write content**, and nothing is auto-injected into prompts — agents read it when they decide to. No new mechanism was added: rules plus the existing file tool are the whole implementation.
+
+**Deleting can be done from the screen** (the eraser left of the refresh button clears everything; the bin on each note removes one). **The "never write content" line has not moved** — deleting is not writing content under someone's name, and it is **cleanup only a person can do**: notes left by a servant whose work folder has moved sit **somewhere that servant can no longer reach** (the tool's fence does not extend there), so without an exit on screen the only way out is deleting files by hand.
+
+**Notes go to the OS trash; there is no permanent-delete path.** That is why **only the bulk action asks for confirmation and single deletions do not** — piling confirmations onto reversible actions makes the confirmations on irreversible ones read as noise. The bulk confirmation **states the count**, because "everything" alone does not say how much.
 
 ### Roles
 

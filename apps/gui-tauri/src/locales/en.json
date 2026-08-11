@@ -267,7 +267,13 @@
     "noteCount": "{count} notes",
     "refresh": "Reload the blackboard",
     "refreshTitle": "Reload the blackboard (it also refreshes automatically while shown)",
-    "empty": "Nothing has been written on the blackboard yet (notes placed in the `blackboard/` folder under work_dir will appear here)."
+    "empty": "Nothing has been written on the blackboard yet (notes placed in the `blackboard/` folder under work_dir will appear here).",
+    "clearAll": "Clear the whole blackboard",
+    "clearAllTitle": "Move every note to the trash",
+    "deleteTitle": "Move \"{name}\" to the trash",
+    "confirmClearTitle": "Clear every note on the blackboard?",
+    "confirmClearMessage": "{count} notes will be moved to the trash. They are not deleted permanently, so you can restore them from the OS trash.",
+    "confirmClearLabel": "Clear all"
   },
   "waves": {
     "state": {
@@ -700,7 +706,8 @@
     "LLM_PARSE": "Failed to parse the model response",
     "IPC_FAILED": "The IPC call failed",
     "EXTERNAL_RECEPTION_UNSET": "Reception is not set",
-    "EXTERNAL_BUSY": "Another external request is in progress"
+    "EXTERNAL_BUSY": "Another external request is in progress",
+    "BLACKBOARD_DELETE_FAILED": "Could not move the blackboard note to the trash"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

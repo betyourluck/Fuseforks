@@ -11,7 +11,15 @@
  */
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
-import { listBlackboard, toErrorPayload } from "../lib/ipc";
+import {
+  clearBlackboard,
+  deleteBlackboardNote,
+  listBlackboard,
+  toErrorPayload,
+} from "../lib/ipc";
+import { useI18n } from "vue-i18n";
+
+import { askConfirm } from "../composables/useConfirm";
 import { formatError } from "../lib/errorText";
 import { renderMarkdown } from "../lib/markdown";
 import type { BlackboardNote, BottomTab, ErrorPayload } from "../types";
@@ -29,6 +37,63 @@ const loaded = ref(false);
 /** 表示中の自動再読の間隔。ローカルの一覧 + 読みだけなので軽い。 */
 const REFRESH_MS = 10_000;
 let timer: number | undefined;
+
+const { t } = useI18n();
+
+/**
+ * 削除の実行中。**押している間はどのボタンも押せなくする** —
+ * 10 秒ごとの自動再読と重なると、消えた付箋の行をもう一度押せてしまう。
+ */
+const busy = ref(false);
+
+/**
+ * 付箋を 1 枚ごみ箱へ移す。**確認は出さない。**
+ *
+ * 消し先がごみ箱なので取り消せる（`file` ツールの remove と同じ規律で、
+ * 完全削除の経路は持たない）。**取り消せる操作に確認を積むと、
+ * 取り消せない操作の確認まで軽く読まれる。**
+ */
+async function remove(note: BlackboardNote): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    await deleteBlackboardNote(note.dir, note.name);
+    error.value = null;
+  } catch (err) {
+    error.value = toErrorPayload(err);
+  } finally {
+    busy.value = false;
+    await refresh();
+  }
+}
+
+/**
+ * 付箋を全部ごみ箱へ移す。**確認を出す。**
+ *
+ * 1 枚ずつと違い、押し間違いの代償が枚数ぶん。**件数を文面に入れる** —
+ * 「全部」だけでは何枚あるか分からないまま押すことになる。
+ */
+async function clearAll(): Promise<void> {
+  if (busy.value || notes.value.length === 0) return;
+  const ok = await askConfirm({
+    title: t("blackboard.confirmClearTitle"),
+    message: t("blackboard.confirmClearMessage", { count: notes.value.length }),
+    confirmLabel: t("blackboard.confirmClearLabel"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  busy.value = true;
+  try {
+    await clearBlackboard();
+    error.value = null;
+  } catch (err) {
+    error.value = toErrorPayload(err);
+  } finally {
+    busy.value = false;
+    await refresh();
+  }
+}
 
 async function refresh(): Promise<void> {
   try {
@@ -74,8 +139,35 @@ function formatTime(ms: number): string {
     >
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="notes.length">{{ $t("blackboard.noteCount", { count: notes.length }) }}</span>
+      <!--
+        一括削除。**確認を出す**（全部まとめて消えるので、押し間違いの代償が
+        1 枚とは桁で違う）。アイコンはチャット入力の表示クリアと同じ消しゴム —
+        同じ「消す」の絵を 2 つ持たない。
+        ただし**あちらは表示だけ・こちらは実体**なので、確認の文面で言い切る。
+      -->
       <button
-        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        :disabled="notes.length === 0 || busy"
+        :title="$t('blackboard.clearAllTitle')"
+        :aria-label="$t('blackboard.clearAll')"
+        @click="clearAll"
+      >
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m15 5 5 5-8 8H7l-4-4z" />
+          <path d="M21 20h-11" />
+        </svg>
+      </button>
+      <button
+        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('blackboard.refreshTitle')"
         :aria-label="$t('blackboard.refresh')"
         @click="refresh"
@@ -127,6 +219,38 @@ function formatTime(ms: number): string {
           <span v-if="note.modifiedMs" class="ml-auto shrink-0 text-ink-dim">{{
             formatTime(note.modifiedMs)
           }}</span>
+          <!--
+            個別削除。**確認を出さない**のは、消し先が**ごみ箱**だから
+            （`file` ツールの remove と同じ規律で、完全削除の経路は無い）。
+            取り消せる操作に確認を積むと、取り消せない操作の確認まで軽く読まれる。
+            日時が無い付箋でも押せるよう、位置は `ml-auto` を持つ側と分けてある。
+          -->
+          <button
+            :class="[
+              'grid size-5 shrink-0 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40',
+              note.modifiedMs ? '' : 'ml-auto',
+            ]"
+            :disabled="busy"
+            :title="$t('blackboard.deleteTitle', { name: note.name })"
+            :aria-label="$t('blackboard.deleteTitle', { name: note.name })"
+            @click="remove(note)"
+          >
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 6h18" />
+              <path d="M8 6V4h8v2" />
+              <path d="M19 6l-1 14H6L5 6" />
+              <path d="M10 11v6M14 11v6" />
+            </svg>
+          </button>
         </header>
         <!--
           renderMarkdown は html:false で生 HTML をエスケープするので、

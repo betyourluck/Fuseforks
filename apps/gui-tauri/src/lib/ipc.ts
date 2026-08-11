@@ -280,10 +280,24 @@ export const writeOrdinance = (content: string) =>
 /**
  * 村の黒板（work_dir の `blackboard/`）の付箋を読む。
  *
- * 読み取り専用 — 書き込みの IPC は存在しない。書くのはエージェント
- * （file ツール）と人で、条例の「1 人 1 ファイル」運用を GUI が迂回しない。
+ * **内容を書く IPC は存在しない。** 書くのはエージェント（file ツール）と人で、
+ * 条例の「1 人 1 ファイル」運用を GUI が迂回しない。**削除だけは在る**（下記）—
+ * 誰かの名前で内容を書く操作ではないので、その凍結を破らない。
  */
 export const listBlackboard = () => call<BlackboardNote[]>("list_blackboard");
+
+/**
+ * 付箋を 1 枚**ごみ箱へ移す**。
+ *
+ * `dir` は一覧が返した `BlackboardNote.dir` をそのまま渡す（コア側が
+ * 「いま使われている work_dir か」を検査する）。**完全削除はしない**ので、
+ * 個別削除には確認を付けていない。
+ */
+export const deleteBlackboardNote = (dir: string, name: string) =>
+  call<void>("delete_blackboard_note", { dir, name });
+
+/** 付箋を全部ごみ箱へ移す。戻り値は移した枚数。 */
+export const clearBlackboard = () => call<number>("clear_blackboard");
 
 // ---- 村の設定（Spec 13） -------------------------------------------------------
 

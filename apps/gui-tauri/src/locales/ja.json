@@ -267,7 +267,13 @@
     "noteCount": "{count} 枚",
     "refresh": "黒板を読み直す",
     "refreshTitle": "黒板を読み直す（表示中は自動でも読み直します）",
-    "empty": "黒板にはまだ何も書かれていません（work_dir の `blackboard/` フォルダに付箋が置かれると、ここに映ります）。"
+    "empty": "黒板にはまだ何も書かれていません（work_dir の `blackboard/` フォルダに付箋が置かれると、ここに映ります）。",
+    "clearAll": "黒板を全部消す",
+    "clearAllTitle": "すべての付箋をごみ箱へ移します",
+    "deleteTitle": "「{name}」をごみ箱へ移す",
+    "confirmClearTitle": "黒板の付箋をすべて消しますか？",
+    "confirmClearMessage": "{count} 枚の付箋をごみ箱へ移します。完全には削除しないので、OS のごみ箱から戻せます。",
+    "confirmClearLabel": "すべて消す"
   },
   "waves": {
     "state": {
@@ -700,7 +706,8 @@
     "LLM_PARSE": "モデル応答の解析に失敗しました",
     "IPC_FAILED": "IPC 呼び出しに失敗しました",
     "EXTERNAL_RECEPTION_UNSET": "窓口が未設定です",
-    "EXTERNAL_BUSY": "別の外部依頼を処理中です"
+    "EXTERNAL_BUSY": "別の外部依頼を処理中です",
+    "BLACKBOARD_DELETE_FAILED": "黒板の付箋をごみ箱へ移せませんでした"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
