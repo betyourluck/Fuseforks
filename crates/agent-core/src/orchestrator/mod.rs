@@ -48,7 +48,7 @@ use delegation::{HandoffTools, Outcome, ask_agent, deliver_and_wait, run_plan};
 mod context;
 use context::{compose_presence_notices, compose_room_log, read_room_log, room_log_tool_spec};
 mod schedules;
-use schedules::{schedule_tick, spawn_schedule_ticker};
+use schedules::spawn_schedule_ticker;
 mod sessions;
 
 use std::collections::HashMap;
@@ -2429,130 +2429,6 @@ impl Orchestrator {
 
     // ---- 予定（Spec 07） -----------------------------------------------------
 
-    /// 登録済みの予定（登録順）。
-    pub async fn schedules(&self) -> Vec<ScheduledTask> {
-        self.shared.schedules.read().await.clone()
-    }
-
-    /// 予定を登録する。
-    ///
-    /// # Errors
-    /// - 再現規則が不正な場合 [`CoreError::InvalidSchedule`]
-    /// - 宛先が未登録の場合 [`CoreError::AgentNotFound`]
-    /// - `schedules.json` が壊れていて書き込みが保護されている場合
-    ///   [`CoreError::ScheduleStoreBlocked`]
-    pub async fn create_schedule(
-        &self,
-        to: AgentId,
-        message: String,
-        recurrence: Recurrence,
-        options: ScheduleOptions,
-    ) -> CoreResult<ScheduledTask> {
-        self.ensure_schedules_writable()?;
-        // 宛先の存在確認。停止中は許す（発火時に飛ばす規則が受け止める）が、
-        // 未登録は登録の時点で弾く — 発火するまで誰も気づかない予定を作らせない。
-        self.shared.world.read().await.agent(&to)?;
-
-        let task = ScheduledTask {
-            id: uuid::Uuid::new_v4().to_string(),
-            to,
-            message,
-            recurrence,
-            created_at_ms: crate::model::now_ms(),
-            last_consumed_due_ms: None,
-            enabled: true,
-            probe: options.probe,
-            session_mode: options.session_mode,
-            summarize_after: options.summarize_after,
-        };
-        // **組み立てた 1 件をまとめて検証する。** 欄ごとに検証を書くと、
-        // 欄が増えたときにここを直す仕事が生える（読み込み側と同じ述語を通す）。
-        task.validate().map_err(|err| CoreError::InvalidSchedule {
-            reason: err.to_string(),
-        })?;
-
-        let mut schedules = self.shared.schedules.write().await;
-        schedules.push(task.clone());
-        // 書き込みロックを持ったまま保存する。保存を外に出すと、並んだ 2 つの
-        // 変更が互いの内容を tmp ファイルで踏み合う（world.json には無い事情 —
-        // あちらの書き手は UI だけだが、こちらは ticker と UI の 2 系統ある）。
-        self.shared.store.save_schedules(&schedules).await?;
-        Ok(task)
-    }
-
-    /// 前判定の承認を答える口を差し込む（Spec 28）。
-    ///
-    /// **差し込むまで前判定は 1 本も走らない**（承認を確かめる手段が無いので
-    /// `unapproved` へ倒れる）。実体は GUI 層が `{app_data_dir}` に持つ —
-    /// workspace に置くと承認ごと配布され、防御にならない。
-    pub async fn set_probe_approvals(&self, approvals: Arc<dyn ProbeApprovals>) {
-        *self.shared.probe_approvals.write().await = Some(approvals);
-    }
-
-    /// 予定ごとの直近 1 回の判定の結末（Spec 28 D8）。プロセス寿命。
-    ///
-    /// **不一致・失敗は会話ログへ流さない**（監視の頻度で本物の通知が埋まる）
-    /// が、画面には出す — `error` / `timeout` は人が直せるので、
-    /// どこにも出さないと「動かないが理由が分からない」になる。
-    pub async fn probe_reports(&self) -> HashMap<String, crate::schedule_probe::ProbeReport> {
-        self.schedule_runtime.last_probe.lock().await.clone()
-    }
-
-    /// この村の識別子（`{workspace}/village_id`）。承認鍵の salt。
-    ///
-    /// GUI は承認を書くときにこの値で鍵を組む。**コアが持っている値をそのまま
-    /// 使わせる** — 2 箇所で読むと、片方がファイルを読み直して食い違う。
-    pub async fn village_id(&self) -> String {
-        self.shared.village_id.read().await.clone()
-    }
-
-    /// 予定を削除する。
-    ///
-    /// # Errors
-    /// - 該当 ID が無い場合 [`CoreError::ScheduleNotFound`]
-    pub async fn delete_schedule(&self, id: &str) -> CoreResult<()> {
-        self.ensure_schedules_writable()?;
-        let mut schedules = self.shared.schedules.write().await;
-        let before = schedules.len();
-        schedules.retain(|task| task.id != id);
-        if schedules.len() == before {
-            return Err(CoreError::ScheduleNotFound(id.to_owned()));
-        }
-        self.shared.store.save_schedules(&schedules).await
-    }
-
-    /// 予定の一時停止・再開（Spec 07 の `enabled`）。
-    ///
-    /// # Errors
-    /// - 該当 ID が無い場合 [`CoreError::ScheduleNotFound`]
-    pub async fn set_schedule_enabled(&self, id: &str, enabled: bool) -> CoreResult<()> {
-        self.ensure_schedules_writable()?;
-        let mut schedules = self.shared.schedules.write().await;
-        let task = schedules
-            .iter_mut()
-            .find(|task| task.id == id)
-            .ok_or_else(|| CoreError::ScheduleNotFound(id.to_owned()))?;
-        task.enabled = enabled;
-        self.shared.store.save_schedules(&schedules).await
-    }
-
-    /// 予定の発火判定を 1 回実行する。
-    ///
-    /// 通常はティッカーが `Local::now()` で呼ぶ。**時刻を引数に取るのは
-    /// テストのため**（壁時計に依存するテストを書かない — Spec 04 の規律）。
-    pub async fn run_schedule_tick<Tz: chrono::TimeZone>(&self, now: chrono::DateTime<Tz>) {
-        schedule_tick(&self.shared, &self.schedule_runtime, now).await;
-    }
-
-    /// `schedules.json` が読めない状態での書き込みを拒否する。
-    fn ensure_schedules_writable(&self) -> CoreResult<()> {
-        match &self.shared.schedules_blocked {
-            Some(reason) => Err(CoreError::ScheduleStoreBlocked {
-                reason: reason.clone(),
-            }),
-            None => Ok(()),
-        }
-    }
 }
 
 impl Drop for Orchestrator {
