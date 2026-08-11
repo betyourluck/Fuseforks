@@ -1165,8 +1165,19 @@ enums:
       gemini だけモデル名が URL に埋まるため、Provider::path() は &'static str を
       返せず String を返す（Spec 05 で全プロバイダの呼び出し側を巻き込んで変更）。
       **/responses を返す provider が 2 つある**が、path が同じでも adapter は
-      別（xai_responses.rs / openai_responses.rs）— 応答の型だけを共有する
-      (Spec 34 D2)。
+      別（xai_responses.rs / openai_responses.rs）。**共有の単位は Spec 34 D2 (rev6)**:
+        共有する  — 応答の型 10 個 (Responses*)。11/11 発の serde 実測が根拠
+        共有する  — ResponsesInputItem / ResponsesTool
+                    (function_call / function_call_output / flat な function tool は
+                     両社で同じ形を実測している)
+        分ける    — トップレベルの要求構造体 (XaiRequest / OpenAiResponsesRequest)
+      **要求を分けるのは include で必ず割れるから** — xAI は
+      ["no_inline_citations"] を常送し、OpenAI は include を送らない。
+      共有すると OpenAI へ "include":[] が飛ぶか、skip_serializing_if を足して
+      **xAI 側の golden が動く**。どちらへ倒しても片方の凍結を壊す。
+      **一般化: 「同じエンドポイントだから同じ型」は送る側では成立しない。**
+      応答は相手が決めるので同型になりうるが、要求は自分が決めるので、
+      機能の選び方の差がそのまま欄の差になる。
   Effort:
     values: [low, medium, high, xhigh, max]
     note: |

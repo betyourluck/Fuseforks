@@ -287,7 +287,7 @@ impl HttpLlmBackend {
                 openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
             Provider::XaiResponses => {
-                let parsed: wire::XaiResponse =
+                let parsed: wire::ResponsesResponse =
                     serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
                         source,
                         raw: raw.clone(),

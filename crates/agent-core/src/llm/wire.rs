@@ -915,10 +915,10 @@ pub struct XaiRequest {
     /// モデル名。
     pub model: String,
     /// 会話とツール往復の混在列（`messages` に相当）。
-    pub input: Vec<XaiInputItem>,
+    pub input: Vec<ResponsesInputItem>,
     /// 空なら欄ごと省く（`tools: []` を送る意味は無い）。
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<XaiTool>,
+    pub tools: Vec<ResponsesTool>,
     /// 契約により `["no_inline_citations"]` 固定。
     pub include: Vec<&'static str>,
     /// 最大出力トークン数。
@@ -934,7 +934,7 @@ pub struct XaiRequest {
 /// `input` の 1 要素。メッセージと関数往復が同じ列に混在する。
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum XaiInputItem {
+pub enum ResponsesInputItem {
     /// 通常の発話。`type` 欄は省略可能（role で判別される）。
     Message {
         /// "system" / "user" / "assistant"。
@@ -969,7 +969,7 @@ pub enum XaiInputItem {
 /// `tools` の 1 要素。サーバー側ツールと関数ツールが同居できる（実測 2026-08-10）。
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum XaiTool {
+pub enum ResponsesTool {
     /// サーバー側ツール（`web_search` / `x_search`）。
     Server {
         /// `"web_search"` / `"x_search"`。
@@ -992,24 +992,24 @@ pub enum XaiTool {
 
 /// xAI Responses の応答。
 #[derive(Debug, Deserialize)]
-pub struct XaiResponse {
+pub struct ResponsesResponse {
     /// 応答の本体列。message / reasoning / 検索呼び出し / function_call が interleave する。
     #[serde(default)]
-    pub output: Vec<XaiOutputItem>,
+    pub output: Vec<ResponsesOutputItem>,
     /// "completed" / "incomplete" など。
     #[serde(default)]
     pub status: Option<String>,
     /// `status: "incomplete"` のときの理由。
     #[serde(default)]
-    pub incomplete_details: Option<XaiIncompleteDetails>,
+    pub incomplete_details: Option<ResponsesIncompleteDetails>,
     /// 使用量。返さない応答でも壊れないよう `Option`。
     #[serde(default)]
-    pub usage: Option<XaiUsage>,
+    pub usage: Option<ResponsesUsage>,
 }
 
 #[derive(Debug, Deserialize)]
 /// 打ち切りの理由（`max_output_tokens` なら Length へ写す）。
-pub struct XaiIncompleteDetails {
+pub struct ResponsesIncompleteDetails {
     /// 理由の文字列。
     #[serde(default)]
     pub reason: Option<String>,
@@ -1021,13 +1021,13 @@ pub struct XaiIncompleteDetails {
 /// Gemini の part と同じく**全フィールド Option の構造体**で受け、`kind` 文字列で
 /// 分岐する（未知種別は数えてから捨てる — #72）。
 #[derive(Debug, Deserialize)]
-pub struct XaiOutputItem {
+pub struct ResponsesOutputItem {
     /// 種別。message / reasoning / web_search_call / x_search_call / custom_tool_call / function_call ほか。
     #[serde(rename = "type")]
     pub kind: String,
     /// `message` のとき。テキスト片と出典の列。
     #[serde(default)]
-    pub content: Option<Vec<XaiContentPart>>,
+    pub content: Option<Vec<ResponsesContentPart>>,
     /// `function_call` のとき。呼び出し ID。
     #[serde(default)]
     pub call_id: Option<String>,
@@ -1039,7 +1039,7 @@ pub struct XaiOutputItem {
     pub arguments: Option<String>,
     /// 検索呼び出しのとき。`query` が検索語を運ぶ（`web_search_call` の形）。
     #[serde(default)]
-    pub action: Option<XaiSearchAction>,
+    pub action: Option<ResponsesSearchAction>,
     /// `custom_tool_call`（x_search の実体）のとき、引数の **JSON 文字列**。
     /// `{"query": "...", "limit": "5"}` の形で検索語が入る。`action` は無い。
     #[serde(default)]
@@ -1051,12 +1051,12 @@ pub struct XaiOutputItem {
     /// 長形（919〜1,367 字）。**どちらも「空」ではない**ので長さで切らない
     /// （`reasoning_summary` 契約の凍結 2）。
     #[serde(default)]
-    pub summary: Option<Vec<XaiSummaryPart>>,
+    pub summary: Option<Vec<ResponsesSummaryPart>>,
 }
 
 /// `reasoning` item の要約 1 片。
 #[derive(Debug, Deserialize)]
-pub struct XaiSummaryPart {
+pub struct ResponsesSummaryPart {
     /// 片の種別。読むのは `summary_text` だけ。
     #[serde(rename = "type")]
     pub kind: String,
@@ -1067,7 +1067,7 @@ pub struct XaiSummaryPart {
 
 #[derive(Debug, Deserialize)]
 /// `message` の中身 1 片（`output_text` など）。
-pub struct XaiContentPart {
+pub struct ResponsesContentPart {
     /// 片の種別。読むのは `output_text` だけ。
     #[serde(rename = "type")]
     pub kind: String,
@@ -1076,13 +1076,13 @@ pub struct XaiContentPart {
     pub text: Option<String>,
     /// 出典（`url_citation`）。
     #[serde(default)]
-    pub annotations: Vec<XaiAnnotation>,
+    pub annotations: Vec<ResponsesAnnotation>,
 }
 
 /// 出典 1 件。`no_inline_citations` では位置（start/end_index）が全部 0 なので
 /// 位置は受けない — 印の座標であって主張の座標ではない（契約）。
 #[derive(Debug, Deserialize)]
-pub struct XaiAnnotation {
+pub struct ResponsesAnnotation {
     /// 種別。読むのは `url_citation` だけ。
     #[serde(rename = "type")]
     pub kind: String,
@@ -1096,7 +1096,7 @@ pub struct XaiAnnotation {
 
 /// 検索呼び出しの中身。`query` が実際の検索語（`Grounding.queries` の原料）。
 #[derive(Debug, Deserialize)]
-pub struct XaiSearchAction {
+pub struct ResponsesSearchAction {
     /// 検索語。
     #[serde(default)]
     pub query: Option<String>,
@@ -1105,7 +1105,7 @@ pub struct XaiSearchAction {
 /// 使用量。回数の欄は観測名（`server_side_tool_usage_details`）と公式文書名
 /// （`server_side_tool_usage`）の**どちらで来ても読める**ようにする（契約）。
 #[derive(Debug, Deserialize)]
-pub struct XaiUsage {
+pub struct ResponsesUsage {
     /// 入力トークン数（検索結果の注入込み）。
     #[serde(default)]
     pub input_tokens: u64,
@@ -1114,10 +1114,10 @@ pub struct XaiUsage {
     pub output_tokens: u64,
     /// 入力トークンの内訳。
     #[serde(default)]
-    pub input_tokens_details: Option<XaiInputTokensDetails>,
+    pub input_tokens_details: Option<ResponsesInputTokensDetails>,
     /// 出力トークンの内訳。思考ぶんはここにしか出ない（Spec 32）。
     #[serde(default)]
-    pub output_tokens_details: Option<XaiOutputTokensDetails>,
+    pub output_tokens_details: Option<ResponsesOutputTokensDetails>,
     /// 補助の生値。単位が未検証なので換算しない（契約）。
     #[serde(default)]
     pub cost_in_usd_ticks: Option<u64>,
@@ -1131,7 +1131,7 @@ pub struct XaiUsage {
 
 #[derive(Debug, Deserialize)]
 /// 入力トークンの内訳。
-pub struct XaiInputTokensDetails {
+pub struct ResponsesInputTokensDetails {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_tokens: u64,
@@ -1139,7 +1139,7 @@ pub struct XaiInputTokensDetails {
 
 #[derive(Debug, Deserialize)]
 /// 出力トークンの内訳。
-pub struct XaiOutputTokensDetails {
+pub struct ResponsesOutputTokensDetails {
     /// 思考に使われたトークン数。**`output_tokens` の内数**
     /// （実測 8/8 で差は本文のトークン数だった。Spec 32 P0）。
     #[serde(default)]

@@ -37,25 +37,25 @@ pub fn encode(
     let mut input = Vec::new();
     for message in &req.messages {
         match message.role {
-            Role::System => input.push(wire::XaiInputItem::Message {
+            Role::System => input.push(wire::ResponsesInputItem::Message {
                 role: "system",
                 content: message.content.clone(),
             }),
             // 添付画像はこのワイヤでは送らない（Spec 23 D8 — 画像は互換経路のみ。
             // gemini ネイティブが素通しする挙動をテストで凍結したのと同じ棚）。
-            Role::User => input.push(wire::XaiInputItem::Message {
+            Role::User => input.push(wire::ResponsesInputItem::Message {
                 role: "user",
                 content: message.content.clone(),
             }),
             Role::Assistant => {
                 if !message.content.is_empty() {
-                    input.push(wire::XaiInputItem::Message {
+                    input.push(wire::ResponsesInputItem::Message {
                         role: "assistant",
                         content: message.content.clone(),
                     });
                 }
                 for call in &message.tool_calls {
-                    input.push(wire::XaiInputItem::FunctionCall {
+                    input.push(wire::ResponsesInputItem::FunctionCall {
                         kind: "function_call",
                         call_id: call.id.clone(),
                         name: call.name.clone(),
@@ -65,7 +65,7 @@ pub fn encode(
                     });
                 }
             }
-            Role::Tool => input.push(wire::XaiInputItem::FunctionCallOutput {
+            Role::Tool => input.push(wire::ResponsesInputItem::FunctionCallOutput {
                 kind: "function_call_output",
                 call_id: message.tool_call_id.clone().unwrap_or_default(),
                 output: message.content.clone(),
@@ -77,13 +77,13 @@ pub fn encode(
     let mut tools = Vec::new();
     if offer_tools {
         if web_search {
-            tools.push(wire::XaiTool::Server { kind: "web_search" });
+            tools.push(wire::ResponsesTool::Server { kind: "web_search" });
         }
         if x_search {
-            tools.push(wire::XaiTool::Server { kind: "x_search" });
+            tools.push(wire::ResponsesTool::Server { kind: "x_search" });
         }
         for spec in &req.tools {
-            tools.push(wire::XaiTool::Function {
+            tools.push(wire::ResponsesTool::Function {
                 kind: "function",
                 name: spec.name.clone(),
                 description: spec.description.clone(),
@@ -126,7 +126,7 @@ const SEARCH_CALL_KINDS: [&str; 3] = ["web_search_call", "x_search_call", "custo
 /// 片方だけを読むと、もう片方の経路で `queries` が**黙って空になる**
 /// （実機の 2 走行がどちらも `queries=0` だった）。検索語は「何を調べたか」を
 /// 人へ見せる唯一の材料なので、空は情報の欠落として現れる。
-fn search_query(item: &wire::XaiOutputItem) -> Option<String> {
+fn search_query(item: &wire::ResponsesOutputItem) -> Option<String> {
     if let Some(query) = item.action.as_ref().and_then(|a| a.query.clone()) {
         return Some(query);
     }
@@ -142,7 +142,7 @@ fn search_query(item: &wire::XaiOutputItem) -> Option<String> {
 /// `arguments` は JSON 文字列なのでここで 1 回だけ parse して以後はオブジェクトとして
 /// 運ぶ（`openai_compat::decode` と同じ境界規律）。壊れた arguments は raw を保持した
 /// [`LlmError::Parse`] にする。
-pub fn decode(resp: wire::XaiResponse) -> Result<ChatResponse, LlmError> {
+pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
     let mut texts: Vec<String> = Vec::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut grounding = Grounding {
@@ -460,7 +460,7 @@ mod tests {
                 "server_side_tool_usage_details": {"web_search_calls": 1}
             }
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
 
         assert_eq!(
@@ -494,7 +494,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.grounding.queries, vec!["AI latest news"]);
         // 検索呼び出しとして数えられており、ツール呼び出しへは漏れていない。
@@ -513,7 +513,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert!(decoded.grounding.queries.is_empty());
         assert_eq!(decoded.text.as_deref(), Some("ok"));
@@ -532,7 +532,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.grounding.queries, vec!["a", "b", "c"]);
         assert_eq!(decoded.text.as_deref(), Some("ok"));
@@ -548,7 +548,7 @@ mod tests {
                  "arguments": "{\"symbol\":\"AAPL\"}", "status": "completed"}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.finish, Finish::ToolUse);
         assert_eq!(decoded.tool_calls.len(), 1);
@@ -567,7 +567,7 @@ mod tests {
                 {"type": "function_call", "call_id": "c", "name": "f", "arguments": "{oops"}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let err = decode(resp).unwrap_err();
         assert!(matches!(err, LlmError::Parse { raw, .. } if raw == "{oops"));
     }
@@ -584,7 +584,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "本文", "annotations": []}]}
             ]
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.text.as_deref(), Some("本文"));
         assert_eq!(decoded.finish, Finish::Stop);
@@ -610,7 +610,7 @@ mod tests {
                 "output_tokens_details": {"reasoning_tokens": 1494}
             }
         }"#;
-        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
 
         assert_eq!(decoded.usage.completion, 1_497);
         assert_eq!(decoded.usage.reasoning, 1_494);
@@ -627,7 +627,7 @@ mod tests {
             "output": [{"type": "message", "content": [{"type": "output_text", "text": "はい", "annotations": []}]}],
             "usage": {"input_tokens": 10, "output_tokens": 2}
         }"#;
-        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
 
         assert_eq!(decoded.usage.reasoning, 0);
         assert_eq!(decoded.usage.completion, 2);
@@ -646,7 +646,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "Bです", "annotations": []}]}
             ]
         }"#;
-        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
 
         assert_eq!(
             decoded.reasoning_summary,
@@ -675,7 +675,7 @@ mod tests {
                 {"type": "message", "content": [{"type": "output_text", "text": "答え", "annotations": []}]}
             ]
         }"#;
-        let decoded = decode(serde_json::from_str::<wire::XaiResponse>(raw).unwrap()).unwrap();
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
 
         assert_eq!(
             decoded.reasoning_summary,
@@ -692,7 +692,7 @@ mod tests {
             "incomplete_details": {"reason": "max_output_tokens"},
             "output": []
         }"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         let decoded = decode(resp).unwrap();
         assert_eq!(decoded.finish, Finish::Length);
     }
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn missing_status_is_other_not_stop() {
         let raw = r#"{"output": [{"type": "message", "content": [{"type": "output_text", "text": "x", "annotations": []}]}]}"#;
-        let resp: wire::XaiResponse = serde_json::from_str(raw).unwrap();
+        let resp: wire::ResponsesResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(decode(resp).unwrap().finish, Finish::Other);
     }
 }

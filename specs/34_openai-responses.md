@@ -206,7 +206,43 @@ P0 で `_ =>` の箇所を数え直して契約へ表で凍結する。
 | 層 | 扱い |
 |---|---|
 | **応答の型 10 個**（`XaiResponse` / `XaiOutputItem` / `XaiContentPart` / `XaiAnnotation` / `XaiSummaryPart` / `XaiSearchAction` / `XaiIncompleteDetails` / `XaiUsage` / `XaiInputTokensDetails` / `XaiOutputTokensDetails`） | **共有**。`wire::Responses*` へ改名 |
-| **要求の型 3 個**（`XaiRequest` / `XaiInputItem` / `XaiTool`） | **共有 + 加算**。`store` / `reasoning` を `Option` で足す（`skip_serializing_if` なので **xAI の encode golden は 1 文字も動かない**） |
+| **要求の型 3 個**（`XaiRequest` / `XaiInputItem` / `XaiTool`） | ~~**共有 + 加算**~~ → **rev6 で訂正**（下記） |
+
+#### rev6 の訂正: **要求のトップレベル構造体は共有できない**（2026-08-11。P1 の着手時）
+
+**P0b の凍結が自分の中で割れていた** — `data_contract.yaml` の `Provider.paths` には
+**「応答の型だけを共有する」**と書いたのに、この表は**要求の型 3 個も共有**と
+書いていた。**P0b の同じコミットで矛盾を 2 箇所へ置いた**（Spec 20 D10 と同じ形 —
+1 つの契約の中で両立しないことが並ぶ）。
+
+**実装しようとして、共有できない理由が実在すると分かった**:
+
+| 欄 | xAI | OpenAI |
+|---|---|---|
+| `include` | **`["no_inline_citations"]` を常送**（Spec 31 D1/D5 の骨格） | **送らない**（T1 — stateless では `encrypted_content` が既定で来る） |
+| `reasoning` | 送らない（要約は既定で来る） | **4 欄を常送** |
+| `temperature` | 送る | **送ると 400**（D11） |
+
+**共有すると `include` で必ず割れる。** `XaiRequest.include` は
+`Vec<&'static str>` で `skip_serializing_if` を持たないので、OpenAI へは
+**`"include":[]` が飛ぶ**（未測定）。付ければ**xAI 側の golden が動く** —
+**どちらへ倒しても、片方の凍結を壊してからでないと共有できない。**
+
+**着地**:
+
+| 層 | 扱い |
+|---|---|
+| **応答の型 10 個** | **共有**（`Responses*` へ改名）。**11/11 の実測が根拠** |
+| **`XaiInputItem` / `XaiTool`** | **共有**（`ResponsesInputItem` / `ResponsesTool`）。`function_call` / `function_call_output` / flat な function tool は**両社で同じ形を実測している** |
+| **トップレベルの要求構造体** | **分ける**。`XaiRequest` は名前ごと据え置き、`OpenAiResponsesRequest` を新設 |
+
+**改名の射程が縮んだのが副産物** — `XaiRequest` を触らないので、
+**Spec 31 の encode golden の型名が動かない**。
+
+**一般化: 「同じエンドポイントだから同じ型」は、送る側では成立しない。**
+応答は相手が決めるので同型になりうるが、**要求は自分が決めるので、
+機能の選び方の差がそのまま欄の差になる**。**共有の可否は、
+測った側（応答）と決めた側（要求）で別々に判断する。**
 | encode / decode 本体 | **分ける**。`llm/openai_responses.rs` を新規 |
 
 **判定を測定へ落とす** — P0 の probe の合格条件に
