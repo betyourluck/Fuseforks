@@ -27,7 +27,7 @@ use command_group::AsyncCommandGroup;
 /// `env_clear` してからこの名前だけを親からコピーする。**これは安全対策ではない** —
 /// `PATH` を渡す以上、子プロセスは端末上の任意の実行ファイルへ届く。可用性のための
 /// 選択で、`echo $ANTHROPIC_API_KEY` のような最も稚拙な経路を 1 つ閉じるだけ。
-const PASSED_ENV: [&str; 7] = [
+const PASSED_ENV: [&str; 8] = [
     "PATH",
     "SYSTEMROOT",
     "TEMP",
@@ -35,6 +35,24 @@ const PASSED_ENV: [&str; 7] = [
     "HOME",
     "USERPROFILE",
     "LANG",
+    // **Windows OpenSSH はこれが環境ブロックに無いと起動直後に死ぬ**
+    // （2026-08-12 実測）。`C:\Windows\System32\OpenSSH\ssh.exe` は
+    // **`-V`（版を出すだけで接続も設定読みもしない）ですら
+    // 出力ゼロで exit 255** になり、`ProgramData` を足すと通る。
+    // 13 個の候補を 1 つずつ足して、通ったのはこれだけだった。
+    //
+    // **値は何でもよい。** 存在しないパスでも空文字でも通るので、
+    // `%ProgramData%\ssh\ssh_config` を読むからではない
+    // （この端末にそのファイルは無い）。**「環境ブロックに在る」ことだけが条件**で、
+    // 内部で何が起きているかは分かっていない。**再現する規則は確定、機序は未確定。**
+    //
+    // Git 版の `ssh.exe` は無くても動くので、**どちらが PATH で先に来るかで
+    // 症状が出たり出なかったりする**（`run:` 行の `resolved=` で読める）。
+    //
+    // 綴りは大小どれでも通ることを実測済み（`PROGRAMDATA` / `ProgramData` /
+    // `programdata` の 3 通りとも exit 0）。**Windows の環境ブロックは
+    // 参照が大小を区別しない**ので、`SYSTEMROOT` と同じ流儀に揃えてある。
+    "PROGRAMDATA",
 ];
 
 /// プロセス 1 本を走らせた結果。**整形前の生の値。**

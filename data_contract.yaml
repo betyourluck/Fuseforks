@@ -3418,9 +3418,20 @@ conversation_termination:
       - **非ゼロ終了は Err にしない。** 終了コード + stdout + stderr を Ok(String) で
         返す (failures.md #41 の一般化 3)
       - **環境変数は env_clear してから名前を指定して親の値をコピー**
-        (PATH / SYSTEMROOT / TEMP / TMP / HOME / USERPROFILE / LANG)。
+        (PATH / SYSTEMROOT / TEMP / TMP / HOME / USERPROFILE / LANG / PROGRAMDATA)。
         **PATH を渡す以上、子プロセスは端末上の任意の実行ファイルへ届く** —
-        可用性のための選択であって安全のためではない
+        可用性のための選択であって安全のためではない。
+        **数ではなく列挙で書く** — 総数を併記すると増えたときに 2 箇所で嘘になる (#67)
+      - **PROGRAMDATA は 2026-08-12 に足した。可用性のためで、境界は動かない。**
+        Windows OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) は
+        **これが環境ブロックに無いと起動直後に死ぬ** — `-V` (版を出すだけで
+        接続も設定読みもしない) ですら**出力ゼロで exit 255**。13 個の候補を
+        1 つずつ足して通ったのはこれだけ。**値は何でもよい** (存在しないパスでも
+        空文字でも通るので `%ProgramData%\ssh\ssh_config` を読むからではない。
+        その端末にそのファイルは無かった)。**規則は確定・機序は未確定。**
+        綴りは大小どれでも通る (Windows の環境ブロックは参照が大小を区別しない)。
+        **Git 版の ssh.exe は無くても動く**ので、**どちらが PATH で先に来るかで
+        症状が出たり出なかったりする**
       - **run は安全機構を増やさない。** 次の 4 点を契約と UI の両方に書く:
         (a) **作業フォルダ境界は run に効かない** (子プロセスは絶対パスで外を読める)
         (b) **file remove のごみ箱限定も意味を失う** (allow に入れたコマンドが rm を
