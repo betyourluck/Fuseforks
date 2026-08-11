@@ -452,6 +452,7 @@ mod tests {
             work_dir: Some(dir.clone()),
             cancel: None,
             rag_roots: Vec::new(),
+            language: crate::world::Language::Ja,
         };
 
         let spec = tool

@@ -59,6 +59,13 @@ pub struct ToolContext {
     /// ツール側が呼び出しごとに掛け直す（無効化であって削除ではない —
     /// パスを直せばその場で復活する）。
     pub rag_roots: Vec<PathBuf>,
+    /// モデルへ届く文言の言語（Spec 35。村の `language`）。
+    ///
+    /// **提示時にも実行時にも渡る** — `spec_for(&self, ctx)` が提示時に ctx を
+    /// 受けるので、個体別の提示文（`run` の「実行できる登録」の説明）を
+    /// この値で書き分けられる。`work_dir` と同じく、ツール自身に world を
+    /// 引かせず、オーケストレーターが解決して渡す。
+    pub language: crate::world::Language,
 }
 
 /// 実行可能なツール。
@@ -263,6 +270,7 @@ mod tests {
             work_dir: None,
             cancel: None,
             rag_roots: Vec::new(),
+            language: crate::world::Language::Ja,
         }
     }
 

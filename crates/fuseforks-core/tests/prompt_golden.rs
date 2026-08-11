@@ -10,6 +10,7 @@
 
 use fuseforks_core::config_store::ConfigStore;
 use fuseforks_core::model::{AgentId, AgentSpec, ConfigFileKind};
+use fuseforks_core::world::Language;
 
 async fn store_with_fixtures(dir: &std::path::Path) -> (ConfigStore, AgentSpec) {
     let store = ConfigStore::new(dir);
@@ -36,7 +37,7 @@ async fn ja_full_prompt_is_byte_identical_to_the_pre_spec35_output() {
     let dir = temp("full");
     let (store, spec) = store_with_fixtures(&dir).await;
     let (prompt, stable_len) = store
-        .compose_system_prompt(&spec, true, Some("R1 / R2"))
+        .compose_system_prompt(&spec, true, Some("R1 / R2"), Language::Ja)
         .await
         .unwrap();
 
@@ -47,13 +48,54 @@ async fn ja_full_prompt_is_byte_identical_to_the_pre_spec35_output() {
     );
 }
 
+/// 英語村の枠組みに日本語が 1 文字も無い（検収 2。**新規生成・空村に限定** —
+/// 言語を切り替えた村では D6 の古い System 行が日本語で残るので、
+/// ゼロは新規生成にしか成立しない）。
+///
+/// 村由来の本文（条例・Construct 等）は利用者の資産なので固定物で埋め、
+/// **コアが書いた枠組みだけ**を検査する形にしている（ASCII の固定物なら
+/// 仮名漢字カウントに混ざらない）。
+#[tokio::test]
+async fn en_framework_contains_no_japanese_for_a_fresh_village() {
+    fn ja_chars(s: &str) -> usize {
+        s.chars()
+            .filter(|c| matches!(*c as u32, 0x3040..=0x309F | 0x30A0..=0x30FF | 0x4E00..=0x9FFF))
+            .count()
+    }
+
+    let dir = temp("en");
+    let store = ConfigStore::new(&dir);
+    let id = AgentId::from("agent_01");
+    store.write_ordinance("Ordinance body").await.unwrap();
+    store.write_config(&id, ConfigFileKind::Construct, "Constraint A").await.unwrap();
+    store.write_config(&id, ConfigFileKind::Skill, "Skill B").await.unwrap();
+    store.write_config(&id, ConfigFileKind::Memory, "Memory C").await.unwrap();
+    let mut spec = AgentSpec::new(id, "Zari", "tpl");
+    spec.work_dir = Some("/work".to_string());
+
+    // 全部品あり（接地含む）で組んで、枠組みの全分岐を通す。
+    let (prompt, stable_len) = store
+        .compose_system_prompt(&spec, true, Some("R1 / R2"), Language::En)
+        .await
+        .unwrap();
+
+    assert_eq!(ja_chars(&prompt), 0, "コアの枠組みに日本語が残っている:\n{prompt}");
+    assert!(prompt.contains("# About you"), "{prompt}");
+    assert!(prompt.contains("## Working folder"), "{prompt}");
+    assert!(prompt.contains("## Grounding (Google Search)"), "{prompt}");
+    assert!(prompt.contains("## Current roster"), "{prompt}");
+    // 安定境界の意味は言語に依存しない（顔ぶれ・Memory は境界の外）。
+    let stable: String = prompt.chars().take(stable_len).collect();
+    assert!(!stable.contains("Current roster"), "顔ぶれが安定部分に入った");
+}
+
 /// 最小形（空村・接地なし・顔ぶれなし・作業フォルダなし）。
 #[tokio::test]
 async fn ja_minimal_prompt_is_byte_identical_to_the_pre_spec35_output() {
     let dir = temp("min");
     let store = ConfigStore::new(&dir);
     let spec = AgentSpec::new(AgentId::from("agent_01"), "ザリ", "tpl");
-    let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+    let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
 
     assert_eq!(stable_len, 172);
     assert_eq!(

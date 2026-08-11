@@ -43,6 +43,7 @@ fn ctx(work_dir: &Path) -> ToolContext {
         work_dir: Some(work_dir.to_path_buf()),
         cancel: None,
         rag_roots: Vec::new(),
+        language: fuseforks_core::world::Language::Ja,
     }
 }
 

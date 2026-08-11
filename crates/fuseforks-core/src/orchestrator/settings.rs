@@ -47,9 +47,11 @@ impl Orchestrator {
 
     /// UI の表示言語を差し替え、`world.json` へ書き戻す。
     ///
-    /// コアはこの値で分岐しない（settings_contract の案 A）ので、
-    /// プロンプト・バックエンド・履歴のどれにも触らない — 変わるのは
-    /// `World` の 1 フィールドと投影だけ。
+    /// **Spec 35 から、プロンプトの新規生成はこの値で分岐する**（枠組み・
+    /// ツールの提示。次のターンから効く）。エラー文言は今も分岐しない
+    /// （settings_contract 層 2 の案 A — コアは日本語で返し UI が訳す）。
+    /// 履歴・バックエンドには触らず、保存済みの System 行と封筒は
+    /// 記録時の言語のまま残る（settings_contract 層 3）。
     pub async fn set_language(&self, language: crate::world::Language) -> CoreResult<()> {
         self.shared.world.write().await.set_language(language);
         self.persist().await

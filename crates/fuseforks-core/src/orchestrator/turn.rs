@@ -628,9 +628,17 @@ pub(super) async fn handle_message(
             .collect();
         (!entries.is_empty()).then(|| entries.join(" / "))
     };
+    // モデルへ届く面の言語（Spec 35）。初回に確定して再判定しないので、
+    // ターンごとに読み直しても村の中では一定（切り替えた直後の 1 回だけ変わる）。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     let (system_prompt, stable_len) = shared
         .store
-        .compose_system_prompt(&spec, template.grounding_active(), roster.as_deref())
+        .compose_system_prompt(&spec, template.grounding_active(), roster.as_deref(), language)
         .await?;
 
     // 3. 転送先ごとのツールを組む。
@@ -809,6 +817,12 @@ async fn present_tools(
         // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
         // （空または全滅なら提示しない）をここから判定する。
         rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
+        language: shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja),
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -2231,7 +2245,7 @@ async fn execute_tool(
     // 作業フォルダ（grep / diff の探索範囲）と宣言フォルダ（rag）は
     // 呼び出しの瞬間に解決する。ツール登録時に固定すると、設定変更が
     // 次の再登録まで効かない。
-    let (work_dir, rag_roots) = {
+    let (work_dir, rag_roots, language) = {
         let world = shared.world.read().await;
         let record = world.agent(agent_id).ok();
         (
@@ -2244,6 +2258,7 @@ async fn execute_tool(
                     record.spec.rag_sources.iter().map(std::path::PathBuf::from).collect()
                 })
                 .unwrap_or_default(),
+            world.language().unwrap_or(crate::world::Language::Ja),
         )
     };
 
@@ -2251,6 +2266,7 @@ async fn execute_tool(
         agent_id: agent_id.clone(),
         work_dir,
         rag_roots,
+        language,
         // ターンのトークンを渡す。**見るのは `run` だけ**（外部プロセスを
         // 起動するツールは、周回境界まで待つと最長 1 時間走り続ける）。
         // Spec 10 の不変条件 1（検査点は周回境界だけ）はターンループの話で、

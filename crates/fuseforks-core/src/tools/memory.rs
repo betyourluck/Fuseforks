@@ -136,6 +136,7 @@ mod tests {
             work_dir: None,
             cancel: None,
             rag_roots: Vec::new(),
+            language: crate::world::Language::Ja,
         }
     }
 

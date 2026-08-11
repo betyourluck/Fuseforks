@@ -26,7 +26,7 @@ use crate::command::CommandPolicy;
 use crate::error::{CoreError, CoreResult};
 use crate::model::{AgentId, AgentSpec, ConfigFileKind};
 use crate::schedule::ScheduledTask;
-use crate::world::PersistedWorld;
+use crate::world::{Language, PersistedWorld};
 
 /// 登録簿の永続化ファイル名。
 const WORLD_FILE: &str = "world.json";
@@ -491,6 +491,7 @@ impl ConfigStore {
         spec: &AgentSpec,
         grounded: bool,
         roster: Option<&str>,
+        language: Language,
     ) -> CoreResult<(String, usize)> {
         let ordinance = self.read_ordinance().await?;
         let construct = self.read_config(&spec.id, ConfigFileKind::Construct).await?;
@@ -498,10 +499,18 @@ impl ConfigStore {
         let memory = self.read_config(&spec.id, ConfigFileKind::Memory).await?;
 
         let mut prompt = String::new();
+        // **加算で二言語**（Spec 35 D1）。日本語の腕はバイト等価で据え置き —
+        // golden（tests/prompt_golden.rs）が (prompt, stable_len) の両方を
+        // リテラルで固定している。英語は翻訳ではなく英語で書く（D7）。
         if !ordinance.is_empty() {
-            prompt.push_str(
-                "# 村の条例（この場の全員に適用される規則。個別設定より優先される）\n",
-            );
+            prompt.push_str(match language {
+                Language::Ja => {
+                    "# 村の条例（この場の全員に適用される規則。個別設定より優先される）\n"
+                }
+                Language::En => {
+                    "# Village Ordinance (rules for everyone here; they override individual settings)\n"
+                }
+            });
             prompt.push_str(&ordinance);
             prompt.push_str("\n\n");
         }
@@ -512,15 +521,28 @@ impl ConfigStore {
         // 起きた。この場には複数のエージェントが居て、それぞれが自分で喋る —
         // という前提はモデルにとって自明ではない。**役の境界は、書かれていなければ
         // 存在しない。**
-        prompt.push_str(&format!(
-            "# あなたについて\n\
-             あなたはこの場に参加している **{}** です。\n\
-             - **{} 自身の発言だけを書いてください。** 他のエージェントの発言を\
-             代筆・代弁してはいけません。彼らはそれぞれ自分で発言します。\n\
-             - 発言に自分の名前を書く必要はありません。誰の発言かは自動的に伝わります。\n\
-             - 相手の発言を装って会話を先に進めないでください。\n\n",
-            spec.name, spec.name
-        ));
+        prompt.push_str(&match language {
+            Language::Ja => format!(
+                "# あなたについて\n\
+                 あなたはこの場に参加している **{}** です。\n\
+                 - **{} 自身の発言だけを書いてください。** 他のエージェントの発言を\
+                 代筆・代弁してはいけません。彼らはそれぞれ自分で発言します。\n\
+                 - 発言に自分の名前を書く必要はありません。誰の発言かは自動的に伝わります。\n\
+                 - 相手の発言を装って会話を先に進めないでください。\n\n",
+                spec.name, spec.name
+            ),
+            Language::En => format!(
+                "# About you\n\
+                 You are **{}**, one of the participants in this space.\n\
+                 - **Write only {}'s own words.** Never write or paraphrase another \
+                 agent's lines — each of them speaks for themselves.\n\
+                 - No need to sign your messages; who is speaking is conveyed \
+                 automatically.\n\
+                 - Never move the conversation forward by staging someone else's \
+                 reply.\n\n",
+                spec.name, spec.name
+            ),
+        });
 
         // 作業フォルダの実パスを開示する。ツールは相対パスしか返さないため、
         // これが無いとモデルは説明文に書く絶対パスを**推測で創作**する
@@ -528,14 +550,24 @@ impl ConfigStore {
         // 判断材料の欠落は、禁止ではなく情報で埋める — 知っていれば創作する
         // 理由が消える）。
         if let Some(work_dir) = &spec.work_dir {
-            prompt.push_str(&format!(
-                "## 作業フォルダ\n\
-                 あなたのファイル系ツール（grep / fd / diff / sd / yq）が\
-                 読み書きできるのは `{work_dir}` の中だけです。ツールが返す\
-                 相対パスは、このフォルダ直下からのパスです。ファイルの場所を\
-                 説明するときは、このパスを基準にしてください\
-                 （それ以外の場所を推測で語らないこと）。\n\n"
-            ));
+            prompt.push_str(&match language {
+                Language::Ja => format!(
+                    "## 作業フォルダ\n\
+                     あなたのファイル系ツール（grep / fd / diff / sd / yq）が\
+                     読み書きできるのは `{work_dir}` の中だけです。ツールが返す\
+                     相対パスは、このフォルダ直下からのパスです。ファイルの場所を\
+                     説明するときは、このパスを基準にしてください\
+                     （それ以外の場所を推測で語らないこと）。\n\n"
+                ),
+                Language::En => format!(
+                    "## Working folder\n\
+                     Your file tools (grep / fd / diff / sd / yq) can read and \
+                     write only inside `{work_dir}`. Relative paths returned by \
+                     the tools are rooted at this folder. When you describe where \
+                     a file is, use this path as the base (do not guess about \
+                     locations outside it).\n\n"
+                ),
+            });
         }
         // 接地の作法。**「出典を出すな」ではなく「何が手元に無いか」を伝える。**
         //
@@ -550,18 +582,34 @@ impl ConfigStore {
         // ここに置いている。人格ではなくワイヤ経路の性質なので、SKILL.md では
         // なく実装側から入れる（接地を有効にした全員に等しく効く）。
         if grounded {
-            prompt.push_str(
-                "## グラウンディング（Google 検索）について\n\
-                 あなたは Google 検索で裏を取ってから答えられます。ただし\
-                 **参照したページの URL は、あなたの手元には渡ってきません。**\n\
-                 - **URL を書かないでください。** 出典を求められたら\
-                 「URL は取得できない」と正直に答えてください。\n\
-                 - 代わりに、**実際に検索した語**と、**発表元の名前**\
-                 （気象庁・内閣府・◯◯新聞 など）は答えられます。それを示してください。\n\
-                 - もっともらしい URL を組み立ててはいけません。\
-                 実在しない URL は、出典が無いことより有害です\
-                 （受け取った相手が確認済みだと誤解します）。\n\n",
-            );
+            prompt.push_str(match language {
+                Language::Ja => {
+                    "## グラウンディング（Google 検索）について\n\
+                     あなたは Google 検索で裏を取ってから答えられます。ただし\
+                     **参照したページの URL は、あなたの手元には渡ってきません。**\n\
+                     - **URL を書かないでください。** 出典を求められたら\
+                     「URL は取得できない」と正直に答えてください。\n\
+                     - 代わりに、**実際に検索した語**と、**発表元の名前**\
+                     （気象庁・内閣府・◯◯新聞 など）は答えられます。それを示してください。\n\
+                     - もっともらしい URL を組み立ててはいけません。\
+                     実在しない URL は、出典が無いことより有害です\
+                     （受け取った相手が確認済みだと誤解します）。\n\n"
+                }
+                Language::En => {
+                    "## Grounding (Google Search)\n\
+                     You can check your answer against Google Search before \
+                     replying, but **the URLs of the pages you consulted are \
+                     never handed back to you.**\n\
+                     - **Do not write URLs.** If asked for sources, say honestly \
+                     that URLs are not available to you.\n\
+                     - What you can report instead are **the exact search terms \
+                     you used** and **the names of the publishers** (a weather \
+                     bureau, a ministry, a newspaper, and so on). Offer those.\n\
+                     - Never assemble a plausible-looking URL. A URL that does \
+                     not exist is worse than having no source at all (the reader \
+                     will assume it has been verified).\n\n"
+                }
+            });
         }
 
         if !construct.is_empty() {
@@ -587,7 +635,10 @@ impl ConfigStore {
         // 順序・形式は呼び出し側（orchestrator）が組む — 状態は World の持ち物で、
         // ConfigStore はファイルしか知らない。
         if let Some(roster) = roster {
-            prompt.push_str("## 今の顔ぶれ\n");
+            prompt.push_str(match language {
+                Language::Ja => "## 今の顔ぶれ\n",
+                Language::En => "## Current roster\n",
+            });
             prompt.push_str(roster);
             prompt.push_str("\n\n");
         }
@@ -927,7 +978,7 @@ mod tests {
             .unwrap();
 
         let spec = AgentSpec::new(id.clone(), "Planner", "tpl");
-        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
 
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(stable.contains("制約A") && stable.contains("能力B"));
@@ -953,11 +1004,11 @@ mod tests {
 
         let roster = "agent_2（ジェミー）: 稼働中 / agent_3（ロボットくん1号）: 停止中";
         let (with, stable_with) = store
-            .compose_system_prompt(&spec, false, Some(roster))
+            .compose_system_prompt(&spec, false, Some(roster), Language::Ja)
             .await
             .unwrap();
         let (without, stable_without) =
-            store.compose_system_prompt(&spec, false, None).await.unwrap();
+            store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
 
         // 境界の値は顔ぶれの有無で変わらない（変わればキャッシュキーが揺れる）。
         assert_eq!(stable_with, stable_without, "顔ぶれは境界を動かさない");
@@ -982,7 +1033,7 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new(AgentId::from("agent_01"), "ジェミー", "tpl");
 
-        let (grounded, stable_len) = store.compose_system_prompt(&spec, true, None).await.unwrap();
+        let (grounded, stable_len) = store.compose_system_prompt(&spec, true, None, Language::Ja).await.unwrap();
         assert!(grounded.contains("URL は、あなたの手元には渡ってきません"));
         assert!(grounded.contains("検索した語"), "代わりに何を言えるかも伝える");
 
@@ -991,7 +1042,7 @@ mod tests {
         assert!(stable.contains("グラウンディング（Google 検索）について"));
 
         // 接地していないエージェントには出さない。無関係な制約を負わせない。
-        let (plain, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+        let (plain, _) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
         assert!(!plain.contains("グラウンディング（Google 検索）について"));
     }
 
@@ -1074,11 +1125,11 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
 
         let mut spec = AgentSpec::new("agent_1", "コーダー", "tpl");
-        let (prompt, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
         assert!(!prompt.contains("作業フォルダ"), "未設定なら節ごと出さない");
 
         spec.work_dir = Some("D:\\Projects\\my-app".into());
-        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+        let (prompt, stable_len) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
         assert!(prompt.contains("D:\\Projects\\my-app"), "実パスが入ること: {prompt}");
         let stable: String = prompt.chars().take(stable_len).collect();
         assert!(
@@ -1098,7 +1149,7 @@ mod tests {
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new("agent_1", "ジェミー", "tpl");
 
-        let (prompt, _) = store.compose_system_prompt(&spec, false, None).await.unwrap();
+        let (prompt, _) = store.compose_system_prompt(&spec, false, None, Language::Ja).await.unwrap();
 
         assert!(prompt.contains("ジェミー"), "自分の名前が入ること");
         assert!(

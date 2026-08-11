@@ -6399,11 +6399,16 @@ async fn the_language_is_determined_once_and_persisted() {
     );
 }
 
-/// Spec 13: 言語の切り替えはシステムプロンプトに触らない（多言語化 3 層の (3) —
-/// 「system_digest が切り替えの前後で同一」の結合版。訳すのは UI 文言だけで、
-/// モデルへの入力は 1 字も変わらない）。
+/// Spec 35: 言語の切り替えは**次のターンのシステムプロンプトから効く**。
+///
+/// **Spec 13 の旧凍結（切り替えはプロンプトに触らない）を意図的に付け替えた
+/// テスト。** 旧契約の案 A はエラー文言の話として残り、プロンプトの新規生成は
+/// Spec 35 からこの値で分岐する（settings_contract 層 3 の改訂）。
+/// 日本語のバイト等価は tests/prompt_golden.rs の golden が別途固定している —
+/// このテストが見るのは**切り替えが効くこと**で、あちらが見るのは
+/// **切り替えない限り 1 バイトも動かないこと**。対で 1 つの契約になる。
 #[tokio::test]
-async fn switching_the_language_leaves_the_system_prompt_untouched() {
+async fn switching_the_language_takes_effect_from_the_next_turn() {
     let dir = TempDir::new("language-prompt");
     let backend = Arc::new(PromptProbeBackend {
         systems: std::sync::Mutex::new(Vec::new()),
@@ -6431,14 +6436,25 @@ async fn switching_the_language_leaves_the_system_prompt_untouched() {
 
     let systems = backend.systems.lock().unwrap();
     assert_eq!(systems.len(), 2, "2 ターン分の記録があること");
-    assert_eq!(
-        systems[0], systems[1],
-        "言語切り替えの前後で system ブロックは 1 字も変わらない"
+    assert!(
+        systems[0].contains("# あなたについて"),
+        "切り替え前は日本語の枠組み: {}",
+        systems[0]
+    );
+    assert!(
+        systems[1].contains("# About you"),
+        "切り替え後は英語の枠組み（次のターンから効く）: {}",
+        systems[1]
+    );
+    assert!(
+        !systems[1].contains("# あなたについて"),
+        "英語の村に日本語の枠組みが混ざらない: {}",
+        systems[1]
     );
 
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
-    assert_eq!(json["language"].as_str(), Some("en"), "投影は切り替わる");
+    assert_eq!(json["language"].as_str(), Some("en"), "投影も切り替わる");
 }
 
 /// Spec 13: 0 は設定経路で拒否される（INVALID_TOKEN_BUDGET）。

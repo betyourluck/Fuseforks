@@ -1224,6 +1224,7 @@ mod tests {
             work_dir: work_dir.map(Path::to_path_buf),
             cancel: None,
             rag_roots: Vec::new(),
+            language: crate::world::Language::Ja,
         }
     }
 

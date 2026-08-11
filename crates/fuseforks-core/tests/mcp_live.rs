@@ -133,6 +133,7 @@ async fn connects_to_a_real_server_and_calls_a_tool() {
         work_dir: None,
         cancel: None,
         rag_roots: Vec::new(),
+        language: fuseforks_core::world::Language::Ja,
     };
     let args = serde_json::json!({ "path": dir.0.join("hello.txt").display().to_string() });
     let output = read_tool.call(&ctx, &args).await.expect("呼び出せること");
