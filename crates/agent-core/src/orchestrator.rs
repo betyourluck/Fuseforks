@@ -4201,7 +4201,7 @@ async fn handle_message(
 ) -> CoreResult<()> {
     let Envelope {
         incoming,
-        reply_to,
+        mut reply_to,
         // 自ターンのトークンは agent_loop が子として導出済み（`turn.token`）。
         // ここで別々に見ると 2 本の検査になる — 1 本に畳むのが Phase 2 の核。
         cancel: _,
@@ -4328,20 +4328,8 @@ async fn handle_message(
         awaiting_reply,
         offer_transfer: use_handoff_tools && spec.allow_handoff && !awaiting_reply,
     };
-    // 以降は個々の真偽で読む。**束ねたのは 3 つが同じ 1 つの規律に属するから**で、
-    // 読む側の書き方を変えるためではない（分割代入なので下の段は無変更）。
-    let HandoffGates {
-        offer_transfer, ..
-    } = gates;
-
     // 4. プロンプトを組む。組み立ての中身は build_prompt が持つ。
-    let TurnPrompt {
-        // 実行ループが周ごとに呼び出しと結果を積む（#29 — 対で積まないと 400）。
-        mut messages,
-        sent_user_turn,
-        system_digest,
-        history_depth,
-    } = build_prompt(
+    let prompt = build_prompt(
         shared,
         agent_id,
         &spec,
@@ -4355,17 +4343,199 @@ async fn handle_message(
     .await;
 
     // 5. ツールを提示する。組み立ての中身は present_tools が持つ。
+    let tools = present_tools(shared, agent_id, &spec, &template, &handoffs, gates).await;
+    // 6-7. 実行ループと統計。ここで打ち切り・予算切れなら後始末まで済んでいる。
+    let Some(product) = run_turn(
+        shared,
+        agent_id,
+        turn,
+        &incoming,
+        &mut reply_to,
+        &budget,
+        &participants,
+        &spec,
+        &template,
+        &handoffs,
+        gates,
+        prompt,
+        tools,
+        stable_len,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+
+    // 8. 記録と転送。
+    dispatch_outcome(
+        shared,
+        agent_id,
+        &incoming,
+        reply_to,
+        product,
+        budget,
+        participants,
+    )
+    .await
+}
+
+
+
+/// モデルへ渡すツール一式（段 5）。
+///
+/// **`specs` と `executable` は別物**。前者は提示集合（転送・委譲・`plan`・
+/// `room_log` を含む）、後者は registry と個別 MCP で**実際に走らせられる**もの。
+/// 合成側（`ask_*` / `plan` / `room_log`）は `executable` に居ないので、
+/// 実行可否を `executable` だけで判定すると呼び出しが素通りして
+/// **モデルが呼んだのに何も起きない**（エラーにならないので気づけない）。
+/// 2 つを同じ型で返すのは、その差を読む側の目に入れるため。
+struct PresentedTools {
+    /// モデルへ提示する全部。
+    specs: Vec<ToolSpec>,
+    /// registry + 個別 MCP で実行できるもの（実行可否の判定に使う）。
+    executable: Vec<ToolSpec>,
+    /// ツールを送るか。空の提示集合とツール非対応モデルで偽。
+    use_tools: bool,
+}
+
+/// ツールを提示する（段 5）。
+///
+/// **切り出したのは、ここが「何を選べるか」だけを決める段だから** —
+/// 実行もしなければ応答も見ない。提示は個体別に解決する（`spec_for`）ので、
+/// 名前の集合では書けない除外（`run` の許可リストが空、`rag` の宣言が空）が
+/// ここに入る。
+async fn present_tools(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    spec: &AgentSpec,
+    template: &ModelTemplate,
+    handoffs: &HandoffTools,
+    gates: HandoffGates,
+) -> PresentedTools {
+    let HandoffGates {
+        use_handoff_tools,
+        offer_transfer,
+        ..
+    } = gates;
+    // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
+    //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
+    //    転送だけ別扱いにする理由が無い。区別するのはこちら側の役目。
+    //    同梱ツールはエージェント個別の提示制御（enabled_tools + 作業フォルダ
+    //    連動の自動除外）を通す — 使わないツールのスキーマは毎ターンの
+    //    固定費になる（トークン節約は最重要課題）。
+    let mut specs = if use_handoff_tools {
+        // 転送は `offer_transfer` のときだけ。委譲と `plan` は常に載る。
+        let mut both = if offer_transfer {
+            handoffs.specs()
+        } else {
+            Vec::new()
+        };
+        both.extend(handoffs.ask_specs());
+        // 並列委譲は接続先 2 体以上のときだけ載る（Spec 04）。
+        // 1 体しか繋がっていないエージェントには使えない選択肢なので、
+        // そのスキーマを毎ターンの固定費として払わせない。
+        both.extend(handoffs.plan_specs());
+        both
+    } else {
+        Vec::new()
+    };
+    // 広場ログの全文読み（Spec 22 — `room_log_pull` 契約）。提示は
+    // hears_room_log ただ 1 点で決まる — 抜粋が届かない個体は ID を知る経路が
+    // 無い。ログが空かどうかでは揺らさない（提示は静的・状態は動的）。
+    // enabledTools の対象外（`ask_*` / `rag` と同じ側）。
+    if spec.hears_room_log {
+        specs.push(room_log_tool_spec());
+    }
+    // 提示は**個体別に解決する**。`spec_for` を持つツール（Spec 15 の `run`）は、
+    // その個体から実行できる登録だけを列挙し、1 件も無ければ自分を落とす。
+    // 名前の集合（`WORK_DIR_TOOL_NAMES`）では書けない除外がここに入る。
+    let presentation_ctx = ToolContext {
+        agent_id: agent_id.clone(),
+        work_dir: spec.work_dir.clone().map(std::path::PathBuf::from),
+        cancel: None,
+        // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
+        // （空または全滅なら提示しない）をここから判定する。
+        rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
+    };
+    let shared_specs: Vec<ToolSpec> = shared
+        .tools
+        .read()
+        .await
+        .specs_for(&presentation_ctx)
+        .await
+        .into_iter()
+        .filter(|tool| is_bundled_tool_presented(&tool.name, spec))
+        .collect();
+    // エージェント別 MCP のツールを重ねる（ツール収集の最終形）。
+    // 同名は個別が勝つ — 共通と同じサーバーを自分専用の接続先で
+    // 置き換える正当な手段（上書き可能な加算）。
+    let personal_specs: Vec<ToolSpec> = {
+        let map = shared.agent_mcp.read().await;
+        map.get(agent_id)
+            .map(|state| state.manager.tools().iter().map(|tool| tool.spec()).collect())
+            .unwrap_or_default()
+    };
+    let executable = merge_tool_specs(shared_specs, personal_specs);
+    specs.extend(executable.iter().cloned());
+    let use_tools = !specs.is_empty() && template.use_tools;
+    PresentedTools {
+        specs,
+        executable,
+        use_tools,
+    }
+}
+
+
+/// ターンを走らせる（段 6-7）。**ここが `handle_message` の核**。
+///
+/// 戻り値の `None` は「打ち切り・予算切れで、後始末まで済んでいる」。
+/// 出口 3 点セット（会話ログ・履歴・依頼主への `Reply`）はその中で完了して
+/// いるので、呼び出し側は `Ok(())` で降りるだけでよい。
+///
+/// 返す [`TurnProduct`] は**そのまま段 8 の入力**。中で溜める 4 つ
+/// （outcome / tokens / grounding / reasoning_summary）は 1 ターンぶんの寿命で、
+/// 周ごとに上書きすると先に起きた接地や要約が消える。
+#[allow(clippy::too_many_arguments)]
+async fn run_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    turn: &TurnHandle,
+    incoming: &AgentMessage,
+    // **`&mut` で受けるのは、早期終了の 2 経路だけが消費するから。**
+    // 通常終了では段 8 が使うので、ここで所有を奪うと戻せない。
+    reply_to: &mut Option<tokio::sync::oneshot::Sender<Reply>>,
+    budget: &Option<Arc<crate::budget::BudgetPool>>,
+    participants: &Option<Participants>,
+    spec: &AgentSpec,
+    template: &ModelTemplate,
+    handoffs: &HandoffTools,
+    gates: HandoffGates,
+    prompt: TurnPrompt,
+    tools: PresentedTools,
+    stable_len: usize,
+) -> CoreResult<Option<TurnProduct>> {
+    let HandoffGates {
+        use_handoff_tools,
+        offer_transfer,
+        ..
+    } = gates;
+    let TurnPrompt {
+        // 実行ループが周ごとに呼び出しと結果を積む（#29 — 対で積まないと 400）。
+        mut messages,
+        sent_user_turn,
+        system_digest,
+        history_depth,
+    } = prompt;
     let PresentedTools {
         specs,
         executable,
         use_tools,
-    } = present_tools(shared, agent_id, &spec, &template, &handoffs, gates).await;
-
+    } = tools;
     // 6. 実行ループ。
     //    規則は OpenAI Agents SDK と同じ:
     //    ツールを呼んだら実行して結果を積み、もう一度呼ぶ。
     //    ツールを呼ばないテキスト出力が出たら、それが最終出力。
-    let backend = shared.backend_for(&template).await?;
+    let backend = shared.backend_for(template).await?;
     // キャッシュ読み取り分は別に数える。合計だけ見ていると、キャッシュが
     // 一度も効いていない状態と完全に効いている状態が同じ数字に見える
     // (実際、実機で 5 体全員が無キャッシュのまま数日走っていた。failures.md #33)。
@@ -4423,7 +4593,7 @@ async fn handle_message(
             return finish_interrupted(
                 shared,
                 agent_id,
-                reply_to,
+                reply_to.take(),
                 turn,
                 &sent_user_turn,
                 TurnSpend {
@@ -4434,7 +4604,7 @@ async fn handle_message(
                     hop: incoming.hop,
                 },
             )
-            .await;
+            .await.map(|()| None);
         }
 
         // 予算の検査（Spec 11）。cancel の**後**に見る — 同時成立の分類は
@@ -4447,7 +4617,7 @@ async fn handle_message(
             return finish_budget_exhausted(
                 shared,
                 agent_id,
-                reply_to,
+                reply_to.take(),
                 pool,
                 &sent_user_turn,
                 TurnSpend {
@@ -4458,7 +4628,7 @@ async fn handle_message(
                     hop: incoming.hop,
                 },
             )
-            .await;
+            .await.map(|()| None);
         }
 
         let request = ChatRequest {
@@ -4661,7 +4831,7 @@ async fn handle_message(
                 Ok(run_plan(
                     shared,
                     agent_id,
-                    &handoffs,
+                    handoffs,
                     call,
                     incoming.hop,
                     plan_wave,
@@ -4800,7 +4970,7 @@ async fn handle_message(
             return finish_budget_exhausted(
                 shared,
                 agent_id,
-                reply_to,
+                reply_to.take(),
                 pool,
                 &sent_user_turn,
                 TurnSpend {
@@ -4811,7 +4981,7 @@ async fn handle_message(
                     hop: incoming.hop,
                 },
             )
-            .await;
+            .await.map(|()| None);
         }
 
         messages.push(ChatMessage::system(match &repeat_stop {
@@ -5010,129 +5180,12 @@ async fn handle_message(
          reasoning={reasoning}",
         incoming.hop,
     );
-
-    // 8. 記録と転送。
-    dispatch_outcome(
-        shared,
-        agent_id,
-        &incoming,
-        reply_to,
-        TurnProduct {
-            outcome,
-            tokens,
-            grounding,
-            reasoning_summary,
-        },
-        budget,
-        participants,
-    )
-    .await
-}
-
-
-
-/// モデルへ渡すツール一式（段 5）。
-///
-/// **`specs` と `executable` は別物**。前者は提示集合（転送・委譲・`plan`・
-/// `room_log` を含む）、後者は registry と個別 MCP で**実際に走らせられる**もの。
-/// 合成側（`ask_*` / `plan` / `room_log`）は `executable` に居ないので、
-/// 実行可否を `executable` だけで判定すると呼び出しが素通りして
-/// **モデルが呼んだのに何も起きない**（エラーにならないので気づけない）。
-/// 2 つを同じ型で返すのは、その差を読む側の目に入れるため。
-struct PresentedTools {
-    /// モデルへ提示する全部。
-    specs: Vec<ToolSpec>,
-    /// registry + 個別 MCP で実行できるもの（実行可否の判定に使う）。
-    executable: Vec<ToolSpec>,
-    /// ツールを送るか。空の提示集合とツール非対応モデルで偽。
-    use_tools: bool,
-}
-
-/// ツールを提示する（段 5）。
-///
-/// **切り出したのは、ここが「何を選べるか」だけを決める段だから** —
-/// 実行もしなければ応答も見ない。提示は個体別に解決する（`spec_for`）ので、
-/// 名前の集合では書けない除外（`run` の許可リストが空、`rag` の宣言が空）が
-/// ここに入る。
-async fn present_tools(
-    shared: &Arc<Shared>,
-    agent_id: &AgentId,
-    spec: &AgentSpec,
-    template: &ModelTemplate,
-    handoffs: &HandoffTools,
-    gates: HandoffGates,
-) -> PresentedTools {
-    let HandoffGates {
-        use_handoff_tools,
-        offer_transfer,
-        ..
-    } = gates;
-    // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
-    //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
-    //    転送だけ別扱いにする理由が無い。区別するのはこちら側の役目。
-    //    同梱ツールはエージェント個別の提示制御（enabled_tools + 作業フォルダ
-    //    連動の自動除外）を通す — 使わないツールのスキーマは毎ターンの
-    //    固定費になる（トークン節約は最重要課題）。
-    let mut specs = if use_handoff_tools {
-        // 転送は `offer_transfer` のときだけ。委譲と `plan` は常に載る。
-        let mut both = if offer_transfer {
-            handoffs.specs()
-        } else {
-            Vec::new()
-        };
-        both.extend(handoffs.ask_specs());
-        // 並列委譲は接続先 2 体以上のときだけ載る（Spec 04）。
-        // 1 体しか繋がっていないエージェントには使えない選択肢なので、
-        // そのスキーマを毎ターンの固定費として払わせない。
-        both.extend(handoffs.plan_specs());
-        both
-    } else {
-        Vec::new()
-    };
-    // 広場ログの全文読み（Spec 22 — `room_log_pull` 契約）。提示は
-    // hears_room_log ただ 1 点で決まる — 抜粋が届かない個体は ID を知る経路が
-    // 無い。ログが空かどうかでは揺らさない（提示は静的・状態は動的）。
-    // enabledTools の対象外（`ask_*` / `rag` と同じ側）。
-    if spec.hears_room_log {
-        specs.push(room_log_tool_spec());
-    }
-    // 提示は**個体別に解決する**。`spec_for` を持つツール（Spec 15 の `run`）は、
-    // その個体から実行できる登録だけを列挙し、1 件も無ければ自分を落とす。
-    // 名前の集合（`WORK_DIR_TOOL_NAMES`）では書けない除外がここに入る。
-    let presentation_ctx = ToolContext {
-        agent_id: agent_id.clone(),
-        work_dir: spec.work_dir.clone().map(std::path::PathBuf::from),
-        cancel: None,
-        // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
-        // （空または全滅なら提示しない）をここから判定する。
-        rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
-    };
-    let shared_specs: Vec<ToolSpec> = shared
-        .tools
-        .read()
-        .await
-        .specs_for(&presentation_ctx)
-        .await
-        .into_iter()
-        .filter(|tool| is_bundled_tool_presented(&tool.name, spec))
-        .collect();
-    // エージェント別 MCP のツールを重ねる（ツール収集の最終形）。
-    // 同名は個別が勝つ — 共通と同じサーバーを自分専用の接続先で
-    // 置き換える正当な手段（上書き可能な加算）。
-    let personal_specs: Vec<ToolSpec> = {
-        let map = shared.agent_mcp.read().await;
-        map.get(agent_id)
-            .map(|state| state.manager.tools().iter().map(|tool| tool.spec()).collect())
-            .unwrap_or_default()
-    };
-    let executable = merge_tool_specs(shared_specs, personal_specs);
-    specs.extend(executable.iter().cloned());
-    let use_tools = !specs.is_empty() && template.use_tools;
-    PresentedTools {
-        specs,
-        executable,
-        use_tools,
-    }
+    Ok(Some(TurnProduct {
+        outcome,
+        tokens,
+        grounding,
+        reasoning_summary,
+    }))
 }
 
 /// 送るプロンプト一式（段 4）。
