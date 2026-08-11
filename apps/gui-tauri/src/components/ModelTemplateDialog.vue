@@ -157,6 +157,7 @@ const PROVIDERS: { value: Provider | null; labelKey: string }[] = [
   { value: "anthropic", labelKey: "modelTemplate.providerAnthropic" },
   { value: "gemini", labelKey: "modelTemplate.providerGemini" },
   { value: "xai_responses", labelKey: "modelTemplate.providerXaiResponses" },
+  { value: "open_ai_responses", labelKey: "modelTemplate.providerOpenAiResponses" },
 ];
 
 /**
@@ -171,6 +172,8 @@ const skills = computed(() =>
       googleSearch: false,
       xaiWebSearch: false,
       xaiXSearch: false,
+      openaiWebSearch: false,
+      openaiReasoningPro: false,
     },
   ),
 );
@@ -600,6 +603,39 @@ function onTemperature(raw: string): void {
             </template>
 
             <!--
+              OpenAI の web 検索（Spec 34 D5）。**トグルは 1 つ** — xAI が 2 つに
+              割れたのは別ツール・別課金・別 output 種別を実測したからで、
+              数を写す理由は無い。送る type は `web_search`（`web_search_preview`
+              は別名で、input_tokens が 1 バイトも違わない）。
+            -->
+            <template v-if="skills.openaiWeb.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.openaiWebSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.openaiWebSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.openaiWebSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!--
+              Pro 推論モード（Spec 34 D4）。**トグルで足りる** — `mode` を
+              送らないのと `"standard"` は input_tokens が完全に一致する
+              （実測 20 / 20）ので、省略 ≡ standard。
+              **注記に数字を 2 つ書く** — 精度（Terra 23.3 → 28.5）と入力の
+              固定費（+1,538）。片方だけだと押す判断ができない。
+            -->
+            <template v-if="skills.openaiPro.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.openaiReasoningPro") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.openaiReasoningPro" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.openaiReasoningProHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!--
               パッシブな固有スキル（設定を持たず、そのワイヤなら常に効く）。
               **チェックボックスは置かない** — 操作できないものを操作の形で
               出すのは「押しても効かないチェックを見せない」の裏返しの嘘になる。
@@ -626,6 +662,32 @@ function onTemperature(raw: string): void {
             <template v-if="skills.xaiWeb.offered || skills.xaiX.offered">
               <div class="col-span-2 text-[11px] text-ink-dim">
                 {{ $t("modelTemplate.xaiSearchCost") }}
+              </div>
+            </template>
+
+            <!--
+              **2 段で書く**（Spec 34 D5 の実測）。初回 4,454 / 2 回目以降は
+              キャッシュに乗って約 484。「桁で増える」だけ書くと毎回 4.4k 払うと
+              読める。検索させない問いでも掛かる固定費なので、押す前に言う。
+            -->
+            <template v-if="skills.openaiWeb.offered">
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.openaiSearchCost") }}
+              </div>
+            </template>
+
+            <!--
+              このワイヤの代償を 2 つ、選ぶ場所で言う。
+              - 温度: gpt-5.6 系は 400 で拒むので**型に欄が無い**（D11）。
+                黙って落とすと「設定したのに効かない」になり、送って 400 に
+                するより悪い（どちらも効かないが、後者は理由が読める）
+              - 画像: ネイティブ経路は画像を運ばない（Spec 23 D8 の据え置き）。
+                note_dropped_attachment はワイヤの能力を見ていないので、
+                **切り替えると黙って落ちる**（D8）
+            -->
+            <template v-if="skills.openaiWeb.offered || skills.openaiPro.offered">
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.openaiResponsesCaveats") }}
               </div>
             </template>
 
@@ -658,6 +720,24 @@ function onTemperature(raw: string): void {
                 {{ $t("modelTemplate.strandedBefore")
                 }}<strong>{{ $t("modelTemplate.strandedXaiStrong") }}</strong
                 >{{ $t("modelTemplate.strandedXaiAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.openaiWeb.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.openaiWebSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedOpenAiStrong") }}</strong
+                >{{ $t("modelTemplate.strandedOpenAiAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.openaiPro.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.openaiReasoningPro") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedOpenAiStrong") }}</strong
+                >{{ $t("modelTemplate.strandedOpenAiAfter") }}
               </p>
             </template>
           </div>

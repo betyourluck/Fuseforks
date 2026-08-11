@@ -11,7 +11,12 @@ import type { ModelTemplate } from "../types";
 
 type Draft = Pick<
   ModelTemplate,
-  "provider" | "googleSearch" | "xaiWebSearch" | "xaiXSearch"
+  | "provider"
+  | "googleSearch"
+  | "xaiWebSearch"
+  | "xaiXSearch"
+  | "openaiWebSearch"
+  | "openaiReasoningPro"
 >;
 
 function draft(over: Partial<Draft> = {}): Draft {
@@ -20,6 +25,8 @@ function draft(over: Partial<Draft> = {}): Draft {
     googleSearch: false,
     xaiWebSearch: false,
     xaiXSearch: false,
+    openaiWebSearch: false,
+    openaiReasoningPro: false,
     ...over,
   };
 }
@@ -178,5 +185,104 @@ describe("passiveSkills", () => {
     expect(s.anyOffered).toBe(true);
     expect(s.google.offered || s.xaiWeb.offered || s.xaiX.offered).toBe(false);
     expect(s.passive).toEqual(["passivePromptCache"]);
+  });
+});
+
+/**
+ * **既定 URL の表が非単射になる 7 通り**（Spec 34 D7）。
+ *
+ * `open_ai_compat` と `open_ai_responses` が**同じ文字列**
+ * （`https://api.openai.com/v1`）を指す。gemini / xai_responses は
+ * 「互換の口も持つ他社ホスト」で**鍵が別**だったが、ここは**値が一致する**。
+ *
+ * 机上では 3 述語とも壊れないと追えるが、**#91 は机上で追って外した事故**
+ * （集合へ要素を足したら、その集合を否定に使っている述語が黙って厳しくなった）。
+ * だから 7 通りを機械で置く。**行 4・5・7 は rev1 の表に無かった** —
+ * 特に行 5（人が入れたプロキシ URL）は「触らない」が期待値なのに、
+ * どこにも書かれていなかった。
+ */
+describe("既定 URL が非単射になる 7 通り（Spec 34 D7）", () => {
+  const OPENAI = DEFAULT_BASE_URL.open_ai_compat;
+
+  it("1: 互換 + api.openai.com は警告なし（既存の主経路）", () => {
+    expect(baseUrlMismatch("open_ai_compat", OPENAI)).toBeNull();
+  });
+
+  it("2: Responses + api.openai.com も警告なし", () => {
+    expect(DEFAULT_BASE_URL.open_ai_responses).toBe(OPENAI);
+    expect(baseUrlMismatch("open_ai_responses", OPENAI)).toBeNull();
+  });
+
+  it("3: 互換 → Responses で URL が動かない", () => {
+    expect(presetBaseUrlFor("open_ai_responses", OPENAI)).toBeNull();
+  });
+
+  it("4: Responses → 互換でも URL が動かない", () => {
+    expect(presetBaseUrlFor("open_ai_compat", OPENAI)).toBeNull();
+  });
+
+  it("5: カスタム URL（プロキシ）は触らない", () => {
+    const proxy = "https://proxy.example.test/v1";
+    expect(baseUrlMismatch("open_ai_responses", proxy)).toBeNull();
+    expect(presetBaseUrlFor("open_ai_responses", proxy)).toBeNull();
+  });
+
+  it("6: anthropic + api.openai.com は従来どおり警告", () => {
+    expect(baseUrlMismatch("anthropic", OPENAI)).toBe(DEFAULT_BASE_URL.anthropic);
+  });
+
+  // **登録しないとここが壊れる。** preset が undefined になって null が返り、
+  // base URL が api.anthropic.com のまま残る（presetBaseUrlFor の doc が
+  // 名指しする元のバグの鏡像）。「同じ文字列を 2 回登録する意味が無い」は誤り。
+  it("7: anthropic → Responses は api.openai.com へ書き換わる", () => {
+    expect(presetBaseUrlFor("open_ai_responses", DEFAULT_BASE_URL.anthropic)).toBe(
+      OPENAI,
+    );
+  });
+});
+
+describe("OpenAI Responses の固有スキル（Spec 34 D4 / D5）", () => {
+  it("Responses を選んだときだけ 2 つとも出る", () => {
+    const s = providerSkills(
+      draft({
+        provider: "open_ai_responses",
+        openaiWebSearch: true,
+        openaiReasoningPro: true,
+      }),
+    );
+    expect(s.openaiWeb.offered && s.openaiPro.offered).toBe(true);
+    expect(s.openaiWeb.stranded || s.openaiPro.stranded).toBe(false);
+    // xAI / Gemini の行は出ない（provider で分けており、モデル名では分けない）。
+    expect(s.xaiWeb.offered || s.xaiX.offered || s.google.offered).toBe(false);
+  });
+
+  // UI からは作れないが world.json の直接編集で作れる組。**隠すだけだと
+  // 真のまま見えなくなる**ので、そのときだけ理由と直し方を出す。
+  it("互換のままトグルが真なら stranded", () => {
+    const s = providerSkills(
+      draft({
+        provider: "open_ai_compat",
+        openaiWebSearch: true,
+        openaiReasoningPro: true,
+      }),
+    );
+    expect(s.openaiWeb.offered || s.openaiPro.offered).toBe(false);
+    expect(s.openaiWeb.stranded && s.openaiPro.stranded).toBe(true);
+  });
+
+  // **2 つは独立。** 片方だけ真にしても、もう片方は stranded にならない。
+  it("web 検索と Pro モードは独立", () => {
+    const s = providerSkills(
+      draft({ provider: "open_ai_compat", openaiReasoningPro: true }),
+    );
+    expect(s.openaiPro.stranded).toBe(true);
+    expect(s.openaiWeb.stranded).toBe(false);
+  });
+
+  // 見出しは Responses でも描く（固有の能力があるので）。
+  it("Responses では見出しが出る", () => {
+    expect(providerSkills(draft({ provider: "open_ai_responses" })).anyOffered).toBe(
+      true,
+    );
   });
 });

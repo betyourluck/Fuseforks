@@ -555,7 +555,16 @@
     "strandedXaiAfter": "。Live Search は Responses 経路にしかありません。使うならプロトコルを「xAI ネイティブ（Responses）」にしてください。",
     "passiveBadge": "パッシブ",
     "passivePromptCache": "プロンプトキャッシュ",
-    "passivePromptCacheHint": "共通の前置き（条例・役職・顔ぶれ）を 1 時間キャッシュし、以後のターンの入力費を下げます。2,048 トークンを超える依頼で効きます。"
+    "passivePromptCacheHint": "共通の前置き（条例・役職・顔ぶれ）を 1 時間キャッシュし、以後のターンの入力費を下げます。2,048 トークンを超える依頼で効きます。",
+    "providerOpenAiResponses": "OpenAI ネイティブ（Responses）",
+    "openaiWebSearch": "web 検索",
+    "openaiWebSearchHint": "web を検索して裏を取ってから答えます（出典の URL が返ります）",
+    "openaiReasoningPro": "Pro 推論モード",
+    "openaiReasoningProHint": "難しい問いに計算を厚く積みます。公表のベンチマークでは terra が 23.3% → 28.5%（標準の sol 28.7% にほぼ並ぶ）。入力が毎回 約 1,500 トークン増え、応答も遅くなります。",
+    "openaiSearchCost": "web 検索を有効にすると、検索しない依頼でも入力が約 4,400 トークン増えます（ツールの宣言がプロンプトへ入るため）。2 回目以降はキャッシュに乗るので実質は約 1/10 です。実際に検索した回は、結果が入力へ入るぶんさらに大きく増えます。",
+    "openaiResponsesCaveats": "このプロトコルでは温度（temperature）が使えません（接続先が拒否します）。また画像の添付は互換プロトコルでしか送れないため、切り替えると画像は相手に届きません。",
+    "strandedOpenAiStrong": "プロトコルが OpenAI ネイティブ（Responses）ではないため効きません",
+    "strandedOpenAiAfter": "。この機能は Responses 経路にしかありません。使うならプロトコルを「OpenAI ネイティブ（Responses）」にしてください。"
   },
   "schedule": {
     "title": "予定（スケジュール実行）",

@@ -16,6 +16,15 @@ export const DEFAULT_BASE_URL: Record<string, string> = {
   anthropic: "https://api.anthropic.com/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta",
   xai_responses: "https://api.x.ai/v1",
+  // **open_ai_compat と同じ文字列。表は非単射になる**（Spec 34 D7）。
+  // gemini / xai_responses は「互換の口も持つ他社ホスト」で鍵が別だったが、
+  // ここは値が完全に一致する。**壊れないのは、この表を引くのが常に
+  // provider を鍵にした前方参照だから** — URL から provider を逆引きする
+  // 経路を足すと、ここが最初に壊れる。
+  //
+  // **登録しないと壊れる側もある**: anthropic → open_ai_responses の切り替えで
+  // preset が undefined になり、base URL が api.anthropic.com のまま残る。
+  open_ai_responses: "https://api.openai.com/v1",
 };
 
 /** 既知の既定値のいずれかであれば、プロトコル変更に追随してよいと判断する。 */
@@ -137,11 +146,25 @@ function visibility(enabled: boolean, onItsWire: boolean): SkillVisibility {
  */
 export function providerSkills(draft: Pick<
   ModelTemplate,
-  "provider" | "googleSearch" | "xaiWebSearch" | "xaiXSearch"
+  | "provider"
+  | "googleSearch"
+  | "xaiWebSearch"
+  | "xaiXSearch"
+  | "openaiWebSearch"
+  | "openaiReasoningPro"
 >): {
   google: SkillVisibility;
   xaiWeb: SkillVisibility;
   xaiX: SkillVisibility;
+  openaiWeb: SkillVisibility;
+  /**
+   * Pro 推論モード（`reasoning.mode = "pro"`。Spec 34 D4）。
+   *
+   * **3 値の選択肢ではなくトグル。** 送らないのと `"standard"` は
+   * `input_tokens` が完全に一致する（実測 20 / 20）ので、省略 ≡ standard。
+   * 器の 3 形目は要らなかった。
+   */
+  openaiPro: SkillVisibility;
   /** 設定を持たない固有スキルの辞書キー。 */
   passive: string[];
   /**
@@ -153,10 +176,13 @@ export function providerSkills(draft: Pick<
 } {
   const onGemini = draft.provider === "gemini";
   const onXai = draft.provider === "xai_responses";
+  const onOpenAi = draft.provider === "open_ai_responses";
 
   const google = visibility(draft.googleSearch, onGemini);
   const xaiWeb = visibility(draft.xaiWebSearch, onXai);
   const xaiX = visibility(draft.xaiXSearch, onXai);
+  const openaiWeb = visibility(draft.openaiWebSearch, onOpenAi);
+  const openaiPro = visibility(draft.openaiReasoningPro, onOpenAi);
 
   const passive = passiveSkills(draft.provider);
 
@@ -164,8 +190,15 @@ export function providerSkills(draft: Pick<
     google,
     xaiWeb,
     xaiX,
+    openaiWeb,
+    openaiPro,
     passive,
     anyOffered:
-      google.offered || xaiWeb.offered || xaiX.offered || passive.length > 0,
+      google.offered ||
+      xaiWeb.offered ||
+      xaiX.offered ||
+      openaiWeb.offered ||
+      openaiPro.offered ||
+      passive.length > 0,
   };
 }

@@ -555,7 +555,16 @@
     "strandedXaiAfter": ". Live Search exists only on the Responses path. To use it, set the protocol to \"xAI native (Responses)\".",
     "passiveBadge": "Passive",
     "passivePromptCache": "Prompt caching",
-    "passivePromptCacheHint": "Caches the shared preamble (ordinance, role, roster) for 1 hour, lowering input cost on later turns. Applies to requests above 2,048 tokens."
+    "passivePromptCacheHint": "Caches the shared preamble (ordinance, role, roster) for 1 hour, lowering input cost on later turns. Applies to requests above 2,048 tokens.",
+    "providerOpenAiResponses": "OpenAI native (Responses)",
+    "openaiWebSearch": "Web search",
+    "openaiWebSearchHint": "Searches the web and grounds the answer before replying (source URLs are returned).",
+    "openaiReasoningPro": "Pro reasoning mode",
+    "openaiReasoningProHint": "Spends more computation on hard questions. In the published benchmark, terra goes 23.3% -> 28.5% (about level with standard sol at 28.7%). Every request costs roughly 1,500 more input tokens, and replies get slower.",
+    "openaiSearchCost": "Turning on web search adds about 4,400 input tokens to every request, even ones that never search (the tool declaration is injected into the prompt). Later requests hit the cache, so the effective cost is roughly a tenth of that. Requests that actually search grow further, because the results are injected too.",
+    "openaiResponsesCaveats": "This protocol does not accept temperature (the provider rejects it). Image attachments only travel over the compatible protocol, so after switching, images will not reach the model.",
+    "strandedOpenAiStrong": "but it does nothing because the protocol is not OpenAI native (Responses)",
+    "strandedOpenAiAfter": ". This capability exists only on the Responses path. Set the protocol to \"OpenAI native (Responses)\" to use it."
   },
   "schedule": {
     "title": "Schedules (timed requests)",
