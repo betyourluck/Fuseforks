@@ -942,6 +942,64 @@ pub struct XaiRequest {
     pub tool_choice: Option<serde_json::Value>,
 }
 
+/// OpenAI Responses（`/v1/responses`）へのリクエスト（Spec 34）。
+///
+/// **`XaiRequest` と共有しない。** 同じエンドポイント名でも送る側の欄が違う
+/// （契約 `openai_responses` / Spec 34 D2 rev6）:
+/// - `include` は**送らない** — stateless では `encrypted_content` が既定で
+///   返るので要求の必要が無い。xAI は `["no_inline_citations"]` を常送する
+/// - `reasoning` を**常送する** — xAI は要約が既定で来るので送らない
+/// - **`temperature` の欄が存在しない** — gpt-5.6 系は 400
+///   `Unsupported parameter: 'temperature'` を返す（実測。Spec 34 D11）。
+///   **モデル名で送り分けるより、欄を持たないほうが強い**（送れる形が無い）
+#[derive(Debug, Serialize)]
+pub struct OpenAiResponsesRequest {
+    /// モデル名。
+    pub model: String,
+    /// 会話とツール往復の混在列。**要素の型は xAI と共有する**（実測で同形）。
+    pub input: Vec<ResponsesInputItem>,
+    /// 空なら欄ごと省く。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ResponsesTool>,
+    /// 思考の制御。契約により**常に送る**。
+    pub reasoning: OpenAiReasoning,
+    /// 応答を接続先に保持させるか。**契約により常に `false`**（Spec 34 D3）。
+    pub store: bool,
+    /// 最大出力トークン数。**この欄名の 1 名だけ** —
+    /// `max_completion_tokens` を送ると `failures.md` #76 の逆向きを踏む。
+    pub max_output_tokens: u32,
+    /// ツール選択方針。`required` / `{type: function, name}` のときだけ送る。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+/// `reasoning` オブジェクト（Spec 34 D4）。
+#[derive(Debug, Serialize)]
+pub struct OpenAiReasoning {
+    /// 推論の深さ。canonical が未指定なら送らない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<&'static str>,
+    /// 要約の粒度。**契約により常に `"detailed"`**。
+    ///
+    /// **`"auto"` は要約を 1 字も返さない**（実測 0 字 / 522 字）。
+    /// auto を選ぶと「送っているのに何も出ない」という最も診断しにくい形になる
+    /// （`reasoning_tokens` は出ているので払ってはいる）。
+    pub summary: &'static str,
+    /// 思考の参照範囲。**契約により常に `"current_turn"`**。
+    ///
+    /// gpt-5.6 系の既定は `all_turns` だが、この村は `previous_response_id` を
+    /// 持たず思考を履歴へも積まない（`reasoning_summary` 凍結 1）ので
+    /// **参照する先が存在しない**。**省略は「無効」ではなく「サーバ既定を採る」**
+    /// （`failures.md` #77 の教訓の 2 例目）。
+    pub context: &'static str,
+    /// 実行モード。`Some("pro")` のときだけ送る（トグル）。
+    ///
+    /// **送らないのと `"standard"` は `input_tokens` が完全に一致する**
+    /// （実測 20 / 20）ので、省略 ≡ standard。だから 2 状態で足りる。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<&'static str>,
+}
+
 /// `input` の 1 要素。メッセージと関数往復が同じ列に混在する。
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -1108,6 +1166,14 @@ pub struct ResponsesAnnotation {
 /// 検索呼び出しの中身。`query` が実際の検索語（`Grounding.queries` の原料）。
 #[derive(Debug, Deserialize)]
 pub struct ResponsesSearchAction {
+    /// 行為の種別。**OpenAI では `search` / `open_page` / `find_in_page` の 3 種**で、
+    /// 後 2 者は検索語を持たない（Spec 34 D9）。**`queries < calls` は正常**で、
+    /// Spec 31 が xAI で使った `queries == calls` の等式をこちらへ写すと、
+    /// ページを開いただけの周がある応答が常に不合格に見える。
+    ///
+    /// xAI の `web_search_call` では読まない（あちらは `search` しか出ない）。
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
     /// 検索語。
     #[serde(default)]
     pub query: Option<String>,

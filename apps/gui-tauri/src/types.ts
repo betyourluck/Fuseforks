@@ -27,15 +27,21 @@ export type ConfigFileKind = "skill" | "memory" | "construct" | "mcp" | "run";
 /**
  * LLM のワイヤプロトコル。未指定なら baseUrl から自動判定される。
  *
- * `gemini` と `xai_responses` は自動判定されない（明示選択のみ）。どちらの
- * base URL も OpenAI 互換としても動いており、自動判定を変えると既存の設定が
- * 黙って別のワイヤへ移ってしまうため。
+ * `gemini` / `xai_responses` / `open_ai_responses` は自動判定されない
+ * （明示選択のみ）。どの base URL も OpenAI 互換としても動いており、
+ * 自動判定を変えると既存の設定が黙って別のワイヤへ移ってしまうため。
+ *
+ * **`open_ai_compat` と `open_ai_responses` は既定 base URL が同じ文字列**
+ * （`https://api.openai.com/v1`）。`DEFAULT_BASE_URL` は非単射になるが、
+ * 引くのは常に provider を鍵にした前方参照なので壊れない
+ * （Spec 34 D7。**URL から provider を逆引きする経路を足すとここが最初に壊れる**）。
  */
 export type Provider =
   | "open_ai_compat"
   | "anthropic"
   | "gemini"
-  | "xai_responses";
+  | "xai_responses"
+  | "open_ai_responses";
 
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -321,6 +327,19 @@ export interface ModelTemplate {
    */
   xaiWebSearch: boolean;
   xaiXSearch: boolean;
+  /**
+   * OpenAI の web 検索（Spec 34）。**`provider === "open_ai_responses"` の
+   * ときだけ効く。** 提示するだけで input が 4,434 トークン増える（実測。
+   * 2 回目以降はキャッシュに乗る）ので、押す前に画面で言う。
+   */
+  openaiWebSearch: boolean;
+  /**
+   * OpenAI の Pro 推論モード（`reasoning.mode = "pro"`。Spec 34）。
+   * **`provider === "open_ai_responses"` のときだけ効く。**
+   * 2 状態で足りるのは、送らないのと `"standard"` が完全に一致するため。
+   * 既定 OFF — 効きは収穫逓減で、入力の固定費が +1,538 トークンある。
+   */
+  openaiReasoningPro: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
 }

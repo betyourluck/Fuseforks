@@ -46,6 +46,8 @@ fn wire_field_sets_are_frozen() {
             "maxRetries",
             "model",
             "name",
+            "openaiReasoningPro",
+            "openaiWebSearch",
             "provider",
             "requestTimeoutSecs",
             "temperature",

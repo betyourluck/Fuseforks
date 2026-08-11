@@ -580,6 +580,21 @@ pub struct ModelTemplate {
     /// 実測済みのため（1 つに畳むと web だけ欲しい村が X の攻撃面まで開ける）。
     #[serde(default)]
     pub xai_x_search: bool,
+    /// OpenAI の web 検索を有効にするか（Spec 34）。
+    ///
+    /// **[`crate::llm::Provider::OpenAiResponses`] を明示したテンプレートでのみ効く。**
+    /// ベンダー接頭辞の理由は `xai_web_search` と同じ。
+    /// 判定は [`ModelTemplate::openai_web_search_active`] を使うこと。
+    #[serde(default)]
+    pub openai_web_search: bool,
+    /// OpenAI の Pro 推論モード（`reasoning.mode = "pro"`）を有効にするか（Spec 34）。
+    ///
+    /// **2 状態で足りる** — `mode` を送らないのと `"standard"` は `input_tokens` が
+    /// 完全に一致する（実測 20 / 20）ので、省略 ≡ standard。
+    /// 既定 OFF なのは効きが収穫逓減だから（GeneBench-Pro で Sol は +2.8 ポイント）。
+    /// **入力の固定費が +1,538 トークンある**（実測）ので、常に良いものではない。
+    #[serde(default)]
+    pub openai_reasoning_pro: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -639,6 +654,19 @@ impl ModelTemplate {
         self.xai_x_search && self.effective_provider() == crate::llm::Provider::XaiResponses
     }
 
+    /// OpenAI の web 検索が**実際に効く**か（Spec 34 D5）。
+    ///
+    /// [`ModelTemplate::grounding_active`] と同型の AND 述語。
+    pub fn openai_web_search_active(&self) -> bool {
+        self.openai_web_search && self.effective_provider() == crate::llm::Provider::OpenAiResponses
+    }
+
+    /// Pro 推論モードが**実際に効く**か（Spec 34 D4）。
+    pub fn openai_reasoning_pro_active(&self) -> bool {
+        self.openai_reasoning_pro
+            && self.effective_provider() == crate::llm::Provider::OpenAiResponses
+    }
+
     /// 汎用的な既定値でテンプレートを作る。
     pub fn new(
         id: impl Into<ModelTemplateId>,
@@ -660,6 +688,8 @@ impl ModelTemplate {
             google_search: false,
             xai_web_search: false,
             xai_x_search: false,
+            openai_web_search: false,
+            openai_reasoning_pro: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
         }

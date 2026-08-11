@@ -393,6 +393,8 @@ pub enum GroundingEngine {
     Google,
     /// xAI の Live Search（Agent Tools。Spec 31）。
     Xai,
+    /// OpenAI の web 検索（Responses API のサーバー側ツール。Spec 34）。
+    OpenAi,
 }
 
 impl Grounding {

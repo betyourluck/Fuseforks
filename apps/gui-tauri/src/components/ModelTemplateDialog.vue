@@ -213,6 +213,9 @@ function blank(): ModelTemplate {
     googleSearch: false,
     xaiWebSearch: false,
     xaiXSearch: false,
+    // Spec 34 P1 は既定値だけ。トグルと注記（固定費 4,434 / +1,538）は P2。
+    openaiWebSearch: false,
+    openaiReasoningPro: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
   };

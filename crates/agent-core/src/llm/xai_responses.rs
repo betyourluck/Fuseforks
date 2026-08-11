@@ -15,8 +15,8 @@
 //! - 出典は annotations の 1 系統。`action.sources` は読まない
 
 use super::canonical::{
-    ChatRequest, ChatResponse, Finish, Grounding, GroundingEngine, GroundingSource, Role,
-    ToolCall, ToolChoice, Usage,
+    ChatRequest, ChatResponse, Finish, Grounding, GroundingEngine, GroundingSource, ToolCall,
+    ToolChoice, Usage,
 };
 use super::error::LlmError;
 use super::wire;
@@ -34,44 +34,10 @@ pub fn encode(
     web_search: bool,
     x_search: bool,
 ) -> wire::XaiRequest {
-    let mut input = Vec::new();
-    for message in &req.messages {
-        match message.role {
-            Role::System => input.push(wire::ResponsesInputItem::Message {
-                role: "system",
-                content: message.content.clone(),
-            }),
-            // 添付画像はこのワイヤでは送らない（Spec 23 D8 — 画像は互換経路のみ。
-            // gemini ネイティブが素通しする挙動をテストで凍結したのと同じ棚）。
-            Role::User => input.push(wire::ResponsesInputItem::Message {
-                role: "user",
-                content: message.content.clone(),
-            }),
-            Role::Assistant => {
-                if !message.content.is_empty() {
-                    input.push(wire::ResponsesInputItem::Message {
-                        role: "assistant",
-                        content: message.content.clone(),
-                    });
-                }
-                for call in &message.tool_calls {
-                    input.push(wire::ResponsesInputItem::FunctionCall {
-                        kind: "function_call",
-                        call_id: call.id.clone(),
-                        name: call.name.clone(),
-                        // canonical の args はオブジェクト。ワイヤの方言
-                        // 「arguments は JSON 文字列」へは encode 境界で 1 回だけ戻す。
-                        arguments: call.args.to_string(),
-                    });
-                }
-            }
-            Role::Tool => input.push(wire::ResponsesInputItem::FunctionCallOutput {
-                kind: "function_call_output",
-                call_id: message.tool_call_id.clone().unwrap_or_default(),
-                output: message.content.clone(),
-            }),
-        }
-    }
+    // 添付画像はこのワイヤでは送らない（Spec 23 D8 — 画像は互換経路のみ）。
+    // 組み立ては OpenAI Responses と共有する（Spec 34 D2 rev6 — 要素の型が
+    // 同じだと実測しており、2 箇所に写すと片方だけ直す形が生まれる）。
+    let input = super::responses_input::encode(&req.messages);
 
     let offer_tools = use_tools && req.tool_choice != ToolChoice::None;
     let mut tools = Vec::new();

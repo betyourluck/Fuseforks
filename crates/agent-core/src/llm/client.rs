@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
-use super::{BackendResolution, LlmBackend, anthropic, gemini, openai_compat, wire, xai_responses};
+use super::{
+    BackendResolution, LlmBackend, anthropic, gemini, openai_compat, openai_responses, wire,
+    xai_responses,
+};
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
 
@@ -47,6 +50,14 @@ pub enum Provider {
     /// この経路が要るのは Grok の Live Search を使うときだけで、legacy の
     /// `search_parameters` は HTTP 410 Gone（実測 2026-08-09）。Gemini と同じ構図の 2 例目。
     XaiResponses,
+    /// `POST {base_url}/responses` + `Authorization: Bearer`（Spec 34）。
+    ///
+    /// OpenAI も互換の口を持っており、**関数呼び出しだけならそちらで足りる**。
+    /// この経路が要るのは 3 つ — 思考の**要約本文**（互換の口には来ない）/
+    /// web 検索（一般の gpt-5 系では Responses 専用）/ `failures.md` #77 の代償
+    /// （互換の口はツールと思考を併用できず `reasoning_effort: "none"` を
+    /// 強制していた）。gemini / xai_responses と同じ構図の 3 例目。
+    OpenAiResponses,
 }
 
 impl Provider {
@@ -76,7 +87,7 @@ impl Provider {
             Self::OpenAiCompat => "/chat/completions".to_owned(),
             Self::Anthropic => "/messages".to_owned(),
             Self::Gemini => gemini::path(model),
-            Self::XaiResponses => "/responses".to_owned(),
+            Self::XaiResponses | Self::OpenAiResponses => "/responses".to_owned(),
         }
     }
 }
@@ -115,6 +126,12 @@ pub struct LlmConfig {
     pub xai_web_search: bool,
     /// Grok の Live Search（X 検索）。[`Provider::XaiResponses`] でのみ効く。
     pub xai_x_search: bool,
+    /// OpenAI の web 検索。[`Provider::OpenAiResponses`] でのみ効く。
+    /// 値は [`ModelTemplate::openai_web_search_active`] の判定済み。
+    pub openai_web_search: bool,
+    /// OpenAI の Pro 推論モード（`reasoning.mode = "pro"`）。
+    /// [`Provider::OpenAiResponses`] でのみ効く。
+    pub openai_reasoning_pro: bool,
 }
 
 impl LlmConfig {
@@ -172,6 +189,8 @@ impl LlmConfig {
             // XaiResponses でしか読まないが、判定の実装を 2 箇所にしない (Spec 31 D4)。
             xai_web_search: template.xai_web_search_active(),
             xai_x_search: template.xai_x_search_active(),
+            openai_web_search: template.openai_web_search_active(),
+            openai_reasoning_pro: template.openai_reasoning_pro_active(),
         })
     }
 }
@@ -241,6 +260,19 @@ impl HttpLlmBackend {
                 }
                 b
             }
+            Provider::OpenAiResponses => {
+                let body = openai_responses::encode(
+                    req,
+                    self.config.use_tools,
+                    self.config.openai_web_search,
+                    self.config.openai_reasoning_pro,
+                );
+                let mut b = self.http.post(&url).json(&body);
+                if !self.config.api_key.is_empty() {
+                    b = b.bearer_auth(&self.config.api_key);
+                }
+                b
+            }
         };
 
         let response = builder.send().await.map_err(LlmError::from)?;
@@ -293,6 +325,17 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = xai_responses::decode(parsed)?;
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
+            }
+            // 応答の型は xAI と共有する（Spec 34 D2 rev6 — 11/11 発の serde 実測）。
+            // 分けたのは encode と、トップレベルの要求構造体だけ。
+            Provider::OpenAiResponses => {
+                let parsed: wire::ResponsesResponse =
+                    serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                        source,
+                        raw: raw.clone(),
+                    })?;
+                let decoded = openai_responses::decode(parsed)?;
                 openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
         }
@@ -369,6 +412,7 @@ impl LlmBackend for HttpLlmBackend {
             Provider::Anthropic => "anthropic",
             Provider::Gemini => "gemini",
             Provider::XaiResponses => "xai-responses",
+            Provider::OpenAiResponses => "openai-responses",
         }
     }
 
