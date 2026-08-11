@@ -1381,8 +1381,16 @@ async fn run_turn(
         // 省くと機構が効いているか読めなくなる（D3）。
         "turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
          waves={plan_wave} stop={stop} prompt={prompt} cached={cached} total={tokens} \
-         reasoning={reasoning}",
+         reasoning={reasoning} backend={}",
         incoming.hop,
+        // どのワイヤを通ったか（Spec 34 P5 の前に追加）。**これが無いと、
+        // ワイヤを足したことを実機で確かめられない** — Spec 31 は
+        // `xai search:` が偶然その役をしていたが、あの行は検索を有効にした
+        // 呼び出しでしか出ない。検索を使わない村ではプロトコルを切り替えても
+        // **ログが 1 行も変わらなかった**（実機で 2 ターン撃って、どちらの口を
+        // 通ったか読めなかった）。`LlmBackend::name()` は在ったのに、
+        // テストの assert 以外で 1 度も呼ばれていなかった。
+        backend.name(),
     );
     Ok(Some(TurnProduct {
         outcome,
