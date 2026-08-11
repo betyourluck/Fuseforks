@@ -3720,6 +3720,28 @@ struct TurnSpend {
     hop: u8,
 }
 
+/// 転送・委譲の提示条件（Spec 20 / 2026-08-11）。
+///
+/// **3 つを束ねたのは、5 箇所が同じ規律を読むから** — 手順の文（段 4）・
+/// ツール提示（段 5）・応答の判定（段 6）。ここがずれると
+/// 「出していないのに効く」か「出したのに効かない」になる。
+/// 実機ではその両方を踏んでいる（`failures.md` #95 / #96）。
+///
+/// **`awaiting_reply` だけは個体の設定と独立**で、`reply_to` の有無という
+/// 構造で決まる。設定で切れる `offer_transfer` と同じ型に住まわせているのは、
+/// **読む側にとっては 1 つの答え**（転送を出すか）に畳まれるため。
+#[derive(Clone, Copy)]
+struct HandoffGates {
+    /// 委譲（`ask_*`）と並列委譲（`plan`）を出すか。ツール非対応モデルと
+    /// 接続先ゼロで偽になる。
+    use_handoff_tools: bool,
+    /// 転送（`transfer_to_*`）を出すか。
+    offer_transfer: bool,
+    /// 委譲で呼ばれたターンか。**手順の文で「答えがどこへ返るか」を分ける**
+    /// のに要る（`offer_transfer` が偽になる理由が 2 つあり、書くべき文が違う）。
+    awaiting_reply: bool,
+}
+
 /// ターンが生んだもの。実行ループの出口から [`dispatch_outcome`] へ渡す。
 ///
 /// **4 つとも「1 ターンぶんの事実」**という一点で寿命が揃っている — 周ごとに
@@ -4279,11 +4301,11 @@ async fn handle_message(
             .collect()
     };
     let handoffs = HandoffTools::build(&targets);
-    // 委譲（`ask_*`）と並列委譲（`plan`）を出す条件。**転送とは分ける。**
-    let use_handoff_tools = template.use_tools && !handoffs.is_empty();
     // **委譲（`ask` / `plan`）で呼ばれたターンか。** 真なら答えを待っている
     // 相手が居る（`reply_to` はその戻り口）。
     let awaiting_reply = reply_to.is_some();
+    // 委譲（`ask_*`）と並列委譲（`plan`）を出す条件。**転送とは分ける。**
+    let use_handoff_tools = template.use_tools && !handoffs.is_empty();
     // **転送（`transfer_to_*`）を提示するか。** 落ちる理由は 2 つある。
     //
     // 1. **個体の設定**（`allow_handoff`。既定は真）。分ける理由は 2 つの道具の
@@ -4301,201 +4323,36 @@ async fn handle_message(
     // **`ask` と `plan` はどちらの理由でも落ちない** — 消すのは転送だけ。
     // 委譲で呼ばれた個体が、さらに別の個体へ `ask` して答えを束ねる経路は
     // 残る（囲いは `max_hops` とトークン天井が同じ因果に載っていること）。
-    let offer_transfer = use_handoff_tools && spec.allow_handoff && !awaiting_reply;
-
-    // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
-    //
-    // **`Role::System` は「安定なもの」専用の枠として扱う。** adapter は
-    // Role::System のメッセージを配列のどこにあっても全部引き抜いて 1 つの
-    // system / systemInstruction へ連結するので（gemini.rs / anthropic.rs の
-    // encode）、可変なものを System で積むと**配列上の位置に関係なく前方一致の
-    // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
-    let mut messages = vec![ChatMessage::system(system_prompt)];
-    if !handoffs.is_empty() {
-        messages.push(ChatMessage::system(handoffs.protocol_note(
-            use_handoff_tools,
-            offer_transfer,
-            awaiting_reply,
-        )));
-    }
-
-    // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
-    //
-    // 通数を控える理由は診断のため。`history_turns` は**滑る窓**で（world.rs の
-    // push_exchange が先頭から drain する）、埋まると毎ターン先頭の 1 往復が落ちる。
-    // 前方一致はそこで切れるので、窓が埋まった瞬間からキャッシュは system 止まりに
-    // なる。窓が上限に張り付いているかは通数を見ないと分からない。
-    let history_msgs = {
-        let world = shared.world.read().await;
-        match world.agent(agent_id) {
-            Ok(record) => {
-                messages.extend(record.history.iter().cloned());
-                record.history.len()
-            }
-            Err(_) => 0,
-        }
+    let gates = HandoffGates {
+        use_handoff_tools,
+        awaiting_reply,
+        offer_transfer: use_handoff_tools && spec.allow_handoff && !awaiting_reply,
     };
+    // 以降は個々の真偽で読む。**束ねたのは 3 つが同じ 1 つの規律に属するから**で、
+    // 読む側の書き方を変えるためではない（分割代入なので下の段は無変更）。
+    let HandoffGates {
+        offer_transfer, ..
+    } = gates;
 
-    // ここから下は**毎ターン変わる文脈**。System では積まず、`context` へ溜めて
-    // 最後に今回の受信と一緒に 1 本の user 発話として送る。
-    //
-    // こうする理由は 2 つ。(1) System で積むと adapter が先頭へ畳むので
-    // 前方一致がそこで切れる。(2) user ロールで別々に積むと user が連続し、
-    // ロールの交互を要求するプロバイダで壊れる。**1 本に畳めば両方避けられる。**
-    //
-    // 履歴には入れない（`attributed` だけを積む）— 今回だけの文脈を履歴へ
-    // 焼き付けると、以後の全ターンのプレフィックスに残り続ける。
-    let mut context: Vec<String> = Vec::new();
-
-    // これまでの経緯（Spec 12 P4 の手動要約）。作られていれば毎ターン差す。
-    //
-    // **履歴の中に summary 専用の席は作らない。** ここ（可変文脈）へ差せば、
-    // 畳んでできた `sent_user_turn` がそのまま `exchange` として保存されるので、
-    // 送信と保存が食い違わない（failures.md #45）。履歴へ直接積むと、
-    // 保存側は「送った文字列そのもの」を持つ規律なので二重に入る。
-    //
-    // 注入するのは**最新の 1 本だけ**。古い要約はレコードとして残るが、
-    // 痕跡であって現役ではない。
-    if let Some(summary) = shared.summaries.read().await.get(agent_id) {
-        context.push(format!(
-            "## これまでの経緯（要約）\n{summary}\n\n\
-             （この要約より後のやり取りは、下の履歴にそのまま残っています）"
-        ));
-    }
-
-    // 参照資料の push 注入は Spec 18 で廃止した（pull のみ = モデルが `rag`
-    // ツールで読みに行く）。撤去自体は挙動を変えていない — 旧 RagIndex には
-    // 取り込み導線が無く索引は常に空で、この位置の注入は一度も発火しなかった。
-
-    // 居合わせた会話（広場ログ）。受信側でオプトアウトできる（Spec 03）:
-    // 毎ターン最大 12 件 × 200 字の固定費であり、場の共有が要らない役には
-    // 価値が無い。false でも自分の発話は他者の広場ログに載る（受信側だけの設定）。
-    //
-    // 元は「場の背景であって自分とのやり取りではない」から System の枠で履歴の
-    // **前**に置いていた。その読みは筋が通っていたが、**他人が喋るたびに前方一致が
-    // 切れる**という代償が見えていなかった — 村として使っているときにこそ
-    // キャッシュが効かなくなる。
-    if spec.hears_room_log
-        && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
-    {
-        context.push(room);
-    }
-
-    // 入退室の通知（Spec 06 P1）。**広場ログの gate の外**に置く —
-    // 広場ログのオプトアウトは「場の共有が要らない役から固定費を外す」機能で、
-    // 入退室は場の雑談ではなく配送先の正しさに関わる情報。コストの設定が
-    // 経路の正しさを黙って壊す形にしない。
-    if let Some(notices) =
-        compose_presence_notices(shared, &shared.config, roster.is_some()).await
-    {
-        context.push(notices);
-    }
-
-    // 送り手の封筒。ユーザーの言葉もエージェントからの転送も同じ user ロールで
-    // 届くため、名前を書かないと受信側は区別できない — 実際にユーザーの発話を
-    // 「他のエージェントが話した言葉」と取り違えた。プロンプトと履歴の両方へ
-    // 同じ形で入れる。履歴に入れないと、次のターンで再び出所不明になる。
-    let attributed = attribute_sender(shared, &incoming).await;
-
-    // 同報の注記。「みんなへ」と呼びかけられたのに自分しか受け取っていないように
-    // 見えると、各エージェントは律儀に接続先へ転送して反響が起きる（実機で観測）。
-    // 転送を禁止するのではなく、「全員が既に受け取っている」という事実を与えて
-    // 転送する理由そのものを消す。
-    //
-    // これも System では積まない。同報かどうかは発話ごとに変わるので、System へ
-    // 入れると adapter が先頭へ畳んで前方一致を切る（failures.md #45）。
-    if incoming.co_recipients.len() >= 2 {
-        let world = shared.world.read().await;
-        let names: Vec<String> = incoming
-            .co_recipients
-            .iter()
-            .map(|id| {
-                world
-                    .agent(id)
-                    .map(|record| record.spec.name.clone())
-                    // 宛先が既に削除されていても注記自体は成立させる。ID で示す。
-                    .unwrap_or_else(|_| id.to_string())
-            })
-            .collect();
-        // 「転送するな」だけでは足りない。実機では、転送の代わりに
-        // 「ユーザーから依頼です、自己紹介お願いします」という**新しい発話**を
-        // 全員へ配って回り、同じ混乱が起きた（促しは転送ではないので注記の射程外だった）。
-        // 塞ぐべきは経路ではなく、**他人の分まで面倒を見ようとする動機**のほう。
-        context.push(format!(
-            "【同報】この発話はあなたを含む {} 体（{}）へ同時に届いています。\
-             全員が同じ内容を既に受け取っており、**それぞれが自分で答えます**。\
-             したがって、この内容を他のエージェントへ転送する必要はありませんし、\
-             他の参加者に発言を促す必要もありません。\
-             あなたは**あなた自身の分だけ**答えてください。",
-            names.len(),
-            names.join("、")
-        ));
-    }
-
-    // 添付画像を実体へ展開する（Spec 23）。読むのは**このターンの受信に付いた
-    // 参照だけ**で、履歴の発話は `String` なので構造的に画像を持てない（D1）。
-    // 読めなかった参照（GC 済み・ファイル欠損）は黙って抜かずに本文で断る —
-    // モデルが「画像を見た」ふりで答える形が一番診断しにくい（#44 の同型）。
-    let image_attachments = load_turn_attachments(shared, agent_id, &incoming).await;
-    if incoming.attachments.len() > image_attachments.len() {
-        context.push(
-            "【添付】この発話には画像が添付されていましたが、保持期間を過ぎて\
-             削除されたため読み込めませんでした。画像は見えていない前提で\
-             答えてください。"
-                .to_owned(),
-        );
-    }
-    // **添付の事実を文字列として残す**（2026-08-06 利用者裁定。実機で穴が出た）。
-    //
-    // D1 は画像だけでなく**「画像があったという事実」ごと**履歴から消していた —
-    // 履歴に積まれるのは畳んだ文字列で、そこに添付の記述が無いため、次のターンの
-    // モデルは**自分が書いた説明文は覚えているのに、画像という物があったことを
-    // 知らない**。実機では「画像を貼る → 話す → これを誰々に見せて」という
-    // 最も自然な流れで、転送先が理由の書かれていない本文だけを受け取った
-    // （D6 の断り書きは「そのターンの受信に添付があるか」で門を張っており、
-    // 添付と転送依頼が別ターンになると鳴らない）。
-    //
-    // **この 1 行は `context` へ入るので `sent_user_turn` の一部になり、
-    // #45 の規律でそのまま履歴へ残る。** 画像そのものは入らないので D1 は不変。
-    if !image_attachments.is_empty() {
-        context.push(format!(
-            "【添付】この発話には画像が {} 枚付いています。\
-             **画像が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
-             見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
-             するときも画像は渡りません。**後から「あの画像を見せて」と頼まれたら、\
-             もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**",
-            image_attachments.len()
-        ));
-    }
-
-    // 可変の文脈と今回の受信を **1 本の user 発話**に畳んで送る。
-    //
-    // **送った文字列をそのまま履歴へ積む**（下の push_exchange へ渡す）。
-    // 当初は `attributed` だけを積んで「今回だけの文脈を履歴へ焼き付けない」
-    // ようにしたが、それは**送信と保存の食い違い**を作る。次のターンでは履歴側の
-    // 短い文字列がその位置に来るので、**前方一致がそこで切れる** — 以後どれだけ
-    // 会話が伸びてもキャッシュは system + tools で頭打ちになる（failures.md #45）。
-    //
-    // 揃えるほうが記録としても正しい。エージェントは実際にその文脈込みで受け取って
-    // おり、`attributed` だけを積むのは受け取った内容についての嘘になる。
-    //
-    // 画像は文字列ではないので畳めない — `ChatMessage.attachments` の席で運び、
-    // adapter が画像ブロックへ組む（テキストより前）。履歴へ積まれるのは
-    // `sent_user_turn` の文字列だけなので、**画像は履歴に残らない**（D1）。
-    context.push(attributed.clone());
-    let sent_user_turn = context.join("\n\n");
-    messages.push(ChatMessage::user_with_attachments(
-        &sent_user_turn,
-        image_attachments,
-    ));
-
-    // 指紋は**組み終わってから**取る。adapter と同じ畳み方で数えないと、
-    // 実際に前方一致の先頭を占める文字列とは別物を測ることになる。
-    let system_digest = SystemDigest::of(&messages, stable_len);
-    let history_depth = HistoryDepth {
-        msgs: history_msgs,
-        limit: shared.config.history_turns.saturating_mul(2),
-    };
+    // 4. プロンプトを組む。組み立ての中身は build_prompt が持つ。
+    let TurnPrompt {
+        // 実行ループが周ごとに呼び出しと結果を積む（#29 — 対で積まないと 400）。
+        mut messages,
+        sent_user_turn,
+        system_digest,
+        history_depth,
+    } = build_prompt(
+        shared,
+        agent_id,
+        &spec,
+        &incoming,
+        system_prompt,
+        stable_len,
+        roster.is_some(),
+        &handoffs,
+        gates,
+    )
+    .await;
 
     // 5. ツールを提示する。転送用と実行用を 1 つの集合としてモデルへ渡す。
     //    モデルから見れば「次に何をするか」の選択肢はどちらも同じ粒度で、
@@ -5225,6 +5082,247 @@ async fn handle_message(
         participants,
     )
     .await
+}
+
+
+/// 送るプロンプト一式（段 4）。
+///
+/// **`sent_user_turn` を一緒に返すのが要点**。可変文脈を畳んだこの文字列を
+/// **そのまま履歴へ積む**規律（`failures.md` #45）があり、組み立てた側と
+/// 保存する側で別々に作ると前方一致がそこで切れてキャッシュが頭打ちになる。
+/// 同じ関数から出すことで、2 つが同じ文字列であることを型で保つ。
+struct TurnPrompt {
+    /// バックエンドへ送る messages。
+    messages: Vec<ChatMessage>,
+    /// 畳んだ user 発話。**履歴へ積むのはこれ**。
+    sent_user_turn: String,
+    /// 安定プレフィックスの指紋（計器）。
+    system_digest: SystemDigest,
+    /// 滑る窓の深さ（計器）。
+    history_depth: HistoryDepth,
+}
+
+/// プロンプトを組む（段 4）。
+///
+/// **切り出したのは、ここが「モデルへ何を見せるか」だけを決める段だから** —
+/// ツールの実行も応答の判定もしない。可変文脈（要約・広場ログ・入退室・
+/// 同報・添付）はすべてここで 1 本の user 発話へ畳まれる（#45）。
+#[allow(clippy::too_many_arguments)]
+async fn build_prompt(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    spec: &AgentSpec,
+    incoming: &AgentMessage,
+    system_prompt: String,
+    stable_len: usize,
+    has_roster: bool,
+    handoffs: &HandoffTools,
+    gates: HandoffGates,
+) -> TurnPrompt {
+    let HandoffGates {
+        use_handoff_tools,
+        offer_transfer,
+        awaiting_reply,
+    } = gates;
+    // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
+    //
+    // **`Role::System` は「安定なもの」専用の枠として扱う。** adapter は
+    // Role::System のメッセージを配列のどこにあっても全部引き抜いて 1 つの
+    // system / systemInstruction へ連結するので（gemini.rs / anthropic.rs の
+    // encode）、可変なものを System で積むと**配列上の位置に関係なく前方一致の
+    // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
+    let mut messages = vec![ChatMessage::system(system_prompt)];
+    if !handoffs.is_empty() {
+        messages.push(ChatMessage::system(handoffs.protocol_note(
+            use_handoff_tools,
+            offer_transfer,
+            awaiting_reply,
+        )));
+    }
+
+    // 履歴。これが無いと毎回コールドスタートになり、同じ入力に同じ出力を返し続ける。
+    //
+    // 通数を控える理由は診断のため。`history_turns` は**滑る窓**で（world.rs の
+    // push_exchange が先頭から drain する）、埋まると毎ターン先頭の 1 往復が落ちる。
+    // 前方一致はそこで切れるので、窓が埋まった瞬間からキャッシュは system 止まりに
+    // なる。窓が上限に張り付いているかは通数を見ないと分からない。
+    let history_msgs = {
+        let world = shared.world.read().await;
+        match world.agent(agent_id) {
+            Ok(record) => {
+                messages.extend(record.history.iter().cloned());
+                record.history.len()
+            }
+            Err(_) => 0,
+        }
+    };
+
+    // ここから下は**毎ターン変わる文脈**。System では積まず、`context` へ溜めて
+    // 最後に今回の受信と一緒に 1 本の user 発話として送る。
+    //
+    // こうする理由は 2 つ。(1) System で積むと adapter が先頭へ畳むので
+    // 前方一致がそこで切れる。(2) user ロールで別々に積むと user が連続し、
+    // ロールの交互を要求するプロバイダで壊れる。**1 本に畳めば両方避けられる。**
+    //
+    // 履歴には入れない（`attributed` だけを積む）— 今回だけの文脈を履歴へ
+    // 焼き付けると、以後の全ターンのプレフィックスに残り続ける。
+    let mut context: Vec<String> = Vec::new();
+
+    // これまでの経緯（Spec 12 P4 の手動要約）。作られていれば毎ターン差す。
+    //
+    // **履歴の中に summary 専用の席は作らない。** ここ（可変文脈）へ差せば、
+    // 畳んでできた `sent_user_turn` がそのまま `exchange` として保存されるので、
+    // 送信と保存が食い違わない（failures.md #45）。履歴へ直接積むと、
+    // 保存側は「送った文字列そのもの」を持つ規律なので二重に入る。
+    //
+    // 注入するのは**最新の 1 本だけ**。古い要約はレコードとして残るが、
+    // 痕跡であって現役ではない。
+    if let Some(summary) = shared.summaries.read().await.get(agent_id) {
+        context.push(format!(
+            "## これまでの経緯（要約）\n{summary}\n\n\
+             （この要約より後のやり取りは、下の履歴にそのまま残っています）"
+        ));
+    }
+
+    // 参照資料の push 注入は Spec 18 で廃止した（pull のみ = モデルが `rag`
+    // ツールで読みに行く）。撤去自体は挙動を変えていない — 旧 RagIndex には
+    // 取り込み導線が無く索引は常に空で、この位置の注入は一度も発火しなかった。
+
+    // 居合わせた会話（広場ログ）。受信側でオプトアウトできる（Spec 03）:
+    // 毎ターン最大 12 件 × 200 字の固定費であり、場の共有が要らない役には
+    // 価値が無い。false でも自分の発話は他者の広場ログに載る（受信側だけの設定）。
+    //
+    // 元は「場の背景であって自分とのやり取りではない」から System の枠で履歴の
+    // **前**に置いていた。その読みは筋が通っていたが、**他人が喋るたびに前方一致が
+    // 切れる**という代償が見えていなかった — 村として使っているときにこそ
+    // キャッシュが効かなくなる。
+    if spec.hears_room_log
+        && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
+    {
+        context.push(room);
+    }
+
+    // 入退室の通知（Spec 06 P1）。**広場ログの gate の外**に置く —
+    // 広場ログのオプトアウトは「場の共有が要らない役から固定費を外す」機能で、
+    // 入退室は場の雑談ではなく配送先の正しさに関わる情報。コストの設定が
+    // 経路の正しさを黙って壊す形にしない。
+    if let Some(notices) =
+        compose_presence_notices(shared, &shared.config, has_roster).await
+    {
+        context.push(notices);
+    }
+
+    // 送り手の封筒。ユーザーの言葉もエージェントからの転送も同じ user ロールで
+    // 届くため、名前を書かないと受信側は区別できない — 実際にユーザーの発話を
+    // 「他のエージェントが話した言葉」と取り違えた。プロンプトと履歴の両方へ
+    // 同じ形で入れる。履歴に入れないと、次のターンで再び出所不明になる。
+    let attributed = attribute_sender(shared, incoming).await;
+
+    // 同報の注記。「みんなへ」と呼びかけられたのに自分しか受け取っていないように
+    // 見えると、各エージェントは律儀に接続先へ転送して反響が起きる（実機で観測）。
+    // 転送を禁止するのではなく、「全員が既に受け取っている」という事実を与えて
+    // 転送する理由そのものを消す。
+    //
+    // これも System では積まない。同報かどうかは発話ごとに変わるので、System へ
+    // 入れると adapter が先頭へ畳んで前方一致を切る（failures.md #45）。
+    if incoming.co_recipients.len() >= 2 {
+        let world = shared.world.read().await;
+        let names: Vec<String> = incoming
+            .co_recipients
+            .iter()
+            .map(|id| {
+                world
+                    .agent(id)
+                    .map(|record| record.spec.name.clone())
+                    // 宛先が既に削除されていても注記自体は成立させる。ID で示す。
+                    .unwrap_or_else(|_| id.to_string())
+            })
+            .collect();
+        // 「転送するな」だけでは足りない。実機では、転送の代わりに
+        // 「ユーザーから依頼です、自己紹介お願いします」という**新しい発話**を
+        // 全員へ配って回り、同じ混乱が起きた（促しは転送ではないので注記の射程外だった）。
+        // 塞ぐべきは経路ではなく、**他人の分まで面倒を見ようとする動機**のほう。
+        context.push(format!(
+            "【同報】この発話はあなたを含む {} 体（{}）へ同時に届いています。\
+             全員が同じ内容を既に受け取っており、**それぞれが自分で答えます**。\
+             したがって、この内容を他のエージェントへ転送する必要はありませんし、\
+             他の参加者に発言を促す必要もありません。\
+             あなたは**あなた自身の分だけ**答えてください。",
+            names.len(),
+            names.join("、")
+        ));
+    }
+
+    // 添付画像を実体へ展開する（Spec 23）。読むのは**このターンの受信に付いた
+    // 参照だけ**で、履歴の発話は `String` なので構造的に画像を持てない（D1）。
+    // 読めなかった参照（GC 済み・ファイル欠損）は黙って抜かずに本文で断る —
+    // モデルが「画像を見た」ふりで答える形が一番診断しにくい（#44 の同型）。
+    let image_attachments = load_turn_attachments(shared, agent_id, incoming).await;
+    if incoming.attachments.len() > image_attachments.len() {
+        context.push(
+            "【添付】この発話には画像が添付されていましたが、保持期間を過ぎて\
+             削除されたため読み込めませんでした。画像は見えていない前提で\
+             答えてください。"
+                .to_owned(),
+        );
+    }
+    // **添付の事実を文字列として残す**（2026-08-06 利用者裁定。実機で穴が出た）。
+    //
+    // D1 は画像だけでなく**「画像があったという事実」ごと**履歴から消していた —
+    // 履歴に積まれるのは畳んだ文字列で、そこに添付の記述が無いため、次のターンの
+    // モデルは**自分が書いた説明文は覚えているのに、画像という物があったことを
+    // 知らない**。実機では「画像を貼る → 話す → これを誰々に見せて」という
+    // 最も自然な流れで、転送先が理由の書かれていない本文だけを受け取った
+    // （D6 の断り書きは「そのターンの受信に添付があるか」で門を張っており、
+    // 添付と転送依頼が別ターンになると鳴らない）。
+    //
+    // **この 1 行は `context` へ入るので `sent_user_turn` の一部になり、
+    // #45 の規律でそのまま履歴へ残る。** 画像そのものは入らないので D1 は不変。
+    if !image_attachments.is_empty() {
+        context.push(format!(
+            "【添付】この発話には画像が {} 枚付いています。\
+             **画像が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
+             見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
+             するときも画像は渡りません。**後から「あの画像を見せて」と頼まれたら、\
+             もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**",
+            image_attachments.len()
+        ));
+    }
+
+    // 可変の文脈と今回の受信を **1 本の user 発話**に畳んで送る。
+    //
+    // **送った文字列をそのまま履歴へ積む**（下の push_exchange へ渡す）。
+    // 当初は `attributed` だけを積んで「今回だけの文脈を履歴へ焼き付けない」
+    // ようにしたが、それは**送信と保存の食い違い**を作る。次のターンでは履歴側の
+    // 短い文字列がその位置に来るので、**前方一致がそこで切れる** — 以後どれだけ
+    // 会話が伸びてもキャッシュは system + tools で頭打ちになる（failures.md #45）。
+    //
+    // 揃えるほうが記録としても正しい。エージェントは実際にその文脈込みで受け取って
+    // おり、`attributed` だけを積むのは受け取った内容についての嘘になる。
+    //
+    // 画像は文字列ではないので畳めない — `ChatMessage.attachments` の席で運び、
+    // adapter が画像ブロックへ組む（テキストより前）。履歴へ積まれるのは
+    // `sent_user_turn` の文字列だけなので、**画像は履歴に残らない**（D1）。
+    context.push(attributed.clone());
+    let sent_user_turn = context.join("\n\n");
+    messages.push(ChatMessage::user_with_attachments(
+        &sent_user_turn,
+        image_attachments,
+    ));
+
+    // 指紋は**組み終わってから**取る。adapter と同じ畳み方で数えないと、
+    // 実際に前方一致の先頭を占める文字列とは別物を測ることになる。
+    let system_digest = SystemDigest::of(&messages, stable_len);
+    let history_depth = HistoryDepth {
+        msgs: history_msgs,
+        limit: shared.config.history_turns.saturating_mul(2),
+    };
+    TurnPrompt {
+        messages,
+        sent_user_turn,
+        system_digest,
+        history_depth,
+    }
 }
 
 /// ターンの出口（段 8）。答えを記録し、宛先へ配送する。
