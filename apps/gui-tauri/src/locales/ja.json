@@ -168,7 +168,8 @@
     "heading": "グラウンディング",
     "engine": {
       "google": "Google 検索",
-      "xai": "Live Search（xAI）"
+      "xai": "Live Search（xAI）",
+      "open_ai": "web 検索（OpenAI）"
     },
     "queries": "検索語",
     "sourcesMissing": "参照元は返ってきていません（本文に URL があっても、出典としては確認できていません）。",

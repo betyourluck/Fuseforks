@@ -141,10 +141,19 @@ describe("sourceLabel", () => {
 
 describe("groundingView の engine", () => {
   it("記録の engine をそのまま運ぶ", () => {
-    const view = groundingView(
-      message({ engine: "xai", queries: ["x"], sources: [] }),
-    );
-    expect(view?.engine).toBe("xai");
+    for (const engine of ["google", "xai", "open_ai"] as const) {
+      const view = groundingView(message({ engine, queries: ["x"], sources: [] }));
+      expect(view?.engine).toBe(engine);
+    }
+  });
+
+  // **OpenAI の出典は普通の web URL** なので、X 専用の分岐は通らない
+  // （Spec 34 D6）。アイコンが意味を足すのはラベルがホストを語らないときだけで、
+  // ホスト名がそのまま出るならアイコンは同じことを 2 回言う。
+  it("open_ai の出典は X 専用の見せ方に落ちない", () => {
+    const source = { uri: "https://example.test/article", title: "" };
+    expect(sourceLabel(source)).toBe("example.test");
+    expect(sourceIcon(source)).toBeNull();
   });
 
   // engine は Spec 31 で足した欄。それ以前の記録はすべて Google 検索由来で、

@@ -362,8 +362,14 @@ export interface GroundingSource {
  *
  * `engine` 欄を持たない古い記録は `google` として読む（Spec 31 以前の接地は
  * すべて Spec 05 の Google 検索由来。コア側の serde 既定と同じ向き）。
+ *
+ * 3 値目 `open_ai` は Spec 34（**`openai` ではない** — コアの
+ * `rename_all = "snake_case"` が `OpenAi` を `open_ai` へ割る。`Provider` の
+ * `open_ai_compat` / `open_ai_responses` と同じ綴りで揃う）。**出典は普通の web URL** なので、
+ * `sourceLabel` / `sourceIcon` の X 専用分岐は触らない — アイコンが意味を
+ * 足すのはラベルがホストを語らないときだけ。
  */
-export type GroundingEngine = "google" | "xai";
+export type GroundingEngine = "google" | "xai" | "open_ai";
 
 export interface Grounding {
   queries: string[];

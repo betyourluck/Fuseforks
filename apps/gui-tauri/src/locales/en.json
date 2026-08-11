@@ -168,7 +168,8 @@
     "heading": "Grounding",
     "engine": {
       "google": "Google Search",
-      "xai": "Live Search (xAI)"
+      "xai": "Live Search (xAI)",
+      "open_ai": "Web search (OpenAI)"
     },
     "queries": "Queries",
     "sourcesMissing": "No sources were returned (URLs in the reply are not confirmed citations).",

@@ -394,6 +394,9 @@ pub enum GroundingEngine {
     /// xAI の Live Search（Agent Tools。Spec 31）。
     Xai,
     /// OpenAI の web 検索（Responses API のサーバー側ツール。Spec 34）。
+    ///
+    /// **ワイヤ値は `open_ai`**（`rename_all = "snake_case"` が `OpenAi` を割る）。
+    /// `Provider` の `open_ai_compat` / `open_ai_responses` と同じ綴りで揃う。
     OpenAi,
 }
 
@@ -473,6 +476,24 @@ pub struct ChatResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 接地エンジンのワイヤ値を固定する。
+    ///
+    /// **`OpenAi` は `snake_case` で `open_ai` になる**（`openai` ではない）。
+    /// この値は `types.ts` の `GroundingEngine` と辞書 `grounding.engine.*` の
+    /// 鍵に**そのまま使われる**ので、食い違うと画面に生の鍵が出る —
+    /// 型検査にも lint にも掛からない種類の退行（`failures.md` #54 と同じ形で、
+    /// あちらは実行時に組み立てる `var(--color-role-${色})` だった）。
+    #[test]
+    fn grounding_engine_wire_values_are_frozen() {
+        for (engine, expected) in [
+            (GroundingEngine::Google, r#""google""#),
+            (GroundingEngine::Xai, r#""xai""#),
+            (GroundingEngine::OpenAi, r#""open_ai""#),
+        ] {
+            assert_eq!(serde_json::to_string(&engine).unwrap(), expected);
+        }
+    }
 
     #[test]
     fn effort_wire_value_matches_as_str() {
