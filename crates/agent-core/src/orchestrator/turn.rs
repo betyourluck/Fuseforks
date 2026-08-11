@@ -1046,22 +1046,6 @@ async fn run_turn(
             break;
         }
 
-        // 実行できる呼び出しか。転送用の名前はここには来ない
-        // （上で Handoff として抜けている）。委譲（`ask_*`）は**結果が返る**ので、
-        // 転送ではなくこちら側 — 実行ツールと同じ扱いでループを回す。
-        let is_runnable = |call: &crate::llm::ToolCall| {
-            executable.iter().any(|spec| spec.name == call.name)
-                || (use_handoff_tools && handoffs.resolve_ask(&call.name).is_some())
-                // plan は executable にも resolve_ask にも該当しない。
-                // ここへ足し忘れると呼び出しが素通りし、モデルが呼んだのに
-                // **何も起きず本文だけ返る**（エラーにならないので気づけない）。
-                || (use_handoff_tools
-                    && handoffs.offers_plan()
-                    && call.name == HandoffTools::PLAN)
-                // room_log も orchestrator 合成（Spec 22）なので executable に
-                // 居ない。条件は提示（spec_for 相当）と同じ式に揃える。
-                || (spec.hears_room_log && call.name == crate::room_log::ROOM_LOG_TOOL_NAME)
-        };
 
         // **提示していない名前も捨てない。** 以前はここで filter して落として
         // いたため、モデルが実在しない名前を呼ぶと呼び出しはログにも
@@ -1106,169 +1090,36 @@ async fn run_turn(
         let mut executed_in_round = 0usize;
         let mut blocked_in_round: Option<String> = None;
 
-        for call in &calls {
-            // 同じ呼び出しに同じ結果が返り続けているなら、この 1 本は実行しない
-            // （failures.md #41 の処方 1）。**結果は必ず積む** — 呼び出しだけ
-            // 残して結果を落とすと、次のリクエストが「対応する結果が無い
-            // 呼び出し」として 400 で拒否される（#29）。
-            // 返す本文は短くする。**ここが効きの本体** — 同じ 12,000 字を
-            // もう一度積むと、以後の全周回でそれが再送される。
-            if repeat_guard.blocks(&call.name, &call.args) {
-                let repeats = repeat_guard.repeats(&call.name, &call.args);
-                shared.emit(CoreEvent::ToolRepeatBlocked {
-                    agent_id: agent_id.clone(),
-                    tool: call.name.clone(),
-                    repeats,
-                });
-                messages.push(ChatMessage::tool_result(
-                    &call.id,
-                    &call.name,
-                    format!(
-                        "`{}` は同じ引数で既に {repeats} 回、同じ結果を返しています。\
-                         もう一度呼んでも同じなので実行しませんでした。\
-                         引数か手順を変えるか、**できなかったこと自体を答えとして**\
-                         報告してください。",
-                        call.name
-                    ),
-                ));
-                note!(
-                    "tool blocked: agent={agent_id} round={} name={} repeats={repeats}",
-                    iteration + 1,
-                    call.name,
-                );
-                blocked_in_round.get_or_insert_with(|| call.name.clone());
-                continue;
-            }
-
-            // 提示していない名前。**捨てずに「無い」ことを結果として返す。**
-            //
-            // 判定を RepeatGuard の**後**に置くのは、同じ実在しない名前を呼び
-            // 続けたときに周回の打ち切りへ落ちるようにするため（先に置くと
-            // 同じ結果を返し続けて上限まで回る）。イベントは出さない —
-            // `ToolInvoked` は「ツールが走った」の意味で、走っていないものを
-            // 混ぜると UI の直近ツールが実在しない名前で埋まる。
-            if !is_runnable(call) {
-                let body = format!(
-                    "`{}` というツールはありません。提示された名前から選んでください。",
-                    call.name
-                );
-                note!(
-                    "tool unknown: agent={agent_id} round={} name={}",
-                    iteration + 1,
-                    call.name,
-                );
-                // 数えるのは**モデルへ返した本文**（RepeatGuard の規律と同じ）。
-                repeat_guard.observe(&call.name, &call.args, &body);
-                // 「無い」と伝えるのも新しい情報なので、空振りの周にはしない。
-                executed_in_round += 1;
-                messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
-                continue;
-            }
-
-            // 理由（Spec 27）の既定は `Excluded` = **合成側**（plan / room_log /
-            // ask / handoff）。あれらは `AgentTool` を実装しておらず、
-            // **引数が発話として会話ペインに出る**ので理由は重複になる。
-            // registry へ落ちた呼び出しだけが下で上書きする。
-            //
-            // **条件を書き写して先に判定しない。** 分岐の条件をここでもう一度
-            // 書くと、同じ規律が 2 箇所に生えて片方だけ古くなる。
-            // 既定値 + 実際に通った枝での上書きなら、**枝が増えても既定へ落ちる**。
-            let mut reason = (crate::tool_reason::ReasonState::Excluded, 0usize);
-            // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
-            // 上限（`max_tool_iterations`）の消費も 1 回で済む。
-            let result = if use_handoff_tools
-                && handoffs.offers_plan()
-                && call.name == HandoffTools::PLAN
-            {
-                plan_wave += 1;
-                Ok(run_plan(
-                    shared,
-                    agent_id,
-                    handoffs,
-                    call,
-                    incoming.hop,
-                    plan_wave,
-                    &turn.token,
-                    budget.as_ref(),
-                    participants.as_ref(),
-                    !incoming.attachments.is_empty(),
-                )
-                .await)
-            } else if spec.hears_room_log
-                && call.name == crate::room_log::ROOM_LOG_TOOL_NAME
-            {
-                // 広場ログの全文読み（Spec 22）。名前一致でここが勝つのは
-                // `transfer_to_*` / `ask_*` と同じ規則 — orchestrator 合成の
-                // 名前は registry（MCP 由来の同名）より先に解決される。
-                // hears_room_log = false の個体では素通りして registry 側へ
-                // 落ちる（その個体にこのツールは合成されていない）。
-                Ok(read_room_log(shared, agent_id, call).await)
-            } else {
-                match handoffs.resolve_ask(&call.name) {
-                    Some(target) if use_handoff_tools => {
-                        ask_agent(
-                            shared,
-                            agent_id,
-                            target,
-                            call,
-                            incoming.hop,
-                            &turn.token,
-                            budget.as_ref(),
-                            participants.as_ref(),
-                            !incoming.attachments.is_empty(),
-                        )
-                        .await
-                    }
-                    _ => {
-                        reason = registry_reason(shared, agent_id, call).await;
-                        execute_tool(shared, agent_id, call, &turn.token).await
-                    }
+        // 1 本ぶんの処理は CallRunner へ出した。**ここに残したのは
+        // `messages` と周ごとのカウンタ**で、戻り値で受ければ借用が 1 つ減る。
+        {
+            let mut runner = CallRunner {
+                shared,
+                agent_id,
+                spec,
+                handoffs,
+                incoming,
+                turn,
+                budget,
+                participants,
+                executable: &executable,
+                use_handoff_tools,
+                repeat_guard: &mut repeat_guard,
+                plan_wave: &mut plan_wave,
+            };
+            for call in &calls {
+                let (body, executed, blocked) = match runner.on_call(call, iteration + 1).await {
+                    CallOutcome::Executed(body) => (body, true, None),
+                    CallOutcome::Blocked { body, tool } => (body, false, Some(tool)),
+                };
+                if executed {
+                    executed_in_round += 1;
                 }
-            };
-            let (reason, reason_chars) = reason;
-            // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
-            let reason_kind = crate::tool_reason::kind_label(&reason);
-            shared.emit(CoreEvent::ToolInvoked {
-                agent_id: agent_id.clone(),
-                tool: call.name.clone(),
-                ok: result.is_ok(),
-                reason,
-            });
-            let ok = result.is_ok();
-            let body = match result {
-                Ok(text) => text,
-                // 失敗しても会話を止めない。モデルが読んで次を決める。
-                Err(err) => format!("ツールの実行に失敗しました: {err}"),
-            };
-            // ツール 1 本ごとの実測。**`body_chars` がこの行の主目的** — ツール結果は
-            // 履歴に積まれて以後の全周回で再送されるので、1 本の大きさが
-            // そのターンの入力トークンに周回数ぶん掛かって効く。ターン行の
-            // `rounds` と `prompt` だけでは「何がプロンプトを太らせたか」が
-            // 追えなかった（2026-07-31 の 730,406 トークンの診断で不足した欄）。
-            // `ok` は `Err` だったかどうかで、同梱ツールは失敗も `Ok` の本文で
-            // 返すため `ok=true` のまま失敗していることがある（CoreEvent::ToolInvoked
-            // と同じ意味。判定材料にするなら本文の側を見る）。
-            // `reason_chars` は**トリム後・切り詰め前**（Spec 27 D3）。本文は出さない —
-            // モデルの出力を記録する計器は秘密の転送経路になる（failures.md #71）。
-            // 切り詰め後を出すと「モデルが上限を超えて書くか」が全部 60 に
-            // 貼り付いて測れなくなる。
-            //
-            // **`reason=` を併記するのは、字数だけでは 3 つの状態が 0 に畳まれるため**
-            // （書かなかった / 外部なので尋ねていない / 対象外）。**畳むと後から
-            // 区別できない** — 実機の初日に、尋ねていない 2 件を「短い理由」として
-            // 平均へ混ぜる誤りを踏んだ（Spec 27 の P4 実装記録）。
-            note!(
-                "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}",
-                iteration + 1,
-                call.name,
-                call.args.to_string().chars().count(),
-                body.chars().count(),
-            );
-            // 数えるのは**モデルへ返した本文**。同梱ツールの失敗は `Err` ではなく
-            // この本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
-            repeat_guard.observe(&call.name, &call.args, &body);
-            executed_in_round += 1;
-            messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
+                if let Some(tool) = blocked {
+                    blocked_in_round.get_or_insert(tool);
+                }
+                messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
+            }
         }
 
         // **この周が丸ごと空振りだったときだけ**打ち切る。1 本が重複しただけの
@@ -1539,6 +1390,242 @@ async fn run_turn(
         grounding,
         reasoning_summary,
     }))
+}
+
+
+/// 1 本のツール呼び出しの結末。**本文は必ずある** — 呼び出しだけ残して結果を
+/// 落とすと、次のリクエストが「対応する結果が無い呼び出し」として 400 で
+/// 拒否される（`failures.md` #29）。
+enum CallOutcome {
+    /// 実行した。**「そんな道具は無い」を返した場合も含む** — 新しい情報を
+    /// 返しているので、空振りの周には数えない。
+    Executed(String),
+    /// 繰り返しで止めた。結果は積むが、この周の実行数には数えない。
+    Blocked {
+        /// モデルへ返す本文。
+        body: String,
+        /// 止めたツール名（周ごとの打ち切り判定に使う）。
+        tool: String,
+    },
+}
+
+/// 1 本の呼び出しを走らせるのに要る借用を束ねたもの。
+///
+/// **`&mut` で持つのは 2 つだけ**（`repeat_guard` / `plan_wave`）。ほかは
+/// 読むだけで、`messages` と周ごとのカウンタは**呼び出し側に残した** —
+/// 戻り値で返せば借用が 1 つ減り、`run_turn` 側で `messages` を触り続けられる。
+///
+/// **ここを型で束ねたのは、`for` の中身を関数へ出すため**（引数 12 個の関数に
+/// すると呼び出し側が読めなくなる）。分割の 5 箇条の「境界を型にする」。
+struct CallRunner<'a> {
+    shared: &'a Arc<Shared>,
+    agent_id: &'a AgentId,
+    spec: &'a AgentSpec,
+    handoffs: &'a HandoffTools,
+    incoming: &'a AgentMessage,
+    turn: &'a TurnHandle,
+    budget: &'a Option<Arc<crate::budget::BudgetPool>>,
+    participants: &'a Option<Participants>,
+    /// registry と個別 MCP で実行できるもの（実行可否の判定に使う）。
+    executable: &'a [ToolSpec],
+    use_handoff_tools: bool,
+    /// 同一失敗の検出（#41 の処方 1）。**ターンをまたいで持ち回る**ので `&mut`。
+    repeat_guard: &'a mut RepeatGuard,
+    /// 波の連番（Spec 08）。`plan` を呼んだ回だけ進む。
+    plan_wave: &'a mut u32,
+}
+
+impl CallRunner<'_> {
+    /// 実行できる呼び出しか。
+    ///
+    /// **転送用の名前はここに来ない**（`Outcome::Handoff` で先に抜けている）。
+    /// 委譲（`ask_*`）は**結果が返る**ので実行ツールと同じ扱い。
+    fn is_runnable(&self, call: &crate::llm::ToolCall) -> bool {
+        self.executable.iter().any(|spec| spec.name == call.name)
+            || (self.use_handoff_tools && self.handoffs.resolve_ask(&call.name).is_some())
+            // plan は executable にも resolve_ask にも該当しない。
+            // ここへ足し忘れると呼び出しが素通りし、モデルが呼んだのに
+            // **何も起きず本文だけ返る**（エラーにならないので気づけない）。
+            || (self.use_handoff_tools
+                && self.handoffs.offers_plan()
+                && call.name == HandoffTools::PLAN)
+            // room_log も orchestrator 合成（Spec 22）なので executable に
+            // 居ない。条件は提示（spec_for 相当）と同じ式に揃える。
+            || (self.spec.hears_room_log
+                && call.name == crate::room_log::ROOM_LOG_TOOL_NAME)
+    }
+
+    /// 1 本走らせる。`round` は 1 始まりの周回数（ログの `round=`）。
+    async fn on_call(&mut self, call: &crate::llm::ToolCall, round: u8) -> CallOutcome {
+        // 読むだけの借用はここでローカルへ落とす。**`note!` のインライン展開
+        // （`{agent_id}`）は式を取れない**ので、`self.` のままだと本文が書けない。
+        let shared = self.shared;
+        let agent_id = self.agent_id;
+        let spec = self.spec;
+        let handoffs = self.handoffs;
+        let incoming = self.incoming;
+        let turn = self.turn;
+        let budget = self.budget;
+        let participants = self.participants;
+        let use_handoff_tools = self.use_handoff_tools;
+        // 同じ呼び出しに同じ結果が返り続けているなら、この 1 本は実行しない
+        // （failures.md #41 の処方 1）。**結果は必ず積む** — 呼び出しだけ
+        // 残して結果を落とすと、次のリクエストが「対応する結果が無い
+        // 呼び出し」として 400 で拒否される（#29）。
+        // 返す本文は短くする。**ここが効きの本体** — 同じ 12,000 字を
+        // もう一度積むと、以後の全周回でそれが再送される。
+        if self.repeat_guard.blocks(&call.name, &call.args) {
+            let repeats = self.repeat_guard.repeats(&call.name, &call.args);
+            shared.emit(CoreEvent::ToolRepeatBlocked {
+                agent_id: agent_id.clone(),
+                tool: call.name.clone(),
+                repeats,
+            });
+            let body = format!(
+                "`{}` は同じ引数で既に {repeats} 回、同じ結果を返しています。\
+                 もう一度呼んでも同じなので実行しませんでした。\
+                 引数か手順を変えるか、**できなかったこと自体を答えとして**\
+                 報告してください。",
+                call.name
+            );
+            note!(
+                "tool blocked: agent={agent_id} round={} name={} repeats={repeats}",
+                round,
+                call.name,
+            );
+            return CallOutcome::Blocked {
+                body,
+                tool: call.name.clone(),
+            };
+        }
+
+        // 提示していない名前。**捨てずに「無い」ことを結果として返す。**
+        //
+        // 判定を RepeatGuard の**後**に置くのは、同じ実在しない名前を呼び
+        // 続けたときに周回の打ち切りへ落ちるようにするため（先に置くと
+        // 同じ結果を返し続けて上限まで回る）。イベントは出さない —
+        // `ToolInvoked` は「ツールが走った」の意味で、走っていないものを
+        // 混ぜると UI の直近ツールが実在しない名前で埋まる。
+        if !self.is_runnable(call) {
+            let body = format!(
+                "`{}` というツールはありません。提示された名前から選んでください。",
+                call.name
+            );
+            note!(
+                "tool unknown: agent={agent_id} round={} name={}",
+                round,
+                call.name,
+            );
+            // 数えるのは**モデルへ返した本文**（RepeatGuard の規律と同じ）。
+            self.repeat_guard.observe(&call.name, &call.args, &body);
+            // 「無い」と伝えるのも新しい情報なので、空振りの周にはしない。
+            return CallOutcome::Executed(body);
+        }
+
+        // 理由（Spec 27）の既定は `Excluded` = **合成側**（plan / room_log /
+        // ask / handoff）。あれらは `AgentTool` を実装しておらず、
+        // **引数が発話として会話ペインに出る**ので理由は重複になる。
+        // registry へ落ちた呼び出しだけが下で上書きする。
+        //
+        // **条件を書き写して先に判定しない。** 分岐の条件をここでもう一度
+        // 書くと、同じ規律が 2 箇所に生えて片方だけ古くなる。
+        // 既定値 + 実際に通った枝での上書きなら、**枝が増えても既定へ落ちる**。
+        let mut reason = (crate::tool_reason::ReasonState::Excluded, 0usize);
+        // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
+        // 上限（`max_tool_iterations`）の消費も 1 回で済む。
+        let result = if use_handoff_tools
+            && handoffs.offers_plan()
+            && call.name == HandoffTools::PLAN
+        {
+            *self.plan_wave += 1;
+            Ok(run_plan(
+                shared,
+                agent_id,
+                handoffs,
+                call,
+                incoming.hop,
+                *self.plan_wave,
+                &turn.token,
+                budget.as_ref(),
+                participants.as_ref(),
+                !incoming.attachments.is_empty(),
+            )
+            .await)
+        } else if spec.hears_room_log
+            && call.name == crate::room_log::ROOM_LOG_TOOL_NAME
+        {
+            // 広場ログの全文読み（Spec 22）。名前一致でここが勝つのは
+            // `transfer_to_*` / `ask_*` と同じ規則 — orchestrator 合成の
+            // 名前は registry（MCP 由来の同名）より先に解決される。
+            // hears_room_log = false の個体では素通りして registry 側へ
+            // 落ちる（その個体にこのツールは合成されていない）。
+            Ok(read_room_log(shared, agent_id, call).await)
+        } else {
+            match handoffs.resolve_ask(&call.name) {
+                Some(target) if use_handoff_tools => {
+                    ask_agent(
+                        shared,
+                        agent_id,
+                        target,
+                        call,
+                        incoming.hop,
+                        &turn.token,
+                        budget.as_ref(),
+                        participants.as_ref(),
+                        !incoming.attachments.is_empty(),
+                    )
+                    .await
+                }
+                _ => {
+                    reason = registry_reason(shared, agent_id, call).await;
+                    execute_tool(shared, agent_id, call, &turn.token).await
+                }
+            }
+        };
+        let (reason, reason_chars) = reason;
+        // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
+        let reason_kind = crate::tool_reason::kind_label(&reason);
+        shared.emit(CoreEvent::ToolInvoked {
+            agent_id: agent_id.clone(),
+            tool: call.name.clone(),
+            ok: result.is_ok(),
+            reason,
+        });
+        let ok = result.is_ok();
+        let body = match result {
+            Ok(text) => text,
+            // 失敗しても会話を止めない。モデルが読んで次を決める。
+            Err(err) => format!("ツールの実行に失敗しました: {err}"),
+        };
+        // ツール 1 本ごとの実測。**`body_chars` がこの行の主目的** — ツール結果は
+        // 履歴に積まれて以後の全周回で再送されるので、1 本の大きさが
+        // そのターンの入力トークンに周回数ぶん掛かって効く。ターン行の
+        // `rounds` と `prompt` だけでは「何がプロンプトを太らせたか」が
+        // 追えなかった（2026-07-31 の 730,406 トークンの診断で不足した欄）。
+        // `ok` は `Err` だったかどうかで、同梱ツールは失敗も `Ok` の本文で
+        // 返すため `ok=true` のまま失敗していることがある（CoreEvent::ToolInvoked
+        // と同じ意味。判定材料にするなら本文の側を見る）。
+        // `reason_chars` は**トリム後・切り詰め前**（Spec 27 D3）。本文は出さない —
+        // モデルの出力を記録する計器は秘密の転送経路になる（failures.md #71）。
+        // 切り詰め後を出すと「モデルが上限を超えて書くか」が全部 60 に
+        // 貼り付いて測れなくなる。
+        //
+        // **`reason=` を併記するのは、字数だけでは 3 つの状態が 0 に畳まれるため**
+        // （書かなかった / 外部なので尋ねていない / 対象外）。**畳むと後から
+        // 区別できない** — 実機の初日に、尋ねていない 2 件を「短い理由」として
+        // 平均へ混ぜる誤りを踏んだ（Spec 27 の P4 実装記録）。
+        note!(
+            "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}",
+            round,
+            call.name,
+            call.args.to_string().chars().count(),
+            body.chars().count(),
+        );
+        // 数えるのは**モデルへ返した本文**。同梱ツールの失敗は `Err` ではなく
+        // この本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
+        self.repeat_guard.observe(&call.name, &call.args, &body);
+        CallOutcome::Executed(body)
+    }
 }
 
 /// 送るプロンプト一式（段 4）。
