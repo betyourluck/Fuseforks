@@ -245,17 +245,41 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 利用者要望。`ssh outcasts <コマンド>` は通るが対話セッションは返らない。
 **着手前に測った 3 点**（`outcasts` = `outcasts.jp` へ実接続）:
 
-- **同じ「stdin が null」でも ssh の実装で挙動が正反対だった。**
-  **Git Bash の ssh**（MSYS2）は
-  `Pseudo-terminal will not be allocated because stdin is not a terminal.`
-  を出して**即返る（exit 0）**。**Windows OpenSSH**（`System32\OpenSSH\ssh.exe`）は
-  その警告を出さず、MOTD のあと **107 秒ぶら下がって exit 255**。
-  **`run` が叩くのは後者**（`PROGRAMDATA` が要ったのと同じ二分岐）。
-  **どちらの ssh で測ったかを書かずに「返らない/返る」と書かない**
+- **ぶら下がりは `run` 側のバグで、2 行で直った**（同日着地）。
+  `Stdio::null()` を **`Stdio::piped()` + 握った stdin の即 drop** に変えた。
+  **Windows OpenSSH は NUL から EOF を受け取らない** — リモートの bash が
+  stdin を待ち続ける。実コード経路の実測は **60 秒でタイムアウト → 1.04 秒 exit 0**。
+  **`-T` は効かない**（420 秒でも返らず、素の 107 秒より悪化）。
+  **tty の問題ではない** — MOTD は `pam_motd` が tty の有無に関係なく出すので、
+  出ていることは pty の確保を意味しない。**Git Bash の ssh**（MSYS2）は
+  `Pseudo-terminal will not be allocated…` を出して元から即返るので、
+  **どちらの ssh で測ったかを書かずに「返る/返らない」と書かない**
+  （`PROGRAMDATA` が要ったのと同じ二分岐）
+- **合成テストでは判別できなかった。** `sort` に stdin を読ませる形は
+  **`drop` を外しても 0.14 秒で緑**（普通のプログラムは `Stdio::null()` でも
+  EOF を受け取る）。**判別するのは実機の Windows OpenSSH だけ**なので、
+  回帰は `#[ignore]` の `runs_ssh_without_hanging_on_stdin` 1 本で留めた。
+  **一発で緑になったテストは、機構を壊して赤を確かめる**まで信用しない
 - **一発コマンドは通る** — `ssh outcasts 'echo ok; whoami; pwd'` が exit 0。
   **だから「`ssh -T` が通るか」では分岐しない**（測る前は分岐条件のつもりだった）
-- **状態は持ち越されない** — `cd /tmp` の次の呼び出しで `pwd` = `/home/ubuntu`。
-  **実際の分岐条件はこちら**（状態が要るか / tty が要るか）
+- **状態は「呼び出しをまたぐと」持ち越されない** — `cd /tmp` の**次の呼び出し**で
+  `pwd` = `/home/ubuntu`。**ただし 1 回の呼び出しの中では持ち越される** —
+  stdin へ複数行を流すとリモートは **1 つの bash が読み続ける**ので、
+  `cd /tmp` → `pwd` = `/tmp`、`export FOO=bar` → `$FOO` = `bar`（413 ms・exit 0）。
+  **B'' は状態を持つ。** 持てないのは**途中の出力を見て次の手を決めること**だけ
+
+**分岐条件は「状態が要るか」ではない**（上の実測で覆った）:
+
+```text
+中間出力を見て次の手を決める必要があるか?
+├─ No  → B''（1 呼び出し = 1 シェル。cd / export は効く）
+└─ Yes → tty が要るか?
+         ├─ No  → A-piped
+         └─ Yes → A-pty（sudo のパスワード / vim / top）
+```
+
+**サーヴァントは自前のループ（36 周）を持つので、呼び出しをまたいだ分岐はできる**
+（毎回シェルが新品になるだけ）。**A が要るのは分岐と状態の持続が同時に要るときだけ。**
 
 **設計の芯は「閉じた許容が stdin には掛からない」**こと。`decide` が見ているのは
 **構造として分かれた argv** で、シェルが存在しないことが安全の根拠
@@ -268,6 +292,12 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 - **通る形は「解析ではなく構成」** — `stdin` を `Vec<Vec<String>>`（argv の列）で
   受け、`decide` を各 argv に掛け、**こちらが引用して 1 行に組み立てる**。
   モデルはメタ文字を持ち込む席を構造的に持たない
+- **引用規則は「相手が誰か」で決まるので、汎用の `run` 機能にはできない。**
+  `shell_escape::unix::escape` が正しいのは**相手が POSIX シェルのとき**だけで、
+  `python -` / `patch` / Windows のプログラムが stdin を読む登録では誤る。
+  **`run.json` の登録側に「この stdin は bash が読む」を宣言させ、
+  宣言の無い登録では `stdin_argv` を受け付けない**形が要る
+  （`api_key_env` と同じで、**説明文ではなく構造で持つ**）
 - **セッションを持つ案（pty + `SessionManager`）は所有者の再設計を伴う** —
   予算（Spec 11）・打ち切り（Spec 10）・hop は全部ターン建てで、
   セッションはターンより長生きする。**Realtime API を見送ったのと同じ構造**。

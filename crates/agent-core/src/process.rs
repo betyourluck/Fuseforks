@@ -94,7 +94,16 @@ pub async fn spawn_and_wait(
     command
         .args(argv)
         .current_dir(cwd)
-        .stdin(Stdio::null())
+        // **`Stdio::null()` ではなく、開いてすぐ閉じたパイプ。**
+        // どちらも「入力は無い」つもりだが、**Windows OpenSSH は NUL から
+        // EOF を受け取らない** — `ssh outcasts` が MOTD まで出したあと
+        // リモートの bash が stdin を待ち続け、107 秒ぶら下がって exit 255
+        // になる（2026-08-12 実測。`-T` を足すと 420 秒でも返らず悪化した）。
+        // **閉じたパイプなら 989 ms・exit 0 で返る。**
+        //
+        // **tty の問題ではない。** MOTD は `pam_motd` が tty の有無に関係なく
+        // 出すので、出ていることは pty の確保を意味しない。
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -120,6 +129,11 @@ pub async fn spawn_and_wait(
     // kill が 1 つも無かった理由**で、`group_spawn` で殺せる形に作ってあるのに
     // 殺す呼び出しが無いまま `Ran::Cancelled` を返していた（実機で ssh が
     // 打ち切り後も 5 分生き残った。2026-08-12）。
+    // **握った stdin は即座に落とす。** これが EOF になる。
+    // 持ったままだと閉じないので、`Stdio::null()` のときと同じ形で
+    // 相手が待ち続ける — **開くことではなく閉じることが処方**。
+    drop(child.inner().stdin.take());
+
     let out_pipe = child.inner().stdout.take();
     let err_pipe = child.inner().stderr.take();
     let drain = tokio::spawn(async move {

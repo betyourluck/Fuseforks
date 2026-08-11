@@ -493,6 +493,37 @@ mod tests {
         );
     }
 
+    /// **実機の ssh でしか判別できない**ので `#[ignore]`。
+    ///
+    /// `cargo test -p agent-core --lib runs_ssh -- --ignored --nocapture` で走る。
+    /// **`sort` を読ませる合成テストでは判別できなかった** — 普通のプログラムは
+    /// `Stdio::null()` でも EOF を受け取るので、`drop` を外しても 0.14 秒で緑。
+    /// **判別するのは Windows OpenSSH だけ**（NUL から EOF を受け取らない）。
+    ///
+    /// 接続先 `outcasts` は開発者の ssh_config に依存するので CI では走らない。
+    #[tokio::test]
+    #[ignore = "実接続が要る。ssh_config に outcasts が要る"]
+    async fn runs_ssh_without_hanging_on_stdin() {
+        let started = std::time::Instant::now();
+        let out = run_program(
+            "ssh",
+            Path::new(r"C:\Windows\System32\OpenSSH\ssh.exe"),
+            &["-o".into(), "BatchMode=yes".into(), "outcasts".into()],
+            Path::new("."),
+            60,
+            None,
+        )
+        .await
+        .unwrap();
+
+        eprintln!("elapsed={:?}\n{out}", started.elapsed());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "stdin が閉じていなければ 107 秒ぶら下がる（実測 {:?}）",
+            started.elapsed()
+        );
+    }
+
     /// **名前どおり「止める」ところまで見る。**
     ///
     /// 経過時間の assertion が**プロセス木を落としたことの証拠**になっている。
