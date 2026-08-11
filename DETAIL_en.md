@@ -63,6 +63,8 @@ Fuseforks/
 │       │       ├── anthropic.rs     Anthropic Messages API adapter
 │       │       ├── gemini.rs        Gemini native adapter (Google Search grounding)
 │       │       ├── xai_responses.rs xAI Responses adapter (Grok Live Search)
+│       │       ├── openai_responses.rs OpenAI Responses adapter (thinking summary, web search)
+│       │       ├── responses_input.rs  input list shared by both Responses wires
 │       │       ├── client.rs        HTTP core (URL / headers / retry)
 │       │       └── error.rs         LlmError (retry decision axis)
 │       ├── tests/orchestrator.rs    Integration tests (no network required)
@@ -322,6 +324,7 @@ an image, nothing sent and nothing paid changes.
 | Servant → servant (`ask` / `plan` / transfer) | Dropped | The delivered body is prefixed with "(the 1 image is not forwarded)" |
 | Plaza log (excerpts of others' conversations) | Dropped | Only its existence is noted, as "(1 image)" |
 | Gemini's native path | Dropped | Refused on screen (that path exists solely for Google Search grounding) |
+| The xAI / OpenAI Responses paths | Dropped | **Stated up front in the model registration screen** (the cost is shown where the switch is made) |
 
 **Never drop silently** is the rule here. If the recipient cannot diagnose *why* it cannot
 see an image, a mechanism working correctly is indistinguishable from a broken one.
@@ -766,7 +769,7 @@ Set the model template's **protocol to "xAI native (Responses)"** and the
 **Live Search (web)** and **Live Search (X)** switches appear under
 "Vendor-specific skills". A model with either checked searches before it answers.
 
-**Using a fourth wire at `/v1/responses` is a constraint, not a preference.**
+**Using a dedicated wire at `/v1/responses` is a constraint, not a preference.**
 The older `search_parameters` on `/v1/chat/completions` now returns **HTTP 410
 Gone**, with the server itself naming its successor API (measured 2026-08-09).
 Function calling alone works fine on the OpenAI-compatible endpoint, so existing
@@ -804,7 +807,8 @@ results are injected into the prompt: 98,213 in one measured turn, of which
 ([Spec 11](specs/11_token-budget.md)) one search can exhaust it, so the measured
 figure sits next to the checkbox.
 
-**The thinking summary is received and shown** ([Spec 33](specs/33_thinking-summary.md)).
+**The thinking summary is received and shown** ([Spec 33](specs/33_thinking-summary.md) /
+[Spec 34](specs/34_openai-responses.md)).
 It sits below the bubble in the chat pane, collapsed, in a **frame separate from
 the grounding record** — sources are verifiable external pointers while a summary
 is an unverifiable internal claim, so putting them in one frame would lend the
@@ -812,16 +816,23 @@ latter the credibility of the former. It is **collapsed by default** (measuremen
 reach 3,700 characters, and it comes back in English). Turns with no summary show
 no frame at all.
 
-**Two of the three providers return nothing unless asked.** Only xAI returns it by
-default; Anthropic needs `thinking.display: "summarized"` and Gemini needs
-`thinkingConfig.includeThoughts`. **Thinking happens and is billed either way**, so
+**Three of the four providers return nothing unless asked.** Only xAI returns it by
+default; Anthropic needs `thinking.display: "summarized"`, Gemini needs
+`thinkingConfig.includeThoughts`, and **OpenAI needs `reasoning.summary: "detailed"`** —
+`auto` returns not a single character (measured: 0 vs 522). **Thinking happens and is
+billed either way**, so
 these fields change only how it is returned. **Anthropic is asked only on
 5-generation models** (older ones reject it with a 400, and they do not think by default).
 
 **Fidelity differs by an order of magnitude between providers** (measured): xAI and
 Anthropic return under 10% of their thinking, while **Gemini returns 75–85%**. The
-label is "thinking summary" for all three (an understatement for Gemini, but it errs
+label is "thinking summary" everywhere (an understatement for Gemini, but it errs
 in the safe direction — it never claims more than what came back).
+
+> **"Fidelity" may not be a meaningful reading for OpenAI.** One measurement showed
+> 131 thinking tokens against a 1,308-character summary (over 300 tokens of English).
+> A summary extracted from thinking cannot exceed it, so **it may be generated
+> separately**. This is a single observation and is not being treated as settled.
 
 **The token count spent on thinking is also measured**
 ([Spec 32](specs/32_thinking-reception.md)) — via `reasoning=` on the `turn`
@@ -838,8 +849,52 @@ The reason for measuring it: **most of what was paid for never reached the
 screen.** In one measurement (`grok-4.5`), 1,494 of 1,497 output tokens went to
 thinking and **the visible answer was four characters long**.
 
-Receiving the thinking **text** splits into two further specs — receiving and
+Receiving the thinking **text** split into two further specs — receiving and
 displaying the summary (Spec 33), and the OpenAI Responses wire (Spec 34).
+**Both have landed.**
+
+---
+
+### The OpenAI Responses Wire ([Spec 34](specs/34_openai-responses.md))
+
+Setting a model template's **protocol to "OpenAI native (Responses)"** adds
+**web search** and **Pro reasoning mode** under "provider skills".
+
+**Three things need this path, and none of them are reachable over
+`/v1/chat/completions`.**
+
+1. **The text of the thinking summary** — the compatible endpoint returns
+   the count but never the body
+2. **Web search** — `web_search` on general gpt-5 models is Responses-only
+3. **Thinking itself** — the compatible endpoint refuses to combine function
+   tools with reasoning, so this app **switched thinking off whenever tools were
+   offered**, running a reasoning model with its reasoning killed. The error that
+   refuses the combination names this wire as the way out.
+
+The third one produced a matched pair on real hardware. **Same agent, 110 seconds
+apart**: Responses at `rounds=5 reasoning=131` (thinking while calling tools six
+times), compatible at `rounds=1 reasoning=0`.
+
+**Switching costs two things.** Temperature is rejected by the provider, and image
+attachments only travel over the compatible endpoint. **Both are stated in the
+model registration screen** — dropping them silently reads as "I configured it and
+it does nothing", which is worse than being refused (both fail, but only one is
+legible).
+
+**Existing gpt-\* templates change nothing until switched** (there is no
+auto-detection). Left alone, nothing on screen would reveal that new capabilities
+exist, so **a one-line hint sits directly under the protocol selector**. The hint
+also looks at the model name, but **the wire is selected by provider alone** —
+guidance and judgement are kept apart.
+
+**Web search adds about 4,400 input tokens to every request, including ones that
+never search** (the tool declaration is injected into the prompt); later requests
+hit the cache, so the effective cost is roughly a tenth. **Pro reasoning mode
+carries its own fixed cost of about 1,500 tokens per request**, against a
+published benchmark gain of 23.3% → 28.5% for terra (about level with standard
+sol at 28.7%). **Both the accuracy and the fixed cost are stated** — either one
+alone is not enough to decide with.
+
 
 ### Where API Keys Live
 
@@ -974,10 +1029,15 @@ is still `[concordia]`. The format itself did not change across the rename.
 2026-07-31 04:35:02.117 [concordia] turn: agent=agent hop=0 rounds=19/36 waves=1 stop=- prompt=730406 cached=116334 total=748424
 ```
 
-A `turn` line carries **one more field than this example**: a trailing
-`reasoning=` (tokens spent on thinking during that turn). Spec 32 added it, so
-older logs do not have it. It is **a share of `total=`**, so the total does not
-move at all.
+A `turn` line carries **two more fields than this example**: a trailing
+`reasoning=` (tokens spent on thinking during that turn; Spec 32) and `backend=`
+(which wire the turn went over; Spec 34). Older logs have neither.
+`reasoning=` is **a share of `total=`**, so the total does not move at all.
+
+`backend=` was added because **adding a wire could not be confirmed on real
+hardware**. Switching the protocol changed **not one line of the log** unless a
+provider-specific feature such as search was used. An instrument tied to one wire
+is only evidence about **the feature**, never about the path.
 
 There are eight line kinds: `turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>`), `turn failed` (a turn that died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
 

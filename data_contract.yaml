@@ -1184,12 +1184,14 @@ enums:
       canonical (ChatRequest.effort) は未指定なら null のまま運ぶ。
       XHigh のワイヤ値は `xhigh` (serde の snake_case 変換に任せると `x_high` になり、
       TS 側と食い違う)。Effort::as_str と serde 値の一致をテストで固定している。
-      **Responses ワイヤでの受理集合は未確定 (Spec 34 P1 で測る)。**
-      P0a で実測したのは low だけ。外部調査 (Manuale
-      AI/model/chatgpt/GPT-5-mode-pro.md) は gpt-5.6 系を
-      none / low / medium / high / xhigh / max の 6 段階とし、**minimal を挙げていない**
-      — Spec 34 rev2 が 7 値と書いたのは gpt-5 期の値を引きずった可能性がある。
-      **受理されない値を送ると 400 なので、丸めの表は実測で決める。**
+      **Responses ワイヤでの受理集合は実測で確定した (Spec 34 P1)。**
+      gpt-5.6-terra は none / low / medium / high / xhigh / max の **6 値**を受け、
+      **minimal は 400**。よって **canonical の 5 値はすべて通り、丸めは要らない**
+      (openai_compat が xhigh / max を high へ丸めるのは、受け付けないプロバイダ
+      向けの縮退。**このワイヤへ写さない**)。
+      **測り方**: 正しい値を 1 つずつ試すのではなく、**明確に誤った値を 1 つ送る** —
+      400 の本文がサーバー側から受理集合を全部列挙する
+      ("Supported values are: 'none', 'low', ...")。1 発で表が埋まる。
 
       ワイヤへ出すかどうかと値の決定は adapter の責務で、モデル名で割れる
       (openai_compat::reasoning_effort)。「未指定なら送らない」は canonical の
@@ -3719,11 +3721,24 @@ llm_wire:
 
     計器: `turn:` 行へ **reasoning= を常に出す（0 も出す）**。
     形は `turn: agent=… hop=… rounds=…/… waves=… stop=… prompt=…
-    cached=… total=… reasoning=…`（**output という欄は存在しない** —
+    cached=… total=… reasoning=… backend=…`（**output という欄は存在しない** —
     total= の隣へ足した。P1 で着地）。**Spec 32 より前のログには
     reasoning= が無い** — 古い行を読むときの目印になる。
     **条件付きで省かない** — 思考を使わない経路で 0 が出ることが「常に出す実装」
     との対照になり、省くと機構が効いているか読めなくなる。
+
+    **backend= はどのワイヤを通ったか (Spec 34)。** LlmBackend::name() の値で、
+    openai-compat / anthropic / gemini / xai-responses / openai-responses。
+    足したのは**ワイヤを増やしたことを実機で確かめられなかった**ため —
+    プロトコルを切り替えても、検索のような固有機能を使わない限り
+    **ログが 1 行も変わらなかった**（実機で 2 ターン撃って読めなかった）。
+    Spec 31 はこの穴を踏まずに済んでいたが、それは `xai search:` が偶然
+    その役をしていたからで、あの行は検索を有効にした呼び出しでしか出ない。
+    **一般化: あるワイヤに固有の計器は、そのワイヤの「特定の機能を使ったとき」
+    の証拠にしかならない。「この口を通った」を読みたいなら、機能と無関係な
+    場所に置く。**
+    **欄は末尾へ足す** — 既存の欄の位置が動かないので、過去の観測を引く
+    grep が壊れない（reasoning= を足したときと同じ形）。
 
   reasoning_summary: |
     モデルが返す「思考の要約」（Spec 33 P0 凍結 2026-08-10）。
