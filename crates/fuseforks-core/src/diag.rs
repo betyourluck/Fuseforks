@@ -136,7 +136,7 @@ pub fn note(line: &str) {
 /// 診断の 1 行を出す。`format!` と同じ書式を取る。
 ///
 /// ```
-/// agent_core::note!("turn: agent={} rounds={}", "agent_01", 3);
+/// fuseforks_core::note!("turn: agent={} rounds={}", "agent_01", 3);
 /// ```
 #[macro_export]
 macro_rules! note {

@@ -60,7 +60,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # **ワークスペースはルートに 1 つだけ**（members = apps/gui-tauri/src-tauri,
-      # crates/agent-core）。target もルートに 1 つなので、キャッシュ対象も 1 つでよい。
+      # crates/fuseforks-core）。target もルートに 1 つなので、キャッシュ対象も 1 つでよい。
       - name: Rust cache
         uses: swatinem/rust-cache@v2
 

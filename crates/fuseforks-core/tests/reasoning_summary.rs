@@ -15,10 +15,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::event::CoreEvent;
-use agent_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Usage};
-use agent_core::model::{AgentId, AgentSpec, ModelTemplate};
-use agent_core::{
+use fuseforks_core::event::CoreEvent;
+use fuseforks_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Usage};
+use fuseforks_core::model::{AgentId, AgentSpec, ModelTemplate};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 use tokio::sync::broadcast::Receiver;
@@ -144,7 +144,7 @@ async fn the_summary_reaches_the_message_but_never_the_next_prompt() {
     let events = drain_until_quiet(&mut rx).await;
 
     // 正の対照: 要約が発話に載っている（載らなければ配線が死んでいる）。
-    let with_summary: Vec<&agent_core::AgentMessage> = events
+    let with_summary: Vec<&fuseforks_core::AgentMessage> = events
         .iter()
         .filter_map(|e| match e {
             CoreEvent::MessageSent { message } if !message.reasoning_summary.is_empty() => {

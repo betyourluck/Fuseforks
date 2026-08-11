@@ -1,6 +1,6 @@
 //! Tauri IPC コマンド。
 //!
-//! この層は**薄い転送層**に徹する。判断はすべて [`agent_core::Orchestrator`] 側にあり、
+//! この層は**薄い転送層**に徹する。判断はすべて [`fuseforks_core::Orchestrator`] 側にあり、
 //! ここでやるのは引数の受け取りと戻り値の受け渡しだけ。
 //! ロジックがこちらへ滲むと、GUI を起動しないと検証できない挙動が生まれる。
 //!
@@ -10,12 +10,12 @@
 
 use std::collections::HashMap;
 
-use agent_core::model::{
+use fuseforks_core::model::{
     AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, ConfigFileKind,
     ModelTemplate, ModelTemplateId, TopologyEdge,
 };
-use agent_core::world::TopologyPosition;
-use agent_core::{CoreError, CoreResult};
+use fuseforks_core::world::TopologyPosition;
+use fuseforks_core::{CoreError, CoreResult};
 use tauri::State;
 
 use crate::state::AppState;
@@ -83,7 +83,7 @@ pub async fn list_messages(
 #[tauri::command]
 pub async fn list_plan_waves(
     state: State<'_, AppState>,
-) -> CoreResult<Vec<agent_core::plan::PlanWaveRecord>> {
+) -> CoreResult<Vec<fuseforks_core::plan::PlanWaveRecord>> {
     Ok(state.orchestrator.list_plan_waves().await)
 }
 
@@ -387,7 +387,7 @@ pub async fn set_reception(state: State<'_, AppState>, agent_id: Option<AgentId>
 
 /// `mcp.json` の宣言を返す。
 #[tauri::command]
-pub async fn read_mcp_config(state: State<'_, AppState>) -> CoreResult<agent_core::McpConfig> {
+pub async fn read_mcp_config(state: State<'_, AppState>) -> CoreResult<fuseforks_core::McpConfig> {
     state.orchestrator.mcp_config().await
 }
 
@@ -395,7 +395,7 @@ pub async fn read_mcp_config(state: State<'_, AppState>) -> CoreResult<agent_cor
 #[tauri::command]
 pub async fn write_mcp_config(
     state: State<'_, AppState>,
-    config: agent_core::McpConfig,
+    config: fuseforks_core::McpConfig,
 ) -> CoreResult<()> {
     state.orchestrator.set_mcp_config(&config).await
 }
@@ -410,7 +410,7 @@ pub async fn reload_mcp(state: State<'_, AppState>) -> CoreResult<()> {
 #[tauri::command]
 pub async fn list_mcp_servers(
     state: State<'_, AppState>,
-) -> CoreResult<Vec<agent_core::McpServerStatus>> {
+) -> CoreResult<Vec<fuseforks_core::McpServerStatus>> {
     Ok(state.orchestrator.mcp_statuses().await)
 }
 
@@ -419,7 +419,7 @@ pub async fn list_mcp_servers(
 pub async fn agent_mcp_status(
     state: State<'_, AppState>,
     agent_id: AgentId,
-) -> CoreResult<agent_core::AgentMcpStatus> {
+) -> CoreResult<fuseforks_core::AgentMcpStatus> {
     state.orchestrator.agent_mcp_status(&agent_id).await
 }
 
@@ -445,7 +445,7 @@ pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> Cor
 #[tauri::command]
 pub async fn list_blackboard(
     state: State<'_, AppState>,
-) -> CoreResult<Vec<agent_core::BlackboardNote>> {
+) -> CoreResult<Vec<fuseforks_core::BlackboardNote>> {
     state.orchestrator.read_blackboard().await
 }
 
@@ -493,7 +493,7 @@ pub async fn set_token_budget(
 
 /// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
 #[tauri::command]
-pub async fn get_language(state: State<'_, AppState>) -> CoreResult<agent_core::world::Language> {
+pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_core::world::Language> {
     Ok(state.orchestrator.language().await)
 }
 
@@ -502,7 +502,7 @@ pub async fn get_language(state: State<'_, AppState>) -> CoreResult<agent_core::
 #[tauri::command]
 pub async fn set_language(
     state: State<'_, AppState>,
-    language: agent_core::world::Language,
+    language: fuseforks_core::world::Language,
 ) -> CoreResult<()> {
     state.orchestrator.set_language(language).await
 }
@@ -513,7 +513,7 @@ pub async fn set_language(
 #[tauri::command]
 pub async fn list_command_requests(
     state: State<'_, AppState>,
-) -> CoreResult<Vec<agent_core::CommandPolicyView>> {
+) -> CoreResult<Vec<fuseforks_core::CommandPolicyView>> {
     Ok(state.orchestrator.command_policies().await)
 }
 
@@ -529,7 +529,7 @@ pub async fn approve_command(
     command: String,
     args: Vec<String>,
     open: bool,
-) -> CoreResult<agent_core::ApprovalOutcome> {
+) -> CoreResult<fuseforks_core::ApprovalOutcome> {
     state
         .orchestrator
         .approve_command(&agent_id, &command, &args, open)
@@ -544,7 +544,7 @@ pub async fn reject_command(
     command: String,
     args: Vec<String>,
     open: bool,
-) -> CoreResult<agent_core::ApprovalOutcome> {
+) -> CoreResult<fuseforks_core::ApprovalOutcome> {
     state
         .orchestrator
         .reject_command(&agent_id, &command, &args, open)
@@ -699,10 +699,10 @@ pub async fn send_user_message(
         use base64::Engine as _;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&payload.data_base64)
-            .map_err(|_| agent_core::CoreError::InvalidAttachment {
+            .map_err(|_| fuseforks_core::CoreError::InvalidAttachment {
                 reason: "画像データを読み取れません（base64 の復号に失敗）".to_owned(),
             })?;
-        uploads.push(agent_core::AttachmentUpload {
+        uploads.push(fuseforks_core::AttachmentUpload {
             file_name: payload.file_name,
             bytes,
         });
@@ -728,7 +728,7 @@ pub async fn send_user_message(
 pub async fn list_work_dir_files(
     state: State<'_, AppState>,
     agent_id: AgentId,
-) -> CoreResult<agent_core::WorkDirListing> {
+) -> CoreResult<fuseforks_core::WorkDirListing> {
     state.orchestrator.list_work_dir_files(&agent_id).await
 }
 
@@ -773,7 +773,7 @@ pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
 #[tauri::command]
 pub async fn list_sessions(
     state: State<'_, AppState>,
-) -> CoreResult<Vec<agent_core::SessionSummary>> {
+) -> CoreResult<Vec<fuseforks_core::SessionSummary>> {
     state.orchestrator.list_sessions().await
 }
 
@@ -797,7 +797,7 @@ pub async fn resume_session(state: State<'_, AppState>, session_id: String) -> C
 pub async fn list_fork_points(
     state: State<'_, AppState>,
     session_id: String,
-) -> CoreResult<Vec<agent_core::ForkPoint>> {
+) -> CoreResult<Vec<fuseforks_core::ForkPoint>> {
     state.orchestrator.list_fork_points(&session_id).await
 }
 
@@ -861,7 +861,7 @@ pub async fn export_session(
 pub struct ScheduleView {
     /// 予定そのもの（camelCase で平坦化）。
     #[serde(flatten)]
-    pub task: agent_core::schedule::ScheduledTask,
+    pub task: fuseforks_core::schedule::ScheduledTask,
     /// 次回の発火予定時刻（epoch ミリ秒）。求まらない場合は `null`。
     pub next_due_ms: Option<u64>,
     /// 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。
@@ -875,16 +875,16 @@ pub struct ScheduleView {
     ///
     /// **プロセス寿命**（再起動で消える）。再起動後の診断は `fuseforks.log` の
     /// `schedule probe:` 行が担う — 第 2 の永続ファイルは作らない。
-    pub last_probe: Option<agent_core::schedule_probe::ProbeReport>,
+    pub last_probe: Option<fuseforks_core::schedule_probe::ProbeReport>,
 }
 
 impl ScheduleView {
     /// 現在時刻で `next_due` を評価して 1 行に整える。
     fn of(
-        task: agent_core::schedule::ScheduledTask,
+        task: fuseforks_core::schedule::ScheduledTask,
         approvals: &crate::probe_approvals::ApprovalStore,
         village_id: &str,
-        reports: &std::collections::HashMap<String, agent_core::schedule_probe::ProbeReport>,
+        reports: &std::collections::HashMap<String, fuseforks_core::schedule_probe::ProbeReport>,
     ) -> Self {
         let last_probe = reports.get(&task.id).cloned();
         let next_due_ms = task
@@ -892,7 +892,7 @@ impl ScheduleView {
             .and_then(|due| u64::try_from(due.timestamp_millis()).ok());
         let recurrence_label = task.recurrence.label_ja();
         let probe_approved = task.probe.as_ref().is_none_or(|probe| {
-            agent_core::orchestrator::ProbeApprovals::is_approved(
+            fuseforks_core::orchestrator::ProbeApprovals::is_approved(
                 approvals,
                 &probe.approval_key(village_id),
             )
@@ -935,8 +935,8 @@ pub async fn create_schedule(
     state: State<'_, AppState>,
     to: AgentId,
     message: String,
-    recurrence: agent_core::schedule::Recurrence,
-    options: Option<agent_core::schedule::ScheduleOptions>,
+    recurrence: fuseforks_core::schedule::Recurrence,
+    options: Option<fuseforks_core::schedule::ScheduleOptions>,
 ) -> CoreResult<ScheduleView> {
     let options = options.unwrap_or_default();
     let village_id = state.orchestrator.village_id().await;
@@ -947,7 +947,7 @@ pub async fn create_schedule(
         state
             .probe_approvals
             .approve(probe.approval_key(&village_id))
-            .map_err(|reason| agent_core::CoreError::ConfigIo {
+            .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
                 path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
                 source: std::io::Error::other(reason),
             })?;
@@ -964,7 +964,7 @@ pub async fn create_schedule(
         .probe_approvals
         .retain_for(&state.orchestrator.schedules().await, &village_id)
     {
-        agent_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
+        fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
 
     let reports = state.orchestrator.probe_reports().await;
@@ -991,18 +991,18 @@ pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> C
     let task = tasks
         .iter()
         .find(|task| task.id == id)
-        .ok_or_else(|| agent_core::CoreError::ScheduleNotFound(id.clone()))?;
+        .ok_or_else(|| fuseforks_core::CoreError::ScheduleNotFound(id.clone()))?;
     let probe = task
         .probe
         .as_ref()
-        .ok_or_else(|| agent_core::CoreError::InvalidSchedule {
+        .ok_or_else(|| fuseforks_core::CoreError::InvalidSchedule {
             reason: "この予定は前判定を持ちません".to_owned(),
         })?;
 
     state
         .probe_approvals
         .approve(probe.approval_key(&village_id))
-        .map_err(|reason| agent_core::CoreError::ConfigIo {
+        .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
             path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
             source: std::io::Error::other(reason),
         })
@@ -1028,7 +1028,7 @@ pub async fn delete_schedule(state: State<'_, AppState>, id: String) -> CoreResu
         .probe_approvals
         .retain_for(&state.orchestrator.schedules().await, &village_id)
     {
-        agent_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
+        fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
     Ok(())
 }

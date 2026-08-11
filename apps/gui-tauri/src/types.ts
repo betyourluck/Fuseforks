@@ -1,7 +1,7 @@
 /**
- * Rust 側 `agent-core` のドメイン型に 1 対 1 で対応する TypeScript 定義。
+ * Rust 側 `fuseforks-core` のドメイン型に 1 対 1 で対応する TypeScript 定義。
  *
- * **この 2 つは手で同期させる契約になっている。** Rust 側の `crates/agent-core/src/model.rs`
+ * **この 2 つは手で同期させる契約になっている。** Rust 側の `crates/fuseforks-core/src/model.rs`
  * および `event.rs` のフィールドを増減させたら、必ずここも直すこと。
  * serde は `rename_all = "camelCase"` を指定しているので、命名はキャメルケースで一致する。
  */

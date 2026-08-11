@@ -486,7 +486,7 @@ Phase 順と Spec 34 の位置がその順序そのもの。
    CLAUDE.md の「書かない境界」に触れる規模だが Spec を切ったのは、
    **内数か外数か・`total()` を触るか・0 を出すか**が決めどころで、
    どれも間違えると天井の実効値が動くため
-3. **probe は使い捨てで削除済み**（`crates/agent-core/examples/probe_reasoning.rs`。
+3. **probe は使い捨てで削除済み**（`crates/fuseforks-core/examples/probe_reasoning.rs`。
    Spec 31 と同じ流儀）。実 API 呼び出し 8 発、ticks 合計約 9.4 億 —
    **tick の単位は応答に書かれていないので金額へ換算しない**（Spec 31 D8 と同じ規律）
 4. **コミットは既存の `Spec NN PX — 説明` 形式**（査読 8c は不採用）。

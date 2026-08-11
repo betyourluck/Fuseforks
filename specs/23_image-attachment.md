@@ -259,7 +259,7 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   `VP8X` チャンクのフラグを見る必要があり、これは新規実装（無料ではない）。
   単体: 非対応形式を拒否 / アニメーション WebP を拒否 / 上限超を拒否 / 往復 /
   GC が期限内を消さない・期限切れを消す / **`validate_icon` の挙動が変わっていない**
-- **P2 ワイヤ** — **完了（2026-08-06。単体 6 本追加 = agent-core 417 → 423・
+- **P2 ワイヤ** — **完了（2026-08-06。単体 6 本追加 = fuseforks-core 417 → 423・
   workspace 580 全緑・clippy 警告ゼロ）**: `ChatMessage.attachments`（加算）+ 3 adapter。
   **`OaiMessage.content` は `enum OaiContent { Text(String), Blocks(Vec<..>) }`
   にして、添付が無ければ必ず `Text` を構築する**（rev2。査読 4 — ただし
@@ -287,7 +287,7 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   5. **gemini は添付を組み立てず、添付あり = 添付なしのバイト等価をテストで凍結**
      （D8。`inline_data` を生やす退行はテストが先に落ちる）。バイト等価の golden は
      文字列リテラルで固定（openai / anthropic）
-- **P3 配線** — **完了（2026-08-06。結合 3 + 単体 2 = agent-core 423 → 425・
+- **P3 配線** — **完了（2026-08-06。結合 3 + 単体 2 = fuseforks-core 423 → 425・
   結合 119 → 122・workspace 585 全緑・clippy 警告ゼロ）**:
   `send_user_message` へ `attachments`（加算・省略可）+
   `AgentMessage.attachments` + 保存 + そのターンだけプロンプトへ展開 +
@@ -624,11 +624,11 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   `ImageAttachment`（canonical）+ `OaiContent` enum 化 +
   `AnthropicRequestBlock::Image` + gemini は素通り（D8）。バイト等価 golden ×
   2 + 添付あり golden × 2 + gemini 等価 + 画像だけの発話の 3 点をテストで凍結。
-  単体 6 本（agent-core 417 → 423）。実装で決めた 5 点は Tasks の P2 実装記録
+  単体 6 本（fuseforks-core 417 → 423）。実装で決めた 5 点は Tasks の P2 実装記録
 - **P1 完了**（2026-08-06）: `attachment.rs` 新設（`Attachment` / `validate_attachment` /
   `AttachmentStore` / `gc_plan` + `GcReport`）+ `CoreError::InvalidAttachment` +
   `validate_icon` の magic 判定を `is_webp` へ共有。単体 16 本
-  （agent-core 401 → 417）。実装で決めた 5 点は Tasks の P1 実装記録
+  （fuseforks-core 401 → 417）。実装で決めた 5 点は Tasks の P1 実装記録
 - **P0 完了**（2026-08-06）: 5 系統 × WebP / JPEG の実測 10 通り全部通過 —
   **D3 の既定は WebP で確定**（表と読み方 3 点は「P0 実測結果」）。
   実測 5 本目はローカル互換の代わりに実在の互換層（さくら / Qwen3-VL）で取った。

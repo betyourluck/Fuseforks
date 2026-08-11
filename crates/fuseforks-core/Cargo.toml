@@ -1,5 +1,5 @@
 [package]
-name = "agent-core"
+name = "fuseforks-core"
 description = "Fuseforks のマルチエージェント・オーケストレーション中核。GUI 層に一切依存しない。"
 version.workspace = true
 edition.workspace = true

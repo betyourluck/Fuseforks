@@ -3,7 +3,7 @@
 正式名は **Outcasts Fuseforks**（2026-08-09 改名。旧 Outcasts Concordia →
 [Spec 30](specs/30_rename.md)）。アプリ内表示・System の送り手名も
 「Fuseforks」。狙いは**エンジニアのホビー + Outcasts への導線** —
-核（agent-core / 契約 / 発火規則）は業務品質、殻（村・キャラ）はホビーの体験、
+核（fuseforks-core / 契約 / 発火規則）は業務品質、殻（村・キャラ）はホビーの体験、
 両方を中途半端にやるのが唯一の失敗形（README「思想」の節が正）。
 
 ## 台帳の構成（真実の記録先）
@@ -238,7 +238,7 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
   **計器は在ったのに、書いた側も読む側も「無い」と言った**
 
 **次のセッションの候補**: 多モーダル（音声・動画・PDF）/ マイルストーン 6
-（agent-core の英語化）/ **対話シェルを `run` から使う**（下記）。
+（fuseforks-core の英語化）/ **対話シェルを `run` から使う**（下記）。
 
 ### 対話シェルの検討（2026-08-12 に実測。**起票前の材料**）
 
@@ -1060,7 +1060,7 @@ P5 の実機確認がその役を負う。
 | **4** | **トリガー前に新規チャット / 後に要約**（dreaming 相当のチェックボックス） | v0.1.0 後 | **部品は両方すでにある**（Spec 12 の新規チャットと `summarize_session`）。配線だけ。**2 つは向きが逆**なので性質を書き分ける — 新規チャットは*捨てる*、**要約は残り、しかも落ちない固定費**（opus が 1 往復に 1,163 字を書いた実測がある） |
 | ~~**5**~~ | **絆ペインの序列を左ペインの順序に** | **着地**（2026-08-08） | **数えたら足すものが 1 つも無かった** — `order` の欄も `reorder_agents` の経路も既にあり、ノード配置は既に左ペインに従っていた。残っていた依存は**双方向の辺の向き 1 箇所**だけで、決めていたのは id ではなく **`state.edges` に先に現れたほう**。`lib/kizunaEdges.ts` の `drawDirection` で `order` に正規化した。**新しい名前・型・ワイヤ・画面要素が 1 つも生まれない**ので Spec も台帳の節も無し（この行が記録）。**一方向は触らない** — `A→B` は事実そのもので、向きを入れ替えると矢印が逆を指す |
 | **2 + 4** | **トリガーと前後処理** | **[Spec 28](specs/28_schedule-probe.md) として起票 → rev3 承認**（2026-08-08。Fable で仕様を練った）。骨格 = 発火時に probe コマンドを実行し **stdout 1 行目の完全一致でだけ配送**（トークンゼロの前判定・exit code は判定に使わない）+ 2 行目以降を依頼文へ付記 + `sessionMode`（continue / fresh）+ `summarizeAfter`（対象は `deliver_and_wait` で待って完了した個体のみ・handoff 先は対象外）。**外部トリガー API は対象外**（利用者判断 —「スケジュールでやったほうが楽」）。**査読 2 巡で最重要だったのは D10 の端末承認** — rev2 の内容ハッシュは workspace 差し替え攻撃が通り、査読の案 A（パス salt）も **workspace が `{app_data_dir}/workspace` 固定（`state.rs:56`）なので効かない**（差し替えは同じパスの中身の交換）。着地は **`{workspace}/village_id`（UUID v4・配布に載る）を salt に含めた `SHA-256(canonical_json({args, command, cwd, villageId}))`**、承認は `{app_data_dir}/probe_approvals.json`（ハッシュのみ・GUI の IPC だけが書く・保存のたび掃除）。残余（公開した村の id は漏れる = 標的攻撃は防がない）は保証と書かず明記。**P0〜P5 完了 = Done**（実機確認 8 件すべて観測。2026-08-08。**起票から Done まで 1 日**） |
-| **6** | **agent-core の指示も英語に**（英語・中国語） | **v0.2.0** | **凍結を覆す変更**（`data_contract.yaml:611`「システムプロンプト・ツール説明は**訳さない**」）。前提が「読み手は日本語話者」だったので覆すこと自体は正当。**大きい理由は翻訳量ではない** — 英語プロンプトは日本語版の翻訳ではなく**別の資産**で、この村の実測（キャッシュ率・`stable_len`・束ねの挙動）は全部日本語での測定値。**System 行は独立した 1 本**（訳すには `kind + params` の構造化＝ワイヤ + `session_store` の加算）。**中国語はワイヤが要らない可能性が高い** — DeepSeek / Kimi / Qwen はいずれも OpenAI 互換を出しており、この村は `OpenAiCompat` を持つ。**未実測**（#76 / #77 と同型の 400 は出るはず）。**着手前にテンプレート登録だけで 1 往復通るかを測ると、6 の見積もりから 1 項目消える** |
+| **6** | **fuseforks-core の指示も英語に**（英語・中国語） | **v0.2.0** | **凍結を覆す変更**（`data_contract.yaml:611`「システムプロンプト・ツール説明は**訳さない**」）。前提が「読み手は日本語話者」だったので覆すこと自体は正当。**大きい理由は翻訳量ではない** — 英語プロンプトは日本語版の翻訳ではなく**別の資産**で、この村の実測（キャッシュ率・`stable_len`・束ねの挙動）は全部日本語での測定値。**System 行は独立した 1 本**（訳すには `kind + params` の構造化＝ワイヤ + `session_store` の加算）。**中国語はワイヤが要らない可能性が高い** — DeepSeek / Kimi / Qwen はいずれも OpenAI 互換を出しており、この村は `OpenAiCompat` を持つ。**未実測**（#76 / #77 と同型の 400 は出るはず）。**着手前にテンプレート登録だけで 1 往復通るかを測ると、6 の見積もりから 1 項目消える** |
 | ~~**7**~~ | **作業フォルダの一括切り替え**（サーヴァントにチェックボックスを付け、パスを 1 つ入れるとチェックした個体の `work_dir` をまとめて変える） | **Done**（2026-08-08） | **[Spec 29](specs/29_batch-workdir.md)。起票から Done まで 1 日**（査読 10 件 = 採用 7 / 訂正して採用 2 / 反証 1。**反証はタイムアウト** — `update_agent` はローカル IPC で `mutate()` 全呼び出しがタイムアウトを持たず、ここだけ足すと単体と規律が割れる。**訂正 2 件は査読の処方の側の誤り** — `snapshotToSpec` の欄名 `work_dir` はフロントの型に合わない（`workDir`）/ 「アプリの設定へ倒す」は一覧ヘッダの前例「モデル登録」を数えていない）。**起票時の実測で見立てが 2 つ覆った** — (a) この表の旧記述「これだけがコアに触る」は誤り。`update_agent` IPC が既にあり（稼働中でも受け付け・次の発話から反映）、**コアの変更はゼロ** (b)「決めどころは失敗の扱い」も半分消えた — **単体の保存が実在検査を掛けていない**（囲いはツール実行時の `canonicalize` + 前方一致）ので、一括だけ検査を足すと規律が割れる。残る決めどころはチェックの置き場（rev1 はダイアログ内の一時チェックを推し）と部分失敗の見せ方（通った個体だけ通し、名指しで報告）。**踏むと分かっている罠**: snapshot → spec の組み立てが既に 2 箇所に複製されており（`seed` / `setBatchStart`。「写さないと保存で既定へ戻る」）、3 箇所目を作る前に `snapshotToSpec` の 1 実装へ寄せる（D4）。**P4 実機 5 件すべて観測・指摘ゼロ**。**実装で 1 つ決まった** — 一括は **`mutate()` を通さない**（`finally` の `refreshAll()` で全状態の再同期が 8 回走り、失敗のたびにトーストが 8 枚出る。しかも `updateAgent` は `Promise<void>` で**成否を捨てている**）。`ipc.updateAgent` を直接呼んで個体ごとに `try/catch` し、最後に `refreshAll()`。**ただし「読み直しは最後に 1 回」は不正確だった**（同日訂正）— `update_agent` は 1 体ごとに `TopologyChanged` を出し、フロントはそのイベントで毎回取り直す。**`mutate` を避けて消えたのはトースト 8 枚と成否の握り潰しであって、再同期の回数ではない**（**一般化: 呼び出し側の再同期を止めても、コアがイベントを出していれば投影は動く。「何回取り直すか」は呼ぶ側だけを数えても分からない**）。その帰結で**適用中に行が 1 つずつ書き換わる**のが実機で見え、**イベントを止めるのではなく `busy` の間だけ一覧を進捗へ差し替えた**（再同期は投影の真実性を支える機構で、一括のために止める口を作ると「止め忘れると古い表示が残る」新しい失敗が生まれる）。閉じる導線も塞ぐ（閉じてもループは止まらず、結果を見られないまま副作用だけ進む）。**入口は一覧のフッター**（利用者裁定 — ヘッダの「モデル登録」「追加」は*作る側*、フッターは*既にいる個体をまとめて扱う側*。**アプリのステータスバーとは別物**）。**P4 の実機で要望が 1 つ出て同日に追加** = **最近使ったフォルダの履歴**（`fuseforks.workDirHistory.v1`・最大 8 件）。**積むのは適用が 1 体でも通ったときだけ**で、入力しただけ・参照…で選んだだけでは残らない。**いま各個体が向いているフォルダは混ぜない** — すぐ上の一覧に出ているので、履歴が埋めるのは「いまは誰も向いていないが、また戻る先」 |
 | ~~**8**~~ | **ショートカットキー**（サーヴァント一覧の選択を移す） | **着地**（2026-08-08） | 下記「サーヴァント一覧の選択をキーで動かす」の節が正 |
 | ~~**10**~~ | **改名**（`Concordia` → **`Fuseforks`**）。DeepMind に同名・同領域のプロジェクトがある | **Done**（2026-08-09） | **[Spec 30](specs/30_rename.md)。起票から着地まで 1 日。** 名前は `ClawVillage` → `Fuse Folks` → `Fuseforks` と動いた（`fuse` + `fork` = 撒いて束ねる = `plan` の機構そのもの）。**起票時の実測で CLAUDE.md の旧記述が 3 つ覆った** — 身元は 1 つではなく 4 つ（`SERVICE_NAME` / MCP の名乗り / `Endpoint::System` が漏れていた。実装中にさらに `localStorage` の 4 鍵が出て 5 つ）/ 269 箇所ではなく 84 ファイル・279 行・**289 出現**（`git grep -c` が返すのは一致行数）/ `bun.lock` の名前が既にずれていた。**D10 で裁定** = リポジトリと作業フォルダも **`Fuseforks`** へ（GitHub の rename・`git remote`・CI・この村自身の `work_dir` が同時に動くので repo の中の作業ではない。手順は Spec 30 D10） |
@@ -1861,7 +1861,7 @@ failures.md #41 のトークン燃焼を **1 → 2 → 3 の順**で潰した。
 **Spec 12 は rev2 承認 → P0 完了**（2026-08-02。契約は data_contract の
 `session_store` + `reset_rule` の Spec 12 改訂節 + `sessionSwitched` の加算。
 Spec 03 のヘッダにも改訂を記録）**→ P1 完了**（2026-08-03。
-`crates/agent-core/src/session_store.rs`。`SessionStore::open` /
+`crates/fuseforks-core/src/session_store.rs`。`SessionStore::open` /
 `create_session` / `append` / `session_meta` / `list_sessions` /
 `latest_session` / `records` / `tail_messages` / `restore_histories` /
 `fork_session` / `delete_session` / `export_session`。単体 16 本・
@@ -2490,7 +2490,7 @@ CI がタグから書き換える側。
   細工ファイルが素通り / VP8X キャンバス寸法がビットストリームに勝つ）。
   `is_webp` を切り出して `validate_icon` と共有（上限は共有しない —
   凍結 4 の述語境界）。`CoreError::InvalidAttachment` は `InvalidIcon` と別変種。
-  単体 16 本（agent-core 401 → 417）
+  単体 16 本（fuseforks-core 401 → 417）
 - **P2 完了**（2026-08-06）— canonical へ `ImageMediaType` / `ImageAttachment`
   （**data は base64 済み文字列** — adapter は純関数なので実体読みは P3 の責務）+
   `OaiContent` enum 化（**decode は無傷** — 応答側は `OaiResponseMessage` の別型）+
@@ -2728,7 +2728,7 @@ Kataribe（`D:\Github\Kataribe\.github\workflows\build.yml`）を写し、
 | Kataribe | この村 | 理由 |
 |---|---|---|
 | `setup-node` + `npm ci` | **`setup-bun` + `bun install --frozen-lockfile`** | `tauri.conf.json` の `beforeBuildCommand` が `bun run build` |
-| `rust-cache` に workspace 2 つ | **1 つ（既定のルートのみ）** | ルート 1 ワークスペース（`members = apps/gui-tauri/src-tauri, crates/agent-core`）で target も 1 つ |
+| `rust-cache` に workspace 2 つ | **1 つ（既定のルートのみ）** | ルート 1 ワークスペース（`members = apps/gui-tauri/src-tauri, crates/fuseforks-core`）で target も 1 つ |
 | artifact は `app/src-tauri/target/…` | **`target/release/bundle/`** | 同上。**bundle はルートの target 配下に出る** |
 | `node -e` で version 書き換え | **`bun -e`** | node は runner に最初から入っているが、**この workflow が明示的に用意しているのは bun だけ** |
 
@@ -3107,7 +3107,7 @@ lint にも引っかからない = #51 と同じ性質。`roleColorTokens.test.t
 `allowExtraArgs` に回すかは利用者の判断で、機械が決めると閉じた許容の粒度が
 勝手に決まる）。
 
-**P1 完了**（2026-08-04）— `crates/agent-core/src/command.rs`（型 + 純機構）+
+**P1 完了**（2026-08-04）— `crates/fuseforks-core/src/command.rs`（型 + 純機構）+
 `config_store.rs` の I/O 4 本。単体 15 + store 8 本、workspace 456 本全緑。
 `schedule.rs`（型 + 純機構）と `config_store.rs`（I/O）の分業を踏襲。
 **実装で決めた 7 点は Spec の「P1 実装記録」**。要点だけ:
@@ -3356,7 +3356,7 @@ LICENSE で代替してよい」と Exhibit A 自身が書いている。数百�
 **relicense 前の実測（2026-08-04）。阻む依存は無かった**:
 
 - `cargo license`（build / dev 依存込み・535 crate）で**第三者の GPL / AGPL /
-  LGPL-only はゼロ**。`AGPL-3.0-or-later` に出るのは `agent-core` と `concordia`
+  LGPL-only はゼロ**。`AGPL-3.0-or-later` に出るのは `fuseforks-core` と `concordia`
   （自分の 2 crate）だけ。`r-efi` の `Apache-2.0 OR LGPL-2.1-or-later OR MIT` は
   選択なので Apache / MIT を取れる。MPL-2.0 の依存が 5 本あるが同一ライセンスで無害
 - フロント（`apps/gui-tauri` production）も MIT 65 / ISC 9 / BSD 4 / Apache 2 /
@@ -3674,7 +3674,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   **実測: Written のみで中央 19・平均 20.8・切り詰めゼロ**（起票時の仮定は 30 字）。
   契約は `data_contract.yaml` の
   `tool_reason_contract`（`command_tool_contract` の隣）。
-  実装は `crates/agent-core/src/tool_reason.rs`（純機構）+ `wants_reason` +
+  実装は `crates/fuseforks-core/src/tool_reason.rs`（純機構）+ `wants_reason` +
   `ToolRegistry::specs_for` での注入。**次に触る人が要る判断は Spec の P1 実装記録**。
   **`ReasonState` は実装で 4 値になった**（凍結の 3 値では足りず、契約も訂正）—
   **合成側も `ToolInvoked` を発行する**ので、3 値だと `ask_agent_3` に

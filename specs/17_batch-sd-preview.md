@@ -319,7 +319,7 @@ rev1 は「**境界の外**は全体を拒否、**実在しない**はスキッ�
 
 ### Phase 1: 実装 — **完了**（2026-08-05）
 
-`crates/agent-core/src/tools/edit.rs` に `run_multi` / `preview_one` /
+`crates/fuseforks-core/src/tools/edit.rs` に `run_multi` / `preview_one` /
 `render_multi` と `FilePreview` / `PreviewStatus` を新設。
 **`tools::edit` の単体テストは 29 → 43 本（+14）、workspace 合計 469 → 483 本、
 すべて全緑。既存 29 本は 1 本も書き換えていない。clippy 新規警告ゼロ**

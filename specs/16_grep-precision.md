@@ -134,13 +134,13 @@ glob を採らない理由は `bundled_tools_contract` の凍結行
 
 ```
 2 件が一致:
-crates/agent-core/src/tools/run.rs:80- impl RunTool {
-crates/agent-core/src/tools/run.rs:82: /// `agents/{id}/run.json` を読む。
-crates/agent-core/src/tools/run.rs:83-     async fn load(&self, id: &AgentId) -> CommandPolicy {
+crates/fuseforks-core/src/tools/run.rs:80- impl RunTool {
+crates/fuseforks-core/src/tools/run.rs:82: /// `agents/{id}/run.json` を読む。
+crates/fuseforks-core/src/tools/run.rs:83-     async fn load(&self, id: &AgentId) -> CommandPolicy {
 --
-crates/agent-core/src/tools/run.rs:249-      利用者への要求として記録しました。
-crates/agent-core/src/tools/run.rs:250: 利用者が `agents/{}/run.json` の `allow` へ追加すると、
-crates/agent-core/src/tools/run.rs:251-      次から実行できます。
+crates/fuseforks-core/src/tools/run.rs:249-      利用者への要求として記録しました。
+crates/fuseforks-core/src/tools/run.rs:250: 利用者が `agents/{}/run.json` の `allow` へ追加すると、
+crates/fuseforks-core/src/tools/run.rs:251-      次から実行できます。
 ```
 
 #### D2: 一致行と文脈行は**書式で区別する**（`#55` の再演を防ぐ要）
@@ -221,7 +221,7 @@ crates/agent-core/src/tools/run.rs:251-      次から実行できます。
 
 ### Phase 1: 実装 — **完了**（2026-08-05）
 
-`crates/agent-core/src/tools/fs.rs` に `compile_include` / `merge_windows` を新設し、
+`crates/fuseforks-core/src/tools/fs.rs` に `compile_include` / `merge_windows` を新設し、
 `run_grep` の走査ループを「一致集合を作る → 窓を畳む → 描く」へ組み替えた。
 **`tools::fs` の単体テストは 25 → 35 本（+10）、workspace 合計 483 → 493 本で全緑。
 既存 25 本は 1 本も書き換えていない。clippy 新規警告ゼロ。**
@@ -248,7 +248,7 @@ README 日英の同梱ツール表と grep の節。`CLAUDE.md` の待ち行列�
 4. `MAX_MATCHES` は**一致行だけ**を数える。文脈行は `MAX_OUTPUT_CHARS` だけを食う
 5. `count_only` と `context` が競合したら **`context` を無視して 1 行書く**
 
-### Phase 1: 実装（`crates/agent-core/src/tools/fs.rs`）
+### Phase 1: 実装（`crates/fuseforks-core/src/tools/fs.rs`）
 
 `run_grep` の引数を 2 つ増やす。触るのは 1 ファイル。
 

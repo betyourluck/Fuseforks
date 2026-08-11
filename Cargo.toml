@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/gui-tauri/src-tauri", "crates/agent-core"]
+members = ["apps/gui-tauri/src-tauri", "crates/fuseforks-core"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +11,7 @@ rust-version = "1.85"
 license = "MPL-2.0"
 
 [workspace.dependencies]
-agent-core = { path = "crates/agent-core" }
+fuseforks-core = { path = "crates/fuseforks-core" }
 
 async-trait = "0.1"
 # 予定の発火規則（Spec 07）で使うカレンダー計算。「次の木曜 17 時（現地時刻）」は

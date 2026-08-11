@@ -15,8 +15,8 @@ fn notes_reach_the_log_file_after_open() {
     let path = dir.join("fuseforks.log");
     let _guard = scopeguard(dir.clone());
 
-    agent_core::open_log(&path).expect("開けること");
-    agent_core::note!("turn: agent={} rounds={}", "agent_01", 19);
+    fuseforks_core::open_log(&path).expect("開けること");
+    fuseforks_core::note!("turn: agent={} rounds={}", "agent_01", 19);
 
     let body = std::fs::read_to_string(&path).expect("読めること");
     assert!(body.contains("起動しました"), "起動の区切りが残ること: {body}");
@@ -37,8 +37,8 @@ fn notes_reach_the_log_file_after_open() {
 
     // 2 回目の open_log は宛先を奪わない（最初に決まった出口が勝つ）。
     let other = dir.join("別の宛先.log");
-    agent_core::open_log(&other).expect("2 回目も Err にはしない");
-    agent_core::note!("2 回目の open の後");
+    fuseforks_core::open_log(&other).expect("2 回目も Err にはしない");
+    fuseforks_core::note!("2 回目の open の後");
     assert!(
         std::fs::read_to_string(&path).unwrap().contains("2 回目の open の後"),
         "最初の宛先へ出続けること"

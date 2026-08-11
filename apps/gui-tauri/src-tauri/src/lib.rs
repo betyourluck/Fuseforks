@@ -1,8 +1,8 @@
 //! Fuseforks GUI クレート。
 //!
-//! ここは **agent-core の薄い外殻**である。ウィンドウの起動、IPC コマンドの登録、
+//! ここは **fuseforks-core の薄い外殻**である。ウィンドウの起動、IPC コマンドの登録、
 //! コアイベントの中継しか行わない。オーケストレーションの判断はすべて
-//! `agent-core` 側にあり、このクレートを外しても中核は単体で動く。
+//! `fuseforks-core` 側にあり、このクレートを外しても中核は単体で動く。
 
 mod commands;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
@@ -47,7 +47,7 @@ pub fn run() {
                 .get_webview_window("main")
                 .or_else(|| app.webview_windows().into_values().next())
             else {
-                agent_core::note!("2 つ目の起動を止めたが、前面に出すウィンドウが無い");
+                fuseforks_core::note!("2 つ目の起動を止めたが、前面に出すウィンドウが無い");
                 return;
             };
 
@@ -79,7 +79,7 @@ pub fn run() {
                     Err(err) => {
                         // ウィンドウは既に出ている。ここで panic せず理由を残し、
                         // フロントの覆いに「初期化に失敗した」と表示させる。
-                        agent_core::note!("初期化に失敗しました: {err}");
+                        fuseforks_core::note!("初期化に失敗しました: {err}");
                         let slot = handle.state::<state::BootError>();
                         if let Ok(mut guard) = slot.0.lock() {
                             *guard = Some(err.to_string());

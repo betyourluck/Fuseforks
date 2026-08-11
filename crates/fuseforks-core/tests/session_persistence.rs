@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::event::CoreEvent;
-use agent_core::llm::{
+use fuseforks_core::event::CoreEvent;
+use fuseforks_core::llm::{
     ChatMessage, ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Role, Usage,
 };
-use agent_core::model::{AgentId, AgentSpec, ModelTemplate};
-use agent_core::{
+use fuseforks_core::model::{AgentId, AgentSpec, ModelTemplate};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 use tokio::sync::broadcast::Receiver;
@@ -507,7 +507,7 @@ async fn resuming_is_refused_mid_turn_but_a_new_chat_is_not() {
     tokio::time::sleep(Duration::from_millis(80)).await;
 
     let refused = orchestrator.resume_session(&first).await;
-    let payload = agent_core::ErrorPayload::from(&refused.expect_err("拒否されること"));
+    let payload = fuseforks_core::ErrorPayload::from(&refused.expect_err("拒否されること"));
     assert_eq!(payload.code, "SESSION_SWITCH_BLOCKED");
     assert_eq!(
         orchestrator.current_session(),

@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agent_core::Orchestrator;
+use fuseforks_core::Orchestrator;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::transport::streamable_http_server::{
@@ -116,7 +116,7 @@ impl McpServerStore {
                 Err(err) => {
                     // **値は出さない**（合鍵が入っているファイルなので、
                     // 読めなかった中身をログへ流さない）。
-                    agent_core::note!(
+                    fuseforks_core::note!(
                         "mcp server: {CONFIG_FILE} を読めませんでした。扉は開かず、設定の保存も拒みます（{err}）"
                     );
                     Self {
@@ -176,7 +176,7 @@ fn restrict_permissions(path: &Path) {
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(err) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-            agent_core::note!("mcp server: 設定ファイルの権限を絞れませんでした（{err}）");
+            fuseforks_core::note!("mcp server: 設定ファイルの権限を絞れませんでした（{err}）");
         }
     }
     #[cfg(not(unix))]
@@ -294,7 +294,7 @@ impl RunningServer {
     /// 扉を閉じる。**セッションもここで畳まれる**（rmcp の cancellation_token）。
     pub fn stop(self) {
         self.cancel.cancel();
-        agent_core::note!("mcp server: 127.0.0.1:{} の扉を閉じました", self.port);
+        fuseforks_core::note!("mcp server: 127.0.0.1:{} の扉を閉じました", self.port);
     }
 }
 
@@ -346,11 +346,11 @@ pub async fn start(
             .with_graceful_shutdown(async move { shutdown.cancelled().await })
             .await
         {
-            agent_core::note!("mcp server: 待ち受けが終了しました（{err}）");
+            fuseforks_core::note!("mcp server: 待ち受けが終了しました（{err}）");
         }
     });
 
-    agent_core::note!("mcp server: 127.0.0.1:{actual_port}{MCP_PATH} で待ち受けます");
+    fuseforks_core::note!("mcp server: 127.0.0.1:{actual_port}{MCP_PATH} で待ち受けます");
     Ok(RunningServer {
         cancel,
         port: actual_port,
@@ -421,7 +421,7 @@ impl McpServerManager {
         }
         let Some(token) = config.token.clone() else {
             let reason = "合鍵が未生成のため扉を開きませんでした".to_owned();
-            agent_core::note!("mcp server: {reason}");
+            fuseforks_core::note!("mcp server: {reason}");
             return Some(reason);
         };
         let port = config.port;
@@ -432,7 +432,7 @@ impl McpServerManager {
             }
             Err(err) => {
                 let reason = format!("ポート {port} で待ち受けられませんでした（{err}）");
-                agent_core::note!("mcp server: {reason}");
+                fuseforks_core::note!("mcp server: {reason}");
                 Some(reason)
             }
         }

@@ -22,7 +22,7 @@ Fuseforks/
 ├── specs/                           仕様（起票 → 査読 → rev 改訂 → Phase 分割で実装）
 │
 ├── crates/
-│   └── agent-core/                  ★ 中核。GUI 層に一切依存しない
+│   └── fuseforks-core/                  ★ 中核。GUI 層に一切依存しない
 │       ├── src/
 │       │   ├── lib.rs               公開 API と依存方向の宣言
 │       │   ├── model.rs             ドメインの名詞（AgentId / AgentSpec / ModelTemplate …）
@@ -71,7 +71,7 @@ Fuseforks/
 │       └── tests/external_ask.rs    結合テスト: 外の LLM からの依頼（Spec 25）
 │
 └── apps/
-    └── gui-tauri/                   ★ 外殻。agent-core に依存する
+    └── gui-tauri/                   ★ 外殻。fuseforks-core に依存する
         ├── src-tauri/src/
         │   ├── lib.rs               ウィンドウ起動と IPC コマンド登録
         │   ├── state.rs             オーケストレーター組み立て + イベント中継
@@ -124,10 +124,10 @@ Fuseforks/
 依存は一方向だけ。
 
 ```text
-apps/gui-tauri  ──依存──▶  crates/agent-core
+apps/gui-tauri  ──依存──▶  crates/fuseforks-core
 ```
 
-`crates/agent-core/Cargo.toml` に `tauri` が現れないことが、この分離の機械的な保証になっている。
+`crates/fuseforks-core/Cargo.toml` に `tauri` が現れないことが、この分離の機械的な保証になっている。
 GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで、受け手が Tauri か
 テストコードかをコア層は知らない。結果として、**GUI を起動せずに全経路を検証できる**。
 
@@ -176,7 +176,7 @@ GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで�
 
 **画面に出る呼称は「サーヴァント」、ドメインの語彙は「エージェント」**（2026-07-31）。
 UI の文言だけを世界観の側へ寄せ、型・フィールド・IPC コマンド・イベント名・
-クレート名（`AgentId` / `AgentSpec` / `create_agent` / `agent-core` …）と、この
+クレート名（`AgentId` / `AgentSpec` / `create_agent` / `fuseforks-core` …）と、この
 README・`data_contract.yaml`・`failures.md` の地の文は「エージェント」のまま置く。
 呼称はいつでも変わりうるが、型名を変えると Rust・TypeScript・台帳の 3 系統を
 同時に直すことになる — **変わりやすいものと変えにくいものを同じ語に束ねない**。

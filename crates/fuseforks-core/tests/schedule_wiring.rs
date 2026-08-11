@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::event::CoreEvent;
-use agent_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
-use agent_core::schedule::{Recurrence, ScheduleOptions, Weekday};
-use agent_core::{
+use fuseforks_core::event::CoreEvent;
+use fuseforks_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
+use fuseforks_core::schedule::{Recurrence, ScheduleOptions, Weekday};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 use tokio::sync::broadcast::Receiver;
@@ -79,7 +79,7 @@ async fn drain_until_quiet(rx: &mut Receiver<CoreEvent>, quiet: Duration) -> Vec
 }
 
 /// 発話イベントだけを抜き出す。
-fn messages(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
+fn messages(events: &[CoreEvent]) -> Vec<&fuseforks_core::AgentMessage> {
     events
         .iter()
         .filter_map(|e| match e {

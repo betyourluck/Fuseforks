@@ -242,14 +242,14 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 **`world.json` は所有者ではなく投影である。** 所有者はメモリ上の `World` で、
 天井は**依頼のたびに**そこから読まれる:
 
-- `new_root_budget`（[orchestrator:2230](../crates/agent-core/src/orchestrator)）が
+- `new_root_budget`（[orchestrator:2230](../crates/fuseforks-core/src/orchestrator)）が
   `shared.world.read().await.token_budget()` を読む
 - 呼ばれるのは**ユーザー発話の宛先ごと**（同 1896）と**予定の発火ごと**（同 2180）
 
 これは `schedules.json` と同じ形（`data_contract` の「予定の所有者は in-memory で
 ファイルは投影」）で、既存の `upsert_template` / `create_agent` の IPC が
 すでにこの経路を使っている（メモリを変えてからファイルへ書き戻す）。
-`set_token_budget` は `World` に**既にある**（[world.rs:236](../crates/agent-core/src/world.rs)）。
+`set_token_budget` は `World` に**既にある**（[world.rs:236](../crates/fuseforks-core/src/world.rs)）。
 
 したがって P1 は「メモリを変えて保存する IPC 1 本」で足り、**次の依頼から効く**。
 再起動は要らないし、ホットリロードという別機構も要らない。
@@ -266,7 +266,7 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 **重みは内部の milli 表現に閉じており、天井は実効トークンの整数である。**
 
 - `WEIGHT_CACHED_MILLI: u64 = 100`（= ×0.1）、`WEIGHT_OUTPUT_MILLI = 4000`
-  （[budget.rs:16-21](../crates/agent-core/src/budget.rs)）
+  （[budget.rs:16-21](../crates/fuseforks-core/src/budget.rs)）
 - 内部の蓄積は `ceiling_milli: u64`、外へ出すときは
   `effective_milli().div_ceil(1000)` で**切り上げて整数**へ戻す（同 43-48）
 - CLAUDE.md にも凍結済み: 「内部は milli 建て AtomicU64・切り上げ
@@ -280,7 +280,7 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 
 **0 の正規化はコアに既にある。** `World::from_persisted` が `Some(0)` を
 `None` へ倒し、`token budget: tokenBudget=0 は不正値のため天井なしとして扱います`
-と 1 行出す（[world.rs:195](../crates/agent-core/src/world.rs)）。
+と 1 行出す（[world.rs:195](../crates/fuseforks-core/src/world.rs)）。
 UI 側の入力検査は**二重化**であって新規要件ではない（それでも P1 で入れる —
 「保存したのに黙って別の値になる」を画面に作らないため）。
 

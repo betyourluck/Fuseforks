@@ -8,21 +8,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::event::CoreEvent;
-use agent_core::plan::PlanTaskState;
-use agent_core::{
+use fuseforks_core::event::CoreEvent;
+use fuseforks_core::plan::PlanTaskState;
+use fuseforks_core::{
     AgentTool, ConfigFileKind, DiffTool, FdTool, FileTool, GrepTool, RememberTool, SdTool,
     ToolContext, YqTool,
 };
-use agent_core::model::{
+use fuseforks_core::model::{
     AgentId, AgentSpec, AgentStatus, CredentialSource, Endpoint, ModelTemplate, ModelTemplateId,
 };
-use agent_core::llm::{
+use fuseforks_core::llm::{
     ChatMessage, ChatRequest, ChatResponse, Finish, Grounding, GroundingSource, LlmBackend,
     LlmError, Role, ToolCall, Usage,
 };
-use agent_core::error::CoreError;
-use agent_core::{
+use fuseforks_core::error::CoreError;
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
     SecretStore,
 };
@@ -106,7 +106,7 @@ async fn drain_until_quiet(rx: &mut Receiver<CoreEvent>, quiet: Duration) -> Vec
 }
 
 /// 発話イベントだけを抜き出す。
-fn messages(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
+fn messages(events: &[CoreEvent]) -> Vec<&fuseforks_core::AgentMessage> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -451,7 +451,7 @@ impl LlmBackend for EndlessToolBackend {
         *calls += 1;
         let n = *calls;
 
-        if req.tool_choice == agent_core::llm::ToolChoice::None {
+        if req.tool_choice == fuseforks_core::llm::ToolChoice::None {
             assert!(
                 !req.tools.is_empty(),
                 "まとめ呼び出しでも tools の定義は残ること（空だと実プロバイダで 400）"
@@ -510,7 +510,7 @@ impl LlmBackend for StuckToolBackend {
     }
 
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-        if req.tool_choice == agent_core::llm::ToolChoice::None {
+        if req.tool_choice == fuseforks_core::llm::ToolChoice::None {
             return Ok(ChatResponse {
                 text: Some("同じ操作しかできず、目的は果たせませんでした。".into()),
                 tool_calls: Vec::new(),
@@ -577,7 +577,7 @@ impl AgentTool for StuckTool {
         &self,
         _ctx: &ToolContext,
         _args: &serde_json::Value,
-    ) -> agent_core::CoreResult<String> {
+    ) -> fuseforks_core::CoreResult<String> {
         self.runs
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok("`存在しない.md` を読めません: 見つかりません".into())
@@ -601,7 +601,7 @@ impl LlmBackend for MixedToolBackend {
     }
 
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-        if req.tool_choice == agent_core::llm::ToolChoice::None {
+        if req.tool_choice == fuseforks_core::llm::ToolChoice::None {
             return Ok(ChatResponse {
                 text: Some("まとめました。".into()),
                 tool_calls: Vec::new(),
@@ -752,7 +752,7 @@ impl AgentTool for McpLikeTool {
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({ "type": "object" })
     }
-    async fn call(&self, _ctx: &ToolContext, _args: &serde_json::Value) -> agent_core::CoreResult<String> {
+    async fn call(&self, _ctx: &ToolContext, _args: &serde_json::Value) -> fuseforks_core::CoreResult<String> {
         Ok("ok".into())
     }
 }
@@ -1179,7 +1179,7 @@ async fn credentials_are_trimmed_before_storage() {
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),
         Arc::new(FixedBackendFactory::echo("[echo]")),
-        Arc::clone(&secrets) as Arc<dyn agent_core::SecretStore>,
+        Arc::clone(&secrets) as Arc<dyn fuseforks_core::SecretStore>,
         OrchestratorConfig::default(),
     )
     .await
@@ -1194,7 +1194,7 @@ async fn credentials_are_trimmed_before_storage() {
         .await
         .unwrap();
 
-    use agent_core::SecretStore as _;
+    use fuseforks_core::SecretStore as _;
     assert_eq!(
         secrets.get("tpl").unwrap().as_deref(),
         Some("uuid:secret-value"),
@@ -2224,7 +2224,7 @@ async fn rereading_the_same_id_in_one_turn_is_blocked_on_the_third_try() {
         }
 
         async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-            if req.tool_choice == agent_core::llm::ToolChoice::None {
+            if req.tool_choice == fuseforks_core::llm::ToolChoice::None {
                 return Ok(ChatResponse {
                     text: Some("同じ発言しか読めませんでした。".into()),
                     tool_calls: Vec::new(),
@@ -2573,7 +2573,7 @@ async fn handoff_tools_identify_targets_by_display_name() {
     /// リクエストのツール定義を記録するバックエンド。
     #[derive(Default)]
     struct ToolSpyBackend {
-        seen: std::sync::Mutex<Vec<agent_core::llm::ToolSpec>>,
+        seen: std::sync::Mutex<Vec<fuseforks_core::llm::ToolSpec>>,
     }
 
     #[async_trait::async_trait]
@@ -3840,7 +3840,7 @@ async fn rag_presentation_follows_the_declaration_not_enabled_tools() {
     let backend = Arc::new(ToolsProbeBackend::default());
     let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
     register_all_tools(&orchestrator, &dir).await;
-    orchestrator.register_tool(Arc::new(agent_core::RagTool)).await;
+    orchestrator.register_tool(Arc::new(fuseforks_core::RagTool)).await;
 
     // 宣言に使う実在フォルダ（Markdown が 1 枚ある）。
     let docs = dir.0.join("docs");
@@ -4262,7 +4262,7 @@ async fn plan_delivers_in_parallel_and_bundles_the_answers() {
         .expect("plan の実行が通知されること");
     assert_eq!(
         plan_reason,
-        agent_core::tool_reason::ReasonState::Excluded,
+        fuseforks_core::tool_reason::ReasonState::Excluded,
         "合成側は Excluded（理由の行を出さない）であること"
     );
 
@@ -5378,7 +5378,7 @@ impl AgentTool for BusyTool {
         &self,
         _ctx: &ToolContext,
         _args: &serde_json::Value,
-    ) -> agent_core::CoreResult<String> {
+    ) -> fuseforks_core::CoreResult<String> {
         Ok("ok".into())
     }
 }
@@ -5471,7 +5471,7 @@ fn interruptions(events: &[CoreEvent]) -> usize {
 }
 
 /// 打ち切りの System 行を集める。
-fn interrupt_notices(events: &[CoreEvent]) -> Vec<&agent_core::AgentMessage> {
+fn interrupt_notices(events: &[CoreEvent]) -> Vec<&fuseforks_core::AgentMessage> {
     messages(events)
         .into_iter()
         .filter(|m| {
@@ -6208,7 +6208,7 @@ async fn the_next_request_gets_a_fresh_budget_after_exhaustion() {
     // 天井 100,000 は echo の 1 ターン（見積もり数百実効）では尽きない。
     let orchestrator = setup_with_budget(
         &dir,
-        Arc::new(agent_core::EchoBackend::new("[echo]")),
+        Arc::new(fuseforks_core::EchoBackend::new("[echo]")),
         100_000,
     )
     .await;
@@ -6422,7 +6422,7 @@ async fn switching_the_language_leaves_the_system_prompt_untouched() {
     let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
     orchestrator
-        .set_language(agent_core::world::Language::En)
+        .set_language(fuseforks_core::world::Language::En)
         .await
         .unwrap();
 
@@ -6450,7 +6450,7 @@ async fn setting_a_zero_ceiling_is_rejected_without_touching_anything() {
     let dir = TempDir::new("budget-settings-zero");
     let orchestrator = setup_with_budget(
         &dir,
-        Arc::new(agent_core::EchoBackend::new("[echo]")),
+        Arc::new(fuseforks_core::EchoBackend::new("[echo]")),
         7,
     )
     .await;
@@ -6658,7 +6658,7 @@ async fn the_leak_instrument_fires_on_a_real_turn() {
             .unwrap()
             .as_nanos()
     ));
-    agent_core::open_log(&log_path).expect("ログを開けること");
+    fuseforks_core::open_log(&log_path).expect("ログを開けること");
 
     let dir = TempDir::new("leak-instrument");
     let orchestrator = setup_with(
@@ -6700,8 +6700,8 @@ async fn the_leak_instrument_fires_on_a_real_turn() {
 // ---- 役職（Spec 14 P2） -----------------------------------------------------
 
 /// 役職を 1 件作る補助。
-fn a_role(id: &str, name: &str, defaults: agent_core::AgentRoleDefaults) -> agent_core::AgentRole {
-    agent_core::AgentRole {
+fn a_role(id: &str, name: &str, defaults: fuseforks_core::AgentRoleDefaults) -> fuseforks_core::AgentRole {
+    fuseforks_core::AgentRole {
         id: id.into(),
         name: name.into(),
         description: "テスト用".into(),
@@ -6727,7 +6727,7 @@ async fn creating_with_a_role_fills_the_settings_and_writes_construct() {
         .upsert_role(a_role(
             "researcher",
             "調査役",
-            agent_core::AgentRoleDefaults {
+            fuseforks_core::AgentRoleDefaults {
                 construct: "あなたは調査役です。".into(),
                 model_template_id: Some("fast".into()),
                 enabled_tools: Some(vec!["grep".into()]),
@@ -6780,7 +6780,7 @@ async fn editing_a_role_never_touches_existing_agents() {
         .upsert_role(a_role(
             "researcher",
             "調査役",
-            agent_core::AgentRoleDefaults {
+            fuseforks_core::AgentRoleDefaults {
                 construct: "初版".into(),
                 max_tool_iterations: Some(24),
                 ..Default::default()
@@ -6798,7 +6798,7 @@ async fn editing_a_role_never_touches_existing_agents() {
         .upsert_role(a_role(
             "researcher",
             "調査役",
-            agent_core::AgentRoleDefaults {
+            fuseforks_core::AgentRoleDefaults {
                 construct: "二版".into(),
                 model_template_id: Some("fast".into()),
                 max_tool_iterations: Some(99),
@@ -6829,7 +6829,7 @@ async fn deleting_a_role_in_use_leaves_the_agent_working() {
         .upsert_role(a_role(
             "researcher",
             "調査役",
-            agent_core::AgentRoleDefaults {
+            fuseforks_core::AgentRoleDefaults {
                 construct: "本文".into(),
                 max_tool_iterations: Some(24),
                 ..Default::default()
@@ -6864,7 +6864,7 @@ async fn a_missing_template_drops_one_field_but_the_agent_is_still_created() {
         .upsert_role(a_role(
             "researcher",
             "調査役",
-            agent_core::AgentRoleDefaults {
+            fuseforks_core::AgentRoleDefaults {
                 model_template_id: Some("存在しない".into()),
                 max_tool_iterations: Some(24),
                 ..Default::default()
@@ -6930,7 +6930,7 @@ async fn roles_survive_a_restart() {
             .upsert_role(a_role(
                 "researcher",
                 "調査役",
-                agent_core::AgentRoleDefaults::default(),
+                fuseforks_core::AgentRoleDefaults::default(),
             ))
             .await
             .unwrap();
@@ -6957,12 +6957,12 @@ async fn the_roster_carries_the_role_name_but_never_the_description() {
     let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
 
     orchestrator
-        .upsert_role(agent_core::AgentRole {
+        .upsert_role(fuseforks_core::AgentRole {
             id: "researcher".into(),
             name: "調査役".into(),
             description: "この文字列はプロンプトに出てはいけない".into(),
             color: None,
-            defaults: agent_core::AgentRoleDefaults::default(),
+            defaults: fuseforks_core::AgentRoleDefaults::default(),
         })
         .await
         .unwrap();
@@ -7072,12 +7072,12 @@ async fn adding_a_role_does_not_move_the_stable_prefix() {
     // 役職を作り、相手に付ける（**設定は流し込まれない** — update_agent は
     // ラベルだけを差し替える。凍結 4）。
     orchestrator
-        .upsert_role(agent_core::AgentRole {
+        .upsert_role(fuseforks_core::AgentRole {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
             color: None,
-            defaults: agent_core::AgentRoleDefaults {
+            defaults: fuseforks_core::AgentRoleDefaults {
                 construct: "この本文は既存の個体へ入ってはいけない".into(),
                 max_tool_iterations: Some(99),
                 ..Default::default()
@@ -7271,17 +7271,17 @@ async fn every_role_display_change_leaves_one_system_line() {
         .await
         .unwrap();
     orchestrator
-        .upsert_role(agent_core::AgentRole {
+        .upsert_role(fuseforks_core::AgentRole {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
             color: None,
-            defaults: agent_core::AgentRoleDefaults::default(),
+            defaults: fuseforks_core::AgentRoleDefaults::default(),
         })
         .await
         .unwrap();
 
-    let lines = |messages: Vec<agent_core::model::AgentMessage>| -> Vec<String> {
+    let lines = |messages: Vec<fuseforks_core::model::AgentMessage>| -> Vec<String> {
         messages
             .into_iter()
             .filter(|m| m.from == Endpoint::System && m.content.contains("役職"))
@@ -7299,12 +7299,12 @@ async fn every_role_display_change_leaves_one_system_line() {
 
     // (2) 改名（役職側を直す。個体は触っていない）。
     orchestrator
-        .upsert_role(agent_core::AgentRole {
+        .upsert_role(fuseforks_core::AgentRole {
             id: "researcher".into(),
             name: "コード調査役".into(),
             description: String::new(),
             color: None,
-            defaults: agent_core::AgentRoleDefaults::default(),
+            defaults: fuseforks_core::AgentRoleDefaults::default(),
         })
         .await
         .unwrap();
@@ -7326,12 +7326,12 @@ async fn an_update_that_keeps_the_role_stays_silent() {
     let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
     let id = AgentId::from("agent_01");
     orchestrator
-        .upsert_role(agent_core::AgentRole {
+        .upsert_role(fuseforks_core::AgentRole {
             id: "researcher".into(),
             name: "調査役".into(),
             description: String::new(),
             color: None,
-            defaults: agent_core::AgentRoleDefaults::default(),
+            defaults: fuseforks_core::AgentRoleDefaults::default(),
         })
         .await
         .unwrap();
@@ -7376,12 +7376,12 @@ async fn an_agent_never_sees_its_own_role_name_only_the_roles_of_others() {
 
     for (id, name) in [("deputy", "助役"), ("librarian", "司書")] {
         orchestrator
-            .upsert_role(agent_core::AgentRole {
+            .upsert_role(fuseforks_core::AgentRole {
                 id: id.into(),
                 name: name.into(),
                 description: String::new(),
                 color: None,
-                defaults: agent_core::AgentRoleDefaults::default(),
+                defaults: fuseforks_core::AgentRoleDefaults::default(),
             })
             .await
             .unwrap();
@@ -7428,7 +7428,7 @@ async fn an_agent_never_sees_its_own_role_name_only_the_roles_of_others() {
 /// 見ておらず、提示の検証には `req.tools` が要る。
 #[derive(Default)]
 struct ToolSpecBackend {
-    tools: std::sync::Mutex<Vec<Vec<agent_core::llm::ToolSpec>>>,
+    tools: std::sync::Mutex<Vec<Vec<fuseforks_core::llm::ToolSpec>>>,
 }
 
 #[async_trait::async_trait]
@@ -7453,11 +7453,11 @@ impl LlmBackend for ToolSpecBackend {
 async fn setup_with_run(dir: &TempDir, backend: Arc<dyn LlmBackend>) -> Orchestrator {
     let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
     orchestrator
-        .register_tool(Arc::new(agent_core::RunTool::new(ConfigStore::new(&dir.0))))
+        .register_tool(Arc::new(fuseforks_core::RunTool::new(ConfigStore::new(&dir.0))))
         .await;
     // 既定集合の変更が**他の同梱ツールに波及していない**ことを見るための比較対象。
     // `setup_with` は同梱ツールを 1 本も登録しない（GUI 側の仕事）。
-    orchestrator.register_tool(Arc::new(agent_core::GrepTool)).await;
+    orchestrator.register_tool(Arc::new(fuseforks_core::GrepTool)).await;
     orchestrator
 }
 
@@ -7693,7 +7693,7 @@ async fn an_attached_image_reaches_the_model_once_and_never_again() {
             &a,
             "この画像は何？",
             &[],
-            vec![agent_core::AttachmentUpload {
+            vec![fuseforks_core::AttachmentUpload {
                 file_name: "shot.png".into(),
                 bytes: tiny_webp(),
             }],
@@ -7732,7 +7732,7 @@ async fn an_attached_image_reaches_the_model_once_and_never_again() {
     assert_eq!(first_user.attachments.len(), 1);
     assert_eq!(
         first_user.attachments[0].media_type,
-        agent_core::llm::ImageMediaType::Webp
+        fuseforks_core::llm::ImageMediaType::Webp
     );
     {
         use base64::Engine as _;
@@ -7792,7 +7792,7 @@ async fn a_second_attachment_is_rejected_before_anything_is_written() {
         .unwrap();
     orchestrator.start_agent(&a).await.unwrap();
 
-    let upload = || agent_core::AttachmentUpload {
+    let upload = || fuseforks_core::AttachmentUpload {
         file_name: "x.png".into(),
         bytes: tiny_webp(),
     };
@@ -7832,7 +7832,7 @@ async fn a_transfer_notes_the_dropped_image_in_its_body() {
             &a,
             "この画像をブラボーに見せて",
             &[],
-            vec![agent_core::AttachmentUpload {
+            vec![fuseforks_core::AttachmentUpload {
                 file_name: "shot.png".into(),
                 bytes: tiny_webp(),
             }],
@@ -7893,7 +7893,7 @@ async fn the_reason_reaches_the_event_but_not_the_next_turn() {
     // 1. イベントには届く。
     let written = events.iter().find_map(|e| match e {
         CoreEvent::ToolInvoked {
-            reason: agent_core::tool_reason::ReasonState::Written { text },
+            reason: fuseforks_core::tool_reason::ReasonState::Written { text },
             ..
         } => Some(text.clone()),
         _ => None,
@@ -7936,7 +7936,7 @@ async fn the_reason_reaches_the_event_but_not_the_next_turn() {
 async fn synthesized_tools_do_not_gain_a_reason_field() {
     #[derive(Default)]
     struct SpyBackend {
-        seen: std::sync::Mutex<Vec<agent_core::llm::ToolSpec>>,
+        seen: std::sync::Mutex<Vec<fuseforks_core::llm::ToolSpec>>,
     }
 
     #[async_trait::async_trait]
@@ -7987,8 +7987,8 @@ async fn synthesized_tools_do_not_gain_a_reason_field() {
     drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
 
     let seen = backend.seen.lock().unwrap().clone();
-    let key = agent_core::tool_reason::REASON_KEY;
-    let has_reason = |spec: &agent_core::llm::ToolSpec| {
+    let key = fuseforks_core::tool_reason::REASON_KEY;
+    let has_reason = |spec: &fuseforks_core::llm::ToolSpec| {
         spec.parameters
             .get("properties")
             .and_then(|p| p.get(key))

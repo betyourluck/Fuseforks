@@ -388,7 +388,7 @@ enum ReasonState {
 
   ### P1 実装記録（2026-08-07 完了。lib 455 / 結合 124 全緑）
 
-  新設は `crates/agent-core/src/tool_reason.rs`（純機構・単体 13 本）。
+  新設は `crates/fuseforks-core/src/tool_reason.rs`（純機構・単体 13 本）。
   触ったのは `tool.rs`（`wants_reason` + `specs_for` の注入 + 単体 4 本）/
   `mcp.rs`（オプトアウト）/ `event.rs`（欄と doc）/ `orchestrator`
   （決定と計器）/ 結合 3 本。**次に触る人が要る判断が 4 点**:

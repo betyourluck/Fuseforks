@@ -5,7 +5,7 @@
 //! 赤くしない。手元で経路を確かめたいときに明示して走らせる:
 //!
 //! ```text
-//! cargo test -p agent-core --test mcp_live -- --ignored --nocapture
+//! cargo test -p fuseforks-core --test mcp_live -- --ignored --nocapture
 //! ```
 //!
 //! ここで確かめたいのは自分のコードの結線であって SDK の正しさではない:
@@ -16,9 +16,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use agent_core::mcp::{McpConfig, McpManager, McpServerConfig};
-use agent_core::tool::ToolContext;
-use agent_core::AgentId;
+use fuseforks_core::mcp::{McpConfig, McpManager, McpServerConfig};
+use fuseforks_core::tool::ToolContext;
+use fuseforks_core::AgentId;
 
 /// テスト用の一時ディレクトリ。
 struct TempDir(PathBuf);

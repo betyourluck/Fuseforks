@@ -1,13 +1,13 @@
 //! TypeScript 側が送出する JSON が、Rust 側の型でそのまま受かることを固定するテスト。
 //!
-//! `apps/gui-tauri/src/types.ts` と `crates/agent-core/src/model.rs` は手で同期させる
+//! `apps/gui-tauri/src/types.ts` と `crates/fuseforks-core/src/model.rs` は手で同期させる
 //! 契約になっている（`data_contract.yaml` 参照）。この二言語の境界は型検査が届かないため、
 //! **フロントが実際に組み立てるリテラルをそのまま貼って**デシリアライズを試す。
 //!
 //! ここに貼る JSON は推測で書かず、TS 側の実装から機械的に写すこと。
 
-use agent_core::llm::{Effort, Provider};
-use agent_core::model::{
+use fuseforks_core::llm::{Effort, Provider};
+use fuseforks_core::model::{
     AgentId, AgentMessage, AgentRole, AgentRoleDefaults, AgentSnapshot, AgentSpec, AgentStatus,
     CredentialSource, Endpoint, ModelTemplate,
 };
@@ -102,7 +102,7 @@ fn wire_field_sets_are_frozen() {
             id: "researcher".into(),
             name: "調査役".into(),
             description: "説明".into(),
-            color: Some(agent_core::RoleColor::Teal),
+            color: Some(fuseforks_core::RoleColor::Teal),
             defaults: AgentRoleDefaults::default(),
         }),
         vec!["color", "defaults", "description", "id", "name"],
@@ -110,7 +110,7 @@ fn wire_field_sets_are_frozen() {
     );
     // 色の値は lowercase（TS の union リテラルと一致させる）。
     assert_eq!(
-        serde_json::to_value(agent_core::RoleColor::Violet).unwrap(),
+        serde_json::to_value(fuseforks_core::RoleColor::Violet).unwrap(),
         serde_json::json!("violet")
     );
 
@@ -193,13 +193,13 @@ fn wire_field_sets_are_frozen() {
     // 値を入れた状態でもう一度固定して、TS 側への追従を強制する。
     let mut filled = AgentMessage::new(Endpoint::User, Endpoint::System, "本文", 0);
     filled.co_recipients = vec![AgentId::from("agent_a")];
-    filled.grounding = agent_core::llm::Grounding {
+    filled.grounding = fuseforks_core::llm::Grounding {
         queries: vec!["検索語".into()],
-        sources: vec![agent_core::llm::GroundingSource {
+        sources: vec![fuseforks_core::llm::GroundingSource {
             uri: "https://example.test/a".into(),
             title: "表題".into(),
         }],
-        engine: agent_core::llm::GroundingEngine::default(),
+        engine: fuseforks_core::llm::GroundingEngine::default(),
     };
     assert_eq!(
         wire_keys(&filled),
@@ -261,7 +261,7 @@ fn wire_field_sets_are_frozen() {
 /// 落ちたら types.ts の `PlanWaveRecord` / `PlanTaskRecord` / `PlanTaskState` を直すこと。
 #[test]
 fn plan_wave_wire_fields_are_frozen() {
-    use agent_core::plan::{PlanTaskState, PlanWaveStore};
+    use fuseforks_core::plan::{PlanTaskState, PlanWaveStore};
 
     let mut store = PlanWaveStore::default();
     let id = store.begin_wave(AgentId::from("agent_1"), 1, &[(AgentId::from("agent_2"), 12)], 55);
@@ -479,7 +479,7 @@ fn enums_round_trip_through_json() {
 /// （TS 側では省略可能）ので、両方の形を固定する。
 #[test]
 fn session_wire_fields_are_frozen() {
-    use agent_core::{ForkPoint, SessionMeta, SessionSummary};
+    use fuseforks_core::{ForkPoint, SessionMeta, SessionSummary};
 
     let plain = SessionSummary {
         id: "1785600000000-abcd1234".into(),

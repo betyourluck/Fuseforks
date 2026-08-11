@@ -25,8 +25,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use agent_core::orchestrator::ProbeApprovals;
-use agent_core::schedule::ScheduledTask;
+use fuseforks_core::orchestrator::ProbeApprovals;
+use fuseforks_core::schedule::ScheduledTask;
 use serde::{Deserialize, Serialize};
 
 /// 承認ファイルの名前（`{app_data_dir}/probe_approvals.json`）。
@@ -62,7 +62,7 @@ impl ApprovalStore {
                 Err(err) => {
                     // 空として扱うのは**安全側**（全部の前判定が unapproved になる
                     // だけで、危険側へは倒れない）。ただし書き戻さない。
-                    agent_core::note!(
+                    fuseforks_core::note!(
                         "WARN probe approvals: {APPROVALS_FILE} が読めません（前判定は実行されません）: {err}"
                     );
                     (HashSet::new(), Some(err.to_string()))
@@ -161,7 +161,7 @@ fn restrict_permissions(path: &Path) {
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(err) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-            agent_core::note!("probe approvals: 承認ファイルの権限を絞れませんでした（{err}）");
+            fuseforks_core::note!("probe approvals: 承認ファイルの権限を絞れませんでした（{err}）");
         }
     }
     #[cfg(not(unix))]
@@ -171,8 +171,8 @@ fn restrict_permissions(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::schedule::{Recurrence, ScheduledTask};
-    use agent_core::schedule_probe::ScheduleProbe;
+    use fuseforks_core::schedule::{Recurrence, ScheduledTask};
+    use fuseforks_core::schedule_probe::ScheduleProbe;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -199,14 +199,14 @@ mod tests {
     fn task_with(probe: Option<ScheduleProbe>) -> ScheduledTask {
         ScheduledTask {
             id: "t1".to_owned(),
-            to: agent_core::model::AgentId::from("agent_01"),
+            to: fuseforks_core::model::AgentId::from("agent_01"),
             message: "見張って".to_owned(),
             recurrence: Recurrence::Interval { every_minutes: 5 },
             created_at_ms: 0,
             last_consumed_due_ms: None,
             enabled: true,
             probe,
-            session_mode: agent_core::schedule_probe::SessionMode::Continue,
+            session_mode: fuseforks_core::schedule_probe::SessionMode::Continue,
             summarize_after: false,
         }
     }

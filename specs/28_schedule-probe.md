@@ -5,7 +5,7 @@
 **Status**: **rev3 承認 → P0〜P4 完了**（2026-08-08。起票から実装完了まで 1 日・
 査読 2 巡）。**P5 実機確認 8 件すべて観測して Done**（2026-08-08。
 起票から Done まで 1 日）。
-agent-core 667 + gui lib 13 + vitest 229 全緑・clippy 警告ゼロ・build 緑。
+fuseforks-core 667 + gui lib 13 + vitest 229 全緑・clippy 警告ゼロ・build 緑。
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
 ## Goal
@@ -369,7 +369,7 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
   この村の work_dir がリポジトリ直下を指す村では、モデルの手が
   `schedules.json` に実際に届く）
 - **実装境界（承認時の細部 3）**: `probe_approvals.json` への書き込み関数は
-  **`tauri::command` の層に閉じる**（`pub(crate)` で agent-core 側へ
+  **`tauri::command` の層に閉じる**（`pub(crate)` で fuseforks-core 側へ
   広げない）。可視性そのものを境界にする — 「呼ばない約束」ではなく
   「呼べない構造」（コンパイラが守る側に置く）
 - **保存順序は 承認 → `schedules.json`**。逆順だと schedules だけ書けて

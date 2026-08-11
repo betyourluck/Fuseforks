@@ -4,11 +4,11 @@
 //! 1. [`Orchestrator`] をワークスペースのパスとバックエンドを与えて起こす
 //! 2. `broadcast` で流れてくる [`CoreEvent`] をウィンドウへ転送する
 //!
-//! ここが **agent-core と Tauri の唯一の接点**であり、コア側は Tauri を知らない。
+//! ここが **fuseforks-core と Tauri の唯一の接点**であり、コア側は Tauri を知らない。
 
 use std::sync::Arc;
 
-use agent_core::{
+use fuseforks_core::{
     ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
     KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool, RememberTool, RunTool, SdTool,
     SecretStore, YqTool,
@@ -67,7 +67,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // アプリが動かない理由にならず、stderr への出力は残る。
     // 置き場をワークスペース直下にするのは、「フォルダを開く」導線でそのまま
     // 辿り着けるから（不具合の報告時に場所を説明せずに済む）。
-    if let Err(err) = agent_core::open_log(&workspace.join("fuseforks.log")) {
+    if let Err(err) = fuseforks_core::open_log(&workspace.join("fuseforks.log")) {
         eprintln!("[fuseforks] ログファイルを開けませんでした（stderr のみ）: {err}");
     }
 
@@ -117,7 +117,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // `mcp.json` 自体が壊れている場合もここで握る — 設定を直す画面へ到達できないと
     // 利用者は詰む。
     if let Err(err) = orchestrator.reload_mcp().await {
-        agent_core::note!("MCP の初期接続に失敗しました: {err}");
+        fuseforks_core::note!("MCP の初期接続に失敗しました: {err}");
     }
 
     let orchestrator = Arc::new(orchestrator);
@@ -137,7 +137,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // **ここを忘れると「全部 unapproved」という安全側で止まる**。
     let probe_approvals = Arc::new(crate::probe_approvals::ApprovalStore::load(&app_data_dir));
     orchestrator
-        .set_probe_approvals(Arc::clone(&probe_approvals) as Arc<dyn agent_core::orchestrator::ProbeApprovals>)
+        .set_probe_approvals(Arc::clone(&probe_approvals) as Arc<dyn fuseforks_core::orchestrator::ProbeApprovals>)
         .await;
 
     Ok(AppState {

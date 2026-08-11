@@ -37,7 +37,7 @@ use crate::model::{AgentId, AgentMessage, Endpoint};
 ///
 /// # Examples
 /// ```
-/// # use agent_core::compute::spawn_rayon;
+/// # use fuseforks_core::compute::spawn_rayon;
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
 /// let sum = spawn_rayon(|| (1..=1000u64).sum::<u64>()).await.unwrap();

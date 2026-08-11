@@ -18,9 +18,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, ToolCall, Usage};
-use agent_core::model::{AgentId, AgentSpec, ModelTemplate};
-use agent_core::{
+use fuseforks_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, ToolCall, Usage};
+use fuseforks_core::model::{AgentId, AgentSpec, ModelTemplate};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 
@@ -91,7 +91,7 @@ impl LlmBackend for HandoffOnceBackend {
 async fn a_handoff_is_logged_and_the_reply_goes_to_the_user() {
     let dir = TempDir::new("handoff");
     let log_path = dir.0.join("fuseforks.log");
-    agent_core::open_log(&log_path).expect("ログを開けること");
+    fuseforks_core::open_log(&log_path).expect("ログを開けること");
 
     let orchestrator = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),
@@ -352,7 +352,7 @@ async fn a_restricted_agent_never_hands_off_even_with_empty_text() {
         .await
         .unwrap();
     while let Ok(Ok(event)) = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
-        if let agent_core::event::CoreEvent::MessageSent { message } = event {
+        if let fuseforks_core::event::CoreEvent::MessageSent { message } = event {
             sent.push((format!("{:?}", message.from), format!("{:?}", message.to)));
         }
     }

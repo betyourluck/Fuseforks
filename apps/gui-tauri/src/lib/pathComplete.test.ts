@@ -115,9 +115,9 @@ describe("splitForDisplay", () => {
   });
 
   it("深い階層はフォルダ側にまとめる", () => {
-    expect(splitForDisplay("crates/agent-core/src/lib.rs")).toEqual({
+    expect(splitForDisplay("crates/fuseforks-core/src/lib.rs")).toEqual({
       base: "lib.rs",
-      dir: "crates/agent-core/src",
+      dir: "crates/fuseforks-core/src",
     });
   });
 

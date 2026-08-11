@@ -11,7 +11,7 @@ vocabulary:
   rule: |
     **UI に出る文言だけが「サーヴァント」**。型・フィールド・IPC コマンド・
     イベント名・クレート名 (AgentId / AgentSpec / AgentSnapshot / create_agent /
-    agentStatusChanged / agent-core …) と、この台帳・README・failures.md の
+    agentStatusChanged / fuseforks-core …) と、この台帳・README・failures.md の
     地の文は**「エージェント」のまま**。
     根拠: 世界観の呼称はいつでも変わりうるが、型名を変えると Rust / TS /
     台帳 3 系統の全同期が要る。**変わりやすいものと変えにくいものを同じ語に
@@ -23,8 +23,8 @@ vocabulary:
 
 # 同一の型が 2 言語に存在する。手で同期させる契約になっている。
 single_source_of_truth:
-  rust: crates/agent-core/src/model.rs
-  rust_events: crates/agent-core/src/event.rs
+  rust: crates/fuseforks-core/src/model.rs
+  rust_events: crates/fuseforks-core/src/event.rs
   typescript: apps/gui-tauri/src/types.ts
   serde_policy: |
     構造体は `rename_all = "camelCase"`、列挙は `rename_all = "snake_case"`。
@@ -1637,7 +1637,7 @@ entities:
 
   # -------------------------------------------------------------------------
   # Spec 07 の契約。**2026-07-31 に Phase 0 で凍結** (rev2 査読承認)。
-  # 実装は crates/agent-core/src/schedule.rs (Phase 2 で着地)。発火の判定は
+  # 実装は crates/fuseforks-core/src/schedule.rs (Phase 2 で着地)。発火の判定は
   # ScheduledTask::decide が返す Tick (Idle / Consume / Fire) 1 つに集まっている。
   # 純関数はタイムゾーンを型引数 Tz で受ける — 時刻を引数で渡すだけでは実行機の
   # 設定にテストが依存したままで、DST のあるタイムゾーンも渡せない。
@@ -1775,7 +1775,7 @@ entities:
   # -------------------------------------------------------------------------
   # Spec 28 の契約。**2026-08-08 に P0 で凍結** (rev3 承認)。
   # 定期発火の前に「LLM を通さない判定」を挟み、変化があったときだけ課金する。
-  # 実装は crates/agent-core/src/schedule_probe.rs (純機構) + schedule_tick の配線。
+  # 実装は crates/fuseforks-core/src/schedule_probe.rs (純機構) + schedule_tick の配線。
   ScheduleProbe:
     description: |
       予定の前判定 (Spec 28)。時刻が来たらこのコマンドを実行し、stdout の
@@ -1858,7 +1858,7 @@ entities:
       **承認を書くのは GUI の保存 IPC だけ** (人のクリック起点)。モデルが
       schedules.json を file write で書いても承認は付かない (モデルは IPC を
       呼べない)。**書き込み関数は tauri::command の層に閉じ、pub(crate) で
-      agent-core 側へ広げない** — 「呼ばない約束」ではなく「呼べない構造」。
+      fuseforks-core 側へ広げない** — 「呼ばない約束」ではなく「呼べない構造」。
       保存順序は **承認 → schedules.json**。逆順だと schedules だけ書けて
       正当な probe が unapproved で due を失う。承認だけ書けた残骸は
       何も参照しない鍵で無害。
@@ -2945,7 +2945,7 @@ conversation_termination:
     **壊れるべきテスト**として残してある (壊れたら挙動を変えた証拠になる)。
 
   tool_extension_point: |
-    AgentTool / ToolRegistry (crates/agent-core/src/tool.rs) が差し替え点。
+    AgentTool / ToolRegistry (crates/fuseforks-core/src/tool.rs) が差し替え点。
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
     同梱ツールは Fuseforks 自身が提供する操作だけに限る
@@ -2982,7 +2982,7 @@ conversation_termination:
     除外**は名前の集合では書けない。
 
   bundled_tools_contract: |
-    同梱 grep / fd / diff = crates/agent-core/src/tools/fs.rs (2026-07-29)。
+    同梱 grep / fd / diff = crates/fuseforks-core/src/tools/fs.rs (2026-07-29)。
     動機: コーディング用エージェントが最も頻繁に使う道具で、全文読みより
     桁違いに安い (トークン節約は最重要課題)。MCP filesystem に依存せず
     誰の環境でも動くことに意味がある。
@@ -3688,7 +3688,7 @@ concurrency:
   rayon:
     owns: [ログのトークン集計]  # ベクトル類似検索は Spec 18 で rag.rs ごと撤去
     rationale: CPU バウンド。Tokio ワーカー上で回すと IPC 応答が詰まる
-  bridge: agent_core::compute::spawn_rayon（oneshot で受け渡し、双方をブロックしない）
+  bridge: fuseforks_core::compute::spawn_rayon（oneshot で受け渡し、双方をブロックしない）
   anti_pattern: |
     エージェント実行を Rayon に載せてはいけない。Rayon のプールはコア数に固定されるため、
     そこでネットワークを待つと同時稼働エージェント数がコア数で頭打ちになる。

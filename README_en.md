@@ -17,7 +17,7 @@ Everything is visible in a single screen across 3 panes.
 
 ![Outcasts Fuseforks](images/fuseforks.webp)
 
-Rust (`agent-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
+Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
 
 ## What You Can Do
 
@@ -58,7 +58,7 @@ but because the internals were real Unix, it was worth taking home — that is t
 
 Therefore, the design has 2 layers with different disciplines:
 
-- **The core (`agent-core` / `data_contract.yaml` / firing rules) is production quality.**
+- **The core (`fuseforks-core` / `data_contract.yaml` / firing rules) is production quality.**
   Freeze the contract before implementation, write tests red-first.
   Zero dependency on GUI (guaranteed mechanically. This crate alone runs headless)
 - **The shell (village, characters, 3 panes) is the hobby experience.**
@@ -98,7 +98,7 @@ cd apps/gui-tauri && bun run test
 ```
 
 > **`cargo test --workspace` fails while the app is running** — the executable cannot be
-> replaced. `cargo test -p agent-core` covers the core and works with the app running.
+> replaced. `cargo test -p fuseforks-core` covers the core and works with the app running.
 
 Pushing a `v*.*` tag runs release builds for 3 operating systems on GitHub Actions
 ([`.github/workflows/build.yml`](.github/workflows/build.yml)). Ordinary commits do not
@@ -106,7 +106,7 @@ trigger it.
 
 ## Tech Stack
 
-**Core (`crates/agent-core`)**
+**Core (`crates/fuseforks-core`)**
 
 - **Rust** 2024 edition — orchestration, firing rules, tools, and the LLM wire layer
 - **Tokio** (I/O and concurrent turns) + **Rayon** (CPU-bound work)

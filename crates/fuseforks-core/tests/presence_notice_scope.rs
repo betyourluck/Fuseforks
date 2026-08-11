@@ -16,11 +16,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::event::CoreEvent;
-use agent_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Usage};
-use agent_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
-use agent_core::schedule::{Recurrence, ScheduleOptions};
-use agent_core::{
+use fuseforks_core::event::CoreEvent;
+use fuseforks_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Usage};
+use fuseforks_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
+use fuseforks_core::schedule::{Recurrence, ScheduleOptions};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 use tokio::sync::broadcast::Receiver;

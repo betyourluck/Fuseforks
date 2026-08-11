@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 
 const rustSource = readFileSync(
-  resolve(here, "../../../../crates/agent-core/src/tools/mod.rs"),
+  resolve(here, "../../../../crates/fuseforks-core/src/tools/mod.rs"),
   "utf-8",
 );
 const vueSource = readFileSync(

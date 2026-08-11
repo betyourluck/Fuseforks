@@ -22,7 +22,7 @@ Fuseforks/
 ├── specs/                           Specifications (filed → reviewed → rev iterated → Phase split for implementation)
 │
 ├── crates/
-│   └── agent-core/                  ★ The core. Zero dependency on GUI layer
+│   └── fuseforks-core/                  ★ The core. Zero dependency on GUI layer
 │       ├── src/
 │       │   ├── lib.rs               Public API and dependency direction declarations
 │       │   ├── model.rs             Domain nouns (AgentId / AgentSpec / ModelTemplate …)
@@ -71,7 +71,7 @@ Fuseforks/
 │       └── tests/external_ask.rs    Integration tests: requests from external LLMs (Spec 25)
 │
 └── apps/
-    └── gui-tauri/                   ★ The shell. Depends on agent-core
+    └── gui-tauri/                   ★ The shell. Depends on fuseforks-core
         ├── src-tauri/src/
         │   ├── lib.rs               Window launch and IPC command registration
         │   ├── state.rs             Orchestrator assembly + event relay
@@ -125,10 +125,10 @@ Fuseforks/
 Dependencies flow in only one direction.
 
 ```text
-apps/gui-tauri  ──depends on──▶  crates/agent-core
+apps/gui-tauri  ──depends on──▶  crates/fuseforks-core
 ```
 
-The absence of `tauri` in `crates/agent-core/Cargo.toml` mechanically guarantees this separation.
+The absence of `tauri` in `crates/fuseforks-core/Cargo.toml` mechanically guarantees this separation.
 Notifications sent to the GUI merely stream `CoreEvent` into a `broadcast` channel; the core layer remains entirely unaware of whether the receiver is Tauri or test code. Consequently, **the entire pipeline can be verified without launching the GUI**.
 
 ---
@@ -173,7 +173,7 @@ the theme ([Spec 13](specs/13_settings-dialog.md) rev3 D8 made "no emoji for per
 mechanism). From here on, the ledgers point at a button's **label and location**: the description
 stays true even when the artwork changes.
 
-**The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `agent-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
+**The on-screen term is "servant"; the domain vocabulary is "agent"** (2026-07-31). Only user-facing strings follow the setting's fiction. Types, fields, IPC commands, event names, and crate names (`AgentId` / `AgentSpec` / `create_agent` / `fuseforks-core`, …), as well as the prose in this README, `data_contract.yaml`, and `failures.md`, stay on "agent". The name may change at any time, but renaming a type means changing Rust, TypeScript, and the ledgers in lockstep — **do not bind what changes easily and what changes with difficulty to the same word**. The rule of record is `vocabulary` in [data_contract.yaml](data_contract.yaml).
 
 **The upper-center pane, "Kizuna" (絆 — bonds between servants), shows who can speak to whom** (renamed 2026-08-05; formerly "village map"). The name comes from the *Kizuna* system in KOEI TECMO's *Romance of the Three Kingdoms XIII*: as there, **the ties themselves are the mechanism, not decoration**. Without a tie an utterance does not arrive; draw one and it does. The pane keeps the name `Kizuna` in English too — *ties* and *connections* are used as common nouns in prose, but **the name on screen is Kizuna**.
 

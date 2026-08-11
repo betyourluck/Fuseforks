@@ -21,9 +21,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use agent_core::llm::{ChatMessage, ChatRequest, ImageAttachment, ImageMediaType, LlmBackend};
-use agent_core::model::{CredentialSource, ModelTemplate};
-use agent_core::{HttpLlmBackend, InMemorySecretStore, LlmConfig, Provider};
+use fuseforks_core::llm::{ChatMessage, ChatRequest, ImageAttachment, ImageMediaType, LlmBackend};
+use fuseforks_core::model::{CredentialSource, ModelTemplate};
+use fuseforks_core::{HttpLlmBackend, InMemorySecretStore, LlmConfig, Provider};
 
 /// スタブが返す応答の決め方。**接続先の性格を 3 つに分けている。**
 #[derive(Clone, Copy, PartialEq, Eq)]

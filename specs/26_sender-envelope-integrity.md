@@ -41,7 +41,7 @@ format!("【送り手: {sender_label}】\n{}", incoming.content)
 
 ### 実測 2 — 封筒はツールの提示にも実行にも届いていない
 
-`Endpoint::` で `crates/agent-core/src` を引くと 7 ファイルに出るが、
+`Endpoint::` で `crates/fuseforks-core/src` を引くと 7 ファイルに出るが、
 **`tools/` には 1 件も無い**。提示は `enabled_tools`（個体ごと）、
 実行は `run.json` の allow / deny（個体ごと）と `work_dir` 境界（個体ごと）で
 決まり、**どれも送り手を入力に取らない**。
@@ -336,8 +336,8 @@ role は定数なので、そこへ倒れた個体は必ず誤る。**受け皿�
   **1 行に絞ったのはこの費用が恒久だから** — 効果の測れない 3 文を
   払い続ける理由が無い。条例を書き換えた回数ぶん全員のキャッシュが割れる。
 
-- **P2 コア** — **完了（2026-08-07。agent-core lib 425 → 439・結合 122・
-  clippy 警告ゼロ）**。`crates/agent-core/src/sender_envelope.rs` を新設し、
+- **P2 コア** — **完了（2026-08-07。fuseforks-core lib 425 → 439・結合 122・
+  clippy 警告ゼロ）**。`crates/fuseforks-core/src/sender_envelope.rs` を新設し、
   `attribute_sender` がそこを通す。
 
   **P2 実装記録（実装で決めた 4 点）**:

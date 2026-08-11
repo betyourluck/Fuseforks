@@ -9,36 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "chrono-tz",
- "command-group",
- "image",
- "keyring",
- "pulldown-cmark",
- "rayon",
- "redb",
- "regex",
- "reqwest 0.12.28",
- "rmcp",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "sys-locale",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "toml_edit 0.25.13+spec-1.1.0",
- "trash",
- "uuid",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1229,10 +1199,10 @@ dependencies = [
 name = "fuseforks"
 version = "0.1.0"
 dependencies = [
- "agent-core",
  "axum",
  "base64 0.22.1",
  "chrono",
+ "fuseforks-core",
  "rmcp",
  "serde",
  "serde_json",
@@ -1244,6 +1214,36 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "uuid",
+]
+
+[[package]]
+name = "fuseforks-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "command-group",
+ "image",
+ "keyring",
+ "pulldown-cmark",
+ "rayon",
+ "redb",
+ "regex",
+ "reqwest 0.12.28",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "sys-locale",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "toml_edit 0.25.13+spec-1.1.0",
+ "trash",
  "uuid",
 ]
 

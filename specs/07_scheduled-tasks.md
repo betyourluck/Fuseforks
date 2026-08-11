@@ -416,7 +416,7 @@ rev1 は猶予を全種別に掛けており、`interval` の意図（再開時�
       **テストは 1 本も書いていない** — P0 の Acceptance は「2 プロセス
       並べたときの挙動」で、OS のミューテックス（Windows）/ D-Bus（Linux）を
       掴む機構をテストプロセス内から模しても実物とは別のものを確かめることになる
-- [x] Phase 2 — 発火規則（純関数）: `crates/agent-core/src/schedule.rs` に
+- [x] Phase 2 — 発火規則（純関数）: `crates/fuseforks-core/src/schedule.rs` に
       `Weekday` / `Recurrence` / `ScheduledTask` / `Tick` と、
       `due_wall_clock` / `due_interval` / `next_due` / `decide` を実装。
       **タイムゾーンも型引数 `Tz` で受ける** — 時刻を引数で渡すだけでは

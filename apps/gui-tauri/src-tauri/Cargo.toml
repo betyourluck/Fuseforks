@@ -16,8 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# 中核ロジック。依存はこの一方向だけ。agent-core 側は tauri を知らない。
-agent-core.workspace = true
+# 中核ロジック。依存はこの一方向だけ。fuseforks-core 側は tauri を知らない。
+fuseforks-core.workspace = true
 
 # IPC で届く添付画像の base64 復号（Spec 23）。復号は IPC 境界で 1 回、
 # 検証と保存はコア側（AttachmentStore::save）。

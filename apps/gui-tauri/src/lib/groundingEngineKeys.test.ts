@@ -28,7 +28,7 @@ import en from "../locales/en.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rustSource = readFileSync(
-  resolve(here, "../../../../crates/agent-core/src/llm/canonical.rs"),
+  resolve(here, "../../../../crates/fuseforks-core/src/llm/canonical.rs"),
   "utf-8",
 );
 

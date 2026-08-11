@@ -640,7 +640,7 @@ rev1 はこれを条件 2（2 番目）に置いていたので、**400 が出�
   `openai_compat` から写すと `#76` の逆向きを踏む
 - **`gpt-5` + tools ありで `"none"` が出ない**（D4）
 
-**probe は使い捨て**（`crates/agent-core/examples/` に置いて Phase 終了時に削除。
+**probe は使い捨て**（`crates/fuseforks-core/examples/` に置いて Phase 終了時に削除。
 Spec 31 / 32 と同じ流儀）。**golden にするのは応答 JSON の形だけ。**
 **実 API 呼び出しは 1〜9 で 5〜6 発**（xAI への 6' を含む）。
 
@@ -669,10 +669,10 @@ Spec 31 / 32 と同じ流儀）。**golden にするのは応答 JSON の形だ�
 
 - **P0a（測る）— 完了（2026-08-11）**: probe **11 発**で 9 条件すべてを閉じ、
   結果を「接地」へ追記して **rev3**。**何も凍結していない**。
-  **probe は `crates/agent-core/examples/probe_responses.rs`。P0b で削除する**
+  **probe は `crates/fuseforks-core/examples/probe_responses.rs`。P0b で削除する**
 - **P0b（決めて凍結する）— 完了（2026-08-11）**: `data_contract.yaml` へ
   **`openai_responses` 節（117 行）**を新設し、既存 5 箇所を追従させた。
-  **probe は削除済み**（`git rm`）。`cargo test -p agent-core` 緑。
+  **probe は削除済み**（`git rm`）。`cargo test -p fuseforks-core` 緑。
   凍結したもの: `store: false` 常送（2 ワイヤ）/ `previous_response_id` 不使用 /
   `reasoning` の 4 欄と `summary: "detailed"` 常送・`context: "current_turn"` 明示 /
   `mode` はトグルで省略 ≡ standard / **`#77` の `none` を写さない** /

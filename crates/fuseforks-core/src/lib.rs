@@ -1,4 +1,4 @@
-//! # agent-core
+//! # fuseforks-core
 //!
 //! Fuseforks のマルチエージェント・オーケストレーション中核。
 //!
@@ -7,7 +7,7 @@
 //! このクレートは **GUI 層（Tauri / Vue）に一切依存しない**。逆向きの依存だけが存在する:
 //!
 //! ```text
-//! apps/gui-tauri  ──依存──▶  crates/agent-core
+//! apps/gui-tauri  ──依存──▶  crates/fuseforks-core
 //! ```
 //!
 //! `Cargo.toml` に `tauri` が現れないことがこの分離の機械的な保証になっている。
@@ -29,12 +29,12 @@
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use agent_core::{
+//! use fuseforks_core::{
 //!     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 //!     model::{AgentSpec, ModelTemplate},
 //! };
 //!
-//! # async fn example() -> Result<(), agent_core::CoreError> {
+//! # async fn example() -> Result<(), fuseforks_core::CoreError> {
 //! let store = ConfigStore::new("./workspace");
 //! let orchestrator = Orchestrator::bootstrap(
 //!     store,

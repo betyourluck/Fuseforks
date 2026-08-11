@@ -199,9 +199,9 @@ rev2 はツール名だけ `rag` に決め、**実装を `tools/doc.rs`、契約
 | 層 | 名前 | 既存の前例 |
 |---|---|---|
 | ツール | `rag` | — |
-| 実装 | **`crates/agent-core/src/tools/rag.rs`** | `tools/run.rs` = `run` / `tools/file.rs` = `file` |
+| 実装 | **`crates/fuseforks-core/src/tools/rag.rs`** | `tools/run.rs` = `run` / `tools/file.rs` = `file` |
 | 契約 | **`rag_tool_contract`** | `file_tool_contract` / `command_tool_contract` |
-| **純機構** | **`crates/agent-core/src/doc_index.rs`（このまま）** | `command.rs`（型 + 純機構）と `tools/run.rs`（ツール）の分業 |
+| **純機構** | **`crates/fuseforks-core/src/doc_index.rs`（このまま）** | `command.rs`（型 + 純機構）と `tools/run.rs`（ツール）の分業 |
 
 **純機構だけ `doc_index` の名前を残すのは、層が違うから。** あそこに入るのは
 「Markdown の見出しを木にする」純関数で、**`rag` という取得の概念とは独立**
@@ -282,7 +282,7 @@ rev2 の Notes 3 は `grep` と `rag` の差を「**work_dir の中か、資料�
 #### D10: `rag_sources` を `AgentRoleDefaults` から外す（**rev2 で新設**）
 
 `AgentRoleDefaults` には `rag_sources` が入っている
-（`crates/agent-core/src/model.rs:286`。`role_contract` 凍結 2 の「入れる 4 欄」の 1 つ）。
+（`crates/fuseforks-core/src/model.rs:286`。`role_contract` 凍結 2 の「入れる 4 欄」の 1 つ）。
 その 20 行上、`model.rs:261` に**入れなかった欄の理由**がこう書いてある:
 
 > `work_dir` — 絶対パスで端末ごとに違う。村を配ると存在しないパスを指す
@@ -369,7 +369,7 @@ rev2 は「件数で打ち切る」と書いて**数を書いていなかった*
 ##### `file read` とは逆の作法になる（**rev2 で追記**）
 
 **隣接するのは Spec 17 / 16 ではなく `file read` で、そちらは切り詰める** —
-`crates/agent-core/src/tools/file.rs:183` が先頭 `MAX_OUTPUT_CHARS` 字 +
+`crates/fuseforks-core/src/tools/file.rs:183` が先頭 `MAX_OUTPUT_CHARS` 字 +
 「残り N 字は省略しました」を返す。**同じ `read` という語で作法が 2 つ並ぶ**ので、
 差の理由を書いておかないと次に触る人が `file read` に合わせて切り詰めへ倒す。
 
@@ -427,7 +427,7 @@ rev2 は「件数で打ち切る」と書いて**数を書いていなかった*
 
 #### D7: `rag` は `DEFAULT_ENABLED_TOOLS` に入れる（**rev2 で新設**）
 
-`crates/agent-core/src/tools/mod.rs:26` に**等式**が書いてある:
+`crates/fuseforks-core/src/tools/mod.rs:26` に**等式**が書いてある:
 
 > **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}`**
 
@@ -492,7 +492,7 @@ DEFAULT_ENABLED_TOOLS = ["diff", "fd", "file", "grep", "remember", "sd", "yq"]
 
 ### Phase 1: 見出しの木（純機構）
 
-`crates/agent-core/src/doc_index.rs` を新設し、Manuale の `markdown.rs`（**191 行。
+`crates/fuseforks-core/src/doc_index.rs` を新設し、Manuale の `markdown.rs`（**191 行。
 実測で確認済み**）を移植する。`HeadingFlat` / `HeadingNode` / `parse_headings` / `build_tree`。
 
 **依存は `pulldown-cmark` 1 本**（D5）。純関数なので単体で留める。
@@ -532,7 +532,7 @@ MIT の表示義務は発火しない**が、**表示は入れる** — 3 行で
 
 ### Phase 2: ツールの実装
 
-**`crates/agent-core/src/tools/rag.rs`**（**rev3 で `tools/doc.rs` から改名** — D2）。
+**`crates/fuseforks-core/src/tools/rag.rs`**（**rev3 で `tools/doc.rs` から改名** — D2）。
 `op` ごとに `outline` / `search` / `read`。
 
 - **走査は既存の `collect_files` を各ルートに掛ける**（`ignore` を入れない）
@@ -544,7 +544,7 @@ MIT の表示義務は発火しない**が、**表示は入れる** — 3 行で
 
 #### `ToolContext` へ `rag_roots` を足す（**rev2 で追加。実装前に必要**）
 
-`ToolContext`（`crates/agent-core/src/tool.rs:34`）が持っているのは
+`ToolContext`（`crates/fuseforks-core/src/tool.rs:34`）が持っているのは
 `agent_id` / `work_dir` / `cancel` の **3 つだけ**で、`rag_sources` を運ぶ経路が無い。
 
 **`run` の手は使えない。** `RunTool` は `self.load(&ctx.agent_id)` で自分の
@@ -599,7 +599,7 @@ Spec 15 P2（`description()` は個体を知らないので `spec_for` が要る
 
 ### Phase 4: 旧 RAG の撤去
 
-- `crates/agent-core/src/rag.rs` を削除（`HashEmbedder` / `RagIndex` / `RagChunk`）
+- `crates/fuseforks-core/src/rag.rs` を削除（`HashEmbedder` / `RagIndex` / `RagChunk`）
 - `orchestrator:3312` の**毎ターンの `## 参照資料` 注入を撤去**（D6）
 - **`RagChunk` は `data_contract.yaml:1026` で凍結されたワイヤ型**（**rev2 で訂正** —
   rev1 は `ipc_contract.rs` と書いていたが、あのファイルに `RagChunk` は 0 件）。

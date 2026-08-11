@@ -495,7 +495,7 @@ mod tests {
 
     /// **実機の ssh でしか判別できない**ので `#[ignore]`。
     ///
-    /// `cargo test -p agent-core --lib runs_ssh -- --ignored --nocapture` で走る。
+    /// `cargo test -p fuseforks-core --lib runs_ssh -- --ignored --nocapture` で走る。
     /// **`sort` を読ませる合成テストでは判別できなかった** — 普通のプログラムは
     /// `Stdio::null()` でも EOF を受け取るので、`drop` を外しても 0.14 秒で緑。
     /// **判別するのは Windows OpenSSH だけ**（NUL から EOF を受け取らない）。

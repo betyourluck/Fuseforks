@@ -18,7 +18,7 @@ Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会
 ![Outcasts Fuseforks](images/fuseforks.webp)
 
 
-Rust（`agent-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
+Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
 
 ## 何ができるか
 
@@ -60,7 +60,7 @@ Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
 
 だから設計は 2 層で規律が違う:
 
-- **核（`agent-core` / `data_contract.yaml` / 発火規則）は業務品質。**
+- **核（`fuseforks-core` / `data_contract.yaml` / 発火規則）は業務品質。**
   契約を凍結してから実装し、テストは赤を見てから緑にする。
   GUI への依存はゼロ（機械的に保証。このクレートだけで headless に動く）
 - **殻（村・キャラクター・3 ペイン）はホビーの体験。**
@@ -100,7 +100,7 @@ cd apps/gui-tauri && bun run test
 ```
 
 > **アプリを起動したまま `cargo test --workspace` を回すと落ちる** —
-> 実行ファイルを置き換えられないため。コアだけなら `cargo test -p agent-core`
+> 実行ファイルを置き換えられないため。コアだけなら `cargo test -p fuseforks-core`
 > がアプリ稼働中でも通る。
 
 `v*.*` のタグを push すると、3 OS 分のリリースビルドが GitHub Actions で走る
@@ -109,7 +109,7 @@ cd apps/gui-tauri && bun run test
 
 ## 技術スタック
 
-**核（`crates/agent-core`）**
+**核（`crates/fuseforks-core`）**
 
 - **Rust** 2024 edition — オーケストレーション、発火規則、ツール、LLM ワイヤ層
 - **Tokio**（I/O と並行ターン）+ **Rayon**（CPU 側）

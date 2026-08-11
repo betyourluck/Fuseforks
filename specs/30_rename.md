@@ -80,9 +80,9 @@ agent-based models that simulate interactions among entities"）。**マルチ
 | | 場所 | 変えると何が起きるか |
 |---|---|---|
 | **A** | `apps/gui-tauri/src-tauri/tauri.conf.json:5` `"identifier": "jp.outcasts.concordia"` | `{app_data_dir}` が変わる。**workspace は `{app_data_dir}/workspace` 固定**（`state.rs:63`）なので、**既存の村がアプリから見えなくなる** — `world.json` / `sessions.redb` / `Ordinance.md` / `village_id` / `blackboard/` が旧フォルダに取り残される。同じ棚の `mcp_server.json`（`state.rs:130`）と `probe_approvals.json`（`state.rs:138`）も同時に取り残される |
-| **B** | `crates/agent-core/src/secret.rs:24` `SERVICE_NAME = "jp.outcasts.concordia"` | **OS の資格情報ストアのサービス名。登録済みの API キーが見えなくなる** — 消えるのではなく旧サービス名の下に残り、画面には「未登録」とだけ出る |
+| **B** | `crates/fuseforks-core/src/secret.rs:24` `SERVICE_NAME = "jp.outcasts.concordia"` | **OS の資格情報ストアのサービス名。登録済みの API キーが見えなくなる** — 消えるのではなく旧サービス名の下に残り、画面には「未登録」とだけ出る |
 | **C** | `apps/gui-tauri/src-tauri/src/mcp_server.rs:236` `name = "ask_concordia"` | 外部クライアントへ宣言するツール名（Spec 25 P0 凍結） |
-| **D** | `crates/agent-core/src/orchestrator:3562` / `:5987` `Endpoint::System => "Concordia"` | 封筒 `【送り手: Concordia】` に入る = **モデルが読むプロンプトの一部**。かつ **System 行は会話ログへ焼き付いて `session_store` に保存される**ので、既存の村のログには旧名が残る |
+| **D** | `crates/fuseforks-core/src/orchestrator:3562` / `:5987` `Endpoint::System => "Concordia"` | 封筒 `【送り手: Concordia】` に入る = **モデルが読むプロンプトの一部**。かつ **System 行は会話ログへ焼き付いて `session_store` に保存される**ので、既存の村のログには旧名が残る |
 
 **A と B は同じ文字列だが別の機構で、独立に決められる。** 一方は
 `{app_data_dir}` を決め、他方は OS の資格情報ストアを束ねる。

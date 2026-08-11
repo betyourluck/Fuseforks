@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::error::CoreError;
-use agent_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
-use agent_core::{
+use fuseforks_core::error::CoreError;
+use fuseforks_core::model::{AgentId, AgentSpec, Endpoint, ModelTemplate};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 
@@ -203,7 +203,7 @@ async fn malformed_client_name_falls_back_instead_of_rejecting() {
     assert_eq!(
         request.from,
         Endpoint::External {
-            client: agent_core::world::DEFAULT_EXTERNAL_CLIENT.to_owned()
+            client: fuseforks_core::world::DEFAULT_EXTERNAL_CLIENT.to_owned()
         },
         "記録にも正規化後の値だけが残ること（壊れた値を再放流しない）"
     );
@@ -215,7 +215,7 @@ async fn overlong_client_name_falls_back() {
     let dir = TempDir::new("overlong");
     let (orchestrator, _id) = setup_with_reception(&dir).await;
 
-    let long = "あ".repeat(agent_core::world::USER_NAME_MAX_CHARS + 1);
+    let long = "あ".repeat(fuseforks_core::world::USER_NAME_MAX_CHARS + 1);
     let answer = orchestrator.ask_external(&long, "やあ").await.unwrap();
 
     assert!(
@@ -237,28 +237,28 @@ struct GatedBackend {
 }
 
 #[async_trait::async_trait]
-impl agent_core::llm::LlmBackend for GatedBackend {
+impl fuseforks_core::llm::LlmBackend for GatedBackend {
     fn name(&self) -> &str {
         "gated"
     }
 
     async fn chat(
         &self,
-        _req: agent_core::llm::ChatRequest,
-    ) -> Result<agent_core::llm::ChatResponse, agent_core::llm::LlmError> {
+        _req: fuseforks_core::llm::ChatRequest,
+    ) -> Result<fuseforks_core::llm::ChatResponse, fuseforks_core::llm::LlmError> {
         self.entered.add_permits(1);
         self.release.acquire().await.unwrap().forget();
-        Ok(agent_core::llm::ChatResponse {
+        Ok(fuseforks_core::llm::ChatResponse {
             text: Some("[gated] 答え".to_owned()),
             tool_calls: Vec::new(),
-            finish: agent_core::llm::Finish::Stop,
-            usage: agent_core::llm::Usage {
+            finish: fuseforks_core::llm::Finish::Stop,
+            usage: fuseforks_core::llm::Usage {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
                 reasoning: 0,
             },
-            grounding: agent_core::llm::Grounding::default(),
+            grounding: fuseforks_core::llm::Grounding::default(),
             reasoning_summary: Vec::new(),
         })
     }
@@ -337,8 +337,8 @@ async fn second_external_request_is_refused_while_busy() {
 /// 親切心で分岐が足される。
 #[test]
 fn room_log_hides_external_requests_but_shows_replies() {
-    use agent_core::model::AgentMessage;
-    use agent_core::room_log::is_visible_in_room_log;
+    use fuseforks_core::model::AgentMessage;
+    use fuseforks_core::room_log::is_visible_in_room_log;
 
     let desk = AgentId::from("agent_desk");
     let other = AgentId::from("agent_other");
@@ -378,8 +378,8 @@ fn room_log_hides_external_requests_but_shows_replies() {
 /// 「正しく吸っている」ことをテストでだけ確かめられる。
 #[test]
 fn wildcard_matches_treat_external_as_not_an_agent() {
-    use agent_core::compute::count_by_sender;
-    use agent_core::model::AgentMessage;
+    use fuseforks_core::compute::count_by_sender;
+    use fuseforks_core::model::AgentMessage;
 
     let external = Endpoint::External {
         client: "Claude Code".to_owned(),
@@ -417,31 +417,31 @@ fn wildcard_matches_treat_external_as_not_an_agent() {
 struct LoopingBackend;
 
 #[async_trait::async_trait]
-impl agent_core::llm::LlmBackend for LoopingBackend {
+impl fuseforks_core::llm::LlmBackend for LoopingBackend {
     fn name(&self) -> &str {
         "looping"
     }
 
     async fn chat(
         &self,
-        _req: agent_core::llm::ChatRequest,
-    ) -> Result<agent_core::llm::ChatResponse, agent_core::llm::LlmError> {
-        Ok(agent_core::llm::ChatResponse {
+        _req: fuseforks_core::llm::ChatRequest,
+    ) -> Result<fuseforks_core::llm::ChatResponse, fuseforks_core::llm::LlmError> {
+        Ok(fuseforks_core::llm::ChatResponse {
             text: Some(String::new()),
-            tool_calls: vec![agent_core::llm::ToolCall {
+            tool_calls: vec![fuseforks_core::llm::ToolCall {
                 id: "call_1".into(),
                 name: "not_presented".into(),
                 args: serde_json::json!({}),
                 extra: None,
             }],
-            finish: agent_core::llm::Finish::ToolUse,
-            usage: agent_core::llm::Usage {
+            finish: fuseforks_core::llm::Finish::ToolUse,
+            usage: fuseforks_core::llm::Usage {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
                 reasoning: 0,
             },
-            grounding: agent_core::llm::Grounding::default(),
+            grounding: fuseforks_core::llm::Grounding::default(),
             reasoning_summary: Vec::new(),
         })
     }

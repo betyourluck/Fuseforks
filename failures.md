@@ -311,7 +311,7 @@ Flex の伸縮子には `min-h-0` / `min-w-0` を明示する。
 テンプレートを保存し直すと、`unset` が `keyring` を黙って上書きする。
 キー本体は資格情報ストアに残るため、⚙ 画面は「登録済み」と表示し続け、矛盾が見えない。
 
-**処方**（agent-core 側の二段）:
+**処方**（fuseforks-core 側の二段）:
 1. `upsert_template` で `credential` を正規化する。既存が `keyring` なら維持
    （離脱は秘密の削除と一体の `clear_credential` に限る）。秘密の裏付けが無い
    `keyring` 主張は `unset` へ引き戻す。`unset` ⇄ `not_required` は
@@ -3779,7 +3779,7 @@ run: agent=agent command=ssh resolved=C:\Windows\System32\OpenSSH\ssh.exe args=2
 
 ```text
 thread 'blackboard::tests::only_flat_note_names_are_accepted' panicked at
-crates/agent-core/src/blackboard.rs:211:13:
+crates/fuseforks-core/src/blackboard.rs:211:13:
 通してはいけない名前が通った: sub\note.md
 test result: FAILED. 527 passed; 1 failed;
 ```

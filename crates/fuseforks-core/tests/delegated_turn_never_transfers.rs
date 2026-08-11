@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, ToolCall, Usage};
-use agent_core::model::{AgentId, AgentSpec, ModelTemplate};
-use agent_core::{
+use fuseforks_core::llm::{ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, ToolCall, Usage};
+use fuseforks_core::model::{AgentId, AgentSpec, ModelTemplate};
+use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
 
@@ -291,7 +291,7 @@ async fn a_delegated_answer_does_not_split_into_two_conversations() {
         .await
         .unwrap();
     while let Ok(Ok(event)) = tokio::time::timeout(Duration::from_millis(600), rx.recv()).await {
-        if let agent_core::event::CoreEvent::MessageSent { message } = event {
+        if let fuseforks_core::event::CoreEvent::MessageSent { message } = event {
             sent.push((format!("{:?}", message.from), format!("{:?}", message.to)));
         }
     }
