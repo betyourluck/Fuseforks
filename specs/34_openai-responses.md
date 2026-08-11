@@ -2,7 +2,7 @@
 
 **ID**: 34
 **Date**: 2026-08-11
-**Status**: **rev4（P0a 完了 + 未決 4 件すべて決着。P0b の凍結待ち）**
+**Status**: **rev5（P0a / P0b 完了。未決ゼロ。P1 の実装待ち）**
 **Branch**: なし（main へ直接コミット。Phase ごと）
 
 **rev1 → rev2**: 査読 **2 系統 19 点**（利用者 15 = 論理 9 + 技術 6 / 村 4）→
@@ -632,12 +632,30 @@ Spec 31 / 32 と同じ流儀）。**golden にするのは応答 JSON の形だ�
 - **P0a（測る）— 完了（2026-08-11）**: probe **11 発**で 9 条件すべてを閉じ、
   結果を「接地」へ追記して **rev3**。**何も凍結していない**。
   **probe は `crates/agent-core/examples/probe_responses.rs`。P0b で削除する**
-- **P0b（決めて凍結する）**: P0a の結果で **D2（共有か複製か）/ D3（`store`）/
-  D4（`mode` / `context` / 丸めの表）/ D5（送る `type` 文字列）**を確定 →
-  `data_contract.yaml` へ `openai_responses_wire` 節を凍結
-  （Provider 5 値目 / `store` の扱い / `reasoning` の 4 欄 /
-  `#77` の `none` を写さない / トグル 1 欄 / `openai_web_search_active` /
-  engine 3 値目 / 計器の行の形式（`actions=` 込み）/ **ワイルドカード match の表**）
+- **P0b（決めて凍結する）— 完了（2026-08-11）**: `data_contract.yaml` へ
+  **`openai_responses` 節（117 行）**を新設し、既存 5 箇所を追従させた。
+  **probe は削除済み**（`git rm`）。`cargo test -p agent-core` 緑。
+  凍結したもの: `store: false` 常送（2 ワイヤ）/ `previous_response_id` 不使用 /
+  `reasoning` の 4 欄と `summary: "detailed"` 常送・`context: "current_turn"` 明示 /
+  `mode` はトグルで省略 ≡ standard / **`#77` の `none` を写さない** /
+  `temperature` を送らない / 上限欄は `max_output_tokens` のみ /
+  `web_search`（`web_search_preview` は別名）/ AND 述語 2 本 /
+  engine 3 値目 / 計器 `openai search:`（`actions=` 込み・ticks は書かない）/
+  `xai search:` の行名は動かさない / 画像は送らない。
+
+  **追従させた既存 5 箇所**: `Provider.values`（5 値目）/ `Provider.detect`（3 例目）/
+  `Provider.paths`（`/responses` が 2 つ）/ `ModelTemplate` の 2 欄 /
+  `xai_responses.invariants` へ `store` 常送。
+
+  **新しい節を 3 つ作った**（凍結の形として次も使う）:
+  - **`Provider.non_injective_defaults`** — 既定 URL の表が非単射になる件。
+    **壊れないのは逆引き経路が 1 本も無いから**で、**逆引きを足すとここが最初に壊れる**
+  - **`openai_responses.intentionally_unread`** — 応答に在るのに読まない欄 2 つ。
+    **「serde で通る」は「全部読める」を意味しない**
+  - **`openai_responses.variant_addition_sites`** — 5 値目で触る場所の棚卸し。
+    **実測でコンパイラが指す 4 / 指さない 2 系統**（`client.rs` の網羅 match 4 本 /
+    `model.rs` の `==` 述語 3 本 + **フロントの `providerSkills.ts`**）。
+    **本体は TS 側** — string union は網羅検査を持たないので黙って吸う
 
   **rev1 は P0 の 1 つに畳んでいた**（査読 6）。**測定で決める項目を
   凍結と同じ Phase に置くと、7 がコケたときに凍結内容が変わる** —
@@ -667,7 +685,18 @@ Spec 31 / 32 と同じ流儀）。**golden にするのは応答 JSON の形だ�
 - **P4**: README / DETAIL 日英 + `data_contract` の回収。
   **数えるのはファイル単位**（#51 (b)。台帳は日英 4 ファイル）+
   **CLAUDE.md の 4 社 4 形の表を書き換える**（OpenAI 互換の行が「4 本目のワイヤそのもの」
-  のままになる）
+  のままになる）。
+
+  **P0b で「本数」の記述を先に数えた**（#62 — 数の記述は増えた名前で grep しても
+  引っかからない）。**現時点で嘘になっている記述は 1 つも無い**が、
+  **P4 で読み直す 3 行**を名指しで置く:
+  - `DETAIL.md:1108`「入口が `/v1/responses` の **4 本目のワイヤ**なのは、
+    選択ではなく制約」/ `DETAIL_en.md:769` の `fourth wire` — **Spec 31 の文脈では
+    正しい**（当時 4 本目だった）が、5 本目が並ぶと読み手が数を数え直す
+  - `DETAIL.md:1158`「**4 社すべてで取れる**」/ `DETAIL_en.md:828` — **これは
+    嘘にならない**。増えるのは**ワイヤ**であって**社**ではない（4 社のまま）。
+    **P4 で「触らない」と判断した記録として残す** — 数の記述を見つけたら
+    全部直す、をやると正しい記述まで動く
 - **P5**: 実機
 
 ## 検収（**書く前に読み口の実在を数えた** — #68 / #80 / #90 の規律）

@@ -1129,7 +1129,7 @@ enums:
           rev で潰したのと同じ誤り — 保存先での分類は実装の都合が目録に出る)。
           これは入口の話で、置き場そのものは凍結 1
   Provider:
-    values: [open_ai_compat, anthropic, gemini, xai_responses]
+    values: [open_ai_compat, anthropic, gemini, xai_responses, open_ai_responses]
     detect: |
       未指定なら baseUrl から自動判定。`api.anthropic.com` を含めば anthropic、
       それ以外は open_ai_compat（判定不能なプロキシは安全側で互換に落とす）。
@@ -1140,19 +1140,45 @@ enums:
       api.x.ai は OpenAI 互換としても動いており、既存の互換運用の村
       （grok-* を open_ai_compat で回している個体）を黙って別のワイヤへ移さない。
       gemini と同じ理由の 2 例目。
+      open_ai_responses も**自動判定されない（明示選択のみ。Spec 34 D7）** —
+      api.openai.com は互換の口が主経路で、この村の gpt-* 個体は全部そこに居る。
+      3 例目。
+    non_injective_defaults: |
+      **既定 base URL の表は open_ai_responses で非単射になる (Spec 34 D7)。**
+      open_ai_compat と open_ai_responses が同じ https://api.openai.com/v1 を指す。
+      gemini / xai_responses は「互換の口も持つ他社ホスト」で**キーが別**だったが、
+      ここは**値が完全に一致する**。
+      壊れないのは、lib/providerSkills.ts の baseUrlMismatch / presetBaseUrlFor が
+      **provider を鍵に前方参照するだけ**で、URL から provider を逆引きする経路が
+      1 本も無いため。**逆引きを足すとここが最初に壊れる。**
+      **同じ文字列を 2 回登録するのは必要**（登録しないと anthropic →
+      open_ai_responses の切り替えで base URL が api.anthropic.com のまま残り、
+      presetBaseUrlFor の doc が名指しするバグの鏡像になる）。
+      ALSO_SERVES_COMPAT へは足さない — あれは「互換の口も持つ**他社**ホスト」の
+      免除で、OpenAI 自身は他社ではない。足すと免除の意味が 2 つになる。
     paths: |
-      open_ai_compat: {base_url}/chat/completions  + Authorization: Bearer
-      anthropic:      {base_url}/messages          + x-api-key + anthropic-version
-      gemini:         {base_url}/models/{model}:generateContent + x-goog-api-key
-      xai_responses:  {base_url}/responses         + Authorization: Bearer
+      open_ai_compat:    {base_url}/chat/completions  + Authorization: Bearer
+      anthropic:         {base_url}/messages          + x-api-key + anthropic-version
+      gemini:            {base_url}/models/{model}:generateContent + x-goog-api-key
+      xai_responses:     {base_url}/responses         + Authorization: Bearer
+      open_ai_responses: {base_url}/responses         + Authorization: Bearer
       gemini だけモデル名が URL に埋まるため、Provider::path() は &'static str を
       返せず String を返す（Spec 05 で全プロバイダの呼び出し側を巻き込んで変更）。
+      **/responses を返す provider が 2 つある**が、path が同じでも adapter は
+      別（xai_responses.rs / openai_responses.rs）— 応答の型だけを共有する
+      (Spec 34 D2)。
   Effort:
     values: [low, medium, high, xhigh, max]
     note: |
       canonical (ChatRequest.effort) は未指定なら null のまま運ぶ。
       XHigh のワイヤ値は `xhigh` (serde の snake_case 変換に任せると `x_high` になり、
       TS 側と食い違う)。Effort::as_str と serde 値の一致をテストで固定している。
+      **Responses ワイヤでの受理集合は未確定 (Spec 34 P1 で測る)。**
+      P0a で実測したのは low だけ。外部調査 (Manuale
+      AI/model/chatgpt/GPT-5-mode-pro.md) は gpt-5.6 系を
+      none / low / medium / high / xhigh / max の 6 段階とし、**minimal を挙げていない**
+      — Spec 34 rev2 が 7 値と書いたのは gpt-5 期の値を引きずった可能性がある。
+      **受理されない値を送ると 400 なので、丸めの表は実測で決める。**
 
       ワイヤへ出すかどうかと値の決定は adapter の責務で、モデル名で割れる
       (openai_compat::reasoning_effort)。「未指定なら送らない」は canonical の
@@ -1432,6 +1458,9 @@ entities:
       # (openai_compat::uses_max_completion_tokens。旧欄は 400
       # unsupported_parameter で拒否され、新欄は知らない互換サーバがある。
       # failures.md #76)
+      # **Responses ワイヤ (xai_responses / open_ai_responses) は
+      # max_output_tokens の 1 名だけ。** 互換の送り分けをここへ写さない —
+      # max_completion_tokens を送ると #76 の逆向きを踏む (Spec 34 D11)
       maxOutputTokens: u32
       credential: CredentialSource  # 取得元のみ。秘密を持てるフィールドは存在しない
       provider: Provider | null     # null なら baseUrl から自動判定
@@ -1445,6 +1474,14 @@ entities:
       # 欲しい村が X の攻撃面まで開ける — Spec 31 D3)
       xaiWebSearch: bool
       xaiXSearch: bool
+      # 2 欄とも既定 false。provider == open_ai_responses でのみ効く (Spec 34)。
+      # ベンダー接頭辞の理由は xaiWebSearch と同じ。
+      # openaiReasoningPro は reasoning.mode を "pro" で送るかどうかの 2 状態で、
+      # **OFF では欄ごと省く** — 送らないのと "standard" は input_tokens が
+      # 20 で完全一致する (P0a 実測) ので、省略 ≡ standard。
+      # 3 値の選択肢ではないので既存のトグルの形に乗る (Spec 34 D4)
+      openaiWebSearch: bool
+      openaiReasoningPro: bool
       requestTimeoutSecs: u32
       maxRetries: u32
     invariant: |
@@ -4146,6 +4183,15 @@ llm_wire:
       関数呼び出しだけなら互換層で足りる（既存エージェントはそのまま）—
       gemini_native と同じ構図の 2 例目。
     invariants: |
+      - encode は store: false を**常に送る** (Spec 34 D3・利用者裁定 2026-08-11)。
+        **Option にせず常送する** — skip_serializing_if を付けると
+        「送っている」ことがワイヤ形の凍結から読めなくなる。この欄は
+        「村の会話を接続先に保持させない」という主張を支える側なので、
+        **出力に現れるほうが正しい**。
+        Spec 31 の時点ではこの欄を 1 度も送っておらず、xAI 側の既定に委ねたまま
+        それが何かを測っていなかった (Spec 34 起票時に発見)。実測で 200 を確認済み。
+        **2 つの Responses ワイヤで揃える** — 片方だけ寄せると、保持の扱いが
+        非対称になり、その差がどの画面にもログにも出ない
       - encode は include: ["no_inline_citations"] を**常に送る** (Spec 31 D1/D5)。
         省くと本文へ [[N]](url) の markdown が混入し、annotations は
         「本文で参照した分」に痩せる。無効時は「調べて触れた全 URL」が届く
@@ -4199,3 +4245,121 @@ llm_wire:
       将来足すときの名前だけ残す: web_search.allowed_domains /
       x_search.allowed_x_handles (上限 20) / from_date / to_date。
       いずれも tools 配列の要素への加算で、ワイヤの破壊的変更にはならない。
+
+  openai_responses:
+    why: |
+      OpenAI の /v1/chat/completions では原理的に取れないものが 3 つある (Spec 34)。
+      (1) 思考の要約本文 — 数は取れるが本文が来ない (Spec 33 が引き渡した)
+      (2) web 検索 — 一般の gpt-5 系の web_search は Responses 専用で、
+          chat/completions で検索するには専用モデル gpt-5-search-api が要り、
+          旧 gpt-4o-search-preview 系は 2026-07-23 に停止済み
+      (3) failures.md #77 の代償 — gpt-5 系は chat/completions で
+          「function tools と思考の併用」を拒むため、ツールを持つ限り
+          reasoning_effort: "none" を強制していた。**推論モデルの推論を
+          殺したまま使っていた**。400 の本文自身が /v1/responses を逃げ道に挙げる
+      xai_responses / gemini_native と同じ構図の 3 例目 — 関数呼び出しだけなら
+      互換層で足りるので、既存の gpt-* 個体は明示選択するまで動かない。
+    measured: |
+      P0a probe 11 発 (2026-08-11・実鍵・gpt-5.6-terra + xAI へ 1 発)。
+      予測を撃つ前に書いた (当たり 6 / 外れ 2 / 不完全 1)。
+      - 素の発 (reasoning も tools も送らない) は input_tokens=20 / 思考なし
+      - 関数ツールと思考は**同居できる** (#77 の 400 が出ない)。
+        reasoning item が **要求せずに encrypted_content つきで来る** (972 字)
+      - **関数往復で reasoning item の再送は要求されない** —
+        function_call_output だけ返して 200 で完走 (予測は 400 側だった)
+      - **web_search と web_search_preview は別名。** 1 本でも 2 本同時でも
+        input_tokens=4,454 で完全に一致する
+      - **検索ツールは提示するだけで input が 4,434 増える**
+        (素の 20 に対し 4,454。検索させない問いで実測)。
+        **2 回目以降は cached_tokens=4,411 に乗る**ので、実効トークン
+        (token_budget の重み: キャッシュ済み ×0.1) では初回 4,454 / 以降 約 484
+      - **temperature は 400** — Unsupported parameter: 'temperature' is not
+        supported with this model.
+      - reasoning の 4 欄はすべて 200 (effort:low / mode:standard / mode:pro /
+        context:current_turn)。**mode:pro は input が 20 → 1,558** (+1,538)
+      - **summary は auto が 0 字・detailed が 522 字。**
+        組織検証の 400 は出なかった
+      - **11/11 発が wire::XaiResponse に serde で通る** (D2 の判定)
+    invariants: |
+      - encode は store: false を**常に送る** (xai_responses と同じ。Spec 34 D3)。
+        **2 つの Responses ワイヤで揃える** — 片方だけ寄せると保持の扱いが
+        非対称になり、その差がどの画面にもログにも出ない
+      - **previous_response_id は使わない。** サーバー側に会話状態が生まれると
+        真実が 2 つになる (session_store が redb 1 ファイルへ寄せたのと同型)。
+        この村の履歴の正は sessions.redb で、滑る窓も可変文脈の畳みも送信側で組む
+      - reasoning は 4 欄。**summary は "detailed" を常送する** —
+        "auto" は要約を 1 字も返さない (実測 0 字 / 522 字)。auto を選ぶと
+        「送っているのに何も出ない」という最も診断しにくい形になる
+        (reasoning_tokens は出ているので払ってはいる)。
+        **context は "current_turn" を明示して送る** — gpt-5.6 系の既定は
+        all_turns だが、この村は previous_response_id を持たず思考を履歴へも
+        積まない (reasoning_summary 凍結 1) ので、**参照する先が存在しない**。
+        省略は「無効」ではなく「サーバ既定を採る」(#77 の教訓の 2 例目)
+      - **mode は openaiReasoningPro のトグル。ON で "pro"、OFF で欄ごと省く。**
+        送らないのと "standard" は input_tokens が 20 で完全一致する (省略 ≡ standard)
+      - **openai_compat::reasoning_effort をこのワイヤから呼ばない** (Spec 34 D4)。
+        あの関数の先頭にある gpt-5 → "none" は **chat/completions 固有の制約**への
+        対処で、**このワイヤはその制約が無いことが移る理由そのもの**。
+        写すと Goal の 3 本目を自分で潰す。共有するのは丸めだけ。
+        **負の対照をテストで留める** — gpt-5 + tools ありの encode で
+        "none" が出ないこと
+      - **temperature を送らない** (400 実測。Spec 34 D11)。canonical の
+        「明示時のみ送る」だけでは守れない — 利用者が画面で温度を入れた瞬間に
+        毎ターン 400 になる。**モデル名の送り分けを openai_responses.rs に持つ**
+        (uses_max_completion_tokens と同型)。#76 / #77 と同じ家族の 3 件目
+      - 上限欄は **max_output_tokens の 1 名だけ**。max_completion_tokens を
+        送らない負の対照をテストへ (#76 の逆向き)
+      - 検索ツールの type は **"web_search"** を送る。web_search_preview は別名で、
+        input_tokens が 1 バイトも違わない (どちらを送っても同じものが届く)。
+        旧名を選ぶ理由が 1 つも無い
+      - openai_web_search_active(tool) = トグル AND
+        effective_provider() == OpenAiResponses。
+        openai_reasoning_pro_active も同型。**フラグ単独を判定に使わない**
+        (grounding_active / live_search_active と同じ規律)
+      - decode の output 種別は message / reasoning / function_call /
+        web_search_call。**未知種別は数えてから捨てる** (#72 の処方)
+      - **web_search_call.action は search / open_page / find_in_page の 3 種**で、
+        後 2 者は検索語を持たない。**queries < calls は正常。**
+        Spec 31 P5 は queries == calls == 15 を合格条件にしたが、
+        **その等式をこのワイヤへ写すと、ページを開いただけの周がある OpenAI は
+        常に不合格に見える。** 計器は actions= の内訳で読む
+      - 出典は annotations (url_citation) を Grounding.sources へ。
+        engine は GroundingEngine::OpenAi (3 値目)
+      - 計器は **openai search: calls=N actions=search:N,open_page:N,find_in_page:N
+        sources=N queries=N** を検索を使った呼び出しのときだけ 1 行。
+        **ticks は書かない** — cost_in_usd_ticks は xAI の欄で、OpenAI にあるかを
+        測っていない。**無い欄を "-" で埋める計器は「測ったが無かった」と
+        「見ていない」を畳む**
+      - **xai search: の行名は動かさない** — Spec 31 P5 の観測記録がその文字列を
+        指しており、統一すると過去の観測が引けなくなる (改名で concordia.log の
+        行を書き換えなかったのと同じ判断)
+      - 添付画像は**このワイヤでも送らない** (attachment_contract 凍結 7 の据え置き)。
+        **ただし note_dropped_attachment はワイヤの能力を見ていない** —
+        引数は「受信に添付があったか」だけで、「このワイヤは画像を送れない」で
+        断る経路は 1 本も無い。**ネイティブを選ぶと画像が黙って落ちる**のは
+        gemini / xai_responses に既にある穴で、これが 3 例目。
+        **述語は多モーダルの Spec で作る** (そこが「どのワイヤが画像を運ぶか」の
+        集合を書き換える側なので、先に作ると最初の作業がその作り直しになる)
+    intentionally_unread: |
+      **応答に在るのに canonical へ読まない欄 (Spec 34 P0a)。**
+      「serde で通る」は「全部読める」を意味しない — 通ることと読むことは別。
+      **書いておかないと、次に読む人が「対応漏れ」と読んで足しに来る。**
+      - reasoning[].encrypted_content (実測 972〜1,956 字) —
+        思考の往復に使う値。**この村は往復しない**ことを実測で確かめた
+        (function_call_output だけ返して 200)。読む必要が無い
+      - usage.input_tokens_details.cache_write_tokens (実測 4,411) —
+        xAI に無い欄。この村は cache write を数えていない (Usage.cache_read のみ)。
+        **量として存在するのに計器に無い**ので、足すなら Usage の欄を増やす判断が要る
+    variant_addition_sites: |
+      **Provider に 5 値目を足したときに触る場所 (Spec 25 rev3 と同じ棚卸し)。**
+      コンパイラが指す (網羅 match) — 4 箇所。すべて llm/client.rs:
+        Provider::path() / attempt() の encode+認証 / decode の分岐 / name()
+      コンパイラが指さない — 2 系統。**ここが本体**:
+        (a) model.rs の AND 述語 3 本 (grounding_active / xai_*_search_active) は
+            == 比較なので新 variant で false を返す。**それが正しい**
+            (新しい provider が Gemini の検索を有効にしてはいけない)
+        (b) **フロントの lib/providerSkills.ts** — TS の string union は
+            網羅検査を持たないので**黙って吸う**。DEFAULT_BASE_URL /
+            passiveSkills / providerSkills の 3 つすべてに手が要る
+      **非単射になる既定 URL の 7 通りは providerSkills.test.ts で先に書く**
+      (Provider.non_injective_defaults を参照)。#91 は机上で追って外した事故。
