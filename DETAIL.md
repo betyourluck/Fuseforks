@@ -30,7 +30,17 @@ Fuseforks/
 │       │   ├── event.rs             CoreEvent（broadcast で押し出す状態変化）
 │       │   ├── world.rs             登録簿。同期的な純データ構造（ロックを持たない）
 │       │   ├── config_store.rs      SKILL.md / Memory.md / Construct.md / icon.webp / Ordinance.md と world.json の入出力
-│       │   ├── orchestrator.rs      ★ ライフサイクルとメッセージ配送（Tokio）
+│       │   ├── orchestrator/        ★ ライフサイクルとメッセージ配送（Tokio）
+│       │   │   ├── mod.rs           型・Shared・配送の骨格（agent_loop / deliver）
+│       │   │   ├── bootstrap.rs     起動と復元（自動起動はしない）
+│       │   │   ├── lifecycle.rs     村の編成（サーヴァント・役職・テンプレート）
+│       │   │   ├── runtime.rs       稼働と入口（start / stop / 打ち切り / 発話）
+│       │   │   ├── settings.rs      設定と資源の入口（天井・言語・呼び名・MCP・条例）
+│       │   │   ├── sessions.rs      会話の持ち替え（新規 / 開き直し / 分岐 / 要約）
+│       │   │   ├── schedules.rs     予定の発火（ticker・前判定・配送）
+│       │   │   ├── turn.rs          ターンの実行（段 1-8。プロンプト → ツール → 配送）
+│       │   │   ├── delegation.rs    委譲と転送（ask / plan / transfer の提示と判定）
+│       │   │   └── context.rs       プロンプトに載る文脈（広場ログ・入退室）
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
 │       │   ├── schedule.rs          予定の型と発火規則（純関数。時刻もタイムゾーンも引数）
 │       │   ├── schedule_probe.rs    予定の前判定（純関数。判定・付記・承認鍵。Spec 28）

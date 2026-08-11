@@ -2657,7 +2657,7 @@ import するので、**そこに書いていない前提は存在しないの�
 
 ```text
 allow 空 → offers_anything() = false → spec_for が None → run は提示されない
-        → 提示集合が実行フィルタでもある（orchestrator.rs の executable）
+        → 提示集合が実行フィルタでもある（orchestrator の executable）
         → 呼び出しが弾かれ call() に届かない → note_pending に届かない
         → pending は空のまま → resolve が NotFound（D9「pending に無いものは
           許容へ入れない」）→ allow に 1 件も足せない
@@ -3535,7 +3535,7 @@ Anthropic だけ確かめなかった。
 指定しないと守ったつもりになれる。**
 
 **もう 1 段の一般化**: **ある値が「ログに出るか」は、出す側のコードを読んで
-確かめる。** 今回は `orchestrator.rs` のコメントが
+確かめる。** 今回は `orchestrator` のコメントが
 「転送用の名前はここには来ない」と**明示していた** — 読めば 1 行で分かった。
 **grep で数える前に、その値が計器を通る経路にあるかを数える。**
 

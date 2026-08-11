@@ -30,7 +30,17 @@ Fuseforks/
 │       │   ├── event.rs             CoreEvent (state changes pushed via broadcast)
 │       │   ├── world.rs             Registry. Synchronous pure data structure (no locks)
 │       │   ├── config_store.rs      I/O for SKILL.md / Memory.md / Construct.md / icon.webp / Ordinance.md and world.json
-│       │   ├── orchestrator.rs      ★ Lifecycle and message routing (Tokio)
+│       │   ├── orchestrator/        ★ Lifecycle and message routing (Tokio)
+│       │   │   ├── mod.rs           Types, Shared, and the routing skeleton (agent_loop / deliver)
+│       │   │   ├── bootstrap.rs     Startup and restore (nothing auto-starts)
+│       │   │   ├── lifecycle.rs     Village composition (servants, roles, templates)
+│       │   │   ├── runtime.rs       Running and entry points (start / stop / interrupt / send)
+│       │   │   ├── settings.rs      Settings and resource access (budget, language, names, MCP, ordinance)
+│       │   │   ├── sessions.rs      Switching conversations (new / resume / fork / summarize)
+│       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery)
+│       │   │   ├── turn.rs          Running a turn (phases 1-8: prompt -> tools -> dispatch)
+│       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
+│       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
 │       │   ├── schedule_probe.rs    Schedule pre-check (pure functions: judgement, appendix, approval key. Spec 28)

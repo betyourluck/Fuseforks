@@ -178,7 +178,7 @@ Spec 14 の「バッジは由来であって現在の中身を保証しない」
 **外部サーバーのスキーマにこちらの欄が生える**。
 
 **合成側（`ask` / `handoff` / `plan` / `room_log`）は `AgentTool` を実装していない**
-— `orchestrator.rs` の 5395 / 5918 / 5953 / 6058 で `ToolSpec` を直接組む。
+— `orchestrator` の 5395 / 5918 / 5953 / 6058 で `ToolSpec` を直接組む。
 **ゆえに合成側へ理由欄が生える経路は無い**（rev2 の査読 2 はここを
 「もし実装していたら」と仮定したが、実装していない）。
 
@@ -228,7 +228,7 @@ fn wants_reason(&self) -> bool { true }
 |---|---|---|
 | 他のサーヴァント（広場ログ） | **届かない** | `Shared.log` は `AgentMessage`＝発話だけ。ツール呼び出しは載らない |
 | 次のターンの自分（履歴） | **届かない** | `push_exchange(sent, replied)`（`world.rs:99`）は**送った文字列と返した本文の対だけ** |
-| 保存（`session_store`） | **届かない** | `SessionRecord::exchange(agent_id, sent, replied)`（`orchestrator.rs:426`）も同じ 2 つ |
+| 保存（`session_store`） | **届かない** | `SessionRecord::exchange(agent_id, sent, replied)`（`orchestrator:426`）も同じ 2 つ |
 | 同じターンの後続の周回 | **届く（意図的）** | ツールループの `messages` に積まれ round 2..N で再送。**そこに積まれないとツール呼び出しが成立しない**。同じ個体で、キャッシュ前置に載るので ×0.1 |
 
 **4 行目は漏れではなく設計。** 契約にもそう書く — **書かないと、次に読む人が
@@ -283,7 +283,7 @@ enum ReasonState {
 
 **`Excluded` は P1 の実装で足した。rev3 の凍結（3 値）では足りなかった。**
 合成側（`ask` / `plan` / `room_log`）も **`ToolInvoked` を発行する**
-（`orchestrator.rs` の emit は分岐の**後ろ**にある）。3 値だと合成側を
+（`orchestrator` の emit は分岐の**後ろ**にある）。3 値だと合成側を
 `Unsupported` に落とすしかなく、**`ask_agent_3` に「外部ツール」と出る** —
 **画面のラベルが嘘になる**。**契約を書いた時点で「発行するのは registry 経由の
 呼び出しだけ」と暗に仮定しており、そこを数えていなかった。**
@@ -292,7 +292,7 @@ enum ReasonState {
 
 **査読 7。rev2 の未決は「`ok=false` のとき」と書いていたが射程が狭かった** —
 同梱ツールは失敗を `Err` ではなく **`Ok(<エラー文>)` で返す**ので
-（`failures.md` #41、`orchestrator.rs:4329` の doc が明記）、
+（`failures.md` #41、`orchestrator:4329` の doc が明記）、
 **`ok=true` のまま失敗している行が常態**。
 
 契約へ D1 と対で書く:
@@ -390,7 +390,7 @@ enum ReasonState {
 
   新設は `crates/agent-core/src/tool_reason.rs`（純機構・単体 13 本）。
   触ったのは `tool.rs`（`wants_reason` + `specs_for` の注入 + 単体 4 本）/
-  `mcp.rs`（オプトアウト）/ `event.rs`（欄と doc）/ `orchestrator.rs`
+  `mcp.rs`（オプトアウト）/ `event.rs`（欄と doc）/ `orchestrator`
   （決定と計器）/ 結合 3 本。**次に触る人が要る判断が 4 点**:
 
   - **`ReasonState` は 4 値になった**（D10 参照）。**rev3 の凍結 3 値では

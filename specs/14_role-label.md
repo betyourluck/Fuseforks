@@ -419,14 +419,14 @@ P0 は「参照の欠落は種類で分けず 1 規則」と凍結したが、**
   **役職はここに 6 つ目として並ぶ**（`ModelTemplate` と同じ棚）
 - **安定素材の連結順**: 条例 → あなたについて → 作業フォルダ → 接地 →
   Construct → Skill。`config_store.rs:383` が**その末尾で `stable_len` を確定**
-- **顔ぶれ**（`orchestrator.rs:3023`）: `{id}（表示名）: 状態` を
+- **顔ぶれ**（`orchestrator:3023`）: `{id}（表示名）: 状態` を
   **`connected_agents` のぶんだけ**組み、`stable_len` の**後ろ**（可変部）へ置く。
   `config_store.rs:385` に「可変部分に置くので stable_len は据え置き」と明記
 - **セッションは system プロンプトを保存しない**。`session_store.rs` に
   `system_prompt` の語が無く、保存は `Message` / `Exchange` / `Summary` の 3 種。
-  `compose_system_prompt` の実行経路の呼び出しは `orchestrator.rs:3042` の 1 箇所で、
+  `compose_system_prompt` の実行経路の呼び出しは `orchestrator:3042` の 1 箇所で、
   **毎ターン現在の spec とファイルから組み直される**
-- **plan の発火条件**は `orchestrator.rs:5030` の `entries.len() >= 2`。
+- **plan の発火条件**は `orchestrator:5030` の `entries.len() >= 2`。
   5025 行の doc コメントが「『進行役フラグ』のような設定は足さない」と明記済み
 
 ## 機構の要点（Phase 0 で凍結する）
@@ -622,7 +622,7 @@ rev1 は直前に「例外はない」と書いており、例外の説明が続
 - **残るのは履歴の残り香だけ** — 復元された `ChatMessage` に、旧役職として
   振る舞った過去の発言が残る。**既知の残りとして受け入れる**
 - **その個体の役職表示が変わったら System 行を 1 本書く。**
-  `compose_presence_notices`（`orchestrator.rs:4498`）が広場ログの直近窓から
+  `compose_presence_notices`（`orchestrator:4498`）が広場ログの直近窓から
   System 発を拾って可変文脈へ注入するので、次のターンでモデルに届く。
   **新しい機構はゼロ**。**発火は次の 3 つ**（rev2 で削除を追加。指摘 8）:
   - **付与**（`role_id` が付いた）

@@ -55,14 +55,14 @@ Fuseforks 側が持つ（ポーリング）形は、外部に常駐プログラ�
 
 `Recurrence` と `ScheduledTask::decide`（純関数・Spec 07 で凍結）には 1 ミリも
 触れない。probe が挟まるのは `schedule_tick` の `Tick::Fire` 分岐
-（`orchestrator.rs:2722`）で、**「発火する」と決まった後・配送の直前**。
+（`orchestrator:2722`）で、**「発火する」と決まった後・配送の直前**。
 
 **発火 1 件の判定列（上から順に評価。rev2 で表に固定）**:
 
 | 段 | 条件 | 帰結 |
 |---|---|---|
 | 1 | 宛先が停止中 | **消化** + System 行（既存の挙動） |
-| 2 | 宛先が飛行中（`in_flight` は**宛先個体単位** — `orchestrator.rs:2754`） | **スキップ**（消化しない・次 tick 再判定。既存の挙動） |
+| 2 | 宛先が飛行中（`in_flight` は**宛先個体単位** — `orchestrator:2754`） | **スキップ**（消化しない・次 tick 再判定。既存の挙動） |
 | 3 | **同じ予定の probe が走行中**（rev2・査読 8） | **スキップ**（消化しない・次 tick 再判定。段 2 と同じ倒し方） |
 | 4 | probe があり**端末の承認が無い**（D10） | `outcome=unapproved`・**消化**（意図的 — S6）・ダイアログに承認導線 |
 | 5 | probe 実行 → error / timeout | **消化**・配送しない・reason 付きログ（D8） |
@@ -189,7 +189,7 @@ D1 の判定列・段 1〜2 の後ろに置くことの帰結（rev1 から維�
 ### D6 セッション選択は `sessionMode`: `continue`（既定）| `fresh`
 
 - `fresh` は配送前に `create_session`。**`create_session` は
-  `ensure_idle_for_switch` を通らない**（`orchestrator.rs:921` — 検査があるのは
+  `ensure_idle_for_switch` を通らない**（`orchestrator:921` — 検査があるのは
   既存会話を開く側 `:1245`）。Spec 12 P2 の裁定どおり、**他個体が飛行中でも**
   新規チャットは通る（着地先が新しい空の会話なので既存の記録を汚さない）。
   **宛先自身の飛行中は D1 の段 2 で既にスキップ済み** — rev1 はこの 2 つの
@@ -1000,7 +1000,7 @@ schedule probe: id=… outcome=match|no_match|error|timeout|unapproved
   `schedule probe:` 行へ（査読の「少なくともログファイルに残す」の側。
   `probe_last.json` は作らない — `concordia.log` の複製になる）。
   **前提を訂正して処方を採用**: 1 = 「両立しない」は誤読で、飛行中チェックは
-  **宛先個体単位**（`orchestrator.rs:2754`）、D6 の許容は**他個体**の飛行中の話
+  **宛先個体単位**（`orchestrator:2754`）、D6 の許容は**他個体**の飛行中の話
   （`create_session` は `ensure_idle_for_switch` を通らない — `:921` / `:1245`）。
   ただし 2 つの「飛行中」を書き分けていなかったのは事実で、D1 の判定列の表で
   固定した / 11 = handoff は**同一 Arc を継承する**（`tests/orchestrator.rs:6415`

@@ -34,7 +34,7 @@ Notes 3 は答えを得るためだけなら Phase 2 で足りたが、そこで
 
 `world.rs` に `USER_NAME_MAX_CHARS` / `normalize_user_name` / `PersistedWorld.user_name` /
 `World.user_name()` / `set_user_name()`、`error.rs` に `InvalidUserName { reason }`
-（code `INVALID_USER_NAME`）、`orchestrator.rs` に `DEFAULT_USER_LABEL` と
+（code `INVALID_USER_NAME`）、`orchestrator` に `DEFAULT_USER_LABEL` と
 `user_name()` / `set_user_name()`、`attribute_sender` の `Endpoint::User` 分岐。
 単体 5 本（world 366 本全緑）+ 結合 2 本（112 本全緑）。workspace 全緑・clippy 新規警告ゼロ。
 
@@ -71,7 +71,7 @@ Notes 3 は答えを得るためだけなら Phase 2 で足りたが、そこで
 
 `config_store.rs` に `USER_DIR` / `validate_icon` / `write_icon_at` / `read_icon_at` /
 `delete_icon_at` / `user_icon_path` / `read_user_icon` / `write_user_icon` /
-`delete_user_icon`、`orchestrator.rs` に `user_icon` / `set_user_icon` /
+`delete_user_icon`、`orchestrator` に `user_icon` / `set_user_icon` /
 `clear_user_icon`。単体 2 本（368 本全緑）。workspace 全緑・clippy 新規警告ゼロ。
 
 **実装で決めた 3 点**:
@@ -182,10 +182,10 @@ workspace 木の `user/icon.webp` / システム設定の節（ページ表 + �
 
 | 何 | 実装の場所 | 今の値 | 言語に追従するか |
 |---|---|---|---|
-| サーヴァントが読む封筒 | `orchestrator.rs:2628` `Endpoint::User => "ユーザー".to_owned()` | `【送り手: ユーザー】` | **しない**（日本語固定） |
+| サーヴァントが読む封筒 | `orchestrator:2628` `Endpoint::User => "ユーザー".to_owned()` | `【送り手: ユーザー】` | **しない**（日本語固定） |
 | 会話ペインの表示名 | `ChatPanel.vue:70` `case "user": return t("chat.you")` | ja「あなた」/ en「You」 | する |
 | 会話ペインのアバター | `ChatPanel.vue:91` `iconFor` は `endpoint.kind === "agent"` のときだけ引く | 頭文字の円（`avatarHue(label)`） | — |
-| 顔ぶれ | `orchestrator.rs:3167` `spec.connected_agents` から組む | **利用者は元から載っていない** | — |
+| 顔ぶれ | `orchestrator:3167` `spec.connected_agents` から組む | **利用者は元から載っていない** | — |
 
 **利用者の呼び名は 1 つではなく 2 つあり、片方は言語に追従してもう片方はしない。**
 利用者の要望「"あなた" や "You" ではなく」は表示名を、「サーヴァントから
@@ -326,7 +326,7 @@ Spec 14 が `work_dir` を役職の雛形から外した理由は「**端末ご�
 
 - `world.rs`: `PersistedWorld.user_name` / `World.user_name()` / `set_user_name()`
 - `world.rs`: `is_valid_user_name` の純関数（4 条件）+ 単体テスト
-- `orchestrator.rs`: `user_name()` / `set_user_name()` の API、
+- `orchestrator`: `user_name()` / `set_user_name()` の API、
   `attribute_sender` の `Endpoint::User` 分岐を `world.user_name()` から引く形へ
 - `error.rs`: `InvalidUserName`（`#[error]` は利用者に見えるのでシステム用語で書く
   = Spec 13 の用語境界）
@@ -339,7 +339,7 @@ Spec 14 が `work_dir` を役職の雛形から外した理由は「**端末ご�
   既存の `write_icon` は 1 行も意味が変わらない）
 - `config_store.rs`: `read_user_icon` / `write_user_icon` / `delete_user_icon`
   （`ICON_FILE` を共有、親は `{workspace}/user/`、検証は切り出した述語を通す）
-- `orchestrator.rs`: `user_icon` / `set_user_icon` / `clear_user_icon`
+- `orchestrator`: `user_icon` / `set_user_icon` / `clear_user_icon`
 - 単体: 書いて読める / 消したら `None` / フォルダが無くても書ける /
   **WebP でないバイト列と 512 KB 超が利用者側でも拒否される**（検証の共有を
   テストで留める。切り出しを戻されたら落ちる）

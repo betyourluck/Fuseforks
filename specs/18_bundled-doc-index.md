@@ -559,10 +559,10 @@ MIT の表示義務は発火しない**が、**表示は入れる** — 3 行で
 
 | 箇所 | 用途 |
 |---|---|
-| `orchestrator.rs:3436`（`presentation_ctx`） | **提示**。`spec_for` が空判定に使う（2 段ゲート） |
-| `orchestrator.rs:4262`（`execute_tool` の `ctx`） | **実行**。`work_dir` と同じく**呼び出しの瞬間に解決する** |
+| `orchestrator:3436`（`presentation_ctx`） | **提示**。`spec_for` が空判定に使う（2 段ゲート） |
+| `orchestrator:4262`（`execute_tool` の `ctx`） | **実行**。`work_dir` と同じく**呼び出しの瞬間に解決する** |
 
-**呼び出しの瞬間に解決するのは `work_dir` と同じ規律**（`orchestrator.rs:4251` の
+**呼び出しの瞬間に解決するのは `work_dir` と同じ規律**（`orchestrator:4251` の
 「ツール登録時に固定すると、設定変更が次の再登録まで効かない」）。
 
 **この指摘の一般化**: **契約に欄や規則を足したら、それを運ぶ経路が既にあるかを
@@ -600,7 +600,7 @@ Spec 15 P2（`description()` は個体を知らないので `spec_for` が要る
 ### Phase 4: 旧 RAG の撤去
 
 - `crates/agent-core/src/rag.rs` を削除（`HashEmbedder` / `RagIndex` / `RagChunk`）
-- `orchestrator.rs:3312` の**毎ターンの `## 参照資料` 注入を撤去**（D6）
+- `orchestrator:3312` の**毎ターンの `## 参照資料` 注入を撤去**（D6）
 - **`RagChunk` は `data_contract.yaml:1026` で凍結されたワイヤ型**（**rev2 で訂正** —
   rev1 は `ipc_contract.rs` と書いていたが、あのファイルに `RagChunk` は 0 件）。
   ワイヤであること自体は正しく、写しは `apps/gui-tauri/src/types.ts:396` /
@@ -610,7 +610,7 @@ Spec 15 P2（`description()` は個体を知らないので `spec_for` が要る
 #### D6: push 注入をやめて pull にする（**rev2 で効果の記述を訂正**）
 
 現状は `spec.rag_sources` が空でなければ**毎ターン検索して `## 参照資料` を差し込む**
-（`orchestrator.rs:3312`、コメントに「**毎ターン必ず変わる**」）。
+（`orchestrator:3312`、コメントに「**毎ターン必ず変わる**」）。
 
 **これは黒板で明示的に退けた形**（「push 注入はしない = pull = 読みたいときに
 `file read`」）。広場ログでも同じ疑い（毎ターンの可変注入が品質を落としていないか）が

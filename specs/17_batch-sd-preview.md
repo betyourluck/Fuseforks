@@ -323,7 +323,7 @@ rev1 は「**境界の外**は全体を拒否、**実在しない**はスキッ�
 `render_multi` と `FilePreview` / `PreviewStatus` を新設。
 **`tools::edit` の単体テストは 29 → 43 本（+14）、workspace 合計 469 → 483 本、
 すべて全緑。既存 29 本は 1 本も書き換えていない。clippy 新規警告ゼロ**
-（残る 3 件は `edit.rs` の yq / `file.rs` / `orchestrator.rs` にある既存分）。
+（残る 3 件は `edit.rs` の yq / `file.rs` / `orchestrator` にある既存分）。
 
 #### P1 の実装で決めた 3 点
 

@@ -361,7 +361,7 @@ enums:
         grep がヘッダに引っかからないようにするため)。
         エラーは SESSION_NOT_FOUND / SESSION_STORE_FAILED (operation に
         開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)
-      P2 で着地した配線 (orchestrator.rs・2026-08-03):
+      P2 で着地した配線 (orchestrator・2026-08-03):
         書き込み点は **2 つだけ** — Shared::record (message) と
         Shared::push_exchange (exchange)。後者は履歴へ積む処理と保存を
         **1 つの関数に閉じてある**: 4 箇所 (成功 / 失敗 / 割り込み / 予算切れ) の
@@ -665,7 +665,7 @@ enums:
       実装は P1〜P5)。入口はシステム設定「全般 > ユーザー」= **目録の先頭**。
 
       **呼び名は 1 つではなく 2 つあった。** 起票時の実測:
-        - サーヴァントが読む封筒 = orchestrator.rs の attribute_sender が組む
+        - サーヴァントが読む封筒 = orchestrator の attribute_sender が組む
           `【送り手: ユーザー】`。**日本語固定で language に追従しない**
         - 会話ペインの表示名 = ChatPanel.vue の label() が引く辞書キー chat.you
           (ja「あなた」/ en「You」)。**language に追従する**
@@ -1093,7 +1093,7 @@ enums:
       ## 凍結 7. 役職は実行時の分岐に入らない
 
       配送・権限・ツール提示のどの分岐にも role_id を読む箇所を作らない。
-      plan の発火条件は entries.len() >= 2 のまま (orchestrator.rs)。
+      plan の発火条件は entries.len() >= 2 のまま (orchestrator)。
       ここが混ざると「進行役 Role なら plan を出す」が自然に見え、**線は人が引く**
       (AdaptOrch を採らなかった根拠) ごと崩れる。
 
@@ -3247,7 +3247,7 @@ conversation_termination:
         (2026-08-06 利用者裁定)。
         **旧記述「allow が空なら提示されず実行もできない」は撤回した** —
         この節は同じ文の中で矛盾していた。提示しなければ呼び出しは
-        実行フィルタ (orchestrator.rs の executable) で弾かれ、
+        実行フィルタ (orchestrator の executable) で弾かれ、
         **note_pending に到達しないので「全部 pending」が成立しない**。
         実際に閉じた輪になっていた: allow 空 → 非提示 → 呼べない →
         pending 空 → 承認画面に何も出ない (resolve は pending に無いものを
@@ -3431,7 +3431,7 @@ conversation_termination:
         spec() の既定では **run にだけ乗らない**。
         **specs_for は全部が通る唯一の漏斗。説明文の定数もここ 1 箇所**
       - **合成側 (ask / handoff / plan / room_log) は AgentTool を実装していない** —
-        orchestrator.rs で ToolSpec を直接組む。**理由欄が生える経路は無い**。
+        orchestrator で ToolSpec を直接組む。**理由欄が生える経路は無い**。
         **編集ゼロだがテストで留める** (次に読む人が親切心で足す)
       - **空欄は 3 種類ある。ReasonState の 4 値で運ぶ**
         (**P1 の実装で 3 値では足りないと分かり、rev3 の凍結を訂正した**):
@@ -3892,7 +3892,7 @@ llm_wire:
     保証ではなく傾向だった**ことが実機で出たので、前提を作り直した節。
 
     実測 (2026-08-07。Spec 25 P5 の検証中に出た):
-      - `orchestrator.rs` の `attribute_sender` は
+      - `orchestrator` の `attribute_sender` は
         `format!("【送り手: {sender_label}】\n{}", incoming.content)` で、
         **封筒は本文の先頭に連結されているだけ**。canonical にもワイヤにも
         発話ごとの送り手名を運ぶ欄は無い (`OaiMessage` = role / content /
@@ -4055,7 +4055,7 @@ llm_wire:
 
       **率だけでは 0% の理由が三つ巴になる** — (a) プロバイダの最小長を下回った
       (b) 前方一致が壊れた (c) プロバイダが値を返していない。3 つとも処方が違うのに
-      画面では同じ 0% に見える。判別のため `orchestrator.rs` の note_cache_diag が
+      画面では同じ 0% に見える。判別のため `orchestrator` の note_cache_diag が
       **周ごとの生の数字**を fuseforks.log へ出す:
       `cache: agent=… model=… round=N prompt=… cached=… system_chars=…
       stable_chars=… system_digest=…`

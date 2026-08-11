@@ -115,7 +115,7 @@ pub reasoning: u64,
 ### D3: `turn:` 行へ `reasoning=` を**常に**出す（0 も出す）
 
 現行は `turn: agent={} hop={} rounds={}/{} waves={} stop={} prompt={} cached={} total={}`
-（`orchestrator.rs`）。**`output` という欄はそもそも無い**ので、そこへ足す形ではなく
+（`orchestrator`）。**`output` という欄はそもそも無い**ので、そこへ足す形ではなく
 `total=` の隣へ 1 語を加える。
 
 **条件付きで出さない**理由は検収 2 にある — 思考を使わないモデルで **0 が出る**ことが

@@ -82,7 +82,7 @@ agent-based models that simulate interactions among entities"）。**マルチ
 | **A** | `apps/gui-tauri/src-tauri/tauri.conf.json:5` `"identifier": "jp.outcasts.concordia"` | `{app_data_dir}` が変わる。**workspace は `{app_data_dir}/workspace` 固定**（`state.rs:63`）なので、**既存の村がアプリから見えなくなる** — `world.json` / `sessions.redb` / `Ordinance.md` / `village_id` / `blackboard/` が旧フォルダに取り残される。同じ棚の `mcp_server.json`（`state.rs:130`）と `probe_approvals.json`（`state.rs:138`）も同時に取り残される |
 | **B** | `crates/agent-core/src/secret.rs:24` `SERVICE_NAME = "jp.outcasts.concordia"` | **OS の資格情報ストアのサービス名。登録済みの API キーが見えなくなる** — 消えるのではなく旧サービス名の下に残り、画面には「未登録」とだけ出る |
 | **C** | `apps/gui-tauri/src-tauri/src/mcp_server.rs:236` `name = "ask_concordia"` | 外部クライアントへ宣言するツール名（Spec 25 P0 凍結） |
-| **D** | `crates/agent-core/src/orchestrator.rs:3562` / `:5987` `Endpoint::System => "Concordia"` | 封筒 `【送り手: Concordia】` に入る = **モデルが読むプロンプトの一部**。かつ **System 行は会話ログへ焼き付いて `session_store` に保存される**ので、既存の村のログには旧名が残る |
+| **D** | `crates/agent-core/src/orchestrator:3562` / `:5987` `Endpoint::System => "Concordia"` | 封筒 `【送り手: Concordia】` に入る = **モデルが読むプロンプトの一部**。かつ **System 行は会話ログへ焼き付いて `session_store` に保存される**ので、既存の村のログには旧名が残る |
 
 **A と B は同じ文字列だが別の機構で、独立に決められる。** 一方は
 `{app_data_dir}` を決め、他方は OS の資格情報ストアを束ねる。
@@ -220,7 +220,7 @@ probe 承認（`probe_approvals.json`）は移行後もそのまま効く** — 
 | `apps/gui-tauri/index.html:8` | `<title>` |
 | **`tauri.conf.json:15`** | `app.windows[0].title`（**実際の窓の題**。`index.html` は WebView 側で、こちらが窓枠側） |
 | **`TitleBar.vue:73`** | `<span>Concordia</span>`（画面に出るワードマーク） |
-| **`ChatPanel.vue:89`** | `return "Concordia"` — **`Endpoint::System` の UI 側の対**。`orchestrator.rs:3560` のコメントが「表示は UI と同じ」と書いており、**片方だけ変えるとその根拠が壊れる** |
+| **`ChatPanel.vue:89`** | `return "Concordia"` — **`Endpoint::System` の UI 側の対**。`orchestrator:3560` のコメントが「表示は UI と同じ」と書いており、**片方だけ変えるとその根拠が壊れる** |
 | 辞書 ja/en `822` | `Concordia を終了しますか？` / `Quit Concordia?` |
 
 CLAUDE.md 冒頭の「アプリ内表示・System の送り手名は『Concordia』のまま」は
@@ -477,7 +477,7 @@ identifier と同じ理由でここにも掛かる。
 **rev1 の読み口「会話ペイン」は構造的に成立しなかった**（2026-08-09 に実装を数えて
 差し替えた）。**送り手の表示名はどこにも保存されていない** — `ChatPanel.vue` の
 `label()` が `Endpoint` から毎回導出し、`case "system"` は定数 `"Fuseforks"` を返す。
-コア側も同じで `orchestrator.rs` の `attribute_sender` と `endpoint_label` が
+コア側も同じで `orchestrator` の `attribute_sender` と `endpoint_label` が
 同じ定数を返す。**よって改名前の System 行も画面では「Fuseforks」と表示され、
 会話ペインに `Concordia` は 1 行も出ない。**
 

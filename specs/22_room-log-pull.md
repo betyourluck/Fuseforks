@@ -54,14 +54,14 @@ Notes 1）。
 
 ## 現況（実測 2026-08-06）
 
-- 抜粋の合成は `orchestrator.rs` の `compose_room_log`。**この関数は今
+- 抜粋の合成は `orchestrator` の `compose_room_log`。**この関数は今
   3 つの責務を持つ** — 可視述語（`from_agent && !is_mine`）+ 窓切り
   （`room_log_window` = 12 件）+ 切り詰め（`room_log_excerpt_chars` = 200 字）。
   本 Spec が共有するのは**述語だけ**（rev2: 査読 C3）
 - 切った行には `（全 N 字）`、切った行が 1 件でもあれば notice に
   「**全文が要るなら、その発言をした相手へ `ask`**」— **この文と、契約
   `room_log` の「広場ログは読み直す経路を持たない」が、本 Spec で嘘になる**
-  （P4 で回収。data_contract:1970 とコード内コメント orchestrator.rs:4970 の 2 箇所）
+  （P4 で回収。data_contract:1970 とコード内コメント orchestrator:4970 の 2 箇所）
 - 原本は `Shared.log`（in-memory リング 5,000）。`session_store` にも永続化
   されるが、**そちらは可視述語を通す前の生ログ**で、本 Spec の読み口ではない
   （D7）。**新しい器は要らない**
@@ -74,7 +74,7 @@ Notes 1）。
   （三例目）を、今回は起票時に数えた
 - `hears_room_log`（Spec 03 の opt-out）は `AgentSpec` の欄。false の個体は
   `compose_room_log` がスキップされ、抜粋自体が届かない
-- **`RepeatGuard` はターン内でだけ数える**（orchestrator.rs:3583 のコメント
+- **`RepeatGuard` はターン内でだけ数える**（orchestrator:3583 のコメント
   「ターンを跨ぐ繰り返しは別の問題」+ guard はターン関数のローカル変数）。
   ターンを跨いだ同一 ID の再読は最初から止まらない（Notes 6）
 
@@ -204,7 +204,7 @@ Notes 1）。
 - **P3 文面**: `compose_room_log` の抜粋行へ ID 前置（切れた行のみ・
   衝突時は伸長）+ notice の差し替え（`ask` → `room_log` ツール。D3 の
   打ち切り文では `ask` がフォールバックとして復活する）。
-  orchestrator.rs:4970 のコメントも同時に回収
+  orchestrator:4970 のコメントも同時に回収
 - **P4 台帳**: README 日英（広場ログの節）+ CLAUDE.md。grep 語彙:
   「読み直す経路」「全文が要るなら」「ask で尋ね」「pull 化」
 - **P5 実機確認**（検収は画面・ログで観測できる項目だけ — #68）:
@@ -252,7 +252,7 @@ Notes 1）。
    訂正して採用した**（Spec 21 rev2 Notes 6 と同じ形）。査読は「ターンを
    跨いだ正当な再読が 3 回目で止まる」ことを懸念したが、`RepeatGuard` は
    **ターン関数のローカル変数**で、コメントに「ターン内でだけ数える —
-   ターンを跨ぐ繰り返しは別の問題」と明記されている（orchestrator.rs:3583-3586）。
+   ターンを跨ぐ繰り返しは別の問題」と明記されている（orchestrator:3583-3586）。
    ターン跨ぎの再読は最初から数えに入らない。ターン内の 3 回目が止まるのは
    正しい歯止め（同じ本文の 2 回目の取得が既に無駄で、それを履歴に積むと
    以後の全周回で再送される）。**除外や限定の機構は足さない** — 既存の挙動が

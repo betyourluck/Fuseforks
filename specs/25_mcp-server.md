@@ -61,7 +61,7 @@ async fn deliver_and_wait(shared, from, to, question, next_hop, parent, budget)
 
 **ただし「そのまま再利用」は 1 行割れる**（rev3 査読 7）— 現行の
 `deliver_and_wait` は `from: &AgentId` を受けて `Endpoint::Agent` を
-焼き込んでいる（`orchestrator.rs:4761`）。S2（会話ペインに External として残る）を
+焼き込んでいる（`orchestrator:4761`）。S2（会話ペインに External として残る）を
 満たすには **`from` を `Endpoint` で受ける形へ広げる**必要があり、呼び出し元は
 `ask` / `plan` の 2 系。待ち方・失敗の分類・予算の検査は 1 字も変えない。
 
@@ -178,7 +178,7 @@ Claude Code ──HTTP(MCP)──▶ 動いている Fuseforks
   **射程（rev3 で数え直し — rev2 の「コンパイラが全部指す・取りこぼし無い」は
   実測と食い違っていた。査読 5）**:
 
-  **コンパイラが指す網羅 match は 4 箇所**（すべて `orchestrator.rs`:
+  **コンパイラが指す網羅 match は 4 箇所**（すべて `orchestrator`:
   2772 / 2901 `attribute_sender` / 3473 / 5181）。
   **指さない箇所が 6 箇所あり、そちらが真の盲点** — ワイルドカード・`matches!`・
   `==` は新 variant を黙って吸う。各サイトの挙動をここで決めて P1 で凍結する:
@@ -189,7 +189,7 @@ Claude Code ──HTTP(MCP)──▶ 動いている Fuseforks
   | `compute.rs:90` `count_by_sender` | `_ => None` | **辺の集計外**（利用者ノードを地図に出さない裁定と同じ側 — External も全結線相当で無情報） |
   | `room_log.rs:31,34` 可視述語 | `matches!` | **依頼（from=External）は編集ゼロで不可視**（`from` が `Agent` でない発話は既に落ちる。**手を入れずテストで凍結** — 不要な編集はそれ自体が退行の入口） |
   | `session_store.rs:593,792` fork 候補 | `matches!(from, User)` | **External の依頼は分岐点に出ない**（分岐候補はユーザー発話だけ、の既存規則の帰結。凍結） |
-  | `orchestrator.rs:5134` System 行の抽出 | `== System` | 対象外のまま（正） |
+  | `orchestrator:5134` System 行の抽出 | `== System` | 対象外のまま（正） |
   | フロント `chatRows.ts` ほか | 型を返さない switch | 手で数える（下記） |
 
   **広場ログは依頼と返答を分けて書く**（rev3 査読 6 — rev2 の「窓口以外の

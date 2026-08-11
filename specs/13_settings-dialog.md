@@ -242,7 +242,7 @@ ConfirmHost / ToastHost / TopologyMap（確認文言含む）+ useOrchestrator �
 **`world.json` は所有者ではなく投影である。** 所有者はメモリ上の `World` で、
 天井は**依頼のたびに**そこから読まれる:
 
-- `new_root_budget`（[orchestrator.rs:2230](../crates/agent-core/src/orchestrator.rs)）が
+- `new_root_budget`（[orchestrator:2230](../crates/agent-core/src/orchestrator)）が
   `shared.world.read().await.token_budget()` を読む
 - 呼ばれるのは**ユーザー発話の宛先ごと**（同 1896）と**予定の発火ごと**（同 2180）
 

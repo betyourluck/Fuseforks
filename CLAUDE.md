@@ -397,7 +397,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
 **[Spec 19](specs/19_user-identity.md) 起票・rev1 承認 → P0 完了**（2026-08-05）—
 利用者の**呼び名とアイコン**をシステム設定「全般 > ユーザー」から設定できるようにする。
 **起票時の実測で「呼び名は 1 つではなく 2 つあった」** — サーヴァントが読む封筒
-`【送り手: ユーザー】`（`orchestrator.rs` の `attribute_sender`。**日本語固定で
+`【送り手: ユーザー】`（`orchestrator` の `attribute_sender`。**日本語固定で
 言語に追従しない**）と、会話ペインの表示名 `chat.you`（ja「あなた」/ en「You」。
 **言語に追従する**）。本 Spec は 2 つを 1 つの設定へ畳む。
 **封筒は毎ターンの user ロール本文なので `stable_len` は動かない**（呼び名を
@@ -521,7 +521,7 @@ vitest 127 → 132）。**P4 完了**（README 日英 4 箇所 + `settings_contr
 
 ```text
 allow 空 → offers_anything() = false → spec_for が None → run は提示されない
-        → 提示集合が実行フィルタでもある（orchestrator.rs の executable）
+        → 提示集合が実行フィルタでもある（orchestrator の executable）
         → 呼び出しが弾かれ call() に届かない → note_pending に届かない
         → pending は空 → resolve が NotFound（D9）→ allow に 1 件も足せない
 ```
@@ -1199,6 +1199,89 @@ Spec 05 と同じ縮小を食らう。** 測り方は Spec 05 が `sources` の�
 **同じ節に混ぜない**。**ただし「何を取ってくるか」は品質の側**で、
 反応数がデータとして入ることと、反応数を自分の成績にすることは別。
 
+## orchestrator の分割（2026-08-11 着地。Spec 不要と判断）
+
+起点は利用者 —「`orchestrator.rs` が大きすぎて大変だろうと思ったから分けたい」。
+**目的は読みやすさではなく、私（作業する側）の作業のしやすさ。** そこで
+「どう分けるか」を推測ではなく **git の変更履歴から数えた**。
+
+### 実測（95 コミット）が境界を 1 つ動かした
+
+| | |
+|---|---|
+| **55 / 95** | `handle_message` に入っている |
+| 同時に変わるペア | `handle_message` + `HandoffTools` 9 / `run_plan` 9 / `ask_agent` 7 / `agent_loop` 6 / `deliver_and_wait` 5 |
+
+**利用者の当初案は `turn.rs` / `delivery.rs` / `prompt.rs` の 3 分割**だったが、
+実測ではその 3 つが**最も繋がっていた**（合計 27 回）。因果が輪になっている
+（`ask` が `deliver_and_wait` を呼び、それが新しいターンを起こす）ため。
+**裁定は `delegation.rs` へ 1 本化**（利用者採用）。今日の転送まわりの
+3 コミット（#95 / #96 とその計器）は、この 1 ファイルにほぼ収まる。
+
+### 関数分割を先にやった（順序を逆にした）
+
+利用者の当初案は「ディレクトリ化が最優先」だったが、**実測が指していたのは
+`handle_message` の 1,206 行**だった。ファイルを分けても関数は分かれない。
+
+**決め手は「diff が読めない」こと。** 1,206 行の関数は git から見ると 1 つの塊で、
+hunk context がほぼ全部 `@@ … @@ async fn handle_message` になる。
+今日の 4 コミットも全部そうだった。段ごとの関数に割るとそこが直る。
+
+```text
+handle_message 1,206 → 196 行（段の並びだけ）
+  build_prompt     223  段 4  モデルへ何を見せるか
+  present_tools     92  段 5  何を選べるか
+  run_turn         698  段 6-7 実行ループと統計
+  dispatch_outcome 182  段 8  どこへ返すか
+```
+
+**`run_turn` の戻り値を段 8 の入力（`TurnProduct`）に一致させた** —
+`Option` の `None` は「打ち切り・予算切れで後始末まで済んでいる」。
+
+**`HandoffGates` を作った時点で、骨格側の再束縛が unused になった**
+（コンパイラが教えた）。3 つのゲートは段 4・5・6 の**5 箇所**が読んでおり、
+ずれると「出していないのに効く」か「出したのに効かない」になる（#95 / #96）。
+**ゲートを渡すだけの関数になったことが、分割が効いた印。**
+
+### 可視性は 1 つも緩まなかった
+
+見積もりで「`Shared` の可視性が緩む」と書いたのは**誤り**。Rust では
+private アイテムは**宣言したモジュールとその子孫**から見えるので、
+`orchestrator::turn` からは親の private がそのまま見える。
+
+要ったのは**逆向きだけ** — 親と兄弟から使うものに `pub(super)`。
+`delegation.rs` の 16 個（`HandoffTools` のメソッド 11 + 型と関数 5）と
+`turn.rs` の 3 本がそれで、**何が外から使われるかが use の 1 行に集まる**。
+
+### 着地（10 ファイル・7,343 行）
+
+```text
+turn.rs 2,357 / mod.rs 1,340 / delegation.rs 883 / schedules.rs 638
+settings.rs 489 / runtime.rs 392 / context.rs 342 / bootstrap.rs 337
+lifecycle.rs 329 / sessions.rs 236
+```
+
+**`settings.rs` と `runtime.rs` は当初案に無い**（実物が連続していたので足した）。
+逆に `lifecycle.rs` は当初案の「create/start/stop/update」から
+**start/stop を外した** — 実物では create 系と start 系の間に設定が 480 行挟まる。
+
+**各コミットで中身を 1 行も変えていない**（`use` の追加と `pub(super)` のみ）。
+差分が「移動」だと読める形に保つため。**`tests/orchestrator.rs` は 8,026 行で
+src より大きいが、この分割では 1 行も動かない** — 統合テストは公開 API 経由で、
+src の内部構造から独立している（別の一手として残る）。
+
+### 踏んだ落とし穴 3 つ
+
+- **移動スクリプトが `impl Shared` の `persist` に当たり、範囲が逆転して
+  ファイルを壊した**（30 エラー）。`git checkout` で戻し、探索を
+  `impl Orchestrator` の範囲に限って再実行。**同じ名前のメソッドが 2 つの
+  impl にあることを機械の側で数えていなかった**
+- **`#[cfg(test)]` が `compose_room_log` と `truncate_chars` の間にあり**、
+  `context.rs` の範囲へ丸ごと入った。中身は leak detector / `merge_tool_specs` /
+  RepeatGuard で**全部 turn 系**だったので `mod.rs` へ戻し、`turn.rs` で回収した
+- **clippy が赤のままコミットした** — `&&` で繋いだので `grep` の成功が
+  そのまま `git commit` まで通した。**検査の結果を見てから繋ぐ**
+
 ## 転送を個体ごとに切る（2026-08-11 着地。Spec 不要と判断）
 
 起点は実機 —「**返答をユーザーに返してしまい、オーケストレーションにならない
@@ -1532,7 +1615,7 @@ failures.md #41 のトークン燃焼を **1 → 2 → 3 の順**で潰した。
 
 1. **同一失敗の検出** — **完了**（2026-07-31）。ツール名 + 引数 + **結果本文**の
    完全一致が 2 回返ったら 3 回目は実行せず短い通知だけ返し、`ToolRepeatBlocked`
-   を発行する（`orchestrator.rs` の `RepeatGuard`。単体 7 本 + 結合 2 本）。
+   を発行する（`orchestrator` の `RepeatGuard`。単体 7 本 + 結合 2 本）。
    判定材料が「エラー文言」でなく結果本文なのは、同梱ツールが失敗を `Err` では
    なく `Ok(<エラー文の本文>)` で返すため（failures.md #41 の一般化 3）。
    数えは **(ツール名 + 引数) ごとで隣接を要求しない** — 隣接判定にしていた
@@ -3050,7 +3133,7 @@ Goal を果たせない。機構で止めると*汎用インタプリタの一�
 
 **アンケートの読み方で 1 つ**: ザリは「上限 12 回では最初から足りない」を
 要望の構造的理由としたが、`max_tool_iterations` は **LLM の周回数**であって
-ツール呼び出しの本数ではない（`orchestrator.rs` の `executed_in_round`。
+ツール呼び出しの本数ではない（`orchestrator` の `executed_in_round`。
 1 周に 2〜3 本を並列で呼ぶ）。**結論（batch-sd は要る）は正しく、理由が誤っていた。**
 正しい理由はトークン — 周が増えるたびにプロンプト全体が再送され、diff が 1 本ずつ
 履歴に積まれる。**6 名全員が「回数」の枠で考えており、誰も読み取りのトークン効率を
@@ -3356,7 +3439,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   処方を注意から構造へ移した（**規則ごとのテストでは欄を選ぶ**。丸ごと固定して
   よいのは golden とワイヤ形の凍結だけ）。
   **查読の前提を実測で訂正した点が 3 つ** — 飛行中チェックは宛先個体単位
-  （`orchestrator.rs:2754`）/ handoff は予算の同一 Arc を継承
+  （`orchestrator:2754`）/ handoff は予算の同一 Arc を継承
   （`tests/orchestrator.rs:6415`）/ workspace はパス固定なのでパス salt は
   村を区別しない（`state.rs:56`）。3 つ目は査読側も「配置モデルの前提を
   取り違えていた」と追認し、`village_id` での束縛に置き換えて承認された

@@ -24,7 +24,7 @@ Spec 25 の D6 は `【送り手: Neo（外部クライアント）】` とい�
 
 ### 実測 1 — 封筒は本文の先頭に連結されているだけ
 
-`orchestrator.rs:3085`:
+`orchestrator:3085`:
 
 ```rust
 format!("【送り手: {sender_label}】\n{}", incoming.content)

@@ -114,7 +114,7 @@ CLAUDE.md「次の作業」の 2 番（2026-07-31 合意）。1（同一失敗�
 
 ## 現状の構造（接地・2026-08-01 起票時）
 
-- **ターンの実行単位は `handle_message`**（`orchestrator.rs`）。中のツールループは
+- **ターンの実行単位は `handle_message`**（`orchestrator`）。中のツールループは
   `for iteration in 0..max_tool_iterations` で、1 周 = LLM 呼び出し 1 回 +
   ツール実行 0〜N 本。周回の境界に介入点は無い
 - **進行役は `run_plan` の JoinSet を join で待つ間、ツールループの外に居る**

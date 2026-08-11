@@ -254,7 +254,7 @@ D1 の裏返し。まとめて承認は**粒度の決定を飛ばす**ので、�
   API にすると、`*` 1 文字のような任意のパターンを画面から `allow` へ入れられ、
   D1 の「粒度は機械が決めない」が**「粒度を GUI が何でも決められる」へ反転する**
 - `merge_pending_into` とそのテストを**撤去**（D5）
-- `orchestrator.rs`: `command_policies() -> Vec<(AgentId, CommandPolicy)>`（村全体）/
+- `orchestrator`: `command_policies() -> Vec<(AgentId, CommandPolicy)>`（村全体）/
   `approve_command(...)` / `reject_command(...)`。書き込みは
   **読み直し → 差分適用 → 3 回 retry**（`RunTool::note_pending` と同じ形。
   **同じ 8 行が 2 箇所に生えるなら先に切り出す** — Spec 19 P2 の `write_icon` と
@@ -334,7 +334,7 @@ D1 の裏返し。まとめて承認は**粒度の決定を飛ばす**ので、�
 
 ```text
 allow 空 → offers_anything() = false → spec_for が None → run は提示されない
-        → 提示集合が実行フィルタでもある（orchestrator.rs の executable）
+        → 提示集合が実行フィルタでもある（orchestrator の executable）
         → 呼び出しが弾かれ call() に届かない → note_pending に届かない
         → pending は空のまま → resolve が NotFound（D9「pending に無いものは
           許容へ入れない」）→ allow に 1 件も足せない
@@ -369,7 +369,7 @@ allow 空 → offers_anything() = false → spec_for が None → run は提示�
 `command.rs` に `PendingCommand::pattern` / `ApprovalOutcome` / `CommandPolicyView` /
 `CommandPolicy::approve` / `reject`（共通実装 `resolve`）、`merge_pending_into` を撤去。
 `config_store.rs` に `read_command_policy` / `update_command_policy`。
-`orchestrator.rs` に `command_policies` / `approve_command` / `reject_command`。
+`orchestrator` に `command_policies` / `approve_command` / `reject_command`。
 単体 8 本追加（370 → 378）。workspace 全緑・clippy 新規警告ゼロ。
 
 **着手前に、この Spec が共有しようとしていた機構がデータを壊していた**（PoC で確認）。
