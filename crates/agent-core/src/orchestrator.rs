@@ -3720,6 +3720,24 @@ struct TurnSpend {
     hop: u8,
 }
 
+/// ターンが生んだもの。実行ループの出口から [`dispatch_outcome`] へ渡す。
+///
+/// **4 つとも「1 ターンぶんの事実」**という一点で寿命が揃っている — 周ごとに
+/// 上書きせず溜め、配送では**先頭の 1 通にだけ**載せる（fan-out で複製すると
+/// 宛先数ぶん二重に数える）。引数で並べると 4 つが同じ寿命であることが
+/// 呼び出し側からしか読めないので、束ねて型で示す。
+struct TurnProduct {
+    /// ループの抜け方。`Finish` なら本文、`Handoff` なら宛先ごとの配送。
+    outcome: Outcome,
+    /// このターンが使ったトークン（統計と発話に載る）。
+    tokens: u64,
+    /// 接地の来歴（Spec 05 / 31）。表示層へ渡すだけでプロンプトへは戻らない。
+    grounding: crate::llm::Grounding,
+    /// 思考の要約（Spec 33）。**履歴へは載らない** — 積む先の
+    /// [`ChatMessage`] にこの欄が無く、型で閉じている。
+    reasoning_summary: Vec<String>,
+}
+
 /// 割り込みで打ち切られたターンの出口（Spec 10 — 契約の出口 2a）。
 ///
 /// 3 点セット: (a) 会話ログへ System の 1 行（要求から検知までの elapsed を
@@ -5192,6 +5210,44 @@ async fn handle_message(
     );
 
     // 8. 記録と転送。
+    dispatch_outcome(
+        shared,
+        agent_id,
+        &incoming,
+        reply_to,
+        TurnProduct {
+            outcome,
+            tokens,
+            grounding,
+            reasoning_summary,
+        },
+        budget,
+        participants,
+    )
+    .await
+}
+
+/// ターンの出口（段 8）。答えを記録し、宛先へ配送する。
+///
+/// **`handle_message` から切り出したのは、ここが「どこへ返すか」だけを決める
+/// 独立した段だから** — 入力は [`TurnProduct`] と受信の封筒だけで、プロンプトも
+/// ツールもモデルも見ない。今日の実機の事故（1 つの依頼が 2 本に分裂する）は
+/// この段の宛先の決まり方そのもので、**ここだけを読めば追える形**にしてある。
+async fn dispatch_outcome(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    incoming: &AgentMessage,
+    reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+    product: TurnProduct,
+    budget: Option<Arc<crate::budget::BudgetPool>>,
+    participants: Option<Participants>,
+) -> CoreResult<()> {
+    let TurnProduct {
+        outcome,
+        tokens,
+        mut grounding,
+        mut reasoning_summary,
+    } = product;
     let next_hop = incoming.hop.saturating_add(1);
     let from = Endpoint::Agent {
         id: agent_id.clone(),
