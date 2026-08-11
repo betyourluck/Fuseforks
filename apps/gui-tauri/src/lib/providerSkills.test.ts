@@ -6,6 +6,7 @@ import {
   passiveSkills,
   presetBaseUrlFor,
   providerSkills,
+  suggestsResponses,
 } from "./providerSkills";
 import type { ModelTemplate } from "../types";
 
@@ -284,5 +285,54 @@ describe("OpenAI Responses の固有スキル（Spec 34 D4 / D5）", () => {
     expect(providerSkills(draft({ provider: "open_ai_responses" })).anyOffered).toBe(
       true,
     );
+  });
+});
+
+/**
+ * Responses への切り替え案内（Spec 34・利用者裁定 2026-08-11）。
+ *
+ * **案内であって判定ではない。** モデル名を見てよいのはそのためで、
+ * ワイヤの選択は provider だけで決まる（D2 / D7）。
+ */
+describe("suggestsResponses", () => {
+  const openai = DEFAULT_BASE_URL.open_ai_compat;
+  const hint = (over: Partial<Parameters<typeof suggestsResponses>[0]> = {}) =>
+    suggestsResponses({
+      provider: null,
+      model: "gpt-5.6-terra",
+      baseUrl: openai,
+      ...over,
+    });
+
+  it("自動判定 + OpenAI の既定 URL + gpt-5 系なら出す", () => {
+    expect(hint()).toBe(true);
+    expect(hint({ provider: "open_ai_compat" })).toBe(true);
+  });
+
+  // 既に切り替えてある村へ「切り替えれば使える」と言わない。
+  it("既に Responses なら出さない", () => {
+    expect(hint({ provider: "open_ai_responses" })).toBe(false);
+  });
+
+  // 他社を明示している村には無関係。
+  it("他社を明示していれば出さない", () => {
+    for (const p of ["anthropic", "gemini", "xai_responses"] as const) {
+      expect(hint({ provider: p })).toBe(false);
+    }
+  });
+
+  // **偽陽性が高くつく。** ローカルの互換サーバに gpt-5 を名乗るモデルを
+  // 載せている村へ案内すると、切り替えた先に /responses が無く毎ターン失敗する。
+  it("自前プロキシ / ローカルには出さない", () => {
+    expect(hint({ baseUrl: "http://localhost:8080/v1" })).toBe(false);
+    expect(hint({ baseUrl: "https://proxy.example.test/v1" })).toBe(false);
+  });
+
+  // 範囲は #76 / #77 が対象にしている家族と同じ（Rust の
+  // uses_max_completion_tokens が見ているのも gpt-5 前置）。
+  it("gpt-5 系でなければ出さない", () => {
+    for (const model of ["gpt-4o", "o3-mini", "gpt-oss-120b"]) {
+      expect(hint({ model })).toBe(false);
+    }
   });
 });

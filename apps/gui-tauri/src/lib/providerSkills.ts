@@ -113,6 +113,37 @@ export function presetBaseUrlFor(
  * いない。それを固有スキルとして並べると、アプリの働きではないものを
  * 働きとして見せることになる。
  */
+/**
+ * このテンプレートは Responses ワイヤへ切り替えると能力が増えるか（Spec 34）。
+ *
+ * **これは「案内」であって「判定」ではない。** ワイヤの選択は provider だけで
+ * 決まり（D2 / D7）、この関数は 1 行の案内を出すかどうかしか決めない。
+ * **モデル名を見てよいのはそのため** — 判定に使うと `Provider::detect` と
+ * 2 系統になるが、案内は効き目に一切触れない。
+ *
+ * **要る理由は頻度が 1.0 だから。** 既存の gpt-* テンプレートは 100% が
+ * 互換（または自動判定）で、切り替えるまで新しい能力が在ることが画面の
+ * どこにも出ない。「頻度を見てから」は**頻度が未知の事象**の規律で、
+ * 構造で決まっている穴へ当てると先送りに規律の名前を借りることになる
+ * （Spec 34 D8 で自分が踏んだ形）。
+ *
+ * **base URL を条件に入れるのは偽陽性が高くつくから。** ローカルの互換サーバへ
+ * `gpt-5` を名乗るモデルを載せている村に「切り替えれば使える」と言うと、
+ * 切り替えた先に `/responses` が無く**毎ターン失敗する**。
+ * 取りこぼし（プロキシ経由で OpenAI を使う村に出ない）は手で切り替えれば済む。
+ */
+export function suggestsResponses(
+  draft: Pick<ModelTemplate, "provider" | "model" | "baseUrl">,
+): boolean {
+  // 既に Responses なら案内しない。他社を明示している村にも出さない。
+  if (draft.provider !== null && draft.provider !== "open_ai_compat") return false;
+  // 既定の OpenAI ホストのときだけ。自前プロキシ / ローカルには出さない。
+  if (draft.baseUrl !== DEFAULT_BASE_URL.open_ai_responses) return false;
+  // #76 / #77 が対象にしている家族と同じ範囲に揃える（Rust の
+  // `uses_max_completion_tokens` が見ているのも `gpt-5` 前置）。
+  return draft.model.startsWith("gpt-5");
+}
+
 export function passiveSkills(provider: ModelTemplate["provider"]): string[] {
   // Anthropic だけが cache_control を実際に組み立てている
   // （`anthropic::place_message_breakpoint` / `build_system_blocks`）。

@@ -14,6 +14,7 @@ import {
   baseUrlMismatch as checkBaseUrlMismatch,
   presetBaseUrlFor,
   providerSkills,
+  suggestsResponses,
 } from "../lib/providerSkills";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -176,6 +177,19 @@ const skills = computed(() =>
       openaiReasoningPro: false,
     },
   ),
+);
+
+/**
+ * Responses へ切り替えると能力が増えるテンプレートか（Spec 34・利用者裁定
+ * 2026-08-11）。**案内であって判定ではない** — ワイヤの選択は provider だけで
+ * 決まり、ここはモデル名も見るが効き目には一切触れない。
+ *
+ * 実機で「gpt-5.6 に固有スキルが出ない」が最初の確認で出た。原因は設計どおり
+ * （自動判定しない = D7）だが、**既存の gpt-* テンプレートは 100% が互換**なので、
+ * 切り替えるまで新しい能力が在ることが画面のどこにも出なかった。
+ */
+const responsesHint = computed(
+  () => draft.value !== null && suggestsResponses(draft.value),
 );
 
 const EFFORTS: { value: Effort | null; label: string }[] = [
@@ -440,6 +454,16 @@ function onTemperature(raw: string): void {
                 {{ $t(p.labelKey) }}
               </option>
             </select>
+
+            <!--
+              切り替えの案内。**プロトコルを選ぶその場所に出す** — 固有スキルの
+              節は切り替えるまで現れないので、そこに書いても届かない。
+              警告色にしないのは、いまの設定が壊れているわけではないため
+              （stranded は「効かない設定が残っている」で、こちらは「もっと使える」）。
+            -->
+            <div v-if="responsesHint" class="col-span-2 -mt-1 text-[11px] text-ink-dim">
+              {{ $t("modelTemplate.responsesHint") }}
+            </div>
 
             <label class="text-ink-dim">{{ $t("modelTemplate.apiKey") }}</label>
             <div>

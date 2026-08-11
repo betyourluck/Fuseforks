@@ -565,7 +565,8 @@
     "openaiSearchCost": "Turning on web search adds about 4,400 input tokens to every request, even ones that never search (the tool declaration is injected into the prompt). Later requests hit the cache, so the effective cost is roughly a tenth of that. Requests that actually search grow further, because the results are injected too.",
     "openaiResponsesCaveats": "This protocol does not accept temperature (the provider rejects it). Image attachments only travel over the compatible protocol, so after switching, images will not reach the model.",
     "strandedOpenAiStrong": "but it does nothing because the protocol is not OpenAI native (Responses)",
-    "strandedOpenAiAfter": ". This capability exists only on the Responses path. Set the protocol to \"OpenAI native (Responses)\" to use it."
+    "strandedOpenAiAfter": ". This capability exists only on the Responses path. Set the protocol to \"OpenAI native (Responses)\" to use it.",
+    "responsesHint": "Switching this model's protocol to \"OpenAI native (Responses)\" unlocks reasoning summaries and web search (on the compatible protocol, reasoning is disabled entirely whenever tools are offered). After switching, temperature stops working and images can no longer be sent."
   },
   "schedule": {
     "title": "Schedules (timed requests)",
