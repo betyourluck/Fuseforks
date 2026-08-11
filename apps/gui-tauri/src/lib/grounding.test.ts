@@ -74,9 +74,12 @@ describe("sourceLabel", () => {
     expect(sourceLabel({ uri: "https://example.test/a", title: "記事" })).toBe("記事");
   });
 
-  it("表題が空ならホスト名で代用する（押せる場所を消さない）", () => {
+  // **Spec 34 D12 で規則が変わった** — ホスト名だけでは、表題を持たない
+  // `action.sources` が同じホストから 10 件来たときに全部同じ文字列になる。
+  // **意図（押せる場所を消さない）は不変**で、代用の中身が変わった。
+  it("表題が空ならホスト名 + パス末尾で代用する（押せる場所を消さない）", () => {
     expect(sourceLabel({ uri: "https://news.example.test/a", title: "  " })).toBe(
-      "news.example.test",
+      "news.example.test/a",
     );
   });
 
@@ -94,9 +97,9 @@ describe("sourceLabel", () => {
     );
   });
 
-  it("表題が無ければホスト名で代用する", () => {
+  it("表題が無ければホスト名 + パス末尾で代用する", () => {
     expect(sourceLabel(src("https://techcrunch.com/2026/08/08/x"))).toBe(
-      "techcrunch.com",
+      "techcrunch.com/x",
     );
   });
 
@@ -123,14 +126,26 @@ describe("sourceLabel", () => {
     );
   });
 
+  // **意図は「投稿として扱わない」**（`@handle` にも `…id` にもしない）。
+  // ホスト名 + 末尾で出るのは一般の URL と同じ扱いに落ちたということ。
   it("status の後ろが数字でなければ投稿として扱わない", () => {
-    expect(sourceLabel(src("https://x.com/i/status/foo"))).toBe("x.com");
+    const label = sourceLabel(src("https://x.com/i/status/foo"));
+    expect(label).toBe("x.com/foo");
+    expect(label.startsWith("@")).toBe(false);
+    expect(label.startsWith("…")).toBe(false);
   });
 
   // プロフィールや検索結果を投稿として扱うと、押した先が想像と違うものになる。
-  it("投稿以外の x.com はホスト名のまま", () => {
-    expect(sourceLabel(src("https://x.com/hayakawagomi"))).toBe("x.com");
-    expect(sourceLabel(src("https://x.com/search?q=ai"))).toBe("x.com");
+  // プロフィールや検索結果を投稿として扱うと、押した先が想像と違うものになる。
+  // **ホストが読めることは保つ** — `sourceIcon` が X のマークを付けないのは
+  // 「ラベルにホストが出ているから 2 回言わない」が理由で、そこは変わらない。
+  it("投稿以外の x.com は投稿の見せ方に落ちない", () => {
+    for (const uri of ["https://x.com/hayakawagomi", "https://x.com/search?q=ai"]) {
+      const label = sourceLabel(src(uri));
+      expect(label.startsWith("x.com")).toBe(true);
+      expect(label.startsWith("@")).toBe(false);
+      expect(sourceIcon(src(uri))).toBeNull();
+    }
   });
 
   // 空文字を返すとリンクの押せる場所が消える。
@@ -152,7 +167,6 @@ describe("groundingView の engine", () => {
   // ホスト名がそのまま出るならアイコンは同じことを 2 回言う。
   it("open_ai の出典は X 専用の見せ方に落ちない", () => {
     const source = { uri: "https://example.test/article", title: "" };
-    expect(sourceLabel(source)).toBe("example.test");
     expect(sourceIcon(source)).toBeNull();
   });
 
@@ -190,5 +204,47 @@ describe("sourceIcon", () => {
   it("X 以外には付かない", () => {
     expect(sourceIcon(src("https://techcrunch.com/a"))).toBeNull();
     expect(sourceIcon(src("not a url"))).toBeNull();
+  });
+});
+
+/**
+ * 表題を持たない URL のラベル（Spec 34 D12 の副作用）。
+ *
+ * `action.sources` の項目は表題を持たないので、**同じホストから 10 件返ると
+ * 全部同じラベルになる**（実機で `releases.rs` × 10）。
+ * **X の 45 件と同じ病**で、処方も同じ — ラベルに区別を運ばせる。
+ */
+describe("sourceLabel（表題なし・X でもない URL）", () => {
+  const label = (uri: string) => sourceLabel({ uri, title: "" });
+
+  it("ホスト名にパスの末尾を足して区別する", () => {
+    expect(label("https://releases.rs/docs/1.90.0/")).toBe("releases.rs/1.90.0");
+    expect(label("https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/")).toBe(
+      "blog.rust-lang.org/Rust-1.90.0",
+    );
+    expect(label("https://blog.rust-lang.org/releases/")).toBe("blog.rust-lang.org/releases");
+  });
+
+  // **同じホストの複数件が別々のラベルになる**のがこの関数の存在理由。
+  it("同じホストの 3 件が全部違うラベルになる", () => {
+    const labels = [
+      "https://releases.rs/docs/1.88.0/",
+      "https://releases.rs/docs/1.89.0/",
+      "https://releases.rs/docs/1.90.0/",
+    ].map(label);
+    expect(new Set(labels).size).toBe(3);
+  });
+
+  // 足すものが無いのに `/` を付けると、区別を増やさずに文字だけ増える。
+  it("ルート URL はホスト名のまま", () => {
+    expect(label("https://example.test/")).toBe("example.test");
+    expect(label("https://example.test")).toBe("example.test");
+  });
+
+  // 表題があるならそちらが勝つ（既存の規律。ここは変えていない）。
+  it("表題があれば表題", () => {
+    expect(sourceLabel({ uri: "https://releases.rs/docs/1.90.0/", title: "Rust 1.90" })).toBe(
+      "Rust 1.90",
+    );
   });
 });

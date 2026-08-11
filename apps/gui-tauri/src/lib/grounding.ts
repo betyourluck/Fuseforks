@@ -92,10 +92,30 @@ export function sourceLabel(source: GroundingSource): string {
   if (source.title.trim()) return source.title;
   try {
     const url = new URL(source.uri);
-    return xPostLabel(url) ?? url.hostname;
+    return xPostLabel(url) ?? hostWithTail(url);
   } catch {
     return source.uri;
   }
+}
+
+/**
+ * 表題も X の投稿でもない URL のラベル。**ホスト名 + パスの末尾**。
+ *
+ * # なぜホスト名だけでは足りないか（2 例目）
+ *
+ * Spec 34 D12 で **`web_search_call.action.sources`（触れた全 URL）**を拾うように
+ * したが、**あの経路の項目は表題を持たない**（表題は annotations 側にしかない）。
+ * 実機で 14 件のうち **`releases.rs` が 10 件・`blog.rust-lang.org` が 2 件**、
+ * 同じ文字列で並んだ。**X の 45 件と同じ病** — 縦に長いのは症状で、
+ * **ラベルが区別を運んでいないのが病**。
+ *
+ * 末尾の 1 区画だけを足すのは、**全部のパスを出すと今度は長さで読めなくなる**ため。
+ * 区画が無い URL（ルート）はホスト名のまま — 足すものが無いのに
+ * `/` を付けると、区別を増やさずに文字だけ増える。
+ */
+function hostWithTail(url: URL): string {
+  const tail = url.pathname.split("/").filter(Boolean).pop();
+  return tail ? `${url.hostname}/${tail}` : url.hostname;
 }
 
 /**
