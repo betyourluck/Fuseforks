@@ -145,6 +145,19 @@ interface OrchestratorState {
    */
   lastTool: Record<AgentId, ToolRun>;
   /**
+   * カードの失敗理由を人が閉じた個体（2026-08-11）。
+   *
+   * **コアへは送らない。** `AgentRecord.last_error` は `#[derive(Debug)]` だけで
+   * serde されない = **プロセス寿命**なので、アプリを開き直せば両方消える。
+   * コアが「人が読んだ」を知る必要も無い — 診断は `fuseforks.log` の
+   * `turn failed:` 行が持っており、**画面の表示は人のためのもの**
+   * （`showPresenceNotices` と同じ側の状態）。
+   *
+   * **`agentFailed` が来たら必ず外す。** 外さないと、一度閉じた個体の
+   * **次の失敗が画面に出なくなる** — 消す機能が黙らせる機能に化ける。
+   */
+  dismissedErrors: AgentId[];
+  /**
    * plan 波の記録（Spec 08 — 波ペイン）。古い順。
    *
    * 突き合わせの鍵は planId、タスクの鍵は (planId, to)。新規チャットでは
@@ -187,6 +200,7 @@ const state = reactive<OrchestratorState>({
   interruptPending: {},
   toolRuns: [],
   lastTool: {},
+  dismissedErrors: [],
   planWaves: [],
   sessions: [],
   currentSessionId: "",
@@ -592,6 +606,11 @@ function applyEvent(event: CoreEvent): void {
 
     case "agentFailed": {
       patchAgent(event.agentId, { lastError: event.error });
+      // **新しい失敗は必ず見せる。** 前の失敗を閉じたことが残っていると、
+      // この個体の以後の失敗が画面に出なくなる（消す機能が黙らせる機能になる）。
+      state.dismissedErrors = state.dismissedErrors.filter(
+        (id) => id !== event.agentId,
+      );
       const name =
         state.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId;
       pushToast(
@@ -776,6 +795,23 @@ export function useOrchestrator() {
     /** 選択中のエージェント（無ければ `null`）。 */
     selected(): AgentSnapshot | null {
       return state.agents.find((a) => a.id === state.selectedAgentId) ?? null;
+    },
+
+    /**
+     * カードの失敗理由を閉じる（表示だけ。IPC は通らない）。
+     *
+     * コアの `last_error` は残す — **消えるのは画面の 1 枚で、事実ではない**。
+     * 次の `agentFailed` で自動的に開き直る。
+     */
+    dismissError(agentId: AgentId): void {
+      if (!state.dismissedErrors.includes(agentId)) {
+        state.dismissedErrors.push(agentId);
+      }
+    },
+
+    /** カードに失敗理由を出すか（`AgentCard` の表示条件の 1 実装）。 */
+    showsError(agent: AgentSnapshot): boolean {
+      return agent.lastError !== null && !state.dismissedErrors.includes(agent.id);
     },
 
     async toggleRunning(agentId: AgentId, running: boolean): Promise<void> {

@@ -369,6 +369,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         @configure="configuring = agent.id"
         @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
         @batch-start="(included) => orchestrator.setBatchStart(agent.id, included)"
+        @dismiss-error="orchestrator.dismissError(agent.id)"
       />
 
       <p

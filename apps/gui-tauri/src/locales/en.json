@@ -232,7 +232,9 @@
     "cacheDetail": "Total {total} ({input} input / {output} output; output is {outputShare}% of the total). {cached} of the input tokens were read from the prompt cache. Output cannot be cached, so the rate is relative to input (0% means the cache is not being hit)",
     "connections": "Connections",
     "connectionsCount": "{count}",
-    "lastTool": "Last tool"
+    "lastTool": "Last tool",
+    "dismissError": "Dismiss this failure",
+    "dismissErrorTitle": "Click to dismiss this failure notice (the record is kept)"
   },
   "chatInput": {
     "send": "Send",

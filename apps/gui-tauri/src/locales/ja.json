@@ -232,7 +232,9 @@
     "cacheDetail": "累計 {total}（入力 {input} / 出力 {output}、出力は全体の {outputShare}%）。入力のうち {cached} がプロンプトキャッシュから読まれました。出力はキャッシュできないため、割合は入力に対して出しています（0% はキャッシュが効いていないことを示します）",
     "connections": "接続",
     "connectionsCount": "{count} 件",
-    "lastTool": "直近ツール"
+    "lastTool": "直近ツール",
+    "dismissError": "失敗の表示を閉じる",
+    "dismissErrorTitle": "クリックすると、この失敗の表示を閉じます（記録は残ります）"
   },
   "chatInput": {
     "send": "送信",

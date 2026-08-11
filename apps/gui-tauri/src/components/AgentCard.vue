@@ -31,13 +31,30 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "select"): void;
   (e: "configure"): void;
+  /** 失敗理由の枠を閉じる（表示だけ。コアの `last_error` は残る）。 */
+  (e: "dismiss-error"): void;
   /** スタンバイボタン: この個体の実際の起動・停止。 */
   (e: "toggle", running: boolean): void;
   /** 対象トグル: 一括起動（▶）に含めるか。稼働状態は変えない。 */
   (e: "batch-start", included: boolean): void;
 }>();
 
-const { state } = useOrchestrator();
+const orchestrator = useOrchestrator();
+const { state } = orchestrator;
+
+/** 失敗理由の枠を出すか。判定は composable の 1 実装を借りる。 */
+const showsError = computed(() => orchestrator.showsError(props.agent));
+
+/**
+ * 枠の `title`。**詳細と操作説明を両方出す** — 詳細だけだと閉じられることが
+ * 伝わらず、操作説明だけだと `detail` を読む唯一の経路が消える
+ * （本文は `formatError` の要約で、原文はここにしか無い）。
+ */
+const errorTitle = computed(() => {
+  const detail = props.agent.lastError?.detail;
+  const hint = t("agentCard.dismissErrorTitle");
+  return detail ? `${detail}\n\n${hint}` : hint;
+});
 
 /**
  * 役職バッジの文言。引けなければ `null` で、**バッジごと描かない**
@@ -315,13 +332,22 @@ const cacheTone = computed(() => {
       </template>
     </dl>
 
-    <!-- 失敗理由はカード内に残す。トースト任せにすると閉じた瞬間に原因が消える。 -->
-    <p
-      v-if="agent.lastError"
-      class="mt-2 rounded border border-fail/40 bg-fail/10 px-2 py-1 text-[11px] text-fail"
-      :title="agent.lastError.detail ?? undefined"
+    <!--
+      失敗理由はカード内に残す。トースト任せにすると閉じた瞬間に原因が消える。
+      **クリックで閉じられる**（2026-08-11）— 復帰したあとも前回の失敗が
+      居座り、今の状態と食い違って見えるため。閉じるのは画面の 1 枚だけで、
+      コアの `last_error` も `fuseforks.log` の `turn failed:` 行も残る。
+      **次の失敗では自動的に開き直る**（`agentFailed` が閉じた印を外す）。
+    -->
+    <button
+      v-if="showsError"
+      type="button"
+      class="mt-2 w-full cursor-pointer rounded border border-fail/40 bg-fail/10 px-2 py-1 text-left text-[11px] text-fail hover:bg-fail/20"
+      :title="errorTitle"
+      :aria-label="t('agentCard.dismissError')"
+      @click.stop="emit('dismiss-error')"
     >
-      {{ formatError(agent.lastError) }}
-    </p>
+      {{ formatError(agent.lastError!) }}
+    </button>
   </article>
 </template>
