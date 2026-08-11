@@ -961,6 +961,13 @@ pub struct OpenAiResponsesRequest {
     /// 空なら欄ごと省く。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ResponsesTool>,
+    /// 契約により `["web_search_call.action.sources"]` 固定（Spec 34 D12）。
+    ///
+    /// **rev6 は「OpenAI へ include は送らない」と書いていた。** T1（stateless では
+    /// `encrypted_content` が既定で返る）は正しかったが、**出典の全件はこの鍵で
+    /// しか取れない**ことを実測で見落としていた。annotations は
+    /// **モデルが引用した分だけ**で、引用しなければ 0 件になる。
+    pub include: Vec<&'static str>,
     /// 思考の制御。契約により**常に送る**。
     pub reasoning: OpenAiReasoning,
     /// 応答を接続先に保持させるか。**契約により常に `false`**（Spec 34 D3）。
@@ -1177,6 +1184,36 @@ pub struct ResponsesSearchAction {
     /// 検索語。
     #[serde(default)]
     pub query: Option<String>,
+    /// **その検索で触れた全ソース**（Spec 34 D12）。
+    ///
+    /// `include: ["web_search_call.action.sources"]` を送ったときだけ入る。
+    /// annotations が**モデルが実際に引用した分だけ**なのに対し、こちらは
+    /// **参照した完全な一覧**で、引用より多いのが普通。
+    ///
+    /// **URL とは限らない。** リアルタイムの外部フィードは
+    /// `{"type":"api","name":"oai-finance"}` の形で現れる（実測。公式文書も
+    /// `oai-sports` / `oai-weather` / `oai-finance` を名指ししている）。
+    ///
+    /// **xAI 側はこの欄を読まない**（`xai_responses` 契約）。あちらは
+    /// `include: ["no_inline_citations"]` によって **annotations 自体が全件になる**
+    /// ので、2 系統を足す理由が無い。**同じ「出典の正は 1 系統」という規律から、
+    /// 社ごとに違う 1 系統が選ばれている。**
+    #[serde(default)]
+    pub sources: Vec<ResponsesSearchSource>,
+}
+
+/// 検索が触れたソース 1 件（Spec 34 D12）。
+#[derive(Debug, Deserialize)]
+pub struct ResponsesSearchSource {
+    /// `url` か `api`。**`api` は URL を持たない。**
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+    /// `type == "url"` のとき。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// `type == "api"` のとき（`oai-finance` など）。
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// 使用量。回数の欄は観測名（`server_side_tool_usage_details`）と公式文書名

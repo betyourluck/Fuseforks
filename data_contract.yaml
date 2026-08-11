@@ -4349,10 +4349,38 @@ llm_wire:
         Spec 31 P5 は queries == calls == 15 を合格条件にしたが、
         **その等式をこのワイヤへ写すと、ページを開いただけの周がある OpenAI は
         常に不合格に見える。** 計器は actions= の内訳で読む
-      - 出典は annotations (url_citation) を Grounding.sources へ。
-        engine は GroundingEngine::OpenAi (3 値目)
+      - 出典は **2 系統から集める** (Spec 34 D12。P5 の実機で追加)。
+        **rev6 までは annotations だけを読んでいて、実機で sources=0 を踏んだ。**
+          * message.content[].annotations (url_citation) — **モデルが引用した分だけ。**
+            引用しなければ 0 件になる。**start_index / end_index が実在する**
+            (xAI は全部 0 なので、こちらのほうが解像度が高い)
+          * web_search_call.action.sources — **触れた全ソース。**
+            `include: ["web_search_call.action.sources"]` を**常送**しないと来ない
+        **annotations を先に入れ、action.sources を後で足す** — 表題を持つのは
+        注釈の側だけなので、先に URL だけ入れると重複排除で表題が落ちる
+      - **URL を持たないソースは Grounding.sources へ入れない** (Spec 34 D12)。
+        リアルタイムの外部フィードは {"type":"api","name":"oai-finance"} の形で来る
+        (公式文書が oai-sports / oai-weather / oai-finance を名指し)。
+        **URI ではないものを URI の欄へ入れると、画面が「出典」として嘘を出す。**
+        計器へ api_sources= と api_names= で数と名前だけ残す —
+        「出典 0 件だったのは内部 API へ回ったから」がログから読める。
+        **画面は Spec 05 の文言のまま**「参照元は返ってきていません」でよい
+      - **`include` は `["web_search_call.action.sources"]` を常送する。**
+        rev6 の「OpenAI へ include は送らない」は取り消し。T1 (stateless では
+        encrypted_content が既定で返る) は正しかったが、**出典の全件はこの鍵で
+        しか取れない**ことを見落としていた。
+        **`no_inline_citations` は 400** — xAI 専用の値で、OpenAI の受理集合は
+        file_search_call.results / web_search_call.results /
+        web_search_call.action.sources / message.input_image.image_url /
+        computer_call_output.output.image_url / code_interpreter_call.outputs /
+        reasoning.encrypted_content / message.output_text.logprobs の 8 つ
+        (400 の本文が列挙した)。
+        **web_search_call.results は読まない** — 画像検索の生データ用で、
+        実測でも [] だった
+      - engine は GroundingEngine::OpenAi (3 値目)
       - 計器は **openai search: calls=N actions=search:N,open_page:N,find_in_page:N
-        sources=N queries=N** を検索を使った呼び出しのときだけ 1 行。
+        sources=N queries=N api_sources=N api_names=…** を検索を使った呼び出しの
+        ときだけ 1 行。
         **ticks は書かない** — cost_in_usd_ticks は xAI の欄で、OpenAI にあるかを
         測っていない。**無い欄を "-" で埋める計器は「測ったが無かった」と
         「見ていない」を畳む**

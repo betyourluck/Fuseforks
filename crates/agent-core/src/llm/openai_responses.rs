@@ -73,6 +73,10 @@ pub fn encode(
         model: req.model.clone(),
         input: responses_input::encode(&req.messages),
         tools,
+        // **常送する**（Spec 34 D12）。annotations は**モデルが引用した分だけ**で、
+        // 引用しなければ 0 件になる（実測 — 金融の問いで annotations=0）。
+        // 触れた全ソースはこの鍵でしか取れない。
+        include: vec!["web_search_call.action.sources"],
         reasoning: wire::OpenAiReasoning {
             // **丸めない。** canonical の 5 値はすべて受理される（実測 —
             // 誤った値 `minimal` を 1 つ送ったら、400 の本文が受理集合
@@ -104,6 +108,10 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
     // action の内訳。`search` 以外は検索語を持たないので、queries の分母にしない。
     let mut actions: Vec<(String, u32)> = Vec::new();
     let mut search_calls = 0u32;
+    // 触れた全ソース。**annotations を入れ終えてから足す**（表題を落とさないため）。
+    let mut touched: Vec<String> = Vec::new();
+    // URL を持たない外部フィードの名前（計器専用）。
+    let mut api_sources: Vec<String> = Vec::new();
     let mut reasoning_summary: Vec<String> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
 
@@ -166,6 +174,29 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
                 {
                     grounding.queries.push(query);
                 }
+                // 触れた全ソース（Spec 34 D12）。**ここでは溜めるだけで、
+                // `Grounding` へは annotations を入れた後で足す** — 注釈の側だけが
+                // 表題を持つので、先に URL だけを入れると重複排除で表題が落ちる。
+                for source in item.action.iter().flat_map(|a| a.sources.iter()) {
+                    match source.kind.as_deref() {
+                        Some("url") => {
+                            if let Some(url) = source.url.clone() {
+                                touched.push(url);
+                            }
+                        }
+                        // **URL を持たない外部フィード**（`oai-finance` など）。
+                        // **`Grounding.sources` へは入れない** — URI ではないものを
+                        // URI の欄へ入れると、画面が「出典」として嘘を出す。
+                        // 計器にだけ残すと「0 件だったのは内部 API へ回ったから」が読める。
+                        _ => {
+                            if let Some(name) = source.name.clone()
+                                && !api_sources.contains(&name)
+                            {
+                                api_sources.push(name);
+                            }
+                        }
+                    }
+                }
             }
             "function_call" => {
                 let raw = item.arguments.unwrap_or_default();
@@ -181,6 +212,17 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
                 });
             }
             other => dropped.push(other.to_owned()),
+        }
+    }
+
+    // **annotations の後に足す。** 引用された出典は表題を持つので先に入っており、
+    // ここで同じ URL が来ても重複排除で落ちる = 表題つきの側が残る。
+    for url in touched {
+        if !grounding.sources.iter().any(|s| s.uri == url) {
+            grounding.sources.push(GroundingSource {
+                uri: url,
+                title: String::new(),
+            });
         }
     }
 
@@ -226,7 +268,7 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
     // 測っていない。無い欄を `-` で埋めると「測ったが無かった」と「見ていない」を畳む。
     if search_calls > 0 {
         crate::note!(
-            "openai search: calls={} actions={} sources={} queries={}",
+            "openai search: calls={} actions={} sources={} queries={} api_sources={} api_names={}",
             search_calls,
             actions
                 .iter()
@@ -235,6 +277,12 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
                 .join(","),
             grounding.sources.len(),
             grounding.queries.len(),
+            api_sources.len(),
+            if api_sources.is_empty() {
+                "-".to_owned()
+            } else {
+                api_sources.join(",")
+            },
         );
     }
 
@@ -310,7 +358,7 @@ mod tests {
         let json = serde_json::to_string(&body).unwrap();
         assert_eq!(
             json,
-            r#"{"model":"gpt-5.6-terra","input":[{"role":"system","content":"あなたは検証用の応答者です"},{"role":"user","content":"AAPL の現在価格を教えて"}],"tools":[{"type":"web_search"},{"type":"function","name":"get_price","description":"テスト用","parameters":{"type":"object","properties":{}}}],"reasoning":{"summary":"detailed","context":"current_turn"},"store":false,"max_output_tokens":1024}"#
+            r#"{"model":"gpt-5.6-terra","input":[{"role":"system","content":"あなたは検証用の応答者です"},{"role":"user","content":"AAPL の現在価格を教えて"}],"tools":[{"type":"web_search"},{"type":"function","name":"get_price","description":"テスト用","parameters":{"type":"object","properties":{}}}],"include":["web_search_call.action.sources"],"reasoning":{"summary":"detailed","context":"current_turn"},"store":false,"max_output_tokens":1024}"#
         );
     }
 
@@ -398,7 +446,15 @@ mod tests {
         let body = encode(&req, true, true, false);
         assert!(body.tools.is_empty());
         let json = serde_json::to_string(&body).unwrap();
-        assert!(!json.contains("web_search"), "検索ツールが漏れている: {json}");
+        // **ツールの形ごと突き合わせる。** 素の `web_search` で検査すると
+        // `include` の値 `"web_search_call.action.sources"` に含まれて必ず真になる。
+        // **この Spec で 2 度目**（1 度目は `mode` が `"model"` に含まれた）。
+        // **一般化: 部分文字列で「無いこと」を検査するときは、欄名だけでなく
+        // 値の側にもその文字列が現れないかを数える。**
+        assert!(
+            !json.contains(r#"{"type":"web_search"}"#),
+            "検索ツールが漏れている: {json}"
+        );
     }
 
     /// `web_search_preview` は送らない（別名で、input_tokens が完全に一致する）。
@@ -497,6 +553,66 @@ mod tests {
         let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
         assert_eq!(decoded.grounding.queries, vec!["a"], "検索語は search の 1 件だけ");
         assert!(decoded.tool_calls.is_empty(), "検索呼び出しはツール呼び出しではない");
+    }
+
+    /// **触れた全ソースを拾う**（Spec 34 D12）。annotations は**引用した分だけ**なので、
+    /// モデルが引用しなければ 0 件になる（実機で金融の問いが annotations=0 だった）。
+    ///
+    /// **表題は注釈の側にしか無い。** だから `action.sources` は annotations の
+    /// 後で足す — 先に URL だけ入れると、重複排除で表題つきの側が落ちる。
+    #[test]
+    fn touched_sources_are_added_without_losing_annotation_titles() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "web_search_call", "action": {"type": "search", "query": "rust 1.90",
+                 "sources": [
+                    {"type": "url", "url": "https://blog.rust-lang.org/a"},
+                    {"type": "url", "url": "https://example.test/never-cited"}
+                 ]}},
+                {"type": "message", "content": [
+                    {"type": "output_text", "text": "本文", "annotations": [
+                        {"type": "url_citation", "url": "https://blog.rust-lang.org/a", "title": "Rust 1.90"}
+                    ]}
+                ]}
+            ]
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
+
+        assert_eq!(decoded.grounding.sources.len(), 2, "引用されていない URL も拾う");
+        // 引用された側は表題を保つ（順序も引用が先）。
+        assert_eq!(decoded.grounding.sources[0].uri, "https://blog.rust-lang.org/a");
+        assert_eq!(decoded.grounding.sources[0].title, "Rust 1.90");
+        assert_eq!(decoded.grounding.sources[1].uri, "https://example.test/never-cited");
+        assert_eq!(decoded.grounding.sources[1].title, "");
+    }
+
+    /// **URL を持たない外部フィードは `Grounding.sources` へ入れない**（Spec 34 D12）。
+    ///
+    /// `{"type":"api","name":"oai-finance"}` は URI ではないので、URI の欄へ入れると
+    /// 画面が「出典」として嘘を出す。**計器にだけ残す** — そうすれば
+    /// 「出典 0 件だったのは内部 API へ回ったから」がログから読める。
+    /// 実機でダウ平均を訊いた回がこの形だった（annotations=0 / results=[]）。
+    #[test]
+    fn api_feeds_never_become_sources() {
+        let raw = r#"{
+            "status": "completed",
+            "output": [
+                {"type": "web_search_call", "action": {"type": "search", "query": "finance: DJI",
+                 "sources": [{"type": "api", "name": "oai-finance"}]}},
+                {"type": "message", "content": [{"type": "output_text", "text": "53,975.98 ドル", "annotations": []}]}
+            ]
+        }"#;
+        let decoded = decode(serde_json::from_str::<wire::ResponsesResponse>(raw).unwrap()).unwrap();
+
+        assert!(
+            decoded.grounding.sources.is_empty(),
+            "URI を持たないソースが出典として出ている: {:?}",
+            decoded.grounding.sources
+        );
+        // 検索した事実（検索語）は残る — Spec 05 の「検索した事実と、出典が
+        // 返らない事実を区別して見せる」がここでも成立する。
+        assert_eq!(decoded.grounding.queries, vec!["finance: DJI"]);
     }
 
     /// 壊れた arguments は raw を保持した Parse エラー（境界規律は他 adapter と同じ）。
