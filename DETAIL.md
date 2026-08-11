@@ -38,7 +38,7 @@ Fuseforks/
 │       │   │   ├── settings.rs      設定と資源の入口（天井・言語・呼び名・MCP・条例）
 │       │   │   ├── sessions.rs      会話の持ち替え（新規 / 開き直し / 分岐 / 要約）
 │       │   │   ├── schedules.rs     予定の発火（ticker・前判定・配送）
-│       │   │   ├── turn.rs          ターンの実行（段 1-8。プロンプト → ツール → 配送）
+│       │   │   ├── turn.rs          ターンの実行（段 1-8。**核ファイルとして据え置き** — 下の注記）
 │       │   │   ├── delegation.rs    委譲と転送（ask / plan / transfer の提示と判定）
 │       │   │   └── context.rs       プロンプトに載る文脈（広場ログ・入退室）
 │       │   ├── compute.rs           ★ CPU バウンド処理と Tokio↔Rayon の橋渡し
@@ -107,6 +107,15 @@ Fuseforks/
                 ├── StatusBar.vue                      最下段: MCP サーバーの待ち受け・日付と時刻（診断ログと同じ形式）・版番号
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
+
+> **`turn.rs` は核ファイルとして据え置いてある**（2026-08-11 利用者判断）。
+> 分割の時点で 2,444 行あるが、中身は段ごとの `fn` に割れており
+> （`handle_message` / `build_prompt` / `present_tools` / `run_turn` /
+> `CallRunner` / `dispatch_outcome`）、**認知負荷は関数分割で既に下がっている**。
+> ここで割ると得るのは行数の減少だけで、失うのは `pub(super)` が増えること。
+> **次に割る根拠は行数ではない** — `run_turn` と `CallRunner` の同時変更が
+> 5 回を超えたか、レビューでこのファイル内のスクロールが往復するようになったか。
+> 手順は `CLAUDE.md` の「巨大ファイル分割の 6 箇条」が正。
 
 ## クレート分離の保証
 

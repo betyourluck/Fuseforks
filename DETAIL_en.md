@@ -38,7 +38,7 @@ Fuseforks/
 │       │   │   ├── settings.rs      Settings and resource access (budget, language, names, MCP, ordinance)
 │       │   │   ├── sessions.rs      Switching conversations (new / resume / fork / summarize)
 │       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery)
-│       │   │   ├── turn.rs          Running a turn (phases 1-8: prompt -> tools -> dispatch)
+│       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
 │       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
@@ -107,6 +107,16 @@ Fuseforks/
                 ├── StatusBar.vue                      Bottom: MCP server listening state, date, time (same format as the diagnostic log), and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
+
+> **`turn.rs` is deliberately kept whole as the core file** (owner's call,
+> 2026-08-11). It was 2,444 lines at the time of the split, but the inside is
+> already divided into per-phase functions (`handle_message` / `build_prompt` /
+> `present_tools` / `run_turn` / `CallRunner` / `dispatch_outcome`), so the
+> cognitive load was already paid down by the function split. Splitting the file
+> now would buy only a smaller line count and cost more `pub(super)`.
+> **The trigger for splitting it later is not the line count** — it is whether
+> `run_turn` and `CallRunner` start changing together more than five times, or
+> whether review starts scrolling back and forth inside this one file.
 
 ## Crate Separation Guarantee
 
