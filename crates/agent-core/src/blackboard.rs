@@ -54,9 +54,17 @@ pub struct BlackboardNote {
 /// ファイル名だけを通す — 区切り文字も `..` も入れさせない。
 /// **`read_blackboard_dir` が返した `name` をそのまま返してくる**のが正常系だが、
 /// **正常系だけを想定した検査は検査ではない**。
+///
+/// **区切り文字は自分で数える。`Path` に訊かない** — `\` を区切りとして扱うのは
+/// Windows の `Path` だけで、Unix では `sub\note.md` が合法な平置きの名前になる。
+/// 判定を `file_name()` に委ねると、**同じ入力の可否が開発機の OS で変わる**
+/// （実際に v0.1.3 の CI で macOS と Ubuntu だけが赤くなった）。
+/// `file_name()` の比較は残すが、これはドライブ接頭辞のような
+/// **Windows 固有の形**を拾う保険であって、区切りの保証はその上の行が持つ。
 fn is_safe_note_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
         && Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name)
 }
 
