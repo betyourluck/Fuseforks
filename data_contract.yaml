@@ -3414,7 +3414,16 @@ conversation_termination:
       - **プロセスは木ごと kill する** (command-group)。tokio::process::Child::kill は
         対象 PID にしか効かず**孫が残る**。このクレートは unsafe_code = "forbid" なので
         Job Object / setsid を自前で書けない (trash と同じ判断)。
-        タイムアウトと Spec 10 の打ち切りの両方に掛かる
+        タイムアウトと Spec 10 の打ち切りの両方に掛かる。
+        **どちらの経路でも kill を必ず呼ぶ** — 2026-08-12 まで呼び出しが 1 つも
+        無く、`group_spawn` で殺せる形に作ってあるのに殺していなかった。
+        実機で `ssh` が打ち切り後も 5 分生き残り、`Established` のまま残った。
+        **`wait_with_output` は self を取るので使えない** (打ち切り時に
+        `child.kill()` を呼ぶ手が残らない)。パイプは別タスクで並行に汲み、
+        `child.wait()` で待って、走り切らなかったときに kill する。
+        **経過時間の assertion がプロセス木を落とした証拠になる** —
+        落とせていないと汲み取りが子の自然終了まで返らない
+        (ミューテーションで 0.2 秒 → 30.4 秒)
       - **非ゼロ終了は Err にしない。** 終了コード + stdout + stderr を Ok(String) で
         返す (failures.md #41 の一般化 3)
       - **環境変数は env_clear してから名前を指定して親の値をコピー**

@@ -493,8 +493,18 @@ mod tests {
         );
     }
 
+    /// **名前どおり「止める」ところまで見る。**
+    ///
+    /// 経過時間の assertion が**プロセス木を落としたことの証拠**になっている。
+    /// `spawn_and_wait` は kill のあとパイプの汲み取りを待つので、
+    /// **落とせていなければ 30 秒の子が終わるまで返らない**（実測 30.4 秒）。
+    /// 落とせていれば上限の 1 秒 + 余裕で返る。
+    ///
+    /// 2026-08-12 まで kill の呼び出しが 1 つも無く、この形は
+    /// **実機で ssh が打ち切り後も生き残る**として出た。
     #[tokio::test]
     async fn a_timeout_stops_the_process_and_says_how_to_fix_it() {
+        let started = std::time::Instant::now();
         let out = run_program("sleep", &shell_program(), &sleep_args(30), Path::new("."), 1, None)
             .await
             .unwrap();
@@ -503,8 +513,19 @@ mod tests {
             out.contains("timeoutSecs"),
             "次の手を書くこと（#44。直す場所の名前まで出す）: {out}"
         );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "上限で**プロセス木ごと**落とすこと。落とせていないと、汲み取りが             子の自然終了まで返らない（実測 {:?}）",
+            started.elapsed()
+        );
     }
 
+    /// 打ち切りは**プロセス木を落とすところまで**。
+    ///
+    /// 経過時間がその証拠（上の timeout のテストと同じ理屈）。
+    /// **kill を外すと 30.36 秒かかって落ちる**ことをミューテーションで確認済み
+    /// （2026-08-12。修正前は 0.2 秒で通っていた — 汲み取りを待たずに
+    /// 返していたので、殺さなくても速かった）。
     #[tokio::test]
     async fn a_cancelled_run_stops_without_waiting_for_the_timeout() {
         let token = tokio_util::sync::CancellationToken::new();

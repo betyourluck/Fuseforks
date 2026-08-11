@@ -106,37 +106,85 @@ pub async fn spawn_and_wait(
         }
     }
 
-    let child = match command.group_spawn() {
+    let mut child = match command.group_spawn() {
         Ok(child) => child,
         Err(err) => return Ran::SpawnFailed(err.to_string()),
     };
+
+    // **パイプは待ちと並行に汲む。** 汲まずに `wait()` だけすると、出力の多い子が
+    // パイプ満杯で止まり、待ちが永久に返らない（`wait_with_output` が中で
+    // やっていることを、こちらは `child` を手放さずにやる）。
+    //
+    // **`wait_with_output` を使わないのはそのため** — あれは `self` を取るので、
+    // 打ち切りのときに `child.kill()` を呼ぶ手が残らない。**それがこの関数に
+    // kill が 1 つも無かった理由**で、`group_spawn` で殺せる形に作ってあるのに
+    // 殺す呼び出しが無いまま `Ran::Cancelled` を返していた（実機で ssh が
+    // 打ち切り後も 5 分生き残った。2026-08-12）。
+    let out_pipe = child.inner().stdout.take();
+    let err_pipe = child.inner().stderr.take();
+    let drain = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        match (out_pipe, err_pipe) {
+            (Some(mut o), Some(mut e)) => {
+                // **同時に読む。** 片方ずつ読むと、もう片方のパイプが満杯に
+                // なった子が止まり、読んでいる側も終わらない。
+                let _ = tokio::try_join!(o.read_to_end(&mut out), e.read_to_end(&mut err));
+            }
+            (Some(mut o), None) => {
+                let _ = o.read_to_end(&mut out).await;
+            }
+            (None, Some(mut e)) => {
+                let _ = e.read_to_end(&mut err).await;
+            }
+            (None, None) => {}
+        }
+        (out, err)
+    });
 
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let waited = match cancel {
         Some(token) => {
             tokio::select! {
-                result = tokio::time::timeout(timeout, child.wait_with_output()) => Waited::Finished(result),
+                result = tokio::time::timeout(timeout, child.wait()) => match result {
+                    Ok(status) => Waited::Finished(status),
+                    Err(_elapsed) => Waited::TimedOut,
+                },
                 () = token.cancelled() => Waited::Cancelled,
             }
         }
-        None => Waited::Finished(tokio::time::timeout(timeout, child.wait_with_output()).await),
+        None => match tokio::time::timeout(timeout, child.wait()).await {
+            Ok(status) => Waited::Finished(status),
+            Err(_elapsed) => Waited::TimedOut,
+        },
     };
 
+    // **走り切らなかったときは必ずプロセス木ごと落とす**（`command-group` の
+    // `kill` は Windows の Job Object / Unix のプロセスグループへ効く）。
+    // ここを省くと、`cmd /c` が起こした孫だけでなく**本人も生き残る**。
+    if matches!(waited, Waited::TimedOut | Waited::Cancelled) {
+        let _ = child.kill().await;
+    }
+
+    // kill か終了でパイプが閉じるので、汲み取りはここで必ず返る。
+    let (stdout, stderr) = drain.await.unwrap_or_default();
+
     match waited {
-        Waited::Finished(Ok(Ok(output))) => Ran::Finished {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        Waited::Finished(Ok(status)) => Ran::Finished {
+            code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
         },
-        Waited::Finished(Ok(Err(err))) => Ran::WaitFailed(err.to_string()),
-        Waited::Finished(Err(_elapsed)) => Ran::TimedOut,
+        Waited::Finished(Err(err)) => Ran::WaitFailed(err.to_string()),
+        Waited::TimedOut => Ran::TimedOut,
         Waited::Cancelled => Ran::Cancelled,
     }
 }
 
 /// 待ちの結果。`tokio::select!` の腕を型で分ける（`Result` の入れ子を読ませない）。
 enum Waited {
-    Finished(Result<std::io::Result<std::process::Output>, tokio::time::error::Elapsed>),
+    Finished(std::io::Result<std::process::ExitStatus>),
+    TimedOut,
     Cancelled,
 }
 
