@@ -921,6 +921,17 @@ pub struct XaiRequest {
     pub tools: Vec<ResponsesTool>,
     /// 契約により `["no_inline_citations"]` 固定。
     pub include: Vec<&'static str>,
+    /// 応答を接続先に保持させるか。**契約により常に `false`**（Spec 34 D3）。
+    ///
+    /// **`Option` にせず常送する。** `skip_serializing_if` を付けると
+    /// 「送っている」ことがワイヤ形の凍結（encode golden）から読めなくなる。
+    /// この欄は「村の会話を接続先に保持させない」という主張を支える側なので、
+    /// **出力に現れるほうが正しい**。
+    ///
+    /// Spec 31 の時点ではこの欄を 1 度も送っておらず、xAI 側の既定に委ねたまま
+    /// **それが何かを測っていなかった**（Spec 34 の起票時に発見）。
+    /// 200 で受けることは実測済み。
+    pub store: bool,
     /// 最大出力トークン数。
     pub max_output_tokens: u32,
     /// サンプリング温度。`None` なら送らない（canonical の規律）。

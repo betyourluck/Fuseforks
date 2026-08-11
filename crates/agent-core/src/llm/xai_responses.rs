@@ -105,6 +105,10 @@ pub fn encode(
         input,
         tools,
         include: vec!["no_inline_citations"],
+        // 契約により常に false（Spec 34 D3）。2 つの Responses ワイヤで揃える —
+        // 片方だけ寄せると保持の扱いが非対称になり、その差がどの画面にも
+        // ログにも出ない。
+        store: false,
         max_output_tokens: req.max_tokens,
         temperature: req.temperature,
         tool_choice,
@@ -362,8 +366,31 @@ mod tests {
         let json = serde_json::to_string(&body).unwrap();
         assert_eq!(
             json,
-            r#"{"model":"grok-4.5","input":[{"role":"system","content":"あなたは検証用の応答者です"},{"role":"user","content":"AAPL の現在価格を教えて"}],"tools":[{"type":"web_search"},{"type":"function","name":"get_price","description":"テスト用","parameters":{"type":"object","properties":{}}}],"include":["no_inline_citations"],"max_output_tokens":1024}"#
+            r#"{"model":"grok-4.5","input":[{"role":"system","content":"あなたは検証用の応答者です"},{"role":"user","content":"AAPL の現在価格を教えて"}],"tools":[{"type":"web_search"},{"type":"function","name":"get_price","description":"テスト用","parameters":{"type":"object","properties":{}}}],"include":["no_inline_citations"],"store":false,"max_output_tokens":1024}"#
         );
+    }
+
+    /// `store` は**どの経路でも必ず出る**（Spec 34 D3）。
+    ///
+    /// golden 1 本でも守れるが、**あちらは形が変わるたびに書き換わる**ので、
+    /// 「保持させない」という主張だけを単独で留める。**親切心で
+    /// `skip_serializing_if` を足すと、既定（保持する）へ黙って落ちる** —
+    /// そのとき golden も一緒に直されると、退行が誰にも見えなくなる。
+    #[test]
+    fn store_false_is_always_sent() {
+        for (use_tools, web, x) in [
+            (true, true, true),
+            (true, false, false),
+            (false, false, false),
+        ] {
+            let body = encode(&base_request(), use_tools, web, x);
+            assert!(!body.store);
+            let json = serde_json::to_string(&body).unwrap();
+            assert!(
+                json.contains(r#""store":false"#),
+                "store が欠けている: {json}"
+            );
+        }
     }
 
     /// ToolChoice::None では検索ツールも関数ツールも送らない（契約）。
