@@ -217,6 +217,9 @@ match language {
 
 1. **日本語の村でバイト等価**（機械・P1 golden）— 実装前後で
    `compose_system_prompt` の出力と全 `ToolSpec` が一致する。
+   **golden は `(prompt, stable_len)` の両方をリテラルで固定する** — 文字列だけ
+   固定すると、境界の計算が変わっても緑のままになる（P0 で読み口を数えたら、
+   既存テストは構造の不変条件だけで値を固定していなかった）。
    **読み口**: golden テストのリテラル比較
 2. **英語の村で仮名漢字ゼロ**（機械）— **新規生成・空村に限定**（rev2。査読 6 —
    言語を切り替えた村では D6 の古い System 行が日本語で残るので、ゼロは
@@ -227,8 +230,13 @@ match language {
    英語の村で `【送り手: ユーザー】` を本文に書いた発話が、どちらも
    `（本文）` / `(quoted)` 形へ寄る。**読み口**: `sender_envelope` の単体 +
    `sender envelope escaped:` の計器
-4. **`stable_len` が日本語の村で動かない**（結合）— 実装前後で同値。
-   **読み口**: 既存の `stable_len` 結合テストの期待値が変わらないこと
+4. **`stable_len` が日本語の村で動かない** — **検収 1 の golden に包含される**
+   （`(prompt, stable_len)` を両方固定するため）。独立の読み口として、
+   既存の構造テスト 2 本（`tests/orchestrator.rs` の「役職名を足しても
+   `stable_len` は動かない」/ `config_store.rs` の
+   `the_roster_lives_outside_the_stable_prefix`）が**期待値の変更なしで**
+   緑のままであることも見る（P0 で実在を確認済み — 値は固定していないので
+   単独では検収にならない。golden との 2 本立て）
 5. **実機: 英語村の完走** — `language=en` の村で英語の依頼を出し、
    英語の応答が返り、ツール呼び出しが完走する。**読み口**: 画面 +
    `fuseforks.log` の `turn:` 行（`stop=-`）
