@@ -1,99 +1,98 @@
-**日本語** | [English](README_en.md)
+**English** | [日本語](README_jp.md)
 
 # <img src="images/logo.webp" alt="Outcasts Fuseforks Logo" width="28" /> Outcasts Fuseforks
 
-  [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange?style=for-the-badge&logo=tauri&logoColor=white)](https://v2.tauri.app/ja/)
+  [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange?style=for-the-badge&logo=tauri&logoColor=white)](https://v2.tauri.app/)
   [![Vue](https://img.shields.io/badge/Vue.js-3.0-4FC08D?style=for-the-badge&logo=vue.js&logoColor=white)](https://vuejs.org)
   [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
   [![Rust](https://img.shields.io/badge/Rust-Backend-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
 
-**AI エージェントの村を、手元で飼う。**
+**Keep a village of AI agents in your hands.**
 
-Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会話する
-マルチエージェント・オーケストレーションのデスクトップアプリです。
-エージェントを作り、繋ぎ、話しかけると、村が動き出す —
-委譲し、手分けし、束ね、時刻が来れば勝手に働く。
-その全部が 3 ペインの 1 画面に見えています。
+Outcasts Fuseforks is a desktop application for multi-agent orchestration, where multiple
+AI agents coordinate and converse with each other.
+Create agents, connect them, and talk to them — the village springs to life.
+They delegate, divide work, bundle results, and work on their own when the time comes.
+Everything is visible in a single screen across 3 panes.
+
 
 ![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
 
 ![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
 
+Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
 
-Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
-
-## 何ができるか
+## What You Can Do
 
 | | |
 |---|---|
-| 🏘️ **村を組む** | エージェントを作って絆で結ぶ。**サーヴァントの絆**がそのまま制御盤 |
-| 🤝 **委譲と合流** | 進行役が `ask` で訊き、`plan` でワーカーへ並列に手分けして束ねる |
-| ⏰ **予定** | 「毎週 木曜 17:00」「10 分ごと」で依頼が時刻発火する。cron 式は書かせない |
-| 🔎 **前判定** | 発火時にまずコマンドを走らせ、**出力が合図と一致したときだけ**依頼する。一致しない回はトークンを 1 つも使わない。配られた村のコマンドは承認するまで走らない |
-| 🔌 **MCP** | Claude Desktop の `mcp.json` を**そのまま貼れる**。共通 + エージェント別 |
-| 🔍 **グラウンディング** | Gemini の Google 検索、Grok の Live Search（web / X）、OpenAI の web 検索。**検索した事実と、出典が返らない事実を区別して見せる** |
-| 🧠 **思考の要約** | モデルが考えたことの要約を、答えとは**別の枠**に畳んで置く。出典は検証できる指し先、要約は検証できない申告なので混ぜない |
-| 🛠️ **同梱ツール** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`。ファイル系は作業フォルダの外を構造的に読めない（例外は宣言したフォルダを読む `rag` と、囲いが許可リストである `run`） |
-| 🪧 **ツールの理由** | 道具を使うとき、**何のために使うのか**が 1 行で会話に出る。**モデルの自己申告**であって監査の記録ではない |
-| 🎚️ **転送の可否** | 進行役には「会話を引き渡す」道具を持たせない設定。**委譲（訊いて答えを受け取る）と手分けは残る**ので、答えが利用者へ逸れずに戻る |
-| 🗣️ **広場ログ** | 他人の会話が聞こえる村。聞かない自由もある（コスト設定として） |
-| 📎 **パス補完** | 入力欄で `@` を打つと作業フォルダのファイルが候補に出る。**入るのはパスだけ**で、サーヴァントが探す周回が消える |
-| 🖼️ **画像の添付** | 入力欄へ貼り付けるか選ぶと、宛先のサーヴァントが見て答える。**渡るのはそのターンだけ**（滑る窓での再送を避ける） |
-| 🏛️ **村の条例** | 全員のプロンプト最上段に入る共通規則。モデル間の憲法差を揃える正規化層 |
-| 🎭 **役職** | サーヴァントの雛形。選んで作れば設定が入り、一覧と地図に色付きバッジが出る |
-| 📁 **作業フォルダの一括切り替え** | 村ごと別のプロジェクトへ向け直すとき、チェックした全員の作業フォルダを 1 回で変える。**稼働中でも次の発話から効く** |
-| 💾 **会話の保存** | 閉じて開き直すと前回の続きから。複数の会話を持ち替え、途中から分岐できる |
-| ⚙️ **システム設定** | 自分の呼び名とアイコン・言語（画面と、サーヴァントへの指示の両方が切り替わる）・トークン制限・確認ダイアログ。**左メニューが設定できるものの目録** |
+| 🏘️ **Build a Village** | Create agents and tie them together. **Kizuna** is your control panel |
+| 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results |
+| ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
+| 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
+| 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
+| 🔍 **Grounding** | Gemini's Google Search, Grok's Live Search (web / X), and OpenAI's web search. **The display distinguishes between searched facts, their sources, and facts that went unfound** |
+| 🧠 **Thinking summary** | The model's own summary of its reasoning, collapsed in a **frame separate from the answer**. Sources are verifiable pointers; a summary is an unverifiable claim — they are not mixed |
+| 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
+| 🪧 **Tool Reasons** | When a servant reaches for a tool, **what it is reaching for it for** appears as one line in the conversation. It is **the model's own account**, not an audit record |
+| 🎚️ **Handoff toggle** | Deny a coordinator the tool that passes the conversation on. **Delegation (ask and receive) and splitting work remain**, so answers come back instead of drifting to the user |
+| 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
+| 📎 **Path Completion** | Type `@` to pick a file from the work folder. **Only the path is inserted**, and the rounds a servant spends searching disappear |
+| 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
+| 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
+| 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
+| 📁 **Change work folders together** | When you point the whole village at another project, set every checked servant's work folder in one go. **Running servants pick it up from their next message** |
+| 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
+| ⚙️ **System Settings** | Your own name and icon, language (switches both the screen and what the core says to the servants), token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
-接続先は OpenAI 互換 / Anthropic / Gemini / xAI / OpenAI ネイティブ。**base URL は自由**なので、
-Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
+The connection target is OpenAI-compatible / Anthropic / Gemini / xAI / OpenAI native. **The base URL is flexible**,
+so it connects directly to local LLMs like Ollama or LM Studio.
 
-## 思想 — おもちゃの形をした本物
+## Philosophy — A Real Thing Wearing the Shape of a Toy
 
-このアプリの想定ユーザーは**エンジニアのホビー**である。業務のオーケストレーション
-基盤は狙わない — 業務には人件費という計算があり「人に確認させるより AI で回す」が
-成立するが、個人では自分の時間より API 費のほうが目につく。その非対称は
-アプリ側からは動かせない。
+The intended users of this app are **engineers as a hobby**. We are not targeting
+orchestration infrastructure for business — in business there is accounting for labor costs,
+so "let AI do it instead of asking people to check" is justified, but for individuals the API cost
+catches the eye more than one's own time. That asymmetry cannot be solved from the app side.
 
-ただし、**ホビー向けだからこそ中身は本物にする**。単純なグループ会話ツールなら
-エンジニアのホビーにもならない。初期の Linux が Solaris 使いからおもちゃ扱い
-されながら、中身が本物の Unix だったから家に持ち帰る価値があった — それと同じ形を
-狙う。
+Yet **precisely because this is for a hobby, the insides must be real**. A simple group chat tool
+is not worth an engineer's hobby time. Early Linux was dismissed as a toy by Solaris users,
+but because the internals were real Unix, it was worth taking home — that is the form we pursue.
 
-だから設計は 2 層で規律が違う:
+Therefore, the design has 2 layers with different disciplines:
 
-- **核（`fuseforks-core` / `data_contract.yaml` / 発火規則）は業務品質。**
-  契約を凍結してから実装し、テストは赤を見てから緑にする。
-  GUI への依存はゼロ（機械的に保証。このクレートだけで headless に動く）
-- **殻（村・キャラクター・3 ペイン）はホビーの体験。**
-  「設定が少なくて分かりやすい」が差別化軸で、cron 式や YAML の壁を利用者に
-  登らせない
+- **The core (`fuseforks-core` / `data_contract.yaml` / firing rules) is production quality.**
+  Freeze the contract before implementation, write tests red-first.
+  Zero dependency on GUI (guaranteed mechanically. This crate alone runs headless)
+- **The shell (village, characters, 3 panes) is the hobby experience.**
+  "Less configuration and easier to understand" is the differentiator; we don't ask users
+  to climb the wall of cron syntax or YAML
 
-両方を中途半端にやるのが唯一の失敗形である。かわいさのために契約を緩めない。
-業務の顔をするために設定を増やさない。
+Doing both half-way is the only failure mode. Don't loosen the contract for cuteness.
+Don't add configuration to look businesslike.
 
-## ビルド
+## Build
 
-必要なもの: **Rust 1.85 以上**（edition 2024）、**[Bun](https://bun.sh)**、
-各 OS の Tauri v2 前提（Windows は WebView2、Linux は WebKitGTK、macOS は Xcode CLT）。
+Requirements: **Rust 1.85+** (edition 2024), **[Bun](https://bun.sh)**, and the Tauri v2
+prerequisites for your OS (WebView2 on Windows, WebKitGTK on Linux, Xcode CLT on macOS).
 
 ```bash
 cd apps/gui-tauri && bun install
 ```
 
-開発用に起動する（HMR あり）:
+Run in development (with HMR):
 
 ```bash
 cd apps/gui-tauri && bun run tauri dev
 ```
 
-配布物を作る。インストーラは `target/release/bundle/` に出る:
+Build the distributable. Installers land in `target/release/bundle/`:
 
 ```bash
 cd apps/gui-tauri && bun run tauri build
 ```
 
-テストと lint:
+Tests and lint:
 
 ```bash
 cargo test --workspace
@@ -101,61 +100,62 @@ cargo clippy --workspace --all-targets -- -D warnings
 cd apps/gui-tauri && bun run test
 ```
 
-> **アプリを起動したまま `cargo test --workspace` を回すと落ちる** —
-> 実行ファイルを置き換えられないため。コアだけなら `cargo test -p fuseforks-core`
-> がアプリ稼働中でも通る。
+> **`cargo test --workspace` fails while the app is running** — the executable cannot be
+> replaced. `cargo test -p fuseforks-core` covers the core and works with the app running.
 
-`v*.*` のタグを push すると、3 OS 分のリリースビルドが GitHub Actions で走る
-（[`.github/workflows/build.yml`](.github/workflows/build.yml)）。
-通常のコミットでは走らない。
+Pushing a `v*.*` tag runs release builds for 3 operating systems on GitHub Actions
+([`.github/workflows/build.yml`](.github/workflows/build.yml)). Ordinary commits do not
+trigger it.
 
-## 技術スタック
+## Tech Stack
 
-**核（`crates/fuseforks-core`）**
+**Core (`crates/fuseforks-core`)**
 
-- **Rust** 2024 edition — オーケストレーション、発火規則、ツール、LLM ワイヤ層
-- **Tokio**（I/O と並行ターン）+ **Rayon**（CPU 側）
-- **redb** — 会話の永続化。純 Rust・C 依存なし
-- **keyring** — API キーは OS の資格情報ストアへ。設定ファイルには保存しない
-- **rmcp** — MCP のクライアント（外部ツールを繋ぐ）とサーバー（外から依頼を受ける）
-- **GUI への依存はゼロ。** このクレートだけで headless に動くことを機械的に保証している
+- **Rust** 2024 edition — orchestration, firing rules, tools, and the LLM wire layer
+- **Tokio** (I/O and concurrent turns) + **Rayon** (CPU-bound work)
+- **redb** — conversation persistence. Pure Rust, no C dependency
+- **keyring** — API keys go to the OS credential store, never to a configuration file
+- **rmcp** — MCP as a client (connecting external tools) and as a server (receiving requests)
+- **Zero GUI dependency.** That this crate runs headless on its own is mechanically enforced
 
-**殻（`apps/gui-tauri`）**
+**Shell (`apps/gui-tauri`)**
 
 - **Tauri v2** + **Vue 3** + **TypeScript** + **Vite**
-- **Tailwind CSS v4** — 配色は 1 箇所に集約。ライト / ダークの両対応
-- **Vue Flow** — サーヴァントの絆（中央上段の地図）
-- **CodeMirror 6** — 条例・役職・設定の編集面
-- **vue-i18n** — 日本語 / 英語
-- テストは **vitest**、パッケージマネージャは **Bun**
+- **Tailwind CSS v4** — colors live in one place; light and dark both supported
+- **Vue Flow** — Kizuna, the map in the upper center pane
+- **CodeMirror 6** — editing surface for the ordinance, roles, and settings
+- **vue-i18n** — Japanese / English
+- Tests run on **vitest**; the package manager is **Bun**
 
-## もっと詳しく
+## Further Reading
 
 | | |
 |---|---|
-| [DETAIL.md](DETAIL.md) | ディレクトリ構造・並行モデル・画面の構成・同梱ツールの安全境界・LLM ワイヤ層・運用 |
-| [data_contract.yaml](data_contract.yaml) | ドメイン契約。**実装よりここが正** |
-| [specs/](specs) | 仕様。起票 → 査読 → Phase 分割で実装 |
-| [failures.md](failures.md) | 踏んだ罠（症状 → 真因 → 処方 → 一般化） |
-| [PRIVACY.md](PRIVACY.md) | プライバシーポリシー（**開発者は何も受け取らない**） |
+| [DETAIL_en.md](DETAIL_en.md) | Directory structure, concurrency model, screen layout, tool safety boundaries, LLM wire layer, operation |
+| [data_contract.yaml](data_contract.yaml) | The domain contract. **It takes precedence over the implementation** |
+| [specs/](specs) | Specifications. Drafted, reviewed, then implemented in phases |
+| [failures.md](failures.md) | Traps stepped in (symptom → root cause → prescription → generalization) |
+| [PRIVACY_en.md](PRIVACY_en.md) | Privacy policy (**the developer receives nothing**) |
 
-## ライセンス
+> The two documents above are written in Japanese.
 
-**MPL-2.0**（[LICENSE](LICENSE)）。選定の意図（2026-08-05）:
+## License
 
-- **改良は還流してほしい** — この配布物に含まれるファイルを**書き換えて**
-  配る場合は、**そのファイルの**ソース公開が必要です。良くなった Fuseforks は、
-  元の村にも還ってくる形にしています
-- **義務はファイル単位で止まる** — Fuseforks を部品として組み込んだより大きな
-  成果物（MPL の言う Larger Work）は、**あなたの条件で配れます**（§3.3）。
-  新しく書き足したファイルは最初から対象外です
-- **私的な改変は私的なまま** — 自分のマシンで自分用に改変して使う分には
-  公開義務は一切ありません。義務が発火するのは配布のときだけです
-- コミュニティでの共同開発を歓迎します。プルリクエストは MPL-2.0 の下で
-  受け入れます
+**MPL-2.0** ([LICENSE](LICENSE)). Why this license (2026-08-05):
 
-**AGPL-3.0-or-later から変更しました**（MIT → AGPL → MPL の 3 つ目）。
-AGPL は「ネットワーク越しの提供」でも義務が発火し、組み込む側にも全体の公開を
-求めるため、**道具として使ってもらうには強すぎました**。求めていたのは
-「誰かがいい修正をしたら、こちらもそれを使いたい」という一点で、
-それはファイル単位のコピーレフトで足ります。
+- **Improvements should flow back** — if you distribute a version in which you
+  have **modified files from this distribution**, you must publish the source of
+  **those files**. A better Fuseforks comes back to the original village.
+- **The obligation stops at the file boundary** — a Larger Work that merely
+  includes Fuseforks can be distributed **under your own terms** (§3.3), and
+  files you write yourself are outside the scope from the start.
+- **Private modifications stay private** — using a modified copy on your own
+  machine carries no obligation to publish anything. The obligation triggers
+  only on distribution.
+- Community co-development is welcome. Pull requests are accepted under MPL-2.0.
+
+**Changed from AGPL-3.0-or-later** (MIT → AGPL → MPL, the third). AGPL also
+triggers on network use and asks anyone embedding the project to publish the
+whole, which was **too strong for something meant to be used as a tool**. What
+was actually wanted is one thing — "if someone makes a good fix, I want to use
+it too" — and file-level copyleft is enough for that.
