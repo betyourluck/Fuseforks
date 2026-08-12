@@ -4618,5 +4618,140 @@ llm_wire:
         (b) **フロントの lib/providerSkills.ts** — TS の string union は
             網羅検査を持たないので**黙って吸う**。DEFAULT_BASE_URL /
             passiveSkills / providerSkills の 3 つすべてに手が要る
+            (**lib/carries.ts は Record<Provider,…> なので指す** — 同じ TS でも
+            union か Record かで網羅性が変わる)
+
+      **自分で罠を作った実例 (Spec 36 → Spec 37 で発覚)。**
+      Provider::carries を `match (self, kind)` に `(_, K::Image) => true` の形で
+      書いていた。**種別側がワイルドカードなので新 variant を黙って吸い**、
+      6 本目 (Meta) が audio=false / video=false を受け取る — **実測は 4 種別
+      すべて ✓ なので 2 マスが静かに誤る**。しかも doc には
+      「match を網羅で書くのは 6 値目を足す人へ問いを出すため」と書いてあり、
+      **その主張自体が嘘だった**。provider ごとに 1 腕の配列リテラルへ直した。
+      **一般化: 「コンパイラが指す」と doc に書いたら、variant を 1 つ足して
+      実際に落ちるか確かめる。** 網羅性の主張は、網羅していない書き方でも
+      同じ文章で書けてしまう (#62 と同族)。
       **非単射になる既定 URL の 7 通りは providerSkills.test.ts で先に書く**
       (Provider.non_injective_defaults を参照)。#91 は机上で追って外した事故。
+
+  meta_responses:
+    why: |
+      api.meta.ai の web 検索は Responses (/v1/responses) にしか無い (Spec 37)。
+      互換の口 (/v1/chat/completions) には検索が露出していないので、gemini_native /
+      xai_responses / openai_responses と**同じ構図の 4 例目**。関数呼び出しだけなら
+      互換層で足りるため、既存の muse-spark 個体は明示選択するまで動かない
+      (Provider::detect は変えない — 自動判定を変えると設定を触っていない利用者の
+      個体が黙って別のワイヤへ移る)。
+    measured: |
+      **P0 / P0b の probe 24 発で確定 (2026-08-13)。文書ではなく実測が正。**
+
+      ## ストリーミングは不要 (最重要。規模を決めた)
+
+      提示された curl は `"stream": true` + `Accept: text/event-stream` だったが、
+      **どちらも省いて 200 が返る**。応答の形は `kinds=['reasoning','message']` で
+      **xai_responses / openai_responses と同じ**。この村に SSE は 1 行も無く、
+      必須なら再試行・タイムアウト・打ち切り・トークン計上がすべてその上に乗る
+      ので桁が変わっていた。**6 本目のワイヤの規模で収まる。**
+
+      ## 関数往復は 3 社で同一 (共有の分割線の根拠)
+
+        {"type":"function_call","id":"fc_…","call_id":"call_…","name":"get_weather",
+         "arguments":"{\"city\":\"東京\"}","status":"completed"}
+
+      `call_id` の命名も `arguments` が JSON **文字列**であることも xAI / OpenAI と
+      一致。返す側の `function_call_output.output` は **string のみ**
+      (object は `input[2].output did not match any supported type` で 400)。
+      **wire::ResponsesInputItem::FunctionCallOutput.output: String** なので
+      型で既に成立している — **緩めると 3 社で割れる。**
+
+      ## tool_choice は "auto" のみ
+
+      `none` / `required` / 名指しは 400
+      (`only "auto" is supported for tool_choice`)。**Kataribe の wire 分割で
+      観測済みの制約の再演**。この村は ToolChoice::None を使う (ツール上限後の
+      まとめ呼び出し) が、**Responses の既存の作法 (None なら tools ごと送らない)
+      で回避できる** — tool_choice 欄そのものを出さない。
+      **このワイヤは強制ツール呼び出しを表現できない** (NoStructuredOutput の
+      経路が使えない)。
+
+      ## usage は分解できる
+
+        {"input_tokens":545,"input_tokens_details":{"cached_tokens":113},
+         "output_tokens":212,"output_tokens_details":{"reasoning_tokens":142},
+         "total_tokens":757}
+
+      `cached_tokens` と `reasoning_tokens` の両方があるので、Spec 32 の思考
+      トークン計上とキャッシュ率がそのまま効く。
+
+      ## carries の 6 行目 — 4 種別すべて (内容照合まで)
+
+        画像 input_image の data URL       ◎「左が赤、右が青」
+        音声 input_audio の {data, format}  ◎「ガーネット」
+        動画 input_video の video_url       ◎「赤、青」
+        PDF  input_file の {filename, file_data} ◎「GARNET-77」
+
+      **Gemini に次ぐ 2 本目の「4 種別すべてを運ぶワイヤ」。**
+      **予測を覆した** — openai_responses からの類推で動画は ✗ と書くところだった。
+      payload 無しの `{"type":"input_video"}` が
+      `requires video_url or file_id` と**名指しで 400 を返した**ので撃てた。
+
+      ## 受理集合は列挙されない (第 3 の様式)
+
+      誤ったツール型を送っても `tools[0] did not match any supported type` だけで
+      **候補を列挙しない** (OpenAI / Anthropic は全列挙、xAI は untagged enum の
+      422)。**Spec 34 の「400 が受理集合を教えてくれる」手筋はこのワイヤでは
+      使えない。** ただし **content part と tool の欄は 1 つずつ名指しで教える**
+      (`tools[].max_results is not supported for Responses web_search` /
+      `input_audio content part requires input_audio, audio_url, or file_id`)。
+      **未知の欄は 1 つずつ名指しさせるのが唯一の手。**
+
+      ## web_search の options は実在する
+
+      `search_context_size: "high"` は **200 で受理**。`filters.allowed_domains` /
+      `max_results` / 未知欄は 400 で名指し。**固有スキルはトグル 1 つに閉じるが、
+      軸が在ることは記録する** (将来 search_context_size を出すならもう 1 つの器)。
+
+      ## 出力上限の下限 — 添付ありで本文が空になる
+
+        max_output_tokens=512   → output_tokens=512 (使い切り) → 本文**空**
+        max_output_tokens=1024  → output_tokens=1024(使い切り) → 本文**空**
+        max_output_tokens=2048  → output_tokens=1636          → 本文あり
+        max_output_tokens=4096  → output_tokens=1146          → 本文あり
+
+      既定の `reasoning.effort` が **high** (応答に出る) で、思考で使い切っている
+      (#72 と同型)。**下限は effort で動く**ので、画面の警告は法則ではなく
+      **観測値として書く** —「observed: effort=high のとき 1024 で空・2048 で本文」。
+      **実装が max_output_tokens や effort を黙って書き換えることはしない**
+      (利用者が決めた値を実装が上書きする形は、この村が繰り返し退けてきた)。
+    files_are_retained: |
+      **送った添付は /v1/files に期限なしで保存される (Spec 37 P0b の最重要発見)。**
+
+      GET /v1/files が `purpose: "user_data"` / **`expires_at: null`** の一覧を返し、
+      バイト数がローカルの probe 素材と 1 バイト単位で一致した。
+      **/v1/chat/completions (互換の口) で送った画像も残っていた**ので、
+      **Responses ワイヤに限らずこの接続先すべて**に効く。
+      Meta が `https` URL から取得した動画も保存された。
+      **音声 (input_audio.data) だけは一覧に現れなかった — 経路で扱いが違う。機序は未確定。**
+
+      削除口は在り、実際に消える:
+
+        DELETE /v1/files/{id}  → 200 {"deleted": true}
+        GET    /v1/files/{id}  → 404 file_not_found   ← **確認はこちら**
+        GET    /v1/files       → 一覧。**最大 20 秒ほど遅れる**
+
+      **一覧は結果整合で、真実は個別 GET 側。** 削除直後の一覧は件数が変わらず、
+      20 秒後に減った。**1 回目の観測だけで「削除は効かない」と結論しかけた** —
+      **遅れて正しくなる計器を、壊れていると読まない** (#90 の逆側)。
+
+      **この村は削除の口を実装しない** (Spec 37 D11)。外部の状態の CRUD を持つと
+      「Fuseforks が接続先の状態を管理する」責務が生まれ、mcp_server_contract の
+      「村の状態は外からブラックボックス」と逆向きの越境になる。
+      **ただし存在と削除の手順は台帳に書く** — 消す道があることに気づけないのは
+      #44 の逆側 (歯止めの先ではなく、**行き先に道を書く**)。
+
+      **画面へは 2 箇所で出す** (Spec 37 D7。利用者裁定 2026-08-13):
+      README の接続先の表 (説明) と、**添付チップの警告** (貼る瞬間)。
+      **パッシブスキルには載せない** — 保存は接続先の性質でありアプリの働きでは
+      ないので、Spec 31 の基準 (このアプリがその機構を実際に使っているか) が割れる。
+      **「学習に使われます」とは書かない** — あれは規約で、こちらは観測できる事実。
+      **性質の違う 2 つを 1 文に混ぜると、どちらも確かめられなくなる。**
