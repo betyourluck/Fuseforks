@@ -15,7 +15,10 @@ Create agents, connect them, and talk to them — the village springs to life.
 They delegate, divide work, bundle results, and work on their own when the time comes.
 Everything is visible in a single screen across 3 panes.
 
-![Outcasts Fuseforks](images/fuseforks.webp)
+
+![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
+
+![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
 
 Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
 

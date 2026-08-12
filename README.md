@@ -15,7 +15,9 @@ Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会
 委譲し、手分けし、束ね、時刻が来れば勝手に働く。
 その全部が 3 ペインの 1 画面に見えています。
 
-![Outcasts Fuseforks](images/fuseforks.webp)
+![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
+
+![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
 
 
 Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
