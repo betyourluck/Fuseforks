@@ -38,7 +38,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | 🎚️ **Handoff toggle** | Deny a coordinator the tool that passes the conversation on. **Delegation (ask and receive) and splitting work remain**, so answers come back instead of drifting to the user |
 | 🗣️ **Public Square Log** | A village where you can hear others' conversations. You're also free not to listen (as a cost setting) |
 | 📎 **Path Completion** | Type `@` to pick a file from the work folder. **Only the path is inserted**, and the rounds a servant spends searching disappear |
-| 🖼️ **Image Attachments** | Paste or pick an image in the input box and the addressed servant looks at it. **It reaches the model on that turn only** (so the sliding window never resends it) |
+| 🖼️ **Attachments (image / audio / video / PDF)** | Paste or pick a file in the input box and the addressed servant looks at it or listens to it. **It reaches the model on that turn only** (so the sliding window never resends it). **Wires that cannot carry a kind warn on paste and refuse to send** |
 | 🏛️ **Village Ordinance** | Common rules that appear at the top of every agent's prompt. A normalization layer that unifies constitutional differences between models |
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
 | 📁 **Change work folders together** | When you point the whole village at another project, set every checked servant's work folder in one go. **Running servants pick it up from their next message** |

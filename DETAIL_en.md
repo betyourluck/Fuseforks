@@ -47,7 +47,7 @@ Fuseforks/
 │       │   ├── process.rs           Spawning and awaiting a child process (shared by the run tool and pre-checks)
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
-│       │   ├── attachment.rs        Image attachments: validation, storage, GC (pure mechanics; dimensions read from the WebP header)
+│       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
@@ -81,7 +81,8 @@ Fuseforks/
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
-            ├── lib/attachment.ts    Attachment pure functions (scaling math / base64 / WebP check)
+            ├── lib/attachment.ts    Attachment pure functions (kind detection / scaling math / base64)
+            ├── lib/carries.ts       Which wire carries which kind (screen-side copy, for warnings)
             ├── lib/pathComplete.ts  `@` path completion (trigger detection / ranking / commit)
             ├── lib/scheduleProbe.ts Pre-check display rules (pure functions; returns dictionary keys)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
@@ -274,33 +275,95 @@ Do not substitute values locally with the assumption that "it should be like thi
 
 ---
 
-## Image Attachments ([Spec 23](specs/23_image-attachment.md))
+## Attachments ([Spec 23](specs/23_image-attachment.md) = images / [Spec 36](specs/36_multimodal-attachments.md) = audio, video, PDF)
 
-**Paste** an image into the input box (Ctrl+V) or **pick** one with the clip button on
-the left, and the addressed servant sees it and answers. Drag-and-drop is deliberately
-not an entry point — Tauri intercepts in-page drops (and Ctrl+V is the main path for
-screenshots anyway).
+**Paste** a file into the input box (Ctrl+V) or **pick** one with the clip button on
+the left, and the addressed servant sees or hears it and answers. Drag-and-drop is
+deliberately not an entry point — Tauri intercepts in-page drops (and Ctrl+V is the main
+path for screenshots anyway).
 
-**One image per utterance. The UI scales it to 1568px on the long edge and converts it
-to WebP before sending.** Conversion runs in a WebWorker, so picking a large image never
-freezes the screen. Source files above 10 MB, and converted files above 2 MB, are refused.
+**One attachment per utterance.** There are four kinds — **image / audio / video / PDF** —
+and **the kind is always decided by the magic bytes of the content** (neither the file
+name's extension nor its MIME type is read; both can be rewritten, and trusting them lets
+content and kind disagree all the way to the wire).
+
+| Kind | Accepted formats | Limit | Conversion |
+|---|---|---|---|
+| Image | anything the browser can decode (png / jpeg / gif / webp …) | 10 MB source → 2 MB converted | **UI scales to 1568px long edge and converts to WebP** |
+| Audio | mp3 / wav | 10 MB | none |
+| Video | mp4 | 12 MB | none |
+| PDF | pdf | 10 MB | none |
+
+Conversion runs in a WebWorker, so picking a large image never freezes the screen.
+**Only images are converted** — bundling audio/video transcoders would change the
+dependency footprint by an order of magnitude (the ffmpeg family is not available in pure
+Rust), so unsupported formats are refused at the entrance instead.
+
+Limits are set by **the narrowest wire that carries the kind** (Gemini's 20 MB inline
+request total), counting base64 expansion (4/3) and headroom for the prompt.
+**Limits do not vary by recipient** — if the same file passed for one servant and failed
+for another, the rule would stop being readable from the screen.
+
+### Which combinations travel
+
+**A single predicate** (`Provider::carries`) holds which wire carries which kind, and
+**only the send entrance reads it**. The table was decided by measurement (not by HTTP
+200 — audio was checked against a spoken passphrase, video against a colour transition,
+PDF against a proper noun in the body).
+
+| Wire | Image | Audio | Video | PDF |
+|---|---|---|---|---|
+| OpenAI-compatible | ✓ | ✓ | — | ✓ |
+| Anthropic | ✓ | — | — | ✓ |
+| **Gemini native** | ✓ | **✓** | **✓** | ✓ |
+| xAI Responses | ✓ | — | — | ✓ |
+| OpenAI Responses | ✓ | — | — | ✓ |
+
+**Only the Gemini native path carries audio and video.** Spec 23 had frozen "do not
+implement attachments on the native path"; **that premise (images travel over the
+compatible endpoint anyway) disappeared from the side of the kinds**, so Spec 36
+reversed it.
+
+**Combinations that cannot travel are warned about on paste, and refused by the entrance
+on send** — and when refused, **nothing is stored and no turn starts** (not a single
+token is paid). The guidance text is assembled from the table, so changing the table
+moves the guidance with it.
+
+**"Can the wire carry it" and "will the model accept it" are different layers.** The
+compatible endpoint really does have an audio field, but a model without audio support
+returns 400. The first is refused by the entrance; the second surfaces as the provider's
+response — **treating a structural impossibility and a runtime refusal in the same layer
+makes them indistinguishable on screen.**
 
 ### It reaches the model exactly once
 
-**An attached image is sent to the model only on the turn it arrives.** From the second
+**An attachment is sent to the model only on the turn it arrives.** From the second
 turn on, the model can no longer see it (**it stays visible on screen**). The input box
 says the same thing next to the attachment chip.
 
 This is design, not a limitation, and the reason is cost. History is a sliding window of
-the last 8 exchanges, so keeping the image would **resend the same picture up to 8 times**.
-A 1568px 16:9 image costs 1,792 vision tokens per turn — 14,336 across 8 turns. That
-**breaks the one-to-one correspondence between what you pay and the act of attaching**.
-If you want the model to look again, attach it again: an explicit action has clearer
-causality than automatic retention.
+the last 8 exchanges, so keeping an attachment would **resend the same file up to 8
+times**. The measured magnitudes differ sharply by kind:
 
-**The fact that an image was there does survive.** Only the picture is dropped; the
-servant keeps a line saying "one image arrived on this turn, and it is not visible from
-the next turn on." So when you later ask it to "show that image to X," it can answer
+| Kind | Per attachment (measured) | If kept for 8 turns |
+|---|---|---|
+| Image (1568px, 16:9) | 1,792 | 14,336 |
+| Audio / video | depends on length and resolution (~1,000 for a 10-second 720p clip) | 8x |
+| PDF (9.3 MB) | **~165,000** | **~1.3 million** |
+
+That **breaks the one-to-one correspondence between what you pay and the act of
+attaching**. If you want the model to look again, attach it again: an explicit action has
+clearer causality than automatic retention.
+
+**Within a turn it is resent every round, but the cache absorbs that.** In the turn that
+actually carried the PDF above (3 rounds), `prompt` swelled to 520,323 — yet the uncached
+part was 173,564, **exactly one round's worth**. **Read attachment cost as `prompt`
+paired with `cached`, never `prompt` alone**, or it looks like you paid a multiple of the
+round count.
+
+**The fact that an attachment was there does survive.** Only the content is dropped; the
+servant keeps a line saying "one attachment arrived on this turn, and it is not visible
+from the next turn on." So when you later ask it to "show that image to X," it can answer
 **"I no longer have it — please attach it again, addressed to X."**
 
 Before that line existed, a servant *remembered the description it had written but did
@@ -310,29 +373,33 @@ to tell why**, so the fact alone is kept.
 
 ### People who never use it never pay for it
 
-**No tool is added.** An image is a kind of input, not a capability, so neither the tool
-schemas nor the system prompt grow by a single character. For utterances without an
+**No tool is added.** An attachment is a kind of input, not a capability, so neither the
+tool schemas nor the system prompt grow by a single character. For utterances without an
 attachment, the wire output is **byte-for-byte identical** to what it was before this
-feature existed (tests pin this for all three adapters). In a village that never attaches
-an image, nothing sent and nothing paid changes.
+feature existed (tests pin this for **all five wires**). In a village that never attaches
+anything, nothing sent and nothing paid changes.
 
-### Where images do not go
+### Where attachments do not go
 
-| Path | Image | What happens instead |
+| Path | Attachment | What happens instead |
 |---|---|---|
-| User → servant | **Delivered** | — |
-| Servant → servant (`ask` / `plan` / transfer) | Dropped | The delivered body is prefixed with "(the 1 image is not forwarded)" |
+| User → servant | **Delivered** (if the wire carries the kind) | Otherwise the entrance refuses — nothing stored, no turn started |
+| Servant → servant (`ask` / `plan` / transfer) | **Always** dropped | The delivered body is prefixed with "(the 1 image is not forwarded)" |
 | Plaza log (excerpts of others' conversations) | Dropped | Only its existence is noted, as "(1 image)" |
-| Gemini's native path | Dropped | Refused on screen (that path exists solely for Google Search grounding) |
-| The xAI / OpenAI Responses paths | Dropped | **Stated up front in the model registration screen** (the cost is shown where the switch is made) |
+
+**Forwarding drops the attachment even when the recipient could carry it.** Passing it on
+would turn one attachment into N turns' worth of payment and break the one-to-one
+correspondence — hence the division of labour: **only the send entrance reads `carries`.**
 
 **Never drop silently** is the rule here. If the recipient cannot diagnose *why* it cannot
-see an image, a mechanism working correctly is indistinguishable from a broken one.
+see an attachment, a mechanism working correctly is indistinguishable from a broken one.
+In practice this helped **recovery as well as diagnosis** — a sender who read the notice
+transcribed the picture's contents into text and passed that along instead.
 
 ### Where the bodies live, and how long
 
 Images enter neither the conversation log nor the conversation store (`sessions.redb`).
-The body lives at `{workspace}/attachments/{uuid}.webp`, and the utterance carries only a
+The body lives at `{workspace}/attachments/{uuid}.{ext}`, and the utterance carries only a
 reference. **On startup, anything older than 30 days — and, beyond a 500 MB total, the
 oldest first — is deleted.** A deleted image becomes a "this image was deleted after its
 retention period" placeholder in the conversation pane; showing nothing would make it look
@@ -542,7 +609,7 @@ Built-in tools report failure in the **body** rather than as a return error, so 
 marker only means "did the return value carry an error" — **whether the side effect
 succeeded is a separate question**, and the screen cannot answer it.
 
-**Villages that never use it still pay.** Unlike image attachments or path completion, this is
+**Villages that never use it still pay.** Unlike attachments or path completion, this is
 on for everyone by default. Measured over 969 tool calls across 355 turns in
 `concordia.log`, it adds **1.5–2.2% effective tokens on turns that call tools**, and
 **zero on turns that call none**.
@@ -964,7 +1031,7 @@ Agent settings reside in the OS application-data area.
   mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
   sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
   exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list)
-  attachments/{uuid}.webp     Attached image bodies (Spec 23; auto-deleted after 30 days / above 500 MB total)
+  attachments/{uuid}.{ext}    Attachment bodies (webp / mp3 / wav / mp4 / pdf; auto-deleted after 30 days / above 500 MB total)
   agents/{agent_id}/
     SKILL.md
     Memory.md
