@@ -1640,7 +1640,7 @@ impl CallRunner<'_> {
                 &turn.token,
                 budget.as_ref(),
                 participants.as_ref(),
-                !incoming.attachments.is_empty(),
+                incoming.attachments.first().map(|a| a.kind()),
             )
             .await)
         } else if spec.hears_room_log
@@ -1664,7 +1664,7 @@ impl CallRunner<'_> {
                         &turn.token,
                         budget.as_ref(),
                         participants.as_ref(),
-                        !incoming.attachments.is_empty(),
+                        incoming.attachments.first().map(|a| a.kind()),
                     )
                     .await
                 }
@@ -1900,13 +1900,27 @@ async fn build_prompt(
     // 読めなかった参照（GC 済み・ファイル欠損）は黙って抜かずに本文で断る —
     // モデルが「画像を見た」ふりで答える形が一番診断しにくい（#44 の同型）。
     let image_attachments = load_turn_attachments(shared, agent_id, incoming).await;
+    // モデルへ届く文は二言語（Spec 35）。**日本語は 1 バイトも変えていない**
+    // ので、既存の golden はそのまま緑のまま。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     if incoming.attachments.len() > image_attachments.len() {
-        context.push(
-            "【添付】この発話には画像が添付されていましたが、保持期間を過ぎて\
-             削除されたため読み込めませんでした。画像は見えていない前提で\
-             答えてください。"
-                .to_owned(),
-        );
+        context.push(match language {
+            crate::world::Language::Ja =>
+                "【添付】この発話には画像が添付されていましたが、保持期間を過ぎて\
+                 削除されたため読み込めませんでした。画像は見えていない前提で\
+                 答えてください。"
+                    .to_owned(),
+            crate::world::Language::En =>
+                "[Attachment] This message had an attachment, but it could not be \
+                 loaded because it passed the retention period. Answer on the \
+                 assumption that you cannot see it."
+                    .to_owned(),
+        });
     }
     // **添付の事実を文字列として残す**（2026-08-06 利用者裁定。実機で穴が出た）。
     //
@@ -1921,14 +1935,29 @@ async fn build_prompt(
     // **この 1 行は `context` へ入るので `sent_user_turn` の一部になり、
     // #45 の規律でそのまま履歴へ残る。** 画像そのものは入らないので D1 は不変。
     if !image_attachments.is_empty() {
-        context.push(format!(
-            "【添付】この発話には画像が {} 枚付いています。\
-             **画像が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
-             見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
-             するときも画像は渡りません。**後から「あの画像を見せて」と頼まれたら、\
-             もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**",
-            image_attachments.len()
-        ));
+        // 種別語で書く（Spec 36）。D5 で 1 発話 1 件なので先頭を見れば足りる。
+        let kind = image_attachments[0].kind();
+        let label = super::attachment_kind_label(kind, language);
+        context.push(match language {
+            crate::world::Language::Ja => format!(
+                "【添付】この発話には{label}が {} 件付いています。\
+                 **{label}が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
+                 見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
+                 するときも{label}は渡りません。**後から「あの{label}を見せて」と頼まれたら、\
+                 もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**",
+                image_attachments.len()
+            ),
+            crate::world::Language::En => format!(
+                "[Attachment] This message carries {} {label} attachment(s). \
+                 **The {label} reaches you only on this turn** — from the next turn \
+                 on you cannot see it (it stays visible to the user). It is not \
+                 forwarded when you hand off or delegate to another servant either. \
+                 **If you are later asked to show that {label}, say that you no longer \
+                 have it and ask the user to attach it again, addressed to the \
+                 servant who needs it.**",
+                image_attachments.len()
+            ),
+        });
     }
 
     // 可変の文脈と今回の受信を **1 本の user 発話**に畳んで送る。
@@ -2085,13 +2114,22 @@ async fn dispatch_outcome(
 
     // 宛先ごとに 1 通として記録する（fan-out）。トークンは 1 ターンぶんの消費なので、
     // 全通に載せると宛先数で二重計上される。先頭の 1 通にだけ載せる。
+    //
+    // 断り書きは記録時の言語で書く（Spec 35 D6）。全通で同じ値なのでループの外。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    let dropped_kind = incoming.attachments.first().map(|a| a.kind());
     let mut queued = Vec::with_capacity(deliveries.len());
     for (index, (to, message)) in deliveries.iter().enumerate() {
         let mut outgoing = AgentMessage::new(
             from.clone(),
             Endpoint::Agent { id: to.clone() },
-            // 依頼元のターンに画像が付いていたら、届かないことを本文で断る（D6）。
-            note_dropped_attachment(message, !incoming.attachments.is_empty()),
+            // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
+            note_dropped_attachment(message, dropped_kind, language),
             next_hop,
         );
         outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };

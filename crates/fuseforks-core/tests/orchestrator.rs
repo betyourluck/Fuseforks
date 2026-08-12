@@ -7856,6 +7856,123 @@ async fn a_second_attachment_is_rejected_before_anything_is_written() {
     );
 }
 
+/// 検証を通る最小の PDF（Spec 36）。
+fn tiny_pdf() -> Vec<u8> {
+    b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\n%%EOF\n".to_vec()
+}
+
+/// 検証を通る最小の mp4（ISO BMFF・受け入れブランド）。
+fn tiny_mp4() -> Vec<u8> {
+    let mut out = 32u32.to_be_bytes().to_vec();
+    out.extend_from_slice(b"ftypisom");
+    out.extend_from_slice(&[0u8; 16]);
+    out
+}
+
+/// **運べない種別は保存より前に断る**（Spec 36 D2）。
+///
+/// 決定的なのは 3 つが同時に成立すること — 専用のエラー符号が返り、
+/// **ファイルが 1 つも書かれず**、**ターンが 1 本も起きない**。
+/// 既定のテンプレートは OpenAI 互換で、動画を運べるのは Gemini だけ。
+#[tokio::test]
+async fn an_uncarried_kind_is_rejected_before_anything_is_written() {
+    let dir = TempDir::new("attach-carries");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    let err = orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "この動画は何？",
+            &[],
+            vec![fuseforks_core::AttachmentUpload {
+                file_name: "clip.mp4".into(),
+                bytes: tiny_mp4(),
+            }],
+        )
+        .await
+        .unwrap_err();
+
+    // 1. 専用の符号（「別のファイルにしろ」ではなく「別の宛先へ」の意味）。
+    assert_eq!(err.code(), "ATTACHMENT_NOT_CARRIED");
+    // 案内は carries の表から組み立てる — 表を変えると案内も動く。
+    assert!(
+        err.to_string().contains("gemini"),
+        "どの接続先なら運べるかが文面に出ること: {err}"
+    );
+    // 2. ディスクへ何も書かれていない（保存より前の門）。
+    assert!(
+        !dir.0.join("attachments").exists(),
+        "運べない添付はディスクへ書かれないこと"
+    );
+    // 3. ターンが 1 本も起きていない。
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    assert!(
+        messages(&events).is_empty(),
+        "拒否した発話は会話ログにも載らないこと"
+    );
+    assert!(
+        backend.requests.lock().unwrap().is_empty(),
+        "モデルへの往復が 1 度も起きないこと"
+    );
+}
+
+/// **運べる種別は今までどおり通る**（上の負の対照）。
+///
+/// 拒否だけを見ると「全部拒否する実装」でも緑になるので、同じ土台で
+/// 通る側を並べる（Spec 25 P2 の「通る側と対で見る」）。
+#[tokio::test]
+async fn a_carried_kind_still_reaches_the_model() {
+    let dir = TempDir::new("attach-carried");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "この PDF を読んで",
+            &[],
+            vec![fuseforks_core::AttachmentUpload {
+                file_name: "report.pdf".into(),
+                bytes: tiny_pdf(),
+            }],
+        )
+        .await
+        .expect("PDF は OpenAI 互換でも運べる");
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.requests.lock().unwrap();
+    let first_user = requests[0]
+        .messages
+        .iter()
+        .find(|m| !m.attachments.is_empty())
+        .expect("添付つきの発話がモデルへ渡ること");
+    assert_eq!(
+        first_user.attachments[0].media_type,
+        fuseforks_core::llm::PromptMediaType::Pdf
+    );
+    assert_eq!(
+        first_user.attachments[0].file_name, "report.pdf",
+        "PDF はファイル名を運ぶ（input_file / file part が要求する）"
+    );
+}
+
 /// 転送では画像が渡らず、そのことが届く本文の先頭で断られる（D6）。
 #[tokio::test]
 async fn a_transfer_notes_the_dropped_image_in_its_body() {
@@ -7897,8 +8014,11 @@ async fn a_transfer_notes_the_dropped_image_in_its_body() {
                 && m.to == Endpoint::Agent { id: b.clone() }
         })
         .expect("A から B への転送があること");
+    // 助数詞は「件」— 種別へ一般化した帰結（Spec 36 D6）。画像なら「枚」、
+    // 動画なら「本」と種別ごとに変えると、語の表が 1 つ増えて種別を足すたびに
+    // 腐る。**D5 で常に 1 件**なので、中立の助数詞で意味が落ちない。
     assert!(
-        forwarded.content.starts_with("（画像 1 枚は転送されません）"),
+        forwarded.content.starts_with("（画像 1 件は転送されません）"),
         "転送の本文が添付の脱落を先頭で断ること: {}",
         forwarded.content
     );

@@ -34,15 +34,23 @@ pub(super) async fn ask_agent(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
-    drops_attachment: bool,
+    drops_attachment: Option<crate::attachment::AttachmentKind>,
 ) -> CoreResult<String> {
-    // 依頼元のターンに画像が付いていたら、届かないことを本文で断る（D6）。
+    // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
+    // System 行と同じく**記録時の言語**で書く（Spec 35 D6）。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     let question = note_dropped_attachment(
         call.args
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or_default(),
         drops_attachment,
+        language,
     );
 
     let next_hop = hop.saturating_add(1);
@@ -197,8 +205,17 @@ pub(super) async fn run_plan(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
-    drops_attachment: bool,
+    drops_attachment: Option<crate::attachment::AttachmentKind>,
 ) -> String {
+    // 断り書きは記録時の言語で書く（Spec 35 D6）。波の全タスクで同じ値なので
+    // ループの外で 1 回だけ引く。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
         return "plan には tasks（依頼の配列）が必要です。何も配送していません。".to_owned();
@@ -236,8 +253,11 @@ pub(super) async fn run_plan(
                  2 件目は次の波で頼んでください。何も配送していません。"
             );
         }
-        // 依頼元のターンに画像が付いていたら、届かないことを各依頼の本文で断る（D6）。
-        wave_tasks.push((target, note_dropped_attachment(message, drops_attachment)));
+        // 依頼元のターンに添付が付いていたら、届かないことを各依頼の本文で断る（D6）。
+        wave_tasks.push((
+            target,
+            note_dropped_attachment(message, drops_attachment, language),
+        ));
     }
 
     // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す

@@ -61,6 +61,15 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// 全ワイヤ。`carries` の表を横断して読むとき（案内文の組み立て・検査）に使う。
+    pub const ALL: [Self; 5] = [
+        Self::OpenAiCompat,
+        Self::Anthropic,
+        Self::Gemini,
+        Self::XaiResponses,
+        Self::OpenAiResponses,
+    ];
+
     /// base URL からワイヤプロトコルを推定する。
     ///
     /// 明示設定があればそちらが優先で、これは未設定時の既定。
@@ -108,6 +117,21 @@ impl Provider {
             // 動画は Gemini ネイティブだけ。
             (Self::Gemini, K::Video) => true,
             (_, K::Video) => false,
+        }
+    }
+
+    /// ログと計器に出す安定した名前。
+    ///
+    /// **`turn:` 行の `backend=`（Spec 34）と `attachment kind:` 行の
+    /// `provider=`（Spec 36）が同じ語を使う** — 表を 2 箇所に持つと、
+    /// 片方だけ直したときに同じログの中で別名になる。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompat => "openai-compat",
+            Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
+            Self::XaiResponses => "xai-responses",
+            Self::OpenAiResponses => "openai-responses",
         }
     }
 
@@ -442,13 +466,7 @@ fn has_webp_attachments(req: &ChatRequest) -> bool {
 #[async_trait]
 impl LlmBackend for HttpLlmBackend {
     fn name(&self) -> &str {
-        match self.config.provider {
-            Provider::OpenAiCompat => "openai-compat",
-            Provider::Anthropic => "anthropic",
-            Provider::Gemini => "gemini",
-            Provider::XaiResponses => "xai-responses",
-            Provider::OpenAiResponses => "openai-responses",
-        }
+        self.config.provider.as_str()
     }
 
     /// 指数バックオフつきで往復する。

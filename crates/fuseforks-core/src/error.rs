@@ -184,10 +184,31 @@ pub enum CoreError {
     /// 画面の辞書が「どちらの上限の話か」を区別できなくなる。共有するのは
     /// WebP のマジックバイト判定（`attachment::is_webp`）だけ。
     // 文言は UI の語彙で書く（このメッセージは利用者に見える）。
-    #[error("画像を受け付けられません: {reason}")]
+    #[error("添付を受け付けられません: {reason}")]
     InvalidAttachment {
         /// 拒否した具体的な理由。
         reason: String,
+    },
+
+    /// 宛先のワイヤがその種別の添付を運べない（Spec 36 D2 / `carries` 表）。
+    ///
+    /// **[`Self::InvalidAttachment`] と別の変種にする — 人の次の手が違う。**
+    /// あちらは「そのファイルが条件を満たさない」（次の手 = 別のファイル）、
+    /// こちらは「ファイルは正しいが宛先が受けない」（次の手 = **別の宛先**）。
+    /// 1 つに畳むと、画面が「小さくすれば送れる」と読める文言しか出せなくなる
+    /// （`AGENT_NOT_FOUND` と `EXTERNAL_RECEPTION_UNSET` を分けたのと同じ判断）。
+    ///
+    /// **これは構造の話で、モデルの受理とは層が違う。** ワイヤに書ける形が
+    /// あっても受理しないモデルは 400 を返し、そちらは画面へ別経路で出る。
+    // 文言は UI の語彙で書く（このメッセージは利用者に見える）。
+    #[error("この宛先へは{kind}を送れません（接続先: {provider}）。{hint}")]
+    AttachmentNotCarried {
+        /// 種別の表示名（画像 / 音声 / 動画 / PDF）。
+        kind: String,
+        /// ワイヤの名前（`turn:` 行の `backend=` と同じ語）。
+        provider: String,
+        /// 次の手（どの接続先なら運べるか）。
+        hint: String,
     },
 
     /// 利用者の呼び名が受け入れ条件を満たさない（`user_identity_contract` 凍結 4）。
@@ -296,6 +317,7 @@ impl CoreError {
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
             Self::InvalidIcon { .. } => "INVALID_ICON",
             Self::InvalidAttachment { .. } => "INVALID_ATTACHMENT",
+            Self::AttachmentNotCarried { .. } => "ATTACHMENT_NOT_CARRIED",
             Self::InvalidUserName { .. } => "INVALID_USER_NAME",
             Self::ExternalReceptionUnset => "EXTERNAL_RECEPTION_UNSET",
             Self::ExternalBusy => "EXTERNAL_BUSY",

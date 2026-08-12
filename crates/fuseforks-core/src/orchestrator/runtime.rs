@@ -262,14 +262,25 @@ impl Orchestrator {
             .await
     }
 
-    /// 添付画像つきのユーザー発話を投入する（Spec 23）。
+    /// 添付つきのユーザー発話を投入する（Spec 23 = 画像 / Spec 36 = 多モーダル）。
     ///
-    /// 画像はここで検証して `{workspace}/attachments/` へ保存し、発話には
-    /// **参照だけ**を載せる。上限は 1 発話 1 枚（D5）。
+    /// 添付はここで検証して `{workspace}/attachments/` へ保存し、発話には
+    /// **参照だけ**を載せる。上限は 1 発話 1 件（D5）。
+    ///
+    /// # 門は 2 つあり、順序が意味を持つ（Spec 36 rev2）
+    ///
+    /// 1. **`carries`** — 宛先のワイヤがその種別を運べるか。**保存より前**に
+    ///    見る。落ちたら保存も記録もせず、ターンも起こさない（計器 1 行だけ残る）
+    /// 2. **`save` の検証** — 形式・サイズが条件を満たすか
+    ///
+    /// **1 が先なのは、運べない添付をディスクへ書く理由が無いから。**
+    /// 逆にすると、拒否した添付のファイルが GC まで残る。
     ///
     /// # Errors
-    /// 2 枚以上・検証に落ちる画像は [`CoreError::InvalidAttachment`]
-    /// （何も書かず、発話も投入しない）。
+    /// - 2 件以上・検証に落ちる添付は [`CoreError::InvalidAttachment`]
+    /// - 宛先のワイヤが運べない種別は [`CoreError::AttachmentNotCarried`]
+    ///
+    /// どちらも**何も書かず、発話も投入しない**。
     pub async fn send_user_message_with_attachments(
         &self,
         to: &AgentId,
@@ -279,11 +290,18 @@ impl Orchestrator {
     ) -> CoreResult<()> {
         if uploads.len() > 1 {
             return Err(CoreError::InvalidAttachment {
-                reason: "1 つの発話に添付できる画像は 1 枚までです".to_owned(),
+                reason: "1 つの発話に添付できるのは 1 件までです".to_owned(),
             });
         }
+        // 宛先のワイヤがこの種別を運べるか（Spec 36 D2）。
+        //
+        // **添付が無ければテンプレートを 1 回も引かない** — 添付を使わない村の
+        // 経路が 1 ミリも変わらないことが Goal（使わない人に払わせない）の機械側。
+        if !uploads.is_empty() {
+            self.reject_uncarried_attachments(to, &uploads).await?;
+        }
         // 保存は発話の記録より**前**。検証に落ちたら発話ごと拒否する —
-        // 「画像なしで送信されました」は、送った人の意図と黙って食い違う。
+        // 「添付なしで送信されました」は、送った人の意図と黙って食い違う。
         let mut attachments = Vec::with_capacity(uploads.len());
         for upload in &uploads {
             attachments.push(
@@ -311,6 +329,94 @@ impl Orchestrator {
         // 利用者の発話は参加者を数えない — 自動要約は予定の発火だけの機能で、
         // 人が話している間に履歴を畳むのは「押していない操作」になる。
         deliver(&self.shared, to, message, budget, None).await
+    }
+
+    /// 「どの接続先なら運べるか」を **`carries` の表から組み立てる**（Spec 36 D2）。
+    ///
+    /// **案内文に接続先の名前を書き下さない。** 書き下すと表を変えたときに
+    /// 案内だけが古くなり、「送れないと言われたので Gemini にしたのに送れない」
+    /// という形の嘘になる。表から引けば、表の改訂に案内が自動で追随する。
+    fn carries_hint(
+        kind: crate::attachment::AttachmentKind,
+        language: crate::world::Language,
+    ) -> String {
+        let carriers: Vec<&str> = crate::llm::Provider::ALL
+            .iter()
+            .filter(|provider| provider.carries(kind))
+            .map(|provider| provider.as_str())
+            .collect();
+        match (carriers.is_empty(), language) {
+            (true, crate::world::Language::Ja) => {
+                "この種別を運べる接続先はありません。".to_owned()
+            }
+            (true, crate::world::Language::En) => {
+                "No connection can carry this kind of attachment.".to_owned()
+            }
+            (false, crate::world::Language::Ja) => format!(
+                "運べるのは {} です。その接続先を使うサーヴァントへ送ってください。",
+                carriers.join(" / ")
+            ),
+            (false, crate::world::Language::En) => format!(
+                "It can be carried by {}. Send it to a servant using one of those.",
+                carriers.join(" / ")
+            ),
+        }
+    }
+
+    /// 宛先のワイヤが運べない添付を、**保存より前に**断る（Spec 36 D2）。
+    ///
+    /// 判定は `carries` の 1 実装だけを読む。**形式の妥当性はここで見ない** —
+    /// マジックとサイズは `AttachmentStore::save` の述語が持っており、同じ検査を
+    /// 2 箇所に書くと片方だけ古くなる。形式が判らない添付はこの門を素通りし、
+    /// `save` が断る（**種別が引けない以上、carries の問いが立たない**）。
+    ///
+    /// 計器 `attachment kind:` は**通った側にも出す** — 「行が出ない」だけを
+    /// 証拠にすると、計器が空振りしている場合と区別できない（#90）。
+    async fn reject_uncarried_attachments(
+        &self,
+        to: &AgentId,
+        uploads: &[AttachmentUpload],
+    ) -> CoreResult<()> {
+        let provider = {
+            let world = self.shared.world.read().await;
+            let record = world.agent(to)?;
+            world
+                .template(&record.spec.model_template_id)?
+                .effective_provider()
+        };
+        let language = self
+            .shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+
+        for upload in uploads {
+            let Some(format) = crate::attachment::detect_format(&upload.bytes) else {
+                continue; // 形式不明は save の検証が断る
+            };
+            let kind = format.kind();
+            if provider.carries(kind) {
+                note!(
+                    "attachment kind: agent={to} kind={} provider={} outcome=ok",
+                    kind.as_str(),
+                    provider.as_str(),
+                );
+                continue;
+            }
+            note!(
+                "attachment kind: agent={to} kind={} provider={} outcome=rejected",
+                kind.as_str(),
+                provider.as_str(),
+            );
+            return Err(CoreError::AttachmentNotCarried {
+                kind: super::attachment_kind_label(kind, language).to_owned(),
+                provider: provider.as_str().to_owned(),
+                hint: Self::carries_hint(kind, language),
+            });
+        }
+        Ok(())
     }
 
     // ---- 外部からの依頼（Spec 25） -------------------------------------------

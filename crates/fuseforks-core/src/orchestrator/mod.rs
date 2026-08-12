@@ -1394,15 +1394,53 @@ async fn load_turn_attachments(
     loaded
 }
 
-/// 委譲・転送で添付が落ちることを、届く本文の先頭で断る（Spec 23 D6）。
+/// 添付の種別をモデルへ見せる語にする（Spec 36。**二言語** — Spec 35）。
 ///
-/// `ask` / `plan` / `transfer_to_*` は画像を運ばない。黙って落とすと、
-/// 転送先がなぜ画像を見られないのか誰にも診断できない — 「歯止めの先に
-/// 道を書く」（#44）と Spec 12 P4 の「飛ばした相手が居たら必ず書く」の同型。
-fn note_dropped_attachment(message: &str, incoming_had_attachments: bool) -> String {
-    if incoming_had_attachments {
-        format!("（画像 1 枚は転送されません）\n\n{message}")
-    } else {
-        message.to_owned()
+/// [`AttachmentKind::as_str`] はログ用の安定した識別子で、こちらは
+/// **モデルと利用者が読む語**。2 つを兼ねると、ログの grep 語が翻訳で動く。
+pub(super) fn attachment_kind_label(
+    kind: crate::attachment::AttachmentKind,
+    language: crate::world::Language,
+) -> &'static str {
+    use crate::attachment::AttachmentKind as K;
+    use crate::world::Language as L;
+    match (kind, language) {
+        (K::Image, L::Ja) => "画像",
+        (K::Audio, L::Ja) => "音声",
+        (K::Video, L::Ja) => "動画",
+        (K::Pdf, L::Ja) => "PDF",
+        (K::Image, L::En) => "image",
+        (K::Audio, L::En) => "audio",
+        (K::Video, L::En) => "video",
+        (K::Pdf, L::En) => "PDF",
+    }
+}
+
+/// 委譲・転送で添付が落ちることを、届く本文の先頭で断る（Spec 23 D6 /
+/// Spec 36 で種別語へ一般化）。
+///
+/// `ask` / `plan` / `transfer_to_*` は**宛先が運べる種別でも**添付を渡さない
+/// （Spec 36 D6 の分業 — `carries` を読むのは送信入口だけ）。根拠は D1 と同じ
+/// 因果で、転送で渡すと 1 回の添付が N ターンの支払いに化け、「払う量と人の
+/// 操作の 1 対 1 対応」が切れる。
+///
+/// 黙って落とすと、転送先がなぜ添付を見られないのか誰にも診断できない —
+/// 「歯止めの先に道を書く」（#44）と Spec 12 P4 の「飛ばした相手が居たら
+/// 必ず書く」の同型。**実機では診断だけでなく回復にも効いた**（送る側が
+/// 断り書きを読んで、画像の内容をテキストへ書き起こして渡した）。
+fn note_dropped_attachment(
+    message: &str,
+    dropped: Option<crate::attachment::AttachmentKind>,
+    language: crate::world::Language,
+) -> String {
+    let Some(kind) = dropped else {
+        return message.to_owned();
+    };
+    let label = attachment_kind_label(kind, language);
+    match language {
+        crate::world::Language::Ja => format!("（{label} 1 件は転送されません）\n\n{message}"),
+        crate::world::Language::En => {
+            format!("(the attached {label} is not forwarded)\n\n{message}")
+        }
     }
 }
