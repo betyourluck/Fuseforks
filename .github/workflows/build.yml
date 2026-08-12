@@ -110,6 +110,17 @@ jobs:
       # Tauri アプリをビルドし、タグの GitHub Release に installer を添付する。
       # projectPath で src-tauri の親を指す。tagName を渡すと Release を作成/更新し、
       # 3 OS の bundle が同じ Release の Assets に集まる（永続リンクになる）。
+      #
+      # **releaseDraft: true は片肺公開を塞ぐためのもの**（2026-08-13）。
+      # このジョブは fail-fast: false の matrix で **3 OS が独立に**ここを呼ぶので、
+      # false だと **1 OS 通っただけで Release が public になる**。実際 2 回踏んだ:
+      #   - v0.1.3 (e935d2d): mac / ubuntu が赤、**Windows だけ完走して公開された**
+      #   - v0.1.5 (06489ce): ubuntu がランナーの DNS で落ちた
+      #     （index.crates.io が引けず依存解決の前で終了）。このときは
+      #     **落ちた側が先だったので気づけた** — 順番が逆なら欠けたまま出ていた
+      # draft なら 3 OS 分の Assets が揃ったのを人が見てから publish できる。
+      # **タグは push した時点で残る**ので、publish しないことは「その版が
+      # 存在しなかった」を意味しない（v0.1.2 の破棄で確かめた線引き）。
       - name: Build Tauri app (+ GitHub Release)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -119,7 +130,8 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Outcasts Fuseforks ${{ github.ref_name }}"
           releaseBody: "各 OS の installer を下の Assets からダウンロードしてください。"
-          releaseDraft: false
+          # **人が publish する。** 上のコメントの理由による。
+          releaseDraft: true
           prerelease: false
 
       # **artifact のアップロードは意図的に置いていない。** installer は上の

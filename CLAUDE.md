@@ -738,8 +738,11 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **そのとき Windows だけが完走して Release が public になった** —
   `build.yml` は `fail-fast: false` の matrix で**各ジョブが独立に
   `releaseDraft: false` の `tauri-action` を呼ぶ**ので、**1 OS 通れば公開される**。
-  タグと Release を消して打ち直した。**片肺公開を塞ぐかは未決**
-  （`releaseDraft: true` にして人が publish する案が最小）
+  タグと Release を消して打ち直した。~~**片肺公開を塞ぐかは未決**~~
+  → **2026-08-13 に決着。`releaseDraft: true` へ変えた**（`v0.1.5` で 2 回目を
+  踏んだため。**同じ罠を 2 回踏んだら処方を注意から構造へ移す** = #67 の規律）。
+  **以後、Release は draft で作られ、人が publish する** — 3 OS 分のアセットが
+  揃ったことを見てから出せる。**効くのは次のタグから**
 - **`v0.1.4` = `5fc4655`（2026-08-12。18 コミット）— Spec 35 Done（モデルへ届く面の
   二言語化）+ `agent-core` → `fuseforks-core` 改名 + `run` の stdin 修正**
   （Windows OpenSSH の 107 秒ぶら下がり解消）。**1 度目（`04a39ae`）は
