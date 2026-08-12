@@ -1003,7 +1003,7 @@ enums:
       (Option 化は redb の既存レコードと非互換)、保証は送信入口の検査で持ち、
       「2 件目は拒否」をテストで凍結して「Vec だから複数対応」の誤読を機械で止める。
 
-      ### carries 表 (凍結。P0 の probe 18 発で全 20 マスを観測 2026-08-12)
+      ### carries 表 (凍結。Spec 36 の probe 18 発で 20 マス / Spec 37 で 6 行目)
 
       **「どのワイヤがどの種別を運べるか」の述語 carries(provider, kind) を
       1 実装で持つ。** 読み手は 送信入口の拒否 / フロントの警告表示 (Rust の表を
@@ -1015,6 +1015,7 @@ enums:
         | gemini            |  ✓    |  ✓    |  ✓    |  ✓  |
         | xai_responses     |  ✓    |  ✗    |  ✗    |  ✓  |
         | open_ai_responses |  ✓    |  ✗    |  ✗    |  ✓  |
+        | meta_responses    |  ✓    |  ✓    |  ✓    |  ✓  |
 
       - 全マス**内容照合**で判定した (音声 = TTS の合言葉 / 動画 = 色の遷移 /
         PDF = 本文の固有文字列 / 画像 = 矩形の色。HTTP 200 では「受理して無視」と
@@ -1065,7 +1066,9 @@ enums:
 
       4 種別すべてが実機を通った。画像 (Responses)・音声/動画 (Gemini ネイティブ)・
       PDF (Anthropic の document / OpenAI 互換 / Responses)。**音声と動画を運ぶのは
-      Gemini ネイティブだけ**なので、この 2 件が凍結 7 を覆した判断の裏取りになる。
+      ネイティブだけ**なので、この 2 件が凍結 7 を覆した判断の裏取りになる。
+      **Spec 37 で Meta が 2 本目のネイティブとして加わり、表は 24 マスになった**
+      (4 種別 × 6 ワイヤ)。
 
       **運べない組み合わせの拒否は三点が同時に揃った** (ルナ = Responses へ動画)。
       画面に carries の表から組み立てた案内、ディスクに mp4 が増えない、
@@ -4594,7 +4597,7 @@ llm_wire:
         responses_input へ input_image / input_file を足し、「ネイティブを選ぶと
         画像が黙って落ちる」3 例 (gemini / xai_responses / ここ) を解消する。
         述語 carries は attachment_contract の Spec 36 改訂の節が正
-        (P0 で全 20 マス実測済み。実装は Spec 36 P2)。
+        (Spec 36 P0 で 20 マス / Spec 37 P0 で 6 行目。実装は Spec 36 P2 / Spec 37 P1)。
         旧記述が予告した「先に作ると作り直しになる」は起きなかった —
         述語の設計は Spec 36 rev2 で行われ、3 例の記録がその材料になった
     intentionally_unread: |

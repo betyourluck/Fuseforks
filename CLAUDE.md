@@ -209,6 +209,51 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 
 ## 現在地（2026-08-13 更新）
 
+**マイルストーン = [Spec 37](specs/37_meta-responses.md)（Meta の Responses ワイヤ）は
+P0〜P1 + P3 が着地。残るのは P4 の一部と P5 の実機**（この節と `data_contract` は書いた）。
+**未 push が 18 コミット。**
+
+**6 本目のワイヤ `Provider::MetaResponses`**（`api.meta.ai/v1/responses`）。
+起点は利用者 —「**データを学習に使われるという条件で破格の安さ**。秘匿情報を渡さない
+ように注意すればかなり使える。さらに Gemini のように web_search が API では使える」。
+
+**probe 24 発を先に撃ってから設計した。文書は 4 回続けて実装と食い違っている**
+（Spec 23 の WebP / Spec 31 の legacy 410 / Spec 36 の xAI PDF / 今回 2 件）。
+
+- **`stream` は不要**（提示された curl の `"stream": true` と
+  `Accept: text/event-stream` は**どちらも省いて 200**）。**1 発目で規模が決まった** —
+  必須なら SSE をクライアント核へ入れる話で、再試行・打ち切り・トークン計上が
+  全部その上に乗るので桁が変わっていた
+- **citations が返る。しかも xAI より強い** — `start_index` / `end_index` が
+  **0 ではなく実区間**（xAI は 77/77 が全部 0 = メッセージ単位）
+- **4 種別すべてを運ぶ**（Gemini に次ぐ 2 本目）。**動画は予測を覆した** —
+  payload 無しの `input_video` が「`video_url` か `file_id` が要る」と**名指しで 400**
+  を返したので撃てた。OpenAI Responses からの類推では ✗ と書いていた
+- **`tool_choice` は `"auto"` のみ**（Kataribe で見た制約の再演）。
+  型から欄ごと外した — **送れる形が無いほうが強い**（#77 と同じ）
+- **受理集合は列挙されない**（第 3 の様式）。OpenAI / Anthropic は全列挙、
+  xAI は untagged enum の 422、Meta は「どの型にも一致しない」だけ。
+  **Spec 34 の手筋が効かない**ので、未測定の欄は送らない
+- **`/v1/files` に添付が期限なしで保存される**（`expires_at: null`。P0b の最重要発見）。
+  **互換の口で送った画像も残る**ので Responses に限らない。削除口は在り実際に消えるが、
+  **一覧は最大 20 秒遅れる**（真実は個別 GET 側 — 1 回目の観測だけで
+  「削除は効かない」と結論しかけた）
+
+**自分が Spec 36 で作った罠が、6 値目を足した瞬間に出た** — `Provider::carries` を
+`match (self, kind)` の**種別側ワイルドカード**で書いていたので、新 variant が
+`audio=false` / `video=false` を黙って受け取る形だった（実測は全 ✓）。しかも doc には
+「網羅で書くのは 6 値目を足す人へ問いを出すため」と書いてあり、**その主張自体が嘘**。
+provider ごとに 1 腕の配列リテラルへ直したら、**今回コンパイラが実際に指した**。
+**一般化: 「コンパイラが指す」と doc に書いたら、variant を 1 つ足して実際に落ちるか
+確かめる**（網羅性の主張は、網羅していない書き方でも同じ文章で書ける）。
+
+**TS 側は union と `Record` で網羅性が割れる** — `Provider` に 6 値目を足して落ちたのは
+`carries.ts` の `Record<Provider,…>` **だけ**で、`providerSkills.ts` は黙って通った。
+**手で数えたのは 5 箇所**（`DEFAULT_BASE_URL` / `ALSO_SERVES_COMPAT` / 判定と戻り値 /
+`anyOffered` / 選択肢）。**`anyOffered` が最も静か** — 足さなくても型は通り、
+トグルは描かれるのに**見出しの区切りだけが消える**。
+
+
 **マイルストーン = [Spec 36](specs/36_multimodal-attachments.md)（多モーダルの添付）は
 P0〜P4 + P6 が着地。残るのは P5 の一部**（この節と `data_contract` は書いた）。
 **未 push が 12 コミット**（`v0.1.4` = `5fc4655` から）。
@@ -3527,6 +3572,21 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- Spec 37（Meta の Responses ワイヤ — web 検索と 4 種別の添付）:
+  **rev2 承認 → P0 / P0b / P1 / P3 完了。残は P4 の一部と P5 の実機**。
+  **probe 24 発を先に撃ってから起票した**（文書が 4 回続けて実装と食い違っている）。
+  査読 8 点 → 採用 6 / 訂正して採用 2 / 反証 0。詳細は上の「現在地」と Spec が正。
+
+  **D2 の分割線が最も重かった** — Spec 34 D2 の「共有するのは要素の型が同じだと
+  実測しているから」という前提が、Meta の `input_audio` / `input_video` で崩れた。
+  着地は**関数ポインタを adapter が渡す形**（`encode(messages, part_for)`）。
+  `part_for` は **`carries` を読まない**ので、`adapters_match_the_carries_table` が
+  同語反復にならず網が生きたまま残る。
+
+  **ミューテーションで網 2 本の役割が実証できた**（予測を 1 つ外した）—
+  adapter だけを変えると一致テストが赤、**adapter と表を同時に変えると一致テストは
+  緑で逐語凍結だけが赤**。「両方を同時に変えると通ってしまう」を塞ぐために
+  逐語凍結を別に置いた理由が、そのまま出た。
 - Spec 36（多モーダルの添付 — 音声・動画・PDF）: **rev2 承認 → P0〜P4 + P6 完了。
   残は P5 の README 日英 / DETAIL 日英**（この CLAUDE.md と `data_contract` は書いた）。
   起票から実機まで 2 日。**査読 11 点 → 採用 8 / 訂正して採用 3 / 反証 0**。

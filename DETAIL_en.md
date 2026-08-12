@@ -318,11 +318,15 @@ PDF against a proper noun in the body).
 | **Gemini native** | ✓ | **✓** | **✓** | ✓ |
 | xAI Responses | ✓ | — | — | ✓ |
 | OpenAI Responses | ✓ | — | — | ✓ |
+| **Meta native** | ✓ | **✓** | **✓** | ✓ |
 
-**Only the Gemini native path carries audio and video.** Spec 23 had frozen "do not
-implement attachments on the native path"; **that premise (images travel over the
-compatible endpoint anyway) disappeared from the side of the kinds**, so Spec 36
-reversed it.
+**Only the two native paths carry audio and video** (Gemini and Meta). Spec 23 had
+frozen "do not implement attachments on the native path"; **that premise (images travel
+over the compatible endpoint anyway) disappeared from the side of the kinds**, so Spec 36
+reversed it. **Meta became the second one in Spec 37**, and **video passed against the
+prediction** — reasoning by analogy from OpenAI Responses would have written ✗, but a
+payload-less `input_video` came back with a named 400 (`requires video_url or file_id`),
+which is what made the probe possible.
 
 **Combinations that cannot travel are warned about on paste, and refused by the entrance
 on send** — and when refused, **nothing is stored and no turn starts** (not a single
@@ -376,7 +380,7 @@ to tell why**, so the fact alone is kept.
 **No tool is added.** An attachment is a kind of input, not a capability, so neither the
 tool schemas nor the system prompt grow by a single character. For utterances without an
 attachment, the wire output is **byte-for-byte identical** to what it was before this
-feature existed (tests pin this for **all five wires**). In a village that never attaches
+feature existed (tests pin this for **all six wires**). In a village that never attaches
 anything, nothing sent and nothing paid changes.
 
 ### Where attachments do not go
