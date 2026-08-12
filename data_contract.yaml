@@ -1379,7 +1379,16 @@ enums:
           選んでいても上書きする** — /v1/chat/completions は function tools と
           思考の併用を 400 で拒否し、キーの省略では回避できない (省略は
           サーバ既定の思考として扱われる)。tools を送らない周では触らない
-      値の丸めも adapter が持つ (xhigh / max を受け付けない先へは high)。
+      値の丸めも adapter が持つ。**丸め先はプロバイダの天井で決まるので 1 つではない**
+      (2026-08-13 に訂正 — 旧記述は「high へ」と 1 つだけ書いていた):
+        - openai_compat: xhigh / max を受け付けない先があるので **high** へ落とす。
+          **これは本当に段を落としている**
+        - meta_responses: `max` の段が存在しないので **xhigh** へ写す
+          (meta_effort)。**xhigh が Meta の天井なので、丸めというより同義への写像**
+        - openai_responses: canonical の 5 値がすべて通るので **丸めない**
+          (Spec 34 P1 の実測)
+        - xai_responses: **そもそも effort を読まない** (encode に req.effort が
+          1 度も現れない)。「丸めない」ではなく「送らない」
       すなわち画面の段階は要求であって保証ではない (failures.md #77)。
   CredentialSource:
     values:
@@ -4698,15 +4707,39 @@ llm_wire:
       payload 無しの `{"type":"input_video"}` が
       `requires video_url or file_id` と**名指しで 400 を返した**ので撃てた。
 
-      ## 受理集合は列挙されない (第 3 の様式)
+      ## 受理集合の列挙は層で違う (2026-08-13 に訂正)
 
-      誤ったツール型を送っても `tools[0] did not match any supported type` だけで
-      **候補を列挙しない** (OpenAI / Anthropic は全列挙、xAI は untagged enum の
-      422)。**Spec 34 の「400 が受理集合を教えてくれる」手筋はこのワイヤでは
-      使えない。** ただし **content part と tool の欄は 1 つずつ名指しで教える**
+      **型の層は列挙しない。** 誤ったツール型を送っても
+      `tools[0] did not match any supported type` だけで**候補を列挙しない**
+      (OpenAI / Anthropic は全列挙、xAI は untagged enum の 422)。
+      ただし **content part と tool の欄は 1 つずつ名指しで教える**
       (`tools[].max_results is not supported for Responses web_search` /
       `input_audio content part requires input_audio, audio_url, or file_id`)。
-      **未知の欄は 1 つずつ名指しさせるのが唯一の手。**
+      **未知の型は 1 つずつ名指しさせるのが唯一の手。**
+
+      **スカラの enum 欄は全列挙する。** `reasoning.effort` に `max` を送ると
+      `` unknown variant `max`, expected one of `none`, `minimal`, `low`,
+      `medium`, `high`, `xhigh` `` が返り、**Spec 34 の「誤った値を 1 つ送ると
+      400 が全部列挙する」手筋がそのまま効く** (実測 2026-08-13 / P5)。
+
+      **旧記述は「Meta は受理集合を列挙しない (第 3 の様式)」と書いていた。**
+      観測したのは `tools[0]` と content part = **どちらも型の層**で、
+      そこから欄全般へ広げた誤り。**部分集合で観測した性質を集合全体の性質として
+      書いた形** (#91 と同族 — あちらは述語、こちらは散文)。
+
+      ## effort は max だけ受理されない
+
+      canonical の 5 段 (low / medium / high / xhigh / max) のうち **`max` の段が
+      Meta には無い** (梯子は none / minimal / low / medium / high / xhigh)。
+      `meta_responses::meta_effort` が **`max` -> `xhigh`** へ写す。
+
+      **これは丸めというより同義への写像。** `xhigh` が Meta の天井なので
+      「最大」を選んだ意図はそのまま満たされ、失うものが無い。
+      `openai_compat` の `xhigh` / `max` -> `high` は本当に段を落としているので、
+      同じ「丸め」でも性質が違う。**落とす先はプロバイダの天井で決まる。**
+
+      **写像を通さないと個体ごと落ちる** — 400 は `fatal=true` なので
+      `stops_the_agent()` が真になり、稼働が降りる (実測 2026-08-13)。
 
       ## web_search の options は実在する
 
