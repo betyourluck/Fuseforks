@@ -1114,7 +1114,8 @@ pub struct MetaResponsesRequest {
 /// `summary` / `context` / `mode` を**このワイヤで測っていない**から。
 #[derive(Debug, Serialize)]
 pub struct MetaReasoning {
-    /// `low` / `medium` / `high` など。canonical の値をそのまま送る。
+    /// `low` / `medium` / `high` / `xhigh`。**canonical をそのまま入れない** —
+    /// `max` は受理されないので `meta_responses::meta_effort` で丸めてから入れる。
     pub effort: &'static str,
 }
 

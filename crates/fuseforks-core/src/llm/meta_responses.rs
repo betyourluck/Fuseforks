@@ -11,14 +11,18 @@
 //!   この村に SSE は 1 行も無いので、ここが必須なら規模が桁で変わっていた
 //! - **`tool_choice` は `"auto"` のみ** — `none` / `required` / 名指しは 400。
 //!   [`wire::MetaResponsesRequest`] は**欄そのものを持たない**ので送りようがない
-//! - **受理集合は列挙されない** — 誤った型を送っても候補が返らない
-//!   （OpenAI / Anthropic は全列挙、xAI は untagged enum の 422）。
-//!   **未知の欄は 1 つずつ名指しさせるしかない**ので、測っていない欄は送らない
+//! - **受理集合を列挙するかは層で違う**（2026-08-13 に前半を実測で訂正）。
+//!   **スカラの enum 欄は全列挙する** — `reasoning.effort: max` を送ったら
+//!   `` expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` ``
+//!   が返り、Spec 34 の「誤った値を 1 つ送ると 400 が教える」手筋がそのまま効いた。
+//!   **列挙しないのは content の型のほう**（`input_video` は「どの型にも一致しない」
+//!   としか言わない）。**旧記述は content 側の観察を欄全般へ広げていた。**
+//!   測っていない**型**は送らない、が正しい射程
 //! - **4 種別すべてを運ぶ**（Gemini に次ぐ 2 本目）。`input_audio` と
 //!   `input_video` はこのワイヤだけが持つ
 
 use super::canonical::{
-    ChatRequest, ChatResponse, Finish, Grounding, GroundingEngine, GroundingSource,
+    ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingEngine, GroundingSource,
     PromptAttachment, ToolCall, ToolChoice, Usage,
 };
 use super::error::LlmError;
@@ -72,6 +76,37 @@ pub(super) fn attachment_part(
     }
 }
 
+/// canonical の思考段階 → Meta が受理する値。
+///
+/// **`max` だけがはみ出す。** 受理集合はサーバー自身が 400 で全列挙した
+/// （2026-08-13 実機）:
+///
+/// ```text
+/// `reasoning.effort`: unknown variant `max`,
+///  expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
+/// ```
+///
+/// **丸め先が `high` ではなく `xhigh` なのは、Meta の最上位が `xhigh` だから。**
+/// `openai_compat` が `high` へ落とすのは、そちらの相手が `xhigh` を受けないため
+/// （同じ「丸め」でも落とす先はプロバイダの天井で決まる）。
+///
+/// `none` / `minimal` は canonical に対応する段階が無いので送らない。**送れない
+/// 値があること自体は害ではない** — 害は、受理されない値を送れてしまうこと。
+///
+/// **`match` はワイルドカードを使わない。** 段階が 6 つ目になったとき、
+/// コンパイラにここを指させる（Spec 37 で `Provider::carries` が種別側の
+/// ワイルドカードで新 variant を黙って吸った、その裏返し）。
+fn meta_effort(effort: Effort) -> &'static str {
+    match effort {
+        Effort::Low => "low",
+        Effort::Medium => "medium",
+        Effort::High => "high",
+        Effort::XHigh => "xhigh",
+        // 受理されない唯一の値。天井へ寄せる。
+        Effort::Max => "xhigh",
+    }
+}
+
 /// canonical → Meta Responses wire。
 ///
 /// `use_tools` が偽、または `tool_choice` が [`ToolChoice::None`] のときは
@@ -109,10 +144,15 @@ pub fn encode(
         model: req.model.clone(),
         input: responses_input::encode(&req.messages, attachment_part),
         tools,
-        // **丸めない。** canonical の値をそのまま送る（`medium` は実測で通った）。
+        // `max` だけ `xhigh` へ丸める（[`meta_effort`] を参照）。**旧版はここで
+        // `e.as_str()` をそのまま送っており、「`medium` は実測で通った」から
+        // 全段階が通ると書いていた。** 1 値の実測を集合全体へ広げた誤りで、
+        // 実機の `max` が `fatal=true` の 400 で個体ごと落ちて分かった。
         // `openai_compat::reasoning_effort` を呼ばないのは openai_responses と同じ
         // 理由 — あの `"none"` 強制は chat/completions 固有の制約への対処。
-        reasoning: req.effort.map(|e| wire::MetaReasoning { effort: e.as_str() }),
+        reasoning: req.effort.map(|e| wire::MetaReasoning {
+            effort: meta_effort(e),
+        }),
         max_output_tokens: req.max_tokens,
         temperature: req.temperature,
     }
@@ -280,4 +320,50 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
         grounding,
         reasoning_summary,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::ChatMessage;
+
+    /// Meta 自身が 400 で全列挙した受理集合（2026-08-13 実機）。
+    ///
+    /// **この配列は実測の写し。** Spec 37 は「Meta は受理集合を列挙しない」と
+    /// 凍結したが、それが当たるのは content の型（`input_video` は「どの型にも
+    /// 一致しない」としか言わない）で、**スカラの enum 欄は全列挙する**。
+    const ACCEPTED: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+    #[test]
+    fn every_effort_maps_into_the_set_meta_accepts() {
+        for effort in [
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ] {
+            let sent = meta_effort(effort);
+            assert!(
+                ACCEPTED.contains(&sent),
+                "{effort:?} が受理されない値 `{sent}` になる（400 でターンごと落ちる）"
+            );
+        }
+        assert_eq!(meta_effort(Effort::Max), "xhigh", "max は天井へ寄せる");
+    }
+
+    /// **`encode` が実際に丸めを通ること。**
+    ///
+    /// 述語だけ検査しても、`encode` が `e.as_str()` のままなら 400 は再発する。
+    /// 提示側だけ守って判定側を守らない形（Spec 27 P1 で踏んだ穴）を塞ぐ。
+    #[test]
+    fn encode_routes_effort_through_the_clamp() {
+        let mut req = ChatRequest::plain("m", vec![ChatMessage::user("問い")], 64);
+        req.effort = Some(Effort::Max);
+        assert_eq!(
+            encode(&req, true, false).reasoning.map(|r| r.effort),
+            Some("xhigh"),
+            "encode が丸めを通していない（max が素通りしている）"
+        );
+    }
 }
