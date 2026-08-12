@@ -14,6 +14,8 @@
 
 use super::*;
 
+use crate::world::Language;
+
 /// 他のエージェントへ質問し、**答えを待って**返す（委譲）。
 ///
 /// 転送との違いは行き先だけ。転送は制御ごと渡してユーザーへ返るが、委譲は
@@ -572,23 +574,31 @@ impl HandoffTools {
     ///
     /// 転送との違いは**答えの行き先**だけ。転送は制御ごと渡してユーザーへ返るが、
     /// 委譲は答えが自分に戻ってきて、自分の話を続けられる。
-    pub(super) fn ask_specs(&self) -> Vec<ToolSpec> {
+    pub(super) fn ask_specs(&self, language: Language) -> Vec<ToolSpec> {
         self.entries
             .iter()
             .map(|(name, _, display)| ToolSpec {
                 name: Self::ask_name(name),
-                description: format!(
-                    "**{display}** に質問し、**その答えを受け取る**。\
-                     答えは自分に戻ってくるので、それを踏まえて話を続けられる。\
-                     相手に話を引き継いで自分は退く場合は、これではなく \
-                     `transfer_to_*` を使うこと。"
-                ),
+                description: match language {
+                    Language::Ja => format!(
+                        "**{display}** に質問し、**その答えを受け取る**。\
+                         答えは自分に戻ってくるので、それを踏まえて話を続けられる。\
+                         相手に話を引き継いで自分は退く場合は、これではなく \
+                         `transfer_to_*` を使うこと。"
+                    ),
+                    Language::En => format!(
+                        "Ask **{display}** a question and **receive their answer**. \
+                         The answer comes back to you, so you can continue with it. \
+                         To hand the conversation over and step aside, use \
+                         `transfer_to_*` instead."
+                    ),
+                },
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "message": {
                             "type": "string",
-                            "description": "相手に尋ねる内容"
+                            "description": language.pick("相手に尋ねる内容", "What to ask them")
                         }
                     },
                     "required": ["message"],
@@ -607,22 +617,30 @@ impl HandoffTools {
     }
 
     /// wire へ載せるツール定義。
-    pub(super) fn specs(&self) -> Vec<ToolSpec> {
+    pub(super) fn specs(&self, language: Language) -> Vec<ToolSpec> {
         self.entries
             .iter()
             .map(|(name, _, display)| ToolSpec {
                 name: name.clone(),
-                description: format!(
-                    "**{display}** へメッセージを渡して、会話を続ける。\
-                     相手は自分で考えて返事をするので、返事を代筆しないこと。\
-                     自分の応答で用が足りるなら、このツールを呼ばずに本文だけを返すこと。"
-                ),
+                description: match language {
+                    Language::Ja => format!(
+                        "**{display}** へメッセージを渡して、会話を続ける。\
+                         相手は自分で考えて返事をするので、返事を代筆しないこと。\
+                         自分の応答で用が足りるなら、このツールを呼ばずに本文だけを返すこと。"
+                    ),
+                    Language::En => format!(
+                        "Pass the conversation to **{display}** with a message. \
+                         They think and reply for themselves — never write their \
+                         reply for them. If your own response is enough, return \
+                         plain text without calling this tool."
+                    ),
+                },
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "message": {
                             "type": "string",
-                            "description": "相手に伝える内容"
+                            "description": language.pick("相手に伝える内容", "What to tell them")
                         }
                     },
                     "required": ["message"],
@@ -637,7 +655,13 @@ impl HandoffTools {
     /// OpenAI Agents SDK が `RECOMMENDED_PROMPT_PREFIX` で同種の説明を
     /// プロンプトへ足すのと同じ意図。ツールを渡すだけでは、
     /// 「呼ばない」という選択が終了を意味することがモデルに伝わらない。
-    pub(super) fn protocol_note(&self, tools_available: bool, offer_transfer: bool, awaiting_reply: bool) -> String {
+    pub(super) fn protocol_note(
+        &self,
+        tools_available: bool,
+        offer_transfer: bool,
+        awaiting_reply: bool,
+        language: Language,
+    ) -> String {
         // **答えがどこへ返るか。** 委譲（`ask` / `plan`）で来たターンは依頼主へ
         // 戻り、それ以外は利用者へ流れる（`Outcome::Finish` の `destination` が
         // `reply_to` の有無で決まるのと**同じ 1 つの事実**）。
@@ -653,55 +677,109 @@ impl HandoffTools {
         // ツール非対応モデルの旧経路で、委譲で呼ばれても終了マーカーが無ければ
         // 最初の相手へ渡る — **挙動が違うので同じ文は当てられない**
         // （当てると「頼んだ相手へ戻ります」が新しい嘘になる）。
-        let ending = if awaiting_reply {
-            "その時点であなたの仕事は終わり、**あなたに頼んだ相手へ答えが戻ります**。"
-        } else {
-            "その時点で会話は終わり、結果が人間へ返ります。"
+        let ending = match (awaiting_reply, language) {
+            (true, Language::Ja) => {
+                "その時点であなたの仕事は終わり、**あなたに頼んだ相手へ答えが戻ります**。"
+            }
+            (false, Language::Ja) => "その時点で会話は終わり、結果が人間へ返ります。",
+            (true, Language::En) => {
+                "At that point your job is done and **your answer goes back to whoever asked you**."
+            }
+            (false, Language::En) => {
+                "At that point the conversation ends and the result goes to the human."
+            }
         };
         if tools_available {
             // **提示していない道具を手順で名指ししない。** 転送を落とした個体に
             // 「`transfer_to_*` を呼んでください」と書くと、存在しないツールを
             // 探させることになる（提示集合と手順が食い違う）。
-            let delegation = if offer_transfer {
-                "他のエージェントの助けが要るときだけ `transfer_to_*` ツールを呼んでください。\
-                 **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
-                 全員へ並行して届きます。\n\
-                 相手の答えを受け取って自分の話を続けたいときは、`transfer_to_*` ではなく \
-                 `ask_*` を使ってください — **答えが自分に戻ります**。"
-            } else {
-                "他のエージェントの助けが要るときは `ask_*` ツールを呼んでください。\
-                 **答えは自分に戻ってくる**ので、それを踏まえて自分の言葉でまとめてください。\
-                 **複数の相手へ同時に訊くときは、それぞれの `ask_*` を同じ応答の中で呼んでください**。\n\
-                 **あなたは会話を他のエージェントへ引き渡せません。**\
-                 最後にまとめて答えるのはあなたです。"
+            let delegation = match (offer_transfer, language) {
+                (true, Language::Ja) => {
+                    "他のエージェントの助けが要るときだけ `transfer_to_*` ツールを呼んでください。\
+                     **複数の相手へ渡すときは、それぞれの `transfer_to_*` を同じ応答の中で同時に呼んでください**。\
+                     全員へ並行して届きます。\n\
+                     相手の答えを受け取って自分の話を続けたいときは、`transfer_to_*` ではなく \
+                     `ask_*` を使ってください — **答えが自分に戻ります**。"
+                }
+                (false, Language::Ja) => {
+                    "他のエージェントの助けが要るときは `ask_*` ツールを呼んでください。\
+                     **答えは自分に戻ってくる**ので、それを踏まえて自分の言葉でまとめてください。\
+                     **複数の相手へ同時に訊くときは、それぞれの `ask_*` を同じ応答の中で呼んでください**。\n\
+                     **あなたは会話を他のエージェントへ引き渡せません。**\
+                     最後にまとめて答えるのはあなたです。"
+                }
+                (true, Language::En) => {
+                    "Call a `transfer_to_*` tool only when you need another agent's help. \
+                     **To hand off to several agents, call each `transfer_to_*` in the \
+                     same response** — they all receive it in parallel.\n\
+                     If you want their answer back so you can continue yourself, use \
+                     `ask_*` instead of `transfer_to_*` — **the answer returns to you**."
+                }
+                (false, Language::En) => {
+                    "When you need another agent's help, call an `ask_*` tool. \
+                     **The answer comes back to you**; weave it into your own words. \
+                     **To ask several agents at once, call each `ask_*` in the same \
+                     response.**\n\
+                     **You cannot hand the conversation over to another agent.** \
+                     The final answer is yours to give."
+                }
             };
-            format!(
-                "## この場に居る相手\n\
-                 {}\n\
-                 いずれも**自分で考えて発言する別のエージェント**です。あなたが\
-                 彼らの発言を書くことはありません。\n\n\
-                 ## 会話の進め方\n\
-                 まず、届いた発話の送り手を見てください。**あなたに話しかけてきた相手へ、\
-                 あなた自身の言葉で答えるのが基本です。**\n\
-                 {delegation}\n\
-                 自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
-                 **ツールを呼ばずに本文だけを返してください**。{ending}\
-                 同じ内容を繰り返すくらいなら、会話を終えてください。\n\
-                 委譲が失敗したときは、その**理由**（相手が停止中・時間切れ など）が\
-                 結果の文字列で返ります。事前の点呼は不要です。",
-                self.roster()
-                    .iter()
-                    .map(|name| format!("- {name}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
+            let peers = self
+                .roster()
+                .iter()
+                .map(|name| format!("- {name}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            match language {
+                Language::Ja => format!(
+                    "## この場に居る相手\n\
+                     {peers}\n\
+                     いずれも**自分で考えて発言する別のエージェント**です。あなたが\
+                     彼らの発言を書くことはありません。\n\n\
+                     ## 会話の進め方\n\
+                     まず、届いた発話の送り手を見てください。**あなたに話しかけてきた相手へ、\
+                     あなた自身の言葉で答えるのが基本です。**\n\
+                     {delegation}\n\
+                     自分の応答で用が足りる場合、または相手の発言に返すべきことが残っていない場合は、\
+                     **ツールを呼ばずに本文だけを返してください**。{ending}\
+                     同じ内容を繰り返すくらいなら、会話を終えてください。\n\
+                     委譲が失敗したときは、その**理由**（相手が停止中・時間切れ など）が\
+                     結果の文字列で返ります。事前の点呼は不要です。"
+                ),
+                Language::En => format!(
+                    "## Who is here\n\
+                     {peers}\n\
+                     Each of them is **a separate agent who thinks and speaks for \
+                     themselves**. You never write their lines.\n\n\
+                     ## How the conversation works\n\
+                     First, look at who sent the incoming message. **Answering the one \
+                     who spoke to you, in your own words, is the default.**\n\
+                     {delegation}\n\
+                     If your own response is enough, or there is nothing left to answer, \
+                     **return plain text without calling any tool**. {ending} \
+                     Rather than repeat yourself, end the conversation.\n\
+                     When a delegation fails, the **reason** (the agent is stopped, it \
+                     timed out, and so on) comes back in the result string. No roll \
+                     call is needed beforehand."
+                ),
+            }
         } else {
-            format!(
-                "## 会話の進め方\n\
-                 応答は次のエージェントへ渡されます。会話を終えてよいと判断したら、\
-                 本文の末尾に {TERMINATION_MARKER} と書いてください。その時点で会話は終わり、\
-                 結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
-            )
+            match language {
+                Language::Ja => format!(
+                    "## 会話の進め方\n\
+                     応答は次のエージェントへ渡されます。会話を終えてよいと判断したら、\
+                     本文の末尾に {TERMINATION_MARKER} と書いてください。その時点で会話は終わり、\
+                     結果が人間へ返ります。同じ内容を繰り返すくらいなら、会話を終えてください。"
+                ),
+                Language::En => format!(
+                    "## How the conversation works\n\
+                     Your response is passed to the next agent. When you judge the \
+                     conversation can end, write {TERMINATION_MARKER} at the end of \
+                     your message. At that point the conversation ends and the result \
+                     goes to the human. Rather than repeat yourself, end the \
+                     conversation."
+                ),
+            }
         }
     }
 
@@ -729,7 +807,7 @@ impl HandoffTools {
     /// 表示名の一意性はどこも保証していない（`World::register_agent` が
     /// 拒否するのは ID の重複だけ）ので、名前で指させると同名の 2 体を
     /// 区別できない。
-    pub(super) fn plan_specs(&self) -> Vec<ToolSpec> {
+    pub(super) fn plan_specs(&self, language: Language) -> Vec<ToolSpec> {
         if !self.offers_plan() {
             return Vec::new();
         }
@@ -750,34 +828,55 @@ impl HandoffTools {
 
         vec![ToolSpec {
             name: Self::PLAN.to_owned(),
-            description: format!(
-                "複数の相手へ**並列に**頼んで、全員の答えを束ねて受け取る。\
-                 相手ごとに依頼内容を変えられる。\
-                 1 体ずつ順に尋ねる `ask_*` と違い、全員が同時に動くので速い。\
-                 独立した調べもの・作業を配るときはこれを使うこと。\
-                 次の波を出す前に、前の束ねは**自分の言葉で要約**してから頼むこと\
-                 （束ね全文を引きずると入力が波のたびに膨らむ）。\
-                 「会話を渡した」と返ったタスクは**リトライしないこと** — \
-                 仕事は別の経路で続いており、頼み直すと同じ仕事が二重に走る。\
-                 依頼先: {roster}"
-            ),
+            description: match language {
+                Language::Ja => format!(
+                    "複数の相手へ**並列に**頼んで、全員の答えを束ねて受け取る。\
+                     相手ごとに依頼内容を変えられる。\
+                     1 体ずつ順に尋ねる `ask_*` と違い、全員が同時に動くので速い。\
+                     独立した調べもの・作業を配るときはこれを使うこと。\
+                     次の波を出す前に、前の束ねは**自分の言葉で要約**してから頼むこと\
+                     （束ね全文を引きずると入力が波のたびに膨らむ）。\
+                     「会話を渡した」と返ったタスクは**リトライしないこと** — \
+                     仕事は別の経路で続いており、頼み直すと同じ仕事が二重に走る。\
+                     依頼先: {roster}"
+                ),
+                Language::En => format!(
+                    "Ask several agents **in parallel** and receive all their answers \
+                     bundled together. Each agent can get a different request. Unlike \
+                     `ask_*`, which waits for one agent at a time, everyone works at \
+                     once, so it is fast. Use this to spread independent research or \
+                     tasks. Before sending the next wave, **summarize the previous \
+                     bundle in your own words** (dragging the full bundle along makes \
+                     the input grow with every wave). If a task returns \"the \
+                     conversation was handed over\", **do not retry it** — the work \
+                     continues on another path, and asking again runs the same job \
+                     twice. Recipients: {roster}"
+                ),
+            },
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "tasks": {
                         "type": "array",
-                        "description": "同時に頼む依頼の一覧。同じ相手を 2 回入れないこと",
+                        "description": language.pick(
+                            "同時に頼む依頼の一覧。同じ相手を 2 回入れないこと",
+                            "Requests to send at the same time. Never list the same agent twice"),
                         "items": {
                             "type": "object",
                             "properties": {
                                 "to": {
                                     "type": "string",
                                     "enum": ids,
-                                    "description": format!("依頼先。{roster}"),
+                                    "description": match language {
+                                        Language::Ja => format!("依頼先。{roster}"),
+                                        Language::En => format!("Recipient. {roster}"),
+                                    },
                                 },
                                 "message": {
                                     "type": "string",
-                                    "description": "その相手への依頼内容"
+                                    "description": language.pick(
+                                        "その相手への依頼内容",
+                                        "The request for that agent")
                                 }
                             },
                             "required": ["to", "message"],

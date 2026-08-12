@@ -109,18 +109,25 @@ fn endpoint_label(world: &crate::world::World, endpoint: &Endpoint) -> String {
 /// `room_log` ツールの定義（Spec 22）。
 ///
 /// スキーマは提示される個体の毎ターンに乗る固定費なので最小に保つ。
-pub(super) fn room_log_tool_spec() -> ToolSpec {
+pub(super) fn room_log_tool_spec(language: crate::world::Language) -> ToolSpec {
     ToolSpec {
         name: crate::room_log::ROOM_LOG_TOOL_NAME.into(),
-        description: "「この場で交わされていた会話」の切れた抜粋を全文で読む。\
-                      抜粋の行頭に表示されている ID をそのまま指定する。"
+        description: language
+            .pick(
+                "「この場で交わされていた会話」の切れた抜粋を全文で読む。\
+                 抜粋の行頭に表示されている ID をそのまま指定する。",
+                "Read the full text behind a truncated excerpt of the room's \
+                 conversation. Pass the ID shown at the start of the excerpt line.",
+            )
             .into(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "発話 ID（抜粋の行頭に [ ] で表示されているもの）"
+                    "description": language.pick(
+                        "発話 ID（抜粋の行頭に [ ] で表示されているもの）",
+                        "Message ID (shown in [ ] at the start of the excerpt line)")
                 }
             },
             "required": ["id"]

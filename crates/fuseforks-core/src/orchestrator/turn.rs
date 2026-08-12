@@ -596,6 +596,9 @@ pub(super) async fn handle_message(
     //    無いと表示名 → id の対応をツール説明から二段引きすることになる。
     let roster: Option<String> = {
         let world = shared.world.read().await;
+        // 顔ぶれの本文もモデルへ届く面（Spec 35 P3）。組み立て時の現在言語で書く。
+        // 英語の腕は ASCII の括弧 — 全角の `（）［］` は英語の文中で浮く。
+        let language = world.language().unwrap_or(crate::world::Language::Ja);
         let entries: Vec<String> = spec
             .connected_agents
             .iter()
@@ -612,18 +615,36 @@ pub(super) async fn handle_message(
                         // 書かない — 存在しない役は判断材料にならず、毎ターンぶんの
                         // トークンを払うだけになる。バッジ側（カード・地図）と
                         // 同じ規則で、3 箇所の扱いを揃えてある。
-                        let role = world
-                            .role_label(record.spec.role_id.as_ref())
-                            .map(|name| format!("［{name}］"))
-                            .unwrap_or_default();
-                        format!(
-                            "{id}（{}）{role}: {}",
-                            record.spec.name,
-                            record.status.label()
-                        )
+                        match language {
+                            crate::world::Language::Ja => {
+                                let role = world
+                                    .role_label(record.spec.role_id.as_ref())
+                                    .map(|name| format!("［{name}］"))
+                                    .unwrap_or_default();
+                                format!(
+                                    "{id}（{}）{role}: {}",
+                                    record.spec.name,
+                                    record.status.label()
+                                )
+                            }
+                            crate::world::Language::En => {
+                                let role = world
+                                    .role_label(record.spec.role_id.as_ref())
+                                    .map(|name| format!(" [{name}]"))
+                                    .unwrap_or_default();
+                                format!(
+                                    "{id} ({}){role}: {}",
+                                    record.spec.name,
+                                    record.status.label_en()
+                                )
+                            }
+                        }
                     })
                     // 接続先が消えていても行は成立させる（ID と不明で示す）。
-                    .unwrap_or_else(|_| format!("{id}: 不明"))
+                    .unwrap_or_else(|_| match language {
+                        crate::world::Language::Ja => format!("{id}: 不明"),
+                        crate::world::Language::En => format!("{id}: unknown"),
+                    })
             })
             .collect();
         (!entries.is_empty()).then(|| entries.join(" / "))
@@ -784,18 +805,27 @@ async fn present_tools(
     //    同梱ツールはエージェント個別の提示制御（enabled_tools + 作業フォルダ
     //    連動の自動除外）を通す — 使わないツールのスキーマは毎ターンの
     //    固定費になる（トークン節約は最重要課題）。
+    // モデルへ届く文言の言語（Spec 35）。合成ツール・room_log・同梱ツールの
+    // 提示がすべてこの 1 つの値を使う — ばらばらに読むと、切り替えの瞬間に
+    // 半分だけ英語のプロンプトが組める。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     let mut specs = if use_handoff_tools {
         // 転送は `offer_transfer` のときだけ。委譲と `plan` は常に載る。
         let mut both = if offer_transfer {
-            handoffs.specs()
+            handoffs.specs(language)
         } else {
             Vec::new()
         };
-        both.extend(handoffs.ask_specs());
+        both.extend(handoffs.ask_specs(language));
         // 並列委譲は接続先 2 体以上のときだけ載る（Spec 04）。
         // 1 体しか繋がっていないエージェントには使えない選択肢なので、
         // そのスキーマを毎ターンの固定費として払わせない。
-        both.extend(handoffs.plan_specs());
+        both.extend(handoffs.plan_specs(language));
         both
     } else {
         Vec::new()
@@ -805,7 +835,7 @@ async fn present_tools(
     // 無い。ログが空かどうかでは揺らさない（提示は静的・状態は動的）。
     // enabledTools の対象外（`ask_*` / `rag` と同じ側）。
     if spec.hears_room_log {
-        specs.push(room_log_tool_spec());
+        specs.push(room_log_tool_spec(language));
     }
     // 提示は**個体別に解決する**。`spec_for` を持つツール（Spec 15 の `run`）は、
     // その個体から実行できる登録だけを列挙し、1 件も無ければ自分を落とす。
@@ -817,12 +847,7 @@ async fn present_tools(
         // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
         // （空または全滅なら提示しない）をここから判定する。
         rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
-        language: shared
-            .world
-            .read()
-            .await
-            .language()
-            .unwrap_or(crate::world::Language::Ja),
+        language,
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -1705,10 +1730,17 @@ async fn build_prompt(
     // 先頭へ戻る**。位置を変えるだけでは直らない（failures.md #45）。
     let mut messages = vec![ChatMessage::system(system_prompt)];
     if !handoffs.is_empty() {
+        let language = shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
         messages.push(ChatMessage::system(handoffs.protocol_note(
             use_handoff_tools,
             offer_transfer,
             awaiting_reply,
+            language,
         )));
     }
 

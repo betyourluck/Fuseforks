@@ -125,11 +125,13 @@ impl AgentStatus {
         matches!(self, Self::Starting | Self::Running)
     }
 
-    /// 表示語彙。UI の `STATUS_LABELS`（types.ts）と**同一**であること。
+    /// 表示語彙。UI の辞書（`labels.status.*`）と**同一**であること。
     ///
     /// 顔ぶれ（Spec 06）はこの語彙でプロンプトに載る。画面とプロンプトで
     /// 同じ相手が違う言葉で呼ばれると、利用者とエージェントの会話が
     /// 噛み合わなくなる（「停止中って出てますよ」「こちらでは Idle です」）。
+    /// **英語の腕（Spec 35）も同じ理由で `locales/en.json` の語彙に揃える** —
+    /// 独自の英語（"active" 等）を発明すると同じ食い違いが英語村で再演する。
     pub fn label(self) -> &'static str {
         match self {
             Self::Idle => "停止中",
@@ -137,6 +139,17 @@ impl AgentStatus {
             Self::Running => "稼働中",
             Self::Stopping => "停止処理中",
             Self::Failed => "失敗",
+        }
+    }
+
+    /// [`Self::label`] の英語（Spec 35。`locales/en.json` の `labels.status.*` と同一）。
+    pub fn label_en(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::Starting => "Starting",
+            Self::Running => "Running",
+            Self::Stopping => "Stopping",
+            Self::Failed => "Failed",
         }
     }
 }
