@@ -255,7 +255,7 @@
     "completeFailed": "ファイル一覧を取得できませんでした。",
     "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。",
     "clearView": "会話ペインの表示を消す（表示だけ。会話は残り、サーヴァントへ届く内容も変わりません）",
-    "attachUnsupported": "対応していない形式です（画像 webp / 音声 mp3・wav / 動画 mp4 / PDF）",
+    "attachUnsupported": "対応していない形式です（画像 / 音声 mp3・wav / 動画 mp4 / PDF）",
     "attachNotCarried": "この宛先へは{kind}を送れません。運べるのは {carriers} です。",
     "attachKind": {
       "image": "画像",

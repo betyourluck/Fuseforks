@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_EDGE_PX, bytesToBase64, detectKind, fitWithin, isWebpBytes } from "./attachment";
+import {
+  MAX_EDGE_PX,
+  bytesToBase64,
+  detectKind,
+  fitWithin,
+  isWebpBytes,
+  routeAttachment,
+} from "./attachment";
 
 describe("fitWithin", () => {
   it("長辺が上限ちょうどなら縮小しない（境界値）", () => {
@@ -110,5 +117,48 @@ describe("detectKind", () => {
   it("知らない形式は null（拡張子や MIME では判定しない）", () => {
     expect(detectKind(bytesOf("\x89PNG\r\n\x1a\n", 8))).toBeNull();
     expect(detectKind(new Uint8Array(2))).toBeNull();
+  });
+});
+
+/**
+ * **経路の既定は画像**（Spec 36。P4 で一度落とした退行の回帰）。
+ *
+ * `detectKind` は Rust の `detect_format` の写しだが、**入力の集合が違う** —
+ * コアが見るのは変換後（画像は常に WebP）、フロントが見るのは利用者の生ファイル。
+ * 「画像を magic で当てる」向きに書くと **PNG / JPEG / GIF が全部落ちる**。
+ * 表の仕事は画像を当てることではなく、**画像でないものを外す**こと。
+ */
+describe("routeAttachment", () => {
+  const bytesOf = (head: string, extra = 0): Uint8Array => {
+    const out = new Uint8Array(head.length + extra);
+    for (let i = 0; i < head.length; i += 1) out[i] = head.charCodeAt(i);
+    return out;
+  };
+
+  it("WebP 以外の画像も画像の経路へ行く（JPEG / PNG / GIF）", () => {
+    // JPEG（FF D8 FF）。**mp3 のフレーム同期と先頭 1 バイトが同じ**なので、
+    // 2 バイト目まで見ないと音声として無変換で送られる。
+    expect(routeAttachment(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe("image");
+    expect(routeAttachment(bytesOf("\x89PNG\r\n\x1a\n", 8))).toBe("image");
+    expect(routeAttachment(bytesOf("GIF89a", 8))).toBe("image");
+    expect(routeAttachment(bytesOf("RIFF\0\0\0\0WEBP", 8))).toBe("image");
+  });
+
+  it("HEIC / AVIF も画像の経路へ（デコードの可否はブラウザが決める）", () => {
+    expect(routeAttachment(bytesOf("\0\0\0 ftypheic", 8))).toBe("image");
+    expect(routeAttachment(bytesOf("\0\0\0 ftypavif", 8))).toBe("image");
+  });
+
+  it("音声・動画・PDF と確定したものだけが無変換の経路へ行く", () => {
+    expect(routeAttachment(bytesOf("RIFF\0\0\0\0WAVE", 8))).toBe("audio");
+    expect(routeAttachment(bytesOf("ID3\0\0", 16))).toBe("audio");
+    expect(routeAttachment(bytesOf("\0\0\0 ftypisom", 8))).toBe("video");
+    expect(routeAttachment(bytesOf("%PDF-1.4\n", 16))).toBe("pdf");
+  });
+
+  it("判らないものも画像へ倒す（判定の権威はデコーダ）", () => {
+    // ここで断らないのは、断る根拠がこちらに無いから。デコードして初めて
+    // 「画像ではなかった」と言える（そのとき unsupportedType を返す）。
+    expect(routeAttachment(bytesOf("PK\x03\x04", 8))).toBe("image");
   });
 });

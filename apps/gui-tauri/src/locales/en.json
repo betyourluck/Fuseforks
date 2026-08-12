@@ -255,7 +255,7 @@
     "completeFailed": "Could not load the file list.",
     "completeTruncated": "The candidate list hit its limit. Some files are not shown here.",
     "clearView": "Clear the chat view (display only — the conversation stays, and servants still receive it)",
-    "attachUnsupported": "Unsupported format (image webp / audio mp3, wav / video mp4 / PDF)",
+    "attachUnsupported": "Unsupported format (image / audio mp3, wav / video mp4 / PDF)",
     "attachNotCarried": "This recipient cannot receive {kind}. It can be carried by {carriers}.",
     "attachKind": {
       "image": "image",

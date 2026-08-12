@@ -204,19 +204,35 @@ export function detectKind(bytes: Uint8Array): AttachmentKind | null {
 }
 
 /**
+ * 貼られた生ファイルをどの経路へ流すか（Spec 36）。
+ *
+ * **既定は画像。** magic で音声・動画・PDF と**確定できたものだけ**が無変換の
+ * 経路へ行き、それ以外はすべて画像として変換を試みる。
+ *
+ * **ここを「画像を magic で当てる」向きに書くと PNG / JPEG / GIF / HEIC が
+ * 全部落ちる**（実際に落とした — P4 の退行）。**フロントが見るのは利用者の
+ * 生ファイル**で、コアが見るのは**変換後**のバイト列（画像は常に WebP）。
+ * [`detectKind`] と Rust の `detect_format` は同じ形の述語に見えるが、
+ * **入力の集合が違う** — 層をまたいで述語の形だけを写すと、この差が消える。
+ *
+ * **画像かどうかを決める権威はブラウザのデコーダ**であって、こちらの表ではない。
+ * 表の仕事は「画像でないもの（音声・動画・PDF）を**外す**」ことだけ。
+ */
+export function routeAttachment(bytes: Uint8Array): AttachmentKind {
+  return detectKind(bytes) ?? "image";
+}
+
+/**
  * 添付を 1 件受け取り、送信待ちの形にする。
  *
  * **変換するのは画像だけ**（Spec 36 D3）。音声・動画・PDF は無変換で通す —
  * 変換器を同梱すると依存の桁が変わるので、受け付けない形式は入口で断る。
  *
- * @throws {AttachmentError} 種別不明・上限超・変換失敗。
+ * @throws {AttachmentError} 上限超・デコード不能（= 対応外）・worker の異常。
  */
 export async function prepareFile(file: File): Promise<PendingAttachment> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const kind = detectKind(bytes);
-  if (!kind) {
-    throw new AttachmentError("unsupportedType");
-  }
+  const kind = routeAttachment(bytes);
   if (kind === "image") {
     return convertImageFile(file, bytes);
   }
@@ -255,7 +271,13 @@ async function convertImageFile(
     ensureWorker().postMessage(request, [buffer]);
   });
   if (!response.ok) {
-    throw new AttachmentError("convertFailed");
+    // **デコードできなかった = 対応外の形式**（ここへ来るのは音声・動画・PDF の
+    // どれでもないファイル）。worker が死んだ場合だけは別の理由なので分ける —
+    // 「形式が悪い」と「変換器が落ちた」で人の次の手が違う（前者は別のファイル、
+    // 後者はもう一度試す）。
+    throw new AttachmentError(
+      response.error === "worker crashed" ? "convertFailed" : "unsupportedType",
+    );
   }
   if (response.bytes > MAX_CONVERTED_BYTES) {
     throw new AttachmentError("convertedTooLarge");
