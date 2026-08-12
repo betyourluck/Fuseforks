@@ -242,19 +242,32 @@
     "sendEnter": "Send (Enter)",
     "cannotSend": "Cannot send",
     "hint": "Enter to send / Shift+Enter for a new line",
-    "attach": "Attach an image (paste also works)",
-    "attachNote": "This image is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
+    "attach": "Attach a file (image, audio, video, PDF — paste also works)",
+    "attachNote": "This attachment is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
     "attachScaled": "Scaled down to {px}px on the long edge.",
     "attachRemove": "Remove attachment",
     "attachConverting": "Converting image…",
-    "attachTooLarge": "The image is too large (limit: 10MB)",
+    "attachTooLarge": "The attachment is too large (image 10MB / audio, PDF 10MB / video 12MB)",
     "attachConvertedTooLarge": "The converted image is too large (limit: 2MB)",
     "attachFailed": "Could not read the image",
     "completeNoWorkDir": "This servant has no work folder set, so file completion is unavailable.",
     "completeLoading": "Looking for files…",
     "completeFailed": "Could not load the file list.",
     "completeTruncated": "The candidate list hit its limit. Some files are not shown here.",
-    "clearView": "Clear the chat view (display only — the conversation stays, and servants still receive it)"
+    "clearView": "Clear the chat view (display only — the conversation stays, and servants still receive it)",
+    "attachUnsupported": "Unsupported format (image webp / audio mp3, wav / video mp4 / PDF)",
+    "attachNotCarried": "This recipient cannot receive {kind}. It can be carried by {carriers}.",
+    "attachKind": {
+      "image": "image",
+      "audio": "audio",
+      "video": "video",
+      "pdf": "PDF"
+    },
+    "attachCost": {
+      "audio": "Audio costs on the order of thousands of tokens per minute.",
+      "video": "Video costs on the order of tens of thousands of tokens per minute.",
+      "pdf": "A PDF costs on the order of hundreds to thousands of tokens per page."
+    }
   },
   "bottomTabs": {
     "blackboard": "Blackboard",
@@ -351,7 +364,7 @@
     "copied": "Copied",
     "copy": "Copy text",
     "empty": "No messages yet.",
-    "attachmentDeleted": "This image was deleted after its retention period",
+    "attachmentDeleted": "This attachment was deleted after its retention period",
     "externalBadge": "external",
     "clearedNote": "Earlier messages hidden: {count} (the conversation is still there)",
     "clearedRestore": "Show all"
@@ -691,7 +704,7 @@
     "CONFIG_IO": "Configuration file I/O failed",
     "UNSAFE_IDENTIFIER": "The identifier contains characters that cannot be used",
     "INVALID_ICON": "The icon image was rejected",
-    "INVALID_ATTACHMENT": "The image was rejected",
+    "INVALID_ATTACHMENT": "The attachment was rejected",
     "SECRET_STORE_FAILED": "An OS credential-store operation failed",
     "CREDENTIAL_MISSING": "The API key is not registered",
     "COMPUTE_FAILED": "A compute task failed",
@@ -707,7 +720,8 @@
     "IPC_FAILED": "The IPC call failed",
     "EXTERNAL_RECEPTION_UNSET": "Reception is not set",
     "EXTERNAL_BUSY": "Another external request is in progress",
-    "BLACKBOARD_DELETE_FAILED": "Could not move the blackboard note to the trash"
+    "BLACKBOARD_DELETE_FAILED": "Could not move the blackboard note to the trash",
+    "ATTACHMENT_NOT_CARRIED": "This recipient wire cannot carry that kind of attachment"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

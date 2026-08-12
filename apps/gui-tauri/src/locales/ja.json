@@ -242,19 +242,32 @@
     "sendEnter": "送信（Enter）",
     "cannotSend": "送信できません",
     "hint": "Enter で送信 / Shift+Enter で改行",
-    "attach": "画像を添付（貼り付けも可）",
-    "attachNote": "この画像は今回のみモデルへ渡ります。2 ターン目以降はモデルからは見えません（画面には残ります）。",
+    "attach": "添付する（画像・音声・動画・PDF。貼り付けも可）",
+    "attachNote": "この添付は今回のみモデルへ渡ります。2 ターン目以降はモデルからは見えません（画面には残ります）。",
     "attachScaled": "長辺 {px}px へ縮小しました。",
     "attachRemove": "添付を外す",
     "attachConverting": "画像を変換中…",
-    "attachTooLarge": "画像が大きすぎます（上限 10MB）",
+    "attachTooLarge": "添付が大きすぎます（画像 10MB / 音声・PDF 10MB / 動画 12MB）",
     "attachConvertedTooLarge": "変換後の画像が大きすぎます（上限 2MB）",
     "attachFailed": "画像を読み込めませんでした",
     "completeNoWorkDir": "このサーヴァントには作業フォルダが設定されていないため、ファイルを補完できません。",
     "completeLoading": "ファイルを探しています…",
     "completeFailed": "ファイル一覧を取得できませんでした。",
     "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。",
-    "clearView": "会話ペインの表示を消す（表示だけ。会話は残り、サーヴァントへ届く内容も変わりません）"
+    "clearView": "会話ペインの表示を消す（表示だけ。会話は残り、サーヴァントへ届く内容も変わりません）",
+    "attachUnsupported": "対応していない形式です（画像 webp / 音声 mp3・wav / 動画 mp4 / PDF）",
+    "attachNotCarried": "この宛先へは{kind}を送れません。運べるのは {carriers} です。",
+    "attachKind": {
+      "image": "画像",
+      "audio": "音声",
+      "video": "動画",
+      "pdf": "PDF"
+    },
+    "attachCost": {
+      "audio": "音声は 1 分あたり数千トークン規模です。",
+      "video": "動画は 1 分あたり数万トークン規模です。",
+      "pdf": "PDF は 1 頁あたり数百〜数千トークン規模です。"
+    }
   },
   "bottomTabs": {
     "blackboard": "黒板",
@@ -351,7 +364,7 @@
     "copied": "コピーしました",
     "copy": "本文をコピー",
     "empty": "まだ発話がありません。",
-    "attachmentDeleted": "画像は保持期間を過ぎて削除されました",
+    "attachmentDeleted": "添付は保持期間を過ぎて削除されました",
     "externalBadge": "外部",
     "clearedNote": "これより前の {count} 件は表示していません（会話は残っています）",
     "clearedRestore": "すべて表示"
@@ -691,7 +704,7 @@
     "CONFIG_IO": "設定ファイルの入出力に失敗しました",
     "UNSAFE_IDENTIFIER": "識別子に使えない文字が含まれています",
     "INVALID_ICON": "アイコン画像を受け付けられません",
-    "INVALID_ATTACHMENT": "画像を受け付けられません",
+    "INVALID_ATTACHMENT": "添付を受け付けられません",
     "SECRET_STORE_FAILED": "資格情報ストアの操作に失敗しました",
     "CREDENTIAL_MISSING": "API キーが未登録です",
     "COMPUTE_FAILED": "計算タスクが失敗しました",
@@ -707,7 +720,8 @@
     "IPC_FAILED": "IPC 呼び出しに失敗しました",
     "EXTERNAL_RECEPTION_UNSET": "窓口が未設定です",
     "EXTERNAL_BUSY": "別の外部依頼を処理中です",
-    "BLACKBOARD_DELETE_FAILED": "黒板の付箋をごみ箱へ移せませんでした"
+    "BLACKBOARD_DELETE_FAILED": "黒板の付箋をごみ箱へ移せませんでした",
+    "ATTACHMENT_NOT_CARRIED": "この宛先のワイヤはこの種別の添付を運べません"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",

@@ -384,8 +384,15 @@ export interface Grounding {
  */
 export interface Attachment {
   id: string;
-  width: number;
-  height: number;
+  /**
+   * 形式（Spec 36）。**欄を持たない古いレコードは webp**（Spec 23 の時代の
+   * 添付はすべて WebP の画像だった）— コア側の `#[serde(default)]` と対。
+   */
+  format?: "webp" | "mp3" | "wav" | "mp4" | "pdf";
+  /** 幅（px）。**画像のときだけ**（音声・PDF に寸法は無い）。 */
+  width?: number;
+  /** 高さ（px）。画像のときだけ。 */
+  height?: number;
   /** 元ファイル名（表示用）。 */
   fileName: string;
 }

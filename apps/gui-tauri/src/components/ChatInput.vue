@@ -24,9 +24,10 @@ import { useI18n } from "vue-i18n";
 import {
   AttachmentError,
   MAX_EDGE_PX,
-  convertImageFile,
+  prepareFile,
   type PendingAttachment,
 } from "../lib/attachment";
+import { carries, carriersOf, effectiveProvider } from "../lib/carries";
 import {
   applyCompletion,
   findTrigger,
@@ -96,6 +97,43 @@ const canSend = computed(
 const attachmentSize = computed(() => {
   if (!attachment.value) return "";
   return `${Math.max(1, Math.round(attachment.value.bytes / 1024))} KB`;
+});
+
+/** チップに出す寸法（画像のときだけ）。 */
+const attachmentDimensions = computed(() => {
+  const a = attachment.value;
+  if (!a || a.width === undefined || a.height === undefined) return "";
+  return `${a.width}×${a.height} / `;
+});
+
+/**
+ * 宛先のワイヤ（Spec 36 D12）。テンプレート未設定なら base URL から推定する
+ * （コアの `effective_provider` と同じ規則）。
+ */
+const targetProvider = computed(() => {
+  const agent = orchestrator.state.agents.find((a) => a.id === props.agentId);
+  if (!agent) return null;
+  const template = orchestrator.state.templates.find(
+    (t) => t.id === agent.modelTemplateId,
+  );
+  if (!template) return null;
+  return effectiveProvider(template.provider, template.baseUrl);
+});
+
+/**
+ * 貼った添付を宛先が運べないときの警告（Spec 36 D12）。
+ *
+ * **送信は止めない** — 止めるのはコア側の門で、ここは「貼った時点で分かる」
+ * ためだけ。2 箇所で止めると、表の同期が切れたときにどちらが正か読めなくなる。
+ */
+const carryWarning = computed(() => {
+  const a = attachment.value;
+  const provider = targetProvider.value;
+  if (!a || !provider || carries(provider, a.kind)) return "";
+  return t("chatInput.attachNotCarried", {
+    kind: t(`chatInput.attachKind.${a.kind}`),
+    carriers: carriersOf(a.kind).join(" / "),
+  });
 });
 
 // ---- パス補完（Spec 24 P2） -------------------------------------------------
@@ -292,24 +330,26 @@ function onEnter(event: KeyboardEvent): void {
   void send();
 }
 
-/** 変換の失敗を辞書の文言で通知する。生の例外文字列は画面に出さない。 */
+/** 失敗の種別 → 辞書キー。生の例外文字列は画面に出さない。 */
+const ATTACH_ERROR_KEYS = {
+  tooLarge: "chatInput.attachTooLarge",
+  convertedTooLarge: "chatInput.attachConvertedTooLarge",
+  convertFailed: "chatInput.attachFailed",
+  unsupportedType: "chatInput.attachUnsupported",
+} as const;
+
+/** 変換の失敗を辞書の文言で通知する。 */
 function notifyAttachError(error: unknown): void {
   const kind = error instanceof AttachmentError ? error.kind : "convertFailed";
-  const key =
-    kind === "tooLarge"
-      ? "chatInput.attachTooLarge"
-      : kind === "convertedTooLarge"
-        ? "chatInput.attachConvertedTooLarge"
-        : "chatInput.attachFailed";
-  orchestrator.notify("error", t(key));
+  orchestrator.notify("error", t(ATTACH_ERROR_KEYS[kind]));
 }
 
-/** ファイルを 1 枚受け取り、変換してチップに載せる。 */
+/** ファイルを 1 件受け取り、（画像なら変換して）チップに載せる。 */
 async function attach(file: File): Promise<void> {
   if (props.disabled || converting.value) return;
   converting.value = true;
   try {
-    attachment.value = await convertImageFile(file);
+    attachment.value = await prepareFile(file);
   } catch (error) {
     notifyAttachError(error);
   } finally {
@@ -324,7 +364,9 @@ async function attach(file: File): Promise<void> {
 function onPaste(event: ClipboardEvent): void {
   const items = event.clipboardData?.items ?? [];
   for (const item of items) {
-    if (item.kind === "file" && item.type.startsWith("image/")) {
+    // **種別の判定は中身（magic）が決める**ので、ここは「ファイルが来たか」
+    // だけを見る。MIME で絞ると、クリップボードが型を伏せた添付を取り落とす。
+    if (item.kind === "file") {
       const file = item.getAsFile();
       if (file) {
         event.preventDefault();
@@ -396,8 +438,13 @@ defineExpose({ fill });
           <span class="truncate text-[11px] text-ink" :title="attachment.fileName">
             {{ attachment.fileName }}
           </span>
+          <!-- 種別を語で出す（Spec 36）。アイコンは 1 つに畳んであるので、
+               何を貼ったかはこのラベルが唯一の手掛かりになる。 -->
+          <span class="shrink-0 rounded bg-surface-2 px-1 text-[10px] text-ink-dim">
+            {{ $t(`chatInput.attachKind.${attachment.kind}`) }}
+          </span>
           <span class="shrink-0 text-[10px] text-ink-dim tabular-nums">
-            {{ attachment.width }}×{{ attachment.height }} / {{ attachmentSize }}
+            {{ attachmentDimensions }}{{ attachmentSize }}
           </span>
           <button
             type="button"
@@ -415,6 +462,17 @@ defineExpose({ fill });
         <template v-if="attachment?.scaled">
           {{ $t("chatInput.attachScaled", { px: MAX_EDGE_PX }) }}
         </template>
+        <!-- S6: コストの桁は貼った時点で言う（請求で知るのでは遅い）。
+             **数字は計算せず定型文**で出す — 各社のレートは実測で桁が違い
+             （同じ画像で Gemini 1,064 対 OpenAI 130）、表を持つと必ず腐る。 -->
+        <template v-if="attachment && attachment.kind !== 'image'">
+          {{ $t(`chatInput.attachCost.${attachment.kind}`) }}
+        </template>
+      </p>
+      <!-- 宛先が運べないときの警告（D12）。**送信は止めない** — 止めるのは
+           コア側の門で、ここは貼った時点で分かるようにするためだけ。 -->
+      <p v-if="carryWarning" class="mt-1 text-[10px] text-warn">
+        {{ carryWarning }}
       </p>
     </div>
 
@@ -548,7 +606,7 @@ defineExpose({ fill });
       <input
         ref="filePicker"
         type="file"
-        accept="image/*"
+        accept="image/*,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,video/mp4,application/pdf"
         class="hidden"
         @change="onFilePicked"
       />

@@ -45,6 +45,8 @@ import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
 import { readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
+import type { AttachmentKind } from "../lib/carries";
+import type { Attachment } from "../types";
 import type { AgentId, AgentMessage, Endpoint } from "../types";
 
 const { t } = useI18n();
@@ -455,6 +457,29 @@ function ensureAttachment(id: string): void {
 function attachmentUrl(id: string): string | null | undefined {
   ensureAttachment(id);
   return attachmentUrls[id];
+}
+
+/**
+ * 添付の種別（Spec 36）。**形式欄の無い古いレコードは画像**
+ * （Spec 23 の時代の添付はすべて WebP の画像だった — コアの既定と対）。
+ */
+function attachmentKindOf(att: Attachment): AttachmentKind {
+  switch (att.format) {
+    case "mp3":
+    case "wav":
+      return "audio";
+    case "mp4":
+      return "video";
+    case "pdf":
+      return "pdf";
+    default:
+      return "image";
+  }
+}
+
+/** インラインで描けるのは画像だけ。 */
+function isImageAttachment(att: Attachment): boolean {
+  return attachmentKindOf(att) === "image";
 }
 
 /** 会話一覧ダイアログを開いているか（Spec 12）。 */
@@ -868,8 +893,11 @@ async function newChat(): Promise<void> {
                プレースホルダの枠 — 何も出さないと「添付したはずの画像が
                無かったことになる」ので、消えたことを消えたと言う。 -->
           <template v-for="att in entry.row.message.attachments ?? []" :key="att.id">
+            <!-- 画像だけがインラインで見える。音声・動画・PDF は
+                 **枠とファイル名で存在を示す**（Spec 36）— プレイヤーや
+                 ビューアを内蔵すると、画面が「添付を扱う場所」に化ける。 -->
             <img
-              v-if="attachmentUrl(att.id)"
+              v-if="isImageAttachment(att) && attachmentUrl(att.id)"
               :src="attachmentUrl(att.id)!"
               :alt="att.fileName"
               :title="att.fileName"
@@ -877,6 +905,15 @@ async function newChat(): Promise<void> {
               :width="att.width"
               :height="att.height"
             />
+            <div
+              v-else-if="!isImageAttachment(att) && attachmentUrl(att.id)"
+              class="mb-1 inline-flex max-w-full items-center gap-2 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] ring-1 ring-line"
+            >
+              <span class="shrink-0 rounded bg-surface-1 px-1 text-[10px] text-ink-dim">
+                {{ $t(`chatInput.attachKind.${attachmentKindOf(att)}`) }}
+              </span>
+              <span class="truncate text-ink" :title="att.fileName">{{ att.fileName }}</span>
+            </div>
             <div
               v-else-if="attachmentUrl(att.id) === null"
               class="mb-1 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] text-ink-dim ring-1 ring-line"

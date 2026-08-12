@@ -1,5 +1,5 @@
 /**
- * 画像の添付 — フロント側の変換と上限（Spec 23 P4）。
+ * 添付 — フロント側の判定・変換・上限（Spec 23 = 画像 / Spec 36 = 多モーダル）。
  *
  * 「フロントは常に WebP を作る」（D3）の実装。重い処理（デコード・縮小・
  * エンコード）は WebWorker（`workers/imageConvert.ts`）で行い、
@@ -13,32 +13,42 @@
  *   見るのは、IPC を往復してから拒否されるより手前で分かるほうが速いだけで、
  *   **門はコア側が本体**（IPC を直接叩く経路はコアが塞ぐ）
  */
+import { KIND_MAX_BYTES, type AttachmentKind } from "./carries";
 
-/** 元ファイルの上限（bytes）。デコード前の門。 */
+export type { AttachmentKind };
+
+/** 画像の元ファイルの上限（bytes）。デコード前の門。 */
 export const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
 
-/** 変換後（WebP）の上限（bytes）。コアの `ATTACHMENT_MAX_BYTES` と同じ値。 */
+/** 変換後（WebP）の上限（bytes）。コアの `ATTACHMENT_IMAGE_MAX_BYTES` と同じ値。 */
 export const MAX_CONVERTED_BYTES = 2 * 1024 * 1024;
 
-/** 長辺の上限（px）。コアの `ATTACHMENT_MAX_EDGE_PX` と同じ値。 */
+/** 長辺の上限（px）。コアの `ATTACHMENT_IMAGE_MAX_EDGE_PX` と同じ値。 */
 export const MAX_EDGE_PX = 1568;
 
 /** WebP の品質（lossy）。スクリーンショットの文字が読める範囲で小さく。 */
 export const WEBP_QUALITY = 0.85;
 
-/** 送信を待っている添付 1 枚。 */
+/**
+ * 送信を待っている添付 1 件。
+ *
+ * **寸法は画像のときだけ**（Spec 36）。音声・PDF に寸法は無く、0 で埋めると
+ * 「0px の画像」と区別できない — コアの `Attachment` と同じ判断。
+ */
 export interface PendingAttachment {
   /** 元ファイル名（表示用）。 */
   fileName: string;
-  /** 変換後 WebP の base64。 */
+  /** 種別（コアの `AttachmentKind` と同じ）。 */
+  kind: AttachmentKind;
+  /** base64（画像は変換後 WebP、他は無変換のまま）。 */
   dataBase64: string;
-  /** 変換後の幅（px）。 */
-  width: number;
-  /** 変換後の高さ（px）。 */
-  height: number;
+  /** 幅（px。画像のときだけ）。 */
+  width?: number;
+  /** 高さ（px。画像のときだけ）。 */
+  height?: number;
   /** 縮小したか。true なら画面にその旨を出す（D3「縮小したことを画面に出す」）。 */
   scaled: boolean;
-  /** 変換後のバイト数。 */
+  /** バイト数。 */
   bytes: number;
 }
 
@@ -46,7 +56,8 @@ export interface PendingAttachment {
 export type AttachmentErrorKind =
   | "tooLarge"
   | "convertedTooLarge"
-  | "convertFailed";
+  | "convertFailed"
+  | "unsupportedType";
 
 /** 変換の失敗。`kind` で文言を引く（メッセージに生の例外を混ぜない）。 */
 export class AttachmentError extends Error {
@@ -167,20 +178,80 @@ function ensureWorker(): Worker {
 }
 
 /**
+ * バイト列から種別を判定する（**コアの `detect_format` と同じ規則**）。
+ *
+ * **ファイル名の拡張子も MIME も見ない。** どちらも書き換えられるので、
+ * 信じると中身と種別が食い違ったまま IPC へ流れる。判定が割れたときに
+ * 勝つのは**コア側**（保存時に同じ判定をやり直す）で、ここは表示のため。
+ */
+export function detectKind(bytes: Uint8Array): AttachmentKind | null {
+  const at = (i: number, s: string): boolean =>
+    s.split("").every((c, k) => bytes[i + k] === c.charCodeAt(0));
+  if (isWebpBytes(bytes)) return "image";
+  // WAV は WebP と先頭 4 バイトが同じ（どちらも RIFF）。form type まで見る。
+  if (bytes.length >= 12 && at(0, "RIFF") && at(8, "WAVE")) return "audio";
+  if (bytes.length >= 5 && at(0, "%PDF-")) return "pdf";
+  // ftyp は動画専用ではない（HEIC / M4A / QuickTime も名乗る）。ブランドで絞る。
+  if (bytes.length >= 12 && at(4, "ftyp")) {
+    const brands = ["isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "dash", "mmp4"];
+    if (brands.some((b) => at(8, b))) return "video";
+    return null;
+  }
+  if (bytes.length >= 3 && at(0, "ID3")) return "audio";
+  // ID3 の無い素の MPEG フレーム同期（先頭 11 bit がすべて 1）。最も緩いので最後。
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return "audio";
+  return null;
+}
+
+/**
+ * 添付を 1 件受け取り、送信待ちの形にする。
+ *
+ * **変換するのは画像だけ**（Spec 36 D3）。音声・動画・PDF は無変換で通す —
+ * 変換器を同梱すると依存の桁が変わるので、受け付けない形式は入口で断る。
+ *
+ * @throws {AttachmentError} 種別不明・上限超・変換失敗。
+ */
+export async function prepareFile(file: File): Promise<PendingAttachment> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const kind = detectKind(bytes);
+  if (!kind) {
+    throw new AttachmentError("unsupportedType");
+  }
+  if (kind === "image") {
+    return convertImageFile(file, bytes);
+  }
+  // 無変換の種別は、その種別の上限をそのまま元ファイルへ掛ける。
+  if (bytes.length > KIND_MAX_BYTES[kind]) {
+    throw new AttachmentError("tooLarge");
+  }
+  return {
+    fileName: file.name || `attachment.${kind}`,
+    kind,
+    dataBase64: bytesToBase64(bytes),
+    scaled: false,
+    bytes: bytes.length,
+  };
+}
+
+/**
  * 画像ファイルを WebP へ変換し、送信待ちの形にする。
  *
  * @throws {AttachmentError} 10MB 超・変換失敗・変換後 2MB 超。
  */
-export async function convertImageFile(file: File): Promise<PendingAttachment> {
+async function convertImageFile(
+  file: File,
+  bytes: Uint8Array,
+): Promise<PendingAttachment> {
   if (file.size > MAX_SOURCE_BYTES) {
     throw new AttachmentError("tooLarge");
   }
-  const buffer = await file.arrayBuffer();
+  // worker へは transfer で渡す（コピーしない）。判定で読んだ `bytes` とは
+  // 別の buffer を起こす — transfer した側は以後こちらから読めない。
+  const buffer = bytes.slice().buffer;
   const id = ++requestSeq;
   const response = await new Promise<ConvertResponse>((resolve) => {
     inFlight.set(id, { resolve });
     const request: ConvertRequest = { id, buffer };
-    // buffer は transfer で渡す（コピーしない）。以後こちら側からは読めない。
     ensureWorker().postMessage(request, [buffer]);
   });
   if (!response.ok) {
@@ -192,6 +263,7 @@ export async function convertImageFile(file: File): Promise<PendingAttachment> {
   return {
     // 貼り付け（クリップボード）にはファイル名が無いことがある。
     fileName: file.name || "clipboard.png",
+    kind: "image",
     dataBase64: response.dataBase64,
     width: response.width,
     height: response.height,
