@@ -1209,12 +1209,18 @@ fn external_label<'a>(world: &'a World, client: &'a str) -> &'a str {
     world.external_name().unwrap_or(client)
 }
 
-/// 呼び名が未設定のときに封筒へ入る名前（`user_identity_contract` 凍結 2）。
+/// 呼び名が未設定のときに封筒へ入る名前（`user_identity_contract` 凍結 2。
+/// **Spec 35 D5 で部分改訂** — 言語で決まる: ja = これ / en = [`DEFAULT_USER_LABEL_EN`]）。
 ///
-/// **言語に追従させない。** 会話ペインの表示名（`chat.you`）は追従するが、
-/// こちらは追従しない — この非対称は Spec 19 の起票時からある既存の挙動で、
-/// 揃えると既存の村の履歴の途中で送り手名が変わる。
+/// 旧凍結「言語に追従させない」の理由は「既存の村の履歴の途中で送り手名が
+/// 変わる」だった。**言語は初回に確定して再判定しないので、新規の英語村には
+/// この理由が当たらない** — 新規村は最初から `User` で一貫する。途中で
+/// 切り替えた村は切り替え以後の封筒だけが変わり、それは System 行と同じ
+/// 「記録時の言語」として許容する（settings_contract 層 3）。
 pub const DEFAULT_USER_LABEL: &str = "ユーザー";
+
+/// [`DEFAULT_USER_LABEL`] の英語（Spec 35 D5）。
+pub const DEFAULT_USER_LABEL_EN: &str = "User";
 
 /// 受信した発話へ送り手の封筒を付ける。
 ///
@@ -1224,14 +1230,23 @@ pub const DEFAULT_USER_LABEL: &str = "ユーザー";
 /// 組み立てはこの 1 箇所に置く（2 箇所で組むと、片方だけ直したときに
 /// 過去のターンだけ出所不明に戻る）。
 async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> String {
+    // 封筒の語と既定ラベルは村の言語で決まる（Spec 35 D5）。組み立ての瞬間の
+    // 言語 = 記録時の言語で、履歴に焼かれた後は変わらない（D6 と同じ扱い）。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     let sender_label = match &incoming.from {
         // 利用者が呼び名を設定していればそれを使う（Spec 19）。
-        // **設定していないときは言語に追従させず既定のまま** — 追従させると
-        // 既存の en の村で封筒が変わり、同じ会話の履歴の途中で送り手名が
-        // 切り替わる（履歴は保存済みの文字列なので遡って直らない）。
+        // 未設定の既定は言語で決まる（凍結 2 の部分改訂。const の doc が正）。
         Endpoint::User => {
             let world = shared.world.read().await;
-            world.user_name().unwrap_or(DEFAULT_USER_LABEL).to_owned()
+            world
+                .user_name()
+                .unwrap_or(language.pick(DEFAULT_USER_LABEL, DEFAULT_USER_LABEL_EN))
+                .to_owned()
         }
         // 表示は UI と同じ「Fuseforks」。プロンプトと画面で同じ送り手が
         // 違う名前になると、利用者とエージェントの会話が噛み合わない。
@@ -1252,7 +1267,14 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
         // 乗る固定費ではない。
         Endpoint::External { client } => {
             let world = shared.world.read().await;
-            format!("{}（外部クライアント）", external_label(&world, client))
+            match language {
+                crate::world::Language::Ja => {
+                    format!("{}（外部クライアント）", external_label(&world, client))
+                }
+                crate::world::Language::En => {
+                    format!("{} (external client)", external_label(&world, client))
+                }
+            }
         }
     };
     // **本文が封筒を名乗れないようにしてから組み立てる**（Spec 26 D1）。
@@ -1272,7 +1294,7 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
             endpoint_kind(&incoming.from)
         );
     }
-    crate::sender_envelope::wrap(&sender_label, &body)
+    crate::sender_envelope::wrap(&sender_label, &body, language)
 }
 
 /// 計器へ出す送り手の種別。**表示名ではなく種別**（誰が名乗ったかではなく、
