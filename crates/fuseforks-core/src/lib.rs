@@ -87,7 +87,10 @@ pub mod tool_reason;
 pub mod tools;
 pub mod world;
 
-pub use attachment::{Attachment, AttachmentStore, GcReport, validate_attachment};
+pub use attachment::{
+    Attachment, AttachmentFormat, AttachmentKind, AttachmentStore, GcReport, ValidatedAttachment,
+    detect_format, validate_any, validate_attachment, validate_audio, validate_pdf, validate_video,
+};
 pub use blackboard::BlackboardNote;
 pub use budget::BudgetPool;
 pub use command::{

@@ -146,11 +146,15 @@ impl Orchestrator {
         let attachments = crate::attachment::AttachmentStore::new(store.root());
         match attachments.gc(std::time::SystemTime::now()).await {
             Ok(report) if report.removed > 0 || report.remaining_files > 0 => {
+                // 種別内訳を併記する（Spec 36 D11）— 種別クォータを作らない
+                // 代わりの計器で、動画が総量を食って画像を押し出す事態が
+                // 実際に起きているかをここで観測する。0 も出す（#72）。
                 note!(
-                    "attachment gc: removed={} remaining={} bytes={}",
+                    "attachment gc: removed={} remaining={} bytes={} kinds={}",
                     report.removed,
                     report.remaining_files,
                     report.remaining_bytes,
+                    report.kinds_line(),
                 );
             }
             Ok(_) => {}

@@ -335,11 +335,56 @@ P6-4 はこの「rejected 行あり + turn 行なし」を**対で**読む。査
   種別ごとの上限 / **`carries` の表の凍結（画像の行を含む全 20 マス）** /
   Spec 23 凍結 7（Gemini ネイティブ非対応）の**覆しの明記** /
   D6 の分業（転送は常に Drop・述語は入口だけ）/ D10（Files API 不採用）
-- [ ] **P1 コア（純機構）**: `attachment.rs` の種別拡張 — `AttachmentKind` +
-  種別ごとの magic 述語と上限（**述語は種別ごとに別。画像の
-  `validate_attachment` は触らない**）+ **D13 の改名** + 保存 ext の規則
-  （画像 = .webp 固定 / 他 = magic から決定。ファイル名拡張子は読まない）。
-  GC は無変更をテストで確認 + 計器の種別内訳（D11）
+- [x] **P1 コア（純機構）— 完了（2026-08-12）**。`attachment.rs` の種別拡張。
+  **単体 21 → 37 本**（コア lib 全体 533 → 549）・workspace 全緑・clippy 警告ゼロ。
+  `AttachmentKind` + 種別ごとの magic 述語と上限（**述語は種別ごとに別。画像の
+  `validate_attachment` は中身を触らず、参照する定数名だけ D13 で変えた**）+
+  保存 ext の規則（画像 = .webp 固定 / 他 = magic から決定。ファイル名拡張子は
+  読まない）+ GC の種別内訳（D11）。
+
+  **P1 実装記録（実装で決めた 7 点）**:
+  1. **型は 2 段にした — `AttachmentKind`（4 種別）と `AttachmentFormat`（5 形式）。**
+     `carries` と上限は種別の粒度だが、**保存の拡張子と MIME は種別だけでは
+     決まらない**（音声に mp3 / wav の 2 形式がある）。**メッセージが持つのは
+     format 1 つ**で kind は `format.kind()` で導出する — 両方を持たせると
+     ディスク上に真実が 2 つできて、食い違ったときどちらが正か決められない
+  2. **`width` / `height` を `Option<u32>` へ**（0 で埋めない）。0 を入れると
+     「0px の画像」と区別できず、**無い値を型で無いと言う**規律に反する。
+     redb 互換は `#[serde(default)]` + `skip_serializing_if` で保つ
+     （旧レコードの `"width": 320` は `Some(320)` として読める）
+  3. **`AttachmentStore::read(id)` の署名は変えず、拡張子を総当たりする。**
+     表示の経路（IPC `read_attachment`）は**チップの id しか運ばない**ので、
+     読み口に形式を足すと P3 / P4 まで配線が伸びる。id は UUID なので当たるのは
+     高々 1 つで、外れは `NotFound` で素通り（stat 最大 5 回）
+  4. **`ftyp` は動画専用ではなかった**（実装中に出た発見。予測になかった）。
+     同じ ISO BMFF を `M4A `（音声）/ `heic` `mif1` `avif`（画像）/ `qt  `
+     （QuickTime）も名乗るので、**ブランドを見ずに通すと HEIC の写真が
+     「動画」としてワイヤへ載る**（そして相手が拒む理由を画面で説明できない）。
+     major brand を閉じた許容にした
+  5. **WebP と WAV は先頭 4 バイトが同じ**（どちらも `RIFF`）。オフセット 8 の
+     フォーム型まで見ないと WAV が画像の述語へ落ち、**「音声を送ったのに
+     画像のエラーが出る」**形になる。`detect_format` の判定順は
+     「曖昧さの無いものから」— RIFF 系 → PDF → `ftyp` → **mp3 の素フレーム同期は
+     最後**（2 バイトしか見ない最も緩い判定）
+  6. **尺（秒）も頁数も数えない。** デコーダ / パーサが要り、依存を増やしてまで
+     守る境界ではない（重いものはサイズの門に当たる）。**確かめられないことを
+     確かめたふりの検査で覆わない**（Spec 15 の「実行可能性は見ない」と同じ規律）。
+     コストの桁は画面の注記が伝える（S6）
+  7. **`GcReport.remaining_by_kind` は全 4 種別を必ず含み 0 も出す**（#72）。
+     欄の欠落と 0 を画面で区別できないと、そこへ落ちたものは無かったことになる。
+     ログは `kinds=image:N,audio:N,video:N,pdf:N` の固定形
+
+  **ミューテーション 3 回で赤を確かめた**（一発で緑になったので）。
+  **予測を先に書き、3 本ちょうど・1 ミューテーションにつき 1 本で一致**:
+  (a) `ftyp` のブランド検査を外す → `ftyp_brand_allowlist_rejects_non_video_containers`
+  (b) `check_size` を画像の定数へ畳む → `each_kind_has_its_own_size_gate`
+  （**D13 の存在理由そのもの**が赤で読める）
+  (c) `#[serde(default)]` を外す → `old_records_without_format_read_as_webp_image`
+  （割れると**再起動で過去の会話の添付が全部読めなくなる**）
+
+  **P4 への持ち越し**: `types.ts` の `Attachment.width: number` は画像では
+  今も正しいが、**非画像では欄ごと来ない**ので `width?: number` へ広げる。
+  P1 では UI から非画像を作れないので TS の型検査は割れていない
 - [ ] **P2 ワイヤ**: canonical の `ImageAttachment` → 種別を持つ形へ
   （既存欄は加算で拡張。serde の後方互換 = 旧形式の読みが割れないことを
   テストで凍結）。Gemini `inline_data`（D8 — 画像含む）/ Anthropic `document` /
