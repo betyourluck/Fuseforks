@@ -652,32 +652,54 @@ impl Shared {
             // 飛ばした相手が居るなら**必ず言う**。黙って対象外にすると、
             // 「要約したのに次のターンが短くならない」個体の理由が画面から消える。
             // 次の道も書く（#44 の規律）— 起動してから押せば要約される。
-            let note = if skipped > 0 {
-                format!(
+            // System 行は記録時の言語で書く（Spec 35 D6）。
+            let language = self
+                .world
+                .read()
+                .await
+                .language()
+                .unwrap_or(crate::world::Language::Ja);
+            let note = match (skipped > 0, language) {
+                (true, crate::world::Language::Ja) => format!(
                     "（停止中の {skipped} 体は要約していません。起動してからもう一度押すと、\
                      その相手も要約されます）"
-                )
-            } else {
-                String::new()
+                ),
+                (true, crate::world::Language::En) => format!(
+                    " ({skipped} stopped agent(s) were not summarized. Start them and \
+                     press again to include them.)"
+                ),
+                (false, _) => String::new(),
             };
             // **文言を経路で分ける。** 予定の完了後に走った要約を「押しました」の
             // 文面で出すと、押していない人が自分の操作だと読む。
-            let headline = if only.is_some() {
-                format!("予定の完了後に {done} 体の記憶を要約しました。")
-            } else {
-                format!("稼働中の {done} 体の記憶を要約しました。")
+            let headline = match (only.is_some(), language) {
+                (true, crate::world::Language::Ja) => {
+                    format!("予定の完了後に {done} 体の記憶を要約しました。")
+                }
+                (false, crate::world::Language::Ja) => {
+                    format!("稼働中の {done} 体の記憶を要約しました。")
+                }
+                (true, crate::world::Language::En) => {
+                    format!("Summarized the memory of {done} agent(s) after the scheduled run finished.")
+                }
+                (false, crate::world::Language::En) => {
+                    format!("Summarized the memory of {done} running agent(s).")
+                }
             };
-            self.record(AgentMessage::new(
-                Endpoint::System,
-                Endpoint::User,
-                format!(
+            let body = match language {
+                crate::world::Language::Ja => format!(
                     "{headline}以後のやり取りは要約を踏まえて続きます\
                      （元のやり取りは消えていません — 「会話一覧」の書き出しから\
                      読めます）{note}"
                 ),
-                0,
-            ))
-            .await;
+                crate::world::Language::En => format!(
+                    "{headline} Future turns continue from the summary. (Nothing is \
+                     lost — the original exchanges can be read via the conversation \
+                     list's export.){note}"
+                ),
+            };
+            self.record(AgentMessage::new(Endpoint::System, Endpoint::User, body, 0))
+                .await;
         }
         Ok(done)
     }
@@ -829,12 +851,32 @@ impl Shared {
             // 語彙を混ぜると、同じ状態に 2 つの言葉が並びモデルが対応を推測する）。
             // Failed だけ種別を伝える — 理由（last_error）は流さないが、
             // 失敗と正常停止の区別は進行役の次の一手を変える。
-            let text = if is_running {
-                format!("{id}（{name}）が稼働を開始しました")
-            } else if status == AgentStatus::Failed {
-                format!("{id}（{name}）が失敗により停止しました")
-            } else {
-                format!("{id}（{name}）が停止しました")
+            // System 行は記録時の言語で書く（Spec 35 D6）。
+            let language = self
+                .world
+                .read()
+                .await
+                .language()
+                .unwrap_or(crate::world::Language::Ja);
+            let text = match language {
+                crate::world::Language::Ja => {
+                    if is_running {
+                        format!("{id}（{name}）が稼働を開始しました")
+                    } else if status == AgentStatus::Failed {
+                        format!("{id}（{name}）が失敗により停止しました")
+                    } else {
+                        format!("{id}（{name}）が停止しました")
+                    }
+                }
+                crate::world::Language::En => {
+                    if is_running {
+                        format!("{id} ({name}) is now running")
+                    } else if status == AgentStatus::Failed {
+                        format!("{id} ({name}) stopped after a failure")
+                    } else {
+                        format!("{id} ({name}) stopped")
+                    }
+                }
             };
             // from: System / to: User。User 宛の発話は全エージェントにとって
             // 他人の会話なので、広場ログの is_mine 判定に誰も掛からず全員に

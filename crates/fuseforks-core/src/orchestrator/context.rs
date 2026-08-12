@@ -60,15 +60,26 @@ pub(super) async fn compose_presence_notices(
 
     // 「顔ぶれが権威、通知が語り」の案内は、顔ぶれの節が実際に出ている
     // 相手にだけ書く。接続 0 体の個体に存在しない節を指させない。
-    let authority_note = if has_roster {
-        "\n\n現在の状態は「今の顔ぶれ」が正です。"
-    } else {
-        ""
+    // 見出しは組み立て時の現在言語（Spec 35 D6 — 保存されないので
+    // System 行の「記録時の言語」とは別の側）。本文の行は記録時の言語のまま。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    let authority_note = match (has_roster, language) {
+        (true, crate::world::Language::Ja) => "\n\n現在の状態は「今の顔ぶれ」が正です。",
+        (true, crate::world::Language::En) => {
+            "\n\nThe current state is whatever \"Current roster\" says."
+        }
+        (false, _) => "",
     };
-    Some(format!(
-        "## 入退室（新しいものが下）\n{}{authority_note}",
-        lines.join("\n")
-    ))
+    let heading = language.pick(
+        "## 入退室（新しいものが下）\n",
+        "## Arrivals and departures (newest at the bottom)\n",
+    );
+    Some(format!("{heading}{}{authority_note}", lines.join("\n")))
 }
 
 /// 「居合わせた会話」を組み立てる（広場ログ）。
@@ -283,6 +294,8 @@ pub(super) async fn compose_room_log(
 
     let world = shared.world.read().await;
     let label = |endpoint: &Endpoint| endpoint_label(&world, endpoint);
+    // 枠組み（見出し・切り詰めの注記）は組み立て時の現在言語（Spec 35）。
+    let language = world.language().unwrap_or(crate::world::Language::Ja);
 
     // 収集は新しい順なので、表示は古い順へ戻す。
     //
@@ -301,7 +314,11 @@ pub(super) async fn compose_room_log(
             let (prefix, tail) = match handle {
                 Some(id) => {
                     clipped += 1;
-                    (format!("[{id}] "), format!("（全 {full_chars} 字）"))
+                    let tail = match language {
+                        crate::world::Language::Ja => format!("（全 {full_chars} 字）"),
+                        crate::world::Language::En => format!(" (full length: {full_chars} chars)"),
+                    };
+                    (format!("[{id}] "), tail)
                 }
                 None => (String::new(), String::new()),
             };
@@ -316,25 +333,42 @@ pub(super) async fn compose_room_log(
     // 次の手は行頭の ID を `room_log` ツールへ渡すこと（Spec 22 — 旧文面
     // 「本人へ ask」は撤回。上限超・リング溢れのときだけツール側の返答が
     // ask へ誘導する）。書かないと同じ抜粋を眺め続けることになる（#44）。
-    let notice = if clipped > 0 {
-        format!(
+    let notice = match (clipped > 0, language) {
+        (true, crate::world::Language::Ja) => format!(
             "うち {clipped} 件は途中で切れています（行末の「全 N 字」が元の長さ）。\
              **全文が要るなら、行頭の [ ] 内の ID をそのまま `room_log` ツールに\
              指定してください。**"
-        )
-    } else {
-        String::new()
+        ),
+        (true, crate::world::Language::En) => format!(
+            "{clipped} of them are cut off (the \"full length\" at the end of the \
+             line is the original size). **If you need the full text, pass the ID \
+             from the [ ] at the start of the line to the `room_log` tool.**"
+        ),
+        (false, _) => String::new(),
     };
 
-    Some(format!(
-        "## この場で交わされていた会話\n\
-         あなた宛ではありませんが、同じ場に居たので聞こえていた発言です。\
-         **返事をする義務はありません。** 文脈として使ってください。\n\
-         直近 {} 件まで・各行は先頭 {} 字の抜粋です。{notice}\n{}",
-        config.room_log_window,
-        config.room_log_excerpt_chars,
-        lines.join("\n")
-    ))
+    Some(match language {
+        crate::world::Language::Ja => format!(
+            "## この場で交わされていた会話\n\
+             あなた宛ではありませんが、同じ場に居たので聞こえていた発言です。\
+             **返事をする義務はありません。** 文脈として使ってください。\n\
+             直近 {} 件まで・各行は先頭 {} 字の抜粋です。{notice}\n{}",
+            config.room_log_window,
+            config.room_log_excerpt_chars,
+            lines.join("\n")
+        ),
+        crate::world::Language::En => format!(
+            "## Conversation happening around you\n\
+             These messages were not addressed to you, but you overheard them in \
+             the same space. **You are not obliged to reply.** Use them as \
+             context.\n\
+             Up to the {} most recent, each line an excerpt of the first {} \
+             characters. {notice}\n{}",
+            config.room_log_window,
+            config.room_log_excerpt_chars,
+            lines.join("\n")
+        ),
+    })
 }
 
 

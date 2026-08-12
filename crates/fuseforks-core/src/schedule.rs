@@ -84,6 +84,19 @@ impl Weekday {
             Self::Sun => "日曜",
         }
     }
+
+    /// [`Self::label_ja`] の英語（Spec 35）。
+    pub fn label_en(self) -> &'static str {
+        match self {
+            Self::Mon => "Monday",
+            Self::Tue => "Tuesday",
+            Self::Wed => "Wednesday",
+            Self::Thu => "Thursday",
+            Self::Fri => "Friday",
+            Self::Sat => "Saturday",
+            Self::Sun => "Sunday",
+        }
+    }
 }
 
 /// 再現規則。
@@ -179,6 +192,21 @@ impl Recurrence {
                 hour,
                 minute,
             } => format!("毎週 {} {hour:02}:{minute:02}", weekday.label_ja()),
+        }
+    }
+
+    /// [`Self::label_ja`] の英語（Spec 35。モデルへ届く面で使う。
+    /// UI の一覧は今も `label_ja` — 画面の言語は UI 辞書の責務で、
+    /// この関数はプロンプトと会話ログに出る側だけを担う）。
+    pub fn label_en(&self) -> String {
+        match self {
+            Self::Interval { every_minutes } => format!("every {every_minutes} minutes"),
+            Self::Daily { hour, minute } => format!("daily at {hour:02}:{minute:02}"),
+            Self::Weekly {
+                weekday,
+                hour,
+                minute,
+            } => format!("every {} at {hour:02}:{minute:02}", weekday.label_en()),
         }
     }
 

@@ -140,9 +140,23 @@ async fn finish_interrupted(
         .lock()
         .expect("await を跨がない")
         .map(|at| at.elapsed());
-    let cause = match elapsed {
-        Some(elapsed) => format!("要求から {:.1} 秒", elapsed.as_secs_f64()),
-        None => "依頼元の打ち切りに連鎖".to_owned(),
+    // System 行は記録時の言語で書く（Spec 35 D6）。cause は行の中へ埋まるので
+    // ここで一緒に分岐する（言語をまたいで埋め込むと語順が壊れる — Spec 13 P3b）。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    let cause = match (elapsed, language) {
+        (Some(elapsed), crate::world::Language::Ja) => {
+            format!("要求から {:.1} 秒", elapsed.as_secs_f64())
+        }
+        (None, crate::world::Language::Ja) => "依頼元の打ち切りに連鎖".to_owned(),
+        (Some(elapsed), crate::world::Language::En) => {
+            format!("{:.1}s after the request", elapsed.as_secs_f64())
+        }
+        (None, crate::world::Language::En) => "cascaded from the requester's interrupt".to_owned(),
     };
 
     // (b) 履歴 + 統計。1 回の world ロックで済ませる。
@@ -157,11 +171,19 @@ async fn finish_interrupted(
             .map(|record| record.spec.name.clone())
             .unwrap_or_else(|_| agent_id.to_string())
     };
+    let interrupt_text = match language {
+        crate::world::Language::Ja => {
+            format!("{agent_id}（{display}）のターンをユーザーの指示で打ち切りました（{cause}）")
+        }
+        crate::world::Language::En => {
+            format!("Interrupted {agent_id} ({display})'s turn at the user's request ({cause})")
+        }
+    };
     shared
         .record(AgentMessage::new(
             Endpoint::System,
             Endpoint::User,
-            format!("{agent_id}（{display}）のターンをユーザーの指示で打ち切りました（{cause}）"),
+            interrupt_text,
             0,
         ))
         .await;
@@ -267,16 +289,32 @@ async fn finish_budget_exhausted(
                 .map(|record| record.spec.name.clone())
                 .unwrap_or_else(|_| agent_id.to_string())
         };
+        // System 行は記録時の言語で書く（Spec 35 D6）。
+        let language = shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+        let budget_text = match language {
+            crate::world::Language::Ja => format!(
+                "予算（実効 {} トークン）を使い切ったため、{agent_id}（{display}）の\
+                 ターンを打ち切りました。続きが要るなら改めて依頼してください\
+                 （予算は依頼ごとに新しく付きます）",
+                pool.ceiling_effective()
+            ),
+            crate::world::Language::En => format!(
+                "The budget ({} effective tokens) is used up, so {agent_id} \
+                 ({display})'s turn was cut off. If you need more, send a new \
+                 request — each request gets a fresh budget",
+                pool.ceiling_effective()
+            ),
+        };
         shared
             .record(AgentMessage::new(
                 Endpoint::System,
                 Endpoint::User,
-                format!(
-                    "予算（実効 {} トークン）を使い切ったため、{agent_id}（{display}）の\
-                     ターンを打ち切りました。続きが要るなら改めて依頼してください\
-                     （予算は依頼ごとに新しく付きます）",
-                    pool.ceiling_effective()
-                ),
+                budget_text,
                 0,
             ))
             .await;

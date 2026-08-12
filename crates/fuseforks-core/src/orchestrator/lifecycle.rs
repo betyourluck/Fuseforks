@@ -193,11 +193,28 @@ impl Orchestrator {
                 Err(_) => return,
             }
         };
-        let text = match (before, after) {
-            (None, Some(now)) => format!("{id}（{name}）の役職が「{now}」になりました"),
-            (Some(_), Some(now)) => format!("{id}（{name}）の役職が「{now}」になりました"),
-            (Some(was), None) => format!("{id}（{name}）の役職「{was}」が外れました"),
-            (None, None) => return,
+        // System 行は記録時の言語で書く（Spec 35 D6）。
+        let language = self
+            .shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+        let text = match (before, after, language) {
+            (_, Some(now), crate::world::Language::Ja) => {
+                format!("{id}（{name}）の役職が「{now}」になりました")
+            }
+            (Some(was), None, crate::world::Language::Ja) => {
+                format!("{id}（{name}）の役職「{was}」が外れました")
+            }
+            (_, Some(now), crate::world::Language::En) => {
+                format!("{id} ({name}) now has the role \"{now}\"")
+            }
+            (Some(was), None, crate::world::Language::En) => {
+                format!("{id} ({name}) no longer has the role \"{was}\"")
+            }
+            (None, None, _) => return,
         };
         // 入退室通知と同じ経路（from: System / to: User。record のみで配送しない）。
         self.shared

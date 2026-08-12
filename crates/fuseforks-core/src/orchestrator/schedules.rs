@@ -136,17 +136,27 @@ pub(super) async fn schedule_tick<Tz: chrono::TimeZone>(
                             // 宛先が削除済みでも通知は成立させる（ID で示す）。
                             .unwrap_or_else(|_| task.to.to_string())
                     };
+                    // System 行は記録時の言語で書く（Spec 35 D6）。
+                    let language = shared
+                        .world
+                        .read()
+                        .await
+                        .language()
+                        .unwrap_or(crate::world::Language::Ja);
+                    let text = match language {
+                        crate::world::Language::Ja => format!(
+                            "{}（{name}）への予定「{}」を飛ばしました（停止中）",
+                            task.to,
+                            task.recurrence.label_ja()
+                        ),
+                        crate::world::Language::En => format!(
+                            "Skipped the schedule \"{}\" for {} ({name}) — the agent is stopped",
+                            task.recurrence.label_en(),
+                            task.to,
+                        ),
+                    };
                     shared
-                        .record(AgentMessage::new(
-                            Endpoint::System,
-                            Endpoint::User,
-                            format!(
-                                "{}（{name}）への予定「{}」を飛ばしました（停止中）",
-                                task.to,
-                                task.recurrence.label_ja()
-                            ),
-                            0,
-                        ))
+                        .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
                         .await;
                     consumed.push((task.id.clone(), due_ms));
                     continue;
@@ -258,11 +268,25 @@ async fn deliver_scheduled(
     // 本文の先頭に由来を書く。封筒（【送り手: Fuseforks】）だけでは
     // モデルが人の発話と区別できない。会話ペインにもそのまま出るので
     // 利用者も定期発火だと分かる。
-    let base = format!(
-        "【定期実行: {}】\n{}",
-        task.recurrence.label_ja(),
-        task.message
-    );
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    let base = match language {
+        crate::world::Language::Ja => format!(
+            "【定期実行: {}】\n{}",
+            task.recurrence.label_ja(),
+            task.message
+        ),
+        // 【】は封筒と同じく両言語で共通（構造の印。Spec 35 D5 と同じ判断）。
+        crate::world::Language::En => format!(
+            "【Scheduled run: {}】\n{}",
+            task.recurrence.label_en(),
+            task.message
+        ),
+    };
     // 前判定の出力を添える。**添えないとサーヴァントが同じ情報を取りに行く
     // 周回が発生し、トークン節約という目的と逆行する**（Spec 28 D3）。
     let content = compose_body(&base, &appendix);
