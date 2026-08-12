@@ -1206,12 +1206,20 @@ Three things have since been added into this frame: the theme, your own name and
   always had one). On by default: cutting a line once is recoverable, but losing one without knowing
   the setting exists is not
 
-Localization covers two of three layers. **UI text** and **error text returned by the core** are
-translated; **system prompts and tool descriptions are not** — translating those is not translation
-but a change of prompt, and it collides with the discipline of not altering a single character of the
-bundling text ([Spec 08](specs/08_plan-wave-pane.md)). System lines in the conversation log are not
-translated either (records should stay in the language they happened in; retranslating them would put
-the exported JSONL and the screen out of sync).
+Localization covers all three layers ([Spec 35](specs/35_bilingual-core.md) landed the third).
+**UI text** and **error text returned by the core** are translated through dictionaries; **what the
+core says to the agents (the system-prompt framework, tool descriptions, the sender envelope) exists
+in both Japanese and English, and the village's language setting picks which one is sent**. This is
+an addition, not a replacement — a Japanese village does not change by a single byte (the discipline
+of never altering the bundling text, [Spec 08](specs/08_plan-wave-pane.md), stays intact). The aim
+is steering language pull: models tend to reply in whichever language dominates their input, so an
+English village gets an English-speaking core. **Village content (the ordinance, Construct, SKILL)
+is the user's asset** and the core leaves it alone — an English UI with a Japanese SKILL
+occasionally producing Japanese in replies is expected. System lines in the conversation log are
+written in **the village's language at the moment of recording** and never retranslated
+(retranslating would put the exported JSONL and the screen out of sync; a village that switched
+languages keeps its old lines in the old language — an honest record, like the user's own past
+messages).
 
 ### Accepting requests from external LLMs ([Spec 25](specs/25_mcp-server.md))
 
