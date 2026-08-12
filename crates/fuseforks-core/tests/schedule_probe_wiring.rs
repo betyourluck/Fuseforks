@@ -74,6 +74,9 @@ async fn setup(dir: &TempDir) -> Orchestrator {
     )
     .await
     .expect("bootstrap できること");
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
         .await
@@ -463,6 +466,9 @@ async fn a_probe_is_persisted_and_reloads() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    reopened.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     let tasks = reopened.schedules().await;
     assert_eq!(tasks.len(), 1);
     let restored = tasks[0].probe.as_ref().expect("前判定が戻ること");
@@ -580,6 +586,9 @@ async fn the_village_id_survives_a_restart() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    reopened.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     assert_eq!(
         reopened.village_id().await,
         first,

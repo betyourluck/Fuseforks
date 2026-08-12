@@ -132,6 +132,9 @@ async fn a_delegated_turn_is_not_offered_transfer_tools() {
     )
     .await
     .expect("bootstrap できること");
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
         .await
@@ -260,6 +263,9 @@ async fn a_delegated_answer_does_not_split_into_two_conversations() {
     )
     .await
     .expect("bootstrap できること");
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
         .await

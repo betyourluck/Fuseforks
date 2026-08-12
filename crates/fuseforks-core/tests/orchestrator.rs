@@ -42,6 +42,9 @@ async fn setup_with(
     )
     .await
     .expect("bootstrap できること");
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
 
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
@@ -84,6 +87,9 @@ async fn setup(dir: &TempDir, config: OrchestratorConfig) -> Orchestrator {
     )
     .await
     .expect("bootstrap できること");
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
 
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
@@ -1131,6 +1137,9 @@ async fn a_legacy_world_file_still_opens() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
 
     let templates = orchestrator.templates().await;
     assert_eq!(templates.len(), 1);
@@ -1184,6 +1193,9 @@ async fn credentials_are_trimmed_before_storage() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
         .await
@@ -1302,6 +1314,9 @@ async fn bootstrap_promotes_unset_credential_when_the_secret_already_exists() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    orchestrator.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
 
     assert_eq!(
         orchestrator.templates().await[0].credential,
@@ -4209,6 +4224,9 @@ async fn state_survives_a_restart_but_agents_do_not_auto_start() {
     )
     .await
     .unwrap();
+    // ホストの OS ロケールに依存させない（CI は en・開発機は ja — Spec 35 で
+    // 言語がコアの挙動の入力になった。時計を引数で受けるのと同じ規律）。
+    reopened.set_language(fuseforks_core::world::Language::Ja).await.unwrap();
 
     let snapshot = reopened.snapshot(&id).await.unwrap();
     assert_eq!(snapshot.name, "PlannerAgent");
@@ -6369,10 +6387,25 @@ impl LlmBackend for PromptProbeBackend {
 /// （settings_contract — 「自動」の選択肢は無く、初回に確定する）。
 /// テスト機の OS 言語には依存しない — 確定先が ja / en のどちらかであることと、
 /// **再起動で再判定されない**（確定済みの値が残る）ことを見る。
+///
+/// **`setup` を使わない唯一のテスト。** setup は Spec 35 から言語を ja へ
+/// ピン留めするが、ここは OS 判定そのものが検査対象なので、素の bootstrap を
+/// 直接呼ぶ（ピンを通すと 2 度目の起動が flipped を上書きして、
+/// 「再判定されない」の検査が壊れる）。
 #[tokio::test]
 async fn the_language_is_determined_once_and_persisted() {
+    async fn raw_boot(dir: &TempDir) -> Orchestrator {
+        Orchestrator::bootstrap(
+            ConfigStore::new(&dir.0),
+            Arc::new(FixedBackendFactory::echo("[echo]")),
+            Arc::new(InMemorySecretStore::new()),
+            OrchestratorConfig::default(),
+        )
+        .await
+        .expect("bootstrap できること")
+    }
     let dir = TempDir::new("language-determine");
-    let _ = setup(&dir, OrchestratorConfig::default()).await;
+    let _ = raw_boot(&dir).await;
 
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
@@ -6389,7 +6422,7 @@ async fn the_language_is_determined_once_and_persisted() {
     edited["language"] = serde_json::Value::String(flipped.into());
     std::fs::write(dir.0.join("world.json"), edited.to_string()).unwrap();
 
-    let _ = setup(&dir, OrchestratorConfig::default()).await;
+    let _ = raw_boot(&dir).await;
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.0.join("world.json")).unwrap()).unwrap();
     assert_eq!(
