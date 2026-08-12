@@ -265,7 +265,7 @@
     },
     "attachCost": {
       "audio": "Audio costs on the order of thousands of tokens per minute.",
-      "video": "Video costs on the order of tens of thousands of tokens per minute.",
+      "video": "Video costs on the order of ten thousand tokens per minute (varies severalfold with resolution).",
       "pdf": "A PDF costs on the order of hundreds to thousands of tokens per page."
     }
   },
