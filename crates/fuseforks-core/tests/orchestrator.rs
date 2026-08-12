@@ -567,10 +567,10 @@ impl AgentTool for StuckTool {
     fn name(&self) -> &str {
         "stuck_probe"
     }
-    fn description(&self) -> String {
+    fn description(&self, _language: fuseforks_core::world::Language) -> String {
         "テスト用。いつも同じ失敗を返す".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _language: fuseforks_core::world::Language) -> serde_json::Value {
         serde_json::json!({ "type": "object" })
     }
     async fn call(
@@ -746,10 +746,10 @@ impl AgentTool for McpLikeTool {
     fn name(&self) -> &str {
         "memoria__recall"
     }
-    fn description(&self) -> String {
+    fn description(&self, _language: fuseforks_core::world::Language) -> String {
         "テスト用の MCP 風ツール".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _language: fuseforks_core::world::Language) -> serde_json::Value {
         serde_json::json!({ "type": "object" })
     }
     async fn call(&self, _ctx: &ToolContext, _args: &serde_json::Value) -> fuseforks_core::CoreResult<String> {
@@ -5368,10 +5368,10 @@ impl AgentTool for BusyTool {
     fn name(&self) -> &str {
         "busy_probe"
     }
-    fn description(&self) -> String {
+    fn description(&self, _language: fuseforks_core::world::Language) -> String {
         "テスト用の即答ツール".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _language: fuseforks_core::world::Language) -> serde_json::Value {
         serde_json::json!({ "type": "object" })
     }
     async fn call(

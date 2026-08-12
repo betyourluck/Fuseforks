@@ -35,6 +35,13 @@ const ELLIPSIS: char = '…';
 pub const REASON_DESCRIPTION: &str =
     "この呼び出しで次に何を確かめるのかを 20〜40 字で 1 行。長い説明や手順は書かない。";
 
+/// [`REASON_DESCRIPTION`] の英語（Spec 35。加算 — 日本語は 1 字も動かさない）。
+///
+/// 字数の目安は「20〜40 字」を写さず語数で言う — 英語で 20〜40 *characters* は
+/// 短すぎ、モデルは字数より語数で従う。
+pub const REASON_DESCRIPTION_EN: &str =
+    "One short line stating what this call is meant to find out. No long explanations or step lists.";
+
 /// 理由の状態。
 ///
 /// **`Option<String>` にしない。** `None` が「モデルが書かなかった」と
@@ -113,7 +120,7 @@ pub fn read(args: &Value) -> (ReasonState, usize) {
 /// バリデーションで落ちると、**理由を出すための機能がツールを使えなくする**。
 ///
 /// オブジェクトでないスキーマは**触らない**（壊すより出さないほうが安全）。
-pub fn inject(parameters: &mut Value) {
+pub fn inject(parameters: &mut Value, language: crate::world::Language) {
     let Some(root) = parameters.as_object_mut() else {
         return;
     };
@@ -127,7 +134,7 @@ pub fn inject(parameters: &mut Value) {
         REASON_KEY.to_owned(),
         serde_json::json!({
             "type": "string",
-            "description": REASON_DESCRIPTION,
+            "description": language.pick(REASON_DESCRIPTION, REASON_DESCRIPTION_EN),
         }),
     );
 }
@@ -231,7 +238,7 @@ mod tests {
             "properties": { "pattern": { "type": "string" } },
             "required": ["pattern"],
         });
-        inject(&mut schema);
+        inject(&mut schema, crate::world::Language::Ja);
 
         assert_eq!(
             schema["properties"][REASON_KEY]["type"], "string",
@@ -247,7 +254,7 @@ mod tests {
     #[test]
     fn inject_creates_properties_when_missing() {
         let mut schema = serde_json::json!({ "type": "object" });
-        inject(&mut schema);
+        inject(&mut schema, crate::world::Language::Ja);
         assert_eq!(schema["properties"][REASON_KEY]["type"], "string");
     }
 
@@ -255,7 +262,7 @@ mod tests {
     fn inject_leaves_non_objects_alone() {
         // 壊すより出さないほうが安全。
         let mut schema = serde_json::json!("これはスキーマではない");
-        inject(&mut schema);
+        inject(&mut schema, crate::world::Language::Ja);
         assert_eq!(schema, serde_json::json!("これはスキーマではない"));
     }
 

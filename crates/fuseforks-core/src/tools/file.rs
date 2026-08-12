@@ -45,44 +45,65 @@ impl AgentTool for FileTool {
         "file"
     }
 
-    fn description(&self) -> String {
-        "作業フォルダ内のファイル・フォルダを操作する。\
-         **新しいファイルを作れる唯一のツール**（翻訳・要約・生成物の書き出しはこれを使う）。\
-         op で操作を選ぶ: read（全文を読む）/ write（新規作成・全文置換）/ \
-         append（末尾に continuation を足す）/ mkdir（フォルダ作成）/ \
-         move（移動・改名）/ copy（複製）/ remove（ごみ箱へ移す）。\
-         **長い文章を書くときは write で書き始め、append で継ぎ足すこと。** \
-         1 回の応答で出せる量には上限があり、write は毎回全文を運ぶので、\
-         長い成果物を write だけで作ろうとすると途中で切れる。\
-         既にあるファイルの**一部だけ**を直すなら sd / yq のほうが安く確実。\
-         削除はごみ箱へ移すだけで、完全には消さない。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "作業フォルダ内のファイル・フォルダを操作する。\
+                 **新しいファイルを作れる唯一のツール**（翻訳・要約・生成物の書き出しはこれを使う）。\
+                 op で操作を選ぶ: read（全文を読む）/ write（新規作成・全文置換）/ \
+                 append（末尾に continuation を足す）/ mkdir（フォルダ作成）/ \
+                 move（移動・改名）/ copy（複製）/ remove（ごみ箱へ移す）。\
+                 **長い文章を書くときは write で書き始め、append で継ぎ足すこと。** \
+                 1 回の応答で出せる量には上限があり、write は毎回全文を運ぶので、\
+                 長い成果物を write だけで作ろうとすると途中で切れる。\
+                 既にあるファイルの**一部だけ**を直すなら sd / yq のほうが安く確実。\
+                 削除はごみ箱へ移すだけで、完全には消さない。",
+                "Work with files and folders in the working folder. \
+                 **The only tool that can create new files** (use it to write out \
+                 translations, summaries and other deliverables). Pick an operation \
+                 with op: read (whole file) / write (create or replace in full) / \
+                 append (add a continuation at the end) / mkdir / move (move or \
+                 rename) / copy / remove (moves to the recycle bin). \
+                 **For long documents, start with write and keep going with \
+                 append.** A single response has an output limit and write carries \
+                 the full text every time, so building a long file with write alone \
+                 gets cut off midway. To change **only part of** an existing file, \
+                 sd / yq are cheaper and safer. \
+                 Removal only moves to the recycle bin; nothing is deleted for good.",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "op": {
                     "type": "string",
                     "enum": ["read", "write", "append", "mkdir", "move", "copy", "remove"],
-                    "description": "操作。read=読む / write=書く（全文置換）/ append=末尾へ追記 / mkdir=フォルダ作成 / move=移動・改名 / copy=複製 / remove=ごみ箱へ"
+                    "description": d("操作。read=読む / write=書く（全文置換）/ append=末尾へ追記 / mkdir=フォルダ作成 / move=移動・改名 / copy=複製 / remove=ごみ箱へ",
+                                     "Operation: read / write (replace in full) / append / mkdir / move (move or rename) / copy / remove (to recycle bin)")
                 },
                 "path": {
                     "type": "string",
-                    "description": "対象の相対パス（作業フォルダ起点）"
+                    "description": d("対象の相対パス（作業フォルダ起点）",
+                                     "Relative path of the target (rooted at the working folder)")
                 },
                 "content": {
                     "type": "string",
-                    "description": "write で書き込む全文、または append で末尾へ足す続き"
+                    "description": d("write で書き込む全文、または append で末尾へ足す続き",
+                                     "Full text to write (write), or the continuation to add at the end (append)")
                 },
                 "to": {
                     "type": "string",
-                    "description": "move / copy の宛先の相対パス"
+                    "description": d("move / copy の宛先の相対パス",
+                                     "Destination relative path for move / copy")
                 },
                 "overwrite": {
                     "type": "boolean",
-                    "description": "既存を上書きするか。既定 false（既存があれば拒否する）"
+                    "description": d("既存を上書きするか。既定 false（既存があれば拒否する）",
+                                     "Overwrite an existing file. Defaults to false (refuses if the target exists)")
                 }
             },
             "required": ["op", "path"],

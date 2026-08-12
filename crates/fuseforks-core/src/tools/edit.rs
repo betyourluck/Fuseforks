@@ -203,46 +203,64 @@ impl AgentTool for SdTool {
         "sd"
     }
 
-    fn description(&self) -> String {
-        "作業フォルダ内のファイルを正規表現で置換する。\
-         **既定では書き込まず、適用した場合の差分（diff）だけを返す。**\
-         差分を確認してから `apply: true` で実際に書き込むこと。\
-         置換文字列では `$1` や `$name` でキャプチャを参照できる。\
-         リテラルの `$` は `$$` と書く。\
-         `paths` に複数のファイルを渡すと差分をまとめて確認できる（最大 20 件）— \
-         **これは preview 専用で、書き込みは 1 回の呼び出しで 1 ファイルだけ**\
-         （`path` で 1 つずつ `apply: true` を指定する）。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "作業フォルダ内のファイルを正規表現で置換する。\
+                 **既定では書き込まず、適用した場合の差分（diff）だけを返す。**\
+                 差分を確認してから `apply: true` で実際に書き込むこと。\
+                 置換文字列では `$1` や `$name` でキャプチャを参照できる。\
+                 リテラルの `$` は `$$` と書く。\
+                 `paths` に複数のファイルを渡すと差分をまとめて確認できる（最大 20 件）— \
+                 **これは preview 専用で、書き込みは 1 回の呼び出しで 1 ファイルだけ**\
+                 （`path` で 1 つずつ `apply: true` を指定する）。",
+                "Replace text in a file in the working folder using a regular \
+                 expression. **By default nothing is written — you get the diff that \
+                 would result.** Review the diff, then call again with `apply: true` \
+                 to actually write. The replacement string may reference captures as \
+                 `$1` or `$name`; write a literal `$` as `$$`. \
+                 Pass several files in `paths` to preview their diffs together \
+                 (up to 20) — **that form is preview-only; writing is one file per \
+                 call** (use `path` with `apply: true`, one at a time).",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "対象ファイルの相対パス。書き込む（apply: true）ときはこちら"
+                    "description": d("対象ファイルの相対パス。書き込む（apply: true）ときはこちら",
+                                     "Relative path of the target file. Use this form when writing (apply: true)")
                 },
                 "paths": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "複数ファイルの差分をまとめて確認する（最大 20 件）。**preview 専用で `apply` とは併用できない**。`path` とは同時に指定できない"
+                    "description": d("複数ファイルの差分をまとめて確認する（最大 20 件）。**preview 専用で `apply` とは併用できない**。`path` とは同時に指定できない",
+                                     "Preview diffs for several files at once (up to 20). **Preview-only; cannot be combined with `apply`** or with `path`")
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "検索する正規表現（Rust regex 構文）"
+                    "description": d("検索する正規表現（Rust regex 構文）",
+                                     "Regular expression to search for (Rust regex syntax)")
                 },
                 "replacement": {
                     "type": "string",
-                    "description": "置換文字列。`$1` `$name` でキャプチャ参照、リテラル `$` は `$$`"
+                    "description": d("置換文字列。`$1` `$name` でキャプチャ参照、リテラル `$` は `$$`",
+                                     "Replacement string. `$1` / `$name` reference captures; a literal `$` is `$$`")
                 },
                 "apply": {
                     "type": "boolean",
-                    "description": "true で書き込む。省略時は preview（差分を返すだけで書かない）"
+                    "description": d("true で書き込む。省略時は preview（差分を返すだけで書かない）",
+                                     "If true, write the change. Omitted = preview (returns the diff without writing)")
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "大文字小文字を無視するか。既定は false"
+                    "description": d("大文字小文字を無視するか。既定は false",
+                                     "Ignore case. Defaults to false")
                 }
             },
             "required": ["pattern", "replacement"],
@@ -699,41 +717,58 @@ impl AgentTool for YqTool {
         "yq"
     }
 
-    fn description(&self) -> String {
-        "TOML / JSON ファイルの特定の値だけを取得（get）・設定（set）・\
-         削除（remove）する。コメント・キー順・フォーマットは保持されるので、\
-         **設定ファイルの値を変えるときはファイル全体を書き直さずこれを使うこと**。\
-         `key` は `a.b[0].c` 形式のパスのみ（yq のクエリ式は使えない）。\
-         set / remove は既定では書き込まず差分（diff）だけを返す。\
-         確認してから `apply: true` で書き込むこと。\
-         set できるのはスカラー値（文字列・数値・真偽・null）だけ。YAML は非対応。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "TOML / JSON ファイルの特定の値だけを取得（get）・設定（set）・\
+                 削除（remove）する。コメント・キー順・フォーマットは保持されるので、\
+                 **設定ファイルの値を変えるときはファイル全体を書き直さずこれを使うこと**。\
+                 `key` は `a.b[0].c` 形式のパスのみ（yq のクエリ式は使えない）。\
+                 set / remove は既定では書き込まず差分（diff）だけを返す。\
+                 確認してから `apply: true` で書き込むこと。\
+                 set できるのはスカラー値（文字列・数値・真偽・null）だけ。YAML は非対応。",
+                "Get, set, or remove a single value in a TOML / JSON file. Comments, \
+                 key order and formatting are preserved, so **use this instead of \
+                 rewriting the whole file when changing a config value**. \
+                 `key` is a path of the form `a.b[0].c` (yq query expressions are \
+                 not supported). set / remove return a diff by default without \
+                 writing; review it, then call again with `apply: true`. \
+                 Only scalar values (string, number, boolean, null) can be set. \
+                 YAML is not supported.",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "対象ファイルの相対パス（.toml / .json）"
+                    "description": d("対象ファイルの相対パス（.toml / .json）",
+                                     "Relative path of the target file (.toml / .json)")
                 },
                 "op": {
                     "type": "string",
                     "enum": ["get", "set", "remove"],
-                    "description": "操作。get = 値の取得、set = 値の設定、remove = キーの削除"
+                    "description": d("操作。get = 値の取得、set = 値の設定、remove = キーの削除",
+                                     "Operation: get = read a value, set = write a value, remove = delete a key")
                 },
                 "key": {
                     "type": "string",
-                    "description": "対象のパス。`a.b[0].c` 形式（キーは英数字・`-`・`_` のみ）"
+                    "description": d("対象のパス。`a.b[0].c` 形式（キーは英数字・`-`・`_` のみ）",
+                                     "Target path in the form `a.b[0].c` (keys are alphanumeric, `-`, `_` only)")
                 },
                 "value": {
                     "type": "string",
-                    "description": "set する値を JSON リテラルで（例: `\"text\"` / `42` / `true` / `null`）。set 時のみ"
+                    "description": d("set する値を JSON リテラルで（例: `\"text\"` / `42` / `true` / `null`）。set 時のみ",
+                                     "Value to set, as a JSON literal (e.g. `\"text\"` / `42` / `true` / `null`). set only")
                 },
                 "apply": {
                     "type": "boolean",
-                    "description": "true で書き込む。省略時は preview（差分を返すだけで書かない）。set / remove のみ"
+                    "description": d("true で書き込む。省略時は preview（差分を返すだけで書かない）。set / remove のみ",
+                                     "If true, write the change. Omitted = preview (returns the diff without writing). set / remove only")
                 }
             },
             "required": ["path", "op", "key"],

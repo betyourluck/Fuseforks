@@ -839,7 +839,14 @@ async fn present_tools(
     let personal_specs: Vec<ToolSpec> = {
         let map = shared.agent_mcp.read().await;
         map.get(agent_id)
-            .map(|state| state.manager.tools().iter().map(|tool| tool.spec()).collect())
+            .map(|state| {
+                state
+                    .manager
+                    .tools()
+                    .iter()
+                    .map(|tool| tool.spec(presentation_ctx.language))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let executable = merge_tool_specs(shared_specs, personal_specs);

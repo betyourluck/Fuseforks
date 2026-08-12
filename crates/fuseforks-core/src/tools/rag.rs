@@ -398,35 +398,46 @@ impl AgentTool for RagTool {
         "rag"
     }
 
-    fn description(&self) -> String {
+    fn description(&self, language: crate::world::Language) -> String {
         // 個体別の実文面は spec_for が組む。ここは登録簿用の一般形。
-        "宣言された資料フォルダの Markdown を見出し索引で引く。".to_owned()
+        language
+            .pick(
+                "宣言された資料フォルダの Markdown を見出し索引で引く。",
+                "Query the declared reference folders' Markdown through a heading index.",
+            )
+            .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "op": {
                     "type": "string",
                     "enum": ["outline", "search", "read"],
-                    "description": "outline: フォルダと見出し木の一覧 / search: 一致行と所属する節 / read: 節の本文"
+                    "description": d("outline: フォルダと見出し木の一覧 / search: 一致行と所属する節 / read: 節の本文",
+                                     "outline: folders and heading trees / search: matching lines with their sections / read: a section's body")
                 },
                 "path": {
                     "type": "string",
-                    "description": "対象のパス。相対なら宣言フォルダ群から解決。outline / search では省略可（全フォルダ）、read では必須"
+                    "description": d("対象のパス。相対なら宣言フォルダ群から解決。outline / search では省略可（全フォルダ）、read では必須",
+                                     "Target path. Relative paths resolve against the declared folders. Optional for outline / search (all folders), required for read")
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "search の正規表現（Rust regex 構文）"
+                    "description": d("search の正規表現（Rust regex 構文）",
+                                     "Regex for search (Rust regex syntax)")
                 },
                 "section": {
                     "type": "string",
-                    "description": "read で読む節の見出し名。省略で全文。完全一致 → 大文字小文字無視 → 部分一致の順で解決"
+                    "description": d("read で読む節の見出し名。省略で全文。完全一致 → 大文字小文字無視 → 部分一致の順で解決",
+                                     "Heading of the section to read. Omit for the whole file. Resolved as exact match, then case-insensitive, then substring")
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "search で大文字小文字を無視するか。既定は false"
+                    "description": d("search で大文字小文字を無視するか。既定は false",
+                                     "Ignore case in search. Defaults to false")
                 }
             },
             "required": ["op"],
@@ -446,27 +457,40 @@ impl AgentTool for RagTool {
             return None;
         }
 
-        let mut text = String::from(
+        let mut text = String::from(ctx.language.pick(
             "資料フォルダの Markdown を**見出し索引**で引く。全文を読む前に \
              `outline` で構造を見て、`search` で当たりを付け、`read` で節だけを\
              読むこと — 一致行には所属する節の経路が付く。\
              見出しが整った文書（仕様書・規格書）で効き、走り書きでは grep と\
              大差ない。読めるのは次のフォルダの中だけ（読み取り専用）:\n",
-        );
+            "Query the reference folders' Markdown through a **heading index**. \
+             Before reading a whole file, look at the structure with `outline`, \
+             narrow down with `search`, then read just the section with `read` — \
+             matching lines carry the path of their section. \
+             It shines on well-structured documents (specs, standards); on rough \
+             notes it is little better than grep. Only the folders below are \
+             readable (read-only):\n",
+        ));
         for (_, display) in &roots.valid {
             text.push_str(&format!("- `{display}`\n"));
         }
         if !roots.invalid.is_empty() {
-            text.push_str(&format!(
-                "（ほか {} 件の宣言が見つからず無効になっている）\n",
-                roots.invalid.len()
-            ));
+            match ctx.language {
+                crate::world::Language::Ja => text.push_str(&format!(
+                    "（ほか {} 件の宣言が見つからず無効になっている）\n",
+                    roots.invalid.len()
+                )),
+                crate::world::Language::En => text.push_str(&format!(
+                    "({} other declared folder(s) could not be found and are disabled)\n",
+                    roots.invalid.len()
+                )),
+            }
         }
 
         Some(ToolSpec {
             name: self.name().to_owned(),
             description: text,
-            parameters: self.parameters(),
+            parameters: self.parameters(ctx.language),
         })
     }
 

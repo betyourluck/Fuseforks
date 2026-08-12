@@ -284,6 +284,25 @@ match language {
 - 英語版の全文ダンプは出して読み、使い捨てにした（D7。本文はセッション記録と
   P1 コミットの検収 2 テストが実質の写し）
 
+## P2 実装記録（2026-08-12）
+
+- **golden は fixture ファイル**（`tests/fixtures/tool_specs_ja.txt`・11,274 bytes）。
+  9 本ぶんはリテラル埋め込みには大きすぎ、fixture なら git で diff できる。
+  変更前に焼いて先にコミット（`6b97dea`）し、trait 変更後も緑 = バイト等価
+- **`Language::pick(ja, en)` を足し、schema は 1 実装のまま文言だけ分岐**。
+  `match` を腕ごと複製すると Ja と En で構造（キー・型・required）が別々に
+  ドリフトする余地が生まれる — 値の側だけ選べば構造は 1 箇所に留まる
+- **trait は `description(lang)` / `parameters(lang)` / `spec(lang)`**。
+  コンパイラが全実装（9 本 + `McpTool` + テスト具 5 つ）を列挙した。
+  `McpTool` は受けて無視する（D4-1。名付けたのは接続先）
+- **理由欄は `REASON_DESCRIPTION_EN` を新設**。「20〜40 字」は写さず語数の指示に
+  した — 英語の 20〜40 *characters* は短すぎ、モデルは字数より語数で従う
+- **`run` の個体別提示文（`spec_for`）も二言語** — allow が空のときの説明が本命
+  （モデルの次の手を運ぶ文で、英語村で日本語のまま残ると一番読まれる場所で混ざる）。
+  `rag` の spec_for（宣言フォルダの列挙）も同様
+- **検査は 3 段**: ja fixture golden（バイト等価）/ En 全 spec 仮名漢字ゼロ /
+  `run` spec_for の En 経路（空 allow の文面）
+
 ## 査読 1 巡目の処理（2026-08-12。7 点）
 
 | # | 指摘 | 処理 |

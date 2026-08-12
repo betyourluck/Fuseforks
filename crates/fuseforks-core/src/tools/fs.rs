@@ -328,46 +328,67 @@ impl AgentTool for GrepTool {
         "grep"
     }
 
-    fn description(&self) -> String {
-        "作業フォルダ内のファイルから、正規表現に一致する行を探す。\
-         **ファイルの中身を知りたいときは、全文を読む前にまずこれで当たりを付けること** — \
-         一致行だけが返るので速くて安い。結果は `パス:行番号: 内容` の形式。\
-         検索できるのはエージェント設定で指定された作業フォルダの中だけ。\
-         **「何件あるか」だけを知りたいときは `count_only: true`** — \
-         一致行を返さずファイル別と全体の件数だけを返すので、\
-         パターンを変えて何度も叩き直す必要がなくなる。\
-         `include` でファイル名を**正規表現**で絞れる（例: `\\.rs$`。**glob ではない**）。\
-         `context: 1〜3` で一致行の前後も返る（一致行は `:`、前後の行は `-`）。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "作業フォルダ内のファイルから、正規表現に一致する行を探す。\
+                 **ファイルの中身を知りたいときは、全文を読む前にまずこれで当たりを付けること** — \
+                 一致行だけが返るので速くて安い。結果は `パス:行番号: 内容` の形式。\
+                 検索できるのはエージェント設定で指定された作業フォルダの中だけ。\
+                 **「何件あるか」だけを知りたいときは `count_only: true`** — \
+                 一致行を返さずファイル別と全体の件数だけを返すので、\
+                 パターンを変えて何度も叩き直す必要がなくなる。\
+                 `include` でファイル名を**正規表現**で絞れる（例: `\\.rs$`。**glob ではない**）。\
+                 `context: 1〜3` で一致行の前後も返る（一致行は `:`、前後の行は `-`）。",
+                "Search files in the working folder for lines matching a regular \
+                 expression. **When you want to know what a file contains, probe with \
+                 this before reading the whole file** — only matching lines come back, \
+                 so it is fast and cheap. Results are `path:line: content`. \
+                 Only the working folder configured for this agent is searchable. \
+                 **If you only need to know how many matches there are, pass \
+                 `count_only: true`** — it returns per-file and total counts instead of \
+                 the lines, so you don't have to re-run with narrower patterns. \
+                 `include` filters by **file name as a regex** (e.g. `\\.rs$`; \
+                 **not a glob**). `context: 1-3` also returns surrounding lines \
+                 (matches are marked `:`, context lines `-`).",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "検索する正規表現（Rust regex 構文）。例: `fn \\w+`"
+                    "description": d("検索する正規表現（Rust regex 構文）。例: `fn \\w+`",
+                                     "Regular expression to search for (Rust regex syntax), e.g. `fn \\w+`")
                 },
                 "path": {
                     "type": "string",
-                    "description": "検索範囲を絞る相対パス（ファイルまたはフォルダ）。省略時は作業フォルダ全体"
+                    "description": d("検索範囲を絞る相対パス（ファイルまたはフォルダ）。省略時は作業フォルダ全体",
+                                     "Relative path (file or folder) to narrow the search. Defaults to the whole working folder")
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "大文字小文字を無視するか。既定は false"
+                    "description": d("大文字小文字を無視するか。既定は false",
+                                     "Ignore case. Defaults to false")
                 },
                 "count_only": {
                     "type": "boolean",
-                    "description": "true で一致行を返さず件数だけを返す。既定は false"
+                    "description": d("true で一致行を返さず件数だけを返す。既定は false",
+                                     "If true, return only counts instead of matching lines. Defaults to false")
                 },
                 "include": {
                     "type": "string",
-                    "description": "対象を**ファイル名**で絞る正規表現（**glob ではない**。例: `\\.rs$`）。省略時は全ファイル"
+                    "description": d("対象を**ファイル名**で絞る正規表現（**glob ではない**。例: `\\.rs$`）。省略時は全ファイル",
+                                     "Regex that filters by **file name** (**not a glob**; e.g. `\\.rs$`). Defaults to all files")
                 },
                 "context": {
                     "type": "integer",
-                    "description": "一致行の前後も返す行数（0〜3、既定 0）。一致行は `:`、前後の行は `-` で区切られる"
+                    "description": d("一致行の前後も返す行数（0〜3、既定 0）。一致行は `:`、前後の行は `-` で区切られる",
+                                     "How many surrounding lines to return (0-3, default 0). Matches are marked `:`, context lines `-`")
                 }
             },
             "required": ["pattern"],
@@ -742,30 +763,43 @@ impl AgentTool for FdTool {
         "fd"
     }
 
-    fn description(&self) -> String {
-        "作業フォルダ内のファイル・フォルダを**名前**で探す。\
-         **ファイルの場所や存在を知りたいときは、中身を検索する grep より先にこれを使うこと。**\
-         パターンは名前（パスの最後の要素）に対する正規表現で、\
-         結果は相対パスの一覧（フォルダは末尾 `/`）。\
-         探せるのはエージェント設定で指定された作業フォルダの中だけ。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "作業フォルダ内のファイル・フォルダを**名前**で探す。\
+                 **ファイルの場所や存在を知りたいときは、中身を検索する grep より先にこれを使うこと。**\
+                 パターンは名前（パスの最後の要素）に対する正規表現で、\
+                 結果は相対パスの一覧（フォルダは末尾 `/`）。\
+                 探せるのはエージェント設定で指定された作業フォルダの中だけ。",
+                "Find files and folders in the working folder **by name**. \
+                 **When you want to know where a file is or whether it exists, use \
+                 this before grep (which searches contents).** The pattern is a \
+                 regex applied to the name (the last path segment); results are a \
+                 list of relative paths (folders end with `/`). \
+                 Only the working folder configured for this agent is searchable.",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "名前に対する正規表現（Rust regex 構文）。例: `\\.md$`、`^config`"
+                    "description": d("名前に対する正規表現（Rust regex 構文）。例: `\\.md$`、`^config`",
+                                     "Regex applied to the name (Rust regex syntax), e.g. `\\.md$`, `^config`")
                 },
                 "path": {
                     "type": "string",
-                    "description": "探索範囲を絞る相対パス（フォルダ）。省略時は作業フォルダ全体"
+                    "description": d("探索範囲を絞る相対パス（フォルダ）。省略時は作業フォルダ全体",
+                                     "Relative folder path to narrow the search. Defaults to the whole working folder")
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "大文字小文字を無視するか。既定は true（名前検索は表記揺れが多い）"
+                    "description": d("大文字小文字を無視するか。既定は true（名前検索は表記揺れが多い）",
+                                     "Ignore case. Defaults to true (file names vary in casing)")
                 }
             },
             "required": ["pattern"],
@@ -884,25 +918,34 @@ impl AgentTool for DiffTool {
         "diff"
     }
 
-    fn description(&self) -> String {
-        "作業フォルダ内の 2 つのファイルの差分を unified diff 形式で返す。\
-         **2 つのファイルの違いを知りたいとき、両方の全文を読む代わりに使うこと** — \
-         変わった行だけが返るので速くて安い。\
-         比較できるのはエージェント設定で指定された作業フォルダの中だけ。"
+    fn description(&self, language: crate::world::Language) -> String {
+        language
+            .pick(
+                "作業フォルダ内の 2 つのファイルの差分を unified diff 形式で返す。\
+                 **2 つのファイルの違いを知りたいとき、両方の全文を読む代わりに使うこと** — \
+                 変わった行だけが返るので速くて安い。\
+                 比較できるのはエージェント設定で指定された作業フォルダの中だけ。",
+                "Return the difference between two files in the working folder as a \
+                 unified diff. **When you want to know how two files differ, use this \
+                 instead of reading both in full** — only changed lines come back, so \
+                 it is fast and cheap. \
+                 Only the working folder configured for this agent is comparable.",
+            )
             .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "old_path": {
                     "type": "string",
-                    "description": "比較元ファイルの相対パス"
+                    "description": d("比較元ファイルの相対パス", "Relative path of the old file")
                 },
                 "new_path": {
                     "type": "string",
-                    "description": "比較先ファイルの相対パス"
+                    "description": d("比較先ファイルの相対パス", "Relative path of the new file")
                 }
             },
             "required": ["old_path", "new_path"],

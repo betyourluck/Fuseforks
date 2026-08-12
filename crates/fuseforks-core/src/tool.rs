@@ -75,10 +75,15 @@ pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
 
     /// モデルへ提示する説明。**いつ呼ぶべきかを書く。** 何をするかだけでは呼ばれない。
-    fn description(&self) -> String;
+    ///
+    /// `language` は村の言語（Spec 35。**モデルへ届く文言だけ**が対象で、
+    /// 名前・schema の構造は言語に依存しない）。[`crate::mcp::McpTool`] は
+    /// 受け取っても無視する — 名付けたのは接続先で、訳語を当てると
+    /// 何が走ったかについて嘘になる。
+    fn description(&self, language: crate::world::Language) -> String;
 
-    /// 引数の JSON Schema。
-    fn parameters(&self) -> Value;
+    /// 引数の JSON Schema。文言（`description` 値）だけが `language` で変わる。
+    fn parameters(&self, language: crate::world::Language) -> Value;
 
     /// 実行する。戻り値はモデルへそのまま渡る文字列。
     ///
@@ -87,11 +92,11 @@ pub trait AgentTool: Send + Sync {
     async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String>;
 
     /// モデルへ提示する定義。
-    fn spec(&self) -> ToolSpec {
+    fn spec(&self, language: crate::world::Language) -> ToolSpec {
         ToolSpec {
             name: self.name().to_owned(),
-            description: self.description(),
-            parameters: self.parameters(),
+            description: self.description(language),
+            parameters: self.parameters(language),
         }
     }
 
@@ -105,8 +110,8 @@ pub trait AgentTool: Send + Sync {
     /// `WORK_DIR_TOOL_NAMES` による自動除外は名前の集合で書かれているが、
     /// 「登録が 1 件も実行可能でない」のような**中身を見ないと決まらない除外**は
     /// 名前の集合では書けない。
-    async fn spec_for(&self, _ctx: &ToolContext) -> Option<ToolSpec> {
-        Some(self.spec())
+    async fn spec_for(&self, ctx: &ToolContext) -> Option<ToolSpec> {
+        Some(self.spec(ctx.language))
     }
 
     /// 理由欄（Spec 27）を提示するか。**既定は真。**
@@ -167,8 +172,8 @@ impl ToolRegistry {
 
     /// 全ツールの定義。モデルへ提示する順は名前順で安定させる
     /// （順が揺れるとプロンプトキャッシュのプレフィックスが毎回変わる）。
-    pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|tool| tool.spec()).collect()
+    pub fn specs(&self, language: crate::world::Language) -> Vec<ToolSpec> {
+        self.tools.values().map(|tool| tool.spec(language)).collect()
     }
 
     /// 登録済みの名前。
@@ -193,7 +198,7 @@ impl ToolRegistry {
         for tool in self.tools.values() {
             if let Some(mut spec) = tool.spec_for(ctx).await {
                 if tool.wants_reason() {
-                    crate::tool_reason::inject(&mut spec.parameters);
+                    crate::tool_reason::inject(&mut spec.parameters, ctx.language);
                 }
                 specs.push(spec);
             }
@@ -213,10 +218,10 @@ mod tests {
         fn name(&self) -> &str {
             self.0
         }
-        fn description(&self) -> String {
+        fn description(&self, _language: crate::world::Language) -> String {
             "テスト用".into()
         }
-        fn parameters(&self) -> Value {
+        fn parameters(&self, _language: crate::world::Language) -> Value {
             serde_json::json!({ "type": "object" })
         }
         async fn call(&self, _ctx: &ToolContext, _args: &Value) -> CoreResult<String> {
@@ -230,7 +235,7 @@ mod tests {
         registry.register(Arc::new(Dummy("zebra")));
         registry.register(Arc::new(Dummy("alpha")));
 
-        let names: Vec<String> = registry.specs().into_iter().map(|s| s.name).collect();
+        let names: Vec<String> = registry.specs(crate::world::Language::Ja).into_iter().map(|s| s.name).collect();
         assert_eq!(names, vec!["alpha", "zebra"], "提示順は安定していること");
     }
 
@@ -250,10 +255,10 @@ mod tests {
         fn name(&self) -> &str {
             self.0
         }
-        fn description(&self) -> String {
+        fn description(&self, _language: crate::world::Language) -> String {
             "外部ツールの代役".into()
         }
-        fn parameters(&self) -> Value {
+        fn parameters(&self, _language: crate::world::Language) -> Value {
             serde_json::json!({ "type": "object", "properties": {} })
         }
         async fn call(&self, _ctx: &ToolContext, _args: &Value) -> CoreResult<String> {

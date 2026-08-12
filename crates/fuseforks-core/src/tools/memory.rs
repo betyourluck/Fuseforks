@@ -39,22 +39,34 @@ impl AgentTool for RememberTool {
         "remember"
     }
 
-    fn description(&self) -> String {
-        format!(
-            "後の会話でも憶えておくべきことを長期記憶へ書き留める。\
-             会話が終わっても保持され、次回以降のあなたのプロンプトに含まれる。\
-             書くのは**後で判断に使う事実**（相手の好み、決まった方針、繰り返し出る前提）だけにすること。\
-             その場限りの話題や、いま答えれば済むことは書かない。{MAX_NOTE_CHARS} 文字まで。"
-        )
+    fn description(&self, language: crate::world::Language) -> String {
+        match language {
+            crate::world::Language::Ja => format!(
+                "後の会話でも憶えておくべきことを長期記憶へ書き留める。\
+                 会話が終わっても保持され、次回以降のあなたのプロンプトに含まれる。\
+                 書くのは**後で判断に使う事実**（相手の好み、決まった方針、繰り返し出る前提）だけにすること。\
+                 その場限りの話題や、いま答えれば済むことは書かない。{MAX_NOTE_CHARS} 文字まで。"
+            ),
+            crate::world::Language::En => format!(
+                "Write down something worth remembering across conversations. It \
+                 survives the end of this conversation and is included in your \
+                 prompts from now on. Record only **facts you will act on later** \
+                 (preferences, settled decisions, recurring assumptions). Do not \
+                 record passing topics or things answered once and done. Up to \
+                 {MAX_NOTE_CHARS} characters."
+            ),
+        }
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "note": {
                     "type": "string",
-                    "description": "書き留める内容。一文で、後から読んで意味が分かる形にすること"
+                    "description": d("書き留める内容。一文で、後から読んで意味が分かる形にすること",
+                                     "What to record. One sentence that will still make sense when read later")
                 }
             },
             "required": ["note"],

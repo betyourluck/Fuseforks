@@ -112,24 +112,32 @@ impl AgentTool for RunTool {
         "run"
     }
 
-    fn description(&self) -> String {
+    fn description(&self, language: crate::world::Language) -> String {
         // 個体を知らない既定の説明。実際に提示されるのは `spec_for` の側で、
         // そこで**その個体の allow だけ**を列挙する。
-        "利用者が許可したコマンドを実行する。".to_owned()
+        language
+            .pick(
+                "利用者が許可したコマンドを実行する。",
+                "Run a command the user has allowed.",
+            )
+            .to_owned()
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, language: crate::world::Language) -> Value {
+        let d = |ja: &str, en: &str| language.pick(ja, en).to_owned();
         serde_json::json!({
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "実行ファイル名。パス区切り（/ \\ :）を含めてはいけない"
+                    "description": d("実行ファイル名。パス区切り（/ \\ :）を含めてはいけない",
+                                     "Executable name. Must not contain path separators (/ \\ :)")
                 },
                 "args": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "引数。シェルは介さないので、パイプやリダイレクトは使えない"
+                    "description": d("引数。シェルは介さないので、パイプやリダイレクトは使えない",
+                                     "Arguments. No shell is involved, so pipes and redirection do not work")
                 }
             },
             "required": ["command"],
@@ -154,36 +162,49 @@ impl AgentTool for RunTool {
         if !policy.allows_anything() {
             return Some(ToolSpec {
                 name: self.name().to_owned(),
-                description: String::from(
+                description: String::from(ctx.language.pick(
                     "利用者が許可したコマンドを実行する。**シェルは介さない**（パイプ・\
                      リダイレクト・変数展開は使えない）。\n\
                      **いま許可されているコマンドは 1 つも無いので、この道具では\
                      何も実行できない。** 呼ぶと利用者への要求として記録され、\
                      利用者が承認すれば次のターンから実行できるようになる。\
                      急ぐなら利用者へ依頼するか、別の手段で進めること。\n",
-                ),
-                parameters: self.parameters(),
+                    "Run a command the user has allowed. **No shell is involved** \
+                     (pipes, redirection and variable expansion do not work).\n\
+                     **No commands are currently allowed, so this tool cannot run \
+                     anything yet.** Calling it records a request to the user; once \
+                     they approve, the command becomes runnable from the next turn. \
+                     If it is urgent, ask the user or find another way.\n",
+                )),
+                parameters: self.parameters(ctx.language),
             });
         }
 
-        let mut text = String::from(
+        let mut text = String::from(ctx.language.pick(
             "利用者が許可したコマンドを実行する。**シェルは介さない**（パイプ・\
              リダイレクト・変数展開は使えない）。実行できるのは次のパターンに\
              一致する呼び出しだけ:\n",
-        );
+            "Run a command the user has allowed. **No shell is involved** (pipes, \
+             redirection and variable expansion do not work). Only calls matching \
+             these patterns can run:\n",
+        ));
         for pattern in &policy.allow {
             text.push_str(&format!("- `{pattern}`\n"));
         }
-        text.push_str(
+        text.push_str(ctx.language.pick(
             "パターン末尾の `*` は「以降の引数は自由」。`*` が無いパターンは\
              **引数なしの呼び出しにしか一致しない**。\
              一致しない呼び出しは実行されず、利用者への要求として記録される。\n",
-        );
+            "A trailing `*` in a pattern means \"any further arguments\". A pattern \
+             without `*` **matches only a call with no arguments**. \
+             Calls that match nothing are not run; they are recorded as requests \
+             to the user.\n",
+        ));
 
         Some(ToolSpec {
             name: self.name().to_owned(),
             description: text,
-            parameters: self.parameters(),
+            parameters: self.parameters(ctx.language),
         })
     }
 

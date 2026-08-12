@@ -184,6 +184,19 @@ impl Language {
             Language::En => "en",
         }
     }
+
+    /// モデルへ届く文言の二言語分岐（Spec 35 D1）。
+    ///
+    /// **schema の構造は 1 実装のまま、文言だけを選ぶ**ためのヘルパ。
+    /// `match` を各所に書くと、Ja と En で構造（キー・型・required）が
+    /// 別々にドリフトする余地が生まれる — 値の側だけをこれで選べば、
+    /// 構造は 1 箇所に留まる。
+    pub fn pick<'a>(self, ja: &'a str, en: &'a str) -> &'a str {
+        match self {
+            Language::Ja => ja,
+            Language::En => en,
+        }
+    }
 }
 
 /// 利用者の呼び名の字数上限（`user_identity_contract` 凍結 4）。

@@ -211,13 +211,15 @@ impl AgentTool for McpTool {
         &self.qualified
     }
 
-    fn description(&self) -> String {
+    /// **言語は無視する**（Spec 35 D4-1）。名付けたのは接続先で、
+    /// 訳語を当てると何が走ったかについて嘘になる。
+    fn description(&self, _language: crate::world::Language) -> String {
         // どのサーバー由来かをモデルにも見せる。同種のツールが複数あるとき、
         // 説明文だけでは選べない（例: 2 つの検索ツール）。
         format!("[{}] {}", self.server, self.description)
     }
 
-    fn parameters(&self) -> Value {
+    fn parameters(&self, _language: crate::world::Language) -> Value {
         self.parameters.clone()
     }
 
