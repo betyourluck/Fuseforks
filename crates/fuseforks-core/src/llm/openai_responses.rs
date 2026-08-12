@@ -71,7 +71,7 @@ pub fn encode(
 
     wire::OpenAiResponsesRequest {
         model: req.model.clone(),
-        input: responses_input::encode(&req.messages),
+        input: responses_input::encode(&req.messages, responses_input::image_and_pdf_part),
         tools,
         // **常送する**（Spec 34 D12）。annotations は**モデルが引用した分だけ**で、
         // 引用しなければ 0 件になる（実測 — 金融の問いで annotations=0）。

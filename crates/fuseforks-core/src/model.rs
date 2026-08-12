@@ -608,6 +608,15 @@ pub struct ModelTemplate {
     /// **入力の固定費が +1,538 トークンある**（実測）ので、常に良いものではない。
     #[serde(default)]
     pub openai_reasoning_pro: bool,
+    /// Meta の web 検索（Spec 37）。**`provider == meta_responses` のときだけ効く。**
+    ///
+    /// 互換の口に検索は露出していないので、互換のまま真にしても何も起きない。
+    /// 判定は [`ModelTemplate::meta_web_search_active`]（AND 述語）を使う。
+    ///
+    /// **検索は入力を桁で膨らませる** — 実測で `input_tokens` が 66,350
+    /// （検索なしの同型は 12〜141）。既定 OFF。
+    #[serde(default)]
+    pub meta_web_search: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -674,6 +683,16 @@ impl ModelTemplate {
         self.openai_web_search && self.effective_provider() == crate::llm::Provider::OpenAiResponses
     }
 
+    /// Meta の web 検索が**実際に効く**か（Spec 37 D3）。
+    ///
+    /// [`ModelTemplate::grounding_active`] と同型の AND 述語。フラグ単独を
+    /// 判定に使わない — 互換経路のまま真になっている設定は `world.json` の
+    /// 直接編集で作れてしまい、フラグだけを見ると検索できないモデルに
+    /// 「検索できます」と教えることになる。
+    pub fn meta_web_search_active(&self) -> bool {
+        self.meta_web_search && self.effective_provider() == crate::llm::Provider::MetaResponses
+    }
+
     /// Pro 推論モードが**実際に効く**か（Spec 34 D4）。
     pub fn openai_reasoning_pro_active(&self) -> bool {
         self.openai_reasoning_pro
@@ -703,6 +722,7 @@ impl ModelTemplate {
             xai_x_search: false,
             openai_web_search: false,
             openai_reasoning_pro: false,
+            meta_web_search: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
         }

@@ -37,7 +37,7 @@ pub fn encode(
     // 添付は画像と PDF を送る（Spec 36 D9 で凍結 7 の据え置きを解いた）。
     // 組み立ては OpenAI Responses と共有する（Spec 34 D2 rev6 — 要素の型が
     // 同じだと実測しており、2 箇所に写すと片方だけ直す形が生まれる）。
-    let input = super::responses_input::encode(&req.messages);
+    let input = super::responses_input::encode(&req.messages, super::responses_input::image_and_pdf_part);
 
     let offer_tools = use_tools && req.tool_choice != ToolChoice::None;
     let mut tools = Vec::new();

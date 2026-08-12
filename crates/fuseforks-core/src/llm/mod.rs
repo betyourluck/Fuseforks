@@ -24,6 +24,7 @@ pub mod client;
 pub mod error;
 pub mod gemini;
 pub mod openai_compat;
+pub mod meta_responses;
 pub mod openai_responses;
 /// Responses ワイヤ 2 本が共有する `input` 列の組み立て（Spec 34 D2 rev6）。
 mod responses_input;

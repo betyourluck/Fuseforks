@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
 use super::{
-    BackendResolution, LlmBackend, anthropic, gemini, openai_compat, openai_responses, wire,
-    xai_responses,
+    BackendResolution, LlmBackend, anthropic, gemini, meta_responses, openai_compat,
+    openai_responses, wire, xai_responses,
 };
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
@@ -58,16 +58,25 @@ pub enum Provider {
     /// （互換の口はツールと思考を併用できず `reasoning_effort: "none"` を
     /// 強制していた）。gemini / xai_responses と同じ構図の 3 例目。
     OpenAiResponses,
+    /// `POST {base_url}/responses` + `Authorization: Bearer`（Spec 37）。
+    ///
+    /// Meta も OpenAI 互換の口を持っており、**関数呼び出しだけならそちらで足りる**。
+    /// この経路が要るのは web 検索を使うときだけで、互換の口に検索は露出していない。
+    /// gemini / xai_responses / openai_responses と同じ構図の 4 例目。
+    ///
+    /// **`tool_choice` は `"auto"` のみ**（実測）。強制ツール呼び出しは表現できない。
+    MetaResponses,
 }
 
 impl Provider {
     /// 全ワイヤ。`carries` の表を横断して読むとき（案内文の組み立て・検査）に使う。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::OpenAiCompat,
         Self::Anthropic,
         Self::Gemini,
         Self::XaiResponses,
         Self::OpenAiResponses,
+        Self::MetaResponses,
     ];
 
     /// base URL からワイヤプロトコルを推定する。
@@ -123,6 +132,11 @@ impl Provider {
             // （文書と実装の乖離 2 例目。1 例目は Spec 23 の WebP）。
             Self::XaiResponses => [true, false, false, true],
             Self::OpenAiResponses => [true, false, false, true],
+            // **Gemini に次ぐ 2 本目の「4 種別すべて」**（Spec 37 P0 で内容照合まで）。
+            // 動画まで通ったのは予測を覆した — openai_responses からの類推で
+            // ✗ と書くところを、payload 無しの `input_video` が
+            // 「video_url か file_id が要る」と名指しで 400 を返したので撃てた。
+            Self::MetaResponses => [true, true, true, true],
         };
         match kind {
             K::Image => image,
@@ -144,6 +158,7 @@ impl Provider {
             Self::Gemini => "gemini",
             Self::XaiResponses => "xai-responses",
             Self::OpenAiResponses => "openai-responses",
+            Self::MetaResponses => "meta-responses",
         }
     }
 
@@ -155,7 +170,9 @@ impl Provider {
             Self::OpenAiCompat => "/chat/completions".to_owned(),
             Self::Anthropic => "/messages".to_owned(),
             Self::Gemini => gemini::path(model),
-            Self::XaiResponses | Self::OpenAiResponses => "/responses".to_owned(),
+            Self::XaiResponses | Self::OpenAiResponses | Self::MetaResponses => {
+                "/responses".to_owned()
+            }
         }
     }
 }
@@ -200,6 +217,9 @@ pub struct LlmConfig {
     /// OpenAI の Pro 推論モード（`reasoning.mode = "pro"`）。
     /// [`Provider::OpenAiResponses`] でのみ効く。
     pub openai_reasoning_pro: bool,
+    /// Meta の web 検索（Spec 37）。[`Provider::MetaResponses`] でのみ効く。
+    /// 値は [`ModelTemplate::meta_web_search_active`] の判定済み。
+    pub meta_web_search: bool,
 }
 
 impl LlmConfig {
@@ -259,6 +279,7 @@ impl LlmConfig {
             xai_x_search: template.xai_x_search_active(),
             openai_web_search: template.openai_web_search_active(),
             openai_reasoning_pro: template.openai_reasoning_pro_active(),
+            meta_web_search: template.meta_web_search_active(),
         })
     }
 }
@@ -341,6 +362,19 @@ impl HttpLlmBackend {
                 }
                 b
             }
+            Provider::MetaResponses => {
+                // **`stream` は送らない。** 提示された curl には
+                // `"stream": true` + `Accept: text/event-stream` が入っていたが、
+                // どちらも省いて 200 が返る（実測 2026-08-13）。この村に SSE は
+                // 1 行も無いので、必須なら規模が桁で変わっていた。
+                let body =
+                    meta_responses::encode(req, self.config.use_tools, self.config.meta_web_search);
+                let mut b = self.http.post(&url).json(&body);
+                if !self.config.api_key.is_empty() {
+                    b = b.bearer_auth(&self.config.api_key);
+                }
+                b
+            }
         };
 
         let response = builder.send().await.map_err(LlmError::from)?;
@@ -404,6 +438,18 @@ impl HttpLlmBackend {
                         raw: raw.clone(),
                     })?;
                 let decoded = openai_responses::decode(parsed)?;
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
+            }
+            Provider::MetaResponses => {
+                let parsed: wire::ResponsesResponse =
+                    serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                        source,
+                        raw: raw.clone(),
+                    })?;
+                let decoded = meta_responses::decode(parsed)?;
+                // **思考で使い切って本文ゼロ**は実測で踏んだ（`max_output_tokens`
+                // 1,024 で空・2,048 で本文。既定の effort が high）。
+                // 既存の #72 の網がそのまま当たるので、ここだけ独自の判定を持たない。
                 openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
         }

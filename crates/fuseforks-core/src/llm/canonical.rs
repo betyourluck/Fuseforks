@@ -489,6 +489,12 @@ pub enum GroundingEngine {
     /// **ワイヤ値は `open_ai`**（`rename_all = "snake_case"` が `OpenAi` を割る）。
     /// `Provider` の `open_ai_compat` / `open_ai_responses` と同じ綴りで揃う。
     OpenAi,
+    /// Meta の web 検索（Responses API のサーバー側ツール。Spec 37）。
+    ///
+    /// **出典の `start_index` / `end_index` が実区間で返る唯一のワイヤ**
+    /// （xAI は 77/77 がすべて 0 = メッセージ単位）。この村は今のところ
+    /// 区間を捨てているが、捨てたことを `meta_responses` の契約に書いてある。
+    Meta,
 }
 
 impl Grounding {

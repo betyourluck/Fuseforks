@@ -322,9 +322,52 @@ data URL と、Meta が `https` URL から取得したものは残る）。**機
 - [x] **P0 実測 — 完了（2026-08-13。probe 12 発）**。上記「P0 実測結果」が正。
       **残: `data_contract` の凍結**（carries 表の 6 行目 / 受理集合の非列挙 /
       出力上限の罠）は rev 承認後に P0b として書く
-- [ ] **P1 ワイヤ**: `Provider::MetaResponses` + `meta_responses.rs`（encode / decode）+
-      `carries` の 6 行目 + `as_str` / `path` ほかコンパイラが指す 5 箇所。
-      **D2 の結論に従って input 組み立ての分割線を引く**
+- [x] **P1 ワイヤ — 完了（2026-08-13）**。コア lib 549・`carries_table` 4 本
+      （20 → **24 マス**）・workspace 全緑・clippy 警告ゼロ。
+
+  **P1 実装記録（実装で決めた 6 点）**:
+  1. **D2 の分割線は「関数ポインタを adapter が渡す」形で引いた** —
+     `responses_input::encode(messages, part_for)` の `part_for` は
+     `fn(&PromptAttachment) -> Option<ResponsesInputPart>`。
+     **`carries` を読まない**ので `adapters_match_the_carries_table` は
+     同語反復にならず、各 adapter は「自分が何を組み立てられるか」を独立に主張する。
+     共有側に残ったのは**テキストと関数往復の骨格**だけ（3 社で同形と実測済み）
+  2. **`wire::MetaResponsesRequest` は `tool_choice` の欄を持たない。**
+     `"auto"` 以外が 400 なので、**送れる形が無いほうが強い**
+     （#77 で `temperature` を欄ごと持たなかったのと同じ判断）。
+     `ToolChoice::None` は**ツールごと出さない**ことで表し、
+     `Required` / `Specific` は表現できない（**このワイヤは強制ツール呼び出しを
+     持てない** — 契約に明記した）
+  3. **`store` / `include` / `summary` / `context` を送らない** — このワイヤで
+     測っていない。**受理集合が列挙されない**ワイヤなので、未測定の欄を既定で
+     送ると 400 が出たとき原因がこちらか相手か分からなくなる
+  4. **`phase: "commentary"` は読まない**（`intentionally_unread`）。
+     本文として繋ぐ — ここだけ独自の選別を持ち込むと「なぜこの社だけ発言が
+     消えるのか」が画面から読めない。雑音だと分かったら**そのとき観測を根拠に**落とす
+  5. **検索の計器に `actions=` / `sources=` の内訳を書かない** — Meta の
+     `web_search_call` に `action.sources` が在るかを測っていない。
+     **無い欄を `-` で埋めると「測ったが無かった」と「見ていない」を畳む**
+     （Spec 34 の `ticks` と同じ判断）
+  6. **`meta_web_search_active()` は AND 述語**（フラグ単独を判定に使わない規律の
+     5 例目）。互換のまま真になっている設定は `world.json` の直接編集で作れる
+
+  **`carries` の修正が実地で効いた** — 6 値目を足した瞬間、コンパイラが
+  `client.rs:125`（`carries`）を **non-exhaustive で指した**。
+  **Spec 36 のワイルドカードのままなら、Meta が audio=false / video=false を
+  黙って受け取っていた**（実測は 4 種別すべて ✓ なので 2 マスが静かに誤る）。
+  **doc に「コンパイラが指す」と書いた主張が、今回はじめて本当になった。**
+
+  **ミューテーション 2 回で、網 2 本が別々の仕事をすることを実証した**
+  （**予測を 1 つ外して、より良いことが分かった**）:
+
+  | 変異 | `adapters_match` | 逐語凍結 |
+  |---|---|---|
+  | **adapter だけ**（動画を落とす） | **赤**（`MetaResponses × Video`） | 緑 |
+  | **adapter と表を同時に** | **緑**（一致してしまう） | **赤**（`MetaResponses の動画`） |
+
+  予測は「(a) で 1 本 / (b) で 2 本」だったが、**同時に変えると一致するので
+  `adapters_match` は緑になる**。**逐語凍結を別に置いた理由がそのまま出た** —
+  「両方を同時に変えると通ってしまう」は、あの網が塞ぐために書かれている。
 - [ ] **P2 固有スキル**: `ModelTemplate.meta_web_search` + `meta_web_search_active()` +
       `LlmConfig` への配線 + `Grounding.engine` の Meta
 - [ ] **P3 フロント**: `providerSkills.ts`（**string union は網羅検査を持たないので

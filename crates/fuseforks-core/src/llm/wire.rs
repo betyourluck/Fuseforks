@@ -1077,6 +1077,47 @@ pub struct OpenAiReasoning {
     pub mode: Option<&'static str>,
 }
 
+/// Meta Responses（`api.meta.ai/v1/responses`）の要求（Spec 37）。
+///
+/// **OpenAI / xAI の要求構造体とは分ける**（Spec 34 D2 の規則 — 揃っているのは
+/// 「相手が決める側」で、トップレベルは「自分が決める側」）。実際に割れる:
+///
+/// - **`tool_choice` を持たない** — `"auto"` 以外は 400（実測 2026-08-13）。
+///   欄そのものを型から外すことで、**送れる形が無い**ようにする
+///   （`failures.md` #77 の「送れる形が無いほうが強い」と同じ扱い）
+/// - **`store` / `include` を送らない** — このワイヤで測っていない。
+///   **未測定の欄を送らない**のがこの村の作法（測っていないものを既定で送ると、
+///   400 が出たとき原因がこちらの欄か相手の仕様か分からなくなる）
+/// - **`reasoning` は `effort` の 1 欄だけ** — `summary` / `context` / `mode` は未測定
+#[derive(Debug, Serialize)]
+pub struct MetaResponsesRequest {
+    /// モデル名。
+    pub model: String,
+    /// 会話とツール往復の混在列。**要素の型は 3 社で共有**（実測で同形）。
+    pub input: Vec<ResponsesInputItem>,
+    /// 空なら欄ごと省く。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ResponsesTool>,
+    /// 思考の制御。**`effort` だけ**（実測で通った形）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<MetaReasoning>,
+    /// 最大出力トークン数。
+    pub max_output_tokens: u32,
+    /// サンプリング温度。**明示時のみ送る**（`openai_compat` と同じ規律）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+}
+
+/// Meta の思考の制御。**`effort` の 1 欄だけ**（Spec 37）。
+///
+/// 他社の `OpenAiReasoning` を使い回さないのは、あちらが持つ
+/// `summary` / `context` / `mode` を**このワイヤで測っていない**から。
+#[derive(Debug, Serialize)]
+pub struct MetaReasoning {
+    /// `low` / `medium` / `high` など。canonical の値をそのまま送る。
+    pub effort: &'static str,
+}
+
 /// `input` の 1 要素。メッセージと関数往復が同じ列に混在する。
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -1151,6 +1192,32 @@ pub enum ResponsesInputPart {
         /// data URL。
         file_data: String,
     },
+    /// 音声（Spec 37。**Meta だけが持つ**）。
+    ///
+    /// **data URL ではなく生の base64 + 短い形式名** — 同じワイヤの
+    /// `input_image` が data URL なのと形が揃っていない（実測 2026-08-13）。
+    InputAudio {
+        /// `{data, format}`。
+        input_audio: ResponsesInputAudio,
+    },
+    /// 動画（Spec 37。**Meta だけが持つ**）。
+    ///
+    /// `video_url` に data URL を入れる。**`file_id` の経路もある**が、
+    /// そちらは数値 ID で `/v1/files` への事前アップロードが要る
+    /// （この村は事前アップロードを持たない — `attachment_contract` の D10）。
+    InputVideo {
+        /// data URL（または https URL）。
+        video_url: String,
+    },
+}
+
+/// Responses の音声の中身（`{"data": "<base64>", "format": "wav"}`）。
+#[derive(Debug, Serialize)]
+pub struct ResponsesInputAudio {
+    /// base64 済みの音声データ。
+    pub data: String,
+    /// `"wav"` / `"mp3"`。
+    pub format: String,
 }
 
 /// `tools` の 1 要素。サーバー側ツールと関数ツールが同居できる（実測 2026-08-10）。

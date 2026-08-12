@@ -12,17 +12,54 @@
 //! 1 実装にしてあるのは、2 箇所に写すと**片方だけ直す**形が生まれるため
 //! （`failures.md` #88 / #96 と同じ「関数は正しい / 射程だけが違う」）。
 
-use super::canonical::{ChatMessage, Role};
+use super::canonical::{ChatMessage, PromptAttachment, Role};
 use crate::attachment::AttachmentKind;
 use super::wire;
 
+/// 添付 1 件を、そのワイヤの part へ写す関数（**adapter が渡す**）。
+///
+/// **共有するのは「相手が決める側」だけ**（Spec 37 D2）。Responses を名乗る
+/// 3 社は**関数往復の形が完全に同じ**だと実測しているが（`call_id` の命名も
+/// `arguments` が JSON 文字列であることも、`function_call_output.output` が
+/// string 限定であることも一致）、**添付の part は割れる** — Meta だけが
+/// `input_audio` / `input_video` を持つ。
+///
+/// **`Provider::carries` をここから読まない。** 読むと
+/// `adapters_match_the_carries_table` が同語反復になり、**表と実装が食い違う
+/// ことを検出する網が 1 枚死ぬ**。各 adapter は「自分が何を組み立てられるか」を
+/// 独立に書き、テストがそれと表を突き合わせる。
+pub(super) type AttachmentPart = fn(&PromptAttachment) -> Option<wire::ResponsesInputPart>;
+
+/// 画像と PDF だけを組み立てる（xAI / OpenAI Responses の共通の腕）。
+///
+/// **2 社で同じなのは偶然ではなく実測** — どちらも 400 の受理集合列挙で
+/// `input_text` / `input_image` / `input_file` を返し、音声・動画の part は
+/// 列挙に無かった。**Meta は別の関数を持つ**（`meta_responses::attachment_part`）。
+pub(super) fn image_and_pdf_part(
+    attachment: &PromptAttachment,
+) -> Option<wire::ResponsesInputPart> {
+    match attachment.kind() {
+        AttachmentKind::Image => Some(wire::ResponsesInputPart::InputImage {
+            image_url: attachment.data_url(),
+        }),
+        AttachmentKind::Pdf => Some(wire::ResponsesInputPart::InputFile {
+            filename: attachment.file_name_or_default(),
+            file_data: attachment.data_url(),
+        }),
+        AttachmentKind::Audio | AttachmentKind::Video => None,
+    }
+}
+
 /// canonical の発話列を Responses の `input` 列へ写す。
 ///
-/// **添付は画像と PDF を組み立てる**（Spec 36 D9。`attachment_contract` 凍結 7 の
-/// 据え置きを解いた）。これで「ネイティブを選ぶと画像が黙って落ちる」3 例目
-/// （Spec 34 検収 7）が消える。音声・動画の part 型はこのワイヤに存在しない —
-/// 400 の受理集合列挙で確認済み（`input_text` / `input_image` / `input_file` ほか）。
-pub(super) fn encode(messages: &[ChatMessage]) -> Vec<wire::ResponsesInputItem> {
+/// **骨格（テキストと関数往復）だけを共有し、添付の part は `part_for` が決める**
+/// （Spec 37 D2）。Spec 34 D2 の分割規則
+/// 「揃っているのは相手が決める側 / 分けたのは自分が決める側」を content 層へ
+/// そのまま当てたもの。
+pub(super) fn encode(
+    messages: &[ChatMessage],
+    part_for: AttachmentPart,
+) -> Vec<wire::ResponsesInputItem> {
     let mut input = Vec::new();
     for message in messages {
         match message.role {
@@ -32,7 +69,7 @@ pub(super) fn encode(messages: &[ChatMessage]) -> Vec<wire::ResponsesInputItem> 
             }),
             Role::User => input.push(wire::ResponsesInputItem::Message {
                 role: "user",
-                content: encode_user_content(message),
+                content: encode_user_content(message, part_for),
             }),
             Role::Assistant => {
                 // 空本文の assistant は出さない（#29 — 空発話を積むと次のターンが 400）。
@@ -67,23 +104,14 @@ pub(super) fn encode(messages: &[ChatMessage]) -> Vec<wire::ResponsesInputItem> 
 ///
 /// **添付ゼロで形が変わらないことが不変条件** — 常にブロック列を作ると、
 /// 添付を一度も使わない村の要求まで形が変わる（`OaiContent` と同じ規律）。
-fn encode_user_content(message: &ChatMessage) -> wire::ResponsesContent {
-    let mut parts: Vec<wire::ResponsesInputPart> = message
-        .attachments
-        .iter()
-        .filter_map(|a| match a.kind() {
-            AttachmentKind::Image => Some(wire::ResponsesInputPart::InputImage {
-                image_url: a.data_url(),
-            }),
-            AttachmentKind::Pdf => Some(wire::ResponsesInputPart::InputFile {
-                filename: a.file_name_or_default(),
-                file_data: a.data_url(),
-            }),
-            // このワイヤに音声・動画の part 型は無い。正面の門は送信入口の
-            // `carries`（Spec 36 D2）で、ここは最後の砦。
-            AttachmentKind::Audio | AttachmentKind::Video => None,
-        })
-        .collect();
+fn encode_user_content(
+    message: &ChatMessage,
+    part_for: AttachmentPart,
+) -> wire::ResponsesContent {
+    // 何を組み立てられるかは `part_for`（= adapter）が決める。正面の門は
+    // 送信入口の `carries`（Spec 36 D2）で、ここは最後の砦。
+    let mut parts: Vec<wire::ResponsesInputPart> =
+        message.attachments.iter().filter_map(part_for).collect();
     if parts.is_empty() {
         return wire::ResponsesContent::Text(message.content.clone());
     }

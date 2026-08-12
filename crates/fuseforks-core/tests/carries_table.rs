@@ -68,6 +68,10 @@ fn adapter_emits(provider: Provider, kind: AttachmentKind) -> bool {
             &fuseforks_core::llm::openai_responses::encode(&req, true, false, false),
         )
         .unwrap(),
+        Provider::MetaResponses => {
+            serde_json::to_string(&fuseforks_core::llm::meta_responses::encode(&req, true, false))
+                .unwrap()
+        }
     };
     json.contains("QUJD")
 }
@@ -79,12 +83,16 @@ fn adapter_emits(provider: Provider, kind: AttachmentKind) -> bool {
 /// （表の出どころは P0 の probe で、実装ではない）。
 #[test]
 fn adapters_match_the_carries_table() {
+    // **`Provider::ALL` を使わない。** ここは「表が覆うべきマス」の期待値で、
+    // 実装から導出すると 6 値目を足したときに黙って 24 マスへ増える。
+    // 手で並べてあるから、variant を足した人が**この行でも決めさせられる**。
     let providers = [
         Provider::OpenAiCompat,
         Provider::Anthropic,
         Provider::Gemini,
         Provider::XaiResponses,
         Provider::OpenAiResponses,
+        Provider::MetaResponses,
     ];
     let mut checked = 0;
     for provider in providers {
@@ -97,7 +105,7 @@ fn adapters_match_the_carries_table() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 20, "表は 4 種別 × 5 ワイヤの全マスを覆う");
+    assert_eq!(checked, 24, "表は 4 種別 × 6 ワイヤの全マスを覆う");
 }
 
 /// **表そのものを逐語で凍結する**（P0 の probe 18 発の観測結果）。
@@ -115,6 +123,10 @@ fn the_carries_table_matches_what_the_probes_observed() {
         // xAI の PDF は**公式文書に記述が無いのに通った**（乖離 2 例目）。
         (Provider::XaiResponses, true, false, false, true),
         (Provider::OpenAiResponses, true, false, false, true),
+        // **Gemini に次ぐ 2 本目の「4 種別すべて」**（Spec 37 P0）。
+        // 動画は openai_responses からの類推で ✗ と書くところを、
+        // payload 無しの `input_video` の名指し 400 が実在を教えて撃てた。
+        (Provider::MetaResponses, true, true, true, true),
     ];
     for (provider, image, audio, video, pdf) in expected {
         assert_eq!(provider.carries(Image), image, "{provider:?} の画像");
@@ -136,6 +148,7 @@ fn every_wire_carries_images_now() {
         Provider::Gemini,
         Provider::XaiResponses,
         Provider::OpenAiResponses,
+        Provider::MetaResponses,
     ] {
         assert!(
             provider.carries(AttachmentKind::Image),
@@ -171,6 +184,8 @@ fn no_attachment_means_no_block_list_on_any_wire() {
         serde_json::to_value(fuseforks_core::llm::xai_responses::encode(&req, true, false, false))
             .unwrap(),
         serde_json::to_value(fuseforks_core::llm::openai_responses::encode(&req, true, false, false))
+            .unwrap(),
+        serde_json::to_value(fuseforks_core::llm::meta_responses::encode(&req, true, false))
             .unwrap(),
     ] {
         assert_eq!(
