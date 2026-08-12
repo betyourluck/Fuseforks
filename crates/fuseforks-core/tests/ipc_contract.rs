@@ -44,6 +44,7 @@ fn wire_field_sets_are_frozen() {
             "id",
             "maxOutputTokens",
             "maxRetries",
+            "metaWebSearch",
             "model",
             "name",
             "openaiReasoningPro",
@@ -419,13 +420,23 @@ fn agent_spec_saved_before_work_dir_still_loads() {
 }
 
 /// `types.ts` の `Provider` が取りうる全値を Rust 側が受け取れること。
+///
+/// **ワイヤを 1 本足したらここへ 1 行足す。** 型検査は二言語の境界に届かないので、
+/// 抜けても Rust も TS も黙って通り、**そのテンプレートを保存した村だけが
+/// 読み込みで落ちる**。実際 4〜6 本目（xai / openai / meta）の 3 値は
+/// この一覧から漏れたまま P4 まで来ていた。
 #[test]
 fn provider_values_match_typescript_union() {
-    // types.ts: export type Provider = "open_ai_compat" | "anthropic" | "gemini";
+    // types.ts: export type Provider =
+    //   "open_ai_compat" | "anthropic" | "gemini"
+    //   | "xai_responses" | "open_ai_responses" | "meta_responses";
     for (json, expected) in [
         (r#""open_ai_compat""#, Provider::OpenAiCompat),
         (r#""anthropic""#, Provider::Anthropic),
         (r#""gemini""#, Provider::Gemini),
+        (r#""xai_responses""#, Provider::XaiResponses),
+        (r#""open_ai_responses""#, Provider::OpenAiResponses),
+        (r#""meta_responses""#, Provider::MetaResponses),
     ] {
         let parsed: Provider = serde_json::from_str(json)
             .unwrap_or_else(|e| panic!("Provider {json} が受からない: {e}"));
@@ -465,7 +476,16 @@ fn enums_round_trip_through_json() {
         assert_eq!(back, effort, "往復で壊れる: {json}");
     }
 
-    for provider in [Provider::OpenAiCompat, Provider::Anthropic] {
+    // **全 variant を並べる。** 片道（受け取り）は上のテストが見ているが、
+    // 往復が壊れると「保存した設定を読み戻せない」形で出る。
+    for provider in [
+        Provider::OpenAiCompat,
+        Provider::Anthropic,
+        Provider::Gemini,
+        Provider::XaiResponses,
+        Provider::OpenAiResponses,
+        Provider::MetaResponses,
+    ] {
         let json = serde_json::to_string(&provider).unwrap();
         let back: Provider = serde_json::from_str(&json).unwrap();
         assert_eq!(back, provider, "往復で壊れる: {json}");
