@@ -100,23 +100,35 @@ impl Provider {
     /// （互換の口に `input_audio` は実在するが、音声非対応モデルは拒む）。
     /// 構造的に不可能なものと実行時拒否を同じ層で扱うと、画面で区別できなくなる。
     ///
-    /// **`match` を網羅で書くのは、Provider に 6 値目を足す人へ問いを出すため** —
-    /// 新しいワイヤが 4 種別それぞれを運べるかは、実装者が probe で決めるしかない。
+    /// **表は provider ごとに 1 腕で書く。種別側にワイルドカードを使わない。**
+    ///
+    /// 初版は `match (self, kind)` に `(_, K::Image) => true` のような腕を並べて
+    /// いたが、**それでは `Provider` に variant を足したときコンパイラが指さず、
+    /// 新しいワイヤが既定値を黙って受け取る**（`variant_addition_sites` が
+    /// 「ワイルドカード match は新 variant を黙って吸う」と書いている形そのもの。
+    /// #62 と同族）。**新しいワイヤが 4 種別それぞれを運べるかは probe でしか
+    /// 決まらない**のに、既定値が入ると「測っていない値」が表に載る。
+    ///
+    /// 並びは `[image, audio, video, pdf]` — **`tests/carries_table.rs` の
+    /// 凍結表と同じ順序**にしてある（読み比べるときに並べ替えを挟まない）。
     pub fn carries(self, kind: crate::attachment::AttachmentKind) -> bool {
         use crate::attachment::AttachmentKind as K;
-        match (self, kind) {
-            // 画像は全ワイヤが運ぶ（Spec 36 D9 で Responses 2 本と Gemini を回収した）。
-            (_, K::Image) => true,
-            // PDF も全ワイヤが運ぶ。**xAI は公式文書に記述が無いのに通った**
+        let [image, audio, video, pdf] = match self {
+            // 互換の口は音声の欄を持つ（受理はモデル次第 — gpt-5.6-luna は拒む）。
+            Self::OpenAiCompat => [true, true, false, true],
+            Self::Anthropic => [true, false, false, true],
+            // 4 種別すべてを運ぶ唯一のワイヤ（Spec 36 D8 を覆した理由）。
+            Self::Gemini => [true, true, true, true],
+            // xAI の PDF は**公式文書に記述が無いのに通った**
             // （文書と実装の乖離 2 例目。1 例目は Spec 23 の WebP）。
-            (_, K::Pdf) => true,
-            // 音声は Gemini ネイティブと OpenAI 互換だけ。互換は形が実在する
-            // という意味で、受理はモデル次第（gpt-5.6-luna は拒む）。
-            (Self::Gemini | Self::OpenAiCompat, K::Audio) => true,
-            (_, K::Audio) => false,
-            // 動画は Gemini ネイティブだけ。
-            (Self::Gemini, K::Video) => true,
-            (_, K::Video) => false,
+            Self::XaiResponses => [true, false, false, true],
+            Self::OpenAiResponses => [true, false, false, true],
+        };
+        match kind {
+            K::Image => image,
+            K::Audio => audio,
+            K::Video => video,
+            K::Pdf => pdf,
         }
     }
 
