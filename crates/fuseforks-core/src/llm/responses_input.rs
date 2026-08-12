@@ -13,30 +13,33 @@
 //! （`failures.md` #88 / #96 と同じ「関数は正しい / 射程だけが違う」）。
 
 use super::canonical::{ChatMessage, Role};
+use crate::attachment::AttachmentKind;
 use super::wire;
 
 /// canonical の発話列を Responses の `input` 列へ写す。
 ///
-/// **添付画像は組み立てない**（`attachment_contract` 凍結 7 の据え置き。
-/// 画像は互換経路のみ）。
+/// **添付は画像と PDF を組み立てる**（Spec 36 D9。`attachment_contract` 凍結 7 の
+/// 据え置きを解いた）。これで「ネイティブを選ぶと画像が黙って落ちる」3 例目
+/// （Spec 34 検収 7）が消える。音声・動画の part 型はこのワイヤに存在しない —
+/// 400 の受理集合列挙で確認済み（`input_text` / `input_image` / `input_file` ほか）。
 pub(super) fn encode(messages: &[ChatMessage]) -> Vec<wire::ResponsesInputItem> {
     let mut input = Vec::new();
     for message in messages {
         match message.role {
             Role::System => input.push(wire::ResponsesInputItem::Message {
                 role: "system",
-                content: message.content.clone(),
+                content: wire::ResponsesContent::Text(message.content.clone()),
             }),
             Role::User => input.push(wire::ResponsesInputItem::Message {
                 role: "user",
-                content: message.content.clone(),
+                content: encode_user_content(message),
             }),
             Role::Assistant => {
                 // 空本文の assistant は出さない（#29 — 空発話を積むと次のターンが 400）。
                 if !message.content.is_empty() {
                     input.push(wire::ResponsesInputItem::Message {
                         role: "assistant",
-                        content: message.content.clone(),
+                        content: wire::ResponsesContent::Text(message.content.clone()),
                     });
                 }
                 for call in &message.tool_calls {
@@ -58,4 +61,34 @@ pub(super) fn encode(messages: &[ChatMessage]) -> Vec<wire::ResponsesInputItem> 
         }
     }
     input
+}
+
+/// user 発話の本文（添付があればブロック列、無ければ素の文字列）。
+///
+/// **添付ゼロで形が変わらないことが不変条件** — 常にブロック列を作ると、
+/// 添付を一度も使わない村の要求まで形が変わる（`OaiContent` と同じ規律）。
+fn encode_user_content(message: &ChatMessage) -> wire::ResponsesContent {
+    let mut parts: Vec<wire::ResponsesInputPart> = message
+        .attachments
+        .iter()
+        .filter_map(|a| match a.kind() {
+            AttachmentKind::Image => Some(wire::ResponsesInputPart::InputImage {
+                image_url: a.data_url(),
+            }),
+            AttachmentKind::Pdf => Some(wire::ResponsesInputPart::InputFile {
+                filename: a.file_name_or_default(),
+                file_data: a.data_url(),
+            }),
+            // このワイヤに音声・動画の part 型は無い。正面の門は送信入口の
+            // `carries`（Spec 36 D2）で、ここは最後の砦。
+            AttachmentKind::Audio | AttachmentKind::Video => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        return wire::ResponsesContent::Text(message.content.clone());
+    }
+    parts.push(wire::ResponsesInputPart::InputText {
+        text: message.content.clone(),
+    });
+    wire::ResponsesContent::Parts(parts)
 }

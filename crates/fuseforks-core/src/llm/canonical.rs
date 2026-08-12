@@ -12,6 +12,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attachment::{AttachmentFormat, AttachmentKind};
+
 /// 会話の役割。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,40 +28,129 @@ pub enum Role {
     Tool,
 }
 
-/// 添付画像のワイヤ上の形式（Spec 23 / `attachment_contract` 凍結 4）。
+/// 添付のワイヤ上の形式（Spec 23 = 画像 / Spec 36 = 音声・動画・PDF。
+/// 契約は `attachment_contract`）。
 ///
-/// **閉じた列挙。** ファイル上の実体は常に WebP だが、互換層が WebP を
-/// 拒んだときの 1 回だけの JPEG 再送（D3）があるため、ワイヤへは 2 形式が乗る。
+/// **[`crate::attachment::AttachmentFormat`]（ディスク上の形式）とは別の集合。**
+/// こちらには [`Self::Jpeg`] が居る — 互換層が WebP を拒んだときの
+/// 1 回だけの再送（Spec 23 D3）で作られる形で、**ファイルには決して存在しない**。
+/// 「置ける形」と「送れる形」を 1 つの型に畳むと、その非対称が消える。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ImageMediaType {
-    /// WebP（既定。P0 実測で 5 系統すべて通過）。
+pub enum PromptMediaType {
+    /// WebP（画像の既定。P0 実測で 5 系統すべて通過）。
     Webp,
-    /// JPEG（互換層が WebP を 400 で拒んだときのフォールバック）。
+    /// JPEG（互換層が WebP を 400 で拒んだときのフォールバック。**ワイヤ専用**）。
     Jpeg,
+    /// mp3（音声）。
+    Mp3,
+    /// wav（音声）。
+    Wav,
+    /// mp4（動画）。
+    Mp4,
+    /// PDF。
+    Pdf,
 }
 
-impl ImageMediaType {
+impl PromptMediaType {
     /// ワイヤに載せる MIME 文字列。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Webp => "image/webp",
             Self::Jpeg => "image/jpeg",
+            Self::Mp3 => "audio/mpeg",
+            Self::Wav => "audio/wav",
+            Self::Mp4 => "video/mp4",
+            Self::Pdf => "application/pdf",
+        }
+    }
+
+    /// 種別（`carries` の引数になる粒度）。
+    pub fn kind(self) -> AttachmentKind {
+        match self {
+            Self::Webp | Self::Jpeg => AttachmentKind::Image,
+            Self::Mp3 | Self::Wav => AttachmentKind::Audio,
+            Self::Mp4 => AttachmentKind::Video,
+            Self::Pdf => AttachmentKind::Pdf,
+        }
+    }
+
+    /// 互換層が使う短い形式名（`input_audio` の `format` 欄）。
+    ///
+    /// MIME ではなく `"wav"` / `"mp3"` の裸の語を要求するのは OpenAI 互換の
+    /// 方言（実測 2026-08-12）。**音声以外では意味を持たない**ので `Option`。
+    pub fn audio_format(self) -> Option<&'static str> {
+        match self {
+            Self::Mp3 => Some("mp3"),
+            Self::Wav => Some("wav"),
+            _ => None,
         }
     }
 }
 
-/// この発話と一緒にモデルへ渡す画像（Spec 23）。
+impl From<AttachmentFormat> for PromptMediaType {
+    /// ディスク上の形式からワイヤの形式へ。**逆向きは無い**
+    /// （JPEG はワイヤにしか存在しないので、全射だが単射ではない）。
+    fn from(format: AttachmentFormat) -> Self {
+        match format {
+            AttachmentFormat::Webp => Self::Webp,
+            AttachmentFormat::Mp3 => Self::Mp3,
+            AttachmentFormat::Wav => Self::Wav,
+            AttachmentFormat::Mp4 => Self::Mp4,
+            AttachmentFormat::Pdf => Self::Pdf,
+        }
+    }
+}
+
+/// この発話と一緒にモデルへ渡す添付（Spec 23 / Spec 36）。
 ///
 /// **`data` は base64 済みの文字列。** adapter は純関数（ネットワークも
 /// ファイルも知らない）なので、実体の読み出しと base64 化は
 /// プロンプトを組む側（orchestrator）の責務。
+///
+/// **`file_name` を持つのは PDF のため** — `input_file` / `file` part は
+/// ファイル名を要求する社があり、省くと 400 になる。画像・音声では使わない。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImageAttachment {
+pub struct PromptAttachment {
     /// ワイヤ上の形式。
-    pub media_type: ImageMediaType,
-    /// base64 エンコード済みの画像データ。
+    pub media_type: PromptMediaType,
+    /// base64 エンコード済みのデータ。
     pub data: String,
+    /// 元のファイル名（`input_file` / `file` part 用。既定は空）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file_name: String,
+}
+
+impl PromptAttachment {
+    /// 形式とデータだけの添付（画像・音声・動画。ファイル名を使わない社向け）。
+    pub fn new(media_type: PromptMediaType, data: impl Into<String>) -> Self {
+        Self {
+            media_type,
+            data: data.into(),
+            file_name: String::new(),
+        }
+    }
+
+    /// 種別。
+    pub fn kind(&self) -> AttachmentKind {
+        self.media_type.kind()
+    }
+
+    /// `data:` URL 形式（互換層の `image_url` と Responses の `input_file`）。
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.media_type.as_str(), self.data)
+    }
+
+    /// ファイル名（空なら種別に応じた既定を作る）。
+    ///
+    /// **空のまま送ると 400 になる社がある**ので、ここで必ず何かを返す。
+    pub fn file_name_or_default(&self) -> String {
+        if self.file_name.is_empty() {
+            format!("attachment.{}", self.media_type.audio_format().unwrap_or("pdf"))
+        } else {
+            self.file_name.clone()
+        }
+    }
 }
 
 /// 会話の 1 ターン。
@@ -83,13 +174,13 @@ pub struct ChatMessage {
     /// [`Role::Tool`] のとき、実行したツール名。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
-    /// この発話と一緒に渡す添付画像（Spec 23。通常は空）。
+    /// この発話と一緒に渡す添付（Spec 23 / Spec 36。通常は空）。
     ///
     /// **1 ターン限り**（D1）— プロンプトを組む側が現在の発話にだけ付け、
     /// 履歴として積む [`ChatMessage`] には入れない。`skip_serializing_if` により、
     /// 添付が無い発話のシリアライズ結果は欄の追加前と 1 バイトも変わらない。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<ImageAttachment>,
+    pub attachments: Vec<PromptAttachment>,
 }
 
 impl ChatMessage {
@@ -108,7 +199,7 @@ impl ChatMessage {
     /// 添付画像つきのユーザーメッセージを作る（Spec 23）。
     pub fn user_with_attachments(
         content: impl Into<String>,
-        attachments: Vec<ImageAttachment>,
+        attachments: Vec<PromptAttachment>,
     ) -> Self {
         Self {
             attachments,

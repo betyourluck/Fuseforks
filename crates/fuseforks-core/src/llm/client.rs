@@ -79,6 +79,38 @@ impl Provider {
         }
     }
 
+    /// **このワイヤがその種別の添付を運べるか**（Spec 36 D2。契約は
+    /// `attachment_contract` の carries 表）。
+    ///
+    /// **全 20 マスを P0 の probe で観測して決めた表**（2026-08-12）。判定は
+    /// HTTP 200 ではなく内容の照合で、`false` は 400 の受理集合列挙
+    /// （OpenAI / Anthropic）か untagged enum の 422（xAI）による構造判定。
+    ///
+    /// **これは「ワイヤに書ける形があるか」だけを答える。**
+    /// そのモデルが受理するかは別の層で、400 として画面へ出る
+    /// （互換の口に `input_audio` は実在するが、音声非対応モデルは拒む）。
+    /// 構造的に不可能なものと実行時拒否を同じ層で扱うと、画面で区別できなくなる。
+    ///
+    /// **`match` を網羅で書くのは、Provider に 6 値目を足す人へ問いを出すため** —
+    /// 新しいワイヤが 4 種別それぞれを運べるかは、実装者が probe で決めるしかない。
+    pub fn carries(self, kind: crate::attachment::AttachmentKind) -> bool {
+        use crate::attachment::AttachmentKind as K;
+        match (self, kind) {
+            // 画像は全ワイヤが運ぶ（Spec 36 D9 で Responses 2 本と Gemini を回収した）。
+            (_, K::Image) => true,
+            // PDF も全ワイヤが運ぶ。**xAI は公式文書に記述が無いのに通った**
+            // （文書と実装の乖離 2 例目。1 例目は Spec 23 の WebP）。
+            (_, K::Pdf) => true,
+            // 音声は Gemini ネイティブと OpenAI 互換だけ。互換は形が実在する
+            // という意味で、受理はモデル次第（gpt-5.6-luna は拒む）。
+            (Self::Gemini | Self::OpenAiCompat, K::Audio) => true,
+            (_, K::Audio) => false,
+            // 動画は Gemini ネイティブだけ。
+            (Self::Gemini, K::Video) => true,
+            (_, K::Video) => false,
+        }
+    }
+
     /// base URL に付けるパス。
     ///
     /// Gemini だけモデル名が URL に埋まるため `&'static str` を返せない。
@@ -370,6 +402,9 @@ impl HttpLlmBackend {
 ///
 /// 変換できない添付が 1 つでもあれば `None` — 半分だけ変換した形で
 /// 再送しても、拒否された WebP が残っている限り同じ 400 が返る。
+///
+/// **画像以外は触らない**（Spec 36）。音声・PDF に画像デコーダを当てても
+/// 失敗するだけで、その `None` が**画像の再送まで道連れにする**。
 fn with_jpeg_attachments(req: &ChatRequest) -> Option<ChatRequest> {
     use base64::Engine as _;
     let engine = base64::engine::general_purpose::STANDARD;
@@ -377,7 +412,7 @@ fn with_jpeg_attachments(req: &ChatRequest) -> Option<ChatRequest> {
     let mut any = false;
     for message in &mut converted.messages {
         for attachment in &mut message.attachments {
-            if attachment.media_type != super::canonical::ImageMediaType::Webp {
+            if attachment.media_type != super::canonical::PromptMediaType::Webp {
                 continue;
             }
             let bytes = engine.decode(&attachment.data).ok()?;
@@ -388,7 +423,7 @@ fn with_jpeg_attachments(req: &ChatRequest) -> Option<ChatRequest> {
             let mut jpeg = std::io::Cursor::new(Vec::new());
             rgb.write_to(&mut jpeg, image::ImageFormat::Jpeg).ok()?;
             attachment.data = engine.encode(jpeg.into_inner());
-            attachment.media_type = super::canonical::ImageMediaType::Jpeg;
+            attachment.media_type = super::canonical::PromptMediaType::Jpeg;
             any = true;
         }
     }
@@ -400,7 +435,7 @@ fn has_webp_attachments(req: &ChatRequest) -> bool {
     req.messages.iter().any(|m| {
         m.attachments
             .iter()
-            .any(|a| a.media_type == super::canonical::ImageMediaType::Webp)
+            .any(|a| a.media_type == super::canonical::PromptMediaType::Webp)
     })
 }
 
@@ -664,7 +699,7 @@ mod tests {
     /// data は JPEG のマジック（FF D8）で始まる。
     #[test]
     fn jpeg_fallback_converts_webp_attachments() {
-        use crate::llm::canonical::{ChatMessage, ImageAttachment, ImageMediaType};
+        use crate::llm::canonical::{ChatMessage, PromptAttachment, PromptMediaType};
         use base64::Engine as _;
 
         let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
@@ -680,10 +715,7 @@ mod tests {
             "gpt-x",
             vec![ChatMessage::user_with_attachments(
                 "見て",
-                vec![ImageAttachment {
-                    media_type: ImageMediaType::Webp,
-                    data,
-                }],
+                vec![PromptAttachment::new(PromptMediaType::Webp, data)],
             )],
             64,
         );
@@ -691,7 +723,7 @@ mod tests {
 
         let jpeg = with_jpeg_attachments(&req).expect("変換できること");
         let att = &jpeg.messages[0].attachments[0];
-        assert_eq!(att.media_type, ImageMediaType::Jpeg);
+        assert_eq!(att.media_type, PromptMediaType::Jpeg);
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&att.data)
             .unwrap();
@@ -699,7 +731,7 @@ mod tests {
         // 元のリクエストは無傷（clone してから変換している）。
         assert_eq!(
             req.messages[0].attachments[0].media_type,
-            ImageMediaType::Webp
+            PromptMediaType::Webp
         );
     }
 

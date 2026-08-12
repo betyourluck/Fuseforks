@@ -13,6 +13,7 @@ use super::canonical::{
     Usage,
 };
 use super::error::LlmError;
+use crate::attachment::AttachmentKind;
 use super::wire;
 
 /// canonical → OpenAI 互換 wire。
@@ -120,19 +121,38 @@ fn encode_message(message: &ChatMessage) -> wire::OaiMessage {
     // 添付画像つきの発話だけブロック列にする（Spec 23 P2）。
     // **添付が無ければ必ず素の文字列** — 常にブロック列を作ると、配列の content を
     // 知らない互換サーバで添付ゼロの発話まで落ちる。画像はテキストより前。
-    let content = if message.attachments.is_empty() {
+    // 運べない種別（動画）はここで落ちる。**正面の門は送信入口の `carries`**
+    // （Spec 36 D2）で、ここは最後の砦 — 2 つが食い違わないことは
+    // `adapters_match_the_carries_table` が機械で留めている。
+    let parts: Vec<wire::OaiContentPart> = message
+        .attachments
+        .iter()
+        .filter_map(|a| match a.kind() {
+            AttachmentKind::Image => Some(wire::OaiContentPart::ImageUrl {
+                image_url: wire::OaiImageUrl { url: a.data_url() },
+            }),
+            AttachmentKind::Audio => a.media_type.audio_format().map(|format| {
+                wire::OaiContentPart::InputAudio {
+                    input_audio: wire::OaiInputAudio {
+                        data: a.data.clone(),
+                        format: format.to_owned(),
+                    },
+                }
+            }),
+            AttachmentKind::Pdf => Some(wire::OaiContentPart::File {
+                file: wire::OaiInputFile {
+                    filename: a.file_name_or_default(),
+                    file_data: a.data_url(),
+                },
+            }),
+            AttachmentKind::Video => None,
+        })
+        .collect();
+    let content = if parts.is_empty() {
         // 本文が空のまま送ると `content` が必須のサーバで 400 になる。省くほうが安全。
         (!message.content.is_empty()).then(|| wire::OaiContent::Text(message.content.clone()))
     } else {
-        let mut parts: Vec<wire::OaiContentPart> = message
-            .attachments
-            .iter()
-            .map(|a| wire::OaiContentPart::ImageUrl {
-                image_url: wire::OaiImageUrl {
-                    url: format!("data:{};base64,{}", a.media_type.as_str(), a.data),
-                },
-            })
-            .collect();
+        let mut parts = parts;
         if !message.content.is_empty() {
             parts.push(wire::OaiContentPart::Text {
                 text: message.content.clone(),
@@ -401,15 +421,12 @@ mod tests {
     /// 添付つきはブロック列になり、画像が先・テキストが後（Spec 23 P2）。
     #[test]
     fn attachments_become_a_data_url_block_before_text() {
-        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
         let req = ChatRequest::plain(
             "gpt-4o",
             vec![ChatMessage::user_with_attachments(
                 "何が見える？",
-                vec![ImageAttachment {
-                    media_type: ImageMediaType::Webp,
-                    data: "QUJD".into(),
-                }],
+                vec![PromptAttachment::new(PromptMediaType::Webp, "QUJD")],
             )],
             256,
         );

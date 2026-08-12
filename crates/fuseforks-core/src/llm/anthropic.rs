@@ -18,6 +18,7 @@ use super::canonical::{
     ChatMessage, ChatResponse, Finish, Grounding, Role, ToolCall, ToolChoice, Usage,
 };
 use super::error::LlmError;
+use crate::attachment::AttachmentKind;
 use super::wire;
 use crate::llm::canonical::ChatRequest;
 
@@ -268,7 +269,8 @@ fn message_tokens(messages: &[wire::AnthropicMessage]) -> usize {
             // 視覚トークンは寸法（28px パッチ数）からしか出ず、adapter は base64 しか
             // 持たない。数えない = **少なめに見積もる側へ倒す**（この関数の既定の向き。
             // 画像つきの発話はどのみち履歴に残らないので恒常的な過小にはならない）。
-            wire::AnthropicRequestBlock::Image { .. } => 0,
+            wire::AnthropicRequestBlock::Image { .. }
+            | wire::AnthropicRequestBlock::Document { .. } => 0,
         })
         .sum()
 }
@@ -301,7 +303,8 @@ fn place_message_breakpoint(messages: &mut [wire::AnthropicMessage], prefix_toke
         | wire::AnthropicRequestBlock::ToolResult { cache_control, .. }
         // 「種別は問わない」（prompt_cache の凍結）。本文なしの画像だけの発話では
         // 末尾ブロックが Image になる — ここに打てないと、その周だけ境界が抜ける。
-        | wire::AnthropicRequestBlock::Image { cache_control, .. } => {
+        | wire::AnthropicRequestBlock::Image { cache_control, .. }
+        | wire::AnthropicRequestBlock::Document { cache_control, .. } => {
             *cache_control = ephemeral();
         }
     }
@@ -325,16 +328,27 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
     }
 
     let mut content = Vec::new();
-    // 画像はテキストより前に置く（公式の推奨。Spec 23 P2）。
+    // 添付はテキストより前に置く（公式の推奨。Spec 23 P2）。
+    // **音声と動画の variant はこのワイヤに無い**（400 の受理集合列挙で確認。
+    // Spec 36 P0）ので落ちる。正面の門は送信入口の `carries`（D2）。
     for attachment in &message.attachments {
-        content.push(wire::AnthropicRequestBlock::Image {
-            source: wire::AnthropicImageSource {
-                kind: "base64",
-                media_type: attachment.media_type.as_str().to_owned(),
-                data: attachment.data.clone(),
+        let source = wire::AnthropicBase64Source {
+            kind: "base64",
+            media_type: attachment.media_type.as_str().to_owned(),
+            data: attachment.data.clone(),
+        };
+        let block = match attachment.kind() {
+            AttachmentKind::Image => wire::AnthropicRequestBlock::Image {
+                source,
+                cache_control: None,
             },
-            cache_control: None,
-        });
+            AttachmentKind::Pdf => wire::AnthropicRequestBlock::Document {
+                source,
+                cache_control: None,
+            },
+            AttachmentKind::Audio | AttachmentKind::Video => continue,
+        };
+        content.push(block);
     }
     // 空のテキストブロックは拒否されるので、中身があるときだけ積む。
     if !message.content.is_empty() {
@@ -634,15 +648,12 @@ mod tests {
     /// 添付は image ブロックになり、**テキストより前**に置かれる（Spec 23 P2）。
     #[test]
     fn attachments_become_image_blocks_before_text() {
-        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
         let req = ChatRequest::plain(
             "claude-opus-5",
             vec![ChatMessage::user_with_attachments(
                 "何が見える？",
-                vec![ImageAttachment {
-                    media_type: ImageMediaType::Webp,
-                    data: "QUJD".into(),
-                }],
+                vec![PromptAttachment::new(PromptMediaType::Webp, "QUJD")],
             )],
             512,
         );
@@ -660,15 +671,12 @@ mod tests {
     /// 食われず、空テキストのフォールバックも入らない。
     #[test]
     fn an_image_only_message_is_not_dropped_as_empty() {
-        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
         let req = ChatRequest::plain(
             "claude-opus-5",
             vec![ChatMessage::user_with_attachments(
                 "",
-                vec![ImageAttachment {
-                    media_type: ImageMediaType::Webp,
-                    data: "QUJD".into(),
-                }],
+                vec![PromptAttachment::new(PromptMediaType::Webp, "QUJD")],
             )],
             512,
         );

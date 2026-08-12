@@ -21,7 +21,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use fuseforks_core::llm::{ChatMessage, ChatRequest, ImageAttachment, ImageMediaType, LlmBackend};
+use fuseforks_core::llm::{ChatMessage, ChatRequest, PromptAttachment, PromptMediaType, LlmBackend};
 use fuseforks_core::model::{CredentialSource, ModelTemplate};
 use fuseforks_core::{HttpLlmBackend, InMemorySecretStore, LlmConfig, Provider};
 
@@ -140,11 +140,7 @@ fn request_with_image() -> ChatRequest {
         "stub-model",
         vec![ChatMessage::user_with_attachments(
             "何が見える？",
-            vec![ImageAttachment {
-                media_type: ImageMediaType::Webp,
-                // 4×4 の実 WebP（image crate がデコードできる形でないと変換が失敗する）。
-                data: tiny_webp_base64(),
-            }],
+            vec![PromptAttachment::new(PromptMediaType::Webp, tiny_webp_base64())],
         )],
         64,
     )

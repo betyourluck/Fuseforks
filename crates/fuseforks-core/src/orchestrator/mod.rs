@@ -1352,25 +1352,29 @@ fn endpoint_kind(from: &Endpoint) -> &'static str {
     }
 }
 
-/// このターンの受信に付いた添付参照を、ワイヤへ載せる形へ展開する（Spec 23）。
+/// このターンの受信に付いた添付参照を、ワイヤへ載せる形へ展開する
+/// （Spec 23 = 画像 / Spec 36 = 音声・動画・PDF）。
 ///
 /// 読むのは `incoming.attachments` だけ — 履歴の発話は文字列なので、
-/// **画像がプロンプトへ載るのはこの 1 ターン限り**（D1）が構造で成立する。
+/// **添付がプロンプトへ載るのはこの 1 ターン限り**（D1）が構造で成立する。
 /// 読めなかった参照は抜いて返し、数の差は呼び出し側が本文で断る。
 async fn load_turn_attachments(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     incoming: &AgentMessage,
-) -> Vec<crate::llm::ImageAttachment> {
+) -> Vec<crate::llm::PromptAttachment> {
     use base64::Engine as _;
     let mut loaded = Vec::with_capacity(incoming.attachments.len());
     for reference in &incoming.attachments {
         match shared.attachments.read(&reference.id).await {
-            Ok(Some(bytes)) => loaded.push(crate::llm::ImageAttachment {
-                // 置き場の実体は常に WebP（保存時の検証が保証する）。
-                // JPEG はワイヤ上のフォールバック（D3）でしか現れない。
-                media_type: crate::llm::ImageMediaType::Webp,
+            Ok(Some(bytes)) => loaded.push(crate::llm::PromptAttachment {
+                // 形式は**保存時に検証で確定したもの**を参照から引く
+                // （利用者のファイル名は見ない）。JPEG はワイヤ上の
+                // フォールバック（Spec 23 D3）でしか現れないので、ここには出ない。
+                media_type: reference.format.into(),
                 data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                // PDF の `input_file` / `file` part がファイル名を要求する。
+                file_name: reference.file_name.clone(),
             }),
             Ok(None) => {
                 note!(

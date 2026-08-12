@@ -69,6 +69,38 @@ pub enum OaiContentPart {
         /// `image_url` オブジェクト。
         image_url: OaiImageUrl,
     },
+    /// 音声（Spec 36）。**data URL ではなく生の base64 + 短い形式名**という
+    /// 独自の形で、`image_url` と揃っていない（実測 2026-08-12）。
+    InputAudio {
+        /// `input_audio` オブジェクト。
+        input_audio: OaiInputAudio,
+    },
+    /// ファイル（PDF。Spec 36）。こちらは data URL に戻る。
+    File {
+        /// `file` オブジェクト。
+        file: OaiInputFile,
+    },
+}
+
+/// 音声の中身（`{"data": "<base64>", "format": "wav"}`）。
+///
+/// **`format` は MIME ではなく裸の語**（`"wav"` / `"mp3"`）。同じ社の
+/// `image_url` が data URL なのと形が揃っていないので、写し間違えると 400 になる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OaiInputAudio {
+    /// base64 済みの音声データ。
+    pub data: String,
+    /// `"wav"` / `"mp3"`。
+    pub format: String,
+}
+
+/// ファイルの中身（`{"filename": "...", "file_data": "data:application/pdf;base64,..."}`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OaiInputFile {
+    /// ファイル名。**省くと 400 になる**ので必ず入れる。
+    pub filename: String,
+    /// data URL。
+    pub file_data: String,
 }
 
 /// 画像参照。`url` に `data:image/webp;base64,...` の data URL を入れる。
@@ -443,21 +475,37 @@ pub enum AnthropicRequestBlock {
     /// 添付画像（Spec 23）。**テキストより前に置く**（公式の推奨）。
     Image {
         /// 画像の実体（base64）。
-        source: AnthropicImageSource,
+        source: AnthropicBase64Source,
+        /// キャッシュ指示。ここまでを再利用対象にする。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
+    },
+    /// 添付 PDF（Spec 36）。**画像とは別の種別名**で、同じ source 形を使う。
+    ///
+    /// 音声・動画の variant はこのワイヤに存在しない — 誤った型を 1 つ送ると
+    /// 400 が受理集合を列挙し、そこに音声も動画も無かった（実測 2026-08-12）。
+    Document {
+        /// PDF の実体（base64）。
+        source: AnthropicBase64Source,
         /// キャッシュ指示。ここまでを再利用対象にする。
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
     },
 }
 
-/// Anthropic の画像ソース。この村は base64 だけを使う
-/// （URL は外部から到達できる場所へ画像を置くことになる — Spec 23 Notes 8）。
+/// Anthropic の添付ソース（`image` と `document` が共有する形）。
+///
+/// この村は base64 だけを使う — URL は外部から到達できる場所へ実体を置くことに
+/// なる（Spec 23 Notes 8。公式は url / file_id も持つ）。
+///
+/// **名前が「画像」を名乗らないのは Spec 36** — 同じ形を PDF が使うようになった
+/// 時点で `AnthropicImageSource` は嘘になる（D13 と同じ規律）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AnthropicImageSource {
+pub struct AnthropicBase64Source {
     /// 常に `"base64"`。
     #[serde(rename = "type")]
     pub kind: &'static str,
-    /// `image/webp` など。
+    /// `image/webp` / `application/pdf` など。
     pub media_type: String,
     /// base64 エンコード済みデータ。
     pub data: String,
@@ -651,6 +699,13 @@ pub struct GeminiPart {
     /// 本文。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 添付の実体（Spec 36 D8。`{"mimeType": ..., "data": <base64>}`）。
+    ///
+    /// **このワイヤだけが 4 種別すべてを運ぶ** — 音声と動画を受けるのは
+    /// Gemini ネイティブだけで、それが Spec 23 D8（ネイティブに添付を
+    /// 実装しない）を覆した理由。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<GeminiInlineData>,
     /// 思考ブロックであることの印。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought: Option<bool>,
@@ -671,6 +726,21 @@ pub struct GeminiPart {
     /// 組み込みツールの結果。中身は解釈しない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_response: Option<serde_json::Value>,
+}
+
+/// Gemini の添付の実体（Spec 36）。
+///
+/// **`mimeType` の許容リストに 4 種別すべてが並ぶ**唯一のワイヤ
+/// （`image/webp` / `audio/wav` / `audio/mpeg` / `video/mp4` / `application/pdf`）。
+/// インラインは**要求全体で 20MB** — 種別ごとの上限を最狭のここに合わせている
+/// （`attachment_contract` の D4）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiInlineData {
+    /// MIME 型。
+    pub mime_type: String,
+    /// base64 エンコード済みデータ。
+    pub data: String,
 }
 
 /// 関数呼び出し。`args` は **JSON オブジェクト**（OpenAI 系の文字列方言ではない）。
@@ -1015,8 +1085,9 @@ pub enum ResponsesInputItem {
     Message {
         /// "system" / "user" / "assistant"。
         role: &'static str,
-        /// 本文。
-        content: String,
+        /// 本文。**添付が無ければ素の文字列**（`OaiContent` と同じ規律 —
+        /// 常にブロック列を作ると添付ゼロの発話まで形が変わる）。
+        content: ResponsesContent,
     },
     /// 履歴として再送する assistant の関数呼び出し。
     FunctionCall {
@@ -1039,6 +1110,46 @@ pub enum ResponsesInputItem {
         call_id: String,
         /// 実行結果の本文。
         output: String,
+    },
+}
+
+/// Responses の発話本文（Spec 36 D9）。
+///
+/// **添付が無ければ素の文字列**。`OaiContent` と同じ理由で untagged にする —
+/// 「常にブロック列を作る」実装にすると、添付ゼロの発話まで形が変わる。
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum ResponsesContent {
+    /// 素の文字列（既定）。
+    Text(String),
+    /// ブロック列（添付つきの発話だけ）。
+    Parts(Vec<ResponsesInputPart>),
+}
+
+/// Responses のブロック（Spec 36 D9）。
+///
+/// **種別名が互換の口と違う** — あちらは `text` / `image_url` / `file` だが、
+/// こちらは `input_` 接頭辞つき。同じ社の 2 本のワイヤで名前が揃っていないので、
+/// 写すと 400 になる（実測 2026-08-12。400 が受理集合を列挙してくれる）。
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponsesInputPart {
+    /// テキスト。
+    InputText {
+        /// 本文。
+        text: String,
+    },
+    /// 画像（data URL）。
+    InputImage {
+        /// data URL。
+        image_url: String,
+    },
+    /// ファイル（PDF）。
+    InputFile {
+        /// ファイル名。省くと 400 になる。
+        filename: String,
+        /// data URL。
+        file_data: String,
     },
 }
 

@@ -36,7 +36,7 @@ use async_trait::async_trait;
 
 pub use canonical::{
     ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingEngine, GroundingSource,
-    ImageAttachment, ImageMediaType, Role, ToolCall, ToolChoice, ToolSpec, Usage,
+    PromptAttachment, PromptMediaType, Role, ToolCall, ToolChoice, ToolSpec, Usage,
 };
 pub use client::{HttpBackendFactory, HttpLlmBackend, LlmConfig, Provider};
 pub use error::LlmError;

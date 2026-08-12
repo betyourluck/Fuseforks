@@ -259,11 +259,10 @@ fn config(mode: &'static str, allowed: Option<Vec<String>>) -> wire::GeminiFunct
 /// ツール結果が `user` ロールになるのが最大の差。`tool` という役割が存在せず、
 /// 「モデルへ渡す入力」は全部 `user` に畳まれる。
 ///
-/// **添付画像（`ChatMessage.attachments`）はこの経路では組み立てない**
-/// （Spec 23 D8 / `attachment_contract` 凍結 7）。ネイティブ経路が要るのは
-/// Google 検索の接地だけで、画像と接地を同時に使う経路は作らない。
-/// 断りは送信の入口（画面）が出す — ここで `inline_data` を生やすと、
-/// その凍結を実装が黙って追い越す。
+/// **添付は `inline_data` として組み立てる**（Spec 36 D8。`attachment_contract`
+/// 凍結 7 を覆した）。旧凍結は「画像は互換で運べるからネイティブに要らない」
+/// だったが、**音声と動画を受けるのはこのワイヤだけ**なので前提が種別の側から
+/// 消えた。覆したことは契約の当該節に取り消し線つきで書いてある。
 fn encode_message(message: &ChatMessage) -> wire::GeminiContent {
     match message.role {
         Role::Tool => wire::GeminiContent {
@@ -304,13 +303,34 @@ fn encode_message(message: &ChatMessage) -> wire::GeminiContent {
             }
         }
         // System はこの関数へ来ない（encode で除外済み）。来ても user として扱えば壊れない。
-        _ => wire::GeminiContent {
-            role: Some("user".into()),
-            parts: vec![wire::GeminiPart {
-                text: Some(message.content.clone()),
-                ..Default::default()
-            }],
-        },
+        _ => {
+            // 添付はテキストより前（他社と同じ並び）。**4 種別すべてを運ぶ唯一の
+            // ワイヤ**で、音声と動画をここでしか送れないことが Spec 23 D8 を
+            // 覆した理由（Spec 36 D8）。
+            let mut parts: Vec<wire::GeminiPart> = message
+                .attachments
+                .iter()
+                .map(|a| wire::GeminiPart {
+                    inline_data: Some(wire::GeminiInlineData {
+                        mime_type: a.media_type.as_str().to_owned(),
+                        data: a.data.clone(),
+                    }),
+                    ..Default::default()
+                })
+                .collect();
+            // **添付が無いときは今日までと 1 バイトも変わらない** — 空の本文でも
+            // text パートを 1 つ出す形を保つ（golden で凍結）。
+            if parts.is_empty() || !message.content.is_empty() {
+                parts.push(wire::GeminiPart {
+                    text: Some(message.content.clone()),
+                    ..Default::default()
+                });
+            }
+            wire::GeminiContent {
+                role: Some("user".into()),
+                parts,
+            }
+        }
     }
 }
 
@@ -507,26 +527,54 @@ mod tests {
         assert_eq!(sys.parts[0].text.as_deref(), Some("あなたはザリ"));
     }
 
-    /// **ネイティブ経路は添付を組み立てない**（Spec 23 D8 の凍結）。
+    /// **添付が無い発話は Spec 36 の前後でバイト等価**。
     ///
-    /// 添付つきでも添付なしとワイヤがバイト等価であること。ここへ
-    /// `inline_data` を生やすと「画像と接地を同時に使う経路は作らない」の
-    /// 凍結を実装が黙って追い越すので、このテストが先に落ちる。
+    /// 旧テスト `attachments_are_ignored_on_the_native_path`（Spec 23 D8 =
+    /// ネイティブに添付を実装しない、の凍結）を**この形へ置き換えた**。
+    /// D8 は Spec 36 で覆したので「添付を無視する」は守るべき性質ではなくなり、
+    /// 残る不変条件は**添付を使わない村が 1 バイトも変わらないこと**だけ。
     #[test]
-    fn attachments_are_ignored_on_the_native_path() {
-        use crate::llm::canonical::{ImageAttachment, ImageMediaType};
-        let base = request(vec![ChatMessage::user("こんにちは")]);
-        let with = request(vec![ChatMessage::user_with_attachments(
-            "こんにちは",
-            vec![ImageAttachment {
-                media_type: ImageMediaType::Webp,
-                data: "QUJD".into(),
-            }],
-        )]);
+    fn encoding_without_attachments_matches_the_golden_bytes() {
+        let wire = encode(&request(vec![ChatMessage::user("こんにちは")]), false);
+        let json = serde_json::to_value(&wire).unwrap();
         assert_eq!(
-            serde_json::to_string(&encode(&base, false)).unwrap(),
-            serde_json::to_string(&encode(&with, false)).unwrap(),
+            json["contents"],
+            serde_json::json!([{ "role": "user", "parts": [{ "text": "こんにちは" }] }]),
+            "添付なしの発話に inlineData の欄は生えない"
         );
+    }
+
+    /// **4 種別すべてが `inlineData` として乗る**（Spec 36 D8。音声と動画を
+    /// 受けるのはこのワイヤだけで、それが D8 を覆した理由）。
+    ///
+    /// 添付はテキストより前・`mimeType` は各種別の MIME・キーは camelCase。
+    #[test]
+    fn every_kind_rides_as_inline_data_before_the_text() {
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
+        for (media, mime) in [
+            (PromptMediaType::Webp, "image/webp"),
+            (PromptMediaType::Wav, "audio/wav"),
+            (PromptMediaType::Mp3, "audio/mpeg"),
+            (PromptMediaType::Mp4, "video/mp4"),
+            (PromptMediaType::Pdf, "application/pdf"),
+        ] {
+            let wire = encode(
+                &request(vec![ChatMessage::user_with_attachments(
+                    "これは何？",
+                    vec![PromptAttachment::new(media, "QUJD")],
+                )]),
+                false,
+            );
+            let json = serde_json::to_value(&wire).unwrap();
+            assert_eq!(
+                json["contents"][0]["parts"],
+                serde_json::json!([
+                    { "inlineData": { "mimeType": mime, "data": "QUJD" } },
+                    { "text": "これは何？" },
+                ]),
+                "{media:?} が inlineData として先頭に乗る"
+            );
+        }
     }
 
     #[test]

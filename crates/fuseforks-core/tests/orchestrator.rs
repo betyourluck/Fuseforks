@@ -7781,7 +7781,7 @@ async fn an_attached_image_reaches_the_model_once_and_never_again() {
     assert_eq!(first_user.attachments.len(), 1);
     assert_eq!(
         first_user.attachments[0].media_type,
-        fuseforks_core::llm::ImageMediaType::Webp
+        fuseforks_core::llm::PromptMediaType::Webp
     );
     {
         use base64::Engine as _;

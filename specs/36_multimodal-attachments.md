@@ -385,11 +385,59 @@ P6-4 はこの「rejected 行あり + turn 行なし」を**対で**読む。査
   **P4 への持ち越し**: `types.ts` の `Attachment.width: number` は画像では
   今も正しいが、**非画像では欄ごと来ない**ので `width?: number` へ広げる。
   P1 では UI から非画像を作れないので TS の型検査は割れていない
-- [ ] **P2 ワイヤ**: canonical の `ImageAttachment` → 種別を持つ形へ
-  （既存欄は加算で拡張。serde の後方互換 = 旧形式の読みが割れないことを
-  テストで凍結）。Gemini `inline_data`（D8 — 画像含む）/ Anthropic `document` /
+- [x] **P2 ワイヤ — 完了（2026-08-12）**。コア lib 549・**新設
+  `tests/carries_table.rs` 4 本**・workspace 全緑・clippy 警告ゼロ。
+  canonical の `ImageAttachment` → `PromptAttachment`（種別を運ぶ形へ改名）/
+  Gemini `inlineData`（D8 — 4 種別すべて）/ Anthropic `document` /
   compat の `input_audio` + `file` part / `responses_input` の `input_image` +
-  `input_file`（D9）。**添付なしのバイト等価 golden は全ワイヤで維持**
+  `input_file`（D9）。**添付なしのバイト等価は 5 ワイヤ横並びで凍結**。
+
+  **P2 実装記録（実装で決めた 6 点）**:
+  1. **`ImageAttachment` / `ImageMediaType` を `PromptAttachment` /
+     `PromptMediaType` へ改名した**（D13 と同じ規律の 3 例目 —
+     `AnthropicImageSource` → `AnthropicBase64Source` が 4 例目）。
+     音声・PDF を運ぶ型が「画像」を名乗ると、**次に読む人が種別を足す場所を
+     探して見つけられない**。射程 8 ファイル・機械的置換
+  2. **`PromptMediaType` は `AttachmentFormat`（ディスク）と別の集合のまま。**
+     こちらには `Jpeg` が居る — Spec 23 D3 のフォールバックで作られる形で、
+     **ファイルには決して存在しない**。1 つに畳むとこの非対称が消える。
+     橋は `From<AttachmentFormat>`（全射だが単射ではない）
+  3. **`Provider::carries` は P2 に置いた**（Spec では P3 の項目だったが、
+     **述語はワイヤについての言明**なので実装がここに要る）。P3 は
+     この述語を送信入口から**読むだけ**になる。網羅 `match` にしてあるので、
+     Provider に 6 値目を足す人へ「4 種別それぞれを運べるか」が問いとして立つ
+  4. **`file_name` を `PromptAttachment` へ足した** — PDF の `input_file` /
+     `file` part は**ファイル名を要求し、省くと 400**。画像・音声では使わない
+     ので `skip_serializing_if` で欄ごと消える
+  5. **JPEG フォールバックの射程を画像へ絞った**（Spec 23 D3 の保守）。
+     音声・PDF に画像デコーダを当てても失敗するだけで、その `None` が
+     **画像の再送まで道連れにする**（`with_jpeg_attachments` は 1 つでも
+     変換できなければ全体を諦める設計）
+  6. **Gemini の旧テスト `attachments_are_ignored_on_the_native_path` は
+     削除ではなく置換した** — D8 を覆したので「無視する」は守るべき性質では
+     なくなったが、**「添付が無い村は 1 バイトも変わらない」は残る不変条件**。
+     テストの名前と主張をそちらへ移し、4 種別が `inlineData` に乗ることを
+     別の 1 本で凍結した
+
+  **`tests/carries_table.rs` が P2 の要**（D2「提示と判定の集合を分けない」の
+  機械側）。**4 本が別々の仕事をする**:
+  - `adapters_match_the_carries_table` — **全 20 マス**で述語と adapter の
+    実装が一致する。判定は「encode 結果の JSON に base64 が現れるか」で、
+    ブロックの型名（`image_url` / `input_image` / `inlineData` / `document`）を
+    書き分けない — **書き分けると網が表の写しになる**
+  - `the_carries_table_matches_what_the_probes_observed` — **表を逐語で凍結**。
+    上のテストは「一致」しか見ないので**両方を同時に変えると通る**
+  - `every_wire_carries_images_now` — D9 の完了条件（画像の行が全 ✓）
+  - `no_attachment_means_no_block_list_on_any_wire` — 5 ワイヤ**横並び**で
+    バイト等価。個別 golden では「1 本だけブロック列へ倒れる」退行が
+    表の側から見えない
+
+  **ミューテーション 3 回で赤を確かめた**（予測を先に書き、一致）:
+  (a) 互換の音声を落とす → `adapters_match` (b) 表の xAI PDF を偽へ →
+  `adapters_match` + `the_carries_table_matches` の 2 本 (c) Responses を
+  常にブロック列へ → `no_attachment_means_no_block_list`。
+  **`every_wire_carries_images_now` は 3 つとも緑のまま** = 画像の行に
+  触れていないことまで読める
 - [ ] **P3 配線**: `carries` の述語 + 送信入口の拒否（**保存・記録より前。
   拒否時は保存もターンも無く、計器 `attachment kind: … outcome=rejected` の
   1 行と IPC エラーだけ** — rev2 査読 1）+ 通った側の計器

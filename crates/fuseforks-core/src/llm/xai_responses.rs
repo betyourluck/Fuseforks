@@ -34,7 +34,7 @@ pub fn encode(
     web_search: bool,
     x_search: bool,
 ) -> wire::XaiRequest {
-    // 添付画像はこのワイヤでは送らない（Spec 23 D8 — 画像は互換経路のみ）。
+    // 添付は画像と PDF を送る（Spec 36 D9 で凍結 7 の据え置きを解いた）。
     // 組み立ては OpenAI Responses と共有する（Spec 34 D2 rev6 — 要素の型が
     // 同じだと実測しており、2 箇所に写すと片方だけ直す形が生まれる）。
     let input = super::responses_input::encode(&req.messages);
