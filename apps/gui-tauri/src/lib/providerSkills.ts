@@ -25,6 +25,7 @@ export const DEFAULT_BASE_URL: Record<string, string> = {
   // **登録しないと壊れる側もある**: anthropic → open_ai_responses の切り替えで
   // preset が undefined になり、base URL が api.anthropic.com のまま残る。
   open_ai_responses: "https://api.openai.com/v1",
+  meta_responses: "https://api.meta.ai/v1",
 };
 
 /** 既知の既定値のいずれかであれば、プロトコル変更に追随してよいと判断する。 */
@@ -46,6 +47,9 @@ export const KNOWN_DEFAULTS = Object.values(DEFAULT_BASE_URL);
 const ALSO_SERVES_COMPAT: readonly string[] = [
   DEFAULT_BASE_URL.gemini,
   DEFAULT_BASE_URL.xai_responses,
+  // Meta も互換の口を持つ。**この村の muse-spark 個体は現に互換で動いている**
+  // ので、`open_ai_compat` のまま api.meta.ai を指すのは正当な構成。
+  DEFAULT_BASE_URL.meta_responses,
 ];
 
 /**
@@ -183,6 +187,7 @@ export function providerSkills(draft: Pick<
   | "xaiXSearch"
   | "openaiWebSearch"
   | "openaiReasoningPro"
+  | "metaWebSearch"
 >): {
   google: SkillVisibility;
   xaiWeb: SkillVisibility;
@@ -196,6 +201,15 @@ export function providerSkills(draft: Pick<
    * 器の 3 形目は要らなかった。
    */
   openaiPro: SkillVisibility;
+  /**
+   * Meta の web 検索（Spec 37 D3）。
+   *
+   * **トグル 1 つに閉じる。** `search_context_size` という軸は実在する
+   * （実測で 200）が、`filters` / `max_results` は 400 で名指しされる —
+   * **受理集合が列挙されないワイヤ**なので、器を増やす前に 1 つずつ
+   * 名指しさせて確かめる必要がある。
+   */
+  metaWeb: SkillVisibility;
   /** 設定を持たない固有スキルの辞書キー。 */
   passive: string[];
   /**
@@ -208,12 +222,14 @@ export function providerSkills(draft: Pick<
   const onGemini = draft.provider === "gemini";
   const onXai = draft.provider === "xai_responses";
   const onOpenAi = draft.provider === "open_ai_responses";
+  const onMeta = draft.provider === "meta_responses";
 
   const google = visibility(draft.googleSearch, onGemini);
   const xaiWeb = visibility(draft.xaiWebSearch, onXai);
   const xaiX = visibility(draft.xaiXSearch, onXai);
   const openaiWeb = visibility(draft.openaiWebSearch, onOpenAi);
   const openaiPro = visibility(draft.openaiReasoningPro, onOpenAi);
+  const metaWeb = visibility(draft.metaWebSearch, onMeta);
 
   const passive = passiveSkills(draft.provider);
 
@@ -223,6 +239,7 @@ export function providerSkills(draft: Pick<
     xaiX,
     openaiWeb,
     openaiPro,
+    metaWeb,
     passive,
     anyOffered:
       google.offered ||
@@ -230,6 +247,7 @@ export function providerSkills(draft: Pick<
       xaiX.offered ||
       openaiWeb.offered ||
       openaiPro.offered ||
+      metaWeb.offered ||
       passive.length > 0,
   };
 }

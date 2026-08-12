@@ -370,9 +370,34 @@ data URL と、Meta が `https` URL から取得したものは残る）。**機
   「両方を同時に変えると通ってしまう」は、あの網が塞ぐために書かれている。
 - [ ] **P2 固有スキル**: `ModelTemplate.meta_web_search` + `meta_web_search_active()` +
       `LlmConfig` への配線 + `Grounding.engine` の Meta
-- [ ] **P3 フロント**: `providerSkills.ts`（**string union は網羅検査を持たないので
-      手で数える**）+ `carries.ts` の 6 行目（**こちらは `Record` が指す**）+
-      モデル登録画面のトグル + 辞書 ja / en
+- [x] **P3 フロント — 完了（2026-08-13）**。vitest 359 全緑・vue-tsc + vite build 緑。
+
+  **union と `Record` の非対称が実地で出た**（契約に書いたとおりの形）。
+  `types.ts` の `Provider` へ 6 値目を足した瞬間に落ちたのは
+  **`carries.ts` の `Record<Provider,…>` だけ**で、`providerSkills.ts` の
+  `DEFAULT_BASE_URL` / `ALSO_SERVES_COMPAT` / `providerSkills` は**黙って通った**。
+  **同じ TS でも、union か Record かで網羅性が変わる**（`variant_addition_sites`）。
+
+  **手で数えた 5 箇所**（コンパイラが 1 つも指さない）:
+  `DEFAULT_BASE_URL` / `ALSO_SERVES_COMPAT` / `providerSkills` の判定と戻り値 /
+  `anyOffered` の OR / `PROVIDERS` の選択肢。
+  **`anyOffered` が最も静かな穴** — 足さなくても型は通り、
+  **見出しだけが出なくなる**（トグルは描かれるのに区切りが消える）。
+
+  **引数の型に欄を足した瞬間、呼び出し元は全部指された** —
+  `providerSkills(draft)` の `Pick<…>` に `metaWebSearch` を入れたので、
+  テストの `Draft` 型とダイアログの初期値 2 箇所が TS2345 / TS2741 で落ちた。
+  **union で黙って吸われる部分と、構造体で必ず指される部分が同じファイルに同居している。**
+
+  **同期テストが 3 本とも捕まえた** — Rust の凍結表が 6 行になったのに TS 側の
+  期待値が 5 のままだったので、`expected 6 to be 5` で赤。**Rust を直して TS を
+  忘れる**という、この網が塞ぐために書かれた形がそのまま出た。
+
+  **Spec 36 の追従漏れを 2 件回収した**（#51 (b) — 腐るのは Spec 37 の節ではない）:
+  `openaiResponsesCaveats` と `responsesHint` が
+  **「切り替えると画像は相手に届きません」**と言い続けていた。
+  **Spec 36 D9 で画像は全ワイヤが運ぶようになっている**ので、これは嘘。
+  日英とも直した。**機能を回収したとき、その制約を説明していた文言が腐る。**
 - [ ] **P4 台帳**: README 日英 / DETAIL 日英 / CLAUDE.md / `data_contract`。
       **ファイル単位で数える**（#51 (b)）
 - [ ] **P5 実機確認**:

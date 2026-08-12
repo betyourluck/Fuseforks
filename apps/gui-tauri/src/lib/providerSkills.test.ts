@@ -18,6 +18,7 @@ type Draft = Pick<
   | "xaiXSearch"
   | "openaiWebSearch"
   | "openaiReasoningPro"
+  | "metaWebSearch"
 >;
 
 function draft(over: Partial<Draft> = {}): Draft {
@@ -28,6 +29,7 @@ function draft(over: Partial<Draft> = {}): Draft {
     xaiXSearch: false,
     openaiWebSearch: false,
     openaiReasoningPro: false,
+    metaWebSearch: false,
     ...over,
   };
 }

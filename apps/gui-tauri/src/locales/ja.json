@@ -582,10 +582,16 @@
     "openaiReasoningPro": "Pro 推論モード",
     "openaiReasoningProHint": "難しい問いに計算を厚く積みます。公表のベンチマークでは terra が 23.3% → 28.5%（標準の sol 28.7% にほぼ並ぶ）。入力が毎回 約 1,500 トークン増え、応答も遅くなります。",
     "openaiSearchCost": "web 検索を有効にすると、検索しない依頼でも入力が約 4,400 トークン増えます（ツールの宣言がプロンプトへ入るため）。2 回目以降はキャッシュに乗るので実質は約 1/10 です。実際に検索した回は、結果が入力へ入るぶんさらに大きく増えます。",
-    "openaiResponsesCaveats": "このプロトコルでは温度（temperature）が使えません（接続先が拒否します）。また画像の添付は互換プロトコルでしか送れないため、切り替えると画像は相手に届きません。",
+    "openaiResponsesCaveats": "このプロトコルでは温度（temperature）が使えません（接続先が拒否します）。",
     "strandedOpenAiStrong": "プロトコルが OpenAI ネイティブ（Responses）ではないため効きません",
     "strandedOpenAiAfter": "。この機能は Responses 経路にしかありません。使うならプロトコルを「OpenAI ネイティブ（Responses）」にしてください。",
-    "responsesHint": "このモデルはプロトコルを「OpenAI ネイティブ（Responses）」にすると、思考の要約と web 検索が使えます（互換プロトコルでは、ツールを持たせている間は思考そのものが止まります）。切り替えると温度が使えなくなり、画像も送れなくなります。"
+    "responsesHint": "このモデルはプロトコルを「OpenAI ネイティブ（Responses）」にすると、思考の要約と web 検索が使えます（互換プロトコルでは、ツールを持たせている間は思考そのものが止まります）。切り替えると温度が使えなくなります。",
+    "providerMetaResponses": "Meta ネイティブ（Responses）",
+    "metaWebSearch": "web 検索",
+    "metaWebSearchHint": "web を検索して裏を取ってから答えます（出典の URL が返ります）",
+    "metaResponsesCaveats": "この接続先は送った添付をサーバー側に期限なしで保存します（一覧で取得でき、削除もできます）。また強制的なツール呼び出しができません（接続先が auto しか受け付けないため）。web 検索を有効にすると、実際に検索した回は入力が数万トークン規模まで増えます。",
+    "strandedMetaStrong": "プロトコルが Meta ネイティブ（Responses）ではないため効きません",
+    "strandedMetaAfter": "。この機能は Responses 経路にしかありません。使うならプロトコルを「Meta ネイティブ（Responses）」にしてください。"
   },
   "schedule": {
     "title": "予定（スケジュール実行）",

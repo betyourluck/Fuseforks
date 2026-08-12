@@ -159,6 +159,7 @@ const PROVIDERS: { value: Provider | null; labelKey: string }[] = [
   { value: "gemini", labelKey: "modelTemplate.providerGemini" },
   { value: "xai_responses", labelKey: "modelTemplate.providerXaiResponses" },
   { value: "open_ai_responses", labelKey: "modelTemplate.providerOpenAiResponses" },
+  { value: "meta_responses", labelKey: "modelTemplate.providerMetaResponses" },
 ];
 
 /**
@@ -175,6 +176,7 @@ const skills = computed(() =>
       xaiXSearch: false,
       openaiWebSearch: false,
       openaiReasoningPro: false,
+      metaWebSearch: false,
     },
   ),
 );
@@ -233,6 +235,8 @@ function blank(): ModelTemplate {
     // Spec 34 P1 は既定値だけ。トグルと注記（固定費 4,434 / +1,538）は P2。
     openaiWebSearch: false,
     openaiReasoningPro: false,
+    // Spec 37。既定 OFF（検索は入力を桁で膨らませる — 実測 66,350）。
+    metaWebSearch: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
   };
@@ -701,6 +705,37 @@ function onTemperature(raw: string): void {
             </template>
 
             <!--
+              Meta の web 検索（Spec 37 D3）。**トグル 1 つ**に閉じる —
+              `search_context_size` という軸は実在する（実測 200）が、
+              `filters` / `max_results` は 400 で名指しされる。**受理集合が
+              列挙されないワイヤ**なので、器を増やす前に 1 つずつ確かめる。
+            -->
+            <template v-if="skills.metaWeb.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.metaWebSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.metaWebSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.metaWebSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!--
+              このワイヤの代償と性質を、選ぶ場所で言う（Spec 37 D7 の a）。
+              - **添付は接続先に恒久保存される**（`/v1/files` / `expires_at: null`）。
+                「学習に使われます」とは書かない — あれは規約で、こちらは
+                観測できる事実。**性質の違う 2 つを 1 文に混ぜると、どちらも
+                確かめられなくなる**
+              - 強制ツール呼び出しを持てない（`tool_choice` は auto のみ）
+              - 検索は入力を桁で膨らませる（実測 66,350）
+            -->
+            <template v-if="skills.metaWeb.offered">
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.metaResponsesCaveats") }}
+              </div>
+            </template>
+
+            <!--
               このワイヤの代償を 2 つ、選ぶ場所で言う。
               - 温度: gpt-5.6 系は 400 で拒むので**型に欄が無い**（D11）。
                 黙って落とすと「設定したのに効かない」になり、送って 400 に
@@ -720,6 +755,15 @@ function onTemperature(raw: string): void {
               その時だけ理由と直し方を出す。スキルごとに 1 行 — まとめて 1 つの
               警告にすると、どれを直せばよいかが読めなくなる。
             -->
+            <template v-if="skills.metaWeb.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.metaWebSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedMetaStrong") }}</strong
+                >{{ $t("modelTemplate.strandedMetaAfter") }}
+              </p>
+            </template>
+
             <template v-if="skills.google.stranded">
               <label class="text-warn">{{ $t("modelTemplate.googleSearch") }}</label>
               <p class="text-warn">

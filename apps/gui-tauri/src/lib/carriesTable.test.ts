@@ -36,6 +36,7 @@ const VARIANT_TO_PROVIDER: Record<string, Provider> = {
   Gemini: "gemini",
   XaiResponses: "xai_responses",
   OpenAiResponses: "open_ai_responses",
+  MetaResponses: "meta_responses",
 };
 
 /**
@@ -59,9 +60,9 @@ function rustTable(): Record<string, boolean[]> {
 }
 
 describe("carries の表", () => {
-  it("全 20 マスが Rust の凍結表と一致する", () => {
+  it("全 24 マスが Rust の凍結表と一致する", () => {
     const rust = rustTable();
-    expect(Object.keys(rust).length).toBe(5);
+    expect(Object.keys(rust).length).toBe(6);
     let checked = 0;
     for (const [provider, flags] of Object.entries(rust)) {
       KIND_ORDER.forEach((kind, index) => {
@@ -72,17 +73,19 @@ describe("carries の表", () => {
         checked += 1;
       });
     }
-    expect(checked).toBe(20);
+    expect(checked).toBe(24);
   });
 
   it("画像はどのワイヤでも運べる（Spec 36 D9 の回収）", () => {
     // 「ネイティブを選ぶと画像が黙って落ちる」3 例が解消したことを、
     // 画面側の表からも読めるようにする。
-    expect(carriersOf("image").length).toBe(5);
+    expect(carriersOf("image").length).toBe(6);
   });
 
-  it("動画は Gemini ネイティブだけ", () => {
-    expect(carriersOf("video")).toEqual(["gemini"]);
+  it("動画は Gemini と Meta のネイティブだけ（Spec 37 で 2 本目）", () => {
+    // Meta の動画は **予測を覆して通った** — openai_responses からの類推で
+    // ✗ と書くところを、payload 無しの `input_video` の名指し 400 が実在を教えた。
+    expect(carriersOf("video")).toEqual(["gemini", "meta_responses"]);
   });
 
   it("実効ワイヤは未設定なら base URL から推定する（コアと同じ規則）", () => {

@@ -41,7 +41,8 @@ export type Provider =
   | "anthropic"
   | "gemini"
   | "xai_responses"
-  | "open_ai_responses";
+  | "open_ai_responses"
+  | "meta_responses";
 
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -340,6 +341,16 @@ export interface ModelTemplate {
    * 既定 OFF — 効きは収穫逓減で、入力の固定費が +1,538 トークンある。
    */
   openaiReasoningPro: boolean;
+  /**
+   * Meta の web 検索（Spec 37）。**`provider === "meta_responses"` のときだけ効く。**
+   *
+   * 互換の口に検索は露出していないので、互換のまま真にしても何も起きない
+   * （コア側の `meta_web_search_active` が AND で判定する）。
+   *
+   * **検索は入力を桁で膨らませる** — 実測で `input_tokens` が 66,350
+   * （検索なしの同型は 12〜141）。既定 OFF。
+   */
+  metaWebSearch: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
 }

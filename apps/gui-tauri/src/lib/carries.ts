@@ -44,6 +44,8 @@ const TABLE: Record<Provider, readonly [boolean, boolean, boolean, boolean]> = {
   // xAI の PDF は公式文書に記述が無いのに通った（文書と実装の乖離 2 例目）。
   xai_responses: [true, false, false, true],
   open_ai_responses: [true, false, false, true],
+  // **Gemini に次ぐ 2 本目の「4 種別すべて」**（Spec 37）。
+  meta_responses: [true, true, true, true],
 };
 
 /** 表の列の順序。`TABLE` の並びと 1 対 1。 */

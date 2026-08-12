@@ -582,10 +582,16 @@
     "openaiReasoningPro": "Pro reasoning mode",
     "openaiReasoningProHint": "Spends more computation on hard questions. In the published benchmark, terra goes 23.3% -> 28.5% (about level with standard sol at 28.7%). Every request costs roughly 1,500 more input tokens, and replies get slower.",
     "openaiSearchCost": "Turning on web search adds about 4,400 input tokens to every request, even ones that never search (the tool declaration is injected into the prompt). Later requests hit the cache, so the effective cost is roughly a tenth of that. Requests that actually search grow further, because the results are injected too.",
-    "openaiResponsesCaveats": "This protocol does not accept temperature (the provider rejects it). Image attachments only travel over the compatible protocol, so after switching, images will not reach the model.",
+    "openaiResponsesCaveats": "This protocol does not support temperature (the endpoint rejects it).",
     "strandedOpenAiStrong": "but it does nothing because the protocol is not OpenAI native (Responses)",
     "strandedOpenAiAfter": ". This capability exists only on the Responses path. Set the protocol to \"OpenAI native (Responses)\" to use it.",
-    "responsesHint": "Switching this model's protocol to \"OpenAI native (Responses)\" unlocks reasoning summaries and web search (on the compatible protocol, reasoning is disabled entirely whenever tools are offered). After switching, temperature stops working and images can no longer be sent."
+    "responsesHint": "Switching this model's protocol to \"OpenAI native (Responses)\" enables reasoning summaries and web search (on the compatible protocol, reasoning stops entirely while tools are offered). Temperature becomes unavailable after the switch.",
+    "providerMetaResponses": "Meta native (Responses)",
+    "metaWebSearch": "Web search",
+    "metaWebSearchHint": "Searches the web and checks its facts before answering (source URLs are returned)",
+    "metaResponsesCaveats": "This endpoint stores the attachments you send on its server with no expiry (they can be listed and deleted). It also cannot force a tool call (the endpoint only accepts auto). With web search on, turns that actually search grow the input to tens of thousands of tokens.",
+    "strandedMetaStrong": "has no effect because the protocol is not Meta native (Responses)",
+    "strandedMetaAfter": ". This feature exists only on the Responses path. To use it, set the protocol to \"Meta native (Responses)\"."
   },
   "schedule": {
     "title": "Schedules (timed requests)",
