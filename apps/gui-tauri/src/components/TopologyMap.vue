@@ -483,7 +483,31 @@ onBeforeUnmount(() => {
           <clipPath id="kizuna-avatar" clipPathUnits="objectBoundingBox">
             <circle cx="0.5" cy="0.5" r="0.5" />
           </clipPath>
+
+          <!--
+            点描の背景。**間隔 18 / 半径 1 は旧 `<Background>` と同じ値**
+            （見え方を変えないため）。色は CSS が与える — SVG の
+            presentation attribute に `var()` は書けない。
+          -->
+          <pattern id="kizuna-dots" width="18" height="18" patternUnits="userSpaceOnUse">
+            <circle class="kizuna-dot" cx="1" cy="1" r="1" />
+          </pattern>
         </defs>
+
+        <!--
+          背景レイヤー。**視点の中に入る**ので、旧 `<Background>` と同じく
+          パンとズームに追従する（CSS の背景画像だと地図だけが動いて点が残る）。
+          矩形を大きく取っているのは、遠くまでパンしても点が切れないため。
+        -->
+        <template #background>
+          <rect
+            x="-20000"
+            y="-20000"
+            width="40000"
+            height="40000"
+            fill="url(#kizuna-dots)"
+          />
+        </template>
 
         <!--
           ノードの見た目。**運ぶのは「誰か」「選ばれているか」「動いているか」の
@@ -580,7 +604,7 @@ onBeforeUnmount(() => {
 
 .kizuna :deep(.kizuna-ring) {
   fill: var(--color-surface-1);
-  stroke-width: 2;
+  stroke-width: 4;
   stroke: var(--color-line);
 }
 .kizuna :deep(.is-running .kizuna-ring) {
@@ -595,7 +619,7 @@ onBeforeUnmount(() => {
 /* 選択は**太さ + accent**。状態色が 4 種あるので、色だけで 5 つ目を足さない。 */
 .kizuna :deep(.is-selected .kizuna-ring) {
   stroke: var(--color-accent);
-  stroke-width: 4;
+  stroke-width: 8;
 }
 
 /*
@@ -638,6 +662,10 @@ onBeforeUnmount(() => {
   fill: var(--color-run);
   stroke: var(--color-surface-0);
   stroke-width: 2;
+}
+
+.kizuna :deep(.kizuna-dot) {
+  fill: var(--color-line);
 }
 
 .kizuna :deep(.v-ng-edge) {
