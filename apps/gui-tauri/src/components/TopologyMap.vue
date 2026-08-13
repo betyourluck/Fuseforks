@@ -711,8 +711,12 @@ onBeforeUnmount(() => {
  * **角の切り欠き・等幅・薄い走査線・片側の発光**なので、既存トークンだけで組める。
  * 生の緑や赤を入れると (a) 配色が `style.css` の外へ出て (b) ライトテーマで浮く。
  *
- * 角の斜め切りは `clip-path`。**枠線は `border` では描けない**（clip が切る）ので、
- * 外側を accent で塗って 1px はみ出させ、内側を地の色で同じ形に切る。
+ * **角は削らない**（2026-08-13 利用者裁定 —「モロに ROG なのは避けたい」）。
+ * 斜め切りは記号として強すぎて、他所から借りてきた面に見える。**角丸はアプリの
+ * 既定に合わせる** — この村の面の言語に馴染ませるほうが、借り物感が消える。
+ *
+ * 枠は外側を accent の斜めグラデで塗って 1px はみ出させ、内側を地の色で覆う
+ * 2 層。**片側だけが光る**面はこれで作っている（角を削らなくても残る性質）。
  *
  * **縦は内容で決まる**（利用者裁定 — 可変でよい）。行を足せば伸びる。
  */
@@ -724,8 +728,8 @@ onBeforeUnmount(() => {
     color-mix(in oklab, var(--color-accent) 25%, transparent) 45%,
     color-mix(in oklab, var(--color-accent) 10%, transparent) 100%
   );
-  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
-  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--color-accent) 30%, transparent));
+  border-radius: 6px;
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--color-accent) 22%, transparent));
 }
 
 .kizuna-hud-body {
@@ -734,7 +738,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px 10px;
   background: color-mix(in oklab, var(--color-surface-0) 82%, transparent);
   backdrop-filter: blur(6px);
-  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  border-radius: 5px;
 }
 
 /* 走査線。**主張しない濃さに留める** — 読ませたいのは値であって装飾ではない。 */
