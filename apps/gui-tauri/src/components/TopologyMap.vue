@@ -384,6 +384,16 @@ onBeforeUnmount(() => {
           `closest` で辿る — ライブラリのクラス名を選択子に書くと、描画を
           差し替えたときに黙って壊れる（今回まさにそれを踏んだ）。
         -->
+        <!--
+          **当たり判定は下の CSS が与える**（`.kizuna-node { pointer-events: all }`）。
+          ライブラリの既定ノードは、スロットへ渡ってくる `class`
+          （`{ draggable, selectable }`）で `pointer-events` を得る作りだが、
+          **その `class` は型宣言（`NodeSlotProps`）に載っていない** — 実行時には
+          渡っているのに宣言が漏れている。宣言に無いものへ寄りかかると
+          版が上がったときに黙って壊れるので、自分の CSS で与える。
+          ドラッグとクリックのハンドラは**ライブラリが外側の `<g>` に付けている**
+          ので、こちらが当たりさえすればイベントは届く。
+        -->
         <template #override-node="{ nodeId, scale }">
           <g :data-kizuna-node="nodeId" :class="['kizuna-node', ringClass(nodeId as AgentId)]">
             <circle class="kizuna-ring" :r="NODE_RADIUS * scale" />
@@ -444,8 +454,18 @@ onBeforeUnmount(() => {
  * これが `v-network-graph`（SVG）を選んだ理由そのもの — canvas だと
  * この節が描画コードへ散る。
  */
+/*
+ * **これが無いと掴めない。** ライブラリの既定 CSS は
+ * `.v-ng-node .draggable / .selectable` にだけ `pointer-events: all` を与える。
+ * 自前のノードはそのクラスを持たないので、ここで自分に与える。
+ * **見た目は正しいまま操作だけが死ぬ**種類の欠落で、実機でしか出ない。
+ */
 .kizuna :deep(.kizuna-node) {
-  cursor: pointer;
+  pointer-events: all;
+  cursor: grab;
+}
+.kizuna :deep(.v-ng-canvas.dragging .kizuna-node) {
+  cursor: grabbing;
 }
 
 .kizuna :deep(.kizuna-ring) {
