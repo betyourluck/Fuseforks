@@ -141,8 +141,14 @@ function edgeIsLive(edge: { source: string; target: string; bidirectional?: bool
 const zoom = ref(1);
 const pan = ref({ x: 0, y: 0 });
 
-/** 点の間隔と大きさは旧 `<Background>` と同じ（18 / 1）。 */
-const DOT_GAP = 18;
+/**
+ * 点の間隔と大きさ。
+ *
+ * **間隔は旧 `<Background>` の 18 から広げた**（2026-08-13 実機。詰まって見えた）。
+ * 大きさは 1 のまま — 太らせると点が目立って地が騒がしくなる。
+ * **間隔だけを動かす**のが、密度を変えつつ地の静けさを保つ側。
+ */
+const DOT_GAP = 32;
 const DOT_RADIUS = 1;
 
 const dotStyle = computed(() => {
@@ -681,8 +687,8 @@ onBeforeUnmount(() => {
 }
 
 /*
- * 点描の背景。旧 `<Background :gap="18" :size="1" />` の見え方をそのまま写す。
- * 位置と大きさは `dotStyle` が視点から与える。
+ * 点描の背景。位置と大きさは `dotStyle` が視点から与える
+ * （間隔は `DOT_GAP` / 点の大きさは `DOT_RADIUS`）。
  */
 .kizuna {
   background-image: radial-gradient(
