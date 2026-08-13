@@ -65,7 +65,9 @@ const NODE_RADIUS = 26;
 const nodes = computed<Nodes>(() => {
   const result: Nodes = {};
   for (const agent of state.agents) {
-    result[agent.id] = { name: agent.name };
+    // **`selected` を載せるのは `configs` が読むため。** 選択で半径が変わるので、
+    // ここを持たせないと辺の端が旧い半径のまま刺さる。
+    result[agent.id] = { name: agent.name, selected: agent.id === state.selectedAgentId };
   }
   return result;
 });
@@ -176,8 +178,10 @@ const configs = defineConfigs({
   node: {
     selectable: false,
     draggable: true,
-    normal: { type: "circle", radius: NODE_RADIUS },
-    hover: { type: "circle", radius: NODE_RADIUS },
+    // **選択中は 1.5 倍。** ここで変えると辺の接続点も一緒に動く
+    // （見た目だけ CSS で拡大すると、線がノードの内側へ食い込む）。
+    normal: { type: "circle", radius: (node) => (node.selected ? NODE_RADIUS * 1.5 : NODE_RADIUS) },
+    hover: { type: "circle", radius: (node) => (node.selected ? NODE_RADIUS * 1.5 : NODE_RADIUS) },
     // 名前はスロットで描くので、組み込みのラベルは出さない。
     label: { visible: false },
     focusring: { visible: false },
@@ -354,25 +358,6 @@ onBeforeUnmount(() => {
         </span>
       </span>
 
-      <span class="ml-auto flex items-center gap-1">
-        <button
-          type="button"
-          class="rounded border border-line px-2 py-0.5 hover:bg-surface-2"
-          :title="$t('map.fitTitle')"
-          @click="fit"
-        >
-          {{ $t("map.fit") }}
-        </button>
-        <button
-          type="button"
-          class="rounded border px-2 py-0.5 hover:bg-surface-2"
-          :class="settings.autoFitOnResize ? 'border-accent text-accent' : 'border-line'"
-          :title="$t('map.autoFit')"
-          @click="settings.autoFitOnResize = !settings.autoFitOnResize"
-        >
-          {{ $t("map.autoFitShort") }}
-        </button>
-      </span>
     </header>
 
     <div ref="canvas" class="kizuna relative min-h-0 flex-1">
@@ -391,10 +376,10 @@ onBeforeUnmount(() => {
       -->
       <aside
         v-if="selected"
-        class="pointer-events-none absolute right-2 top-2 z-10 w-52 rounded-md border border-line bg-surface-1/80 px-3 py-2 text-xs shadow-lg backdrop-blur-xl"
+        class="pointer-events-none absolute right-2 top-2 z-10 w-60 rounded-md bg-surface-1/25 px-3 py-2 text-sm backdrop-blur-sm"
       >
         <div class="flex items-center gap-2">
-          <span class="truncate font-medium text-ink">{{ selected.name }}</span>
+          <span class="truncate text-base font-semibold text-ink">{{ selected.name }}</span>
           <!-- 役職バッジ（Spec 14）。引けなければ**バッジごと描かない**。 -->
           <span
             v-if="roleOf(selected)"
@@ -431,6 +416,45 @@ onBeforeUnmount(() => {
         </dl>
       </aside>
 
+      <!--
+        表示の操作（左下）。**Vue Flow の `Controls` と同じ位置と作法**に戻した
+        （2026-08-13 利用者要望）。ヘッダへ文字のボタンとして置いていたが、
+        あそこは村の要約を出す場所で、操作を混ぜると読む面と押す面が混ざる。
+
+        自動 Fit が Fit の**下**なのは元と同じ並び。ボタンを増やす判断は
+        「操作ボタンは地図の面積を奪う」と逆向きに見えるが、これは**操作ではなく
+        状態の切り替え**で、押した後は押さないもの。
+      -->
+      <div
+        class="kizuna-controls absolute bottom-2 left-2 z-10 flex flex-col overflow-hidden rounded border border-line bg-surface-1/80 backdrop-blur"
+      >
+        <button type="button" :title="$t('map.fitTitle')" @click="fit">
+          <!-- 四隅へ広げる = 全体を入れる。 -->
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path
+              d="M3 7.75A.75.75 0 0 1 2.25 7V4A1.75 1.75 0 0 1 4 2.25h3a.75.75 0 0 1 0 1.5H4a.25.25 0 0 0-.25.25v3A.75.75 0 0 1 3 7.75Zm14 0a.75.75 0 0 1-.75-.75V4a.25.25 0 0 0-.25-.25h-3a.75.75 0 0 1 0-1.5h3A1.75 1.75 0 0 1 17.75 4v3a.75.75 0 0 1-.75.75Zm-14 4.5a.75.75 0 0 1 .75.75v3c0 .138.112.25.25.25h3a.75.75 0 0 1 0 1.5H4A1.75 1.75 0 0 1 2.25 16v-3a.75.75 0 0 1 .75-.75Zm14 0a.75.75 0 0 1 .75.75v3A1.75 1.75 0 0 1 16 17.75h-3a.75.75 0 0 1 0-1.5h3a.25.25 0 0 0 .25-.25v-3a.75.75 0 0 1 .75-.75Z"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          :class="{ 'is-on': settings.autoFitOnResize }"
+          :title="$t('map.autoFit')"
+          @click="settings.autoFitOnResize = !settings.autoFitOnResize"
+        >
+          <!--
+            利用者提供の SVG。**`fill` は `currentColor` へ直してある** — 原本は
+            `#212121` 固定で、ライトでもダークでも同じ黒になり `is-on` の accent も
+            効かなかった（絵文字を恒久要素に使わない理由と同じ線引き）。
+          -->
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path
+              d="M15.0027 4.49838L15.7121 5.23289C15.9998 5.53084 16.4746 5.53911 16.7726 5.25137C17.0705 4.96362 17.0788 4.48882 16.7911 4.19087L14.9701 2.30532C14.577 1.89823 13.9246 1.89823 13.5315 2.30532L11.7105 4.19087C11.4228 4.48882 11.431 4.96362 11.729 5.25137C12.0269 5.53911 12.5017 5.53084 12.7895 5.23289L13.5027 4.49433V7.25C13.5027 7.66421 13.8385 8 14.2527 8C14.667 8 15.0027 7.66421 15.0027 7.25V4.49838ZM3 5C3 3.89543 3.89543 3 5 3H9.25C9.66421 3 10 3.33579 10 3.75C10 4.16421 9.66421 4.5 9.25 4.5H5C4.72386 4.5 4.5 4.72386 4.5 5V15C4.5 15.2761 4.72386 15.5 5 15.5H9.25C9.66421 15.5 10 15.8358 10 16.25C10 16.6642 9.66421 17 9.25 17H5C3.89543 17 3 16.1046 3 15V5ZM15.7121 14.7671L15.0027 15.5016V12.75C15.0027 12.3358 14.667 12 14.2527 12C13.8385 12 13.5027 12.3358 13.5027 12.75V15.5057L12.7895 14.7671C12.5017 14.4692 12.0269 14.4609 11.729 14.7486C11.431 15.0364 11.4228 15.5112 11.7105 15.8091L13.5315 17.6947C13.9246 18.1018 14.577 18.1018 14.9701 17.6947L16.7911 15.8091C17.0788 15.5112 17.0705 15.0364 16.7726 14.7486C16.4746 14.4609 15.9998 14.4692 15.7121 14.7671Z"
+            />
+          </svg>
+        </button>
+      </div>
+
       <VNetworkGraph
         ref="graph"
         :nodes="nodes"
@@ -464,23 +488,23 @@ onBeforeUnmount(() => {
           ドラッグとクリックのハンドラは**ライブラリが外側の `<g>` に付けている**
           ので、こちらが当たりさえすればイベントは届く。
         -->
-        <template #override-node="{ nodeId, scale }">
+        <template #override-node="{ nodeId, scale, config }">
           <g :data-kizuna-node="nodeId" :class="['kizuna-node', ringClass(nodeId as AgentId)]">
-            <circle class="kizuna-ring" :r="NODE_RADIUS * scale" />
+            <circle class="kizuna-ring" :r="config.radius * scale" />
 
             <image
               v-if="state.icons[nodeId as AgentId]"
               :href="state.icons[nodeId as AgentId]!"
-              :x="-NODE_RADIUS * scale"
-              :y="-NODE_RADIUS * scale"
-              :width="NODE_RADIUS * 2 * scale"
-              :height="NODE_RADIUS * 2 * scale"
+              :x="-config.radius * scale"
+              :y="-config.radius * scale"
+              :width="config.radius * 2 * scale"
+              :height="config.radius * 2 * scale"
               clip-path="url(#kizuna-avatar)"
               preserveAspectRatio="xMidYMid slice"
             />
             <template v-else>
               <circle
-                :r="(NODE_RADIUS - 2) * scale"
+                :r="(config.radius - 2) * scale"
                 :fill="avatarHue(nameOf(nodeId as AgentId))"
               />
               <text
@@ -497,15 +521,15 @@ onBeforeUnmount(() => {
             <circle
               v-if="running(nodeId as AgentId)"
               class="kizuna-live"
-              :cx="NODE_RADIUS * 0.72 * scale"
-              :cy="-NODE_RADIUS * 0.72 * scale"
+              :cx="config.radius * 0.72 * scale"
+              :cy="-config.radius * 0.72 * scale"
               :r="5 * scale"
             />
 
             <text
               class="kizuna-name"
               text-anchor="middle"
-              :y="(NODE_RADIUS + 14) * scale"
+              :y="(config.radius + 14) * scale"
               :font-size="11 * scale"
             >
               {{ nameOf(nodeId as AgentId) }}
@@ -558,6 +582,34 @@ onBeforeUnmount(() => {
   stroke-width: 4;
 }
 
+/*
+ * 選択したときの弾み。
+ *
+ * **大きさそのものは `configs.node.normal.radius` が 1.5 倍にしている** —
+ * ここでやるのは行き過ぎて戻る演出だけ。半径を CSS の拡大で作ると
+ * **辺の接続点が旧い半径のまま**になり、線がノードの内側へ食い込む。
+ *
+ * 起点を 0.667（= 1 / 1.5）にしてあるので、**前の大きさから膨らむ**ように見える。
+ * 原点はノードの中心（スロットの (0,0) が中心）なので `transform-origin` は要らない。
+ */
+.kizuna :deep(.is-selected) {
+  animation: kizuna-bounce 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes kizuna-bounce {
+  0% {
+    transform: scale(0.667);
+  }
+  60% {
+    transform: scale(1.1);
+  }
+  80% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 .kizuna :deep(.kizuna-initial) {
   fill: var(--color-surface-0);
   font-weight: 600;
@@ -574,6 +626,33 @@ onBeforeUnmount(() => {
 
 .kizuna :deep(.v-ng-edge) {
   stroke: var(--color-accent);
+}
+
+/*
+ * 左下の操作パネル。旧 `Controls` の寸法（24px 角）をそのまま踏襲する —
+ * 位置も大きさも変わると、慣れた手が迷う。
+ */
+.kizuna-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--color-ink);
+}
+.kizuna-controls button + button {
+  border-top: 1px solid var(--color-line);
+}
+.kizuna-controls button:hover {
+  background-color: var(--color-surface-2);
+}
+.kizuna-controls button svg {
+  width: 14px;
+  height: 14px;
+}
+/* 自動 Fit が入っているときだけ accent で示す（押した状態の印）。 */
+.kizuna-controls button.is-on {
+  color: var(--color-accent);
 }
 
 /* 張られなかった drop への応答（Spec 21 D3）。**SVG に box-shadow は効かない**
