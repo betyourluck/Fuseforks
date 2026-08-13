@@ -165,7 +165,7 @@ function trackPointer(event: PointerEvent): void {
 
 function onDragStart(): void {
   // 矩形判定だけの安い検査（D2 の連続ヒットテストとは別物。Phase 1 の範囲）。
-  mapRect = document.querySelector(".vue-flow")?.getBoundingClientRect() ?? null;
+  mapRect = document.querySelector(".v-ng-container")?.getBoundingClientRect() ?? null;
   document.addEventListener("pointermove", trackPointer);
 }
 
@@ -178,10 +178,16 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
   pendingOrder = null;
 
   // 分身はイベント配送前に除去済みなので素の elementFromPoint でよい
-  // （Spec 21 P0 実測 2）。closest はハンドル・ラベル等の子要素から辿るため。
+  // （Spec 21 P0 実測 2）。closest は輪・名前等の子要素から辿るため。
+  //
+  // **選択子は自前の属性にする**（2026-08-13）。以前はここに描画ライブラリの
+  // クラス名（`.vue-flow__node`）を書いており、**地図の描画を差し替えた瞬間に
+  // 黙って壊れた** — 型検査にも lint にも掛からない種類の結合。
+  // `data-kizuna-node` は `TopologyMap` が自分で付けているので、ライブラリを
+  // 変えても意味が変わらない。**id もここから読む**（属性 1 つで両方足りる）。
   const point = dropPoint(evt.originalEvent);
   const node = point
-    ? (document.elementFromPoint(point.x, point.y)?.closest(".vue-flow__node") ?? null)
+    ? (document.elementFromPoint(point.x, point.y)?.closest("[data-kizuna-node]") ?? null)
     : null;
 
   if (!node) {
@@ -200,7 +206,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
   }
 
   const source = typeof evt.oldIndex === "number" ? agents.value[evt.oldIndex] : undefined;
-  const targetId = node.getAttribute("data-id") as AgentId | null;
+  const targetId = node.getAttribute("data-kizuna-node") as AgentId | null;
   if (!source || !targetId) return;
 
   const next = tieAddition(state.agents, source.id, targetId);
@@ -453,7 +459,7 @@ body.kizuna-drop-target * {
 }
 
 /* 張られなかった drop（接続済み・自分自身）への応答。無音にしない（D3）。 */
-.vue-flow__node.kizuna-pulse {
+.kizuna-node.kizuna-pulse {
   animation: kizuna-pulse 0.4s ease-out;
 }
 

@@ -410,93 +410,58 @@ textarea,
 }
 
 /*
- * Vue Flow をアプリの配色に合わせる（既定は明るい前提のため）。
+ * 絆の地図（`v-network-graph`）をアプリの配色に合わせる。
  *
- * `theme-default.css` の `.vue-flow__node-default` は白背景・枠線・パディング・
- * 固定幅を持つ。ノードの中身は自前で描いているので、その外側の箱は素通しにする。
- * 個別に打ち消しているのは、ライブラリ側の既定がどれだけ乗っているかを
- * 明示するため（`all: unset` だと何を消したのか読めなくなる）。
+ * **色はここに集める。** ライブラリの `configs` へ色を書くと SVG の
+ * presentation attribute として焼き付き、**属性値は `var()` の置換を受けない**
+ * のでテーマに追従しない。CSS 規則は presentation attribute に必ず勝つので、
+ * 塗りはこちらで与える。**canvas 描画のライブラリを採らなかった理由がこれ** —
+ * canvas だとこの節が描画コードへ散り、色の置き場が 2 つになる。
  */
-.vue-flow__node-default {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  width: auto;
-  box-shadow: none;
-  color: inherit;
-  font-size: inherit;
-  text-align: left;
-}
 
 /*
- * 地図の点描の背景。`<Background>` は色を **SVG の presentation attribute**
- * （`fill="…"`）として置くので、**そこに `var()` は書けない**（属性値は
- * CSS 変数の置換を受けない）。CSS 規則は presentation attribute に必ず
- * 勝つので、色はここで与える — こうすればテーマに自動で追従し、
- * コンポーネント側から生の色（旧 `pattern-color="#3a4152"`）が消える。
- */
-.vue-flow__background circle,
-.vue-flow__background path {
-  fill: var(--color-line);
-  stroke: var(--color-line);
-}
-
-/*
- * 辺（2026-08-05 実機の指摘。**両テーマ共通**）。
+ * 辺（2026-08-05 実機の指摘。**両テーマ共通**。描画ライブラリを差し替えても
+ * この判断は持ち越す）。
  *
  * **既定を accent にし、ホバーでは色を変えず光らせる。**
  *
  * 以前は既定が `--color-line`（枠線と同じ灰）で、ダークでもライトでも地に
  * 沈んで「どこが繋がっているか」が読めなかった。**線は村の構造そのもの**で、
- * パネルの縁と同じ重みに落とすものではない。ホバーのときだけ accent にして
- * いたのは、常時見えるべきものを操作したときだけ見せていた形。
+ * パネルの縁と同じ重みに落とすものではない。
  *
  * ホバーで**色を変えない**のは、色が変わると「別のもの」に見えるため。
- * 変えるのは強さ（太さと発光）だけにすると、同じ辺が強調されたと読める。
+ * 変えるのは強さ（発光）だけにすると、同じ辺が強調されたと読める。
  * 発光を 2 段の drop-shadow で作るのは ChatPanel の削除ボタンと同じ手で、
  * 芯（近く・濃い）と滲み（遠く・薄い）を分けないと「ボワッと」にならない。
+ *
+ * **太さは CSS で決めない** — 双方向かどうかで変えており、それは
+ * `configs.edge.normal.width` が辺ごとに返している（形は configs、色は CSS）。
  */
-.vue-flow__edge-path {
+.v-ng-line {
   stroke: var(--color-accent);
-  stroke-width: 1.5;
-  transition:
-    stroke-width 0.15s,
-    filter 0.15s;
+  transition: filter 0.15s;
 }
-/*
- * **`stroke` をここでも書くのは省略ではなく必須。** Vue Flow の既定に
- * `.vue-flow__edge.selected/:focus .vue-flow__edge-path { stroke: #555 }` があり、
- * 上の既定（`.vue-flow__edge-path`）より特異度が高い。強さだけを変えるつもりで
- * `stroke` を落とすと、**選択とフォーカスのときだけ灰色に戻る**。
- */
-.vue-flow__edge.selected .vue-flow__edge-path,
-.vue-flow__edge:focus .vue-flow__edge-path,
-.vue-flow__edge:focus-visible .vue-flow__edge-path,
-.vue-flow__edge:hover .vue-flow__edge-path {
+.v-ng-line:hover,
+.v-ng-edge.hover .v-ng-line,
+.v-ng-edge.selected .v-ng-line {
   stroke: var(--color-accent);
-  stroke-width: 2.5;
   filter: drop-shadow(0 0 3px color-mix(in oklab, var(--color-accent) 75%, transparent))
     drop-shadow(0 0 8px color-mix(in oklab, var(--color-accent) 45%, transparent));
 }
 
 /*
- * 矢印は線と同じ色にする。既定は明るい灰色で、線だけ色を変えると継ぎ目が浮く。
+ * 矢印は線と同じ色。既定は暗い色で、線だけ色を変えると継ぎ目が浮く。
  * **マーカーは `<defs>` で全辺が共有する**ので、ホバーの発光までは追従できない
  * （個別に持たせるには辺ごとにマーカーを複製することになる）。
  */
-.vue-flow__arrowhead * {
+.v-ng-marker-arrow,
+.v-ng-marker-head * {
   stroke: var(--color-accent);
   fill: var(--color-accent);
 }
-.vue-flow__handle {
-  background-color: var(--color-line);
-  border: 1px solid var(--color-surface-0);
-  width: 8px;
-  height: 8px;
-}
-.vue-flow__controls-button {
-  background-color: var(--color-surface-2);
-  border-bottom: 1px solid var(--color-line);
-  fill: var(--color-ink);
+
+/* 背景のグリッド（出す場合）。点描と同じ扱いで地の色へ寄せる。 */
+.v-ng-background-grid line,
+.v-ng-background-grid path {
+  stroke: var(--color-line);
 }

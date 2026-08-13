@@ -1,115 +1,71 @@
 <script setup lang="ts">
 /**
- * 中央ペイン上部: ノードベースのサーヴァントの絆（旧「村の地図」）。
+ * 中央ペイン上部: サーヴァントの絆（旧「村の地図」）。
  *
- * トポロジーの真実は「どの辺があるか」だけであり、座標は world.json に保存する
- * 表示設定として分ける。未配置ノードだけはここで円環状に自動配置する。
+ * **描画は `v-network-graph`**（2026-08-13 に Vue Flow から差し替えた試作）。
+ * 選んだ理由は 2 つで、**1 つ目が決定的**:
+ *
+ * - **SVG で、ノードを Vue のスロットで描ける。** 色は CSS から引けるので
+ *   「配色は `style.css` の 1 箇所」の規律が破れない。canvas（vis-network）だと
+ *   描画コードが色の 2 箇所目になり、テーマの切り替えに自前で追従する羽目になる
+ * - **`layouts.nodes` が `topologyPositions` と 1 対 1。** 既にある IPC と
+ *   `world.json` の欄がそのまま使える
+ *
+ * **座標は人が置く**（`SimpleLayout`）。自動整列は入れていない —
+ * 「なくてもよいかもしれない」が利用者の裁定で、規則的な配置は実機で
+ * 2 度却下されている（円環・エゴ中心の放射とも「網ではなく図表に見える」）。
+ * 埋めるのは**一度も置かれていない個体だけ**で、規則は `lib/kizunaSeed`。
+ *
+ * **失ったものが 1 つある** — このライブラリには**辺をドラッグで作る機構が無い**
+ * （イベントに接続系が無い）。Spec 21 の 3 経路のうち**ハンドル引きが消える**。
+ * カードの drop と役職ダイアログのチェックは残るので、辺を作れなくはならない。
  *
  * 辺の追加・削除はグラフ上の操作をそのままコアへ流す。
  * 自己ループと未登録先はコア側が拒否するので、ここでは事前検査しない
  * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  VueFlow,
-  useVueFlow,
-  type Connection,
-  type Edge,
-  type Node,
-  type NodeDragEvent,
-} from "@vue-flow/core";
-import { Background } from "@vue-flow/background";
-import { Controls } from "@vue-flow/controls";
+  VNetworkGraph,
+  defineConfigs,
+  type Edges,
+  type EventHandlers,
+  type Layouts,
+  type Nodes,
+} from "v-network-graph";
+import "v-network-graph/lib/style.css";
 
-import { compactNumber } from "../lib/format";
-import { tieAddition } from "../lib/kizunaDrop";
 import { drawDirection } from "../lib/kizunaEdges";
-import { roleBadge } from "../lib/roleLabel";
-
+import { seedPositions } from "../lib/kizunaSeed";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
-import { STATUS_LABEL_KEYS, type AgentId } from "../types";
+import type { AgentId } from "../types";
 
 const { t } = useI18n();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const { settings } = useUiSettings();
-const { fitView } = useVueFlow();
 
-/**
- * ペインの大きさが変わった後に Fit を掛け直す（2026-08-08 利用者要望）。
- *
- * **見ているのはコンテナの箱だけ。** ノードの移動でも辺の増減でも発火しない —
- * ドラッグ中に視点が動くと Spec 21 の drop が使う `elementFromPoint` の座標と
- * 画面がずれる。**Vue Flow に「追従し続ける」プロパティは無い**ので
- * （1.48.2 は初期化時 1 回の `fitViewOnInit` と命令的な `fitView()` だけ）、
- * リサイズという 1 点に絞って自前で繋ぐ。
- */
+const graph = ref<InstanceType<typeof VNetworkGraph> | null>(null);
 const canvas = ref<HTMLElement | null>(null);
-let observer: ResizeObserver | null = null;
-let settle: ReturnType<typeof setTimeout> | null = null;
 
-/**
- * 落ち着いてから 1 回だけ掛ける。**仕切りのドラッグ中は毎フレーム発火する**ので、
- * そのたびに掛けると視点が追いかけ続けて操作感が悪くなる（利用者の言葉も
- * 「大きさが変わった**後**に」）。
- */
-function scheduleFit(): void {
-  if (!settings.autoFitOnResize) return;
-  if (settle) clearTimeout(settle);
-  settle = setTimeout(() => {
-    settle = null;
-    fitView();
-  }, 120);
-}
+/** ノードの見た目の寸法（SVG 座標）。`configs` と slot の両方が読む。 */
+const NODE_RADIUS = 26;
 
-onMounted(() => {
-  if (typeof ResizeObserver !== "function" || !canvas.value) return;
-  observer = new ResizeObserver(scheduleFit);
-  observer.observe(canvas.value);
-});
+/* ------------------------------------------------------------------ *
+ * データ
+ * ------------------------------------------------------------------ */
 
-onBeforeUnmount(() => {
-  observer?.disconnect();
-  if (settle) clearTimeout(settle);
-});
-
-/**
- * ノードに出す役職名。引けなければ `null` で**バッジごと描かない**
- * （`role_contract` 凍結 5 — 3 箇所は `roleLabel` の 1 実装を通す）。
- */
-function roleOf(agent: { roleId: string | null }) {
-  return roleBadge(agent.roleId, state.roles);
-}
-
-/** 円環配置の半径。ノード数に応じて広げ、重なりを避ける。 */
-function radiusFor(count: number): number {
-  return Math.max(140, count * 34);
-}
-
-const nodes = computed<Node[]>(() => {
-  const list = [...state.agents].sort((a, b) => a.order - b.order);
-  const radius = radiusFor(list.length);
-
-  return list.map((agent, index) => {
-    const angle = (index / Math.max(1, list.length)) * Math.PI * 2 - Math.PI / 2;
-    const auto = {
-      x: 320 + radius * Math.cos(angle),
-      y: 220 + radius * Math.sin(angle),
-    };
-
-    return {
-      id: agent.id,
-      type: "default",
-      position: state.topologyPositions[agent.id] ?? auto,
-      data: { agent },
-      class: agent.id === state.selectedAgentId ? "is-selected" : "",
-    };
-  });
+const nodes = computed<Nodes>(() => {
+  const result: Nodes = {};
+  for (const agent of state.agents) {
+    result[agent.id] = { name: agent.name };
+  }
+  return result;
 });
 
 /**
@@ -119,50 +75,32 @@ const nodes = computed<Node[]>(() => {
  * 矢が両端に付いた状態と区別がつかない。だったら初めから 1 本で描いて、
  * 「双方向である」ことを形で示すほうが正しい。
  */
-const edges = computed<Edge[]>(() => {
+const edges = computed<Edges>(() => {
   const exists = (source: AgentId, target: AgentId) =>
     state.edges.some((e) => e.source === source && e.target === target);
 
-  const running = (id: AgentId) =>
-    state.agents.some((a) => a.id === id && a.status === "running");
-
-  /**
-   * 左ペインでの並び順。**引けなければ末尾へ**（消えた個体の辺が残っていても
-   * 描画順が揺れないように、`NaN` を作らない）。
-   */
+  /** 左ペインでの並び順。**引けなければ末尾へ**（`NaN` を作らない）。 */
   const orderOf = (id: AgentId) =>
     state.agents.find((a) => a.id === id)?.order ?? Number.MAX_SAFE_INTEGER;
 
+  const result: Edges = {};
   const seen = new Set<string>();
-  const result: Edge[] = [];
 
   for (const edge of state.edges) {
     const bidirectional = exists(edge.target, edge.source);
-    // 双方向は向きを無視した鍵で正規化し、2 周目を弾く。
     const id = bidirectional
-      ? `${[edge.source, edge.target].sort().join("<->")}`
+      ? [edge.source, edge.target].sort().join("<->")
       : `${edge.source}->${edge.target}`;
     if (seen.has(id)) continue;
     seen.add(id);
 
-    // 描画方向は左ペインの並びに合わせる（規則と根拠は `lib/kizunaEdges.ts`）。
     const [source, target] = drawDirection(
       edge.source,
       edge.target,
       bidirectional,
       orderOf,
     );
-
-    result.push({
-      id,
-      source,
-      target,
-      data: { bidirectional },
-      animated: running(edge.source) || (bidirectional && running(edge.target)),
-      markerEnd: "arrowclosed",
-      // 双方向のときだけ始端にも矢を付ける。
-      markerStart: bidirectional ? "arrowclosed" : undefined,
-    });
+    result[id] = { source, target, bidirectional };
   }
 
   return result;
@@ -170,23 +108,120 @@ const edges = computed<Edge[]>(() => {
 
 /** 双方向にまとまった辺の本数。見出しの内訳に出す。 */
 const bidirectionalCount = computed(
-  () => edges.value.filter((e) => e.data?.bidirectional).length,
+  () => Object.values(edges.value).filter((e) => e.bidirectional).length,
 );
 
-async function onNodeDragStop(event: NodeDragEvent): Promise<void> {
-  await orchestrator.setTopologyPosition(event.node.id, event.node.position);
+const running = (id: AgentId) =>
+  state.agents.some((a) => a.id === id && a.status === "running");
+
+/** 稼働中の個体から出ている辺（流れる破線にする）。 */
+function edgeIsLive(edge: { source: string; target: string; bidirectional?: boolean }) {
+  return running(edge.source) || (Boolean(edge.bidirectional) && running(edge.target));
 }
 
+/* ------------------------------------------------------------------ *
+ * 配置（人が置く。埋めるのは未配置だけ）
+ * ------------------------------------------------------------------ */
+
+const layouts = reactive<Layouts>({ nodes: {} });
+
 /**
- * 辺を引いたときの処理。追加の規則は lib/kizunaDrop の 1 実装
- * （リストからのカード drop と共有。Spec 21）。
+ * 保存済みの座標を写し、未配置だけを埋める。
+ *
+ * **`world.json` を真実として一方向に流す。** ドラッグの結果は
+ * `node:dragend` でコアへ返し、コアの投影がここへ戻ってくる。
  */
-async function onConnect(connection: Connection): Promise<void> {
-  if (!connection.target) return;
-  const next = tieAddition(state.agents, connection.source, connection.target);
-  if (!next) return;
-  await orchestrator.setConnections(connection.source, next);
+function syncLayouts(): void {
+  const ids = state.agents.map((a) => a.id);
+  const placed = state.topologyPositions;
+
+  for (const id of ids) {
+    const saved = placed[id];
+    if (saved) layouts.nodes[id] = { ...saved };
+  }
+  Object.assign(layouts.nodes, seedPositions(ids, placed));
+
+  // 消えた個体の座標は落とす（残すと辺の無い幽霊が描かれ続ける）。
+  for (const id of Object.keys(layouts.nodes)) {
+    if (!ids.includes(id as AgentId)) delete layouts.nodes[id];
+  }
 }
+
+watch(
+  () => [state.agents.map((a) => a.id).join(","), state.topologyPositions] as const,
+  syncLayouts,
+  { immediate: true, deep: true },
+);
+
+/* ------------------------------------------------------------------ *
+ * 見た目
+ * ------------------------------------------------------------------ */
+
+/**
+ * **形と太さだけをここで決め、色は CSS に置く。**
+ *
+ * `configs` に色を書くと SVG の属性として焼き付き、テーマの切り替えに
+ * 追従しない（`var()` は属性値では解決されない）。だから塗りは
+ * `<style>` の `.v-ng-*` 側で当てる — **色の置き場を 1 箇所に保つ**。
+ */
+const configs = defineConfigs({
+  view: {
+    scalingObjects: true,
+    minZoomLevel: 0.3,
+    maxZoomLevel: 2,
+    autoPanAndZoomOnLoad: "fit-content",
+  },
+  node: {
+    selectable: false,
+    draggable: true,
+    normal: { type: "circle", radius: NODE_RADIUS },
+    hover: { type: "circle", radius: NODE_RADIUS },
+    // 名前はスロットで描くので、組み込みのラベルは出さない。
+    label: { visible: false },
+    focusring: { visible: false },
+  },
+  edge: {
+    selectable: true,
+    normal: {
+      width: (edge) => (edge.bidirectional ? 3 : 1.6),
+      animate: (edge) => edgeIsLive(edge as never),
+    },
+    hover: { width: (edge) => (edge.bidirectional ? 4 : 2.4) },
+    marker: {
+      source: {
+        // 引数は [edge, stroke] の組（このライブラリの marker だけ形が違う）。
+        type: ([edge]) => (edge.bidirectional ? "arrow" : "none"),
+        width: 4,
+        height: 4,
+      },
+      target: { type: "arrow", width: 4, height: 4 },
+    },
+  },
+});
+
+function ringClass(id: AgentId): string {
+  if (id === state.selectedAgentId) return "is-selected";
+  const agent = state.agents.find((a) => a.id === id);
+  switch (agent?.status) {
+    case "running":
+      return "is-running";
+    case "failed":
+      return "is-failed";
+    case "starting":
+    case "stopping":
+      return "is-warn";
+    default:
+      return "is-idle";
+  }
+}
+
+function nameOf(id: AgentId): string {
+  return state.agents.find((a) => a.id === id)?.name ?? id;
+}
+
+/* ------------------------------------------------------------------ *
+ * 操作
+ * ------------------------------------------------------------------ */
 
 /** 宛先の表示。id と表示名の併記（Spec 06 の規律）。 */
 function agentLabel(id: string): string {
@@ -200,18 +235,20 @@ function agentLabel(id: string): string {
  * 双方向を 1 本で描いている以上、その線を切れば**両方向とも切れる**のが
  * 見た目と一致する。片方だけ残すなら、設定ダイアログの接続先チェックで行う。
  *
- * 線は棚卸しで**唯一、確認なしで消える破壊的操作**だった（Spec 13 S4 —
- * 誤クリックで失った実害報告あり。接続は元に戻せない）。確認は既定 ON で、
- * システム設定「線削除の確認」から切れる。
+ * 線は棚卸しで**唯一、確認なしで消える破壊的操作**だった（Spec 13 S4）。
+ * 確認は既定 ON で、システム設定「線削除の確認」から切れる。
  */
-async function removeEdge(edge: Edge): Promise<void> {
+async function removeEdge(edgeId: string): Promise<void> {
+  const edge = edges.value[edgeId];
+  if (!edge) return;
+
   if (settings.confirmEdgeDelete) {
-    const arrow = edge.data?.bidirectional ? "⇄" : "→";
+    const arrow = edge.bidirectional ? "⇄" : "→";
     const ok = await askConfirm({
       title: t("map.confirmDeleteTitle"),
       message:
         `${agentLabel(edge.source)} ${arrow} ${agentLabel(edge.target)}` +
-        (edge.data?.bidirectional ? `\n${t("map.bidirectionalNote")}` : ""),
+        (edge.bidirectional ? `\n${t("map.bidirectionalNote")}` : ""),
       confirmLabel: t("map.confirmDeleteLabel"),
       danger: true,
     });
@@ -219,7 +256,7 @@ async function removeEdge(edge: Edge): Promise<void> {
   }
 
   const forward = state.agents.find((a) => a.id === edge.source);
-  const backward = edge.data?.bidirectional
+  const backward = edge.bidirectional
     ? state.agents.find((a) => a.id === edge.target)
     : undefined;
 
@@ -237,191 +274,234 @@ async function removeEdge(edge: Edge): Promise<void> {
   }
 }
 
-/** ノードの縁の色を状態から決める。 */
-function borderClass(status: string): string {
-  switch (status) {
-    case "running":
-      return "border-run";
-    case "failed":
-      return "border-fail";
-    case "starting":
-    case "stopping":
-      return "border-warn";
-    default:
-      return "border-line";
-  }
+const handlers: EventHandlers = {
+  "node:click": ({ node }) => orchestrator.select(node as AgentId),
+  // まとめ表示のときは `edge` が無く `edges` が来るので、単体のときだけ切る。
+  "edge:click": ({ edge }) => {
+    if (edge) void removeEdge(edge);
+  },
+  // ドラッグの結果を `world.json` へ返す。**移動した個体だけ**を書く。
+  "node:dragend": (positions) => {
+    for (const [id, position] of Object.entries(positions)) {
+      void orchestrator.setTopologyPosition(id as AgentId, position);
+    }
+  },
+};
+
+/* ------------------------------------------------------------------ *
+ * ペインの大きさが変わった後に Fit を掛け直す（2026-08-08 利用者要望）
+ * ------------------------------------------------------------------ */
+
+let observer: ResizeObserver | null = null;
+let settle: ReturnType<typeof setTimeout> | null = null;
+
+function fit(): void {
+  graph.value?.fitToContents();
 }
+
+/**
+ * 落ち着いてから 1 回だけ掛ける。**仕切りのドラッグ中は毎フレーム発火する**ので、
+ * そのたびに掛けると視点が追いかけ続けて操作感が悪くなる（利用者の言葉も
+ * 「大きさが変わった**後**に」）。
+ */
+function scheduleFit(): void {
+  if (!settings.autoFitOnResize) return;
+  if (settle) clearTimeout(settle);
+  settle = setTimeout(() => {
+    settle = null;
+    fit();
+  }, 120);
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== "function" || !canvas.value) return;
+  observer = new ResizeObserver(scheduleFit);
+  observer.observe(canvas.value);
+});
+
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  if (settle) clearTimeout(settle);
+});
 </script>
 
 <template>
   <div class="flex h-full flex-col">
     <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
-      class="flex h-[38px] shrink-0 items-center gap-3 border-b border-line px-3 text-xs text-ink-dim"
+      class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <!--
-        操作の説明はタイトルのホバーへ置く。**常時表示しない** — 覚えたあとは
-        毎回同じ幅を占めるだけで、状態（ノード数・辺数）を読む邪魔になる。
-        ヘッダに常駐してよいのは「今どうなっているか」で、「どう操作するか」ではない。
-      -->
-      <h2
-        class="cursor-help font-semibold tracking-wide text-ink"
-        :title="$t('map.headingHelp')"
-      >
-        {{ $t("map.heading") }}
-      </h2>
+      <span class="font-medium text-ink">{{ $t("map.title") }}</span>
       <span>
-        {{ $t("map.summary", { nodes: state.agents.length, edges: edges.length }) }}
+        {{ $t("map.counts", { agents: state.agents.length, edges: Object.keys(edges).length }) }}
         <span v-if="bidirectionalCount" class="text-ink">
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
         </span>
       </span>
+
+      <span class="ml-auto flex items-center gap-1">
+        <button
+          type="button"
+          class="rounded border border-line px-2 py-0.5 hover:bg-surface-2"
+          :title="$t('map.fit')"
+          @click="fit"
+        >
+          {{ $t("map.fit") }}
+        </button>
+        <button
+          type="button"
+          class="rounded border px-2 py-0.5 hover:bg-surface-2"
+          :class="settings.autoFitOnResize ? 'border-accent text-accent' : 'border-line'"
+          :title="$t('map.autoFit')"
+          @click="settings.autoFitOnResize = !settings.autoFitOnResize"
+        >
+          {{ $t("map.autoFit") }}
+        </button>
+      </span>
     </header>
 
-    <div ref="canvas" class="min-h-0 flex-1">
-      <VueFlow
+    <div ref="canvas" class="kizuna min-h-0 flex-1">
+      <VNetworkGraph
+        ref="graph"
         :nodes="nodes"
         :edges="edges"
-        :default-viewport="{ x: 0, y: 0, zoom: 0.9 }"
-        :min-zoom="0.3"
-        :max-zoom="2"
-        fit-view-on-init
-        @node-drag-stop="onNodeDragStop"
-        @connect="onConnect"
-        @edge-click="({ edge }) => removeEdge(edge)"
-        @node-click="({ node }) => orchestrator.select(node.id)"
+        :layouts="layouts"
+        :configs="configs"
+        :event-handlers="handlers"
       >
-        <!-- ノードの見た目。状態と負荷が一目で読めることだけを目的にしている。 -->
-        <template #node-default="{ data }">
-          <div
-            class="min-w-[132px] rounded-md border-2 bg-surface-1 px-2.5 py-1.5 shadow-lg"
-            :class="borderClass(data.agent.status)"
-          >
-            <div class="flex items-center gap-2">
-              <!-- アバター。会話・一覧と同じ規則（画像 > 頭文字の円）。 -->
-              <img
-                v-if="state.icons[data.agent.id]"
-                :src="state.icons[data.agent.id]!"
-                class="size-8 shrink-0 rounded-full object-cover ring-1 ring-line"
-                :alt="data.agent.name"
-              />
-              <div
-                v-else
-                class="flex size-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-surface-0"
-                :style="{ backgroundColor: avatarHue(data.agent.name) }"
-              >
-                {{ avatarInitial(data.agent.name) }}
-              </div>
+        <defs>
+          <clipPath id="kizuna-avatar" clipPathUnits="objectBoundingBox">
+            <circle cx="0.5" cy="0.5" r="0.5" />
+          </clipPath>
+        </defs>
 
-              <div class="min-w-0">
-                <div class="truncate text-xs font-medium text-ink">
-                  {{ data.agent.name }}
-                </div>
-                <div class="mt-0.5 truncate text-[10px] text-ink-dim">
-                  {{ data.agent.model }}
-                </div>
-              </div>
-            </div>
-            <div class="mt-1 flex items-center gap-1.5 text-[10px] text-ink-dim">
-              <!--
-                役職バッジ（Spec 14）。名前行ではなくこの行へ置く — 名前とモデル名は
-                どちらも truncate で幅を奪い合っており、3 つ目を足すと全部読めなくなる。
-                この行は元からチップの並びなので、短い語（3〜5 字）が収まる。
-                **状態より前**に置くのは、役職が「誰か」の側で状態が「今どうか」の側だから。
-              -->
-              <span
-                v-if="roleOf(data.agent)"
-                class="rounded border px-1 py-px leading-none"
-                :class="roleOf(data.agent)!.color ? '' : 'border-line'"
-                :style="
-                  roleOf(data.agent)!.color
-                    ? { borderColor: roleOf(data.agent)!.color, color: roleOf(data.agent)!.color }
-                    : undefined
-                "
-                :title="$t('roles.badgeTitle', { name: roleOf(data.agent)!.name })"
-              >
-                {{ roleOf(data.agent)!.name }}
-              </span>
-              <span>{{ $t(STATUS_LABEL_KEYS[data.agent.status as keyof typeof STATUS_LABEL_KEYS]) }}</span>
-              <span class="tabular-nums">
-                {{ compactNumber(data.agent.totalTokens) }} tokens
-              </span>
-            </div>
-          </div>
-        </template>
-
-        <!-- 点の色は style.css が与える（SVG の属性に var() は書けないため）。 -->
-        <Background :gap="18" :size="1" />
         <!--
-          フィット（全ノードを画面に収める）だけを出す。ズームはホイール・
-          ピンチで足り、操作ボタンを増やすと地図の面積を奪う（ヘッダの
-          「常駐してよいのは状態だけ」と同じ判断）。
+          ノードの見た目。**運ぶのは「誰か」「選ばれているか」「動いているか」の
+          3 つだけ。** モデル名・役職・トークンは左のカードに全部載っているので、
+          ここに出すのは重複だった。
+
+          **`data-kizuna-node` を自分で付ける。** Spec 21 の drop はこれを
+          `closest` で辿る — ライブラリのクラス名を選択子に書くと、描画を
+          差し替えたときに黙って壊れる（今回まさにそれを踏んだ）。
         -->
-        <Controls :show-zoom="false" :show-interactive="false">
-          <!--
-            自動 Fit のトグルは **Fit の下**（既定スロットは組み込みボタンの
-            後に描かれる。`#top` は Fit の上になる）。ボタンを増やす判断が
-            上の Controls のコメントと逆向きに見えるが、これは**操作ではなく
-            状態の切り替え**で、押した後は押さないもの。
-          -->
-          <template #default>
-            <button
-              class="vue-flow__controls-button"
-              :class="{ 'is-on': settings.autoFitOnResize }"
-              :title="$t('map.autoFit')"
-              :aria-label="$t('map.autoFit')"
-              :aria-pressed="settings.autoFitOnResize"
-              @click="settings.autoFitOnResize = !settings.autoFitOnResize"
+        <template #override-node="{ nodeId, scale }">
+          <g :data-kizuna-node="nodeId" :class="['kizuna-node', ringClass(nodeId as AgentId)]">
+            <circle class="kizuna-ring" :r="NODE_RADIUS * scale" />
+
+            <image
+              v-if="state.icons[nodeId as AgentId]"
+              :href="state.icons[nodeId as AgentId]!"
+              :x="-NODE_RADIUS * scale"
+              :y="-NODE_RADIUS * scale"
+              :width="NODE_RADIUS * 2 * scale"
+              :height="NODE_RADIUS * 2 * scale"
+              clip-path="url(#kizuna-avatar)"
+              preserveAspectRatio="xMidYMid slice"
+            />
+            <template v-else>
+              <circle
+                :r="(NODE_RADIUS - 2) * scale"
+                :fill="avatarHue(nameOf(nodeId as AgentId))"
+              />
+              <text
+                class="kizuna-initial"
+                text-anchor="middle"
+                dominant-baseline="central"
+                :font-size="18 * scale"
+              >
+                {{ avatarInitial(nameOf(nodeId as AgentId)) }}
+              </text>
+            </template>
+
+            <!-- 稼働中の印。**色ではなく点**（状態色と選択色の競合を避ける）。 -->
+            <circle
+              v-if="running(nodeId as AgentId)"
+              class="kizuna-live"
+              :cx="NODE_RADIUS * 0.72 * scale"
+              :cy="-NODE_RADIUS * 0.72 * scale"
+              :r="5 * scale"
+            />
+
+            <text
+              class="kizuna-name"
+              text-anchor="middle"
+              :y="(NODE_RADIUS + 14) * scale"
+              :font-size="11 * scale"
             >
-              <!--
-                **`fill` は `currentColor`。** 受け取った原本は `#212121` 固定で、
-                ライトテーマでもダークテーマでも同じ黒になり、`is-on` の accent も
-                効かない（絵文字を恒久要素に使わない理由と同じ — 配色に追従しない
-                図形を置かない）。
-              -->
-              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path
-                  d="M15.0027 4.49838L15.7121 5.23289C15.9998 5.53084 16.4746 5.53911 16.7726 5.25137C17.0705 4.96362 17.0788 4.48882 16.7911 4.19087L14.9701 2.30532C14.577 1.89823 13.9246 1.89823 13.5315 2.30532L11.7105 4.19087C11.4228 4.48882 11.431 4.96362 11.729 5.25137C12.0269 5.53911 12.5017 5.53084 12.7895 5.23289L13.5027 4.49433V7.25C13.5027 7.66421 13.8385 8 14.2527 8C14.667 8 15.0027 7.66421 15.0027 7.25V4.49838ZM3 5C3 3.89543 3.89543 3 5 3H9.25C9.66421 3 10 3.33579 10 3.75C10 4.16421 9.66421 4.5 9.25 4.5H5C4.72386 4.5 4.5 4.72386 4.5 5V15C4.5 15.2761 4.72386 15.5 5 15.5H9.25C9.66421 15.5 10 15.8358 10 16.25C10 16.6642 9.66421 17 9.25 17H5C3.89543 17 3 16.1046 3 15V5ZM15.7121 14.7671L15.0027 15.5016V12.75C15.0027 12.3358 14.667 12 14.2527 12C13.8385 12 13.5027 12.3358 13.5027 12.75V15.5057L12.7895 14.7671C12.5017 14.4692 12.0269 14.4609 11.729 14.7486C11.431 15.0364 11.4228 15.5112 11.7105 15.8091L13.5315 17.6947C13.9246 18.1018 14.577 18.1018 14.9701 17.6947L16.7911 15.8091C17.0788 15.5112 17.0705 15.0364 16.7726 14.7486C16.4746 14.4609 15.9998 14.4692 15.7121 14.7671Z"
-                />
-              </svg>
-            </button>
-          </template>
-        </Controls>
-      </VueFlow>
+              {{ nameOf(nodeId as AgentId) }}
+            </text>
+          </g>
+        </template>
+      </VNetworkGraph>
     </div>
   </div>
 </template>
 
 <style scoped>
-:deep(.vue-flow__node.is-selected > div) {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-:deep(.vue-flow__node) {
+/*
+ * **色はここだけ。** `configs` へ書くと SVG の属性に焼き付いてテーマに
+ * 追従しない（`var()` は属性値では解決されない）ので、塗りは CSS で当てる。
+ * これが `v-network-graph`（SVG）を選んだ理由そのもの — canvas だと
+ * この節が描画コードへ散る。
+ */
+.kizuna :deep(.kizuna-node) {
   cursor: pointer;
 }
 
-/* Controls の既定テーマは白地なので、アプリのダーク配色へ合わせる。 */
-:deep(.vue-flow__controls) {
-  box-shadow: none;
+.kizuna :deep(.kizuna-ring) {
+  fill: var(--color-surface-1);
+  stroke-width: 2;
+  stroke: var(--color-line);
 }
-:deep(.vue-flow__controls-button) {
-  width: 24px;
-  height: 24px;
-  background-color: var(--color-surface-1);
-  border: 1px solid var(--color-line);
-  border-radius: 4px;
+.kizuna :deep(.is-running .kizuna-ring) {
+  stroke: var(--color-run);
+}
+.kizuna :deep(.is-failed .kizuna-ring) {
+  stroke: var(--color-fail);
+}
+.kizuna :deep(.is-warn .kizuna-ring) {
+  stroke: var(--color-warn);
+}
+/* 選択は**太さ + accent**。状態色が 4 種あるので、色だけで 5 つ目を足さない。 */
+.kizuna :deep(.is-selected .kizuna-ring) {
+  stroke: var(--color-accent);
+  stroke-width: 4;
 }
 
-/* 自動 Fit が入っているときだけ、枠と字を accent で示す（押した状態の印）。 */
-.vue-flow__controls-button.is-on {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+.kizuna :deep(.kizuna-initial) {
+  fill: var(--color-surface-0);
+  font-weight: 600;
 }
-:deep(.vue-flow__controls-button:hover) {
-  background-color: var(--color-surface-2);
-}
-:deep(.vue-flow__controls-button svg) {
+.kizuna :deep(.kizuna-name) {
   fill: var(--color-ink);
+  font-weight: 500;
+}
+.kizuna :deep(.kizuna-live) {
+  fill: var(--color-run);
+  stroke: var(--color-surface-0);
+  stroke-width: 2;
+}
+
+.kizuna :deep(.v-ng-edge) {
+  stroke: var(--color-accent);
+}
+
+/* 張られなかった drop への応答（Spec 21 D3）。**SVG に box-shadow は効かない**
+   ので、Vue Flow 時代の影ではなく輪の拡大で返す。 */
+.kizuna :deep(.kizuna-node.kizuna-pulse .kizuna-ring) {
+  animation: kizuna-pulse 0.4s ease-out;
+}
+@keyframes kizuna-pulse {
+  0% {
+    stroke: var(--color-accent);
+    stroke-width: 2;
+  }
+  50% {
+    stroke: var(--color-accent);
+    stroke-width: 8;
+  }
+  100% {
+    stroke-width: 2;
+  }
 }
 </style>
