@@ -127,6 +127,14 @@ function edgeIsLive(edge: { source: string; target: string; bidirectional?: bool
  * 配置（人が置く。埋めるのは未配置だけ）
  * ------------------------------------------------------------------ */
 
+/**
+ * 自前のレイヤーの差し込み位置。
+ *
+ * **`base` は `grid` より上**なので視点の変換が掛かる（パンとズームに追従する）。
+ * `background` へ置くと画面に固定され、地図だけが動いて点が取り残される。
+ */
+const layers = { kizunaDots: "base" } as const;
+
 const layouts = reactive<Layouts>({ nodes: {} });
 
 /**
@@ -190,6 +198,10 @@ const configs = defineConfigs({
     selectable: true,
     normal: {
       width: (edge) => (edge.bidirectional ? 3 : 1.6),
+      // **稼働中の個体から出ている辺は動く破線**（旧実装の踏襲）。
+      // `animate` だけでは足りない — 破線でない線を流しても見た目が変わらない
+      // ので、`dasharray` と対で与える。実機で「動かない」と出たのがこれ。
+      dasharray: (edge) => (edgeIsLive(edge as never) ? 6 : undefined),
       animate: (edge) => edgeIsLive(edge as never),
     },
     hover: { width: (edge) => (edge.bidirectional ? 4 : 2.4) },
@@ -476,6 +488,7 @@ onBeforeUnmount(() => {
         :nodes="nodes"
         :edges="edges"
         :layouts="layouts"
+        :layers="layers"
         :configs="configs"
         :event-handlers="handlers"
       >
@@ -495,11 +508,13 @@ onBeforeUnmount(() => {
         </defs>
 
         <!--
-          背景レイヤー。**視点の中に入る**ので、旧 `<Background>` と同じく
-          パンとズームに追従する（CSS の背景画像だと地図だけが動いて点が残る）。
+          点描を敷くレイヤー。**`base`（`grid` より上）に差すのが要点** —
+          このライブラリは **`grid` より下（`background` / `root`）を画面に固定**し、
+          視点の変換を掛けない。最初 `#background` へ置いたらパンで点が動かず、
+          実機で分かった（旧 `<Background>` は視点に追従していた）。
           矩形を大きく取っているのは、遠くまでパンしても点が切れないため。
         -->
-        <template #background>
+        <template #kizunaDots>
           <rect
             x="-20000"
             y="-20000"
