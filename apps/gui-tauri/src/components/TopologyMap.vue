@@ -225,9 +225,19 @@ function nameOf(id: AgentId): string {
   return state.agents.find((a) => a.id === id)?.name ?? id;
 }
 
-/** 右上のパネルに出す個体。**選んでいなければ `null` でパネルごと出さない。** */
-const selected = computed(
-  () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
+/**
+ * 右上のパネルに出す個体。**マウスを載せている間だけ**（2026-08-13 利用者裁定）。
+ *
+ * 選択で出しっぱなしにしていたが、**常に何かが浮いている**状態になり、
+ * 重ねる意味（要るときだけ見える）が薄れていた。ホバーなら「見たいときだけ」が
+ * 操作そのもので表せる。
+ *
+ * **`state.agents` から引き直す**ので、載せたまま個体が消えてもパネルは
+ * 自動で閉じる（id を持ったまま古い値を描き続けない）。
+ */
+const hovered = ref<AgentId | null>(null);
+const detail = computed(
+  () => state.agents.find((a) => a.id === hovered.value) ?? null,
 );
 
 /**
@@ -295,6 +305,12 @@ async function removeEdge(edgeId: string): Promise<void> {
 
 const handlers: EventHandlers = {
   "node:click": ({ node }) => orchestrator.select(node as AgentId),
+  "node:pointerover": ({ node }) => {
+    hovered.value = node as AgentId;
+  },
+  "node:pointerout": () => {
+    hovered.value = null;
+  },
   // まとめ表示のときは `edge` が無く `edges` が来るので、単体のときだけ切る。
   "edge:click": ({ edge }) => {
     if (edge) void removeEdge(edge);
@@ -375,43 +391,43 @@ onBeforeUnmount(() => {
         右上はノードが来うる場所で、情報のために操作を殺すのは交換として合わない。
       -->
       <aside
-        v-if="selected"
+        v-if="detail"
         class="pointer-events-none absolute right-2 top-2 z-10 w-60 rounded-md bg-surface-1/25 px-3 py-2 text-sm backdrop-blur-sm"
       >
         <div class="flex items-center gap-2">
-          <span class="truncate text-base font-semibold text-ink">{{ selected.name }}</span>
+          <span class="truncate text-base font-semibold text-ink">{{ detail.name }}</span>
           <!-- 役職バッジ（Spec 14）。引けなければ**バッジごと描かない**。 -->
           <span
-            v-if="roleOf(selected)"
+            v-if="roleOf(detail)"
             class="shrink-0 rounded border px-1 py-px leading-none"
-            :class="roleOf(selected)!.color ? '' : 'border-line'"
+            :class="roleOf(detail)!.color ? '' : 'border-line'"
             :style="
-              roleOf(selected)!.color
-                ? { borderColor: roleOf(selected)!.color, color: roleOf(selected)!.color }
+              roleOf(detail)!.color
+                ? { borderColor: roleOf(detail)!.color, color: roleOf(detail)!.color }
                 : undefined
             "
           >
-            {{ roleOf(selected)!.name }}
+            {{ roleOf(detail)!.name }}
           </span>
         </div>
 
-        <div class="mt-1 truncate text-ink-dim">{{ selected.id }}</div>
+        <div class="mt-1 truncate text-ink-dim">{{ detail.id }}</div>
 
         <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-ink-dim">
           <dt>{{ $t("agentCard.model") }}</dt>
-          <dd class="truncate text-ink">{{ selected.model }}</dd>
+          <dd class="truncate text-ink">{{ detail.model }}</dd>
 
           <dt>{{ $t("map.status") }}</dt>
           <dd class="text-ink">
-            {{ $t(STATUS_LABEL_KEYS[selected.status as keyof typeof STATUS_LABEL_KEYS]) }}
+            {{ $t(STATUS_LABEL_KEYS[detail.status as keyof typeof STATUS_LABEL_KEYS]) }}
           </dd>
 
           <dt>{{ $t("agentCard.tokens") }}</dt>
-          <dd class="tabular-nums text-ink">{{ compactNumber(selected.totalTokens) }}</dd>
+          <dd class="tabular-nums text-ink">{{ compactNumber(detail.totalTokens) }}</dd>
 
           <dt>{{ $t("agentCard.connections") }}</dt>
           <dd class="tabular-nums text-ink">
-            {{ $t("agentCard.connectionsCount", { count: selected.connectedAgents.length }) }}
+            {{ $t("agentCard.connectionsCount", { count: detail.connectedAgents.length }) }}
           </dd>
         </dl>
       </aside>
