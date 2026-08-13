@@ -323,6 +323,22 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
 pub fn reject_empty_reasoning(resp: ChatResponse, limit: u32) -> Result<ChatResponse, LlmError> {
     let text_empty = resp.text.as_deref().is_none_or(|t| t.trim().is_empty());
     if text_empty && resp.tool_calls.is_empty() && resp.finish == Finish::Length {
+        // **払ったトークンをここで 1 行残す。** この `Err` は `turn.rs` の
+        // `backend.chat(...).await?` で即座に伝播するので、**その先の加算
+        // （`tokens +=` / `pool.debit`）に 1 つも到達しない** — 課金は起きているのに
+        // カードの累計にも予算の消費にも `turn:` 行にも出ない。
+        //
+        // **`usage` を持ったまま `Err` へ変わる地点はここだけ**なので、計器も
+        // ここにしか置けない。予算へ計上するかは別の判断（`failures.md` #103）。
+        crate::note!(
+            "truncated: limit={} prompt={} cached={} completion={} reasoning={} \
+             （このターンは失敗するので、これらはどの計器にも計上されません）",
+            limit,
+            resp.usage.prompt,
+            resp.usage.cache_read,
+            resp.usage.completion,
+            resp.usage.reasoning,
+        );
         return Err(LlmError::OutputTruncated { limit });
     }
     Ok(resp)

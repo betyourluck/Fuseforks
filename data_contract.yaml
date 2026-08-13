@@ -1391,6 +1391,12 @@ enums:
           (Spec 34 P1 の実測)
         - xai_responses: **そもそも effort を読まない** (encode に req.effort が
           1 度も現れない)。「丸めない」ではなく「送らない」
+        - anthropic: **同じく読まない。** 送るのは thinking: {adaptive, summarized}
+          だけで、canonical の doc にある output_config.effort は未実装。
+          **画面で段階を選んでもワイヤは 1 バイトも変わらない** (2026-08-13 実測)。
+          adaptive は**枠に合わせて思考を縮める**ので、max_output_tokens を
+          500 にしても本文が 460 字返り、64 まで落として初めて空になった。
+          **「段階は要求であって保証ではない」の最も強い形** — 要求が届いてすらいない
       すなわち画面の段階は要求であって保証ではない (failures.md #77)。
   CredentialSource:
     values:
