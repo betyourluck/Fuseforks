@@ -128,12 +128,31 @@ function edgeIsLive(edge: { source: string; target: string; bidirectional?: bool
  * ------------------------------------------------------------------ */
 
 /**
- * 自前のレイヤーの差し込み位置。
+ * 点描の背景を視点へ追従させるための値。
  *
- * **`base` は `grid` より上**なので視点の変換が掛かる（パンとズームに追従する）。
- * `background` へ置くと画面に固定され、地図だけが動いて点が取り残される。
+ * **SVG の中へ矩形を敷く形は採れない。** `grid` より上のレイヤーは視点の変換が
+ * 掛かるので追従はするが、**`fitToContents` が内容の外接矩形にその矩形を含めて
+ * しまい、変な位置に収まる**（実機で踏んだ）。かといって `background` レイヤーは
+ * 画面固定でパンに追従しない。**どちらの層でも成立しない。**
+ *
+ * so 点は容器の CSS 背景として描き、パンとズームを自分で反映する。
+ * こうすると内容の外接矩形に一切影響しない。
  */
-const layers = { kizunaDots: "base" } as const;
+const zoom = ref(1);
+const pan = ref({ x: 0, y: 0 });
+
+/** 点の間隔と大きさは旧 `<Background>` と同じ（18 / 1）。 */
+const DOT_GAP = 18;
+const DOT_RADIUS = 1;
+
+const dotStyle = computed(() => {
+  const gap = DOT_GAP * zoom.value;
+  return {
+    "--dot-r": `${DOT_RADIUS * zoom.value}px`,
+    backgroundSize: `${gap}px ${gap}px`,
+    backgroundPosition: `${pan.value.x}px ${pan.value.y}px`,
+  };
+});
 
 const layouts = reactive<Layouts>({ nodes: {} });
 
@@ -323,6 +342,13 @@ const handlers: EventHandlers = {
   "node:pointerout": () => {
     hovered.value = null;
   },
+  // 点描は容器の CSS 背景なので、視点の変化をこちらで写す。
+  "view:zoom": (level) => {
+    zoom.value = level;
+  },
+  "view:pan": (position) => {
+    pan.value = { x: position.x, y: position.y };
+  },
   // まとめ表示のときは `edge` が無く `edges` が来るので、単体のときだけ切る。
   "edge:click": ({ edge }) => {
     if (edge) void removeEdge(edge);
@@ -388,7 +414,7 @@ onBeforeUnmount(() => {
 
     </header>
 
-    <div ref="canvas" class="kizuna relative min-h-0 flex-1">
+    <div ref="canvas" class="kizuna relative min-h-0 flex-1" :style="dotStyle">
       <!--
         選択中の個体の詳細。**ノードから外した 3 つ（役職・モデル・トークン）の
         行き先**で、地図の上に重ねる（2026-08-13 利用者要望）。
@@ -488,7 +514,6 @@ onBeforeUnmount(() => {
         :nodes="nodes"
         :edges="edges"
         :layouts="layouts"
-        :layers="layers"
         :configs="configs"
         :event-handlers="handlers"
       >
@@ -497,32 +522,8 @@ onBeforeUnmount(() => {
             <circle cx="0.5" cy="0.5" r="0.5" />
           </clipPath>
 
-          <!--
-            点描の背景。**間隔 18 / 半径 1 は旧 `<Background>` と同じ値**
-            （見え方を変えないため）。色は CSS が与える — SVG の
-            presentation attribute に `var()` は書けない。
-          -->
-          <pattern id="kizuna-dots" width="18" height="18" patternUnits="userSpaceOnUse">
-            <circle class="kizuna-dot" cx="1" cy="1" r="1" />
-          </pattern>
         </defs>
 
-        <!--
-          点描を敷くレイヤー。**`base`（`grid` より上）に差すのが要点** —
-          このライブラリは **`grid` より下（`background` / `root`）を画面に固定**し、
-          視点の変換を掛けない。最初 `#background` へ置いたらパンで点が動かず、
-          実機で分かった（旧 `<Background>` は視点に追従していた）。
-          矩形を大きく取っているのは、遠くまでパンしても点が切れないため。
-        -->
-        <template #kizunaDots>
-          <rect
-            x="-20000"
-            y="-20000"
-            width="40000"
-            height="40000"
-            fill="url(#kizuna-dots)"
-          />
-        </template>
 
         <!--
           ノードの見た目。**運ぶのは「誰か」「選ばれているか」「動いているか」の
@@ -679,8 +680,15 @@ onBeforeUnmount(() => {
   stroke-width: 2;
 }
 
-.kizuna :deep(.kizuna-dot) {
-  fill: var(--color-line);
+/*
+ * 点描の背景。旧 `<Background :gap="18" :size="1" />` の見え方をそのまま写す。
+ * 位置と大きさは `dotStyle` が視点から与える。
+ */
+.kizuna {
+  background-image: radial-gradient(
+    var(--color-line) var(--dot-r, 1px),
+    transparent var(--dot-r, 1px)
+  );
 }
 
 .kizuna :deep(.v-ng-edge) {
