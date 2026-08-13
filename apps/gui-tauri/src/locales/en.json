@@ -323,8 +323,7 @@
     "autoFit": "Fit automatically after the pane is resized",
     "fit": "Fit",
     "fitTitle": "Fit the whole graph into view",
-    "autoFitShort": "Auto fit",
-    "status": "Status"
+    "autoFitShort": "Auto fit"
   },
   "chat": {
     "heading": "Chat",

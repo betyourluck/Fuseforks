@@ -437,10 +437,16 @@ onBeforeUnmount(() => {
       -->
       <aside
         v-if="detail"
-        class="kizuna-hud pointer-events-none absolute right-2 top-2 z-10 w-56"
+        class="kizuna-hud pointer-events-none absolute right-2 top-2 z-10 w-60"
       >
         <div class="kizuna-hud-edge">
           <div class="kizuna-hud-body">
+            <!--
+              **見出しは訳さない**（利用者裁定 2026-08-13 —「英語でも日本語でも同じ」）。
+              版番号を訳さないのと同じ線引きで、**これは語ではなく計器の銘板**。
+            -->
+            <div class="kizuna-hud-title">SERVANT_PROFILE</div>
+
             <div class="kizuna-hud-head">
               <span class="kizuna-hud-tick" />
               <span class="kizuna-hud-name">{{ detail.name }}</span>
@@ -460,22 +466,29 @@ onBeforeUnmount(() => {
 
             <div class="kizuna-hud-id">{{ detail.id }}</div>
 
+            <!--
+              **項目名は英字の略号で固定**（同裁定）。訳さないのは、これが
+              名前ではなく**欄の番地**だから — 計器の目盛りに language は無い。
+              **値は訳す**（状態は「停止中」で読ませる。そこは語）。
+            -->
+            <div class="kizuna-hud-section">[AGENT_STATUS]</div>
             <dl class="kizuna-hud-rows">
-              <dt>{{ $t("agentCard.model") }}</dt>
+              <dt>MDL</dt>
               <dd>{{ detail.model }}</dd>
 
-              <dt>{{ $t("map.status") }}</dt>
+              <dt>STS</dt>
               <dd>
-                {{ $t(STATUS_LABEL_KEYS[detail.status as keyof typeof STATUS_LABEL_KEYS]) }}
+                [{{ $t(STATUS_LABEL_KEYS[detail.status as keyof typeof STATUS_LABEL_KEYS]) }}]
               </dd>
 
-              <dt>{{ $t("agentCard.tokens") }}</dt>
+              <dt>TKN</dt>
               <dd class="tabular-nums">{{ compactNumber(detail.totalTokens) }}</dd>
 
-              <dt>{{ $t("agentCard.connections") }}</dt>
-              <dd class="tabular-nums">
-                {{ $t("agentCard.connectionsCount", { count: detail.connectedAgents.length }) }}
-              </dd>
+              <dt>CON</dt>
+              <dd class="tabular-nums">{{ detail.connectedAgents.length }}</dd>
+
+              <dt>RAG</dt>
+              <dd class="tabular-nums">{{ detail.ragSources.length }}</dd>
             </dl>
           </div>
         </div>
@@ -692,14 +705,16 @@ onBeforeUnmount(() => {
 }
 
 /*
- * 情報パネル（HUD）。**ROG 系の計器を、色ではなく形で作る。**
+ * 情報パネル（HUD）。**計器の読み出し面として作る。**
  *
- * **生の色を 1 つも使わない。** ROG の赤を入れると (a) 配色が `style.css` の
- * 外へ出て (b) ライトテーマで浮く。記号として効いているのは色ではなく
+ * **生の色を 1 つも使わない。** ROG 系の記号として効いているのは色ではなく
  * **角の切り欠き・等幅・薄い走査線・片側の発光**なので、既存トークンだけで組める。
+ * 生の緑や赤を入れると (a) 配色が `style.css` の外へ出て (b) ライトテーマで浮く。
  *
  * 角の斜め切りは `clip-path`。**枠線は `border` では描けない**（clip が切る）ので、
  * 外側を accent で塗って 1px はみ出させ、内側を地の色で同じ形に切る。
+ *
+ * **縦は内容で決まる**（利用者裁定 — 可変でよい）。行を足せば伸びる。
  */
 .kizuna-hud-edge {
   padding: 1px;
@@ -709,17 +724,17 @@ onBeforeUnmount(() => {
     color-mix(in oklab, var(--color-accent) 25%, transparent) 45%,
     color-mix(in oklab, var(--color-accent) 10%, transparent) 100%
   );
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
   filter: drop-shadow(0 0 6px color-mix(in oklab, var(--color-accent) 30%, transparent));
 }
 
 .kizuna-hud-body {
   position: relative;
   overflow: hidden;
-  padding: 7px 9px 8px;
-  background: color-mix(in oklab, var(--color-surface-0) 78%, transparent);
+  padding: 8px 10px 10px;
+  background: color-mix(in oklab, var(--color-surface-0) 82%, transparent);
   backdrop-filter: blur(6px);
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
 }
 
 /* 走査線。**主張しない濃さに留める** — 読ませたいのは値であって装飾ではない。 */
@@ -735,26 +750,46 @@ onBeforeUnmount(() => {
   );
 }
 
+/* 銘板。**訳さない**ので、字幅の揃う等幅で置く。 */
+.kizuna-hud-title,
+.kizuna-hud-section,
+.kizuna-hud-id,
+.kizuna-hud-rows {
+  position: relative;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+.kizuna-hud-title {
+  padding-bottom: 5px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-line) 70%, transparent);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--color-ink-dim);
+}
+
 .kizuna-hud-head {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
+  margin-top: 7px;
 }
 
 /* 名前の頭の小さな角。計器の「いま読んでいる行」の印。 */
 .kizuna-hud-tick {
   width: 3px;
-  height: 11px;
+  height: 12px;
   flex: none;
   background: var(--color-accent);
 }
 
+/* **名前は小さいまま**（利用者裁定）。大きくすると読み出し面ではなく看板になる。 */
 .kizuna-hud-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-ink);
@@ -770,38 +805,44 @@ onBeforeUnmount(() => {
   color: var(--color-ink-dim);
 }
 
-/* id は等幅。**識別子は語ではないので、字幅を揃えて読ませる**（版番号と同じ規律）。 */
+/* id は accent。**識別子は語ではない**ので等幅で、色で「機械の値」だと示す。 */
 .kizuna-hud-id {
-  margin-top: 2px;
-  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  font-size: 10px;
+  margin-top: 3px;
+  font-size: 11px;
   letter-spacing: 0.06em;
-  color: color-mix(in oklab, var(--color-ink-dim) 80%, transparent);
+  color: var(--color-accent);
 }
 
-.kizuna-hud-rows {
-  position: relative;
-  margin-top: 7px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 3px 8px;
-  border-top: 1px solid color-mix(in oklab, var(--color-line) 70%, transparent);
-  padding-top: 6px;
-}
-
-.kizuna-hud-rows dt {
+.kizuna-hud-section {
+  margin-top: 9px;
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--color-ink-dim);
+}
+
+/*
+ * 読み出しの行。**左揃えの 2 列**（計器は桁を右へ寄せない — 番地と値が
+ * 横に並んでいるほうが 1 行ずつ読める）。
+ */
+.kizuna-hud-rows {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: 2.6em 1fr;
+  gap: 2px 6px;
+  font-size: 11px;
+}
+
+.kizuna-hud-rows dt {
+  color: color-mix(in oklab, var(--color-ink-dim) 85%, transparent);
+}
+.kizuna-hud-rows dt::after {
+  content: ":";
 }
 
 .kizuna-hud-rows dd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: right;
-  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  font-size: 11px;
   color: var(--color-ink);
 }
 

@@ -323,8 +323,7 @@
     "autoFit": "ペインの大きさが変わったら自動でフィット",
     "fit": "フィット",
     "fitTitle": "全体が入るように表示を合わせる",
-    "autoFitShort": "自動フィット",
-    "status": "状態"
+    "autoFitShort": "自動フィット"
   },
   "chat": {
     "heading": "会話",
