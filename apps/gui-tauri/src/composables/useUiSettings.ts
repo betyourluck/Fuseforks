@@ -63,8 +63,9 @@ export interface UiSettings {
    * 既定を ON にすると既存の村の見え方が黙って変わるので、オプトインにする
    * （`showPresenceNotices` と同じ判断）。
    *
-   * **Vue Flow に「追従し続ける」プロパティは無い**（1.48.2 が持つのは
-   * 初期化時 1 回の `fitViewOnInit` と命令的な `fitView()` だけ）。ここが
+   * **「追従し続ける」プロパティは描画ライブラリに無い**（Vue Flow 1.48.2 が持つのは
+   * 初期化時 1 回の `fitViewOnInit` と命令的な `fitView()` だけ、
+   * `v-network-graph` も `fitToContents()` と `autoPanAndZoomOnLoad` だけ）。ここが
    * 見ているのは**コンテナの箱の変化だけ**で、ノードの移動や辺の増減では
    * 発火しない — ドラッグ中に視点が動くと Spec 21 の drop の座標とずれる。
    */

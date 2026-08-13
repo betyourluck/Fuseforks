@@ -124,7 +124,7 @@ cd apps/gui-tauri && bun run test
 
 - **Tauri v2** + **Vue 3** + **TypeScript** + **Vite**
 - **Tailwind CSS v4** — 配色は 1 箇所に集約。ライト / ダークの両対応
-- **Vue Flow** — サーヴァントの絆（中央上段の地図）
+- **v-network-graph** — サーヴァントの絆（中央上段の地図。SVG なのでノードは Vue のスロット）
 - **CodeMirror 6** — 条例・役職・設定の編集面
 - **vue-i18n** — 日本語 / 英語
 - テストは **vitest**、パッケージマネージャは **Bun**

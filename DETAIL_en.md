@@ -178,13 +178,17 @@ stays true even when the artwork changes.
 
 **The upper-center pane, "Kizuna" (絆 — bonds between servants), shows who can speak to whom** (renamed 2026-08-05; formerly "village map"). The name comes from the *Kizuna* system in KOEI TECMO's *Romance of the Three Kingdoms XIII*: as there, **the ties themselves are the mechanism, not decoration**. Without a tie an utterance does not arrive; draw one and it does. The pane keeps the name `Kizuna` in English too — *ties* and *connections* are used as common nouns in prose, but **the name on screen is Kizuna**.
 
-**There are three ways to draw a tie** (all human operations — humans draw the lines):
+**There are two ways to draw a tie** (both human operations — humans draw the lines):
 
 | Entry point | Operation | Applied |
 |---|---|---|
-| Kizuna | Drag between node handles | Immediately |
 | Servant list | **Drag a card onto a node in Kizuna** (2026-08-06) | Immediately |
 | Servant settings | Connection checkboxes | On save |
+
+~~| Kizuna | Drag between node handles |~~ — **this row was wrong** (removed
+2026-08-13). Nodes were drawn through an overridden node slot that contained no
+handles at all, so **dragging between handles on the map never existed**. The
+`@connect` handler was there but unreachable.
 
 Ties are **directed** (arrow at the end); a bidirectional pair is drawn as a single line with arrows on both ends. A card drop starts from the card's side — the dropped-on servant becomes someone the card's servant can delegate to. Dropping onto a servant that already has the reverse tie makes it bidirectional. Dropping onto an already-connected servant or onto yourself makes the node pulse briefly — "it arrived but nothing was drawn" (success is signaled by the line itself appearing; no toast). While dragging, the cursor turns to `copy` over the map.
 

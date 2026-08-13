@@ -122,7 +122,7 @@ trigger it.
 
 - **Tauri v2** + **Vue 3** + **TypeScript** + **Vite**
 - **Tailwind CSS v4** — colors live in one place; light and dark both supported
-- **Vue Flow** — Kizuna, the map in the upper center pane
+- **v-network-graph** — Kizuna, the map in the upper center pane (SVG, so nodes are Vue slots)
 - **CodeMirror 6** — editing surface for the ordinance, roles, and settings
 - **vue-i18n** — Japanese / English
 - Tests run on **vitest**; the package manager is **Bun**
