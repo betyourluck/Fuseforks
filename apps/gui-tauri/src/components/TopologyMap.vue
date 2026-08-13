@@ -36,13 +36,15 @@ import {
 } from "v-network-graph";
 import "v-network-graph/lib/style.css";
 
+import { compactNumber } from "../lib/format";
 import { drawDirection } from "../lib/kizunaEdges";
+import { roleBadge } from "../lib/roleLabel";
 import { seedPositions } from "../lib/kizunaSeed";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
-import type { AgentId } from "../types";
+import { STATUS_LABEL_KEYS, type AgentId } from "../types";
 
 const { t } = useI18n();
 
@@ -219,6 +221,19 @@ function nameOf(id: AgentId): string {
   return state.agents.find((a) => a.id === id)?.name ?? id;
 }
 
+/** 右上のパネルに出す個体。**選んでいなければ `null` でパネルごと出さない。** */
+const selected = computed(
+  () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
+);
+
+/**
+ * パネルに出す役職名。引けなければ `null` で**バッジごと描かない**
+ * （`role_contract` 凍結 5 — 表示の解決は `roleLabel` の 1 実装を通す）。
+ */
+function roleOf(agent: { roleId: string | null }) {
+  return roleBadge(agent.roleId, state.roles);
+}
+
 /* ------------------------------------------------------------------ *
  * 操作
  * ------------------------------------------------------------------ */
@@ -331,9 +346,9 @@ onBeforeUnmount(() => {
     <header
       class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
     >
-      <span class="font-medium text-ink">{{ $t("map.title") }}</span>
+      <span class="font-medium text-ink">{{ $t("map.heading") }}</span>
       <span>
-        {{ $t("map.counts", { agents: state.agents.length, edges: Object.keys(edges).length }) }}
+        {{ $t("map.summary", { nodes: state.agents.length, edges: Object.keys(edges).length }) }}
         <span v-if="bidirectionalCount" class="text-ink">
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
         </span>
@@ -343,7 +358,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="rounded border border-line px-2 py-0.5 hover:bg-surface-2"
-          :title="$t('map.fit')"
+          :title="$t('map.fitTitle')"
           @click="fit"
         >
           {{ $t("map.fit") }}
@@ -355,12 +370,67 @@ onBeforeUnmount(() => {
           :title="$t('map.autoFit')"
           @click="settings.autoFitOnResize = !settings.autoFitOnResize"
         >
-          {{ $t("map.autoFit") }}
+          {{ $t("map.autoFitShort") }}
         </button>
       </span>
     </header>
 
-    <div ref="canvas" class="kizuna min-h-0 flex-1">
+    <div ref="canvas" class="kizuna relative min-h-0 flex-1">
+      <!--
+        選択中の個体の詳細。**ノードから外した 3 つ（役職・モデル・トークン）の
+        行き先**で、地図の上に重ねる（2026-08-13 利用者要望）。
+
+        **選んでいなければ出さない。**「未選択です」と書くと、常に何かが浮いて
+        いる状態になり、重ねる意味（要るときだけ見える）が消える。
+
+        擦りガラスは `@` 補完の候補と同じ作法 — トークンにアルファを掛けるので
+        `color-mix` へ展開され、**ライトテーマの上書きに実行時で追従する**。
+
+        `pointer-events-none` にするのは、**下のノードを掴む邪魔をしないため**。
+        右上はノードが来うる場所で、情報のために操作を殺すのは交換として合わない。
+      -->
+      <aside
+        v-if="selected"
+        class="pointer-events-none absolute right-2 top-2 z-10 w-52 rounded-md border border-line bg-surface-1/80 px-3 py-2 text-xs shadow-lg backdrop-blur-xl"
+      >
+        <div class="flex items-center gap-2">
+          <span class="truncate font-medium text-ink">{{ selected.name }}</span>
+          <!-- 役職バッジ（Spec 14）。引けなければ**バッジごと描かない**。 -->
+          <span
+            v-if="roleOf(selected)"
+            class="shrink-0 rounded border px-1 py-px leading-none"
+            :class="roleOf(selected)!.color ? '' : 'border-line'"
+            :style="
+              roleOf(selected)!.color
+                ? { borderColor: roleOf(selected)!.color, color: roleOf(selected)!.color }
+                : undefined
+            "
+          >
+            {{ roleOf(selected)!.name }}
+          </span>
+        </div>
+
+        <div class="mt-1 truncate text-ink-dim">{{ selected.id }}</div>
+
+        <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-ink-dim">
+          <dt>{{ $t("agentCard.model") }}</dt>
+          <dd class="truncate text-ink">{{ selected.model }}</dd>
+
+          <dt>{{ $t("map.status") }}</dt>
+          <dd class="text-ink">
+            {{ $t(STATUS_LABEL_KEYS[selected.status as keyof typeof STATUS_LABEL_KEYS]) }}
+          </dd>
+
+          <dt>{{ $t("agentCard.tokens") }}</dt>
+          <dd class="tabular-nums text-ink">{{ compactNumber(selected.totalTokens) }}</dd>
+
+          <dt>{{ $t("agentCard.connections") }}</dt>
+          <dd class="tabular-nums text-ink">
+            {{ $t("agentCard.connectionsCount", { count: selected.connectedAgents.length }) }}
+          </dd>
+        </dl>
+      </aside>
+
       <VNetworkGraph
         ref="graph"
         :nodes="nodes"

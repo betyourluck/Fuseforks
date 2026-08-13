@@ -313,14 +313,18 @@
   },
   "map": {
     "heading": "Kizuna",
-    "headingHelp": "Drag a handle to form a tie / click a tie to cut it (a bidirectional tie cuts both ways)",
+    "headingHelp": "Drop a card onto a node to tie them / click a tie to cut it (bidirectional ties are cut both ways) / drag nodes to move them",
     "summary": "{nodes} servants / {edges} ties",
     "bidirectional": "({count} bidirectional)",
     "agentLabel": "{id} ({name})",
     "confirmDeleteTitle": "Cut this tie?",
     "bidirectionalNote": "This is a bidirectional tie, so both directions will be cut.",
     "confirmDeleteLabel": "Cut the tie",
-    "autoFit": "Fit automatically after the pane is resized"
+    "autoFit": "Fit automatically after the pane is resized",
+    "fit": "Fit",
+    "fitTitle": "Fit the whole graph into view",
+    "autoFitShort": "Auto fit",
+    "status": "Status"
   },
   "chat": {
     "heading": "Chat",

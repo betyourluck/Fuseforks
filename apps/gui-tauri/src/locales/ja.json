@@ -313,14 +313,18 @@
   },
   "map": {
     "heading": "サーヴァントの絆",
-    "headingHelp": "ハンドルをドラッグで絆を結ぶ / 絆をクリックで切る（双方向は両方向とも切れる）",
+    "headingHelp": "カードを地図のノードへドロップで絆を結ぶ / 絆をクリックで切る（双方向は両方向とも切れる）／ノードはドラッグで動かせる",
     "summary": "サーヴァント {nodes} / 絆 {edges}",
     "bidirectional": "（うち双方向 {count}）",
     "agentLabel": "{id}（{name}）",
     "confirmDeleteTitle": "この絆を切りますか？",
     "bidirectionalNote": "双方向の絆なので、両方向とも切れます。",
     "confirmDeleteLabel": "絆を切る",
-    "autoFit": "ペインの大きさが変わったら自動でフィット"
+    "autoFit": "ペインの大きさが変わったら自動でフィット",
+    "fit": "フィット",
+    "fitTitle": "全体が入るように表示を合わせる",
+    "autoFitShort": "自動フィット",
+    "status": "状態"
   },
   "chat": {
     "heading": "会話",
