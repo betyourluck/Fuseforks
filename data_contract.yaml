@@ -2481,6 +2481,54 @@ entities:
         cancel (interrupted) > budget_exhausted > RepeatGuard > hop / rounds 上限
       人の明示停止が最優先、次に資源の事実。race の勝敗が分類を変えない
       (turn_interrupt と同じ規律) を静的な順序で担保する。
+    reservation: |
+      (Spec 38 P0 凍結・2026-08-14。実装は P1 以降 = 着手日の
+      YYYYMMDD_reserve ブランチ。D0=(1) を採る — やらないへ倒す場合の
+      完了定義は Spec 38 D0 が正)
+
+      **上限式**: 超過 = 飛行中の各呼び出しの「正の見積もり誤差」の総和
+      (<= 同時数 × 最大正誤差)。旧記述「1 呼び出し分」は因果 1 本のときだけ
+      成立する数えで、TLC で反証済み (specs/tla/BudgetOvershootBound /
+      failures.md #105)。
+
+      **API** (move セマンティクスの凍結が P1 実装の前提):
+      - BudgetPool::try_reserve(estimate_milli: u64) -> Option<ReservationGuard>。
+        CAS (fetch_update): 残額 >= estimate なら引いて Some、足りなければ None。
+      - **estimate > ceiling は即 None** — 天井より大きい予約の部分適用は
+        残高を負方向へ持っていけるので書かない。
+      - ReservationGuard::commit(self, actual_milli) は **self を move で消費**:
+        actual > estimate なら差額を debit、actual < estimate なら差額を返金。
+      - **commit されなかったパスでのみ Drop が走り、予約全額を返す**。
+        move 消費なので commit 後に Drop は呼ばれない — committed フラグは
+        持たない (フラグを足すと「commit したのに Drop も返す」二重返金が
+        再び書ける形に戻る)。
+      - 返金は fetch_update + min(ceiling) で**天井に飽和** (並列返金の
+        一時的な天井超えが後続 debit の超過を隠す形を防御的に塞ぐ)。
+
+      **見積もり (D1(b))**: その個体の直前の呼び出しの実効値。初回は床
+      1_000_000 milli (= 1,000 実効トークン)。
+      - 置き場は**個体ごとの共有 AtomicU64** — 個体ローカルではターンを
+        またぐ初回ラウンドへ持ち越せない (run_turn はターンごとに新品)。
+        書くのは commit だけ・読むのは try_reserve の直前だけ・ロックは足さない。
+      - **初回波は固定床のため上限縮小が効かない。2 回目以降で収束** —
+        これは仕様であって欠陥ではない (床を上げると単発の小さい依頼まで
+        止まる側に倒れる)。
+      - 過大予約で落ちた波のセルは budget_exhausted で確定し、返金後も
+        **再依頼しない** (「自動の再依頼はしない」の凍結) — 束ねに欠けが
+        出るのは仕様。README の予算の節に 1 行で警告する (P4)。
+
+      **予約する場所は run_turn の周回境界 2 箇所だけ**。deliver_and_wait
+      冒頭の配送前検査は LLM を呼ばない門なので **load 観測のまま**とし、
+      予約しないことをテストで凍結する (3 箇所目を予約に変えると配送拒否の
+      たびに返金が要る形が黙って生える)。
+
+      **未確定のまま P1 へ送る 1 点**: JoinSet::abort で Drop が走るかは
+      **仮説** (tokio 文書に明言が無く、査読 2 系統でも結論が割れた)。
+      P1 の実測テストで決める。プロセス死 (exit / SIGKILL) の予約漏れは
+      実害の経路が無い — プールはプロセス内メモリで再起動で復元しない
+      (session_store の「予算は復元しない」凍結の帰結)。abort・切断時の
+      under-debit (usage が返らず清算できない実費) は予約の有無と独立で
+      現行と同じ — 本契約は退行させないことだけを約束する (#103 の領域)。
   channel: "core://event"
   tagged_union_key: type
   variants:
