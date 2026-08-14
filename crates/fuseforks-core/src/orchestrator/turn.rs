@@ -1046,8 +1046,10 @@ async fn run_turn(
 
         // 予算の検査（Spec 11）。cancel の**後**に見る — 同時成立の分類は
         // 優先順位 cancel > budget_exhausted（token_budget.precedence）。
-        // try_reserve → LLM → debit の分離により、飛行中 1 呼び出し分の
-        // オーバーシュートは許容して数える（一体の atomic にはできない）。
+        // try_reserve → LLM → debit の分離により、飛行中のオーバーシュートは
+        // 許容して数える（一体の atomic にはできない）。超過の上限は
+        // 「1 呼び出し分」ではなく「同時に飛ぶ本数ぶん」— 波の全タスクが
+        // 同じプールを load で検査するため（specs/tla/BudgetOvershootBound）。
         if let Some(pool) = &budget
             && !pool.try_reserve()
         {

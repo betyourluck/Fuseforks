@@ -260,6 +260,35 @@ P0〜P5 が着地して Done**（2026-08-13。**実機の検収 5 件すべて�
 一括起動 / Alt+↑↓ / 黒板 / MPL-2.0。**台帳の grep 網の外にある**ので、
 **用語を変えたときは記事も数える**。
 
+**`specs/tla/` を新設した**（2026-08-14。TLA+ の bug-model・出自は
+[MASC](https://github.com/jeong-sik/masc) の `specs/bug-models/` の型）。
+**1 つの `.tla` に安全版と壊れた版を書き、`.cfg` 2 本を対で回す** —
+壊れた版が赤くなることを確かめて初めて「モデルが判別している」と言える
+（「一発で緑になったテストは機構を壊して赤を確かめる」の形式版）。
+**違反しなくなったら直すのは `.cfg` ではなく `.tla`** — 期待値を緩めて
+通した形にしない。回すには java + `extra/tla2tools.jar`（gitignore 済み。
+この開発機の JVM は Android Studio 同梱の JBR。**TLC は cwd に `states/` を
+掘るので scratchpad へ写して回す** — リポジトリ直下で回さない）。
+
+- `SessionAppendAtomic` — `session_store.rs` の `append` が RECORDS と
+  SESSIONS(meta) を **1 トランザクション**で書くことを留める（割った版は
+  2 遷移で torn を観測）
+- `BudgetOvershootBound` — **`turn.rs` の「オーバーシュート 1 呼び出し分」を
+  反証した**（`try_reserve` は load のみ = 予約しないので、波が N 体へ撒くと
+  残額 1 でも N 体が通る。**上限は「同時に飛ぶ本数 × 1 呼び出しの実費」**）。
+  台帳 4 箇所（`budget.rs` doc / `turn.rs` 注釈 / `data_contract` の
+  `token_budget` / この Spec 11 の節）を同日に訂正。処方の判断は
+  [Spec 38](specs/38_budget-reserve.md)
+
+**`gemini-3.7-flash` は 19,000 トークン未満のプロンプトでキャッシュを返さない**
+（2026-08-14 実測。`failures.md` #104）。同一個体・同一会話の A/B で
+**18,305 が ✗ / 4 秒後の 19,035 が ✓**、`gemini-3.6-flash` は同じ帯で普通に効く。
+`cached` は**約 8,000 の塊**で返り、**3.7 は 1 ブロックを 1 度も返さない**（最小 2 ブロック）。
+**両者は同額なので、19K を超えない仕事に 3.7 を当てると入力が 1.63 倍**
+（実測 $0.4593 対 $0.7500 /1M）。**会話は 3.6、19K を超え続ける仕事だけ 3.7。**
+分けられたのは `cache:` 行が `model=` と `round=` を持つからで、**`turn:` の
+`prompt` はラウンドの合計・モデル名も無い**ので帯も機種も見えない。
+
 **この節に一度書いた「未 push が N コミット」は捨てた** — P4 で書いた「18」は翌日に偽になり、
 **その後 2 本積むと再び真に戻る**という形で腐っていた。**総数は書く行為そのものが腐らせる**ので、
 一度は基点（`origin/main` の sha）の指定へ置き換え、push しきったこの行で消えた。
@@ -4166,8 +4195,12 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   spent=50000` / 既定天井で健全依頼が完走 = 2026-08-04 実効 110,157 で天井の
   11.0%）。**Done。** 実効トークン = 未キャッシュ ×1 + キャッシュ済み ×0.1 +
   出力 ×4、**内部は milli 建て AtomicU64・切り上げ**（Atomic に浮動小数は
-  無い）。try_reserve / consume 分離で**オーバーシュート 1 呼び出し分許容**
-  （check→LLM→減算は一体の atomic にできない）。`Envelope.budget` は
+  無い）。try_reserve / consume 分離で**オーバーシュートを許容**
+  （check→LLM→減算は一体の atomic にできない）。~~1 呼び出し分~~
+  **取り消し（2026-08-14。TLC で反証 — `specs/tla/BudgetOvershootBound`）**:
+  `try_reserve` は load のみで予約しないので、**波が N 体へ撒くと残額 1 でも
+  N 体が同時に通る。超過の上限は「同時に飛ぶ本数 × 1 呼び出しの実費」**
+  （「1 呼び出し分」は因果が 1 本のときだけ）。`Envelope.budget` は
   cancel と独立の `Option<Arc<BudgetPool>>`、天井は world.json の
   `Option<u64>`（0 のマジック値なし・新規のみ Some(1M)・既存 None は
   起動 WARN で次の道）。歯止めの優先順位 cancel > budget_exhausted >

@@ -97,9 +97,14 @@ pub fn normalized_usage(reported: &Usage, sent_utf8_len: usize, received_utf8_le
 /// # 検査と減算は分離されている（TOCTOU は仕様）
 ///
 /// `try_reserve()`（atomic な残高検査）→ LLM 呼び出し → `debit()`（atomic な
-/// 減算）。間に飛行時間が挟まるため一体の atomic にはできず、飛行中
-/// 1 呼び出し分のオーバーシュートを**許容して数える** — 残高は 0 に飽和し、
-/// 次の `try_reserve()` が確実に止める。
+/// 減算）。間に飛行時間が挟まるため一体の atomic にはできず、オーバーシュートを
+/// **許容して数える** — 残高は 0 に飽和し、次の `try_reserve()` が確実に止める。
+///
+/// 超過の上限は **1 呼び出し分ではない**（2026-08-14 に TLC で反証。
+/// `specs/tla/BudgetOvershootBound.tla`）。`try_reserve` は load しか
+/// しないので、波が N 体へ撒くと残額 1 でも N 体が同時に通る —
+/// 上限は「同時に飛ぶ本数 × その時いちばん大きい 1 呼び出しの実費」。
+/// 因果が 1 本のときだけ「1 呼び出し分」に縮む。
 #[derive(Debug)]
 pub struct BudgetPool {
     /// 天井（milli）。`spent_effective` の計算にも使う不変値。
