@@ -20,6 +20,23 @@ pub const WEIGHT_CACHED_MILLI: u64 = 100;
 /// 出力の重み（milli。= ×4.0）。
 pub const WEIGHT_OUTPUT_MILLI: u64 = 4000;
 
+/// 予約の見積もりの床（milli = 1,000 実効トークン。Spec 38 D1(b)）。
+///
+/// 直前の呼び出しの実測を見積もりに使うが、**初回は実測が無い**ので
+/// ここから始める。床を上げると単発の小さい依頼まで早期に止まる側へ倒れる。
+pub const RESERVE_FLOOR_MILLI: u64 = 1_000_000;
+
+/// 直前の実測から次の予約額を決める（Spec 38 D1(b)）。
+///
+/// `max(直前の実測, 床)` を**天井で頭打ち**にする。頭打ちが要るのは、
+/// 直前の 1 呼び出しが天井を超えていた場合に `try_reserve` が
+/// 「`estimate > ceiling` は即 `None`」で**永久に通らなくなる**ため —
+/// 天井 1,000 実効の村で 1 回でも 1,000 超の呼び出しをした個体が、
+/// 以後どの因果でも 1 度も走れなくなる形を塞ぐ。
+pub fn reserve_estimate_milli(last_call_milli: u64, ceiling_milli: u64) -> u64 {
+    last_call_milli.max(RESERVE_FLOOR_MILLI).min(ceiling_milli)
+}
+
 /// 新規 world.json に書き込む既定の天井（実効トークン）。
 ///
 /// 根拠実測（2026-08-02）: 健全な 6 体編成の依頼 1 件 = 実効 ≈ 250K。
@@ -200,6 +217,11 @@ impl BudgetPool {
     /// 天井（実効トークン建て）。打ち切りの System 行「実効 N トークン」に使う。
     pub fn ceiling_effective(&self) -> u64 {
         self.ceiling_milli.div_ceil(1000)
+    }
+
+    /// 天井（milli 建て）。予約額の頭打ちに使う（[`reserve_estimate_milli`]）。
+    pub fn ceiling_milli(&self) -> u64 {
+        self.ceiling_milli
     }
 
     /// 使用済み（実効トークン建て・切り上げ）。飽和により天井を超えない —
@@ -488,6 +510,32 @@ mod tests {
         let pool = BudgetPool::new(1_000);
         pool.credit_milli(500_000);
         assert_eq!(pool.spent_effective(), 0, "満額への返金は天井で頭打ち");
+    }
+
+    #[test]
+    fn estimate_starts_at_the_floor_and_then_follows_the_last_call() {
+        let ceiling = 1_000_000_000; // 実効 1,000,000（既定の天井）
+        // 初回は実測が無い → 床。
+        assert_eq!(reserve_estimate_milli(0, ceiling), RESERVE_FLOOR_MILLI);
+        // 床より小さい実測は床のまま（小さすぎる予約は上限を縮めない）。
+        assert_eq!(reserve_estimate_milli(1_000, ceiling), RESERVE_FLOOR_MILLI);
+        // 床より大きい実測に追従する。
+        assert_eq!(reserve_estimate_milli(50_000_000, ceiling), 50_000_000);
+    }
+
+    #[test]
+    fn estimate_is_capped_at_the_ceiling_so_a_huge_last_call_cannot_wedge_the_agent() {
+        // 直前の 1 呼び出しが天井を超えていた個体。頭打ちが無いと
+        // `try_reserve` の「estimate > ceiling は即 None」に当たり続け、
+        // **以後どの因果でも 1 度も走れなくなる**。
+        let ceiling = 5_000;
+        let estimate = reserve_estimate_milli(9_999_999, ceiling);
+        assert_eq!(estimate, ceiling, "天井で頭打ち");
+        let pool = BudgetPool::new(5);
+        assert!(
+            pool.try_reserve(estimate).is_some(),
+            "頭打ちした見積もりは満額の残高で必ず通る（詰みを作らない）"
+        );
     }
 
     /// TLC の `SpecReserving`（緑）の実装版 + ミューテーション (i) の的。
