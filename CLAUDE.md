@@ -4200,7 +4200,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   **取り消し（2026-08-14。TLC で反証 — `specs/tla/BudgetOvershootBound`）**:
   `try_reserve` は load のみで予約しないので、**波が N 体へ撒くと残額 1 でも
   N 体が同時に通る。超過の上限は「同時に飛ぶ本数 × 1 呼び出しの実費」**
-  （「1 呼び出し分」は因果が 1 本のときだけ）。`Envelope.budget` は
+  （「1 呼び出し分」は因果が 1 本のときだけ）。
+  **→ [Spec 38](specs/38_budget-reserve.md) で塞いだ**（2026-08-15。
+  `try_reserve(estimate)` を CAS 化し、`ReservationGuard` の move セマンティクスで
+  **二重返金を型で消した**。見積もりは個体ごとの直前実測・初回は床 1,000 実効で、
+  **超過の上限は「飛行中の正の見積もり誤差の総和」へ縮んだ**）。
+  **代償は波の欠け** — 残額はあるのに次の 1 呼び出しぶんを確保できない個体が
+  budget_exhausted で確定し、**自動では頼み直さない**ので束ねに欠けが出る。
+  打ち切りの理由は `budget stop: … reason=exhausted|reserve_short` で分かれる。
+  `Envelope.budget` は
   cancel と独立の `Option<Arc<BudgetPool>>`、天井は world.json の
   `Option<u64>`（0 のマジック値なし・新規のみ Some(1M)・既存 None は
   起動 WARN で次の道）。歯止めの優先順位 cancel > budget_exhausted >

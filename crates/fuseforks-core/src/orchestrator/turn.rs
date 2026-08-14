@@ -296,17 +296,23 @@ async fn finish_budget_exhausted(
             .await
             .language()
             .unwrap_or(crate::world::Language::Ja);
+        // **「使い切った」とは言わない**（Spec 38 D3）。予約は次の 1 呼び出しぶんを
+        // 先に確保する形なので、**実費を使い切る前に止まる**ことがある
+        // （過大予約による早止まり）。起きた事実は「次のぶんを確保できなかった」で、
+        // どちらの場合も正しい。残額の内訳は `budget stop:` の計器が持つ。
         let budget_text = match language {
             crate::world::Language::Ja => format!(
-                "予算（実効 {} トークン）を使い切ったため、{agent_id}（{display}）の\
-                 ターンを打ち切りました。続きが要るなら改めて依頼してください\
+                "次の呼び出しぶんの予算（上限は実効 {} トークン）を確保できなかったため、\
+                 {agent_id}（{display}）のターンを打ち切りました。\
+                 続きが要るなら改めて依頼してください\
                  （予算は依頼ごとに新しく付きます）",
                 pool.ceiling_effective()
             ),
             crate::world::Language::En => format!(
-                "The budget ({} effective tokens) is used up, so {agent_id} \
-                 ({display})'s turn was cut off. If you need more, send a new \
-                 request — each request gets a fresh budget",
+                "Could not reserve the budget for the next call (the ceiling is {} \
+                 effective tokens), so {agent_id} ({display})'s turn was cut off. \
+                 If you need more, send a new request — each request gets a fresh \
+                 budget",
                 pool.ceiling_effective()
             ),
         };
@@ -1073,6 +1079,21 @@ async fn run_turn(
                 match pool.try_reserve(estimate) {
                     Some(guard) => Some(guard),
                     None => {
+                        // 打ち切りの理由を分ける（Spec 38 P4）。「尽きた」と
+                        // 「次の 1 呼び出しぶんを確保できない」は利用者から
+                        // 見て別の事態で、System 行の文言だけでは残額が読めない。
+                        // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
+                        note!(
+                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
+                            pool.ceiling_effective(),
+                            pool.remaining_milli().div_ceil(1000),
+                            estimate.div_ceil(1000),
+                            if pool.remaining_milli() == 0 {
+                                "exhausted"
+                            } else {
+                                "reserve_short"
+                            },
+                        );
                         return finish_budget_exhausted(
                             shared,
                             agent_id,
@@ -1298,6 +1319,21 @@ async fn run_turn(
                 match pool.try_reserve(estimate) {
                     Some(guard) => Some(guard),
                     None => {
+                        // 打ち切りの理由を分ける（Spec 38 P4）。「尽きた」と
+                        // 「次の 1 呼び出しぶんを確保できない」は利用者から
+                        // 見て別の事態で、System 行の文言だけでは残額が読めない。
+                        // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
+                        note!(
+                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
+                            pool.ceiling_effective(),
+                            pool.remaining_milli().div_ceil(1000),
+                            estimate.div_ceil(1000),
+                            if pool.remaining_milli() == 0 {
+                                "exhausted"
+                            } else {
+                                "reserve_short"
+                            },
+                        );
                         return finish_budget_exhausted(
                             shared,
                             agent_id,

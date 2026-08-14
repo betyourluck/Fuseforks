@@ -4097,9 +4097,14 @@ pub fn try_reserve(&self) -> bool {
 Arc を共有させていた。**共有しても、検査が原子でなければ超過は人数倍**の側は
 誰も数えていない — 片方の race を塞いだ注釈が、もう片方が塞がっている印象を作る。
 
-**処方**: 台帳 4 箇所を同日訂正（実装は触っていない）。予約型 `try_reserve`
-（CAS で見積もりを先に引く形。TLC の `SpecReserving` は緑）へ直すかは
-見積もり値の裁定が要るので Spec 38 として起票。
+**処方**: 台帳 4 箇所を同日訂正。**その後 Spec 38 として実装まで着地**
+（2026-08-14〜15・ブランチ `20260814_reserve`）— `try_reserve(estimate)` を CAS 化し、
+`ReservationGuard` の move セマンティクス（`commit(self, actual)` で清算 /
+commit されなかったパスは Drop が全額返金）で**二重返金を型で消した**。
+`JoinSet::abort` で Drop が走るかは査読 2 系統で結論が割れたので**実測で決めた**
+（走る・全額返金される）。会計の正しさは `specs/tla/BudgetReservationSettlement`
+が留める — **`committed` フラグ設計（double-refund）は depth 3 で違反**し、
+型で消した判断が機械で裏づけられた。
 
 **一般化 2 つ**:
 
