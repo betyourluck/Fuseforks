@@ -1093,6 +1093,11 @@ async fn agent_loop(
     mut shutdown: watch::Receiver<bool>,
     shared: Arc<Shared>,
 ) {
+    // 直前の 1 呼び出しの実効 milli（Spec 38 D1(b)）。**この個体の稼働と
+    // 同じだけ生きる** — ターンをまたいで持ち越すのが目的なので、ターンの中
+    // （`run_turn`）に置くと各ターンの初回ラウンドが永久に床のままになる。
+    // 停止で消えるのは仕様（次の起動は床から。契約 reservation の初回床）。
+    let last_call_milli = Arc::new(std::sync::atomic::AtomicU64::new(0));
     loop {
         tokio::select! {
             // 停止通知を受信より優先する。停止要求が受信箱の滞留に埋もれないように。
@@ -1175,7 +1180,9 @@ async fn agent_loop(
                     .await
                     .insert(agent_id.clone(), Arc::clone(&turn));
 
-                let outcome = handle_message(&shared, &agent_id, envelope, &turn).await;
+                let outcome =
+                    handle_message(&shared, &agent_id, envelope, &turn, &last_call_milli)
+                        .await;
 
                 // 自分の seq を確かめてから外す。順次処理（不変条件 7）の下では
                 // 必ず自分だが、seq を見ない remove は「別のターンのハンドルを

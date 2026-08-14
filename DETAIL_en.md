@@ -537,12 +537,13 @@ Each utterance has a `hop`, and upon reaching `max_hops` (default 8), the chain 
 
 #### Token Budget — an automatic ceiling per request ([Spec 11](specs/11_token-budget.md))
 
-While `hop` bounds *depth*, this bounds *spend* — an orthogonal brake. Each request causality (one of your utterances per recipient, or one scheduled firing) gets a budget denominated in effective tokens, shared by every turn that cascades from it via ask / plan / handoff. When it runs out, the turn is cut at the round boundary and a single System line appears in the conversation (how much was spent, and that you can simply ask again). Agents stay running; the next request gets a fresh budget.
+While `hop` bounds *depth*, this bounds *spend* — an orthogonal brake. Each request causality (one of your utterances per recipient, or one scheduled firing) gets a budget denominated in effective tokens, shared by every turn that cascades from it via ask / plan / handoff. When it runs out, the turn is cut at the round boundary and a single System line appears in the conversation (the ceiling, and that you can simply ask again). Agents stay running; the next request gets a fresh budget.
 
 - **Effective tokens** = uncached input ×1 + cached input ×0.1 + output ×4. Proportional to real cost rather than raw counts, so a healthy long job with 87–99% cache hits is not falsely cut.
 - **One setting**: `tokenBudget` (effective tokens). **Change it from "System Settings" > "Cost Management" in the title bar** ([Spec 13](specs/13_settings-dialog.md)); saving takes effect **from the next request**, with no restart. It lives in `world.json`, so it is stored in the village and travels with it when shared. Freshly created villages get a default of 1,000,000. **Existing villages are not silently changed** — a startup WARN points you to the setting instead.
 - **Guidance**: ~6 agents run fine under 1,000,000 (a measured healthy 6-agent request ≈ 250K effective). Villages running 8-stage flows, ~12 agents, or output-heavy code generation should use 2,000,000–3,000,000.
 - The remaining balance is never injected into prompts, and there is no automatic retry. The ceiling counts silently and only speaks when exhausted.
+- **Near the ceiling, part of a wave may come back without an answer** ([Spec 38](specs/38_budget-reserve.md)). At each round boundary the budget for the next call is **reserved up front**, so an agent can be refused while the balance is not yet zero. That agent's turn is cut and **nothing re-asks on its own**, so the bundle comes back with a gap. If you see gaps, raise the ceiling or fan out to fewer agents.
 
 ### Tool Execution Loop
 

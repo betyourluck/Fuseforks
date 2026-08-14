@@ -296,17 +296,23 @@ async fn finish_budget_exhausted(
             .await
             .language()
             .unwrap_or(crate::world::Language::Ja);
+        // **「使い切った」とは言わない**（Spec 38 D3）。予約は次の 1 呼び出しぶんを
+        // 先に確保する形なので、**実費を使い切る前に止まる**ことがある
+        // （過大予約による早止まり）。起きた事実は「次のぶんを確保できなかった」で、
+        // どちらの場合も正しい。残額の内訳は `budget stop:` の計器が持つ。
         let budget_text = match language {
             crate::world::Language::Ja => format!(
-                "予算（実効 {} トークン）を使い切ったため、{agent_id}（{display}）の\
-                 ターンを打ち切りました。続きが要るなら改めて依頼してください\
+                "次の呼び出しぶんの予算（上限は実効 {} トークン）を確保できなかったため、\
+                 {agent_id}（{display}）のターンを打ち切りました。\
+                 続きが要るなら改めて依頼してください\
                  （予算は依頼ごとに新しく付きます）",
                 pool.ceiling_effective()
             ),
             crate::world::Language::En => format!(
-                "The budget ({} effective tokens) is used up, so {agent_id} \
-                 ({display})'s turn was cut off. If you need more, send a new \
-                 request — each request gets a fresh budget",
+                "Could not reserve the budget for the next call (the ceiling is {} \
+                 effective tokens), so {agent_id} ({display})'s turn was cut off. \
+                 If you need more, send a new request — each request gets a fresh \
+                 budget",
                 pool.ceiling_effective()
             ),
         };
@@ -589,6 +595,12 @@ pub(super) async fn handle_message(
     agent_id: &AgentId,
     envelope: Envelope,
     turn: &TurnHandle,
+    // 直前の 1 呼び出しの実効 milli（Spec 38 D1(b) の予約見積もり）。
+    // **所有者は `agent_loop`** — ターンより長く、個体の稼働と同じだけ生きる。
+    // `run_turn` に置くとターンごとに新品になり、各ターンの初回ラウンドが
+    // 永久に床のままになる。`Shared` の表にしなかったのは、周回ごとに
+    // ロックを取らずに済ませるため（契約 reservation の「ロックは足さない」）。
+    last_call_milli: &Arc<std::sync::atomic::AtomicU64>,
 ) -> CoreResult<()> {
     let Envelope {
         incoming,
@@ -772,6 +784,7 @@ pub(super) async fn handle_message(
         &incoming,
         &mut reply_to,
         &budget,
+        last_call_milli,
         &participants,
         &spec,
         &template,
@@ -942,6 +955,8 @@ async fn run_turn(
     // 通常終了では段 8 が使うので、ここで所有を奪うと戻せない。
     reply_to: &mut Option<tokio::sync::oneshot::Sender<Reply>>,
     budget: &Option<Arc<crate::budget::BudgetPool>>,
+    // 予約の見積もり源（Spec 38 D1(b)）。所有者は `agent_loop`。
+    last_call_milli: &Arc<std::sync::atomic::AtomicU64>,
     participants: &Option<Participants>,
     spec: &AgentSpec,
     template: &ModelTemplate,
@@ -1044,31 +1059,61 @@ async fn run_turn(
             .await.map(|()| None);
         }
 
-        // 予算の検査（Spec 11）。cancel の**後**に見る — 同時成立の分類は
-        // 優先順位 cancel > budget_exhausted（token_budget.precedence）。
-        // try_reserve → LLM → debit の分離により、飛行中のオーバーシュートは
-        // 許容して数える（一体の atomic にはできない）。超過の上限は
-        // 「1 呼び出し分」ではなく「同時に飛ぶ本数ぶん」— 波の全タスクが
-        // 同じプールを load で検査するため（specs/tla/BudgetOvershootBound）。
-        if let Some(pool) = &budget
-            && !pool.try_reserve()
-        {
-            return finish_budget_exhausted(
-                shared,
-                agent_id,
-                reply_to.take(),
-                pool,
-                &sent_user_turn,
-                TurnSpend {
-                    tokens,
-                    cached,
-                    prompt,
-                    rounds: llm_rounds,
-                    hop: incoming.hop,
-                },
-            )
-            .await.map(|()| None);
-        }
+        // 予算の予約（Spec 11 / Spec 38 P2）。cancel の**後**に見る — 同時成立の
+        // 分類は優先順位 cancel > budget_exhausted（token_budget.precedence）。
+        //
+        // **load 観測ではなく CAS 予約**。観測だけで通すと、波の全タスクが
+        // 同じプールを見て残額 1 でも N 体が同時に通り、超過が人数倍になる
+        // （#105 / specs/tla/BudgetOvershootBound で反証済み）。予約は
+        // 見積もりぶんを先に引くので、境界では通る本数そのものが絞られる。
+        //
+        // **予約に失敗した = 尽きた扱い**。実費はまだ残っていても
+        // 「次の 1 呼び出しぶんを確保できない」ので新しい呼び出しを始めない
+        // （過大予約による早止まりは仕様 — Spec 38 D1(b)）。
+        let reservation = match &budget {
+            Some(pool) => {
+                let estimate = crate::budget::reserve_estimate_milli(
+                    last_call_milli.load(std::sync::atomic::Ordering::Relaxed),
+                    pool.ceiling_milli(),
+                );
+                match pool.try_reserve(estimate) {
+                    Some(guard) => Some(guard),
+                    None => {
+                        // 打ち切りの理由を分ける（Spec 38 P4）。「尽きた」と
+                        // 「次の 1 呼び出しぶんを確保できない」は利用者から
+                        // 見て別の事態で、System 行の文言だけでは残額が読めない。
+                        // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
+                        note!(
+                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
+                            pool.ceiling_effective(),
+                            pool.remaining_milli().div_ceil(1000),
+                            estimate.div_ceil(1000),
+                            if pool.remaining_milli() == 0 {
+                                "exhausted"
+                            } else {
+                                "reserve_short"
+                            },
+                        );
+                        return finish_budget_exhausted(
+                            shared,
+                            agent_id,
+                            reply_to.take(),
+                            pool,
+                            &sent_user_turn,
+                            TurnSpend {
+                                tokens,
+                                cached,
+                                prompt,
+                                rounds: llm_rounds,
+                                hop: incoming.hop,
+                            },
+                        )
+                        .await.map(|()| None);
+                    }
+                }
+            }
+            None => None,
+        };
 
         let request = ChatRequest {
             model: template.model.clone(),
@@ -1100,12 +1145,16 @@ async fn run_turn(
         cached += response.usage.cache_read;
         prompt += response.usage.prompt;
         reasoning += response.usage.reasoning;
-        // 実測 usage ぶんを予算から引く（Spec 11 の consume 側）。usage が
+        // 予約を実測で清算する（Spec 11 の consume 側 / Spec 38 P2）。usage が
         // 欠けた応答（テストバックエンド・異常応答）はバイト数で保守的に
         // 見積もる — 楽観の 0 を作らない（usage_fallback の三規程）。
-        if let Some(pool) = &budget {
-            if response.usage.total() > 0 {
-                pool.debit(&response.usage);
+        //
+        // **ここへ到達しなかった経路（`?` での早期脱出）では guard の Drop が
+        // 予約を全額返す。** 実費が発生していても usage を受け取れていない
+        // ので清算のしようがなく、それは予約の有無と独立の穴（#103 の領域）。
+        if let Some(guard) = reservation {
+            let settled = if response.usage.total() > 0 {
+                response.usage
             } else {
                 let sent: usize = messages.iter().map(|m| m.content.len()).sum();
                 let received: usize = response.text.as_deref().map_or(0, str::len)
@@ -1114,8 +1163,14 @@ async fn run_turn(
                         .iter()
                         .map(|call| call.args.to_string().len())
                         .sum::<usize>();
-                pool.debit(&crate::budget::normalized_usage(&response.usage, sent, received));
-            }
+                crate::budget::normalized_usage(&response.usage, sent, received)
+            };
+            // 次の予約の見積もりは**この実測**（Spec 38 D1(b)）。書くのは
+            // 清算した所だけ — 予約時に書くと、失敗して返金した呼び出しの
+            // 見積もりが次へ引き継がれる。
+            let actual = crate::budget::effective_milli(&settled);
+            last_call_milli.store(actual, std::sync::atomic::Ordering::Relaxed);
+            guard.commit(actual);
         }
         // 転送で抜ける周の接地も拾う。break の後ろに置くと、検索してから
         // 転送したターンの来歴が丸ごと落ちる。
@@ -1251,28 +1306,54 @@ async fn run_turn(
         && content.trim().is_empty()
         && (tool_limit_hit || repeat_stop.is_some())
     {
-        // 予算が尽きていたら、まとめの 1 回も呼ばない（尽きたら新しい LLM
-        // 呼び出しを始めない — token_budget の exhaustion。打ち切りの直後に
-        // もう 1 回課金しない、という割り込みのまとめ省略と同じ判断でもある）。
-        if let Some(pool) = &budget
-            && !pool.try_reserve()
-        {
-            return finish_budget_exhausted(
-                shared,
-                agent_id,
-                reply_to.take(),
-                pool,
-                &sent_user_turn,
-                TurnSpend {
-                    tokens,
-                    cached,
-                    prompt,
-                    rounds: llm_rounds,
-                    hop: incoming.hop,
-                },
-            )
-            .await.map(|()| None);
-        }
+        // まとめの 1 回も同じ財布から**予約**する（Spec 38 P2）。確保できな
+        // ければまとめを呼ばない — 尽きたら新しい LLM 呼び出しを始めない
+        // （token_budget の exhaustion。打ち切りの直後にもう 1 回課金しない、
+        // という割り込みのまとめ省略と同じ判断でもある）。
+        let summary_reservation = match &budget {
+            Some(pool) => {
+                let estimate = crate::budget::reserve_estimate_milli(
+                    last_call_milli.load(std::sync::atomic::Ordering::Relaxed),
+                    pool.ceiling_milli(),
+                );
+                match pool.try_reserve(estimate) {
+                    Some(guard) => Some(guard),
+                    None => {
+                        // 打ち切りの理由を分ける（Spec 38 P4）。「尽きた」と
+                        // 「次の 1 呼び出しぶんを確保できない」は利用者から
+                        // 見て別の事態で、System 行の文言だけでは残額が読めない。
+                        // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
+                        note!(
+                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
+                            pool.ceiling_effective(),
+                            pool.remaining_milli().div_ceil(1000),
+                            estimate.div_ceil(1000),
+                            if pool.remaining_milli() == 0 {
+                                "exhausted"
+                            } else {
+                                "reserve_short"
+                            },
+                        );
+                        return finish_budget_exhausted(
+                            shared,
+                            agent_id,
+                            reply_to.take(),
+                            pool,
+                            &sent_user_turn,
+                            TurnSpend {
+                                tokens,
+                                cached,
+                                prompt,
+                                rounds: llm_rounds,
+                                hop: incoming.hop,
+                            },
+                        )
+                        .await.map(|()| None);
+                    }
+                }
+            }
+            None => None,
+        };
 
         messages.push(ChatMessage::system(match &repeat_stop {
             Some(tool) => format!(
@@ -1322,20 +1403,19 @@ async fn run_turn(
                 cached += response.usage.cache_read;
                 prompt += response.usage.prompt;
                 reasoning += response.usage.reasoning;
-                // まとめ呼び出しも同じ財布から引く（Spec 11）。
-                if let Some(pool) = &budget {
-                    if response.usage.total() > 0 {
-                        pool.debit(&response.usage);
+                // まとめ呼び出しも同じ財布で清算する（Spec 11 / Spec 38 P2）。
+                if let Some(guard) = summary_reservation {
+                    let settled = if response.usage.total() > 0 {
+                        response.usage
                     } else {
                         let sent: usize = messages.iter().map(|m| m.content.len()).sum();
                         let received: usize =
                             response.text.as_deref().map_or(0, str::len);
-                        pool.debit(&crate::budget::normalized_usage(
-                            &response.usage,
-                            sent,
-                            received,
-                        ));
-                    }
+                        crate::budget::normalized_usage(&response.usage, sent, received)
+                    };
+                    let actual = crate::budget::effective_milli(&settled);
+                    last_call_milli.store(actual, std::sync::atomic::Ordering::Relaxed);
+                    guard.commit(actual);
                 }
                 grounding.absorb(std::mem::take(&mut response.grounding));
                 reasoning_summary.append(&mut response.reasoning_summary);
