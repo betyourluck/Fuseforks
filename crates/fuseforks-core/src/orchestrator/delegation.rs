@@ -108,7 +108,7 @@ pub(super) async fn deliver_and_wait(
     // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
     // 先に尽きたらここで止まる）。
     if let Some(pool) = budget
-        && !pool.try_reserve()
+        && !pool.has_remaining()
     {
         return (
             "トークン予算の上限に達したため、配送していません。".to_owned(),

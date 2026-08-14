@@ -189,6 +189,34 @@ impl Drop for ReservationGuard {
   残高が行に出ない + 失敗ターンが行を出さないためで、**統制走行では
   自分で境界を作るから読める**（利用者査読 4 の因果注記）
 
+## P1 実装記録（2026-08-14・ブランチ `20260814_reserve`）
+
+- **旧 `try_reserve()` は `has_remaining()` へ改名**（呼び出し点 3 + テスト 8 を
+  機械的改名 — 挙動不変）。予約しないのに予約を名乗っていたのが #105 の嘘の
+  起点なので、実態の名前にした。P2 で `run_turn` の 2 箇所だけが新
+  `try_reserve(estimate)` へ移り、`deliver_and_wait` は `has_remaining` に残る
+- **`ReservationGuard<'a>` は借用で持つ**（`Arc` を要求しない — 波のタスク内では
+  future が Arc と guard を両方所有する自己完結形で足りる）。`commit` の
+  Drop 無効化は `mem::forget`（`unsafe_code = "forbid"` の下で safe・
+  フィールドは Copy）。`commit_usage(&Usage)` も足した — P2 の配線が
+  実効 milli 換算を自分で書かずに済む
+- **契約の不足を 1 つ精密化**（実装が凍結を読んで初めて見えた —
+  Spec 15 P2 と同じ形）: 「残額 >= estimate なら Some」は estimate=0・残額 0 で
+  **Some を返す読みになり、exhaustion の門を迂回する**。拒否側へ倒し、
+  契約へ 1 行足した（残額 0 のときは estimate 0 でも None）
+- **abort 仮説の実測決着**: `join_set_abort_runs_drop_and_refunds` が緑 —
+  **`JoinSet::abort` で Drop は走り、予約は全額返金される**（判定は残高の
+  復元 400 → 0 で読む。フラグの proxy ではなく返金そのものを観測）。
+  待ちループは**有界**にした — 無限 while だとミューテーション (i) で
+  赤ではなくハングになり、実装のデッドロックと区別が付かない（#86）
+- **ミューテーション 2 本、どちらも予測を先に書いて実測が一致**:
+  - (i) CAS → load 観測化: **予測 5 本 → 実測 5 本ちょうど**（settle /
+    remaining_short / drop_refund / **parallel = TLC の反証経路
+    ReserveByLoad ×3 の実装再現** / abort の reserved_seen）
+  - (ii) Drop の返金除去: **予測 2 本 → 実測 2 本ちょうど**（drop_refund /
+    abort）。commit 経路は Drop を通らないので他 18 本は緑のまま
+- 新設テスト 7 本（budget 20 本）・clippy 警告ゼロ
+
 ## Notes
 
 1. 本 Spec は D0 で (2) に倒れてもよい。その場合の完了定義は D0 に凍結済み。

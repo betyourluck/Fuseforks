@@ -2494,6 +2494,9 @@ entities:
       **API** (move セマンティクスの凍結が P1 実装の前提):
       - BudgetPool::try_reserve(estimate_milli: u64) -> Option<ReservationGuard>。
         CAS (fetch_update): 残額 >= estimate なら引いて Some、足りなければ None。
+        **残額 0 のときは estimate 0 でも None** (P1 で精密化 — 「>= で Some」を
+        字義どおり読むと est=0 が尽きた門を迂回する。exhaustion の「尽きたら
+        新しい呼び出しを始めない」が勝つ)。
       - **estimate > ceiling は即 None** — 天井より大きい予約の部分適用は
         残高を負方向へ持っていけるので書かない。
       - ReservationGuard::commit(self, actual_milli) は **self を move で消費**:
