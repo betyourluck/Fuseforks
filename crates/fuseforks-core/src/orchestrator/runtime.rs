@@ -19,11 +19,17 @@ impl Orchestrator {
     /// - 未登録なら [`CoreError::AgentNotFound`]
     /// - 既に稼働中なら [`CoreError::AlreadyRunning`]
     pub async fn start_agent(&self, id: &AgentId) -> CoreResult<()> {
+        let began = std::time::Instant::now();
+        let mut reaped = false;
         let mut tasks = self.tasks.lock().await;
         if let Some(existing) = tasks.get(id) {
             // 稼働中なら断る。**ただし「登録がある」と「走っている」は別**
             // （失敗して自分から降りたタスクの登録は残る）。
             if !existing.join.is_finished() {
+                // **断ったことも 1 行残す。** 画面は OFF に見えているのに
+                // ON が通らない、という食い違いは「押した記録が無い」と
+                // 区別が付かない（2026-08-15 に実際に詰まった）。
+                note!("agent start refused: agent={id} reason=already_running");
                 return Err(CoreError::AlreadyRunning {
                     agent_id: id.to_string(),
                 });
@@ -64,6 +70,7 @@ impl Orchestrator {
             // 不在からの推測でしか読めない** — 沈黙を根拠に使う形になる
             // （failures.md #77 の一般化 1）。
             note!("agent reaped: agent={id} had_error={had_error}");
+            reaped = true;
         }
 
         {
@@ -124,6 +131,13 @@ impl Orchestrator {
         drop(tasks);
 
         self.shared.set_status(id, AgentStatus::Running).await;
+        // **起動が届いて完了したことを 1 行残す。** これが無いと、
+        // 「要求が届いていない」「届いたが返ってこない」「完了したが
+        // 画面が古い」の 3 つが同じ無音に見える（#72 / #99 の同族）。
+        note!(
+            "agent started: agent={id} elapsed_ms={} reaped={reaped}",
+            began.elapsed().as_millis(),
+        );
         Ok(())
     }
 
@@ -176,6 +190,7 @@ impl Orchestrator {
     /// # Errors
     /// 稼働していない場合 [`CoreError::NotRunning`]。
     pub async fn stop_agent(&self, id: &AgentId) -> CoreResult<()> {
+        let began = std::time::Instant::now();
         let handle = {
             let mut tasks = self.tasks.lock().await;
             tasks.remove(id).ok_or_else(|| CoreError::NotRunning {
@@ -198,10 +213,10 @@ impl Orchestrator {
 
         let _ = handle.shutdown.send(true);
         // 処理中の LLM 呼び出しが終わるのを待つ。無限には待たない。
-        if tokio::time::timeout(Duration::from_secs(30), handle.join)
+        let joined = tokio::time::timeout(Duration::from_secs(30), handle.join)
             .await
-            .is_err()
-        {
+            .is_ok();
+        if !joined {
             // タイムアウトしてもタスクは自走を続けるが、受信箱は既に外れているので
             // 次のループで停止する。ここで abort しないのは前掲の理由による。
         }
@@ -221,6 +236,13 @@ impl Orchestrator {
             }
         }
         self.shared.set_status(id, AgentStatus::Idle).await;
+        // **`joined=false` が最も読みたい値**。停止が返っても古いタスクは
+        // まだ走っており（割り込みの効かないツールを掴んでいる場合に起きる）、
+        // その間に起動し直すと 2 つのループが同じ個体に居る窓ができる。
+        note!(
+            "agent stopped: agent={id} elapsed_ms={} joined={joined}",
+            began.elapsed().as_millis(),
+        );
         Ok(())
     }
 
