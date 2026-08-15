@@ -56,10 +56,29 @@ pub(super) async fn record_failed_turn(
     shared.push_exchange(&mut world, agent_id, &attributed, &note);
 }
 
-/// 打ち切られたターンの消費量。[`finish_interrupted`] へまとめて渡す。
+/// ターンの**飛行中台帳** — 始まった時点で作り、**どの出口でも**清算する。
+///
+/// 元は打ち切りの 2 出口へ消費量を束ねて渡すだけの型だったが、`failures.md` #103
+/// で**4 つ目の出口（`Err`）だけが清算されていない**ことが分かり、ターンの
+/// 頭から終わりまで生きる台帳へ広げた。形は otari（mozilla-ai）の
+/// `inflight` 登録簿と同じ発想 — 「使用量の記録は過去しか語れない」ので、
+/// 要求が始まった瞬間に登録し、**終わり方に関わらず**精算する。ここでは
+/// 台帳が `run_turn` の外側（[`run_turn`]）に住み、内側（[`run_turn_inner`]）が
+/// `&mut` で加算するので、`?` で内側から抜けても台帳は外側の手元に残る。
+///
+/// 出口は 4 つで、**それぞれ 1 行の使用量の行を書く**:
+///
+/// | 出口 | 行 |
+/// |---|---|
+/// | 完走 | `turn: … stop=-|repeat:x|tool_limit` |
+/// | 失敗（`Err`） | `turn: … stop=failed:{CODE}`（**この行が #103 で無かった**） |
+/// | 割り込み | `turn interrupted: … prompt= cached= total=` |
+/// | 予算 | `turn budget exhausted: … prompt= cached= total=` |
 ///
 /// 個別引数にしないのは、u64 が 3 つ並ぶと呼び出し側の取り違えが
-/// コンパイルを通ってしまうため。
+/// コンパイルを通ってしまうため。`Copy` なのは、打ち切りの出口が値で受け取る
+/// 一方で台帳そのものは外側に残す必要があるから（写しを渡し、原本を持ち続ける）。
+#[derive(Clone, Copy, Default)]
 struct TurnSpend {
     /// 累計トークン（入力 + 出力）。
     tokens: u64,
@@ -67,10 +86,27 @@ struct TurnSpend {
     cached: u64,
     /// 入力トークン。
     prompt: u64,
-    /// 打ち切りまでに完走した LLM 呼び出しの周回数。
+    /// 出力のうち思考に使われたぶん。**`tokens` の内数**（Spec 32 D2）。
+    reasoning: u64,
+    /// 実行ループの LLM 呼び出しの周回数（上限 `max_tool_iterations` との比較に
+    /// 使うので、**まとめ呼び出しは数えない** — 元の `llm_rounds` と同じ）。
+    /// **払ったと分かる失敗の周も数える** — 切れた応答も 1 往復として課金されている。
     rounds: u32,
     /// 受信した発話の hop。
     hop: u8,
+}
+
+impl TurnSpend {
+    /// 1 呼び出しぶんの使用量を台帳へ足す。成功した応答も、払ったと分かる失敗
+    /// （[`crate::llm::LlmError::usage`]）も**同じ入口**を通る — 経路を分けると
+    /// 片方だけが既定値のまま化ける（#103 の形そのもの）。周回数は呼び出し側が
+    /// 別に進める（まとめ呼び出しは使用量だけ足して周回数を進めないため）。
+    fn absorb(&mut self, usage: &crate::llm::Usage) {
+        self.tokens += usage.total();
+        self.cached += usage.cache_read;
+        self.prompt += usage.prompt;
+        self.reasoning += usage.reasoning;
+    }
 }
 
 /// 転送・委譲の提示条件（Spec 20 / 2026-08-11）。
@@ -945,8 +981,112 @@ async fn present_tools(
 /// 返す [`TurnProduct`] は**そのまま段 8 の入力**。中で溜める 4 つ
 /// （outcome / tokens / grounding / reasoning_summary）は 1 ターンぶんの寿命で、
 /// 周ごとに上書きすると先に起きた接地や要約が消える。
+///
+/// # 飛行中台帳（#103）
+///
+/// この関数は**台帳 [`TurnSpend`] の所有者**で、実行ループは [`run_turn_inner`] に
+/// 居る。分けたのは `?` のため — 内側が `Err` で抜けても台帳はここに残るので、
+/// **失敗したターンの払いを成功と同じ 3 箇所（カードの累計・`turn:` 行・予算）へ
+/// 入れられる**。以前は 4 つの出口のうち `Err` だけが清算されず、
+/// 課金だけが増えて村のどの数字にも出なかった。
+///
+/// バックエンドの解決もここで済ませる。内側より前に失敗したら（設定不備）
+/// LLM は 1 度も呼ばれておらず払いは無いので、台帳を作らずに `Err` を返す —
+/// **使用量の行が出るのは実行ループへ入ったターンだけ**。
 #[allow(clippy::too_many_arguments)]
 async fn run_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    turn: &TurnHandle,
+    incoming: &AgentMessage,
+    reply_to: &mut Option<tokio::sync::oneshot::Sender<Reply>>,
+    budget: &Option<Arc<crate::budget::BudgetPool>>,
+    last_call_milli: &Arc<std::sync::atomic::AtomicU64>,
+    participants: &Option<Participants>,
+    spec: &AgentSpec,
+    template: &ModelTemplate,
+    handoffs: &HandoffTools,
+    gates: HandoffGates,
+    prompt: TurnPrompt,
+    tools: PresentedTools,
+    stable_len: usize,
+) -> CoreResult<Option<TurnProduct>> {
+    let backend = shared.backend_for(template).await?;
+    let mut spend = TurnSpend {
+        hop: incoming.hop,
+        ..TurnSpend::default()
+    };
+    let result = run_turn_inner(
+        shared,
+        agent_id,
+        turn,
+        incoming,
+        reply_to,
+        budget,
+        last_call_milli,
+        participants,
+        spec,
+        template,
+        handoffs,
+        gates,
+        prompt,
+        tools,
+        stable_len,
+        &backend,
+        &mut spend,
+    )
+    .await;
+    if let Err(err) = &result {
+        settle_failed_turn(shared, agent_id, &spend, err, backend.name()).await;
+    }
+    result
+}
+
+/// 失敗したターンの清算（4 つ目の出口 — `failures.md` #103）。
+///
+/// 成功の出口が段 7 でやること（カードの累計 + `turn:` 行）を、`Err` に対しても
+/// する。**予算は既に清算済み** — 各呼び出しの予約は内側の呼び出し地点で
+/// commit（払ったと分かる失敗も含む）か Drop（払いが分からない失敗 = 全額返金）
+/// されており、ここで二度触ると二重計上になる。
+///
+/// 履歴への注記（`record_failed_turn`）と `turn failed:` 行はこれまでどおり
+/// `agent_loop` が書く。この関数が足すのは**数字だけ**。
+async fn settle_failed_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    spend: &TurnSpend,
+    err: &CoreError,
+    backend_name: &str,
+) {
+    {
+        let mut world = shared.world.write().await;
+        if let Ok(record) = world.agent_mut(agent_id) {
+            record.total_tokens += spend.tokens;
+            record.cached_tokens += spend.cached;
+            record.prompt_tokens += spend.prompt;
+        }
+    }
+    // 成功の `turn:` 行と**同じ欄を同じ順で**書く（読む側が 1 つの書式で数えられる
+    // ように）。`stop=failed:{CODE}` だけが違う。`waves` は失敗経路では数えていない
+    // ので 0 と書く（波を撒いた後に落ちたターンでも 0 — 波の記録は `plan wave:` の
+    // 行が別に持つ）。`rounds` の分母は失敗経路では読めないので `-`。
+    note!(
+        "turn: agent={agent_id} hop={} rounds={}/- waves=0 stop=failed:{} \
+         prompt={} cached={} total={} reasoning={} backend={backend_name}",
+        spend.hop,
+        spend.rounds,
+        crate::error::ErrorPayload::from(err).code,
+        spend.prompt,
+        spend.cached,
+        spend.tokens,
+        spend.reasoning,
+    );
+}
+
+/// 実行ループの本体（[`run_turn`] の内側）。台帳 `spend` は外側が持ち、
+/// ここは加算するだけ。**`?` で抜けてよい** — 抜けた後の清算は外側の仕事。
+#[allow(clippy::too_many_arguments)]
+async fn run_turn_inner(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     turn: &TurnHandle,
@@ -965,6 +1105,8 @@ async fn run_turn(
     prompt: TurnPrompt,
     tools: PresentedTools,
     stable_len: usize,
+    backend: &Arc<dyn crate::llm::LlmBackend>,
+    spend: &mut TurnSpend,
 ) -> CoreResult<Option<TurnProduct>> {
     let HandoffGates {
         use_handoff_tools,
@@ -987,17 +1129,13 @@ async fn run_turn(
     //    規則は OpenAI Agents SDK と同じ:
     //    ツールを呼んだら実行して結果を積み、もう一度呼ぶ。
     //    ツールを呼ばないテキスト出力が出たら、それが最終出力。
-    let backend = shared.backend_for(template).await?;
-    // キャッシュ読み取り分は別に数える。合計だけ見ていると、キャッシュが
-    // 一度も効いていない状態と完全に効いている状態が同じ数字に見える
+    //
+    // 消費量は台帳 `spend` に積む（`TurnSpend::absorb`）。キャッシュ読み取り分と
+    // 入力ぶんを合計と別に持つのは、合計だけ見ていると、キャッシュが一度も
+    // 効いていない状態と完全に効いている状態が同じ数字に見えるため
     // (実際、実機で 5 体全員が無キャッシュのまま数日走っていた。failures.md #33)。
-    let mut cached = 0u64;
-    // 入力ぶんも別に数える。キャッシュ率の分母は合計ではなく入力。
-    let mut prompt = 0u64;
-    let mut tokens = 0u64;
-    // 出力のうち思考に使われたぶん。**`tokens` の内数**なので、ここで数えても
-    // 合計は 1 つも動かない（Spec 32 D2）。ターンぶんで持つのは他の 3 つと同じ。
-    let mut reasoning = 0u64;
+    // キャッシュ率の分母は合計ではなく入力。思考ぶんは `tokens` の内数（Spec 32 D2）。
+    //
     // 最後の LLM 応答が使った出力トークン。**空本文の診断に使う。**
     //
     // 本文もツール呼び出しも無いのに出力トークンだけがある場合、モデルは
@@ -1031,8 +1169,7 @@ async fn run_turn(
     // 繰り返しで打ち切ったツール名。まとめ呼び出しと最終文言の分岐に使う。
     let mut repeat_stop: Option<String> = None;
     // 観測用（Spec 04 Notes 2 のトリガー判定の実測材料）。
-    // llm_rounds は上限の較正（12 で足りているか）、plan_wave は波の因果の追跡。
-    let mut llm_rounds: u32 = 0;
+    // `spend.rounds` は上限の較正（12 で足りているか）、plan_wave は波の因果の追跡。
     let mut plan_wave: u32 = 0;
 
     for iteration in 0..max_tool_iterations {
@@ -1048,13 +1185,7 @@ async fn run_turn(
                 reply_to.take(),
                 turn,
                 &sent_user_turn,
-                TurnSpend {
-                    tokens,
-                    cached,
-                    prompt,
-                    rounds: llm_rounds,
-                    hop: incoming.hop,
-                },
+                *spend,
             )
             .await.map(|()| None);
         }
@@ -1100,13 +1231,7 @@ async fn run_turn(
                             reply_to.take(),
                             pool,
                             &sent_user_turn,
-                            TurnSpend {
-                                tokens,
-                                cached,
-                                prompt,
-                                rounds: llm_rounds,
-                                hop: incoming.hop,
-                            },
+                            *spend,
                         )
                         .await.map(|()| None);
                     }
@@ -1130,28 +1255,48 @@ async fn run_turn(
             cacheable_prefix_len: stable_len,
         };
 
-        let mut response = backend.chat(request).await?;
-        llm_rounds += 1;
+        let mut response = match backend.chat(request).await {
+            Ok(response) => response,
+            Err(err) => {
+                // **払ったと分かる失敗は、成功と同じ台帳・同じ財布で清算してから抜ける**
+                // （`failures.md` #103）。以前はここが `?` で、`Err` に化けた瞬間に
+                // usage ごと捨てられ、予約は guard の Drop で**全額返金**されていた —
+                // 課金は起きているのに予算が減らず、上限を小さくした個体が失敗し
+                // 続けると予算が減らないまま課金だけが増えた。
+                //
+                // 払いが分からない失敗（400 / DNS / タイムアウト）は `usage()` が
+                // `None` なので、これまでどおり Drop の全額返金へ落ちる — ここで
+                // 見積もりを捏造して引くと、払っていない 400 の連発が予算を食う。
+                if let Some(usage) = err.usage() {
+                    spend.rounds += 1;
+                    spend.absorb(usage);
+                    if let Some(guard) = reservation {
+                        let actual = crate::budget::effective_milli(usage);
+                        last_call_milli.store(actual, std::sync::atomic::Ordering::Relaxed);
+                        guard.commit(actual);
+                    }
+                }
+                return Err(err.into());
+            }
+        };
+        spend.rounds += 1;
         note_cache_diag(
             agent_id,
             &template.model,
-            llm_rounds,
+            spend.rounds,
             &response.usage,
             system_digest,
             history_depth,
         );
         last_completion = response.usage.completion;
-        tokens += response.usage.total();
-        cached += response.usage.cache_read;
-        prompt += response.usage.prompt;
-        reasoning += response.usage.reasoning;
+        spend.absorb(&response.usage);
         // 予約を実測で清算する（Spec 11 の consume 側 / Spec 38 P2）。usage が
         // 欠けた応答（テストバックエンド・異常応答）はバイト数で保守的に
         // 見積もる — 楽観の 0 を作らない（usage_fallback の三規程）。
         //
-        // **ここへ到達しなかった経路（`?` での早期脱出）では guard の Drop が
-        // 予約を全額返す。** 実費が発生していても usage を受け取れていない
-        // ので清算のしようがなく、それは予約の有無と独立の穴（#103 の領域）。
+        // **ここへ到達しなかった経路では guard の Drop が予約を全額返す。**
+        // 払ったと分かる失敗は上の `Err` 腕で先に清算しているので、Drop へ落ちるのは
+        // 払いが分からない失敗だけ（#103 の残余 — `LlmError::usage` の doc）。
         if let Some(guard) = reservation {
             let settled = if response.usage.total() > 0 {
                 response.usage
@@ -1340,13 +1485,7 @@ async fn run_turn(
                             reply_to.take(),
                             pool,
                             &sent_user_turn,
-                            TurnSpend {
-                                tokens,
-                                cached,
-                                prompt,
-                                rounds: llm_rounds,
-                                hop: incoming.hop,
-                            },
+                            *spend,
                         )
                         .await.map(|()| None);
                     }
@@ -1393,16 +1532,13 @@ async fn run_turn(
                 note_cache_diag(
                     agent_id,
                     &template.model,
-                    llm_rounds + 1,
+                    spend.rounds + 1,
                     &response.usage,
                     system_digest,
                     history_depth,
                 );
                 last_completion = response.usage.completion;
-                tokens += response.usage.total();
-                cached += response.usage.cache_read;
-                prompt += response.usage.prompt;
-                reasoning += response.usage.reasoning;
+                spend.absorb(&response.usage);
                 // まとめ呼び出しも同じ財布で清算する（Spec 11 / Spec 38 P2）。
                 if let Some(guard) = summary_reservation {
                     let settled = if response.usage.total() > 0 {
@@ -1443,7 +1579,20 @@ async fn run_turn(
                     _ => {}
                 }
             }
-            Err(err) => summary_error = Some(err.to_string()),
+            Err(err) => {
+                // まとめの呼び出しが**払ったうえで**失敗した場合も台帳と財布へ入れる
+                // （#103 と同じ穴がここにもあった — 出力上限で切れたまとめは
+                // 課金されているのに、`summary_error` の文言にしかならなかった）。
+                if let Some(usage) = err.usage() {
+                    spend.absorb(usage);
+                    if let Some(guard) = summary_reservation {
+                        let actual = crate::budget::effective_milli(usage);
+                        last_call_milli.store(actual, std::sync::atomic::Ordering::Relaxed);
+                        guard.commit(actual);
+                    }
+                }
+                summary_error = Some(err.to_string());
+            }
         }
     }
 
@@ -1505,9 +1654,9 @@ async fn run_turn(
     {
         let mut world = shared.world.write().await;
         if let Ok(record) = world.agent_mut(agent_id) {
-            record.total_tokens += tokens;
-            record.cached_tokens += cached;
-            record.prompt_tokens += prompt;
+            record.total_tokens += spend.tokens;
+            record.cached_tokens += spend.cached;
+            record.prompt_tokens += spend.prompt;
         }
         shared.push_exchange(&mut world, agent_id, &sent_user_turn, &outcome.spoken());
     }
@@ -1545,10 +1694,17 @@ async fn run_turn(
         // `reasoning` は `total` の内数（Spec 32 D2）。**0 でも必ず出す** —
         // 思考を使わない経路で 0 が出ることが「常に 0 を出す実装」との対照になり、
         // 省くと機構が効いているか読めなくなる（D3）。
-        "turn: agent={agent_id} hop={} rounds={llm_rounds}/{max_tool_iterations} \
-         waves={plan_wave} stop={stop} prompt={prompt} cached={cached} total={tokens} \
-         reasoning={reasoning} backend={}",
+        // **欄の並びは [`settle_failed_turn`] の失敗行と揃える**（#103） — 読む側が
+        // 1 つの書式で成功と失敗を数えられるように。違うのは `stop=` の値だけ。
+        "turn: agent={agent_id} hop={} rounds={}/{max_tool_iterations} \
+         waves={plan_wave} stop={stop} prompt={} cached={} total={} \
+         reasoning={} backend={}",
         incoming.hop,
+        spend.rounds,
+        spend.prompt,
+        spend.cached,
+        spend.tokens,
+        spend.reasoning,
         // どのワイヤを通ったか（Spec 34 P5 の前に追加）。**これが無いと、
         // ワイヤを足したことを実機で確かめられない** — Spec 31 は
         // `xai search:` が偶然その役をしていたが、あの行は検索を有効にした
@@ -1560,7 +1716,7 @@ async fn run_turn(
     );
     Ok(Some(TurnProduct {
         outcome,
-        tokens,
+        tokens: spend.tokens,
         grounding,
         reasoning_summary,
     }))

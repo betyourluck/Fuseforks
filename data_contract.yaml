@@ -2514,6 +2514,15 @@ entities:
         move 消費なので commit 後に Drop は呼ばれない — committed フラグは
         持たない (フラグを足すと「commit したのに Drop も返す」二重返金が
         再び書ける形に戻る)。
+      - **払ったと分かる失敗も commit する** (2026-08-16、failures.md #103 の
+        処方)。LlmError::usage() が Some を返す variant (今は OutputTruncated
+        だけ — プロバイダが 200 を返した後にこちらが Err へ変えた形) は、
+        run_turn の呼び出し地点で **成功と同じ commit** を通してから Err を
+        伝播する。Drop の全額返金へ落ちるのは **払いが分からない失敗だけ**
+        (400 / DNS / タイムアウト)。分からないものに見積もりを捏造して引か
+        ない — 払っていない 400 の連発が予算を食う側に倒れる。
+        **1 予約につき清算は 2 腕** (成功 / 払った失敗) で、
+        tests/budget_reserve_wiring.rs が `.commit(` を 2 × 2 = 4 で数える。
       - 返金は fetch_update + min(ceiling) で**天井に飽和** (並列返金の
         一時的な天井超えが後続 debit の超過を隠す形を防御的に塞ぐ)。
 
@@ -2540,7 +2549,9 @@ entities:
       実害の経路が無い — プールはプロセス内メモリで再起動で復元しない
       (session_store の「予算は復元しない」凍結の帰結)。abort・切断時の
       under-debit (usage が返らず清算できない実費) は予約の有無と独立で
-      現行と同じ — 本契約は退行させないことだけを約束する (#103 の領域)。
+      現行と同じ — 本契約は退行させないことだけを約束する (#103 の**残余**。
+      usage が返った失敗は 2026-08-16 に清算へ入れた。残るのは usage 自体が
+      届かない切断・abort・タイムアウトで、これは見積もれない)。
   channel: "core://event"
   tagged_union_key: type
   variants:
@@ -2605,6 +2616,15 @@ entities:
     — turn 行が成功経路にしかなく、落ちたターンが 1 行も残らないうえ、
     ツールを呼ばない周 (LLM 応答待ち) は行が出ないため、
     「飛行中」と「3 分前に死んだ」が同じ無音に見えた (2026-07-31)。
+    **turn 行は失敗したターンにも出る** (2026-08-16、failures.md #103) —
+    `stop=failed:{CODE}` で、欄の並びは成功と同じ (prompt / cached / total /
+    reasoning / backend)。使用量の行はターンの出口 4 つに 1 行ずつ:
+    完走 = turn (stop=- / repeat:x / tool_limit) / 失敗 = turn (stop=failed:…) /
+    割り込み = turn interrupted / 予算 = turn budget exhausted。
+    turn failed は**理由の文面**を運ぶ行として残り、数字は turn 行が持つ
+    (失敗したターンは 2 行になる — 数えるのは turn 行だけでよい)。
+    出るのは実行ループへ入ったターンだけで、バックエンドの解決 (設定不備)
+    より前に落ちたターンは LLM を 1 度も呼んでいないので turn 行を持たない。
     不変条件:
       - 載せるのは観測行だけ。**プロンプト本文・ツール結果の本文・資格情報は
         載せない** (ログは平文でワークスペースに置かれる。failures.md #1)

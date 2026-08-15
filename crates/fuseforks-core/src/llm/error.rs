@@ -57,6 +57,13 @@ pub enum LlmError {
     /// 載せようとして `max_output_tokens` の既定 4,096 を超えた。2026-07-31）。
     /// 再試行はバックオフと課金だけを増やし、画面には「空の応答」としか
     /// 出ないため、利用者が上限に当たったことに辿り着けなかった。
+    ///
+    /// **`usage` を運ぶ。** この失敗はプロバイダが 200 を返した後に**こちらが**
+    /// `Err` へ変えるものなので、課金は起きている。以前は `limit` しか持たず、
+    /// `?` で伝播した瞬間に usage が捨てられて**カードにも予算にも `turn:` 行にも
+    /// 出なかった**（`failures.md` #103 — 上限を小さくした個体が失敗し続けると、
+    /// 予算が減らないまま課金だけが増える）。`Err` に変換する地点で
+    /// 「捨てている中身に後で数えたいものが入っていないか」を問い、入っていたので載せた。
     #[error(
         "出力上限に達し、応答が途中で切れました（{limit} トークン）。\
          モデルテンプレートの「最大出力トークン」を上げるか、依頼を分割してください"
@@ -64,6 +71,8 @@ pub enum LlmError {
     OutputTruncated {
         /// 適用されていた上限。次の一手（どこまで上げるか）の判断材料になる。
         limit: u32,
+        /// 切れた応答が払った量。統計・予算・`turn:` 行へ**失敗しても**計上する。
+        usage: crate::llm::Usage,
     },
 
     /// プロバイダが応答をブロックした（安全フィルタ・利用規約）。
@@ -139,6 +148,26 @@ impl LlmError {
         }
     }
 
+    /// **払ったことが分かっている失敗**が運ぶ使用量（`failures.md` #103）。
+    ///
+    /// エラーごとに「払ったか」が違うので一律には答えられない —
+    /// 400（生成前・払っていない）/ 出力上限（払っている）/ タイムアウト
+    /// （払ったかどうか分からない）/ DNS（払っていない）。**`Some` を返すのは
+    /// プロバイダが 200 を返した後にこちらが `Err` へ変えた variant だけ**で、
+    /// 今は [`Self::OutputTruncated`] のみ。「分からない」は `None`
+    /// （楽観の 0 と同じ値になるが、ここで見積もりを捏造しない — 見積もりは
+    /// 呼び出し側の規程 `usage_fallback` の仕事）。
+    ///
+    /// 読むのは `turn.rs` の飛行中台帳（`TurnSpend`）で、**成功と同じ経路で**
+    /// 統計・予算の清算・`turn:` 行へ入れる。variant を増やして払いが分かる形に
+    /// なったら、ここへ腕を足せば台帳側は 1 行も変わらない。
+    pub fn usage(&self) -> Option<&crate::llm::Usage> {
+        match self {
+            Self::OutputTruncated { usage, .. } => Some(usage),
+            _ => None,
+        }
+    }
+
     /// 再生成プロンプトへ添えるための生文字列（保持している場合）。
     pub fn raw_output(&self) -> Option<&str> {
         match self {
@@ -183,6 +212,32 @@ mod tests {
             .is_transient()
         );
         assert!(!LlmError::Config("キー未設定".into()).is_transient());
+    }
+
+    /// 払ったことが分かる失敗だけが usage を運ぶ（#103）。
+    ///
+    /// 対照を同じテストで取る — 400 は生成前なので `None`。`OutputTruncated` だけ
+    /// `Some` を返すことを見ないと、「常に None」の実装（= 修正前）と区別が付かない。
+    #[test]
+    fn only_paid_failures_carry_usage() {
+        let paid = crate::llm::Usage {
+            prompt: 23_440,
+            completion: 64,
+            cache_read: 12_000,
+            reasoning: 64,
+        };
+        let truncated = LlmError::OutputTruncated {
+            limit: 64,
+            usage: paid,
+        };
+        assert_eq!(truncated.usage(), Some(&paid), "上限切れは払った量を運ぶ");
+
+        let rejected = LlmError::Api {
+            status: 400,
+            body: String::new(),
+        };
+        assert_eq!(rejected.usage(), None, "400 は生成前なので払っていない");
+        assert_eq!(LlmError::EmptyResponse.usage(), None, "分からないものは None");
     }
 
     #[test]

@@ -323,23 +323,27 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
 pub fn reject_empty_reasoning(resp: ChatResponse, limit: u32) -> Result<ChatResponse, LlmError> {
     let text_empty = resp.text.as_deref().is_none_or(|t| t.trim().is_empty());
     if text_empty && resp.tool_calls.is_empty() && resp.finish == Finish::Length {
-        // **払ったトークンをここで 1 行残す。** この `Err` は `turn.rs` の
-        // `backend.chat(...).await?` で即座に伝播するので、**その先の加算
-        // （`tokens +=` / `pool.debit`）に 1 つも到達しない** — 課金は起きているのに
-        // カードの累計にも予算の消費にも `turn:` 行にも出ない。
+        // **払ったトークンをここで 1 行残し、`Err` にも載せて返す**（#103）。
         //
-        // **`usage` を持ったまま `Err` へ変わる地点はここだけ**なので、計器も
-        // ここにしか置けない。予算へ計上するかは別の判断（`failures.md` #103）。
+        // 以前は `limit` だけの `Err` を返しており、`turn.rs` の
+        // `backend.chat(...).await?` で即座に伝播して**加算（`tokens +=` /
+        // 予約の清算）に 1 つも到達しなかった** — 課金は起きているのにカードの
+        // 累計にも予算の消費にも `turn:` 行にも出ず、この 1 行だけが痕跡だった。
+        // 今は `turn.rs` の飛行中台帳が `LlmError::usage()` を読んで**成功と同じ
+        // 経路で**清算する。この行は「1 呼び出しの計器」として残す — `turn:` 行は
+        // ターンの合計なので、どの呼び出しが切れたか（`limit` と対で）はここでしか読めない。
         crate::note!(
-            "truncated: limit={} prompt={} cached={} completion={} reasoning={} \
-             （このターンは失敗するので、これらはどの計器にも計上されません）",
+            "truncated: limit={} prompt={} cached={} completion={} reasoning={}",
             limit,
             resp.usage.prompt,
             resp.usage.cache_read,
             resp.usage.completion,
             resp.usage.reasoning,
         );
-        return Err(LlmError::OutputTruncated { limit });
+        return Err(LlmError::OutputTruncated {
+            limit,
+            usage: resp.usage,
+        });
     }
     Ok(resp)
 }
@@ -706,11 +710,17 @@ mod tests {
 
     #[test]
     fn empty_reasoning_response_is_rejected_only_on_length() {
+        let paid = Usage {
+            prompt: 100,
+            completion: 4_096,
+            cache_read: 0,
+            reasoning: 4_096,
+        };
         let base = ChatResponse {
             text: Some("  ".into()),
             tool_calls: Vec::new(),
             finish: Finish::Length,
-            usage: Usage::default(),
+            usage: paid,
             grounding: Grounding::default(),
             reasoning_summary: Vec::new(),
         };
@@ -720,6 +730,8 @@ mod tests {
         assert_eq!(err.code(), "LLM_OUTPUT_TRUNCATED");
         // 次の一手が「いくつまで上げるか」なので、現在値を文言に載せる。
         assert!(err.to_string().contains("4096"), "{err}");
+        // 払った量は `Err` に乗って呼び出し側へ届く（#103 — 捨てると計上できない）。
+        assert_eq!(err.usage(), Some(&paid), "切れた応答の usage を運ぶこと");
 
         let normal_empty = ChatResponse {
             finish: Finish::Stop,

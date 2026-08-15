@@ -463,7 +463,10 @@ mod tests {
     /// 出力上限は「この依頼は無理」であって「このエージェントは無理」ではない。
     #[test]
     fn output_truncation_is_not_retryable_but_keeps_the_agent_running() {
-        let err = CoreError::Llm(crate::llm::LlmError::OutputTruncated { limit: 4_096 });
+        let err = CoreError::Llm(crate::llm::LlmError::OutputTruncated {
+            limit: 4_096,
+            usage: crate::llm::Usage::default(),
+        });
         assert!(!err.is_retryable(), "同じ依頼を再送しても同じ所で切れる");
         assert!(
             !err.stops_the_agent(),

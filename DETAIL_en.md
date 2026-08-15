@@ -1115,9 +1115,11 @@ hardware**. Switching the protocol changed **not one line of the log** unless a
 provider-specific feature such as search was used. An instrument tied to one wire
 is only evidence about **the feature**, never about the path.
 
-There are eight line kinds: `turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>`), `turn failed` (a turn that died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
+There are eight line kinds: `turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>` / **`failed:<CODE>`**), `turn failed` (the reason a turn died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
 
 The start and failure kinds were added later. The `turn` line existed **only on the success path**, so a turn that died left no line at all; and rounds that call no tool (waiting on the LLM) emit nothing. **"Still in flight" and "died three minutes ago" looked like the same silence.**
+
+**The `turn` line is now emitted for failed turns too** (2026-08-16). A turn whose output hit the token limit with an empty body had been paid for at the provider, yet had no `turn` line and showed up in neither the card totals nor the budget (`failures.md` #103). Now a failed turn still writes one `turn` line with `stop=failed:<CODE>` **in the same columns as a successful one**, and what it paid lands in the card and the budget. `turn failed` stays as the line that carries the reason text — **count `turn` lines only** (a failed turn now produces two lines). Each of the four turn exits writes exactly one usage line: `turn interrupted` for interrupts and `turn budget exhausted` for budget cut-offs.
 
 The primary purpose of a `tool` line is **`body_chars`**. Tool results are added to history and resent in every subsequent round, so **the size of one tool result affects input tokens for every round of that turn**. `rounds` and `prompt` in a `turn` line alone could not identify what made the prompt large.
 
