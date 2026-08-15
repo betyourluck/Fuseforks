@@ -2,7 +2,9 @@
 
 **ID**: 39
 **Date**: 2026-08-16
-**Status**: rev2 承認（2026-08-16。利用者査読 9 点 → 採用 5 / 訂正して採用 3 / 反証 1）→ P0 着手
+**Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
+互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）。次は P1（ブランチ）
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）

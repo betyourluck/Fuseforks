@@ -10,7 +10,8 @@
 ことを利用者が確認して Done とした**（2026-08-08）。
 **狙って撮った 1 回の観測ではなく、使い続けて壊れなかったという別種の根拠**。
 data_contract へ `session_store` ブロックを凍結（backend = redb 4.1.0 /
-テーブル 2 つ / `Record` 3 種別 / `seq` の意味と fork の inclusive /
+テーブル 2 つ / `Record` 3 種別（**続報: 2026-08-16 に [Spec 39](39_stats-view.md) P0 で
+`turn` を加算して 4 種別**。既存 3 種別のシリアライズは不変）/ `seq` の意味と fork の inclusive /
 summary の `coversUpToSeq < 自身の seq` / 単一ライターは await を跨がない /
 権限は unix のみ / 上限 / API 一覧 / 実測値）＋ `reset_rule` へ Spec 03 の
 改訂節を加算 ＋ `sessionSwitched` イベントを加算。

@@ -2283,7 +2283,9 @@ log には System 行や他人宛の発話があり、どの history にも入�
 
 `{workspace}/sessions.redb` にテーブル 2 つ（`sessions` / `records`、
 records のキーは `(session_id, seq)`）。`Record` は **message / exchange /
-summary の 3 種別**。復元しないものは波・予算・MCP 接続・稼働状態（作業の寿命）。
+summary の 3 種別**（**→ 2026-08-16 に [Spec 39](specs/39_stats-view.md) P0 で
+`turn` を足して 4 種別。** ターン 1 本の使用量。履歴の入力にはならない）。
+復元しないものは波・予算・MCP 接続・稼働状態（作業の寿命）。
 索引は作らない・要約は手動のみ。**`export_session`（JSONL 書き出し）は P1 の
 完了条件** — 読めない保存先を作るなら出口は機構の一部（この企画の診断は
 grep に依存している）。

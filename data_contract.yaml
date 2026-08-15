@@ -214,12 +214,45 @@ enums:
         title は自動生成 (最初のユーザー発話の先頭 30 字)。
         parentId / forkedAtSeq は fork で生まれたときだけ入る。
         「最新」の判定は **updatedAt** で行う (session_id の辞書順に依存しない)。
-      Record は **3 種別で閉じる** (kind の閉じた列挙。2 種別ではない):
+      Record は **4 種別で閉じる** (kind の閉じた列挙。~~3 種別~~ → **Spec 39 P0 で
+      turn を追加**・2026-08-16):
         message  : AgentMessage **丸ごと** (grounding / coRecipients も含む —
                    再開後の表示に要る)
         exchange : { agentId, sent, replied } — 履歴 1 往復。
                    **sent は実際に送った文字列そのもの** (#45 の規律を保存側へ延長)
         summary  : { agentId, text, coversUpToSeq } — 要約 1 本
+        turn     : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached,
+                     completion, reasoning, model, backend, elapsedMs }
+                   — ターン 1 本の使用量 (Spec 39 D1)。**`turn:` 行と同じ構造体
+                   (TurnSpend) から 1 実装 settle_turn が書く** — 行とレコードが
+                   食い違う形を構造で作らない。**4 出口 (完走 / 失敗 / 割り込み /
+                   予算) すべてで 1 件**。tsMs は**開始**の壁時計 (requested_at)。
+                   `completion = tokens − prompt` は**書く側の settle_turn が 1 箇所で
+                   引く** (TurnSpend は total を持つ。読む側は引き算をしない)。
+                   reasoning は completion の**内数** (Spec 32 D2)。
+                   **model は Option ではない** — テンプレートは handle_message の
+                   段 1 で 4 出口のどれより先に解決され、引けなければターン自体が
+                   始まらない (observability_rule の「解決前に落ちたターンは turn 行を
+                   持たない」と同じ位置)。
+                   stop は閉じた列挙 7 値 (出口との対応は Spec 39 D1 の表が正):
+                     completed | repeat{tool} | tool_limit | failed{code} |
+                     interrupted | budget_exhausted | reserve_short
+                   budget_exhausted / reserve_short は finish_budget_exhausted の
+                   同じ行から出る (理由を引数で運ぶ — Spec 38 D3 の区別をレコードへ)。
+                   **入れない欄**: 予算の残額 (因果ごと・プロセス寿命) / 依頼文・
+                   本文 (exchange が持つ。数字の記録に本文を混ぜない) / セッション id
+                   (キーが持つ)。
+                   **履歴の入力にならない** — restore_histories / tail_messages /
+                   fork_points は turn を読まない。fork は seq 込みで複製するので
+                   分岐先にも分岐点までの turn が残る (その会話の文脈を作った費用 —
+                   正しい記録。区別は stats_contract の scopeMeta.forkedFrom)。
+                   **互換の向きは 2 つ**: (a) 新しい版は旧い sessions.redb を
+                   **そのまま読める** (既存 3 種別のシリアライズは不変。旧い村は
+                   turn が 0 件になるだけ) / (b) 旧い版で新しい村を開くのは
+                   **非サポート** (未知の kind で records() が落ちる。summary を
+                   足したときと同じ位置づけ)。**未知 kind を WARN で飛ばす読み取りは
+                   作らない** — 読めないレコードを黙って落とすと統計が「払っていない」
+                   側へ嘘をつく (#72 の形)。
       seq:
         - u64。**セッション内で 0 から単調増加**。セッションを跨いで共有しない
         - fork は **at_seq を含めて (inclusive)** コピーする
@@ -471,6 +504,98 @@ enums:
       判定は**フロントで行う** — `AgentSnapshot.workDir` が既にあるので、
       未設定なら IPC を呼ばずに理由を出せる (AgentSettingsDialog の
       noWorkDirWarn と同じ形)。**判断に必要な情報を既に持っている層で判断する。**
+
+    stats_contract: |
+      統計画面 (Spec 39。**2026-08-16 rev2 承認 → P0 で凍結**。着地は P1〜P3)。
+      **この村がいくら払ったかを画面で読む。** 扱うのは評価基盤の**費用の層だけ**
+      (otari 側) — 「払った価値があったか」(assertions / pass rate / LLM-judge =
+      promptfoo 側) は合格条件を持たないこの村では空の欄になるので**扱わない**
+      (Spec 15 D7 の規律。材料は Spec 39 Notes 1)。
+
+      ## 原本 = Record::Turn (session_store の 4 種別目)
+
+      数字の原本は session_store の turn レコード 1 つ。**turn: 行と同じ構造体
+      (TurnSpend) から 1 実装 settle_turn が両方を書く**。AgentRecord の累計 4 欄
+      (プロセスをまたぐ生涯累計・会話をまたぐ) は原本にしない — 「いつ」を持たず、
+      セッション別・時系列が原理的に出ない。fuseforks.log からの埋め戻しも
+      **しない** (8MB 1 世代で回る + テキストの再解析は書式の 2 実装目)。
+      **帰結: この版より前の会話は遡れない。** 記録の無い会話は 0 の表を出さず
+      「この会話にはターンの記録がありません (記録はこの版から)」の 1 行だけ
+      (0 は「払っていない」と読まれる — #68 の裏返し)。
+
+      ## Scope (閉じた列挙 2 値)
+
+        Scope = { kind: "session", sessionId }   # 1 会話 (既定 = 今開いている会話)
+              | { kind: "all" }                  # この村の全会話
+
+      sessions.redb は**村に 1 ファイル** (sessions / records の 2 テーブル) なので、
+      all は list_sessions() → 各 id で records(id) を読み、turn だけを
+      (session_id, TurnRecord) に集める。**I/O はここまで。集計は純関数**:
+
+        aggregate(turns: &[(SessionId, TurnRecord)], sessions: &[SessionSummary], scope) -> StatsReport
+
+      時計を読まず I/O をしない (budget.rs と同じ形)。IPC は session_stats(scope) の
+      1 本で「集める → aggregate」の 2 段。フロントは描くだけ。
+
+      ## StatsReport (DTO)
+
+        StatsReport {
+          scope,
+          scopeMeta: {
+            recordedSince: Option<tsMs>,          # 最初の turn の開始時刻。無ければ null
+            sessions: [{ sessionId, title, forkedFrom: Option<sessionId>, turns, effective }],
+                                                  # session では 1 件、all では会話ごとの合計表
+          },
+          totals:  Slice,                         # スコープ全体
+          byAgent: [{ agentId, model, ...Slice }],
+          byStop:  [{ stop, code?, count }],      # failed は CODE ごとに分ける
+          series:  Option<{ points: [{ tsMs, agentId, effective, prompt, completion, stop }],
+                            dropped: u32 }>,      # session のみ。all では null
+        }
+        Slice { turns, failed, prompt, cached, completion, reasoning, effective,
+                cacheRate, outputShare, avgElapsedMs, avgTokensPerTurn }
+
+      規則:
+        - **effective は budget.rs の重み関数の 1 実装を呼ぶ**
+          ((prompt − cached) ×1 + cached ×0.1 + completion ×4)。
+          **reasoning は completion の内数なので足さない。** フロントで再計算しない
+        - **通貨に換算しない** (2026-08-15 利用者裁定。凍結)。価格表を持たない —
+          各社の改定に追従できない / 同じモデルでもキャッシュの帯で単価が変わる
+          (#104: gemini-3.7-flash は 19K 未満で 1.63 倍) / 通貨を出すと「合っている」と
+          読まれる (実効トークンは「予算がそう数えた」という事実、通貨は推定)。
+          出すのは利用者が自分の単価で掛けるための数字まで
+        - series は **session スコープのみ**。末尾 N = 500 件 (MESSAGE_LIMIT と同数) で、
+          落とした件数を dropped に出す (**溢れは数える** — #72)。all では null —
+          会話をまたいだ 500 件は古い会話が丸ごと消えた列になり、棒を見て
+          「その会話は払っていない」と読める。all の主役は scopeMeta.sessions の表
+        - cacheRate = prompt > 0 ? cached / prompt : 0 (AgentCard と同じ分母。
+          0 除算のガードを定義に含める) /
+          outputShare = (prompt + completion) > 0 ? completion / (prompt + completion) : 0
+        - 平均は算術平均のみ (中央値・分位は出さない — 出す根拠になる利用がまだ無い)
+        - forkedFrom は **セッションの属性** (SessionMeta.parentId) であって
+          ターンの属性ではない。fork は seq 込みで複製するので、分岐先の統計に
+          「分岐前に払ったぶん」が載る — 正しい記録 (その会話の文脈を作った費用)
+        - AgentRecord の生涯累計 (カードの数字) と統計の all の個体別合計が
+          **一致するのは、この版より後に作られた村だけ**。既存の村では累計 > 統計で、
+          欠陥ではない。カードの数字は触らない (素の合計のまま — 別の問い)
+
+      ## 画面 (Spec 39 D4)
+
+        - **3 ペインの上に重ねるダイアログではなく、3 ペインを丸ごと差し替える全画面**
+          (2026-08-16 利用者裁定)。App.vue の view: "village" | "stats" 1 つ。
+          TitleBar と StatusBar は残る (戻る導線・時計・版番号は統計中も要る)
+        - **3 ペインのグリッドは v-show で DOM に残し、StatsView を v-if で足す。**
+          v-if で外すと ChatInput の入力途中・スクロール位置・選択中の個体が捨てられる
+        - view は**保存しない** (bottomTab と同じ。起動は必ず村から)
+        - 更新は core://event の turnRecorded を **統計を開いている間だけ**受けて
+          session_stats を叩き直す。村の表示中はイベントを読み捨てる。
+          手動更新のボタン・定期 pull は置かない
+        - 描画はテーブル + SVG の棒 1 本 (session の series)。**チャートライブラリは
+          足さない** — 色は style.css の CSS 変数から引く規律 (v-network-graph を
+          選んだ理由と同じ) で、SVG なら破れない
+        - promptfoo の見出し (Requests / Total Tokens / Avg Tokens / Avg Latency) を
+          個体別の表に写す。**Tokens/Sec は出さない** (ストリーミングしないので
+          意味を持たない)。pass rate 系の 3 チャートは pass の概念が無いので出せない
 
     blackboard_contract: |
       村の黒板 = 共有作業メモ (2026-08-02 条例で運用開始。機構は読み取り投影のみ)。
@@ -2590,6 +2715,14 @@ entities:
     # 新規チャット・resume・fork・continue_latest のすべてがこれを出す
     # (「今どのセッションを見ているか」の唯一の通知路)。
     sessionSwitched: { sessionId }
+    # Spec 39 (統計画面)。ターンの使用量が Record::Turn として保存された直後に
+    # 1 通 (4 出口すべて)。**id だけを運び、数字を運ばない** — 数字は
+    # session_stats が aggregate から出す 1 経路に留める (イベントで運ぶと
+    # 2 経路目になる)。受け手はフロントの統計画面だけで、**開いていない間は
+    # 読み捨てる**。コストは agentStatsUpdated (稼働中の個体ごとに毎秒) の
+    # 1/数十以下 — rev1 で「払いすぎ」と見積もって 10 秒 pull にしたのが誤り。
+    # **加算的変更** (既存 variant の意味は変えない)。
+    turnRecorded: { agentId, sessionId }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
@@ -2625,6 +2758,14 @@ entities:
     (失敗したターンは 2 行になる — 数えるのは turn 行だけでよい)。
     出るのは実行ループへ入ったターンだけで、バックエンドの解決 (設定不備)
     より前に落ちたターンは LLM を 1 度も呼んでいないので turn 行を持たない。
+    **使用量の 4 行は末尾に `model=` を持つ** (Spec 39 P0・2026-08-16。着地は P1) —
+    turn / turn interrupted / turn budget exhausted のすべてで、**接頭辞と既存の
+    欄の並びは変えず、増えるのは末尾の `model=` 1 つだけ** (既存の grep を
+    壊さない)。後ろ 2 行に backend= / elapsed_ms= は**足さない** — 欄を揃えたければ
+    Record::Turn を読む。行とレコードで揃えるのは*出自の構造体* (TurnSpend →
+    settle_turn の 1 実装) であって*出力の欄*ではない。model は #104 が
+    「turn の prompt はラウンドの合計・モデル名も無い」と書いた欠けで、
+    帯と機種の判断がログだけでできるようになる。
     不変条件:
       - 載せるのは観測行だけ。**プロンプト本文・ツール結果の本文・資格情報は
         載せない** (ログは平文でワークスペースに置かれる。failures.md #1)
