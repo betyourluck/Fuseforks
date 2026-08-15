@@ -4,7 +4,7 @@
 **Date**: 2026-08-16
 **Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）。次は P3
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）。次は P4（台帳）→ 合流 → P5 実機
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -382,6 +382,43 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
   存在しない会話は `SessionNotFound`
 - fuseforks-core 全緑・clippy 警告ゼロ・vitest 365・`vue-tsc` 緑・GUI クレート
   `cargo check --tests` 緑
+
+## P3 実装記録（2026-08-16・同ブランチ）
+
+- **`App.vue`**: `view: ref<"village" | "stats">`（保存しない）。3 ペインのグリッドは
+  **`v-show="view === 'village'"`** で DOM に残し、`StatsView` を **`v-if`** で足す。
+  TitleBar に `statsActive` を渡し `toggle-stats` で往復
+- **`TitleBar.vue`**: 7 つ目の入口（棒グラフの SVG + 「統計」）。**他の 6 つと違いトグル**
+  なので押している間 `is-on`（`aria-pressed` も出す）— 3 ペインが丸ごと消えるので、
+  どこに居るかがタイトルバーから読めないと戻る導線が消える。`data-stats-toggle`
+- **`StatsView.vue`**: 見出し行（題 / スコープ「この会話 | 全会話」/ 単位の注記 /
+  「村へ戻る」）+ 合計タイル 6 枚（ターン・うち失敗 / 実効 / 入力・キャッシュ率 /
+  出力・うち思考 / 平均トークン・出力の割合 / 平均所要）+ **時系列の SVG 棒 1 本**
+  （session のみ・実効・色調は `is_failure` の境界）+ 会話ごとの表（all のみ・
+  `turns = 0` は「—」）+ 個体別の表（promptfoo のプロバイダ見出しの写し）+ 終わり方の
+  内訳。**記録が無い会話は 1 行だけ**（`data-stats-empty`）。取り直しは
+  `watch([scope, turnRecordedTick])` で、**古い応答が新しい応答を上書きしない**よう
+  `fetchSeq` で最後の 1 本だけ採る
+- **`useOrchestrator.ts`**: `state.turnRecordedTick`（受けた回数）。`case "turnRecorded"` は
+  **数を進めるだけで IPC を呼ばない** — 取り直すかは統計画面（`v-if` で足される間だけ）
+  が決める。これで「村の表示中に `session_stats` が走らない」が構造で決まる
+- **`lib/statsView.ts`**（純関数）: `statsNotice`（`recordedSince` だけを見る）/
+  `STOP_LABEL_KEYS`（7 値の `Record` — 閉じた列挙を網羅で持つ）/ `stopTone`
+  （`is_failure` と同じ境界）/ `seriesBars`（**線形** — 突出こそ見たいもの。全部 0 なら
+  高さ 0 の棒）/ `formatPercent` / `formatDuration`
+- **辞書 ja/en**: `titleBar.stats` / `titleBar.statsTitle` + `stats.*`（59 鍵ずつ。
+  `json` モジュールで組み立て、既存の鍵に差分ゼロ — Spec 28 P3 の教訓）
+- **`statsView.test.ts` 13 本**: 判定が `recordedSince` を見ている（`turns = 3` でも
+  `null` なら empty / `turns = 0` でも値があれば ready）/ `App.vue` の `v-show` と
+  `v-if` と「保存しない」をソース走査 / `turnRecorded` の受け手が IPC を呼ばない /
+  `seriesBars` の線形・0・色調 / 7 値の鍵が ja/en に揃う / 書式。
+  **ミューテーション**: `v-show` → `v-if` で 1 本だけ赤（予測どおり）
+- 描画ライブラリは足していない（`package.json` の依存は不変）。vitest 365 → 378・
+  `vue-tsc` 緑・`bun run build` 緑。**画面の目視は実機（P5）** — vite 単体では
+  `invoke` が落ちて起動の覆いが外れない（Spec 25 P3 と同じ）
+- **起動テストの IPC モックは触っていない** — `initialize()` は `session_stats` を
+  呼ばない（統計画面が開いたときだけ）。Tasks に書いた「足さないと赤くなる網」は
+  この形では発火しない（初期化が IPC を増やしていないので正しく緑）
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

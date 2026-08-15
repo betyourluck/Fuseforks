@@ -29,6 +29,8 @@
     "schedulesAria": "Schedules",
     "settings": "Settings",
     "settingsTitle": "System settings (village settings)",
+    "stats": "Stats",
+    "statsTitle": "Stats (what this village has paid; toggles with the three panes)",
     "minimize": "Minimize",
     "maximize": "Maximize / restore",
     "close": "Close",
@@ -907,5 +909,62 @@
     "resultOk": "{count} changed",
     "resultFailed": "{count} failed",
     "historyHeading": "Recently used"
+  },
+  "stats": {
+    "title": "Stats",
+    "unitNote": "Units are tokens; nothing is converted to currency (effective = uncached ×1 + cached ×0.1 + output ×4)",
+    "backToVillage": "Back to the village",
+    "loading": "Loading…",
+    "emptySession": "This conversation has no turn records (recording starts with this version; earlier conversations cannot be counted)",
+    "emptyAll": "This village has no turn records yet (recording starts with this version; earlier conversations cannot be counted)",
+    "scope": {
+      "session": "This conversation",
+      "all": "All conversations"
+    },
+    "tiles": {
+      "turns": "Turns",
+      "failedOf": "{count} failed",
+      "effective": "Effective tokens",
+      "effectiveNote": "Same weights as the budget",
+      "prompt": "Input",
+      "cacheRate": "Cached {rate}",
+      "completion": "Output",
+      "reasoningOf": "{count} thinking",
+      "avgTokens": "Avg tokens / turn",
+      "outputShare": "Output share {rate}",
+      "avgElapsed": "Avg latency",
+      "perTurn": "per turn"
+    },
+    "series": {
+      "title": "Effective tokens per turn (oldest first)",
+      "dropped": "{count} older turns are not shown"
+    },
+    "sessions": {
+      "title": "Conversation",
+      "forkedFrom": "Fork",
+      "forked": "forked",
+      "untitled": "(untitled)"
+    },
+    "columns": {
+      "agent": "Servant",
+      "model": "Model",
+      "turns": "Turns",
+      "failed": "Failed",
+      "effective": "Effective",
+      "avgTokens": "Avg / turn",
+      "cacheRate": "Cache rate",
+      "outputShare": "Output share",
+      "avgElapsed": "Avg latency"
+    },
+    "stopsTitle": "How turns ended",
+    "stop": {
+      "completed": "Completed",
+      "repeat": "Cut off (repeated tool call)",
+      "toolLimit": "Cut off (tool limit)",
+      "failed": "Failed",
+      "interrupted": "Interrupted by the user",
+      "budgetExhausted": "Budget exhausted",
+      "reserveShort": "Budget short (could not reserve the next call)"
+    }
   }
 }
