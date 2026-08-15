@@ -4,7 +4,7 @@
 **Date**: 2026-08-16
 **Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）。次は P2
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）。次は P3
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -351,6 +351,37 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
 - ワイヤ層は 1 行も変えていない。fuseforks-core 563 + 結合全緑・clippy 警告ゼロ・
   vitest 365・`vue-tsc` 緑（**`cargo test --workspace` は開発機で `fuseforks.exe` が
   ロックされており走らせていない** — GUI クレートは `cargo check --tests` まで）
+
+## P2 実装記録（2026-08-16・同ブランチ）
+
+- **`stats.rs` 新設**（純機構）— `StatsScope` / `StatsSlice` / `AgentStats`（Slice を
+  `#[serde(flatten)]`）/ `StopCount` / `SeriesPoint` / `StatsSeries` / `SessionStats` /
+  `StatsScopeMeta` / `StatsReport` と `aggregate(turns, sessions, scope)`。実効は
+  `budget::effective_tokens` を呼ぶ（`TurnRecord` → `Usage` へ写して渡す。`reasoning` は
+  重み関数の中でも足していない）。**丸めは `budget.rs` の切り上げに従う** — 単体で
+  `(10 − 2) ×1 + 2 ×0.1 + 3 ×4 = 20.2` を 20 と書いて赤になり、21 へ直した（重みだけ
+  でなく丸めも 1 実装に従うことが、赤で確かめられた形）
+- **`by_agent.model` は最後のターンのモデル**（テンプレートを差し替えた個体は途中で
+  変わりうる。「いま何で払っているか」）。並びは実効の多い順・同点は id 順。
+  `by_stop` は件数の多い順・同点は種別名 → コード順。`scope_meta.sessions` は渡した
+  並び（`all` は `list_sessions()` の更新の新しい順）で、**`turns` に無い会話も 0 で並ぶ**
+  （表の行として存在する。0 を「払っていない」と読ませないのはフロントの仕事 — D6）
+- **`Orchestrator::session_stats(scope)`**（`sessions.rs`）= 集める → `aggregate`。
+  `session` は `session_meta` で存在検査（無ければ `SessionNotFound`）、`all` は
+  `list_sessions()` → 各 `records()`。**`sessions.redb` は村に 1 ファイル**なので
+  `all` でも開くファイルは 1 つ（rev2 の反証どおり）
+- IPC `session_stats(scope)`（`commands.rs` + `lib.rs` の登録）/ `ipc.ts` の
+  `sessionStats` / `types.ts` に `TurnStop` / `StatsScope` / `StatsSlice` / `AgentStats` /
+  `StopCount` / `SeriesPoint` / `StatsSeries` / `SessionStats` / `StatsReport`
+- **単体 8 本**（`stats.rs`）: 重みの一致と `reasoning` の二重加算なし / 空入力で
+  `recorded_since = None` と比 0 / `prompt = 0` で `cache_rate = 0` / `by_stop` の CODE 分割と
+  `failed` の数え / `by_agent` の並びと最後のモデル / `series` の末尾 N と `dropped`・
+  逆順入力でも並ぶ・`all` では `None` / `all` の会話ごとの表と `forked_from` /
+  ワイヤ形（`kind` タグ・平坦な Slice・`code` は無ければ出ない）。**結合 1 本**
+  （`tests/turn_records.rs`）: 2 ターン後に `session` / `all` の両スコープで数字が出て、
+  存在しない会話は `SessionNotFound`
+- fuseforks-core 全緑・clippy 警告ゼロ・vitest 365・`vue-tsc` 緑・GUI クレート
+  `cargo check --tests` 緑
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

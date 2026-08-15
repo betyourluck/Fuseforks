@@ -360,3 +360,52 @@ async fn a_reserve_short_turn_writes_a_turn_record() {
     assert_eq!(r["rounds"], 1);
     assert_eq!(r["prompt"], 2_400);
 }
+
+/// `session_stats`（集める → `aggregate` の 2 段）が保存した `Turn` から数字を出す。
+/// `session` と `all` の両スコープ、存在しない会話は `SESSION_NOT_FOUND`。
+#[tokio::test]
+async fn session_stats_reads_the_saved_turns_in_both_scopes() {
+    use fuseforks_core::stats::StatsScope;
+
+    let dir = TempDir::new("stats");
+    let usage = Usage { prompt: 1_000, completion: 50, cache_read: 200, reasoning: 0 };
+    let orchestrator = setup(&dir, Arc::new(PlainBackend(usage)), None).await;
+    let id = AgentId::from("agent_01");
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "こんにちは").await.unwrap();
+    orchestrator.send_user_message(&id, "もう一度").await.unwrap();
+    let _ = drain(&mut rx, Duration::from_millis(400)).await;
+
+    let session = orchestrator.current_session();
+    let report = orchestrator
+        .session_stats(StatsScope::Session { session_id: session.clone() })
+        .await
+        .expect("集計できること");
+    assert_eq!(report.totals.turns, 2);
+    // (1000 − 200) ×1 + 200 ×0.1 + 50 ×4 = 1,020 × 2 ターン
+    assert_eq!(report.totals.effective, 2_040, "実効は budget.rs の重み");
+    assert!(report.scope_meta.recorded_since.is_some(), "記録がある会話");
+    assert_eq!(report.scope_meta.sessions.len(), 1);
+    assert_eq!(report.scope_meta.sessions[0].session_id, session);
+    assert_eq!(report.by_agent.len(), 1);
+    assert_eq!(report.by_agent[0].model, "mock-model");
+    assert_eq!(report.series.as_ref().map(|s| s.points.len()), Some(2));
+
+    let all = orchestrator.session_stats(StatsScope::All).await.unwrap();
+    assert_eq!(all.totals.turns, 2);
+    assert!(all.series.is_none(), "all では series を出さない");
+    assert!(
+        all.scope_meta.sessions.iter().any(|s| s.session_id == session && s.turns == 2),
+        "会話ごとの合計表に今の会話が居る: {:#?}",
+        all.scope_meta.sessions
+    );
+
+    let missing = orchestrator
+        .session_stats(StatsScope::Session { session_id: "no-such".into() })
+        .await;
+    assert!(
+        matches!(missing, Err(fuseforks_core::CoreError::SessionNotFound(_))),
+        "存在しない会話は名指しで失敗: {missing:?}"
+    );
+}

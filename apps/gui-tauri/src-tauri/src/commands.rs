@@ -849,6 +849,16 @@ pub async fn export_session(
     Ok(dest.display().to_string())
 }
 
+/// 統計（Spec 39）。`scope` は `{ kind: "session", sessionId } | { kind: "all" }`。
+/// 集めるのはコア（`Orchestrator::session_stats`）、畳むのは純関数、ここは渡すだけ。
+#[tauri::command]
+pub async fn session_stats(
+    state: State<'_, AppState>,
+    scope: fuseforks_core::stats::StatsScope,
+) -> CoreResult<fuseforks_core::stats::StatsReport> {
+    state.orchestrator.session_stats(scope).await
+}
+
 // ---- 予定（Spec 07） -----------------------------------------------------------
 
 /// UI の一覧 1 行ぶんの予定。
