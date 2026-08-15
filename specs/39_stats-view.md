@@ -4,7 +4,7 @@
 **Date**: 2026-08-16
 **Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）。次は P4（台帳）→ 合流 → P5 実機
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）→ **P4 完了**（同日。README 日英 / DETAIL 日英 / CLAUDE.md）→ 合流。**残るは P5 実機（検収 6 件）**
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -419,6 +419,21 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
 - **起動テストの IPC モックは触っていない** — `initialize()` は `session_stats` を
   呼ばない（統計画面が開いたときだけ）。Tasks に書いた「足さないと赤くなる網」は
   この形では発火しない（初期化が IPC を増やしていないので正しく緑）
+
+## P4 台帳記録（2026-08-16）
+
+- README 日英の「何ができるか」に **📊 統計** の 1 行（通貨に換算しない / 失敗の払いも入る /
+  記録はこの版から）。**README は 161 → 162 行**で、CLAUDE.md の「160 行以内」の
+  上限を Spec 36/37 の頃から 1 行超えており、本 Spec でさらに 1 行。守りたいのは
+  「最初に探すものが埋まっていない」ことで、`bun install` は今も `## ビルド` の下に在る
+- DETAIL 日英: ディレクトリ木に `StatsView.vue` / TitleBar の入口列に「統計」/ 画面の
+  構成表に **全画面** の行（モーダルではない、を明記）/ ログの節に「4 行の末尾 `model=`」と
+  「同じ数字は `sessions.redb` の `turn` レコードにも残る。この版より前の会話には無い」
+- CLAUDE.md: Spec の状態を P0〜P4 完了へ + 次に触る人が要る 3 点 / #104 の節の
+  「`turn:` にモデル名も無い」に取り消し線と続報
+- `data_contract` は P0 で凍結済み。P1〜P3 で契約から外れた点は 1 つ — `tsMs` の注記
+  「(requested_at)」が Spec D1 の取り違えを写しており、P4 で「`run_turn` の入口 =
+  `TurnContext.started`。`TurnHandle.requested_at` ではない」へ訂正した
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

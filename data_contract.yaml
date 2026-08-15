@@ -226,7 +226,9 @@ enums:
                    — ターン 1 本の使用量 (Spec 39 D1)。**`turn:` 行と同じ構造体
                    (TurnSpend) から 1 実装 settle_turn が書く** — 行とレコードが
                    食い違う形を構造で作らない。**4 出口 (完走 / 失敗 / 割り込み /
-                   予算) すべてで 1 件**。tsMs は**開始**の壁時計 (requested_at)。
+                   予算) すべてで 1 件**。tsMs は**ターン開始**の壁時計
+                   (`run_turn` の入口 = TurnContext.started。**TurnHandle.requested_at
+                   ではない** — あれは割り込みを要求された時刻。P1 で訂正)。
                    `completion = tokens − prompt` は**書く側の settle_turn が 1 箇所で
                    引く** (TurnSpend は total を持つ。読む側は引き算をしない)。
                    reasoning は completion の**内数** (Spec 32 D2)。
