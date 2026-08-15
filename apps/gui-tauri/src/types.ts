@@ -708,6 +708,105 @@ export interface ForkPoint {
   tsMs: number;
 }
 
+// ---- 統計（Spec 39）— stats_contract のミラー ------------------------------------
+
+/**
+ * ターンの終わり方（`Record::Turn.stop`）。閉じた列挙 7 値。`repeat` は止めたツール名、
+ * `failed` はエラーのコードを持つ。
+ */
+export type TurnStop =
+  | { kind: "completed" }
+  | { kind: "repeat"; tool: string }
+  | { kind: "tool_limit" }
+  | { kind: "failed"; code: string }
+  | { kind: "interrupted" }
+  | { kind: "budget_exhausted" }
+  | { kind: "reserve_short" };
+
+/** 集計の範囲。閉じた列挙 2 値。 */
+export type StatsScope =
+  | { kind: "session"; sessionId: string }
+  | { kind: "all" };
+
+/** 使用量の 1 切片（村全体 / 個体別で同じ形）。実効は `budget.rs` の 1 実装。 */
+export interface StatsSlice {
+  turns: number;
+  /** 払ったが答えが無かったターン（`is_failure`）。 */
+  failed: number;
+  prompt: number;
+  cached: number;
+  completion: number;
+  /** `completion` の内数。 */
+  reasoning: number;
+  /** 実効トークン（Spec 11 の重み）。**通貨ではない。** */
+  effective: number;
+  /** `prompt > 0 ? cached / prompt : 0`。 */
+  cacheRate: number;
+  /** `(prompt + completion) > 0 ? completion / (prompt + completion) : 0`。 */
+  outputShare: number;
+  avgElapsedMs: number;
+  avgTokensPerTurn: number;
+}
+
+/** 個体別の 1 行（Slice を平坦に持つ）。`model` は**最後のターン**のモデル名。 */
+export interface AgentStats extends StatsSlice {
+  agentId: AgentId;
+  model: string;
+}
+
+/** 終わり方の内訳の 1 行。`failed` は CODE ごとに分かれる。 */
+export interface StopCount {
+  stop: TurnStop["kind"];
+  code?: string;
+  count: number;
+}
+
+/** 時系列の 1 点（ターン 1 本）。 */
+export interface SeriesPoint {
+  tsMs: number;
+  agentId: AgentId;
+  effective: number;
+  prompt: number;
+  completion: number;
+  stop: TurnStop;
+}
+
+/** 時系列（`session` スコープだけ）。末尾 500 件・落とした件数は `dropped`。 */
+export interface StatsSeries {
+  points: SeriesPoint[];
+  dropped: number;
+}
+
+/** 会話ごとの合計。`forkedFrom` はセッションの属性（分岐元）。 */
+export interface SessionStats {
+  sessionId: string;
+  title: string;
+  forkedFrom?: string;
+  turns: number;
+  effective: number;
+}
+
+/** 集計の結果（IPC `session_stats` の戻り）。 */
+export interface StatsReport {
+  scope: StatsScope;
+  scopeMeta: {
+    /**
+     * スコープ内で最初のターンの開始時刻。**`null` なら記録が無い**（この版より前の
+     * 会話）— 0 の表を出さず「記録はこの版から」と言う（D6）。
+     */
+    recordedSince: number | null;
+    /** `session` では 1 件、`all` では会話ごとの合計表。 */
+    sessions: SessionStats[];
+  };
+  totals: StatsSlice;
+  /** 実効の多い順。 */
+  byAgent: AgentStats[];
+  /** 件数の多い順。 */
+  byStop: StopCount[];
+  /** `session` のみ。`all` では `null`。 */
+  series: StatsSeries | null;
+}
+
 /** 村の黒板の付箋 1 枚（work_dir の `blackboard/` 直下。読み取り専用の投影）。 */
 export interface BlackboardNote {
   /** 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。 */
@@ -781,6 +880,12 @@ export type CoreEvent =
    * （`conversationCleared` → `sessionSwitched`）で 2 本出る。
    */
   | { type: "sessionSwitched"; sessionId: string }
+  /**
+   * ターンの使用量が `Record::Turn` として保存された（Spec 39。4 出口すべて）。
+   * **id だけ・数字を運ばない** — 数字は `session_stats` が集計から出す 1 経路。
+   * 受け手は統計画面だけで、開いていない間は読み捨てる。**加算的変更**。
+   */
+  | { type: "turnRecorded"; agentId: AgentId; sessionId: string }
   | {
       type: "toolInvoked";
       agentId: AgentId;

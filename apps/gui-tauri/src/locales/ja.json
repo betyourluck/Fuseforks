@@ -29,6 +29,8 @@
     "schedulesAria": "予定",
     "settings": "システム設定",
     "settingsTitle": "システム設定（村の設定）",
+    "stats": "統計",
+    "statsTitle": "統計（この村がいくら払ったか。3 ペインと切り替え）",
     "minimize": "最小化",
     "maximize": "最大化 / 元に戻す",
     "close": "閉じる",
@@ -907,5 +909,62 @@
     "resultOk": "変更 {count} 体",
     "resultFailed": "失敗 {count} 体",
     "historyHeading": "最近使ったフォルダ"
+  },
+  "stats": {
+    "title": "統計",
+    "unitNote": "単位はトークン。通貨には換算しません（実効 = 未キャッシュ ×1 + キャッシュ ×0.1 + 出力 ×4）",
+    "backToVillage": "村へ戻る",
+    "loading": "読み込み中…",
+    "emptySession": "この会話にはターンの記録がありません（記録はこの版から。それより前の会話は数えられません）",
+    "emptyAll": "この村にはまだターンの記録がありません（記録はこの版から。それより前の会話は数えられません）",
+    "scope": {
+      "session": "この会話",
+      "all": "全会話"
+    },
+    "tiles": {
+      "turns": "ターン",
+      "failedOf": "うち失敗 {count}",
+      "effective": "実効トークン",
+      "effectiveNote": "予算と同じ重み",
+      "prompt": "入力",
+      "cacheRate": "キャッシュ {rate}",
+      "completion": "出力",
+      "reasoningOf": "うち思考 {count}",
+      "avgTokens": "平均トークン / ターン",
+      "outputShare": "出力の割合 {rate}",
+      "avgElapsed": "平均所要",
+      "perTurn": "1 ターンあたり"
+    },
+    "series": {
+      "title": "ターンごとの実効トークン（古い順）",
+      "dropped": "古い {count} 件は表示していません"
+    },
+    "sessions": {
+      "title": "会話",
+      "forkedFrom": "分岐",
+      "forked": "分岐した会話",
+      "untitled": "（無題）"
+    },
+    "columns": {
+      "agent": "サーヴァント",
+      "model": "モデル",
+      "turns": "ターン",
+      "failed": "失敗",
+      "effective": "実効",
+      "avgTokens": "平均 / ターン",
+      "cacheRate": "キャッシュ率",
+      "outputShare": "出力の割合",
+      "avgElapsed": "平均所要"
+    },
+    "stopsTitle": "終わり方の内訳",
+    "stop": {
+      "completed": "完走",
+      "repeat": "繰り返しで打ち切り",
+      "toolLimit": "ツール上限で打ち切り",
+      "failed": "失敗",
+      "interrupted": "ユーザーが打ち切り",
+      "budgetExhausted": "予算切れ",
+      "reserveShort": "予算不足（次の呼び出しぶんを確保できず）"
+    }
   }
 }

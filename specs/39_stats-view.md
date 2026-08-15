@@ -4,7 +4,7 @@
 **Date**: 2026-08-16
 **Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）。次は P1（ブランチ）
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）→ **P4 完了**（同日。README 日英 / DETAIL 日英 / CLAUDE.md）→ 合流。**残るは P5 実機（検収 6 件）**
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -309,6 +309,131 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
 - **P4**: 台帳 — README 日英（画面の構成表 + 「何ができるか」）/ DETAIL 日英
   （画面の節 + workspace 木は変わらない）/ CLAUDE.md / `failures.md` は出たら
 - **P5**: 実機 — 下の検収 6 件
+
+## P1 実装記録（2026-08-16・ブランチ `20260816_stats`）
+
+- **D1 の `elapsedMs` の起点を訂正した。** 起票時に「`requested_at.elapsed()` — 割り込み経路
+  だけが持っていた」と書いたが、**`TurnHandle.requested_at` は割り込みを要求された時刻**で、
+  割り込み経路の「要求から N 秒」の起点。ターンの開始時刻は**どこにも無かった**。
+  `TurnContext { started, started_ts_ms, model, backend }` を新設し、`run_turn` の入口
+  （バックエンド解決の直後）で 1 度作って 4 出口へ `&` で渡す。`tsMs` / `elapsedMs` は
+  ここから。`turn interrupted:` 行の `elapsed_ms=`（要求からの経過）とは**別の量**で、
+  欄名が同じでも取り違えないよう `settle_turn` の doc に書いた
+- **`settle_turn` の 1 実装** = (1) カードの累計へ積む（**4 出口に散っていた加算を
+  ここへ移した** — 出口ごとに積むと片方だけ既定値のまま化ける、#103 の形） (2)
+  `TurnRecord` を組んで `persist` (3) 書けたら `TurnRecorded`。ログ行は D2 のとおり
+  **`turn:` の 2 出口（完走 / 失敗）はここが書き、後ろ 2 出口は呼び出し側が自分の行を
+  書いて末尾に `model=` だけ足す**（数字は戻り値の `TurnRecord` から読む）。
+  `completion = tokens − prompt` はここの 1 箇所
+- **`persist` が `bool` を返すようになった**（書けたか）。保存先を持たない村・書けなかった
+  村では `TurnRecorded` を出さない — 出すとフロントが無い記録を取りに行く
+- **`budget_stop_reason` を新設**（`budget stop:` の 1 行 + `TurnStop` の 2 値を同じ判定から
+  返す）。以前は予約の 2 箇所（周回境界 / まとめ呼び出しの前）に同じ `note!` が
+  複製されており、理由は行にしか無かった。`finish_budget_exhausted` に `stop` の引数が
+  増え、`debug_assert!` で 2 値以外を弾く。**`tests/budget_reserve_wiring.rs` の
+  ソース走査が赤くなった**（`"budget stop:` のリテラルを 2 で数えていた）→
+  「書式は 1 実装 + 呼び出し 2 箇所」へ理由つきで更新
+- **読み口は `export_session` の JSONL**（`tests/turn_records.rs`）。redb はバイナリなので、
+  人が読める出口が機構の一部（Spec 12）— 5 本がそれを通ることで「JSONL に
+  `kind: "turn"` が出る」も同時に留まる。**結合 5 本 = `stop` の 5 値**（完走 /
+  `failed:LLM_OUTPUT_TRUNCATED` / `interrupt_turn` / 天井 1,000 で `budget_exhausted` /
+  天井 3,000・実費 2,400 で `reserve_short`）。**ミューテーション 3 回とも予測どおり** —
+  書き込みを外す → 5 本赤 / 失敗出口だけ戻す → 失敗の 1 本 / 理由を `exhausted` 固定 →
+  `reserve_short` の 1 本
+- **単体 2 本**（`session_store.rs`）— `Turn` は `restore_histories` / `tail_messages` /
+  `fork_points` のどれにも現れず、seq は 4 種別で 1 つの列、fork は seq 込みで複製、
+  JSON は `kind: "turn"` + camelCase + `stop: { kind, … }` / `TurnStop::log_label` が
+  `turn:` 行の `stop=` と 1 対 1。**観察 1 つ**: `fork_points` の `at_seq` は turn の seq を
+  座標として数える（turn は候補にならないが、直前の seq が turn ならそこを指す）— 分岐は
+  seq 込み複製なので正しい
+- **TS の `CoreEvent` union に `turnRecorded` を足した**（ワイヤ形のミラー）。受け手は
+  P3（`useOrchestrator` の `switch` に `default` は無く、未知の型は読み捨てられる）
+- ワイヤ層は 1 行も変えていない。fuseforks-core 563 + 結合全緑・clippy 警告ゼロ・
+  vitest 365・`vue-tsc` 緑（**`cargo test --workspace` は開発機で `fuseforks.exe` が
+  ロックされており走らせていない** — GUI クレートは `cargo check --tests` まで）
+
+## P2 実装記録（2026-08-16・同ブランチ）
+
+- **`stats.rs` 新設**（純機構）— `StatsScope` / `StatsSlice` / `AgentStats`（Slice を
+  `#[serde(flatten)]`）/ `StopCount` / `SeriesPoint` / `StatsSeries` / `SessionStats` /
+  `StatsScopeMeta` / `StatsReport` と `aggregate(turns, sessions, scope)`。実効は
+  `budget::effective_tokens` を呼ぶ（`TurnRecord` → `Usage` へ写して渡す。`reasoning` は
+  重み関数の中でも足していない）。**丸めは `budget.rs` の切り上げに従う** — 単体で
+  `(10 − 2) ×1 + 2 ×0.1 + 3 ×4 = 20.2` を 20 と書いて赤になり、21 へ直した（重みだけ
+  でなく丸めも 1 実装に従うことが、赤で確かめられた形）
+- **`by_agent.model` は最後のターンのモデル**（テンプレートを差し替えた個体は途中で
+  変わりうる。「いま何で払っているか」）。並びは実効の多い順・同点は id 順。
+  `by_stop` は件数の多い順・同点は種別名 → コード順。`scope_meta.sessions` は渡した
+  並び（`all` は `list_sessions()` の更新の新しい順）で、**`turns` に無い会話も 0 で並ぶ**
+  （表の行として存在する。0 を「払っていない」と読ませないのはフロントの仕事 — D6）
+- **`Orchestrator::session_stats(scope)`**（`sessions.rs`）= 集める → `aggregate`。
+  `session` は `session_meta` で存在検査（無ければ `SessionNotFound`）、`all` は
+  `list_sessions()` → 各 `records()`。**`sessions.redb` は村に 1 ファイル**なので
+  `all` でも開くファイルは 1 つ（rev2 の反証どおり）
+- IPC `session_stats(scope)`（`commands.rs` + `lib.rs` の登録）/ `ipc.ts` の
+  `sessionStats` / `types.ts` に `TurnStop` / `StatsScope` / `StatsSlice` / `AgentStats` /
+  `StopCount` / `SeriesPoint` / `StatsSeries` / `SessionStats` / `StatsReport`
+- **単体 8 本**（`stats.rs`）: 重みの一致と `reasoning` の二重加算なし / 空入力で
+  `recorded_since = None` と比 0 / `prompt = 0` で `cache_rate = 0` / `by_stop` の CODE 分割と
+  `failed` の数え / `by_agent` の並びと最後のモデル / `series` の末尾 N と `dropped`・
+  逆順入力でも並ぶ・`all` では `None` / `all` の会話ごとの表と `forked_from` /
+  ワイヤ形（`kind` タグ・平坦な Slice・`code` は無ければ出ない）。**結合 1 本**
+  （`tests/turn_records.rs`）: 2 ターン後に `session` / `all` の両スコープで数字が出て、
+  存在しない会話は `SessionNotFound`
+- fuseforks-core 全緑・clippy 警告ゼロ・vitest 365・`vue-tsc` 緑・GUI クレート
+  `cargo check --tests` 緑
+
+## P3 実装記録（2026-08-16・同ブランチ）
+
+- **`App.vue`**: `view: ref<"village" | "stats">`（保存しない）。3 ペインのグリッドは
+  **`v-show="view === 'village'"`** で DOM に残し、`StatsView` を **`v-if`** で足す。
+  TitleBar に `statsActive` を渡し `toggle-stats` で往復
+- **`TitleBar.vue`**: 7 つ目の入口（棒グラフの SVG + 「統計」）。**他の 6 つと違いトグル**
+  なので押している間 `is-on`（`aria-pressed` も出す）— 3 ペインが丸ごと消えるので、
+  どこに居るかがタイトルバーから読めないと戻る導線が消える。`data-stats-toggle`
+- **`StatsView.vue`**: 見出し行（題 / スコープ「この会話 | 全会話」/ 単位の注記 /
+  「村へ戻る」）+ 合計タイル 6 枚（ターン・うち失敗 / 実効 / 入力・キャッシュ率 /
+  出力・うち思考 / 平均トークン・出力の割合 / 平均所要）+ **時系列の SVG 棒 1 本**
+  （session のみ・実効・色調は `is_failure` の境界）+ 会話ごとの表（all のみ・
+  `turns = 0` は「—」）+ 個体別の表（promptfoo のプロバイダ見出しの写し）+ 終わり方の
+  内訳。**記録が無い会話は 1 行だけ**（`data-stats-empty`）。取り直しは
+  `watch([scope, turnRecordedTick])` で、**古い応答が新しい応答を上書きしない**よう
+  `fetchSeq` で最後の 1 本だけ採る
+- **`useOrchestrator.ts`**: `state.turnRecordedTick`（受けた回数）。`case "turnRecorded"` は
+  **数を進めるだけで IPC を呼ばない** — 取り直すかは統計画面（`v-if` で足される間だけ）
+  が決める。これで「村の表示中に `session_stats` が走らない」が構造で決まる
+- **`lib/statsView.ts`**（純関数）: `statsNotice`（`recordedSince` だけを見る）/
+  `STOP_LABEL_KEYS`（7 値の `Record` — 閉じた列挙を網羅で持つ）/ `stopTone`
+  （`is_failure` と同じ境界）/ `seriesBars`（**線形** — 突出こそ見たいもの。全部 0 なら
+  高さ 0 の棒）/ `formatPercent` / `formatDuration`
+- **辞書 ja/en**: `titleBar.stats` / `titleBar.statsTitle` + `stats.*`（59 鍵ずつ。
+  `json` モジュールで組み立て、既存の鍵に差分ゼロ — Spec 28 P3 の教訓）
+- **`statsView.test.ts` 13 本**: 判定が `recordedSince` を見ている（`turns = 3` でも
+  `null` なら empty / `turns = 0` でも値があれば ready）/ `App.vue` の `v-show` と
+  `v-if` と「保存しない」をソース走査 / `turnRecorded` の受け手が IPC を呼ばない /
+  `seriesBars` の線形・0・色調 / 7 値の鍵が ja/en に揃う / 書式。
+  **ミューテーション**: `v-show` → `v-if` で 1 本だけ赤（予測どおり）
+- 描画ライブラリは足していない（`package.json` の依存は不変）。vitest 365 → 378・
+  `vue-tsc` 緑・`bun run build` 緑。**画面の目視は実機（P5）** — vite 単体では
+  `invoke` が落ちて起動の覆いが外れない（Spec 25 P3 と同じ）
+- **起動テストの IPC モックは触っていない** — `initialize()` は `session_stats` を
+  呼ばない（統計画面が開いたときだけ）。Tasks に書いた「足さないと赤くなる網」は
+  この形では発火しない（初期化が IPC を増やしていないので正しく緑）
+
+## P4 台帳記録（2026-08-16）
+
+- README 日英の「何ができるか」に **📊 統計** の 1 行（通貨に換算しない / 失敗の払いも入る /
+  記録はこの版から）。**README は 161 → 162 行**で、CLAUDE.md の「160 行以内」の
+  上限を Spec 36/37 の頃から 1 行超えており、本 Spec でさらに 1 行。守りたいのは
+  「最初に探すものが埋まっていない」ことで、`bun install` は今も `## ビルド` の下に在る
+- DETAIL 日英: ディレクトリ木に `StatsView.vue` / TitleBar の入口列に「統計」/ 画面の
+  構成表に **全画面** の行（モーダルではない、を明記）/ ログの節に「4 行の末尾 `model=`」と
+  「同じ数字は `sessions.redb` の `turn` レコードにも残る。この版より前の会話には無い」
+- CLAUDE.md: Spec の状態を P0〜P4 完了へ + 次に触る人が要る 3 点 / #104 の節の
+  「`turn:` にモデル名も無い」に取り消し線と続報
+- `data_contract` は P0 で凍結済み。P1〜P3 で契約から外れた点は 1 つ — `tsMs` の注記
+  「(requested_at)」が Spec D1 の取り違えを写しており、P4 で「`run_turn` の入口 =
+  `TurnContext.started`。`TurnHandle.requested_at` ではない」へ訂正した
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

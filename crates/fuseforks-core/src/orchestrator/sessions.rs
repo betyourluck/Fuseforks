@@ -190,6 +190,44 @@ impl Orchestrator {
         self.sessions()?.export_session_to_file(session_id, dest)
     }
 
+    /// 統計（Spec 39 D3）— **集める → `aggregate`** の 2 段。
+    ///
+    /// I/O はここまで: `session` なら 1 会話の、`all` なら `list_sessions()` の全会話の
+    /// `records()` を読み、`Record::Turn` だけを `(session_id, TurnRecord)` に集める。
+    /// 畳むのは [`crate::stats::aggregate`]（純関数・時計を読まない）。
+    /// `sessions.redb` は村に 1 ファイルなので、`all` でも開くファイルは 1 つ。
+    ///
+    /// 存在しない会話は `SessionNotFound`。**この版より前の会話は `Turn` を持たない**ので
+    /// `scope_meta.recorded_since = None` で返る — 呼び出し側は 0 の表を出さない（D6）。
+    ///
+    /// # Errors
+    /// 保存先が開けていない、会話が存在しない、または読み込みに失敗した場合。
+    pub async fn session_stats(&self, scope: crate::stats::StatsScope) -> CoreResult<crate::stats::StatsReport> {
+        use crate::session_store::Record;
+        let store = self.sessions()?;
+        let sessions: Vec<SessionSummary> = match &scope {
+            crate::stats::StatsScope::Session { session_id } => {
+                let meta = store
+                    .session_meta(session_id)?
+                    .ok_or_else(|| CoreError::SessionNotFound(session_id.clone()))?;
+                vec![SessionSummary {
+                    id: session_id.clone(),
+                    meta,
+                }]
+            }
+            crate::stats::StatsScope::All => store.list_sessions()?,
+        };
+        let mut turns = Vec::new();
+        for session in &sessions {
+            for (_, record) in store.records(&session.id)? {
+                if let Record::Turn(turn) = record {
+                    turns.push((session.id.clone(), *turn));
+                }
+            }
+        }
+        Ok(crate::stats::aggregate(&turns, &sessions, scope))
+    }
+
     /// 保存先を借りる。開けていなければ、直し方を添えて失敗を返す。
     fn sessions(&self) -> CoreResult<&SessionStore> {
         self.shared

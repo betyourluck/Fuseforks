@@ -175,6 +175,12 @@ interface OrchestratorState {
   sessions: SessionSummary[];
   /** いま開いている会話の ID。保存先が開けていない村では空文字。 */
   currentSessionId: string;
+  /**
+   * `turnRecorded`（Spec 39）を受けた回数。**数字は運ばない** — 統計画面が
+   * これを見て `sessionStats` を叩き直す。画面が閉じている間は誰も読まないので、
+   * ここで IPC を呼ばない（村の表示中に `session_stats` が走らないのはこの構造で決まる）。
+   */
+  turnRecordedTick: number;
 }
 
 const state = reactive<OrchestratorState>({
@@ -204,6 +210,7 @@ const state = reactive<OrchestratorState>({
   planWaves: [],
   sessions: [],
   currentSessionId: "",
+  turnRecordedTick: 0,
 });
 
 /** ツール実行の連番。イベントに ID が無いので受け手側で振る。 */
@@ -591,6 +598,12 @@ function applyEvent(event: CoreEvent): void {
       // **ここでは通知を出さない**（Spec 12）。この 1 本は新規チャットでも
       // 開き直しでも分岐でも同じように飛ぶので、「新規チャットを開始しました」と
       // 言うと開き直しのときに嘘になる。何が起きたかは操作した側が知っている。
+      break;
+
+    case "turnRecorded":
+      // ターンの使用量が保存された（Spec 39）。id だけの通知なので、ここでは
+      // 数を進めるだけ — 取り直すかは統計画面（開いている間だけ）が決める。
+      state.turnRecordedTick += 1;
       break;
 
     case "sessionSwitched":

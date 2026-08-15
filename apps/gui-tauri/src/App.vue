@@ -30,6 +30,7 @@ import OrdinanceDialog from "./components/OrdinanceDialog.vue";
 import PlanWavePane from "./components/PlanWavePane.vue";
 import ScheduleDialog from "./components/ScheduleDialog.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
+import StatsView from "./components/StatsView.vue";
 import CommandApprovalDialog from "./components/CommandApprovalDialog.vue";
 import RoleDialog from "./components/RoleDialog.vue";
 import PaneSplitter from "./components/PaneSplitter.vue";
@@ -60,6 +61,12 @@ const { layout, resize, reset } = usePaneLayout();
  * 同じとは限らない。
  */
 const bottomTab = ref<BottomTab>("waves");
+/**
+ * 全画面の切り替え（Spec 39 D4）。`"village"` = 3 ペイン / `"stats"` = 統計画面。
+ * **保存しない**（`bottomTab` と同じ）— 起動は必ず村から。「開いただけで統計が
+ * 出る」形にすると、次に来た人が村の状態を見る前に数字を見る。
+ */
+const view = ref<"village" | "stats">("village");
 
 /** 村の条例ダイアログの表示状態。 */
 const ordinanceOpen = ref(false);
@@ -148,14 +155,23 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-surface-0 text-ink">
   <TitleBar
+    :stats-active="view === 'stats'"
     @open-ordinance="ordinanceOpen = true"
     @open-roles="rolesOpen = true"
     @open-command-approval="commandApprovalOpen = true"
     @open-mcp="mcpOpen = true"
     @open-schedules="schedulesOpen = true"
+    @toggle-stats="view = view === 'stats' ? 'village' : 'stats'"
     @open-settings="settingsOpen = true"
   />
+  <!--
+    統計画面（Spec 39 D4）は 3 ペインを丸ごと差し替える。**グリッドは v-show で
+    DOM に残す** — v-if で外すと入力欄の途中の文・スクロール位置・選択中の個体が
+    捨てられる。StatsView は v-if（開いている間だけ sessionStats を叩く）。
+  -->
+  <StatsView v-if="view === 'stats'" @close="view = 'village'" />
   <div
+    v-show="view === 'village'"
     class="grid min-h-0 flex-1 overflow-hidden"
     :style="{ gridTemplateColumns: columns }"
   >

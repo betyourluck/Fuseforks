@@ -82,6 +82,7 @@ pub mod schedule_probe;
 pub mod secret;
 pub mod sender_envelope;
 pub mod session_store;
+pub mod stats;
 pub mod tool;
 pub mod tool_reason;
 pub mod tools;

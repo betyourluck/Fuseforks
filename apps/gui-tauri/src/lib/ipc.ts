@@ -38,6 +38,8 @@ import type {
   ScheduleOptions,
   ScheduleView,
   SessionSummary,
+  StatsReport,
+  StatsScope,
   TopologyEdge,
   TopologyPosition,
   WorkDirListing,
@@ -441,6 +443,15 @@ export const exportSession = (sessionId: string) =>
  * **人が押したときだけ走る**（LLM 呼び出し = トークンなので自動化しない）。
  */
 export const summarizeSession = () => call<number>("summarize_session");
+
+/**
+ * 統計（Spec 39）。`scope` は `{ kind: "session", sessionId }` か `{ kind: "all" }`。
+ *
+ * 数字はコアの集計（`aggregate` の 1 実装）から出る唯一の経路。`turnRecorded` は
+ * id だけを運ぶので、受けたらこれを叩き直す（統計画面を開いている間だけ）。
+ */
+export const sessionStats = (scope: StatsScope) =>
+  call<StatsReport>("session_stats", { scope });
 
 // ---- アイコン ----------------------------------------------------------------
 

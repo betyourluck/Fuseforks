@@ -14,12 +14,20 @@ import { useOrchestrator } from "../composables/useOrchestrator";
 
 const { state } = useOrchestrator();
 
+/**
+ * `statsActive`: 統計画面（Spec 39）を表示中か。入口のボタンはトグルで、
+ * 押している間だけ `is-on` の見た目にする — 3 ペインを丸ごと差し替えるので、
+ * どこに居るかがタイトルバーから読めないと戻る導線が消える。
+ */
+const props = defineProps<{ statsActive?: boolean }>();
+
 const emit = defineEmits<{
   (e: "open-ordinance"): void;
   (e: "open-roles"): void;
   (e: "open-mcp"): void;
   (e: "open-command-approval"): void;
   (e: "open-schedules"): void;
+  (e: "toggle-stats"): void;
   (e: "open-settings"): void;
 }>();
 
@@ -212,6 +220,34 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       <span>{{ $t("titleBar.schedules") }}</span>
     </button>
 
+    <!-- 統計（Spec 39）。3 ペインを丸ごと差し替える全画面へのトグル。
+         ダイアログではないので、他の入口と違って押している間 is-on になる。 -->
+    <button
+      class="tb-btn"
+      :class="{ 'is-on': props.statsActive }"
+      :title="$t('titleBar.statsTitle')"
+      :aria-label="$t('titleBar.stats')"
+      :aria-pressed="props.statsActive ? 'true' : 'false'"
+      data-stats-toggle
+      @click="emit('toggle-stats')"
+    >
+      <!-- 棒グラフ -->
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </svg>
+      <span>{{ $t("titleBar.stats") }}</span>
+    </button>
+
     <!-- システム設定。村の設定（天井など）をここから開く（Spec 13）。
          COG はカードの設定ボタンが鉛筆へ変わって空いた（rev3 D8）。 -->
     <button
@@ -316,6 +352,10 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
 .tb-btn:hover {
   background: color-mix(in oklab, currentColor 12%, transparent);
   color: var(--color-ink);
+}
+.tb-btn.is-on {
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
 }
 .tb-close:hover {
   background: #e53935;

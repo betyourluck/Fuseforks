@@ -43,6 +43,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | 🎭 **Roles** | Templates for servants. Pick one at creation and the settings come with it; a colored badge shows in the list and in Kizuna |
 | 📁 **Change work folders together** | When you point the whole village at another project, set every checked servant's work folder in one go. **Running servants pick it up from their next message** |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
+| 📊 **Stats** | What this village has paid, by conversation × servant × how each turn ended. Units are tokens (the same effective-token weights the budget uses), **never converted to currency**. Failed turns are counted too. **Recording starts with this version** (earlier conversations cannot be counted) |
 | ⚙️ **System Settings** | Your own name and icon, language (switches both the screen and what the core says to the servants), token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
 The connection target is OpenAI-compatible / Anthropic / Gemini / xAI / OpenAI / Meta native. **The base URL is flexible**,
