@@ -15,9 +15,14 @@ import { useOrchestrator } from "../composables/useOrchestrator";
 const { state } = useOrchestrator();
 
 /**
- * `statsActive`: 統計画面（Spec 39）を表示中か。入口のボタンはトグルで、
- * 押している間だけ `is-on` の見た目にする — 3 ペインを丸ごと差し替えるので、
- * どこに居るかがタイトルバーから読めないと戻る導線が消える。
+ * `statsActive`: 統計画面（Spec 39）を表示中か。
+ *
+ * **真のあいだ、この列の入口をすべて塞ぐ。** ここはダイアログの入口だけを並べた
+ * 列で、統計は 3 ペインごと差し替える別の面 — 統計を見ている最中にダイアログを
+ * 開いても、読む対象（村の状態）が背後に無い。押せてしまうと「開いたつもりで
+ * 見えない」か「村へ戻ってから現れる」になり、どちらも二度押しを誘う
+ * （実機で踏んだ。入口はフッターへ移した）。**窓操作は塞がない** —
+ * 最小化・最大化・閉じるは、どの面に居ても要る。
  */
 const props = defineProps<{ statsActive?: boolean }>();
 
@@ -27,7 +32,6 @@ const emit = defineEmits<{
   (e: "open-mcp"): void;
   (e: "open-command-approval"): void;
   (e: "open-schedules"): void;
-  (e: "toggle-stats"): void;
   (e: "open-settings"): void;
 }>();
 
@@ -86,6 +90,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     <!-- 村の条例。全エージェント共通の規則をここから編集する。 -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.ordinanceTitle')"
       :aria-label="$t('titleBar.ordinanceAria')"
       @click="emit('open-ordinance')"
@@ -117,6 +122,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.rolesTitle')"
       :aria-label="$t('titleBar.rolesAria')"
       @click="emit('open-roles')"
@@ -144,6 +150,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
          0 件でも入口は消さない — 消えると「機能が無い」と読める。 -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.commandApprovalTitle')"
       :aria-label="$t('titleBar.commandApprovalAria')"
       @click="emit('open-command-approval')"
@@ -172,6 +179,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     <!-- MCP サーバー。外部ツールの接続をここから管理する。 -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.mcpTitle')"
       :aria-label="$t('titleBar.mcpAria')"
       @click="emit('open-mcp')"
@@ -198,6 +206,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
     <!-- 予定。時刻で発火する依頼をここから管理する（Spec 07）。 -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.schedulesTitle')"
       :aria-label="$t('titleBar.schedulesAria')"
       @click="emit('open-schedules')"
@@ -220,38 +229,11 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       <span>{{ $t("titleBar.schedules") }}</span>
     </button>
 
-    <!-- 統計（Spec 39）。3 ペインを丸ごと差し替える全画面へのトグル。
-         ダイアログではないので、他の入口と違って押している間 is-on になる。 -->
-    <button
-      class="tb-btn"
-      :class="{ 'is-on': props.statsActive }"
-      :title="$t('titleBar.statsTitle')"
-      :aria-label="$t('titleBar.stats')"
-      :aria-pressed="props.statsActive ? 'true' : 'false'"
-      data-stats-toggle
-      @click="emit('toggle-stats')"
-    >
-      <!-- 棒グラフ -->
-      <svg
-        width="15"
-        height="15"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-      </svg>
-      <span>{{ $t("titleBar.stats") }}</span>
-    </button>
-
     <!-- システム設定。村の設定（天井など）をここから開く（Spec 13）。
          COG はカードの設定ボタンが鉛筆へ変わって空いた（rev3 D8）。 -->
     <button
       class="tb-btn"
+      :disabled="props.statsActive"
       :title="$t('titleBar.settingsTitle')"
       :aria-label="$t('titleBar.settings')"
       @click="emit('open-settings')"
@@ -353,9 +335,14 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
   background: color-mix(in oklab, currentColor 12%, transparent);
   color: var(--color-ink);
 }
-.tb-btn.is-on {
-  color: var(--color-ink);
-  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+/* 統計画面を見ている間、ダイアログの入口は塞ぐ（押せないことを見た目で言う）。 */
+.tb-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.tb-btn:disabled:hover {
+  background: transparent;
+  color: var(--color-ink-dim);
 }
 .tb-close:hover {
   background: #e53935;

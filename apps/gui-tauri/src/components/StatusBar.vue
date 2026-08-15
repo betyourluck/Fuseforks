@@ -39,6 +39,16 @@
  * **`enabled` ではなく `listening` で出す。** 設定が ON でもポートが埋まって
  * いれば開いていない。ここで見せたいのは「実際に受け付けている」ことで、
  * 「そう設定してある」ことではない（食い違いの診断は設定ページが担う）。
+ *
+ * # 統計への入口（Spec 39・2026-08-16 に TitleBar から移した）
+ *
+ * **この帯で唯一の操作**。時計の左にアイコンだけで置く。タイトルバーへ置いて
+ * いたときは、ダイアログの入口 6 つの列に**面ごと差し替える 1 つ**が混ざり、
+ * 同じ見た目で振る舞いが違った（利用者判断）。ここなら列の性質が割れない。
+ *
+ * **常駐の規律（常に見る必要があるか）は情報に掛かるもので、ここは操作**。
+ * 絆の地図の Auto Fit を Controls へ置いたときと同じ線引き — 押した後は
+ * 押さないもの・面の切り替えは、面積を奪う「操作の列」を作らない。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
@@ -46,6 +56,9 @@ import { formatClock } from "../lib/clock";
 import { useOrchestrator } from "../composables/useOrchestrator";
 
 const { state } = useOrchestrator();
+
+const props = defineProps<{ statsActive?: boolean }>();
+const emit = defineEmits<{ (e: "toggle-stats"): void }>();
 
 /** 扉が実際に開いているか（Spec 25）。 */
 const listening = computed(() => state.mcpHost?.listening === true);
@@ -108,6 +121,35 @@ onBeforeUnmount(() => {
     <!-- 扉が閉じている間は左が空くので、右寄せを保つ詰め物を置く。 -->
     <span v-else class="mr-auto" />
     <!--
+      統計（Spec 39）。**この帯で唯一の操作**なので、字を持たずアイコンだけ。
+      開いている間は緑（`--color-run` = 稼働の色）に発光させる — 押せる場所が
+      1 つしか無い帯では、点いているかどうかが状態そのものを指す。
+    -->
+    <button
+      type="button"
+      class="stats-btn"
+      :class="{ 'is-on': props.statsActive }"
+      :title="$t('statusBar.statsTitle')"
+      :aria-label="$t('statusBar.statsTitle')"
+      :aria-pressed="props.statsActive ? 'true' : 'false'"
+      data-stats-toggle
+      @click="emit('toggle-stats')"
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </svg>
+    </button>
+    <!--
       tabular-nums は必須。等幅でないと桁の太さが毎秒変わり、
       1 秒ごとに時計の幅が揺れて隣が動く。
     -->
@@ -133,3 +175,27 @@ onBeforeUnmount(() => {
     </span>
   </footer>
 </template>
+
+<style scoped>
+.stats-btn {
+  display: flex;
+  align-items: center;
+  margin-right: 10px;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  color: var(--color-ink-dim);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    filter 0.15s;
+}
+.stats-btn:hover {
+  color: var(--color-ink);
+}
+/* 開いている間は稼働の緑で発光。**色だけに頼らない** — aria-pressed も出している。 */
+.stats-btn.is-on {
+  color: var(--color-run);
+  filter: drop-shadow(0 0 4px var(--color-run));
+}
+</style>

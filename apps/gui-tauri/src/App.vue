@@ -161,7 +161,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
     @open-command-approval="commandApprovalOpen = true"
     @open-mcp="mcpOpen = true"
     @open-schedules="schedulesOpen = true"
-    @toggle-stats="view = view === 'stats' ? 'village' : 'stats'"
     @open-settings="settingsOpen = true"
   />
   <!--
@@ -249,67 +248,75 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
         <ChatPanel />
       </ErrorBoundary>
     </aside>
+  </div>
 
-    <ToastHost />
-    <!-- 確認ダイアログ（はい／いいえ）。ブラウザの confirm() は使わない —
-         WebView のネイティブダイアログは localhost を名乗る。 -->
-    <ConfirmHost />
+  <!--
+    **全画面の層はグリッドの外に置く**（Spec 39 P3 の退行の処方）。
+    トースト・確認ダイアログ・各ダイアログ・初期化の覆いはどれも `fixed` だが、
+    **`display: none` の親の中では `fixed` でも描画されない** — 統計画面へ
+    切り替えるとグリッドが `v-show` で消えるので、内側に置くと「開いたのに
+    見えず、村へ戻ると現れる」になる。**確認ダイアログが出ないと窓が閉じられない**
+    （`askConfirm` の Promise が解決しない）ので、実害はダイアログの見え方に留まらない。
+  -->
+  <ToastHost />
+  <!-- 確認ダイアログ（はい／いいえ）。ブラウザの confirm() は使わない —
+       WebView のネイティブダイアログは localhost を名乗る。 -->
+  <ConfirmHost />
 
-    <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
+  <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
 
-    <RoleDialog v-if="rolesOpen" @close="rolesOpen = false" />
-    <CommandApprovalDialog
-      v-if="commandApprovalOpen"
-      @close="commandApprovalOpen = false"
-    />
+  <RoleDialog v-if="rolesOpen" @close="rolesOpen = false" />
+  <CommandApprovalDialog
+    v-if="commandApprovalOpen"
+    @close="commandApprovalOpen = false"
+  />
 
-    <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
+  <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
-    <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
+  <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
 
-    <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
+  <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
 
-    <!--
-      初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。
-      バックエンドの初期化（MCP 接続を含む）はバックグラウンドで走っており、
-      10 秒を超えることがある — その間ここがブロック画面として立つ。
-      Vue がマウントするまでの最初の一瞬は index.html 側の同じ見た目の
-      スプラッシュが出ており、継ぎ目なくこの覆いへ引き継がれる。
+  <!--
+    初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。
+    バックエンドの初期化（MCP 接続を含む）はバックグラウンドで走っており、
+    10 秒を超えることがある — その間ここがブロック画面として立つ。
+    Vue がマウントするまでの最初の一瞬は index.html 側の同じ見た目の
+    スプラッシュが出ており、継ぎ目なくこの覆いへ引き継がれる。
 
-      ただし失敗したときは覆いのまま据え置かない。読み込み中と初期化失敗が
-      同じ見た目になると、待てば直るのか壊れているのかを区別する手段が消える。
-    -->
-    <div
-      v-if="!state.ready"
-      class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-surface-0 px-8 text-center"
-    >
-      <template v-if="state.initError">
-        <p class="font-medium text-fail">{{ $t("app.bootFailed") }}</p>
-        <p class="selectable max-w-lg text-[12px] text-ink-dim">
-          {{ formatError(state.initError) }}
-        </p>
-        <p
-          v-if="state.initError.detail"
-          class="selectable max-w-lg text-[11px] text-ink-dim opacity-70"
-        >
-          {{ state.initError.detail }}
-        </p>
-        <button
-          v-if="state.initError.code !== 'BOOT_FAILED'"
-          class="mt-2 rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-surface-0"
-          @click="orchestrator.init()"
-        >
-          {{ $t("app.retry") }}
-        </button>
-      </template>
-      <template v-else>
-        <span class="boot-spinner" aria-hidden="true" />
-        <p class="text-ink-dim">{{ $t("app.booting") }}</p>
-        <p class="text-[11px] text-ink-dim opacity-60">
-          {{ $t("app.bootingHint") }}
-        </p>
-      </template>
-    </div>
+    ただし失敗したときは覆いのまま据え置かない。読み込み中と初期化失敗が
+    同じ見た目になると、待てば直るのか壊れているのかを区別する手段が消える。
+  -->
+  <div
+    v-if="!state.ready"
+    class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-surface-0 px-8 text-center"
+  >
+    <template v-if="state.initError">
+      <p class="font-medium text-fail">{{ $t("app.bootFailed") }}</p>
+      <p class="selectable max-w-lg text-[12px] text-ink-dim">
+        {{ formatError(state.initError) }}
+      </p>
+      <p
+        v-if="state.initError.detail"
+        class="selectable max-w-lg text-[11px] text-ink-dim opacity-70"
+      >
+        {{ state.initError.detail }}
+      </p>
+      <button
+        v-if="state.initError.code !== 'BOOT_FAILED'"
+        class="mt-2 rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-surface-0"
+        @click="orchestrator.init()"
+      >
+        {{ $t("app.retry") }}
+      </button>
+    </template>
+    <template v-else>
+      <span class="boot-spinner" aria-hidden="true" />
+      <p class="text-ink-dim">{{ $t("app.booting") }}</p>
+      <p class="text-[11px] text-ink-dim opacity-60">
+        {{ $t("app.bootingHint") }}
+      </p>
+    </template>
   </div>
 
   <!--
@@ -317,6 +324,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
     置くのは、3 ペインの分割規則（`minmax(0, 1fr)` と仕切り）に巻き込まないため。
     `shrink-0` なので、縮むのは上のグリッド側。
   -->
-  <StatusBar />
+  <StatusBar
+    :stats-active="view === 'stats'"
+    @toggle-stats="view = view === 'stats' ? 'village' : 'stats'"
+  />
   </div>
 </template>

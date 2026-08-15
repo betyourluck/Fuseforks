@@ -2,9 +2,9 @@
 
 **ID**: 39
 **Date**: 2026-08-16
-**Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
+**Status**: rev3（2026-08-16 実機で入口の位置を裁定・#107 の退行を回収）→ **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）→ **P4 完了**（同日。README 日英 / DETAIL 日英 / CLAUDE.md）→ 合流。**残るは P5 実機（検収 6 件）**
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）→ **P2 完了**（同日。`stats.rs` + IPC `session_stats`。単体 8 + 結合 1）→ **P3 完了**（同日。全画面 + `StatsView.vue` + 辞書。vitest 378）→ **P4 完了**（同日。README 日英 / DETAIL 日英 / CLAUDE.md）→ 合流 → **rev3 の実機修正**（入口を StatusBar へ / #107 の退行を回収）。**残るは P5 実機（検収 6 件）**
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -93,7 +93,7 @@ turn : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached, completion,
 | 欄 | 出自 | 注 |
 |---|---|---|
 | `agentId` | ターンの主 | |
-| `tsMs` | ターン開始の壁時計 | `turn.requested_at` を epoch ms へ。**終了時刻ではなく開始** — 並べ替えの鍵は「いつ頼んだか」 |
+| `tsMs` | ターン開始の壁時計 | `TurnContext.started_ts_ms`（**P1 で訂正**。上と同じ）。**終了時刻ではなく開始** — 並べ替えの鍵は「いつ頼んだか」 |
 | `hop` | `TurnSpend.hop` | 0 = 因果の根（利用者 / 予定 / 外部）。委譲されたターンは ≥ 1 |
 | `rounds` | `TurnSpend.rounds` | 上限（`max_tool_iterations`）は**入れない** — 設定であって観測ではない |
 | `waves` | `plan_wave` | |
@@ -101,7 +101,7 @@ turn : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached, completion,
 | `prompt` / `cached` / `completion` / `reasoning` | `TurnSpend` | **`completion` はレコードで初めて生まれる欄** — `TurnSpend` が持つのは `tokens`（= total）で、`settle_turn` が **`completion = tokens − prompt`** を 1 箇所で計算する（rev2 で明記。利用者査読 2 — 「引き算を要求しない」のは*読む側*の話で、*書く側*は引く）。ログ行は従来どおり `total=tokens`。`reasoning` は `completion` の内数（Spec 32 D2）— D3 の実効計算で二重に足さない |
 | `model` | `template.model` | **`turn:` 行に無かった欄**。#104 の「帯も機種も見えない」を閉じる。同時にログ行の**末尾へ `model=` を足す**（D2）。**`Option` にしない** — テンプレートは `handle_message` の段 1（`world.template(...)?`）で 4 出口のどれより先に解決され、引けなければターン自体が始まらない（`observability_rule` の「バックエンドの解決より前に落ちたターンは `turn` 行を持たない」と同じ位置）。rev2 で利用者査読 2 の `Option<String>` 案を**コードで反証** |
 | `backend` | `backend.name()` | ワイヤ名 |
-| `elapsedMs` | `requested_at.elapsed()` | 割り込み経路だけが持っていたものを 4 出口へ |
+| `elapsedMs` | `TurnContext.started.elapsed()` | **P1 で訂正** — 起票時に書いた `requested_at` は*割り込みを要求された時刻*で、ターンの開始時刻はどこにも無かった。`run_turn` の入口で `TurnContext` を作って 4 出口へ渡す |
 
 **`stop` の閉じた列挙 7 値と、出口 4 つの対応**（rev2 で表にした。利用者査読の細目 1）:
 
@@ -208,11 +208,19 @@ Slice { turns, failed, prompt, cached, completion, reasoning, effective,
 
 ### D4. 全画面の切り替え
 
-`App.vue` に `view: ref<"village" | "stats">` を 1 つ。TitleBar に 7 つ目の入口
-（SVG アイコン + 「統計」）。`view === "stats"` のとき **3 ペインのグリッドを
-`v-show` で隠し（DOM に残す）、`StatsView.vue` を `v-if` で足す**。TitleBar と
-StatusBar は残る。（rev2 で「`v-if` / `v-else` で差し替える」の 1 文を削った —
-次の箇条書きと矛盾していた。利用者査読 5）
+`App.vue` に `view: ref<"village" | "stats">` を 1 つ。`view === "stats"` のとき
+**3 ペインのグリッドを `v-show` で隠し（DOM に残す）、`StatsView.vue` を `v-if` で
+足す**。TitleBar と StatusBar は残る。（rev2 で「`v-if` / `v-else` で差し替える」の
+1 文を削った — 次の箇条書きと矛盾していた。利用者査読 5）
+
+**入口は StatusBar（フッター）にアイコンだけで置く**（rev3・2026-08-16 実機裁定。
+P3 では TitleBar の 7 つ目に置いていた）— **あの列はダイアログの入口だけの列**で、
+そこへ「面ごと差し替える 1 つ」を混ぜると、同じ見た目で振る舞いが違う。
+時計の左・`--color-run` の緑で発光。**この帯で唯一の操作**なので字を持たない。
+**「村へ戻る」も字から出口の図形へ**（この面は表と数字ばかりで絵が少ない）。
+
+**統計を見ている間、TitleBar のダイアログ入口 6 つは `disabled`**（同裁定）。
+**窓操作 3 つは塞がない** — 最小化・最大化・閉じるはどの面でも要る。
 
 - **保存しない**（`bottomTab` と同じ。起動は必ず村から — 「開いただけで統計が出る」
   形にすると、次に来た人が村の状態を見る前に数字を見る）
@@ -434,6 +442,31 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
 - `data_contract` は P0 で凍結済み。P1〜P3 で契約から外れた点は 1 つ — `tsMs` の注記
   「(requested_at)」が Spec D1 の取り違えを写しており、P4 で「`run_turn` の入口 =
   `TurnContext.started`。`TurnHandle.requested_at` ではない」へ訂正した
+
+## P3 修正記録（2026-08-16 実機・利用者指摘 3 点 → rev3）
+
+**指摘 1 が退行だった**（`failures.md` #107）。統計画面でダイアログを開くと、
+その場では何も起きず村へ戻った瞬間に現れる。真因は **`ToastHost` / `ConfirmHost` /
+ダイアログ 6 つ / 初期化の覆いがグリッドの内側にあった**こと — `v-show` の
+`display: none` の中では **`fixed` でも描画されない**。**利用者が踏んだのは
+ダイアログだが、重いのは `ConfirmHost`** で、統計画面では「閉じる前の確認」が
+出ず `askConfirm` が解決しない = **窓が閉じられない**。全画面の層をグリッドの
+外へ出した。**入口を塞ぐだけでは足りない**（`ToastHost` / `ConfirmHost` の入口は
+TitleBar ではない）。
+
+**指摘 2・3 は入口と出口の作法**（上の D4 に反映）。入口を StatusBar へ移したことで、
+TitleBar は「ダイアログの入口だけ」に戻り、列の性質が割れなくなった。
+
+**テスト 13 → 26 本**（`statsView.test.ts`）。足したのは (a) 9 つの層がグリッドの
+**外**にある（範囲は `<div>` の深さで求める — インデント判定は整形で壊れる）
+(b) TitleBar が統計の入口を持たない (c) StatusBar が入口を持ち `--color-run` で
+発光する (d) ダイアログ入口 6 つが `disabled` になり窓操作 3 つは残る。
+**ミューテーション**: `ConfirmHost` をグリッドの中へ戻すと 1 本だけ赤。
+
+**作業中に自分で踏んだ罠**（#107 の一般化 3）: ブロックを移す編集で閉じタグを
+1 つ落としたとき、**`vue-tsc` も vitest 391 本も緑のまま**で、`bun run build` だけが
+`Element is missing end tag` で落ちた。**テンプレートを構造ごと動かす編集は
+ビルドで確かめる。**
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

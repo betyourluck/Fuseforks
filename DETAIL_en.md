@@ -107,8 +107,8 @@ Fuseforks/
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
-                ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, Stats, System Settings)
-                ├── StatusBar.vue                      Bottom: MCP server listening state, date, time (same format as the diagnostic log), and version
+                ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
+                ├── StatusBar.vue                      Bottom: MCP server listening state, **the stats entry point**, date, time (same format as the diagnostic log), and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
@@ -165,7 +165,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Schedule list, addition, deletion, pre-checks and approvals (from "Schedule" in the title bar) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
-| **Full screen** | **Stats** ("Stats" in the title bar toggles it with the three panes; [Spec 39](specs/39_stats-view.md)) — what this village has paid, by conversation × servant × how each turn ended. **Not a modal: it replaces the three panes wholesale** (they are only hidden — a half-typed message and the current selection survive). The title bar and the status bar stay | Opened occasionally |
+| **Full screen** | **Stats** (the bar chart icon to the left of the clock, in the bottom bar, toggles it with the three panes; [Spec 39](specs/39_stats-view.md)) — what this village has paid, by conversation × servant × how each turn ended. **Not a modal: it replaces the three panes wholesale** (they are only hidden — a half-typed message and the current selection survive). The title bar and the status bar stay, but **the title bar's dialog entries are disabled while it is open** (the window controls are not) | Opened occasionally |
 
 Configuration is excluded from persistent panes because **occasionally opened items consume screen area meant for items that are always watched**.
 
@@ -1123,7 +1123,7 @@ The start and failure kinds were added later. The `turn` line existed **only on 
 
 **The `turn` line is now emitted for failed turns too** (2026-08-16). A turn whose output hit the token limit with an empty body had been paid for at the provider, yet had no `turn` line and showed up in neither the card totals nor the budget (`failures.md` #103). Now a failed turn still writes one `turn` line with `stop=failed:<CODE>` **in the same columns as a successful one**, and what it paid lands in the card and the budget. `turn failed` stays as the line that carries the reason text — **count `turn` lines only** (a failed turn now produces two lines). Each of the four turn exits writes exactly one usage line: `turn interrupted` for interrupts and `turn budget exhausted` for budget cut-offs. **All four lines end with `model=`** (the template's model name; [Spec 39](specs/39_stats-view.md) — the prefix and the existing columns are unchanged, so earlier greps keep working).
 
-**The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all four exits). That is what the stats view ("Stats" in the title bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
+**The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all four exits). That is what the stats view (the bar chart icon in the bottom bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
 
 The primary purpose of a `tool` line is **`body_chars`**. Tool results are added to history and resent in every subsequent round, so **the size of one tool result affects input tokens for every round of that turn**. `rounds` and `prompt` in a `turn` line alone could not identify what made the prompt large.
 

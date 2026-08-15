@@ -120,12 +120,33 @@ const totals = computed(() => report.value?.totals ?? null);
         </button>
       </div>
       <p class="min-w-0 flex-1 truncate text-xs text-ink-dim">{{ t("stats.unitNote") }}</p>
+      <!--
+        村へ戻る。**字を持たず出口の図形だけ**（利用者判断 2026-08-16 — この面は
+        表と数字ばかりで絵が少ない）。意味は `title` / `aria-label` が運ぶので、
+        支援技術からは字のときと同じに読める。
+      -->
       <button
         type="button"
-        class="rounded border border-line px-2 py-1 text-xs text-ink-dim hover:text-ink"
+        class="exit-btn"
+        :title="t('stats.backToVillage')"
+        :aria-label="t('stats.backToVillage')"
         @click="emit('close')"
       >
-        {{ t("stats.backToVillage") }}
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="M16 17l5-5-5-5" />
+          <path d="M21 12H9" />
+        </svg>
       </button>
     </header>
 
@@ -306,6 +327,24 @@ const totals = computed(() => report.value?.totals ?? null);
 </template>
 
 <style scoped>
+.exit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-ink-dim);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.exit-btn:hover {
+  color: var(--color-ink);
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
 .scope-btn {
   padding: 2px 8px;
   border-radius: 3px;
