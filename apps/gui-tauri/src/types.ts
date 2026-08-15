@@ -781,6 +781,12 @@ export type CoreEvent =
    * （`conversationCleared` → `sessionSwitched`）で 2 本出る。
    */
   | { type: "sessionSwitched"; sessionId: string }
+  /**
+   * ターンの使用量が `Record::Turn` として保存された（Spec 39。4 出口すべて）。
+   * **id だけ・数字を運ばない** — 数字は `session_stats` が集計から出す 1 経路。
+   * 受け手は統計画面だけで、開いていない間は読み捨てる。**加算的変更**。
+   */
+  | { type: "turnRecorded"; agentId: AgentId; sessionId: string }
   | {
       type: "toolInvoked";
       agentId: AgentId;

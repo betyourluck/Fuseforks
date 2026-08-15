@@ -72,10 +72,18 @@ fn the_cut_instrument_separates_exhausted_from_reserve_short() {
     let src = read("src/orchestrator/turn.rs");
     // 先頭の `"` まで含めて数える — 引用符が無いものは計器の説明コメントで、
     // 数えると「コメントを 1 行足したら緑になる」テストになる。
+    // **書式は 1 実装**（Spec 39 P1 で `budget_stop_reason` へ寄せた — 行と
+    // `Record::Turn` の `stop` が同じ判定から出るように）、呼び出しは打ち切りの
+    // 2 箇所（周回境界・まとめ呼び出し）。以前は 2 箇所に同じ `note!` が複製されていた。
     assert_eq!(
         src.matches("\"budget stop:").count(),
+        1,
+        "計器の書式は 1 実装（`budget_stop_reason`）であること"
+    );
+    assert_eq!(
+        src.matches("budget_stop_reason(pool, agent_id, estimate)").count(),
         2,
-        "打ち切りの 2 箇所（周回境界・まとめ呼び出し）に計器があること"
+        "打ち切りの 2 箇所（周回境界・まとめ呼び出し）が同じ判定を呼ぶこと"
     );
     // 書式が壊れていないこと（行継続が消えて空白が埋まった実例がある）。
     assert!(

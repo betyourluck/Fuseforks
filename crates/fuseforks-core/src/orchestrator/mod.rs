@@ -761,14 +761,20 @@ impl Shared {
     /// redb の書き込みは同期で 1 本に直列化されるが、1 件の追記は短い
     /// （実測 40,000 件で 271 ms = 1 件あたり約 7 マイクロ秒）。**トランザクションを
     /// `await` を跨いで持たない**という契約は、この関数が同期で閉じることで守られる。
-    fn persist(&self, record: &SessionRecord) {
+    ///
+    /// 戻り値は**書けたか**。保存先を持たない村・書けなかった村では偽で、
+    /// 呼び出し側は「保存されたことを前提にする後続」（Spec 39 の `TurnRecorded`）を
+    /// 抑える。ここで `Err` にしないのは Spec 12 の規律（保存の失敗は WARN 1 行で続行）。
+    fn persist(&self, record: &SessionRecord) -> bool {
         let Some(store) = self.sessions.as_ref() else {
-            return;
+            return false;
         };
         let session_id = self.current_session();
         if let Err(err) = store.append(&session_id, record) {
             note!("WARN session store: 会話 `{session_id}` へ保存できませんでした: {err}");
+            return false;
         }
+        true
     }
 
     /// 1 往復を履歴へ積み、**同じ内容を保存先へも書く**。

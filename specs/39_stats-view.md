@@ -4,7 +4,7 @@
 **Date**: 2026-08-16
 **Status**: rev2 承認 → **P0 完了**（2026-08-16。`data_contract` の `session_store`（4 種別・
 互換の向き 2 つ）/ `core://event` の `turnRecorded` / `observability_rule` の末尾 `model=` /
-`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）。次は P1（ブランチ）
+`stats_contract` 新設。CLAUDE.md と Spec 12 の「3 種別」に続報）→ **P1 完了**（同日・ブランチ `20260816_stats`。結合 5 + 単体 2・ミューテーション 3 回）。次は P2
 **Branch**: P0（契約の凍結）は rev 承認後に main 直コミット。P1 以降は着手日の
 `YYYYMMDD_stats` へ積み、P1/P2 のテスト合格をゲートに合流（Spec 38 と同じ 2 段階。
 **フロントの全画面切り替えは P3 で初めて画面に触る**ので、P1/P2 は画面を 1 px も変えない）
@@ -309,6 +309,48 @@ promptfoo の 3 チャート（pass rate 棒 / スコア分布 / 散布図）は
 - **P4**: 台帳 — README 日英（画面の構成表 + 「何ができるか」）/ DETAIL 日英
   （画面の節 + workspace 木は変わらない）/ CLAUDE.md / `failures.md` は出たら
 - **P5**: 実機 — 下の検収 6 件
+
+## P1 実装記録（2026-08-16・ブランチ `20260816_stats`）
+
+- **D1 の `elapsedMs` の起点を訂正した。** 起票時に「`requested_at.elapsed()` — 割り込み経路
+  だけが持っていた」と書いたが、**`TurnHandle.requested_at` は割り込みを要求された時刻**で、
+  割り込み経路の「要求から N 秒」の起点。ターンの開始時刻は**どこにも無かった**。
+  `TurnContext { started, started_ts_ms, model, backend }` を新設し、`run_turn` の入口
+  （バックエンド解決の直後）で 1 度作って 4 出口へ `&` で渡す。`tsMs` / `elapsedMs` は
+  ここから。`turn interrupted:` 行の `elapsed_ms=`（要求からの経過）とは**別の量**で、
+  欄名が同じでも取り違えないよう `settle_turn` の doc に書いた
+- **`settle_turn` の 1 実装** = (1) カードの累計へ積む（**4 出口に散っていた加算を
+  ここへ移した** — 出口ごとに積むと片方だけ既定値のまま化ける、#103 の形） (2)
+  `TurnRecord` を組んで `persist` (3) 書けたら `TurnRecorded`。ログ行は D2 のとおり
+  **`turn:` の 2 出口（完走 / 失敗）はここが書き、後ろ 2 出口は呼び出し側が自分の行を
+  書いて末尾に `model=` だけ足す**（数字は戻り値の `TurnRecord` から読む）。
+  `completion = tokens − prompt` はここの 1 箇所
+- **`persist` が `bool` を返すようになった**（書けたか）。保存先を持たない村・書けなかった
+  村では `TurnRecorded` を出さない — 出すとフロントが無い記録を取りに行く
+- **`budget_stop_reason` を新設**（`budget stop:` の 1 行 + `TurnStop` の 2 値を同じ判定から
+  返す）。以前は予約の 2 箇所（周回境界 / まとめ呼び出しの前）に同じ `note!` が
+  複製されており、理由は行にしか無かった。`finish_budget_exhausted` に `stop` の引数が
+  増え、`debug_assert!` で 2 値以外を弾く。**`tests/budget_reserve_wiring.rs` の
+  ソース走査が赤くなった**（`"budget stop:` のリテラルを 2 で数えていた）→
+  「書式は 1 実装 + 呼び出し 2 箇所」へ理由つきで更新
+- **読み口は `export_session` の JSONL**（`tests/turn_records.rs`）。redb はバイナリなので、
+  人が読める出口が機構の一部（Spec 12）— 5 本がそれを通ることで「JSONL に
+  `kind: "turn"` が出る」も同時に留まる。**結合 5 本 = `stop` の 5 値**（完走 /
+  `failed:LLM_OUTPUT_TRUNCATED` / `interrupt_turn` / 天井 1,000 で `budget_exhausted` /
+  天井 3,000・実費 2,400 で `reserve_short`）。**ミューテーション 3 回とも予測どおり** —
+  書き込みを外す → 5 本赤 / 失敗出口だけ戻す → 失敗の 1 本 / 理由を `exhausted` 固定 →
+  `reserve_short` の 1 本
+- **単体 2 本**（`session_store.rs`）— `Turn` は `restore_histories` / `tail_messages` /
+  `fork_points` のどれにも現れず、seq は 4 種別で 1 つの列、fork は seq 込みで複製、
+  JSON は `kind: "turn"` + camelCase + `stop: { kind, … }` / `TurnStop::log_label` が
+  `turn:` 行の `stop=` と 1 対 1。**観察 1 つ**: `fork_points` の `at_seq` は turn の seq を
+  座標として数える（turn は候補にならないが、直前の seq が turn ならそこを指す）— 分岐は
+  seq 込み複製なので正しい
+- **TS の `CoreEvent` union に `turnRecorded` を足した**（ワイヤ形のミラー）。受け手は
+  P3（`useOrchestrator` の `switch` に `default` は無く、未知の型は読み捨てられる）
+- ワイヤ層は 1 行も変えていない。fuseforks-core 563 + 結合全緑・clippy 警告ゼロ・
+  vitest 365・`vue-tsc` 緑（**`cargo test --workspace` は開発機で `fuseforks.exe` が
+  ロックされており走らせていない** — GUI クレートは `cargo check --tests` まで）
 
 ## 検収（P5。**書く前に「その画面がその値を引いているか」を数えた** — #68）
 

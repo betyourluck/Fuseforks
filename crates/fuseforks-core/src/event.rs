@@ -115,6 +115,20 @@ pub enum CoreEvent {
         session_id: String,
     },
 
+    /// ターンの使用量が `Record::Turn` として保存された（Spec 39。4 出口すべて）。
+    ///
+    /// **id だけを運び、数字を運ばない** — 数字は `session_stats` が集計から出す
+    /// 1 経路に留める（イベントで運ぶと 2 経路目になる）。受け手は統計画面だけで、
+    /// 開いていない間は読み捨てる。コストは `AgentStatsUpdated`（稼働中の個体ごとに
+    /// 毎秒）の 1/数十以下。**加算的変更** — 既存 variant の意味は変えない。
+    #[serde(rename_all = "camelCase")]
+    TurnRecorded {
+        /// ターンの主。
+        agent_id: AgentId,
+        /// 保存先の会話。
+        session_id: String,
+    },
+
     /// エージェントが受信した発話の処理を始めた / 終えた（入力中表示用）。
     ///
     /// 応答の生成には LLM 呼び出しとツール実行が含まれ、数十秒かかりうる。

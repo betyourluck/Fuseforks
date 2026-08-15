@@ -97,9 +97,108 @@ pub struct SessionSummary {
     pub meta: SessionMeta,
 }
 
-/// 保存されるレコード。**3 種別で閉じる。**
+/// ターンの終わり方（Spec 39 D1）。**閉じた列挙 7 値**で、`turn:` 行の `stop=` と
+/// 後ろ 2 出口（`turn interrupted:` / `turn budget exhausted:`）を吸収する。
 ///
-/// 2 種別にできないのは、上のモジュール解説にある「履歴が 2 層ある」事情による。
+/// `BudgetExhausted` と `ReserveShort` を分けるのは Spec 38 D3 の帰結 —
+/// 「使い切った」と「次の 1 呼び出しぶんを確保できなかった」は利用者の次の手が違う。
+/// 呼ぶ関数は同じ（`finish_budget_exhausted`）で、理由を引数で運ぶ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnStop {
+    /// 完走（`stop=-`）。
+    Completed,
+    /// RepeatGuard がその周のツールを全部止めた（`stop=repeat:{tool}`）。
+    Repeat {
+        /// 止めたツール名。
+        tool: String,
+    },
+    /// `max_tool_iterations` に到達（`stop=tool_limit`）。
+    ToolLimit,
+    /// `Err` で抜けた（`stop=failed:{CODE}`。`code` は [`crate::error::ErrorPayload`] のコード）。
+    Failed {
+        /// エラーのコード（`LLM_OUTPUT_TRUNCATED` 等）。
+        code: String,
+    },
+    /// 利用者の指示で打ち切り（Spec 10）。
+    Interrupted,
+    /// 予算の残額 0（Spec 11）。
+    BudgetExhausted,
+    /// 残額はあるが次の 1 呼び出しの見積もりに届かない（Spec 38）。
+    ReserveShort,
+}
+
+impl TurnStop {
+    /// `turn:` 行の `stop=` に書く形。**行とレコードで同じ値を出す**ための 1 実装。
+    #[must_use]
+    pub fn log_label(&self) -> String {
+        match self {
+            Self::Completed => "-".to_owned(),
+            Self::Repeat { tool } => format!("repeat:{tool}"),
+            Self::ToolLimit => "tool_limit".to_owned(),
+            Self::Failed { code } => format!("failed:{code}"),
+            Self::Interrupted => "interrupted".to_owned(),
+            Self::BudgetExhausted => "budget_exhausted".to_owned(),
+            Self::ReserveShort => "reserve_short".to_owned(),
+        }
+    }
+
+    /// 払ったが答えが無かった終わり方か（統計の `failed` の数え）。
+    /// 完走の 3 値（`Completed` / `Repeat` / `ToolLimit`）は本文を返しているので偽。
+    #[must_use]
+    pub fn is_failure(&self) -> bool {
+        !matches!(self, Self::Completed | Self::Repeat { .. } | Self::ToolLimit)
+    }
+}
+
+/// ターン 1 本の使用量（Spec 39 D1・`Record::Turn` の中身）。
+///
+/// **`turn:` 行と同じ構造体（`TurnSpend`）から 1 実装 `settle_turn` が書く** —
+/// 行とレコードが食い違う形を構造で作らない。4 出口（完走 / 失敗 / 割り込み /
+/// 予算）すべてで 1 件。**履歴の入力にはならない**（`restore_histories` /
+/// `tail_messages` / `fork_points` はこの variant を読まない）。
+///
+/// 入れない欄: 予算の残額（因果ごと・プロセス寿命）/ 依頼文・本文（`exchange` が
+/// 持つ。数字の記録に本文を混ぜない）/ セッション id（キーが持つ）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnRecord {
+    /// ターンの主。
+    pub agent_id: String,
+    /// **開始**の壁時計（epoch ms。`AgentMessage.ts_ms` と同じ型）。並べ替えの鍵は
+    /// 「いつ頼んだか」。
+    pub ts_ms: u64,
+    /// 受信した発話の hop。0 = 因果の根（利用者 / 予定 / 外部）。
+    pub hop: u8,
+    /// 実行ループの LLM 呼び出しの周回数（まとめ呼び出しは数えない）。
+    /// 上限は入れない — 設定であって観測ではない。
+    pub rounds: u32,
+    /// このターンで撒いた波の数。
+    pub waves: u32,
+    /// 終わり方。
+    pub stop: TurnStop,
+    /// 入力トークン。
+    pub prompt: u64,
+    /// 入力のうちキャッシュから読んだぶん。
+    pub cached: u64,
+    /// 出力トークン。**書く側が `total − prompt` を 1 箇所で引く**（読む側は引き算をしない）。
+    pub completion: u64,
+    /// 出力のうち思考のぶん。**`completion` の内数**（Spec 32 D2）。
+    pub reasoning: u64,
+    /// テンプレートのモデル名。`Option` ではない — テンプレートは段 1 で 4 出口の
+    /// どれより先に解決され、引けなければターン自体が始まらない。
+    pub model: String,
+    /// ワイヤ名（`LlmBackend::name()`）。
+    pub backend: String,
+    /// 開始から出口までの経過。
+    pub elapsed_ms: u64,
+}
+
+/// 保存されるレコード。**4 種別で閉じる**（Spec 39 P0 で `turn` を加算。
+/// 既存 3 種別のシリアライズは不変 — 新しい版は旧い `sessions.redb` をそのまま
+/// 読める。旧い版で新しい村を開くのは非サポート）。
+///
+/// 3 種別より減らせないのは、上のモジュール解説にある「履歴が 2 層ある」事情による。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
@@ -138,12 +237,20 @@ pub enum Record {
         /// 不変条件で、これが単調増加するので要約の要約が循環しない。
         covers_up_to_seq: u64,
     },
+
+    /// ターン 1 本の使用量（Spec 39）。統計画面の原本。
+    Turn(Box<TurnRecord>),
 }
 
 impl Record {
     /// 会話ログ 1 件のレコードを作る。
     pub fn message(message: AgentMessage) -> Self {
         Self::Message(Box::new(message))
+    }
+
+    /// ターン 1 本の使用量のレコードを作る。
+    pub fn turn(record: TurnRecord) -> Self {
+        Self::Turn(Box::new(record))
     }
 
     /// 履歴 1 往復のレコードを作る。
@@ -498,7 +605,9 @@ impl SessionStore {
 
         for (seq, record) in self.records(session_id)? {
             match record {
-                Record::Message(_) => {}
+                // 会話ログと使用量は履歴の入力ではない（Spec 39 D2 — `Turn` を
+                // 読むと統計の記録が履歴へ混ざり、送信と保存が食い違う）。
+                Record::Message(_) | Record::Turn(_) => {}
                 Record::Exchange {
                     agent_id,
                     sent,
@@ -698,7 +807,7 @@ impl SessionStore {
     /// セッションを JSONL で書き出し、書いたレコード数を返す。
     ///
     /// 1 行目はセッションのメタデータ（`{"session":{...}}`）、2 行目以降は
-    /// `{"seq":N,"kind":"...",...}` の 1 レコード 1 行。**`kind` は 3 種別のまま**で、
+    /// `{"seq":N,"kind":"...",...}` の 1 レコード 1 行。**`kind` は 4 種別のまま**で、
     /// ヘッダ行は `kind` を持たない — `"kind":"message"` の grep が
     /// ヘッダに引っかからないようにするため。
     ///
@@ -915,6 +1024,120 @@ mod tests {
             title,
             "一度決まった表題は後の発話で上書きしない"
         );
+    }
+
+    fn sample_turn(stop: TurnStop) -> TurnRecord {
+        TurnRecord {
+            agent_id: "agent_01".to_owned(),
+            ts_ms: 1_000,
+            hop: 0,
+            rounds: 1,
+            waves: 0,
+            stop,
+            prompt: 10,
+            cached: 3,
+            completion: 4,
+            reasoning: 1,
+            model: "mock-model".to_owned(),
+            backend: "plain".to_owned(),
+            elapsed_ms: 12,
+        }
+    }
+
+    /// **`Turn` は履歴の入力にならない**（Spec 39 D2）。復元・末尾の会話ログ・
+    /// 分岐点のどれにも現れず、seq は他の種別と同じ列で振られ、fork は seq 込みで
+    /// 複製する（分岐先にも分岐点までの turn が残る — その会話の文脈を作った費用）。
+    #[test]
+    fn turn_records_are_stored_but_never_enter_histories_or_fork_points() {
+        let dir = TempDir::new();
+        let store = SessionStore::open(dir.db()).expect("開けること");
+        let id = store.create_session(None).expect("作れること");
+
+        store.append(&id, &Record::message(user_message("依頼"))).unwrap();
+        store
+            .append(&id, &Record::exchange(&agent(), "送った", "返った"))
+            .unwrap();
+        let turn_seq = store
+            .append(&id, &Record::turn(sample_turn(TurnStop::Completed)))
+            .unwrap();
+        assert_eq!(turn_seq, 2, "seq は 4 種別で 1 つの列");
+        store
+            .append(
+                &id,
+                &Record::turn(sample_turn(TurnStop::Failed {
+                    code: "LLM_OUTPUT_TRUNCATED".into(),
+                })),
+            )
+            .unwrap();
+
+        store.append(&id, &Record::message(user_message("2 回目"))).unwrap();
+
+        let restored = store.restore_histories(&id, 8).unwrap();
+        assert_eq!(
+            restored.histories[&agent()].len(),
+            2,
+            "履歴は exchange 1 往復 = 2 メッセージだけ（turn は入らない）"
+        );
+        assert_eq!(store.tail_messages(&id, 10).unwrap().len(), 2, "会話ログは message だけ");
+        let forks = store.fork_points(&id).unwrap();
+        assert_eq!(forks.len(), 1, "分岐点は 2 通目のユーザー発話だけ（先頭は分岐点にならず、turn も加わらない）");
+        assert_eq!(forks[0].at_seq, 3, "直前 = 2 つ目の turn の seq。turn は候補ではないが座標には数える");
+
+        // 保存はされている（5 件）。読み戻しで型が保たれる。
+        let records = store.records(&id).unwrap();
+        assert_eq!(records.len(), 5);
+        let turns: Vec<&TurnRecord> = records
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Record::Turn(t) => Some(t.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].stop, TurnStop::Completed);
+        assert_eq!(
+            turns[1].stop,
+            TurnStop::Failed {
+                code: "LLM_OUTPUT_TRUNCATED".into()
+            }
+        );
+
+        // fork は seq 込みで複製する（inclusive）。
+        let forked = store.fork_session(&id, 2).unwrap();
+        let forked_records = store.records(&forked).unwrap();
+        assert_eq!(forked_records.len(), 3, "seq 0..=2 = message / exchange / turn");
+        assert!(
+            matches!(forked_records[2].1, Record::Turn(_)),
+            "分岐先にも分岐点までの turn が残る"
+        );
+
+        // ワイヤ形（JSON）: kind タグと camelCase。旧い 3 種別の形は変えない。
+        let json = serde_json::to_value(Record::turn(sample_turn(TurnStop::Repeat {
+            tool: "grep".into(),
+        })))
+        .unwrap();
+        assert_eq!(json["kind"], "turn");
+        assert_eq!(json["agentId"], "agent_01");
+        assert_eq!(json["elapsedMs"], 12);
+        assert_eq!(json["stop"]["kind"], "repeat");
+        assert_eq!(json["stop"]["tool"], "grep");
+    }
+
+    /// `TurnStop::log_label` は `turn:` 行の `stop=` と 1 対 1（行とレコードで同じ値）。
+    #[test]
+    fn turn_stop_log_labels_match_the_turn_line() {
+        assert_eq!(TurnStop::Completed.log_label(), "-");
+        assert_eq!(TurnStop::Repeat { tool: "fd".into() }.log_label(), "repeat:fd");
+        assert_eq!(TurnStop::ToolLimit.log_label(), "tool_limit");
+        assert_eq!(
+            TurnStop::Failed { code: "X".into() }.log_label(),
+            "failed:X"
+        );
+        assert!(!TurnStop::Completed.is_failure());
+        assert!(!TurnStop::ToolLimit.is_failure());
+        assert!(TurnStop::Failed { code: "X".into() }.is_failure());
+        assert!(TurnStop::Interrupted.is_failure());
+        assert!(TurnStop::ReserveShort.is_failure());
     }
 
     /// 滑る窓はロード時に適用する。**窓を広げたら過去が戻る**ことがこの設計の要点。

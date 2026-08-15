@@ -15,6 +15,7 @@
 //! [`super::delegation`] にある。
 
 use super::*;
+use crate::session_store::{TurnRecord, TurnStop};
 
 /// 失敗したターンの**受信側だけ**を履歴へ残す。
 ///
@@ -109,6 +110,119 @@ impl TurnSpend {
     }
 }
 
+/// ターン 1 本の、清算に要る不変の文脈（Spec 39 P1）。[`run_turn`] が入口で 1 度
+/// 作り、4 出口へ `&` で渡す。`TurnSpend` が「いくら」なら、こちらは
+/// 「いつ・誰で・どのワイヤで」— 出口で初めて分かるものは持たない。
+///
+/// `started` は**ターンの開始**（`run_turn` に入った瞬間）。`TurnHandle.requested_at`
+/// ではない — あれは**割り込みを要求された時刻**で、割り込み経路の
+/// 「要求から N 秒」の起点。Spec 39 D1 は起票時にこの 2 つを取り違えており、
+/// P1 で実装を読んで訂正した（起票時の 4 出口の経過時間の起点はどこにも無かった）。
+struct TurnContext {
+    started: std::time::Instant,
+    /// `started` の壁時計（epoch ms）。`Instant` は壁時計を持たないので別に取る。
+    started_ts_ms: u64,
+    model: String,
+    backend: String,
+}
+
+impl TurnContext {
+    fn begin(template: &ModelTemplate, backend: &dyn crate::llm::LlmBackend) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            started_ts_ms: crate::model::now_ms(),
+            model: template.model.clone(),
+            backend: backend.name().to_owned(),
+        }
+    }
+}
+
+/// ターンの清算 — **4 出口（完走 / 失敗 / 割り込み / 予算）の 1 実装**（Spec 39 D2）。
+///
+/// することは 3 つで、順序も固定: (1) カードの累計へ積む (2) [`TurnRecord`] を
+/// `Record::Turn` として保存する（`turn:` 行と**同じ構造体 `TurnSpend` から**組む —
+/// 行とレコードが食い違う形を構造で作らない） (3) 保存できたら `TurnRecorded` を
+/// 出す（id だけ・数字を運ばない）。**`completion = tokens − prompt` はここで 1 回だけ
+/// 引く**（読む側は引き算をしない）。
+///
+/// ログ行の扱い: `turn:` の 2 出口（完走 / 失敗）は**この関数が行も書く**
+/// （欄の並びが同じ 1 書式なので）。後ろ 2 出口（`turn interrupted:` /
+/// `turn budget exhausted:`）は接頭辞も欄も違うので**呼び出し側が自分の行を書き**、
+/// この関数は書かない — 揃えるのは*出自の構造体*であって*出力の欄*ではない
+/// （`observability_rule`）。どの行も末尾に `model=` を持つ。
+///
+/// 戻り値は書いたレコード。呼び出し側が自分の行を組むときに同じ数字を読むため。
+async fn settle_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    ctx: &TurnContext,
+    spend: &TurnSpend,
+    waves: u32,
+    stop: TurnStop,
+    // `turn:` 行の `rounds=` の分母。完走は上限、失敗は読めないので `None` = `-`。
+    // 後ろ 2 出口では読まれない。
+    rounds_cap: Option<u32>,
+) -> TurnRecord {
+    {
+        let mut world = shared.world.write().await;
+        if let Ok(record) = world.agent_mut(agent_id) {
+            record.total_tokens += spend.tokens;
+            record.cached_tokens += spend.cached;
+            record.prompt_tokens += spend.prompt;
+        }
+    }
+    let record = TurnRecord {
+        agent_id: agent_id.as_str().to_owned(),
+        ts_ms: ctx.started_ts_ms,
+        hop: spend.hop,
+        rounds: spend.rounds,
+        waves,
+        stop,
+        prompt: spend.prompt,
+        cached: spend.cached,
+        completion: spend.tokens.saturating_sub(spend.prompt),
+        reasoning: spend.reasoning,
+        model: ctx.model.clone(),
+        backend: ctx.backend.clone(),
+        elapsed_ms: u64::try_from(ctx.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    };
+    let own_line = matches!(
+        record.stop,
+        TurnStop::Interrupted | TurnStop::BudgetExhausted | TurnStop::ReserveShort
+    );
+    if !own_line {
+        // 完走と失敗で**同じ欄を同じ順で**書く（読む側が 1 つの書式で数えられる
+        // ように — #103）。違うのは `stop=` の値と `rounds` の分母だけ。
+        // `reasoning` は `total` の内数（Spec 32 D2）。**0 でも必ず出す** —
+        // 思考を使わない経路で 0 が出ることが「常に 0 を出す実装」との対照になる。
+        // `backend=` はどのワイヤを通ったか（Spec 34 P5 の前に追加 — これが無いと
+        // ワイヤを足したことを実機で確かめられない）。`model=` は Spec 39 で末尾へ
+        // 足した（#104 の「帯も機種も見えない」を閉じる。既存の grep は壊れない）。
+        note!(
+            "turn: agent={agent_id} hop={} rounds={}/{} waves={} stop={} \
+             prompt={} cached={} total={} reasoning={} backend={} model={}",
+            record.hop,
+            record.rounds,
+            rounds_cap.map_or_else(|| "-".to_owned(), |cap| cap.to_string()),
+            record.waves,
+            record.stop.log_label(),
+            record.prompt,
+            record.cached,
+            spend.tokens,
+            record.reasoning,
+            record.backend,
+            record.model,
+        );
+    }
+    if shared.persist(&SessionRecord::turn(record.clone())) {
+        shared.emit(CoreEvent::TurnRecorded {
+            agent_id: agent_id.clone(),
+            session_id: shared.current_session(),
+        });
+    }
+    record
+}
+
 /// 転送・委譲の提示条件（Spec 20 / 2026-08-11）。
 ///
 /// **3 つを束ねたのは、5 箇所が同じ規律を読むから** — 手順の文（段 4）・
@@ -160,13 +274,16 @@ struct TurnProduct {
 /// 打ち切りは失敗ではない（不変条件 4） — `AgentFailed` を出さず、
 /// `last_error` にも書かず、ステータスは Running のまま。だからこの関数は
 /// `Ok(())` を返す。ここまでに使ったトークンは実際に消費したので統計へ積む。
+#[allow(clippy::too_many_arguments)]
 async fn finish_interrupted(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
     turn: &TurnHandle,
+    ctx: &TurnContext,
     sent_user_turn: &str,
     spend: TurnSpend,
+    waves: u32,
 ) -> CoreResult<()> {
     // None = 自分への interrupt_turn ではなく、依頼元の打ち切りが子トークン
     // 経由で連鎖した（Phase 2）。そのとき「要求から 0.0 秒」と書くと、
@@ -195,8 +312,9 @@ async fn finish_interrupted(
         (None, crate::world::Language::En) => "cascaded from the requester's interrupt".to_owned(),
     };
 
-    // (b) 履歴 + 統計。1 回の world ロックで済ませる。
-    record_interrupted_turn(shared, agent_id, sent_user_turn, &spend).await;
+    // (b) 履歴 + 清算（累計 / Record::Turn / TurnRecorded — Spec 39 の 1 実装）。
+    record_interrupted_turn(shared, agent_id, sent_user_turn).await;
+    let settled = settle_turn(shared, agent_id, ctx, &spend, waves, TurnStop::Interrupted, None).await;
 
     // (a) 会話ログへ System の 1 行。表示名は「切られた本人」— System 行は
     // 全員の会話ペインに出るので、誰のターンかを名指ししないと読めない。
@@ -242,17 +360,21 @@ async fn finish_interrupted(
         });
     }
 
+    // 接頭辞と既存の欄の並びは変えず、末尾に `model=` だけ足す（Spec 39 D2）。
+    // ここの `elapsed_ms` は**割り込み要求からの経過**で、Record::Turn の
+    // `elapsedMs`（ターン開始からの経過）とは別の量 — 欄名が同じでも取り違えない。
     note!(
         "turn interrupted: agent={agent_id} seq={} hop={} rounds={} elapsed_ms={} \
-         prompt={} cached={} total={}",
+         prompt={} cached={} total={} model={}",
         turn.seq,
         spend.hop,
         spend.rounds,
         // 連鎖（None）は -1。0 と区別する — 0 は「即検知」という実測値。
         elapsed.map_or(-1, |e| i128::try_from(e.as_millis()).unwrap_or(i128::MAX)),
-        spend.prompt,
-        spend.cached,
+        settled.prompt,
+        settled.cached,
         spend.tokens,
+        settled.model,
     );
     Ok(())
 }
@@ -267,21 +389,14 @@ async fn finish_interrupted(
 /// だけに縮めると送信と保存が食い違い、その位置で前方一致が切れる
 /// （failures.md #45 — 打ち切りの検知点では組み立てが済んでいるので、
 /// 失敗経路と違って送った形が手元にある。縮める理由が無い）。
-async fn record_interrupted_turn(
-    shared: &Arc<Shared>,
-    agent_id: &AgentId,
-    sent_user_turn: &str,
-    spend: &TurnSpend,
-) {
+///
+/// 数字は積まない — 累計・`Record::Turn` は [`settle_turn`] が 4 出口共通で持つ
+/// （Spec 39 P1 でここから移した。出口ごとに積むと片方だけ既定値のまま化ける — #103 の形）。
+async fn record_interrupted_turn(shared: &Arc<Shared>, agent_id: &AgentId, sent_user_turn: &str) {
     let note = "（このターンはユーザーの指示で打ち切られました。\
                 依頼は未処理のまま残っています）";
 
     let mut world = shared.world.write().await;
-    if let Ok(record) = world.agent_mut(agent_id) {
-        record.total_tokens += spend.tokens;
-        record.cached_tokens += spend.cached;
-        record.prompt_tokens += spend.prompt;
-    }
     shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
 }
 
@@ -294,26 +409,35 @@ async fn record_interrupted_turn(
 /// `Reply { kind: BudgetExhausted }`。まとめの LLM 呼び出しはしない —
 /// 尽きたら新しい呼び出しを始めない、が契約そのもの。
 /// 稼働は降ろさない（閉じるのはターンだけ）。次の依頼は新しい予算で普通に走る。
+///
+/// `stop` は `BudgetExhausted`（残額 0）か `ReserveShort`（残額はあるが見積もりに
+/// 届かない）のどちらか（Spec 39 D1 — Spec 38 D3 の区別をレコードへ運ぶ。それまでは
+/// 直前の `budget stop:` の `reason=` にしか無く、この関数は理由を知らなかった）。
+#[allow(clippy::too_many_arguments)]
 async fn finish_budget_exhausted(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
     pool: &Arc<BudgetPool>,
+    ctx: &TurnContext,
     sent_user_turn: &str,
     spend: TurnSpend,
+    waves: u32,
+    stop: TurnStop,
 ) -> CoreResult<()> {
-    // (b) 履歴 + 統計。ここまでに使ったトークンは実際に消費したので積む。
+    debug_assert!(
+        matches!(stop, TurnStop::BudgetExhausted | TurnStop::ReserveShort),
+        "予算の出口は 2 値のどちらか"
+    );
+    // (b) 履歴 + 清算（累計 / Record::Turn / TurnRecorded — Spec 39 の 1 実装）。
+    //     ここまでに使ったトークンは実際に消費したので積む。
     {
         let note = "（このターンはトークン予算の上限で打ち切られました。\
                     依頼は未処理のまま残っています）";
         let mut world = shared.world.write().await;
-        if let Ok(record) = world.agent_mut(agent_id) {
-            record.total_tokens += spend.tokens;
-            record.cached_tokens += spend.cached;
-            record.prompt_tokens += spend.prompt;
-        }
         shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
     }
+    let settled = settle_turn(shared, agent_id, ctx, &spend, waves, stop, None).await;
 
     // (a) System の 1 行。文言は契約の固定文（事実 + 次の道 — #44 の規律）。
     // 書くのは因果で最初に尽きを観測したターンだけ。
@@ -372,18 +496,48 @@ async fn finish_budget_exhausted(
         });
     }
 
+    // 接頭辞と既存の欄の並びは変えず、末尾に `model=` だけ足す（Spec 39 D2）。
+    // 尽きたか見積もり不足かは直前の `budget stop:` の `reason=` と Record::Turn の
+    // `stop` が持つ — この行の書式は変えない。
     note!(
         "turn budget exhausted: agent={agent_id} hop={} rounds={} ceiling={} spent={} \
-         prompt={} cached={} total={}",
+         prompt={} cached={} total={} model={}",
         spend.hop,
         spend.rounds,
         pool.ceiling_effective(),
         pool.spent_effective(),
-        spend.prompt,
-        spend.cached,
+        settled.prompt,
+        settled.cached,
         spend.tokens,
+        settled.model,
     );
     Ok(())
+}
+
+/// 予約に失敗した周の**理由の分類**（Spec 38 P4 / Spec 39 D1）。`budget stop:` の
+/// 1 行を書き、同じ判定を [`TurnStop`] として返す — 行とレコードで理由が食い違わない
+/// ように、判定は 1 箇所。**打ち切った周にしか呼ばれない**（通常運転では 1 行も増えない）。
+///
+/// 「尽きた」と「次の 1 呼び出しぶんを確保できない」は利用者から見て別の事態で、
+/// System 行の文言だけでは残額が読めない。予約の呼び出し点は 2 つ（周回境界 /
+/// まとめ呼び出しの前）で、以前は両方に同じ `note!` が複製されていた。
+fn budget_stop_reason(pool: &BudgetPool, agent_id: &AgentId, estimate: u64) -> TurnStop {
+    let stop = if pool.remaining_milli() == 0 {
+        TurnStop::BudgetExhausted
+    } else {
+        TurnStop::ReserveShort
+    };
+    note!(
+        "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
+        pool.ceiling_effective(),
+        pool.remaining_milli().div_ceil(1000),
+        estimate.div_ceil(1000),
+        match stop {
+            TurnStop::BudgetExhausted => "exhausted",
+            _ => "reserve_short",
+        },
+    );
+    stop
 }
 
 /// プロンプトキャッシュの診断行を 1 周ごとに残す。
@@ -1012,6 +1166,7 @@ async fn run_turn(
     stable_len: usize,
 ) -> CoreResult<Option<TurnProduct>> {
     let backend = shared.backend_for(template).await?;
+    let ctx = TurnContext::begin(template, backend.as_ref());
     let mut spend = TurnSpend {
         hop: incoming.hop,
         ..TurnSpend::default()
@@ -1033,54 +1188,39 @@ async fn run_turn(
         tools,
         stable_len,
         &backend,
+        &ctx,
         &mut spend,
     )
     .await;
     if let Err(err) = &result {
-        settle_failed_turn(shared, agent_id, &spend, err, backend.name()).await;
+        settle_failed_turn(shared, agent_id, &ctx, &spend, err).await;
     }
     result
 }
 
 /// 失敗したターンの清算（4 つ目の出口 — `failures.md` #103）。
 ///
-/// 成功の出口が段 7 でやること（カードの累計 + `turn:` 行）を、`Err` に対しても
-/// する。**予算は既に清算済み** — 各呼び出しの予約は内側の呼び出し地点で
+/// 成功の出口が段 7 でやること（カードの累計 + `turn:` 行 + `Record::Turn`）を、
+/// `Err` に対してもする — 実体は [`settle_turn`] で、ここは `stop=failed:{CODE}` を
+/// 組むだけ。**予算は既に清算済み** — 各呼び出しの予約は内側の呼び出し地点で
 /// commit（払ったと分かる失敗も含む）か Drop（払いが分からない失敗 = 全額返金）
 /// されており、ここで二度触ると二重計上になる。
 ///
 /// 履歴への注記（`record_failed_turn`）と `turn failed:` 行はこれまでどおり
-/// `agent_loop` が書く。この関数が足すのは**数字だけ**。
+/// `agent_loop` が書く。`waves` は失敗経路では数えていないので 0
+/// （波を撒いた後に落ちたターンでも 0 — 波の記録は `plan wave:` の行が別に持つ）。
+/// `rounds` の分母は失敗経路では読めないので `None` = `-`。
 async fn settle_failed_turn(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
+    ctx: &TurnContext,
     spend: &TurnSpend,
     err: &CoreError,
-    backend_name: &str,
 ) {
-    {
-        let mut world = shared.world.write().await;
-        if let Ok(record) = world.agent_mut(agent_id) {
-            record.total_tokens += spend.tokens;
-            record.cached_tokens += spend.cached;
-            record.prompt_tokens += spend.prompt;
-        }
-    }
-    // 成功の `turn:` 行と**同じ欄を同じ順で**書く（読む側が 1 つの書式で数えられる
-    // ように）。`stop=failed:{CODE}` だけが違う。`waves` は失敗経路では数えていない
-    // ので 0 と書く（波を撒いた後に落ちたターンでも 0 — 波の記録は `plan wave:` の
-    // 行が別に持つ）。`rounds` の分母は失敗経路では読めないので `-`。
-    note!(
-        "turn: agent={agent_id} hop={} rounds={}/- waves=0 stop=failed:{} \
-         prompt={} cached={} total={} reasoning={} backend={backend_name}",
-        spend.hop,
-        spend.rounds,
-        crate::error::ErrorPayload::from(err).code,
-        spend.prompt,
-        spend.cached,
-        spend.tokens,
-        spend.reasoning,
-    );
+    let stop = TurnStop::Failed {
+        code: crate::error::ErrorPayload::from(err).code,
+    };
+    settle_turn(shared, agent_id, ctx, spend, 0, stop, None).await;
 }
 
 /// 実行ループの本体（[`run_turn`] の内側）。台帳 `spend` は外側が持ち、
@@ -1106,6 +1246,7 @@ async fn run_turn_inner(
     tools: PresentedTools,
     stable_len: usize,
     backend: &Arc<dyn crate::llm::LlmBackend>,
+    ctx: &TurnContext,
     spend: &mut TurnSpend,
 ) -> CoreResult<Option<TurnProduct>> {
     let HandoffGates {
@@ -1184,8 +1325,10 @@ async fn run_turn_inner(
                 agent_id,
                 reply_to.take(),
                 turn,
+                ctx,
                 &sent_user_turn,
                 *spend,
+                plan_wave,
             )
             .await.map(|()| None);
         }
@@ -1214,24 +1357,17 @@ async fn run_turn_inner(
                         // 「次の 1 呼び出しぶんを確保できない」は利用者から
                         // 見て別の事態で、System 行の文言だけでは残額が読めない。
                         // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
-                        note!(
-                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
-                            pool.ceiling_effective(),
-                            pool.remaining_milli().div_ceil(1000),
-                            estimate.div_ceil(1000),
-                            if pool.remaining_milli() == 0 {
-                                "exhausted"
-                            } else {
-                                "reserve_short"
-                            },
-                        );
+                        let stop = budget_stop_reason(pool, agent_id, estimate);
                         return finish_budget_exhausted(
                             shared,
                             agent_id,
                             reply_to.take(),
                             pool,
+                            ctx,
                             &sent_user_turn,
                             *spend,
+                            plan_wave,
+                            stop,
                         )
                         .await.map(|()| None);
                     }
@@ -1468,24 +1604,17 @@ async fn run_turn_inner(
                         // 「次の 1 呼び出しぶんを確保できない」は利用者から
                         // 見て別の事態で、System 行の文言だけでは残額が読めない。
                         // **打ち切った周にしか出ない** — 通常運転では 1 行も増えない。
-                        note!(
-                            "budget stop: agent={agent_id} ceiling={} remaining={} estimate={} reason={}",
-                            pool.ceiling_effective(),
-                            pool.remaining_milli().div_ceil(1000),
-                            estimate.div_ceil(1000),
-                            if pool.remaining_milli() == 0 {
-                                "exhausted"
-                            } else {
-                                "reserve_short"
-                            },
-                        );
+                        let stop = budget_stop_reason(pool, agent_id, estimate);
                         return finish_budget_exhausted(
                             shared,
                             agent_id,
                             reply_to.take(),
                             pool,
+                            ctx,
                             &sent_user_turn,
                             *spend,
+                            plan_wave,
+                            stop,
                         )
                         .await.map(|()| None);
                     }
@@ -1653,25 +1782,20 @@ async fn run_turn_inner(
     //    キャッシュが頭打ちになる**（failures.md #45）。
     {
         let mut world = shared.world.write().await;
-        if let Ok(record) = world.agent_mut(agent_id) {
-            record.total_tokens += spend.tokens;
-            record.cached_tokens += spend.cached;
-            record.prompt_tokens += spend.prompt;
-        }
         shared.push_exchange(&mut world, agent_id, &sent_user_turn, &outcome.spoken());
     }
 
-    // 観測用のターン行（Spec 04 Notes 2 / Notes 12 のトリガー判定の実測材料）。
-    // prompt の伸びは束ねの履歴肥大 (O(N²) 懸念) を、rounds は上限 12 の較正を、
-    // waves は plan の利用実態を、それぞれ将来の判断のために記録する。
-    // 機構は入れない — 測らずに入れると「効いているか分からない機構」が増える。
-    // stop はループの抜け方。rounds が上限より小さいのに短く終わったターンを
-    // 「モデルが早く答えた」と読み違えないために出す（繰り返しの打ち切りは
-    // rounds を途中で止める唯一の機構）。
+    // 観測用のターン行（Spec 04 Notes 2 / Notes 12 のトリガー判定の実測材料）と
+    // Record::Turn（Spec 39）。prompt の伸びは束ねの履歴肥大 (O(N²) 懸念) を、
+    // rounds は上限 12 の較正を、waves は plan の利用実態を、それぞれ将来の判断の
+    // ために記録する。機構は入れない — 測らずに入れると「効いているか分からない
+    // 機構」が増える。stop はループの抜け方。rounds が上限より小さいのに短く
+    // 終わったターンを「モデルが早く答えた」と読み違えないために出す
+    // （繰り返しの打ち切りは rounds を途中で止める唯一の機構）。
     let stop = match &repeat_stop {
-        Some(tool) => format!("repeat:{tool}"),
-        None if tool_limit_hit => "tool_limit".to_owned(),
-        None => "-".to_owned(),
+        Some(tool) => TurnStop::Repeat { tool: tool.clone() },
+        None if tool_limit_hit => TurnStop::ToolLimit,
+        None => TurnStop::Completed,
     };
     // 思考の要約を**受け取った回だけ** 1 行（`xai search:` と同じ形）。
     //
@@ -1690,30 +1814,9 @@ async fn run_turn_inner(
         );
     }
 
-    note!(
-        // `reasoning` は `total` の内数（Spec 32 D2）。**0 でも必ず出す** —
-        // 思考を使わない経路で 0 が出ることが「常に 0 を出す実装」との対照になり、
-        // 省くと機構が効いているか読めなくなる（D3）。
-        // **欄の並びは [`settle_failed_turn`] の失敗行と揃える**（#103） — 読む側が
-        // 1 つの書式で成功と失敗を数えられるように。違うのは `stop=` の値だけ。
-        "turn: agent={agent_id} hop={} rounds={}/{max_tool_iterations} \
-         waves={plan_wave} stop={stop} prompt={} cached={} total={} \
-         reasoning={} backend={}",
-        incoming.hop,
-        spend.rounds,
-        spend.prompt,
-        spend.cached,
-        spend.tokens,
-        spend.reasoning,
-        // どのワイヤを通ったか（Spec 34 P5 の前に追加）。**これが無いと、
-        // ワイヤを足したことを実機で確かめられない** — Spec 31 は
-        // `xai search:` が偶然その役をしていたが、あの行は検索を有効にした
-        // 呼び出しでしか出ない。検索を使わない村ではプロトコルを切り替えても
-        // **ログが 1 行も変わらなかった**（実機で 2 ターン撃って、どちらの口を
-        // 通ったか読めなかった）。`LlmBackend::name()` は在ったのに、
-        // テストの assert 以外で 1 度も呼ばれていなかった。
-        backend.name(),
-    );
+    // 累計・`turn:` 行・Record::Turn・TurnRecorded は 4 出口共通の 1 実装
+    // （[`settle_turn`]）。`max_tool_iterations` は行の `rounds=` の分母にだけ使う。
+    settle_turn(shared, agent_id, ctx, spend, plan_wave, stop, Some(u32::from(max_tool_iterations))).await;
     Ok(Some(TurnProduct {
         outcome,
         tokens: spend.tokens,
