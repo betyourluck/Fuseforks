@@ -22,7 +22,19 @@ jobs:
       # **秘密そのものではなく「在るか」だけを env へ出す。**
       # `secrets` は step の `if:` から参照できる保証が無いので、
       # job の env へ真偽値として畳んでから `env.` で見る。
-      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
+      #
+      # **5 つ全部を数える。** 一部だけ揃った状態で有効化してはいけない —
+      # Tauri の ENVIRONMENT_VARIABLES.md が
+      # 「APPLE_ID を指定するなら APPLE_PASSWORD と APPLE_TEAM_ID も要る」と
+      # 明記しており、欠けた 1 つは空文字として届いて公証の段で落ちる。
+      # 署名だけ通って公証が無い .app は Gatekeeper が結局拒むので、
+      # **部分的に有効化しても得るものが無く、リリースが割れるだけ**。
+      HAS_APPLE_SIGNING: >-
+        ${{ secrets.APPLE_CERTIFICATE != ''
+        && secrets.APPLE_CERTIFICATE_PASSWORD != ''
+        && secrets.APPLE_ID != ''
+        && secrets.APPLE_PASSWORD != ''
+        && secrets.APPLE_TEAM_ID != '' }}
 
     strategy:
       fail-fast: false
