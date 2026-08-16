@@ -18,6 +18,12 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      # **秘密そのものではなく「在るか」だけを env へ出す。**
+      # `secrets` は step の `if:` から参照できる保証が無いので、
+      # job の env へ真偽値として畳んでから `env.` で見る。
+      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +112,51 @@ jobs:
         shell: bash
         run: |
           bun -e "const f='tauri.conf.json';const fs=require('fs');const j=JSON.parse(fs.readFileSync(f));j.version=process.env.APP_VERSION;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
+
+      # **macOS の署名と公証。秘密が揃っているときだけ環境変数を生やす。**
+      #
+      # 空文字を渡してはいけない — Tauri の `macos/sign.rs` は
+      # `var_os("APPLE_CERTIFICATE")` で見ており、**空文字も `Some` を返す**ので
+      # 「証明書が指定された」と読んで取り込みに行き、macOS だけが落ちる。
+      # `env:` へ直に書くと未設定の秘密は空文字になるため、この分岐が要る。
+      # タグ push が実質リリースなので、秘密の未設定でリリースが片肺になる形を
+      # 構造で塞ぐ（releaseDraft: true を入れたのと同じ規律）。
+      #
+      # **`APPLE_CERTIFICATE` は改行なしの base64 でなければならない**
+      # （`openssl base64 -A`）。折り返した base64 は $GITHUB_ENV の
+      # 1 行形式に載らない。
+      #
+      # 公証は Apple ID 経路（`APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID`）。
+      # `APPLE_PASSWORD` は App 固有パスワードで、Apple ID の本パスワードではない。
+      # `APPLE_SIGNING_IDENTITY` は置いていない —
+      # 渡すと証明書と一致するかの検証にしか使われず、省略すると証明書から推論される。
+      - name: Configure Apple signing and notarization
+        if: matrix.platform == 'macos-latest' && env.HAS_APPLE_SIGNING == 'true'
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          ID: ${{ secrets.APPLE_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          {
+            echo "APPLE_CERTIFICATE=${CERT}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASSWORD}"
+            echo "APPLE_ID=${ID}"
+            echo "APPLE_PASSWORD=${APP_PASSWORD}"
+            echo "APPLE_TEAM_ID=${TEAM_ID}"
+          } >> "$GITHUB_ENV"
+          echo "Apple signing: enabled"
+
+      # 秘密が無い村（fork など）では署名せずに進む。**黙って進まない** —
+      # 公証されていない .app は macOS が起動を拒むので、
+      # 「署名されなかった」ことがログから読めないと出荷物の性質が分からなくなる。
+      - name: Report unsigned macOS build
+        if: matrix.platform == 'macos-latest' && env.HAS_APPLE_SIGNING != 'true'
+        shell: bash
+        run: |
+          echo "Apple signing: DISABLED (secrets absent) -- the .app will not be notarized"
 
       # Tauri アプリをビルドし、タグの GitHub Release に installer を添付する。
       # projectPath で src-tauri の親を指す。tagName を渡すと Release を作成/更新し、
