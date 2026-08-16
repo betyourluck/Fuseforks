@@ -288,6 +288,241 @@ Spec は切っていない。ブランチ `20260813_vng` で試作し、実機�
 評価の材料になる）。**品質の層（rubric・閾値・LLM-judge）は SNS へ意見を投げて
 返答待ち**（同日。返答が無ければ機械で決まる軸から進める）。
 
+## 配布経路を 3 つに広げた（2026-08-16〜17 着地。Spec 不要と判断）
+
+起点は利用者 —「Microsoft Store の予約はしたが、一般層向けに出すにはマニュアルや
+ヘルプが少なすぎる。ただ開発者が使う winget や homebrew では公開したい」。
+**Spec を切らなかったのは、決めることが識別子と配布物の選択の 2 つしか無く、
+どちらも利用者がその場で裁定したから**（コアも画面も 1 行も変えていない）。
+
+**前提の確認から入った** — winget のコミュニティリポジトリと Microsoft Store の
+一覧は**一方通行**で、winget-pkgs に登録しても Store の GUI には 1 件も出ない
+（逆は `msstore` ソースで見える）。だから「Store には出さず winget だけ」は
+構造として成立する。
+
+### winget（`Outcasts.Fuseforks`。PR 提出済み・人の承認待ち）
+
+**PR は https://github.com/microsoft/winget-pkgs/pull/418363**（`v0.1.8` の MSI）。
+**自動検証 10 本すべて SUCCESS**（未署名インストーラへの Defender スキャンも通過）、
+CLA 署名済み、`Validation-Completed` / `New-Package` のラベルで**人のマージ待ち**。
+
+- **`Outcasts.Fuseforks` は実質永続の公開識別子**（改名には move PR が要り、
+  既存利用者の `winget install` が壊れる）。利用者裁定。根拠は実測で、MSI の
+  `Manufacturer` と Summary の `Author` がどちらも `outcasts`
+  （Tauri が `jp.outcasts.fuseforks` から導出している）
+- **提出したのは MSI のみ。** NSIS の `-setup.exe` は出していない。MSI は
+  `ProductCode` / `UpgradeCode` を持つので winget の更新・削除の検出が構造で決まる。
+  対する NSIS は ARP の表示名と発行者の照合に頼るが、**実測で exe の
+  `CompanyName` が空**だった = 最も壊れやすい形
+- **`ProductCode` は版ごとに変わり、`UpgradeCode` は不変**
+  （0.1.8 は `{AFC5FBCB-F63D-4F2C-9A5F-58A6A67F5DE5}` /
+  `{B2DDE00E-42D3-505A-B1C4-62EE9E4F5A6C}`）。手で書くなら**必ず新しい MSI から
+  読み直す** — 古い値を写すと更新検出が壊れる
+- **NSIS は現ユーザー単位に入る**（開発機の ARP が `ARP\User\X64\fuseforks`
+  だったので確定）。MSI は `ALLUSERS=1` でマシン全体。**この 2 つは同じ端末に
+  並んで入り、identifier が同じなので村のデータは共有する**
+- **MSI はインストール中に WebView2 を外部から落とす経路を持つ**
+  （`DownloadAndInvokeBootstrapper` が `NOT(REMOVE OR INSTALLED_WEBVIEW2_VERSION)`
+  の条件で `powershell.exe` を呼ぶ）。Win11 には既に入っているので通常は飛ぶ
+- **サイレント時にアプリは自動起動しない** — `LaunchApplication` の条件が
+  `AUTOLAUNCHAPP AND NOT Installed` で、それを立てるのは終了ダイアログの
+  チェックボックスだけ。`/quiet` は UI シーケンスごと走らない
+- **CI は 1 行も変えなくてよい。** winget は版ごとに URL と SHA256 で固定する側で、
+  **版を含むファイル名だからこそ自動化できる**（Microsoft 自身の PowerToys も
+  版入りファイル名）。次の版は
+  `wingetcreate update Outcasts.Fuseforks --version <V> --urls <上の式> --submit`
+- **検証は Windows Sandbox**（winget-pkgs の `Tools/SandboxTest.ps1`）。
+  **罠: マップ先のパスが `winget-pkgs` を含まないと警告の既定が `Inquire` になり、
+  非対話シェルが応答待ちで固まる。** `-WarningAction Continue` を明示する
+
+### macOS の署名と公証（`v0.1.9` から）
+
+**`v0.1.9` が署名 + 公証された最初のリリース。** 起点は実測 — それまでの
+`.app` に `_CodeSignature/` が無く、Gatekeeper がダウンロード後の起動を拒む状態だった。
+
+- **秘密は 5 つ**（`APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` /
+  `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`）。**Team ID は `6XU323VJZN`**
+- **環境変数の名前の一次資料は Tauri CLI の
+  `crates/tauri-cli/ENVIRONMENT_VARIABLES.md`。** tauri-action の README には無い。
+  `APPLE_SIGNING_IDENTITY` は置いていない — 渡すと証明書と一致するかの検証にしか
+  使われず、省略すると証明書から推論される（`macos/sign.rs` で確認）
+- **証明書の発行で既定が罠だった。** Apple の画面は
+  `Profile Type: ● Previous Sub-CA` を既定で選んでおり、**そのまま進むと
+  2027-02-01 に失効する証明書**が出る（同じ画面の説明文にそう書いてある）。
+  **G2 Sub-CA を選ぶ。** 選べたことは**発行された証明書の期限 2031-08-18** で
+  裏が取れる
+- **CSR に入れたメールは証明書に残らない**（実測）。Apple は CSR から公開鍵だけを
+  取り、subject は全部アカウント側から組み直す —
+  `UID=6XU323VJZN, CN=Developer ID Application: kosei takahashi (6XU323VJZN),
+  OU=6XU323VJZN, O=kosei takahashi, C=JP`
+- **署名した配布物には実名が恒久的に載る。** 個人登録なので CN が個人名になり、
+  `codesign -dvv` で誰でも読める。法人登録（D-U-N-S が要る）以外に回避策は無い。
+  **利用者が承知したうえでの判断**（2026-08-17）
+- **Windows での p12 の作り方**（Mac 無しで通る）: openssl で鍵と CSR →
+  Apple へ CSR → `.cer` → **中間証明書 G2**
+  （`https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer`）と束ねて
+  `openssl pkcs12 -export -legacy` → `openssl base64 -A`。
+  **`-legacy` は macOS の `security import` 互換のため**（実機で通ることを確認済み）、
+  **`-A` は改行なし**（折り返した base64 は `$GITHUB_ENV` の 1 行形式に載らない）
+- **`MSYS_NO_PATHCONV=1` が要る場面が 2 つ** — openssl の `-subj` と
+  `git show <ref>:<path>`。どちらも Git Bash がコロン付き引数を
+  Windows のパスへ変換して壊す
+- **`openssl rand -hex` は末尾に改行を付ける。** そのまま `gh secret set` へ流すと
+  パスワードが 1 文字ずれて CI の証明書取り込みが落ちる
+- **`.github/workflows/verify-notary.yml`（手動）を新設した。** 公証の資格情報だけを
+  `xcrun notarytool history` で 1 分で検証する。**初回で元を取った** — 20 分の
+  ビルドを回さずに「`APPLE_PASSWORD` が 15 文字 = App 固有パスワードではない
+  （正しくはハイフン込み 19 文字）」を特定できた。
+  **値を 1 文字も出さず長さだけで判定している** — `failures.md` #71
+  （計器がモデルの出力経由で秘密をログへ書いた）の対になる形
+- **私が開けた穴が 1 つ。** 署名の門 `HAS_APPLE_SIGNING` が**必要な秘密 5 つのうち
+  2 つしか数えていなかった**。空文字で落ちる形を防ぐために作った門が、
+  `APPLE_ID` を入れた瞬間に真になり `APPLE_PASSWORD` が空のまま発火する状態だった。
+  **一般化: 「必要な入力が揃っているか」を検査する門を書いたら、その入力を実際に
+  数える。依存は片方向とは限らない**（Tauri の文書は「`APPLE_ID` を指定するなら
+  `APPLE_PASSWORD` と `APPLE_TEAM_ID` も要る」と明記していた）
+- **YAML の罠**: `run:` を単一行で書くと、値の中の `Apple signing: DISABLED` の
+  **コロン+空白**を YAML が入れ子のマッピングと読んで落ちる。**ブロックスカラー
+  （`run: |`）内の同じ文字列は無害** — 同じ文字列が置かれた文脈だけで有効と
+  無効に分かれる。目視では見えないので**パーサに通すまで信用しない**（#107 の同型）
+
+### Homebrew tap（`betyourluck/homebrew-tap`）
+
+**`brew install --cask betyourluck/tap/fuseforks` が通ることを実機で確認済み。**
+
+- **完全修飾名は省略できない。** `brew tap` してから短い名前で入れようとすると
+  `Refusing to load cask ... from untrusted tap` で拒否される。Homebrew は
+  **tap することと、そこのコードを読み込む信頼を与えることを分けている**
+  （`brew trust --cask <完全修飾>` を先に打てば短形も使える）。
+  **世間の README に溢れている `brew tap X && brew install Y` は非公式 tap では
+  通らない** — `Taps.md` にその段落があるのに、私は慣れた形を書いて実機で落ちた
+- **リポジトリ名は `homebrew-` で始まれば後ろは自由。** `tap` にしたのは
+  **索引を中身の 1 つの名前で呼ぶと、2 つ目が入った瞬間に名前が嘘になる**ため
+  （完全修飾が `betyourluck/fuseforks/fuseforks` と重なるのも避けた）。
+  cask は `Casks/fuseforks.rb`
+- **`auto_updates true` は付けない。** 参考にした cask は付けているが、
+  **Fuseforks に updater は無い**（`PRIVACY.md` が正）。付けると Homebrew は
+  「アプリが自力で更新する」と読んで `brew upgrade` の対象から外し、
+  **利用者が新版を受け取れなくなる**
+- **`depends_on macos:` は書かない** — 実行時の OS 下限を測っていない。
+  winget で `MinimumOSVersion` を書かなかったのと同じ判断
+- **`zap` は村を消す**（`~/Library/Application Support/jp.outcasts.fuseforks` に
+  `world.json` / `sessions.redb` / workspace が全部入っている）。通常の
+  `uninstall` では消えないことを cask と README の両方に書いた
+- **`.github/workflows/verify-cask.yml`（手動）を新設した。** この tap を保守して
+  いる端末は Windows で `brew` を 1 度も実行できない。**`spctl` が本命** —
+  署名の構造物が入っていることと Gatekeeper が実際に受け入れることは別の主張で、
+  前者はファイルを見れば分かるが後者は macOS に訊くしかない。
+  **`--no-quarantine` を使わない**（使うと判定を迂回して目的が消える）
+
+**実測の結果**（`macos-latest` ランナー）:
+
+```text
+codesign -dvv   Authority=Developer ID Application: kosei takahashi (6XU323VJZN)
+                Authority=Developer ID Certification Authority / Apple Root CA
+                Notarization Ticket=stapled
+stapler validate  The validate action worked!
+spctl -a -vv      accepted / source=Notarized Developer ID
+brew audit --cask --online --strict   指摘ゼロ
+```
+
+**3 つは主張の強さが違う** — `codesign` は署名の構造物、`stapler` は
+チケットの綴じ込み（オフラインでも検証できる）、**`spctl` の `accepted` だけが
+「Gatekeeper が実際に受け入れる」**を意味する。
+
+### 公式 homebrew-cask は目標から降ろした（2026-08-17 利用者裁定）
+
+**`Package-Acceptance-Policy.md` の門は 2 つあり、片方は時間で解けない**:
+
+| 門 | 要求 | 実測（2026-08-17） |
+|---|---|---|
+| リポジトリの年齢 | 30 日 | 18 日（2026-08-29 に開く） |
+| **注目度（本人提出）** | **225 stars** / 90 forks / 90 watchers | **1 star / 0 forks / 1 watcher** |
+
+**他人が提出すれば 75 stars**に下がる。例外条項は「substantial, independently
+verifiable public interest and **multiple requests for inclusion**」を材料に挙げる。
+
+**降ろした理由は星が足りないことではなく、目的の裁定**（下の節）。**tap で完結**して
+おり、`fuseforks` というトークンは homebrew-cask に存在しないので将来も使える。
+
+### 版を出すたびに 2 経路の更新が要るようになった
+
+**「リリースビルド」の節はタグを打つところで終わっている**が、そこで終わらなくなった:
+
+1. **winget**: `wingetcreate update Outcasts.Fuseforks --version <V> --urls <MSI の URL> --submit`
+2. **tap**: `Casks/fuseforks.rb` の `version` と `sha256` を新しい dmg から取り直す
+
+**どちらも版ごとに URL と SHA256 で固定する形**なので、タグを打った後に忘れると
+**配布経路だけが古い版を指し続ける**（壊れはしないが、新版が届かない）。
+
+## Fuseforks の目的の裁定（2026-08-17 利用者）
+
+**ホビー / 学習の対象であり、普及を狙う道具ではない。**
+
+起点は [AionUi](https://github.com/iOfficeAI/AionUi) の発見（**32,036 stars・
+fork 3,282・2025-08-07 作成 = 1 年先行**）。**その Team Mode が `plan` と構造的に
+同じ**ことを確認したうえでの裁定 —「Leader が subtask へ割って Teammate へ
+**並列委譲**・各自が**別モデル**・結果を**束ねる**・**作業フォルダを共有**」の
+4 点が一致する。利用者の言葉 —「**先行しているプレイヤーがいるのは、むしろ
+良いことだと思う**」「AionUI からはワイヤーや機能などを勉強できればいい」。
+
+**帰結**: 公式 homebrew-cask を降ろした。**星の数は普及の指標であって実装の質では
+ない** — AionUi 本体の 32,036 は GUI と配布と提携が集めたもので、**Rust の核
+`aionrs` は 117 stars**。核どうしなら 117 対 1 で、まだ「1 年先行した小規模実装」の
+規模だ。
+
+**設計の差は 3 つあり、どれも能力ではなく構造**:
+
+1. **委譲の相手。** AionUi の Teammate は**外部の CLI エージェント**
+   （Claude Code / Codex / Gemini CLI…）+ 自前の `aionrs`。各 CLI のハーネスを
+   借りるので**ベンダー機能を実装しなくてよい**（利用者の観察。当たっている）。
+   **ただし得られるのは「API が持つもの」ではなく「その CLI が露出したもの」**で、
+   CLI 作者の製品判断を継承する
+2. **ループの所有。** 粒度がプロセスなので、**自分が所有していないプロセスの連鎖に
+   トークンの天井は掛けられない**。Fuseforks が自分で持っているのは
+   ターンループ / 周回上限 / 因果ごとの CAS 予約つき天井 / 打ち切りの伝播 /
+   プロンプトキャッシュの境界打ち / RepeatGuard / ツールの提示集合
+3. **トポロジーの寿命。** AionUi は Leader→Teammate をタスクごとに組む。
+   Fuseforks は**人が引いた線が村の恒久的な性質**
+
+**学習が目的だと、この比較は裏返る** — Spec 31/34/36/37 が残したのは機能ではなく
+観測だった（`carries` 表の 20 マス / Meta は添付を期限なしで保存 /
+gemini-3.7-flash は 19,000 トークン未満でキャッシュを返さない / 文書と実装が
+4 回続けて食い違った）。**CLI をラップすると製品は手に入るが、この知識は 1 つも
+手に入らない。**
+
+### AionUi から読む対象（`aionrs`。Apache-2.0・Rust）
+
+- **`crates/aion-compact`** — **会話の要約ではなくツール出力の圧縮**で、
+  **LLM を 1 回も呼ばない純粋なテキスト変換**。`CompactLevel::{Off,Safe,Full}` で
+  `sanitize → fold_repeated_lines → compact_json`。`fold` は**似た行が 3 行以上
+  続いたら先頭と末尾だけ残して `[... N identical lines]` に畳む**（似ている =
+  共通接頭辞が短いほうの 50% 以上）。**実測で cargo のビルド出力が 69.8%
+  （約 30% 減）**。Fuseforks の `run` / `grep` / `fd` にそのまま効く形で、
+  まだ何も持っていない
+  - **私は最初これを「段階的な会話圧縮」と説明したが誤りだった** —
+    ファイル名（`fold.rs` / `level.rs`）から推測して書いた。**読まずに名前から
+    中身を語らない**
+  - **最初の測定 1.0% も交絡だった** — GitHub のログはタイムスタンプ接頭辞が
+    全行を「似ている」に寄せる。**生のコマンド出力で測り直して 69.8%**
+  - **向こうのコードにこの村が 2 度踏んだのと同じ罠がある** —
+    `common_prefix_len` は**文字数**を返すのに `min_len` は `a.len()` = **バイト長**。
+    ASCII では一致するので気づかないが、**日本語は比が 1/3 になり閾値 0.5 が
+    実質 1.5 になって永久に畳まれない**。`failures.md` の
+    「`MAX_*_CHARS` を `len()` と突き合わせる差分は日本語では枠の 1/3 で発火する」
+    がそのまま当たる。**別プロジェクトで独立に同じ罠**
+- **`crates/aion-providers`** — `openai_responses_projector.rs` が
+  **Spec 34/37 と同じ問題（同一エンドポイントで要求の形が違う）への別解**。
+  Fuseforks は adapter が関数ポインタを渡す形（`encode(messages, part_for)`）で
+  着地した。`bedrock.rs` は Fuseforks に無い 7 本目のワイヤ
+- **`toon`（TOON = トークン指向の記法）は未読。** `compact_output_toon` として
+  `fold` とは別経路になっており、構造化データのコストに効く可能性がある
+- **テストの置き方**: `#[cfg(test)] #[path = "x_test.rs"] mod x_test;` で
+  **モジュール宣言は inline のまま中身を隣接ファイルへ出す**。
+  Fuseforks は inline の `#[cfg(test)] mod tests`。**`orchestrator.rs` の分割で
+  `#[cfg(test)]` ブロックが範囲ごと別ファイルへ運ばれた事故**（分割の落とし穴 2）は、
+  隣接ファイル方式なら起きない
+
 ## 現在地（2026-08-16 更新）
 
 **マイルストーン = [Spec 39](specs/39_stats-view.md)（統計画面）が Done で、
@@ -931,6 +1166,22 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   一覧で出す**（スクショを共有するときに写る）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
+
+- **`v0.1.9` = `38575fd`（2026-08-17。5 コミット）— macOS の署名と公証**。
+  **アプリのコードは 1 行も変わっていない**（`crates/` と `apps/*/src` の diff が
+  空。変わったのは `build.yml` / `README` 日英 / `CLAUDE.md` の 4 ファイルだけ）。
+  **配布物の性質だけが変わった版**で、リリースノートの主題もそこに置いた。
+  **利用者が負う条件は 2 つ** — macOS は Apple Silicon 専用（以前からそうだったが
+  どこにも書いていなかった。この版から README に明記）/ **機能追加も不具合修正も
+  ゼロなので Windows と Linux には更新する理由が無い**。
+  **署名の射程は macOS だけで、Windows のインストーラは依然として未署名**である
+  ことも書いた（書かないと全体に掛かると読まれる）。
+  **1 度目の macOS は 401 で落ちた** — `APPLE_PASSWORD` に App 固有パスワードでは
+  なくアカウントのパスワードを入れていた。**タグは打ち直していない** —
+  `gh run rerun --failed` で macOS のジョブだけ再走させ、Windows / Ubuntu の
+  success と既にある draft の 5 アセットをそのまま生かした。
+  **`releaseDraft: true` がまた効いた**（macOS 欠けの 5/7 で public になる形を
+  塞いだ。片肺公開の 4 回目になるところだった）
 
 **リリースの installer は Release Assets が正で、artifact には残さない**
 （`2a0e47a` で `Upload artifacts` step を撤去。Release Assets と同じものの
@@ -3188,6 +3439,24 @@ Kataribe（`D:\Github\Kataribe\.github\workflows\build.yml`）を写し、
 更新は入口側へ伝わらない。** 依存を足した本人の手元では動くので、壊れるのは CI か
 別の端末。**ロックファイルは「どちらでも動く」ものではなく、どちらが正かを
 1 つ決めるもの。**
+
+### タグを打った後にもう 2 つ仕事がある（2026-08-17 追記）
+
+**この節はタグの push で終わっていたが、配布経路が 3 つになったので終わらない。**
+詳細は上の「配布経路を 3 つに広げた」の節が正。ここには**忘れると何が起きるか**だけ:
+
+| | やること | 忘れると |
+|---|---|---|
+| **winget** | `wingetcreate update Outcasts.Fuseforks --version <V> --urls <MSI の URL> --submit` | `winget install` が古い版を入れ続ける |
+| **Homebrew tap** | `betyourluck/homebrew-tap` の `Casks/fuseforks.rb` の `version` と `sha256` を新しい dmg から取り直す | `brew install --cask` が古い版を入れ続ける |
+
+**どちらも版ごとに URL と SHA256 で固定する形**なので、**壊れずに古いまま止まる**のが
+厄介なところ — エラーが出ないので気づく契機が無い。
+
+**macOS の署名は 5 つの secret が揃っているときだけ発火する。** 揃っていなければ
+署名せずに `Apple signing: DISABLED` の 1 行を出して進む（**黙って進まない**）。
+資格情報が疑わしいときは `verify-notary.yml` を手動で回すと **1 分で真偽が出る**
+（ビルドを回すと 20 分）。
 
 ## システム設定への追加候補（2026-08-03 利用者。小出しに来る前提）
 
