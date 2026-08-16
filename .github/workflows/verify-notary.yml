@@ -1,0 +1,64 @@
+name: Verify notary credentials
+
+# **手動でしか走らない。** 公証の資格情報（APPLE_ID / APPLE_PASSWORD /
+# APPLE_TEAM_ID）が通るかだけを見る。ビルドは 1 行も走らせない。
+#
+# 存在理由は費用の差。macOS の Tauri ビルドは 20 分前後かかるので、
+# 「App 固有パスワードが合っているか」を知るためにそれを回すのは払いすぎで、
+# 外すとまた 20 分になる。ここは 1 分で真偽が出る。
+#
+# **鍵の失効・更新のたびに要る**ので使い捨てにしない — App 固有パスワードは
+# Apple ID のパスワード変更で無効になり、そのときの症状は
+# 「タグを打ったら macOS だけ 401 で落ちる」という最も高い形で現れる。
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      # 秘密が欠けていたら 401 の原因が「誤り」なのか「未設定」なのか
+      # 区別できなくなるので、先に在るかだけ数える（値は出さない）。
+      - name: Check secrets are present
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          fail=0
+          for n in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            v="${!n}"
+            if [ -z "$v" ]; then echo "  $n : MISSING"; fail=1
+            else echo "  $n : present (${#v} chars)"; fi
+          done
+          [ "$fail" -eq 0 ] || { echo "secrets が欠けている"; exit 1; }
+
+      # **文字数を出すのは値を漏らさずに形を検査するため。**
+      # App 固有パスワードは Apple が xxxx-xxxx-xxxx-xxxx の形で発行するので
+      # ハイフン込み 19 文字。16 ならハイフンを外して貼っている。
+      - name: Check app-specific password shape
+        env:
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          n=${#APPLE_PASSWORD}
+          echo "  length = $n"
+          case "$n" in
+            19) echo "  -> ハイフン込みの想定どおり" ;;
+            16) echo "  -> WARNING: ハイフンが抜けている可能性が高い" ;;
+            *)  echo "  -> WARNING: App 固有パスワードの想定 (19) と違う" ;;
+          esac
+          if printf '%s' "$APPLE_PASSWORD" | grep -q '[[:space:]]'; then
+            echo "  -> WARNING: 空白が含まれている（貼り付け時の混入）"
+          fi
+
+      # 本命。認証が通れば履歴（空でもよい）が返り、誤っていれば 401。
+      - name: notarytool history
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
