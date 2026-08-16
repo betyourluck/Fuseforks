@@ -108,7 +108,8 @@ cd apps/gui-tauri && bun run test
 
 `v*.*` のタグを push すると、3 OS 分のリリースビルドが GitHub Actions で走る
 （[`.github/workflows/build.yml`](.github/workflows/build.yml)）。
-通常のコミットでは走らない。
+通常のコミットでは走らない。**macOS のビルドは Apple Silicon 専用**で、
+Intel Mac は対象にしない。
 
 ## 技術スタック
 
@@ -154,9 +155,3 @@ cd apps/gui-tauri && bun run test
   公開義務は一切ありません。義務が発火するのは配布のときだけです
 - コミュニティでの共同開発を歓迎します。プルリクエストは MPL-2.0 の下で
   受け入れます
-
-**AGPL-3.0-or-later から変更しました**（MIT → AGPL → MPL の 3 つ目）。
-AGPL は「ネットワーク越しの提供」でも義務が発火し、組み込む側にも全体の公開を
-求めるため、**道具として使ってもらうには強すぎました**。求めていたのは
-「誰かがいい修正をしたら、こちらもそれを使いたい」という一点で、
-それはファイル単位のコピーレフトで足ります。

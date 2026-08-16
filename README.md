@@ -106,7 +106,7 @@ cd apps/gui-tauri && bun run test
 
 Pushing a `v*.*` tag runs release builds for 3 operating systems on GitHub Actions
 ([`.github/workflows/build.yml`](.github/workflows/build.yml)). Ordinary commits do not
-trigger it.
+trigger it. **The macOS build is Apple Silicon only** — Intel Macs are not a target.
 
 ## Tech Stack
 
@@ -154,9 +154,3 @@ trigger it.
   machine carries no obligation to publish anything. The obligation triggers
   only on distribution.
 - Community co-development is welcome. Pull requests are accepted under MPL-2.0.
-
-**Changed from AGPL-3.0-or-later** (MIT → AGPL → MPL, the third). AGPL also
-triggers on network use and asks anyone embedding the project to publish the
-whole, which was **too strong for something meant to be used as a tool**. What
-was actually wanted is one thing — "if someone makes a good fix, I want to use
-it too" — and file-level copyleft is enough for that.
