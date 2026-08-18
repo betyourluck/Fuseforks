@@ -148,6 +148,16 @@
       "iconAlt": "External client icon",
       "nameSave": "Save",
       "nameSaved": "Saved"
+    },
+    "menuPricing": "Price table",
+    "pricing": {
+      "title": "Price table source",
+      "lead": "Where the \"Fetch\" button in model registration reads from. Leave it empty and this request never happens (rates can also be typed in by hand).",
+      "urlLabel": "Source URL (https only)",
+      "urlPlaceholder": "https://example.com/prices.json",
+      "urlHint": "Fetched only when you press the button. Never on startup, never when this screen opens, and never on a timer.",
+      "saved": "Saved",
+      "privacy": "The request is an HTTP GET only. It carries no village data, no conversation, and no model names. The host sees the request and your IP address."
     }
   },
   "common": {
@@ -594,7 +604,24 @@
     "metaWebSearchHint": "Searches the web and checks its facts before answering (source URLs are returned)",
     "metaResponsesCaveats": "This endpoint stores the attachments you send on its server with no expiry (they can be listed and deleted). It also cannot force a tool call (the endpoint only accepts auto). With web search on, turns that actually search grow the input to tens of thousands of tokens.",
     "strandedMetaStrong": "has no effect because the protocol is not Meta native (Responses)",
-    "strandedMetaAfter": ". This feature exists only on the Responses path. To use it, set the protocol to \"Meta native (Responses)\"."
+    "strandedMetaAfter": ". This feature exists only on the Responses path. To use it, set the protocol to \"Meta native (Responses)\".",
+    "pricing": {
+      "title": "Rates ($ per 1M tokens)",
+      "hint": "Blank means \"unset\". Blank cache rates fall back to the next rate up.",
+      "input": "Input",
+      "output": "Output",
+      "cacheRead": "Cache read",
+      "cacheWrite": "Cache write",
+      "cacheWrite1h": "of which 1h TTL",
+      "asOf": "Rates as of",
+      "unset": "unset",
+      "fallsBack": "blank = falls back",
+      "fetch": "Fetch",
+      "fetching": "Fetching…",
+      "filled": "Rates filled in (not saved yet)",
+      "filledWithDropped": "Rates filled in ({n} invalid entries skipped)",
+      "notFound": "{model} is not in the table. Enter the rates by hand."
+    }
   },
   "schedule": {
     "title": "Schedules (timed requests)",
@@ -970,6 +997,12 @@
       "cacheWrite": "cache write {n}",
       "fresh": "fresh {n}",
       "cacheWrite1h": "of which 1h {n}"
+    },
+    "cost": {
+      "approx": "≈ ${usd}",
+      "asOf": "(rates as of {date})",
+      "asOfUnknown": "(rate date not recorded)",
+      "coverage": "{priced}/{total} rows · {percent} of tokens"
     }
   }
 }

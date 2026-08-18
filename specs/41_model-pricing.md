@@ -2,8 +2,8 @@
 
 **ID**: 41
 **Date**: 2026-08-18
-**Status**: **rev5（2026-08-18）— P0 / P1 / P2 完了。次は P3（画面）**
-（rev2 = 査読 7 点 / rev3 = D4 確定 / rev4 = P1 / rev5 = P2 着地）
+**Status**: **rev6（2026-08-18）— P0〜P3 完了。残るは P4（台帳）と P5（実機）**
+（rev2 = 査読 7 点 / rev3 = D4 確定 / rev4 = P1 / rev5 = P2 / rev6 = P3）
 **Branch**: P0（契約 + D5 の覆し）は rev 承認後に main 直。P1 以降は `YYYYMMDD_pricing` へ積む
 
 ## Goal
@@ -227,7 +227,7 @@ cost(turn, price) =
 | **P0** | **完了**（2026-08-18）。`data_contract` の `ModelTemplate` へ 5 欄 + `pricingAsOf`、`pricing` と `pricing_fetch_freeze` の 2 ブロック。D5 の覆しは Spec 39 側の見出しへ記録済み | rev 承認 |
 | **P1** | **完了**（2026-08-18）。`ModelTemplate` へ 6 欄 + `pricing.rs`（`resolve` / `cost_of` / `summarize`・単体 8 本）。**`budget.rs` は 1 行も触っていない** | 全緑（`fuseforks-core` 812）・clippy 警告ゼロ |
 | **P2** | **完了**（2026-08-18）。`pricing_source.rs`（棚 + `validate_url` + `fetch_table`）+ `parse_table`（コア・純）+ IPC 3 本 + **`PRIVACY.md` 日英を同じコミットで**。単体 7 本 | 全緑・clippy 警告ゼロ・**凍結の網をミューテーションで赤に** |
-| **P3** | 画面: 登録ダイアログの 5 欄と「取得」/ システム設定の URL / 統計の `≈ $` 行と被覆率 | vitest・build |
+| **P3** | **完了**（2026-08-18）。登録ダイアログの 5 欄 + 日付 + 「取得」/ システム設定 > 外部連携 > 単価表 / 統計の `≈ $` 2 行 / 辞書 ja・en | vitest 394・build 緑・clippy 警告ゼロ |
 | **P4** | 台帳: README 日英 / DETAIL 日英 / CLAUDE.md / Spec 39 D5 の追記 | grep で追従漏れゼロ |
 | **P5** | 実機 | 検収 |
 
@@ -321,6 +321,29 @@ core 経由で既にツリーに居た）。
 
 **(d) を書いたのは、書かないと「何も残らない」と読まれるから** — 実際には
 GitHub のアクセスログに残る。**こちらが送らないことと、相手に何も残らないことは別。**
+
+## P3 実装記録（2026-08-18）
+
+vitest 394・build 緑・clippy 警告ゼロ・**辞書の鍵は ja / en で完全一致**。
+
+- **金額を埋めるのは `Orchestrator::session_stats`**（`aggregate` ではない）。
+  **`aggregate` は純関数で村を知らない**が、単価は `ModelTemplate` に住む。
+  `StatsReport.cost` を `Option` にして、**呼び出し側が後から入れる**形にした
+- **`v-model.number` を使わなかった**のが単価欄の要点。`.number` は**空文字を `0` に
+  する**ので、**「未設定」が「無料」に化ける**。文字列で持ち、`priceField` の setter で
+  空欄 → `null` / 数値でなければ**触らない**（通貨記号を書かせない = 査読のその他 3）
+- **「取得」はモデル登録ダイアログにしか無い。** システム設定には URL 欄だけで、
+  **到達確認のボタンも置かない**（凍結）。取得は**対象のモデルが決まっている場所**
+  でしか押せない
+- **取得できなかった欄は触らない** — `if (hit.x !== null)` で埋めるので、
+  **手で入れた値を空で潰さない**（D3）
+- **`settings` ページを開いたときは設定を読むだけ**。`selectPage` に
+  `loadPricingSource` だけを置き、**取得は呼ばない**
+- **金額の塊は `report.cost` が `null` なら丸ごと出ない**（0 と書かない。D4）
+
+**型検査が 2 回止めた** — `ModelTemplate` に欄を足したとき（ダイアログの雛形）と、
+`StatsReport` に `cost` を足したとき（テストの fixture）。**どちらも欄を足した側が
+気づけない場所**で、`bun run build` だけが指した。
 
 ## Notes
 

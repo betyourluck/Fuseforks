@@ -225,7 +225,31 @@ impl Orchestrator {
                 }
             }
         }
-        Ok(crate::stats::aggregate(&turns, &sessions, scope))
+        let mut report = crate::stats::aggregate(&turns, &sessions, scope);
+        // **金額はここで足す**（Spec 41）。`aggregate` は純関数で村を知らないが、
+        // 単価は `ModelTemplate` に住む。**引けなかった行は合計から外れ、外れたことが
+        // `priced_rows` / `priced_tokens` に出る** — 部分合計が全体に見えないように。
+        let templates = self.shared.world.read().await.templates();
+        let summary = crate::pricing::summarize(&report.by_agent, |model| {
+            templates
+                .iter()
+                .find(|t| t.model == model)
+                .map(|t| {
+                    (
+                        crate::pricing::Rates {
+                            input: t.input_per_mtok,
+                            output: t.output_per_mtok,
+                            cache_read: t.cache_read_per_mtok,
+                            cache_write: t.cache_write_per_mtok,
+                            cache_write_1h: t.cache_write_1h_per_mtok,
+                        },
+                        t.pricing_as_of.clone(),
+                    )
+                })
+        });
+        // **1 行も引けなければ `None`** — 画面は金額の行そのものを出さない（0 と書かない）。
+        report.cost = (!summary.is_empty()).then_some(summary);
+        Ok(report)
     }
 
     /// 保存先を借りる。開けていなければ、直し方を添えて失敗を返す。

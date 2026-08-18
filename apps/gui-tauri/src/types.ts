@@ -353,6 +353,66 @@ export interface ModelTemplate {
   metaWebSearch: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
+  /**
+   * 100 万トークンあたりの単価（USD。Spec 41）。**未設定は 0 ではなく「無い」。**
+   *
+   * **`inputPerMtok` と `outputPerMtok` が両方揃って初めて「単価登録済み」**。
+   * 片方で他方を埋めない（出力を入力単価で埋めると桁が 5 倍違う嘘になる）。
+   * **未設定のキャッシュ単価は 1 段上へ落ちる** — `cacheWrite1h → cacheWrite → input`。
+   */
+  inputPerMtok: number | null;
+  outputPerMtok: number | null;
+  cacheReadPerMtok: number | null;
+  /** **書き込みの単価。3 欄で計算すると実測で 1.52 倍ずれる。** */
+  cacheWritePerMtok: number | null;
+  /** うち 1 時間 TTL（Anthropic のみ）。 */
+  cacheWrite1hPerMtok: number | null;
+  /** **この単価が正しいと信じられる時点**（取得なら表の日付、手入力ならその日）。 */
+  pricingAsOf: string | null;
+}
+
+/** 単価表の取得元（Spec 41）。**URL は秘密ではない** — 見て変えられることが根拠。 */
+export interface PricingSourceView {
+  /** 取得先。**空なら通信そのものが起きない。** */
+  url: string;
+  /** 設定ファイルが読めない理由（`Some` の間は保存できない）。 */
+  blocked: string | null;
+}
+
+/** 取得の結果。**欄に入れるだけで保存はしない**（Spec 41 D3）。 */
+export interface FetchedPrices {
+  asOf: string | null;
+  models: FetchedPrice[];
+  /** 値が不正で落とした件数。**落としたことを画面に出す。** */
+  dropped: number;
+}
+
+/** 取得した 1 モデルぶんの単価。 */
+export interface FetchedPrice {
+  /** 突き合わせる鍵（`ModelTemplate.model`）。 */
+  key: string;
+  inputPerMtok: number | null;
+  outputPerMtok: number | null;
+  cacheReadPerMtok: number | null;
+  cacheWritePerMtok: number | null;
+  cacheWrite1hPerMtok: number | null;
+}
+
+/**
+ * おおよその金額（Spec 41 D4）。**単価が 1 行も引けなければ `null`。**
+ *
+ * **被覆率を必ず一緒に出す** — これが無いと部分合計が全体の合計に見える。
+ */
+export interface CostSummary {
+  /** 単価が引けた行だけの合計（USD）。**近似**。 */
+  totalUsd: number;
+  pricedRows: number;
+  totalRows: number;
+  /** **素のトークン**（`prompt + completion`）での被覆率。実効では数えない。 */
+  pricedTokens: number;
+  totalTokens: number;
+  /** 使った単価のうち**最も古い**時点。 */
+  asOf: string | null;
 }
 
 /** 参照した web ページ 1 件。 */
@@ -824,6 +884,11 @@ export interface StatsReport {
   byStop: StopCount[];
   /** `session` のみ。`all` では `null`。 */
   series: StatsSeries | null;
+  /**
+   * おおよその金額（Spec 41）。**単価が 1 行も引けなければ `null`** —
+   * 画面は金額の塊ごと出さない（0 と書かない）。
+   */
+  cost: CostSummary | null;
 }
 
 /** 村の黒板の付箋 1 枚（work_dir の `blackboard/` 直下。読み取り専用の投影）。 */

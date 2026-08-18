@@ -61,6 +61,7 @@ function report(overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number 
     },
     byAgent: [],
     byStop: [],
+    cost: null,
     series: null,
   };
 }

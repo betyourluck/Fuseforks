@@ -28,6 +28,77 @@ const { state } = orchestrator;
 
 const selectedId = ref<ModelTemplateId | null>(state.templates[0]?.id ?? null);
 const draft = ref<ModelTemplate | null>(null);
+
+/**
+ * 単価の入力欄（Spec 41）。**文字列で持って、保存の直前に数値へ寄せる。**
+ *
+ * `v-model.number` を使わないのは、**空欄と 0 を区別する**ため — `.number` は
+ * 空文字を `0` にするので、「未設定」が「無料」に化ける。**未設定は 0 ではない。**
+ */
+function priceField(key: keyof ModelTemplate) {
+  return computed<string>({
+    get: () => {
+      const v = draft.value?.[key];
+      return typeof v === "number" ? String(v) : "";
+    },
+    set: (raw) => {
+      if (!draft.value) return;
+      const trimmed = raw.trim();
+      // 空欄 = 未設定へ戻す。数値でなければ触らない（通貨記号を書かせない）。
+      const parsed = trimmed === "" ? null : Number(trimmed);
+      const next =
+        parsed === null || (Number.isFinite(parsed) && parsed >= 0) ? parsed : undefined;
+      if (next !== undefined) {
+        (draft.value as unknown as Record<string, number | null>)[key as string] = next;
+      }
+    },
+  });
+}
+
+const priceInput = priceField("inputPerMtok");
+const priceOutput = priceField("outputPerMtok");
+const priceCacheRead = priceField("cacheReadPerMtok");
+const priceCacheWrite = priceField("cacheWritePerMtok");
+const priceCacheWrite1h = priceField("cacheWrite1hPerMtok");
+
+const fetchingPrices = ref(false);
+const priceNotice = ref("");
+
+/**
+ * 単価表から引いて**欄に入れるだけ**（Spec 41 D3）。**保存はしない。**
+ *
+ * **取得できなかった欄は触らない** — 手で入れた値を空で潰さない。
+ * 呼ばれるのは**このボタンだけ**で、起動・画面遷移・タイマーからは呼ばない
+ * （`data_contract` の `pricing_fetch_freeze`）。
+ */
+async function fetchPrices() {
+  if (!draft.value || fetchingPrices.value) return;
+  fetchingPrices.value = true;
+  priceNotice.value = "";
+  try {
+    const table = await ipc.fetchModelPrices();
+    const hit = table.models.find((m) => m.key === draft.value?.model);
+    if (!hit) {
+      priceNotice.value = t("modelTemplate.pricing.notFound", { model: draft.value.model });
+      return;
+    }
+    const d = draft.value;
+    if (hit.inputPerMtok !== null) d.inputPerMtok = hit.inputPerMtok;
+    if (hit.outputPerMtok !== null) d.outputPerMtok = hit.outputPerMtok;
+    if (hit.cacheReadPerMtok !== null) d.cacheReadPerMtok = hit.cacheReadPerMtok;
+    if (hit.cacheWritePerMtok !== null) d.cacheWritePerMtok = hit.cacheWritePerMtok;
+    if (hit.cacheWrite1hPerMtok !== null) d.cacheWrite1hPerMtok = hit.cacheWrite1hPerMtok;
+    d.pricingAsOf = table.asOf;
+    priceNotice.value =
+      table.dropped > 0
+        ? t("modelTemplate.pricing.filledWithDropped", { n: table.dropped })
+        : t("modelTemplate.pricing.filled");
+  } catch (err) {
+    priceNotice.value = String((err as { message?: string })?.message ?? err);
+  } finally {
+    fetchingPrices.value = false;
+  }
+}
 /** 削除の通信中である行の ID。連打による二重送信を塞ぐ。 */
 const removing = ref<ModelTemplateId | null>(null);
 
@@ -239,6 +310,14 @@ function blank(): ModelTemplate {
     metaWebSearch: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
+    // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
+    // 「取得」か手入力で初めて埋まる。
+    inputPerMtok: null,
+    outputPerMtok: null,
+    cacheReadPerMtok: null,
+    cacheWritePerMtok: null,
+    cacheWrite1hPerMtok: null,
+    pricingAsOf: null,
   };
 }
 
@@ -570,6 +649,87 @@ function onTemperature(raw: string): void {
               type="number"
               class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
             />
+
+            <!--
+              単価（Spec 41）。**5 欄 + 日付。** 3 欄（入力 / 出力 / キャッシュ）では
+              実測で 1.52 倍ずれるので、書き込みを独立させてある。
+              **空欄は無視ではなく 1 段上へ落ちる**ので、書き込みの概念が無い
+              モデル（Gemini / xAI）では空が正しい状態。
+            -->
+            <label class="col-span-2 mt-2 text-xs font-semibold text-ink-dim">
+              {{ $t("modelTemplate.pricing.title") }}
+            </label>
+            <label class="col-span-2 -mt-1 text-xs text-ink-dim">
+              {{ $t("modelTemplate.pricing.hint") }}
+            </label>
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.input") }}</label>
+            <input
+              v-model="priceInput"
+              type="number"
+              step="any"
+              min="0"
+              :placeholder="$t('modelTemplate.pricing.unset')"
+              class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
+            />
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.output") }}</label>
+            <input
+              v-model="priceOutput"
+              type="number"
+              step="any"
+              min="0"
+              :placeholder="$t('modelTemplate.pricing.unset')"
+              class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
+            />
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.cacheRead") }}</label>
+            <input
+              v-model="priceCacheRead"
+              type="number"
+              step="any"
+              min="0"
+              :placeholder="$t('modelTemplate.pricing.fallsBack')"
+              class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
+            />
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.cacheWrite") }}</label>
+            <input
+              v-model="priceCacheWrite"
+              type="number"
+              step="any"
+              min="0"
+              :placeholder="$t('modelTemplate.pricing.fallsBack')"
+              class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
+            />
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.cacheWrite1h") }}</label>
+            <input
+              v-model="priceCacheWrite1h"
+              type="number"
+              step="any"
+              min="0"
+              :placeholder="$t('modelTemplate.pricing.fallsBack')"
+              class="rounded border border-line bg-surface-0 px-2 py-1 tabular-nums outline-none focus:border-accent"
+            />
+
+            <label class="text-ink-dim">{{ $t("modelTemplate.pricing.asOf") }}</label>
+            <div class="flex items-center gap-2">
+              <span class="tabular-nums text-ink-dim">
+                {{ draft.pricingAsOf ?? $t("modelTemplate.pricing.unset") }}
+              </span>
+              <button
+                type="button"
+                class="rounded border border-line px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
+                :disabled="fetchingPrices"
+                @click="fetchPrices"
+              >
+                {{ fetchingPrices ? $t("modelTemplate.pricing.fetching") : $t("modelTemplate.pricing.fetch") }}
+              </button>
+            </div>
+            <p v-if="priceNotice" class="col-span-2 -mt-1 text-xs text-ink-dim">
+              {{ priceNotice }}
+            </p>
 
             <label class="text-ink-dim">{{ $t("modelTemplate.toolCalls") }}</label>
             <label class="flex items-center gap-2">

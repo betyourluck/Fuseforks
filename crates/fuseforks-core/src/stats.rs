@@ -192,6 +192,12 @@ pub struct StatsReport {
     pub by_stop: Vec<StopCount>,
     /// 時系列（`session` のみ）。
     pub series: Option<StatsSeries>,
+    /// おおよその金額（Spec 41）。**単価が 1 つも登録されていなければ `None`。**
+    ///
+    /// **[`aggregate`] は埋めない** — 単価は `ModelTemplate` に住み、あれは純関数で
+    /// 村を知らない。埋めるのは `Orchestrator::session_stats`（呼び出し側）。
+    #[serde(default)]
+    pub cost: Option<crate::pricing::CostSummary>,
 }
 
 /// `TurnRecord` の使用量を `Usage` の形へ（実効の重み関数が `Usage` を受けるため）。
@@ -407,6 +413,8 @@ pub fn aggregate(
         by_agent,
         by_stop,
         series,
+        // **純関数はここを埋めない**（単価は村に住む）。呼び出し側が後から入れる。
+        cost: None,
     }
 }
 

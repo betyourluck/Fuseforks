@@ -148,6 +148,16 @@
       "iconAlt": "外部クライアントのアイコン",
       "nameSave": "保存",
       "nameSaved": "保存しました"
+    },
+    "menuPricing": "単価表",
+    "pricing": {
+      "title": "単価表の取得元",
+      "lead": "モデル登録の「取得」ボタンが読みに行く先です。空にすると、この通信は一切行われません（単価は手入力でも設定できます）。",
+      "urlLabel": "取得先（https のみ）",
+      "urlPlaceholder": "https://example.com/prices.json",
+      "urlHint": "押したときだけ取りに行きます。起動時・この画面を開いたとき・定期的な確認は行いません。",
+      "saved": "保存しました",
+      "privacy": "送るのは HTTP GET のみで、村の情報・会話・モデル名は含みません。取得先には要求の事実と IP アドレスが残ります。"
     }
   },
   "common": {
@@ -594,7 +604,24 @@
     "metaWebSearchHint": "web を検索して裏を取ってから答えます（出典の URL が返ります）",
     "metaResponsesCaveats": "この接続先は送った添付をサーバー側に期限なしで保存します（一覧で取得でき、削除もできます）。また強制的なツール呼び出しができません（接続先が auto しか受け付けないため）。web 検索を有効にすると、実際に検索した回は入力が数万トークン規模まで増えます。",
     "strandedMetaStrong": "プロトコルが Meta ネイティブ（Responses）ではないため効きません",
-    "strandedMetaAfter": "。この機能は Responses 経路にしかありません。使うならプロトコルを「Meta ネイティブ（Responses）」にしてください。"
+    "strandedMetaAfter": "。この機能は Responses 経路にしかありません。使うならプロトコルを「Meta ネイティブ（Responses）」にしてください。",
+    "pricing": {
+      "title": "単価（$ / 100 万トークン）",
+      "hint": "空欄は「未設定」。キャッシュ系は空なら 1 段上の単価へ落ちます。",
+      "input": "入力",
+      "output": "出力",
+      "cacheRead": "キャッシュ読み",
+      "cacheWrite": "キャッシュ書き込み",
+      "cacheWrite1h": "うち 1 時間 TTL",
+      "asOf": "単価の時点",
+      "unset": "未設定",
+      "fallsBack": "空なら上へ",
+      "fetch": "取得",
+      "fetching": "取得中…",
+      "filled": "単価を入れました（保存はまだです）",
+      "filledWithDropped": "単価を入れました（不正な {n} 件は取り込んでいません）",
+      "notFound": "表に {model} がありません。手で入れてください"
+    }
   },
   "schedule": {
     "title": "予定（スケジュール実行）",
@@ -970,6 +997,12 @@
       "cacheWrite": "書き込み {n}",
       "fresh": "新規 {n}",
       "cacheWrite1h": "うち1h {n}"
+    },
+    "cost": {
+      "approx": "≈ ${usd}",
+      "asOf": "（{date} 時点の単価）",
+      "asOfUnknown": "（単価の時点は未記録）",
+      "coverage": "{priced}/{total} 体・トークン {percent}"
     }
   }
 }

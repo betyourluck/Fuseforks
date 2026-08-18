@@ -183,6 +183,39 @@ const totals = computed(() => report.value?.totals ?? null);
       </p>
 
       <template v-else-if="report && totals">
+        <!--
+          おおよその金額（Spec 41 D4）。**2 行に分ける** — 1 行目は金額と日付だけで
+          `≈` の射程を閉じ、2 行目に被覆率を灰色の小字で置く。
+          **被覆率を必ず一緒に出す**（これが無いと部分合計が全体の合計に見える）。
+          **実効トークンと同じ行に並べない**（並べると「実効 = お金」と読まれる）。
+          **単価が 1 行も引けなければ `cost` は null で、この塊ごと出ない**（0 と書かない）。
+        -->
+        <div v-if="report.cost" class="mb-4" data-stats-cost>
+          <div class="text-lg font-semibold tabular-nums">
+            {{ t("stats.cost.approx", { usd: report.cost.totalUsd.toFixed(2) }) }}
+            <span class="ml-2 text-xs font-normal text-ink-dim">
+              {{
+                report.cost.asOf
+                  ? t("stats.cost.asOf", { date: report.cost.asOf })
+                  : t("stats.cost.asOfUnknown")
+              }}
+            </span>
+          </div>
+          <div class="text-xs text-ink-dim">
+            {{
+              t("stats.cost.coverage", {
+                priced: report.cost.pricedRows,
+                total: report.cost.totalRows,
+                percent: formatPercent(
+                  report.cost.totalTokens > 0
+                    ? report.cost.pricedTokens / report.cost.totalTokens
+                    : 0,
+                ),
+              })
+            }}
+          </div>
+        </div>
+
         <!-- 合計タイル -->
         <div class="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6">
           <div class="tile">

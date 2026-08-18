@@ -41,7 +41,7 @@ const { state } = orchestrator;
  * 指す先は Spec 19 で「全般 → 言語」から「全般 → ユーザー」へ動いた。
  * **規則（先頭）は不変で、指す先だけが動く。**
  */
-type Page = "user" | "language" | "tokenBudget" | "mcpHost" | "theme" | "messages";
+type Page = "user" | "language" | "tokenBudget" | "mcpHost" | "pricing" | "theme" | "messages";
 const page = ref<Page>("user");
 
 /**
@@ -49,6 +49,46 @@ const page = ref<Page>("user");
  * 「読み込み中…」の覆いと村の注記はこの 1 つの定義から引く。
  */
 const VILLAGE_PAGES: Page[] = ["user", "language", "tokenBudget", "mcpHost"];
+
+/**
+ * 単価表の取得元（Spec 41）。**ここは読み書きだけで、1 度も取りに行かない。**
+ *
+ * 取得は「モデル登録」ダイアログの「取得」ボタンだけが呼ぶ
+ * （`data_contract` の `pricing_fetch_freeze` — 画面を開いたときの到達確認も禁止）。
+ */
+const pricingUrlInput = ref("");
+const pricingSaved = ref("");
+const pricingBlocked = ref<string | null>(null);
+const pricingSaving = ref(false);
+const pricingNotice = ref("");
+const pricingDirty = computed(() => pricingUrlInput.value.trim() !== pricingSaved.value);
+
+async function loadPricingSource() {
+  try {
+    const view = await ipc.pricingSourceStatus();
+    pricingSaved.value = view.url;
+    pricingUrlInput.value = view.url;
+    pricingBlocked.value = view.blocked;
+  } catch (err) {
+    pricingBlocked.value = String((err as { message?: string })?.message ?? err);
+  }
+}
+
+async function savePricingUrl() {
+  if (pricingSaving.value) return;
+  pricingSaving.value = true;
+  pricingNotice.value = "";
+  try {
+    const view = await ipc.savePricingSource(pricingUrlInput.value.trim());
+    pricingSaved.value = view.url;
+    pricingBlocked.value = view.blocked;
+    pricingNotice.value = t("settings.pricing.saved");
+  } catch (err) {
+    pricingNotice.value = String((err as { message?: string })?.message ?? err);
+  } finally {
+    pricingSaving.value = false;
+  }
+}
 const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
@@ -429,6 +469,9 @@ function selectPage(next: Page): void {
   page.value = next;
   savedNote.value = "";
   error.value = "";
+  // **設定の読み込みだけ。取得はしない**（Spec 41 の凍結 — 画面を開いたときの
+  // 自動 GET も、到達確認も持たない）。
+  if (next === "pricing") void loadPricingSource();
 }
 </script>
 
@@ -488,6 +531,13 @@ function selectPage(next: Page): void {
             @click="selectPage('mcpHost')"
           >
             {{ $t("settings.menuMcpHost") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'pricing' }"
+            @click="selectPage('pricing')"
+          >
+            {{ $t("settings.menuPricing") }}
           </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupUi") }}</p>
@@ -904,6 +954,47 @@ function selectPage(next: Page): void {
             テーマ。**選んだ瞬間に反映する**（保存ボタンを持たない）— 見た目の
             設定は結果を見て決めるものなので、押すまで変わらないと選べない。
           -->
+          <!--
+            単価表の取得元（Spec 41）。**この村で 1 本目の非 LLM 外向き通信**なので、
+            接続先を画面に出して変えられることが「利用者が自分で設定した接続先」の
+            根拠になる。**空にすればこの通信は一切起きない。**
+            **ここには「取得」ボタンを置かない** — 取得はモデル登録ダイアログの側で、
+            対象のモデルが決まっている場所でだけ押せる。
+          -->
+          <template v-else-if="page === 'pricing'">
+            <h3 class="mb-1 text-sm font-semibold">{{ $t("settings.pricing.title") }}</h3>
+            <p class="mb-3 text-xs text-ink-dim">{{ $t("settings.pricing.lead") }}</p>
+
+            <label class="mb-1 block text-xs text-ink-dim">
+              {{ $t("settings.pricing.urlLabel") }}
+            </label>
+            <input
+              v-model="pricingUrlInput"
+              type="url"
+              spellcheck="false"
+              :placeholder="$t('settings.pricing.urlPlaceholder')"
+              class="w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono text-xs outline-none focus:border-accent"
+            />
+            <p class="mt-1 text-xs text-ink-dim">{{ $t("settings.pricing.urlHint") }}</p>
+            <p v-if="pricingBlocked" class="mt-1 text-xs text-warn">
+              {{ pricingBlocked }}
+            </p>
+
+            <div class="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                class="rounded border border-line px-3 py-1 text-xs hover:border-accent disabled:opacity-50"
+                :disabled="!pricingDirty || pricingSaving"
+                @click="savePricingUrl"
+              >
+                {{ $t("common.save") }}
+              </button>
+              <span v-if="pricingNotice" class="text-xs text-ink-dim">{{ pricingNotice }}</span>
+            </div>
+
+            <p class="mt-4 text-xs text-ink-dim">{{ $t("settings.pricing.privacy") }}</p>
+          </template>
+
           <template v-else-if="page === 'theme'">
             <h3 class="mb-1 text-xs font-semibold text-ink">
               {{ $t("settings.theme.heading") }}

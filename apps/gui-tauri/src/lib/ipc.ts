@@ -38,6 +38,8 @@ import type {
   ScheduleOptions,
   ScheduleView,
   SessionSummary,
+  FetchedPrices,
+  PricingSourceView,
   StatsReport,
   StatsScope,
   TopologyEdge,
@@ -452,6 +454,23 @@ export const summarizeSession = () => call<number>("summarize_session");
  */
 export const sessionStats = (scope: StatsScope) =>
   call<StatsReport>("session_stats", { scope });
+
+// ---- 単価表（Spec 41） --------------------------------------------------------
+
+/** 取得元の設定を読む。**取りに行かない。** */
+export const pricingSourceStatus = () => call<PricingSourceView>("pricing_source_status");
+
+/** 取得元の URL を保存する。**保存しただけでは取りに行かない**（凍結）。 */
+export const savePricingSource = (url: string) =>
+  call<PricingSourceView>("save_pricing_source", { url });
+
+/**
+ * 単価表を取りに行く。**利用者がボタンを押したときだけ呼ぶ唯一の入口。**
+ *
+ * **起動経路・画面遷移・タイマーから呼んではならない**
+ * （`data_contract` の `pricing_fetch_freeze`）。
+ */
+export const fetchModelPrices = () => call<FetchedPrices>("fetch_model_prices");
 
 // ---- アイコン ----------------------------------------------------------------
 
