@@ -2,8 +2,8 @@
 
 **ID**: 40
 **Date**: 2026-08-18
-**Status**: **rev2（2026-08-18・査読 4 点）— 未査読**
-（採用 2 / **強めて採用** 1 / **反証 1**。詳細は改訂履歴）
+**Status**: **rev3（2026-08-18）— 未査読**
+（rev2 = 査読 4 点 / rev3 = 先行実装 otari の実読で D6 の符号化を訂正）
 **Branch**: P0（契約）は rev 承認後に main 直コミット。P1 以降は `YYYYMMDD_cachewrite` へ積む
 
 ## Goal
@@ -174,12 +174,25 @@ doc がそう書いてある）。**要求が通っている保証は、結果�
   **最大 37% の過小計上**（引用であって私の実測ではない）
 - **非対称なので取るほうへ倒す** — 内訳を持つコストは `u64` 2 つ。持たないコストは
   **後から遡れない**（畳んだ値は復元できない。この Spec が扱っている失敗そのもの）
-- **`5m + 1h == cache_creation_input_tokens` を検定にする**（検収 6）。
-  破れたら、平坦な欄と内訳のどちらかについての理解が誤っている
-- **canonical はどう持つか**: `cache_write`（合計）に加えて内訳が要る。
-  ただし**内訳は Anthropic にしか無い概念**なので、canonical へ 2 欄足すか、
-  `cache_write` 1 欄 + レコードに生の内訳を持つかは **P1 の実装で決める**
-  （型を決める前に、実際に何が返るかを見る）
+- **符号化は「合計 + 1h の部分集合」の 2 欄**（**rev3 で訂正**。出自は otari の
+  `BillableUsage` を読んだこと — 下の「先行実装の読み」）:
+
+  ```text
+  cache_write      : u64   // 合計（= 平坦な cache_creation_input_tokens）
+  cache_write_1h   : u64   // そのうち 1 時間 TTL のぶん（部分集合）
+  cache_write_5m   = cache_write - cache_write_1h   // 導出。持たない
+  ```
+
+  **rev2 は `5m` と `1h` を 2 欄で持ち `5m + 1h == 合計` を検定にしていたが、
+  3 つの数のうち独立なのは 2 つ**なので、3 つ持つのは冗長だった。
+  **不変条件も 1 本へ縮む**（`cache_write_1h <= cache_write`。検収 6）。
+  **1 欄だけ足りない状態が構造的に作れない**のが部分集合式の効き目 —
+  2 欄式は「片方だけ埋まって合計と食い違う」形が書ける
+- **単価も同じ形で落とす** — otari は `cache_write_1h_price` が未設定なら
+  `cache_write_price` を使う。**未設定は「無視」ではなく「1 段上へ落とす」**
+- **canonical へ 2 欄とも足す。** 内訳は Anthropic にしか無い概念だが、
+  **`reasoning` の前例と同じ**（取れないワイヤでは 0）。レコード側に生の内訳を
+  別に持つ案は採らない — 同じ数が 2 箇所に住む
 
 ## Stories
 
@@ -212,12 +225,113 @@ doc がそう書いてある）。**要求が通っている保証は、結果�
    `cache:` 行の 3 値で検算できる（**この等式が破れたら畳み方を間違えている**）
 4. P1 の前後で、**`turn:` 行の既存欄が 1 文字も変わらない**
 5. P2: 未キャッシュに占める書き込みの割合が出る。**予測を観測の前に書く**（#80）
-6. **`cache_write_5m + cache_write_1h == cache_write`**（D6 の検定。破れたら
-   平坦な欄と内訳のどちらかの理解が誤っている）
+6. **`cache_write_1h <= cache_write`**（D6 の不変条件。rev3 で 2 欄式の
+   `5m + 1h == 合計` から縮めた）
 7. **`gpt-5.6-terra` の個体の `cache_write=`** が 0 か否か。**どちらでも情報**
    （0 なら査読の報告はこの接続先には当たらない / 非 0 ならその個体の費用も
    これまで過小に出ていた）。**「0 しか出ない」を配線の死と区別するため、
    Anthropic の個体で非 0 が出ていることを同じ走行で確かめる**（肯定の対照）
+
+## 先行実装の読み（otari。2026-08-18・実読）
+
+**出典は [mozilla-ai/otari](https://github.com/mozilla-ai/otari)**（Apache-2.0・Python・
+★393・2026-04 作成）の `src/gateway/` を実際に読んだもの。**README ではなくコード。**
+
+### 費用の型（`models/entities.py` の `ModelPricing`）
+
+```text
+input_price_per_million / output_price_per_million
+cache_read_price_per_million       : float | None
+cache_write_price_per_million      : float | None
+cache_write_1h_price_per_million   : float | None
+pricing_tiers : list[dict]   # min_input_tokens に達したら【要求全体】へ別レート
+```
+
+**査読の 2 点が、文書ではなく他実装のコードで裏付けられた** — 1h 専用のレート欄が
+実在し、段階課金も実在する。**段は限界税率ではなく「崖」**（閾値を超えたら
+要求全体が新レート）。
+
+### 2 つの規約の正規化（`core/usage.py` / `services/metered_pricing.py`）
+
+otari は**フラグで持ち回っている**:
+
+```text
+cache_tokens_in_prompt: bool
+  True  = OpenAI 形（cached は prompt_tokens の内数）
+  False = Anthropic 形（input_tokens は cache read/write を含まない加算バケツ）
+```
+
+**この村はこのフラグが要らない** — `decode` の時点で `prompt` を**合計へ正規化済み**
+だから（`prompt = input + cache_read + cache_creation`）。**畳んで失っていたのは
+`cache_creation` だけで、規約の正規化そのものは最初から正しかった。**
+D1（`cache_write` は `prompt` の内数）はこの読みで裏付けられた。
+
+### 費用の式（`calculate_metered_cost`）
+
+```text
+fresh_input = total_input
+  − cache_read       （read_rate     が設定されているときだけ）
+  − cache_write_base （write_rate    が設定されているときだけ）
+  − cache_write_1h   （write_1h_rate が設定されているときだけ）
+cost = fresh_input×input + completion×output + 各キャッシュ meter×各レート
+```
+
+**単価が未設定のトークンは無視されず、基本単価の側に残る。** 表が不完全でも
+**合計トークンは失われない**。`write_1h_rate` が無ければ `write_rate` へ落ちるのも
+同じ形。**この規則を単価表 JSON の既定として採る**（下の付録）。
+
+### この村にとっての反対材料が 1 つ
+
+**otari の `cache_write_tokens_of` は非 Anthropic で 0 を返す**（docstring に
+「0 for non-Anthropic」と明記）。**今日も push されている現役のゲートウェイが、
+いまだ書き込みを Anthropic 専用として扱っている。** 査読の「GPT-5.6 以降の
+OpenAI は `cache_write_tokens` を返す」を否定はしないが、**普及した実装がまだ
+追随していない**ことは事実で、**D2 の「測ってから契約に書く」判断を支持する**。
+
+## 付録: 単価表 JSON のスキーマ（利用者の別プロジェクト向け）
+
+**本 Spec の射程外**（この村は通貨に換算しない — Spec 39 D5）。ただし
+**この Spec が出す数字の消費者**なので、噛み合う形をここに置く。骨格は otari の
+`ModelPricing` から起こした。
+
+```json
+{
+  "version": 1,
+  "updated": "2026-08-18",
+  "models": [
+    {
+      "key": "claude-sonnet-5",
+      "backend": "anthropic",
+      "input_per_mtok": 3.0,
+      "output_per_mtok": 15.0,
+      "cache_read_per_mtok": 0.30,
+      "cache_write_per_mtok": 3.75,
+      "cache_write_1h_per_mtok": 6.0,
+      "tiers": [
+        { "min_input_tokens": 200000,
+          "input_per_mtok": 6.0, "output_per_mtok": 22.5 }
+      ]
+    }
+  ]
+}
+```
+
+**引く側の規則（otari の式をそのまま写す）**:
+
+1. **段は `prompt`（合計入力）で選ぶ。** 閾値以上なら**要求全体**へその段のレート。
+   段が持たない欄は下の段から継承する
+2. **未設定は無視ではなく 1 段上へ落とす** — `cache_write_1h_per_mtok` が無ければ
+   `cache_write_per_mtok`、それも無ければ `input_per_mtok`。**落ちたトークンは
+   `fresh_input` に残るので、合計は必ず保存される**
+3. `fresh_input = prompt − cache_read − cache_write`（**単価が設定されている
+   meter のぶんだけ引く**）
+4. **`reasoning` は掛けない** — `completion` の内数なので、出力単価に既に乗っている
+5. **鍵は `backend` + `key` で引く。** `key` 単独だと OpenAI 互換の口を共有する
+   別ベンダーを取り違える（Notes 6）
+
+**入力はすべて `Record::Turn` から取れる** — `model` / `backend` / `prompt` /
+`cached` / `completion` / `reasoning`、そして本 Spec が足す `cache_write` /
+`cache_write_1h`。**P3 まで着地すれば、外の表と突き合わせる材料が揃う。**
 
 ## Notes
 
@@ -253,6 +367,15 @@ doc がそう書いてある）。**要求が通っている保証は、結果�
 
 ## 改訂履歴
 
+- **rev3（2026-08-18・先行実装の実読）**: otari の `BillableUsage` /
+  `calculate_metered_cost` / `ModelPricing` を読み、**D6 の符号化を
+  「合計 + 1h の部分集合」へ訂正**（rev2 の 2 欄式は 3 つの数のうち独立なのが
+  2 つなので冗長だった。不変条件も `1h <= 合計` の 1 本へ縮む）。
+  **D1（内数）は otari の `cache_tokens_in_prompt` フラグの読みで裏付けられた** —
+  この村は decode で正規化済みなのでフラグが要らない。
+  **単価表 JSON のスキーマを付録として追加**（本 Spec の射程外だが、
+  この Spec が出す数字の消費者なので噛み合う形を置く）。
+  **反対材料も記録**: otari は非 Anthropic で `cache_write` を 0 に固定している
 - **rev2（2026-08-18・査読 4 点）**: **採用 2** = 1（`cache_creation` の内訳を
   取る → D6 を反転）/ 4（予算の過小を契約の文面として固定 → D3 に引用ブロック）。
   **強めて採用 1** = 2（OpenAI の書き込み）— 査読は「GPT-5.6 は書き込みに課金する
