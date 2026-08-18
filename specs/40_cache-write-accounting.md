@@ -2,7 +2,8 @@
 
 **ID**: 40
 **Date**: 2026-08-18
-**Status**: **起票（rev1・査読前）**
+**Status**: **rev2（2026-08-18・査読 4 点）— 未査読**
+（採用 2 / **強めて採用** 1 / **反証 1**。詳細は改訂履歴）
 **Branch**: P0（契約）は rev 承認後に main 直コミット。P1 以降は `YYYYMMDD_cachewrite` へ積む
 
 ## Goal
@@ -45,20 +46,28 @@ cache_read: u.cache_read_input_tokens,
 つまり各ターンは前回の境界までを読み、**そのターンで増えた分を新しく書く**。
 `cache_creation` はターンごとに立つ量であって、初回限定の固定費ではない。
 
-**6 ワイヤのうち、書き込みの概念を持つのは Anthropic だけ**（decode を全部読んだ）:
+**この村の型が今持っている欄**（decode を全部読んだ）。**「書き込み」の列は
+*こちらの型に欄があるか*であって、*相手が返さないこと*の証拠ではない** —
+rev1 はこの 2 つを取り違えて「Anthropic だけ」と書いた（rev2 で訂正）:
 
-| ワイヤ | 読み取り | 書き込み |
-|---|---|---|
-| **Anthropic** | `cache_read_input_tokens` | **`cache_creation_input_tokens`** |
-| OpenAI 互換 | `prompt_tokens_details.cached_tokens` | 欄が無い |
-| Gemini | `cachedContentTokenCount` | 欄が無い（**この村は cache を作っていない** — 暗黙のみ） |
-| xAI Responses | `cached_tokens` | 欄が無い |
-| OpenAI Responses | `cached_tokens` | 欄が無い |
-| Meta Responses | `input_tokens_details.cached_tokens` | 欄が無い |
+| ワイヤ | 読み取り | 書き込み（こちらの型） | 相手が返すか |
+|---|---|---|---|
+| **Anthropic** | `cache_read_input_tokens` | **`cache_creation_input_tokens`** | 返る（実装済み） |
+| OpenAI 互換 | `prompt_tokens_details.cached_tokens` | 欄が無い | **未測定**（査読は GPT-5.6 以降 `cache_write_tokens` が付き 1.25× と報告） |
+| OpenAI Responses | `cached_tokens` | 欄が無い | **未測定**（同上） |
+| Gemini | `cachedContentTokenCount` | 欄が無い | 返らない見込み（**この村は cache を作っていない** — 暗黙のみ） |
+| xAI Responses | `cached_tokens` | 欄が無い | 未測定 |
+| Meta Responses | `input_tokens_details.cached_tokens` | 欄が無い | 未測定 |
 
-**「欄が無い」と「0 だった」は、ここでは同じ扱いでよい** — 書き込みに課金しない
-プロバイダでは、書き込みトークンは費用の計算に現れない量だから（`reasoning` を
-`Option` にしなかったのと同じ判断。`canonical.rs` の doc が理由を書いている）。
+**`deny_unknown_fields` は 6 ワイヤのどこにも無い**（grep で 0 件）。つまり
+**相手が今 `cache_write_tokens` を返していても、この村は黙って捨てている。**
+「欄が無い」は観測ではなく、**観測していないことの言い換え**でしかない。
+
+**そしてこの村は `gpt-5.6-terra` を実際に走らせている**（`fuseforks.log` で確認）。
+査読の報告が正しければ、**Anthropic だけでなくこの個体の費用も今すぐ過小に出ている**。
+
+**確かめ方が安い** — 欄を足して 1 ターン回せば、文書を読まずに真偽が出る。
+**これが rev2 で D2 を反転した理由**（下）。
 
 ## この見落としの機序（#62 / Spec 32 P0 と同型）
 
@@ -100,10 +109,22 @@ prompt = input + cache_read + cache_write    ← 不変条件（Anthropic のみ
 **内数**（`cache_read` と同じ）。外数にすると `prompt` の意味が Anthropic だけ
 別になり、**`turn:` 行の `prompt=` が他ワイヤと比較できなくなる**。
 
-### D2. 他 5 ワイヤは 0 固定か `Option` か
+### D2. `cache_write` はワイヤ非依存の欄にする（**rev2 で反転**）
 
-**0 固定。`Option` にしない** — `reasoning` の前例（`canonical.rs` の doc）。
-「取れない」と「0 だった」を型で分けると表示側が 2 状態を扱う。
+**値は 0 固定にせず、6 ワイヤすべてで「相手が返せば入る」形にする。**
+型としては `u64`（`Option` にしない — `reasoning` の前例。`canonical.rs` の doc が
+「取れない」と「0 だった」を型で分けない理由を書いている）。
+
+**rev1 は「Anthropic 専用・他 5 本は 0 固定」と書いた。これは誤り** —
+根拠が「こちらの型に欄が無い」だけで、**相手が返さないことを 1 度も測っていない**。
+`deny_unknown_fields` が無いので、返っていても黙って捨てているだけかもしれない。
+
+- **P1 で `OaiUsage` / `ResponsesUsage` にも欄を足す**（`#[serde(default)]` なので
+  相手が返さなければ 0。**足すコストは 1 欄、足さないコストは「後から遡れない」**）
+- **契約へ「GPT-5.6 以降の OpenAI は書き込みに課金する」とは書かない**（rev2 時点で
+  未測定）。書くのは**測ってから**。査読の引用は一次資料に当てていない
+- **この村の実データで測れる** — `gpt-5.6-terra` の個体が居るので、P1 の後に
+  1 ターン回せば `cache_write=` が 0 か否かで決まる。**probe を別に書く必要が無い**
 
 ### D3. 予算（`budget.rs`）の重みを変えるか — **本 Spec で最も重い決定**
 
@@ -116,7 +137,14 @@ prompt = input + cache_read + cache_write    ← 不変条件（Anthropic のみ
   （Spec 38 の代償がより早く出る）。**破壊的変更**で、Spec 11 の凍結に触れる
 - **私の推し: 本 Spec では変えない。** 記録と表示だけ先に入れ、**測ってから
   別 Spec**（重みは「実際の値段」ではなく「歯止めの単位」で、目的が違う）。
-  ただし**契約に「実効トークンは書き込みを 1.0× で数えている」と明記する** —
+  ただし**契約に明記する**（rev2 で文面を固定。査読 4 を採用 — 書かないと
+  P2 で数字が出た時点で議論が蒸し返される）:
+
+  > 実効トークン（Spec 11）は**キャッシュ書き込みを 1.0× で数えている**。
+  > 実際の請求は TTL 依存で、この村の `CACHE_TTL = "1h"` では **2.0×**。
+  > **したがって実効トークンは請求に対して過小**であり、天井は「支払いの上限」
+  > ではなく「歯止めの単位」として読む。
+
   書かないと、記録が正しくなったあとに実効だけが古い前提のまま残る
 
 ### D4. 統計画面に出すか
@@ -130,13 +158,28 @@ prompt = input + cache_read + cache_write    ← 不変条件（Anthropic のみ
 **足す。末尾へ 1 つ**（`observability_rule` の「接頭辞と既存欄の並びは変えない」）。
 **P1 の目的そのもの** — これが無いと大きさを測れない。
 
-### D6. 5 分 / 1 時間の内訳を取るか
+### D6. 5 分 / 1 時間の内訳を取るか（**rev2 で反転**）
 
-**取らない（rev1）。** この村は `CACHE_TTL = "1h"` 固定なので倍率は 2.0× で一意。
-**未測定**: 新しい API は `cache_creation: { ephemeral_5m_input_tokens,
-ephemeral_1h_input_tokens }` を返すとされるが、**この村のワイヤ型は平坦な
-`cache_creation_input_tokens` しか持たず、実際に何が返るか撃っていない**。
-TTL を可変にするときに測る（Notes 2）。
+**取る。ワイヤ型に `cache_creation: Option<AnthropicCacheCreation>` を足し、
+`cache:` 行へ `cache_write_5m=` / `cache_write_1h=` を出す。**
+
+rev1 は「`CACHE_TTL = "1h"` 固定なので倍率は 2.0× で一意」として見送った。
+**これは「こちらが要求した TTL」と「相手が実際に作った TTL」を同一視していた** —
+要求と結果を同一視するのは、この村が `EXTENDED_CACHE_BETA` で既に踏んだ形
+（**ベータ名を送らないと `ttl` が黙って無視されて 5 分に戻る**。`anthropic.rs` の
+doc がそう書いてある）。**要求が通っている保証は、結果の側にしか無い。**
+
+- **倍率が違うので、合計だけでは価格表が掛け分けられない**（5m = 1.25× /
+  1h = 2.0×）。査読が挙げた他プロジェクトの実測では、混在セッションで
+  **最大 37% の過小計上**（引用であって私の実測ではない）
+- **非対称なので取るほうへ倒す** — 内訳を持つコストは `u64` 2 つ。持たないコストは
+  **後から遡れない**（畳んだ値は復元できない。この Spec が扱っている失敗そのもの）
+- **`5m + 1h == cache_creation_input_tokens` を検定にする**（検収 6）。
+  破れたら、平坦な欄と内訳のどちらかについての理解が誤っている
+- **canonical はどう持つか**: `cache_write`（合計）に加えて内訳が要る。
+  ただし**内訳は Anthropic にしか無い概念**なので、canonical へ 2 欄足すか、
+  `cache_write` 1 欄 + レコードに生の内訳を持つかは **P1 の実装で決める**
+  （型を決める前に、実際に何が返るかを見る）
 
 ## Stories
 
@@ -151,8 +194,8 @@ TTL を可変にするときに測る（Notes 2）。
 | Phase | 内容 | ゲート |
 |---|---|---|
 | **P0** | `data_contract` に凍結（`Usage` の 3 項の不変条件 / 実効トークンは書き込みを 1.0× で数える旨 / `observability_rule` の `cache_write=`） | rev 承認 |
-| **P1** | `Usage.cache_write` + 6 ワイヤの decode（Anthropic だけ実値・他 5 本は 0）+ `cache:` 行の末尾。**`prompt` は 1 バイトも変えない** | 全緑・**既存の `turn:` / `cache:` の他欄が不変**であることを golden で |
-| **P2** | **測る。** 実機を数日回して `cache_write` の分布を出す（未キャッシュに占める割合 / ターンあたり / 実効への寄与） | **数字が出るまで P3 へ進まない** |
+| **P1** | `Usage.cache_write` + **6 ワイヤすべて**の decode に欄（`#[serde(default)]`。Anthropic は `cache_creation_input_tokens`、OpenAI 系は `cache_write_tokens`、無ければ 0）+ **`AnthropicUsage.cache_creation` の内訳**（D6）+ `cache:` 行の末尾へ `cache_write=` / `cache_write_5m=` / `cache_write_1h=`。**`prompt` は 1 バイトも変えない** | 全緑・**既存の `turn:` / `cache:` の他欄が不変**であることを golden で |
+| **P2** | **測る。** (a) Anthropic の個体で `cache_write` の分布（未キャッシュに占める割合 / ターンあたり / 実効への寄与）(b) **`gpt-5.6-terra` の個体で `cache_write` が 0 か否か** — 査読の「GPT-5.6 は書き込みに課金」の真偽がこの 1 行で決まる (c) `5m` / `1h` の混在があるか | **数字が出るまで P3 へ進まない** |
 | **P3** | `TurnRecord.cache_write` + `stats.rs` の `Slice` + `StatsView` のホバー + TS 型 | 全緑 |
 | **P4** | 台帳（`CLAUDE.md` / `DETAIL` 日英 / Spec 39 の `Slice` 記述 / `failures.md`） | grep で追従漏れゼロ |
 
@@ -169,6 +212,12 @@ TTL を可変にするときに測る（Notes 2）。
    `cache:` 行の 3 値で検算できる（**この等式が破れたら畳み方を間違えている**）
 4. P1 の前後で、**`turn:` 行の既存欄が 1 文字も変わらない**
 5. P2: 未キャッシュに占める書き込みの割合が出る。**予測を観測の前に書く**（#80）
+6. **`cache_write_5m + cache_write_1h == cache_write`**（D6 の検定。破れたら
+   平坦な欄と内訳のどちらかの理解が誤っている）
+7. **`gpt-5.6-terra` の個体の `cache_write=`** が 0 か否か。**どちらでも情報**
+   （0 なら査読の報告はこの接続先には当たらない / 非 0 ならその個体の費用も
+   これまで過小に出ていた）。**「0 しか出ない」を配線の死と区別するため、
+   Anthropic の個体で非 0 が出ていることを同じ走行で確かめる**（肯定の対照）
 
 ## Notes
 
@@ -176,19 +225,46 @@ TTL を可変にするときに測る（Notes 2）。
    `prompt=` が縮み、**8 日ぶんのコスト実測（CLAUDE.md「コストの実測」の節）と
    比較できなくなる**。あの数字は今後この領域を触るときの基準なので、
    **単位を動かすほうが高くつく**
-2. **未測定 2 件**: (a) D6 の 5m / 1h の内訳が実際に返るか (b) **`cache_creation`
-   に課金されたトークンが `input_tokens` にも重複して現れないか** — Anthropic の
-   3 値が排他だという前提は doc の読みで、**この村では撃っていない**。検収 3 の
-   等式がそのまま検定になる（**破れたら前提が誤り**）
+2. **3 値の排他性は査読が公式文書で肯定した**（`total_input_tokens =
+   cache_read + cache_creation + input`）。**それでも検収 3 の等式は残す** —
+   確かめているのは相手の仕様ではなく**こちらの畳み方**で、破れたときに
+   「パーサの誤り」と「文書の誤り」のどちらかは、破れてから分ければよい。
+   **この村は文書を根拠に凍結して 4 回外している**（Spec 23 の WebP /
+   Spec 31 の legacy 410 / Spec 36 の xAI PDF / Spec 37 の 2 件）ので、
+   **安い検定は文書があっても残す**
 3. **Gemini の明示キャッシュは対象外。** あちらは事前に cache を作る API 呼び出しが
    要り、この村は呼んでいない（CLAUDE.md「Gemini Context Caching は Anthropic と
    形が違う」）。**呼ぶようになったら作成コストが別に立つ**ので、そのときに戻る
-4. **価格表の鍵は `model` 単独では足りない可能性がある** — レコードは `model` と
+4. **ストリーミングの二重計上は、現状この村には当たらない**（査読 3a を反証）。
+   `stream` / `message_start` / `message_delta` の grep が **6 ワイヤすべてで 0 件**で、
+   この村は非ストリーミングのみ（Spec 37 で「`stream` は不要」と実測して以来）。
+   **ただし入れた瞬間に発火する** — Anthropic は `message_start` と `message_delta` の
+   両方に**同じ累計値**を載せるので、イベントごとに足すと二重になる。
+   **ストリーミングを起票するときは、この Spec のこの行を検収項目にする**
+5. **価格表は `base_rate × multiplier` では引けない**（査読 3b を採用）。
+   Claude / GPT-5.6 は入力が長いと**単価そのものが上がる段**を持つ
+   （査読の引用では 200k 超で 2 倍）。掛ける順序は
+   **`tiered_rate(prompt_total) × cache_multiplier`**。本 Spec の射程外だが、
+   **表のスキーマを決めるのは今**なので、閾値の欄を最初から持たせること。
+   `TurnRecord` は `prompt` を持つので、段の判定に必要な入力は揃っている
+6. **価格表の鍵は `model` 単独では足りない可能性がある** — レコードは `model` と
    `backend`（ワイヤ名）を持つが `base_url` を持たず、**OpenAI 互換の口は複数の
    ベンダーが共有する**。本 Spec の射程外だが、表を作る側で先に決めること
 
 ## 改訂履歴
 
+- **rev2（2026-08-18・査読 4 点）**: **採用 2** = 1（`cache_creation` の内訳を
+  取る → D6 を反転）/ 4（予算の過小を契約の文面として固定 → D3 に引用ブロック）。
+  **強めて採用 1** = 2（OpenAI の書き込み）— 査読は「GPT-5.6 は書き込みに課金する
+  前提で設計せよ」だが、**この村は `deny_unknown_fields` を持たないので、返って
+  いても今は黙って捨てている**うえ **`gpt-5.6-terra` を実際に走らせている**。
+  よって「前提を置く」ではなく**「欄を足して 1 ターンで確かめる」**へ変え、
+  契約には測ってから書く（検収 7）。**反証 1** = 3a（ストリーミングの二重計上）—
+  `stream` / `message_start` / `message_delta` が 6 ワイヤで 0 件。この村は
+  非ストリーミングのみ。将来の起票のための Notes 4 として残した。
+  **査読の引用（2026-05-28 の `usage` 仕様 / GPT-5.6 の課金）は一次資料に
+  当てていない** — 私のカットオフは 2026-05 で、独立には確かめられていない。
+  **構造の推奨は採り、事実の断定は P1/P2 の実測の後**にする
 - rev1（2026-08-18）: 起票。利用者要望（価格表 JSON で使用料を算出）から派生。
   **私が最初に伝えた「25% 過小」は誤りで、`CACHE_TTL = "1h"` なので 2.0× =
   書き込みぶんを半分しか数えていない**（コードで訂正）
