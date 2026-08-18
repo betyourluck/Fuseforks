@@ -757,7 +757,8 @@
     "EXTERNAL_RECEPTION_UNSET": "窓口が未設定です",
     "EXTERNAL_BUSY": "別の外部依頼を処理中です",
     "BLACKBOARD_DELETE_FAILED": "黒板の付箋をごみ箱へ移せませんでした",
-    "ATTACHMENT_NOT_CARRIED": "この宛先のワイヤはこの種別の添付を運べません"
+    "ATTACHMENT_NOT_CARRIED": "この宛先のワイヤはこの種別の添付を運べません",
+    "PRICING_FETCH": "単価表を取得できませんでした"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",

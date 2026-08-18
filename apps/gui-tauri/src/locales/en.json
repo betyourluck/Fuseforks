@@ -757,7 +757,8 @@
     "EXTERNAL_RECEPTION_UNSET": "Reception is not set",
     "EXTERNAL_BUSY": "Another external request is in progress",
     "BLACKBOARD_DELETE_FAILED": "Could not move the blackboard note to the trash",
-    "ATTACHMENT_NOT_CARRIED": "This recipient wire cannot carry that kind of attachment"
+    "ATTACHMENT_NOT_CARRIED": "This recipient wire cannot carry that kind of attachment",
+    "PRICING_FETCH": "Could not fetch the price table"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

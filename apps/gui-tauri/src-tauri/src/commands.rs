@@ -1102,11 +1102,12 @@ pub async fn fetch_model_prices(
         let store = state.pricing_source.lock().await;
         store.config().url.clone()
     };
+    // **`ConfigIo` へ畳まない**（`PricingFetch` の doc）。理由ごとに次の手が違う —
+    // 未設定なら URL を入れる / https でないなら直す / 通信の失敗なら回線か URL /
+    // 表が壊れているなら表を直す。畳むと全部「設定ファイルの入出力に失敗」になり、
+    // **壊れていない `pricing.json` を名指しする**。
     let table = crate::pricing_source::fetch_table(&url)
         .await
-        .map_err(|reason| CoreError::ConfigIo {
-            path: crate::pricing_source::CONFIG_FILE.to_owned(),
-            source: std::io::Error::other(reason),
-        })?;
+        .map_err(|reason| CoreError::PricingFetch { reason })?;
     Ok(crate::pricing_source::FetchedPrices::from(table))
 }

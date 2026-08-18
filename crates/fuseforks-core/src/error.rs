@@ -138,6 +138,19 @@ pub enum CoreError {
         capacity: usize,
     },
 
+    /// 単価表を取得できなかった（Spec 41）。
+    ///
+    /// **`ConfigIo` へ畳まない。** あちらは `source` を表示に出さないので、
+    /// 「取得先が未設定」「https でない」「通信に失敗」「表が壊れている」が
+    /// **すべて「設定ファイルの入出力に失敗」という嘘の 1 文へ落ちる**
+    /// （実際には `pricing.json` は壊れていない）。**次の手が理由ごとに違う**
+    /// ので、理由を本文で運ぶ。
+    #[error("単価表を取得できませんでした: {reason}")]
+    PricingFetch {
+        /// 取得できなかった理由（そのまま画面へ出る）。
+        reason: String,
+    },
+
     /// 設定ファイルの読み書きに失敗した。
     #[error("設定ファイル `{path}` の入出力に失敗しました")]
     ConfigIo {
@@ -312,6 +325,7 @@ impl CoreError {
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",
             Self::MailboxFull { .. } => "MAILBOX_FULL",
+            Self::PricingFetch { .. } => "PRICING_FETCH",
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::BlackboardDeleteFailed { .. } => "BLACKBOARD_DELETE_FAILED",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
