@@ -296,9 +296,14 @@ core 経由で既にツリーに居た）。
 - **パースはコア（純）、通信は GUI**。`fuseforks-core::pricing::parse_table` は I/O を
   持たず、`reqwest` を使うのは `apps/gui-tauri/.../pricing_source.rs` だけ。
   **コアを「利用者が設定した LLM だけと話す」ままに保つ**ための線引き
-- **既定の URL は空**（`DEFAULT_URL = ""`）。**公開する静的ファイルの URL が
-  決まったらここへ入れる**。空のあいだ、この村は単価表のために 1 度も外へ出ない
-  （S4 がそのまま既定の状態）
+- **既定の URL は `https://betyourluck.github.io/prices.json`**（2026-08-18 に
+  公開・実測 HTTP 200 / `application/json` / 187,405 バイト）。中身は
+  **1,686 モデル**で、**書き込み単価を持つのは 193 件**（残りは概念が無いか未収載）。
+  出典は `BerriAI/litellm`（MIT）で、**著作権表示は JSON 自身の `_notice` に入れた**。
+  **鍵は素のモデル名**（`xai/grok-4.5` のような接頭辞を落とし、重複は欄の多いほうを採用）
+  — 村が送るのは `ModelTemplate::model` の素の名前なので、これで突き合う。
+  **`null` の欄は書かない**（「未設定」と「0」を混ぜない）。
+  **URL を空にすれば通信は一切起きない**（S4）
 - **凍結を 2 つの走査テストで留めた** — `pricing_source.rs` の本体が
   `spawn` / `interval` / `sleep` / `HEAD` / `Instant::now` を持たないこと、
   `state.rs` が棚を読むだけで `fetch_table` を呼ばないこと。
@@ -311,6 +316,13 @@ core 経由で既にツリーに居た）。
 - **IPC を P2 に入れた**（P3 送りにしない）— 呼び出し元の無いまま置くと
   `dead_code` を `allow` で覆うことになり、**本当に死んだコードが隠れる**
   （Spec 15 P3 の判断と同じ）
+
+### 公開する JSON は、パーサの欄名と機械で突き合わせた
+
+**実装から `WireEntry` / `WireTable` の欄名を抜き出して JSON と比べた** —
+「Rust が読む欄のうち JSON に無いもの」が空、「JSON にあって Rust が無視する欄」も
+把握済み（`_notice` / `version`）。**P5 の実機まで持ち越すと、取れないことが
+実機で初めて分かる**ので、公開の前に閉じた。
 
 ### `PRIVACY.md` は同じコミットで直した（rev2 の決定どおり）
 

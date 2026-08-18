@@ -34,10 +34,12 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// 既定の取得先。
 ///
-/// **今は空**。公開した静的ファイルの URL が決まったらここへ入れる。
-/// **空のあいだ、この村は単価表のために 1 度も外へ出ない**（S4）—
-/// 手入力だけで完結する状態が既定になる。
-const DEFAULT_URL: &str = "";
+/// **開発者が用意した静的ファイル**（GitHub Pages）。`PRIVACY.md` に「開発者が
+/// 運営する送信先」の唯一の例外として明記してある。**画面から変更・空にできる**。
+///
+/// **空にすれば、この村は単価表のために 1 度も外へ出ない**（S4）。
+/// **既定が入っていても、押すまでは 1 度も通信しない**（凍結事項）。
+const DEFAULT_URL: &str = "https://betyourluck.github.io/prices.json";
 
 /// 取得元の設定。`{app_data_dir}/pricing.json` の中身そのもの。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,11 +254,27 @@ mod tests {
         assert!(validate_url("  ").is_err());
     }
 
-    /// **既定では取得先が空**（S4）。空の村は単価表のために 1 度も外へ出ない。
+    /// **空にすれば取りに行かない**（S4）。
+    ///
+    /// **「既定が空であること」ではなく「空にできること」が要件**。
+    /// rev1 の実装途中は既定が空で、テストもそれを凍結していたが、
+    /// **それは状態であって設計ではなかった** — URL が入ったら赤くなり、
+    /// 要件は 1 つも壊れていないのにテストだけが止まる形だった。
     #[test]
-    fn the_default_source_is_empty_so_a_fresh_village_never_reaches_out() {
-        assert!(PricingSourceConfig::default().url.is_empty());
-        assert!(validate_url(&PricingSourceConfig::default().url).is_err());
+    fn clearing_the_source_disables_the_fetch() {
+        assert!(validate_url("").is_err());
+        assert!(validate_url("   ").is_err());
+    }
+
+    /// **既定は入っているが、それ自体は通信を起こさない。**
+    ///
+    /// 通信が起きるのは `fetch_table` を呼んだときだけで、**呼ぶのは
+    /// IPC ハンドラ 1 箇所**（起動経路が呼ばないことは下のテストが留める）。
+    #[test]
+    fn the_default_source_is_a_usable_https_url() {
+        let url = PricingSourceConfig::default().url;
+        assert!(validate_url(&url).is_ok(), "既定が使えない: {url}");
+        assert!(url.starts_with("https://"));
     }
 
     /// **自動取得の機構を持たない**（`data_contract` の `pricing_fetch_freeze`）。
