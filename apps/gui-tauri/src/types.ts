@@ -748,7 +748,12 @@ export interface StatsSlice {
   avgTokensPerTurn: number;
 }
 
-/** 個体別の 1 行（Slice を平坦に持つ）。`model` は**最後のターン**のモデル名。 */
+/**
+ * **(個体, モデル)** 別の 1 行（Slice を平坦に持つ）。
+ *
+ * `agentId` は**一意ではない** — モデルを切り替えた個体は行が増える。表示の鍵には
+ * `agentId` + `model` を使うこと。
+ */
 export interface AgentStats extends StatsSlice {
   agentId: AgentId;
   model: string;

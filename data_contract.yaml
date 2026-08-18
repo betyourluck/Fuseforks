@@ -550,6 +550,8 @@ enums:
           },
           totals:  Slice,                         # スコープ全体
           byAgent: [{ agentId, model, ...Slice }],
+                                                  # 鍵は (agentId, model)。agentId は一意ではない
+                                                  # — モデルを切り替えた個体は行が増える
           byStop:  [{ stop, code?, count }],      # failed は CODE ごとに分ける
           series:  Option<{ points: [{ tsMs, agentId, effective, prompt, completion, stop }],
                             dropped: u32 }>,      # session のみ。all では null

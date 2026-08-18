@@ -72,14 +72,18 @@ pub struct StatsSlice {
     pub avg_tokens_per_turn: u64,
 }
 
-/// 個体別の 1 行。
+/// **(個体, モデル)** 別の 1 行。
+///
+/// 1 個体が複数行になりうる — テンプレートを差し替えた個体は、モデルごとに割れる。
+/// 畳まないのは**単価がモデルごとに違う**ため（外部の価格表を当てて金額を出す用途で、
+/// 個体だけで畳むと切り替え前のターンまで最後のモデルの単価で計算される）。
+/// `agent_id` は `by_agent` の鍵として一意ではないので、**表示の鍵にも使えない**。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStats {
-    /// 個体。
+    /// 個体。**一意ではない**（同じ個体がモデルごとに複数行を持つ）。
     pub agent_id: String,
-    /// **最後のターン**のモデル名。テンプレートを差し替えた個体は途中で変わりうるので、
-    /// 「いま何で払っているか」を出す（履歴の全モデルは `series` の側で読める）。
+    /// この行のモデル名。`TurnRecord.model` = テンプレートの `model`。
     pub model: String,
     /// 使用量。
     #[serde(flatten)]
@@ -167,7 +171,7 @@ pub struct StatsReport {
     pub scope_meta: StatsScopeMeta,
     /// スコープ全体。
     pub totals: StatsSlice,
-    /// 個体別。実効トークンの多い順、同点は id 順。
+    /// **(個体, モデル)** 別。実効トークンの多い順、同点は id 順 → モデル名順。
     pub by_agent: Vec<AgentStats>,
     /// 終わり方の内訳。件数の多い順、同点は種別名 → コード順。
     pub by_stop: Vec<StopCount>,
@@ -270,22 +274,23 @@ pub fn aggregate(
     sessions: &[SessionSummary],
     scope: StatsScope,
 ) -> StatsReport {
-    // 開始時刻順に並べる（`by_agent.model` は最後のターン、`series` は末尾 N 件）。
+    // 開始時刻順に並べる（`series` は末尾 N 件）。
     let mut ordered: Vec<&(String, TurnRecord)> = turns.iter().collect();
     ordered.sort_by_key(|(_, t)| t.ts_ms);
 
     let mut totals = SliceAcc::default();
-    let mut by_agent: BTreeMap<&str, (SliceAcc, &str)> = BTreeMap::new();
+    // 鍵は **(個体, モデル)**。個体だけで畳むと、テンプレートを差し替えた個体の
+    // 全ターンが最後のモデルの下に集まり、単価を掛けたときに金額が狂う。
+    let mut by_agent: BTreeMap<(&str, &str), SliceAcc> = BTreeMap::new();
     let mut by_stop: BTreeMap<(&'static str, Option<&str>), u64> = BTreeMap::new();
     let mut by_session: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
 
     for (session_id, turn) in &ordered {
         totals.push(turn);
-        let entry = by_agent
-            .entry(turn.agent_id.as_str())
-            .or_insert_with(|| (SliceAcc::default(), turn.model.as_str()));
-        entry.0.push(turn);
-        entry.1 = turn.model.as_str();
+        by_agent
+            .entry((turn.agent_id.as_str(), turn.model.as_str()))
+            .or_default()
+            .push(turn);
         let code = match &turn.stop {
             TurnStop::Failed { code } => Some(code.as_str()),
             _ => None,
@@ -298,7 +303,7 @@ pub fn aggregate(
 
     let mut by_agent: Vec<AgentStats> = by_agent
         .into_iter()
-        .map(|(agent_id, (acc, model))| AgentStats {
+        .map(|((agent_id, model), acc)| AgentStats {
             agent_id: agent_id.to_owned(),
             model: model.to_owned(),
             slice: acc.finish(),
@@ -309,6 +314,7 @@ pub fn aggregate(
             .effective
             .cmp(&a.slice.effective)
             .then_with(|| a.agent_id.cmp(&b.agent_id))
+            .then_with(|| a.model.cmp(&b.model))
     });
 
     let mut by_stop: Vec<StopCount> = by_stop
@@ -496,23 +502,66 @@ mod tests {
         );
     }
 
-    /// `by_agent` は実効の多い順、`model` は最後のターンのもの。
+    /// `by_agent` は **(個体, モデル) ごと**に分かれ、実効の多い順に並ぶ。
+    ///
+    /// 同じ個体がモデルを切り替えたら行が増える。畳むと、価格表を当てたときに
+    /// **全ターンが最後のモデルの単価で計算されて金額が狂う**。
     #[test]
-    fn by_agent_orders_by_effective_and_takes_the_latest_model() {
-        let mut later = turn("a", 5, 10, 0, 0, TurnStop::Completed);
-        later.model = "m2".into();
+    fn by_agent_splits_by_model_and_orders_by_effective() {
+        let on_m2 = |ts: u64| {
+            let mut t = turn("a", ts, 10, 0, 0, TurnStop::Completed);
+            t.model = "m2".into();
+            t
+        };
         let turns = vec![
             ("s1".to_owned(), turn("b", 1, 100, 0, 0, TurnStop::Completed)),
             ("s1".to_owned(), turn("a", 2, 10, 0, 0, TurnStop::Completed)),
-            ("s1".to_owned(), later),
+            ("s1".to_owned(), on_m2(3)),
+            ("s1".to_owned(), on_m2(4)),
         ];
         let report = aggregate(&turns, &[session("s1", None)], scope_s());
-        assert_eq!(report.by_agent[0].agent_id, "b");
-        assert_eq!(report.by_agent[0].slice.effective, 100);
-        assert_eq!(report.by_agent[1].agent_id, "a");
-        assert_eq!(report.by_agent[1].slice.turns, 2);
-        assert_eq!(report.by_agent[1].model, "m2", "最後のターンのモデル");
-        assert_eq!(report.by_agent[1].slice.avg_tokens_per_turn, 10);
+        let rows: Vec<(&str, &str, u64, u64)> = report
+            .by_agent
+            .iter()
+            .map(|r| {
+                (
+                    r.agent_id.as_str(),
+                    r.model.as_str(),
+                    r.slice.turns,
+                    r.slice.effective,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![("b", "m1", 1, 100), ("a", "m2", 2, 20), ("a", "m1", 1, 10)],
+            "a は m1 / m2 の 2 行へ割れ、並びは実効の多い順"
+        );
+        assert_eq!(report.by_agent[2].slice.avg_tokens_per_turn, 10);
+        assert_eq!(
+            report.totals.turns, 4,
+            "割っても totals は変わらない（同じターンを 2 度数えない）"
+        );
+    }
+
+    /// 実効が同点なら id 順、id も同じならモデル名順。
+    ///
+    /// 同じ個体の複数行が並ぶのは本 Spec で初めて起きるので、その中の順序を固定する。
+    #[test]
+    fn by_agent_breaks_ties_by_agent_then_model() {
+        let with_model = |ts: u64, model: &str| {
+            let mut t = turn("a", ts, 10, 0, 0, TurnStop::Completed);
+            t.model = model.to_owned();
+            t
+        };
+        let turns = vec![
+            ("s1".to_owned(), with_model(1, "m2")),
+            ("s1".to_owned(), with_model(2, "m0")),
+            ("s1".to_owned(), turn("a", 3, 10, 0, 0, TurnStop::Completed)),
+        ];
+        let report = aggregate(&turns, &[session("s1", None)], scope_s());
+        let models: Vec<&str> = report.by_agent.iter().map(|r| r.model.as_str()).collect();
+        assert_eq!(models, vec!["m0", "m1", "m2"]);
     }
 
     /// `series` は開始時刻の昇順で末尾 N 件、落とした件数を数える。`all` では出さない。

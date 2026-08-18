@@ -289,7 +289,8 @@ const totals = computed(() => report.value?.totals ?? null);
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in report.byAgent" :key="row.agentId">
+              <!-- 鍵は (個体, モデル)。同じ個体がモデルごとに複数行を持つので id だけでは重複する。 -->
+              <tr v-for="row in report.byAgent" :key="`${row.agentId}/${row.model}`">
                 <td :title="row.agentId">{{ agentName(row.agentId) }}</td>
                 <td class="font-mono text-xs text-ink-dim">{{ row.model }}</td>
                 <td class="num">{{ exactNumber(row.turns) }}</td>
