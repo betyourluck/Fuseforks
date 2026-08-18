@@ -250,6 +250,14 @@ pub fn decode(resp: wire::OaiResponse) -> Result<ChatResponse, LlmError> {
                 .prompt_tokens_details
                 .as_ref()
                 .map_or(0, |d| d.cached_tokens),
+            // **`/chat/completions` の口では未測定**（Spec 40 D2）。Responses の口では
+            // 2026-08-11 に 4,411 を実測しているが、こちらは撃っていない。
+            cache_write: u
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |d| d.cache_write_tokens),
+            // TTL 別の内訳は OpenAI 形に無い。
+            cache_write_1h: 0,
             // 思考の**本文**はこの口に来ないが、**数**は来ることがある
             // （推論モデルが completion_tokens_details で返す）。Spec 32 D4 の
             // 「数えて結果を書く」はここ。欄が無い互換サーバでは 0 に落ちる。
@@ -674,6 +682,47 @@ mod tests {
         assert!(json.get("reasoning_effort").is_none(), "触らない");
     }
 
+    /// **受け皿が配線されていることを、実機の前に確かめる**（Spec 40 P1）。
+    ///
+    /// この村の decode は**未知の欄を黙って落とす**（`deny_unknown_fields` を
+    /// 1 箇所も使っていない）。だから実機で `cache_write=0` を見たとき、
+    /// **「相手が返していない」と「こちらが読んでいない」は区別が付かない**。
+    /// **このテストが後者を消す。**
+    ///
+    /// **`/chat/completions` の口で値が返るかは未測定** — Responses の口では
+    /// 2026-08-11 に 4,411 を実測している（Spec 34 P0a）。ここで固定しているのは配線だけ。
+    #[test]
+    fn decode_reads_the_openai_cache_write_receptacle_when_present() {
+        let raw = r#"{
+            "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 5,
+                       "prompt_tokens_details": { "cached_tokens": 8,
+                                                  "cache_write_tokens": 40 } }
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+
+        assert_eq!(resp.usage.cache_write, 40, "欄が返れば読める");
+        assert_eq!(resp.usage.cache_read, 8);
+        // OpenAI 形は cached を prompt の内数として返すので、prompt は素のまま。
+        assert_eq!(resp.usage.prompt, 100);
+        assert_eq!(resp.usage.cache_write_1h, 0, "TTL 別の内訳は無い");
+    }
+
+    /// 欄が無い応答では 0（既存の互換サーバが壊れない）。
+    ///
+    /// **この 1 本だけでは配線を守れない** — 実装が死んでいても緑になる。
+    /// 上の「返れば読める」と**対で**意味を持つ。
+    #[test]
+    fn decode_defaults_the_cache_write_receptacle_to_zero() {
+        let raw = r#"{
+            "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 5 }
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+        assert_eq!(resp.usage.cache_write, 0);
+        assert_eq!(resp.usage.prompt, 100);
+    }
+
     #[test]
     fn decode_parses_arguments_string_exactly_once() {
         let raw = r#"{
@@ -714,6 +763,8 @@ mod tests {
             prompt: 100,
             completion: 4_096,
             cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 4_096,
         };
         let base = ChatResponse {

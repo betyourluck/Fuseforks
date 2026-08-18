@@ -456,6 +456,17 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
             prompt: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
             completion: u.output_tokens,
             cache_read: u.cache_read_input_tokens,
+            // **`prompt` の内数**（Spec 40）。rev1 まではこの値が `prompt` へ足し込まれる
+            // だけで独立した行き先を持たず、読み取り 0.1× と書き込み 2.0× が同じ袋に
+            // 入っていた（`CACHE_TTL = "1h"`）。
+            cache_write: u.cache_creation_input_tokens,
+            // 合計の**部分集合**。内訳を返さない応答では 0（合計だけが立つ）。
+            // **ここで `cache_write` へ丸めない** — 不変条件は実データで確かめる側で、
+            // decode で強制すると検定が同語反復になる。
+            cache_write_1h: u
+                .cache_creation
+                .as_ref()
+                .map_or(0, |c| c.ephemeral_1h_input_tokens),
             // `output_tokens` の内数。足さない。
             //
             // **Spec 32 P1 はここを 0 で固定し、「Anthropic は usage に欄が無く
@@ -1148,5 +1159,62 @@ mod tests {
         // キャッシュ読み取り分を含めた総入力量に正規化される。
         assert_eq!(resp.usage.prompt, 100);
         assert_eq!(resp.usage.cache_read, 90);
+        assert_eq!(resp.usage.cache_write, 0);
+        assert_eq!(resp.usage.cache_write_1h, 0);
+    }
+
+    /// **キャッシュ書き込みが独立して取れる**（Spec 40 P1）。
+    ///
+    /// rev1 まで `cache_creation_input_tokens` は `prompt` へ足し込まれるだけで、
+    /// 独立した行き先を持っていなかった。読み取り 0.1× に対し書き込みは 2.0×
+    /// （`CACHE_TTL = "1h"`）なので、畳むと外の単価表で金額が狂う。
+    ///
+    /// **`prompt` が 3 項の和のままであることを同じテストで留める** — 欄を足した
+    /// ときに `prompt` の意味を動かすと、8 日ぶんの実測と比較できなくなる。
+    #[test]
+    fn decode_splits_cache_write_from_prompt_and_keeps_the_sum() {
+        let raw = r#"{
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 5,
+                       "cache_read_input_tokens": 90,
+                       "cache_creation_input_tokens": 400,
+                       "cache_creation": { "ephemeral_5m_input_tokens": 150,
+                                           "ephemeral_1h_input_tokens": 250 } }
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+
+        assert_eq!(resp.usage.cache_write, 400, "合計は平坦な欄から");
+        assert_eq!(resp.usage.cache_write_1h, 250, "1h は内訳から");
+        // 5 分ぶんは欄を持たず引き算で出す（独立な数は 2 つ）。
+        assert_eq!(resp.usage.cache_write - resp.usage.cache_write_1h, 150);
+        assert!(resp.usage.cache_write_1h <= resp.usage.cache_write);
+        // **`prompt` は 3 項の和のまま**（10 + 90 + 400）。
+        assert_eq!(resp.usage.prompt, 500);
+        // 素の未キャッシュはこの引き算で出る。
+        assert_eq!(
+            resp.usage.prompt - resp.usage.cache_read - resp.usage.cache_write,
+            10
+        );
+    }
+
+    /// **内訳が返らない応答では、合計だけが立つ**（Spec 40 P1）。
+    ///
+    /// `cache_creation` を返さない世代・応答があるので、**内訳の欠落を
+    /// 「書き込みが無かった」と読まない**。
+    #[test]
+    fn decode_keeps_the_cache_write_total_when_the_ttl_breakdown_is_absent() {
+        let raw = r#"{
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 5,
+                       "cache_read_input_tokens": 0,
+                       "cache_creation_input_tokens": 400 }
+        }"#;
+        let resp = decode(serde_json::from_str(raw).unwrap()).unwrap();
+
+        assert_eq!(resp.usage.cache_write, 400);
+        assert_eq!(resp.usage.cache_write_1h, 0, "内訳が無ければ 0");
+        assert_eq!(resp.usage.prompt, 410);
     }
 }

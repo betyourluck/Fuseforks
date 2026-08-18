@@ -206,7 +206,7 @@ fn stop_kind(record: &serde_json::Value) -> &str {
 #[tokio::test]
 async fn a_completed_turn_writes_one_turn_record_and_one_event() {
     let dir = TempDir::new("completed");
-    let usage = Usage { prompt: 10, completion: 4, cache_read: 3, reasoning: 1 };
+    let usage = Usage { prompt: 10, completion: 4, cache_read: 3, cache_write: 0, cache_write_1h: 0, reasoning: 1 };
     let orchestrator = setup(&dir, Arc::new(PlainBackend(usage)), None).await;
     let id = AgentId::from("agent_01");
 
@@ -248,7 +248,7 @@ async fn a_completed_turn_writes_one_turn_record_and_one_event() {
 #[tokio::test]
 async fn a_failed_turn_writes_a_turn_record_with_the_error_code() {
     let dir = TempDir::new("failed");
-    let usage = Usage { prompt: 2_000, completion: 125, cache_read: 0, reasoning: 125 };
+    let usage = Usage { prompt: 2_000, completion: 125, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 125 };
     let orchestrator = setup(&dir, Arc::new(TruncatedBackend(usage)), None).await;
     let id = AgentId::from("agent_01");
 
@@ -273,7 +273,7 @@ async fn a_failed_turn_writes_a_turn_record_with_the_error_code() {
 #[tokio::test]
 async fn an_interrupted_turn_writes_a_turn_record() {
     let dir = TempDir::new("interrupted");
-    let usage = Usage { prompt: 7, completion: 2, cache_read: 0, reasoning: 0 };
+    let usage = Usage { prompt: 7, completion: 2, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 0 };
     let backend = Arc::new(LoopingBackend {
         usage,
         delay: Duration::from_millis(300),
@@ -310,7 +310,7 @@ async fn an_interrupted_turn_writes_a_turn_record() {
 #[tokio::test]
 async fn a_budget_exhausted_turn_writes_a_turn_record() {
     let dir = TempDir::new("exhausted");
-    let usage = Usage { prompt: 5_000, completion: 0, cache_read: 0, reasoning: 0 };
+    let usage = Usage { prompt: 5_000, completion: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 0 };
     let backend = Arc::new(LoopingBackend {
         usage,
         delay: Duration::ZERO,
@@ -340,7 +340,7 @@ async fn a_budget_exhausted_turn_writes_a_turn_record() {
 #[tokio::test]
 async fn a_reserve_short_turn_writes_a_turn_record() {
     let dir = TempDir::new("reserve-short");
-    let usage = Usage { prompt: 2_400, completion: 0, cache_read: 0, reasoning: 0 };
+    let usage = Usage { prompt: 2_400, completion: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 0 };
     let backend = Arc::new(LoopingBackend {
         usage,
         delay: Duration::ZERO,
@@ -368,7 +368,7 @@ async fn session_stats_reads_the_saved_turns_in_both_scopes() {
     use fuseforks_core::stats::StatsScope;
 
     let dir = TempDir::new("stats");
-    let usage = Usage { prompt: 1_000, completion: 50, cache_read: 200, reasoning: 0 };
+    let usage = Usage { prompt: 1_000, completion: 50, cache_read: 200, cache_write: 0, cache_write_1h: 0, reasoning: 0 };
     let orchestrator = setup(&dir, Arc::new(PlainBackend(usage)), None).await;
     let id = AgentId::from("agent_01");
 

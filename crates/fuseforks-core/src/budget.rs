@@ -96,6 +96,12 @@ pub fn normalized_usage(reported: &Usage, sent_utf8_len: usize, received_utf8_le
         prompt: estimate_tokens(sent_utf8_len),
         completion: estimate_tokens(received_utf8_len),
         cache_read: 0,
+        // **書き込みも見積もらない**（Spec 40）。見積もりが走るのはプロバイダが
+        // usage を返さなかったときで、そのとき分かるのは送受信のバイト数だけ。
+        // **キャッシュに書いたかはこちらから見えない**。0 は「書かなかった」ではなく
+        // 「分からない」の側だが、実効では書き込みを 1.0× で数えるので取りこぼしは無い。
+        cache_write: 0,
+        cache_write_1h: 0,
         // 思考ぶんは**見積もらない**。バイト数から出せるのは受け取った本文の量で、
         // 思考は本文に現れないので、推定する材料がそもそも無い。ここで
         // 保守側へ倒す（大きめに入れる）と、天井には効かないのに計器だけが
@@ -324,6 +330,11 @@ mod tests {
             prompt,
             completion,
             cache_read,
+            // **予算は書き込みを 1.0× で数える**（Spec 40 D3）。実際の請求は
+            // `CACHE_TTL = "1h"` で 2.0× なので、実効トークンは請求に対して過小。
+            // 天井は「支払いの上限」ではなく「歯止めの単位」。
+            cache_write: 0,
+            cache_write_1h: 0,
             // 予算の計算は思考ぶんを見ない（内数なので completion に入っている）。
             // ここを 0 以外にしても実効トークンが動かないことは
             // `reasoning_does_not_change_the_effective_cost` が留める。

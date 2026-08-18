@@ -573,7 +573,8 @@ fn note_cache_diag(
     note!(
         "cache: agent={agent_id} model={model} round={round} \
          prompt={} cached={} system_chars={} stable_chars={} system_blocks={} \
-         history_msgs={}/{} system_digest={:016x}",
+         history_msgs={}/{} system_digest={:016x} \
+         cache_write={} cache_write_1h={}",
         usage.prompt,
         usage.cache_read,
         system.chars,
@@ -582,6 +583,11 @@ fn note_cache_diag(
         history.msgs,
         history.limit,
         system.digest,
+        // Spec 40 P1。**この 2 つが、既存のログでは測れなかった量** —
+        // `cache_creation` はどの行にも出ていなかった。**増える欄は末尾へ**
+        // （`observability_rule`。8 日ぶんの実測が既存の書式で取られている）。
+        usage.cache_write,
+        usage.cache_write_1h,
     );
 }
 

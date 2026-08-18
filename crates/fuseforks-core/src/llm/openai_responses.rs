@@ -237,6 +237,15 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
                 .as_ref()
                 .map(|d| d.cached_tokens)
                 .unwrap_or_default(),
+            // **`ResponsesInputTokensDetails` は 3 本の Responses ワイヤで共有**なので、
+            // 欄を 1 つ足すと 3 本に効く。ただし decode の式は 3 ファイルに別々に
+            // 書かれているので、テストも 3 本要る（Spec 40 P1）。
+            cache_write: u
+                .input_tokens_details
+                .as_ref()
+                .map(|d| d.cache_write_tokens)
+                .unwrap_or_default(),
+            cache_write_1h: 0,
             // `output_tokens` の内数。足さない（Spec 32 D2）。
             reasoning: u
                 .output_tokens_details
@@ -530,6 +539,12 @@ mod tests {
         assert_eq!(decoded.grounding.sources[1].title, "");
         assert_eq!(decoded.reasoning_summary, vec!["The user asks a puzzle…"]);
         assert_eq!(decoded.usage.prompt, 4454);
+        // **受け皿の配線を実機の前に固定する**（Spec 40 P1）。この欄は
+        // **2026-08-11 の probe で 4,411 を実測**していた（Spec 34 P0a の S4）。
+        // **fixture にも当時から書かれていたが、ワイヤ型に欄が無く 7 日間
+        // 黙って落ちていた** — このテストはその再発を留める。
+        assert_eq!(decoded.usage.cache_write, 0, "この fixture の値は 0");
+        assert_eq!(decoded.usage.cache_write_1h, 0, "TTL 別の内訳は無い");
         assert_eq!(decoded.usage.cache_read, 4411);
         assert_eq!(decoded.usage.reasoning, 176);
         // reasoning は output_tokens の内数。外数で実装すると 4,937 になる。

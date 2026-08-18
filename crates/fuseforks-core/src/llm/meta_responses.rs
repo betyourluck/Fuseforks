@@ -253,6 +253,15 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
                 .as_ref()
                 .map(|d| d.cached_tokens)
                 .unwrap_or_default(),
+            // **`ResponsesInputTokensDetails` は 3 本の Responses ワイヤで共有**なので、
+            // 欄を 1 つ足すと 3 本に効く。ただし decode の式は 3 ファイルに別々に
+            // 書かれているので、テストも 3 本要る（Spec 40 P1）。
+            cache_write: u
+                .input_tokens_details
+                .as_ref()
+                .map(|d| d.cache_write_tokens)
+                .unwrap_or_default(),
+            cache_write_1h: 0,
             reasoning: u
                 .output_tokens_details
                 .as_ref()

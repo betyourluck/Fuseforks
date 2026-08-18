@@ -299,6 +299,12 @@ pub struct OaiPromptTokensDetails {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_tokens: u64,
+    /// キャッシュへ書き込まれたトークン数（Spec 40）。
+    ///
+    /// **OpenAI Responses では 2026-08-11 に実測 4,411**（Spec 34 P0a の S4）。
+    /// 当時ワイヤ型に欄が無く、**7 日間 黙って落ちていた**。
+    #[serde(default)]
+    pub cache_write_tokens: u64,
 }
 
 /// 出力トークンの内訳。
@@ -621,15 +627,40 @@ pub struct AnthropicUsage {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cache_read_input_tokens: u64,
-    /// キャッシュ書き込みに要したトークン数。
+    /// キャッシュ書き込みに要したトークン数（**TTL 別の合計**）。
     #[serde(default)]
     pub cache_creation_input_tokens: u64,
+    /// キャッシュ書き込みの TTL 別内訳（Spec 40 D6）。
+    ///
+    /// **平坦な欄が合計、こちらが内訳**。返らない応答では `None` で、内訳は 0
+    /// として扱う（合計だけが立つ）。
+    ///
+    /// **要求した TTL と、相手が実際に作った TTL は別**。この村は `CACHE_TTL = "1h"`
+    /// を送るが、`EXTENDED_CACHE_BETA` を送らないと**`ttl` は黙って無視されて
+    /// 5 分に戻る**（`anthropic.rs` の doc）。**要求が通っている保証は結果の側にしか
+    /// 無い**ので、内訳を読む。
+    #[serde(default)]
+    pub cache_creation: Option<AnthropicCacheCreation>,
     /// 出力トークンの内訳（Spec 32 P4）。
     ///
     /// **`thinking` を送っていない要求の応答にも付く** — claude-sonnet-5 は
     /// 既定で思考するため（実測 2026-08-10。5/5 の応答に出た）。
     #[serde(default)]
     pub output_tokens_details: Option<AnthropicOutputTokensDetails>,
+}
+
+/// Anthropic のキャッシュ書き込みの TTL 別内訳（Spec 40）。
+///
+/// 課金の倍率が TTL で違う（5 分 1.25× / 1 時間 2.0×）ので、合計だけでは外の
+/// 単価表が掛け分けられない。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AnthropicCacheCreation {
+    /// 5 分 TTL で書かれたトークン数。
+    #[serde(default)]
+    pub ephemeral_5m_input_tokens: u64,
+    /// 1 時間 TTL で書かれたトークン数。
+    #[serde(default)]
+    pub ephemeral_1h_input_tokens: u64,
 }
 
 /// Anthropic の出力トークンの内訳。
@@ -1428,6 +1459,12 @@ pub struct ResponsesInputTokensDetails {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_tokens: u64,
+    /// キャッシュへ書き込まれたトークン数（Spec 40）。
+    ///
+    /// **OpenAI Responses では 2026-08-11 に実測 4,411**（Spec 34 P0a の S4）。
+    /// 当時ワイヤ型に欄が無く、**7 日間 黙って落ちていた**。
+    #[serde(default)]
+    pub cache_write_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]

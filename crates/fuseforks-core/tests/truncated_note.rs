@@ -27,6 +27,8 @@ fn truncated() -> ChatResponse {
             prompt: 23_440,
             completion: 64,
             cache_read: 12_000,
+            cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 64,
         },
         grounding: Grounding::default(),

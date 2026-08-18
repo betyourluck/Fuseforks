@@ -180,6 +180,9 @@ impl LlmBackend for EchoBackend {
                 prompt: (prompt_chars / 4) as u64,
                 completion,
                 cache_read: 0,
+                // Echo バックエンドはキャッシュも思考もしない。
+                cache_write: 0,
+                cache_write_1h: 0,
                 // Echo バックエンドは思考しない。
                 reasoning: 0,
             },

@@ -185,6 +185,11 @@ fn usage_of(turn: &TurnRecord) -> Usage {
         prompt: turn.prompt,
         completion: turn.completion,
         cache_read: turn.cached,
+        // **P1 では 0 固定**（Spec 40）。`TurnRecord` に欄が生えるのは P3。
+        // **P3 の後も 0 のまま渡す** — D3 で「実効トークンは書き込みを 1.0× で
+        // 数える」と決めているので、渡すと天井の意味が黙って変わる。
+        cache_write: 0,
+        cache_write_1h: 0,
         reasoning: turn.reasoning,
     }
 }
@@ -439,6 +444,8 @@ mod tests {
                 prompt: 1_000,
                 completion: 50,
                 cache_read: 200,
+                cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 40
             }),
             "budget.rs と同じ数字"

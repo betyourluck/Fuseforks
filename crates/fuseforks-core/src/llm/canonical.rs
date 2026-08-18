@@ -402,8 +402,35 @@ pub struct Usage {
     pub prompt: u64,
     /// 出力トークン数。
     pub completion: u64,
-    /// キャッシュから読まれた入力トークン数。
+    /// キャッシュから読まれた入力トークン数。**[`Self::prompt`] の内数。**
     pub cache_read: u64,
+    /// キャッシュへ**書き込まれた**入力トークン数。**[`Self::prompt`] の内数**（Spec 40）。
+    ///
+    /// **[`Self::cache_read`] と重ならない** — 入力は「素の未キャッシュ + 読み取り +
+    /// 書き込み」の 3 つに割れ、`prompt` はその合計。素の未キャッシュは
+    /// `prompt - cache_read - cache_write` で引く。
+    ///
+    /// **読み取りと分けて持つのは、課金の倍率が違うから。** Anthropic は読み取り
+    /// 0.1× に対し書き込みは TTL 依存（5 分 1.25× / 1 時間 2.0×）で、**この村は
+    /// `CACHE_TTL = "1h"` を送っているので 2.0×**。畳むと「1.0× のもの」と
+    /// 「2.0× のもの」が同じ袋に入り、外の単価表を当てたときに金額が狂う。
+    ///
+    /// **[`crate::budget`] の実効トークンはこの欄を 1.0× で数えている**（Spec 40 D3。
+    /// 天井は「支払いの上限」ではなく「歯止めの単位」）。
+    ///
+    /// 取れないワイヤでは 0。**`Option` にしない**（[`Self::reasoning`] と同じ理由）。
+    /// **「欄が無い」は観測ではない** — この村の decode は未知の欄を黙って落とすので、
+    /// 相手が返していても 0 に見える。0 の意味は実測で決める。
+    pub cache_write: u64,
+    /// [`Self::cache_write`] のうち、**1 時間 TTL で書かれたぶん**（**部分集合**）。
+    ///
+    /// **5 分ぶんは持たない** — `cache_write - cache_write_1h` で引ける。3 つの数の
+    /// うち独立なのは 2 つなので、3 欄持つと「片方だけ埋まって合計と食い違う」形が
+    /// 書けてしまう（Spec 40 D6 rev3。符号化の出自は otari の `BillableUsage`）。
+    ///
+    /// 不変条件: `cache_write_1h <= cache_write`。内訳を返さないワイヤ・応答では 0
+    /// （**合計だけが立つ**）。
+    pub cache_write_1h: u64,
     /// うち思考（reasoning / thinking）に使われたトークン数。
     ///
     /// **[`Self::completion`] の内数**であって外数ではない（Spec 32 P0 凍結。
@@ -627,6 +654,8 @@ mod tests {
             prompt: 100,
             completion: 25,
             cache_read: 80,
+            cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 0,
         };
         assert_eq!(usage.total(), 125);
@@ -643,6 +672,8 @@ mod tests {
             prompt: 100,
             completion: 25,
             cache_read: 80,
+            cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 25,
         };
         assert_eq!(usage.total(), 125, "内数なので上のテストと同じ値でなければならない");

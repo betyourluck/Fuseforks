@@ -2,8 +2,9 @@
 
 **ID**: 40
 **Date**: 2026-08-18
-**Status**: **rev3（2026-08-18）— 未査読**
-（rev2 = 査読 4 点 / rev3 = 先行実装 otari の実読で D6 の符号化を訂正）
+**Status**: **rev4（2026-08-18）— P0 は暗黙・P1 完了。次は P2（測る）**
+（rev2 = 査読 4 点 / rev3 = otari の実読 / **rev4 = 「未測定」が誤りだった。
+OpenAI Responses の `cache_write_tokens` は 2026-08-11 に実測 4,411 で観測済み**）
 **Branch**: P0（契約）は rev 承認後に main 直コミット。P1 以降は `YYYYMMDD_cachewrite` へ積む
 
 ## Goal
@@ -53,8 +54,8 @@ rev1 はこの 2 つを取り違えて「Anthropic だけ」と書いた（rev2 
 | ワイヤ | 読み取り | 書き込み（こちらの型） | 相手が返すか |
 |---|---|---|---|
 | **Anthropic** | `cache_read_input_tokens` | **`cache_creation_input_tokens`** | 返る（実装済み） |
-| OpenAI 互換 | `prompt_tokens_details.cached_tokens` | 欄が無い | **未測定**（査読は GPT-5.6 以降 `cache_write_tokens` が付き 1.25× と報告） |
-| OpenAI Responses | `cached_tokens` | 欄が無い | **未測定**（同上） |
+| OpenAI 互換 | `prompt_tokens_details.cached_tokens` | 欄が無い | **未測定**（この口では撃っていない） |
+| **OpenAI Responses** | `cached_tokens` | 欄が無い | **返る。実測 4,411**（2026-08-11・Spec 34 P0a の S4。**文書ではなくこの村の probe**） |
 | Gemini | `cachedContentTokenCount` | 欄が無い | 返らない見込み（**この村は cache を作っていない** — 暗黙のみ） |
 | xAI Responses | `cached_tokens` | 欄が無い | 未測定 |
 | Meta Responses | `input_tokens_details.cached_tokens` | 欄が無い | 未測定 |
@@ -332,6 +333,74 @@ OpenAI は `cache_write_tokens` を返す」を否定はしないが、**普及�
 **入力はすべて `Record::Turn` から取れる** — `model` / `backend` / `prompt` /
 `cached` / `completion` / `reasoning`、そして本 Spec が足す `cache_write` /
 `cache_write_1h`。**P3 まで着地すれば、外の表と突き合わせる材料が揃う。**
+
+## rev4 の訂正 — 「未測定」は誤りだった（2026-08-18）
+
+**rev1〜rev3 は OpenAI の書き込みを 3 回とも「未測定」と書いた。誤り。**
+**7 日前にこの村自身が実測し、契約に書いていた。**
+
+`data_contract.yaml` の `openai_responses` の「応答に在るのに canonical へ読まない欄」:
+
+> `usage.input_tokens_details.cache_write_tokens` **(実測 4,411)** — xAI に無い欄。
+> この村は cache write を数えていない (`Usage.cache_read` のみ)。
+> **量として存在するのに計器に無い**ので、**足すなら Usage の欄を増やす判断が要る**
+
+**契約は、この Spec がいま作っている変更を名指しで予告していた。**
+`openai_responses.rs` のテスト fixture にも `"cache_write_tokens": 0` が
+**Spec 34 P1（`4a12562`・2026-08-11）から入っていた** — 型に欄が無いので
+**7 日間、黙って落ちていた**。
+
+**帰結が 3 つ**:
+
+1. **査読の「GPT-5.6 は書き込みを返す」は、文書ではなくこの村の probe で
+   裏付けられる。** ただし**観測したのは Responses の口**で、
+   `/chat/completions`（OpenAI 互換）では撃っていない — そちらは今も未測定
+2. **検収 7 の意味が変わる。** 「返るか」はもう分かっているので、実機で見るのは
+   **受け皿が本番経路で実際に捕まえるか**（テストの JSON ではなく生のワイヤ）
+3. **otari は遅れている側だった** — 非 Anthropic で `cache_write` を 0 に固定して
+   いる（rev3 で「反対材料」として記録した）。**この村の観測のほうが新しい**
+
+### なぜ見つけられなかったか（**処方は注意ではなく手順**）
+
+**起票時の調査で `crates/` は grep したが、`specs/` と `data_contract.yaml` を
+`cache_write` で grep していない。** コードに欄が無いことは確かめ、
+**「欄が無い理由が既に台帳に書かれていないか」を確かめなかった。**
+
+- **一般化: 「未測定」と書く前に、その名前で自分の台帳を grep する。**
+  `mandate_removal_requires_ledger_grep`（変えたら台帳を grep する）の**鏡像**で、
+  **書く前に引く**側。撤去の grep 規律だけでは、この向きは守られない
+- **同型の再発**: Spec 32 P0 の「自分の型を見て相手のワイヤを見なかった」
+  （`failures.md` #93）と**同じ形で、対象が台帳に変わっただけ**。
+  あちらは*実装*を見なかった、こちらは*記録*を見なかった
+- **契約に書いても害は消えなかった。** 当時の記述は正しく
+  「量として存在するのに計器に無い」と言っており、**#72 の穴（黙って捨てる）には
+  なっていない**。それでも 7 日間、費用は過小に出続けた。
+  **一般化: 「意図して読まない」と契約に書くことは、読まないことの害を消さない。**
+  #72 の処方は「気づかないこと」を防ぐが、**「気づいたうえで数えないこと」は
+  防がない**。費用に効く欄では、記録ではなく計上まで進めるか、
+  **進めない理由を金額で書く**（「4,411 トークン ×1.25× は 1 ターンあたり N 円」）
+
+## P1 実装記録（2026-08-18）
+
+**着地**: 25 ファイル・419 挿入 / 43 削除。workspace 全緑・clippy 警告ゼロ。
+
+- **`Usage` に 2 欄**（`cache_write` / `cache_write_1h`）。`Default` を derive
+  しているので**足りない場所はコンパイラが全部指した** — 実コード 3 箇所
+  （`budget::normalized_usage` / Echo バックエンド / `stats::usage_of`）と
+  fixture 74 箇所。**fixture は `..Default::default()` で埋めなかった** —
+  埋めると次に欄が増えたときコンパイラが指さなくなる
+- **6 ワイヤすべてに欄を配線した。** 実値が入るのは今のところ Anthropic
+  （`cache_creation_input_tokens` + `cache_creation` の内訳）と、
+  OpenAI 形の 4 本（受け皿）。Gemini は 0 固定で理由をコメントに書いた
+- **`cache:` 行の末尾へ `cache_write=` / `cache_write_1h=`。** これで
+  **初めて大きさが測れる**（P2 の前提）
+- **ミューテーション 2 回で赤を確かめた** — Anthropic の decode を 0 に固定すると
+  新しい 2 本が赤、OpenAI の受け皿を 0 にすると 1 本が赤。**「欄が無ければ 0」の
+  テストは緑のまま**で、これが対の意味 — 片方だけでは配線が死んでいても通る
+- **`stats::usage_of` は P3 以降も 0 を渡す**（D3）。渡すと天井の意味が変わる
+
+**踏んだもの**: `cargo fmt` を 1 回走らせて 80 ファイルが整形された
+（CLAUDE.md に節を立てた）。**このリポジトリでは走らせない。**
 
 ## Notes
 

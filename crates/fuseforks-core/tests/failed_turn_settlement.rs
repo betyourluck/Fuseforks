@@ -69,6 +69,8 @@ const WORKER_USAGE: Usage = Usage {
     prompt: 2_000,
     completion: 125,
     cache_read: 0,
+    cache_write: 0,
+    cache_write_1h: 0,
     reasoning: 125,
 };
 
@@ -89,6 +91,8 @@ impl LlmBackend for AskThenTruncatedWorker {
             prompt: 1,
             completion: 1,
             cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
             reasoning: 0,
         };
         if let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_")) {

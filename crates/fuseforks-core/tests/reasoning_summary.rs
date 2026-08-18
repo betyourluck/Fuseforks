@@ -82,6 +82,8 @@ impl LlmBackend for SummarizingProbe {
                 prompt: 1,
                 completion: 1,
                 cache_read: 0,
+                cache_write: 0,
+                cache_write_1h: 0,
                 reasoning: 1,
             },
             grounding: Default::default(),

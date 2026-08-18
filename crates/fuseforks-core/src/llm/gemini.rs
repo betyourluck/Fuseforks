@@ -367,6 +367,11 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             // totalTokenCount == prompt + candidates + thoughts が成り立つ。
             completion: u.candidates_token_count + u.thoughts_token_count,
             cache_read: u.cached_content_token_count,
+            // **書き込みの欄は Gemini に無い**（Spec 40）。明示キャッシュは事前に
+            // cache を作る API 呼び出しが要り、**この村は呼んでいない**（暗黙のみ）。
+            // 呼ぶようになったら作成コストが別に立つので、そのときここへ戻る。
+            cache_write: 0,
+            cache_write_1h: 0,
             // 内数として**同じ値をもう 1 度**入れる（Spec 32）。足し込みは上の
             // 行のまま触らない — `completion` の数え方を変えると
             // totalTokenCount との一致（実測で凍結済み）が壊れる。
