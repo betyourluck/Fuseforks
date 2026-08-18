@@ -185,6 +185,24 @@ pub struct TurnRecord {
     pub completion: u64,
     /// 出力のうち思考のぶん。**`completion` の内数**（Spec 32 D2）。
     pub reasoning: u64,
+    /// 入力のうちキャッシュへ**書き込んだ**ぶん。**`prompt` の内数**（Spec 40）。
+    ///
+    /// **`cached` と重ならない** — 素の新規入力は
+    /// `prompt - cached - cache_write`。実測ではこれが 1 ラウンドあたり数トークンで、
+    /// **「未キャッシュ」の実体はほぼ全部が書き込み**だった（Spec 40 P2）。
+    ///
+    /// **`#[serde(default)]`** — `v0.1.8`〜`v0.1.9` に書かれたレコードはこの欄を
+    /// 持たない。**古い記録は 0 として読む**（Spec 39 が凍結した互換の向き）。
+    /// **0 は「書き込みが無かった」ではなく「記録していなかった」**なので、
+    /// 画面はこの版より前の会話で内訳を主張しない。
+    #[serde(default)]
+    pub cache_write: u64,
+    /// うち 1 時間 TTL のぶん。**`cache_write` の部分集合**（Spec 40 D6）。
+    ///
+    /// TTL 別の内訳を返すのは Anthropic だけ。**OpenAI 形では常に 0 で、
+    /// それは相手の TTL についての観測ではない**（decode が 0 を焼いている）。
+    #[serde(default)]
+    pub cache_write_1h: u64,
     /// テンプレートのモデル名。`Option` ではない — テンプレートは段 1 で 4 出口の
     /// どれより先に解決され、引けなければターン自体が始まらない。
     pub model: String,
@@ -925,6 +943,28 @@ fn restrict_to_owner(_path: &Path, _mode: u32) {}
 
 #[cfg(test)]
 mod tests {
+    /// **この版より前に書かれた `turn` レコードが読める**（Spec 40 P3）。
+    ///
+    /// `cache_write` / `cache_write_1h` は `v0.1.8`〜`v0.1.9` のレコードに無い。
+    /// `#[serde(default)]` が無ければ**その会話の統計が丸ごと開けなくなる**
+    /// （Spec 39 が凍結した互換の向き — 新しい版は古い記録を読めること）。
+    ///
+    /// **0 は「書き込みが無かった」ではなく「記録していなかった」。** 画面が
+    /// この版より前の会話で内訳を主張しないのは、この 0 の意味が違うから。
+    #[test]
+    fn a_turn_record_written_before_this_version_still_deserializes() {
+        let old = r#"{
+            "agentId": "agent_1", "tsMs": 1, "hop": 0, "rounds": 1, "waves": 0,
+            "stop": { "kind": "completed" },
+            "prompt": 100, "cached": 80, "completion": 20, "reasoning": 0,
+            "model": "m", "backend": "b", "elapsedMs": 5
+        }"#;
+        let rec: super::TurnRecord = serde_json::from_str(old).expect("旧レコードが読めること");
+        assert_eq!(rec.prompt, 100);
+        assert_eq!(rec.cache_write, 0, "欄が無ければ 0");
+        assert_eq!(rec.cache_write_1h, 0);
+    }
+
     use super::*;
     use crate::llm::Role;
 
@@ -1038,6 +1078,8 @@ mod tests {
             cached: 3,
             completion: 4,
             reasoning: 1,
+            cache_write: 0,
+            cache_write_1h: 0,
             model: "mock-model".to_owned(),
             backend: "plain".to_owned(),
             elapsed_ms: 12,

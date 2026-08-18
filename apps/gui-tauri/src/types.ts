@@ -738,6 +738,20 @@ export interface StatsSlice {
   completion: number;
   /** `completion` の内数。 */
   reasoning: number;
+  /**
+   * `prompt` の内数。キャッシュへ**書き込んだ**ぶん（Spec 40）。
+   *
+   * 素の新規入力は `prompt - cached - cacheWrite`。実測ではこれが 1 ラウンド
+   * あたり数トークンで、**「未キャッシュ」の実体はほぼ全部が書き込み**だった。
+   *
+   * **`effective` には 1.0× で入っている。** 実際の課金は 1.25〜2.0× なので、
+   * **金額が要るならこの生の数へ外部の単価表を当てる。**
+   *
+   * **この版より前の会話では 0**（記録していなかった。「書き込みが無かった」ではない）。
+   */
+  cacheWrite: number;
+  /** `cacheWrite` のうち 1 時間 TTL のぶん（部分集合）。OpenAI 形では常に 0。 */
+  cacheWrite1h: number;
   /** 実効トークン（Spec 11 の重み）。**通貨ではない。** */
   effective: number;
   /** `prompt > 0 ? cached / prompt : 0`。 */

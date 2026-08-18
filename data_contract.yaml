@@ -222,7 +222,14 @@ enums:
                    **sent は実際に送った文字列そのもの** (#45 の規律を保存側へ延長)
         summary  : { agentId, text, coversUpToSeq } — 要約 1 本
         turn     : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached,
-                     completion, reasoning, model, backend, elapsedMs }
+                     completion, reasoning, cacheWrite, cacheWrite1h,
+                     model, backend, elapsedMs }
+                   — cacheWrite / cacheWrite1h は Spec 40 P3 で追加。**どちらも
+                   `#[serde(default)]`** なので v0.1.8〜v0.1.9 のレコードは 0 で
+                   読める (互換の向き: 新しい版が古い記録を読めること)。
+                   **その 0 は「書き込みが無かった」ではなく「記録していなかった」** —
+                   画面はこの版より前の会話で内訳を主張しない。
+                   cacheWrite は prompt の内数、cacheWrite1h は cacheWrite の部分集合。
                    — ターン 1 本の使用量 (Spec 39 D1)。**`turn:` 行と同じ構造体
                    (TurnSpend) から 1 実装 settle_turn が書く** — 行とレコードが
                    食い違う形を構造で作らない。**4 出口 (完走 / 失敗 / 割り込み /
@@ -556,8 +563,12 @@ enums:
           series:  Option<{ points: [{ tsMs, agentId, effective, prompt, completion, stop }],
                             dropped: u32 }>,      # session のみ。all では null
         }
-        Slice { turns, failed, prompt, cached, completion, reasoning, effective,
+        Slice { turns, failed, prompt, cached, completion, reasoning,
+                cacheWrite, cacheWrite1h, effective,
                 cacheRate, outputShare, avgElapsedMs, avgTokensPerTurn }
+        # cacheWrite は生の数で出す。**effective には 1.0× で入っている** (Spec 40 D3) —
+        # 金額が要るならこの生の数へ外部の単価表を当てる。画面は列を増やさず
+        # キャッシュ率のホバーへ内訳を出す (D4)。
 
       規則:
         - **effective は budget.rs の重み関数の 1 実装を呼ぶ**

@@ -27,6 +27,7 @@ import {
   STOP_LABEL_KEYS,
   formatDuration,
   formatPercent,
+  inputBreakdown,
   seriesBars,
   statsNotice,
   stopTone,
@@ -50,6 +51,8 @@ function report(overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number 
       cached: 0,
       completion: 0,
       reasoning: 0,
+      cacheWrite: 0,
+      cacheWrite1h: 0,
       effective: 0,
       cacheRate: 0,
       outputShare: 0,
@@ -273,5 +276,30 @@ describe("書式", () => {
     expect(formatDuration(850)).toBe("850 ms");
     expect(formatDuration(12_340)).toBe("12.3 s");
     expect(formatDuration(-1)).toBe("—");
+  });
+});
+
+describe("inputBreakdown", () => {
+  // Spec 40 D4。**素の新規は引き算で出す** — 実測ではこれが 1 ラウンドあたり
+  // 数トークンで、「未キャッシュ」の実体はほぼ全部が書き込みだった。
+  it("splits the prompt into read / write / fresh", () => {
+    expect(
+      inputBreakdown({ prompt: 1000, cached: 800, cacheWrite: 190, cacheWrite1h: 190 }),
+    ).toEqual({ cached: 800, cacheWrite: 190, cacheWrite1h: 190, fresh: 10 });
+  });
+
+  // **この版より前の会話**は cacheWrite が 0 で記録されている。そのとき fresh が
+  // 過大に出るのは正しい表示 — 0 を「書き込みが無かった」と読ませない。
+  it("puts everything in fresh when the write was never recorded", () => {
+    const b = inputBreakdown({ prompt: 1000, cached: 800, cacheWrite: 0, cacheWrite1h: 0 });
+    expect(b.fresh).toBe(200);
+    expect(b.cacheWrite).toBe(0);
+  });
+
+  // 引き算が負になる入力でも 0 で止める（壊れた記録で画面を落とさない）。
+  it("never returns a negative fresh count", () => {
+    expect(
+      inputBreakdown({ prompt: 100, cached: 90, cacheWrite: 50, cacheWrite1h: 0 }).fresh,
+    ).toBe(0);
   });
 });

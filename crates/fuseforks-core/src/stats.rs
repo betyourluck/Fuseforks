@@ -60,6 +60,21 @@ pub struct StatsSlice {
     pub completion: u64,
     /// 出力のうち思考のぶんの合計（`completion` の内数）。
     pub reasoning: u64,
+    /// 入力のうちキャッシュへ**書き込んだ**ぶんの合計（`prompt` の内数。Spec 40）。
+    ///
+    /// **素の新規入力は `prompt - cached - cache_write`。** 実測ではこれが
+    /// 1 ラウンドあたり数トークンで、**「未キャッシュ」の実体はほぼ全部が
+    /// 書き込み**だった（Anthropic 100.0% / OpenAI 互換 99.8%）。
+    ///
+    /// **[`Self::effective`] には 1.0× で入っている**（Spec 40 D3）。実際の課金は
+    /// TTL とワイヤ次第で 1.25〜2.0× なので、**金額が要るならこの生の数へ外部の
+    /// 単価表を当てる** — 実効トークンは歯止めの単位であって通貨ではない。
+    pub cache_write: u64,
+    /// うち 1 時間 TTL のぶん（`cache_write` の部分集合）。
+    ///
+    /// TTL 別の内訳を返すのは Anthropic だけ。**OpenAI 形の 0 は相手の TTL に
+    /// ついての観測ではない**（decode が 0 を焼いている）。
+    pub cache_write_1h: u64,
     /// 実効トークンの合計（Spec 11 の重み — `budget.rs` の 1 実装）。
     pub effective: u64,
     /// `prompt > 0 ? cached / prompt : 0`（AgentCard と同じ分母）。
@@ -209,6 +224,8 @@ struct SliceAcc {
     cached: u64,
     completion: u64,
     reasoning: u64,
+    cache_write: u64,
+    cache_write_1h: u64,
     effective: u64,
     elapsed_ms: u64,
 }
@@ -223,6 +240,10 @@ impl SliceAcc {
         self.cached = self.cached.saturating_add(turn.cached);
         self.completion = self.completion.saturating_add(turn.completion);
         self.reasoning = self.reasoning.saturating_add(turn.reasoning);
+        // **`effective_of` には渡らない**（D3 — 実効は書き込みを 1.0× で数える）。
+        // ここは表示のための実数で、外の単価表を当てる側が使う。
+        self.cache_write = self.cache_write.saturating_add(turn.cache_write);
+        self.cache_write_1h = self.cache_write_1h.saturating_add(turn.cache_write_1h);
         self.effective = self.effective.saturating_add(effective_of(turn));
         self.elapsed_ms = self.elapsed_ms.saturating_add(turn.elapsed_ms);
     }
@@ -236,6 +257,8 @@ impl SliceAcc {
             cached: self.cached,
             completion: self.completion,
             reasoning: self.reasoning,
+            cache_write: self.cache_write,
+            cache_write_1h: self.cache_write_1h,
             effective: self.effective,
             cache_rate: ratio(self.cached, self.prompt),
             output_share: ratio(self.completion, io),
@@ -404,6 +427,8 @@ mod tests {
             cached,
             completion,
             reasoning: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
             model: "m1".to_owned(),
             backend: "b".to_owned(),
             elapsed_ms: 100,
@@ -506,6 +531,34 @@ mod tests {
                 ("tool_limit".into(), None, 1),
             ],
             "件数の多い順、同点は種別名 → コード順"
+        );
+    }
+
+    /// キャッシュ書き込みは**実効には 1.0× で入り、Slice には生の数で出る**（Spec 40）。
+    ///
+    /// **`effective` が書き込みで動かないこと**を同じテストで留める — D3 の裁定
+    /// （重みを変えない）を機械で固定しないと、次に読む人が「請求に合わせる」
+    /// 親切心で 2.0× を入れ、既存の村の天井の意味が黙って変わる。
+    #[test]
+    fn cache_write_is_reported_raw_and_never_reweighted_in_effective() {
+        let mut with_write = turn("a", 1, 1_000, 200, 50, TurnStop::Completed);
+        with_write.cache_write = 700;
+        with_write.cache_write_1h = 700;
+        let plain = turn("a", 1, 1_000, 200, 50, TurnStop::Completed);
+
+        let w = aggregate(
+            &[("s1".to_owned(), with_write)],
+            &[session("s1", None)],
+            scope_s(),
+        );
+        let p = aggregate(&[("s1".to_owned(), plain)], &[session("s1", None)], scope_s());
+
+        assert_eq!(w.totals.cache_write, 700, "生の数はそのまま出る");
+        assert_eq!(w.totals.cache_write_1h, 700);
+        assert_eq!(p.totals.cache_write, 0);
+        assert_eq!(
+            w.totals.effective, p.totals.effective,
+            "実効は書き込みで動かない（D3 — 重みは 1.0× のまま）"
         );
     }
 

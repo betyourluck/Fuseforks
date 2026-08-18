@@ -89,6 +89,10 @@ struct TurnSpend {
     prompt: u64,
     /// 出力のうち思考に使われたぶん。**`tokens` の内数**（Spec 32 D2）。
     reasoning: u64,
+    /// 入力のうちキャッシュへ**書き込んだ**ぶん。**`prompt` の内数**（Spec 40）。
+    cache_write: u64,
+    /// うち 1 時間 TTL のぶん。**`cache_write` の部分集合**（Spec 40 D6）。
+    cache_write_1h: u64,
     /// 実行ループの LLM 呼び出しの周回数（上限 `max_tool_iterations` との比較に
     /// 使うので、**まとめ呼び出しは数えない** — 元の `llm_rounds` と同じ）。
     /// **払ったと分かる失敗の周も数える** — 切れた応答も 1 往復として課金されている。
@@ -107,6 +111,8 @@ impl TurnSpend {
         self.cached += usage.cache_read;
         self.prompt += usage.prompt;
         self.reasoning += usage.reasoning;
+        self.cache_write += usage.cache_write;
+        self.cache_write_1h += usage.cache_write_1h;
     }
 }
 
@@ -182,6 +188,8 @@ async fn settle_turn(
         cached: spend.cached,
         completion: spend.tokens.saturating_sub(spend.prompt),
         reasoning: spend.reasoning,
+        cache_write: spend.cache_write,
+        cache_write_1h: spend.cache_write_1h,
         model: ctx.model.clone(),
         backend: ctx.backend.clone(),
         elapsed_ms: u64::try_from(ctx.started.elapsed().as_millis()).unwrap_or(u64::MAX),

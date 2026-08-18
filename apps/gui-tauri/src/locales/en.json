@@ -964,6 +964,12 @@
       "interrupted": "Interrupted by the user",
       "budgetExhausted": "Budget exhausted",
       "reserveShort": "Budget short (could not reserve the next call)"
+    },
+    "breakdown": {
+      "cached": "cache read {n}",
+      "cacheWrite": "cache write {n}",
+      "fresh": "fresh {n}",
+      "cacheWrite1h": "of which 1h {n}"
     }
   }
 }

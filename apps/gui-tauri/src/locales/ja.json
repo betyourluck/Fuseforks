@@ -964,6 +964,12 @@
       "interrupted": "ユーザーが打ち切り",
       "budgetExhausted": "予算切れ",
       "reserveShort": "予算不足（次の呼び出しぶんを確保できず）"
+    },
+    "breakdown": {
+      "cached": "キャッシュ読み {n}",
+      "cacheWrite": "書き込み {n}",
+      "fresh": "新規 {n}",
+      "cacheWrite1h": "うち1h {n}"
     }
   }
 }

@@ -41,6 +41,32 @@ export function stopTone(kind: TurnStop["kind"]): "ok" | "fail" {
 }
 
 /** 0〜1 の比を `12.3%` に。有限でなければ `—`。 */
+/**
+ * キャッシュ率のホバーへ出す入力の内訳（Spec 40 D4）。**列は増やさない** —
+ * 8 列の表に 9 列目を足すと横スクロールが常態化する。
+ *
+ * 返すのは辞書の鍵ではなく**数の組**。訳語はテンプレート側が当てる
+ * （`reasonDisplay` / `probeDisplay` と同じ形 — 純関数は i18n を知らない）。
+ *
+ * **`fresh` は引き算で出す**（`prompt - cached - cacheWrite`）。負にならないよう
+ * 0 で止める — 古い記録は `cacheWrite` が 0 なので `fresh` が過大に出るが、
+ * **それは「記録していなかった」の正しい表示**（0 を書き込み無しと読ませない）。
+ */
+export function inputBreakdown(slice: {
+  prompt: number;
+  cached: number;
+  cacheWrite: number;
+  cacheWrite1h: number;
+}): { cached: number; cacheWrite: number; cacheWrite1h: number; fresh: number } {
+  const fresh = Math.max(0, slice.prompt - slice.cached - slice.cacheWrite);
+  return {
+    cached: slice.cached,
+    cacheWrite: slice.cacheWrite,
+    cacheWrite1h: slice.cacheWrite1h,
+    fresh,
+  };
+}
+
 export function formatPercent(rate: number): string {
   if (!Number.isFinite(rate)) return "—";
   return `${(rate * 100).toFixed(1)}%`;

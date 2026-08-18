@@ -2,8 +2,8 @@
 
 **ID**: 40
 **Date**: 2026-08-18
-**Status**: **rev6（2026-08-18）— P1 / P2 完了。検収 7 も観測して閉じた。
-D3 は A（重みを変えない）で確定。残るは P3（レコードと画面）**
+**Status**: **rev7（2026-08-18）— P1 / P2 / P3 完了。検収 7 も閉じた。
+残るは P4（台帳の追従）だけ**
 （rev2 = 査読 4 点 / rev3 = otari の実読 / **rev4 = 「未測定」が誤りだった。
 OpenAI Responses の `cache_write_tokens` は 2026-08-11 に実測 4,411 で観測済み**）
 **Branch**: P0（契約）は rev 承認後に main 直コミット。P1 以降は `YYYYMMDD_cachewrite` へ積む
@@ -483,6 +483,33 @@ prompt 124,803 = cached 108,604 + cache_write 16,172 + 素の新規 27
 - **なぜ外したか**: 「otari が 0 に固定している」を**相手の挙動の証拠として使った**。
   あれは**実装が追随していない**ことの証拠であって、**API が返さない**ことの証拠では
   ない。**#93 と同型** — 自分（や他人）の型を見て相手のワイヤを見なかった
+
+## P3 実装記録（2026-08-18）
+
+**`TurnRecord` に 2 欄 → `StatsSlice` → 画面のホバー**まで通した。
+`fuseforks-core` 全緑・clippy 警告ゼロ・vitest 394・build 緑。
+
+- **`#[serde(default)]` が本体。** `v0.1.8`〜`v0.1.9` のレコードはこの欄を
+  持たないので、無いと**その会話の統計が丸ごと開けなくなる**（Spec 39 が凍結した
+  互換の向き）。`a_turn_record_written_before_this_version_still_deserializes` が
+  **旧い JSON をそのまま食わせて**留めている
+- **0 の意味が 2 つある**ことを型の doc と画面の両方に書いた —
+  「書き込みが無かった」と「記録していなかった」。**古い会話では後者**なので、
+  `inputBreakdown` は差分を `fresh`（素の新規）へ寄せる。**過大に出るのが正しい表示**
+- **`effective` は動かない。** `usage_of` は `cache_write: 0` を渡し続ける（D3）。
+  **`cache_write_is_reported_raw_and_never_reweighted_in_effective` が機械で固定した** —
+  書き込みがある行と無い行で `effective` が一致することを見る。**これが無いと、
+  次に読む人が「請求に合わせる」親切心で 2.0× を入れ、既存の村の天井の意味が
+  黙って変わる**
+- **画面は列を増やさない**（D4）。キャッシュ率のホバーへ
+  「キャッシュ読み N / 書き込み N / 新規 N（/ うち1h N）」。数の組は
+  `inputBreakdown`（純関数・単体 3 本）、訳語はテンプレート側
+- **`1h` の行はホバーに出さない**（0 のとき）— OpenAI 形では常に 0 で、
+  **その 0 は相手の TTL についての観測ではない**。出すと観測に見える
+
+**これで単価表に渡す材料が揃った** — `Record::Turn` から `model` / `backend` /
+`prompt` / `cached` / `cacheWrite` / `cacheWrite1h` / `completion` / `reasoning`
+が取れる（付録のスキーマの入力と 1 対 1）。
 
 ## Notes
 

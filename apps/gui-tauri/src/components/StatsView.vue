@@ -25,13 +25,33 @@ import {
   STOP_LABEL_KEYS,
   formatDuration,
   formatPercent,
+  inputBreakdown,
   seriesBars,
   statsNotice,
   stopTone,
 } from "../lib/statsView";
-import type { ErrorPayload, StatsReport, StatsScope, StopCount } from "../types";
+import type { ErrorPayload, StatsReport, StatsScope, StatsSlice, StopCount } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
+
+/**
+ * キャッシュ率のホバー文（Spec 40 D4）。入力の内訳を 1 行で出す。
+ *
+ * **列を増やさない**代わりにここへ置く。数の組は `inputBreakdown` が作り、
+ * 訳語はここで当てる（純関数は i18n を知らない）。
+ */
+function breakdownTitle(slice: StatsSlice): string {
+  const b = inputBreakdown(slice);
+  const parts = [
+    t("stats.breakdown.cached", { n: exactNumber(b.cached) }),
+    t("stats.breakdown.cacheWrite", { n: exactNumber(b.cacheWrite) }),
+    t("stats.breakdown.fresh", { n: exactNumber(b.fresh) }),
+  ];
+  if (b.cacheWrite1h > 0) {
+    parts.push(t("stats.breakdown.cacheWrite1h", { n: exactNumber(b.cacheWrite1h) }));
+  }
+  return parts.join(" / ");
+}
 
 const { t } = useI18n();
 const { state } = useOrchestrator();
@@ -297,7 +317,12 @@ const totals = computed(() => report.value?.totals ?? null);
                 <td class="num" :class="{ 'text-warn': row.failed > 0 }">{{ exactNumber(row.failed) }}</td>
                 <td class="num" :title="exactNumber(row.effective)">{{ compactNumber(row.effective) }}</td>
                 <td class="num">{{ compactNumber(row.avgTokensPerTurn) }}</td>
-                <td class="num" :class="{ 'text-warn': row.prompt > 0 && row.cached === 0 }">
+                <!-- 入力の内訳はホバーへ（D4 — 列は増やさない）。 -->
+                <td
+                  class="num"
+                  :class="{ 'text-warn': row.prompt > 0 && row.cached === 0 }"
+                  :title="breakdownTitle(row)"
+                >
                   {{ formatPercent(row.cacheRate) }}
                 </td>
                 <td class="num">{{ formatPercent(row.outputShare) }}</td>
