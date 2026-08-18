@@ -4313,7 +4313,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 41](specs/41_model-pricing.md)（モデルごとの単価と、おおよその金額表示）:
-  **P0〜P4 着地・P5 の一部を実機で観測**（2026-08-18）。
+  **Done**（2026-08-18。**起票から Done まで 1 日**。検収 9 件中 8 件を観測）。
   **取得先は `https://betyourluck.github.io/prices.json`**（GitHub Pages。1,686 モデル・
   187KB。出典 `BerriAI/litellm` = MIT で、著作権表示は JSON 自身の `_notice`）。
   **鍵は素のモデル名**で、村が送る `ModelTemplate::model` と直に突き合う。
