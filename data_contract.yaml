@@ -4615,7 +4615,15 @@ llm_wire:
       画面では同じ 0% に見える。判別のため `orchestrator` の note_cache_diag が
       **周ごとの生の数字**を fuseforks.log へ出す:
       `cache: agent=… model=… round=N prompt=… cached=… system_chars=…
-      stable_chars=… system_digest=…`
+      stable_chars=… system_digest=… cache_write=… cache_write_1h=…`
+
+      cache_write / cache_write_1h は Spec 40 P1 で**末尾へ**足した
+      (接頭辞と既存欄の並びは不変 — 8 日ぶんの実測がこの書式で取られている)。
+      **素の新規入力は `prompt - cached - cache_write`** で引く。実測では
+      これが 1 ラウンドあたり数トークンで、**「未キャッシュ」の実体はほぼ全部が
+      書き込み**だった (Anthropic 100.0% / OpenAI 互換 99.8%)。
+      **cache_write_1h が 0 でも相手の TTL について何も言っていない** —
+      TTL 別の内訳を返すのは Anthropic だけで、OpenAI 形では decode が 0 を焼く。
 
       読み方 — prompt が閾値未満で cached=0 なら (a)。閾値を超えていて cached=0 で
       **system_digest が前の周から変わっている**なら (b)。どちらでもないなら (c)。

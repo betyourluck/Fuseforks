@@ -4313,7 +4313,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 40](specs/40_cache-write-accounting.md)（キャッシュ書き込みを数える —
-  `cache_creation_input_tokens` が `prompt` へ畳まれている）: **rev2（査読 4 点。未査読）**
+  `cache_creation_input_tokens` が `prompt` へ畳まれている）: **Done**
+  （2026-08-18。**起票から Done まで 1 日**。rev2 = 査読 4 点 / rev3 = otari の実読 /
+  rev4 = 「未測定」が誤りだった / rev5 = D3 確定 / rev6 = 検収 7 / rev7 = P3。
+  **検収 7 件のうち 6 件を観測し、1 件は実測が前提を覆した**）
   （2026-08-18）。起点は利用者 —「API のトークン単価のサイトを作り、そこから JSON で
   だいたいの使用料を算出させたい」。**`anthropic.rs` の `usage` の写しが 3 つの量を
   2 つの欄へ落としている** — `prompt = input + cache_read + cache_creation` と足した上で
