@@ -623,6 +623,43 @@ pub struct ModelTemplate {
     /// 最大試行回数（初回を含む）。
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
+    /// 100 万トークンあたりの入力単価（USD）。**未設定は 0 ではなく「無い」**（Spec 41）。
+    ///
+    /// **単価は 5 欄 + 日付。3 欄（入力 / 出力 / キャッシュ）では足りない** —
+    /// Spec 40 P2 の実測で「未キャッシュ」の実体はほぼ全部がキャッシュ書き込みで、
+    /// 3 欄で計算すると**同じログから 1.52 倍ずれる**。
+    ///
+    /// **`input` と `output` が両方揃って初めて「単価登録済み」**（`pricing::resolve`）。
+    /// 片方で他方を埋めない — 出力を入力単価で埋めると桁が 5 倍違う嘘になる。
+    #[serde(default)]
+    pub input_per_mtok: Option<f64>,
+    /// 出力単価。
+    #[serde(default)]
+    pub output_per_mtok: Option<f64>,
+    /// キャッシュ読みの単価。**未設定なら入力単価へ落ちる**（無視しない）。
+    #[serde(default)]
+    pub cache_read_per_mtok: Option<f64>,
+    /// キャッシュ書き込みの単価。**未設定なら入力単価へ落ちる。**
+    ///
+    /// **この欄が本 Spec の主題**。Anthropic は入力の 1.25×（5 分）/ 2.0×（1 時間）、
+    /// OpenAI は 1.25×。Gemini / xAI は書き込みの概念が無いので空が正しい。
+    #[serde(default)]
+    pub cache_write_per_mtok: Option<f64>,
+    /// うち 1 時間 TTL の単価。**Anthropic のみ。未設定なら書き込み単価へ落ちる。**
+    #[serde(default)]
+    pub cache_write_1h_per_mtok: Option<f64>,
+    /// **この単価が正しいと信じられる時点**（`YYYY-MM-DD` など）。
+    ///
+    /// 取得なら表の日付、手入力ならその日。**「取得した日」と「表の日付」を
+    /// 2 欄に分けない** — 画面にどちらを出すかが新しい未決になり、差が意味を
+    /// 持つのは静的ファイルが現実に対して古いときだけで、**それはこちらから
+    /// 観測できない**。
+    ///
+    /// **古さはこの欄からの経過日数だけで判定する。** リモートと比較しない —
+    /// 比較するために外へ出る経路が、凍結した自動取得の抜け道になる
+    /// （`data_contract` の `pricing_fetch_freeze`）。
+    #[serde(default)]
+    pub pricing_as_of: Option<String>,
 }
 
 /// `use_tools` の serde 既定値。
@@ -725,6 +762,14 @@ impl ModelTemplate {
             meta_web_search: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
+            // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
+            // 取得か手入力で初めて埋まる。
+            input_per_mtok: None,
+            output_per_mtok: None,
+            cache_read_per_mtok: None,
+            cache_write_per_mtok: None,
+            cache_write_1h_per_mtok: None,
+            pricing_as_of: None,
         }
     }
 }

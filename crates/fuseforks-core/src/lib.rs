@@ -75,6 +75,7 @@ pub mod mcp;
 pub mod model;
 pub mod orchestrator;
 pub mod plan;
+pub mod pricing;
 pub mod room_log;
 pub mod process;
 pub mod schedule;
