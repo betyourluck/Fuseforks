@@ -564,14 +564,15 @@ JSON で持って金額を算出したいので、現在のモデル名で算出
   言う必要は無かった**（統計は履歴で、カードは現在。層が違う）
 - **`totals` は変わらない**（同じターンを 2 度数えない）。テストで凍結した
 
-**金額の算出には、この変更で埋まらない穴が 2 つ残る**（別件・未起票）:
+**金額の算出には、この変更で埋まらない穴が 2 つ残る**（別件。1 は
+[Spec 40](40_cache-write-accounting.md) として同日に起票、2 は未起票）:
 
 1. **キャッシュの書き込みが独立していない。** canonical の `Usage` は
    `prompt` / `cache_read` / `completion` / `reasoning` の 4 つで、
    `anthropic.rs` は `cache_creation_input_tokens` を**読んでいるのに `prompt` へ
-   畳んでいる**。Anthropic は cache write = 基本入力 ×1.25 / cache read = ×0.1 なので、
-   `uncached = prompt − cached` を基本単価で掛けると**書き込みぶんを 25% 過小に
-   計算する**。ずれの大きさは未測定。射程が違う（canonical + 6 ワイヤの decode +
+   畳んでいる**。**この村は `CACHE_TTL = "1h"` を送っているので書き込みは 2.0×**
+   （5 分なら 1.25×）。`uncached = prompt − cached` を基本単価で掛けると
+   **書き込みぶんを半分しか数えない**。ずれの大きさは未測定。射程が違う（canonical + 6 ワイヤの decode +
    `TurnRecord` の欄）ので混ぜない
 2. **`base_url` を記録していない。** 鍵にできるのは `model` と `backend`（ワイヤ名）
    だけで、**OpenAI 互換の口は複数のベンダーが共有する**。価格表の鍵を `model` 単独に
