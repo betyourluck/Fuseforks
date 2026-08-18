@@ -9,6 +9,7 @@ mod commands;
 // **公開しているのは扉の部品であって、扉そのものではない。**
 pub mod mcp_server;
 pub mod probe_approvals;
+pub mod pricing_source;
 mod state;
 
 use tauri::Manager;
@@ -103,6 +104,9 @@ pub fn run() {
             commands::list_roles,
             commands::workspace_path,
             // 外の LLM から依頼を受ける扉（Spec 25）
+            commands::pricing_source_status,
+            commands::save_pricing_source,
+            commands::fetch_model_prices,
             commands::mcp_host_status,
             commands::set_mcp_host,
             commands::regenerate_mcp_host_token,

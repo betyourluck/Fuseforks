@@ -158,6 +158,91 @@ where
     s
 }
 
+/// 外部の単価表 1 件（`models[]` の要素）。**受け取るのは数値と鍵だけ。**
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct WireEntry {
+    key: String,
+    #[serde(default)]
+    input_per_mtok: Option<f64>,
+    #[serde(default)]
+    output_per_mtok: Option<f64>,
+    #[serde(default)]
+    cache_read_per_mtok: Option<f64>,
+    #[serde(default)]
+    cache_write_per_mtok: Option<f64>,
+    #[serde(default)]
+    cache_write_1h_per_mtok: Option<f64>,
+}
+
+/// 外部の単価表そのもの。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct WireTable {
+    #[serde(default)]
+    fetched: Option<String>,
+    #[serde(default)]
+    models: Vec<WireEntry>,
+}
+
+/// パースした単価表。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedTable {
+    /// 表が名乗る時点。`ModelTemplate::pricing_as_of` へ入る。
+    pub as_of: Option<String>,
+    /// モデル名 → 単価。
+    pub entries: Vec<(String, Rates)>,
+    /// 値が不正で落とした件数。**落としたことを数える**（#72 の規律）。
+    pub dropped: u32,
+}
+
+/// 単価として受け入れられる上限（$/100 万トークン）。
+///
+/// **桁外れを弾くための衛生**であって、価格の予測ではない。$1,000 を超える
+/// 単価は 2026 年時点で存在せず、**入っていれば単位の取り違えか壊れた表**。
+const MAX_RATE: f64 = 1_000.0;
+
+/// 有限で 0 以上 [`MAX_RATE`] 以下のときだけ通す。
+fn sane(v: Option<f64>) -> Option<f64> {
+    v.filter(|x| x.is_finite() && *x >= 0.0 && *x <= MAX_RATE)
+}
+
+/// 外部の単価表を読む（Spec 41 P2）。
+///
+/// **受け取るのは数値だけ。** 照合の鍵はこちらが持つモデル名で、**向こうが
+/// 名前を名乗る余地を作らない** — `key` は突き合わせにしか使わず、
+/// 画面にも `world.json` にもそのままは入らない。
+///
+/// **値が不正な要素はその 1 件だけ落とす**（表全体を拒まない）。落とした数は
+/// [`ParsedTable::dropped`] に出る — **黙って捨てると、単価が入らない理由が
+/// 画面から読めなくなる**。
+///
+/// # Errors
+/// JSON として読めないとき。
+pub fn parse_table(raw: &str) -> Result<ParsedTable, String> {
+    let table: WireTable = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    let mut dropped = 0;
+    for e in table.models {
+        let rates = Rates {
+            input: sane(e.input_per_mtok),
+            output: sane(e.output_per_mtok),
+            cache_read: sane(e.cache_read_per_mtok),
+            cache_write: sane(e.cache_write_per_mtok),
+            cache_write_1h: sane(e.cache_write_1h_per_mtok),
+        };
+        // 入力と出力が揃わない要素は「単価」として意味を持たない（`resolve` と同じ境界）。
+        if resolve(&rates).is_none() || e.key.is_empty() {
+            dropped += 1;
+            continue;
+        }
+        entries.push((e.key, rates));
+    }
+    Ok(ParsedTable {
+        as_of: table.fetched,
+        entries,
+        dropped,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +390,57 @@ mod tests {
             Some((full(), Some(d.to_owned())))
         });
         assert_eq!(s.as_of.as_deref(), Some("2026-06-01"));
+    }
+
+    /// 付録のスキーマをそのまま読む（Spec 41 P2）。
+    #[test]
+    fn parses_the_appendix_schema() {
+        let raw = r#"{
+            "version": 1,
+            "fetched": "2026-08-18",
+            "models": [
+              { "key": "claude-sonnet-5", "input_per_mtok": 2.0, "output_per_mtok": 10.0,
+                "cache_read_per_mtok": 0.2, "cache_write_per_mtok": 2.5,
+                "cache_write_1h_per_mtok": 4.0 },
+              { "key": "gemini-3.6-flash", "input_per_mtok": 1.5, "output_per_mtok": 7.5,
+                "cache_read_per_mtok": 0.15 }
+            ]
+        }"#;
+        let t = parse_table(raw).expect("読めること");
+        assert_eq!(t.as_of.as_deref(), Some("2026-08-18"));
+        assert_eq!(t.entries.len(), 2);
+        assert_eq!(t.dropped, 0);
+        let (k, r) = &t.entries[0];
+        assert_eq!(k, "claude-sonnet-5");
+        assert_eq!(r.cache_write_1h, Some(4.0));
+        // 書き込みを持たないモデルは None のまま（`resolve` が入力単価へ落とす）。
+        assert_eq!(t.entries[1].1.cache_write, None);
+    }
+
+    /// **不正な値はその 1 件だけ落ちる。表全体を拒まない**（P2）。
+    ///
+    /// 落とした数を数えるのは、**単価が入らない理由を画面から読めるようにする**ため。
+    #[test]
+    fn a_bad_entry_is_dropped_alone_and_counted() {
+        let raw = r#"{
+            "models": [
+              { "key": "ok", "input_per_mtok": 2.0, "output_per_mtok": 10.0 },
+              { "key": "negative", "input_per_mtok": -1.0, "output_per_mtok": 10.0 },
+              { "key": "absurd", "input_per_mtok": 999999.0, "output_per_mtok": 10.0 },
+              { "key": "half", "input_per_mtok": 2.0 },
+              { "key": "", "input_per_mtok": 2.0, "output_per_mtok": 10.0 }
+            ]
+        }"#;
+        let t = parse_table(raw).expect("読めること");
+        assert_eq!(t.entries.len(), 1, "通るのは ok だけ");
+        assert_eq!(t.entries[0].0, "ok");
+        assert_eq!(t.dropped, 4, "落とした数を数える");
+    }
+
+    /// JSON として壊れていれば、表ごと断る（**部分的に読んだふりをしない**）。
+    #[test]
+    fn a_broken_document_is_refused_whole() {
+        assert!(parse_table("{ not json").is_err());
     }
 
     /// **`pricing` は `budget` を呼ばない**（Spec 41 D5 の凍結を機械で留める）。

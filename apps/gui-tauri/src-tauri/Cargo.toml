@@ -35,6 +35,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio.workspace = true
+# 単価表の取得（Spec 41 P2）。**この村で 1 本目の非 LLM 外向き通信**。
+# core と同じ workspace 依存なので、依存の木は増えない（実測で確認）。
+reqwest.workspace = true
 
 # 外の LLM から依頼を受ける扉（Spec 25）。**MCP サーバー側は GUI に住む** —
 # 村は 1 プロセスの中にしかおらず（single_instance / redb の単一書き手 /

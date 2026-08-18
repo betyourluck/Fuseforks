@@ -1052,3 +1052,61 @@ pub async fn set_schedule_enabled(
 ) -> CoreResult<()> {
     state.orchestrator.set_schedule_enabled(&id, enabled).await
 }
+
+/// 単価表の取得元の設定を返す（Spec 41）。**取りに行かない。**
+#[tauri::command]
+pub async fn pricing_source_status(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::pricing_source::PricingSourceView> {
+    let store = state.pricing_source.lock().await;
+    Ok(crate::pricing_source::PricingSourceView {
+        url: store.config().url.clone(),
+        blocked: store.blocked().map(str::to_owned),
+    })
+}
+
+/// 取得元の URL を保存する。**保存しただけでは取りに行かない**（凍結）。
+///
+/// # Errors
+/// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn save_pricing_source(
+    state: State<'_, AppState>,
+    url: String,
+) -> CoreResult<crate::pricing_source::PricingSourceView> {
+    let mut store = state.pricing_source.lock().await;
+    store
+        .save(crate::pricing_source::PricingSourceConfig { url })
+        .map_err(|reason| CoreError::ConfigIo {
+            path: crate::pricing_source::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    Ok(crate::pricing_source::PricingSourceView {
+        url: store.config().url.clone(),
+        blocked: store.blocked().map(str::to_owned),
+    })
+}
+
+/// 単価表を取りに行く。**利用者がボタンを押したときだけ呼ばれる唯一の入口。**
+///
+/// **`fetch_table` の呼び出し元はここ 1 箇所に限る**（Spec 41 の凍結事項。
+/// 起動経路・画面遷移・タイマーから呼んではならない）。
+///
+/// # Errors
+/// URL が未設定・不正、通信に失敗、表として読めない場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn fetch_model_prices(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::pricing_source::FetchedPrices> {
+    let url = {
+        let store = state.pricing_source.lock().await;
+        store.config().url.clone()
+    };
+    let table = crate::pricing_source::fetch_table(&url)
+        .await
+        .map_err(|reason| CoreError::ConfigIo {
+            path: crate::pricing_source::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    Ok(crate::pricing_source::FetchedPrices::from(table))
+}

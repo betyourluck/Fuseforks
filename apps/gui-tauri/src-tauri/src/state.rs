@@ -32,6 +32,13 @@ pub struct AppState {
     pub mcp_server: tokio::sync::Mutex<crate::mcp_server::McpServerManager>,
     /// 直近の扉の起動失敗（ポート衝突など）。画面へそのまま出す。
     pub mcp_server_error: std::sync::Mutex<Option<String>>,
+    /// 単価表の取得元（Spec 41）。
+    ///
+    /// **workspace の外**（`{app_data_dir}/pricing.json`）に住む — 村の中に置くと
+    /// 取得先ごと配布され、**受け取った人の村が、その人の知らない URL へ
+    /// 取りに行ける状態**になる。**単価そのものは `ModelTemplate` に住み、
+    /// 村と一緒に配られる**（公開情報でテンプレートの属性）。
+    pub pricing_source: tokio::sync::Mutex<crate::pricing_source::PricingSourceStore>,
     /// 予定の前判定をこの端末で実行してよいかの記録（Spec 28）。
     ///
     /// **workspace の外**（`{app_data_dir}/probe_approvals.json`）に住む —
@@ -145,6 +152,10 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
         workspace,
         mcp_server: tokio::sync::Mutex::new(mcp_server),
         mcp_server_error: std::sync::Mutex::new(mcp_server_error),
+        // **読むだけ**。ここでは 1 度も取りに行かない（Spec 41 の凍結）。
+        pricing_source: tokio::sync::Mutex::new(
+            crate::pricing_source::PricingSourceStore::load(&app_data_dir),
+        ),
         probe_approvals,
     })
 }

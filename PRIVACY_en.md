@@ -10,13 +10,26 @@
 
 **The developer of Outcasts Fuseforks (the "app") collects no information from users.**
 
-- The app has **no developer-operated server**. There is no endpoint the developer controls.
+- The app has **no developer-operated server**, with one exception: the **model price table**
+  is fetched, by default, from a static file the developer publishes on GitHub (see below).
 - It performs **no usage measurement, analytics, or crash reporting**. No such mechanism is built in.
 - There is **no account registration**.
 - It performs **no update check** (it contacts nothing on startup).
 - All data you create is stored **entirely on your own device**.
 
-The app communicates externally **only with destinations you configure yourself**.
+The app communicates externally with **only two kinds of destination**: the ones **you configure
+yourself**, and the **model price table**.
+
+**About the price-table fetch** (used to fill in per-model rates on screen):
+
+- It happens **only when you press the "fetch" button**. There is **no fetch on startup,
+  no fetch when a screen opens, and no periodic check**.
+- The default source is a **static file the developer publishes on GitHub**. You can
+  **change it, or clear it, from the system settings screen**; cleared, this request never
+  happens at all (rates can also be typed in by hand).
+- The request is an **HTTP GET only**. It carries **no village data, no conversation, and no
+  model names**. The host (GitHub) sees only that the file was requested, plus the
+  originating IP address.
 
 ---
 
