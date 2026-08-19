@@ -22,6 +22,16 @@ import { formatError } from "../lib/errorText";
 import { compactNumber, exactNumber } from "../lib/format";
 import { sessionStats, toErrorPayload } from "../lib/ipc";
 import {
+  boundsOf,
+  canGoBack,
+  canGoForward,
+  closingMonthOf,
+  labelParamsOf,
+  shift,
+  type ClosingMonth,
+} from "../lib/statsPeriod";
+import { useUiSettings } from "../composables/useUiSettings";
+import {
   STOP_LABEL_KEYS,
   formatDuration,
   formatPercent,
@@ -55,6 +65,7 @@ function breakdownTitle(slice: StatsSlice): string {
 
 const { t } = useI18n();
 const { state } = useOrchestrator();
+const { settings } = useUiSettings();
 
 /** スコープの選択。既定は今の会話。 */
 const scopeKind = ref<"session" | "all">("session");
@@ -63,11 +74,66 @@ const error = ref<ErrorPayload | null>(null);
 /** 飛行中の取得を数える。古い応答が新しい応答を上書きしないよう、最後の 1 本だけ採る。 */
 let fetchSeq = 0;
 
+/**
+ * 全会話の期間（Spec 42）。**状態は締め月 `{year, month}`** で持ち、境界 `[since, until)` は
+ * 締め日と合わせて都度導く（`period` から締め日を逆算しない — `since = 1 日` は月末締めとも
+ * 1 日締めとも読めて不定）。開いたときの既定は**今の期間**。時計は呼び出し側（ここ）で読む。
+ */
+const closingMonth = ref<ClosingMonth>(closingMonthOf(settings.statsClosingDay, new Date()));
+/** 「全期間」トグル。ON で `period` を外す = Spec 42 より前の挙動。 */
+const wholeHistory = ref(false);
+
+/** 締め日を変えたら（設定ページはこの画面と同時に開ける）今の期間へ戻す。 */
+watch(
+  () => settings.statsClosingDay,
+  (day) => {
+    closingMonth.value = closingMonthOf(day, new Date());
+  },
+);
+
 const scope = computed<StatsScope | null>(() => {
-  if (scopeKind.value === "all") return { kind: "all" };
+  if (scopeKind.value === "all") {
+    if (wholeHistory.value) return { kind: "all" };
+    return { kind: "all", period: boundsOf(settings.statsClosingDay, closingMonth.value) };
+  }
   if (!state.currentSessionId) return null;
   return { kind: "session", sessionId: state.currentSessionId };
 });
+
+/** ヘッダのラベル「2026 年 8 月分（7/26〜8/25）」。 */
+const periodLabel = computed(() =>
+  t("stats.period.label", labelParamsOf(settings.statsClosingDay, closingMonth.value)),
+);
+/** ◀ は村で最初の記録を含む締め月で止まる（`oldestMs` は `all` のときだけ来る）。 */
+const canPrev = computed(() =>
+  canGoBack(settings.statsClosingDay, closingMonth.value, report.value?.scopeMeta.oldestMs),
+);
+/** ▶ は今の期間で止まる（未来の期間は開けない）。 */
+const canNext = computed(() =>
+  canGoForward(settings.statsClosingDay, closingMonth.value, new Date()),
+);
+
+function movePeriod(delta: -1 | 1): void {
+  if (delta < 0 && !canPrev.value) return;
+  if (delta > 0 && !canNext.value) return;
+  closingMonth.value = shift(closingMonth.value, delta);
+}
+
+/** 全期間を OFF に戻したら今の期間へ（過去の月に留まったまま戻ると「戻った」に見えない）。 */
+function toggleWholeHistory(): void {
+  wholeHistory.value = !wholeHistory.value;
+  if (!wholeHistory.value) {
+    closingMonth.value = closingMonthOf(settings.statsClosingDay, new Date());
+  }
+}
+
+/** 期間で切った全会話が空か（村に記録はあるが、この期間に無い）。 */
+const periodEmpty = computed(
+  () =>
+    report.value?.scope.kind === "all" &&
+    report.value.scope.period !== undefined &&
+    report.value.scopeMeta.oldestMs !== null,
+);
 
 async function refresh(): Promise<void> {
   const target = scope.value;
@@ -139,6 +205,48 @@ const totals = computed(() => report.value?.totals ?? null);
           {{ t("stats.scope.all") }}
         </button>
       </div>
+      <!--
+        全会話の期間ナビ（Spec 42 D5）。**全会話のときだけ**出る。**全期間 ON の間は
+        ◀ ▶ とラベルを出さない**（無効化ではなく非表示 — 灰色の月名は「今その月を見ている」と
+        読める）。トグルの見た目はスコープの切り替えと同じ。
+      -->
+      <div v-if="scopeKind === 'all'" class="flex items-center gap-1 text-xs" data-stats-period>
+        <template v-if="!wholeHistory">
+          <button
+            type="button"
+            class="nav-btn"
+            :disabled="!canPrev"
+            :title="t('stats.period.prev')"
+            :aria-label="t('stats.period.prev')"
+            data-stats-period-prev
+            @click="movePeriod(-1)"
+          >
+            ◀
+          </button>
+          <span class="tabular-nums text-ink" data-stats-period-label>{{ periodLabel }}</span>
+          <button
+            type="button"
+            class="nav-btn"
+            :disabled="!canNext"
+            :title="t('stats.period.next')"
+            :aria-label="t('stats.period.next')"
+            data-stats-period-next
+            @click="movePeriod(1)"
+          >
+            ▶
+          </button>
+        </template>
+        <button
+          type="button"
+          class="scope-btn ml-1 rounded border border-line"
+          :class="{ 'is-on': wholeHistory }"
+          :aria-pressed="wholeHistory"
+          data-stats-whole-history
+          @click="toggleWholeHistory"
+        >
+          {{ t("stats.period.wholeHistory") }}
+        </button>
+      </div>
       <p class="min-w-0 flex-1 truncate text-xs text-ink-dim">{{ t("stats.unitNote") }}</p>
       <!--
         村へ戻る。**字を持たず出口の図形だけ**（利用者判断 2026-08-16 — この面は
@@ -177,9 +285,19 @@ const totals = computed(() => report.value?.totals ?? null);
 
       <p v-if="notice === 'loading'" class="text-xs text-ink-dim">{{ t("stats.loading") }}</p>
 
-      <!-- 記録が無い会話: 0 の表を出さず、1 行だけ（D6）。 -->
+      <!--
+        記録が無い会話: 0 の表を出さず、1 行だけ（D6）。
+        期間で切った全会話が空のときは語を分ける（Spec 42 D5）— 「この期間」に無いだけで
+        村には記録がある。村に 1 件も無ければ（`oldestMs` が null）従来の文言。
+      -->
       <p v-else-if="notice === 'empty'" class="text-sm text-ink-dim" data-stats-empty>
-        {{ scopeKind === "all" ? t("stats.emptyAll") : t("stats.emptySession") }}
+        {{
+          scopeKind === "all"
+            ? periodEmpty
+              ? t("stats.period.empty")
+              : t("stats.emptyAll")
+            : t("stats.emptySession")
+        }}
       </p>
 
       <template v-else-if="report && totals">
@@ -415,6 +533,22 @@ const totals = computed(() => report.value?.totals ?? null);
 .scope-btn.is-on {
   color: var(--color-ink);
   background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+}
+.nav-btn {
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--color-ink-dim);
+  background: transparent;
+  border: 1px solid var(--color-line);
+  cursor: pointer;
+  line-height: 1;
+}
+.nav-btn:hover:not(:disabled) {
+  color: var(--color-ink);
+}
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .tile {
   border: 1px solid var(--color-line);
