@@ -792,7 +792,7 @@ prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で�
 
 | 層 | LangGraph（実測） | Fuseforks | 判定 |
 |---|---|---|---|
-| 共有状態 | チャネル + リデューサ。**リデューサ無しの鍵に 2 ノードが同じ周で書くと `InvalidUpdateError`**（`channels/last_value.py:60`）。`add_messages` は id で置換する append | 黒板（`file write` = 全文上書き・後勝ち）。衝突は**条例「1 人 1 ファイル」= 文言**で避けている | **欠け（思想の差）**。並行書き込みの安全を構造で持っていない。機構化するなら黒板の追記専用 op か reducer 相当 |
+| 共有状態 | チャネル + リデューサ。**リデューサ無しの鍵に 2 ノードが同じ周で書くと `InvalidUpdateError`**（`channels/last_value.py:60`）。`add_messages` は id で置換する append | 黒板（`file write` = 全文上書き・後勝ち）。衝突は**条例「1 人 1 ファイル」= 文言**で避けている。**`file` の `append` は既にある**（Spec 09 rev2・2026-07-31・`tools/file.rs:274`。不在なら新規作成・上書きゲート無し・上限は追記後の大きさ）— **条例がそれを知らない**（「write は全文上書きなので 2 人で書くと片方が消える」とだけ書いてある） | **欠けは op ではなく 2 つ**: (a) 条例の文言が `append` を数えていない (b) `write` / `sd` の read-modify-write は**読んでから変わっていても黙って後勝ち**（`overwrite: true` は「存在するか」しか見ない。LangGraph の `InvalidUpdateError` に当たる検出が無い）。**同じ問題を `run.json` は既に構造で解いている**（read → 差分適用 → `write_atomic`・3 回リトライ。Spec 15 Notes 4） |
 | 部分グラフ / 名前空間 | compiled graph をそのまま node に（`graph/state.py:667`）、`checkpoint_ns` で入れ子 | 無し（村は平坦。`hop` が深さ） | 欠け。要る利用が無い |
 | 実行モデル | Pregel の superstep。周回境界で状態反映。**`recursion_limit` 既定 10007**（`_internal/_config.py:32`。「25」ではない）、`GraphRecursionError` | ターンループ。**周回境界で cancel / budget / RepeatGuard / hop を検査** = superstep 境界と同じ形。上限は `max_tool_iterations` 36 / `max_hops` | 同型 |
 | ノード再試行 | `RetryPolicy`（0.5s ×2 ≤128s・3 回・Connection / 5xx のみ。`types.py:418`） | `chat_with_backoff`（200ms ×2 ≤5s・`max_retries`・429 / 5xx / 空応答）— **LLM 呼び出しだけ**。ツール実行の再試行は無く、**逆向きの `RepeatGuard`**（同じ失敗の 3 回目を止める）を持つ | 方針の差。**こちらは「再試行を増やす」より「繰り返しを止める」側** |
@@ -817,8 +817,13 @@ prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で�
    （コマンドの stdout で宛先を決める）を**発話の配送**にも開く形になる。
    ただし**線は人が引く・選ぶのは LLM** がこの村の位置取りなので、足すなら「前判定」止まり
 2. **リデューサ** — 黒板の後勝ちを文言（条例）で避けているのが、LangGraph と比べて
-   最も弱い所。**`file` に追記専用の op を足す**（全文上書きではなく append）だけで
-   `add_messages` の「append-only」に相当する。新しい型が 1 つ増えるので Spec
+   最も弱い所。~~**`file` に追記専用の op を足す**~~ → **数えたら既にあった**
+   （2026-08-19 同日。`append` は Spec 09 rev2 から在る。**実装を読まずに名前から
+   「無い」と書いた** — aion-compact を「段階的な会話圧縮」と説明した誤りと同じ形）。
+   実際の穴は上の表の (a)(b)。**(a) は条例へ 1 行（コード 0）**、(b) は `write` に
+   「読んだときから変わっていないか」の検査を足す形（`run.json` の前例あり）だが、
+   **2 人で同じファイルを書く事故はまだ 1 度も観測していない**（2026-08-11 の黒板の
+   事故は stale であって lost update ではない）ので、頻度を見てから
 3. **運用 API の 3 つ**（完了 webhook / enqueue / `after_seconds`）は、Spec 25 の MCP サーバーと
    Spec 28 の予定に**それぞれ 1 欄足す**規模。需要が出てから
 4. **採らない**: ノード結果キャッシュ（却下済み）/ ストリーミング（意図的）/ 周回単位の
