@@ -10,7 +10,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
-import { parsePriceInput } from "../lib/priceInput";
+import { parsePriceInput, todayIsoDate } from "../lib/priceInput";
 import {
   baseUrlMismatch as checkBaseUrlMismatch,
   presetBaseUrlFor,
@@ -53,6 +53,9 @@ function priceField(key: keyof ModelTemplate) {
       const next = parsePriceInput(raw);
       if (next !== undefined) {
         (draft.value as unknown as Record<string, number | null>)[key as string] = next;
+        // **手入力した日が「この単価を信じられる時点」**（Spec 41 D1: 取得なら JSON の
+        // 日付、手入力ならその日）。空欄へ戻すだけのときは触らない。
+        if (next !== null) draft.value.pricingAsOf = todayIsoDate(new Date());
       }
     },
   });

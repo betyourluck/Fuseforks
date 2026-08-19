@@ -22,3 +22,15 @@ export function parsePriceInput(raw: string | number): number | null | undefined
   const parsed = Number(text);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
+
+/**
+ * 手入力の `pricingAsOf` に書く日付（ローカルの `YYYY-MM-DD`）。
+ *
+ * Spec 41 D1 —「`pricing_as_of` は取得なら JSON の日付、**手入力ならその日**、で常に埋まる」。
+ * 初版は取得のときしか書いておらず、手入力した村の画面が「単価の時点は未記録」のまま
+ * だった（2026-08-19 実機）。`clock.ts` と同じく現在時刻は引数で受ける。
+ */
+export function todayIsoDate(now: Date): string {
+  const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+}

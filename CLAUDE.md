@@ -858,6 +858,25 @@ prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で�
 - **鍵の環境変数名は文書では `PERPLEXITY_API_KEY`**。この端末は `PPLX_API_KEY`（ユーザー
   環境変数）に置き、テンプレートは keyring。probe はその鍵で通した（値はログに出していない）
 
+## 単価の手入力が保存されない実バグを直した（2026-08-19。`failures.md` #111）
+
+起点は利用者 —「Perplexity は価格表が取れないのはいいのだが、入力と出力とキャッシュに
+価格を手で入れても更新されなかった」。**真因は `type="number"` の `v-model` が `.number`
+修飾子無しでも数値を渡すこと**（`@vue/runtime-dom` の `castToNumber = number ||
+vnode.props.type === "number"` を実物で確認）。文字列前提の setter（`raw.trim()`）が
+`TypeError` で死に、空欄（文字列のまま届く）だけが通っていた — だから「取得」は効き
+手入力だけが効かなかった。**同じ経路で 2 つ目**: Spec 41 D1「手入力ならその日で
+`pricing_as_of` は常に埋まる」が実装されておらず「単価の時点は未記録」と出ていた。
+
+- 処方は純関数 `lib/priceInput.ts` の 2 本（`parsePriceInput(string | number)` /
+  `todayIsoDate(now)`）。**初版 setter の再現（数値で `TypeError`）を赤として単体に残した**
+- **利用者が実機で確認**（同日。単価を入れて保存 → 統計に `≈ $0.01`・被覆率 `1/1 体・
+  トークン 100.0%` が出た）。**Perplexity は `usage.cost` も返す口**なので、次に
+  この推定と実額を突き合わせられる（上の「Perplexity を繋いだ」の節）
+- **一般化**（#111）: `computed<string>` の型注釈は setter の実引数を保証しない /
+  「A を使わないから B が来る」は A 以外の経路を数えていない / 契約に「常に」と書いた欄は
+  埋める経路を 1 つずつ数える
+
 ## 現在地（2026-08-19 更新）
 
 **[Spec 42](specs/42_stats-period.md)（統計の「全会話」を月の集計にする）を起票 → rev2 承認 →

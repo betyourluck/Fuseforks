@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parsePriceInput } from "./priceInput";
+import { parsePriceInput, todayIsoDate } from "./priceInput";
 
 /**
  * 初版の setter（文字列前提）。**`type="number"` の v-model は数値を渡す**ので、
@@ -40,5 +40,12 @@ describe("parsePriceInput", () => {
     expect(parsePriceInput("abc")).toBeUndefined();
     expect(parsePriceInput(Number.NaN)).toBeUndefined();
     expect(parsePriceInput(Number.POSITIVE_INFINITY)).toBeUndefined();
+  });
+});
+
+describe("todayIsoDate", () => {
+  it("ローカル日付を YYYY-MM-DD で返す（手入力の pricingAsOf 用）", () => {
+    expect(todayIsoDate(new Date(2026, 7, 19, 23, 13, 10))).toBe("2026-08-19");
+    expect(todayIsoDate(new Date(2026, 0, 5))).toBe("2026-01-05");
   });
 });
