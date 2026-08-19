@@ -392,7 +392,7 @@ async fn session_stats_reads_the_saved_turns_in_both_scopes() {
     assert_eq!(report.by_agent[0].model, "mock-model");
     assert_eq!(report.series.as_ref().map(|s| s.points.len()), Some(2));
 
-    let all = orchestrator.session_stats(StatsScope::All).await.unwrap();
+    let all = orchestrator.session_stats(StatsScope::All { period: None }).await.unwrap();
     assert_eq!(all.totals.turns, 2);
     assert!(all.series.is_none(), "all では series を出さない");
     assert!(
