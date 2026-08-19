@@ -831,6 +831,33 @@ prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で�
 4. **採らない**: ノード結果キャッシュ（却下済み）/ ストリーミング（意図的）/ 周回単位の
    checkpoint（`exchange` の粒度を変える大工事で、得るのは「落ちたら頼み直し」の解消だけ）
 
+## Perplexity を繋いだ（2026-08-19。コード 0・設定だけ）
+
+起点は実機 — `ppl-deepseek-v4-flash-0731`（`baseUrl = https://api.perplexity.ai/v1`・provider 未指定）
+が **404 本文なし**で落ちた。probe 5 本と文書（`docs.perplexity.ai/llms.txt` 起点）で確定:
+
+- **`/v1/chat/completions` は存在しない**（404・本文なし = アプリと同じ）。互換の口は
+  **`/router/v1/chat/completions`**（Router API。接地なし）で、**有料クレジットが要る**
+  （403 `restricted_api_key`）。接地つきは **`/v1/agent`** で、**`/v1/responses` が OpenAI
+  Responses 互換の別名**
+- **繋ぎ方**: provider を **`OpenAI Responses`** に明示、`baseUrl` は
+  `https://api.perplexity.ai/v1` のまま、モデルは `perplexity/deepseek-v4-flash-0731`
+  （Agent API の有効 id。文書で確認）。**アプリの Responses ワイヤが送る欄そのまま**
+  （`store` / `reasoning.summary+context` / `include` / 関数ツールと `web_search` の混在）で
+  200 を実測。`22:33:59` から `backend=openai-responses` の `stop=-` を観測
+- **固有の差 2 つ**（次に触るとき要る）:
+  (a) **出典は `annotations` ではなく `search_results` という output item**
+  （`{queries, results[{url,title,snippet,date,source,id,last_updated}]}`。probe で 15 件、
+  `annotations` は 0）。decode は未知の種別を捨てて数える（`dropped content blocks:
+  kinds=search_results`）ので落ちないが、**接地の注記は「参照元は返ってきていません」になり、
+  本文の URL だけが残る**。写すなら `GroundingEngine` に 1 値（Spec 31 の形）
+  (b) **`usage.cost`（USD）が返る**（検索 1 回 $0.0025 + 入出力 ≈ $0.003 / ターン。
+  `tool_calls_details.search_web.invocation` も）。**単価表を当てずに実額が取れる唯一の口**。
+  統計へ入れるなら Spec 41 の横に 1 欄
+- `reasoning_tokens` は 0、思考の要約も返らない。`cached_tokens` も 0（2 ターンとも）
+- **鍵の環境変数名は文書では `PERPLEXITY_API_KEY`**。この端末は `PPLX_API_KEY`（ユーザー
+  環境変数）に置き、テンプレートは keyring。probe はその鍵で通した（値はログに出していない）
+
 ## 現在地（2026-08-19 更新）
 
 **[Spec 42](specs/42_stats-period.md)（統計の「全会話」を月の集計にする）を起票 → rev2 承認 →
