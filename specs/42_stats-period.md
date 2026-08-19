@@ -2,7 +2,7 @@
 
 **ID**: 42
 **Date**: 2026-08-19
-**Status**: **rev2 承認（2026-08-19）→ P0 完了**。P1〜P3 はブランチ `20260819_stats_period`
+**Status**: **rev2 承認（2026-08-19）→ P0〜P4 完了。残は P5 実機**（検収 1〜8）
 **Branch**: P0（契約）は rev 承認後に main 直。P1 以降は `20260819_stats_period` へ積む
 
 ## Goal
@@ -191,7 +191,7 @@ Scope = { kind: "session", sessionId }
 
 - [x] **P0 契約**（2026-08-19。`data_contract` の `stats_contract` Scope / `oldestMs` / D4 の計算順と但し書き / 画面のナビ、`settings_contract` に `statsClosingDay`）: `stats_contract` Scope 改訂 + `oldestMs` + D4 の規則 /
       `settings_contract` に `statsClosingDay`
-- [ ] **P1 コア**: `StatsScope::All { period: Option<StatsPeriod> }`（`#[serde(default)]`）/
+- [x] **P1 コア**（2026-08-19。単体 4 本・ミューテーション 2 回）: `StatsScope::All { period: Option<StatsPeriod> }`（`#[serde(default)]`）/
       `aggregate` の順序は **`oldest_ms`（全 turn の最小）→ `since ≤ ts < until` で落とす →
       `recorded_since`（残りの最小）** / `oldest_ms` は `All` のときだけ（`Session` は
       `None`）/ 期間ありの `sessions_meta` は `turns > 0` のみ。単体: 境界の両側
@@ -199,7 +199,7 @@ Scope = { kind: "session", sessionId }
       消える / **`oldest_ms` は期間の外の turn を指す**（期間内の最古ではない）/
       `Session` で `oldest_ms` が `None`。
       **既存の `aggregate` テストは 1 本も変えない**（`All` の既定が `period: None`）
-- [ ] **P2 フロント（純関数）**: `lib/statsPeriod.ts` — 状態は締め月 `{ year, month }`。
+- [x] **P2 フロント（純関数）**（2026-08-19。単体 17 本・ミューテーション 2 回）: `lib/statsPeriod.ts` — 状態は締め月 `{ year, month }`。
       `closingMonthOf(closingDay, now) → { year, month }`（今日を含む期間の締め月）/
       `boundsOf(closingDay, { year, month }) → { sinceMs, untilMs }` /
       `shift({ year, month }, ±1)` / `label(closingDay, { year, month }, locale)`
@@ -209,15 +209,15 @@ Scope = { kind: "session", sessionId }
       `shift(+1)` と `shift(−1)` が往復で元に戻る / `boundsOf` の隣り合う 2 期間で
       `until == 次の since`（穴も重なりも無い）。**`Date.now()` を関数の中で読まない**
       （`formatClock` と同じ規律 — 引数で受ける）
-- [ ] **P2' 設定**: `useUiSettings` に `statsClosingDay`（既定 `"eom"`。型は
+- [x] **P2' 設定**（2026-08-19）: `useUiSettings` に `statsClosingDay`（既定 `"eom"`。型は
       `1..=28 | "eom"`）+ 検証（範囲外・型違いは既定へ）/ システム設定「コスト管理」
       ページに「集計の締め日」の選択 + **選択肢の直下に `statsPeriod` で出す「今の期間」の
       ライブ表示** + 端末保存の注記 / `useUiSettings.test.ts` の保存形を更新
       （**緩めずに期待値を直す**）/ 辞書 ja/en
-- [ ] **P3 画面**: `StatsView` に期間ナビ（D5。状態は締め月）/ `oldestMs` で `◀` を止める
+- [x] **P3 画面**（2026-08-19。vue-tsc / vitest 412 / build 緑）: `StatsView` に期間ナビ（D5。状態は締め月）/ `oldestMs` で `◀` を止める
       （`null` なら無効）/ 「全期間」トグル（ON の間はナビ非表示）/ 空の期間の 1 行 /
       辞書 ja/en。**チャートも表も増やさない**
-- [ ] **P4 台帳**: README 日英の統計の節（「全会話」= 締め日で切った月・全期間は選択）/
+- [x] **P4 台帳**（2026-08-19。README 日英 / DETAIL 日英の統計と設定表 / CLAUDE.md 現在地）: README 日英の統計の節（「全会話」= 締め日で切った月・全期間は選択）/
       DETAIL 日英 / CLAUDE.md の現在地 / `data_contract` の回収（P0 の見直し）
 - [ ] **P5 実機**: 下の検収
 

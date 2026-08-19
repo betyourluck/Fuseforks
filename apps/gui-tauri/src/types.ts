@@ -786,7 +786,17 @@ export type TurnStop =
 /** 集計の範囲。閉じた列挙 2 値。 */
 export type StatsScope =
   | { kind: "session"; sessionId: string }
-  | { kind: "all" };
+  | { kind: "all"; period?: StatsPeriod };
+
+/**
+ * 期間（Spec 42）。**半開 `[sinceMs, untilMs)`** をターンの開始時刻で切る。
+ * **`all` にだけ載る** — 会話は会話そのものが境界。境界の計算は `lib/statsPeriod.ts`
+ * （締め日 + 締め月 → ローカル時刻 → epoch ms）で、コアは 2 数だけ受ける。
+ */
+export interface StatsPeriod {
+  sinceMs: number;
+  untilMs: number;
+}
 
 /** 使用量の 1 切片（村全体 / 個体別で同じ形）。実効は `budget.rs` の 1 実装。 */
 export interface StatsSlice {
@@ -874,7 +884,15 @@ export interface StatsReport {
      * 会話）— 0 の表を出さず「記録はこの版から」と言う（D6）。
      */
     recordedSince: number | null;
-    /** `session` では 1 件、`all` では会話ごとの合計表。 */
+    /**
+     * **`all` のときだけ**: 期間に関わらず村で最初のターンの開始時刻（◀ の下限。Spec 42）。
+     * `session` では `null`、ターンが 1 件も無い村も `null`。
+     */
+    oldestMs: number | null;
+    /**
+     * `session` では 1 件、`all` では会話ごとの合計表。
+     * **`all` で期間があるときは `turns > 0` の会話だけ**（Spec 42 D4）。
+     */
     sessions: SessionStats[];
   };
   totals: StatsSlice;

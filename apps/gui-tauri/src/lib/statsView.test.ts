@@ -42,6 +42,7 @@ function report(overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number 
     scope: { kind: "session", sessionId: "s1" },
     scopeMeta: {
       recordedSince: overrides.recordedSince ?? null,
+      oldestMs: overrides.oldestMs ?? null,
       sessions: overrides.sessions ?? [],
     },
     totals: {

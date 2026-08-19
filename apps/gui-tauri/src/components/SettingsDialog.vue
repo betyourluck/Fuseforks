@@ -27,6 +27,12 @@ import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
+import {
+  CLOSING_DAY_MAX,
+  closingMonthOf,
+  labelParamsOf,
+  type ClosingDay,
+} from "../lib/statsPeriod";
 import type { AgentId, Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -96,6 +102,25 @@ const { settings } = useUiSettings();
 
 /** 配色の選択肢。`Theme` と 1 対 1（増やしたら `style.css` にも足す）。 */
 const THEME_OPTIONS: Theme[] = ["dark", "light"];
+
+/**
+ * 統計の締め日の選択肢（Spec 42 D1）。1〜28 と月末。**29〜31 は並べない** —
+ * 2 月に存在しない日を選ばせると「その月はどうなるか」の規則がもう 1 つ要る。
+ */
+const CLOSING_DAY_OPTIONS: ClosingDay[] = [
+  ...Array.from({ length: CLOSING_DAY_MAX }, (_, i) => i + 1),
+  "eom",
+];
+
+/**
+ * 選んだ締め日での「今の期間」。**選択肢の直下にライブで出す** — 締め日 1（7/2〜8/1）と
+ * 月末（8/1〜8/31）は別の期間で、暦の月を期待して 1 を選ぶ取り違えを説明文ではなく
+ * 構造で防ぐ。統計画面と同じ `statsPeriod` の 1 実装から導くので、ここで見た範囲と
+ * 統計で見る範囲が食い違わない。時計はここ（呼び出し側）で読む。
+ */
+const currentPeriodLabel = computed(() =>
+  t("stats.period.label", labelParamsOf(settings.statsClosingDay, closingMonthOf(settings.statsClosingDay, new Date()))),
+);
 
 const loading = ref(true);
 const busy = ref(false);
@@ -748,6 +773,36 @@ function selectPage(next: Page): void {
               </div>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+
+            <!--
+              集計の締め日（Spec 42）。**端末に保存・選んだ瞬間に反映**（テーマと同じ）。
+              同じページに村の設定（トークン制限）と並ぶが、分類は保存先ではなく主題
+              （#52 — コスト管理）。注記で保存先を分けて言う。
+            -->
+            <h3 class="mt-5 mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.closingDay.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.closingDay.help") }}</p>
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-center gap-2">
+                <span>{{ $t("settings.closingDay.label") }}</span>
+                <select
+                  v-model="settings.statsClosingDay"
+                  class="rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  data-stats-closing-day
+                >
+                  <option v-for="option in CLOSING_DAY_OPTIONS" :key="option" :value="option">
+                    {{ option === "eom" ? $t("settings.closingDay.eom") : $t("settings.closingDay.day", { day: option }) }}
+                  </option>
+                </select>
+              </label>
+              <!-- ライブ表示（D1 / D2）。値が変わった瞬間に境界が見える。 -->
+              <p class="pl-6 text-ink" data-stats-closing-day-preview>
+                {{ $t("settings.closingDay.current", { period: currentPeriodLabel }) }}
+              </p>
+              <p class="pl-6 text-ink-dim">{{ $t("settings.closingDay.note") }}</p>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.closingDay.deviceNote") }}</p>
           </template>
 
           <!--

@@ -215,7 +215,7 @@ impl Orchestrator {
                     meta,
                 }]
             }
-            crate::stats::StatsScope::All => store.list_sessions()?,
+            crate::stats::StatsScope::All { .. } => store.list_sessions()?,
         };
         let mut turns = Vec::new();
         for session in &sessions {

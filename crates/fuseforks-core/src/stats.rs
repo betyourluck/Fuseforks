@@ -31,6 +31,10 @@ use crate::session_store::{SessionSummary, TurnRecord, TurnStop};
 pub const SERIES_LIMIT: usize = 500;
 
 /// 集計の範囲。閉じた列挙 2 値。
+///
+/// **期間を持てるのは `All` だけ**（Spec 42 D3）。1 つの会話は会話そのものが境界で、
+/// そこへ月を掛けると「この会話に今月の記録が無い」という D6 と紛らわしい空が生まれる。
+/// **送れる形が無いほうが強い**（Spec 34 の `temperature` と同じ判断）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StatsScope {
@@ -40,8 +44,36 @@ pub enum StatsScope {
         /// 会話の ID。
         session_id: String,
     },
-    /// この村の全会話。
-    All,
+    /// この村の全会話。`period` が無ければ全期間（Spec 42 より前の挙動そのまま）。
+    All {
+        /// 切り取る期間。**無ければ全期間。** 旧いクライアントの `{ "kind": "all" }` は
+        /// `#[serde(default)]` でここへ落ちる。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        period: Option<StatsPeriod>,
+    },
+}
+
+/// 期間。**半開区間 `[since_ms, until_ms)`** を [`TurnRecord::ts_ms`]（ターンの開始時刻）で
+/// 切る。日付をまたいで走ったターンは**始まった側**に落ちる（払いの単位はターン 1 本）。
+///
+/// **境界の計算はフロント**（`lib/statsPeriod.ts` — 締め日 + 締め月 → ローカル時刻 →
+/// epoch ms）で、コアは 2 数だけ受ける。ここに時計もタイムゾーンも入れない
+/// （`aggregate` を純関数のまま保つ。`budget.rs` と同じ規律）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsPeriod {
+    /// この時刻**を含む**。
+    pub since_ms: u64,
+    /// この時刻**を含まない**。
+    pub until_ms: u64,
+}
+
+impl StatsPeriod {
+    /// `ts` がこの期間に入るか（`since_ms ≤ ts < until_ms`）。
+    #[must_use]
+    pub const fn contains(self, ts: u64) -> bool {
+        self.since_ms <= ts && ts < self.until_ms
+    }
 }
 
 /// 使用量の 1 切片（村全体 / 個体別で同じ形）。
@@ -169,10 +201,19 @@ pub struct SessionStats {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsScopeMeta {
-    /// スコープ内で最初の `Turn` の開始時刻。**無ければ `None`** — 呼び出し側は
-    /// 0 の表を出さず「記録が無い」と言う（D6）。
+    /// スコープ内（`period` を掛けた**後**）で最初の `Turn` の開始時刻。**無ければ `None`** —
+    /// 呼び出し側は 0 の表を出さず「記録が無い」と言う（D6）。
     pub recorded_since: Option<u64>,
+    /// **`all` のときだけ**: `period` に関わらず村で最初の `Turn` の開始時刻。
+    /// 画面の ◀ をどこまで押せるかの下限（Spec 42 D4）。`session` では `None`
+    /// （◀ は `all` にしか出ないので計算する理由が無い — 型を分けると本構造体が
+    /// 2 つに割れるので、契約で留める）。`Turn` が 1 件も無い村も `None`。
+    /// **計算はフィルタの前** — 順序を逆にすると期間内の最古になり ◀ が 1 つ前で止まる。
+    pub oldest_ms: Option<u64>,
     /// 会話ごとの合計。`all` では `list_sessions` の並び（更新の新しい順）。
+    /// **`all` で `period` があるときは `turns > 0` の会話だけ**（Spec 42 D4）— 「今月」の表に
+    /// 生涯の全会話が `—` で並ぶのは、行が増える問題をそのまま残す形。このとき
+    /// 表の合計 = `totals`（`all` の一覧は全件なので、表に居ない会話は存在しない）。
     pub sessions: Vec<SessionStats>,
 }
 
@@ -308,8 +349,16 @@ pub fn aggregate(
     sessions: &[SessionSummary],
     scope: StatsScope,
 ) -> StatsReport {
-    // 開始時刻順に並べる（`series` は末尾 N 件）。
-    let mut ordered: Vec<&(String, TurnRecord)> = turns.iter().collect();
+    // **`oldest_ms` はフィルタの前に取る**（`all` のみ。Spec 42 D4）。
+    let (period, oldest_ms) = match &scope {
+        StatsScope::All { period } => (*period, turns.iter().map(|(_, t)| t.ts_ms).min()),
+        StatsScope::Session { .. } => (None, None),
+    };
+    // 期間で落としてから、開始時刻順に並べる（`series` は末尾 N 件）。
+    let mut ordered: Vec<&(String, TurnRecord)> = turns
+        .iter()
+        .filter(|(_, t)| period.is_none_or(|p| p.contains(t.ts_ms)))
+        .collect();
     ordered.sort_by_key(|(_, t)| t.ts_ms);
 
     let mut totals = SliceAcc::default();
@@ -378,6 +427,8 @@ pub fn aggregate(
                 effective,
             }
         })
+        // 期間があるときは、その期間に払った会話だけ（D4）。全期間では `—` の行も残す。
+        .filter(|s| period.is_none() || s.turns > 0)
         .collect();
 
     let series = match &scope {
@@ -400,13 +451,14 @@ pub fn aggregate(
                 dropped: u32::try_from(dropped).unwrap_or(u32::MAX),
             })
         }
-        StatsScope::All => None,
+        StatsScope::All { .. } => None,
     };
 
     StatsReport {
         scope,
         scope_meta: StatsScopeMeta {
             recorded_since: ordered.first().map(|(_, t)| t.ts_ms),
+            oldest_ms,
             sessions: sessions_meta,
         },
         totals: totals.finish(),
@@ -647,7 +699,7 @@ mod tests {
         assert_eq!(series.points.last().unwrap().ts_ms, SERIES_LIMIT as u64 + 6);
         assert_eq!(report.scope_meta.recorded_since, Some(0), "recorded_since は落とした側も含む最古");
 
-        let all = aggregate(&turns, &[session("s1", None)], StatsScope::All);
+        let all = aggregate(&turns, &[session("s1", None)], StatsScope::All { period: None });
         assert!(all.series.is_none(), "all では series を出さない");
     }
 
@@ -660,7 +712,7 @@ mod tests {
             ("s2".to_owned(), turn("b", 3, 30, 0, 0, TurnStop::Completed)),
         ];
         let sessions = vec![session("s2", Some("s1")), session("s1", None), session("s3", None)];
-        let report = aggregate(&turns, &sessions, StatsScope::All);
+        let report = aggregate(&turns, &sessions, StatsScope::All { period: None });
         assert_eq!(report.totals.turns, 3);
         assert_eq!(report.totals.effective, 60);
         let rows: Vec<(String, Option<String>, u64, u64)> = report
@@ -680,6 +732,87 @@ mod tests {
         );
     }
 
+    fn scope_all(since: u64, until: u64) -> StatsScope {
+        StatsScope::All {
+            period: Some(StatsPeriod {
+                since_ms: since,
+                until_ms: until,
+            }),
+        }
+    }
+
+    /// 期間は半開 `[since, until)`: `since` のターンは入り、`until` のターンは入らない（Spec 42 D1）。
+    #[test]
+    fn period_is_half_open_on_turn_start_time() {
+        let turns = vec![
+            ("s1".to_owned(), turn("a", 99, 1, 0, 0, TurnStop::Completed)),
+            ("s1".to_owned(), turn("a", 100, 10, 0, 0, TurnStop::Completed)),
+            ("s1".to_owned(), turn("a", 199, 100, 0, 0, TurnStop::Completed)),
+            ("s1".to_owned(), turn("a", 200, 1_000, 0, 0, TurnStop::Completed)),
+        ];
+        let report = aggregate(&turns, &[session("s1", None)], scope_all(100, 200));
+        assert_eq!(report.totals.turns, 2);
+        assert_eq!(report.totals.prompt, 110, "100 と 199 だけ。99 と 200 は外");
+        assert_eq!(report.scope_meta.recorded_since, Some(100), "recorded_since はフィルタ後の最古");
+        assert_eq!(report.by_stop[0].count, 2, "by_stop も期間で切れている");
+    }
+
+    /// `period` 無しは現行と同一 — 全期間。`{ "kind": "all" }` の旧いクライアントも同じ道。
+    #[test]
+    fn all_without_period_is_the_whole_history_and_old_wire_deserializes_to_it() {
+        let turns = vec![
+            ("s1".to_owned(), turn("a", 1, 10, 0, 0, TurnStop::Completed)),
+            ("s2".to_owned(), turn("a", 2, 20, 0, 0, TurnStop::Completed)),
+        ];
+        let sessions = vec![session("s1", None), session("s2", None), session("s3", None)];
+        let whole = aggregate(&turns, &sessions, StatsScope::All { period: None });
+        assert_eq!(whole.totals.turns, 2);
+        assert_eq!(whole.scope_meta.sessions.len(), 3, "全期間では turns=0 の会話も並ぶ（—）");
+        let old: StatsScope = serde_json::from_str(r#"{"kind":"all"}"#).unwrap();
+        assert_eq!(old, StatsScope::All { period: None }, "旧ワイヤは全期間へ落ちる");
+        let json = serde_json::to_value(&whole.scope).unwrap();
+        assert!(json.get("period").is_none(), "period は無ければ出ない");
+        let with: StatsScope = serde_json::from_str(r#"{"kind":"all","period":{"sinceMs":5,"untilMs":9}}"#).unwrap();
+        assert_eq!(with, scope_all(5, 9));
+    }
+
+    /// 期間ありでは `turns > 0` の会話だけが表に載る（D4）。表の合計 = `totals`。
+    #[test]
+    fn period_drops_sessions_without_turns_from_the_table() {
+        let turns = vec![
+            ("s1".to_owned(), turn("a", 10, 10, 0, 0, TurnStop::Completed)),
+            ("s2".to_owned(), turn("a", 50, 20, 0, 0, TurnStop::Completed)),
+            ("s2".to_owned(), turn("b", 150, 40, 0, 0, TurnStop::Completed)),
+        ];
+        let sessions = vec![session("s2", None), session("s1", None), session("s3", None)];
+        let report = aggregate(&turns, &sessions, scope_all(0, 100));
+        let ids: Vec<&str> = report.scope_meta.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["s2", "s1"], "s3（記録なし）は消える。並びは渡した順のまま");
+        assert_eq!(report.scope_meta.sessions[0].turns, 1, "s2 は期間内の 1 本だけ");
+        let table_total: u64 = report.scope_meta.sessions.iter().map(|s| s.effective).sum();
+        assert_eq!(table_total, report.totals.effective, "期間ありでは表の合計 = totals");
+    }
+
+    /// `oldest_ms` はフィルタの**前**の全 turn から取る（`◀` の下限）。`session` では `None`。
+    #[test]
+    fn oldest_ms_ignores_the_period_and_is_absent_for_session_scope() {
+        let turns = vec![
+            ("s1".to_owned(), turn("a", 3, 1, 0, 0, TurnStop::Completed)),
+            ("s1".to_owned(), turn("a", 500, 1, 0, 0, TurnStop::Completed)),
+        ];
+        let sessions = vec![session("s1", None)];
+        let later = aggregate(&turns, &sessions, scope_all(400, 600));
+        assert_eq!(later.scope_meta.oldest_ms, Some(3), "期間の外の turn を指す（期間内の最古 500 ではない）");
+        assert_eq!(later.scope_meta.recorded_since, Some(500));
+        let empty = aggregate(&turns, &sessions, scope_all(1_000, 2_000));
+        assert_eq!(empty.totals.turns, 0);
+        assert_eq!(empty.scope_meta.recorded_since, None, "期間内が空なら recorded_since は無い");
+        assert_eq!(empty.scope_meta.oldest_ms, Some(3), "それでも oldest_ms は残る");
+        assert!(empty.scope_meta.sessions.is_empty(), "期間ありで 0 本なら表は空");
+        assert_eq!(aggregate(&[], &sessions, StatsScope::All { period: None }).scope_meta.oldest_ms, None, "turn ゼロの村は None");
+        assert_eq!(aggregate(&turns, &sessions, scope_s()).scope_meta.oldest_ms, None, "session では計算しない");
+    }
+
     /// ワイヤ形: `scope` は kind タグ、`by_agent` は Slice を平坦に持つ、`code` は無ければ出ない。
     #[test]
     fn wire_shape_is_camel_case_and_flat() {
@@ -696,7 +829,7 @@ mod tests {
         assert!(json["byStop"][0].get("code").is_none(), "code は無ければ出ない");
         assert_eq!(json["series"]["dropped"], 0);
         assert_eq!(json["series"]["points"][0]["stop"]["kind"], "completed");
-        let all = serde_json::to_value(aggregate(&turns, &[], StatsScope::All)).unwrap();
+        let all = serde_json::to_value(aggregate(&turns, &[], StatsScope::All { period: None })).unwrap();
         assert_eq!(all["scope"]["kind"], "all");
         assert!(all["series"].is_null());
     }

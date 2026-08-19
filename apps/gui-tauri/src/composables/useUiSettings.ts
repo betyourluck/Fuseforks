@@ -11,6 +11,8 @@
 
 import { reactive, watch } from "vue";
 
+import { DEFAULT_CLOSING_DAY, isClosingDay, type ClosingDay } from "../lib/statsPeriod";
+
 const STORAGE_KEY = "fuseforks.settings.v1";
 
 /** 配色。`style.css` の `:root[data-theme="light"]` と 1 対 1。 */
@@ -84,6 +86,19 @@ export interface UiSettings {
    * 困る人がいない（困るなら選べばそこで固定される）。
    */
   theme: Theme;
+  /**
+   * 統計の「全会話」を切る月の締め日（Spec 42。2026-08-19）。`1..=28` か `"eom"`（月末）。
+   *
+   * **既定は月末 = 暦の月。** 締め日 `d` の期間は「前の締め日の翌日 00:00 〜 締め日の翌日
+   * 00:00」の半開区間（25 → 7/26〜8/25 =「8 月分」）。境界の計算は `lib/statsPeriod.ts` の
+   * 1 実装で、設定ページの「今の期間」のライブ表示と統計画面が同じ関数を呼ぶ。
+   *
+   * **端末に置く**のは、締め日が請求を読む人の属性で村の状態ではなく、会話ログにも
+   * プロンプトにも焼き付かないから。村を配った先の人にはその人の締め日がある。
+   * **締め日を変えると過去の月の境界も全部いまの締め日で引き直される**（記録には
+   * 「どの締め日で払ったか」が無い。締め日ごとに月次を保存する機構は作らない）。
+   */
+  statsClosingDay: ClosingDay;
 }
 
 /**
@@ -102,6 +117,7 @@ const DEFAULTS: UiSettings = {
   autoFitOnResize: false,
   // 参照時に評価するため、実体は load() で入れる（モジュール読み込み順に依存しない）。
   theme: "dark",
+  statsClosingDay: DEFAULT_CLOSING_DAY,
 };
 
 /** 保存済みの設定を読む。壊れていたら・型が違ったら既定値へ落とす。 */
@@ -133,6 +149,10 @@ function load(): UiSettings {
       // **保存済みが 2 値のどちらかでなければ OS へ戻す。** 既定値の定数へ
       // 落とすと、手編集で壊れた村が「利用者はダークを選んだ」状態になる。
       theme: parsed.theme === "dark" || parsed.theme === "light" ? parsed.theme : osTheme(),
+      // 範囲外（29〜31・小数・文字列の数字）や旧版の欠落は既定（月末）へ。
+      statsClosingDay: isClosingDay(parsed.statsClosingDay)
+        ? parsed.statsClosingDay
+        : DEFAULTS.statsClosingDay,
     };
   } catch {
     // 壊れた保存値で画面が開けなくなるほうが害が大きい。
