@@ -532,10 +532,23 @@ enums:
       「この会話にはターンの記録がありません (記録はこの版から)」の 1 行だけ
       (0 は「払っていない」と読まれる — #68 の裏返し)。
 
-      ## Scope (閉じた列挙 2 値)
+      ## Scope (閉じた列挙 2 値。**Spec 42 rev2 で all に期間を足した**・2026-08-19)
 
-        Scope = { kind: "session", sessionId }   # 1 会話 (既定 = 今開いている会話)
-              | { kind: "all" }                  # この村の全会話
+        Scope = { kind: "session", sessionId }                       # 1 会話 (既定 = 今開いている会話)
+              | { kind: "all", period?: { sinceMs, untilMs } }       # この村の全会話。period 無し = 全期間
+
+      period は **半開区間 [sinceMs, untilMs)** で、TurnRecord.tsMs (ターンの開始時刻)
+      で切る。日付をまたいで走ったターンは**始まった側**に落ちる (払いの単位は
+      ターン 1 本で割らない)。**境界の計算はフロント** (lib/statsPeriod.ts の純関数。
+      締め日 statsClosingDay + 締め月 {year, month} → ローカル時刻 → epoch ms) で、
+      **コアは 2 数だけ受け、時計もタイムゾーンも読まない** (aggregate は純関数のまま)。
+      **session に期間は無い** — 会話そのものが境界で、月を掛けると「この会話に
+      今月の記録が無い」という下の D6 と紛らわしい空が生まれる。送れる形が無いほうが
+      強い (Spec 34 の temperature / Spec 37 の tool_choice と同じ)。
+      **period から締め日を逆算しない** (since = 1 日は月末締めとも 1 日締めとも読める)。
+      画面のナビは締め月 {year, month} を状態に持ち、境界は都度導く。
+      **月だけ** — 週・日・任意区間は要る利用がまだ無い。要るときはフロントの純関数へ
+      選択肢を足すだけでワイヤは動かない (2 数のまま)。
 
       sessions.redb は**村に 1 ファイル** (sessions / records の 2 テーブル) なので、
       all は list_sessions() → 各 id で records(id) を読み、turn だけを
@@ -551,9 +564,12 @@ enums:
         StatsReport {
           scope,
           scopeMeta: {
-            recordedSince: Option<tsMs>,          # 最初の turn の開始時刻。無ければ null
+            recordedSince: Option<tsMs>,          # スコープ (period を掛けた後) で最初の turn の開始時刻。無ければ null
+            oldestMs:      Option<tsMs>,          # **all のときだけ**: period に関わらず村で最初の turn。
+                                                  # session では null。turn が 1 件も無い村も null (Spec 42)
             sessions: [{ sessionId, title, forkedFrom: Option<sessionId>, turns, effective }],
-                                                  # session では 1 件、all では会話ごとの合計表
+                                                  # session では 1 件、all では会話ごとの合計表。
+                                                  # **all で period があるときは turns > 0 の会話だけ** (Spec 42 D4)
           },
           totals:  Slice,                         # スコープ全体
           byAgent: [{ agentId, model, ...Slice }],
@@ -571,6 +587,18 @@ enums:
         # キャッシュ率のホバーへ内訳を出す (D4)。
 
       規則:
+        - **aggregate の計算順は oldestMs → フィルタ → recordedSince** (Spec 42 rev2)。
+          oldestMs = min(全 turn の tsMs) を**先に**取り、次に sinceMs ≤ tsMs < untilMs で
+          落とし、残りの最小を recordedSince にする。逆にすると oldestMs が期間内の最古に
+          なり、画面の ◀ が 1 つ前で止まる。oldestMs は all のときだけ計算する
+          (◀ は all にしか出ない。使う場所が無い値を計算しない — 型ではなく契約で留める。
+          型を分けると StatsScopeMeta が 2 つに割れる)
+        - **period があるとき scopeMeta.sessions は turns > 0 の会話だけ** (Spec 42 D4)。
+          「今月」の表に生涯の全会話が — で並ぶのは、行が増える問題をそのまま残す形。
+          period 無しは現行どおり全件 (— を含む)。**period ありでは表の合計 = totals** —
+          all の sessions は list_sessions() の全件なので「turns に居て sessions に居ない
+          会話」が存在せず、下の「表に居ない会話も合計には数える」は空振りになる
+          (矛盾ではない。規則は残す)
         - **effective は budget.rs の重み関数の 1 実装を呼ぶ**
           ((prompt − cached) ×1 + cached ×0.1 + completion ×4)。
           **reasoning は completion の内数なので足さない。** フロントで再計算しない
@@ -611,6 +639,15 @@ enums:
         - promptfoo の見出し (Requests / Total Tokens / Avg Tokens / Avg Latency) を
           個体別の表に写す。**Tokens/Sec は出さない** (ストリーミングしないので
           意味を持たない)。pass rate 系の 3 チャートは pass の概念が無いので出せない
+        - **全会話は既定で「今の期間」を出す** (Spec 42 rev2)。ヘッダに
+          `◀ 2026 年 8 月分 (7/26〜8/25) ▶` と「全期間」トグル。**▶ は今の期間で止まる**
+          (未来の期間は開けない)、**◀ は oldestMs を含む締め月で止まる** (null なら無効)。
+          **全期間 ON の間はナビとラベルを出さない** (無効化ではなく非表示 — 灰色の月名は
+          「今その月を見ている」と読める)。ラベルの範囲は締め月で呼び (「8 月分」)、
+          右端は untilMs − 1 ms を sinceMs と同じタイムゾーンで日付化する
+          (until は排他なので 9/1 を 8/31 と出す)。期間内に turn が無い月は
+          「この期間にターンの記録はありません」の 1 行 (D6 の「この会話」と語を分ける)。
+          この会話 (session) スコープには期間の操作が無い
 
     blackboard_contract: |
       村の黒板 = 共有作業メモ (2026-08-02 条例で運用開始。機構は読み取り投影のみ)。
@@ -711,7 +748,22 @@ enums:
           Spec 21 の drop が使う elementFromPoint の座標と画面がずれる。
           仕切りのドラッグ中は毎フレーム発火するので 120ms 落ち着かせてから 1 回) /
           theme ("dark" | "light"。2026-08-05 追加)。表示の都合であって
-          村の状態ではない (usePaneLayout の「表示の都合は localStorage」と同じ棚)。
+          村の状態ではない (usePaneLayout の「表示の都合は localStorage」と同じ棚) /
+          statsClosingDay (1..=28 | "eom"。**既定 "eom"** = 暦の月。Spec 42・2026-08-19)。
+          統計の「全会話」を切る月の締め日。締め日 d の期間は
+          **[前の締め日の翌日 00:00, 締め日の翌日 00:00)** のローカル時刻
+          (25 → 7/26〜8/25 =「8 月分」、"eom" → 1 日〜末日)。**29〜31 は選ばせない** —
+          2 月に存在しない日を選ばせると「その月はどうなるか」の規則がもう 1 つ要る
+          (却下した代案は 1〜31 + min(d, 末日) の丸め。穴も重なりも出ないが、2 月にだけ
+          黙って 28 日締めになる規則が設定した本人に見えない)。
+          **締め日 1 は "eom" と同義ではない** (1 日締めは 7/2〜8/1、月末締めは
+          8/1〜8/31)。取り違えは説明文ではなく構造で防ぐ — 設定ページの選択肢の直下に
+          その締め日での「今の期間」を**ライブで**出し、統計画面と同じ lib/statsPeriod.ts の
+          1 実装から導く。**端末に置く理由**は、締め日が請求を読む人の属性で村の状態では
+          なく、会話ログにもプロンプトにも焼き付かないから。村を配った先の人にはその人の
+          締め日がある。**締め日を変えると過去の月の境界も全部いまの締め日で引き直される**
+          (記録には「どの締め日で払ったか」が無い。締め日ごとに月次を保存する機構は
+          作らない — 導出値を保存すると 2 実装目)。範囲外・型違いは既定へ落とす。
           **保存形は useUiSettings.test.ts が丸ごと固定している** —
           鍵が黙って増えると契約と実装が食い違うため
         - **端末に保存 → localStorage "fuseforks.chatCleared.v1"**

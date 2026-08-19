@@ -2,7 +2,7 @@
 
 **ID**: 42
 **Date**: 2026-08-19
-**Status**: Draft（rev2。査読 8 点 → 採用 7 / 訂正して採用 1。承認待ち）
+**Status**: **rev2 承認（2026-08-19）→ P0 完了**。P1〜P3 はブランチ `20260819_stats_period`
 **Branch**: P0（契約）は rev 承認後に main 直。P1 以降は `20260819_stats_period` へ積む
 
 ## Goal
@@ -189,7 +189,7 @@ Scope = { kind: "session", sessionId }
 
 ## Tasks
 
-- [ ] **P0 契約**: `stats_contract` Scope 改訂 + `oldestMs` + D4 の規則 /
+- [x] **P0 契約**（2026-08-19。`data_contract` の `stats_contract` Scope / `oldestMs` / D4 の計算順と但し書き / 画面のナビ、`settings_contract` に `statsClosingDay`）: `stats_contract` Scope 改訂 + `oldestMs` + D4 の規則 /
       `settings_contract` に `statsClosingDay`
 - [ ] **P1 コア**: `StatsScope::All { period: Option<StatsPeriod> }`（`#[serde(default)]`）/
       `aggregate` の順序は **`oldest_ms`（全 turn の最小）→ `since ≤ ts < until` で落とす →
