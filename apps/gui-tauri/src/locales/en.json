@@ -84,6 +84,16 @@
       "save": "Save",
       "saving": "Saving…"
     },
+    "closingDay": {
+      "heading": "Closing day (Statistics › All conversations)",
+      "help": "\"All conversations\" in Statistics shows one month at a time, cut at the closing day you pick here. Closing day N covers the (N+1)th of the previous month through the Nth of this month; \"End of month\" covers the 1st through the last day.",
+      "label": "Closing day",
+      "day": "{day}th of each month",
+      "eom": "End of month",
+      "current": "Current period: {period}",
+      "note": "Takes effect immediately. Changing the closing day also re-cuts past months with the new day.",
+      "deviceNote": "The closing day is stored on this device (it is not part of the village)."
+    },
     "language": {
       "heading": "Language",
       "help": "Display language of the UI. The switch takes effect the moment you save.",
@@ -947,6 +957,13 @@
     "scope": {
       "session": "This conversation",
       "all": "All conversations"
+    },
+    "period": {
+      "label": "{year}-{month2} ({from}–{to})",
+      "prev": "Previous month",
+      "next": "Next month",
+      "wholeHistory": "All time",
+      "empty": "No turns were recorded in this period"
     },
     "tiles": {
       "turns": "Turns",

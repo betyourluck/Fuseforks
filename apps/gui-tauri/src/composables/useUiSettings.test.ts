@@ -90,7 +90,27 @@ describe("この画面の設定", () => {
       showPresenceNotices: true,
       autoFitOnResize: false,
       theme: "dark",
+      statsClosingDay: "eom",
     });
+  });
+
+  it("統計の締め日は既定が月末で、1..=28 か eom 以外は既定へ落とす（Spec 42）", async () => {
+    const fresh = await freshModule(fakeStorage());
+    expect(fresh.useUiSettings().settings.statsClosingDay).toBe("eom");
+
+    const kept = await freshModule(
+      fakeStorage({ [STORAGE_KEY]: JSON.stringify({ statsClosingDay: 25 }) }),
+    );
+    expect(kept.useUiSettings().settings.statsClosingDay).toBe(25);
+
+    // 29〜31 は選ばせない（2 月に存在しない日を選ばせると規則がもう 1 つ要る）。
+    // 文字列の "25" も通さない — v-model.number を使わないので、型で守る。
+    for (const bad of [31, 0, "25", 2.5]) {
+      const broken = await freshModule(
+        fakeStorage({ [STORAGE_KEY]: JSON.stringify({ statsClosingDay: bad }) }),
+      );
+      expect(broken.useUiSettings().settings.statsClosingDay, String(bad)).toBe("eom");
+    }
   });
 
   it("閉じる確認の既定は ON、壊れた値は既定へ落とす", async () => {
