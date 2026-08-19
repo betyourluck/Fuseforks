@@ -764,6 +764,66 @@ otari は利用者単位の予算（予約 + reconcile）、Dify はテナント
 **Dify は層が違う** — `quota` 372 件 / `billing` 428 件と厚いが、**テナント単位の
 課金枠**であって実行中の因果ごとの天井ではない。SaaS の請求層。
 
+## LangGraph の実読と突き合わせ（2026-08-19。**コードを読んだ。README ではない**）
+
+起点は利用者 —「LangGraph の機能を簡単に落とし込む。動的ルーティングとか。本番運用まで
+されている LangGraph には何があり、Fuseforks には何が欠けてるか」。`langchain-ai/langgraph`
+`1e44bda`（2026-08-18）を scratchpad へ浅くクローンし、3 領域（グラフ / 実行・永続化 /
+prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で取った。**サーバー本体
+（`langgraph_api`）は閉源でリポジトリに無く、`docs/` の本文も gitignore で無い** —
+運用 API は SDK の引数から読んだ。
+
+### 「動的ルーティング」は 3 つあり、全部「閉じた辺の中でコードが選ぶ」
+
+| LangGraph | 実体（file:line は `libs/langgraph/langgraph/`） | Fuseforks の対応物 |
+|---|---|---|
+| `add_conditional_edges` | ルータは**コード**。戻り値は `path_map` / `Literal` 型ヒント / ノード名で**閉じた集合**に写され、外れると `ValueError`（`graph/_branch.py:146,192`） | **絆（トポロジー）が閉じた辺の集合**。選ぶのは **LLM**（`ask_*` / `plan` / `transfer_to_*` は `connected_agents` にしか生えない） |
+| `Send(node, arg)` | 実行時に**同じノードの N インスタンス**を per-instance 状態で撒く（`pregel/_algo.py:442-448`、入力は `packet.arg` そのもの `:1060`）= map。reduce は**チャネルのリデューサ**が行う | `plan` = 接続先へ per-task 本文で撒く波。**同じ個体に N 並列は不可**（受信箱 1 本・ターン直列）。**reduce は進行役の LLM が束ねる**（コードではない） |
+| `Command(goto / update / resume)` | ノードが次を指す + 共有状態を更新 + 割り込みの再開（`types.py:799`）。`goto` も `branch:to:<既存ノード>` への書き込みでしかなく、**辺を広げない**（`graph/state.py:1749`、未知ノードは warning で捨てる `_algo.py:978`） | `transfer_to_*` = goto / `ask_*` = call して戻る。**`update`（共有状態への書き込み）に当たるものが無い** — 黒板（ファイル全文上書き）と広場ログと `Memory.md` が代わり |
+
+**LLM の生出力が次のノードを選ぶ経路は LangGraph に 1 つも無い**（`tools_condition` は
+`"tools" | "__end__"` の 2 値で、モデルが選ぶのは `ToolNode` の中のどのツールか）。
+**Fuseforks はその逆で、LLM が次の個体を選ぶ**（辺は人が引く）。同じ「閉じた集合」でも
+選ぶ主体が違う — **これが位置取り（オーケストレーションとコワークの中間）の差そのもの**で、
+欠けではない。**Fuseforks で LLM を呼ばずに選ぶ経路は、スケジュールの probe（stdout 1 行目の
+完全一致で配送を決める・Spec 28）の 1 例だけ。**
+
+### 層ごとの「あって / 欠けて」
+
+| 層 | LangGraph（実測） | Fuseforks | 判定 |
+|---|---|---|---|
+| 共有状態 | チャネル + リデューサ。**リデューサ無しの鍵に 2 ノードが同じ周で書くと `InvalidUpdateError`**（`channels/last_value.py:60`）。`add_messages` は id で置換する append | 黒板（`file write` = 全文上書き・後勝ち）。衝突は**条例「1 人 1 ファイル」= 文言**で避けている | **欠け（思想の差）**。並行書き込みの安全を構造で持っていない。機構化するなら黒板の追記専用 op か reducer 相当 |
+| 部分グラフ / 名前空間 | compiled graph をそのまま node に（`graph/state.py:667`）、`checkpoint_ns` で入れ子 | 無し（村は平坦。`hop` が深さ） | 欠け。要る利用が無い |
+| 実行モデル | Pregel の superstep。周回境界で状態反映。**`recursion_limit` 既定 10007**（`_internal/_config.py:32`。「25」ではない）、`GraphRecursionError` | ターンループ。**周回境界で cancel / budget / RepeatGuard / hop を検査** = superstep 境界と同じ形。上限は `max_tool_iterations` 36 / `max_hops` | 同型 |
+| ノード再試行 | `RetryPolicy`（0.5s ×2 ≤128s・3 回・Connection / 5xx のみ。`types.py:418`） | `chat_with_backoff`（200ms ×2 ≤5s・`max_retries`・429 / 5xx / 空応答）— **LLM 呼び出しだけ**。ツール実行の再試行は無く、**逆向きの `RepeatGuard`**（同じ失敗の 3 回目を止める）を持つ | 方針の差。**こちらは「再試行を増やす」より「繰り返しを止める」側** |
+| ノード timeout | `TimeoutPolicy`（協調的） | `run` の `timeoutSecs` / `ask_timeout` / probe の timeout | 同等 |
+| ノード結果キャッシュ | `CachePolicy`（入力の pickle ハッシュ・TTL・InMemory / Redis） | **意図的に無し**（2026-08-04: 検索結果キャッシュは RepeatGuard の判定を壊すと却下） | 採らない |
+| 耐久性 / checkpoint | `durability` = `sync` / `async`（既定）/ `exit`（`types.py:89`）。**superstep ごと**に checkpoint | `sessions.redb` は message 投入時 + exchange ターン完了時 = **`exit` 相当の粒度（ターン単位）**。飛行中に落ちると半端（許容と凍結） | **欠け: 周回単位の再開**。落ちたら頼み直し（予定は次回発火） |
+| タイムトラベル | `get_state_history` / `update_state(as_node)` / `checkpoint_id` からの fork（`pregel/main.py:1480,2515`） | `fork_session(at_seq)` + 分岐で依頼文を入力欄へ（Spec 12）。**状態の編集（`update_state`）は無い** | 半分。人が過去の答えを書き換えて再開する経路は無い（会話ログの改竄に当たる。黒板の削除だけ） |
+| HITL | `interrupt()` → `GraphInterrupt` → `Command(resume=)`。**ノードを先頭から再実行**して N 番目の `interrupt()` に N 番目の resume を渡す（`types.py:955-975`）。`interrupt_before / after` | Spec 10 の打ち切り（resume 無し）/ `run.json` の pending 承認（人が依頼し直す）/ **人への質問は「答えて turn を終え、次の発話が次の turn」= 会話そのものが resume** | **欠けではなく形の差**。ターンより長生きする状態を持たない判断（対話シェル A 案の見送りと同じ） |
+| ストリーミング | 7 モード（`types.py:122`）、`get_stream_writer` | **無し**（非ストリーミング。Spec 37 で `stream` 不要と実測） | 意図的 |
+| 村横断メモリ | `BaseStore`（名前空間タプル・ベクタ検索・TTL・`PostgresStore` + pgvector） | `Memory.md`（個体）+ 黒板（作業）+ `rag`（宣言フォルダの見出し索引） | **欠け: 村横断の KV + ベクタ検索**。lindera / tantivy 451 依存を避けた判断が生きている。Memoria 連携は個体 session で別線 |
+| 実行時コンテキスト | `Runtime`（`context` / `store` / `stream_writer` / `previous`） | `ToolContext`（`work_dir` / `rag_roots` / `cancel` / `language`） | 同型 |
+| **費用の歯止め** | **無し**（再確認。`token_budget` / `budget` / `usage_metadata` = 0 件、`cost` 4 件は全部コメント） | 因果ごとの天井 / CAS 予約 / 実効トークン / 単価 | **こちらが持つ側** |
+| prebuilt | `create_react_agent` は **`@deprecated`**（`langchain.agents.create_agent` へ。`chat_agent_executor.py:274`）。`ToolNode` は並列実行・`return_direct` / `remaining_steps` 警告 / `response_format` / pre・post hook / `wrap_tool_call` / `InjectedState` | ターンループが react loop そのもの。並列ツール 1 周に複数本 / 打ち切り文で次の手を書く（`remaining_steps` 相当）/ Structured Output は却下済み / 封筒と可変文脈の畳みが固定の pre hook / RepeatGuard・`decide`・理由が固定の `wrap_tool_call` | 同等。**supervisor / swarm / handoff は LangGraph 本体に無い**（別 repo） |
+| 配布 / 運用面 | `langgraph.json`（`http` に **MCP エンドポイントのトグル**あり `schemas.py:471`）/ `langgraph dev`（閉源の `langgraph_api` が要る）/ `up` = redis + pgvector + api の compose / `deploy` = LangSmith へ | デスクトップ（winget / brew / MSI）。MCP サーバー（Spec 25） | 層が違う |
+| サーバー API（SDK から読んだ。本体は閉源） | assistants（**版つき設定**）/ threads / runs（background・stream・wait・**`multitask_strategy` = reject・interrupt・rollback・enqueue**・`if_not_exists`・**`after_seconds`**・**`webhook`**・`on_disconnect`）/ crons / store / **資源 × 動作ごとの auth ハンドラ** / encryption plugin | `ask_fuseforks` 1 本（**同時 1 本 = `reject` 固定**・D7）/ schedules（cron + probe + sessionMode + summarizeAfter）/ セッション API / 合鍵 1 本 + loopback | **欠け: 完了 webhook・enqueue（待ち行列）・1 回きりの遅延実行（`after_seconds`）・背景 run + join・版つき雛形** |
+| 可観測性 | LangSmith tracing（`langsmith_tracing` / API キー）。OTel / `/metrics` は 3 lib に無い | `fuseforks.log` の計器 + `sessions.redb` + 統計画面 | 方式の差 |
+
+### 落とし込むなら（私の見立て。裁定は利用者）
+
+1. **「動的ルーティング」は既にある** — 欠けているのは**ルータそのもの**ではなく
+   **「LLM を呼ばずに選ぶ経路」**。LangGraph 流に足すなら、スケジュールの probe と同じ形
+   （コマンドの stdout で宛先を決める）を**発話の配送**にも開く形になる。
+   ただし**線は人が引く・選ぶのは LLM** がこの村の位置取りなので、足すなら「前判定」止まり
+2. **リデューサ** — 黒板の後勝ちを文言（条例）で避けているのが、LangGraph と比べて
+   最も弱い所。**`file` に追記専用の op を足す**（全文上書きではなく append）だけで
+   `add_messages` の「append-only」に相当する。新しい型が 1 つ増えるので Spec
+3. **運用 API の 3 つ**（完了 webhook / enqueue / `after_seconds`）は、Spec 25 の MCP サーバーと
+   Spec 28 の予定に**それぞれ 1 欄足す**規模。需要が出てから
+4. **採らない**: ノード結果キャッシュ（却下済み）/ ストリーミング（意図的）/ 周回単位の
+   checkpoint（`exchange` の粒度を変える大工事で、得るのは「落ちたら頼み直し」の解消だけ）
+
 ## 現在地（2026-08-19 更新）
 
 **[Spec 42](specs/42_stats-period.md)（統計の「全会話」を月の集計にする）を起票 → rev2 承認 →
