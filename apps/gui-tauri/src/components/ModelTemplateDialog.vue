@@ -10,6 +10,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import { parsePriceInput } from "../lib/priceInput";
 import {
   baseUrlMismatch as checkBaseUrlMismatch,
   presetBaseUrlFor,
@@ -34,20 +35,22 @@ const draft = ref<ModelTemplate | null>(null);
  *
  * `v-model.number` を使わないのは、**空欄と 0 を区別する**ため — `.number` は
  * 空文字を `0` にするので、「未設定」が「無料」に化ける。**未設定は 0 ではない。**
+ *
+ * **setter には `string | number` が届く**（2026-08-19 の実バグ）。`type="number"` の
+ * `<input>` では `.number` を付けなくても Vue が数値へ自動変換するので、文字列前提の
+ * `raw.trim()` は数字を打った瞬間に `TypeError` で死に、欄が書かれなかった。
+ * 変換は `parsePriceInput`（純関数・`lib/priceInput.ts`）の 1 実装に寄せてある。
  */
 function priceField(key: keyof ModelTemplate) {
-  return computed<string>({
+  return computed<string | number>({
     get: () => {
       const v = draft.value?.[key];
       return typeof v === "number" ? String(v) : "";
     },
     set: (raw) => {
       if (!draft.value) return;
-      const trimmed = raw.trim();
       // 空欄 = 未設定へ戻す。数値でなければ触らない（通貨記号を書かせない）。
-      const parsed = trimmed === "" ? null : Number(trimmed);
-      const next =
-        parsed === null || (Number.isFinite(parsed) && parsed >= 0) ? parsed : undefined;
+      const next = parsePriceInput(raw);
       if (next !== undefined) {
         (draft.value as unknown as Record<string, number | null>)[key as string] = next;
       }
