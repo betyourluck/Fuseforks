@@ -960,7 +960,7 @@ Spec 41       単価を登録して ≈ $ を出した
   **Spec 39 D5「通貨に換算しない」を覆した**（3 理由のうち 2 つが 3 日で消えた）。
   **この村で 1 本目の非 LLM 外向き通信**で、`PRIVACY.md` 日英に節を足した
 - **先行実装の調査**（LangGraph / Dify / AionUi / otari）と、**単価表の公開**
-  （`betyourluck.github.io/prices.json`。1,686 モデル・MIT の LiteLLM 由来）
+  （`betyourluck.github.io/prices.json`。MIT の LiteLLM 由来 + Perplexity は手写し）
 
 **次の一手**: 評価基盤の**完遂**の軸（`reply: to=` を数えるだけ。計器は要らない）/
 単価表の overlay（**埋める範囲は見込みより狭い** — さくら系も公開表に載っていた）/
@@ -4546,8 +4546,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   実機で表示を確認）。詳細は上の「現在地（2026-08-19 更新）」が正
 - [Spec 41](specs/41_model-pricing.md)（モデルごとの単価と、おおよその金額表示）:
   **Done**（2026-08-18。**起票から Done まで 1 日**。検収 9 件中 8 件を観測）。
-  **取得先は `https://betyourluck.github.io/prices.json`**（GitHub Pages。1,686 モデル・
-  187KB。出典 `BerriAI/litellm` = MIT で、著作権表示は JSON 自身の `_notice`）。
+  **取得先は `https://betyourluck.github.io/prices.json`**（GitHub Pages。出典
+  `BerriAI/litellm` = MIT で、著作権表示は JSON 自身の `_notice`）。
+  **2026-08-20 に Perplexity の 42 件を手で足した**（`perplexity/…` / `openai/…` の
+  **プレフィックス付きキー**。それまでの LiteLLM 由来は 1 件も `/` を含まなかった）。
+  村が送る `ModelTemplate.model` と直に突き合うのが照合規則なので、Perplexity 経由の
+  モデルはプレフィックスごと鍵にする。**同じモデルでも経由で値段が違う** —
+  `google/gemini-3.7-flash` は素の `gemini-3.7-flash` の**ちょうど半額**で、
+  別エントリであること自体に意味がある。**総数は書かない**（#67 — 足すたびに腐る。
+  「1,686 モデル」と書いた 2 日後にこの追加で嘘になった）。
   **鍵は素のモデル名**で、村が送る `ModelTemplate::model` と直に突き合う。
   **これがこの村で 1 本目の非 LLM 外向き通信**なので `PRIVACY.md` 日英に節を足した
   （押したときだけ / 変更・空にできる / GET のみ / **配信元に要求の事実と IP が残る**）。
