@@ -77,6 +77,26 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     if let Err(err) = fuseforks_core::open_log(&workspace.join("fuseforks.log")) {
         eprintln!("[fuseforks] ログファイルを開けませんでした（stderr のみ）: {err}");
     }
+    // **どの配布物が村を触ったかを、ログだけで読めるようにする**（2026-08-20）。
+    //
+    // 起点は事故 — 旧い版（単価の欄をまだ知らない世代）で村を開くと、`world.json` の
+    // 未知の欄が**黙って落ちて書き戻される**。単価が消えて統計の金額が出なくなったが、
+    // 起動の区切りが「起動しました」だけだったので、**3 回の起動のどれが古い版か**を
+    // ログから判別できなかった（`failures.md` #112）。
+    //
+    // **`CARGO_PKG_VERSION` は使えない** — CI がタグから書き換えるのは
+    // `tauri.conf.json` の `version` だけで、workspace の version はどのビルドでも
+    // `0.1.0` のまま。ここが読むのは書き換えられる側（`package_info`）。
+    //
+    // **判別できる範囲**: 配布物（`0.1.8` 等）と手元のビルド（`0.1.0`）は分かれる。
+    // **手元のビルド同士は区別できない** — 全部 `0.1.0` になる。コミットや
+    // ビルド時刻まで要るなら `build.rs` が要り、それはこの 1 行の射程の外。
+    // `profile` はその半分を埋める（`tauri dev` = debug / `tauri build` = release）。
+    fuseforks_core::note!(
+        "version: app={} profile={}",
+        app.package_info().version,
+        if cfg!(debug_assertions) { "debug" } else { "release" }
+    );
 
     // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
     // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。

@@ -2892,8 +2892,11 @@ entities:
     workspace/fuseforks.log の両方へ出る (diag::note)。stderr だけだった間は
     `tauri dev` の端末にしか残らず、利用者が貼らない限り誰も読めなかった
     (1 ターン 730,406 トークンの診断がそこで止まった)。
-    行の種類は turn start / turn / turn failed / tool / tool blocked /
-    plan wave / plan bundle / schedule。turn start と turn failed は後から足した
+    行の種類は version / turn start / turn / turn failed / tool / tool blocked /
+    plan wave / plan bundle / schedule。version は起動の区切りの直後に 1 行
+    (app=tauri.conf.json の版 / profile=debug|release。2026-08-20、failures.md #112) —
+    **同じ端末に複数世代の配布物が並び、同じ world.json を共有する**ので、
+    どの世代が村を触ったかがログから読めないと事故を事後に追えない。turn start と turn failed は後から足した
     — turn 行が成功経路にしかなく、落ちたターンが 1 行も残らないうえ、
     ツールを呼ばない周 (LLM 応答待ち) は行が出ないため、
     「飛行中」と「3 分前に死んだ」が同じ無音に見えた (2026-07-31)。

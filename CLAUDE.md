@@ -323,7 +323,12 @@ CLA 署名済み、`Validation-Completed` / `New-Package` のラベルで**人�
   読み直す** — 古い値を写すと更新検出が壊れる
 - **NSIS は現ユーザー単位に入る**（開発機の ARP が `ARP\User\X64\fuseforks`
   だったので確定）。MSI は `ALLUSERS=1` でマシン全体。**この 2 つは同じ端末に
-  並んで入り、identifier が同じなので村のデータは共有する**
+  並んで入り、identifier が同じなので村のデータは共有する** —
+  **ここで実際に事故が起きた**（2026-08-20。`failures.md` #112）。手元のビルドを
+  合わせて **3 世代が 1 つの `world.json` を共有**し、**単価の欄を知らない旧版が
+  それを黙って削って書き戻した**。`#[serde(default)]` は「欠けても読める」だけで
+  「消さない」を保証しない。処方は起動行へ `version: app=… profile=…` を出したこと
+  （どの世代が触ったかをログで読む）。**未知の欄を保持して書き戻す側は未起票**
 - **MSI はインストール中に WebView2 を外部から落とす経路を持つ**
   （`DownloadAndInvokeBootstrapper` が `NOT(REMOVE OR INSTALLED_WEBVIEW2_VERSION)`
   の条件で `powershell.exe` を呼ぶ）。Win11 には既に入っているので通常は飛ぶ
