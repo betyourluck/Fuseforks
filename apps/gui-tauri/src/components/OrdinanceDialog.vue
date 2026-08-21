@@ -9,7 +9,7 @@
  *
  * 保存すると**次の発話から**全エージェントに反映される（再起動不要）。
  */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
 
 import CodeEditor from "./CodeEditor.vue";
@@ -53,6 +53,21 @@ async function save(): Promise<void> {
   } finally {
     saving.value = false;
   }
+}
+
+/**
+ * 保存できるか。**保存ボタンと `Ctrl+S` が同じ述語を見る。**
+ *
+ * 条件を 2 箇所に書くと、片方だけがすり抜ける形が生まれる（`Ctrl+S` だけが
+ * 保存中に二重で走る）。ボタンの `:disabled` はこれの否定。
+ */
+const canSave = computed(
+  () => !loading.value && !loadError.value && !saving.value && text.value !== saved.value,
+);
+
+/** `Ctrl+S`。押せないときは何もしない（ボタンが `disabled` のときと同じ）。 */
+function saveFromEditor(): void {
+  if (canSave.value) void save();
 }
 
 async function requestClose(): Promise<void> {
@@ -107,6 +122,7 @@ async function requestClose(): Promise<void> {
           class="h-full"
           language="markdown"
           :placeholder="$t('ordinance.placeholder')"
+          @save="saveFromEditor"
         />
       </div>
 
@@ -114,7 +130,7 @@ async function requestClose(): Promise<void> {
         <span v-if="text !== saved" class="text-[11px] text-warn">{{ $t("ordinance.unsaved") }}</span>
         <button
           class="ml-auto rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
-          :disabled="loading || !!loadError || saving || text === saved"
+          :disabled="!canSave"
           @click="save"
         >
           {{ saving ? $t("ordinance.saving") : $t("ordinance.save") }}

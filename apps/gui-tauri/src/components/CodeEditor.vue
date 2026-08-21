@@ -33,7 +33,17 @@ const props = withDefaults(
   { placeholder: "", readonly: false },
 );
 
-const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string): void;
+  /**
+   * `Ctrl+S`（mac は `Cmd+S`）が押された。**保存するかは親が決める。**
+   *
+   * ここは合図しか出さない — 保存できるかの条件（未変更 / 保存中 / JSON が
+   * 壊れている）は保存ボタンの `:disabled` が既に持っており、こちらでもう一度
+   * 書くと**同じ規律が 2 箇所に生える**。親は**ボタンと同じ述語**で受けること。
+   */
+  (e: "save"): void;
+}>();
 
 const host = ref<HTMLElement | null>(null);
 const languageCompartment = new Compartment();
@@ -120,6 +130,27 @@ onMounted(() => {
         autocompletion(),
         closeBrackets(),
         keymap.of([
+          // **この 2 本は既定より先に置く**（同じ keymap では先頭ほど強い）。
+          //
+          // `Mod-` は CodeMirror の記法で **mac では Cmd に写る**。`Ctrl-` と
+          // 書くと mac で効かない（サーヴァント一覧の Alt+↑↓ で「3 OS で片方だけ
+          // 効かない鍵は採らない」と決めた線がそのまま当たる）。
+          {
+            key: "Mod-s",
+            run: () => {
+              emit("save");
+              return true;
+            },
+          },
+          // **リロードを飲む。** WebView の `Ctrl+R` は画面を作り直すので、
+          // 編集中の本文が**確認を 1 つも通さずに消える** — dirty の確認は
+          // どの面でも「閉じる」経路にしか無く、リロードはそこを通らない。
+          // JetBrains 系では `Ctrl+R` が Replace なので手癖で押される
+          // （この村の置換は `Ctrl+F` のパネルの中にある）。
+          //
+          // **エディタにフォーカスがある間だけ**塞ぐので、再読み込みで投影が
+          // 張り直ることを見る手順（Spec 08 の実機確認）は今までどおり通る。
+          { key: "Mod-r", run: () => true },
           indentWithTab,
           ...closeBracketsKeymap,
           ...defaultKeymap,

@@ -73,6 +73,19 @@ function insertTemplate(): void {
   content.value = template.value;
 }
 
+/**
+ * 保存できるか。**保存ボタンと `Ctrl+S` が同じ述語を見る。**
+ *
+ * 条件を 2 箇所に書くと、片方だけがすり抜ける形が生まれる（`Ctrl+S` だけが
+ * 保存中に二重で走る / 壊れた JSON を通す）。ボタンの `:disabled` はこれの否定。
+ */
+const canSave = computed(() => dirty() && !saving.value);
+
+/** `Ctrl+S`。押せないときは何もしない（ボタンが `disabled` のときと同じ）。 */
+function saveFromEditor(): void {
+  if (canSave.value) void save();
+}
+
 async function save(): Promise<void> {
   saving.value = true;
   const ok = await orchestrator.writeConfig(props.agentId, kind.value, content.value);
@@ -146,6 +159,7 @@ watch(
         class="h-full"
         :language="kind === 'mcp' || kind === 'run' ? 'json' : 'markdown'"
         :placeholder="placeholder"
+        @save="saveFromEditor"
       />
 
       <pre
@@ -165,7 +179,7 @@ watch(
       </button>
       <button
         class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
-        :disabled="!dirty() || saving"
+        :disabled="!canSave"
         @click="save"
       >
         {{ saving ? $t("editor.saving") : $t("editor.save") }}

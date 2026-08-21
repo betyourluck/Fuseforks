@@ -76,6 +76,22 @@ async function load(): Promise<void> {
 
 onMounted(load);
 
+/**
+ * 保存できるか。**保存ボタンと `Ctrl+S` が同じ述語を見る。**
+ *
+ * 条件を 2 箇所に書くと、片方だけがすり抜ける形が生まれる（`Ctrl+S` だけが
+ * 保存中に二重で走る / 壊れた JSON を通す）。ボタンの `:disabled` はこれの否定。
+ */
+const canSave = computed(
+  () =>
+    !loading.value && !loadError.value && !parseError.value && !busy.value && dirty.value,
+);
+
+/** `Ctrl+S`。押せないときは何もしない（ボタンが `disabled` のときと同じ）。 */
+function saveFromEditor(): void {
+  if (canSave.value) void save();
+}
+
 async function save(): Promise<void> {
   if (parseError.value) return;
   busy.value = true;
@@ -184,6 +200,7 @@ async function requestClose(): Promise<void> {
             class="h-64"
             language="json"
             :placeholder="$t('mcp.editorPlaceholder')"
+            @save="saveFromEditor"
           />
 
           <!-- 接続結果。繋がらなかった理由が見えないと利用者は直しようがない。 -->
@@ -228,7 +245,7 @@ async function requestClose(): Promise<void> {
         </span>
         <button
           class="ml-auto rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
-          :disabled="loading || !!loadError || !!parseError || busy || !dirty"
+          :disabled="!canSave"
           @click="save"
         >
           {{ busy ? $t("mcp.saving") : $t("mcp.saveAndConnect") }}

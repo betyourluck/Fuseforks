@@ -136,6 +136,11 @@ function setTool(tool: string, checked: boolean): void {
     : current.filter((name) => name !== tool);
 }
 
+/** `Ctrl+S`。押せないときは何もしない（ボタンが `disabled` のときと同じ）。 */
+function saveFromEditor(): void {
+  if (canSave.value) void save();
+}
+
 async function save(): Promise<void> {
   if (!draft.value || !canSave.value) return;
   busy.value = true;
@@ -344,6 +349,7 @@ async function remove(role: Role): Promise<void> {
                 v-model="draft.defaults.construct"
                 class="h-full"
                 language="markdown"
+                @save="saveFromEditor"
               />
             </div>
           </div>
