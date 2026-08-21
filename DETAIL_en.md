@@ -267,6 +267,19 @@ Without this check, unfinished sentences would fly off the moment Japanese conve
 Boundaries can be adjusted using two splitters (double-click restores defaults, arrow keys also move them).
 Dimensions are saved in `localStorage`. Since this is a display preference rather than orchestrator state, it is not mixed into `world.json`.
 
+### Keys in the editor
+
+The ordinance, roles, MCP config, and a servant's own documents are edited in a
+CodeMirror editor (`CodeEditor.vue`). Three keys work **only while the editor has focus**.
+
+| Key | What happens |
+|---|---|
+| **Ctrl+S** (Cmd+S on macOS) | Saves. **Does nothing when the save button is disabled** (unchanged / already saving / broken JSON) |
+| **Ctrl+F** | Opens the search panel. **The replace fields live in there too** (localized when the UI language is Japanese) |
+| **Ctrl+R** | **Nothing happens** — the page reload is swallowed, because it would discard the text being edited |
+
+**`Ctrl+R` is swallowed only inside the editor**; everywhere else the window reloads as before.
+
 ---
 
 ## UI Synchronization Rules
