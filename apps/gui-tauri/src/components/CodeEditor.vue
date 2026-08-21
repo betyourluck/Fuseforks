@@ -20,6 +20,8 @@ import {
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
+import { currentLocale } from "../i18n";
+import { searchPhrases } from "../lib/editorPhrases";
 
 type EditorLanguage = "markdown" | "json";
 
@@ -50,6 +52,7 @@ const languageCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
 const themeCompartment = new Compartment();
+const phraseCompartment = new Compartment();
 let editor: EditorView | null = null;
 
 const { settings } = useUiSettings();
@@ -163,6 +166,7 @@ onMounted(() => {
         readOnlyCompartment.of(readOnlyExtension(props.readonly)),
         placeholderCompartment.of(placeholder(props.placeholder)),
         themeCompartment.of(editorTheme(settings.theme)),
+        phraseCompartment.of(EditorState.phrases.of(searchPhrases(currentLocale()))),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const value = update.state.doc.toString();
@@ -202,6 +206,14 @@ watch(
 watch(
   () => settings.theme,
   (theme) => editor?.dispatch({ effects: themeCompartment.reconfigure(editorTheme(theme)) }),
+);
+
+// 検索パネルの文言も表示言語へ追従させる。開いたまま言語を切り替えられるので
+// （システム設定と編集画面は同時に開きうる）、テーマと同じ compartment 方式。
+watch(currentLocale, (value) =>
+  editor?.dispatch({
+    effects: phraseCompartment.reconfigure(EditorState.phrases.of(searchPhrases(value))),
+  }),
 );
 
 onBeforeUnmount(() => editor?.destroy());
