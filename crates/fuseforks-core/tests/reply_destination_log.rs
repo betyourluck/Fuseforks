@@ -151,6 +151,13 @@ async fn a_handoff_is_logged_and_the_reply_goes_to_the_user() {
         "転送された側の答えは reply_to を持たないので user へ返る:
 {body}"
     );
+    // 断り形の計器が配線されていること（2026-08-24。「答えです」は断りではない
+    // ので no。判定の中身は refusal.rs の単体が持ち、ここは欄の実在だけを見る）。
+    assert!(
+        body.contains("refusal=no"),
+        "reply: 行に refusal= の欄が出ること:
+{body}"
+    );
 }
 
 /// 提示されたツール名を覚えるだけのバックエンド。

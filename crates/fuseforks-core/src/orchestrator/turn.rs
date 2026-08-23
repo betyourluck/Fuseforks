@@ -2392,10 +2392,19 @@ async fn dispatch_outcome(
             // `to=user` なら `reply_to` が無かった = 転送で来た依頼だった証拠、
             // `to=<agent_id>` なら委譲が戻っている証拠。**判定の材料は宛先だけ**で、
             // 依頼文の中身を読む必要が無い。
+            //
+            // `refusal=` は**断り形**の観測（`crate::refusal`）。完遂の軸の 2 本目で、
+            // to= が宛先の取り違えを、refusal= が「返したが中身が辞退」を数える。
+            // 配送には一切効かない — 効かせると Spec 08 の凍結（分類は型で運ぶ）を破る。
             note!(
-                "reply: agent={agent_id} to={} hop={next_hop} chars={}",
+                "reply: agent={agent_id} to={} hop={next_hop} chars={} refusal={}",
                 endpoint_log_label(&destination),
                 content.chars().count(),
+                if crate::refusal::is_refusal_form(content) {
+                    "yes"
+                } else {
+                    "no"
+                },
             );
             let mut outgoing = AgentMessage::new(from, destination, content, next_hop);
             outgoing.tokens = tokens as u32;

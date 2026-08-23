@@ -1786,10 +1786,16 @@ entities:
       ツールを探させることになる。
 
       **診断はログで読める** (2026-08-11 に足した計器):
-        handoff: agent=… to=… hop=…          転送そのもの
-        reply:   agent=… to=… hop=… chars=…  答えの宛先
+        handoff: agent=… to=… hop=…                      転送そのもの
+        reply:   agent=… to=… hop=… chars=… refusal=…    答えの宛先と断り形
       reply の to=user は「reply_to を持たない配送 = 転送で来た依頼」の証拠。
       **この 2 行が無かったせいで、原因の特定に何往復もかかった** (#94)。
+      refusal=yes|no は**断り形**の観測 (2026-08-24 追加。crate::refusal の
+      1 実装 — 先頭 80 字の窓 × 閉じた語彙表)。**配送には一切効かない** —
+      「分類は文言 parse でなく型で運ぶ」の凍結が縛るのは配送で、観測だけの
+      欄はその外。名前が failure でないのは「できません」が正答の依頼が
+      実在するため — 数えるのは形で、解釈は読む側 (完遂の軸の材料。
+      eigent 実読 2026-08-24 由来、出自は camel の validate_task_content)。
 
     hears_room_log_invariant: |
       hearsRoomLog は広場ログの**受信側だけ**の設定 (Spec 03 rev2 承認、
