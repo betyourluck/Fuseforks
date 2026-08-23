@@ -282,7 +282,8 @@ enums:
           実測: 後ろから 16 件の逆順範囲走査が 0.03 ms (20,000 件のテーブル)
         - **Shared.log の 5,000 件はメモリ上の上限であって保存の上限ではない。**
           ファイルには全量が残り、起動時に読むのは末尾 5,000 件
-        - **復元しないもの**: plan の波 (Spec 08 が in-memory と凍結) /
+        - **復元しないもの**: plan の波 (Spec 08 が in-memory と凍結。
+          **提案 pending も含む** — Spec 43) /
           BudgetPool (因果ごと・Spec 11) / MCP 接続 / TurnHandle /
           稼働状態 (bootstrap は自動起動しない) / 累積統計 (プロセス寿命)
         - **半端なターンを許容する。** message は投入時、exchange はターン完了時に
@@ -1657,6 +1658,7 @@ entities:
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
       allowHandoff: bool            # 転送 (transfer_to_*) を提示するか。既定 true
+      planReview: bool              # plan の編集窓 (計画の確認)。既定 false (Spec 43)
       batchStart: bool              # 一括起動 (▶) の対象か。既定 true
     batch_start_invariant: |
       一括起動 = 左ペインヘッダの ▶ で、batchStart が真のエージェントだけを
@@ -1841,6 +1843,7 @@ entities:
       enabledTools: String[] | null # 同上
       hearsRoomLog: bool            # 同上
       allowHandoff: bool            # 同上 (転送を提示するか。**投影にも要る**)
+      planReview: bool              # 同上 (plan の編集窓。**投影にも要る** — Spec 43)
       batchStart: bool              # 同上 (一括起動 ▶ の対象か。稼働状態は status)
       lastError: ErrorPayload | null
 
@@ -2523,6 +2526,7 @@ entities:
       planId: u64                # プロセス内で単調増加。1 始まり・0 は予約
       agentId: AgentId           # 進行役
       wave: u32                  # ターン内連番 (stderr の wave= と同じ値のまま)
+      state: pending | dispatched | discarded  # 波レベル状態 (Spec 43)。serde default = dispatched — 旧クライアント・編集窓 OFF の経路は従来の意味のまま (加算的変更)
       startedAtMs: u64           # epoch ms (壁時計)
       tasks:                     # 入力順 (束ねと同じ。解決順ではない)
         to: AgentId              # 波内で一意 (同一宛先の重複 = 静的な不正)
@@ -2542,7 +2546,10 @@ entities:
         (波の因果を追えなくて困った実例) が出たときに別途
       - **配送ゼロの plan (静的差し戻し / hop 上限) は記録しない。** 波 =
         配送が起きた単位。stderr の plan wave: も早期 return が eprintln! より
-        前にあり配送ゼロでは出ない (検証済み) — GUI と stderr の数え方は一致
+        前にあり配送ゼロでは出ない (検証済み) — GUI と stderr の数え方は一致。
+        **Spec 43 の提案 (state=pending) は例外** — 配送前だが記録される
+        (記録が編集窓の器そのもの)。静的差し戻し・hop 上限の不記録は変わらず、
+        「plan wave: は配送でだけ出る」も変わらない (提案の段は plan pending:)
       - 保持はリングバッファ**上限 50 波**。押し出しは**状態を問わず**古い方から。
         押し出された波への後続更新は窓の外として無視する (event は普通に飛ぶ
         ので、投影側の欠けであって配送の欠けではない)。概算 1 波 ≈ 400 byte、
@@ -3164,6 +3171,50 @@ conversation_termination:
           撒くので、ターンの途中で繋ぎ替えは起こりうる (将来の話ではない)
       未解決: 束ねた結果は N 体分の回答全文を進行役の履歴へ積む (ask の N 倍)。
       上限も要約も**実測で膨らむのを見てから**決める (確かめる前に席を作らない)。
+    plan_edit_window: |
+      plan の編集窓 (Spec 43 rev2 承認 2026-08-24)。planReview が真の個体の
+      plan は配送せず**提案**を記録してターンを正常に終え、人の承認 (dispatch)
+      が配送を起こす二相。LLM が立てた計画を人が直してから撒く —
+      「線は人が引く」の計画への延長。出自は eigent の
+      eigent_make_sub_tasks / eigent_start (CLAUDE.md の eigent 実読の節)。
+      凍結 (Spec 43 の 9 本):
+        1. **既定 OFF。** planReview が偽 (既定) の個体の plan は
+           バイト等価の挙動 — 既存の村は 1 ミリも変わらない
+        2. **提案は永続化しない** (session_store の「復元しないもの」に
+           提案 pending も含む。再起動で消えたら頼み直し — 作業の寿命)
+        3. **dispatch の検証は run_plan と 1 実装** (空 / 宛先がその進行役の
+           接続先 / 宛先重複。検証は dispatch 時点の接続で掛かる —
+           GUI が何でも配送できる形にしない。Spec 20 rev2 の罠の再演防止)
+        4. **編集の中間状態に API を与えない。** IPC は
+           dispatch_plan_wave(planId, tasks: [{to, message}]) と
+           discard_plan_wave(planId) の 2 本だけ。提案の真実は
+           PlanWaveRecord に提示時に記録された tasks、dispatch が受けた
+           最終形が配送の真実 — その間に真実は無い
+        5. **dispatch は新しい因果の根** (ユーザー発話・予定の発火に次ぐ
+           3 つ目)。天井は World::token_budget() から new_root_budget で
+           切る 1 実装 — 式を増やさない。進行役ターンの残り予算は
+           引き継がない。cancel は新しい root token (interrupt_all で切れる)。
+           波の配送は next_hop=1 (run_plan と同じ位置)
+        6. **束ねの送り手は Endpoint::System・宛先は進行役のみ。**
+           他個体の広場ログへ漏れない (#89 の回帰をテストで留める)。
+           配送そのものは RepeatGuard の射程外 (ツール呼び出しの機構なので
+           構造的に当たらない — 当たらないこと自体をテストで凍結する)
+        7. **LLM は承認後の経路に居ない。** 人が見た計画のデータがそのまま
+           検証・配送される (提示と実行の同一性の構造的保証)
+        8. **ターンの外の実行形は 2 つまで** (手動要約 = failures.md #50 と
+           本 Spec の波の実行者)。3 つ目はこの凍結を名指しで覆す。どちらも
+           TurnSpend で精算し計器を持つ (#50 / #103 の処方を最初から)
+        9. **dispatch 実行中に進行役が停止したら束ねは破棄**し、
+           plan bundle discarded: reason=agent_stopped の 1 行 + 会話への
+           System 行で事実を残す (黙って捨てない — #44 の規律)
+      欄名: AgentSpec.planReview: bool (serde default = false)。
+      **AgentSnapshot にも写す** (投影に無い欄は設定保存で既定へ戻る —
+      Spec 14 P1 の規律)。UI ラベルは「計画の確認」(分類・ラベルは
+      システム用語側 — 用語境界)。
+      計器: plan pending: (提示) / plan dispatch: (実行の起点) /
+      plan discard: (破棄) / plan bundle discarded: (M2 の破棄)。
+      既存の plan wave: 〜 plan bundle: は dispatch 後の配送で従来どおり出る。
+      提案の段では plan wave: を出さない (検収 1 の負の対照)。
     presence: |
       顔ぶれの提示と入退室の通知 (Spec 06, 2026-07-30 凍結)。
       人間には UI で見えている稼働状態が、エージェントには見えていなかった

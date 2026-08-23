@@ -182,7 +182,8 @@ rev2 で入った差分（査読 2026-08-02）:
 7. **滑る窓はロード時に再適用する。** `records` には全 `exchange` が残り、
    復元時に `history_turns` の窓で切る。窓の値を変えたら次回の復元から効く
    （保存時に切ると、設定を広げても過去は戻らない）
-8. **復元しないもの**: plan の波（Spec 08 が in-memory と凍結）/ `BudgetPool`
+8. **復元しないもの**: plan の波（Spec 08 が in-memory と凍結。提案 pending も
+   含む — Spec 43）/ `BudgetPool`
    （因果ごと・Spec 11）/ MCP 接続 / `TurnHandle` / 稼働状態
    （bootstrap は自動起動しない、既存契約）/ 累積統計（プロセス寿命）
 9. **`Shared.log` の 5,000 件はメモリ上の上限であって、保存の上限ではない。**

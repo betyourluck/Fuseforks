@@ -1,8 +1,12 @@
 # Spec: plan の編集窓 — 計画を提示し、人が直してから撒く
 
 - 起票: 2026-08-24
-- 状態: **rev2（査読 M1〜M3 / S1〜S2 / Nit 2 を反映。M3 と S2 は前提の機構名を
-  実装と突き合わせて訂正のうえ採用 — Notes 5）**
+- 状態: **rev2 承認（2026-08-24）→ P0 完了**（`data_contract` の
+  `plan_edit_window`（凍結 9 本 + 欄名 + IPC 2 本 + 計器）/ `AgentSpec` と
+  `AgentSnapshot` へ `planReview` / `PlanWaveRecord` へ波レベル状態
+  `state`（serde default = dispatched）と「配送ゼロは記録しない」への
+  pending 例外 / Spec 04・08 ヘッダと Spec 12 凍結 8・`session_store` の
+  「復元しないもの」へ続報）。査読の反映記録は Notes 5
 - 起点: eigent の実読（CLAUDE.md「eigent の実読と突き合わせ（2026-08-24）」
   取り込み 3。利用者裁定「③の編集窓は号令待ち → Spec 化をお願いします」）。
   eigent は camel の一体だった `process_task` を**二分割してまで**

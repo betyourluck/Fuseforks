@@ -4,6 +4,10 @@
 **Date**: 2026-07-30
 **Status**: **Done**（2026-08-04 実機確認まで完了）。rev2 査読承認 → Phase 0〜4 完了（2026-07-30）
 
+**改訂の続報**: [Spec 43](43_plan-edit-window.md) で波レベル状態
+`pending / dispatched / discarded` が加わる（加算的変更。serde default =
+dispatched なので既存の意味は不変。2026-08-24 rev2 承認）。
+
 **実機確認 2 本とも観測済み。**
 
 1. **波が列として現れ、セルが個別に確定する**（2026-08-02）— answered と
