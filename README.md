@@ -27,7 +27,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | | |
 |---|---|
 | 🏘️ **Build a Village** | Create agents and tie them together. **Kizuna** is your control panel |
-| 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results. Optional **plan review** (off by default) lets you edit the plan before it fans out |
+| 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results. Optional **plan review** (off by default) lets you edit the plan before it fans out. The wait for an answer is configurable (default 600 s); circular delegation is rejected instantly instead of waiting |
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |

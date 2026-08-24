@@ -568,6 +568,14 @@ While `hop` bounds *depth*, this bounds *spend* — an orthogonal brake. Each re
 - The remaining balance is never injected into prompts, and there is no automatic retry. The ceiling counts silently and only speaks when exhausted.
 - **Near the ceiling, part of a wave may come back without an answer** ([Spec 38](specs/38_budget-reserve.md)). At each round boundary the budget for the next call is **reserved up front**, so an agent can be refused while the balance is not yet zero. That agent's turn is cut and **nothing re-asks on its own**, so the bundle comes back with a gap. If you see gaps, raise the ceiling or fan out to fewer agents.
 
+#### Delegation Wait Time and Immediate Cycle Rejection ([Spec 44](specs/44_ask-cycle-detection.md))
+
+The wait for an answer from an agent asked via `ask` / `plan` defaults to **600 seconds**, changeable to 30–3600 seconds under **System Settings > Cost Management** (stored as `askTimeoutSecs` in `world.json`, so it travels with the village). A timeout does **not** stop the other agent's turn — the design leans toward not killing slow-but-healthy research, and the spend of an undelivered answer still appears in the stats.
+
+The clock can be extended freely because **delegation cycles (deadlocks) no longer depend on it**. Each envelope carries the chain of agents blocked waiting for an answer in this causality; when an `ask` / `plan` delivery targets an agent already in that chain, it is **rejected immediately without entering the mailbox** (one "circular delegation" reply comes back, and both turns continue normally). Handoffs carry the chain with its tail removed, so **asking back the original requester after a handoff still goes through** — only cycles of waiting are rejected.
+
+One caution for villages used externally through the MCP server: the 600-second default can exceed the MCP client's own timeout, so **set `timeout` in `.mcp.json` to at least this value** (otherwise the client cuts the wait before the village does).
+
 ### Tool Execution Loop
 
 This runs in the same framework as transfers. The model receives transfer and execution tools as one set, and the receiver distinguishes the returned calls.
@@ -801,7 +809,7 @@ Convergence needs a condition before termination. Agents retain the latest `hist
 
 **History is scoped to the conversation** (Spec 12). Close the app and reopen it and the previous conversation's history comes back, which is why the first request after a restart is answered in light of what was said before. Starting or stopping an agent does not clear it. To start over, press "New chat" — that is the one operation that marks a break between conversations.
 
-Cycles in the topology itself are **allowed**. Agents going back and forth is this system's purpose; the two layers above are the proper place to stop it.
+Cycles in the topology itself are **allowed**. Agents going back and forth is this system's purpose; the two layers above are the proper place to stop it. The one run-time exception is a **cycle of waiting** (A waiting on B while B waits on A), which is rejected immediately at delivery ([Spec 44](specs/44_ask-cycle-detection.md)) — cycles of ties are free; only cycles of waiting cannot form.
 
 ---
 
@@ -1271,7 +1279,7 @@ Three things have since been added into this frame: the theme, your own name and
 | Page | Content |
 |---|---|
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
-| Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
+| Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
 | Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default |
 | User Interface | **Theme** (Dark / Light) and message visibility. The latter now has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
 
