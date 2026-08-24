@@ -3180,7 +3180,7 @@ conversation_termination:
       未解決: 束ねた結果は N 体分の回答全文を進行役の履歴へ積む (ask の N 倍)。
       上限も要約も**実測で膨らむのを見てから**決める (確かめる前に席を作らない)。
     plan_edit_window: |
-      plan の編集窓 (Spec 43 rev2 承認 2026-08-24)。planReview が真の個体の
+      plan の編集窓 (Spec 43 rev3 / Done 2026-08-25 — 実機検収 7 件観測)。planReview が真の個体の
       plan は配送せず**提案**を記録してターンを正常に終え、人の承認 (dispatch)
       が配送を起こす二相。LLM が立てた計画を人が直してから撒く —
       「線は人が引く」の計画への延長。出自は eigent の
