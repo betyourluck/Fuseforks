@@ -819,6 +819,9 @@ pub(super) async fn handle_message(
         // だけがここへ入る。予算と同じ経路で下流へ渡すが、書き込むのは
         // `deliver_and_wait` が答えを受け取った瞬間だけ。
         participants,
+        // 待ち手の連鎖（Spec 44）。ask / plan は自分を足して運び、転送は
+        // 末尾を除いて運ぶ。判定は deliver_and_wait の 1 箇所。
+        waiting,
     } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
@@ -990,6 +993,7 @@ pub(super) async fn handle_message(
         &budget,
         last_call_milli,
         &participants,
+        &waiting,
         &spec,
         &template,
         &handoffs,
@@ -1012,6 +1016,7 @@ pub(super) async fn handle_message(
         product,
         budget,
         participants,
+        waiting,
     )
     .await
 }
@@ -1171,6 +1176,7 @@ async fn run_turn(
     budget: &Option<Arc<crate::budget::BudgetPool>>,
     last_call_milli: &Arc<std::sync::atomic::AtomicU64>,
     participants: &Option<Participants>,
+    waiting: &[AgentId],
     spec: &AgentSpec,
     template: &ModelTemplate,
     handoffs: &HandoffTools,
@@ -1194,6 +1200,7 @@ async fn run_turn(
         budget,
         last_call_milli,
         participants,
+        waiting,
         spec,
         template,
         handoffs,
@@ -1252,6 +1259,7 @@ async fn run_turn_inner(
     // 予約の見積もり源（Spec 38 D1(b)）。所有者は `agent_loop`。
     last_call_milli: &Arc<std::sync::atomic::AtomicU64>,
     participants: &Option<Participants>,
+    waiting: &[AgentId],
     spec: &AgentSpec,
     template: &ModelTemplate,
     handoffs: &HandoffTools,
@@ -1538,6 +1546,7 @@ async fn run_turn_inner(
                 turn,
                 budget,
                 participants,
+                waiting,
                 executable: &executable,
                 use_handoff_tools,
                 repeat_guard: &mut repeat_guard,
@@ -1873,6 +1882,8 @@ struct CallRunner<'a> {
     turn: &'a TurnHandle,
     budget: &'a Option<Arc<crate::budget::BudgetPool>>,
     participants: &'a Option<Participants>,
+    /// 待ち手の連鎖（Spec 44）。ask / plan の配送が deliver_and_wait へ渡す。
+    waiting: &'a [AgentId],
     /// registry と個別 MCP で実行できるもの（実行可否の判定に使う）。
     executable: &'a [ToolSpec],
     use_handoff_tools: bool,
@@ -1914,6 +1925,7 @@ impl CallRunner<'_> {
         let turn = self.turn;
         let budget = self.budget;
         let participants = self.participants;
+        let waiting = self.waiting;
         let use_handoff_tools = self.use_handoff_tools;
         // 同じ呼び出しに同じ結果が返り続けているなら、この 1 本は実行しない
         // （failures.md #41 の処方 1）。**結果は必ず積む** — 呼び出しだけ
@@ -1997,6 +2009,7 @@ impl CallRunner<'_> {
                 &turn.token,
                 budget.as_ref(),
                 participants.as_ref(),
+                waiting,
                 incoming.attachments.first().map(|a| a.kind()),
             )
             .await)
@@ -2021,6 +2034,7 @@ impl CallRunner<'_> {
                         &turn.token,
                         budget.as_ref(),
                         participants.as_ref(),
+                        waiting,
                         incoming.attachments.first().map(|a| a.kind()),
                     )
                     .await
@@ -2359,6 +2373,7 @@ async fn build_prompt(
 /// 独立した段だから** — 入力は [`TurnProduct`] と受信の封筒だけで、プロンプトも
 /// ツールもモデルも見ない。今日の実機の事故（1 つの依頼が 2 本に分裂する）は
 /// この段の宛先の決まり方そのもので、**ここだけを読めば追える形**にしてある。
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_outcome(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
@@ -2367,6 +2382,8 @@ async fn dispatch_outcome(
     product: TurnProduct,
     budget: Option<Arc<crate::budget::BudgetPool>>,
     participants: Option<Participants>,
+    // 待ち手の連鎖（Spec 44）。転送の配送だけが読む（末尾を除いて運ぶ）。
+    waiting: Vec<AgentId>,
 ) -> CoreResult<()> {
     let TurnProduct {
         outcome,
@@ -2544,7 +2561,17 @@ async fn dispatch_outcome(
         // **参加者は引き継ぐが、転送先はここでは数に入らない** — 数えるのは
         // 「待って答えを返した」個体で、転送は待たない（Spec 28 D7）。
         // 引き継ぐのは、転送先がさらに `ask` で待ったときにその相手を拾うため。
-        if let Err(err) = deliver(shared, to, outgoing, budget.clone(), participants.clone()).await
+        if let Err(err) = deliver(
+            shared,
+            to,
+            outgoing,
+            budget.clone(),
+            participants.clone(),
+            // 転送は直近の依頼主の待ちを解く（HandedOff の返信が上で先に
+            // 送られている）ので、連鎖は末尾を除いて運ぶ（Spec 44 凍結 2）。
+            crate::orchestrator::delegation::trimmed_chain(&waiting),
+        )
+        .await
         {
             shared.emit(CoreEvent::AgentFailed {
                 agent_id: to.clone(),

@@ -129,6 +129,10 @@ pub enum CoreError {
         agent_id: String,
     },
 
+    /// 委譲の待ち時間が範囲外（Spec 44 凍結 4 — 30..=3600 秒）。
+    #[error("委譲の待ち時間は 30〜3600 秒の範囲で指定してください")]
+    InvalidAskTimeout,
+
     /// 指定した波が承認待ちの計画ではない（存在しない・確定済み・破棄済み・
     /// リングから押し出された、のいずれか。Spec 43）。
     #[error("波 {plan_id} は承認待ちの計画ではありません")]
@@ -340,6 +344,7 @@ impl CoreError {
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",
+            Self::InvalidAskTimeout => "INVALID_ASK_TIMEOUT",
             Self::PlanWaveNotPending { .. } => "PLAN_WAVE_NOT_PENDING",
             Self::PlanDispatchInvalid { .. } => "PLAN_DISPATCH_INVALID",
             Self::MailboxFull { .. } => "MAILBOX_FULL",

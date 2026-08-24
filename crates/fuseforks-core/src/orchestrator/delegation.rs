@@ -16,6 +16,30 @@ use super::*;
 
 use crate::world::Language;
 
+/// `ask` / `plan` が送り出す連鎖 = 依頼元の連鎖 + 自分（Spec 44 凍結 2 —
+/// **判定は追加後の連鎖に対して行う**。追加前だと自己委譲だけがすり抜けて
+/// 自分の受信箱を永遠に待つ。今のトポロジーは自己ループの辺を拒否する
+/// （`world.rs` の `validate_connections`）ので実機では到達不能だが、
+/// 判定の規則をトポロジーの検証に寄りかからせない — 検証が緩んだ日に
+/// 黙って穴が開く形にしない）。
+pub(super) fn chain_with(waiting: &[AgentId], from: &Endpoint) -> Vec<AgentId> {
+    let mut chain = waiting.to_vec();
+    if let Endpoint::Agent { id } = from {
+        chain.push(id.clone());
+    }
+    chain
+}
+
+/// 転送が運ぶ連鎖 = 末尾（直近の依頼主）を除いた残り。**空なら空のまま**
+/// （Spec 44 凍結 2 — アンダーフローしない）。末尾を除くのは、転送が
+/// `HandedOff` の返信でその待ちを**配送より前に**解くため（`turn.rs` の
+/// 返信 → 配送の順）。上流（依頼主の依頼主…）はまだブロック中なので残す。
+pub(super) fn trimmed_chain(waiting: &[AgentId]) -> Vec<AgentId> {
+    let mut chain = waiting.to_vec();
+    chain.pop();
+    chain
+}
+
 /// 他のエージェントへ質問し、**答えを待って**返す（委譲）。
 ///
 /// 転送との違いは行き先だけ。転送は制御ごと渡してユーザーへ返るが、委譲は
@@ -34,6 +58,7 @@ pub(super) async fn ask_agent(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
+    waiting: &[AgentId],
     drops_attachment: Option<crate::attachment::AttachmentKind>,
 ) -> CoreResult<String> {
     // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
@@ -72,6 +97,8 @@ pub(super) async fn ask_agent(
         parent,
         budget,
         participants,
+        waiting,
+        "ask",
     )
     .await
     .0)
@@ -103,6 +130,8 @@ pub(super) async fn deliver_and_wait(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
+    waiting: &[AgentId],
+    via: &'static str,
 ) -> (String, PlanTaskState) {
     // 予算が尽きていたら配送そのものを始めない（token_budget の exhaustion —
     // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
@@ -113,6 +142,45 @@ pub(super) async fn deliver_and_wait(
         return (
             "トークン予算の上限に達したため、配送していません。".to_owned(),
             PlanTaskState::BudgetExhausted,
+        );
+    }
+
+    // 輪の検出（Spec 44）。**判定は追加後の連鎖に対して**行い、受信箱へ積まず、
+    // 会話にも「尋ねた」を記録しない — 尋ねられていないので、記録すると
+    // 広場ログが起きなかった配送を語る。輪 = 待ちの循環はここでしか生まれない
+    // （転送は待たない）ので、この 1 箇所で不成立が閉じる（凍結 1・3）。
+    let chain = chain_with(waiting, from);
+    if chain.contains(to) {
+        note!(
+            "ask refused: agent={} to={to} via={via} reason=circular chain=[{}]",
+            match from {
+                Endpoint::Agent { id } => id.to_string(),
+                other => format!("{other:?}"),
+            },
+            chain
+                .iter()
+                .map(AgentId::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        let language = shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+        return (
+            match language {
+                crate::world::Language::Ja => format!(
+                    "宛先「{to}」はこの依頼の因果の中で答えを待っています（循環する委譲）。\
+                     配送していません。依頼主への返信で直接答えてください。"
+                ),
+                crate::world::Language::En => format!(
+                    "Target \"{to}\" is waiting for an answer within this request's causality \
+                     (circular delegation). Nothing was delivered. Answer your requester directly instead."
+                ),
+            },
+            PlanTaskState::Undeliverable,
         );
     }
 
@@ -137,6 +205,8 @@ pub(super) async fn deliver_and_wait(
         budget: budget.cloned(),
         // 参加者も同じ因果を運ぶ。**入れるのは答えが返った後**（下）。
         participants: participants.cloned(),
+        // 待ち手の連鎖（Spec 44）。上で判定に使った追加後の形をそのまま運ぶ。
+        waiting: chain,
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -147,7 +217,10 @@ pub(super) async fn deliver_and_wait(
         );
     }
 
-    match tokio::time::timeout(shared.config.ask_timeout, rx).await {
+    // 待ちの上限は村の設定（Spec 44 — `World::ask_timeout()`・None = 600 秒）。
+    // 呼び出しごとに読むので、保存すれば次の委譲から効く。
+    let ask_timeout = shared.world.read().await.ask_timeout();
+    match tokio::time::timeout(ask_timeout, rx).await {
         // 答え（Answered）か転送の事実（HandedOff）。刻み手は handle_message。
         Ok(Ok(reply)) => {
             // **ここが「待って完了した」の唯一の観測点**（Spec 28 D7）。
@@ -234,6 +307,7 @@ pub(super) async fn run_plan(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
+    waiting: &[AgentId],
     drops_attachment: Option<crate::attachment::AttachmentKind>,
 ) -> String {
     // 断り書きは記録時の言語で書く（Spec 35 D6）。波の全タスクで同じ値なので
@@ -427,6 +501,7 @@ pub(super) async fn run_plan(
         parent,
         budget,
         participants,
+        waiting,
         &displays,
         dispatched_at,
     )
@@ -456,6 +531,7 @@ async fn execute_wave(
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
+    waiting: &[AgentId],
     display_of: &std::collections::HashMap<AgentId, String>,
     dispatched_at: std::time::Instant,
 ) -> Option<String> {
@@ -479,6 +555,8 @@ async fn execute_wave(
         // 参加者の集合も波の全タスクが同一の Arc を指す。**答えを返した
         // タスクだけが自分を書き込む**ので、波の中で誰が答えたかがそのまま残る。
         let participants = participants.cloned();
+        // 待ち手の連鎖も全タスクで同じ（追加は deliver_and_wait が行う）。
+        let waiting = waiting.to_vec();
         set.spawn(async move {
             let task_started = std::time::Instant::now();
             let (answer, state) = deliver_and_wait(
@@ -490,6 +568,8 @@ async fn execute_wave(
                 &parent,
                 budget.as_ref(),
                 participants.as_ref(),
+                &waiting,
+                "plan",
             )
             .await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)
@@ -497,7 +577,7 @@ async fn execute_wave(
     }
 
     // 進行役のターンが切られたら、波の待ちもここで畳む（Spec 10 — U2）。
-    // 周回境界の検査だけでは、最悪 ask_timeout（既定 180 秒）が割り込み不能の
+    // 周回境界の検査だけでは、最悪 ask_timeout（村の設定・既定 600 秒）が割り込み不能の
     // まま残る。ワーカー側は封筒の子トークンが同じ cancel で連鎖して止まるので、
     // ここで待ち続けても新しい答えは（打ち切りの報告以外）もう来ない。
     let mut wave_interrupted = false;
@@ -667,6 +747,8 @@ pub(super) async fn run_dispatched_wave(
         &cancel,
         budget.as_ref(),
         None,
+        // 新しい因果の根 — 進行役は提案でターンを終えており待っていない（凍結 2）。
+        &[],
         &displays,
         dispatched_at,
     )
@@ -700,7 +782,7 @@ pub(super) async fn run_dispatched_wave(
         body,
         0,
     );
-    match super::deliver(&shared, &coordinator, message.clone(), budget, None).await {
+    match super::deliver(&shared, &coordinator, message.clone(), budget, None, Vec::new()).await {
         Ok(()) => {
             shared.record(message).await;
         }
@@ -1243,5 +1325,43 @@ impl HandoffTools {
                 content: text.replace(TERMINATION_MARKER, "").trim_end().to_owned(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod waiting_chain_tests {
+    use super::*;
+
+    fn agent(id: &str) -> AgentId {
+        AgentId::from(id)
+    }
+
+    /// ask / plan の連鎖は自分を末尾に足す。**判定は追加後**なので、
+    /// 自分宛（自己委譲）も `contains` の同じ網に掛かる（Spec 44 凍結 2 —
+    /// 今のトポロジーでは自己ループの辺が拒否されるため実機では到達不能だが、
+    /// 規則をトポロジーの検証に寄りかからせない）。
+    #[test]
+    fn chain_with_appends_the_asker_and_catches_self_delegation() {
+        let from = Endpoint::Agent { id: agent("a") };
+        let chain = chain_with(&[agent("root")], &from);
+        assert_eq!(chain, vec![agent("root"), agent("a")]);
+        // 自己委譲は追加後の連鎖でだけ捕まる（追加前 = [root] には a が居ない）。
+        assert!(chain.contains(&agent("a")));
+
+        // エージェント以外の送り手（外部の扉など）は連鎖に足さない。
+        let external = chain_with(&[], &Endpoint::User);
+        assert!(external.is_empty());
+    }
+
+    /// 転送は末尾（直近の依頼主 — HandedOff で待ちが解ける側）だけを除き、
+    /// **空なら空のまま**（アンダーフローしない。Spec 44 凍結 2）。
+    #[test]
+    fn trimmed_chain_pops_the_tail_and_keeps_empty_empty() {
+        assert_eq!(
+            trimmed_chain(&[agent("x"), agent("a"), agent("b")]),
+            vec![agent("x"), agent("a")],
+            "上流（依頼主の依頼主）はまだブロック中なので残す"
+        );
+        assert!(trimmed_chain(&[]).is_empty(), "空なら空のまま");
     }
 }

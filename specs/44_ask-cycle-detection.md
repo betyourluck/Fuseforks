@@ -1,7 +1,8 @@
 # Spec: 委譲の輪の検出と待ち時間 — `ask_timeout` を保険へ格下げする
 
 - 起票: 2026-08-24
-- 状態: **rev2 承認（2026-08-24）→ P0 完了**（`data_contract` の
+- 状態: **rev2 承認（2026-08-24）→ P0〜P1 完了**（P1 実装記録は下。
+  結合 4 本 + 単体 3 本、ミューテーション 2 回で赤確認）。P0 = `data_contract` の
   `ask_cycle_contract`（凍結 6 本 + 計器 + **外の扉との相互作用**）/
   `settings_contract` の world.json 列挙へ `askTimeoutSecs` /
   「出さない 12 個」の行へ続報（12 → 11）/ Spec 13・25・43 ヘッダへ続報 —
@@ -205,6 +206,35 @@ chain=[{連鎖}]` を 1 行（拒否のたび）。**`via=` は査読 7 の趣�
 - **P3 台帳**: README 日英（`ask` の説明の待ち時間）/ DETAIL 日英
   （会話の終わり方の層 2 に「循環の即時拒否」）/ CLAUDE.md の材料の回収
 - **P4 実機**: 下の検収
+
+## P1 実装記録（2026-08-24。次に触る人が要るもの）
+
+- **配線**: `Envelope.waiting` → `handle_message` の分解 → `run_turn` /
+  `run_turn_inner` / `CallRunner` → `ask_agent` / `run_plan` / `execute_wave` が
+  `deliver_and_wait` へ、`dispatch_outcome` が転送の `deliver` へ
+  （`trimmed_chain`）。新しい根 4 経路（利用者発話 / 予定 / dispatch / 束ね）は
+  空を渡す。判定・拒否文（ja/en）・計器は `deliver_and_wait` の入口 1 箇所
+- **拒否は会話にも残さない** — `shared.record` より前で返す。尋ねられて
+  いないので、記録すると広場ログが起きなかった配送を語る（テストは
+  「B→A の委譲が message_log に無い」ことをこれで読む）
+- **査読 1 のシナリオの実在範囲が実装で確定した**: ツール経路では
+  「委譲で呼ばれたターンに転送を提示しない」（#96 の門）ので、
+  「ask された B が転送する」は**起きない**。実在するのは**ツール非対応
+  モデルの旧経路だけ** — `decide` の `tools_available=false` 分岐は
+  `offer_transfer` の門を通らず、終了マーカーが無ければ最初の相手へ渡す
+  （`delegation.rs:1318`）。S4 の結合テストはこの旧経路で
+  `trimmed_chain` の非空 pop を踏む（`use_tools=false` のテンプレート）
+- **`OrchestratorConfig.ask_timeout` は撤去済み**。読み替えは
+  `deliver_and_wait` の 1 行（`World::ask_timeout()`）。範囲外の保存は
+  `INVALID_ASK_TIMEOUT`、**手編集の範囲外は読みで既定へ倒す**
+  （`from_persisted` — `tokenBudget=0` と同じ規律。開けなくしない）
+- **テストで踏んだ罠**: 目印「開始」が入退室 System 行「稼働を**開始**
+  しました」に部分一致し、**可変文脈（#45 で最終 user 発話へ畳まれる）越しに**
+  バックエンドの分岐が誤発火した。目印は System 行の語彙と衝突しない
+  カタカナへ変更（プロンプトに何が畳まれているかを忘れて本文だけを
+  設計すると踏む — モック側の #45）
+- **ミューテーション**: 連鎖の追加を外す → 相互・3 段の 2 本 + 単体 1 本が赤 /
+  転送の末尾除去を外す → S4 だけが赤（**恒久の偽陽性が実在する**ことの証明）
 
 ## 検収（実機）
 

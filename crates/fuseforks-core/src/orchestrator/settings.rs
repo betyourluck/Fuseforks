@@ -34,6 +34,30 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// 委譲の待ち時間・秒（Spec 44）。`None` = 既定（600 秒）。
+    pub async fn ask_timeout_secs(&self) -> Option<u64> {
+        self.shared.world.read().await.ask_timeout_secs()
+    }
+
+    /// 委譲の待ち時間を差し替え、`world.json` へ書き戻す。
+    ///
+    /// `deliver_and_wait` が呼び出しごとに `World` から読むので、保存すれば
+    /// **次の委譲から**効く（`new_root_budget` と同じ形。再起動不要）。
+    ///
+    /// # Errors
+    /// 範囲（30..=3600 秒）の外は [`CoreError::InvalidAskTimeout`]。
+    /// 0 や負を許すと全委譲が即死する村が作れる（凍結 4）。
+    pub async fn set_ask_timeout(&self, secs: Option<u64>) -> CoreResult<()> {
+        if let Some(secs) = secs
+            && !(crate::world::ASK_TIMEOUT_MIN_SECS..=crate::world::ASK_TIMEOUT_MAX_SECS)
+                .contains(&secs)
+        {
+            return Err(CoreError::InvalidAskTimeout);
+        }
+        self.shared.world.write().await.set_ask_timeout_secs(secs);
+        self.persist().await
+    }
+
     /// UI の表示言語。bootstrap が必ず確定させるので、未確定は起こらない
     /// （防御の既定は従来の見た目 = 日本語）。
     pub async fn language(&self) -> crate::world::Language {

@@ -307,7 +307,17 @@ async fn deliver_scheduled(
     // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
     let budget = new_root_budget(shared).await;
 
-    match deliver(shared, &task.to, message.clone(), budget, participants.clone()).await {
+    // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2）。
+    match deliver(
+        shared,
+        &task.to,
+        message.clone(),
+        budget,
+        participants.clone(),
+        Vec::new(),
+    )
+    .await
+    {
         Ok(()) => {
             shared.record(message).await;
             runtime.in_flight.lock().await.insert(task.to.clone());

@@ -147,12 +147,9 @@ pub struct OrchestratorConfig {
     /// 長い発話 1 つでログ全体が埋まるのを防ぐ。要点だけ見えれば
     /// 「誰が何の話をしていたか」は伝わる。
     pub room_log_excerpt_chars: usize,
-    /// 委譲（`ask_*`）で相手の答えを待つ上限。
-    ///
-    /// 委譲は相手の応答を**待ってブロックする**。相互に委譲し合う配置では
-    /// 待ち合わせが起きうるので、必ず戻る上限が要る。`max_hops` は深さしか
-    /// 縛らず、待ちの時間は縛らない。
-    pub ask_timeout: Duration,
+    // 委譲の待ち時間（旧 `ask_timeout`）は Spec 44 で `World::ask_timeout()` へ
+    // 移した — 既定 600 秒はあちらの 1 箇所に住み、二重定義を作らない。
+    // 輪の解放も時計の仕事ではなくなった（`Envelope.waiting` の構造検出）。
 }
 
 impl Default for OrchestratorConfig {
@@ -168,7 +165,6 @@ impl Default for OrchestratorConfig {
             log_capacity: 5_000,
             room_log_window: 12,
             room_log_excerpt_chars: 200,
-            ask_timeout: Duration::from_secs(180),
         }
     }
 }
@@ -217,6 +213,18 @@ struct Envelope {
     ///
     /// `None` = 参加者を数える必要のない因果（利用者の発話・要約しない予定）。
     participants: Option<Participants>,
+    /// この因果で**答えを待ってブロック中**の個体の連鎖（Spec 44 — 輪の検出）。
+    ///
+    /// **順序つき・末尾が直近の依頼主。** `ask` / `plan` の配送は自分を末尾に
+    /// 追加し、転送は末尾を除き（`HandedOff` が配送より前にその待ちを解くため。
+    /// 空なら空のまま）、新しい因果の根（利用者発話 / 予定の発火 /
+    /// Spec 43 の dispatch / 束ねの配送）は空。
+    ///
+    /// **判定は [`delegation::deliver_and_wait`] の入口 1 箇所だけ** — 輪 =
+    /// 待ちの循環はそこでしか生まれない。転送の配送では判定しない（転送は
+    /// 待たない。判定を足すと、ブロック中の個体への健全な転送 = 受信箱で
+    /// 順番を待つだけの形を壊す）。詳細は `ask_cycle_contract`。
+    waiting: Vec<AgentId>,
 }
 
 /// 因果に参加して答えを返し終えた個体の集合（Spec 28）。
@@ -258,6 +266,7 @@ impl Envelope {
         incoming: AgentMessage,
         budget: Option<Arc<BudgetPool>>,
         participants: Option<Participants>,
+        waiting: Vec<AgentId>,
     ) -> Self {
         Self {
             incoming,
@@ -265,6 +274,7 @@ impl Envelope {
             cancel: None,
             budget,
             participants,
+            waiting,
         }
     }
 }
@@ -1260,8 +1270,14 @@ async fn deliver(
     message: AgentMessage,
     budget: Option<Arc<BudgetPool>>,
     participants: Option<Participants>,
+    waiting: Vec<AgentId>,
 ) -> CoreResult<()> {
-    deliver_envelope(shared, to, Envelope::plain(message, budget, participants)).await
+    deliver_envelope(
+        shared,
+        to,
+        Envelope::plain(message, budget, participants, waiting),
+    )
+    .await
 }
 
 /// 返信路つきの配送。

@@ -205,6 +205,18 @@ impl Language {
 /// 長い名前は全ターンの固定費になる。
 pub const USER_NAME_MAX_CHARS: usize = 32;
 
+/// 委譲の待ち時間の既定・秒（Spec 44）。`askTimeoutSecs` が `None` の村で効く。
+///
+/// 旧既定 180 秒は「検索の重い委譲は分単位」の実測に対して短く、調査が
+/// 捨てられていた（しかも相手のターンは止まらないので払いだけ発生）。
+/// 輪の解放は構造（`ask_cycle_contract`）へ移したので、時計は保険として
+/// 長くできる。
+pub const ASK_TIMEOUT_DEFAULT_SECS: u64 = 600;
+/// 委譲の待ち時間の下限・秒。未満は調節ではなく委譲の無効化（凍結 4）。
+pub const ASK_TIMEOUT_MIN_SECS: u64 = 30;
+/// 委譲の待ち時間の上限・秒。`run` の `timeoutSecs` の上限と同値（凍結 4）。
+pub const ASK_TIMEOUT_MAX_SECS: u64 = 3600;
+
 /// 封筒の括弧。呼び名に含めると 1 つの発話に封筒が 2 つあるように読める。
 ///
 /// **閉じ括弧だけでは足りない**（Spec 26 凍結 5）— 攻撃経路は
@@ -298,6 +310,16 @@ pub struct PersistedWorld {
     /// `rename_all = camelCase` によりファイル上は `tokenBudget`（個別 rename 不要）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
+    /// 委譲（`ask_*` / `plan`）で相手の答えを待つ上限・秒（Spec 44）。
+    ///
+    /// `None` = 既定 600 秒。**既定はここではなく [`World::ask_timeout`] の
+    /// 1 箇所に住む**（二重定義を作らない — `OrchestratorConfig` の欄は
+    /// Spec 44 で撤去した）。範囲検査（30..=3600）は保存の入口
+    /// （`Orchestrator::set_ask_timeout`）が担い、読み込みは範囲外も
+    /// そのまま持つ — 手編集の値で world.json が開けなくなるのは罰が重すぎる
+    /// （`tokenBudget` の `Some(0)` と同じ判断。範囲外は読みで既定へ倒す）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_timeout_secs: Option<u64>,
     /// UI の表示言語（Spec 13。`"ja"` / `"en"`）。
     ///
     /// **生の文字列で受ける**（`tokenBudget` の `Some(0)` と同じ判断） —
@@ -361,6 +383,8 @@ pub struct World {
     topology_positions: BTreeMap<AgentId, TopologyPosition>,
     /// トークン予算の天井（Spec 11）。意味論は [`PersistedWorld::token_budget`]。
     token_budget: Option<u64>,
+    /// 委譲の待ち時間・秒（Spec 44）。意味論は [`PersistedWorld::ask_timeout_secs`]。
+    ask_timeout_secs: Option<u64>,
     /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
     language: Option<Language>,
     /// 利用者の呼び名（Spec 19）。意味論は [`PersistedWorld::user_name`]。
@@ -394,6 +418,17 @@ impl World {
         world.token_budget = match persisted.token_budget {
             Some(0) => {
                 crate::note!("token budget: tokenBudget=0 は不正値のため天井なしとして扱います");
+                None
+            }
+            other => other,
+        };
+        // 範囲外は既定へ倒す（Spec 44 凍結 4 の範囲は保存の入口が守る側で、
+        // 手編集の値では開けなくしない。0 のマジック値も作らない）。
+        world.ask_timeout_secs = match persisted.ask_timeout_secs {
+            Some(secs) if !(ASK_TIMEOUT_MIN_SECS..=ASK_TIMEOUT_MAX_SECS).contains(&secs) => {
+                crate::note!(
+                    "ask timeout: askTimeoutSecs={secs} は範囲外（{ASK_TIMEOUT_MIN_SECS}..={ASK_TIMEOUT_MAX_SECS}）のため既定 {ASK_TIMEOUT_DEFAULT_SECS} 秒として扱います"
+                );
                 None
             }
             other => other,
@@ -482,6 +517,7 @@ impl World {
             model_templates: self.templates.values().cloned().collect(),
             topology_positions: self.topology_positions.clone(),
             token_budget: self.token_budget,
+            ask_timeout_secs: self.ask_timeout_secs,
             language: self.language.map(|l| l.as_str().to_string()),
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
@@ -551,6 +587,25 @@ impl World {
     /// トークン予算の天井を差し替える（新規 world.json への既定値書き込み用）。
     pub fn set_token_budget(&mut self, ceiling: Option<u64>) {
         self.token_budget = ceiling;
+    }
+
+    /// 委譲（`ask_*` / `plan`）で相手の答えを待つ上限（Spec 44）。
+    ///
+    /// **既定 600 秒はこの 1 箇所に住む**（凍結 4 — `OrchestratorConfig` の
+    /// 欄は撤去済みで、二重定義を作らない）。
+    pub fn ask_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.ask_timeout_secs.unwrap_or(ASK_TIMEOUT_DEFAULT_SECS))
+    }
+
+    /// 保存されている生の値（`None` = 既定）。設定画面の表示用。
+    pub fn ask_timeout_secs(&self) -> Option<u64> {
+        self.ask_timeout_secs
+    }
+
+    /// 委譲の待ち時間を差し替える。範囲検査は保存の入口
+    /// （`Orchestrator::set_ask_timeout`）が担う。
+    pub fn set_ask_timeout_secs(&mut self, secs: Option<u64>) {
+        self.ask_timeout_secs = secs;
     }
 
     /// UI の表示言語。`None` = 未確定（起動時の確定前だけ観測される）。
@@ -950,6 +1005,31 @@ mod tests {
         world
     }
 
+    /// 委譲の待ち時間（Spec 44）。既定 600 は `World::ask_timeout()` の
+    /// 1 箇所に住み、範囲外の保存値は読みで既定へ倒れる（開けなくしない）。
+    #[test]
+    fn ask_timeout_defaults_to_600_and_folds_out_of_range_values() {
+        let mut world = World::new();
+        assert_eq!(world.ask_timeout(), std::time::Duration::from_secs(600));
+
+        world.set_ask_timeout_secs(Some(120));
+        assert_eq!(world.ask_timeout(), std::time::Duration::from_secs(120));
+        assert_eq!(world.ask_timeout_secs(), Some(120));
+
+        // 手編集の範囲外（例: 5 秒）は読みで既定へ倒す — 全委譲が即死する村を
+        // 手編集で作れてしまう形にしない（tokenBudget=0 と同じ規律）。
+        let mut persisted = world.to_persisted();
+        persisted.ask_timeout_secs = Some(5);
+        let reread = World::from_persisted(persisted);
+        assert_eq!(reread.ask_timeout(), std::time::Duration::from_secs(600));
+        assert_eq!(reread.ask_timeout_secs(), None);
+
+        // 範囲内は往復で保たれる（村と一緒に配られる欄）。
+        let mut persisted = world.to_persisted();
+        persisted.ask_timeout_secs = Some(900);
+        assert_eq!(World::from_persisted(persisted).ask_timeout_secs(), Some(900));
+    }
+
     #[test]
     fn duplicate_registration_is_rejected() {
         let mut world = world_with_two_agents();
@@ -1006,6 +1086,7 @@ mod tests {
             model_templates: vec![ModelTemplate::new("tpl", "既定", "gpt-4o")],
             topology_positions: BTreeMap::new(),
             token_budget: None,
+            ask_timeout_secs: None,
             language: None,
             user_name: None,
             roles: Vec::new(),
@@ -1295,6 +1376,7 @@ mod tests {
                 (AgentId::from("ghost"), TopologyPosition { x: 0.0, y: 0.0 }),
             ]),
             token_budget: None,
+            ask_timeout_secs: None,
             language: None,
             user_name: None,
             roles: Vec::new(),
