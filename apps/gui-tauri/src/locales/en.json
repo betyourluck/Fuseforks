@@ -84,6 +84,18 @@
       "save": "Save",
       "saving": "Saving…"
     },
+    "askTimeout": {
+      "heading": "Delegation wait time",
+      "help": "Seconds to wait for an answer from a servant asked via ask / plan. When exceeded, the wait is cut off and work continues (the other servant's turn keeps running, and its spend still appears in the stats). Circular delegation is rejected immediately at delivery, independently of this timer.",
+      "default": "Default (600 seconds)",
+      "custom": "Custom",
+      "unit": "seconds (30–3600)",
+      "invalid": "Enter an integer between 30 and 3600.",
+      "mcpNote": "For villages used externally via the MCP server, a shorter client-side timeout cuts the wait first (set the timeout in .mcp.json to at least this value).",
+      "saved": "Saved. Takes effect from the next delegation (no restart needed).",
+      "save": "Save",
+      "saving": "Saving…"
+    },
     "closingDay": {
       "heading": "Closing day (Statistics › All conversations)",
       "help": "\"All conversations\" in Statistics shows one month at a time, cut at the closing day you pick here. Closing day N covers the (N+1)th of the previous month through the Nth of this month; \"End of month\" covers the 1st through the last day.",
@@ -754,6 +766,7 @@
     "SESSION_STORE_FAILED": "A session-store operation failed",
     "SESSION_SWITCH_BLOCKED": "Cannot switch conversations while turns are in flight",
     "INVALID_TOKEN_BUDGET": "0 cannot be set as the token limit (choose No limit instead)",
+    "INVALID_ASK_TIMEOUT": "The delegation wait time must be between 30 and 3600 seconds",
     "INVALID_TOPOLOGY": "The topology is invalid",
     "ALREADY_RUNNING": "Already running",
     "NOT_RUNNING": "Not running",

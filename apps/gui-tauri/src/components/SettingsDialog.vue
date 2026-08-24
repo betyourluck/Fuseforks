@@ -152,6 +152,40 @@ const ceilingValid = computed(() => {
 
 const ceilingDirty = computed(() => formCeiling.value !== savedCeiling.value);
 
+// ---- 委譲の待ち時間（村の設定。Spec 44） ---------------------------------------
+
+/** 保存済みの値。`null` = 既定（600 秒）。差分検出の基準。 */
+const savedAskTimeout = ref<number | null>(null);
+/** フォームの状態。「既定」はラジオで明示的に選ぶ（0 のマジック値を作らない）。 */
+const hasCustomAskTimeout = ref(false);
+const askTimeoutInput = ref<number>(600);
+
+/** フォームが表す待ち時間。`null` = 既定（600 秒）。 */
+const formAskTimeout = computed<number | null>(() =>
+  hasCustomAskTimeout.value ? askTimeoutInput.value : null,
+);
+
+/**
+ * 範囲（30〜3600 秒）は入力段でも弾く（コアの `INVALID_ASK_TIMEOUT` との
+ * 二重化 — 天井の 0 と同じ理由）。上限はコアの `ASK_TIMEOUT_MAX_SECS` と同値。
+ */
+const askTimeoutValid = computed(() => {
+  if (!hasCustomAskTimeout.value) return true;
+  return (
+    Number.isInteger(askTimeoutInput.value) &&
+    askTimeoutInput.value >= 30 &&
+    askTimeoutInput.value <= 3600
+  );
+});
+
+const askTimeoutDirty = computed(() => formAskTimeout.value !== savedAskTimeout.value);
+
+/**
+ * 委譲の待ち時間だけの保存告知。`savedNote` と分けるのは、同じページに保存
+ * ボタンが 2 つ並ぶため — 共有すると片方を保存しただけで両方の枠に告知が出る。
+ */
+const askTimeoutNote = ref("");
+
 // ---- 言語（村の設定） ----------------------------------------------------------
 
 /** 保存済みの言語。差分検出の基準。 */
@@ -398,6 +432,11 @@ async function load(): Promise<void> {
     hasCeiling.value = ceiling !== null;
     if (ceiling !== null) ceilingInput.value = ceiling;
 
+    const askTimeout = await ipc.getAskTimeout();
+    savedAskTimeout.value = askTimeout;
+    hasCustomAskTimeout.value = askTimeout !== null;
+    if (askTimeout !== null) askTimeoutInput.value = askTimeout;
+
     const language = await ipc.getLanguage();
     savedLanguage.value = language;
     languageInput.value = language;
@@ -429,10 +468,29 @@ async function saveCeiling(): Promise<void> {
   busy.value = true;
   error.value = "";
   savedNote.value = "";
+  askTimeoutNote.value = "";
   try {
     await ipc.setTokenBudget(formCeiling.value);
     savedCeiling.value = formCeiling.value;
     savedNote.value = t("settings.tokenBudget.saved");
+  } catch (e) {
+    const payload = ipc.toErrorPayload(e);
+    error.value = formatError(payload);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saveAskTimeout(): Promise<void> {
+  if (!askTimeoutValid.value || !askTimeoutDirty.value || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  savedNote.value = "";
+  askTimeoutNote.value = "";
+  try {
+    await ipc.setAskTimeout(formAskTimeout.value);
+    savedAskTimeout.value = formAskTimeout.value;
+    askTimeoutNote.value = t("settings.askTimeout.saved");
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
@@ -493,6 +551,7 @@ async function saveLanguage(): Promise<void> {
 function selectPage(next: Page): void {
   page.value = next;
   savedNote.value = "";
+  askTimeoutNote.value = "";
   error.value = "";
   // **設定の読み込みだけ。取得はしない**（Spec 41 の凍結 — 画面を開いたときの
   // 自動 GET も、到達確認も持たない）。
@@ -769,6 +828,52 @@ function selectPage(next: Page): void {
                   @click="saveCeiling"
                 >
                   {{ busy ? $t("settings.tokenBudget.saving") : $t("settings.tokenBudget.save") }}
+                </button>
+              </div>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+
+            <!--
+              委譲の待ち時間（Spec 44）。輪の不成立は構造（Envelope.waiting）が
+              保証するので、時計は「遅い・固まったワーカーの保険」— 長くしても
+              安全が崩れない側の設定としてコスト管理に置く（凍結 5 の続報）。
+            -->
+            <h3 class="mt-5 mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.askTimeout.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.askTimeout.help") }}</p>
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-center gap-2">
+                <input v-model="hasCustomAskTimeout" type="radio" :value="false" />
+                <span>{{ $t("settings.askTimeout.default") }}</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input v-model="hasCustomAskTimeout" type="radio" :value="true" />
+                <span>{{ $t("settings.askTimeout.custom") }}</span>
+                <input
+                  v-model.number="askTimeoutInput"
+                  type="number"
+                  min="30"
+                  max="3600"
+                  step="1"
+                  :disabled="!hasCustomAskTimeout"
+                  class="w-24 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent disabled:opacity-40"
+                />
+                <span class="text-ink-dim">{{ $t("settings.askTimeout.unit") }}</span>
+              </label>
+              <p v-if="hasCustomAskTimeout && !askTimeoutValid" class="pl-6 text-fail">
+                {{ $t("settings.askTimeout.invalid") }}
+              </p>
+              <!-- 既定 600 は MCP クライアントの既定より長い（Spec 25 S1 の続報）。 -->
+              <p class="pl-6 text-ink-dim">{{ $t("settings.askTimeout.mcpNote") }}</p>
+              <div class="flex items-center justify-end gap-2 pt-1">
+                <span v-if="askTimeoutNote" class="text-run">{{ askTimeoutNote }}</span>
+                <button
+                  class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!askTimeoutValid || !askTimeoutDirty || busy"
+                  @click="saveAskTimeout"
+                >
+                  {{ busy ? $t("settings.askTimeout.saving") : $t("settings.askTimeout.save") }}
                 </button>
               </div>
             </div>

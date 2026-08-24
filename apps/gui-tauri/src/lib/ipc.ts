@@ -328,6 +328,16 @@ export const getTokenBudget = () => call<number | null>("get_token_budget");
 export const setTokenBudget = (ceiling: number | null) =>
   call<void>("set_token_budget", { ceiling });
 
+/** 委譲の待ち時間（秒）。`null` = 既定（600 秒）。 */
+export const getAskTimeout = () => call<number | null>("get_ask_timeout");
+
+/**
+ * 委譲の待ち時間を差し替える。**次の委譲から効く**（再起動不要）。
+ * 30..=3600 の外は `INVALID_ASK_TIMEOUT` で拒否されるが、入力段でも弾くこと
+ * （「保存したのに黙って別の値になる」を画面に作らない）。
+ */
+export const setAskTimeout = (secs: number | null) => call<void>("set_ask_timeout", { secs });
+
 /** UI の表示言語。bootstrap が初回に OS から確定済みなので、必ず値が返る。 */
 export const getLanguage = () => call<Language>("get_language");
 

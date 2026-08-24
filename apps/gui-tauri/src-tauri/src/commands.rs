@@ -491,6 +491,20 @@ pub async fn set_token_budget(
     state.orchestrator.set_token_budget(ceiling).await
 }
 
+/// 委譲の待ち時間・秒（Spec 44）。`null` = 既定（600 秒）。
+#[tauri::command]
+pub async fn get_ask_timeout(state: State<'_, AppState>) -> CoreResult<Option<u64>> {
+    Ok(state.orchestrator.ask_timeout_secs().await)
+}
+
+/// 委譲の待ち時間を差し替える。`deliver_and_wait` が呼び出しごとに `World` から
+/// 読むので、**次の委譲から効く**（settings_contract の即時反映）。
+/// 30..=3600 の外は `INVALID_ASK_TIMEOUT` で拒否（UI 側の入力検査との二重化）。
+#[tauri::command]
+pub async fn set_ask_timeout(state: State<'_, AppState>, secs: Option<u64>) -> CoreResult<()> {
+    state.orchestrator.set_ask_timeout(secs).await
+}
+
 /// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
 #[tauri::command]
 pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_core::world::Language> {
