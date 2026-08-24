@@ -712,7 +712,10 @@ enums:
       Kataribe と同型) — **左メニューが「設定できるものの目録」になる**。
       置き場は 2 つ (これ以外を作らない):
         - **村に保存 → world.json**: tokenBudget (Option<u64>。単位と正規化は
-          token_budget.ceiling が正)、language ("ja" | "en")、
+          token_budget.ceiling が正)、
+          askTimeoutSecs (Option<u64>。None = 既定 600。30..=3600 の外は保存時に
+          拒否。Spec 44 — 委譲の待ち時間。詳細は ask_cycle_contract)、
+          language ("ja" | "en")、
           userName (Option<String>。Spec 19。意味論は user_identity_contract が正)。
           村を配れば設定も付いて回る。System 行は会話ログに保存されるので、
           言語は村の共有物 — localStorage には置けない。
@@ -822,7 +825,11 @@ enums:
           意味しない
         - **OrchestratorConfig は画面へ出さない** (履歴の往復数・hop 上限・
           ツール上限・広場ログの窓 ほか 12 個)。間違えると村が壊れる種類の値で、
-          正しい値は実測でしか決まらない (#41 の較正)。出すなら別 Spec で 1 つずつ
+          正しい値は実測でしか決まらない (#41 の較正)。出すなら別 Spec で 1 つずつ。
+          **続報 (Spec 44 rev2 承認 2026-08-24)**: ask_timeout がその「別 Spec で
+          1 つずつ」の最初の 1 個 — 欄を World の askTimeoutSecs へ移して
+          設定化した (12 → 11 個。OrchestratorConfig 自体は画面に出ないまま。
+          詳細は ask_cycle_contract)
         - **保存したら次の依頼から効く。再起動を要求する設定は載せない** —
           メモリ上の World を変えてから world.json へ書き戻す (world.json は
           所有者ではなく投影。schedules.json と同じ)。天井は依頼のたびに
@@ -3222,6 +3229,57 @@ conversation_termination:
       plan discard: (破棄) / plan bundle discarded: (M2 の破棄)。
       既存の plan wave: 〜 plan bundle: は dispatch 後の配送で従来どおり出る。
       提案の段では plan wave: を出さない (検収 1 の負の対照)。
+    ask_cycle_contract: |
+      委譲の輪の検出と待ち時間 (Spec 44 rev2 承認 2026-08-24)。
+      1 本の時計 (ask_timeout 180 秒固定) に載っていた逆向きの 2 つの仕事 —
+      「深い委譲をどこまで待つか」(長くしたい) と「輪をいつ解くか」(短く
+      したい) — を分ける。輪は構造 (配送時の即答拒否) へ、時計は保険へ。
+      起点は実機 (調査の委譲が 180 秒で捨てられ、しかも相手のターンは
+      止まらないので答えは作られ課金され届かず捨てられる — 二重の損)。
+      凍結 (Spec 44 の 6 本):
+        1. **輪の不成立を構造で保証する** (時計に依存しない)。保証するのは
+           不成立であって拒否の最小性ではない — 連鎖は配送時点のスナップ
+           ショットなので、拒否の直後に待ちが解けていた競合の偽陽性はありうる。
+           代償は拒否文 1 通で、モデルは次の周で頼み直せる
+        2. **Envelope.waiting は順序つきの連鎖**・末尾が直近の依頼主。
+           ask / plan の配送は自分を末尾に追加、転送は**空なら空のまま・
+           非空なら末尾を除く** (転送は直近の待ちを解く側 — HandedOff の
+           返信が配送より前に送られる turn.rs の実測)、新しい因果の根
+           (利用者発話 / 予定の発火 / Spec 43 の dispatch / 束ねの配送) は空。
+           **判定は追加後の連鎖に宛先が居るか** — 追加前だと自己委譲
+           (自己ループの辺 + ask 自分) だけがすり抜けて自分の受信箱を
+           永遠に待つ
+        3. **判定は deliver_and_wait の入口 1 実装**。受信箱へ積まずに
+           typed の結果で即答 (停止中の Undeliverable と同じ形 — モデルは
+           同じ周で読んで進路を変えられる)。**転送の配送では判定しない** —
+           転送は待ちを作らず (送り手はブロックしない)、輪 = 待ちの循環は
+           deliver_and_wait でしか生まれない。判定を転送に足すと健全な形
+           (ブロック中の個体への転送 = 受信箱で順番を待つだけ) を壊す。
+           転送の役目は連鎖の中身を正しく保つことだけ (下流の ask のため)
+        4. **askTimeoutSecs は World の Option<u64>** (world.json — 村と
+           配られる)。**OrchestratorConfig.ask_timeout は撤去** — 既定は
+           World::ask_timeout() の None → 600 秒の 1 箇所だけに住む
+           (二重定義を作らない)。保存時に 30..=3600 の外を拒否
+           (下限 30: 未満は調節ではなく委譲の無効化 / 上限 3600: run の
+           timeoutSecs と同値。10 分超は保険としては遅いが、1 時間級の
+           ワーカーを持つ村の明示の選択として許容)。deliver_and_wait が
+           呼び出しごとに読む = 保存すれば次の委譲から効く・再起動不要
+        5. **OrchestratorConfig は画面に出ないまま** (形式上 Spec 13 の凍結は
+           不変 — 欄が World へ引っ越す)。実質は「出さない 12 個」の 1 つの
+           設定化なので 12 → 11 個 (settings_contract の当該行に続報)。
+           UI はシステム設定 > コスト管理・保存先は村 (ページ末尾の注記 —
+           tokenBudget と同じ扱い。このアプリは 1 プロセス 1 村なので
+           「どの村へ書くか」の曖昧さは実在しない)
+        6. **タイムアウトしても相手のターンは止めない** (既存挙動の凍結 —
+           止めると「遅いが健全な調査」を殺す側に倒れる。届かない答えの
+           払いは turn: 行と統計に今までどおり残る)
+      計器: ask refused: agent=… to=… via=ask|plan reason=circular chain=[…]
+      (拒否のたび 1 行。via に transfer は無い — 転送の拒否は存在しない)。
+      **外の扉 (Spec 25) との相互作用**: ask_fuseforks の保持時間の上限も
+      この時計なので、既定 600 への引き上げで「既定同士で S1 は切られない」
+      (クライアント実測保持 196 秒 ≥ 旧既定 180) の前提が崩れる。外から使う
+      村は .mcp.json の "timeout" (ms) 併記が実質必須になる — mcp_server_contract
+      の当該行に続報済み。D7 (同時 1 本・busy 即拒否) の機構は別のまま不変。
     presence: |
       顔ぶれの提示と入退室の通知 (Spec 06, 2026-07-30 凍結)。
       人間には UI で見えている稼働状態が、エージェントには見えていなかった
@@ -4598,7 +4656,10 @@ llm_wire:
         curl 直で 180 秒保持を確認 (SSE keep-alive 15 秒間隔)。
         ask_timeout 既定 180 秒 ≤ クライアントの実測保持時間なので、既定同士の
         組み合わせで S1 は切られない。ask_timeout を上げるなら
-        .mcp.json の "timeout" (ms・サーバー単位) を併記する
+        .mcp.json の "timeout" (ms・サーバー単位) を併記する。
+        **続報 (Spec 44)**: 既定が 600 秒へ動く (P1 で着地) ので、この
+        「既定同士で切られない」は崩れる — 外から使う村は "timeout" の併記が
+        実質必須になる (ask_cycle_contract の相互作用の項が正)
       - 認証ヘッダは `claude mcp add --transport http --header
         "Authorization: Bearer ..."` / .mcp.json の headers 欄で通る
 

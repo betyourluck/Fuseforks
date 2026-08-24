@@ -5,6 +5,12 @@
 **Status**: **Done**（2026-08-07。rev3 承認 → P0〜P5。起票から Done まで 1 日）
 **Branch**: なし（main へ Phase 単位で直接コミット）
 
+**改訂の続報**: [Spec 44](44_ask-cycle-detection.md)（2026-08-24 rev2 承認）で
+`ask_timeout` の既定が 180 → 600 秒へ動く（P1 で着地）。**P0 実測の
+「既定同士で S1 は切られない」（クライアント実測保持 196 秒 ≥ 180）は崩れる** —
+外から使う村は `.mcp.json` の `"timeout"`（ms）併記が実質必須になる。
+D7（同時 1 本・busy 即拒否）の機構は Spec 44 の輪の検出とは別のまま不変。
+
 ## Goal
 
 Claude Code や Copilot、各社の CLI から **Fuseforks へチャットを 1 本投げ、

@@ -2,6 +2,12 @@
 
 **ID**: 13
 **Date**: 2026-08-03
+**改訂の続報**: [Spec 44](44_ask-cycle-detection.md)（2026-08-24 rev2 承認）が
+「`OrchestratorConfig` は出さない 12 個」のうち `ask_timeout` を **World の
+`askTimeoutSecs` へ移して設定化**した（12 → 11 個。`OrchestratorConfig` 自体は
+画面に出ないまま = 本 Spec の凍結の形式は不変。「出すなら別 Spec で 1 つずつ」の
+最初の 1 個）。
+
 **Status**: **rev3 承認 → P0〜P4 完了 + 実機の指摘で分類を改稿 → P5 完了 = Done**
 （Done は 2026-08-08。**P5 の実機確認は「使い続けて問題が出ていない」を利用者が
 確認する形で閉じた** — 分類の改稿・語彙のシステム用語化・⚙ の回収はいずれも
