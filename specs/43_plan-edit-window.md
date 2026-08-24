@@ -7,8 +7,30 @@
   `state`（serde default = dispatched）と「配送ゼロは記録しない」への
   pending 例外 / Spec 04・08 ヘッダと Spec 12 凍結 8・`session_store` の
   「復元しないもの」へ続報。P1 = コア実装 + 結合 7 本 + 単体 4 本 +
-  ミューテーション 2 回で赤確認。実装記録は下の「P1 実装記録」）。
-  査読の反映記録は Notes 5
+  ミューテーション 2 回で赤確認。実装記録は下の「P1 実装記録」。
+  **P2 = IPC + フロント完了** — 実装記録は「P2 実装記録」）。
+  査読の反映記録は Notes 5。**残は P3（README / DETAIL 日英）と P4（実機検収）**
+
+## P2 実装記録（2026-08-24）
+
+- IPC 2 本（`commands.rs` + `lib.rs` 登録 + `ipc.ts`）。エラー辞書
+  `PLAN_WAVE_NOT_PENDING` / `PLAN_DISPATCH_INVALID` と操作名
+  `op.dispatchPlan` / `op.discardPlan` を ja / en へ（**json モジュール経由** —
+  Spec 28 P3 の処方「生成文字列で構造化ファイルを書き換えない」）
+- **型検査が投影の写し忘れ 4 箇所を捕まえた**（`AgentList.vue` の新規作成
+  spec / テスト fixture 3 本）— `snapshotToSpec` の doc「新しい欄の写し忘れは
+  コンパイラが捕まえる」がそのまま働いた形。`AgentSettingsDialog` の seed は
+  `snapshotToSpec` 経由なので自動追従、dirty 比較とトグル行だけ手で足した
+- **編集パネルは波ペイン（作業状況）の上部**。最古の pending 1 件を扱い、
+  複数は件数だけ出す（同時編集の UI を作らない — 承認は 1 件ずつで十分）。
+  下書きはフロントのみ（D4）で、タブを離れれば消え提案は記録の形のまま
+- **グリッドの列は 3 相を描き分ける** — pending は破線・discarded は薄く。
+  **実行痕だけが色を持つ**（読み取り専用の原則は実行痕の側で不変）
+- `upsertPlanWave` に**波レベル状態の巻き戻し防止**（pending → dispatched /
+  discarded の片方向。list の応答が event より古い競合で確定を pending に
+  戻さない — タスクの「解決済みを running で巻き戻さない」と同じ規則）。
+  **ミューテーションで赤を確認**（防止を外すと波テストの該当 1 本だけが赤）
+- vitest 437（+1）・vue-tsc 0・bun build 緑・GUI クレート cargo check 緑
 
 ## P1 実装記録（2026-08-24。次に触る人が要るもの）
 

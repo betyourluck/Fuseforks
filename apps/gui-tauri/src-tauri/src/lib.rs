@@ -170,6 +170,8 @@ pub fn run() {
             commands::start_agent,
             commands::stop_agent,
             commands::interrupt_turn,
+            commands::dispatch_plan_wave,
+            commands::discard_plan_wave,
             commands::interrupt_all,
             commands::set_agent_running,
             commands::send_user_message,

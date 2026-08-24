@@ -155,6 +155,14 @@ export interface AgentSpec {
    */
   allowHandoff: boolean;
   /**
+   * plan の編集窓（計画の確認・Spec 43）。**既定は偽。**
+   *
+   * 真なら plan は配送せず提案を記録してターンを終え、人の承認
+   * （`dispatchPlanWave`）が配送を起こす。窓は人のための機構なので
+   * per-call にしない — LLM に「窓を飛ばす」選択肢を与えない。
+   */
+  planReview: boolean;
+  /**
    * 一括起動（左ペインの ▶）の対象にするか。既定 true。
    *
    * **自動起動ではない** — アプリを開いた時点では誰も走らず、▶ を押したときに
@@ -272,6 +280,8 @@ export interface AgentSnapshot {
    * 選ぶとオーケストレーションが成立しないので、道具の側で選べなくする。
    */
   allowHandoff: boolean;
+  /** plan の編集窓（計画の確認・Spec 43）。**投影にも要る**（保存で消えない）。 */
+  planReview: boolean;
   /** 一括起動（▶）の対象か。稼働状態とは別（それは `status`）。 */
   batchStart: boolean;
   /**
@@ -702,6 +712,12 @@ export interface PlanTaskAnnounced {
   msgChars: number;
 }
 
+/**
+ * 波レベルの状態（Spec 43）。セルの分類（`PlanTaskState`）とは別の軸 —
+ * あちらは配送されたタスクの結末、こちらは波そのものの段。
+ */
+export type PlanWaveState = "pending" | "dispatched" | "discarded";
+
 /** 波の 1 タスクの記録。同一性は `(planId, to)`（同一宛先の重複は静的な不正）。 */
 export interface PlanTaskRecord {
   to: AgentId;
@@ -709,6 +725,17 @@ export interface PlanTaskRecord {
   /** 配送からこのタスクの解決まで。相手のキュー待ちを含む（並列なのは配送）。 */
   elapsedMs: number | null;
   msgChars: number;
+  /**
+   * 依頼本文。**波が `pending` の間だけ**埋まる（編集 UI が読む提案の真実 —
+   * Spec 43 D4）。dispatch / discard で落ちる。ワイヤは欄ごと省略されるので任意。
+   */
+  message?: string;
+}
+
+/** `dispatchPlanWave` が受けるタスクの入力形（plan ツールの引数と同じ 2 欄）。 */
+export interface PlanTaskInput {
+  to: AgentId;
+  message: string;
 }
 
 /** plan 1 波の実行記録。所有者はコアの in-memory（リング上限 50・プロセス寿命）。 */
@@ -719,6 +746,8 @@ export interface PlanWaveRecord {
   agentId: AgentId;
   /** ターン内連番（ターンを跨いで重複する。同定は planId の仕事）。 */
   wave: number;
+  /** 波レベルの状態（Spec 43）。旧レコードは欄が無く `dispatched` 扱い。 */
+  state: PlanWaveState;
   startedAtMs: number;
   /** 入力順（束ねと同じ。解決順ではない）。 */
   tasks: PlanTaskRecord[];
@@ -1029,6 +1058,17 @@ export type CoreEvent =
       bundleChars: number;
       elapsedMs: number;
     }
+  // Spec 43（編集窓）。提案 → 承認（planWaveStarted）か破棄（planWaveDiscarded）。
+  | {
+      type: "planWaveProposed";
+      planId: number;
+      agentId: AgentId;
+      wave: number;
+      /** 提案されたタスク（入力順・本文つき — 編集 UI が読む提案の真実）。 */
+      tasks: PlanTaskInput[];
+      startedAtMs: number;
+    }
+  | { type: "planWaveDiscarded"; planId: number }
   /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
       流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };

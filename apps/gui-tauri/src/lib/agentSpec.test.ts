@@ -39,6 +39,7 @@ function snapshot(): AgentSnapshot {
     enabledTools: ["grep", "fd"],
     hearsRoomLog: false,
     allowHandoff: false,
+    planReview: true,
     batchStart: false,
     roleId: "role_auditor",
   };
@@ -60,6 +61,7 @@ describe("snapshotToSpec", () => {
       enabledTools: ["grep", "fd"],
       hearsRoomLog: false,
     allowHandoff: false,
+      planReview: true,
       batchStart: false,
       roleId: "role_auditor",
     });

@@ -5,7 +5,9 @@
  * タブ切り替え。台帳・テスト内の「波ペイン」はこの部品を指す）。
  *
  * 列 = 波（古い→新しいを左→右）、行 = エージェント、セル = タスクの解決状態。
- * 描くのは**モデルが作った計画の実行痕**であり、編集する場所ではない（読み取り専用）。
+ * 描くのは**モデルが作った計画の実行痕**。**例外は確認待ちの波（Spec 43）** —
+ * `planReview` の個体の提案はここに編集パネルとして現れ、人が本文を直し・
+ * 消し・足してから「実行」する（実行痕の側は今までどおり読み取り専用）。
  * ノードと辺の図は上段の TopologyMap の役割 — ここは「誰に・いつ・どうなったか」の
  * 時系列だけを持つ。
  *
@@ -26,6 +28,7 @@ import { useOrchestrator } from "../composables/useOrchestrator";
 import type {
   AgentId,
   BottomTab,
+  PlanTaskInput,
   PlanTaskRecord,
   PlanTaskState,
   PlanWaveRecord,
@@ -96,6 +99,8 @@ function waveTitle(wave: PlanWaveRecord): string {
     `planId ${wave.planId}`,
     t("waves.startedAt", { time: new Date(wave.startedAtMs).toLocaleTimeString() }),
   ];
+  if (wave.state === "pending") lines.push(t("waves.pendingBadge"));
+  if (wave.state === "discarded") lines.push(t("waves.discardedBadge"));
   if (wave.elapsedMs !== null)
     lines.push(t("waves.elapsedSlowest", { duration: formatMs(wave.elapsedMs) }));
   if (wave.bundleChars !== null)
@@ -115,6 +120,82 @@ function cellTitle(task: PlanTaskRecord): string {
   if (task.elapsedMs !== null)
     lines.push(t("waves.elapsedQueued", { duration: formatMs(task.elapsedMs) }));
   return lines.join("\n");
+}
+
+// ---- 編集窓（Spec 43）。確認待ちの波を 1 件ずつ、古い順に扱う。 ------------
+
+/** 確認待ちの波（最古の 1 件）。複数あるときは件数だけ横に出す。 */
+const pendingWave = computed(() => state.planWaves.find((w) => w.state === "pending"));
+const pendingCount = computed(
+  () => state.planWaves.filter((w) => w.state === "pending").length,
+);
+
+/**
+ * 編集中の下書き。**フロントだけが持つ**（D4 — 編集の中間状態に API を
+ * 与えない。画面を切り替えたら消え、提案は記録された形のまま残る）。
+ */
+const draft = ref<PlanTaskInput[]>([]);
+/** 追加行の宛先選択。 */
+const addTarget = ref<AgentId | "">("");
+/** 実行・破棄の連打防止。 */
+const busy = ref(false);
+
+watch(
+  () => pendingWave.value?.planId,
+  () => {
+    // 提案の真実（記録された tasks）から下書きを組み直す。
+    draft.value = (pendingWave.value?.tasks ?? []).map((task) => ({
+      to: task.to,
+      message: task.message ?? "",
+    }));
+    addTarget.value = "";
+  },
+  { immediate: true },
+);
+
+/**
+ * 追加で選べる宛先 = **進行役の今の接続先**から、下書きに居ない相手。
+ * 窓は線を引き直す場所ではない（凍結 3 — 検証はコア側でもう一度掛かる）。
+ */
+const addableTargets = computed(() => {
+  const wave = pendingWave.value;
+  if (!wave) return [];
+  const connected =
+    state.agents.find((a) => a.id === wave.agentId)?.connectedAgents ?? [];
+  return connected.filter((id) => !draft.value.some((task) => task.to === id));
+});
+
+function removeDraftTask(index: number): void {
+  draft.value.splice(index, 1);
+}
+
+function addDraftTask(): void {
+  if (!addTarget.value) return;
+  draft.value.push({ to: addTarget.value, message: "" });
+  addTarget.value = "";
+}
+
+async function dispatchPending(): Promise<void> {
+  const wave = pendingWave.value;
+  if (!wave || busy.value) return;
+  busy.value = true;
+  try {
+    // 成功の投影は event（planWaveStarted）が運ぶ。失敗は mutate がトーストへ。
+    await orchestrator.dispatchPlanWave(wave.planId, draft.value);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function discardPending(): Promise<void> {
+  const wave = pendingWave.value;
+  if (!wave || busy.value) return;
+  busy.value = true;
+  try {
+    await orchestrator.discardPlanWave(wave.planId);
+  } finally {
+    busy.value = false;
+  }
 }
 
 /** 横スクロールの入れ物。右端追従の判定に使う。 */
@@ -152,6 +233,85 @@ watch(
       <span v-if="waves.length">{{ $t("waves.waveCount", { count: waves.length }) }}</span>
     </header>
 
+    <!-- 確認待ちの編集パネル（Spec 43）。最古の 1 件を扱い、残りは件数だけ。 -->
+    <div
+      v-if="pendingWave"
+      class="shrink-0 border-b border-line bg-surface-1 px-3 py-2"
+      data-plan-pending-editor
+    >
+      <div class="mb-1.5 flex items-center gap-2 text-[11px]">
+        <span class="rounded-sm bg-warn/20 px-1.5 py-0.5 text-warn">
+          {{ $t("waves.pendingBadge") }}
+        </span>
+        <span class="text-ink">
+          {{ $t("waves.pendingTitle", { name: displayName(pendingWave.agentId) }) }}
+        </span>
+        <span v-if="pendingCount > 1" class="text-ink-dim">
+          {{ $t("waves.pendingMore", { count: pendingCount - 1 }) }}
+        </span>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <div
+          v-for="(task, index) in draft"
+          :key="`${pendingWave.planId}:${task.to}`"
+          class="flex items-start gap-2"
+        >
+          <span class="w-32 shrink-0 truncate pt-1 text-[11px] text-ink" :title="task.to">
+            {{ displayName(task.to) }}
+          </span>
+          <textarea
+            v-model="task.message"
+            rows="2"
+            class="min-h-[2.5rem] flex-1 resize-y rounded border border-line bg-surface-0 px-2 py-1 text-[12px] text-ink"
+          />
+          <button
+            type="button"
+            class="shrink-0 pt-1 text-[11px] text-ink-dim hover:text-fail"
+            :title="$t('waves.removeTask')"
+            @click="removeDraftTask(index)"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="flex items-center gap-2">
+          <select
+            v-model="addTarget"
+            class="rounded border border-line bg-surface-0 px-1.5 py-0.5 text-[11px] text-ink"
+          >
+            <option value="">{{ $t("waves.addTargetPlaceholder") }}</option>
+            <option v-for="id in addableTargets" :key="id" :value="id">
+              {{ displayName(id) }}
+            </option>
+          </select>
+          <button
+            type="button"
+            class="text-[11px] text-ink-dim hover:text-ink disabled:opacity-40"
+            :disabled="!addTarget"
+            @click="addDraftTask"
+          >
+            {{ $t("waves.addTask") }}
+          </button>
+          <div class="flex-1" />
+          <button
+            type="button"
+            class="rounded border border-line px-2 py-0.5 text-[11px] text-ink-dim hover:text-fail disabled:opacity-40"
+            :disabled="busy"
+            @click="discardPending"
+          >
+            {{ $t("waves.discard") }}
+          </button>
+          <button
+            type="button"
+            class="rounded bg-accent px-3 py-0.5 text-[11px] text-surface-0 disabled:opacity-40"
+            :disabled="busy || draft.length === 0"
+            @click="dispatchPending"
+          >
+            {{ $t("waves.dispatch") }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div
       v-if="waves.length === 0"
       class="flex flex-1 items-center justify-center text-xs text-ink-dim"
@@ -179,7 +339,9 @@ watch(
           <span class="block truncate text-ink">{{ displayName(wave.agentId) }}</span>
           <span class="block text-[10px]">
             {{ $t("waves.waveN", { n: wave.wave })
-            }}<template v-if="wave.elapsedMs !== null"> · {{ formatMs(wave.elapsedMs) }}</template>
+            }}<template v-if="wave.state === 'pending'"> · {{ $t("waves.pendingBadge") }}</template
+            ><template v-else-if="wave.state === 'discarded'"> · {{ $t("waves.discardedBadge") }}</template
+            ><template v-else-if="wave.elapsedMs !== null"> · {{ formatMs(wave.elapsedMs) }}</template>
           </span>
         </div>
 
@@ -196,10 +358,17 @@ watch(
             :key="`${wave.planId}:${agent.id}`"
             class="flex items-center justify-center border-b border-line/50 px-2 py-1.5"
           >
+            <!-- 確認待ちは破線（動いていない）、破棄は薄く。実行痕だけが色を持つ。 -->
             <div
               v-if="taskFor(wave, agent.id)"
               class="h-3.5 w-full rounded-sm"
-              :class="cellClass(taskFor(wave, agent.id)!.state)"
+              :class="
+                wave.state === 'pending'
+                  ? 'border border-dashed border-warn/60'
+                  : wave.state === 'discarded'
+                    ? 'bg-line/40'
+                    : cellClass(taskFor(wave, agent.id)!.state)
+              "
               :title="cellTitle(taskFor(wave, agent.id)!)"
             />
           </div>

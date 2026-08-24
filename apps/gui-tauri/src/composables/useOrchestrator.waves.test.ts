@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
       planId: 1,
       agentId: "agent_lead",
       wave: 1,
+      state: "dispatched",
       startedAtMs: 1000,
       tasks: [
         { to: "agent_w1", state: "answered", elapsedMs: 42, msgChars: 10 },
@@ -134,5 +135,72 @@ describe("波ペインの投影規律", () => {
       orchestrator.state.planWaves[0].planId,
       "古い方から捨てること（planId 1・2 が押し出される）",
     ).toBe(3);
+  });
+
+  it("提案は本文つきで現れ、承認が最終形で置き換え、破棄が本文を落とす（Spec 43）", async () => {
+    const orchestrator = useOrchestrator();
+    await orchestrator.init();
+
+    // 提案（編集窓）。本文が編集 UI の読む真実として届く。
+    fire({
+      type: "planWaveProposed",
+      planId: 100,
+      agentId: "agent_lead",
+      wave: 1,
+      tasks: [
+        { to: "agent_w1", message: "Aを調べて" },
+        { to: "agent_w2", message: "Bを調べて" },
+      ],
+      startedAtMs: 5000,
+    });
+    const pending = orchestrator.state.planWaves.find((w) => w.planId === 100)!;
+    expect(pending.state).toBe("pending");
+    expect(pending.tasks[0].message).toBe("Aを調べて");
+    expect(pending.tasks[0].msgChars).toBe(5);
+
+    // 承認 = planWaveStarted が**人の最終形**でタスクを置き換える（1 件へ編集）。
+    fire({
+      type: "planWaveStarted",
+      planId: 100,
+      agentId: "agent_lead",
+      wave: 1,
+      tasks: [{ to: "agent_w2", msgChars: 7 }],
+      startedAtMs: 6000,
+    });
+    // upsert は要素を新しいオブジェクトで差し替えるので、取り直して読む
+    // （古い参照 `pending` は更新されない — reactive でも要素差し替えは別物）。
+    const dispatched = orchestrator.state.planWaves.find((w) => w.planId === 100)!;
+    expect(dispatched.state).toBe("dispatched");
+    expect(dispatched.tasks).toHaveLength(1);
+    expect(dispatched.tasks[0].to).toBe("agent_w2");
+    expect(dispatched.tasks[0].message, "配送後は本文を持たない").toBeUndefined();
+
+    // 確定済みを pending で巻き戻さない（list の応答が event より古い競合）。
+    fire({
+      type: "planWaveProposed",
+      planId: 100,
+      agentId: "agent_lead",
+      wave: 1,
+      tasks: [{ to: "agent_w1", message: "古い提案" }],
+      startedAtMs: 5000,
+    });
+    expect(
+      orchestrator.state.planWaves.find((w) => w.planId === 100)!.state,
+      "波レベル状態の遷移は片方向（pending へ巻き戻らない）",
+    ).toBe("dispatched");
+
+    // 破棄。状態が閉じ、本文が落ちる。
+    fire({
+      type: "planWaveProposed",
+      planId: 101,
+      agentId: "agent_lead",
+      wave: 2,
+      tasks: [{ to: "agent_w1", message: "破棄される" }],
+      startedAtMs: 7000,
+    });
+    fire({ type: "planWaveDiscarded", planId: 101 });
+    const discarded = orchestrator.state.planWaves.find((w) => w.planId === 101)!;
+    expect(discarded.state).toBe("discarded");
+    expect(discarded.tasks[0].message).toBeUndefined();
   });
 });

@@ -112,6 +112,8 @@ async function submitNew(): Promise<void> {
     enabledTools: null,
     hearsRoomLog: true,
     allowHandoff: true,
+    // 計画の確認（Spec 43）は既定 OFF — 既存の村の plan の挙動を変えない。
+    planReview: false,
     // 作ったら一括起動の対象に入れる。外すのが例外側（重いモデル・実験中）。
     batchStart: true,
     // 役職（Spec 14）。**設定の流し込みはコアがやる** — ここで前埋めしない。

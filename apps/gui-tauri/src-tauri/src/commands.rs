@@ -655,6 +655,26 @@ pub async fn interrupt_all(state: State<'_, AppState>) -> CoreResult<()> {
     Ok(())
 }
 
+/// 承認待ちの計画を、人が編集した最終形で配送する（Spec 43 — 編集窓の実行側）。
+///
+/// `tasks` が配送の真実 — 提案との差分は取らない（人が最後に見て押した形が
+/// 唯一の真実）。検証・新しい因果の根・束ねの配送はコアの
+/// `dispatch_plan_wave` が持つ。
+#[tauri::command]
+pub async fn dispatch_plan_wave(
+    state: State<'_, AppState>,
+    plan_id: u64,
+    tasks: Vec<fuseforks_core::plan::PlanTaskInput>,
+) -> CoreResult<()> {
+    state.orchestrator.dispatch_plan_wave(plan_id, tasks).await
+}
+
+/// 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。
+#[tauri::command]
+pub async fn discard_plan_wave(state: State<'_, AppState>, plan_id: u64) -> CoreResult<()> {
+    state.orchestrator.discard_plan_wave(plan_id).await
+}
+
 /// トグルスイッチ 1 つで起動・停止を切り替える。
 ///
 /// 「既に稼働中」「稼働していない」は、トグル操作の文脈では失敗ではなく

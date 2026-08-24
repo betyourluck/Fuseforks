@@ -329,7 +329,16 @@
     "empty": "No plan runs yet.",
     "servant": "Servant",
     "waveN": "Wave {n}",
-    "agentTitle": "{id} ({name})"
+    "agentTitle": "{id} ({name})",
+    "pendingBadge": "awaiting review",
+    "discardedBadge": "discarded",
+    "pendingTitle": "A plan from {name} awaits your review",
+    "pendingMore": "+{count} more",
+    "addTask": "Add target",
+    "addTargetPlaceholder": "Choose a target…",
+    "removeTask": "Remove this task",
+    "dispatch": "Dispatch",
+    "discard": "Discard"
   },
   "map": {
     "heading": "Kizuna",
@@ -529,7 +538,9 @@
     "roleHelp": "This changes only the role label. Settings (Construct.md, model, and so on) are copied at creation time, so changing the role here does not change them.",
     "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run. The tool is offered even while allow is empty, but nothing can be executed in that state — non-matching calls are recorded as pending, so approving one from \"Command approval\" in the title bar lets it pass from the next turn.",
     "allowHandoff": "Allow handoff (pass the conversation on)",
-    "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator."
+    "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator.",
+    "planReview": "Review plans (edit window)",
+    "planReviewHint": "plan pauses as a proposal before dispatching. Edit and dispatch it from the activity tab. The proposing turn does not receive results."
   },
   "modelTemplate": {
     "title": "Model templates",
@@ -768,7 +779,9 @@
     "EXTERNAL_BUSY": "Another external request is in progress",
     "BLACKBOARD_DELETE_FAILED": "Could not move the blackboard note to the trash",
     "ATTACHMENT_NOT_CARRIED": "This recipient wire cannot carry that kind of attachment",
-    "PRICING_FETCH": "Could not fetch the price table"
+    "PRICING_FETCH": "Could not fetch the price table",
+    "PLAN_WAVE_NOT_PENDING": "Not a plan awaiting review",
+    "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",
@@ -840,7 +853,9 @@
       "exportSession": "Exporting the conversation",
       "listCommandRequests": "Loading the pending requests",
       "approveCommand": "Approving the command",
-      "rejectCommand": "Rejecting the command"
+      "rejectCommand": "Rejecting the command",
+      "dispatchPlan": "Dispatching the plan",
+      "discardPlan": "Discarding the plan"
     }
   },
   "statusBar": {

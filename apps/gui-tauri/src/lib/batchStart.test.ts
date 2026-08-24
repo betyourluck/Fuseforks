@@ -27,6 +27,7 @@ function agent(
     enabledTools: null,
     hearsRoomLog: true,
     allowHandoff: true,
+    planReview: false,
     batchStart,
     lastError: null,
   };

@@ -33,6 +33,7 @@ import type {
   RoleId,
   McpConfig,
   McpServerStatus,
+  PlanTaskInput,
   PlanWaveRecord,
   Recurrence,
   ScheduleOptions,
@@ -132,6 +133,17 @@ export const listMessages = (limit?: number) =>
 
 /** plan 波の記録を取得する（Spec 08 — 波ペイン。古い順・実行中の波も含む）。 */
 export const listPlanWaves = () => call<PlanWaveRecord[]>("list_plan_waves");
+
+/**
+ * 承認待ちの計画を、人が編集した最終形で配送する（Spec 43 — 編集窓の実行側）。
+ * `tasks` が配送の真実 — 提案との差分は取らない。
+ */
+export const dispatchPlanWave = (planId: number, tasks: PlanTaskInput[]) =>
+  call<void>("dispatch_plan_wave", { planId, tasks });
+
+/** 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。 */
+export const discardPlanWave = (planId: number) =>
+  call<void>("discard_plan_wave", { planId });
 
 /** エージェント別トークン消費量を取得する（Rust 側で Rayon 集計）。 */
 export const tokenUsage = () => call<Record<AgentId, number>>("token_usage");

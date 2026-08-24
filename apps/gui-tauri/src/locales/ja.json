@@ -329,7 +329,16 @@
     "empty": "plan の実行はまだありません。",
     "servant": "サーヴァント",
     "waveN": "波{n}",
-    "agentTitle": "{id}（{name}）"
+    "agentTitle": "{id}（{name}）",
+    "pendingBadge": "確認待ち",
+    "discardedBadge": "破棄",
+    "pendingTitle": "{name} の計画が承認を待っています",
+    "pendingMore": "ほか {count} 件",
+    "addTask": "宛先を追加",
+    "addTargetPlaceholder": "宛先を選ぶ…",
+    "removeTask": "このタスクを外す",
+    "dispatch": "実行",
+    "discard": "破棄"
   },
   "map": {
     "heading": "サーヴァントの絆",
@@ -529,7 +538,9 @@
     "roleHelp": "ここで変えられるのは役職の名札だけです。設定（Construct.md やモデル）は作成時にコピーされるため、役職を変えても中身は変わりません。",
     "runOnWarn": "コマンド実行を許しています。作業フォルダの制限は実行したコマンドには効きません。実行できるのはこのサーヴァントの run.json（mcp.json タブの隣で編集）の allow に一致する呼び出しだけです。allow が空でも道具は提示されますが、その状態では何も実行できません — 一致しない呼び出しは pending に記録されるので、タイトルバーの「コマンド承認」で承認すると次のターンから通ります。",
     "allowHandoff": "転送を許す（会話を引き渡す）",
-    "allowHandoffHint": "この個体は会話を引き渡せません。委譲（相手に訊いて答えを受け取る）と手分けは使えます。進行役に向いた設定です。"
+    "allowHandoffHint": "この個体は会話を引き渡せません。委譲（相手に訊いて答えを受け取る）と手分けは使えます。進行役に向いた設定です。",
+    "planReview": "計画の確認（plan の編集窓）",
+    "planReviewHint": "plan は撒く前に提案として止まり、作業状況タブで内容を編集してから実行できます。提案したターンには結果が返りません。"
   },
   "modelTemplate": {
     "title": "モデルテンプレート",
@@ -768,7 +779,9 @@
     "EXTERNAL_BUSY": "別の外部依頼を処理中です",
     "BLACKBOARD_DELETE_FAILED": "黒板の付箋をごみ箱へ移せませんでした",
     "ATTACHMENT_NOT_CARRIED": "この宛先のワイヤはこの種別の添付を運べません",
-    "PRICING_FETCH": "単価表を取得できませんでした"
+    "PRICING_FETCH": "単価表を取得できませんでした",
+    "PLAN_WAVE_NOT_PENDING": "承認待ちの計画ではありません",
+    "PLAN_DISPATCH_INVALID": "計画を配送できません"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
@@ -840,7 +853,9 @@
       "exportSession": "会話の書き出し",
       "listCommandRequests": "判断待ちの取得",
       "approveCommand": "コマンドの承認",
-      "rejectCommand": "コマンドの却下"
+      "rejectCommand": "コマンドの却下",
+      "dispatchPlan": "計画の実行",
+      "discardPlan": "計画の破棄"
     }
   },
   "statusBar": {

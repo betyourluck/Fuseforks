@@ -32,6 +32,7 @@ import type {
   McpHostStatus,
   ModelTemplate,
   Role,
+  PlanTaskInput,
   PlanWaveRecord,
   SessionSummary,
   TopologyPosition,
@@ -472,6 +473,13 @@ function upsertPlanWave(incoming: PlanWaveRecord): void {
   const existing = state.planWaves[index];
   state.planWaves[index] = {
     ...incoming,
+    // 波レベル状態の遷移は片方向（pending → dispatched / discarded — Spec 43）。
+    // list の応答が event より古い可能性があるので、確定済みを pending で
+    // 巻き戻さない（タスクの「解決済みを running で巻き戻さない」と同じ規則）。
+    state:
+      incoming.state === "pending" && existing.state !== "pending"
+        ? existing.state
+        : incoming.state,
     tasks: incoming.tasks.map((task) => {
       const prev = existing.tasks.find((t) => t.to === task.to);
       // 解決済みを running で巻き戻さない。
@@ -667,6 +675,7 @@ function applyEvent(event: CoreEvent): void {
         planId: event.planId,
         agentId: event.agentId,
         wave: event.wave,
+        state: "dispatched",
         startedAtMs: event.startedAtMs,
         tasks: event.tasks.map((task) => ({
           to: task.to,
@@ -678,6 +687,37 @@ function applyEvent(event: CoreEvent): void {
         elapsedMs: null,
       });
       break;
+
+    // Spec 43（編集窓）。提案は本文つきで届き、承認（planWaveStarted）が
+    // タスクを最終形で置き換えるか、破棄（planWaveDiscarded）が閉じる。
+    case "planWaveProposed":
+      upsertPlanWave({
+        planId: event.planId,
+        agentId: event.agentId,
+        wave: event.wave,
+        state: "pending",
+        startedAtMs: event.startedAtMs,
+        tasks: event.tasks.map((task) => ({
+          to: task.to,
+          state: "running",
+          elapsedMs: null,
+          msgChars: [...task.message].length,
+          message: task.message,
+        })),
+        bundleChars: null,
+        elapsedMs: null,
+      });
+      break;
+
+    case "planWaveDiscarded": {
+      const wave = state.planWaves.find((w) => w.planId === event.planId);
+      if (wave) {
+        wave.state = "discarded";
+        // 本文を落とす（コアの discard_wave と同じ後始末）。
+        for (const task of wave.tasks) delete task.message;
+      }
+      break;
+    }
 
     case "planTaskResolved": {
       // Started より前に Resolved は来ない（per planId の順序保証）。
@@ -859,6 +899,30 @@ export function useOrchestrator() {
         state.interruptPending[agentId] = true;
       }
       await mutate("orchestrator.op.interruptAll", () => ipc.interruptAll());
+    },
+
+    /**
+     * 承認待ちの計画を、人が編集した最終形で配送する（Spec 43）。
+     *
+     * 成否は戻り値で読む（`mutate` は失敗をトーストにして `FAILED` を返す）。
+     * 成功の投影は event（`planWaveStarted`）が運ぶので、ここでは何も書かない。
+     */
+    async dispatchPlanWave(
+      planId: number,
+      tasks: PlanTaskInput[],
+    ): Promise<boolean> {
+      const result = await mutate("orchestrator.op.dispatchPlan", () =>
+        ipc.dispatchPlanWave(planId, tasks),
+      );
+      return result !== FAILED;
+    },
+
+    /** 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。 */
+    async discardPlanWave(planId: number): Promise<boolean> {
+      const result = await mutate("orchestrator.op.discardPlan", () =>
+        ipc.discardPlanWave(planId),
+      );
+      return result !== FAILED;
     },
 
     /**

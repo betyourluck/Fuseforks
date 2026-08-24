@@ -936,7 +936,9 @@ scratchpad へ展開し、読み手 4 本（eigent 3 + upstream camel 1）で読
    凍結 9 本を `data_contract` の `plan_edit_window` へ。P1 = コア実装 +
    結合 7 本、ミューテーション 2 回で赤確認。**停止の精緻化** — 進行役の停止は
    波ごと畳み、凍結 9 の破棄は完了競合・受信箱飽和の残余の網。
-   残は P2 = IPC + フロント / P3 台帳 / P4 実機）。eigent は camel の一体だった `process_task` を
+   **P2 = IPC 2 本 + トグル + 波ペインの編集パネル + 辞書 ja/en も完了**
+   （型検査が投影の写し忘れ 4 箇所を捕まえた。vitest 437）。
+   残は P3 台帳 / P4 実機）。eigent は camel の一体だった `process_task` を
    **二分割してまで**、分解結果を人が編集・削除・追加してから走らせる窓を
    開けた（`eigent_make_sub_tasks` / `eigent_start`）。`plan` を
    「提示 → 編集 → 実行」の 2 フェーズへ。**「線は人が引く」の計画への延長**で、

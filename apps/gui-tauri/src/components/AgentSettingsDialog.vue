@@ -192,6 +192,7 @@ const dirty = computed(() => {
     JSON.stringify(current.enabledTools) !== JSON.stringify(source.enabledTools) ||
     current.hearsRoomLog !== source.hearsRoomLog ||
     current.allowHandoff !== source.allowHandoff ||
+    current.planReview !== source.planReview ||
     // 役職だけを変えたときも保存できること。**入れ忘れると、選び直しても
     // 保存ボタンが有効にならず「変えられない」と読まれる。**
     current.roleId !== source.roleId
@@ -594,6 +595,14 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           </label>
           <p v-if="!draft.allowHandoff" class="mt-0.5 text-[10px] text-ink-dim">
             {{ $t("agentSettings.allowHandoffHint") }}
+          </p>
+          <!-- plan の編集窓（Spec 43）。既定 OFF — 既存の村の plan の挙動を変えない。 -->
+          <label class="mt-1 flex items-center gap-2 text-[12px]">
+            <input type="checkbox" v-model="draft.planReview" />
+            <span>{{ $t("agentSettings.planReview") }}</span>
+          </label>
+          <p v-if="draft.planReview" class="mt-0.5 text-[10px] text-ink-dim">
+            {{ $t("agentSettings.planReviewHint") }}
           </p>
           <div class="mb-3" />
 
