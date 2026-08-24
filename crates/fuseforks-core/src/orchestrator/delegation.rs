@@ -195,6 +195,34 @@ pub(super) async fn deliver_and_wait(
 /// `Err` を返すと実行ループが「ツールの実行に失敗しました」で包み、
 /// モデルが読むべき「なぜ配送されなかったか」が一段深い所へ埋まるため。
 #[allow(clippy::too_many_arguments)]
+/// 波のタスク 1 件の欠陥。**判定は `run_plan` と `dispatch_plan_wave` の
+/// 2 経路がこの 1 実装を共有する**（Spec 43 凍結 3 — GUI が何でも配送できる
+/// 形にしない）。文言は経路ごとに描く（ツール結果と IPC エラーで読み手が違う）。
+pub(super) enum WaveTaskDefect {
+    /// 宛先が進行役の接続先ではない。
+    NotConnected,
+    /// 同じ波に同じ宛先が 2 回ある。
+    Duplicate,
+}
+
+/// 波へ足そうとしている宛先 1 件を検査する。判定順（接続 → 重複）も
+/// 両経路で共有する — 順が割れると同じ入力に別の文言が返る。
+pub(super) fn check_wave_target<'a>(
+    target: &AgentId,
+    accepted: impl Iterator<Item = &'a AgentId>,
+    is_target: impl Fn(&AgentId) -> bool,
+) -> Option<WaveTaskDefect> {
+    if !is_target(target) {
+        return Some(WaveTaskDefect::NotConnected);
+    }
+    let mut accepted = accepted;
+    if accepted.any(|existing| existing == target) {
+        return Some(WaveTaskDefect::Duplicate);
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_plan(
     shared: &Arc<Shared>,
     from: &AgentId,
@@ -202,6 +230,7 @@ pub(super) async fn run_plan(
     call: &crate::llm::ToolCall,
     hop: u8,
     wave: u32,
+    review: bool,
     parent: &tokio_util::sync::CancellationToken,
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
@@ -240,24 +269,82 @@ pub(super) async fn run_plan(
 
         let target = AgentId::from(to);
         // 提示はターンの開始時、検証は今。この間に繋ぎ替えは起こりうる。
-        if !handoffs.is_target(&target) {
-            return format!(
-                "{position} 件目の宛先「{to}」は、あなたの接続先ではありません。\
-                 頼めるのは {} です。何も配送していません。",
-                handoffs.roster().join("、")
-            );
-        }
-        if wave_tasks.iter().any(|(existing, _)| *existing == target) {
-            return format!(
-                "宛先「{to}」が同じ波に 2 回あります。1 回の plan で同じ相手へ頼めるのは 1 件です。\
-                 2 件目は次の波で頼んでください。何も配送していません。"
-            );
+        // 判定は dispatch_plan_wave と 1 実装を共有する（Spec 43 凍結 3）。
+        match check_wave_target(
+            &target,
+            wave_tasks.iter().map(|(existing, _)| existing),
+            |t| handoffs.is_target(t),
+        ) {
+            Some(WaveTaskDefect::NotConnected) => {
+                return format!(
+                    "{position} 件目の宛先「{to}」は、あなたの接続先ではありません。\
+                     頼めるのは {} です。何も配送していません。",
+                    handoffs.roster().join("、")
+                );
+            }
+            Some(WaveTaskDefect::Duplicate) => {
+                return format!(
+                    "宛先「{to}」が同じ波に 2 回あります。1 回の plan で同じ相手へ頼めるのは 1 件です。\
+                     2 件目は次の波で頼んでください。何も配送していません。"
+                );
+            }
+            None => {}
         }
         // 依頼元のターンに添付が付いていたら、届かないことを各依頼の本文で断る（D6）。
         wave_tasks.push((
             target,
             note_dropped_attachment(message, drops_attachment, language),
         ));
+    }
+
+    // 編集窓（Spec 43 — 二相の提示側）。静的な検証を通した形だけを提案として
+    // 記録する（形の誤りは今この場でモデルへ返すほうが 1 往復安い）。
+    // hop の検査より**前**に置く — dispatch は新しい因果の根で next_hop=1 なので、
+    // 提示の時点の hop は配送の可否を決めない。
+    if review {
+        let started_at_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let plan_id = shared.plan_waves.write().await.begin_pending_wave(
+            from.clone(),
+            wave,
+            &wave_tasks,
+            started_at_ms,
+        );
+        note!(
+            "plan pending: agent={from} plan_id={plan_id} wave={wave} tasks={} to=[{}] msg_chars={}",
+            wave_tasks.len(),
+            wave_tasks
+                .iter()
+                .map(|(target, _)| target.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            wave_tasks
+                .iter()
+                .map(|(_, message)| message.chars().count())
+                .sum::<usize>(),
+        );
+        shared.emit(CoreEvent::PlanWaveProposed {
+            plan_id,
+            agent_id: from.clone(),
+            wave,
+            tasks: wave_tasks
+                .iter()
+                .map(|(to, message)| crate::plan::PlanTaskInput {
+                    to: to.clone(),
+                    message: message.clone(),
+                })
+                .collect(),
+            started_at_ms,
+        });
+        // このターンでは結果を受け取らない（D3 — 嘘を書かない）。
+        return match language {
+            crate::world::Language::Ja => "計画を提示しました。利用者が編集して実行または破棄します。\
+                 このターンでは結果を受け取りません。提示した事実を短く報告して、ターンを終えてください。"
+                .to_owned(),
+            crate::world::Language::En => "The plan has been proposed. The user will edit it, then \
+                 dispatch or discard it. You will not receive the results in this turn. \
+                 Briefly report that the plan was proposed, then end your turn."
+                .to_owned(),
+        };
     }
 
     // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す
@@ -316,12 +403,68 @@ pub(super) async fn run_plan(
         started_at_ms,
     });
 
-    // 3. 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
-    //    直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
-    //    並列なのは**配送**であって実行ではない。各エージェントの受信箱は
-    //    1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
-    //    タスクの所要はここで測る — deliver_and_wait に計時を入れない
-    //    （ask に plan の観測の関心を背負わせない）。
+    // 3.-4. 配送 → 回収 → 束ね。**dispatch 経路（Spec 43）と 1 実装を共有**
+    //    する（execute_wave）。表示名はこちらの経路では HandoffTools が持つ。
+    let displays: std::collections::HashMap<AgentId, String> = wave_tasks
+        .iter()
+        .map(|(target, _)| {
+            (
+                target.clone(),
+                handoffs
+                    .display_of(target)
+                    .unwrap_or_else(|| target.as_str())
+                    .to_owned(),
+            )
+        })
+        .collect();
+    match execute_wave(
+        shared,
+        from,
+        plan_id,
+        wave,
+        &wave_tasks,
+        next_hop,
+        parent,
+        budget,
+        participants,
+        &displays,
+        dispatched_at,
+    )
+    .await
+    {
+        Some(bundle) => bundle,
+        // この文字列は進行役の周回に返るが、直後の周回境界で本人も止まるので
+        // モデルは読まない。読まれる前提の文言にしない（人がログで読む行）。
+        None => "plan はユーザーの指示で打ち切られました。".to_owned(),
+    }
+}
+
+/// 波の実行の 1 実装（配送 → 回収 → 束ね。Spec 43 で二相化した際に
+/// `run_plan` から切り出した — ターンの中（ツール結果）とターンの外
+/// （dispatch）の 2 経路がここを共有する）。
+///
+/// 戻りは `Some(束ね)`、親トークンで打ち切られたら `None`
+/// （波の記録はどちらでも閉じ済み）。
+#[allow(clippy::too_many_arguments)]
+async fn execute_wave(
+    shared: &Arc<Shared>,
+    from: &AgentId,
+    plan_id: u64,
+    wave: u32,
+    wave_tasks: &[(AgentId, String)],
+    next_hop: u8,
+    parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
+    display_of: &std::collections::HashMap<AgentId, String>,
+    dispatched_at: std::time::Instant,
+) -> Option<String> {
+    // 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
+    // 直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
+    // 並列なのは**配送**であって実行ではない。各エージェントの受信箱は
+    // 1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
+    // タスクの所要はここで測る — deliver_and_wait に計時を入れない
+    // （ask に plan の観測の関心を背負わせない）。
     let mut set = tokio::task::JoinSet::new();
     for (index, (target, message)) in wave_tasks.iter().enumerate() {
         let shared = Arc::clone(shared);
@@ -439,19 +582,22 @@ pub(super) async fn run_plan(
             elapsed_ms: folded_at,
         });
 
-        // この文字列は進行役の周回に返るが、直後の周回境界で本人も止まるので
-        // モデルは読まない。読まれる前提の文言にしない（人がログで読む行）。
-        return "plan はユーザーの指示で打ち切られました。".to_owned();
+        // 打ち切りの報告は呼び出し側の仕事（ターンの中ならツール結果、
+        // dispatch 経路なら何もしない — 記録はここまでで閉じている）。
+        return None;
     }
 
-    // 4. 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
-    //    表示名の一意性がどこも保証されていないから（同名が 2 体いると
-    //    どちらの答えか判別できなくなる）。順序は入力順に戻す。
+    // 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
+    // 表示名の一意性がどこも保証されていないから（同名が 2 体いると
+    // どちらの答えか判別できなくなる）。順序は入力順に戻す。
     let bundle = wave_tasks
         .iter()
         .zip(answers)
         .map(|((target, _), answer)| {
-            let display = handoffs.display_of(target).unwrap_or_else(|| target.as_str());
+            let display = display_of
+                .get(target)
+                .map(String::as_str)
+                .unwrap_or_else(|| target.as_str());
             let body = answer.unwrap_or_else(|| "答えの取得中に問題が起きました。".to_owned());
             format!("## {target}（{display}）\n{body}")
         })
@@ -483,7 +629,106 @@ pub(super) async fn run_plan(
         bundle_chars,
         elapsed_ms,
     });
-    bundle
+    Some(bundle)
+}
+
+/// 承認済みの波の実行者（Spec 43 D6 — **ターンの外の実行形の 2 つ目**。
+/// 1 つ目は手動要約 = `failures.md` #50。3 つ目は凍結 8 を名指しで覆すこと）。
+///
+/// 配送 → 回収 → 束ねは `execute_wave` の 1 実装で、run_plan との違いは
+/// 束ねの行き先だけ — ツール結果として返る席が無いので、`Endpoint::System` の
+/// 配送として進行役の新しいターンを起こす（D6）。
+///
+/// **この関数自身は LLM を 1 回も呼ばない。** 消費が起きるのはワーカーの
+/// ターンと進行役の束ねターンで、どちらも普通のターンとして `TurnSpend` で
+/// 精算される — #50 の轍（ターンの外の LLM 呼び出しが計器に載らない）を、
+/// ここは構造ごと持たない。
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_dispatched_wave(
+    shared: Arc<Shared>,
+    coordinator: AgentId,
+    plan_id: u64,
+    wave: u32,
+    tasks: Vec<(AgentId, String)>,
+    displays: std::collections::HashMap<AgentId, String>,
+    budget: Option<Arc<BudgetPool>>,
+    cancel: tokio_util::sync::CancellationToken,
+) {
+    let dispatched_at = std::time::Instant::now();
+    let bundle = execute_wave(
+        &shared,
+        &coordinator,
+        plan_id,
+        wave,
+        &tasks,
+        // 新しい因果の根からの配送（凍結 5 — run_plan の「進行役から 1 段」と
+        // 同じ位置）。
+        1,
+        &cancel,
+        budget.as_ref(),
+        None,
+        &displays,
+        dispatched_at,
+    )
+    .await;
+
+    // 実行者の登録簿から降りる（interrupt の対象はここまで）。
+    shared.wave_runs.lock().await.remove(&plan_id);
+
+    // 打ち切りなら束ねは無い（波の記録は execute_wave が閉じ済み）。
+    let Some(bundle) = bundle else { return };
+
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    let body = match language {
+        crate::world::Language::Ja => format!(
+            "plan（波 {wave}）の束ねが届きました。各担当の答えを読んで、報告をまとめてください。\n\n{bundle}"
+        ),
+        crate::world::Language::En => format!(
+            "The bundled results of plan (wave {wave}) have arrived. Read each assignee's answer and compose your report.\n\n{bundle}"
+        ),
+    };
+    let message = AgentMessage::new(
+        Endpoint::System,
+        Endpoint::Agent {
+            id: coordinator.clone(),
+        },
+        body,
+        0,
+    );
+    match super::deliver(&shared, &coordinator, message.clone(), budget, None).await {
+        Ok(()) => {
+            shared.record(message).await;
+        }
+        Err(err) => {
+            // 凍結 9 — 黙って捨てない。届け先の居ない束ねは破棄し、事実を
+            // ログと会話の両方へ残す（#44 の規律。答えだけ揃って要約されない
+            // 波を沈黙のまま作らない）。
+            let reason = match err {
+                crate::error::CoreError::NotRunning { .. } => "agent_stopped",
+                _ => "mailbox_full",
+            };
+            note!(
+                "plan bundle discarded: reason={reason} plan_id={plan_id} agent={coordinator} chars={}",
+                bundle.chars().count(),
+            );
+            let notice = match language {
+                crate::world::Language::Ja => format!(
+                    "計画（波 {wave}）の束ねは、進行役へ配送できなかったため破棄されました。"
+                ),
+                crate::world::Language::En => format!(
+                    "The bundle of plan (wave {wave}) was discarded because it could not be delivered to the coordinator."
+                ),
+            };
+            shared
+                .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0))
+                .await;
+        }
+    }
 }
 
 /// `JoinSet` のタスク異常を握り潰さずに記録する。

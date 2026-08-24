@@ -1992,6 +1992,8 @@ impl CallRunner<'_> {
                 call,
                 incoming.hop,
                 *self.plan_wave,
+                // 編集窓（Spec 43）。真なら配送せず提案を記録してターンを終える。
+                spec.plan_review,
                 &turn.token,
                 budget.as_ref(),
                 participants.as_ref(),

@@ -190,6 +190,7 @@ impl Orchestrator {
             probe_approvals: RwLock::new(None),
             village_id: RwLock::new(village_id),
             plan_waves: RwLock::new(PlanWaveStore::default()),
+            wave_runs: Mutex::new(HashMap::new()),
             turns: Mutex::new(HashMap::new()),
             turn_seq: std::sync::atomic::AtomicU64::new(1),
             schedules_blocked,

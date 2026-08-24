@@ -931,9 +931,12 @@ scratchpad へ展開し、読み手 4 本（eigent 3 + upstream camel 1）で読
    2 箇所に置く）。`reply:` 行へ `refusal=` を 1 欄足す（下の材料が正）。
    **Spec 27 で却下した「`Error:` で ok を倒す」はツール結果への適用**で、
    こちらは依頼主への返信本文 — 偽陽性の構造が違う。機構ではなく計器（#47）
-3. **人間の編集窓 — [Spec 43](specs/43_plan-edit-window.md) rev2 承認 → P0 完了**
-   （2026-08-24。査読 7 点 → 採用 5 / 前提を訂正して採用 2。凍結 9 本を
-   `data_contract` の `plan_edit_window` へ）。eigent は camel の一体だった `process_task` を
+3. **人間の編集窓 — [Spec 43](specs/43_plan-edit-window.md) rev2 承認 →
+   P0〜P1 完了**（2026-08-24。査読 7 点 → 採用 5 / 前提を訂正して採用 2。
+   凍結 9 本を `data_contract` の `plan_edit_window` へ。P1 = コア実装 +
+   結合 7 本、ミューテーション 2 回で赤確認。**停止の精緻化** — 進行役の停止は
+   波ごと畳み、凍結 9 の破棄は完了競合・受信箱飽和の残余の網。
+   残は P2 = IPC + フロント / P3 台帳 / P4 実機）。eigent は camel の一体だった `process_task` を
    **二分割してまで**、分解結果を人が編集・削除・追加してから走らせる窓を
    開けた（`eigent_make_sub_tasks` / `eigent_start`）。`plan` を
    「提示 → 編集 → 実行」の 2 フェーズへ。**「線は人が引く」の計画への延長**で、

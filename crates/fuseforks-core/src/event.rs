@@ -269,6 +269,30 @@ pub enum CoreEvent {
         /// 波全体の所要（= キュー待ち込みの最遅 1 体分）。
         elapsed_ms: u64,
     },
+
+    /// plan の提案が記録された（Spec 43 — 編集窓）。配送は起きていない。
+    /// 人の承認（`dispatch_plan_wave` → `PlanWaveStarted`）か破棄
+    /// （`discard_plan_wave` → `PlanWaveDiscarded`）がこの後に続く。
+    #[serde(rename_all = "camelCase")]
+    PlanWaveProposed {
+        /// 波の同定子。
+        plan_id: u64,
+        /// 進行役。
+        agent_id: AgentId,
+        /// ターン内連番。
+        wave: u32,
+        /// 提案されたタスク（入力順・本文つき — 編集 UI が読む提案の真実）。
+        tasks: Vec<crate::plan::PlanTaskInput>,
+        /// 提示時刻（epoch ms）。
+        started_at_ms: u64,
+    },
+
+    /// plan の提案が破棄された（Spec 43）。配送は一度も起きていない。
+    #[serde(rename_all = "camelCase")]
+    PlanWaveDiscarded {
+        /// 波の同定子。
+        plan_id: u64,
+    },
 }
 
 #[cfg(test)]

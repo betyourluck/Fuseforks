@@ -2530,9 +2530,10 @@ entities:
       startedAtMs: u64           # epoch ms (壁時計)
       tasks:                     # 入力順 (束ねと同じ。解決順ではない)
         to: AgentId              # 波内で一意 (同一宛先の重複 = 静的な不正)
-        state: PlanTaskState
+        state: PlanTaskState     # 波が pending の間は未配送の置き場 (running のまま。セルの意味は波の state が決め、dispatch がタスクを最終形で置き換える)
         elapsedMs: u64 | null    # 配送→そのタスクの解決。相手のキュー待ちを含む
         msgChars: u32
+        message: String?         # **pending の間だけ埋まる** (編集 UI が読む提案の真実 — Spec 43 P1 で実装が数えて足した欄。dispatch / discard で落とす — 配送後の本文は束ねとワーカーの履歴に住み、二重に持つとリングの概算が嘘になる。skip_serializing_if で無い時は欄ごと出ない)
       bundleChars: u64 | null    # 波の完了時に埋まる
       elapsedMs: u64 | null      # 波全体 = キュー待ち込みの最遅 1 体分
     invariants: |
@@ -3206,7 +3207,13 @@ conversation_termination:
            TurnSpend で精算し計器を持つ (#50 / #103 の処方を最初から)
         9. **dispatch 実行中に進行役が停止したら束ねは破棄**し、
            plan bundle discarded: reason=agent_stopped の 1 行 + 会話への
-           System 行で事実を残す (黙って捨てない — #44 の規律)
+           System 行で事実を残す (黙って捨てない — #44 の規律)。
+           **P1 の実装で精緻化** (2026-08-24): 停止は通常この網より手前で効く —
+           stop_agent は interrupt_turn を通り、interrupt_turn は進行役一致の
+           波の実行者 token を切るので、**波ごと畳まれてワーカーも止まる**
+           (届け先の居ない束ねのためにトークンを払い続けない)。凍結 9 の破棄は
+           その**残余** (波の完了と停止の競合・受信箱飽和 = reason=mailbox_full)
+           を受ける網。両経路とも結合テストで留めた (plan_edit_window.rs)
       欄名: AgentSpec.planReview: bool (serde default = false)。
       **AgentSnapshot にも写す** (投影に無い欄は設定保存で既定へ戻る —
       Spec 14 P1 の規律)。UI ラベルは「計画の確認」(分類・ラベルは

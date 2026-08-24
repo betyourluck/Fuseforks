@@ -1,12 +1,52 @@
 # Spec: plan の編集窓 — 計画を提示し、人が直してから撒く
 
 - 起票: 2026-08-24
-- 状態: **rev2 承認（2026-08-24）→ P0 完了**（`data_contract` の
+- 状態: **rev2 承認（2026-08-24）→ P0〜P1 完了**（P0 = `data_contract` の
   `plan_edit_window`（凍結 9 本 + 欄名 + IPC 2 本 + 計器）/ `AgentSpec` と
   `AgentSnapshot` へ `planReview` / `PlanWaveRecord` へ波レベル状態
   `state`（serde default = dispatched）と「配送ゼロは記録しない」への
   pending 例外 / Spec 04・08 ヘッダと Spec 12 凍結 8・`session_store` の
-  「復元しないもの」へ続報）。査読の反映記録は Notes 5
+  「復元しないもの」へ続報。P1 = コア実装 + 結合 7 本 + 単体 4 本 +
+  ミューテーション 2 回で赤確認。実装記録は下の「P1 実装記録」）。
+  査読の反映記録は Notes 5
+
+## P1 実装記録（2026-08-24。次に触る人が要るもの）
+
+- **共有は検証を超えて実行まで広がった。** 凍結 3 が求めたのは検証の 1 実装
+  （`check_wave_target`）だが、配送 → 回収 → 束ねの本体も `execute_wave` として
+  `run_plan` から切り出し、dispatch 経路（`run_dispatched_wave`）と共有した —
+  join ループを二重に書くと Interrupted の畳み方がドリフトする温床になるため。
+  run_plan は displays（HandoffTools 由来）を作って呼ぶだけの形になった
+- **停止の精緻化（凍結 9 の射程が実測で決まった）**: `stop_agent` は
+  `interrupt_turn` を通り、`interrupt_turn` は進行役一致の波の実行者 token を
+  切るので、**進行役の停止は通常、波ごと畳む**（ワーカーも止まり、届け先の
+  居ない束ねのためにトークンを払わない）。凍結 9 の「束ねの破棄」は**残余の網**
+  （完了と停止の競合・受信箱飽和 `reason=mailbox_full`）。テストは両経路 —
+  停止 = セルが interrupted で閉じる / 飽和 = 破棄 + System 行
+- **契約の gap を 1 つ実装が数えた**: 提案の真実（D4）に本文が要るのに、
+  `PlanWaveRecord.tasks` は `msgChars` しか持っていなかった。`message: String?`
+  を足した — **pending の間だけ**埋まり、dispatch / discard で落とす
+  （配送後の本文は束ねとワーカーの履歴に住む。リングの概算 400 byte/波を
+  壊さない）。data_contract 追従済み
+- **束ねの配送は hop 0**（予定の発火と同型 — 根に近い配送）。ワーカーへの
+  配送が next_hop=1（凍結 5）
+- **#89 の回帰（凍結 6）は既存の網がそのまま覆う**: 束ねは System→Agent で、
+  presence の述語（`from == System && to == User`・1 実装）が構造的に落とす。
+  その述語は `presence_notice_scope.rs` が凍結済み — 新しいテストを足さない
+  のは、足すと同じ述語の網が 2 箇所に生えるため
+- **波の実行者は LLM を呼ばない**（凍結 8 の充足形）: 消費はワーカーのターンと
+  進行役の束ねターンで起き、どちらも普通のターンとして `TurnSpend` で精算
+  される。#50 の轍（ターン外の LLM 呼び出し）を構造ごと持たない
+- **エラーは 2 変種**: `PLAN_WAVE_NOT_PENDING` / `PLAN_DISPATCH_INVALID`
+  （P2 で辞書 ja/en に鍵を足す）
+- **ミューテーション 2 回**: 接続検証を素通しへ → 検証テストだけ赤 /
+  `if review` を殺して即配送へ → **6 本赤・OFF の対照だけ緑**（窓の機構が
+  全テストの前提になっている形が読めた）
+- **テストで踏んだ罠 2 つ**: (a) plan は**接続 2 体以上でしか生えない**
+  （提示条件）— 受信箱テストの進行役に 1 体しか繋がず、plan が呼ばれない
+  空振りを踏んだ (b) 診断ログはプロセス共有（`OnceLock`）なので並走する
+  テストの plan 行が同じファイルに写る — **テストごとに固有の agent id** を
+  使い、grep を id で絞る形にした
 - 起点: eigent の実読（CLAUDE.md「eigent の実読と突き合わせ（2026-08-24）」
   取り込み 3。利用者裁定「③の編集窓は号令待ち → Spec 化をお願いします」）。
   eigent は camel の一体だった `process_task` を**二分割してまで**

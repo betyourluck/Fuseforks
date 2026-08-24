@@ -153,6 +153,14 @@ impl Orchestrator {
     /// 冪等 — 二重に呼んでも計測の起点（最初の要求時刻）は動かず、
     /// 出口の行も 1 本のまま（書くのは切られたターン自身なので）。
     pub async fn interrupt_turn(&self, id: &AgentId) {
+        // Spec 43 — この個体を進行役とする承認済みの波の実行者も切る（凍結 5。
+        // 波の実行者はターンではないので `turns` の網に掛からない）。飛行中
+        // ターンの有無より先に見る — ターンが無くても波だけ走っていることはある。
+        for (agent, token) in self.shared.wave_runs.lock().await.values() {
+            if agent == id {
+                token.cancel();
+            }
+        }
         let handle = {
             let turns = self.shared.turns.lock().await;
             turns.get(id).map(Arc::clone)
@@ -182,6 +190,12 @@ impl Orchestrator {
         let ids: Vec<AgentId> = self.shared.turns.lock().await.keys().cloned().collect();
         for id in ids {
             self.interrupt_turn(&id).await;
+        }
+        // 進行役に飛行中ターンが無い波の実行者もここで切る（Spec 43 凍結 5 —
+        // 「全ターン停止」は承認済みの波も止める。上のループは turns に居る
+        // 個体しか回らない）。
+        for (_, token) in self.shared.wave_runs.lock().await.values() {
+            token.cancel();
         }
     }
 

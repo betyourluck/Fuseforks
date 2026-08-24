@@ -778,6 +778,7 @@ impl World {
             enabled_tools: record.spec.enabled_tools.clone(),
             hears_room_log: record.spec.hears_room_log,
             allow_handoff: record.spec.allow_handoff,
+            plan_review: record.spec.plan_review,
             batch_start: record.spec.batch_start,
             role_id: record.spec.role_id.clone(),
             last_error: record.last_error.clone(),

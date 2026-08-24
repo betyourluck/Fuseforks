@@ -129,6 +129,22 @@ pub enum CoreError {
         agent_id: String,
     },
 
+    /// 指定した波が承認待ちの計画ではない（存在しない・確定済み・破棄済み・
+    /// リングから押し出された、のいずれか。Spec 43）。
+    #[error("波 {plan_id} は承認待ちの計画ではありません")]
+    PlanWaveNotPending {
+        /// 対象の波の同定子。
+        plan_id: u64,
+    },
+
+    /// dispatch に渡された計画が検証に落ちた（Spec 43 凍結 3 —
+    /// 判定は run_plan と同じ 1 実装）。
+    #[error("計画を配送できません: {detail}")]
+    PlanDispatchInvalid {
+        /// 落ちた理由（宛先が接続先でない・重複・空）。
+        detail: String,
+    },
+
     /// 受信箱が詰まっており、メッセージを受け付けられない（背圧）。
     #[error("エージェント `{agent_id}` の受信箱が飽和しています（capacity={capacity}）")]
     MailboxFull {
@@ -324,6 +340,8 @@ impl CoreError {
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",
+            Self::PlanWaveNotPending { .. } => "PLAN_WAVE_NOT_PENDING",
+            Self::PlanDispatchInvalid { .. } => "PLAN_DISPATCH_INVALID",
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::PricingFetch { .. } => "PRICING_FETCH",
             Self::ConfigIo { .. } => "CONFIG_IO",

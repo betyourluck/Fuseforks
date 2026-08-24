@@ -319,6 +319,13 @@ struct Shared {
     /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
     /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
     plan_waves: RwLock<PlanWaveStore>,
+    /// 承認済みの波の実行者（Spec 43 — **ターンの外の実行形**。凍結 8）。
+    /// key = plan_id・値は (進行役, root cancel token)。
+    ///
+    /// `interrupt_turn`（進行役一致）と `interrupt_all` がここを切る —
+    /// 波の実行者はターンではないので `turns` の網に掛からない。
+    /// 完了時に実行者自身が自分を外す。
+    wave_runs: Mutex<HashMap<u64, (AgentId, tokio_util::sync::CancellationToken)>>,
     /// 飛行中ターンの割り込みハンドル（Spec 10）。キーの有無 = 飛行中ターンの有無。
     ///
     /// `agent_loop` がターン開始時に入れ、終了時に**自分の seq を確かめてから**
@@ -992,6 +999,193 @@ impl Orchestrator {
     /// planId upsert）は data_contract の projection_rule が正。
     pub async fn list_plan_waves(&self) -> Vec<PlanWaveRecord> {
         self.shared.plan_waves.read().await.list()
+    }
+
+    /// 承認待ちの計画を、人が承認した最終形で配送する（Spec 43 — 編集窓の実行側）。
+    ///
+    /// `tasks` が配送の真実 — 提案との差分は取らない（D4。人が最後に見て押した
+    /// 形が唯一の真実）。検証は run_plan と同じ 1 実装（凍結 3）を **dispatch
+    /// 時点の接続**へ掛ける。配送は新しい因果の根（凍結 5 — 天井は村の
+    /// `tokenBudget`、cancel は新しい root token で `interrupt_all` /
+    /// 進行役への `interrupt_turn` が切る）。
+    ///
+    /// # Errors
+    /// - [`CoreError::PlanWaveNotPending`] — 承認待ちの波ではない
+    /// - [`CoreError::NotRunning`] — 進行役が停止中（D9。自動起動はしない）
+    /// - [`CoreError::PlanDispatchInvalid`] — 検証に落ちた（空・非接続・重複）
+    pub async fn dispatch_plan_wave(
+        &self,
+        plan_id: u64,
+        tasks: Vec<crate::plan::PlanTaskInput>,
+    ) -> CoreResult<()> {
+        let Some((coordinator, wave)) = self.shared.plan_waves.read().await.proposal(plan_id)
+        else {
+            return Err(CoreError::PlanWaveNotPending { plan_id });
+        };
+
+        // D9 — 開始時点の門。束ねの届け先が居ないまま撒かない。
+        if self
+            .shared
+            .mailboxes
+            .read()
+            .await
+            .get(&coordinator)
+            .is_none()
+        {
+            return Err(CoreError::NotRunning {
+                agent_id: coordinator.to_string(),
+            });
+        }
+
+        if tasks.is_empty() {
+            return Err(CoreError::PlanDispatchInvalid {
+                detail: "tasks が空です".to_owned(),
+            });
+        }
+
+        // 検証と表示名の解決は dispatch 時点の world で行う（提示と dispatch の
+        // 間に繋ぎ替えは起こりうる — run_plan の「検証は今」と同じ規律）。
+        let (connected, displays) = {
+            let world = self.shared.world.read().await;
+            let record = world.agent(&coordinator)?;
+            let connected = record.spec.connected_agents.clone();
+            let displays: HashMap<AgentId, String> = tasks
+                .iter()
+                .map(|task| {
+                    let display = world
+                        .agent(&task.to)
+                        .map(|r| r.spec.name.clone())
+                        .unwrap_or_else(|_| task.to.to_string());
+                    (task.to.clone(), display)
+                })
+                .collect();
+            (connected, displays)
+        };
+
+        let mut accepted: Vec<(AgentId, String)> = Vec::with_capacity(tasks.len());
+        for (index, task) in tasks.into_iter().enumerate() {
+            let position = index + 1;
+            match delegation::check_wave_target(
+                &task.to,
+                accepted.iter().map(|(existing, _)| existing),
+                |t| connected.contains(t),
+            ) {
+                Some(delegation::WaveTaskDefect::NotConnected) => {
+                    return Err(CoreError::PlanDispatchInvalid {
+                        detail: format!(
+                            "{position} 件目の宛先「{}」は進行役の接続先ではありません",
+                            task.to
+                        ),
+                    });
+                }
+                Some(delegation::WaveTaskDefect::Duplicate) => {
+                    return Err(CoreError::PlanDispatchInvalid {
+                        detail: format!("宛先「{}」が同じ波に 2 回あります", task.to),
+                    });
+                }
+                None => {}
+            }
+            accepted.push((task.to, task.message));
+        }
+
+        let announced: Vec<(AgentId, u32)> = accepted
+            .iter()
+            .map(|(to, message)| (to.clone(), message.chars().count() as u32))
+            .collect();
+        let started_at_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        self.shared
+            .plan_waves
+            .write()
+            .await
+            .dispatch_wave(plan_id, &announced, started_at_ms);
+
+        let to_list = accepted
+            .iter()
+            .map(|(target, _)| target.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let msg_chars: usize = accepted
+            .iter()
+            .map(|(_, message)| message.chars().count())
+            .sum();
+        // 実行の起点（人の操作）と配送の印を対で出す — dispatch: と wave: の
+        // to= / msg_chars= が提示時（plan pending:）と違えば、編集がそのまま
+        // 走った証拠になる（検収 2）。
+        crate::note!(
+            "plan dispatch: agent={coordinator} plan_id={plan_id} wave={wave} tasks={} to=[{to_list}] msg_chars={msg_chars}",
+            accepted.len(),
+        );
+        crate::note!(
+            "plan wave: agent={coordinator} wave={wave} tasks={} to=[{to_list}] msg_chars={msg_chars}",
+            accepted.len(),
+        );
+        self.shared.emit(CoreEvent::PlanWaveStarted {
+            plan_id,
+            agent_id: coordinator.clone(),
+            wave,
+            tasks: announced
+                .iter()
+                .map(|(to, msg_chars)| crate::plan::PlanTaskAnnounced {
+                    to: to.clone(),
+                    msg_chars: *msg_chars,
+                })
+                .collect(),
+            started_at_ms,
+        });
+
+        // 新しい因果の根（凍結 5）。天井の式は増やさない — ユーザー発話・
+        // 予定の発火と同じ new_root_budget。
+        let budget = new_root_budget(&self.shared).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        self.shared
+            .wave_runs
+            .lock()
+            .await
+            .insert(plan_id, (coordinator.clone(), cancel.clone()));
+        tokio::spawn(delegation::run_dispatched_wave(
+            Arc::clone(&self.shared),
+            coordinator,
+            plan_id,
+            wave,
+            accepted,
+            displays,
+            budget,
+            cancel,
+        ));
+        Ok(())
+    }
+
+    /// 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。
+    ///
+    /// 破棄の事実は System 行として会話に残る（D3 — 進行役は次の依頼で
+    /// 別の計画を立てられる）。
+    ///
+    /// # Errors
+    /// [`CoreError::PlanWaveNotPending`] — 承認待ちの波ではない。
+    pub async fn discard_plan_wave(&self, plan_id: u64) -> CoreResult<()> {
+        let Some((coordinator, wave)) = self.shared.plan_waves.read().await.proposal(plan_id)
+        else {
+            return Err(CoreError::PlanWaveNotPending { plan_id });
+        };
+        self.shared.plan_waves.write().await.discard_wave(plan_id);
+        crate::note!("plan discard: agent={coordinator} plan_id={plan_id} wave={wave}");
+        self.shared.emit(CoreEvent::PlanWaveDiscarded { plan_id });
+
+        let language = self
+            .shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+        let notice = match language {
+            crate::world::Language::Ja => format!("計画（波 {wave}）は破棄されました。"),
+            crate::world::Language::En => format!("The plan (wave {wave}) was discarded."),
+        };
+        self.shared
+            .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0))
+            .await;
+        Ok(())
     }
 
     /// エージェント別トークン消費量を集計する。

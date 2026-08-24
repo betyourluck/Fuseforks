@@ -79,6 +79,7 @@ fn wire_field_sets_are_frozen() {
             "modelTemplateId",
             "name",
             "order",
+            "planReview",
             "ragSources",
             "roleId",
             "workDir",
@@ -157,6 +158,7 @@ fn wire_field_sets_are_frozen() {
         enabled_tools: None,
         hears_room_log: true,
         allow_handoff: true,
+        plan_review: false,
         batch_start: true,
         role_id: None,
         last_error: None,
@@ -177,6 +179,7 @@ fn wire_field_sets_are_frozen() {
             "modelTemplateId",
             "name",
             "order",
+            "planReview",
             "promptTokens",
             "ragSources",
             "roleId",
@@ -285,6 +288,7 @@ fn plan_wave_wire_fields_are_frozen() {
             "elapsedMs",
             "planId",
             "startedAtMs",
+            "state",
             "tasks",
             "wave",
         ],
@@ -293,12 +297,41 @@ fn plan_wave_wire_fields_are_frozen() {
     assert_eq!(
         wire_keys(&wave.tasks[0]),
         vec!["elapsedMs", "msgChars", "state", "to"],
-        "PlanTaskRecord のフィールドが変わった"
+        "PlanTaskRecord のフィールドが変わった（配送済みは message を持たない）"
     );
     // 分類の値は snake_case（TS の union リテラルと一致させる）。
     assert_eq!(
         serde_json::to_value(wave.tasks[0].state).unwrap(),
         serde_json::json!("answered")
+    );
+    // 波レベル状態も snake_case（Spec 43）。
+    assert_eq!(
+        serde_json::to_value(wave.state).unwrap(),
+        serde_json::json!("dispatched")
+    );
+
+    // 提案（pending）は本文を持つ — `message` は skip_serializing_if なので、
+    // **値の入った状態でも固定する**（上の AgentMessage の教訓と同じ穴を
+    // 通り抜けさせない）。
+    let pending_id = store.begin_pending_wave(
+        AgentId::from("agent_1"),
+        2,
+        &[(AgentId::from("agent_2"), "調べて".to_owned())],
+        56,
+    );
+    let pending = store
+        .list()
+        .into_iter()
+        .find(|w| w.plan_id == pending_id)
+        .unwrap();
+    assert_eq!(
+        wire_keys(&pending.tasks[0]),
+        vec!["elapsedMs", "message", "msgChars", "state", "to"],
+        "pending の PlanTaskRecord は本文を持つ（編集 UI が読む提案の真実）"
+    );
+    assert_eq!(
+        serde_json::to_value(pending.state).unwrap(),
+        serde_json::json!("pending")
     );
 }
 

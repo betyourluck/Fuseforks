@@ -52,6 +52,40 @@ pub enum PlanTaskState {
     BudgetExhausted,
 }
 
+/// 波レベルの状態（Spec 43）。**セルの分類（[`PlanTaskState`]）とは別の軸** —
+/// あちらは配送されたタスクの結末、こちらは波そのものの段。
+///
+/// serde default = `dispatched`（[`default_wave_state`]）— 旧レコード・
+/// 編集窓 OFF の経路は従来の意味のまま（加算的変更。`Interrupted` /
+/// `BudgetExhausted` と同じ流儀）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanWaveState {
+    /// 提案（編集窓）。配送されておらず、人の承認・破棄を待っている。
+    Pending,
+    /// 配送済み（従来の波はすべてこれ）。
+    Dispatched,
+    /// 人が破棄した。配送は一度も起きていない。
+    Discarded,
+}
+
+/// [`PlanWaveState`] の serde 既定値。関数なのは serde の `default =` が
+/// パスしか受けないため。
+fn default_wave_state() -> PlanWaveState {
+    PlanWaveState::Dispatched
+}
+
+/// `dispatch_plan_wave` / `discard_plan_wave` が受けるタスクの入力形
+/// （ワイヤは `{to, message}` — plan ツールの引数と同じ 2 欄）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTaskInput {
+    /// 宛先。
+    pub to: AgentId,
+    /// 依頼本文。
+    pub message: String,
+}
+
 /// `PlanWaveStarted` が運ぶタスクの告知形。開始時点で確定している 2 欄だけを持つ
 /// （state は必ず `running`、elapsed は未確定 — 載せると「まだ無い値」の席になる）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,12 +105,18 @@ pub struct PlanTaskAnnounced {
 pub struct PlanTaskRecord {
     /// 宛先。
     pub to: AgentId,
-    /// 解決分類。
+    /// 解決分類。**波が `pending` の間は未配送の置き場**（`running` のまま。
+    /// セルの意味は波の state が決め、dispatch がタスクを最終形で置き換える）。
     pub state: PlanTaskState,
     /// 配送からこのタスクの解決まで。相手のキュー待ちを含む（並列なのは配送）。
     pub elapsed_ms: Option<u64>,
-    /// 依頼本文の文字数（本文そのものは持たない）。
+    /// 依頼本文の文字数（配送された波は本文そのものを持たない）。
     pub msg_chars: u32,
+    /// 依頼本文。**`pending` の間だけ埋まる**（編集 UI が読む — 提案の真実。
+    /// Spec 43 D4）。dispatch / discard で落とす — 配送後の本文は束ねと
+    /// ワーカーの履歴に住み、記録が二重に持つとリングの概算が嘘になる。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// plan 1 波の実行記録。
@@ -90,7 +130,12 @@ pub struct PlanWaveRecord {
     pub agent_id: AgentId,
     /// ターン内連番（stderr の `wave=` と同じ値）。同定は `plan_id` の仕事。
     pub wave: u32,
+    /// 波レベルの状態（Spec 43）。旧レコードは欄が無く `dispatched` へ落ちる。
+    #[serde(default = "default_wave_state")]
+    pub state: PlanWaveState,
     /// 波の開始時刻（epoch ms・壁時計）。`elapsed_ms` は単調時計由来で別系統。
+    /// **`pending` では提示時刻、dispatch が配送時刻で上書きする**（Spec 43 —
+    /// 所要の意味を「配送からの経過」に保つ）。
     pub started_at_ms: u64,
     /// タスク。**入力順**（束ねと同じ。解決順ではない）。
     pub tasks: Vec<PlanTaskRecord>,
@@ -138,6 +183,7 @@ impl PlanWaveStore {
             plan_id,
             agent_id,
             wave,
+            state: PlanWaveState::Dispatched,
             started_at_ms,
             tasks: tasks
                 .iter()
@@ -146,12 +192,110 @@ impl PlanWaveStore {
                     state: PlanTaskState::Running,
                     elapsed_ms: None,
                     msg_chars: *msg_chars,
+                    message: None,
                 })
                 .collect(),
             bundle_chars: None,
             elapsed_ms: None,
         });
         plan_id
+    }
+
+    /// 提案（編集窓・Spec 43）を記録し、`plan_id` を払い出す。配送は起きていない。
+    ///
+    /// 本文を持つのはこの形だけ — 提案の真実は**ここに記録された tasks**で、
+    /// フロントの編集中状態は真実ではない（D4）。
+    pub fn begin_pending_wave(
+        &mut self,
+        agent_id: AgentId,
+        wave: u32,
+        tasks: &[(AgentId, String)],
+        started_at_ms: u64,
+    ) -> u64 {
+        let plan_id = self.next_id;
+        self.next_id += 1;
+
+        if self.waves.len() >= PLAN_WAVE_CAPACITY {
+            self.waves.pop_front();
+        }
+        self.waves.push_back(PlanWaveRecord {
+            plan_id,
+            agent_id,
+            wave,
+            state: PlanWaveState::Pending,
+            started_at_ms,
+            tasks: tasks
+                .iter()
+                .map(|(to, message)| PlanTaskRecord {
+                    to: to.clone(),
+                    state: PlanTaskState::Running,
+                    elapsed_ms: None,
+                    msg_chars: message.chars().count() as u32,
+                    message: Some(message.clone()),
+                })
+                .collect(),
+            bundle_chars: None,
+            elapsed_ms: None,
+        });
+        plan_id
+    }
+
+    /// 提案の中身を返す（`dispatch_plan_wave` / `discard_plan_wave` の入口検査用）。
+    /// `pending` でない・押し出し済みなら `None`。
+    pub fn proposal(&self, plan_id: u64) -> Option<(AgentId, u32)> {
+        self.waves
+            .iter()
+            .find(|w| w.plan_id == plan_id && w.state == PlanWaveState::Pending)
+            .map(|w| (w.agent_id.clone(), w.wave))
+    }
+
+    /// 提案を配送済みへ進め、タスクを**人が承認した最終形で置き換える**（Spec 43）。
+    ///
+    /// 提示時の tasks は残さない — 配送の記録が持つべきは走った形だけで、
+    /// 提示と配送の差分は `plan pending:` / `plan dispatch:` のログが運ぶ。
+    /// `pending` でなければ何もしない（呼び出し側が `proposal` で先に確かめる —
+    /// 押し出し済みへの更新を無視する `resolve_task` と同じ規律）。
+    pub fn dispatch_wave(
+        &mut self,
+        plan_id: u64,
+        tasks: &[(AgentId, u32)],
+        started_at_ms: u64,
+    ) {
+        let Some(wave) = self
+            .waves
+            .iter_mut()
+            .find(|w| w.plan_id == plan_id && w.state == PlanWaveState::Pending)
+        else {
+            return;
+        };
+        wave.state = PlanWaveState::Dispatched;
+        wave.started_at_ms = started_at_ms;
+        wave.tasks = tasks
+            .iter()
+            .map(|(to, msg_chars)| PlanTaskRecord {
+                to: to.clone(),
+                state: PlanTaskState::Running,
+                elapsed_ms: None,
+                msg_chars: *msg_chars,
+                message: None,
+            })
+            .collect();
+    }
+
+    /// 提案を破棄する（Spec 43）。本文を落とし、配送は一度も起きない。
+    /// `pending` でなければ何もしない（`dispatch_wave` と同じ規律）。
+    pub fn discard_wave(&mut self, plan_id: u64) {
+        let Some(wave) = self
+            .waves
+            .iter_mut()
+            .find(|w| w.plan_id == plan_id && w.state == PlanWaveState::Pending)
+        else {
+            return;
+        };
+        wave.state = PlanWaveState::Discarded;
+        for task in &mut wave.tasks {
+            task.message = None;
+        }
     }
 
     /// タスクの解決を記録する。押し出された波への更新は**窓の外として無視**する
@@ -248,6 +392,80 @@ mod tests {
         assert_eq!(wire, "\"budget_exhausted\"");
         let round: PlanTaskState = serde_json::from_str(&wire).unwrap();
         assert_eq!(round, PlanTaskState::BudgetExhausted);
+    }
+
+    /// 波レベル状態は加算的変更であること（Spec 43）。
+    ///
+    /// 旧レコード（state 欄を知らない時代）はそのまま読めて `dispatched` へ
+    /// 落ち、pending のタスクだけが本文を持つ。
+    #[test]
+    fn wave_state_is_an_additive_wire_value() {
+        let mut store = PlanWaveStore::default();
+        let id = store.begin_wave(agent("agent_1"), 1, &[(agent("agent_2"), 7)], 0);
+        let mut json = serde_json::to_value(&store.list()[0]).unwrap();
+
+        // 配送済みの波は本文を持たない（skip_serializing_if — 旧クライアントが
+        // 知らない欄を読む席をそもそも作らない）。
+        assert!(json["tasks"][0].get("message").is_none());
+        assert_eq!(json["state"], "dispatched");
+
+        // 旧レコード相当（state 欄なし）はそのまま読めて dispatched へ落ちる。
+        json.as_object_mut().unwrap().remove("state");
+        let parsed: PlanWaveRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.plan_id, id);
+        assert_eq!(parsed.state, PlanWaveState::Dispatched);
+    }
+
+    /// 提案は本文を持ち、dispatch が最終形で置き換えて本文を落とす（Spec 43 D4）。
+    #[test]
+    fn a_pending_wave_carries_messages_until_dispatched() {
+        let mut store = PlanWaveStore::default();
+        let id = store.begin_pending_wave(
+            agent("agent_1"),
+            1,
+            &[
+                (agent("agent_2"), "調べて".to_owned()),
+                (agent("agent_3"), "まとめて".to_owned()),
+            ],
+            100,
+        );
+
+        let wave = &store.list()[0];
+        assert_eq!(wave.state, PlanWaveState::Pending);
+        assert_eq!(wave.tasks[0].message.as_deref(), Some("調べて"));
+        assert_eq!(wave.tasks[0].msg_chars, 3);
+        assert_eq!(store.proposal(id), Some((agent("agent_1"), 1)));
+
+        // 人が 1 件消して 1 件直した最終形で配送。
+        store.dispatch_wave(id, &[(agent("agent_3"), 5)], 200);
+        let wave = &store.list()[0];
+        assert_eq!(wave.state, PlanWaveState::Dispatched);
+        assert_eq!(wave.started_at_ms, 200, "所要の起点は配送時刻へ動く");
+        assert_eq!(wave.tasks.len(), 1, "タスクは承認された最終形で置き換わる");
+        assert_eq!(wave.tasks[0].to, agent("agent_3"));
+        assert!(wave.tasks[0].message.is_none(), "配送後は本文を持たない");
+        // 確定した波はもう提案ではない。
+        assert_eq!(store.proposal(id), None);
+    }
+
+    /// discard は pending にだけ効き、本文を落とす。確定済みへは何もしない。
+    #[test]
+    fn discard_only_settles_a_pending_wave() {
+        let mut store = PlanWaveStore::default();
+        let pending =
+            store.begin_pending_wave(agent("agent_1"), 1, &[(agent("agent_2"), "調べて".to_owned())], 0);
+        let dispatched = store.begin_wave(agent("agent_1"), 2, &[(agent("agent_2"), 3)], 0);
+
+        store.discard_wave(pending);
+        store.discard_wave(dispatched); // 何もしない（pending ではない）
+
+        let waves = store.list();
+        assert_eq!(waves[0].state, PlanWaveState::Discarded);
+        assert!(waves[0].tasks[0].message.is_none(), "破棄で本文を落とす");
+        assert_eq!(waves[1].state, PlanWaveState::Dispatched);
+        // 破棄済みへの dispatch も何もしない（一方通行）。
+        store.dispatch_wave(pending, &[(agent("agent_2"), 3)], 9);
+        assert_eq!(store.list()[0].state, PlanWaveState::Discarded);
     }
 
     #[test]

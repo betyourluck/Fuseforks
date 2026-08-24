@@ -428,6 +428,14 @@ pub struct AgentSpec {
     /// **委譲と並列委譲（`plan`）は残る** — 消えるのは転送だけ。
     #[serde(default = "default_true")]
     pub allow_handoff: bool,
+    /// plan の編集窓（計画の確認・Spec 43）。真なら plan は配送せず**提案**を
+    /// 記録してターンを終え、人の承認（`dispatch_plan_wave`）が配送を起こす。
+    ///
+    /// **既定は偽。** 既存の村の plan の挙動を 1 ミリも変えない（凍結 1）。
+    /// 窓は人のための機構なので **per-call にしない** — LLM に「窓を飛ばす」
+    /// 選択肢を与えると #84 の形で必ず飛ばされる。
+    #[serde(default)]
+    pub plan_review: bool,
     /// 一括起動（左ペインの ▶）の対象にするか。
     ///
     /// **自動起動ではない。** アプリを開いた時点で勝手に走り出すことはなく、
@@ -477,6 +485,7 @@ impl AgentSpec {
             enabled_tools: None,
             hears_room_log: true,
             allow_handoff: true,
+            plan_review: false,
             batch_start: true,
             role_id: None,
         }
@@ -970,6 +979,8 @@ pub struct AgentSnapshot {
     /// **投影にも要る** — 設定ダイアログは投影から `AgentSpec` を組み直して
     /// 保存するので、ここに無い欄は**保存のたびに既定へ戻る**（Spec 14 P1）。
     pub allow_handoff: bool,
+    /// plan の編集窓（計画の確認・Spec 43）。**投影にも要る**（同上）。
+    pub plan_review: bool,
     /// 一括起動（▶）の対象か。稼働状態とは別（`status` がそちら）。
     pub batch_start: bool,
     /// どの役職を雛形にして作られたか（Spec 14）。`None` = 役職なし。
