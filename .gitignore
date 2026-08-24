@@ -38,3 +38,9 @@ extra/
 # 壊すため採らない。中身は export_session で確認できる）。
 sessions.redb
 sessions.redb.lock
+# sqz（ツール出力圧縮。試用中）が生成する各 AI ツール向けの案内。開発機ローカルの
+# 絶対パス（ユーザー名込み）を含むので、公開リポジトリの内容物にしない。
+/opencode.json
+/AGENTS.md
+/.clinerules
+/sqz-claude-guidance.md
