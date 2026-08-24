@@ -1,4 +1,4 @@
-**English** | [日本語](README_jp.md)
+**English** | [日本語](README_jp.md) | [中文](README_zh.md)
 
 # <img src="images/logo.webp" alt="Outcasts Fuseforks Logo" width="28" /> Outcasts Fuseforks
 
