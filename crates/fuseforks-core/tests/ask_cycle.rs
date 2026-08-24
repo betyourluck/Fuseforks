@@ -116,8 +116,45 @@ impl LlmBackend for MarkerBackend {
             // そのまま最初の接続先へ**転送**する（decide の下段の分岐）。
             return Ok(ok_response("タノム", Vec::new()));
         }
+        // 深い連鎖（[A,B]）からの転送先。上流 A と、pop で外れた B の**両方**へ
+        // 同じ周で委譲する — 2 本の結末が逆になることが `[A,B]→[A]` の一意な指紋。
+        // 上の浅い形（連鎖 [A]）の転送先はこの 2 本目の道具を持たないので素通りする。
+        if latest.contains("タノム")
+            && let (Some(up), Some(mid)) = (
+                req.tools.iter().find(|t| t.name == "ask_deep_a"),
+                req.tools.iter().find(|t| t.name == "ask_deep_b"),
+            )
+        {
+            return Ok(ok_response(
+                "",
+                vec![
+                    ToolCall {
+                        id: "call_up".into(),
+                        name: up.name.clone(),
+                        args: serde_json::json!({ "message": "カクニンして" }),
+                        extra: None,
+                    },
+                    ToolCall {
+                        id: "call_mid".into(),
+                        name: mid.name.clone(),
+                        args: serde_json::json!({ "message": "カクニンして" }),
+                        extra: None,
+                    },
+                ],
+            ));
+        }
         if latest.contains("タノム")
             && let Some(response) = Self::ask_first(&req, "カクニンして")
+        {
+            return Ok(response);
+        }
+        if latest.contains("シンソウ")
+            && let Some(response) = Self::ask_first(&req, "ニダンメ")
+        {
+            return Ok(response);
+        }
+        if latest.contains("ニダンメ")
+            && let Some(response) = Self::ask_first(&req, "バトンして")
         {
             return Ok(response);
         }
@@ -365,4 +402,81 @@ async fn ask_timeout_bounds_are_enforced_at_save_time() {
     // None = 既定（600 秒）へ戻す。
     orchestrator.set_ask_timeout(None).await.unwrap();
     assert_eq!(orchestrator.ask_timeout_secs().await, None);
+}
+
+/// S4b — **連鎖が 2 段のときの転送**（`[A,B]` → 末尾を除いて `[A]`）。
+///
+/// 上の S4 が覆うのは 1 段（`[A]` → `[]`）だけで、**pop が起きたかどうかを
+/// 振る舞いで区別できない** — 連鎖が丸ごと残る実装でも「A への委譲が拒否される」は
+/// 同じように成立してしまう。ここは D から 2 本同時に投げて指紋を取る:
+///
+/// - **上流 A への委譲は拒否される**（A はまだ B の答えを待っている＝`trimmed_chain`
+///   の doc「上流はまだブロック中なので残す」）
+/// - **pop で外れた B への委譲は通る**（B の待ちは `HandedOff` が解いた）
+///
+/// **2 本の結末が逆になるのは連鎖が `[A]` のときだけ。** `[A,B]` のままなら
+/// B 宛も拒否され、`[]` まで削れていれば A 宛が通る。
+///
+/// 形: user→A「シンソウ」→ A が B へ ask「ニダンメ」（連鎖 `[A]`）→
+/// B が C へ ask「バトンして」（連鎖 `[A,B]`）→ C は**ツール非対応**なので
+/// 旧経路が D へ**転送**（連鎖 `[A]`・`HandedOff` が B を解く）→
+/// D が A と B へ同時に ask。
+///
+/// **実機検収から降ろした形**（Spec 44 検収 4b・2026-08-25 利用者裁定）—
+/// `use_tools=false` の個体を B に置く村を組まないと到達しないので、
+/// 実機で踏むコストが見合わない。ここが唯一の担保。
+#[tokio::test]
+async fn a_two_deep_chain_keeps_the_upstream_after_a_handoff() {
+    let (_dir, orchestrator) = setup(
+        "deep",
+        &["deep_a", "deep_b", "deep_c", "deep_d"],
+        true,
+        &["deep_c"],
+    )
+    .await;
+    // D は輪を閉じる A に加えて B へも繋ぐ（**pop の指紋を読むための辺**。
+    // setup の連鎖は i→i+1 しか張らないので、ここだけ後から足す）。
+    orchestrator
+        .set_connections(
+            &AgentId::from("deep_d"),
+            vec![AgentId::from("deep_a"), AgentId::from("deep_b")],
+        )
+        .await
+        .unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&AgentId::from("deep_a"), "シンソウ")
+        .await
+        .unwrap();
+    drain(&mut rx).await;
+
+    let sent = sent_pairs(&orchestrator).await;
+    // 正の対照 1: 連鎖が 2 段まで育っている（B→C が配送された）。
+    assert!(
+        sent.iter().any(|(from, to, body)| from.contains("deep_b")
+            && to.contains("deep_c")
+            && body.contains("バトンして")),
+        "B→C（連鎖が [A,B] へ育つ辺）は配送されること: {sent:?}"
+    );
+    // 本題 1: pop で外れた B への委譲は**通る**（連鎖が [A,B] のままなら拒否される）。
+    assert!(
+        sent.iter().any(|(from, to, body)| from.contains("deep_d")
+            && to.contains("deep_b")
+            && body.contains("カクニンして")),
+        "D→B（pop で外れた相手）への委譲は配送されること: {sent:?}"
+    );
+    // 本題 2: 上流 A への委譲は**拒否される**（連鎖が [] まで削れていたら通ってしまう）。
+    assert!(
+        !sent.iter().any(|(from, to, body)| from.contains("deep_d")
+            && to.contains("deep_a")
+            && body.contains("カクニンして")),
+        "D→A（まだ待っている上流）への委譲は配送されてはいけない: {sent:?}"
+    );
+    // 会話は完走する（D は転送で来ているので答えは利用者へ返る）。
+    assert!(
+        sent.iter()
+            .any(|(from, to, _)| from.contains("deep_d") && to == "User"),
+        "転送先 D の答えが利用者へ返ること: {sent:?}"
+    );
 }
