@@ -610,13 +610,23 @@ mod tests {
         // **有界ループ**にする: 無限 while だと、予約が起きない実装
         // （ミューテーション (i) = load 観測化）でハングになり、赤と
         // 区別が付かない（#86 — 失敗は「永久に返らない」形にしない）。
+        //
+        // **上限は回数ではなく実時間で切る。** 初版は `yield_now()` を
+        // 10,000 回で切っていたが、それは実時間で数ミリ秒しかなく、
+        // **spawn したタスクが別ワーカーで走り出すより短い**。混んだ CI では
+        // 予約の前にループが尽き、`reserved_seen` が偽になって赤くなった
+        // （v0.1.11 の macOS / Windows。Ubuntu は通ったので速さ依存と読める）。
+        // `sleep` にするのは待つためだけではない — `yield_now` の密なループは
+        // ワーカーを回し続けるので、譲ったつもりで譲れていない。
+        // **#86 の処方（永久に返らない形にしない）は満たしたまま、
+        // 上限の単位だけを「回数」から「秒」へ移した。**
         let mut reserved_seen = false;
-        for _ in 0..10_000 {
+        for _ in 0..1_000 {
             if pool.spent_effective() == 400 {
                 reserved_seen = true;
                 break;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         assert!(reserved_seen, "予約が残額から引かれる実装であること");
         set.abort_all();
