@@ -826,7 +826,7 @@ enums:
         - **OrchestratorConfig は画面へ出さない** (履歴の往復数・hop 上限・
           ツール上限・広場ログの窓 ほか 12 個)。間違えると村が壊れる種類の値で、
           正しい値は実測でしか決まらない (#41 の較正)。出すなら別 Spec で 1 つずつ。
-          **続報 (Spec 44 rev2 承認 2026-08-24)**: ask_timeout がその「別 Spec で
+          **続報 (Spec 44 rev3 / Done 2026-08-25 — 実機検収 5 件観測)**: ask_timeout がその「別 Spec で
           1 つずつ」の最初の 1 個 — 欄を World の askTimeoutSecs へ移して
           設定化した (12 → 11 個。OrchestratorConfig 自体は画面に出ないまま。
           詳細は ask_cycle_contract)
