@@ -86,6 +86,30 @@ const isOn = computed(
   () => props.agent.status === "running" || props.agent.status === "starting",
 );
 
+/**
+ * 遷移中（起動処理中・停止処理中）。この間は電源ボタンを封じる —
+ * 起動の完了を待つ間にもう一度押すと、起きた直後の個体を止める二度押しに
+ * なる（2026-08-27 利用者指摘）。`starting` は MCP 接続のタイムアウト
+ * （30 秒）で必ず抜けるので、押せない時間は有界。
+ */
+const transitioning = computed(
+  () => props.agent.status === "starting" || props.agent.status === "stopping",
+);
+
+/** 電源ボタンの hover 文言。遷移中は「押せない理由」を出す。 */
+const powerTitle = computed(() => {
+  switch (props.agent.status) {
+    case "starting":
+      return t("agentCard.starting", { name: props.agent.name });
+    case "stopping":
+      return t("agentCard.stopping", { name: props.agent.name });
+    default:
+      return isOn.value
+        ? t("agentCard.stop", { name: props.agent.name })
+        : t("agentCard.start", { name: props.agent.name });
+  }
+});
+
 /** 秒数を `1h 02m 03s` 形式にする。 */
 const uptime = computed(() => {
   const total = props.agent.uptimeSecs;
@@ -261,9 +285,16 @@ const cacheTone = computed(() => {
       <!-- スタンバイ（電源）。この個体の実際の起動・停止。
            色は状態と一致させる（稼働中は緑、停止中は淡色）。 -->
       <button
-        :title="isOn ? $t('agentCard.stop', { name: agent.name }) : $t('agentCard.start', { name: agent.name })"
+        :title="powerTitle"
+        :disabled="transitioning"
         class="shrink-0 rounded-full p-1 transition-colors"
-        :class="isOn ? 'text-run hover:bg-surface-2' : 'text-ink-dim hover:text-ink hover:bg-surface-2'"
+        :class="
+          transitioning
+            ? 'cursor-default text-warn opacity-60'
+            : isOn
+              ? 'text-run hover:bg-surface-2'
+              : 'text-ink-dim hover:text-ink hover:bg-surface-2'
+        "
         @click.stop="emit('toggle', !isOn)"
       >
         <svg

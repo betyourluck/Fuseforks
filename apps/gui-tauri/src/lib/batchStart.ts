@@ -37,9 +37,22 @@ function isStartable(status: AgentStatus): boolean {
   return status === "idle" || status === "failed";
 }
 
-/** 止められる状態か。`starting` も含める（起動を取り消したい場面がある）。 */
+/**
+ * 止められる状態か。**`starting` は含めない**（2026-08-27 に反転。利用者判断）。
+ *
+ * 旧規則は「起動を取り消したい場面がある」として含めていたが、実機では
+ * **一括起動の直後にもう一度押して、起きた直後の個体を止める二度押し**の
+ * ほうが多発した。取り消しの利便より誤停止の事故が重い。`starting` は
+ * MCP 接続のタイムアウト（30 秒）で必ず `running` / `failed` へ抜けるので、
+ * 触れない時間は有界 — 閉じ込めにはならない。
+ */
 function isStoppable(status: AgentStatus): boolean {
-  return status === "running" || status === "starting";
+  return status === "running";
+}
+
+/** 遷移中か。この状態の対象がいる間、停止側の役は封じる（二度押し対策）。 */
+function isTransitioning(status: AgentStatus): boolean {
+  return status === "starting" || status === "stopping";
 }
 
 /**
@@ -58,12 +71,20 @@ export function batchAction(agents: readonly AgentSnapshot[]): BatchAction {
     return { mode: "start", targets: startable.map((agent) => agent.id) };
   }
 
+  // 遷移中の対象がいる間は停止へ役を変えない。一括起動の直後は全員が
+  // `starting` で、ここで `stop` に変わると二度押しがそのまま誤停止になる
+  // （個体が `running` へ抜けた順に停止対象へ入るので、窓は縮むだけで
+  // 消えない — だから「startable が空で遷移中がいる」は一律 `none`）。
+  if (eligible.some((agent) => isTransitioning(agent.status))) {
+    return { mode: "none", targets: [] };
+  }
+
   const stoppable = eligible.filter((agent) => isStoppable(agent.status));
   if (stoppable.length) {
     return { mode: "stop", targets: stoppable.map((agent) => agent.id) };
   }
 
-  // 対象が 0 体、または全員が遷移中（stopping）。押せる操作が無い。
+  // 対象が 0 体。押せる操作が無い。
   return { mode: "none", targets: [] };
 }
 
@@ -94,7 +115,7 @@ export function batchLabel(
       return {
         icon: "▶",
         titleKey: eligibleCount
-          ? "agentList.batchAllTransitioning"
+          ? "agentList.batchTransitioning"
           : "agentList.batchNoTargets",
       };
   }
