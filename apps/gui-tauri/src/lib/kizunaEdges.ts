@@ -36,3 +36,23 @@ export function drawDirection(
   if (!bidirectional) return [source, target];
   return orderOf(source) <= orderOf(target) ? [source, target] : [target, source];
 }
+
+/**
+ * 辺を「流れる破線」にするか（2026-08-27）。
+ *
+ * **両端が稼働しているときだけ生きた辺として描く。** 旧規則は片端の稼働で
+ * 発火していた（一方向は source のみ・双方向はどちらか片方）が、片方しか
+ * 稼働していない辺が流れると**両方稼働していると誤認する**（利用者指摘）。
+ * 破線が運ぶ意味を「この線の上で実際にやり取りが成立しうる」へ狭める —
+ * 委譲（`ask_*` / `transfer_to_*` / `plan` の波）は相手が稼働していなければ
+ * 届かないので、両端の稼働が成立の条件そのもの。
+ *
+ * 向きも `bidirectional` も判定に使わない — 描画方向は `drawDirection` の
+ * 責務で、生死は端点の状態だけで決まる。
+ */
+export function edgeIsLive(
+  edge: { source: string; target: string },
+  isRunning: (id: string) => boolean,
+): boolean {
+  return isRunning(edge.source) && isRunning(edge.target);
+}

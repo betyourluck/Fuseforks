@@ -37,7 +37,7 @@ import {
 import "v-network-graph/lib/style.css";
 
 import { compactNumber } from "../lib/format";
-import { drawDirection } from "../lib/kizunaEdges";
+import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
 import { seedPositions } from "../lib/kizunaSeed";
 import { avatarHue, avatarInitial } from "../lib/avatar";
@@ -117,11 +117,6 @@ const bidirectionalCount = computed(
 
 const running = (id: AgentId) =>
   state.agents.some((a) => a.id === id && a.status === "running");
-
-/** 稼働中の個体から出ている辺（流れる破線にする）。 */
-function edgeIsLive(edge: { source: string; target: string; bidirectional?: boolean }) {
-  return running(edge.source) || (Boolean(edge.bidirectional) && running(edge.target));
-}
 
 /* ------------------------------------------------------------------ *
  * 配置（人が置く。埋めるのは未配置だけ）
@@ -227,8 +222,8 @@ const configs = defineConfigs({
       // **稼働中の個体から出ている辺は動く破線**（旧実装の踏襲）。
       // `animate` だけでは足りない — 破線でない線を流しても見た目が変わらない
       // ので、`dasharray` と対で与える。実機で「動かない」と出たのがこれ。
-      dasharray: (edge) => (edgeIsLive(edge as never) ? 6 : undefined),
-      animate: (edge) => edgeIsLive(edge as never),
+      dasharray: (edge) => (edgeIsLive(edge as never, running) ? 6 : undefined),
+      animate: (edge) => edgeIsLive(edge as never, running),
     },
     hover: { width: (edge) => (edge.bidirectional ? 4 : 2.4) },
     marker: {

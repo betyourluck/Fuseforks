@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { drawDirection } from "./kizunaEdges";
+import { drawDirection, edgeIsLive } from "./kizunaEdges";
 
 /** 左ペインの並び。a が上、b が下。 */
 const order = (id: string) => ({ a: 0, b: 1, c: 2 })[id] ?? Number.MAX_SAFE_INTEGER;
@@ -35,5 +35,24 @@ describe("drawDirection", () => {
   it("同じ順序なら受け取った並びのまま（比較が不定にならない）", () => {
     const flat = () => 0;
     expect(drawDirection("b", "a", true, flat)).toEqual(["b", "a"]);
+  });
+});
+
+describe("edgeIsLive", () => {
+  const runningOnly = (ids: string[]) => (id: string) => ids.includes(id);
+
+  it("両端が稼働しているときだけ生きる", () => {
+    expect(edgeIsLive({ source: "a", target: "b" }, runningOnly(["a", "b"]))).toBe(true);
+  });
+
+  it("片端だけの稼働では生きない（source 側でも target 側でも）", () => {
+    // **ここが 2026-08-27 の変更点。** 旧規則は source の稼働だけで発火し、
+    // 片方しか稼働していない辺が流れて「両方稼働」と誤認させていた。
+    expect(edgeIsLive({ source: "a", target: "b" }, runningOnly(["a"]))).toBe(false);
+    expect(edgeIsLive({ source: "a", target: "b" }, runningOnly(["b"]))).toBe(false);
+  });
+
+  it("両端とも停止なら生きない", () => {
+    expect(edgeIsLive({ source: "a", target: "b" }, runningOnly([]))).toBe(false);
   });
 });
