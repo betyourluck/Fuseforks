@@ -1218,6 +1218,7 @@ enums:
         | xai_responses     |  ✓    |  ✗    |  ✗    |  ✓  |
         | open_ai_responses |  ✓    |  ✗    |  ✗    |  ✓  |
         | meta_responses    |  ✓    |  ✓    |  ✓    |  ✓  |
+        | perplexity_responses | ✓  |  ✗    |  ✗    |  ✗  |
 
       - 全マス**内容照合**で判定した (音声 = TTS の合言葉 / 動画 = 色の遷移 /
         PDF = 本文の固有文字列 / 画像 = 矩形の色。HTTP 200 では「受理して無視」と
@@ -1228,6 +1229,15 @@ enums:
       - **xAI の PDF は公式文書に記述が無いのに通った** (文書と実装の乖離 2 例目。
         1 例目は Spec 23 の WebP)。文書どおりに締められる日が来たら carries の
         このマスを実測で取り直す
+      - **perplexity_responses の行は Spec 45 の probe (2026-08-27)**。画像は
+        内容照合 (1×1 赤 PNG に gemini-3-flash-preview 経由で「赤」)、✗ 3 マスは
+        `invalid type "input_audio"` 等の**型ごと名指し拒否**。判定様式は
+        第 3 の形 — 名指しはするが受理集合は列挙しない (OpenAI = 全列挙 /
+        xAI = 無言の 422 / Perplexity = named のみ)。**本家 open_ai_responses と
+        Pdf のマスが割れている**ことが、相乗りをやめて 7 本目を切る根拠の 1 つ
+        (Spec 45 D1)。画像 ✓ はワイヤの層 — `perplexity/deepseek-v4-flash-0731`
+        はモデル層で画像を拒否する (400 invalid request。既知の拒否として
+        carries_table.rs の凍結コメントにも残す — Spec 45 D11)
       - OpenAiCompat の Audio ✓ は**ワイヤの形の話** — 実在するのは
         input_audio part で、受理はモデル依存 (gpt-5.6-luna は拒否した)。
         **述語はワイヤの層だけを守り、モデルの受理は 400 を画面へ出す** (2 層)。
@@ -1901,6 +1911,21 @@ entities:
       # 3 値の選択肢ではないので既存のトグルの形に乗る (Spec 34 D4)
       openaiWebSearch: bool
       openaiReasoningPro: bool
+      # 既定 false。provider == meta_responses でのみ効く (Spec 37)。
+      # **この行は Spec 45 P0 で回収した追従漏れ** — model.rs には Spec 37 から
+      # 実在するのに、この列挙に無かった (metaWebSearch で grep しても
+      # 0 件だったのが証拠。#51 の「隣の節」の再演)
+      metaWebSearch: bool
+      # --- Perplexity の固有スキル 4 本 (Spec 45 D3)。すべて既定 false、
+      # provider == perplexity_responses でのみ効く (*_active() の AND 述語)。
+      # 別トグルなのは別ツール・別課金・別 output 種別 (web/finance/people は
+      # 検索の入力膨張 + finance/people は 1 回 $0.005 の呼び出し課金)。
+      # openaiWebSearch からの自動写しは作らない — 切り替えただけで課金面が
+      # 開く経路にしない (サイレント喪失は P2 のダイアログ注意文で受ける)
+      perplexityWebSearch: bool
+      perplexityFinanceSearch: bool
+      perplexityPeopleSearch: bool
+      perplexityFetchUrl: bool
       requestTimeoutSecs: u32
       maxRetries: u32
       # --- 単価 (Spec 41)。すべて Option + #[serde(default)]。$ / 100 万トークン ---
@@ -2016,13 +2041,20 @@ entities:
     fields: { uri: String, title: String }   # title は取れなければ空文字
 
   GroundingEngine:
-    values: [google, xai]
+    values: [google, xai, open_ai, meta, perplexity]
     note: |
       表示の「エンジン」ラベルはこの値から辞書で引く (grounding.engine の
       「Google 検索」固定を Spec 31 P3 で置き換える)。自由文字列にしないのは
       役職の色と同じ理由 — 開いた値は表示層に分岐を漏らす。
       serde 既定は google: engine 欄の無い既存レコード (sessions.redb に保存済みの
       AgentMessage) はすべて Spec 05 の Google 検索由来なので、既定で正しく読める。
+      **open_ai (Spec 34) / meta (Spec 37) はこの列挙への追従が漏れていた**
+      (canonical.rs には当時から実在。Spec 45 P0 で回収 — 新しい variant は
+      「その型を説明している場所」にも要る、の #51 の再演)。
+      perplexity は Spec 45 D5 — 出典は annotations ではなく *_results 系
+      output item から写す (search_results / people_search_results /
+      fetch_url_results / finance_results の 4 種。finance だけ URL 裸の
+      文字列配列で title を持たない)。
 
   ErrorPayload:
     fields:
@@ -5180,6 +5212,10 @@ llm_wire:
       同じ文章で書けてしまう (#62 と同族)。
       **非単射になる既定 URL の 7 通りは providerSkills.test.ts で先に書く**
       (Provider.non_injective_defaults を参照)。#91 は机上で追って外した事故。
+      **7 値目 (perplexity_responses・Spec 45) からの続報**: 手数えの箇所が
+      1 つ増えた — ALSO_SERVES_RESPONSES (perplexity_responses ブロックの
+      base_url_exemption)。免除の表が 2 枚になったので、「足す表」と
+      「足さない表」の両方を数える。
 
   meta_responses:
     why: |
@@ -5326,3 +5362,82 @@ llm_wire:
       ないので、Spec 31 の基準 (このアプリがその機構を実際に使っているか) が割れる。
       **「学習に使われます」とは書かない** — あれは規約で、こちらは観測できる事実。
       **性質の違う 2 つを 1 文に混ぜると、どちらも確かめられなくなる。**
+
+  perplexity_responses:
+    why: |
+      7 本目のワイヤ (Spec 45 D1。利用者裁定 2026-08-27)。相乗り
+      (open_ai_responses + api.perplexity.ai) では成立しない 4 つのため:
+      固有スキルのゲート (provider で本物の OpenAI と区別できない) /
+      出典の decode (*_results 系 output item が dropped へ落ち続ける) /
+      carries が本家と割れる (Pdf) / usage.cost (USD 実額が返る唯一の口)。
+      xAI (Spec 31) / Meta (Spec 37) に続くベンダー方言 Responses の 3 例目。
+      Chat Completions の口は持たない (/v1/chat/completions は 404・本文なし。
+      実測 2026-08-19) — 互換の口を持つ xAI / Meta / Gemini と逆。
+    measured: |
+      Spec 45 の probe 11 発 (2026-08-27) が正。要点:
+      - アプリの Responses ワイヤの送信形そのまま (store / reasoning / include /
+        関数ツールとの混在) で 200 (2026-08-19 から実測済み)
+      - finance_search は max_steps 無しだと skill_loaded item だけ返して
+        **200 のまま黙って空振りする** (モデルが「ツール呼び出しが無効」と
+        自己申告)。max_steps: 5 で完走
+      - people_search / fetch_url は max_steps 不要
+      - 誤ったツール型は 400 named (unknown discriminator value)。
+        受理集合は列挙しない
+      - usage.cost = {currency, input_cost, output_cost, tool_calls_cost,
+        tool_calls_cost_details, total_cost} (USD 実額)。回数は別の欄
+        usage.tool_calls_details ({invocation: N})。**people_search の鍵は
+        両欄とも search_people** — tool 型と揃っていない
+      - ツール課金の実測: finance / people $0.005/回、fetch_url $0.0005/回
+        (文書と一致)
+      - annotations は全 probe で 0 件。出典は *_results item 側にしか無い
+      - reasoning_tokens 0 / cached_tokens は効く (3968 を観測)
+    invariants: |
+      - **固有スキルは 4 本** (Spec 45 D3): perplexityWebSearch /
+        perplexityFinanceSearch / perplexityPeopleSearch / perplexityFetchUrl。
+        判定は各 *_active() = フラグ AND effective_provider() ==
+        PerplexityResponses。フラグ単独を判定に使わない
+        (grounding_active / live_search_active と同じ規律)
+      - **max_steps は perplexityFinanceSearch が ON のときだけ Some(5)**
+        (Spec 45 D4)。定数 5・設定にしない・利用者に見せない。他ツールだけの
+        ときは None = 欄ごとワイヤに出ない (skip_serializing_if)。
+        送らないと finance が黙って空振りする (エラーにならない最悪の形) ので、
+        フラグと欄はコアが対で管理する
+      - **要求のトップレベル型は open_ai_responses と共有し、max_steps:
+        Option<u32> を加算する** (Spec 45 D2)。OpenAI 経路では常に None —
+        既存 golden がバイト等価のまま緑であることが加算の機械証明
+      - **出典は GroundingEngine::Perplexity へ写す** (Spec 45 D5)。写す元は
+        search_results / people_search_results / fetch_url_results (いずれも
+        url + title 持ちのオブジェクト配列) と finance_results
+        (results[].sources = URL 裸の文字列の二重配列。**平坦化が要り、
+        title / snippet は存在しない — 空文字で捏造せず URL をそのまま
+        表示名に使う**)。skill_loaded は出典を持たない — 捨てるが数える
+        (dropped の計器。#72)
+      - **計器は pplx tools: の 1 行** (Spec 45 D6):
+        `pplx tools: finance=N people=N fetch=N web=N sources=N
+        invocations=k:v,... tool_cost_usd=X.XXXXXX`
+        * finance= 等の N は **output item の数** (decode が数える。usage の
+          鍵名から数えない — search_people の非対称と web の detail 未実測に
+          依存しないため)
+        * invocations= は usage.tool_calls_details の鍵と invocation を
+          **そのまま列挙** (鍵名を enum で固定しない — 綴りが直っても未知の
+          ツールが増えてもサイレント欠損にならない)
+        * tool_cost_usd= は usage.cost.tool_calls_cost (**ツール課金だけ**。
+          total_cost は入出力込みなので行名の下に置くと誤読する)
+        * sources= は出典として写した URL の総数 (finance は平坦化してから)
+      - **base_url_exemption** (Spec 45 D8): DEFAULT_BASE_URL は
+        https://api.perplexity.ai/v1。ALSO_SERVES_COMPAT には**入れない**
+        (あれは Chat Completions の口の免除で、この接続先はその口を持たない)。
+        代わりに **ALSO_SERVES_RESPONSES を新設** — open_ai_responses の
+        provider のまま api.perplexity.ai を指す相乗りは 2026-08-19 から動く
+        正当な現用構成で、baseUrlMismatch が指摘したら誤検知。免除の表は
+        2 枚になった (互換の口 / Responses の口)
+      - Provider::detect に api.perplexity.ai を足す (未指定テンプレートの
+        推定。能力・スキル・encode の base URL 分岐は引き続き禁じ手 —
+        detect はそれに当たらない。Spec 45 D1 の精密化)
+      - **usage.cost の統計への写しは範囲外** (Spec 45 D10)。D6 の計器で
+        ログに残すところまで — 捨てはしない・写しもしない
+      - モデル層の拒否には何もしない (Spec 45 D11)。carries の画像 ✓ は
+        ワイヤの層で、deepseek-v4-flash の 400 は既存の 400 処理のまま。
+        既知の拒否は carries_table.rs の凍結コメントと README に書き残す
+      - **output item の型の置き場 (共有 enum か専用型か) は P1 で決めて
+        この節へ追補する** (Spec 45 P0 では凍結しない — 査読 A-3)

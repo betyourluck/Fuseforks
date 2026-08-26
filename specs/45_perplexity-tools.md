@@ -1,8 +1,16 @@
 # Spec: Perplexity のツール — 7 本目のワイヤと固有スキル 4 本
 
 - 起票: 2026-08-27
-- 状態: **rev2（2026-08-27 — 査読 2 系統 10 点 + 軽微 2 を反映。採用 7 /
-  訂正して採用 3 / 反証 1。反映記録は Notes 5）**。rev1 は査読待ちの初版
+- 状態: **rev2 承認（2026-08-27）→ P0 完了**（`data_contract.yaml` へ
+  `perplexity_responses` ブロック新設 + carries 表の 7 行目 +
+  `GroundingEngine` values + `ModelTemplate` の 4 欄 +
+  `variant_addition_sites` の続報。**P0 で既存の追従漏れを 2 件回収した** —
+  `GroundingEngine` の values が `[google, xai]` のままで `open_ai` /
+  `meta` が漏れていた（Spec 34 / 37）/ `ModelTemplate` の契約欄の列挙に
+  `metaWebSearch` が無かった（Spec 37）。どちらも #51 の「腐るのはその機能の
+  節ではなく隣の節」— 契約を書く前に隣の記述を読んだので出た、の再演）。
+  査読の反映は 採用 7 / 訂正して採用 3 / 反証 1（記録は Notes 5）。
+  rev1 は査読待ちの初版
 - 起点: 利用者 —「Perplexity には `web search` だけではなく `Fetch URL`、
   `People Search`、`Finance Search` が使える。とくに Finance Search は
   xAI の live search 並に金融系の情報収集には人気のツールであるため
