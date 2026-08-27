@@ -1078,6 +1078,16 @@ scratchpad へ展開し、読み手 4 本（eigent 3 + upstream camel 1）で読
   （Agent API の有効 id。文書で確認）。**アプリの Responses ワイヤが送る欄そのまま**
   （`store` / `reasoning.summary+context` / `include` / 関数ツールと `web_search` の混在）で
   200 を実測。`22:33:59` から `backend=openai-responses` の `stop=-` を観測
+- **→ 2026-08-27 に 7 本目のワイヤ `Provider::PerplexityResponses` を切った**
+  （[Spec 45](specs/45_perplexity-tools.md)。P0〜P3 完了）。固有スキル 4 本
+  （web / 金融 / 人物検索 / URL 取得）+ `*_results` 4 種を
+  `GroundingEngine::Perplexity` へ写す — **下の (a) の宿題はこれで回収**
+  （「参照元は返ってきていません」が実 URL の一覧になる）。(b) の
+  `usage.cost` は `pplx tools:` 行の `tool_cost_usd=` でログに出る
+  （統計への写しは D10 で範囲外のまま）。**相乗り構成はそのまま動く**
+  （`ALSO_SERVES_RESPONSES` — 免除の表が互換の口 / Responses の口の 2 枚に
+  なった）。finance は `max_steps: 5` を対で送らないと **200 のまま黙って
+  空振りする**（probe 実測）
 - **固有の差 2 つ**（次に触るとき要る）:
   (a) **出典は `annotations` ではなく `search_results` という output item**
   （`{queries, results[{url,title,snippet,date,source,id,last_updated}]}`。probe で 15 件、

@@ -64,6 +64,8 @@ Fuseforks/
 │       │       ├── gemini.rs        Gemini native adapter (Google Search grounding)
 │       │       ├── xai_responses.rs xAI Responses adapter (Grok Live Search)
 │       │       ├── openai_responses.rs OpenAI Responses adapter (thinking summary, web search)
+│       │       ├── meta_responses.rs   Meta Responses adapter (web search, all four attachment kinds)
+│       │       ├── perplexity_responses.rs Perplexity Responses adapter (four search tools, sources)
 │       │       ├── responses_input.rs  input list shared by both Responses wires
 │       │       ├── client.rs        HTTP core (URL / headers / retry)
 │       │       └── error.rs         LlmError (retry decision axis)
@@ -338,8 +340,13 @@ PDF against a proper noun in the body).
 | xAI Responses | ✓ | — | — | ✓ |
 | OpenAI Responses | ✓ | — | — | ✓ |
 | **Meta native** | ✓ | **✓** | **✓** | ✓ |
+| Perplexity | ✓ | — | — | **—** |
 
-**Only the two native paths carry audio and video** (Gemini and Meta). Spec 23 had
+**Only the two native paths carry audio and video** (Gemini and Meta).
+**Perplexity does not carry PDF either** — the first cell where a Responses-shaped
+wire diverges from OpenAI proper, and one of the reasons the piggyback was replaced
+with a dedicated wire (Spec 45; the endpoint rejects it with a named
+`invalid type "input_file"` 400, measured). Spec 23 had
 frozen "do not implement attachments on the native path"; **that premise (images travel
 over the compatible endpoint anyway) disappeared from the side of the kinds**, so Spec 36
 reversed it. **Meta became the second one in Spec 37**, and **video passed against the
@@ -399,7 +406,7 @@ to tell why**, so the fact alone is kept.
 **No tool is added.** An attachment is a kind of input, not a capability, so neither the
 tool schemas nor the system prompt grow by a single character. For utterances without an
 attachment, the wire output is **byte-for-byte identical** to what it was before this
-feature existed (tests pin this for **all six wires**). In a village that never attaches
+feature existed (tests pin this for **all seven wires**). In a village that never attaches
 anything, nothing sent and nothing paid changes.
 
 ### Where attachments do not go
@@ -1002,6 +1009,44 @@ published benchmark gain of 23.3% → 28.5% for terra (about level with standard
 sol at 28.7%). **Both the accuracy and the fixed cost are stated** — either one
 alone is not enough to decide with.
 
+
+### Perplexity Tools ([Spec 45](specs/45_perplexity-tools.md))
+
+Set the protocol to **"Perplexity (Responses)"** in a model template and four
+switches appear under provider-specific skills: **web search, finance search,
+people search, and URL fetch**. Finance search retrieves structured market data
+such as stock quotes and market caps. People search **searches the web for
+people and their backgrounds**. Finance and people search cost $0.005 per call
+and URL fetch $0.0005 per call, billed separately (the toggles say so — the
+price is stated before you press).
+
+**This path is not a choice but the only door.** Perplexity has no
+Chat Completions endpoint (`/v1/chat/completions` returns 404). `/v1/responses`
+is the OpenAI-compatible alias of the Agent API (`/v1/agent`); previously the
+village piggybacked on the OpenAI Responses protocol for web search alone —
+that piggyback remains a legitimate configuration and keeps working, but
+finance / people search, URL fetch, and source display exist only on the
+dedicated protocol. **Switching does not carry the checkboxes over**
+(switching alone must not open a billing surface), so re-enable web search —
+a leftover checkbox is called out by name on screen.
+
+**Sources come back as real URLs** (the same side as Grok). The delivery is
+unusual, though: instead of annotations on the body, **the search results
+themselves come back as part of the response**, and sources are copied from
+there. Finance sources take the form `perplexity.ai/finance/…` and carry no
+title, so the URL is shown as-is (a missing title is not fabricated as an
+empty string).
+
+**Images travel but are model-dependent** (`deepseek-v4-flash` rejects them —
+measured). Audio, video, and PDF are rejected by the wire itself (see the
+carries table above).
+
+When finance search is enabled, the core sends a **step budget
+(`max_steps: 5`) as its pair** — without it the endpoint merely loads the tool
+and never runs it, **failing silently with a 200** (measured). The field is
+not exposed on screen (keeping the pair consistent is the core's job).
+
+---
 
 ### Where API Keys Live
 

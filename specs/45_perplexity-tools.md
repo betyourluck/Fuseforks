@@ -1,7 +1,15 @@
 # Spec: Perplexity のツール — 7 本目のワイヤと固有スキル 4 本
 
 - 起票: 2026-08-27
-- 状態: **rev2 承認（2026-08-27）→ P0〜P2 完了**（P2 = D9 の全箇所 +
+- 状態: **rev2 承認（2026-08-27）→ P0〜P3 完了。残は P4 の実機検収 7 件**。
+  P3 = README 3 言語（グラウンディングの行 + 接続先の行。**中文 README が
+  2026-08-25 に増えていたので 3 言語で数えた** — #51 (b) の「数えるのは
+  ファイル単位」）/ DETAIL 日英（carries 表 + ディレクトリ木 +
+  「7 つのワイヤすべて」+ Perplexity のツールの節を新設）/ CLAUDE.md
+  「Perplexity を繋いだ」節へ続報（(a) 出典の宿題を回収と明記）。
+  **DETAIL 日英のディレクトリ木に `meta_responses.rs` が無かった追従漏れ
+  （Spec 37）も同時回収** — P0 の 2 件と合わせて本 Spec の回収は 3 件目。
+  P2 = D9 の全箇所 +
   `ModelTemplateDialog` のトグル 4 本と課金注意・切り替え注意文・stranded 4 本 +
   辞書 ja/en 13 鍵 + `providerSkills.test.ts` 6 本（**`anyOffered` の名指し検査**
   含む — ミューテーションで 1 本だけ赤を確認）。vitest 441 → 447・build 緑。

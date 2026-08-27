@@ -31,7 +31,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
 | 🔌 **MCP** | Paste Claude Desktop's `mcp.json` **as-is**. Shared + per-agent |
-| 🔍 **Grounding** | Gemini's Google Search, Grok's Live Search (web / X), and web search on OpenAI and Meta. **The display distinguishes between searched facts, their sources, and facts that went unfound** |
+| 🔍 **Grounding** | Gemini's Google Search, Grok's Live Search (web / X), web search on OpenAI and Meta, and Perplexity's web / finance / people search and URL fetch. **The display distinguishes between searched facts, their sources, and facts that went unfound** |
 | 🧠 **Thinking summary** | The model's own summary of its reasoning, collapsed in a **frame separate from the answer**. Sources are verifiable pointers; a summary is an unverifiable claim — they are not mixed |
 | 🛠️ **Built-in Tools** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `run`. File tools are structurally unable to read outside the work folder (the exceptions are `rag`, which reads declared folders, and `run`, whose enclosure is its allowlist) |
 | 🪧 **Tool Reasons** | When a servant reaches for a tool, **what it is reaching for it for** appears as one line in the conversation. It is **the model's own account**, not an audit record |
@@ -46,7 +46,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | 📊 **Stats** | What this village has paid, by conversation × **servant × model** × how each turn ended (a servant that switched models gets one row per model). Units are tokens (the same effective-token weights the budget uses). **Register per-model rates and it also shows an approximate cost (`≈ $`)** ([Spec 41](specs/41_model-pricing.md); rates come from a "fetch" button or by hand. **Models without rates drop out of the total, and the screen says so**). Failed turns are counted too. **"All conversations" shows one month at a time, cut at a closing day, and you can page back to earlier months** (the closing day is set under System Settings > Cost Management; the default is end of month, and "All time" is still available — [Spec 42](specs/42_stats-period.md)). **Recording starts with this version** (earlier conversations cannot be counted) |
 | ⚙️ **System Settings** | Your own name and icon, language (switches both the screen and what the core says to the servants), token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
-The connection target is OpenAI-compatible / Anthropic / Gemini / xAI / OpenAI / Meta native. **The base URL is flexible**,
+The connection target is OpenAI-compatible / Anthropic / Gemini / xAI / OpenAI / Meta / Perplexity native. **The base URL is flexible**,
 so it connects directly to local LLMs like Ollama or LM Studio.
 
 ## Philosophy — A Real Thing Wearing the Shape of a Toy
