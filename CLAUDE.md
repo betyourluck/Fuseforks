@@ -1087,7 +1087,10 @@ scratchpad へ展開し、読み手 4 本（eigent 3 + upstream camel 1）で読
   （統計への写しは D10 で範囲外のまま）。**相乗り構成はそのまま動く**
   （`ALSO_SERVES_RESPONSES` — 免除の表が互換の口 / Responses の口の 2 枚に
   なった）。finance は `max_steps: 5` を対で送らないと **200 のまま黙って
-  空振りする**（probe 実測）
+  空振りする**（probe 実測）。**P4 で Done**（2026-08-27。4 ツール各単独 ON で
+  発火を利用者が観測）。**運用の観察: 4 本すべて ON にするとツール選択が
+  モデル任せでバラける**（金融の質問でも web から拾う等）。機構は作らない —
+  単独 ON = 用途別テンプレートが処方（トグルを 4 本に割った理由がここで効く）
 - **固有の差 2 つ**（次に触るとき要る）:
   (a) **出典は `annotations` ではなく `search_results` という output item**
   （`{queries, results[{url,title,snippet,date,source,id,last_updated}]}`。probe で 15 件、
