@@ -1,7 +1,9 @@
 # Spec: Perplexity のツール — 7 本目のワイヤと固有スキル 4 本
 
 - 起票: 2026-08-27
-- 状態: **rev2 承認（2026-08-27）→ P0 完了**（`data_contract.yaml` へ
+- 状態: **rev2 承認（2026-08-27）→ P0〜P1 完了**（P1 実装記録は下。
+  workspace 全 32 スイート緑・vitest 441 緑・clippy 警告ゼロ・
+  ミューテーション 2 回で赤確認）。P0 =（`data_contract.yaml` へ
   `perplexity_responses` ブロック新設 + carries 表の 7 行目 +
   `GroundingEngine` values + `ModelTemplate` の 4 欄 +
   `variant_addition_sites` の続報。**P0 で既存の追従漏れを 2 件回収した** —
@@ -315,6 +317,44 @@ Spec 37 の教訓（union と `Record` で網羅性が割れる）をそのま�
 7. **出典の回収**: web 検索（`perplexity_web_search` ON）で出典が
    「参照元は返ってきていません」ではなく実 URL の一覧になる
    （2026-08-19 の観察の裏返し。`search_results` が Grounding へ写った証拠）
+
+## P1 実装記録（2026-08-27）
+
+- **着地**: `Provider::PerplexityResponses`（7 値目）+
+  `llm/perplexity_responses.rs` 新設（encode / decode / `Tools` 構造体 /
+  golden 3 本 + decode fixture 1 本 + part 1 本）+ `ModelTemplate` の
+  4 フラグと `*_active()` 4 本 + carries の 1 腕と凍結表 + TS の網の維持
+  （`types.ts` の union / `carries.ts` の `Record` /
+  `carriesTable.test.ts` のマス数 24 → 28 と variant 写像）
+- **output item の型の置き場（D2 末尾の宿題）**: 共有 `ResponsesOutputItem`
+  へ Option 欄を加算（`queries` / `results` / `contents`）。専用型に
+  しなかったのは、あの構造体が enum ではなく**全欄 Option + kind 文字列
+  分岐**で、xAI 専用の `input` 欄が既に同じ形で載っている前例のため。
+  `data_contract` の `perplexity_responses` へ追補済み
+- **`encode` の引数は bool 4 連ではなく `Tools` 構造体** — 同型 bool の並びは
+  呼び出し側で取り違えてもコンパイラが指さない
+- **`usage.tool_calls_details` は `BTreeMap`** — HashMap だと `invocations=`
+  の列挙順が走行ごとに揺れ、同じ応答のログが毎回違う
+  （`probe_approvals` の保存順を固定したのと同じ理由）
+- **凍結の網が 2 つ、意図どおり鳴った**: `ipc_contract` の
+  `wire_field_sets_are_frozen`（`ModelTemplate` の欄が増えた = 期待値へ
+  4 欄を足して受けた）/ `carriesTable.test.ts`（Rust の凍結表に 7 行目が
+  増えた = TS の表・variant 写像・マス数を追従）。**後者の variant 写像
+  （`VARIANT_TO_PROVIDER`）は D9 の手数え表に無かった 6 箇所目** —
+  P2 で表へ足す
+- **ミューテーション 2 回、予測どおりの赤**: (a) `max_steps` の対を
+  `None` 固定 → finance ON の golden **1 本だけ**赤（OFF 側 golden は緑 =
+  2 本が別々の仕事をしている）(b) carries の PDF を ✓ → 逐語凍結と
+  adapter 一致の **2 本**が赤（両方を同時に変えると通る穴を逐語凍結が
+  塞いでいる形がそのまま出た）
+- **golden の `base_request` は `tool_choice: Auto` へ上げる必要があった** —
+  `ChatRequest::plain` の既定は `ToolChoice::None`（ツールを一切送らない
+  要求）で、そのままだとサーバー側ツールも `max_steps` も出ない。
+  最初の golden 2 本はこれで赤になり、`openai_responses` の golden と
+  同じ形へ直した
+- **P2 へ送る宿題**: D9 の表 + `VARIANT_TO_PROVIDER`（6 箇所目）/
+  `ModelTemplateDialog` のトグル 4 本と切り替え注意文 / 辞書 ja/en /
+  `providerSkills.test.ts`（`anyOffered` の名指し検査）
 
 ## Notes
 

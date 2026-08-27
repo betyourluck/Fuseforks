@@ -5439,5 +5439,13 @@ llm_wire:
       - モデル層の拒否には何もしない (Spec 45 D11)。carries の画像 ✓ は
         ワイヤの層で、deepseek-v4-flash の 400 は既存の 400 処理のまま。
         既知の拒否は carries_table.rs の凍結コメントと README に書き残す
-      - **output item の型の置き場 (共有 enum か専用型か) は P1 で決めて
-        この節へ追補する** (Spec 45 P0 では凍結しない — 査読 A-3)
+      - **output item の型の置き場 (P1 で決定・追補)**: 共有の
+        ResponsesOutputItem へ Option 欄を加算した (queries / results /
+        contents。要素は PerplexityResultEntry / PerplexityFetchedContent)。
+        専用型にしなかったのは、あの構造体が enum ではなく**全欄 Option +
+        kind 文字列分岐**の形で、xAI 専用の input 欄が既に同じ形で載っている
+        (前例) ため — 専用型だと ResponsesResponse ごと複製になる。
+        **3 種別が同じ results 鍵で違う形を運ぶ**ので要素も全欄 Option
+        (search / people = url + title、finance = sources のみ)。
+        usage 側は cost (ResponsesCost) と tool_calls_details
+        (**BTreeMap** — 計器の列挙順を決定的にする) を加算

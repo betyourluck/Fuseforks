@@ -626,6 +626,31 @@ pub struct ModelTemplate {
     /// （検索なしの同型は 12〜141）。既定 OFF。
     #[serde(default)]
     pub meta_web_search: bool,
+    /// Perplexity の web 検索（Spec 45）。**`provider == perplexity_responses` の
+    /// ときだけ効く**（判定は [`ModelTemplate::perplexity_web_search_active`]）。
+    ///
+    /// 相乗り構成（`open_ai_responses` + api.perplexity.ai）では
+    /// `openai_web_search` が同じツールを送っていた。**provider を切り替えても
+    /// フラグは自動で写さない** — 切り替えただけで検索の課金面が開く経路を
+    /// 作らない（Spec 45 D3。サイレント喪失はダイアログの注意文で受ける）。
+    #[serde(default)]
+    pub perplexity_web_search: bool,
+    /// Perplexity の金融検索（Spec 45）。1 回 $0.005 の呼び出し課金つき。
+    ///
+    /// **ON のとき encode が `max_steps: 5` を対で送る**（Spec 45 D4）。
+    /// 送らないと skill 族の finance は `skill_loaded` だけ返して
+    /// **200 のまま黙って空振りする**（実測 2026-08-27）。
+    #[serde(default)]
+    pub perplexity_finance_search: bool,
+    /// Perplexity の人物検索（Spec 45）。1 回 $0.005 の呼び出し課金つき。
+    ///
+    /// 課金・回数の detail 鍵は **`search_people`** で tool 型と揃っていない
+    /// （実測 2026-08-27。計器は鍵名を固定せず生で列挙する — Spec 45 D6）。
+    #[serde(default)]
+    pub perplexity_people_search: bool,
+    /// Perplexity の URL 取得（Spec 45）。1 回 $0.0005 の呼び出し課金つき。
+    #[serde(default)]
+    pub perplexity_fetch_url: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -739,6 +764,32 @@ impl ModelTemplate {
         self.meta_web_search && self.effective_provider() == crate::llm::Provider::MetaResponses
     }
 
+    /// Perplexity の web 検索が**実際に効く**か（Spec 45 D3）。
+    ///
+    /// 他の `*_active` と同型の AND 述語。フラグ単独を判定に使わない。
+    pub fn perplexity_web_search_active(&self) -> bool {
+        self.perplexity_web_search
+            && self.effective_provider() == crate::llm::Provider::PerplexityResponses
+    }
+
+    /// Perplexity の金融検索が**実際に効く**か（Spec 45 D3）。
+    pub fn perplexity_finance_search_active(&self) -> bool {
+        self.perplexity_finance_search
+            && self.effective_provider() == crate::llm::Provider::PerplexityResponses
+    }
+
+    /// Perplexity の人物検索が**実際に効く**か（Spec 45 D3）。
+    pub fn perplexity_people_search_active(&self) -> bool {
+        self.perplexity_people_search
+            && self.effective_provider() == crate::llm::Provider::PerplexityResponses
+    }
+
+    /// Perplexity の URL 取得が**実際に効く**か（Spec 45 D3）。
+    pub fn perplexity_fetch_url_active(&self) -> bool {
+        self.perplexity_fetch_url
+            && self.effective_provider() == crate::llm::Provider::PerplexityResponses
+    }
+
     /// Pro 推論モードが**実際に効く**か（Spec 34 D4）。
     pub fn openai_reasoning_pro_active(&self) -> bool {
         self.openai_reasoning_pro
@@ -769,6 +820,10 @@ impl ModelTemplate {
             openai_web_search: false,
             openai_reasoning_pro: false,
             meta_web_search: false,
+            perplexity_web_search: false,
+            perplexity_finance_search: false,
+            perplexity_people_search: false,
+            perplexity_fetch_url: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
             // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、

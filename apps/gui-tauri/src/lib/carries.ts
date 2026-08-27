@@ -46,6 +46,9 @@ const TABLE: Record<Provider, readonly [boolean, boolean, boolean, boolean]> = {
   open_ai_responses: [true, false, false, true],
   // **Gemini に次ぐ 2 本目の「4 種別すべて」**（Spec 37）。
   meta_responses: [true, true, true, true],
+  // Spec 45 の probe（2026-08-27）。**PDF が本家 open_ai_responses と割れる**
+  // （invalid type の名指し 400）— 相乗りをやめて 7 本目を切った根拠の 1 つ。
+  perplexity_responses: [true, false, false, false],
 };
 
 /** 表の列の順序。`TABLE` の並びと 1 対 1。 */

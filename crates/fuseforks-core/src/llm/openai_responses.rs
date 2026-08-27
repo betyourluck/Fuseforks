@@ -94,6 +94,9 @@ pub fn encode(
         store: false,
         max_output_tokens: req.max_tokens,
         tool_choice,
+        // OpenAI 経路では常に None = ワイヤに出ない（Spec 45 D2。
+        // golden がバイト等価のまま緑であることが加算の証明）。
+        max_steps: None,
     }
 }
 

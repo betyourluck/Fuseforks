@@ -522,6 +522,13 @@ pub enum GroundingEngine {
     /// （xAI は 77/77 がすべて 0 = メッセージ単位）。この村は今のところ
     /// 区間を捨てているが、捨てたことを `meta_responses` の契約に書いてある。
     Meta,
+    /// Perplexity のサーバー側ツール群（Agent API。Spec 45）。
+    ///
+    /// **出典は annotations ではなく `*_results` 系 output item から写す**
+    /// （`search_results` / `people_search_results` / `fetch_url_results` /
+    /// `finance_results` の 4 種。annotations は全 probe で 0 件 —
+    /// 実測 2026-08-27）。finance だけ URL 裸の文字列配列で表題を持たない。
+    Perplexity,
 }
 
 impl Grounding {

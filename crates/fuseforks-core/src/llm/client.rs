@@ -16,7 +16,7 @@ use super::canonical::{ChatRequest, ChatResponse, Effort};
 use super::error::LlmError;
 use super::{
     BackendResolution, LlmBackend, anthropic, gemini, meta_responses, openai_compat,
-    openai_responses, wire, xai_responses,
+    openai_responses, perplexity_responses, wire, xai_responses,
 };
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
@@ -66,17 +66,26 @@ pub enum Provider {
     ///
     /// **`tool_choice` は `"auto"` のみ**（実測）。強制ツール呼び出しは表現できない。
     MetaResponses,
+    /// `POST {base_url}/responses` + `Authorization: Bearer`（Spec 45）。
+    ///
+    /// Perplexity Agent API（`/v1/agent`）の OpenAI 互換エイリアス。
+    /// **Chat Completions の口を持たない**（`/v1/chat/completions` は 404 —
+    /// 実測 2026-08-19。互換の口も持つ xAI / Meta / Gemini と逆）。
+    /// この経路が要るのは 4 つ — 固有スキルのゲート / `*_results` 系の出典 /
+    /// carries の差（PDF を運べない）/ `usage.cost`（Spec 45 D1）。
+    PerplexityResponses,
 }
 
 impl Provider {
     /// 全ワイヤ。`carries` の表を横断して読むとき（案内文の組み立て・検査）に使う。
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::OpenAiCompat,
         Self::Anthropic,
         Self::Gemini,
         Self::XaiResponses,
         Self::OpenAiResponses,
         Self::MetaResponses,
+        Self::PerplexityResponses,
     ];
 
     /// base URL からワイヤプロトコルを推定する。
@@ -92,6 +101,13 @@ impl Provider {
     pub fn detect(base_url: &str) -> Self {
         if base_url.contains("api.anthropic.com") {
             Self::Anthropic
+        } else if base_url.contains("api.perplexity.ai") {
+            // Spec 45 D8。`generativelanguage` を Gemini へ倒さない判断（下）と
+            // 逆に見えるが、前提が逆 — あちらは「互換で現に動いている」既存を
+            // 守る側、こちらは互換の口が存在しない（404）ので、未指定 +
+            // api.perplexity.ai は**既に壊れている構成**。倒すことは直す向きに
+            // しか働かない。
+            Self::PerplexityResponses
         } else {
             Self::OpenAiCompat
         }
@@ -137,6 +153,12 @@ impl Provider {
             // ✗ と書くところを、payload 無しの `input_video` が
             // 「video_url か file_id が要る」と名指しで 400 を返したので撃てた。
             Self::MetaResponses => [true, true, true, true],
+            // Spec 45 の probe（2026-08-27）。**本家 open_ai_responses と PDF の
+            // マスが割れている**（`invalid type "input_file"` の名指し拒否）—
+            // 相乗りをやめて 7 本目を切った根拠の 1 つ。画像 ✓ はワイヤの層で、
+            // **`perplexity/deepseek-v4-flash-0731` はモデル層で画像を拒否する**
+            // （内容照合は gemini-3-flash-preview 経由。Spec 45 D11）。
+            Self::PerplexityResponses => [true, false, false, false],
         };
         match kind {
             K::Image => image,
@@ -159,6 +181,7 @@ impl Provider {
             Self::XaiResponses => "xai-responses",
             Self::OpenAiResponses => "openai-responses",
             Self::MetaResponses => "meta-responses",
+            Self::PerplexityResponses => "perplexity-responses",
         }
     }
 
@@ -170,9 +193,10 @@ impl Provider {
             Self::OpenAiCompat => "/chat/completions".to_owned(),
             Self::Anthropic => "/messages".to_owned(),
             Self::Gemini => gemini::path(model),
-            Self::XaiResponses | Self::OpenAiResponses | Self::MetaResponses => {
-                "/responses".to_owned()
-            }
+            Self::XaiResponses
+            | Self::OpenAiResponses
+            | Self::MetaResponses
+            | Self::PerplexityResponses => "/responses".to_owned(),
         }
     }
 }
@@ -220,6 +244,15 @@ pub struct LlmConfig {
     /// Meta の web 検索（Spec 37）。[`Provider::MetaResponses`] でのみ効く。
     /// 値は [`ModelTemplate::meta_web_search_active`] の判定済み。
     pub meta_web_search: bool,
+    /// Perplexity の web 検索（Spec 45）。[`Provider::PerplexityResponses`] でのみ効く。
+    /// 値は [`ModelTemplate::perplexity_web_search_active`] の判定済み。
+    pub perplexity_web_search: bool,
+    /// Perplexity の金融検索（Spec 45）。ON なら encode が `max_steps: 5` を対で送る。
+    pub perplexity_finance_search: bool,
+    /// Perplexity の人物検索（Spec 45）。
+    pub perplexity_people_search: bool,
+    /// Perplexity の URL 取得（Spec 45）。
+    pub perplexity_fetch_url: bool,
 }
 
 impl LlmConfig {
@@ -280,6 +313,10 @@ impl LlmConfig {
             openai_web_search: template.openai_web_search_active(),
             openai_reasoning_pro: template.openai_reasoning_pro_active(),
             meta_web_search: template.meta_web_search_active(),
+            perplexity_web_search: template.perplexity_web_search_active(),
+            perplexity_finance_search: template.perplexity_finance_search_active(),
+            perplexity_people_search: template.perplexity_people_search_active(),
+            perplexity_fetch_url: template.perplexity_fetch_url_active(),
         })
     }
 }
@@ -375,6 +412,23 @@ impl HttpLlmBackend {
                 }
                 b
             }
+            Provider::PerplexityResponses => {
+                let body = perplexity_responses::encode(
+                    req,
+                    self.config.use_tools,
+                    perplexity_responses::Tools {
+                        web_search: self.config.perplexity_web_search,
+                        finance_search: self.config.perplexity_finance_search,
+                        people_search: self.config.perplexity_people_search,
+                        fetch_url: self.config.perplexity_fetch_url,
+                    },
+                );
+                let mut b = self.http.post(&url).json(&body);
+                if !self.config.api_key.is_empty() {
+                    b = b.bearer_auth(&self.config.api_key);
+                }
+                b
+            }
         };
 
         let response = builder.send().await.map_err(LlmError::from)?;
@@ -450,6 +504,17 @@ impl HttpLlmBackend {
                 // **思考で使い切って本文ゼロ**は実測で踏んだ（`max_output_tokens`
                 // 1,024 で空・2,048 で本文。既定の effort が high）。
                 // 既存の #72 の網がそのまま当たるので、ここだけ独自の判定を持たない。
+                openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
+            }
+            // 応答の型は他の Responses 3 本と共有（Spec 45 P1 — probe 11 発の
+            // 実測が全部 serde で通っている）。
+            Provider::PerplexityResponses => {
+                let parsed: wire::ResponsesResponse =
+                    serde_json::from_str(&raw).map_err(|source| LlmError::Parse {
+                        source,
+                        raw: raw.clone(),
+                    })?;
+                let decoded = perplexity_responses::decode(parsed)?;
                 openai_compat::reject_empty_reasoning(decoded, req.max_tokens)
             }
         }

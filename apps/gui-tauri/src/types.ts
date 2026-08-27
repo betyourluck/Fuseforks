@@ -42,7 +42,8 @@ export type Provider =
   | "gemini"
   | "xai_responses"
   | "open_ai_responses"
-  | "meta_responses";
+  | "meta_responses"
+  | "perplexity_responses";
 
 /** 推論の深さ。未指定ならリクエストに含めない。 */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";

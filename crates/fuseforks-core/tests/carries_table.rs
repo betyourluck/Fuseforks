@@ -72,6 +72,14 @@ fn adapter_emits(provider: Provider, kind: AttachmentKind) -> bool {
             serde_json::to_string(&fuseforks_core::llm::meta_responses::encode(&req, true, false))
                 .unwrap()
         }
+        Provider::PerplexityResponses => serde_json::to_string(
+            &fuseforks_core::llm::perplexity_responses::encode(
+                &req,
+                true,
+                fuseforks_core::llm::perplexity_responses::Tools::default(),
+            ),
+        )
+        .unwrap(),
     };
     json.contains("QUJD")
 }
@@ -93,6 +101,7 @@ fn adapters_match_the_carries_table() {
         Provider::XaiResponses,
         Provider::OpenAiResponses,
         Provider::MetaResponses,
+        Provider::PerplexityResponses,
     ];
     let mut checked = 0;
     for provider in providers {
@@ -105,7 +114,7 @@ fn adapters_match_the_carries_table() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 24, "表は 4 種別 × 6 ワイヤの全マスを覆う");
+    assert_eq!(checked, 28, "表は 4 種別 × 7 ワイヤの全マスを覆う");
 }
 
 /// **表そのものを逐語で凍結する**（P0 の probe 18 発の観測結果）。
@@ -127,6 +136,12 @@ fn the_carries_table_matches_what_the_probes_observed() {
         // 動画は openai_responses からの類推で ✗ と書くところを、
         // payload 無しの `input_video` の名指し 400 が実在を教えて撃てた。
         (Provider::MetaResponses, true, true, true, true),
+        // Spec 45 の probe（2026-08-27）。**PDF が本家 open_ai_responses と
+        // 割れている**（`invalid type "input_file"` の名指し 400）— 相乗りを
+        // やめて 7 本目を切った根拠の 1 つ。画像 ✓ はワイヤの層で、
+        // **`perplexity/deepseek-v4-flash-0731` はモデル層で画像を拒否する**
+        // （内容照合は gemini-3-flash-preview 経由で「赤」）。
+        (Provider::PerplexityResponses, true, false, false, false),
     ];
     for (provider, image, audio, video, pdf) in expected {
         assert_eq!(provider.carries(Image), image, "{provider:?} の画像");

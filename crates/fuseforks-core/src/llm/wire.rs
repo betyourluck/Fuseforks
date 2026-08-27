@@ -1068,6 +1068,11 @@ pub struct OpenAiResponsesRequest {
     /// `encrypted_content` が既定で返る）は正しかったが、**出典の全件はこの鍵で
     /// しか取れない**ことを実測で見落としていた。annotations は
     /// **モデルが引用した分だけ**で、引用しなければ 0 件になる。
+    ///
+    /// **空なら欄ごと省く**（Spec 45）。Perplexity は `action.sources` を
+    /// 持たない（出典は `*_results` item 側）ので読む先の無い欄を送らない。
+    /// OpenAI 経路は常に 1 要素なので、この skip で golden は 1 バイトも動かない。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<&'static str>,
     /// 思考の制御。契約により**常に送る**。
     pub reasoning: OpenAiReasoning,
@@ -1079,6 +1084,15 @@ pub struct OpenAiResponsesRequest {
     /// ツール選択方針。`required` / `{type: function, name}` のときだけ送る。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    /// Perplexity Agent API の step 予算（Spec 45 D2 / D4）。
+    ///
+    /// **OpenAI 経路では常に `None`** = 欄ごとワイヤに出ない（golden が
+    /// バイト等価のまま緑であることが加算の機械証明）。Perplexity 経路では
+    /// `finance_search` が ON のときだけ `Some(5)` — 送らないと skill 族の
+    /// finance が `skill_loaded` だけ返して **200 のまま黙って空振りする**
+    /// （実測 2026-08-27）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u32>,
 }
 
 /// `reasoning` オブジェクト（Spec 34 D4）。
@@ -1338,6 +1352,21 @@ pub struct ResponsesOutputItem {
     /// （`reasoning_summary` 契約の凍結 2）。
     #[serde(default)]
     pub summary: Option<Vec<ResponsesSummaryPart>>,
+    /// Perplexity の `search_results` / `people_search_results` のとき、
+    /// 検索語の列（Spec 45 D5）。
+    #[serde(default)]
+    pub queries: Option<Vec<String>>,
+    /// Perplexity の `search_results` / `people_search_results` /
+    /// `finance_results` のとき、結果の列（Spec 45 D5）。
+    ///
+    /// **3 種別が同じ `results` 鍵で違う形を運ぶ**ので、要素は全欄 Option の
+    /// 1 型で受ける（この構造体自身と同じ判断 — enum で閉じると未知の形で
+    /// parse ごと落ちる）。
+    #[serde(default)]
+    pub results: Option<Vec<PerplexityResultEntry>>,
+    /// Perplexity の `fetch_url_results` のとき、取得したページの列（Spec 45 D5）。
+    #[serde(default)]
+    pub contents: Option<Vec<PerplexityFetchedContent>>,
 }
 
 /// `reasoning` item の要約 1 片。
@@ -1412,6 +1441,38 @@ pub struct ResponsesSearchAction {
     pub sources: Vec<ResponsesSearchSource>,
 }
 
+/// Perplexity の `*_results` の結果 1 件（Spec 45 D5）。
+///
+/// `search_results` / `people_search_results` は `{url, title, snippet, …}`、
+/// `finance_results` は `{category, content, sources, tickers}` で
+/// **URL は `sources`（裸の文字列配列）にだけ入り、表題を持たない**
+/// （実測 2026-08-27）。読まない欄（snippet / content / tickers …）は
+/// 受けない — 出典に要るのは URL と表題だけ。
+#[derive(Debug, Deserialize)]
+pub struct PerplexityResultEntry {
+    /// 出典 URL（search / people）。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 表題（search / people）。
+    #[serde(default)]
+    pub title: Option<String>,
+    /// 出典 URL の列（finance）。**平坦化して読む**（Spec 45 D6 の
+    /// `sources=` の定義 — 二重配列のまま数えると件数が result 数になる）。
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
+}
+
+/// Perplexity の `fetch_url_results` の 1 件（Spec 45 D5）。
+#[derive(Debug, Deserialize)]
+pub struct PerplexityFetchedContent {
+    /// 取得した URL。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// ページの表題。
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
 /// 検索が触れたソース 1 件（Spec 34 D12）。
 #[derive(Debug, Deserialize)]
 pub struct ResponsesSearchSource {
@@ -1451,6 +1512,38 @@ pub struct ResponsesUsage {
     /// 回数の欄（公式文書名）。
     #[serde(default)]
     pub server_side_tool_usage: Option<serde_json::Value>,
+    /// Perplexity の実額（USD。Spec 45 D6）。
+    #[serde(default)]
+    pub cost: Option<ResponsesCost>,
+    /// Perplexity のツール呼び出し回数（Spec 45 D6）。
+    ///
+    /// **`BTreeMap` なのは計器の列挙順を決定的にするため**（HashMap だと
+    /// `invocations=` の並びが走行ごとに揺れ、同じ応答のログが毎回違う）。
+    /// **鍵名は enum で固定しない** — `people_search` の鍵は `search_people` で
+    /// tool 型と揃っておらず（実測 2026-08-27）、生の写しなら綴りが直っても
+    /// 未知のツールが増えてもサイレント欠損にならない。
+    #[serde(default)]
+    pub tool_calls_details:
+        Option<std::collections::BTreeMap<String, ResponsesToolInvocations>>,
+}
+
+/// Perplexity の実額の内訳（Spec 45 D6）。
+///
+/// 読むのは `tool_calls_cost` だけ — `total_cost` は入出力トークン込みで、
+/// `pplx tools:` 行に置くと誤読する。統計への写しは範囲外（Spec 45 D10）。
+#[derive(Debug, Deserialize)]
+pub struct ResponsesCost {
+    /// ツール課金だけの合計（USD）。
+    #[serde(default)]
+    pub tool_calls_cost: Option<f64>,
+}
+
+/// ツール 1 種の呼び出し回数（Spec 45 D6）。
+#[derive(Debug, Deserialize)]
+pub struct ResponsesToolInvocations {
+    /// 呼び出し回数。
+    #[serde(default)]
+    pub invocation: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
