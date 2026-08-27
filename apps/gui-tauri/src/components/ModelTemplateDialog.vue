@@ -237,6 +237,10 @@ const PROVIDERS: { value: Provider | null; labelKey: string }[] = [
   { value: "xai_responses", labelKey: "modelTemplate.providerXaiResponses" },
   { value: "open_ai_responses", labelKey: "modelTemplate.providerOpenAiResponses" },
   { value: "meta_responses", labelKey: "modelTemplate.providerMetaResponses" },
+  {
+    value: "perplexity_responses",
+    labelKey: "modelTemplate.providerPerplexityResponses",
+  },
 ];
 
 /**
@@ -254,6 +258,10 @@ const skills = computed(() =>
       openaiWebSearch: false,
       openaiReasoningPro: false,
       metaWebSearch: false,
+      perplexityWebSearch: false,
+      perplexityFinanceSearch: false,
+      perplexityPeopleSearch: false,
+      perplexityFetchUrl: false,
     },
   ),
 );
@@ -314,6 +322,11 @@ function blank(): ModelTemplate {
     openaiReasoningPro: false,
     // Spec 37。既定 OFF（検索は入力を桁で膨らませる — 実測 66,350）。
     metaWebSearch: false,
+    // Spec 45。4 本とも既定 OFF（finance / people は 1 回 $0.005 の課金つき）。
+    perplexityWebSearch: false,
+    perplexityFinanceSearch: false,
+    perplexityPeopleSearch: false,
+    perplexityFetchUrl: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
     // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
@@ -902,6 +915,74 @@ function onTemperature(raw: string): void {
             </template>
 
             <!--
+              Perplexity の固有スキル 4 本（Spec 45 D3）。**別トグル** —
+              別ツール・別課金・別 output 種別（xAI が 2 つに割れたのと同じ根拠。
+              1 つに畳むと web だけ欲しい村が人物検索の課金面まで開ける）。
+              finance を ON にするとコアが max_steps: 5 を対で送る（D4 —
+              送らないと 200 のまま黙って空振りする実測）。
+            -->
+            <template v-if="skills.perplexityWeb.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.perplexityWebSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.perplexityWebSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.perplexityWebSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <template v-if="skills.perplexityFinance.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.perplexityFinanceSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.perplexityFinanceSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.perplexityFinanceSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <template v-if="skills.perplexityPeople.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.perplexityPeopleSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.perplexityPeopleSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.perplexityPeopleSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <template v-if="skills.perplexityFetch.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.perplexityFetchUrl") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.perplexityFetchUrl" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.perplexityFetchUrlHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!-- 課金の注意（Spec 45 D3。押す前に言う — xAI / OpenAI の前例と同じ棚）。 -->
+            <template v-if="skills.perplexityWeb.offered">
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.perplexityToolsCost") }}
+              </div>
+            </template>
+
+            <!--
+              相乗り（open_ai_responses）から切り替えた直後の案内（Spec 45 D3）。
+              フラグは自動で写さない（切り替えただけで課金面が開く経路を作らない）
+              ので、残った openaiWebSearch を名指しして入れ直し先を示す。
+              **表示条件だけで書けるので「1 回だけ警告」のような状態の記憶は
+              持たない。** stranded の警告（下）と対で出る — あちらは残った設定の
+              説明、こちらは新ワイヤ側の直し方。
+            -->
+            <template v-if="skills.perplexityWeb.offered && draft.openaiWebSearch">
+              <div class="col-span-2 text-[11px] text-warn">
+                {{ $t("modelTemplate.perplexitySwitchNote") }}
+              </div>
+            </template>
+
+            <!--
               このワイヤの代償を 2 つ、選ぶ場所で言う。
               - 温度: gpt-5.6 系は 400 で拒むので**型に欄が無い**（D11）。
                 黙って落とすと「設定したのに効かない」になり、送って 400 に
@@ -963,6 +1044,42 @@ function onTemperature(raw: string): void {
                 {{ $t("modelTemplate.strandedBefore")
                 }}<strong>{{ $t("modelTemplate.strandedOpenAiStrong") }}</strong
                 >{{ $t("modelTemplate.strandedOpenAiAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.perplexityWeb.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.perplexityWebSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
+                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.perplexityFinance.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.perplexityFinanceSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
+                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.perplexityPeople.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.perplexityPeopleSearch") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
+                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
+              </p>
+            </template>
+
+            <template v-if="skills.perplexityFetch.stranded">
+              <label class="text-warn">{{ $t("modelTemplate.perplexityFetchUrl") }}</label>
+              <p class="text-warn">
+                {{ $t("modelTemplate.strandedBefore")
+                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
+                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
               </p>
             </template>
 

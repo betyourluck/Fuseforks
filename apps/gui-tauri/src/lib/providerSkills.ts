@@ -26,6 +26,7 @@ export const DEFAULT_BASE_URL: Record<string, string> = {
   // preset が undefined になり、base URL が api.anthropic.com のまま残る。
   open_ai_responses: "https://api.openai.com/v1",
   meta_responses: "https://api.meta.ai/v1",
+  perplexity_responses: "https://api.perplexity.ai/v1",
 };
 
 /** 既知の既定値のいずれかであれば、プロトコル変更に追随してよいと判断する。 */
@@ -50,6 +51,28 @@ const ALSO_SERVES_COMPAT: readonly string[] = [
   // Meta も互換の口を持つ。**この村の muse-spark 個体は現に互換で動いている**
   // ので、`open_ai_compat` のまま api.meta.ai を指すのは正当な構成。
   DEFAULT_BASE_URL.meta_responses,
+  // **Perplexity はここに入れない**（Spec 45 D8）— この表は Chat Completions の
+  // 口の免除で、api.perplexity.ai はその口を持たない（/v1/chat/completions は
+  // 404・本文なし。実測 2026-08-19）。あちらの免除は下の
+  // ALSO_SERVES_RESPONSES が担う。
+];
+
+/**
+ * **OpenAI Responses の口も同時に持つ**ホストの既定 URL（Spec 45 D8）。
+ *
+ * `ALSO_SERVES_COMPAT` の対になる 2 枚目の免除表。`provider:
+ * open_ai_responses` のまま api.perplexity.ai を指す相乗りは **2026-08-19 から
+ * 現に動いている正当な構成**（/v1/responses は /v1/agent の互換エイリアス）で、
+ * perplexity_responses の既定値が `KNOWN_DEFAULTS` に入った瞬間、この表が
+ * 無いと既存の設定に嘘の警告が出る（rev1 の Spec 45 が査読で指摘された矛盾）。
+ *
+ * 用途は `ALSO_SERVES_COMPAT` と同じ 2 つ — `baseUrlMismatch` の免除（否定）と
+ * `presetBaseUrlFor` の据え置き（肯定）。**片方だけに足すと、切り替えた瞬間に
+ * Perplexity の鍵を持って OpenAI へ送る設定が黙って出来上がる**
+ * （api.x.ai の 401 実機と同じ形）。
+ */
+const ALSO_SERVES_RESPONSES: readonly string[] = [
+  DEFAULT_BASE_URL.perplexity_responses,
 ];
 
 /**
@@ -70,6 +93,12 @@ export function baseUrlMismatch(
   const expected = DEFAULT_BASE_URL[provider];
   if (!expected || baseUrl === expected) return null;
   if (provider === "open_ai_compat" && ALSO_SERVES_COMPAT.includes(baseUrl)) {
+    return null;
+  }
+  if (
+    provider === "open_ai_responses" &&
+    ALSO_SERVES_RESPONSES.includes(baseUrl)
+  ) {
     return null;
   }
   return KNOWN_DEFAULTS.includes(baseUrl) ? expected : null;
@@ -96,6 +125,12 @@ export function presetBaseUrlFor(
   const preset = DEFAULT_BASE_URL[provider];
   if (!preset || !KNOWN_DEFAULTS.includes(currentBaseUrl)) return null;
   if (provider === "open_ai_compat" && ALSO_SERVES_COMPAT.includes(currentBaseUrl)) {
+    return null;
+  }
+  if (
+    provider === "open_ai_responses" &&
+    ALSO_SERVES_RESPONSES.includes(currentBaseUrl)
+  ) {
     return null;
   }
   return preset === currentBaseUrl ? null : preset;
@@ -188,6 +223,10 @@ export function providerSkills(draft: Pick<
   | "openaiWebSearch"
   | "openaiReasoningPro"
   | "metaWebSearch"
+  | "perplexityWebSearch"
+  | "perplexityFinanceSearch"
+  | "perplexityPeopleSearch"
+  | "perplexityFetchUrl"
 >): {
   google: SkillVisibility;
   xaiWeb: SkillVisibility;
@@ -210,6 +249,14 @@ export function providerSkills(draft: Pick<
    * 名指しさせて確かめる必要がある。
    */
   metaWeb: SkillVisibility;
+  /**
+   * Perplexity の固有スキル 4 本（Spec 45 D3）。別トグルなのは
+   * 別ツール・別課金・別 output 種別（xAI が 2 つに割れたのと同じ根拠）。
+   */
+  perplexityWeb: SkillVisibility;
+  perplexityFinance: SkillVisibility;
+  perplexityPeople: SkillVisibility;
+  perplexityFetch: SkillVisibility;
   /** 設定を持たない固有スキルの辞書キー。 */
   passive: string[];
   /**
@@ -223,6 +270,7 @@ export function providerSkills(draft: Pick<
   const onXai = draft.provider === "xai_responses";
   const onOpenAi = draft.provider === "open_ai_responses";
   const onMeta = draft.provider === "meta_responses";
+  const onPerplexity = draft.provider === "perplexity_responses";
 
   const google = visibility(draft.googleSearch, onGemini);
   const xaiWeb = visibility(draft.xaiWebSearch, onXai);
@@ -230,6 +278,10 @@ export function providerSkills(draft: Pick<
   const openaiWeb = visibility(draft.openaiWebSearch, onOpenAi);
   const openaiPro = visibility(draft.openaiReasoningPro, onOpenAi);
   const metaWeb = visibility(draft.metaWebSearch, onMeta);
+  const perplexityWeb = visibility(draft.perplexityWebSearch, onPerplexity);
+  const perplexityFinance = visibility(draft.perplexityFinanceSearch, onPerplexity);
+  const perplexityPeople = visibility(draft.perplexityPeopleSearch, onPerplexity);
+  const perplexityFetch = visibility(draft.perplexityFetchUrl, onPerplexity);
 
   const passive = passiveSkills(draft.provider);
 
@@ -240,6 +292,10 @@ export function providerSkills(draft: Pick<
     openaiWeb,
     openaiPro,
     metaWeb,
+    perplexityWeb,
+    perplexityFinance,
+    perplexityPeople,
+    perplexityFetch,
     passive,
     anyOffered:
       google.offered ||
@@ -248,6 +304,10 @@ export function providerSkills(draft: Pick<
       openaiWeb.offered ||
       openaiPro.offered ||
       metaWeb.offered ||
+      perplexityWeb.offered ||
+      perplexityFinance.offered ||
+      perplexityPeople.offered ||
+      perplexityFetch.offered ||
       passive.length > 0,
   };
 }

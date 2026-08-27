@@ -362,6 +362,18 @@ export interface ModelTemplate {
    * （検索なしの同型は 12〜141）。既定 OFF。
    */
   metaWebSearch: boolean;
+  /**
+   * Perplexity の固有スキル 4 本（Spec 45 D3）。すべて既定 false、
+   * `provider == perplexity_responses` でのみ効く（コアの `*_active()` 述語）。
+   * 別トグルなのは別ツール・別課金・別 output 種別。finance / people は
+   * 1 回 $0.005、fetch_url は $0.0005 の呼び出し課金つき。
+   * **finance を ON にするとコアが `max_steps: 5` を対で送る**（D4 —
+   * 送らないと 200 のまま黙って空振りする実測）。
+   */
+  perplexityWebSearch: boolean;
+  perplexityFinanceSearch: boolean;
+  perplexityPeopleSearch: boolean;
+  perplexityFetchUrl: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
   /**

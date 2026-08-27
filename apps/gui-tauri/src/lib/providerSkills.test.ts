@@ -19,6 +19,10 @@ type Draft = Pick<
   | "openaiWebSearch"
   | "openaiReasoningPro"
   | "metaWebSearch"
+  | "perplexityWebSearch"
+  | "perplexityFinanceSearch"
+  | "perplexityPeopleSearch"
+  | "perplexityFetchUrl"
 >;
 
 function draft(over: Partial<Draft> = {}): Draft {
@@ -30,6 +34,10 @@ function draft(over: Partial<Draft> = {}): Draft {
     openaiWebSearch: false,
     openaiReasoningPro: false,
     metaWebSearch: false,
+    perplexityWebSearch: false,
+    perplexityFinanceSearch: false,
+    perplexityPeopleSearch: false,
+    perplexityFetchUrl: false,
     ...over,
   };
 }
@@ -67,6 +75,22 @@ describe("baseUrlMismatch", () => {
     expect(baseUrlMismatch("xai_responses", DEFAULT_BASE_URL.gemini)).toBe(
       DEFAULT_BASE_URL.xai_responses,
     );
+  });
+
+  // Spec 45 D8（検収 6 の機械側）。相乗り（open_ai_responses +
+  // api.perplexity.ai）は 2026-08-19 から現に動いている正当な構成で、
+  // perplexity_responses の既定値を表へ足した瞬間に嘘の警告が出るのを、
+  // ALSO_SERVES_RESPONSES（2 枚目の免除表）が止めている。
+  it("Responses の口も持つホストを OpenAI Responses で使うのは食い違いではない", () => {
+    expect(
+      baseUrlMismatch("open_ai_responses", DEFAULT_BASE_URL.perplexity_responses),
+    ).toBeNull();
+  });
+
+  it("Perplexity を選んだのに別ホストなら指摘する", () => {
+    expect(
+      baseUrlMismatch("perplexity_responses", DEFAULT_BASE_URL.open_ai_responses),
+    ).toBe(DEFAULT_BASE_URL.perplexity_responses);
   });
 });
 
@@ -111,9 +135,48 @@ describe("presetBaseUrlFor", () => {
       presetBaseUrlFor("xai_responses", DEFAULT_BASE_URL.open_ai_compat),
     ).toBe(DEFAULT_BASE_URL.xai_responses);
   });
+
+  // Spec 45 D8。perplexity_responses → open_ai_responses へ戻すときに
+  // api.perplexity.ai を api.openai.com へ書き換えると、**Perplexity の鍵を
+  // 持って OpenAI へ送る**設定が黙って出来上がる（api.x.ai の 401 実機と同じ形）。
+  it("Responses の口も持つホストは、OpenAI Responses へ戻しても書き換えない", () => {
+    expect(
+      presetBaseUrlFor("open_ai_responses", DEFAULT_BASE_URL.perplexity_responses),
+    ).toBeNull();
+  });
 });
 
 describe("providerSkills", () => {
+  // Spec 45 D3。4 本が別トグルで、perplexity_responses のときだけ出る。
+  it("Perplexity を明示選択したときだけ 4 本を出す", () => {
+    const s = providerSkills(draft({ provider: "perplexity_responses" }));
+    expect(s.perplexityWeb.offered).toBe(true);
+    expect(s.perplexityFinance.offered).toBe(true);
+    expect(s.perplexityPeople.offered).toBe(true);
+    expect(s.perplexityFetch.offered).toBe(true);
+    // 他社のトグルは出ない。
+    expect(s.openaiWeb.offered).toBe(false);
+    expect(s.metaWeb.offered).toBe(false);
+  });
+
+  // **anyOffered の名指し検査**（Spec 45 D9 — 足し忘れても型は通り、
+  // トグルは描かれるのに見出しの区切りだけが消える最も静かな穴）。
+  it("Perplexity だけが offered でも見出しは出る（anyOffered）", () => {
+    const s = providerSkills(draft({ provider: "perplexity_responses" }));
+    expect(s.anyOffered).toBe(true);
+  });
+
+  // 相乗りから切り替えた直後の形（D3）— openaiWebSearch が残っていても
+  // perplexity のワイヤでは効かない（stranded）。サイレント喪失ではなく
+  // 警告として画面に出る側の判定。
+  it("切り替えで残った openaiWebSearch は stranded になる", () => {
+    const s = providerSkills(
+      draft({ provider: "perplexity_responses", openaiWebSearch: true }),
+    );
+    expect(s.openaiWeb.offered).toBe(false);
+    expect(s.openaiWeb.stranded).toBe(true);
+  });
+
   it("xAI を明示選択したときだけ Grok の 2 つを出す", () => {
     const s = providerSkills(draft({ provider: "xai_responses" }));
     expect(s.xaiWeb.offered).toBe(true);

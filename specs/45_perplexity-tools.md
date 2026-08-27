@@ -1,7 +1,16 @@
 # Spec: Perplexity のツール — 7 本目のワイヤと固有スキル 4 本
 
 - 起票: 2026-08-27
-- 状態: **rev2 承認（2026-08-27）→ P0〜P1 完了**（P1 実装記録は下。
+- 状態: **rev2 承認（2026-08-27）→ P0〜P2 完了**（P2 = D9 の全箇所 +
+  `ModelTemplateDialog` のトグル 4 本と課金注意・切り替え注意文・stranded 4 本 +
+  辞書 ja/en 13 鍵 + `providerSkills.test.ts` 6 本（**`anyOffered` の名指し検査**
+  含む — ミューテーションで 1 本だけ赤を確認）。vitest 441 → 447・build 緑。
+  **`ALSO_SERVES_RESPONSES` は `presetBaseUrlFor` にも足した** — 片方だけだと
+  open_ai_responses へ戻した瞬間に **Perplexity の鍵で OpenAI へ送る**設定が
+  黙って出来上がる（api.x.ai の 401 実機と同じ形。`ALSO_SERVES_COMPAT` の doc
+  「同じ免除が両方に要る」がそのまま当たった）。**vue-tsc が Pick 型の拡張で
+  テストの `Draft` を正しく指した** — vitest は型検査をしないので、
+  網は `bun run build` の側。P1 実装記録は下。
   workspace 全 32 スイート緑・vitest 441 緑・clippy 警告ゼロ・
   ミューテーション 2 回で赤確認）。P0 =（`data_contract.yaml` へ
   `perplexity_responses` ブロック新設 + carries 表の 7 行目 +
