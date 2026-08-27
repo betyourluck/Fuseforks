@@ -975,8 +975,18 @@ function onTemperature(raw: string): void {
               **表示条件だけで書けるので「1 回だけ警告」のような状態の記憶は
               持たない。** stranded の警告（下）と対で出る — あちらは残った設定の
               説明、こちらは新ワイヤ側の直し方。
+
+              **perplexityWebSearch を入れたら消える**（2026-08-27 利用者指摘 —
+              P4 の実機で「入れ直してください」が入れ直した後も出続けていた）。
+              入れ直しの案内は、入れ直しが済んだ瞬間に嘘ではないが騒音になる。
             -->
-            <template v-if="skills.perplexityWeb.offered && draft.openaiWebSearch">
+            <template
+              v-if="
+                skills.perplexityWeb.offered &&
+                draft.openaiWebSearch &&
+                !draft.perplexityWebSearch
+              "
+            >
               <div class="col-span-2 text-[11px] text-warn">
                 {{ $t("modelTemplate.perplexitySwitchNote") }}
               </div>
