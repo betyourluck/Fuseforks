@@ -73,6 +73,14 @@ Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
 両方を中途半端にやるのが唯一の失敗形である。かわいさのために契約を緩めない。
 業務の顔をするために設定を増やさない。
 
+## インストール
+
+| OS | 方法 |
+|---|---|
+| Windows | `winget install --id Outcasts.Fuseforks` — 更新は `winget upgrade --id Outcasts.Fuseforks` |
+| macOS | `brew install --cask betyourluck/tap/fuseforks`（Apple Silicon 専用・署名と公証済み。完全修飾名が必須） |
+| Linux / 直接 | `.msi` / `-setup.exe` / `.dmg` / `.AppImage` / `.deb` / `.rpm` を [Releases](https://github.com/betyourluck/Fuseforks/releases/latest) から |
+
 ## ビルド
 
 必要なもの: **Rust 1.85 以上**（edition 2024）、**[Bun](https://bun.sh)**、

@@ -70,6 +70,14 @@ Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。应用内的显示名称为
 两边都半途而废是唯一的失败形态。绝不为了可爱而放松契约。
 绝不为了摆出业务面孔而增加配置。
 
+## 安装
+
+| 操作系统 | 方式 |
+|---|---|
+| Windows | `winget install --id Outcasts.Fuseforks` — 更新使用 `winget upgrade --id Outcasts.Fuseforks` |
+| macOS | `brew install --cask betyourluck/tap/fuseforks`（仅限 Apple Silicon，已签名与公证。必须使用完整限定名） |
+| Linux / 直接安装 | 从 [Releases](https://github.com/betyourluck/Fuseforks/releases/latest) 获取 `.msi` / `-setup.exe` / `.dmg` / `.AppImage` / `.deb` / `.rpm` |
+
 ## 构建
 
 所需条件：**Rust 1.85 以上**（edition 2024）、**[Bun](https://bun.sh)**、

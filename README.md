@@ -72,6 +72,14 @@ Therefore, the design has 2 layers with different disciplines:
 Doing both half-way is the only failure mode. Don't loosen the contract for cuteness.
 Don't add configuration to look businesslike.
 
+## Install
+
+| OS | How |
+|---|---|
+| Windows | `winget install --id Outcasts.Fuseforks` — update with `winget upgrade --id Outcasts.Fuseforks` |
+| macOS | `brew install --cask betyourluck/tap/fuseforks` (Apple Silicon only, signed & notarized; the fully-qualified name is required) |
+| Linux / direct | `.msi` / `-setup.exe` / `.dmg` / `.AppImage` / `.deb` / `.rpm` from [Releases](https://github.com/betyourluck/Fuseforks/releases/latest) |
+
 ## Build
 
 Requirements: **Rust 1.85+** (edition 2024), **[Bun](https://bun.sh)**, and the Tauri v2
