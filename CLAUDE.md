@@ -1326,7 +1326,18 @@ scratchpad へ展開し、読み手 4 本（eigent 3 + upstream camel 1）で読
   空振りする**（probe 実測）。**P4 で Done**（2026-08-27。4 ツール各単独 ON で
   発火を利用者が観測）。**運用の観察: 4 本すべて ON にするとツール選択が
   モデル任せでバラける**（金融の質問でも web から拾う等）。機構は作らない —
-  単独 ON = 用途別テンプレートが処方（トグルを 4 本に割った理由がここで効く）
+  単独 ON = 用途別テンプレートが処方（トグルを 4 本に割った理由がここで効く）。
+  **続報（2026-08-30）: stranded 警告の同名衝突を直した** — Perplexity の
+  テンプレートに **OpenAI Responses 時代の `openaiWebSearch: true` の残骸**が
+  「web 検索 … プロトコルを OpenAI ネイティブにしてください」と出続けた
+  （利用者の指摘。従うと固有スキル 4 本を失う助言）。辞書のラベルが
+  `openaiWebSearch` / `perplexityWebSearch` とも文字どおり「web 検索」で
+  区別が付かなかった。処方 3 つ: (a) stranded 行のラベルへ持ち主のワイヤ名を
+  併記 (b) **「オフにする」ボタンを新設**（それまで残骸を消す UI が無く、
+  プロトコル往復か `world.json` 手編集しかなかった） (c) `providerSkills.ts` の
+  「UI からは作れない」というコメントは**嘘だった**ので訂正（ON のまま
+  プロトコルを切り替えて保存すると UI から作れる — 保存は draft の全欄を
+  そのまま送る）。stranded の 10 ブロックは `strandedRows` の v-for 1 本へ畳んだ
 - **固有の差 2 つ**（次に触るとき要る）:
   (a) **出典は `annotations` ではなく `search_results` という output item**
   （`{queries, results[{url,title,snippet,date,source,id,last_updated}]}`。probe で 15 件、

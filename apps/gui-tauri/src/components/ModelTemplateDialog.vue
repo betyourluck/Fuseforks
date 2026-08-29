@@ -267,6 +267,124 @@ const skills = computed(() =>
 );
 
 /**
+ * 効かない設定が残っている行の一覧（表示は下の 1 つの v-for が描く）。
+ *
+ * **ラベルには持ち主のワイヤ名を併記する** — 同じ表示名「web 検索」が
+ * OpenAI と Perplexity の 2 ワイヤに実在するので、スキル名だけの警告は
+ * すぐ上に見えているチェック済みトグルへの警告と読み違える
+ * （2026-08-30 実機の指摘。Perplexity のテンプレートに OpenAI 時代の
+ * 残骸フラグが警告を出し続けていた）。
+ *
+ * **`clear` はその場で残骸を消す唯一の UI 経路。** これが無いと、消すには
+ * プロトコルを往復するか `world.json` の手編集しかなく、警告が
+ * 「直せない小言」として残り続ける。
+ */
+const strandedRows = computed(() => {
+  const s = skills.value;
+  const d = draft.value;
+  if (!d) return [];
+  const rows: {
+    key: string;
+    labelKey: string;
+    ownerKey: string;
+    strongKey: string;
+    afterKey: string;
+    clear: () => void;
+  }[] = [];
+  if (s.metaWeb.stranded)
+    rows.push({
+      key: "metaWeb",
+      labelKey: "modelTemplate.metaWebSearch",
+      ownerKey: "modelTemplate.providerMetaResponses",
+      strongKey: "modelTemplate.strandedMetaStrong",
+      afterKey: "modelTemplate.strandedMetaAfter",
+      clear: () => (d.metaWebSearch = false),
+    });
+  if (s.google.stranded)
+    rows.push({
+      key: "google",
+      labelKey: "modelTemplate.googleSearch",
+      ownerKey: "modelTemplate.providerGemini",
+      strongKey: "modelTemplate.strandedStrong",
+      afterKey: "modelTemplate.strandedAfter",
+      clear: () => (d.googleSearch = false),
+    });
+  if (s.xaiWeb.stranded)
+    rows.push({
+      key: "xaiWeb",
+      labelKey: "modelTemplate.xaiWebSearch",
+      ownerKey: "modelTemplate.providerXaiResponses",
+      strongKey: "modelTemplate.strandedXaiStrong",
+      afterKey: "modelTemplate.strandedXaiAfter",
+      clear: () => (d.xaiWebSearch = false),
+    });
+  if (s.xaiX.stranded)
+    rows.push({
+      key: "xaiX",
+      labelKey: "modelTemplate.xaiXSearch",
+      ownerKey: "modelTemplate.providerXaiResponses",
+      strongKey: "modelTemplate.strandedXaiStrong",
+      afterKey: "modelTemplate.strandedXaiAfter",
+      clear: () => (d.xaiXSearch = false),
+    });
+  if (s.openaiWeb.stranded)
+    rows.push({
+      key: "openaiWeb",
+      labelKey: "modelTemplate.openaiWebSearch",
+      ownerKey: "modelTemplate.providerOpenAiResponses",
+      strongKey: "modelTemplate.strandedOpenAiStrong",
+      afterKey: "modelTemplate.strandedOpenAiAfter",
+      clear: () => (d.openaiWebSearch = false),
+    });
+  if (s.perplexityWeb.stranded)
+    rows.push({
+      key: "perplexityWeb",
+      labelKey: "modelTemplate.perplexityWebSearch",
+      ownerKey: "modelTemplate.providerPerplexityResponses",
+      strongKey: "modelTemplate.strandedPerplexityStrong",
+      afterKey: "modelTemplate.strandedPerplexityAfter",
+      clear: () => (d.perplexityWebSearch = false),
+    });
+  if (s.perplexityFinance.stranded)
+    rows.push({
+      key: "perplexityFinance",
+      labelKey: "modelTemplate.perplexityFinanceSearch",
+      ownerKey: "modelTemplate.providerPerplexityResponses",
+      strongKey: "modelTemplate.strandedPerplexityStrong",
+      afterKey: "modelTemplate.strandedPerplexityAfter",
+      clear: () => (d.perplexityFinanceSearch = false),
+    });
+  if (s.perplexityPeople.stranded)
+    rows.push({
+      key: "perplexityPeople",
+      labelKey: "modelTemplate.perplexityPeopleSearch",
+      ownerKey: "modelTemplate.providerPerplexityResponses",
+      strongKey: "modelTemplate.strandedPerplexityStrong",
+      afterKey: "modelTemplate.strandedPerplexityAfter",
+      clear: () => (d.perplexityPeopleSearch = false),
+    });
+  if (s.perplexityFetch.stranded)
+    rows.push({
+      key: "perplexityFetch",
+      labelKey: "modelTemplate.perplexityFetchUrl",
+      ownerKey: "modelTemplate.providerPerplexityResponses",
+      strongKey: "modelTemplate.strandedPerplexityStrong",
+      afterKey: "modelTemplate.strandedPerplexityAfter",
+      clear: () => (d.perplexityFetchUrl = false),
+    });
+  if (s.openaiPro.stranded)
+    rows.push({
+      key: "openaiPro",
+      labelKey: "modelTemplate.openaiReasoningPro",
+      ownerKey: "modelTemplate.providerOpenAiResponses",
+      strongKey: "modelTemplate.strandedOpenAiStrong",
+      afterKey: "modelTemplate.strandedOpenAiAfter",
+      clear: () => (d.openaiReasoningPro = false),
+    });
+  return rows;
+});
+
+/**
  * Responses へ切り替えると能力が増えるテンプレートか（Spec 34・利用者裁定
  * 2026-08-11）。**案内であって判定ではない** — ワイヤの選択は provider だけで
  * 決まり、ここはモデル名も見るが効き目には一切触れない。
@@ -1011,95 +1129,26 @@ function onTemperature(raw: string): void {
               効かない設定が残っている状態。隠すだけだと真のまま見えなくなるので、
               その時だけ理由と直し方を出す。スキルごとに 1 行 — まとめて 1 つの
               警告にすると、どれを直せばよいかが読めなくなる。
+              ラベルの（ワイヤ名）と「オフにする」の理由は strandedRows の doc が正。
             -->
-            <template v-if="skills.metaWeb.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.metaWebSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedMetaStrong") }}</strong
-                >{{ $t("modelTemplate.strandedMetaAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.google.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.googleSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedStrong") }}</strong
-                >{{ $t("modelTemplate.strandedAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.xaiWeb.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.xaiWebSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedXaiStrong") }}</strong
-                >{{ $t("modelTemplate.strandedXaiAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.xaiX.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.xaiXSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedXaiStrong") }}</strong
-                >{{ $t("modelTemplate.strandedXaiAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.openaiWeb.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.openaiWebSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedOpenAiStrong") }}</strong
-                >{{ $t("modelTemplate.strandedOpenAiAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.perplexityWeb.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.perplexityWebSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
-                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.perplexityFinance.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.perplexityFinanceSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
-                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.perplexityPeople.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.perplexityPeopleSearch") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
-                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.perplexityFetch.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.perplexityFetchUrl") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedPerplexityStrong") }}</strong
-                >{{ $t("modelTemplate.strandedPerplexityAfter") }}
-              </p>
-            </template>
-
-            <template v-if="skills.openaiPro.stranded">
-              <label class="text-warn">{{ $t("modelTemplate.openaiReasoningPro") }}</label>
-              <p class="text-warn">
-                {{ $t("modelTemplate.strandedBefore")
-                }}<strong>{{ $t("modelTemplate.strandedOpenAiStrong") }}</strong
-                >{{ $t("modelTemplate.strandedOpenAiAfter") }}
-              </p>
+            <template v-for="row in strandedRows" :key="row.key">
+              <label class="text-warn"
+                >{{ $t(row.labelKey) }}（{{ $t(row.ownerKey) }}）</label
+              >
+              <div class="text-warn">
+                <p>
+                  {{ $t("modelTemplate.strandedBefore")
+                  }}<strong>{{ $t(row.strongKey) }}</strong
+                  >{{ $t(row.afterKey) }}{{ $t("modelTemplate.strandedOrClear") }}
+                </p>
+                <button
+                  type="button"
+                  class="mt-1 rounded border border-line px-2 py-0.5 text-[11px] text-ink hover:border-accent"
+                  @click="row.clear()"
+                >
+                  {{ $t("modelTemplate.strandedTurnOff") }}
+                </button>
+              </div>
             </template>
           </div>
 

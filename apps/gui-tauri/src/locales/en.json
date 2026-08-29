@@ -596,6 +596,8 @@
     "googleSearch": "Google grounding",
     "googleSearchHint": "Answers are grounded with Google Search first (can be combined with bundled tools and delegation)",
     "strandedBefore": "This is enabled, but ",
+    "strandedOrClear": " If you don't use it, \"Turn off\" clears this setting.",
+    "strandedTurnOff": "Turn off",
     "strandedStrong": "it does nothing because the protocol is not Gemini",
     "strandedAfter": ". Grounding exists only on the Gemini native path. To use it, set the protocol to Gemini native.",
     "keyStoreBefore": "API keys are stored in the ",

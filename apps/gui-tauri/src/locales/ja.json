@@ -596,6 +596,8 @@
     "googleSearch": "Google グラウンディング",
     "googleSearchHint": "Google 検索で裏取りしてから答えます（同梱ツールや委譲とは併用できます）",
     "strandedBefore": "有効になっていますが、",
+    "strandedOrClear": "使わないなら「オフにする」でこの設定を消せます。",
+    "strandedTurnOff": "オフにする",
     "strandedStrong": "プロトコルが Gemini ではないため働きません",
     "strandedAfter": "。グラウンディングは Gemini ネイティブ経路にしかありません。使うならプロトコルを「Gemini ネイティブ」にしてください。",
     "keyStoreBefore": "API キーは ",

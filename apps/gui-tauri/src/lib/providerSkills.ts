@@ -197,7 +197,11 @@ export interface SkillVisibility {
    * 効かない設定が真のまま残っているか。
    *
    * **隠すだけだと真のまま見えなくなる**ので、その時だけ理由と直し方を出す。
-   * UI からは作れないが `world.json` の直接編集で作れる。
+   * **UI からも普通に作れる** — スキルを ON にしたままプロトコルを切り替えて
+   * 保存すると残る（保存は draft の全欄をそのまま送る。2026-08-30 に
+   * Perplexity のテンプレートで実機観測 — OpenAI Responses 時代の
+   * `openaiWebSearch: true` が残っていた）。`world.json` の直接編集でも作れる。
+   * 消す UI は stranded 行の「オフにする」ボタン（ModelTemplateDialog）。
    */
   stranded: boolean;
 }
