@@ -354,6 +354,24 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   ただし**マージとカタログ配信は別** — マージ直後の `winget search` はまだ
   旧版を返し、publish パイプラインの索引再構築を待つ。**実測: マージ 08:26 →
   カタログ配信 10:01 までの間（15 分刻みの監視で捕捉）= 配信ラグは 2 時間弱**
+- **`winget upgrade` はロケール照合で落ちうる**（2026-08-29 に開発機で実測）。
+  症状は「新しいパッケージ バージョンを使用できますが、システムまたは要件には
+  適用されません」（`UPDATE_NOT_APPLICABLE`）。verbose ログの決定的な 1 行は
+  `Installer [X64,wix,Machine,en-US] not applicable: Installer locale does not
+  match ... Preferred Locales: [ja-JP]`（`IsInstalledLocale: 1`）—
+  **マニフェストの `InstallerLocale: en-US` と、端末のインストール記録の
+  ja-JP が突き合わされて弾かれる**。種別・スコープ・アーキテクチャは無関係。
+  - **踏む条件は「MSI を winget の外で手動で入れた + 日本語環境」** —
+    開発機の 0.1.8 は提出前の手動テストで入れたもので、HKLM に居るのに
+    winget の追跡記録が無い。`winget install` で入れた利用者は en-US が
+    記録されるので踏まないはず
+  - **処方は `winget upgrade --id Outcasts.Fuseforks --locale en-US`**
+    （実機で 0.1.8 → 0.1.12 が完走。`UpgradeCode` による差し替えも動いた）
+  - **未検証の予測**: winget 経由で入った今、追跡記録は en-US のはずなので
+    **0.1.13 からは素の `winget upgrade` で通る** — 次の版で確かめる
+  - 途中で **MSI 1618（別のインストールが進行中）** と **1602（UAC を
+    承認せず = キャンセル扱い）** も踏んだ。どちらもロケールとは別の層で、
+    再試行と UAC の承認で解ける
 - **update の実走で確定した 3 点**（2026-08-29 の 0.1.12 =
   https://github.com/microsoft/winget-pkgs/pull/426022）:
   (a) **手元のマニフェストは要らない** — update は公式リポジトリの既存
