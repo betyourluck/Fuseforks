@@ -2147,6 +2147,9 @@ entities:
       probe: ScheduleProbe | null       # 既定 null = 前判定なし (従来の無条件発火)
       sessionMode: continue | fresh      # 既定 continue（閉じた 2 値）
       summarizeAfter: bool              # 既定 false
+      # --- Spec 46 で加算 (2026-08-30)。default + skip_serializing_if で
+      #     後判定なしの既存予定は読みも保存もバイト等価 (Spec 28 S5 と同じ規律)。
+      acceptance: Acceptance | null     # 既定 null = 後判定なし (下の Acceptance が正)
     firing_rule: |
       各 tick で「now 以前にある直近の予定時刻」= due を求めて判定する。
         enabled == false                  → 何もしない (消化もしない)
@@ -2506,6 +2509,95 @@ entities:
         mailboxes を見て、停止中は shared.record (会話ペイン) で消化して continue —
         **note! ではないので fuseforks.log は完全に沈黙し、lastConsumedDueMs だけが
         動く**。ログの沈黙には理由が 2 つある (未承認 / 未到達)
+
+  # Spec 46 P0 で新設 (2026-08-30)。予定の後判定 — 検収の probe と、通るまでの再依頼。
+  # 出自は Prime Agent (arXiv:2608.23552) の autonomous mode (予算 + 決定論テスト +
+  # 通るまで続行)。村は部品を既に持っており (tokenBudget / スケジュール / probe)、
+  # ここが足すのは「通るまで続ける」の輪だけ。
+  Acceptance:
+    description: |
+      予定の後判定 (Spec 46)。発火した依頼の因果が完了したら検収コマンドを
+      実行し、stdout が expect と一致しなければ**同じ依頼を失敗の内容つきで
+      出し直す** (上限つき)。判定は決定論 (probe = 完全一致) なので、
+      トークンゼロで判定でき、同じ成果物に同じ判定が返る —
+      「LLM 判定は最後、機械で決まる軸を先に」(評価基盤の裁定) の実行形。
+    fields:
+      # 判定部は ScheduleProbe を serde(flatten) で再利用。
+      # command / args / expect / timeoutSecs / cwd — 承認・判定・出力上限の
+      # 規律はすべて ScheduleProbe の節が正で、ここに複製しない。
+      maxAttempts: u8             # 再依頼を含めた総試行回数。既定 2・範囲 1..=5
+    invariants: |
+      - **後判定の判定部は ScheduleProbe の再利用** — 検収専用の判定型を
+        作らない。Acceptance は判定部 + maxAttempts の薄い封筒
+        (maxAttempts が中に住むのは、acceptance: null のとき意味を持たない欄を
+        構造で締め出すため — 送れる形が無いほうが強い)
+      - **再依頼を生むのは no_match だけ — かつ試行と予算の両方が残っているとき。**
+        分岐の表 (rev2 D3):
+          match                                        → 記録して確定
+          no_match ∧ attempt < maxAttempts ∧ 予算残 > 0 → 再依頼
+          no_match ∧ (試行上限 ∨ 予算残ゼロ)           → 記録して確定
+          error / timeout / unapproved                 → 記録して確定。**再依頼しない**
+        判定不能 3 値が宛先を持たないのは fail-closed —
+        no_match 側へ倒すと壊れた検収コマンドが毎発火で再依頼の輪を回し、
+        match 側へ倒すと検証が壊れたときだけ検証をすり抜ける
+        (eigent の採点器が 3 回失敗で quality_score=80 を捏造した反面教師)
+      - **再依頼は新しい封筒・同じ財布。** cancel token と participants 集合は
+        試行ごとに新品 (完了検知と打ち切りが試行単位で独立)、
+        **Envelope.budget には発火時の Arc<BudgetPool> をそのまま積む**
+        (new_root_budget を呼ばない)。機構は封筒相乗りの既存 3 前例
+        (cancel / budget / participants) と同じで、配送のルーティングに
+        フラグは要らない。tokenBudget が「通るまで続ける」の天井になる —
+        新品にすると毒タスクが 発火 × 試行 × 天井 で漏れる
+      - **範囲はスケジュールのみ。** 配送 5 経路 (人の発話 / ask_* /
+        transfer_to_* / plan の波 / スケジュール) の他 4 つに掛けない
+        (掛けるなら別 Spec)
+      - **再依頼のセッションは continue 固定** (予定の sessionMode は初回だけ)。
+        前の試行で何をしたかが見えないと同じ失敗を繰り返す —
+        fresh で再依頼すると RepeatGuard に相当する記憶が会話ごと消える
+      - **前判定は発火時に 1 回だけ評価する。再依頼は前判定を通らない**
+        (後判定ループは封筒を直接組むので構造で成立する。通すと、検収の輪の
+        途中で環境が変わったとき「配送されないまま試行だけ数える」形が生まれる)
+      - **expect は承認の対象外** (承認ハッシュは {args, command, cwd, villageId}
+        で expect を含まない — 前判定も元から同じ性質)。承認の対象は
+        「何が実行されるか」であって「何を合格とするか」ではない。
+        expect の変更は新しい実行を 1 つも生まない
+    execution_order: |
+      発火 → 配送 → 因果の参加者が全員完了 (participants + AgentTyping —
+      summarizeAfter と**同じ検知の 1 実装**) → 後判定 → 分岐。
+      **完了イベントの受け手は 1 本で、後判定 → (確定したら) 要約の直列。**
+      並行に発火させると試行ごとに要約が走って課金が試行回数ぶん増える —
+      要約の発火は後判定ループが確定 (match / 試行上限 / 判定不能 / 予算枯渇)
+      するまで抑止し、確定後に 1 回。要約は確定の理由を問わず走る
+      (summarizeAfter の既存の意味論を変えない)。
+      **完了検知の番犬は作らない** — 検知は summarizeAfter と 1 実装共有で、
+      ターンの終了は構造で有界 (周回 36 / 予算 / ask_timeout / probe の
+      timeoutSecs)。2 つ目の検知は片方だけが取りこぼす (Spec 28 P2b の判断)。
+    redelivery: |
+      再依頼の本文 = **初回の依頼文** + **最新の失敗注記 1 個だけ** (累積しない):
+        {初回の依頼文}
+        (空行)
+        （前回の検収が不一致でした。検収コマンドの出力:
+        {抜粋}）
+      ベースは常に初回のオリジナル依頼文 — maxAttempts >= 3 で注記が入れ子に
+      なる形を作らない。経緯は continue セッションの履歴の側に全部ある
+      (1 通は自己完結、経緯は履歴、と置き場を分ける)。
+      **抜粋は stdout の先頭 500 文字** (文字数であってバイトではない —
+      MAX_*_CHARS をバイト長で数える差分は日本語では枠の 1/3 で発火する)。
+      改行は保持。**stdout がトリム後に空なら stderr の先頭 500 文字**へ落とす
+      (検収コマンドが stderr にだけ理由を書いたとき、モデルへ届く診断を
+      空にしない。capture 層の process::Ran::Finished は stderr を既に持つ)。
+      **判定は stdout のみで変えない** (非ゼロ exit は error ではない —
+      起動失敗だけが error。ScheduleProbe の judgement の規律のまま)。
+      前判定の「2 行目以降を依頼文へ付記」は**前判定だけの規則** —
+      後判定の 2 行目以降は判定に使わず、この抜粋の材料になる。
+    instrumentation: |
+      acceptance: schedule=… attempt=1/2 outcome=match|no_match|error|timeout|unapproved
+      **試行のたびに 1 行。outcome の語彙は schedule probe: 行と同一**
+      (書式も判定も 1 実装を再利用するので、パーサが 2 つの語彙を持たない)。
+      完遂の軸の 3 本目 — reply: to= / refusal= に続き、これだけが
+      「成果物の検証」を機械で直接言う列。
+      画面はスケジュールダイアログに直近の結末 (lastProbe と同じ器・
+      プロセス寿命・schedules.json へ書かない)。
 
   # Spec 28 P0 で新設 (2026-08-08)。承認の束縛先として立てた識別子だが、
   # 用途を承認に限定しない形で 1 つの棚にしてある。
