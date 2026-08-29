@@ -348,6 +348,17 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   **版を含むファイル名だからこそ自動化できる**（Microsoft 自身の PowerToys も
   版入りファイル名）。次の版は
   `wingetcreate update Outcasts.Fuseforks --version <V> --urls <上の式> --submit`
+- **update の実走で確定した 3 点**（2026-08-29 の 0.1.12 =
+  https://github.com/microsoft/winget-pkgs/pull/426022）:
+  (a) **手元のマニフェストは要らない** — update は公式リポジトリの既存
+  マニフェストを取り、版・URL・SHA256 だけ差し替える
+  (b) **罠: フォーク `betyourluck/winget-pkgs` が本家より古いと
+  「フォークされたリポジトリをアップストリーム コミットと同期できませんでした」で
+  失敗する。** 処方は提出前に
+  `gh repo sync betyourluck/winget-pkgs --source microsoft/winget-pkgs --branch master`
+  （フォークは提出のたびに本家へ置いていかれるので、**次の版でも必ず踏む**）
+  (c) **device 認証コードはコンソール直描画で、出力捕獲に乗らない** —
+  `wingetcreate` の提出は人がコンソールで実行する
 - **検証は Windows Sandbox**（winget-pkgs の `Tools/SandboxTest.ps1`）。
   **罠: マップ先のパスが `winget-pkgs` を含まないと警告の既定が `Inquire` になり、
   非対話シェルが応答待ちで固まる。** `-WarningAction Continue` を明示する
