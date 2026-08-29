@@ -348,6 +348,11 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   **版を含むファイル名だからこそ自動化できる**（Microsoft 自身の PowerToys も
   版入りファイル名）。次の版は
   `wingetcreate update Outcasts.Fuseforks --version <V> --urls <上の式> --submit`
+- **版上げは New-Package と速さの桁が違う** — 0.1.12 の update PR は
+  提出から **1 時間足らずでマージ**された（2026-08-29 08:26 UTC。
+  `Moderator-Approved` → bot が自動マージ。0.1.8 の New-Package は 12 日）。
+  ただし**マージとカタログ配信は別** — マージ直後の `winget search` はまだ
+  旧版を返し、publish パイプラインの索引再構築を待つ
 - **update の実走で確定した 3 点**（2026-08-29 の 0.1.12 =
   https://github.com/microsoft/winget-pkgs/pull/426022）:
   (a) **手元のマニフェストは要らない** — update は公式リポジトリの既存
