@@ -303,11 +303,17 @@ Spec は切っていない。ブランチ `20260813_vng` で試作し、実機�
 （逆は `msstore` ソースで見える）。だから「Store には出さず winget だけ」は
 構造として成立する。
 
-### winget（`Outcasts.Fuseforks`。PR 提出済み・人の承認待ち）
+### winget（`Outcasts.Fuseforks`。**2026-08-29 マージ済み**）
 
-**PR は https://github.com/microsoft/winget-pkgs/pull/418363**（`v0.1.8` の MSI）。
+**PR https://github.com/microsoft/winget-pkgs/pull/418363 は 2026-08-29 にマージされた**
+（提出 2026-08-17 → **12 日**。New-Package の中央値 15.2 日とほぼ一致）。
 **自動検証 10 本すべて SUCCESS**（未署名インストーラへの Defender スキャンも通過）、
-CLA 署名済み、`Validation-Completed` / `New-Package` のラベルで**人のマージ待ち**。
+CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-Succeeded`。
+`winget search fuseforks` が `Outcasts.Fuseforks 0.1.8` を返すことを実機で確認済み。
+
+**載ったのは提出時の `0.1.8` で、その後 v0.1.9〜v0.1.11 が出ている。**
+**古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
+下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
 
 - **`Outcasts.Fuseforks` は実質永続の公開識別子**（改名には move PR が要り、
   既存利用者の `winget install` が壊れる）。利用者裁定。根拠は実測で、MSI の
@@ -463,22 +469,29 @@ verifiable public interest and **multiple requests for inclusion**」を材料�
 **どちらも版ごとに URL と SHA256 で固定する形**なので、タグを打った後に忘れると
 **配布経路だけが古い版を指し続ける**（壊れはしないが、新版が届かない）。
 
-## ランディングページ（2026-08-27。**公開待ち**）
+## ランディングページ（2026-08-27 作成。**公開の条件は 2026-08-29 に満たされた**）
 
 **置き場が 2 つあり、リポジトリの中には無い。**
 
 | | パス | 状態 |
 |---|---|---|
 | 作業用 | `RundingPage/fuseforks.html` | **`.gitignore` 済み**（`d754f35`）。この repo は追跡しない |
-| 公開先 | `betyourluck.github.io/docs/fuseforks.html`（手元は `D:/Github/betyourluck.github.io/docs/`） | 利用者が上書き済み。**まだ公開していない** |
+| 公開先 | `betyourluck.github.io/docs/fuseforks.html`（手元は `D:/Github/betyourluck.github.io/docs/`） | 利用者が上書き済み。**`docs/fuseforks.html` と `docs/images/` が未追跡（`??`）** = 「公開していない」の実体は git に入れていないこと |
 
 - **`docs/` が Pages のルート**（`prices.json` が そこに居るのが根拠 — Spec 41 の
   単価表が `betyourluck.github.io/prices.json` で引ける）。だから URL は
   `betyourluck.github.io/fuseforks.html` で、**`index.html` へ改名しない**
   （別のページと相乗り）。フォルダ名の綴りは **`RundingPage`**（Landing ではない）
-- **公開は winget の PR が通ってから**（2026-08-27 利用者判断）。ページが
+- **公開の条件は winget の PR が通ること**だった（2026-08-27 利用者判断）。ページが
   `winget install Outcasts.Fuseforks` を推す形なので、**未マージのまま出すと
-  押した人の手元で必ず失敗する**。PR #418363 は 2026-08-27 時点で `state: OPEN`
+  押した人の手元で必ず失敗する**。**PR #418363 は 2026-08-29 にマージされ、
+  条件は満たされた** — ページ側で消すのは 2 箇所（`tag-pending` のバッジと
+  「承認されるまでこのコマンドは使えません」の本文）
+- **公開前に直す 9 件目が残っていた**（2026-08-29 発見）— 「インストーラーを直接取得」の
+  **3 本とも `href="https://github.com"`**（GitHub のトップ）で、Releases へ行かない。
+  **winget / brew を使わない人の導線が全部そこで切れる**。下の 8 件は本文の誤りだったが、
+  これは**リンク先**なので本文をいくら読んでも出ない — **生成物のレビューでは
+  `href` / `src` の実値を別に数える**（本文の正しさは行き先の正しさを含意しない）
 
 **これで外向けの面が 3 つになった** — README（3 言語）/ Qiita の記事 /
 ランディングページ。**後ろ 2 つはこの repo の grep 網の外**にあり、
