@@ -45,3 +45,4 @@ sessions.redb.lock
 /.clinerules
 /sqz-claude-guidance.md
 RundingPage
+manifests/

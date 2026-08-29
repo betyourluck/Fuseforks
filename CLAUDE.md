@@ -372,6 +372,25 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   - 途中で **MSI 1618（別のインストールが進行中）** と **1602（UAC を
     承認せず = キャンセル扱い）** も踏んだ。どちらもロケールとは別の層で、
     再試行と UAC の承認で解ける
+  - **恒久処方は「次の提出でマニフェストから `InstallerLocale: en-US` を
+    消す」**（2026-08-29 利用者裁定 —「あまり winget でインストールしている
+    人はまだいなさそうだしロケール消していい」。per-locale MSI 案は
+    提示したうえで採らなかった）。根拠は winget-cli の
+    `ManifestComparator.cpp`（`LocaleComparator::IsApplicable`）の実読 —
+    **インストール記録由来の照合（preference 枝）には空ロケールの素通しが
+    ある**（「そうしないとカタログ全体のアップグレードが壊れる」とコメントに
+    明記）ので、宣言が無ければ今回の形は構造的に起きない
+  - **残余を 1 つ受け入れている**: `--locale` を一度使った端末は利用意図が
+    記録されて**要求**に昇格し、要求の枝には空ロケールの素通しが**無い** —
+    つまりこの開発機（今日 `--locale en-US` で入れた）は 0.1.13 でも
+    `--locale en-US` が要る可能性が高い。一般の利用者は使っていないので
+    当たらない、が裁定の根拠
+  - **提出の手順が 1 段増える**: `wingetcreate update` は前の版の
+    マニフェストを引き写すので、`--submit` せず一度ローカルへ生成 →
+    `installer.yaml` の `InstallerLocale: en-US` の行を削除 →
+    `wingetcreate submit`。**wingetcreate は cwd に `manifests/` を
+    生成する**（リポジトリ直下で実行すると未追跡フォルダが生える。
+    `.gitignore` 済み。正本は winget-pkgs 側）
 - **update の実走で確定した 3 点**（2026-08-29 の 0.1.12 =
   https://github.com/microsoft/winget-pkgs/pull/426022）:
   (a) **手元のマニフェストは要らない** — update は公式リポジトリの既存
