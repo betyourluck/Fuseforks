@@ -352,7 +352,8 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   提出から **1 時間足らずでマージ**された（2026-08-29 08:26 UTC。
   `Moderator-Approved` → bot が自動マージ。0.1.8 の New-Package は 12 日）。
   ただし**マージとカタログ配信は別** — マージ直後の `winget search` はまだ
-  旧版を返し、publish パイプラインの索引再構築を待つ
+  旧版を返し、publish パイプラインの索引再構築を待つ。**実測: マージ 08:26 →
+  カタログ配信 10:01 までの間（15 分刻みの監視で捕捉）= 配信ラグは 2 時間弱**
 - **update の実走で確定した 3 点**（2026-08-29 の 0.1.12 =
   https://github.com/microsoft/winget-pkgs/pull/426022）:
   (a) **手元のマニフェストは要らない** — update は公式リポジトリの既存
