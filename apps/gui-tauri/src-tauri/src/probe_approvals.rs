@@ -104,9 +104,16 @@ impl ApprovalStore {
     /// # Errors
     /// ファイルが読めていない、または書き込みに失敗した場合。
     pub fn retain_for(&self, tasks: &[ScheduledTask], village_id: &str) -> Result<(), String> {
+        // **前判定と後判定の両方を生存に数える**（Spec 46）。後判定を数え
+        // 忘れると、予定を 1 件作るたびの掃除が検収の承認を落とし、
+        // 次の発火が `unapproved` で確定する — 人が押したのに走らない形。
         let live: HashSet<String> = tasks
             .iter()
-            .filter_map(|task| task.probe.as_ref())
+            .flat_map(|task| {
+                task.probe
+                    .iter()
+                    .chain(task.acceptance.as_ref().map(|acceptance| &acceptance.probe))
+            })
             .map(|probe| probe.approval_key(village_id))
             .collect();
         self.mutate(|set| set.retain(|key| live.contains(key)))
@@ -262,6 +269,30 @@ mod tests {
         assert!(
             !store.is_approved(&stale),
             "どの予定も使わない承認は落ちること（肥大化を時計ではなく参照で止める）"
+        );
+    }
+
+    /// 後判定の承認は掃除で消えない（Spec 46 — `retain_for` の生存集合に
+    /// 前判定と後判定の**両方**が入る。数え忘れると、予定を作るたびの掃除が
+    /// 検収の承認を落とし、人が押したのに次の発火が `unapproved` で確定する）。
+    #[test]
+    fn cleanup_keeps_acceptance_approvals_alive() {
+        let dir = temp_dir("cleanup-acceptance");
+        let store = ApprovalStore::load(&dir);
+        let acceptance_probe = probe("verify.py の中身");
+        let key = acceptance_probe.approval_key("v1");
+        store.approve(key.clone()).unwrap();
+
+        let mut task = task_with(None);
+        task.acceptance = Some(fuseforks_core::schedule::Acceptance {
+            probe: acceptance_probe,
+            max_attempts: 2,
+        });
+        store.retain_for(&[task], "v1").unwrap();
+
+        assert!(
+            store.is_approved(&key),
+            "後判定だけの予定でも承認は生存に数えられること"
         );
     }
 

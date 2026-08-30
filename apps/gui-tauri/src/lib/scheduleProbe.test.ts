@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acceptanceCommandLine,
+  acceptanceDisplay,
+  acceptanceFormValid,
   parseProbeArgs,
   probeCommandLine,
   probeDisplay,
@@ -22,6 +25,8 @@ function view(probe: ScheduleView["probe"]): ScheduleView {
     recurrenceLabel: "5 分ごと",
     probeApproved: true,
     lastProbe: null,
+    acceptanceApproved: true,
+    lastAcceptance: null,
   };
 }
 
@@ -116,5 +121,54 @@ describe("probeFormValid", () => {
     expect(probeFormValid({ command: "p", expect: "C", timeoutSecs: 0 })).toBe(false);
     expect(probeFormValid({ command: "p", expect: "C", timeoutSecs: 3600 })).toBe(true);
     expect(probeFormValid({ command: "p", expect: "C", timeoutSecs: 3601 })).toBe(false);
+  });
+});
+
+describe("acceptanceCommandLine", () => {
+  it("は後判定のコマンド行を組む（前判定と同じ書式）", () => {
+    const task = view(null);
+    task.acceptance = {
+      command: "python",
+      args: ["verify.py"],
+      expect: "OK",
+      timeoutSecs: 60,
+      cwd: "D:/verify",
+      maxAttempts: 2,
+    };
+    expect(acceptanceCommandLine(task)).toBe("python verify.py (cwd: D:/verify)");
+  });
+
+  it("は後判定が無ければ空文字", () => {
+    expect(acceptanceCommandLine(view(null))).toBe("");
+  });
+});
+
+describe("acceptanceDisplay", () => {
+  it("は前判定と別の辞書の枝を返す（match の訳語が文脈で逆向きになるため）", () => {
+    const report: ProbeReport = { outcome: "match", reason: "-", atMs: 1 };
+    expect(acceptanceDisplay(report)?.labelKey).toBe("schedule.acceptanceOutcome.match");
+    expect(probeDisplay(report)?.labelKey).toBe("schedule.probeOutcome.match");
+  });
+
+  it("は走っていなければ null", () => {
+    expect(acceptanceDisplay(null)).toBeNull();
+  });
+});
+
+describe("acceptanceFormValid", () => {
+  const base = { command: "python", expect: "OK", timeoutSecs: 60 };
+
+  it("は判定部に前判定と同じ述語を使う", () => {
+    expect(acceptanceFormValid({ ...base, maxAttempts: 2 })).toBe(true);
+    expect(acceptanceFormValid({ ...base, command: " ", maxAttempts: 2 })).toBe(false);
+  });
+
+  it("は試行回数の値域 1..=5 を見る（境界 1 が本番）", () => {
+    expect(acceptanceFormValid({ ...base, maxAttempts: 1 })).toBe(true);
+    expect(acceptanceFormValid({ ...base, maxAttempts: 5 })).toBe(true);
+    expect(acceptanceFormValid({ ...base, maxAttempts: 0 })).toBe(false);
+    expect(acceptanceFormValid({ ...base, maxAttempts: 6 })).toBe(false);
+    // type="number" は小数も通すので、整数でなければ拒否する。
+    expect(acceptanceFormValid({ ...base, maxAttempts: 2.5 })).toBe(false);
   });
 });

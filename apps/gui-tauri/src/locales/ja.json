@@ -735,6 +735,22 @@
       "timeout": "時間切れ",
       "unapproved": "未承認のため実行せず"
     },
+    "acceptanceToggle": "完了後に検収する（後判定）",
+    "acceptanceHint": "依頼が終わったらコマンドを実行し、出力の 1 行目が合図と一致しなければ、同じ依頼を失敗の内容つきで出し直します（回数の上限つき）。判定そのものはトークンを 1 つも使いません。",
+    "acceptanceExpectHint": "出力の 1 行目がこの文字列と一致したら合格です。一致しなければ、出力の先頭 500 字を添えて出し直します。",
+    "acceptanceMaxAttempts": "総試行回数",
+    "acceptanceMaxAttemptsSuffix": "回（1 = 出し直さず記録だけ）",
+    "acceptanceLabel": "後判定:",
+    "acceptanceMeta": "合図: {expect} · 試行 {max} 回まで",
+    "acceptanceNeverRan": "まだ検収していません",
+    "acceptanceUnapproved": "この検収コマンドはこの端末でまだ承認されていません。承認するまで検収は走りません。",
+    "acceptanceOutcome": {
+      "match": "一致（検収に通りました）",
+      "no_match": "一致せず",
+      "error": "実行できませんでした",
+      "timeout": "時間切れ",
+      "unapproved": "未承認のため実行せず"
+    },
     "freshToggle": "発火のたびに新しい会話を始める",
     "freshHint": "村全体が新しい会話へ切り替わります。前の会話は消えず、「会話一覧」から開き直せます。",
     "summarizeToggle": "終わったら記憶を要約する",

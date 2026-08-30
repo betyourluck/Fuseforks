@@ -735,6 +735,22 @@
       "timeout": "Timed out",
       "unapproved": "Not approved, did not run"
     },
+    "acceptanceToggle": "Verify after completion (acceptance check)",
+    "acceptanceHint": "When the request finishes, runs a command; if the first line of its output does not match the signal, the same request is re-issued with the failure attached (up to the attempt limit). The check itself costs no tokens.",
+    "acceptanceExpectHint": "The first line of the output must match this string to pass. Otherwise the request is re-issued with the first 500 characters of the output attached.",
+    "acceptanceMaxAttempts": "Total attempts",
+    "acceptanceMaxAttemptsSuffix": "times (1 = record only, no re-issue)",
+    "acceptanceLabel": "Acceptance:",
+    "acceptanceMeta": "signal: {expect} · up to {max} attempts",
+    "acceptanceNeverRan": "No acceptance check yet",
+    "acceptanceUnapproved": "This acceptance command is not approved on this machine yet. The check will not run until you approve it.",
+    "acceptanceOutcome": {
+      "match": "Matched (accepted)",
+      "no_match": "No match",
+      "error": "Could not run",
+      "timeout": "Timed out",
+      "unapproved": "Not approved, did not run"
+    },
     "freshToggle": "Start a new conversation each time",
     "freshHint": "The whole village switches to a new conversation. The previous one is kept and can be reopened from the conversation list.",
     "summarizeToggle": "Summarise memories when finished",

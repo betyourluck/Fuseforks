@@ -6,7 +6,7 @@
  * 返すので、この層は言語を知らない。
  */
 
-import type { ProbeReport, ScheduleView } from "../types";
+import type { ProbeReport, ScheduleProbe, ScheduleView } from "../types";
 
 /**
  * 引数欄のテキストを配列へ。**1 行 1 引数**（Spec 15 P4 の判断を踏襲）。
@@ -31,8 +31,22 @@ export function parseProbeArgs(text: string): string[] {
  */
 export function probeCommandLine(task: ScheduleView): string {
   if (!task.probe) return "";
-  const parts = [task.probe.command, ...task.probe.args];
-  const cwd = task.probe.cwd ? ` (cwd: ${task.probe.cwd})` : "";
+  return commandLineOf(task.probe);
+}
+
+/**
+ * 後判定（Spec 46）のコマンド行。承認の判断材料である点は前判定と同じ —
+ * 承認は 1 回で前後両方に効くので、ダイアログは**両方の行**を出す。
+ */
+export function acceptanceCommandLine(task: ScheduleView): string {
+  if (!task.acceptance) return "";
+  return commandLineOf(task.acceptance);
+}
+
+/** コマンド行の組み立て 1 実装（前判定と後判定で共有）。 */
+function commandLineOf(probe: ScheduleProbe): string {
+  const parts = [probe.command, ...probe.args];
+  const cwd = probe.cwd ? ` (cwd: ${probe.cwd})` : "";
   return `${parts.join(" ")}${cwd}`;
 }
 
@@ -58,9 +72,28 @@ export interface ProbeDisplay {
  * `reasonDisplay` で踏んだのと同じ形）。
  */
 export function probeDisplay(report: ProbeReport | null | undefined): ProbeDisplay | null {
+  return reportDisplay(report, "schedule.probeOutcome");
+}
+
+/**
+ * 直近 1 回の**検収**の表示（Spec 46）。
+ *
+ * **辞書の枝は前判定と分ける** — `probeOutcome.match` の訳語は
+ * 「一致（依頼しました）」で、検収の一致は依頼ではなく確定。同じ 5 値でも
+ * 文脈で意味が逆向きなので、訳語の表を共有すると片方が嘘をつく。
+ */
+export function acceptanceDisplay(report: ProbeReport | null | undefined): ProbeDisplay | null {
+  return reportDisplay(report, "schedule.acceptanceOutcome");
+}
+
+/** 結末 → 表示素材の 1 実装（辞書の枝だけが違う）。 */
+function reportDisplay(
+  report: ProbeReport | null | undefined,
+  prefix: string,
+): ProbeDisplay | null {
   if (!report) return null;
   return {
-    labelKey: `schedule.probeOutcome.${report.outcome}`,
+    labelKey: `${prefix}.${report.outcome}`,
     reason: report.outcome === "error" ? report.reason : null,
     atMs: report.atMs,
   };
@@ -80,4 +113,22 @@ export function probeFormValid(input: {
   if (!input.command.trim()) return false;
   if (!input.expect.trim()) return false;
   return input.timeoutSecs >= 1 && input.timeoutSecs <= 3600;
+}
+
+/**
+ * 後判定の欄が送信できるか（Spec 46 D5）。
+ *
+ * 判定部は前判定と同じ述語 + `maxAttempts` の値域（1..=5。整数でなければ拒否 —
+ * `type="number"` は小数も通す）。コア側の `validate` が本体で、ここは手戻り減。
+ */
+export function acceptanceFormValid(input: {
+  command: string;
+  expect: string;
+  timeoutSecs: number;
+  maxAttempts: number;
+}): boolean {
+  if (!probeFormValid(input)) return false;
+  return (
+    Number.isInteger(input.maxAttempts) && input.maxAttempts >= 1 && input.maxAttempts <= 5
+  );
 }

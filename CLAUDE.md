@@ -5388,8 +5388,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 46](specs/46_acceptance-probe.md)（予定の後判定 — 検収の probe と、
-  通るまでの再依頼）: **rev2 承認 → P0 完了**（2026-08-30。`data_contract` の
-  `Acceptance` ブロック — ScheduleProbe の隣・規律は複製せず参照）。査読で骨格が 2 つ精緻化された —
+  通るまでの再依頼）: **rev2 承認 → P0〜P2 完了**（2026-08-30。P0 =
+  `data_contract` の `Acceptance` ブロック。P1 = コア + 結合 5 本・
+  ミューテーション 3 回（D2 の直列は防御が二重で、1 層だけの変異は緑のまま —
+  P1 実装記録の一般化）。P2 = 投影 2 欄 + **承認 3 箇所の拡張**
+  （`retain_for` の生存集合に後判定を数え忘れると、掃除が検収の承認を落とし
+  「人が押したのに unapproved」になる — 単体で凍結）+ ScheduleDialog の
+  後判定の節 + 辞書 ja/en（検収の結末は `acceptanceOutcome` の別枝 —
+  `probeOutcome.match`「一致（依頼しました）」は検収では嘘になる）。
+  vitest 453・lib 616・clippy 0。残は P3 台帳 / P4 実機 6 件）。査読で骨格が 2 つ精緻化された —
   「新しい根にしない」は不正確で**「新しい封筒・同じ財布」**（cancel /
   participants は試行ごとに新品、`Arc<BudgetPool>` だけ継承 = 封筒相乗りの
   既存形でフラグ不要）/ **前判定は発火時のみで再依頼は通らない**（凍結 6）。

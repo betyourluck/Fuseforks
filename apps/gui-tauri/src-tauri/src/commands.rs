@@ -920,6 +920,10 @@ pub struct ScheduleView {
     /// **プロセス寿命**（再起動で消える）。再起動後の診断は `fuseforks.log` の
     /// `schedule probe:` 行が担う — 第 2 の永続ファイルは作らない。
     pub last_probe: Option<fuseforks_core::schedule_probe::ProbeReport>,
+    /// 後判定がこの端末で承認済みか（Spec 46）。**後判定が無ければ常に真**。
+    pub acceptance_approved: bool,
+    /// 直近 1 回の**検収**の結末（Spec 46）。器も寿命も `last_probe` と同じ。
+    pub last_acceptance: Option<fuseforks_core::schedule_probe::ProbeReport>,
 }
 
 impl ScheduleView {
@@ -929,24 +933,36 @@ impl ScheduleView {
         approvals: &crate::probe_approvals::ApprovalStore,
         village_id: &str,
         reports: &std::collections::HashMap<String, fuseforks_core::schedule_probe::ProbeReport>,
+        acceptance_reports: &std::collections::HashMap<
+            String,
+            fuseforks_core::schedule_probe::ProbeReport,
+        >,
     ) -> Self {
         let last_probe = reports.get(&task.id).cloned();
+        let last_acceptance = acceptance_reports.get(&task.id).cloned();
         let next_due_ms = task
             .next_due(&chrono::Local::now())
             .and_then(|due| u64::try_from(due.timestamp_millis()).ok());
         let recurrence_label = task.recurrence.label_ja();
-        let probe_approved = task.probe.as_ref().is_none_or(|probe| {
+        let approved = |probe: &fuseforks_core::schedule_probe::ScheduleProbe| {
             fuseforks_core::orchestrator::ProbeApprovals::is_approved(
                 approvals,
                 &probe.approval_key(village_id),
             )
-        });
+        };
+        let probe_approved = task.probe.as_ref().is_none_or(&approved);
+        let acceptance_approved = task
+            .acceptance
+            .as_ref()
+            .is_none_or(|acceptance| approved(&acceptance.probe));
         Self {
             task,
             next_due_ms,
             recurrence_label,
             probe_approved,
             last_probe,
+            acceptance_approved,
+            last_acceptance,
         }
     }
 }
@@ -956,12 +972,21 @@ impl ScheduleView {
 pub async fn list_schedules(state: State<'_, AppState>) -> CoreResult<Vec<ScheduleView>> {
     let village_id = state.orchestrator.village_id().await;
     let reports = state.orchestrator.probe_reports().await;
+    let acceptance_reports = state.orchestrator.acceptance_reports().await;
     Ok(state
         .orchestrator
         .schedules()
         .await
         .into_iter()
-        .map(|task| ScheduleView::of(task, &state.probe_approvals, &village_id, &reports))
+        .map(|task| {
+            ScheduleView::of(
+                task,
+                &state.probe_approvals,
+                &village_id,
+                &reports,
+                &acceptance_reports,
+            )
+        })
         .collect())
 }
 
@@ -985,9 +1010,15 @@ pub async fn create_schedule(
     let options = options.unwrap_or_default();
     let village_id = state.orchestrator.village_id().await;
 
-    if let Some(probe) = &options.probe {
-        // **人のクリックだけがここへ到達する。** モデルは IPC を呼べないので、
-        // `schedules.json` を `file write` で書いても承認は付かない。
+    // **前判定と後判定の両方を承認する**（Spec 46 — 後判定も同じ承認機構に乗る。
+    // 書いた人 = 承認した人、の理屈も同じ）。
+    // **人のクリックだけがここへ到達する。** モデルは IPC を呼べないので、
+    // `schedules.json` を `file write` で書いても承認は付かない。
+    let probes = options
+        .probe
+        .iter()
+        .chain(options.acceptance.as_ref().map(|acceptance| &acceptance.probe));
+    for probe in probes {
         state
             .probe_approvals
             .approve(probe.approval_key(&village_id))
@@ -1012,22 +1043,27 @@ pub async fn create_schedule(
     }
 
     let reports = state.orchestrator.probe_reports().await;
+    let acceptance_reports = state.orchestrator.acceptance_reports().await;
     Ok(ScheduleView::of(
         task,
         &state.probe_approvals,
         &village_id,
         &reports,
+        &acceptance_reports,
     ))
 }
 
-/// 既存の予定の前判定を、この端末で実行してよいと承認する（Spec 28 D10）。
+/// 既存の予定の probe（前判定と後判定の両方）を、この端末で実行してよいと
+/// 承認する（Spec 28 D10 / Spec 46）。
 ///
-/// **配られた村・手で書いた `schedules.json` の前判定はここを通るまで走らない。**
-/// 画面がコマンド行の原文（`command` / `args` / `cwd`）を出したうえで、
-/// 人が中身を見て押す。
+/// **配られた村・手で書いた `schedules.json` の probe はここを通るまで走らない。**
+/// 画面がコマンド行の原文（`command` / `args` / `cwd` — 後判定があればそちらも）を
+/// 出したうえで、人が中身を見て押す。**1 回の承認で両方に効く** — 画面が両方の
+/// 原文を見せていることが前提で、片方ずつ承認する導線は作らない
+/// （同じ意図の 2 つ目のスイッチになる）。
 ///
 /// # Errors
-/// 該当 ID が無い、前判定を持たない、または承認ファイルへ書けない場合。
+/// 該当 ID が無い、probe を 1 つも持たない、または承認ファイルへ書けない場合。
 #[tauri::command]
 pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> CoreResult<()> {
     let village_id = state.orchestrator.village_id().await;
@@ -1036,20 +1072,27 @@ pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> C
         .iter()
         .find(|task| task.id == id)
         .ok_or_else(|| fuseforks_core::CoreError::ScheduleNotFound(id.clone()))?;
-    let probe = task
+    let probes: Vec<_> = task
         .probe
-        .as_ref()
-        .ok_or_else(|| fuseforks_core::CoreError::InvalidSchedule {
-            reason: "この予定は前判定を持ちません".to_owned(),
-        })?;
+        .iter()
+        .chain(task.acceptance.as_ref().map(|acceptance| &acceptance.probe))
+        .collect();
+    if probes.is_empty() {
+        return Err(fuseforks_core::CoreError::InvalidSchedule {
+            reason: "この予定は前判定も後判定も持ちません".to_owned(),
+        });
+    }
 
-    state
-        .probe_approvals
-        .approve(probe.approval_key(&village_id))
-        .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
-            path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
-            source: std::io::Error::other(reason),
-        })
+    for probe in probes {
+        state
+            .probe_approvals
+            .approve(probe.approval_key(&village_id))
+            .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
+                path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
+                source: std::io::Error::other(reason),
+            })?;
+    }
+    Ok(())
 }
 
 /// 予定を削除する。復元はできない。

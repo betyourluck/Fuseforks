@@ -17,6 +17,9 @@ import { formatError } from "../lib/errorText";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
+  acceptanceCommandLine,
+  acceptanceDisplay,
+  acceptanceFormValid,
   parseProbeArgs,
   probeCommandLine,
   probeDisplay,
@@ -66,6 +69,18 @@ const formCwd = ref("");
 const formSessionMode = ref<SessionMode>("continue");
 const formSummarizeAfter = ref(false);
 
+// ---- 後判定（Spec 46） ---------------------------------------------------------
+
+/** 後判定を付けるか。**既定は付けない** — 既存の予定と同じ挙動から始まる。 */
+const formAcceptanceOn = ref(false);
+const formAccCommand = ref("");
+const formAccArgs = ref("");
+const formAccExpect = ref("");
+const formAccTimeout = ref(60);
+const formAccCwd = ref("");
+/** 再依頼を含めた総試行回数。既定 2 = 出し直し 1 回（コア側の既定と同じ）。 */
+const formAccMaxAttempts = ref(2);
+
 const agents = computed(() => state.agents);
 
 /** フォームが送信できる状態か。数値の範囲は Rust 側でも検証される（二重化）。 */
@@ -78,6 +93,18 @@ const formValid = computed(() => {
       command: formCommand.value,
       expect: formExpect.value,
       timeoutSecs: formTimeout.value,
+    })
+  ) {
+    return false;
+  }
+  // 後判定も同じ述語 + 試行回数の値域（コア側も読み込みで弾く）。
+  if (
+    formAcceptanceOn.value &&
+    !acceptanceFormValid({
+      command: formAccCommand.value,
+      expect: formAccExpect.value,
+      timeoutSecs: formAccTimeout.value,
+      maxAttempts: formAccMaxAttempts.value,
     })
   ) {
     return false;
@@ -105,6 +132,16 @@ function buildOptions(): ScheduleOptions {
       : null,
     sessionMode: formSessionMode.value,
     summarizeAfter: formSummarizeAfter.value,
+    acceptance: formAcceptanceOn.value
+      ? {
+          command: formAccCommand.value.trim(),
+          args: parseProbeArgs(formAccArgs.value),
+          expect: formAccExpect.value.trim(),
+          timeoutSecs: Math.floor(formAccTimeout.value),
+          cwd: formAccCwd.value.trim() || null,
+          maxAttempts: Math.floor(formAccMaxAttempts.value),
+        }
+      : null,
   };
 }
 
@@ -210,12 +247,16 @@ async function toggleEnabled(task: ScheduleView): Promise<void> {
  * すると、承認が「読まずにクリックする儀式」に落ちる。
  */
 async function approveProbe(task: ScheduleView): Promise<void> {
-  if (!task.probe) return;
+  if (!task.probe && !task.acceptance) return;
+  // **1 回の承認で前後両方に効く**（IPC 側の規律）ので、確認には両方の
+  // コマンド行を出す — 片方だけ見せて両方を承認させると、読んでいない
+  // ものへの同意になる。
+  const lines = [probeCommandLine(task), acceptanceCommandLine(task)]
+    .filter((line) => line.length > 0)
+    .join("\n");
   const ok = await askConfirm({
     title: t("schedule.approveConfirmTitle"),
-    message: t("schedule.approveConfirmMessage", {
-      command: probeCommandLine(task),
-    }),
+    message: t("schedule.approveConfirmMessage", { command: lines }),
     confirmLabel: t("schedule.approveAction"),
   });
   if (!ok) return;
@@ -240,8 +281,19 @@ async function approveProbe(task: ScheduleView): Promise<void> {
  * **規則は `probeDisplay`（純関数）が持ち、ここは訳語を当てるだけ。**
  */
 function lastProbeLabel(task: ScheduleView): string {
-  const display = probeDisplay(task.lastProbe);
-  if (!display) return t("schedule.probeNeverRan");
+  return reportLabel(probeDisplay(task.lastProbe), "schedule.probeNeverRan");
+}
+
+/** 直近の検収の 1 行（Spec 46）。規則は `acceptanceDisplay` が持つ。 */
+function lastAcceptanceLabel(task: ScheduleView): string {
+  return reportLabel(acceptanceDisplay(task.lastAcceptance), "schedule.acceptanceNeverRan");
+}
+
+function reportLabel(
+  display: ReturnType<typeof probeDisplay>,
+  neverRanKey: string,
+): string {
+  if (!display) return t(neverRanKey);
   const at = new Date(display.atMs).toLocaleString("ja-JP", {
     month: "numeric",
     day: "numeric",
@@ -349,6 +401,38 @@ function formatNextDue(task: ScheduleView): string {
                   class="mt-1.5 flex items-center gap-2 rounded border border-warn/50 bg-surface-0 p-1.5"
                 >
                   <span class="flex-1 text-warn">{{ $t("schedule.probeUnapproved") }}</span>
+                  <button
+                    class="shrink-0 rounded border border-warn px-2 py-0.5 text-warn hover:bg-warn hover:text-surface-0 disabled:opacity-40"
+                    :disabled="busy"
+                    @click="approveProbe(task)"
+                  >
+                    {{ $t("schedule.approve") }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 後判定（Spec 46）。付いている予定にだけ出す。前判定と同じ器。 -->
+              <div v-if="task.acceptance" class="mt-1.5 rounded border border-line bg-surface-1 p-1.5">
+                <div class="flex items-center gap-1.5">
+                  <span class="shrink-0 text-ink-dim">{{ $t("schedule.acceptanceLabel") }}</span>
+                  <code class="selectable truncate font-mono text-ink" :title="acceptanceCommandLine(task)">
+                    {{ acceptanceCommandLine(task) }}
+                  </code>
+                </div>
+                <div class="mt-1 flex items-center gap-1.5 text-ink-dim">
+                  <span>{{
+                    $t("schedule.acceptanceMeta", {
+                      expect: task.acceptance.expect,
+                      max: task.acceptance.maxAttempts,
+                    })
+                  }}</span>
+                  <span class="ml-auto">{{ lastAcceptanceLabel(task) }}</span>
+                </div>
+                <div
+                  v-if="!task.acceptanceApproved"
+                  class="mt-1.5 flex items-center gap-2 rounded border border-warn/50 bg-surface-0 p-1.5"
+                >
+                  <span class="flex-1 text-warn">{{ $t("schedule.acceptanceUnapproved") }}</span>
                   <button
                     class="shrink-0 rounded border border-warn px-2 py-0.5 text-warn hover:bg-warn hover:text-surface-0 disabled:opacity-40"
                     :disabled="busy"
@@ -523,6 +607,79 @@ function formatNextDue(task: ScheduleView): string {
                   <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
                   <input
                     v-model="formCwd"
+                    :placeholder="$t('schedule.probeCwdPlaceholder')"
+                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <!-- 後判定（Spec 46）。既定は付けない = 既存の予定と同じ挙動。 -->
+            <div class="border-t border-line pt-2">
+              <label class="flex items-center gap-2">
+                <input v-model="formAcceptanceOn" type="checkbox" />
+                <span class="font-medium text-ink">{{ $t("schedule.acceptanceToggle") }}</span>
+              </label>
+              <p class="mt-1 pl-6 text-ink-dim">{{ $t("schedule.acceptanceHint") }}</p>
+
+              <div v-if="formAcceptanceOn" class="mt-2 space-y-2 pl-6">
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCommand") }}</span>
+                  <input
+                    v-model="formAccCommand"
+                    :placeholder="$t('schedule.probeCommandPlaceholder')"
+                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                  />
+                </label>
+
+                <label class="flex items-start gap-2">
+                  <span class="w-20 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.probeArgs") }}</span>
+                  <textarea
+                    v-model="formAccArgs"
+                    rows="2"
+                    :placeholder="$t('schedule.probeArgsPlaceholder')"
+                    class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                  />
+                </label>
+
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeExpectLabel") }}</span>
+                  <input
+                    v-model="formAccExpect"
+                    :placeholder="$t('schedule.probeExpectPlaceholder')"
+                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                  />
+                </label>
+                <p class="pl-20 text-ink-dim">{{ $t("schedule.acceptanceExpectHint") }}</p>
+
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.acceptanceMaxAttempts") }}</span>
+                  <input
+                    v-model.number="formAccMaxAttempts"
+                    type="number"
+                    min="1"
+                    max="5"
+                    class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  />
+                  <span class="text-ink-dim">{{ $t("schedule.acceptanceMaxAttemptsSuffix") }}</span>
+                </label>
+
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeTimeout") }}</span>
+                  <input
+                    v-model.number="formAccTimeout"
+                    type="number"
+                    min="1"
+                    max="3600"
+                    class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  />
+                  <span class="text-ink-dim">{{ $t("schedule.probeTimeoutSuffix") }}</span>
+                </label>
+
+                <label class="flex items-center gap-2">
+                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
+                  <input
+                    v-model="formAccCwd"
                     :placeholder="$t('schedule.probeCwdPlaceholder')"
                     class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
                   />

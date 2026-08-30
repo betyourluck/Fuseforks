@@ -645,10 +645,24 @@ export interface ProbeReport {
  * 受け取り側は「欄が無い = 既定」として読むこと — 前判定を持たない既存の予定を
  * 読んで保存し直してもファイルが 1 バイトも変わらない、を成立させている。
  */
+/**
+ * 予定の後判定（Spec 46）— 検収の probe と、通るまでの再依頼。
+ *
+ * 判定部は前判定と同じ欄（Rust 側が `serde(flatten)` で平坦化する）。
+ * `maxAttempts` がこの中に住むのは、後判定なしのとき意味を持たない欄を
+ * 構造で締め出すため。
+ */
+export interface Acceptance extends ScheduleProbe {
+  /** 再依頼を含めた総試行回数。既定 2・範囲 1..=5。 */
+  maxAttempts: number;
+}
+
 export interface ScheduleOptions {
   probe?: ScheduleProbe | null;
   sessionMode?: SessionMode;
   summarizeAfter?: boolean;
+  /** 因果の完了後に走らせる検収（Spec 46）。 */
+  acceptance?: Acceptance | null;
 }
 
 /**
@@ -685,6 +699,12 @@ export interface ScheduleView {
   probeApproved: boolean;
   /** 直近 1 回の判定（Spec 28 D8）。まだ 1 度も走っていなければ null。 */
   lastProbe: ProbeReport | null;
+  /** 後判定（Spec 46）。既定（無し）ならワイヤに現れない。 */
+  acceptance?: Acceptance | null;
+  /** 後判定がこの端末で承認済みか（Spec 46）。**後判定が無ければ常に真**。 */
+  acceptanceApproved: boolean;
+  /** 直近 1 回の検収（Spec 46）。器も寿命も `lastProbe` と同じ。 */
+  lastAcceptance: ProbeReport | null;
 }
 
 /**

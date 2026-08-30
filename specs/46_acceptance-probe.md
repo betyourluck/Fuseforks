@@ -1,7 +1,9 @@
 # Spec: 予定の後判定 — 検収の probe と、通るまでの再依頼
 
 - 起票: 2026-08-30
-- 状態: **rev2 承認（2026-08-30 利用者）→ P0〜P1 完了**（P0 = `data_contract` の
+- 状態: **rev2 承認（2026-08-30 利用者）→ P0〜P2 完了**（P2 = 投影 2 欄 +
+  承認 3 箇所の拡張 + ScheduleDialog の後判定の節 + 辞書 ja/en。
+  記録は「P2 実装記録」）。以下は P0〜P1 の記録:（P0 = `data_contract` の
   `Acceptance` ブロック（凍結 7 本・分岐の表・実行順序・再依頼の形・計器）。
   P1 = コア実装 + 単体 6 本 + 結合 5 本。**ミューテーションは 3 回** —
   fail-closed 破壊で結合 2 本が赤 / D2 の登録側だけの破壊は**緑のまま**
@@ -257,6 +259,26 @@ acceptance: schedule=… attempt=1/2 outcome=match|no_match|error|timeout|unappr
 6. **予算が優先**: 小さい `tokenBudget` の村で、再依頼の前に予算が尽きると
    `outcome=no_match` の後に配送が**無く**、確定の記録が残る
    （予算の残ゼロが D3 の表の条件として効いたことの観測）
+
+## P2 実装記録（2026-08-30）
+
+- **IPC は欄の加算だけで新設ゼロ** — `ScheduleOptions` / `ScheduledTask` の
+  serde が `acceptance` を運ぶ。`ScheduleView` へ `acceptanceApproved` /
+  `lastAcceptance` の投影 2 欄
+- **承認の 3 箇所を後判定へ広げた**（ここが P2 の本丸）:
+  (1) `create_schedule` — 前後両方の probe を承認（書いた人 = 承認した人）
+  (2) `approve_schedule_probe` — **1 回の承認で前後両方に効く**（確認ダイアログが
+  両方のコマンド行を出すことが前提。片方ずつの導線は同じ意図の 2 つ目の
+  スイッチになるので作らない）
+  (3) **`retain_for` の生存集合に後判定の鍵を足した** — 数え忘れると、
+  予定を作るたびの掃除が検収の承認を落とし、**人が押したのに次の発火が
+  `unapproved` で確定する**（#88 の同族。単体テストで凍結）
+- **検収の結末の辞書は前判定と分けた**（`acceptanceOutcome`）—
+  `probeOutcome.match` の訳語「一致（依頼しました）」は検収では嘘になる
+  （一致 = 依頼ではなく確定）。同じ 5 値でも文脈で意味が逆向き
+- フォームは前判定の欄の複製 + `maxAttempts`（`acceptanceFormValid` は
+  **整数検査つき** — `type="number"` は小数を通す）。
+  vitest 447 → 453・gui crate 20 本・clippy 0・build 緑
 
 ## P1 実装記録（2026-08-30）
 
