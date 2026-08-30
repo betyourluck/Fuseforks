@@ -68,6 +68,12 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # 独自のミニ構文を発明するより標準の regex を渡すほうが失敗が少ない。
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Spec 47 D4 — リモート MCP の URL 検査（host で loopback を判定する側）。
+# reqwest が既に連れているので新しい crate は増えない。
+url = "2"
+# Spec 47 P2 — headers を rmcp の custom_headers（http::HeaderName/Value）へ
+# 写すため。ツリーには 1.4.2 が 1 版だけ居る（reqwest 0.12 / 0.13 で共有）。
+http = "1"
 # UI 言語の初回確定（Spec 13）。Webview の navigator.language は OS 設定と
 # ズレるため、OS のロケールを直接読む。使うのは起動時の 1 回だけで、
 # コアは確定した値で分岐しない（settings_contract の案 A）。依存ゼロの小 crate。
@@ -84,6 +90,14 @@ sys-locale = "0.3"
 # 将来リモート HTTP サーバーへ繋ぐなら transport-streamable-http-client-reqwest を足す。
 rmcp = { version = "2.2", default-features = false, features = [
   "client",
+  # Spec 47 — リモート MCP（Streamable HTTP のクライアント側）。
+  # rmcp は自前の reqwest 0.13 を持ち込む（ワークスペースの 0.12 = LLM
+  # クライアントとは別の実体。版込みの依存差分 +1 — P0 実測）。
+  # "reqwest" は TLS の鍵: これが `reqwest?/rustls` を立てる。**無いと
+  # 既定 Client に HTTPS コネクタが無く、https へ「scheme is not http」で
+  # 落ちる**（P0 probe で実測）。rustls なのは自前の reqwest と同じ判断。
+  "transport-streamable-http-client-reqwest",
+  "reqwest",
   # Spec 25 — 村を MCP **サーバー**にする側（外の LLM から依頼を受ける扉）。
   # クライアント側とは向きが逆で、同じ crate の別の顔を使う。
   "server",

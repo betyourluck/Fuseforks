@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use fuseforks_core::mcp::{McpConfig, McpManager, McpServerConfig};
+use fuseforks_core::mcp::{McpConfig, McpManager, McpServerConfig, McpStdioConfig};
 use fuseforks_core::tool::ToolContext;
 use fuseforks_core::AgentId;
 
@@ -57,7 +57,7 @@ async fn a_claude_desktop_config_works_verbatim() {
     let mut servers = BTreeMap::new();
     servers.insert(
         "fs".to_owned(),
-        McpServerConfig {
+        McpServerConfig::Stdio(McpStdioConfig {
             // Claude Desktop の設定に書かれているのはこの形。加工しない。
             command: "npx".to_owned(),
             args: vec![
@@ -67,7 +67,7 @@ async fn a_claude_desktop_config_works_verbatim() {
             ],
             env: BTreeMap::new(),
             enabled: true,
-        },
+        }),
     );
 
     let manager = McpManager::connect_all(&McpConfig { servers }).await;
@@ -92,7 +92,7 @@ async fn connects_to_a_real_server_and_calls_a_tool() {
     let mut servers = BTreeMap::new();
     servers.insert(
         "fs".to_owned(),
-        McpServerConfig {
+        McpServerConfig::Stdio(McpStdioConfig {
             command: "npx".to_owned(),
             args: vec![
                 "-y".to_owned(),
@@ -101,7 +101,7 @@ async fn connects_to_a_real_server_and_calls_a_tool() {
             ],
             env: BTreeMap::new(),
             enabled: true,
-        },
+        }),
     );
 
     let manager = McpManager::connect_all(&McpConfig { servers }).await;

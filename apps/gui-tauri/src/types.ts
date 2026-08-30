@@ -540,13 +540,33 @@ export interface AgentMessage {
   attachments?: Attachment[];
 }
 
-/** MCP サーバー 1 台の起動方法（Claude Desktop の設定と同じ形）。 */
-export interface McpServerConfig {
+/**
+ * MCP サーバー 1 台の繋ぎ方（Claude Desktop の設定と同じ形。Spec 47 で 2 形）。
+ * 検証はコア側（5 段・エントリ名の名指し）— ここは写し。
+ */
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+
+/** 子プロセスを起動して stdio で話す（従来形。`type` 無しはこちら）。 */
+export interface McpStdioServerConfig {
+  type?: "stdio";
   command: string;
   args: string[];
   /** 追加の環境変数。**秘密は書かないこと** — mcp.json は平文で保存される。 */
   env: Record<string, string>;
   /** 設定を消さずに一時停止するための欄。 */
+  enabled: boolean;
+}
+
+/** リモートの Streamable HTTP サーバーへ繋ぐ（Spec 47）。 */
+export interface McpHttpServerConfig {
+  type: "http";
+  /** https、または loopback の http だけが通る（コア側 D4 が検査する）。 */
+  url: string;
+  /**
+   * 毎リクエストに付けるヘッダー。**env より 1 段重い** — Authorization は
+   * 外部へ送信され、村（workspace）を配るとトークンごと配られる。
+   */
+  headers?: Record<string, string>;
   enabled: boolean;
 }
 
