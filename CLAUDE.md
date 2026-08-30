@@ -1593,6 +1593,31 @@ Please retry in 56.493566409s
   変異は sed で入れて sed で戻す — 可逆な編集だけを使う（Spec 41 の
   「復元のつもりの `open(dst,"w")` が src を 0 バイトにする」と同族）
 
+## リモート MCP（[Spec 47](specs/47_remote-mcp.md)・2026-08-30。**Done**）
+
+起点は実機 — `mcp.json` へ `type: "http"` の elyth を書いたら
+`missing field 'command'` で保存拒否（利用者「今はリモート MCP が主流」）。
+**起票 → rev2.1 → P0〜P4 を同日で Done**（検収は実機 3 + 機械 3。elyth で
+26 ツール・投稿と返信の実走、alphaXiv で論文調査タスクの完走まで）。
+詳細は Spec の実装記録が正。次に触る人が要る 4 点:
+
+- **rmcp の feature `"reqwest"` が TLS の鍵** — transport feature だけでは
+  既定 Client に HTTPS コネクタが無く「scheme is not http」で落ちる（P0 実測）。
+  rmcp は自前の reqwest 0.13 を持ち込む（LLM クライアントの 0.12 とは別実体。
+  **`from_config` を使い、こちらから reqwest の型を名指ししない**）
+- **「アプリは mcp.json を再シリアライズしない」は半分誤りだった** —
+  エージェント別は生テキスト保存だが、**共通の mcp.json は
+  `write_mcp_config(McpConfig)` が構造体から書き戻す**。http の `type` を
+  Serialize で省略すると保存の往復で stdio へ化ける（rev2.1 の致命指摘は
+  本番のファイル破壊だった）
+- **接続エラーの分類は二分**（`classify_http_connect_error`）— `HTTP <code>` を
+  含むエラーは**状態コードだけの自前の文**（rmcp の 401 は応答本文を逐語で運び、
+  本文に受信ヘッダーをエコーするサーバーが実在する = #71 の系譜）、
+  DNS / 接続拒否はそのまま通す（丸めると「理由が分からない」へ戻る）
+- **winget の device 認証と同族の回避をもう 1 つ確定** — probe のトークンは
+  `ELYTH_TOKEN` 環境変数で利用者のシェルから注入（値はスクリプトにもログにも
+  残らない）。実測: elyth-remote v2.0.0 / protocol 2025-06-18 / tools 26 本
+
 ## 現在地（2026-08-30 更新）
 
 **この 2 日（08-29〜30）で配布が一周閉じ、調査が Spec 46 を生んだ。**
@@ -1620,6 +1645,10 @@ Please retry in 56.493566409s
   再依頼は配送されるが `reserve_short` で払いゼロのまま確定）
 - **未貼りの条例草案が 1 つ** — 手順書の節（Prime Agent 梃子 2 の運用開始。
   草案は 2026-08-30 の会話で渡した。条例は利用者の資産なので貼るのは利用者）
+- **同日夕: リモート MCP（[Spec 47](specs/47_remote-mcp.md)）を起票から
+  Done まで**（上の節が正。起点は elyth の `type: "http"` が保存できなかった
+  実機。alphaXiv も接続 — 「stream だった」の正体は Streamable HTTP で、
+  認証なしは OAuth の challenge = `AuthRequired` を分類する枝まで実測から生えた）
 - **同日午後: スケジュールダイアログを 2 ペイン化し、予定の編集
   （`update_schedule`）を足した**（上の節が正。起点は P4 検収中の実機 —
   検収コマンドを 1 文字直すのに作り直すしかなかった）。編集機能は

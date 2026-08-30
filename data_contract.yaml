@@ -87,10 +87,38 @@ enums:
       MCP サーバー宣言 = {workspace}/mcp.json (2026-07-29)。
       **Claude Desktop の claude_desktop_config.json と同じ `mcpServers` 形式**を採る
       (利用者が既に持つ設定をそのまま貼れることに実用上の価値がある)。
-      クライアント実装は公式 SDK の rmcp 2.2 (client + transport-child-process のみ、
-      server/macros は使わない)。LLM のワイヤ形は自前で持つがここは SDK に委ねる —
+      クライアント実装は公式 SDK の rmcp 2.2 (client + transport-child-process +
+      transport-streamable-http-client-reqwest。server/macros は扉 = Spec 25 の側)。
+      LLM のワイヤ形は自前で持つがここは SDK に委ねる —
       MCP は仕様が広く (handshake / capabilities / 通知 / キャンセル / ページング)
       改訂が速く、自前で持っても得るものが無い。
+      エントリは 2 形 (Spec 47 rev2.1・2026-08-30):
+        - stdio (従来形。`type` 無し、または `type: "stdio"` の明示): command 必須。
+          **Serialize は type を常に省略** (出力は従来形に一致)
+        - http (`type: "http"`): url 必須 + headers 任意 (Streamable HTTP)。
+          **Serialize は type: "http" を必ず出力** (省略すると次の読みで stdio と
+          誤判別される — rev2.1 の致命指摘)
+        - `type: "sse"` (旧 SSE transport) は名指しで拒否。互換を主張するのは
+          stdio と Streamable HTTP の 2 形だけ
+        - 検証は 5 段の固定順 (形の判別 → 相互排他 [両向き] → 必須欄 →
+          値の形式 → URL スキーム)。1 エントリにつき最初の違反 1 つを
+          エントリ名と欄で名指し。**enabled: false でも検証は掛かる**
+          (スキップされるのは接続だけ)
+        - URL は https、または loopback の http (Url::host() 判定:
+          IP の is_loopback() [::1 含む] / ホスト名 "localhost" 完全一致。
+          プライベート帯・host.docker.internal は不許可)
+        - **headers の値はエラーにもログにも出さない** (D7。相手の応答本文も
+          転記しない — 本文に受信ヘッダをエコーするサーバーが実在する。
+          P0 実測: rmcp の 401 は UnexpectedServerResponse("HTTP 401 …{本文}")
+          の形で本文を運んでくるので、そのまま McpServerStatus.error へ
+          写すと転送経路になる)
+        - 認証は auth_header に**素のトークン** (reqwest の bearer_auth が
+          Bearer を付ける — rmcp 実装読み)。401/403 は「設定の確認が要る」で
+          即確定し自動再試行しない
+        - rmcp の feature "reqwest" が TLS の鍵 (reqwest?/rustls)。無いと
+          既定 Client に HTTPS コネクタが無く「scheme is not http」で落ちる
+          (P0 実測)。rmcp は自前の reqwest 0.13 を持ち込む (ワークスペースの
+          0.12 = LLM クライアントとは別の実体。版込み依存差分 +1)
       不変条件:
         - MCP ツールは AgentTool 実装 1 つとして ToolRegistry へ入る。
           オーケストレーターから見て同梱ツール (remember) と区別が無い
@@ -107,8 +135,11 @@ enums:
         - RunningService は保持し続ける。drop すると接続が畳まれ子プロセスが落ちる
         - mcp.json が壊れている場合は**空として扱わずエラー**にする。空にすると
           書き間違えた瞬間に全ツールが黙って消え、原因に辿り着けない
-        - env に秘密を書かせない (mcp.json は平文)。認証が要るサーバーは
-          将来 secret::SecretStore を通す経路を別途用意する
+        - env に秘密を書かせない (mcp.json は平文)。**http の headers は
+          env より 1 段重い** — env はローカルの子プロセス止まりだが、
+          headers の Authorization は外部へ送信され、村 (workspace) を配ると
+          トークンごと配られる (Spec 47 D3。README / PRIVACY に明記)。
+          keyring 参照化 (CredentialSource の前例) は別 Spec 候補
         - **コマンドは PATH から解決する** (rmcp の which-command)。素の名前を
           Command::new へ渡してはいけない — Windows の PATH には npx.cmd と
           拡張子なしの npx (Git Bash 用スクリプト) が両方居り、後者に当たると

@@ -126,6 +126,11 @@ If you declare an MCP server, the app connects to it and sends the arguments of
 tools the agent invokes. The destination and its behavior depend on the server
 you chose.
 
+If you declare a remote MCP server (`"type": "http"`), **the headers you
+configured are sent with every request to that destination** (including an
+Authorization header, i.e. your access token). Headers are stored in plaintext
+`mcp.json`, so distributing your workspace distributes the token with it.
+
 ---
 
 ## 5. Operations performed on your device

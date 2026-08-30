@@ -1219,6 +1219,26 @@ This clock alone **does not follow the language setting**. English locale format
 - Broken JSON is rejected when saving. External edits that break it do not stop startup; the error is readable from the Settings dialog's "Per-Agent MCP" field. Connection state is not persisted, because a state file would falsely retain "connected" after a process exits.
 - Per-agent tools cannot be called by other agents, even if they know the name.
 
+### Remote MCP (Streamable HTTP)
+
+`mcp.json` entries come in two forms (Spec 47, 2026-08-30). Besides the
+traditional stdio form (`command` — spawn a child process), `"type": "http"` +
+`url` (+ optional `headers`) connects to a **remote Streamable HTTP server**.
+The notation is compatible with Claude Desktop / Claude Code. The legacy SSE
+form is **intentionally incompatible** and rejected by name — most servers have
+moved from `/sse` to a single endpoint such as `/mcp`.
+
+- **URLs must be https, or http to loopback only (127.0.0.1 / [::1] /
+  localhost)** — sending Authorization over plaintext http is blocked by default
+- **`headers` are stored in plaintext `mcp.json` and travel with the village.**
+  They are one step heavier than `env` — env stops at the local child process,
+  but an Authorization header is **sent to the outside**. Connection errors
+  carry neither header values nor the server's response body (servers that echo
+  received headers into the body exist)
+- Mistakes are rejected at save time **naming the entry and the field**
+  (`type: "http"` without `url`, a stdio entry with `url`, and so on). Disabled
+  entries (`enabled: false`) are still validated — only the connection is skipped
+
 ### Village Ordinance
 
 Rules stack in three layers: **vendor constitution (model-side, immutable) > village ordinance > individual agent settings**. The ordinance enters the top of every agent's system prompt and applies from the next utterance after saving. Since everyone receives the same document as the rules of the place, it is also a normalization layer that aligns behavior differences between models.
