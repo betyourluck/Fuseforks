@@ -400,8 +400,11 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
   失敗する。** 処方は提出前に
   `gh repo sync betyourluck/winget-pkgs --source microsoft/winget-pkgs --branch master`
   （フォークは提出のたびに本家へ置いていかれるので、**次の版でも必ず踏む**）
-  (c) **device 認証コードはコンソール直描画で、出力捕獲に乗らない** —
-  `wingetcreate` の提出は人がコンソールで実行する
+  (c) ~~**device 認証コードはコンソール直描画で、出力捕獲に乗らない** —
+  `wingetcreate` の提出は人がコンソールで実行する~~ → **0.1.13 で回避経路が
+  確定**（2026-08-30）: `wingetcreate submit --token "$(gh auth token)"` なら
+  device 認証ごと不要で、自動化から提出できる（「トークンがログに記録される
+  可能性」の警告は出るが値は表示されない。gh の keyring 認証が前提）
 - **検証は Windows Sandbox**（winget-pkgs の `Tools/SandboxTest.ps1`）。
   **罠: マップ先のパスが `winget-pkgs` を含まないと警告の既定が `Inquire` になり、
   非対話シェルが応答待ちで固まる。** `-WarningAction Continue` を明示する
@@ -2395,6 +2398,15 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.1.13` = `ecb7322`（2026-08-30。2 コミット）— Spec 46 Done（予定の
+  後判定 = 検収の probe と通るまでの再依頼）+ スケジュールダイアログの
+  2 ペイン化と編集（`update_schedule`）**。3 OS 緑・アセット 7 件・publish 済み。
+  ノートは日英併記で「利用者が負う条件」2 つ（再依頼はトークンを消費 /
+  検収コマンドの出力は UTF-8 で読む — 日本語 Windows の python は `-X utf8`）。
+  **winget 0.1.13 = PR #426339 を `InstallerLocale` 無しで提出**（全ロケール
+  対応の恒久処方を実施。利用者指示「英語だけでなく全部でインストールできる
+  ように」）。tap は `7e56443` で 0.1.13 へ。**タグは利用者・publish と
+  winget と tap は Neo**（提出の 3 段手順は下の winget 節どおりに踏んだ）
 - **`v0.1.12` = `c79e957`（2026-08-29。15 コミット）— Spec 45（Perplexity の
   7 本目のワイヤ + 固有スキル 4 本）+ 起動の二度押し封じ + 絆の破線の両端条件 +
   #113 のフレーク畳み**。3 OS 緑・アセット 7 件・publish 済み（06:58 UTC）。
