@@ -94,7 +94,7 @@ impl ApprovalStore {
     /// （`schedule.rs` の「内部で `Local::now()` を呼ばない」と同じ規律）。
     /// **予定を消せば承認も消える**ので、肥大化はこれで止まる。
     ///
-    /// **呼び出し元は 2 つ。総数ではなく列挙する**（`create_schedule` /
+    /// **呼び出し元は列挙する**（`create_schedule` / `update_schedule` /
     /// `delete_schedule`。増えたら行を足すことが更新になる — `failures.md` #67）。
     /// 初版は「保存のたびに呼ぶ」とだけ書いて `create_schedule` からしか
     /// 呼んでおらず、**doc の「予定を消せば承認も消える」が嘘だった**

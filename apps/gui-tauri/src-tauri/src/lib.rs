@@ -193,6 +193,7 @@ pub fn run() {
             // 予定（Spec 07）
             commands::list_schedules,
             commands::create_schedule,
+            commands::update_schedule,
             commands::approve_schedule_probe,
             commands::delete_schedule,
             commands::set_schedule_enabled,

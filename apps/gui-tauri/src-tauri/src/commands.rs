@@ -1053,6 +1053,66 @@ pub async fn create_schedule(
     ))
 }
 
+/// 既存の予定を書き換える（id は不変）。
+///
+/// **編集も「書いた人 = 承認した人」**（[`create_schedule`] と同じ Spec 28 D10 の
+/// 理屈）— いま画面で書き換えた probe への同意をもう一度問わない。
+/// 旧いコマンドの承認は後段の掃除（`retain_for`）が落とす — どの予定からも
+/// 参照されなくなった鍵を端末に残さない（取り消しの側が本体、の同じ規律）。
+///
+/// **順序は create と同じ 承認 → schedules → 掃除。** 承認だけ書けた残骸は
+/// 何も参照しない鍵なので無害で、更新に失敗しても次の保存の掃除が拾う。
+#[tauri::command]
+pub async fn update_schedule(
+    state: State<'_, AppState>,
+    id: String,
+    to: AgentId,
+    message: String,
+    recurrence: fuseforks_core::schedule::Recurrence,
+    options: Option<fuseforks_core::schedule::ScheduleOptions>,
+) -> CoreResult<ScheduleView> {
+    let options = options.unwrap_or_default();
+    let village_id = state.orchestrator.village_id().await;
+
+    let probes = options
+        .probe
+        .iter()
+        .chain(options.acceptance.as_ref().map(|acceptance| &acceptance.probe));
+    for probe in probes {
+        state
+            .probe_approvals
+            .approve(probe.approval_key(&village_id))
+            .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
+                path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
+                source: std::io::Error::other(reason),
+            })?;
+    }
+
+    let task = state
+        .orchestrator
+        .update_schedule(&id, to, message, recurrence, options)
+        .await?;
+
+    // 差し替えで参照されなくなった旧コマンドの承認を落とす（create / delete と
+    // 同じ掃除。失敗しても更新は成立しているので警告に留める）。
+    if let Err(reason) = state
+        .probe_approvals
+        .retain_for(&state.orchestrator.schedules().await, &village_id)
+    {
+        fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
+    }
+
+    let reports = state.orchestrator.probe_reports().await;
+    let acceptance_reports = state.orchestrator.acceptance_reports().await;
+    Ok(ScheduleView::of(
+        task,
+        &state.probe_approvals,
+        &village_id,
+        &reports,
+        &acceptance_reports,
+    ))
+}
+
 /// 既存の予定の probe（前判定と後判定の両方）を、この端末で実行してよいと
 /// 承認する（Spec 28 D10 / Spec 46）。
 ///

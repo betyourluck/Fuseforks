@@ -2340,8 +2340,11 @@ entities:
       保存順序は **承認 → schedules.json**。逆順だと schedules だけ書けて
       正当な probe が unapproved で due を失う。承認だけ書けた残骸は
       何も参照しない鍵で無害。
-      **掃除を通す IPC は create_schedule と delete_schedule の 2 つ**
+      **掃除を通す IPC は create_schedule / update_schedule / delete_schedule**
       (総数ではなく列挙 — 増えたら行を足すことが更新になる。failures.md #67)。
+      update_schedule (2026-08-30 の編集機能) の順序は create と同じ
+      **承認 → schedules → 掃除** — 編集も「書いた人 = 承認した人」で、
+      差し替えで参照されなくなった旧コマンドの承認は掃除が落とす。
       現在の schedules.json のどの probe にも一致しない承認を落とす。
       **set_schedule_enabled は通さない** — 一時停止は「いまは動かさない」で
       あって取り消しではなく、再開のたびに押し直させると D10 の目的を超える。

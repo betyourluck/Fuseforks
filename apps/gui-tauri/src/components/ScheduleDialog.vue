@@ -2,14 +2,23 @@
 /**
  * 予定（スケジュール実行）の管理ダイアログ。タイトルバーの ⏰ から開く（Spec 07）。
  *
- * 一覧・追加・削除・一時停止だけの薄い画面。再現規則は種別のラジオ + 時刻入力で、
- * cron 式の自由入力欄は置かない（読めない人には一切読めない）。
+ * **2 ペイン**（2026-08-30 利用者指示）: 左が一覧 + 「新規作成」、右が入力。
+ * 一覧の予定を選ぶと右ペインへ流し込まれ、**その場で編集して保存できる**
+ * （`update_schedule`）。それまでは作って消すしかなく、検収コマンドを
+ * 1 文字直すにも作り直しだった。
+ *
+ * 下書きは**捨てられる前提**（`RoleDialog` と同じ二層）— 別の予定を選ぶと
+ * 確認なしで上書きされる。dirty 確認は付けない（利用者裁定 2026-08-21 の
+ * `RoleDialog` の判断をそのまま写す — 意図的な破棄の経路にまで確認が生える）。
+ *
+ * 再現規則は種別のラジオ + 時刻入力で、cron 式の自由入力欄は置かない
+ * （読めない人には一切読めない）。
  *
  * **限界の告知が本文にある**: アプリを起動していない間、予定は動かない。
  * 書かずに「毎週木曜 17 時」と名乗るのは、できないことをできると見せる嘘になる
  * （Spec 05 で潰したのと同じ形）。
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
@@ -17,22 +26,19 @@ import { formatError } from "../lib/errorText";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
+  draftFromSchedule,
+  draftValid,
+  emptyDraft,
+  optionsFromDraft,
+  recurrenceFromDraft,
+} from "../lib/scheduleDraft";
+import {
   acceptanceCommandLine,
   acceptanceDisplay,
-  acceptanceFormValid,
-  parseProbeArgs,
   probeCommandLine,
   probeDisplay,
-  probeFormValid,
 } from "../lib/scheduleProbe";
-import {
-  WEEKDAY_LABEL_KEYS,
-  type Recurrence,
-  type ScheduleOptions,
-  type ScheduleView,
-  type SessionMode,
-  type Weekday,
-} from "../types";
+import { WEEKDAY_LABEL_KEYS, type ScheduleView } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -46,128 +52,52 @@ const busy = ref(false);
 /** 読み込み・操作の失敗。SCHEDULE_STORE_BLOCKED（ファイル破損）もここに出る。 */
 const error = ref("");
 
-// ---- 追加フォーム -------------------------------------------------------------
+// ---- 右ペインの状態 ------------------------------------------------------------
 
-const formTo = ref("");
-const formMessage = ref("");
-const formKind = ref<Recurrence["kind"]>("weekly");
-const formWeekday = ref<Weekday>("thu");
-const formHour = ref(17);
-const formMinute = ref(0);
-const formEveryMinutes = ref(60);
-
-// ---- 前判定と前後処理（Spec 28） -----------------------------------------------
-
-/** 前判定を付けるか。**既定は付けない** — 既存の予定と同じ挙動から始まる。 */
-const formProbeOn = ref(false);
-const formCommand = ref("");
-/** 引数は **1 行 1 引数**。空白区切りにするとシェルの引用規則が要る（Spec 15 P4）。 */
-const formArgs = ref("");
-const formExpect = ref("");
-const formTimeout = ref(60);
-const formCwd = ref("");
-const formSessionMode = ref<SessionMode>("continue");
-const formSummarizeAfter = ref(false);
-
-// ---- 後判定（Spec 46） ---------------------------------------------------------
-
-/** 後判定を付けるか。**既定は付けない** — 既存の予定と同じ挙動から始まる。 */
-const formAcceptanceOn = ref(false);
-const formAccCommand = ref("");
-const formAccArgs = ref("");
-const formAccExpect = ref("");
-const formAccTimeout = ref(60);
-const formAccCwd = ref("");
-/** 再依頼を含めた総試行回数。既定 2 = 出し直し 1 回（コア側の既定と同じ）。 */
-const formAccMaxAttempts = ref(2);
+/** 右ペインの形。none = 何も選んでいない / new = 新規登録 / edit = 既存の編集。 */
+const panel = ref<"none" | "new" | "edit">("none");
+/** 編集中の予定の ID（`panel === "edit"` のときだけ意味を持つ）。 */
+const selectedId = ref<string | null>(null);
+/** フォームの下書き。変換の規則は `lib/scheduleDraft.ts`（純関数）が持つ。 */
+const draft = reactive(emptyDraft());
 
 const agents = computed(() => state.agents);
+const selected = computed(
+  () => schedules.value.find((task) => task.id === selectedId.value) ?? null,
+);
+const valid = computed(() => draftValid(draft));
 
-/** フォームが送信できる状態か。数値の範囲は Rust 側でも検証される（二重化）。 */
-const formValid = computed(() => {
-  if (!formTo.value || !formMessage.value.trim()) return false;
-  // 前判定を付けるなら、コマンドと合図は必須（コア側も読み込みで弾く）。
-  if (
-    formProbeOn.value &&
-    !probeFormValid({
-      command: formCommand.value,
-      expect: formExpect.value,
-      timeoutSecs: formTimeout.value,
-    })
-  ) {
-    return false;
-  }
-  // 後判定も同じ述語 + 試行回数の値域（コア側も読み込みで弾く）。
-  if (
-    formAcceptanceOn.value &&
-    !acceptanceFormValid({
-      command: formAccCommand.value,
-      expect: formAccExpect.value,
-      timeoutSecs: formAccTimeout.value,
-      maxAttempts: formAccMaxAttempts.value,
-    })
-  ) {
-    return false;
-  }
-  if (formKind.value === "interval") return formEveryMinutes.value >= 1;
-  return (
-    formHour.value >= 0 &&
-    formHour.value <= 23 &&
-    formMinute.value >= 0 &&
-    formMinute.value <= 59
-  );
-});
-
-/** 送信する追加指定。**既定のままの欄も送る** — 受け側が既定へ畳む。 */
-function buildOptions(): ScheduleOptions {
-  return {
-    probe: formProbeOn.value
-      ? {
-          command: formCommand.value.trim(),
-          args: parseProbeArgs(formArgs.value),
-          expect: formExpect.value.trim(),
-          timeoutSecs: Math.floor(formTimeout.value),
-          cwd: formCwd.value.trim() || null,
-        }
-      : null,
-    sessionMode: formSessionMode.value,
-    summarizeAfter: formSummarizeAfter.value,
-    acceptance: formAcceptanceOn.value
-      ? {
-          command: formAccCommand.value.trim(),
-          args: parseProbeArgs(formAccArgs.value),
-          expect: formAccExpect.value.trim(),
-          timeoutSecs: Math.floor(formAccTimeout.value),
-          cwd: formAccCwd.value.trim() || null,
-          maxAttempts: Math.floor(formAccMaxAttempts.value),
-        }
-      : null,
-  };
+/** 新規登録を始める。下書きは初期値へ戻す（前の下書きは捨てられる前提）。 */
+function startNew(): void {
+  selectedId.value = null;
+  panel.value = "new";
+  Object.assign(draft, emptyDraft());
 }
 
-function buildRecurrence(): Recurrence {
-  switch (formKind.value) {
-    case "interval":
-      return { kind: "interval", everyMinutes: Math.floor(formEveryMinutes.value) };
-    case "daily":
-      return { kind: "daily", hour: formHour.value, minute: formMinute.value };
-    case "weekly":
-      return {
-        kind: "weekly",
-        weekday: formWeekday.value,
-        hour: formHour.value,
-        minute: formMinute.value,
-      };
-  }
+/** 一覧の予定を選んで編集を始める。 */
+function select(task: ScheduleView): void {
+  selectedId.value = task.id;
+  panel.value = "edit";
+  Object.assign(draft, draftFromSchedule(task));
 }
 
 // ---- 操作 ----------------------------------------------------------------------
+
+/** 一覧の取り直し（load と定期 pull が共有する 1 実装）。 */
+async function refreshList(): Promise<void> {
+  schedules.value = await ipc.listSchedules();
+  // 選んでいた予定が消えていたら（外部の削除・破損）、右ペインを畳む。
+  if (panel.value === "edit" && !selected.value) {
+    panel.value = "none";
+    selectedId.value = null;
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    schedules.value = await ipc.listSchedules();
+    await refreshList();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
@@ -178,21 +108,57 @@ async function load(): Promise<void> {
 
 onMounted(load);
 
+// 開いている間、10 秒ごとに一覧を取り直す（黒板タブと同じ pull —
+// 表示中だけ・push 注入なし）。発火の結果（直近の判定・検収）はダイアログを
+// 開いたまま動くので、取り直さないと「走ったのに画面が沈黙する」
+// （検収 4 の実機で踏んだ）。**下書きには触れない** — 更新するのは一覧と、
+// そこから引かれる右ペインの状態表示だけ。
+const pullTimer = setInterval(() => {
+  if (busy.value || loading.value) return;
+  // 静かな取り直し。失敗は次の周期に任せる（エラー表示で入力を邪魔しない）。
+  refreshList().catch(() => {});
+}, 10_000);
+onUnmounted(() => clearInterval(pullTimer));
+
 async function add(): Promise<void> {
-  if (!formValid.value || busy.value) return;
+  if (!valid.value || busy.value) return;
   busy.value = true;
   error.value = "";
   try {
-    await ipc.createSchedule(
-      formTo.value,
-      formMessage.value.trim(),
-      buildRecurrence(),
-      buildOptions(),
+    const created = await ipc.createSchedule(
+      draft.to,
+      draft.message.trim(),
+      recurrenceFromDraft(draft),
+      optionsFromDraft(draft),
     );
-    formMessage.value = "";
-    // **前判定の欄は残す。** 似た監視をもう 1 件足す使い方が普通で、
-    // 毎回コマンドを打ち直させるのは手間を増やすだけ。
     await load();
+    // 作った予定をそのまま選んで編集モードへ — 保存された形（承認状態・
+    // 次回の発火）がその場で読め、直したければそのまま保存できる。
+    const stored = schedules.value.find((task) => task.id === created.id);
+    if (stored) select(stored);
+  } catch (e) {
+    const payload = ipc.toErrorPayload(e);
+    error.value = formatError(payload);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function save(): Promise<void> {
+  if (!valid.value || busy.value || !selectedId.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await ipc.updateSchedule(
+      selectedId.value,
+      draft.to,
+      draft.message.trim(),
+      recurrenceFromDraft(draft),
+      optionsFromDraft(draft),
+    );
+    await load();
+    // 保存された形（トリム済みの引数など）を流し込み直す。
+    if (selected.value) Object.assign(draft, draftFromSchedule(selected.value));
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
     error.value = formatError(payload);
@@ -217,6 +183,8 @@ async function remove(task: ScheduleView): Promise<void> {
   error.value = "";
   try {
     await ipc.deleteSchedule(task.id);
+    panel.value = "none";
+    selectedId.value = null;
     await load();
   } catch (e) {
     const payload = ipc.toErrorPayload(e);
@@ -328,7 +296,7 @@ function formatNextDue(task: ScheduleView): string {
     @click.self="emit('close')"
   >
     <div
-      class="flex h-[640px] w-[760px] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
+      class="flex h-[680px] w-[1000px] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
         <h2 class="flex-1 font-semibold">{{ $t("schedule.title") }}</h2>
@@ -342,377 +310,421 @@ function formatNextDue(task: ScheduleView): string {
         {{ $t("schedule.noticeCatchUp") }}
       </p>
 
-      <div class="min-h-0 flex-1 overflow-y-auto p-3">
-        <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">
-          {{ $t("schedule.loading") }}
-        </p>
+      <p
+        v-if="error"
+        class="selectable shrink-0 border-b border-fail/50 bg-surface-0 px-3 py-2 text-[11px] text-fail"
+      >
+        {{ error }}
+      </p>
 
-        <template v-else>
-          <p v-if="error" class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-[11px] text-fail">
-            {{ error }}
-          </p>
-
-          <!-- 一覧 -->
-          <h3 class="mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("schedule.listHeading") }}</h3>
-          <p v-if="!schedules.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            {{ $t("schedule.empty") }}
-          </p>
-          <ul v-else class="space-y-2">
-            <li
-              v-for="task in schedules"
-              :key="task.id"
-              class="rounded border border-line bg-surface-0 p-2 text-[11px]"
-              :class="{ 'opacity-60': !task.enabled }"
+      <div class="flex min-h-0 flex-1 text-[11px]">
+        <!-- 左ペイン: 新規作成 + 一覧 -->
+        <aside class="flex w-[300px] shrink-0 flex-col border-r border-line">
+          <div class="shrink-0 border-b border-line p-2">
+            <button
+              class="w-full rounded bg-accent px-3 py-1.5 font-medium text-surface-0 hover:opacity-90"
+              @click="startNew"
             >
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-ink">{{ agentLabel(task.to) }}</span>
-                <span class="rounded bg-surface-1 px-1.5 py-0.5 text-ink-dim">
-                  {{ task.recurrenceLabel }}
-                </span>
-                <span
-                  class="ml-auto text-ink-dim"
-                  :title="task.enabled ? $t('schedule.nextDueTitle') : $t('schedule.pausedTitle')"
-                >
-                  {{ $t("schedule.nextDue", { time: formatNextDue(task) }) }}
-                </span>
-              </div>
-              <p class="mt-1 truncate text-ink-dim" :title="task.message">
-                {{ task.message }}
-              </p>
-
-              <!-- 前判定と前後処理（Spec 28）。付いている予定にだけ出す。 -->
-              <div v-if="task.probe" class="mt-1.5 rounded border border-line bg-surface-1 p-1.5">
-                <div class="flex items-center gap-1.5">
-                  <span class="shrink-0 text-ink-dim">{{ $t("schedule.probeLabel") }}</span>
-                  <code class="selectable truncate font-mono text-ink" :title="probeCommandLine(task)">
-                    {{ probeCommandLine(task) }}
-                  </code>
-                </div>
-                <div class="mt-1 flex items-center gap-1.5 text-ink-dim">
-                  <span>{{ $t("schedule.probeExpect", { expect: task.probe.expect }) }}</span>
-                  <span class="ml-auto">{{ lastProbeLabel(task) }}</span>
-                </div>
-                <!--
-                  未承認は「動かないが理由が分からない」を防ぐための表示。
-                  **コマンド行は上に出ている**ので、押す前に中身が読める。
-                -->
+              {{ $t("schedule.new") }}
+            </button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-2">
+            <p v-if="loading" class="py-8 text-center text-ink-dim">
+              {{ $t("schedule.loading") }}
+            </p>
+            <p
+              v-else-if="!schedules.length"
+              class="rounded border border-line bg-surface-0 p-3 text-ink-dim"
+            >
+              {{ $t("schedule.empty") }}
+            </p>
+            <ul v-else class="space-y-1.5">
+              <!--
+                行は button ではなく div + click（一時停止ボタンを行の中に
+                置くため — button の入れ子は HTML として不正で、クリックの
+                届き先も環境で割れる）。
+              -->
+              <li v-for="task in schedules" :key="task.id">
                 <div
-                  v-if="!task.probeApproved"
-                  class="mt-1.5 flex items-center gap-2 rounded border border-warn/50 bg-surface-0 p-1.5"
+                  class="w-full cursor-pointer rounded border bg-surface-0 p-2 text-left"
+                  :class="[
+                    task.id === selectedId ? 'border-accent' : 'border-line hover:border-accent/50',
+                    { 'opacity-60': !task.enabled },
+                  ]"
+                  @click="select(task)"
                 >
-                  <span class="flex-1 text-warn">{{ $t("schedule.probeUnapproved") }}</span>
-                  <button
-                    class="shrink-0 rounded border border-warn px-2 py-0.5 text-warn hover:bg-warn hover:text-surface-0 disabled:opacity-40"
-                    :disabled="busy"
-                    @click="approveProbe(task)"
-                  >
-                    {{ $t("schedule.approve") }}
-                  </button>
+                  <div class="flex items-center gap-1.5">
+                    <span class="truncate font-medium text-ink">{{ agentLabel(task.to) }}</span>
+                    <span class="ml-auto shrink-0 rounded bg-surface-1 px-1.5 py-0.5 text-ink-dim">
+                      {{ task.recurrenceLabel }}
+                    </span>
+                  </div>
+                  <p class="mt-1 truncate text-ink-dim" :title="task.message">
+                    {{ task.message }}
+                  </p>
+                  <div class="mt-1 flex flex-wrap items-center gap-1.5 text-ink-dim">
+                    <span>{{ $t("schedule.nextDue", { time: formatNextDue(task) }) }}</span>
+                    <span v-if="task.probe" class="rounded bg-surface-1 px-1 py-0.5">
+                      {{ $t("schedule.probeBadge") }}
+                    </span>
+                    <span v-if="task.acceptance" class="rounded bg-surface-1 px-1 py-0.5">
+                      {{ $t("schedule.acceptanceBadge") }}
+                    </span>
+                    <!-- 未承認は一覧でも見せる — 開かないと気づけない形にしない。 -->
+                    <span
+                      v-if="!task.probeApproved || !task.acceptanceApproved"
+                      class="rounded border border-warn/50 px-1 py-0.5 text-warn"
+                    >
+                      {{ $t("schedule.needsApproval") }}
+                    </span>
+                    <!-- @click.stop: 一時停止のつもりで選択まで動かさない。 -->
+                    <button
+                      class="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent disabled:opacity-40"
+                      :disabled="busy"
+                      @click.stop="toggleEnabled(task)"
+                    >
+                      {{ task.enabled ? $t("schedule.pause") : $t("schedule.resume") }}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </li>
+            </ul>
+          </div>
+        </aside>
 
-              <!-- 後判定（Spec 46）。付いている予定にだけ出す。前判定と同じ器。 -->
-              <div v-if="task.acceptance" class="mt-1.5 rounded border border-line bg-surface-1 p-1.5">
-                <div class="flex items-center gap-1.5">
-                  <span class="shrink-0 text-ink-dim">{{ $t("schedule.acceptanceLabel") }}</span>
-                  <code class="selectable truncate font-mono text-ink" :title="acceptanceCommandLine(task)">
-                    {{ acceptanceCommandLine(task) }}
-                  </code>
-                </div>
-                <div class="mt-1 flex items-center gap-1.5 text-ink-dim">
-                  <span>{{
-                    $t("schedule.acceptanceMeta", {
-                      expect: task.acceptance.expect,
-                      max: task.acceptance.maxAttempts,
-                    })
-                  }}</span>
-                  <span class="ml-auto">{{ lastAcceptanceLabel(task) }}</span>
-                </div>
-                <div
-                  v-if="!task.acceptanceApproved"
-                  class="mt-1.5 flex items-center gap-2 rounded border border-warn/50 bg-surface-0 p-1.5"
-                >
-                  <span class="flex-1 text-warn">{{ $t("schedule.acceptanceUnapproved") }}</span>
-                  <button
-                    class="shrink-0 rounded border border-warn px-2 py-0.5 text-warn hover:bg-warn hover:text-surface-0 disabled:opacity-40"
-                    :disabled="busy"
-                    @click="approveProbe(task)"
-                  >
-                    {{ $t("schedule.approve") }}
-                  </button>
-                </div>
-              </div>
-
-              <p
-                v-if="task.sessionMode === 'fresh' || task.summarizeAfter"
-                class="mt-1 text-ink-dim"
-              >
-                <span v-if="task.sessionMode === 'fresh'">{{ $t("schedule.freshBadge") }}</span>
-                <span v-if="task.sessionMode === 'fresh' && task.summarizeAfter"> · </span>
-                <span v-if="task.summarizeAfter">{{ $t("schedule.summarizeBadge") }}</span>
-              </p>
-
-              <div class="mt-1.5 flex items-center gap-2">
-                <button
-                  class="rounded border border-line px-2 py-0.5 hover:border-accent hover:text-accent disabled:opacity-40"
-                  :disabled="busy"
-                  @click="toggleEnabled(task)"
-                >
-                  {{ task.enabled ? $t("schedule.pause") : $t("schedule.resume") }}
-                </button>
-                <button
-                  class="rounded border border-line px-2 py-0.5 text-fail hover:border-fail disabled:opacity-40"
-                  :disabled="busy"
-                  @click="remove(task)"
-                >
-                  {{ $t("schedule.delete") }}
-                </button>
-              </div>
-            </li>
-          </ul>
-
-          <!-- 追加フォーム -->
-          <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("schedule.addHeading") }}</h3>
-          <p v-if="!agents.length" class="rounded border border-line bg-surface-0 p-3 text-[11px] text-ink-dim">
-            {{ $t("schedule.noAgents") }}
+        <!-- 右ペイン: 入力（新規 / 編集） -->
+        <section class="min-h-0 flex-1 overflow-y-auto p-3">
+          <p v-if="panel === 'none'" class="py-10 text-center text-ink-dim">
+            {{ $t("schedule.selectPrompt") }}
           </p>
-          <div v-else class="space-y-2 rounded border border-line bg-surface-0 p-3 text-[11px]">
-            <label class="flex items-center gap-2">
-              <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.to") }}</span>
-              <select
-                v-model="formTo"
-                class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+
+          <template v-else>
+            <h3 class="mb-2 font-semibold text-ink-dim">
+              {{ panel === "new" ? $t("schedule.addHeading") : $t("schedule.editHeading") }}
+            </h3>
+
+            <!-- 編集モードだけ: 保存済みの状態（次回・直近の判定・承認）。 -->
+            <div v-if="panel === 'edit' && selected" class="mb-2 space-y-1.5">
+              <div class="space-y-0.5 rounded border border-line bg-surface-0 p-2 text-ink-dim">
+                <div>{{ $t("schedule.nextDue", { time: formatNextDue(selected) }) }}</div>
+                <div v-if="selected.probe">
+                  {{ $t("schedule.probeLabel") }} {{ lastProbeLabel(selected) }}
+                </div>
+                <div v-if="selected.acceptance">
+                  {{ $t("schedule.acceptanceLabel") }} {{ lastAcceptanceLabel(selected) }}
+                </div>
+              </div>
+              <!--
+                未承認は「動かないが理由が分からない」を防ぐための表示。
+                コマンド行は承認の確認ダイアログが原文を出す。
+              -->
+              <div
+                v-if="!selected.probeApproved || !selected.acceptanceApproved"
+                class="flex items-center gap-2 rounded border border-warn/50 bg-surface-0 p-2"
               >
-                <option value="" disabled>{{ $t("schedule.selectServant") }}</option>
-                <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-                  {{ $t("schedule.agentLabel", { id: agent.id, name: agent.name }) }}
-                </option>
-              </select>
-            </label>
-
-            <label class="flex items-start gap-2">
-              <span class="w-14 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.request") }}</span>
-              <textarea
-                v-model="formMessage"
-                rows="2"
-                :placeholder="$t('schedule.requestPlaceholder')"
-                class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
-              />
-            </label>
-
-            <div class="flex items-center gap-2">
-              <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.recurrence") }}</span>
-              <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="weekly" /> {{ $t("schedule.weekly") }}
-              </label>
-              <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="daily" /> {{ $t("schedule.daily") }}
-              </label>
-              <label class="flex items-center gap-1">
-                <input v-model="formKind" type="radio" value="interval" /> {{ $t("schedule.interval") }}
-              </label>
+                <span class="flex-1 space-y-0.5 text-warn">
+                  <p v-if="!selected.probeApproved">{{ $t("schedule.probeUnapproved") }}</p>
+                  <p v-if="!selected.acceptanceApproved">
+                    {{ $t("schedule.acceptanceUnapproved") }}
+                  </p>
+                </span>
+                <button
+                  class="shrink-0 rounded border border-warn px-2 py-0.5 text-warn hover:bg-warn hover:text-surface-0 disabled:opacity-40"
+                  :disabled="busy"
+                  @click="approveProbe(selected)"
+                >
+                  {{ $t("schedule.approve") }}
+                </button>
+              </div>
             </div>
 
-            <div class="flex items-center gap-2 pl-16">
-              <template v-if="formKind === 'weekly'">
+            <p
+              v-if="!agents.length"
+              class="rounded border border-line bg-surface-0 p-3 text-ink-dim"
+            >
+              {{ $t("schedule.noAgents") }}
+            </p>
+            <div v-else class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-center gap-2">
+                <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.to") }}</span>
                 <select
-                  v-model="formWeekday"
-                  class="rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  v-model="draft.to"
+                  class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                 >
-                  <option v-for="(labelKey, value) in WEEKDAY_LABEL_KEYS" :key="value" :value="value">
-                    {{ $t(labelKey) }}
+                  <option value="" disabled>{{ $t("schedule.selectServant") }}</option>
+                  <option v-for="agent in agents" :key="agent.id" :value="agent.id">
+                    {{ $t("schedule.agentLabel", { id: agent.id, name: agent.name }) }}
                   </option>
                 </select>
-              </template>
-              <template v-if="formKind !== 'interval'">
-                <input
-                  v-model.number="formHour"
-                  type="number"
-                  min="0"
-                  max="23"
-                  class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
-                />
-                <span class="text-ink-dim">{{ $t("schedule.hourSuffix") }}</span>
-                <input
-                  v-model.number="formMinute"
-                  type="number"
-                  min="0"
-                  max="59"
-                  class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
-                />
-                <span class="text-ink-dim">{{ $t("schedule.minuteSuffix") }}</span>
-              </template>
-              <template v-else>
-                <input
-                  v-model.number="formEveryMinutes"
-                  type="number"
-                  min="1"
-                  class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
-                />
-                <span class="text-ink-dim">{{ $t("schedule.everyMinutesSuffix") }}</span>
-              </template>
-            </div>
-
-            <!-- 前判定（Spec 28）。既定は付けない = 既存の予定と同じ挙動。 -->
-            <div class="border-t border-line pt-2">
-              <label class="flex items-center gap-2">
-                <input v-model="formProbeOn" type="checkbox" />
-                <span class="font-medium text-ink">{{ $t("schedule.probeToggle") }}</span>
               </label>
-              <p class="mt-1 pl-6 text-ink-dim">{{ $t("schedule.probeHint") }}</p>
 
-              <div v-if="formProbeOn" class="mt-2 space-y-2 pl-6">
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCommand") }}</span>
-                  <input
-                    v-model="formCommand"
-                    :placeholder="$t('schedule.probeCommandPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
+              <label class="flex items-start gap-2">
+                <span class="w-14 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.request") }}</span>
+                <textarea
+                  v-model="draft.message"
+                  rows="2"
+                  :placeholder="$t('schedule.requestPlaceholder')"
+                  class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                />
+              </label>
+
+              <div class="flex items-center gap-2">
+                <span class="w-14 shrink-0 text-ink-dim">{{ $t("schedule.recurrence") }}</span>
+                <label class="flex items-center gap-1">
+                  <input v-model="draft.kind" type="radio" value="weekly" />
+                  {{ $t("schedule.weekly") }}
                 </label>
-
-                <label class="flex items-start gap-2">
-                  <span class="w-20 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.probeArgs") }}</span>
-                  <textarea
-                    v-model="formArgs"
-                    rows="2"
-                    :placeholder="$t('schedule.probeArgsPlaceholder')"
-                    class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
+                <label class="flex items-center gap-1">
+                  <input v-model="draft.kind" type="radio" value="daily" />
+                  {{ $t("schedule.daily") }}
                 </label>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeExpectLabel") }}</span>
-                  <input
-                    v-model="formExpect"
-                    :placeholder="$t('schedule.probeExpectPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
-                </label>
-                <p class="pl-20 text-ink-dim">{{ $t("schedule.probeExpectHint") }}</p>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeTimeout") }}</span>
-                  <input
-                    v-model.number="formTimeout"
-                    type="number"
-                    min="1"
-                    max="3600"
-                    class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
-                  />
-                  <span class="text-ink-dim">{{ $t("schedule.probeTimeoutSuffix") }}</span>
-                </label>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
-                  <input
-                    v-model="formCwd"
-                    :placeholder="$t('schedule.probeCwdPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
+                <label class="flex items-center gap-1">
+                  <input v-model="draft.kind" type="radio" value="interval" />
+                  {{ $t("schedule.interval") }}
                 </label>
               </div>
-            </div>
 
-            <!-- 後判定（Spec 46）。既定は付けない = 既存の予定と同じ挙動。 -->
-            <div class="border-t border-line pt-2">
-              <label class="flex items-center gap-2">
-                <input v-model="formAcceptanceOn" type="checkbox" />
-                <span class="font-medium text-ink">{{ $t("schedule.acceptanceToggle") }}</span>
-              </label>
-              <p class="mt-1 pl-6 text-ink-dim">{{ $t("schedule.acceptanceHint") }}</p>
-
-              <div v-if="formAcceptanceOn" class="mt-2 space-y-2 pl-6">
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCommand") }}</span>
+              <div class="flex items-center gap-2 pl-16">
+                <template v-if="draft.kind === 'weekly'">
+                  <select
+                    v-model="draft.weekday"
+                    class="rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  >
+                    <option
+                      v-for="(labelKey, value) in WEEKDAY_LABEL_KEYS"
+                      :key="value"
+                      :value="value"
+                    >
+                      {{ $t(labelKey) }}
+                    </option>
+                  </select>
+                </template>
+                <template v-if="draft.kind !== 'interval'">
                   <input
-                    v-model="formAccCommand"
-                    :placeholder="$t('schedule.probeCommandPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
-                </label>
-
-                <label class="flex items-start gap-2">
-                  <span class="w-20 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.probeArgs") }}</span>
-                  <textarea
-                    v-model="formAccArgs"
-                    rows="2"
-                    :placeholder="$t('schedule.probeArgsPlaceholder')"
-                    class="flex-1 resize-none rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
-                </label>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeExpectLabel") }}</span>
-                  <input
-                    v-model="formAccExpect"
-                    :placeholder="$t('schedule.probeExpectPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
-                </label>
-                <p class="pl-20 text-ink-dim">{{ $t("schedule.acceptanceExpectHint") }}</p>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.acceptanceMaxAttempts") }}</span>
-                  <input
-                    v-model.number="formAccMaxAttempts"
+                    v-model.number="draft.hour"
                     type="number"
-                    min="1"
-                    max="5"
+                    min="0"
+                    max="23"
                     class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                   />
-                  <span class="text-ink-dim">{{ $t("schedule.acceptanceMaxAttemptsSuffix") }}</span>
-                </label>
-
-                <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeTimeout") }}</span>
+                  <span class="text-ink-dim">{{ $t("schedule.hourSuffix") }}</span>
                   <input
-                    v-model.number="formAccTimeout"
+                    v-model.number="draft.minute"
+                    type="number"
+                    min="0"
+                    max="59"
+                    class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                  />
+                  <span class="text-ink-dim">{{ $t("schedule.minuteSuffix") }}</span>
+                </template>
+                <template v-else>
+                  <input
+                    v-model.number="draft.everyMinutes"
                     type="number"
                     min="1"
-                    max="3600"
                     class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
                   />
-                  <span class="text-ink-dim">{{ $t("schedule.probeTimeoutSuffix") }}</span>
-                </label>
+                  <span class="text-ink-dim">{{ $t("schedule.everyMinutesSuffix") }}</span>
+                </template>
+              </div>
 
+              <!-- 前判定（Spec 28）。既定は付けない = 既存の予定と同じ挙動。 -->
+              <div class="border-t border-line pt-2">
                 <label class="flex items-center gap-2">
-                  <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
-                  <input
-                    v-model="formAccCwd"
-                    :placeholder="$t('schedule.probeCwdPlaceholder')"
-                    class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
-                  />
+                  <input v-model="draft.probeOn" type="checkbox" />
+                  <span class="font-medium text-ink">{{ $t("schedule.probeToggle") }}</span>
                 </label>
+                <p class="mt-1 pl-6 text-ink-dim">{{ $t("schedule.probeHint") }}</p>
+
+                <div v-if="draft.probeOn" class="mt-2 space-y-2 pl-6">
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCommand") }}</span>
+                    <input
+                      v-model="draft.probeCommand"
+                      :placeholder="$t('schedule.probeCommandPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label class="flex items-start gap-2">
+                    <span class="w-20 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.probeArgs") }}</span>
+                    <!-- 1 行 1 引数の欄なので広め + 縦だけ伸ばせる（依頼文と違い
+                         行の数がそのまま argv の数 — 見切れると引数が数えられない）。 -->
+                    <textarea
+                      v-model="draft.probeArgs"
+                      rows="4"
+                      :placeholder="$t('schedule.probeArgsPlaceholder')"
+                      class="flex-1 resize-y rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeExpectLabel") }}</span>
+                    <input
+                      v-model="draft.probeExpect"
+                      :placeholder="$t('schedule.probeExpectPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+                  <p class="pl-20 text-ink-dim">{{ $t("schedule.probeExpectHint") }}</p>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeTimeout") }}</span>
+                    <input
+                      v-model.number="draft.probeTimeout"
+                      type="number"
+                      min="1"
+                      max="3600"
+                      class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                    />
+                    <span class="text-ink-dim">{{ $t("schedule.probeTimeoutSuffix") }}</span>
+                  </label>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
+                    <input
+                      v-model="draft.probeCwd"
+                      :placeholder="$t('schedule.probeCwdPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <!-- 後判定（Spec 46）。既定は付けない = 既存の予定と同じ挙動。 -->
+              <div class="border-t border-line pt-2">
+                <label class="flex items-center gap-2">
+                  <input v-model="draft.acceptanceOn" type="checkbox" />
+                  <span class="font-medium text-ink">{{ $t("schedule.acceptanceToggle") }}</span>
+                </label>
+                <p class="mt-1 pl-6 text-ink-dim">{{ $t("schedule.acceptanceHint") }}</p>
+
+                <div v-if="draft.acceptanceOn" class="mt-2 space-y-2 pl-6">
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCommand") }}</span>
+                    <input
+                      v-model="draft.accCommand"
+                      :placeholder="$t('schedule.probeCommandPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label class="flex items-start gap-2">
+                    <span class="w-20 shrink-0 pt-1 text-ink-dim">{{ $t("schedule.probeArgs") }}</span>
+                    <!-- 前判定の引数欄と同じ理由で広め + 縦だけ伸ばせる。 -->
+                    <textarea
+                      v-model="draft.accArgs"
+                      rows="4"
+                      :placeholder="$t('schedule.probeArgsPlaceholder')"
+                      class="flex-1 resize-y rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeExpectLabel") }}</span>
+                    <input
+                      v-model="draft.accExpect"
+                      :placeholder="$t('schedule.probeExpectPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+                  <p class="pl-20 text-ink-dim">{{ $t("schedule.acceptanceExpectHint") }}</p>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">
+                      {{ $t("schedule.acceptanceMaxAttempts") }}
+                    </span>
+                    <input
+                      v-model.number="draft.accMaxAttempts"
+                      type="number"
+                      min="1"
+                      max="5"
+                      class="w-14 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                    />
+                    <span class="text-ink-dim">{{ $t("schedule.acceptanceMaxAttemptsSuffix") }}</span>
+                  </label>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeTimeout") }}</span>
+                    <input
+                      v-model.number="draft.accTimeout"
+                      type="number"
+                      min="1"
+                      max="3600"
+                      class="w-20 rounded border border-line bg-surface-1 px-2 py-1 outline-none focus:border-accent"
+                    />
+                    <span class="text-ink-dim">{{ $t("schedule.probeTimeoutSuffix") }}</span>
+                  </label>
+
+                  <label class="flex items-center gap-2">
+                    <span class="w-20 shrink-0 text-ink-dim">{{ $t("schedule.probeCwd") }}</span>
+                    <input
+                      v-model="draft.accCwd"
+                      :placeholder="$t('schedule.probeCwdPlaceholder')"
+                      class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono outline-none focus:border-accent"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <!-- 前後処理（Spec 28）。向きが逆なので性質を書き分ける。 -->
+              <div class="space-y-1 border-t border-line pt-2">
+                <label class="flex items-center gap-2">
+                  <input
+                    v-model="draft.sessionMode"
+                    type="checkbox"
+                    true-value="fresh"
+                    false-value="continue"
+                  />
+                  <span class="font-medium text-ink">{{ $t("schedule.freshToggle") }}</span>
+                </label>
+                <p class="pl-6 text-ink-dim">{{ $t("schedule.freshHint") }}</p>
+
+                <label class="flex items-center gap-2 pt-1">
+                  <input v-model="draft.summarizeAfter" type="checkbox" />
+                  <span class="font-medium text-ink">{{ $t("schedule.summarizeToggle") }}</span>
+                </label>
+                <p class="pl-6 text-ink-dim">{{ $t("schedule.summarizeHint") }}</p>
+              </div>
+
+              <div class="flex items-center gap-2 border-t border-line pt-2">
+                <!-- 編集モードだけ: 一時停止と削除（対象は保存済みの側）。 -->
+                <template v-if="panel === 'edit' && selected">
+                  <button
+                    class="rounded border border-line px-2 py-0.5 hover:border-accent hover:text-accent disabled:opacity-40"
+                    :disabled="busy"
+                    @click="toggleEnabled(selected)"
+                  >
+                    {{ selected.enabled ? $t("schedule.pause") : $t("schedule.resume") }}
+                  </button>
+                  <button
+                    class="rounded border border-line px-2 py-0.5 text-fail hover:border-fail disabled:opacity-40"
+                    :disabled="busy"
+                    @click="remove(selected)"
+                  >
+                    {{ $t("schedule.delete") }}
+                  </button>
+                </template>
+                <button
+                  v-if="panel === 'new'"
+                  class="ml-auto rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!valid || busy"
+                  @click="add"
+                >
+                  {{ busy ? $t("schedule.adding") : $t("schedule.add") }}
+                </button>
+                <button
+                  v-else
+                  class="ml-auto rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
+                  :disabled="!valid || busy"
+                  @click="save"
+                >
+                  {{ busy ? $t("schedule.saving") : $t("schedule.save") }}
+                </button>
               </div>
             </div>
-
-            <!-- 前後処理（Spec 28）。向きが逆なので性質を書き分ける。 -->
-            <div class="space-y-1 border-t border-line pt-2">
-              <label class="flex items-center gap-2">
-                <input v-model="formSessionMode" type="checkbox" true-value="fresh" false-value="continue" />
-                <span class="font-medium text-ink">{{ $t("schedule.freshToggle") }}</span>
-              </label>
-              <p class="pl-6 text-ink-dim">{{ $t("schedule.freshHint") }}</p>
-
-              <label class="flex items-center gap-2 pt-1">
-                <input v-model="formSummarizeAfter" type="checkbox" />
-                <span class="font-medium text-ink">{{ $t("schedule.summarizeToggle") }}</span>
-              </label>
-              <p class="pl-6 text-ink-dim">{{ $t("schedule.summarizeHint") }}</p>
-            </div>
-
-            <div class="flex justify-end">
-              <button
-                class="rounded bg-accent px-3 py-1 font-medium text-surface-0 disabled:opacity-40"
-                :disabled="!formValid || busy"
-                @click="add"
-              >
-                {{ busy ? $t("schedule.adding") : $t("schedule.add") }}
-              </button>
-            </div>
-          </div>
-        </template>
+          </template>
+        </section>
       </div>
     </div>
   </div>

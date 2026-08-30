@@ -865,6 +865,71 @@ impl Orchestrator {
         self.shared.village_id.read().await.clone()
     }
 
+    /// 予定を書き換える（id は不変）。
+    ///
+    /// **保つのは同一性と履歴、差し替えるのは内容。** `id` / `created_at_ms` /
+    /// `last_consumed_due_ms` / `enabled` は据え置く — 消化の記録を捨てると、
+    /// 編集した瞬間に過去の予定時刻が「未消化」へ戻って再発火する。
+    /// 一時停止も編集で黙って解除しない（再開は人の明示操作）。
+    ///
+    /// **直近の判定・検収の表示は消す。** 残すと旧いコマンドの結果が新しい
+    /// 定義の結果として読まれる（器はプロセス寿命の表示専用 — ログは残る）。
+    ///
+    /// **飛行中の因果には触らない。** 走っている前判定・検収の輪は旧設定のまま
+    /// 完走し、次の発火から新設定が効く（予定はメモリ所有 + ファイル投影）。
+    ///
+    /// # Errors
+    /// - 該当 ID が無い場合 [`CoreError::ScheduleNotFound`]
+    /// - 宛先が未登録の場合 [`CoreError::AgentNotFound`]
+    /// - 値が不正な場合 [`CoreError::InvalidSchedule`]（既存の予定は変わらない）
+    /// - `schedules.json` が保護されている場合 [`CoreError::ScheduleStoreBlocked`]
+    pub async fn update_schedule(
+        &self,
+        id: &str,
+        to: AgentId,
+        message: String,
+        recurrence: Recurrence,
+        options: ScheduleOptions,
+    ) -> CoreResult<ScheduledTask> {
+        self.ensure_schedules_writable()?;
+        // 宛先の存在確認は create と同じ規律 — 発火するまで誰も気づかない
+        // 宛先を書かせない（停止中は許す）。
+        self.shared.world.read().await.agent(&to)?;
+
+        let mut schedules = self.shared.schedules.write().await;
+        let task = schedules
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or_else(|| CoreError::ScheduleNotFound(id.to_owned()))?;
+
+        let updated = ScheduledTask {
+            id: task.id.clone(),
+            to,
+            message,
+            recurrence,
+            created_at_ms: task.created_at_ms,
+            last_consumed_due_ms: task.last_consumed_due_ms,
+            enabled: task.enabled,
+            probe: options.probe,
+            session_mode: options.session_mode,
+            summarize_after: options.summarize_after,
+            acceptance: options.acceptance,
+        };
+        // 検証は create と同じ 1 述語。**通らなければ既存の予定に指一本触れない。**
+        updated.validate().map_err(|err| CoreError::InvalidSchedule {
+            reason: err.to_string(),
+        })?;
+        *task = updated.clone();
+        self.shared.store.save_schedules(&schedules).await?;
+        drop(schedules);
+
+        // 表示専用の直近の結末を消す（doc 冒頭の理由）。ID 単位なので、
+        // 他の予定の表示には触れない。
+        self.schedule_runtime.last_probe.lock().await.remove(id);
+        self.schedule_runtime.last_acceptance.lock().await.remove(id);
+        Ok(updated)
+    }
+
     /// 予定を削除する。
     ///
     /// # Errors

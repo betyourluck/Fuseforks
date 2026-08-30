@@ -74,7 +74,10 @@ fn commands_that_change_the_schedule_set_also_prune_approvals() {
     // 再開のたびに承認を押し直させると D10 の目的を超える。
     let mut guarded = Vec::new();
     for (name, body) in &functions {
-        if !body.contains(".create_schedule(") && !body.contains(".delete_schedule(") {
+        if !body.contains(".create_schedule(")
+            && !body.contains(".update_schedule(")
+            && !body.contains(".delete_schedule(")
+        {
             continue;
         }
         guarded.push(name.clone());
@@ -91,7 +94,11 @@ fn commands_that_change_the_schedule_set_also_prune_approvals() {
     guarded.sort();
     assert_eq!(
         guarded,
-        vec!["create_schedule".to_owned(), "delete_schedule".to_owned()],
+        vec![
+            "create_schedule".to_owned(),
+            "delete_schedule".to_owned(),
+            "update_schedule".to_owned(),
+        ],
         "対象の IPC が増減した。増えたなら掃除を通したうえでここへ足す"
     );
 }

@@ -473,3 +473,117 @@ async fn corrupt_file_blocks_writes_but_not_boot() {
     let text = std::fs::read_to_string(dir.0.join("schedules.json")).unwrap();
     assert!(text.contains("これは JSON ではない"));
 }
+
+/// 編集（`update_schedule`）が内容を差し替え、同一性と履歴を保ち、保存へ写る。
+#[tokio::test]
+async fn update_rewrites_content_but_keeps_identity_and_history() {
+    let dir = TempDir::new("update");
+    let orchestrator = setup(&dir).await;
+    let agent = AgentId::from("agent_01");
+    let other = AgentId::from("agent_02");
+    for (id, name) in [(&agent, "ロボットくん"), (&other, "ロボットさん")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+
+    let task = orchestrator
+        .create_schedule(agent.clone(), "点検して".into(), THU_17, ScheduleOptions::default())
+        .await
+        .unwrap();
+    // 履歴（消化）と一時停止を先に作っておく — 編集がこれらを保つことの検査。
+    orchestrator
+        .run_schedule_tick(jst_at(2026, 7, 30, 17, 0, 29))
+        .await;
+    orchestrator.set_schedule_enabled(&task.id, false).await.unwrap();
+    let before = orchestrator.schedules().await.remove(0);
+    assert!(before.last_consumed_due_ms.is_some(), "前提: 消化の記録があること");
+
+    let updated = orchestrator
+        .update_schedule(
+            &task.id,
+            other.clone(),
+            "掃除して".into(),
+            Recurrence::Interval { every_minutes: 5 },
+            ScheduleOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    // 内容は差し替わる。
+    assert_eq!(updated.to, other);
+    assert_eq!(updated.message, "掃除して");
+    assert!(matches!(updated.recurrence, Recurrence::Interval { every_minutes: 5 }));
+    // 同一性と履歴は保つ（消すと編集した瞬間に過去の予定時刻へ再発火する）。
+    assert_eq!(updated.id, task.id, "id は不変");
+    assert_eq!(updated.created_at_ms, before.created_at_ms, "作成時刻は不変");
+    assert_eq!(
+        updated.last_consumed_due_ms, before.last_consumed_due_ms,
+        "消化の記録は不変"
+    );
+    assert!(!updated.enabled, "一時停止は編集で黙って解除しない");
+
+    // in-memory とファイルの両方に写っている。
+    let stored = orchestrator.schedules().await.remove(0);
+    assert_eq!(stored.message, "掃除して");
+    let text = std::fs::read_to_string(dir.0.join("schedules.json")).unwrap();
+    assert!(text.contains("掃除して") && !text.contains("点検して"));
+}
+
+/// 不正な値の編集は既存の予定に指一本触れない。未知 ID は名指しで拒否。
+#[tokio::test]
+async fn invalid_update_leaves_the_stored_task_untouched() {
+    let dir = TempDir::new("update-invalid");
+    let orchestrator = setup(&dir).await;
+    let agent = AgentId::from("agent_01");
+    orchestrator
+        .create_agent(AgentSpec::new(agent.clone(), "ロボットくん", "tpl"))
+        .await
+        .unwrap();
+    let task = orchestrator
+        .create_schedule(agent.clone(), "点検して".into(), THU_17, ScheduleOptions::default())
+        .await
+        .unwrap();
+
+    // 不正な再現規則（interval 0 分）。
+    let err = orchestrator
+        .update_schedule(
+            &task.id,
+            agent.clone(),
+            "掃除して".into(),
+            Recurrence::Interval { every_minutes: 0 },
+            ScheduleOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_SCHEDULE");
+    let stored = orchestrator.schedules().await.remove(0);
+    assert_eq!(stored.message, "点検して", "失敗した編集は何も変えない");
+
+    // 未知 ID。
+    let err = orchestrator
+        .update_schedule(
+            "no-such-id",
+            agent.clone(),
+            "掃除して".into(),
+            THU_17,
+            ScheduleOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "SCHEDULE_NOT_FOUND");
+
+    // 未登録の宛先。
+    let err = orchestrator
+        .update_schedule(
+            &task.id,
+            AgentId::from("ghost"),
+            "掃除して".into(),
+            THU_17,
+            ScheduleOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "AGENT_NOT_FOUND");
+}

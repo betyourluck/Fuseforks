@@ -581,6 +581,21 @@ export const createSchedule = (
 ) => call<ScheduleView>("create_schedule", { to, message, recurrence, options });
 
 /**
+ * 既存の予定を書き換える（id は不変）。
+ *
+ * **編集も「書いた人 = 承認した人」**（`createSchedule` と同じ）— この呼び出しが
+ * 前後の probe の承認も書き、差し替えで参照されなくなった旧コマンドの承認は
+ * 保存後の掃除が落とす。飛行中の因果には触れず、次の発火から新設定が効く。
+ */
+export const updateSchedule = (
+  id: string,
+  to: AgentId,
+  message: string,
+  recurrence: Recurrence,
+  options?: ScheduleOptions,
+) => call<ScheduleView>("update_schedule", { id, to, message, recurrence, options });
+
+/**
  * 既存の予定の前判定を、この端末で実行してよいと承認する（Spec 28 D10）。
  *
  * 配られた村・手で書いた `schedules.json` の前判定はここを通るまで走らない。
