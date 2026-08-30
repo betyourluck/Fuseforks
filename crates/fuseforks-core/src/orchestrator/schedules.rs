@@ -45,7 +45,26 @@ pub(super) fn spawn_schedule_ticker(
                         runtime.in_flight.lock().await.remove(&agent_id);
                         // 根のターンが終わった = この因果で待った相手は全員
                         // 答え終わっている（`ask` / `plan` は答えを待って初めて
-                        // 呼び出し元のターンが進むため）。ここが自動要約の起点。
+                        // 呼び出し元のターンが進むため）。
+                        //
+                        // **受け手は 1 本・後判定が先（Spec 46 D2 の直列）。**
+                        // 後判定つきの予定は配送時に `pending_acceptances` へだけ
+                        // 登録されるので、ここの 2 つの取り出しは構造的に排他 —
+                        // 要約は後判定ループが確定させてから走る。
+                        let acceptance =
+                            runtime.pending_acceptances.lock().await.remove(&agent_id);
+                        if let Some(state) = acceptance {
+                            if let Some(shared) = shared.upgrade() {
+                                // **切り離す。** 検収コマンドは timeoutSecs
+                                // （上限 3600 秒）まで走りうる（前判定と同じ理由）。
+                                let runtime = Arc::clone(&runtime);
+                                tokio::spawn(async move {
+                                    acceptance_step(&shared, &runtime, state).await;
+                                });
+                            }
+                            continue;
+                        }
+                        // ここが自動要約の起点（後判定なしの予定）。
                         let pending = runtime.pending_summaries.lock().await.remove(&agent_id);
                         if let Some(participants) = pending
                             && let Some(shared) = shared.upgrade()
@@ -66,6 +85,10 @@ pub(super) fn spawn_schedule_ticker(
                         // **要約待ちも一緒に捨てる。** 完了の合図を取りこぼした以上、
                         // 待ち続けても起点は二度と来ない。要約は次の発火でやり直せる。
                         runtime.pending_summaries.lock().await.clear();
+                        // **検収待ちも同じ理由で捨てる**（Spec 46 — 検知は 1 実装
+                        // 共有なので、取りこぼしの倒し方も揃える）。検収は次の
+                        // 発火がやり直す。
+                        runtime.pending_acceptances.lock().await.clear();
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
@@ -298,7 +321,7 @@ async fn deliver_scheduled(
         Endpoint::Agent {
             id: task.to.clone(),
         },
-        content,
+        content.clone(),
         0,
     );
 
@@ -306,6 +329,8 @@ async fn deliver_scheduled(
     // 人が見ていない時間の安全の本体）。配送を見送った tick では
     // プールも捨てられ、次の tick が新しく作る（消費ゼロなので等価）。
     let budget = new_root_budget(shared).await;
+    // 後判定の再依頼が継承する財布（Spec 46 凍結 3 —「新しい封筒・同じ財布」）。
+    let budget_for_acceptance = budget.clone();
 
     // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2）。
     match deliver(
@@ -321,6 +346,30 @@ async fn deliver_scheduled(
         Ok(()) => {
             shared.record(message).await;
             runtime.in_flight.lock().await.insert(task.to.clone());
+            if let Some(acceptance) = task.acceptance.clone() {
+                // 後判定つきは**こちらへだけ**登録する（Spec 46 D2 の直列 —
+                // 要約は後判定ループが確定させてから走らせるので、
+                // `pending_summaries` には積まない）。
+                //
+                // 同じ宛先へ次の発火が重なった場合は後勝ち（insert が置き換える）。
+                // 隙間は AgentTyping と再依頼の間の一瞬だけで、上書きされた側の
+                // 検収は次の発火がやり直す。
+                runtime.pending_acceptances.lock().await.insert(
+                    task.to.clone(),
+                    AcceptancePending {
+                        task_id: task.id.clone(),
+                        to: task.to.clone(),
+                        base_content: content,
+                        acceptance,
+                        attempt: 1,
+                        budget: budget_for_acceptance,
+                        participants_union: std::collections::HashSet::new(),
+                        current_participants: participants,
+                        summarize_after: task.summarize_after,
+                    },
+                );
+                return true;
+            }
             // 根のターンが終わったら要約する（Spec 28 D7）。**ここでは待たない** —
             // 待つと予定のループが 1 件の依頼に塞がれる。完了の合図は
             // `AgentTyping { active: false }` で、ティッカーが既に聴いている。
@@ -397,7 +446,14 @@ async fn run_probe(
     task_id: &str,
     probe: &ScheduleProbe,
 ) -> (ProbeOutcome, String) {
-    let (outcome, appendix, exit, resolved, chars) = probe_once(shared, probe).await;
+    let ProbeRun {
+        outcome,
+        appendix,
+        exit,
+        resolved,
+        stdout_chars: chars,
+        ..
+    } = probe_once(shared, probe).await;
     note!(
         "schedule probe: id={task_id} outcome={} exit={exit} reason={} resolved={resolved} stdout_chars={chars}",
         outcome.as_str(),
@@ -416,11 +472,37 @@ async fn run_probe(
     (outcome, appendix)
 }
 
-/// 前判定の本体。計器へ出す値も一緒に返す。
-async fn probe_once(
-    shared: &Shared,
-    probe: &ScheduleProbe,
-) -> (ProbeOutcome, String, String, String, usize) {
+/// probe 1 本の実行結果（計器へ出す値 + 生の出力）。
+///
+/// `stdout` / `stderr` は**検収の抜粋の材料**（Spec 46 D4）で、前判定は使わない。
+/// 計器へは字数と閉じた列挙だけを出す（#71 — 中身は 1 文字も出さない）。
+struct ProbeRun {
+    outcome: ProbeOutcome,
+    appendix: String,
+    exit: String,
+    resolved: String,
+    stdout_chars: usize,
+    stdout: String,
+    stderr: String,
+}
+
+impl ProbeRun {
+    /// プロセスを起こす前に終わった結末（未承認・cwd 不在・PATH 不在）。
+    fn without_process(outcome: ProbeOutcome, resolved: &str) -> Self {
+        Self {
+            outcome,
+            appendix: String::new(),
+            exit: "-".to_owned(),
+            resolved: resolved.to_owned(),
+            stdout_chars: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+}
+
+/// 前判定と後判定が共有する probe 実行の本体（承認 → cwd → PATH → 実行 → 判定）。
+async fn probe_once(shared: &Shared, probe: &ScheduleProbe) -> ProbeRun {
     // 承認の確認が先。**未承認ならプロセスを 1 つも起こさない** —
     // 起こしてから捨てる形にすると、承認の意味が「結果を使わない」に落ちる。
     let approved = {
@@ -432,13 +514,7 @@ async fn probe_once(
         }
     };
     if !approved {
-        return (
-            ProbeOutcome::Unapproved,
-            String::new(),
-            "-".to_owned(),
-            "-".to_owned(),
-            0,
-        );
+        return ProbeRun::without_process(ProbeOutcome::Unapproved, "-");
     }
 
     // 作業フォルダ。**検査は実行時だけ**（読み込みで弾くと、村を配った先で
@@ -448,24 +524,12 @@ async fn probe_once(
         .as_ref()
         .map_or_else(|| shared.store.root().to_path_buf(), std::path::PathBuf::from);
     if !cwd.is_dir() {
-        return (
-            ProbeOutcome::Error(ProbeError::CwdMissing),
-            String::new(),
-            "-".to_owned(),
-            "-".to_owned(),
-            0,
-        );
+        return ProbeRun::without_process(ProbeOutcome::Error(ProbeError::CwdMissing), "-");
     }
 
     // **PATH は実行のたびに引き直す**（直したら次の実行から変わってほしい）。
     let Some(program) = crate::process::resolve_program(&probe.command) else {
-        return (
-            ProbeOutcome::Error(ProbeError::NotFound),
-            String::new(),
-            "-".to_owned(),
-            "-".to_owned(),
-            0,
-        );
+        return ProbeRun::without_process(ProbeOutcome::Error(ProbeError::NotFound), "-");
     };
     let resolved = crate::process::display_path(&program);
 
@@ -475,47 +539,41 @@ async fn probe_once(
         crate::process::spawn_and_wait(&program, &probe.args, &cwd, probe.timeout_secs, None).await;
 
     match ran {
-        crate::process::Ran::Finished { code, stdout, .. } => {
+        crate::process::Ran::Finished {
+            code,
+            stdout,
+            stderr,
+        } => {
             let chars = stdout.chars().count();
             let exit = code.map_or_else(|| "-".to_owned(), |c| c.to_string());
-            match judge(&stdout, &probe.expect) {
-                Judgement::Match { appendix } => {
-                    (ProbeOutcome::Match, appendix, exit, resolved, chars)
-                }
-                Judgement::NoMatch => {
-                    (ProbeOutcome::NoMatch, String::new(), exit, resolved, chars)
-                }
+            let (outcome, appendix) = match judge(&stdout, &probe.expect) {
+                Judgement::Match { appendix } => (ProbeOutcome::Match, appendix),
+                Judgement::NoMatch => (ProbeOutcome::NoMatch, String::new()),
                 Judgement::SignalTruncated => (
                     ProbeOutcome::Error(ProbeError::SignalTruncated),
                     String::new(),
-                    exit,
-                    resolved,
-                    chars,
                 ),
+            };
+            ProbeRun {
+                outcome,
+                appendix,
+                exit,
+                resolved,
+                stdout_chars: chars,
+                stdout,
+                stderr,
             }
         }
-        crate::process::Ran::TimedOut => (
-            ProbeOutcome::Timeout,
-            String::new(),
-            "-".to_owned(),
-            resolved,
-            0,
-        ),
-        crate::process::Ran::SpawnFailed(_) | crate::process::Ran::WaitFailed(_) => (
-            ProbeOutcome::Error(ProbeError::SpawnFailed),
-            String::new(),
-            "-".to_owned(),
-            resolved,
-            0,
-        ),
-        // 前っ判定にトークンを渡していないので、この腕は構造上通らない。
-        crate::process::Ran::Cancelled => (
-            ProbeOutcome::Error(ProbeError::SpawnFailed),
-            String::new(),
-            "-".to_owned(),
-            resolved,
-            0,
-        ),
+        crate::process::Ran::TimedOut => {
+            ProbeRun::without_process(ProbeOutcome::Timeout, &resolved)
+        }
+        crate::process::Ran::SpawnFailed(_) | crate::process::Ran::WaitFailed(_) => {
+            ProbeRun::without_process(ProbeOutcome::Error(ProbeError::SpawnFailed), &resolved)
+        }
+        // probe にトークンを渡していないので、この腕は構造上通らない。
+        crate::process::Ran::Cancelled => {
+            ProbeRun::without_process(ProbeOutcome::Error(ProbeError::SpawnFailed), &resolved)
+        }
     }
 }
 
@@ -528,11 +586,20 @@ async fn probe_once(
 /// （本人のモデルが書く / ツールは提示しない / 保存が済んでから畳む / 空なら
 /// 畳まない）は 1 つも変えていない。
 async fn summarize_causality(shared: &Shared, root: &AgentId, participants: &Participants) {
-    let mut targets = match participants.lock() {
+    let targets = match participants.lock() {
         Ok(set) => set.clone(),
         // 毒されたロックで要約を諦める理由が無い（中身は名前の集合だけ）。
         Err(poisoned) => poisoned.into_inner().clone(),
     };
+    summarize_targets(shared, root, targets).await;
+}
+
+/// 要約の本体（`summarize_causality` と後判定の確定が共有する 1 実装）。
+async fn summarize_targets(
+    shared: &Shared,
+    root: &AgentId,
+    mut targets: std::collections::HashSet<AgentId>,
+) {
     // **根は必ず対象。** 依頼を受けて答えた本人で、履歴が最も伸びている。
     targets.insert(root.clone());
 
@@ -541,6 +608,173 @@ async fn summarize_causality(shared: &Shared, root: &AgentId, participants: &Par
         Ok(done) => note!("schedule summarize: root={root} agents={done}"),
         // 要約できないことは、次の発火を止める理由にならない。
         Err(err) => note!("WARN schedule summarize: root={root} に失敗しました: {err}"),
+    }
+}
+
+/// 根のターンの完了を待っている後判定 1 件（Spec 46）。
+///
+/// 「新しい封筒・同じ財布」（凍結 3）の**財布の側**がここに住む —
+/// `budget` は発火時の `Arc` で、再依頼の封筒へそのまま積まれる。
+pub(super) struct AcceptancePending {
+    /// 予定の ID（計器と直近の結末の鍵）。
+    task_id: String,
+    /// 発火の宛先（因果の根）。
+    to: AgentId,
+    /// **初回に配送した本文**（【定期実行】ヘッダ + 依頼文 + 前判定の付記）。
+    /// 再依頼はこれをベースに**最新の失敗注記 1 個だけ**を足す（D4 — 累積しない）。
+    base_content: String,
+    /// 検収の設定。
+    acceptance: crate::schedule::Acceptance,
+    /// 今回の試行番号（1 始まり）。
+    attempt: u8,
+    /// 発火時の財布。`None` = 天井の無い村（予算の条件は常に真）。
+    budget: Option<Arc<BudgetPool>>,
+    /// 全試行の参加者の和（確定後の要約の対象。participants の器そのものは
+    /// 試行ごとに新品 — 凍結 3。和を取るのは、continue セッションの因果として
+    /// 全試行が地続きだから）。
+    participants_union: std::collections::HashSet<AgentId>,
+    /// 今回の試行の参加者集合（完了時に和へ畳む）。
+    current_participants: Option<Participants>,
+    /// 確定後に要約するか。
+    summarize_after: bool,
+}
+
+/// 完了した試行 1 回ぶんの後判定（Spec 46 D2 の「後判定 → 確定 → 要約」の直列）。
+///
+/// **切り離したタスクで動く**（検収コマンドは `timeoutSecs` まで走りうる）。
+async fn acceptance_step(
+    shared: &Arc<Shared>,
+    runtime: &Arc<ScheduleRuntime>,
+    mut state: AcceptancePending,
+) {
+    // 今回の試行の参加者を和へ畳む（要約は確定後に 1 回 — D2）。
+    if let Some(participants) = state.current_participants.take() {
+        let set = match participants.lock() {
+            Ok(set) => set.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        state.participants_union.extend(set);
+    }
+
+    let run = probe_once(shared, &state.acceptance.probe).await;
+    // 計器は契約の形そのまま（語彙は schedule probe: 行と同一 — 凍結 7）。
+    note!(
+        "acceptance: schedule={} attempt={}/{} outcome={}",
+        state.task_id,
+        state.attempt,
+        state.acceptance.max_attempts,
+        run.outcome.as_str(),
+    );
+    runtime.last_acceptance.lock().await.insert(
+        state.task_id.clone(),
+        crate::schedule_probe::ProbeReport {
+            outcome: run.outcome.as_str().to_owned(),
+            reason: run.outcome.reason().to_owned(),
+            at_ms: crate::model::now_ms(),
+        },
+    );
+
+    // 予算の条件（D3 の表）。`None` = 天井の無い村では常に真。
+    let has_budget = state
+        .budget
+        .as_ref()
+        .is_none_or(|pool| pool.has_remaining());
+    if crate::schedule_probe::should_redeliver(
+        &run.outcome,
+        state.attempt,
+        state.acceptance.max_attempts,
+        has_budget,
+    ) {
+        let excerpt = crate::schedule_probe::acceptance_excerpt(&run.stdout, &run.stderr);
+        redeliver_for_acceptance(shared, runtime, state, &excerpt).await;
+    } else {
+        settle_acceptance(shared, &state).await;
+    }
+}
+
+/// 検収の不一致を受けた再依頼（Spec 46 D4 / 凍結 3「新しい封筒・同じ財布」）。
+///
+/// **前判定は通らない**（凍結 6 — ここが封筒を直接組むので構造で成立する）。
+/// **セッションも切り替えない**（凍結 5 — continue 固定。fresh の予定でも
+/// 再依頼は初回の試行が作った会話に積む）。
+async fn redeliver_for_acceptance(
+    shared: &Arc<Shared>,
+    runtime: &Arc<ScheduleRuntime>,
+    mut state: AcceptancePending,
+    excerpt: &str,
+) {
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+    // ベースは常に初回の依頼文。注記は最新の 1 個だけ（累積しない —
+    // 経緯は continue セッションの履歴の側に全部ある）。
+    let content = match language {
+        crate::world::Language::Ja => format!(
+            "{}\n\n（前回の検収が不一致でした。検収コマンドの出力:\n{excerpt}）",
+            state.base_content
+        ),
+        crate::world::Language::En => format!(
+            "{}\n\n(The previous acceptance check did not match. Acceptance command output:\n{excerpt})",
+            state.base_content
+        ),
+    };
+    let message = AgentMessage::new(
+        Endpoint::System,
+        Endpoint::Agent {
+            id: state.to.clone(),
+        },
+        content,
+        0,
+    );
+    // 新しい封筒: cancel と participants は新品（試行ごとに独立した完了検知と
+    // 打ち切り）。財布だけが発火時の Arc（`new_root_budget` を呼ばない）。
+    let participants: Option<Participants> = state
+        .summarize_after
+        .then(|| Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())));
+    match deliver(
+        shared,
+        &state.to.clone(),
+        message.clone(),
+        state.budget.clone(),
+        participants.clone(),
+        Vec::new(),
+    )
+    .await
+    {
+        Ok(()) => {
+            shared.record(message).await;
+            runtime.in_flight.lock().await.insert(state.to.clone());
+            state.attempt += 1;
+            state.current_participants = participants;
+            runtime
+                .pending_acceptances
+                .lock()
+                .await
+                .insert(state.to.clone(), state);
+        }
+        Err(err) => {
+            // 受信箱の飽和・停止の競合。配送を回し続けると確定が永遠に来ない
+            // 沈黙になるので、**記録して確定へ倒す**（次の発火がやり直す）。
+            note!(
+                "acceptance: schedule={} の再依頼を見送りました: {err}",
+                state.task_id
+            );
+            settle_acceptance(shared, &state).await;
+        }
+    }
+}
+
+/// 後判定ループの確定（Spec 46 D2）。
+///
+/// **要約は確定の理由を問わず走る**（match / 試行上限 / 判定不能 / 予算枯渇の
+/// どれでも。`summarizeAfter` の既存の意味論を変えない — rev2 で査読の
+/// 「予算枯渇時はスキップ」を却下した側）。
+async fn settle_acceptance(shared: &Arc<Shared>, state: &AcceptancePending) {
+    if state.summarize_after {
+        summarize_targets(shared, &state.to, state.participants_union.clone()).await;
     }
 }
 
@@ -580,6 +814,7 @@ impl Orchestrator {
             probe: options.probe,
             session_mode: options.session_mode,
             summarize_after: options.summarize_after,
+            acceptance: options.acceptance,
         };
         // **組み立てた 1 件をまとめて検証する。** 欄ごとに検証を書くと、
         // 欄が増えたときにここを直す仕事が生える（読み込み側と同じ述語を通す）。
@@ -612,6 +847,14 @@ impl Orchestrator {
     /// どこにも出さないと「動かないが理由が分からない」になる。
     pub async fn probe_reports(&self) -> HashMap<String, crate::schedule_probe::ProbeReport> {
         self.schedule_runtime.last_probe.lock().await.clone()
+    }
+
+    /// 予定ごとの直近 1 回の**検収**の結末（Spec 46）。プロセス寿命。
+    ///
+    /// `probe_reports` と同じ器・同じ理由 — 不一致・失敗は会話ログへ流さないが、
+    /// 沈黙にもしない（判定不能 3 値は人が直せる）。
+    pub async fn acceptance_reports(&self) -> HashMap<String, crate::schedule_probe::ProbeReport> {
+        self.schedule_runtime.last_acceptance.lock().await.clone()
     }
 
     /// この村の識別子（`{workspace}/village_id`）。承認鍵の salt。

@@ -352,6 +352,45 @@ pub struct ScheduledTask {
     /// 発火の因果が終わったら、参加した個体の履歴を要約して畳むか（Spec 28）。
     #[serde(default, skip_serializing_if = "is_false")]
     pub summarize_after: bool,
+    /// 因果の完了後に走らせる検収（Spec 46）。`None` なら後判定なし。
+    ///
+    /// **`decide` はこの欄を見ない**（前判定と同じ — 発火規則は不変）。
+    /// 効くのは配送された因果が**完了した後**で、不一致なら同じ依頼を
+    /// 失敗の内容つきで出し直す（上限 [`Acceptance::max_attempts`]）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<Acceptance>,
+}
+
+/// 予定の後判定（Spec 46）— 検収の probe と、通るまでの再依頼。
+///
+/// **判定部は [`ScheduleProbe`] の再利用**（検収専用の判定型を作らない —
+/// 承認・判定・出力上限の規律は 1 実装で、`serde(flatten)` によりワイヤ上も
+/// probe と同じ欄名が並ぶ）。`maxAttempts` がこの中に住むのは、
+/// `acceptance: null` のとき**意味を持たない欄を構造で締め出す**ため
+/// （欄を外に置くと「後判定なしの maxAttempts」という読めない状態が
+/// ワイヤで作れてしまい、バリデーションが要る — 送れる形が無いほうが強い）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Acceptance {
+    /// 検収コマンド。判定（stdout 1 行目の完全一致・exit code 不使用）・
+    /// 承認（ハッシュ。`expect` は対象外）・出力上限は前判定の規律のまま。
+    #[serde(flatten)]
+    pub probe: ScheduleProbe,
+    /// 再依頼を含めた**総試行回数**。既定 2・範囲 1..=5。
+    ///
+    /// 既定 2（= 再依頼 1 回）は RepeatGuard の「同じ失敗の 3 回目は実行しない」
+    /// と同じ側の保守性。`1` は「再依頼なし・検収の記録だけ」で、
+    /// 完遂の計器としてだけ使う形も正当。
+    #[serde(default = "max_attempts_default")]
+    pub max_attempts: u8,
+}
+
+/// `maxAttempts` の値域（両端を含む）。
+pub const MAX_ATTEMPTS_RANGE: std::ops::RangeInclusive<u8> = 1..=5;
+
+/// `maxAttempts` の既定値（2 = 再依頼 1 回）。
+fn max_attempts_default() -> u8 {
+    2
 }
 
 /// 予定を作るときの追加の指定（Spec 28）。
@@ -372,6 +411,8 @@ pub struct ScheduleOptions {
     pub session_mode: SessionMode,
     /// 因果の完了後に参加した個体を要約するか。
     pub summarize_after: bool,
+    /// 因果の完了後に走らせる検収（Spec 46）。
+    pub acceptance: Option<Acceptance>,
 }
 
 /// 予定 1 件として受け付けられない値。
@@ -386,6 +427,12 @@ pub enum InvalidTask {
     /// 前判定が不正。
     #[error(transparent)]
     Probe(#[from] crate::schedule_probe::InvalidProbe),
+    /// 後判定の総試行回数が値域外（Spec 46 D5）。
+    #[error("maxAttempts は 1〜5 の範囲で指定してください（{given}）")]
+    AcceptanceAttempts {
+        /// 受け取った値。
+        given: u8,
+    },
 }
 
 /// 既定の [`SessionMode`] かどうか。**既定値は直列化しない。**
@@ -421,6 +468,15 @@ impl ScheduledTask {
         self.recurrence.validate()?;
         if let Some(probe) = &self.probe {
             probe.validate()?;
+        }
+        if let Some(acceptance) = &self.acceptance {
+            // 判定部の妥当性は前判定と同じ述語で見る（1 実装）。
+            acceptance.probe.validate()?;
+            if !MAX_ATTEMPTS_RANGE.contains(&acceptance.max_attempts) {
+                return Err(InvalidTask::AcceptanceAttempts {
+                    given: acceptance.max_attempts,
+                });
+            }
         }
         Ok(())
     }
@@ -563,6 +619,7 @@ mod tests {
             probe: None,
             session_mode: SessionMode::Continue,
             summarize_after: false,
+            acceptance: None,
         }
     }
 
@@ -839,6 +896,81 @@ mod tests {
         assert_eq!(json["everyMinutes"], 10);
     }
 
+    /// 後判定の値域（Spec 46 D5）。境界 1 が本番（#69 — 0 と 2 だけでは足りない）。
+    #[test]
+    fn acceptance_attempts_are_validated_at_the_range_edges() {
+        let created = at(2026, 7, 30, 9, 0, 0);
+        let probe = crate::schedule_probe::ScheduleProbe {
+            command: "python".to_owned(),
+            args: vec!["check.py".to_owned()],
+            expect: "OK".to_owned(),
+            timeout_secs: crate::schedule_probe::PROBE_TIMEOUT_DEFAULT,
+            cwd: None,
+        };
+        let with = |max_attempts: u8| {
+            let mut t = task(THU_17, created);
+            t.acceptance = Some(Acceptance {
+                probe: probe.clone(),
+                max_attempts,
+            });
+            t
+        };
+        assert!(with(1).validate().is_ok(), "下端 1 は再依頼なしの正当な形");
+        assert!(with(5).validate().is_ok(), "上端 5");
+        assert!(matches!(
+            with(0).validate(),
+            Err(InvalidTask::AcceptanceAttempts { given: 0 })
+        ));
+        assert!(matches!(
+            with(6).validate(),
+            Err(InvalidTask::AcceptanceAttempts { given: 6 })
+        ));
+        // 判定部の妥当性も同じ入口で見る（expect 空は前判定と同じ述語が弾く）。
+        let mut broken = with(2);
+        if let Some(acceptance) = &mut broken.acceptance {
+            acceptance.probe.expect = "  ".to_owned();
+        }
+        assert!(matches!(broken.validate(), Err(InvalidTask::Probe(_))));
+    }
+
+    /// 後判定はワイヤ上 probe と同じ欄名が flatten で並び、maxAttempts が同居する。
+    /// 省くと既定 2 で読める（既定値は直列化しない — Spec 28 S5 の規律）。
+    #[test]
+    fn acceptance_round_trips_and_defaults_max_attempts() {
+        let json = r#"{
+            "id": "task_01",
+            "to": "agent_01",
+            "message": "点検",
+            "recurrence": { "kind": "daily", "hour": 9, "minute": 0 },
+            "createdAtMs": 1700000000000,
+            "lastConsumedDueMs": null,
+            "acceptance": {
+                "command": "python",
+                "args": ["check.py"],
+                "expect": "OK",
+                "timeoutSecs": 60,
+                "cwd": null
+            }
+        }"#;
+        let t: ScheduledTask = serde_json::from_str(json).expect("読める");
+        let acceptance = t.acceptance.as_ref().expect("後判定が読める");
+        assert_eq!(acceptance.max_attempts, 2, "省いた maxAttempts は既定 2");
+        assert_eq!(acceptance.probe.command, "python");
+
+        // 往復。flatten なので probe の欄がそのままトップに並ぶ。
+        let value = serde_json::to_value(&t).expect("直列化できる");
+        assert_eq!(value["acceptance"]["command"], "python");
+        assert_eq!(value["acceptance"]["maxAttempts"], 2);
+        let back: ScheduledTask =
+            serde_json::from_value(value).expect("書いたものが読める");
+        assert_eq!(back, t);
+
+        // 後判定なしの予定に acceptance の欄は生えない（バイト等価の側）。
+        let plain = task(THU_17, at(2026, 7, 30, 9, 0, 0));
+        let value = serde_json::to_value(&plain).expect("直列化できる");
+        assert!(value.get("acceptance").is_none());
+    }
+
     /// `enabled` を持たない古い（または手書きの）JSON は真として読む。
     #[test]
     fn enabled_defaults_to_true_when_absent() {
@@ -881,6 +1013,7 @@ mod tests {
                 probe: None,
                 session_mode: SessionMode::Continue,
                 summarize_after: false,
+                acceptance: None,
             };
 
             // 02:30 は存在しないので、この日は発火も消化もしない。
@@ -908,6 +1041,7 @@ mod tests {
                 probe: None,
                 session_mode: SessionMode::Continue,
                 summarize_after: false,
+                acceptance: None,
             };
 
             assert_eq!(t.decide(&now), Tick::Idle);

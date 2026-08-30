@@ -1,10 +1,11 @@
 # Spec: 予定の後判定 — 検収の probe と、通るまでの再依頼
 
 - 起票: 2026-08-30
-- 状態: **rev2 承認（2026-08-30 利用者）→ P0 完了**（`data_contract` へ
-  `Acceptance` ブロック — 凍結 7 本・分岐の表・実行順序・再依頼の形・計器。
-  `ScheduledTask` の欄へ `acceptance` を加算。ScheduleProbe の隣に置き、
-  判定・承認・出力上限の規律は複製せず ScheduleProbe の節を正とした）。
+- 状態: **rev2 承認（2026-08-30 利用者）→ P0〜P1 完了**（P0 = `data_contract` の
+  `Acceptance` ブロック（凍結 7 本・分岐の表・実行順序・再依頼の形・計器）。
+  P1 = コア実装 + 単体 6 本 + 結合 5 本。**ミューテーションは 3 回** —
+  fail-closed 破壊で結合 2 本が赤 / D2 の登録側だけの破壊は**緑のまま**
+  （防御が二重）/ 両層同時の破壊で直列テストだけが赤。記録は「P1 実装記録」）。
   rev2 = 査読 2 系統 10 点を反映。採用 8 / 明記の側で受けた 2 /
   却下 1（理由つき）。記録は Notes 5
 - 起点: 利用者 —「**ワークの質を上げるのが Fuseforks の課題**」（2026-08-30）と、
@@ -256,6 +257,38 @@ acceptance: schedule=… attempt=1/2 outcome=match|no_match|error|timeout|unappr
 6. **予算が優先**: 小さい `tokenBudget` の村で、再依頼の前に予算が尽きると
    `outcome=no_match` の後に配送が**無く**、確定の記録が残る
    （予算の残ゼロが D3 の表の条件として効いたことの観測）
+
+## P1 実装記録（2026-08-30）
+
+- **着地**: `schedule.rs` に `Acceptance`（flatten + `max_attempts` 検証・
+  `MAX_ATTEMPTS_RANGE`）/ `schedule_probe.rs` に純関数 2 本
+  （`should_redeliver` = D3 の表・`acceptance_excerpt` = D4 の抜粋規則）/
+  `schedules.rs` に `AcceptancePending`・`acceptance_step`・
+  `redeliver_for_acceptance`・`settle_acceptance`・ティッカーの直列受け手 /
+  `acceptance_reports()` 読み口。単体 6 本 + 結合 5 本
+  （`tests/schedule_acceptance.rs`）
+- **`probe_once` を 5 要素タプルから `ProbeRun` 構造体へ**（前判定と後判定の
+  1 実装共有。stderr が抜粋の材料として要るため — capture 層の
+  `Ran::Finished` は元から持っていた）
+- **D2 の直列は二重に守られていた**（ミューテーションで判明）。
+  登録側の排他（後判定つきは `pending_summaries` に積まない）と
+  受け手側の優先（acceptance を先に取って `continue`）は**それぞれ単独で
+  不変条件を守り切る** — 登録側だけ壊す変異は緑のままだった。
+  **一般化: 不変条件が 2 層で守られているとき、1 層だけのミューテーションは
+  赤にならない。「変異が緑 = テストの穴」とは限らず「防御が冗長」の証拠の
+  こともある — 判定には両方を同時に壊す。** 両層同時の変異で
+  `summarising_waits_until_the_acceptance_loop_settles` だけが赤
+  （要約 2 本）を確認した。変異 1（fail-closed を `!Match` へ倒す）は
+  結合 2 本（error / unapproved）が予測どおり赤
+- **failures.md #86 を自分で踏んだ** — `drain_until_quiet` の静穏窓に
+  1200 / 1500 ms を渡し、統計イベント（1 秒周期）で窓が閉じずテストが
+  永久にハングした（利用者が「テストが止まっていませんか？」で検出）。
+  **#86 は自分が書いた一般化で、書いた本人が 3 例目を作った** —
+  処方を注意から構造へ移す合図（#67 の規律）。窓の定数化は
+  テストヘルパの共有と一緒に別途判断
+- **再依頼の配送失敗（受信箱飽和・停止競合）は確定へ倒す** — 配送を回し
+  続けると確定が永遠に来ない沈黙になる。次の発火がやり直す（実装で決めた点。
+  契約の redelivery には書いていなかったので P3 で追従）
 
 ## Notes
 

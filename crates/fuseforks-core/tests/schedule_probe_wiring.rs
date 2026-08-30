@@ -185,6 +185,7 @@ async fn with_probe(
                 probe: Some(probe),
                 session_mode,
                 summarize_after: false,
+                acceptance: None,
             },
         )
         .await
@@ -510,6 +511,7 @@ async fn summarize_after_folds_only_the_agents_in_the_causality() {
                 probe: None,
                 session_mode: SessionMode::Continue,
                 summarize_after: true,
+                acceptance: None,
             },
         )
         .await

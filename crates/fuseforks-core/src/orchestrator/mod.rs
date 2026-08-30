@@ -419,6 +419,22 @@ struct ScheduleRuntime {
     /// fail open で空にされるとき、こちらだけ残ると要約が永遠に待つ）。
     /// ゆえに**取りこぼしでは一緒に捨てる** — 要約は次の発火でやり直せる。
     pending_summaries: Mutex<HashMap<AgentId, Participants>>,
+    /// 根のターンの完了を待っている後判定（Spec 46）。
+    ///
+    /// キーは**発火の宛先**（因果の根）。`pending_summaries` と**同じ合図に
+    /// 相乗り**するが、**受け手は排他** — 後判定つきの予定は配送時にこちらへ
+    /// だけ登録し、要約は後判定ループが確定してから走らせる（D2 の直列。
+    /// 両方へ登録すると試行ごとに要約が発火して課金が試行回数ぶん増える）。
+    ///
+    /// 取りこぼし（Lagged）では `pending_summaries` と一緒に捨てる —
+    /// 完了の合図が来ない以上、待ち続けても起点は二度と来ない。
+    /// 検収は次の発火がやり直す（毒タスクの残余として契約に明記済み）。
+    pending_acceptances: Mutex<HashMap<AgentId, schedules::AcceptancePending>>,
+    /// 予定ごとの**直近 1 回**の検収の結末（Spec 46）。プロセス寿命。
+    ///
+    /// `last_probe` と同じ器・同じ理由 — 不一致・失敗は会話ログへ流さないが
+    /// 沈黙にもしない。再起動後の診断は `fuseforks.log` の `acceptance:` 行。
+    last_acceptance: Mutex<HashMap<String, crate::schedule_probe::ProbeReport>>,
     /// 予定ごとの**直近 1 回**の判定の結末（Spec 28 D8）。
     ///
     /// **画面のためだけに持つ。** 不一致・失敗は会話ログへ流さない（5 分ごとの

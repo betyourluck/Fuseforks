@@ -233,6 +233,44 @@ fn appendix_of(rest: &str, intake_truncated: bool) -> String {
     format!("{head}\n（{measure}のうち先頭 {PROBE_APPENDIX_CHARS} 字。打ち切りました）")
 }
 
+/// 再依頼の注記へ入れる抜粋の上限（**文字数**。Spec 46 D4）。
+///
+/// バイトではない — `MAX_*_CHARS` をバイト長で数える差分は日本語では
+/// 枠の 1/3 で発火する（既知の罠）。
+pub const ACCEPTANCE_EXCERPT_CHARS: usize = 500;
+
+/// 検収の失敗をモデルへ伝える抜粋（Spec 46 D4）。
+///
+/// **stdout の先頭 500 文字。改行は保持。** stdout がトリム後に空なら
+/// **stderr の先頭 500 文字**へ落とす — 検収コマンドが異常終了して stderr に
+/// だけ理由を書いたとき、モデルへ届く診断を空にしない（受け皿を底なしに
+/// しない側の判断。**判定は今までどおり stdout のみ**で、これは伝達の話）。
+#[must_use]
+pub fn acceptance_excerpt(stdout: &str, stderr: &str) -> String {
+    let source = if stdout.trim().is_empty() { stderr } else { stdout };
+    let (head, _) = take_chars(source, ACCEPTANCE_EXCERPT_CHARS);
+    head
+}
+
+/// 再依頼するかどうか（Spec 46 D3 の分岐表。純関数）。
+///
+/// **真になるのは `no_match` かつ試行と予算の両方が残っているときだけ。**
+/// 判定不能 3 値（`error` / `timeout` / `unapproved`）は宛先を持たない —
+/// `no_match` 側へ倒すと壊れた検収コマンドが毎発火で再依頼の輪を回し、
+/// `match` 側へ倒すと検証が壊れたときだけ検証をすり抜ける（fail-closed）。
+///
+/// `has_budget_remaining` は天井の無い村（プールが `None`）では真を渡す —
+/// 「残 > 0」の条件は天井があるときにだけ意味を持つ。
+#[must_use]
+pub fn should_redeliver(
+    outcome: &ProbeOutcome,
+    attempt: u8,
+    max_attempts: u8,
+    has_budget_remaining: bool,
+) -> bool {
+    matches!(outcome, ProbeOutcome::NoMatch) && attempt < max_attempts && has_budget_remaining
+}
+
 /// 先頭から `limit` 文字を取り、打ち切ったかどうかを返す。
 fn take_chars(text: &str, limit: usize) -> (String, bool) {
     let mut taken = String::with_capacity(text.len().min(limit * 4));
@@ -360,6 +398,53 @@ mod tests {
             timeout_secs: PROBE_TIMEOUT_DEFAULT,
             cwd: None,
         }
+    }
+
+    #[test]
+    fn redelivery_happens_only_for_no_match_with_room_left() {
+        // D3 の表そのもの。**真になる行は 1 つだけ。**
+        assert!(should_redeliver(&ProbeOutcome::NoMatch, 1, 2, true));
+        // 一致は確定（再依頼しない）。
+        assert!(!should_redeliver(&ProbeOutcome::Match, 1, 2, true));
+        // 試行上限。境界は attempt == max（1 が本番 — #69 の規律）。
+        assert!(!should_redeliver(&ProbeOutcome::NoMatch, 2, 2, true));
+        assert!(!should_redeliver(&ProbeOutcome::NoMatch, 1, 1, true));
+        // 予算の残ゼロが試行の残りに優先する。
+        assert!(!should_redeliver(&ProbeOutcome::NoMatch, 1, 5, false));
+        // 判定不能 3 値は宛先を持たない（fail-closed）。
+        assert!(!should_redeliver(
+            &ProbeOutcome::Error(ProbeError::NotFound),
+            1,
+            5,
+            true
+        ));
+        assert!(!should_redeliver(&ProbeOutcome::Timeout, 1, 5, true));
+        assert!(!should_redeliver(&ProbeOutcome::Unapproved, 1, 5, true));
+    }
+
+    #[test]
+    fn the_excerpt_counts_characters_not_bytes() {
+        // 日本語 600 字 → 500 **文字**で切れる（バイトで数えると 1/3 で切れる罠）。
+        let stdout = "あ".repeat(600);
+        let excerpt = acceptance_excerpt(&stdout, "");
+        assert_eq!(excerpt.chars().count(), ACCEPTANCE_EXCERPT_CHARS);
+    }
+
+    #[test]
+    fn the_excerpt_keeps_newlines_and_prefers_stdout() {
+        let excerpt = acceptance_excerpt("NG\n3 件のうち 1 件が空\n", "stderr は読まれない");
+        assert_eq!(excerpt, "NG\n3 件のうち 1 件が空\n");
+    }
+
+    #[test]
+    fn an_empty_stdout_falls_back_to_stderr() {
+        // 異常終了で stderr にだけ理由が書かれた形。空白のみの stdout も空と扱う。
+        assert_eq!(
+            acceptance_excerpt("  \n", "assert failed: rows == 2"),
+            "assert failed: rows == 2"
+        );
+        // 両方空なら空（捏造しない）。
+        assert_eq!(acceptance_excerpt("", ""), "");
     }
 
     #[test]
