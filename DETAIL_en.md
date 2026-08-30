@@ -37,13 +37,13 @@ Fuseforks/
 │       │   │   ├── runtime.rs       Running and entry points (start / stop / interrupt / send)
 │       │   │   ├── settings.rs      Settings and resource access (budget, language, names, MCP, ordinance)
 │       │   │   ├── sessions.rs      Switching conversations (new / resume / fork / summarize)
-│       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery)
+│       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery, acceptance check)
 │       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
 │       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
-│       │   ├── schedule_probe.rs    Schedule pre-check (pure functions: judgement, appendix, approval key. Spec 28)
+│       │   ├── schedule_probe.rs    Schedule pre-check and acceptance check (pure functions: judgement, appendix, approval key, redelivery branch. Spec 28 / 46)
 │       │   ├── process.rs           Spawning and awaiting a child process (shared by the run tool and pre-checks)
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
@@ -164,7 +164,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
 | Modal | Command approval (from "Commands" in the title bar, [Spec 20](specs/20_command-approval.md)) | Opened occasionally |
-| Modal | Schedule list, addition, deletion, pre-checks and approvals (from "Schedule" in the title bar) | Opened occasionally |
+| Modal | Schedule list, addition, deletion, pre-checks, acceptance checks and approvals (from "Schedule" in the title bar) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
 | **Full screen** | **Stats** (the bar chart icon to the left of the clock, in the bottom bar, toggles it with the three panes; [Spec 39](specs/39_stats-view.md)) — what this village has paid, by conversation × **servant × model** × how each turn ended (**a servant that switched models gets one row per model** — prices differ per model, so folding them together makes any cost estimate wrong). **Hovering the cache-rate cell shows the input breakdown** (cache read / cache write / fresh; [Spec 40](specs/40_cache-write-accounting.md) — **no extra column**: a ninth column in an eight-column table makes horizontal scrolling permanent). **In a village with registered rates, two lines of `≈ $` appear at the top** ([Spec 41](specs/41_model-pricing.md): the amount and the rate date, then the coverage). **Coverage has two axes** (rows and tokens) because **either one alone misleads** — a real run showed `5/7 rows · 99.9% of tokens`: by rows it looks a third short, by tokens it looks complete. **Not a modal: it replaces the three panes wholesale** (they are only hidden — a half-typed message and the current selection survive). The title bar and the status bar stay, but **the title bar's dialog entries are disabled while it is open** (the window controls are not). **"All conversations" shows one month at a time, cut at the closing day** ([Spec 42](specs/42_stats-period.md): with closing day 25 you see "2026-08 (7/26–8/25)"; with end of month, the 1st through the last day. `◀ ▶` page through earlier months — `▶` stops at the current period, `◀` at the month holding the first record. **"All time" restores the lifetime totals.** When a period is applied, only conversations that paid within it are listed) | Opened occasionally |
@@ -1304,6 +1304,15 @@ A schedule can therefore carry a **pre-check** ([Spec 28](specs/28_schedule-prob
 **Commands that arrive with a shared village never run until you approve them.** Schedules are village content and travel with it, but **approvals are stored on this machine only** (outside the village). A pre-check you wrote yourself in the UI is approved as you save it; anything else is listed as "not approved yet" so you can read the command before approving it.
 
 **This closes the path where a shared village runs commands silently** — it cannot vouch for what an approved command then does (the same property as the `run` allow list).
+
+#### Verifying with a command after completion (acceptance check)
+
+A scheduled request used to be fire-and-forget, with **no mechanism to confirm the deliverable actually got made**. A schedule can therefore carry an **acceptance check** ([Spec 46](specs/46_acceptance-probe.md)). When the causality of the request completes, a verification command runs; **if the first line of its output does not equal the signal, the same request is re-issued with the failure attached** (up to a total-attempts limit — default 2, i.e. one retry). The check has the same shape as the pre-check (one command, no model call, exit code ignored), so verification itself costs no tokens.
+
+- **The re-issued request carries the first 500 characters of the check's output** — what was missing arrives verbatim, so the person who writes the acceptance command also designs the failure message.
+- **Only a mismatch triggers a re-issue.** If the check could not run, timed out, or is unapproved, the loop **records the outcome and stops** — a broken verifier must not be the one case that slips past verification (no fail-open).
+- **Re-issues stay in the same conversation and inherit the firing's token budget** — `tokenBudget` is the ceiling on "keep going until it passes".
+- Approval uses the same machinery as the pre-check (per-machine; approvals do not travel with a shared village). One approval covers both the pre-check and the acceptance check — the confirmation shows both command lines.
 
 #### Before and after a firing (new conversation / summary)
 
