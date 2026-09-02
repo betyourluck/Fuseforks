@@ -88,6 +88,21 @@ impl LlmBackend for PlanProposerBackend {
             .find_map(|m| (!m.content.is_empty()).then(|| m.content.clone()))
             .unwrap_or_default();
 
+        // 依頼主の合図（委譲されたターンの窓のテスト用）。`ask_*` が 1 本でも
+        // 提示されていれば、その相手へ「撒いて」を委譲する。
+        if latest.contains("訊いて") {
+            if let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_")) {
+                return Ok(ok_response(
+                    "",
+                    vec![ToolCall {
+                        id: "call_ask".into(),
+                        name: ask.name.clone(),
+                        args: serde_json::json!({ "message": "撒いて" }),
+                        extra: None,
+                    }],
+                ));
+            }
+        }
         // 進行役を長いターンで塞ぐための合図（受信箱飽和のテスト用）。
         if has_plan && latest.contains("眠って") {
             tokio::time::sleep(Duration::from_millis(1200)).await;
@@ -621,4 +636,63 @@ async fn identical_bundles_start_two_turns() {
         })
         .count();
     assert_eq!(bundles, 2, "同一内容の束ねが 2 回ともターンを起こす: {sent:?}");
+}
+
+/// 委譲で呼ばれたターンでは窓を飛ばす（2026-09-02 の実機 — 凍結 10）。
+///
+/// 依頼主 R が `ask` で進行役 C（`planReview` = true）へ「撒いて」と頼む。
+/// C のターンは戻り口（`reply_to`）を持つので、窓を開けると提示でターンが
+/// 終わり、戻り口は「提案した」の 1 行で消費される。束ねは後から hop=0 の
+/// 新しい根として届き、戻り口が無いので利用者へ流れる — R は永遠に束ねを
+/// 受け取れない。だから委譲されたターンでは従来どおりターンの中で撒いて束ね、
+/// R へ戻す。#96 の転送の門（`!awaiting_reply`）と同じ形。
+#[tokio::test]
+async fn a_delegated_turn_skips_the_window_and_returns_the_bundle_to_the_requester() {
+    let (_dir, orchestrator, coordinator, worker_a, worker_b) =
+        setup("delegated", Duration::ZERO, true, ("dlg_c", "dlg_wa", "dlg_wb")).await;
+    let requester = AgentId::from("dlg_r");
+    let mut spec = AgentSpec::new(requester.clone(), "依頼主", "tpl");
+    spec.connected_agents = vec![coordinator.clone()];
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&requester).await.unwrap();
+    let mut rx = orchestrator.subscribe();
+
+    orchestrator
+        .send_user_message(&requester, "訊いて")
+        .await
+        .unwrap();
+    drain(&mut rx).await;
+
+    // 窓は開かない — 波は生まれつき dispatched で、ワーカーへ配送されている。
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 1, "C の plan が 1 波: {waves:?}");
+    assert_eq!(
+        waves[0].state,
+        PlanWaveState::Dispatched,
+        "委譲されたターンの plan は提示で止まらない（reply_to があるので待てる場所が無い）"
+    );
+    let sent = sent_pairs(&orchestrator).await;
+    assert!(
+        sent.iter().any(|(from, to, _)| from.contains("dlg_c")
+            && (to.contains(worker_a.as_str()) || to.contains(worker_b.as_str()))),
+        "C はターンの中でワーカーへ撒く: {sent:?}"
+    );
+    // 束ねは System の配送にならず、C の答えが R へ戻る。
+    assert!(
+        !sent
+            .iter()
+            .any(|(from, to, _)| from == "System" && to.contains("dlg_c")),
+        "委譲されたターンでは束ねを System 配送にしない（新しい根を作らない）: {sent:?}"
+    );
+    assert!(
+        sent.iter()
+            .any(|(from, to, _)| from.contains("dlg_c") && to.contains("dlg_r")),
+        "C の答えは依頼主 R へ戻る（利用者へ流れない）: {sent:?}"
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|(from, to, _)| from.contains("dlg_c") && to == "User"),
+        "C から利用者への発話は無い: {sent:?}"
+    );
 }

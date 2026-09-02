@@ -1274,7 +1274,7 @@ async fn run_turn_inner(
     let HandoffGates {
         use_handoff_tools,
         offer_transfer,
-        ..
+        awaiting_reply,
     } = gates;
     let TurnPrompt {
         // 実行ループが周ごとに呼び出しと結果を積む（#29 — 対で積まないと 400）。
@@ -1549,6 +1549,7 @@ async fn run_turn_inner(
                 waiting,
                 executable: &executable,
                 use_handoff_tools,
+                awaiting_reply,
                 repeat_guard: &mut repeat_guard,
                 plan_wave: &mut plan_wave,
             };
@@ -1887,6 +1888,13 @@ struct CallRunner<'a> {
     /// registry と個別 MCP で実行できるもの（実行可否の判定に使う）。
     executable: &'a [ToolSpec],
     use_handoff_tools: bool,
+    /// このターンに戻り口（`reply_to`）があるか。委譲（`ask_*` / `plan`）で
+    /// 呼ばれたターンでは真。**plan の編集窓（Spec 43）はこのとき開けない** —
+    /// 窓は提示でターンを正常に終える二相なので、戻り口はそこで「提案した」の
+    /// 1 行に消費され、後から届く束ねは hop=0 の新しい根（戻り口なし）へ落ちて
+    /// 利用者へ流れる。依頼主は束ねを永遠に受け取れない（2026-09-02 の実機）。
+    /// 転送を委譲ターンで提示しない #96 の門と同じ構造の規則。
+    awaiting_reply: bool,
     /// 同一失敗の検出（#41 の処方 1）。**ターンをまたいで持ち回る**ので `&mut`。
     repeat_guard: &'a mut RepeatGuard,
     /// 波の連番（Spec 08）。`plan` を呼んだ回だけ進む。
@@ -2005,7 +2013,9 @@ impl CallRunner<'_> {
                 incoming.hop,
                 *self.plan_wave,
                 // 編集窓（Spec 43）。真なら配送せず提案を記録してターンを終える。
-                spec.plan_review,
+                // **委譲で呼ばれたターン（戻り口あり）では設定に関わらず飛ばす**
+                // （凍結 10 — 理由は `CallRunner::awaiting_reply` の doc）。
+                spec.plan_review && !self.awaiting_reply,
                 &turn.token,
                 budget.as_ref(),
                 participants.as_ref(),

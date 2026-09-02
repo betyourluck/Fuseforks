@@ -3348,7 +3348,7 @@ conversation_termination:
       が配送を起こす二相。LLM が立てた計画を人が直してから撒く —
       「線は人が引く」の計画への延長。出自は eigent の
       eigent_make_sub_tasks / eigent_start (CLAUDE.md の eigent 実読の節)。
-      凍結 (Spec 43 の 9 本):
+      凍結 (Spec 43 の 9 本 + 2026-09-02 の 10):
         1. **既定 OFF。** planReview が偽 (既定) の個体の plan は
            バイト等価の挙動 — 既存の村は 1 ミリも変わらない
         2. **提案は永続化しない** (session_store の「復元しないもの」に
@@ -3384,6 +3384,16 @@ conversation_termination:
            (届け先の居ない束ねのためにトークンを払い続けない)。凍結 9 の破棄は
            その**残余** (波の完了と停止の競合・受信箱飽和 = reason=mailbox_full)
            を受ける網。両経路とも結合テストで留めた (plan_edit_window.rs)
+        10. **委譲で呼ばれたターン (reply_to あり) では planReview に関わらず
+           窓を開けない** (2026-09-02 実機。turn.rs の `plan_review &&
+           !awaiting_reply`)。窓は提示でターンを正常に終える二相なので、
+           戻り口はそこで「提案した」の 1 行に消費され、後から届く束ねは
+           凍結 5 の新しい根 (hop=0・戻り口なし) へ落ちて**利用者へ流れる** —
+           依頼主 (plan / ask の呼び手) は束ねを永遠に受け取れない。委譲された
+           ターンでは従来どおりターンの中で撒いて束ね、依頼主へ戻す。
+           転送を委譲ターンで提示しない #96 の門 (`!awaiting_reply`) と同じ
+           構造の規則。結合テストで留めた
+           (plan_edit_window.rs の a_delegated_turn_skips_the_window_…)
       欄名: AgentSpec.planReview: bool (serde default = false)。
       **AgentSnapshot にも写す** (投影に無い欄は設定保存で既定へ戻る —
       Spec 14 P1 の規律)。UI ラベルは「計画の確認」(分類・ラベルは

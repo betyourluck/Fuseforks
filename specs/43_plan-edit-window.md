@@ -1,5 +1,16 @@
 # Spec: plan の編集窓 — 計画を提示し、人が直してから撒く
 
+**改訂の続報（2026-09-02・凍結 10）**: **委譲で呼ばれたターン（`reply_to`
+あり）では `planReview` に関わらず窓を開けない**。実機で、ザリの `plan` に
+呼ばれたルナ（`planReview` = true）が自分の `plan` で提示 → ザリへは「提案した」の
+105 字だけが戻り → 束ねは hop=0 の新しい根としてルナへ届き → 戻り口が無いので
+利用者へ流れた（ザリの束ねはルナの調査を欠いたまま確定）。Design の
+「窓が要るのは進行役だけ。ワーカーに plan は生えないことが多い」は前提として
+弱く、`plan` は接続 2 体以上なら誰にでも生える。処方は #96 の転送の門と同じ形
+`plan_review && !awaiting_reply`（`turn.rs`）。結合テスト 1 本を赤 → 緑で
+留めた（`a_delegated_turn_skips_the_window_and_returns_the_bundle_to_the_requester`）。
+詳細は Notes 6。
+
 **改訂の続報**: [Spec 44](44_ask-cycle-detection.md)（rev2 承認）の輪の検出で、
 dispatch 経路の `Envelope.waiting` は**空**（新しい因果の根 — 進行役は提案で
 ターンを終えており待っていない）。凍結 8（ターン外の実行形は 2 つまで）には
@@ -379,6 +390,24 @@ IPC は **`dispatch_plan(plan_id, tasks)` と `discard_plan(plan_id)` の 2 本*
      先に留める）
    - M1 は指摘のとおり rev1 の記述矛盾（提案の保持と波の実行者を 1 つの主張で
      覆っていた）。D1 を限定し、凍結 8 で例外の数を 2 に固定した
+6. **委譲されたターンでは窓を飛ばす（2026-09-02・凍結 10）。** 実機の時系列
+   （`fuseforks.log` 2026-09-02 07:40〜07:44）: `plan wave: agent=agent
+   to=[agent_3,agent_8]` → `plan pending: agent=agent_8`（07:40:29）→
+   `reply: agent=agent_8 to=agent chars=105`（07:40:32 = ターンが提示で終わる）→
+   `plan dispatch: agent=agent_8`（07:40:39 = 人の承認）→ `plan bundle:
+   agent=agent`（07:40:43 = ザリの束ねが 105 字の席で閉じる）→ `turn start:
+   agent=agent_8 hop=0 from=system`（07:43:33）→ `reply: agent=agent_8 to=user`
+   （07:44:41）。**ルナは待たなかったのではなく、待てる場所が無かった** —
+   凍結 5（dispatch は新しい因果の根）は戻り口を持ち越さないので、窓を開けた
+   時点で依頼主への束ねの経路は構造的に消える。処方は `plan_review &&
+   !awaiting_reply`（`turn.rs` の `CallRunner::awaiting_reply`）。採らなかった
+   形は 2 つ — 2 つ目のターンへ戻り口を持ち越す（`reply_to` がターンより
+   長生きする = 所有者の再設計）/ ワーカーの `planReview` を OFF にする運用
+   （同じ組み合わせを作れる余地が残る）。**検収 4 の対照（`agent`=true /
+   `agent_8`=false）はこの組み合わせを 1 度も踏んでいなかった** — 実機検収は
+   「進行役に付ける」形しか試しておらず、ワーカーに付ける形の帰結は設計時に
+   数えていない。ミューテーション: 判定を `spec.plan_review` へ戻すと新設の
+   1 本だけが赤（`Pending` 対 `Dispatched`）で、他 7 本は緑。
 
 ## P4 実機記録（2026-08-24〜25。**検収 7 件すべて観測 → Done**）
 

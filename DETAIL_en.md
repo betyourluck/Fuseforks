@@ -551,6 +551,7 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 - **The identity of what you saw and what runs is guaranteed structurally** — what dispatches is exactly the data you last edited and confirmed; **no LLM sits on the post-approval path**
 - The proposing turn ends normally and **receives no results**. The dispatch runs as a new request causality (its ceiling comes from the village `tokenBudget` as usual), and the bundle arrives as a System delivery that starts a fresh coordinator turn, where it is summarized and returned
 - Proposals are not persisted (they vanish on restart — the same working lifetime as wave records). Stopping the coordinator mid-run folds the whole wave (workers stop too; no tokens are spent on a bundle with nowhere to go)
+- **A delegated turn skips the window** (2026-09-02). When a servant with Plan Review on is itself called via `ask` or `plan`, its `plan` in that turn fans out and bundles inside the turn as before and returns to the requester. Opening the window would end the turn at the proposal, so the requester would receive only "proposed"; the bundle would arrive later as a new causality with no return path and drift to the user — the requester could never receive it. Same shape as the rule that a delegated turn is never offered the handoff tool
 
 #### Wave Pane — Execution Traces of `plan` ([Spec 08](specs/08_plan-wave-pane.md))
 
