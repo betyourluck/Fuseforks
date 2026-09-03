@@ -1143,6 +1143,125 @@ Outcasts のスレッド 2 本を読んだ —
   個体の属性ではなく**その系統での役割の属性**。系統ごとに進行役が違うなら、
   設定はグループ側に置くか、役割を構造（戻り口の有無）で判定する側へ寄せる
 
+## Gemini 3.8 Flash と Interactions API の接地（2026-09-03。**未起票・材料**）
+
+起点は利用者 —「Interactions API の固有スキルが目を見張る。村の事前調査を接地して
+Gemini 系の固有スキルとして使えるものがないか調べて」。公式文書 9 ページ +
+端末の `GEMINI_API_KEY` で **probe 21 発**（generateContent 13 / Interactions 8）+
+`fuseforks.log` の突き合わせ。**村の報告は 6 リンク中 3 本が 404、事実の誤りが 1 件、
+射程の広げすぎが 1 件**。以下は probe と文書で確定した側。
+
+### 村の報告の接地結果
+
+| 主張 | 判定 | 根拠 |
+|---|---|---|
+| Agentic Video Understanding は 3.8 **非対応** | **誤り** | docs の対応表に 3.8 あり。probe: `processing: "agentic"` で `processing_call` / `processing_result` step が走り「赤から青」を正答。村は 09-01 の changelog（3.7 / 3.6 / 3.5-lite = 3.8 GA の前日）を根拠にしたと推定 |
+| `temperature` / `top_p` / `top_k` は 3.x 共通で非推奨 | 射程の広げすぎ | changelog 2026-07-21 の記述は **3.6 Flash と 3.5 Flash-Lite** 宛。3.8 は `temperature: 0.2` を 200 で黙って受ける（警告欄も無い） |
+| `minimal` はエラー | 確認 | 400 `Thinking level MINIMAL is not supported for this model`。**受理集合は列挙されない**（Spec 34 の手筋は Gemini では効かない） |
+| 整数の `thinking_budget` は互換にしない | 判断としては可 | ただし `thinkingBudget: 512` は 3.8 でも **200** で通る。「使えない」ではない |
+| Interactions API を呼出し基盤に | 文書は GA 2026-06 | **今の generateContent で 3.8 の機能は全部届く**（下）。基盤を替える動機は「新機能が先に来る」だけ |
+| 単価 $0.75 / $3.75・キャッシュ 90% 引き | 一致 | `prices.json` に 3.8 = 0.75 / 3.75 / 0.075 を利用者が 09-03 に登録済み。**2027-01-01 に倍になる崖**（$1.50 / $7.50 / $0.15）は `pricingAsOf` で追う |
+| リンク 6 本 | 3 本 404 | `models/gemini-3.8-flash/interactions` / `docs/release-notes`（実体は `docs/changelog`）/ Vertex（`cloud.google.com` → `docs.cloud.google.com` へ 301、そこも 404） |
+
+### 3.8 は今のワイヤでそのまま動いている
+
+`fuseforks.log` に **`model=gemini-3.8-flash` のターンが 35 本**（agent_3・2026-09-03 02:29〜）、
+`stop=failed` は **0**、`rounds=6/12` の関数往復も完走。`thoughtSignature` の持ち回り
+（`ToolCall::extra`）が 3.8 でも通っている。**`cache:` 行は prompt 10,754〜14,162 で
+`cached=0` が 8 本中 6 本** — #104（3.7 は 19,000 未満でキャッシュを返さない）の同族の
+可能性が高いが、19K 超の対照が無いので未確定。
+
+### 実装との差（Gemini ワイヤの現状 = `gemini.rs`）
+
+- 送るのは `google_search` + `functionDeclarations` + `toolConfig.includeServerSideToolInvocations`
+  （google_search ON のときだけ）+ `thinkingConfig.includeThoughts: true` だけ
+- **`effort` は Gemini に 1 度も渡っていない**（`client.rs:369` の `encode(req, google_search)`）。
+  3.8 / 3.7 は既定 `medium` で常時思考 — 8 日実測で思考が実効の 17% を占めた村で、
+  **制御の口が無い唯一のワイヤ**
+- usage の decode は 4 欄（prompt / candidates / thoughts / cachedContent）。
+  **`toolUsePromptTokenCount` を読んでいない**
+- **Gemini の decode に `dropped content blocks:` の計器が無い**（Anthropic と Meta にはある）。
+  未知の part は無音で消える
+
+### probe で確定した API の形（generateContent・3.8）
+
+| | 結果 |
+|---|---|
+| `generationConfig.thinkingConfig.thinkingLevel: "low"` | 200。応答の text part に `thoughtSignature` が付く |
+| `urlContext: {}` | 200。`urlContextMetadata.urlMetadata[{retrievedUrl, urlRetrievalStatus}]` + `groundingMetadata.groundingChunks[].web.uri` が**実 URL**（redirect ではない）。**取得本文は `toolUsePromptTokenCount` = 8,999 として入力課金**（LP 1 ページ）。`promptTokenCount` は 32 のまま |
+| `codeExecution` / `googleSearch` + `functionDeclarations` | `includeServerSideToolInvocations` 無しは 400（**同じ文面**）。ありなら 200 で `toolCall` / `toolResponse` part（各 part に `thoughtSignature`）が本文の前に並ぶ |
+| `googleSearch` 単独 | `groundingChunks` 3 件・`groundingSupports` あり。**URI は `vertexaisearch.cloud.google.com/grounding-api-redirect/…`**、title はドメインのみ。Spec 05 の「sources 空」は 3.8 では解消しているが実 URL ではない。usage に検索の注入分は出ない（課金は 1 クエリ単位: 月 5,000 無料 → $14 / 1,000） |
+
+### probe で確定した Interactions API の形（`POST /v1beta/interactions`）
+
+- 要求: `model` / `input`（string | Content[] | Step[]）/ `tools[{type}]` / `generation_config.thinking_level` /
+  `store` / `previous_interaction_id`。ツール型は `function / google_search / google_maps /
+  code_execution / file_search / url_context / computer_use / mcp_server`
+- 応答: `steps[]`（`thought` / `function_call` / `function_result` / `google_search_call` /
+  `google_search_result` / `code_execution_call` / `code_execution_result` / `processing_call` /
+  `processing_result` / `model_output`）。`usage` に `total_thought_tokens` / `total_cached_tokens` /
+  `total_tool_use_tokens` / `grounding_tool_count` / `raw_prompt_token`
+- **ステートレス（`store: false`）では `thought` step を `signature` ごと逐語で送り返さないと 400**
+  （`function_call` の signature を落としても 400。文面は `Request contains an invalid argument` で
+  理由を言わない）。OpenAI Responses の `reasoning` item と同型
+- `previous_interaction_id` のサーバー側状態は動く（合言葉の往復で確認）。**村は履歴を自分で
+  所有する**（滑る窓 8 往復・`sessions.redb`）ので採るならステートレス側
+- `google_search` + `function` の混在は 200。citations は `url_citation` annotation で
+  **URL は generateContent と同じ redirect**
+- `raw_prompt_token`（15,449 / 16,011）と `total_input_tokens`（129 / 43）の差が検索の注入分。
+  **課金は per-query なので token には出ない**（generateContent と同じ）
+- **agentic video は Interactions 限定**（同日の 2 発目で確定）。generateContent は
+  `parts[].videoMetadata.processing` も `parts[].processing` も
+  `Unknown name "processing" … Cannot find field` の 400 — モデルの非対応ではなく
+  **スキーマに欄が無い**。8 本目のワイヤを切る理由になりうる唯一の機能
+- **`extra/zari.mp4`（10 秒・720p・音声あり・2.5MB）の対照**（同じ質問・`thinking_level: low`）:
+
+  | 経路 | 所要 | 入力側の払い | 答え |
+  |---|---|---|---|
+  | Interactions agentic | **14.0 秒** | `tool_use` **1,896**（image 1,320 + audio 251 + text 325）+ `processing_call` 3 回 | 映像 2 区間 + 音声 1 行。末尾のロゴには触れず |
+  | Interactions static | 5.4 秒 | `video` **910** | 「白抜きの EEVA! ロゴ」を**捏造** |
+  | generateContent static | 3.3 秒 | `video` 910 | 「左下に Yeah! の文字」を**捏造** |
+
+  ffmpeg で 8.5 / 9.3 / 9.9 秒のフレームを抜いて目視 — **どのフレームにも文字は無い**
+  （ハート → 片足を上げたポーズ。ロゴもテロップも無い）。**10 秒の動画では agentic が
+  2.1 倍のトークンと 2.6 倍の時間を払い、代わりに存在しない文字を書かなかった**。
+  文書の「88% 節約・7% 高品質」は長尺の話で、短尺では費用の向きが逆。
+  末尾の掛け声は 3 経路で割れ、**利用者の耳が正**（2026-09-03「イーバー、おそらく
+  fever」）— Interactions static の「イーバ！」が最も近く、agentic は「イバー！（¡Viva!）」と
+  語を取り違え、generateContent static の「Yeah!」は外れ。**agentic は文字を捏造しなかった
+  代わりに音声の語を外した**ので、10 秒の動画では品質も一方向に良いとは言えない。4 秒の合成動画（160×120）でも同じ向き（static 252 対 agentic 329）
+
+### 見立て（裁定は利用者）→ **1 と 2 を [Spec 48](specs/48_gemini-thinking-level-and-url-context.md) として起票**（同日。利用者「とりあえず両方」）
+
+1. **`thinkingLevel` を「思考段階」の Gemini 腕として足す** — 最も安く、費用に直結。
+   `low / medium / high` はそのまま、`xhigh / max → high`（Meta の `max → xhigh` と同じ
+   「天井への写像」）、`minimal` は送らない。**モデル名でのゲートが要る** — 3.6 / 3.5-lite は
+   `minimal` を受け、2.5 系は `thinkingLevel` 自体を持たない（`openai_compat::reasoning_effort` と
+   同じ形）。新しいトグルは生えない。Spec 不要級（決めるのは丸めとゲートだけ）
+2. **`urlContext` を固有スキル 1 トグル**（`geminiUrlContext`。Perplexity の `fetch_url` と同型・
+   「ワイヤの形が変わる」側）。**同時に `toolUsePromptTokenCount` を usage へ**（読まないと
+   #103 / Spec 40 の形 = 払っているのに `prompt` に出ない）。**`dropped content blocks:` の
+   計器も同じコミットで**（`toolCall` / `toolResponse` / `executableCode` が無音で消える口を
+   閉じる）。この 2 つは前提なので、スキルより先
+3. **Interactions API のワイヤ（8 本目）は起票しない** — generateContent で 3.8 の機能が
+   全部届く間、増やす理由が「新機能が Interactions に先に来る」だけ。Meta / Perplexity の
+   ときは Responses しか口が無かった。**agentic video は generateContent では撃てない**
+   （同日実測。上の表）ので、これが Interactions を切る唯一の理由。**ただし短尺では
+   費用も時間も倍**で、効くのは長尺（分単位）だけ — 村に長尺の動画を読ませる仕事が
+   出るまで起票しない。切るときの形は `Provider::GeminiInteractions`（ステートレス・
+   `thought` step の signature を逐語で往復 = Responses 4 本と同じ骨格）
+4. **採らない**: code execution（2026-08-09 裁定の Code Interpreter と同じ棚。30 秒・
+   ネット無し・成果物が本文に畳まれてファイルにならない）/ File Search（村の `rag` と競合し、
+   **ファイルが Google 側に無期限保存** = Meta の `/v1/files` と同じ「利用者が負う条件」、
+   `google_search` / `url_context` と同時使用不可）/ Maps（村に用途が無い）/
+   Computer use（2026-08-09 裁定のまま。Preview）
+5. **passive バッジは付けない** — implicit caching は「働きでないものを見せない」の規律の外側
+   （`providerSkills.ts` の doc が禁じている側）
+
+**probe スクリプトは scratchpad に置いて捨てた**（Spec 34 と同じ扱い。数字はここが正）。
+**自分の誤り 1 つ**: 2 本目の probe スクリプトが 1 本目を import した時点で全 probe を再実行し、
+同じ 8 発を 2 度撃った（`sys.argv` の差し替えでは止まらなかった — import 時の既定が `all`）。
+
 ## 設計の材料 3 件（2026-08-29 の議論。未起票）
 
 利用者との設計議論 3 往復の記録。裁定が落ちたものと構想の段階のものを分けて書く。
@@ -5620,6 +5739,21 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 48](specs/48_gemini-thinking-level-and-url-context.md)（Gemini の固有スキル 2 本 —
+  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0 完了。残は P1〜P4**
+  （2026-09-03。P0 = probe 7 発 + `data_contract` 凍結 3 箇所。**決着 2 つ** —
+  `thinkingLevel` の門は `gemini-3`（2.5-flash-lite が 400・2.5-flash は 404 で提供終了）/
+  **`toolCall` / `toolResponse` は履歴へ返さない**（返さなくても 200・返さないと
+  再取得・返すなら signature ごと逐語で剥ぐと 400。Spec 05 以来の「未確認」を閉じた）。
+  予測を外したのは 1 つ: 2.5-lite は `urlContext` を受ける = 門は要らない。査読 2 系統
+  13 点 → 採用 6 / 訂正して採用 4 / 反証 2 / 変更なし 1。**反証 2 つはログと実装が根拠** —
+  `gemini-3.6-flash` / `3.5-flash-lite` は村のログに 248 / 92 ターン / `cache:` 行は
+  decode 後の `Usage.prompt` を出している。**訂正の本体は B-2** —
+  `includeServerSideToolInvocations` は「組み込み × 関数宣言」の門で、現行の
+  `google_search` 単独で真にする実装と単体 1 本の期待値が変わる）。
+  起点は 3.8 Flash の接地（上の節）。範囲は思考段階の写像 + `geminiUrlContext` トグル +
+  `toolUsePromptTokenCount` の畳み + Gemini decode の計器 2 行。Interactions ワイヤと
+  agentic video は範囲外
 - [Spec 46](specs/46_acceptance-probe.md)（予定の後判定 — 検収の probe と、
   通るまでの再依頼）: **rev2 承認 → P0〜P2 完了**（2026-08-30。P0 =
   `data_contract` の `Acceptance` ブロック。P1 = コア + 結合 5 本・

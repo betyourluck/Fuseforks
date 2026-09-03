@@ -1957,6 +1957,10 @@ entities:
       perplexityFinanceSearch: bool
       perplexityPeopleSearch: bool
       perplexityFetchUrl: bool
+      # --- Gemini の固有スキル (Spec 48 D3)。既定 false、provider == gemini でのみ
+      # 効く (gemini_url_context_active() の AND 述語)。google_search と同じ棚。
+      # 思考段階 (thinkingLevel) は新しい欄を持たない — 既存の effort を写す (D1)
+      geminiUrlContext: bool
       requestTimeoutSecs: u32
       maxRetries: u32
       # --- 単価 (Spec 41)。すべて Option + #[serde(default)]。$ / 100 万トークン ---
@@ -5069,11 +5073,47 @@ llm_wire:
       - system は contents に混ぜず systemInstruction へ分ける。role は user / model の
         2 値しかなく、ツール結果も user ロールの functionResponse パートとして積む
       - 思考ブロック（thought: true）は本文に混ぜない（内部独白が利用者に見える）
-      - completion = candidatesTokenCount + thoughtsTokenCount。思考も課金対象で、
-        この数え方でのみ totalTokenCount と一致する（実測）
-      - 組み込みツールと関数呼び出しを併用するなら
-        toolConfig.includeServerSideToolInvocations が必須。欠くと 400 で名指しされる。
-        接地を使うときだけ送る（無関係なキーを常時足さない）
+      - completion = candidatesTokenCount + thoughtsTokenCount。思考も課金対象。
+        **prompt = promptTokenCount + toolUsePromptTokenCount** (Spec 48 D4。
+        URL context が取得した本文は toolUsePromptTokenCount として入力単価で
+        課金され、promptTokenCount には入らない — 実測 32 + 8,999)。
+        恒等式は 4 項: totalTokenCount = promptTokenCount + candidatesTokenCount
+        + thoughtsTokenCount + toolUsePromptTokenCount (欄なしは 0。
+        thinkingLevel low では思考が起きない回があり thoughtsTokenCount が
+        欄ごと省かれる)。畳んだ後の「素の未キャッシュ」prompt − cache_read −
+        cache_write には取得本文が含まれる (定義。予算式 ×1.0 に乗る)。
+        **同じ要求で toolUsePromptTokenCount が欄なしで返る回がある**
+        (Spec 48 P0 (d)/(d2)。取得は両方で起きている) — 払いが usage に出ない
+        回が実在する。機構は作らず gemini tools: 行の url_context 数で数える
+      - 組み込みツール (google_search / urlContext) と**関数宣言**を併用するなら
+        toolConfig.includeServerSideToolInvocations が必須。欠くと 400 で名指しされる
+        (文面は「to use Built-in tools with Function calling」)。
+        **送る条件は「組み込みが 1 つでも ON かつ functionDeclarations が 1 つ以上」**
+        (Spec 48 D3。旧: google_search 単独で真。関数宣言の無い周に送っても
+        害は無い — P0 (f-1)(f-2) で 3 通り 200 — が、送ると応答に toolCall /
+        toolResponse の part が付く。検索語は groundingMetadata.webSearchQueries
+        からも拾えるので、フラグを落としても Grounding.queries は空にならない)
+      - **thinkingLevel** (Spec 48 D1/D2): generationConfig.thinkingConfig.thinkingLevel
+        に Effort を写す。None → 送らない (既定 medium) / low・medium・high → そのまま /
+        xhigh・max → high (天井への写像)。minimal は Effort に無いので構造的に出ない
+        (3.8 / 3.7 は 400 で拒む)。**門は model.starts_with("gemini-3")** —
+        gemini-2.5-flash-lite は 400 `Thinking level is not supported for this model`
+        (P0 (b'))。同じワイヤ内の方言の吸収であって、ワイヤの選択に名前を使う
+        (Spec 31 D2 の禁止) ではない。includeThoughts: true とは併存する
+      - **toolCall / toolResponse は履歴へ返さない** (Spec 48 P0 (d2) で確定。
+        Spec 05 以来の「未確認」を閉じた)。返さなくても 200 で、モデルは必要なら
+        同じ URL / 検索を**再実行**する (toolUsePromptTokenCount がもう 1 度乗る)。
+        返すなら thoughtSignature ごと逐語 — 剥ぐと 400
+        `Tool call part is missing thought_signature`。返せば次の周の prompt に
+        取得本文が乗り (9,050)、返さなければ再取得に乗る (9,047) — どちらも
+        入力単価で同額なので、ChatMessage に不透明な part の席は作らない
+      - **計器 2 行** (Spec 48 D5): decode が本文・tool_calls・grounding のどれにも
+        写さなかった part は `dropped content blocks: kinds=… count=…` を 1 行
+        (Anthropic / Meta と同じ形。toolResponse は現行で毎ターン捨てている =
+        可視化であって新事象ではない。toolCall は queries を拾うので数えない)。
+        URL context か検索を使った周だけ
+        `gemini tools: agent=… url_context={retrieved}/{requested} statuses=…
+        tool_use_prompt={n} search_queries={n}` を 1 行 (pplx tools: と同じ棚)
     schema_subset: |
       functionDeclarations[].parameters は JSON Schema ではなく OpenAPI 3.0 の部分集合。
       未知キー（$schema / additionalProperties / exclusiveMinimum 等）は黙って無視されず
@@ -5109,9 +5149,19 @@ llm_wire:
       処方そのものが毒になる (Spec 05 Phase 2.5)。
       UI はその状態でチェックを隠す代わりに理由と直し方を出す
       （隠すだけだと真のまま見えなくなる）。
-      未解決: toolCall / toolResponse を履歴へ返す必要があるかは未確認
-      （「検索 → 関数呼び出し → functionResponse → 次の周」が未通過）。
-      確かめる前に ChatMessage 側へ席を作らない。
+      ~~未解決: toolCall / toolResponse を履歴へ返す必要があるかは未確認~~
+      → **2026-09-03 Spec 48 P0 (d2) で確定: 返さなくてよい** (invariants の項)。
+      席は作らない、が結論のまま残った。
+    gemini_url_context_active: |
+      **gemini_url_context_active() = gemini_url_context AND effective_provider() == Gemini**
+      (Spec 48 D3。grounding_active と同型の AND 述語)。モデル名の門は無い —
+      gemini-2.5-flash-lite でも urlContext は 200 (P0 (e))。ON なら tools に
+      {"urlContext": {}} を別要素で push。**システムプロンプトへの告知は無い** —
+      URL context は依頼文に URL があるときだけモデルが自分で使う道具で、
+      告知なしで発火する (probe 5)。出典は groundingChunks[].web に実 URL で載り
+      GroundingEngine::Google のまま (URI の形で検索の redirect と区別はできるが、
+      engine は応答 1 値で chunk 単位ではなく、redirect ホスト名の照合は除外リスト
+      側の検査)。urlContextMetadata は画面に出さず gemini tools: 行へ。
 
   xai_responses:
     why: |
