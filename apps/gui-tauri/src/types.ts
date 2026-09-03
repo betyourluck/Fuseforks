@@ -374,6 +374,14 @@ export interface ModelTemplate {
   perplexityFinanceSearch: boolean;
   perplexityPeopleSearch: boolean;
   perplexityFetchUrl: boolean;
+  /**
+   * Gemini の URL context（Spec 48 D3）。依頼文に書かれた URL を Google 側が
+   * 取得して答えに使う。**`provider === "gemini"` のときだけ効く**（コアの
+   * `gemini_url_context_active` が AND で判定する）。
+   * 取得本文は入力単価で課金される — 実測 1 ページ 8,999 トークンで、
+   * `prompt` へ畳んで数える（D4）。既定 OFF。
+   */
+  geminiUrlContext: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
   /**

@@ -23,12 +23,14 @@ type Draft = Pick<
   | "perplexityFinanceSearch"
   | "perplexityPeopleSearch"
   | "perplexityFetchUrl"
+  | "geminiUrlContext"
 >;
 
 function draft(over: Partial<Draft> = {}): Draft {
   return {
     provider: null,
     googleSearch: false,
+    geminiUrlContext: false,
     xaiWebSearch: false,
     xaiXSearch: false,
     openaiWebSearch: false,
@@ -185,11 +187,27 @@ describe("providerSkills", () => {
     expect(s.anyOffered).toBe(true);
   });
 
-  it("Gemini では Google だけを出す（固有スキルは混ざらない）", () => {
+  it("Gemini では Google と URL context の 2 本を出す（他社の固有スキルは混ざらない）", () => {
     const s = providerSkills(draft({ provider: "gemini" }));
     expect(s.google.offered).toBe(true);
+    expect(s.geminiUrlContext.offered).toBe(true);
     expect(s.xaiWeb.offered).toBe(false);
     expect(s.xaiX.offered).toBe(false);
+    expect(s.perplexityFetch.offered).toBe(false);
+    expect(s.anyOffered).toBe(true);
+  });
+
+  // Spec 48 D3 / D6。**Gemini の見出しは google.offered が既に立てている**ので、
+  // anyOffered に geminiUrlContext を足し忘れても Gemini では静かに通る —
+  // ここで留められるのは stranded と offered の対応だけ（D6 に明記）。
+  it("URL context を ON のまま互換へ戻すと stranded になる", () => {
+    const s = providerSkills(draft({ provider: "open_ai_compat", geminiUrlContext: true }));
+    expect(s.geminiUrlContext.offered).toBe(false);
+    expect(s.geminiUrlContext.stranded).toBe(true);
+    // Gemini に戻せば offered で stranded ではない。
+    const back = providerSkills(draft({ provider: "gemini", geminiUrlContext: true }));
+    expect(back.geminiUrlContext.offered).toBe(true);
+    expect(back.geminiUrlContext.stranded).toBe(false);
   });
 
   it("互換のままでは 1 つも出ない", () => {

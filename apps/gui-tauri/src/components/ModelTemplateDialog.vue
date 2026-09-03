@@ -262,6 +262,7 @@ const skills = computed(() =>
       perplexityFinanceSearch: false,
       perplexityPeopleSearch: false,
       perplexityFetchUrl: false,
+      geminiUrlContext: false,
     },
   ),
 );
@@ -308,6 +309,15 @@ const strandedRows = computed(() => {
       strongKey: "modelTemplate.strandedStrong",
       afterKey: "modelTemplate.strandedAfter",
       clear: () => (d.googleSearch = false),
+    });
+  if (s.geminiUrlContext.stranded)
+    rows.push({
+      key: "geminiUrlContext",
+      labelKey: "modelTemplate.geminiUrlContext",
+      ownerKey: "modelTemplate.providerGemini",
+      strongKey: "modelTemplate.strandedStrong",
+      afterKey: "modelTemplate.strandedGeminiToolAfter",
+      clear: () => (d.geminiUrlContext = false),
     });
   if (s.xaiWeb.stranded)
     rows.push({
@@ -445,6 +455,8 @@ function blank(): ModelTemplate {
     perplexityFinanceSearch: false,
     perplexityPeopleSearch: false,
     perplexityFetchUrl: false,
+    // Spec 48。既定 OFF（取得本文は入力単価で課金 — 実測 1 ページ 8,999 トークン）。
+    geminiUrlContext: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
     // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
@@ -898,6 +910,20 @@ function onTemperature(raw: string): void {
                 <input v-model="draft.googleSearch" type="checkbox" />
                 <span class="text-ink-dim">
                   {{ $t("modelTemplate.googleSearchHint") }}
+                </span>
+              </label>
+            </template>
+
+            <!--
+              Gemini の URL context（Spec 48 D3）。接地と同じ棚で、Gemini ネイティブを
+              選んだときだけ出す。取得本文は入力単価で課金されるので、押す前に言う。
+            -->
+            <template v-if="skills.geminiUrlContext.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.geminiUrlContext") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.geminiUrlContext" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.geminiUrlContextHint") }}
                 </span>
               </label>
             </template>

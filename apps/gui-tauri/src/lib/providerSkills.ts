@@ -231,8 +231,14 @@ export function providerSkills(draft: Pick<
   | "perplexityFinanceSearch"
   | "perplexityPeopleSearch"
   | "perplexityFetchUrl"
+  | "geminiUrlContext"
 >): {
   google: SkillVisibility;
+  /**
+   * Gemini の URL context（Spec 48 D3）。`google` と同じ棚（Gemini ネイティブ
+   * 限定）。取得本文は入力単価で課金されるので、押す前に画面で言う。
+   */
+  geminiUrlContext: SkillVisibility;
   xaiWeb: SkillVisibility;
   xaiX: SkillVisibility;
   openaiWeb: SkillVisibility;
@@ -277,6 +283,7 @@ export function providerSkills(draft: Pick<
   const onPerplexity = draft.provider === "perplexity_responses";
 
   const google = visibility(draft.googleSearch, onGemini);
+  const geminiUrlContext = visibility(draft.geminiUrlContext, onGemini);
   const xaiWeb = visibility(draft.xaiWebSearch, onXai);
   const xaiX = visibility(draft.xaiXSearch, onXai);
   const openaiWeb = visibility(draft.openaiWebSearch, onOpenAi);
@@ -291,6 +298,7 @@ export function providerSkills(draft: Pick<
 
   return {
     google,
+    geminiUrlContext,
     xaiWeb,
     xaiX,
     openaiWeb,
@@ -303,6 +311,7 @@ export function providerSkills(draft: Pick<
     passive,
     anyOffered:
       google.offered ||
+      geminiUrlContext.offered ||
       xaiWeb.offered ||
       xaiX.offered ||
       openaiWeb.offered ||

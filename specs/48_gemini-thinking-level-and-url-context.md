@@ -5,7 +5,7 @@
   反証 2 / 変更なし 1。記録は Notes 5。承認査読の追加 2 点 = golden の変更を「意図した
   削減」と明記 / (f) を f-1・f-2 に割る、も取り込み）→ P0 完了（probe 7 発 +
   `data_contract` 凍結 3 箇所。記録は「P0 実測記録」）→ P1 完了（コア。記録は
-  「P1 実装記録」）**。残は P2〜P4
+  「P1 実装記録」）→ P2 完了（GUI。記録は「P2 実装記録」）**。残は P3〜P4
 - 起点: 利用者 —「Google が gemini-3.8-flash を発表した。API の固有スキルが
   目を見張るものがあった」→ 村の事前調査を接地（probe 21 発 + 公式文書 9 ページ +
   `fuseforks.log`。記録は CLAUDE.md「Gemini 3.8 Flash と Interactions API の接地
@@ -302,6 +302,28 @@ lib 643 → 全 test binary 緑・clippy 警告ゼロ・ワークスペース `c
   `url_context_report` / `urlContextMetadata` の decode。`model.rs` に AND 述語の単体 1 本
 - **触っていないもの**: `Usage` / `Record::Turn` / `TurnSpend` / `budget.rs` /
   `pricing.rs` / `turn:` 行の書式（D4 の「畳む」がこの 6 箇所を触らない理由そのもの）
+
+## P2 実装記録（2026-09-03）
+
+vitest 453 → 458・`bun run build`（vue-tsc）緑。D6 の全箇所: `types.ts` /
+`providerSkills.ts`（Pick・戻り値・`visibility`・`anyOffered`）/ `ModelTemplateDialog.vue`
+（`draft` 初期化 2 箇所・`strandedRows`・チェックボックス）/ `locales/{ja,en}.json` 3 鍵
+（`geminiUrlContext` / `geminiUrlContextHint` / `strandedGeminiToolAfter`）/
+`providerSkills.test.ts` 2 本。
+
+- **ミューテーション 2 回**: (a) URL context の持ち主を `onXai` へ → 2 本赤（offered と
+  stranded の対応） (b) **`anyOffered` から外す → 緑のまま**。**予測どおり** — Gemini の
+  見出しは `google.offered` が既に立てているので、Spec 45 P2 の「`anyOffered` の名指し
+  検査で 1 本だけ赤」はここでは再現しない。**D6 の「足し忘れると見出しの区切りだけ
+  消える」は、そのワイヤに 2 本目の固有スキルが入った時点で網から外れる**（1 本目が
+  見出しを立てる）。足したのは一貫性のため。テストのコメントに明記
+- **stranded の文言は `strandedStrong` を再利用し、後半だけ新設**
+  （`strandedGeminiToolAfter`）。既存の `strandedAfter` は「グラウンディングは…」と
+  接地を名指しするので、URL context の行に流用すると嘘になる
+- **ラベルは「URL 取得（URL context）」** — Perplexity の「URL 取得」と同じ語を使い、
+  括弧で機構名を添えて区別する（stranded 行は持ち主のワイヤ名を併記するので
+  そこでは紛れない）。ヒントに「入力トークンとして課金（1 ページで数千トークン）」を
+  入れた — 押す前に言う（xAI / OpenAI / Perplexity の前例と同じ棚）
 
 ## 検収項目（各項目に到達経路を書く — Spec 43/44 の教訓）
 
