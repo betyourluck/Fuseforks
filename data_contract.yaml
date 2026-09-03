@@ -4680,7 +4680,8 @@ llm_wire:
                 **要求しなくても思考ぶんは払っている**（実測 3,773 トークン）。
                 includeThoughts は**接地とは独立に常に送る** —
                 tool_config.includeServerSideToolInvocations の
-                「接地を使うときだけ送る」規律とは条件が違い、思考は接地の
+                「組み込みツール × 関数宣言のときだけ送る」規律（Spec 48 D3。
+                旧: 接地を使うときだけ）とは条件が違い、思考は接地の
                 有無と無関係に常に起きている
     **トグルにしない** — 思考ぶんは display に関わらず払っており、summarized は
     「既に払ったものを返してもらう」だけ（実測 1 対で thinking_tokens

@@ -61,7 +61,7 @@ Fuseforks/
 │       │       ├── wire.rs          Provider raw JSON (single source of truth)
 │       │       ├── openai_compat.rs OpenAI-compatible adapter (encode/decode pure functions)
 │       │       ├── anthropic.rs     Anthropic Messages API adapter
-│       │       ├── gemini.rs        Gemini native adapter (Google Search grounding)
+│       │       ├── gemini.rs        Gemini native adapter (Google Search grounding, URL context, thinking level)
 │       │       ├── xai_responses.rs xAI Responses adapter (Grok Live Search)
 │       │       ├── openai_responses.rs OpenAI Responses adapter (thinking summary, web search)
 │       │       ├── meta_responses.rs   Meta Responses adapter (web search, all four attachment kinds)
@@ -878,6 +878,41 @@ Provenance flows **only to the presentation layer**. It never returns to the mod
 Schemas for built-in and MCP tools are filtered by adapters to retain **only keys Gemini accepts**. Gemini's `parameters` are a subset of OpenAPI 3.0, not JSON Schema; sending `$schema` or `additionalProperties` returns 400. This is an allowlist, not a denylist, because **MCP tool schemas are written by connected servers and cannot be constrained internally**.
 
 ---
+
+### Gemini Thinking Level and URL Context ([Spec 48](specs/48_gemini-thinking-level-and-url-context.md))
+
+**Reasoning effort now reaches Gemini** — it is mapped onto
+`generationConfig.thinkingConfig.thinkingLevel`. `low / medium / high` pass through,
+`xhigh / max` become `high` (the ceiling of this wire), and an unset effort sends
+nothing (provider default = `medium`). The gate is the `gemini-3` name: 2.5-series
+models have no such field and reject it with a 400 (measured on
+`gemini-2.5-flash-lite`). **Until now the effort setting never reached Gemini at
+all** — 3.7 / 3.8 were always thinking at the default `medium`. In a village where
+eight days of measurement put thinking at 17% of effective tokens, this was the only
+wire without a control.
+
+"Vendor-specific skills" gains **Fetch URL (URL context)**, on the same shelf as
+Google grounding (Gemini native only). Google fetches the pages at URLs written in
+the request and uses them in the answer. Sources carry the **real URL** (search
+sources are Google redirect URLs). **The fetched text is billed as input tokens**
+(measured: 8,999 tokens for one page). In usage it appears as
+`toolUsePromptTokenCount`, not `promptTokenCount`, so the app folds it into `prompt` —
+otherwise the spend shows up neither in statistics nor on the `turn:` line. Fetched
+text is not kept in the history; if the model needs it again on the next round it
+fetches again (roughly the same spend). Nothing is added to the system prompt — URL
+context is a tool the model uses on its own only when the request contains a URL,
+and it fires without any notice.
+
+On 3.8, **search sources (`groundingChunks`) are now returned as well**, but the URLs
+are `vertexaisearch.cloud.google.com` redirects with only the domain as a title —
+read the note above ("referenced URLs are not returned") as "**real** URLs are not
+returned".
+
+Two log lines: `gemini tools: url_context={fetched}/{requested} statuses=…
+tool_use_prompt=… search_queries=…` (only on rounds that used a built-in tool), and
+`dropped content blocks: kinds=…` (part kinds the decoder discarded; the search
+`toolResponse` appears every turn — this makes visible what was silently dropped
+before).
 
 ### Grok Live Search ([Spec 31](specs/31_grok-live-search.md))
 

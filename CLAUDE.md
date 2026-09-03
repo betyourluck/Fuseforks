@@ -1256,6 +1256,10 @@ Gemini 系の固有スキルとして使えるものがないか調べて」。�
    `google_search` / `url_context` と同時使用不可）/ Maps（村に用途が無い）/
    Computer use（2026-08-09 裁定のまま。Preview）
 5. **passive バッジは付けない** — implicit caching は「働きでないものを見せない」の規律の外側
+
+**→ 1 と 2 は Spec 48 として P0〜P3 まで着地**（2026-09-03〜04。P0 の probe で
+`toolCall` / `toolResponse` を履歴へ返さなくてよいことが確定し、Spec 05 以来の
+「未確認」を閉じた。P4 実機 6 件が残り）。3〜5 は据え置き
    （`providerSkills.ts` の doc が禁じている側）
 
 **probe スクリプトは scratchpad に置いて捨てた**（Spec 34 と同じ扱い。数字はここが正）。
@@ -5740,7 +5744,11 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 48](specs/48_gemini-thinking-level-and-url-context.md)（Gemini の固有スキル 2 本 —
-  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0〜P2 完了。残は P3〜P4**
+  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0〜P3 完了。残は P4 実機 6 件**
+  （P3 = README 3 言語のグラウンディング行 / DETAIL 日英に「Gemini の思考段階と
+  URL context」の節 + ディレクトリ木 / `data_contract` の Spec 33 の注記が旧条件
+  「接地を使うときだけ」のままだったのを回収。**ランディングページと Qiita 記事は
+  grep 網の外** — LP は固有スキルを列挙していないので嘘にならない）
   （P2 = GUI。vitest 458・build 緑。ミューテーションで `anyOffered` から外しても
   緑 = **2 本目の固有スキルが入ったワイヤでは「見出しの区切り」の網が効かない**
   ことが実測で出た）

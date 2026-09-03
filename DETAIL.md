@@ -61,7 +61,7 @@ Fuseforks/
 │       │       ├── wire.rs          プロバイダの生 JSON 形（唯一の真実）
 │       │       ├── openai_compat.rs OpenAI 互換 adapter（encode/decode 純関数）
 │       │       ├── anthropic.rs     Anthropic Messages API adapter
-│       │       ├── gemini.rs        Gemini ネイティブ adapter（Google 検索の接地）
+│       │       ├── gemini.rs        Gemini ネイティブ adapter（Google 検索の接地・URL context・思考段階）
 │       │       ├── xai_responses.rs xAI Responses adapter（Grok の Live Search）
 │       │       ├── openai_responses.rs OpenAI Responses adapter（思考の要約・web 検索）
 │       │       ├── meta_responses.rs   Meta Responses adapter（web 検索・4 種別の添付）
@@ -1258,6 +1258,35 @@ Wikipedia / TVer）— 上の告知が意図どおりに働いている。実測
 書くもので、こちらから中身を制限できない**ため。
 
 ---
+
+### Gemini の思考段階と URL context（[Spec 48](specs/48_gemini-thinking-level-and-url-context.md)）
+
+**思考段階（`effort`）が Gemini でも効くようになった** —
+`generationConfig.thinkingConfig.thinkingLevel` へ写す。`low / medium / high` は
+そのまま、`xhigh / max` は `high`（その口の天井）、未指定は送らない（プロバイダ
+既定 = `medium`）。門は `gemini-3` で、2.5 系は欄を持たず 400 で拒む
+（`gemini-2.5-flash-lite` で実測）。**それまで Gemini には思考段階が 1 度も
+渡っておらず**、3.7 / 3.8 は既定の `medium` で常時思考していた — 8 日の実測で
+思考が実効トークンの 17% を占めた村で、制御の口が無い唯一のワイヤだった。
+
+「固有スキル」に **URL 取得（URL context）** が加わった（Google グラウンディングと
+同じ棚 — Gemini ネイティブ限定）。依頼文に書いた URL を Google 側が取得して
+答えに使う。出典には**実 URL** が載る（検索の出典は Google の redirect URL）。
+**取得した本文は入力トークンとして課金される**（実測 1 ページ 8,999 トークン）。
+usage では `promptTokenCount` ではなく `toolUsePromptTokenCount` に載るので、
+アプリは `prompt` へ畳んで数える — 畳まないと払いが統計にも `turn:` 行にも出ない。
+取得した本文は履歴に残らず、次の周でも要るならモデルが再取得する（払いはほぼ同額）。
+システムプロンプトへの告知は無い — URL context は依頼文に URL があるときだけ
+モデルが自分で使う道具で、告知が無くても発火する。
+
+3.8 では**検索の出典（`groundingChunks`）も返る**ようになった。ただし URL は
+`vertexaisearch.cloud.google.com` の redirect で、表題はドメイン名だけ —
+上の「参照した URL は渡ってこない」は「**実 URL** は渡ってこない」と読む。
+
+計器は 2 行。`gemini tools: url_context={取得数}/{要求数} statuses=…
+tool_use_prompt=… search_queries=…`（組み込みツールを使った周だけ）と、
+`dropped content blocks: kinds=…`（decode が捨てた part の種別。検索の
+`toolResponse` は毎ターン出る — 今まで無音で捨てていたものの可視化）。
 
 ### Grok の Live Search（[Spec 31](specs/31_grok-live-search.md)）
 
