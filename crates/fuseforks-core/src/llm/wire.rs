@@ -824,6 +824,11 @@ pub struct GeminiTool {
     /// Google 検索による接地。有効化は空オブジェクトを置くことで表す。
     #[serde(rename = "google_search", skip_serializing_if = "Option::is_none")]
     pub google_search: Option<serde_json::Value>,
+    /// URL context（Spec 48 D3）。依頼文に書かれた URL を Google 側が取得して
+    /// 答えに使う。有効化は空オブジェクト。**綴りは camelCase**（`google_search` は
+    /// snake_case で通る綴りだが、こちらは `urlContext` で実測 200 — 2026-09-03）。
+    #[serde(rename = "urlContext", skip_serializing_if = "Option::is_none")]
+    pub url_context: Option<serde_json::Value>,
     /// 関数宣言。
     #[serde(
         rename = "functionDeclarations",
@@ -857,10 +862,13 @@ pub struct GeminiToolConfig {
     pub function_calling_config: Option<GeminiFunctionCallingConfig>,
     /// サーバー側ツールの実行記録を応答に含めるか。
     ///
-    /// **組み込みツール（`google_search`）と関数呼び出しを併用するなら必須。**
+    /// **組み込みツール（`google_search` / `urlContext`）と関数宣言を併用するなら必須。**
     /// 欠くと 400 で
     /// `Please enable tool_config.include_server_side_tool_invocations to use
-    /// Built-in tools with Function calling.` と名指しで断られる（実測 2026-07-29）。
+    /// Built-in tools with Function calling.` と名指しで断られる（実測 2026-07-29。
+    /// `urlContext` でも同じ文面 — 2026-09-03）。**関数宣言が無ければ送らない**
+    /// （Spec 48 D3。組み込み単独は無くても 200 で、送ると `toolCall` / `toolResponse`
+    /// の part が付くだけ）。
     ///
     /// 真にすると応答の parts に `toolCall` / `toolResponse` が現れる。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -897,14 +905,21 @@ pub struct GeminiGenerationConfig {
 /// （実測。既定では答えの part 1 つだけ）。**思考自体は送信の有無に関わらず
 /// 起きており**（実測 `thoughtsTokenCount` 3,773）、この欄は返し方だけを変える。
 ///
-/// **モデルによるガードは要らない** — `gemini-3.5-flash-lite` と
+/// **`include_thoughts` にモデルによるガードは要らない** — `gemini-3.5-flash-lite` と
 /// `gemini-3.6-flash` の双方が 200 で受けた（Anthropic の `adaptive` は
-/// 旧世代で 400 になるので、そちらだけガードがある）。
+/// 旧世代で 400 になるので、そちらだけガードがある）。**`thinking_level` にはガードが
+/// 要る** — `gemini-2.5-flash-lite` が 400 `Thinking level is not supported for this
+/// model` を返す（Spec 48 P0 (b')）。門は [`super::gemini::thinking_level`] が持つ。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiThinkingConfig {
     /// 思考の part を応答へ含めるか。
     pub include_thoughts: bool,
+    /// 思考の深さ（Spec 48 D1）。`low` / `medium` / `high`。**未指定ならキーごと省く**
+    /// （プロバイダ既定 = `medium`。既定を勝手に補わない）。`minimal` は
+    /// [`super::canonical::Effort`] に無いので構造的に出ない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<&'static str>,
 }
 
 /// Gemini の応答。
@@ -941,6 +956,33 @@ pub struct GeminiCandidate {
     /// （実測 2026-07-29: ドメインのルート URL に記事の見出しが添えられた）。
     #[serde(default)]
     pub grounding_metadata: Option<GeminiGroundingMetadata>,
+    /// URL context の取得記録（Spec 48 D3）。**画面には出さず `gemini tools:` 行へ**。
+    /// 取得した本文そのものは `groundingChunks[].web` に実 URL として載る側で、
+    /// ここに来るのは「どの URL をどう取りに行ったか」だけ。
+    #[serde(default)]
+    pub url_context_metadata: Option<GeminiUrlContextMetadata>,
+}
+
+/// URL context の取得記録（Spec 48）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiUrlContextMetadata {
+    /// URL ごとの結果。
+    #[serde(default)]
+    pub url_metadata: Vec<GeminiUrlMetadata>,
+}
+
+/// URL 1 件の取得結果。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiUrlMetadata {
+    /// 取りに行った URL。
+    #[serde(default)]
+    pub retrieved_url: Option<String>,
+    /// `URL_RETRIEVAL_STATUS_SUCCESS` など。閉じた列挙として扱わない（未知の値は
+    /// そのままログへ出す — 増えたときに沈黙しない）。
+    #[serde(default)]
+    pub url_retrieval_status: Option<String>,
 }
 
 /// 接地の来歴。
@@ -990,6 +1032,12 @@ pub struct GeminiUsageMetadata {
     /// キャッシュから読まれたトークン数。
     #[serde(default)]
     pub cached_content_token_count: u64,
+    /// 組み込みツールが取ってきた本文のトークン数（Spec 48 D4）。URL context の
+    /// 取得本文がここに載り、**`promptTokenCount` には入らない**（実測 32 + 8,999）。
+    /// 入力単価で課金される。検索の注入分はここにも出ない（1 クエリ単位の課金）。
+    /// **同じ要求で欄ごと省かれる回がある**（Spec 48 P0 (d)/(d2)）。
+    #[serde(default)]
+    pub tool_use_prompt_token_count: u64,
 }
 
 // ============================================================================

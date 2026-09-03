@@ -58,7 +58,7 @@ fn adapter_emits(provider: Provider, kind: AttachmentKind) -> bool {
             serde_json::to_string(&fuseforks_core::llm::anthropic::encode(&req)).unwrap()
         }
         Provider::Gemini => {
-            serde_json::to_string(&fuseforks_core::llm::gemini::encode(&req, false)).unwrap()
+            serde_json::to_string(&fuseforks_core::llm::gemini::encode(&req, fuseforks_core::llm::gemini::GeminiSkills::default())).unwrap()
         }
         Provider::XaiResponses => {
             serde_json::to_string(&fuseforks_core::llm::xai_responses::encode(&req, true, false, false))
@@ -189,7 +189,7 @@ fn no_attachment_means_no_block_list_on_any_wire() {
     assert_eq!(ant["messages"][0]["content"][0]["type"], "text");
     assert_eq!(ant["messages"][0]["content"].as_array().unwrap().len(), 1);
 
-    let gem = serde_json::to_value(fuseforks_core::llm::gemini::encode(&req, false)).unwrap();
+    let gem = serde_json::to_value(fuseforks_core::llm::gemini::encode(&req, fuseforks_core::llm::gemini::GeminiSkills::default())).unwrap();
     assert_eq!(
         gem["contents"][0]["parts"],
         serde_json::json!([{ "text": "こんにちは" }]),

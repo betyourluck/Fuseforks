@@ -253,6 +253,9 @@ pub struct LlmConfig {
     pub perplexity_people_search: bool,
     /// Perplexity の URL 取得（Spec 45）。
     pub perplexity_fetch_url: bool,
+    /// Gemini の URL context（Spec 48）。[`Provider::Gemini`] でのみ効く。
+    /// 値は [`ModelTemplate::gemini_url_context_active`] の判定済み。
+    pub gemini_url_context: bool,
 }
 
 impl LlmConfig {
@@ -317,6 +320,7 @@ impl LlmConfig {
             perplexity_finance_search: template.perplexity_finance_search_active(),
             perplexity_people_search: template.perplexity_people_search_active(),
             perplexity_fetch_url: template.perplexity_fetch_url_active(),
+            gemini_url_context: template.gemini_url_context_active(),
         })
     }
 }
@@ -367,7 +371,13 @@ impl HttpLlmBackend {
                     .json(&body)
             }
             Provider::Gemini => {
-                let body = gemini::encode(req, self.config.google_search);
+                let body = gemini::encode(
+                    req,
+                    gemini::GeminiSkills {
+                        google_search: self.config.google_search,
+                        url_context: self.config.gemini_url_context,
+                    },
+                );
                 self.http
                     .post(&url)
                     .header(gemini::AUTH_HEADER, &self.config.api_key)

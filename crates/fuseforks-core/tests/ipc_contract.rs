@@ -44,6 +44,8 @@ fn wire_field_sets_are_frozen() {
             "contextLength",
             "credential",
             "effort",
+            // Gemini の URL context（Spec 48 D3）。types.ts も同時に足すこと（P2）。
+            "geminiUrlContext",
             "googleSearch",
             "id",
             "inputPerMtok",

@@ -21,8 +21,8 @@
 use serde_json::{Value, json};
 
 use super::canonical::{
-    ChatMessage, ChatRequest, ChatResponse, Finish, Grounding, GroundingSource, Role, ToolCall,
-    ToolChoice, Usage,
+    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingSource, Role,
+    ToolCall, ToolChoice, Usage,
 };
 use super::error::LlmError;
 use super::wire;
@@ -69,14 +69,61 @@ const SCHEMA_KEYS: &[&str] = &[
 /// 入れるのとは形が違うが、読み手が同じなので衝突しない。
 const THOUGHT_SIGNATURE: &str = "thoughtSignature";
 
+/// Gemini の組み込みツールのうち、このワイヤが実際に要求するもの（Spec 48 D3）。
+///
+/// bool を並べて渡すと呼び出し側で順番を取り違える（`xai_responses::encode` の
+/// `(true, false, false)` がその形）ので、名前付きの 1 つで受ける。値は
+/// [`crate::model::ModelTemplate`] の `*_active()` を通した後のもの。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GeminiSkills {
+    /// Google 検索による接地（Spec 05）。
+    pub google_search: bool,
+    /// URL context（Spec 48）。
+    pub url_context: bool,
+}
+
+impl GeminiSkills {
+    /// 組み込みツールを 1 つでも要求しているか。
+    pub fn any(self) -> bool {
+        self.google_search || self.url_context
+    }
+}
+
+/// 思考段階 → `thinkingLevel`（Spec 48 D1 / D2。純関数）。
+///
+/// | `Effort` | 送る値 |
+/// |---|---|
+/// | `None` | 送らない（プロバイダ既定 = `medium`。既定を勝手に補わない） |
+/// | `Low` / `Medium` / `High` | そのまま |
+/// | `XHigh` / `Max` | `high`（天井への写像。Meta の `max → xhigh` と同じ規律） |
+///
+/// **門は `gemini-3` の名前**。2.5 系は `thinkingLevel` を持たず
+/// `gemini-2.5-flash-lite` が 400 `Thinking level is not supported for this model`
+/// を返す（P0 (b')）。`openai_compat::reasoning_effort` と同じ「同じワイヤ内の方言の
+/// 吸収」で、ワイヤの選択に名前を使う（Spec 31 D2 の禁止）ではない。
+/// `minimal` は `Effort` に無いので構造的に出ない（3.8 / 3.7 は 400 で拒む）。
+pub fn thinking_level(model: &str, effort: Option<Effort>) -> Option<&'static str> {
+    if !model.starts_with("gemini-3") {
+        return None;
+    }
+    Some(match effort? {
+        Effort::Low => "low",
+        Effort::Medium => "medium",
+        Effort::High | Effort::XHigh | Effort::Max => "high",
+    })
+}
+
 /// canonical → Gemini wire。
 ///
-/// `google_search` が真なら、関数宣言とは**別要素**として `tools` に積む。
-/// 両者は併用でき、検索 → 関数呼び出しが 1 応答の中で連鎖する（実測 2026-07-29）。
+/// 組み込みツール（`google_search` / `urlContext`）は、関数宣言とは**別要素**として
+/// `tools` に積む。両者は併用でき、検索 → 関数呼び出しが 1 応答の中で連鎖する
+/// （実測 2026-07-29）。
+///
+/// 思考段階は `req.effort` から [`thinking_level`] で写す（Spec 48 D1）。
 ///
 /// `use_tools` に相当するフォールバック（スキーマをプロンプトに載せる経路）は持たない。
 /// ネイティブ経路は関数呼び出しを常に解釈できるため、Anthropic adapter と同じ扱いにする。
-pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
+pub fn encode(req: &ChatRequest, skills: GeminiSkills) -> wire::GeminiRequest {
     // system は contents に混ぜられない。複数あれば改行で畳んで 1 つにする。
     let system_text = req
         .messages
@@ -102,15 +149,20 @@ pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
         .collect();
 
     let mut tools = Vec::new();
-    if google_search {
+    if skills.google_search {
         tools.push(wire::GeminiTool {
             google_search: Some(json!({})),
-            function_declarations: None,
+            ..Default::default()
+        });
+    }
+    if skills.url_context {
+        tools.push(wire::GeminiTool {
+            url_context: Some(json!({})),
+            ..Default::default()
         });
     }
     if !req.tools.is_empty() {
         tools.push(wire::GeminiTool {
-            google_search: None,
             function_declarations: Some(
                 req.tools
                     .iter()
@@ -122,6 +174,7 @@ pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
                     })
                     .collect(),
             ),
+            ..Default::default()
         });
     }
 
@@ -134,9 +187,12 @@ pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
         ToolChoice::Specific(name) => config("ANY", Some(vec![name.clone()])),
     });
 
-    // 組み込みツールを使うなら、その実行記録を応答に含めるよう明示しないと
-    // 関数呼び出しとの併用そのものが拒否される。
-    let include_server_side_tool_invocations = google_search.then_some(true);
+    // 組み込みツールと**関数宣言を併用する**なら、実行記録を応答に含めるよう明示しないと
+    // 併用そのものが 400 で拒否される（文面は "to use Built-in tools with Function
+    // calling"）。**関数宣言が無ければ送らない**（Spec 48 D3）— 組み込み単独は無くても
+    // 200 で、送ると toolCall / toolResponse の part が付くだけ（P0 (f-1)(f-2)）。
+    let include_server_side_tool_invocations =
+        (skills.any() && !req.tools.is_empty()).then_some(true);
 
     let tool_config = (function_calling_config.is_some()
         || include_server_side_tool_invocations.is_some())
@@ -159,6 +215,7 @@ pub fn encode(req: &ChatRequest, google_search: bool) -> wire::GeminiRequest {
             // 規律とは条件が違う（思考は接地の有無と無関係に常に起きている）。
             thinking_config: wire::GeminiThinkingConfig {
                 include_thoughts: true,
+                thinking_level: thinking_level(&req.model, req.effort),
             },
         },
     }
@@ -362,9 +419,12 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         .usage_metadata
         .as_ref()
         .map(|u| Usage {
-            prompt: u.prompt_token_count,
-            // 思考も課金される出力。実測で
-            // totalTokenCount == prompt + candidates + thoughts が成り立つ。
+            // 組み込みツールが取ってきた本文（URL context）は promptTokenCount に
+            // 入らず toolUsePromptTokenCount に載る。入力単価で課金されるので
+            // **内数として畳む**（Spec 48 D4）。畳んだ後の恒等式は
+            // totalTokenCount == prompt + candidates + thoughts（4 項の実物で凍結）。
+            prompt: u.prompt_token_count + u.tool_use_prompt_token_count,
+            // 思考も課金される出力。
             completion: u.candidates_token_count + u.thoughts_token_count,
             cache_read: u.cached_content_token_count,
             // **書き込みの欄は Gemini に無い**（Spec 40）。明示キャッシュは事前に
@@ -377,6 +437,12 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             // totalTokenCount との一致（実測で凍結済み）が壊れる。
             reasoning: u.thoughts_token_count,
         })
+        .unwrap_or_default();
+
+    let tool_use_prompt = resp
+        .usage_metadata
+        .as_ref()
+        .map(|u| u.tool_use_prompt_token_count)
         .unwrap_or_default();
 
     let Some(candidate) = resp.candidates.into_iter().next() else {
@@ -408,11 +474,19 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             .collect();
     }
 
+    // URL context の取得記録。画面には出さず計器だけ（Spec 48 D3 / D5）。
+    let url_meta = candidate.url_context_metadata;
+
     let mut text = String::new();
     let mut tool_calls = Vec::new();
     let mut reasoning_summary: Vec<String> = Vec::new();
+    let mut dropped: Vec<&'static str> = Vec::new();
 
     for part in candidate.content.map(|c| c.parts).unwrap_or_default() {
+        if let Some(kind) = dropped_kind(&part) {
+            dropped.push(kind);
+            continue;
+        }
         // Google が代行した組み込みツール。実行するものは無いが、
         // 起きた事実は残す（検索語は args.queries に構造化されている）。
         if let Some(server) = part.tool_call {
@@ -471,6 +545,30 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         }
     };
 
+    // 捨てた part を数える（Spec 48 D5。Anthropic / Meta と同じ形）。toolResponse は
+    // 現行でも毎ターン捨てていた — 可視化であって新事象ではない。
+    if !dropped.is_empty() {
+        crate::note!(
+            "dropped content blocks: kinds={} count={} output_tokens={} text_chars={} tool_calls={}",
+            dropped.join("+"),
+            dropped.len(),
+            usage.completion,
+            text.chars().count(),
+            tool_calls.len(),
+        );
+    }
+
+    // 組み込みツールを使った周だけ 1 行（`pplx tools:` と同じ棚）。取得本文の払いは
+    // usage に出ない回があるので、url_context の件数を別に数える（P0 (d)/(d2)）。
+    let (requested, retrieved, statuses) = url_context_report(url_meta.as_ref());
+    if requested > 0 || tool_use_prompt > 0 || !grounding.queries.is_empty() {
+        crate::note!(
+            "gemini tools: url_context={retrieved}/{requested} statuses={statuses} \
+             tool_use_prompt={tool_use_prompt} search_queries={}",
+            grounding.queries.len(),
+        );
+    }
+
     Ok(ChatResponse {
         text: (!text.is_empty()).then_some(text),
         tool_calls,
@@ -479,6 +577,53 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         grounding,
         reasoning_summary,
     })
+}
+
+/// decode が本文にも `tool_calls` にも `grounding` にも写さない part の種別（Spec 48 D5）。
+///
+/// `None` は「読む枝がある」part（本文 / 思考 / 関数呼び出し / 組み込みの呼び出し —
+/// 最後のものは `queries` を拾うので「捨てた」に数えない）。未知のキーだけの part は
+/// serde が全欄 `None` で受けるので `unknown` になる（`executableCode` 等）。
+fn dropped_kind(part: &wire::GeminiPart) -> Option<&'static str> {
+    if part.text.is_some() || part.function_call.is_some() || part.tool_call.is_some() {
+        return None;
+    }
+    Some(if part.tool_response.is_some() {
+        "toolResponse"
+    } else if part.inline_data.is_some() {
+        "inlineData"
+    } else if part.function_response.is_some() {
+        "functionResponse"
+    } else {
+        "unknown"
+    })
+}
+
+/// URL context の記録を `(要求数, 成功数, 状態の列挙)` へ畳む（`gemini tools:` 行用）。
+/// 状態は重複を潰して `+` で繋ぐ。無ければ `-`。
+fn url_context_report(meta: Option<&wire::GeminiUrlContextMetadata>) -> (usize, usize, String) {
+    let Some(meta) = meta else {
+        return (0, 0, "-".to_owned());
+    };
+    let requested = meta.url_metadata.len();
+    let retrieved = meta
+        .url_metadata
+        .iter()
+        .filter(|m| m.url_retrieval_status.as_deref() == Some("URL_RETRIEVAL_STATUS_SUCCESS"))
+        .count();
+    let mut statuses: Vec<&str> = Vec::new();
+    for m in &meta.url_metadata {
+        let s = m.url_retrieval_status.as_deref().unwrap_or("?");
+        if !statuses.contains(&s) {
+            statuses.push(s);
+        }
+    }
+    let statuses = if statuses.is_empty() {
+        "-".to_owned()
+    } else {
+        statuses.join("+")
+    };
+    (requested, retrieved, statuses)
 }
 
 /// エンドポイントのパス。モデル名が URL に埋まるのが他プロバイダとの構造的な差。
@@ -496,6 +641,17 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 mod tests {
     use super::*;
     use crate::llm::canonical::{ChatMessage, ToolSpec};
+
+    /// 接地だけ ON（旧 `encode(req, true)` に当たる形）。
+    const SEARCH: GeminiSkills = GeminiSkills {
+        google_search: true,
+        url_context: false,
+    };
+    /// URL context だけ ON。
+    const URL_CONTEXT: GeminiSkills = GeminiSkills {
+        google_search: false,
+        url_context: true,
+    };
 
     fn tool() -> ToolSpec {
         ToolSpec {
@@ -524,7 +680,7 @@ mod tests {
             ChatMessage::system("あなたはザリ"),
             ChatMessage::user("こんにちは"),
         ]);
-        let wire = encode(&req, false);
+        let wire = encode(&req, GeminiSkills::default());
 
         assert_eq!(wire.contents.len(), 1, "system は contents に混ざらない");
         assert_eq!(wire.contents[0].role.as_deref(), Some("user"));
@@ -540,7 +696,7 @@ mod tests {
     /// 残る不変条件は**添付を使わない村が 1 バイトも変わらないこと**だけ。
     #[test]
     fn encoding_without_attachments_matches_the_golden_bytes() {
-        let wire = encode(&request(vec![ChatMessage::user("こんにちは")]), false);
+        let wire = encode(&request(vec![ChatMessage::user("こんにちは")]), GeminiSkills::default());
         let json = serde_json::to_value(&wire).unwrap();
         assert_eq!(
             json["contents"],
@@ -568,7 +724,7 @@ mod tests {
                     "これは何？",
                     vec![PromptAttachment::new(media, "QUJD")],
                 )]),
-                false,
+                GeminiSkills::default(),
             );
             let json = serde_json::to_value(&wire).unwrap();
             assert_eq!(
@@ -584,7 +740,7 @@ mod tests {
 
     #[test]
     fn google_search_and_functions_are_separate_tool_entries() {
-        let wire = encode(&request(vec![ChatMessage::user("調べて")]), true);
+        let wire = encode(&request(vec![ChatMessage::user("調べて")]), SEARCH);
 
         assert_eq!(wire.tools.len(), 2, "組み込みと関数宣言は別要素");
         assert!(wire.tools[0].google_search.is_some());
@@ -596,19 +752,91 @@ mod tests {
         assert!(json["tools"][1].get("functionDeclarations").is_some());
     }
 
+    /// **Spec 48 D3 で期待値を反転した。** 旧: 接地単独でも
+    /// `includeServerSideToolInvocations: true` を送る（`toolConfig` あり）。
+    /// 新: 関数宣言が無ければ `toolConfig` ごと送らない — 400 の文面が名指しするのは
+    /// 「組み込み × 関数宣言」の併用で、単独は無くても 200（P0 (f-2)）。
+    /// `google_search` ON のテンプレートの送信 JSON はここで**意図して**変わる。
     #[test]
-    fn google_search_alone_still_sends_tools() {
+    fn google_search_alone_sends_tools_but_no_tool_config() {
         let mut req = request(vec![ChatMessage::user("調べて")]);
         req.tools.clear();
-        let wire = encode(&req, true);
+        let wire = encode(&req, SEARCH);
 
         assert_eq!(wire.tools.len(), 1);
-        let cfg = wire.tool_config.expect("接地を使うなら toolConfig は要る");
         assert!(
-            cfg.function_calling_config.is_none(),
-            "宣言が無いなら mode を送らない"
+            wire.tool_config.is_none(),
+            "宣言が無いなら mode も includeServerSideToolInvocations も送らない"
         );
-        assert_eq!(cfg.include_server_side_tool_invocations, Some(true));
+    }
+
+    /// Spec 48 D3: URL context は接地と同じ棚 — 別要素で積み、関数宣言があれば
+    /// `includeServerSideToolInvocations` が付く（P0 (c) の 400 を避ける）。
+    #[test]
+    fn url_context_rides_as_its_own_tool_entry_with_the_server_side_flag() {
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("読んで")]), URL_CONTEXT))
+            .unwrap();
+
+        assert_eq!(json["tools"][0], json!({ "urlContext": {} }), "綴りは camelCase");
+        assert!(json["tools"][1].get("functionDeclarations").is_some());
+        assert_eq!(json["toolConfig"]["includeServerSideToolInvocations"], json!(true));
+    }
+
+    #[test]
+    fn url_context_off_leaves_no_trace() {
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("読んで")]), GeminiSkills::default()))
+            .unwrap();
+        assert_eq!(json["tools"].as_array().unwrap().len(), 1, "関数宣言だけ");
+        assert!(json["tools"][0].get("urlContext").is_none());
+        assert!(json["toolConfig"].get("includeServerSideToolInvocations").is_none());
+    }
+
+    /// Spec 48 D1 / D2 の写像表。**`minimal` は `Effort` に無いので出ない。**
+    #[test]
+    fn thinking_level_maps_effort_and_gates_on_gemini_3() {
+        assert_eq!(thinking_level("gemini-3.8-flash", None), None, "未指定は送らない");
+        assert_eq!(thinking_level("gemini-3.8-flash", Some(Effort::Low)), Some("low"));
+        assert_eq!(thinking_level("gemini-3.8-flash", Some(Effort::Medium)), Some("medium"));
+        assert_eq!(thinking_level("gemini-3.8-flash", Some(Effort::High)), Some("high"));
+        assert_eq!(thinking_level("gemini-3.8-flash", Some(Effort::XHigh)), Some("high"), "天井へ");
+        assert_eq!(thinking_level("gemini-3.8-flash", Some(Effort::Max)), Some("high"), "天井へ");
+        assert_eq!(thinking_level("gemini-3.5-flash-lite", Some(Effort::Low)), Some("low"));
+        // 2.5 系は欄を持たず 400 で拒む（P0 (b')）。門の外では全 Effort で何も送らない。
+        for effort in [Effort::Low, Effort::Medium, Effort::High, Effort::XHigh, Effort::Max] {
+            assert_eq!(thinking_level("gemini-2.5-flash-lite", Some(effort)), None);
+        }
+    }
+
+    /// Spec 48 D2 のバイト等価 (a): `effort: None` なら `generationConfig` は
+    /// 変更前と 1 バイトも変わらない（`thinkingLevel` の欄が生えない）。
+    #[test]
+    fn effort_none_keeps_generation_config_byte_equal() {
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("hi")]), GeminiSkills::default()))
+            .unwrap();
+        assert_eq!(
+            serde_json::to_string(&json["generationConfig"]).unwrap(),
+            r#"{"maxOutputTokens":4096,"thinkingConfig":{"includeThoughts":true}}"#,
+        );
+    }
+
+    /// Spec 48 D2 のバイト等価 (b): 門の外（2.5 系）は `effort` があっても同じ JSON。
+    #[test]
+    fn effort_on_a_pre_gemini_3_model_sends_nothing() {
+        let mut req = request(vec![ChatMessage::user("hi")]);
+        req.model = "gemini-2.5-flash-lite".into();
+        req.effort = Some(Effort::High);
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
+        assert!(json["generationConfig"]["thinkingConfig"].get("thinkingLevel").is_none());
+    }
+
+    #[test]
+    fn effort_on_gemini_3_sends_thinking_level() {
+        let mut req = request(vec![ChatMessage::user("hi")]);
+        req.model = "gemini-3.8-flash".into();
+        req.effort = Some(Effort::Max);
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
+        assert_eq!(json["generationConfig"]["thinkingConfig"]["thinkingLevel"], "high");
+        assert_eq!(json["generationConfig"]["thinkingConfig"]["includeThoughts"], true, "併存する");
     }
 
     #[test]
@@ -616,7 +844,7 @@ mod tests {
         // これが無いと 400:
         // "Please enable tool_config.include_server_side_tool_invocations
         //  to use Built-in tools with Function calling."
-        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("調べて")]), true))
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("調べて")]), SEARCH))
             .unwrap();
 
         assert_eq!(
@@ -630,7 +858,7 @@ mod tests {
     fn no_google_search_means_no_server_side_flag() {
         // 接地を使わないなら送らない。無関係なキーを足すと、
         // 組み込みツール非対応のモデルで弾かれうる。
-        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("hi")]), false))
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("hi")]), GeminiSkills::default()))
             .unwrap();
 
         assert!(
@@ -643,14 +871,14 @@ mod tests {
 
     #[test]
     fn temperature_is_omitted_when_unset() {
-        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("hi")]), false)).unwrap();
+        let json = serde_json::to_value(encode(&request(vec![ChatMessage::user("hi")]), GeminiSkills::default())).unwrap();
         assert!(json["generationConfig"].get("temperature").is_none());
     }
 
     #[test]
     fn tool_result_is_encoded_as_user_role_function_response() {
         let req = request(vec![ChatMessage::tool_result("c4b3", "grep", "3 件")]);
-        let wire = encode(&req, false);
+        let wire = encode(&req, GeminiSkills::default());
 
         assert_eq!(wire.contents[0].role.as_deref(), Some("user"), "tool ロールは無い");
         let fr = wire.contents[0].parts[0]
@@ -701,7 +929,7 @@ mod tests {
     #[test]
     fn thinking_config_is_always_requested() {
         let req = ChatRequest::plain("gemini-3.6-flash", vec![ChatMessage::user("問い")], 512);
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
         assert_eq!(
             json["generationConfig"]["thinkingConfig"],
             serde_json::json!({ "includeThoughts": true })
@@ -776,6 +1004,70 @@ mod tests {
         assert!(decoded.tool_calls.is_empty(), "組み込みツールは呼び出しではない");
         assert_eq!(decoded.text.as_deref(), Some("東京は晴れです"));
         assert_eq!(decoded.finish, Finish::Stop);
+    }
+
+    /// Spec 48 D4 の恒等式。**fixture は probe の実物 2 つ** — probe 5 は tool-use 側
+    /// （`thoughtsTokenCount` 欄なし = 0）、probe 7 は thoughts 側（tool-use 欄なし）。
+    /// どちらも `totalTokenCount == prompt + completion` が畳んだ後でだけ成り立つ。
+    #[test]
+    fn tool_use_prompt_tokens_fold_into_prompt_and_keep_the_total_identity() {
+        // probe 5（2026-09-03・gemini-3.8-flash・urlContext 単独）
+        let raw = r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],
+          "usageMetadata":{"promptTokenCount":32,"candidatesTokenCount":76,"totalTokenCount":9107,
+            "toolUsePromptTokenCount":8999}}"#;
+        let u = decode(serde_json::from_str(raw).unwrap()).unwrap().usage;
+        assert_eq!(u.prompt, 32 + 8999, "取得本文を内数として畳む");
+        assert_eq!(u.completion, 76);
+        assert_eq!(u.prompt + u.completion, 9107, "恒等式");
+        assert_eq!(u.reasoning, 0);
+
+        // probe 7（同日・googleSearch + FN。tool-use の欄は無い）
+        let raw = r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],
+          "usageMetadata":{"promptTokenCount":121,"candidatesTokenCount":128,"thoughtsTokenCount":213,
+            "totalTokenCount":462}}"#;
+        let u = decode(serde_json::from_str(raw).unwrap()).unwrap().usage;
+        assert_eq!(u.prompt, 121, "欄なしは 0 — prompt は動かない");
+        assert_eq!(u.completion, 128 + 213);
+        assert_eq!(u.prompt + u.completion, 462, "恒等式");
+    }
+
+    /// Spec 48 D5: 捨てた part の種別だけを数える。`toolCall` は queries を拾うので
+    /// 数えず、未知のキーだけの part は `unknown`。
+    #[test]
+    fn dropped_kind_names_only_the_parts_decode_does_not_read() {
+        let part = |raw: &str| -> wire::GeminiPart { serde_json::from_str(raw).unwrap() };
+        assert_eq!(dropped_kind(&part(r#"{"text":"x"}"#)), None);
+        assert_eq!(dropped_kind(&part(r#"{"text":"x","thought":true}"#)), None);
+        assert_eq!(dropped_kind(&part(r#"{"functionCall":{"name":"f","args":{}}}"#)), None);
+        assert_eq!(dropped_kind(&part(r#"{"toolCall":{"toolType":"GOOGLE_SEARCH_WEB","args":{}}}"#)), None);
+        assert_eq!(dropped_kind(&part(r#"{"toolResponse":{"toolType":"URL_CONTEXT"},"thoughtSignature":"s"}"#)), Some("toolResponse"));
+        assert_eq!(dropped_kind(&part(r#"{"inlineData":{"mimeType":"image/png","data":"AA"}}"#)), Some("inlineData"));
+        assert_eq!(dropped_kind(&part(r#"{"executableCode":{"language":"PYTHON","code":"1"}}"#)), Some("unknown"));
+    }
+
+    #[test]
+    fn url_context_report_counts_successes_and_lists_distinct_statuses() {
+        let raw = r#"{"urlMetadata":[
+          {"retrievedUrl":"https://a","urlRetrievalStatus":"URL_RETRIEVAL_STATUS_SUCCESS"},
+          {"retrievedUrl":"https://b","urlRetrievalStatus":"URL_RETRIEVAL_STATUS_ERROR"},
+          {"retrievedUrl":"https://c","urlRetrievalStatus":"URL_RETRIEVAL_STATUS_SUCCESS"}]}"#;
+        let meta: wire::GeminiUrlContextMetadata = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            url_context_report(Some(&meta)),
+            (3, 2, "URL_RETRIEVAL_STATUS_SUCCESS+URL_RETRIEVAL_STATUS_ERROR".to_owned())
+        );
+        assert_eq!(url_context_report(None), (0, 0, "-".to_owned()));
+    }
+
+    #[test]
+    fn url_context_metadata_is_decoded_without_touching_the_answer() {
+        let raw = r#"{"candidates":[{"content":{"parts":[{"text":"タイトルは X"}]},"finishReason":"STOP",
+          "urlContextMetadata":{"urlMetadata":[{"retrievedUrl":"https://a","urlRetrievalStatus":"URL_RETRIEVAL_STATUS_SUCCESS"}]},
+          "groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://a","title":"A"}}]}}]}"#;
+        let decoded = decode(serde_json::from_str(raw).unwrap()).unwrap();
+        assert_eq!(decoded.text.as_deref(), Some("タイトルは X"));
+        assert_eq!(decoded.grounding.sources.len(), 1, "出典は既存の経路で実 URL が載る");
+        assert_eq!(decoded.grounding.sources[0].uri, "https://a");
     }
 
     #[test]
@@ -856,7 +1148,7 @@ mod tests {
 
         // 履歴として送り返したとき、同じ署名が同じ場所に戻ること。
         let req = request(vec![ChatMessage::assistant_tool_calls("", calls)]);
-        let wire = encode(&req, false);
+        let wire = encode(&req, GeminiSkills::default());
         assert_eq!(
             wire.contents[0].parts[0].thought_signature.as_deref(),
             Some("SIG")
@@ -880,7 +1172,7 @@ mod tests {
             "required": ["pattern"],
             "additionalProperties": false
         });
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
         let params = &json["tools"][0]["functionDeclarations"][0]["parameters"];
 
         assert!(params.get("additionalProperties").is_none(), "未対応キーは落とす");
@@ -902,7 +1194,7 @@ mod tests {
                 "items": { "type": "array", "items": { "type": "string", "$id": "x" } }
             }
         });
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
         let params = &json["tools"][0]["functionDeclarations"][0]["parameters"];
 
         assert!(params.get("$schema").is_none());
@@ -923,7 +1215,7 @@ mod tests {
             "type": "object",
             "properties": { "mode": { "type": "string", "const": "preview" } }
         });
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
         let mode = &json["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["mode"];
 
         assert!(mode.get("const").is_none());
@@ -937,7 +1229,7 @@ mod tests {
             "type": "object",
             "properties": { "note": { "type": ["string", "null"] } }
         });
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
         let note = &json["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["note"];
 
         assert_eq!(note["type"], "string", "配列の type は弾かれる");
@@ -948,7 +1240,7 @@ mod tests {
     fn parameterless_tool_omits_the_key_entirely() {
         let mut req = request(vec![ChatMessage::user("hi")]);
         req.tools[0].parameters = json!({ "type": "object", "properties": {} });
-        let json = serde_json::to_value(encode(&req, false)).unwrap();
+        let json = serde_json::to_value(encode(&req, GeminiSkills::default())).unwrap();
 
         assert!(
             json["tools"][0]["functionDeclarations"][0]

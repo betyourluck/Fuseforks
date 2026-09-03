@@ -4,7 +4,8 @@
 - 状態: **rev2 承認（2026-09-03。査読 2 系統 13 点 → 採用 6 / 訂正して採用 4 /
   反証 2 / 変更なし 1。記録は Notes 5。承認査読の追加 2 点 = golden の変更を「意図した
   削減」と明記 / (f) を f-1・f-2 に割る、も取り込み）→ P0 完了（probe 7 発 +
-  `data_contract` 凍結 3 箇所。記録は「P0 実測記録」）**。残は P1〜P4
+  `data_contract` 凍結 3 箇所。記録は「P0 実測記録」）→ P1 完了（コア。記録は
+  「P1 実装記録」）**。残は P2〜P4
 - 起点: 利用者 —「Google が gemini-3.8-flash を発表した。API の固有スキルが
   目を見張るものがあった」→ 村の事前調査を接地（probe 21 発 + 公式文書 9 ページ +
   `fuseforks.log`。記録は CLAUDE.md「Gemini 3.8 Flash と Interactions API の接地
@@ -265,6 +266,42 @@ stranded 用）。`providerSkills.test.ts` に `anyOffered` の名指し検査�
 4 項へ・`includeServerSideToolInvocations` を「組み込み × 関数宣言」へ・`thinkingLevel` の
 写像表と門・「未解決: toolCall / toolResponse」を閉じる・計器 2 行 / `ModelTemplate` の
 欄の列挙へ `geminiUrlContext` / `grounding_active` の隣に `gemini_url_context_active`。
+
+## P1 実装記録（2026-09-03）
+
+lib 643 → 全 test binary 緑・clippy 警告ゼロ・ワークスペース `cargo check --all-targets`
+警告ゼロ。**ミューテーション 2 回とも予測どおり 1 本だけ赤** — 写像を全部 `high` へ →
+`thinking_level_maps_effort_and_gates_on_gemini_3` だけ / 畳みを外す →
+`tool_use_prompt_tokens_fold_into_prompt_and_keep_the_total_identity` だけ。復元は sed で
+（可逆な編集だけを使う — 2026-08-30 の `git checkout --` の事故を踏まない）。
+
+- **`encode(req, skills: GeminiSkills)`** — rev2 の `&GeminiSkills` ではなく **値渡し**
+  （`Copy` の 2 bool。参照にする理由が無い）。`GeminiSkills::any()` が「組み込みが
+  1 つでも ON」の 1 実装。`thinking_level(&req.model, req.effort)` は `encode` の中で
+  呼び、引数は増やしていない（B-4 の訂正どおり）
+- **`gemini tools:` 行に `agent=` は無い** — decode 層は個体を知らない（`pplx tools:` /
+  `dropped content blocks:` と同じ棚で、同じ制約）。突き合わせは直後の `turn:` 行の
+  時刻で行う。D5 の書式から `agent=` を落とした
+- **`dropped_kind` は「読む枝がある part」を先に除外する** — `text` / `functionCall` /
+  `toolCall` のどれかを持つ part は数えない。`toolResponse` → `inlineData` →
+  `functionResponse` の順で名指しし、未知のキーだけの part（serde が全欄 `None` で
+  受ける = `executableCode` 等）は `unknown`。**思考の part は `text` を持つので
+  数えない**（`thought: true` + `text`）
+- **`tool_use_prompt` は `usage` を組む前に取り出す** — `Usage` へ畳んだ後は
+  生の値が消えるので、`gemini tools:` 行の `tool_use_prompt=` は畳む前の値
+- **既存テスト 1 本の期待値を反転** — `google_search_alone_still_sends_tools` →
+  `google_search_alone_sends_tools_but_no_tool_config`（関数宣言が無ければ `toolConfig`
+  ごと送らない）。**`google_search` ON のテンプレートの送信 JSON はここで意図して
+  変わる**（承認査読の追加指摘。バイト等価の約束は `effort` の側だけ）
+- **`ipc_contract.rs` の `wire_field_sets_are_frozen` が赤になった** — `ModelTemplate` の
+  欄集合を凍結している側で、`geminiUrlContext` を足した。**このテストの doc は
+  「まず `types.ts` を直せ」** — P2 の 1 手目はそこ（P1 では Rust 側の期待値だけ更新し、
+  TS は P2 で足す。P1 と P2 の間は TS が 1 欄古い状態）
+- 単体の新設 9 本: 写像表 / バイト等価 (a)(b) / 3 系で送る / URL context ON の
+  `tools` + `toolConfig` / OFF で痕跡なし / 恒等式（probe 5・7 の実物）/ `dropped_kind` /
+  `url_context_report` / `urlContextMetadata` の decode。`model.rs` に AND 述語の単体 1 本
+- **触っていないもの**: `Usage` / `Record::Turn` / `TurnSpend` / `budget.rs` /
+  `pricing.rs` / `turn:` 行の書式（D4 の「畳む」がこの 6 箇所を触らない理由そのもの）
 
 ## 検収項目（各項目に到達経路を書く — Spec 43/44 の教訓）
 

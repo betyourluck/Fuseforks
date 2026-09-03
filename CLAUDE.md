@@ -5740,7 +5740,11 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 48](specs/48_gemini-thinking-level-and-url-context.md)（Gemini の固有スキル 2 本 —
-  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0 完了。残は P1〜P4**
+  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0〜P1 完了。残は P2〜P4**
+  （P1 = コア。`GeminiSkills` 値渡し / `thinking_level` 純関数 / `toolUsePromptTokenCount`
+  を `prompt` へ畳む / Gemini decode に `dropped content blocks:` と `gemini tools:` /
+  `gemini_url_context` 欄 + AND 述語。単体 +10・ミューテーション 2 回とも 1 本だけ赤。
+  **`ipc_contract` の凍結が `types.ts` を指しているので P2 の 1 手目はそこ**）
   （2026-09-03。P0 = probe 7 発 + `data_contract` 凍結 3 箇所。**決着 2 つ** —
   `thinkingLevel` の門は `gemini-3`（2.5-flash-lite が 400・2.5-flash は 404 で提供終了）/
   **`toolCall` / `toolResponse` は履歴へ返さない**（返さなくても 200・返さないと

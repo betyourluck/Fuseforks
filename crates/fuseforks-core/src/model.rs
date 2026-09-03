@@ -651,6 +651,15 @@ pub struct ModelTemplate {
     /// Perplexity の URL 取得（Spec 45）。1 回 $0.0005 の呼び出し課金つき。
     #[serde(default)]
     pub perplexity_fetch_url: bool,
+    /// Gemini の URL context（Spec 48 D3）。依頼文に書かれた URL を Google 側が
+    /// 取得して答えに使う。**取得本文は入力単価で課金される**（実測 1 ページ 8,999
+    /// トークン。`toolUsePromptTokenCount` を `prompt` へ畳んで数える — Spec 48 D4）。
+    ///
+    /// **[`crate::llm::Provider::Gemini`] を明示したテンプレートでのみ効く。**
+    /// 判定はフラグ単独ではなく [`ModelTemplate::gemini_url_context_active`] を使うこと。
+    /// モデル名の門は無い（`gemini-2.5-flash-lite` でも 200 — Spec 48 P0 (e)）。
+    #[serde(default)]
+    pub gemini_url_context: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -790,6 +799,14 @@ impl ModelTemplate {
             && self.effective_provider() == crate::llm::Provider::PerplexityResponses
     }
 
+    /// Gemini の URL context が**実際に効く**か（Spec 48 D3）。
+    ///
+    /// [`ModelTemplate::grounding_active`] と同型の AND 述語。互換の口は組み込み
+    /// ツールを 400 で拒むので、フラグ単独を判定に使わない。
+    pub fn gemini_url_context_active(&self) -> bool {
+        self.gemini_url_context && self.effective_provider() == crate::llm::Provider::Gemini
+    }
+
     /// Pro 推論モードが**実際に効く**か（Spec 34 D4）。
     pub fn openai_reasoning_pro_active(&self) -> bool {
         self.openai_reasoning_pro
@@ -824,6 +841,7 @@ impl ModelTemplate {
             perplexity_finance_search: false,
             perplexity_people_search: false,
             perplexity_fetch_url: false,
+            gemini_url_context: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
             // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
@@ -1230,6 +1248,21 @@ mod tests {
         // チェックを外せば当然無効。
         template.google_search = false;
         assert!(!template.grounding_active());
+    }
+
+    /// URL context の AND 述語（Spec 48 D3）。`grounding_active` と同型。
+    #[test]
+    fn url_context_is_inactive_unless_the_wire_is_actually_gemini() {
+        let mut template = ModelTemplate::new("tpl", "ジェミー", "gemini-3.8-flash");
+        template.base_url = "https://generativelanguage.googleapis.com/v1beta".into();
+        template.gemini_url_context = true;
+        assert!(!template.gemini_url_context_active(), "互換経路では効かない");
+
+        template.provider = Some(crate::llm::Provider::Gemini);
+        assert!(template.gemini_url_context_active());
+
+        template.gemini_url_context = false;
+        assert!(!template.gemini_url_context_active());
     }
 
     /// Live Search の AND 述語（Spec 31 D4）。`grounding_active` と同型で、
