@@ -38,6 +38,7 @@ import {
 } from "../lib/pathComplete";
 import { listWorkDirFiles } from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { contextArc, contextPercent, contextRatio, contextTone } from "../lib/contextUsage";
 import type { AgentId } from "../types";
 
 const props = defineProps<{
@@ -63,7 +64,35 @@ const props = defineProps<{
    * 入力欄は「押されたことを伝える」だけ。ここで数えると同じ規律が 2 箇所に生える。
    */
   canClear?: boolean;
+  /**
+   * 宛先のテンプレートの `contextLength`（Spec 49 の輪の分母）。`null` なら輪を出さない。
+   * `workDir` と同じで、判定に要る材料はフロントが既に持っている（`state.templates`）
+   * ので prop で受け、ここでは IPC を呼ばない。
+   */
+  contextLength?: number | null;
+  /** 宛先の直近の呼び出しの入力（`AgentSnapshot.lastPromptTokens`。輪の分子）。 */
+  lastPromptTokens?: number | null;
 }>();
+
+/**
+ * コンテキスト使用率の輪（Spec 49）。**分子は直近の 1 呼び出し**であって
+ * ターンの合計ではない — 合計だと 6 周のターンで窓の何倍にもなる（D1 の罠）。
+ * `null` = 出さない（未選択 / テンプレート無し / まだ呼び出していない）。
+ */
+const contextUsage = computed(() => {
+  const ratio = contextRatio(props.lastPromptTokens, props.contextLength);
+  if (ratio === null) return null;
+  return {
+    ratio,
+    percent: contextPercent(ratio),
+    arc: contextArc(ratio),
+    tone: contextTone(ratio),
+    over: ratio > 1,
+  };
+});
+
+/** 輪の周長（r = 5.5）。`stroke-dasharray` の分母。 */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 
 const emit = defineEmits<{
   (e: "send", text: string, attachments: PendingAttachment[]): void;
@@ -649,14 +678,53 @@ defineExpose({ fill });
     <div class="mt-1 flex items-center gap-2 px-1 text-[10px] text-ink-dim">
       <p>{{ $t("chatInput.hint") }}</p>
       <!--
-        表示クリア。**中身は消さない**ので `title` で言い切る（押した人が
-        「軽くなった」と読むのを防ぐ — モデルが読む量は 1 バイトも変わらない）。
-        アイコンは SVG。絵文字は環境で字形と大きさが変わり `currentColor` を
-        継承しないので、恒久要素には使わない（Spec 13 の規律）。
+        右端のグループ。**`ml-auto` はグループに付ける**（ボタン自身に付けたまま
+        その左に輪を置くと、輪は左寄せ側の末尾に残りボタンだけが右へ押し出される —
+        Spec 49 rev2 査読 B-1）。
       -->
+      <div class="ml-auto flex items-center gap-2">
+        <!--
+          コンテキスト使用率の輪（Spec 49）。選択中の個体の**直近の 1 呼び出し**の
+          入力 ÷ テンプレートの contextLength。色は 3 段のトークン（accent / warn / fail）
+          で、SVG は currentColor から引く（生の色を書かない）。弧は 1.0 で止め、
+          数字は丸めない — 100% 超は「設定が実際の窓より小さい」の診断（D2）。
+        -->
+        <span
+          v-if="contextUsage"
+          :class="['flex items-center gap-1 tabular-nums', contextUsage.tone]"
+          :title="
+            $t('chatInput.contextUsage', {
+              used: (lastPromptTokens ?? 0).toLocaleString(),
+              total: (contextLength ?? 0).toLocaleString(),
+            }) + (contextUsage.over ? ' ' + $t('chatInput.contextUsageOver') : '')
+          "
+          data-context-usage
+        >
+          <svg viewBox="0 0 14 14" class="size-3.5" aria-hidden="true">
+            <circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity="0.25" />
+            <circle
+              cx="7"
+              cy="7"
+              r="5.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              transform="rotate(-90 7 7)"
+              :stroke-dasharray="`${contextUsage.arc * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`"
+            />
+          </svg>
+          <span>{{ contextUsage.percent }}%</span>
+        </span>
+        <!--
+          表示クリア。**中身は消さない**ので `title` で言い切る（押した人が
+          「軽くなった」と読むのを防ぐ — モデルが読む量は 1 バイトも変わらない）。
+          アイコンは SVG。絵文字は環境で字形と大きさが変わり `currentColor` を
+          継承しないので、恒久要素には使わない（Spec 13 の規律）。
+        -->
       <button
         type="button"
-        class="ml-auto rounded p-0.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        class="rounded p-0.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
         :disabled="!canClear"
         :title="$t('chatInput.clearView')"
         :aria-label="$t('chatInput.clearView')"
@@ -675,6 +743,7 @@ defineExpose({ fill });
           <path d="M21 20h-11" />
         </svg>
       </button>
+      </div>
     </div>
   </div>
 </template>

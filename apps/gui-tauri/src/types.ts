@@ -302,6 +302,12 @@ export interface AgentSnapshot {
   promptTokens: number;
   /** 入力トークンのうち、プロンプトキャッシュから読まれた分。 */
   cachedTokens: number;
+  /**
+   * **直近の LLM 呼び出し 1 回ぶん**の入力トークン（Spec 49）。累計ではない。
+   * 会話ペインの輪の分子で、分母はテンプレートの `contextLength`。
+   * `null` = まだ 1 度も呼び出していない（輪を出さない）。再起動で `null` に戻る。
+   */
+  lastPromptTokens: number | null;
   lastError: ErrorPayload | null;
 }
 
@@ -1054,6 +1060,8 @@ export type CoreEvent =
           再起動後の会話で欄ごと消える（failures.md #33 の経路版）。 */
       promptTokens: number;
       cachedTokens: number;
+      /** 直近の呼び出しの入力（Spec 49。輪の分子）。乗せないと更新が refreshAll 頼み。 */
+      lastPromptTokens: number | null;
     }
   | { type: "messageSent"; message: AgentMessage }
   | { type: "topologyChanged" }

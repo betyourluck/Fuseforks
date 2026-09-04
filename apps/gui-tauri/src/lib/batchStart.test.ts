@@ -19,6 +19,7 @@ function agent(
     totalTokens: 0,
     promptTokens: 0,
     cachedTokens: 0,
+    lastPromptTokens: null,
     ragSources: [],
     connectedAgents: [],
     order: 0,

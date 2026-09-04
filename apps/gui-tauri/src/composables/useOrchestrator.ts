@@ -507,6 +507,7 @@ function applyEvent(event: CoreEvent): void {
         totalTokens: event.totalTokens,
         promptTokens: event.promptTokens,
         cachedTokens: event.cachedTokens,
+        lastPromptTokens: event.lastPromptTokens,
       });
       break;
 

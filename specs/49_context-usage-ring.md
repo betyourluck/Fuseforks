@@ -4,7 +4,8 @@
 - 状態: **rev2（査読 2 系統 13 点 → 採用 5 / 訂正して採用 1 / 反証 4 / 確認済み・
   変更なし 3。記録は Notes 4）→ 承認（2026-09-04）→ P0 完了（`data_contract` 凍結 4 箇所 =
   `AgentSnapshot.lastPromptTokens` / `contextLength` の読み手 / `agentStatsUpdated` の欄 /
-  `observability` の輪の節）→ P1 完了（コア。記録は「P1 実装記録」）**。残は P2〜P4
+  `observability` の輪の節）→ P1 完了（コア。記録は「P1 実装記録」）→ P2 完了
+  （フロント。記録は「P2 実装記録」）**。残は P3〜P4
 - 起点: 利用者 —「Claude や Copilot の入力欄の右下にあるコンテキスト使用率の
   プログレスを Fuseforks にも。ザリのコンテキストはどのくらい使っているか、ルナは、と
   **キャラクターを切り替えるごとに**分かるようにしたい。**料金はここでは見せない**。
@@ -201,6 +202,29 @@ B-2 は反証）— `is_active()` は `Starting | Running` = **起動してい�
   `bootstrap.rs`（`AgentStatsUpdated`）/ `turn.rs`（`TurnSpend` + `absorb` + `settle_turn`）/
   `ipc_contract.rs`（literal + 凍結リスト。**doc どおり P2 の 1 手目は `types.ts`**）/
   新設 `tests/context_usage_ring.rs`（2 本）
+
+## P2 実装記録（2026-09-04）
+
+vitest 458 → 466・`bun run build`（vue-tsc）緑。
+
+- `lib/contextUsage.ts`（`contextRatio` / `contextTone` / `contextArc` / `contextPercent` +
+  閾値の定数 2 つ）と単体 8 本（境界値 0.75 / 0.90 ちょうど・分母 0 と null・分子 0 は
+  0 であって null ではない・1.0 超は切り詰めない・弧は 1 で止まる）
+- `ChatInput.vue`: prop 2 本（`contextLength` / `lastPromptTokens` — `workDir` と同じく
+  材料は prop で受けて IPC を呼ばない）+ computed `contextUsage` + 輪（インライン SVG
+  14px・`r=5.5`・`stroke-dasharray` を周長で正規化・`rotate(-90)` で 12 時から）。
+  **輪と「表示クリア」を `ml-auto flex items-center gap-2` のグループで包み、
+  ボタンの `ml-auto` を外した**（rev2 B-1）。`data-context-usage` 属性は検収と
+  将来の走査テスト用
+- `ChatPanel.vue`: `targetTemplate`（`state.templates` を `modelTemplateId` で引く）を
+  足し、2 prop を配線
+- `types.ts` ×2 / `useOrchestrator.ts` の `patchAgent` / 辞書 ja/en 2 鍵
+  （`chatInput.contextUsage` に分子・分母の絶対値、`contextUsageOver` に 100% 超の注記）
+- **vue-tsc が `AgentSnapshot` の literal fixture 2 本を指した**（`agentSpec.test.ts` /
+  `batchStart.test.ts`）— vitest は型検査をしないので緑のまま通り、`bun run build` だけが
+  落ちる（Spec 45 P2 と同じ形）。`lastPromptTokens: null` を足した
+- 数字の整形は `toLocaleString()` の既定ロケール（桁区切りだけが要件で、ja / en で
+  同じ形になる）。時計の固定書式（`clock.ts`）とは要件が違う
 
 ## 検収項目（各項目に到達経路を書く）
 

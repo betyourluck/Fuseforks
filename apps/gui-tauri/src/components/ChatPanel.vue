@@ -66,6 +66,17 @@ const targetAgent = computed(
 /** 送信可能か。停止中のエージェントへは投げられない。 */
 const canSend = computed(() => targetAgent.value?.status === "running");
 
+/**
+ * 宛先のテンプレート（Spec 49 の輪の分母 `contextLength` を引くため）。
+ * `state.templates` から `modelTemplateId` で引く — IPC は要らない。引けなければ
+ * `null` で、輪は出ない（`model: "<unknown>"` の作法と同じ。無いものを 0% にしない）。
+ */
+const targetTemplate = computed(() => {
+  const agent = targetAgent.value;
+  if (!agent) return null;
+  return state.templates.find((t) => t.id === agent.modelTemplateId) ?? null;
+});
+
 /** 送信できない理由。押せないボタンに理由を添えないと、故障と区別がつかない。 */
 const blockedReason = computed(() => {
   if (!targetAgent.value) return t("chat.selectTarget");
@@ -1037,6 +1048,8 @@ async function newChat(): Promise<void> {
       :agent-id="targetAgent?.id ?? null"
       :work-dir="targetAgent?.workDir ?? null"
       :can-clear="timeline.length > 0"
+      :context-length="targetTemplate?.contextLength ?? null"
+      :last-prompt-tokens="targetAgent?.lastPromptTokens ?? null"
       @send="send"
       @clear-view="clearChatView"
     />

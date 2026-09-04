@@ -289,6 +289,8 @@
     "completeFailed": "ファイル一覧を取得できませんでした。",
     "completeTruncated": "候補が上限に達しました。ここに出ていないファイルがあります。",
     "clearView": "会話ペインの表示を消す（表示だけ。会話は残り、サーヴァントへ届く内容も変わりません）",
+    "contextUsage": "コンテキスト使用率: 直近の呼び出しの入力 {used} / 上限 {total} トークン（テンプレートのコンテキスト長。累計ではありません）",
+    "contextUsageOver": "— 上限を超えています。テンプレートのコンテキスト長が実際の窓より小さい可能性があります",
     "attachUnsupported": "対応していない形式です（画像 / 音声 mp3・wav / 動画 mp4 / PDF）",
     "attachNotCarried": "この宛先へは{kind}を送れません。運べるのは {carriers} です。",
     "attachKind": {

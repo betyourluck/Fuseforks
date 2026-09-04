@@ -30,6 +30,7 @@ function snapshot(): AgentSnapshot {
     totalTokens: 999,
     promptTokens: 500,
     cachedTokens: 250,
+    lastPromptTokens: null,
     lastError: null,
     ragSources: ["D:\\docs\\a", "D:\\docs\\b"],
     connectedAgents: ["agent_2", "agent_9"],
