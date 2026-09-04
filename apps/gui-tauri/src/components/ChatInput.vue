@@ -684,7 +684,36 @@ defineExpose({ fill });
       -->
       <div class="ml-auto flex items-center gap-2">
         <!--
-          コンテキスト使用率の輪（Spec 49）。選択中の個体の**直近の 1 呼び出し**の
+          表示クリア。**中身は消さない**ので `title` で言い切る（押した人が
+          「軽くなった」と読むのを防ぐ — モデルが読む量は 1 バイトも変わらない）。
+          アイコンは SVG。絵文字は環境で字形と大きさが変わり `currentColor` を
+          継承しないので、恒久要素には使わない（Spec 13 の規律）。
+        -->
+      <button
+        type="button"
+        class="rounded p-0.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        :disabled="!canClear"
+        :title="$t('chatInput.clearView')"
+        :aria-label="$t('chatInput.clearView')"
+        @click="emit('clearView')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          class="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="m15 5 5 5-8 8H7l-4-4z" />
+          <path d="M21 20h-11" />
+        </svg>
+      </button>
+        <!--
+          コンテキスト使用率の輪（Spec 49）。**消しゴム（表示クリア）の右**に置く
+          （2026-09-04 利用者裁定 — 右端は「いま話しかけている相手の状態」の席）。
+          選択中の個体の**直近の 1 呼び出し**の
           入力 ÷ テンプレートの contextLength。色は 3 段のトークン（accent / warn / fail）
           で、SVG は currentColor から引く（生の色を書かない）。弧は 1.0 で止め、
           数字は丸めない — 100% 超は「設定が実際の窓より小さい」の診断（D2）。
@@ -716,33 +745,6 @@ defineExpose({ fill });
           </svg>
           <span>{{ contextUsage.percent }}%</span>
         </span>
-        <!--
-          表示クリア。**中身は消さない**ので `title` で言い切る（押した人が
-          「軽くなった」と読むのを防ぐ — モデルが読む量は 1 バイトも変わらない）。
-          アイコンは SVG。絵文字は環境で字形と大きさが変わり `currentColor` を
-          継承しないので、恒久要素には使わない（Spec 13 の規律）。
-        -->
-      <button
-        type="button"
-        class="rounded p-0.5 text-ink-dim hover:text-accent disabled:opacity-40 disabled:hover:text-ink-dim"
-        :disabled="!canClear"
-        :title="$t('chatInput.clearView')"
-        :aria-label="$t('chatInput.clearView')"
-        @click="emit('clearView')"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          class="h-3.5 w-3.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="m15 5 5 5-8 8H7l-4-4z" />
-          <path d="M21 20h-11" />
-        </svg>
-      </button>
       </div>
     </div>
   </div>
