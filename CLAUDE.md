@@ -5745,6 +5745,17 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 49](specs/49_context-usage-ring.md)（コンテキスト使用率の輪 — 選択中の個体の
+  直近の入力 ÷ `contextLength`）: **rev2 → 承認待ち**（2026-09-04。査読 2 系統 13 点 →
+  採用 5 / 訂正して採用 1 / 反証 4 / 確認済み・変更なし 3。反証の本体は「確定後に
+  個体が停止して最終の 1 通が漏れる」— `is_active` は起動している個体でターンの最中では
+  ない。採用の本体は `Option<u64>`（`usage` の無い失敗ターンで 0 に上書きして輪が消える
+  穴）と `ml-auto` の配置）。起点は利用者
+  「Claude / Copilot の入力欄右下の輪を Fuseforks にも。個体を切り替えるごとに」。
+  **起票時の実測 2 つが骨格** — フロントへ届く個体の数字は 4 つとも生涯累計で
+  「直近の呼び出し」が無い（`TurnSpend.prompt` はターン内の全周の合計 = 分子に使うと
+  100% を常時超える罠）/ `ModelTemplate.contextLength` は定義と既定の 2 行以外に
+  読み手が無い死んだ欄。置き場は `ChatInput.vue` の下の行（StatusBar は帯の規律で不可）
 - [Spec 48](specs/48_gemini-thinking-level-and-url-context.md)（Gemini の固有スキル 2 本 —
   `thinkingLevel` の腕と URL context）: **Done**（2026-09-04。**起票から Done まで
   2 日**。実機検収 6 件 = 5 件観測 + 1 件は golden。決め手の行は
