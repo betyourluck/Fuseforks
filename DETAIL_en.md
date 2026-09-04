@@ -88,6 +88,7 @@ Fuseforks/
             ├── lib/pathComplete.ts  `@` path completion (trigger detection / ranking / commit)
             ├── lib/scheduleProbe.ts Pre-check display rules (pure functions; returns dictionary keys)
             ├── lib/scheduleDraft.ts Schedule form draft ⇄ wire round-trip (pure functions; the editing entry)
+            ├── lib/contextUsage.ts  ratio and tone of the context-usage ring (pure functions, [Spec 49](specs/49_context-usage-ring.md))
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -159,7 +160,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
-| Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) | Always visible |
+| Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is typed by hand, so a number above 100% means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
 | Bottom | Status bar (**MCP server listening state**, date and time, version) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |

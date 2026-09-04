@@ -5,7 +5,7 @@
   変更なし 3。記録は Notes 4）→ 承認（2026-09-04）→ P0 完了（`data_contract` 凍結 4 箇所 =
   `AgentSnapshot.lastPromptTokens` / `contextLength` の読み手 / `agentStatsUpdated` の欄 /
   `observability` の輪の節）→ P1 完了（コア。記録は「P1 実装記録」）→ P2 完了
-  （フロント。記録は「P2 実装記録」）**。残は P3〜P4
+  （フロント。記録は「P2 実装記録」）→ P3 完了（台帳）**。残は P4 実機 7 件
 - 起点: 利用者 —「Claude や Copilot の入力欄の右下にあるコンテキスト使用率の
   プログレスを Fuseforks にも。ザリのコンテキストはどのくらい使っているか、ルナは、と
   **キャラクターを切り替えるごとに**分かるようにしたい。**料金はここでは見せない**。
@@ -225,6 +225,17 @@ vitest 458 → 466・`bun run build`（vue-tsc）緑。
   落ちる（Spec 45 P2 と同じ形）。`lastPromptTokens: null` を足した
 - 数字の整形は `toLocaleString()` の既定ロケール（桁区切りだけが要件で、ja / en で
   同じ形になる）。時計の固定書式（`clock.ts`）とは要件が違う
+
+## P3 台帳記録（2026-09-04）
+
+- DETAIL 日英: 画面構成の表の「右」の行に輪の 1 文（分子・分母・色・**ターンの最中は
+  動かない**（rev2 A-D）・100% 超の読み方・再起動後は出ない）+ ディレクトリ木に
+  `lib/contextUsage.ts`
+- `data_contract`: P0 で凍結済み（`AgentSnapshot.lastPromptTokens` / `contextLength` の
+  読み手 / `agentStatsUpdated` / `observability`）。P3 で足すものは無かった
+- README 3 言語: 触らない（D7。「何ができるか」の表に載せる大きさではない）
+- CLAUDE.md: 「Spec の状態」
+- **grep 網の外**: LP / Qiita は画面要素の追加なので嘘にならない
 
 ## 検収項目（各項目に到達経路を書く）
 
