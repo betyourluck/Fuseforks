@@ -1257,9 +1257,11 @@ Gemini 系の固有スキルとして使えるものがないか調べて」。�
    Computer use（2026-08-09 裁定のまま。Preview）
 5. **passive バッジは付けない** — implicit caching は「働きでないものを見せない」の規律の外側
 
-**→ 1 と 2 は Spec 48 として P0〜P3 まで着地**（2026-09-03〜04。P0 の probe で
+**→ 1 と 2 は Spec 48 として Done**（2026-09-03〜04。P0 の probe で
 `toolCall` / `toolResponse` を履歴へ返さなくてよいことが確定し、Spec 05 以来の
-「未確認」を閉じた。P4 実機 6 件が残り）。3〜5 は据え置き
+「未確認」を閉じた。実機検収 6 件）。3〜5 は据え置き。**URL の取得に失敗したときの
+捏造は運用で受ける**（利用者裁定 2026-09-04 — 条例 / `Memory.md` の文言。効いたかは
+`gemini tools: url_context=0/N` の周の後の `reply:` で読む）
    （`providerSkills.ts` の doc が禁じている側）
 
 **probe スクリプトは scratchpad に置いて捨てた**（Spec 34 と同じ扱い。数字はここが正）。
@@ -5744,7 +5746,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 48](specs/48_gemini-thinking-level-and-url-context.md)（Gemini の固有スキル 2 本 —
-  `thinkingLevel` の腕と URL context）: **rev2 承認 → P0〜P3 完了。残は P4 実機 6 件**
+  `thinkingLevel` の腕と URL context）: **Done**（2026-09-04。**起票から Done まで
+  2 日**。実機検収 6 件 = 5 件観測 + 1 件は golden。決め手の行は
+  `gemini tools: url_context=1/1 … tool_use_prompt=10557` と同じ周の
+  `cache: prompt=21577`（= 前の周 10,965 + 取得本文）— 畳みが `cache:` と `turn:` の
+  両方に載った。**副産物 2 つ**: 存在しない URL の取得失敗（`statuses=URL_RETRIEVAL_STATUS_ERROR`）
+  の後にモデルが 10 周・200K トークンを回して捏造した — **利用者裁定は運用**
+  （「ハルシネーションをしないように覚えさせれば解決できる。運用だね」。表示も機構も
+  足さない）/ 取得失敗でも `tool_use_prompt=10296` が載る（1 対の観測）。
+  以下は P3 時点の記録:**
   （P3 = README 3 言語のグラウンディング行 / DETAIL 日英に「Gemini の思考段階と
   URL context」の節 + ディレクトリ木 / `data_contract` の Spec 33 の注記が旧条件
   「接地を使うときだけ」のままだったのを回収。**ランディングページと Qiita 記事は

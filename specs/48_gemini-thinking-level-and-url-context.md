@@ -6,7 +6,8 @@
   削減」と明記 / (f) を f-1・f-2 に割る、も取り込み）→ P0 完了（probe 7 発 +
   `data_contract` 凍結 3 箇所。記録は「P0 実測記録」）→ P1 完了（コア。記録は
   「P1 実装記録」）→ P2 完了（GUI。記録は「P2 実装記録」）→ P3 完了（台帳。
-  記録は「P3 台帳記録」）**。残は P4 実機 6 件
+  記録は「P3 台帳記録」）→ P4 完了 = Done**（2026-09-04。実機検収 6 件のうち 5 件を
+  観測、1 件は機械。記録は「P4 実機記録」。**起票から Done まで 2 日**）
 - 起点: 利用者 —「Google が gemini-3.8-flash を発表した。API の固有スキルが
   目を見張るものがあった」→ 村の事前調査を接地（probe 21 発 + 公式文書 9 ページ +
   `fuseforks.log`。記録は CLAUDE.md「Gemini 3.8 Flash と Interactions API の接地
@@ -358,6 +359,73 @@ vitest 453 → 458・`bun run build`（vue-tsc）緑。D6 の全箇所: `types.t
 
 **検収から外したもの**: 2.5 系で 400 が出ない（村に 2.5 の個体が無い。P0 (b') の probe と
 D2 の単体で留める）。
+
+## P4 実機記録（2026-09-04〜。利用者検証。判定は `fuseforks.log` だけで読む）
+
+- **検収 5 観測**（2026-09-04 01:43。debug ビルド `version: app=0.1.0 profile=debug`・
+  ジェミー = `gemini-3.8-flash`・`googleSearch: true`・`effort: null`・
+  `geminiUrlContext` は未保存 = 既定 false）。設定を変えずに検索が走る依頼 1 本
+  （`chars=21`）で **`dropped content blocks: kinds=toolResponse count=1
+  output_tokens=2423 text_chars=1799 tool_calls=0`** と **`gemini tools:
+  url_context=0/0 statuses=- tool_use_prompt=0 search_queries=4`** が同じミリ秒
+  （01:43:44.347）に並んだ。`toolCall` は数えられていない（`queries` を拾うので
+  設計どおり）。**同じ個体の前日のターン（09-03 19:40・release 0.1.15）には
+  どちらの行も無い** = 対で読める。`turn: … reasoning=1346` は `effort: null` なので
+  プロバイダ既定の `medium` — 検収 1 の対照の片側にはならない（`low` と `high` を
+  明示した 2 本が要る）
+- **検収 1 観測**（2026-09-04 01:48 / 01:52。同じ個体・同じ長さの依頼 `chars=26`・
+  どちらも検索が走った `search_queries=4`）。**`high` = `reasoning=3193`・
+  `total=16675`・30 秒・`reasoning summary: items=2 chars=3006` / `low` =
+  `reasoning=0`・`total=11485`・11 秒・要約の行なし**。桁どころか 0 — `low` では
+  思考が 1 度も起きない回がある（P0 の probe 1 と同じ揺れ）。**どちらが high か
+  low かはログに残らない**（`turn:` 行は `effort` を持たない）— `world.json` の
+  保存値（最後の保存 = `low`）と操作の順で読んだ。**`effort` を `turn:` 行へ足すかは
+  頻度を見てから**（今回は 2 本なので操作順で足りた）。`prompt` は 12,157 対
+  10,832 で、差 1,325 は `history_msgs=2/16` 対 `0/16`（会話を分けた）の分 —
+  思考段階は `prompt` を動かさない（Note 3 の訂正どおり）
+- **検収 3・4 観測**（2026-09-04 10:36。outcasts.jp の実在するスレッドの URL・
+  `chars=84`）。モデルは先に `grep` → `rag`（同梱ツール）を試し、3 周目で取得:
+  **`gemini tools: url_context=1/1 statuses=URL_RETRIEVAL_STATUS_SUCCESS
+  tool_use_prompt=10557 search_queries=0`**。同じ周の **`cache: round=3 prompt=21577`**
+  = 2 周目の 10,965 + 取得本文 10,557（畳みが `cache:` 行に載っている）。
+  `turn: prompt=43410` = 10,868 + 10,965 + 21,577 で `turn:` と `cache:` が同じ数を
+  見ている（検収 4 の「同じ値」）。出典に実 URL が並んだかは画面側（利用者の目視）
+- **検収 7 観測 — ただし設計の穴が 1 つ出た**（10:38。2 つのスレッドの ID を途中で
+  合成した**存在しない** URL・`chars=85`・会話は前の続き `history_msgs=2/16`）。
+  2 周目に **`url_context=0/1 statuses=URL_RETRIEVAL_STATUS_ERROR
+  tool_use_prompt=10296 search_queries=3`** — **ターンは落ちない**（検収 7 の合格条件）。
+  **そのあとモデルは 10 周（`grep` / `rag` / `fd` / `file` ×5 / `manuale__search` /
+  `memoria__recall_memory` + 検索 16 語）を回して `stop=tool_limit`（12/12）、
+  `turn: prompt=201603 cached=50288` を払い、1,224 字の答えを返した — 利用者の判定は
+  「ハルシネーション」。** 存在しないスレッドについて、前の周に読んだ実在スレッドの
+  本文（履歴 2 通）と検索と手元のファイルから筋の通った答えを組み立てた形
+  （#82 の「答えられないことに気づけない」）。
+  2 つ持ち帰る:
+  (a) **取得に失敗しても `tool_use_prompt=10296` が課金側に載る** — 404 のページ
+  （outcasts.jp の SPA の殻）を取ってきて ERROR と印を付けている、と読むのが自然だが
+  **1 対の観測**。取得失敗が無料ではない
+  (b) **URL の取得失敗は画面のどこにも出ない**（D3 で「失敗の頻度を見てから」と
+  したとおり）。頻度は 1 だが、**代償が「200K トークンの空回り + 捏造」**なので
+  小さくない。処方の候補は 2 つ — 接地の注記（`GroundingNote`）に「取得できなかった
+  URL: …」を 1 行出す（Spec 05 が「検索した事実」と「出典が返らない事実」を分けたのと
+  同じ形。**機構ではなく表示**）/ または条例側（「URL の取得に失敗したら、その URL の
+  内容については答えない」— 文言は保証ではない #84）。**裁定（2026-09-04 利用者）:
+  運用で受ける** —「ハルシネーションをしないように覚えさせれば解決できる。運用だね」。
+  表示も機構も足さない。条例 / `Memory.md` 側の文言で、その個体に「取得に失敗した URL の
+  内容は語らない」を持たせる（黒板・手順書と同じ道 — 条例で運用を始め、機構は要るときに）。
+  #84 の規律どおり効いたかは観測でしか分からないので、次に同じ形が出たら
+  `gemini tools: url_context=0/N` の周の後の `reply:` を読む
+- **検収 6 観測**（2026-09-04。利用者のスクリーンショット）。`gemini-3.8-flash` の
+  テンプレートでプロトコルを互換へ切り替えると、**「Google グラウンディング（Gemini
+  ネイティブ）」と「URL 取得（URL context）（Gemini ネイティブ）」の 2 行**が並び、
+  どちらも「有効になっていますが、プロトコルが Gemini ではないため働きません」+
+  「オフにする」。URL context の行だけ後半が「この機能は Gemini ネイティブ経路にしか
+  ありません」（`strandedGeminiToolAfter`）で、接地の行は「グラウンディングは…」のまま
+  = 流用しなかった判断が画面で読める。利用者が「オフにする」で消せることを確認
+  （「OFF にできました。検収完了です」）
+- **検収 2 は機械**（P1 の golden `effort_none_keeps_generation_config_byte_equal`）
+- **6 件すべて閉じた。** 副産物は検収 7 の「取得失敗後の捏造」（運用で受ける裁定）と
+  「取得失敗でも `tool_use_prompt` が載る」（1 対の観測）
 
 ## Notes
 
