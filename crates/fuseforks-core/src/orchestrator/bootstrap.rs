@@ -334,6 +334,7 @@ fn spawn_stats_ticker(shared: Weak<Shared>) -> JoinHandle<()> {
                         total_tokens: snapshot.total_tokens,
                         prompt_tokens: snapshot.prompt_tokens,
                         cached_tokens: snapshot.cached_tokens,
+                        last_prompt_tokens: snapshot.last_prompt_tokens,
                     });
                 }
             }

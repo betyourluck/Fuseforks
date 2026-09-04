@@ -99,6 +99,11 @@ struct TurnSpend {
     rounds: u32,
     /// 受信した発話の hop。
     hop: u8,
+    /// **直近の LLM 呼び出し 1 回ぶん**の入力（Spec 49 D1）。上の欄と違い
+    /// `absorb` で足さず**代入**する — 輪の分子で、ターンの合計は使えない。
+    /// `None` = このターンで `usage` が 1 度も返らなかった（DNS / 401 / タイムアウト）。
+    /// その場合 `settle_turn` は個体の記録を上書きしない（前回値が残る）。
+    last_prompt: Option<u64>,
 }
 
 impl TurnSpend {
@@ -113,6 +118,9 @@ impl TurnSpend {
         self.reasoning += usage.reasoning;
         self.cache_write += usage.cache_write;
         self.cache_write_1h += usage.cache_write_1h;
+        // 代入（Spec 49）。払ったと分かる失敗（`LlmError::usage()`）も同じ入口を
+        // 通るので、`OutputTruncated` の周の入力もここで記録される。
+        self.last_prompt = Some(usage.prompt);
     }
 }
 
@@ -175,6 +183,11 @@ async fn settle_turn(
             record.total_tokens += spend.tokens;
             record.cached_tokens += spend.cached;
             record.prompt_tokens += spend.prompt;
+            // 累計ではなく代入（Spec 49 D1）。`usage` が 1 度も返らなかったターンでは
+            // 触らない — 0 で上書きすると失敗の直後に輪が消える（rev2 査読 B-3）。
+            if let Some(last) = spend.last_prompt {
+                record.last_prompt_tokens = Some(last);
+            }
         }
     }
     let record = TurnRecord {

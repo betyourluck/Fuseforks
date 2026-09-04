@@ -43,6 +43,15 @@ pub struct AgentRecord {
     /// 気づいたのは請求ダッシュボードのグラフからだった（failures.md #33）。
     /// 割合を画面に出せば、設定を変えた次のターンで分かる。
     pub cached_tokens: u64,
+    /// **直近の LLM 呼び出し 1 回ぶん**の入力トークン（Spec 49 D1）。
+    ///
+    /// 上の 3 欄と違い**累計ではなく代入** — 会話ペインの輪
+    /// （`lastPromptTokens ÷ ModelTemplate.contextLength`）の分子。
+    /// ターンの合計（`TurnRecord.prompt`）でもない — あれは全周の和で、6 周のターンでは
+    /// 窓の何倍にもなる。`None` = まだ 1 度も呼び出していない（0 を番兵にしない）。
+    /// `usage` が返らなかった失敗ターンでは上書きしない（前回値が残る）。
+    /// 累計と同じく揮発で、再起動で `None` に戻る（`PersistedWorld` に無い）。
+    pub last_prompt_tokens: Option<u64>,
     /// 直近の失敗。
     pub last_error: Option<ErrorPayload>,
     /// 直近の会話履歴（自分の発言を含む）。
@@ -74,6 +83,7 @@ impl AgentRecord {
             total_tokens: 0,
             prompt_tokens: 0,
             cached_tokens: 0,
+            last_prompt_tokens: None,
             last_error: None,
             history: Vec::new(),
         }
@@ -825,6 +835,7 @@ impl World {
             total_tokens: record.total_tokens,
             prompt_tokens: record.prompt_tokens,
             cached_tokens: record.cached_tokens,
+            last_prompt_tokens: record.last_prompt_tokens,
             rag_sources: record.spec.rag_sources.clone(),
             connected_agents: record.spec.connected_agents.clone(),
             order: record.spec.order,

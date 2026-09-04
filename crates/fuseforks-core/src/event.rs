@@ -47,6 +47,9 @@ pub enum CoreEvent {
         prompt_tokens: u64,
         /// うちキャッシュから読まれた入力トークン数（キャッシュ率の分子）。
         cached_tokens: u64,
+        /// 直近の LLM 呼び出し 1 回ぶんの入力トークン（Spec 49。輪の分子）。
+        /// 乗せないと輪の更新が `refreshAll` 頼みになる（上の 2 欄と同じ理由）。
+        last_prompt_tokens: Option<u64>,
     },
 
     /// 発話が 1 件確定した。中央ペインのログに追記される。

@@ -4,7 +4,7 @@
 - 状態: **rev2（査読 2 系統 13 点 → 採用 5 / 訂正して採用 1 / 反証 4 / 確認済み・
   変更なし 3。記録は Notes 4）→ 承認（2026-09-04）→ P0 完了（`data_contract` 凍結 4 箇所 =
   `AgentSnapshot.lastPromptTokens` / `contextLength` の読み手 / `agentStatsUpdated` の欄 /
-  `observability` の輪の節）**。残は P1〜P4
+  `observability` の輪の節）→ P1 完了（コア。記録は「P1 実装記録」）**。残は P2〜P4
 - 起点: 利用者 —「Claude や Copilot の入力欄の右下にあるコンテキスト使用率の
   プログレスを Fuseforks にも。ザリのコンテキストはどのくらい使っているか、ルナは、と
   **キャラクターを切り替えるごとに**分かるようにしたい。**料金はここでは見せない**。
@@ -174,6 +174,33 @@ B-2 は反証）— `is_active()` は `Starting | Running` = **起動してい�
   `useOrchestrator.ts` の `patchAgent` / 辞書 ja/en（tooltip 1 鍵）
 - **P3** — 台帳（D7）
 - **P4** — 実機検収
+
+## P1 実装記録（2026-09-04）
+
+全 test binary 緑・workspace clippy 警告ゼロ。**ミューテーション 2 回とも予測どおり
+1 本だけ赤** — 代入を累積へ → `last_prompt_is_the_final_round_not_the_turn_sum` だけ /
+`if let Some` を外して `None` でも上書き → `a_turn_without_usage_keeps_the_previous_value`
+だけ。
+
+- **代入は `TurnSpend::absorb` の中に置いた**（rev2 の「`:1449` / `:1693` で代入」より
+  1 段内側）。`absorb` は成功の応答と払ったと分かる失敗（`LlmError::usage()`）の
+  **同じ入口**なので、`OutputTruncated` の周の入力が別経路を書かずに乗る（#103 の
+  「経路を分けると片方だけが既定値のまま化ける」の逆をやらない）。`last_completion` の
+  2 箇所は触っていない
+- **`settle_turn` の書き込みは `if let Some(last) = spend.last_prompt`** — `None`
+  （`usage` が 1 度も返らなかったターン）では触らない。結合テストで `Config` の失敗の後に
+  `Some(250)` が残ることを留めた
+- **結合テストで 1 つ踏んだ**: `Config` の失敗は `fatal` で個体が落ちるので、3 通目の
+  `send_user_message` が `NotRunning`。`start_agent` で戻してから送る形にし、**その
+  再起動で値が消えないこと**（消えるのはアプリの再起動だけ — D6）も同じテストで留めた
+- **要約の呼び出し（`summarize_agents`）には載せていない** — ターンループの外の LLM
+  呼び出しで、累計へは積むが `settle_turn` を通らない。要約の `prompt` は畳んだ履歴の
+  大きさで「会話の窓の占有」と同じ意味ではあるが、頻度が低く手動なので今は書かない
+  （要ると分かったら `summarize_agents` の累計加算の隣に 1 行）
+- 触った箇所: `world.rs`（欄・既定・投影）/ `model.rs`（`AgentSnapshot`）/ `event.rs` +
+  `bootstrap.rs`（`AgentStatsUpdated`）/ `turn.rs`（`TurnSpend` + `absorb` + `settle_turn`）/
+  `ipc_contract.rs`（literal + 凍結リスト。**doc どおり P2 の 1 手目は `types.ts`**）/
+  新設 `tests/context_usage_ring.rs`（2 本）
 
 ## 検収項目（各項目に到達経路を書く）
 

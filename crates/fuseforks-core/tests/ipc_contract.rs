@@ -156,6 +156,7 @@ fn wire_field_sets_are_frozen() {
         total_tokens: 0,
         prompt_tokens: 0,
         cached_tokens: 0,
+        last_prompt_tokens: None,
         rag_sources: Vec::new(),
         connected_agents: Vec::new(),
         order: 0,
@@ -180,6 +181,8 @@ fn wire_field_sets_are_frozen() {
             "hearsRoomLog",
             "id",
             "lastError",
+            // Spec 49。直近の呼び出しの入力（累計ではない）。types.ts も同時に足すこと。
+            "lastPromptTokens",
             "maxToolIterations",
             "model",
             "modelTemplateId",

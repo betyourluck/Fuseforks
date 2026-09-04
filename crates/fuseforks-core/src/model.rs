@@ -1032,6 +1032,10 @@ pub struct AgentSnapshot {
     /// 合計だけではキャッシュの効き具合が見えない（無キャッシュでも同じ数字）。
     /// 画面では割合として出す。
     pub cached_tokens: u64,
+    /// **直近の LLM 呼び出し 1 回ぶん**の入力トークン（Spec 49）。累計ではない。
+    /// 会話ペインの輪の分子で、分母はテンプレートの `contextLength`。
+    /// `None` = まだ 1 度も呼び出していない（輪を出さない）。
+    pub last_prompt_tokens: Option<u64>,
     /// 見出し索引を張るフォルダ（Spec 18）。設定ダイアログが投影から
     /// `AgentSpec` を組み直して保存するので、投影に無い欄は保存のたびに消える。
     pub rag_sources: Vec<String>,
