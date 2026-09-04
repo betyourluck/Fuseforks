@@ -2,7 +2,9 @@
 
 - 起票: 2026-09-04
 - 状態: **rev2（査読 2 系統 13 点 → 採用 5 / 訂正して採用 1 / 反証 4 / 確認済み・
-  変更なし 3。記録は Notes 4）→ 承認待ち**。rev1 は査読待ちの初版
+  変更なし 3。記録は Notes 4）→ 承認（2026-09-04）→ P0 完了（`data_contract` 凍結 4 箇所 =
+  `AgentSnapshot.lastPromptTokens` / `contextLength` の読み手 / `agentStatsUpdated` の欄 /
+  `observability` の輪の節）**。残は P1〜P4
 - 起点: 利用者 —「Claude や Copilot の入力欄の右下にあるコンテキスト使用率の
   プログレスを Fuseforks にも。ザリのコンテキストはどのくらい使っているか、ルナは、と
   **キャラクターを切り替えるごとに**分かるようにしたい。**料金はここでは見せない**。

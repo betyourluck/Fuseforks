@@ -1888,6 +1888,15 @@ entities:
       totalTokens: u64              # 入力 + 出力
       promptTokens: u64             # うち入力。キャッシュ率の分母
       cachedTokens: u64             # うちキャッシュ読み取り
+      # 直近の LLM 呼び出し 1 回ぶんの入力 (Usage.prompt = 未キャッシュ + cache_read +
+      # cache_write + Gemini の toolUsePromptTokenCount)。**累計ではない** — 上の 3 欄と
+      # 違い settle_turn で代入する。**ターンの合計 (TurnRecord.prompt) でもない** —
+      # あれは全周の和で、分子に使うと 6 周で窓の何倍にもなる (Spec 49 D1)。
+      # null = まだ 1 度も呼び出していない (0 を番兵にしない)。usage が返らなかった
+      # 失敗ターンでは上書きしない (前回値が残る)。累計 4 欄と同じく揮発 —
+      # PersistedWorld に無く、再起動で null に戻る (Spec 49 D6)。
+      # 用途: 会話ペインの入力欄の下の輪 = lastPromptTokens ÷ ModelTemplate.contextLength
+      lastPromptTokens: u64 | null
       ragSources: String[]
       connectedAgents: AgentId[]
       order: u32
@@ -1907,6 +1916,9 @@ entities:
       name: String
       baseUrl: String               # パスは Provider が付ける（Provider.paths 参照）
       model: String
+      # Spec 49 でこの欄に初めて読み手が付いた (それまで定義と既定 128,000 の 2 行だけ)。
+      # コンテキスト使用率の輪の分母。**利用者の手入力**なので、実際の窓と違えば
+      # 輪の % は嘘になる — 100% を超えた数字はそのまま出す (設定が窓より小さい診断)
       contextLength: u32
       temperature: f32 | null       # null なら送らない
       # **requestTimeoutSecs と連動する。** 上限だけ上げると「途中で切れる」が
@@ -3021,7 +3033,11 @@ entities:
     # 率の更新が refreshAll (起動時と設定変更時) 頼みになり、再起動後の会話で
     # 率の欄ごと消える (表示は実装していても、データの通り道が偶然にしか
     # 通らないなら出ないのと同じ。failures.md #33 の経路版)。
-    agentStatsUpdated: { agentId, uptimeSecs, totalTokens, promptTokens, cachedTokens }
+    # lastPromptTokens (Spec 49) も同じ理由でここに乗せる — 乗せないと輪の更新が
+    # refreshAll 頼みになる。稼働中 (Starting | Running = 起動している個体) だけに
+    # 毎秒。ターンが確定しても個体は Running のままなので次の tick で新しい値が乗る
+    # (停止は人の操作で、そのとき refreshAll が投影を取り直す)
+    agentStatsUpdated: { agentId, uptimeSecs, totalTokens, promptTokens, cachedTokens, lastPromptTokens }
     messageSent: { message }
     topologyChanged: {}
     agentFailed: { agentId, error }
@@ -5025,6 +5041,18 @@ llm_wire:
       合計を分母にすると天井が 100% にならず取り残し量が読めない）。
       0% は警告色。効いていないことが画面から分からない指標は静かに壊れる
       (failures.md #33 は請求ダッシュボードを見るまで数日気づけなかった)。
+
+      **コンテキスト使用率の輪 (Spec 49)**: 会話ペインの入力欄の下に、選択中の個体の
+      AgentSnapshot.lastPromptTokens ÷ その個体のテンプレートの contextLength を輪と
+      % で出す。分子は**直近の LLM 呼び出し 1 回**の Usage.prompt (キャッシュ込み・
+      ツール取得込み。窓を占めるのはキャッシュされていても同じ) で、**ターンの合計や
+      実効トークンではない** (前者は全周の和・後者は歯止めの単位)。色は 3 段の定数 —
+      比 < 0.75 = accent / < 0.90 = warn / それ以上 = fail (設定にしない)。弧は
+      min(比, 1) で描き数字は丸めない (100% 超は設定が窓より小さい診断)。輪を出さない
+      条件は 3 つ: 個体未選択 / テンプレートが引けないか contextLength が 0 /
+      lastPromptTokens が null。**ターンの最中は動かない** (確定後 ≤ 1 秒で追従)。
+      置き場はステータスバーではない (帯の規律「常に見る必要があるか」を通らない)。
+      料金・累計・予算との比較は持たない (統計画面とカードの仕事)。
 
       **率だけでは 0% の理由が三つ巴になる** — (a) プロバイダの最小長を下回った
       (b) 前方一致が壊れた (c) プロバイダが値を返していない。3 つとも処方が違うのに
