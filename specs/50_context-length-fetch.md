@@ -3,7 +3,7 @@
 - 起票: 2026-09-05
 - 状態: **rev2（査読 2 系統 15 点 → 採用 11 / 訂正して採用 2 / 前提を実測で訂正して採用 2。
   記録は Notes 7）→ 承認（2026-09-05）→ P0 完了（契約 2 箇所 + Pages の生成スクリプトと表。
-  記録は「P0 実装記録」）**
+  記録は「P0 実装記録」）→ P1 完了（コア。記録は「P1 実装記録」）**
 - 起点: 利用者 —「`contextLength` の自動取得」（2026-09-05。[Spec 49](49_context-usage-ring.md)
   Notes 1 が「別 Spec の材料」として残していたもの）
 
@@ -218,6 +218,31 @@ grok-4.6 500,000 で入り、`perplexity/…` と `gpt-oss-120b` は付かない
   blob は LF）。書式の自己検査（無改変の再シリアライズが元と一致するか）が改行の差で
   落ちて何も書かなかった — **検査は設計どおり効いた**が、比較の前に LF へ正規化する
   1 行が要った。書き戻しは LF のままで、git が blob 側で揃える
+
+## P1 実装記録（2026-09-05）
+
+`pricing.rs`: `WireEntry.max_input_tokens: Option<f64>` / `sane_context(Option<f64>) -> Option<u32>`
+（有限・小数部 0・`1..=u32::MAX`）/ `ParsedTable.entries` を `(String, Rates, Option<u32>)` の
+3 つ組へ / `ParsedTable::windows()`（計器用の件数）。`pricing_source.rs`:
+`FetchedPrice.max_input_tokens: Option<u32>` / `pricing fetch:` 行へ `context=`。
+単体 4 本追加（コアの pricing 11 → 15・GUI 5・clippy 警告ゼロ）。
+
+**`Rates` に窓を入れない判断は型で留めた** — 3 つ組の 3 番目に置いたので、`resolve` /
+`cost_of` の入力に窓が居る形は書けない。走査テスト `pricing_never_reaches_into_the_budget_weights`
+はコメントを落としてから `budget` を探すので、doc に「`budget` を呼ばないのと同じ線」と
+書いても緑（書く前に確かめた）。
+
+**ミューテーション 2 回（予測を先に書いてから）**:
+
+| 変異 | 予測 | 実測 |
+|---|---|---|
+| `sane_context` を素通し（範囲検査を消す） | **Spec の Phases は「2 本目だけ赤」と書いていた** → 書く前に数え直して「2 本目と 3 本目」へ | **2 本目と 3 本目が赤**（`an_unsane_window_drops_only_the_field` / `a_negative_or_fractional_window_does_not_break_the_table`）。素通しは `-5` を 0 へ、`1.5` を 1 へ丸めるので、3 本目の「欄が `None`」も落ちる |
+| 受け型を `Option<u64>` へ | 3 本目だけ赤 | **3 本目だけ赤**（`-5` で `from_str` ごと失敗。1 本目・2 本目・4 本目は整数だけの表なので通る） |
+
+**Phases の予測が 1 つ外れていた** — 素通しの変異は「0 と `u32` 超」だけでなく「負数と小数」の
+テストにも当たる。**同じ関数を壊す変異が複数のテストを赤にするのは、テストが同じ関数の
+別の性質を見ている証拠**で、穴ではない。復元は `git checkout` ではなく文字列の差し戻しで、
+前後のハッシュ一致を見た（2026-08-30 の「未コミットの実装ごと消える」罠を避ける）。
 
 ## 検収項目（各項目に到達経路を書く）
 

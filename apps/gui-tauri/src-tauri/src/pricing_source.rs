@@ -170,10 +170,13 @@ pub async fn fetch_table(url: &str) -> Result<ParsedTable, String> {
     }
     let raw = String::from_utf8(body.to_vec()).map_err(|e| e.to_string())?;
     let table = fuseforks_core::pricing::parse_table(&raw)?;
+    // `context=` は窓が入った要素の数（Spec 50）。**`as_of` は単価の時点で、窓を足しても
+    // 動かない** — `as_of=2026-08-20 context=1493` が同じ行に並ぶのは矛盾ではない。
     fuseforks_core::note!(
-        "pricing fetch: entries={} dropped={} as_of={}",
+        "pricing fetch: entries={} dropped={} context={} as_of={}",
         table.entries.len(),
         table.dropped,
+        table.windows(),
         table.as_of.as_deref().unwrap_or("-")
     );
     Ok(table)
@@ -218,6 +221,9 @@ pub struct FetchedPrice {
     pub cache_write_per_mtok: Option<f64>,
     /// うち 1 時間 TTL。
     pub cache_write_1h_per_mtok: Option<f64>,
+    /// 入力の窓（Spec 50）。`contextLength` へ入る。表に無いか不正なら `None` で、
+    /// 画面は**欄を触らず**通知の 2 文目で「表にありません」と言う。
+    pub max_input_tokens: Option<u32>,
 }
 
 impl From<ParsedTable> for FetchedPrices {
@@ -228,13 +234,14 @@ impl From<ParsedTable> for FetchedPrices {
             models: t
                 .entries
                 .into_iter()
-                .map(|(key, r)| FetchedPrice {
+                .map(|(key, r, window)| FetchedPrice {
                     key,
                     input_per_mtok: r.input,
                     output_per_mtok: r.output,
                     cache_read_per_mtok: r.cache_read,
                     cache_write_per_mtok: r.cache_write,
                     cache_write_1h_per_mtok: r.cache_write_1h,
+                    max_input_tokens: window,
                 })
                 .collect(),
         }

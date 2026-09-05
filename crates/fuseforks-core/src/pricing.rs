@@ -172,6 +172,11 @@ struct WireEntry {
     cache_write_per_mtok: Option<f64>,
     #[serde(default)]
     cache_write_1h_per_mtok: Option<f64>,
+    /// 入力の窓（Spec 50）。**単価と同じく `f64` で受ける** — `Option<u64>` だと
+    /// `-1` が 1 件あるだけで表全体の `from_str` が落ち、「欄だけ落とす」が書けない
+    /// （2026-09-05 実測）。正規化は [`sane_context`]。
+    #[serde(default)]
+    max_input_tokens: Option<f64>,
 }
 
 /// 外部の単価表そのもの。
@@ -188,10 +193,23 @@ struct WireTable {
 pub struct ParsedTable {
     /// 表が名乗る時点。`ModelTemplate::pricing_as_of` へ入る。
     pub as_of: Option<String>,
-    /// モデル名 → 単価。
-    pub entries: Vec<(String, Rates)>,
+    /// モデル名 → 単価 → 入力の窓（Spec 50。表に無いか不正なら `None`）。
+    ///
+    /// **窓は [`Rates`] に入れない** — あれは `resolve` / `cost_of` の入力で「単価」の型。
+    /// 混ぜると単価の計算に窓が居る形になる（`pricing` が `budget` を呼ばないのと同じ線）。
+    pub entries: Vec<(String, Rates, Option<u32>)>,
     /// 値が不正で落とした件数。**落としたことを数える**（#72 の規律）。
+    /// 窓が不正な要素はここに数えない（欄だけ落ちて要素は残る）。
     pub dropped: u32,
+}
+
+impl ParsedTable {
+    /// 窓が入った要素の数。`pricing fetch:` の `context=` に出す —
+    /// **表が欄を運んでいるかをログから読む**ため（Spec 50 D4）。
+    #[must_use]
+    pub fn windows(&self) -> usize {
+        self.entries.iter().filter(|e| e.2.is_some()).count()
+    }
 }
 
 /// 単価として受け入れられる上限（$/100 万トークン）。
@@ -203,6 +221,21 @@ const MAX_RATE: f64 = 1_000.0;
 /// 有限で 0 以上 [`MAX_RATE`] 以下のときだけ通す。
 fn sane(v: Option<f64>) -> Option<f64> {
     v.filter(|x| x.is_finite() && *x >= 0.0 && *x <= MAX_RATE)
+}
+
+/// 入力の窓として受け入れる値（Spec 50 D4）: **有限・小数部 0・`1..=u32::MAX`**。
+///
+/// 外れたときは**窓だけ `None`** で、要素は残る（`dropped` にも数えない — 単価としては
+/// 健全な要素）。0 を通さないのは、`contextLength` の 0 が「輪を出さない」の番兵で
+/// （Spec 49 D2）、表から 0 を運ぶと「取得したら輪が消えた」になるため。
+fn sane_context(v: Option<f64>) -> Option<u32> {
+    let x = v?;
+    if !x.is_finite() || x.fract() != 0.0 || x < 1.0 || x > f64::from(u32::MAX) {
+        return None;
+    }
+    // 上の範囲検査を通った値だけが来るので、切り捨ても飽和も起きない。
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some(x as u32)
 }
 
 /// 外部の単価表を読む（Spec 41 P2）。
@@ -230,11 +263,12 @@ pub fn parse_table(raw: &str) -> Result<ParsedTable, String> {
             cache_write_1h: sane(e.cache_write_1h_per_mtok),
         };
         // 入力と出力が揃わない要素は「単価」として意味を持たない（`resolve` と同じ境界）。
+        // 窓の有無はこの判定に関与しない — 窓しか持たない要素は「単価表の要素」ではない。
         if resolve(&rates).is_none() || e.key.is_empty() {
             dropped += 1;
             continue;
         }
-        entries.push((e.key, rates));
+        entries.push((e.key, rates, sane_context(e.max_input_tokens)));
     }
     Ok(ParsedTable {
         as_of: table.fetched,
@@ -410,7 +444,7 @@ mod tests {
         assert_eq!(t.as_of.as_deref(), Some("2026-08-18"));
         assert_eq!(t.entries.len(), 2);
         assert_eq!(t.dropped, 0);
-        let (k, r) = &t.entries[0];
+        let (k, r, _) = &t.entries[0];
         assert_eq!(k, "claude-sonnet-5");
         assert_eq!(r.cache_write_1h, Some(4.0));
         // 書き込みを持たないモデルは None のまま（`resolve` が入力単価へ落とす）。
@@ -441,6 +475,80 @@ mod tests {
     #[test]
     fn a_broken_document_is_refused_whole() {
         assert!(parse_table("{ not json").is_err());
+    }
+
+    /// 窓は単価の隣に読まれ、無い要素は `None`（Spec 50 D4）。
+    #[test]
+    fn a_window_is_read_next_to_the_rates() {
+        let raw = r#"{
+            "fetched": "2026-08-20",
+            "models": [
+              { "key": "with", "input_per_mtok": 0.75, "output_per_mtok": 3.75, "max_input_tokens": 1048576 },
+              { "key": "without", "input_per_mtok": 2.0, "output_per_mtok": 10.0 }
+            ]
+        }"#;
+        let t = parse_table(raw).unwrap();
+        assert_eq!(t.entries.len(), 2);
+        assert_eq!(t.entries[0].2, Some(1_048_576));
+        assert_eq!(t.entries[1].2, None, "表に無い窓は None（0 にしない）");
+        assert_eq!(t.windows(), 1, "計器に出す件数は窓が入った要素だけ");
+        assert_eq!(t.dropped, 0, "窓の有無は要素を落とさない");
+    }
+
+    /// 0 と `u32` 超は**窓だけ**落ちて要素は残る（`dropped` にも数えない）。
+    #[test]
+    fn an_unsane_window_drops_only_the_field() {
+        let raw = r#"{
+            "models": [
+              { "key": "zero", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": 0 },
+              { "key": "huge", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": 4294967296 },
+              { "key": "max", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": 4294967295 }
+            ]
+        }"#;
+        let t = parse_table(raw).unwrap();
+        assert_eq!(t.entries.len(), 3, "単価としては健全なので要素は残る");
+        assert_eq!(t.dropped, 0);
+        assert_eq!(t.entries[0].2, None, "0 は番兵なので通さない");
+        assert_eq!(t.entries[1].2, None, "u32 を超える値は通さない");
+        assert_eq!(t.entries[2].2, Some(u32::MAX), "上限ちょうどは通る");
+    }
+
+    /// 負数や小数が 1 件あっても**表全体は落ちない**（整数型で受けると落ちる —
+    /// `Option<u64>` に `-1` で `from_str` ごと失敗することを 2026-09-05 に実測）。
+    #[test]
+    fn a_negative_or_fractional_window_does_not_break_the_table() {
+        let raw = r#"{
+            "models": [
+              { "key": "ok", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": 128000 },
+              { "key": "negative", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": -5 },
+              { "key": "fraction", "input_per_mtok": 1.0, "output_per_mtok": 1.0, "max_input_tokens": 1.5 }
+            ]
+        }"#;
+        let t = parse_table(raw).expect("負数や小数で表ごと落ちてはならない");
+        assert_eq!(t.entries.len(), 3);
+        assert_eq!(t.entries[0].2, Some(128_000));
+        assert_eq!(t.entries[1].2, None);
+        assert_eq!(t.entries[2].2, None);
+    }
+
+    /// 欄の無い旧い表（Spec 50 P0 より前の `prices.json`）は、要素の数も `dropped` も
+    /// 変わらず、窓が全部 `None` になるだけ（互換の後ろ向き）。
+    #[test]
+    fn an_old_table_without_windows_parses_unchanged() {
+        let raw = r#"{
+            "fetched": "2026-08-20",
+            "models": [
+              { "key": "a", "input_per_mtok": 2.0, "output_per_mtok": 10.0 },
+              { "key": "b", "input_per_mtok": 1.0, "output_per_mtok": 3.0, "cache_read_per_mtok": 0.1 },
+              { "key": "half", "input_per_mtok": 2.0 }
+            ]
+        }"#;
+        let t = parse_table(raw).unwrap();
+        assert_eq!(t.entries.len(), 2);
+        assert_eq!(t.dropped, 1, "落ちるのは今までどおり単価の揃わない要素だけ");
+        assert!(t.entries.iter().all(|e| e.2.is_none()));
+        assert_eq!(t.windows(), 0);
+        assert_eq!(t.as_of.as_deref(), Some("2026-08-20"));
     }
 
     /// **`pricing` は `budget` を呼ばない**（Spec 41 D5 の凍結を機械で留める）。
