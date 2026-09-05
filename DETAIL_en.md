@@ -89,12 +89,14 @@ Fuseforks/
             ├── lib/scheduleProbe.ts Pre-check display rules (pure functions; returns dictionary keys)
             ├── lib/scheduleDraft.ts Schedule form draft ⇄ wire round-trip (pure functions; the editing entry)
             ├── lib/contextUsage.ts  ratio and tone of the context-usage ring (pure functions, [Spec 49](specs/49_context-usage-ring.md))
+            ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
             ├── composables/useOrchestrator.ts   Single store
             ├── composables/useUiSettings.ts     This-screen settings (stored on the device)
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
+            ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
@@ -109,6 +111,7 @@ Fuseforks/
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
+                ├── GroupDialog.vue                    Modal: create / rename / delete groups ([Spec 51](specs/51_agent-groups.md))
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
@@ -157,7 +160,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 
 | Position | Content | Reason for Permanence |
 |---|---|---|
-| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together) | Always visible |
+| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (groups, model registration, add); the **footer is the operate-on-many side** (change work folders together). In a village with groups the list is **sectioned under headings**, each carrying an eye (show/hide), ▶/■, and a batch-start switch ([Spec 51](specs/51_agent-groups.md); dragging a card into another section changes its group) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is filled by the model template's "Fetch" button together with the rates ([Spec 50](specs/50_context-length-fetch.md); models absent from the table keep the hand-typed value), so a number above 100% still means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
@@ -1333,6 +1336,37 @@ prompt. Persona is carried by the prose in `Construct.md` / `SKILL.md`, and
 injecting a role name there **pulls the model toward that word's connotations**
 (write "Deputy" and it starts behaving deferentially). A role is a label for
 people and for other servants, not material for self-identity.
+
+### Groups
+
+**Sections of the servant list, named after tasks** ([Spec 51](specs/51_agent-groups.md)).
+Create, rename, and delete them from "Groups" in the list header. Membership is set in a
+servant's settings dialog, or by **dragging a card into another section** (the section it lands
+in becomes its group; order and membership are saved in one step). Membership lives in the
+village (`world.json`) and travels with it. **A servant belongs to at most one group**;
+ungrouped is allowed. A worker shared by two lines of work should stay ungrouped — ungrouped
+servants are never hidden, and ties can be drawn regardless of membership.
+
+**Hiding changes what you see, not the ties.** Hiding a group with the eye on its heading
+removes its servants, and every tie touching them, from Kizuna (the summary line shows
+"hidden: N servants / M ties"), and drops them from the chat filter and the Alt+↑↓ cycle.
+**They still appear in the conversation** — a hidden servant that speaks through delegation,
+handoff, or a bundle shows up as usual. Delivery, delegation, handoff, schedules, statistics,
+and the tool set offered to models are untouched. Hiding is a per-device setting
+(`localStorage`) and does not travel with the village. If the selected servant gets hidden,
+the selection moves to the first visible one; **with nothing visible, the recipient is empty**
+(the same state as an empty village).
+
+**Batch start has two gates.** Switching a heading off makes the global ▶ skip that group
+(the toggle on each card remains the per-servant gate). **Hiding does not stop starting** —
+resting a group is the switch's job. The ▶/■ on a heading starts or stops only that group's
+servants (disabled with "no targets" when every card toggle is off). The ungrouped heading has
+no eye and no switch, only ▶/■ and a count.
+
+Deleting a group does not break its servants; they return to the ungrouped section.
+**Servants are never told their group name** (as with role names — a servant that reads
+"research" or "release" drifts toward the word). **Opening the village with an older binary
+drops groups and membership as unknown fields** ([failures.md](failures.md) #112).
 
 ### Scheduling
 

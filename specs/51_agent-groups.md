@@ -6,7 +6,8 @@
   （`data_contract` 4 箇所 = `AgentGroup` の実体 / `AgentSpec.groupId` / `AgentSnapshot.groupId` /
   `group_contract` 凍結 8 本 + `settings_contract` の `fuseforks.hiddenGroups.v1`）→ P1 完了
   （コア。記録は「P1 実装記録」）→ P2 完了（フロント。記録は「P2 実装記録」。
-  vitest 478・typecheck・build 緑）**
+  vitest 478・typecheck・build 緑）→ P3 完了（台帳。記録は「P3 台帳記録」）。
+  残は P4 実機検収 12 件**
 - 起点: 利用者 —「グループは表示/非表示。非表示は絆に出てこない。またチャットの送信宛先に
   でてこない。ただし非表示でも会話のメッセージには出てくる（委譲や転送の場合）。
   グループは一括起動のスイッチがある。また ON/OFF ボタンもあり、グループ一括で起動もできる。
@@ -327,6 +328,16 @@ fixture 2 つ — 欄を足した側が気づけない場所）。
 **起票時の読み（Notes 7）は試していない** — 「1 本の箱に見出しを混ぜる」形は P2 で試さず、
 最初から区分けごとの箱で書いた。`vue-draggable-plus` の splice が index を見出しごと数えるかは
 **未実測のまま**。区分けごとの箱で動くなら、それでよい。
+
+## P3 台帳記録（2026-09-05）
+
+DETAIL 日英に「グループ」の節（役職の直後・予定の直前）と、画面構成の左ペインの行、
+ディレクトリ木 3 行（`lib/agentGroups.ts` / `GroupDialog.vue` / `composables/useHiddenGroups.ts`）。
+README 3 言語の「何ができるか」表へ 1 行（役職の直後。**行数は 166 / 167 / 162** —
+上限 160 の意図「新しく来た人が最初に探すもの」の側なので許容。次に削るなら別の節から）。
+CLAUDE.md の「Spec の状態」と現在地。`data_contract` は P0 で済み。
+**PRIVACY 日英は変えない**（外へ送るものは増えない）。**grep 網の外**: Qiita 記事は一覧を
+触れているが「見出しが増える」だけで嘘にならない / LP は一覧の見た目に触れていない。
 
 ## 検収項目（各項目に到達経路を書く）
 
