@@ -675,7 +675,9 @@
       "fetching": "Fetching…",
       "filled": "Rates filled in (not saved yet)",
       "filledWithDropped": "Rates filled in ({n} invalid entries skipped)",
-      "notFound": "{model} is not in the table. Enter the rates by hand."
+      "notFound": "{model} is not in the table. Enter the rates by hand.",
+      "contextFilled": "Context length filled in too.",
+      "contextMissing": "Context length is not in the table (left as entered)."
     }
   },
   "schedule": {

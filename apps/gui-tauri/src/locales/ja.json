@@ -675,7 +675,9 @@
       "fetching": "取得中…",
       "filled": "単価を入れました（保存はまだです）",
       "filledWithDropped": "単価を入れました（不正な {n} 件は取り込んでいません）",
-      "notFound": "表に {model} がありません。手で入れてください"
+      "notFound": "表に {model} がありません。手で入れてください",
+      "contextFilled": "コンテキスト長も入れました。",
+      "contextMissing": "コンテキスト長は表にありません（手入力のままです）。"
     }
   },
   "schedule": {

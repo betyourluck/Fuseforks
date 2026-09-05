@@ -95,10 +95,20 @@ async function fetchPrices() {
     if (hit.cacheWritePerMtok !== null) d.cacheWritePerMtok = hit.cacheWritePerMtok;
     if (hit.cacheWrite1hPerMtok !== null) d.cacheWrite1hPerMtok = hit.cacheWrite1hPerMtok;
     d.pricingAsOf = table.asOf;
-    priceNotice.value =
+    // 窓も同じ規則（Spec 50 D5）: 表にあれば上書き、無ければ触らない。
+    // `pricingAsOf` は単価の時点なので、窓を入れても動かさない。
+    if (hit.maxInputTokens !== null) d.contextLength = hit.maxInputTokens;
+    // 通知は独立した 2 文の並び — 1 文目は単価（既存の 2 鍵のまま）、2 文目は窓。
+    // 節を連結するのではなく文を並べるので、語順が言語をまたげない問題は起きない。
+    const rates =
       table.dropped > 0
         ? t("modelTemplate.pricing.filledWithDropped", { n: table.dropped })
         : t("modelTemplate.pricing.filled");
+    const window =
+      hit.maxInputTokens !== null
+        ? t("modelTemplate.pricing.contextFilled")
+        : t("modelTemplate.pricing.contextMissing");
+    priceNotice.value = `${rates} ${window}`;
   } catch (err) {
     priceNotice.value = String((err as { message?: string })?.message ?? err);
   } finally {

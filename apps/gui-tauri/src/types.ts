@@ -433,6 +433,11 @@ export interface FetchedPrice {
   cacheReadPerMtok: number | null;
   cacheWritePerMtok: number | null;
   cacheWrite1hPerMtok: number | null;
+  /**
+   * 入力の窓（Spec 50）。`contextLength` へ入る。表に無いか不正なら `null` で、
+   * 画面は欄を触らず通知の 2 文目で「表にありません」と言う。
+   */
+  maxInputTokens: number | null;
 }
 
 /**

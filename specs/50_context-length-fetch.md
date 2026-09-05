@@ -3,7 +3,8 @@
 - 起票: 2026-09-05
 - 状態: **rev2（査読 2 系統 15 点 → 採用 11 / 訂正して採用 2 / 前提を実測で訂正して採用 2。
   記録は Notes 7）→ 承認（2026-09-05）→ P0 完了（契約 2 箇所 + Pages の生成スクリプトと表。
-  記録は「P0 実装記録」）→ P1 完了（コア。記録は「P1 実装記録」）**
+  記録は「P0 実装記録」）→ P1 完了（コア。記録は「P1 実装記録」）→ P2 完了（フロント。
+  vitest 466・build 緑）**
 - 起点: 利用者 —「`contextLength` の自動取得」（2026-09-05。[Spec 49](49_context-usage-ring.md)
   Notes 1 が「別 Spec の材料」として残していたもの）
 
@@ -243,6 +244,16 @@ grok-4.6 500,000 で入り、`perplexity/…` と `gpt-oss-120b` は付かない
 テストにも当たる。**同じ関数を壊す変異が複数のテストを赤にするのは、テストが同じ関数の
 別の性質を見ている証拠**で、穴ではない。復元は `git checkout` ではなく文字列の差し戻しで、
 前後のハッシュ一致を見た（2026-08-30 の「未コミットの実装ごと消える」罠を避ける）。
+
+## P2 実装記録（2026-09-05）
+
+`types.ts` の `FetchedPrice.maxInputTokens: number | null` / `ModelTemplateDialog.vue` の
+`fetchPrices()` に上書き 1 行と通知の 2 文（`${rates} ${window}` — 1 文目は既存の
+`filled` / `filledWithDropped` のまま、2 文目は新設の `contextFilled` / `contextMissing`）/
+辞書 ja/en に 2 鍵（`pricing` の末尾。**既存の鍵と文言は 1 字も変えていない**）。
+vitest 466（鍵集合一致のテストが ja/en の対を機械で留める）・`vue-tsc` + `vite build` 緑。
+辞書は JSON を読んで鍵を足し同じ書式（indent 2）で書き戻した — P0 の生成スクリプトと同じ
+「書式の自己検査 → 通ったときだけ書く」の形。
 
 ## 検収項目（各項目に到達経路を書く）
 
