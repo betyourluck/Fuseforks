@@ -160,7 +160,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 
 | Position | Content | Reason for Permanence |
 |---|---|---|
-| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (groups, model registration, add); the **footer is the operate-on-many side** (change work folders together). In a village with groups the list is **sectioned under headings**, each carrying an eye (show/hide), ▶/■, and a batch-start switch ([Spec 51](specs/51_agent-groups.md); dragging a card into another section changes its group) | Always visible |
+| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together). In a village with groups the list is **sectioned under headings**, each carrying an eye (show/hide), a pencil (rename / delete), ▶/■, and a batch-start switch, and a dashed area at the bottom of the list adds a group ([Spec 51](specs/51_agent-groups.md); dragging a card into another section changes its group) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is filled by the model template's "Fetch" button together with the rates ([Spec 50](specs/50_context-length-fetch.md); models absent from the table keep the hand-typed value), so a number above 100% still means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
@@ -1340,8 +1340,10 @@ people and for other servants, not material for self-identity.
 ### Groups
 
 **Sections of the servant list, named after tasks** ([Spec 51](specs/51_agent-groups.md)).
-Create, rename, and delete them from "Groups" in the list header. Membership is set in a
-servant's settings dialog, or by **dragging a card into another section** (the section it lands
+Create one from the **dashed area at the bottom of the list** (it turns into a name field and
+the new heading appears above); rename and delete from the pencil on a heading, which opens the
+group dialog. Membership is set in a servant's settings dialog, or by **dragging a card into
+another section** (the section it lands
 in becomes its group; order and membership are saved in one step). Membership lives in the
 village (`world.json`) and travels with it. **A servant belongs to at most one group**;
 ungrouped is allowed. A worker shared by two lines of work should stay ungrouped — ungrouped

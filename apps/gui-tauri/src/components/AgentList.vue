@@ -96,6 +96,21 @@ async function toggleGate(group: AgentGroup): Promise<void> {
   await orchestrator.upsertGroup({ ...group, batchStart: !group.batchStart });
 }
 
+/** 一覧の最下段の点線エリア（作成の入口）。改名・削除は見出しの鉛筆からダイアログへ。 */
+const addingGroup = ref(false);
+const newGroupName = ref("");
+
+async function submitGroup(): Promise<void> {
+  const name = newGroupName.value.trim();
+  if (!name) return;
+  const created = await orchestrator.createGroup(name);
+  if (created) {
+    newGroupName.value = "";
+    addingGroup.value = false;
+    await orchestrator.refreshAll();
+  }
+}
+
 /**
  * 選択が変わったら、そのカードを見える位置へ寄せる（Alt+↑↓ 用）。
  *
@@ -346,28 +361,6 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       <span class="flex-1 text-ink-dim tabular-nums">
         {{ $t("agentList.runningSummary", { running: runningCount, total: state.agents.length }) }}
       </span>
-      <!-- グループの管理（Spec 51 D6）。区分けは一覧を作る側の仕事なので、ここ。 -->
-      <button
-        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-        :title="$t('agentList.manageGroups')"
-        :aria-label="$t('agentList.manageGroups')"
-        @click="showGroups = true"
-      >
-        <svg
-          class="size-4"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="3" y="4" width="18" height="6" rx="1.5" />
-          <rect x="3" y="14" width="18" height="6" rx="1.5" />
-        </svg>
-        <span class="agent-list-action-label">{{ $t("agentList.manageGroupsLabel") }}</span>
-      </button>
       <button
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.manageTemplates')"
@@ -499,6 +492,19 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
           <span v-if="isCollapsed(section)" class="text-ink-dim">
             {{ $t("agentList.groupHidden") }}
           </span>
+          <!-- 改名・削除はダイアログ（見出しから開く）。作成は一覧の最下段の点線エリア。 -->
+          <button
+            v-if="section.group"
+            class="rounded px-1 text-ink-dim hover:text-accent"
+            :title="$t('agentList.manageGroups')"
+            :aria-label="$t('agentList.manageGroups')"
+            @click="showGroups = true"
+          >
+            <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
           <span class="flex-1" />
           <!-- 見出しの ▶/■。全体と同じ純関数に部分集合を渡す（凍結 7）。 -->
           <button
@@ -525,9 +531,11 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
             :class="section.group.batchStart ? 'bg-accent' : 'bg-line'"
             @click="toggleGate(section.group)"
           >
+            <!-- ノブはカードのトグル（AgentCard）と同じ書き方 — left で置く。translate で
+                 動かした初版は ON でノブが消えた（2026-09-05 実機）。 -->
             <span
-              class="absolute top-0.5 size-2.5 rounded-full bg-surface-0 transition-transform"
-              :class="section.group.batchStart ? 'translate-x-3' : 'translate-x-0.5'"
+              class="absolute top-0.5 size-2.5 rounded-full bg-surface-0 transition-all"
+              :class="section.group.batchStart ? 'left-3' : 'left-0.5'"
             />
           </button>
         </div>
@@ -572,6 +580,44 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         {{ $t("agentList.emptyLine1") }}<br />
         {{ $t("agentList.emptyLine2") }}
       </p>
+
+      <!--
+        グループの追加（2026-09-05 実機の裁定 — ヘッダのボタンではなく、一覧の最下段の
+        点線エリア。押すと名前の入力に変わり、Enter で作られたグループの見出しが上に生える）。
+      -->
+      <form
+        v-if="addingGroup"
+        class="mt-2 rounded border border-dashed border-line p-2"
+        @submit.prevent="submitGroup"
+      >
+        <input
+          v-model="newGroupName"
+          autofocus
+          :placeholder="$t('agentList.addGroupPlaceholder')"
+          class="w-full rounded border border-line bg-surface-1 px-2 py-1 text-[11px] outline-none focus:border-accent"
+          @keydown.escape.prevent="addingGroup = false"
+        />
+        <div class="mt-1.5 flex justify-end gap-2 text-[11px]">
+          <button type="button" class="rounded px-2 py-0.5 text-ink-dim hover:text-ink" @click="addingGroup = false">
+            {{ $t("agentList.cancel") }}
+          </button>
+          <button
+            type="submit"
+            class="rounded bg-accent px-2 py-0.5 font-medium text-surface-0 disabled:opacity-40"
+            :disabled="!newGroupName.trim()"
+          >
+            {{ $t("agentList.create") }}
+          </button>
+        </div>
+      </form>
+      <button
+        v-else
+        type="button"
+        class="mt-2 w-full rounded border border-dashed border-line px-2 py-1.5 text-[11px] text-ink-dim transition-colors hover:border-accent hover:text-accent"
+        @click="addingGroup = true"
+      >
+        {{ $t("agentList.addGroup") }}
+      </button>
     </div>
 
     <!--

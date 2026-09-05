@@ -250,7 +250,6 @@
     "noRole": "No role",
     "batchWorkDir": "Change work folders together",
     "manageGroups": "Manage groups",
-    "manageGroupsLabel": "Groups",
     "unassigned": "Ungrouped",
     "groupMembers": "{count}",
     "groupHide": "Hide this group from Kizuna and the recipient list (delivery and batch start are unaffected)",
@@ -260,7 +259,9 @@
     "groupBatchGateHelp": "When off, the global ▶ skips this group. Hiding a group does not stop it from starting — this switch is what rests it.",
     "groupBatchStart": "Start {count} servants in \"{name}\"",
     "groupBatchStop": "Stop {count} running servants in \"{name}\"",
-    "groupBatchNoTargets": "No targets (choose with the toggle on each card)"
+    "groupBatchNoTargets": "No targets (choose with the toggle on each card)",
+    "addGroup": "+ Add group",
+    "addGroupPlaceholder": "Group name (task)"
   },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",

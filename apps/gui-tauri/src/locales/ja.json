@@ -250,7 +250,6 @@
     "noRole": "役職を選ばない",
     "batchWorkDir": "作業フォルダ一括切り替え",
     "manageGroups": "グループを管理",
-    "manageGroupsLabel": "グループ",
     "unassigned": "無所属",
     "groupMembers": "{count} 体",
     "groupHide": "このグループを絆と宛先から隠す（配送・一括起動には効きません）",
@@ -260,7 +259,9 @@
     "groupBatchGateHelp": "OFF にすると、全体の ▶ はこのグループを飛ばします。非表示にしても起動は止まりません — 休ませるのはこのスイッチです。",
     "groupBatchStart": "「{name}」の {count} 体を起動",
     "groupBatchStop": "「{name}」の稼働中 {count} 体を停止",
-    "groupBatchNoTargets": "対象 0 体（カードのトグルで選んでください）"
+    "groupBatchNoTargets": "対象 0 体（カードのトグルで選んでください）",
+    "addGroup": "＋ グループを追加",
+    "addGroupPlaceholder": "グループ名（タスク名）"
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",
