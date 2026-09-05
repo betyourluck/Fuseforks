@@ -132,6 +132,12 @@ pub fn run() {
             commands::delete_model_template,
             commands::upsert_role,
             commands::delete_role,
+            // グループ（Spec 51）
+            commands::list_groups,
+            commands::create_group,
+            commands::upsert_group,
+            commands::delete_group,
+            commands::commit_agent_drop,
             // 設定ファイル
             commands::read_agent_config,
             commands::write_agent_config,

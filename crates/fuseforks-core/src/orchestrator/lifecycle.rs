@@ -8,6 +8,10 @@
 //! 入れると役職を選んだ瞬間に線が引かれ、この村の原則が崩れる。
 
 use super::*;
+// グループの型は**このファイルだけ**が読む（Spec 51 の CRUD の包み）。`mod.rs` の共通
+// import に入れない — 実行経路がグループを読まないことを走査テスト
+// （`tests/agent_groups.rs`）が `mod.rs` を含めて留めているため。
+use crate::model::{AgentGroup, AgentGroupId};
 
 impl Orchestrator {
     /// エージェントを登録する。
@@ -264,6 +268,49 @@ impl Orchestrator {
     /// 表示順を振り直す。
     pub async fn reorder_agents(&self, order: &[AgentId]) -> CoreResult<()> {
         self.shared.world.write().await.reorder(order);
+        self.persist().await
+    }
+
+    // ---- グループ（Spec 51） ------------------------------------------------
+    //
+    // 役職と違い System 行は出さない — グループ名はプロンプトに入らず（group_contract
+    // 凍結 4）、顔ぶれにも載らないので、改名しても個体の見え方は変わらない。
+
+    /// グループの一覧（配列順 = 見出しの並び）。
+    pub async fn list_groups(&self) -> Vec<AgentGroup> {
+        self.shared.world.read().await.groups()
+    }
+
+    /// グループを新設する。id はコアが発行する。
+    pub async fn create_group(&self, name: &str) -> CoreResult<AgentGroup> {
+        let group = self.shared.world.write().await.create_group(name)?;
+        self.persist().await?;
+        Ok(group)
+    }
+
+    /// 改名 / 全体 ▶ のスイッチ。既存のサーヴァントには何も起きない。
+    pub async fn upsert_group(&self, group: AgentGroup) -> CoreResult<()> {
+        self.shared.world.write().await.upsert_group(group)?;
+        self.persist().await
+    }
+
+    /// グループを削除する。**個体の `group_id` には触らない**（凍結 3）。
+    pub async fn remove_group(&self, id: &AgentGroupId) -> CoreResult<()> {
+        self.shared.world.write().await.remove_group(id)?;
+        self.persist().await
+    }
+
+    /// drop の確定（凍結 8）。**並びと所属を世界ロックの中で一緒に書き、1 回で永続化**。
+    pub async fn commit_agent_drop(
+        &self,
+        order: &[AgentId],
+        regroup: Option<(&AgentId, Option<AgentGroupId>)>,
+    ) -> CoreResult<()> {
+        self.shared
+            .world
+            .write()
+            .await
+            .commit_agent_drop(order, regroup)?;
         self.persist().await
     }
 

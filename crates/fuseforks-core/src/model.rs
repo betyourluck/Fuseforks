@@ -193,6 +193,73 @@ impl From<String> for AgentRoleId {
     }
 }
 
+/// サーヴァントのグループの識別子（Spec 51）。**コアが発行する UUID v4**で、
+/// 削除しても再発行しない — 引けない `group_id` を個体に残す設計（`group_contract`
+/// 凍結 3）と組むと、再利用した id が削除前の個体を黙って吸う。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentGroupId(String);
+
+impl AgentGroupId {
+    /// 既存の id を包む（`world.json` から読むとき・テスト用）。発行は [`Self::fresh`]。
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// 新しい id を発行する。
+    #[must_use]
+    pub fn fresh() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
+
+    /// 文字列として借りる。
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AgentGroupId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for AgentGroupId {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl From<String> for AgentGroupId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+/// サーヴァント一覧の区分け = タスク名（Spec 51）。役職と同じ棚（`world.json`）に
+/// 住み、**村を配ると付いて回る**。
+///
+/// **隠すのは見え方であって線ではない** — 非表示の集合はこの型に無く、端末の
+/// `localStorage` に住む（`group_contract` 凍結 1）。名前は**プロンプトへ入れない**
+/// （凍結 4。「調査」「リリース」を読んだ個体はその語に寄る）。**実行経路で読まない**
+/// （凍結 5。配送・権限・ツール提示・`plan` の撒き先のどの分岐にも入らない）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentGroup {
+    /// 一意識別子。
+    pub id: AgentGroupId,
+    /// 見出しに出る名前。空は拒む。重複は拒まない（タスク名は重なりうる）。
+    pub name: String,
+    /// **全体の ▶** がこのグループの個体を対象にするか（既定 true）。
+    ///
+    /// グループ自身の ▶/■ には効かない — 効かせると OFF のグループの ▶ が死んだ
+    /// ボタンになる。個体の `batch_start` は別の門で、全体 ▶ の対象は
+    /// `agent.batch_start && (無所属 || group.batch_start)`（凍結 7）。
+    /// **非表示とは独立** — 隠したグループも全体 ▶ で起きる。休ませるのはこのスイッチ。
+    #[serde(default = "default_true")]
+    pub batch_start: bool,
+}
+
 /// 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
 ///
 /// # なぜ自由な色文字列にしないか
@@ -464,6 +531,13 @@ pub struct AgentSpec {
     /// ゆえに言葉のほうを実態に合わせてある（`role_contract` 凍結の外）。
     #[serde(default)]
     pub role_id: Option<AgentRoleId>,
+    /// 所属するグループ（Spec 51）。**参照**であってコピーではない（`role_id` と同じ形）。
+    ///
+    /// `None` = 無所属。`World::groups` に無い id は無所属として描き、**次に所属を書く
+    /// 操作**（設定ダイアログの保存 / 無所属の箱への drop）で `None` へ正規化する
+    /// （`group_contract` 凍結 3）。**実行経路で読まない**（凍結 5）。
+    #[serde(default)]
+    pub group_id: Option<AgentGroupId>,
 }
 
 impl AgentSpec {
@@ -488,6 +562,7 @@ impl AgentSpec {
             plan_review: false,
             batch_start: true,
             role_id: None,
+            group_id: None,
         }
     }
 }
@@ -1072,6 +1147,9 @@ pub struct AgentSnapshot {
     ///    3 箇所で捕まえた（`AgentSpec` にだけ足して投影に足さないと、
     ///    **設定を保存した瞬間に役職が外れる**）
     pub role_id: Option<AgentRoleId>,
+    /// 所属（Spec 51）。**投影にも要る** — `role_id` と同じ理由（設定ダイアログは
+    /// 投影から spec を組み直して保存する）。
+    pub group_id: Option<AgentGroupId>,
     /// 直近の失敗（あれば）。`status == Failed` の理由表示に使う。
     pub last_error: Option<crate::error::ErrorPayload>,
 }

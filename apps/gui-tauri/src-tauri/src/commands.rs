@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use fuseforks_core::model::{
-    AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, ConfigFileKind,
-    ModelTemplate, ModelTemplateId, TopologyEdge,
+    AgentGroup, AgentGroupId, AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot,
+    AgentSpec, ConfigFileKind, ModelTemplate, ModelTemplateId, TopologyEdge,
 };
 use fuseforks_core::world::TopologyPosition;
 use fuseforks_core::{CoreError, CoreResult};
@@ -197,6 +197,59 @@ pub async fn upsert_role(state: State<'_, AppState>, role: AgentRole) -> CoreRes
 #[tauri::command]
 pub async fn delete_role(state: State<'_, AppState>, role_id: AgentRoleId) -> CoreResult<()> {
     state.orchestrator.remove_role(&role_id).await
+}
+
+// ---- グループ（Spec 51） ----------------------------------------------------
+
+/// グループの一覧（配列順 = 見出しの並び）。
+#[tauri::command]
+pub async fn list_groups(state: State<'_, AppState>) -> CoreResult<Vec<AgentGroup>> {
+    Ok(state.orchestrator.list_groups().await)
+}
+
+/// グループを新設する。**id はコアが発行する**（UUID v4・再発行しない）。
+#[tauri::command]
+pub async fn create_group(state: State<'_, AppState>, name: String) -> CoreResult<AgentGroup> {
+    state.orchestrator.create_group(&name).await
+}
+
+/// 改名 / 全体 ▶ のスイッチ。既存のサーヴァントには何も起きない。
+#[tauri::command]
+pub async fn upsert_group(state: State<'_, AppState>, group: AgentGroup) -> CoreResult<()> {
+    state.orchestrator.upsert_group(group).await
+}
+
+/// グループを削除する。**個体の `groupId` には触らない**（`group_contract` 凍結 3 —
+/// 引けない id は無所属として描かれ、次に所属を書く操作で `null` へ正規化される）。
+#[tauri::command]
+pub async fn delete_group(state: State<'_, AppState>, group_id: AgentGroupId) -> CoreResult<()> {
+    state.orchestrator.remove_group(&group_id).await
+}
+
+/// 動かしたカードの所属（`commit_agent_drop` の `regroup`）。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DropRegroup {
+    pub id: AgentId,
+    /// `None` = 無所属の箱へ落ちた（引けない id の正規化もここ）。
+    pub group_id: Option<AgentGroupId>,
+}
+
+/// drop の確定（`group_contract` 凍結 8）。並びと所属を 1 回で永続化する —
+/// `reorder_agents` + `update_agent` の 2 本に割ると片方だけ通った状態が `world.json` に残る。
+#[tauri::command]
+pub async fn commit_agent_drop(
+    state: State<'_, AppState>,
+    order: Vec<AgentId>,
+    regroup: Option<DropRegroup>,
+) -> CoreResult<()> {
+    state
+        .orchestrator
+        .commit_agent_drop(
+            &order,
+            regroup.as_ref().map(|r| (&r.id, r.group_id.clone())),
+        )
+        .await
 }
 
 // ---- 設定ファイル -----------------------------------------------------------

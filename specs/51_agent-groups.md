@@ -4,7 +4,8 @@
 - 状態: **rev2（利用者裁定 2 点 = D4 据え置き / D6 のドラッグ採用 → 査読 2 系統 17 点 →
   採用 15 / 前提を実測で訂正して採用 2。記録は Notes 6）→ 承認（2026-09-05）→ P0 完了
   （`data_contract` 4 箇所 = `AgentGroup` の実体 / `AgentSpec.groupId` / `AgentSnapshot.groupId` /
-  `group_contract` 凍結 8 本 + `settings_contract` の `fuseforks.hiddenGroups.v1`）**
+  `group_contract` 凍結 8 本 + `settings_contract` の `fuseforks.hiddenGroups.v1`）→ P1 完了
+  （コア。記録は「P1 実装記録」）**
 - 起点: 利用者 —「グループは表示/非表示。非表示は絆に出てこない。またチャットの送信宛先に
   でてこない。ただし非表示でも会話のメッセージには出てくる（委譲や転送の場合）。
   グループは一括起動のスイッチがある。また ON/OFF ボタンもあり、グループ一括で起動もできる。
@@ -261,6 +262,29 @@
   `regroup` を `null` に → drop の単体が赤
 - **P3** — 台帳（D7）
 - **P4** — 実機検収
+
+## P1 実装記録（2026-09-05）
+
+`model.rs`: `AgentGroupId`（`fresh()` = UUID v4）/ `AgentGroup { id, name, batch_start }` /
+`AgentSpec.group_id` / `AgentSnapshot.group_id`。`world.rs`: `PersistedWorld.groups`（`Vec` —
+配列順が見出しの並び。役職は順序を持たないので `BTreeMap` だが、グループは違う）/
+`create_group`（id の発行と空名の拒否）/ `upsert_group`（配列の位置を保つ）/ `remove_group`
+（個体に触らない）/ `groups` / `commit_agent_drop`（所属 → 並びの順。所属の個体が未登録なら
+並びも触らない）。`error.rs`: `GroupNotFound` / `InvalidGroupName`。`lifecycle.rs` に包み 5 本
+（System 行は出さない — 名前がプロンプトに入らないので改名しても個体の見え方は変わらない）。
+IPC は **5 本**（rev2 の 4 本 + `create_group` — id をコアが発行するので、作成と更新を
+1 本の upsert に畳めない。役職は id を人が打つ形だったので upsert 1 本で済んでいた）。
+`ipc_contract.rs` の 2 リストへ `groupId`。
+
+**走査テストの網は `mod.rs` まで含める。** 最初 `mod.rs` の共通 import へ
+`AgentGroup` を足したら走査が自分で赤になった — 型を CRUD の包み（`lifecycle.rs`）だけが
+読む形にし、`mod.rs` の import には入れない。**実行経路に型が見えないこと**まで留めている。
+
+単体 4（`world.rs`）+ 結合 4 + 走査 1。ワークスペース全緑・clippy 警告ゼロ。
+**ミューテーション 2 回（予測を先に書いて）**: `mod.rs` の import へ `AgentGroup` を戻す →
+走査 1 本だけ赤（予測どおり）/ `commit_agent_drop` を「並び → 所属」の順にする →
+`a_drop_writes_order_and_membership_in_one_step` だけ赤（予測どおり。所属の失敗で並びが
+残る形を留めている）。
 
 ## 検収項目（各項目に到達経路を書く）
 

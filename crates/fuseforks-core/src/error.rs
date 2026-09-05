@@ -41,6 +41,15 @@ pub enum CoreError {
     #[error("役職 `{0}` は登録されていません")]
     RoleNotFound(String),
 
+    /// 指定 ID のグループが存在しない（Spec 51）。引けない `group_id` を持つ個体は
+    /// 無所属として描かれるので、この型が届くのは明示操作（削除・改名）のときだけ。
+    #[error("グループ `{0}` は登録されていません")]
+    GroupNotFound(String),
+
+    /// グループ名が空（Spec 51。見出しに何も出ないグループは作らない）。
+    #[error("グループ名が空です")]
+    InvalidGroupName,
+
     /// 指定 ID の予定が存在しない（Spec 07）。
     #[error("予定 `{0}` は登録されていません")]
     ScheduleNotFound(String),
@@ -334,6 +343,8 @@ impl CoreError {
             Self::DuplicateAgentName(_) => "DUPLICATE_AGENT_NAME",
             Self::ModelTemplateNotFound(_) => "MODEL_TEMPLATE_NOT_FOUND",
             Self::RoleNotFound(_) => "ROLE_NOT_FOUND",
+            Self::GroupNotFound(_) => "GROUP_NOT_FOUND",
+            Self::InvalidGroupName => "INVALID_GROUP_NAME",
             Self::ScheduleNotFound(_) => "SCHEDULE_NOT_FOUND",
             Self::InvalidSchedule { .. } => "INVALID_SCHEDULE",
             Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",

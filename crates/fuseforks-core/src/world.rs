@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::llm::ChatMessage;
 use crate::model::{
-    AgentId, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec, AgentStatus, ModelTemplate,
+    AgentGroup, AgentGroupId, AgentId, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec,
+    AgentStatus, ModelTemplate,
     ModelTemplateId, TopologyEdge,
 };
 
@@ -355,6 +356,11 @@ pub struct PersistedWorld {
     /// `#[serde(default)]` なので、役職を 1 つも持たない既存の村もそのまま開く。
     #[serde(default)]
     pub roles: Vec<AgentRole>,
+    /// グループ（Spec 51）。配列順が見出しの並び（作成順）。**旧版のバイナリで村を
+    /// 開くと未知の欄として消える**（`failures.md` #112 — `default` は「欠けても読める」
+    /// だけ）。
+    #[serde(default)]
+    pub groups: Vec<AgentGroup>,
     /// 外部からの依頼を受ける窓口（Spec 25。`None` = 未設定）。
     ///
     /// **村の内容物なので `world.json` に住む** — どの個体が窓口かは村ごとに
@@ -402,6 +408,9 @@ pub struct World {
     user_name: Option<String>,
     /// 役職（Spec 14）。意味論は [`PersistedWorld::roles`]。
     roles: BTreeMap<AgentRoleId, AgentRole>,
+    /// グループ（Spec 51）。`Vec` なのは**配列順が見出しの並び**だから
+    /// （役職は順序を持たないので `BTreeMap`）。意味論は [`PersistedWorld::groups`]。
+    groups: Vec<AgentGroup>,
     /// 外部からの依頼を受ける窓口（Spec 25）。意味論は [`PersistedWorld::reception`]。
     reception: Option<AgentId>,
     /// 外部クライアントの呼び名（Spec 25）。意味論は [`PersistedWorld::external_name`]。
@@ -506,6 +515,9 @@ impl World {
         for role in persisted.roles {
             world.roles.insert(role.id.clone(), role);
         }
+        // グループも検査せずそのまま読む。引けない group_id は無所属として描かれる
+        // （group_contract 凍結 3）ので、孤児の掃除も要らない。
+        world.groups = persisted.groups;
         for mut spec in persisted.agents {
             spec.connected_agents
                 .retain(|target| *target != spec.id && known.contains(target));
@@ -531,6 +543,7 @@ impl World {
             language: self.language.map(|l| l.as_str().to_string()),
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
+            groups: self.groups.clone(),
             reception: self.reception.clone(),
             external_name: self.external_name.clone(),
         }
@@ -847,6 +860,7 @@ impl World {
             plan_review: record.spec.plan_review,
             batch_start: record.spec.batch_start,
             role_id: record.spec.role_id.clone(),
+            group_id: record.spec.group_id.clone(),
             last_error: record.last_error.clone(),
         }
     }
@@ -998,6 +1012,94 @@ impl World {
     pub fn roles(&self) -> Vec<AgentRole> {
         self.roles.values().cloned().collect()
     }
+
+    // ---- グループ（Spec 51） ------------------------------------------------
+
+    /// グループを新設する。**id はここで発行する**（UUID v4。再発行しない）。
+    ///
+    /// # Errors
+    /// 名前が空（trim 後）なら [`CoreError::InvalidGroupName`]。重複名は拒まない
+    /// （タスク名は重なりうる。id が別なら別のグループ）。
+    pub fn create_group(&mut self, name: &str) -> CoreResult<AgentGroup> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(CoreError::InvalidGroupName);
+        }
+        let group = AgentGroup {
+            id: AgentGroupId::fresh(),
+            name: name.to_owned(),
+            batch_start: true,
+        };
+        self.groups.push(group.clone());
+        Ok(group)
+    }
+
+    /// 既存のグループを書き換える（改名 / 全体 ▶ のスイッチ）。**配列の位置は動かさない**
+    /// （見出しの並び = 作成順を保つ）。
+    ///
+    /// # Errors
+    /// 未登録の id なら [`CoreError::GroupNotFound`]。名前が空なら
+    /// [`CoreError::InvalidGroupName`]。
+    pub fn upsert_group(&mut self, group: AgentGroup) -> CoreResult<()> {
+        if group.name.trim().is_empty() {
+            return Err(CoreError::InvalidGroupName);
+        }
+        let slot = self
+            .groups
+            .iter_mut()
+            .find(|g| g.id == group.id)
+            .ok_or_else(|| CoreError::GroupNotFound(group.id.to_string()))?;
+        *slot = AgentGroup {
+            name: group.name.trim().to_owned(),
+            ..group
+        };
+        Ok(())
+    }
+
+    /// グループを削除する。**個体の `group_id` には触らない**（`group_contract` 凍結 3 —
+    /// `remove_role` と同じ）。引けない id は無所属として描かれ、次に所属を書く操作で
+    /// `None` へ正規化される。
+    ///
+    /// # Errors
+    /// 未登録の id なら [`CoreError::GroupNotFound`]。
+    pub fn remove_group(&mut self, id: &AgentGroupId) -> CoreResult<()> {
+        let before = self.groups.len();
+        self.groups.retain(|g| g.id != *id);
+        if self.groups.len() == before {
+            return Err(CoreError::GroupNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// グループの一覧（配列順 = 見出しの並び）。
+    pub fn groups(&self) -> Vec<AgentGroup> {
+        self.groups.clone()
+    }
+
+    /// drop の確定（`group_contract` 凍結 8）。**並びと所属を 1 回で書く** —
+    /// `reorder` + `update_agent` の 2 段に割ると、片方だけ通った状態が `world.json` に残る。
+    ///
+    /// `regroup` は動かしたカードの新しい所属。`Some((id, None))` は無所属の箱へ落ちた
+    /// （引けない id の正規化もここ）。所属の書き込みは**個体の他の欄に触らない**。
+    ///
+    /// # Errors
+    /// `regroup` の個体が未登録なら [`CoreError::AgentNotFound`]。`order` に知らない id が
+    /// 混ざっても拒まない（`reorder` と同じ — 知らない id は無視し、載っていない個体は末尾へ）。
+    pub fn commit_agent_drop(
+        &mut self,
+        order: &[AgentId],
+        regroup: Option<(&AgentId, Option<AgentGroupId>)>,
+    ) -> CoreResult<()> {
+        if let Some((id, group_id)) = regroup {
+            let record = self
+                .agents
+                .get_mut(id)
+                .ok_or_else(|| CoreError::AgentNotFound(id.to_string()))?;
+            record.spec.group_id = group_id;
+        }
+        self.reorder(order);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1101,6 +1203,7 @@ mod tests {
             language: None,
             user_name: None,
             roles: Vec::new(),
+            groups: Vec::new(),
             reception: None,
             external_name: None,
         };
@@ -1391,6 +1494,7 @@ mod tests {
             language: None,
             user_name: None,
             roles: Vec::new(),
+            groups: Vec::new(),
             reception: None,
             external_name: None,
         };
@@ -1511,6 +1615,83 @@ mod tests {
             restored.role_label(Some(&"researcher".into())),
             Some("調査役")
         );
+    }
+
+    // ---- グループ（Spec 51） ------------------------------------------------
+
+    /// グループは `world.json` を往復し、**配列順（作成順）を保つ**。
+    #[test]
+    fn groups_round_trip_and_keep_their_creation_order() {
+        let mut world = World::new();
+        let first = world.create_group("調査").unwrap();
+        let second = world.create_group("リリース").unwrap();
+        assert_ne!(first.id, second.id, "id はコアが発行する");
+
+        let restored = World::from_persisted(world.to_persisted());
+        let names: Vec<&str> = restored.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["調査", "リリース"]);
+    }
+
+    /// 改名は配列の位置を動かさず、名前の前後の空白を落とす。
+    #[test]
+    fn renaming_a_group_keeps_its_slot() {
+        let mut world = World::new();
+        let a = world.create_group("a").unwrap();
+        let b = world.create_group("b").unwrap();
+        world
+            .upsert_group(AgentGroup {
+                name: "  A'  ".into(),
+                batch_start: false,
+                ..a
+            })
+            .unwrap();
+        let groups = world.groups();
+        assert_eq!(groups[0].name, "A'");
+        assert!(!groups[0].batch_start);
+        assert_eq!(groups[1].id, b.id);
+    }
+
+    /// 削除は個体の `group_id` を巻き込まない（凍結 3）。空名は拒む。
+    #[test]
+    fn removing_a_group_leaves_the_dangling_id_on_agents() {
+        let mut world = world_with_two_agents();
+        let group = world.create_group("調査").unwrap();
+        world
+            .commit_agent_drop(
+                &["agent_01".into(), "agent_02".into()],
+                Some((&"agent_01".into(), Some(group.id.clone()))),
+            )
+            .unwrap();
+        world.remove_group(&group.id).unwrap();
+
+        assert!(world.groups().is_empty());
+        let snapshot = world.snapshot(&"agent_01".into()).unwrap();
+        assert_eq!(snapshot.group_id, Some(group.id));
+        assert_eq!(world.create_group(" ").unwrap_err().code(), "INVALID_GROUP_NAME");
+    }
+
+    /// drop の確定は**並びと所属を 1 回で**書く（凍結 8）。未登録の個体なら何も書かない。
+    #[test]
+    fn a_drop_writes_order_and_membership_in_one_step() {
+        let mut world = world_with_two_agents();
+        let group = world.create_group("調査").unwrap();
+        world
+            .commit_agent_drop(
+                &["agent_02".into(), "agent_01".into()],
+                Some((&"agent_02".into(), Some(group.id.clone()))),
+            )
+            .unwrap();
+        let second = world.snapshot(&"agent_02".into()).unwrap();
+        assert_eq!(second.order, 0);
+        assert_eq!(second.group_id, Some(group.id));
+        assert_eq!(world.snapshot(&"agent_01".into()).unwrap().order, 1);
+
+        let err = world
+            .commit_agent_drop(&["agent_01".into()], Some((&"ghost".into(), None)))
+            .unwrap_err();
+        assert_eq!(err.code(), "AGENT_NOT_FOUND");
+        // 失敗したときは並びも触らない（片方だけ通らない）。
+        assert_eq!(world.snapshot(&"agent_02".into()).unwrap().order, 0);
     }
 
     /// 役職を 1 つも持たない既存の村もそのまま開く（`#[serde(default)]`）。

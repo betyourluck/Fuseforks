@@ -110,7 +110,8 @@ pub use llm::{
 pub use mcp::{McpConfig, McpManager, McpServerConfig, McpServerStatus};
 pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
-    AgentRole, AgentRoleDefaults, AgentRoleId, RoleColor, Endpoint, ModelTemplate, ModelTemplateId,
+    AgentGroup, AgentGroupId, AgentRole, AgentRoleDefaults, AgentRoleId, RoleColor, Endpoint,
+    ModelTemplate, ModelTemplateId,
     TopologyEdge, WorkDirListing,
 };
 pub use orchestrator::{AgentMcpStatus, AttachmentUpload, Orchestrator, OrchestratorConfig};

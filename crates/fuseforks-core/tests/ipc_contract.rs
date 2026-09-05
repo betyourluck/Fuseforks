@@ -79,6 +79,8 @@ fn wire_field_sets_are_frozen() {
             "batchStart",
             "connectedAgents",
             "enabledTools",
+            // Spec 51。所属（参照）。types.ts と snapshotToSpec も同時に足すこと。
+            "groupId",
             "hearsRoomLog",
             "id",
             "maxToolIterations",
@@ -168,6 +170,7 @@ fn wire_field_sets_are_frozen() {
         plan_review: false,
         batch_start: true,
         role_id: None,
+        group_id: None,
         last_error: None,
     };
     assert_eq!(
@@ -178,6 +181,8 @@ fn wire_field_sets_are_frozen() {
             "cachedTokens",
             "connectedAgents",
             "enabledTools",
+            // Spec 51。所属（参照）。types.ts と snapshotToSpec も同時に足すこと。
+            "groupId",
             "hearsRoomLog",
             "id",
             "lastError",
