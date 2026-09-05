@@ -812,6 +812,13 @@ enums:
           会話ごとに持つので、新規チャットと分岐は最初から全部見える。
           **隠している間は件数と「すべて表示」を画面に出す** — 黙って消すと
           押した人は会話ごと失われたと読む (実際は残っている)
+        - **端末に保存 → localStorage "fuseforks.hiddenGroups.v1"** (Spec 51・
+          2026-09-05)。隠しているグループ id の配列。**村には持たせない** — 地図の
+          表示フィルタは端末の見え方で、村に入れると配った先で「なぜか半分しか
+          見えない」になる (autoFitOnResize と同じ棚)。知らない id (削除済み・
+          別の村) は読み飛ばす。配列を持つので useUiSettings (真偽値だけ) ではなく
+          useWorkDirHistory と同じ形の棚 (useHiddenGroups)。
+          隠すのは見え方だけで、配送にも一括起動にも効かない (group_contract 凍結 6)
       不変条件:
         - **左メニューの分類は主題で切る。保存先で切らない** (2026-08-03 の実機
           指摘で rev3 から変更)。分類は 全般 (ユーザー / 言語) /
@@ -1547,6 +1554,85 @@ enums:
           条例も言語も同じで、そこは分類の根拠にならない (settings_contract が
           rev で潰したのと同じ誤り — 保存先での分類は実装の都合が目録に出る)。
           これは入口の話で、置き場そのものは凍結 1
+
+      グループ (AgentGroup) — 一覧の区分け・地図の表示切り替え・グループ単位の起動
+      (Spec 51。2026-09-05 rev2 承認 → P0 で本節を凍結。実装は P1〜P4)。
+
+      **隠すのは見え方であって線ではない。** 配送・委譲・転送・予定・統計・提示集合には
+      1 ミリも触らない。起点は 2026-09-02 の裁定「配線の切り替えは採らず、別系統の
+      ノードとエッジを作る → リストをグループ化して絆に見せる見せないを切り替える」。
+
+      ## 凍結 1. 置き場を 2 つに割る — 所属は村、表示は端末
+
+      所属 (AgentGroup と AgentSpec.group_id) は world.json。非表示の集合は
+      localStorage "fuseforks.hiddenGroups.v1" (隠しているグループ id の配列。
+      知らない id は読み飛ばす)。**村に入れると配った先で「なぜか半分しか見えない」**
+      (autoFitOnResize と同じ棚)。
+
+      ## 凍結 2. 所属は 1 つ (Option<AgentGroupId>)。跨がない
+
+      跨がせると「非表示の意味 (和か積か)」と「全体 ▶ の門 (和か積か)」の規則が
+      もう 1 つずつ要り、どちらも画面に書けない。**共有ワーカーは無所属にする** —
+      無所属はどのフィルタでも隠れず、接続 (connected_agents) は所属と無関係に跨げる。
+      Option から Vec へは serde の互換で広げられるので、狭いほうから始める。
+
+      ## 凍結 3. 削除は所属を巻き込まない。引けない id は無所属として描く
+
+      remove_group は groups から消すだけで個体の group_id に触らない (remove_role と
+      同じ)。引けない id は無所属として描き、**次に所属を書く操作で None へ正規化**
+      (設定ダイアログの保存 / 無所属の箱への drop・箱内の移動)。id は再発行しない
+      (AgentGroup の節) ので、引けない id と None が並んでも取り違えは起きない。
+
+      ## 凍結 4. グループ名はプロンプトに入れない
+
+      顔ぶれの行にも Construct.md にも載せない (Spec 14 D6 と同じ — 「調査」
+      「リリース」を読んだ個体はその語に寄る)。名前は人が一覧と地図で見るための分類。
+
+      ## 凍結 5. グループは実行時の分岐に入らない
+
+      配送・権限・ツール提示・plan の撒き先のどの分岐にも group_id を読む箇所を
+      作らない (role_contract 凍結 7 と同じ線)。**orchestrator/ の本体に group_id が
+      0 件**であることを走査テストで留める (pricing が budget を読まない網と同じ形)。
+
+      ## 凍結 6. 非表示が効く面は 5 つ。効かない面は名指しで凍結
+
+      効く: 一覧 (見出しごと畳む。見出しは残す) / 地図のノード / 地図の辺
+      (**両端が見えている辺だけ**。隠れる辺の数 = 全辺 − 可視の辺 を要約行へ) /
+      会話ペインの絞り込み select / Alt+↑↓ の巡回と発話の宛先 (見えている個体だけ。
+      隠した瞬間に選択中だった個体は見えている先頭へ。**可視 0 体なら選択は null** =
+      空の村と同じ状態)。
+      効かない: 会話の行 (名前解決は隠さない) / 配送の全経路 / ツールの提示集合 /
+      統計・黒板・予定の宛先・ステータスバー・fuseforks.log / **一括起動** (非表示の
+      グループも全体 ▶ で起きる。休ませるのは AgentGroup.batchStart の仕事)。
+      **無所属はどのフィルタでも隠れない。**
+
+      ## 凍結 7. 一括起動の門は 2 段。判定は batchAction の 1 本
+
+      全体 ▶ の対象 = agent.batchStart && (無所属 || group.batchStart)。
+      グループの ▶/■ = batchAction(そのグループの個体) — 既存の純関数に部分集合を
+      渡すだけで、個体の batchStart は効かせる (「含めるか」の軸を 2 つにしない)。
+      全員 OFF なら無効で title が「対象 0 体」。無所属の見出しにも ▶/■ を置く
+      (目とスイッチは置かない — 隠れず、保存先も無い)。スイッチの置き場は見出しだけ。
+
+      ## 凍結 8. drop の確定は IPC 1 本 (commit_agent_drop { order, regroup })
+
+      一覧は区分けごとの VueDraggable (同じ group 名で箱をまたぐ)。end で 1 回、
+      落ちた箱の区分けを動かしたカードの group_id に、**state から組んだ全区分け**
+      (畳んだ区分けの個体も含む) を連結したものを order にする。並びと所属は
+      **世界ロックの中で一緒に書いて 1 回で永続化** — reorder_agents + update_agent の
+      2 本に割ると片方だけ通った状態が world.json に残る。地図のノードで終わった drop は
+      今までどおり絆を張り、並びも所属も確定しない。畳んだ区分けにも落とせる (末尾へ。
+      畳んだ中のカードは掴めないので出すには表示へ戻す)。
+      **order の意味は「一覧に並ぶ位置」のまま** — 区分けが入ると最初のドラッグで
+      連結へ一度だけ正規化される。地図への効きは双方向の辺の描画上の始点だけ
+      (drawDirection は一方向の矢に触らない)。
+
+      ## 凍結の外
+
+        - 旧版のバイナリで村を開くと groups と group_id が消える (failures.md #112。
+          #[serde(default)] は「欠けても読める」だけ)。利用者が負う条件として README に書く
+        - グループ名が空のときの拒否文言 / 見出しの並び (無所属 → groups の配列順) は
+          Spec に書くが契約では縛らない
   Provider:
     values: [open_ai_compat, anthropic, gemini, xai_responses, open_ai_responses]
     detect: |
@@ -1708,6 +1794,11 @@ entities:
       allowHandoff: bool            # 転送 (transfer_to_*) を提示するか。既定 true
       planReview: bool              # plan の編集窓 (計画の確認)。既定 false (Spec 43)
       batchStart: bool              # 一括起動 (▶) の対象か。既定 true
+      # 所属するグループ (Spec 51)。**参照**であってコピーではない (role_id と同じ形)。
+      # null = 無所属。World.groups に無い id は無所属として描き、次に所属を書く
+      # 操作 (設定ダイアログの保存 / 無所属の箱への drop) で null へ正規化する。
+      # **実行経路で読まない** (group_contract 凍結 5)。**プロンプトへ入れない** (同 4)
+      groupId: AgentGroupId | null
     batch_start_invariant: |
       一括起動 = 左ペインヘッダの ▶ で、batchStart が真のエージェントだけを
       まとめて起こす (2026-07-31、利用者要望)。起動時に 1 体ずつトグルを
@@ -1907,7 +1998,23 @@ entities:
       allowHandoff: bool            # 同上 (転送を提示するか。**投影にも要る**)
       planReview: bool              # 同上 (plan の編集窓。**投影にも要る** — Spec 43)
       batchStart: bool              # 同上 (一括起動 ▶ の対象か。稼働状態は status)
+      groupId: AgentGroupId | null  # 同上 (所属。**投影にも要る** — 無いと保存のたびに消える。Spec 51)
       lastError: ErrorPayload | null
+
+  AgentGroup:
+    description: |
+      サーヴァント一覧の区分け = タスク名 (Spec 51)。役職 (AgentRole) と同じ棚
+      (PersistedWorld.groups、world.json。**村を配ると付いて回る**)。
+      id はコアが発行する UUID v4 で**削除しても再発行しない** (引けない group_id が
+      個体に残る設計 = group_contract 凍結 3 と組むと、再利用した id が削除前の個体を
+      黙って吸う)。並びは groups の**配列順 (作成順)** で、並び替えの UI は持たない。
+    fields:
+      id: AgentGroupId
+      name: String                  # 見出しに出る。空は拒む。重複は拒まない (タスク名は重なりうる)
+      batchStart: bool              # **全体の ▶** がこのグループの個体を対象にするか。既定 true。
+                                    # グループ自身の ▶/■ には効かない (効かせると OFF のグループの
+                                    # ▶ が死んだボタンになる)。個体の batchStart は別の門で、
+                                    # 全体 ▶ の対象 = agent.batchStart && (無所属 || group.batchStart)
 
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
