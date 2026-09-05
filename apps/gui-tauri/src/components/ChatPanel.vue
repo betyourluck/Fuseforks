@@ -43,6 +43,8 @@ import { askConfirm } from "../composables/useConfirm";
 import { useChatClear } from "../composables/useChatClear";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
+import { useHiddenGroups } from "../composables/useHiddenGroups";
+import { visibleAgents } from "../lib/agentGroups";
 import { readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
 import type { AttachmentKind } from "../lib/carries";
@@ -59,6 +61,16 @@ const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
 
 /** 送信の宛先。左ペインまたはサーヴァントの絆で選んだ 1 体。 */
+const hiddenGroups = useHiddenGroups();
+/**
+ * 絞り込みの選択肢（Spec 51 D3）。隠したグループの個体は出さない —
+ * 宛先も一覧の選択なので、見えていない相手は選べない。**会話の行は隠さない**
+ * （名前解決は `state.agents` のまま。委譲・転送で隠れた個体の発話は普通に出る）。
+ */
+const filterableAgents = computed(() =>
+  visibleAgents(state.agents, state.groups, hiddenGroups.hidden),
+);
+
 const targetAgent = computed(
   () => state.agents.find((a) => a.id === state.selectedAgentId) ?? null,
 );
@@ -687,7 +699,7 @@ async function newChat(): Promise<void> {
         class="ml-auto min-w-0 rounded border border-line bg-surface-1 px-1.5 py-0.5 outline-none focus:border-accent"
       >
         <option value="">{{ $t("chat.filterAll") }}</option>
-        <option v-for="agent in state.agents" :key="agent.id" :value="agent.id">
+        <option v-for="agent in filterableAgents" :key="agent.id" :value="agent.id">
           {{ agent.name }}
         </option>
       </select>

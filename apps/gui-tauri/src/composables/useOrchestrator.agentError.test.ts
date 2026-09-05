@@ -19,6 +19,7 @@ function snapshot(id: string, lastError: AgentSnapshot["lastError"]): AgentSnaps
     name: id,
     modelTemplateId: "tpl",
     roleId: null,
+    groupId: null,
     status: "failed",
     connectedAgents: [],
     enabledTools: null,
@@ -52,6 +53,8 @@ const h = vi.hoisted(() => ({
   listTopologyPositions: vi.fn(async () => ({})),
   listModelTemplates: vi.fn(async () => []),
   listRoles: vi.fn(async () => []),
+  // Spec 51。refreshAll が list_groups も引くので、無いと起動の網に掛かる（意図した網）。
+  listGroups: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   listMessages: vi.fn(async () => []),
   listPlanWaves: vi.fn(async () => []),

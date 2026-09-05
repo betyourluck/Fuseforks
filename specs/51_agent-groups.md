@@ -5,7 +5,8 @@
   採用 15 / 前提を実測で訂正して採用 2。記録は Notes 6）→ 承認（2026-09-05）→ P0 完了
   （`data_contract` 4 箇所 = `AgentGroup` の実体 / `AgentSpec.groupId` / `AgentSnapshot.groupId` /
   `group_contract` 凍結 8 本 + `settings_contract` の `fuseforks.hiddenGroups.v1`）→ P1 完了
-  （コア。記録は「P1 実装記録」）**
+  （コア。記録は「P1 実装記録」）→ P2 完了（フロント。記録は「P2 実装記録」。
+  vitest 478・typecheck・build 緑）**
 - 起点: 利用者 —「グループは表示/非表示。非表示は絆に出てこない。またチャットの送信宛先に
   でてこない。ただし非表示でも会話のメッセージには出てくる（委譲や転送の場合）。
   グループは一括起動のスイッチがある。また ON/OFF ボタンもあり、グループ一括で起動もできる。
@@ -285,6 +286,47 @@ IPC は **5 本**（rev2 の 4 本 + `create_group` — id をコアが発行す
 走査 1 本だけ赤（予測どおり）/ `commit_agent_drop` を「並び → 所属」の順にする →
 `a_drop_writes_order_and_membership_in_one_step` だけ赤（予測どおり。所属の失敗で並びが
 残る形を留めている）。
+
+## P2 実装記録（2026-09-05）
+
+**規則は `lib/agentGroups.ts` の純関数 7 本に閉じた** — `sectionKeyOf`（引けない id は
+無所属）/ `sectionize`（無所属 → 配列順、空の区分けも返す = 見出しは落とし場）/
+`isHidden` / `visibleAgents` / `settleSelection`（可視 0 体なら `null`）/ `batchEligible`
+（2 段の門・非表示を見ない）/ `visibleEdges` / `commitDrop`（`state` から組んだ全区分けを
+材料に、保留のある箱だけ差し替える。同じ箱なら `regroup: null`、無所属の箱では引けない id を
+`null` へ正規化）。コンポーネントは配線だけ。
+
+**非表示の棚は `useHiddenGroups.ts`**（`fuseforks.hiddenGroups.v1`。`useWorkDirHistory` と
+同じ形。`parseHidden` / `toggleHidden` は純関数）。**選択の落ち着き先は `App.vue` の watch 1 本**
+（個体・グループ・非表示のどれが動いても `settleSelection` で数え直す）。
+
+**一覧は区分けごとに 1 つの `VueDraggable`**（同じ `group="agents"`・`data-section-key`）。
+`holdReorder` は箱ごとに保留し、**畳んだ区分け**では Sortable が返すのが落ちたカードだけなので
+「畳まれた中の個体 → 落ちたカード（末尾）」に組み直す。`onDragEnd` は `evt.from` / `evt.to` の
+`data-section-key` から区分けを引き、地図のノードなら差し戻し（`evt.item.parentElement` から
+外す — 箱をまたいだ後は `evt.from` の子ではない）、それ以外は `commitDrop` → IPC 1 本。
+見出し = 目（無所属には無い）+ 名前 + 体数 + ▶/■（`batchAction(section.agents)`）+
+スイッチ（無所属には無い）。**グループが無い村では見出しを出さない**（今までの一覧のまま）。
+
+**触った面**: `types.ts` / `ipc.ts`（5 本）/ `agentSpec.ts`（`groupId` を写す）/
+`useOrchestrator.ts`（`state.groups`・`fetchAndAssign`・action 4 本）/ `GroupDialog.vue`（新設。
+作成・改名・削除だけ）/ `AgentList.vue` / `AgentSettingsDialog.vue`（select。引けない id は
+「無所属」を選んだ状態で出し、保存で `null`）/ `TopologyMap.vue`（`visible` / `visibleEdges` /
+要約行の「非表示: N / M」）/ `ChatPanel.vue`（絞り込み）/ `App.vue`（巡回と選択の watch）/
+辞書 ja/en（`agentList` 12・`agentSettings` 3・`groups` 18・`map` 1・`orchestrator.op` 4）。
+
+**起動の網が働いた** — `fetchAndAssign` が `list_groups` を引くようになった瞬間、
+`useOrchestrator.*.test.ts` の 6 本が赤になった（モックに無い IPC）。Spec 25 P3 と同じ形で、
+9 ファイルへ `listGroups` のモックを足して緑。**型検査も 2 箇所を指した**（`AgentSnapshot` の
+fixture 2 つ — 欄を足した側が気づけない場所）。
+
+**ミューテーション 3 回（予測を先に書いて）**: `visibleAgents` を素通し → visibility の 2 本
+（予測どおり）/ `batchEligible` からグループの門を外す → 1 本（予測どおり）/ `commitDrop` が
+箱をまたいでも `regroup: null` → 箱またぎ 1 本 + 無所属の正規化 1 本（予測どおり）。
+
+**起票時の読み（Notes 7）は試していない** — 「1 本の箱に見出しを混ぜる」形は P2 で試さず、
+最初から区分けごとの箱で書いた。`vue-draggable-plus` の splice が index を見出しごと数えるかは
+**未実測のまま**。区分けごとの箱で動くなら、それでよい。
 
 ## 検収項目（各項目に到達経路を書く）
 

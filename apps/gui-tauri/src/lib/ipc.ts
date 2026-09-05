@@ -29,6 +29,8 @@ import type {
   McpHostStatus,
   ModelTemplate,
   ModelTemplateId,
+  AgentGroup,
+  GroupId,
   Role,
   RoleId,
   McpConfig,
@@ -268,6 +270,33 @@ export const upsertRole = (role: Role) => call<void>("upsert_role", { role });
  * バッジと顔ぶれの役職表示が消えるだけ。
  */
 export const deleteRole = (roleId: RoleId) => call<void>("delete_role", { roleId });
+
+// ---- グループ（Spec 51） ----------------------------------------------------
+
+/** グループの一覧（村の配列順 = 見出しの並び）。 */
+export const listGroups = () => call<AgentGroup[]>("list_groups");
+
+/** グループを新設する。**id はコアが発行する**（UUID v4）。 */
+export const createGroup = (name: string) => call<AgentGroup>("create_group", { name });
+
+/** 改名 / 全体 ▶ のスイッチ。既存のサーヴァントには何も起きない。 */
+export const upsertGroup = (group: AgentGroup) => call<void>("upsert_group", { group });
+
+/**
+ * グループを削除する。**個体の `groupId` には触らない**（group_contract 凍結 3）—
+ * 引けない id は無所属として描かれ、次に所属を書く操作で `null` へ正規化される。
+ */
+export const deleteGroup = (groupId: GroupId) => call<void>("delete_group", { groupId });
+
+/**
+ * drop の確定（group_contract 凍結 8）。**並びと所属を 1 回で永続化する** —
+ * `reorderAgents` + `updateAgent` の 2 本に割ると、片方だけ通った状態が村に残る。
+ * `regroup` は動かしたカードの新しい所属（`groupId: null` = 無所属の箱へ落ちた）。
+ */
+export const commitAgentDrop = (
+  order: AgentId[],
+  regroup: { id: AgentId; groupId: GroupId | null } | null,
+) => call<void>("commit_agent_drop", { order, regroup });
 
 // ---- 設定ファイル -----------------------------------------------------------
 

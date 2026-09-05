@@ -248,7 +248,19 @@
     "emptyLine1": "No servants yet.",
     "emptyLine2": "Add one with the + button in the top right.",
     "noRole": "No role",
-    "batchWorkDir": "Change work folders together"
+    "batchWorkDir": "Change work folders together",
+    "manageGroups": "Manage groups",
+    "manageGroupsLabel": "Groups",
+    "unassigned": "Ungrouped",
+    "groupMembers": "{count}",
+    "groupHide": "Hide this group from Kizuna and the recipient list (delivery and batch start are unaffected)",
+    "groupShow": "Show this group",
+    "groupHidden": "hidden",
+    "groupBatchGate": "Include in the global batch start",
+    "groupBatchGateHelp": "When off, the global ▶ skips this group. Hiding a group does not stop it from starting — this switch is what rests it.",
+    "groupBatchStart": "Start {count} servants in \"{name}\"",
+    "groupBatchStop": "Stop {count} running servants in \"{name}\"",
+    "groupBatchNoTargets": "No targets (choose with the toggle on each card)"
   },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",
@@ -368,7 +380,8 @@
     "autoFit": "Fit automatically after the pane is resized",
     "fit": "Fit",
     "fitTitle": "Fit the whole graph into view",
-    "autoFitShort": "Auto fit"
+    "autoFitShort": "Auto fit",
+    "hiddenSummary": "(hidden: {nodes} servants / {edges} ties)"
   },
   "chat": {
     "heading": "Chat",
@@ -556,7 +569,10 @@
     "allowHandoff": "Allow handoff (pass the conversation on)",
     "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator.",
     "planReview": "Review plans (edit window)",
-    "planReviewHint": "plan pauses as a proposal before dispatching. Edit and dispatch it from the activity tab. The proposing turn does not receive results."
+    "planReviewHint": "plan pauses as a proposal before dispatching. Edit and dispatch it from the activity tab. The proposing turn does not receive results.",
+    "group": "Group",
+    "noGroup": "Ungrouped",
+    "groupHelp": "Membership only affects the list sections and what Kizuna shows. Delegation and handoff ties are unchanged."
   },
   "modelTemplate": {
     "title": "Model templates",
@@ -916,7 +932,11 @@
       "approveCommand": "Approving the command",
       "rejectCommand": "Rejecting the command",
       "dispatchPlan": "Dispatching the plan",
-      "discardPlan": "Discarding the plan"
+      "discardPlan": "Discarding the plan",
+      "createGroup": "create group",
+      "saveGroup": "save group",
+      "deleteGroup": "delete group",
+      "commitDrop": "save order and group"
     }
   },
   "statusBar": {
@@ -1098,5 +1118,25 @@
       "asOfUnknown": "(rate date not recorded)",
       "coverage": "{priced}/{total} rows · {percent} of tokens"
     }
+  },
+  "groups": {
+    "title": "Groups",
+    "close": "Close",
+    "help": "Section the servant list by task. Each heading toggles visibility and batch start; drag a card into another section to move it. Servants are never told their group name.",
+    "empty": "No groups yet.",
+    "add": "Add group",
+    "create": "Create",
+    "rename": "Rename",
+    "delete": "Delete",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "name": "Name",
+    "namePlaceholder": "Task name (e.g. research, release)",
+    "nameHelp": "Shown as the section heading. Cannot be blank.",
+    "members": "{count} servants",
+    "confirmDeleteTitle": "Delete the group \"{name}\"?",
+    "confirmDeleteBody": "Its {count} servants become ungrouped and keep running. Only the heading disappears.",
+    "villageScope": "Groups are stored in the village (world.json) and travel with it. Hiding is a per-device setting."
   }
 }

@@ -17,9 +17,11 @@ import { formatError } from "../lib/errorText";
 import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
+  AgentGroup,
   AgentId,
   AgentMessage,
   ForkPoint,
+  GroupId,
   AgentSnapshot,
   AgentSpec,
   ApprovalOutcome,
@@ -69,6 +71,8 @@ interface OrchestratorState {
    * 「どの雛形を選ぶか」を決める人だけなので、投影も画面のためだけに持つ。
    */
   roles: Role[];
+  /** グループ（Spec 51）。村の配列順 = 見出しの並び。 */
+  groups: AgentGroup[];
   workspace: string;
   selectedAgentId: AgentId | null;
   toasts: Toast[];
@@ -191,6 +195,7 @@ const state = reactive<OrchestratorState>({
   messages: [],
   templates: [],
   roles: [],
+  groups: [],
   workspace: "",
   selectedAgentId: null,
   toasts: [],
@@ -384,12 +389,13 @@ function refreshAll(): Promise<void> {
 
 /** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
 async function fetchAndAssign(): Promise<void> {
-  const [agents, edges, topologyPositions, templates, roles] = await Promise.all([
+  const [agents, edges, topologyPositions, templates, roles, groups] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listTopologyPositions(),
     ipc.listModelTemplates(),
     ipc.listRoles(),
+    ipc.listGroups(),
   ]);
   state.agents = agents;
   // 会話の送信先と左右ペインの強調表示を必ず同じ選択状態にする。
@@ -400,6 +406,7 @@ async function fetchAndAssign(): Promise<void> {
   state.topologyPositions = topologyPositions;
   state.templates = templates;
   state.roles = roles;
+  state.groups = groups;
   await refreshIcons();
 }
 
@@ -980,6 +987,42 @@ export function useOrchestrator() {
 
     async updateAgent(spec: AgentSpec): Promise<void> {
       await mutate("orchestrator.op.saveAgent", () => ipc.updateAgent(spec));
+    },
+
+    // ---- グループ（Spec 51） ------------------------------------------------
+
+    /** グループを新設する。id はコアが発行する。成功したら一覧を取り直す。 */
+    async createGroup(name: string): Promise<AgentGroup | null> {
+      const created = await mutate("orchestrator.op.createGroup", () => ipc.createGroup(name));
+      return succeeded(created) ? created : null;
+    },
+
+    /** 改名 / 全体 ▶ のスイッチ。楽観的に反映して保存する。 */
+    async upsertGroup(group: AgentGroup): Promise<boolean> {
+      const index = state.groups.findIndex((g) => g.id === group.id);
+      if (index >= 0) state.groups[index] = { ...group };
+      const result = await mutate("orchestrator.op.saveGroup", () => ipc.upsertGroup(group));
+      return succeeded(result);
+    },
+
+    /** グループを削除する。個体の `groupId` には触らない（凍結 3）。 */
+    async deleteGroup(groupId: GroupId): Promise<boolean> {
+      const result = await mutate("orchestrator.op.deleteGroup", () => ipc.deleteGroup(groupId));
+      return succeeded(result);
+    },
+
+    /**
+     * drop の確定（凍結 8）。並びと所属を楽観的に反映してから IPC 1 本で永続化する。
+     * `reorder` と同じく見た目を先に動かす（操作感）。
+     */
+    async commitDrop(
+      order: AgentId[],
+      regroup: { id: AgentId; groupId: GroupId | null } | null,
+    ): Promise<void> {
+      order.forEach((id, index) => patchAgent(id, { order: index }));
+      if (regroup) patchAgent(regroup.id, { groupId: regroup.groupId });
+      state.agents.sort((a, b) => a.order - b.order);
+      await mutate("orchestrator.op.commitDrop", () => ipc.commitAgentDrop(order, regroup));
     },
 
     async deleteAgent(agentId: AgentId): Promise<void> {

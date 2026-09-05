@@ -17,7 +17,7 @@
  * 入力できなくなった。`minmax(0, 1fr)` で最小値を 0 に固定し、
  * はみ出しは各ペインの内部スクロールに引き受けさせる。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -33,6 +33,8 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import StatsView from "./components/StatsView.vue";
 import CommandApprovalDialog from "./components/CommandApprovalDialog.vue";
 import RoleDialog from "./components/RoleDialog.vue";
+import { settleSelection, visibleAgents } from "./lib/agentGroups";
+import { useHiddenGroups } from "./composables/useHiddenGroups";
 import PaneSplitter from "./components/PaneSplitter.vue";
 import StatusBar from "./components/StatusBar.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -51,6 +53,27 @@ import type { BottomTab } from "./types";
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const hiddenGroups = useHiddenGroups();
+
+/**
+ * 選択の落ち着き先（Spec 51 D3）。隠した瞬間に選択中だった個体は見えている先頭へ、
+ * 可視 0 体なら `null`（= 空の村と同じ状態。宛先欄は「宛先を選択してください」）。
+ * 個体・グループ・非表示の集合のどれが動いても同じ規則で数え直す —
+ * `useOrchestrator` の「選択が一覧に無ければ先頭」を可視の集合に対して行う形。
+ */
+watch(
+  () =>
+    [
+      state.agents.map((a) => `${a.id}:${a.groupId ?? ""}`).join(","),
+      state.groups.map((g) => g.id).join(","),
+      hiddenGroups.hidden.join(","),
+    ] as const,
+  () => {
+    const visible = visibleAgents(state.agents, state.groups, hiddenGroups.hidden);
+    const next = settleSelection(state.selectedAgentId, visible);
+    if (next !== state.selectedAgentId) orchestrator.select(next);
+  },
+);
 const { settings } = useUiSettings();
 
 const { layout, resize, reset } = usePaneLayout();
@@ -135,7 +158,12 @@ function onNavKey(event: KeyboardEvent): void {
   if (delta === null) return;
   if (!isNavigableFocus(document.activeElement)) return;
 
-  const next = nextAgentId(state.agents, state.selectedAgentId, delta);
+  // 隠したグループの個体は巡らない（Spec 51 D3。可視 0 体なら null で何もしない）。
+  const next = nextAgentId(
+    visibleAgents(state.agents, state.groups, hiddenGroups.hidden),
+    state.selectedAgentId,
+    delta,
+  );
   if (next === null) return;
   // 入力欄では Alt+↑↓ が段落移動になる環境があるので、拾ったら必ず止める。
   event.preventDefault();

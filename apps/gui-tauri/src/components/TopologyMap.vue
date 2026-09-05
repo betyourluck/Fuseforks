@@ -40,6 +40,8 @@ import { compactNumber } from "../lib/format";
 import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
 import { seedPositions } from "../lib/kizunaSeed";
+import { visibleAgents, visibleEdges } from "../lib/agentGroups";
+import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -50,6 +52,7 @@ const { t } = useI18n();
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const hiddenGroups = useHiddenGroups();
 const { settings } = useUiSettings();
 
 const graph = ref<InstanceType<typeof VNetworkGraph> | null>(null);
@@ -62,9 +65,23 @@ const NODE_RADIUS = 26;
  * データ
  * ------------------------------------------------------------------ */
 
+/**
+ * 見えている個体（Spec 51）。隠したグループの個体はノードも辺も描かない —
+ * **無所属は決して隠れない**。座標（`layouts`）は全個体ぶん保つので、出し直しても
+ * 置いた場所に戻る。
+ */
+const visible = computed(() => visibleAgents(state.agents, state.groups, hiddenGroups.hidden));
+const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
+/** 隠れている個体の数。要約行に出す（隠していることが画面から読めるように）。 */
+const hiddenNodeCount = computed(() => state.agents.length - visible.value.length);
+/** 隠れている辺の数 = 全辺 − 両端が見えている辺（片端でも両端でも隠れていれば数える）。 */
+const hiddenEdgeCount = computed(
+  () => state.edges.length - visibleEdges(state.edges, visibleIds.value).length,
+);
+
 const nodes = computed<Nodes>(() => {
   const result: Nodes = {};
-  for (const agent of state.agents) {
+  for (const agent of visible.value) {
     // **`selected` を載せるのは `configs` が読むため。** 選択で半径が変わるので、
     // ここを持たせないと辺の端が旧い半径のまま刺さる。
     result[agent.id] = { name: agent.name, selected: agent.id === state.selectedAgentId };
@@ -90,7 +107,8 @@ const edges = computed<Edges>(() => {
   const result: Edges = {};
   const seen = new Set<string>();
 
-  for (const edge of state.edges) {
+  // 両端が見えている辺だけ（Spec 51 D3）。片端だけ描くと宙に浮いた線になる。
+  for (const edge of visibleEdges(state.edges, visibleIds.value)) {
     const bidirectional = exists(edge.target, edge.source);
     const id = bidirectional
       ? [edge.source, edge.target].sort().join("<->")
@@ -408,9 +426,13 @@ onBeforeUnmount(() => {
     >
       <span class="font-medium text-ink">{{ $t("map.heading") }}</span>
       <span>
-        {{ $t("map.summary", { nodes: state.agents.length, edges: Object.keys(edges).length }) }}
+        {{ $t("map.summary", { nodes: visible.length, edges: Object.keys(edges).length }) }}
         <span v-if="bidirectionalCount" class="text-ink">
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
+        </span>
+        <!-- 隠しているものを黙らない（Spec 51 D3）。数だけで、名前は出さない。 -->
+        <span v-if="hiddenNodeCount" class="text-warn">
+          {{ $t("map.hiddenSummary", { nodes: hiddenNodeCount, edges: hiddenEdgeCount }) }}
         </span>
       </span>
 

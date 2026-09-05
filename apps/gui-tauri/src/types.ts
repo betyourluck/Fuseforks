@@ -181,10 +181,37 @@ export interface AgentSpec {
    * という個体が正当な操作で生まれる。コピー方式の必然（role_contract 凍結の外）。
    */
   roleId: RoleId | null;
+  /**
+   * 所属するグループ（Spec 51）。**参照**であってコピーではない（`roleId` と同じ形）。
+   * `null` = 無所属。村に無い id は無所属として描き、次に所属を書く操作
+   * （設定ダイアログの保存 / 無所属の箱への drop）で `null` へ正規化する。
+   * **実行経路で読まない・プロンプトへ入れない**（group_contract 凍結 4・5）。
+   */
+  groupId: GroupId | null;
 }
 
 /** 役職の一意識別子（Spec 14）。表示名ではなく id で指すので、改名で参照が切れない。 */
 export type RoleId = string;
+
+/** グループの一意識別子（Spec 51）。**コアが発行する UUID v4** で、削除しても再発行しない。 */
+export type GroupId = string;
+
+/**
+ * サーヴァント一覧の区分け = タスク名（Spec 51）。村（`world.json`）に住み、配ると付いて回る。
+ *
+ * **隠すのは見え方であって線ではない** — 非表示の集合はこの型に無く、端末の
+ * `localStorage`（`useHiddenGroups`）に住む。並びは村の配列順（作成順）。
+ */
+export interface AgentGroup {
+  id: GroupId;
+  /** 見出しに出る名前。空は拒まれる。重複は拒まれない（タスク名は重なりうる）。 */
+  name: string;
+  /**
+   * **全体の ▶** がこのグループの個体を対象にするか。グループ自身の ▶/■ には効かない。
+   * 非表示とは独立 — 隠したグループも全体 ▶ で起きる。休ませるのはこのスイッチ。
+   */
+  batchStart: boolean;
+}
 
 /**
  * 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
@@ -294,6 +321,8 @@ export interface AgentSnapshot {
    * 保存のたびに消える**。
    */
   roleId: RoleId | null;
+  /** 所属（Spec 51）。`roleId` と同じ理由で**投影にも要る**。 */
+  groupId: GroupId | null;
   /**
    * 累積トークンのうち入力（プロンプト）側。
    * **キャッシュ率の分母はこちら。出力はキャッシュできないので、

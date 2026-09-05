@@ -248,7 +248,19 @@
     "emptyLine1": "サーヴァントがまだありません。",
     "emptyLine2": "右上の ＋ から追加してください。",
     "noRole": "役職を選ばない",
-    "batchWorkDir": "作業フォルダ一括切り替え"
+    "batchWorkDir": "作業フォルダ一括切り替え",
+    "manageGroups": "グループを管理",
+    "manageGroupsLabel": "グループ",
+    "unassigned": "無所属",
+    "groupMembers": "{count} 体",
+    "groupHide": "このグループを絆と宛先から隠す（配送・一括起動には効きません）",
+    "groupShow": "このグループを表示する",
+    "groupHidden": "非表示",
+    "groupBatchGate": "全体の一括起動に含める",
+    "groupBatchGateHelp": "OFF にすると、全体の ▶ はこのグループを飛ばします。非表示にしても起動は止まりません — 休ませるのはこのスイッチです。",
+    "groupBatchStart": "「{name}」の {count} 体を起動",
+    "groupBatchStop": "「{name}」の稼働中 {count} 体を停止",
+    "groupBatchNoTargets": "対象 0 体（カードのトグルで選んでください）"
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",
@@ -368,7 +380,8 @@
     "autoFit": "ペインの大きさが変わったら自動でフィット",
     "fit": "フィット",
     "fitTitle": "全体が入るように表示を合わせる",
-    "autoFitShort": "自動フィット"
+    "autoFitShort": "自動フィット",
+    "hiddenSummary": "（非表示: サーヴァント {nodes} / 絆 {edges}）"
   },
   "chat": {
     "heading": "会話",
@@ -556,7 +569,10 @@
     "allowHandoff": "転送を許す（会話を引き渡す）",
     "allowHandoffHint": "この個体は会話を引き渡せません。委譲（相手に訊いて答えを受け取る）と手分けは使えます。進行役に向いた設定です。",
     "planReview": "計画の確認（plan の編集窓）",
-    "planReviewHint": "plan は撒く前に提案として止まり、作業状況タブで内容を編集してから実行できます。提案したターンには結果が返りません。"
+    "planReviewHint": "plan は撒く前に提案として止まり、作業状況タブで内容を編集してから実行できます。提案したターンには結果が返りません。",
+    "group": "グループ",
+    "noGroup": "無所属",
+    "groupHelp": "所属は一覧の区分けと絆の表示だけに効きます。委譲や転送の線は変わりません。"
   },
   "modelTemplate": {
     "title": "モデルテンプレート",
@@ -916,7 +932,11 @@
       "approveCommand": "コマンドの承認",
       "rejectCommand": "コマンドの却下",
       "dispatchPlan": "計画の実行",
-      "discardPlan": "計画の破棄"
+      "discardPlan": "計画の破棄",
+      "createGroup": "グループの作成",
+      "saveGroup": "グループの保存",
+      "deleteGroup": "グループの削除",
+      "commitDrop": "並びと所属の保存"
     }
   },
   "statusBar": {
@@ -1098,5 +1118,25 @@
       "asOfUnknown": "（単価の時点は未記録）",
       "coverage": "{priced}/{total} 体・トークン {percent}"
     }
+  },
+  "groups": {
+    "title": "グループ",
+    "close": "閉じる",
+    "help": "サーヴァント一覧をタスクごとに区分けします。見出しで表示/非表示と一括起動を切り替え、カードを別の区分けへドラッグすると所属が変わります。グループ名はサーヴァントには知らされません。",
+    "empty": "グループはまだありません。",
+    "add": "グループを追加",
+    "create": "作成",
+    "rename": "改名",
+    "delete": "削除",
+    "save": "保存",
+    "saving": "保存中…",
+    "cancel": "キャンセル",
+    "name": "名前",
+    "namePlaceholder": "タスク名（例: 調査、リリース）",
+    "nameHelp": "見出しに出ます。空にはできません。",
+    "members": "{count} 体",
+    "confirmDeleteTitle": "グループ「{name}」を削除しますか？",
+    "confirmDeleteBody": "所属している {count} 体は無所属に戻り、そのまま動き続けます。消えるのは見出しだけです。",
+    "villageScope": "グループは村（world.json）に保存され、配ると一緒に付いて回ります。表示/非表示はこの端末だけの設定です。"
   }
 }

@@ -43,6 +43,7 @@ function snapshot(): AgentSnapshot {
     planReview: true,
     batchStart: false,
     roleId: "role_auditor",
+    groupId: "g-research",
   };
 }
 
@@ -65,6 +66,8 @@ describe("snapshotToSpec", () => {
       planReview: true,
       batchStart: false,
       roleId: "role_auditor",
+      // Spec 51。写さないと保存のたびに所属が消える（roleId と同じ穴）。
+      groupId: "g-research",
     });
   });
 

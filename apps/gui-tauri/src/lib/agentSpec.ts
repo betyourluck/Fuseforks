@@ -43,6 +43,7 @@ export function snapshotToSpec(
     planReview: snapshot.planReview,
     batchStart: snapshot.batchStart,
     roleId: snapshot.roleId,
+    groupId: snapshot.groupId,
     ...overrides,
   };
 }

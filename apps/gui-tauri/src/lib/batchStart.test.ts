@@ -14,6 +14,7 @@ function agent(
     model: "mock",
     modelTemplateId: "tpl",
     roleId: null,
+    groupId: null,
     status,
     uptimeSecs: 0,
     totalTokens: 0,

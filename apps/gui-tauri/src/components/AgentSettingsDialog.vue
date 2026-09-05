@@ -61,6 +61,16 @@ function seed(): void {
 }
 
 /**
+ * グループ select の表示値（Spec 51）。**村に無い id は「無所属」を選んだ状態で出す** —
+ * 引けない id をそのまま `v-model` に流すと、どの選択肢にも一致せず空欄に見える。
+ * 保存すると `null` が書かれる（凍結 3 の正規化）。
+ */
+const groupSelectValue = computed(() => {
+  const id = draft.value?.groupId ?? null;
+  return id !== null && state.groups.some((g) => g.id === id) ? id : "";
+});
+
+/**
  * 作業フォルダの入力バッファ。空文字と `null`（未設定）を同一視するため、
  * 保存時に trim して空なら `null` へ落とす。
  */
@@ -195,7 +205,9 @@ const dirty = computed(() => {
     current.planReview !== source.planReview ||
     // 役職だけを変えたときも保存できること。**入れ忘れると、選び直しても
     // 保存ボタンが有効にならず「変えられない」と読まれる。**
-    current.roleId !== source.roleId
+    current.roleId !== source.roleId ||
+    // 所属だけを変えたときも保存できること（Spec 51。役職と同じ穴）。
+    current.groupId !== source.groupId
   );
 });
 
@@ -495,6 +507,29 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               </option>
             </select>
             <p class="mb-3 text-[10px] text-ink-dim">{{ $t("agentSettings.roleHelp") }}</p>
+          </template>
+
+          <!--
+            グループ（Spec 51）。所属は参照で、変わるのは一覧の区分けと地図の表示だけ。
+            出す条件は役職と同じ —「村にグループがある」か「この個体が所属を持っている」。
+            後半が無いと、グループを全部削除した村で**引けない id を外す入口が消える**。
+            引けない id は「無所属」として表示し、保存で null を書く（凍結 3 の正規化）。
+          -->
+          <template v-if="state.groups.length || draft.groupId">
+            <label class="mb-1 block text-[11px] text-ink-dim">
+              {{ $t("agentSettings.group") }}
+            </label>
+            <select
+              :value="groupSelectValue"
+              class="mb-1 w-full rounded border border-line bg-surface-0 px-2 py-1 outline-none focus:border-accent"
+              @change="draft.groupId = ($event.target as HTMLSelectElement).value || null"
+            >
+              <option value="">{{ $t("agentSettings.noGroup") }}</option>
+              <option v-for="group in state.groups" :key="group.id" :value="group.id">
+                {{ group.name }}
+              </option>
+            </select>
+            <p class="mb-3 text-[10px] text-ink-dim">{{ $t("agentSettings.groupHelp") }}</p>
           </template>
 
           <label class="mb-1 block text-[11px] text-ink-dim">

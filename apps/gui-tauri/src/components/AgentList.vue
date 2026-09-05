@@ -6,20 +6,31 @@
  * 別画面にあると「何もできないアプリ」に見えるため。
  */
 import { computed, nextTick, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { VueDraggable } from "vue-draggable-plus";
 
 import AgentCard from "./AgentCard.vue";
 import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import BatchWorkDirDialog from "./BatchWorkDirDialog.vue";
+import GroupDialog from "./GroupDialog.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
+import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import {
+  UNASSIGNED,
+  batchEligible,
+  commitDrop,
+  sectionize,
+  type Section,
+} from "../lib/agentGroups";
 import { inListOrder } from "../lib/agentNav";
 import { batchAction, batchLabel } from "../lib/batchStart";
 import { dropPoint, tieAddition } from "../lib/kizunaDrop";
-import type { AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
+import type { AgentGroup, AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const { t } = useI18n();
 
 const showTemplates = ref(false);
 const showBatchWorkDir = ref(false);
@@ -32,6 +43,58 @@ const newName = ref("");
 // 並び順は lib/agentNav.ts と共有する。**別々に整列すると、Alt+↑↓ の移動が
 // 画面の並びと違う順で飛ぶ**（同じ規則を 2 箇所に書かない）。
 const agents = computed(() => inListOrder(state.agents));
+
+// ---- グループ（Spec 51）--------------------------------------------------------
+//
+// 一覧は「無所属 → グループの配列順」の区分けで、各区分けが 1 つの並び替えの箱。
+// 全部に同じ `group` 名を与えて箱をまたげるようにする（Sortable の共有グループ）。
+// **グループが 1 つも無い村では見出しを出さない**（今までの一覧と 1 ミリも変わらない）。
+
+const hiddenGroups = useHiddenGroups();
+const showGroups = ref(false);
+/** 区分け。純関数 `sectionize` が唯一の規則。 */
+const sections = computed(() => sectionize(state.agents, state.groups));
+const hasGroups = computed(() => state.groups.length > 0);
+
+function isCollapsed(section: Section<AgentSnapshot>): boolean {
+  return section.group !== null && hiddenGroups.isHidden(section.group.id);
+}
+
+/** 見出しの ▶/■。**全体と同じ純関数に部分集合を渡すだけ**（凍結 7）。 */
+function sectionBatch(section: Section<AgentSnapshot>) {
+  const action = batchAction(section.agents);
+  const eligible = section.agents.filter((a) => a.batchStart).length;
+  return { action, view: batchLabel(action, eligible) };
+}
+
+/**
+ * 見出しの ▶/■ の説明。全体のものと文が違う（グループ名を言う）ので、辞書キーを
+ * ここで差し替える。`none` のときは全体と同じ理由文。
+ */
+function sectionTitle(section: Section<AgentSnapshot>): string {
+  const { action, view } = sectionBatch(section);
+  const name = section.group?.name ?? t("agentList.unassigned");
+  if (action.mode === "start") {
+    return t("agentList.groupBatchStart", { name, count: action.targets.length });
+  }
+  if (action.mode === "stop") {
+    return t("agentList.groupBatchStop", { name, count: action.targets.length });
+  }
+  return view.titleKey === "agentList.batchTransitioning"
+    ? t(view.titleKey)
+    : t("agentList.groupBatchNoTargets");
+}
+
+async function runSectionBatch(section: Section<AgentSnapshot>): Promise<void> {
+  const { action } = sectionBatch(section);
+  if (action.mode === "none") return;
+  await orchestrator.runBatch(action.targets, action.mode === "start");
+}
+
+/** 全体 ▶ の門（スイッチ）。見出しだけに置く（`GroupDialog` には置かない — 二重管理にしない）。 */
+async function toggleGate(group: AgentGroup): Promise<void> {
+  await orchestrator.upsertGroup({ ...group, batchStart: !group.batchStart });
+}
 
 /**
  * 選択が変わったら、そのカードを見える位置へ寄せる（Alt+↑↓ 用）。
@@ -56,13 +119,15 @@ const runningCount = computed(
   () => state.agents.filter((a) => a.status === "running").length,
 );
 
-/** 一括ボタンが次に行う操作。規則は lib/batchStart.ts。 */
-const batch = computed(() => batchAction(state.agents));
+/**
+ * 一括ボタンが次に行う操作。規則は lib/batchStart.ts。対象は**個体のトグルと
+ * グループのスイッチの 2 段**（`batchEligible`。Spec 51 凍結 7）— 非表示は見ない。
+ */
+const eligibleForBatch = computed(() => batchEligible(state.agents, state.groups));
+const batch = computed(() => batchAction(eligibleForBatch.value));
 
 /** 一括ボタンの記号と説明（押せないときは理由）。 */
-const batchView = computed(() =>
-  batchLabel(batch.value, state.agents.filter((a) => a.batchStart).length),
-);
+const batchView = computed(() => batchLabel(batch.value, eligibleForBatch.value.length));
 
 /** 一括起動 / 一括停止を実行する。 */
 async function runBatch(): Promise<void> {
@@ -120,6 +185,8 @@ async function submitNew(): Promise<void> {
     // このフォームは名前しか集めないので、上書きされて困る編集値が存在しない
     // （P2 で立てた D5 は、フォームがこの形である限り起きない）。
     roleId: newRoleId.value,
+    // 所属（Spec 51）は作成後に設定ダイアログかドラッグで付ける。作成フォームには置かない。
+    groupId: null,
   };
 
   const created = await orchestrator.createAgent(spec);
@@ -141,15 +208,31 @@ async function submitNew(): Promise<void> {
 interface DragEndEvent {
   item?: HTMLElement;
   from?: HTMLElement;
+  to?: HTMLElement;
   oldIndex?: number;
   originalEvent?: MouseEvent | TouchEvent;
 }
 
-/** ドラッグ中の並び替え結果。end で確定するまでコアへは渡さない。 */
-let pendingOrder: AgentSnapshot[] | null = null;
+/**
+ * ドラッグ中の並び替え結果を**箱ごとに**保留する（Spec 51 D6）。箱をまたぐと出た箱と
+ * 入った箱の 2 回、同じ箱の中なら 1 回 `update:model-value` が飛ぶ。end で確定するまで
+ * コアへは渡さない（Spec 21 の保留コミットの形は据え置き）。
+ */
+let pendingBySection: Record<string, AgentId[]> = {};
 
-function holdReorder(reordered: AgentSnapshot[]): void {
-  pendingOrder = reordered;
+function holdReorder(section: Section<AgentSnapshot>, reordered: AgentSnapshot[]): void {
+  const incoming = reordered.map((a) => a.id);
+  // 畳んだ区分けにはカードが描かれていないので、Sortable が返すのは落ちたカード
+  // だけ。**畳まれた中の個体を先に置き、落ちたカードを末尾へ**（凍結 8「末尾へ」）。
+  pendingBySection[section.key] = isCollapsed(section)
+    ? [...section.agents.map((a) => a.id).filter((id) => !incoming.includes(id)), ...incoming]
+    : incoming;
+}
+
+/** `data-section-key` から区分けを引く。付いていなければ無所属の箱と読む。 */
+function sectionOf(el: HTMLElement | undefined): Section<AgentSnapshot> | undefined {
+  const key = el?.dataset.sectionKey ?? UNASSIGNED;
+  return sections.value.find((s) => s.key === key);
 }
 
 /** ドラッグ開始時に測った地図の矩形。copy カーソルの判定に使う。 */
@@ -176,8 +259,12 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
   document.body.classList.remove("kizuna-drop-target");
   mapRect = null;
 
-  const pending = pendingOrder;
-  pendingOrder = null;
+  const pending = pendingBySection;
+  pendingBySection = {};
+  const fromSection = sectionOf(evt.from);
+  const toSection = sectionOf(evt.to);
+  const source =
+    typeof evt.oldIndex === "number" ? fromSection?.agents[evt.oldIndex] : undefined;
 
   // 分身はイベント配送前に除去済みなので素の elementFromPoint でよい
   // （Spec 21 P0 実測 2）。closest は輪・名前等の子要素から辿るため。
@@ -194,20 +281,22 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
 
   if (!node) {
     // リスト内（または地図でもノードでもない場所）で終わった drop。
-    // 並び替えだけを確定する。座標が取れなかったときもこちら = 既存挙動。
-    if (pending) await orchestrator.reorder(pending.map((agent) => agent.id));
+    // 並びと所属を**1 回で**確定する（Spec 51 凍結 8）。座標が取れなかったときも
+    // こちら = 既存挙動。保留が 1 つも無ければ何も動いていない。
+    if (!Object.keys(pending).length || !source || !toSection) return;
+    const { order, regroup } = commitDrop(sections.value, pending, toSection.key, source.id);
+    await orchestrator.commitDrop(order, regroup);
     return;
   }
 
-  // 地図のノードで終わった drop — 並び替えは確定しない。state を変えない
+  // 地図のノードで終わった drop — 並びも所属も確定しない。state を変えない
   // だけでは DOM が移動後の並びのまま残る（Spec 21 P0 実測 3）ので、
-  // カードを元の位置へ差し戻す。
-  if (pending && evt.item && evt.from && typeof evt.oldIndex === "number") {
-    evt.from.removeChild(evt.item);
+  // カードを元の箱の元の位置へ差し戻す（箱をまたいでいたら `evt.to` から外す）。
+  if (Object.keys(pending).length && evt.item && evt.from && typeof evt.oldIndex === "number") {
+    evt.item.parentElement?.removeChild(evt.item);
     evt.from.insertBefore(evt.item, evt.from.children[evt.oldIndex] ?? null);
   }
 
-  const source = typeof evt.oldIndex === "number" ? agents.value[evt.oldIndex] : undefined;
   const targetId = node.getAttribute("data-kizuna-node") as AgentId | null;
   if (!source || !targetId) return;
 
@@ -257,6 +346,28 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       <span class="flex-1 text-ink-dim tabular-nums">
         {{ $t("agentList.runningSummary", { running: runningCount, total: state.agents.length }) }}
       </span>
+      <!-- グループの管理（Spec 51 D6）。区分けは一覧を作る側の仕事なので、ここ。 -->
+      <button
+        class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        :title="$t('agentList.manageGroups')"
+        :aria-label="$t('agentList.manageGroups')"
+        @click="showGroups = true"
+      >
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="4" width="18" height="6" rx="1.5" />
+          <rect x="3" y="14" width="18" height="6" rx="1.5" />
+        </svg>
+        <span class="agent-list-action-label">{{ $t("agentList.manageGroupsLabel") }}</span>
+      </button>
       <button
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.manageTemplates')"
@@ -351,34 +462,108 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       外すと並び替えごと動かなくなる（Spec 21。断定形への裏取りは P4 の実機で）。
       Spec 21 の絆 drop も fallback の座標を前提にしている。
     -->
-    <VueDraggable
-      :model-value="agents"
-      tag="div"
-      class="min-h-0 flex-1 space-y-2 overflow-y-auto p-3"
-      :animation="150"
-      :force-fallback="true"
-      ghost-class="opacity-40"
-      chosen-class="agent-card--dragging"
-      filter="button, input, textarea"
-      :prevent-on-filter="false"
-      @update:model-value="holdReorder"
-      @start="onDragStart"
-      @end="onDragEnd"
-    >
-      <AgentCard
-        v-for="agent in agents"
-        :key="agent.id"
-        :data-agent-id="agent.id"
-        :agent="agent"
-        :icon="state.icons[agent.id]"
-        :last-tool="state.lastTool[agent.id]"
-        :selected="agent.id === state.selectedAgentId"
-        @select="orchestrator.select(agent.id)"
-        @configure="configuring = agent.id"
-        @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
-        @batch-start="(included) => orchestrator.setBatchStart(agent.id, included)"
-        @dismiss-error="orchestrator.dismissError(agent.id)"
-      />
+    <!--
+      区分けごとに 1 つの並び替えの箱（Spec 51 D6）。全部に同じ `group` 名を与えて
+      箱をまたげるようにする。**1 本の箱に見出しを混ぜない** — Sortable の index は
+      `draggable` な子だけを数えるので、見出しを配列に混ぜると splice の位置がずれる。
+      グループが無い村では見出しを出さず、無所属の箱 1 つ = 今までの一覧。
+    -->
+    <div class="min-h-0 flex-1 overflow-y-auto p-3">
+      <template v-for="section in sections" :key="section.key">
+        <div
+          v-if="hasGroups"
+          class="mb-1 mt-2 flex items-center gap-1.5 text-[11px] first:mt-0"
+          :class="section.group ? 'text-ink' : 'text-ink-dim'"
+        >
+          <!-- 目（表示/非表示）。無所属には置かない — 無所属は隠れない（凍結 6）。 -->
+          <button
+            v-if="section.group"
+            class="rounded px-1 text-ink-dim hover:text-accent"
+            :title="isCollapsed(section) ? $t('agentList.groupShow') : $t('agentList.groupHide')"
+            :aria-label="isCollapsed(section) ? $t('agentList.groupShow') : $t('agentList.groupHide')"
+            :aria-pressed="isCollapsed(section)"
+            @click="hiddenGroups.toggle(section.group.id)"
+          >
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+              <circle cx="12" cy="12" r="3" />
+              <path v-if="isCollapsed(section)" d="M4 4l16 16" />
+            </svg>
+          </button>
+          <span class="truncate font-semibold">
+            {{ section.group?.name ?? $t("agentList.unassigned") }}
+          </span>
+          <span class="tabular-nums text-ink-dim">
+            {{ $t("agentList.groupMembers", { count: section.agents.length }) }}
+          </span>
+          <span v-if="isCollapsed(section)" class="text-ink-dim">
+            {{ $t("agentList.groupHidden") }}
+          </span>
+          <span class="flex-1" />
+          <!-- 見出しの ▶/■。全体と同じ純関数に部分集合を渡す（凍結 7）。 -->
+          <button
+            class="rounded border px-1.5 py-0.5 leading-none transition-colors disabled:opacity-40"
+            :class="
+              sectionBatch(section).action.mode === 'stop'
+                ? 'border-line text-warn hover:border-warn'
+                : 'border-line text-run hover:border-run'
+            "
+            :disabled="sectionBatch(section).action.mode === 'none'"
+            :title="sectionTitle(section)"
+            @click="runSectionBatch(section)"
+          >
+            {{ sectionBatch(section).view.icon }}
+          </button>
+          <!-- 全体 ▶ の門。非表示とは独立（隠しても起きる）。無所属には無い。 -->
+          <button
+            v-if="section.group"
+            type="button"
+            role="switch"
+            :aria-checked="section.group.batchStart"
+            :title="$t('agentList.groupBatchGate') + ' — ' + $t('agentList.groupBatchGateHelp')"
+            class="relative h-3.5 w-6 shrink-0 rounded-full transition-colors"
+            :class="section.group.batchStart ? 'bg-accent' : 'bg-line'"
+            @click="toggleGate(section.group)"
+          >
+            <span
+              class="absolute top-0.5 size-2.5 rounded-full bg-surface-0 transition-transform"
+              :class="section.group.batchStart ? 'translate-x-3' : 'translate-x-0.5'"
+            />
+          </button>
+        </div>
+        <VueDraggable
+          :model-value="isCollapsed(section) ? [] : section.agents"
+          tag="div"
+          group="agents"
+          :data-section-key="section.key"
+          class="space-y-2"
+          :class="isCollapsed(section) ? 'min-h-2 rounded border border-dashed border-line/60' : hasGroups ? 'min-h-6' : ''"
+          :animation="150"
+          :force-fallback="true"
+          ghost-class="opacity-40"
+          chosen-class="agent-card--dragging"
+          filter="button, input, textarea"
+          :prevent-on-filter="false"
+          @update:model-value="(v: AgentSnapshot[]) => holdReorder(section, v)"
+          @start="onDragStart"
+          @end="onDragEnd"
+        >
+          <AgentCard
+            v-for="agent in isCollapsed(section) ? [] : section.agents"
+            :key="agent.id"
+            :data-agent-id="agent.id"
+            :agent="agent"
+            :icon="state.icons[agent.id]"
+            :last-tool="state.lastTool[agent.id]"
+            :selected="agent.id === state.selectedAgentId"
+            @select="orchestrator.select(agent.id)"
+            @configure="configuring = agent.id"
+            @toggle="(running) => orchestrator.toggleRunning(agent.id, running)"
+            @batch-start="(included) => orchestrator.setBatchStart(agent.id, included)"
+            @dismiss-error="orchestrator.dismissError(agent.id)"
+          />
+        </VueDraggable>
+      </template>
 
       <p
         v-if="!agents.length"
@@ -387,7 +572,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         {{ $t("agentList.emptyLine1") }}<br />
         {{ $t("agentList.emptyLine2") }}
       </p>
-    </VueDraggable>
+    </div>
 
     <!--
       一覧のフッター（Spec 29。**アプリのステータスバーとは別物** — この帯は
@@ -424,6 +609,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
     </footer>
 
     <ModelTemplateDialog v-if="showTemplates" @close="showTemplates = false" />
+    <GroupDialog v-if="showGroups" @close="showGroups = false" />
     <BatchWorkDirDialog v-if="showBatchWorkDir" @close="showBatchWorkDir = false" />
     <AgentSettingsDialog
       v-if="configuring"
