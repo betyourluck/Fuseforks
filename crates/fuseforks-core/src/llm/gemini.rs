@@ -637,6 +637,38 @@ pub const AUTH_HEADER: &str = "x-goog-api-key";
 /// `プロトコル` を Gemini に切り替えたときの base URL 既定値。
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
+/// `google.rpc.RetryInfo` の `@type`。この要素の `retryDelay` が待ち時間。
+const RETRY_INFO_TYPE: &str = "type.googleapis.com/google.rpc.RetryInfo";
+
+/// エラー本文から再試行の材料を取り出す（Spec 52 D1 / D2 (b)。純関数）。
+///
+/// Gemini の封筒 `{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": […]}}`。
+/// `code` は `error.status`（`RESOURCE_EXHAUSTED` 等。数値の `error.code` は HTTP status の
+/// 写しなので読まない）。**待ち時間は `details[]` の `@type == google.rpc.RetryInfo` の
+/// `retryDelay`**（protobuf Duration の JSON 形 `"56s"`）。実機の 429 は同じ配列に
+/// `QuotaFailure` と `Help` も運ぶが、読むのは `RetryInfo` だけ。
+///
+/// busbar は本文の `retryDelay` を読まない（HTTP ヘッダだけ）。村で観測した 429 は
+/// 2 件とも本文側だったので、この関数が村の実測に効かせる唯一の口。
+pub fn error_signal(body: &str) -> super::retry::ErrorSignal {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return super::retry::ErrorSignal::default();
+    };
+    let error = &value["error"];
+    let code = error["status"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let retry_after = error["details"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|d| d["@type"].as_str() == Some(RETRY_INFO_TYPE))
+        .and_then(|d| d["retryDelay"].as_str())
+        .and_then(super::retry::parse_proto_duration);
+    super::retry::ErrorSignal { code, retry_after }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1253,5 +1285,23 @@ mod tests {
     #[test]
     fn path_embeds_model_name() {
         assert_eq!(path("gemini-3.5-flash"), "/models/gemini-3.5-flash:generateContent");
+    }
+
+    /// 実機の 429 本文（2026-08-25）と同じ形。`RetryInfo` だけを読む。
+    #[test]
+    fn error_signal_reads_status_and_retry_info_delay() {
+        let body = r#"{"error":{"code":429,"message":"You exceeded your current quota","status":"RESOURCE_EXHAUSTED","details":[
+            {"@type":"type.googleapis.com/google.rpc.Help","links":[{"description":"quotas","url":"https://ai.google.dev"}]},
+            {"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},
+            {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"56s"}
+        ]}}"#;
+        let s = error_signal(body);
+        assert_eq!(s.code.as_deref(), Some("RESOURCE_EXHAUSTED"));
+        assert_eq!(s.retry_after, Some(std::time::Duration::from_secs(56)));
+
+        let without = error_signal(r#"{"error":{"code":400,"status":"INVALID_ARGUMENT","details":[]}}"#);
+        assert_eq!(without.code.as_deref(), Some("INVALID_ARGUMENT"));
+        assert_eq!(without.retry_after, None);
+        assert_eq!(error_signal("<html>").code, None);
     }
 }

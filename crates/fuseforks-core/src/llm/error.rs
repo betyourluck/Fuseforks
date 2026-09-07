@@ -6,8 +6,11 @@
 //!    raw を捨てると「JSON が壊れていた」以上のことが言えなくなり、自己修復が組めない。
 //! 2. **`Blocked` を `EmptyResponse` から分離する** — 安全フィルタで弾かれた応答を
 //!    200 + 空本文で返すプロバイダがあり、理由を捨てると一律「空の応答」になって診断不能になる。
-//! 3. **`is_transient` が再試行の唯一の判断軸** — HTTP 障害 / 429 / 5xx / 推論の空応答だけが
-//!    再試行対象。`Blocked` と `Parse` は同じ入力を再送しても回復しないので対象外。
+//! 3. **`is_transient` が再試行の唯一の判断軸** — HTTP 障害 / 推論の空応答 / `Api` のうち
+//!    [`crate::llm::retry::RetryClass`] の判定が Retry のもの（429 / 529 / 5xx。ただし
+//!    `insufficient_quota` は 429 でも止める）だけが再試行対象。`Blocked` と `Parse` は
+//!    同じ入力を再送しても回復しないので対象外。分類は `Api` 自身が持つ（Spec 52 D1 —
+//!    `CoreError::is_retryable` から引数無しで呼ばれるので、材料を外から渡せない）。
 
 use thiserror::Error;
 
@@ -32,17 +35,22 @@ pub enum LlmError {
         detail: String,
     },
 
-    /// API がエラーステータスを返した。`status` で再試行可否を判断する。
+    /// API がエラーステータスを返した。再試行の可否は `class` が決める（Spec 52）。
     ///
-    /// **`retry_after` と `hint_src` は Spec 52 P0 で足した欄。** サーバーが明示した
-    /// 待ち時間（`Retry-After` ヘッダ。P1 から Gemini の本文 `RetryInfo` も）を運ぶ。
-    /// P0 では計器 `llm retry:` に出すだけで、待ちの計算には使わない（P1 の `plan_wait`）。
+    /// `class` / `retry_after` / `hint_src` は client が応答を受けた地点で 1 回だけ決める
+    /// （status + adapter の `error_signal` → `retry::classify`、ヘッダと本文の待ち時間を
+    /// マージ）。以後この error を読む側は JSON を見直さない。
     #[error("API エラー (status={status}): {body}")]
     Api {
         /// HTTP ステータスコード。
         status: u16,
         /// 応答本文（先頭のみ）。
         body: String,
+        /// 再試行の分類。`is_transient` はこれだけを読む。
+        class: crate::llm::retry::RetryClass,
+        /// プロバイダの機械可読コード（先頭 40 字）。計器の `code=` に出すだけで、
+        /// 判定は `class` が済ませている。
+        code: Option<String>,
         /// サーバーが明示した待ち時間。ヘッダと本文の両方があれば大きいほう。
         retry_after: Option<std::time::Duration>,
         /// `retry_after` の出所（計器用）。
@@ -125,12 +133,14 @@ impl From<reqwest::Error> for LlmError {
 }
 
 impl LlmError {
-    /// 明示された待ち時間を持たない [`Self::Api`]。テストと、ヘッダを見ずに組む
-    /// 経路（JPEG フォールバックの文面差し替え）のための入口。
+    /// 本文もヘッダも読まずに組む [`Self::Api`]（分類は status 既定・待ち時間なし）。
+    /// テストと、文面を差し替えて返す経路（JPEG フォールバック）のための入口。
     pub fn api(status: u16, body: impl Into<String>) -> Self {
         Self::Api {
             status,
             body: body.into(),
+            class: crate::llm::retry::classify(status, None),
+            code: None,
             retry_after: None,
             hint_src: crate::llm::retry::HintSource::None,
         }
@@ -152,16 +162,18 @@ impl LlmError {
 
     /// 再試行で回復しうるか。
     ///
-    /// 対象は HTTP 障害・429・5xx・理由不明の空応答のみ。
+    /// 対象は HTTP 障害・理由不明の空応答・`Api` のうち分類が Retry のもの
+    /// （[`crate::llm::retry::verdict`]。429 / 529 / 5xx、ただし `insufficient_quota` は止める）。
     /// `Blocked` / `Parse` / `Config` は同じ入力を再送しても回復しないため除外する。
     /// `OutputTruncated` も除外 — 上限は入力に対して決定的なので、再送すれば
     /// 同じ所で切れる（実機で 2 回連続の同一失敗を観測。2026-07-31）。
     pub fn is_transient(&self) -> bool {
+        use crate::llm::retry::{verdict, Verdict};
         match self {
             Self::Http { source, .. } => {
                 source.is_timeout() || source.is_connect() || source.is_request()
             }
-            Self::Api { status, .. } => *status == 429 || (500..600).contains(status),
+            Self::Api { class, .. } => verdict(*class) == Verdict::Retry,
             Self::EmptyResponse => true,
             _ => false,
         }
@@ -205,7 +217,19 @@ mod tests {
         assert!(LlmError::EmptyResponse.is_transient());
         assert!(LlmError::api(429, "").is_transient());
         assert!(LlmError::api(503, "").is_transient());
+        assert!(LlmError::api(529, "").is_transient());
         assert!(!LlmError::api(400, "").is_transient());
+        assert!(!LlmError::api(401, "").is_transient());
+        // 分類が Stop なら 429 でも止まる（Spec 52 で変わった挙動の 1 つ）。
+        let billing = LlmError::Api {
+            status: 429,
+            body: String::new(),
+            class: crate::llm::retry::RetryClass::Billing,
+            code: Some("insufficient_quota".into()),
+            retry_after: None,
+            hint_src: crate::llm::retry::HintSource::None,
+        };
+        assert!(!billing.is_transient(), "課金切れは再送しても回復しない");
         assert!(
             !LlmError::Blocked {
                 reason: "SAFETY".into()

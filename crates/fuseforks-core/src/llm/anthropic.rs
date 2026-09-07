@@ -553,6 +553,25 @@ pub fn decode(resp: wire::AnthropicResponse) -> Result<ChatResponse, LlmError> {
     })
 }
 
+/// エラー本文から再試行の材料を取り出す（Spec 52 D1。純関数）。
+///
+/// Anthropic の封筒 `{"type": "error", "error": {"type": "overloaded_error", "message": …}}`。
+/// `code` は `error.type`。**表に載せている値は無い**（`billing_error` は文書にも実機にも
+/// 当てていない。実機で出たのは 529 の `overloaded_error` だけ）ので、分類は status 既定へ
+/// 落ち、`type` は計器の `code=` に出るだけ。本文に待ち時間は無い。
+pub fn error_signal(body: &str) -> super::retry::ErrorSignal {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return super::retry::ErrorSignal::default();
+    };
+    super::retry::ErrorSignal {
+        code: value["error"]["type"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        retry_after: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1216,5 +1235,15 @@ mod tests {
         assert_eq!(resp.usage.cache_write, 400);
         assert_eq!(resp.usage.cache_write_1h, 0, "内訳が無ければ 0");
         assert_eq!(resp.usage.prompt, 410);
+    }
+
+    #[test]
+    fn error_signal_reads_the_error_type() {
+        let s = error_signal(
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"},"request_id":"req_1"}"#,
+        );
+        assert_eq!(s.code.as_deref(), Some("overloaded_error"));
+        assert_eq!(s.retry_after, None);
+        assert_eq!(error_signal("").code, None);
     }
 }

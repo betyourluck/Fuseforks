@@ -4695,9 +4695,9 @@ llm_wire:
     - text 空 かつ tool_calls 空 かつ finish==Length のときだけ EmptyResponse（推論の空応答）
     - Blocked を EmptyResponse から分離する（安全フィルタ拒否を診断可能に保つ）
     - Parse エラーは raw を保持する（却下理由と一緒に差し戻して再生成させる燃料）
-    - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）。
-      分類と待ち時間の規則は retry_contract（Spec 52。P0 時点では判定は据え置きで、
-      計器 `llm retry:` と Retry-After の読み取りだけが入っている）
+    - 再試行対象は is_transient のみ（HTTP 障害 / 推論の空応答 / Api のうち RetryClass の
+      判定が Retry のもの = 429 / 529 / 5xx。insufficient_quota は 429 でも止める）。
+      分類と待ち時間の規則は retry_contract（Spec 52）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
 
   retry_contract: |
@@ -4751,8 +4751,12 @@ llm_wire:
       **P0 の縮退版**は `llm retry: model= attempt= status= hint= src=header|- wait=` で、
       class / code / src=body は P1
 
-    状態: **P0（2026-09-07）= 計器の縮退版 + (a) の読み取り + `Api.retry_after` / `hint_src` の
-      2 欄 + `LlmError::api()`。判定と待ちは据え置き。** 分類・(b)・待ちの式・打ち切りは P1〜P2
+    `LlmError::Api` の欄（P1 で確定）: status / body / class（RetryClass）/ code（プロバイダ code の
+      先頭 40 字。計器の code= に出すだけ）/ retry_after / hint_src。組む場所は client の
+      `attempt()` 1 箇所と `LlmError::api()`（status 既定・待ち時間なし。テストと文面差し替え用）
+
+    状態: **P1（2026-09-07）= 分類・(a)(b) のマージ・待ちの式・計器 2 形・本文の前置まで着地。**
+      打ち切り（sleep の select!）は P2。P0 の縮退版の行はもう出ない（class= / code= が常に付く）
 
   usage: |
     canonical の Usage（Spec 32 P0 凍結 2026-08-10）。欄は prompt / completion /

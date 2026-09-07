@@ -445,21 +445,43 @@ impl HttpLlmBackend {
         let status = response.status();
 
         if !status.is_success() {
-            // Spec 52 D2 (a): サーバーが明示した待ち時間はヘッダにある。本文を読む前に
-            // 取る（`text()` が response を消費する）。P1 で (b) の本文側とここでマージする。
-            let retry_after = response
+            // Spec 52 D2: サーバーが明示した待ち時間の出所は 2 つ。(a) ヘッダは本文を
+            // 読む前に取る（`text()` が response を消費する）。(b) 本文は adapter の純関数が
+            // 読む（client は JSON を解釈しない — decode と同じく `Provider` で振り分ける）。
+            // **マージはここ 1 箇所**: 両方あれば大きいほう、出所は `hint_src` へ畳む。
+            let header_hint = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| {
                     super::retry::parse_retry_after(v, std::time::SystemTime::now())
                 });
-            let hint_src = super::retry::HintSource::from_presence(retry_after.is_some(), false);
             let mut body = response.text().await.unwrap_or_default();
             body.truncate(MAX_ERROR_BODY);
+            let signal = match self.config.provider {
+                Provider::OpenAiCompat
+                | Provider::XaiResponses
+                | Provider::OpenAiResponses
+                | Provider::MetaResponses
+                | Provider::PerplexityResponses => openai_compat::error_signal(&body),
+                Provider::Anthropic => anthropic::error_signal(&body),
+                Provider::Gemini => gemini::error_signal(&body),
+            };
+            let body_hint = signal.retry_after;
+            let retry_after = match (header_hint, body_hint) {
+                (Some(h), Some(b)) => Some(h.max(b)),
+                (h, b) => h.or(b),
+            };
+            let hint_src =
+                super::retry::HintSource::from_presence(header_hint.is_some(), body_hint.is_some());
+            let class = super::retry::classify(status.as_u16(), signal.code.as_deref());
+            // 計器用に先頭 40 字だけ残す（本文は `turn failed` 行が運ぶ。#71 の規律）。
+            let code = signal.code.map(|c| c.chars().take(40).collect::<String>());
             return Err(LlmError::Api {
                 status: status.as_u16(),
                 body,
+                class,
+                code,
                 retry_after,
                 hint_src,
             });
@@ -544,53 +566,190 @@ impl HttpLlmBackend {
 }
 
 impl HttpLlmBackend {
-    /// 指数バックオフつきの往復（JPEG フォールバックの内側）。
+    /// 指数バックオフつきの往復（JPEG フォールバックの内側）。Spec 52。
+    ///
+    /// 判断は全部 `retry.rs` の純関数に委ね、ここは順序と計器だけを持つ:
+    /// 分類が Stop → 即返す（`llm retry stop:`）/ 明示値が天井超え → 本文へ秒数を書いて
+    /// 返す（`llm retry stop: … reason=hint_too_long`）/ それ以外 → `plan_wait` の時間だけ
+    /// 待って再送（`llm retry:`）。最後の試行の失敗はそのまま返す（行は出ない —
+    /// 「M 回試行 = M − 1 行」）。
     async fn chat_with_backoff(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
+        use super::retry::{plan_wait, WaitPlan};
+
         let attempts = self.config.max_retries.max(1);
         let mut last_error: Option<LlmError> = None;
 
         for attempt in 0..attempts {
-            match self.attempt(req).await {
+            let err = match self.attempt(req).await {
                 Ok(resp) => return Ok(resp),
-                Err(err) if err.is_transient() && attempt + 1 < attempts => {
-                    // 200ms, 400ms, 800ms, ... 上限 5s。
-                    let backoff =
-                        Duration::from_millis(200u64.saturating_mul(1 << attempt)).min(Duration::from_secs(5));
-                    // Spec 52 P0 の計器（縮退版）。**再試行はこれまでどのログ行にも出ず**、
-                    // 529 が 16 秒後に落ちたターンで何回試したかを読めなかった。
-                    // `attempt=` は失敗した通算の試行番号（1 始まり）。`hint=` / `src=` は
-                    // サーバーが明示した待ち時間で、P0 では読んで出すだけ（待ちは変えない）。
-                    let (status, hint, src) = match &err {
-                        LlmError::Api {
-                            status,
-                            retry_after,
-                            hint_src,
-                            ..
-                        } => (
-                            status.to_string(),
-                            retry_after.map_or_else(|| "-".to_owned(), |d| format!("{}s", d.as_secs())),
-                            hint_src.as_str(),
-                        ),
-                        _ => ("-".to_owned(), "-".to_owned(), "-"),
-                    };
+                Err(err) => err,
+            };
+            let facts = RetryFacts::of(&err);
+            let stop = |reason: &str| {
+                crate::note!(
+                    "llm retry stop: model={} attempt={}/{} status={} class={} code={} hint={} src={}{}",
+                    self.config.model,
+                    attempt + 1,
+                    attempts,
+                    facts.status,
+                    facts.class,
+                    facts.code,
+                    facts.hint,
+                    facts.src,
+                    reason,
+                );
+            };
+
+            if !err.is_transient() {
+                // 分類で止めるのは `Api` だけ計器に出す（Blocked / Parse / Config は
+                // 再試行の問いに最初から入っていない）。
+                if matches!(err, LlmError::Api { .. }) {
+                    stop("");
+                }
+                return Err(err);
+            }
+
+            let hint = match &err {
+                LlmError::Api { retry_after, .. } => *retry_after,
+                _ => None,
+            };
+            // jitter の乱数は純関数の外で作る（D3）。時刻・試行番号・このバックエンドの
+            // アドレス（個体ごとに 1 インスタンス = 波で同時に落ちても種が割れる）を畳む。
+            let u = jitter_unit(std::time::SystemTime::now(), attempt, self as *const Self as usize);
+            match plan_wait(attempt, hint, u) {
+                WaitPlan::StopHintTooLong(hint) => {
+                    stop(" reason=hint_too_long");
+                    return Err(with_hint_too_long(err, hint));
+                }
+                WaitPlan::Wait(_) if attempt + 1 >= attempts => return Err(err),
+                WaitPlan::Wait(wait) => {
                     crate::note!(
-                        "llm retry: model={} attempt={}/{} status={} hint={} src={} wait={}ms",
+                        "llm retry: model={} attempt={}/{} status={} class={} code={} hint={} src={} wait={}ms",
                         self.config.model,
                         attempt + 1,
                         attempts,
-                        status,
-                        hint,
-                        src,
-                        backoff.as_millis(),
+                        facts.status,
+                        facts.class,
+                        facts.code,
+                        facts.hint,
+                        facts.src,
+                        wait.as_millis(),
                     );
-                    tokio::time::sleep(backoff).await;
+                    tokio::time::sleep(wait).await;
                     last_error = Some(err);
                 }
-                Err(err) => return Err(err),
             }
         }
 
         Err(last_error.unwrap_or(LlmError::EmptyResponse))
+    }
+}
+
+/// 計器 `llm retry:` / `llm retry stop:` の欄。文字列に畳んで持つだけ。
+struct RetryFacts {
+    status: String,
+    class: String,
+    code: String,
+    hint: String,
+    src: &'static str,
+}
+
+impl RetryFacts {
+    /// `-` は「その欄に値が無い」（他の計器と同じ作法）。`code=` は先頭 40 字まで —
+    /// 本文は `turn failed` 行が既に運んでいる（#71 の規律。ここでは出さない）。
+    fn of(err: &LlmError) -> Self {
+        use super::retry::RetryClass;
+        match err {
+            LlmError::Api {
+                status,
+                class,
+                code,
+                retry_after,
+                hint_src,
+                ..
+            } => Self {
+                status: status.to_string(),
+                class: class.as_str().to_owned(),
+                code: code.clone().unwrap_or_else(|| "-".to_owned()),
+                hint: retry_after.map_or_else(|| "-".to_owned(), |d| format!("{}s", d.as_secs())),
+                src: hint_src.as_str(),
+            },
+            LlmError::Http { source, .. } => Self {
+                status: "-".to_owned(),
+                class: if source.is_timeout() {
+                    RetryClass::Timeout
+                } else {
+                    RetryClass::Network
+                }
+                .as_str()
+                .to_owned(),
+                code: "-".to_owned(),
+                hint: "-".to_owned(),
+                src: "-",
+            },
+            other => Self {
+                status: "-".to_owned(),
+                class: match other {
+                    LlmError::EmptyResponse => "empty_response".to_owned(),
+                    _ => other.code().to_ascii_lowercase(),
+                },
+                code: "-".to_owned(),
+                hint: "-".to_owned(),
+                src: "-",
+            },
+        }
+    }
+}
+
+/// jitter の乱数 `u ∈ [0, 1]`（D3）。`rand` を足さず、FNV-1a で 3 つの材料を畳む。
+///
+/// 時刻だけだと、波で同時に落ちた個体がナノ秒まで近い値で並び `%` が同じ側へ寄る。
+/// 試行番号とインスタンスのアドレス（個体ごとに 1 つ）を混ぜて割る（busbar の
+/// `cell_id` と同じ役）。
+fn jitter_unit(now: std::time::SystemTime, attempt: u32, instance: usize) -> f64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let nanos = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut h = FNV_OFFSET;
+    for part in [nanos, u64::from(attempt), instance as u64] {
+        for byte in part.to_le_bytes() {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+    }
+    (h % 1001) as f64 / 1000.0
+}
+
+/// 天井を超えた明示値で止めるとき、本文の先頭に秒数を書く（D3）。
+///
+/// 生の 429 本文だけでは、利用者は「待てば通る」にも「今日はもう無理」にも辿り着けない。
+/// JPEG フォールバックの「この接続先は画像を受け付けません」と同じ層・同じ形。
+/// `status` と `class` は元のまま。
+fn with_hint_too_long(err: LlmError, hint: Duration) -> LlmError {
+    match err {
+        LlmError::Api {
+            status,
+            body,
+            class,
+            code,
+            retry_after,
+            hint_src,
+        } => LlmError::Api {
+            status,
+            body: format!(
+                "プロバイダは {} 秒後の再試行を求めています。時間を置いて依頼し直して\
+                 ください。プロバイダの応答: {body}",
+                hint.as_secs()
+            ),
+            class,
+            code,
+            retry_after,
+            hint_src,
+        },
+        other => other,
     }
 }
 

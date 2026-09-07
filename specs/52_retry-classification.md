@@ -4,7 +4,7 @@
 - 状態: **rev2 承認（2026-09-07。査読 2 系統 16 点 → 採用 12 / 訂正して採用 2 /
   反証 1 / 裁定へ 1。記録は Notes 7。承認時の裁定 = 408 は据え置き Stop / 承認査読の
   追加 1 点 = jitter と天井の順序を Notes 8 へ）→ P0 完了（2026-09-07。記録は
-  「P0 実装記録」）**
+  「P0 実装記録」）→ P1 完了（同日。記録は「P1 実装記録」）**
 - 起点: 利用者 —「breaker.rs の純関数を参考にしましょう」（2026-09-07。busbar =
   github.com/GetBusbar/busbar `4f7e9b0` の実読。CLAUDE.md「先行実装の調査」の
   8 実装目）。前史は 2026-08-25 の実測（CLAUDE.md「波の fan-out はプロバイダの
@@ -363,6 +363,42 @@ lib 655 + 結合全緑・clippy 警告ゼロ。**ミューテーション 1 回*
 
 **P0 が答えていないこと**: D2 (a) が実際に付くか。スタブは付けているが、実機のプロバイダが
 付けるかは**次に 429 / 529 を踏んだときの `src=` が初めて答える**（Notes 6）。
+
+## P1 実装記録（2026-09-07）
+
+**入れたもの**: `retry.rs` に `RetryClass`（9 値）/ `Verdict` / `classify` / `verdict` /
+`plan_wait` / `WaitPlan` / `MAX_HONORED_RETRY_AFTER` / `ErrorSignal` / `parse_proto_duration` /
+adapter の `error_signal` 3 系統（`openai_compat` = Responses 4 本と共有 / `anthropic` /
+`gemini` — `RetryInfo` を読むのはここだけ）/ `LlmError::Api` に `class` と **`code`**
+（先頭 40 字。計器の `code=` に出す）/ `is_transient` の `Api` の腕を `verdict` へ /
+`client.rs` の `attempt()` でマージと分類（1 箇所）/ `chat_with_backoff` を `plan_wait` +
+計器 2 形へ書き換え / `with_hint_too_long`（本文の前置）/ `jitter_unit`（FNV-1a）。
+
+**テスト**: 単体 +14（`retry.rs` 13 = 9 値の verdict 網羅 / status 既定の表 / code の優先と
+400・413 の門 / 指数部が今と同じ / 明示値は下限 / jitter は max の後・上向き・定義域の
+クランプ / 天井は jitter 前で 60 秒は通り 61 秒は止まる / proto Duration。adapter 3 = 実機の
+429 本文と同じ形で `RESOURCE_EXHAUSTED` + `56s` を読む、ほか）+ 結合 1 本を 7 場面へ
+（ヘッダ 1 秒 → 実測 ≥ 1 秒 / ヘッダ無し → 200 ms / 200 → 行が出ない / 課金切れ → 1 回で
+止まる / 3,600 秒 → 1 回で止まり本文の先頭に秒数 / Gemini 本文 `1s` → ヘッダ無しでも 1 秒
+待つ / 529 → 再送）。行は 6 本（再送 4 + 停止 2）で `class=` / `code=` / `hint=` / `src=` を
+逐語で留めた。lib 655 → 669 + 結合全緑・clippy 警告ゼロ。
+
+**ミューテーション 2 回**（どちらも狙った 1 本だけが赤）: `verdict` の Stop を全部 Retry へ →
+結合の「再試行しない」（`hits == 1`）と単体の網羅が赤 / `plan_wait` の `max` を外す →
+結合の「明示値 1 秒は下限」（`elapsed ≥ 1s`）だけが赤。
+
+**実装で決めた 3 点**:
+- **`code` を `Api` に載せた**（rev2 の型には無かった）。載せないと計器の `code=` が
+  「分類が code 由来のときだけ語を捏造する」形になり、`overloaded_error` や
+  `RESOURCE_EXHAUSTED` のように分類に効かない code が読めない。40 字で切って本文は出さない
+- **分類で止めるときの `llm retry stop:` は `Api` だけ**。`Blocked` / `Parse` / `Config` は
+  再試行の問いに最初から入っていないので計器に混ぜない
+- **最後の試行の失敗は行を出さない**（「M 回試行 = M − 1 行」の読みは P0 のまま）。
+  ただし天井超えは最後の試行でも `stop` の行と本文の前置を出す — 秒数が人に渡ることが
+  目的で、試行番号は関係ない
+
+**P1 が答えていないこと**: D2 (a) が実機で付くか（P0 と同じ。`src=` が答える）/ 打ち切り
+（P2。今の sleep は `select!` を持たず、明示値の待ちは最長 66 秒まで止められない）。
 
 ## 検収項目（各項目に到達経路を書く）
 
