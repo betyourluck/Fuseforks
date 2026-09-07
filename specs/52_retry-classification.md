@@ -1,7 +1,9 @@
 # Spec: LLM 再試行の分類と待ち時間 — 閉じた分類・サーバーの明示値・jitter・計器
 
 - 起票: 2026-09-07
-- 状態: **rev1（査読待ち）**
+- 状態: **rev2（2026-09-07。査読 2 系統 16 点 → 採用 12 / 訂正して採用 2 / 反証 1 /
+  裁定へ 1。記録は Notes 7）。裁定待ち 2 点 = 408 の扱い（D1）/ D4 の範囲は
+  rev2 で「待ちだけ」に確定したので裁定対象から外れた（Notes 5）**
 - 起点: 利用者 —「breaker.rs の純関数を参考にしましょう」（2026-09-07。busbar =
   github.com/GetBusbar/busbar `4f7e9b0` の実読。CLAUDE.md「先行実装の調査」の
   8 実装目）。前史は 2026-08-25 の実測（CLAUDE.md「波の fan-out はプロバイダの
@@ -20,29 +22,39 @@
    401 / 403 は今も止まるが、分類名を持たないので計器に「なぜ止めたか」が出ない
 2. **待ち時間の下限** — `Retry-After` ヘッダ（全ワイヤ）と Gemini の本文
    `google.rpc.RetryInfo.retryDelay` を読み、指数バックオフとの大きいほうを待つ。
-   **天井を持ち、天井を超える要求は再試行せず理由を本文に書く**（D3）
+   **天井を持ち、天井を超える明示値は再試行せず理由を本文に書く**（D3）
 3. **jitter** — 波で同時に落ちた個体が同じ瞬間に再送しないよう待ちを散らす
 4. **計器** — `llm retry:` の 1 行。**今は再試行がどのログ行にも出ない**
+
+**今と変わる挙動は 2 つだけ**: `Billing` を再試行しなくなること / 明示値を下限として
+待つこと。それ以外（401 / 403 / 400 / 404 が止まる・429 / 5xx / 529 が再送される）は
+結果が同じで、**分類名が計器に出る**ようになるだけ。408 は据え置き（D1。裁定待ち）。
 
 **やらないこと（範囲外）**: フェイルオーバー（村は個体 = 1 ワイヤ 1 モデルで、
 別レーンへ逃がす先が無い）/ ブレーカーの状態機械（Open / HalfOpen。待機中の
 個体は課金されないので「落ちているレーンを避ける」問題が村に無い）/
 `error_map` の設定化（busbar は catalog の YAML で持つが、村は閉じた列挙を
 コードに置く — 増やすときはコミットが記録になる。`refusal.rs` の語彙表と同じ判断）/
-`max_retries` の意味変更（既定 3 のまま）/ ヘルスプローブ。
+`max_retries` の意味変更（既定 3 のまま）/ ヘルスプローブ / **HTTP 往復そのものの
+打ち切り**（D4。払いの記録を失うので Spec 10 の境界のまま）。
 
 ## 起票時の実測（2026-09-07。コードとログを読んだ）
 
 **現行の再試行**（`crates/fuseforks-core/src/llm/client.rs:536-555`）:
-`attempts = max_retries.max(1)`（既定 3 = `model.rs:794`）、`is_transient()` が真なら
-`200ms × 2^attempt` を 5 秒でクランプして sleep。**既定では 200 + 400 ms = 合計 0.6 秒しか
-待たない。** `is_transient`（`error.rs:140-149`）= HTTP 障害（timeout / connect / request）
-/ `Api` の 429 と 5xx / `EmptyResponse`。408 は 4xx なので非一過性。
+`attempts = max_retries.max(1)`（既定 3 = `model.rs:794`）、ループ変数 `attempt` は
+**0 始まり**（`for attempt in 0..attempts`）。`is_transient()` が真なら
+`200ms × 2^attempt` を 5 秒でクランプして sleep — **0 回目の失敗の後が 200 ms、
+1 回目の後が 400 ms**、2 回目の失敗で `last_error` を返す。**既定では通算 3 回試行・
+待ちは合計 0.6 秒。** `is_transient`（`error.rs:140-149`）= HTTP 障害（timeout / connect /
+request）/ `Api` の 429 と 5xx / `EmptyResponse`。408 は 4xx なので非一過性。
 
 **ヘッダは捨てている**: `client.rs:444-454` は `response.status()` だけ読んで
 `LlmError::Api { status, body }` を作る。`Retry-After` は crate 全体で 0 ヒット。
 `LlmError::Api` のパターンは **2 ファイル 5 箇所**（`client.rs` / `error.rs`）で、
-欄を足す変更は小さい。
+欄を足す変更は小さい。**client は既にプロバイダで分岐している**（`client.rs:352` の
+要求の組み立てと `:459` の decode の振り分け）— 「client は wire の中身を見ない」は
+**client が JSON を自分で解釈しない**という規律で、adapter の純関数へ委ねることは
+decode で毎回やっている（Notes 7 の反証 1）。
 
 **計器はゼロ**: `fuseforks.log`（14,450 行・2026-08-09〜09-07）で `retry` に当たる
 4 行は**全部プロバイダの本文の引用**。2026-08-11 12:32 の 529 は `tool:` の 16.5 秒後に
@@ -50,7 +62,7 @@
 
 **頻度**（同じログ）: `code=LLM_API` の失敗 9 件 = fatal 6（401 ×3 / 404 ×2 / 400 ×1）+
 非 fatal 3（**429 ×2 = Gemini 無料枠** / **529 ×1 = Anthropic overloaded**）。`LLM_HTTP` 3。
-2026-08-25 から数字は動いていない（頻度ゲートの側は変わらず 3 件）。
+408 は 0 件。2026-08-25 から数字は動いていない（頻度ゲートの側は変わらず 3 件）。
 
 **Gemini の 429 本文**（実物）: `error.status = "RESOURCE_EXHAUSTED"`、`error.details[]` に
 `"@type": "type.googleapis.com/google.rpc.RetryInfo"` + `"retryDelay": "56s"`（もう 1 件は
@@ -78,36 +90,59 @@ GenerateRequestsPerMinutePerProjectPerModel-FreeTier`）と `google.rpc.Help`。
 
 ## Design
 
-### D1: 分類は閉じた列挙 `RetryClass`。status 既定は `llm/retry.rs`、プロバイダの code は adapter の純関数
+### D1: 分類は閉じた列挙 `RetryClass`。status 既定は `llm/retry.rs`、プロバイダの code は adapter の純関数。**分類は `LlmError::Api` が持つ**
 
-新設 `crates/fuseforks-core/src/llm/retry.rs`（純関数のみ・I/O 無し）:
+新設 `crates/fuseforks-core/src/llm/retry.rs`（純関数のみ・I/O 無し・時計も乱数も読まない）:
 
 ```rust
 pub enum RetryClass {
     RateLimit,      // 429
     Overloaded,     // 529（Anthropic 固有。IANA 未登録だが文書化されている）
     ServerError,    // 5xx
-    Timeout,        // 408 / reqwest の is_timeout
+    Timeout,        // reqwest の is_timeout（408 は含めない — 下の表と裁定）
     Network,        // reqwest の is_connect / is_request
     Auth,           // 401 / 403
     Billing,        // プロバイダ code（下の表）
-    ClientError,    // 上記以外の 4xx・2xx / 3xx がエラー経路へ来た形
+    ClientError,    // 上記以外の 4xx（408 を含む）・2xx / 3xx がエラー経路へ来た形
     ContextLength,  // 400 / 413 かつプロバイダ code が文脈超過
 }
 pub enum Verdict { Retry, Stop }
-pub fn classify(status: u16, signal: Option<&ErrorSignal>) -> RetryClass;  // 網羅 match
-pub fn verdict(class: RetryClass) -> Verdict;                               // 網羅 match
+pub fn classify(status: u16, code: Option<&str>) -> RetryClass;  // 網羅 match
+pub fn verdict(class: RetryClass) -> Verdict;                     // 網羅 match
 ```
 
 | `RetryClass` | `Verdict` | 今との差 |
 |---|---|---|
-| RateLimit / Overloaded / ServerError / Network | Retry | 同じ（529 は今 5xx として拾っている） |
-| Timeout（408） | Retry | **変わる**（今は 4xx として止める） |
+| RateLimit / Overloaded / ServerError / Timeout / Network | Retry | 同じ（529 は今 5xx として拾っている） |
 | Auth / ClientError / ContextLength | Stop | 同じ結果。**分類名が計器に出る**ようになる |
 | **Billing** | **Stop** | **変わる**（今は 429 なら再試行していた。OpenAI の `insufficient_quota` は 429） |
 
+**408 は `ClientError`（Stop）に据え置く**（rev2 で表を確定。裁定待ち）。査読 2 系統が
+割れた点で、R1 は据え置き（「変わる挙動は 2 つ」を守る・実機 0 件）、R2 は Retry
+（busbar と揃える・網羅 match として自然）。**私は据え置きを推す** — 動かす根拠が
+「あちらがそうしている」だけで、村の実測が 0 件。`Timeout` は reqwest の
+`is_timeout` 専用にし、408 を Retry へ動かす日は `classify` の 1 行と表の 1 行で済む。
+
+**分類は `LlmError::Api` に載せる**（R2 の 2(b) — `is_transient` は `CoreError::is_retryable`
+（`error.rs:400-406`）と UI から**引数無し**で呼ばれるので、判定材料を error 自身が
+持たないと 429 の `insufficient_quota` が status 既定の RateLimit へ落ちて再試行され続ける）:
+
+```rust
+LlmError::Api {
+    status: u16,
+    body: String,
+    class: RetryClass,                 // classify(status, signal.code) を client が呼んだ結果
+    retry_after: Option<Duration>,     // (a) ヘッダと (b) 本文をマージした最終値（D2）
+    hint_src: HintSource,              // Header | Body | Both | None（計器用。D5）
+}
+```
+
+テストで `Api` を組む場所のために **`LlmError::api(status, body)`** を置く（signal 無しで
+分類 = status 既定・`retry_after: None`）。既存の 5 箇所はそれへ寄せる。
+
 **status 以外の材料は adapter が出す**（`client` は wire の中身を見ない —
-`data_contract` の `llm_wire.layers`）。各 adapter に純関数を 1 本:
+`data_contract` の `llm_wire.layers`。client は decode と同じく `Provider` で振り分ける）。
+各 adapter に純関数を 1 本:
 
 ```rust
 pub struct ErrorSignal { pub code: Option<String>, pub retry_after: Option<Duration> }
@@ -116,51 +151,82 @@ pub fn error_signal(body: &str) -> ErrorSignal;   // openai_compat / anthropic /
 
 | ワイヤ | `code` の出所 | Billing と読む値 | ContextLength と読む値 |
 |---|---|---|---|
-| OpenAI 互換・Responses 4 本 | `error.code` → 無ければ `error.type` | `insufficient_quota` | `context_length_exceeded` |
-| Anthropic | `error.type` | `billing_error`（**未確認** — Notes 4） | `invalid_request_error` は文脈超過に限らないので**読まない** |
-| Gemini | `error.status` | 無し（`RESOURCE_EXHAUSTED` は RateLimit。busbar と同じ） | 無し |
+| OpenAI 互換・Responses 4 本（xAI / OpenAI / Meta / Perplexity） | `error.code` → 無ければ `error.type` | `insufficient_quota` | `context_length_exceeded` |
+| Anthropic | `error.type` | **無し**（`billing_error` は文書にも実機にも当てていない。busbar の `error_map` も Anthropic は空 = `providers.yaml:23-26`。Notes 4） | 無し（`invalid_request_error` は文脈超過に限らない） |
+| Gemini | `error.status` | 無し（`RESOURCE_EXHAUSTED` は RateLimit。busbar と同じ。**課金起因の 429 が同じ status で来た場合は RateLimit として再試行するリスクを許容する** — 明示値が付いていれば下限で待つだけで、天井超えなら止まる） | 無し |
 
 **閉じた列挙で、表に無い code は status 既定へ落ちる**（busbar の「error_map に無ければ
 HTTP 分類へフォールスルー」と同じ向き。未知の code で止めない）。
 
-### D2: 待ち時間の下限はサーバーの明示値。出所は 2 つ
+### D2: 待ち時間の下限はサーバーの明示値。出所は 2 つ。**マージは client の 1 箇所**
 
 - **(a) `Retry-After` ヘッダ** — 全ワイヤ。`client.rs:445` の `response` から取れる
-  （client の責務 = 「URL・ヘッダ・タイムアウト・再試行」）。delay-seconds と
-  HTTP-date の両方を読む。過去の日付は 0
+  （client の責務 = 「URL・ヘッダ・タイムアウト・再試行」）。`retry::parse_retry_after`
+  は delay-seconds と HTTP-date の両方を読む。**過去の日付は `Some(0)`**（「今すぐ」。
+  `None` = ヘッダ無しと区別する — 計器では `hint=0s src=header` と出る）
 - **(b) Gemini の本文 `error.details[]`** — `@type` が
   `type.googleapis.com/google.rpc.RetryInfo` の要素の `retryDelay`。protobuf `Duration` の
   JSON 形（`"56s"` / `"0.5s"`）。adapter の純関数（`gemini::error_signal`）が読む
 
-`LlmError::Api` へ `retry_after: Option<Duration>` を 1 欄足す。**(a) と (b) の両方が
-あれば大きいほう**。
+**マージは `attempt()` の失敗枝ただ 1 箇所**（`client.rs:447` 付近）:
 
-### D3: 待ち = max(指数バックオフ + jitter, 明示値)。天井 60 秒。天井を超える明示値は再試行しない
+```rust
+let header_hint = retry::parse_retry_after(response.headers());   // (a)
+let signal = match self.config.provider { Provider::Gemini => gemini::error_signal(&body), … };
+let body_hint = signal.retry_after;                                  // (b)
+let retry_after = max_opt(header_hint, body_hint);                   // 両方あれば大きいほう
+let hint_src = HintSource::from(header_hint.is_some(), body_hint.is_some());
+let class = retry::classify(status, signal.code.as_deref());
+Err(LlmError::Api { status, body, class, retry_after, hint_src })
+```
+
+`plan_wait` にはマージ済みの 1 値だけを渡す。生の 2 値は `hint_src` へ畳んでから捨てる。
+
+### D3: 待ち = max(指数, 明示値) × (1 + 0.1 × u)。天井 60 秒は明示値にだけ掛かり、超えたら再試行しない
 
 ```rust
 pub const MAX_HONORED_RETRY_AFTER: Duration = Duration::from_secs(60);
 pub enum WaitPlan { Wait(Duration), StopHintTooLong(Duration) }
-pub fn plan_wait(attempt: u32, hint: Option<Duration>, jitter_unit: f64) -> WaitPlan;
+/// attempt は 0 始まり（0 回目の失敗の後 = 200 ms）。u ∈ [0, 1]。
+pub fn plan_wait(attempt: u32, hint: Option<Duration>, u: f64) -> WaitPlan;
 ```
 
-- **指数部は据え置き**（`200ms × 2^attempt`、5 秒でクランプ）
-- **jitter は ±10%、帯の最低幅 20 ms**（200 ms の 10% が 20 ms。busbar の「帯 ≥ 1 秒」は
-  秒建ての cooldown 向けで、ミリ秒建ての村ではそのまま写すと帯が本体より大きくなる）。
-  `jitter_unit ∈ [-1, 1]` は**引数で受ける**（`schedule.rs` と同じ「内部で時計や乱数を
-  読まない」規律。本番は `SystemTime` のナノ秒 + attempt の FNV-1a で作る = busbar と
-  同じ形。**`rand` を core に足さない**）
-- **明示値は下限**（`max`）。busbar と同じ
-- **天井 60 秒で、明示値がそれを超えたら `StopHintTooLong` = 再試行せず止める。**
-  **ここが busbar と違う**（あちらは cooldown をクランプして次の要求へ進む）。理由:
-  村の待ちは**飛行中のターンの中**で起きる。「3 時間後に再試行せよ」（日次の quota）を
-  60 秒でクランプして再送しても必ず失敗し、失敗するまでの 60 秒を利用者が払う。
-  止めて本文に「プロバイダは N 秒後の再試行を求めています」と書けば、次の手が人に渡る
-  （fail-closed。Spec 46 の「判定不能は宛先を持たない」と同じ向き）。60 秒の根拠 =
-  実機の 2 件が 56 / 51 秒（分単位の quota 窓）で、これを通す最小の切り
+計算の順序（**ここが rev1 の誤りで、査読 2 系統が同じ穴を指した** — Notes 7）:
+
+1. `exp = min(200ms × 2^attempt, 5s)` — **指数部の天井 5 秒は据え置き**
+2. `hint > 60s` なら **`StopHintTooLong(hint)` を返して終わり**。`Verdict::Retry` を
+   ここで上書きする。**60 秒の天井は明示値にだけ掛かる**（指数部は 5 秒で頭打ちなので
+   60 秒を超えるのは明示値だけ）
+3. `base = max(exp, hint)` — 明示値は下限
+4. `wait = base × (1 + 0.1 × u)` — **jitter は `max` の後に、上向きだけ乗算で掛ける。**
+   rev1 の「`max(exp + jitter, hint)`」は明示値が勝つと jitter が消え、5 体の波が
+   56,000 ms ちょうどで揃う（S5 と検収 3 が原理的に成立しない）。上向きだけなのは
+   **明示値を下回らない**ため（busbar は ±で散らすが、あちらの値は cooldown で
+   下限ではない）。乗算なので「帯の最低幅」は要らない（200 ms なら 0〜20 ms）
+5. 天井の判定は jitter 前の `hint`。**jitter 後の `wait` は最大 66 秒**
+
+- `u` は**引数で受ける**（`schedule.rs` と同じ「内部で時計や乱数を読まない」規律）。
+  本番の生成は `retry.rs` の外（`client.rs`）で、`SystemTime` のナノ秒・`attempt`・
+  **`self`（`HttpLlmBackend`）のアドレス**（個体ごとに 1 インスタンス =
+  `client.rs:683` で起動時に作られる。busbar の `cell_id` と同じ役）を FNV-1a で畳み、
+  `u = (h % 1001) as f64 / 1000.0`。**`rand` を core に足さない**
+- **天井を超えたら止める理由（busbar と違う点）**: あちらは cooldown をクランプして
+  次の要求へ進む。村の待ちは**飛行中のターンの中**で起きるので、「3 時間後に再試行せよ」
+  （日次の quota）を 60 秒に丸めて再送しても必ず失敗し、失敗するまでの 60 秒を利用者が
+  払う。止めて本文に秒数を書けば次の手が人に渡る（fail-closed。Spec 46 の「判定不能は
+  宛先を持たない」と同じ向き）。60 秒の根拠 = 実機の 2 件が 56 / 51 秒（分単位の
+  quota 窓）で、これを通す最小の切り
+- **止めたときの本文**: `chat_with_backoff` が `LlmError::Api` の `body` を
+  `format!("プロバイダは {secs} 秒後の再試行を求めています。時間を置いて依頼し直して\
+  ください。プロバイダの応答: {body}")` へ差し替えて返す — **JPEG フォールバックの
+  「この接続先は画像を受け付けません」（`client.rs:636-643`）と同じ形・同じ層**。
+  `status` / `class` は元のまま（UI の `formatError` は `LLM_API` として扱う。
+  英語 UI では訳語 + 原文併記 = Spec 13 P4 の規律のまま）。`turn failed` 行は今と同じ
+  1 本で、直前に `llm retry stop: … reason=hint_too_long` が出る
 - **天井は code constant**（Spec 13「`OrchestratorConfig` を出さない」・`budget.rs` の
   重みと同じ扱い）。設定にするなら頻度を見てから
 
-### D4: 待ちは打ち切りで切れる
+### D4: 待ちは打ち切りで切れる。**切るのは sleep だけで、HTTP 往復は切らない**
 
 長い待ちを入れる以上、**打ち切り（Spec 10）が待ちの終わりまで遅れる**のは退行。
 `LlmBackend::chat` に cancel を渡す口を足す:
@@ -169,47 +235,67 @@ pub fn plan_wait(attempt: u32, hint: Option<Duration>, jitter_unit: f64) -> Wait
 async fn chat(&self, req: ChatRequest, cancel: Option<CancellationToken>) -> Result<ChatResponse, LlmError>;
 ```
 
-- `HttpLlmBackend` は sleep を `select!` で token と競わせ、切れたら **`LlmError` の
-  新 variant を作らず**、最後のエラー（`last_error`）をそのまま返す。ターンループは
-  周回境界で `is_cancelled()` を見て `interrupted` へ落とすので、**再試行の中で
-  切られたことに固有の名前は要らない**（打ち切りの分類は 1 箇所 = `turn.rs:1357`）
+- **`select!` に入れるのは sleep だけ。** `attempt()` の HTTP future は入れない —
+  reqwest の future を drop すれば接続は切れるが、**プロバイダが生成を始めていれば
+  課金は起きており、こちらには `usage` が届かない**（`failures.md` #103 の形 =
+  払ったのに `turn:` 行にも予算にも出ない）。sleep は捨てても 1 トークンも払わない。
+  **HTTP 往復の途中の打ち切りは今までどおり周回境界まで待つ**（Spec 10 の境界のまま）
+- 切れたら **`LlmError` の新 variant を作らず**、`last_error` をそのまま返す。sleep は
+  失敗の後にしか無いので `last_error` は必ず `Some`（初回失敗前に sleep は無い）。
+  ターンループは周回境界で `is_cancelled()` を見て `interrupted` へ落とすので、
+  **再試行の中で切られたことに固有の名前は要らない**（打ち切りの分類は 1 箇所 =
+  `turn.rs:1357`）
 - `ChatRequest` には載せない — `PartialEq` を導出しており `CancellationToken` は
   比較できない。adapter の純関数の入力に token が混ざるのも層が違う
 - **実装は 10 箇所**（`HttpLlmBackend` / `EchoBackend` / 結合テストの 8 バックエンド）。
-  全部 `_cancel` で受けるだけの機械的変更。`EchoBackend` は待たないので使わない
-- **採らない形**: 天井 60 秒だけで済ませる（打ち切りが最長 60 秒遅れる。Spec 10 の
-  実機「要求から 0.0 秒」を 1 箇所だけ破る）。**利用者裁定の対象**（Notes 5）
+  全部 `_cancel` で受けるだけの機械的変更
+- **帰結として「■ 停止が 1 秒以内」の保証は待ちの最中だけ。** HTTP 往復中
+  （`request_timeout_secs` 既定 120 秒）はこれまでと同じ。検収 4 はその範囲で書く
 
-### D5: 計器 `llm retry:` — 再試行するときと、分類で止めるときの 2 形
+### D5: 計器 `llm retry:` — 再試行するときと、分類で止めるときの 2 形。P0 は縮退版
+
+P1 以降の形:
 
 ```text
-llm retry: model=gemini-3.5-flash-lite attempt=1/3 status=429 class=rate_limit hint=56s src=body wait=56000ms
-llm retry stop: model=gpt-5.6-terra status=429 class=billing code=insufficient_quota hint=- src=-
-llm retry stop: model=… status=429 class=rate_limit hint=10800s src=header reason=hint_too_long
+llm retry: model=gemini-3.5-flash-lite attempt=1/3 status=429 class=rate_limit code=RESOURCE_EXHAUSTED hint=56s src=body wait=58240ms
+llm retry stop: model=gpt-5.6-terra attempt=1/3 status=429 class=billing code=insufficient_quota hint=- src=-
+llm retry stop: model=… attempt=1/3 status=429 class=rate_limit code=- hint=10800s src=header reason=hint_too_long
 ```
 
-- `src=header|body|both|-` — **P0 でこれだけ先に出す**（ヘッダの有無が今は読めない）
+**P0 の縮退版**（`retry.rs` が無いので `class` / `code` / `src=body` は出せない —
+査読 2 系統が同じ点を指した）:
+
+```text
+llm retry: model=… attempt=1/3 status=429 hint=-|NNs src=header|- wait=200ms
+```
+
+- `attempt=k/M` — **k は失敗した通算の試行番号（1 始まり）、M は `max_retries`**。
+  `wait=` はその失敗の後の待ち。ループ変数（0 始まり）とは 1 ずれるので、実装は
+  `attempt + 1` を出す
+- `status=-` は `Http` / `EmptyResponse` の再試行。`class=` は `Api` と `Http` が
+  `RetryClass`、`EmptyResponse` は `empty_response` の固定文字
 - `code=` はプロバイダ code の先頭 40 字。本文は出さない（#71 の規律 — エラー本文は
   `turn failed` 行が既に運んでいる）
-- `attempt` は 1 始まり・分母は `max_retries`。`turn failed` 行と突き合わせれば
-  「何回試して落ちたか」が読める
+- `hint=0s src=header` = 「ヘッダは付いていたが過去の日付」。`hint=-` と読み分ける
+- `turn failed` 行と突き合わせれば「何回試して落ちたか」が読める
 
 ### D6: `is_transient` は残し、`Api` の腕だけ分類へ委ねる
 
 `is_transient` は `CoreError::is_retryable` / UI の分岐が読んでおり（`data_contract` の
 `error_contract`）、名前も呼び出し元も変えない。中身の `Api` の腕を
-`verdict(classify(status, signal)) == Retry` へ差し替える。**`Http` と `EmptyResponse` の
-腕は据え置き。**
+`verdict(*class) == Retry` へ差し替える（材料は D1 で error 自身が持つ）。**`Http` と
+`EmptyResponse` の腕は据え置き。**
 
 ### D7: 触る台帳
 
 - `data_contract.yaml` — `llm_wire.invariants` の「再試行対象は is_transient のみ（HTTP
   障害 / 429 / 5xx / 推論の空応答）」を分類表へ書き換え / 新設 `retry_contract`
-  （分類 9 値と verdict・明示値の出所 2 つ・天井・jitter 帯・打ち切り）/
-  `observability_rule` へ `llm retry:` 行
+  （分類 9 値と verdict・明示値の出所 2 つとマージ地点・待ちの式と順序・天井・
+  打ち切りの範囲）/ `observability_rule` へ `llm retry:` 行
 - `error.rs` のモジュール doc 3 項「`is_transient` が再試行の唯一の判断軸」
 - DETAIL 日英 — 再試行の記述（`grep 再試行 DETAIL.md`）と**「利用者が負う条件」**:
-  429 の直後にターンが最長 60 秒静かになることがある（画面は「入力中」のまま）
+  429 の直後にターンが最長 66 秒静かになることがある（画面は「入力中」のまま）/
+  既定 3 回では**待ちが 2 回起きうる**（S1）
 - CLAUDE.md — 「先行実装の調査」に busbar の節 / 「波の fan-out」の節の
   「機構は作らない」を取り消し線で覆す / 現在地
 - README は触らない（設定もトグルも増えない）。**ランディングページと Qiita は
@@ -217,31 +303,37 @@ llm retry stop: model=… status=429 class=rate_limit hint=10800s src=header rea
 
 ## Stories
 
-- **S1** Gemini 無料枠の 429（`retryDelay: "56s"`）→ 56 秒 ± jitter 待って 1 回再送、
-  `llm retry:` に `hint=56s src=body` が出る。2 回目も 429 なら 3 回目は無い（既定 3）
+- **S1** Gemini 無料枠の 429（`retryDelay: "56s"`）→ 56〜61.6 秒待って再送（通算 2 回目）、
+  `llm retry:` に `hint=56s src=body` が出る。**通算 2 回目も 429 なら、もう 1 度
+  56 秒待って通算 3 回目を送り、それも 429 なら `turn failed`**（既定 3 = 通算 3 回・
+  待ち 2 回。最長で約 2 分）。分単位の quota 窓なら 2 回目で通る
 - **S2** OpenAI の `insufficient_quota`（429）→ 再送せず `llm retry stop: class=billing`。
   `turn failed` は今と同じ 1 本
 - **S3** Anthropic 529 → 今と同じく再送。`Retry-After` があれば `src=header`
-- **S4** 待ちの最中に「■ 停止」→ 1 秒以内に `turn interrupted`（D4 採用時）
-- **S5** 5 体の波が同時に 429 → 5 本の `wait=` が全部違う値（jitter）
+- **S4** 待ちの最中に「■ 停止」→ 1 秒以内に `turn interrupted`
+- **S5** 5 体の波が同時に 429 → 5 本の `wait=` が全部違う値（jitter は `max` の後）
 - **S6** 明示値が 60 秒超 → 再送せず `reason=hint_too_long`、本文に秒数が載る
 
 ## Phases
 
-- **P0 計器と契約**: `llm retry:` 行を**現行の再試行に**先に足す（分類も待ちも変えない。
-  `src=` はヘッダを読むだけ）→ 実機で 1 件でも 429 を踏めば D2 の (a) の有無が決まる。
+- **P0 計器と契約**: `llm retry:` の縮退版を**現行の再試行に**先に足す（分類も待ちも
+  変えない。足すのは `retry::parse_retry_after` と `LlmError::Api.retry_after` /
+  `hint_src` の 2 欄だけ）→ 実機で 1 件でも 429 / 529 を踏めば D2 の (a) の有無が決まる。
   `data_contract` の `retry_contract` を凍結
-- **P1 コア**: `retry.rs`（`classify` / `verdict` / `plan_wait` / `parse_retry_after`）+
-  adapter の `error_signal` 3 系統 + `LlmError::Api.retry_after` + `client.rs` の配線。
-  単体: 9 値 × verdict の網羅 / 過去日付の HTTP-date は 0 / `"0.5s"` の parse /
-  jitter の帯 / 天井超えは Stop。**結合はループバック HTTP スタブ**
-  （`tests/attachment_fallback.rs` と同じ作り）: 429 + `Retry-After: 1` → 2 回目で 200
-  （受信本文の件数 = 2）/ 429 + `insufficient_quota` → 1 回で止まる（件数 = 1）/
-  429 + Gemini 形の `RetryInfo` 本文 → 待ちの下限が効く / 529 → 再送。
+- **P1 コア**: `retry.rs`（`RetryClass` / `classify` / `verdict` / `plan_wait`）+
+  adapter の `error_signal` 3 系統 + `LlmError::Api.class` + `LlmError::api()` +
+  `client.rs` の配線（マージ・分類・止めたときの本文）。
+  単体: 9 値 × verdict の網羅 / 過去日付の HTTP-date は `Some(0)` / `"0.5s"` の parse /
+  `plan_wait` の順序（hint 56s・u=1 → 61,600 ms / hint 61s → Stop / hint 無し attempt 0
+  u=0 → 200 ms）/ `max` の後の jitter（同じ hint で u が違えば wait が違う）。
+  **結合はループバック HTTP スタブ**（`tests/attachment_fallback.rs` と同じ作り）:
+  429 + `Retry-After: 1` → 通算 2 回目で 200（受信本文の件数 = 2・間隔 ≥ 1 秒）/
+  429 + `insufficient_quota` → 1 回で止まる（件数 = 1）/ 429 + Gemini 形の `RetryInfo`
+  本文 → 待ちの下限が効く / 529 → 再送。
   **ミューテーション 2 回**（`verdict` を全部 Retry へ → billing の 1 本だけ赤 /
   `max` を外す → 下限の 1 本だけ赤）
-- **P2 打ち切り**: D4 の trait 変更 + 10 実装 + 結合 1 本（待ち中に cancel →
-  200 ms 以内に返る）
+- **P2 打ち切り**: D4 の trait 変更 + 10 実装 + 結合 1 本（`Retry-After: 30` の待ち中に
+  cancel → 200 ms 以内に `Err` が返り、受信本文の件数 = 1）
 - **P3 台帳**: D7
 - **P4 実機**: 検収項目
 
@@ -250,10 +342,11 @@ llm retry stop: model=… status=429 class=rate_limit hint=10800s src=header rea
 1. **無料枠の Gemini 鍵で 2 体へ波を撒く**（2026-08-25 の再現）→ `llm retry:` に
    `status=429 class=rate_limit hint=NNs src=body|both` が出る。経路: Gemini 429 →
    `gemini::error_signal` が `RetryInfo` を読む → `plan_wait` → sleep
-2. 同じ走行で `wait=` が `hint` 以上・60,000 ms 以下
+2. 同じ走行で `wait=` が `hint` 以上・`hint × 1.1` 以下
 3. 同じ走行で 2 体の `wait=` が異なる（jitter）。**1 体だけでは判定にならない**
-4. **待ちの最中に「■ 停止」** → `turn interrupted` が 1 秒以内（P2 採用時）。経路:
-   `select!` が token を拾う → `last_error` を返す → 周回境界で `interrupted`
+4. **待ちの最中に「■ 停止」** → `turn interrupted` が 1 秒以内。**HTTP 往復中の停止は
+   対象外**（D4。今までどおり周回境界）。経路: `select!` が token を拾う →
+   `last_error` を返す → 周回境界で `interrupted`
 5. `insufficient_quota` は**実機で踏めない**（残高がある鍵しか無い）→ P1 の結合テストが
    代替（`attachment_fallback` と同じ判断: 踏めない経路をテスト無しで残さない）
 6. 529 は Anthropic の混雑時にしか出ない → **狙わない**。出たら `src=` を読む
@@ -267,7 +360,7 @@ llm retry stop: model=… status=429 class=rate_limit hint=10800s src=header rea
    failover の walk / `error_map` の YAML / `ContextLength` を「別の大きいモデルへ
    逃がす」分類（村は同じ個体で再送しない。分類名だけ計器のために持つ）/
    ヘルスプローブ（`user "ping" max_tokens 1` は安いが、待機中の個体は課金されないので
-   「黙って死んでいるレーン」が村に無い）
+   「黙って死んでいるレーン」が村に無い）/ ±の jitter（D3 — 明示値を下限に保つため上向きだけ）
 2. **2026-08-25 の「機構は作らない」を覆す理由**: 利用者裁定（2026-09-07）+ 参照実装で
    実装の値段が純関数 1 本に下がった。頻度は今も 3 件。**効き目は「失敗が減る」ではなく
    「サーバーが教えた値を無視しない」と「再試行が見える」の 2 つ** — 2026-08-25 の
@@ -276,12 +369,29 @@ llm retry stop: model=… status=429 class=rate_limit hint=10800s src=header rea
    遅くても完走し、対話なら利用者が止める — どちらへ倒すかは D3 の天井が決めている
 3. **写すのは構造で、コードは書き直す**（Apache-2.0 → MPL-2.0 は互換だが、逐語で
    持ち込まないので NOTICE も不要。doc コメントに出典を 1 行書く）
-4. **Anthropic の `billing_error` は未確認**（文書にも実機にも当てていない。Anthropic の
-   `error.type` で実機に出たのは `overloaded_error` だけ）。P1 で表へ入れるなら
-   **入れた根拠を書く**か、入れずに status 既定へ落とす。**busbar の `error_map` も
-   Anthropic には空**（`providers.yaml:23-26`）— あちらも持っていない
-5. **利用者裁定が要るもの**: D3 の天井 60 秒と「超えたら止める」/ D4 を P2 でやるか
-   天井だけで済ませるか / D1 の 408 を Retry へ動かすか（実機で 408 は 0 件）
+4. **Anthropic の `billing_error` は表に入れない**（rev2 で確定）。文書にも実機にも
+   当てておらず、busbar の `error_map` も Anthropic は空。入れるなら根拠を書いてから
+5. **利用者裁定が要るもの（rev2 で 1 点に減った）**: **408 の扱い**（D1。据え置きを推す）。
+   D3 の天井 60 秒と「超えたら止める」は査読 2 系統とも賛成 / D4 は「待ちだけ切る」
+   に範囲を確定（#103 の形を避けるため — HTTP 往復を切ると払いの記録を失う）
 6. **計器を先に出す順序（P0）が本体より重い判断**: D2 の (a) が実際に付くかは
    ヘッダを記録しないと永遠に分からず、`src=` の実測が無いまま (a) を実装すると
    「入れたのに効いているか分からない機構」になる（#47 の規律）
+7. **rev1 → rev2 の査読記録（2 系統 16 点）**:
+   - **採用 12**: R1-2（マージ地点を client の 1 箇所に明記）/ R1-3・R2-4（P0 の計器は
+     縮退版 — `class` / `src=body` は P1）/ R1-4（天井は明示値にだけ掛かる・`Verdict` を
+     上書き）/ R1-6（`attempt` は 0 始まり・計器は 1 始まり）/ R1-細 3 件（Gemini の
+     Billing リスクを表に明記 / `hint=0s` の読み / `u` の正規化式）/ R2-2(b)（`LlmError::Api`
+     に `class` を載せる — `is_transient` が引数無しで呼ばれる）/ R2-3（S1 の回数を通算で
+     書き直し。待ちは 2 回起きうる）/ R2-5（止めたときの本文は JPEG フォールバックと
+     同じ層・同じ形）/ R2-6（jitter の種にインスタンスのアドレス）
+   - **訂正して採用 2**: R1-5（D4 の範囲を「待ちだけ」に絞る — 理由は R1 の
+     「1 秒保証が破れる」ではなく、**HTTP を切ると払いの記録を失う**こと。結果は同じ）/
+     R1-7 + R2-1（jitter の式 — 乗算・**`max` の後**・上向きだけ。R1 は式の固定を求め、
+     R2 は「明示値が勝つと jitter が消える」バグを指した。両方を 1 つの式で受けた）
+   - **反証 1**: R2-2(a)「client が wire を見ずに adapter の `error_signal` を呼ぶ
+     インターフェースが未定義」— client は `client.rs:352` / `:459` で既に `Provider` で
+     振り分けて adapter の encode / decode を呼んでいる。規律が禁じるのは client 自身が
+     JSON を解釈することで、委譲は毎回やっている
+   - **裁定へ 1**: R1-1 と R2-3（408）— 査読同士が逆を向いた。表は据え置き（Stop）で
+     書き、裁定で動かす
