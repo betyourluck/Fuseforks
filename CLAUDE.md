@@ -5833,6 +5833,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 52](specs/52_retry-classification.md)（LLM 再試行の分類と待ち時間 — 閉じた分類 /
+  `Retry-After` と Gemini の `RetryInfo.retryDelay` を下限に / 天井 60 秒・超えたら止める /
+  jitter / `llm retry:` の計器）: **rev1 起票（2026-09-07。査読待ち）**。起点は利用者
+  「breaker.rs の純関数を参考にしましょう」— busbar（github.com/GetBusbar/busbar）の実読で
+  写す価値があったのは `breaker.rs` の純関数 3 本だけ、という結論の実装側。**2026-08-25 の
+  「機構は作らない・頻度を見てから」を利用者裁定で覆す**（頻度は今も 3 件 = 429 ×2 /
+  529 ×1）。**busbar も本文の `retryDelay` は読まない**ので、観測した 2 件に効かせるには
+  Gemini の adapter に純関数を 1 本足す（D2 (b)）。裁定待ち 3 点 = 天井と超過時の停止 /
+  打ち切りの配線を P2 でやるか / 408 を再試行へ動かすか（Notes 5）
 - [Spec 51](specs/51_agent-groups.md)（サーヴァントのグループ — 一覧の区分け・絆の地図の
   表示切り替え・グループ単位の起動）: **Done**（2026-09-05。**起票から Done まで同日**。
   実機検収 12 件すべて利用者が確認。実機の指摘 2 件 = スイッチのノブを `left` で置く /
