@@ -573,7 +573,16 @@ impl HttpLlmBackend {
     /// 返す（`llm retry stop: … reason=hint_too_long`）/ それ以外 → `plan_wait` の時間だけ
     /// 待って再送（`llm retry:`）。最後の試行の失敗はそのまま返す（行は出ない —
     /// 「M 回試行 = M − 1 行」）。
-    async fn chat_with_backoff(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
+    ///
+    /// `cancel` があれば **sleep だけ**を `select!` で競わせる（D4）。切れたら `LlmError` の
+    /// 新しい variant は作らず、いま受けた失敗をそのまま返す — ターンループが周回境界で
+    /// `is_cancelled()` を見て `interrupted` へ落とすので、再試行の中で切られたことに
+    /// 固有の名前は要らない（打ち切りの分類は `turn.rs` の 1 箇所）。
+    async fn chat_with_backoff(
+        &self,
+        req: &ChatRequest,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<ChatResponse, LlmError> {
         use super::retry::{plan_wait, WaitPlan};
 
         let attempts = self.config.max_retries.max(1);
@@ -635,13 +644,63 @@ impl HttpLlmBackend {
                         facts.src,
                         wait.as_millis(),
                     );
-                    tokio::time::sleep(wait).await;
+                    match cancel {
+                        Some(token) => {
+                            tokio::select! {
+                                _ = token.cancelled() => return Err(err),
+                                _ = tokio::time::sleep(wait) => {}
+                            }
+                        }
+                        None => tokio::time::sleep(wait).await,
+                    }
                     last_error = Some(err);
                 }
             }
         }
 
         Err(last_error.unwrap_or(LlmError::EmptyResponse))
+    }
+
+    /// `chat` と `chat_cancellable` の共通部（JPEG フォールバックの外側）。
+    async fn chat_inner(
+        &self,
+        req: ChatRequest,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<ChatResponse, LlmError> {
+        match self.chat_with_backoff(&req, cancel).await {
+            Err(LlmError::Api {
+                status: 400, body, ..
+            }) if self.config.provider == Provider::OpenAiCompat
+                && has_webp_attachments(&req) =>
+            {
+                let Some(jpeg_req) = with_jpeg_attachments(&req) else {
+                    return Err(LlmError::api(400, body));
+                };
+                crate::note!(
+                    "attachment fallback: model={} retrying with jpeg after 400",
+                    self.config.model,
+                );
+                match self.chat_with_backoff(&jpeg_req, cancel).await {
+                    Ok(resp) => Ok(resp),
+                    // 両形式とも拒否 = この接続先は画像を受け付けない。
+                    // 生の 400 本文だけでは利用者が「画像が原因」へ辿り着けない。
+                    Err(LlmError::Api {
+                        status: 400,
+                        body: second,
+                        ..
+                    }) => Err(LlmError::api(
+                        400,
+                        format!(
+                            "この接続先は画像を受け付けません（WebP と JPEG の両方が\
+                             拒否されました）。画像なしで送り直してください。\
+                             プロバイダの応答: {second}"
+                        ),
+                    )),
+                    Err(other) => Err(other),
+                }
+            }
+            other => other,
+        }
     }
 }
 
@@ -812,40 +871,16 @@ impl LlmBackend for HttpLlmBackend {
     /// あり（xAI は公式文書上 jpg/png のみ）、形式を変えれば通る可能性がある。
     /// それでも落ちたら「画像を受け付けない接続先」として理由を本文へ書く。
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-        match self.chat_with_backoff(&req).await {
-            Err(LlmError::Api {
-                status: 400, body, ..
-            }) if self.config.provider == Provider::OpenAiCompat
-                && has_webp_attachments(&req) =>
-            {
-                let Some(jpeg_req) = with_jpeg_attachments(&req) else {
-                    return Err(LlmError::api(400, body));
-                };
-                crate::note!(
-                    "attachment fallback: model={} retrying with jpeg after 400",
-                    self.config.model,
-                );
-                match self.chat_with_backoff(&jpeg_req).await {
-                    Ok(resp) => Ok(resp),
-                    // 両形式とも拒否 = この接続先は画像を受け付けない。
-                    // 生の 400 本文だけでは利用者が「画像が原因」へ辿り着けない。
-                    Err(LlmError::Api {
-                        status: 400,
-                        body: second,
-                        ..
-                    }) => Err(LlmError::api(
-                        400,
-                        format!(
-                            "この接続先は画像を受け付けません（WebP と JPEG の両方が\
-                             拒否されました）。画像なしで送り直してください。\
-                             プロバイダの応答: {second}"
-                        ),
-                    )),
-                    Err(other) => Err(other),
-                }
-            }
-            other => other,
-        }
+        self.chat_inner(req, None).await
+    }
+
+    /// 打ち切りの token つき（Spec 52 D4）。ターンループはこちらを呼ぶ。
+    async fn chat_cancellable(
+        &self,
+        req: ChatRequest,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<ChatResponse, LlmError> {
+        self.chat_inner(req, cancel.as_ref()).await
     }
 }
 

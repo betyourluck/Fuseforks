@@ -4738,10 +4738,13 @@ llm_wire:
       retry.rs の外（SystemTime のナノ秒・attempt・バックエンドのアドレスを FNV-1a で畳み
       `(h % 1001) / 1000`）。`rand` を core に足さない
 
-    打ち切り: `LlmBackend::chat(req, cancel)` の cancel は **sleep だけ**を切る。HTTP 往復は
-      切らない（切るとプロバイダが払わせた usage が届かず、`turn:` 行にも予算にも出ない =
-      failures.md #103 の形。sleep は捨てても 1 トークンも払わない）。切れたら last_error を
-      そのまま返し、分類は周回境界の 1 箇所（turn.rs）に任せる
+    打ち切り: `LlmBackend::chat_cancellable(req, cancel)`（**trait の既定メソッド** — 既定は
+      token を読まず `chat` へ委ねる。上書きするのは HttpLlmBackend だけ。署名を変えると
+      結合テストの 55 バックエンドが落ちるので加算にした = P2 で訂正）の cancel は
+      **sleep だけ**を切る。HTTP 往復は切らない（切るとプロバイダが払わせた usage が届かず、
+      `turn:` 行にも予算にも出ない = failures.md #103 の形。sleep は捨てても 1 トークンも
+      払わない）。切れたらいま受けた失敗をそのまま返し、分類は周回境界の 1 箇所（turn.rs）に
+      任せる。ターンループの 2 箇所（本体・まとめ）が token を渡す。要約は `chat` のまま
 
     計器（再試行のたびに 1 行 / 分類か天井で止めたとき 1 行）:
       llm retry: model=… attempt=k/M status=… class=… code=… hint=NNs|- src=… wait=…ms
@@ -4755,8 +4758,8 @@ llm_wire:
       先頭 40 字。計器の code= に出すだけ）/ retry_after / hint_src。組む場所は client の
       `attempt()` 1 箇所と `LlmError::api()`（status 既定・待ち時間なし。テストと文面差し替え用）
 
-    状態: **P1（2026-09-07）= 分類・(a)(b) のマージ・待ちの式・計器 2 形・本文の前置まで着地。**
-      打ち切り（sleep の select!）は P2。P0 の縮退版の行はもう出ない（class= / code= が常に付く）
+    状態: **P2（2026-09-07）= 分類・(a)(b) のマージ・待ちの式・計器 2 形・本文の前置・
+      打ち切り（sleep の select!）まで着地。** 残は P3（台帳）と P4（実機）
 
   usage: |
     canonical の Usage（Spec 32 P0 凍結 2026-08-10）。欄は prompt / completion /

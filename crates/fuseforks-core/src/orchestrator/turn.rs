@@ -1426,7 +1426,12 @@ async fn run_turn_inner(
             cacheable_prefix_len: stable_len,
         };
 
-        let mut response = match backend.chat(request).await {
+        // Spec 52 D4: token は再試行の待ちだけを切る。HTTP 往復は完走させる
+        // （切ると払いの記録を失う）。打ち切りの分類は周回境界（上の `is_cancelled`）。
+        let mut response = match backend
+            .chat_cancellable(request, Some(turn.token.clone()))
+            .await
+        {
             Ok(response) => response,
             Err(err) => {
                 // **払ったと分かる失敗は、成功と同じ台帳・同じ財布で清算してから抜ける**
@@ -1690,7 +1695,10 @@ async fn run_turn_inner(
         // まとめの失敗でターンごと落とさない。ただし**理由は握り潰さない** —
         // ここを `if let Ok` で書いていた間、まとめが落ちても理由はログにも
         // イベントにもフォールバック文言にも残らず、現場から診断不能だった。
-        match backend.chat(request).await {
+        match backend
+            .chat_cancellable(request, Some(turn.token.clone()))
+            .await
+        {
             Ok(mut response) => {
                 // まとめ呼び出しの周。**ここは必ず書き込みになる** —
                 // tool_choice を None へ変えると履歴層のキャッシュが落ちるため

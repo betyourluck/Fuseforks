@@ -4,7 +4,8 @@
 - 状態: **rev2 承認（2026-09-07。査読 2 系統 16 点 → 採用 12 / 訂正して採用 2 /
   反証 1 / 裁定へ 1。記録は Notes 7。承認時の裁定 = 408 は据え置き Stop / 承認査読の
   追加 1 点 = jitter と天井の順序を Notes 8 へ）→ P0 完了（2026-09-07。記録は
-  「P0 実装記録」）→ P1 完了（同日。記録は「P1 実装記録」）**
+  「P0 実装記録」）→ P1 完了（同日。記録は「P1 実装記録」）→ P2 完了（同日。記録は
+  「P2 実装記録」— D4 の形を加算的な既定メソッドへ訂正）**
 - 起点: 利用者 —「breaker.rs の純関数を参考にしましょう」（2026-09-07。busbar =
   github.com/GetBusbar/busbar `4f7e9b0` の実読。CLAUDE.md「先行実装の調査」の
   8 実装目）。前史は 2026-08-25 の実測（CLAUDE.md「波の fan-out はプロバイダの
@@ -399,6 +400,49 @@ adapter の `error_signal` 3 系統（`openai_compat` = Responses 4 本と共有
 
 **P1 が答えていないこと**: D2 (a) が実機で付くか（P0 と同じ。`src=` が答える）/ 打ち切り
 （P2。今の sleep は `select!` を持たず、明示値の待ちは最長 66 秒まで止められない）。
+
+## P2 実装記録（2026-09-07）
+
+**D4 の形を 1 つ訂正した — trait の署名は変えず、既定実装つきのメソッドを足した。**
+rev2 は「`chat` に `cancel` を足す。実装は 10 箇所」と書いたが、**実装は 57 箇所**あった
+（`EchoBackend` + `HttpLlmBackend` + 結合テストの 55）。起票時の grep を `head` で切って
+数えたのが誤りで、実物を数え直したのは P2 の 1 手目。署名を変えると 55 本のテスト
+バックエンドが機械的に落ちるだけで何も守らないので、
+
+```rust
+async fn chat_cancellable(&self, req, cancel: Option<CancellationToken>) -> … {
+    let _ = cancel;      // 既定: token を読まずに chat へ委ねる
+    self.chat(req).await
+}
+```
+
+を **trait の既定メソッド**として足し、`HttpLlmBackend` だけが上書きする。ターンループの
+2 箇所（`turn.rs` の本体の呼び出しと、まとめの呼び出し）が `chat_cancellable(request,
+Some(turn.token.clone()))` を呼ぶ。要約（`summarize_agents`）は `chat` のまま（ターンの外で、
+打ち切りの対象ではない）。**D4 が守るもの（sleep だけ切る・HTTP は切らない・新 variant を
+作らない・分類は周回境界の 1 箇所）は 1 つも動いていない** — 変えたのは配線の形だけ。
+
+**入れたもの**: `LlmBackend::chat_cancellable`（既定実装）/ `HttpLlmBackend` の `chat_inner`
+（`chat` と `chat_cancellable` の共通部。JPEG フォールバックはここ）/ `chat_with_backoff` の
+sleep を `select!` で token と競わせる（切れたら `Err(err)` = いま受けた失敗をそのまま）/
+`turn.rs` の 2 箇所。
+
+**テスト**: 結合を 9 場面へ（+2）。**8 = 30 秒の明示値の待ち中に 150 ms で cancel → 2 秒以内に
+返り、送ったのは 1 回、返るのは受けた 429 そのもの**（`retry_after = Some(30s)`）。
+**9 = 600 ms 黙るスタブへ 100 ms で cancel → 応答が届く**（`elapsed ≥ 600 ms`・本文 `late`）=
+HTTP 往復は切れないことの負の対照。ログは 7 本になり、打ち切られた待ちも「待ち始めた
+1 行」（`hint=30s wait=30000..33000ms`）は残る — 切れた事実は `turn.rs` の `interrupted` が
+書くので、ここに固有の行は作らない。lib 669 + 結合全緑・clippy 警告ゼロ。
+**ミューテーション 1 回**: `select!` の token の腕を `pending()` に差し替える → 場面 8 が
+**30.5 秒待ってから**「30 秒待たずに返る」の assert で赤（ミューテーションのテストが
+30 秒かかるのは、機構が無いと本当に 30 秒待つことの実測でもある）。
+
+**次に触る人が要る 2 点**:
+- **`chat` を直に呼ぶ経路は打ち切りの外**。ターンループ以外から `HttpLlmBackend` を呼ぶ
+  ときは `chat_cancellable` に token を渡さないと、その待ちは切れない（今それに当たるのは
+  要約だけで、意図どおり）
+- **HTTP 往復中の打ち切りは今までどおり `request_timeout_secs`（既定 120 秒）まで待つ**。
+  検収 4 の「1 秒以内」は待ちの最中だけ
 
 ## 検収項目（各項目に到達経路を書く）
 

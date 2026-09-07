@@ -21,6 +21,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use tokio_util::sync::CancellationToken;
+
 use fuseforks_core::llm::retry::{HintSource, RetryClass};
 use fuseforks_core::llm::{ChatMessage, ChatRequest, LlmBackend, LlmError};
 use fuseforks_core::model::{CredentialSource, ModelTemplate};
@@ -44,6 +46,10 @@ enum Policy {
     GeminiRetryInfo,
     /// 常に 529（Anthropic の過負荷の形。本文は素の JSON）。
     Overloaded,
+    /// 常に 429 + `Retry-After: 30`。打ち切りで待ちが切れることを見る（D4）。
+    RateLimitedThirty,
+    /// 600 ms 黙ってから 200。**HTTP 往復は打ち切りで切れない**ことを見る（D4 の境界）。
+    SlowOk,
 }
 
 type Hits = Arc<Mutex<usize>>;
@@ -89,6 +95,9 @@ async fn spawn_stub(policy: Policy) -> (String, Hits) {
                     }
                 }
                 *counter.lock().unwrap() += 1;
+                if policy == Policy::SlowOk {
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                }
 
                 let slow_down = r#"{"error":{"message":"slow down"}}"#;
                 let (status, extra, payload) = match policy {
@@ -118,6 +127,14 @@ async fn spawn_stub(policy: Policy) -> (String, Hits) {
                         "529 Overloaded",
                         "",
                         r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+                    ),
+                    Policy::RateLimitedThirty => {
+                        ("429 Too Many Requests", "retry-after: 30\r\n", slow_down)
+                    }
+                    Policy::SlowOk => (
+                        "200 OK",
+                        "",
+                        r#"{"choices":[{"message":{"role":"assistant","content":"late"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#,
                     ),
                 };
                 let response = format!(
@@ -263,13 +280,52 @@ async fn retries_wait_for_the_hint_and_stop_on_billing_or_a_too_long_hint() {
     let (status, _, class, ..) = api(err);
     assert_eq!((status, class), (529, RetryClass::Overloaded));
 
+    // 8. 30 秒の明示値の待ちの最中に打ち切り — **待ちが切れて即返る**（D4・S4・検収 4）。
+    //    返るのは受けた 429 そのもの（新しい variant は無い）。送ったのは 1 回。
+    let (url, hits) = spawn_stub(Policy::RateLimitedThirty).await;
+    let token = CancellationToken::new();
+    let canceller = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        canceller.cancel();
+    });
+    let started = Instant::now();
+    let err = backend(&url, Provider::OpenAiCompat)
+        .chat_cancellable(request(), Some(token))
+        .await
+        .expect_err("429");
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(2), "30 秒待たずに返る: {elapsed:?}");
+    assert_eq!(*hits.lock().unwrap(), 1, "再送していない");
+    let (status, _, class, retry_after, _) = api(err);
+    assert_eq!((status, class), (429, RetryClass::RateLimit));
+    assert_eq!(retry_after, Some(Duration::from_secs(30)));
+
+    // 9. HTTP 往復の最中に打ち切り — **切れない**（D4 の境界。払いの記録を失わないため）。
+    //    600 ms 黙るスタブへ 100 ms で cancel しても、応答は届く。
+    let (url, hits) = spawn_stub(Policy::SlowOk).await;
+    let token = CancellationToken::new();
+    let canceller = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        canceller.cancel();
+    });
+    let started = Instant::now();
+    let response = backend(&url, Provider::OpenAiCompat)
+        .chat_cancellable(request(), Some(token))
+        .await
+        .expect("往復は完走する");
+    assert!(started.elapsed() >= Duration::from_millis(600), "HTTP は切らない");
+    assert_eq!(response.text.as_deref(), Some("late"));
+    assert_eq!(*hits.lock().unwrap(), 1);
+
     // ---- ログ。場面の順序 = 行の順序。
     let text = std::fs::read_to_string(&log).expect("読めること");
     let lines: Vec<&str> = text
         .lines()
         .filter(|line| line.contains("llm retry"))
         .collect();
-    assert_eq!(lines.len(), 6, "再送 4 本 + 停止 2 本:\n{text}");
+    assert_eq!(lines.len(), 7, "再送 5 本 + 停止 2 本:\n{text}");
 
     let expect_prefix = |line: &str, prefix: &str| {
         assert!(line.contains(prefix), "期待 `{prefix}`\n実物 `{line}`");
@@ -302,4 +358,12 @@ async fn retries_wait_for_the_hint_and_stop_on_billing_or_a_too_long_hint() {
         lines[5],
         "llm retry: model=stub-model attempt=1/2 status=529 class=overloaded code=overloaded_error hint=- src=- wait=",
     );
+    // 打ち切られた待ちも、待ち始めた事実は 1 行残る（切れたことは turn.rs 側の
+    // `interrupted` が書く — ここには固有の行を作らない）。
+    expect_prefix(
+        lines[6],
+        "llm retry: model=stub-model attempt=1/2 status=429 class=rate_limit code=- hint=30s src=header wait=",
+    );
+    let wait = wait_ms(lines[6]);
+    assert!((30_000..=33_000).contains(&wait), "30 秒 + jitter ≤ 10%: {wait}");
 }

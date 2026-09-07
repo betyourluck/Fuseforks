@@ -56,6 +56,24 @@ pub trait LlmBackend: Send + Sync {
 
     /// 1 往復。再試行の要否は実装が判断する。
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError>;
+
+    /// 打ち切りの token を添えた 1 往復（Spec 52 D4）。
+    ///
+    /// **切れるのは再試行の待ち（sleep）だけ**で、HTTP 往復は切らない — 切ると
+    /// プロバイダが払わせた usage が届かず、`turn:` 行にも予算にも出ない
+    /// （`failures.md` #103 の形）。sleep は捨てても 1 トークンも払わない。
+    ///
+    /// 既定の実装は token を読まずに [`Self::chat`] へ委ねる。待ちを持たない実装
+    /// （`EchoBackend` / 結合テストの 50 余りのバックエンド）は上書きしなくてよい —
+    /// trait の署名を変えると全実装が落ちるので、加算的な既定メソッドにした。
+    async fn chat_cancellable(
+        &self,
+        req: ChatRequest,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<ChatResponse, LlmError> {
+        let _ = cancel;
+        self.chat(req).await
+    }
 }
 
 /// バックエンドの解決結果。
