@@ -67,6 +67,7 @@ Fuseforks/
 │       │       ├── meta_responses.rs   Meta Responses adapter (web search, all four attachment kinds)
 │       │       ├── perplexity_responses.rs Perplexity Responses adapter (four search tools, sources)
 │       │       ├── responses_input.rs  input list shared by both Responses wires
+│       │       ├── retry.rs         Retry pure functions (classification, wait formula, Retry-After; Spec 52)
 │       │       ├── client.rs        HTTP core (URL / headers / retry)
 │       │       └── error.rs         LlmError (retry decision axis)
 │       ├── tests/orchestrator.rs    Integration tests (no network required)
@@ -837,6 +838,8 @@ Production pitfalls are listed in `llm_wire.invariants` in `data_contract.yaml`.
 - Every response field has `#[serde(default)]`. Servers claiming compatibility vary widely in practice.
 - Retry as an "empty inference response" only when the body is empty, `tool_calls` is empty, and `finish == length`.
 - Preserve the **raw** data on parse failure; it is the material for returning the rejection reason and requesting regeneration.
+- **Whether to retry is decided by a closed classification** ([Spec 52](specs/52_retry-classification.md)). 429 / 529 / 5xx / transport failures / empty inference responses are resent; 401 / 403 / 400 / 404 and **`insufficient_quota` (which OpenAI-family APIs return as a 429)** are not. The classification lives in the pure functions of `llm/retry.rs`; each adapter's `error_signal` extracts the provider code from the body.
+- **A server-stated wait is a floor** (the `Retry-After` header, and Gemini's in-body `google.rpc.RetryInfo.retryDelay`). The wait is the larger of that and the exponential backoff (200 ms × 2ⁿ, capped at 5 s), plus 0–10% upward jitter. **A stated wait above 60 seconds is not honored**: the call stops and the body is prefixed with "the provider asks you to retry in N seconds".
 
 ### Prompt Cache
 
@@ -1108,6 +1111,10 @@ Secrets pass through the process only from `LlmConfig::from_template` to the HTT
 > This was rebuilt twice. Initially, `apiKeyEnv` was a `String`, and the only defense was a UI label and warning text. A real key was pasted on the first day of use and persisted in plaintext. The next design required an environment variable name, but that did not fit a desktop GUI: it required terminal work and restart, and on Windows configured variables do not propagate to an already-running process. **Warnings are not controls. It is not enough to make writing impossible; the design must provide a correct place for the user to put the value.**
 
 ## Operation
+
+### Retry Waits (Spec 52)
+
+Right after a 429 or 529, the turn **goes quiet for as long as the server asked** (the screen still shows "typing"; at most 66 s = 60 s plus jitter). With the default of three attempts, **the wait can happen twice** (about two minutes at most). **"■ Stop" cuts this wait immediately**, but never an in-flight HTTP round trip: cutting that would lose the usage the provider already charged for, producing spend that shows up in neither the stats nor the budget. What happened is readable in `fuseforks.log` as `llm retry:` (a resend) and `llm retry stop:` (stopped by classification or the ceiling); `hint=` is the server's value and `src=` where it came from (`header` / `body`).
 
 ### First Launch
 

@@ -4758,8 +4758,9 @@ llm_wire:
       先頭 40 字。計器の code= に出すだけ）/ retry_after / hint_src。組む場所は client の
       `attempt()` 1 箇所と `LlmError::api()`（status 既定・待ち時間なし。テストと文面差し替え用）
 
-    状態: **P2（2026-09-07）= 分類・(a)(b) のマージ・待ちの式・計器 2 形・本文の前置・
-      打ち切り（sleep の select!）まで着地。** 残は P3（台帳）と P4（実機）
+    状態: **P3（2026-09-07）= 分類・(a)(b) のマージ・待ちの式・計器 2 形・本文の前置・
+      打ち切り（sleep の select!）・台帳（DETAIL 日英 / CLAUDE.md / failures.md #120）まで
+      着地。** 残は P4（実機 — 無料枠の波の再現で `src=` を読む）
 
   usage: |
     canonical の Usage（Spec 32 P0 凍結 2026-08-10）。欄は prompt / completion /

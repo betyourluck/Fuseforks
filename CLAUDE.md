@@ -954,6 +954,44 @@ otari は利用者単位の予算（予約 + reconcile）、Dify はテナント
 **Dify は層が違う** — `quota` 372 件 / `billing` 428 件と厚いが、**テナント単位の
 課金枠**であって実行中の因果ごとの天井ではない。SaaS の請求層。
 
+## busbar の実読と突き合わせ（2026-09-07。**コードを読んだ。README ではない**）
+
+起点は利用者 —「この Rust の SDK について Fuseforks に使えるものがないか調べて」
+（github.com/GetBusbar/busbar。Apache-2.0・128 stars・2026-05-29 作成）。**8 実装目**
+（LangGraph / Dify / AionUi / otari / eigent / Symphony / Lya Studio Coder に続く）。
+scratchpad へ浅くクローン（`4f7e9b0`）し、読み手 4 本（IR / 費用と予算 / ブレーカーと
+フェイルオーバー / プラグインと MCP・A2A）で file:line を取った。**ビルドも実走も
+していない** — 「同一プロトコルはバイト等価」は実装の読みであって実測ではない。
+
+**種別は LLM ゲートウェイ**（otari と同じ「横断するゲートウェイ」の層）。「Rust の SDK」に
+当たる `crates/api` と `plugin-sdk` は busbar 自身のプラグイン（cdylib + C ABI・ed25519
+署名）が実装する契約で、アプリへ組み込むライブラリではない。6 プロトコル（Anthropic /
+OpenAI chat / Responses / Gemini / Bedrock / Cohere）を superset IR で相互変換し、同一
+プロトコルは元バイトを転送（`proxy/engine/mod.rs:1490` / `proto/stream.rs:143` で IR を
+課金の側路に降格）。これは `Provider` + `baseUrl` + `ALSO_SERVES_COMPAT` と同じ形。
+
+| 領域 | busbar | Fuseforks | 判定 |
+|---|---|---|---|
+| usage の欄 | 4 つだけ（`ir/mod.rs:659-662`）。5m/1h・思考トークン・`toolUsePromptTokenCount`・`groundingMetadata` は 0 ヒット。Responses 出力は `reasoning_tokens: 0` を捏造（`openai_responses/mod.rs:253`） | Spec 32 / 40 / 48 で全部持つ | こちらが先 |
+| 単価表 | 4 レート（`cost.rs:86-92`）。1h・段階課金・ツール別課金は無い。config の `rate_card` が唯一で、無いモデルは fail-closed | Spec 41 = 4 + 1 レート | こちらが先 |
+| 予算 | 仮想キー単位の窓つき。**トークンは admit 時に予約せず事後加算 = ソフト**。「ハード化には admit 時リザーブが要るが scope 外」と明記（`governance/state.rs:1606-1616`）。CAS は同時実行数だけ | Spec 38 の CAS 予約 | **「因果ごとのトークン天井を持つのは公開実装ではこの村だけ」は保つ** |
+| 再試行 | 同一レーンへの再試行ゼロ。`Retry-After` は delay-seconds と HTTP-date（`breaker.rs:131-148`）を読むが cooldown の下限にだけ使い、待たずに次レーンへ。**本文の `retryDelay` は 0 ヒット** | 5 秒天井・ヘッダも本文も読まず | 部分的に向こうが先 → **Spec 52** |
+| MCP / A2A | **実装なし**。config の doc コメントに「1.5.4 / 1.5.6 で足す」。実在するのは Responses の `mcp` ツール定義を不透明のまま素通しする経路（`openai_responses/reader.rs:372-387`） | Spec 25 の扉・`run` の閉じた許容 | README の主張はロードマップ |
+| 監査 | 1 要求 5 欄。本文は型で送れない（`export/projection.rs:65-67`） | `fuseforks.log` の計器 | 層が違う |
+
+**使えたもの = `breaker.rs` の純関数 3 本だけ**（`StatusClass` + `classify` の網羅 match /
+`parse_retry_after` / `compute_cooldown_with_retry_after` の jitter と下限）→ **Spec 52 として
+同日に rev2 → P0〜P3**。写したのは構造で、コードは書き直した（NOTICE 不要。doc コメントに
+出典 1 行）。**あちらと違えた 2 点**: 天井超えの明示値はクランプせず止める（村の待ちは
+飛行中のターンの中で起きる）/ jitter は `max` の後に上向きだけ（明示値を下回らない）。
+
+**採らない**: ゲートウェイとして前に置く（単一利用者のデスクトップで、村の予算と計器の
+ほうが細かい。効く日があるとすれば core 単独実行の構想で資格情報をコンテナの境界に
+置きたいとき — その日の参照候補）/ プラグイン署名とローダ（DLL プラグインは却下済み）/
+IR の相互変換（個体 = 1 ワイヤで変換の必要が無い。`n > 1` のクランプや hosted tool の
+全 drop が「変換を持たない判断」の裏付け）/ ヘルスプローブ（待機中の個体は課金されない）。
+**Bedrock を繋ぐ日が来たら `proto/bedrock/` + `sigv4.rs`（1,258 行）が参照実装**（純 Rust）。
+
 ## LangGraph の実読と突き合わせ（2026-08-19。**コードを読んだ。README ではない**）
 
 起点は利用者 —「LangGraph の機能を簡単に落とし込む。動的ルーティングとか。本番運用まで
@@ -987,7 +1025,7 @@ prebuilt・CLI・SDK）を読み手 3 本で読ませ、根拠は file:line で�
 | 共有状態 | チャネル + リデューサ。**リデューサ無しの鍵に 2 ノードが同じ周で書くと `InvalidUpdateError`**（`channels/last_value.py:60`）。`add_messages` は id で置換する append | 黒板（`file write` = 全文上書き・後勝ち）。衝突は**条例「1 人 1 ファイル」= 文言**で避けている。**`file` の `append` は既にある**（Spec 09 rev2・2026-07-31・`tools/file.rs:274`。不在なら新規作成・上書きゲート無し・上限は追記後の大きさ）— **条例がそれを知らない**（「write は全文上書きなので 2 人で書くと片方が消える」とだけ書いてある） | **欠けは op ではなく 2 つ**: (a) 条例の文言が `append` を数えていない (b) `write` / `sd` の read-modify-write は**読んでから変わっていても黙って後勝ち**（`overwrite: true` は「存在するか」しか見ない。LangGraph の `InvalidUpdateError` に当たる検出が無い）。**同じ問題を `run.json` は既に構造で解いている**（read → 差分適用 → `write_atomic`・3 回リトライ。Spec 15 Notes 4） |
 | 部分グラフ / 名前空間 | compiled graph をそのまま node に（`graph/state.py:667`）、`checkpoint_ns` で入れ子 | 無し（村は平坦。`hop` が深さ） | 欠け。要る利用が無い |
 | 実行モデル | Pregel の superstep。周回境界で状態反映。**`recursion_limit` の既定は版で動く** — 配布物で確認: 1.0.0 = 25 / 1.1.0 = 10000 / 1.2.0 以降 = 10007（読んだ 1.2.11 開発版は `_internal/_config.py:32` で 10007。「25」は 1.0 系の値で文書に残っている）、`GraphRecursionError` | ターンループ。**周回境界で cancel / budget / RepeatGuard / hop を検査** = superstep 境界と同じ形。上限は `max_tool_iterations` 36 / `max_hops` | 同型 |
-| ノード再試行 | `RetryPolicy`（0.5s ×2 ≤128s・3 回・Connection / 5xx のみ。`types.py:418`） | `chat_with_backoff`（200ms ×2 ≤5s・`max_retries`・429 / 5xx / 空応答）— **LLM 呼び出しだけ**。ツール実行の再試行は無く、**逆向きの `RepeatGuard`**（同じ失敗の 3 回目を止める）を持つ | 方針の差。**こちらは「再試行を増やす」より「繰り返しを止める」側** |
+| ノード再試行 | `RetryPolicy`（0.5s ×2 ≤128s・3 回・Connection / 5xx のみ。`types.py:418`） | `chat_with_backoff`（200ms ×2 ≤5s・`max_retries`・429 / 5xx / 空応答）— **LLM 呼び出しだけ**。ツール実行の再試行は無く、**逆向きの `RepeatGuard`**（同じ失敗の 3 回目を止める）を持つ。**→ 2026-09-07 Spec 52 で閉じた分類 + 明示値の下限へ**（`insufficient_quota` は 429 でも止める） | 方針の差。**こちらは「再試行を増やす」より「繰り返しを止める」側** |
 | ノード timeout | `TimeoutPolicy`（協調的） | `run` の `timeoutSecs` / `ask_timeout` / probe の timeout | 同等 |
 | ノード結果キャッシュ | `CachePolicy`（入力の pickle ハッシュ・TTL・InMemory / Redis） | **意図的に無し**（2026-08-04: 検索結果キャッシュは RepeatGuard の判定を壊すと却下） | 採らない |
 | 耐久性 / checkpoint | `durability` = `sync` / `async`（既定）/ `exit`（`types.py:89`）。**superstep ごと**に checkpoint | `sessions.redb` は message 投入時 + exchange ターン完了時 = **`exit` 相当の粒度（ターン単位）**。飛行中に落ちると半端（許容と凍結） | **欠け: 周回単位の再開**。落ちたら頼み直し（予定は次回発火） |
@@ -1740,11 +1778,15 @@ Please retry in 56.493566409s
   実装は `Duration::from_millis(200 * 2^n).min(Duration::from_secs(5))`
   （`llm/client.rs:470`）で、サーバーが `retryDelay: "56s"` と**言っているのに
   読んでいない**。この 429 は再試行しても**構造的に必ず失敗する**
-- **機構は作らない**（2026-08-25）。`retryDelay` を読んで待っても
+- ~~**機構は作らない**（2026-08-25）。~~ `retryDelay` を読んで待っても
   **RPM 15 は 2 体 × 10 周には足りない**ので症状は消えず、遅くなるだけ。
   直す価値は「失敗が減ること」ではなく「サーバーが教えた値を無視しないこと」の
-  側にあり、**それは頻度を見てから決める**（#47 の規律。**今回は運用で解消した
-  ので頻度は 1**）
+  側にあり、~~**それは頻度を見てから決める**（#47 の規律。**今回は運用で解消した
+  ので頻度は 1**）~~ → **2026-09-07 に [Spec 52](specs/52_retry-classification.md) で
+  覆した**（利用者裁定。busbar の `breaker.rs` の実読で実装の値段が純関数 1 本に
+  下がった。頻度は 3 件のまま）。`RetryInfo.retryDelay` を下限として待ち、60 秒超は
+  止めて本文に秒数を書く。「RPM 15 は足りない」は今も正しく、変わったのは
+  「再試行が正直になった」ことと「`llm retry:` で見えるようになった」ことの 2 つ
 - **鍵を差し替えた再走行が対照になった**（同日 03:12）。**`stop=failed` が
   0 件**で、同じ 2 体が 13 周・14 周を完走。**429 は鍵の枠の問題であって、
   周回数でも波の形でもない**ことがこれで確定した
@@ -1847,6 +1889,34 @@ Please retry in 56.493566409s
 - **winget の device 認証と同族の回避をもう 1 つ確定** — probe のトークンは
   `ELYTH_TOKEN` 環境変数で利用者のシェルから注入（値はスクリプトにもログにも
   残らない）。実測: elyth-remote v2.0.0 / protocol 2025-06-18 / tools 26 本
+
+## 現在地（2026-09-07 更新）
+
+**この日は台帳の書き戻し 1 件・先行実装の実読 1 件・Spec 1 本を起票から P3 まで。**
+git: main = `f7a6043` 以降・push 済み ✗（この日のコミットは未 push）・clean。タグは
+`v0.2.0` のまま。
+
+- **winget 0.2.0（PR #430036）のマージを台帳へ**（publish の 61 分後にマージ。
+  0.1.15 の PR #428116 も 09-02 にマージ済みだった）
+- **busbar の実読**（上の「busbar の実読と突き合わせ」が正）— 8 実装目。使えたのは
+  `breaker.rs` の純関数 3 本だけで、usage の粒度・単価表・予算の硬さは村が先を行き、
+  README の MCP / A2A 統制はコードに無い
+- **[Spec 52](specs/52_retry-classification.md) rev2 承認 → P0〜P3**（同日）。
+  再試行を閉じた分類（`RetryClass` 9 値）へ、サーバーの明示値（`Retry-After` /
+  Gemini の `RetryInfo.retryDelay`）を下限に、60 秒超は止めて本文へ秒数、jitter は
+  `max` の後に上向きだけ、打ち切りは sleep だけ切る、計器 `llm retry:` /
+  `llm retry stop:`。**変わった挙動は 2 つだけ**（`insufficient_quota` を再試行しない /
+  明示値を下限に待つ）。査読 2 系統 16 点 → 採用 12 / 訂正して採用 2 / 反証 1 /
+  裁定 1（408 は据え置き）。**rev1 の待ちの式は誤りだった**（明示値が勝つと jitter が
+  消える — 査読 2 系統が同じ穴を指した）。**D4 の「実装 10 箇所」は 57 箇所だった**
+  （`failures.md` #120）。ミューテーション 4 回とも狙った 1 本だけ赤
+
+**次の一手**: **Spec 52 P4 = 実機**（無料枠の Gemini 鍵で 2 体へ波を撒く = 2026-08-25 の
+再現。`llm retry:` の `src=` が D2 (a) の要否を初めて答える。検収 7 件のうち踏めるのは
+1〜4・7）/ 開発機で素の `winget upgrade` が 0.2.0 へ通るか / 評価基盤の「完遂」の軸 /
+`world.json` の未知の欄を保持して書き戻す（#112）。
+
+以下は 2026-09-05 時点の記録。
 
 ## 現在地（2026-09-05 更新）
 
@@ -5845,7 +5915,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   赤）→ **P2 完了**（同日。**D4 の形を訂正** — 実装は 10 箇所ではなく 57 箇所あったので、
   trait の署名を変えず `chat_cancellable` を既定実装つきで足し `HttpLlmBackend` だけが
   上書き。sleep だけ `select!`・HTTP は切らない。結合 +2 場面、ミューテーションで
-  「機構が無いと本当に 30.5 秒待つ」を実測）。残は P3 台帳と P4 実機。起点は利用者
+  「機構が無いと本当に 30.5 秒待つ」を実測）→ **P3 完了**（同日。DETAIL 日英に
+  再試行の分類と「運用 > 再試行の待ち」/ CLAUDE.md の「波の fan-out」を取り消し線で覆し
+  「busbar の実読と突き合わせ」を新設 / `failures.md` #120）。**残は P4 実機**
+  （無料枠の波の再現で `src=` を読む）。起点は利用者
   「breaker.rs の純関数を参考にしましょう」— busbar（github.com/GetBusbar/busbar）の実読で
   写す価値があったのは `breaker.rs` の純関数 3 本だけ、という結論の実装側。**2026-08-25 の
   「機構は作らない・頻度を見てから」を利用者裁定で覆す**（頻度は今も 3 件 = 429 ×2 /

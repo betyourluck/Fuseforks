@@ -67,6 +67,7 @@ Fuseforks/
 │       │       ├── meta_responses.rs   Meta Responses adapter（web 検索・4 種別の添付）
 │       │       ├── perplexity_responses.rs Perplexity Responses adapter（検索 4 種・出典）
 │       │       ├── responses_input.rs  Responses 2 本が共有する input 列の組み立て
+│       │       ├── retry.rs         再試行の純関数（分類・待ちの式・Retry-After。Spec 52）
 │       │       ├── client.rs        HTTP 核（URL・ヘッダ・再試行）
 │       │       └── error.rs         LlmError（再試行可否の判断軸）
 │       ├── tests/orchestrator.rs    結合テスト（ネットワーク不要）
@@ -1164,6 +1165,14 @@ canonical ⇄ wire の adapter 分離を採る。オーケストレーターは 
 - 応答側の全フィールドに `#[serde(default)]`。互換を名乗るサーバは実際には形がまちまち
 - 本文空 + tool_calls 空 + `finish == length` のときだけ「推論の空応答」として再試行に乗せる
 - パース失敗は **raw を保持**する（却下理由と一緒に差し戻して再生成させる燃料）
+- **再試行の対象は閉じた分類で決める**（[Spec 52](specs/52_retry-classification.md)）。
+  429 / 529 / 5xx / HTTP 障害 / 推論の空応答は再送し、401 / 403 / 400 / 404 と
+  **`insufficient_quota`（OpenAI 系は 429 で返す）** は再送しない。分類は `llm/retry.rs` の
+  純関数で、プロバイダの code は各 adapter の `error_signal` が本文から取り出す
+- **サーバーが明示した待ち時間は下限**（`Retry-After` ヘッダと、Gemini の本文
+  `google.rpc.RetryInfo.retryDelay`）。指数バックオフ（200 ms × 2ⁿ・5 秒まで）との大きい
+  ほうに 0〜10% の jitter を上乗せして待つ。**60 秒を超える要求には従わず**、本文の先頭に
+  「プロバイダは N 秒後の再試行を求めています」と書いて止める
 
 ### プロンプトキャッシュ
 
@@ -1471,6 +1480,15 @@ UI へ返るのは「登録済みかどうか」だけで、**値を読み出す
 > 利用者が正しく置ける場所を用意するところまでが設計。**
 
 ## 運用
+
+### 再試行の待ち（Spec 52）
+
+429 や 529 の直後は、サーバーが明示した待ち時間だけ**ターンが静かになる**（画面は
+「入力中」のまま。最長 66 秒 = 60 秒 + jitter）。既定の 3 回試行では**待ちが 2 回起きうる**
+（最長で約 2 分）。**「■ 停止」はこの待ちを即座に切る**が、HTTP 往復の最中は切らない —
+プロバイダが払わせた usage が届かなくなり、統計にも予算にも出ない払いが生まれるため。
+何が起きたかは `fuseforks.log` の `llm retry:`（再送）と `llm retry stop:`（分類か天井で
+止めた）の行で読める。`hint=` がサーバーの値、`src=` がその出所（`header` / `body`）。
 
 ### 初回起動
 
