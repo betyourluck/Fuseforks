@@ -320,7 +320,9 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
 が 0.1.13 を返すことを 2026-09-02 に実測）。**0.1.14 は利用者裁定で飛ばし、
 0.1.15 を PR #428116 で提出**（2026-09-02。`wingetcreate update … --submit
 --token "$(gh auth token)"` の 1 段で完了 — 0.1.13 のマニフェストに
-`InstallerLocale` が無いので引き写しで全ロケール対応のまま）。
+`InstallerLocale` が無いので引き写しで全ロケール対応のまま。**2026-09-02 19:38 UTC
+マージ**）。**→ 0.2.0 も PR #430036 で同じ 1 段。2026-09-05 15:15 UTC にマージ**
+（publish の 61 分後）。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
 
@@ -1852,6 +1854,8 @@ Please retry in 56.493566409s
 「起票 → 査読 2 系統 → rev2 → P0 で契約 → P1〜P3 → P4 実機」の一周を同日に閉じている。
 git: main = `dfb7baa` 以降・push 済み・clean。**タグは `v0.2.0` = `50e6bcf`**（Spec 48〜51 の
 4 本がこの版で初めて配布物に入った。winget PR #430036 / tap `ee2f603` / Release publish 済み）。
+**winget の 0.2.0 は 2026-09-05 15:15 UTC にマージ**（publish 14:14 UTC の 61 分後。
+`Moderator-Approved` → `Publish-Pipeline-Succeeded`。0.1.12 と同じ「1 時間足らず」の形）。
 
 - **[Spec 50](specs/50_context-length-fetch.md) Done** — コンテキスト長の自動取得。起点は
   Spec 49 Notes 1。**起票時の実測が動機そのもの** — 村の 16 テンプレート中 15 件が既定の
@@ -1871,7 +1875,7 @@ git: main = `dfb7baa` 以降・push 済み・clean。**タグは `v0.2.0` = `50e
 
 **次の一手**: 評価基盤の「完遂」の軸（`reply: to=` と `refusal=` を数えるだけ）/ `world.json` の
 未知の欄を保持して書き戻す（#112。次に欄を足す Spec と一緒に）/ v0.2.0 の反応待ち
-（winget の配信確認・開発機で素の `winget upgrade` が通るかは持ち越し）。
+（winget はマージ済み。開発機で素の `winget upgrade` が 0.2.0 へ通るかは持ち越し）。
 
 以下は 2026-09-04 時点の記録。
 
@@ -2736,7 +2740,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   ノートは日英併記で主題はグループ、「利用者が負う条件」5 つ（重いのは**旧版で同じ村を
   開くとグループと所属が消える** = #112 の形）。**タグは利用者・publish と winget と tap は
   Neo** — winget 0.2.0 = PR #430036（`wingetcreate update … --token` の 1 段。
-  `InstallerLocale` 無しを引き写し）/ tap `ee2f603`（sha256 は Release API の `digest`）。
+  `InstallerLocale` 無しを引き写し。**2026-09-05 15:15 UTC マージ**）/ tap `ee2f603`
+  （sha256 は Release API の `digest`）。
   **v0.1.x → v0.2.0 はマイナーの繰り上げ**で、「v0.2.0 で公表」の段は Qiita / note で
   済んでいる（2026-08-15）。この版で 4 本の Spec が初めて配布物に入った
 - **`v0.1.15` = `98c3cba`（2026-09-02。2 コミット）— plan の編集窓を委譲ターンで
