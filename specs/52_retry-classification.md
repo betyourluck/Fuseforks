@@ -553,6 +553,20 @@ HTTP 往復は切れないことの負の対照。ログは 7 本になり、打
     書いてある。テストの初版は `turn:` 行を探して自分で赤にした）
   - 他の 3 体はそのまま待ち、01:22:09〜10 に 2 体が 3 回目の 429（`hint=50〜51s`）、
     agent_6 は `rounds=9/16 stop=-` で完走
+- **検収 4 = 修正後に再観測して合格**（2026-09-08 06:57。起動 06:51:46 の再ビルド）。
+  3 体が `attempt=2/3 hint=59s wait=60〜64 秒` の待ちに入った 29 秒後に agent_6 で「■ 停止」:
+
+  ```text
+  06:57:30.987 interrupt requested: agent=agent_6 seq=4
+  06:57:30.999 turn interrupted: agent=agent_6 seq=4 hop=1 rounds=4 … prompt=17862 model=gemini-3.5-flash-lite
+  ```
+
+  **12 ms で切れ、`turn interrupted:` で閉じた。** `turn: … stop=failed:` も `turn failed:` も
+  出ていない（01:21 の形との対）。払った分（prompt 17,862）は `turn interrupted:` の行に
+  残っている。待ちを続けた残り 2 体（agent_2 / agent_4）は 06:58:07 / 06:58:10 に `stop=-`
+  で完走 = 停止は押した個体だけを切り、同じ波の他の待ちには触れない。
+  同じ走行で `hint=4s` / `5s` の小さい明示値も出た（`wait=4169〜5123ms` — 下限として
+  そのまま効いている）
 - **D2 (a) の要否（Gemini）= 不要だが残す**。Gemini の 429 は 17 本すべて `src=body` で、
   ヘッダを読む経路は 1 度も発火していない。**外すのは誤り** — OpenAI / Anthropic が
   `Retry-After` を付けるかは未観測で、読む側は 10 行の純関数。次に 429 / 529 が他ワイヤで
