@@ -6,7 +6,10 @@
   追加 1 点 = jitter と天井の順序を Notes 8 へ）→ P0 完了（2026-09-07。記録は
   「P0 実装記録」）→ P1 完了（同日。記録は「P1 実装記録」）→ P2 完了（同日。記録は
   「P2 実装記録」— D4 の形を加算的な既定メソッドへ訂正）→ P3 完了（同日。記録は
-  「P3 台帳記録」）。残は P4 実機**
+  「P3 台帳記録」）→ P4 完了 = Done**（2026-09-08。実機検収 7 件 = 観測 5（1・2・3・
+  4・7）/ 結合が代替 1（5）/ 狙わない 1（6）。**検収 4 で D4 の穴が出て同日に塞いだ** —
+  待ちは 2 ms で切れたが分類が `failed:LLM_API` だった。記録は「P4 実機記録」。
+  **起票から Done まで 2 日**）
 - 起点: 利用者 —「breaker.rs の純関数を参考にしましょう」（2026-09-07。busbar =
   github.com/GetBusbar/busbar `4f7e9b0` の実読。CLAUDE.md「先行実装の調査」の
   8 実装目）。前史は 2026-08-25 の実測（CLAUDE.md「波の fan-out はプロバイダの
@@ -521,8 +524,39 @@ HTTP 往復は切れないことの負の対照。ログは 7 本になり、打
   elapsed_ms=124671`。**S1 の「分単位の quota 窓なら次で通る」の実物** — 2026-08-25 は
   5 秒で諦めて 2 体が `turn failed` だったのに対し、今回は 3 体のうち 2 体が完走した
   （落ちた 1 体は `hint=0s` を信じた 400 ms の再送が外れた側）
-- **検収 4（待ち中の停止）は未観測** — 60 秒の待ちに入っている個体は居たが、その最中に
-  「■ 停止」は押されていない。次に `wait=` の大きい行が出た直後に押せば取れる
+- **検収 4 = 観測。ただし半分だけ合格で、D4 の穴が 1 つ出た**（2026-09-08 01:21）。
+  4 体が `attempt=2/3 hint=56〜59s wait=57〜63 秒` の待ちに入った 9 秒後に agent_4 で
+  「■ 停止」:
+
+  ```text
+  01:21:13.190 interrupt requested: agent=agent_4 seq=4
+  01:21:13.192 turn: agent=agent_4 hop=1 rounds=5/- waves=0 stop=failed:LLM_API …
+  01:21:13.202 turn failed: agent=agent_4 hop=1 code=LLM_API fatal=false: API エラー (status=429)
+  ```
+
+  **待ちは 2 ms で切れた**（機構は効いた。1 秒以内の要件は満たす）が、**ターンは
+  `stop=failed:LLM_API` で閉じ、「API エラー」の System 行が出た** — 人が止めたターンが
+  失敗を名乗る。D4 の「切れたら失敗をそのまま返し、ターンループが周回境界で
+  `is_cancelled()` を見て `interrupted` へ落とす」は、**`Err` の腕には当たっていなかった** —
+  `turn.rs` の `Err` の腕は払いを清算してすぐ `Err` で抜け、周回境界（`Ok` の経路にしか無い）
+  を通らない。`token_budget.precedence`（cancel が最優先）を 1 経路で破っていた。
+  - **処方**（同日）: `Err` の腕で払いの清算の直後に `turn.token.is_cancelled()` を見て
+    `finish_interrupted` へ落とす 1 箇所。打ち切りへ落とす判定は**周回境界と `Err` の腕の
+    2 箇所、どちらも `finish_interrupted` の 1 実装**。払った分は落とす前に台帳へ入れる
+  - **赤 → 緑**: `tests/interrupt_during_retry_wait.rs`（token が切れるまで待って 429 を返す
+    バックエンドで、`TurnInterrupted` 1 本・`AgentFailed` 0・ログに `turn interrupted:` が
+    あり `stop=failed:` と `turn failed:` が無い）。修正前は `TurnInterrupted` 0 で赤、
+    修正後に緑。**ミューテーション**（`Err` の腕の検査を `if false &&` で殺す）で同じ
+    assert が赤に戻ることを確認
+  - **予測を外した点**: 打ち切りで閉じた出口は `turn interrupted:` の行で、`turn: …
+    stop=interrupted` ではない（4 出口の書式は CLAUDE.md「失敗したターンの払い」に
+    書いてある。テストの初版は `turn:` 行を探して自分で赤にした）
+  - 他の 3 体はそのまま待ち、01:22:09〜10 に 2 体が 3 回目の 429（`hint=50〜51s`）、
+    agent_6 は `rounds=9/16 stop=-` で完走
+- **D2 (a) の要否（Gemini）= 不要だが残す**。Gemini の 429 は 17 本すべて `src=body` で、
+  ヘッダを読む経路は 1 度も発火していない。**外すのは誤り** — OpenAI / Anthropic が
+  `Retry-After` を付けるかは未観測で、読む側は 10 行の純関数。次に 429 / 529 が他ワイヤで
+  出たとき `src=` が答える
 
 ## Notes
 

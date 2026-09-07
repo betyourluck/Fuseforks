@@ -1452,6 +1452,29 @@ async fn run_turn_inner(
                         guard.commit(actual);
                     }
                 }
+                // **打ち切りは失敗より先**（`token_budget.precedence`: cancel が最優先）。
+                // Spec 52 D4 で再試行の待ちが token で切れるようになり、切れた
+                // `chat_cancellable` は**いま受けた失敗（429 等）をそのまま返す**。
+                // ここで先に `Err` として抜けると、人が停止を押したターンが
+                // `stop=failed:LLM_API` + 「API エラー」の System 行で終わる
+                // （Spec 52 P4 の実機 2026-09-08 01:21:13 — 待ちは 2 ms で切れたのに
+                // 分類が失敗だった）。周回境界の検査（上の `is_cancelled`）は `Ok` の
+                // 経路しか通らないので、`Err` の腕にも同じ 1 行が要る。払いの清算は
+                // 上で済ませてから落とす（打ち切りでも払った分は台帳に残す）。
+                if turn.token.is_cancelled() {
+                    return finish_interrupted(
+                        shared,
+                        agent_id,
+                        reply_to.take(),
+                        turn,
+                        ctx,
+                        &sent_user_turn,
+                        *spend,
+                        plan_wave,
+                    )
+                    .await
+                    .map(|()| None);
+                }
                 return Err(err.into());
             }
         };
