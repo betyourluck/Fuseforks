@@ -33,12 +33,20 @@ pub enum LlmError {
     },
 
     /// API がエラーステータスを返した。`status` で再試行可否を判断する。
+    ///
+    /// **`retry_after` と `hint_src` は Spec 52 P0 で足した欄。** サーバーが明示した
+    /// 待ち時間（`Retry-After` ヘッダ。P1 から Gemini の本文 `RetryInfo` も）を運ぶ。
+    /// P0 では計器 `llm retry:` に出すだけで、待ちの計算には使わない（P1 の `plan_wait`）。
     #[error("API エラー (status={status}): {body}")]
     Api {
         /// HTTP ステータスコード。
         status: u16,
         /// 応答本文（先頭のみ）。
         body: String,
+        /// サーバーが明示した待ち時間。ヘッダと本文の両方があれば大きいほう。
+        retry_after: Option<std::time::Duration>,
+        /// `retry_after` の出所（計器用）。
+        hint_src: crate::llm::retry::HintSource,
     },
 
     /// 応答が空。理由が `length` 以外の場合（プロバイダが 200 + 空本文を返した等）。
@@ -117,6 +125,17 @@ impl From<reqwest::Error> for LlmError {
 }
 
 impl LlmError {
+    /// 明示された待ち時間を持たない [`Self::Api`]。テストと、ヘッダを見ずに組む
+    /// 経路（JPEG フォールバックの文面差し替え）のための入口。
+    pub fn api(status: u16, body: impl Into<String>) -> Self {
+        Self::Api {
+            status,
+            body: body.into(),
+            retry_after: None,
+            hint_src: crate::llm::retry::HintSource::None,
+        }
+    }
+
     /// UI 側の分岐に使う安定コード。
     pub fn code(&self) -> &'static str {
         match self {
@@ -184,27 +203,9 @@ mod tests {
     #[test]
     fn transient_classification_matches_retry_policy() {
         assert!(LlmError::EmptyResponse.is_transient());
-        assert!(
-            LlmError::Api {
-                status: 429,
-                body: String::new()
-            }
-            .is_transient()
-        );
-        assert!(
-            LlmError::Api {
-                status: 503,
-                body: String::new()
-            }
-            .is_transient()
-        );
-        assert!(
-            !LlmError::Api {
-                status: 400,
-                body: String::new()
-            }
-            .is_transient()
-        );
+        assert!(LlmError::api(429, "").is_transient());
+        assert!(LlmError::api(503, "").is_transient());
+        assert!(!LlmError::api(400, "").is_transient());
         assert!(
             !LlmError::Blocked {
                 reason: "SAFETY".into()
@@ -234,10 +235,7 @@ mod tests {
         };
         assert_eq!(truncated.usage(), Some(&paid), "上限切れは払った量を運ぶ");
 
-        let rejected = LlmError::Api {
-            status: 400,
-            body: String::new(),
-        };
+        let rejected = LlmError::api(400, "");
         assert_eq!(rejected.usage(), None, "400 は生成前なので払っていない");
         assert_eq!(LlmError::EmptyResponse.usage(), None, "分からないものは None");
     }

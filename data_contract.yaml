@@ -4695,8 +4695,64 @@ llm_wire:
     - text 空 かつ tool_calls 空 かつ finish==Length のときだけ EmptyResponse（推論の空応答）
     - Blocked を EmptyResponse から分離する（安全フィルタ拒否を診断可能に保つ）
     - Parse エラーは raw を保持する（却下理由と一緒に差し戻して再生成させる燃料）
-    - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）
+    - 再試行対象は is_transient のみ（HTTP 障害 / 429 / 5xx / 推論の空応答）。
+      分類と待ち時間の規則は retry_contract（Spec 52。P0 時点では判定は据え置きで、
+      計器 `llm retry:` と Retry-After の読み取りだけが入っている）
     - reqwest の source 連鎖は平坦化する（真因が "error sending request" に隠れる）
+
+  retry_contract: |
+    Spec 52（2026-09-07 rev2 承認）。再試行は `llm/client.rs` の `chat_with_backoff` の
+    1 箇所で、判断材料は `llm/retry.rs` の純関数（I/O・時計・乱数を読まない。現在時刻は
+    引数）。構造は busbar `crates/busbar/src/breaker.rs`（Apache-2.0）を写し、コードは
+    書き直した。
+
+    分類 `RetryClass`（閉じた 9 値・網羅 match）と `Verdict`:
+      RateLimit(429) / Overloaded(529) / ServerError(5xx) / Timeout(reqwest is_timeout) /
+      Network(reqwest is_connect・is_request)                             → Retry
+      Auth(401・403) / ClientError(他の 4xx。**408 を含む** = 2026-09-07 裁定) /
+      ContextLength(400・413 + code) / Billing(プロバイダ code)          → Stop
+      - status 以外の材料（code・本文の待ち時間）は adapter の純関数 `error_signal(body)` が
+        出し、client は `Provider` で振り分けて呼ぶ（decode と同じ。client 自身は JSON を
+        解釈しない）
+      - Billing と読む code は OpenAI 互換・Responses 4 本の `insufficient_quota` だけ。
+        Anthropic / Gemini は無し（Gemini の RESOURCE_EXHAUSTED は RateLimit。課金起因の
+        429 を再試行するリスクを許容する）。表に無い code は status 既定へ落ちる
+      - 分類は `LlmError::Api.class` が持つ（`is_transient` は `CoreError::is_retryable` から
+        引数無しで呼ばれるため）
+      - **今と変わる挙動は 2 つだけ**: Billing を再試行しない / 明示値を下限として待つ
+
+    明示された待ち時間の出所は 2 つ。マージは `attempt()` の失敗枝の 1 箇所:
+      (a) `Retry-After` ヘッダ（全ワイヤ。delay-seconds と HTTP-date。過去の日付は Some(0)）
+      (b) Gemini の本文 `error.details[].@type == google.rpc.RetryInfo` の `retryDelay`（"56s"）
+      両方あれば大きいほう。`LlmError::Api.retry_after` に最終値、`hint_src` に出所
+      （none / header / body / both）。生の 2 値は `hint_src` へ畳んでから捨てる
+
+    待ちの式と順序（`plan_wait(attempt, hint, u)`。attempt は 0 始まり・u ∈ [0, 1]）:
+      1. exp = min(200ms × 2^attempt, 5s) — 指数部の天井 5 秒は据え置き
+      2. hint > 60s（MAX_HONORED_RETRY_AFTER = code constant）なら StopHintTooLong —
+         再試行せず、本文へ「プロバイダは N 秒後の再試行を求めています」を前置して返す
+         （JPEG フォールバックの文面差し替えと同じ層・同じ形）
+      3. base = max(exp, hint) — 明示値は下限
+      4. wait = base × (1 + 0.1 × u) — jitter は max の後・上向きだけ（明示値を下回らない）
+      天井の判定は jitter 前の hint。jitter 後の wait は最大 66 秒。u の本番の生成は
+      retry.rs の外（SystemTime のナノ秒・attempt・バックエンドのアドレスを FNV-1a で畳み
+      `(h % 1001) / 1000`）。`rand` を core に足さない
+
+    打ち切り: `LlmBackend::chat(req, cancel)` の cancel は **sleep だけ**を切る。HTTP 往復は
+      切らない（切るとプロバイダが払わせた usage が届かず、`turn:` 行にも予算にも出ない =
+      failures.md #103 の形。sleep は捨てても 1 トークンも払わない）。切れたら last_error を
+      そのまま返し、分類は周回境界の 1 箇所（turn.rs）に任せる
+
+    計器（再試行のたびに 1 行 / 分類か天井で止めたとき 1 行）:
+      llm retry: model=… attempt=k/M status=… class=… code=… hint=NNs|- src=… wait=…ms
+      llm retry stop: model=… attempt=k/M status=… class=… code=… hint=… src=… [reason=hint_too_long]
+      k は失敗した通算の試行番号（1 始まり）、M は max_retries。status=- は Http /
+      EmptyResponse の再試行。hint=0s src=header は「ヘッダは付いていたが過去の日付」。
+      **P0 の縮退版**は `llm retry: model= attempt= status= hint= src=header|- wait=` で、
+      class / code / src=body は P1
+
+    状態: **P0（2026-09-07）= 計器の縮退版 + (a) の読み取り + `Api.retry_after` / `hint_src` の
+      2 欄 + `LlmError::api()`。判定と待ちは据え置き。** 分類・(b)・待ちの式・打ち切りは P1〜P2
 
   usage: |
     canonical の Usage（Spec 32 P0 凍結 2026-08-10）。欄は prompt / completion /

@@ -445,11 +445,23 @@ impl HttpLlmBackend {
         let status = response.status();
 
         if !status.is_success() {
+            // Spec 52 D2 (a): サーバーが明示した待ち時間はヘッダにある。本文を読む前に
+            // 取る（`text()` が response を消費する）。P1 で (b) の本文側とここでマージする。
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| {
+                    super::retry::parse_retry_after(v, std::time::SystemTime::now())
+                });
+            let hint_src = super::retry::HintSource::from_presence(retry_after.is_some(), false);
             let mut body = response.text().await.unwrap_or_default();
             body.truncate(MAX_ERROR_BODY);
             return Err(LlmError::Api {
                 status: status.as_u16(),
                 body,
+                retry_after,
+                hint_src,
             });
         }
 
@@ -544,6 +556,33 @@ impl HttpLlmBackend {
                     // 200ms, 400ms, 800ms, ... 上限 5s。
                     let backoff =
                         Duration::from_millis(200u64.saturating_mul(1 << attempt)).min(Duration::from_secs(5));
+                    // Spec 52 P0 の計器（縮退版）。**再試行はこれまでどのログ行にも出ず**、
+                    // 529 が 16 秒後に落ちたターンで何回試したかを読めなかった。
+                    // `attempt=` は失敗した通算の試行番号（1 始まり）。`hint=` / `src=` は
+                    // サーバーが明示した待ち時間で、P0 では読んで出すだけ（待ちは変えない）。
+                    let (status, hint, src) = match &err {
+                        LlmError::Api {
+                            status,
+                            retry_after,
+                            hint_src,
+                            ..
+                        } => (
+                            status.to_string(),
+                            retry_after.map_or_else(|| "-".to_owned(), |d| format!("{}s", d.as_secs())),
+                            hint_src.as_str(),
+                        ),
+                        _ => ("-".to_owned(), "-".to_owned(), "-"),
+                    };
+                    crate::note!(
+                        "llm retry: model={} attempt={}/{} status={} hint={} src={} wait={}ms",
+                        self.config.model,
+                        attempt + 1,
+                        attempts,
+                        status,
+                        hint,
+                        src,
+                        backoff.as_millis(),
+                    );
                     tokio::time::sleep(backoff).await;
                     last_error = Some(err);
                 }
@@ -615,12 +654,13 @@ impl LlmBackend for HttpLlmBackend {
     /// それでも落ちたら「画像を受け付けない接続先」として理由を本文へ書く。
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
         match self.chat_with_backoff(&req).await {
-            Err(LlmError::Api { status: 400, body })
-                if self.config.provider == Provider::OpenAiCompat
-                    && has_webp_attachments(&req) =>
+            Err(LlmError::Api {
+                status: 400, body, ..
+            }) if self.config.provider == Provider::OpenAiCompat
+                && has_webp_attachments(&req) =>
             {
                 let Some(jpeg_req) = with_jpeg_attachments(&req) else {
-                    return Err(LlmError::Api { status: 400, body });
+                    return Err(LlmError::api(400, body));
                 };
                 crate::note!(
                     "attachment fallback: model={} retrying with jpeg after 400",
@@ -633,14 +673,15 @@ impl LlmBackend for HttpLlmBackend {
                     Err(LlmError::Api {
                         status: 400,
                         body: second,
-                    }) => Err(LlmError::Api {
-                        status: 400,
-                        body: format!(
+                        ..
+                    }) => Err(LlmError::api(
+                        400,
+                        format!(
                             "この接続先は画像を受け付けません（WebP と JPEG の両方が\
                              拒否されました）。画像なしで送り直してください。\
                              プロバイダの応答: {second}"
                         ),
-                    }),
+                    )),
                     Err(other) => Err(other),
                 }
             }
