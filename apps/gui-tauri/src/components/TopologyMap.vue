@@ -39,7 +39,7 @@ import "v-network-graph/lib/style.css";
 import { compactNumber } from "../lib/format";
 import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
-import { seedPositions } from "../lib/kizunaSeed";
+import { visibleLayouts } from "../lib/kizunaSeed";
 import { visibleAgents, visibleEdges } from "../lib/agentGroups";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { avatarHue, avatarInitial } from "../lib/avatar";
@@ -67,8 +67,10 @@ const NODE_RADIUS = 26;
 
 /**
  * 見えている個体（Spec 51）。隠したグループの個体はノードも辺も描かない —
- * **無所属は決して隠れない**。座標（`layouts`）は全個体ぶん保つので、出し直しても
- * 置いた場所に戻る。
+ * **無所属は決して隠れない**。座標の真実は `state.topologyPositions`（`world.json`）に
+ * あり、地図へ渡す `layouts` には**見えている個体だけ**を載せる（`visibleLayouts`）—
+ * v-network-graph の Fit は `layouts` の全件で外接矩形を取るので、隠れた個体の座標を
+ * 残すと Fit が関係ない位置へ寄る（実機 2026-09-08）。出し直せば置いた場所に戻る。
  */
 const visible = computed(() => visibleAgents(state.agents, state.groups, hiddenGroups.hidden));
 const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
@@ -183,23 +185,21 @@ const layouts = reactive<Layouts>({ nodes: {} });
  * `node:dragend` でコアへ返し、コアの投影がここへ戻ってくる。
  */
 function syncLayouts(): void {
-  const ids = state.agents.map((a) => a.id);
-  const placed = state.topologyPositions;
+  const next = visibleLayouts(
+    visible.value.map((a) => a.id),
+    state.topologyPositions,
+  );
 
-  for (const id of ids) {
-    const saved = placed[id];
-    if (saved) layouts.nodes[id] = { ...saved };
-  }
-  Object.assign(layouts.nodes, seedPositions(ids, placed));
-
-  // 消えた個体の座標は落とす（残すと辺の無い幽霊が描かれ続ける）。
+  // 消えた個体と**隠れた個体**の座標は落とす（残すと辺の無い幽霊が描かれ続け、
+  // Fit の外接矩形にも入る）。隠れた個体の座標は `state.topologyPositions` に残る。
   for (const id of Object.keys(layouts.nodes)) {
-    if (!ids.includes(id as AgentId)) delete layouts.nodes[id];
+    if (!(id in next)) delete layouts.nodes[id];
   }
+  Object.assign(layouts.nodes, next);
 }
 
 watch(
-  () => [state.agents.map((a) => a.id).join(","), state.topologyPositions] as const,
+  () => [visible.value.map((a) => a.id).join(","), state.topologyPositions] as const,
   syncLayouts,
   { immediate: true, deep: true },
 );

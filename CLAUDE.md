@@ -5957,7 +5957,9 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   区分けごとの `VueDraggable`**（同じ `group` 名・`data-section-key`）。畳んだ区分けにも
   落とせて末尾へ入る。畳んだ中のカードは掴めない (e) **id は UUID v4 でコアが発行し
   再発行しない**（引けない id を個体に残す設計と組むため）。**旧版で村を開くと `groups` と
-  `group_id` が消える**（#112 の形。検収 7 で意図的に踏む）。査読 2 系統 17 点のうち前提を
+  `group_id` が消える**（#112 の形。検収 7 で意図的に踏む）。**追補 2026-09-08**: 隠して
+  2 体だけにすると Fit が隅へ寄る（`failures.md` #122 — v-network-graph の Fit は `layouts`
+  の全件を見る。`visibleLayouts` で見えている個体だけを `layouts` に載せる形へ）。査読 2 系統 17 点のうち前提を
   実測で訂正したのは 2 点（`order` の正規化は双方向の辺の描画上の始点にしか効かない）
 - [Spec 50](specs/50_context-length-fetch.md)（コンテキスト長の自動取得 — 単価表に
   `max_input_tokens` を運び、「取得」で `contextLength` も埋める）: **Done**（2026-09-05。

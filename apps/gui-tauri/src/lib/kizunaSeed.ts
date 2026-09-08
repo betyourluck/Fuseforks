@@ -75,3 +75,27 @@ export function seedPositions(
 
   return result;
 }
+
+/**
+ * 地図へ渡す座標表。**見えている個体だけ**を載せる（Spec 51 の追補・2026-09-08）。
+ *
+ * v-network-graph の `fitToContents` は描画中のノードではなく **`layouts` の全件**から
+ * 外接矩形を取る（`lib/index.js` の `$s` → `hi(layouts)`）。隠したグループの座標を
+ * `layouts` に残すと、2 体だけ見えているときの Fit が隠れた個体の位置へ寄り、
+ * 関係ない場所に収まる（実機 2026-09-08。`failures.md` #122）。
+ *
+ * 座標の真実は `world.json` の `topologyPositions`（コアの投影）にあるので、`layouts`
+ * から落としても出し直せば同じ場所に戻る。未配置の埋めは見えている個体の塊だけを
+ * 避ける — 隠れている個体の位置は、見えていない以上、避ける対象ではない。
+ */
+export function visibleLayouts(
+  visible: string[],
+  placed: Record<string, Point>,
+): Record<string, Point> {
+  const result: Record<string, Point> = {};
+  for (const id of visible) {
+    const saved = placed[id];
+    if (saved) result[id] = { ...saved };
+  }
+  return { ...result, ...seedPositions(visible, placed) };
+}

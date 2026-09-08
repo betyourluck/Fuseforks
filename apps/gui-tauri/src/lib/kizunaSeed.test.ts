@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { seedPositions } from "./kizunaSeed";
+import { seedPositions, visibleLayouts } from "./kizunaSeed";
 
 describe("seedPositions", () => {
   it("既に置かれている座標には触れない", () => {
@@ -50,5 +50,33 @@ describe("seedPositions", () => {
 
   it("空でも落ちない", () => {
     expect(seedPositions([], {})).toEqual({});
+  });
+});
+
+describe("visibleLayouts", () => {
+  it("隠れている個体の座標は載せない（Fit が隠れた位置へ寄らない）", () => {
+    // v-network-graph の fitToContents は layouts の全件から外接矩形を取る。
+    // 8 体のうち 2 体だけ見えているとき、残り 6 体の座標が layouts に残ると
+    // 2 体は矩形の隅へ追いやられる（実機 2026-09-08）。
+    const placed = {
+      a: { x: 0, y: 0 },
+      b: { x: 40, y: 0 },
+      hidden: { x: 2000, y: 2000 },
+    };
+    const out = visibleLayouts(["a", "b"], placed);
+    expect(Object.keys(out).sort()).toEqual(["a", "b"]);
+    expect(out).not.toHaveProperty("hidden");
+  });
+
+  it("見えている個体の座標は写すだけで触らない", () => {
+    const placed = { a: { x: 10, y: 20 } };
+    expect(visibleLayouts(["a"], placed).a).toEqual({ x: 10, y: 20 });
+  });
+
+  it("見えていて未配置の個体だけを埋める", () => {
+    const out = visibleLayouts(["a", "b"], { a: { x: 0, y: 0 } });
+    expect(out.a).toEqual({ x: 0, y: 0 });
+    expect(out.b).toBeDefined();
+    expect(out.b).not.toEqual({ x: 0, y: 0 });
   });
 });
