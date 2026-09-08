@@ -74,6 +74,18 @@ const NODE_RADIUS = 26;
  */
 const visible = computed(() => visibleAgents(state.agents, state.groups, hiddenGroups.hidden));
 const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
+
+/**
+ * 可視集合が変わったら地図の部品を**作り直す**（`:key`）。
+ *
+ * v-network-graph は渡した `layouts` を内部の写しへ `Object.assign` で**足すだけ**
+ * （`lib/index.js` の `F(() => i.layouts, …)`）で、こちらが鍵を消しても写しからは消えない。
+ * 地図を開いた後にグループを隠すと、隠した個体の座標が写しに残り、`fitToContents` は
+ * それを含めた外接矩形に収める — 見えている 2 体が左上へ追いやられる（実機 2026-09-08。
+ * `failures.md` #122）。`layouts` を絞るだけでは足りず、写しごと捨てるしかない。
+ * 作り直した地図は `autoPanAndZoomOnLoad: "fit-content"` で見えている個体に収まる。
+ */
+const visibleKey = computed(() => visible.value.map((a) => a.id).join(","));
 /** 隠れている個体の数。要約行に出す（隠していることが画面から読めるように）。 */
 const hiddenNodeCount = computed(() => state.agents.length - visible.value.length);
 /** 隠れている辺の数 = 全辺 − 両端が見えている辺（片端でも両端でも隠れていれば数える）。 */
@@ -552,6 +564,7 @@ onBeforeUnmount(() => {
 
       <VNetworkGraph
         ref="graph"
+        :key="visibleKey"
         :nodes="nodes"
         :edges="edges"
         :layouts="layouts"
