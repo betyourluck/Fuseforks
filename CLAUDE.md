@@ -1890,6 +1890,32 @@ Please retry in 56.493566409s
   `ELYTH_TOKEN` 環境変数で利用者のシェルから注入（値はスクリプトにもログにも
   残らない）。実測: elyth-remote v2.0.0 / protocol 2025-06-18 / tools 26 本
 
+## 現在地（2026-09-08 更新）
+
+**この日は Spec 52 を Done にして `v0.2.1` を 4 経路で配り、その後に絆の地図の Fit を
+3 回目で直した。** git: main = origin/main = `0782021`・push 済み・clean。
+**タグ `v0.2.1` = `b54891c`**（Release publish 02:46 UTC / winget PR #431147 = マージ待ち /
+tap `0d4c533`）。**#122 の修正（Fit の余白）は v0.2.1 に入っていない** — 次のタグから。
+
+- **[Spec 52](specs/52_retry-classification.md) Done**（起票から 2 日）。実機 = 無料枠の
+  Gemini で波を 3 回。`llm retry:` は 17/17 が `src=body`（Gemini は `Retry-After` ヘッダを
+  付けない）/ `hint=0s` が来て 400 ms 再送が外れた 1 体（明示値は約束ではない）/
+  60 秒待った個体は次で通った / **停止が待ちを 2 ms で切ったのに分類が `failed:LLM_API`
+  だった穴（#121）を同日に塞ぎ、再観測で 12 ms・`turn interrupted:`**
+- **`failures.md` #122 — グループを隠して 2 体だけにすると Fit が左上へ寄る。** 真因は
+  v-network-graph の zoom clamp（上限を超える要求で zoom だけ丸めて pan を丸めない。
+  幅が広いほど要求 zoom が大きくずれる）。処方は `lib/kizunaFit.ts` の `fitMargin`
+  （余るぶんを余白へ回し要求 zoom を上限ちょうどに）。**先の 2 処方は真因を外した** —
+  設定の枝（`scalingObjects: true` = `Is`）を読まずに `$s` の読みで書いた。3 回目は
+  再現ページを作って数字を取ってから直し、利用者「動きは完璧」。**隠れた Browser ペインでは
+  rAF が止まり svg-pan-zoom の測定が無効**（rAF をタイマーへ差し替えてから測る）
+
+**次の一手**: winget 0.2.1（PR #431147）のマージ確認 / 次のタグ（#122 の修正を配る。
+winget と tap の 2 経路が続く）/ 開発機で素の `winget upgrade` が通るか / 評価基盤の
+「完遂」の軸 / `world.json` の未知の欄を保持して書き戻す（#112）。
+
+以下は 2026-09-07 時点の記録。
+
 ## 現在地（2026-09-07 更新）
 
 **この日は台帳の書き戻し 1 件・先行実装の実読 1 件・Spec 1 本を起票から P3 まで。**
