@@ -322,7 +322,7 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
 --token "$(gh auth token)"` の 1 段で完了 — 0.1.13 のマニフェストに
 `InstallerLocale` が無いので引き写しで全ロケール対応のまま。**2026-09-02 19:38 UTC
 マージ**）。**→ 0.2.0 も PR #430036 で同じ 1 段。2026-09-05 15:15 UTC にマージ**
-（publish の 61 分後）。
+（publish の 61 分後）。**→ 0.2.1 = PR #431147（2026-09-08 提出。同じ 1 段）。**
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
 
@@ -1911,10 +1911,10 @@ git: main = `74fe28f` 以降・push 済み・clean。タグは `v0.2.0` のま�
   （`failures.md` #120）。ミューテーション 4 回とも狙った 1 本だけ赤
 
 **Spec 52 は 2026-09-08 に Done**（実機で `src=body` 17/17・`hint=0s`・停止の穴 #121 を
-同日に塞いだ。「Spec の状態」が正）。**次の一手**: 開発機で素の `winget upgrade` が
-0.2.0 へ通るか / 評価基盤の「完遂」の軸 / `world.json` の未知の欄を保持して書き戻す
-（#112）/ 次のタグ（Spec 52 は v0.2.0 に入っていない。打つときは winget と tap の
-2 経路が続く）。
+同日に塞いだ。「Spec の状態」が正）。**同日 `v0.2.1` = `b54891c` を全 4 経路で配信**
+（Release publish 02:46 UTC / winget PR #431147 / tap `0d4c533` / LP は `releases/latest`）。
+**次の一手**: winget 0.2.1 のマージ確認 / 開発機で素の `winget upgrade` が通るか /
+評価基盤の「完遂」の軸 / `world.json` の未知の欄を保持して書き戻す（#112）。
 
 以下は 2026-09-05 時点の記録。
 
@@ -2804,6 +2804,15 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.2.1` = `b54891c`（2026-09-08。15 コミット）— [Spec 52](specs/52_retry-classification.md)
+  Done（LLM 再試行の分類と待ち時間）**。3 OS 緑・アセット 7 件・publish 02:46 UTC。
+  ノートは英日併記で主題は再試行だけ（台帳の書き戻しと busbar の実読はノートに入れない）、
+  「利用者が負う条件」4 つ（429 の直後に最長 66 秒静か・既定 3 回で待ち 2 回 / 停止は待ちだけ
+  切る / 60 秒超の要求はエラーで終わる / Gemini 以外の `Retry-After` は未観測）。
+  **タグと tap のコミットは利用者、publish・winget・tap の push は Neo** — winget 0.2.1 =
+  PR #431147（`gh repo sync` → `wingetcreate update … --token` の 1 段。`InstallerLocale`
+  無しを引き写し・ProductCode は `{953D9853-…}` へ更新）/ tap `0d4c533`（利用者が sha256 を
+  Release API の digest で書いた commit を Neo が push）
 - **`v0.2.0` = `50e6bcf`（2026-09-05。25 コミット）— Spec 48（Gemini の思考段階と
   URL context）/ Spec 49（コンテキスト使用率の輪）/ Spec 50（コンテキスト長の自動取得）/
   Spec 51（サーヴァントのグループ）**。3 OS 緑・アセット 7 件・publish 14:14 UTC。
