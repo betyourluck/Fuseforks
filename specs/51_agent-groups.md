@@ -380,11 +380,14 @@ CLAUDE.md の「Spec の状態」と現在地。`data_contract` は P0 で済み
 
 ## 追補（2026-09-08。Done の後に実機で出た 1 件）
 
-- **隠して 2 体だけにすると Fit が関係ない位置に収まる**（`failures.md` #122）。真因は
-  v-network-graph の `fitToContents` が `layouts` の全件で外接矩形を取ること。P2 の
-  「座標は `layouts` に全個体ぶん保つ」を覆し、`visibleLayouts`（`lib/kizunaSeed.ts`）で
-  **見えている個体だけ**を `layouts` に載せる形へ。座標の真実は `topologyPositions` の側なので
-  出し直しは今までどおり戻る。凍結 8 本は不変（隠すのは見え方、が Fit にも当たった）
+- **隠して 2 体だけにすると Fit が左上へ寄る**（`failures.md` #122）。真因は v-network-graph の
+  `fitToContents` が上限を超える zoom を要求したとき zoom だけを丸めて pan を丸めないこと
+  （残った個体の広がりが小さいほど要求 zoom が上がる = 隠すほど出る）。処方は `fitMargin`
+  （`lib/kizunaFit.ts`）で余るぶんを余白へ回し、要求 zoom を上限ちょうどに留める。
+  読み込み時の Fit も同じ `fit()` へ。**先に書いた 2 つの処方（`visibleLayouts` / `:key`）は
+  真因を外していた**が、幽霊の座標を渡さない衛生と「隠した直後に Fit し直す」として残す。
+  P2 の「座標は `layouts` に全個体ぶん保つ」は覆したまま（座標の真実は `topologyPositions`）。
+  凍結 8 本は不変
 
 ## Notes
 

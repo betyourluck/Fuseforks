@@ -39,6 +39,7 @@ import "v-network-graph/lib/style.css";
 import { compactNumber } from "../lib/format";
 import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
+import { fitMargin } from "../lib/kizunaFit";
 import { visibleLayouts } from "../lib/kizunaSeed";
 import { visibleAgents, visibleEdges } from "../lib/agentGroups";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
@@ -61,6 +62,12 @@ const canvas = ref<HTMLElement | null>(null);
 /** ノードの見た目の寸法（SVG 座標）。`configs` と slot の両方が読む。 */
 const NODE_RADIUS = 26;
 
+/**
+ * ズームの上限。`configs.view.maxZoomLevel` と `fit()` の余白計算が同じ値を読む —
+ * 2 箇所に書くと「Fit が上限を超えた zoom を要求して pan だけがずれる」（#122）が戻る。
+ */
+const MAX_ZOOM = 2;
+
 /* ------------------------------------------------------------------ *
  * データ
  * ------------------------------------------------------------------ */
@@ -78,12 +85,11 @@ const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
 /**
  * 可視集合が変わったら地図の部品を**作り直す**（`:key`）。
  *
- * v-network-graph は渡した `layouts` を内部の写しへ `Object.assign` で**足すだけ**
- * （`lib/index.js` の `F(() => i.layouts, …)`）で、こちらが鍵を消しても写しからは消えない。
- * 地図を開いた後にグループを隠すと、隠した個体の座標が写しに残り、`fitToContents` は
- * それを含めた外接矩形に収める — 見えている 2 体が左上へ追いやられる（実機 2026-09-08。
- * `failures.md` #122）。`layouts` を絞るだけでは足りず、写しごと捨てるしかない。
- * 作り直した地図は `autoPanAndZoomOnLoad: "fit-content"` で見えている個体に収まる。
+ * 目的は「隠した / 出した直後に、残った個体へ Fit し直す」こと — 作り直しの `view:load` が
+ * `fit()` を呼ぶ。ライブラリの内部の写し（`layouts` を `Object.assign` で足すだけで、消した
+ * 鍵が残る）を捨てる効果もあるが、Fit の矩形は描画の `getBBox()` から取るので
+ * （`scalingObjects: true` の枝）、残った座標が Fit を狂わせていたわけではない —
+ * #122 の真因はズームの clamp（`MAX_ZOOM` と `fit()` の余白を見よ）。
  */
 const visibleKey = computed(() => visible.value.map((a) => a.id).join(","));
 /** 隠れている個体の数。要約行に出す（隠していることが画面から読めるように）。 */
@@ -231,8 +237,10 @@ const configs = defineConfigs({
   view: {
     scalingObjects: true,
     minZoomLevel: 0.3,
-    maxZoomLevel: 2,
-    autoPanAndZoomOnLoad: "fit-content",
+    maxZoomLevel: MAX_ZOOM,
+    // 読み込み時の Fit もこちらの `fit()`（`view:load`）で掛ける。ライブラリの
+    // "fit-content" は上限を超える zoom を要求したとき pan がずれる（#122）。
+    autoPanAndZoomOnLoad: false,
   },
   node: {
     selectable: false,
@@ -374,6 +382,10 @@ const handlers: EventHandlers = {
   "node:pointerout": () => {
     hovered.value = null;
   },
+  // 初回と `:key` の作り直しの両方で、見えている個体へ収める（#122）。
+  "view:load": () => {
+    fit();
+  },
   // 点描は容器の CSS 背景なので、視点の変化をこちらで写す。
   "view:zoom": (level) => {
     zoom.value = level;
@@ -400,8 +412,25 @@ const handlers: EventHandlers = {
 let observer: ResizeObserver | null = null;
 let settle: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * 見えている個体へ収める。**余白で zoom を上限の内側に留める**（#122）。
+ *
+ * `fitToContents` は内容が小さいと上限を超える zoom を計算し、zoom だけを丸めて pan は
+ * 丸める前の値のまま当てる — 2 体だけの地図が左上へ寄る。余白を辺ごとに広げて要求 zoom を
+ * 上限ちょうどにすれば clamp が起きず、ライブラリ自身の pan が正しい
+ * （再現ページで `matrix(2,0,0,2,…)`・内容の中心 = ペインの中心を実測）。
+ */
 function fit(): void {
-  graph.value?.fitToContents();
+  const g = graph.value;
+  const box = canvas.value?.getBoundingClientRect();
+  if (!g || !box || box.width === 0 || box.height === 0) return;
+  const margin = fitMargin(
+    Object.values(layouts.nodes),
+    NODE_RADIUS,
+    { width: box.width, height: box.height },
+    MAX_ZOOM,
+  );
+  void g.fitToContents({ margin });
 }
 
 /**
