@@ -713,7 +713,7 @@ async function newChat(): Promise<void> {
     -->
     <div
       ref="scroller"
-      class="min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
+      class="chat-zoom min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
     >
       <!--
         表示クリアの案内。**消していないことを画面で言い、そこから戻せる。**
@@ -1054,6 +1054,7 @@ async function newChat(): Promise<void> {
 
     <ChatInput
       ref="input"
+      class="chat-zoom"
       :disabled="!canSend"
       :placeholder="placeholder"
       :blocked-reason="blockedReason"

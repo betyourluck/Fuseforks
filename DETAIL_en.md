@@ -1436,7 +1436,7 @@ Three things have since been added into this frame: the theme, your own name and
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
 | Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default |
-| User Interface | **Theme** (Dark / Light) and message visibility. The latter now has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
+| User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), and message visibility. The last one has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
 
 - **Your name is both the display name on screen and the name servants read**
   ([Spec 19](specs/19_user-identity.md)). Leave it unset and the screen says "You" while

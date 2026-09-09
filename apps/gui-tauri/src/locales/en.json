@@ -50,6 +50,7 @@
     "menuLanguage": "Language",
     "menuTokenLimit": "Token limit",
     "menuTheme": "Theme",
+    "menuChatZoom": "Chat text",
     "menuMessages": "Message visibility",
     "theme": {
       "heading": "Theme",
@@ -59,6 +60,14 @@
       "light": "Light",
       "lightNote": "Dark text on a light ground. Suits bright rooms and working alongside documents.",
       "deviceNote": "The theme is stored on this device. Until you choose, it follows your OS setting."
+    },
+    "chatZoom": {
+      "heading": "Chat text size",
+      "intro": "Sets the zoom of the conversation pane. It applies the moment you choose, and scales icons and spacing along with the text.",
+      "label": "Zoom",
+      "scopeNote": "Only the message flow and the input box scale. Other panes, dialogs and the pane heading keep their size.",
+      "costNote": "A display setting only. What the servants receive, and the tokens you pay, do not change.",
+      "deviceNote": "The zoom is saved on this device."
     },
     "villageScope": "This setting is stored in the village configuration (world.json), so it travels with the village when you share it.",
     "user": {

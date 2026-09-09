@@ -11,6 +11,7 @@
 
 import { reactive, watch } from "vue";
 
+import { DEFAULT_CHAT_ZOOM, isChatZoom, type ChatZoom } from "../lib/chatZoom";
 import { DEFAULT_CLOSING_DAY, isClosingDay, type ClosingDay } from "../lib/statsPeriod";
 
 const STORAGE_KEY = "fuseforks.settings.v1";
@@ -99,6 +100,17 @@ export interface UiSettings {
    * 「どの締め日で払ったか」が無い。締め日ごとに月次を保存する機構は作らない）。
    */
   statsClosingDay: ClosingDay;
+  /**
+   * 会話ペインの表示倍率（2026-09-09 利用者要望）。刻みと理由は `lib/chatZoom.ts`。
+   *
+   * **掛かるのは会話ペインだけ**で、他のペイン・ダイアログ・ステータスバーは動かない
+   * （利用者の要件そのもの）。**ペインの見出し行（38px）にも掛けない** — あの高さは
+   * 4 ペイン共通で、ここだけ伸びると隣のペインとの段差になる。
+   *
+   * **表示の設定なので、モデルへ届く量は 1 バイトも変わらない**（`showPresenceNotices`
+   * と同じ性質。倍率を上げても払うトークンは増えない）。
+   */
+  chatZoom: ChatZoom;
 }
 
 /**
@@ -118,6 +130,7 @@ const DEFAULTS: UiSettings = {
   // 参照時に評価するため、実体は load() で入れる（モジュール読み込み順に依存しない）。
   theme: "dark",
   statsClosingDay: DEFAULT_CLOSING_DAY,
+  chatZoom: DEFAULT_CHAT_ZOOM,
 };
 
 /** 保存済みの設定を読む。壊れていたら・型が違ったら既定値へ落とす。 */
@@ -153,6 +166,8 @@ function load(): UiSettings {
       statsClosingDay: isClosingDay(parsed.statsClosingDay)
         ? parsed.statsClosingDay
         : DEFAULTS.statsClosingDay,
+      // 選べる刻みに無い値（手編集・旧版の欠落・小数の誤差）は等倍へ。
+      chatZoom: isChatZoom(parsed.chatZoom) ? parsed.chatZoom : DEFAULTS.chatZoom,
     };
   } catch {
     // 壊れた保存値で画面が開けなくなるほうが害が大きい。
@@ -171,8 +186,21 @@ function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
 }
 
+/**
+ * 表示倍率を DOM へ映す。**`style.css` の `.chat-zoom` が読む変数を 1 つ置くだけ**で、
+ * 掛ける場所（会話ペインのどこか）を知っているのは CSS 側だけにする — ここが要素を
+ * 探しに行くと、包む場所を変えたときに 2 箇所を揃える必要が生まれる。
+ */
+function applyChatZoom(zoom: ChatZoom): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty("--chat-zoom", String(zoom));
+}
+
 applyTheme(settings.theme);
 watch(() => settings.theme, applyTheme);
+
+applyChatZoom(settings.chatZoom);
+watch(() => settings.chatZoom, applyChatZoom);
 
 watch(settings, (next) => {
   try {

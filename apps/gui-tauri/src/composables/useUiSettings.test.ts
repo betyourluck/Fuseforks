@@ -91,6 +91,7 @@ describe("この画面の設定", () => {
       autoFitOnResize: false,
       theme: "dark",
       statsClosingDay: "eom",
+      chatZoom: 1,
     });
   });
 

@@ -260,6 +260,25 @@ textarea,
 }
 
 /*
+ * 会話の表示倍率（2026-09-09 利用者要望。刻みと理由は `lib/chatZoom.ts`）。
+ *
+ * **掛けるのは会話の流れと入力欄の 2 つだけ。** ペインの見出し行には掛けない —
+ * 高さ 38px が 4 ペイン共通で、ここが伸びると隣のペインとの段差になる。
+ * `.chat-panel` 自体にも掛けない — あれは container query のコンテナ
+ * （`container-type: inline-size`）で、倍率が入ると `@container` の幅の評価が
+ * ずれ、見出しのボタンのラベルが出る閾値まで動く。
+ *
+ * **scoped ではなくここに置く**のは、2 つのコンポーネント（ChatPanel の流れと
+ * ChatInput の root）に掛かることを 1 箇所で読ませるため。
+ *
+ * 変数は `useUiSettings` が `:root` へ置く。未設定（テスト環境・保存値が壊れた村）
+ * では 1 に落ちて、これまでの見え方のまま。
+ */
+.chat-zoom {
+  zoom: var(--chat-zoom, 1);
+}
+
+/*
  * 会話バブル内の Markdown 描画（ChatPanel の .md-body、v-html で挿す）。
  *
  * v-html の中身には Vue の scoped 属性が付かないため、ここ（グローバル）に置く。

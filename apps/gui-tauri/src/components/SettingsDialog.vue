@@ -26,6 +26,7 @@ import { fileToWebpIcon } from "../lib/iconImage";
 import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { CHAT_ZOOM_STEPS, formatChatZoom } from "../lib/chatZoom";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
 import {
   CLOSING_DAY_MAX,
@@ -47,7 +48,15 @@ const { state } = orchestrator;
  * 指す先は Spec 19 で「全般 → 言語」から「全般 → ユーザー」へ動いた。
  * **規則（先頭）は不変で、指す先だけが動く。**
  */
-type Page = "user" | "language" | "tokenBudget" | "mcpHost" | "pricing" | "theme" | "messages";
+type Page =
+  | "user"
+  | "language"
+  | "tokenBudget"
+  | "mcpHost"
+  | "pricing"
+  | "theme"
+  | "chatZoom"
+  | "messages";
 const page = ref<Page>("user");
 
 /**
@@ -634,6 +643,13 @@ function selectPage(next: Page): void {
           </button>
           <button
             class="menu-item"
+            :class="{ active: page === 'chatZoom' }"
+            @click="selectPage('chatZoom')"
+          >
+            {{ $t("settings.menuChatZoom") }}
+          </button>
+          <button
+            class="menu-item"
             :class="{ active: page === 'messages' }"
             @click="selectPage('messages')"
           >
@@ -1177,6 +1193,36 @@ function selectPage(next: Page): void {
               </label>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.theme.deviceNote") }}</p>
+          </template>
+
+          <!--
+            ユーザーインターフェース > 会話の表示倍率（2026-09-09 利用者要望）。
+            **選んだ瞬間に反映**（保存ボタン無し。テーマと同じ）— 大きさは見て決める
+            ものなので、押すまで分からない形にすると選べない。
+          -->
+          <template v-else-if="page === 'chatZoom'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.chatZoom.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.chatZoom.intro") }}</p>
+
+            <div class="flex items-center gap-2 rounded border border-line bg-surface-0 p-3">
+              <label for="chat-zoom" class="text-ink">
+                {{ $t("settings.chatZoom.label") }}
+              </label>
+              <select
+                id="chat-zoom"
+                v-model="settings.chatZoom"
+                class="rounded border border-line bg-surface-1 px-2 py-1 text-ink"
+              >
+                <option v-for="step in CHAT_ZOOM_STEPS" :key="step" :value="step">
+                  {{ formatChatZoom(step) }}
+                </option>
+              </select>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.chatZoom.scopeNote") }}</p>
+            <p class="mt-1 text-ink-dim">{{ $t("settings.chatZoom.costNote") }}</p>
+            <p class="mt-1 text-ink-dim">{{ $t("settings.chatZoom.deviceNote") }}</p>
           </template>
 
           <!--
