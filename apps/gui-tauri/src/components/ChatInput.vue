@@ -438,7 +438,7 @@ defineExpose({ fill });
 </script>
 
 <template>
-    <div class="relative shrink-0 border-t border-line px-3 py-2.5">
+    <div class="relative shrink-0 border-t border-line px-3 py-2.5" data-tour="chat">
     <!-- 添付チップ（Spec 23）。× で外せる。S4 の注記をすぐ下に置く —
          「1 ターン限り」は設定ではなく仕様なので、添付のたびに見える場所で言う。 -->
     <div v-if="attachment || converting" class="mb-2 px-1">

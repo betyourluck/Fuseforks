@@ -36,7 +36,7 @@ import {
 } from "../lib/statsPeriod";
 import type { AgentId, Language } from "../types";
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{ (e: "close"): void; (e: "show-tour"): void }>();
 
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
@@ -51,6 +51,7 @@ const { state } = orchestrator;
 type Page =
   | "user"
   | "language"
+  | "tour"
   | "tokenBudget"
   | "mcpHost"
   | "pricing"
@@ -605,6 +606,13 @@ function selectPage(next: Page): void {
           >
             {{ $t("settings.menuLanguage") }}
           </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'tour' }"
+            @click="selectPage('tour')"
+          >
+            {{ $t("settings.menuTour") }}
+          </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupCost") }}</p>
           <button
@@ -794,6 +802,27 @@ function selectPage(next: Page): void {
               </div>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+          </template>
+
+          <!--
+            全般 > 案内（2026-09-13）。初回起動のナビゲーションを呼び直す**唯一の入口**。
+            一度でも使った村では初回判定で出ないので、ここが消えると二度と見られない。
+            押すと設定を閉じてから出す（対象の要素はダイアログの下に居るため）。
+          -->
+          <template v-else-if="page === 'tour'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.tour.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.tour.intro") }}</p>
+            <div class="flex items-center gap-3 rounded border border-line bg-surface-0 p-3">
+              <button
+                class="rounded bg-accent px-3 py-1 font-medium text-surface-0"
+                @click="emit('show-tour')"
+              >
+                {{ $t("settings.tour.show") }}
+              </button>
+              <span class="text-ink-dim">{{ $t("settings.tour.showNote") }}</span>
+            </div>
           </template>
 
           <!-- コスト管理 -->

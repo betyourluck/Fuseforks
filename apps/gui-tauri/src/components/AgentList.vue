@@ -353,6 +353,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         "
         :disabled="batch.mode === 'none'"
         :title="$t(batchView.titleKey, batchView.titleParams ?? {})"
+        data-tour="start"
         @click="runBatch"
       >
         {{ batchView.icon }}
@@ -365,6 +366,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.manageTemplates')"
         :aria-label="$t('agentList.manageTemplates')"
+        data-tour="models"
         @click="showTemplates = true"
       >
         <svg
@@ -389,6 +391,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.addServant')"
         :aria-label="$t('agentList.addServant')"
+        data-tour="servant"
         @click="creating = !creating"
       >
         <svg
@@ -461,7 +464,8 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       `draggable` な子だけを数えるので、見出しを配列に混ぜると splice の位置がずれる。
       グループが無い村では見出しを出さず、無所属の箱 1 つ = 今までの一覧。
     -->
-    <div class="min-h-0 flex-1 overflow-y-auto p-3">
+    <!-- data-tour: 初回の案内が「ここから地図へ drop」として地図のキャンバスと束ねて照らす。 -->
+    <div class="min-h-0 flex-1 overflow-y-auto p-3" data-tour="kizuna">
       <template v-for="section in sections" :key="section.key">
         <div
           v-if="hasGroups"
@@ -634,6 +638,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         class="flex items-center gap-1 rounded px-1 py-0.5 text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('agentList.batchWorkDir')"
         :aria-label="$t('agentList.batchWorkDir')"
+        data-tour="workdir"
         @click="showBatchWorkDir = true"
       >
         <svg

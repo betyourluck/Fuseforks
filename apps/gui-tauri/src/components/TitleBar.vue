@@ -93,6 +93,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       :disabled="props.statsActive"
       :title="$t('titleBar.ordinanceTitle')"
       :aria-label="$t('titleBar.ordinanceAria')"
+      data-tour="titlebar"
       @click="emit('open-ordinance')"
     >
       <!-- 巻物 -->
@@ -236,6 +237,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
       :disabled="props.statsActive"
       :title="$t('titleBar.settingsTitle')"
       :aria-label="$t('titleBar.settings')"
+      data-tour="titlebar"
       @click="emit('open-settings')"
     >
       <!-- 歯車（COG） -->
@@ -300,13 +302,7 @@ async function win(method: "minimize" | "toggleMaximize" | "close") {
  * ワードマーク。色も光も `style.css` のトークンから引く（テーマで変わる）。
  * ライトでは光をほぼ消す — 明るい地の発光は「光」ではなく「にじみ」に見える。
  */
-.outcasts-word {
-  color: var(--color-wordmark);
-  font-family: "DotGothic16", sans-serif;
-  text-shadow:
-    0 0 6px var(--wordmark-glow-near),
-    0 0 18px var(--wordmark-glow-far);
-}
+/* `.outcasts-word` は `style.css`（グローバル）— 初回の案内の幕（FirstRunTour）と共有する。 */
 
 .tb-btn {
   min-width: 44px;

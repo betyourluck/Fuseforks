@@ -133,6 +133,7 @@ onBeforeUnmount(() => {
       :aria-label="$t('statusBar.statsTitle')"
       :aria-pressed="props.statsActive ? 'true' : 'false'"
       data-stats-toggle
+      data-tour="stats"
       @click="emit('toggle-stats')"
     >
       <svg

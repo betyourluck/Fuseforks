@@ -260,6 +260,19 @@ textarea,
 }
 
 /*
+ * ワードマーク「Outcasts」。色も光もこのファイルのトークンから引く（テーマで変わる）。
+ * TitleBar の scoped から降ろした（2026-09-13）— 初回の案内の幕（FirstRunTour）も同じ字で
+ * 名乗るので、2 箇所に同じ 5 行を書かない。大きさは置く側が決める。
+ */
+.outcasts-word {
+  color: var(--color-wordmark);
+  font-family: "DotGothic16", sans-serif;
+  text-shadow:
+    0 0 6px var(--wordmark-glow-near),
+    0 0 18px var(--wordmark-glow-far);
+}
+
+/*
  * 会話の表示倍率（2026-09-09 利用者要望。刻みと理由は `lib/chatZoom.ts`）。
  *
  * **掛けるのは会話の流れと入力欄の 2 つだけ。** ペインの見出し行には掛けない —

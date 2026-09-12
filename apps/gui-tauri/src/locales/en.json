@@ -48,6 +48,7 @@
     "groupUi": "User interface",
     "menuUser": "User",
     "menuLanguage": "Language",
+    "menuTour": "Guide",
     "menuTokenLimit": "Token limit",
     "menuTheme": "Theme",
     "menuChatZoom": "Chat text",
@@ -122,6 +123,12 @@
       "saved": "Saved.",
       "save": "Save",
       "saving": "Saving…"
+    },
+    "tour": {
+      "heading": "Getting-started guide",
+      "intro": "The nine-step guide shown on first launch. Open it again from here.",
+      "show": "Show the guide",
+      "showNote": "Closes the settings and overlays the guide on the screen."
     },
     "messages": {
       "heading": "Message visibility",
@@ -1148,5 +1155,53 @@
     "confirmDeleteTitle": "Delete the group \"{name}\"?",
     "confirmDeleteBody": "Its {count} servants become ungrouped and keep running. Only the heading disappears.",
     "villageScope": "Groups are stored in the village (world.json) and travel with it. Hiding is a per-device setting."
+  },
+  "tour": {
+    "welcomeTitle": "Nine steps to get started",
+    "welcomeLead": "Fuseforks builds a village of servants (AI agents), scatters a request among them and gathers the answers. Register a model first, create a servant, tie them together, then talk to them. This guide only shows the steps — nothing is registered or started from here.",
+    "start": "Show me",
+    "skip": "Close",
+    "next": "Next",
+    "back": "Back",
+    "finish": "Start",
+    "keys": "Enter / → next, ← back, Esc to close",
+    "steps": {
+      "models": {
+        "title": "Register a model",
+        "body": "Open Model registration and enter the LLM provider, model name and API key. One model is enough to create a servant. Keys go to the OS credential store, never into the village files."
+      },
+      "servant": {
+        "title": "Add a servant",
+        "body": "Press Add and give it a name. Afterwards, the pencil on its card opens the settings: model, bundled tools, command execution and MCP servers, per servant (all optional)."
+      },
+      "kizuna": {
+        "title": "Draw a tie",
+        "body": "Drag a card from the list and drop it on a servant in the map to draw a tie. Only servants joined by a tie can delegate to each other. Ties are drawn by you — nothing connects on its own."
+      },
+      "start": {
+        "title": "Start the servants",
+        "body": "Use the switch on a card to start one, or ▶ to start everyone marked for batch start. Nothing is billed until a servant is started. Stopping is the same place."
+      },
+      "chat": {
+        "title": "Talk to them",
+        "body": "Send a request to the selected servant from the input box in the chat pane. {'@'} completes file paths, and images or PDFs can be pasted. Delegation to tied servants is something the servant does on its own."
+      },
+      "titlebar": {
+        "title": "The title bar menu",
+        "body": "Ordinance (rules shared by the village), Roles (servant templates), Command approval (pending executions), shared MCP, Schedules and System settings live here. You can leave these until you are used to the rest."
+      },
+      "board": {
+        "title": "Blackboard and work status",
+        "body": "The bottom pane has two tabs. The blackboard holds the shared notes that servants write; work status shows how a request scattered to several servants (plan) is going. Both are read-only — the servants do the writing."
+      },
+      "stats": {
+        "title": "Tokens and cost",
+        "body": "Press the chart in the status bar to switch to the statistics view. It shows tokens per conversation and per servant, and an approximate cost once prices are registered."
+      },
+      "workdir": {
+        "title": "Switch the working folder",
+        "body": "The folder a servant reads and writes is set per servant, but from here you can point every checked servant at another folder at once. Use it when you switch jobs."
+      }
+    }
   }
 }

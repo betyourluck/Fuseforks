@@ -17,7 +17,7 @@
  * 入力できなくなった。`minmax(0, 1fr)` で最小値を 0 に固定し、
  * はみ出しは各ペインの内部スクロールに引き受けさせる。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -44,11 +44,18 @@ import TopologyMap from "./components/TopologyMap.vue";
 import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
 import { closeConfirmLines } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
+import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
 import { askConfirm } from "./composables/useConfirm";
 import { useOrchestrator } from "./composables/useOrchestrator";
 import { usePaneLayout } from "./composables/usePaneLayout";
 import { useUiSettings } from "./composables/useUiSettings";
 import type { BottomTab } from "./types";
+
+/**
+ * 初回起動のナビゲーション（2026-09-13）。初回にしか読まれないので動的 import（chunk 境界）。
+ * 判定は `lib/tour.ts` の `shouldShowTour`（純関数）。
+ */
+const FirstRunTour = defineAsyncComponent(() => import("./components/FirstRunTour.vue"));
 
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
@@ -102,6 +109,48 @@ const mcpOpen = ref(false);
 const schedulesOpen = ref(false);
 /** システム設定ダイアログの表示状態（Spec 13）。 */
 const settingsOpen = ref(false);
+
+/**
+ * 初回起動のナビゲーション。**`state.ready` が立ってから 1 回だけ判定する** —
+ * `ready` は `refreshAll()` の後に立つので、テンプレートとサーヴァントの数は揃っている。
+ * 立つ前に数えると空の村に見え、使い込んだ村にも案内が出る。
+ */
+const showTour = ref(false);
+function decideTour(): void {
+  let done = false;
+  try {
+    done = !!localStorage.getItem(TOUR_DONE_KEY);
+  } catch {
+    return; // storage が読めない環境では出さない（印も立てられないので毎回出てしまう）
+  }
+  showTour.value = shouldShowTour({
+    done,
+    templateCount: state.templates.length,
+    agentCount: state.agents.length,
+  });
+  if (!showTour.value && !done) {
+    // 既に使っている人には出さない。**印だけ立てる** — 次に空の村へ戻しても出さないため。
+    try {
+      localStorage.setItem(TOUR_DONE_KEY, "1");
+    } catch {
+      /* 書けなくても実害は無い */
+    }
+  }
+}
+watch(
+  () => state.ready,
+  (ready) => {
+    if (ready) decideTour();
+  },
+  { immediate: true },
+);
+
+/** 案内をもう一度（システム設定 ＞ 全般 ＞ 案内）。**設定を閉じてから**出す — 対象の要素はダイアログの下に居る。 */
+function replayTour(): void {
+  settingsOpen.value = false;
+  view.value = "village";
+  showTour.value = true;
+}
 
 const columns = computed(
   () => `${layout.leftWidth}px 2px minmax(0, 1fr) 2px ${layout.rightWidth}px`,
@@ -244,7 +293,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
         @reset="reset"
       />
 
-      <section class="min-h-0 overflow-hidden">
+      <!-- data-tour: 初回の案内が黒板と作業状況をまとめて照らす。 -->
+      <section class="min-h-0 overflow-hidden" data-tour="board">
         <ErrorBoundary
           :label="bottomTab === 'waves' ? $t('app.regions.waves') : $t('app.regions.blackboard')"
         >
@@ -303,7 +353,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
 
   <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
 
-  <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
+  <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" @show-tour="replayTour" />
+
+  <!-- 初回起動のナビゲーション。z は 55（ダイアログ 40 の上・確認とトースト 60 の下）。 -->
+  <FirstRunTour v-if="showTour" @close="showTour = false" />
 
   <!--
     初期化中の覆い。空の 3 ペインを見せて「壊れている」と誤解させない。

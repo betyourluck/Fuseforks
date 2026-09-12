@@ -479,7 +479,7 @@ onBeforeUnmount(() => {
 
     </header>
 
-    <div ref="canvas" class="kizuna relative min-h-0 flex-1" :style="dotStyle">
+    <div ref="canvas" class="kizuna relative min-h-0 flex-1" :style="dotStyle" data-tour="kizuna">
       <!--
         選択中の個体の詳細。**ノードから外した 3 つ（役職・モデル・トークン）の
         行き先**で、地図の上に重ねる（2026-08-13 利用者要望）。
