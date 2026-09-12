@@ -20,6 +20,8 @@ Everything is visible in a single screen across 3 panes.
 
 ![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
 
+<video src="https://github.com/user-attachments/assets/08c421eb-a1a8-48c0-a682-978a9b35dfd0" controls="controls" muted="muted" width="100%"></video>
+
 Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fuseforks."
 
 ## What You Can Do
