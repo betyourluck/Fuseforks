@@ -145,7 +145,7 @@ watch(
   { immediate: true },
 );
 
-/** 案内をもう一度（システム設定 ＞ 全般 ＞ 案内）。**設定を閉じてから**出す — 対象の要素はダイアログの下に居る。 */
+/** 案内をもう一度（システム設定 ＞ ユーザーインターフェース ＞ 案内）。**設定を閉じてから**出す — 対象の要素はダイアログの下に居る。 */
 function replayTour(): void {
   settingsOpen.value = false;
   view.value = "village";

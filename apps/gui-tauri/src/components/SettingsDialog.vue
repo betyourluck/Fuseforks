@@ -606,13 +606,6 @@ function selectPage(next: Page): void {
           >
             {{ $t("settings.menuLanguage") }}
           </button>
-          <button
-            class="menu-item"
-            :class="{ active: page === 'tour' }"
-            @click="selectPage('tour')"
-          >
-            {{ $t("settings.menuTour") }}
-          </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupCost") }}</p>
           <button
@@ -662,6 +655,13 @@ function selectPage(next: Page): void {
             @click="selectPage('messages')"
           >
             {{ $t("settings.menuMessages") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'tour' }"
+            @click="selectPage('tour')"
+          >
+            {{ $t("settings.menuTour") }}
           </button>
         </nav>
 
@@ -805,7 +805,8 @@ function selectPage(next: Page): void {
           </template>
 
           <!--
-            全般 > 案内（2026-09-13）。初回起動のナビゲーションを呼び直す**唯一の入口**。
+            ユーザーインターフェース > 案内（2026-09-13。利用者裁定で全般からここへ — 案内は
+            画面の見え方の側）。初回起動のナビゲーションを呼び直す**唯一の入口**。
             一度でも使った村では初回判定で出ないので、ここが消えると二度と見られない。
             押すと設定を閉じてから出す（対象の要素はダイアログの下に居るため）。
           -->

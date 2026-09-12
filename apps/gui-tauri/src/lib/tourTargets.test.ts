@@ -119,7 +119,7 @@ describe("案内の文言", () => {
 });
 
 describe("案内の入口", () => {
-  it("設定画面から呼び直せる（全般 ＞ 案内）", () => {
+  it("設定画面から呼び直せる（ユーザーインターフェース ＞ 案内）", () => {
     expect(settings).toContain("emit('show-tour')");
     expect(settings).toContain("page === 'tour'");
     expect(settings).toContain('"settings.menuTour"');
