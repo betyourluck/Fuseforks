@@ -1654,8 +1654,10 @@ enums:
 
       ## 凍結の外
 
-        - 旧版のバイナリで村を開くと groups と group_id が消える (failures.md #112。
-          #[serde(default)] は「欠けても読める」だけ)。利用者が負う条件として README に書く
+        - v0.2.3 以前のバイナリで村を開くと groups と group_id が消える (failures.md #112。
+          #[serde(default)] は「欠けても読める」だけ)。利用者が負う条件として README に書く。
+          **2026-09-14 以降の版は未知の欄を保持して書き戻す** (UnknownFields — 下の
+          ModelTemplate.credential の history (3) を参照)。旧版を直すことはできない
         - グループ名が空のときの拒否文言 / 見出しの並び (無所属 → groups の配列順) は
           Spec に書くが契約では縛らない
   Provider:
@@ -2195,6 +2197,13 @@ entities:
           プロセスへ伝播しないため「設定したのに効かない」が常態化した。
           綴りを 1 文字誤っただけ (ANTROPIC_API_KEY) で実行時まで気づけなかった。
           → 秘密を保持できるフィールドごと廃止し、OS の資格情報ストアへ移した。
+      (3) 2026-09-14、world.json の構造体が未知の欄を保持して書き戻すようになった
+          (UnknownFields。failures.md #112)。**廃止した apiKeyEnv を「未知の欄」として
+          持つと、旧い world.json の秘密が保存のたびに書き戻され続ける**ので、
+          ModelTemplate.retired_api_key_env: () が読んで捨て、書き出さない
+          (AgentRoleDefaults.retired_rag_sources も同じ形)。
+          **欄を撤去するときは消さずに retired_* へ置き換える** — 消すと次の読みで
+          未知の欄として拾われる。
       教訓: 秘密の置き場は「書けないようにする」だけでは足りず、
       「利用者が正しく置ける場所を用意する」ところまでが設計。
 

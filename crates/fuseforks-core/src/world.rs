@@ -15,7 +15,7 @@ use crate::llm::ChatMessage;
 use crate::model::{
     AgentGroup, AgentGroupId, AgentId, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec,
     AgentStatus, ModelTemplate,
-    ModelTemplateId, TopologyEdge,
+    ModelTemplateId, TopologyEdge, UnknownFields,
 };
 
 /// 1 エージェントの定義と実行時状態。
@@ -389,6 +389,9 @@ pub struct PersistedWorld {
     /// 通して担う（呼び名と**同じ述語** — 封筒の制約が同じだから）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_name: Option<String>,
+    /// この版が知らない最上位の欄（[`UnknownFields`]。`failures.md` #112）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// 登録簿本体。
@@ -416,6 +419,8 @@ pub struct World {
     /// 外部クライアントの呼び名（Spec 25）。意味論は [`PersistedWorld::external_name`]。
     /// **ここに入るのは検証を通った値だけ**（読み込みでも保存でも同じ述語）。
     external_name: Option<String>,
+    /// この版が知らない最上位の欄。意味論は [`PersistedWorld::unknown`]。
+    unknown: UnknownFields,
 }
 
 impl World {
@@ -503,6 +508,8 @@ impl World {
             },
             None => None,
         };
+        // 知らない欄は解釈せずそのまま持ち、to_persisted で書き戻す（#112）。
+        world.unknown = persisted.unknown;
         world.topology_positions = persisted.topology_positions.clone();
         for template in persisted.model_templates {
             world.templates.insert(template.id.clone(), template);
@@ -546,6 +553,7 @@ impl World {
             groups: self.groups.clone(),
             reception: self.reception.clone(),
             external_name: self.external_name.clone(),
+            unknown: self.unknown.clone(),
         }
     }
 
@@ -712,7 +720,7 @@ impl World {
     }
 
     /// エージェント定義を差し替える。統計と稼働状態は保持する。
-    pub fn update_agent(&mut self, spec: AgentSpec) -> CoreResult<()> {
+    pub fn update_agent(&mut self, mut spec: AgentSpec) -> CoreResult<()> {
         if !self.agents.contains_key(&spec.id) {
             return Err(CoreError::AgentNotFound(spec.id.to_string()));
         }
@@ -730,6 +738,8 @@ impl World {
         self.validate_connections(&spec.id, &spec.connected_agents)?;
 
         if let Some(record) = self.agents.get_mut(&spec.id) {
+            // 画面は知っている欄だけで組み直して送る。未知の欄は既存の側から引き継ぐ（#112）。
+            spec.unknown = std::mem::take(&mut record.spec.unknown);
             record.spec = spec;
         }
         Ok(())
@@ -915,7 +925,11 @@ impl World {
     /// 秘密の書式検査はもう要らない。[`ModelTemplate`] に秘密を置ける場所が無く、
     /// 実値は OS の資格情報ストアにしか入らないため、
     /// この経路を通って平文の設定ファイルへ秘密が入ることは構造上ありえない。
-    pub fn upsert_template(&mut self, template: ModelTemplate) {
+    pub fn upsert_template(&mut self, mut template: ModelTemplate) {
+        // 既存を差し替えるときは、未知の欄を既存の側から引き継ぐ（#112）。
+        if let Some(existing) = self.templates.get_mut(&template.id) {
+            template.unknown = std::mem::take(&mut existing.unknown);
+        }
         self.templates.insert(template.id.clone(), template);
     }
 
@@ -966,7 +980,13 @@ impl World {
     /// ときにコピーされる（`role_contract` 凍結 4 — 流し込みの発火点は新規作成
     /// ただ 1 つ）ので、ここで中身を書き換えても既に居る個体の設定は変わらない。
     /// 変わるのは `name` を参照している**表示だけ**。
-    pub fn upsert_role(&mut self, role: AgentRole) {
+    pub fn upsert_role(&mut self, mut role: AgentRole) {
+        // 既存を差し替えるときは、未知の欄を既存の側から引き継ぐ（#112）。
+        // 既定値は入れ子の構造体なので、そちらの未知の欄も同じく引き継ぐ。
+        if let Some(existing) = self.roles.get_mut(&role.id) {
+            role.unknown = std::mem::take(&mut existing.unknown);
+            role.defaults.unknown = std::mem::take(&mut existing.defaults.unknown);
+        }
         self.roles.insert(role.id.clone(), role);
     }
 
@@ -1029,6 +1049,7 @@ impl World {
             id: AgentGroupId::fresh(),
             name: name.to_owned(),
             batch_start: true,
+            unknown: UnknownFields::default(),
         };
         self.groups.push(group.clone());
         Ok(group)
@@ -1049,8 +1070,11 @@ impl World {
             .iter_mut()
             .find(|g| g.id == group.id)
             .ok_or_else(|| CoreError::GroupNotFound(group.id.to_string()))?;
+        // 未知の欄は既存の側から引き継ぐ（#112）。
+        let unknown = std::mem::take(&mut slot.unknown);
         *slot = AgentGroup {
             name: group.name.trim().to_owned(),
+            unknown,
             ..group
         };
         Ok(())
@@ -1206,6 +1230,7 @@ mod tests {
             groups: Vec::new(),
             reception: None,
             external_name: None,
+            unknown: UnknownFields::default(),
         };
         let world = World::from_persisted(persisted);
         assert_eq!(world.snapshots().len(), 2, "重複していても両方読めること");
@@ -1497,6 +1522,7 @@ mod tests {
             groups: Vec::new(),
             reception: None,
             external_name: None,
+            unknown: UnknownFields::default(),
         };
 
         let world = World::from_persisted(persisted);
@@ -1542,6 +1568,7 @@ mod tests {
             description: String::new(),
             color: None,
             defaults: crate::model::AgentRoleDefaults::default(),
+            unknown: UnknownFields::default(),
         }
     }
 
@@ -1717,5 +1744,97 @@ mod tests {
 
         assert_eq!(record.spec.role_id, Some("消えた役職".into()));
         assert_eq!(restored.role_label(record.spec.role_id.as_ref()), None);
+    }
+
+    /// 新しい版が書いた `world.json` を想定した JSON。**この版が知らない欄**を
+    /// 世界・個体・テンプレート・役職・役職の既定値・グループの 6 箇所に 1 つずつ持つ。
+    fn world_json_from_a_newer_version() -> &'static str {
+        r#"{
+            "futureWorld": {"nested": [1, 2]},
+            "agents": [{"id": "agent_1", "name": "ザリ", "modelTemplateId": "tpl", "futureAgent": "a"}],
+            "modelTemplates": [{
+                "id": "tpl", "name": "既定", "baseUrl": "https://api.openai.com/v1",
+                "model": "gpt-4o", "contextLength": 128000, "maxOutputTokens": 8192,
+                "futureTemplate": 3.5
+            }],
+            "roles": [{"id": "role", "name": "調査役", "defaults": {"futureDefaults": true}, "futureRole": null}],
+            "groups": [{"id": "grp", "name": "調査", "futureGroup": ["x"]}]
+        }"#
+    }
+
+    /// 保存した JSON で、指した場所に未知の欄が元の値のまま残っているか。
+    fn assert_unknown_fields_kept(saved: &serde_json::Value) {
+        assert_eq!(saved["futureWorld"], serde_json::json!({"nested": [1, 2]}), "世界");
+        assert_eq!(saved["agents"][0]["futureAgent"], "a", "個体");
+        assert_eq!(saved["modelTemplates"][0]["futureTemplate"], 3.5, "テンプレート");
+        assert!(saved["roles"][0].as_object().unwrap().contains_key("futureRole"), "役職");
+        assert_eq!(saved["roles"][0]["defaults"]["futureDefaults"], true, "役職の既定値");
+        assert_eq!(saved["groups"][0]["futureGroup"], serde_json::json!(["x"]), "グループ");
+    }
+
+    /// **旧い版で開いて保存しても、新しい版の欄を消さない**（`failures.md` #112）。
+    /// `#[serde(default)]` は「欠けても読める」だけで、「書き戻しで消さない」は保証しない。
+    #[test]
+    fn unknown_fields_survive_load_and_save() {
+        let persisted: PersistedWorld =
+            serde_json::from_str(world_json_from_a_newer_version()).unwrap();
+        let saved = serde_json::to_value(World::from_persisted(persisted).to_persisted()).unwrap();
+        assert_unknown_fields_kept(&saved);
+    }
+
+    /// **画面からの更新でも消さない。** 画面は自分の版が知っている欄だけで個体・テンプレート・
+    /// 役職・グループを組み直して送る（`snapshotToSpec` など）ので、差し替えの入口が
+    /// 未知の欄を引き継がないと、読みで残しても最初の保存操作で消える。
+    #[test]
+    fn unknown_fields_survive_updates_from_the_ui() {
+        let persisted: PersistedWorld =
+            serde_json::from_str(world_json_from_a_newer_version()).unwrap();
+        let mut world = World::from_persisted(persisted);
+
+        // 画面が送る形 = この版が知っている欄だけ。
+        let spec: AgentSpec = serde_json::from_value(serde_json::json!({
+            "id": "agent_1", "name": "ザリ改", "modelTemplateId": "tpl"
+        }))
+        .unwrap();
+        world.update_agent(spec).unwrap();
+        let mut template = ModelTemplate::new("tpl", "既定改", "gpt-4o");
+        template.max_retries = 5;
+        world.upsert_template(template);
+        let role: AgentRole = serde_json::from_value(serde_json::json!({
+            "id": "role", "name": "調査役改", "defaults": {"construct": "調べる"}
+        }))
+        .unwrap();
+        world.upsert_role(role);
+        let group: AgentGroup =
+            serde_json::from_value(serde_json::json!({"id": "grp", "name": "調査改"})).unwrap();
+        world.upsert_group(group).unwrap();
+
+        let saved = serde_json::to_value(world.to_persisted()).unwrap();
+        assert_unknown_fields_kept(&saved);
+        // 知っている欄は画面が送った値で差し替わっている（引き継ぐのは未知の欄だけ）。
+        assert_eq!(saved["agents"][0]["name"], "ザリ改");
+        assert_eq!(saved["modelTemplates"][0]["maxRetries"], 5);
+        assert_eq!(saved["roles"][0]["defaults"]["construct"], "調べる");
+        assert_eq!(saved["groups"][0]["name"], "調査改");
+    }
+
+    /// **この版が廃止した欄は、未知の欄として書き戻さない。** 未知の欄を保持する機構は
+    /// 「新しい版の欄」を守るためのもので、**自分が捨てた欄を蘇らせてはいけない** —
+    /// `apiKeyEnv` は実キーが平文で入った欄（`failures.md` #1）で、残すと秘密が残り続ける。
+    #[test]
+    fn retired_fields_are_not_written_back() {
+        let json = r#"{
+            "modelTemplates": [{
+                "id": "tpl", "name": "旧設定", "baseUrl": "https://api.anthropic.com/v1",
+                "model": "claude-sonnet-5", "contextLength": 128000, "maxOutputTokens": 4096,
+                "apiKeyEnv": "sk-ant-api03-EXAMPLE-NOT-A-REAL-KEY"
+            }],
+            "roles": [{"id": "role", "name": "調査役", "defaults": {"ragSources": ["old"]}}]
+        }"#;
+        let persisted: PersistedWorld = serde_json::from_str(json).unwrap();
+        let text = serde_json::to_string(&World::from_persisted(persisted).to_persisted()).unwrap();
+        assert!(!text.contains("apiKeyEnv"), "廃止した apiKeyEnv が書き戻された: {text}");
+        assert!(!text.contains("EXAMPLE-NOT-A-REAL-KEY"), "秘密の値が残った");
+        assert!(!text.contains("ragSources"), "廃止した defaults.ragSources が書き戻された");
     }
 }

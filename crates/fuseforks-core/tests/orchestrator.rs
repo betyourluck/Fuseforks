@@ -6797,6 +6797,7 @@ fn a_role(id: &str, name: &str, defaults: fuseforks_core::AgentRoleDefaults) -> 
         // 色はプロンプトに載らないので、コア側のテストでは常に None で足りる。
         color: None,
         defaults,
+        unknown: Default::default(),
     }
 }
 
@@ -6821,6 +6822,8 @@ async fn creating_with_a_role_fills_the_settings_and_writes_construct() {
                 model_template_id: Some("fast".into()),
                 enabled_tools: Some(vec!["grep".into()]),
                 max_tool_iterations: Some(24),
+                retired_rag_sources: (),
+                unknown: Default::default(),
             },
         ))
         .await
@@ -7052,6 +7055,7 @@ async fn the_roster_carries_the_role_name_but_never_the_description() {
             description: "この文字列はプロンプトに出てはいけない".into(),
             color: None,
             defaults: fuseforks_core::AgentRoleDefaults::default(),
+            unknown: Default::default(),
         })
         .await
         .unwrap();
@@ -7171,6 +7175,7 @@ async fn adding_a_role_does_not_move_the_stable_prefix() {
                 max_tool_iterations: Some(99),
                 ..Default::default()
             },
+            unknown: Default::default(),
         })
         .await
         .unwrap();
@@ -7368,6 +7373,7 @@ async fn every_role_display_change_leaves_one_system_line() {
             description: String::new(),
             color: None,
             defaults: fuseforks_core::AgentRoleDefaults::default(),
+            unknown: Default::default(),
         })
         .await
         .unwrap();
@@ -7396,6 +7402,7 @@ async fn every_role_display_change_leaves_one_system_line() {
             description: String::new(),
             color: None,
             defaults: fuseforks_core::AgentRoleDefaults::default(),
+            unknown: Default::default(),
         })
         .await
         .unwrap();
@@ -7423,6 +7430,7 @@ async fn an_update_that_keeps_the_role_stays_silent() {
             description: String::new(),
             color: None,
             defaults: fuseforks_core::AgentRoleDefaults::default(),
+            unknown: Default::default(),
         })
         .await
         .unwrap();
@@ -7473,6 +7481,7 @@ async fn an_agent_never_sees_its_own_role_name_only_the_roles_of_others() {
                 description: String::new(),
                 color: None,
                 defaults: fuseforks_core::AgentRoleDefaults::default(),
+                unknown: Default::default(),
             })
             .await
             .unwrap();

@@ -4500,8 +4500,20 @@ fn lines_are_similar(a: &str, b: &str) -> bool {
    は使えない** — CI がタグから書き換えるのは `tauri.conf.json` だけで、workspace の version は
    どのビルドでも `0.1.0`。**配布物と手元のビルドは分かれるが、手元のビルド同士は区別できない**
    （`profile` がその半分を埋める）
-2. **未起票**: `PersistedWorld` / `ModelTemplate` が未知の欄を保持して書き戻す。**効くのは
-   今後足す欄だけ** — 既に配布済みの旧版は直せない
+2. **着地（2026-09-14。Spec 不要と判断）**: `PersistedWorld` / `AgentSpec` / `ModelTemplate` /
+   `AgentRole` / `AgentRoleDefaults` / `AgentGroup` が `#[serde(flatten)] unknown: UnknownFields` で
+   未知の欄を保持して書き戻す。**効くのは今後足す欄だけ** — 既に配布済みの旧版（v0.2.3 以前）は直せない。
+   **読みで残すだけでは足りなかった** — 画面は自分の版が知っている欄だけで組み直して送る
+   （`snapshotToSpec`）ので、`update_agent` / `upsert_template` / `upsert_role` / `upsert_group` が
+   **既存の側から未知の欄を引き継がないと、最初の保存操作で消える**。赤は 2 本に割って
+   2 段とも確認した（`unknown_fields_survive_load_and_save` / `..._updates_from_the_ui`）。
+   **持ち込んだ穴を 1 つ同日に塞いだ** — 未知の欄を全部残すと、**この版が廃止した欄**
+   （`apiKeyEnv` = #1 で実キーが入った欄 / `defaults.ragSources`）まで書き戻され続ける。
+   既存の `apiKeyEnv` のテスト 2 本は「旧形式が読める」だけを見て書き戻しを見ていなかったので
+   緑のままだった。処方は廃止した欄を**型に名前を残して読み捨てる**（`retired_*: ()` +
+   `skip_serializing` + `discard_retired`）。履歴の走査で、`model.rs` / `world.rs` から消えた
+   `pub` 欄は `api_key_env` の 1 つだけだった（`ragSources` は `AgentSpec` に残っているので
+   差分に出ない — 走査の外にあった 2 つ目）
 3. **採らない**: 旧版で起動を止める。「起動が止まる経路は作らない」（`from_persisted` の
    既存の判断）と衝突する
 

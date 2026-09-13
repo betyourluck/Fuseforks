@@ -162,6 +162,7 @@ async fn a_blank_group_name_is_refused() {
         id: AgentGroupId::new("missing"),
         name: "x".into(),
         batch_start: true,
+        unknown: Default::default(),
     };
     let err = orchestrator.upsert_group(unknown).await.unwrap_err();
     assert_eq!(err.code(), "GROUP_NOT_FOUND");

@@ -105,6 +105,7 @@ fn wire_field_sets_are_frozen() {
             description: String::new(),
             color: None,
             defaults: AgentRoleDefaults::default(),
+            unknown: Default::default(),
         }),
         // color は skip_serializing_if なので、None では現れない。
         vec!["defaults", "description", "id", "name"],
@@ -121,6 +122,7 @@ fn wire_field_sets_are_frozen() {
             description: "説明".into(),
             color: Some(fuseforks_core::RoleColor::Teal),
             defaults: AgentRoleDefaults::default(),
+            unknown: Default::default(),
         }),
         vec!["color", "defaults", "description", "id", "name"],
         "Role の省略フィールドが変わった"

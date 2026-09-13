@@ -258,6 +258,9 @@ pub struct AgentGroup {
     /// **非表示とは独立** — 隠したグループも全体 ▶ で起きる。休ませるのはこのスイッチ。
     #[serde(default = "default_true")]
     pub batch_start: bool,
+    /// この版が知らない欄（[`UnknownFields`]）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
@@ -329,6 +332,9 @@ pub struct AgentRole {
     /// 新規作成のときだけ流し込まれる既定値。
     #[serde(default)]
     pub defaults: AgentRoleDefaults,
+    /// この版が知らない欄（[`UnknownFields`]）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// 役職が持つ既定値（Spec 14。`role_contract` 凍結 2 の「入れる」4 欄）。
@@ -366,6 +372,20 @@ pub struct AgentRoleDefaults {
     /// 1 回の発話処理で許すツール実行の回数。`None` = 既定に従う。
     #[serde(default)]
     pub max_tool_iterations: Option<u8>,
+    /// **廃止した欄 `ragSources`**（Spec 18 D10）。読んで捨て、書き出さない
+    /// （[`discard_retired`]）。`AgentSpec::rag_sources` は残っているが、役職の雛形からは
+    /// 撤去した（村を配ると壊れた絶対パスを配るため）。
+    #[serde(
+        rename = "ragSources",
+        default,
+        skip_serializing,
+        deserialize_with = "discard_retired"
+    )]
+    pub retired_rag_sources: (),
+    /// この版が知らない欄（[`UnknownFields`]）。**`apply_to` は流し込まない** —
+    /// 流し込む欄を知らない版が、知らない値を個体へ写すことはできない。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl AgentRoleDefaults {
@@ -538,6 +558,10 @@ pub struct AgentSpec {
     /// （`group_contract` 凍結 3）。**実行経路で読まない**（凍結 5）。
     #[serde(default)]
     pub group_id: Option<AgentGroupId>,
+    /// この版が知らない欄（[`UnknownFields`]）。`AgentSnapshot` には写さない
+    /// （画面は知らない欄を扱わず、差し替えの入口が既存の側から引き継ぐ）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl AgentSpec {
@@ -563,6 +587,7 @@ impl AgentSpec {
             batch_start: true,
             role_id: None,
             group_id: None,
+            unknown: UnknownFields::default(),
         }
     }
 }
@@ -635,8 +660,9 @@ pub struct ModelTemplate {
     pub max_output_tokens: u32,
     /// 認証情報の取得元。
     ///
-    /// 旧版の `apiKeyEnv`（環境変数名）は廃止した。読み込み時に未知フィールドとして
-    /// 無視され、`credential` は既定の [`CredentialSource::Unset`] になる。
+    /// 旧版の `apiKeyEnv`（環境変数名）は廃止した。読み込み時に
+    /// [`ModelTemplate::retired_api_key_env`] が読んで捨て、`credential` は既定の
+    /// [`CredentialSource::Unset`] になる。
     /// 移行にあたって利用者はキーを画面から入れ直すことになるが、
     /// 旧フィールドは名前しか持っておらず、そこから移せる値が存在しない。
     #[serde(default)]
@@ -778,6 +804,21 @@ pub struct ModelTemplate {
     /// （`data_contract` の `pricing_fetch_freeze`）。
     #[serde(default)]
     pub pricing_as_of: Option<String>,
+    /// **廃止した欄 `apiKeyEnv`**。読んで捨て、書き出さない（[`discard_retired`]）。
+    ///
+    /// `failures.md` #1 — 環境変数名を入れるはずの欄に**実キーが平文で入った**。
+    /// 未知の欄として持つと、旧い `world.json` の秘密が保存のたびに書き戻され続ける。
+    #[serde(
+        rename = "apiKeyEnv",
+        default,
+        skip_serializing,
+        deserialize_with = "discard_retired"
+    )]
+    pub retired_api_key_env: (),
+    /// この版が知らない欄（[`UnknownFields`]）。#112 で実際に消えたのはここ
+    /// （単価 5 欄と `pricingAsOf` を知らない世代が書き戻した）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// `use_tools` の serde 既定値。
@@ -793,6 +834,48 @@ fn default_timeout_secs() -> u32 {
 /// `max_retries` の serde 既定値。
 fn default_max_retries() -> u32 {
     3
+}
+
+/// **この版が知らない JSON の欄**。`world.json` に住む構造体が `#[serde(flatten)]` で
+/// 1 つずつ持ち、読んだ未知の欄を**書き戻しでそのまま出す**（`failures.md` #112）。
+///
+/// # なぜ要るか
+///
+/// 同じ端末に配布物の複数世代（MSI / NSIS / 手元のビルド）が並び、**1 つの `world.json` を
+/// 共有する**。`#[serde(default)]` は「欠けても読める」だけで「書き戻しで消さない」は
+/// 保証しないので、旧い版で村を開いて何か保存した時点で、新しい版の欄（単価・グループ）が
+/// 黙って消えていた。
+///
+/// # 引き継ぎの規則
+///
+/// **既存を差し替える入口（`update_agent` / `upsert_template` / `upsert_role` /
+/// `upsert_group`）は、既存の側の値をこの欄へ移す。** 画面は自分の版が知っている欄だけで
+/// 組み直して送る（`snapshotToSpec` など）ので、送られた値のまま差し替えると
+/// 読みで残しても最初の保存操作で消える。同じ版の画面が未知の欄を持つことは無いので、
+/// 既存の側が常に正しい。
+///
+/// **`types.ts` には写さない。** ワイヤの鍵集合は空のとき 1 つも増えない
+/// （`ipc_contract.rs` の凍結はそのまま通る）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UnknownFields(serde_json::Map<String, serde_json::Value>);
+
+impl UnknownFields {
+    /// 未知の欄が 1 つも無いか。
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// **この版が廃止した欄**を読んで捨てる（`#[serde(deserialize_with)]` 用）。
+///
+/// 未知の欄を保持する機構（[`UnknownFields`]）は「新しい版の欄」を守るためのもので、
+/// **自分が捨てた欄を蘇らせてはいけない**。廃止した欄は名前を型に残し
+/// （`retired_*: ()`・`skip_serializing`）、読みでここを通して捨てる。
+/// **欄を撤去したら、消すのではなくこの形へ置き換える** — 消すと次の読みで
+/// 未知の欄として拾われ、書き戻され続ける。
+fn discard_retired<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| ())
 }
 
 impl ModelTemplate {
@@ -927,6 +1010,8 @@ impl ModelTemplate {
             cache_write_per_mtok: None,
             cache_write_1h_per_mtok: None,
             pricing_as_of: None,
+            retired_api_key_env: (),
+            unknown: UnknownFields::default(),
         }
     }
 }
@@ -1467,6 +1552,8 @@ mod tests {
             model_template_id: Some("tpl".into()),
             enabled_tools: Some(vec!["grep".into()]),
             max_tool_iterations: Some(24),
+            retired_rag_sources: (),
+            unknown: UnknownFields::default(),
         }
     }
 
