@@ -211,7 +211,7 @@ Node coordinates moved by hand in Kizuna are saved to `topologyPositions` in `wo
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).
 
 Originally, a single toggle served both purposes, making it impossible to express *"stopped right now, but I want to wake this lineup next"* — users were forced to press them one by one every time.
-Note that ▶ does not trigger automatic startup; no agents run when the application first opens (avoiding a design where opening the app immediately incurs charges). When pressed in a mixed state, **startup takes priority** — stopping everything right then would abruptly kill active conversations.
+Note that ▶ does not trigger automatic startup; no agents run when the application first opens (avoiding a design where opening the app immediately consumes tokens). When pressed in a mixed state, **startup takes priority** — stopping everything right then would abruptly kill active conversations.
 
 ### Startup
 
@@ -262,6 +262,12 @@ Note that text bodies are displayed all at once upon completion rather than stre
 **Agent statements are rendered in Markdown** (`lib/markdown.ts`, markdown-it).
 Models frequently return Markdown, and raw syntax makes text unreadable. User inputs and system notifications remain plain text — if strings typed by the user were transformed by rendering, verification of sent contents would become impossible. LLM output is treated as untrusted text, utilizing `html: false` from the outset to prevent interpreting raw HTML as tags (and `javascript:` links are caught by markdown-it's default validation). Link clicks are intercepted and opened in an external browser (navigating within the webview would replace the entire app screen).
 
+**Long messages you sent are collapsed.** A sent message over 12 lines or 800 characters is
+clamped to 6 lines with a "Show all" button. The decision uses the text alone (no measuring of
+rendered height — the chat pane is where the display-scale `zoom` applies, and it keeps no
+coordinate calculations), and the expanded state is not saved. Servant replies and requests
+between servants are never collapsed. Copy still takes the full text.
+
 Input fields follow Kataribe's `ActionInput.vue` (`ChatInput.vue`).
 
 - Begins at `rows="1"` and **grows upward** with each line break (due to the bottom-fixed layout)
@@ -269,6 +275,9 @@ Input fields follow Kataribe's `ActionInput.vue` (`ChatInput.vue`).
 - The send button floats **inside** the input field and appears only when content is present (↵ icon)
 - Enter to send, Shift+Enter for a line break
 - **Alt + ↑↓ moves the selection in the servant list** (works even while typing in the input box)
+- **"/" jumps to the input box** (when focus is outside it. It does nothing inside another text
+  field or editor, while a dialog or the guided tour is open, or on the statistics screen — there
+  "/" is typed as a character)
 
 **Enter during IME conversion does not trigger sending** (`event.isComposing` is checked).
 Without this check, unfinished sentences would fly off the moment Japanese conversion is finalized.
@@ -1375,8 +1384,10 @@ no eye and no switch, only ▶/■ and a count.
 
 Deleting a group does not break its servants; they return to the ungrouped section.
 **Servants are never told their group name** (as with role names — a servant that reads
-"research" or "release" drifts toward the word). **Opening the village with an older binary
-drops groups and membership as unknown fields** ([failures.md](failures.md) #112).
+"research" or "release" drifts toward the word). **Opening the village with a v0.2.3 or older
+binary drops groups and membership as unknown fields** ([failures.md](failures.md) #112).
+Later versions write fields they do not recognise back to `world.json` unchanged, so the next
+field added will not disappear the same way.
 
 ### Scheduling
 
