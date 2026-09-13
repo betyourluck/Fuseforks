@@ -21,6 +21,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
 import ThinkingNote from "./ThinkingNote.vue";
+import { isLongPrompt } from "../lib/longPrompt";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
@@ -327,6 +328,25 @@ function toTitle(row: ChatRow): string {
 /** 自分（ユーザー）の発言か。右寄せにする。 */
 function isMine(message: AgentMessage): boolean {
   return message.from.kind === "user";
+}
+
+/**
+ * 送信済みの自分の発言を畳む（2026-09-14 利用者要望）。規則は `lib/longPrompt.ts`。
+ *
+ * 開いた発言の id を持つ。**保存しない** — 開いたかどうかは「いま読みたいか」で、
+ * 会話を開き直したら畳んだ状態から始まるほうが一覧として読める。
+ */
+const expandedPrompts = ref(new Set<string>());
+
+function isCollapsiblePrompt(message: AgentMessage): boolean {
+  return isMine(message) && isLongPrompt(message.content);
+}
+
+function togglePrompt(id: string): void {
+  const next = new Set(expandedPrompts.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedPrompts.value = next;
 }
 
 /**
@@ -962,8 +982,33 @@ async function newChat(): Promise<void> {
                 : 'rounded-2xl rounded-tl-sm bg-surface-2 text-ink'
             "
           >
-            {{ entry.row.message.content }}
+            <!-- 行数の制限は内側の要素に掛ける。吹き出し（余白 py-2 を持つ側）に掛けると、
+                 overflow が隠すのは余白の外側なので、7 行目の上半分が下の余白に描かれる
+                 （2026-09-14 実機で観測、headless Edge の再現で確認）。 -->
+            <div
+              :class="
+                isCollapsiblePrompt(entry.row.message) &&
+                !expandedPrompts.has(entry.row.message.id)
+                  ? 'line-clamp-6'
+                  : ''
+              "
+            >{{ entry.row.message.content }}</div>
           </div>
+          <!-- 長い自分の発言だけ畳む（lib/longPrompt.ts）。畳むのは見え方だけで、
+               コピーは下の行のボタンが全文を写す。 -->
+          <button
+            v-if="isCollapsiblePrompt(entry.row.message)"
+            type="button"
+            class="mt-0.5 px-0.5 text-[10px] text-ink-dim hover:text-ink"
+            :aria-expanded="expandedPrompts.has(entry.row.message.id)"
+            @click="togglePrompt(entry.row.message.id)"
+          >
+            {{
+              expandedPrompts.has(entry.row.message.id)
+                ? $t("chat.collapsePrompt")
+                : $t("chat.expandPrompt")
+            }}
+          </button>
 
           <!-- 接地の来歴。規則は lib/grounding.ts、見た目は GroundingNote.vue。
                接地していない発話（大多数）では null になり、欄ごと出ない。 -->

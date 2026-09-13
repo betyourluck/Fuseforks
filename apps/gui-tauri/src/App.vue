@@ -42,6 +42,7 @@ import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
+import { hasOpenOverlay, isEditableElement, isFocusChatKey } from "./lib/chatFocus";
 import { closeConfirmLines } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
@@ -219,14 +220,37 @@ function onNavKey(event: KeyboardEvent): void {
   orchestrator.select(next);
 }
 
+/**
+ * 「/」で会話の入力欄へ移る（2026-09-14 利用者要望）。規則は `lib/chatFocus.ts`、ここは配線だけ。
+ *
+ * **奪ってよいのは、どこにも打ち込めない状態のときだけ** — 入力できる要素にフォーカスが
+ * あるとき・覆いの層（ダイアログ・確認・案内）が出ているとき・統計画面のとき
+ * （入力欄は `v-show` で隠れている）は、何もしない。
+ */
+function onFocusChatKey(event: KeyboardEvent): void {
+  if (!isFocusChatKey(event)) return;
+  if (view.value !== "village" || showTour.value) return;
+  if (isEditableElement(document.activeElement)) return;
+  if (hasOpenOverlay(document)) return;
+  const input = document.querySelector<HTMLTextAreaElement>("textarea[data-chat-input]");
+  // 宛先が無いと入力欄は disabled。フォーカスできないので「/」も奪わない。
+  if (input === null || input.disabled) return;
+  event.preventDefault();
+  input.focus();
+}
+
 onMounted(() => {
   void orchestrator.init();
   // 失敗しても画面は使える（確認が付かないだけ）。閉じられなくなるほうが害が大きい。
   void registerCloseGuard().catch(() => undefined);
   window.addEventListener("keydown", onNavKey);
+  window.addEventListener("keydown", onFocusChatKey);
 });
 
-onBeforeUnmount(() => window.removeEventListener("keydown", onNavKey));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onNavKey);
+  window.removeEventListener("keydown", onFocusChatKey);
+});
 </script>
 
 <template>

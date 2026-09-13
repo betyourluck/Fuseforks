@@ -445,7 +445,9 @@
     "attachmentDeleted": "This attachment was deleted after its retention period",
     "externalBadge": "external",
     "clearedNote": "Earlier messages hidden: {count} (the conversation is still there)",
-    "clearedRestore": "Show all"
+    "clearedRestore": "Show all",
+    "expandPrompt": "Show all",
+    "collapsePrompt": "Collapse"
   },
   "editor": {
     "mcpPlaceholder": "JSON in the same mcpServers format as Claude Desktop. Leave it empty if this servant has no dedicated MCP. Broken JSON cannot be saved.",
@@ -1180,7 +1182,7 @@
       },
       "start": {
         "title": "Start the servants",
-        "body": "Use the switch on a card to start one, or ▶ to start everyone marked for batch start. Nothing is billed until a servant is started. Stopping is the same place."
+        "body": "Use the switch on a card to start one, or ▶ to start everyone marked for batch start. No tokens are used until a servant is started. Stopping is the same place."
       },
       "chat": {
         "title": "Talk to them",

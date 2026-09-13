@@ -445,7 +445,9 @@
     "attachmentDeleted": "添付は保持期間を過ぎて削除されました",
     "externalBadge": "外部",
     "clearedNote": "これより前の {count} 件は表示していません（会話は残っています）",
-    "clearedRestore": "すべて表示"
+    "clearedRestore": "すべて表示",
+    "expandPrompt": "すべて表示",
+    "collapsePrompt": "折りたたむ"
   },
   "editor": {
     "mcpPlaceholder": "Claude Desktop と同じ mcpServers 形式の JSON。空のままならこのサーヴァント専用の MCP はありません。壊れた JSON は保存できません。",
@@ -1180,7 +1182,7 @@
       },
       "start": {
         "title": "サーヴァントを起動する",
-        "body": "カードのスイッチで 1 体ずつ、または ▶ で一括起動の対象をまとめて起動します。起動するまで課金は始まりません。止めるときも同じ場所です。"
+        "body": "カードのスイッチで 1 体ずつ、または ▶ で一括起動の対象をまとめて起動します。起動するまでトークンは消費しません。止めるときも同じ場所です。"
       },
       "chat": {
         "title": "話しかける",
