@@ -359,6 +359,13 @@ pub struct ScheduledTask {
     /// 失敗の内容つきで出し直す（上限 [`Acceptance::max_attempts`]）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acceptance: Option<Acceptance>,
+    /// この予定の因果では計画の確認（Spec 43）を開けない（Spec 53 D1）。
+    ///
+    /// 真なら発火と検収の再依頼の封筒に印が立ち、委譲・`plan`・転送で
+    /// 引き継がれる。**`decide` はこの欄を見ない**（発火規則は不変）。
+    /// **既定は偽**で、偽なら直列化しない（既存の予定は読みも保存もバイト等価）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_approve_plans: bool,
 }
 
 /// 予定の後判定（Spec 46）— 検収の probe と、通るまでの再依頼。
@@ -413,6 +420,8 @@ pub struct ScheduleOptions {
     pub summarize_after: bool,
     /// 因果の完了後に走らせる検収（Spec 46）。
     pub acceptance: Option<Acceptance>,
+    /// この予定の因果では計画の確認を開けない（Spec 53）。
+    pub auto_approve_plans: bool,
 }
 
 /// 予定 1 件として受け付けられない値。
@@ -620,6 +629,7 @@ mod tests {
             session_mode: SessionMode::Continue,
             summarize_after: false,
             acceptance: None,
+            auto_approve_plans: false,
         }
     }
 
@@ -1014,6 +1024,7 @@ mod tests {
                 session_mode: SessionMode::Continue,
                 summarize_after: false,
                 acceptance: None,
+                auto_approve_plans: false,
             };
 
             // 02:30 は存在しないので、この日は発火も消化もしない。
@@ -1042,6 +1053,7 @@ mod tests {
                 session_mode: SessionMode::Continue,
                 summarize_after: false,
                 acceptance: None,
+                auto_approve_plans: false,
             };
 
             assert_eq!(t.decide(&now), Tick::Idle);

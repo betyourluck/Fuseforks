@@ -60,6 +60,7 @@ pub(super) async fn ask_agent(
     participants: Option<&Participants>,
     waiting: &[AgentId],
     drops_attachment: Option<crate::attachment::AttachmentKind>,
+    auto_approve_plans: bool,
 ) -> CoreResult<String> {
     // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
     // System 行と同じく**記録時の言語**で書く（Spec 35 D6）。
@@ -99,6 +100,7 @@ pub(super) async fn ask_agent(
         participants,
         waiting,
         "ask",
+        auto_approve_plans,
     )
     .await
     .0)
@@ -132,6 +134,8 @@ pub(super) async fn deliver_and_wait(
     participants: Option<&Participants>,
     waiting: &[AgentId],
     via: &'static str,
+    // 計画の確認を開けない印（Spec 53 凍結 11 (a)）。依頼元の封筒の値を**写すだけ**。
+    auto_approve_plans: bool,
 ) -> (String, PlanTaskState) {
     // 予算が尽きていたら配送そのものを始めない（token_budget の exhaustion —
     // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
@@ -207,6 +211,7 @@ pub(super) async fn deliver_and_wait(
         participants: participants.cloned(),
         // 待ち手の連鎖（Spec 44）。上で判定に使った追加後の形をそのまま運ぶ。
         waiting: chain,
+        auto_approve_plans,
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -309,6 +314,7 @@ pub(super) async fn run_plan(
     participants: Option<&Participants>,
     waiting: &[AgentId],
     drops_attachment: Option<crate::attachment::AttachmentKind>,
+    auto_approve_plans: bool,
 ) -> String {
     // 断り書きは記録時の言語で書く（Spec 35 D6）。波の全タスクで同じ値なので
     // ループの外で 1 回だけ引く。
@@ -504,6 +510,7 @@ pub(super) async fn run_plan(
         waiting,
         &displays,
         dispatched_at,
+        auto_approve_plans,
     )
     .await
     {
@@ -534,6 +541,9 @@ async fn execute_wave(
     waiting: &[AgentId],
     display_of: &std::collections::HashMap<AgentId, String>,
     dispatched_at: std::time::Instant,
+    // 波の全タスクへ写す印（Spec 53 凍結 11 (a)）。ワーカー自身は委譲ターンなので
+    // 窓を開けないが、その先で転送された個体の計画にまで効かせるために運ぶ。
+    auto_approve_plans: bool,
 ) -> Option<String> {
     // 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
     // 直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
@@ -570,6 +580,7 @@ async fn execute_wave(
                 participants.as_ref(),
                 &waiting,
                 "plan",
+                auto_approve_plans,
             )
             .await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)
@@ -751,6 +762,8 @@ pub(super) async fn run_dispatched_wave(
         &[],
         &displays,
         dispatched_at,
+        // 承認後の波は新しい根 — 印は立てない（Spec 53 凍結 11 (a)）。
+        false,
     )
     .await;
 
@@ -782,7 +795,11 @@ pub(super) async fn run_dispatched_wave(
         body,
         0,
     );
-    match super::deliver(&shared, &coordinator, message.clone(), budget, None, Vec::new()).await {
+    // 束ねの配送は新しい根（Spec 43 凍結 5）— 計画の確認を開けない印は立てない
+    // （Spec 53 凍結 11 (a)。人が承認した波の続きで、次の計画は人がまた見る）。
+    match super::deliver(&shared, &coordinator, message.clone(), budget, None, Vec::new(), false)
+        .await
+    {
         Ok(()) => {
             shared.record(message).await;
         }

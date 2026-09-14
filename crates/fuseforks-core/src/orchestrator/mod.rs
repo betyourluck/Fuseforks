@@ -225,6 +225,16 @@ struct Envelope {
     /// 待たない。判定を足すと、ブロック中の個体への健全な転送 = 受信箱で
     /// 順番を待つだけの形を壊す）。詳細は `ask_cycle_contract`。
     waiting: Vec<AgentId>,
+    /// この因果では計画の確認（Spec 43）を開けない印（Spec 53 D1 / 凍結 11 (a)）。
+    ///
+    /// **真を立てるのはコードの 2 箇所だけ** — `deliver_scheduled`（予定の
+    /// `autoApprovePlans` が真）と、その予定の検収の再依頼。`ask` / `plan` /
+    /// 転送の配送は受信封筒の値を**写すだけ**で上書きしない。新しい根
+    /// （利用者の発話 / dispatch / 束ねの配送 / 外部依頼）は偽。
+    ///
+    /// 予算と同じ経路で運ぶのは、委譲先・転送先の進行役が撒く計画も同じ
+    /// 予定の中の作業だから（人が居ない前提は因果の全体に掛かる）。
+    auto_approve_plans: bool,
 }
 
 /// 因果に参加して答えを返し終えた個体の集合（Spec 28）。
@@ -267,6 +277,7 @@ impl Envelope {
         budget: Option<Arc<BudgetPool>>,
         participants: Option<Participants>,
         waiting: Vec<AgentId>,
+        auto_approve_plans: bool,
     ) -> Self {
         Self {
             incoming,
@@ -275,6 +286,7 @@ impl Envelope {
             budget,
             participants,
             waiting,
+            auto_approve_plans,
         }
     }
 }
@@ -382,6 +394,13 @@ struct Shared {
     /// 自分のターンの完了を待つデッドロックも即座に解ける。併走による予算の
     /// 二重消費も同じ 1 つの機構で消える。
     external_gate: tokio::sync::Semaphore,
+    /// ステータスバーの「計画の確認を飛ばす」スイッチ（Spec 53 D3 / 凍結 11 (b)）。
+    ///
+    /// **メモリだけで、保存しない。起動時は必ず偽。** 付けっぱなしのまま
+    /// 再起動すると、確認が要る村で黙って確認が消え続けるため。再起動を
+    /// またいで無人で回すものは予定の `autoApprovePlans` が担う。
+    /// 1 プロセス 1 村なので、スコープはプロセス全体 = その村。
+    plan_review_bypass: std::sync::atomic::AtomicBool,
     config: OrchestratorConfig,
 }
 
@@ -1287,11 +1306,12 @@ async fn deliver(
     budget: Option<Arc<BudgetPool>>,
     participants: Option<Participants>,
     waiting: Vec<AgentId>,
+    auto_approve_plans: bool,
 ) -> CoreResult<()> {
     deliver_envelope(
         shared,
         to,
-        Envelope::plain(message, budget, participants, waiting),
+        Envelope::plain(message, budget, participants, waiting, auto_approve_plans),
     )
     .await
 }

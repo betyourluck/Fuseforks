@@ -264,6 +264,9 @@ struct HandoffGates {
     /// 委譲で呼ばれたターンか。**手順の文で「答えがどこへ返るか」を分ける**
     /// のに要る（`offer_transfer` が偽になる理由が 2 つあり、書くべき文が違う）。
     awaiting_reply: bool,
+    /// 封筒に計画の確認を開けない印があるか（Spec 53 凍結 11 (a)）。
+    /// 窓の判定と、このターンが生む配送（ask / plan / 転送）へ写すのに要る。
+    auto_approve_plans: bool,
 }
 
 /// ターンが生んだもの。実行ループの出口から [`dispatch_outcome`] へ渡す。
@@ -835,6 +838,9 @@ pub(super) async fn handle_message(
         // 待ち手の連鎖（Spec 44）。ask / plan は自分を足して運び、転送は
         // 末尾を除いて運ぶ。判定は deliver_and_wait の 1 箇所。
         waiting,
+        // 計画の確認を開けない印（Spec 53）。このターンでは**写すだけ**で、
+        // 立てたり消したりしない（凍結 11 (a)）。
+        auto_approve_plans,
     } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
@@ -979,6 +985,7 @@ pub(super) async fn handle_message(
         use_handoff_tools,
         awaiting_reply,
         offer_transfer: use_handoff_tools && spec.allow_handoff && !awaiting_reply,
+        auto_approve_plans,
     };
     // 4. プロンプトを組む。組み立ての中身は build_prompt が持つ。
     let prompt = build_prompt(
@@ -1030,6 +1037,7 @@ pub(super) async fn handle_message(
         budget,
         participants,
         waiting,
+        auto_approve_plans,
     )
     .await
 }
@@ -1288,6 +1296,7 @@ async fn run_turn_inner(
         use_handoff_tools,
         offer_transfer,
         awaiting_reply,
+        auto_approve_plans,
     } = gates;
     let TurnPrompt {
         // 実行ループが周ごとに呼び出しと結果を積む（#29 — 対で積まないと 400）。
@@ -1591,6 +1600,7 @@ async fn run_turn_inner(
                 executable: &executable,
                 use_handoff_tools,
                 awaiting_reply,
+                auto_approve_plans,
                 repeat_guard: &mut repeat_guard,
                 plan_wave: &mut plan_wave,
             };
@@ -1939,6 +1949,9 @@ struct CallRunner<'a> {
     /// 利用者へ流れる。依頼主は束ねを永遠に受け取れない（2026-09-02 の実機）。
     /// 転送を委譲ターンで提示しない #96 の門と同じ構造の規則。
     awaiting_reply: bool,
+    /// 封筒に計画の確認を開けない印があるか（Spec 53 凍結 11 (a)）。
+    /// 窓の判定（[`Self::opens_plan_review`]）と、ask / plan の配送へ写すのに使う。
+    auto_approve_plans: bool,
     /// 同一失敗の検出（#41 の処方 1）。**ターンをまたいで持ち回る**ので `&mut`。
     repeat_guard: &'a mut RepeatGuard,
     /// 波の連番（Spec 08）。`plan` を呼んだ回だけ進む。
@@ -1946,6 +1959,39 @@ struct CallRunner<'a> {
 }
 
 impl CallRunner<'_> {
+    /// plan を撒くときに計画の確認（Spec 43）の窓を開けるか。
+    ///
+    /// **判定はこの 1 箇所**（凍結 10・11）。窓を開けないのは 3 つ —
+    /// 委譲で呼ばれたターン（凍結 10）/ 封筒に予定の印がある（凍結 11 (a)）/
+    /// ステータスバーのスイッチが入っている（凍結 11 (b)）。
+    ///
+    /// **設定がオンの個体で 11 の理由により開けなかったときだけ**計器を出す
+    /// （出さないと「計画の確認をオンにしたのに止まらなかった」がログから読めない）。
+    /// 凍結 10 の飛ばしは従来どおり出さない。両方が真なら `reason=schedule` —
+    /// スイッチを戻しても同じ予定は飛ばし続けるので、持続する側の理由を出す。
+    fn opens_plan_review(&self) -> bool {
+        if !self.spec.plan_review || self.awaiting_reply {
+            return false;
+        }
+        let bypass = self
+            .shared
+            .plan_review_bypass
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if !self.auto_approve_plans && !bypass {
+            return true;
+        }
+        let reason = if self.auto_approve_plans {
+            "schedule"
+        } else {
+            "bypass"
+        };
+        note!(
+            "plan review skipped: agent={} reason={reason}",
+            self.agent_id
+        );
+        false
+    }
+
     /// 実行できる呼び出しか。
     ///
     /// **転送用の名前はここに来ない**（`Outcome::Handoff` で先に抜けている）。
@@ -2057,14 +2103,15 @@ impl CallRunner<'_> {
                 incoming.hop,
                 *self.plan_wave,
                 // 編集窓（Spec 43）。真なら配送せず提案を記録してターンを終える。
-                // **委譲で呼ばれたターン（戻り口あり）では設定に関わらず飛ばす**
-                // （凍結 10 — 理由は `CallRunner::awaiting_reply` の doc）。
-                spec.plan_review && !self.awaiting_reply,
+                // 開けない条件（凍結 10 の委譲ターン・凍結 11 の予定の印と
+                // スイッチ）は `opens_plan_review` の 1 箇所が持つ。
+                self.opens_plan_review(),
                 &turn.token,
                 budget.as_ref(),
                 participants.as_ref(),
                 waiting,
                 incoming.attachments.first().map(|a| a.kind()),
+                self.auto_approve_plans,
             )
             .await)
         } else if spec.hears_room_log
@@ -2090,6 +2137,7 @@ impl CallRunner<'_> {
                         participants.as_ref(),
                         waiting,
                         incoming.attachments.first().map(|a| a.kind()),
+                        self.auto_approve_plans,
                     )
                     .await
                 }
@@ -2179,10 +2227,13 @@ async fn build_prompt(
     handoffs: &HandoffTools,
     gates: HandoffGates,
 ) -> TurnPrompt {
+    // 計画の確認を開けない印（Spec 53）はプロンプトに出さない — 窓の判定と
+    // 配送だけが使う（モデルに「窓が無い」を知らせる理由が無い）。
     let HandoffGates {
         use_handoff_tools,
         offer_transfer,
         awaiting_reply,
+        ..
     } = gates;
     // 4. プロンプトを組む。順序は system → 手順 → 履歴 → 可変の文脈 + 今回の受信。
     //
@@ -2438,6 +2489,7 @@ async fn dispatch_outcome(
     participants: Option<Participants>,
     // 待ち手の連鎖（Spec 44）。転送の配送だけが読む（末尾を除いて運ぶ）。
     waiting: Vec<AgentId>,
+    auto_approve_plans: bool,
 ) -> CoreResult<()> {
     let TurnProduct {
         outcome,
@@ -2624,6 +2676,8 @@ async fn dispatch_outcome(
             // 転送は直近の依頼主の待ちを解く（HandedOff の返信が上で先に
             // 送られている）ので、連鎖は末尾を除いて運ぶ（Spec 44 凍結 2）。
             crate::orchestrator::delegation::trimmed_chain(&waiting),
+            // 転送先の計画にも効かせる — 受信封筒の印を写すだけ（Spec 53 凍結 11 (a)）。
+            auto_approve_plans,
         )
         .await
         {

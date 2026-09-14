@@ -8,6 +8,7 @@
   計器 `plan review skipped:` / 新ブロック `plan_verifier_contract`（凍結 8 本）/ `ScheduledTask` の
   `autoApprovePlans` / `settings_contract` の `world.json` の列に `defaultVerifier` と「置き場ではないもの」
   にスイッチ。IPC と `CoreEvent` は契約に列挙が無いので P3 で `tests/ipc_contract.rs` 側を追従する）
+  → P1 完了**（同日。記録は「P1 実装記録」）
 - 起点: 利用者 —「スケジュールで回しているとき作業を割り振って承認待ちで止まっちゃう。
   それは自律化にならない。承認を自動で OK させるようにしたい。あと検証役もデフォルトの
   検証役になるようにしたい」（2026-09-15）。形は同日の裁定 2 点:
@@ -175,6 +176,44 @@ spec.plan_review
 - **P4 台帳**: DETAIL 日英（計画の確認・予定・ステータスバー）/ CLAUDE.md / README 3 言語の該当行 /
   **条例の「束ねの検証」節の改訂案を利用者へ渡す**（Notes 3）
 - **P5 実機**
+
+## P1 実装記録（2026-09-15）
+
+- **印の運び方を D1 から 1 点変えた — `run_turn` / `run_turn_inner` の署名には足さず、既存の
+  `HandoffGates` に 1 欄足した。** `HandoffGates` は `awaiting_reply`（凍結 10 の材料）を運ぶ構造体で、
+  `handle_message` が封筒を分解した直後に組み、`run_turn_inner` で分解して `CallRunner` へ入れる。
+  凍結 10 と 11 の材料が同じ器に並ぶ。`present_tools` と `build_prompt` は `..` で受ける
+  （**プロンプトには印を出さない** — モデルに「窓が無い」を知らせる理由が無い）
+- **引数が増えた関数**: `deliver` / `Envelope::plain` / `deliver_and_wait` / `ask_agent` / `run_plan` /
+  `execute_wave` / `dispatch_outcome`。**真を立てるのは 2 箇所だけ**（`deliver_scheduled` の
+  `task.auto_approve_plans` / `redeliver_for_acceptance` の `state.auto_approve_plans`）で、
+  `false` を明示する根は 4 箇所（利用者の発話 `runtime.rs` / 外部依頼 `runtime.rs` /
+  承認後の波 `run_dispatched_wave` / 束ねの配送）。他は受信封筒の値を写すだけ
+- **窓の判定は `CallRunner::opens_plan_review` の 1 メソッド**（凍結 10 と 11 を 1 箇所に集めた。
+  旧 `spec.plan_review && !self.awaiting_reply` の式はこのメソッドへ移動）。計器
+  `plan review skipped: agent=… reason=schedule|bypass` もここで出す
+- **スイッチ**: `Shared.plan_review_bypass: AtomicBool`（`bootstrap` で `false`）と
+  `Orchestrator::plan_review_bypass()` / `set_plan_review_bypass(bool)`（`persist` を呼ばない）。
+  **IPC と `CoreEvent::PlanReviewBypassChanged` は P3**
+- **欄**: `ScheduledTask.auto_approve_plans`（`serde(default, skip_serializing_if = "is_false")`）/
+  `ScheduleOptions.auto_approve_plans` / `AcceptancePending.auto_approve_plans`。
+  リテラルの追従は `schedule.rs` 3・`schedules.rs` 2・`probe_approvals.rs` 1・テスト 4。
+  **GUI 層の `ScheduleView`（`commands.rs:958`）への写しは P3**
+- **結合テスト `tests/unattended_plan.rs`（5 本・一発で緑）**: 理由の計器と優先（ログを読む唯一の 1 本 —
+  予定の印とスイッチが両方真で `reason=schedule`、利用者の依頼でスイッチだけ真で `reason=bypass`、
+  `plan pending:` は出ない）/ 印の無い予定と利用者の依頼では窓が開く（負の対照）/ スイッチは既定 OFF・
+  ON で開かず OFF に戻すと開く / 予定 → 中継役の転送 → 進行役でも開かない（印の無い予定の対照つき）/
+  検収の再依頼でも開かない（常に不一致の検収・総試行 2 回で波が 2 つとも実行）
+- **ミューテーション 4 回とも予測どおりの赤**: 判定で予定の印を無視 → 転送と再依頼の 2 本 /
+  再依頼の印を `false` → 再依頼の 1 本 / 転送の印を `false` → 転送の 1 本 / 理由の優先を逆 → ログの 1 本。
+  **テストが 1 本ずつ別の経路を守っている**ことが分かる（予測を先に書いてから撃った）
+- **ワークスペース全件 953 本が緑・clippy 警告 0**。**1 回目の全件は出力が空だった** — バックグラウンドで
+  `grep` を通した出力に `test result` が 1 行も無く、終了コード 0 は末尾の `echo` のものだった。
+  ログファイルへ書き出して流し直して 40 スイートを確認した（原因は特定していない。**終了コードは
+  パイプの最後のコマンドのもので、テストの成否を語らない**）
+- **確かめていないこと**: 外部依頼（MCP）の根で印が偽になること — 外部依頼は必ず答えを待つ委譲なので、
+  凍結 10 で窓がそもそも開かず、観測で区別できない。承認後の波・束ねの配送で偽になることも同じく
+  窓の開閉では観測できない（コードで `false` を明示している箇所の列挙で担保）
 
 ## 検収
 

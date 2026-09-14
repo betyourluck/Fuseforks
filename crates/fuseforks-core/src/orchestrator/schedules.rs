@@ -340,6 +340,8 @@ async fn deliver_scheduled(
         budget,
         participants.clone(),
         Vec::new(),
+        // 計画の確認を開けない印を立てる 1 箇所目（Spec 53 凍結 11 (a)）。
+        task.auto_approve_plans,
     )
     .await
     {
@@ -366,6 +368,7 @@ async fn deliver_scheduled(
                         participants_union: std::collections::HashSet::new(),
                         current_participants: participants,
                         summarize_after: task.summarize_after,
+                        auto_approve_plans: task.auto_approve_plans,
                     },
                 );
                 return true;
@@ -637,6 +640,9 @@ pub(super) struct AcceptancePending {
     current_participants: Option<Participants>,
     /// 確定後に要約するか。
     summarize_after: bool,
+    /// 再依頼の封筒に計画の確認を開けない印を立てるか（Spec 53 — 発火時の
+    /// 予定の値を写す。**メモリだけ**の構造体なので再起動後の再依頼は存在しない）。
+    auto_approve_plans: bool,
 }
 
 /// 完了した試行 1 回ぶんの後判定（Spec 46 D2 の「後判定 → 確定 → 要約」の直列）。
@@ -741,6 +747,8 @@ async fn redeliver_for_acceptance(
         state.budget.clone(),
         participants.clone(),
         Vec::new(),
+        // 印を立てる 2 箇所目（Spec 53 凍結 11 (a) — 発火時の予定の値）。
+        state.auto_approve_plans,
     )
     .await
     {
@@ -815,6 +823,7 @@ impl Orchestrator {
             session_mode: options.session_mode,
             summarize_after: options.summarize_after,
             acceptance: options.acceptance,
+            auto_approve_plans: options.auto_approve_plans,
         };
         // **組み立てた 1 件をまとめて検証する。** 欄ごとに検証を書くと、
         // 欄が増えたときにここを直す仕事が生える（読み込み側と同じ述語を通す）。
@@ -914,6 +923,7 @@ impl Orchestrator {
             session_mode: options.session_mode,
             summarize_after: options.summarize_after,
             acceptance: options.acceptance,
+            auto_approve_plans: options.auto_approve_plans,
         };
         // 検証は create と同じ 1 述語。**通らなければ既存の予定に指一本触れない。**
         updated.validate().map_err(|err| CoreError::InvalidSchedule {

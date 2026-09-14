@@ -58,6 +58,23 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// 計画の確認を飛ばすスイッチ（Spec 53 D3）が入っているか。
+    pub fn plan_review_bypass(&self) -> bool {
+        self.shared
+            .plan_review_bypass
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 計画の確認を飛ばすスイッチを切り替える（Spec 53 D3）。
+    ///
+    /// **`world.json` へは書かない**（`persist` を呼ばない）— メモリだけの状態で、
+    /// 再起動すると必ず OFF に戻る（凍結 11 (b)）。次のターンの窓の判定から効く。
+    pub fn set_plan_review_bypass(&self, on: bool) {
+        self.shared
+            .plan_review_bypass
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// UI の表示言語。bootstrap が必ず確定させるので、未確定は起こらない
     /// （防御の既定は従来の見た目 = 日本語）。
     pub async fn language(&self) -> crate::world::Language {

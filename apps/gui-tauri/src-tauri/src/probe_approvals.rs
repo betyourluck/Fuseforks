@@ -216,6 +216,7 @@ mod tests {
             session_mode: fuseforks_core::schedule_probe::SessionMode::Continue,
             summarize_after: false,
             acceptance: None,
+            auto_approve_plans: false,
         }
     }
 

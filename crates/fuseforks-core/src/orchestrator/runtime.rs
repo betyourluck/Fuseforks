@@ -364,7 +364,8 @@ impl Orchestrator {
         let budget = new_root_budget(&self.shared).await;
         // 利用者の発話は参加者を数えない — 自動要約は予定の発火だけの機能で、
         // 人が話している間に履歴を畳むのは「押していない操作」になる。
-        deliver(&self.shared, to, message, budget, None, Vec::new()).await
+        // 利用者の発話は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
+        deliver(&self.shared, to, message, budget, None, Vec::new(), false).await
     }
 
     /// 「どの接続先なら運べるか」を **`carries` の表から組み立てる**（Spec 36 D2）。
@@ -526,6 +527,8 @@ impl Orchestrator {
             // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2。閉路は D7 の busy が塞ぐ）。
             &[],
             "ask",
+            // 外部依頼は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
+            false,
         )
         .await;
         // 分類は捨てる（`ask` と同じ）。**失敗も文字列で返る** — 相手が

@@ -198,6 +198,8 @@ impl Orchestrator {
             summaries: RwLock::new(restored_summaries),
             session_id: std::sync::RwLock::new(session_id),
             external_gate: tokio::sync::Semaphore::new(1),
+            // 起動時は必ず OFF（Spec 53 D3 — 保存しない）。
+            plan_review_bypass: std::sync::atomic::AtomicBool::new(false),
             config,
         });
 

@@ -181,6 +181,7 @@ async fn fire_with_acceptance(
                 session_mode: SessionMode::Continue,
                 summarize_after,
                 acceptance: Some(acceptance),
+                auto_approve_plans: false,
             },
         )
         .await
@@ -324,6 +325,7 @@ async fn an_unapproved_acceptance_does_not_redeliver() {
                 session_mode: SessionMode::Continue,
                 summarize_after: false,
                 acceptance: Some(echo_acceptance("OK", "OK", 5)),
+                auto_approve_plans: false,
             },
         )
         .await
