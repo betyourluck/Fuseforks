@@ -383,7 +383,11 @@
     "addTargetPlaceholder": "宛先を選ぶ…",
     "removeTask": "このタスクを外す",
     "dispatch": "実行",
-    "discard": "破棄"
+    "discard": "破棄",
+    "clearView": "終わった波を表示から隠す（記録は消えません。確認待ちと実行中は残ります）",
+    "clearedNote": "{count} 波を隠しています",
+    "clearedRestore": "すべて表示",
+    "clearedAll": "終わった波はすべて隠しています。"
   },
   "map": {
     "heading": "サーヴァントの絆",

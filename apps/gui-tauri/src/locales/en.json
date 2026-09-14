@@ -383,7 +383,11 @@
     "addTargetPlaceholder": "Choose a target…",
     "removeTask": "Remove this task",
     "dispatch": "Dispatch",
-    "discard": "Discard"
+    "discard": "Discard",
+    "clearView": "Hide finished waves from view (records are kept; waves awaiting review or still running stay)",
+    "clearedNote": "{count} waves hidden",
+    "clearedRestore": "Show all",
+    "clearedAll": "All finished waves are hidden."
   },
   "map": {
     "heading": "Kizuna",

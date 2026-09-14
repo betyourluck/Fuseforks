@@ -97,6 +97,7 @@ Fuseforks/
             ├── composables/useOrchestrator.ts   単一ストア
             ├── composables/useUiSettings.ts     この画面の設定（端末に保存）
             ├── composables/useChatClear.ts      会話ペインの表示クリア（表示だけ・会話ごと）
+            ├── composables/useWaveClear.ts      作業状況タブの表示クリア（表示だけ・終わった波だけ）
             ├── composables/useHiddenGroups.ts   隠しているグループの集合（端末に保存。[Spec 51](specs/51_agent-groups.md)）
             ├── App.vue              3 ペインのグリッド
             └── components/
@@ -690,6 +691,13 @@ Airflow の Grid 相当。**Airflow「風」であって Airflow ではない** 
 刻む）。記録はプロセス寿命の in-memory リング（直近 50 波）で、同定は `plan_id`
 （モデルには見せない — 束ねの文言は 1 字も変えていない）。stderr の
 `plan wave:` / `plan bundle:` 観測線はそのまま残っている。
+
+見出しの右端の消しゴムで、**終わった波を表示から隠せる**（2026-09-15）。会話ペインの
+表示クリアと同じく**消すのは表示だけ**で、コアの記録には触らない（隠している間は件数と
+「すべて表示」が見出しに出る）。隠れるのは押した時点で終わっていた波だけで、
+**確認待ちと実行中の波は押しても残り**、後から終わった波が勝手に消えることもない。
+隠した波は `planId` と開始時刻の組で覚えるので、再起動で `planId` が振り直されても
+新しい波は隠れない。
 
 エージェント発の同報（1 体が同じ内容を複数へ渡す fan-out）は今も動く。その各通には
 全宛先の一覧が添えられ、受信者のプロンプトに「全員が既に受け取っている」という

@@ -25,6 +25,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { isSettled, useWaveClear } from "../composables/useWaveClear";
 import type {
   AgentId,
   BottomTab,
@@ -47,7 +48,24 @@ const { state } = orchestrator;
 /** 行 = 全登録エージェント。左ペイン・一覧と同じ order 順。 */
 const rows = computed(() => [...state.agents].sort((a, b) => a.order - b.order));
 
-const waves = computed(() => state.planWaves);
+const waveClear = useWaveClear();
+
+/**
+ * 表示する波。表示クリア（useWaveClear）で隠した波だけを除く。**記録そのものは
+ * `state.planWaves` に残り**、確認待ちの編集パネルもそちらを読む（確認待ちは
+ * そもそも隠れない）。
+ */
+const waves = computed(() => state.planWaves.filter((w) => !waveClear.isHidden(w)));
+
+/** 隠している波の数。0 なら案内ごと出さない。 */
+const hiddenCount = computed(() => state.planWaves.length - waves.value.length);
+
+/** 隠せる波（表示中で終わっている波）が 1 つでもあるか。 */
+const canClear = computed(() => waves.value.some(isSettled));
+
+function clearView(): void {
+  waveClear.clear(state.planWaves);
+}
 
 /** 分類の表示語彙（辞書キー）。色の対応は data_contract.yaml の PlanTaskState が正。 */
 const STATE_LABEL_KEYS: Record<PlanTaskState, string> = {
@@ -231,6 +249,47 @@ watch(
       <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（サーヴァントの絆と同じ規則）。 -->
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
       <span v-if="waves.length">{{ $t("waves.waveCount", { count: waves.length }) }}</span>
+      <!--
+        表示クリアの案内。**消していないことを画面で言い、そこから戻せる**
+        （会話ペインの表示クリアと同じ規律）。
+      -->
+      <span v-if="hiddenCount" class="flex items-center gap-1.5 text-[10px]">
+        <span>{{ $t("waves.clearedNote", { count: hiddenCount }) }}</span>
+        <button
+          type="button"
+          class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+          @click="waveClear.restore()"
+        >
+          {{ $t("waves.clearedRestore") }}
+        </button>
+      </span>
+      <!--
+        表示クリア。アイコンは会話ペインと黒板と同じ消しゴム（同じ「消す」の絵を
+        2 つ持たない）。**こちらは表示だけ**なので黒板の一括削除と違って確認を出さず、
+        hover も失敗色ではなく accent（会話ペインと同じ）。
+      -->
+      <button
+        type="button"
+        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        :disabled="!canClear"
+        :title="$t('waves.clearView')"
+        :aria-label="$t('waves.clearView')"
+        @click="clearView"
+      >
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m15 5 5 5-8 8H7l-4-4z" />
+          <path d="M21 20h-11" />
+        </svg>
+      </button>
     </header>
 
     <!-- 確認待ちの編集パネル（Spec 43）。最古の 1 件を扱い、残りは件数だけ。 -->
@@ -316,7 +375,7 @@ watch(
       v-if="waves.length === 0"
       class="flex flex-1 items-center justify-center text-xs text-ink-dim"
     >
-      {{ $t("waves.empty") }}
+      {{ hiddenCount ? $t("waves.clearedAll") : $t("waves.empty") }}
     </div>
 
     <div v-else ref="scroller" class="min-h-0 flex-1 overflow-auto">

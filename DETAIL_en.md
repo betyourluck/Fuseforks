@@ -97,6 +97,7 @@ Fuseforks/
             ├── composables/useOrchestrator.ts   Single store
             ├── composables/useUiSettings.ts     This-screen settings (stored on the device)
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
+            ├── composables/useWaveClear.ts      Clearing the Work Status view (display only, finished waves only)
             ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
             ├── App.vue              3-pane grid
             └── components/
@@ -571,6 +572,8 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 #### Wave Pane — Execution Traces of `plan` ([Spec 08](specs/08_plan-wave-pane.md))
 
 The lower section of the central pane depicts the execution of `plan`. Columns = waves, rows = agents, cells = task resolution states (running / reply / transfer / undeliverable / no response / timed out), equivalent to Airflow's Grid. It is **Airflow "style" rather than Airflow** — the preceding stance that humans do not write DAGs remains unchanged, and what is drawn is the **execution trace** of the plan created by the model, not a place to edit (the only exception is a **wave awaiting review** from Plan Review above — it appears as a dashed column, editable before it becomes a trace). Classification is carried by types rather than word parsing (the core carves it out with `Reply.kind`). Records are process-lifetime in-memory rings (the latest 50 waves), and identification uses `plan_id` (hidden from the model — the bundling phrasing has not changed by a single character). The stderr observation lines `plan wave:` / `plan bundle:` remain as they are.
+
+The eraser at the right end of the header **hides finished waves from view** (2026-09-15). As with clearing the chat view, **only the display changes** and the core's records are untouched (while waves are hidden, the header shows the count and "Show all"). Only waves that had already finished when you pressed it are hidden: **waves awaiting review or still running stay**, and a wave that finishes later does not disappear on its own. Hidden waves are remembered by the pair of `planId` and start time, so a new wave is not hidden when a restart renumbers `planId`.
 
 Agent-initiated broadcasts (where a single body passes the same content to multiple recipients) continue to work. Each such message includes a list of all destinations, and the recipient's prompt contains a note stating, "Everyone has already received this." Without this, each agent decides that "only I have heard this" and conscientiously transfers to connection partners, causing echoes (failures.md #20).
 
