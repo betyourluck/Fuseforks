@@ -43,6 +43,7 @@ function fullTask(): ScheduleView {
       cwd: null,
       maxAttempts: 3,
     },
+    autoApprovePlans: true,
     nextDueMs: null,
     recurrenceLabel: "5 分ごと",
     probeApproved: true,
@@ -74,13 +75,14 @@ describe("draftFromSchedule → optionsFromDraft / recurrenceFromDraft の往復
         cwd: null,
         maxAttempts: 3,
       },
+      autoApprovePlans: true,
     });
     expect(draftValid(draft)).toBe(true);
   });
 
   it("素の予定（欄がワイヤに現れない形）は既定へ畳まれる", () => {
-    // probe / sessionMode / summarizeAfter / acceptance は既定だとワイヤに
-    // 現れない（Rust 側の skip_serializing_if）。undefined を既定として
+    // probe / sessionMode / summarizeAfter / acceptance / autoApprovePlans は
+    // 既定だとワイヤに現れない（Rust 側の skip_serializing_if）。undefined を既定として
     // 読めないと、既存の予定を開いて保存しただけで挙動が変わる。
     const task: ScheduleView = {
       ...fullTask(),
@@ -89,6 +91,7 @@ describe("draftFromSchedule → optionsFromDraft / recurrenceFromDraft の往復
       sessionMode: undefined,
       summarizeAfter: undefined,
       acceptance: undefined,
+      autoApprovePlans: undefined,
     };
     const draft = draftFromSchedule(task);
     expect(recurrenceFromDraft(draft)).toEqual({
@@ -102,6 +105,7 @@ describe("draftFromSchedule → optionsFromDraft / recurrenceFromDraft の往復
       sessionMode: "continue",
       summarizeAfter: false,
       acceptance: null,
+      autoApprovePlans: false,
     });
   });
 

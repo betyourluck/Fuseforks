@@ -31,6 +31,19 @@ fn wire_keys<T: serde::Serialize>(value: &T) -> Vec<String> {
 /// 型検査は二言語の境界に届かないので、フィールドを増減しても TS 側は黙って古いままになる。
 /// ここで落として「TS も見ろ」と強制するのが目的で、期待値の更新だけして通すのは
 /// このテストの意味を消す行為（failures.md #9 と同じ形）。
+/// 計画の確認を飛ばすスイッチの変化（Spec 53）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `CoreEvent` の `planReviewBypassChanged` を直すこと**
+/// （画面は `on` だけを読む。欄名が変わると、スイッチを押しても帯の表示が追従しない）。
+#[test]
+fn plan_review_bypass_event_wire_is_frozen() {
+    let event = fuseforks_core::event::CoreEvent::PlanReviewBypassChanged { on: true };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({ "type": "planReviewBypassChanged", "on": true }),
+    );
+}
+
 #[test]
 fn wire_field_sets_are_frozen() {
     assert_eq!(

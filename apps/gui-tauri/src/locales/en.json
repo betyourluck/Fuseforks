@@ -387,7 +387,11 @@
     "clearView": "Hide finished waves from view (records are kept; waves awaiting review or still running stay)",
     "clearedNote": "{count} waves hidden",
     "clearedRestore": "Show all",
-    "clearedAll": "All finished waves are hidden."
+    "clearedAll": "All finished waves are hidden.",
+    "verifierLabel": "Verifier:",
+    "verifierNone": "None",
+    "verifierTitle": "Default verifier for bundles. After plan bundles the answers, this servant is asked to check 4 points and its conclusion is appended to the bundle. When approving a plan review you can choose again per wave.",
+    "panelVerifierLabel": "Verifier"
   },
   "map": {
     "heading": "Kizuna",
@@ -809,6 +813,8 @@
     "freshHint": "The whole village switches to a new conversation. The previous one is kept and can be reopened from the conversation list.",
     "summarizeToggle": "Summarise memories when finished",
     "summarizeHint": "Summarises only the servants involved in this request. Summaries stay in every later turn (unlike a new conversation, they are not discarded).",
+    "autoApproveToggle": "Approve plan reviews automatically",
+    "autoApproveHint": "Work started by this schedule is dispatched without waiting for approval, even by servants with plan review on (this also applies to delegations, transfers and acceptance re-requests).",
     "freshBadge": "Starts a new conversation",
     "summarizeBadge": "Summarises when done"
   },
@@ -955,6 +961,8 @@
       "approveCommand": "Approving the command",
       "rejectCommand": "Rejecting the command",
       "dispatchPlan": "Dispatching the plan",
+      "setPlanReviewBypass": "Toggling the plan review skip switch",
+      "saveDefaultVerifier": "Saving the default verifier",
       "discardPlan": "Discarding the plan",
       "createGroup": "create group",
       "saveGroup": "save group",
@@ -969,7 +977,11 @@
     "versionAria": "Version {version}",
     "mcpHost": "MCP server listening :{port}",
     "mcpHostTitle": "Accepting requests from external LLMs (127.0.0.1:{port}). Turn it off under Settings > Integration > MCP server when not in use.",
-    "statsTitle": "Stats (what this village has paid; toggles with the village view)"
+    "statsTitle": "Stats (what this village has paid; toggles with the village view)",
+    "bypassOffTitle": "Skip plan reviews (while on, servants with plan review on dispatch without waiting for approval. Not saved; turns off on restart)",
+    "bypassOnTitle": "Skipping plan reviews (click to turn off; also turns off on restart)",
+    "bypassAria": "Skip plan reviews",
+    "bypassOnLabel": "No review"
   },
   "roles": {
     "title": "Roles",

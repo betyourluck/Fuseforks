@@ -731,6 +731,8 @@ export interface ScheduleOptions {
   summarizeAfter?: boolean;
   /** 因果の完了後に走らせる検収（Spec 46）。 */
   acceptance?: Acceptance | null;
+  /** この予定の因果では計画の確認を開けない（Spec 53）。 */
+  autoApprovePlans?: boolean;
 }
 
 /**
@@ -753,6 +755,10 @@ export interface ScheduleView {
   sessionMode?: SessionMode;
   /** 因果の完了後に参加した個体を要約するか。既定（偽）ならワイヤに現れない。 */
   summarizeAfter?: boolean;
+  /**
+   * この予定の因果では計画の確認を開けない（Spec 53）。既定（偽）ならワイヤに現れない。
+   */
+  autoApprovePlans?: boolean;
   /** 次回の発火予定時刻（epoch ミリ秒）。求まらなければ null。 */
   nextDueMs: number | null;
   /** 再現規則の日本語表記（「毎週 木曜 17:00」）。配送本文の由来と同じ関数。 */
@@ -1172,6 +1178,8 @@ export type CoreEvent =
       startedAtMs: number;
     }
   | { type: "planWaveDiscarded"; planId: number }
+  /** 計画の確認を飛ばすスイッチが切り替わった（Spec 53 — ステータスバー）。 */
+  | { type: "planReviewBypassChanged"; on: boolean }
   /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
       流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };

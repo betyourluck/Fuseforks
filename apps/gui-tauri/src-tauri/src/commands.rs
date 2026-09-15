@@ -558,6 +558,38 @@ pub async fn set_ask_timeout(state: State<'_, AppState>, secs: Option<u64>) -> C
     state.orchestrator.set_ask_timeout(secs).await
 }
 
+/// 計画の確認を飛ばすスイッチ（Spec 53 D3）。**メモリだけの状態で、起動時は必ず偽**。
+#[tauri::command]
+pub async fn get_plan_review_bypass(state: State<'_, AppState>) -> CoreResult<bool> {
+    Ok(state.orchestrator.plan_review_bypass())
+}
+
+/// 計画の確認を飛ばすスイッチを切り替える。**`world.json` へは書かない**
+/// （再起動で OFF に戻る — plan_edit_window 凍結 11 (b)）。次のターンの窓の判定から効く。
+#[tauri::command]
+pub async fn set_plan_review_bypass(state: State<'_, AppState>, on: bool) -> CoreResult<()> {
+    state.orchestrator.set_plan_review_bypass(on);
+    Ok(())
+}
+
+/// 束ねの既定の検証役（Spec 53）。`null` = なし（削除済みの個体も `null`）。
+#[tauri::command]
+pub async fn get_default_verifier(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {
+    Ok(state.orchestrator.default_verifier().await)
+}
+
+/// 束ねの既定の検証役を差し替える。`null` で「なし」へ戻す。次の plan から効く。
+///
+/// # Errors
+/// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]。
+#[tauri::command]
+pub async fn set_default_verifier(
+    state: State<'_, AppState>,
+    agent_id: Option<AgentId>,
+) -> CoreResult<()> {
+    state.orchestrator.set_default_verifier(agent_id.as_ref()).await
+}
+
 /// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
 #[tauri::command]
 pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_core::world::Language> {

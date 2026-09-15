@@ -9,6 +9,7 @@
   `autoApprovePlans` / `settings_contract` の `world.json` の列に `defaultVerifier` と「置き場ではないもの」
   にスイッチ。IPC と `CoreEvent` は契約に列挙が無いので P3 で `tests/ipc_contract.rs` 側を追従する）
   → P1 完了**（同日。記録は「P1 実装記録」）**→ P2 完了**（同日。記録は「P2 実装記録」— 契約を 3 点訂正）
+  **→ P3 完了**（同日。記録は「P3 実装記録」— 実機は未確認）
 - 起点: 利用者 —「スケジュールで回しているとき作業を割り振って承認待ちで止まっちゃう。
   それは自律化にならない。承認を自動で OK させるようにしたい。あと検証役もデフォルトの
   検証役になるようにしたい」（2026-09-15）。形は同日の裁定 2 点:
@@ -251,6 +252,44 @@ spec.plan_review
   既定へ落とす → 承認時の選択の 1 本 / 参加者の判定を外す → 理由の 1 本 / 削除済みを「なし」に読まない →
   削除の 1 本 / 打ち切りを「答えなし」へ写す → 単体の 1 本
 - **ワークスペース全件 960 本が緑（41 スイート）・clippy 警告 0**（どちらもログファイルへ書き出して数えた — P1 の教訓）
+
+## P3 実装記録（2026-09-15）
+
+- **IPC 4 本**（`get_plan_review_bypass` / `set_plan_review_bypass` / `get_default_verifier` /
+  `set_default_verifier`）と `dispatch_plan_wave` の `verifier` 引数（TS は `verifier?: AgentId | null`、
+  省略は `null` で送る）。**スイッチの変化は `CoreEvent::PlanReviewBypassChanged { on }`** —
+  `Orchestrator::set_plan_review_bypass` が発行する。ワイヤ形は `ipc_contract.rs` の
+  `plan_review_bypass_event_wire_is_frozen` で凍結（`{"type":"planReviewBypassChanged","on":true}`）
+- **投影**: `useOrchestrator` の `planReviewBypass` / `defaultVerifier`。**起動時に両方を読む** —
+  起動直後ならスイッチは必ず OFF だが、**画面の再読み込みではコアが生きていて ON のまま戻る**。
+  以後スイッチはイベントで追う。操作は `setPlanReviewBypass` / `setDefaultVerifier`（成功したら投影を
+  先に書く）と `dispatchPlanWave(planId, tasks, verifier = null)`
+- **画面 4 箇所**:
+  - **ステータスバー**: 統計の左にスイッチ。オンの間は注意色で発光し「確認なし」の字も出す
+    （色だけに頼らない・`aria-pressed` も出す）。doc の「この帯で唯一の操作」を「操作は 2 つ」へ直した
+  - **予定のダイアログ**: 「計画の確認を自動で通す」のチェック（要約のチェックの下）。一覧のバッジは
+    付けていない — **既存の要約・新規会話のバッジの鍵（`summarizeBadge` / `freshBadge`）はどの画面からも
+    使われていない死んだ鍵**だったので、同じ形の鍵を足さなかった
+  - **作業状況タブの見出し**: 「検証役: [なし / 全サーヴァント]」。消しゴムの `ml-auto` をこの選択へ移した
+  - **確認待ちパネル**: 「破棄」の左に検証役の選択。**初期値は村の既定で、提案が切り替わるたびに既定へ
+    戻す**（前の提案の選択を持ち越さない）。承認で渡すのはこの選択
+- **D4 と違えた点**: 「指定した個体が削除されたら画面で（削除済み）と出す」は**出せない**。コアの
+  `default_verifier` が削除済みを `None` で返すので、画面は保存値を知らない（区別する欄をワイヤに
+  持たない判断。画面は一覧に居ない個体も「なし」として扱う）
+- **テスト**: `useOrchestrator.planReview.test.ts`（3 本 — 起動時の読みとイベントの追従 / 操作で投影が
+  変わる / 承認時の検証役を押したときの値で渡し、省略は `null`）/ `scheduleDraft.test.ts` の往復に
+  `autoApprovePlans` / 起動テストのモックに IPC 2 本。`bun run build`（vue-tsc）緑
+- **ミューテーション 3 つ**: イベントの受け口を消す → 1 本赤 / 変換で `autoApprovePlans` を落とす →
+  往復の 2 本赤 / **承認時の「なし」に村の既定を差し込む → 2 回続けて緑のまま通った**。
+  **穴は別々に 2 つ**あった — (1) 状態はモジュールで 1 つ・`init` は 2 回目以降は何もしないので、前の
+  テストが既定を `null` にしていて差し込みが `null` のままだった (2) それを直そうとテストで
+  `orchestrator.state.defaultVerifier = "agent_v"` と代入したが、**公開される状態は `readonly(state)` で、
+  代入は黙って捨てられた**。操作（`setDefaultVerifier`）で置く形に直して赤を確認した。
+  **一般化: 変異が緑のとき、まずテストの前提（その値が本当にその状態になっているか）を確かめる**
+- **Rust 全件の 1 回目はテストの前にビルドが落ちた**（`only metadata stub found for rlib dependency core` /
+  `can't find crate for std`）。流し直すと 41 スイート 961 本が緑。直前の `cargo check`（rmeta だけを作る）
+  の成果物との食い違いと見ているが、**原因は特定していない**。clippy 警告 0
+- **実機は未確認**（P5）
 
 ## 検収
 

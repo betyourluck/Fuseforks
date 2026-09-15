@@ -109,6 +109,16 @@ interface OrchestratorState {
    */
   mcpHost: McpHostStatus | null;
   /**
+   * 計画の確認を飛ばすスイッチ（Spec 53 — ステータスバー）。**コアのメモリだけ**の
+   * 状態で、起動時に 1 回読み、以後は `planReviewBypassChanged` で追う。
+   */
+  planReviewBypass: boolean;
+  /**
+   * 束ねの既定の検証役（Spec 53）。`null` = なし。**削除済みの個体はコアが `null` で
+   * 返す**ので、画面は「削除済み」を区別できない（区別する欄をワイヤに持たない）。
+   */
+  defaultVerifier: AgentId | null;
+  /**
    * 外部クライアントの呼び名（Spec 25）。`null` = 未設定で、表示は
    * **呼び出し側の名乗り**（`Endpoint::External` の `client`）へ落ちる。
    *
@@ -206,6 +216,8 @@ const state = reactive<OrchestratorState>({
   userName: null,
   userIcon: null,
   mcpHost: null,
+  planReviewBypass: false,
+  defaultVerifier: null,
   externalName: null,
   externalIcon: null,
   typing: {},
@@ -717,6 +729,10 @@ function applyEvent(event: CoreEvent): void {
       });
       break;
 
+    case "planReviewBypassChanged":
+      state.planReviewBypass = event.on;
+      break;
+
     case "planWaveDiscarded": {
       const wave = state.planWaves.find((w) => w.planId === event.planId);
       if (wave) {
@@ -813,6 +829,10 @@ async function initialize(): Promise<void> {
     // 起動・設定の適用・合鍵の作り直しの 3 つで、どれもこの composable を通る。
     // 定期的に引き直す理由が無い（`refreshAll` にも混ぜない）。
     state.mcpHost = await ipc.mcpHostStatus();
+    // 計画の確認を飛ばすスイッチと既定の検証役（Spec 53）。スイッチは起動直後なら
+    // 必ず OFF だが、画面の再読み込み（コアは生きている）では ON のことがあるので読む。
+    state.planReviewBypass = await ipc.getPlanReviewBypass();
+    state.defaultVerifier = await ipc.getDefaultVerifier();
     // 外部クライアントの呼び名とアイコン（Spec 25）。会話ペインの外部の行に
     // 出るので、覆いが外れる前に当てておく（利用者の呼び名と同じ理由）。
     state.externalName = await ipc.getExternalName();
@@ -918,11 +938,36 @@ export function useOrchestrator() {
     async dispatchPlanWave(
       planId: number,
       tasks: PlanTaskInput[],
+      /** 計画の確認パネルで選んだ検証役（Spec 53）。`null` = なし。村の既定は読まない。 */
+      verifier: AgentId | null = null,
     ): Promise<boolean> {
       const result = await mutate("orchestrator.op.dispatchPlan", () =>
-        ipc.dispatchPlanWave(planId, tasks),
+        ipc.dispatchPlanWave(planId, tasks, verifier),
       );
       return result !== FAILED;
+    },
+
+    /**
+     * 計画の確認を飛ばすスイッチを切り替える（Spec 53 — ステータスバー）。
+     *
+     * 投影はイベント（`planReviewBypassChanged`）でも届くが、**成功した時点で先に
+     * 書く**（押した直後の見た目をイベントの到着に待たせない）。
+     */
+    async setPlanReviewBypass(on: boolean): Promise<boolean> {
+      const done = await mutate("orchestrator.op.setPlanReviewBypass", () =>
+        ipc.setPlanReviewBypass(on),
+      );
+      if (succeeded(done)) state.planReviewBypass = on;
+      return succeeded(done);
+    },
+
+    /** 束ねの既定の検証役を保存する（Spec 53）。`null` で「なし」へ戻す。 */
+    async setDefaultVerifier(agentId: AgentId | null): Promise<boolean> {
+      const done = await mutate("orchestrator.op.saveDefaultVerifier", () =>
+        ipc.setDefaultVerifier(agentId),
+      );
+      if (succeeded(done)) state.defaultVerifier = agentId;
+      return succeeded(done);
     },
 
     /** 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。 */

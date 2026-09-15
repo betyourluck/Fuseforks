@@ -40,9 +40,16 @@
  * いれば開いていない。ここで見せたいのは「実際に受け付けている」ことで、
  * 「そう設定してある」ことではない（食い違いの診断は設定ページが担う）。
  *
+ * # 計画の確認を飛ばすスイッチ（Spec 53・2026-09-15）
+ *
+ * **この帯の操作は 2 つになった**（統計の入口と、これ）。置くのは統計の左。
+ * スイッチは人の確認をまとめて外す状態なので、**オンの間は注意色で発光させ、
+ * 帯を見ればオンだと分かる**ようにする（MCP の扉と同じ「つけっぱなしに気づける」
+ * 理由 — 状態はコアのメモリだけにあり、再起動で必ず OFF に戻る）。
+ *
  * # 統計への入口（Spec 39・2026-08-16 に TitleBar から移した）
  *
- * **この帯で唯一の操作**。時計の左にアイコンだけで置く。タイトルバーへ置いて
+ * 時計の左にアイコンだけで置く。タイトルバーへ置いて
  * いたときは、ダイアログの入口 6 つの列に**面ごと差し替える 1 つ**が混ざり、
  * 同じ見た目で振る舞いが違った（利用者判断）。ここなら列の性質が割れない。
  *
@@ -55,7 +62,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { formatClock } from "../lib/clock";
 import { useOrchestrator } from "../composables/useOrchestrator";
 
-const { state } = useOrchestrator();
+const orchestrator = useOrchestrator();
+const { state } = orchestrator;
+
+/** 計画の確認を飛ばすスイッチ（Spec 53）を反転する。失敗は `mutate` がトーストへ。 */
+function toggleBypass(): void {
+  void orchestrator.setPlanReviewBypass(!state.planReviewBypass);
+}
 
 const props = defineProps<{ statsActive?: boolean }>();
 const emit = defineEmits<{ (e: "toggle-stats"): void }>();
@@ -121,7 +134,37 @@ onBeforeUnmount(() => {
     <!-- 扉が閉じている間は左が空くので、右寄せを保つ詰め物を置く。 -->
     <span v-else class="mr-auto" />
     <!--
-      統計（Spec 39）。**この帯で唯一の操作**なので、字を持たずアイコンだけ。
+      計画の確認を飛ばすスイッチ（Spec 53）。オンの間は注意色で発光し、字も出す —
+      人の確認が外れていることは、アイコンの色だけでなく言葉で読めるようにする。
+    -->
+    <button
+      type="button"
+      class="bypass-btn"
+      :class="{ 'is-on': state.planReviewBypass }"
+      :title="$t(state.planReviewBypass ? 'statusBar.bypassOnTitle' : 'statusBar.bypassOffTitle')"
+      :aria-label="$t('statusBar.bypassAria')"
+      :aria-pressed="state.planReviewBypass ? 'true' : 'false'"
+      data-plan-review-bypass
+      @click="toggleBypass"
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M5 4l10 8-10 8V4z" />
+        <path d="M19 5v14" />
+      </svg>
+      <span v-if="state.planReviewBypass">{{ $t("statusBar.bypassOnLabel") }}</span>
+    </button>
+    <!--
+      統計（Spec 39）。字を持たずアイコンだけ。
       開いている間は緑（`--color-run` = 稼働の色）に発光させる — 押せる場所が
       1 つしか無い帯では、点いているかどうかが状態そのものを指す。
     -->
@@ -178,6 +221,28 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.bypass-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  color: var(--color-ink-dim);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    filter 0.15s;
+}
+.bypass-btn:hover {
+  color: var(--color-ink);
+}
+/* オンの間は注意色で発光（人の確認が外れている状態）。aria-pressed と文言も併記。 */
+.bypass-btn.is-on {
+  color: var(--color-warn);
+  filter: drop-shadow(0 0 4px var(--color-warn));
+}
 .stats-btn {
   display: flex;
   align-items: center;

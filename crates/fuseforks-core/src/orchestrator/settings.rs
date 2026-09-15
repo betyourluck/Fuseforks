@@ -73,6 +73,7 @@ impl Orchestrator {
         self.shared
             .plan_review_bypass
             .store(on, std::sync::atomic::Ordering::Relaxed);
+        self.shared.emit(CoreEvent::PlanReviewBypassChanged { on });
     }
 
     /// 束ねの既定の検証役（Spec 53）。`None` = なし（削除済みの個体も `None`）。

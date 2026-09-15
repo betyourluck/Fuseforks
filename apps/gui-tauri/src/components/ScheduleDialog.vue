@@ -685,6 +685,13 @@ function formatNextDue(task: ScheduleView): string {
                   <span class="font-medium text-ink">{{ $t("schedule.summarizeToggle") }}</span>
                 </label>
                 <p class="pl-6 text-ink-dim">{{ $t("schedule.summarizeHint") }}</p>
+
+                <!-- Spec 53 — この予定の因果では計画の確認で止めない（無人で回すため）。 -->
+                <label class="flex items-center gap-2 pt-1">
+                  <input v-model="draft.autoApprovePlans" type="checkbox" />
+                  <span class="font-medium text-ink">{{ $t("schedule.autoApproveToggle") }}</span>
+                </label>
+                <p class="pl-6 text-ink-dim">{{ $t("schedule.autoApproveHint") }}</p>
               </div>
 
               <div class="flex items-center gap-2 border-t border-line pt-2">

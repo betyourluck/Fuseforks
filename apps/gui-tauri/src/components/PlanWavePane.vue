@@ -67,6 +67,27 @@ function clearView(): void {
   waveClear.clear(state.planWaves);
 }
 
+// ---- 検証役（Spec 53）。既定は見出し、波ごとの選択は確認待ちパネル。 ----------
+
+/**
+ * 画面で使う既定の検証役。**一覧に居ない個体は「なし」として扱う**（コアも削除済みを
+ * `null` で返す — ここは読み込み後に削除された場合の同じ扱い）。
+ */
+const defaultVerifier = computed(() => {
+  const id = state.defaultVerifier;
+  return id && state.agents.some((a) => a.id === id) ? id : null;
+});
+
+async function onDefaultVerifier(value: string): Promise<void> {
+  await orchestrator.setDefaultVerifier(value || null);
+}
+
+/**
+ * 確認待ちパネルで選んだ検証役（`""` = なし）。**初期値は村の既定**で、提案が
+ * 切り替わるたびに既定へ戻す（前の提案の選択を次の提案へ持ち越さない）。
+ */
+const panelVerifier = ref<AgentId | "">("");
+
 /** 分類の表示語彙（辞書キー）。色の対応は data_contract.yaml の PlanTaskState が正。 */
 const STATE_LABEL_KEYS: Record<PlanTaskState, string> = {
   running: "waves.state.running",
@@ -167,6 +188,7 @@ watch(
       message: task.message ?? "",
     }));
     addTarget.value = "";
+    panelVerifier.value = defaultVerifier.value ?? "";
   },
   { immediate: true },
 );
@@ -199,7 +221,8 @@ async function dispatchPending(): Promise<void> {
   busy.value = true;
   try {
     // 成功の投影は event（planWaveStarted）が運ぶ。失敗は mutate がトーストへ。
-    await orchestrator.dispatchPlanWave(wave.planId, draft.value);
+    // 検証役は**押したときの選択**が真実（Spec 53 — 村の既定はここでは読まない）。
+    await orchestrator.dispatchPlanWave(wave.planId, draft.value, panelVerifier.value || null);
   } finally {
     busy.value = false;
   }
@@ -264,13 +287,34 @@ watch(
         </button>
       </span>
       <!--
+        束ねの既定の検証役（Spec 53）。**村の内容物**なので、計画を見るこの見出しに置く
+        （システム設定ではない — #52 の境界）。絆は要らないので全員から選べる。
+      -->
+      <label
+        class="ml-auto flex items-center gap-1 text-[10px]"
+        :title="$t('waves.verifierTitle')"
+        data-default-verifier
+      >
+        <span>{{ $t("waves.verifierLabel") }}</span>
+        <select
+          :value="defaultVerifier ?? ''"
+          class="rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
+          @change="onDefaultVerifier(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ $t("waves.verifierNone") }}</option>
+          <option v-for="agent in rows" :key="agent.id" :value="agent.id">
+            {{ agent.name }}
+          </option>
+        </select>
+      </label>
+      <!--
         表示クリア。アイコンは会話ペインと黒板と同じ消しゴム（同じ「消す」の絵を
         2 つ持たない）。**こちらは表示だけ**なので黒板の一括削除と違って確認を出さず、
         hover も失敗色ではなく accent（会話ペインと同じ）。
       -->
       <button
         type="button"
-        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
         :disabled="!canClear"
         :title="$t('waves.clearView')"
         :aria-label="$t('waves.clearView')"
@@ -351,6 +395,22 @@ watch(
             {{ $t("waves.addTask") }}
           </button>
           <div class="flex-1" />
+          <!--
+            この波の検証役（Spec 53）。初期選択は村の既定で、「なし」も選べる。
+            **押したときの選択が真実** — 既定を後から変えても、この選択は変わらない。
+          -->
+          <label class="flex items-center gap-1 text-[11px] text-ink-dim" data-panel-verifier>
+            <span>{{ $t("waves.panelVerifierLabel") }}</span>
+            <select
+              v-model="panelVerifier"
+              class="rounded border border-line bg-surface-0 px-1.5 py-0.5 text-[11px] text-ink"
+            >
+              <option value="">{{ $t("waves.verifierNone") }}</option>
+              <option v-for="agent in rows" :key="agent.id" :value="agent.id">
+                {{ agent.name }}
+              </option>
+            </select>
+          </label>
           <button
             type="button"
             class="rounded border border-line px-2 py-0.5 text-[11px] text-ink-dim hover:text-fail disabled:opacity-40"

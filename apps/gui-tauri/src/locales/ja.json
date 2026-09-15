@@ -387,7 +387,11 @@
     "clearView": "終わった波を表示から隠す（記録は消えません。確認待ちと実行中は残ります）",
     "clearedNote": "{count} 波を隠しています",
     "clearedRestore": "すべて表示",
-    "clearedAll": "終わった波はすべて隠しています。"
+    "clearedAll": "終わった波はすべて隠しています。",
+    "verifierLabel": "検証役:",
+    "verifierNone": "なし",
+    "verifierTitle": "束ねの既定の検証役。plan の答えを束ねた後に、この個体へ 4 点の検証を頼み、結論を束ねの末尾に付けます。計画の確認で承認するときは波ごとに選び直せます。",
+    "panelVerifierLabel": "検証役"
   },
   "map": {
     "heading": "サーヴァントの絆",
@@ -809,6 +813,8 @@
     "freshHint": "村全体が新しい会話へ切り替わります。前の会話は消えず、「会話一覧」から開き直せます。",
     "summarizeToggle": "終わったら記憶を要約する",
     "summarizeHint": "この依頼に関わったサーヴァントだけを要約します。要約は以後のやり取りに残り続けます（新しい会話と違って捨てられません）。",
+    "autoApproveToggle": "計画の確認を自動で通す",
+    "autoApproveHint": "この予定から始まった作業では、計画の確認をオンにしたサーヴァントでも承認待ちで止まらずに配ります（委譲・転送・検収の再依頼の先まで効きます）。",
     "freshBadge": "新しい会話で開始",
     "summarizeBadge": "完了後に要約"
   },
@@ -955,6 +961,8 @@
       "approveCommand": "コマンドの承認",
       "rejectCommand": "コマンドの却下",
       "dispatchPlan": "計画の実行",
+      "setPlanReviewBypass": "計画の確認を飛ばすスイッチの切り替え",
+      "saveDefaultVerifier": "既定の検証役の保存",
       "discardPlan": "計画の破棄",
       "createGroup": "グループの作成",
       "saveGroup": "グループの保存",
@@ -969,7 +977,11 @@
     "versionAria": "版番号 {version}",
     "mcpHost": "MCP サーバー 待ち受け中 :{port}",
     "mcpHostTitle": "外部の LLM から依頼を受け付けています（127.0.0.1:{port}）。使わないときはシステム設定の「外部連携 > MCP サーバー」で切ってください。",
-    "statsTitle": "統計（この村がいくら払ったか。村の画面と切り替え）"
+    "statsTitle": "統計（この村がいくら払ったか。村の画面と切り替え）",
+    "bypassOffTitle": "計画の確認を飛ばす（オンの間は、計画の確認をオンにしたサーヴァントも承認待ちで止まらずに配ります。保存されず、再起動でオフに戻ります）",
+    "bypassOnTitle": "計画の確認を飛ばしています（押すと元に戻します。再起動でもオフに戻ります）",
+    "bypassAria": "計画の確認を飛ばす",
+    "bypassOnLabel": "確認なし"
   },
   "roles": {
     "title": "役職",

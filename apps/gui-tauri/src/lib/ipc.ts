@@ -140,8 +140,12 @@ export const listPlanWaves = () => call<PlanWaveRecord[]>("list_plan_waves");
  * 承認待ちの計画を、人が編集した最終形で配送する（Spec 43 — 編集窓の実行側）。
  * `tasks` が配送の真実 — 提案との差分は取らない。
  */
-export const dispatchPlanWave = (planId: number, tasks: PlanTaskInput[]) =>
-  call<void>("dispatch_plan_wave", { planId, tasks });
+export const dispatchPlanWave = (
+  planId: number,
+  tasks: PlanTaskInput[],
+  /** 計画の確認パネルで選んだ検証役（Spec 53）。`null` / 省略 = なし。 */
+  verifier?: AgentId | null,
+) => call<void>("dispatch_plan_wave", { planId, tasks, verifier: verifier ?? null });
 
 /** 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。 */
 export const discardPlanWave = (planId: number) =>
@@ -366,6 +370,22 @@ export const getAskTimeout = () => call<number | null>("get_ask_timeout");
  * （「保存したのに黙って別の値になる」を画面に作らない）。
  */
 export const setAskTimeout = (secs: number | null) => call<void>("set_ask_timeout", { secs });
+
+/**
+ * 計画の確認を飛ばすスイッチ（Spec 53 — ステータスバー）。**コアのメモリだけ**の状態で、
+ * 起動時は必ず `false`（保存しない）。
+ */
+export const getPlanReviewBypass = () => call<boolean>("get_plan_review_bypass");
+
+/** スイッチを切り替える。変化は `planReviewBypassChanged` イベントでも届く。 */
+export const setPlanReviewBypass = (on: boolean) => call<void>("set_plan_review_bypass", { on });
+
+/** 束ねの既定の検証役（Spec 53）。`null` = なし（削除済みの個体も `null`）。 */
+export const getDefaultVerifier = () => call<AgentId | null>("get_default_verifier");
+
+/** 既定の検証役を差し替える。`null` で「なし」へ戻す。次の plan から効く。 */
+export const setDefaultVerifier = (agentId: AgentId | null) =>
+  call<void>("set_default_verifier", { agentId });
 
 /** UI の表示言語。bootstrap が初回に OS から確定済みなので、必ず値が返る。 */
 export const getLanguage = () => call<Language>("get_language");

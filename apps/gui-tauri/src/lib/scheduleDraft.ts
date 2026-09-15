@@ -48,6 +48,8 @@ export interface ScheduleDraft {
   accTimeout: number;
   accCwd: string;
   accMaxAttempts: number;
+  /** この予定の因果では計画の確認を開けない（Spec 53）。 */
+  autoApprovePlans: boolean;
 }
 
 /** 新規作成の初期値。既定はコア側の既定（timeout 60 / maxAttempts 2）と揃える。 */
@@ -75,6 +77,7 @@ export function emptyDraft(): ScheduleDraft {
     accTimeout: 60,
     accCwd: "",
     accMaxAttempts: 2,
+    autoApprovePlans: false,
   };
 }
 
@@ -116,6 +119,8 @@ export function draftFromSchedule(task: ScheduleView): ScheduleDraft {
     draft.accCwd = task.acceptance.cwd ?? "";
     draft.accMaxAttempts = task.acceptance.maxAttempts;
   }
+  // 既定（偽）はワイヤに現れない（Rust の skip_serializing_if）— undefined を偽として読む。
+  draft.autoApprovePlans = task.autoApprovePlans ?? false;
   return draft;
 }
 
@@ -188,5 +193,6 @@ export function optionsFromDraft(draft: ScheduleDraft): ScheduleOptions {
           maxAttempts: Math.floor(draft.accMaxAttempts),
         }
       : null,
+    autoApprovePlans: draft.autoApprovePlans,
   };
 }
