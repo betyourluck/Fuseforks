@@ -29,7 +29,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | | |
 |---|---|
 | 🏘️ **Build a Village** | Create agents and tie them together. **Kizuna** is your control panel |
-| 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results. Optional **plan review** (off by default) lets you edit the plan before it fans out. The wait for an answer is configurable (default 600 s); circular delegation is rejected instantly instead of waiting |
+| 🤝 **Delegation and Convergence** | The coordinator asks with `ask` and distributes work to workers in parallel with `plan`, then bundles the results. Optional **plan review** (off by default) lets you edit the plan before it fans out (a schedule option or the status bar switch skips it for unattended runs). A **default verifier** appends a verification verdict to each bundle. The wait for an answer is configurable (default 600 s); circular delegation is rejected instantly instead of waiting |
 | ⏰ **Scheduling** | Requests fire at times like "every Thursday at 17:00" or "every 10 minutes." No cron syntax required |
 | 🔎 **Pre-check** | Run a command at firing time and ask **only when its output matches your signal**. Runs that do not match cost no tokens at all. Commands that arrive with a shared village never run until approved |
 | ✅ **Acceptance check** | When the request finishes, run a verification command; **if its output does not match your signal, the request is re-issued with the failure attached** (up to an attempt limit — one retry by default). The check itself costs no tokens |

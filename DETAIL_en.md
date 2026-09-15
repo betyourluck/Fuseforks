@@ -118,7 +118,7 @@ Fuseforks/
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
-                ├── StatusBar.vue                      Bottom: MCP server listening state, **the stats entry point**, date, time (same format as the diagnostic log), and version
+                ├── StatusBar.vue                      Bottom: MCP server listening state, **the switch that skips plan reviews**, **the stats entry point**, date, time (same format as the diagnostic log), and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
@@ -167,7 +167,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is filled by the model template's "Fetch" button together with the rates ([Spec 50](specs/50_context-length-fetch.md); models absent from the table keep the hand-typed value), so a number above 100% still means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
-| Bottom | Status bar (**MCP server listening state**, date and time, version) | Always visible (a 22px strip) |
+| Bottom | Status bar (**MCP server listening state**, **the switch that skips plan reviews** ([Spec 53](specs/53_unattended-plan-and-verifier.md); glows and reads "No review" while on; not saved, off after restart), date and time, version) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
@@ -568,6 +568,22 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 - The proposing turn ends normally and **receives no results**. The dispatch runs as a new request causality (its ceiling comes from the village `tokenBudget` as usual), and the bundle arrives as a System delivery that starts a fresh coordinator turn, where it is summarized and returned
 - Proposals are not persisted (they vanish on restart — the same working lifetime as wave records). Stopping the coordinator mid-run folds the whole wave (workers stop too; no tokens are spent on a bundle with nowhere to go)
 - **A delegated turn skips the window** (2026-09-02). When a servant with Plan Review on is itself called via `ask` or `plan`, its `plan` in that turn fans out and bundles inside the turn as before and returns to the requester. Opening the window would end the turn at the proposal, so the requester would receive only "proposed"; the bundle would arrive later as a new causality with no return path and drift to the user — the requester could never receive it. Same shape as the rule that a delegated turn is never offered the handoff tool
+- **The window can be skipped for unattended runs** ([Spec 53](specs/53_unattended-plan-and-verifier.md), 2026-09-15). There are two routes; if either holds, the plan fans out without opening the window:
+  - **A schedule's "Approve plan reviews automatically"** — applies only to work started by that schedule, and carries through delegations, transfers and acceptance re-requests. **Saved with the village; survives restarts**
+  - **The status bar switch** — while on, even your own requests do not open the window. **Not saved** (left on across a restart, it would silently remove reviews from a village that needs them; for unattended runs that must survive restarts, use the schedule option)
+  - A skip writes one line, `plan review skipped: agent=… reason=schedule|bypass` (`schedule` when both hold). Without it, "I turned review on but it did not stop" cannot be read from the log
+
+#### Bundle Verifier ([Spec 53](specs/53_unattended-plan-and-verifier.md))
+
+"Verifier:" in the Work Status tab header selects **the village's default verifier** (default "None"; saved with the village). When set, after `plan` bundles the answers and before returning to the coordinator, **the system asks the verifier to check 4 points** (empty answers / misread requests / contradictions between answers / missing points) and appends the conclusion to the bundle as a `## Verification: agent_x (name)` section. **The model is not given a choice whether to verify** — given the choice, it gets skipped.
+
+- **The plan review panel lets you choose again per wave** (initially the village default; "None" is allowed). An approved wave uses **the selection at the moment you pressed Dispatch**; the village default is not substituted
+- **The verifier needs no tie** — it is a destination a person chose explicitly, treated like a schedule's destination
+- If a verifier is set but verification could not happen, **one reason line is written into the bundle and the bundle is still returned** ("(Not verified: …)"; seven closed reasons — took part in the bundle / is the coordinator / stopped / waiting cycle / timed out / budget exhausted / returned no answer)
+- **With "None", the bundle and the instrumentation are unchanged to the byte.** With a verifier, each `plan` adds one verifier turn, and the whole bundle becomes its input
+- Instrumentation: `plan verify: agent=… plan_id=… verifier=… outcome=ok|skipped:<reason> chars=… elapsed_ms=…`
+- **A village whose ordinance describes its own bundle verification ends up verifying twice** (the coordinator asks yet another servant). Once a verifier is set, remove that ordinance section or change it to "leave it to the mechanism when a verifier is set"
+- Deleting the verifier makes it read as "None" (the setting is not cleaned up; the selection on screen also returns to "None")
 
 #### Wave Pane — Execution Traces of `plan` ([Spec 08](specs/08_plan-wave-pane.md))
 
@@ -1429,6 +1445,10 @@ A scheduled request used to be fire-and-forget, with **no mechanism to confirm t
 - **Only a mismatch triggers a re-issue.** If the check could not run, timed out, or is unapproved, the loop **records the outcome and stops** — a broken verifier must not be the one case that slips past verification (no fail-open).
 - **Re-issues stay in the same conversation and inherit the firing's token budget** — `tokenBudget` is the ceiling on "keep going until it passes".
 - Approval uses the same machinery as the pre-check (per-machine; approvals do not travel with a shared village). One approval covers both the pre-check and the acceptance check — the confirmation shows both command lines.
+
+#### Approving plan reviews automatically
+
+A scheduled request to a coordinator with Plan Review on used to **stop at the proposal, waiting for approval**, so it never ran unattended. With the schedule's "**Approve plan reviews automatically**" on, work started by that schedule fans out without opening the window ([Spec 53](specs/53_unattended-plan-and-verifier.md); off by default; see "Plan Review" above). **It applies only to that schedule's causality** — when you ask the same coordinator yourself, it still stops.
 
 #### Before and after a firing (new conversation / summary)
 
