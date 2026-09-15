@@ -331,6 +331,13 @@ pub struct PersistedWorld {
     /// （`tokenBudget` の `Some(0)` と同じ判断。範囲外は読みで既定へ倒す）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_timeout_secs: Option<u64>,
+    /// 束ねの既定の検証役（Spec 53 — `plan_verifier_contract`）。`None` = なし。
+    ///
+    /// **削除済みの個体を指していても値は落とさない**（掃除しない）が、
+    /// 読み出し（[`World::default_verifier`]）は `None` として返す — 検証役が
+    /// 消えたら「なし」と同じ挙動になるのが契約（凍結 6）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_verifier: Option<AgentId>,
     /// UI の表示言語（Spec 13。`"ja"` / `"en"`）。
     ///
     /// **生の文字列で受ける**（`tokenBudget` の `Some(0)` と同じ判断） —
@@ -404,6 +411,8 @@ pub struct World {
     token_budget: Option<u64>,
     /// 委譲の待ち時間・秒（Spec 44）。意味論は [`PersistedWorld::ask_timeout_secs`]。
     ask_timeout_secs: Option<u64>,
+    /// 束ねの既定の検証役（Spec 53）。意味論は [`PersistedWorld::default_verifier`]。
+    default_verifier: Option<AgentId>,
     /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
     language: Option<Language>,
     /// 利用者の呼び名（Spec 19）。意味論は [`PersistedWorld::user_name`]。
@@ -495,6 +504,8 @@ impl World {
         // 落とさない — 読み出し側が「窓口が見つからない」と報告するほうが、
         // 「未設定」へ黙って化けるより診断になる。
         world.reception = persisted.reception.clone();
+        // 既定の検証役も検査せずそのまま持つ（削除済みの判定は読み出しが行う）。
+        world.default_verifier = persisted.default_verifier.clone();
         // 外部クライアントの呼び名も呼び名と同じ扱い（手編集で壊れた値は落とす）。
         world.external_name = match persisted.external_name.as_deref() {
             Some(raw) => match normalize_user_name(raw) {
@@ -547,6 +558,7 @@ impl World {
             topology_positions: self.topology_positions.clone(),
             token_budget: self.token_budget,
             ask_timeout_secs: self.ask_timeout_secs,
+            default_verifier: self.default_verifier.clone(),
             language: self.language.map(|l| l.as_str().to_string()),
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
@@ -637,6 +649,31 @@ impl World {
     /// （`Orchestrator::set_ask_timeout`）が担う。
     pub fn set_ask_timeout_secs(&mut self, secs: Option<u64>) {
         self.ask_timeout_secs = secs;
+    }
+
+    /// 束ねの既定の検証役（Spec 53）。**指す個体が削除されていれば `None`**
+    /// （`plan_verifier_contract` 凍結 6 — 検証役が消えたら「なし」と同じ挙動）。
+    pub fn default_verifier(&self) -> Option<&AgentId> {
+        self.default_verifier
+            .as_ref()
+            .filter(|id| self.agents.contains_key(*id))
+    }
+
+    /// 既定の検証役を差し替える。`None` で「なし」へ戻す。
+    ///
+    /// # Errors
+    /// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]
+    /// （書き込みの入口でだけ確かめる — `set_reception` と同じ形）。
+    /// **拒否したときは 1 バイトも変更しない。**
+    pub fn set_default_verifier(&mut self, agent_id: Option<&AgentId>) -> CoreResult<()> {
+        self.default_verifier = match agent_id {
+            Some(id) => {
+                self.agent(id)?;
+                Some(id.clone())
+            }
+            None => None,
+        };
+        Ok(())
     }
 
     /// UI の表示言語。`None` = 未確定（起動時の確定前だけ観測される）。
@@ -1224,6 +1261,7 @@ mod tests {
             topology_positions: BTreeMap::new(),
             token_budget: None,
             ask_timeout_secs: None,
+            default_verifier: None,
             language: None,
             user_name: None,
             roles: Vec::new(),
@@ -1516,6 +1554,7 @@ mod tests {
             ]),
             token_budget: None,
             ask_timeout_secs: None,
+            default_verifier: None,
             language: None,
             user_name: None,
             roles: Vec::new(),

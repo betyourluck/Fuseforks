@@ -75,6 +75,24 @@ impl Orchestrator {
             .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// 束ねの既定の検証役（Spec 53）。`None` = なし（削除済みの個体も `None`）。
+    pub async fn default_verifier(&self) -> Option<AgentId> {
+        self.shared.world.read().await.default_verifier().cloned()
+    }
+
+    /// 束ねの既定の検証役を差し替え、`world.json` へ書き戻す（Spec 53）。
+    ///
+    /// `run_plan` が撒く時点で `World` から読むので、保存すれば**次の plan から**効く
+    /// （`set_ask_timeout` と同じ形。再起動不要）。
+    ///
+    /// # Errors
+    /// 未登録のエージェントを指定した場合 [`CoreError::AgentNotFound`]
+    /// （拒否したときは何も変わらない）。
+    pub async fn set_default_verifier(&self, agent_id: Option<&AgentId>) -> CoreResult<()> {
+        self.shared.world.write().await.set_default_verifier(agent_id)?;
+        self.persist().await
+    }
+
     /// UI の表示言語。bootstrap が必ず確定させるので、未確定は起こらない
     /// （防御の既定は従来の見た目 = 日本語）。
     pub async fn language(&self) -> crate::world::Language {

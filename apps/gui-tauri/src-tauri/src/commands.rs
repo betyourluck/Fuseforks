@@ -732,8 +732,14 @@ pub async fn dispatch_plan_wave(
     state: State<'_, AppState>,
     plan_id: u64,
     tasks: Vec<fuseforks_core::plan::PlanTaskInput>,
+    // 計画の確認パネルで選んだ検証役（Spec 53）。**省略可 — 省略は `None`（なし）**
+    // （plan_edit_window 凍結 4 の改訂）。
+    verifier: Option<fuseforks_core::model::AgentId>,
 ) -> CoreResult<()> {
-    state.orchestrator.dispatch_plan_wave(plan_id, tasks).await
+    state
+        .orchestrator
+        .dispatch_plan_wave(plan_id, tasks, verifier)
+        .await
 }
 
 /// 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。

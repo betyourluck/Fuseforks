@@ -1058,10 +1058,15 @@ impl Orchestrator {
     /// - [`CoreError::PlanWaveNotPending`] — 承認待ちの波ではない
     /// - [`CoreError::NotRunning`] — 進行役が停止中（D9。自動起動はしない）
     /// - [`CoreError::PlanDispatchInvalid`] — 検証に落ちた（空・非接続・重複）
+    /// - [`CoreError::AgentNotFound`] — 検証役に未登録のエージェントを指定した
+    ///
+    /// `verifier` は計画の確認パネルで選んだ検証役（Spec 53 — `None` = なし）。
+    /// **村の既定は読まない** — 押したときの値が真実（凍結 4 と同じ規律）。
     pub async fn dispatch_plan_wave(
         &self,
         plan_id: u64,
         tasks: Vec<crate::plan::PlanTaskInput>,
+        verifier: Option<AgentId>,
     ) -> CoreResult<()> {
         let Some((coordinator, wave)) = self.shared.plan_waves.read().await.proposal(plan_id)
         else {
@@ -1086,6 +1091,10 @@ impl Orchestrator {
             return Err(CoreError::PlanDispatchInvalid {
                 detail: "tasks が空です".to_owned(),
             });
+        }
+        // 検証役は登録済みの個体だけ（plan_verifier_contract 凍結 6）。接続は問わない。
+        if let Some(verifier) = &verifier {
+            self.shared.world.read().await.agent(verifier)?;
         }
 
         // 検証と表示名の解決は dispatch 時点の world で行う（提示と dispatch の
@@ -1196,6 +1205,7 @@ impl Orchestrator {
             displays,
             budget,
             cancel,
+            verifier,
         ));
         Ok(())
     }

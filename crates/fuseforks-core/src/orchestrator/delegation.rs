@@ -324,6 +324,9 @@ pub(super) async fn run_plan(
         .await
         .language()
         .unwrap_or(crate::world::Language::Ja);
+    // 検証役（Spec 53 plan_verifier_contract 凍結 2）。ターンの中で撒く plan は
+    // 村の既定を**撒く時点で**読む（削除済みの個体は `None` に読める）。
+    let verifier = shared.world.read().await.default_verifier().cloned();
 
     // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
@@ -511,6 +514,7 @@ pub(super) async fn run_plan(
         &displays,
         dispatched_at,
         auto_approve_plans,
+        verifier,
     )
     .await
     {
@@ -544,6 +548,8 @@ async fn execute_wave(
     // 波の全タスクへ写す印（Spec 53 凍結 11 (a)）。ワーカー自身は委譲ターンなので
     // 窓を開けないが、その先で転送された個体の計画にまで効かせるために運ぶ。
     auto_approve_plans: bool,
+    // 束ねの検証役（Spec 53）。**解決は呼び手が行う**（凍結 2 — ここでは読まない）。
+    verifier: Option<AgentId>,
 ) -> Option<String> {
     // 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
     // 直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
@@ -720,7 +726,287 @@ async fn execute_wave(
         bundle_chars,
         elapsed_ms,
     });
-    Some(bundle)
+
+    // 束ねの検証（Spec 53 plan_verifier_contract）。**検証役が `None` なら何もしない**
+    // （凍結 1 — 束ねも計器もバイト等価）。`plan bundle:` の字数は検証の前の束ね。
+    let Some(verifier) = verifier else {
+        return Some(bundle);
+    };
+    verify_bundle(
+        shared,
+        from,
+        plan_id,
+        wave_tasks,
+        display_of,
+        bundle,
+        &verifier,
+        next_hop,
+        parent,
+        budget,
+        participants,
+        waiting,
+        auto_approve_plans,
+    )
+    .await
+}
+
+/// 検証役が指定されているのに検証しなかった理由（Spec 53 plan_verifier_contract 凍結 4）。
+///
+/// **閉じた 7 つ。** 契約の起票時は 6 つだったが、P2 で「答えを返さなかった」を足した —
+/// 検証役が転送した（`HandedOff`）・答えずに終えた（`NoAnswer`）が 6 つのどれにも
+/// 当たらなかった。**分からない結末を他の理由へ寄せない**（寄せると計器が嘘をつく）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum VerifySkip {
+    /// 検証役が波の宛先に含まれる（自分の仕事を自分で採点しない）。
+    Participant,
+    /// 検証役が進行役自身。
+    Coordinator,
+    /// 停止中・受信箱飽和で届けられなかった。
+    Stopped,
+    /// 検証役がこの因果の中で答えを待っている（Spec 44 の輪）。
+    Circular,
+    /// 時間内に答えが返らなかった。
+    TimedOut,
+    /// トークン予算の上限に達していた。
+    Budget,
+    /// 答えを返さなかった（転送した・答えずに終えた）。
+    NoAnswer,
+}
+
+impl VerifySkip {
+    /// 計器（`plan verify: outcome=skipped:<語>`）の語。
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Participant => "participant",
+            Self::Coordinator => "coordinator",
+            Self::Stopped => "stopped",
+            Self::Circular => "circular",
+            Self::TimedOut => "timed_out",
+            Self::Budget => "budget",
+            Self::NoAnswer => "no_answer",
+        }
+    }
+
+    /// 束ねの末尾に書く 1 行（記録時の言語 — Spec 35 D6）。
+    pub(super) fn note(self, language: Language, verifier: &str) -> String {
+        match language {
+            Language::Ja => {
+                let reason = match self {
+                    Self::Participant => format!("検証役「{verifier}」が束ねに参加した"),
+                    Self::Coordinator => "検証役が進行役自身だった".to_owned(),
+                    Self::Stopped => format!("検証役「{verifier}」に届けられなかった（停止中）"),
+                    Self::Circular => {
+                        format!("検証役「{verifier}」がこの依頼の因果の中で答えを待っている")
+                    }
+                    Self::TimedOut => format!("検証役「{verifier}」の答えが時間内に返らなかった"),
+                    Self::Budget => "トークン予算の上限に達した".to_owned(),
+                    Self::NoAnswer => format!("検証役「{verifier}」が答えを返さなかった"),
+                };
+                format!("（{reason}ため、検証していません）")
+            }
+            Language::En => {
+                let reason = match self {
+                    Self::Participant => format!("the verifier \"{verifier}\" took part in the bundle"),
+                    Self::Coordinator => "the verifier is the coordinator itself".to_owned(),
+                    Self::Stopped => format!("the verifier \"{verifier}\" could not be reached (stopped)"),
+                    Self::Circular => format!(
+                        "the verifier \"{verifier}\" is waiting for an answer within this request's causality"
+                    ),
+                    Self::TimedOut => format!("the verifier \"{verifier}\" did not answer in time"),
+                    Self::Budget => "the token budget was exhausted".to_owned(),
+                    Self::NoAnswer => format!("the verifier \"{verifier}\" returned no answer"),
+                };
+                format!("(Not verified: {reason}.)")
+            }
+        }
+    }
+}
+
+/// 検証役の答えの結末を、検証の結果へ写す（純関数）。
+///
+/// `Ok(())` = 答えた / `Err(Some(理由))` = 検証しなかった / `Err(None)` = 打ち切り
+/// （束ねを作らない既存の経路へ合流する — 凍結 4 の最後の文）。
+pub(super) fn verification_of(state: PlanTaskState) -> Result<(), Option<VerifySkip>> {
+    match state {
+        PlanTaskState::Answered => Ok(()),
+        // 輪は配送の前に自前で判定するので、ここへ来る Undeliverable は停止中・
+        // 受信箱飽和（と、判定と配送の間に待ちが生まれた競合の残余）。
+        PlanTaskState::Undeliverable => Err(Some(VerifySkip::Stopped)),
+        PlanTaskState::TimedOut => Err(Some(VerifySkip::TimedOut)),
+        PlanTaskState::BudgetExhausted => Err(Some(VerifySkip::Budget)),
+        PlanTaskState::HandedOff | PlanTaskState::NoAnswer | PlanTaskState::Running => {
+            Err(Some(VerifySkip::NoAnswer))
+        }
+        PlanTaskState::Interrupted => Err(None),
+    }
+}
+
+/// 検証役へ渡す本文（Spec 53 plan_verifier_contract 凍結 3）。
+///
+/// 区切りは既存の束ねと同じ `## agent_id（表示名）` の見出しで、`---` は使わない
+/// （答えは Markdown で `---` が普通に現れる）。
+fn verification_request(
+    language: Language,
+    coordinator: &AgentId,
+    coordinator_name: &str,
+    wave_tasks: &[(AgentId, String)],
+    display_of: &std::collections::HashMap<AgentId, String>,
+    bundle: &str,
+) -> String {
+    let requests = wave_tasks
+        .iter()
+        .map(|(target, message)| {
+            let display = display_of
+                .get(target)
+                .map(String::as_str)
+                .unwrap_or_else(|| target.as_str());
+            match language {
+                Language::Ja => format!("## {target}（{display}）\n{message}"),
+                Language::En => format!("## {target} ({display})\n{message}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    match language {
+        Language::Ja => format!(
+            "【束ねの検証の依頼】\n\
+             進行役 {coordinator}（{coordinator_name}）が plan で配った依頼と、返ってきた答えの束ねです\
+             （この依頼はシステムが自動で送っています）。\n\
+             次の 4 点だけを確かめてください: 空の答えはないか / 依頼の取り違えはないか / \
+             答え同士の矛盾はないか / 欠けている論点はないか。\n\
+             結論は「このまま使える」「この相手にだけ聞き直す（相手の名前）」「依頼元に確認する」の\
+             どれか 1 つで返してください。\n\n\
+             # 配った依頼\n\n{requests}\n\n# 束ね\n\n{bundle}"
+        ),
+        Language::En => format!(
+            "[Bundle verification request]\n\
+             These are the requests coordinator {coordinator} ({coordinator_name}) sent with plan and \
+             the bundle of answers that came back (this request is sent automatically by the system).\n\
+             Check only these 4 points: any empty answer / any misunderstood request / \
+             any contradiction between answers / any missing point.\n\
+             Reply with exactly one conclusion: \"usable as is\", \"ask only this agent again (name)\", \
+             or \"confirm with the requester\".\n\n\
+             # Requests sent\n\n{requests}\n\n# Bundle\n\n{bundle}"
+        ),
+    }
+}
+
+/// 束ねを検証役へ渡し、結論（または検証しなかった理由）を束ねの末尾に付ける
+/// （Spec 53 plan_verifier_contract 凍結 3〜5）。
+///
+/// **送り手は進行役**（波のタスクと同じ）。待ちの連鎖も波のタスクと同じ規則で作る
+/// ので、検証役が進行役へ ask し返すと Spec 44 で拒否される。本文には
+/// 「システムが自動で送っている」と書く（検証役が「進行役に頼まれた」と誤読しない）。
+///
+/// 戻りは `Some(検証済みの束ね)`、打ち切られたら `None`（束ねを作らない経路へ合流）。
+#[allow(clippy::too_many_arguments)]
+async fn verify_bundle(
+    shared: &Arc<Shared>,
+    coordinator: &AgentId,
+    plan_id: u64,
+    wave_tasks: &[(AgentId, String)],
+    display_of: &std::collections::HashMap<AgentId, String>,
+    bundle: String,
+    verifier: &AgentId,
+    next_hop: u8,
+    parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
+    waiting: &[AgentId],
+    auto_approve_plans: bool,
+) -> Option<String> {
+    let started = std::time::Instant::now();
+    let (language, coordinator_name, verifier_name) = {
+        let world = shared.world.read().await;
+        let name_of = |id: &AgentId| {
+            world
+                .agent(id)
+                .map(|record| record.spec.name.clone())
+                .unwrap_or_else(|_| id.to_string())
+        };
+        (
+            world.language().unwrap_or(Language::Ja),
+            name_of(coordinator),
+            name_of(verifier),
+        )
+    };
+    let from = Endpoint::Agent {
+        id: coordinator.clone(),
+    };
+
+    // 配送の前に分かる理由（凍結 4 の順: 参加者 → 進行役 → 輪 → 停止中）。
+    let precheck = if wave_tasks.iter().any(|(target, _)| target == verifier) {
+        Some(VerifySkip::Participant)
+    } else if verifier == coordinator {
+        Some(VerifySkip::Coordinator)
+    } else if chain_with(waiting, &from).contains(verifier) {
+        Some(VerifySkip::Circular)
+    } else if !shared.mailboxes.read().await.contains_key(verifier) {
+        Some(VerifySkip::Stopped)
+    } else {
+        None
+    };
+
+    let outcome: Result<String, VerifySkip> = match precheck {
+        Some(skip) => Err(skip),
+        None => {
+            let request = verification_request(
+                language,
+                coordinator,
+                &coordinator_name,
+                wave_tasks,
+                display_of,
+                &bundle,
+            );
+            let asked = deliver_and_wait(
+                shared,
+                &from,
+                verifier,
+                &request,
+                next_hop,
+                parent,
+                budget,
+                participants,
+                waiting,
+                "verify",
+                auto_approve_plans,
+            );
+            // 進行役のターン（または承認後の波）が切られたら待ちを畳む — 波の待ちと同じ
+            // （`deliver_and_wait` 自身は時間切れしか見ない）。
+            let (answer, state) = tokio::select! {
+                biased;
+                () = parent.cancelled() => return None,
+                done = asked => done,
+            };
+            match verification_of(state) {
+                Ok(()) => Ok(answer),
+                Err(Some(skip)) => Err(skip),
+                Err(None) => return None,
+            }
+        }
+    };
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let (tail, label, chars) = match outcome {
+        Ok(answer) => {
+            let chars = answer.chars().count();
+            let heading = match language {
+                Language::Ja => format!("## 検証: {verifier}（{verifier_name}）"),
+                Language::En => format!("## Verification: {verifier} ({verifier_name})"),
+            };
+            (format!("{heading}\n{answer}"), "ok".to_owned(), chars)
+        }
+        Err(skip) => (
+            skip.note(language, &verifier_name),
+            format!("skipped:{}", skip.label()),
+            0,
+        ),
+    };
+    note!(
+        "plan verify: agent={coordinator} plan_id={plan_id} verifier={verifier} outcome={label} \
+         chars={chars} elapsed_ms={elapsed_ms}"
+    );
+    Some(format!("{bundle}\n\n{tail}"))
 }
 
 /// 承認済みの波の実行者（Spec 43 D6 — **ターンの外の実行形の 2 つ目**。
@@ -744,6 +1030,8 @@ pub(super) async fn run_dispatched_wave(
     displays: std::collections::HashMap<AgentId, String>,
     budget: Option<Arc<BudgetPool>>,
     cancel: tokio_util::sync::CancellationToken,
+    // 計画の確認パネルで選ばれた検証役（Spec 53 凍結 2 — 村の既定は読まない）。
+    verifier: Option<AgentId>,
 ) {
     let dispatched_at = std::time::Instant::now();
     let bundle = execute_wave(
@@ -764,6 +1052,7 @@ pub(super) async fn run_dispatched_wave(
         dispatched_at,
         // 承認後の波は新しい根 — 印は立てない（Spec 53 凍結 11 (a)）。
         false,
+        verifier,
     )
     .await;
 
@@ -1380,5 +1669,50 @@ mod waiting_chain_tests {
             "上流（依頼主の依頼主）はまだブロック中なので残す"
         );
         assert!(trimmed_chain(&[]).is_empty(), "空なら空のまま");
+    }
+
+    /// 検証役の答えの結末 → 検証の結果（Spec 53 plan_verifier_contract 凍結 4）。
+    /// **全 8 値を並べる** — 値が増えたら match の網羅で落ちるが、ここでも写し先を
+    /// 読んで確かめる（結合テストで作りにくい時間切れ・予算切れ・無応答・打ち切り）。
+    #[test]
+    fn verification_of_maps_every_task_state() {
+        use crate::plan::PlanTaskState as S;
+        assert_eq!(verification_of(S::Answered), Ok(()));
+        assert_eq!(verification_of(S::Undeliverable), Err(Some(VerifySkip::Stopped)));
+        assert_eq!(verification_of(S::TimedOut), Err(Some(VerifySkip::TimedOut)));
+        assert_eq!(verification_of(S::BudgetExhausted), Err(Some(VerifySkip::Budget)));
+        assert_eq!(verification_of(S::HandedOff), Err(Some(VerifySkip::NoAnswer)));
+        assert_eq!(verification_of(S::NoAnswer), Err(Some(VerifySkip::NoAnswer)));
+        assert_eq!(verification_of(S::Running), Err(Some(VerifySkip::NoAnswer)));
+        assert_eq!(
+            verification_of(S::Interrupted),
+            Err(None),
+            "打ち切りは理由を書かず、束ねを作らない経路へ合流する"
+        );
+    }
+
+    /// 理由の 1 行は「〜ため、検証していません」の形で、計器の語は閉じた 7 つ。
+    #[test]
+    fn verify_skip_notes_and_labels_are_closed() {
+        let all = [
+            VerifySkip::Participant,
+            VerifySkip::Coordinator,
+            VerifySkip::Stopped,
+            VerifySkip::Circular,
+            VerifySkip::TimedOut,
+            VerifySkip::Budget,
+            VerifySkip::NoAnswer,
+        ];
+        let labels: std::collections::HashSet<_> = all.iter().map(|s| s.label()).collect();
+        assert_eq!(labels.len(), 7, "計器の語は 7 つとも別の語");
+        for skip in all {
+            let ja = skip.note(Language::Ja, "検証くん");
+            assert!(
+                ja.starts_with('（') && ja.ends_with("ため、検証していません）"),
+                "日本語の 1 行の形: {ja}"
+            );
+            let en = skip.note(Language::En, "verifier");
+            assert!(en.starts_with("(Not verified: "), "英語の 1 行の形: {en}");
+        }
     }
 }

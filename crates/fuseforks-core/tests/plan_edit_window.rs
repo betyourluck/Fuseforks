@@ -241,6 +241,7 @@ async fn the_instruments_tell_the_proposal_from_the_dispatch() {
                 to: worker_b.clone(),
                 message: "Cだけ調べて".to_owned(),
             }],
+            None,
         )
         .await
         .expect("dispatch できること");
@@ -328,6 +329,7 @@ async fn discarding_a_pending_plan_delivers_nothing() {
                 to: worker_a,
                 message: "やっぱり".to_owned(),
             }],
+            None,
         )
         .await
         .unwrap_err();
@@ -391,6 +393,7 @@ async fn dispatch_validates_connections_and_liveness_at_dispatch_time() {
                 to: worker_b.clone(),
                 message: "Bを調べて".to_owned(),
             }],
+            None,
         )
         .await
         .unwrap_err();
@@ -416,6 +419,7 @@ async fn dispatch_validates_connections_and_liveness_at_dispatch_time() {
                     message: "2".to_owned(),
                 },
             ],
+            None,
         )
         .await
         .unwrap_err();
@@ -433,6 +437,7 @@ async fn dispatch_validates_connections_and_liveness_at_dispatch_time() {
                 to: worker_a,
                 message: "Aを調べて".to_owned(),
             }],
+            None,
         )
         .await
         .unwrap_err();
@@ -472,6 +477,7 @@ async fn stopping_the_coordinator_cancels_its_dispatched_wave() {
                 to: worker_a,
                 message: "ゆっくり調べて".to_owned(),
             }],
+            None,
         )
         .await
         .unwrap();
@@ -559,6 +565,7 @@ async fn an_undeliverable_bundle_is_discarded_with_a_notice() {
                 to: worker_a,
                 message: "ゆっくり調べて".to_owned(),
             }],
+            None,
         )
         .await
         .unwrap();
@@ -622,6 +629,7 @@ async fn identical_bundles_start_two_turns() {
                     to: worker_a.clone(),
                     message: "同じ依頼".to_owned(),
                 }],
+            None,
             )
             .await
             .unwrap();
