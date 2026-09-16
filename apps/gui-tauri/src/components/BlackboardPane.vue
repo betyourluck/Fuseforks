@@ -20,6 +20,14 @@ import {
 import { useI18n } from "vue-i18n";
 
 import { askConfirm } from "../composables/useConfirm";
+import { useOrchestrator } from "../composables/useOrchestrator";
+import {
+  LANES,
+  laneNotes,
+  type BlackboardLane,
+  type LanedNote,
+  type ReleasedReason,
+} from "../lib/blackboardLanes";
 import { formatError } from "../lib/errorText";
 import { renderMarkdown } from "../lib/markdown";
 import type { BlackboardNote, BottomTab, ErrorPayload } from "../types";
@@ -29,7 +37,42 @@ defineProps<{ activeTab: BottomTab }>();
 
 const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 
+const orchestrator = useOrchestrator();
+
 const notes = ref<BlackboardNote[]>([]);
+
+/**
+ * 付箋を「持ち主の手番」で 3 列に分ける（`lib/blackboardLanes`）。
+ *
+ * 付箋自身は状態を持たない。列は**持ち主の投影**（typing / status / 波 / workDir）
+ * から毎回派生させるだけなので、黒板に 3 つ目の真実は生まれない —
+ * 「あなたの手番」は作業状況タブと同じ `PlanWaveState` を読んでいる。
+ * 消してよいのは「手が離れている」列だけで、その列にだけ一括の消し口を置く。
+ */
+const board = computed(() =>
+  laneNotes(notes.value, {
+    agents: orchestrator.state.agents,
+    typing: orchestrator.state.typing,
+    waves: orchestrator.state.planWaves,
+  }),
+);
+
+/** 画面の並び: まとめ（あれば）→ 3 列。列の見出しは空でも出す（3 列の形を保つ）。 */
+const sections = computed(() => [
+  ...(board.value.summary.length
+    ? [{ key: "summary" as const, notes: board.value.summary as LanedNote<BlackboardNote>[] }]
+    : []),
+  ...LANES.map((lane) => ({ key: lane, notes: board.value.lanes[lane] })),
+]);
+
+/** 「手が離れている」の内訳バッジ。辞書の鍵を返す（訳語は持たない）。 */
+function reasonKey(reason: ReleasedReason | null): string | null {
+  return reason ? `blackboard.reason.${reason}` : null;
+}
+
+function isReleased(key: BlackboardLane | "summary"): key is "released" {
+  return key === "released";
+}
 const error = ref<ErrorPayload | null>(null);
 /** 初回の読みが済むまで「空」と断定しない（一瞬の空表示のちらつき防止）。 */
 const loaded = ref(false);
@@ -86,6 +129,38 @@ async function clearAll(): Promise<void> {
   busy.value = true;
   try {
     await clearBlackboard();
+    error.value = null;
+  } catch (err) {
+    error.value = toErrorPayload(err);
+  } finally {
+    busy.value = false;
+    await refresh();
+  }
+}
+
+/**
+ * 「手が離れている」列の付箋だけをごみ箱へ移す。**確認を出す**（一括なので）。
+ *
+ * 全消しと同じ IPC は使わない — `clear_blackboard` は列を知らないので、
+ * 一覧が返した `dir` / `name` で 1 枚ずつ `delete_blackboard_note` を呼ぶ。
+ * 途中で失敗したら残りは消さずに止め、エラーを出して読み直す。
+ */
+async function clearReleased(): Promise<void> {
+  const targets = board.value.lanes.released;
+  if (busy.value || targets.length === 0) return;
+  const ok = await askConfirm({
+    title: t("blackboard.confirmClearLaneTitle"),
+    message: t("blackboard.confirmClearLaneMessage", { count: targets.length }),
+    confirmLabel: t("blackboard.confirmClearLaneLabel"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  busy.value = true;
+  try {
+    for (const note of targets) {
+      await deleteBlackboardNote(note.dir, note.name);
+    }
     error.value = null;
   } catch (err) {
     error.value = toErrorPayload(err);
@@ -202,10 +277,60 @@ function formatTime(ms: number): string {
       {{ $t("blackboard.empty") }}
     </div>
 
-    <!-- 付箋を縦に並べる。まとめ.md はコア側の並びで先頭に来る。 -->
+    <!--
+      まとめ（あれば）→ 3 列の順に縦へ並べる。列の見出しは空でも出す —
+      「どれを消すか」を列で読ませるのが目的なので、3 列の形が毎回同じであることが
+      情報になる。付箋の並びは列の中でもコアの順（released だけ孤児が先頭）。
+    -->
     <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+      <section v-for="section in sections" :key="section.key" class="mb-3" :data-lane="section.key">
+        <header
+          class="mb-1.5 flex h-6 items-center gap-2 text-[11px] text-ink-dim"
+          :title="$t(`blackboard.laneTitle.${section.key}`)"
+        >
+          <span
+            :class="[
+              'inline-block size-2 shrink-0 rounded-sm',
+              section.key === 'active'
+                ? 'bg-run'
+                : section.key === 'yourTurn'
+                  ? 'bg-accent'
+                  : 'bg-line',
+            ]"
+            aria-hidden="true"
+          />
+          <span class="font-semibold text-ink">{{ $t(`blackboard.lane.${section.key}`) }}</span>
+          <span>{{ $t("blackboard.noteCount", { count: section.notes.length }) }}</span>
+          <!--
+            列の消し口は「手が離れている」にだけ置く。他の列の付箋は持ち主がまだ
+            触りうるので、まとめて消す導線を出さない（個別のごみ箱は残る）。
+          -->
+          <button
+            v-if="isReleased(section.key)"
+            class="ml-auto grid size-5 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+            :disabled="section.notes.length === 0 || busy"
+            :title="$t('blackboard.clearLaneTitle')"
+            :aria-label="$t('blackboard.clearLane')"
+            @click="clearReleased"
+          >
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m15 5 5 5-8 8H7l-4-4z" />
+              <path d="M21 20h-11" />
+            </svg>
+          </button>
+        </header>
+
       <article
-        v-for="note in notes"
+        v-for="note in section.notes"
         :key="`${note.dir}:${note.name}`"
         class="mb-2 rounded-lg border border-line/50 bg-surface-1"
       >
@@ -213,6 +338,16 @@ function formatTime(ms: number): string {
           class="flex items-baseline gap-2 border-b border-line/50 px-3 py-1.5 text-[11px]"
         >
           <span class="font-semibold text-ink">{{ note.name }}</span>
+          <span
+            v-if="note.info && reasonKey(note.info.reason)"
+            :class="[
+              'shrink-0 rounded px-1.5 py-px text-[10px]',
+              note.info.reason === 'orphanUnknown' || note.info.reason === 'orphanMoved'
+                ? 'bg-fail/15 text-fail'
+                : 'bg-line/60 text-ink-dim',
+            ]"
+            >{{ $t(reasonKey(note.info.reason)!) }}</span
+          >
           <span v-if="showDir" class="truncate text-ink-dim" :title="note.dir">{{
             note.dir
           }}</span>
@@ -262,6 +397,7 @@ function formatTime(ms: number): string {
           v-html="renderMarkdown(note.content)"
         />
       </article>
+      </section>
     </div>
   </div>
 </template>

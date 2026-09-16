@@ -351,7 +351,31 @@
     "deleteTitle": "「{name}」をごみ箱へ移す",
     "confirmClearTitle": "黒板の付箋をすべて消しますか？",
     "confirmClearMessage": "{count} 枚の付箋をごみ箱へ移します。完全には削除しないので、OS のごみ箱から戻せます。",
-    "confirmClearLabel": "すべて消す"
+    "confirmClearLabel": "すべて消す",
+    "lane": {
+      "summary": "まとめ",
+      "active": "動いている",
+      "yourTurn": "あなたの手番",
+      "released": "手が離れている"
+    },
+    "laneTitle": {
+      "summary": "進行役が束ねた付箋（条例の まとめ.md）。列には入れず先頭に固定します",
+      "active": "持ち主がターンの最中か、未確定の波に参加している付箋",
+      "yourTurn": "持ち主の計画があなたの確認を待っている付箋（作業状況タブと同じ状態）",
+      "released": "持ち主の手が離れている付箋。消すならこの列から"
+    },
+    "reason": {
+      "orphanUnknown": "持ち主が見つからない",
+      "orphanMoved": "持ち主は別の作業フォルダ",
+      "failed": "失敗で停止",
+      "stopped": "停止中",
+      "waiting": "起動中・待機"
+    },
+    "clearLane": "手が離れている付箋を消す",
+    "clearLaneTitle": "この列の付箋だけをごみ箱へ移します",
+    "confirmClearLaneTitle": "手が離れている付箋を消しますか？",
+    "confirmClearLaneMessage": "{count} 枚の付箋をごみ箱へ移します（動いている / あなたの手番の付箋は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
+    "confirmClearLaneLabel": "この列を消す"
   },
   "waves": {
     "state": {

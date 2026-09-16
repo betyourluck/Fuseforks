@@ -730,6 +730,19 @@ enums:
           末尾に注記 (IPC ペイロードの上限)
         - 対象は登録エージェントの work_dir (重複除去)。複数の work_dir が
           混在しても全部読み、BlackboardNote.dir で区別する
+        - **GUI は付箋を 3 列に並べる (2026-09-16。lib/blackboardLanes.ts の純関数)**:
+          active (持ち主が typing 中、または state=dispatched で bundleChars=null の
+          波の進行役か running のタスクの宛先) / yourTurn (持ち主が進行役の波が
+          state=pending) / released (それ以外)。優先は yourTurn > active > released。
+          `まとめ.md` は列の外。**列は BlackboardNote から派生しない** — 持ち主
+          (ファイル名の表示名と AgentSnapshot.name の一致) の typing / status /
+          PlanWaveRecord / workDir から画面が毎回引く。ワイヤにも付箋にも状態の欄は
+          足さない (人待ちは Spec 43 の窓と Spec 20 の pending が既に持つ。3 つ目の
+          真実を作らない)。持ち主が引けない、または `workDir != dir` なら孤児
+          (orphanUnknown / orphanMoved) として released の先頭。
+          **列の一括削除は released にだけ付く** (delete_blackboard_note を 1 枚ずつ。
+          新しい IPC は無い)。表示名の一致は条例の約束であって機構の保証ではない —
+          改名すると孤児に見える
     settings_contract: |
       システム設定ダイアログ (Spec 13。2026-08-03 rev3 承認 → P0 で本節を凍結。
       実装は P1〜P5)。主目的は**既にある設定の可視化**。Spec 13 が足した新規の設定は

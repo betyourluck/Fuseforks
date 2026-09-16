@@ -351,7 +351,31 @@
     "deleteTitle": "Move \"{name}\" to the trash",
     "confirmClearTitle": "Clear every note on the blackboard?",
     "confirmClearMessage": "{count} notes will be moved to the trash. They are not deleted permanently, so you can restore them from the OS trash.",
-    "confirmClearLabel": "Clear all"
+    "confirmClearLabel": "Clear all",
+    "lane": {
+      "summary": "Summary",
+      "active": "In motion",
+      "yourTurn": "Your turn",
+      "released": "Hands off"
+    },
+    "laneTitle": {
+      "summary": "The note the coordinator bundles (the ordinance's まとめ.md). Pinned above the lanes",
+      "active": "Notes whose owner is mid-turn or part of an unsettled wave",
+      "yourTurn": "Notes whose owner's plan is waiting for your review (same state as the Work tab)",
+      "released": "Notes whose owner has let go. Clear from this lane"
+    },
+    "reason": {
+      "orphanUnknown": "owner not found",
+      "orphanMoved": "owner is on another work folder",
+      "failed": "stopped by a failure",
+      "stopped": "stopped",
+      "waiting": "running, idle"
+    },
+    "clearLane": "Clear the hands-off notes",
+    "clearLaneTitle": "Move only this lane's notes to the trash",
+    "confirmClearLaneTitle": "Clear the hands-off notes?",
+    "confirmClearLaneMessage": "{count} notes will be moved to the trash (notes in motion or waiting on you stay). They are not deleted permanently, so you can restore them from the OS trash.",
+    "confirmClearLaneLabel": "Clear this lane"
   },
   "waves": {
     "state": {
