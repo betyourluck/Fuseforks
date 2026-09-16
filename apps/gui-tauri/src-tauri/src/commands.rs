@@ -510,13 +510,20 @@ pub async fn list_blackboard(
 ///
 /// `dir` は一覧が返した `BlackboardNote.dir` をそのまま渡す。コア側が
 /// 「いまサーヴァントが向いている work_dir のどれか」であることを検査する。
+/// `note_state` は状態フォルダ（Spec 54。`BlackboardNote.state`）。省略と空文字は直下。
+/// 引数名が `state` でないのは Tauri の `State<'_, AppState>` と衝突するため —
+/// ワイヤの欄名は `noteState`（`ipc.ts` の `deleteBlackboardNote` が写す）。
 #[tauri::command]
 pub async fn delete_blackboard_note(
     dir: String,
     name: String,
+    note_state: Option<String>,
     state: State<'_, AppState>,
 ) -> CoreResult<()> {
-    state.orchestrator.delete_blackboard_note(&dir, &name).await
+    state
+        .orchestrator
+        .delete_blackboard_note(&dir, note_state.as_deref(), &name)
+        .await
 }
 
 /// 付箋を全部ごみ箱へ移す。戻り値は移した枚数。

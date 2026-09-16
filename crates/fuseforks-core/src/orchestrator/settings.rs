@@ -452,14 +452,19 @@ impl Orchestrator {
     /// 受け付けない。** GUI から任意のパスを渡せる形にすると、黒板の削除が
     /// **どこのファイルでも消せる口**になる（囲いは `resolve_in_work_dir` が
     /// ツール側で持っているが、この IPC はその外にある）。
-    pub async fn delete_blackboard_note(&self, dir: &str, name: &str) -> CoreResult<()> {
+    pub async fn delete_blackboard_note(
+        &self,
+        dir: &str,
+        state: Option<&str>,
+        name: &str,
+    ) -> CoreResult<()> {
         if !self.blackboard_dirs().await.iter().any(|known| known == dir) {
             return Err(crate::error::CoreError::BlackboardDeleteFailed {
                 name: name.to_owned(),
                 reason: "その作業フォルダは黒板の対象ではありません".to_owned(),
             });
         }
-        crate::blackboard::delete_note(std::path::Path::new(dir), name).await
+        crate::blackboard::delete_note(std::path::Path::new(dir), state, name).await
     }
 
     /// 黒板の付箋を全部ごみ箱へ移す。戻り値は移した枚数。
@@ -470,7 +475,12 @@ impl Orchestrator {
         let mut removed = 0usize;
         for dir in self.blackboard_dirs().await {
             for note in crate::blackboard::read_blackboard_dir(std::path::Path::new(&dir)).await? {
-                crate::blackboard::delete_note(std::path::Path::new(&dir), &note.name).await?;
+                crate::blackboard::delete_note(
+                    std::path::Path::new(&dir),
+                    note.state.as_deref(),
+                    &note.name,
+                )
+                .await?;
                 removed += 1;
             }
         }

@@ -342,8 +342,8 @@ export const listBlackboard = () => call<BlackboardNote[]>("list_blackboard");
  * 「いま使われている work_dir か」を検査する）。**完全削除はしない**ので、
  * 個別削除には確認を付けていない。
  */
-export const deleteBlackboardNote = (dir: string, name: string) =>
-  call<void>("delete_blackboard_note", { dir, name });
+export const deleteBlackboardNote = (dir: string, name: string, noteState?: string) =>
+  call<void>("delete_blackboard_note", { dir, name, noteState: noteState ?? null });
 
 /** 付箋を全部ごみ箱へ移す。戻り値は移した枚数。 */
 export const clearBlackboard = () => call<number>("clear_blackboard");

@@ -6,6 +6,7 @@
   `data_contract.yaml` の `blackboard_contract` を凍結 10 本の形へ書き換え — 置き場と
   5 値 / 区切り / `state` の欄と関門 2 段 / コアの返却順と画面の列順の分離 / バッジ /
   重複 / `done` 列の一括 / `まとめ.md` の例外 / 畳みの鍵。条例案は Notes 1 を利用者へ渡した）
+  **→ P1 完了**（同日。記録は「P1 実装記録」）
 - 起点: 利用者 —「現在の黒板は単にエージェントの状態と付箋を紐づけているだけ。
   **目指しているのは KANBAN で、タスクの状態を管理するのが理想**。ファイル名を
   `<表示名> - <仕事名> - <状態>` にするか、ファイルの 1 行目に状態を書くか」（2026-09-17）。
@@ -213,16 +214,38 @@ doc と同じ規律）ので、D1 のフォルダ名 5 つは契約に凍結し�
   「3 列」の記述は「バッジ」へ。**総数を書かず列挙する**）— 2026-09-17
 - [x] 条例の改訂案（Notes 1）を利用者へ渡す（貼るのは利用者）— 2026-09-17
 
-### P1 — コア
+### P1 — コア（完了 2026-09-17）
 
-- [ ] `read_blackboard_dir` を 1 段だけ潜る形へ（直下のファイル + 直下のフォルダの中のファイル。
+- [x] `read_blackboard_dir` を 1 段だけ潜る形へ（直下のファイル + 直下のフォルダの中のファイル。
   フォルダの中のフォルダは無視）。`BlackboardNote.state` を埋める。並びは凍結 6
-- [ ] `delete_note(work_dir, state: Option<&str>, name)` — 関門を 2 段。空文字は `None`
-- [ ] `clear_blackboard` を 1 段目まで
-- [ ] 単体: 5 状態 + 直下 + その他 + 2 段目無視 / 並び（凍結 6）/ `state` 入りの削除 /
+- [x] `delete_note(work_dir, state: Option<&str>, name)` — 関門を 2 段。空文字は `None`
+- [x] `clear_blackboard` を 1 段目まで
+- [x] 単体: 5 状態 + 直下 + その他 + 2 段目無視 / 並び（凍結 6）/ `state` 入りの削除 /
   `state` に `..` や `/` を渡すと**拒否**（`BlackboardDeleteFailed`）/ `state` 無しと空文字の
   削除は今までどおり
-- [ ] IPC: `delete_blackboard_note` に `state` を省略可で足す（`tests/ipc_contract.rs` を追従）
+- [x] IPC: `delete_blackboard_note` に `state` を省略可で足す（`tests/ipc_contract.rs` を追従）
+
+#### P1 実装記録
+
+- **触ったのは 6 ファイル** — `blackboard.rs`（型・読み手・関門）/ `orchestrator/settings.rs`
+  （`delete_blackboard_note` の引数・`clear_blackboard` が `state` を写す）/ `commands.rs`（IPC）/
+  `ipc.ts` / `types.ts`（ワイヤの写し）/ `tests/ipc_contract.rs`（凍結）。
+  **`BlackboardNote` はワイヤ凍結テストに未登録だった**ので、`state` を足すついでに
+  `blackboard_note_wire_fields_are_frozen` を新設した（`state` 無しは 4 欄・ありは 5 欄）
+- **IPC の引数名は `noteState`**（`state` ではない）— Tauri のコマンドは `State<'_, AppState>` を
+  `state` という名前で受けており、同名の引数を足すと衝突する。ワイヤの欄名はこちらが正で、
+  `ipc.ts` の `deleteBlackboardNote(dir, name, noteState?)` が写す。**フロントの 3 つ目の
+  引数は省略可**（省略は `null` で送る = コアの `None`）— P2 まで既存の呼び出しはそのまま動く
+- **`.` で始まるフォルダは読まない**（rev2 の凍結に無かった 1 点を実装で足した）。
+  `is_safe_note_name` が先頭 `.` を拒むので、読むと**画面に出るのに消せない付箋**になる
+  （読めるのに消せない形を作らない）。`fd` が隠しフォルダを飛ばすのと同じ向き
+- **コアは 5 値を見ない。** `foo/` の付箋も `state: "foo"` で返す — 閉じた列挙を判定するのは
+  画面（凍結 1 の「その他: <名>」）で、コアが落とすと名指しの材料が消える
+- **1 段目のフォルダが読めなければそのフォルダだけ黙って飛ばす**（1 枚の規律と同じ。
+  1 フォルダの権限で黒板全体を人質にしない）
+- **ミューテーション 2 回とも狙った本だけ赤** — `state` の関門を外す → 拒否のテスト 1 本 /
+  並びから `state` を外す → 並びのテスト 2 本。復元して 11 本緑・`clippy -D warnings` 0・
+  vitest 591・vue-tsc 0
 
 ### P2 — GUI
 

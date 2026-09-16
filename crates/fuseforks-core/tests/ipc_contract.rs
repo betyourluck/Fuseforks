@@ -624,3 +624,30 @@ fn session_wire_fields_are_frozen() {
         "宛先がエージェントでなければ to は出さない"
     );
 }
+
+/// 黒板の付箋のワイヤ形（Spec 54）。**`state` は無いときに欄ごと省く** — 直下の付箋は
+/// 2026-09-17 以前と同じ 4 欄で届き、状態フォルダの中の付箋だけ `state` が付く。
+///
+/// **落ちたら `types.ts` の `BlackboardNote`（`state?: string`）と `ipc.ts` の
+/// `deleteBlackboardNote`（`noteState`）を直すこと。** 画面はこの欄で列を決めるので、
+/// 欄名が変わると全部の付箋が「状態なし」へ落ちる（型検査は二言語の境界に届かない）。
+#[test]
+fn blackboard_note_wire_fields_are_frozen() {
+    let root = fuseforks_core::BlackboardNote {
+        dir: "D:/work".into(),
+        state: None,
+        name: "ザリ.md".into(),
+        content: String::new(),
+        modified_ms: 0,
+    };
+    assert_eq!(wire_keys(&root), vec!["content", "dir", "modifiedMs", "name"]);
+
+    let filed = fuseforks_core::BlackboardNote {
+        state: Some("done".into()),
+        ..root
+    };
+    assert_eq!(
+        wire_keys(&filed),
+        vec!["content", "dir", "modifiedMs", "name", "state"]
+    );
+}

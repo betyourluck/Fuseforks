@@ -40,7 +40,13 @@ const NOTE_MAX_BYTES: usize = 256 * 1024;
 pub struct BlackboardNote {
     /// 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。
     pub dir: String,
-    /// ファイル名（`blackboard/` 直下）。
+    /// 仕事の状態 = `blackboard/` 直下のフォルダ名そのもの（Spec 54）。
+    /// `None` は直下の平置き（「状態なし」）。**閉じた 5 値かどうかはコアで見ない** —
+    /// 5 値の外のフォルダは画面が「その他: <名>」として名指しで出す（閉じた列挙から
+    /// 外れた名前を黙って混ぜない）。ワイヤでは無いときに欄ごと省く（既存の形を保つ）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// ファイル名（フォルダを含めない。`state` と合わせて場所が決まる）。
     pub name: String,
     /// 本文。UTF-8 として読めないバイトは置換文字になる。
     pub content: String,
@@ -79,14 +85,31 @@ fn is_safe_note_name(name: &str) -> bool {
 /// GUI が迂回しないこと**で、削除は誰かの名前で内容を書く操作ではない。
 /// むしろ**人にしかできない後始末**で、work_dir を移した個体の付箋は
 /// 本人が消せない（`resolve_in_work_dir` が届かない）。
-pub async fn delete_note(work_dir: &Path, name: &str) -> CoreResult<()> {
+///
+/// `state` は状態フォルダ（Spec 54）。`None` と空文字は直下。**`state` と `name` は
+/// 別々に [`is_safe_note_name`] を通す** — 関門を 2 段にすることで、`name` に
+/// 区切りを入れて `blackboard/` の外や 2 段目より深くへ届く経路を開けない。
+pub async fn delete_note(work_dir: &Path, state: Option<&str>, name: &str) -> CoreResult<()> {
+    let state = state.filter(|s| !s.is_empty());
     if !is_safe_note_name(name) {
         return Err(CoreError::BlackboardDeleteFailed {
             name: name.to_owned(),
             reason: "付箋のファイル名として受け付けられません".to_owned(),
         });
     }
-    let path = work_dir.join(BLACKBOARD_DIR).join(name);
+    if let Some(state) = state
+        && !is_safe_note_name(state)
+    {
+        return Err(CoreError::BlackboardDeleteFailed {
+            name: name.to_owned(),
+            reason: "状態フォルダの名前として受け付けられません".to_owned(),
+        });
+    }
+    let mut path = work_dir.join(BLACKBOARD_DIR);
+    if let Some(state) = state {
+        path.push(state);
+    }
+    path.push(name);
     // 既に無いものを消せと言われたら成功として扱う（同じ結末なので、
     // 2 人が同時に消したときに片方だけ赤くする理由が無い）。
     if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
@@ -106,11 +129,18 @@ pub async fn delete_note(work_dir: &Path, name: &str) -> CoreResult<()> {
         })
 }
 
-/// `{work_dir}/blackboard/` 直下のファイルを読む。フォルダが無ければ空。
+/// `{work_dir}/blackboard/` の付箋を読む。フォルダが無ければ空。
 ///
-/// - サブフォルダは無視する（付箋は 1 人 1 ファイルの平置きが条例の形）
+/// - 読むのは**直下のファイルと、直下のフォルダ 1 段の中のファイル**まで（Spec 54）。
+///   フォルダの中のフォルダは無視する（2 段目より深い付箋は画面に出ない。`fd` には
+///   出るので、条例が「状態フォルダの中にフォルダを作らない」と書いて受ける）
+/// - `.` で始まるフォルダは読まない。[`is_safe_note_name`] が先頭 `.` を拒むので、
+///   読んでも画面から消せない付箋になる（読めるのに消せない形を作らない）
 /// - 読めない 1 枚は黙って飛ばす（1 枚のロック・権限で黒板全体を人質にしない）
-/// - 並びは `まとめ.md` を先頭に、残りはファイル名順
+/// - 並びは `まとめ.md`（直下）→ 直下の平置き（名前順）→ `state` の文字列順 →
+///   その中で名前順。**安定な並びのためで、意味は持たせない** — 画面の列の並び
+///   （`doing → needs-you → …`）はフロントが持つ。コアに列順を持たせると 5 値の
+///   順序がコアと辞書の 2 箇所に住む
 pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNote>> {
     let dir = work_dir.join(BLACKBOARD_DIR);
     let mut entries = match tokio::fs::read_dir(&dir).await {
@@ -122,41 +152,74 @@ pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNo
     let mut notes = Vec::new();
     while let Some(entry) = entries.next_entry().await.map_err(|e| io_err(&dir, e))? {
         let Ok(meta) = entry.metadata().await else { continue };
-        if !meta.is_file() {
+        if meta.is_file() {
+            if let Some(note) = read_note(work_dir, None, &entry.path(), &meta).await {
+                notes.push(note);
+            }
             continue;
         }
-        let Ok(bytes) = tokio::fs::read(entry.path()).await else { continue };
-
-        let truncated = bytes.len() > NOTE_MAX_BYTES;
-        let slice = if truncated { &bytes[..NOTE_MAX_BYTES] } else { &bytes[..] };
-        let mut content = String::from_utf8_lossy(slice).into_owned();
-        if truncated {
-            content.push_str("\n\n…（付箋の想定を超える長さのため、ここで切り詰めました）");
+        if !meta.is_dir() {
+            continue;
         }
-
-        let modified_ms = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
-
-        notes.push(BlackboardNote {
-            dir: work_dir.display().to_string(),
-            name: entry.file_name().to_string_lossy().into_owned(),
-            content,
-            modified_ms,
-        });
+        let state = entry.file_name().to_string_lossy().into_owned();
+        if state.starts_with('.') {
+            continue;
+        }
+        // 1 段目のフォルダの中。読めないフォルダは黙って飛ばす（1 枚の規律と同じ）。
+        let Ok(mut inner) = tokio::fs::read_dir(entry.path()).await else { continue };
+        while let Ok(Some(child)) = inner.next_entry().await {
+            let Ok(child_meta) = child.metadata().await else { continue };
+            if !child_meta.is_file() {
+                continue;
+            }
+            if let Some(note) = read_note(work_dir, Some(&state), &child.path(), &child_meta).await
+            {
+                notes.push(note);
+            }
+        }
     }
 
     notes.sort_by(|a, b| {
-        let a_is_summary = a.name == SUMMARY_FILE;
-        let b_is_summary = b.name == SUMMARY_FILE;
+        let a_is_summary = a.state.is_none() && a.name == SUMMARY_FILE;
+        let b_is_summary = b.state.is_none() && b.name == SUMMARY_FILE;
         b_is_summary
             .cmp(&a_is_summary)
+            .then_with(|| a.state.cmp(&b.state))
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(notes)
+}
+
+/// 付箋 1 枚を読む。読めなければ `None`（呼び手が飛ばす）。
+async fn read_note(
+    work_dir: &Path,
+    state: Option<&str>,
+    path: &Path,
+    meta: &std::fs::Metadata,
+) -> Option<BlackboardNote> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+
+    let truncated = bytes.len() > NOTE_MAX_BYTES;
+    let slice = if truncated { &bytes[..NOTE_MAX_BYTES] } else { &bytes[..] };
+    let mut content = String::from_utf8_lossy(slice).into_owned();
+    if truncated {
+        content.push_str("\n\n…（付箋の想定を超える長さのため、ここで切り詰めました）");
+    }
+
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+
+    Some(BlackboardNote {
+        dir: work_dir.display().to_string(),
+        state: state.map(str::to_owned),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        content,
+        modified_ms,
+    })
 }
 
 /// I/O エラーへパス情報を添える（`ConfigStore` と同じ形）。
@@ -225,15 +288,142 @@ mod tests {
     #[tokio::test]
     async fn deleting_a_missing_note_is_not_an_error() {
         let dir = TempDir::new("bb-del-missing");
-        delete_note(&dir.0, "居ない.md").await.unwrap();
+        delete_note(&dir.0, None, "居ない.md").await.unwrap();
+        delete_note(&dir.0, Some("done"), "居ない.md").await.unwrap();
     }
 
     /// 危ない名前は**ファイルへ触る前に**落ちる。
     #[tokio::test]
     async fn unsafe_names_are_rejected_before_touching_the_disk() {
         let dir = TempDir::new("bb-del-unsafe");
-        let err = delete_note(&dir.0, "../world.json").await.unwrap_err();
+        let err = delete_note(&dir.0, None, "../world.json").await.unwrap_err();
         assert_eq!(err.code(), "BLACKBOARD_DELETE_FAILED");
+    }
+
+    /// **`state` は `name` とは別に関門を通る**（Spec 54 凍結 4）。`name` が安全でも
+    /// `state` に区切りや `..` が入れば拒否 — 2 段にしないと、状態フォルダの欄が
+    /// `blackboard/` の外へ届く経路になる。
+    #[tokio::test]
+    async fn unsafe_state_names_are_rejected_before_touching_the_disk() {
+        let dir = TempDir::new("bb-del-unsafe-state");
+        let board = dir.0.join(BLACKBOARD_DIR).join("done");
+        std::fs::create_dir_all(&board).unwrap();
+        std::fs::write(board.join("ザリ - 調査.md"), "x").unwrap();
+
+        for bad in ["..", "../..", "done/sub", r"done\sub", "/", ".hidden"] {
+            let err = delete_note(&dir.0, Some(bad), "ザリ - 調査.md")
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), "BLACKBOARD_DELETE_FAILED", "state={bad}");
+        }
+        assert!(
+            board.join("ザリ - 調査.md").exists(),
+            "拒否された呼び出しはディスクに触らない"
+        );
+    }
+
+    /// `state` を渡すとそのフォルダの 1 枚だけが消え、同名の直下の付箋は残る。
+    /// 空文字は `None` と同じ（フロントが `undefined` を空文字で送る形を拒否にしない）。
+    #[tokio::test]
+    async fn state_selects_the_folder_and_empty_state_means_the_root() {
+        let dir = TempDir::new("bb-del-state");
+        let root = dir.0.join(BLACKBOARD_DIR);
+        let done = root.join("done");
+        std::fs::create_dir_all(&done).unwrap();
+        std::fs::write(root.join("ザリ.md"), "root").unwrap();
+        std::fs::write(done.join("ザリ.md"), "done").unwrap();
+
+        delete_note(&dir.0, Some("done"), "ザリ.md").await.unwrap();
+        assert!(!done.join("ザリ.md").exists(), "done/ の 1 枚が消える");
+        assert!(root.join("ザリ.md").exists(), "直下の同名は残る");
+
+        delete_note(&dir.0, Some(""), "ザリ.md").await.unwrap();
+        assert!(!root.join("ザリ.md").exists(), "空文字の state は直下");
+    }
+
+    /// **1 段目のフォルダの中まで読み、2 段目より深くは読まない**（Spec 54 凍結 1）。
+    /// 5 値の外のフォルダ（`foo`）もコアはそのまま `state` に載せる — 閉じた列挙を
+    /// 見るのは画面で、コアは名指しの材料を落とさない。`.` で始まるフォルダは読まない。
+    #[tokio::test]
+    async fn notes_one_folder_deep_are_read_with_their_state() {
+        let dir = TempDir::new("bb-state");
+        let root = dir.0.join(BLACKBOARD_DIR);
+        for state in ["doing", "needs-you", "waiting", "on-hold", "done", "foo", ".git"] {
+            std::fs::create_dir_all(root.join(state)).unwrap();
+            std::fs::write(root.join(state).join("ザリ - 調査.md"), state).unwrap();
+        }
+        std::fs::create_dir_all(root.join("done").join("2026")).unwrap();
+        std::fs::write(root.join("done").join("2026").join("深い.md"), "deep").unwrap();
+        std::fs::write(root.join("ルナ.md"), "root").unwrap();
+
+        let notes = read_blackboard_dir(&dir.0).await.unwrap();
+        let places: Vec<(Option<&str>, &str)> = notes
+            .iter()
+            .map(|n| (n.state.as_deref(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            places,
+            vec![
+                (None, "ルナ.md"),
+                (Some("doing"), "ザリ - 調査.md"),
+                (Some("done"), "ザリ - 調査.md"),
+                (Some("foo"), "ザリ - 調査.md"),
+                (Some("needs-you"), "ザリ - 調査.md"),
+                (Some("on-hold"), "ザリ - 調査.md"),
+                (Some("waiting"), "ザリ - 調査.md"),
+            ],
+            "直下 → state の文字列順（列順ではない）。2 段目と `.git` は出ない"
+        );
+        let done = notes.iter().find(|n| n.state.as_deref() == Some("done")).unwrap();
+        assert_eq!(done.content, "done");
+    }
+
+    /// `まとめ.md` が先頭に固定されるのは**直下のものだけ**（凍結 9）。
+    /// `state` の中の `まとめ.md` は普通の付箋として state の並びに入る。
+    #[tokio::test]
+    async fn only_the_root_summary_is_pinned_first() {
+        let dir = TempDir::new("bb-summary-state");
+        let root = dir.0.join(BLACKBOARD_DIR);
+        std::fs::create_dir_all(root.join("doing")).unwrap();
+        std::fs::write(root.join("doing").join("まとめ.md"), "x").unwrap();
+        std::fs::write(root.join("doing").join("あ.md"), "x").unwrap();
+        std::fs::write(root.join("ん.md"), "x").unwrap();
+        std::fs::write(root.join("まとめ.md"), "x").unwrap();
+
+        let notes = read_blackboard_dir(&dir.0).await.unwrap();
+        let places: Vec<(Option<&str>, &str)> = notes
+            .iter()
+            .map(|n| (n.state.as_deref(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            places,
+            vec![
+                (None, "まとめ.md"),
+                (None, "ん.md"),
+                (Some("doing"), "あ.md"),
+                (Some("doing"), "まとめ.md"),
+            ]
+        );
+    }
+
+    /// ワイヤ形: `state` が無いときは欄ごと省く（既存の形を保つ）。
+    #[test]
+    fn state_is_omitted_from_the_wire_when_absent() {
+        let root = BlackboardNote {
+            dir: "d".into(),
+            state: None,
+            name: "ザリ.md".into(),
+            content: String::new(),
+            modified_ms: 0,
+        };
+        let json = serde_json::to_value(&root).unwrap();
+        assert!(json.get("state").is_none());
+        let filed = BlackboardNote {
+            state: Some("done".into()),
+            ..root
+        };
+        let json = serde_json::to_value(&filed).unwrap();
+        assert_eq!(json["state"], "done");
     }
 
     #[tokio::test]
@@ -251,7 +441,7 @@ mod tests {
         std::fs::write(board.join("ザリ.md"), "調査中: specs/04").unwrap();
         std::fs::write(board.join("まとめ.md"), "# 今日の束ね").unwrap();
         std::fs::write(board.join("ジェミー.md"), "検索語: tokio select").unwrap();
-        // サブフォルダは無視（付箋は平置き）。
+        // 空のサブフォルダは何も足さない（中身が無い状態フォルダ）。
         std::fs::create_dir_all(board.join("古い黒板")).unwrap();
 
         let notes = read_blackboard_dir(&dir.0).await.unwrap();

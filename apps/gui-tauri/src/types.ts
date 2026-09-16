@@ -1049,7 +1049,16 @@ export interface StatsReport {
 export interface BlackboardNote {
   /** 由来の work_dir（実パス）。複数の work_dir が混在するときの区別用。 */
   dir: string;
-  /** ファイル名。`まとめ.md` が先頭に来る並びでコアから返る。 */
+  /**
+   * 仕事の状態 = `blackboard/` 直下のフォルダ名そのもの（Spec 54）。無ければ直下の
+   * 平置き（「状態なし」）。コアは欄ごと省くので `undefined` で来る。5 値かどうかは
+   * 画面（`lib/blackboardLanes.ts`）が見る。
+   */
+  state?: string;
+  /**
+   * ファイル名（フォルダを含めない）。コアの並びは `まとめ.md`（直下）→ 直下 →
+   * `state` の文字列順 → 名前順で、**画面の列順とは別**（列順はフロントが持つ）。
+   */
   name: string;
   content: string;
   /** 最終更新時刻（epoch ms）。取得できない環境では 0。 */
