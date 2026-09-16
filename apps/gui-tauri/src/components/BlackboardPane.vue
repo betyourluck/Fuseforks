@@ -19,6 +19,7 @@ import {
 } from "../lib/ipc";
 import { useI18n } from "vue-i18n";
 
+import { useBlackboardCollapse } from "../composables/useBlackboardCollapse";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
@@ -38,6 +39,8 @@ defineProps<{ activeTab: BottomTab }>();
 const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 
 const orchestrator = useOrchestrator();
+/** 付箋の畳み。部品の外（モジュール + localStorage）に持つ — タブを離れても残す。 */
+const collapse = useBlackboardCollapse();
 
 const notes = ref<BlackboardNote[]>([]);
 
@@ -173,6 +176,7 @@ async function clearReleased(): Promise<void> {
 async function refresh(): Promise<void> {
   try {
     notes.value = await listBlackboard();
+    collapse.prune(notes.value);
     error.value = null;
   } catch (err) {
     error.value = toErrorPayload(err);
@@ -270,17 +274,15 @@ function formatTime(ms: number): string {
       {{ formatError(error) }}
     </div>
 
-    <div
-      v-else-if="loaded && notes.length === 0"
-      class="flex flex-1 items-center justify-center px-6 text-center text-xs text-ink-dim"
-    >
-      {{ $t("blackboard.empty") }}
-    </div>
-
     <!--
       まとめ（あれば）→ 3 列の順に縦へ並べる。列の見出しは空でも出す —
       「どれを消すか」を列で読ませるのが目的なので、3 列の形が毎回同じであることが
       情報になる。付箋の並びは列の中でもコアの順（released だけ孤児が先頭）。
+
+      **付箋が 0 枚でも 3 列を出す**（2026-09-16 利用者裁定）。初回の読みが済むまでは
+      0 枚の 3 列が見え、読めたあと 0 枚なら空の文言に**差し替えて**いた — 読み込みの
+      前後で画面の形が変わり「チラッとカテゴリが見える」になっていた。差し替えをやめ、
+      空の文言は 3 列の下に足す。読み込みの前後で同じ形なので、ちらつきは構造で消える。
     -->
     <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
       <section v-for="section in sections" :key="section.key" class="mb-3" :data-lane="section.key">
@@ -334,9 +336,38 @@ function formatTime(ms: number): string {
         :key="`${note.dir}:${note.name}`"
         class="mb-2 rounded-lg border border-line/50 bg-surface-1"
       >
+        <!--
+          見出し行を押すと本文を畳む ⇄ 開く（ごみ箱は `.stop` で別）。畳んでも
+          見出し行（名前・バッジ・時刻・ごみ箱）は残るので、列の中での枚数と
+          「消せるか」は畳んだままでも読める。
+        -->
         <header
-          class="flex items-baseline gap-2 border-b border-line/50 px-3 py-1.5 text-[11px]"
+          :class="[
+            'flex cursor-pointer items-baseline gap-2 px-3 py-1.5 text-[11px] select-none',
+            collapse.isCollapsed(note) ? '' : 'border-b border-line/50',
+          ]"
+          @click="collapse.toggle(note)"
         >
+          <button
+            class="grid size-4 shrink-0 self-center place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+            :aria-expanded="!collapse.isCollapsed(note)"
+            :title="$t(collapse.isCollapsed(note) ? 'blackboard.expand' : 'blackboard.collapse')"
+            :aria-label="$t(collapse.isCollapsed(note) ? 'blackboard.expand' : 'blackboard.collapse')"
+            @click.stop="collapse.toggle(note)"
+          >
+            <svg
+              :class="['size-3 transition-transform', collapse.isCollapsed(note) ? '-rotate-90' : '']"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
           <span class="font-semibold text-ink">{{ note.name }}</span>
           <span
             v-if="note.info && reasonKey(note.info.reason)"
@@ -368,7 +399,7 @@ function formatTime(ms: number): string {
             :disabled="busy"
             :title="$t('blackboard.deleteTitle', { name: note.name })"
             :aria-label="$t('blackboard.deleteTitle', { name: note.name })"
-            @click="remove(note)"
+            @click.stop="remove(note)"
           >
             <svg
               class="size-3.5"
@@ -393,11 +424,16 @@ function formatTime(ms: number): string {
           （ChatPanel の会話バブルと同じ前提）。
         -->
         <div
+          v-show="!collapse.isCollapsed(note)"
           class="md-body selectable px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
           v-html="renderMarkdown(note.content)"
         />
       </article>
       </section>
+
+      <p v-if="loaded && notes.length === 0" class="px-3 py-4 text-center text-xs text-ink-dim">
+        {{ $t("blackboard.empty") }}
+      </p>
     </div>
   </div>
 </template>

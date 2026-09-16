@@ -371,6 +371,8 @@
       "stopped": "stopped",
       "waiting": "running, idle"
     },
+    "expand": "Expand the note",
+    "collapse": "Collapse the note",
     "clearLane": "Clear the hands-off notes",
     "clearLaneTitle": "Move only this lane's notes to the trash",
     "confirmClearLaneTitle": "Clear the hands-off notes?",

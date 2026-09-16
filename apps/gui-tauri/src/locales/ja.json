@@ -371,6 +371,8 @@
       "stopped": "停止中",
       "waiting": "起動中・待機"
     },
+    "expand": "付箋を開く",
+    "collapse": "付箋を畳む",
     "clearLane": "手が離れている付箋を消す",
     "clearLaneTitle": "この列の付箋だけをごみ箱へ移します",
     "confirmClearLaneTitle": "手が離れている付箋を消しますか？",
