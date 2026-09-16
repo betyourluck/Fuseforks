@@ -352,17 +352,33 @@
     "confirmClearTitle": "黒板の付箋をすべて消しますか？",
     "confirmClearMessage": "{count} 枚の付箋をごみ箱へ移します。完全には削除しないので、OS のごみ箱から戻せます。",
     "confirmClearLabel": "すべて消す",
-    "lane": {
+    "state": {
       "summary": "まとめ",
+      "doing": "進行中",
+      "needsYou": "あなたの判断待ち",
+      "waiting": "エージェント待ち",
+      "onHold": "保留",
+      "done": "完了",
+      "unfiled": "状態なし",
+      "other": "その他: {name}"
+    },
+    "stateTitle": {
+      "summary": "進行役が束ねた付箋（条例の まとめ.md）。列には入れず先頭に固定します",
+      "doing": "blackboard/doing/ にある付箋。サーヴァントが着手中の仕事",
+      "needsYou": "blackboard/needs-you/ にある付箋。あなたの判断を待っている仕事",
+      "waiting": "blackboard/waiting/ にある付箋。他のサーヴァントの答えを待っている仕事",
+      "onHold": "blackboard/on-hold/ にある付箋。止めてある仕事",
+      "done": "blackboard/done/ にある付箋。終わった仕事。消すならこの列から",
+      "unfiled": "blackboard/ 直下の付箋。状態フォルダに入っていない（以前の形の付箋もここ）",
+      "other": "blackboard/{name}/ にある付箋。決めてある 5 つの状態ではないフォルダ"
+    },
+    "badge": {
       "active": "動いている",
       "yourTurn": "あなたの手番",
-      "released": "手が離れている"
+      "duplicate": "重複"
     },
-    "laneTitle": {
-      "summary": "進行役が束ねた付箋（条例の まとめ.md）。列には入れず先頭に固定します",
-      "active": "持ち主がターンの最中か、未確定の波に参加している付箋",
-      "yourTurn": "持ち主の計画があなたの確認を待っている付箋（作業状況タブと同じ状態）",
-      "released": "持ち主の手が離れている付箋。消すならこの列から"
+    "badgeTitle": {
+      "duplicate": "同じ名前の付箋が別の状態にもあります。move ではなく write で作られた形です"
     },
     "reason": {
       "orphanUnknown": "持ち主が見つからない",
@@ -373,11 +389,11 @@
     },
     "expand": "付箋を開く",
     "collapse": "付箋を畳む",
-    "clearLane": "手が離れている付箋を消す",
-    "clearLaneTitle": "この列の付箋だけをごみ箱へ移します",
-    "confirmClearLaneTitle": "手が離れている付箋を消しますか？",
-    "confirmClearLaneMessage": "{count} 枚の付箋をごみ箱へ移します（動いている / あなたの手番の付箋は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
-    "confirmClearLaneLabel": "この列を消す"
+    "clearDone": "完了の付箋を消す",
+    "clearDoneTitle": "完了の列の付箋だけをごみ箱へ移します",
+    "confirmClearDoneTitle": "完了の付箋を消しますか？",
+    "confirmClearDoneMessage": "{count} 枚の付箋をごみ箱へ移します（他の列と まとめ.md は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
+    "confirmClearDoneLabel": "完了を消す"
   },
   "waves": {
     "state": {

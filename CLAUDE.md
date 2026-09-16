@@ -2237,8 +2237,15 @@ rev2 承認 → P0 完了（`data_contract` の `blackboard_contract` を凍結 
 `state` は Tauri の `State<'_, AppState>` と衝突する / ワイヤ凍結テストを新設 / ミューテーション
 2 回とも狙った本だけ赤。記録は Spec の「P1 実装記録」）。
 
-**次の一手**: Spec 54 P2（GUI — 列 = state・バッジ・重複・`done` 列の一括・畳みの鍵・辞書）→
-P3 台帳 → P4 実機 / 条例案の適用は利用者 / 未 push コミットの push
+**P2 完了**（同日。`kanbanNotes` = 列は `STATES` 定数の順・バッジは `badgeOf`・重複は場所の `Set` /
+辞書の鍵は `needs-you` → `needsYou` の camelCase / `done` 列の一括は `deleteBlackboardNote` の
+ループ / 畳みの鍵 `dir:state/name`。ミューテーション 4 回 — **1 回は初回に緑で通った**（「状態なし」を
+`doing` へ倒しても列挙のテストが `unfiled` の存在しか見ていなかった。枚数の配列を足して赤）。
+vitest 599・build 緑。記録は Spec の「P2 実装記録」）。
+
+**次の一手**: Spec 54 P3（台帳 — DETAIL 日英「黒板タブ」/ README 3 言語と `tour.ts` の文言 /
+`git grep` で `3 列` `released` `手が離れている` `1 人 1 ファイル` を回収）→ P4 実機 / 条例案の
+適用は利用者 / 未 push コミットの push
 （799d5e5 / a7280fb / 20d3211）の push / 黒板の 3 列の実機確認は Spec 54 で列が変わるので省略 /
 評価基盤の「完遂」の軸。
 **core 単独実行（クラウドのコンテナ）は最終目標として

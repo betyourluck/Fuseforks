@@ -45,6 +45,15 @@ const A2 = { dir: "D:\\two", name: "ザリ.md" };
 const B = { dir: "D:\\one", name: "ルナ.md" };
 
 describe("useBlackboardCollapse", () => {
+  it("鍵は dir:state/name。state 無しは dir:name のまま（2026-09-16 の保存値を壊さない）", async () => {
+    const { noteKey } = await freshModule(fakeStorage());
+    expect(noteKey(A)).toBe("D:\\one:ザリ.md");
+    expect(noteKey({ ...A, state: "done" })).toBe("D:\\one:done/ザリ.md");
+    // state が変わると鍵も変わる = move した付箋は開く（Spec 54 凍結 10。意図）。
+    // 鍵を dir:name にすると、同名が 2 状態に並ぶ重複で片方を畳むと両方が畳まれる。
+    expect(noteKey({ ...A, state: "doing" })).not.toBe(noteKey({ ...A, state: "done" }));
+  });
+
   it("toggle で畳み、もう一度で開く。鍵は dir:name で別 work_dir の同名と混ざらない", async () => {
     const storage = fakeStorage();
     const { useBlackboardCollapse } = await freshModule(storage);

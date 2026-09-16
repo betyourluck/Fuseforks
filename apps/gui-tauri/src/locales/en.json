@@ -352,17 +352,33 @@
     "confirmClearTitle": "Clear every note on the blackboard?",
     "confirmClearMessage": "{count} notes will be moved to the trash. They are not deleted permanently, so you can restore them from the OS trash.",
     "confirmClearLabel": "Clear all",
-    "lane": {
+    "state": {
       "summary": "Summary",
-      "active": "In motion",
-      "yourTurn": "Your turn",
-      "released": "Hands off"
+      "doing": "In progress",
+      "needsYou": "Needs you",
+      "waiting": "Waiting on an agent",
+      "onHold": "On hold",
+      "done": "Done",
+      "unfiled": "No state",
+      "other": "Other: {name}"
     },
-    "laneTitle": {
-      "summary": "The note the coordinator bundles (the ordinance's まとめ.md). Pinned above the lanes",
-      "active": "Notes whose owner is mid-turn or part of an unsettled wave",
-      "yourTurn": "Notes whose owner's plan is waiting for your review (same state as the Work tab)",
-      "released": "Notes whose owner has let go. Clear from this lane"
+    "stateTitle": {
+      "summary": "The note the coordinator bundles (the ordinance's まとめ.md). Pinned above the columns",
+      "doing": "Notes under blackboard/doing/. Work a servant has started",
+      "needsYou": "Notes under blackboard/needs-you/. Work waiting for your decision",
+      "waiting": "Notes under blackboard/waiting/. Work waiting on another servant",
+      "onHold": "Notes under blackboard/on-hold/. Work set aside",
+      "done": "Notes under blackboard/done/. Finished work. Clear from this column",
+      "unfiled": "Notes directly under blackboard/, not in a state folder (older-style notes land here)",
+      "other": "Notes under blackboard/{name}/, a folder that is not one of the five states"
+    },
+    "badge": {
+      "active": "in motion",
+      "yourTurn": "your turn",
+      "duplicate": "duplicate"
+    },
+    "badgeTitle": {
+      "duplicate": "A note with the same name exists in another state. It was written rather than moved"
     },
     "reason": {
       "orphanUnknown": "owner not found",
@@ -373,11 +389,11 @@
     },
     "expand": "Expand the note",
     "collapse": "Collapse the note",
-    "clearLane": "Clear the hands-off notes",
-    "clearLaneTitle": "Move only this lane's notes to the trash",
-    "confirmClearLaneTitle": "Clear the hands-off notes?",
-    "confirmClearLaneMessage": "{count} notes will be moved to the trash (notes in motion or waiting on you stay). They are not deleted permanently, so you can restore them from the OS trash.",
-    "confirmClearLaneLabel": "Clear this lane"
+    "clearDone": "Clear the done notes",
+    "clearDoneTitle": "Move only the Done column's notes to the trash",
+    "confirmClearDoneTitle": "Clear the done notes?",
+    "confirmClearDoneMessage": "{count} notes will be moved to the trash (other columns and まとめ.md stay). They are not deleted permanently, so you can restore them from the OS trash.",
+    "confirmClearDoneLabel": "Clear done"
   },
   "waves": {
     "state": {

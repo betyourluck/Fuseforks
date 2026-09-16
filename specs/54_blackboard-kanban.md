@@ -6,7 +6,7 @@
   `data_contract.yaml` の `blackboard_contract` を凍結 10 本の形へ書き換え — 置き場と
   5 値 / 区切り / `state` の欄と関門 2 段 / コアの返却順と画面の列順の分離 / バッジ /
   重複 / `done` 列の一括 / `まとめ.md` の例外 / 畳みの鍵。条例案は Notes 1 を利用者へ渡した）
-  **→ P1 完了**（同日。記録は「P1 実装記録」）
+  **→ P1 完了**（同日。記録は「P1 実装記録」）**→ P2 完了**（同日。記録は「P2 実装記録」）
 - 起点: 利用者 —「現在の黒板は単にエージェントの状態と付箋を紐づけているだけ。
   **目指しているのは KANBAN で、タスクの状態を管理するのが理想**。ファイル名を
   `<表示名> - <仕事名> - <状態>` にするか、ファイルの 1 行目に状態を書くか」（2026-09-17）。
@@ -247,22 +247,41 @@ doc と同じ規律）ので、D1 のフォルダ名 5 つは契約に凍結し�
   並びから `state` を外す → 並びのテスト 2 本。復元して 11 本緑・`clippy -D warnings` 0・
   vitest 591・vue-tsc 0
 
-### P2 — GUI
+### P2 — GUI（完了 2026-09-17）
 
-- [ ] `blackboardLanes.ts`: `ownerNameOf` を最初の ` - ` で割る / `laneNotes` を「列 = state」+
+- [x] `blackboardLanes.ts`: `ownerNameOf` を最初の ` - ` で割る / `laneNotes` を「列 = state」+
   「バッジ = classifyNote の内訳」へ / 列順は D1 の表 / その他はフォルダごと / 重複バッジ
   （`name` 全体の一致）
-- [ ] `BlackboardPane.vue`: `まとめ.md` の最上部固定は据え置き / 5 列固定 + 状態なし + その他 /
+- [x] `BlackboardPane.vue`: `まとめ.md` の最上部固定は据え置き / 5 列固定 + 状態なし + その他 /
   バッジ 2 種（持ち主の手番・重複）/ `done` 列の一括削除（`delete_blackboard_note` のループ）/
   削除に `state` を渡す
-- [ ] `useBlackboardCollapse.ts`: 鍵を `dir:state/name`
-- [ ] 辞書 ja / en: `blackboard.state.*`（5 + `unfiled`）/ `blackboard.state.other`
+- [x] `useBlackboardCollapse.ts`: 鍵を `dir:state/name`
+- [x] 辞書 ja / en: `blackboard.state.*`（5 + `unfiled`）/ `blackboard.state.other`
   （`{name}` を受ける）/ バッジは既存の `blackboard.reason.*` + `active` / `yourTurn` の 2 鍵 /
   `blackboard.badge.duplicate` / `done` 列の確認文面。**鍵は実行時に組む**ので
   `blackboardLanesWiring.test.ts` を state の列挙で突き合わせる形へ直す
-- [ ] vitest: 純関数（列 / 列順 / バッジ / 重複 / 区切り無しの旧形式 / 仕事名の中の ` - `）+ 走査
-- [ ] ミューテーションで赤を確認（区切りを最後の ` - ` に変える / 重複の判定を外す / `state`
+- [x] vitest: 純関数（列 / 列順 / バッジ / 重複 / 区切り無しの旧形式 / 仕事名の中の ` - `）+ 走査
+- [x] ミューテーションで赤を確認（区切りを最後の ` - ` に変える / 重複の判定を外す / `state`
   無しを `doing` へ倒す / 列順をコアの文字列順に戻す）
+
+#### P2 実装記録
+
+- **純関数は `kanbanNotes`**（`laneNotes` / `LANES` / `LanedBoard` は撤去）。返すのは `summary` +
+  `columns`（`kind: state | unfiled | other`）で、**列順は `STATES` 定数が持つ**。`classifyNote` は
+  1 行も変えず、`badgeOf` が `lane` を `NoteBadge`（`active` / `yourTurn` / `ReleasedReason` の
+  5 値）へ写す。重複は `dir:name` が現れた場所（直下も 1 つ）を `Set` で数える
+- **辞書の鍵はフォルダ名の `-` を camelCase へ写す**（`needs-you` → `needsYou`。`stateDictKey`）。
+  vue-i18n の鍵にハイフンを置かない側に倒した — 走査テストは `STATES.map(stateDictKey)` と
+  辞書を突き合わせる。「その他」の見出しは `blackboard.state.other` に `{name}` を渡す
+- **バッジの色は 4 段** — 孤児 = fail / `yourTurn` = accent / `active` = run / それ以外 = line。
+  重複は fail で 2 つ目のバッジ。`data-badge` を付けて実機のスクリーンショットから種類を読める
+- **ミューテーション 4 回のうち 1 回は初回に緑のまま通った**（M3「`state` 無しを `doing` へ
+  倒す」）。列挙のテストが `unfiled` 列の**存在**しか見ておらず、`doing` 列が**空である**ことを
+  主張していなかった。枚数の配列 `[0, 0, 0, 0, 0, 1]` を足して赤を確認した。**一般化: 「A が
+  出る」の主張は「B に漏れない」を含意しない**（Spec 27 P1 の「A が生えない ≠ B が入る」の
+  裏返し）。なお M3 の sed は 2 行に当たった（`state` の列と「その他」の列が同じ filter の
+  形）— 変異の射程も数えてから読む
+- vitest 591 → 599・vue-tsc 0・`bun run build` 緑。**実機は未確認**（P4）
 
 ### P3 — 台帳
 

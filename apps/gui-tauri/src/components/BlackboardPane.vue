@@ -19,15 +19,17 @@ import {
 } from "../lib/ipc";
 import { useI18n } from "vue-i18n";
 
-import { useBlackboardCollapse } from "../composables/useBlackboardCollapse";
+import { noteKey, useBlackboardCollapse } from "../composables/useBlackboardCollapse";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
-  LANES,
-  laneNotes,
-  type BlackboardLane,
-  type LanedNote,
-  type ReleasedReason,
+  isOrphan,
+  kanbanNotes,
+  stateDictKey,
+  isKnownState,
+  type KanbanColumn,
+  type MarkedNote,
+  type NoteBadge,
 } from "../lib/blackboardLanes";
 import { formatError } from "../lib/errorText";
 import { renderMarkdown } from "../lib/markdown";
@@ -45,37 +47,86 @@ const collapse = useBlackboardCollapse();
 const notes = ref<BlackboardNote[]>([]);
 
 /**
- * 付箋を「持ち主の手番」で 3 列に分ける（`lib/blackboardLanes`）。
+ * 付箋を**仕事の状態（フォルダ）で列に**分け、**持ち主の手番をバッジに**する
+ * （`lib/blackboardLanes`。Spec 54）。
  *
- * 付箋自身は状態を持たない。列は**持ち主の投影**（typing / status / 波 / workDir）
- * から毎回派生させるだけなので、黒板に 3 つ目の真実は生まれない —
- * 「あなたの手番」は作業状況タブと同じ `PlanWaveState` を読んでいる。
- * 消してよいのは「手が離れている」列だけで、その列にだけ一括の消し口を置く。
+ * 列は付箋の置き場（`BlackboardNote.state`）が決める。持ち主の手番は**投影**
+ * （typing / status / 波 / workDir）から毎回派生させてバッジにするだけなので、
+ * 付箋にもワイヤにも持ち主の状態の欄は無い — 「あなたの手番」は作業状況タブと同じ
+ * `PlanWaveState` を読んでいる。消してよいのは「完了」列だけで、そこにだけ一括の
+ * 消し口を置く。
  */
 const board = computed(() =>
-  laneNotes(notes.value, {
+  kanbanNotes(notes.value, {
     agents: orchestrator.state.agents,
     typing: orchestrator.state.typing,
     waves: orchestrator.state.planWaves,
   }),
 );
 
-/** 画面の並び: まとめ（あれば）→ 3 列。列の見出しは空でも出す（3 列の形を保つ）。 */
-const sections = computed(() => [
+type Section = {
+  key: string;
+  column: KanbanColumn<BlackboardNote> | null;
+  notes: MarkedNote<BlackboardNote>[] | BlackboardNote[];
+};
+
+/**
+ * 画面の並び: まとめ（あれば）→ 5 つの状態の列（0 枚でも出す）→ 状態なし（あれば）→
+ * その他（フォルダごと・あれば）。列順は純関数が持つ（コアの返却順は別のもの）。
+ */
+const sections = computed<Section[]>(() => [
   ...(board.value.summary.length
-    ? [{ key: "summary" as const, notes: board.value.summary as LanedNote<BlackboardNote>[] }]
+    ? [{ key: "summary", column: null, notes: board.value.summary }]
     : []),
-  ...LANES.map((lane) => ({ key: lane, notes: board.value.lanes[lane] })),
+  ...board.value.columns.map((column) => ({
+    key: column.kind === "unfiled" ? "unfiled" : `${column.kind}:${column.state}`,
+    column,
+    notes: column.notes,
+  })),
 ]);
 
-/** 「手が離れている」の内訳バッジ。辞書の鍵を返す（訳語は持たない）。 */
-function reasonKey(reason: ReleasedReason | null): string | null {
-  return reason ? `blackboard.reason.${reason}` : null;
+/** 列の見出し。辞書の鍵は状態ごとに実行時に組む（走査テストが列挙と突き合わせる）。 */
+function columnLabel(section: Section): string {
+  const column = section.column;
+  if (column === null) return t(`blackboard.state.${stateDictKey("summary")}`);
+  if (column.kind === "unfiled") return t(`blackboard.state.${stateDictKey("unfiled")}`);
+  if (column.kind === "other") return t("blackboard.state.other", { name: column.state });
+  return t(`blackboard.state.${stateDictKey(column.state as never)}`);
 }
 
-function isReleased(key: BlackboardLane | "summary"): key is "released" {
-  return key === "released";
+function columnTitle(section: Section): string {
+  const column = section.column;
+  if (column === null) return t(`blackboard.stateTitle.${stateDictKey("summary")}`);
+  if (column.kind === "unfiled") return t(`blackboard.stateTitle.${stateDictKey("unfiled")}`);
+  if (column.kind === "other") return t("blackboard.stateTitle.other", { name: column.state });
+  return t(`blackboard.stateTitle.${stateDictKey(column.state as never)}`);
 }
+
+/** 列の印の色。`doing` は動いている色、`needs-you` は accent、残りは線の色。 */
+function columnDot(section: Section): string {
+  const state = section.column?.state;
+  if (state === "doing") return "bg-run";
+  if (state === "needs-you") return "bg-accent";
+  return "bg-line";
+}
+
+function isDone(section: Section): boolean {
+  return section.column?.kind === "state" && section.column.state === "done";
+}
+
+/** 持ち主の手番のバッジ。辞書の鍵を返す（訳語は持たない）。内訳は既存の `reason.*`。 */
+function badgeKey(badge: NoteBadge): string {
+  return badge === "active" || badge === "yourTurn"
+    ? `blackboard.badge.${badge}`
+    : `blackboard.reason.${badge}`;
+}
+
+function marksOf(note: BlackboardNote | MarkedNote<BlackboardNote>) {
+  return "marks" in note ? note.marks : null;
+}
+
+/** `isKnownState` は列挙の網に載せるためだけに参照する（列は純関数が決める）。 */
+void isKnownState;
 const error = ref<ErrorPayload | null>(null);
 /** 初回の読みが済むまで「空」と断定しない（一瞬の空表示のちらつき防止）。 */
 const loaded = ref(false);
@@ -103,7 +154,7 @@ async function remove(note: BlackboardNote): Promise<void> {
   if (busy.value) return;
   busy.value = true;
   try {
-    await deleteBlackboardNote(note.dir, note.name);
+    await deleteBlackboardNote(note.dir, note.name, note.state);
     error.value = null;
   } catch (err) {
     error.value = toErrorPayload(err);
@@ -142,19 +193,21 @@ async function clearAll(): Promise<void> {
 }
 
 /**
- * 「手が離れている」列の付箋だけをごみ箱へ移す。**確認を出す**（一括なので）。
+ * 「完了」列の付箋だけをごみ箱へ移す。**確認を出す**（一括なので）。
  *
  * 全消しと同じ IPC は使わない — `clear_blackboard` は列を知らないので、
- * 一覧が返した `dir` / `name` で 1 枚ずつ `delete_blackboard_note` を呼ぶ。
- * 途中で失敗したら残りは消さずに止め、エラーを出して読み直す。
+ * 一覧が返した `dir` / `state` / `name` で 1 枚ずつ `delete_blackboard_note` を呼ぶ
+ * （Spec 54 凍結 8。新しい IPC は無い）。途中で失敗したら残りは消さずに止め、
+ * エラーを出して読み直す。
  */
-async function clearReleased(): Promise<void> {
-  const targets = board.value.lanes.released;
+async function clearDone(): Promise<void> {
+  const targets = board.value.columns.find((c) => c.kind === "state" && c.state === "done")
+    ?.notes ?? [];
   if (busy.value || targets.length === 0) return;
   const ok = await askConfirm({
-    title: t("blackboard.confirmClearLaneTitle"),
-    message: t("blackboard.confirmClearLaneMessage", { count: targets.length }),
-    confirmLabel: t("blackboard.confirmClearLaneLabel"),
+    title: t("blackboard.confirmClearDoneTitle"),
+    message: t("blackboard.confirmClearDoneMessage", { count: targets.length }),
+    confirmLabel: t("blackboard.confirmClearDoneLabel"),
     danger: true,
   });
   if (!ok) return;
@@ -162,7 +215,7 @@ async function clearReleased(): Promise<void> {
   busy.value = true;
   try {
     for (const note of targets) {
-      await deleteBlackboardNote(note.dir, note.name);
+      await deleteBlackboardNote(note.dir, note.name, note.state);
     }
     error.value = null;
   } catch (err) {
@@ -275,45 +328,39 @@ function formatTime(ms: number): string {
     </div>
 
     <!--
-      まとめ（あれば）→ 3 列の順に縦へ並べる。列の見出しは空でも出す —
-      「どれを消すか」を列で読ませるのが目的なので、3 列の形が毎回同じであることが
-      情報になる。付箋の並びは列の中でもコアの順（released だけ孤児が先頭）。
+      まとめ（あれば）→ 5 つの状態の列 → 状態なし → その他、の順に縦へ並べる（Spec 54）。
+      5 つの列の見出しは空でも出す — 「どれを消すか」を列で読ませるのが目的なので、
+      列の形が毎回同じであることが情報になる。付箋の並びは列の中でもコアの順
+      （孤児だけ先頭）。列順は純関数が持ち、コアの返却順（state の文字列順）とは別。
 
-      **付箋が 0 枚でも 3 列を出す**（2026-09-16 利用者裁定）。初回の読みが済むまでは
-      0 枚の 3 列が見え、読めたあと 0 枚なら空の文言に**差し替えて**いた — 読み込みの
+      **付箋が 0 枚でも列を出す**（2026-09-16 利用者裁定）。初回の読みが済むまでは
+      0 枚の列が見え、読めたあと 0 枚なら空の文言に**差し替えて**いた — 読み込みの
       前後で画面の形が変わり「チラッとカテゴリが見える」になっていた。差し替えをやめ、
-      空の文言は 3 列の下に足す。読み込みの前後で同じ形なので、ちらつきは構造で消える。
+      空の文言は列の下に足す。読み込みの前後で同じ形なので、ちらつきは構造で消える。
     -->
     <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-      <section v-for="section in sections" :key="section.key" class="mb-3" :data-lane="section.key">
+      <section v-for="section in sections" :key="section.key" class="mb-3" :data-column="section.key">
         <header
           class="mb-1.5 flex h-6 items-center gap-2 text-[11px] text-ink-dim"
-          :title="$t(`blackboard.laneTitle.${section.key}`)"
+          :title="columnTitle(section)"
         >
           <span
-            :class="[
-              'inline-block size-2 shrink-0 rounded-sm',
-              section.key === 'active'
-                ? 'bg-run'
-                : section.key === 'yourTurn'
-                  ? 'bg-accent'
-                  : 'bg-line',
-            ]"
+            :class="['inline-block size-2 shrink-0 rounded-sm', columnDot(section)]"
             aria-hidden="true"
           />
-          <span class="font-semibold text-ink">{{ $t(`blackboard.lane.${section.key}`) }}</span>
+          <span class="font-semibold text-ink">{{ columnLabel(section) }}</span>
           <span>{{ $t("blackboard.noteCount", { count: section.notes.length }) }}</span>
           <!--
-            列の消し口は「手が離れている」にだけ置く。他の列の付箋は持ち主がまだ
-            触りうるので、まとめて消す導線を出さない（個別のごみ箱は残る）。
+            列の消し口は「完了」にだけ置く（Spec 54 凍結 8）。他の列の付箋は仕事が
+            終わっていないので、まとめて消す導線を出さない（個別のごみ箱は残る）。
           -->
           <button
-            v-if="isReleased(section.key)"
+            v-if="isDone(section)"
             class="ml-auto grid size-5 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
             :disabled="section.notes.length === 0 || busy"
-            :title="$t('blackboard.clearLaneTitle')"
-            :aria-label="$t('blackboard.clearLane')"
-            @click="clearReleased"
+            :title="$t('blackboard.clearDoneTitle')"
+            :aria-label="$t('blackboard.clearDone')"
+            @click="clearDone"
           >
             <svg
               class="size-3.5"
@@ -333,7 +380,7 @@ function formatTime(ms: number): string {
 
       <article
         v-for="note in section.notes"
-        :key="`${note.dir}:${note.name}`"
+        :key="noteKey(note)"
         class="mb-2 rounded-lg border border-line/50 bg-surface-1"
       >
         <!--
@@ -369,16 +416,34 @@ function formatTime(ms: number): string {
             </svg>
           </button>
           <span class="font-semibold text-ink">{{ note.name }}</span>
-          <span
-            v-if="note.info && reasonKey(note.info.reason)"
-            :class="[
-              'shrink-0 rounded px-1.5 py-px text-[10px]',
-              note.info.reason === 'orphanUnknown' || note.info.reason === 'orphanMoved'
-                ? 'bg-fail/15 text-fail'
-                : 'bg-line/60 text-ink-dim',
-            ]"
-            >{{ $t(reasonKey(note.info.reason)!) }}</span
-          >
+          <!--
+            バッジは 2 種。持ち主の手番（1 枚に 1 つ。孤児は赤・手番は accent・動いているは
+            run 色）と、同名が複数の状態に並ぶ重複（赤）。列は状態、印は観測 — 2 つを
+            1 つの列に混ぜない（Spec 54 D3）。
+          -->
+          <template v-if="marksOf(note)">
+            <span
+              :class="[
+                'shrink-0 rounded px-1.5 py-px text-[10px]',
+                isOrphan(marksOf(note)!.badge)
+                  ? 'bg-fail/15 text-fail'
+                  : marksOf(note)!.badge === 'yourTurn'
+                    ? 'bg-accent/15 text-accent'
+                    : marksOf(note)!.badge === 'active'
+                      ? 'bg-run/15 text-run'
+                      : 'bg-line/60 text-ink-dim',
+              ]"
+              :data-badge="marksOf(note)!.badge"
+              >{{ $t(badgeKey(marksOf(note)!.badge)) }}</span
+            >
+            <span
+              v-if="marksOf(note)!.duplicate"
+              class="shrink-0 rounded bg-fail/15 px-1.5 py-px text-[10px] text-fail"
+              :title="$t('blackboard.badgeTitle.duplicate')"
+              data-badge="duplicate"
+              >{{ $t("blackboard.badge.duplicate") }}</span
+            >
+          </template>
           <span v-if="showDir" class="truncate text-ink-dim" :title="note.dir">{{
             note.dir
           }}</span>

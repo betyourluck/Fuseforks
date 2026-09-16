@@ -1,8 +1,12 @@
 /**
- * 黒板の付箋を「持ち主の手番」で 3 列に分ける（2026-09-16）。
+ * 黒板の付箋を**仕事の状態（フォルダ）で列に**分け、**持ち主の手番をバッジに**する（Spec 54）。
  *
- * 付箋は仕事のカードではなく**サーヴァント 1 体の作業ログ**（条例の 1 人 1 ファイル
- * `blackboard/<表示名>.md`）なので、列の状態は付箋ではなく**持ち主の状態から派生**させる。
+ * 2026-09-16 の版は持ち主の手番（typing / status / 波 / workDir）から 3 列を派生させていた。
+ * 2026-09-17 の Spec 54 で前提が「持ち主の状態」から「仕事の状態」へ動き、列は付箋の
+ * 置き場（`blackboard/<state>/<表示名> - <仕事名>.md` の `state`）が決めるようになった。
+ * 手番の判定 `classifyNote` は 1 行も変えず、返り値の使い方だけを列からバッジへ変えた —
+ * 「状態は `doing` なのに持ち主は停止中」のような**宣言と観測の食い違い**を人が読むため。
+ *
  * 付箋には状態の欄を 1 つも書かせない — 人待ちは既に機構（Spec 43 の窓・Spec 20 の
  * pending）で決まっており、サーヴァントに申告させると真実が 2 つになる。
  *
@@ -20,17 +24,29 @@
 
 import type { AgentStatus, PlanTaskState, PlanWaveState } from "../types";
 
-/** 進行役が束ねる付箋。列には入れず、常に上に固定する（条例の `まとめ.md`）。 */
+/** 進行役が束ねる付箋。列には入れず、常に上に固定する（条例の `まとめ.md`）。**直下のものだけ。** */
 export const SUMMARY_NOTE = "まとめ.md";
 
 /**
- * 3 列。並びは画面の並びそのもの（上から）。
- * - `active`   — 持ち主がターンの最中、または未確定の波に参加している
- * - `yourTurn` — 持ち主の波が人の確認待ち（Spec 43）
- * - `released` — 持ち主の手が離れている（停止中 / 失敗 / 起動しているが待機 / 孤児）
+ * 仕事の状態 = 状態フォルダの閉じた 5 値（Spec 54 凍結 1）。**並びが画面の列の並び**
+ * （`doing → needs-you → waiting → on-hold → done`）。コアの返却順は `state` の文字列順で
+ * 別のもの — コアに列順を持たせると 5 値の順序がコアと辞書の 2 箇所に住む（凍結 6）。
+ * 名前は英字（`blackboard/` を言語非依存にしたのと同じ規律）。表示は辞書が訳す。
  */
-export type BlackboardLane = "active" | "yourTurn" | "released";
-export const LANES: readonly BlackboardLane[] = ["active", "yourTurn", "released"];
+export const STATES = ["doing", "needs-you", "waiting", "on-hold", "done"] as const;
+export type BlackboardState = (typeof STATES)[number];
+
+export function isKnownState(state: string): state is BlackboardState {
+  return (STATES as readonly string[]).includes(state);
+}
+
+/**
+ * 辞書の鍵（`blackboard.state.*` / `blackboard.stateTitle.*`）。フォルダ名の `-` は
+ * vue-i18n の鍵に置かず camelCase へ写す（`needs-you` → `needsYou`）。
+ */
+export function stateDictKey(state: BlackboardState | "unfiled" | "other" | "summary"): string {
+  return state.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
 
 export interface LaneAgent {
   id: string;
@@ -53,7 +69,15 @@ export interface LaneContext {
 }
 
 /**
- * 「手が離れている」の内訳。列の中でバッジになる。
+ * 持ち主の手番。2026-09-16 の 3 列の名前をそのまま持つ（列ではなくバッジの判定になった）。
+ * - `active`   — 持ち主がターンの最中、または未確定の波に参加している
+ * - `yourTurn` — 持ち主の波が人の確認待ち（Spec 43）
+ * - `released` — 持ち主の手が離れている（停止中 / 失敗 / 起動しているが待機 / 孤児）
+ */
+export type BlackboardLane = "active" | "yourTurn" | "released";
+
+/**
+ * `released` の内訳。バッジになる。
  * - `orphanUnknown` — 表示名の一致する個体が村に居ない
  * - `orphanMoved`   — 居るが、この付箋の work_dir を向いていない（消せるのは人だけ）
  * - `failed` / `stopped` / `waiting` — 持ち主の稼働状態
@@ -68,9 +92,16 @@ export interface NoteLane {
   reason: ReleasedReason | null;
 }
 
-/** 付箋のファイル名から持ち主の表示名を取る（`ザリ.md` → `ザリ`）。 */
+/**
+ * 付箋のファイル名から持ち主の表示名を取る。
+ * `ザリ.md` → `ザリ`（旧形式 = 仕事名なし）/ `ザリ - 調査 - 続き.md` → `ザリ`。
+ * **区切りは最初の ` - `**（半角空白 + ハイフン + 半角空白）。仕事名の中の ` - ` は
+ * 仕事名の一部（Spec 54 凍結 3）。
+ */
 export function ownerNameOf(noteName: string): string {
-  return noteName.endsWith(".md") ? noteName.slice(0, -3) : noteName;
+  const stem = noteName.endsWith(".md") ? noteName.slice(0, -3) : noteName;
+  const cut = stem.indexOf(" - ");
+  return cut === -1 ? stem : stem.slice(0, cut);
 }
 
 function releasedReason(status: AgentStatus): ReleasedReason {
@@ -86,7 +117,7 @@ function releasedReason(status: AgentStatus): ReleasedReason {
   }
 }
 
-/** 付箋 1 枚の列を決める。優先は `yourTurn` > `active` > `released`。 */
+/** 付箋 1 枚の手番を決める。優先は `yourTurn` > `active` > `released`。 */
 export function classifyNote(note: { dir: string; name: string }, ctx: LaneContext): NoteLane {
   const stem = ownerNameOf(note.name);
   const owner = ctx.agents.find((a) => a.name === stem) ?? null;
@@ -112,40 +143,128 @@ export function classifyNote(note: { dir: string; name: string }, ctx: LaneConte
   return { lane: "released", owner, reason: releasedReason(owner.status) };
 }
 
-export type LanedNote<T> = T & { info: NoteLane };
+/**
+ * 見出し行に出すバッジ（1 枚に 1 つ）。`yourTurn` > `active` > `released` の優先は
+ * **どのバッジを出すか**にだけ効き、列の中の並びには使わない（凍結 5）。
+ * `released` は内訳（`reason`）で出す — 「手が離れている」という語は列ごと消えた。
+ */
+export type NoteBadge = "active" | "yourTurn" | ReleasedReason;
 
-export interface LanedBoard<T> {
-  /** `まとめ.md`（work_dir ごとに最大 1 枚）。列の外で先頭に固定する。 */
+export function badgeOf(info: NoteLane): NoteBadge {
+  return info.lane === "released" ? (info.reason ?? "stopped") : info.lane;
+}
+
+export function isOrphan(badge: NoteBadge): boolean {
+  return badge === "orphanUnknown" || badge === "orphanMoved";
+}
+
+export interface NoteMarks {
+  info: NoteLane;
+  badge: NoteBadge;
+  /**
+   * 同じ `dir` で同じ `name`（表示名 + 仕事名の全体）が複数の場所に並んでいる
+   * （凍結 7）。move ではなく write で別の状態に同名を作った事故の網。
+   * `ザリ - A.md` と `ザリ - B.md` は別の仕事なので重複ではない。
+   */
+  duplicate: boolean;
+}
+
+export type MarkedNote<T> = T & { marks: NoteMarks };
+
+/**
+ * 画面の列。並びは `kanbanNotes` が決める:
+ * 5 つの `state`（付箋が 0 枚でも出す）→ `unfiled`（直下。あるときだけ）→
+ * `other`（5 値の外のフォルダ。**フォルダごとに 1 列**・フォルダ名順・あるときだけ）。
+ */
+export interface KanbanColumn<T> {
+  kind: "state" | "unfiled" | "other";
+  /** `state` / `other` のときフォルダ名。`unfiled` は null。 */
+  state: string | null;
+  notes: MarkedNote<T>[];
+}
+
+export interface KanbanBoard<T> {
+  /** 直下の `まとめ.md`（work_dir ごとに最大 1 枚）。列の外で先頭に固定する。バッジ無し。 */
   summary: T[];
-  lanes: Record<BlackboardLane, LanedNote<T>[]>;
+  columns: KanbanColumn<T>[];
+}
+
+interface NoteRef {
+  dir: string;
+  name: string;
+  state?: string;
+}
+
+/** 列の中の並び: 孤児を先頭へ寄せ、残りはコアの並び（`name` 順）のまま。 */
+function orphansFirst<T>(notes: MarkedNote<T>[]): MarkedNote<T>[] {
+  return [
+    ...notes.filter((n) => isOrphan(n.marks.badge)),
+    ...notes.filter((n) => !isOrphan(n.marks.badge)),
+  ];
 }
 
 /**
- * 一覧を 3 列へ振り分ける。コアの並び（`まとめ.md` → 名前順）は列の中でも保つ。
- * 例外は `released` だけで、**孤児を先頭へ**寄せる — 消す判断が最も軽い付箋を
- * 最初に見せる（8/11 に人が手で全消しした経路そのもの）。
+ * 一覧を列へ振り分け、各付箋にバッジを付ける。
+ *
+ * - 直下の `まとめ.md` だけが `summary`（`classifyNote` に掛けない）。`state` の中の
+ *   `まとめ.md` は普通の付箋（持ち主「まとめ」= 孤児バッジ。凍結 9）
+ * - 列は `state` から決まる。5 値の外のフォルダはフォルダごとに `other` の列
+ * - 重複は `dir:name` が複数の場所（直下も 1 つの場所）に現れたとき
  */
-export function laneNotes<T extends { dir: string; name: string }>(
+export function kanbanNotes<T extends NoteRef>(
   notes: readonly T[],
   ctx: LaneContext,
-): LanedBoard<T> {
-  const board: LanedBoard<T> = {
-    summary: [],
-    lanes: { active: [], yourTurn: [], released: [] },
-  };
+): KanbanBoard<T> {
+  const summary: T[] = [];
+  const rest: T[] = [];
   for (const note of notes) {
-    if (note.name === SUMMARY_NOTE) {
-      board.summary.push(note);
-      continue;
-    }
-    const info = classifyNote(note, ctx);
-    board.lanes[info.lane].push({ ...note, info });
+    if (note.state === undefined && note.name === SUMMARY_NOTE) summary.push(note);
+    else rest.push(note);
   }
-  const orphan = (n: LanedNote<T>) =>
-    n.info.reason === "orphanUnknown" || n.info.reason === "orphanMoved";
-  board.lanes.released = [
-    ...board.lanes.released.filter(orphan),
-    ...board.lanes.released.filter((n) => !orphan(n)),
-  ];
-  return board;
+
+  const places = new Map<string, Set<string>>();
+  for (const note of rest) {
+    const key = `${note.dir}:${note.name}`;
+    const set = places.get(key) ?? new Set<string>();
+    set.add(note.state ?? "");
+    places.set(key, set);
+  }
+
+  const marked: MarkedNote<T>[] = rest.map((note) => {
+    const info = classifyNote(note, ctx);
+    return {
+      ...note,
+      marks: {
+        info,
+        badge: badgeOf(info),
+        duplicate: (places.get(`${note.dir}:${note.name}`)?.size ?? 0) > 1,
+      },
+    };
+  });
+
+  const columns: KanbanColumn<T>[] = STATES.map((state) => ({
+    kind: "state",
+    state,
+    notes: orphansFirst(marked.filter((n) => n.state === state)),
+  }));
+
+  const unfiled = orphansFirst(marked.filter((n) => n.state === undefined));
+  if (unfiled.length > 0) columns.push({ kind: "unfiled", state: null, notes: unfiled });
+
+  const others = [
+    ...new Set(
+      marked
+        .map((n) => n.state)
+        .filter((s): s is string => s !== undefined && !isKnownState(s)),
+    ),
+  ].sort();
+  for (const state of others) {
+    columns.push({
+      kind: "other",
+      state,
+      notes: orphansFirst(marked.filter((n) => n.state === state)),
+    });
+  }
+
+  return { summary, columns };
 }

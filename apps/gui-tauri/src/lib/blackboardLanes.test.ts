@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  badgeOf,
   classifyNote,
-  laneNotes,
+  kanbanNotes,
   ownerNameOf,
+  stateDictKey,
+  STATES,
   SUMMARY_NOTE,
   type LaneAgent,
   type LaneContext,
@@ -25,15 +28,23 @@ function ctx(over: Partial<LaneContext> = {}): LaneContext {
   return { agents: [], typing: {}, waves: [], ...over };
 }
 
-const note = (name: string, dir = DIR) => ({ dir, name });
+const note = (name: string, state?: string, dir = DIR) =>
+  state === undefined ? { dir, name } : { dir, name, state };
 
 describe("blackboardLanes: 持ち主の同定", () => {
-  it("ファイル名の .md を落とした表示名で引く", () => {
+  it("ファイル名の .md を落とした表示名で引く（旧形式 = 仕事名なし）", () => {
     expect(ownerNameOf("ザリ.md")).toBe("ザリ");
     expect(ownerNameOf("memo")).toBe("memo");
   });
 
-  it("表示名の一致する個体が居なければ孤児（unknown）で手が離れている", () => {
+  it("区切りは最初の ` - `。仕事名の中の ` - ` は仕事名の一部（Spec 54 凍結 3）", () => {
+    expect(ownerNameOf("ザリ - 調査.md")).toBe("ザリ");
+    expect(ownerNameOf("ザリ - 調査 - 続き.md")).toBe("ザリ");
+    // 空白の無いハイフンは区切りではない（表示名に `-` を含む個体を割らない）。
+    expect(ownerNameOf("ロボット-3号.md")).toBe("ロボット-3号");
+  });
+
+  it("表示名の一致する個体が居なければ孤児（unknown）", () => {
     const r = classifyNote(note("誰か.md"), ctx({ agents: [agent("ザリ")] }));
     expect(r).toEqual({ lane: "released", owner: null, reason: "orphanUnknown" });
   });
@@ -50,16 +61,17 @@ describe("blackboardLanes: 持ち主の同定", () => {
     const zari = agent("ザリ");
     const luna = agent("ルナ", { status: "idle" });
     const c = ctx({ agents: [zari, luna], typing: { [zari.id]: true } });
-    expect(classifyNote(note("ザリ.md"), c).lane).toBe("active");
-    expect(classifyNote(note("ルナ.md"), c).lane).toBe("released");
+    expect(classifyNote(note("ザリ - 調査.md"), c).lane).toBe("active");
+    expect(classifyNote(note("ルナ - 調査.md"), c).lane).toBe("released");
   });
 });
 
-describe("blackboardLanes: 3 列の判定", () => {
+describe("blackboardLanes: 手番の判定（バッジ）", () => {
   it("ターンの最中なら動いている", () => {
     const zari = agent("ザリ");
     const r = classifyNote(note("ザリ.md"), ctx({ agents: [zari], typing: { [zari.id]: true } }));
     expect(r).toEqual({ lane: "active", owner: zari, reason: null });
+    expect(badgeOf(r)).toBe("active");
   });
 
   it("進行役の波が未確定なら typing で無くても動いている", () => {
@@ -81,10 +93,12 @@ describe("blackboardLanes: 3 列の判定", () => {
     expect(classifyNote(note("ザリ.md"), ctx({ agents: [zari], waves: [w] })).reason).toBe("waiting");
   });
 
-  it("持ち主の波が pending なら、typing 中でもあなたの手番が勝つ", () => {
+  it("持ち主の波が pending なら、typing 中でもあなたの手番が勝つ（バッジの優先）", () => {
     const zari = agent("ザリ");
     const c = ctx({ agents: [zari], typing: { [zari.id]: true }, waves: [wave(zari.id, { state: "pending" })] });
-    expect(classifyNote(note("ザリ.md"), c).lane).toBe("yourTurn");
+    const r = classifyNote(note("ザリ.md"), c);
+    expect(r.lane).toBe("yourTurn");
+    expect(badgeOf(r)).toBe("yourTurn");
   });
 
   it("pending の波はワーカー側の付箋には効かない（手番は進行役のもの）", () => {
@@ -104,50 +118,122 @@ describe("blackboardLanes: 3 列の判定", () => {
     });
   });
 
-  it("手が離れている内訳は稼働状態で分かれる", () => {
-    const reasonOf = (status: LaneAgent["status"]) =>
-      classifyNote(note("A.md"), ctx({ agents: [agent("A", { status })] })).reason;
-    expect(reasonOf("idle")).toBe("stopped");
-    expect(reasonOf("stopping")).toBe("stopped");
-    expect(reasonOf("failed")).toBe("failed");
-    expect(reasonOf("running")).toBe("waiting");
-    expect(reasonOf("starting")).toBe("waiting");
+  it("手が離れているときのバッジは稼働状態の内訳で分かれる", () => {
+    const badge = (status: LaneAgent["status"]) =>
+      badgeOf(classifyNote(note("A.md"), ctx({ agents: [agent("A", { status })] })));
+    expect(badge("idle")).toBe("stopped");
+    expect(badge("stopping")).toBe("stopped");
+    expect(badge("failed")).toBe("failed");
+    expect(badge("running")).toBe("waiting");
+    expect(badge("starting")).toBe("waiting");
   });
 });
 
-describe("blackboardLanes: 一覧の振り分け", () => {
-  it("まとめ.md は列に入れず summary へ、残りはコアの並びを保つ", () => {
-    const zari = agent("ザリ");
-    const luna = agent("ルナ", { status: "idle" });
-    const board = laneNotes(
-      [note(SUMMARY_NOTE), note("ザリ.md"), note("ルナ.md")],
-      ctx({ agents: [zari, luna], typing: { [zari.id]: true } }),
+describe("blackboardLanes: 列（仕事の状態）", () => {
+  it("列順は STATES の順で固定 — コアの返却順（state の文字列順）ではない（凍結 6）", () => {
+    // コアは state の文字列順で返す: doing, done, needs-you, on-hold, waiting。
+    const fromCore = ["doing", "done", "needs-you", "on-hold", "waiting"].map((s) =>
+      note(`ザリ - ${s}.md`, s),
     );
-    expect(board.summary.map((n) => n.name)).toEqual([SUMMARY_NOTE]);
-    expect(board.lanes.active.map((n) => n.name)).toEqual(["ザリ.md"]);
-    expect(board.lanes.yourTurn).toEqual([]);
-    expect(board.lanes.released.map((n) => n.name)).toEqual(["ルナ.md"]);
+    const board = kanbanNotes(fromCore, ctx({ agents: [agent("ザリ")] }));
+    expect(board.columns.map((c) => c.state)).toEqual([...STATES]);
+    expect(STATES).toEqual(["doing", "needs-you", "waiting", "on-hold", "done"]);
   });
 
-  it("手が離れている列では孤児を先頭へ寄せ、それ以外は元の並び", () => {
-    const a = agent("A", { status: "idle" });
-    const c = agent("C", { status: "failed" });
-    const moved = agent("M", { workDir: OTHER });
-    const board = laneNotes(
-      [note("A.md"), note("B.md"), note("C.md"), note("M.md")],
-      ctx({ agents: [a, c, moved] }),
+  it("5 つの列は付箋が 0 枚でも出る。状態なし・その他は付箋があるときだけ", () => {
+    const empty = kanbanNotes([], ctx());
+    expect(empty.columns.map((c) => c.kind)).toEqual(["state", "state", "state", "state", "state"]);
+    expect(empty.summary).toEqual([]);
+
+    const withUnfiled = kanbanNotes([note("ザリ.md")], ctx());
+    expect(withUnfiled.columns.map((c) => c.kind)).toEqual([
+      "state",
+      "state",
+      "state",
+      "state",
+      "state",
+      "unfiled",
+    ]);
+    // 直下の付箋は「状態なし」にだけ入り、どの状態の列にも漏れない（`doing` へ倒さない）。
+    expect(withUnfiled.columns.map((c) => c.notes.length)).toEqual([0, 0, 0, 0, 0, 1]);
+  });
+
+  it("5 値の外のフォルダはフォルダごとに 1 列（フォルダ名順）。見出しは名前を運ぶ", () => {
+    const board = kanbanNotes(
+      [note("x.md", "foo"), note("y.md", "bar"), note("z.md", "foo"), note("w.md")],
+      ctx(),
     );
-    expect(board.lanes.released.map((n) => `${n.name}:${n.info.reason}`)).toEqual([
-      "B.md:orphanUnknown",
-      "M.md:orphanMoved",
-      "A.md:stopped",
-      "C.md:failed",
+    const tail = board.columns.slice(STATES.length);
+    expect(tail.map((c) => [c.kind, c.state, c.notes.length])).toEqual([
+      ["unfiled", null, 1],
+      ["other", "bar", 1],
+      ["other", "foo", 2],
     ]);
   });
 
-  it("空の一覧は 3 列とも空で、列の集合は 3 つのまま", () => {
-    const board = laneNotes([], ctx());
-    expect(Object.keys(board.lanes).sort()).toEqual(["active", "released", "yourTurn"]);
-    expect(board.summary).toEqual([]);
+  it("直下の まとめ.md だけが summary。状態の中の まとめ.md は普通の付箋で孤児バッジ（凍結 9）", () => {
+    const board = kanbanNotes(
+      [note(SUMMARY_NOTE), note(SUMMARY_NOTE, "doing")],
+      ctx({ agents: [agent("ザリ")] }),
+    );
+    expect(board.summary.map((n) => n.name)).toEqual([SUMMARY_NOTE]);
+    const doing = board.columns[0];
+    expect(doing.state).toBe("doing");
+    expect(doing.notes.map((n) => [n.name, n.marks.badge])).toEqual([[SUMMARY_NOTE, "orphanUnknown"]]);
+  });
+
+  it("列の中では孤児を先頭へ寄せ、それ以外はコアの並び。バッジの種類では並べ替えない（凍結 5）", () => {
+    const a = agent("A", { status: "idle" });
+    const c = agent("C");
+    const moved = agent("M", { workDir: OTHER });
+    const board = kanbanNotes(
+      [
+        note("A - x.md", "doing"),
+        note("B - x.md", "doing"),
+        note("C - x.md", "doing"),
+        note("M - x.md", "doing"),
+      ],
+      ctx({ agents: [a, c, moved], typing: { [c.id]: true } }),
+    );
+    expect(board.columns[0].notes.map((n) => `${n.name}:${n.marks.badge}`)).toEqual([
+      "B - x.md:orphanUnknown",
+      "M - x.md:orphanMoved",
+      "A - x.md:stopped",
+      "C - x.md:active",
+    ]);
+  });
+
+  it("同じ name が複数の場所に並ぶと両方に重複（凍結 7）。仕事名違いは重複ではない", () => {
+    const board = kanbanNotes(
+      [
+        note("ザリ - A.md", "doing"),
+        note("ザリ - A.md", "done"),
+        note("ザリ - B.md", "doing"),
+        note("ルナ - A.md"),
+        note("ルナ - A.md", "waiting"),
+      ],
+      ctx(),
+    );
+    const dup = new Map<string, boolean>();
+    for (const c of board.columns) for (const n of c.notes) dup.set(`${n.state ?? ""}/${n.name}`, n.marks.duplicate);
+    expect(dup.get("doing/ザリ - A.md")).toBe(true);
+    expect(dup.get("done/ザリ - A.md")).toBe(true);
+    expect(dup.get("doing/ザリ - B.md")).toBe(false);
+    // 直下も 1 つの場所として数える。
+    expect(dup.get("/ルナ - A.md")).toBe(true);
+    expect(dup.get("waiting/ルナ - A.md")).toBe(true);
+  });
+
+  it("別の work_dir の同名は重複ではない（dir が違えば別の黒板）", () => {
+    const board = kanbanNotes(
+      [note("ザリ - A.md", "doing"), note("ザリ - A.md", "done", OTHER)],
+      ctx(),
+    );
+    for (const c of board.columns) for (const n of c.notes) expect(n.marks.duplicate).toBe(false);
+  });
+
+  it("辞書の鍵はフォルダ名の `-` を camelCase へ写す", () => {
+    expect(STATES.map(stateDictKey)).toEqual(["doing", "needsYou", "waiting", "onHold", "done"]);
+    expect(stateDictKey("unfiled")).toBe("unfiled");
   });
 });
