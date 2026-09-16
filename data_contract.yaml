@@ -694,9 +694,11 @@ enums:
       条例の名前へ書き GUI はコードの名前を読むので、書けているのに画面に出ない。
       書き手は
       エージェント (file ツール、Spec 09) と人。運用の正は条例 (Ordinance.md):
-      1 人 1 ファイル (`blackboard/<表示名>.md`)、進行役だけが `blackboard/まとめ.md` を束ねる。
+      **1 仕事 1 ファイル `blackboard/<state>/<表示名> - <仕事名>.md`** (Spec 54。
+      2026-09-17 までは 1 人 1 ファイル `blackboard/<表示名>.md` で、その形は
+      「状態なし」としてそのまま読める)、進行役だけが `blackboard/まとめ.md` を束ねる。
       GUI 投影は中央下段のタブ「黒板」= IPC list_blackboard →
-      BlackboardNote { dir, name, content, modifiedMs } (blackboard.rs)。
+      BlackboardNote { dir, state?, name, content, modifiedMs } (blackboard.rs)。
       不変条件:
         - **GUI から「内容を書く」経路は作らない** (書き込み IPC 不在)。条例の
           「書いてよいのは自分の付箋だけ」を GUI が迂回する口を開けない
@@ -717,34 +719,76 @@ enums:
         - **削除できる work_dir は「いまサーヴァントが向いている work_dir」だけ。**
           GUI から任意のパスを渡せる形にすると、黒板の削除が
           **どこのファイルでも消せる口**になる (この IPC はツール層の
-          resolve_in_work_dir の外にある)。付箋名も `blackboard/` 直下の
-          平置きだけを通す (is_safe_note_name)
+          resolve_in_work_dir の外にある)。付箋名 `name` と状態フォルダ名 `state` は
+          **別々に** is_safe_note_name を通す (どちらも 1 成分の平置きの名前だけ。
+          `/` `\` `..` 先頭 `.` を含めば拒否 = BLACKBOARD_DELETE_FAILED)。`state` の
+          省略と空文字は直下 (None) と同じ (Spec 54 凍結 4)
         - **読みと削除は同じ work_dir 列挙から引く** (blackboard_dirs の 1 実装)。
           2 箇所に書くと「画面に出ているのに消せない付箋」が生まれる
         - **push 注入はしない** (モデルは読みたいときに file read、GUI は
           表示中の定期再読 10 秒 + 手動更新)。毎ターンの可変注入は増やさない
           (prompt_cache #45 の規律と、毎ターン可変注入の品質仮説)
-        - `blackboard/` 未作成は空として返す (エラーではない)。サブフォルダは無視、
-          読めない 1 枚は黙って飛ばす (1 枚のロック・権限で黒板全体を人質にしない)
-        - 並びは `まとめ.md` 先頭 + ファイル名順。1 枚 256 KB 超は切り詰めて
-          末尾に注記 (IPC ペイロードの上限)
+        - `blackboard/` 未作成は空として返す (エラーではない)。読むのは直下のファイルと
+          **直下のフォルダ 1 段の中のファイル**まで。2 段目より深いファイルは無視
+          (Spec 54 凍結 1。`fd` には出るので、条例が「状態フォルダの中にフォルダを
+          作らない」と書いて受ける)。読めない 1 枚は黙って飛ばす (1 枚のロック・
+          権限で黒板全体を人質にしない)
+        - **コアの返却順は `まとめ.md` (直下) → 直下の平置き (name 順) → state の
+          文字列順 → その中で name 順** (安定な並びのためで意味は持たせない。
+          Spec 54 凍結 6)。**画面の列順は別** (下の Spec 54 のブロック)。
+          1 枚 256 KB 超は切り詰めて末尾に注記 (IPC ペイロードの上限)
         - 対象は登録エージェントの work_dir (重複除去)。複数の work_dir が
           混在しても全部読み、BlackboardNote.dir で区別する
-        - **GUI は付箋を 3 列に並べる (2026-09-16。lib/blackboardLanes.ts の純関数)**:
-          active (持ち主が typing 中、または state=dispatched で bundleChars=null の
-          波の進行役か running のタスクの宛先) / yourTurn (持ち主が進行役の波が
-          state=pending) / released (それ以外)。優先は yourTurn > active > released。
-          `まとめ.md` は列の外。**列は BlackboardNote から派生しない** — 持ち主
-          (ファイル名の表示名と AgentSnapshot.name の一致) の typing / status /
-          PlanWaveRecord / workDir から画面が毎回引く。ワイヤにも付箋にも状態の欄は
-          足さない (人待ちは Spec 43 の窓と Spec 20 の pending が既に持つ。3 つ目の
-          真実を作らない)。持ち主が引けない、または `workDir != dir` なら孤児
-          (orphanUnknown / orphanMoved) として released の先頭。
-          **列の一括削除は released にだけ付く** (delete_blackboard_note を 1 枚ずつ。
-          新しい IPC は無い)。表示名の一致は条例の約束であって機構の保証ではない —
-          改名すると孤児に見える。**付箋が 0 枚でも 3 列の見出しを出す** (空の文言は
-          列の下。読み込みの前後で画面の形を変えない)。**付箋は見出し行で畳める**
-          (本文だけ隠す。状態は localStorage "fuseforks.blackboardCollapsed.v1")
+        - **仕事の状態は state フォルダで宣言する (Spec 54。2026-09-17 rev2)**。
+          置き場は `blackboard/<state>/<表示名> - <仕事名>.md`。`state` は
+          **`doing | needs-you | waiting | on-hold | done` の閉じた 5 値** (英字 =
+          BLACKBOARD_DIR と同じ「言語に依存しない名前」の規律。表示は辞書が訳す)。
+          直下の平置きは「状態なし」(unfiled)、5 値の外のフォルダは
+          **フォルダごとに**「その他: <名>」の列 (閉じた列挙から外れた名前を黙って
+          混ぜず名指しする)。**状態の変更は file move であって write ではない**
+          (中身に触れないので append の履歴が保たれる。宛先に同名があれば file の
+          既存の門が overwrite 無しで拒否する = OS を問わない)。**本 Spec で新設する
+          IPC は無い** — GUI が状態を書く経路は作らない (凍結 2)。将来のドラッグは
+          move の 1 本で、「状態なし」「その他」へは落とせない
+        - **ファイル名の区切りは最初の ` - `** (半角空白 + ハイフン + 半角空白)。
+          仕事名の中の ` - ` は仕事名の一部。区切りが無ければ全体が表示名
+          (旧形式 = 仕事名なし)。**BlackboardNote.state は Option<String>
+          (フォルダ名そのもの・None = 直下)、name はファイル名だけでフォルダを含めない**
+          (凍結 3)。仕事名の禁止文字は機械で検査しない (OS が write を拒み、file
+          ツールがその文言を返す = 失敗は沈黙しない。条例に 1 行)
+        - **画面の列は state から決まる (lib/blackboardLanes.ts の純関数)**。列順は
+          `doing → needs-you → waiting → on-hold → done` → 「状態なし」→「その他: …」
+          で**フロントが持つ** (コアの返却順は state の文字列順で別のもの — コアに
+          列順を持たせると 5 値の順序がコアと辞書の 2 箇所に住む。凍結 6)。
+          **5 列は付箋が 0 枚でも見出しを出す**。「状態なし」「その他」は付箋が
+          あるときだけ。**直下の `まとめ.md` は列の外・最上部固定・バッジ無し**
+          (classifyNote に掛けない。凍結 9)。state の中の `まとめ.md` は普通の付箋
+          (持ち主「まとめ」= 孤児バッジ。特別扱いを 2 箇所にしない)
+        - **持ち主の手番はバッジ (2026-09-16 の 3 列を降ろした)**: classifyNote の
+          判定はそのまま — active (持ち主が typing 中、または state=dispatched で
+          bundleChars=null の波の進行役か running のタスクの宛先) / yourTurn
+          (持ち主が進行役の波が state=pending) / released (それ以外。内訳
+          orphanUnknown / orphanMoved / failed / stopped / waiting)。**1 枚に 1 つ**、
+          優先は yourTurn > active > released で、**優先は「どのバッジを出すか」だけに
+          効き列の中の並びには使わない** (孤児を先頭へ寄せる以外はコアの name 順。
+          凍結 5)。バッジの文言は released の内訳で出し、「手が離れている」という
+          列名は消えた。**列はバッジから派生しない・バッジは付箋から派生しない** —
+          持ち主 (ファイル名の表示名と AgentSnapshot.name の一致) の typing / status /
+          PlanWaveRecord / workDir から画面が毎回引く。ワイヤにも付箋にも持ち主の
+          状態の欄は足さない (人待ちは Spec 43 の窓と Spec 20 の pending が既に持つ。
+          3 つ目の真実を作らない)。表示名の一致は条例の約束であって機構の保証では
+          ない — 改名すると孤児に見える
+        - **重複バッジ**: 同じ dir で同じ name (表示名 + 仕事名の全体) が複数の state に
+          並んだら**両方に**付く (フロントの派生。コアは数えない。凍結 7)。
+          `ザリ - A.md` と `ザリ - B.md` は別の仕事なので重複ではない
+        - **列の一括削除は done にだけ付く** (delete_blackboard_note を 1 枚ずつ回し、
+          途中で失敗したら残りは消さずに止めて読み直す。新しい IPC は無い。凍結 8)。
+          clear_blackboard は全部 (直下 + 1 段目。`まとめ.md` も含む)
+        - **付箋は見出し行で畳める** (本文だけ隠す。状態は localStorage
+          "fuseforks.blackboardCollapsed.v1"。**鍵は `dir:state/name`**、state 無しは
+          `dir:name` = 既存の保存値を壊さない)。**move で state が変わった付箋は開く**
+          (意図。状態が動いた付箋は人が見るべきもの。鍵を `dir:name` にすると重複の
+          片方を畳むと両方が畳まれる。凍結 10)
     settings_contract: |
       システム設定ダイアログ (Spec 13。2026-08-03 rev3 承認 → P0 で本節を凍結。
       実装は P1〜P5)。主目的は**既にある設定の可視化**。Spec 13 が足した新規の設定は
