@@ -428,7 +428,9 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
 （2026-09-13 提出。同じ 1 段。`ProductCode` は `{83D92239-…}`。2026-09-13 18:01 UTC マージ =
 publish の 49 分後。2026-09-15 に `winget search` が 0.2.4 を返すことと、開発機に 0.2.4 が
 入っていることを確認）。** **→ 0.2.5 = PR #435413（2026-09-16 提出。同じ 1 段。`ProductCode` は
-`{3A0F3475-…}`。`InstallerLocale` 無しを引き写し。提出直後は OPEN = マージ待ち）。**
+`{3A0F3475-…}`。`InstallerLocale` 無しを引き写し。**2026-09-15 21:04 UTC マージ = publish の
+87 分後**。2026-09-16 に `winget search` が 0.2.5 を返すことを確認）。** 所要を測れた update PR は
+これで 7 版（0.1.12 / 0.2.0〜0.2.5）で、49 分〜3 時間 52 分の幅・中央値は 1 時間前後。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
 
@@ -2110,10 +2112,10 @@ localStorage `fuseforks.wavesCleared.v1`）。**消すのは表示だけ**でコ
 「配布経路を 3 つに広げた > winget」の節に追記）。
 
 **2026-09-16 — `v0.2.5` = `84a516c` を 4 経路で配信**（Spec 53 と作業状況タブの消しゴムが初めて配布物に入った。
-Release publish 09-15 19:37 UTC / winget PR #435413 = マージ待ち / tap `e6023b4` / LP は `releases/latest` なので
-触らない。タグ履歴が正）。
+Release publish 09-15 19:37 UTC / winget PR #435413 = 09-15 21:04 UTC マージ（publish の 87 分後。09-16 に
+`winget search` が 0.2.5 を返すことを確認）/ tap `e6023b4` / LP は `releases/latest` なので触らない。タグ履歴が正）。
 
-**次の一手**: winget 0.2.5（PR #435413）のマージ確認 / 評価基盤の「完遂」の軸。**core 単独実行（クラウドのコンテナ）は最終目標として
+**次の一手**: 評価基盤の「完遂」の軸。**core 単独実行（クラウドのコンテナ）は最終目標として
 後日**（「設計の材料 3 件 > core 単独実行の構想」の節）。
 
 ## 現在地（2026-09-13 更新）
@@ -3104,7 +3106,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   波を隠した状態は端末にだけ保存）。**タグは利用者、publish・winget・tap は Neo**（利用者の指示
   「publish と winget と tap の更新をお願いします」）— winget 0.2.5 = PR #435413（`gh repo sync` →
   `wingetcreate update … --token` の 1 段。`InstallerLocale` 無しを引き写し・ProductCode は `{3A0F3475-…}`・
-  `InstallerSha256` は Release の digest と一致）/ tap `e6023b4`（sha256 は Release API の `digest`）
+  `InstallerSha256` は Release の digest と一致。**2026-09-15 21:04 UTC マージ = publish の 87 分後**）/
+  tap `e6023b4`（sha256 は Release API の `digest`）
 - **`v0.2.4` = `a11ad2f`（2026-09-14 タグ。4 コミット）— #112 の根治（`world.json` の未知の欄を
   保持して書き戻す・廃止した欄は読み捨てる）+ 「/」で入力欄へ + 長い自分の発言を畳む +
   起動画面を英語だけに + 案内の「課金」→「トークン」**。3 OS 緑・アセット 7 件・
