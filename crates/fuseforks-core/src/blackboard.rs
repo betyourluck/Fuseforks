@@ -151,6 +151,33 @@ pub async fn delete_note(work_dir: &Path, state: Option<&str>, name: &str) -> Co
         })
 }
 
+/// `owner` の付箋を全部ごみ箱へ送る（Spec 55 凍結 12。`delete_agent` の掃除）。
+/// 戻りは（送れた枚数, 送れなかった枚数）。
+///
+/// **`agent_id` は削除後に再利用される**（フロントの `deriveId` が空いている最小の番号を
+/// 取る）。消した個体の付箋を残すと、同じ id の新しい個体がそれを自分のものとして読み、
+/// 書ける。探す範囲は読み手と同じ（直下 + 1 段の全フォルダ = [`read_blackboard_dir`] の
+/// 結果）で、割り方も書き手と同じ [`split_note_name`]。消し口は [`delete_note`]（ごみ箱・
+/// 名前の関門つき）をそのまま使う。
+///
+/// **残余**: 届くのは渡された `work_dir` だけ。以前の作業フォルダに残した付箋は届かない。
+pub async fn trash_notes_of(work_dir: &Path, owner: &str) -> (usize, usize) {
+    let Ok(notes) = read_blackboard_dir(work_dir).await else {
+        return (0, 0);
+    };
+    let (mut removed, mut failed) = (0, 0);
+    for note in notes {
+        if split_note_name(&note.name).map(|(id, _)| id) != Some(owner) {
+            continue;
+        }
+        match delete_note(work_dir, note.state.as_deref(), &note.name).await {
+            Ok(()) => removed += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    (removed, failed)
+}
+
 /// `{work_dir}/blackboard/` の付箋を読む。フォルダが無ければ空。
 ///
 /// - 読むのは**直下のファイルと、直下のフォルダ 1 段の中のファイル**まで（Spec 54）。
@@ -497,5 +524,38 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].content.chars().count() < 200_000);
         assert!(notes[0].content.ends_with("切り詰めました）"));
+    }
+
+    /// 個体の削除の掃除（Spec 55）。**探す範囲は読み手と同じ**（直下 + 1 段の全フォルダ）で、
+    /// 前半が id に**完全一致**する付箋だけを送る（`agent` の掃除が `agent_2` を巻き込まない）。
+    #[tokio::test]
+    async fn the_sweep_reaches_every_place_and_only_that_owner() {
+        let dir = TempDir::new("bb-sweep");
+        let root = dir.0.join(BLACKBOARD_DIR);
+        let put = |rel: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x").unwrap();
+        };
+        let mine = ["doing/agent - a.md", "on-hold/agent - b.md", "done/agent - c.md", "agent - d.md", "archive/agent - e.md"];
+        let others = ["doing/agent_2 - a.md", "done/agent-x - a.md", "doing/エージェント - a.md", "まとめ.md", "doing/agent - 深い/x.md"];
+        for rel in mine.iter().chain(others.iter()) {
+            put(rel);
+        }
+
+        let (removed, failed) = trash_notes_of(&dir.0, "agent").await;
+        if failed > 0 {
+            // ごみ箱が無い環境。完全削除へ倒していないことだけを見る。
+            assert_eq!(removed, 0);
+            return;
+        }
+        assert_eq!(removed, mine.len());
+        for rel in mine {
+            assert!(!root.join(rel).exists(), "{rel}");
+        }
+        for rel in others {
+            assert!(root.join(rel).exists(), "他人の付箋は残る: {rel}");
+        }
+        assert_eq!(trash_notes_of(&dir.0, "agent").await, (0, 0), "2 回目は何もしない");
     }
 }

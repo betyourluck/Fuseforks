@@ -199,6 +199,89 @@ pub(crate) fn resolve_creatable(
     Ok((resolved, display))
 }
 
+/// 解決済みのパスが `blackboard/` そのものか、その下か（Spec 55 凍結 9）。
+///
+/// **判定は解決後のパスで行う。** `resolved` は [`resolve_in_work_dir`] /
+/// [`resolve_creatable`] が返したもの。文字列の前置検査にすると
+/// `./blackboard/..` や `x/../blackboard/a.md`、外から `blackboard/` の中を指す
+/// symlink を取りこぼす。
+///
+/// 大文字小文字は無視する — Windows と macOS の既定のファイルシステムでは
+/// `Blackboard/a.md` が同じフォルダを指す。区別するファイルシステムでは別のフォルダまで
+/// 塞ぐことになるが、そこは黒板タブが読まない場所で、塞いで失うものが無い。
+pub(crate) fn is_under_blackboard(work_dir: &Path, resolved: &Path) -> bool {
+    let Ok(root) = work_dir.canonicalize() else {
+        return false;
+    };
+    resolved
+        .strip_prefix(&root)
+        .ok()
+        .and_then(|rel| rel.components().next())
+        .and_then(|first| first.as_os_str().to_str())
+        .is_some_and(|first| first.eq_ignore_ascii_case(crate::blackboard::BLACKBOARD_DIR))
+}
+
+/// `blackboard/` の囲い（Spec 55 凍結 9）。`file` / `sd` / `yq` の**書き込み系**が、
+/// 対象を解決した直後にこれを通す。読み取り系は呼ばない。
+///
+/// 黒板へ書く経路を `blackboard` ツール 1 本へ寄せるためのもので、**ツール層の囲い**。
+/// `run` が起こしたプロセスは外に居る（`run` を許した村では保証にならない）。
+pub(crate) struct BlackboardFence {
+    agent: String,
+    uses_blackboard: bool,
+    language: crate::world::Language,
+}
+
+impl BlackboardFence {
+    pub(crate) fn new(ctx: &ToolContext) -> Self {
+        Self {
+            agent: ctx.agent_id.as_str().to_owned(),
+            uses_blackboard: ctx.uses_blackboard,
+            language: ctx.language,
+        }
+    }
+
+    /// 塞ぐなら拒否の文面。計器 `blackboard fence:` も 1 行出す（パスは出さない —
+    /// ファイル名には仕事名が入る）。
+    pub(crate) fn refuse(&self, work_dir: &Path, resolved: &Path, tool: &str, op: &str) -> Option<String> {
+        if !is_under_blackboard(work_dir, resolved) {
+            return None;
+        }
+        crate::note!("blackboard fence: agent={} tool={tool} op={op}", self.agent);
+        let head = self.language.pick(
+            "`blackboard/` への直接の書き込みはできません（何も変えていません）。",
+            "Writing directly under `blackboard/` is not allowed (nothing was changed).",
+        );
+        // 歯止めの先に道を書く。ツールを持たない個体に、無いツールを案内しない。
+        let next = if self.uses_blackboard {
+            self.language.pick(
+                "`blackboard` ツールの write / append / move / remove を使ってください。書けるのは自分の付箋だけです。読むのは今までどおりできます。",
+                "Use the `blackboard` tool's write / append / move / remove. You can only write to your own notes. Reading works as before.",
+            )
+        } else {
+            self.language.pick(
+                "この個体は黒板を使わない設定です。黒板には書かずに仕事を進めてください。読むのは今までどおりできます。",
+                "This servant is set not to use the blackboard. Carry on without writing to it. Reading works as before.",
+            )
+        };
+        Some(format!("{head}{next}"))
+    }
+
+    /// `sd` の preview へ添える 1 行。preview は読み取りなので通すが、**そのまま
+    /// `apply: true` へ進むと断られる**ことを先に伝える（通してから断ると 1 周を失わせる）。
+    /// 断ってはいないので計器は出さない。
+    pub(crate) fn preview_note(&self, work_dir: &Path, resolved: &Path) -> Option<&'static str> {
+        is_under_blackboard(work_dir, resolved).then(|| {
+            self.language.pick(
+                "（このファイルは `blackboard/` の下にあるので、`apply: true` では書き込めません。付箋を直すなら `blackboard` ツールを使ってください）
+",
+                "(This file is under `blackboard/`, so `apply: true` will be refused. To change a note, use the `blackboard` tool.)
+",
+            )
+        })
+    }
+}
+
 /// 作業フォルダが未設定のときの案内文。全ファイル系ツールで共通。
 pub(crate) fn work_dir_missing() -> String {
     "作業フォルダが設定されていないため、このツールは使えません。\
@@ -1785,5 +1868,40 @@ mod tests {
             reply.contains("`context` は無視しました"),
             "無視した旨が出ていない: {reply}"
         );
+    }
+
+    /// 囲いの判定（Spec 55）は**解決後のパス**で行う。文字列の前置では取りこぼす形を並べる。
+    #[test]
+    fn the_blackboard_fence_is_judged_on_the_resolved_path() {
+        let dir = TempDir::new("bb-fence");
+        std::fs::create_dir_all(dir.0.join("blackboard").join("doing")).unwrap();
+        std::fs::create_dir_all(dir.0.join("notes").join("blackboard")).unwrap();
+        std::fs::write(dir.0.join("blackboard").join("doing").join("a.md"), "x").unwrap();
+        std::fs::write(dir.0.join("blackboard2.md"), "x").unwrap();
+
+        let existing = |rel: &str| resolve_in_work_dir(&dir.0, rel).unwrap().0;
+        let creatable = |rel: &str| resolve_creatable(&dir.0, rel).unwrap().0;
+
+        for inside in [
+            existing("blackboard"),
+            existing("blackboard/doing/a.md"),
+            existing("./blackboard/doing/../doing/a.md"),
+            existing("notes/../blackboard/doing"),
+            creatable("blackboard/new/deep/x.md"),
+            creatable("blackboard/x.md"),
+            // 大文字小文字だけが違う綴り（Windows と macOS では同じフォルダ）。
+            creatable("Blackboard/x.md"),
+        ] {
+            assert!(is_under_blackboard(&dir.0, &inside), "{}", inside.display());
+        }
+        for outside in [
+            existing("blackboard2.md"),
+            existing("notes/blackboard"),
+            creatable("notes/blackboard/x.md"),
+            creatable("blackboard-old/x.md"),
+            existing("."),
+        ] {
+            assert!(!is_under_blackboard(&dir.0, &outside), "{}", outside.display());
+        }
     }
 }

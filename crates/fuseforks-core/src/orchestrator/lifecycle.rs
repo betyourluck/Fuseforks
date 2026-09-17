@@ -229,12 +229,25 @@ impl Orchestrator {
     /// エージェントを削除する。稼働中なら先に停止する。
     pub async fn delete_agent(&self, id: &AgentId) -> CoreResult<()> {
         self.stop_agent(id).await.ok();
-        {
+        let work_dir = {
             let mut world = self.shared.world.write().await;
+            let work_dir = world.agent(id).ok().and_then(|record| record.spec.work_dir.clone());
             world.remove_agent(id)?;
-        }
+            work_dir
+        };
         self.shared.store.remove_agent_dir(id).await?;
         self.persist().await?;
+
+        // その個体の付箋をごみ箱へ（Spec 55 凍結 12）。**id は再利用される**ので、残すと
+        // 同じ id の新しい個体が引き継いで書けてしまう。届くのは現在の作業フォルダだけ。
+        // 掃除の失敗で削除は止めない（個体はもう居ない。残った付箋は黒板タブに孤児として出る）。
+        if let Some(work_dir) = work_dir.filter(|dir| !dir.is_empty()) {
+            let (removed, failed) =
+                crate::blackboard::trash_notes_of(std::path::Path::new(&work_dir), id.as_str()).await;
+            if removed + failed > 0 {
+                crate::note!("blackboard sweep: agent={id} removed={removed} failed={failed}");
+            }
+        }
 
         // その宛先の予定も消す（Spec 07。remove_agent が他エージェントからの
         // 参照を外すのと同じ規律 — 参照の回収まで含めて 1 操作）。

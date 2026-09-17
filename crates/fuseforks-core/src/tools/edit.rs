@@ -23,7 +23,8 @@ use crate::compute::spawn_rayon;
 use crate::error::CoreResult;
 use crate::tool::{AgentTool, ToolContext};
 use crate::tools::fs::{
-    MAX_FILE_BYTES, MAX_OUTPUT_CHARS, looks_binary, resolve_in_work_dir, work_dir_missing,
+    BlackboardFence, MAX_FILE_BYTES, MAX_OUTPUT_CHARS, looks_binary, resolve_in_work_dir,
+    work_dir_missing,
 };
 
 /// 書き込み対象ファイルを検査順序 1〜5 で開き、UTF-8 文字列として返す。
@@ -328,9 +329,11 @@ impl AgentTool for SdTool {
                 .await
             }
             (Some(path), None) => {
+                let fence = BlackboardFence::new(ctx);
                 spawn_rayon(move || {
                     run_sd(
                         &work_dir,
+                        &fence,
                         &path,
                         &pattern,
                         &replacement,
@@ -528,6 +531,7 @@ fn render_multi(previews: &[FilePreview], duplicates: usize) -> String {
 /// sd 本体。ブロッキングして良い文脈で呼ぶ。
 fn run_sd(
     work_dir: &Path,
+    fence: &BlackboardFence,
     user_path: &str,
     pattern: &str,
     replacement: &str,
@@ -538,6 +542,11 @@ fn run_sd(
         Ok(opened) => opened,
         Err(message) => return message,
     };
+    // `blackboard/` の囲い（Spec 55）。**塞ぐのは書き込み（apply）だけ** — preview は
+    // ディスクを変えない読み取りなので通す。
+    if apply && let Some(refusal) = fence.refuse(work_dir, &path, "sd", "apply") {
+        return refusal;
+    }
 
     // 6. 内容の解釈（正規表現コンパイル）。
     // インラインフラグ ((?i) 等) はパターン側が優先される — regex crate の
@@ -583,9 +592,10 @@ fn run_sd(
         }
         format!("適用済み: {match_count} 件を置換しました。\n{diff}")
     } else {
+        let fenced = fence.preview_note(work_dir, &path).unwrap_or_default();
         format!(
             "preview（未適用）: {match_count} 件を置換します。\
-             この内容で良ければ `apply: true` で書き込んでください。\n{diff}"
+             この内容で良ければ `apply: true` で書き込んでください。\n{fenced}{diff}"
         )
     }
 }
@@ -801,13 +811,16 @@ impl AgentTool for YqTool {
         let value = args.get("value").and_then(Value::as_str).map(str::to_owned);
         let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
 
-        spawn_rayon(move || run_yq(&work_dir, &path, op, &key, value.as_deref(), apply)).await
+        let fence = BlackboardFence::new(ctx);
+        spawn_rayon(move || run_yq(&work_dir, &fence, &path, op, &key, value.as_deref(), apply))
+            .await
     }
 }
 
 /// yq 本体。ブロッキングして良い文脈で呼ぶ。
 fn run_yq(
     work_dir: &Path,
+    fence: &BlackboardFence,
     user_path: &str,
     op: YqOp,
     key: &str,
@@ -818,6 +831,14 @@ fn run_yq(
         Ok(opened) => opened,
         Err(message) => return message,
     };
+    // `blackboard/` の囲い（Spec 55）。書き込み op（set / remove）を塞ぐ。get は読み取り。
+    // preview の段で断る — 通してから apply で断ると 1 周を失わせる。
+    if op != YqOp::Get {
+        let name = if op == YqOp::Set { "set" } else { "remove" };
+        if let Some(refusal) = fence.refuse(work_dir, &path, "yq", name) {
+            return refusal;
+        }
+    }
 
     let segs = match parse_key_path(key) {
         Ok(segs) => segs,
@@ -2229,5 +2250,50 @@ started = 2026-01-01T00:00:00Z
             single.starts_with("preview（未適用）: 1 件を置換します"),
             "{single}"
         );
+    }
+
+    /// `blackboard/` の囲い（Spec 55）。sd は apply だけを断り、preview は通して先に知らせる。
+    #[tokio::test]
+    async fn sd_cannot_apply_under_the_blackboard_but_can_preview() {
+        let dir = TempDir::new("sd-bb-fence");
+        dir.write("blackboard/doing/agent_01 - t.md", "old\n");
+        dir.write("plain.md", "old\n");
+        let args = |path: &str, apply: bool| {
+            serde_json::json!({ "path": path, "pattern": "old", "replacement": "new", "apply": apply })
+        };
+
+        let refused = call_sd(&dir, args("blackboard/doing/agent_01 - t.md", true)).await;
+        assert!(refused.contains("`blackboard` ツール"), "{refused}");
+        assert_eq!(dir.read("blackboard/doing/agent_01 - t.md"), "old\n");
+
+        let preview = call_sd(&dir, args("blackboard/doing/agent_01 - t.md", false)).await;
+        assert!(preview.starts_with("preview（未適用）"), "{preview}");
+        assert!(preview.contains("`apply: true` では書き込めません"), "apply が断られることを先に伝える: {preview}");
+
+        // 囲いの外は今までどおり。preview に余計な 1 行も付かない。
+        let plain_preview = call_sd(&dir, args("plain.md", false)).await;
+        assert!(!plain_preview.contains("blackboard"), "{plain_preview}");
+        assert!(call_sd(&dir, args("plain.md", true)).await.starts_with("適用済み"));
+        assert_eq!(dir.read("plain.md"), "new\n");
+    }
+
+    /// yq は書き込み op（set / remove）を preview の段で断る。get は読み取りなので通る。
+    #[tokio::test]
+    async fn yq_cannot_write_under_the_blackboard_but_can_get() {
+        let dir = TempDir::new("yq-bb-fence");
+        dir.write("blackboard/state.json", "{\"port\": 1}\n");
+
+        for args in [
+            serde_json::json!({ "path": "blackboard/state.json", "op": "set", "key": "port", "value": "2" }),
+            serde_json::json!({ "path": "blackboard/state.json", "op": "set", "key": "port", "value": "2", "apply": true }),
+            serde_json::json!({ "path": "blackboard/state.json", "op": "remove", "key": "port", "apply": true }),
+        ] {
+            let reply = call_yq(&dir, args.clone()).await;
+            assert!(reply.contains("`blackboard` ツール"), "{args}: {reply}");
+        }
+        assert_eq!(dir.read("blackboard/state.json"), "{\"port\": 1}\n");
+
+        let got = call_yq(&dir, serde_json::json!({ "path": "blackboard/state.json", "op": "get", "key": "port" })).await;
+        assert!(got.contains("= 1"), "{got}");
     }
 }

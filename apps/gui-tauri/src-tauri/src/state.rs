@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use fuseforks_core::{
-    ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
+    BlackboardTool, ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
     KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool, RememberTool, RunTool, SdTool,
     SecretStore, YqTool,
 };
@@ -128,6 +128,11 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     // 呼び出しの瞬間に解決される。**宣言が空でも登録しておく** — 提示するかは
     // spec_for が個体ごとに決める（run と同じで、ここで出し分けない）。
     orchestrator.register_tool(Arc::new(RagTool)).await;
+
+    // 村の黒板（Spec 55）。`enabled_tools` の対象外で、提示するかは spec_for が個体ごとに決める
+    // （作業フォルダがある && 黒板を使う設定）。**`file` / `sd` / `yq` は `blackboard/` の下へ
+    // 書けない**（囲い）ので、これを登録しないと黒板へ書く経路が 1 本も無くなる。
+    orchestrator.register_tool(Arc::new(BlackboardTool)).await;
 
     // コマンド実行（Spec 15 rev4）。**ポリシーはエージェント別の
     // `agents/{id}/run.json` に住み、呼び出しの瞬間に読む** — 起動時に

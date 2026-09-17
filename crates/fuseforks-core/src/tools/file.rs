@@ -32,7 +32,8 @@ use crate::compute::spawn_rayon;
 use crate::error::CoreResult;
 use crate::tool::{AgentTool, ToolContext};
 use crate::tools::fs::{
-    MAX_FILE_BYTES, MAX_OUTPUT_CHARS, looks_binary, resolve_creatable, resolve_in_work_dir,
+    BlackboardFence, MAX_FILE_BYTES, MAX_OUTPUT_CHARS, looks_binary, resolve_creatable,
+    resolve_in_work_dir,
     work_dir_missing,
 };
 
@@ -132,8 +133,13 @@ impl AgentTool for FileTool {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
+        // `blackboard/` の囲い（Spec 55）。書き込み系の op が、対象を解決した直後に通す。
+        let fence = BlackboardFence::new(ctx);
+
         // ファイル I/O は Tokio ワーカーを塞がない側へ逃がす（既存ツールと同じ規律）。
-        spawn_rayon(move || run_file(&work_dir, &op, &path, content.as_deref(), to.as_deref(), overwrite))
+        spawn_rayon(move || {
+            run_file(&work_dir, &fence, &op, &path, content.as_deref(), to.as_deref(), overwrite)
+        })
             .await
     }
 }
@@ -141,6 +147,7 @@ impl AgentTool for FileTool {
 /// `file` 本体。ブロッキングして良い文脈で呼ぶ。
 fn run_file(
     work_dir: &Path,
+    fence: &BlackboardFence,
     op: &str,
     user_path: &str,
     content: Option<&str>,
@@ -150,19 +157,19 @@ fn run_file(
     match op {
         "read" => run_read(work_dir, user_path),
         "write" => match content {
-            Some(content) => run_write(work_dir, user_path, content, overwrite),
+            Some(content) => run_write(work_dir, fence, user_path, content, overwrite),
             None => "write には `content`（書き込む全文）が必要です。".to_owned(),
         },
         "append" => match content {
-            Some(content) => run_append(work_dir, user_path, content),
+            Some(content) => run_append(work_dir, fence, user_path, content),
             None => "append には `content`（末尾へ足す続き）が必要です。".to_owned(),
         },
-        "mkdir" => run_mkdir(work_dir, user_path),
+        "mkdir" => run_mkdir(work_dir, fence, user_path),
         "move" | "copy" => match to {
-            Some(to) => run_transfer(work_dir, user_path, to, overwrite, op == "move"),
+            Some(to) => run_transfer(work_dir, fence, user_path, to, overwrite, op == "move"),
             None => format!("{op} には `to`（宛先の相対パス）が必要です。"),
         },
-        "remove" => run_remove(work_dir, user_path),
+        "remove" => run_remove(work_dir, fence, user_path),
         other => format!(
             "`{other}` は使えない操作です。op は read / write / append / mkdir / move / copy / remove のいずれかです。"
         ),
@@ -214,11 +221,20 @@ fn run_read(work_dir: &Path, user_path: &str) -> String {
 }
 
 /// 全文を書く。**既存は `overwrite: true` が無い限り拒否**する。
-fn run_write(work_dir: &Path, user_path: &str, content: &str, overwrite: bool) -> String {
+fn run_write(
+    work_dir: &Path,
+    fence: &BlackboardFence,
+    user_path: &str,
+    content: &str,
+    overwrite: bool,
+) -> String {
     let (path, display) = match resolve_creatable(work_dir, user_path) {
         Ok(resolved) => resolved,
         Err(message) => return message,
     };
+    if let Some(refusal) = fence.refuse(work_dir, &path, "file", "write") {
+        return refusal;
+    }
 
     if path.is_dir() {
         return format!("`{display}` はフォルダです。ファイルとして書き込めません。");
@@ -271,13 +287,16 @@ fn run_write(work_dir: &Path, user_path: &str, content: &str, overwrite: bool) -
 /// モデルは 1 件目だけ別の op を選ぶ必要があり、間違えたときの失敗
 /// （「ファイルがありません」）が本筋と無関係な所で出る。
 /// **`write` と違って上書きゲートは要らない** — 追記は既存の内容を壊さない。
-fn run_append(work_dir: &Path, user_path: &str, content: &str) -> String {
+fn run_append(work_dir: &Path, fence: &BlackboardFence, user_path: &str, content: &str) -> String {
     use std::io::Write;
 
     let (path, display) = match resolve_creatable(work_dir, user_path) {
         Ok(resolved) => resolved,
         Err(message) => return message,
     };
+    if let Some(refusal) = fence.refuse(work_dir, &path, "file", "append") {
+        return refusal;
+    }
 
     if path.is_dir() {
         return format!("`{display}` はフォルダです。ファイルとして追記できません。");
@@ -320,11 +339,14 @@ fn run_append(work_dir: &Path, user_path: &str, content: &str) -> String {
 }
 
 /// フォルダを作る（中間も含めて）。
-fn run_mkdir(work_dir: &Path, user_path: &str) -> String {
+fn run_mkdir(work_dir: &Path, fence: &BlackboardFence, user_path: &str) -> String {
     let (path, display) = match resolve_creatable(work_dir, user_path) {
         Ok(resolved) => resolved,
         Err(message) => return message,
     };
+    if let Some(refusal) = fence.refuse(work_dir, &path, "file", "mkdir") {
+        return refusal;
+    }
     if path.is_dir() {
         return format!("`{display}` は既にあります（作成は不要です）。");
     }
@@ -340,6 +362,7 @@ fn run_mkdir(work_dir: &Path, user_path: &str) -> String {
 /// 移動（改名）と複製。**両端とも境界内であることを検査する。**
 fn run_transfer(
     work_dir: &Path,
+    fence: &BlackboardFence,
     user_path: &str,
     to: &str,
     overwrite: bool,
@@ -356,6 +379,16 @@ fn run_transfer(
         Ok(resolved) => resolved,
         Err(message) => return message,
     };
+
+    // `blackboard/` の囲い。**move は元か宛先のどちらかが下なら塞ぐ**（元の削除を伴う）。
+    // **copy は宛先だけで見る** — 外への copy は `blackboard/` を 1 バイトも変えない読み取り。
+    let op = if is_move { "move" } else { "copy" };
+    let fenced = if is_move { [Some(&source), Some(&dest)] } else { [None, Some(&dest)] };
+    for path in fenced.into_iter().flatten() {
+        if let Some(refusal) = fence.refuse(work_dir, path, "file", op) {
+            return refusal;
+        }
+    }
 
     if source == dest {
         return format!("移動元と宛先が同じです（`{source_display}`）。何もしていません。");
@@ -408,11 +441,14 @@ fn remove_existing(path: &Path) -> std::io::Result<()> {
 }
 
 /// **ごみ箱へ移す。** 完全削除の経路は無い。
-fn run_remove(work_dir: &Path, user_path: &str) -> String {
+fn run_remove(work_dir: &Path, fence: &BlackboardFence, user_path: &str) -> String {
     let (path, display) = match resolve_in_work_dir(work_dir, user_path) {
         Ok(resolved) => resolved,
         Err(message) => return message,
     };
+    if let Some(refusal) = fence.refuse(work_dir, &path, "file", "remove") {
+        return refusal;
+    }
 
     // 作業フォルダそのものを消させない。囲いの中で最も壊れるのがここ。
     if work_dir.canonicalize().map(|root| root == path).unwrap_or(false) {
@@ -762,5 +798,62 @@ mod tests {
 
         let reply = call(&dir, serde_json::json!({ "op": "read", "path": "bin.dat" })).await;
         assert!(reply.contains("バイナリ"), "{reply}");
+    }
+
+    /// `blackboard/` の囲い（Spec 55）。**書き込み系は断り、読み取りは通す** — 対で見る。
+    /// 片方だけだと「全部断る実装」も「全部通す実装」も緑になる。
+    #[tokio::test]
+    async fn writes_under_the_blackboard_are_refused_and_reads_pass() {
+        let dir = TempDir::new("bb-fence");
+        dir.write("blackboard/doing/agent_01 - 調査.md", "付箋");
+        dir.write("outside.md", "外");
+
+        for args in [
+            serde_json::json!({ "op": "write", "path": "blackboard/doing/x.md", "content": "x" }),
+            serde_json::json!({ "op": "write", "path": "blackboard/doing/agent_01 - 調査.md", "content": "x", "overwrite": true }),
+            serde_json::json!({ "op": "append", "path": "blackboard/doing/agent_01 - 調査.md", "content": "x" }),
+            serde_json::json!({ "op": "mkdir", "path": "blackboard/archive" }),
+            serde_json::json!({ "op": "remove", "path": "blackboard/doing/agent_01 - 調査.md" }),
+            serde_json::json!({ "op": "remove", "path": "blackboard" }),
+            serde_json::json!({ "op": "move", "path": "blackboard/doing/agent_01 - 調査.md", "to": "blackboard/done/agent_01 - 調査.md" }),
+            // move は元の削除を伴うので、外へ出すのも塞ぐ。
+            serde_json::json!({ "op": "move", "path": "blackboard/doing/agent_01 - 調査.md", "to": "kept.md" }),
+            serde_json::json!({ "op": "move", "path": "blackboard", "to": "old-board" }),
+            serde_json::json!({ "op": "move", "path": "outside.md", "to": "blackboard/doing/in.md" }),
+            serde_json::json!({ "op": "copy", "path": "outside.md", "to": "blackboard/doing/in.md" }),
+            // 解決後のパスで見る。
+            serde_json::json!({ "op": "write", "path": "./x/../blackboard/doing/y.md", "content": "x" }),
+        ] {
+            let reply = call(&dir, args.clone()).await;
+            assert!(reply.contains("`blackboard` ツール"), "{args}: {reply}");
+        }
+        assert_eq!(dir.read("blackboard/doing/agent_01 - 調査.md"), "付箋", "1 バイトも変わらない");
+        assert!(!dir.exists("blackboard/doing/x.md") && !dir.exists("blackboard/doing/in.md"));
+        assert!(!dir.exists("blackboard/archive") && !dir.exists("kept.md") && dir.exists("outside.md"));
+
+        // 読み取りは通る。**外への copy も読み取り**（`blackboard/` を 1 バイトも変えない）。
+        let read = call(&dir, serde_json::json!({ "op": "read", "path": "blackboard/doing/agent_01 - 調査.md" })).await;
+        assert!(read.ends_with("付箋"), "{read}");
+        let copied = call(&dir, serde_json::json!({ "op": "copy", "path": "blackboard/doing/agent_01 - 調査.md", "to": "copy.md" })).await;
+        assert!(copied.contains("複製しました"), "{copied}");
+        assert_eq!(dir.read("copy.md"), "付箋");
+        // 囲いの外は今までどおり書ける。
+        let plain = call(&dir, serde_json::json!({ "op": "write", "path": "briefs/依頼.md", "content": "x" })).await;
+        assert!(plain.contains("作成しました"), "{plain}");
+    }
+
+    /// ツールを持たない個体（オプトアウト）に、無いツールを案内しない。
+    #[tokio::test]
+    async fn the_fence_does_not_point_an_opted_out_servant_at_the_tool() {
+        let dir = TempDir::new("bb-fence-optout");
+        let mut ctx = ctx_with(Some(&dir.0));
+        ctx.uses_blackboard = false;
+        let reply = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "write", "path": "blackboard/doing/x.md", "content": "x" }))
+            .await
+            .unwrap();
+        assert!(reply.contains("黒板を使わない設定"), "{reply}");
+        assert!(!reply.contains("`blackboard` ツール"), "{reply}");
+        assert!(!dir.exists("blackboard"));
     }
 }
