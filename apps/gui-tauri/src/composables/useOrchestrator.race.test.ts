@@ -63,6 +63,7 @@ function snapshot(id: string) {
     enabledTools: null,
     hearsRoomLog: true,
     allowHandoff: true,
+    usesBlackboard: true,
     lastError: null,
   };
 }

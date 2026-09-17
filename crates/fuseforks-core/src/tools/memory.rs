@@ -148,6 +148,8 @@ mod tests {
             work_dir: None,
             cancel: None,
             rag_roots: Vec::new(),
+            agent_names: Vec::new(),
+            uses_blackboard: true,
             language: crate::world::Language::Ja,
         }
     }

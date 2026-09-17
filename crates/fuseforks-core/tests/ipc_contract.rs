@@ -103,6 +103,8 @@ fn wire_field_sets_are_frozen() {
             "planReview",
             "ragSources",
             "roleId",
+            // Spec 55。黒板ツールの提示。types.ts と snapshotToSpec も同時に足すこと。
+            "usesBlackboard",
             "workDir",
         ],
         "AgentSpec のフィールドが変わった"
@@ -182,6 +184,7 @@ fn wire_field_sets_are_frozen() {
         enabled_tools: None,
         hears_room_log: true,
         allow_handoff: true,
+        uses_blackboard: true,
         plan_review: false,
         batch_start: true,
         role_id: None,
@@ -215,6 +218,8 @@ fn wire_field_sets_are_frozen() {
             "status",
             "totalTokens",
             "uptimeSecs",
+            // Spec 55。黒板ツールの提示。types.ts と snapshotToSpec も同時に足すこと。
+            "usesBlackboard",
             "workDir",
         ],
         "AgentSnapshot のフィールドが変わった"

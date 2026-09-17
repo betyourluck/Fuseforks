@@ -352,6 +352,7 @@ pub struct AgentRole {
 /// - `order` — 左ペインの並び順。役職の性質ではない
 /// - `batch_start` — 一括起動の対象。運用の選択
 /// - `hears_room_log` — コスト設定（Spec 03）。村の懐事情で決まる
+/// - `uses_blackboard` — 黒板ツールの提示（Spec 55）。個体の運用の選択
 ///
 /// `id` / `name` は個体固有なので対象外。**11 = 対象外 2 + 入れる 3 + 入れない 6。**
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -515,6 +516,15 @@ pub struct AgentSpec {
     /// **委譲と並列委譲（`plan`）は残る** — 消えるのは転送だけ。
     #[serde(default = "default_true")]
     pub allow_handoff: bool,
+    /// 黒板ツール（`blackboard`）を提示するか（Spec 55）。
+    ///
+    /// **既定は真。** 黒板の規約（置き場・綴り・状態）を運ぶのは条例ではなくツールの
+    /// 説明文なので、既定で出ていないと新しい村で付箋が 1 枚も書かれない。偽にするのは
+    /// 黒板を使わない個体（毎ターンの schema の固定費を払わせない）。`enabled_tools` の
+    /// 外に置くのは、明示配列を持つ既存の村に新ツールが生えない穴（Spec 18 D13）を
+    /// 踏まないため。作業フォルダが無い個体には、真でも提示されない。
+    #[serde(default = "default_true")]
+    pub uses_blackboard: bool,
     /// plan の編集窓（計画の確認・Spec 43）。真なら plan は配送せず**提案**を
     /// 記録してターンを終え、人の承認（`dispatch_plan_wave`）が配送を起こす。
     ///
@@ -583,6 +593,7 @@ impl AgentSpec {
             enabled_tools: None,
             hears_room_log: true,
             allow_handoff: true,
+            uses_blackboard: true,
             plan_review: false,
             batch_start: true,
             role_id: None,
@@ -1216,6 +1227,8 @@ pub struct AgentSnapshot {
     /// **投影にも要る** — 設定ダイアログは投影から `AgentSpec` を組み直して
     /// 保存するので、ここに無い欄は**保存のたびに既定へ戻る**（Spec 14 P1）。
     pub allow_handoff: bool,
+    /// 黒板ツールを提示するか（Spec 55）。**投影にも要る**（同上）。
+    pub uses_blackboard: bool,
     /// plan の編集窓（計画の確認・Spec 43）。**投影にも要る**（同上）。
     pub plan_review: bool,
     /// 一括起動（▶）の対象か。稼働状態とは別（`status` がそちら）。
@@ -1531,20 +1544,33 @@ mod tests {
 
     // ---- 役職の流し込み（Spec 14 P1） ---------------------------------------
 
-    /// 契約の分類表（`role_contract` 凍結 2）で「入れない」とした 6 欄。
+    /// 契約の分類表（`role_contract` 凍結 2）で「入れない」とした欄。
     ///
     /// **名指しで持つ。** rev1 の査読が「線と場所が入らないこと」では対象が
     /// 曖昧でテストに落とせないと指摘した箇所で、ここが表と実装の唯一の接点。
     /// `rag_sources` は Spec 18（意味が絶対パスへ変わり、`work_dir` と同じ
     /// 「端末ごとに違う」性質になった）でこちら側へ移った。
-    const NEVER_APPLIED: [&str; 6] = [
+    ///
+    /// **Spec 55 P1 で数え直した（2026-09-17）。** 旧い表は 6 欄で、後から `AgentSpec` に
+    /// 足された `allow_handoff` / `plan_review` / `role_id` / `group_id` を数えていなかった
+    /// （検算が定数どうしの自己照合で、実際の欄数を見ていなかった）。どれも雛形が
+    /// 触らない欄なのでこちら側へ載せ、検算は下でワイヤの鍵の数から取る。
+    const NEVER_APPLIED: [&str; 11] = [
         "connected_agents",
         "work_dir",
         "rag_sources",
         "order",
         "batch_start",
         "hears_room_log",
+        "allow_handoff",
+        "plan_review",
+        "role_id",
+        "group_id",
+        "uses_blackboard",
     ];
+
+    /// 雛形が入れる 3 欄（`role_contract` の「入れる」のうち `AgentSpec` の欄）。
+    const APPLIED: [&str; 3] = ["model_template_id", "enabled_tools", "max_tool_iterations"];
 
     fn full_defaults() -> AgentRoleDefaults {
         AgentRoleDefaults {
@@ -1576,37 +1602,41 @@ mod tests {
     /// とき存在しないパスを指す（`role_contract` 凍結 2。後者は Spec 18 で
     /// こちら側へ移った — **決定を文章だけで残すと、次に誰かが親切心で足す**）。
     #[test]
-    fn apply_to_never_touches_the_six_excluded_fields() {
+    fn apply_to_never_touches_the_excluded_fields() {
         let baseline = AgentSpec::new("agent_1", "ザリ", "既定");
         let mut spec = baseline.clone();
         let _ = full_defaults().apply_to(&mut spec, |_| true);
 
+        // 名指しの 1 本（線は人が引く）は文面ごと残す。
         assert_eq!(
             spec.connected_agents, baseline.connected_agents,
             "{} は雛形から入ってはいけない（線は人が引く）",
             NEVER_APPLIED[0]
         );
-        assert_eq!(spec.work_dir, baseline.work_dir, "{}", NEVER_APPLIED[1]);
-        assert_eq!(spec.rag_sources, baseline.rag_sources, "{}", NEVER_APPLIED[2]);
-        assert_eq!(spec.order, baseline.order, "{}", NEVER_APPLIED[3]);
-        assert_eq!(spec.batch_start, baseline.batch_start, "{}", NEVER_APPLIED[4]);
-        assert_eq!(
-            spec.hears_room_log, baseline.hears_room_log,
-            "{}",
-            NEVER_APPLIED[5]
-        );
+        // 残りは**入れる 3 欄を元へ戻して全体を比べる** — 欄を 1 つずつ並べる形は、
+        // `AgentSpec` に欄が増えたとき黙って網の外へ落ちる（実際に 4 欄落ちていた）。
+        spec.model_template_id = baseline.model_template_id.clone();
+        spec.enabled_tools = baseline.enabled_tools.clone();
+        spec.max_tool_iterations = baseline.max_tool_iterations;
+        assert_eq!(spec, baseline, "入れる 3 欄（{APPLIED:?}）の外が動いた");
     }
 
-    /// 分類表の数が実装と合う。**11 = 対象外 2 + 入れる 3 + 入れない 6。**
+    /// 分類表の数が実装と合う。**欄の数は `AgentSpec` のワイヤの鍵から取る。**
     ///
-    /// rev1 は箇条書き 4 本を「4 欄」と数えて実体の 6 フィールドとズレた。
-    /// 数え落としは要約から生まれるので、数そのものをテストで留める。
+    /// rev1 は箇条書き 4 本を「4 欄」と数えて実体の 6 フィールドとズレた。その後この検算は
+    /// `11 = 2 + 3 + 6` を**定数どうしで**照合していたので、`AgentSpec` に 4 欄足されても
+    /// 緑のままだった（Spec 55 P1 で発見）。数え落としは要約から生まれるので、
+    /// 左辺を実物から取る — 欄を足して分類を書き忘れると、ここが赤くなる。
     #[test]
     fn the_classification_table_adds_up() {
-        const AGENT_SPEC_FIELDS: usize = 11;
         const EXEMPT: usize = 2; // id / name
-        const APPLIED: usize = 3; // model_template_id / enabled_tools / max_tool_iterations
-        assert_eq!(AGENT_SPEC_FIELDS, EXEMPT + APPLIED + NEVER_APPLIED.len());
+        let wire = serde_json::to_value(AgentSpec::new("agent_1", "ザリ", "既定")).unwrap();
+        let fields = wire.as_object().expect("オブジェクトで出ること").len();
+        assert_eq!(
+            fields,
+            EXEMPT + APPLIED.len() + NEVER_APPLIED.len(),
+            "AgentSpec の欄を足したら、役職の分類（入れる / 入れない）も決めて表へ足す"
+        );
     }
 
     /// 未登録のモデルテンプレートは**その欄だけ落ちる**。他は入る。
@@ -1632,6 +1662,19 @@ mod tests {
         let json = r#"{ "construct": "", "ragSources": [], "enabledTools": null }"#;
         let parsed: AgentRoleDefaults = serde_json::from_str(json).expect("旧形が読めること");
         assert_eq!(parsed, AgentRoleDefaults::default());
+    }
+
+    /// **`usesBlackboard` の無い旧い `world.json` は真で読む**（Spec 55）。
+    ///
+    /// 偽へ落ちると、更新しただけで既存の村から黒板ツールが消える。規約を運ぶのが
+    /// ツールの説明文になった後は、それは「付箋が 1 枚も書かれない村」へ戻ること。
+    #[test]
+    fn a_spec_without_uses_blackboard_reads_as_true() {
+        let mut wire = serde_json::to_value(AgentSpec::new("agent_1", "ザリ", "既定")).unwrap();
+        let removed = wire.as_object_mut().unwrap().remove("usesBlackboard");
+        assert_eq!(removed, Some(serde_json::Value::Bool(true)), "既定は真で、camelCase で出る");
+        let parsed: AgentSpec = serde_json::from_value(wire).expect("欄が無くても読めること");
+        assert!(parsed.uses_blackboard);
     }
 
     /// 空の既定値は何も上書きしない（役職が意見を持たない欄はそのまま）。

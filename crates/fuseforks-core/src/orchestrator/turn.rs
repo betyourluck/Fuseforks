@@ -1089,12 +1089,14 @@ async fn present_tools(
     // モデルへ届く文言の言語（Spec 35）。合成ツール・room_log・同梱ツールの
     // 提示がすべてこの 1 つの値を使う — ばらばらに読むと、切り替えの瞬間に
     // 半分だけ英語のプロンプトが組める。
-    let language = shared
-        .world
-        .read()
-        .await
-        .language()
-        .unwrap_or(crate::world::Language::Ja);
+    // 名前の表（Spec 55）も同じ読みロックの中で取る。見るのは `blackboard` だけ。
+    let (language, agent_names) = {
+        let world = shared.world.read().await;
+        (
+            world.language().unwrap_or(crate::world::Language::Ja),
+            world.agent_names(),
+        )
+    };
     let mut specs = if use_handoff_tools {
         // 転送は `offer_transfer` のときだけ。委譲と `plan` は常に載る。
         let mut both = if offer_transfer {
@@ -1128,6 +1130,8 @@ async fn present_tools(
         // 宣言フォルダ（Spec 18）。`rag` の spec_for が 2 段ゲートの 2 段目
         // （空または全滅なら提示しない）をここから判定する。
         rag_roots: spec.rag_sources.iter().map(std::path::PathBuf::from).collect(),
+        agent_names,
+        uses_blackboard: spec.uses_blackboard,
         language,
     };
     let shared_specs: Vec<ToolSpec> = shared
@@ -2861,7 +2865,7 @@ async fn execute_tool(
     // 作業フォルダ（grep / diff の探索範囲）と宣言フォルダ（rag）は
     // 呼び出しの瞬間に解決する。ツール登録時に固定すると、設定変更が
     // 次の再登録まで効かない。
-    let (work_dir, rag_roots, language) = {
+    let (work_dir, rag_roots, language, agent_names, uses_blackboard) = {
         let world = shared.world.read().await;
         let record = world.agent(agent_id).ok();
         (
@@ -2875,6 +2879,9 @@ async fn execute_tool(
                 })
                 .unwrap_or_default(),
             world.language().unwrap_or(crate::world::Language::Ja),
+            world.agent_names(),
+            // 個体が引けないときは使わない側へ倒す（書き込み系のツールなので）。
+            record.is_some_and(|record| record.spec.uses_blackboard),
         )
     };
 
@@ -2882,6 +2889,8 @@ async fn execute_tool(
         agent_id: agent_id.clone(),
         work_dir,
         rag_roots,
+        agent_names,
+        uses_blackboard,
         language,
         // ターンのトークンを渡す。**見るのは `run` だけ**（外部プロセスを
         // 起動するツールは、周回境界まで待つと最長 1 時間走り続ける）。

@@ -91,6 +91,8 @@ async fn en_run_presentation_for_empty_allow_is_english() {
         work_dir: None,
         cancel: None,
         rag_roots: Vec::new(),
+        agent_names: Vec::new(),
+        uses_blackboard: true,
         language: fuseforks_core::world::Language::En,
     };
     let spec = tool.spec_for(&ctx).await.expect("allow が空でも提示する");

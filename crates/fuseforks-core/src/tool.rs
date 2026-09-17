@@ -59,6 +59,18 @@ pub struct ToolContext {
     /// ツール側が呼び出しごとに掛け直す（無効化であって削除ではない —
     /// パスを直せばその場で復活する）。
     pub rag_roots: Vec<PathBuf>,
+    /// 村の全個体の id → 表示名（Spec 55）。**見るのは `blackboard` だけ。**
+    ///
+    /// 付箋のファイル名の前半は `agent_id` で、表示名は保存しない。`list` / `read` が
+    /// 他人の付箋へ名前を付けるためにここから引く — 顔ぶれは接続先しか載せないので、
+    /// 表が無いと非接続の持ち主が id だけで出る。黒板は元からファイル名で全員の名前を
+    /// 露出しているので、ツール層へ渡すのは新しい露出ではない。並びは id 順
+    /// （`World` の `BTreeMap` の順）。`rag_roots` と同じくオーケストレーターが解いて渡す。
+    pub agent_names: Vec<(AgentId, String)>,
+    /// 黒板ツールを使う個体か（Spec 55。`AgentSpec::uses_blackboard` の写し）。
+    /// **見るのは `blackboard` だけ** — 提示（`spec_for`）と実行（`call` の先頭）が
+    /// 同じ述語でこれを読む。
+    pub uses_blackboard: bool,
     /// モデルへ届く文言の言語（Spec 35。村の `language`）。
     ///
     /// **提示時にも実行時にも渡る** — `spec_for(&self, ctx)` が提示時に ctx を
@@ -275,6 +287,8 @@ mod tests {
             work_dir: None,
             cancel: None,
             rag_roots: Vec::new(),
+            agent_names: Vec::new(),
+            uses_blackboard: true,
             language: crate::world::Language::Ja,
         }
     }

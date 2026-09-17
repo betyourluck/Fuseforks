@@ -29,6 +29,7 @@ function agent(
     enabledTools: null,
     hearsRoomLog: true,
     allowHandoff: true,
+    usesBlackboard: true,
     planReview: false,
     batchStart,
     lastError: null,

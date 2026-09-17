@@ -40,6 +40,8 @@ function snapshot(): AgentSnapshot {
     enabledTools: ["grep", "fd"],
     hearsRoomLog: false,
     allowHandoff: false,
+    // Spec 55。**既定（true）と違う値**で置く — 既定と同じだと写し忘れても緑になる。
+    usesBlackboard: false,
     planReview: true,
     batchStart: false,
     roleId: "role_auditor",
@@ -63,6 +65,8 @@ describe("snapshotToSpec", () => {
       enabledTools: ["grep", "fd"],
       hearsRoomLog: false,
     allowHandoff: false,
+      // Spec 55。写さないと保存のたびに既定（true）へ戻る。
+      usesBlackboard: false,
       planReview: true,
       batchStart: false,
       roleId: "role_auditor",

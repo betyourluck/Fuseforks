@@ -25,6 +25,7 @@ function snapshot(id: string, lastError: AgentSnapshot["lastError"]): AgentSnaps
     enabledTools: null,
     hearsRoomLog: true,
     allowHandoff: true,
+    usesBlackboard: true,
     batchStart: false,
     workDir: null,
     ragSources: [],

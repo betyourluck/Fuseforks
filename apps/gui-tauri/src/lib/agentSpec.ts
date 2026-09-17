@@ -40,6 +40,7 @@ export function snapshotToSpec(
     enabledTools: snapshot.enabledTools ? [...snapshot.enabledTools] : null,
     hearsRoomLog: snapshot.hearsRoomLog,
     allowHandoff: snapshot.allowHandoff,
+    usesBlackboard: snapshot.usesBlackboard,
     planReview: snapshot.planReview,
     batchStart: snapshot.batchStart,
     roleId: snapshot.roleId,

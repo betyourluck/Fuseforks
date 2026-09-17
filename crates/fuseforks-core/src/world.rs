@@ -868,6 +868,15 @@ impl World {
         }
     }
 
+    /// 村の全個体の id → 表示名（Spec 55。`ToolContext::agent_names` へ渡す）。
+    /// 並びは id 順（`BTreeMap` の順）で、同じ村なら呼ぶたびに同じ。
+    pub fn agent_names(&self) -> Vec<(AgentId, String)> {
+        self.agents
+            .values()
+            .map(|record| (record.spec.id.clone(), record.spec.name.clone()))
+            .collect()
+    }
+
     /// 表示順に並べた UI 向けスナップショット。
     pub fn snapshots(&self) -> Vec<AgentSnapshot> {
         let mut list: Vec<AgentSnapshot> = self.agents.values().map(|r| self.snapshot_of(r)).collect();
@@ -904,6 +913,7 @@ impl World {
             enabled_tools: record.spec.enabled_tools.clone(),
             hears_room_log: record.spec.hears_room_log,
             allow_handoff: record.spec.allow_handoff,
+            uses_blackboard: record.spec.uses_blackboard,
             plan_review: record.spec.plan_review,
             batch_start: record.spec.batch_start,
             role_id: record.spec.role_id.clone(),

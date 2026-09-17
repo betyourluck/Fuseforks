@@ -1591,8 +1591,12 @@ enums:
       実体の 6 フィールドとズレた。数え落としは要約から生まれる。
 
       検算は 2 本立てる (片方だけだと表と算式がズレる):
-        - AgentSpec の 11 欄 = 対象外 2 + 入れる 3 + 入れない 6
-        - 下表は 12 行 = その 11 欄 + construct
+        - AgentSpec の **16 欄 = 対象外 2 + 入れる 3 + 入れない 11** (Spec 55 P1・2026-09-17 に
+          数え直した。旧記述は「11 欄 = 2 + 3 + 6」で、後から足された allow_handoff /
+          plan_review / role_id / group_id を数えていなかった — model.rs の検算が定数どうしの
+          自己照合で、実際の欄数を見ていなかったため。**今は左辺を AgentSpec のワイヤの鍵の
+          数から取る**ので、欄を足して分類を書き忘れると赤くなる)
+        - 下表は 17 行 = その 16 欄 + construct
           (**ファイルであって AgentSpec の欄ではない**)
           ゆえに表の「入れる」は 4 行 = **RoleDefaults の 4 欄**
 
@@ -1609,7 +1613,11 @@ enums:
         | order               | 入れない | 左ペインの並び順。役職の性質ではない    |
         | batch_start         | 入れない | 一括起動の対象。運用の選択             |
         | hears_room_log      | 入れない | コスト設定 (Spec 03)。村の懐事情で決まる|
-        | uses_blackboard     | 入れない | 黒板ツールの提示 (Spec 55)。hears_room_log と同じ個体の運用の選択。**P1 で実装と同時に効く** — それまで上の検算 (11 欄・12 行・入れない 6) は現行の数のまま |
+        | allow_handoff       | 入れない | 転送の提示。その系統での役割の選択 (2026-08-11)。P1 で表へ回収 |
+        | plan_review         | 入れない | 計画の確認 (Spec 43)。同上 |
+        | role_id             | 入れない | 流し込みは role_id を触らない (付けるのは呼び出し側)。P1 で表へ回収 |
+        | group_id            | 入れない | 所属 (Spec 51)。作成後に人が付ける。P1 で表へ回収 |
+        | uses_blackboard     | 入れない | 黒板ツールの提示 (Spec 55)。hears_room_log と同じ個体の運用の選択 |
 
       **rag_sources の移動は Spec 18 D10** (2026-08-05)。凍結時に「入れる」だった
       のは意味が「索引済みソース名」で端末に依存しなかったから。絶対パスへの
@@ -1990,7 +1998,7 @@ entities:
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (12)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
-      usesBlackboard: bool          # 黒板ツール (blackboard) を提示するか。既定 true (Spec 55。P1 で着地)
+      usesBlackboard: bool          # 黒板ツール (blackboard) を提示するか。既定 true (Spec 55)。欄の無い旧 world.json は true で読む
       allowHandoff: bool            # 転送 (transfer_to_*) を提示するか。既定 true
       planReview: bool              # plan の編集窓 (計画の確認)。既定 false (Spec 43)
       batchStart: bool              # 一括起動 (▶) の対象か。既定 true
@@ -2197,7 +2205,7 @@ entities:
       maxToolIterations: u8 | null  # 同上
       enabledTools: String[] | null # 同上
       hearsRoomLog: bool            # 同上
-      usesBlackboard: bool          # 同上 (**投影にも要る** — Spec 55。P1 で着地)
+      usesBlackboard: bool          # 同上 (**投影にも要る** — Spec 55)
       allowHandoff: bool            # 同上 (転送を提示するか。**投影にも要る**)
       planReview: bool              # 同上 (plan の編集窓。**投影にも要る** — Spec 43)
       batchStart: bool              # 同上 (一括起動 ▶ の対象か。稼働状態は status)
@@ -4244,7 +4252,8 @@ conversation_termination:
     外部の能力は MCP 経由で足す — 何でも同梱するとシングルバイナリに
     世界中の依存が生える。
     ToolContext は agent_id に加えて work_dir (Option<PathBuf>) を運ぶ (2026-07-29)。
-    **Spec 55 (P1) で agent_names (村の全個体の id → 表示名) と uses_blackboard を足す** —
+    **Spec 55 P1 (2026-09-17 着地) で agent_names (村の全個体の id → 表示名・id 順) と
+    uses_blackboard を足した** (turn.rs の提示時と実行時の 2 箇所が world から解く) —
     見るのは blackboard だけ。黒板は元からファイル名で全員の名前を露出しているので、
     名前の表をツール層へ渡すのは新しい露出ではない。
     解決するのはオーケストレーター (execute_tool) で、**呼び出しの瞬間**に world から

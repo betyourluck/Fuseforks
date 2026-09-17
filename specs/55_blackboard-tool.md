@@ -5,6 +5,7 @@
   前提を訂正して採用 2 / 運用で決めた 1。Notes 3 の表が正）→ 承認（同日。D5 = `まとめ.md` の
   廃止も裁定）→ P0 完了**（同日。`data_contract.yaml` の `blackboard_contract` へ Spec 55 の
   凍結 14 本 + 周辺 7 箇所の追従。条例の改訂案は Notes 4。記録は「P0 契約記録」）
+  **→ P1 完了**（同日。記録は「P1 実装記録」）
 - 起点: 利用者 —「黒板は条例にユーザーが任意で書く使い方と、プログラムで書かれた固定の機構に
   依存している。これは必ず一致するとは限らないため、私以外の環境ではまともに動くのかが不安」→
   「付箋を書くのをツール化することはできませんか？ファイルの命名規則も厳格化するとか」（2026-09-17）。
@@ -243,7 +244,7 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
 - **P0 契約（完了 2026-09-17。記録は下の「P0 契約記録」）** — `data_contract.yaml`: `blackboard_contract` の書き換え（鍵・op・遷移・囲い・残余）/
   `file_tool_contract` と `write_tools_contract` へ囲い / `role_contract` の表 / `tool_extension_point` の
   列挙 / `AgentSpec`・`AgentSnapshot` の欄。条例の改訂案を Notes へ
-- **P1 コア: `ToolContext`** — `agent_names` / `uses_blackboard` を足し、`turn.rs` の 2 箇所で解く。
+- **P1 コア: `ToolContext`（完了 2026-09-17。記録は下の「P1 実装記録」）** — `agent_names` / `uses_blackboard` を足し、`turn.rs` の 2 箇所で解く。
   `AgentSpec.uses_blackboard` + 投影 + 役職の分類テスト
 - **P2 コア: ツール本体** — `tools/blackboard.rs`（正規化の純関数 / 6 op / 遷移表 / ja・en の説明文）。
   読みは `blackboard.rs` の `read_blackboard_dir` を共有。単体 + ミューテーション
@@ -276,6 +277,37 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   なお検算の「11 欄」は `allow_handoff` / `plan_review` / `group_id` / `role_id` を数えておらず、
   本 Spec より前から実際の欄数と合っていない。P1 で表ごと数え直す
 - ブロックの字下げは機械で検査した（`blackboard_contract` の 198 行すべてがリテラルブロックの中）
+
+### P1 実装記録（2026-09-17）
+
+- **`ToolContext` へ 2 欄**（`agent_names: Vec<(AgentId, String)>` / `uses_blackboard: bool`）。
+  解くのは `turn.rs` の 2 箇所で、提示時は言語と同じ読みロックの中で `World::agent_names()`
+  （新設。`BTreeMap` の順 = id 順）を取り、実行時は `work_dir` / `rag_roots` と同じ組で取る。
+  **実行時に個体が引けないときは `uses_blackboard` を偽へ倒す**（書き込み系のツールなので）
+- **`AgentSpec.uses_blackboard`（既定 true・`default_true`）+ `AgentSnapshot` の写し**。
+  欄の無い旧い `world.json` は真で読む（単体で留めた — 偽へ落ちると、更新しただけで既存の村から
+  黒板ツールが消える）
+- **フロントの型と写しを P4 から前倒しした**（`types.ts` の 2 箇所 / `snapshotToSpec` /
+  新規作成の既定 / テストの fixture）。チェックボックスは P4 のまま。前倒しの理由は
+  Spec 14 P1 / Spec 51 の穴 — 投影から `AgentSpec` を組み直して保存する経路が、写しに無い欄を
+  **保存のたびに既定へ戻す**。`world.json` を手で偽にした村で設定ダイアログを保存すると真へ戻る
+- **役職の分類表を数え直した（P0 の宿題）。** `model.rs` の `NEVER_APPLIED` は 6 欄で、後から
+  足された `allow_handoff` / `plan_review` / `role_id` / `group_id` が載っていなかった。
+  検算 `the_classification_table_adds_up` は `11 = 2 + 3 + 6` を**定数どうしで**照合しており、
+  欄が 4 つ増えても緑だった。直した形 = 左辺を `AgentSpec` の**ワイヤの鍵の数**から取る
+  （16 = 対象外 2 + 入れる 3 + 入れない 11）/ 「入れない欄は動かない」の検査は欄を 1 つずつ
+  並べるのをやめ、**入れる 3 欄を元へ戻して全体を比べる**（欄が増えても網の外へ落ちない）。
+  **一般化: 数を留める検算は、片方の辺を実物から取る。両辺が手書きの定数だと、実物が
+  動いても緑のまま残る**（`failures.md` #62 の「数の記述は grep に掛からない」のテスト版）
+- **結合 `tests/blackboard_tool_context.rs`（2 本）**: ctx を書き留めるだけのツールを登録し、
+  提示時と実行時の両方へ「村の全個体の名前（接続していない個体も・id 順）」と個体の設定が
+  届くことを見る。**一発で緑だったので変異 2 回**（実行時の `uses_blackboard` を真に固定 →
+  オプトアウトの 1 本だけ赤 / 名前の表を空に → 名前の 1 本だけ赤）。写しの変異
+  （`snapshotToSpec` が真を固定）も 1 本赤 — fixture を**既定と違う値**（false）で置いたため
+- ワイヤ凍結（`ipc_contract`）は `AgentSpec` と `AgentSnapshot` の両方へ `usesBlackboard`
+- core 947・vitest 622・vue-tsc 0・clippy 0。**アプリの実行ファイルは開発ビルドが起動中で
+  リンクできなかった**ので、アプリ側は `cargo check --workspace --tests` で確かめた
+  （コアのテストは全部走った）
 
 ## 検収（P6）
 

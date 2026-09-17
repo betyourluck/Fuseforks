@@ -155,6 +155,8 @@ export interface AgentSpec {
    * 選ぶとオーケストレーションが成立しないので、道具の側で選べなくする。
    */
   allowHandoff: boolean;
+  /** 黒板ツール（`blackboard`）を提示するか（Spec 55）。既定 true。 */
+  usesBlackboard: boolean;
   /**
    * plan の編集窓（計画の確認・Spec 43）。**既定は偽。**
    *
@@ -308,6 +310,8 @@ export interface AgentSnapshot {
    * 選ぶとオーケストレーションが成立しないので、道具の側で選べなくする。
    */
   allowHandoff: boolean;
+  /** 黒板ツール（`blackboard`）を提示するか（Spec 55）。既定 true。 */
+  usesBlackboard: boolean;
   /** plan の編集窓（計画の確認・Spec 43）。**投影にも要る**（保存で消えない）。 */
   planReview: boolean;
   /** 一括起動（▶）の対象か。稼働状態とは別（それは `status`）。 */

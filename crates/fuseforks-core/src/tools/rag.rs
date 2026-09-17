@@ -569,6 +569,8 @@ mod tests {
             work_dir: None,
             cancel: None,
             rag_roots: roots,
+            agent_names: Vec::new(),
+            uses_blackboard: true,
             language: crate::world::Language::Ja,
         }
     }
