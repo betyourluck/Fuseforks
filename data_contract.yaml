@@ -927,7 +927,8 @@ enums:
           doing|on-hold|done|root|other|- (3 値の外のフォルダ名は出さない)。move だけ to= が付く。
           op= は閉じた 6 つの外なら unknown (モデルが書いた文字列をそのまま出さない)
         - **撤去**: 止血 (条例の「黒板の節を挿入」+ 黒板タブの空表示の案内 =
-          lib/blackboardOrdinance.ts) は P5 で撤去する (節が無いことの検出ごと要らなくなる)
+          lib/blackboardOrdinance.ts) は P5 で撤去する (節が無いことの検出ごと要らなくなる)。
+          **2026-09-18 の P5 で撤去済み**
     settings_contract: |
       システム設定ダイアログ (Spec 13。2026-08-03 rev3 承認 → P0 で本節を凍結。
       実装は P1〜P5)。主目的は**既にある設定の可視化**。Spec 13 が足した新規の設定は

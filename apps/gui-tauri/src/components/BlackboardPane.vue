@@ -15,7 +15,6 @@ import {
   clearBlackboard,
   deleteBlackboardNote,
   listBlackboard,
-  readOrdinance,
   toErrorPayload,
 } from "../lib/ipc";
 import { useI18n } from "vue-i18n";
@@ -33,7 +32,6 @@ import {
   type MarkedNote,
   type NoteBadge,
 } from "../lib/blackboardLanes";
-import { hasBlackboardSection } from "../lib/blackboardOrdinance";
 import { formatError } from "../lib/errorText";
 import { renderMarkdown } from "../lib/markdown";
 import type { BlackboardNote, BottomTab, ErrorPayload } from "../types";
@@ -41,10 +39,7 @@ import BottomPaneTabs from "./BottomPaneTabs.vue";
 
 defineProps<{ activeTab: BottomTab }>();
 
-const emit = defineEmits<{
-  (e: "selectTab", tab: BottomTab): void;
-  (e: "openOrdinance"): void;
-}>();
+const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 
 const orchestrator = useOrchestrator();
 /** 付箋の畳み。部品の外（モジュール + localStorage）に持つ — タブを離れても残す。 */
@@ -240,34 +235,11 @@ async function clearDone(): Promise<void> {
   }
 }
 
-/**
- * 条例に黒板の節が無いか（2026-09-17）。**読めて、無いと分かったときだけ真。**
- *
- * 黒板の規約をサーヴァントへ伝える経路は条例だけなので、節が無い村では付箋が 1 枚も
- * 書かれず、この画面は理由を言わずに空のまま残る。読むのは**付箋が 0 枚のときだけ**
- * （付箋がある村は規約が伝わっている）。読めなかったときは何も言わない —
- * 「分からない」を「無い」と書かない。
- */
-const ordinanceLacksBoard = ref(false);
-
-async function checkOrdinance(): Promise<void> {
-  if (notes.value.length > 0) {
-    ordinanceLacksBoard.value = false;
-    return;
-  }
-  try {
-    ordinanceLacksBoard.value = !hasBlackboardSection(await readOrdinance());
-  } catch {
-    ordinanceLacksBoard.value = false;
-  }
-}
-
 async function refresh(): Promise<void> {
   try {
     notes.value = await listBlackboard();
     collapse.prune(notes.value);
     error.value = null;
-    await checkOrdinance();
   } catch (err) {
     error.value = toErrorPayload(err);
   } finally {
@@ -536,20 +508,6 @@ function formatTime(ms: number): string {
       <p v-if="loaded && notes.length === 0" class="px-3 py-4 text-center text-xs text-ink-dim">
         {{ $t("blackboard.empty") }}
       </p>
-      <!-- 条例に黒板の節が無い村では、待っても付箋は書かれない。理由と次の手を名指しする。 -->
-      <div
-        v-if="loaded && notes.length === 0 && ordinanceLacksBoard"
-        data-ordinance-hint
-        class="mx-3 mb-4 rounded border border-warn/40 bg-surface-1 px-3 py-2 text-center text-xs text-ink"
-      >
-        <p>{{ $t("blackboard.noOrdinanceSection") }}</p>
-        <button
-          class="mt-2 rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0"
-          @click="emit('openOrdinance')"
-        >
-          {{ $t("blackboard.openOrdinance") }}
-        </button>
-      </div>
     </div>
   </div>
 </template>

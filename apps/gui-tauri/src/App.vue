@@ -330,7 +330,6 @@ onBeforeUnmount(() => {
           <BlackboardPane
             v-else
             :active-tab="bottomTab"
-            @open-ordinance="ordinanceOpen = true"
             @select-tab="bottomTab = $event"
           />
         </ErrorBoundary>
