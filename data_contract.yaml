@@ -682,6 +682,12 @@ enums:
           この会話 (session) スコープには期間の操作が無い
 
     blackboard_contract: |
+      **Spec 55 (2026-09-17 rev2 承認・P0 凍結) が本ブロックの 4 点を覆す** —
+      ファイル名の前半 (表示名 → agent_id) / 状態を動かす手 (file move → blackboard
+      ツールの move) / 直下の `まとめ.md` の特別扱い (廃止) / 書き手 (file ツール →
+      blackboard ツール。file・sd・yq の書き込み系は blackboard/ の下で拒否)。
+      **正は末尾の「Spec 55」のブロック。** 実装 (P1〜P4) が着地するまで動いているのは
+      以下の Spec 54 の形で、着地したコミットで該当行へ取り消し線を入れる。
       村の黒板 = 共有作業メモ (2026-08-02 条例で運用開始。機構は読み取り投影のみ)。
       実体はエージェントの共通 work_dir の `blackboard/` フォルダ
       (BLACKBOARD_DIR。2026-08-05 に `黒板/` から改名 = 言語に依存しない名前にする
@@ -792,6 +798,87 @@ enums:
           `dir:name` = 既存の保存値を壊さない)。**move で state が変わった付箋は開く**
           (意図。状態が動いた付箋は人が見るべきもの。鍵を `dir:name` にすると重複の
           片方を畳むと両方が畳まれる。凍結 10)
+      Spec 55 (黒板の書き込みをツールにする。2026-09-17 rev2 承認 → P0 で本節を凍結):
+        起点 — 黒板の規約 (置き場・綴り・状態) をサーヴァントへ伝える経路が条例だけで、
+        新しい村の Ordinance.md は空・コアのプロンプトは黒板に触れない = 条例に節が無い村では
+        付箋が 1 枚も書かれない。規約の運び手を条例からツールの説明文と schema へ移す。
+        - **凍結 1 (ツールと提示)**: 同梱ツール `blackboard` 1 本。**BUNDLED_TOOL_NAMES /
+          DEFAULT_ENABLED_TOOLS / WORK_DIR_TOOL_NAMES のどれにも入れない** (rag と同じ棚。
+          明示配列の enabledTools を持つ既存の村に生えない穴 = Spec 18 D13 を踏まない)。
+          提示の門は述語 1 本 = `work_dir がある && uses_blackboard`。**同じ述語を spec_for と
+          call の先頭の 2 箇所が呼ぶ** (提示集合は executable として既に実行フィルタだが、
+          書き込み系なので call でも 1 回見る。落ちたら outcome=disabled)。理由欄 (Spec 27) は生やす
+        - **凍結 2 (オプトアウト)**: AgentSpec.usesBlackboard: bool (既定 true)。
+          hearsRoomLog / allowHandoff と同じ肯定形。AgentSnapshot にも写す (投影に無い欄は
+          保存のたびに既定へ戻る)。役職の雛形には入れない (role_contract の表)
+        - **凍結 3 (主キー)**: 置き場は `blackboard/<state>/<agent_id> - <仕事名>.md`。
+          **前半は agent_id** (Spec 54 の表示名を覆す)。自分の付箋か = 前半が ctx.agent_id か。
+          **agent_id は生成後に動かない** (発行はフロントの deriveId で新規作成の 1 箇所だけ。
+          改名は同じ id の name を差し替える) ので改名で孤児は出ない。id の文字集合
+          `[a-z0-9_-]` に空白は無く、最初の ` - ` で id と仕事名は一意に割れる。表示名は
+          保存せず、list / read の出力と黒板タブがその時点の名前を id から引く。
+          ToolContext へ足すのは **agent_names (村の全個体の id → 表示名) と uses_blackboard**
+          (rag_roots と同じく turn.rs の 2 箇所で world から解く)。**旧形式
+          `<表示名> - …` は読み替えない** (黒板タブで orphanUnknown になる)
+        - **凍結 4 (仕事名の正規化)**: 純関数 1 本を全 op が通す — 前後の空白と末尾の `.` を
+          落とす / `\ / : * ? " < > |` と制御文字を `_` へ / 空は拒否 / 上限 80 字
+          (code point)。正規化後の名前を結果に必ず書く
+        - **凍結 5 (op は閉じた 6 つ)**: list (本文なしの盤面。直下と「その他」も場所つき) /
+          read { name, owner? } (誰の付箋でも・どの場所でも。範囲の引数は持たない) /
+          write { name, body } (**create-only・置き場は doing 固定**。同じ id + 名前が
+          3 状態・直下・「その他」のどこにあっても拒否) / append { name, body } (自分の付箋・
+          **doing と on-hold にあるものだけ**) / move { name, to } (自分の付箋・3 状態の中に
+          あるものだけ) / remove { name } (自分の付箋・場所を問わない・OS のごみ箱)。
+          他人の付箋への append / move / remove は持ち主を名指しして拒否
+        - **凍結 6 (遷移)**: doing ⇄ on-hold、doing → done、on-hold → done。**done → * は拒否**
+          (done にある付箋への move は宛先が done でも outcome=frozen。done への append も
+          frozen)。同じ状態への move の no-op は doing / on-hold の中だけ。**やり直しは
+          「remove してから write」か「別の仕事名で write」の 2 手**で、拒否の文面が名指しする。
+          **move / remove に現状態の引数は取らない** — 同一個体のターンも周の中のツールも
+          直列で書き手は持ち主だけなので、サーヴァントどうしの競合は構造上無い。ツールは
+          名前だけで引き、**結果に実際の遷移 (`on-hold → done`) を必ず書く**
+        - **凍結 7 (write が重複で断るときの案内)**: 通らない手を案内しない。既存の付箋が
+          doing / on-hold なら append・move・別の仕事名、done なら remove してから write・
+          別の仕事名、直下・「その他」なら remove してから write・別の仕事名
+        - **凍結 8 (大きさとフォルダ)**: 付箋 1 枚の上限は 12,000 字 = file read の 1 回の
+          返却上限 (MAX_OUTPUT_CHARS)。write の本文と append 後の全体に掛ける = **ツールで
+          書いた付箋は read で必ず全文が返る** (続きを取る引数も分割の案内も持たない)。
+          超える append は拒否して「別の仕事名で write して続きを書く」を名指しする。
+          **置き場のフォルダはツールが作る** (write と move。新しい村に blackboard/ は無く、
+          file mkdir は囲いで塞がる)
+        - **凍結 9 (囲い)**: file の write / append / mkdir / remove (対象が blackboard/ の下)、
+          move (**元か宛先のどちらか**が下)、copy (**宛先が下のときだけ** — 外への copy は
+          読み取り)、sd の apply、yq の書き込み op を拒否する。blackboard フォルダ自体への
+          remove / move も同じ。**読み取りは塞がない** (file read / fd / grep / diff /
+          sd の preview / rag)。判定は**解決後のパス**の 1 実装 (work_dir からの最初の要素が
+          `blackboard` か。Windows は大文字小文字を無視)。文字列の前置検査にしない。
+          拒否の文面は blackboard ツールの write / append / move / remove を名指しする。
+          **run は塞がない** — 囲いはツール層のもので、run を許した村では保証にならない
+          (run が起こしたプロセスは並行の書き手にもなりうる)
+        - **凍結 10 (`まとめ.md` の廃止)**: ツールは書かない。黒板タブの最上部固定を外す。
+          既存のファイルは直下の「状態なし」に孤児として出る (消すのは人)。束ねは返信で返る
+        - **凍結 11 (説明文が規約を運ぶ)**: 説明文に入れるのは 5 点 — 1 仕事 1 付箋 /
+          着手時に list で盤面を見る / 状態の意味 (on-hold は「止めるよう言われて**自分で**
+          動かした」。動かせるのは持ち主だけなので「管理人が動かす」と読める書き方にしない) /
+          write は新規だけ・done は動かせない / 仕事の答えは黒板ではなく返信で返す。ja / en
+        - **凍結 12 (個体の削除)**: delete_agent は、消す個体の**現在の work_dir** の
+          blackboard/ (直下 + 1 段の全フォルダ = 読み手と同じ走査) から `<その id> - *.md` を
+          OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。**残余 (保証ではない)**:
+          以前の work_dir に残した付箋は届かない。**agent_id は削除後に再利用される**
+          (deriveId が空いている最小の番号を取る) ので、同じ id の新しい個体がそのフォルダを
+          向くと付箋を引き継ぎ、書ける = 「書けるのは自分の付箋だけ」はここで破れる。
+          運用の処方は「個体を消す前に、以前の作業フォルダの付箋を黒板タブから消す」
+        - **凍結 13 (黒板タブ)**: 持ち主の解決は id の一致 (表示名の一致をやめる)。見出しは
+          表示名 + 仕事名、title に id。orphanUnknown = 前半がどの個体の id にも当たらない
+          (旧形式の付箋 / 凍結 12 の残余)。**掃除が通った削除では孤児は出ない**。orphanMoved・
+          重複のバッジ・畳みの鍵・削除の IPC は不変。**GUI から内容を書く経路は作らない**
+          は維持。コアの読み手は状態名を検査しない (3 値を知るのは書き手のツールだけ)
+        - **凍結 14 (計器)**: `blackboard op: agent=… op=… state=… outcome=ok|noop|exists|
+          not_owner|frozen|not_found|too_large|disabled` を 1 行 (frozen は move と append の
+          両方で出るので op= と組で読む)。囲いの拒否は `blackboard fence: agent=… tool=… op=…`。
+          本文と仕事名は出さない
+        - **撤去**: 止血 (条例の「黒板の節を挿入」+ 黒板タブの空表示の案内 =
+          lib/blackboardOrdinance.ts) は P5 で撤去する (節が無いことの検出ごと要らなくなる)
     settings_contract: |
       システム設定ダイアログ (Spec 13。2026-08-03 rev3 承認 → P0 で本節を凍結。
       実装は P1〜P5)。主目的は**既にある設定の可視化**。Spec 13 が足した新規の設定は
@@ -1522,6 +1609,7 @@ enums:
         | order               | 入れない | 左ペインの並び順。役職の性質ではない    |
         | batch_start         | 入れない | 一括起動の対象。運用の選択             |
         | hears_room_log      | 入れない | コスト設定 (Spec 03)。村の懐事情で決まる|
+        | uses_blackboard     | 入れない | 黒板ツールの提示 (Spec 55)。hears_room_log と同じ個体の運用の選択。**P1 で実装と同時に効く** — それまで上の検算 (11 欄・12 行・入れない 6) は現行の数のまま |
 
       **rag_sources の移動は Spec 18 D10** (2026-08-05)。凍結時に「入れる」だった
       のは意味が「索引済みソース名」で端末に依存しなかったから。絶対パスへの
@@ -1902,6 +1990,7 @@ entities:
       maxToolIterations: u8 | null  # ツール実行回数の個別上限。null なら既定 (12)
       enabledTools: String[] | null # 提示する同梱ツール名。null なら全提示 (Spec 02)
       hearsRoomLog: bool            # 広場ログを受け取るか。既定 true (Spec 03)
+      usesBlackboard: bool          # 黒板ツール (blackboard) を提示するか。既定 true (Spec 55。P1 で着地)
       allowHandoff: bool            # 転送 (transfer_to_*) を提示するか。既定 true
       planReview: bool              # plan の編集窓 (計画の確認)。既定 false (Spec 43)
       batchStart: bool              # 一括起動 (▶) の対象か。既定 true
@@ -1954,6 +2043,8 @@ entities:
       の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
       MCP 由来・転送・委譲は対象外。**rag も対象外** (Spec 18 D13 — 提示は
       rag_sources の宣言だけが決める。詳細は rag_tool_contract)。
+      **blackboard も対象外** (Spec 55 — 提示は work_dir の有無と usesBlackboard が決める。
+      3 つの定数のどれにも入れない。詳細は blackboard_contract の Spec 55 のブロック)。
       - null = 「既定に従う」: **既定集合 DEFAULT_ENABLED_TOOLS を提示**。
         新規作成時の保存値は null (UI のチェック全 ON は null の効果の表示で
         あって、明示配列 7 本を保存するのではない。利用者がチェックを触った
@@ -2106,6 +2197,7 @@ entities:
       maxToolIterations: u8 | null  # 同上
       enabledTools: String[] | null # 同上
       hearsRoomLog: bool            # 同上
+      usesBlackboard: bool          # 同上 (**投影にも要る** — Spec 55。P1 で着地)
       allowHandoff: bool            # 同上 (転送を提示するか。**投影にも要る**)
       planReview: bool              # 同上 (plan の編集窓。**投影にも要る** — Spec 43)
       batchStart: bool              # 同上 (一括起動 ▶ の対象か。稼働状態は status)
@@ -4141,6 +4233,8 @@ conversation_termination:
     下記 bundled_tools_contract / write_tools_contract / file_tool_contract /
     command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
     = DEFAULT_ENABLED_TOOLS は 7 本)。
+    **この列挙の外に居る同梱ツールが 2 本ある** — rag (Spec 18 D13) と blackboard
+    (Spec 55。P2 で着地)。どちらも enabledTools の対象外で、提示は spec_for が決める。
     **2026-08-04 に 4 本 → 7 本へ訂正した** — Spec 01 の sd / yq と Spec 09 の
     file を足したとき、この行だけが追従していなかった。同じファイルの
     enabled_tools_invariant は 7 本と書いており、**1 つの契約ファイルの中で
@@ -4150,6 +4244,9 @@ conversation_termination:
     外部の能力は MCP 経由で足す — 何でも同梱するとシングルバイナリに
     世界中の依存が生える。
     ToolContext は agent_id に加えて work_dir (Option<PathBuf>) を運ぶ (2026-07-29)。
+    **Spec 55 (P1) で agent_names (村の全個体の id → 表示名) と uses_blackboard を足す** —
+    見るのは blackboard だけ。黒板は元からファイル名で全員の名前を露出しているので、
+    名前の表をツール層へ渡すのは新しい露出ではない。
     解決するのはオーケストレーター (execute_tool) で、**呼び出しの瞬間**に world から
     引く — ツール登録時に固定すると設定変更が効かない。ツール自身は world を知らない
     (登録簿の型に依存すると MCP ツールと同じ穴に嵌らなくなる)。
@@ -4253,6 +4350,9 @@ conversation_termination:
 
   write_tools_contract: |
     書き換え系 sd / yq = Spec 01 rev2 承認に基づく契約 (2026-07-29 凍結)。
+    **Spec 55 (2026-09-17 凍結・P3 で着地) の囲い**: sd の apply と yq の書き込み op は、対象が
+    `blackboard/` の下なら拒否する (sd の preview と yq の読み取り op は通す)。判定と文面は
+    file と同じ 1 実装 (blackboard_contract の凍結 9)。
     初の書き込み能力であり、被害クラスを「漏洩」から「改竄」へ広げるため、
     読み取り系より厳しい不変条件を敷く。
     不変条件:
@@ -4360,6 +4460,10 @@ conversation_termination:
 
   file_tool_contract: |
     ファイル・フォルダ操作 file = Spec 09 (2026-07-31 凍結)。
+    **Spec 55 (2026-09-17 凍結・P3 で着地) の囲い**: write / append / mkdir / remove は対象が
+    `blackboard/` の下なら拒否、move は元か宛先のどちらかが下なら拒否、copy は**宛先が下の
+    ときだけ**拒否 (外への copy は読み取り)。read は塞がない。判定は解決後のパスの 1 実装で、
+    拒否の文面は blackboard ツールを名指しする (blackboard_contract の凍結 9)。
     動機は実機の空転 — README の英訳を頼んだが道具立てに**新規作成が無く**、
     エージェントが sd で延々と試み続けた。禁止ではなく**その行動を選ぶ理由を
     消す**情報を与えるのが処方 (判断材料の欠落型。failures.md #20 と同型)。
