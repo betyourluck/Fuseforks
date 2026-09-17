@@ -26,6 +26,28 @@ use crate::error::{CoreError, CoreResult};
 /// （利用者判断 2026-08-05）。呼び名としての「黒板」は台帳・設計語に残す。
 pub const BLACKBOARD_DIR: &str = "blackboard";
 
+/// 付箋のファイル名で、持ち主の id と仕事名を分ける区切り（Spec 55）。
+/// `<agent_id> - <仕事名>.md`。id の文字集合 `[a-z0-9_-]` に空白は無いので、
+/// **最初の 1 つ**で一意に割れる（仕事名の中に同じ並びがあってもよい）。
+/// フロントの `blackboardLanes.ts` の `NOTE_SEPARATOR` と同じ綴り。
+pub const NOTE_SEPARATOR: &str = " - ";
+
+/// 付箋の拡張子。
+pub const NOTE_EXTENSION: &str = ".md";
+
+/// ファイル名を（持ち主の id, 仕事名）へ割る（Spec 55）。`.md` でない・区切りが無い・
+/// どちらかが空のファイルは `None`（持ち主を名乗っていない = 誰の付箋でもない）。
+///
+/// **書き手（`blackboard` ツール）と掃除（`delete_agent`）が同じ 1 実装を通す** —
+/// 割り方が 2 箇所に住むと、ツールが自分のものと読む付箋を掃除が取りこぼす。
+/// 前半が実在の個体の id かどうかはここでは見ない（旧形式 `<表示名> - …` も同じ形で
+/// 割れ、どの id にも当たらないので孤児になる）。
+pub fn split_note_name(file_name: &str) -> Option<(&str, &str)> {
+    let stem = file_name.strip_suffix(NOTE_EXTENSION)?;
+    let (owner, task) = stem.split_once(NOTE_SEPARATOR)?;
+    (!owner.is_empty() && !task.is_empty()).then_some((owner, task))
+}
+
 /// 進行役が束ねる付箋。一覧の先頭へ固定する（条例で書き手が 1 本と
 /// 決まっている唯一のファイルで、読み手が最初に見るべきもの）。
 const SUMMARY_FILE: &str = "まとめ.md";
@@ -280,6 +302,19 @@ mod tests {
             ".",
         ] {
             assert!(!is_safe_note_name(bad), "通してはいけない名前が通った: {bad}");
+        }
+    }
+
+    /// ファイル名は**最初の**区切りで（持ち主, 仕事名）へ割れる（Spec 55）。
+    /// id に空白は無いので、仕事名の中の区切りは仕事名の一部として残る。
+    #[test]
+    fn note_names_split_at_the_first_separator() {
+        assert_eq!(split_note_name("agent_3 - 調査.md"), Some(("agent_3", "調査")));
+        assert_eq!(split_note_name("agent - Spec 55 - P2.md"), Some(("agent", "Spec 55 - P2")));
+        // 旧形式も同じ形で割れる。前半がどの id にも当たらないので孤児になる。
+        assert_eq!(split_note_name("ザリ - 調査.md"), Some(("ザリ", "調査")));
+        for nobody in ["まとめ.md", "agent - 調査.txt", " - 調査.md", "agent - .md", "agent-調査.md"] {
+            assert_eq!(split_note_name(nobody), None, "{nobody}");
         }
     }
 

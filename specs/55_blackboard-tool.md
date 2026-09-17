@@ -5,7 +5,7 @@
   前提を訂正して採用 2 / 運用で決めた 1。Notes 3 の表が正）→ 承認（同日。D5 = `まとめ.md` の
   廃止も裁定）→ P0 完了**（同日。`data_contract.yaml` の `blackboard_contract` へ Spec 55 の
   凍結 14 本 + 周辺 7 箇所の追従。条例の改訂案は Notes 4。記録は「P0 契約記録」）
-  **→ P1 完了**（同日。記録は「P1 実装記録」）
+  **→ P1 完了**（同日。記録は「P1 実装記録」）**→ P2 完了**（同日。記録は「P2 実装記録」）
 - 起点: 利用者 —「黒板は条例にユーザーが任意で書く使い方と、プログラムで書かれた固定の機構に
   依存している。これは必ず一致するとは限らないため、私以外の環境ではまともに動くのかが不安」→
   「付箋を書くのをツール化することはできませんか？ファイルの命名規則も厳格化するとか」（2026-09-17）。
@@ -246,12 +246,12 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   列挙 / `AgentSpec`・`AgentSnapshot` の欄。条例の改訂案を Notes へ
 - **P1 コア: `ToolContext`（完了 2026-09-17。記録は下の「P1 実装記録」）** — `agent_names` / `uses_blackboard` を足し、`turn.rs` の 2 箇所で解く。
   `AgentSpec.uses_blackboard` + 投影 + 役職の分類テスト
-- **P2 コア: ツール本体** — `tools/blackboard.rs`（正規化の純関数 / 6 op / 遷移表 / ja・en の説明文）。
+- **P2 コア: ツール本体（完了 2026-09-17。記録は下の「P2 実装記録」）** — `tools/blackboard.rs`（正規化の純関数 / 6 op / 遷移表 / ja・en の説明文）。
   読みは `blackboard.rs` の `read_blackboard_dir` を共有。単体 + ミューテーション
   （create-only を外す / 持ち主の検査を外す / `done` の凍結を外す — それぞれ狙った本だけ赤）
 - **P3 コア: 囲い** — 判定 1 実装を `tools/fs.rs` へ。`file` 6 op・`sd` apply・`yq` 書き込みへ配線。
   読み取りが通ることを対で留める。`delete_agent` の掃除（D7）
-- **P4 GUI** — 持ち主の解決を id へ / 設定ダイアログのチェック / `snapshotToSpec` / `toolLabel` /
+- **P4 GUI** — **アプリへの登録（`state.rs` の `register_tool(BlackboardTool)`）** / 持ち主の解決を id へ / 設定ダイアログのチェック / `snapshotToSpec` / `toolLabel` /
   辞書 ja・en / D5 の撤去 / 走査テスト
 - **P5 台帳と撤去** — **止血（2026-09-17。条例の「黒板の節を挿入」+ 黒板タブの空表示の案内 =
   `lib/blackboardOrdinance.ts` とその配線・辞書 5 鍵・初回案内の文）を撤去する** — 規約をツールの
@@ -309,6 +309,47 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   リンクできなかった**ので、アプリ側は `cargo check --workspace --tests` で確かめた
   （コアのテストは全部走った）
 
+### P2 実装記録（2026-09-17）
+
+- **`tools/blackboard.rs` を新設**（`BlackboardTool`。`lib.rs` と `tools/mod.rs` から公開）。
+  `BUNDLED_TOOL_NAMES` / `DEFAULT_ENABLED_TOOLS` / `WORK_DIR_TOOL_NAMES` には入れていない。
+  門は `is_offered`（`work_dir` がある && `uses_blackboard`）の 1 本で、`spec_for` と `execute` の先頭が呼ぶ
+- **読みは `read_blackboard_dir` を共有**し、op の本体は `spawn_rayon` の中（既存ツールと同じ規律）。
+  置き場の解決は `file` と同じ 2 本 — 新しい宛先は `resolve_creatable`、既存の付箋は
+  `resolve_in_work_dir`（`blackboard` が作業フォルダの外を指す junction なら、ここで断られる）
+- **`blackboard.rs`（読み手）へ足したもの**: `NOTE_SEPARATOR` / `NOTE_EXTENSION` /
+  `split_note_name`。ファイル名の割り方を書き手と D7 の掃除（P3）が 1 実装で共有する。
+  **3 値 `STATES` はツールの側にだけ置いた**（読み手は状態名を検査しない — 維持した凍結）
+- **契約へ足した細部**（`blackboard_contract` の凍結 4・5・11・14 に追記）: 仕事名の末尾の `.md` を
+  落とす・上限超えは切り詰めずに拒否 / 他人の付箋を狙う形は 2 つ（`owner` に他人・他人の仕事名を
+  そのまま）でどちらも `not_owner` / `read` の `owner` は id でも表示名でも / `append` は改行を
+  1 つ挟む / 重複は `append`・`move` が `ambiguous`、`remove` は全部をごみ箱へ / `write` は
+  `create_new` / `list` の有界化 / 作業フォルダが無ければ掘らない / **計器の `outcome` に 4 値**
+  （`invalid` / `misplaced` / `ambiguous` / `error`。P0 の 8 値では引数の誤りとディスクの失敗が
+  行を出せない）/ `state=` は場所の 6 値・`move` だけ `to=`
+- **結果の文面は ja / en の 2 面にした。** 他の同梱ツールの結果は ja 固定だが、このツールは
+  拒否の文面が次の手を運ぶ（Goal 1 =「私以外の環境で動くか」には英語の村が含まれる）。
+  単体で、英語の提示と結果 7 通りに日本語が 1 字も無いことを留めた
+- **説明文の実測**: ja 480 字 / en 1,041 字、schema の説明 ja 259 字 / en 537 字
+  （全員の毎ターンに乗る固定費。`file` の説明文と同じ桁）。5 点のほかに「終わったら最終の報告を
+  返す前に done へ移す」を 1 句入れた（同日の実機でルナの付箋が `doing` に残った件）。
+  単体が 5 点の語と 700 字未満を留める
+- **単体 15 本 + `split_note_name` 1 本 + 結合 `tests/blackboard_tool_turn.rs` 1 本**
+  （ログの宛先はプロセスに 1 つなので 1 ファイル 1 テスト）。結合は実際のターンで 3 点を見る —
+  `enabled_tools` が**空の明示配列**の個体にも提示される / 同じ村のオプトアウトした個体には
+  提示されない / `blackboard op:` が op 1 回に 1 行で、仕事名も本文も載らない
+- **全部が一発で緑だったので変異 5 回**（sed / 文字列置換で入れて戻す）:
+  create-only の検査を外す → `write_never_overwrites…` の 1 本 / 持ち主の照合を外す →
+  `other_servants_notes…` と `write_never_overwrites…` の 2 本（後者は「他人の同じ仕事名は
+  重複ではない」= 同じ主キーの規則の裏側なので 2 本で正しい）/ `move` の `done` 凍結を外す →
+  `move_follows…` の 1 本 / `append` の凍結を外す → `append_grows…` の 1 本 /
+  `BUNDLED_TOOL_NAMES` へ `blackboard` を足す → 結合の 1 本（提示が `room_log` だけになる）
+- **アプリへの登録は P4 へ送った。** `state.rs` に登録すると、その版から全個体にツールが出て
+  `agent - 仕事名.md` を書き始めるが、黒板タブはまだ表示名で持ち主を引く（全部が孤児に見える）うえ、
+  条例は `file` の write を指したままで囲い（P3）も無い = 規約が 2 つ並ぶ。コアに居るだけなら
+  どの村にも出ない。P4 で GUI が id を引けるようになるコミットで登録する
+- core 964（947 + 17）・clippy 0・`cargo check --workspace --tests` 緑。フロントは無変更
+
 ## 検収（P6）
 
 1. **条例が空の新しい村**で、依頼を受けた個体が `blackboard` の `write` を呼び、黒板タブの
@@ -337,7 +378,8 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
 
 ### 2. 開いたままの点
 
-- 説明文の字数と、`list` の出力の上限（付箋が 100 枚を超えた盤面）。P2 で測る
+- ~~説明文の字数と、`list` の出力の上限（付箋が 100 枚を超えた盤面）。P2 で測る~~ → P2 実装記録。
+  説明文 ja 480 字 + schema 259 字。`list` は 12,000 字で有界（1 行 60〜80 字なので 150〜200 枚）
 - `agent_names` が村の全個体の名前をツール層へ渡すこと。黒板は今もファイル名で全員の名前を
   露出しているので新しい露出ではないが、契約に 1 行書く
 

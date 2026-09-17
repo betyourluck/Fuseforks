@@ -2270,7 +2270,7 @@ Spec 43 の窓と pending の二重申告。変えたのは `STATES` 定数・�
 `attention(tab)` の字面しか見ていなかったので、判定を `return false` にしても緑だった。純関数へ出して
 単体で留め、変異 3 回（判定 / バッジの `v-if` / 色）とも 1 本だけ赤。vitest 605・build 緑。**実機は未確認。**
 
-**2026-09-17 追加 — [Spec 55](specs/55_blackboard-tool.md)（黒板の書き込みをツールにする）を起票 → 査読 2 系統 18 点 → rev2（採用 13 / 前提を訂正して採用 2 / 運用で決めた 1）→ 承認（D5 = `まとめ.md` の廃止も裁定）→ P0 完了（`blackboard_contract` へ凍結 14 本 + 周辺 7 箇所。Spec 54 の行は実装が着地するコミットまで消さず、ブロックの冒頭で「正は末尾の Spec 55」と名指しした。条例の改訂案は Spec の Notes 4 — **貼るのは P4 が着地した版を入れてから**）→ P1 完了（`ToolContext` へ `agent_names` / `uses_blackboard`・`AgentSpec.uses_blackboard` と投影・フロントの型と写しを前倒し。**役職の分類の検算が定数どうしの自己照合で、`AgentSpec` に 4 欄足されても緑だった**のを、左辺をワイヤの鍵の数から取る形へ直した = 16 欄 = 2 + 3 + 11。core 947・vitest 622）。**
+**2026-09-17 追加 — [Spec 55](specs/55_blackboard-tool.md)（黒板の書き込みをツールにする）を起票 → 査読 2 系統 18 点 → rev2（採用 13 / 前提を訂正して採用 2 / 運用で決めた 1）→ 承認（D5 = `まとめ.md` の廃止も裁定）→ P0 完了（`blackboard_contract` へ凍結 14 本 + 周辺 7 箇所。Spec 54 の行は実装が着地するコミットまで消さず、ブロックの冒頭で「正は末尾の Spec 55」と名指しした。条例の改訂案は Spec の Notes 4 — **貼るのは P4 が着地した版を入れてから**）→ P1 完了（`ToolContext` へ `agent_names` / `uses_blackboard`・`AgentSpec.uses_blackboard` と投影・フロントの型と写しを前倒し。**役職の分類の検算が定数どうしの自己照合で、`AgentSpec` に 4 欄足されても緑だった**のを、左辺をワイヤの鍵の数から取る形へ直した = 16 欄 = 2 + 3 + 11。core 947・vitest 622）→ P2 完了（`tools/blackboard.rs` = `BlackboardTool`。仕事名の正規化 `normalize_task_name` / 6 op / 遷移と `done` の凍結 / ja・en の説明文と結果 / 計器 `blackboard op:`。読みは `read_blackboard_dir` を共有し、ファイル名の割り方 `split_note_name` を読み手の `blackboard.rs` へ置いた。説明文は ja 480 字 + schema 259 字。計器の `outcome` へ `invalid` / `misplaced` / `ambiguous` / `error` の 4 値を足した。**アプリへの登録は P4 へ送った** — 今 `state.rs` へ登録すると黒板タブが表示名で持ち主を引くままなので全付箋が孤児に見える。変異 5 回とも狙った本が赤。core 964）。**
 起点は利用者の不安 —「黒板は条例（利用者が任意に書く）と固定の機構の両方に依存していて、私以外の
 環境で動くのか」。実測すると**新しい村の `Ordinance.md` は空で、コアのプロンプトは黒板に 1 字も
 触れていない** = 他の人の環境では付箋が 1 枚も書かれない。裁定 2 点（`blackboard` ツールは
@@ -2309,7 +2309,7 @@ Spec 43 の窓と pending の二重申告。変えたのは `STATES` 定数・�
 残った — 状態の変更は条例の文言による自己申告で、機構は強制しない。Spec 55 の条例案に「最終報告の
 前に done へ移す」の 1 行を入れた）。
 
-**次の一手**: Spec 55 P2（`tools/blackboard.rs` = 仕事名の正規化 / 6 op / 遷移 / ja・en の説明文 / 計器）/ Spec 54 P4 実機検収の残り（~~**条例の改訂案を貼ってから**~~ Spec 55 の条例案を待つ — Spec Notes 1。3 値の綴りへ更新済み）/
+**次の一手**: Spec 55 P3（囲い = `tools/fs.rs` の判定 1 実装を `file` 6 op・`sd` apply・`yq` 書き込みへ配線 / `delete_agent` の掃除 / Spec 54 の契約行へ取り消し線）/ Spec 54 P4 実機検収の残り（~~**条例の改訂案を貼ってから**~~ Spec 55 の条例案を待つ — Spec Notes 1。3 値の綴りへ更新済み）/
 作業状況タブの印の実機確認（計画の確認 ON の進行役に plan を呼ばせ、黒板タブを見たままバッジと色が出る）/
 未 push コミットの push
 （799d5e5 / a7280fb / 20d3211）の push / 黒板の 3 列の実機確認は Spec 54 で列が変わるので省略 /

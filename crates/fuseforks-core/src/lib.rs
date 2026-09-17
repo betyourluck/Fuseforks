@@ -126,6 +126,6 @@ pub use session_store::{
 pub use tool::{AgentTool, ToolContext, ToolRegistry};
 pub use process::resolve_program;
 pub use tools::{
-    DiffTool, FdTool, FileTool, GrepTool, RagTool, RememberTool, RunTool, SdTool, YqTool,
+    BlackboardTool, DiffTool, FdTool, FileTool, GrepTool, RagTool, RememberTool, RunTool, SdTool, YqTool,
 };
 pub use world::World;
