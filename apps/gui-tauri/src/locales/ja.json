@@ -339,7 +339,8 @@
     "blackboardTitle": "村の黒板（共有作業メモ）。work_dir の blackboard/ を表示するだけで、ここからは書けない",
     "waves": "作業状況",
     "wavesTitle": "plan の実行痕。列 = 波 / 行 = サーヴァント",
-    "switcher": "下段ペインの切り替え"
+    "switcher": "下段ペインの切り替え",
+    "wavesPending": "計画の確認待ちが {count} 件。開いて「実行」か「破棄」を選ぶまで村は待っています"
   },
   "blackboard": {
     "noteCount": "{count} 枚",

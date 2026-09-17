@@ -339,7 +339,8 @@
     "blackboardTitle": "The village blackboard (shared working notes). Shows the blackboard/ folder under work_dir; nothing can be written from here",
     "waves": "Work status",
     "wavesTitle": "Execution traces of plan. Columns = waves / rows = servants",
-    "switcher": "Switch bottom pane"
+    "switcher": "Switch bottom pane",
+    "wavesPending": "{count} plan(s) awaiting your review. The village waits until you open this tab and choose Dispatch or Discard"
   },
   "blackboard": {
     "noteCount": "{count} notes",

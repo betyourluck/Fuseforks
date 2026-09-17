@@ -35,6 +35,7 @@ import type {
   PlanWaveRecord,
 } from "../types";
 import BottomPaneTabs from "./BottomPaneTabs.vue";
+import { pendingWaveCount } from "../lib/wavesBadge";
 
 defineProps<{ activeTab: BottomTab }>();
 
@@ -165,9 +166,7 @@ function cellTitle(task: PlanTaskRecord): string {
 
 /** 確認待ちの波（最古の 1 件）。複数あるときは件数だけ横に出す。 */
 const pendingWave = computed(() => state.planWaves.find((w) => w.state === "pending"));
-const pendingCount = computed(
-  () => state.planWaves.filter((w) => w.state === "pending").length,
-);
+const pendingCount = computed(() => pendingWaveCount(state.planWaves));
 
 /**
  * 編集中の下書き。**フロントだけが持つ**（D4 — 編集の中間状態に API を
