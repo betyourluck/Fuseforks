@@ -1055,13 +1055,13 @@ export interface BlackboardNote {
   dir: string;
   /**
    * 仕事の状態 = `blackboard/` 直下のフォルダ名そのもの（Spec 54）。無ければ直下の
-   * 平置き（「状態なし」）。コアは欄ごと省くので `undefined` で来る。5 値かどうかは
+   * 平置き（「状態なし」）。コアは欄ごと省くので `undefined` で来る。3 値かどうかは
    * 画面（`lib/blackboardLanes.ts`）が見る。
    */
   state?: string;
   /**
-   * ファイル名（フォルダを含めない）。コアの並びは `まとめ.md`（直下）→ 直下 →
-   * `state` の文字列順 → 名前順で、**画面の列順とは別**（列順はフロントが持つ）。
+   * ファイル名（フォルダを含めない。前半は持ち主の `agent_id` — Spec 55）。コアの並びは
+   * 直下 → `state` の文字列順 → 名前順で、**画面の列順とは別**（列順はフロントが持つ）。
    */
   name: string;
   content: string;

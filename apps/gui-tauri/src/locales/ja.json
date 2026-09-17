@@ -354,7 +354,6 @@
     "confirmClearMessage": "{count} 枚の付箋をごみ箱へ移します。完全には削除しないので、OS のごみ箱から戻せます。",
     "confirmClearLabel": "すべて消す",
     "state": {
-      "summary": "まとめ",
       "doing": "進行中",
       "onHold": "保留",
       "done": "完了",
@@ -362,7 +361,6 @@
       "other": "その他: {name}"
     },
     "stateTitle": {
-      "summary": "進行役が束ねた付箋（条例の まとめ.md）。列には入れず先頭に固定します",
       "doing": "blackboard/doing/ にある付箋。サーヴァントが着手中の仕事",
       "onHold": "blackboard/on-hold/ にある付箋。止めてある仕事",
       "done": "blackboard/done/ にある付箋。終わった仕事。消すならこの列から",
@@ -389,7 +387,7 @@
     "clearDone": "完了の付箋を消す",
     "clearDoneTitle": "完了の列の付箋だけをごみ箱へ移します",
     "confirmClearDoneTitle": "完了の付箋を消しますか？",
-    "confirmClearDoneMessage": "{count} 枚の付箋をごみ箱へ移します（他の列と まとめ.md は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
+    "confirmClearDoneMessage": "{count} 枚の付箋をごみ箱へ移します（他の列は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
     "confirmClearDoneLabel": "完了を消す",
     "noOrdinanceSection": "条例に黒板の節がありません。サーヴァントは黒板の使い方を条例から知るので、このままでは付箋は書かれません。条例を開いて「黒板の節を挿入」を押し、保存してください。",
     "openOrdinance": "条例を開く"
@@ -639,6 +637,8 @@
     "runOnWarn": "コマンド実行を許しています。作業フォルダの制限は実行したコマンドには効きません。実行できるのはこのサーヴァントの run.json（mcp.json タブの隣で編集）の allow に一致する呼び出しだけです。allow が空でも道具は提示されますが、その状態では何も実行できません — 一致しない呼び出しは pending に記録されるので、タイトルバーの「コマンド承認」で承認すると次のターンから通ります。",
     "allowHandoff": "転送を許す（会話を引き渡す）",
     "allowHandoffHint": "この個体は会話を引き渡せません。委譲（相手に訊いて答えを受け取る）と手分けは使えます。進行役に向いた設定です。",
+    "usesBlackboard": "黒板に付箋を書く",
+    "usesBlackboardHint": "この個体には黒板の道具が出ません。付箋を書いたり動かしたりはできませんが、黒板の付箋を読むことはできます。",
     "planReview": "計画の確認（plan の編集窓）",
     "planReviewHint": "plan は撒く前に提案として止まり、作業状況タブで内容を編集してから実行できます。提案したターンには結果が返りません。",
     "group": "グループ",
@@ -1091,6 +1091,7 @@
     "yq": "設定を書き換える",
     "file": "ファイルを読み書きする",
     "rag": "資料を引く",
+    "blackboard": "黒板に付箋を書く",
     "run": "コマンドを実行する",
     "plan": "手分けして頼む",
     "room_log": "会話をたどる",

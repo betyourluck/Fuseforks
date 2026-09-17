@@ -26,6 +26,7 @@ import { useOrchestrator } from "../composables/useOrchestrator";
 import {
   isOrphan,
   kanbanNotes,
+  noteHeading,
   stateDictKey,
   isKnownState,
   type KanbanColumn,
@@ -71,29 +72,26 @@ const board = computed(() =>
 
 type Section = {
   key: string;
-  column: KanbanColumn<BlackboardNote> | null;
-  notes: MarkedNote<BlackboardNote>[] | BlackboardNote[];
+  column: KanbanColumn<BlackboardNote>;
+  notes: MarkedNote<BlackboardNote>[];
 };
 
 /**
- * 画面の並び: まとめ（あれば）→ 5 つの状態の列（0 枚でも出す）→ 状態なし（あれば）→
+ * 画面の並び: 3 つの状態の列（0 枚でも出す）→ 状態なし（あれば）→
  * その他（フォルダごと・あれば）。列順は純関数が持つ（コアの返却順は別のもの）。
+ * `まとめ.md` の先頭固定は Spec 55 D5 で廃止した。
  */
-const sections = computed<Section[]>(() => [
-  ...(board.value.summary.length
-    ? [{ key: "summary", column: null, notes: board.value.summary }]
-    : []),
-  ...board.value.columns.map((column) => ({
+const sections = computed<Section[]>(() =>
+  board.value.columns.map((column) => ({
     key: column.kind === "unfiled" ? "unfiled" : `${column.kind}:${column.state}`,
     column,
     notes: column.notes,
   })),
-]);
+);
 
 /** 列の見出し。辞書の鍵は状態ごとに実行時に組む（走査テストが列挙と突き合わせる）。 */
 function columnLabel(section: Section): string {
   const column = section.column;
-  if (column === null) return t(`blackboard.state.${stateDictKey("summary")}`);
   if (column.kind === "unfiled") return t(`blackboard.state.${stateDictKey("unfiled")}`);
   if (column.kind === "other") return t("blackboard.state.other", { name: column.state });
   return t(`blackboard.state.${stateDictKey(column.state as never)}`);
@@ -101,7 +99,6 @@ function columnLabel(section: Section): string {
 
 function columnTitle(section: Section): string {
   const column = section.column;
-  if (column === null) return t(`blackboard.stateTitle.${stateDictKey("summary")}`);
   if (column.kind === "unfiled") return t(`blackboard.stateTitle.${stateDictKey("unfiled")}`);
   if (column.kind === "other") return t("blackboard.stateTitle.other", { name: column.state });
   return t(`blackboard.stateTitle.${stateDictKey(column.state as never)}`);
@@ -109,13 +106,13 @@ function columnTitle(section: Section): string {
 
 /** 列の印の色。`doing` は動いている色、残りは線の色。 */
 function columnDot(section: Section): string {
-  const state = section.column?.state;
+  const state = section.column.state;
   if (state === "doing") return "bg-run";
   return "bg-line";
 }
 
 function isDone(section: Section): boolean {
-  return section.column?.kind === "state" && section.column.state === "done";
+  return section.column.kind === "state" && section.column.state === "done";
 }
 
 /** 持ち主の手番のバッジ。辞書の鍵を返す（訳語は持たない）。内訳は既存の `reason.*`。 */
@@ -125,8 +122,21 @@ function badgeKey(badge: NoteBadge): string {
     : `blackboard.reason.${badge}`;
 }
 
-function marksOf(note: BlackboardNote | MarkedNote<BlackboardNote>) {
-  return "marks" in note ? note.marks : null;
+function marksOf(note: MarkedNote<BlackboardNote>) {
+  return note.marks;
+}
+
+/**
+ * 見出しの名前と `title`。持ち主が引けたら「表示名 - 仕事名」で、id は `title` に出す
+ * （ファイル名は id で名付けられているので、撮った画面から実ファイルを引けるように）。
+ */
+function headingOf(note: MarkedNote<BlackboardNote>): string {
+  return noteHeading(note.name, note.marks.info.owner);
+}
+
+function headingTitle(note: MarkedNote<BlackboardNote>): string | undefined {
+  const owner = note.marks.info.owner;
+  return owner === null ? undefined : `${owner.id} · ${note.name}`;
 }
 
 /** `isKnownState` は列挙の網に載せるためだけに参照する（列は純関数が決める）。 */
@@ -355,8 +365,8 @@ function formatTime(ms: number): string {
     </div>
 
     <!--
-      まとめ（あれば）→ 5 つの状態の列 → 状態なし → その他、の順に縦へ並べる（Spec 54）。
-      5 つの列の見出しは空でも出す — 「どれを消すか」を列で読ませるのが目的なので、
+      3 つの状態の列 → 状態なし → その他、の順に縦へ並べる（Spec 54 / 55）。
+      3 つの列の見出しは空でも出す — 「どれを消すか」を列で読ませるのが目的なので、
       列の形が毎回同じであることが情報になる。付箋の並びは列の中でもコアの順
       （孤児だけ先頭）。列順は純関数が持ち、コアの返却順（state の文字列順）とは別。
 
@@ -442,7 +452,7 @@ function formatTime(ms: number): string {
               <path d="m6 9 6 6 6-6" />
             </svg>
           </button>
-          <span class="font-semibold text-ink">{{ note.name }}</span>
+          <span class="font-semibold text-ink" :title="headingTitle(note)">{{ headingOf(note) }}</span>
           <!--
             バッジは 2 種。持ち主の手番（1 枚に 1 つ。孤児は赤・手番は accent・動いているは
             run 色）と、同名が複数の状態に並ぶ重複（赤）。列は状態、印は観測 — 2 つを
@@ -489,8 +499,8 @@ function formatTime(ms: number): string {
               note.modifiedMs ? '' : 'ml-auto',
             ]"
             :disabled="busy"
-            :title="$t('blackboard.deleteTitle', { name: note.name })"
-            :aria-label="$t('blackboard.deleteTitle', { name: note.name })"
+            :title="$t('blackboard.deleteTitle', { name: headingOf(note) })"
+            :aria-label="$t('blackboard.deleteTitle', { name: headingOf(note) })"
             @click.stop="remove(note)"
           >
             <svg

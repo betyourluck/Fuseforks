@@ -3,7 +3,7 @@
  *
  * 2026-09-16 の版は持ち主の手番（typing / status / 波 / workDir）から 3 列を派生させていた。
  * 2026-09-17 の Spec 54 で前提が「持ち主の状態」から「仕事の状態」へ動き、列は付箋の
- * 置き場（`blackboard/<state>/<表示名> - <仕事名>.md` の `state`）が決めるようになった。
+ * 置き場（`blackboard/<state>/<agent_id> - <仕事名>.md` の `state`）が決めるようになった。
  * 手番の判定 `classifyNote` は 1 行も変えず、返り値の使い方だけを列からバッジへ変えた —
  * 「状態は `doing` なのに持ち主は停止中」のような**宣言と観測の食い違い**を人が読むため。
  *
@@ -16,20 +16,21 @@
  * - `PlanWaveRecord.state === "pending"` — 人の手番の波があるか
  * - `AgentSnapshot.workDir` と付箋の `dir` — 持ち主が**この** work_dir を向いているか
  *
- * 持ち主の同定は表示名の一致に寄る（条例がそう決めているだけで、機構の保証ではない）。
+ * 持ち主の同定は**ファイル名の前半と `agent_id` の一致**（Spec 55 D2）。書き手は
+ * `blackboard` ツールだけで、ツールが自分の id で名付けるので、改名しても付箋は
+ * 持ち主から外れない。旧形式（`<表示名>.md` / `<表示名> - <仕事名>.md`）は
+ * どの id にも当たらず孤児になる（検収 7 — 列の一括とごみ箱で消す）。
  * `dir` は持ち主を決められない — 実機では 10 体中 9 体が同じ work_dir を向いている。
- * `dir` が担うのは「その名前の個体がこの work_dir を向いているか」の判定だけで、
+ * `dir` が担うのは「その id の個体がこの work_dir を向いているか」の判定だけで、
  * 向いていなければ**孤児**（work_dir を移した個体の付箋。本人はもう消せない）。
  */
 
 import type { AgentStatus, PlanTaskState, PlanWaveState } from "../types";
 
-/** 進行役が束ねる付箋。列には入れず、常に上に固定する（条例の `まとめ.md`）。**直下のものだけ。** */
-export const SUMMARY_NOTE = "まとめ.md";
-
 /**
- * 表示名と仕事名の区切り（最初の 1 つ）。`ownerNameOf` が割り、条例へ挿入する節
- * （`blackboardOrdinance.ts`）が同じ綴りをサーヴァントへ伝える — 2 箇所に書かない。
+ * 持ち主（`agent_id`）と仕事名の区切り（最初の 1 つ）。`splitNoteName` が割る。
+ * コアの `NOTE_SEPARATOR`（`blackboard.rs`）と同じ綴り。
+ * `まとめ.md` の先頭固定は Spec 55 D5 で廃止した（束ねは進行役の付箋 1 枚）。
  */
 export const NOTE_SEPARATOR = " - ";
 
@@ -53,7 +54,7 @@ export function isKnownState(state: string): state is BlackboardState {
  * 辞書の鍵（`blackboard.state.*` / `blackboard.stateTitle.*`）。フォルダ名の `-` は
  * vue-i18n の鍵に置かず camelCase へ写す（`on-hold` → `onHold`）。
  */
-export function stateDictKey(state: BlackboardState | "unfiled" | "other" | "summary"): string {
+export function stateDictKey(state: BlackboardState | "unfiled" | "other"): string {
   return state.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
@@ -87,7 +88,7 @@ export type BlackboardLane = "active" | "yourTurn" | "released";
 
 /**
  * `released` の内訳。バッジになる。
- * - `orphanUnknown` — 表示名の一致する個体が村に居ない
+ * - `orphanUnknown` — ファイル名の前半に一致する id の個体が村に居ない（旧形式を含む）
  * - `orphanMoved`   — 居るが、この付箋の work_dir を向いていない（消せるのは人だけ）
  * - `failed` / `stopped` / `waiting` — 持ち主の稼働状態
  */
@@ -95,22 +96,34 @@ export type ReleasedReason = "orphanUnknown" | "orphanMoved" | "failed" | "stopp
 
 export interface NoteLane {
   lane: BlackboardLane;
-  /** 表示名で引けた持ち主。孤児（unknown）なら null。 */
+  /** id で引けた持ち主。孤児（unknown）なら null。 */
   owner: LaneAgent | null;
   /** `released` のときだけ埋まる。 */
   reason: ReleasedReason | null;
 }
 
 /**
- * 付箋のファイル名から持ち主の表示名を取る。
- * `ザリ.md` → `ザリ`（旧形式 = 仕事名なし）/ `ザリ - 調査 - 続き.md` → `ザリ`。
- * **区切りは最初の ` - `**（半角空白 + ハイフン + 半角空白）。仕事名の中の ` - ` は
- * 仕事名の一部（Spec 54 凍結 3）。
+ * 付箋のファイル名を持ち主の鍵と仕事名に割る。コアの `split_note_name` と同じ割り方 —
+ * `.md` を落とし、**最初の** ` - `（半角空白 + ハイフン + 半角空白）で割る。仕事名の中の
+ * ` - ` は仕事名の一部。区切りが無い（旧形式 `ザリ.md`）ときは `task` が null で、
+ * `key` は stem 全体（どの id にも当たらないので孤児になる）。
  */
-export function ownerNameOf(noteName: string): string {
+export function splitNoteName(noteName: string): { key: string; task: string | null } {
   const stem = noteName.endsWith(".md") ? noteName.slice(0, -3) : noteName;
   const cut = stem.indexOf(NOTE_SEPARATOR);
-  return cut === -1 ? stem : stem.slice(0, cut);
+  return cut === -1
+    ? { key: stem, task: null }
+    : { key: stem.slice(0, cut), task: stem.slice(cut + NOTE_SEPARATOR.length) };
+}
+
+/**
+ * 見出しに出す名前。持ち主が引けたら「表示名 - 仕事名」（id は `title` へ）、
+ * 引けなければファイル名のまま（孤児は名乗った名前を読めることが手掛かりになる）。
+ */
+export function noteHeading(noteName: string, owner: LaneAgent | null): string {
+  const { task } = splitNoteName(noteName);
+  if (owner === null || task === null) return noteName;
+  return `${owner.name}${NOTE_SEPARATOR}${task}`;
 }
 
 function releasedReason(status: AgentStatus): ReleasedReason {
@@ -128,8 +141,11 @@ function releasedReason(status: AgentStatus): ReleasedReason {
 
 /** 付箋 1 枚の手番を決める。優先は `yourTurn` > `active` > `released`。 */
 export function classifyNote(note: { dir: string; name: string }, ctx: LaneContext): NoteLane {
-  const stem = ownerNameOf(note.name);
-  const owner = ctx.agents.find((a) => a.name === stem) ?? null;
+  // 区切りの無い旧形式は誰の付箋でもない（コアの `split_note_name` が `None` を返すのと
+  // 同じ判定。stem が id と同じ綴りでも持ち主にしない — 掃除が拾わない付箋を
+  // 画面だけが「持ち主あり」と読む形を作らない）。
+  const { key, task } = splitNoteName(note.name);
+  const owner = task === null || key === "" ? null : (ctx.agents.find((a) => a.id === key) ?? null);
   if (owner === null) return { lane: "released", owner: null, reason: "orphanUnknown" };
   if (owner.workDir !== note.dir) return { lane: "released", owner, reason: "orphanMoved" };
 
@@ -171,7 +187,7 @@ export interface NoteMarks {
   info: NoteLane;
   badge: NoteBadge;
   /**
-   * 同じ `dir` で同じ `name`（表示名 + 仕事名の全体）が複数の場所に並んでいる
+   * 同じ `dir` で同じ `name`（持ち主 + 仕事名の全体）が複数の場所に並んでいる
    * （凍結 7）。move ではなく write で別の状態に同名を作った事故の網。
    * `ザリ - A.md` と `ザリ - B.md` は別の仕事なので重複ではない。
    */
@@ -193,8 +209,6 @@ export interface KanbanColumn<T> {
 }
 
 export interface KanbanBoard<T> {
-  /** 直下の `まとめ.md`（work_dir ごとに最大 1 枚）。列の外で先頭に固定する。バッジ無し。 */
-  summary: T[];
   columns: KanbanColumn<T>[];
 }
 
@@ -215,8 +229,7 @@ function orphansFirst<T>(notes: MarkedNote<T>[]): MarkedNote<T>[] {
 /**
  * 一覧を列へ振り分け、各付箋にバッジを付ける。
  *
- * - 直下の `まとめ.md` だけが `summary`（`classifyNote` に掛けない）。`state` の中の
- *   `まとめ.md` は普通の付箋（持ち主「まとめ」= 孤児バッジ。凍結 9）
+ * - `まとめ.md` に特別な扱いは無い（Spec 55 D5）。前半が id でないので孤児バッジ
  * - 列は `state` から決まる。3 値の外のフォルダはフォルダごとに `other` の列
  * - 重複は `dir:name` が複数の場所（直下も 1 つの場所）に現れたとき
  */
@@ -224,22 +237,15 @@ export function kanbanNotes<T extends NoteRef>(
   notes: readonly T[],
   ctx: LaneContext,
 ): KanbanBoard<T> {
-  const summary: T[] = [];
-  const rest: T[] = [];
-  for (const note of notes) {
-    if (note.state === undefined && note.name === SUMMARY_NOTE) summary.push(note);
-    else rest.push(note);
-  }
-
   const places = new Map<string, Set<string>>();
-  for (const note of rest) {
+  for (const note of notes) {
     const key = `${note.dir}:${note.name}`;
     const set = places.get(key) ?? new Set<string>();
     set.add(note.state ?? "");
     places.set(key, set);
   }
 
-  const marked: MarkedNote<T>[] = rest.map((note) => {
+  const marked: MarkedNote<T>[] = notes.map((note) => {
     const info = classifyNote(note, ctx);
     return {
       ...note,
@@ -275,5 +281,5 @@ export function kanbanNotes<T extends NoteRef>(
     });
   }
 
-  return { summary, columns };
+  return { columns };
 }

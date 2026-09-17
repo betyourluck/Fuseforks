@@ -203,6 +203,7 @@ const dirty = computed(() => {
     current.hearsRoomLog !== source.hearsRoomLog ||
     current.allowHandoff !== source.allowHandoff ||
     current.planReview !== source.planReview ||
+    current.usesBlackboard !== source.usesBlackboard ||
     // 役職だけを変えたときも保存できること。**入れ忘れると、選び直しても
     // 保存ボタンが有効にならず「変えられない」と読まれる。**
     current.roleId !== source.roleId ||
@@ -638,6 +639,17 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           </label>
           <p v-if="draft.planReview" class="mt-0.5 text-[10px] text-ink-dim">
             {{ $t("agentSettings.planReviewHint") }}
+          </p>
+          <!--
+            黒板の道具（Spec 55）。上のツール一覧（enabledTools）とは別の欄 — 既存の村は全個体が
+            明示配列なので、一覧に入れると誰にも生えない（Spec 18 D13 の穴）。既定 ON。
+          -->
+          <label class="mt-1 flex items-center gap-2 text-[12px]">
+            <input type="checkbox" v-model="draft.usesBlackboard" />
+            <span>{{ $t("agentSettings.usesBlackboard") }}</span>
+          </label>
+          <p v-if="!draft.usesBlackboard" class="mt-0.5 text-[10px] text-ink-dim">
+            {{ $t("agentSettings.usesBlackboardHint") }}
           </p>
           <div class="mb-3" />
 

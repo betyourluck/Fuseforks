@@ -15,6 +15,7 @@ import { stateDictKey, STATES, type NoteBadge, type ReleasedReason } from "./bla
  * 画面に鍵名がそのまま出る。ここで純関数の列挙と辞書を突き合わせる。
  */
 const pane = readFileSync(new URL("../components/BlackboardPane.vue", import.meta.url), "utf8");
+const dialog = readFileSync(new URL("../components/AgentSettingsDialog.vue", import.meta.url), "utf8");
 
 const REASONS: ReleasedReason[] = ["orphanUnknown", "orphanMoved", "failed", "stopped", "waiting"];
 const LANE_BADGES: Exclude<NoteBadge, ReleasedReason>[] = ["active", "yourTurn"];
@@ -32,8 +33,8 @@ describe("黒板の列とバッジの配線", () => {
     expect(pane).not.toMatch(/\[\s*["']doing["']\s*,/);
   });
 
-  it("列の辞書は STATES（camelCase）+ summary / unfiled / other と一致する（ja / en とも）", () => {
-    const expected = [...STATES.map(stateDictKey), "summary", "unfiled", "other"].sort();
+  it("列の辞書は STATES（camelCase）+ unfiled / other と一致する（ja / en とも）", () => {
+    const expected = [...STATES.map(stateDictKey), "unfiled", "other"].sort();
     expect(keysOf(ja, "blackboard.state")).toEqual(expected);
     expect(keysOf(en, "blackboard.state")).toEqual(expected);
     expect(keysOf(ja, "blackboard.stateTitle")).toEqual(expected);
@@ -89,6 +90,19 @@ describe("黒板の列とバッジの配線", () => {
     for (const key of ["blackboard.expand", "blackboard.collapse"]) {
       expect(keysOf(ja, "blackboard")).toContain(key.split(".")[1]);
       expect(keysOf(en, "blackboard")).toContain(key.split(".")[1]);
+    }
+  });
+  it("見出しは持ち主を id から引いた名前で出す。まとめ.md の固定は無い（Spec 55 D2 / D5）", () => {
+    expect(pane).toContain("noteHeading(note.name, note.marks.info.owner)");
+    expect(pane).not.toContain("summary");
+  });
+
+  it("設定ダイアログに usesBlackboard のチェックがあり、変えたら保存できる（Spec 55 P4）", () => {
+    expect(dialog).toContain('v-model="draft.usesBlackboard"');
+    expect(dialog).toContain("current.usesBlackboard !== source.usesBlackboard");
+    for (const key of ["usesBlackboard", "usesBlackboardHint"]) {
+      expect(keysOf(ja, "agentSettings")).toContain(key);
+      expect(keysOf(en, "agentSettings")).toContain(key);
     }
   });
 });

@@ -5,7 +5,7 @@
   前提を訂正して採用 2 / 運用で決めた 1。Notes 3 の表が正）→ 承認（同日。D5 = `まとめ.md` の
   廃止も裁定）→ P0 完了**（同日。`data_contract.yaml` の `blackboard_contract` へ Spec 55 の
   凍結 14 本 + 周辺 7 箇所の追従。条例の改訂案は Notes 4。記録は「P0 契約記録」）
-  **→ P1 完了**（同日。記録は「P1 実装記録」）**→ P2 完了**（同日。記録は「P2 実装記録」）**→ P3 完了**（同日。記録は「P3 実装記録」）
+  **→ P1 完了**（同日。記録は「P1 実装記録」）**→ P2 完了**（同日。記録は「P2 実装記録」）**→ P3 完了**（同日。記録は「P3 実装記録」）**→ P4 完了**（2026-09-18。記録は「P4 実装記録」）
 - 起点: 利用者 —「黒板は条例にユーザーが任意で書く使い方と、プログラムで書かれた固定の機構に
   依存している。これは必ず一致するとは限らないため、私以外の環境ではまともに動くのかが不安」→
   「付箋を書くのをツール化することはできませんか？ファイルの命名規則も厳格化するとか」（2026-09-17）。
@@ -251,7 +251,7 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   （create-only を外す / 持ち主の検査を外す / `done` の凍結を外す — それぞれ狙った本だけ赤）
 - **P3 コア: 囲い（完了 2026-09-17。記録は下の「P3 実装記録」）** — 判定 1 実装を `tools/fs.rs` へ。`file` 6 op・`sd` apply・`yq` 書き込みへ配線。
   読み取りが通ることを対で留める。`delete_agent` の掃除（D7）
-- **P4 GUI** — ~~アプリへの登録~~（P3 へ戻した。P3 実装記録）/ 持ち主の解決を id へ / 設定ダイアログのチェック / `snapshotToSpec` / `toolLabel` /
+- **P4 GUI（完了 2026-09-18。記録は下の「P4 実装記録」）** — ~~アプリへの登録~~（P3 へ戻した。P3 実装記録）/ 持ち主の解決を id へ / 設定ダイアログのチェック / `snapshotToSpec` / `toolLabel` /
   辞書 ja・en / D5 の撤去 / 走査テスト
 - **P5 台帳と撤去** — **止血（2026-09-17。条例の「黒板の節を挿入」+ 黒板タブの空表示の案内 =
   `lib/blackboardOrdinance.ts` とその配線・辞書 5 鍵・初回案内の文）を撤去する** — 規約をツールの
@@ -379,7 +379,37 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   `delete_agent` が掃除を呼ばない → 結合の 1 本 / 判定を最後の要素で見る → 囲いの 5 本
 - core 971（964 + 7）・clippy 0・`cargo check --workspace --tests` 緑。フロントは無変更
 
-### P4 の入口（2026-09-18。セッションをまたぐための手掛かり）
+### P4 実装記録（2026-09-18）
+
+- **持ち主の解決**: `ownerNameOf` を `splitNoteName`（`{ key, task }`。割り方はコアの `split_note_name` と同じ）+
+  `noteHeading` へ置き換え、`classifyNote` は `agents.find(a.id === key)` で引く。
+  **区切りの無い名前（`agent_2.md`）は stem が id と同じ綴りでも持ち主にしない** — コアの
+  `split_note_name` は `None` を返し、掃除（D7）が拾わない付箋を画面だけが「持ち主あり」と読む形になるため。
+  Spec の入口には書いていなかった判定で、実装で足した
+- **見出し**: 持ち主が引けたら「表示名 - 仕事名」、`title` に `id · ファイル名`（撮った画面から実ファイルを引ける）。
+  孤児はファイル名のまま。ごみ箱の `title` も見出しの名前で出す
+- **D5 の撤去**: コアの `SUMMARY_FILE` と並びの規則を外し、並びは `state` → `name` だけに。テストは
+  `the_summary_note_is_not_pinned_first` へ差し替え — 名前は `あ.md`（U+3042）を使う。`まとめ.md`（U+307E）は
+  カタカナの表示名（U+30A0 台）より前に並ぶので、**旧テストの `ザリ.md` / `ジェミー.md` では固定が残っていても
+  同じ並びになり検査にならない**。フロントは `SUMMARY_NOTE` / `KanbanBoard.summary` / 辞書 `state.summary` と
+  `stateTitle.summary` を削除。止血の `blackboardOrdinance.ts` は `SUMMARY_NOTE` の import と束ねの 1 行ごと外した
+  （P5 で撤去するファイルだが、定数を消す版でビルドを落とさないため。入口に書いた順序の注意どおり）
+- **設定ダイアログ**: `usesBlackboard` のチェックを「計画の確認」の下へ（ツールの節。dirty 判定にも追加）。
+  辞書 `agentSettings.usesBlackboard` / `usesBlackboardHint` ja・en
+- **ツール名**: `KNOWN_TOOLS` へ `blackboard`、辞書 `tools.blackboard`（ja「黒板に付箋を書く」/ en「work the blackboard」）。
+  `toolLabel.test.ts` は `rag` の形を写し、**Rust の `BUNDLED_TOOL_NAMES` に入っていないこと**も留めた
+- **契約**: `blackboard_contract` の Spec 54 の残り 2 点（ファイル名の前半 / `まとめ.md`）と、それに依存する
+  4 行（返却順 / 列の外の固定 / 持ち主の一致 / 改名で孤児）へ取り消し線。冒頭の「P4 まで孤児」を過去形へ
+- **走査テスト**: `blackboardLanesWiring.test.ts` へ 2 本（見出しが `noteHeading` を通る・画面に `summary` が無い /
+  ダイアログに `v-model` と dirty 判定と辞書 2 鍵）。fixture の id は `agent_<名前>` で**表示名と違う綴り**にした
+  — 同じ綴りだと名前で引く実装でも緑になる
+- **変異 4 回とも狙った本で赤**: id → name で引く（持ち主の同定と手番の 11 本）/ 区切り無しの判定を外す（1 本）/
+  dirty 判定を外す（走査 1 本）/ コアの `まとめ.md` 固定を戻す（1 本）
+- vitest 627・vue-tsc 0・build 緑・core 全緑（lib 699）・clippy 0。アプリ側 Rust は変更なし
+  （`fuseforks.exe` が起動中で `cargo test --workspace` はリンクできなかった）
+- **P5 に残したもの**: DETAIL 日英の `まとめ.md` と表示名の記述 / 止血の撤去 / CLAUDE.md の黒板の節
+
+### ~~P4 の入口（2026-09-18。セッションをまたぐための手掛かり）~~（P4 完了。上の実装記録が正）
 
 - **持ち主の解決**: `lib/blackboardLanes.ts` の `ownerNameOf`（表示名の完全一致）を id の一致へ。
   割り方はコアの `split_note_name` と同じ（`.md` を落とし、**最初の** ` - ` で割る。`NOTE_SEPARATOR` は既に定数）。

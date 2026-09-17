@@ -27,13 +27,13 @@ const TRANSFER_PREFIX = "transfer_to_";
 /**
  * この村が名付けたツールの表示名（辞書の鍵の末尾）。
  *
- * **同梱 9 本 + 合成 3 種。** ここに無い名前は外部として扱われるので、
+ * **同梱 10 本 + 合成 3 種。** ここに無い名前は外部として扱われるので、
  * **同梱ツールを足したらここにも足す** — 忘れると自分たちのツールが
  * 「外部のもの」として等幅で出る。`toolLabel.test.ts` が Rust の
  * `BUNDLED_TOOL_NAMES` と突き合わせて機械で留めている。
  */
 const KNOWN_TOOLS = new Set([
-  // 同梱（BUNDLED_TOOL_NAMES ∪ {rag}）
+  // 同梱（BUNDLED_TOOL_NAMES ∪ {rag, blackboard}）
   "remember",
   "grep",
   "fd",
@@ -42,6 +42,7 @@ const KNOWN_TOOLS = new Set([
   "yq",
   "file",
   "rag",
+  "blackboard",
   "run",
   // orchestrator 合成
   "plan",

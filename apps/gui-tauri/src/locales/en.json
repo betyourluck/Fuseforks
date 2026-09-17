@@ -354,7 +354,6 @@
     "confirmClearMessage": "{count} notes will be moved to the trash. They are not deleted permanently, so you can restore them from the OS trash.",
     "confirmClearLabel": "Clear all",
     "state": {
-      "summary": "Summary",
       "doing": "In progress",
       "onHold": "On hold",
       "done": "Done",
@@ -362,7 +361,6 @@
       "other": "Other: {name}"
     },
     "stateTitle": {
-      "summary": "The note the coordinator bundles (the ordinance's まとめ.md). Pinned above the columns",
       "doing": "Notes under blackboard/doing/. Work a servant has started",
       "onHold": "Notes under blackboard/on-hold/. Work set aside",
       "done": "Notes under blackboard/done/. Finished work. Clear from this column",
@@ -389,7 +387,7 @@
     "clearDone": "Clear the done notes",
     "clearDoneTitle": "Move only the Done column's notes to the trash",
     "confirmClearDoneTitle": "Clear the done notes?",
-    "confirmClearDoneMessage": "{count} notes will be moved to the trash (other columns and まとめ.md stay). They are not deleted permanently, so you can restore them from the OS trash.",
+    "confirmClearDoneMessage": "{count} notes will be moved to the trash (other columns stay). They are not deleted permanently, so you can restore them from the OS trash.",
     "confirmClearDoneLabel": "Clear done",
     "noOrdinanceSection": "The ordinance has no blackboard section. Servants learn how to use the blackboard from the ordinance, so no notes will be written as things stand. Open the ordinance, press \"Insert blackboard section\", and save.",
     "openOrdinance": "Open ordinance"
@@ -639,6 +637,8 @@
     "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run. The tool is offered even while allow is empty, but nothing can be executed in that state — non-matching calls are recorded as pending, so approving one from \"Command approval\" in the title bar lets it pass from the next turn.",
     "allowHandoff": "Allow handoff (pass the conversation on)",
     "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator.",
+    "usesBlackboard": "Write notes on the blackboard",
+    "usesBlackboardHint": "This servant gets no blackboard tool. It cannot write or move notes, but it can still read the notes on the blackboard.",
     "planReview": "Review plans (edit window)",
     "planReviewHint": "plan pauses as a proposal before dispatching. Edit and dispatch it from the activity tab. The proposing turn does not receive results.",
     "group": "Group",
@@ -1091,6 +1091,7 @@
     "yq": "edit settings",
     "file": "read or write files",
     "rag": "look up references",
+    "blackboard": "work the blackboard",
     "run": "run a command",
     "plan": "split the work",
     "room_log": "read the room log",

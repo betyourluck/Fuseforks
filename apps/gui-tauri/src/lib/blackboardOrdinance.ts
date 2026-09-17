@@ -9,14 +9,14 @@
  * 空表示の案内（節が無いことを名指しする）。**挿入した後は利用者の文章**で、アプリは以後
  * 1 字も触らない（条例は利用者の資産）。
  *
- * **綴りの正本はコードの定数**（`BLACKBOARD_DIR` と、`blackboardLanes.ts` の `STATES` / `NOTE_SEPARATOR` / `SUMMARY_NOTE`）。
+ * **綴りの正本はコードの定数**（`BLACKBOARD_DIR` と、`blackboardLanes.ts` の `STATES` / `NOTE_SEPARATOR`）。
  * 文面はそこから組むので、状態の集合が変わっても追従する。状態の説明は
  * `Record<BlackboardState, …>` なので、状態を足すと型が説明の欠けを指す。
  *
  * これは現行（Spec 54・条例で運ぶ形）の止血で、Spec 55（書き込みのツール化）が入れば
  * 規約はツールの説明文が運ぶ — そのときこのファイルごと要らなくなる。
  */
-import { type BlackboardState, NOTE_SEPARATOR, STATES, SUMMARY_NOTE } from "./blackboardLanes";
+import { type BlackboardState, NOTE_SEPARATOR, STATES } from "./blackboardLanes";
 
 /** 作業フォルダの下の黒板のフォルダ名。コアの `blackboard.rs` と同じ綴り。 */
 export const BLACKBOARD_DIR = "blackboard";
@@ -65,7 +65,6 @@ export function blackboardSection(language: OrdinanceLanguage): string {
       '- Do not put characters that file names cannot hold into the task name (`\\ / : * ? " < > |`).',
       "- Write only progress, findings, and hand-over memos. Return the answer to a request as a reply, not as a note.",
       `- Read once, when you start. Right after receiving a new task, list \`${dir}\` with fd and read only your own notes and the ones related to the task. Do not re-read during the same task.`,
-      `- Only the coordinator who handed out the work bundles results into \`${dir}${SUMMARY_NOTE}\` with write.`,
       `- Leave finished notes in \`${last}/\`. The user deletes them.`,
       "- For direct instructions from the user, or messages that need an immediate response, skip the blackboard check and respond directly.",
       "",
@@ -85,7 +84,6 @@ export function blackboardSection(language: OrdinanceLanguage): string {
     '- 仕事名にはファイル名に使えない文字を入れない（`\\ / : * ? " < > |`）。',
     "- 書くのは途中経過・気づき・次に渡す人への引き継ぎのメモだけ。頼まれた仕事の答えは付箋ではなく返信で返す。",
     `- 読むのは着手時に 1 回。新しいタスクを受け取った直後に fd で \`${dir}\` を一覧し、自分の付箋と関係する付箋だけ read する。同じタスクの進行中は読み直さない。`,
-    `- 依頼を配った進行役だけが \`${dir}${SUMMARY_NOTE}\` を write で束ねる。`,
     `- 終わった仕事の付箋は \`${last}/\` に残す。消すのは管理人。`,
     "- 管理人からの指示や即時対応が要るメッセージでは、黒板の確認を飛ばして直接対応する。",
     "",

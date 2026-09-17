@@ -44,6 +44,12 @@ describe("toolLabel", () => {
     expect(KNOWN_TOOL_NAMES).toContain("rag");
   });
 
+  it("`blackboard` も表に載っている（rag と同じく enabledTools の外に居る。Spec 55 D1）", () => {
+    // Rust の `BUNDLED_TOOL_NAMES` に入っていないことも留める — 入ると既存の村で誰にも生えない。
+    expect(rustList("BUNDLED_TOOL_NAMES")).not.toContain("blackboard");
+    expect(KNOWN_TOOL_NAMES).toContain("blackboard");
+  });
+
   it("表の全項目に ja / en の訳がある", () => {
     const keys = [...KNOWN_TOOL_NAMES, "ask", "transfer"];
     for (const key of keys) {

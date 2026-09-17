@@ -49,10 +49,6 @@ pub fn split_note_name(file_name: &str) -> Option<(&str, &str)> {
     (!owner.is_empty() && !task.is_empty()).then_some((owner, task))
 }
 
-/// 進行役が束ねる付箋。一覧の先頭へ固定する（条例で書き手が 1 本と
-/// 決まっている唯一のファイルで、読み手が最初に見るべきもの）。
-const SUMMARY_FILE: &str = "まとめ.md";
-
 /// 1 枚あたりの読み上限（bytes）。付箋の想定を大きく超えるファイルで
 /// IPC ペイロードが膨れるのを防ぐ。超過分は切り詰めて末尾に注記を足す。
 const NOTE_MAX_BYTES: usize = 256 * 1024;
@@ -188,8 +184,9 @@ pub async fn trash_notes_of(work_dir: &Path, owner: &str) -> (usize, usize) {
 /// - `.` で始まるフォルダは読まない。[`is_safe_note_name`] が先頭 `.` を拒むので、
 ///   読んでも画面から消せない付箋になる（読めるのに消せない形を作らない）
 /// - 読めない 1 枚は黙って飛ばす（1 枚のロック・権限で黒板全体を人質にしない）
-/// - 並びは `まとめ.md`（直下）→ 直下の平置き（名前順）→ `state` の文字列順 →
-///   その中で名前順。**安定な並びのためで、意味は持たせない** — 画面の列の並び
+/// - 並びは直下の平置き（名前順）→ `state` の文字列順 → その中で名前順。
+///   `まとめ.md` の先頭固定は Spec 55 D5 で廃止した（束ねは進行役の付箋 1 枚になる）。
+///   **安定な並びのためで、意味は持たせない** — 画面の列の並び
 ///   （`doing → on-hold → done`）はフロントが持つ。コアに列順を持たせると 3 値の
 ///   順序がコアと辞書の 2 箇所に住む
 pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNote>> {
@@ -230,14 +227,7 @@ pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNo
         }
     }
 
-    notes.sort_by(|a, b| {
-        let a_is_summary = a.state.is_none() && a.name == SUMMARY_FILE;
-        let b_is_summary = b.state.is_none() && b.name == SUMMARY_FILE;
-        b_is_summary
-            .cmp(&a_is_summary)
-            .then_with(|| a.state.cmp(&b.state))
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    notes.sort_by(|a, b| a.state.cmp(&b.state).then_with(|| a.name.cmp(&b.name)));
     Ok(notes)
 }
 
@@ -441,17 +431,17 @@ mod tests {
         assert_eq!(done.content, "done");
     }
 
-    /// `まとめ.md` が先頭に固定されるのは**直下のものだけ**（凍結 9）。
-    /// `state` の中の `まとめ.md` は普通の付箋として state の並びに入る。
+    /// `まとめ.md` は先頭に固定しない（Spec 55 D5）。直下でも普通の付箋と同じ名前順に入る。
+    /// 名前は `あ.md` を使う — `まとめ.md`（U+307E）より前に並ぶ名前でないと、
+    /// 固定が残っていても同じ並びになって検査にならない。
     #[tokio::test]
-    async fn only_the_root_summary_is_pinned_first() {
-        let dir = TempDir::new("bb-summary-state");
+    async fn the_summary_note_is_not_pinned_first() {
+        let dir = TempDir::new("bb-summary-unpinned");
         let root = dir.0.join(BLACKBOARD_DIR);
         std::fs::create_dir_all(root.join("doing")).unwrap();
         std::fs::write(root.join("doing").join("まとめ.md"), "x").unwrap();
-        std::fs::write(root.join("doing").join("あ.md"), "x").unwrap();
-        std::fs::write(root.join("ん.md"), "x").unwrap();
         std::fs::write(root.join("まとめ.md"), "x").unwrap();
+        std::fs::write(root.join("あ.md"), "x").unwrap();
 
         let notes = read_blackboard_dir(&dir.0).await.unwrap();
         let places: Vec<(Option<&str>, &str)> = notes
@@ -460,12 +450,7 @@ mod tests {
             .collect();
         assert_eq!(
             places,
-            vec![
-                (None, "まとめ.md"),
-                (None, "ん.md"),
-                (Some("doing"), "あ.md"),
-                (Some("doing"), "まとめ.md"),
-            ]
+            vec![(None, "あ.md"), (None, "まとめ.md"), (Some("doing"), "まとめ.md")]
         );
     }
 
@@ -497,20 +482,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn notes_are_read_with_the_summary_pinned_first() {
+    async fn notes_are_read_in_name_order() {
         let dir = TempDir::new("bb-order");
         let board = dir.0.join(BLACKBOARD_DIR);
         std::fs::create_dir_all(&board).unwrap();
         std::fs::write(board.join("ザリ.md"), "調査中: specs/04").unwrap();
-        std::fs::write(board.join("まとめ.md"), "# 今日の束ね").unwrap();
         std::fs::write(board.join("ジェミー.md"), "検索語: tokio select").unwrap();
         // 空のサブフォルダは何も足さない（中身が無い状態フォルダ）。
         std::fs::create_dir_all(board.join("古い黒板")).unwrap();
 
         let notes = read_blackboard_dir(&dir.0).await.unwrap();
         let names: Vec<&str> = notes.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["まとめ.md", "ザリ.md", "ジェミー.md"]);
-        assert_eq!(notes[1].content, "調査中: specs/04");
+        assert_eq!(names, vec!["ザリ.md", "ジェミー.md"]);
+        assert_eq!(notes[0].content, "調査中: specs/04");
         assert_eq!(notes[0].dir, dir.0.display().to_string());
         assert!(notes[0].modified_ms > 0, "更新時刻が入ること");
     }

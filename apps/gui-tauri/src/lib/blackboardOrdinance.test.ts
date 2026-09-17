@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error 同上
 import { fileURLToPath } from "node:url";
 
-import { NOTE_SEPARATOR, STATES, SUMMARY_NOTE, ownerNameOf } from "./blackboardLanes";
+import { NOTE_SEPARATOR, STATES, splitNoteName } from "./blackboardLanes";
 import {
   BLACKBOARD_DIR,
   blackboardSection,
@@ -43,10 +43,10 @@ describe("blackboardOrdinance: 節の綴り", () => {
     expect(text).toContain(String(STATES.length));
   });
 
-  it.each(LANGS)("%s: 区切りと束ねの付箋の名前が読み手と同じ", (lang) => {
+  it.each(LANGS)("%s: 区切りが読み手と同じ。まとめ.md は案内しない（Spec 55 D5）", (lang) => {
     const text = blackboardSection(lang);
     expect(text).toContain(`\`${NOTE_SEPARATOR}\``);
-    expect(text).toContain(`${BLACKBOARD_DIR}/${SUMMARY_NOTE}`);
+    expect(text).not.toContain("まとめ.md");
   });
 
   it.each(LANGS)("%s: 文面の例のファイル名を読み手が持ち主へ割れる", (lang) => {
@@ -54,7 +54,7 @@ describe("blackboardOrdinance: 節の綴り", () => {
     const text = blackboardSection(lang);
     const m = text.match(new RegExp(`${BLACKBOARD_DIR}/${STATES[0]}/([^\`<]+\\.md)`));
     expect(m, "例のパス").not.toBeNull();
-    const owner = ownerNameOf(m![1]);
+    const owner = splitNoteName(m![1]).key;
     expect(owner.length).toBeGreaterThan(0);
     expect(owner).not.toContain(NOTE_SEPARATOR.trim());
     expect(m![1].startsWith(`${owner}${NOTE_SEPARATOR}`)).toBe(true);
