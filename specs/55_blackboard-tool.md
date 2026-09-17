@@ -379,6 +379,24 @@ OS のごみ箱へ送る。失敗は WARN 1 行で削除は通す。
   `delete_agent` が掃除を呼ばない → 結合の 1 本 / 判定を最後の要素で見る → 囲いの 5 本
 - core 971（964 + 7）・clippy 0・`cargo check --workspace --tests` 緑。フロントは無変更
 
+### P4 の入口（2026-09-18。セッションをまたぐための手掛かり）
+
+- **持ち主の解決**: `lib/blackboardLanes.ts` の `ownerNameOf`（表示名の完全一致）を id の一致へ。
+  割り方はコアの `split_note_name` と同じ（`.md` を落とし、**最初の** ` - ` で割る。`NOTE_SEPARATOR` は既に定数）。
+  カードの見出しは「表示名 + 仕事名」、`title` に id。`orphanUnknown` = 前半がどの個体の id にも当たらない
+- **設定ダイアログ**: `AgentSettingsDialog.vue` へ `usesBlackboard` のチェック（`hearsRoomLog` / `allowHandoff` の隣。
+  dirty 判定にも足す）。型・`snapshotToSpec`・新規作成の既定は P1 で入っている
+- **ツール名**: `lib/toolLabel.ts` の `KNOWN_TOOL_NAMES` へ `blackboard`（`rag` と同じ直書き）+ 辞書 `tools.blackboard` ja / en。
+  `toolLabel.test.ts` は Rust の `BUNDLED_TOOL_NAMES` と突き合わせるが、`blackboard` は表の外なので `rag` の扱いを写す
+- **`まとめ.md` の最上部固定の撤去（D5）**: コアは `blackboard.rs` の `SUMMARY_FILE` と並びの規則・そのテスト 2 本、
+  フロントは `blackboardLanes.ts` の `SUMMARY_NOTE` と `BlackboardPane.vue`。**止血の `blackboardOrdinance.ts` が
+  `SUMMARY_NOTE` を import している**ので、P5 の撤去より前に定数を消すとビルドが落ちる（P4 で文面の 1 行ごと外すか、P5 とまとめる）
+- **契約**: `blackboard_contract` の Spec 54 の残り 2 点（ファイル名の前半 / `まとめ.md`）へ取り消し線。
+  冒頭の「P4 まで孤児のバッジが付く」の 1 文を過去形へ
+- **走査テスト**: `blackboardLanesWiring.test.ts`（辞書の鍵と列挙の突き合わせ）が既にある。持ち主の解決を変えると
+  `blackboardLanes.test.ts` の fixture（`ザリ - 調査.md` の形）が id の形へ動く
+- **P4 が入ったら**: 条例の改訂案（Notes 4）を利用者へ再提示する（貼るのは利用者）
+
 ## 検収（P6）
 
 1. **条例が空の新しい村**で、依頼を受けた個体が `blackboard` の `write` を呼び、黒板タブの
