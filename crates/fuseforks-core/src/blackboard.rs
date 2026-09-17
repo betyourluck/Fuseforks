@@ -139,7 +139,7 @@ pub async fn delete_note(work_dir: &Path, state: Option<&str>, name: &str) -> Co
 /// - 読めない 1 枚は黙って飛ばす（1 枚のロック・権限で黒板全体を人質にしない）
 /// - 並びは `まとめ.md`（直下）→ 直下の平置き（名前順）→ `state` の文字列順 →
 ///   その中で名前順。**安定な並びのためで、意味は持たせない** — 画面の列の並び
-///   （`doing → needs-you → …`）はフロントが持つ。コアに列順を持たせると 5 値の
+///   （`doing → on-hold → done`）はフロントが持つ。コアに列順を持たせると 3 値の
 ///   順序がコアと辞書の 2 箇所に住む
 pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNote>> {
     let dir = work_dir.join(BLACKBOARD_DIR);
@@ -342,13 +342,13 @@ mod tests {
     }
 
     /// **1 段目のフォルダの中まで読み、2 段目より深くは読まない**（Spec 54 凍結 1）。
-    /// 5 値の外のフォルダ（`foo`）もコアはそのまま `state` に載せる — 閉じた列挙を
+    /// 3 値の外のフォルダ（`foo` / `bar`）もコアはそのまま `state` に載せる — 閉じた列挙を
     /// 見るのは画面で、コアは名指しの材料を落とさない。`.` で始まるフォルダは読まない。
     #[tokio::test]
     async fn notes_one_folder_deep_are_read_with_their_state() {
         let dir = TempDir::new("bb-state");
         let root = dir.0.join(BLACKBOARD_DIR);
-        for state in ["doing", "needs-you", "waiting", "on-hold", "done", "foo", ".git"] {
+        for state in ["doing", "on-hold", "done", "foo", "bar", ".git"] {
             std::fs::create_dir_all(root.join(state)).unwrap();
             std::fs::write(root.join(state).join("ザリ - 調査.md"), state).unwrap();
         }
@@ -365,12 +365,11 @@ mod tests {
             places,
             vec![
                 (None, "ルナ.md"),
+                (Some("bar"), "ザリ - 調査.md"),
                 (Some("doing"), "ザリ - 調査.md"),
                 (Some("done"), "ザリ - 調査.md"),
                 (Some("foo"), "ザリ - 調査.md"),
-                (Some("needs-you"), "ザリ - 調査.md"),
                 (Some("on-hold"), "ザリ - 調査.md"),
-                (Some("waiting"), "ザリ - 調査.md"),
             ],
             "直下 → state の文字列順（列順ではない）。2 段目と `.git` は出ない"
         );

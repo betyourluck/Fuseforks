@@ -355,8 +355,6 @@
     "state": {
       "summary": "Summary",
       "doing": "In progress",
-      "needsYou": "Needs you",
-      "waiting": "Waiting on an agent",
       "onHold": "On hold",
       "done": "Done",
       "unfiled": "No state",
@@ -365,8 +363,6 @@
     "stateTitle": {
       "summary": "The note the coordinator bundles (the ordinance's まとめ.md). Pinned above the columns",
       "doing": "Notes under blackboard/doing/. Work a servant has started",
-      "needsYou": "Notes under blackboard/needs-you/. Work waiting for your decision",
-      "waiting": "Notes under blackboard/waiting/. Work waiting on another servant",
       "onHold": "Notes under blackboard/on-hold/. Work set aside",
       "done": "Notes under blackboard/done/. Finished work. Clear from this column",
       "unfiled": "Notes directly under blackboard/, not in a state folder (older-style notes land here)",

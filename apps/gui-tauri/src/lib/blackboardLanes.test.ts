@@ -131,34 +131,27 @@ describe("blackboardLanes: 手番の判定（バッジ）", () => {
 
 describe("blackboardLanes: 列（仕事の状態）", () => {
   it("列順は STATES の順で固定 — コアの返却順（state の文字列順）ではない（凍結 6）", () => {
-    // コアは state の文字列順で返す: doing, done, needs-you, on-hold, waiting。
-    const fromCore = ["doing", "done", "needs-you", "on-hold", "waiting"].map((s) =>
+    // コアは state の文字列順で返す: doing, done, on-hold。
+    const fromCore = ["doing", "done", "on-hold"].map((s) =>
       note(`ザリ - ${s}.md`, s),
     );
     const board = kanbanNotes(fromCore, ctx({ agents: [agent("ザリ")] }));
     expect(board.columns.map((c) => c.state)).toEqual([...STATES]);
-    expect(STATES).toEqual(["doing", "needs-you", "waiting", "on-hold", "done"]);
+    expect(STATES).toEqual(["doing", "on-hold", "done"]);
   });
 
-  it("5 つの列は付箋が 0 枚でも出る。状態なし・その他は付箋があるときだけ", () => {
+  it("3 つの列は付箋が 0 枚でも出る。状態なし・その他は付箋があるときだけ", () => {
     const empty = kanbanNotes([], ctx());
-    expect(empty.columns.map((c) => c.kind)).toEqual(["state", "state", "state", "state", "state"]);
+    expect(empty.columns.map((c) => c.kind)).toEqual(["state", "state", "state"]);
     expect(empty.summary).toEqual([]);
 
     const withUnfiled = kanbanNotes([note("ザリ.md")], ctx());
-    expect(withUnfiled.columns.map((c) => c.kind)).toEqual([
-      "state",
-      "state",
-      "state",
-      "state",
-      "state",
-      "unfiled",
-    ]);
+    expect(withUnfiled.columns.map((c) => c.kind)).toEqual(["state", "state", "state", "unfiled"]);
     // 直下の付箋は「状態なし」にだけ入り、どの状態の列にも漏れない（`doing` へ倒さない）。
-    expect(withUnfiled.columns.map((c) => c.notes.length)).toEqual([0, 0, 0, 0, 0, 1]);
+    expect(withUnfiled.columns.map((c) => c.notes.length)).toEqual([0, 0, 0, 1]);
   });
 
-  it("5 値の外のフォルダはフォルダごとに 1 列（フォルダ名順）。見出しは名前を運ぶ", () => {
+  it("3 値の外のフォルダはフォルダごとに 1 列（フォルダ名順）。見出しは名前を運ぶ", () => {
     const board = kanbanNotes(
       [note("x.md", "foo"), note("y.md", "bar"), note("z.md", "foo"), note("w.md")],
       ctx(),
@@ -210,7 +203,7 @@ describe("blackboardLanes: 列（仕事の状態）", () => {
         note("ザリ - A.md", "done"),
         note("ザリ - B.md", "doing"),
         note("ルナ - A.md"),
-        note("ルナ - A.md", "waiting"),
+        note("ルナ - A.md", "on-hold"),
       ],
       ctx(),
     );
@@ -221,7 +214,7 @@ describe("blackboardLanes: 列（仕事の状態）", () => {
     expect(dup.get("doing/ザリ - B.md")).toBe(false);
     // 直下も 1 つの場所として数える。
     expect(dup.get("/ルナ - A.md")).toBe(true);
-    expect(dup.get("waiting/ルナ - A.md")).toBe(true);
+    expect(dup.get("on-hold/ルナ - A.md")).toBe(true);
   });
 
   it("別の work_dir の同名は重複ではない（dir が違えば別の黒板）", () => {
@@ -233,7 +226,7 @@ describe("blackboardLanes: 列（仕事の状態）", () => {
   });
 
   it("辞書の鍵はフォルダ名の `-` を camelCase へ写す", () => {
-    expect(STATES.map(stateDictKey)).toEqual(["doing", "needsYou", "waiting", "onHold", "done"]);
+    expect(STATES.map(stateDictKey)).toEqual(["doing", "onHold", "done"]);
     expect(stateDictKey("unfiled")).toBe("unfiled");
   });
 });

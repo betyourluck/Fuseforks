@@ -294,8 +294,11 @@ AgentCenter = Review と Blocked を別列に）、建設業の Ball in Court（
 覆した。利用者の問い「ディレクトリで分けたほうが管理しやすいか」に実装を数えて答えた —
 状態の集合がフォルダ名で閉じる / `run_transfer` が親フォルダを作るので `file move` だけで
 動く / 禁止文字の問題が仕事名に縮む / 同名の重複が `name` の一致で読める / 直下の平置きが
-「状態なし」として残る）/ 状態は `doing | needs-you | waiting | on-hold | done` の英字 5 値
-（`blackboard/` を言語非依存にしたのと同じ規律）/ 動かすのはサーヴァントの `file move` だけで
+「状態なし」として残る）/ 状態は ~~`doing | needs-you | waiting | on-hold | done` の英字 5 値~~
+**→ rev3（同日の実機）で `doing | on-hold | done` の 3 値**（`needs-you` と `waiting` は使われなかった —
+委譲はターンの中で同期的に待つので「待ちに入った」と宣言する時点が無く、人の手番は Spec 43 の窓と
+`run.json` の pending が機構で決めてバッジに出る。利用者裁定「waiting は使わないので消す。needs-you も。
+on-hold は残す」）（`blackboard/` を言語非依存にしたのと同じ規律）/ 動かすのはサーヴァントの `file move` だけで
 GUI ドラッグは別 Spec。前日の 3 列はバッジへ降りる。**条例の改訂案は Spec の Notes 1**
 （貼るのは利用者）。以下は起票前の材料の記録。
 
@@ -2235,14 +2238,14 @@ Release publish 09-15 19:37 UTC / winget PR #435413 = 09-15 21:04 UTC マージ�
 **2026-09-17 — 黒板を KANBAN へ = [Spec 54](specs/54_blackboard-kanban.md) を起票 → 査読 2 系統 →
 rev2 承認 → P0 完了（`data_contract` の `blackboard_contract` を凍結 10 本の形へ・条例案は渡した）。**
 利用者「目指しているのは KANBAN で、タスクの状態を管理するのが理想」→ 3 点を同日に裁定
-（ディレクトリ / 英字 5 値 / サーヴァントの `file move` だけ）。上の「黒板を KANBAN へ」の節が正。
+（ディレクトリ / 英字 5 値 → **rev3 で 3 値** / サーヴァントの `file move` だけ）。上の「黒板を KANBAN へ」の節が正。
 
 **P1 完了**（同日。読み手を 1 段へ / `BlackboardNote.state` / 関門 2 段 / IPC の引数は `noteState` —
 `state` は Tauri の `State<'_, AppState>` と衝突する / ワイヤ凍結テストを新設 / ミューテーション
 2 回とも狙った本だけ赤。記録は Spec の「P1 実装記録」）。
 
 **P2 完了**（同日。`kanbanNotes` = 列は `STATES` 定数の順・バッジは `badgeOf`・重複は場所の `Set` /
-辞書の鍵は `needs-you` → `needsYou` の camelCase / `done` 列の一括は `deleteBlackboardNote` の
+辞書の鍵は `on-hold` → `onHold` の camelCase / `done` 列の一括は `deleteBlackboardNote` の
 ループ / 畳みの鍵 `dir:state/name`。ミューテーション 4 回 — **1 回は初回に緑で通った**（「状態なし」を
 `doing` へ倒しても列挙のテストが `unfiled` の存在しか見ていなかった。枚数の配列を足して赤）。
 vitest 599・build 緑。記録は Spec の「P2 実装記録」）。
@@ -2250,7 +2253,13 @@ vitest 599・build 緑。記録は Spec の「P2 実装記録」）。
 **P3 完了**（同日。DETAIL 日英の「黒板タブ」を状態の列 + バッジへ / README 3 言語と案内の文言は
 黒板の列に触れていないので無変更 / `git grep` の残りは履歴の文だけ。記録は Spec の「P3 台帳記録」）。
 
-**次の一手**: Spec 54 P4 実機検収 9 件（**条例の改訂案を貼ってから** — Spec Notes 1）/
+**rev3**（同日。P4 の実機で `needs-you` / `waiting` / `on-hold` が 1 度も使われず、利用者裁定で
+`waiting` と `needs-you` を落として `doing | on-hold | done` の 3 値へ。凍結 1 を覆した。
+`waiting` は構造で死んでいた — 委譲はターンの中で同期的に待つので宣言する時点が無い。`needs-you` は
+Spec 43 の窓と pending の二重申告。変えたのは `STATES` 定数・辞書の鍵 4 つ・テストの期待値で、
+コアは 3 値を検査していないので 0 行。記録は Spec の Notes 7）。
+
+**次の一手**: Spec 54 P4 実機検収の残り（**条例の改訂案を貼ってから** — Spec Notes 1。3 値の綴りへ更新済み）/
 未 push コミットの push
 （799d5e5 / a7280fb / 20d3211）の push / 黒板の 3 列の実機確認は Spec 54 で列が変わるので省略 /
 評価基盤の「完遂」の軸。

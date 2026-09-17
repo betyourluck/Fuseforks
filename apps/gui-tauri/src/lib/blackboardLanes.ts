@@ -28,12 +28,15 @@ import type { AgentStatus, PlanTaskState, PlanWaveState } from "../types";
 export const SUMMARY_NOTE = "まとめ.md";
 
 /**
- * 仕事の状態 = 状態フォルダの閉じた 5 値（Spec 54 凍結 1）。**並びが画面の列の並び**
- * （`doing → needs-you → waiting → on-hold → done`）。コアの返却順は `state` の文字列順で
- * 別のもの — コアに列順を持たせると 5 値の順序がコアと辞書の 2 箇所に住む（凍結 6）。
+ * 仕事の状態 = 状態フォルダの閉じた 3 値（Spec 54 凍結 1・rev3）。**並びが画面の列の並び**
+ * （`doing → on-hold → done`）。コアの返却順は `state` の文字列順で
+ * 別のもの — コアに列順を持たせると 3 値の順序がコアと辞書の 2 箇所に住む（凍結 6）。
+ * rev2 の 5 値から `needs-you` と `waiting` を落とした（2026-09-17 実機）— 委譲は
+ * ターンの中で同期的に待つので「待ちに入った」と宣言する時点が無く、人の手番は
+ * Spec 43 の窓と `run.json` の pending が既に決めてバッジに出る。
  * 名前は英字（`blackboard/` を言語非依存にしたのと同じ規律）。表示は辞書が訳す。
  */
-export const STATES = ["doing", "needs-you", "waiting", "on-hold", "done"] as const;
+export const STATES = ["doing", "on-hold", "done"] as const;
 export type BlackboardState = (typeof STATES)[number];
 
 export function isKnownState(state: string): state is BlackboardState {
@@ -42,7 +45,7 @@ export function isKnownState(state: string): state is BlackboardState {
 
 /**
  * 辞書の鍵（`blackboard.state.*` / `blackboard.stateTitle.*`）。フォルダ名の `-` は
- * vue-i18n の鍵に置かず camelCase へ写す（`needs-you` → `needsYou`）。
+ * vue-i18n の鍵に置かず camelCase へ写す（`on-hold` → `onHold`）。
  */
 export function stateDictKey(state: BlackboardState | "unfiled" | "other" | "summary"): string {
   return state.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -173,8 +176,8 @@ export type MarkedNote<T> = T & { marks: NoteMarks };
 
 /**
  * 画面の列。並びは `kanbanNotes` が決める:
- * 5 つの `state`（付箋が 0 枚でも出す）→ `unfiled`（直下。あるときだけ）→
- * `other`（5 値の外のフォルダ。**フォルダごとに 1 列**・フォルダ名順・あるときだけ）。
+ * 3 つの `state`（付箋が 0 枚でも出す）→ `unfiled`（直下。あるときだけ）→
+ * `other`（3 値の外のフォルダ。**フォルダごとに 1 列**・フォルダ名順・あるときだけ）。
  */
 export interface KanbanColumn<T> {
   kind: "state" | "unfiled" | "other";
@@ -208,7 +211,7 @@ function orphansFirst<T>(notes: MarkedNote<T>[]): MarkedNote<T>[] {
  *
  * - 直下の `まとめ.md` だけが `summary`（`classifyNote` に掛けない）。`state` の中の
  *   `まとめ.md` は普通の付箋（持ち主「まとめ」= 孤児バッジ。凍結 9）
- * - 列は `state` から決まる。5 値の外のフォルダはフォルダごとに `other` の列
+ * - 列は `state` から決まる。3 値の外のフォルダはフォルダごとに `other` の列
  * - 重複は `dir:name` が複数の場所（直下も 1 つの場所）に現れたとき
  */
 export function kanbanNotes<T extends NoteRef>(

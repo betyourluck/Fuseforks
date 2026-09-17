@@ -102,11 +102,10 @@ function columnTitle(section: Section): string {
   return t(`blackboard.stateTitle.${stateDictKey(column.state as never)}`);
 }
 
-/** 列の印の色。`doing` は動いている色、`needs-you` は accent、残りは線の色。 */
+/** 列の印の色。`doing` は動いている色、残りは線の色。 */
 function columnDot(section: Section): string {
   const state = section.column?.state;
   if (state === "doing") return "bg-run";
-  if (state === "needs-you") return "bg-accent";
   return "bg-line";
 }
 
