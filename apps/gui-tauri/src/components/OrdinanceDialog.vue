@@ -8,6 +8,10 @@
  * （振る舞いの既定値の違い）を吸収する正規化層としても働く。
  *
  * 保存すると**次の発話から**全エージェントに反映される（再起動不要）。
+ *
+ * **「黒板の節を挿入」**（2026-09-17）: 黒板の規約をサーヴァントへ伝える経路は条例だけで、
+ * 新しい村の条例は空。文面は `lib/blackboardOrdinance.ts` がコードの定数から組む。
+ * **入れるのは下書きまで** — 保存は人が押す。挿入後は利用者の文章で、以後アプリは触らない。
  */
 import { computed, onMounted, ref } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
@@ -16,10 +20,11 @@ import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { hasBlackboardSection, withBlackboardSection } from "../lib/blackboardOrdinance";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const orchestrator = useOrchestrator();
 
 const text = ref("");
@@ -68,6 +73,17 @@ const canSave = computed(
 /** `Ctrl+S`。押せないときは何もしない（ボタンが `disabled` のときと同じ）。 */
 function saveFromEditor(): void {
   if (canSave.value) void save();
+}
+
+/** 節が既にあるか。ボタンの `disabled` と挿入の no-op が同じ述語を見る。 */
+const hasBoardSection = computed(() => hasBlackboardSection(text.value));
+
+/**
+ * 黒板の節を下書きの末尾へ足す。言語は村の言語（= 画面の言語。モデルが読む面なので、
+ * 英語の村には英語で入れる）。保存はしない。
+ */
+function insertBoardSection(): void {
+  text.value = withBlackboardSection(text.value, locale.value === "en" ? "en" : "ja");
 }
 
 async function requestClose(): Promise<void> {
@@ -127,6 +143,15 @@ async function requestClose(): Promise<void> {
       </div>
 
       <div class="flex shrink-0 items-center gap-2 border-t border-line px-3 py-2.5">
+        <button
+          data-insert-blackboard
+          class="rounded border border-line px-2 py-1 text-[11px] text-ink-dim hover:text-ink disabled:opacity-40"
+          :disabled="loading || !!loadError || hasBoardSection"
+          :title="hasBoardSection ? $t('ordinance.insertBlackboardDone') : $t('ordinance.insertBlackboardTitle')"
+          @click="insertBoardSection"
+        >
+          {{ $t("ordinance.insertBlackboard") }}
+        </button>
         <span v-if="text !== saved" class="text-[11px] text-warn">{{ $t("ordinance.unsaved") }}</span>
         <button
           class="ml-auto rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"

@@ -367,7 +367,7 @@
       "onHold": "Notes under blackboard/on-hold/. Work set aside",
       "done": "Notes under blackboard/done/. Finished work. Clear from this column",
       "unfiled": "Notes directly under blackboard/, not in a state folder (older-style notes land here)",
-      "other": "Notes under blackboard/{name}/, a folder that is not one of the five states"
+      "other": "Notes under blackboard/{name}/, a folder that is not one of the three states"
     },
     "badge": {
       "active": "in motion",
@@ -390,7 +390,9 @@
     "clearDoneTitle": "Move only the Done column's notes to the trash",
     "confirmClearDoneTitle": "Clear the done notes?",
     "confirmClearDoneMessage": "{count} notes will be moved to the trash (other columns and まとめ.md stay). They are not deleted permanently, so you can restore them from the OS trash.",
-    "confirmClearDoneLabel": "Clear done"
+    "confirmClearDoneLabel": "Clear done",
+    "noOrdinanceSection": "The ordinance has no blackboard section. Servants learn how to use the blackboard from the ordinance, so no notes will be written as things stand. Open the ordinance, press \"Insert blackboard section\", and save.",
+    "openOrdinance": "Open ordinance"
   },
   "waves": {
     "state": {
@@ -525,7 +527,10 @@
     "placeholder": "Example:\nThis is Outcasts Village.\n- Value implementation details and verifiable claims over vague impressions\n- End the conversation rather than repeating what someone said\n- Polite but frank; no flattery",
     "unsaved": "Unsaved",
     "saving": "Saving…",
-    "save": "Save"
+    "save": "Save",
+    "insertBlackboard": "Insert blackboard section",
+    "insertBlackboardTitle": "Drafts how to use the blackboard (location, state folders, file naming) at the end of the ordinance. Nothing takes effect until you save. You can rewrite it freely afterwards",
+    "insertBlackboardDone": "The ordinance already has a blackboard section (it mentions blackboard/doing)"
   },
   "mcp": {
     "title": "MCP Servers",
@@ -1249,7 +1254,7 @@
       },
       "board": {
         "title": "Blackboard and work status",
-        "body": "The bottom pane has two tabs. The blackboard holds the shared notes that servants write; work status shows how a request scattered to several servants (plan) is going. Both are read-only — the servants do the writing."
+        "body": "The bottom pane has two tabs. The blackboard holds the shared notes that servants write; servants learn how to use it from the ordinance (\"Insert blackboard section\" in the Ordinance dialog drafts it). Work status shows how a request scattered to several servants (plan) is going. Both are read-only — the servants do the writing."
       },
       "stats": {
         "title": "Tokens and cost",

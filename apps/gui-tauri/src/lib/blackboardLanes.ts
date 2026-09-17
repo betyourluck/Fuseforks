@@ -28,6 +28,12 @@ import type { AgentStatus, PlanTaskState, PlanWaveState } from "../types";
 export const SUMMARY_NOTE = "まとめ.md";
 
 /**
+ * 表示名と仕事名の区切り（最初の 1 つ）。`ownerNameOf` が割り、条例へ挿入する節
+ * （`blackboardOrdinance.ts`）が同じ綴りをサーヴァントへ伝える — 2 箇所に書かない。
+ */
+export const NOTE_SEPARATOR = " - ";
+
+/**
  * 仕事の状態 = 状態フォルダの閉じた 3 値（Spec 54 凍結 1・rev3）。**並びが画面の列の並び**
  * （`doing → on-hold → done`）。コアの返却順は `state` の文字列順で
  * 別のもの — コアに列順を持たせると 3 値の順序がコアと辞書の 2 箇所に住む（凍結 6）。
@@ -103,7 +109,7 @@ export interface NoteLane {
  */
 export function ownerNameOf(noteName: string): string {
   const stem = noteName.endsWith(".md") ? noteName.slice(0, -3) : noteName;
-  const cut = stem.indexOf(" - ");
+  const cut = stem.indexOf(NOTE_SEPARATOR);
   return cut === -1 ? stem : stem.slice(0, cut);
 }
 
