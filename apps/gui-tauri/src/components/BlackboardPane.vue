@@ -99,10 +99,15 @@ function columnTitle(section: Section): string {
   return t(`blackboard.stateTitle.${stateDictKey(column.state as never)}`);
 }
 
-/** 列の印の色。`doing` は動いている色、残りは線の色。 */
+/**
+ * 列の印の色。3 つの状態は信号機の緑・黄・赤（進む / 止めてある / 止まった）。
+ * 「状態なし」「その他」は線の色のまま — 3 値の外なので信号の色を持たせない。
+ */
 function columnDot(section: Section): string {
   const state = section.column.state;
   if (state === "doing") return "bg-run";
+  if (state === "on-hold") return "bg-warn";
+  if (state === "done") return "bg-fail";
   return "bg-line";
 }
 
