@@ -1087,7 +1087,9 @@ impl BlackboardTool {
             name: text_arg("name"),
             body: text_arg("body"),
             to: text_arg("to"),
-            owner: text_arg("owner"),
+            // 空は省略と同じ。任意の欄を空文字で埋めてくるモデルがあり、`Some("")` のまま通すと
+            // `own_notes` が空の持ち主を「他人」として断る（read だけが空を省略と読んでいた）。
+            owner: text_arg("owner").filter(|owner| !owner.trim().is_empty()),
         };
 
         let notes = match read_blackboard_dir(&work_dir).await {
@@ -1434,6 +1436,25 @@ mod tests {
         let mine = run(&ctx, serde_json::json!({ "op": "read", "name": "検索" })).await;
         assert_eq!(mine.outcome, Outcome::NotFound);
         assert!(mine.text.contains("agent_2（ジェミー）"), "{}", mine.text);
+    }
+
+    /// **空の `owner` は省略と同じ。** 任意の欄を空文字で埋めて送るモデルがある
+    /// （実機: gpt-5.6-terra が append / move のたびに `owner: ""` を付け、自分の付箋が
+    /// 「（村に居ない持ち主）」として断られ続けた）。read だけが空を省略として扱っていた。
+    #[tokio::test]
+    async fn an_empty_owner_means_your_own_note() {
+        let dir = TempDir::new("empty-owner");
+        let ctx = ctx_as(&dir, "agent");
+        run(&ctx, serde_json::json!({ "op": "write", "name": "t", "body": "x" })).await;
+        for args in [
+            serde_json::json!({ "op": "append", "name": "t", "body": "y", "owner": "" }),
+            serde_json::json!({ "op": "move", "name": "t", "to": "done", "owner": " " }),
+            serde_json::json!({ "op": "read", "name": "t", "owner": "" }),
+        ] {
+            let result = run(&ctx, args.clone()).await;
+            assert_eq!(result.outcome, Outcome::Ok, "{args}: {}", result.text);
+        }
+        assert_eq!(dir.note("done/agent - t.md").as_deref(), Some("x\ny"));
     }
 
     /// 遷移: `doing ⇄ on-hold`、`→ done`。**`done` からは動かない。凍結は no-op より先。**

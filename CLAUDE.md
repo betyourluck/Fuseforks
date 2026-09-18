@@ -2416,10 +2416,10 @@ README 3 言語の同梱ツールの行 / Spec 54 の状態へ Spec 55 が覆し
 
 **2026-09-18 — `v0.3.2` = `79dc8e4` を 4 経路で配信**（Spec 55 が初めて配布物に入った。0.3 系の最初のリリース。
 **v0.3.0 / v0.3.1 のタグは残し Release は draft のまま削除**、v0.3.2 は 1 度目のタグ（`51e1090`）を消して付け直した —
-経緯は `failures.md` #126。Release publish 07:50 UTC / winget PR #436950 = マージ待ち / tap `df36add` /
+経緯は `failures.md` #126。Release publish 07:50 UTC / winget PR #436950 = 2026-09-18 08:39 UTC マージ（publish の 49 分後）/ tap `df36add` /
 LP は `releases/latest` なので触らない）。
 
-**次の一手**: winget 0.3.2（PR #436950）のマージ確認 / **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
+**次の一手**: **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
 作業状況タブの印の実機確認（計画の確認 ON の進行役に plan を呼ばせ、黒板タブを見たままバッジと色が出る）/
 評価基盤の「完遂」の軸。
 **core 単独実行（クラウドのコンテナ）は最終目標として
@@ -3416,7 +3416,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   決まりを書いた条例は直す / 囲いは `run` に掛からない / ツールは既定オンで説明文が毎ターン乗る）。**タグは利用者（v0.3.0 /
   v0.3.1）と Neo（v0.3.2）、publish・winget・tap は Neo** — winget 0.3.2 = PR #436950（`gh repo sync` →
   `wingetcreate update … --token` の 1 段。`InstallerLocale` 無しを引き写し・ProductCode は `{89EA97F5-…}`・
-  `InstallerSha256` は Release の digest と一致）/ tap `df36add`（sha256 は Release API の `digest`）
+  `InstallerSha256` は Release の digest と一致。2026-09-18 08:39 UTC マージ = publish の 49 分後）/ tap `df36add`（sha256 は Release API の `digest`）
 - **`v0.2.5` = `84a516c`（2026-09-16 タグ。11 コミット）— [Spec 53](specs/53_unattended-plan-and-verifier.md)
   Done（予定の「計画の確認を自動で通す」/ ステータスバーの保存しないスイッチ / 束ねの既定の検証役）+
   作業状況タブの消しゴム（終わった波を表示から隠す）**。3 OS 緑・アセット 7 件・publish 2026-09-15
