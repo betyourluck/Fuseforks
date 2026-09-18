@@ -100,14 +100,15 @@ function columnTitle(section: Section): string {
 }
 
 /**
- * 列の印の色。3 つの状態は信号機の緑・黄・赤（進む / 止めてある / 止まった）。
+ * 列の印の色。3 つの状態は緑・黄・青（進む / 止めてある / 終わった）。完了を赤にしないのは、
+ * この画面で赤が孤児・重複・削除の「異常」を運んでいるから（完了は正常な終わり方）。
  * 「状態なし」「その他」は線の色のまま — 3 値の外なので信号の色を持たせない。
  */
 function columnDot(section: Section): string {
   const state = section.column.state;
   if (state === "doing") return "bg-run";
   if (state === "on-hold") return "bg-warn";
-  if (state === "done") return "bg-fail";
+  if (state === "done") return "bg-accent";
   return "bg-line";
 }
 
