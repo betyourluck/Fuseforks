@@ -1244,6 +1244,90 @@ IR の相互変換（個体 = 1 ワイヤで変換の必要が無い。`n > 1` �
 - **学べる点**: 引数を位置で渡してキー名をスキーマから補う（AionUi `toon` と同じ機構の独立収束）/
   信頼性文書が正直（完了率 92.9%・「ルール 1 本で +13pt、誤った例 1 つで 2 桁の後退」）— 評価基盤の「完遂」の軸の材料
 
+## agent-orchestrator の実読（2026-09-18。**コードを読んだ。README ではない**）
+
+起点は利用者 —「このプロジェクトからなにか拾えるものはある？」
+（github.com/Untrivial-ai/agent-orchestrator。Apache-2.0・12,157 stars・fork 1,672・2026-02-13 作成・
+`3e46ad3`）。**9 実装目**（busbar に続く）。scratchpad へ浅くクローンし、読み手 4 本（分業と完了判定 /
+費用と予算 / デーモン・セッション・クラウド / CLI の束ね方・権限・秘密・計測）で file:line を取った。
+**ビルドも実走もしていない。** 種別は AionUi と同じ **CLI エージェントのラッパー**（Go のデーモン +
+Electron + モバイル + クラウド。Claude Code / Codex など 27 種の CLI を束ねる）。
+
+**結論: 今すぐ実装するものは無い。価値の本体は「core 単独実行の構想」の参照実装。**
+
+### 構造（この村との違い）
+
+- **仕事の単位は Session（`worker` / `orchestrator` の 2 種）。** 分解は進行役の LLM がプロンプトの指示で行い、
+  `ao spawn` / `ao send` で作業役を起こす。**計画のオブジェクトも DAG も、人が計画を直す窓も無い**
+  （Spec 43 の編集窓に当たるものが無い）。繋ぎ方は進行役を中心とした星形で、作業役どうしは話さない
+- **完了 = PR がマージされたこと。マージは人**（`service/pr/action_service.go`）。作業役ごとに git worktree を
+  切り、衝突は解かず作業役へ rebase を促すだけ
+- **自動レビュー役の輪**: 変更要求の差し戻しは 3 回まで、CI の失敗は同じ内容なら重複を抑えるだけで回数の上限は
+  無い（`maxAttempts: 0`）。**マージの門は CI では fail-closed だが、自前のレビュー役の判定を見ていない**
+  （GitHub のレビュー判定・未解決コメント・mergeable だけを見る）
+- **止まった作業役の検出は表示だけ**（90 秒 hook が来ないと `no_signal` を出すが、何も動かさない）。
+  周回上限・実時間の上限・同じ失敗の繰り返し検出（RepeatGuard に当たるもの）は無い
+
+### 費用: 事後の推定だけで、予算の天井は無い
+
+- **単価表は LiteLLM 由来で、入力 / 出力 / キャッシュ読み / 書き込み / 1 時間書き込みの 5 レート**
+  （`backend/internal/pricing/runtime.go:62-68`）= Spec 41 と同じ形。LiteLLM の
+  `cache_creation_input_token_cost_above_1hr` を 1 時間書き込みへ写す。**おかしく見える Anthropic の単価は
+  配らずに落とす**（`catalogsync.go:580`。Spec 41 の $1,000/MTok の衛生検査と同じ考え方）
+- **違いは取得の仕方** — **24 時間ごとに `raw.githubusercontent.com` から自動取得**し、新しい表が来たら単価の
+  無かった記録へ遡って値段を付ける（`refresher.go` / `cost_backfiller.go`）。この村は PRIVACY の規律で
+  「押したときだけ」。遡りは、この村では集計のたびに単価を当て直すので最初から要らない
+- **トークン数は各 CLI が自分のディスクに書くログから読む**（`~/.claude/projects` / `~/.codex/sessions`）。
+  API の応答ではない。Claude の `cache_creation.ephemeral_5m/1h` は読むが、**Codex の
+  `reasoning_output_tokens` は検証に使うだけで別の数として保存しない**（Spec 32 の側が先）
+- **欠けた数は 0 ではなく「不明」として記録する**（`runtime.go:496`）= Spec 41 の被覆率と同じ規律
+- **予算・支出の天井は 1 つも無い**（budget / spend / quota / ceiling を探して 0 件。唯一の "budget" は
+  Codex の子ログを追う本数の上限 4096）。**公開実装で依頼の因果ごとのトークン天井を持つのは、9 件目でも
+  この村だけ**
+
+### core 単独実行の参照（最も価値がある所）
+
+「設計の材料 3 件 > core 単独実行の構想」のギャップと対応させて読む。
+
+- **デーモンと GUI の寿命の結び方**（ギャップ 1・2）— Electron がデーモンを起こし、`AO_OWNER=app|persistent`
+  を渡す。GUI はデーモンへのソケット（Windows は名前付きパイプ `\\.\pipe\ao-supervise`）を握り続け、
+  **最後の接続が切れたら 5 秒後に止まる**。ただし**最初の接続が来てから有効になる**ので、ヘッドレス
+  （`ao start`）のデーモンは勝手に止まらない（`daemon/supervisor/supervisor.go:1-6` / `daemon.go:844-858`）
+- **多重起動の防止は `running.json` + `/healthz` の二段**（`daemon.go:195-207`）— **Windows は PID を
+  使い回す**ので、PID が生きているかだけでは判定しない。書き込みは原子的（`runfile.go`）
+- **セッションがデーモンの再起動を生き延びる理由は SQLite ではなく、PTY を持つ別プロセスを切り離して
+  走らせていること**（Windows は ConPTY の pty-host を `DETACHED_PROCESS` で起こす。`conpty/spawn_windows.go:79-84`）。
+  再起動時は SQLite を見て、生きている実行体を拾い直すか、その場で起こし直す（`session_manager/manager.go:2880-2960`）。
+  **この村の「落ちたら頼み直し」を越えたくなったときの要点はここ**
+- **クラウドでの秘密の渡し方**（ギャップ 4）— プロバイダの鍵は AES-GCM で暗号化して保存し、**1 ターンごとに
+  そのコマンドの環境変数にだけ入れる**（`cloud/internal/workerexec/command.go:248-270`）。コンテナの環境にも
+  イメージにも入れない。作業役を起こすための鍵は 15 分で切れる（`sandbox/provisioning.go:21`）
+- **外からの接続口の開け方**（ギャップ 3 = bind 127.0.0.1 固定）— モバイル向けの待ち受けは**利用者が
+  オンにしている間だけ `0.0.0.0`**、Bearer のパスワード + IP ごとの締め出し、**`/shutdown` のような操作系の
+  口は外からは塞ぐ**（`httpd/lan_listener.go:77-89`）。遠隔は Tailscale の `serve`（`funnel` は使わない）か
+  cloudflared のトンネル
+- **ただし loopback の API には認証が無い**（`config.go:22` のコメントが明言。守りは loopback の bind と CORS の
+  Origin 許可だけ）。**この村の MCP の扉（合鍵 + Origin 検査）のほうが固い** — コンテナへ出すなら認証の層は
+  自前で要る
+
+### 採らない（こちらの規律と逆）
+
+- **子プロセスはデーモンの環境変数をすべて引き継ぐ**（`conpty/spawn.go:71-96` は TERM など 3 つを落とすだけ）=
+  全エージェントが全部の鍵を見られる。この村の `run` は `env_clear` + 通す変数の許可リスト
+- **Codex は既定で承認なし + `danger-full-access`**（`codexappserver/driver.go:532-547`）
+- **配布版は PostHog + Sentry が既定で ON**（利用者が切れる。`frontend/src/main.ts:962-973`）= PRIVACY の
+  「計測系の依存 0」と逆
+- **27 種の CLI の束ね方**（hook を主に、画面の読み取りを予備にし、読めないものは推測せず「不明」と返す /
+  9 種は ACP = Agent Client Protocol で構造化）は、**ループを自分で持たないラッパーの作法**。この村は
+  ループの所有者なので写す対象ではない（2026-08-17 の「目的の裁定」の設計差 1・2 と同じ線）
+
+### 拾える形が 1 つ
+
+- **「人が見た版」を操作に添える** — マージの IPC は、利用者が画面で見た head commit と今の head が一致した
+  ときだけ通す（`service/pr/action_service.go:95-150`）。黒板の `write` に「読んだ時から変わっていないか」の
+  検査を足す案（「設計の材料 3 件 > 黒板の並行書き込み」・頻度待ち）と同じ形の外部の実例。**作る理由には
+  まだならない**
+
 ## LangGraph の実読と突き合わせ（2026-08-19。**コードを読んだ。README ではない**）
 
 起点は利用者 —「LangGraph の機能を簡単に落とし込む。動的ルーティングとか。本番運用まで
@@ -1640,6 +1724,10 @@ lost update の観測は今もゼロ（2026-08-11 の黒板は stale であっ�
   状態は SQLite と worktree）・stablyai/orca（デスクトップ + `orca serve`）。
   **常駐させるのは待つもの（cron・外部監視・遠隔操作・長い背景実行）があるときだけ**。
   1 回きりでも状態は workspace に残せる（orca-cli の SQLite = この村の `sessions.redb`）
+- **参照実装は agent-orchestrator**（2026-09-18 に実読。「agent-orchestrator の実読」の節）— デーモンと GUI の
+  寿命を `owner` + 握り続けるソケットで結ぶ形 / `running.json` + `/healthz` の多重起動防止 / 切り離した PTY の
+  別プロセスで再起動を生き延びる形 / 鍵を 1 ターンごとにコマンドの環境変数だけへ入れる形 / 外向きの待ち受けを
+  オンの間だけ開けて操作系の口を塞ぐ形。**ただし loopback の API は無認証なので、認証の層は写さず自前で持つ**
 - 私の提案（未裁定）: ホストの切り出し → 1 回きりの CLI（評価基盤の「完遂」の軸を人の手なしで
   回す最初の用途）→ 常駐させたい場面が出たらデーモンと Docker の Spec
 
