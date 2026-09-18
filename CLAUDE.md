@@ -2421,7 +2421,11 @@ README 3 言語の同梱ツールの行 / Spec 54 の状態へ Spec 55 が覆し
 経緯は `failures.md` #126。Release publish 07:50 UTC / winget PR #436950 = 2026-09-18 08:39 UTC マージ（publish の 49 分後）/ tap `df36add` /
 LP は `releases/latest` なので触らない）。
 
-**次の一手**: **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
+**2026-09-19 — `v0.3.3` = `0f540df` を 4 経路で配信**（gpt-5.6-terra が `owner: ""` を付けて呼び、append / move が
+自分の付箋を断っていた #127 の修正と、起動画面の簡素化。Release publish 2026-09-18 18:10 UTC / winget PR #437288 =
+マージ待ち / tap `d636f91` / LP は `releases/latest` なので触らない）。
+
+**次の一手**: winget 0.3.3（PR #437288）のマージ確認 / **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
 作業状況タブの印の実機確認（計画の確認 ON の進行役に plan を呼ばせ、黒板タブを見たままバッジと色が出る）/
 評価基盤の「完遂」の軸。
 **core 単独実行（クラウドのコンテナ）は最終目標として
@@ -3406,6 +3410,12 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.3.3` = `0f540df`（2026-09-19 JST タグ。3 コミット）— 黒板ツールの空の `owner`（`failures.md` #127）+
+  起動画面の「starting up...」を小さい 1 行へ**。3 OS 緑・アセット 7 件・publish 2026-09-18 18:10 UTC。ノートは英日併記で
+  主題は #127、利用者の手当ては 1 つ（進行中に残った付箋は更新後に頼み直すか黒板タブで消す）。**タグは利用者、
+  publish・winget・tap は Neo** — winget 0.3.3 = PR #437288（`gh repo sync` → `wingetcreate update … --token` の 1 段。
+  `InstallerLocale` 無しを引き写し・ProductCode は `{07D8439C-…}`・`InstallerSha256` は Release の digest と一致）/
+  tap `d636f91`（sha256 は Release API の `digest`）
 - **`v0.3.2` = `79dc8e4`（2026-09-18。28 コミット）— [Spec 54](specs/54_blackboard-kanban.md)（黒板を状態の列へ）+
   [Spec 55](specs/55_blackboard-tool.md) Done（黒板の書き込みを `blackboard` ツールへ・`blackboard/` の囲い・
   削除した個体の付箋の掃除）+ 作業状況タブの確認待ちの印**。3 OS 緑・アセット 7 件・publish 07:50 UTC。
