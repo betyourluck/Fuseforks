@@ -807,9 +807,6 @@ mod tests {
         let dir = TempDir::new("bb-fence");
         dir.write("blackboard/doing/agent_01 - 調査.md", "付箋");
         dir.write("outside.md", "外");
-        // `x/..` を通すパスの検査には `x` の実在が要る。Unix の canonicalize は実在しない
-        // 途中の要素を解決できず、囲いより手前の「作業フォルダの外」で断る（Windows だけが字面で畳む）。
-        dir.write("x/keep.md", "");
 
         for args in [
             serde_json::json!({ "op": "write", "path": "blackboard/doing/x.md", "content": "x" }),
@@ -824,12 +821,21 @@ mod tests {
             serde_json::json!({ "op": "move", "path": "blackboard", "to": "old-board" }),
             serde_json::json!({ "op": "move", "path": "outside.md", "to": "blackboard/doing/in.md" }),
             serde_json::json!({ "op": "copy", "path": "outside.md", "to": "blackboard/doing/in.md" }),
-            // 解決後のパスで見る。
-            serde_json::json!({ "op": "write", "path": "./x/../blackboard/doing/y.md", "content": "x" }),
         ] {
             let reply = call(&dir, args.clone()).await;
             assert!(reply.contains("`blackboard` ツール"), "{args}: {reply}");
         }
+        // `..` を含むパスは OS で断られ方が違う。Windows は `\?\` の root へ join した時点で
+        // `..` を字面で畳むので、囲いが解決後のパスを見て断る。Unix は `..` が残り、
+        // `resolve_creatable` の残り成分の検査が「作業フォルダの外」として先に断る。
+        // どちらも書き込みは起きない — 検査するのは「断られる」ことと、Windows では囲いの文言。
+        let dotted = call(&dir, serde_json::json!({ "op": "write", "path": "./x/../blackboard/doing/y.md", "content": "x" })).await;
+        if cfg!(windows) {
+            assert!(dotted.contains("`blackboard` ツール"), "{dotted}");
+        } else {
+            assert!(dotted.contains("作業フォルダの外"), "{dotted}");
+        }
+        assert!(!dir.exists("blackboard/doing/y.md"), "{dotted}");
         assert_eq!(dir.read("blackboard/doing/agent_01 - 調査.md"), "付箋", "1 バイトも変わらない");
         assert!(!dir.exists("blackboard/doing/x.md") && !dir.exists("blackboard/doing/in.md"));
         assert!(!dir.exists("blackboard/archive") && !dir.exists("kept.md") && dir.exists("outside.md"));
