@@ -807,6 +807,9 @@ mod tests {
         let dir = TempDir::new("bb-fence");
         dir.write("blackboard/doing/agent_01 - 調査.md", "付箋");
         dir.write("outside.md", "外");
+        // `x/..` を通すパスの検査には `x` の実在が要る。Unix の canonicalize は実在しない
+        // 途中の要素を解決できず、囲いより手前の「作業フォルダの外」で断る（Windows だけが字面で畳む）。
+        dir.write("x/keep.md", "");
 
         for args in [
             serde_json::json!({ "op": "write", "path": "blackboard/doing/x.md", "content": "x" }),
