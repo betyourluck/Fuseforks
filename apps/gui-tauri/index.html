@@ -48,6 +48,13 @@
         animation: boot-spin 0.9s linear infinite;
       }
 
+      .boot-line {
+        color: var(--boot-accent);
+        /* Tailwind の font-mono（App.vue の覆い）と同じ並び。揃えないと引き継ぎで字体が変わる */
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+      }
+
       @keyframes boot-spin {
         to {
           transform: rotate(360deg);
@@ -68,43 +75,11 @@
            **確定できない場所では英語だけを出す**（2026-09-14 利用者裁定。旧: 二言語併記）—
            英語圏以外の人が英語だけを見る違和感より、英語圏の人が見知らぬ文字の並びを見る
            違和感のほうが強い。マウント後の App.vue の覆いは表示言語に追従する。
-           文字は利用者提供の gemini-svg.svg から「# starting up...」の行だけを抜き出した
-           （2026-09-14）。元の点の増えるアニメーションは CSS の ::after で書かれており SVG の
-           text では描かれないので、元の見え方どおり止まった「...」。点滅カーソルは入れない
-           （本文直後の ▋ を SMIL で点滅させた版は、実機で点滅せず豆腐として出た）。
-           色はこの画面の背景が常にダーク（--boot-surface）なので元の値のまま。 -->
+           文字は小さい等幅の 1 行で、色は標準色（accent）。発光も「# 」も付けない
+           （2026-09-19 利用者裁定。旧: 利用者提供 SVG から抜いた 28px の緑の発光文字）。 -->
       <div class="boot-splash">
         <span class="boot-spinner" aria-hidden="true"></span>
-        <svg
-          class="boot-line"
-          viewBox="0 0 320 44"
-          width="256"
-          height="35"
-          overflow="visible"
-          role="img"
-          aria-label="Starting up…"
-        >
-          <defs>
-            <filter id="boot-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="3" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          <text
-            x="8"
-            y="32"
-            fill="#00ff66"
-            filter="url(#boot-glow)"
-            font-family='"Courier New", Courier, Consolas, monospace'
-            font-size="28"
-            font-weight="bold"
-          >
-            <tspan fill="#58a6ff"># </tspan>starting up...
-          </text>
-        </svg>
+        <span class="boot-line">starting up...</span>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

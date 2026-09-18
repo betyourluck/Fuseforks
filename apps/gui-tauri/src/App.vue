@@ -417,40 +417,13 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <span class="boot-spinner" aria-hidden="true" />
-      <!-- index.html の 1 段目と同じ「# starting up...」（利用者提供の SVG から抜き出し）。
-           **色だけテーマに追従させる**（2026-09-14 利用者裁定）— 本文は --color-run、
-           「# 」は --color-accent。presentation 属性は var() を受けないので style で渡す。
-           見える文字は英語だけ（起動画面は言語を選ばない裁定）、読み上げは表示言語。
-           点滅カーソルは入れない（▋ は実機で点滅せず豆腐として出た）。 -->
-      <svg
-        viewBox="0 0 320 44"
-        width="256"
-        height="35"
-        overflow="visible"
+      <!-- index.html と同じ小さい 1 行（2026-09-19 利用者裁定）。色は標準色で、テーマに追従する。
+           見える文字は英語だけ（起動画面は言語を選ばない裁定）、読み上げは表示言語。 -->
+      <span
+        class="font-mono text-[12px] text-accent"
         role="img"
         :aria-label="$t('app.booting')"
-      >
-        <defs>
-          <filter id="boot-glow-app" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="3" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-        <text
-          x="8"
-          y="32"
-          style="fill: var(--color-run)"
-          filter="url(#boot-glow-app)"
-          font-family='"Courier New", Courier, Consolas, monospace'
-          font-size="28"
-          font-weight="bold"
-        >
-          <tspan style="fill: var(--color-accent)"># </tspan>starting up...
-        </text>
-      </svg>
+      >starting up...</span>
       <p class="text-[11px] text-ink-dim opacity-60">
         {{ $t("app.bootingHint") }}
       </p>
