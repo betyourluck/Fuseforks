@@ -4967,6 +4967,8 @@ root が `\\?\` の verbatim パスになり、**Rust の `Path::join` は verba
 **処方**: 入口で `text_arg("owner").filter(|o| !o.trim().is_empty())` の 1 か所にした（空は省略と同じ）。
 回帰は `an_empty_owner_means_your_own_note`（append / move / read に `owner: ""` / `" "` を付けて通ることを確かめる）。
 修正前に赤で、失敗文が実機の文と一字一句同じことを確かめてから直した。
+**実機で確認済み**（2026-09-19 01:39〜01:41。修正入りの手元ビルドで、ルナの `append` 2 回と `move doing→done` が
+`outcome=ok`。`doing/` は空になった）。
 
 **一般化**:
 - **任意の欄は「無い」と「空」の 2 形で届く。** 省略だけを想定した入口は、空文字を埋めるモデルの上でだけ壊れる。
