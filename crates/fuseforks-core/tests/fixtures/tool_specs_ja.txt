@@ -252,7 +252,7 @@ TOML / JSON ファイルの特定の値だけを取得（get）・設定（set�
   "properties": {
     "command": {
       "type": "string",
-      "description": "実行ファイル名。パス区切り（/ \\ :）を含めてはいけない"
+      "description": "実行ファイル名を 1 語。空白とパス区切り（/ \\ :）を含めてはいけない。`git status` のような 2 語は command: \"git\" / args: [\"status\"] と分ける"
     },
     "args": {
       "type": "array",

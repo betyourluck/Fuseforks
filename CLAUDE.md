@@ -542,8 +542,12 @@ CLA 署名済み、最終ラベルは `Moderator-Approved` / `Publish-Pipeline-S
 publish の 49 分後。2026-09-15 に `winget search` が 0.2.4 を返すことと、開発機に 0.2.4 が
 入っていることを確認）。** **→ 0.2.5 = PR #435413（2026-09-16 提出。同じ 1 段。`ProductCode` は
 `{3A0F3475-…}`。`InstallerLocale` 無しを引き写し。**2026-09-15 21:04 UTC マージ = publish の
-87 分後**。2026-09-16 に `winget search` が 0.2.5 を返すことを確認）。** 所要を測れた update PR は
-これで 7 版（0.1.12 / 0.2.0〜0.2.5）で、49 分〜3 時間 52 分の幅・中央値は 1 時間前後。
+87 分後**。2026-09-16 に `winget search` が 0.2.5 を返すことを確認）。** **→ 0.3.2 = PR #436950
+（2026-09-18 提出。同じ 1 段。`ProductCode` は `{89EA97F5-…}`。2026-09-18 08:39 UTC マージ =
+publish の 49 分後）。** **→ 0.3.3 = PR #437288（2026-09-18 提出。同じ 1 段。`ProductCode` は
+`{07D8439C-…}`。2026-09-18 19:11 UTC マージ = publish の 61 分後。2026-09-20 に `winget search` が
+0.3.3 を返すことを確認）。** 所要を測れた update PR は
+これで 9 版（0.1.12 / 0.2.0〜0.2.5 / 0.3.2 / 0.3.3）で、49 分〜3 時間 52 分の幅・中央値は 1 時間前後。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
 
@@ -2358,7 +2362,8 @@ Spec 43 の窓と pending の二重申告。変えたのは `STATES` 定数・�
 形はタイトルバーの「コマンド承認」のバッジと同じで丸めない。`useWaveClear` は終わった波しか隠さないので
 表示クリアと独立に数えてよい。**走査テストの穴を 1 つ踏んだ** — 初版は判定を部品に直書きし、走査は
 `attention(tab)` の字面しか見ていなかったので、判定を `return false` にしても緑だった。純関数へ出して
-単体で留め、変異 3 回（判定 / バッジの `v-if` / 色）とも 1 本だけ赤。vitest 605・build 緑。**実機は未確認。**
+単体で留め、変異 3 回（判定 / バッジの `v-if` / 色）とも 1 本だけ赤。vitest 605・build 緑。
+**実機で確認済み**（2026-09-20 利用者）。
 
 **2026-09-17 追加 — [Spec 55](specs/55_blackboard-tool.md)（黒板の書き込みをツールにする）を起票 → 査読 2 系統 18 点 → rev2（採用 13 / 前提を訂正して採用 2 / 運用で決めた 1）→ 承認（D5 = `まとめ.md` の廃止も裁定）→ P0 完了（`blackboard_contract` へ凍結 14 本 + 周辺 7 箇所。Spec 54 の行は実装が着地するコミットまで消さず、ブロックの冒頭で「正は末尾の Spec 55」と名指しした。条例の改訂案は Spec の Notes 4 — **貼るのは P4 が着地した版を入れてから**）→ P1 完了（`ToolContext` へ `agent_names` / `uses_blackboard`・`AgentSpec.uses_blackboard` と投影・フロントの型と写しを前倒し。**役職の分類の検算が定数どうしの自己照合で、`AgentSpec` に 4 欄足されても緑だった**のを、左辺をワイヤの鍵の数から取る形へ直した = 16 欄 = 2 + 3 + 11。core 947・vitest 622）→ P2 完了（`tools/blackboard.rs` = `BlackboardTool`。仕事名の正規化 `normalize_task_name` / 6 op / 遷移と `done` の凍結 / ja・en の説明文と結果 / 計器 `blackboard op:`。読みは `read_blackboard_dir` を共有し、ファイル名の割り方 `split_note_name` を読み手の `blackboard.rs` へ置いた。説明文は ja 480 字 + schema 259 字。計器の `outcome` へ `invalid` / `misplaced` / `ambiguous` / `error` の 4 値を足した。**アプリへの登録は P4 へ送った** — 今 `state.rs` へ登録すると黒板タブが表示名で持ち主を引くままなので全付箋が孤児に見える。変異 5 回とも狙った本が赤。core 964）→ P3 完了（囲い = `tools/fs.rs` の `is_under_blackboard` + `BlackboardFence::refuse` を `file` の write・append・mkdir・remove・move・copy の宛先、`sd` の apply、`yq` の set・remove へ配線。読み取りと外への copy は通す。`yq` は preview の段で断り、`sd` の preview は通して 1 行添える。`delete_agent` の掃除 = `blackboard.rs` の `trash_notes_of` + 計器 `blackboard sweep:`。**アプリへの登録を P3 へ戻した** — 囲いだけ入って `state.rs` の登録が無いと黒板へ書く経路が 1 本も無くなる。P4 までは、ツールが書いた `<agent_id> - …` の付箋に黒板タブが孤児のバッジを付ける。変異 8 回とも狙った本が赤。core 971。`failures.md` #124 = 検算の両辺が定数 / #125 = Phase をまたいで送った登録。P4 の手掛かりは Spec の「P4 の入口」）。**
 起点は利用者の不安 —「黒板は条例（利用者が任意に書く）と固定の機構の両方に依存していて、私以外の
@@ -2423,12 +2428,24 @@ LP は `releases/latest` なので触らない）。
 
 **2026-09-19 — `v0.3.3` = `0f540df` を 4 経路で配信**（gpt-5.6-terra が `owner: ""` を付けて呼び、append / move が
 自分の付箋を断っていた #127 の修正と、起動画面の簡素化。Release publish 2026-09-18 18:10 UTC / winget PR #437288 =
-マージ待ち / tap `d636f91` / LP は `releases/latest` なので触らない）。#127 は実機で確認済み（修正入りの手元ビルドで
+2026-09-18 19:11 UTC マージ（publish の 61 分後。2026-09-20 に `winget search` が 0.3.3 を返すことを確認）/
+tap `d636f91` / LP は `releases/latest` なので触らない）。#127 は実機で確認済み（修正入りの手元ビルドで
 ルナの append / move が `outcome=ok`。残っていた付箋もルナが片付けた）。
 
-**次の一手**: winget 0.3.3（PR #437288）のマージ確認 / **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
-作業状況タブの印の実機確認（計画の確認 ON の進行役に plan を呼ばせ、黒板タブを見たままバッジと色が出る）/
-評価基盤の「完遂」の軸。
+**2026-09-20 — `run` の `command` に空白を入れた呼び出しが `Unknown` に落ち、拒否の文面が
+「`allow` へ追加すれば通る」と誤誘導していた**（`failures.md` #128。別端末の実機で、`git status` と
+`git status *` を両方登録しても 1 件も効かなかった）。`normalize_command` に空白の検査を足して
+`Malformed` へ落とす（`command_tool_contract` の正規化は 3 段 → 4 段）。**`Malformed` は
+`note_pending` を呼ばないので、承認のたびに死んだ `allow` が増える輪も同じ 1 行で切れる。**
+あわせて文面を 3 つ直した — 拒否文に「`command: "git", args: ["status"]` と分ける」/ `parameters` の
+`command` に空白の禁止 / `*` の説明の非対称（「`*` **あり**は引数なしにも当たる」が書かれておらず、
+**利用者が完全一致と `*` の 2 つを登録しようとした原因**）。**`args` の空白は拒否しない**。
+ツール提示の golden が正しく赤になり、差分 1 行を確認して焼き直した。Rust 997 全緑・clippy 0。**次のタグから。**
+
+**次の一手**: **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
+次のタグ（#128 の修正を配る。winget と tap の 2 経路が続く）/ 評価基盤の「完遂」の軸 /
+**`run` の承認に「承認して続けさせる」を足すか**（利用者要望。決めどころ 4 つで Spec 相当。#128 を先に直したので
+「無限に回るボタン」にはならない）。
 **core 単独実行（クラウドのコンテナ）は最終目標として
 後日**（「設計の材料 3 件 > core 単独実行の構想」の節）。
 
@@ -3415,8 +3432,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   起動画面の「starting up...」を小さい 1 行へ**。3 OS 緑・アセット 7 件・publish 2026-09-18 18:10 UTC。ノートは英日併記で
   主題は #127、利用者の手当ては 1 つ（進行中に残った付箋は更新後に頼み直すか黒板タブで消す）。**タグは利用者、
   publish・winget・tap は Neo** — winget 0.3.3 = PR #437288（`gh repo sync` → `wingetcreate update … --token` の 1 段。
-  `InstallerLocale` 無しを引き写し・ProductCode は `{07D8439C-…}`・`InstallerSha256` は Release の digest と一致）/
-  tap `d636f91`（sha256 は Release API の `digest`）
+  `InstallerLocale` 無しを引き写し・ProductCode は `{07D8439C-…}`・`InstallerSha256` は Release の digest と一致。
+  2026-09-18 19:11 UTC マージ = publish の 61 分後）/ tap `d636f91`（sha256 は Release API の `digest`）
 - **`v0.3.2` = `79dc8e4`（2026-09-18。28 コミット）— [Spec 54](specs/54_blackboard-kanban.md)（黒板を状態の列へ）+
   [Spec 55](specs/55_blackboard-tool.md) Done（黒板の書き込みを `blackboard` ツールへ・`blackboard/` の囲い・
   削除した個体の付箋の掃除）+ 作業状況タブの確認待ちの印**。3 OS 緑・アセット 7 件・publish 07:50 UTC。

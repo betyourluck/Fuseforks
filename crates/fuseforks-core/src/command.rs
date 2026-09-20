@@ -347,14 +347,29 @@ impl CommandPolicy {
 
 /// `command` を照合できる形へ正規化する。**できなければ `None`。**
 ///
-/// 3 段（`command_tool_contract`）:
+/// 4 段（`command_tool_contract`）:
 /// 1. パス区切りを含むなら拒否
-/// 2. 小文字化（Windows のファイル名は大文字小文字を区別しない）
-/// 3. Windows では `PATHEXT` の拡張子を剥がす（`python` と `python.exe` を
+/// 2. **空白を含むなら拒否**（2026-09-20 の実機）
+/// 3. 小文字化（Windows のファイル名は大文字小文字を区別しない）
+/// 4. Windows では `PATHEXT` の拡張子を剥がす（`python` と `python.exe` を
 ///    別物にしない）
+///
+/// 2 を足した理由は照合の外にある。`command: "git status"` は 1 トークンとして
+/// `tokens[0]` に入り、`git status *` の先頭 `git` と一致せず `Unknown` へ落ちる。
+/// `Unknown` の文面は「`allow` へ追加すると次から実行できます」と案内するので、
+/// **利用者は追加しても通らないパターンを足し続ける** — 実機では
+/// `git status` と `git status *` が並んで 1 件も効かない状態になった。
+/// `Malformed` なら `call` が `note_pending` を呼ばないので、死んだ行が増える
+/// 輪も同時に切れる。
+///
+/// **`args` の空白は拒否しない。** あちらは逐語で比較する値で、`a b` のように
+/// 空白を含む引数は正当（`args_are_compared_literally_including_spaces`）。
 pub fn normalize_command(command: &str) -> Option<String> {
     let trimmed = command.trim();
-    if trimmed.is_empty() || trimmed.contains(['/', '\\', ':']) {
+    if trimmed.is_empty()
+        || trimmed.contains(['/', '\\', ':'])
+        || trimmed.contains(char::is_whitespace)
+    {
         return None;
     }
     let lowered = trimmed.to_lowercase();
@@ -533,6 +548,34 @@ mod tests {
         }
     }
 
+    /// 空白を含む `command` は照合前に拒否する（2026-09-20 の実機）。
+    ///
+    /// モデルが `command: "git status"` と 1 トークンで呼ぶと、それが
+    /// `tokens[0]` になり、`git status *` の先頭 `git` と一致しないので
+    /// `Unknown` に落ちていた。`Unknown` の文面は「`allow` へ追加すると
+    /// 次から実行できます」と書くので、**利用者は追加しても通らない
+    /// パターンを足し続ける** — 実機では `git status` と `git status *` が
+    /// 並んで 1 件も効かない状態になった。
+    ///
+    /// `Malformed` に落とすと `call` は `note_pending` を呼ばないので、
+    /// **死んだ行が増える輪も同時に切れる。**
+    #[test]
+    fn a_command_with_spaces_is_rejected_before_matching() {
+        let p = policy(&["git status *", "git status"], &[]);
+        for bad in ["git status", "git  status", "git\tstatus"] {
+            assert_eq!(
+                p.decide(bad, &[]),
+                Decision::Malformed,
+                "空白入りはどのパターンにも当たらない。Unknown だと承認の輪が回る"
+            );
+        }
+        assert_eq!(
+            p.decide("git", &args(&["status"])),
+            Decision::Allowed,
+            "分けて呼べば通る（これが唯一の正しい形）"
+        );
+    }
+
     #[test]
     fn matching_ignores_case() {
         let p = policy(&["Ruff *"], &[]);
@@ -680,6 +723,24 @@ mod tests {
         assert_eq!(p.approve("./python", &[], false), ApprovalOutcome::NotFound);
         assert!(p.allow.is_empty());
         assert_eq!(p.pending.len(), 1, "消しもしない（判断できないものは残す）");
+    }
+
+    /// 空白を含む `command` は承認できない（D8 の射程を空白まで広げた）。
+    ///
+    /// 門は元からあったが、数える「不正」が**パス区切りだけ**で、照合が実際に
+    /// 落とす集合より狭かった。実機では承認のたびに `allow` へ死んだ行が入り、
+    /// `allow=1 → 2` に増えた直後の同じ呼び出しがまた `Unknown` になっていた。
+    #[test]
+    fn a_command_with_spaces_cannot_be_approved() {
+        let mut p = CommandPolicy::default();
+        p.pending.push(PendingCommand {
+            command: "git status".to_owned(),
+            args: Vec::new(),
+            first_requested_at_ms: 1,
+            count: 1,
+        });
+        assert_eq!(p.approve("git status", &[], true), ApprovalOutcome::NotFound);
+        assert!(p.allow.is_empty(), "死んだ行を増やさない");
     }
 
     /// **広いパターンで承認すると、それが覆う判断待ちも一覧から消える。**

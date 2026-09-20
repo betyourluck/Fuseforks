@@ -130,8 +130,11 @@ impl AgentTool for RunTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": d("実行ファイル名。パス区切り（/ \\ :）を含めてはいけない",
-                                     "Executable name. Must not contain path separators (/ \\ :)")
+                    "description": d("実行ファイル名を 1 語。空白とパス区切り（/ \\ :）を含めてはいけない。\
+                                      `git status` のような 2 語は command: \"git\" / args: [\"status\"] と分ける",
+                                     "A single executable name. Must not contain whitespace or path \
+                                      separators (/ \\ :). Two words like `git status` go as \
+                                      command: \"git\" / args: [\"status\"]")
                 },
                 "args": {
                     "type": "array",
@@ -192,13 +195,15 @@ impl AgentTool for RunTool {
             text.push_str(&format!("- `{pattern}`\n"));
         }
         text.push_str(ctx.language.pick(
-            "パターン末尾の `*` は「以降の引数は自由」。`*` が無いパターンは\
+            "パターン末尾の `*` は「以降の引数は自由」で、**引数なしの呼び出しにも当たる**\
+             （`git status *` は `git status` も覆う）。`*` が無いパターンは\
              **引数なしの呼び出しにしか一致しない**。\
              一致しない呼び出しは実行されず、利用者への要求として記録される。\n",
-            "A trailing `*` in a pattern means \"any further arguments\". A pattern \
-             without `*` **matches only a call with no arguments**. \
-             Calls that match nothing are not run; they are recorded as requests \
-             to the user.\n",
+            "A trailing `*` in a pattern means \"any further arguments\", and it \
+             **also matches a call with no arguments** (`git status *` covers \
+             `git status` too). A pattern without `*` **matches only a call with \
+             no arguments**. Calls that match nothing are not run; they are \
+             recorded as requests to the user.\n",
         ));
 
         Some(ToolSpec {
@@ -247,7 +252,9 @@ impl AgentTool for RunTool {
             Decision::Malformed => {
                 return Ok(format!(
                     "`{command}` は実行ファイル名として受け付けられません\
-                     （パス区切り `/` `\\` `:` を含めないでください）。\n\
+                     （空白とパス区切り `/` `\\` `:` を含めないでください）。\n\
+                     **2 語以上を 1 つの `command` に書かないでください** — \
+                     `command: \"git\", args: [\"status\"]` のように分けます。\n\
                      名前だけで呼び直してください（探索は PATH に任せます）。"
                 ));
             }
