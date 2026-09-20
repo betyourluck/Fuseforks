@@ -1241,6 +1241,24 @@ export function useOrchestrator() {
       await this.refreshCommandRequests();
       return outcome;
     },
+
+    /**
+     * 承認の直後に続きを走らせる（Spec 56）。真なら配送できた。
+     *
+     * **承認とは別の操作。** 呼ぶ側は `approveCommand` が成功してから呼び、
+     * ここが偽を返しても**承認は取り消さない** — 人が押した判断を配送の失敗で
+     * 巻き戻さない（D8）。失敗の通知は `mutate` のトーストが出すので、
+     * 呼ぶ側は「承認だけは残った」ことを画面で言い足す。
+     *
+     * **一覧は引き直さない** — `run.json` はこの経路で 1 文字も変わらない
+     * （直前の `approveCommand` が既に引き直している）。
+     */
+    async resumeAfterApproval(agentId: AgentId): Promise<boolean> {
+      const done = await mutate("orchestrator.op.resumeAfterApproval", () =>
+        ipc.resumeAfterApproval(agentId),
+      );
+      return succeeded(done);
+    },
     /**
      * 利用者の呼び名を保存する（Spec 19）。`null` で既定へ戻す。
      *

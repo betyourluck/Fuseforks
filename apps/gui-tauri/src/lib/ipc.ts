@@ -423,6 +423,16 @@ export const rejectCommand = (
   args: string[],
   open: boolean,
 ) => call<ApprovalOutcome>("reject_command", { agentId, command, args, open });
+
+/**
+ * 承認の直後に「続けてください」を 1 通配送する（Spec 56）。
+ *
+ * **承認そのものは `approveCommand` が済ませている。** こちらは配送だけで、
+ * `run.json` には触らない — 承認と配送は別の操作（配送に失敗しても
+ * 承認は取り消さない）。
+ */
+export const resumeAfterApproval = (agentId: AgentId) =>
+  call<void>("resume_after_approval", { agentId });
 // ---- 利用者（Spec 19） --------------------------------------------------------
 
 /**

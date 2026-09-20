@@ -172,6 +172,8 @@ pub fn run() {
             commands::list_command_requests,
             commands::approve_command,
             commands::reject_command,
+            // 承認して続けさせる（Spec 56）
+            commands::resume_after_approval,
             // MCP
             commands::read_mcp_config,
             commands::write_mcp_config,

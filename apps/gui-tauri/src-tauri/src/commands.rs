@@ -656,6 +656,23 @@ pub async fn reject_command(
         .reject_command(&agent_id, &command, &args, open)
         .await
 }
+
+/// 承認の直後に「続けてください」を 1 通配送する（Spec 56）。
+///
+/// **`approve_command` に引数を足さず、別の IPC にする。** あちらは
+/// 「粒度を GUI が何でも決められる形にしない」ために引数を絞ってあり、
+/// 配送の有無という別の軸を足すと**1 本が 2 つの判断を運ぶ**。
+///
+/// 承認（`run.json`）と配送（受信箱）は層が違うので、**同一トランザクションにも
+/// しない** — まとめると「配送に失敗したので承認も無かったことにする」形になり、
+/// 人が押した判断をアプリが取り消す（Spec 56 D8）。
+#[tauri::command]
+pub async fn resume_after_approval(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CoreResult<()> {
+    state.orchestrator.resume_after_approval(&agent_id).await
+}
 // ---- 利用者（Spec 19） --------------------------------------------------------
 
 /// 利用者の呼び名を返す。未設定なら `null`。
