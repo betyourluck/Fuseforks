@@ -4855,9 +4855,17 @@ conversation_termination:
         配送せず **既存の NOT_RUNNING (CoreError::NotRunning) で返す** — 新しいエラー
         変種を作らない。deliver_and_wait が停止中の宛先に対して既にこれを返すので、
         **受け皿を増やさず既存の経路をそのまま通す** (Spec 20 の「fail closed は
-        提示ではなく decide が守る」と同じ線)。**ボタンの文言は既存の表示語彙のまま**
-        (ja「停止中」/ en Idle) — AgentStatus::label は画面とプロンプトで同じ相手を
-        同じ言葉で呼ぶことを要求しており、別の言い方を足すと語彙が 3 つ目になる
+        提示ではなく decide が守る」と同じ線)。
+        **画面の判定はコアと別の述語になる** — 受信箱は GUI から見えないので
+        AgentSnapshot.status で近似する (lib/resumeGate.ts の canResume =
+        starting | running。**判定は純関数に置き、部品へ直書きしない**)。
+        これは可視述語が 2 実装へ割れたのとは違い、**近似の側は配送の可否を
+        決めていない**。**ボタンの文言は既存の表示語彙のまま** —
+        押せない状態は Idle だけではない (Stopping / Failed も同じ門) ので
+        「停止中」と書くと Failed の個体に対して嘘になる。labels.status.running の
+        **否定形** (ja「稼働中ではない」/ en not Running) なら 3 状態とも正しく、
+        AgentStatus::label の要求 (画面とプロンプトで同じ相手を同じ言葉で呼ぶ) も
+        満たす — 別の言い方を足すと語彙が 3 つ目になる
       - **承認と配送は別の操作**。IPC も 2 本 (approve_command /
         resume_after_approval)。**approve_command に引数を足さない** — あの IPC は
         「粒度を GUI が何でも決められる形にしない」ために引数を絞ってあり、

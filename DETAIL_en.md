@@ -719,6 +719,20 @@ control).
   resulting pattern is shown literally so you can check it before pressing.
 - **Rejecting writes to `deny`**, not merely removing it from the list — removal alone
   would let the same command queue up again on the next call.
+- **"Approve and resume" starts the work again from there**
+  ([Spec 56](specs/56_resume-after-approval.md)). Approving alone **does not start a
+  new turn** — the servant's turn ended the moment it was refused, and it stays put
+  until you say something. This button approves and then sends one message:
+  "Approved. Please continue."
+  - **Only that fixed line is sent; your original request is not re-sent** (it is
+    still in the requester's conversation).
+  - **One press, one message.** With three requests waiting, clear two with
+    "Approve" and press this on the last one (sending three would start the same
+    turn three times).
+  - **It cannot be pressed for a servant that is not running** (the button says why).
+    Start it first.
+  - **The continuation runs as a new request.** In a village with a token limit,
+    **the ceiling starts fresh every time** (the same treatment as a scheduled run).
 - **There is no "approve all."** Bulk approval skips the decision of *what* to permit,
   which is the substance of allow-listing.
 - **Once even one entry is permitted, that servant can run commands from its next
