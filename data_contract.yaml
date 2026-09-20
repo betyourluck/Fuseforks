@@ -4841,12 +4841,17 @@ conversation_termination:
         文ではないので User にすると封筒が嘘になる (sender_envelope_contract の系譜)。
         **System なので封筒は 【送り手: Fuseforks】 になり、だからこそ本文の先頭に
         由来の印が要る** — 封筒だけでは予定の発火と区別が付かない
-      - **配送できるのは AgentStatus::is_active() が真の個体だけ** (Starting |
-        Running)。判定は deliver_scheduled と**同じ述語を流用し、2 つ目を書かない** —
-        可視述語が経路ごとに 2 実装へ割れると片方が漏れる (Spec 22 の系譜)。
-        **Idle は「停止しており受信箱も存在しない」**ので配送先が無い。
+      - **配送できるかは受信箱の有無で決まる**。「ここに居る = 送信できる」が
+        村の既存の不変条件で、deliver_scheduled も ask_external も
+        mailboxes.contains_key で見ている (**AgentStatus::is_active() ではない** —
+        起票時の rev2 はここを取り違えていた。2026-09-20 の P1 で実測して訂正)。
+        resume_after_approval は**述語を 1 つも足さず**、deliver が返す
+        NOT_RUNNING をそのまま通す — これが「2 つ目を書かない」の最も強い形
+        (可視述語が経路ごとに 2 実装へ割れると片方が漏れる = Spec 22 の系譜)。
+        帰結として **Idle / Failed / Stopping の 3 つは同じ 1 本の門で断られる**
+        (stop_agent は Stopping にした直後に受信箱を外す)。
         ターンが終わっても個体は Running のままで、Idle はトグル OFF の状態
-      - **画面の disabled は導線であって保証ではない**。実行時に is_active() が偽なら
+      - **画面の disabled は導線であって保証ではない**。実行時に受信箱が無ければ
         配送せず **既存の NOT_RUNNING (CoreError::NotRunning) で返す** — 新しいエラー
         変種を作らない。deliver_and_wait が停止中の宛先に対して既にこれを返すので、
         **受け皿を増やさず既存の経路をそのまま通す** (Spec 20 の「fail closed は

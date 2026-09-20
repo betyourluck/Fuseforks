@@ -427,6 +427,92 @@ impl Orchestrator {
             .await
     }
 
+    /// 承認の直後に「続けてください」を 1 通配送する（Spec 56）。
+    ///
+    /// **承認そのものは [`Self::approve_command`] が済ませている。** ここがするのは
+    /// 配送だけで、`run.json` には 1 文字も触らない。1 本の IPC にまとめないのは、
+    /// 承認（ファイル）と配送（受信箱）で層が違うため — まとめると
+    /// 「配送に失敗したので承認も無かったことにする」形になり、**人が押した判断を
+    /// アプリが取り消す**（Spec 56 D8）。
+    ///
+    /// 送るのは定型文だけで、**元の依頼文は再送しない**（依頼主の履歴に残っており、
+    /// 二重に払う理由が無い）。本文の先頭へ由来の印を書くのは `deliver_scheduled` と
+    /// 同じ理由 — 封筒は `【送り手: Fuseforks】` になるので、**印が無いと
+    /// モデルも利用者も予定の発火と区別できない**。
+    ///
+    /// 新しい**因果の根**なので hop は 0、財布は `new_root_budget` の新品。
+    /// 元のターンの `Arc<BudgetPool>` は継がない — **継ぐべき参照が物理的に
+    /// 残っていない**（人が承認を押す時点でそのターンは閉じている）。
+    ///
+    /// # Errors
+    /// - 個体が居ない [`CoreError::AgentNotFound`]
+    /// - 停止中 [`CoreError::NotRunning`] — **稼働の判定を自分で書かない。**
+    ///   「受信箱の有無が稼働の判定」という既存の不変条件へそのまま乗る
+    ///   （`deliver` が同じ述語で返す）。画面の `disabled` は導線であって
+    ///   保証ではないので、実行時の門はここが唯一（Spec 20 の
+    ///   「fail closed は提示ではなく `decide` が守る」と同じ線）
+    /// - 受信箱が飽和 [`CoreError::MailboxFull`]
+    pub async fn resume_after_approval(&self, id: &AgentId) -> CoreResult<()> {
+        let language = {
+            let world = self.shared.world.read().await;
+            // 削除との競合を「停止中」へ畳まない — 作り直すのと起動するのでは
+            // 人の次の手が違う（`ask_external` の窓口と同じ分け方）。
+            world.agent(id)?;
+            world.language().unwrap_or(crate::world::Language::Ja)
+        };
+        let content = match language {
+            crate::world::Language::Ja => "【コマンド承認】\n承認しました。続けてください。",
+            // 【】は封筒と同じく両言語で共通（構造の印。Spec 35 D5 と同じ判断）。
+            crate::world::Language::En => "【Command approval】\nApproved. Please continue.",
+        }
+        .to_owned();
+
+        // 承認による続行は**人の操作が作る新しい因果の根**。送り手は System で、
+        // `Endpoint::User` を名乗らない — 利用者が書いた文ではないので封筒が嘘になる
+        // （Spec 26 の系譜）。hop 0 はユーザー発話・予定の発火と同格。
+        let message = AgentMessage::new(
+            Endpoint::System,
+            Endpoint::Agent { id: id.clone() },
+            content,
+            0,
+        );
+
+        let budget = new_root_budget(&self.shared).await;
+        let ceiling = budget.as_ref().map_or_else(
+            || "-".to_owned(),
+            |pool| pool.ceiling_effective().to_string(),
+        );
+
+        deliver(
+            &self.shared,
+            id,
+            message.clone(),
+            budget,
+            // 予定ではないので参加者を数えない（自動要約の対象外）。
+            None,
+            // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2）。
+            Vec::new(),
+            // 人が押した続行なので計画の確認は普通に開く（Spec 53 の印を
+            // 立てるのは無人の発火だけ）。
+            false,
+        )
+        .await?;
+        // 配送してから記録する（`deliver_scheduled` と同じ順序 — 逆にすると、
+        // 受信箱が飽和していたときに「配られていない発話」が会話ペインへ残る）。
+        self.shared.record(message).await;
+
+        // 人がこの線を何回引いたかを後から数えられるようにする。1 行 = 1 回押した。
+        // `pending_left` は**コアが `run.json` を読んで自分で数える** —
+        // フロントから受け取ると、ログのためだけに IPC の表面が増えるうえ、
+        // 渡された数をコアは検証できない。読めない個体は `-`（Spec 56 D7）。
+        let pending_left = match self.shared.store.read_command_policy(id).await {
+            Ok(policy) => policy.pending.len().to_string(),
+            Err(_) => "-".to_owned(),
+        };
+        note!("resume after approval: agent={id} pending_left={pending_left} ceiling={ceiling}");
+        Ok(())
+    }
+
     // ---- 村の黒板 -------------------------------------------------------------
 
     /// 村の黒板（work_dir の `blackboard/`）を読む。GUI 投影用・読み取り専用。
