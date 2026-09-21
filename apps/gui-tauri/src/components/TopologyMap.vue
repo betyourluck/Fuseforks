@@ -92,12 +92,6 @@ const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
  * #122 の真因はズームの clamp（`MAX_ZOOM` と `fit()` の余白を見よ）。
  */
 const visibleKey = computed(() => visible.value.map((a) => a.id).join(","));
-/** 隠れている個体の数。要約行に出す（隠していることが画面から読めるように）。 */
-const hiddenNodeCount = computed(() => state.agents.length - visible.value.length);
-/** 隠れている辺の数 = 全辺 − 両端が見えている辺（片端でも両端でも隠れていれば数える）。 */
-const hiddenEdgeCount = computed(
-  () => state.edges.length - visibleEdges(state.edges, visibleIds.value).length,
-);
 
 const nodes = computed<Nodes>(() => {
   const result: Nodes = {};
@@ -470,10 +464,6 @@ onBeforeUnmount(() => {
         {{ $t("map.summary", { nodes: visible.length, edges: Object.keys(edges).length }) }}
         <span v-if="bidirectionalCount" class="text-ink">
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
-        </span>
-        <!-- 隠しているものを黙らない（Spec 51 D3）。数だけで、名前は出さない。 -->
-        <span v-if="hiddenNodeCount" class="text-warn">
-          {{ $t("map.hiddenSummary", { nodes: hiddenNodeCount, edges: hiddenEdgeCount }) }}
         </span>
       </span>
 

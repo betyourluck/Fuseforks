@@ -1441,8 +1441,9 @@ ungrouped is allowed. A worker shared by two lines of work should stay ungrouped
 servants are never hidden, and ties can be drawn regardless of membership.
 
 **Hiding changes what you see, not the ties.** Hiding a group with the eye on its heading
-removes its servants, and every tie touching them, from Kizuna (the summary line shows
-"hidden: N servants / M ties"), and drops them from the chat filter and the Alt+↑↓ cycle.
+removes its servants, and every tie touching them, from Kizuna (the summary line counts only
+what is visible; the collapsed heading in the list is what tells you a group is hidden), and
+drops them from the chat filter and the Alt+↑↓ cycle.
 **They still appear in the conversation** — a hidden servant that speaks through delegation,
 handoff, or a bundle shows up as usual. Delivery, delegation, handoff, schedules, statistics,
 and the tool set offered to models are untouched. Hiding is a per-device setting

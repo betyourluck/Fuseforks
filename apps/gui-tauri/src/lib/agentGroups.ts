@@ -112,8 +112,8 @@ export function batchEligible<T extends GroupableAgent>(
 }
 
 /**
- * 地図に描く辺 = **両端が見えている辺だけ**。隠れる辺の数は
- * `edges.length - visibleEdges(...).length`（片端でも両端でも隠れていれば数える）。
+ * 地図に描く辺 = **両端が見えている辺だけ**（片端でも隠れていれば描かない）。
+ * 隠れた辺の数は画面に出さない（2026-09-22 利用者裁定。要約行の数は見えているものだけ）。
  */
 export function visibleEdges(
   edges: readonly TopologyEdge[],

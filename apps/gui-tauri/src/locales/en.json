@@ -451,8 +451,7 @@
     "autoFit": "Fit automatically after the pane is resized",
     "fit": "Fit",
     "fitTitle": "Fit the whole graph into view",
-    "autoFitShort": "Auto fit",
-    "hiddenSummary": "(hidden: {nodes} servants / {edges} ties)"
+    "autoFitShort": "Auto fit"
   },
   "chat": {
     "heading": "Chat",
