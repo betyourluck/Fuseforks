@@ -27,10 +27,13 @@ import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
   buildTimeline,
   collapseRows,
+  formatToolArgs,
+  groupToolRuns,
   isSystemNotice,
   reasonDisplay,
   sameEndpoint,
   type ChatRow,
+  type DisplayEntry,
   type ReasonDisplay,
   type TimelineEntry,
   type ToolRun,
@@ -43,10 +46,11 @@ import { renderMarkdownCached } from "../lib/markdown";
 import { askConfirm } from "../composables/useConfirm";
 import { useChatClear } from "../composables/useChatClear";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { useToolCallDetails } from "../composables/useToolCallDetails";
 import { useUiSettings } from "../composables/useUiSettings";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { visibleAgents } from "../lib/agentGroups";
-import { readAttachment } from "../lib/ipc";
+import { getToolCall, readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
 import type { AttachmentKind } from "../lib/carries";
 import type { Attachment } from "../types";
@@ -235,13 +239,70 @@ const timeline = computed<TimelineEntry[]>(() =>
   buildTimeline(rows.value, visibleToolRuns.value),
 );
 
-/** 直前の発話と同じ話者・同じ宛先か（タイムライン上の位置で見る）。 */
+/**
+ * 開いているまとまりの鍵（Spec 57 D8）。保存しない — 既定は畳んだ状態で、
+ * 開いたまとまりは鍵（先頭の行の `callId`）が変わらない限り開いたまま。
+ */
+const openedGroups = ref(new Set<string>());
+
+/**
+ * いま処理中の個体。**絞り込みに関わらず全員を見る** — 束ねの規則 2
+ * （処理中の個体の行は畳まない）は、その個体の行が画面にあるかどうかとは独立。
+ */
+const busyAgents = computed(
+  () => new Set<AgentId>(Object.keys(state.typing).filter((id) => state.typing[id])),
+);
+
+/**
+ * 実際に描く並び。連続するツール行を束ねた後の形（規則は lib/chatRows.ts）。
+ * 畳んでいるまとまりの行はここに居らず、開いているまとまりの行は見出しの後ろに並ぶ。
+ */
+const display = computed<DisplayEntry[]>(() =>
+  groupToolRuns(timeline.value, busyAgents.value, openedGroups.value),
+);
+
+/** まとまりを開く / 畳む。 */
+function toggleGroup(key: string): void {
+  if (!openedGroups.value.delete(key)) openedGroups.value.add(key);
+}
+
+/** ツール行の中身（Spec 57 D7）。開閉と 4 状態は composable が持つ。 */
+const toolCalls = useToolCallDetails(getToolCall);
+
+/** 開いた行の中身の状態。閉じている行は `null`。 */
+function callDetail(run: ToolRun) {
+  if (!toolCalls.expanded.has(run.callId)) return null;
+  return toolCalls.details.get(run.callId) ?? null;
+}
+
+// 会話を切り替えると `toolRuns` が空になる（`conversationCleared`）。コアの
+// リングも同じ時に空になるので、開閉と引いた中身を持ち続けない。
+watch(
+  () => state.toolRuns.length,
+  (length) => {
+    if (length > 0) return;
+    toolCalls.reset();
+    openedGroups.value.clear();
+  },
+);
+
+/** 字数の表示。**言語に追従させない** — ログの `args_chars` と目で突き合わせる数。 */
+function formatCount(count: number): string {
+  return count.toLocaleString("en-US");
+}
+
+/** 画面に出している字数（code point）。切った後の長さをコアは別に運ばないので数える。 */
+function shownChars(text: string): number {
+  return Array.from(text).length;
+}
+
+/** 直前の発話と同じ話者・同じ宛先か（描く並びの上の位置で見る）。 */
 function continuesTimeline(index: number): boolean {
-  const current = timeline.value[index];
+  const current = display.value[index];
   if (current.kind !== "message") return false;
-  // 直前の発話行を探す。間にツール行が挟まっても連続とみなす。
+  // 直前の発話行を探す。間にツール行・束ねの見出しが挟まっても連続とみなす。
   for (let i = index - 1; i >= 0; i -= 1) {
-    const previous = timeline.value[i];
+    const previous = display.value[i];
     if (previous.kind !== "message") continue;
     const a = previous.row.message.from;
     const b = current.row.message.from;
@@ -754,7 +815,36 @@ async function newChat(): Promise<void> {
         </button>
       </p>
 
-      <template v-for="(entry, index) in timeline" :key="entry.key">
+      <template v-for="(entry, index) in display" :key="entry.key">
+      <!--
+        束ねの見出し（Spec 57 D8）。ターンを終えた個体の、連続 3 本以上のツール行を
+        1 行へ畳む。押すと見出しの後ろに今までと同じ行が並ぶ。
+        **エラーの本数は出さない** — 束ねたまとまりは `ok = false` を含まず、
+        しかも `ok` は「成功したか」ではない（規則は lib/chatRows.ts）。
+      -->
+      <button
+        v-if="entry.kind === 'toolGroup'"
+        type="button"
+        class="flex w-full items-center gap-1.5 pl-5 text-left text-[10px] text-ink-dim hover:text-ink"
+        :aria-expanded="entry.open"
+        @click="toggleGroup(entry.key)"
+      >
+        <svg
+          class="size-2.5 shrink-0 transition-transform"
+          :class="entry.open ? 'rotate-90' : ''"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 4 4 4-4 4" />
+        </svg>
+        <span class="inline-block size-1.5 shrink-0 rounded-full bg-run" />
+        <span>{{ $t("chat.toolGroup", { name: toolActor(entry.agentId), count: entry.count }) }}</span>
+      </button>
       <!--
         ツール実行の 1 行。発話ではないので吹き出しにせず、淡色の細い行にする。
 
@@ -764,10 +854,31 @@ async function newChat(): Promise<void> {
         「調べて」と頼まれた個体が grep を 3 回叩いてから答えた、という
         因果がそこにしか現れないため。
       -->
-      <div
-        v-if="entry.kind === 'tool'"
-        class="flex items-center gap-1.5 pl-9 text-[10px] text-ink-dim"
+      <div v-else-if="entry.kind === 'tool'">
+      <!--
+        行を押すと中身が開く（Spec 57）。**高さは測らない** — 会話ペインは
+        `zoom` を掛ける場所で座標計算を持たない前提なので、開いた節の高さは
+        CSS の `max-height` だけで決める。
+      -->
+      <button
+        type="button"
+        class="flex w-full items-center gap-1.5 pl-5 text-left text-[10px] text-ink-dim hover:text-ink"
+        :aria-expanded="toolCalls.expanded.has(entry.run.callId)"
+        @click="toolCalls.toggle(entry.run.callId)"
       >
+        <svg
+          class="size-2.5 shrink-0 transition-transform"
+          :class="toolCalls.expanded.has(entry.run.callId) ? 'rotate-90' : ''"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 4 4 4-4 4" />
+        </svg>
         <span
           class="inline-block size-1.5 shrink-0 rounded-full"
           :class="entry.run.ok ? 'bg-run' : 'bg-fail'"
@@ -822,6 +933,55 @@ async function newChat(): Promise<void> {
           >
         </span>
         <span class="ml-auto shrink-0 tabular-nums">{{ timestamp(entry.run.tsMs) }}</span>
+      </button>
+      <!--
+        開いた中身。**引数と出力はコアのメモリにだけ在り、ここが唯一の出口** —
+        ログにも保存先にも書き出しにも残らない（`failures.md` #71）。
+      -->
+      <div
+        v-if="callDetail(entry.run)"
+        class="mt-1 ml-9 space-y-1 rounded border border-line bg-surface-0 p-2 text-[10px] text-ink-dim"
+      >
+        <template v-for="detailState in [callDetail(entry.run)!]" :key="detailState.status">
+          <p v-if="detailState.status === 'loading'">{{ $t("chat.toolDetail.loading") }}</p>
+          <p v-else-if="detailState.status === 'gone'">{{ $t("chat.toolDetail.gone") }}</p>
+          <p v-else-if="detailState.status === 'failed'" class="text-fail">
+            {{ $t("chat.toolDetail.failed") }}
+          </p>
+          <template v-else>
+            <p>
+              {{ $t("chat.toolDetail.input") }}
+              <span class="tabular-nums">{{ $t("chat.toolDetail.chars", { count: formatCount(detailState.detail.argsChars) }) }}</span>
+            </p>
+            <pre
+              class="max-h-40 overflow-auto rounded bg-surface-1 p-1.5 font-mono break-all whitespace-pre-wrap text-ink select-text"
+            >{{ formatToolArgs(detailState.detail.args, detailState.detail.argsTruncated) }}</pre>
+            <p v-if="detailState.detail.argsTruncated" class="text-warn">
+              {{
+                $t("chat.toolDetail.truncated", {
+                  shown: formatCount(shownChars(formatToolArgs(detailState.detail.args, true))),
+                  total: formatCount(detailState.detail.argsChars),
+                })
+              }}
+            </p>
+            <p>
+              {{ $t("chat.toolDetail.output") }}
+              <span class="tabular-nums">{{ $t("chat.toolDetail.chars", { count: formatCount(detailState.detail.bodyChars) }) }}</span>
+            </p>
+            <pre
+              class="max-h-64 overflow-auto rounded bg-surface-1 p-1.5 font-mono break-all whitespace-pre-wrap text-ink select-text"
+            >{{ detailState.detail.body || $t("chat.toolDetail.empty") }}</pre>
+            <p v-if="detailState.detail.bodyTruncated" class="text-warn">
+              {{
+                $t("chat.toolDetail.truncated", {
+                  shown: formatCount(shownChars(detailState.detail.body)),
+                  total: formatCount(detailState.detail.bodyChars),
+                })
+              }}
+            </p>
+          </template>
+        </template>
+      </div>
       </div>
 
       <!--

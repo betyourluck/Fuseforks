@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildTimeline,
   collapseRows,
+  formatToolArgs,
+  groupToolRuns,
   isSystemNotice,
   reasonDisplay,
+  TOOL_GROUP_MIN,
+  toolGroupKey,
+  type TimelineEntry,
   type ToolRun,
 } from "./chatRows";
 import type { AgentMessage, Endpoint } from "../types";
@@ -79,6 +84,7 @@ describe("collapseRows", () => {
 describe("buildTimeline", () => {
   const run = (id: string, tool: string, tsMs: number, ok = true): ToolRun => ({
     id,
+    callId: 0,
     agentId: "a",
     tool,
     ok,
@@ -218,5 +224,101 @@ describe("reasonDisplay", () => {
     const display = reasonDisplay({ kind: "excluded" });
     expect(display).toBeNull();
     expect(display).not.toEqual({ kind: "text", text: "" });
+  });
+});
+
+describe("groupToolRuns（Spec 57 D8）", () => {
+  let next = 0;
+  /** ツール行 1 本。`callId` は通し番号。 */
+  const tool = (agentId: string, ok = true): TimelineEntry => {
+    next += 1;
+    return {
+      kind: "tool",
+      key: `tool-${next}`,
+      run: { id: `tool-${next}`, callId: next, agentId, tool: "grep", ok, reason: { kind: "omitted" }, tsMs: next },
+    };
+  };
+  /** 発話 1 通。 */
+  const said = (from: Endpoint, to: Endpoint): TimelineEntry => {
+    const m = message(from, to, "…");
+    return { kind: "message", key: m.id, row: { message: m, extraTargets: [] } };
+  };
+  const kinds = (entries: ReturnType<typeof groupToolRuns>) => entries.map((e) => e.kind);
+  const idle = new Set<string>();
+  const none = new Set<string>();
+
+  it("同じ個体の連続 3 本以上を、既定で 1 行へ畳む", () => {
+    const entries = [tool("a"), tool("a"), tool("a"), said(agent("a"), user)];
+    const out = groupToolRuns(entries, idle, none);
+    expect(kinds(out)).toEqual(["toolGroup", "message"]);
+    expect(out[0]).toMatchObject({ agentId: "a", count: 3, open: false });
+  });
+
+  it(`${TOOL_GROUP_MIN - 1} 本までは束ねない`, () => {
+    const out = groupToolRuns([tool("a"), tool("a"), said(agent("a"), user)], idle, none);
+    expect(kinds(out)).toEqual(["tool", "tool", "message"]);
+  });
+
+  it("処理中の個体の行は束ねない（いま何をしているかが見える）", () => {
+    const entries = [tool("a"), tool("a"), tool("a"), tool("a")];
+    expect(kinds(groupToolRuns(entries, new Set(["a"]), none))).toEqual(["tool", "tool", "tool", "tool"]);
+    // 同じ並びでも、ターンが終われば畳まれる。
+    expect(kinds(groupToolRuns(entries, idle, none))).toEqual(["toolGroup"]);
+  });
+
+  it("後ろに別の個体の行が来ても、答えていない個体の行は畳まれない", () => {
+    // 波の最中: a が 3 本呼んだ後に b の行が来たが、a はまだ処理中。
+    const entries = [tool("a"), tool("a"), tool("a"), tool("b")];
+    const out = groupToolRuns(entries, new Set(["a", "b"]), none);
+    expect(kinds(out)).toEqual(["tool", "tool", "tool", "tool"]);
+  });
+
+  it("別の個体の行と発話でまとまりが切れる", () => {
+    const entries = [tool("a"), tool("a"), tool("b"), tool("a"), said(user, agent("a")), tool("a"), tool("a")];
+    // a の行は 5 本あるが、連続は 2 / 1 / 2 なのでどれも束ねない。
+    expect(kinds(groupToolRuns(entries, idle, none)).filter((k) => k === "toolGroup")).toEqual([]);
+  });
+
+  it("ok=false を 1 本でも含むまとまりは束ねない（赤いドットを見出しの裏へ隠さない）", () => {
+    const entries = [tool("a"), tool("a", false), tool("a"), tool("a")];
+    expect(kinds(groupToolRuns(entries, idle, none))).toEqual(["tool", "tool", "tool", "tool"]);
+  });
+
+  it("開いたまとまりは、見出しの後ろに行が並ぶ", () => {
+    const entries = [tool("a"), tool("a"), tool("a")];
+    const first = entries[0];
+    if (first.kind !== "tool") throw new Error("unreachable");
+    const out = groupToolRuns(entries, idle, new Set([toolGroupKey(first.run)]));
+    expect(kinds(out)).toEqual(["toolGroup", "tool", "tool", "tool"]);
+    expect(out[0]).toMatchObject({ open: true, count: 3 });
+  });
+
+  it("行が増えても、まとまりの鍵は動かない（開いた状態が保たれる）", () => {
+    const entries = [tool("a"), tool("a"), tool("a")];
+    const before = groupToolRuns(entries, idle, none)[0];
+    const after = groupToolRuns([...entries, tool("a"), tool("a")], idle, none)[0];
+    expect(after.key).toBe(before.key);
+    expect(after).toMatchObject({ count: 5 });
+  });
+
+  it("見出しはエラーの本数を持たない（「エラー 0 件」を正常終了と読ませない）", () => {
+    const out = groupToolRuns([tool("a"), tool("a"), tool("a")], idle, none)[0];
+    expect(Object.keys(out).sort()).toEqual(["agentId", "count", "key", "kind", "open"]);
+  });
+});
+
+describe("formatToolArgs（Spec 57 D5）", () => {
+  it("切っていない引数は字下げして出す", () => {
+    expect(formatToolArgs({ pattern: "fn main" }, false)).toBe('{\n  "pattern": "fn main"\n}');
+  });
+
+  it("切った引数は整形せず、そのまま出す", () => {
+    const head = '{"op":"write","content":"字字字';
+    expect(formatToolArgs(head, true)).toBe(head);
+  });
+
+  it("形は旗で決める — 切っていない文字列の引数は JSON の文字列として出す", () => {
+    // typeof で分岐すると、これが「切った引数」として引用符なしで出る。
+    expect(formatToolArgs("plain", false)).toBe('"plain"');
   });
 });

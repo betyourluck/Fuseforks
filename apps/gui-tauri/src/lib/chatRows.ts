@@ -25,8 +25,13 @@ export interface ChatRow {
  * Rust に対応する型は無いので `types.ts`（ミラー契約）には置かない。
  */
 export interface ToolRun {
-  /** 表示のキー。イベントに ID が無いので受け手側で振る。 */
+  /** 表示のキー。受け手側で振る（`callId` が来る前からの鍵で、動かす理由が無い）。 */
   id: string;
+  /**
+   * 中身（引数と、モデルへ返した本文）を引く鍵（Spec 57）。コアが振る。
+   * 行を開いたときに `get_tool_call` へ渡す。
+   */
+  callId: number;
   agentId: AgentId;
   tool: string;
   /** **返り値が `Ok` だったか。副作用の成否ではない**（Spec 27 D11）。 */
@@ -195,4 +200,107 @@ export function buildTimeline(
 
   sortable.sort((a, b) => a.at - b.at || a.tie - b.tie);
   return sortable.map(({ entry }) => entry);
+}
+
+/**
+ * 1 つのまとまりに束ねる最小の本数（Spec 57 D8）。
+ *
+ * 実測（`fuseforks.log` の 5,181 呼び出し）で、同じ個体の連続 3 本以上が
+ * 全ツール行の 76.0%。2 本以下は畳んでも 1 行しか減らず、押す手間のほうが大きい。
+ */
+export const TOOL_GROUP_MIN = 3;
+
+/**
+ * 会話ペインに実際に描く 1 項目。[`TimelineEntry`] に「束ねの見出し」が加わる。
+ *
+ * **見出しは中の行を持たない** — 開いているまとまりの行は、見出しの後ろに
+ * ふつうの `tool` 項目として並ぶ。畳んでいるまとまりの行は並びに居ない。
+ * 描く側が入れ子の v-for を持たずに済み、ツール行の描き方が 1 箇所のままになる。
+ */
+export type DisplayEntry =
+  | TimelineEntry
+  | {
+      kind: "toolGroup";
+      /** まとまりの鍵 = 先頭の行の `callId`。行は末尾にしか増えないので、伸びても動かない。 */
+      key: string;
+      agentId: AgentId;
+      /** まとまりの本数。 */
+      count: number;
+      /** 開いているか（見出しの後ろに行が並んでいるか）。 */
+      open: boolean;
+    };
+
+/** まとまりの鍵。開閉の状態（描く側の `Set`）はこの文字列で持つ。 */
+export function toolGroupKey(first: ToolRun): string {
+  return `tool-group-${first.callId}`;
+}
+
+/**
+ * 連続するツール行を束ねる（Spec 57 D8）。規則は 4 つ:
+ *
+ * 1. **同じ個体のツール行が、間に他の項目を挟まずに [`TOOL_GROUP_MIN`] 本以上**
+ *    続いたら 1 つのまとまり。発話・告知・別の個体の行で切れる
+ *    （時系列を並べ替えてまで束ねない）
+ * 2. **その個体が処理中のあいだは束ねない** — いま何をしているかが見える必要がある。
+ *    「後ろに何が来たか」で切らないのは、波では別の個体の行が後ろに来るので、
+ *    まだ答えていない個体の行が途中で畳まれるため
+ * 3. **`ok = false` の行を 1 本でも含むまとまりは束ねない** — 赤いドットを
+ *    見出しの裏へ隠さない
+ * 4. それ以外は束ね、**既定で畳む**。`opened` に鍵があるまとまりだけ、
+ *    見出しの後ろへ行を並べる
+ *
+ * **見出しにエラーの本数は持たせない。** 3 により束ねたまとまりは常に
+ * `ok = false` が 0 本で、しかも `ok` は「返り値が Ok か」であって「成功したか」
+ * ではない（同梱ツールは失敗を `Ok(<エラー文>)` で返す）。「エラー 0 件」と
+ * 書くと正常に終わったと読まれる。
+ */
+export function groupToolRuns(
+  entries: readonly TimelineEntry[],
+  busy: ReadonlySet<AgentId>,
+  opened: ReadonlySet<string>,
+): DisplayEntry[] {
+  const out: DisplayEntry[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    const head = entries[i];
+    if (head.kind !== "tool") {
+      out.push(head);
+      i += 1;
+      continue;
+    }
+    // 同じ個体のツール行が続く範囲 [i, j)。
+    let j = i + 1;
+    while (j < entries.length) {
+      const next = entries[j];
+      if (next.kind !== "tool" || next.run.agentId !== head.run.agentId) break;
+      j += 1;
+    }
+    const run = entries.slice(i, j) as Extract<TimelineEntry, { kind: "tool" }>[];
+    const foldable =
+      run.length >= TOOL_GROUP_MIN &&
+      !busy.has(head.run.agentId) &&
+      run.every((e) => e.run.ok);
+    if (!foldable) {
+      out.push(...run);
+    } else {
+      const key = toolGroupKey(head.run);
+      const open = opened.has(key);
+      out.push({ kind: "toolGroup", key, agentId: head.run.agentId, count: run.length, open });
+      if (open) out.push(...run);
+    }
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * 開いた行の「入力」に出す文字列（Spec 57 D5）。
+ *
+ * **形は旗で決める。`typeof` で推測しない** — 切っていない引数そのものが
+ * 文字列の JSON 値でありうる。切った引数は詰めた形の先頭なので、整形せず
+ * そのまま出す（途中で切れた JSON は parse できない）。
+ */
+export function formatToolArgs(args: unknown, truncated: boolean): string {
+  if (truncated) return typeof args === "string" ? args : JSON.stringify(args);
+  return JSON.stringify(args, null, 2);
 }

@@ -475,6 +475,17 @@
     "toolRan": "{name}: {tool}",
     "toolRanFailed": "{name}: {tool} (returned an error)",
     "toolOkTitle": "Whether the tool returned an error, not whether the side effect succeeded",
+    "toolGroup": "{name}: {count} tool calls",
+    "toolDetail": {
+      "input": "Input",
+      "output": "Output",
+      "chars": "({count} chars)",
+      "truncated": "Showing the first {shown} characters of {total}",
+      "loading": "Loading…",
+      "gone": "The details of this call are no longer kept (only the latest 500 calls, cleared when you switch conversations)",
+      "failed": "Could not load the details. Click the row again to retry",
+      "empty": "(empty)"
+    },
     "reasonOmitted": "no reason given",
     "reasonUnsupported": "external tool",
     "typingTitle": "{name} is composing a response",

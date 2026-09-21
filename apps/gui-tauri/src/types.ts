@@ -1101,6 +1101,30 @@ export type ReasonState =
    */
   | { kind: "excluded" };
 
+/**
+ * ツール呼び出し 1 件の中身（Spec 57）。Rust 側 `tool_calls::ToolCallDetail` の写し。
+ *
+ * コアのメモリにだけ在り、ログにも `sessions.redb` にも書き出しにも残らない。
+ * ワイヤ形は `ipc_contract.rs` の `tool_call_detail_wire_is_frozen` が凍結している。
+ */
+export interface ToolCallDetail {
+  callId: number;
+  /**
+   * モデルが送った引数。**形は `argsTruncated` だけで決まる** — 偽なら JSON 値
+   * そのまま、真なら詰めた形の文字列の先頭（途中で切った JSON は parse できない）。
+   * **`typeof` で推測せず、旗で分岐する**（引数そのものが文字列の JSON 値でありうる）。
+   */
+  args: unknown;
+  /** 引数の**元の**字数。詰めた形で数える = `tool:` 行の `args_chars` と同じ。 */
+  argsChars: number;
+  argsTruncated: boolean;
+  /** モデルへ返した本文（切った後）。 */
+  body: string;
+  /** 本文の**元の**字数。 */
+  bodyChars: number;
+  bodyTruncated: boolean;
+}
+
 /** コア層から押し出される状態変化。`type` による判別共用体。 */
 export type CoreEvent =
   | { type: "agentStatusChanged"; agentId: AgentId; status: AgentStatus }
@@ -1152,6 +1176,15 @@ export type CoreEvent =
        */
       ok: boolean;
       reason: ReasonState;
+      /**
+       * この呼び出しの中身を引く鍵（Spec 57）。1 始まり・単調増加・プロセス寿命。
+       *
+       * **引数と結果の本文はこのイベントに載らない** — 行を開いたときに
+       * `get_tool_call` で引く。発行より前にコアのリングへ記録してあるので、
+       * 受けた時点で必ず引ける。引けなくなるのは押し出し（500 件）と
+       * 会話の切り替えの後だけ。
+       */
+      callId: number;
     }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った

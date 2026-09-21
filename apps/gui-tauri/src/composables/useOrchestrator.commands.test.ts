@@ -127,7 +127,7 @@ describe("コマンド承認の投影", () => {
     // 実機の指摘（2026-08-05）— 引き直しが起動時と承認後しか無かったので、
     // サーヴァントが積んでも件数が動かなかった。
     h.handler?.({
-      payload: { type: "toolInvoked", agentId: "agent_a", tool: "run", ok: true, reason: { kind: "excluded" } },
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "run", ok: true, reason: { kind: "excluded" }, callId: 41 },
     });
     await Promise.resolve();
     expect(h.listCommandRequests).toHaveBeenCalledTimes(1);
@@ -139,10 +139,20 @@ describe("コマンド承認の投影", () => {
     h.listCommandRequests.mockClear();
 
     h.handler?.({
-      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true, reason: { kind: "excluded" } },
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true, reason: { kind: "excluded" }, callId: 42 },
     });
     await Promise.resolve();
     expect(h.listCommandRequests).not.toHaveBeenCalled();
+  });
+
+  it("ツール行は、中身を引く鍵 callId をイベントから写して持つ（Spec 57）", () => {
+    const orchestrator = useOrchestrator();
+    h.handler?.({
+      payload: { type: "toolInvoked", agentId: "agent_a", tool: "grep", ok: true, reason: { kind: "omitted" }, callId: 77 },
+    });
+    // 写し忘れると、行は出るのに開いても何も引けない（型検査は `callId: 0` の直書きでも通る）。
+    const runs = orchestrator.state.toolRuns;
+    expect(runs[runs.length - 1]?.callId).toBe(77);
   });
 
   it("読めなかった個体は broken のまま運ぶ（既定で埋めない）", async () => {

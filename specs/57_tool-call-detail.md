@@ -2,10 +2,13 @@
 
 - 起票: 2026-09-21
 - 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = rev2 の本文どおり「既定で畳む +
-  `ok=false` を含むまとまりは畳まない + 見出しに本数を出さない」。未決ゼロ）→ P0〜P1 完了**
+  `ok=false` を含むまとまりは畳まない + 見出しに本数を出さない」。未決ゼロ）→ P0〜P2 完了**
   （P0 = `data_contract` の `tool_call_detail_contract` + `events` の `toolInvoked` を 5 欄へ。
   P1 = コアのリング `ToolCallStore` + 記録 → 発行の並び + 会話の切り替え 2 箇所の全消し。
-  Rust 1,019 全緑・ミューテーション 4 回とも予測どおり。記録は「P0 契約記録」「P1 実装記録」）。rev2 = 査読 2 系統 24 点 → 採用 16 / 前提を実測で訂正して採用 3 /
+  Rust 1,019 全緑・ミューテーション 4 回とも予測どおり。P2 = IPC `get_tool_call` + 束ねの純関数 +
+  `useToolCallDetails` + 会話ペインの見出し・押せる行・開いた節 + 辞書 ja / en。vitest 646・
+  ミューテーション 5 回とも予測どおり。記録は「P0 契約記録」「P1 実装記録」「P2 実装記録」）。
+  **残は P3（台帳）と P4（実機 8 件）**rev2 = 査読 2 系統 24 点 → 採用 16 / 前提を実測で訂正して採用 3 /
   一部採用・一部反証 1 / 反証 2 / 不採用 1 / 裁定へ 1（表は Notes 5）
 - 起点: 利用者 —「AionUi で便利だなと思うのは、ツール実行を畳んだり、どんな input と
   output か、またコマンドの出力を確認できるところです。これと同じように Fuseforks の
@@ -365,15 +368,66 @@ D2 が書いた「行が出た瞬間に押した人が詳細なしを引く」�
 
 ### P2 IPC とフロント
 
-- [ ] IPC `get_tool_call` + `types.ts`（`toolInvoked.callId` / `ToolCallDetail`。`args: unknown`）
-- [ ] `useOrchestrator.ts` の `toolInvoked` の受け口で `event.callId` を `ToolRun.callId` へ写す
+- [x] IPC `get_tool_call` + `types.ts`（`toolInvoked.callId` / `ToolCallDetail`。`args: unknown`）
+- [x] `useOrchestrator.ts` の `toolInvoked` の受け口で `event.callId` を `ToolRun.callId` へ写す
       （`id: tool-${seq}` は表示の鍵として残す — `callId` は取りこぼしで欠けないが、
       既存の鍵を動かす理由が無い）
-- [ ] `chatRows.ts`: 束ねの純関数 + 単体（処理中は畳まない / 2 本は畳まない /
+- [x] `chatRows.ts`: 束ねの純関数 + 単体（処理中は畳まない / 2 本は畳まない /
       別の個体の行で切れる / `ok=false` を含むと畳まない / 行が増えても鍵が動かない）
-- [ ] `ChatPanel.vue`: 開閉・4 状態・二重呼び出しの防止・`toolRuns` が空で破棄・束ねの見出し。辞書 ja / en
-- [ ] 走査テスト: `ChatPanel.vue` に座標計算が 0 箇所のまま（`chatZoomWiring` の隣）/
+- [x] `ChatPanel.vue`: 開閉・4 状態・二重呼び出しの防止・`toolRuns` が空で破棄・束ねの見出し。辞書 ja / en
+- [x] 走査テスト: `ChatPanel.vue` に座標計算が 0 箇所のまま（`chatZoomWiring` の隣）/
       辞書の鍵が ja / en に揃う
+
+### P2 実装記録（2026-09-21）
+
+IPC `get_tool_call`（`commands.rs` + `lib.rs` の登録 + `lib/ipc.ts` の `getToolCall`）/
+`types.ts` の `toolInvoked.callId` と `ToolCallDetail` / `useOrchestrator.ts` の写し /
+`lib/chatRows.ts` の `groupToolRuns`・`toolGroupKey`・`formatToolArgs`・`DisplayEntry` /
+`composables/useToolCallDetails.ts`（新設）/ `ChatPanel.vue` の見出し・押せる行・開いた節 /
+辞書 ja・en（`chat.toolGroup` + `chat.toolDetail.*` 8 鍵）/
+`lib/toolCallDetailWiring.test.ts`（走査 6 本）。vitest 622 → 646・vue-tsc 0・build 緑・clippy 0。
+
+**設計から変えた所が 2 つ**:
+
+- **開閉と 4 状態は部品の中ではなく `useToolCallDetails` へ出した**（D7 は「部品内の
+  `Map`」と書いていた）。中身を引く口を引数で受けるので、IPC を立てずに 4 状態と
+  二重呼び出しの防止を単体で試せる。`state`（コアの投影）に入れない判断は D7 のまま
+- **束ねの見出しは中の行を持たない**（`DisplayEntry` は平らな並び）。開いている
+  まとまりの行は見出しの後ろにふつうの `tool` 項目として並び、畳んでいるまとまりの行は
+  並びに居ない。**ツール行のテンプレートが 1 箇所のまま**になり、入れ子の `v-for` が要らない。
+  `continuesTimeline` は描く並び（`display`）を見る形へ移した — 見出しは発話ではないので
+  ツール行と同じく読み飛ばす
+
+**実装で決めた 4 点**:
+
+- **`gone` は引き直さない**（`callId` は再利用されないので、一度無ければ以後も無い）。
+  引き直すのは `failed` だけ
+- **字数の表示は `en-US` 固定**（`16,000`）。`tool:` 行の `args_chars` と目で突き合わせる数なので、
+  時計・版番号と同じく言語に追従させない
+- **切った後の字数はフロントが数える**（`Array.from(text).length`）。コアは元の字数しか
+  運ばないので、「先頭 N 字を表示（全 M 字）」の N は出している文字列から取る
+- **会話の切り替えは `state.toolRuns.length === 0` の watch で拾う**。部品はイベントを
+  直接は聴かず、開閉・引いた中身・開いたまとまりの 3 つを同時に捨てる
+
+**走査テストが留めているもの**（型検査にも実行時のテストにも掛からない結合だけ）:
+コマンド名 `get_tool_call` が Rust の定義・登録と TS の呼び出しで揃っている /
+`v-for` が `display` を描いている（`timeline` のままだと見出しが 1 本も出ず純関数のテストは緑）/
+行と見出しが開閉の口へ繋がっている / 会話ペインに `getBoundingClientRect` と
+`elementFromPoint` が無い / 引いている辞書の鍵 9 本が ja・en に在る（**拾えた鍵の一覧を
+先に固定している** — 走査が空振りしていれば、その先の検査は何も見ていない）/
+見出しの文面の引数が `name` と `count` だけ。
+
+**ミューテーション 5 回。予測を先に書き、5 回とも一致**（可逆な置換・戻した後に SHA-1 で確認）:
+
+| 変異 | 予測 | 実測 |
+|---|---|---|
+| 束ねで処理中を見ない | 2 本（処理中 / 別の個体の行が後ろに来た波） | 一致 |
+| 束ねで `ok` を見ない | 1 本 | 一致 |
+| `v-for` を `timeline` へ戻す | 走査 1 本 | 一致 |
+| `callId` を写さず 0 を直書き | 1 本（型検査は通る） | 一致 |
+| 撃ち直さない門を外す | 3 本（開き直し / 引いている最中 / `gone`）。`failed` の 1 本は緑 | 一致 |
+
+**実機は未確認。** 見るのは「検収（P4）」の 8 件。
 
 ### P3 台帳
 

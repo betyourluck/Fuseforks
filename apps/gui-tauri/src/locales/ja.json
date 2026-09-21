@@ -475,6 +475,17 @@
     "toolRan": "{name}: {tool}",
     "toolRanFailed": "{name}: {tool}（エラーで返った）",
     "toolOkTitle": "ツールの返り値がエラーだったかどうか。副作用が成功したかではありません",
+    "toolGroup": "{name}: ツール {count} 件",
+    "toolDetail": {
+      "input": "入力",
+      "output": "出力",
+      "chars": "（{count} 字）",
+      "truncated": "先頭 {shown} 字を表示しています（全 {total} 字）",
+      "loading": "読み込み中…",
+      "gone": "この呼び出しの詳細はもう残っていません（古いものから 500 件まで・会話を切り替えると消えます）",
+      "failed": "詳細を取得できませんでした。行を押し直すと取り直します",
+      "empty": "（空）"
+    },
     "reasonOmitted": "理由なし",
     "reasonUnsupported": "外部ツール",
     "typingTitle": "{name} が応答を作成しています",

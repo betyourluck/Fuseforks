@@ -567,6 +567,8 @@ function applyEvent(event: CoreEvent): void {
     case "toolInvoked": {
       const run: ToolRun = {
         id: `tool-${++toolRunSeq}`,
+        // 中身を引く鍵（Spec 57）。写し忘れると行は出るのに開いても何も引けない。
+        callId: event.callId,
         agentId: event.agentId,
         tool: event.tool,
         ok: event.ok,

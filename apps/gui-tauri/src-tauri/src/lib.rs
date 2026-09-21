@@ -99,6 +99,7 @@ pub fn run() {
             commands::list_topology_positions,
             commands::list_messages,
             commands::list_plan_waves,
+            commands::get_tool_call,
             commands::token_usage,
             commands::list_model_templates,
             commands::list_roles,

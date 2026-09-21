@@ -38,6 +38,7 @@ import type {
   PlanTaskInput,
   PlanWaveRecord,
   Recurrence,
+  ToolCallDetail,
   ScheduleOptions,
   ScheduleView,
   SessionSummary,
@@ -135,6 +136,14 @@ export const listMessages = (limit?: number) =>
 
 /** plan 波の記録を取得する（Spec 08 — 波ペイン。古い順・実行中の波も含む）。 */
 export const listPlanWaves = () => call<PlanWaveRecord[]>("list_plan_waves");
+
+/**
+ * ツール呼び出し 1 件の中身を引く（Spec 57 — 会話ペインの行を開いたとき）。
+ *
+ * **`null` は「押し出された / 会話を切り替えた」でエラーではない。**
+ */
+export const getToolCall = (callId: number) =>
+  call<ToolCallDetail | null>("get_tool_call", { callId });
 
 /**
  * 承認待ちの計画を、人が編集した最終形で配送する（Spec 43 — 編集窓の実行側）。

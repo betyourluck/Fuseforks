@@ -87,6 +87,18 @@ pub async fn list_plan_waves(
     Ok(state.orchestrator.list_plan_waves().await)
 }
 
+/// ツール呼び出し 1 件の中身を返す（Spec 57 — 会話ペインの行を開いたとき）。
+///
+/// **`None` は「押し出された / 会話を切り替えた」でエラーではない。**
+/// 引数と出力はここでしか外へ出ない — イベントにもログにも保存先にも載らない。
+#[tauri::command]
+pub async fn get_tool_call(
+    state: State<'_, AppState>,
+    call_id: u64,
+) -> CoreResult<Option<fuseforks_core::tool_calls::ToolCallDetail>> {
+    Ok(state.orchestrator.tool_call(call_id))
+}
+
 /// エージェント別のトークン消費量を返す（Rayon で集計）。
 #[tauri::command]
 pub async fn token_usage(state: State<'_, AppState>) -> CoreResult<HashMap<AgentId, u64>> {
