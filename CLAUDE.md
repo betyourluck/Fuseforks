@@ -6703,7 +6703,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0〜P3 完了。残は P4（実機 9 件）**
+- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **Done**（2026-09-22。**起票から Done まで 2 日**）
+  （**P4（2026-09-22）**= 利用者が実機で検証。同じ走行の `fuseforks.log` に `quote:` は 1 本 —
+  `quote: to=agent_8 count=1 chars=1513` の字数が 4 分前の `reply: agent=agent_10 to=user chars=1513` と一致 /
+  宛先のルナも送り手のイクスも `hearsRoomLog=false` / この走行の最長行は 257 字 = 写しの本文はログに無い / `quote rejected:` 0 本。
+  **検収 3（次のターンで参照なしに訊く）と 9（再起動の後）はこの走行で踏まれておらず、結合テストへ預けた**
+  （`the_copy_stays_in_the_history_for_the_next_turn` / `an_answer_from_before_a_restart_can_still_be_quoted`）。
+  **検収 6 の後半と 7 は文面が誤っていた** — `turn start:` の `chars=` は `incoming.content` の字数だけで、封筒も写しも
+  数えない（実測 77 字）。`failures.md` #85 の 4 例目 = 自分が書いた計器でも、数えている式を読んでから検収に使う）
   （**P3（2026-09-22）**= DETAIL 日英に「会話の参照 `@@`」の節 + 広場ログの段落へ「利用者が選んで渡す経路」+ ディレクトリ木 /
   README 3 言語の「パス補完」の行を延長（168 / 168 / 164 行のまま）/ **PRIVACY 日英の 4-1 へ 1 段落** — 送信先は増えていないが、
   「会話の履歴に他の事業者のモデルが書いた文が含まれうる」がどこにも書かれていなかった（委譲と広場ログで以前から起きていた。
