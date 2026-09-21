@@ -304,7 +304,7 @@
     "send": "Send",
     "sendEnter": "Send (Enter)",
     "cannotSend": "Cannot send",
-    "hint": "Enter to send / Shift+Enter for a new line / {'@'} for files / {'@'}{'@'} to quote a message",
+    "hint": "Enter to send / Shift+Enter for a new line",
     "attach": "Attach a file (image, audio, video, PDF — paste also works)",
     "attachNote": "This attachment is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
     "attachScaled": "Scaled down to {px}px on the long edge.",

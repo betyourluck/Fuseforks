@@ -101,12 +101,4 @@ describe("会話の参照の配線（Spec 58）", () => {
       }
     }
   });
-
-  it("入力欄の案内に `@@` が載っている", () => {
-    for (const lang of ["ja", "en"]) {
-      const dict = JSON.parse(read(`src/locales/${lang}.json`)) as { chatInput: { hint: string } };
-      // vue-i18n は `@` を linked message の開始と読むので、リテラルは `{'@'}`。
-      expect(dict.chatInput.hint, lang).toContain("{'@'}{'@'}");
-    }
-  });
 });

@@ -304,7 +304,7 @@
     "send": "送信",
     "sendEnter": "送信（Enter）",
     "cannotSend": "送信できません",
-    "hint": "Enter で送信 / Shift+Enter で改行 / {'@'} でファイル / {'@'}{'@'} で会話の発話を参照",
+    "hint": "Enter で送信 / Shift+Enter で改行",
     "attach": "添付する（画像・音声・動画・PDF。貼り付けも可）",
     "attachNote": "この添付は今回のみモデルへ渡ります。2 ターン目以降はモデルからは見えません（画面には残ります）。",
     "attachScaled": "長辺 {px}px へ縮小しました。",

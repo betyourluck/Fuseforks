@@ -377,7 +377,7 @@ QuotedMessage { messageId, from: Endpoint, to: Endpoint, tsMs, text, totalChars,
 - [x] **送信の失敗で文面・添付・参照を入力欄へ戻す**（実測 13。`ChatInput` が消してから
   `emit` する今の順を、結果を受けてから消す形へ。3 つに同じ機構を効かせる）
 - [x] `ChatPanel.vue` — 利用者の発話の参照チップと開閉
-- [x] 辞書 ja / en + 入力欄の placeholder へ `@@` の案内
+- [x] 辞書 ja / en ~~+ 入力欄の placeholder へ `@@` の案内~~（**案内は同日に撤回** — 裁定 2）
 - [x] 走査テスト（IPC の綴り / 辞書の鍵 / 会話ペインに座標計算を足していない）
 - [x] ミューテーション
 
@@ -396,8 +396,9 @@ QuotedMessage { messageId, from: Endpoint, to: Endpoint, tsMs, text, totalChars,
   下書きを戻す / 会話の切り替えでチップを外す
 - `ChatPanel.vue` — 利用者の発話の参照チップと開閉（`openQuotes`）。`:submit="send"`
 - 辞書 ja / en — `chatInput.quote*` 5 鍵 + `quoteTo` 3 鍵 / `chat.quote` 2 鍵 /
-  `errors.INVALID_QUOTE` / `chatInput.hint` へ `@` と `@@` の案内
-- 走査 `lib/quoteRefWiring.test.ts`（8 本）
+  `errors.INVALID_QUOTE` ~~/ `chatInput.hint` へ `@` と `@@` の案内~~（同日に撤回 — 裁定 2。
+  `chatInput.hint` は P2 の前の文面「Enter で送信 / Shift+Enter で改行」へ戻した）
+- 走査 `lib/quoteRefWiring.test.ts`（~~8 本~~ 7 本。案内の 1 本は撤回と一緒に消した）
 
 **実装で決めた 6 点**:
 
@@ -446,7 +447,8 @@ F4 が留めているのは**黙って壊れる形** — `quote_ids` は `Option
 ### P3 台帳
 
 - [ ] DETAIL 日英（入力欄の節 + 広場ログの節へ「利用者が渡す経路」）/ README 3 言語
-  （`@` 補完の行を延ばす。行は増やさない）/ 初回案内の会話の歩に `@@` を足すか判断
+  （`@` 補完の行を延ばす。行は増やさない）/ ~~初回案内の会話の歩に `@@` を足すか判断~~
+  **→ 足さない**（裁定 2）
 - [ ] PRIVACY 日英 — 外部へ送るものは増えない（写しは会話の一部として接続先へ送られる。
   既存の記述の範囲内か確かめる）
 - [ ] `git grep` の網の外 — ランディングページと Qiita / note の記事
@@ -486,6 +488,11 @@ F4 が留めているのは**黙って壊れる形** — `quote_ids` は `Option
      キャッシュ済み入力（実効 ×0.1）なので、8 往復の合計でも実効 5,000 トークン前後。
      査読 2 の「8 往復で最大 80,000 トークン」は素のトークンの合計で、8,000 と 10,000 の
      差ではなく全量
+2. **`@@` の入口を画面で案内しない — 利用者裁定（2026-09-22）。** 初回案内の会話の歩に `@@` を
+   足さず、P2 で入力欄の下の案内へ足した「`@` でファイル / `@@` で会話の発話を参照」も外した
+   （`chatInput.hint` は P2 の前の文面のまま）。理由 —「Fuseforks を使う大体の人は分かっている。
+   AionUi と違ってこちらはヘビーユーザーが対象なので、冗長になる」。**入口を説明するのは
+   DETAIL / README の側**（P3）で、画面には常駐させない。検収 1 は `@@` を知っている前提で踏む
 
 ## Notes
 
