@@ -590,6 +590,32 @@ export interface AgentMessage {
   reasoningSummary?: string[];
   /** 添付画像の参照（Spec 23）。無い発話では省かれる。 */
   attachments?: Attachment[];
+  /**
+   * 利用者が `@@` で添えた、過去の発話の写し（Spec 58）。**利用者発の発話にだけ付く。**
+   * 他の表示専用の欄と違い、**これはモデルへ渡っている** — コアが本文の後ろへ展開する。
+   */
+  quotes?: QuotedMessage[];
+}
+
+/**
+ * 会話の参照の写し 1 件（Spec 58 / `quote_reference_contract` 凍結 3）。
+ * ワイヤ形は `tests/ipc_contract.rs` の `quoted_message_wire_is_frozen` が留めている。
+ */
+export interface QuotedMessage {
+  /** 原本の発話 ID。 */
+  messageId: string;
+  /** 原本の送り手。常にサーヴァント。 */
+  from: Endpoint;
+  /** 原本の宛先。 */
+  to: Endpoint;
+  /** 原本の時刻。 */
+  tsMs: number;
+  /** 切り詰め後の写し（**無害化する前の原文**。寄せるのはプロンプトへ入れるときだけ）。 */
+  text: string;
+  /** 原本の字数。 */
+  totalChars: number;
+  /** 上限（10,000 字）を超えて切ったか。 */
+  truncated: boolean;
 }
 
 /**

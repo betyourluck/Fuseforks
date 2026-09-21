@@ -1398,12 +1398,18 @@ export function useOrchestrator() {
       agentId: AgentId,
       content: string,
       attachments?: AttachmentPayload[],
-    ): Promise<void> {
+      quoteIds?: string[],
+    ): Promise<boolean> {
       // 発話は MessageSent イベントで届くので、ここでの再同期は
       // 送信が拒否された場合に一覧を正しく戻すために効く。
-      await mutate("orchestrator.op.send", () =>
-        ipc.sendUserMessage(agentId, content, undefined, attachments),
+      //
+      // **成否を返す**（Spec 58）— 入力欄は送る前に下書きを消すので、拒否されたときに
+      // 文面・添付・参照を戻すには、呼び手が成否を知る必要がある。`mutate` は例外を
+      // 飲んでトーストを出すので、ここで見るのは戻り値。
+      const done = await mutate("orchestrator.op.send", () =>
+        ipc.sendUserMessage(agentId, content, undefined, attachments, quoteIds),
       );
+      return succeeded(done);
     },
 
     /**

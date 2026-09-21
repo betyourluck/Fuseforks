@@ -853,6 +853,10 @@ pub async fn send_user_message(
     content: String,
     co_recipients: Option<Vec<AgentId>>,
     attachments: Option<Vec<AttachmentPayload>>,
+    // 会話の参照（Spec 58）。**発話 ID だけ**を受け取り、写しはコアが作る —
+    // 本文を受け取る形にすると、検証できない文字列が「サーヴァントの発話」の
+    // 名札でプロンプトへ入る（`quote_reference_contract` 凍結 1）。
+    quote_ids: Option<Vec<String>>,
 ) -> CoreResult<()> {
     // 添付は base64 で届く（Spec 23）。復号はここで 1 回、検証と保存はコアが行う。
     let mut uploads = Vec::new();
@@ -870,11 +874,12 @@ pub async fn send_user_message(
     }
     state
         .orchestrator
-        .send_user_message_with_attachments(
+        .send_user_message_full(
             &agent_id,
             &content,
             co_recipients.as_deref().unwrap_or(&[]),
             uploads,
+            quote_ids.as_deref().unwrap_or(&[]),
         )
         .await
 }

@@ -54,7 +54,7 @@ import { getToolCall, readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
 import type { AttachmentKind } from "../lib/carries";
 import type { Attachment } from "../types";
-import type { AgentId, AgentMessage, Endpoint } from "../types";
+import type { AgentId, AgentMessage, Endpoint, QuotedMessage } from "../types";
 
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
@@ -516,15 +516,50 @@ watch(
   },
 );
 
-async function send(content: string, attachments: PendingAttachment[]): Promise<void> {
-  if (!canSend.value || !state.selectedAgentId) return;
-  await orchestrator.send(
+/**
+ * 送信。**成否を返す** — 入力欄は送る前に下書きを消しているので、`false` なら
+ * 文面・添付・参照を入力欄へ戻す（Spec 58 D3）。
+ */
+async function send(
+  content: string,
+  attachments: PendingAttachment[],
+  quoteIds: string[],
+): Promise<boolean> {
+  if (!canSend.value || !state.selectedAgentId) return false;
+  return orchestrator.send(
     state.selectedAgentId,
     content,
     // IPC には変換済みの base64 だけを載せる（寸法などの表示情報はコアが
     // 保存時に自分で読み直す — 2 つの真実を作らない）。
     attachments.map((a) => ({ fileName: a.fileName, dataBase64: a.dataBase64 })),
+    // 会話の参照（Spec 58）。運ぶのは発話 ID だけ。
+    quoteIds,
   );
+}
+
+// ---- 会話の参照の表示（Spec 58） ---------------------------------------------
+
+/**
+ * 開いている参照（`発話 ID:原本の ID`）。押すと、渡した写しが下に開く。
+ * データは `message.quotes` に在るので IPC は要らない。
+ */
+const openQuotes = reactive(new Set<string>());
+
+function quoteKey(messageId: string, quote: QuotedMessage): string {
+  return `${messageId}:${quote.messageId}`;
+}
+
+function toggleQuote(messageId: string, quote: QuotedMessage): void {
+  const key = quoteKey(messageId, quote);
+  if (openQuotes.has(key)) openQuotes.delete(key);
+  else openQuotes.add(key);
+}
+
+/** 参照の送り手の表示名。削除済みなら id。 */
+function quoteFromName(quote: QuotedMessage): string {
+  if (quote.from.kind !== "agent") return "";
+  const id = quote.from.id;
+  return state.agents.find((a) => a.id === id)?.name ?? id;
 }
 
 // ---- 添付画像の表示（Spec 23） ----------------------------------------------
@@ -1125,6 +1160,61 @@ async function newChat(): Promise<void> {
             </div>
           </template>
 
+          <!-- 会話の参照（Spec 58）。利用者が `@@` で添えた発話を、チップで示す。
+               **押すと渡した写しが開く** — 個体が何を読んだかを、画面で確かめられる。
+               写しは `message.quotes` に在るので IPC は要らない。高さは測らない
+               （会話ペインは `zoom` の場所 — 座標計算を足さない）。 -->
+          <template
+            v-for="quote in entry.row.message.quotes ?? []"
+            :key="quoteKey(entry.row.message.id, quote)"
+          >
+            <button
+              type="button"
+              class="mb-1 inline-flex max-w-full items-center gap-1.5 rounded-2xl bg-surface-2 px-3 py-1.5 text-left text-[11px] ring-1 ring-line transition hover:ring-accent/60"
+              :aria-expanded="openQuotes.has(quoteKey(entry.row.message.id, quote))"
+              :title="$t('chat.quote.toggle')"
+              data-quote-chip
+              @click="toggleQuote(entry.row.message.id, quote)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                class="size-3 shrink-0 text-ink-dim transition-transform"
+                :class="openQuotes.has(quoteKey(entry.row.message.id, quote)) ? 'rotate-90' : ''"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m9 6 6 6-6 6" />
+              </svg>
+              <span class="truncate text-ink">
+                {{ $t("chat.quote.label", { name: quoteFromName(quote) }) }}
+              </span>
+              <span class="shrink-0 text-[10px] text-ink-dim tabular-nums">
+                {{ timestamp(quote.tsMs) }} ·
+                {{ $t("chat.toolDetail.chars", { count: formatCount(quote.totalChars) }) }}
+              </span>
+            </button>
+            <div
+              v-if="openQuotes.has(quoteKey(entry.row.message.id, quote))"
+              class="mb-1 w-full max-w-full rounded-lg bg-surface-2 p-2 text-[10px] text-ink-dim ring-1 ring-line"
+            >
+              <pre
+                class="max-h-64 overflow-auto rounded bg-surface-1 p-1.5 font-sans break-all whitespace-pre-wrap text-ink select-text"
+              >{{ quote.text }}</pre>
+              <p v-if="quote.truncated" class="mt-1 text-warn">
+                {{
+                  $t("chat.toolDetail.truncated", {
+                    shown: formatCount(shownChars(quote.text)),
+                    total: formatCount(quote.totalChars),
+                  })
+                }}
+              </p>
+            </div>
+          </template>
+
           <div
             v-if="isRenderedAsMarkdown(entry.row.message)"
             class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
@@ -1133,7 +1223,8 @@ async function newChat(): Promise<void> {
           />
           <div
             v-else-if="
-              entry.row.message.content || !entry.row.message.attachments?.length
+              entry.row.message.content ||
+              (!entry.row.message.attachments?.length && !entry.row.message.quotes?.length)
             "
             class="selectable min-w-0 max-w-full px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap"
             :class="
@@ -1268,7 +1359,7 @@ async function newChat(): Promise<void> {
       :can-clear="timeline.length > 0"
       :context-length="targetTemplate?.contextLength ?? null"
       :last-prompt-tokens="targetAgent?.lastPromptTokens ?? null"
-      @send="send"
+      :submit="send"
       @clear-view="clearChatView"
     />
 

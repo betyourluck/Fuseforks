@@ -6703,7 +6703,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0〜P1 完了。残は P2〜P4**
+- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0〜P2 完了。残は P3（台帳）・P4（実機 9 件）**
+  （**P2（2026-09-22）**= IPC の引数 `quoteIds` / `lib/pathComplete.ts` の `Trigger.kind` と `removeTrigger` /
+  `lib/quoteRef.ts`（候補・順位・`restoreDraft`）/ `ChatInput.vue` のチップと候補 / `ChatPanel.vue` の参照チップと開閉 / 辞書。
+  vitest 646 → 677・vue-tsc 0・build 緑・ミューテーション 6 回とも予測どおり（全 677 本を回して分母を毎回確認）。
+  **送信を `emit` から関数の prop `submit` へ変えた** — `emit` は親の戻り値を受け取れず、入力欄が成否を知れない。
+  `orchestrator.send` は `Promise<boolean>` になった。**`findTrigger` は D1 の文面より 1 段細かい** — 語を切るのは
+  空白だけで、開き括弧は「入口の直前に来てよい文字」（開き括弧で切ると `@docs/file(1).md` が閉じる）。
+  **既存の `findTrigger` のテストは無改変では通らなかった**（`toEqual` が全欄を固定するので `kind` で落ちる = #87）。
+  コンポーネントをマウントする土台が無いので、入力欄の振る舞いは純関数の単体 + ソースの走査の 2 層で留めた。**実機は未確認**）
   （**P1（2026-09-22）**= `quote.rs`（純機構: `resolve` / `snapshot` / `render`）+ `sender_envelope.rs` の
   `defuse_quote_tags` / `sanitize_quote_attr` + 送信の入口 `send_user_message_full` + `attribute_sender` の展開 +
   計器 `quote:` / `quote rejected:`。Rust 1,019 → 1,046・clippy 0。**参照の門は添付の保存より前** /

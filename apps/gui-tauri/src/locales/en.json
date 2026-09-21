@@ -304,7 +304,7 @@
     "send": "Send",
     "sendEnter": "Send (Enter)",
     "cannotSend": "Cannot send",
-    "hint": "Enter to send / Shift+Enter for a new line",
+    "hint": "Enter to send / Shift+Enter for a new line / {'@'} for files / {'@'}{'@'} to quote a message",
     "attach": "Attach a file (image, audio, video, PDF — paste also works)",
     "attachNote": "This attachment is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
     "attachScaled": "Scaled down to {px}px on the long edge.",
@@ -332,6 +332,15 @@
       "audio": "Audio costs on the order of thousands of tokens per minute.",
       "video": "Video costs on the order of ten thousand tokens per minute (varies severalfold with resolution).",
       "pdf": "A PDF costs on the order of hundreds to thousands of tokens per page."
+    },
+    "quoteChars": "{chars} chars",
+    "quoteRemove": "Remove this quote",
+    "quoteNone": "No servant has said anything in this conversation yet, so there is nothing to quote.",
+    "quoteFull": "A message can carry up to {max} quotes. Remove one before choosing another.",
+    "quoteTo": {
+      "user": "You",
+      "system": "Fuseforks",
+      "external": "External"
     }
   },
   "bottomTabs": {
@@ -503,7 +512,11 @@
     "clearedNote": "Earlier messages hidden: {count} (the conversation is still there)",
     "clearedRestore": "Show all",
     "expandPrompt": "Show all",
-    "collapsePrompt": "Collapse"
+    "collapsePrompt": "Collapse",
+    "quote": {
+      "label": "Quoting {name}",
+      "toggle": "Show / hide the copy passed to the servant"
+    }
   },
   "editor": {
     "mcpPlaceholder": "JSON in the same mcpServers format as Claude Desktop. Leave it empty if this servant has no dedicated MCP. Broken JSON cannot be saved.",
@@ -937,7 +950,8 @@
     "ATTACHMENT_NOT_CARRIED": "This recipient wire cannot carry that kind of attachment",
     "PRICING_FETCH": "Could not fetch the price table",
     "PLAN_WAVE_NOT_PENDING": "Not a plan awaiting review",
-    "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched"
+    "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched",
+    "INVALID_QUOTE": "The quote was rejected"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

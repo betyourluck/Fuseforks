@@ -17,6 +17,10 @@
  * チップの表示と送信への同乗だけを持つ。上限は 1 発話 1 枚（D5）で、
  * 2 枚目を選んだら**置き換える**（チップが 1 枚しか出ない画面で「2 枚目は
  * 拒否」にすると、置き換えたつもりの操作が黙って無視される）。
+ *
+ * 会話の参照（Spec 58）。`@@` でこの会話のサーヴァントの発話を選ぶと、参照の
+ * チップが付く。**入力欄の文面には何も挿さない** — 運ぶのは発話 ID だけで、写しを
+ * 作るのはコア。3 件まで。
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -32,10 +36,22 @@ import {
   applyCompletion,
   findTrigger,
   rankCandidates,
+  removeTrigger,
   splitForDisplay,
   type Candidate,
   type Trigger,
 } from "../lib/pathComplete";
+import {
+  MAX_QUOTES,
+  addChip,
+  chipOf,
+  quoteCandidates,
+  rankQuotes,
+  restoreDraft,
+  shortTime,
+  type QuoteCandidate,
+  type QuoteChip,
+} from "../lib/quoteRef";
 import { listWorkDirFiles } from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { contextArc, contextPercent, contextRatio, contextTone } from "../lib/contextUsage";
@@ -72,6 +88,18 @@ const props = defineProps<{
   contextLength?: number | null;
   /** 宛先の直近の呼び出しの入力（`AgentSnapshot.lastPromptTokens`。輪の分子）。 */
   lastPromptTokens?: number | null;
+  /**
+   * 送信の実体。**成否を返す**（Spec 58 D3）。
+   *
+   * イベント（`emit`）ではなく関数で受けるのは、入力欄が結果を知る必要があるから —
+   * 下書きは送る前に消すので、拒否されたら文面・添付・参照を戻す。`emit` は親の
+   * 戻り値を受け取れない。
+   */
+  submit: (
+    text: string,
+    attachments: PendingAttachment[],
+    quoteIds: string[],
+  ) => Promise<boolean>;
 }>();
 
 /**
@@ -95,7 +123,6 @@ const contextUsage = computed(() => {
 const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 
 const emit = defineEmits<{
-  (e: "send", text: string, attachments: PendingAttachment[]): void;
   /** 表示クリア。**中身は消さない**ので、実際に隠すのは会話ペインの側。 */
   (e: "clearView"): void;
 }>();
@@ -114,10 +141,14 @@ const filePicker = ref<HTMLInputElement | null>(null);
 const attachment = ref<PendingAttachment | null>(null);
 /** 変換中か。中は送信もチップの × も待たせる。 */
 const converting = ref(false);
+/** 送信待ちの会話の参照（Spec 58。3 件まで）。 */
+const quotes = ref<readonly QuoteChip[]>([]);
+/** 参照が上限に達しているか。候補の行を押せなくし、理由を出す。 */
+const quotesFull = computed(() => quotes.value.length >= MAX_QUOTES);
 
 const canSend = computed(
   () =>
-    (!!text.value.trim() || !!attachment.value) &&
+    (!!text.value.trim() || !!attachment.value || quotes.value.length > 0) &&
     !props.disabled &&
     !converting.value,
 );
@@ -203,17 +234,63 @@ const suggestions = computed(() =>
  * Enter が飲まれると、送信できない理由が画面から読めなくなる。
  * 「作業フォルダが無い」「打ち切り」の注記だけを出しているときも同じ。
  */
-const popupCaptures = computed(() => !!trigger.value && suggestions.value.length > 0);
-
-/** 枠自体を出すか（候補ゼロでも理由を出すことがある）。 */
-const popupVisible = computed(
+const popupCaptures = computed(
   () =>
     !!trigger.value &&
-    (suggestions.value.length > 0 ||
-      !hasWorkDir.value ||
-      loadingCandidates.value ||
-      candidatesFailed.value),
+    (isQuoteTrigger.value ? quoteSuggestions.value.length > 0 : suggestions.value.length > 0),
 );
+
+/** 枠自体を出すか（候補ゼロでも理由を出すことがある）。 */
+const popupVisible = computed(() => {
+  if (!trigger.value) return false;
+  // 参照: 候補が出ているか、**この会話にサーヴァントの発話がまだ 1 つも無い**とき。
+  // 後者で黙ると「`@@` が壊れている」と読まれる。一致しないクエリでは閉じる
+  // （ファイルと同じ — Enter を奪わない）。
+  if (isQuoteTrigger.value) {
+    return quoteSuggestions.value.length > 0 || quotePool.value.length === 0;
+  }
+  return (
+    suggestions.value.length > 0 ||
+    !hasWorkDir.value ||
+    loadingCandidates.value ||
+    candidatesFailed.value
+  );
+});
+
+// ---- 会話の参照（Spec 58） ---------------------------------------------------
+
+/** いま開いている補完が会話の参照（`@@`）か。 */
+const isQuoteTrigger = computed(() => trigger.value?.kind === "message");
+
+/**
+ * 参照の候補の全件。**`@@` を開いた瞬間に 1 回だけ組む**（ファイルの D6 と同じ理由 —
+ * 打鍵の途中で新しい発話が届いて並びが入れ替わると、絞り込みの結果が揺れる）。
+ * 元は `state.messages` なので IPC は要らない。
+ */
+const quotePool = ref<QuoteCandidate[]>([]);
+
+/** 表示する参照の候補（順位付け済み）。 */
+const quoteSuggestions = computed(() =>
+  trigger.value && isQuoteTrigger.value ? rankQuotes(quotePool.value, trigger.value.query) : [],
+);
+
+// 会話を切り替えたら、付けていた参照は外す。参照できるのは**この会話の**発話だけで、
+// 残しておくとコアに必ず拒まれるチップが入力欄に居座る。
+watch(
+  () => orchestrator.state.currentSessionId,
+  () => {
+    quotes.value = [];
+  },
+);
+
+/** 宛先の表示（利用者 / サーヴァントの表示名 / 外部）。 */
+function quoteTarget(candidate: QuoteCandidate): string {
+  const to = candidate.to;
+  if (to.kind === "agent") {
+    return orchestrator.state.agents.find((a) => a.id === to.id)?.name ?? to.id;
+  }
+  return t(`chatInput.quoteTo.${to.kind}`);
+}
 
 /** カーソル位置から `@` を検出し直す。 */
 function refreshTrigger(): void {
@@ -235,16 +312,25 @@ function closeCompletion(): void {
 
 // 開いた瞬間に 1 回だけ取る（D6）。**開いている間は取り直さない** —
 // 一覧が打鍵の途中で入れ替わると、絞り込みの結果が揺れる。
+//
+// **見るのは「開いているか」ではなく種別**（Spec 58）— `@` を打った直後に `@` を
+// もう 1 つ打つと、補完は開いたままファイルから会話の参照へ入れ替わる。
 watch(
-  () => trigger.value !== null,
-  async (open) => {
-    if (!open) {
-      candidates.value = [];
-      candidatesTruncated.value = false;
-      candidatesFailed.value = false;
+  () => trigger.value?.kind ?? null,
+  async (kind) => {
+    candidates.value = [];
+    candidatesTruncated.value = false;
+    candidatesFailed.value = false;
+    quotePool.value = [];
+    if (kind === null) return;
+    selectedIndex.value = 0;
+    if (kind === "message") {
+      quotePool.value = quoteCandidates(
+        orchestrator.state.messages,
+        (id) => orchestrator.state.agents.find((a) => a.id === id)?.name ?? null,
+      );
       return;
     }
-    selectedIndex.value = 0;
     // 作業フォルダが無いなら呼ばない（判定に必要な情報を既に持っている）。
     if (!props.agentId || !hasWorkDir.value) return;
     loadingCandidates.value = true;
@@ -264,9 +350,42 @@ watch(
 );
 
 // 絞り込みで件数が減ったとき、反転が範囲外に残らないようにする。
-watch(suggestions, (list) => {
-  if (selectedIndex.value >= list.length) selectedIndex.value = 0;
+watch([suggestions, quoteSuggestions], () => {
+  if (selectedIndex.value >= activeCount.value) selectedIndex.value = 0;
 });
+
+/** いま出している候補の件数（種別を問わない）。 */
+const activeCount = computed(() =>
+  isQuoteTrigger.value ? quoteSuggestions.value.length : suggestions.value.length,
+);
+
+/**
+ * 参照の候補を確定する。**本文へは何も挿さない** — 打ちかけの `@@クエリ` を消して
+ * チップを足すだけ（Spec 58 D3）。上限に達していたら何もしない（候補の行は
+ * 押せない見た目にしてあり、理由は枠の下に出ている）。
+ */
+async function confirmQuote(candidate: QuoteCandidate): Promise<void> {
+  const el = area.value;
+  const current = trigger.value;
+  if (!el || !current || quotesFull.value) return;
+  quotes.value = addChip(quotes.value, chipOf(candidate));
+  const result = removeTrigger(text.value, current, el.selectionStart ?? text.value.length);
+  text.value = result.text;
+  closeCompletion();
+  await nextTick();
+  autoGrow();
+  el.focus();
+  el.setSelectionRange(result.caret, result.caret);
+}
+
+/** 反転している候補を確定する（種別で分ける）。 */
+function confirmSelected(): void {
+  if (isQuoteTrigger.value) {
+    void confirmQuote(quoteSuggestions.value[selectedIndex.value]);
+  } else {
+    void confirmCandidate(suggestions.value[selectedIndex.value].candidate);
+  }
+}
 
 /** 候補を確定して本文へ挿す。 */
 async function confirmCandidate(candidate: Candidate): Promise<void> {
@@ -291,7 +410,7 @@ async function confirmCandidate(candidate: Candidate): Promise<void> {
 function moveSelection(delta: number, event: KeyboardEvent): void {
   if (!popupCaptures.value) return;
   event.preventDefault();
-  const count = suggestions.value.length;
+  const count = activeCount.value;
   selectedIndex.value = (selectedIndex.value + delta + count) % count;
 }
 
@@ -306,7 +425,7 @@ function onEscape(event: KeyboardEvent): void {
 function onTab(event: KeyboardEvent): void {
   if (!popupCaptures.value) return;
   event.preventDefault();
-  void confirmCandidate(suggestions.value[selectedIndex.value].candidate);
+  confirmSelected();
 }
 
 /** 内容ぴったりの高さへ合わせる。 */
@@ -318,17 +437,41 @@ function autoGrow(): void {
   el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
 }
 
+/**
+ * 送信。**下書きは送る前に消し、拒否されたら戻す**（Spec 58 D3）。
+ *
+ * 先に消すのは二重送信を防ぐためで（Enter の連打）、この順は変えない。代わりに
+ * 結果を待ち、失敗したら文面・添付・参照の 3 つを [`restoreDraft`] の 1 実装で戻す —
+ * コアが参照を拒む経路（`INVALID_QUOTE`）ができたので、拒まれたときに書いた依頼文ごと
+ * 失わせない。待っている間に打たれたものは上書きしない。
+ */
 async function send(): Promise<void> {
   if (!canSend.value) return;
-  const payload = text.value;
-  const files = attachment.value ? [attachment.value] : [];
+  const failed = { text: text.value, attachment: attachment.value, quotes: quotes.value };
   text.value = "";
   attachment.value = null;
+  quotes.value = [];
   closeCompletion();
   // 空にした後で高さを最小へ戻す。
   await nextTick();
   autoGrow();
-  emit("send", payload, files);
+
+  const ok = await props.submit(
+    failed.text,
+    failed.attachment ? [failed.attachment] : [],
+    failed.quotes.map((chip) => chip.id),
+  );
+  if (ok) return;
+
+  const restored = restoreDraft(
+    { text: text.value, attachment: attachment.value, quotes: quotes.value },
+    failed,
+  );
+  text.value = restored.text;
+  attachment.value = restored.attachment;
+  quotes.value = restored.quotes;
+  await nextTick();
+  autoGrow();
 }
 
 /**
@@ -352,7 +495,7 @@ function onEnter(event: KeyboardEvent): void {
   if (event.isComposing) return;
   if (popupCaptures.value) {
     event.preventDefault();
-    void confirmCandidate(suggestions.value[selectedIndex.value].candidate);
+    confirmSelected();
     return;
   }
   event.preventDefault();
@@ -505,6 +648,45 @@ defineExpose({ fill });
       </p>
     </div>
 
+    <!-- 会話の参照のチップ（Spec 58）。添付のチップと同じ作法で、× で外せる。
+         **入力欄の文面には何も挿していない**ので、何を添えたかはこの行が唯一の表示。 -->
+    <div v-if="quotes.length" class="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-quote-chips>
+      <span
+        v-for="chip in quotes"
+        :key="chip.id"
+        class="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-surface-1 px-2 py-1 ring-1 ring-line"
+      >
+        <!-- 引用の印（SVG。絵文字は恒久要素に使わない）。 -->
+        <svg
+          viewBox="0 0 24 24"
+          class="size-3.5 shrink-0 text-ink-dim"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M9 14 4 9l5-5" />
+          <path d="M4 9h10a6 6 0 0 1 6 6v5" />
+        </svg>
+        <span class="truncate text-[11px] text-ink">{{ chip.fromName }}</span>
+        <span class="shrink-0 text-[10px] text-ink-dim tabular-nums">
+          {{ shortTime(chip.tsMs) }} ·
+          {{ $t("chatInput.quoteChars", { chars: chip.chars.toLocaleString("en-US") }) }}
+        </span>
+        <button
+          type="button"
+          class="shrink-0 rounded px-0.5 text-[12px] leading-none text-ink-dim transition hover:text-warn"
+          :title="$t('chatInput.quoteRemove')"
+          :aria-label="$t('chatInput.quoteRemove')"
+          @click="quotes = quotes.filter((c) => c.id !== chip.id)"
+        >
+          ×
+        </button>
+      </span>
+    </div>
+
     <!-- パス補完（Spec 24）。**入力欄の上へ浮かせる**（`absolute` + `bottom-full`）。
          流し込みで置くと、開くたびに入力欄が下へ動いて**会話の表示が縮む** —
          打鍵のたびにレイアウトが跳ねるのは、補完のように頻繁に開閉する部品では
@@ -522,8 +704,49 @@ defineExpose({ fill });
       v-if="popupVisible"
       class="absolute right-3 bottom-full left-3 z-20 mb-1 overflow-hidden rounded-lg bg-surface-1/80 shadow-lg ring-1 ring-line backdrop-blur-xl"
     >
+      <!-- 会話の参照（Spec 58）。`@@` のとき、ファイルの代わりにこの会話の発話を出す。 -->
+      <template v-if="isQuoteTrigger">
+        <p v-if="quotePool.length === 0" class="px-2.5 py-2 text-[11px] text-ink-dim">
+          {{ $t("chatInput.quoteNone") }}
+        </p>
+        <template v-else>
+          <ul class="max-h-72 overflow-y-auto py-0.5">
+            <li v-for="(item, index) in quoteSuggestions" :key="item.id">
+              <!-- 1 行は「送り手 → 宛先・時刻・字数」+ 本文の先頭。**送り手が主** —
+                   照合の 1 段目が表示名なので、表示もそれを先頭に置く。 -->
+              <button
+                type="button"
+                class="flex w-full flex-col gap-0.5 px-2.5 py-1 text-left transition disabled:cursor-not-allowed disabled:opacity-50"
+                :class="index === selectedIndex ? 'bg-surface-2' : ''"
+                :disabled="quotesFull"
+                :title="item.head"
+                @mouseenter="selectedIndex = index"
+                @mousedown.prevent
+                @click="confirmQuote(item)"
+              >
+                <span class="flex items-center gap-1.5">
+                  <span class="truncate text-[11px] text-ink">{{ item.fromName }}</span>
+                  <span class="shrink-0 text-[10px] text-ink-dim">→ {{ quoteTarget(item) }}</span>
+                  <span class="ml-auto shrink-0 text-[10px] text-ink-dim tabular-nums">
+                    {{ shortTime(item.tsMs) }} ·
+                    {{ $t("chatInput.quoteChars", { chars: item.chars.toLocaleString("en-US") }) }}
+                  </span>
+                </span>
+                <span class="truncate text-[10px] text-ink-dim">{{ item.head }}</span>
+              </button>
+            </li>
+          </ul>
+          <!-- 上限。押せない行だけ出して黙ると「`@@` が効かない」と読まれる。 -->
+          <p
+            v-if="quotesFull"
+            class="border-t border-line px-2.5 py-1.5 text-[10px] text-warn"
+          >
+            {{ $t("chatInput.quoteFull", { max: MAX_QUOTES }) }}
+          </p>
+        </template>
+      </template>
       <!-- 作業フォルダが無い（D3）。候補を出す代わりに理由を出す。 -->
-      <p v-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
+      <p v-else-if="!hasWorkDir" class="px-2.5 py-2 text-[11px] text-ink-dim">
         {{ $t("chatInput.completeNoWorkDir") }}
       </p>
       <p v-else-if="loadingCandidates" class="px-2.5 py-2 text-[11px] text-ink-dim">
@@ -650,7 +873,7 @@ defineExpose({ fill });
            複数行へ伸びたときは下端に寄る — 伸びる方向は下なので、
            **書いている行の隣にボタンが残る**（中央に置くと文章の途中を指す）。 -->
       <button
-        v-show="text.trim() || attachment"
+        v-show="text.trim() || attachment || quotes.length"
         type="button"
         :disabled="!canSend"
         :aria-label="$t('chatInput.send')"

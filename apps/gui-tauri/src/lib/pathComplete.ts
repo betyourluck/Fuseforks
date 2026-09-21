@@ -31,12 +31,22 @@ export interface Candidate {
   kind: "file";
 }
 
+/**
+ * 補完の種別。**`@` の個数で決まる**（Spec 58 D1 / `path_completion_contract` 凍結 6）。
+ *
+ * - `"file"` — `@` 1 個。作業フォルダのファイル（Spec 24）
+ * - `"message"` — `@` 2 個。この会話でサーヴァントが書いた発話（Spec 58）
+ */
+export type TriggerKind = "file" | "message";
+
 /** 入力欄で検出した `@` クエリ。 */
 export interface Trigger {
-  /** `@` そのものの位置（本文の先頭からの index）。 */
+  /** `@` の並びの先頭の位置（本文の先頭からの index）。 */
   at: number;
-  /** `@` の直後からカーソルまでの文字列。空文字もありうる。 */
+  /** `@` の並びの直後からカーソルまでの文字列。空文字もありうる。 */
   query: string;
+  /** 補完の種別。 */
+  kind: TriggerKind;
 }
 
 /** 順位付けされた候補 1 件。 */
@@ -70,17 +80,37 @@ export const MAX_SUGGESTIONS = 20;
 export function findTrigger(text: string, caret: number): Trigger | null {
   // カーソルより前だけを見る。後ろに何が書かれていても補完の対象ではない。
   const head = text.slice(0, caret);
-  const at = head.lastIndexOf("@");
-  if (at < 0) return null;
 
-  // `@` の直前。行頭・空白・開き括弧なら入口として認める。
-  const before = at > 0 ? head[at - 1] : "";
-  if (before && !/[\s([{「『（]/.test(before)) return null;
+  // 最後の空白の直後からカーソルまでが「いま打っている語」。クエリに空白は
+  // 入らない — 空白を打った時点で、この語は次の語へ移る。
+  let wordStart = 0;
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (/\s/.test(head[i])) {
+      wordStart = i + 1;
+      break;
+    }
+  }
 
-  const query = head.slice(at + 1);
-  // 空白・改行が入ったら補完は閉じる。
-  if (/\s/.test(query)) return null;
-  return { at, query };
+  // 語の中の `@` の並びのうち、**入口として認められる最後のもの**を採る。
+  // 入口 = 並びの直前が語頭か開き括弧。`@node_modules/@types` の 2 つ目や
+  // `@@user@example` の 3 つ目は直前が単語文字なので、クエリの一部として読む
+  // （Spec 58 より前は `lastIndexOf("@")` だったので、ここで補完が閉じていた）。
+  let found: { at: number; length: number } | null = null;
+  const runs = /@+/g;
+  for (let m = runs.exec(head.slice(wordStart)); m; m = runs.exec(head.slice(wordStart))) {
+    const at = wordStart + m.index;
+    const before = at > wordStart ? head[at - 1] : "";
+    if (!before || /[([{「『（]/.test(before)) found = { at, length: m[0].length };
+  }
+  if (!found) return null;
+
+  // 種別は `@` の個数。3 個以上は何の入口でもない。
+  if (found.length > 2) return null;
+  return {
+    at: found.at,
+    query: head.slice(found.at + found.length),
+    kind: found.length === 1 ? "file" : "message",
+  };
 }
 
 /**
@@ -193,4 +223,20 @@ export function applyCompletion(
     text: `${head}${inserted}${tail}`,
     caret: trigger.at + inserted.length,
   };
+}
+
+/**
+ * 検出したクエリ（`@@ジェミー` など）を本文から取り除く（Spec 58 D3）。
+ *
+ * 会話の参照は**本文へ何も挿さない** — 選んだ発話はチップになり、入力欄に残るのは
+ * 利用者が書いた依頼文だけ。だから確定したら、打ちかけのクエリごと消す。
+ *
+ * @returns 新しい本文と、置くべきカーソル位置
+ */
+export function removeTrigger(
+  text: string,
+  trigger: Trigger,
+  caret: number,
+): { text: string; caret: number } {
+  return { text: `${text.slice(0, trigger.at)}${text.slice(caret)}`, caret: trigger.at };
 }

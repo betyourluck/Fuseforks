@@ -16,16 +16,16 @@ function files(...paths: string[]): Candidate[] {
 
 describe("findTrigger", () => {
   it("行頭の @ で開き、クエリは @ の直後からカーソルまで", () => {
-    expect(findTrigger("@spec", 5)).toEqual({ at: 0, query: "spec" });
+    expect(findTrigger("@spec", 5)).toEqual({ at: 0, query: "spec", kind: "file" });
   });
 
   it("@ を打った直後はクエリが空でも開く", () => {
-    expect(findTrigger("@", 1)).toEqual({ at: 0, query: "" });
+    expect(findTrigger("@", 1)).toEqual({ at: 0, query: "", kind: "file" });
   });
 
   it("空白の後の @ でも開く", () => {
     // 「これを見て 」= 6 文字なので `@` は index 6、カーソルは末尾の 11。
-    expect(findTrigger("これを見て @spec", 11)).toEqual({ at: 6, query: "spec" });
+    expect(findTrigger("これを見て @spec", 11)).toEqual({ at: 6, query: "spec", kind: "file" });
   });
 
   it("単語の直後の @ では開かない（メールアドレスを邪魔しない）", () => {
@@ -40,7 +40,7 @@ describe("findTrigger", () => {
 
   it("カーソルより後ろは見ない", () => {
     // 「@a」まで打って、その後ろに既存の文字列がある状態。
-    expect(findTrigger("@ab", 2)).toEqual({ at: 0, query: "a" });
+    expect(findTrigger("@ab", 2)).toEqual({ at: 0, query: "a", kind: "file" });
   });
 
   it("@ が無ければ開かない", () => {
@@ -48,7 +48,7 @@ describe("findTrigger", () => {
   });
 
   it("複数の @ があれば直近のものを取る", () => {
-    expect(findTrigger("@one @tw", 8)).toEqual({ at: 5, query: "tw" });
+    expect(findTrigger("@one @tw", 8)).toEqual({ at: 5, query: "tw", kind: "file" });
   });
 });
 

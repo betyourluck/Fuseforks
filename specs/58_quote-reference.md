@@ -1,12 +1,15 @@
 # Spec: `@@` で会話の中の発話を参照として渡す — 利用者が選んだサーヴァントの回答を、宛先の個体へ写しで届ける
 
 - 起票: 2026-09-21
-- 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = 1 件 10,000 字。未決ゼロ）→ P0〜P1 完了。
-  残は P2（IPC とフロント）・P3（台帳）・P4（実機）**
+- 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = 1 件 10,000 字。未決ゼロ）→ P0〜P2 完了。
+  残は P3（台帳）・P4（実機）**
   （P0 = `data_contract` の `quote_reference_contract` 凍結 8 本 + 周辺 5 箇所。
   P1 = `quote.rs`（純機構）+ `sender_envelope.rs` の無害化 2 本 + 送信の入口 `send_user_message_full` +
   `attribute_sender` の展開 + 計器 2 行。Rust 1,019 → 1,046・clippy 0・ミューテーション 5 回とも予測どおり。
-  記録は「P0 契約記録」「P1 実装記録」）。
+  P2 = IPC の引数 `quoteIds` + `lib/pathComplete.ts` の種別 + `lib/quoteRef.ts`（候補・順位・復元）+
+  入力欄のチップと候補 + 送信失敗時の復元 + 会話ペインの参照チップ + 辞書 ja / en。vitest 646 → 677・
+  vue-tsc 0・build 緑・ミューテーション 6 回とも予測どおり。**実機は未確認**。
+  記録は「P0 契約記録」「P1 実装記録」「P2 実装記録」）。
   rev2 = 査読 2 系統 21 点 → 採用 14 / 前提を実測で訂正して採用 3 / 不採用 2 / 裁定へ 1 /
   確認のみ 1（表は Notes 3）。利用者裁定 2 点は起票前に確定 — (1) 展開するのはコア
   （フロントは発話 ID だけ送る） (2) 写しは発話に畳んで履歴に残す（1 ターン限りにしない）
@@ -88,9 +91,11 @@
 
 ### D1. `@@` は「会話の参照」。`@` はファイルのまま — 判定は「語の頭に並んだ `@` の個数」
 
-- **カーソルの直前の語**（最後の空白・改行・開き括弧 `( [ {「『（` の直後からカーソルまで）を
-  取り、その語が `@` で始まるときだけ開く。**頭に並んだ `@` の個数**で種別が決まる —
-  1 個 = ファイル / 2 個 = 会話の参照 / 3 個以上 = 開かない。クエリは並びの直後からカーソルまで
+- **カーソルの直前の語**（最後の空白・改行の直後からカーソルまで）の中で、`@` の並びのうち
+  **直前が語頭か開き括弧 `( [ {「『（` であるもの（= 入口）の最後の 1 つ**を採る。**並んだ `@` の
+  個数**で種別が決まる — 1 個 = ファイル / 2 個 = 会話の参照 / 3 個以上 = 開かない。クエリは
+  並びの直後からカーソルまで（P2 で文面を 1 段細かくした。開き括弧で語を切ると
+  `@docs/file(1).md` のクエリが `(` で切れる — P2 実装記録 1）
 - rev1 の「入口の条件は `@` と同じ」は、どの `@` に条件を掛けるのかを書いていなかった
   （査読 1-1 / 2-7）。今の `lastIndexOf("@")` のままだと、`@@` は 2 つ目の `@` の直前が `@` で
   永久に開かず、クエリの中の `@`（`@@user@example`）でも位置を取り違える
@@ -364,17 +369,79 @@ QuotedMessage { messageId, from: Endpoint, to: Endpoint, tsMs, text, totalChars,
 
 ### P2 IPC とフロント
 
-- [ ] IPC の引数 `quoteIds` / `types.ts` / `lib/ipc.ts` / `orchestrator.send`
-- [ ] `lib/pathComplete.ts` — `findTrigger` を D1 の判定へ（単体: `@@` が開く / `@@@` は
+- [x] IPC の引数 `quoteIds` / `types.ts` / `lib/ipc.ts` / `orchestrator.send`
+- [x] `lib/pathComplete.ts` — `findTrigger` を D1 の判定へ（単体: `@@` が開く / `@@@` は
   開かない / クエリの中の `@` で閉じない / `user@example.com` は開かない / 開き括弧の直後 /
   既存の `@` のテストが無改変で通る）/ 候補型の `kind: "message"` / `rankMessages`（純関数）
-- [ ] `ChatInput.vue` — 候補の行・チップ・3 件の上限・送信
-- [ ] **送信の失敗で文面・添付・参照を入力欄へ戻す**（実測 13。`ChatInput` が消してから
+- [x] `ChatInput.vue` — 候補の行・チップ・3 件の上限・送信
+- [x] **送信の失敗で文面・添付・参照を入力欄へ戻す**（実測 13。`ChatInput` が消してから
   `emit` する今の順を、結果を受けてから消す形へ。3 つに同じ機構を効かせる）
-- [ ] `ChatPanel.vue` — 利用者の発話の参照チップと開閉
-- [ ] 辞書 ja / en + 入力欄の placeholder へ `@@` の案内
-- [ ] 走査テスト（IPC の綴り / 辞書の鍵 / 会話ペインに座標計算を足していない）
-- [ ] ミューテーション
+- [x] `ChatPanel.vue` — 利用者の発話の参照チップと開閉
+- [x] 辞書 ja / en + 入力欄の placeholder へ `@@` の案内
+- [x] 走査テスト（IPC の綴り / 辞書の鍵 / 会話ペインに座標計算を足していない）
+- [x] ミューテーション
+
+### P2 実装記録（2026-09-22）
+
+**置いたもの**:
+
+- IPC — `send_user_message` へ `quote_ids: Option<Vec<String>>`（フロントからは `quoteIds`）。
+  `lib/ipc.ts` の `sendUserMessage` / `orchestrator.send`（**戻り値を `Promise<boolean>` へ**）
+- `types.ts` — `QuotedMessage` と `AgentMessage.quotes`
+- `lib/pathComplete.ts` — `Trigger.kind`（`"file" | "message"`）/ `findTrigger` の判定の書き換え /
+  `removeTrigger`。テストは `pathCompleteKinds.test.ts`（新設 9 本）
+- `lib/quoteRef.ts`（新設・純関数）— `quoteCandidates` / `rankQuotes` / `addChip` / `chipOf` /
+  `restoreDraft` / `shortTime` / `MAX_QUOTES`。単体 14 本
+- `ChatInput.vue` — 参照のチップの行 / `@@` の候補の枠 / `confirmQuote` / 送信の結果を待って
+  下書きを戻す / 会話の切り替えでチップを外す
+- `ChatPanel.vue` — 利用者の発話の参照チップと開閉（`openQuotes`）。`:submit="send"`
+- 辞書 ja / en — `chatInput.quote*` 5 鍵 + `quoteTo` 3 鍵 / `chat.quote` 2 鍵 /
+  `errors.INVALID_QUOTE` / `chatInput.hint` へ `@` と `@@` の案内
+- 走査 `lib/quoteRefWiring.test.ts`（8 本）
+
+**実装で決めた 6 点**:
+
+1. **`findTrigger` の判定を D1 の文面より 1 段細かくした。** 語の区切りは**空白だけ**にし、
+   開き括弧は「入口の直前に来てよい文字」として扱う。語の中の `@` の並びのうち、直前が
+   語頭か開き括弧であるもの（= 入口）の**最後の 1 つ**を採る。D1 の文面どおり開き括弧でも
+   語を切ると、`@docs/file(1).md` のクエリが `(` で切れて補完が閉じる（Spec 24 では通っていた）。
+   この形なら `@a(@b` は従来どおり `@b` を拾い、`@node_modules/@types` と `@@user@example` は
+   途中の `@` をクエリの一部として読む。契約の凍結 6 もこの文面へ直した
+2. **既存の `findTrigger` のテストは無改変では通らなかった**（rev2 の Tasks の見込み違い）—
+   期待値が `toEqual({ at, query })` で、`kind` が増えると落ちる。5 箇所へ `kind: "file"` を足した。
+   `toEqual` は全欄を固定する（`failures.md` #87）ので、欄を足せば必ず当たる
+3. **送信は `emit` から関数の prop（`submit`）へ変えた。** `emit` は親の戻り値を受け取れず、
+   入力欄が成否を知る手段が無い。下書きを「送る前に消す」順は変えていない（Enter の連打で
+   二重送信になる）— 結果を待ち、失敗したら `restoreDraft` の 1 実装で 3 つとも戻す
+4. **待っている間に打たれたものは上書きしない**（`restoreDraft`）。文面は失敗した側を先頭に
+   改行で繋ぎ、添付は貼り直されていれば新しいほう、参照は重複を落として上限まで
+5. **会話を切り替えたらチップを外す。** 参照できるのはこの会話の発話だけなので、残すと
+   コアに必ず拒まれるチップが入力欄に居座る（`state.currentSessionId` を watch）
+6. **候補の一覧は `@@` を開いた瞬間に 1 回だけ組む**（ファイルの D6 と同じ理由）。補完の
+   入れ替わりは「開いているか」ではなく**種別**で watch する — `@` の直後に `@` を打つと、
+   補完は開いたままファイルから参照へ入れ替わる
+
+**コンポーネントをマウントするテストの土台が無い**（`@vue/test-utils` も jsdom も入れていない）ので、
+入力欄の振る舞いは 2 層で留めた — 規則は純関数の単体（`restoreDraft` / `addChip` / `rankQuotes`）、
+配線と順序はソースの走査（`await props.submit(` → `if (ok) return;` → `restoreDraft(` の並びを
+正規表現で見る）。
+
+**ミューテーション 6 回**（予測を先に書いた。復元は SHA-1。**名前フィルタを掛けず全 677 本を回し、
+毎回 passed + failed が変異なしの本数と一致することを見た** = `failures.md` #133 の処方）:
+
+| 変異 | 予測 | 実測 |
+|---|---|---|
+| F1 種別を常に `file` | `pathCompleteKinds` 5 本 | 一致 |
+| F2 候補の「サーヴァント発だけ」を外す | `quoteRef.test` 5 本 | 一致 |
+| F3 失敗しても戻さない | 走査 1 本 | 一致 |
+| F4 `ipc.ts` の payload から `quoteIds` を落とす | 走査 1 本 | 一致 |
+| F5 復元が打ちかけの文を上書き | `quoteRef.test` 1 本 | 一致 |
+| F6 TS 側の上限を 4 に | 走査 1 + `quoteRef.test` 2 | 一致 |
+
+F4 が留めているのは**黙って壊れる形** — `quote_ids` は `Option` なので、片側だけ改名しても
+エラーにならず、参照なしの発話として普通に送られる。
+
+**実機は未確認。** 見る項目は検収の 9 件。
 
 ### P3 台帳
 

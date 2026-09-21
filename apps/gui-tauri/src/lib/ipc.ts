@@ -607,7 +607,14 @@ export const sendUserMessage = (
   content: string,
   coRecipients?: AgentId[],
   attachments?: AttachmentPayload[],
-) => call<void>("send_user_message", { agentId, content, coRecipients, attachments });
+  /**
+   * 会話の参照（Spec 58）— 利用者が `@@` で選んだ発話の ID。**本文は送らない**。
+   * 写しを作るのはコアで、無い ID・サーヴァント発でない ID・4 件以上は
+   * `INVALID_QUOTE` で発話ごと拒否される。
+   */
+  quoteIds?: string[],
+) =>
+  call<void>("send_user_message", { agentId, content, coRecipients, attachments, quoteIds });
 
 /**
  * 添付画像の実体（WebP バイト列）を読む（Spec 23）。
