@@ -2,9 +2,10 @@
 
 - 起票: 2026-09-21
 - 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = rev2 の本文どおり「既定で畳む +
-  `ok=false` を含むまとまりは畳まない + 見出しに本数を出さない」。未決ゼロ）→ P0 完了**
-  （`data_contract` の `tool_call_detail_contract` + `events` の `toolInvoked` を 5 欄へ。
-  記録は「P0 契約記録」）。rev2 = 査読 2 系統 24 点 → 採用 16 / 前提を実測で訂正して採用 3 /
+  `ok=false` を含むまとまりは畳まない + 見出しに本数を出さない」。未決ゼロ）→ P0〜P1 完了**
+  （P0 = `data_contract` の `tool_call_detail_contract` + `events` の `toolInvoked` を 5 欄へ。
+  P1 = コアのリング `ToolCallStore` + 記録 → 発行の並び + 会話の切り替え 2 箇所の全消し。
+  Rust 1,019 全緑・ミューテーション 4 回とも予測どおり。記録は「P0 契約記録」「P1 実装記録」）。rev2 = 査読 2 系統 24 点 → 採用 16 / 前提を実測で訂正して採用 3 /
   一部採用・一部反証 1 / 反証 2 / 不採用 1 / 裁定へ 1（表は Notes 5）
 - 起点: 利用者 —「AionUi で便利だなと思うのは、ツール実行を畳んだり、どんな input と
   output か、またコマンドの出力を確認できるところです。これと同じように Fuseforks の
@@ -294,24 +295,73 @@ ToolCallDetail {
 
 ### P1 コア
 
-- [ ] `tool_calls.rs`: `ToolCallStore`（`record` が採番して id を返す / 取得 / 全消し /
+- [x] `tool_calls.rs`: `ToolCallStore`（`record` が採番して id を返す / 取得 / 全消し /
       件数の押し出し / 字数の打ち切り）。単体: 501 件目で最古が消える /
       日本語 16,001 字が 16,000 字 + 元の字数 / 16,000 字ちょうどは切らない /
       切った引数は文字列・切らない引数は JSON 値 / `argsChars` が詰めた形の字数と一致
-- [ ] `turn.rs`: emit を `body` の確定と `record` の後ろへ。`tool:` 行と RepeatGuard は動かさない
-- [ ] `ConversationCleared` を出す 2 箇所（`mod.rs:800` / `sessions.rs:35`）でリングを空にする
-- [ ] `Orchestrator::tool_call(call_id)`
-- [ ] `tests/ipc_contract.rs`: `toolInvoked` の 5 欄（`agentId` / `tool` / `ok` / `reason` /
+- [x] `turn.rs`: emit を `body` の確定と `record` の後ろへ。`tool:` 行と RepeatGuard は動かさない
+- [x] `ConversationCleared` を出す 2 箇所（`mod.rs:800` / `sessions.rs:35`）でリングを空にする
+- [x] `Orchestrator::tool_call(call_id)`
+- [x] `tests/ipc_contract.rs`: `toolInvoked` の 5 欄（`agentId` / `tool` / `ok` / `reason` /
       `callId`）と `ToolCallDetail` の 7 欄のワイヤ形を凍結（P0 契約記録 — 今は 1 欄も留まっていない）
-- [ ] 結合: (a) 記録した引数と本文が取れる (b) 合成側（`ask_*`）も取れる
+- [x] 結合: (a) 記録した引数と本文が取れる (b) 合成側（`ask_*`）も取れる
       (c) **目印の文字列が全イベント・`export_session` に 1 件も出ない**
       (d) **`open_session` 経由（新規チャット）と、保存先の無い村の `reset_conversation`
       の 2 経路**それぞれの後で `None`（開き直し・分岐は `open_session` の 1 実装へ
       合流するので、操作の数ではなく emit の箇所で数える）
       (e) `ToolInvoked` を受けた時点で必ず取れる（順序）
       (f) **提示外のツール名を呼んでも件数が増えない**（実測 7 の `:2083`）
-- [ ] ミューテーション: `record` を emit の後ろへ戻す → (e) だけ赤 / 打ち切りを `len()` へ →
+- [x] ミューテーション: `record` を emit の後ろへ戻す → (e) だけ赤 / 打ち切りを `len()` へ →
       日本語の 1 本だけ赤 / 記録を `:2083` の側にも足す → (f) だけ赤
+
+### P1 実装記録（2026-09-21）
+
+`crates/fuseforks-core/src/tool_calls.rs`（`ToolCallStore` + `ToolCallDetail`。単体 8 本）+
+`Shared.tool_calls` + `turn.rs` の並び替え + 会話の切り替え 2 箇所の全消し +
+`Orchestrator::tool_call` + `event.rs` の `call_id` と doc。結合 6 本
+（`tests/orchestrator.rs` の末尾）+ ワイヤ凍結 2 本（`tests/ipc_contract.rs`）。
+Rust 1,003 → 1,019 全緑・clippy 警告ゼロ。
+
+**Tasks から変えた所が 1 つ — 結合 (e)「順序」は実行時のテストにできなかった。**
+`record` と `emit` の間に `await` が無いので、順を入れ替えても受け手は間へ割り込めない
+（単一スレッドのランタイムでは原理的に。複数スレッドでも IPC の往復より桁で速い）。
+**赤くできないテストは書かない**ので、`turn.rs` のソースの並びを読む走査テスト
+`the_ring_is_written_before_the_event_is_emitted` にした（`.record(&call.args, &body)` が
+`shared.emit(CoreEvent::ToolInvoked {` より前に在る / **記録する点が 1 つだけ**）。
+順は契約なので留めるが、実害の大きさは「行が出てから数 µs の窓」で、
+D2 が書いた「行が出た瞬間に押した人が詳細なしを引く」は実機ではまず起きない。
+
+**実装で決めた 4 点**:
+
+- **ロックは `std::sync::Mutex`**（記録も取得も `await` を跨がない 1 行）。`Shared` の他の
+  `Mutex` は tokio のものなので、型を名指しで書いて取り違えを防いだ
+- **毒されたロックでも中身を使う**（`tool_calls_lock` の 1 実装）。握ったまま panic した
+  別のターンのせいで以後の全ターンのツール実行が落ちる形にしない — 守っているのは
+  表示用の写しで、壊れて困る不変条件は中に無い
+- **`clear` は採番を戻さない**（単体で凍結）。戻すと、画面に残った古い行の `callId` が
+  会話を切り替えた後の新しい呼び出しを指す。D3 の「取りこぼしで行が生えない」場合と
+  GUI の再読み込みを跨いでも、id が別の中身を指すことは無い
+- **引数の字数は `args.to_string()`** — `tool:` 行の `args_chars` と**同じ式**
+  （`Value` の `Display` は詰めた形）。検収 7 の「画面の字数とログの字数が一致する」は
+  この 1 行で成立する
+
+**ミューテーション 4 回。予測を先に書き、4 回とも一致した**（変異は可逆な置換で入れ、
+戻した後に 4 ファイルの SHA-1 が元と一致することを確かめた — `failures.md` #130 の処方）:
+
+| 変異 | 予測 | 実測 |
+|---|---|---|
+| 提示外の名前の枝でも `record` する | (f) と走査（記録点が 2 つ）の 2 本が赤 | 一致 |
+| 保存先の無い村の全消しを外す | (d) が `store_less=true` で赤 | 一致 |
+| `open_session` の全消しを外す | (d) が `store_less=false` で赤 | 一致 |
+| 字数を `len()` で数える | 単体 4 本（ちょうど上限 / 日本語 / 切った引数 / `argsChars`）+ 結合 (a) が赤。ASCII だけのワイヤ凍結は緑 | 一致 |
+
+**(d) の 2 経路が別物であることは、変異 2 と 3 が別々の回で赤くなったことで裏が取れた** —
+`sessions.redb` の位置へフォルダを置くと保存先が開けず、村は保存なしで起動する。
+
+**踏んだもの 1 つ**: 全スイートの 1 回目が `LNK1104`（`uuid.lib` を開けない）で
+`blackboard_tool_turn` のリンクだけ落ちた。コードの問題ではなく、そのテストを単独で
+ビルドし直すと通り、全スイートの 2 回目は緑。集計の awk が 0 を返したのはこの失敗のせいで、
+**「passed=0 failed=0」を緑と読まない**（exit code と `test result` の行数を先に見る）。
 
 ### P2 IPC とフロント
 

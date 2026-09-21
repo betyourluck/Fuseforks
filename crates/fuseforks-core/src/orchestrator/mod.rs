@@ -341,6 +341,13 @@ struct Shared {
     /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
     /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
     plan_waves: RwLock<PlanWaveStore>,
+    /// ツール呼び出しの中身（Spec 57）。リングバッファでプロセス寿命。
+    ///
+    /// **ファイルへもログへも書かない** — 引数と出力には利用者の秘密が入りうる
+    /// （`failures.md` #71）。`std::sync::Mutex` なのは、記録も取得も `await` を
+    /// 跨がない 1 行だから。会話を切り替える 2 箇所
+    /// （`ConversationCleared` を出す所）で空にする。
+    tool_calls: std::sync::Mutex<crate::tool_calls::ToolCallStore>,
     /// 承認済みの波の実行者（Spec 43 — **ターンの外の実行形**。凍結 8）。
     /// key = plan_id・値は (進行役, root cancel token)。
     ///
@@ -503,6 +510,17 @@ impl Shared {
     /// イベントを押し出す。購読者が居なければ黙って捨てる。
     fn emit(&self, event: CoreEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// ツール呼び出しのリング（Spec 57）を握る。
+    ///
+    /// **毒されたロックでも中身を使う** — 握ったまま panic した別のターンのせいで、
+    /// 以後の全ターンのツール実行が落ちる形にしない（守っているのは表示用の
+    /// 写しで、壊れて困る不変条件は中に無い）。
+    fn tool_calls_lock(&self) -> std::sync::MutexGuard<'_, crate::tool_calls::ToolCallStore> {
+        self.tool_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// ログへ追記し、保存先へ書き、[`CoreEvent::MessageSent`] を発行する。
@@ -797,6 +815,9 @@ impl Shared {
         *self.summaries.write().await = restored.summaries;
         *self.log.write().await = messages;
 
+        // 前の会話の引数と出力を持ち続けない（Spec 57）。画面の行は
+        // `ConversationCleared` で消えるので、詳細だけ残る状態を作らない。
+        self.tool_calls_lock().clear();
         self.emit(CoreEvent::ConversationCleared);
         self.emit(CoreEvent::SessionSwitched {
             session_id: session_id.to_owned(),
@@ -1044,6 +1065,15 @@ impl Orchestrator {
     /// planId upsert）は data_contract の projection_rule が正。
     pub async fn list_plan_waves(&self) -> Vec<PlanWaveRecord> {
         self.shared.plan_waves.read().await.list()
+    }
+
+    /// ツール呼び出し 1 件の中身（Spec 57 — 会話ペインの行を開いたとき）。
+    ///
+    /// **`None` は「押し出された / 会話を切り替えた」でエラーではない。**
+    /// 一覧を返す口は作っていない — 行の側（`ToolInvoked`）が鍵を運ぶ。
+    #[must_use]
+    pub fn tool_call(&self, call_id: u64) -> Option<crate::tool_calls::ToolCallDetail> {
+        self.shared.tool_calls_lock().get(call_id)
     }
 
     /// 承認待ちの計画を、人が承認した最終形で配送する（Spec 43 — 編集窓の実行側）。

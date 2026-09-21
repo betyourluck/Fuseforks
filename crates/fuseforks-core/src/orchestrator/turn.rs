@@ -2154,18 +2154,24 @@ impl CallRunner<'_> {
         let (reason, reason_chars) = reason;
         // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
         let reason_kind = crate::tool_reason::kind_label(&reason);
-        shared.emit(CoreEvent::ToolInvoked {
-            agent_id: agent_id.clone(),
-            tool: call.name.clone(),
-            ok: result.is_ok(),
-            reason,
-        });
         let ok = result.is_ok();
         let body = match result {
             Ok(text) => text,
             // 失敗しても会話を止めない。モデルが読んで次を決める。
             Err(err) => format!("ツールの実行に失敗しました: {err}"),
         };
+        // 中身をリングへ置いてから知らせる（Spec 57）。**この順が要点** —
+        // 発行が先だと、行が出た瞬間に開いた人が「詳細なし」を引く。
+        // 記録する点はここ 1 つで、上の「提示していない名前」の枝では記録しない
+        // （あちらは `ToolInvoked` を出さないので、開く入口が無い）。
+        let call_id = shared.tool_calls_lock().record(&call.args, &body);
+        shared.emit(CoreEvent::ToolInvoked {
+            agent_id: agent_id.clone(),
+            tool: call.name.clone(),
+            ok,
+            reason,
+            call_id,
+        });
         // ツール 1 本ごとの実測。**`body_chars` がこの行の主目的** — ツール結果は
         // 履歴に積まれて以後の全周回で再送されるので、1 本の大きさが
         // そのターンの入力トークンに周回数ぶん掛かって効く。ターン行の

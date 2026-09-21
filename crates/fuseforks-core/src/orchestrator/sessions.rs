@@ -32,6 +32,8 @@ impl Orchestrator {
         if self.shared.sessions.is_none() {
             self.shared.log.write().await.clear();
             self.shared.world.write().await.clear_histories();
+            // 保存先の無い村でも、前の会話の引数と出力は持ち続けない（Spec 57）。
+            self.shared.tool_calls_lock().clear();
             self.shared.emit(CoreEvent::ConversationCleared);
             return Ok(());
         }

@@ -656,3 +656,54 @@ fn blackboard_note_wire_fields_are_frozen() {
         vec!["content", "dir", "modifiedMs", "name", "state"]
     );
 }
+
+/// ツール実行の通知（Spec 27 の `reason` + Spec 57 の `callId`）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `CoreEvent` の `toolInvoked` を直すこと。**
+/// この欄はこれまで 1 つも留められておらず、Spec 27 で `reason` を足したとき
+/// `data_contract.yaml` の `events` の行が 3 欄のまま残った（Spec 57 の P0 で回収）。
+/// **引数と結果の本文はここに載らない** — 鍵（`callId`）だけを運ぶ。
+#[test]
+fn tool_invoked_event_wire_is_frozen() {
+    let event = fuseforks_core::event::CoreEvent::ToolInvoked {
+        agent_id: AgentId::from("agent_1"),
+        tool: "grep".into(),
+        ok: true,
+        reason: fuseforks_core::tool_reason::ReasonState::Omitted,
+        call_id: 7,
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({
+            "type": "toolInvoked",
+            "agentId": "agent_1",
+            "tool": "grep",
+            "ok": true,
+            "reason": { "kind": "omitted" },
+            "callId": 7,
+        }),
+    );
+}
+
+/// ツール呼び出しの中身（Spec 57 — `get_tool_call` の戻り）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `ToolCallDetail` を直すこと。** `args` は
+/// `argsTruncated` が偽なら JSON 値、真なら切った文字列 — 受け手は旗で分岐する。
+#[test]
+fn tool_call_detail_wire_is_frozen() {
+    let mut store = fuseforks_core::tool_calls::ToolCallStore::default();
+    let id = store.record(&serde_json::json!({ "pattern": "fn main" }), "src/main.rs:1");
+    let detail = store.get(id).expect("引けること");
+    assert_eq!(
+        serde_json::to_value(&detail).unwrap(),
+        serde_json::json!({
+            "callId": 1,
+            "args": { "pattern": "fn main" },
+            "argsChars": 21,
+            "argsTruncated": false,
+            "body": "src/main.rs:1",
+            "bodyChars": 13,
+            "bodyTruncated": false,
+        }),
+    );
+}

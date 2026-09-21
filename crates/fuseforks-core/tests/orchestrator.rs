@@ -8244,3 +8244,290 @@ async fn synthesized_tools_do_not_gain_a_reason_field() {
         .expect("同梱ツールが提示されていること");
     assert!(has_reason(remember), "同梱ツールには理由欄が生えること");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Spec 57 — ツール呼び出しの中身（引数と、モデルへ返した本文）
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 引数に関わらず、決まった本文を返すツール（出力の側へ目印を入れるため）。
+struct MarkerTool {
+    output: String,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for MarkerTool {
+    fn name(&self) -> &str {
+        "vendor__probe"
+    }
+    fn description(&self, _language: fuseforks_core::world::Language) -> String {
+        "テスト用。決まった本文を返す".into()
+    }
+    fn parameters(&self, _language: fuseforks_core::world::Language) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    async fn call(&self, _ctx: &ToolContext, _args: &serde_json::Value) -> fuseforks_core::CoreResult<String> {
+        Ok(self.output.clone())
+    }
+}
+
+/// イベントから `ToolInvoked` の (ツール名, call_id) を拾う。
+fn invoked_calls(events: &[CoreEvent]) -> Vec<(String, u64)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::ToolInvoked { tool, call_id, .. } => Some((tool.clone(), *call_id)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `ToolInvoked` が運ぶ `call_id` で、モデルが送った引数と、モデルへ返した本文が引ける。
+#[tokio::test]
+async fn a_tool_call_can_be_opened_by_the_call_id_the_event_carries() {
+    let dir = TempDir::new("tool-detail");
+    let args = serde_json::json!({ "note": "相手は簡潔な返答を好む", "reason": "好みを残すため" });
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "remember".into(),
+        args: args.clone(),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "A", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "覚えておいて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let calls = invoked_calls(&events);
+    assert_eq!(calls.len(), 1, "呼び出しは 1 回: {calls:?}");
+    let (tool, call_id) = &calls[0];
+    assert_eq!(tool, "remember");
+    assert_eq!(*call_id, 1, "採番は 1 始まり");
+
+    let detail = orchestrator
+        .tool_call(*call_id)
+        .expect("イベントが運んだ id で中身が引けること");
+    assert_eq!(
+        detail.args, args,
+        "入力はモデルが送った引数そのまま（reason 欄も除かない）"
+    );
+    assert!(!detail.body.is_empty(), "出力はモデルへ返した本文");
+    assert_eq!(detail.body_chars, detail.body.chars().count() as u64);
+}
+
+/// 合成側（`ask_*`）も同じ 1 点で記録される — 相手の答えが、依頼主が受け取った形で読める。
+#[tokio::test]
+async fn a_delegation_is_recorded_like_any_other_tool_call() {
+    let dir = TempDir::new("tool-detail-ask");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AskingBackend), OrchestratorConfig::default()).await;
+    let (a, b) = (AgentId::from("agent_a"), AgentId::from("agent_b"));
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "アルファ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator
+        .create_agent(AgentSpec::new(b.clone(), "ブラボー", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&a, "ブラボーに聞いて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(600)).await;
+
+    let (_, call_id) = invoked_calls(&events)
+        .into_iter()
+        .find(|(tool, _)| tool.starts_with("ask_"))
+        .expect("委譲も ToolInvoked を出すこと");
+    let detail = orchestrator.tool_call(call_id).expect("委譲の中身も引けること");
+    assert_eq!(
+        detail.args,
+        serde_json::json!({ "message": "自己紹介をお願いします" })
+    );
+    assert!(
+        detail.body.contains("ブラボーの自己紹介です"),
+        "出力は依頼主が受け取った相手の答え: {}",
+        detail.body
+    );
+}
+
+/// 引数と出力は `ToolInvoked` を含む**どのイベントにも**、書き出しにも出ない
+/// （`failures.md` #71 — 運ぶのは可、残すのは不可）。
+#[tokio::test]
+async fn args_and_output_never_ride_an_event_or_the_session_export() {
+    const ARG_MARKER: &str = "Bearer-ARG-7f3a9c";
+    const OUT_MARKER: &str = "Bearer-OUT-b41d0e";
+
+    let dir = TempDir::new("tool-detail-secrecy");
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "vendor__probe".into(),
+        args: serde_json::json!({ "header": ARG_MARKER }),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .register_tool(Arc::new(MarkerTool { output: format!("HTTP/1.1 200 OK\n{OUT_MARKER}") }))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "A", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "叩いてみて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 計器の検定を先に取る — 目印が**リングには居る**ことを見てから、不在を読む。
+    let (_, call_id) = invoked_calls(&events)
+        .into_iter()
+        .next()
+        .expect("呼び出しが 1 回あること");
+    let detail = orchestrator.tool_call(call_id).expect("引けること");
+    assert!(detail.args.to_string().contains(ARG_MARKER));
+    assert!(detail.body.contains(OUT_MARKER));
+
+    let dumped = format!("{events:#?}");
+    assert!(
+        !dumped.contains(ARG_MARKER),
+        "引数はどのイベントにも乗らないこと（ToolInvoked を含む）"
+    );
+    assert!(
+        !dumped.contains(OUT_MARKER),
+        "出力はどのイベントにも乗らないこと（ToolInvoked を含む）"
+    );
+
+    let dest = dir.0.join("export.jsonl");
+    orchestrator
+        .export_session(&orchestrator.current_session(), &dest)
+        .await
+        .expect("書き出せること");
+    let exported = std::fs::read_to_string(&dest).unwrap();
+    assert!(!exported.is_empty(), "書き出しが空ではないこと（検定）");
+    assert!(!exported.contains(ARG_MARKER), "引数は書き出しに残らないこと");
+    assert!(!exported.contains(OUT_MARKER), "出力は書き出しに残らないこと");
+}
+
+/// 1 回ツールを呼ばせて、その `call_id` を返す。
+async fn call_once(orchestrator: &Orchestrator, id: &AgentId) -> u64 {
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(id, "覚えておいて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    invoked_calls(&events)
+        .into_iter()
+        .next()
+        .expect("呼び出しが 1 回あること")
+        .1
+}
+
+/// 会話を切り替えると、前の会話の引数と出力をコアは持ち続けない。
+///
+/// `ConversationCleared` を出す箇所は 2 つ（保存先のある村の `open_session` /
+/// 保存先の無い村の `reset_conversation`）。**操作の数ではなく箇所で数える** —
+/// 開き直し・分岐・削除後の切り替えは前者の 1 実装へ合流する。
+#[tokio::test]
+async fn switching_the_conversation_empties_the_ring_on_both_paths() {
+    for store_less in [false, true] {
+        let dir = TempDir::new(if store_less { "tool-detail-nostore" } else { "tool-detail-store" });
+        if store_less {
+            // `sessions.redb` の位置へフォルダを置くと保存先が開けず、
+            // 村は保存なしで起動する（`reset_conversation` が旧経路へ落ちる）。
+            std::fs::create_dir_all(dir.0.join("sessions.redb")).unwrap();
+        }
+        let backend = Arc::new(ToolCallingBackend {
+            tool: "remember".into(),
+            args: serde_json::json!({ "note": "x" }),
+            ..Default::default()
+        });
+        let orchestrator = setup_with(&dir, backend, OrchestratorConfig::default()).await;
+        let id = AgentId::from("agent_01");
+        orchestrator
+            .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+            .await;
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), "A", "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(&id).await.unwrap();
+
+        let call_id = call_once(&orchestrator, &id).await;
+        assert!(orchestrator.tool_call(call_id).is_some(), "切り替える前は引ける");
+
+        orchestrator.reset_conversation().await.unwrap();
+        assert!(
+            orchestrator.tool_call(call_id).is_none(),
+            "切り替えた後は引けないこと（store_less={store_less}）"
+        );
+    }
+}
+
+/// 提示していない名前への返事は `ToolInvoked` を出さないので、リングにも記録しない。
+///
+/// あちらも `CallOutcome::Executed` で返るが、行が生えないので開く入口が無い。
+#[tokio::test]
+async fn an_unknown_tool_name_leaves_nothing_in_the_ring() {
+    let dir = TempDir::new("tool-detail-unknown");
+    let backend = Arc::new(ToolCallingBackend {
+        tool: "no_such_tool".into(),
+        args: serde_json::json!({ "x": 1 }),
+        ..Default::default()
+    });
+    let orchestrator = setup_with(&dir, backend, OrchestratorConfig::default()).await;
+    let id = AgentId::from("agent_01");
+    orchestrator
+        .register_tool(Arc::new(RememberTool::new(ConfigStore::new(&dir.0))))
+        .await;
+    orchestrator
+        .create_agent(AgentSpec::new(id.clone(), "A", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&id).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&id, "呼んでみて").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert!(invoked_calls(&events).is_empty(), "行は生えない");
+    assert!(
+        orchestrator.tool_call(1).is_none(),
+        "行が無い呼び出しの中身を溜めないこと"
+    );
+}
+
+/// 記録は発行より前（Spec 57 D2）。
+///
+/// **実行時のテストでは判別できない** — 2 つの間に `await` が無いので、
+/// 順を入れ替えても受け手が間へ割り込めない（単一スレッドのランタイムでは
+/// 原理的に、複数スレッドでは IPC の往復より桁で速い）。それでも順は契約なので
+/// ソースの並びで留める。
+#[test]
+fn the_ring_is_written_before_the_event_is_emitted() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/orchestrator/turn.rs"),
+    )
+    .unwrap();
+    let record = source
+        .find(".record(&call.args, &body)")
+        .expect("リングへの記録が turn.rs に在ること");
+    let emit = source
+        .find("shared.emit(CoreEvent::ToolInvoked {")
+        .expect("ToolInvoked の発行が turn.rs に在ること");
+    assert!(record < emit, "記録が発行より前に在ること");
+    assert_eq!(
+        source.matches(".record(&call.args, &body)").count(),
+        1,
+        "記録する点は 1 つだけ（提示外の名前の枝では記録しない）"
+    );
+}
