@@ -2018,6 +2018,10 @@ enums:
         quote: to=<agent_id> count=N chars=<渡した字数の合計> truncated=<切った件数> escaped=<寄せた箇所の数>
       **chars は切り詰め後** (プロンプトへ乗る量)。同報は宛先ごとに呼ばれるので行も宛先の数だけ
       出る (to は常に 1 体)。写しの本文も表示名も出さない (failures.md #71)。
+      拒否した側にも 1 行出す (Spec 58 P1):
+        quote rejected: to=<agent_id> requested=N reason=too_many|not_found|not_from_agent
+      出さないと、quote: 行が無いことが「参照を使わなかった」なのか「拒まれた」なのか読めない
+      (failures.md #90)。requested は重複を落とす前の件数。
 
       ## 凍結 8. 画面
 

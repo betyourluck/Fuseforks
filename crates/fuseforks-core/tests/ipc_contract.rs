@@ -707,3 +707,55 @@ fn tool_call_detail_wire_is_frozen() {
         }),
     );
 }
+
+/// 会話の参照の写し（Spec 58 / `quote_reference_contract` 凍結 3）のワイヤ形。
+///
+/// **欄を増減したら `types.ts` の `QuotedMessage` と `data_contract.yaml` の
+/// `entities.QuotedMessage` を直すこと。** 型を「列挙している節」を読む機械が
+/// 居ないと、契約の行だけが古いまま残る（`failures.md` #131）。
+#[test]
+fn quoted_message_wire_is_frozen() {
+    use fuseforks_core::model::{AgentId, AgentMessage, Endpoint};
+
+    let mut original = AgentMessage::new(
+        Endpoint::Agent {
+            id: AgentId::new("agent_3"),
+        },
+        Endpoint::User,
+        "答え",
+        0,
+    );
+    original.id = "m-1".to_owned();
+    original.ts_ms = 1_700_000_000_000;
+
+    let mut message = AgentMessage::new(
+        Endpoint::User,
+        Endpoint::Agent {
+            id: AgentId::new("agent_5"),
+        },
+        "これを踏まえて",
+        0,
+    );
+    // 参照が無ければ欄ごと省かれる — 既存の記録と同じ形のまま。
+    let plain = serde_json::to_value(&message).unwrap();
+    assert!(plain.get("quotes").is_none(), "{plain}");
+
+    message.quotes = vec![fuseforks_core::quote::snapshot(&original)];
+    let wire = serde_json::to_value(&message).unwrap();
+    assert_eq!(
+        wire["quotes"],
+        serde_json::json!([{
+            "messageId": "m-1",
+            "from": { "kind": "agent", "id": "agent_3" },
+            "to": { "kind": "user" },
+            "tsMs": 1_700_000_000_000u64,
+            "text": "答え",
+            "totalChars": 2,
+            "truncated": false,
+        }]),
+    );
+
+    // `quotes` を知らない版が書いた記録も読める。
+    let old: AgentMessage = serde_json::from_value(plain).unwrap();
+    assert!(old.quotes.is_empty());
+}

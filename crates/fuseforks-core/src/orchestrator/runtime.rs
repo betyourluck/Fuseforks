@@ -324,6 +324,41 @@ impl Orchestrator {
         co_recipients: &[AgentId],
         uploads: Vec<AttachmentUpload>,
     ) -> CoreResult<()> {
+        self.send_user_message_full(to, content, co_recipients, uploads, &[])
+            .await
+    }
+
+    /// 添付と**会話の参照**（Spec 58）つきのユーザー発話を投入する。送信の入口の本体。
+    ///
+    /// `quote_ids` は利用者が入力欄の `@@` で選んだ発話 ID（完全形）。**運ぶのは ID だけ**
+    /// で、写しを作るのはここ — フロントから本文を受け取る形にすると、検証できない
+    /// 文字列が「サーヴァントの発話」という名札でプロンプトへ入る
+    /// （`quote_reference_contract` 凍結 1）。
+    ///
+    /// # 参照の門は添付より前
+    ///
+    /// 参照の検査は**何も書かない**ので先に済ませる。添付の保存を先にすると、参照で
+    /// 拒否した発話の添付ファイルが GC まで残る（上の「1 が先」と同じ理由）。
+    ///
+    /// # Errors
+    /// - 上の [`Self::send_user_message_with_attachments`] の 2 つ
+    /// - 参照が無い・サーヴァント発でない・件数超過は [`CoreError::InvalidQuote`]
+    ///
+    /// どれも**何も書かず、発話も投入しない**。
+    pub async fn send_user_message_full(
+        &self,
+        to: &AgentId,
+        content: &str,
+        co_recipients: &[AgentId],
+        uploads: Vec<AttachmentUpload>,
+        quote_ids: &[String],
+    ) -> CoreResult<()> {
+        // **参照が無ければリングを 1 回も読まない** — 使わない村の経路を変えない。
+        let quotes = if quote_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.resolve_quotes(to, quote_ids).await?
+        };
         if uploads.len() > 1 {
             return Err(CoreError::InvalidAttachment {
                 reason: "1 つの発話に添付できるのは 1 件までです".to_owned(),
@@ -355,6 +390,7 @@ impl Orchestrator {
             0,
         );
         message.attachments = attachments;
+        message.quotes = quotes;
         if co_recipients.len() >= 2 {
             message.co_recipients = co_recipients.to_vec();
         }
@@ -366,6 +402,56 @@ impl Orchestrator {
         // 人が話している間に履歴を畳むのは「押していない操作」になる。
         // 利用者の発話は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
         deliver(&self.shared, to, message, budget, None, Vec::new(), false).await
+    }
+
+    /// 発話 ID の列を写しへ解決し、計器 `quote:` を 1 行出す（Spec 58 凍結 2・7）。
+    ///
+    /// 判断は [`crate::quote::resolve`] の 1 実装。ここが持つのはリングの読みと計器だけ。
+    ///
+    /// **計器は字数と件数だけ**（`failures.md` #71）— 写しの本文も表示名も出さない。
+    /// `chars` は切り詰め後（プロンプトへ乗る量）。拒否した側にも 1 行出す —
+    /// 「行が出ない」だけを証拠にすると、計器が空振りしている場合と区別できない（#90）。
+    async fn resolve_quotes(
+        &self,
+        to: &AgentId,
+        quote_ids: &[String],
+    ) -> CoreResult<Vec<crate::model::QuotedMessage>> {
+        let resolved = {
+            let log = self.shared.log.read().await;
+            crate::quote::resolve(&log, quote_ids)
+        };
+        match resolved {
+            Ok(quotes) => {
+                let escaped = {
+                    let world = self.shared.world.read().await;
+                    let name_of =
+                        |id: &AgentId| world.agent(id).ok().map(|r| r.spec.name.clone());
+                    // 数えるためだけに組む。言語は件数に効かない。
+                    crate::quote::render(&quotes, &name_of, crate::world::Language::Ja).1
+                };
+                crate::note!(
+                    "quote: to={to} count={} chars={} truncated={} escaped={escaped}",
+                    quotes.len(),
+                    crate::quote::shown_chars(&quotes),
+                    quotes.iter().filter(|q| q.truncated).count(),
+                );
+                Ok(quotes)
+            }
+            Err(rejection) => {
+                crate::note!(
+                    "quote rejected: to={to} requested={} reason={}",
+                    quote_ids.len(),
+                    match rejection {
+                        crate::quote::QuoteRejection::TooMany { .. } => "too_many",
+                        crate::quote::QuoteRejection::NotFound => "not_found",
+                        crate::quote::QuoteRejection::NotFromAgent => "not_from_agent",
+                    }
+                );
+                Err(CoreError::InvalidQuote {
+                    reason: rejection.reason(),
+                })
+            }
+        }
     }
 
     /// 「どの接続先なら運べるか」を **`carries` の表から組み立てる**（Spec 36 D2）。

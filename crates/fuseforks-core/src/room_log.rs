@@ -152,6 +152,7 @@ mod tests {
             grounding: crate::llm::Grounding::default(),
             reasoning_summary: Vec::new(),
             attachments: Vec::new(),
+            quotes: Vec::new(),
         }
     }
 

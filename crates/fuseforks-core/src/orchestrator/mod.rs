@@ -1635,7 +1635,21 @@ async fn attribute_sender(shared: &Arc<Shared>, incoming: &AgentMessage) -> Stri
             endpoint_kind(&incoming.from)
         );
     }
-    crate::sender_envelope::wrap(&sender_label, &body, language)
+    // 会話の参照（Spec 58）— 利用者が `@@` で添えた写しを、本文の後ろへ展開する。
+    // **展開はここ 1 箇所**。呼び出し元は 2 つ（失敗時の記録 / プロンプトの組み立て）で、
+    // どちらも同じ文字列を得る。ここで組んだ文字列がそのまま履歴へ積まれるので、
+    // 写しは次のターン以降も残る（添付と逆。`quote_reference_contract` 凍結 6）。
+    //
+    // **`quotes` が空なら 1 バイトも変えない** — 使わない村のプロンプトは従来どおり。
+    if incoming.quotes.is_empty() {
+        return crate::sender_envelope::wrap(&sender_label, &body, language);
+    }
+    let block = {
+        let world = shared.world.read().await;
+        let name_of = |id: &AgentId| world.agent(id).ok().map(|r| r.spec.name.clone());
+        crate::quote::render(&incoming.quotes, &name_of, language).0
+    };
+    crate::sender_envelope::wrap(&sender_label, &format!("{body}\n\n{block}"), language)
 }
 
 /// 計器へ出す送り手の種別。**表示名ではなく種別**（誰が名乗ったかではなく、

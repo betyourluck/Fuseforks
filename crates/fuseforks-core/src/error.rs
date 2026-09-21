@@ -232,6 +232,17 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 会話の参照（`@@`）を受け付けられない（Spec 58 / `quote_reference_contract` 凍結 2）。
+    ///
+    /// **発話ごと拒否する** — 参照なしで黙って送ると、送った人の意図と食い違う
+    /// （添付と同じ規律）。理由は 3 つ: 発話が無い / サーヴァント発でない / 件数超過。
+    // 文言は UI の語彙で書く（このメッセージは利用者に見える）。
+    #[error("参照を受け付けられません: {reason}")]
+    InvalidQuote {
+        /// 拒否した具体的な理由。
+        reason: String,
+    },
+
     /// 宛先のワイヤがその種別の添付を運べない（Spec 36 D2 / `carries` 表）。
     ///
     /// **[`Self::InvalidAttachment`] と別の変種にする — 人の次の手が違う。**
@@ -365,6 +376,7 @@ impl CoreError {
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",
             Self::InvalidIcon { .. } => "INVALID_ICON",
             Self::InvalidAttachment { .. } => "INVALID_ATTACHMENT",
+            Self::InvalidQuote { .. } => "INVALID_QUOTE",
             Self::AttachmentNotCarried { .. } => "ATTACHMENT_NOT_CARRIED",
             Self::InvalidUserName { .. } => "INVALID_USER_NAME",
             Self::ExternalReceptionUnset => "EXTERNAL_RECEPTION_UNSET",

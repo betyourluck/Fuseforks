@@ -76,6 +76,7 @@ pub mod model;
 pub mod orchestrator;
 pub mod plan;
 pub mod pricing;
+pub mod quote;
 pub mod refusal;
 pub mod room_log;
 pub mod process;
@@ -112,7 +113,7 @@ pub use mcp::{McpConfig, McpManager, McpServerConfig, McpServerStatus};
 pub use model::{
     AgentId, AgentMessage, AgentSnapshot, AgentSpec, AgentStatus, ConfigFileKind, CredentialSource,
     AgentGroup, AgentGroupId, AgentRole, AgentRoleDefaults, AgentRoleId, RoleColor, Endpoint,
-    ModelTemplate, ModelTemplateId,
+    ModelTemplate, ModelTemplateId, QuotedMessage,
     TopologyEdge, WorkDirListing,
 };
 pub use orchestrator::{AgentMcpStatus, AttachmentUpload, Orchestrator, OrchestratorConfig};

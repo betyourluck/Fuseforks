@@ -1,8 +1,12 @@
 # Spec: `@@` で会話の中の発話を参照として渡す — 利用者が選んだサーヴァントの回答を、宛先の個体へ写しで届ける
 
 - 起票: 2026-09-21
-- 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = 1 件 10,000 字。未決ゼロ）→ P0 完了**
-  （`data_contract` の `quote_reference_contract` 凍結 8 本 + 周辺 5 箇所。記録は「P0 契約記録」）。
+- 状態: **rev3 承認（2026-09-21。未決 1 を利用者が裁定 = 1 件 10,000 字。未決ゼロ）→ P0〜P1 完了。
+  残は P2（IPC とフロント）・P3（台帳）・P4（実機）**
+  （P0 = `data_contract` の `quote_reference_contract` 凍結 8 本 + 周辺 5 箇所。
+  P1 = `quote.rs`（純機構）+ `sender_envelope.rs` の無害化 2 本 + 送信の入口 `send_user_message_full` +
+  `attribute_sender` の展開 + 計器 2 行。Rust 1,019 → 1,046・clippy 0・ミューテーション 5 回とも予測どおり。
+  記録は「P0 契約記録」「P1 実装記録」）。
   rev2 = 査読 2 系統 21 点 → 採用 14 / 前提を実測で訂正して採用 3 / 不採用 2 / 裁定へ 1 /
   確認のみ 1（表は Notes 3）。利用者裁定 2 点は起票前に確定 — (1) 展開するのはコア
   （フロントは発話 ID だけ送る） (2) 写しは発話に畳んで履歴に残す（1 ターン限りにしない）
@@ -290,20 +294,73 @@ QuotedMessage { messageId, from: Endpoint, to: Endpoint, tsMs, text, totalChars,
 
 ### P1 コア
 
-- [ ] `QuotedMessage` + `AgentMessage.quotes`（加算。既存レコードが読めることを単体で）
-- [ ] 送信の系へ `quote_ids` を通す。重複の除去 → 件数 → 解決 → `CoreError::InvalidQuote`
-- [ ] 写しの上限と切り詰め（純関数。日本語で境界値のテスト）
-- [ ] `sender_envelope.rs` へタグの無害化と属性の無害化（冪等性のテスト —
+- [x] `QuotedMessage` + `AgentMessage.quotes`（加算。既存レコードが読めることを単体で）
+- [x] 送信の系へ `quote_ids` を通す。重複の除去 → 件数 → 解決 → `CoreError::InvalidQuote`
+- [x] 写しの上限と切り詰め（純関数。日本語で境界値のテスト）
+- [x] `sender_envelope.rs` へタグの無害化と属性の無害化（冪等性のテスト —
   no-op でも緑になるので、寄せ先を再一致する形へ変える変異で赤を確かめる。Spec 26 と同じ）
-- [ ] `attribute_sender` の展開（ja / en）
-- [ ] 計器 `quote:`
-- [ ] 単体 + 結合（届く / 広場ログ OFF の個体に届く / 利用者発の ID は拒否 /
+- [x] `attribute_sender` の展開（ja / en）
+- [x] 計器 `quote:`
+- [x] 単体 + 結合（届く / 広場ログ OFF の個体に届く / 利用者発の ID は拒否 /
   無い ID は拒否して発話が記録されない / 重複は 1 件になる / 4 件は拒否 /
   写しの中の封筒とタグが寄る / 名前の `"` と改行が寄る / 履歴に残り 2 ターン目の
   プロンプトに在る / 再起動の後（リングを `sessions.redb` から読み戻した後）でも引ける /
   **`quotes` 空でバイト等価（golden）**）
-- [ ] ワイヤ凍結（`tests/ipc_contract.rs`）— `AgentMessage` の `quotes` の形
-- [ ] ミューテーション（予測を先に書く）
+- [x] ワイヤ凍結（`tests/ipc_contract.rs`）— `AgentMessage` の `quotes` の形
+- [x] ミューテーション（予測を先に書く）
+
+### P1 実装記録（2026-09-21〜22）
+
+**置いたもの**:
+
+- `crates/fuseforks-core/src/quote.rs`（新設・純機構）— `MAX_QUOTE_CHARS` = 10,000 / `MAX_QUOTES` = 3 /
+  `dedup_ids` / `resolve` / `snapshot` / `shown_chars` / `render` / `QuoteRejection`（3 値）。単体 14 本
+- `sender_envelope.rs` — `QUOTE_TAG` / `defuse_quote_tags` / `sanitize_quote_attr`。単体 5 本
+- `model.rs` — `QuotedMessage` と `AgentMessage.quotes`（加算）。`error.rs` — `CoreError::InvalidQuote`
+  （code は `INVALID_QUOTE`）
+- `orchestrator/runtime.rs` — 送信の入口の本体を `send_user_message_full(to, content, co_recipients,
+  uploads, quote_ids)` にし、`send_user_message_with_attachments` は `&[]` を渡して委ねる。
+  `resolve_quotes` がリングの読みと計器を持つ
+- `orchestrator/mod.rs` — `attribute_sender` の末尾で展開。**`quotes` が空なら従来の `wrap` を
+  そのまま返す**（枝を分けてあるので、参照なしの出力は 1 バイトも変わらない）
+- テスト — `tests/quote_reference.rs` 6 本 / `tests/quote_reference_log.rs` 1 本 /
+  `tests/ipc_contract.rs` へ `quoted_message_wire_is_frozen`
+
+**実装で決めた 5 点**:
+
+1. **参照の門は添付の保存より前。** 参照の検査は何も書かないので先に済ませる。逆にすると、
+   参照で拒否した発話の添付ファイルが GC まで残る（添付の「`carries` が保存より先」と同じ理由）
+2. **参照が無ければリングを 1 回も読まない**（`quote_ids.is_empty()` で分岐）。使わない村の経路を
+   変えない、の機械側
+3. **発話が持つ写しは「寄せる前」の文字列。** 無害化は `render`（プロンプトへ入れるとき）だけが行う。
+   画面で開いて読むのは原文のままで、`＜` に化けた写しを利用者へ見せない
+4. **計器を 1 行足した** — `quote rejected: to=… requested=N reason=too_many|not_found|not_from_agent`。
+   拒否した側に何も出ないと、「`quote:` 行が無い」が「参照を使わなかった」なのか「拒まれた」なのか
+   読めない（`failures.md` #90）。契約の凍結 7 にも足した
+5. **`escaped` を数えるために、送信の時点で `render` を 1 回呼ぶ**（結果の文字列は捨てる）。
+   数え方を 2 つ持つより、組み立ての 1 実装に数えさせるほうがずれない
+
+**計器のテストを別ファイルにした理由** — `open_log` はプロセス単位で、同じバイナリの他のテストの
+`quote:` 行が同じファイルへ混ざる。`resume_after_approval_log.rs` と同じ作法（1 ファイル 1 本）。
+
+**ミューテーション 5 回**（予測を先に書いた。復元は SHA-1 で確認）:
+
+| 変異 | 予測 | 実測 |
+|---|---|---|
+| M1 サーヴァント発の検査を外す | 単体 1 + 結合 1 | 一致（`only_messages_written_by_a_servant…` / `a_rejected_quote_records_nothing…`） |
+| M2 写しのタグの無害化を外す | 単体 1 + 結合 1 + 計器 1 | 一致（計器は `escaped=2` → 1 で赤） |
+| M3 字数を `len()` で数える | 単体 3 + ワイヤ凍結 1 | 一致 |
+| M4 発話へ `quotes` を載せない | 結合 4・計器は緑 | 一致（reach / history / dedup / restart） |
+| M5 `quotes` が空でも枠を足す | 結合 1 | 一致（`a_message_without_quotes…`） |
+
+**1 回目の実行は予測と合わなかったが、外れていたのは回し方の側だった**（`failures.md` #133）—
+テスト名のフィルタ `-- quote` が、名前に `quote` を含まない結合 2 本（`the_copy_stays_in_the_history…` /
+`duplicate_ids_become_one_copy`）を黙って外し、`--no-fail-fast` が無いので最初に落ちたバイナリで
+止まって後ろの結合が 1 本も走っていなかった。M1〜M3 が「赤 1 本」に見えたのはそのため。
+
+**踏んだ罠がもう 1 つ**（`failures.md` #130 の 3 例目）— `attribute_sender` の `format!("{body}\n\n{block}")` を
+ヒアドキュメントの python で書き込んだら、`\n` が**実改行**になってソースへ入った。Rust では同じ
+文字列なのでビルドもテストも緑のまま。`grep` の出力が行の途中で切れていて気づいた。
 
 ### P2 IPC とフロント
 

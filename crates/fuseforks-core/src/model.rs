@@ -1131,6 +1131,40 @@ pub struct AgentMessage {
     /// （`AgentRecord.history` / `Record::Exchange`）はこの欄を読まない。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<crate::attachment::Attachment>,
+    /// 利用者が `@@` で選んで添えた、過去の発話の**写し**（Spec 58 /
+    /// `quote_reference_contract`）。**利用者発の発話にだけ付く。**
+    ///
+    /// 他の表示層専用の欄（`grounding` / `reasoning_summary`）と違い、
+    /// **これはモデルへ渡る** — `attribute_sender` が本文の後ろへ展開し、その
+    /// 文字列がそのまま履歴へ積まれる（添付と逆で 1 ターン限りではない）。
+    /// 広場ログの抜粋と `room_log` は `content` しか読まない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotes: Vec<QuotedMessage>,
+}
+
+/// 会話の参照の写し 1 件（Spec 58 / `quote_reference_contract` 凍結 3）。
+///
+/// **ID だけでなく写しを持つ** — 配送は受信箱で待ちうるので、ターンが始まる
+/// 時点で原本がリングから押し出されていることがある。発話は不変なので、
+/// 写しと原本が食い違う経路は無い。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotedMessage {
+    /// 原本の発話 ID。
+    pub message_id: String,
+    /// 原本の送り手。常にサーヴァント（凍結 2 の (b)）。
+    pub from: Endpoint,
+    /// 原本の宛先。
+    pub to: Endpoint,
+    /// 原本の時刻。画面のチップ用で、**プロンプトには入れない**（地方時を
+    /// 入れると出力がホストのタイムゾーンに依存する）。
+    pub ts_ms: u64,
+    /// 切り詰め後の写し（先頭 [`crate::quote::MAX_QUOTE_CHARS`] 字）。
+    pub text: String,
+    /// 原本の字数（`chars`）。切り詰め後の字数ではない。
+    pub total_chars: u32,
+    /// `total_chars` が上限を超えていたか。
+    pub truncated: bool,
 }
 
 impl AgentMessage {
@@ -1148,6 +1182,7 @@ impl AgentMessage {
             grounding: crate::llm::Grounding::default(),
             reasoning_summary: Vec::new(),
             attachments: Vec::new(),
+            quotes: Vec::new(),
         }
     }
 }

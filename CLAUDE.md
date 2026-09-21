@@ -6703,7 +6703,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0 完了。残は P1〜P4**
+- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0〜P1 完了。残は P2〜P4**
+  （**P1（2026-09-22）**= `quote.rs`（純機構: `resolve` / `snapshot` / `render`）+ `sender_envelope.rs` の
+  `defuse_quote_tags` / `sanitize_quote_attr` + 送信の入口 `send_user_message_full` + `attribute_sender` の展開 +
+  計器 `quote:` / `quote rejected:`。Rust 1,019 → 1,046・clippy 0。**参照の門は添付の保存より前** /
+  **発話が持つ写しは寄せる前の原文**（無害化は `render` だけ）/ 参照が無ければリングを 1 回も読まない。
+  ミューテーション 5 回とも予測どおり — **ただし 1 回目は回し方が赤を数え落とした**（`failures.md` #133 =
+  名前フィルタ `-- quote` が結合 2 本を黙って外し、`--no-fail-fast` 無しで最初のバイナリで止まっていた）。
+  `failures.md` #130 の 3 例目（`\n` を含む 1 行をヒアドキュメントで書いて実改行がソースへ入った。緑のまま））
   （未決 1 を利用者が裁定 = 1 件 10,000 字・3 件まで。P0 = `data_contract` の `quote_reference_contract` 凍結 8 本 +
   `entities` の `QuotedMessage` + `room_log_pull` / `sender_envelope` / `path_completion_contract`（凍結 6 = `@` の個数）。
   **P0 で追従漏れを 2 件回収** — `entities` の `AgentMessage` に `reasoningSummary`（Spec 33）と `attachments`（Spec 23）が無く、
