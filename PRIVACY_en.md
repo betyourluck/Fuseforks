@@ -111,6 +111,12 @@ When you register a model, the following is sent to that provider:
 The destination is whatever endpoint you registered — for example Anthropic,
 OpenAI, Google, xAI, or any compatible server (including one you run yourself).
 
+**Conversation history can include messages written by other agents.** If you assign
+models from different providers to different agents, text written by one provider's model
+is sent to another provider. This covers requests and answers between agents, excerpts of
+the shared conversation, and copies of messages you picked with `@@` in the input box and
+attached to your request.
+
 **Handling of transmitted data is governed by each provider's own privacy policy.**
 The developer of this app does not mediate that traffic and retains none of it.
 
