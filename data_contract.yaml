@@ -3437,7 +3437,9 @@ entities:
     backendDegraded: { modelTemplateId, reason }
     agentTyping: { agentId, active }
     conversationCleared: {}
-    toolInvoked: { agentId, tool, ok }
+    # reason は Spec 27 (ReasonState の 4 値)、callId は Spec 57 (コアのリングの鍵。
+    # 引数と結果本文はこのイベントに載せない — tool_call_detail_contract)
+    toolInvoked: { agentId, tool, ok, reason, callId }
     toolLimitReached: { agentId, maxIterations }
     # 同一のツール呼び出しの繰り返しを検出して実行せずに打ち切った
     # (failures.md #41 の処方 1)。repeats = 同じ結果が続いた回数 (打ち切り時は 2)
@@ -4974,6 +4976,8 @@ conversation_termination:
         合成側も ToolInvoked を発行することを数えていなかった**
         (発行するのは registry 経由の呼び出しだけだと暗に仮定していた)
       - **CoreEvent::ToolInvoked への加算。既存 3 欄は動かさない**
+        (Spec 57 がさらに callId を 1 欄加算した。引数と結果本文は今もこの
+        イベントに載らない — tool_call_detail_contract)
       - **理由が届かない先は永続共有・永続保存・未来の自分**:
         広場ログ (Shared.log は AgentMessage = 発話だけ) / 履歴
         (push_exchange は**送った文字列と返した本文の対だけ**) /
@@ -5021,6 +5025,87 @@ conversation_termination:
         **持っていない機能の指示を全員が読む**ことになる。
         コスト差 360 対 40 トークンは実効 36 対 4 で**どちらも誤差**なので、
         **誤差の 9 倍差で構造を決めない**
+
+  tool_call_detail_contract: |
+    ツール呼び出しの中身を会話ペインで開く = モデルが送った引数と、モデルへ返した
+    本文を、行を開いたときだけ画面へ出す (Spec 57 rev3、2026-09-21 凍結)。
+    **本節は実装より先に凍結した契約で、着地は P1〜P4。**
+    動機: 会話ペインのツール行は「成否・実行者・ツール名・理由・時刻」の 1 行で、
+    grep が何を探したか・run が何を出力したかは画面のどこにも無い。
+    CoreEvent::ToolInvoked は引数も結果本文も運ばず、tool: 行は字数だけ、
+    sessions.redb の Record にツール呼び出しの種別は無い。
+
+    実測 (2026-09-21、fuseforks.log 2026-08-09〜09-20 の tool: 行 5,181 本 /
+    ツールを使ったターン 969 本):
+      - 1 ターンのツール行は中央 4 / p90 12 / 最大 40。5 本以上が 42.8%
+      - 同じ個体の連続 3 本以上は全ツール行の 76.0%
+      - MCP 由来は 20.8%
+      - 出力は p50 176 / p90 6,253 / p99 19,754 / 最大 193,264 字。
+        同梱ツールの出力の最大は grep 13,606
+      - 引数は中央 100 字前後。最大は file の write の content 13,001
+
+    不変条件:
+      - **置き場はコアの in-memory リング ToolCallStore。ToolInvoked へ足すのは
+        callId (u64・1 始まり・単調増加・プロセス寿命) の 1 欄だけ。**
+        引数と結果本文をイベントに載せない。理由 3 つ: (a) Tauri への橋は
+        broadcast の Lagged を捨てて続行するので、載せた本文は取りこぼすと
+        復元できない (b) broadcast は購読者ごとに clone するので、読まない
+        ティッカーにも最大 193,264 字が複製される (c) 開かれない行が大半
+      - **採番は ToolCallStore::record の中** (ロックの中で振る)
+      - **記録する点は 1 つ = ToolInvoked を emit する直前。**
+        CallOutcome::Executed(body) を返す箇所ではない — 提示外のツール名への
+        返事も Executed だが ToolInvoked を出さないので、そこで記録すると
+        開く入口の無い詳細が溜まる。transfer_to_* と RepeatGuard が止めた
+        呼び出しも ToolInvoked を出さないので記録しない
+      - **並びは 実行 → body の確定 → record → emit → tool: 行 → RepeatGuard。**
+        emit が record より先だと、行が出た瞬間に開いた人が None を引く
+      - **入力 = call.args。コアは欄を足しも除きもしない** (reason 欄も除かない)。
+        **出力 = モデルへ tool_result として返した文字列** — ツールが Err を
+        返したときはコアが「ツールの実行に失敗しました: {err}」へ組み直した文
+      - **残さない。線は「運ぶのは可、残すのは不可」。** tool_reason_contract の
+        「ログには字数だけ。本文は出さない。画面には出す」を理由から引数と出力へ
+        延長する。fuseforks.log の tool: 行は字数のまま / sessions.redb の Record に
+        種別を足さない / export_session に出ない / 他のイベント・広場ログ・履歴に
+        載せない (failures.md #71)
+      - **ConversationCleared を出す 2 箇所 (Shared::open_session /
+        保存先の無い村の reset_conversation) でリングを空にする**
+      - **開く入口の無い詳細がメモリに残る場合が 2 つあり、許容する**:
+        GUI の再読み込み (フロントの toolRuns だけが消える) /
+        ToolInvoked の取りこぼし (行が生えない)。次の ConversationCleared・
+        件数の押し出し・アプリの終了で消える。メモリの中だけで、残さない線は越えない
+      - **上限は 500 件・1 件あたり引数 16,000 字・出力 16,000 字。**
+        500 はフロントの toolRuns の上限と同じ数 (通常は「行がある = 詳細がある」。
+        **保証ではない** — フロントがイベントを取りこぼすと 2 つの窓がずれる)。
+        16,000 は同梱ツールの出力が 1 件も切れない値。総量の上限は置かない
+      - **字数は chars().count()、切るのは chars().take(16_000)。**
+        len() で数えると日本語は 1/3 の位置で切れ、バイト位置のスライスは panic する。
+        **引数の字数は serde_json::to_string (詰めた形) で数える** =
+        tool: 行の args_chars と同じ数え方。画面の字数とログの字数が一致する
+      - **切ったら元の字数を必ず持つ** (failures.md #44 / #58)。残すのは先頭
+      - **IPC は get_tool_call(call_id) -> Option<ToolCallDetail> の 1 本。**
+        ToolCallDetail { callId, args, argsChars, argsTruncated, body,
+        bodyChars, bodyTruncated }。**args は argsTruncated だけで形が決まる** —
+        偽なら call.args の JSON 値、真なら詰めた形の文字列の先頭 16,000 字
+        (途中で切った JSON は parse できない)。フロントは typeof で推測せず
+        旗で分岐する。**None は「押し出された / 会話を切り替えた」でエラーではない**
+      - **ツールの種類で分けない。** 同梱・MCP・合成側 (ask_* / plan / room_log) を
+        同じ 1 点で記録する。欄ごとの「出してよい引数」の許容表は作らない —
+        MCP は他人のスキーマで表が作れず、守りは「残さない」の 1 本
+      - **束ねの 4 規則 (フロントの純関数。入力は時系列の項目と処理中の個体の集合)**:
+        (1) 同じ個体のツール行が、間に他の項目を挟まずに 3 本以上続いたら 1 つの
+        まとまり (2) その個体が処理中 (typing) のあいだは畳まない
+        (3) ok = false の行を 1 本でも含むまとまりは畳まない (4) それ以外は
+        **既定で畳む** (2026-09-21 利用者裁定)。見出しは「{name}: ツール {n} 件」で、
+        **エラーの本数は出さない** — 同梱ツールは失敗を Ok(<エラー文>) で返すので
+        ok は「返り値が Ok か」であって「成功したか」ではない (failures.md #41)
+      - **まとまりの鍵は先頭の行の callId。** 開閉の状態は保存しない
+      - **会話ペインで座標計算をしない** (getBoundingClientRect /
+        elementFromPoint)。開いた節の高さは CSS の max-height だけで決める
+        (会話ペインは zoom を掛ける場所)
+
+    **退けた形**: 引数と本文を ToolInvoked に載せる (上の 3 理由) /
+    欄ごとの許容表 / Record へ 5 種別目を足して永続化する (#71 の線を越える) /
+    見出しにエラーの本数を出す (「エラー 0 件」が正常終了と読まれる)
 
   rag_tool_contract: |
     同梱 rag = 宣言されたフォルダへの見出し索引 (Spec 18 rev3、2026-08-05 凍結)。
