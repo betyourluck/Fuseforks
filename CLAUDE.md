@@ -6703,7 +6703,12 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev2・未決 1（上限の字数）の裁定待ち**
+- [Spec 58](specs/58_quote-reference.md)（`@@` で会話の中の発話を参照として渡す）: **rev3 承認 → P0 完了。残は P1〜P4**
+  （未決 1 を利用者が裁定 = 1 件 10,000 字・3 件まで。P0 = `data_contract` の `quote_reference_contract` 凍結 8 本 +
+  `entities` の `QuotedMessage` + `room_log_pull` / `sender_envelope` / `path_completion_contract`（凍結 6 = `@` の個数）。
+  **P0 で追従漏れを 2 件回収** — `entities` の `AgentMessage` に `reasoningSummary`（Spec 33）と `attachments`（Spec 23）が無く、
+  `Provider` の `values` が 5 値のまま `meta_responses` / `perplexity_responses` を欠いていた。どちらも #131 と同じ形 =
+  「機能の契約の節」には在って「型を列挙している節」に無い）
   （2026-09-21 起票 → 同日、査読 2 系統 21 点 → 採用 14 / 前提を実測で訂正して採用 3 / 不採用 2 / 裁定へ 1 / 確認のみ 1）。
   **rev2 で変わった 5 点**: (a) 枠を `=== 参照 ===` から**タグ `<quoted_message …>`** へ（2 系統が一致。`===` はコードに日常的に出る /
   タグは言語に依らないので無害化が 1 組で済む。**時刻は入れない** — ホストのタイムゾーンへの依存を作ると golden が CI でだけ落ちる = #101 の形）
