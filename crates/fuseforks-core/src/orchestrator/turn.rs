@@ -104,6 +104,17 @@ struct TurnSpend {
     /// `None` = このターンで `usage` が 1 度も返らなかった（DNS / 401 / タイムアウト）。
     /// その場合 `settle_turn` は個体の記録を上書きしない（前回値が残る）。
     last_prompt: Option<u64>,
+    /// 同じ (ツール名, 引数) を呼んだ回数の最大値（[`RepeatGuard::max_calls`]）。
+    ///
+    /// **`turn:` 行の `repeat_max=` にだけ出す観測値で、何も止めない。**
+    /// [`TurnRecord`] へは載せない — あれは `sessions.redb` に残る型で、
+    /// 統計画面が読む（Spec 39）。これは診断の計器なのでログに留める
+    /// （Spec 59 D11 で Jev のトークンを同じ理由でログだけにしたのと同じ線）。
+    ///
+    /// **2 の値が普通**（同じファイルを読み直す・同じ検索を引き直す）。
+    /// 大きい値が出たターンは、`RepeatGuard` が止めなかった = 結果は毎回
+    /// 違っていた、ということなので、**空転とは限らない**。
+    repeat_max: u32,
 }
 
 impl TurnSpend {
@@ -219,9 +230,14 @@ async fn settle_turn(
         // `backend=` はどのワイヤを通ったか（Spec 34 P5 の前に追加 — これが無いと
         // ワイヤを足したことを実機で確かめられない）。`model=` は Spec 39 で末尾へ
         // 足した（#104 の「帯も機種も見えない」を閉じる。既存の grep は壊れない）。
+        // `repeat_max=` は 2026-09-22 に末尾へ足した観測値（既存の grep は壊れない）。
+        // **`RepeatGuard` が止めなかった繰り返しを数えるためだけに在る** — 止める
+        // 判定は `count`（同じ結果の連続）のままで、この欄は何も変えない。
+        // 打ち切り・予算切れの 3 出口（`own_line`）には出さない。あちらは
+        // **止まった理由が既に分かっている**ので、空転の観測の対象にならない。
         note!(
             "turn: agent={agent_id} hop={} rounds={}/{} waves={} stop={} \
-             prompt={} cached={} total={} reasoning={} backend={} model={}",
+             prompt={} cached={} total={} reasoning={} backend={} model={} repeat_max={}",
             record.hop,
             record.rounds,
             rounds_cap.map_or_else(|| "-".to_owned(), |cap| cap.to_string()),
@@ -233,6 +249,7 @@ async fn settle_turn(
             record.reasoning,
             record.backend,
             record.model,
+            spend.repeat_max,
         );
     }
     if shared.persist(&SessionRecord::turn(record.clone())) {
@@ -686,6 +703,13 @@ struct SeenCall {
     body: String,
     /// `body` が**変わらないまま**返ってきた回数。
     count: u32,
+    /// この (name, args) が呼ばれた**総数**。`count` と違い、結果が変わっても
+    /// リセットしない（2026-09-22 の計器）。
+    ///
+    /// **この 2 つの差が `RepeatGuard` の網の外**。`count` は同じ結果の連続を
+    /// 数えるので、`curl` のように出力が毎回変わる呼び出しは何回回しても 1 のまま
+    /// で止まらない。`calls` はその形を**止めずに数えるためだけ**に在る。
+    calls: u32,
 }
 
 /// 同一のツール呼び出しの繰り返しを検出する（failures.md #41 の処方 1）。
@@ -756,10 +780,13 @@ impl RepeatGuard {
         match self.position(name, args) {
             Some(index) => {
                 let seen = &mut self.seen[index];
+                seen.calls += 1;
                 if seen.body == body {
                     seen.count += 1;
                 } else {
                     // 結果が変わった = この呼び出しは行き詰まっていない。数え直す。
+                    // **`calls` は数え直さない** — 「同じ引数で何回呼んだか」は
+                    // 結果が変わっても失われない（計器の目的がそこにある）。
                     seen.body = body.to_owned();
                     seen.count = 1;
                 }
@@ -769,8 +796,21 @@ impl RepeatGuard {
                 args: args.clone(),
                 body: body.to_owned(),
                 count: 1,
+                calls: 1,
             }),
         }
+    }
+
+    /// 同じ (name, args) が呼ばれた回数の最大値。`turn:` 行の `repeat_max=`。
+    ///
+    /// **止める判定には使わない。** [`Self::blocks`] は今までどおり `count`
+    /// （同じ結果の連続）で決める — ここを `calls` に変えると、同じ引数で
+    /// **違う結果**が返っている正常な進行（`file` で別の節を読む・`room_log` で
+    /// 別の ID を引く）まで止まる。実測（2026-09-22・1,445 ターン）では
+    /// `rounds 10+` の 106 本のうち、同じ引数を 3 回以上呼んだのは 14 本で、
+    /// うち本文の字数まで同じだったのは 4 本しかない。
+    fn max_calls(&self) -> u32 {
+        self.seen.iter().map(|seen| seen.calls).max().unwrap_or(0)
     }
 
     fn find(&self, name: &str, args: &serde_json::Value) -> Option<&SeenCall> {
@@ -1896,6 +1936,11 @@ async fn run_turn_inner(
         );
     }
 
+    // 同じ引数を何回呼んだかの最大値を、清算の直前に写す（2026-09-22 の計器）。
+    // **ここでしか写せない** — `repeat_guard` はこの関数のローカルで、
+    // `settle_turn` を呼ぶ他の 3 出口はターンループに入る前なので持っていない
+    // （あちらでは 0 のままで、それが正しい）。
+    spend.repeat_max = repeat_guard.max_calls();
     // 累計・`turn:` 行・Record::Turn・TurnRecorded は 4 出口共通の 1 実装
     // （[`settle_turn`]）。`max_tool_iterations` は行の `rounds=` の分母にだけ使う。
     settle_turn(shared, agent_id, ctx, spend, plan_wave, stop, Some(u32::from(max_tool_iterations))).await;
@@ -2985,6 +3030,45 @@ mod tests {
 
         assert!(guard.blocks("file", &args), "3 回目は実行しない");
         assert_eq!(guard.repeats("file", &args), 2);
+        assert_eq!(guard.max_calls(), 2, "止めた呼び出しも `calls` には乗る");
+    }
+
+    /// **結果が毎回変わる呼び出しは止まらない。`repeat_max` はそれを数える。**
+    ///
+    /// これが `RepeatGuard` の網の外そのもの（`curl` のステータス・`git log` の
+    /// 小刻みな変化）。止める判定は `count`（同じ結果の連続）のままなので、
+    /// 4 回呼んでも `blocks` は偽。計器だけが 4 を見る。
+    #[test]
+    fn changing_bodies_never_block_but_still_count() {
+        let args = serde_json::json!({ "command": "curl", "args": ["-sI", "https://example.com"] });
+        let mut guard = RepeatGuard::default();
+
+        for body in ["200 / 12ms", "200 / 9ms", "200 / 31ms", "200 / 14ms"] {
+            assert!(!guard.blocks("run", &args), "結果が変わる限り止めない");
+            guard.observe("run", &args, body);
+        }
+
+        assert!(!guard.blocks("run", &args), "4 回呼んでも止まらない");
+        assert_eq!(guard.repeats("run", &args), 1, "同じ結果の連続は 1 のまま");
+        assert_eq!(guard.max_calls(), 4, "呼んだ回数は失われない");
+    }
+
+    /// `repeat_max` は**全呼び出しの中の最大**で、合計ではない。
+    #[test]
+    fn max_calls_takes_the_largest_not_the_sum() {
+        let a = serde_json::json!({ "path": "a.md" });
+        let b = serde_json::json!({ "path": "b.md" });
+        let mut guard = RepeatGuard::default();
+
+        assert_eq!(guard.max_calls(), 0, "1 本も呼んでいないターンは 0");
+
+        guard.observe("file", &a, "1 行目");
+        guard.observe("file", &b, "別の本文");
+        guard.observe("file", &a, "2 行目");
+        guard.observe("file", &b, "また別の本文");
+        guard.observe("file", &b, "さらに別の本文");
+
+        assert_eq!(guard.max_calls(), 3, "b の 3 回。合計の 5 ではない");
     }
 
     /// **間に別の呼び出しが挟まっても数えは切れない。**
