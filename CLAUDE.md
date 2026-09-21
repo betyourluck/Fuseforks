@@ -6725,7 +6725,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   コンポーネントをマウントする土台が無いので、入力欄の振る舞いは純関数の単体 + ソースの走査の 2 層で留めた。**実機は未確認**。
   **同日の利用者裁定で `@@` の案内を画面から外した** — 初回案内に足さず、P2 で `chatInput.hint` へ足した
   「`@` でファイル / `@@` で参照」も撤回（「ヘビーユーザーが対象なので冗長」。vitest 677 → 676 = 案内の走査 1 本を消した）。
-  入口の説明は DETAIL / README の側（P3）が持つ）
+  入口の説明は DETAIL / README の側（P3）が持つ。**案内の撤回と、絆の見出しの「非表示: N / M」の撤去は
+  利用者が実機で確認**（2026-09-22））
   （**P1（2026-09-22）**= `quote.rs`（純機構: `resolve` / `snapshot` / `render`）+ `sender_envelope.rs` の
   `defuse_quote_tags` / `sanitize_quote_attr` + 送信の入口 `send_user_message_full` + `attribute_sender` の展開 +
   計器 `quote:` / `quote rejected:`。Rust 1,019 → 1,046・clippy 0。**参照の門は添付の保存より前** /
