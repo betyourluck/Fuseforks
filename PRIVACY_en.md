@@ -157,6 +157,10 @@ tool names and result sizes, and errors.
 - Tool result bodies
 - Credentials
 
+Opening a tool row in the chat shows the arguments passed to that tool and the text it returned.
+These are **held only in the app's memory** and are gone when the app exits.
+Nothing new is written to the diagnostic log or to the saved conversation for this display.
+
 The log stays on your device and rotates once when it exceeds 8MB. It is never transmitted.
 
 ---

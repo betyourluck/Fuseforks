@@ -50,6 +50,7 @@ Fuseforks/
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
+│       │   ├── tool_calls.rs        Ring of tool-call arguments and output (memory only; never in the log or the saved conversation. [Spec 57](specs/57_tool-call-detail.md))
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
 │       │   ├── tools/fs.rs          Built-in tool: grep / fd / diff (read-only. restricted to work folder)
 │       │   ├── tools/edit.rs        Built-in tool: sd / yq (write. preview default + diff required)
@@ -100,6 +101,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
             ├── composables/useWaveClear.ts      Clearing the Work Status view (display only, finished waves only)
             ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
+            ├── composables/useToolCallDetails.ts Contents of tool rows opened in the chat pane (open state and fetch state; not stored)
             ├── App.vue              3-pane grid
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
@@ -650,7 +652,7 @@ When a round cut off by the limit has no text response, the model is called **on
 
 **Calls and results are always added to history as a pair.** Adding only a result makes providers reject it as a result without its corresponding call. The wire formats differ entirely between the two providers (OpenAI-compatible uses `role: "tool"` + `tool_call_id`; Anthropic uses a `tool_result` block in a `user` message), so adapters perform the translation.
 
-Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects. **That announcement also carries the one-line reason the model wrote** (see "Tool reasons" below).
+Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects. **That announcement also carries the one-line reason the model wrote** (see "Tool reasons" below). **Arguments and result text are not part of the announcement** — they are fetched from the app's memory only when a row is opened (see "Opening and folding tool rows" below).
 
 There are ten built-in tools. External capabilities are added through MCP.
 
@@ -698,6 +700,31 @@ succeeded is a separate question**, and the screen cannot answer it.
 on for everyone by default. Measured over 969 tool calls across 355 turns in
 `concordia.log`, it adds **1.5–2.2% effective tokens on turns that call tools**, and
 **zero on turns that call none**.
+
+### Opening and folding tool rows ([Spec 57](specs/57_tool-call-detail.md))
+
+A tool row in the chat pane **opens when clicked** and shows **the arguments the model sent (Input)** and **the text returned to the model (Output)**. This is where you read what `grep` searched for, what `run` printed, and what `file` wrote. Click again to close.
+
+**Arguments and output live only in the app's memory.** `fuseforks.log` still records sizes only, and neither `sessions.redb` nor a conversation export contains them — arguments and output can carry credentials you passed in conversation or configuration. Three consequences:
+
+- **Restarting the app discards the contents** (the tool rows themselves are also gone after a restart)
+- **New chat, reopening a conversation, and branching discard them too**
+- **Only the latest 500 calls are kept.** Opening a row that was pushed out shows "no longer kept"
+
+**What you put on screen stays in a screenshot.** Before sharing a screenshot of an opened row, check that Input and Output show no secrets.
+
+**Long contents are cut to the first 16,000 characters.** Built-in tool output fits within that. What gets cut is long MCP output, shown as "Showing the first 16,000 characters of N". The Input character count uses the same counting as `args_chars` on the `tool:` line of `fuseforks.log`, so a screenshot can be matched to a log line.
+
+**Runs of tool rows fold into one line.** Three or more consecutive tool rows from the same servant become one line such as "Luna: 5 tool calls"; click it to list the rows. **Two cases are never folded.**
+
+| Not folded when | Why |
+|---|---|
+| The servant is still working | What it is doing right now must stay visible. Folding happens after it has answered |
+| A row returned an error | The red mark is not hidden behind a header |
+
+**The header shows the count only, never an error count.** By the second rule a folded run contains no errored row, and the mark means "the return value was an error", not "it worked" (see "Tool reasons" above). Writing "0 errors" would be read as "it worked".
+
+**Tools are not treated differently by kind.** Opening an `ask` / `plan` row shows the other servant's answer, or the bundle, exactly as the requester received it.
 
 ### Command execution (`run`)
 
