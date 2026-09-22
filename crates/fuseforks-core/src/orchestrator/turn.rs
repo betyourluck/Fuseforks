@@ -2042,7 +2042,7 @@ struct CallRunner<'a> {
 /// **メモリだけ。ログにも `sessions.redb` にも書かない。** 寿命はターンで、
 /// ツール結果が 1 ターン限りなのと同じ。
 struct PrunedRaw {
-    /// 本文に書く id（`P1` / `P2`…）。1 始まり。
+    /// 本文に書く id（`P1` / `P2`…）。1 始まり。**配列型は落とした配列ごとに 1 件**（Spec 60）。
     id: String,
     /// 圧縮前の本文を割った段落（0 始まり。`omitted` の `from` / `to` はこの index）。
     paragraphs: Vec<String>,
@@ -2448,7 +2448,7 @@ impl CallRunner<'_> {
                 return None;
             }
         };
-        let shape = format!("shape={} ", prepared.shape().label());
+        let shape = prepared.shape_fields();
 
         // 締め切り（20 秒）と打ち切りは**採点器の外で**掛ける（D8）。
         // `ParagraphScorer` は打ち切りトークンを受け取らないので、ここで包まないと
@@ -2468,8 +2468,8 @@ impl CallRunner<'_> {
             }
         };
         let scores = prepared.spread(&report.scores);
-        let id = format!("P{}", self.pruned.len() + 1);
-        let verdict = crate::prune::apply(&prepared, &scores, threshold, &id);
+        // id の通し番号。配列型は落とした配列ごとに 1 つ使うので、番号は `apply` が振る。
+        let verdict = crate::prune::apply(&prepared, &scores, threshold, self.pruned.len() + 1);
         // **どの結末でも同じ 2 つの式から書く** — 見送った側だけ 0 を埋めると、
         // 門で止めたのか採点が何も落とさなかったのかがログから読めない。
         let (label, dropped, ratio) = (verdict.label(), verdict.dropped(), verdict.ratio_label());
@@ -2484,17 +2484,17 @@ impl CallRunner<'_> {
         };
 
         prune_note!(
-            "ok", shape, out.kept_chars, out.paragraphs, dropped, ratio,
+            "ok", format!("{shape}{}", out.extra_fields()), out.kept_chars, out.paragraphs, dropped, ratio,
             report.calls, report.tokens
         );
-        // 生本文はターンの寿命で持つ（`omitted` が逐語で返す元）。
-        self.pruned.push(PrunedRaw {
-            id,
-            paragraphs: prepared.paragraphs().to_vec(),
-            dropped: (0..prepared.len())
-                .filter(|i| scores.get(*i).copied().flatten().is_some_and(|s| s < threshold))
-                .collect(),
-        });
+        // 生本文はターンの寿命で持つ（`omitted` が逐語で返す元）。**落とした index は
+        // `apply` が数えたものをそのまま積む** — ここで数え直すと規律が 2 箇所に生える。
+        // 配列型は落とした配列ごとに 1 件（それぞれ別の id）。
+        self.pruned.extend(out.entries.iter().map(|e| PrunedRaw {
+            id: e.id.clone(),
+            paragraphs: e.paragraphs.clone(),
+            dropped: e.dropped.clone(),
+        }));
         Some(out.body)
     }
 }

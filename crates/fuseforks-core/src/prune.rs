@@ -31,6 +31,12 @@ pub const BATCH_CHARS: usize = 12_000;
 pub const MIN_BASIS: usize = 20;
 /// 包装型と認める、最長の文字列値が本文全体に占める割合。
 pub const WRAPPER_SHARE: f64 = 0.6;
+/// 配列型で対象にする配列の下限（**JSON 表現の字数**。要素数ではない — Spec 60 D1）。
+///
+/// 要素数で切ると目的と逆行する実例があった（3 件で 17K 字のうち 12K を占める配列）。
+pub const ARRAY_MIN_CHARS: usize = 1_000;
+/// 配列型の印を置くトップレベルのキー（Spec 60 D3）。**元の JSON に既にあれば丸ごと諦める**。
+pub const PRUNED_KEY: &str = "_pruned";
 /// 落とした段落へ戻るための合成ツールの名前（Spec 59 D7）。
 ///
 /// **`AgentTool` ではない。** `room_log` と同じ orchestrator 合成で、
@@ -119,7 +125,8 @@ impl ScoreError {
 pub enum Skip {
     /// 本文が [`MIN_CHARS`] 未満。
     UnderMin,
-    /// JSON だが包装型ではない（配列型ほか）。Spec 60 の範囲。
+    /// JSON だが包装型でも配列型でもない（トップレベルが配列 / 直下に 1,000 字以上の
+    /// 配列が無い / `_pruned` が既にある、ほか）。
     Structured,
     /// 基準が [`MIN_BASIS`] 未満（「了解」のような相槌のターン）。
     NoBasis,
@@ -147,6 +154,8 @@ pub enum Shape {
     Text,
     /// JSON の包装型 — 1 つの文字列値の中身だけを差し替える（D4b）。
     JsonWrapper,
+    /// JSON の配列型 — オブジェクト直下の配列から要素を落とす（Spec 60）。
+    JsonArrays,
 }
 
 impl Shape {
@@ -156,6 +165,7 @@ impl Shape {
         match self {
             Self::Text => "text",
             Self::JsonWrapper => "json_wrapper",
+            Self::JsonArrays => "json_arrays",
         }
     }
 }
@@ -166,20 +176,71 @@ pub struct Prepared {
     /// 0 始まりの段落。**本文の印・`omitted` の範囲・ログの `paragraphs=` は
     /// すべてこの index で数える**（`tool_prune_contract`）。
     paragraphs: Vec<String>,
-    /// 包装型のとき、元テキストの中で差し替える範囲（バイト位置）。
-    /// `None` なら素のテキストで、本文全体が差し替えの対象。
-    wrapper: Option<WrapperSlot>,
+    /// 形ごとの差し替え先（元テキストの上のバイト位置）。
+    layout: Layout,
     /// 割る前の本文（`omitted` が逐語で返す元。差し替えにも使う）。
     raw: String,
 }
 
-/// 包装型の差し替え先。**元テキストの上で置き換える**ので位置で持つ。
+/// 形ごとの差し替え先。**元テキストの上で置き換える**ので位置で持つ。
+#[derive(Debug, Clone)]
+enum Layout {
+    /// 素のテキスト。本文全体が差し替えの対象。
+    Text,
+    /// 包装型。1 つの文字列リテラルだけを差し替える。
+    Wrapper(WrapperSlot),
+    /// 配列型（Spec 60）。直下の配列それぞれの要素を消し、末尾に印を挿す。
+    Arrays {
+        /// 対象の配列（出現順）。
+        slots: Vec<ArraySlot>,
+        /// トップレベルの `}` のバイト位置（印はこの直前に挿す）。
+        close: usize,
+    },
+}
+
+/// 包装型の差し替え先。
 #[derive(Debug, Clone)]
 struct WrapperSlot {
     /// 文字列リテラル（引用符を含む）の開始バイト位置。
     start: usize,
     /// 同じく終端（排他）。
     end: usize,
+}
+
+/// 配列型の対象配列 1 つ。**要素の範囲は元テキストのバイト位置で持つ**（逐語のまま消す）。
+#[derive(Debug, Clone)]
+struct ArraySlot {
+    /// 直下のキー（`_pruned.arrays` の鍵にそのまま使う）。
+    key: String,
+    /// `[` のバイト位置。
+    open: usize,
+    /// `]` のバイト位置。
+    close: usize,
+    /// 各要素の範囲（先頭の非空白から末尾の非空白まで。排他）。
+    elems: Vec<std::ops::Range<usize>>,
+    /// 平坦化した `paragraphs` の中でこの配列の要素が始まる index。
+    first: usize,
+}
+
+impl ArraySlot {
+    /// この配列の要素が占める `paragraphs` の index の範囲。
+    fn range(&self) -> std::ops::Range<usize> {
+        self.first..self.first + self.elems.len()
+    }
+}
+
+/// 圧縮 1 件ぶんの生本文（`omitted` が逐語で返す元）。**呼び出し側はこれを積むだけ**
+/// — 落とした index を呼び出し側で数え直さない（規律が 2 箇所に生えると片方がずれる）。
+///
+/// 段落型・包装型は 1 件、配列型は**落とした配列ごとに 1 件**（それぞれ別の `id`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedEntry {
+    /// 本文に書いた id（`P1` / `P2`…）。
+    pub id: String,
+    /// この id が指す段落（配列型なら要素の逐語）。0 始まり。
+    pub paragraphs: Vec<String>,
+    /// 落とした段落の index（`omitted` が返すのは**これだけ**）。
+    pub dropped: Vec<usize>,
 }
 
 impl Prepared {
@@ -198,10 +259,22 @@ impl Prepared {
     /// 形（ログの `shape=`）。
     #[must_use]
     pub fn shape(&self) -> Shape {
-        if self.wrapper.is_some() {
-            Shape::JsonWrapper
-        } else {
-            Shape::Text
+        match &self.layout {
+            Layout::Text => Shape::Text,
+            Layout::Wrapper(_) => Shape::JsonWrapper,
+            Layout::Arrays { .. } => Shape::JsonArrays,
+        }
+    }
+
+    /// ログの `shape=…` の欄（末尾に空白 1 つ）。配列型は対象の配列数 `arrays=` を併記する
+    /// （`tool_prune_contract`）。
+    #[must_use]
+    pub fn shape_fields(&self) -> String {
+        match &self.layout {
+            Layout::Arrays { slots, .. } => {
+                format!("shape={} arrays={} ", self.shape().label(), slots.len())
+            }
+            _ => format!("shape={} ", self.shape().label()),
         }
     }
 
@@ -356,20 +429,40 @@ pub fn prepare(raw: &str, basis: &str) -> Result<Prepared, Skip> {
         return Err(Skip::NoBasis);
     }
 
-    // JSON なら包装型だけを通す（D4b）。判定はローカルで、ここで落ちた本文は
-    // 外部へ 1 バイトも出ない。
-    let (body, wrapper) = match wrapper_of(raw) {
-        WrapperCheck::NotJson => (Cow::Borrowed(raw), None),
+    // JSON なら包装型（D4b）か配列型（Spec 60）だけを通す。**分岐はここ 1 箇所**
+    // （Spec 60 Notes 1）。判定はローカルで、ここで落ちた本文は外部へ 1 バイトも出ない。
+    // 包装型が先 — 巨大な文字列 1 つを持つ本文は、配列があってもそちらが本体。
+    let (body, layout) = match wrapper_of(raw) {
+        WrapperCheck::NotJson => (Cow::Borrowed(raw), Layout::Text),
         WrapperCheck::Wrapper { text, start, end } => {
-            (Cow::Owned(text), Some(WrapperSlot { start, end }))
+            (Cow::Owned(text), Layout::Wrapper(WrapperSlot { start, end }))
         }
-        WrapperCheck::Other => return Err(Skip::Structured),
+        WrapperCheck::Other => {
+            let Some((slots, close)) = arrays_of(raw) else {
+                return Err(Skip::Structured);
+            };
+            // 配列型は要素 1 つが段落 1 つ。空行で割らず、短い要素も寄せない
+            // （要素の境界は JSON が決めている）。
+            let paragraphs = slots
+                .iter()
+                .flat_map(|slot| slot.elems.iter().map(|r| raw[r.clone()].to_owned()))
+                .collect();
+            let prepared = Prepared {
+                paragraphs,
+                layout: Layout::Arrays { slots, close },
+                raw: raw.to_owned(),
+            };
+            if prepared.candidates().is_empty() {
+                return Err(Skip::NoCandidates);
+            }
+            return Ok(prepared);
+        }
     };
 
     let paragraphs = merge_short(split_blocks(&body));
     let prepared = Prepared {
         paragraphs,
-        wrapper,
+        layout,
         raw: raw.to_owned(),
     };
     if prepared.candidates().is_empty() {
@@ -528,6 +621,216 @@ fn wrapper_of(raw: &str) -> WrapperCheck {
     }
 }
 
+/// Spec 60 D1: 配列型か。**対象の配列（出現順）とトップレベルの `}` の位置**を返す。
+///
+/// 条件は 3 つで、**1 つでも外れたら `None`**（部分的に解釈しない）:
+///
+/// - トップレベルが JSON のオブジェクト（配列なら印の置き場が無い）
+/// - 直下に JSON 表現が [`ARRAY_MIN_CHARS`] 以上の配列が 1 つ以上
+/// - [`PRUNED_KEY`] が直下に**無い**
+///
+/// 直下より深い配列は探さない（`elyth` の 3 段目 — 届いても要素が 50 字の抜粋で判定
+/// 材料が無い。P0 実測）。
+///
+/// **位置は自前の走査で取る。** 包装型が使う「再シリアライズして `match_indices`」は、
+/// 要素が整形（改行・インデント）されていると一致しないので使えない。`serde_json` が
+/// 読めた本文にだけ掛けるので、走査は構文の誤りを想定しない（文字列リテラルと
+/// エスケープ、括弧の深さだけを追う）。
+fn arrays_of(raw: &str) -> Option<(Vec<ArraySlot>, usize)> {
+    let trimmed = raw.trim_start();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let map = value.as_object()?;
+    if map.contains_key(PRUNED_KEY) {
+        return None;
+    }
+
+    let mut scanner = JsonScanner::new(raw);
+    let top = scanner.top_level_object()?;
+    let mut slots = Vec::new();
+    let mut first = 0usize;
+    for (key, value_span, elems) in top.entries {
+        let Some(elems) = elems else { continue };
+        let json_chars = raw[value_span.clone()].chars().count();
+        if json_chars < ARRAY_MIN_CHARS {
+            continue;
+        }
+        let n = elems.len();
+        slots.push(ArraySlot {
+            key,
+            open: value_span.start,
+            close: value_span.end - 1,
+            elems,
+            first,
+        });
+        first += n;
+    }
+    if slots.is_empty() {
+        return None;
+    }
+    Some((slots, top.close))
+}
+
+/// 元テキストのバイト範囲（排他）。
+type Span = std::ops::Range<usize>;
+
+/// トップレベルのオブジェクトの走査結果。
+struct TopLevel {
+    /// `}` のバイト位置。
+    close: usize,
+    /// 直下の (キー, 値の範囲, 配列なら要素の範囲の列)。出現順。
+    entries: Vec<(String, Span, Option<Vec<Span>>)>,
+}
+
+/// JSON の構文だけを追う最小の走査器（**値は解釈しない**。位置を取るためだけ）。
+///
+/// `serde_json` が読めた本文にだけ掛ける前提なので、途中で形が合わなければ `None` を返して
+/// 呼び出し側が `structured` へ倒す（panic も部分解釈もしない）。
+struct JsonScanner<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> JsonScanner<'a> {
+    fn new(raw: &'a str) -> Self {
+        Self { bytes: raw.as_bytes(), pos: 0 }
+    }
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.bytes.len() && matches!(self.bytes[self.pos], b' ' | b'\t' | b'\n' | b'\r') {
+            self.pos += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn expect(&mut self, b: u8) -> Option<()> {
+        (self.peek()? == b).then(|| self.pos += 1)
+    }
+
+    /// 文字列リテラルを読み飛ばす（開きの `"` の位置から）。エスケープは 1 バイト飛ばすだけで
+    /// よい — `\u` の後ろは hex 4 つで、その中に `"` も `\` も来ない。
+    fn skip_string(&mut self) -> Option<()> {
+        self.expect(b'"')?;
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'\\' => self.pos += 2,
+                b'"' => {
+                    self.pos += 1;
+                    return Some(());
+                }
+                _ => self.pos += 1,
+            }
+        }
+        None
+    }
+
+    /// 文字列リテラルを読んで中身を返す（キー用。エスケープは `serde_json` で解く）。
+    fn read_string(&mut self) -> Option<String> {
+        let start = self.pos;
+        self.skip_string()?;
+        let literal = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?;
+        serde_json::from_str::<String>(literal).ok()
+    }
+
+    /// 値を 1 つ読み飛ばし、その範囲を返す。
+    fn skip_value(&mut self) -> Option<std::ops::Range<usize>> {
+        self.skip_ws();
+        let start = self.pos;
+        match self.peek()? {
+            b'"' => self.skip_string()?,
+            b'{' | b'[' => {
+                // 括弧の深さだけを追う。文字列の中の括弧は `skip_string` が飛ばす。
+                let mut depth = 0usize;
+                loop {
+                    match self.peek()? {
+                        b'"' => {
+                            self.skip_string()?;
+                            continue;
+                        }
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                self.pos += 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.pos += 1;
+                }
+            }
+            _ => {
+                // 数値・true / false / null。区切りまで進む。
+                while self.pos < self.bytes.len()
+                    && !matches!(self.bytes[self.pos], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+                {
+                    self.pos += 1;
+                }
+            }
+        }
+        Some(start..self.pos)
+    }
+
+    /// 配列を読み、要素ごとの範囲を返す（`[` の位置から。終わりは `]` の直後）。
+    fn array_elements(&mut self) -> Option<Vec<std::ops::Range<usize>>> {
+        self.expect(b'[')?;
+        let mut elems = Vec::new();
+        loop {
+            self.skip_ws();
+            match self.peek()? {
+                b']' => {
+                    self.pos += 1;
+                    return Some(elems);
+                }
+                b',' => {
+                    self.pos += 1;
+                }
+                _ => elems.push(self.skip_value()?),
+            }
+        }
+    }
+
+    /// トップレベルのオブジェクトを走査する。
+    fn top_level_object(&mut self) -> Option<TopLevel> {
+        self.skip_ws();
+        self.expect(b'{')?;
+        let mut entries = Vec::new();
+        loop {
+            self.skip_ws();
+            match self.peek()? {
+                b'}' => {
+                    let close = self.pos;
+                    return Some(TopLevel { close, entries });
+                }
+                b',' => {
+                    self.pos += 1;
+                }
+                b'"' => {
+                    let key = self.read_string()?;
+                    self.skip_ws();
+                    self.expect(b':')?;
+                    self.skip_ws();
+                    if self.peek()? == b'[' {
+                        let start = self.pos;
+                        let elems = self.array_elements()?;
+                        entries.push((key, start..self.pos, Some(elems)));
+                    } else {
+                        let span = self.skip_value()?;
+                        entries.push((key, span, None));
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
+}
+
 /// 採点の結果から本文を組み立てる。
 ///
 /// `scores` は段落 index ごとの関連度。`None` は「返らなかった」= **残す**
@@ -537,47 +840,197 @@ fn wrapper_of(raw: &str) -> WrapperCheck {
 /// **全部落ちたら圧縮しない** — 依頼と結果が噛み合っていないか採点の失敗で、
 /// どちらでも全文を返すほうが害が小さい（`all_dropped`）。
 /// **正味の削減が [`MIN_REDUCTION`] に満たないときも圧縮しない**（`below_floor`）。
+///
+/// `first_seq` は本文に書く id の通し番号（`P{first_seq}` から）。段落型・包装型は 1 つ使い、
+/// **配列型は落とした配列ごとに 1 つずつ使う**（Spec 60 D3 — `omitted { id, from, to }` の `id` が
+/// 配列を指す）。呼び出し側は [`Pruned::entries`] をそのまま積む。
 #[must_use]
-pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &str) -> Applied {
+pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, first_seq: usize) -> Applied {
     let keep: Vec<bool> = (0..prepared.len())
         .map(|i| scores.get(i).copied().flatten().is_none_or(|s| s >= threshold))
         .collect();
+    let scored: Vec<bool> = (0..prepared.len())
+        .map(|i| scores.get(i).copied().flatten().is_some())
+        .collect();
+
+    if let Layout::Arrays { slots, close } = &prepared.layout {
+        return apply_arrays(prepared, slots, *close, &keep, &scored, first_seq);
+    }
 
     // 採点した段落が 1 つ以上あり、そのすべてが閾値未満なら圧縮しない。
     // **6,000 字超は採点対象ではないので `kept` 扱い**（D6）。
-    let scored: Vec<usize> = (0..prepared.len())
-        .filter(|i| scores.get(*i).copied().flatten().is_some())
-        .collect();
-    let dropped = keep.iter().filter(|k| !**k).count();
-    if !scored.is_empty() && scored.iter().all(|i| !keep[*i]) {
+    let dropped_idx: Vec<usize> = (0..prepared.len()).filter(|i| !keep[*i]).collect();
+    let dropped = dropped_idx.len();
+    if scored.iter().any(|s| *s) && (0..prepared.len()).filter(|i| scored[*i]).all(|i| !keep[i]) {
         return Applied::AllDropped { dropped };
     }
-    if keep.iter().all(|k| *k) {
+    if dropped == 0 {
         return Applied::NothingDropped;
     }
 
-    let body = render(prepared, &keep, id);
-    let raw_chars = prepared.raw.chars().count();
-    let kept_chars = body.chars().count();
-    // **正味で測る**（rev4）。落とした字数ではなく、印を入れた後の差で判定する —
-    // 印は 150 字前後あるので、少ししか落ちない本文では足すほうが多くなる。
-    let ratio = if raw_chars == 0 {
-        0.0
-    } else {
-        (raw_chars.saturating_sub(kept_chars) as f64) / (raw_chars as f64)
-    };
+    let id = format!("P{first_seq}");
+    let body = render(prepared, &keep, &id);
+    let ratio = net_ratio(&prepared.raw, &body);
     if ratio < MIN_REDUCTION {
         return Applied::BelowFloor { ratio, dropped };
     }
 
     Applied::Pruned(Pruned {
+        kept_chars: body.chars().count(),
         body,
-        kept_chars,
         dropped,
         ratio,
         paragraphs: prepared.len(),
         shape: prepared.shape(),
+        arrays_pruned: 0,
+        entries: vec![PrunedEntry {
+            id,
+            paragraphs: prepared.paragraphs.clone(),
+            dropped: dropped_idx,
+        }],
     })
+}
+
+/// **正味で測る**（rev4）。落とした字数ではなく、印を入れた後の差で判定する — 印は
+/// 150 字前後あるので、少ししか落ちない本文では足すほうが多くなる。
+/// **門に満たなくても実測値を返す**（`below_floor` の `ratio=` がこの値。#72 の規律）。
+fn net_ratio(raw: &str, body: &str) -> f64 {
+    let raw_chars = raw.chars().count();
+    let kept_chars = body.chars().count();
+    if raw_chars == 0 {
+        0.0
+    } else {
+        (raw_chars.saturating_sub(kept_chars) as f64) / (raw_chars as f64)
+    }
+}
+
+/// 配列型の判定と組み立て（Spec 60 D6 / D7）。**判定は配列ごと** — 採点した要素が
+/// すべて閾値未満の配列と、1 つも落ちない配列は**触らない**（空配列 `[]` を作らない）。
+fn apply_arrays(
+    prepared: &Prepared,
+    slots: &[ArraySlot],
+    close: usize,
+    keep: &[bool],
+    scored: &[bool],
+    first_seq: usize,
+) -> Applied {
+    // 配列ごとの結末。`Some(落とす index)` なら組み立てに参加する。
+    let mut pruned: Vec<(&ArraySlot, Vec<usize>)> = Vec::new();
+    let mut all_dropped_arrays = 0usize;
+    let mut dropped_total = 0usize;
+    for slot in slots {
+        let range = slot.range();
+        let dropped: Vec<usize> = range.clone().filter(|i| !keep[*i]).map(|i| i - slot.first).collect();
+        let scored_any = range.clone().any(|i| scored[i]);
+        let all_dropped = scored_any && range.clone().filter(|i| scored[*i]).all(|i| !keep[i]);
+        dropped_total += dropped.len();
+        if all_dropped {
+            all_dropped_arrays += 1;
+            continue;
+        }
+        if dropped.is_empty() {
+            continue;
+        }
+        pruned.push((slot, dropped));
+    }
+
+    if pruned.is_empty() {
+        return if all_dropped_arrays == slots.len() {
+            Applied::AllDropped { dropped: dropped_total }
+        } else {
+            Applied::NothingDropped
+        };
+    }
+
+    // 落とした配列ごとに id を振る（出現順）。
+    let entries: Vec<PrunedEntry> = pruned
+        .iter()
+        .enumerate()
+        .map(|(k, (slot, dropped))| PrunedEntry {
+            id: format!("P{}", first_seq + k),
+            paragraphs: prepared.paragraphs[slot.range()].to_vec(),
+            dropped: dropped.clone(),
+        })
+        .collect();
+    let dropped = entries.iter().map(|e| e.dropped.len()).sum();
+    let body = render_arrays(&prepared.raw, close, &pruned, &entries);
+    let ratio = net_ratio(&prepared.raw, &body);
+    if ratio < MIN_REDUCTION {
+        return Applied::BelowFloor { ratio, dropped };
+    }
+
+    Applied::Pruned(Pruned {
+        kept_chars: body.chars().count(),
+        body,
+        dropped,
+        ratio,
+        paragraphs: prepared.len(),
+        shape: Shape::JsonArrays,
+        arrays_pruned: entries.len(),
+        entries,
+    })
+}
+
+/// Spec 60 D4: 元テキストの上で、落とす要素を消し、末尾の `}` の直前に印を挿す。
+///
+/// **配列の中身の組み立て方**（決定的で、どの落とし方でも余分なカンマが出ない）:
+/// `[` と最初の要素の間（`g0`）、要素 i-1 と要素 i の間（`g_i`。カンマを含む）、最後の要素と
+/// `]` の間（`g_n`）を「隙間」と呼ぶ。出力は `[` + `g0` + 残す要素を出現順に — **最初に残す
+/// 要素の前には何も置かず、2 つ目以降は自分の前の隙間 `g_i`（カンマ入り）を置く** — + `g_n` + `]`。
+/// 1 つも落とさなければ入力と同一バイトになる。落とした要素の直前の隙間が消えるので
+/// 「先行または後続のカンマ 1 つを含む」の規則がこれで成立する。
+///
+/// **対象の配列の中身と `_pruned` の 1 キー以外は 1 バイトも変わらない**（利用者裁定
+/// 2026-09-22 でここまで緩めた射程）。
+fn render_arrays(raw: &str, close: usize, pruned: &[(&ArraySlot, Vec<usize>)], entries: &[PrunedEntry]) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut cursor = 0usize;
+    for (slot, dropped) in pruned {
+        out.push_str(&raw[cursor..=slot.open]);
+        let n = slot.elems.len();
+        let first_elem_start = slot.elems[0].start;
+        // g0
+        out.push_str(&raw[slot.open + 1..first_elem_start]);
+        let mut emitted = false;
+        for (i, elem) in slot.elems.iter().enumerate() {
+            if dropped.contains(&i) {
+                continue;
+            }
+            if emitted {
+                let prev_end = slot.elems[i - 1].end;
+                out.push_str(&raw[prev_end..elem.start]);
+            }
+            out.push_str(&raw[elem.clone()]);
+            emitted = true;
+        }
+        // g_n
+        out.push_str(&raw[slot.elems[n - 1].end..slot.close]);
+        cursor = slot.close;
+    }
+    out.push_str(&raw[cursor..close]);
+
+    // 印。配列ごとの id・総数・落とした index。案内は Spec 59 の印と同じ役目（同じ言語）。
+    let mut arrays = String::new();
+    for ((slot, dropped), entry) in pruned.iter().zip(entries) {
+        if !arrays.is_empty() {
+            arrays.push(',');
+        }
+        let key = serde_json::Value::String(slot.key.clone()).to_string();
+        let idx: Vec<String> = dropped.iter().map(ToString::to_string).collect();
+        arrays.push_str(&format!(
+            "{key}:{{\"id\":\"{}\",\"total\":{},\"dropped\":[{}]}}",
+            entry.id,
+            slot.elems.len(),
+            idx.join(",")
+        ));
+    }
+    let note = serde_json::Value::String(
+        "関連度で要素を省略しています。省略した要素は `omitted` に id と要素番号（0 始まり）を渡すと逐語で読めます".to_owned(),
+    )
+    .to_string();
+    out.push_str(&format!(",\"{PRUNED_KEY}\":{{\"note\":{note},\"arrays\":{{{arrays}}}}}"));
+    out.push_str(&raw[close..]);
+    out
 }
 
 /// [`apply`] の結末。**圧縮しなかった理由を畳まない**（`failures.md` #72）。
@@ -648,6 +1101,28 @@ impl Applied {
     pub fn ratio_label(&self) -> String {
         self.ratio().map_or_else(|| "-".to_owned(), |r| format!("{r:.3}"))
     }
+
+    /// 配列型で圧縮したときだけ `pruned=<落とした配列数> ` を返す（他は空）。
+    /// [`Prepared::shape_fields`] の `arrays=` と対で読む。
+    #[must_use]
+    pub fn extra_fields(&self) -> String {
+        match self {
+            Self::Pruned(out) => out.extra_fields(),
+            _ => String::new(),
+        }
+    }
+}
+
+impl Pruned {
+    /// 配列型なら `pruned=<落とした配列数> `、他は空（ログの欄。[`Applied::extra_fields`] と同じ規則）。
+    #[must_use]
+    pub fn extra_fields(&self) -> String {
+        if self.shape == Shape::JsonArrays {
+            format!("pruned={} ", self.arrays_pruned)
+        } else {
+            String::new()
+        }
+    }
 }
 
 /// 圧縮の結果（ログの欄と、モデルへ返す本文）。
@@ -662,10 +1137,14 @@ pub struct Pruned {
     /// 正味の削減率（ログの `ratio=`）。**門を超えた実測値**なので、
     /// [`MIN_REDUCTION`] が妥当かを後から数える材料になる。
     pub ratio: f64,
-    /// 段落の総数。
+    /// 段落の総数（配列型は全対象配列の要素の総数）。
     pub paragraphs: usize,
     /// 形（`shape=`）。
     pub shape: Shape,
+    /// 配列型で落とした配列の数（ログの `pruned=`）。他の形では 0。
+    pub arrays_pruned: usize,
+    /// `omitted` のために積む生本文。**段落型・包装型は 1 件、配列型は落とした配列ごとに 1 件。**
+    pub entries: Vec<PrunedEntry>,
 }
 
 /// 印を入れて組み立てる（D7）。包装型なら元テキストの上で差し替える。
@@ -716,11 +1195,11 @@ fn render(prepared: &Prepared, keep: &[bool], id: &str) -> String {
     }
     let body = out.trim_end().to_owned();
 
-    match &prepared.wrapper {
+    match &prepared.layout {
         // 包装型は**元テキストの上で文字列リテラルだけを差し替える**。
         // 再シリアライズすると整形・キーの順序・他の値の表現が変わりうるので、
         // これが「圧縮した文字列以外は 1 バイトも変わらない」を保つ唯一の方法。
-        Some(slot) => {
+        Layout::Wrapper(slot) => {
             let literal = serde_json::Value::String(body).to_string();
             let mut replaced = String::with_capacity(prepared.raw.len());
             replaced.push_str(&prepared.raw[..slot.start]);
@@ -728,7 +1207,9 @@ fn render(prepared: &Prepared, keep: &[bool], id: &str) -> String {
             replaced.push_str(&prepared.raw[slot.end..]);
             replaced
         }
-        None => body,
+        Layout::Text => body,
+        // 配列型は `render_arrays` が担う（ここへは来ない）。
+        Layout::Arrays { .. } => body,
     }
 }
 
@@ -817,10 +1298,11 @@ mod tests {
         );
     }
 
-    /// 配列型の JSON は素通し（Spec 60 の範囲）。
+    /// 包装型でも配列型でもない JSON は素通し（直下に文字列も配列も無い = 入れ子だけ）。
+    /// **配列型は Spec 60 で対象になった**（下の `arrays_*` のテスト）。
     #[test]
     fn a_json_without_a_direct_string_value_is_skipped() {
-        let body = format!(r#"{{"posts":["{}"]}}"#, long(MIN_CHARS + 10));
+        let body = format!(r#"{{"data":{{"text":"{}"}}}}"#, long(MIN_CHARS + 10));
         assert_eq!(
             prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
             Skip::Structured
@@ -910,7 +1392,7 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..p.len())
             .map(|i| Some(if i < 10 { 0.05 } else { 0.9 }))
             .collect();
-        let out = pruned(apply(&p, &scores, 0.2, "P1"));
+        let out = pruned(apply(&p, &scores, 0.2, 1));
 
         assert!(
             out.body.starts_with(prefix),
@@ -950,7 +1432,7 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..20)
             .map(|i| Some(if i == 0 { 0.9 } else { 0.01 }))
             .collect();
-        let out = pruned(apply(&p, &scores, 0.2, "P1"));
+        let out = pruned(apply(&p, &scores, 0.2, 1));
         assert_eq!(out.shape, Shape::JsonWrapper);
         assert_eq!(out.dropped, 19);
 
@@ -970,7 +1452,7 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.01); 5];
-        let verdict = apply(&p, &scores, 0.2, "P1");
+        let verdict = apply(&p, &scores, 0.2, 1);
         assert_eq!(verdict.label(), "all_dropped");
         // 落とすはずだった数は全段落。**削減率は持たない** — 本文を組み立てて
         // いないので測っていない（測っていない量に 0 を書かない）。
@@ -985,7 +1467,7 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.9); 5];
-        let verdict = apply(&p, &scores, 0.2, "P1");
+        let verdict = apply(&p, &scores, 0.2, 1);
         assert_eq!(verdict.label(), "nothing_dropped");
         assert_eq!(verdict.dropped(), 0);
         assert_eq!(verdict.ratio_label(), "-");
@@ -1003,7 +1485,7 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..6)
             .map(|i| Some(if i == 0 || i == 5 { 0.9 } else { 0.01 }))
             .collect();
-        let out = pruned(apply(&p, &scores, 0.2, "P2"));
+        let out = pruned(apply(&p, &scores, 0.2, 2));
         assert!(out.body.contains("段落 1〜4・4 段落"), "畳まれた印: {}", out.body);
         assert!(out.body.contains("id=P2"));
         assert_eq!(out.dropped, 4);
@@ -1027,7 +1509,7 @@ mod tests {
             .map(|i| Some(if i == 3 { 0.01 } else { 0.9 }))
             .collect();
 
-        let verdict = apply(&p, &scores, 0.2, "P1");
+        let verdict = apply(&p, &scores, 0.2, 1);
         assert_eq!(verdict.label(), "below_floor");
         // **落とすはずだった数と削減率がログへ出る**（計器の `dropped=` / `ratio=`）。
         // ここが 0 と `-` に畳まれると、門で止めたのか採点が何も落とさなかったのかを
@@ -1057,7 +1539,7 @@ mod tests {
             .map(|i| Some(if i < 10 { 0.01 } else { 0.9 }))
             .collect();
 
-        let verdict = apply(&p, &scores, 0.2, "P1");
+        let verdict = apply(&p, &scores, 0.2, 1);
         // **`ratio` は `apply` が計算した値をそのまま持つ** — 呼び出し側で
         // 引き算をやり直すと、印の字数を数え落とした式が 2 つ目の真実になる。
         let ratio = verdict.ratio().expect("圧縮したので削減率がある");
@@ -1076,7 +1558,7 @@ mod tests {
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         // 0 は採点が返らず残る / 1 は高得点で残る / 2〜4 が落ちる。
         let scores = vec![None, Some(0.9), Some(0.01), Some(0.01), Some(0.01)];
-        let out = pruned(apply(&p, &scores, 0.2, "P1"));
+        let out = pruned(apply(&p, &scores, 0.2, 1));
         assert_eq!(out.dropped, 3, "未採点の 0 と高得点の 1 が残る");
         assert!(out.body.contains("段落 2〜4"), "落ちたのは 2〜4: {}", out.body);
     }
@@ -1092,7 +1574,7 @@ mod tests {
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![None, Some(0.01), Some(0.01), Some(0.01), Some(0.01)];
         assert_eq!(
-            apply(&p, &scores, 0.2, "P1").label(),
+            apply(&p, &scores, 0.2, 1).label(),
             "all_dropped",
             "採点した 4 段落が全滅したので圧縮しない"
         );
@@ -1180,5 +1662,244 @@ mod tests {
         let texts = vec![big.as_str(), big.as_str(), big.as_str()];
         let got = batch(&texts);
         assert_eq!(got, vec![vec![0, 1], vec![2]], "10,000 で 1 本目が満ちる");
+    }
+
+    // ---- 配列型（Spec 60）----
+
+    const BASIS: &str = "この依頼は 20 字以上ありますので通ります";
+
+    /// `{"title":…,"posts":[…n 要素…],"tail":1}`。`pretty` なら要素ごとに改行とインデント。
+    fn arr_doc(pretty: bool, n: usize, per: usize) -> String {
+        let elems: Vec<String> = (0..n)
+            .map(|i| format!(r#"{{"i":{i},"text":"{}"}}"#, long(per)))
+            .collect();
+        if pretty {
+            format!(
+                "{{\n  \"title\": \"t\",\n  \"posts\": [\n    {}\n  ],\n  \"tail\": 1\n}}\n",
+                elems.join(",\n    ")
+            )
+        } else {
+            format!(r#"{{"title":"t","posts":[{}],"tail":1}}"#, elems.join(","))
+        }
+    }
+
+    fn scores_dropping(p: &Prepared, drop: &[usize]) -> Vec<Option<f32>> {
+        (0..p.len())
+            .map(|i| Some(if drop.contains(&i) { 0.01 } else { 0.9 }))
+            .collect()
+    }
+
+    /// トップレベルが配列なら対象外（印の置き場が無い）。
+    #[test]
+    fn arrays_top_level_array_is_structured() {
+        let body = format!(r#"[{{"text":"{}"}},{{"text":"{}"}}]"#, long(2500), long(2500));
+        assert_eq!(prepare(&body, BASIS).unwrap_err(), Skip::Structured);
+    }
+
+    /// 直下より深い配列は探さない（`elyth` の形）。
+    #[test]
+    fn arrays_nested_are_not_searched() {
+        let body = format!(r#"{{"data":{{"items":[{{"text":"{}"}},{{"text":"{}"}}]}}}}"#, long(2500), long(2500));
+        assert_eq!(prepare(&body, BASIS).unwrap_err(), Skip::Structured);
+    }
+
+    /// `_pruned` が既にあれば丸ごと諦める。
+    #[test]
+    fn arrays_existing_pruned_key_gives_up() {
+        let body = format!(
+            r#"{{"posts":[{{"text":"{}"}},{{"text":"{}"}}],"_pruned":{{"x":1}}}}"#,
+            long(2500),
+            long(2500)
+        );
+        assert_eq!(prepare(&body, BASIS).unwrap_err(), Skip::Structured);
+    }
+
+    /// 対象の門は**配列の字数**。1,000 字未満の配列は対象に入らず、要素数は見ない。
+    #[test]
+    fn arrays_under_the_char_gate_are_not_targets() {
+        // 8 要素あるが合計 400 字の配列 + 3 要素で 7,500 字の配列。
+        let small: Vec<String> = (0..8).map(|i| format!(r#"{{"k":{i}}}"#)).collect();
+        let big: Vec<String> = (0..3).map(|_| format!(r#""{}""#, long(2500))).collect();
+        let body = format!(r#"{{"hints":[{}],"matches":[{}]}}"#, small.join(","), big.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.shape(), Shape::JsonArrays);
+        assert_eq!(p.shape_fields(), "shape=json_arrays arrays=1 ");
+        assert_eq!(p.len(), 3, "対象は matches の 3 要素だけ");
+    }
+
+    /// 要素は**元テキストの逐語**（整形の改行やインデントは要素の外側なので含まない）。
+    #[test]
+    fn arrays_elements_are_verbatim_slices_of_the_source() {
+        let body = arr_doc(true, 8, 600);
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.len(), 8);
+        for (i, para) in p.paragraphs().iter().enumerate() {
+            assert!(para.starts_with(&format!(r#"{{"i":{i},"#)), "要素 {i}: {}", &para[..20]);
+            assert!(para.ends_with("\"}"));
+            assert_eq!(body.matches(para.as_str()).count(), 1, "逐語の断片は元に 1 回だけ現れる");
+        }
+    }
+
+    /// 包装型が先。巨大な文字列 1 つを持つ本文は、配列があっても包装型として扱う。
+    #[test]
+    fn arrays_yield_to_the_wrapper_shape() {
+        let body = format!(
+            r#"{{"content":"{}","refs":[{{"t":"{}"}},{{"t":"{}"}}]}}"#,
+            long(5000),
+            long(600),
+            long(600)
+        );
+        assert_eq!(prepare(&body, BASIS).unwrap().shape(), Shape::JsonWrapper);
+    }
+
+    /// 6,000 字超の要素は採点しない（Spec 59 D6 の凍結をそのまま借りる）。
+    #[test]
+    fn arrays_oversized_element_is_never_scored() {
+        let body = format!(
+            r#"{{"posts":[{{"text":"{}"}},{{"text":"{}"}},{{"text":"{}"}}]}}"#,
+            long(MAX_PARA + 100),
+            long(600),
+            long(600)
+        );
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.candidates(), vec![1, 2]);
+    }
+
+    /// **先頭・中・末尾のどこを落としても JSON として読め、残る要素は逐語**（素 / 整形の両方）。
+    #[test]
+    fn arrays_dropping_first_middle_and_last_keeps_valid_json() {
+        for pretty in [false, true] {
+            let body = arr_doc(pretty, 8, 600);
+            let p = prepare(&body, BASIS).unwrap();
+            let out = pruned(apply(&p, &scores_dropping(&p, &[0, 3, 7]), 0.2, 1));
+            let v: serde_json::Value =
+                serde_json::from_str(&out.body).unwrap_or_else(|e| panic!("pretty={pretty}: {e}\n{}", out.body));
+            let posts = v["posts"].as_array().expect("posts が配列のまま");
+            assert_eq!(posts.len(), 5);
+            let kept: Vec<u64> = posts.iter().map(|e| e["i"].as_u64().unwrap()).collect();
+            assert_eq!(kept, vec![1, 2, 4, 5, 6]);
+            // 残った要素は逐語。
+            for (k, i) in [1usize, 2, 4, 5, 6].iter().enumerate() {
+                assert!(out.body.contains(p.paragraphs()[*i].as_str()), "要素 {i} が逐語で残る（{k} 番目）");
+            }
+            assert_eq!(v["title"], "t");
+            assert_eq!(v["tail"], 1);
+            let pruned_key = &v[PRUNED_KEY];
+            assert_eq!(pruned_key["arrays"]["posts"]["id"], "P1");
+            assert_eq!(pruned_key["arrays"]["posts"]["total"], 8);
+            assert_eq!(pruned_key["arrays"]["posts"]["dropped"], serde_json::json!([0, 3, 7]));
+            assert!(pruned_key["note"].as_str().unwrap().contains("omitted"));
+            assert_eq!(out.dropped, 3);
+            assert_eq!(out.arrays_pruned, 1);
+            assert_eq!(out.shape, Shape::JsonArrays);
+        }
+    }
+
+    /// **対象の配列の中身と `_pruned` 以外は 1 バイトも変わらない**（利用者裁定の射程）。
+    #[test]
+    fn arrays_everything_outside_the_array_and_the_marker_is_byte_identical() {
+        let body = arr_doc(true, 8, 600);
+        let p = prepare(&body, BASIS).unwrap();
+        let out = pruned(apply(&p, &scores_dropping(&p, &[2, 5, 6]), 0.2, 1));
+        let open = body.find('[').unwrap();
+        let close = body.rfind(']').unwrap();
+        let brace = body.rfind('}').unwrap();
+        // `[` まで同一。
+        assert_eq!(&out.body[..=open], &body[..=open]);
+        // `]` から最後の `}` の直前（`,"tail": 1\n`）までが、出力にもそのまま在る。
+        let between = &body[close..brace];
+        assert!(out.body.contains(between), "配列の後ろの固定欄は逐語");
+        // 最後の `}` 以降（末尾の改行）も同一。
+        assert!(out.body.ends_with(&body[brace..]));
+        // 印は最後の `}` の直前に 1 回だけ。
+        assert_eq!(out.body.matches("\"_pruned\"").count(), 1);
+        let marker_at = out.body.find("\"_pruned\"").unwrap();
+        // 配列の閉じ `]`（整形なので `\n  ],`）より後ろ、最後の `}` より前。
+        assert!(marker_at > out.body.find("\n  ],").unwrap());
+        assert!(marker_at < out.body.rfind('}').unwrap());
+    }
+
+    /// 全滅した配列は触らず、**空配列 `[]` を作らない**。落ちた配列だけが印に載る。
+    #[test]
+    fn arrays_an_all_dropped_array_is_left_alone() {
+        let a: Vec<String> = (0..3).map(|i| format!(r#"{{"a":{i},"t":"{}"}}"#, long(600))).collect();
+        let b: Vec<String> = (0..4).map(|i| format!(r#"{{"b":{i},"t":"{}"}}"#, long(600))).collect();
+        let body = format!(r#"{{"first":[{}],"second":[{}]}}"#, a.join(","), b.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.len(), 7);
+        // first は 3 つとも落ち（全滅）、second は 4 つのうち 2 つ落ちる。
+        let out = pruned(apply(&p, &scores_dropping(&p, &[0, 1, 2, 3, 5]), 0.2, 4));
+        let v: serde_json::Value = serde_json::from_str(&out.body).unwrap();
+        assert_eq!(v["first"].as_array().unwrap().len(), 3, "全滅の配列はそのまま");
+        assert_eq!(v["second"].as_array().unwrap().len(), 2);
+        assert!(v[PRUNED_KEY]["arrays"].get("first").is_none(), "触らなかった配列は印に載らない");
+        assert_eq!(v[PRUNED_KEY]["arrays"]["second"]["id"], "P4");
+        assert_eq!(v[PRUNED_KEY]["arrays"]["second"]["dropped"], serde_json::json!([0, 2]));
+        assert_eq!(out.dropped, 2, "数えるのは実際に落とした要素だけ");
+        assert_eq!(out.arrays_pruned, 1);
+        assert_eq!(out.entries.len(), 1);
+        assert_eq!(out.entries[0].id, "P4");
+        assert_eq!(out.entries[0].paragraphs.len(), 4, "entry は**その配列の**要素だけ");
+        assert_eq!(out.entries[0].dropped, vec![0, 2], "index はその配列の中で 0 始まり");
+    }
+
+    /// すべての配列が全滅なら `all_dropped`、全滅と無傷が混ざるなら `nothing_dropped`。
+    #[test]
+    fn arrays_outcome_when_no_array_is_pruned() {
+        let a: Vec<String> = (0..3).map(|_| format!(r#""{}""#, long(700))).collect();
+        let b: Vec<String> = (0..3).map(|_| format!(r#""{}""#, long(700))).collect();
+        let body = format!(r#"{{"x":[{}],"y":[{}]}}"#, a.join(","), b.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+
+        let all = apply(&p, &scores_dropping(&p, &[0, 1, 2, 3, 4, 5]), 0.2, 1);
+        assert_eq!(all.label(), "all_dropped");
+        assert_eq!(all.dropped(), 6);
+
+        let mixed = apply(&p, &scores_dropping(&p, &[0, 1, 2]), 0.2, 1);
+        assert_eq!(mixed.label(), "nothing_dropped", "x は全滅・y は無傷 = 組み立てるものが無い");
+    }
+
+    /// 落とした配列ごとに別の id。`first_seq` から出現順に振る。
+    #[test]
+    fn arrays_each_pruned_array_gets_its_own_id() {
+        let a: Vec<String> = (0..3).map(|_| format!(r#""{}""#, long(700))).collect();
+        let b: Vec<String> = (0..3).map(|_| format!(r#""{}""#, long(700))).collect();
+        let body = format!(r#"{{"x":[{}],"y":[{}]}}"#, a.join(","), b.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+        let out = pruned(apply(&p, &scores_dropping(&p, &[0, 4]), 0.2, 7));
+        let ids: Vec<&str> = out.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["P7", "P8"]);
+        let v: serde_json::Value = serde_json::from_str(&out.body).unwrap();
+        assert_eq!(v[PRUNED_KEY]["arrays"]["x"]["id"], "P7");
+        assert_eq!(v[PRUNED_KEY]["arrays"]["y"]["id"], "P8");
+        assert_eq!(out.entries[1].dropped, vec![1], "y の落とした index は y の中で数える");
+        assert_eq!(out.arrays_pruned, 2);
+    }
+
+    /// 正味の門は**本文全体**で測る。固定欄が大きければ、配列で落としても届かない。
+    #[test]
+    fn arrays_net_gate_is_measured_on_the_whole_body() {
+        let a: Vec<String> = (0..4).map(|_| format!(r#""{}""#, long(900))).collect();
+        let body = format!(r#"{{"fixed":"{}","x":[{}]}}"#, long(5000), a.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.shape(), Shape::JsonArrays, "fixed は 60% 未満なので包装型にならない");
+        let verdict = apply(&p, &scores_dropping(&p, &[0, 1]), 0.2, 1);
+        assert_eq!(verdict.label(), "below_floor");
+        assert!(verdict.ratio().unwrap() < MIN_REDUCTION);
+        assert_eq!(verdict.dropped(), 2);
+    }
+
+    /// 文字列の中の `]` や `,` や `{` に走査が惑わされない。
+    #[test]
+    fn arrays_scanner_ignores_brackets_inside_strings() {
+        let tricky = format!(r#"{{"t":"a],[b\"}},{{c {}"}}"#, long(1500));
+        let elems = [tricky.clone(), tricky.clone(), tricky];
+        let body = format!(r#"{{"posts":[{}],"z":"]"}}"#, elems.join(","));
+        let p = prepare(&body, BASIS).unwrap();
+        assert_eq!(p.len(), 3);
+        let out = pruned(apply(&p, &scores_dropping(&p, &[1]), 0.2, 1));
+        let v: serde_json::Value = serde_json::from_str(&out.body).unwrap();
+        assert_eq!(v["posts"].as_array().unwrap().len(), 2);
+        assert_eq!(v["z"], "]");
     }
 }
