@@ -1199,8 +1199,25 @@ async fn present_tools(
             })
             .unwrap_or_default()
     };
+    // 落とした段落へ戻る道（Spec 59 D7）。**提示は「圧縮が ON で、その個体の
+    // 提示集合に `prunable` なツールが 1 本以上あるとき」だけ = 静的。**
+    // チェックを切り替えた 1 回だけ入力キャッシュが書き直しになる。
+    //
+    // 個別 MCP は全部 [`crate::mcp::McpTool`] = `prunable` なので、1 本でもあれば真。
+    // 共有 registry は実体を引いて数える（名前の表を作らない）。
+    let offers_omitted = shared.paragraph_scorer.read().await.is_some() && {
+        !personal_specs.is_empty() || {
+            let tools = shared.tools.read().await;
+            shared_specs
+                .iter()
+                .any(|s| tools.get(&s.name).is_some_and(|t| t.prunable()))
+        }
+    };
     let executable = merge_tool_specs(shared_specs, personal_specs);
     specs.extend(executable.iter().cloned());
+    if offers_omitted {
+        specs.push(omitted_tool_spec(language));
+    }
     let use_tools = !specs.is_empty() && template.use_tools;
     PresentedTools {
         specs,
@@ -1400,6 +1417,14 @@ async fn run_turn_inner(
     // 観測用（Spec 04 Notes 2 のトリガー判定の実測材料）。
     // `spend.rounds` は上限の較正（12 で足りているか）、plan_wave は波の因果の追跡。
     let mut plan_wave: u32 = 0;
+    // 圧縮した呼び出しの生本文（Spec 59 D7 / `tool_prune_contract`）。
+    //
+    // **寿命はターンなので、ここ（`run_turn_inner` のローカル）に置く。**
+    // `CallRunner` は周回ごとのブロックで作り直されて Drop されるので、あちらの
+    // フィールドにすると「圧縮は Round 1・`omitted` の呼び出しは Round 2」という
+    // 本来の使い方で必ず `not_found` になる（rev1 の骨格の誤り）。
+    // `repeat_guard` / `plan_wave` と同じく `&mut` で渡す。
+    let mut pruned_raws: Vec<PrunedRaw> = Vec::new();
 
     for iteration in 0..max_tool_iterations {
         // 割り込みの検査点（Spec 10 — 契約の不変条件 1）。周回境界 =
@@ -1647,6 +1672,7 @@ async fn run_turn_inner(
                 auto_approve_plans,
                 repeat_guard: &mut repeat_guard,
                 plan_wave: &mut plan_wave,
+                pruned: &mut pruned_raws,
             };
             for call in &calls {
                 let (body, executed, blocked) = match runner.on_call(call, iteration + 1).await {
@@ -2005,6 +2031,23 @@ struct CallRunner<'a> {
     repeat_guard: &'a mut RepeatGuard,
     /// 波の連番（Spec 08）。`plan` を呼んだ回だけ進む。
     plan_wave: &'a mut u32,
+    /// 圧縮した呼び出しの生本文（Spec 59 D7）。**ターンの寿命**なので
+    /// `run_turn_inner` のローカルを借りる — ここをフィールドにすると
+    /// 次の周の `omitted` が必ず `not_found` になる。
+    pruned: &'a mut Vec<PrunedRaw>,
+}
+
+/// 圧縮した 1 件の生本文（Spec 59 D7 / `tool_prune_contract`）。
+///
+/// **メモリだけ。ログにも `sessions.redb` にも書かない。** 寿命はターンで、
+/// ツール結果が 1 ターン限りなのと同じ。
+struct PrunedRaw {
+    /// 本文に書く id（`P1` / `P2`…）。1 始まり。
+    id: String,
+    /// 圧縮前の本文を割った段落（0 始まり。`omitted` の `from` / `to` はこの index）。
+    paragraphs: Vec<String>,
+    /// 落とした段落の index（`omitted` が返すのは**これだけ**）。
+    dropped: Vec<usize>,
 }
 
 impl CallRunner<'_> {
@@ -2058,6 +2101,12 @@ impl CallRunner<'_> {
             // 居ない。条件は提示（spec_for 相当）と同じ式に揃える。
             || (self.spec.hears_room_log
                 && call.name == crate::room_log::ROOM_LOG_TOOL_NAME)
+            // `omitted` も orchestrator 合成（Spec 59 D7）なので executable に
+            // 居ない。**提示の条件ではなく「この本文が在るか」で判定する** —
+            // 圧縮が 1 度も起きていないターンでは `pruned` が空で、呼ばれても
+            // `not_found` を返すほうが「そんなツールはありません」より正直。
+            || (!self.pruned.is_empty()
+                && call.name == crate::prune::OMITTED_TOOL_NAME)
     }
 
     /// 1 本走らせる。`round` は 1 始まりの周回数（ログの `round=`）。
@@ -2172,6 +2221,10 @@ impl CallRunner<'_> {
             // hears_room_log = false の個体では素通りして registry 側へ
             // 落ちる（その個体にこのツールは合成されていない）。
             Ok(read_room_log(shared, agent_id, call).await)
+        } else if call.name == crate::prune::OMITTED_TOOL_NAME && !self.pruned.is_empty() {
+            // 落とした段落へ戻る（Spec 59 D7）。`room_log` と同じ規則で、
+            // orchestrator 合成の名前は registry より先に解決される。
+            Ok(self.read_omitted(call))
         } else {
             match handoffs.resolve_ask(&call.name) {
                 Some(target) if use_handoff_tools => {
@@ -2200,10 +2253,22 @@ impl CallRunner<'_> {
         // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
         let reason_kind = crate::tool_reason::kind_label(&reason);
         let ok = result.is_ok();
-        let body = match result {
+        let raw = match result {
             Ok(text) => text,
             // 失敗しても会話を止めない。モデルが読んで次を決める。
             Err(err) => format!("ツールの実行に失敗しました: {err}"),
+        };
+        // ツール結果の即時圧縮（Spec 59 / `tool_prune_contract`）。
+        //
+        // **掛けるのはここ 1 箇所で、結果が返った瞬間の 1 回だけ。** 以後の周では
+        // 積んだ文字列を 1 バイトも変えない（入力キャッシュの前方一致）。
+        // `Err` の整形文は圧縮しない（`ok` の枝でだけ呼ぶ）。
+        let body = if ok {
+            self.prune_body(call, &raw)
+                .await
+                .unwrap_or_else(|| raw.clone())
+        } else {
+            raw.clone()
         };
         // 中身をリングへ置いてから知らせる（Spec 57）。**この順が要点** —
         // 発行が先だと、行が出た瞬間に開いた人が「詳細なし」を引く。
@@ -2241,10 +2306,179 @@ impl CallRunner<'_> {
             call.args.to_string().chars().count(),
             body.chars().count(),
         );
-        // 数えるのは**モデルへ返した本文**。同梱ツールの失敗は `Err` ではなく
-        // この本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
-        self.repeat_guard.observe(&call.name, &call.args, &body);
+        // 数えるのは**圧縮前の本文**（Spec 59 D2）。同梱ツールの失敗は `Err` では
+        // なくこの本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
+        //
+        // **位置は動かさず引数を `raw` にして守る。** 圧縮後で数えると、Jev が
+        // 決定的でないため同じ失敗が回ごとに 1 段落ずれて完全一致の数えに乗らない。
+        // **この選択が「戻る道を作らない案」を構造で排除する** — 同じ引数で
+        // 呼び直すと 3 回目に止まり、モデルに残る手は `omitted` だけになる。
+        self.repeat_guard.observe(&call.name, &call.args, &raw);
         CallOutcome::Executed(body)
+    }
+
+    /// `omitted` の本体（Spec 59 D7）。落とした段落を逐語で返す。
+    ///
+    /// **返すのは落とした段落だけ。** 範囲に保持した段落が含まれていたら飛ばす —
+    /// 混ぜると「省略への戻り道」ではなく「生ログの再取得」になる。
+    ///
+    /// 失敗も本文で返す（同梱ツールと同じ作法）。**どの結末でも「何が起きたか」と
+    /// 「次に何をするか」を両方書く**（`failures.md` #44）。
+    fn read_omitted(&self, call: &crate::llm::ToolCall) -> String {
+        let agent_id = self.agent_id;
+        let id = call
+            .args
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        let from = call.args.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+        let to = call
+            .args
+            .get("to")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(from as u64) as usize;
+
+        let note = |outcome: &str, chars: usize| {
+            note!(
+                "tool omitted: agent={agent_id} id={id} from={from} to={to} chars={chars} outcome={outcome}"
+            );
+        };
+
+        let Some(entry) = self.pruned.iter().find(|p| p.id == id) else {
+            note("not_found", 0);
+            return format!(
+                "`{id}` の本文はこのターンには在りません。\
+                 省略の印に書かれている id（P1 / P2 …）をそのまま渡してください。"
+            );
+        };
+
+        // 落とした段落だけを、範囲の中から順に集める。
+        let picked: Vec<usize> = entry
+            .dropped
+            .iter()
+            .copied()
+            .filter(|i| *i >= from && *i <= to)
+            .collect();
+        if picked.is_empty() {
+            note("not_dropped", 0);
+            return format!(
+                "段落 {from}〜{to} に省略された段落はありません。\
+                 その範囲は本文に既に含まれています。省略の印に書かれている範囲を指定してください。"
+            );
+        }
+
+        let chars: usize = picked
+            .iter()
+            .map(|i| entry.paragraphs[*i].chars().count())
+            .sum();
+        if chars > crate::prune::OMITTED_MAX_CHARS {
+            note("too_large", chars);
+            let narrower = picked.first().copied().unwrap_or(from);
+            return format!(
+                "段落 {from}〜{to} は {chars} 字あり、上限の {} 字を超えています。\
+                 範囲を狭めて指定してください（例: from={narrower}, to={narrower}）。",
+                crate::prune::OMITTED_MAX_CHARS
+            );
+        }
+
+        note("ok", chars);
+        let mut out = String::new();
+        for i in picked {
+            out.push_str(&format!("［段落 {i}］\n"));
+            out.push_str(&entry.paragraphs[i]);
+            out.push_str("\n\n");
+        }
+        out.trim_end().to_owned()
+    }
+
+    /// ツール結果を関連度で圧縮する（Spec 59 D2 の条件をすべてここで見る）。
+    ///
+    /// 返るのは圧縮後の本文。`None` なら**全文のまま**（今日の挙動）。
+    /// `tool prune:` は**圧縮を試みた呼び出しでだけ** 1 行出す — 4,000 字未満・
+    /// 対象外・OFF では 1 行も増えない。
+    async fn prune_body(&mut self, call: &crate::llm::ToolCall, raw: &str) -> Option<String> {
+        let scorer = {
+            let slot = self.shared.paragraph_scorer.read().await;
+            slot.as_ref().map(Arc::clone)?
+        };
+        // 対象はツールの自己申告（D1）。合成側は `AgentTool` を実装していないので
+        // ここへ来ない（`resolve_registry_tool` が `None` を返す）。
+        let tool = resolve_registry_tool(self.shared, self.agent_id, &call.name).await?;
+        if !tool.prunable() {
+            return None;
+        }
+
+        let agent_id = self.agent_id;
+        let name = &call.name;
+        let raw_chars = raw.chars().count();
+        let started = std::time::Instant::now();
+        let threshold = scorer.threshold();
+        // 計器の 1 実装。**本文は 1 字も出さない**（#71）。
+        macro_rules! prune_note {
+            ($outcome:expr, $shape:expr, $kept:expr, $paras:expr, $dropped:expr, $calls:expr, $tokens:expr) => {
+                note!(
+                    "tool prune: agent={agent_id} name={name} outcome={} {}raw_chars={raw_chars} \
+                     kept_chars={} paragraphs={} dropped={} calls={} jev_tokens={} ms={} threshold={threshold}",
+                    $outcome,
+                    $shape,
+                    $kept,
+                    $paras,
+                    $dropped,
+                    $calls,
+                    $tokens,
+                    started.elapsed().as_millis(),
+                )
+            };
+        }
+
+        // 基準は受信本文の先頭 2,000 字（D5）。`@@` の写しは含まれない
+        // （`incoming.content` は封筒も写しも持たない = Spec 58 P4）。
+        let basis: String = self.incoming.content.chars().take(2_000).collect();
+        let prepared = match crate::prune::prepare(raw, &basis) {
+            Ok(prepared) => prepared,
+            Err(skip) => {
+                // **4,000 字未満は 1 行も出さない** — 対象外の呼び出しでログを
+                // 太らせない（D11）。残りは「試みて落ちた」ので出す。
+                if skip != crate::prune::Skip::UnderMin {
+                    prune_note!(skip.label(), "", 0, 0, 0, 0, 0);
+                }
+                return None;
+            }
+        };
+        let shape = format!("shape={} ", prepared.shape().label());
+
+        let report = match scorer.score(&basis, &prepared.candidate_texts()).await {
+            Ok(report) => report,
+            Err(err) => {
+                // 失敗は全文（fail-open）。Jev は検証器ではない。
+                prune_note!(err.label(), shape, raw_chars, prepared.len(), 0, 0, 0);
+                return None;
+            }
+        };
+        let scores = prepared.spread(&report.scores);
+        let id = format!("P{}", self.pruned.len() + 1);
+        let Some(out) = crate::prune::apply(&prepared, &scores, threshold, &id) else {
+            // 全部落ちた / 1 つも落ちなかった。どちらも全文を返す。
+            prune_note!(
+                "all_dropped", shape, raw_chars, prepared.len(), 0, report.calls, report.tokens
+            );
+            return None;
+        };
+
+        prune_note!(
+            "ok", shape, out.kept_chars, out.paragraphs, out.dropped, report.calls, report.tokens
+        );
+        // 生本文はターンの寿命で持つ（`omitted` が逐語で返す元）。
+        self.pruned.push(PrunedRaw {
+            id,
+            paragraphs: prepared.paragraphs().to_vec(),
+            dropped: (0..prepared.len())
+                .filter(|i| scores.get(*i).copied().flatten().is_some_and(|s| s < threshold))
+                .collect(),
+        });
+        Some(out.body)
     }
 }
 
@@ -2840,15 +3074,41 @@ fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
     }
 }
 
-/// ツールを 1 本実行する。
+/// registry の逆引き（**個別 MCP を先に**引き、無ければ共有 registry。同名は個別が勝つ）。
 ///
-/// 未知の名前でも `Err` にせず文字列を返すのは、モデルが読んで直せるようにするため。
-/// ここで会話ごと落とすと、名前を打ち間違えただけでターンが終わる。
+/// **この 1 本を 3 つが共有する** — 理由（[`registry_reason`]）・実行（[`execute_tool`]）・
+/// 圧縮の可否（[`crate::tool::AgentTool::prunable`]、Spec 59 D2）。
+/// **順が食い違うと、実行したツールと理由や `prunable` を引いたツールが別物になる。**
+///
+/// 個別ツールは registry に入っていないため、他エージェントからは名前を知っていても
+/// 実行できない。
+async fn resolve_registry_tool(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    name: &str,
+) -> Option<Arc<dyn crate::tool::AgentTool>> {
+    let personal = {
+        let map = shared.agent_mcp.read().await;
+        map.get(agent_id).and_then(|state| {
+            state
+                .manager
+                .tools()
+                .iter()
+                .find(|tool| tool.name() == name)
+                .cloned()
+        })
+    };
+    match personal {
+        Some(tool) => Some(tool),
+        None => shared.tools.read().await.get(name).cloned(),
+    }
+}
+
 /// registry へ落ちた呼び出しの理由を決める（Spec 27）。
 ///
 /// 返すのは（状態, **トリム後・切り詰め前**の文字数）。
 ///
-/// **解決の順は [`execute_tool`] と同じ**（個別 MCP → 共有 registry）。
+/// **解決の順は [`execute_tool`] と同じ**（[`resolve_registry_tool`] の 1 実装）。
 /// 順が食い違うと、**実行したツールと理由を引いたツールが別物になる**。
 ///
 /// - 引けて `wants_reason` = 真 → 引数から読む（`Written` か `Omitted`）
@@ -2859,54 +3119,27 @@ async fn registry_reason(
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
 ) -> (crate::tool_reason::ReasonState, usize) {
-    let personal = {
-        let map = shared.agent_mcp.read().await;
-        map.get(agent_id).and_then(|state| {
-            state
-                .manager
-                .tools()
-                .iter()
-                .find(|tool| tool.name() == call.name)
-                .cloned()
-        })
-    };
-    let tool = match personal {
-        Some(tool) => Some(tool),
-        None => shared.tools.read().await.get(&call.name).cloned(),
-    };
-    match tool {
+    match resolve_registry_tool(shared, agent_id, &call.name).await {
         Some(tool) if tool.wants_reason() => crate::tool_reason::read(&call.args),
         Some(_) => (crate::tool_reason::ReasonState::Unsupported, 0),
         None => (crate::tool_reason::ReasonState::Excluded, 0),
     }
 }
 
+/// ツールを 1 本実行する。
+///
+/// 未知の名前でも `Err` にせず文字列を返すのは、モデルが読んで直せるようにするため。
+/// ここで会話ごと落とすと、名前を打ち間違えただけでターンが終わる。
+///
+/// 解決は [`resolve_registry_tool`] の 1 実装（個別 MCP → 共有 registry）。
 async fn execute_tool(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> CoreResult<String> {
-    // 実行解決は提示と同じ規則の逆引き: **個別 MCP を先に**引き、
-    // 無ければ共有 registry（同名は個別が勝つ）。個別ツールは registry に
-    // 入っていないため、他エージェントからは名前を知っていても実行できない。
-    let personal = {
-        let map = shared.agent_mcp.read().await;
-        map.get(agent_id).and_then(|state| {
-            state
-                .manager
-                .tools()
-                .iter()
-                .find(|tool| tool.name() == call.name)
-                .cloned()
-        })
-    };
-    let tool = match personal {
-        Some(tool) => Some(tool),
-        None => shared.tools.read().await.get(&call.name).cloned(),
-    };
-
-    let Some(tool) = tool else {
+    // 実行解決は提示と同じ規則の逆引き（[`resolve_registry_tool`] の 1 実装）。
+    let Some(tool) = resolve_registry_tool(shared, agent_id, &call.name).await else {
         return Ok(format!(
             "`{}` というツールはありません。提示された名前から選んでください。",
             call.name

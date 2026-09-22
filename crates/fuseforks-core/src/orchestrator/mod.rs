@@ -50,7 +50,9 @@ use turn::{connect_agent_mcp, handle_message, record_failed_turn};
 mod delegation;
 use delegation::{HandoffTools, Outcome, ask_agent, deliver_and_wait, run_plan};
 mod context;
-use context::{compose_presence_notices, compose_room_log, read_room_log, room_log_tool_spec};
+use context::{
+    compose_presence_notices, compose_room_log, omitted_tool_spec, read_room_log, room_log_tool_spec,
+};
 mod schedules;
 use schedules::spawn_schedule_ticker;
 mod sessions;
@@ -408,6 +410,15 @@ struct Shared {
     /// またいで無人で回すものは予定の `autoApprovePlans` が担う。
     /// 1 プロセス 1 村なので、スコープはプロセス全体 = その村。
     plan_review_bypass: std::sync::atomic::AtomicBool,
+    /// ツール結果の関連度を採点する器（Spec 59 D3 / `tool_prune_contract`）。
+    ///
+    /// **`None` が既定で、そのとき圧縮の機構は丸ごと存在しない** — ツール結果は
+    /// 1 バイトも変わらず、`tool prune:` の行も 1 本も出ない。GUI 層が
+    /// `{app_data_dir}/jev.json` と資格情報ストアの鍵から組んで差し込む。
+    ///
+    /// **コアは HTTP を知らない**（[`crate::prune`] も同じ）。ここが trait なのは、
+    /// 結合テストが偽の採点器で圧縮の経路を丸ごと試せるようにするため。
+    paragraph_scorer: tokio::sync::RwLock<Option<Arc<dyn crate::prune::ParagraphScorer>>>,
     config: OrchestratorConfig,
 }
 

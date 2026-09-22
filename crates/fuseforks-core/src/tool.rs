@@ -139,6 +139,22 @@ pub trait AgentTool: Send + Sync {
     fn wants_reason(&self) -> bool {
         true
     }
+
+    /// 返した本文を、関連度で段落単位に落としてよいか（Spec 59 / `tool_prune_contract`）。
+    ///
+    /// **既定は偽。真を返すのは [`crate::mcp::McpTool`] と
+    /// [`crate::tools::rag::RagTool`] の 2 つだけ。**
+    ///
+    /// **名前の表（除外リスト）で持たない** — 新しい同梱ツールは何もしなければ
+    /// 対象外になる。`file` の出力は `sd` の材料で逐語が要り、`run` の固定枠
+    /// 12,000 字は RepeatGuard の完全一致のためにある。どちらも「足し忘れたら
+    /// 圧縮される」形にしない。
+    ///
+    /// 合成側（`plan` / `ask_*` / `transfer_to_*` / `room_log` / `omitted`）は
+    /// `AgentTool` を実装していないので、このメソッド自体を持たない。
+    fn prunable(&self) -> bool {
+        false
+    }
 }
 
 /// 名前で引ける登録簿。

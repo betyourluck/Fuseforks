@@ -440,6 +440,16 @@ impl AgentTool for McpTool {
         false
     }
 
+    /// 接続先が返す本文は圧縮の対象（Spec 59 / `tool_prune_contract`）。
+    ///
+    /// **実測でツール出力の字数の約半分が MCP 由来**（`fuseforks.log` 2026-08-09〜09-22）。
+    /// ただし**返り値の形は名前でも説明文でも決まらない** — 実際に叩いて数えたら、
+    /// 4,000 字以上の本文の 30.1% が JSON の配列型で、これは `prune` が
+    /// `structured` として素通しする（`failures.md` #134 / Spec 60）。
+    fn prunable(&self) -> bool {
+        true
+    }
+
     async fn call(&self, _ctx: &ToolContext, args: &Value) -> CoreResult<String> {
         // MCP の arguments はオブジェクト。オブジェクト以外は引数なしとして送る
         // （モデルが `null` や文字列を寄越すことは実際にある）。

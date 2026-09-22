@@ -58,6 +58,22 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// ツール結果の圧縮に使う採点器を差し込む（Spec 59 D3 / `tool_prune_contract`）。
+    ///
+    /// **`None` を渡すと機構ごと存在しなくなる** — ツール結果は 1 バイトも変わらず、
+    /// `tool prune:` の行も `omitted` の提示も消える。GUI 層が
+    /// `{app_data_dir}/jev.json` と資格情報ストアの鍵から組んで呼ぶ。
+    ///
+    /// **`world.json` へは書かない** — 採点器は村の内容物ではなく端末の設定
+    /// （村を配ったとき、受け取った人の村が知らない送信先へツール結果を送らない）。
+    /// 次のターンの提示と圧縮から効く。
+    pub async fn set_paragraph_scorer(
+        &self,
+        scorer: Option<std::sync::Arc<dyn crate::prune::ParagraphScorer>>,
+    ) {
+        *self.shared.paragraph_scorer.write().await = scorer;
+    }
+
     /// 計画の確認を飛ばすスイッチ（Spec 53 D3）が入っているか。
     pub fn plan_review_bypass(&self) -> bool {
         self.shared

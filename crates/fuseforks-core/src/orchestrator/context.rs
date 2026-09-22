@@ -146,6 +146,50 @@ pub(super) fn room_log_tool_spec(language: crate::world::Language) -> ToolSpec {
     }
 }
 
+/// `omitted` ツールの定義（Spec 59 D7）。
+///
+/// 提示は「圧縮が ON で、その個体の提示集合に `prunable` なツールが 1 本以上
+/// あるとき」だけ = **静的**（チェックを切り替えた 1 回だけ入力キャッシュが
+/// 書き直しになる）。スキーマは毎ターンの固定費なので最小に保つ。
+pub(super) fn omitted_tool_spec(language: crate::world::Language) -> ToolSpec {
+    ToolSpec {
+        name: crate::prune::OMITTED_TOOL_NAME.into(),
+        description: language
+            .pick(
+                "関連度で省略された段落を逐語で読む。本文の印に書かれている id と、\
+                 段落番号の範囲を指定する。返るのは省略された段落だけ。",
+                "Read paragraphs that were omitted by relevance, verbatim. Pass the id \
+                 shown in the notice and a range of paragraph numbers. Only omitted \
+                 paragraphs are returned.",
+            )
+            .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": language.pick(
+                        "省略の印に書かれている id（P1 / P2 …）",
+                        "The id shown in the omission notice (P1 / P2 …)")
+                },
+                "from": {
+                    "type": "integer",
+                    "description": language.pick(
+                        "最初の段落番号（0 始まり・この番号を含む）",
+                        "First paragraph number (0-based, inclusive)")
+                },
+                "to": {
+                    "type": "integer",
+                    "description": language.pick(
+                        "最後の段落番号（0 始まり・この番号を含む）",
+                        "Last paragraph number (0-based, inclusive)")
+                }
+            },
+            "required": ["id", "from", "to"]
+        }),
+    }
+}
+
 /// `room_log` ツールの本体（Spec 22 — `room_log_pull` 契約）。
 /// 抜粋の行頭 ID から発話の全文を返す。
 ///

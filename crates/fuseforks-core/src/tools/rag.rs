@@ -398,6 +398,16 @@ impl AgentTool for RagTool {
         "rag"
     }
 
+    /// 宣言フォルダの本文は圧縮の対象（Spec 59 / `tool_prune_contract`）。
+    ///
+    /// `read` が返すのは Markdown の全文か節（`rag.rs` の組み立て）で、
+    /// **散文なので行の形では畳めないが、関連度では落とせる**（P0 の実測で
+    /// 閾値 0.2 のとき 19〜80%）。**基準は `rag` でも依頼文**で、理由欄は使わない
+    /// — 対測でずれるときは常に「依頼文で残り理由で落ちる」側だった（Spec 59 D5）。
+    fn prunable(&self) -> bool {
+        true
+    }
+
     fn description(&self, language: crate::world::Language) -> String {
         // 個体別の実文面は spec_for が組む。ここは登録簿用の一般形。
         language

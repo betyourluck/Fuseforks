@@ -201,6 +201,9 @@ impl Orchestrator {
             external_gate: tokio::sync::Semaphore::new(1),
             // 起動時は必ず OFF（Spec 53 D3 — 保存しない）。
             plan_review_bypass: std::sync::atomic::AtomicBool::new(false),
+            // 既定は None = 圧縮の機構ごと存在しない（Spec 59 Goal 4）。
+            // GUI 層が設定とキーから組んで差し込む。
+            paragraph_scorer: RwLock::new(None),
             config,
         });
 
