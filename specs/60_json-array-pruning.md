@@ -4,8 +4,8 @@
 - 状態: **rev2（2026-09-22。P0 の実測 + 査読 2 系統 18 点 → 採用 12 / 訂正して採用 5 / 反証 1。
   採否は Notes 4）→ 承認 → P0 完了 → P1 完了**（同日。裁定 2 点は利用者が yes = `_pruned` キーを足すことを
   認める / 縮んだ効き目で進める。`tool_prune_contract` へ「配列型」の節を凍結。P1 = `prune.rs` に
-  `JsonScanner` と配列型の割り方・組み立て。core 810 全緑・ミューテーション 4 本のうち 1 本で予測を外した）。
-  Spec 59 は同日 Done。
+  `JsonScanner` と配列型の割り方・組み立て。core 810 全緑・ミューテーション 4 本のうち 1 本で予測を外した。
+  **P2 完了** = 結合 2 本・変異 2 本とも予測どおり）。Spec 59 は同日 Done。
   rev1 の D1〜D5 は P0 で前提が覆ったので全面的に書き直した — rev1 の文面は Notes 5 に写しを残す
 - 起点: **Spec 59 の P0 で測った返り値の形**（2026-09-22）。対象の呼び出しのうち 4,000 字以上の
   5,246,474 字を、実際にツールを叩いて分類したら **30.1% が JSON の配列型**だった。
@@ -183,8 +183,13 @@ Spec 59 の `omitted { id, from, to }` と `PrunedRaw { id, paragraphs, dropped 
 
 ### P2 — 配線
 
-- [ ] `prune::prepare` の入口で D4b（包装型）と本 Spec（配列型）を**1 箇所で分岐**（Notes 1）
-- [ ] 計器 `tool prune:` に `shape=json_arrays` と、配列ごとの `dropped` を数える欄（`arrays=3 pruned=2`）
+- [x] `prune::prepare` の入口で D4b（包装型）と本 Spec（配列型）を**1 箇所で分岐**（Notes 1）— P1 で済んだ
+- [x] 計器 `tool prune:` に `shape=json_arrays arrays=<対象の配列数> pruned=<落とした配列数>` — P1 で済んだ
+- [x] **結合 2 本**（`tests/tool_prune_arrays.rs`。偽の採点器で経路を丸ごと通す）: 配列型が圧縮されても本文が
+  JSON のまま・`omitted` が次の周で要素を逐語で返す / **落とした配列ごとに別の id**・`omitted` の index は
+  その配列の中で数える（`P2, 1` が y の要素 1 を返し、x の要素 1 も平坦化の 1 番目も返らない）。
+  変異 2 本（`turn.rs` が entries の 1 件目しか積まない / entry の `paragraphs` を平坦化した全要素にする）は
+  どちらも予測どおり 2 本目だけ赤
 
 ### P3 — 台帳 / P4 — 実機
 
