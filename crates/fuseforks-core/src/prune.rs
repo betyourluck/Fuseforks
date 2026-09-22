@@ -39,6 +39,10 @@ pub const WRAPPER_SHARE: f64 = 0.6;
 pub const OMITTED_TOOL_NAME: &str = "omitted";
 /// [`OMITTED_TOOL_NAME`] が 1 回に返す上限（`room_log` と同じ）。
 pub const OMITTED_MAX_CHARS: usize = 20_000;
+/// 採点全体の締め切り。超えたら**済んだ束ねの判定も捨てて**全文を返す。
+pub const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+/// 同時に投げる束ねの本数。
+pub const PARALLEL: usize = 4;
 
 /// 段落ごとの関連度を返す器（Spec 59 D3）。
 ///
@@ -213,24 +217,17 @@ impl Prepared {
     /// **先頭から詰める決定的な割り方**で、同じ本文・同じ依頼なら同じ束ねができる。
     /// 中間帯の段落は束ね方で 0.17〜0.29 動く（P0 の実測）ので、ここが決定的で
     /// ないと同じ入力に同じ結果が返らなくなる。
+    ///
+    /// **割り方そのものは [`batch`] に 1 実装**。ここはその結果を候補の index へ
+    /// 写すだけ — 採点器（`jev.rs`）は `candidate_texts` の平らな列しか見ないので、
+    /// 束ね方を 2 箇所に書くと片方だけずれても型では落ちない。
     #[must_use]
     pub fn batches(&self) -> Vec<Vec<usize>> {
-        let mut out: Vec<Vec<usize>> = Vec::new();
-        let mut batch: Vec<usize> = Vec::new();
-        let mut size = 0usize;
-        for i in self.candidates() {
-            let n = self.paragraphs[i].chars().count();
-            if !batch.is_empty() && (batch.len() >= BATCH_PARAGRAPHS || size + n > BATCH_CHARS) {
-                out.push(std::mem::take(&mut batch));
-                size = 0;
-            }
-            batch.push(i);
-            size += n;
-        }
-        if !batch.is_empty() {
-            out.push(batch);
-        }
-        out
+        let candidates = self.candidates();
+        batch(&self.candidate_texts())
+            .into_iter()
+            .map(|g| g.into_iter().map(|i| candidates[i]).collect())
+            .collect()
     }
 
     /// 圧縮前の本文（`omitted` が逐語で返す元）。
@@ -263,6 +260,67 @@ impl Prepared {
     }
 }
 
+/// 採点の束ねを作る（D4 の 6）。返るのは `texts` の index の列。
+///
+/// **先頭から詰める決定的な割り方**で、同じ並びなら同じ束ねができる。中間帯の
+/// 段落は束ね方で 0.17〜0.29 動く（P0 の実測）ので、ここが決定的でないと同じ
+/// 入力に同じ結果が返らなくなる。
+///
+/// 採点器が受け取るのは [`Prepared::candidate_texts`] の平らな列なので、
+/// **この関数が束ね方の唯一の実装**（[`Prepared::batches`] もここを通る）。
+#[must_use]
+pub fn batch(texts: &[&str]) -> Vec<Vec<usize>> {
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut group: Vec<usize> = Vec::new();
+    let mut size = 0usize;
+    for (i, text) in texts.iter().enumerate() {
+        let n = text.chars().count();
+        if !group.is_empty() && (group.len() >= BATCH_PARAGRAPHS || size + n > BATCH_CHARS) {
+            out.push(std::mem::take(&mut group));
+            size = 0;
+        }
+        group.push(i);
+        size += n;
+    }
+    if !group.is_empty() {
+        out.push(group);
+    }
+    out
+}
+
+/// 採点の待ちに**締め切りと打ち切り**を掛ける（D8）。
+///
+/// **採点器ではなく呼ぶ側に置く。** [`ParagraphScorer`] は打ち切りトークンを
+/// 受け取らないので、ここで包まないと実装ごとに規律が割れる（偽の採点器を使う
+/// 結合テストでも同じ網が掛かるのが要点）。
+///
+/// 締め切りを超えたら `fut` を**丸ごと落とす** — 済んだ束ねの判定も一緒に捨てる。
+/// 部分適用すると落ちる分布が呼び出しの速さで変わり、同じ入力で結果が変わる
+/// 経路が 2 つ目になる（Jev の非決定性に加えて）。
+///
+/// # Errors
+///
+/// 締め切り超過なら [`ScoreError::Timeout`]、打ち切りなら [`ScoreError::Cancelled`]。
+/// `fut` 自身の失敗はそのまま通す。
+pub async fn with_deadline<F>(
+    fut: F,
+    deadline: std::time::Duration,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<ScoreReport, ScoreError>
+where
+    F: std::future::Future<Output = Result<ScoreReport, ScoreError>>,
+{
+    // 打ち切りが無いときは「決して起きない待ち」を置く。`select!` の腕を
+    // 条件で消すと分岐が 2 通りになり、片方だけ締め切りを外す事故が作れる。
+    let idle = tokio_util::sync::CancellationToken::new();
+    let cancel = cancel.unwrap_or(&idle);
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => Err(ScoreError::Cancelled),
+        () = tokio::time::sleep(deadline) => Err(ScoreError::Timeout),
+        out = fut => out,
+    }
+}
 /// 本文を段落へ割る（D4 の 1〜5）。
 ///
 /// # 順序が固定されている理由
@@ -655,12 +713,113 @@ mod tests {
 
     /// 配列型の JSON は素通し（Spec 60 の範囲）。
     #[test]
-    fn an_array_shaped_json_is_skipped() {
+    fn a_json_without_a_direct_string_value_is_skipped() {
         let body = format!(r#"{{"posts":["{}"]}}"#, long(MIN_CHARS + 10));
         assert_eq!(
             prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
             Skip::Structured
         );
+    }
+
+    /// 諦める枝 2/4: **トップレベルがオブジェクトでない**（配列型 = Spec 60）。
+    #[test]
+    fn a_top_level_array_is_skipped() {
+        let body = format!(r#"[{{"content":"{}"}}]"#, long(MIN_CHARS + 10));
+        assert_eq!(
+            prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
+            Skip::Structured
+        );
+    }
+
+    /// 諦める枝 3/4: **最長の文字列が本文の 60% に届かない**。
+    /// 中身が本文そのものだと言えないので、差し替えても効き目が出ない。
+    #[test]
+    fn a_json_whose_longest_string_is_a_minority_is_skipped() {
+        // 同じ長さの文字列を 2 つ入れると、最長でも全体の半分に届かない。
+        let body = format!(
+            r#"{{"a":"{}","b":"{}"}}"#,
+            long(MIN_CHARS + 500),
+            "い".repeat(MIN_CHARS + 500)
+        );
+        assert_eq!(
+            prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
+            Skip::Structured
+        );
+    }
+
+    /// 諦める枝 4/4: **同じ文字列が 2 回現れる**。どちらを差し替えたか読めない。
+    #[test]
+    fn a_json_with_a_duplicated_literal_is_skipped() {
+        let inner = long(MIN_CHARS + 100);
+        let body = format!(r#"{{"a":"{inner}","b":"{inner}"}}"#);
+        assert_eq!(
+            prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
+            Skip::Structured
+        );
+    }
+
+    /// 諦める枝 1/4 の裏: **最長の文字列が 4,000 字に満たない**。
+    /// 本文全体は 4,000 字を超えるので [`Skip::UnderMin`] では落ちない。
+    #[test]
+    fn a_json_whose_string_is_below_the_floor_is_skipped() {
+        let body = format!(
+            r#"{{"pad":"{}","content":"{}"}}"#,
+            long(600),
+            long(MIN_CHARS - 500)
+        );
+        assert!(body.chars().count() > MIN_CHARS);
+        assert_eq!(
+            prepare(&body, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
+            Skip::Structured
+        );
+    }
+
+    /// **圧縮した文字列以外は 1 バイトも変わらない**（D4b の golden）。
+    ///
+    /// 整形・キーの順序・他の値・末尾の改行を**わざと serde の既定から外して**
+    /// おく。再シリアライズで組み直す実装ならここで必ず落ちる（末尾の
+    /// `assert_ne!` が、この golden が本当に判別していることの対照）。
+    #[test]
+    fn everything_outside_the_compressed_string_is_byte_identical() {
+        let inner = (0..20)
+            .map(|i| format!("段落 {i} です。{}", long(200)))
+            .collect::<Vec<_>>()
+            .join("
+
+");
+        let literal = serde_json::Value::String(inner.clone()).to_string();
+        // キーは辞書順でない / 2 字下げ / 末尾に改行。
+        let raw = format!(
+            "{{
+  \"zzz_last\": \"Root > a > b\",
+  \"content\": {literal},
+  \"aaa_first\": \"exact\"
+}}
+"
+        );
+        let start = raw.find(&literal).expect("文字列リテラルが在る");
+        let (prefix, suffix) = (&raw[..start], &raw[start + literal.len()..]);
+
+        let p = prepare(&raw, "この依頼は 20 字以上ありますので通ります").unwrap();
+        let scores: Vec<Option<f32>> = (0..p.len())
+            .map(|i| Some(if i < 10 { 0.05 } else { 0.9 }))
+            .collect();
+        let out = apply(&p, &scores, 0.2, "P1").expect("圧縮する");
+
+        assert!(
+            out.body.starts_with(prefix),
+            "前半が変わった:
+{:?}
+{:?}",
+            &out.body[..prefix.len().min(out.body.len())],
+            prefix
+        );
+        assert!(out.body.ends_with(suffix), "後半が変わった（末尾の改行を含む）");
+
+        // 対照: 読んで書き戻すと**この形にはならない**。だからこの golden は
+        // 「差し替えを再シリアライズへ変える」変異を捕まえる。
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_ne!(serde_json::to_string(&parsed).unwrap(), raw);
     }
 
     /// 包装型は中身を割り、**それ以外は 1 バイトも変えない**（D4b）。
@@ -774,5 +933,76 @@ mod tests {
             prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap_err(),
             Skip::NoCandidates
         );
+    }
+    /// 締め切りの中で終われば、結果はそのまま通る。
+    #[tokio::test]
+    async fn with_deadline_passes_a_result_through() {
+        let got = with_deadline(
+            async { Ok(ScoreReport { scores: vec![Some(0.9)], calls: 1, tokens: 7 }) },
+            std::time::Duration::from_secs(5),
+            None,
+        )
+        .await
+        .expect("間に合う");
+        assert_eq!(got.calls, 1);
+        assert_eq!(got.tokens, 7);
+    }
+
+    /// 締め切りを超えたら [`ScoreError::Timeout`]。**済んだ分も捨てる** —
+    /// ここでは future ごと落ちるので、部分適用の経路が構造的に存在しない。
+    #[tokio::test]
+    async fn with_deadline_gives_up_on_a_slow_scorer() {
+        let err = with_deadline(
+            async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Ok(ScoreReport::default())
+            },
+            std::time::Duration::from_millis(10),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ScoreError::Timeout);
+        assert_eq!(err.label(), "timeout");
+    }
+
+    /// 打ち切り（Spec 10）は締め切りを待たずに切る。**`biased` で打ち切りを先に
+    /// 見る**ので、両方成立していても分類は `cancelled`（cancel が最優先）。
+    #[tokio::test]
+    async fn with_deadline_stops_on_a_cancelled_turn() {
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let err = with_deadline(
+            async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Ok(ScoreReport::default())
+            },
+            std::time::Duration::from_millis(10),
+            Some(&token),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, ScoreError::Cancelled);
+    }
+
+    /// 束ねは **16 段落・12,000 字**で切る。1 本目が 16 で切れ、残りが 2 本目。
+    #[test]
+    fn batch_splits_at_sixteen_paragraphs() {
+        let owned: Vec<String> = (0..20).map(|i| format!("段落 {i}")).collect();
+        let texts: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let got = batch(&texts);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].len(), BATCH_PARAGRAPHS);
+        assert_eq!(got[1], vec![16, 17, 18, 19]);
+    }
+
+    /// 字数でも切る。**1 段落で上限を超えても単独の束ねとして残す**
+    /// （6,000 字超は候補から外れているので、ここへ来るのは 12,000 字未満）。
+    #[test]
+    fn batch_splits_at_twelve_thousand_chars() {
+        let big = "あ".repeat(5_000);
+        let texts = vec![big.as_str(), big.as_str(), big.as_str()];
+        let got = batch(&texts);
+        assert_eq!(got, vec![vec![0, 1], vec![2]], "10,000 で 1 本目が満ちる");
     }
 }

@@ -2449,7 +2449,16 @@ impl CallRunner<'_> {
         };
         let shape = format!("shape={} ", prepared.shape().label());
 
-        let report = match scorer.score(&basis, &prepared.candidate_texts()).await {
+        // 締め切り（20 秒）と打ち切りは**採点器の外で**掛ける（D8）。
+        // `ParagraphScorer` は打ち切りトークンを受け取らないので、ここで包まないと
+        // 実装ごとに規律が割れる — 偽の採点器を使う結合テストにも同じ網が掛かる。
+        let candidates = prepared.candidate_texts();
+        let scoring = crate::prune::with_deadline(
+            scorer.score(&basis, &candidates),
+            crate::prune::DEADLINE,
+            Some(&self.turn.token),
+        );
+        let report = match scoring.await {
             Ok(report) => report,
             Err(err) => {
                 // 失敗は全文（fail-open）。Jev は検証器ではない。

@@ -401,6 +401,77 @@ async fn a_short_request_skips_pruning() {
 ///
 /// 窓は**この系で最も短い定期イベントの周期より短く**する（`failures.md` #86 —
 /// 統計は 1 秒周期なので、1 秒以上にすると永久に閉じない）。
+/// 決して返らない採点器。**打ち切りが待ちを切ること**を確かめるための土台。
+struct NeverReturns {
+    /// 採点に入った合図（ここで打ち切りを撃つ）。
+    started: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl ParagraphScorer for NeverReturns {
+    async fn score(&self, _basis: &str, _paragraphs: &[&str]) -> Result<ScoreReport, ScoreError> {
+        self.started.notify_one();
+        std::future::pending().await
+    }
+    fn threshold(&self) -> f32 {
+        0.2
+    }
+}
+
+/// **打ち切りは締め切り（20 秒）を待たずに採点を切る**（D8）。
+///
+/// 締め切りと打ち切りの網は `prune::with_deadline` に 1 実装あり、単体で
+/// 留めてある。ここで見るのは**配線** — `turn.token` を渡していなければ
+/// この走行は 20 秒掛かる（単体テストでは原理的に出ない形）。
+#[tokio::test]
+async fn an_interrupted_turn_stops_waiting_for_the_scorer() {
+    let dir = TempDir::new("cancel");
+    let spy = Arc::new(Spy {
+        inner: CallThenOmit { tool: "big_probe", omit: false },
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let (orchestrator, id) = village(&dir, spy.clone()).await;
+    orchestrator.register_tool(Arc::new(BigTool::default())).await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    orchestrator
+        .set_paragraph_scorer(Some(Arc::new(NeverReturns { started: started.clone() })))
+        .await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "この依頼は 20 字以上あるので基準として通ります")
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("採点まで到達すること");
+    orchestrator.interrupt_turn(&id).await;
+
+    // **ターンが終わったことを実際に観測する。** 「静かになるまで待つ」では
+    // 判定にならない — 採点で固まったままでもイベントは流れないので静かになる
+    // （`failures.md` #132 と同じ「動いていないのに緑」の形。1 度踏んだ）。
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await {
+                Ok(fuseforks_core::event::CoreEvent::AgentTyping { agent_id, active: false })
+                    if agent_id == id =>
+                {
+                    return;
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return,
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "打ち切りでターンが終わること（締め切り {:?} を待っていない）",
+        fuseforks_core::prune::DEADLINE
+    );
+}
 async fn drain_until_quiet(
     rx: &mut tokio::sync::broadcast::Receiver<fuseforks_core::event::CoreEvent>,
     quiet: Duration,

@@ -70,6 +70,7 @@ pub mod diag;
 pub mod doc_index;
 pub mod error;
 pub mod event;
+pub mod jev;
 pub mod llm;
 pub mod mcp;
 pub mod model;
