@@ -2801,8 +2801,8 @@ JSON 表現と文字列連結の差は小さい（JSON を採る）/ **Jev は `
 **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
 ~~**winget 0.3.4（PR #437997）のマージ確認**~~（**→ 2026-09-21 17:44 UTC マージ = publish の
 29 時間 21 分後**。実績の幅 49 分〜3 時間 52 分を初めて大きく外れた。待っていたのは人の承認）/
-**winget 0.3.5（PR #438606）のマージ確認**（2026-09-21 18:22 UTC 提出。`v0.3.5` = `e7cc020` は
-Release publish・tap `7e6dcfb` まで配信済み）/
+**winget 0.3.5（PR #438606）と 0.3.6（PR #439165）のマージ確認**（0.3.6 は 2026-09-22 16:1x UTC 提出。
+`v0.3.6` = `d87c5d8` は Release publish・tap `9c603b6` まで配信済み）/
 **Spec 56 のツールチップの文面だけ実機で未確認**（`disabled` は観測済み。辞書と配線は
 走査テストが留めている）/ 評価基盤の「完遂」の軸。
 **core 単独実行（クラウドのコンテナ）は最終目標として
@@ -3787,6 +3787,16 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.3.6` = `d87c5d8`（2026-09-23 JST タグ。33 コミット）— [Spec 59](specs/59_jev-tool-result-pruning.md) Done
+  （ツール結果の即時圧縮 — Jev で段落単位。既定は無効・門 25%・`omitted`）+ [Spec 60](specs/60_json-array-pruning.md)
+  Done（JSON オブジェクト直下の配列を要素単位で）+ `turn:` 行の `repeat_max=` + `DETAIL_zh.md`**。3 OS 緑・
+  アセット 7 件・publish 2026-09-22 16:07 UTC。ノートは英日併記で主題は圧縮 1 本、「利用者が負う条件」6 つ
+  （Cloudflare へ送る 2 つ / Jev のトークンは予算に入らない / 判定は決定的でない / 落ちやすいのは 2 論点目 /
+  **設定画面の注記が `rag` を対象と書いたまま配布された**（辞書の追従漏れ。`f0b4973` で直し、次の版から）/
+  トークンは資格情報ストア）。**タグとビルドは利用者、publish・winget・tap は Neo** — winget 0.3.6 =
+  PR #439165（`gh repo sync` → `wingetcreate update … --token` の 1 段。`InstallerLocale` 無しを引き写し・
+  ProductCode は `{FB0E4806-…}`・`InstallerSha256` は Release の digest と一致）/ tap `9c603b6`
+  （sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.3.5` = `e7cc020`（2026-09-22 JST タグ。17 コミット）— [Spec 57](specs/57_tool-call-detail.md) Done
   （ツール行を開いて引数と出力を見る・連続するツール行を束ねる）+ [Spec 58](specs/58_quote-reference.md) Done
   （`@@` で会話の中のサーヴァントの発話を参照として渡す）+ 絆の見出しの「非表示: N / M」の撤去**。
