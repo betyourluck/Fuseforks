@@ -43,6 +43,8 @@ import type {
   ScheduleView,
   SessionSummary,
   FetchedPrices,
+  JevProbeView,
+  JevSettingsView,
   PricingSourceView,
   StatsReport,
   StatsScope,
@@ -561,6 +563,33 @@ export const savePricingSource = (url: string) =>
  * （`data_contract` の `pricing_fetch_freeze`）。
  */
 export const fetchModelPrices = () => call<FetchedPrices>("fetch_model_prices");
+
+// ---- ツール結果の即時圧縮（Spec 59） -----------------------------------------
+//
+// **投影を持たない**（読むのはシステム設定のページだけ）ので生の `ipc` で呼ぶ。
+// 5 本とも同じ `JevSettingsView` を返すので、画面は戻り値をそのまま置き換える。
+
+/** 圧縮の設定を読む。**トークンの値は返らない**（登録済みかだけ）。 */
+export const getJevSettings = () => call<JevSettingsView>("get_jev_settings");
+
+/** 圧縮の設定を保存し、採点器を差し込み直す。**押した時点で反映。** */
+export const setJevSettings = (enabled: boolean, accountId: string, threshold: number) =>
+  call<JevSettingsView>("set_jev_settings", { enabled, accountId, threshold });
+
+/** API トークンを登録する。**読み出す口は無い。** */
+export const setJevToken = (secret: string) =>
+  call<JevSettingsView>("set_jev_token", { secret });
+
+/** API トークンを削除する。 */
+export const clearJevToken = () => call<JevSettingsView>("clear_jev_token");
+
+/**
+ * 接続を確かめる。**2 段落を 1 回投げる唯一の入口。**
+ *
+ * **起動経路・画面遷移・タイマーから呼んではならない**（押していないのに
+ * 外へ出る経路を作らない。Spec 59 D10）。
+ */
+export const testJev = () => call<JevProbeView>("test_jev");
 
 // ---- アイコン ----------------------------------------------------------------
 

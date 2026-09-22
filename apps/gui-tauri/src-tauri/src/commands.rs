@@ -1380,3 +1380,114 @@ pub async fn fetch_model_prices(
         .map_err(|reason| CoreError::PricingFetch { reason })?;
     Ok(crate::pricing_source::FetchedPrices::from(table))
 }
+
+// ---- ツール結果の即時圧縮（Spec 59 P2） -------------------------------------
+//
+// **投影を持たない**（読むのはシステム設定のページだけ）ので、フロントは生の
+// `ipc` で呼ぶ。5 本とも**同じ `JevSettingsView` を返す** — 変更のたびに画面が
+// 状態を組み直すのではなく、コアが決めた判定（`can_enable` / `active`）を返す。
+
+/// 圧縮の設定を読む。**トークンの値は返さない**（登録済みかだけ）。
+#[tauri::command]
+pub async fn get_jev_settings(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::jev_settings::JevSettingsView> {
+    let store = state.jev.lock().await;
+    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+}
+
+/// 圧縮の設定を保存し、採点器を差し込み直す。**押した時点で反映**（MCP のページと同じ）。
+///
+/// # Errors
+/// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn set_jev_settings(
+    state: State<'_, AppState>,
+    enabled: bool,
+    account_id: String,
+    threshold: f32,
+) -> CoreResult<crate::jev_settings::JevSettingsView> {
+    let mut store = state.jev.lock().await;
+    store
+        .save(crate::jev_settings::JevSettingsConfig {
+            enabled,
+            account_id,
+            threshold,
+        })
+        .map_err(|reason| CoreError::ConfigIo {
+            path: crate::jev_settings::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    apply_jev(&state, &store).await;
+    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+}
+
+/// API トークンを資格情報ストアへ書き、採点器を差し込み直す。
+///
+/// **値を返す口は作らない**（モデルの API キーと同じ扱い）。
+///
+/// # Errors
+/// 資格情報ストアへ書けない場合。
+#[tauri::command]
+pub async fn set_jev_token(
+    state: State<'_, AppState>,
+    secret: String,
+) -> CoreResult<crate::jev_settings::JevSettingsView> {
+    // 貼り付け由来の前後空白を落とす（`set_credential` と同じ規律）。
+    state
+        .secrets
+        .set(crate::jev_settings::TOKEN_KEY, secret.trim())?;
+    let store = state.jev.lock().await;
+    apply_jev(&state, &store).await;
+    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+}
+
+/// API トークンを削除し、採点器を外す。
+///
+/// # Errors
+/// 資格情報ストアから削除できない場合。
+#[tauri::command]
+pub async fn clear_jev_token(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::jev_settings::JevSettingsView> {
+    state.secrets.delete(crate::jev_settings::TOKEN_KEY)?;
+    let store = state.jev.lock().await;
+    apply_jev(&state, &store).await;
+    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+}
+
+/// 接続を確かめる。**2 段落を 1 回投げる唯一の入口。**
+///
+/// **起動経路・画面遷移・タイマーから呼んではならない**（押していないのに外へ
+/// 出る経路を作らない。Spec 59 D10。`pricing_fetch_freeze` と同じ形の凍結）。
+/// **設定が OFF でも押せる** — 入れた鍵が通るかを、ON にする前に確かめたい。
+///
+/// # Errors
+/// Account ID かトークンが無い、通信に失敗した、応答を解釈できない場合。
+#[tauri::command]
+pub async fn test_jev(state: State<'_, AppState>) -> CoreResult<crate::jev_settings::JevProbeView> {
+    let scorer = {
+        let store = state.jev.lock().await;
+        crate::jev_settings::scorer_for(store.config(), state.secrets.as_ref())
+    }
+    .map_err(|reason| CoreError::JevProbe { reason })?;
+    let probe = scorer
+        .probe()
+        .await
+        .map_err(|reason| CoreError::JevProbe { reason })?;
+    Ok(probe.into())
+}
+
+/// 設定・トークンを変えた後に採点器を差し込み直す。**呼び出し元は上の 3 本だけ。**
+async fn apply_jev(
+    state: &State<'_, AppState>,
+    store: &crate::jev_settings::JevSettingsStore,
+) {
+    crate::jev_settings::apply(
+        &state.orchestrator,
+        store.config(),
+        store.blocked().is_some(),
+        state.secrets.as_ref(),
+    )
+    .await;
+}

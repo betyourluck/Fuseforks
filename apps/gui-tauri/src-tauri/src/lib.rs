@@ -7,6 +7,7 @@
 mod commands;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
 // **公開しているのは扉の部品であって、扉そのものではない。**
+pub mod jev_settings;
 pub mod mcp_server;
 pub mod probe_approvals;
 pub mod pricing_source;
@@ -108,6 +109,11 @@ pub fn run() {
             commands::pricing_source_status,
             commands::save_pricing_source,
             commands::fetch_model_prices,
+            commands::get_jev_settings,
+            commands::set_jev_settings,
+            commands::set_jev_token,
+            commands::clear_jev_token,
+            commands::test_jev,
             commands::mcp_host_status,
             commands::set_mcp_host,
             commands::regenerate_mcp_host_token,

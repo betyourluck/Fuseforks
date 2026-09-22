@@ -27,6 +27,7 @@ import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { CHAT_ZOOM_STEPS, formatChatZoom } from "../lib/chatZoom";
+import { JEV_THRESHOLDS, jevThresholdKey } from "../lib/jevThreshold";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
 import {
   CLOSING_DAY_MAX,
@@ -34,7 +35,7 @@ import {
   labelParamsOf,
   type ClosingDay,
 } from "../lib/statsPeriod";
-import type { AgentId, Language } from "../types";
+import type { AgentId, JevProbeView, JevSettingsView, Language } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void; (e: "show-tour"): void }>();
 
@@ -54,6 +55,7 @@ type Page =
   | "tour"
   | "tokenBudget"
   | "mcpHost"
+  | "jev"
   | "pricing"
   | "theme"
   | "chatZoom"
@@ -105,6 +107,108 @@ async function savePricingUrl() {
     pricingSaving.value = false;
   }
 }
+/**
+ * ツール結果の即時圧縮（Spec 59）。**設定は `{app_data_dir}/jev.json`**、
+ * トークンは資格情報ストア。**判定（`canEnable` / `active`）は Rust が返す**ものを
+ * そのまま出す — 画面で組み直すと「ON に見えるのに掛かっていない」が作れる。
+ *
+ * **「接続を確かめる」だけが外へ出る。** ページを開いただけでは 1 バイトも出ない
+ * （`pricing` の凍結と同じ形）。
+ */
+const jev = ref<JevSettingsView | null>(null);
+const jevAccountInput = ref("");
+const jevTokenInput = ref("");
+const jevBusy = ref(false);
+const jevNotice = ref("");
+const jevProbe = ref<JevProbeView | null>(null);
+
+const jevAccountDirty = computed(
+  () => jevAccountInput.value.trim() !== (jev.value?.accountId ?? ""),
+);
+
+async function loadJev() {
+  try {
+    const view = await ipc.getJevSettings();
+    jev.value = view;
+    jevAccountInput.value = view.accountId;
+  } catch (err) {
+    jevNotice.value = formatError(ipc.toErrorPayload(err));
+  }
+}
+
+/** 設定を 1 本の IPC で書く。**3 つの入口（ID・チェック・閾値）が同じ関数を通る。** */
+async function saveJev(next: Partial<{ enabled: boolean; threshold: number }> = {}) {
+  if (jevBusy.value) return;
+  jevBusy.value = true;
+  jevNotice.value = "";
+  try {
+    const view = await ipc.setJevSettings(
+      next.enabled ?? jev.value?.enabled ?? false,
+      jevAccountInput.value.trim(),
+      next.threshold ?? jev.value?.threshold ?? 0.2,
+    );
+    jev.value = view;
+    jevAccountInput.value = view.accountId;
+    jevNotice.value = t("settings.jev.saved");
+  } catch (err) {
+    jevNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    jevBusy.value = false;
+  }
+}
+
+async function saveJevToken() {
+  const secret = jevTokenInput.value.trim();
+  if (!secret || jevBusy.value) return;
+  jevBusy.value = true;
+  jevNotice.value = "";
+  try {
+    jev.value = await ipc.setJevToken(secret);
+    jevTokenInput.value = "";
+    jevNotice.value = t("settings.jev.tokenSaved");
+  } catch (err) {
+    jevNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    jevBusy.value = false;
+  }
+}
+
+async function clearJevToken() {
+  if (jevBusy.value) return;
+  const ok = await askConfirm({
+    title: t("settings.jev.clearToken"),
+    message: t("settings.jev.clearTokenConfirm"),
+    danger: true,
+  });
+  if (!ok) return;
+  jevBusy.value = true;
+  jevNotice.value = "";
+  try {
+    jev.value = await ipc.clearJevToken();
+    jevProbe.value = null;
+    jevNotice.value = t("settings.jev.tokenCleared");
+  } catch (err) {
+    jevNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    jevBusy.value = false;
+  }
+}
+
+/** **押したときだけ外へ出る。** 起動・画面遷移からは呼ばない（Spec 59 D10）。 */
+async function testJev() {
+  if (jevBusy.value) return;
+  jevBusy.value = true;
+  jevNotice.value = "";
+  jevProbe.value = null;
+  try {
+    jevProbe.value = await ipc.testJev();
+  } catch (err) {
+    jevNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    jevBusy.value = false;
+  }
+}
+
 const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
@@ -566,6 +670,9 @@ function selectPage(next: Page): void {
   // **設定の読み込みだけ。取得はしない**（Spec 41 の凍結 — 画面を開いたときの
   // 自動 GET も、到達確認も持たない）。
   if (next === "pricing") void loadPricingSource();
+  // **設定を読むだけ。接続の確認はしない**（Spec 59 D10 — 開いただけで
+  // 外へ出る経路を作らない。`pricing` と同じ凍結の形）。
+  if (next === "jev") void loadJev();
 }
 </script>
 
@@ -625,6 +732,13 @@ function selectPage(next: Page): void {
             @click="selectPage('mcpHost')"
           >
             {{ $t("settings.menuMcpHost") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'jev' }"
+            @click="selectPage('jev')"
+          >
+            {{ $t("settings.menuJev") }}
           </button>
           <button
             class="menu-item"
@@ -1167,6 +1281,141 @@ function selectPage(next: Page): void {
             **ここには「取得」ボタンを置かない** — 取得はモデル登録ダイアログの側で、
             対象のモデルが決まっている場所でだけ押せる。
           -->
+          <!--
+            外部連携 > Jev（Spec 59 P2）。**押した時点で反映する**（MCP のページと同じ）。
+            **「接続を確かめる」だけが外へ出る** — 開いただけでは 1 バイトも出ない。
+            チェックは Account ID とトークンが揃うまで `disabled`（`canEnable` は
+            Rust が決めた判定で、ここで組み直さない）。
+          -->
+          <template v-else-if="page === 'jev'">
+            <h3 class="mb-1 text-sm font-semibold">{{ $t("settings.jev.heading") }}</h3>
+            <p class="mb-3 text-xs text-ink-dim">{{ $t("settings.jev.lead") }}</p>
+
+            <p v-if="jev?.blocked" class="mb-3 rounded border border-warn px-2 py-1 text-xs text-warn">
+              {{ $t("settings.jev.blocked", { reason: jev.blocked }) }}
+            </p>
+
+            <label class="mb-1 block text-xs text-ink-dim">
+              {{ $t("settings.jev.accountLabel") }}
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model="jevAccountInput"
+                type="text"
+                spellcheck="false"
+                :disabled="!!jev?.blocked"
+                :placeholder="$t('settings.jev.accountPlaceholder')"
+                class="flex-1 rounded border border-line bg-surface-0 px-2 py-1 font-mono text-xs outline-none focus:border-accent disabled:opacity-50"
+              />
+              <button
+                type="button"
+                class="rounded border border-line px-3 py-1 text-xs hover:border-accent disabled:opacity-50"
+                :disabled="!jevAccountDirty || jevBusy || !!jev?.blocked"
+                @click="saveJev()"
+              >
+                {{ $t("common.save") }}
+              </button>
+            </div>
+
+            <label class="mb-1 mt-3 block text-xs text-ink-dim">
+              {{ $t("settings.jev.tokenLabel") }}
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model="jevTokenInput"
+                type="password"
+                spellcheck="false"
+                autocomplete="off"
+                :placeholder="
+                  jev?.hasToken
+                    ? $t('settings.jev.tokenPlaceholderSet')
+                    : $t('settings.jev.tokenPlaceholder')
+                "
+                class="flex-1 rounded border border-line bg-surface-0 px-2 py-1 font-mono text-xs outline-none focus:border-accent"
+              />
+              <button
+                type="button"
+                class="rounded border border-line px-3 py-1 text-xs hover:border-accent disabled:opacity-50"
+                :disabled="!jevTokenInput.trim() || jevBusy"
+                @click="saveJevToken"
+              >
+                {{ $t("settings.jev.saveToken") }}
+              </button>
+              <button
+                v-if="jev?.hasToken"
+                type="button"
+                class="rounded border border-line px-3 py-1 text-xs text-warn hover:border-warn disabled:opacity-50"
+                :disabled="jevBusy"
+                @click="clearJevToken"
+              >
+                {{ $t("settings.jev.clearToken") }}
+              </button>
+            </div>
+            <p class="mt-1 text-xs text-ink-dim">{{ $t("settings.jev.tokenHint") }}</p>
+
+            <div class="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                class="rounded border border-line px-3 py-1 text-xs hover:border-accent disabled:opacity-50"
+                :disabled="jevBusy || !jev?.hasToken || !jevAccountInput.trim()"
+                @click="testJev"
+              >
+                {{ $t("settings.jev.test") }}
+              </button>
+              <span v-if="jevProbe" class="text-xs text-ink-dim">
+                {{
+                  $t("settings.jev.testResult", {
+                    model: jevProbe.model,
+                    ms: jevProbe.elapsedMs,
+                    relevant: jevProbe.relevant ?? "-",
+                    boilerplate: jevProbe.boilerplate ?? "-",
+                  })
+                }}
+              </span>
+            </div>
+
+            <div class="mt-4 rounded border border-line bg-surface-0 p-3">
+              <label class="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  class="mt-0.5"
+                  :checked="jev?.enabled ?? false"
+                  :disabled="!jev?.canEnable || jevBusy"
+                  @change="saveJev({ enabled: ($event.target as HTMLInputElement).checked })"
+                />
+                <span>
+                  <span class="text-ink">{{ $t("settings.jev.enable") }}</span>
+                  <span class="block text-ink-dim">{{ $t("settings.jev.enableNote") }}</span>
+                </span>
+              </label>
+              <p v-if="jev && !jev.canEnable" class="mt-1 text-xs text-ink-dim">
+                {{ $t("settings.jev.needsKeys") }}
+              </p>
+              <p v-else-if="jev" class="mt-1 text-xs" :class="jev.active ? 'text-run' : 'text-ink-dim'">
+                {{ jev.active ? $t("settings.jev.activeYes") : $t("settings.jev.activeNo") }}
+              </p>
+
+              <label class="mb-1 mt-3 block text-xs text-ink-dim">
+                {{ $t("settings.jev.thresholdLabel") }}
+              </label>
+              <select
+                class="rounded border border-line bg-surface-1 px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-50"
+                :value="jev?.threshold ?? 0.2"
+                :disabled="jevBusy || !!jev?.blocked"
+                @change="saveJev({ threshold: Number(($event.target as HTMLSelectElement).value) })"
+              >
+                <option v-for="level in JEV_THRESHOLDS" :key="level" :value="level">
+                  {{ $t(jevThresholdKey(level)) }}
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-ink-dim">{{ $t("settings.jev.thresholdHint") }}</p>
+            </div>
+
+            <span v-if="jevNotice" class="mt-2 block text-xs text-ink-dim">{{ jevNotice }}</span>
+            <p class="mt-4 text-xs text-ink-dim">{{ $t("settings.jev.privacy") }}</p>
+            <p class="mt-1 text-xs text-ink-dim">{{ $t("settings.jev.deviceNote") }}</p>
+          </template>
+
           <template v-else-if="page === 'pricing'">
             <h3 class="mb-1 text-sm font-semibold">{{ $t("settings.pricing.title") }}</h3>
             <p class="mb-3 text-xs text-ink-dim">{{ $t("settings.pricing.lead") }}</p>

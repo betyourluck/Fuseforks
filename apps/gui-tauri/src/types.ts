@@ -441,6 +441,41 @@ export interface ModelTemplate {
   pricingAsOf: string | null;
 }
 
+/**
+ * ツール結果の即時圧縮の設定（Spec 59）。**トークンの値は返らない。**
+ *
+ * 判定（`canEnable` / `active`）は Rust が決めたものをそのまま受ける —
+ * 画面で組み直すと「画面では ON なのに掛かっていない」が作れる。
+ */
+export interface JevSettingsView {
+  /** 設定上の ON / OFF。 */
+  enabled: boolean;
+  /** Cloudflare のアカウント ID。**秘密ではない。** */
+  accountId: string;
+  /** 閾値（集合に丸めた後の値）。 */
+  threshold: number;
+  /** トークンが登録済みか。**値は返らない。** */
+  hasToken: boolean;
+  /** ON にできる状態か（チェックの `disabled` はこの否定）。 */
+  canEnable: boolean;
+  /** **いま実際に掛かっているか。** `enabled` と別に持つ。 */
+  active: boolean;
+  /** 設定ファイルが読めない理由（`null` 以外の間は保存できない）。 */
+  blocked: string | null;
+}
+
+/** 「接続を確かめる」の結果（Spec 59 P2）。 */
+export interface JevProbeView {
+  /** サーバーが名乗ったモデル版（例 `jev-1.13.0`）。 */
+  model: string;
+  /** 往復の実測（ms）。 */
+  elapsedMs: number;
+  /** 依頼の核として送った段落の点。 */
+  relevant: number | null;
+  /** 定型文として送った段落の点。 */
+  boilerplate: number | null;
+}
+
 /** 単価表の取得元（Spec 41）。**URL は秘密ではない** — 見て変えられることが根拠。 */
 export interface PricingSourceView {
   /** 取得先。**空なら通信そのものが起きない。** */

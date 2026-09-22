@@ -46,6 +46,15 @@ pub struct AppState {
     /// 黙って走る。コアへは `ProbeApprovals` として差し込んであり、
     /// **書き戻す口はここ（IPC の層）にしかない**。
     pub probe_approvals: Arc<crate::probe_approvals::ApprovalStore>,
+    /// ツール結果の即時圧縮の設定（Spec 59）。
+    ///
+    /// **workspace の外**（`{app_data_dir}/jev.json`）に住む — `pricing.json` と
+    /// 同じ理由で、**村を配ったときに、受け取った人の村が知らない送信先へ
+    /// ツール結果を送る状態を作らない**。API トークンは資格情報ストア。
+    pub jev: tokio::sync::Mutex<crate::jev_settings::JevSettingsStore>,
+    /// 資格情報ストア。**Jev のトークンの読み書きに使う**（モデルのキーは
+    /// `Orchestrator` 側の口を通るので、ここを読むのは Jev だけ）。
+    pub secrets: Arc<dyn SecretStore>,
 }
 
 /// バックグラウンド初期化の失敗理由。
@@ -107,7 +116,7 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
     let orchestrator = Orchestrator::bootstrap(
         store.clone(),
         factory,
-        secrets,
+        Arc::clone(&secrets),
         OrchestratorConfig::default(),
     )
     .await?;
@@ -172,6 +181,27 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
         .set_probe_approvals(Arc::clone(&probe_approvals) as Arc<dyn fuseforks_core::orchestrator::ProbeApprovals>)
         .await;
 
+    // ツール結果の即時圧縮（Spec 59）。**設定と鍵が揃っている村でだけ採点器が
+    // 差し込まれる** — 揃っていなければ `Shared.paragraph_scorer` は `None` のままで、
+    // 圧縮の経路そのものが走らない（既定 OFF）。
+    //
+    // **ここでは 1 バイトも外へ出ない。** `apply` は HTTP クライアントを組むだけで、
+    // 送信が起きるのはツールが 4,000 字以上を返したときから（Spec 59 D10）。
+    // 「接続を確かめる」は画面のボタンからだけ呼ぶ（この関数は `probe` を持たない）。
+    let jev = crate::jev_settings::JevSettingsStore::load(&app_data_dir);
+    let jev_active = crate::jev_settings::apply(
+        &orchestrator,
+        jev.config(),
+        jev.blocked().is_some(),
+        secrets.as_ref(),
+    )
+    .await;
+    fuseforks_core::note!(
+        "jev: enabled={} active={jev_active} blocked={}",
+        jev.config().enabled,
+        jev.blocked().is_some()
+    );
+
     Ok(AppState {
         orchestrator,
         workspace,
@@ -182,6 +212,8 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error
             crate::pricing_source::PricingSourceStore::load(&app_data_dir),
         ),
         probe_approvals,
+        jev: tokio::sync::Mutex::new(jev),
+        secrets,
     })
 }
 

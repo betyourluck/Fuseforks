@@ -180,6 +180,17 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// Jev への接続を確かめられなかった（Spec 59 P2 の「接続を確かめる」）。
+    ///
+    /// **`ConfigIo` へ畳まない理由は [`Self::PricingFetch`] と同じ** — 「Account ID が
+    /// 無い」「トークンが無い」「402（残高不足）」「通信に失敗」で次の手が全部違い、
+    /// しかも `jev.json` は壊れていない。
+    #[error("Jev への接続を確かめられませんでした: {reason}")]
+    JevProbe {
+        /// 確かめられなかった理由（そのまま画面へ出る）。
+        reason: String,
+    },
+
     /// 設定ファイルの読み書きに失敗した。
     #[error("設定ファイル `{path}` の入出力に失敗しました")]
     ConfigIo {
@@ -371,6 +382,7 @@ impl CoreError {
             Self::PlanDispatchInvalid { .. } => "PLAN_DISPATCH_INVALID",
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::PricingFetch { .. } => "PRICING_FETCH",
+            Self::JevProbe { .. } => "JEV_PROBE",
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::BlackboardDeleteFailed { .. } => "BLACKBOARD_DELETE_FAILED",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",

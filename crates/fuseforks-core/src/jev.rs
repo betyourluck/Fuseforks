@@ -384,6 +384,55 @@ impl JevScorer {
     }
 }
 
+/// 接続を確かめた結果（画面の「接続を確かめる」）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct JevProbe {
+    /// サーバーが名乗ったモデル版（例 `jev-1.13.0`）。
+    pub model: String,
+    /// 往復の実測（ms）。
+    pub elapsed_ms: u64,
+    /// 依頼の核として書いた段落の点。
+    pub relevant: Option<f32>,
+    /// 定型文として書いた段落の点。
+    pub boilerplate: Option<f32>,
+}
+
+/// 接続を確かめるときに送る 2 段落。**片方は依頼の核、片方は定型文**。
+///
+/// 繋がったことだけでなく、**点が分かれることまで画面に出す** — 200 が返ることと、
+/// 採点が機能していることは別の主張で、前者だけ見せると「設定できた」の意味が
+/// 実際より強く読まれる。
+const PROBE_BASIS: &str =
+    "Rust の `Pin` が何を保証するのか、動かせない理由まで含めて説明してほしい。";
+const PROBE_RELEVANT: &str = "`Pin<P>` は、指している値がメモリ上で動かされないことを型で表す。\
+     自己参照を持つ future は、動かされると内部のポインタが宙に浮く。";
+const PROBE_BOILERPLATE: &str = "このサイトはクッキーを使用しています。設定を変更するには\
+     こちらをクリックしてください。プライバシーポリシー | 利用規約 | お問い合わせ";
+
+impl JevScorer {
+    /// 1 回だけ投げて、モデルの版・遅延・2 段落の点を返す。
+    ///
+    /// **画面の「接続を確かめる」からだけ呼ぶ。** 起動経路・画面遷移からは呼ばない
+    /// （押していないのに外へ出る経路を作らない = D10）。
+    ///
+    /// # Errors
+    ///
+    /// 接続・ステータス・解釈のいずれかに失敗したとき。文面はそのまま画面へ出す。
+    pub async fn probe(&self) -> Result<JevProbe, String> {
+        let began = std::time::Instant::now();
+        let batch = [(0usize, PROBE_RELEVANT), (1usize, PROBE_BOILERPLATE)];
+        let answers = self
+            .ask_once(PROBE_BASIS, &batch)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(JevProbe {
+            model: answers.model,
+            elapsed_ms: u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX),
+            relevant: answers.scores.get(&chunk_id(0)).copied(),
+            boilerplate: answers.scores.get(&chunk_id(1)).copied(),
+        })
+    }
+}
 #[async_trait::async_trait]
 impl ParagraphScorer for JevScorer {
     /// 束ねて並列に投げ、段落の並びへ戻す。
