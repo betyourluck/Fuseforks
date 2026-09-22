@@ -398,15 +398,6 @@ impl AgentTool for RagTool {
         "rag"
     }
 
-    /// 宣言フォルダの本文は圧縮の対象（Spec 59 / `tool_prune_contract`）。
-    ///
-    /// `read` が返すのは Markdown の全文か節（`rag.rs` の組み立て）で、
-    /// **散文なので行の形では畳めないが、関連度では落とせる**（P0 の実測で
-    /// 閾値 0.2 のとき 19〜80%）。**基準は `rag` でも依頼文**で、理由欄は使わない
-    /// — 対測でずれるときは常に「依頼文で残り理由で落ちる」側だった（Spec 59 D5）。
-    fn prunable(&self) -> bool {
-        true
-    }
 
     fn description(&self, language: crate::world::Language) -> String {
         // 個体別の実文面は spec_for が組む。ここは登録簿用の一般形。
@@ -546,6 +537,16 @@ impl AgentTool for RagTool {
 mod tests {
     use super::*;
     use crate::model::AgentId;
+
+    /// **`rag` は圧縮の対象ではない**（Spec 59 rev4。2026-09-22 の実機で確定）。
+    ///
+    /// 12,051 字が**2 段落にしか割れず**、2 回とも `all_dropped` で全文へ倒れた。
+    /// 出力は見出しを改行で並べるだけで**空行を 1 つも出さない**ので、D4 の
+    /// 「空行で割る」が構造的に効かない。**親切心で真へ戻すとまたそこへ戻る。**
+    #[test]
+    fn rag_opts_out_of_pruning() {
+        assert!(!RagTool.prunable(), "rag は対象外（rev4）");
+    }
 
     struct TempDocs {
         dir: std::path::PathBuf,

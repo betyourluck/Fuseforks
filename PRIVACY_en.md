@@ -149,15 +149,15 @@ Authorization header, i.e. your access token). Headers are stored in plaintext
 **Off by default.** It runs only once you enter your own Cloudflare account ID and
 API token. In a village where those are not set, this path does not exist.
 
-When on, long bodies returned by MCP tools and `rag` have paragraphs unrelated to the
-current request dropped, and the judgement is asked of **Jev**, a judgement-only model
+When on, long bodies returned by MCP tools have paragraphs unrelated to the current
+request dropped, and the judgement is asked of **Jev**, a judgement-only model
 (from TypeSafe AI, reached through Cloudflare Workers AI).
 
 **Nothing is sent except when a judgement is actually made.** A call that matches any of
 the following is decided entirely on your device and **never leaves it**: the feature is
-off, no key is set, the tool is out of scope (`file`, `run`), the result is under 4,000
-characters, the body is JSON that is not a simple wrapper, the request is under 20
-characters, or there are no paragraphs to score.
+off, no key is set, the tool is out of scope (`file`, `run`, `rag` — anything but MCP),
+the result is under 4,000 characters, the body is JSON that is not a simple wrapper,
+the request is under 20 characters, or there are no paragraphs to score.
 
 **Exactly two things are sent:**
 

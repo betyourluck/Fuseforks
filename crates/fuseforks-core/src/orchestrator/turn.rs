@@ -2468,10 +2468,12 @@ impl CallRunner<'_> {
         };
         let scores = prepared.spread(&report.scores);
         let id = format!("P{}", self.pruned.len() + 1);
-        let Some(out) = crate::prune::apply(&prepared, &scores, threshold, &id) else {
-            // 全部落ちた / 1 つも落ちなかった。どちらも全文を返す。
+        let verdict = crate::prune::apply(&prepared, &scores, threshold, &id);
+        let crate::prune::Applied::Pruned(out) = verdict else {
+            // 全部落ちた / 1 つも落ちなかった / 正味が足りない。どれも全文を返す。
+            // **理由は畳まない**（rev4） — 門が効いているかを後から数えるため。
             prune_note!(
-                "all_dropped", shape, raw_chars, prepared.len(), 0, report.calls, report.tokens
+                verdict.label(), shape, raw_chars, prepared.len(), 0, report.calls, report.tokens
             );
             return None;
         };

@@ -9,7 +9,7 @@
 //! ```text
 //! prepare(raw, basis)  → Prepared（割った段落・包装型なら差し替えの位置）
 //!   → scorer.score(basis, prepared.candidates())      … ここだけが外へ出る
-//! apply(&prepared, &scores, threshold, id)  → Option<String>（None = 全文のまま）
+//! apply(&prepared, &scores, threshold, id)  → Applied（Pruned 以外は全文のまま）
 //! ```
 //!
 //! **2 段に割ったのは、間に外部呼び出しが挟まるから**。片方だけを単体で試せる
@@ -39,6 +39,16 @@ pub const WRAPPER_SHARE: f64 = 0.6;
 pub const OMITTED_TOOL_NAME: &str = "omitted";
 /// [`OMITTED_TOOL_NAME`] が 1 回に返す上限（`room_log` と同じ）。
 pub const OMITTED_MAX_CHARS: usize = 20_000;
+/// **正味の削減がこれに満たなければ圧縮しない**（rev4。上流の `minReductionRatio`）。
+///
+/// 分母は元の本文、分子は**印を入れた後の差**（落とした字数ではない）。印は
+/// 150 字前後あるので、少ししか落ちない本文では**足すほうが多くなる**。
+///
+/// 実測（2026-09-22 の P4）: `alphaxiv__get_paper_content` は 20,954 → 20,829 で
+/// 正味 0.6%、`MCP_DOCKER__fetch` は 4,096 → 3,858 で 5.8%。しかも後者は**次の周で
+/// モデルが `omitted` を呼び、落とした 380 字を丸ごと読み直した** — 印と往復のぶん
+/// 差し引きで増えている。**この門があれば、どちらも圧縮せずに済んでいた。**
+pub const MIN_REDUCTION: f64 = 0.25;
 /// 採点全体の締め切り。超えたら**済んだ束ねの判定も捨てて**全文を返す。
 pub const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
 /// 同時に投げる束ねの本数。
@@ -523,11 +533,12 @@ fn wrapper_of(raw: &str) -> WrapperCheck {
 /// `scores` は段落 index ごとの関連度。`None` は「返らなかった」= **残す**
 /// （[`MAX_PARA`] 超で採点しなかった段落もここに入る）。
 ///
-/// 返るのは `None`（全文のまま = 圧縮しない）か、圧縮後の本文。
-/// **全部落ちたら `None`** — 依頼と結果が噛み合っていないか採点の失敗で、
+/// 返るのは [`Applied`]。圧縮しないときは**理由つき**で返す（rev4）。
+/// **全部落ちたら圧縮しない** — 依頼と結果が噛み合っていないか採点の失敗で、
 /// どちらでも全文を返すほうが害が小さい（`all_dropped`）。
+/// **正味の削減が [`MIN_REDUCTION`] に満たないときも圧縮しない**（`below_floor`）。
 #[must_use]
-pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &str) -> Option<Pruned> {
+pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &str) -> Applied {
     let keep: Vec<bool> = (0..prepared.len())
         .map(|i| scores.get(i).copied().flatten().is_none_or(|s| s >= threshold))
         .collect();
@@ -538,22 +549,66 @@ pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &s
         .filter(|i| scores.get(*i).copied().flatten().is_some())
         .collect();
     if !scored.is_empty() && scored.iter().all(|i| !keep[*i]) {
-        return None;
+        return Applied::AllDropped;
     }
     if keep.iter().all(|k| *k) {
-        return None; // 1 つも落ちなかった
+        return Applied::NothingDropped;
     }
 
     let body = render(prepared, &keep, id);
-    let dropped: usize = keep.iter().filter(|k| !**k).count();
+    let raw_chars = prepared.raw.chars().count();
     let kept_chars = body.chars().count();
-    Some(Pruned {
+    // **正味で測る**（rev4）。落とした字数ではなく、印を入れた後の差で判定する —
+    // 印は 150 字前後あるので、少ししか落ちない本文では足すほうが多くなる。
+    let ratio = if raw_chars == 0 {
+        0.0
+    } else {
+        (raw_chars.saturating_sub(kept_chars) as f64) / (raw_chars as f64)
+    };
+    if ratio < MIN_REDUCTION {
+        return Applied::BelowFloor { ratio };
+    }
+
+    Applied::Pruned(Pruned {
         body,
         kept_chars,
-        dropped,
+        dropped: keep.iter().filter(|k| !**k).count(),
         paragraphs: prepared.len(),
         shape: prepared.shape(),
     })
+}
+
+/// [`apply`] の結末。**圧縮しなかった理由を畳まない**（`failures.md` #72）。
+///
+/// rev3 までは `Option<Pruned>` で、`all_dropped` / 1 つも落ちなかった / の 2 つが
+/// 同じ `None` に落ちていた。rev4 で門が 3 つ目の理由になったので、**どれで
+/// 見送ったかがログから読めないと門が効いているかを数えられない**。
+#[derive(Debug, Clone)]
+pub enum Applied {
+    /// 圧縮した。
+    Pruned(Pruned),
+    /// 採点した段落がすべて閾値未満。全文へ倒す。
+    AllDropped,
+    /// 1 つも落ちなかった。印だけ足して本文を太らせない。
+    NothingDropped,
+    /// 落ちたが、**正味の削減が [`MIN_REDUCTION`] に満たない**。
+    BelowFloor {
+        /// 実測の削減率（ログの `ratio=`）。
+        ratio: f64,
+    },
+}
+
+impl Applied {
+    /// ログの `outcome=` に出す語。圧縮したときは呼び出し側が `ok` を書く。
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Pruned(_) => "ok",
+            Self::AllDropped => "all_dropped",
+            Self::NothingDropped => "nothing_dropped",
+            Self::BelowFloor { .. } => "below_floor",
+        }
+    }
 }
 
 /// 圧縮の結果（ログの欄と、モデルへ返す本文）。
@@ -638,6 +693,15 @@ fn render(prepared: &Prepared, keep: &[bool], id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 圧縮された前提で中身を取る（取れなければ理由ごと落とす）。
+    #[track_caller]
+    fn pruned(applied: Applied) -> Pruned {
+        match applied {
+            Applied::Pruned(p) => p,
+            other => panic!("圧縮されること（実際は {}）", other.label()),
+        }
+    }
 
     fn long(n: usize) -> String {
         "あ".repeat(n)
@@ -804,7 +868,7 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..p.len())
             .map(|i| Some(if i < 10 { 0.05 } else { 0.9 }))
             .collect();
-        let out = apply(&p, &scores, 0.2, "P1").expect("圧縮する");
+        let out = pruned(apply(&p, &scores, 0.2, "P1"));
 
         assert!(
             out.body.starts_with(prefix),
@@ -844,7 +908,7 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..20)
             .map(|i| Some(if i == 0 { 0.9 } else { 0.01 }))
             .collect();
-        let out = apply(&p, &scores, 0.2, "P1").expect("圧縮されること");
+        let out = pruned(apply(&p, &scores, 0.2, "P1"));
         assert_eq!(out.shape, Shape::JsonWrapper);
         assert_eq!(out.dropped, 19);
 
@@ -864,7 +928,7 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.01); 5];
-        assert!(apply(&p, &scores, 0.2, "P1").is_none());
+        assert_eq!(apply(&p, &scores, 0.2, "P1").label(), "all_dropped");
     }
 
     /// 1 つも落ちなければ圧縮しない（印だけ足して本文を太らせない）。
@@ -873,7 +937,7 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.9); 5];
-        assert!(apply(&p, &scores, 0.2, "P1").is_none());
+        assert_eq!(apply(&p, &scores, 0.2, "P1").label(), "nothing_dropped");
     }
 
     /// 連続して落ちた範囲は 1 つの印に畳み、**0 始まりの index** で書く。
@@ -888,10 +952,60 @@ mod tests {
         let scores: Vec<Option<f32>> = (0..6)
             .map(|i| Some(if i == 0 || i == 5 { 0.9 } else { 0.01 }))
             .collect();
-        let out = apply(&p, &scores, 0.2, "P2").expect("圧縮されること");
+        let out = pruned(apply(&p, &scores, 0.2, "P2"));
         assert!(out.body.contains("段落 1〜4・4 段落"), "畳まれた印: {}", out.body);
         assert!(out.body.contains("id=P2"));
         assert_eq!(out.dropped, 4);
+    }
+
+    /// **正味の削減が 25% に満たなければ圧縮しない**（rev4 の門）。
+    ///
+    /// 20 段落のうち 1 段落だけ落とすと、落ちるのは約 5% で印が 150 字前後。
+    /// 実機（2026-09-22 の P4）で観測したのはまさにこの形で、`omitted` の
+    /// 読み直しまで含めると**差し引き増えていた**。
+    #[test]
+    fn a_small_gain_is_not_worth_the_marker() {
+        let text = (0..20)
+            .map(|i| format!("段落 {i}。{}", long(300)))
+            .collect::<Vec<_>>()
+            .join("
+
+");
+        let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
+        let scores: Vec<Option<f32>> = (0..p.len())
+            .map(|i| Some(if i == 3 { 0.01 } else { 0.9 }))
+            .collect();
+
+        let verdict = apply(&p, &scores, 0.2, "P1");
+        assert_eq!(verdict.label(), "below_floor");
+        match verdict {
+            Applied::BelowFloor { ratio } => {
+                assert!(ratio > 0.0 && ratio < MIN_REDUCTION, "実測の削減率: {ratio}");
+            }
+            other => panic!("BelowFloor を期待したが {}", other.label()),
+        }
+    }
+
+    /// 門を超えれば圧縮する（上の対照）。**同じ本文で落とす数だけ変える。**
+    #[test]
+    fn a_large_gain_passes_the_floor() {
+        let text = (0..20)
+            .map(|i| format!("段落 {i}。{}", long(300)))
+            .collect::<Vec<_>>()
+            .join("
+
+");
+        let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
+        // 半分落とす。印を足しても 25% は超える。
+        let scores: Vec<Option<f32>> = (0..p.len())
+            .map(|i| Some(if i < 10 { 0.01 } else { 0.9 }))
+            .collect();
+
+        let out = pruned(apply(&p, &scores, 0.2, "P1"));
+        assert_eq!(out.dropped, 10);
+        let raw_chars = text.chars().count();
+        let ratio = (raw_chars - out.kept_chars) as f64 / raw_chars as f64;
+        assert!(ratio >= MIN_REDUCTION, "削減率 {ratio} が門を超えること");
     }
 
     /// 採点が返らなかった段落は残す（`None` = 残す。D8 の「一部のバッチだけ失敗」）。
@@ -901,7 +1015,7 @@ mod tests {
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         // 0 は採点が返らず残る / 1 は高得点で残る / 2〜4 が落ちる。
         let scores = vec![None, Some(0.9), Some(0.01), Some(0.01), Some(0.01)];
-        let out = apply(&p, &scores, 0.2, "P1").expect("圧縮されること");
+        let out = pruned(apply(&p, &scores, 0.2, "P1"));
         assert_eq!(out.dropped, 3, "未採点の 0 と高得点の 1 が残る");
         assert!(out.body.contains("段落 2〜4"), "落ちたのは 2〜4: {}", out.body);
     }
@@ -916,8 +1030,9 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![None, Some(0.01), Some(0.01), Some(0.01), Some(0.01)];
-        assert!(
-            apply(&p, &scores, 0.2, "P1").is_none(),
+        assert_eq!(
+            apply(&p, &scores, 0.2, "P1").label(),
+            "all_dropped",
             "採点した 4 段落が全滅したので圧縮しない"
         );
     }

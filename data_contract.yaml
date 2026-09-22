@@ -5323,9 +5323,13 @@ conversation_termination:
 
     不変条件:
       - **対象はツールの自己申告** (AgentTool::prunable。既定は偽)。真を返すのは
-        McpTool と RagTool の 2 つだけ。**名前の表 (除外リスト) で持たない** —
-        新しい同梱ツールは何もしなければ対象外になる。file は sd の材料で逐語が
-        要り、run の固定枠 12,000 字は RepeatGuard の完全一致のためにある。
+        **McpTool だけ** (rev4 で rag を外した)。**名前の表 (除外リスト) で
+        持たない** — 新しい同梱ツールは何もしなければ対象外になる。file は sd の
+        材料で逐語が要り、run の固定枠 12,000 字は RepeatGuard の完全一致のためにある。
+        **rag を外したのは 2026-09-22 の実機** — 12,051 字が **2 段落にしか割れず**、
+        2 回とも all_dropped で全文へ倒れた。rag の出力は見出しを改行で並べるだけで
+        **空行を 1 つも出さない**ので、下の割り方 2 (空行で割る) が構造的に効かない。
+        割り方を変えれば効きうるが、それは P0 の測定を丸ごとやり直す話になる。
         合成側 (plan / ask_* / transfer_to_* / room_log / omitted) は AgentTool を
         実装していないので prunable() 自体を持たず、構造上ここへ来ない
       - **圧縮は結果が返った瞬間の 1 回だけ。** 落とした後の文字列をそのまま積み、
@@ -5379,6 +5383,20 @@ conversation_termination:
         応答は failed、打ち切りは cancelled、全部落ちたら all_dropped。
         **一部のバッチだけ失敗したときはその段落を残して続ける** (ok)。
         Jev は検証器ではないので fail-open でよい
+      - **正味の削減が 25% (MIN_REDUCTION) に満たなければ圧縮しない** (rev4。
+        outcome=below_floor)。**分母は元の本文、分子は印を入れた後の差**で、
+        落とした字数ではない — 印は 150 字前後あるので、少ししか落ちない本文では
+        足すほうが多くなる。2026-09-22 の実機 5 件がこの門の論拠で、
+        alphaxiv__get_paper_content は 20,954 → 20,829 で正味 0.6%、
+        MCP_DOCKER__fetch は 4,096 → 3,858 で 5.8%。**後者は次の周でモデルが
+        omitted を呼び、落とした 380 字を丸ごと読み直した**ので差し引き増えている。
+        **門があれば 5 件とも圧縮せずに済んでいた。** 形は上流
+        (github.com/tamaratran/fast-jev-compaction) の minReductionRatio と同じで、
+        あちらも既定 0.25
+      - **圧縮しなかった理由は畳まない** (rev4)。rev3 までは all_dropped と
+        「1 つも落ちなかった」が同じ outcome に落ちていたが、門が 3 つ目の理由に
+        なったので分けた (nothing_dropped / below_floor)。**どれで見送ったかが
+        ログから読めないと、門が効いているかを数えられない** (failures.md #72)
       - **all_dropped の判定は「採点した段落が 1 つ以上あり、そのすべてが閾値未満」**
         (2026-09-22 の P1 で精緻化)。**採点が全滅した時点で、依頼と結果が噛み合って
         いないか採点の失敗**なので、未採点で残る段落 (6,000 字超 / 失敗したバッチ) が
@@ -5397,8 +5415,8 @@ conversation_termination:
         2,000 字) と採点する段落**の 2 つで、6,000 字超の段落は送らない。
         PRIVACY 日英の「4. 外部へ送信される情報」に名指しで書く
       - **ログは件数だけ。本文は 1 字も出さない。** tool prune: の outcome は
-        ok / structured / no_basis / all_dropped / timeout / failed / cancelled の
-        7 値で、shape= は text / json_wrapper (structured の行は shape= を持たない
+        ok / structured / no_basis / all_dropped / nothing_dropped / below_floor /
+        timeout / failed / cancelled の 9 値で、shape= は text / json_wrapper (structured の行は shape= を持たない
         — 形が包装型でないことがその outcome そのもので、2 つ目の欄で同じことを
         言わない)。calls=0 は「採点対象が 1 つも無かった」= 外部送信も無い。
         **Jev のトークンは TurnSpend にも予算にも載せない** (単価が桁で違い、

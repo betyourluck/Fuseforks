@@ -834,7 +834,7 @@ A tool row in the chat pane **opens when clicked** and shows **the arguments the
 Cloudflare account ID and API token; only then can it be enabled. In a village where
 those are not set, tool bodies are not changed by a single byte.
 
-When on, bodies returned by **MCP tools and `rag`** have paragraphs unrelated to the
+When on, bodies returned by **MCP tools** have paragraphs unrelated to the
 current request dropped before the model sees them. The judgement comes from **Jev**,
 a judgement-only model (from TypeSafe AI, reached through Cloudflare Workers AI) that
 writes no prose and returns only a 0.0–1.0 relevance per paragraph, at input rates an
@@ -848,10 +848,15 @@ source. This is a different question — **dropping by relevance of content** �
 works on prose.
 
 **A tool opts in for itself** (`AgentTool::prunable`, false by default). Only `McpTool`
-and `RagTool` return true, and **there is no name-based exclusion list** — a new bundled
-tool is out of scope unless it says otherwise. `file` feeds `sd` and needs the text
-verbatim; `run`'s fixed 12,000-character budget exists for repeat detection (exact match
-on the result body).
+returns true, and **there is no name-based exclusion list** — a new bundled tool is out of
+scope unless it says otherwise. `file` feeds `sd` and needs the text verbatim; `run`'s
+fixed 12,000-character budget exists for repeat detection (exact match on the result body).
+
+**`rag` was taken out of scope on 2026-09-22, from a real run.** 12,051 characters split
+into **only two paragraphs**, and both runs fell back to the full text as "everything was
+dropped". `rag` prints headings separated by newlines and **emits no blank line at all**,
+so "split on blank lines" above cannot work on it. A different split might, but that means
+redoing the measurements.
 
 **What stays is verbatim, and cuts happen only at paragraph boundaries** — nothing is
 summarized or reworded. The body opens with "N of N paragraphs / N of N characters
@@ -878,6 +883,15 @@ results) belongs to [Spec 60](specs/60_json-array-pruning.md).
 the 20-second deadline, an interrupted turn, or a verdict that drops every paragraph all
 return the original body. **When only some batches fail, their paragraphs are kept and
 the rest proceeds.**
+
+**Nothing is pruned unless the net reduction reaches 25%.** The denominator is the
+original body and the numerator is the difference **after the marker is inserted**, not
+the characters dropped — the marker runs about 150 characters, so a body that loses only
+a little gains more than it loses. In the 2026-09-22 run two calls dropped 1.3% and 9.5%,
+and **in the second the model called `omitted` on the next round and read all 380 dropped
+characters back**, so the turn ended up larger. The reasons for not pruning stay distinct
+in the log (`all_dropped` / `nothing_dropped` / `below_floor`) — folding them would make
+it impossible to count whether the floor is doing anything.
 
 **There are four strengths** (light 0.1 / standard 0.2 / strong 0.3 / maximum 0.5). The
 default 0.2 was measured: judging the 46 paragraphs in the 0.15–0.28 band against the
