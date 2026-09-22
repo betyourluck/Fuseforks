@@ -206,7 +206,7 @@
       "test": "接続を確かめる",
       "testResult": "{model} ／ {ms} ms ／ 依頼の核 {relevant}・定型文 {boilerplate}",
       "enable": "ツール結果を Jev で圧縮する",
-      "enableNote": "対象は MCP のツールと rag だけです。file と run は圧縮しません（編集の材料には逐語が要るため）。",
+      "enableNote": "対象は MCP のツールだけです。file・run・rag は圧縮しません（編集の材料には逐語が要り、rag の出力は段落に割れないため）。",
       "needsKeys": "アカウント ID と API トークンを両方入れると選べます。",
       "activeYes": "いま有効です。4,000 字以上のツール結果が圧縮されます。",
       "activeNo": "いまは掛かっていません。",

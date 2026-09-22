@@ -206,7 +206,7 @@
       "test": "Check the connection",
       "testResult": "{model} / {ms} ms / relevant {relevant}, boilerplate {boilerplate}",
       "enable": "Prune tool results with Jev",
-      "enableNote": "Only MCP tools and rag are pruned. file and run are left alone (edits need the text verbatim).",
+      "enableNote": "Only MCP tools are pruned. file, run and rag are left alone (edits need the text verbatim; rag output does not split into paragraphs).",
       "needsKeys": "Enter both the account ID and the API token to enable this.",
       "activeYes": "Active. Tool results of 4,000 characters or more are pruned.",
       "activeNo": "Not active right now.",
