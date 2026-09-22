@@ -548,8 +548,9 @@ pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &s
     let scored: Vec<usize> = (0..prepared.len())
         .filter(|i| scores.get(*i).copied().flatten().is_some())
         .collect();
+    let dropped = keep.iter().filter(|k| !**k).count();
     if !scored.is_empty() && scored.iter().all(|i| !keep[*i]) {
-        return Applied::AllDropped;
+        return Applied::AllDropped { dropped };
     }
     if keep.iter().all(|k| *k) {
         return Applied::NothingDropped;
@@ -566,13 +567,14 @@ pub fn apply(prepared: &Prepared, scores: &[Option<f32>], threshold: f32, id: &s
         (raw_chars.saturating_sub(kept_chars) as f64) / (raw_chars as f64)
     };
     if ratio < MIN_REDUCTION {
-        return Applied::BelowFloor { ratio };
+        return Applied::BelowFloor { ratio, dropped };
     }
 
     Applied::Pruned(Pruned {
         body,
         kept_chars,
-        dropped: keep.iter().filter(|k| !**k).count(),
+        dropped,
+        ratio,
         paragraphs: prepared.len(),
         shape: prepared.shape(),
     })
@@ -588,13 +590,18 @@ pub enum Applied {
     /// 圧縮した。
     Pruned(Pruned),
     /// 採点した段落がすべて閾値未満。全文へ倒す。
-    AllDropped,
+    AllDropped {
+        /// 落とすはずだった段落の数（ログの `dropped=`）。
+        dropped: usize,
+    },
     /// 1 つも落ちなかった。印だけ足して本文を太らせない。
     NothingDropped,
     /// 落ちたが、**正味の削減が [`MIN_REDUCTION`] に満たない**。
     BelowFloor {
         /// 実測の削減率（ログの `ratio=`）。
         ratio: f64,
+        /// 落とすはずだった段落の数（ログの `dropped=`）。
+        dropped: usize,
     },
 }
 
@@ -604,10 +611,42 @@ impl Applied {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Pruned(_) => "ok",
-            Self::AllDropped => "all_dropped",
+            Self::AllDropped { .. } => "all_dropped",
             Self::NothingDropped => "nothing_dropped",
             Self::BelowFloor { .. } => "below_floor",
         }
+    }
+
+    /// ログの `dropped=`。**圧縮しなかったときも「落とすはずだった数」を返す** —
+    /// 0 固定にすると「全部落ちた」と「1 つも落ちなかった」が同じ数字になり、
+    /// 見送った理由を `outcome=` だけで説明することになる。
+    #[must_use]
+    pub fn dropped(&self) -> usize {
+        match self {
+            Self::Pruned(out) => out.dropped,
+            Self::AllDropped { dropped } | Self::BelowFloor { dropped, .. } => *dropped,
+            Self::NothingDropped => 0,
+        }
+    }
+
+    /// ログの `ratio=`（正味の削減率）。
+    ///
+    /// **[`render`] を通った結末にしか無い** — `all_dropped` と
+    /// `nothing_dropped` は本文を組み立てていないので、印を入れた後の正味を
+    /// 測っていない。**測っていない量に 0 を書かない**（#72 の規律）。
+    #[must_use]
+    pub fn ratio(&self) -> Option<f64> {
+        match self {
+            Self::Pruned(out) => Some(out.ratio),
+            Self::BelowFloor { ratio, .. } => Some(*ratio),
+            Self::AllDropped { .. } | Self::NothingDropped => None,
+        }
+    }
+
+    /// ログの `ratio=` に出す文字列。**無いときは `-`**（0 と区別する）。
+    #[must_use]
+    pub fn ratio_label(&self) -> String {
+        self.ratio().map_or_else(|| "-".to_owned(), |r| format!("{r:.3}"))
     }
 }
 
@@ -620,6 +659,9 @@ pub struct Pruned {
     pub kept_chars: usize,
     /// 落とした段落の数。
     pub dropped: usize,
+    /// 正味の削減率（ログの `ratio=`）。**門を超えた実測値**なので、
+    /// [`MIN_REDUCTION`] が妥当かを後から数える材料になる。
+    pub ratio: f64,
     /// 段落の総数。
     pub paragraphs: usize,
     /// 形（`shape=`）。
@@ -928,7 +970,13 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.01); 5];
-        assert_eq!(apply(&p, &scores, 0.2, "P1").label(), "all_dropped");
+        let verdict = apply(&p, &scores, 0.2, "P1");
+        assert_eq!(verdict.label(), "all_dropped");
+        // 落とすはずだった数は全段落。**削減率は持たない** — 本文を組み立てて
+        // いないので測っていない（測っていない量に 0 を書かない）。
+        assert_eq!(verdict.dropped(), 5);
+        assert_eq!(verdict.ratio(), None);
+        assert_eq!(verdict.ratio_label(), "-");
     }
 
     /// 1 つも落ちなければ圧縮しない（印だけ足して本文を太らせない）。
@@ -937,7 +985,10 @@ mod tests {
         let text = (0..5).map(|_| long(1000)).collect::<Vec<_>>().join("\n\n");
         let p = prepare(&text, "この依頼は 20 字以上ありますので通ります").unwrap();
         let scores = vec![Some(0.9); 5];
-        assert_eq!(apply(&p, &scores, 0.2, "P1").label(), "nothing_dropped");
+        let verdict = apply(&p, &scores, 0.2, "P1");
+        assert_eq!(verdict.label(), "nothing_dropped");
+        assert_eq!(verdict.dropped(), 0);
+        assert_eq!(verdict.ratio_label(), "-");
     }
 
     /// 連続して落ちた範囲は 1 つの印に畳み、**0 始まりの index** で書く。
@@ -978,9 +1029,14 @@ mod tests {
 
         let verdict = apply(&p, &scores, 0.2, "P1");
         assert_eq!(verdict.label(), "below_floor");
+        // **落とすはずだった数と削減率がログへ出る**（計器の `dropped=` / `ratio=`）。
+        // ここが 0 と `-` に畳まれると、門で止めたのか採点が何も落とさなかったのかを
+        // 後から区別できない。
+        assert_eq!(verdict.dropped(), 1);
         match verdict {
-            Applied::BelowFloor { ratio } => {
+            Applied::BelowFloor { ratio, dropped } => {
                 assert!(ratio > 0.0 && ratio < MIN_REDUCTION, "実測の削減率: {ratio}");
+                assert_eq!(dropped, 1);
             }
             other => panic!("BelowFloor を期待したが {}", other.label()),
         }
@@ -1001,11 +1057,16 @@ mod tests {
             .map(|i| Some(if i < 10 { 0.01 } else { 0.9 }))
             .collect();
 
-        let out = pruned(apply(&p, &scores, 0.2, "P1"));
+        let verdict = apply(&p, &scores, 0.2, "P1");
+        // **`ratio` は `apply` が計算した値をそのまま持つ** — 呼び出し側で
+        // 引き算をやり直すと、印の字数を数え落とした式が 2 つ目の真実になる。
+        let ratio = verdict.ratio().expect("圧縮したので削減率がある");
+        let out = pruned(verdict);
         assert_eq!(out.dropped, 10);
-        let raw_chars = text.chars().count();
-        let ratio = (raw_chars - out.kept_chars) as f64 / raw_chars as f64;
         assert!(ratio >= MIN_REDUCTION, "削減率 {ratio} が門を超えること");
+        let raw_chars = text.chars().count();
+        let recomputed = (raw_chars - out.kept_chars) as f64 / raw_chars as f64;
+        assert!((out.ratio - recomputed).abs() < 1e-9, "載せた値が実測と一致する");
     }
 
     /// 採点が返らなかった段落は残す（`None` = 残す。D8 の「一部のバッチだけ失敗」）。

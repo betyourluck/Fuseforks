@@ -2417,15 +2417,16 @@ impl CallRunner<'_> {
         let threshold = scorer.threshold();
         // 計器の 1 実装。**本文は 1 字も出さない**（#71）。
         macro_rules! prune_note {
-            ($outcome:expr, $shape:expr, $kept:expr, $paras:expr, $dropped:expr, $calls:expr, $tokens:expr) => {
+            ($outcome:expr, $shape:expr, $kept:expr, $paras:expr, $dropped:expr, $ratio:expr, $calls:expr, $tokens:expr) => {
                 note!(
                     "tool prune: agent={agent_id} name={name} outcome={} {}raw_chars={raw_chars} \
-                     kept_chars={} paragraphs={} dropped={} calls={} jev_tokens={} ms={} threshold={threshold}",
+                     kept_chars={} paragraphs={} dropped={} ratio={} calls={} jev_tokens={} ms={} threshold={threshold}",
                     $outcome,
                     $shape,
                     $kept,
                     $paras,
                     $dropped,
+                    $ratio,
                     $calls,
                     $tokens,
                     started.elapsed().as_millis(),
@@ -2442,7 +2443,7 @@ impl CallRunner<'_> {
                 // **4,000 字未満は 1 行も出さない** — 対象外の呼び出しでログを
                 // 太らせない（D11）。残りは「試みて落ちた」ので出す。
                 if skip != crate::prune::Skip::UnderMin {
-                    prune_note!(skip.label(), "", 0, 0, 0, 0, 0);
+                    prune_note!(skip.label(), "", 0, 0, 0, "-", 0, 0);
                 }
                 return None;
             }
@@ -2462,24 +2463,29 @@ impl CallRunner<'_> {
             Ok(report) => report,
             Err(err) => {
                 // 失敗は全文（fail-open）。Jev は検証器ではない。
-                prune_note!(err.label(), shape, raw_chars, prepared.len(), 0, 0, 0);
+                prune_note!(err.label(), shape, raw_chars, prepared.len(), 0, "-", 0, 0);
                 return None;
             }
         };
         let scores = prepared.spread(&report.scores);
         let id = format!("P{}", self.pruned.len() + 1);
         let verdict = crate::prune::apply(&prepared, &scores, threshold, &id);
+        // **どの結末でも同じ 2 つの式から書く** — 見送った側だけ 0 を埋めると、
+        // 門で止めたのか採点が何も落とさなかったのかがログから読めない。
+        let (label, dropped, ratio) = (verdict.label(), verdict.dropped(), verdict.ratio_label());
         let crate::prune::Applied::Pruned(out) = verdict else {
             // 全部落ちた / 1 つも落ちなかった / 正味が足りない。どれも全文を返す。
             // **理由は畳まない**（rev4） — 門が効いているかを後から数えるため。
             prune_note!(
-                verdict.label(), shape, raw_chars, prepared.len(), 0, report.calls, report.tokens
+                label, shape, raw_chars, prepared.len(), dropped, ratio,
+                report.calls, report.tokens
             );
             return None;
         };
 
         prune_note!(
-            "ok", shape, out.kept_chars, out.paragraphs, out.dropped, report.calls, report.tokens
+            "ok", shape, out.kept_chars, out.paragraphs, dropped, ratio,
+            report.calls, report.tokens
         );
         // 生本文はターンの寿命で持つ（`omitted` が逐語で返す元）。
         self.pruned.push(PrunedRaw {

@@ -1508,9 +1508,15 @@ The start and failure kinds were added later. The `turn` line existed **only on 
 
 **A pruned invocation emits one `tool prune:` line** ([Spec 59](specs/59_jev-tool-result-pruning.md)).
 It records **counts and character totals only** — not one character of the dropped
-paragraphs, nor of the request sent to Jev. `outcome=` has seven values (`ok` /
-`structured` / `no_basis` / `all_dropped` / `timeout` / `failed` / `cancelled`), and
+paragraphs, nor of the request sent to Jev. `outcome=` is a closed enumeration (`ok` /
+`structured` / `no_basis` / `all_dropped` / `nothing_dropped` / `below_floor` / `timeout` /
+`failed` / `cancelled`), and
 **`calls=0` means "there was nothing to score", i.e. nothing left the machine either**.
+**Lines that did not prune still report what was measured**: `dropped=` is how many
+paragraphs would have been dropped, `ratio=` is the net reduction after the marker is
+added, and **`below_floor` means "paragraphs did drop, but the net gain missed 25%"**.
+`ratio=-` marks the outcomes where no body was assembled (everything dropped / nothing
+dropped / never scored) — **a quantity that was not measured is not written as 0**.
 **Results under 4,000 characters and out-of-scope tools emit no line at all** (invocations
 that were never attempted do not bloat the log). Jev's tokens appear as `jev_tokens=` but
 **do not enter the card totals or the budget** — its rates differ by an order of magnitude,
