@@ -69,6 +69,11 @@ is transmitted anywhere.
 |---|---|
 | `mcp_server.json` | Enable/disable, port, and access token for the local intake feature described below |
 | `probe_approvals.json` | Record of which pre-check commands you allowed to run on this device |
+| `pricing.json` | The URL the price table is fetched from |
+| `jev.json` | Enable/disable, account ID, and strength for tool-result pruning (see 4-4) |
+
+**These live outside the village (workspace).** Handing your village to someone else
+never puts their copy in a state where it talks to a destination they do not know about.
 
 ---
 
@@ -82,7 +87,9 @@ Keys you enter are stored in your **operating system's credential store**:
 - macOS: Keychain
 - Linux: freedesktop Secret Service
 
-The service name used for storage is `jp.outcasts.fuseforks`.
+The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
+this is also where the Cloudflare API token for tool-result pruning (see 4-4) is kept.
+**Neither can be read back** — the screen only shows whether a key is stored.
 
 The app's configuration files (such as `world.json`) **have no field capable of
 holding a key**. Because those files are stored in plain text, the place where a
@@ -136,6 +143,35 @@ If you declare a remote MCP server (`"type": "http"`), **the headers you
 configured are sent with every request to that destination** (including an
 Authorization header, i.e. your access token). Headers are stored in plaintext
 `mcp.json`, so distributing your workspace distributes the token with it.
+
+### 4-4. Tool-result pruning (Jev)
+
+**Off by default.** It runs only once you enter your own Cloudflare account ID and
+API token. In a village where those are not set, this path does not exist.
+
+When on, long bodies returned by MCP tools and `rag` have paragraphs unrelated to the
+current request dropped, and the judgement is asked of **Jev**, a judgement-only model
+(from TypeSafe AI, reached through Cloudflare Workers AI).
+
+**Nothing is sent except when a judgement is actually made.** A call that matches any of
+the following is decided entirely on your device and **never leaves it**: the feature is
+off, no key is set, the tool is out of scope (`file`, `run`), the result is under 4,000
+characters, the body is JSON that is not a simple wrapper, the request is under 20
+characters, or there are no paragraphs to score.
+
+**Exactly two things are sent:**
+
+- the **first 2,000 characters of the request** for that turn, and
+- the **paragraphs being scored** from the tool's body (paragraphs over 6,000 characters
+  are not sent).
+
+**Tool names, arguments, conversation history, model names, and village data are never
+sent.** The body that is sent may contain the contents of folders you declared for `rag`,
+or whatever a connected MCP server returned (including memories, mail, or internal
+documents, if you connected a server that returns those).
+
+The diagnostic log (section 6) records **counts and character totals only** — not one
+character of the body.
 
 ---
 

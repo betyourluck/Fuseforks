@@ -48,6 +48,8 @@ Fuseforks/
 │       │   ├── doc_index.rs         Markdown heading index (pure functions; the PageIndex idea)
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
 │       │   ├── quote.rs             Message-reference pure mechanics (ID resolution / copies / frame rendering; [Spec 58](specs/58_quote-reference.md))
+│       │   ├── prune.rs             Tool-result pruning pure mechanics (split into paragraphs / batch / render; knows no HTTP; [Spec 59](specs/59_jev-tool-result-pruning.md))
+│       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; the one `ParagraphScorer` implementation)
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
@@ -83,6 +85,8 @@ Fuseforks/
         │   ├── state.rs             Orchestrator assembly + event relay
         │   ├── commands.rs          IPC commands (thin forwarding layer)
         │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
+        │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
+        │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59)
         │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
@@ -95,6 +99,7 @@ Fuseforks/
             ├── lib/scheduleDraft.ts Schedule form draft ⇄ wire round-trip (pure functions; the editing entry)
             ├── lib/contextUsage.ts  ratio and tone of the context-usage ring (pure functions, [Spec 49](specs/49_context-usage-ring.md))
             ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
+            ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -823,6 +828,71 @@ A tool row in the chat pane **opens when clicked** and shows **the arguments the
 
 **Tools are not treated differently by kind.** Opening an `ask` / `plan` row shows the other servant's answer, or the bundle, exactly as the requester received it.
 
+### Tool-result pruning ([Spec 59](specs/59_jev-tool-result-pruning.md))
+
+**Off by default.** Under System settings → Integration → Jev you enter your own
+Cloudflare account ID and API token; only then can it be enabled. In a village where
+those are not set, tool bodies are not changed by a single byte.
+
+When on, bodies returned by **MCP tools and `rag`** have paragraphs unrelated to the
+current request dropped before the model sees them. The judgement comes from **Jev**,
+a judgement-only model (from TypeSafe AI, reached through Cloudflare Workers AI) that
+writes no prose and returns only a 0.0–1.0 relevance per paragraph, at input rates an
+order of magnitude cheaper.
+
+**The motivation is measured.** Tool output accounts for 11–22% of effective cost, and
+78% of that comes from results of 4,000 characters or more. The 2026-08-17 ruling of
+"do not build tool-output folding" was about **folding by the shape of lines** (collapse
+repeated lines), which was worth 0.5% here because this village's output is prose and
+source. This is a different question — **dropping by relevance of content** — and it
+works on prose.
+
+**A tool opts in for itself** (`AgentTool::prunable`, false by default). Only `McpTool`
+and `RagTool` return true, and **there is no name-based exclusion list** — a new bundled
+tool is out of scope unless it says otherwise. `file` feeds `sd` and needs the text
+verbatim; `run`'s fixed 12,000-character budget exists for repeat detection (exact match
+on the result body).
+
+**What stays is verbatim, and cuts happen only at paragraph boundaries** — nothing is
+summarized or reworded. The body opens with "N of N paragraphs / N of N characters
+omitted", and each cut leaves a marker like `［… 段落 3〜7・5 段落・2,104 字を省略 …］`.
+
+**Dropped paragraphs can be read back with `omitted`**, by passing the id and paragraph
+numbers from the marker. They live in memory for that turn only — never in the log, never
+in the session store.
+
+**Pruning happens exactly once, when the result comes back**, and the body is not
+changed on later rounds: prompt-cache prefix matching is **byte equality**, so changing
+the body mid-turn reprocesses everything after it. **For the same reason, thinning the
+history and narrowing the tool set were both rejected** — those break the prefix every turn.
+
+**Only wrapper-shaped JSON is pruned.** The top level must be an object, its longest
+direct string value must be at least 60% of the body, that string must be 4,000
+characters or more, and its JSON representation must appear exactly once in the original
+text. When all four hold, **the string literal is replaced in place in the original text**
+(never re-serialized, so formatting, key order, and every other value stay byte-identical).
+If any one fails, the whole body is left alone. Array-shaped JSON (e.g. `manuale__search`
+results) belongs to [Spec 60](specs/60_json-array-pruning.md).
+
+**Failure passes the full text through.** Jev is not a verifier, so a network failure,
+the 20-second deadline, an interrupted turn, or a verdict that drops every paragraph all
+return the original body. **When only some batches fail, their paragraphs are kept and
+the rest proceeds.**
+
+**There are four strengths** (light 0.1 / standard 0.2 / strong 0.3 / maximum 0.5). The
+default 0.2 was measured: judging the 46 paragraphs in the 0.15–0.28 band against the
+request, total error was lowest at 0.22 — but **the two kinds of error do not cost the
+same**. Wrongly keeping a paragraph only costs tokens; wrongly dropping one removes the
+material for the answer, and `omitted` only recovers it if the model notices. Going from
+0.20 to 0.22 doubles the wrong drops from 3 to 6.
+
+**What gets wrongly dropped is the second and later points of a request** (measured).
+The extremes separate cleanly — navigation, references, and tables score 0.01–0.12, while
+the core of the request scores 0.85–0.94. **A threshold cannot fix this** (fixing it means
+splitting the request into one point at a time).
+
+What is and is not sent externally is specified in [`PRIVACY_en.md`](PRIVACY_en.md), 4-4.
+
 ### Command execution (`run`)
 
 **Only commands matching a per-agent allowlist can run**
@@ -1351,11 +1421,13 @@ Agent settings reside in the OS application-data area.
 ```text
 {app_data_dir}/mcp_server.json       MCP server enabled/disabled, port, and token (Spec 25)
 {app_data_dir}/probe_approvals.json  Whether a schedule's pre-check may run on this machine (Spec 28)
+{app_data_dir}/pricing.json          Where the price table is fetched from (Spec 41)
+{app_data_dir}/jev.json              Tool-result pruning enabled/disabled, account ID, strength (Spec 59)
 ```
 
-What you hand over when sharing a village is the workspace, so **keeping these two outside
-is what makes "sharing a village neither opens its door nor runs the commands it carried"
-hold**. Only the chosen reception servant lives in `world.json` — who receives is
+What you hand over when sharing a village is the workspace, so **keeping these outside
+is what makes "sharing a village neither opens its door, nor runs the commands it carried,
+nor talks to a destination the recipient does not know about" hold**. Only the chosen reception servant lives in `world.json` — who receives is
 a per-village question, while enabled/port are per-machine ones.
 
 **The approval file holds hashes only**, never the command text. Writing the text would turn
@@ -1408,7 +1480,9 @@ hardware**. Switching the protocol changed **not one line of the log** unless a
 provider-specific feature such as search was used. An instrument tied to one wire
 is only evidence about **the feature**, never about the path.
 
-There are eight line kinds: `turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>` / **`failed:<CODE>`**), `turn failed` (the reason a turn died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
+**The main line kinds are these** (the implementation has more; the authoritative count is
+the number of `note!` calls, and writing a total here would rot every time one is added):
+`turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>` / **`failed:<CODE>`**), `turn failed` (the reason a turn died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
 
 The start and failure kinds were added later. The `turn` line existed **only on the success path**, so a turn that died left no line at all; and rounds that call no tool (waiting on the LLM) emit nothing. **"Still in flight" and "died three minutes ago" looked like the same silence.**
 
@@ -1417,6 +1491,17 @@ The start and failure kinds were added later. The `turn` line existed **only on 
 **The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all four exits). That is what the stats view (the bar chart icon in the bottom bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
 
 **Records written up to `v0.1.9` carry no `cacheWrite` / `cacheWrite1h`** (added in Spec 40 P3). They read back as 0, but **that 0 means "never recorded", not "nothing was written"** — the screen folds the difference into the "fresh" bucket rather than claiming a breakdown it does not have.
+
+**A pruned invocation emits one `tool prune:` line** ([Spec 59](specs/59_jev-tool-result-pruning.md)).
+It records **counts and character totals only** — not one character of the dropped
+paragraphs, nor of the request sent to Jev. `outcome=` has seven values (`ok` /
+`structured` / `no_basis` / `all_dropped` / `timeout` / `failed` / `cancelled`), and
+**`calls=0` means "there was nothing to score", i.e. nothing left the machine either**.
+**Results under 4,000 characters and out-of-scope tools emit no line at all** (invocations
+that were never attempted do not bloat the log). Jev's tokens appear as `jev_tokens=` but
+**do not enter the card totals or the budget** — its rates differ by an order of magnitude,
+and the village ceiling is denominated in effective tokens, so mixing them would make the
+number mean two things.
 
 The primary purpose of a `tool` line is **`body_chars`**. Tool results are added to history and resent in every subsequent round, so **the size of one tool result affects input tokens for every round of that turn**. `rounds` and `prompt` in a `turn` line alone could not identify what made the prompt large.
 
@@ -1623,7 +1708,7 @@ Three things have since been added into this frame: the theme, your own name and
 |---|---|
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
-| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default |
+| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Jev** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default). **Price table** (the URL it is fetched from) |
 | User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
 
 - **Your name is both the display name on screen and the name servants read**

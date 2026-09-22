@@ -81,6 +81,7 @@ Fuseforks/
         │   ├── state.rs             编排器组装 + 事件中继
         │   ├── commands.rs          IPC 命令（轻量转发层）
         │   ├── mcp_server.rs        接收外部 LLM 请求的大门（HTTP + 合同密钥。Spec 25）
+        │   ├── jev_settings.rs      工具结果压缩的设定与评分器的装入（Spec 59）
         │   └── probe_approvals.rs   记录是否可在当前终端执行前置判定（Spec 28）
         └── src/
             ├── types.ts             Rust 类型的镜像（手动同步的契约）
@@ -92,6 +93,7 @@ Fuseforks/
             ├── lib/scheduleDraft.ts 定时任务表单草稿 ⇄ 连线类型的往返（纯函数。编辑入口）
             ├── lib/contextUsage.ts  上下文使用率圆环的比例与颜色（纯函数。[Spec 49](specs/49_context-usage-ring.md)）
             ├── lib/agentGroups.ts   组的分类・可见集合・批量启动门・drop 确定（纯函数。[Spec 51](specs/51_agent-groups.md)）
+            ├── lib/jevThreshold.ts  工具结果压缩的阈值与标签键（纯函数。值以 Rust 为准，由扫描测试比对）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）
             ├── locales/ja.json / en.json        UI 文案字典（通过测试保证键集合一致）
@@ -343,6 +345,26 @@ Anthropic 官方 / OpenAI 官方 / Gemini 互换 / xAI / さくら互換（Qwen3
 在会话面板中，工具调用的执行结果默认处于**折叠状态**。
 - 点击可展开并查看输入与输出。
 - 若在同一个回合中连续执行了多个相同的工具（例如连续 3 次 grep），则会自动折叠并合并为 1 行（例如显示为 `grep (3件)`），以防止长篇的工具日志将实质性的对话内容淹没。
+### 工具结果的压缩（[Spec 59](specs/59_jev-tool-result-pruning.md)）
+
+将 MCP 工具与 `rag` 返回的长正文中、与本回合委托无关的段落，在交给仆从之前删去。
+判定交由**只作判断的模型 Jev**（由 TypeSafe AI 提供，经 Cloudflare Workers AI 调用）。
+
+- **预设为停用。** 需要使用者在「系统设定 ＞ 外部联动 ＞ Jev」填入自己的
+  Cloudflare 帐号 ID 与 API 权杖；未设定的村庄，工具正文不会有 1 个位元组的变化。
+- **对象由工具自行申报**（`AgentTool::prunable`，预设为否）。回传为真的只有
+  MCP 工具与 `rag`；`file` 与 `run` 不在对象内（编辑的素材需要逐字原文）。
+- **保留的部分为逐字原文，只在段落的边界切开。** 删去之处会留下记号，
+  并可用 `omitted` 以逐字原文重新读取（只在该回合内有效，仅存于内存）。
+- **压缩只在结果返回的当下进行 1 次**，其后的回合不再变动 1 个位元组
+  —— 提示词缓存的前缀比对是**位元组等同**，回合中途改动正文会使其后全部重新处理。
+- **失败时原样通过全文。** 通信失败、超过 20 秒、回合被中断、或判定为全部删去时，
+  都返回原本的正文。
+- **删除的强度有 4 段**（0.1 / 0.2 / 0.3 / 0.5，预设 0.2 由实测决定）。
+  **错误删去的多半是委托中第 2 个以后的论点**，这一点无法靠阈值解决。
+
+送往外部的内容以 [`PRIVACY.md`](PRIVACY.md) 的 4-4 为准。
+
 ### 命令执行（`run`）
 
 `run` 允许在当前的工作文件夹中执行外部命令（例如 `cargo build` 或 `pytest`）。
