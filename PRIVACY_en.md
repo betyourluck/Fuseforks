@@ -156,19 +156,21 @@ request dropped, and the judgement is asked of **Jev**, a judgement-only model
 **Nothing is sent except when a judgement is actually made.** A call that matches any of
 the following is decided entirely on your device and **never leaves it**: the feature is
 off, no key is set, the tool is out of scope (`file`, `run`, `rag` — anything but MCP),
-the result is under 4,000 characters, the body is JSON that is not a simple wrapper,
-the request is under 20 characters, or there are no paragraphs to score.
+the result is under 4,000 characters, the body is JSON that is neither a simple wrapper
+nor an object with array fields, the request is under 20 characters, or there are no
+paragraphs to score.
 
 **Exactly two things are sent:**
 
 - the **first 2,000 characters of the request** for that turn, and
 - the **paragraphs being scored** from the tool's body (paragraphs over 6,000 characters
-  are not sent).
+  are not sent). When the body is array-shaped JSON, what is sent instead of paragraphs is
+  **the JSON text of each array element** (key names included).
 
 **Tool names, arguments, conversation history, model names, and village data are never
-sent.** The body that is sent may contain the contents of folders you declared for `rag`,
-or whatever a connected MCP server returned (including memories, mail, or internal
-documents, if you connected a server that returns those).
+sent.** The body that is sent may contain whatever a connected MCP server returned
+(including memories, mail, or internal documents, if you connected a server that returns
+those).
 
 The diagnostic log (section 6) records **counts and character totals only** — not one
 character of the body.

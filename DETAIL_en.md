@@ -876,8 +876,24 @@ direct string value must be at least 60% of the body, that string must be 4,000
 characters or more, and its JSON representation must appear exactly once in the original
 text. When all four hold, **the string literal is replaced in place in the original text**
 (never re-serialized, so formatting, key order, and every other value stay byte-identical).
-If any one fails, the whole body is left alone. Array-shaped JSON (e.g. `manuale__search`
-results) belongs to [Spec 60](specs/60_json-array-pruning.md).
+If any one fails, the whole body is left alone.
+
+**Array-shaped JSON is pruned element by element** ([Spec 60](specs/60_json-array-pruning.md)).
+When the top level is an object and a direct child is an array whose JSON text is 1,000
+characters or more (`posts` in `outcasts__read_thread`, each layer of
+`memoria__recall_memory`, `matches` in `manuale__search`), **each element is scored as one
+paragraph** and the unrelated ones are removed in place in the original text. The gate is
+the array's character count, not its element count (one real array was 3 elements and 12K
+characters). **A top-level array, and arrays deeper than the first level, are out of scope**
+(the latter is the `elyth` shape — three levels down, with 50-character excerpts as body,
+so even if reached there is nothing to judge). What was dropped is recorded as **one
+top-level key, `_pruned`** (a marker element inside the array would break the element type
+for whoever parses it). Each pruned array gets its own `id`, and `omitted` indexes **within
+that array**, 0-based. **An array whose every element would drop is left untouched** (no
+empty arrays are produced). **"Not one byte changes" is one notch looser here only** — what
+changes is the contents of the target arrays plus the single `_pruned` key; every other
+field, the formatting, and key order stay as they were. If the original already has a
+`_pruned` key, the whole body is left alone.
 
 **Failure passes the full text through.** Jev is not a verifier, so a network failure,
 the 20-second deadline, an interrupted turn, or a verdict that drops every paragraph all
