@@ -266,15 +266,7 @@ impl AgentTool for RunTool {
             }
             Decision::Unknown => {
                 self.note_pending(&ctx.agent_id, command, &argv).await;
-                return Ok(format!(
-                    "`{command}` は許可されていないため実行しませんでした。\
-                     利用者への要求として記録しました。\n\
-                     利用者が `agents/{}/run.json` の `allow` へ追加すると、\
-                     次から実行できます。\n\
-                     **このターンでは実行できません。** 利用者へ依頼するか、\
-                     別の手段で進めてください。",
-                    ctx.agent_id
-                ));
+                return Ok(unknown_refusal(command, &argv, &ctx.agent_id));
             }
             Decision::Allowed => {}
         }
@@ -386,6 +378,35 @@ fn section(label: &str, text: &str, limit: usize) -> String {
     )
 }
 
+/// `Unknown` の拒否文（Spec 20 の承認画面へ積んだ後にモデルへ返す文）。
+///
+/// **引数のどれかに空白が入っているときは 1 行足す** — `allow` のパターンは空白で
+/// 割って 1 語ずつ照合するので（`command::pattern_matches`）、`["-Command", "lake build"]`
+/// のような呼び出しは `pwsh -NoProfile -Command lake build` と書いても**永久に一致しない**
+/// （パターンは 5 語・argv は 4 要素）。その事実を書かないと「`allow` へ追加すると次から
+/// 実行できます」が嘘になり、利用者が追加しても通らない形で止まる
+/// （`failures.md` #128 の引数側の対。2026-09-24 の実機）。
+fn unknown_refusal(command: &str, argv: &[String], agent_id: &AgentId) -> String {
+    let mut out = format!(
+        "`{command}` は許可されていないため実行しませんでした。\
+         利用者への要求として記録しました。\n\
+         利用者が `agents/{agent_id}/run.json` の `allow` へ追加すると、\
+         次から実行できます。\n"
+    );
+    if argv.iter().any(|a| a.chars().any(char::is_whitespace)) {
+        out.push_str(
+            "**空白を含む引数は `allow` の完全一致では書けません** — パターンは空白で割って \
+             1 語ずつ照合するので、`\"lake build\"` のような引数は一致しません。\
+             利用者は末尾 `*` のパターンで許可するか、あなたが引数を語ごとに割って\
+             呼び直してください。\n",
+        );
+    }
+    out.push_str(
+        "**このターンでは実行できません。** 利用者へ依頼するか、別の手段で進めてください。",
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -453,6 +474,27 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// 空白を含む引数の呼び出しは、`allow` へ書き写しても一致しないことを拒否文が言う。
+    ///
+    /// 実機（2026-09-24）: ルナが `pwsh -NoProfile -Command "lake build"` を呼び、利用者が
+    /// `"pwsh -NoProfile -Command lake build"` を `allow` へ書いたが、パターンは 5 語・
+    /// argv は 4 要素で永久に `Unknown` だった。旧文面は「追加すると次から実行できます」と
+    /// 書いており、追加しても通らない形で止まった。
+    #[test]
+    fn the_refusal_names_whitespace_in_an_argument() {
+        let id = AgentId::from("agent_8");
+        let spaced = ["-NoProfile", "-Command", "lake build"].map(String::from);
+        let text = unknown_refusal("pwsh", &spaced, &id);
+        assert!(text.contains("空白を含む引数"), "{text}");
+        assert!(text.contains("末尾 `*`"), "{text}");
+        assert!(text.contains("agents/agent_8/run.json"));
+
+        let plain = ["status".to_string()];
+        let text = unknown_refusal("git", &plain, &id);
+        assert!(!text.contains("空白を含む引数"), "空白が無ければ 1 行足さない: {text}");
+        assert!(text.contains("このターンでは実行できません"));
+    }
+
     /// **`allow` が空でも `run` を提示する。**（2026-08-06 利用者裁定）
     ///
     /// 提示しないと呼び出しがフィルタで弾かれ、`pending` へ 1 件も積めない。
