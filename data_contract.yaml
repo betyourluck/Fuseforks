@@ -4981,10 +4981,16 @@ conversation_termination:
       - **非ゼロ終了は Err にしない。** 終了コード + stdout + stderr を Ok(String) で
         返す (failures.md #41 の一般化 3)
       - **環境変数は env_clear してから名前を指定して親の値をコピー**
-        (PATH / SYSTEMROOT / TEMP / TMP / HOME / USERPROFILE / LANG / PROGRAMDATA)。
+        (PATH / SYSTEMROOT / TEMP / TMP / HOME / USERPROFILE / LANG / PROGRAMDATA / PATHEXT)。
         **PATH を渡す以上、子プロセスは端末上の任意の実行ファイルへ届く** —
         可用性のための選択であって安全のためではない。
         **数ではなく列挙で書く** — 総数を併記すると増えたときに 2 箇所で嘘になる (#67)
+      - **PATHEXT は 2026-09-24 に足した。可用性のためで、境界は動かない。**
+        PowerShell は `.exe` を実行できる拡張子と判定するのに PATHEXT を読むので、
+        無いと `pwsh -NoProfile -Command & '<絶対パス>.exe' …` が**何もせず exit 0・
+        出力 0 字で返る** (`$LASTEXITCODE` も空 = ネイティブのコマンドを起動していない)。
+        `.exe` を直接起動する経路は無くても走るので、症状はシェル経由のときだけ。
+        12 個の候補を 1 つずつ足して通ったのはこれだけ (failures.md #138)
       - **PROGRAMDATA は 2026-08-12 に足した。可用性のためで、境界は動かない。**
         Windows OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) は
         **これが環境ブロックに無いと起動直後に死ぬ** — `-V` (版を出すだけで

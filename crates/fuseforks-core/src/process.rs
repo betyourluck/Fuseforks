@@ -27,7 +27,7 @@ use command_group::AsyncCommandGroup;
 /// `env_clear` してからこの名前だけを親からコピーする。**これは安全対策ではない** —
 /// `PATH` を渡す以上、子プロセスは端末上の任意の実行ファイルへ届く。可用性のための
 /// 選択で、`echo $ANTHROPIC_API_KEY` のような最も稚拙な経路を 1 つ閉じるだけ。
-const PASSED_ENV: [&str; 8] = [
+const PASSED_ENV: [&str; 9] = [
     "PATH",
     "SYSTEMROOT",
     "TEMP",
@@ -53,6 +53,21 @@ const PASSED_ENV: [&str; 8] = [
     // `programdata` の 3 通りとも exit 0）。**Windows の環境ブロックは
     // 参照が大小を区別しない**ので、`SYSTEMROOT` と同じ流儀に揃えてある。
     "PROGRAMDATA",
+    // **PowerShell はこれが無いと `& 'C:\…\lake.exe' build` を黙って飛ばす**
+    // （2026-09-24 実測。`failures.md` #138）。`pwsh -NoProfile -Command & '<絶対パス>.exe' …`
+    // が **exit 0・stdout 0 字・stderr 0 字・0.6 秒**で返り、`$LASTEXITCODE` も空 =
+    // ネイティブのコマンドを 1 度も起動していない。`PATHEXT` を足すと同じ呼び出しが
+    // `Build completed successfully (141 jobs)` まで走る。12 個の候補（`LOCALAPPDATA` /
+    // `APPDATA` / `COMSPEC` / `USERNAME` / `HOMEDRIVE` / `HOMEPATH` / `WINDIR` /
+    // `PROGRAMFILES` / `ELAN_HOME` / `ALLUSERSPROFILE` / `PUBLIC` / これ）を 1 つずつ
+    // 足して、通ったのはこれだけ。PowerShell は `.exe` を「実行できる拡張子」と
+    // 判定するのに `PATHEXT` を読む — 無ければ `&` の対象が「アプリケーション」に
+    // 分類されず、何もしない。`lake.exe` を直接起動する経路（`pwsh` を挟まない）は
+    // `PATHEXT` 無しでも走るので、症状は **シェル経由のときだけ**出る。
+    //
+    // `PROGRAMDATA` と同じく可用性のための追加で、境界は動かない（`PATHEXT` の値は
+    // 拡張子の一覧で、秘密でも権限でもない）。
+    "PATHEXT",
 ];
 
 /// プロセス 1 本を走らせた結果。**整形前の生の値。**
@@ -248,4 +263,39 @@ pub fn resolve_program(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **`PATHEXT` を渡さないと、PowerShell は `& '<絶対パス>.exe'` を黙って飛ばす**
+    /// （2026-09-24 実機。`failures.md` #138）。exit 0・出力 0 字で返るので、
+    /// `run` の結果だけ見ると「走ったが何も出なかった」と読めてしまう。
+    ///
+    /// Windows だけ。`pwsh` が PATH に無い端末では何も主張しない（skip）。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn powershell_can_invoke_an_exe_by_path_with_the_passed_env() {
+        let Some(pwsh) = resolve_program("pwsh") else {
+            eprintln!("pwsh が PATH に無いので skip");
+            return;
+        };
+        let system_root = std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".into());
+        let whoami = format!(r"{system_root}\System32\whoami.exe");
+        let argv: Vec<String> = ["-NoProfile", "-Command", "&", &format!("'{whoami}'")]
+            .map(String::from)
+            .to_vec();
+        let cwd = std::env::temp_dir();
+        match spawn_and_wait(&pwsh, &argv, &cwd, 60, None).await {
+            Ran::Finished { code, stdout, .. } => {
+                assert_eq!(code, Some(0));
+                assert!(
+                    !stdout.trim().is_empty(),
+                    "`& '<絶対パス>.exe'` が何も出さずに exit 0 で返った = PATHEXT が渡っていない"
+                );
+            }
+            other => panic!("Finished を期待したが {other:?}"),
+        }
+    }
 }
