@@ -263,6 +263,30 @@ pub struct AgentGroup {
     pub unknown: UnknownFields,
 }
 
+/// 判断特化のエージェント（Spec 62・`judge_contract`）。
+///
+/// **問いと規則は `{workspace}/judges/<id>/judge.toml` に住み、ここには持たない**
+/// （`crate::judge::JudgeFile`）。起動・受信箱・履歴を持たない — 呼び出し元のツール呼び出しの
+/// 中で同期的に評価される関数で、会話の相手ではない。
+///
+/// **`id` は [`AgentId`] 型で、サーヴァントと同じ名前空間。** サーヴァントの
+/// `connected_agents` に入れると線になり、`topology_positions` にも同じ鍵で座標が入る。
+/// ID と表示名の一意性は 2 つの一覧をまたぐ（`World::register_judge`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeSpec {
+    /// 一意識別子。[`AgentId::is_safe`] を通る（`judges/<id>/` のディレクトリ名になる）。
+    pub id: AgentId,
+    /// 表示名。サーヴァントの表示名とも重ならない。
+    pub name: String,
+    /// 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立。
+    #[serde(default)]
+    pub order: u32,
+    /// この版が知らない欄（[`UnknownFields`]）。
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
+}
+
 /// 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
 ///
 /// # なぜ自由な色文字列にしないか

@@ -14,7 +14,7 @@ use crate::error::{CoreError, CoreResult, ErrorPayload};
 use crate::llm::ChatMessage;
 use crate::model::{
     AgentGroup, AgentGroupId, AgentId, AgentRole, AgentRoleId, AgentSnapshot, AgentSpec,
-    AgentStatus, ModelTemplate,
+    AgentStatus, JudgeSpec, ModelTemplate,
     ModelTemplateId, TopologyEdge, UnknownFields,
 };
 
@@ -368,6 +368,13 @@ pub struct PersistedWorld {
     /// だけ）。
     #[serde(default)]
     pub groups: Vec<AgentGroup>,
+    /// 判断特化のエージェント（Spec 62・`judge_contract`）。問いと規則は
+    /// `judges/<id>/judge.toml` に住み、ここには ID・表示名・並びだけを持つ。
+    /// **判断役を知らない旧版で開くと**、配列は [`UnknownFields`] で書き戻るが、
+    /// サーヴァント → 判断役の線と判断役の座標は [`World::from_persisted`] の `known` に
+    /// 入らないので読み込みで捨てられる（直せないので配布のノートに書く）。
+    #[serde(default)]
+    pub judges: Vec<JudgeSpec>,
     /// 外部からの依頼を受ける窓口（Spec 25。`None` = 未設定）。
     ///
     /// **村の内容物なので `world.json` に住む** — どの個体が窓口かは村ごとに
@@ -423,6 +430,9 @@ pub struct World {
     /// グループ（Spec 51）。`Vec` なのは**配列順が見出しの並び**だから
     /// （役職は順序を持たないので `BTreeMap`）。意味論は [`PersistedWorld::groups`]。
     groups: Vec<AgentGroup>,
+    /// 判断特化のエージェント（Spec 62）。**ID はサーヴァントと同じ名前空間**で、
+    /// `agents` と鍵が重ならない（登録で拒否し、読み込みでは判断役の側を落とす）。
+    judges: BTreeMap<AgentId, JudgeSpec>,
     /// 外部からの依頼を受ける窓口（Spec 25）。意味論は [`PersistedWorld::reception`]。
     reception: Option<AgentId>,
     /// 外部クライアントの呼び名（Spec 25）。意味論は [`PersistedWorld::external_name`]。
@@ -443,7 +453,19 @@ impl World {
     /// 復元時にトポロジーの健全性を検査し、**未登録先への接続は黙って落とす**。
     /// 保存後に相手が削除された場合に、ファイルを開けなくなるほうが害が大きい。
     pub fn from_persisted(persisted: PersistedWorld) -> Self {
-        let known: Vec<AgentId> = persisted.agents.iter().map(|s| s.id.clone()).collect();
+        let servants: Vec<AgentId> = persisted.agents.iter().map(|s| s.id.clone()).collect();
+        // 判断役も線と座標の相手として知る（Spec 62 — 知らないと再起動のたびに
+        // サーヴァント → 判断役の線と判断役の座標が消える）。**サーヴァントと ID が
+        // 重なる判断役は落とす** — 手編集でしか作れない形で、残すと配送先が一意でなくなる。
+        let mut judges: BTreeMap<AgentId, JudgeSpec> = BTreeMap::new();
+        for judge in persisted.judges {
+            if servants.contains(&judge.id) || judges.contains_key(&judge.id) || !judge.id.is_safe() {
+                crate::note!("judge: 保存された判断役 `{}` を読み込みません（ID の重複か不正）", judge.id);
+                continue;
+            }
+            judges.insert(judge.id.clone(), judge);
+        }
+        let known: Vec<AgentId> = servants.iter().cloned().chain(judges.keys().cloned()).collect();
 
         let mut world = Self::new();
         // Some(0) は「即打ち切りの村」ではなく不正値 — None（天井なし）へ倒す
@@ -536,6 +558,7 @@ impl World {
         // グループも検査せずそのまま読む。引けない group_id は無所属として描かれる
         // （group_contract 凍結 3）ので、孤児の掃除も要らない。
         world.groups = persisted.groups;
+        world.judges = judges;
         for mut spec in persisted.agents {
             spec.connected_agents
                 .retain(|target| *target != spec.id && known.contains(target));
@@ -563,6 +586,7 @@ impl World {
             user_name: self.user_name.clone(),
             roles: self.roles.values().cloned().collect(),
             groups: self.groups.clone(),
+            judges: self.judges(),
             reception: self.reception.clone(),
             external_name: self.external_name.clone(),
             unknown: self.unknown.clone(),
@@ -720,9 +744,20 @@ impl World {
     /// どこまで畳むかの線引きが恣意的になり、利用者の意図した区別を潰しうる。
     fn name_taken(&self, name: &str, excluding: &AgentId) -> bool {
         let name = name.trim();
+        // **判断役の表示名もまたぐ**（Spec 62）。ツールの説明文・判定の行・地図で
+        // 名前が 2 つの一覧をまたいで並ぶので、同名があると誰のことか読めない。
         self.agents
             .iter()
             .any(|(id, record)| id != excluding && record.spec.name.trim() == name)
+            || self
+                .judges
+                .iter()
+                .any(|(id, judge)| id != excluding && judge.name.trim() == name)
+    }
+
+    /// ID がサーヴァントか判断役のどちらかに使われているか（Spec 62 — 名前空間は 1 つ）。
+    fn id_taken(&self, id: &AgentId) -> bool {
+        self.agents.contains_key(id) || self.judges.contains_key(id)
     }
 
     /// エージェントを登録する。
@@ -739,7 +774,7 @@ impl World {
                 value: spec.id.to_string(),
             });
         }
-        if self.agents.contains_key(&spec.id) {
+        if self.id_taken(&spec.id) {
             return Err(CoreError::DuplicateAgent(spec.id.to_string()));
         }
         if self.name_taken(&spec.name, &spec.id) {
@@ -808,7 +843,10 @@ impl World {
         id: &AgentId,
         position: TopologyPosition,
     ) -> CoreResult<()> {
-        self.agent(id)?;
+        // 判断役も地図に置く（Spec 62 — 座標の鍵は同じ名前空間）。
+        if !self.judges.contains_key(id) {
+            self.agent(id)?;
+        }
         self.topology_positions.insert(id.clone(), position);
         Ok(())
     }
@@ -956,7 +994,9 @@ impl World {
                     reason: format!("エージェント `{owner}` が自分自身に接続しています"),
                 });
             }
-            if !self.agents.contains_key(target) {
+            // 判断役へも線を引ける（Spec 62。サーヴァント → 判断役）。判断役から出る線は
+            // ここを通らない — 正本は judge.toml の to で、保存しない。
+            if !self.id_taken(target) {
                 return Err(CoreError::InvalidTopology {
                     reason: format!("接続先 `{target}` は登録されていません"),
                 });
@@ -1142,6 +1182,81 @@ impl World {
         Ok(())
     }
 
+    /// 判断役の一覧（`order` の順、同じなら ID の順）。
+    pub fn judges(&self) -> Vec<JudgeSpec> {
+        let mut out: Vec<JudgeSpec> = self.judges.values().cloned().collect();
+        out.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
+        out
+    }
+
+    /// 判断役を 1 つ引く。
+    pub fn judge(&self, id: &AgentId) -> Option<&JudgeSpec> {
+        self.judges.get(id)
+    }
+
+    /// その ID がサーヴァントか（判断役ではなく）。
+    pub fn is_servant(&self, id: &AgentId) -> bool {
+        self.agents.contains_key(id)
+    }
+
+    /// 判断役を登録する（Spec 62）。
+    ///
+    /// # Errors
+    /// - ID がパスとして安全でない場合 [`CoreError::UnsafeIdentifier`]
+    /// - ID がサーヴァントか判断役に使われている場合 [`CoreError::DuplicateAgent`]
+    /// - 表示名がサーヴァントか判断役に使われている場合 [`CoreError::DuplicateAgentName`]
+    pub fn register_judge(&mut self, mut spec: JudgeSpec) -> CoreResult<()> {
+        if !spec.id.is_safe() {
+            return Err(CoreError::UnsafeIdentifier { value: spec.id.to_string() });
+        }
+        if self.id_taken(&spec.id) {
+            return Err(CoreError::DuplicateAgent(spec.id.to_string()));
+        }
+        if self.name_taken(&spec.name, &spec.id) {
+            return Err(CoreError::DuplicateAgentName(spec.name.clone()));
+        }
+        spec.name = spec.name.trim().to_owned();
+        self.judges.insert(spec.id.clone(), spec);
+        Ok(())
+    }
+
+    /// 判断役の表示名と並びを差し替える。
+    ///
+    /// # Errors
+    /// - 判断役が無い場合 [`CoreError::AgentNotFound`]
+    /// - 表示名が使われている場合 [`CoreError::DuplicateAgentName`]
+    pub fn update_judge(&mut self, mut spec: JudgeSpec) -> CoreResult<()> {
+        if !self.judges.contains_key(&spec.id) {
+            return Err(CoreError::AgentNotFound(spec.id.to_string()));
+        }
+        if self.name_taken(&spec.name, &spec.id) {
+            return Err(CoreError::DuplicateAgentName(spec.name.clone()));
+        }
+        spec.name = spec.name.trim().to_owned();
+        if let Some(existing) = self.judges.get_mut(&spec.id) {
+            // 画面は知っている欄だけで組み直して送る。未知の欄は既存の側から引き継ぐ（#112）。
+            spec.unknown = std::mem::take(&mut existing.unknown);
+            *existing = spec;
+        }
+        Ok(())
+    }
+
+    /// 判断役を消し、サーヴァントからの線と座標も同時に外す（`remove_agent` と同じ規律 —
+    /// 削除は参照の回収まで含めて 1 操作）。
+    ///
+    /// # Errors
+    /// 判断役が無い場合 [`CoreError::AgentNotFound`]。
+    pub fn remove_judge(&mut self, id: &AgentId) -> CoreResult<()> {
+        if self.judges.remove(id).is_none() {
+            return Err(CoreError::AgentNotFound(id.to_string()));
+        }
+        self.topology_positions.remove(id);
+        for record in self.agents.values_mut() {
+            record.spec.connected_agents.retain(|target| target != id);
+        }
+        Ok(())
+    }
+
     /// グループの一覧（配列順 = 見出しの並び）。
     pub fn groups(&self) -> Vec<AgentGroup> {
         self.groups.clone()
@@ -1276,6 +1391,7 @@ mod tests {
             user_name: None,
             roles: Vec::new(),
             groups: Vec::new(),
+            judges: Vec::new(),
             reception: None,
             external_name: None,
             unknown: UnknownFields::default(),
@@ -1569,6 +1685,7 @@ mod tests {
             user_name: None,
             roles: Vec::new(),
             groups: Vec::new(),
+            judges: Vec::new(),
             reception: None,
             external_name: None,
             unknown: UnknownFields::default(),
@@ -1885,5 +2002,110 @@ mod tests {
         assert!(!text.contains("apiKeyEnv"), "廃止した apiKeyEnv が書き戻された: {text}");
         assert!(!text.contains("EXAMPLE-NOT-A-REAL-KEY"), "秘密の値が残った");
         assert!(!text.contains("ragSources"), "廃止した defaults.ragSources が書き戻された");
+    }
+    // ---- 判断役（Spec 62・judge_contract） ----
+
+    fn judge(id: &str, name: &str) -> JudgeSpec {
+        JudgeSpec { id: id.into(), name: name.to_owned(), order: 0, unknown: UnknownFields::default() }
+    }
+
+    #[test]
+    fn a_judge_and_a_servant_share_one_id_namespace() {
+        let mut world = world_with_two_agents();
+        // 判断役がサーヴァントの ID を取れない。
+        let err = world.register_judge(judge("agent_01", "振り分け役")).unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT");
+        // サーヴァントも判断役の ID を取れない。
+        world.register_judge(judge("router", "振り分け役")).unwrap();
+        let err = world.register_agent(AgentSpec::new("router", "別の個体", "tpl")).unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT");
+    }
+
+    #[test]
+    fn display_names_are_unique_across_servants_and_judges() {
+        let mut world = world_with_two_agents();
+        let err = world.register_judge(judge("router", " Planner ")).unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT_NAME");
+        world.register_judge(judge("router", "振り分け役")).unwrap();
+        let err = world.register_agent(AgentSpec::new("agent_03", "振り分け役", "tpl")).unwrap_err();
+        assert_eq!(err.code(), "DUPLICATE_AGENT_NAME");
+        // 改名でも同じ入口で守る。
+        let mut planner = world.agent(&"agent_01".into()).unwrap().spec.clone();
+        planner.name = "振り分け役".into();
+        assert_eq!(world.update_agent(planner).unwrap_err().code(), "DUPLICATE_AGENT_NAME");
+        assert_eq!(
+            world.update_judge(judge("router", "Critic")).unwrap_err().code(),
+            "DUPLICATE_AGENT_NAME"
+        );
+    }
+
+    #[test]
+    fn an_unsafe_judge_id_is_rejected() {
+        let mut world = world_with_two_agents();
+        let err = world.register_judge(judge("../x", "外")).unwrap_err();
+        assert_eq!(err.code(), "UNSAFE_IDENTIFIER");
+    }
+
+    /// 査読 2 (3) の回帰 — `from_persisted` の `known` が判断役を知らないと、
+    /// **新版でも**再起動のたびにサーヴァント → 判断役の線と判断役の座標が消える。
+    #[test]
+    fn a_line_to_a_judge_and_its_position_survive_a_round_trip() {
+        let mut world = world_with_two_agents();
+        world.register_judge(judge("router", "振り分け役")).unwrap();
+        world.set_connections(&"agent_01".into(), vec!["router".into()]).unwrap();
+        world
+            .set_topology_position(&"router".into(), TopologyPosition { x: 10.0, y: 20.0 })
+            .unwrap();
+
+        let reopened = World::from_persisted(world.to_persisted());
+
+        assert_eq!(reopened.judges(), vec![judge("router", "振り分け役")]);
+        assert_eq!(
+            reopened.agent(&"agent_01".into()).unwrap().spec.connected_agents,
+            vec![AgentId::from("router")]
+        );
+        assert!(reopened.topology_positions().contains_key(&AgentId::from("router")));
+    }
+
+    #[test]
+    fn a_saved_judge_that_collides_with_a_servant_is_not_loaded() {
+        let mut persisted = world_with_two_agents().to_persisted();
+        persisted.judges = vec![judge("agent_02", "偽物"), judge("router", "振り分け役")];
+        let world = World::from_persisted(persisted);
+        assert_eq!(world.judges(), vec![judge("router", "振り分け役")], "サーヴァントが勝つ");
+        assert!(world.is_servant(&"agent_02".into()));
+    }
+
+    #[test]
+    fn removing_a_judge_removes_lines_to_it_and_its_position() {
+        let mut world = world_with_two_agents();
+        world.register_judge(judge("router", "振り分け役")).unwrap();
+        world
+            .set_connections(&"agent_01".into(), vec!["agent_02".into(), "router".into()])
+            .unwrap();
+        world
+            .set_topology_position(&"router".into(), TopologyPosition { x: 1.0, y: 2.0 })
+            .unwrap();
+
+        world.remove_judge(&"router".into()).unwrap();
+
+        assert!(world.judges().is_empty());
+        assert_eq!(
+            world.agent(&"agent_01".into()).unwrap().spec.connected_agents,
+            vec![AgentId::from("agent_02")],
+            "サーヴァントへの線は残る"
+        );
+        assert!(!world.topology_positions().contains_key(&AgentId::from("router")));
+        assert_eq!(world.remove_judge(&"router".into()).unwrap_err().code(), "AGENT_NOT_FOUND");
+    }
+
+    #[test]
+    fn judges_are_listed_by_order_then_id() {
+        let mut world = World::new();
+        world.register_judge(JudgeSpec { order: 2, ..judge("b", "B") }).unwrap();
+        world.register_judge(JudgeSpec { order: 1, ..judge("c", "C") }).unwrap();
+        world.register_judge(JudgeSpec { order: 1, ..judge("a", "A") }).unwrap();
+        let ids: Vec<String> = world.judges().into_iter().map(|j| j.id.to_string()).collect();
+        assert_eq!(ids, ["a", "c", "b"]);
     }
 }
