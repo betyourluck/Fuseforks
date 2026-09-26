@@ -450,7 +450,10 @@ Choice / Score を送った記録はどちらのリポジトリにも無い（20
   input_tokens=… output_tokens=…`（`usage` は両方を返す — P0 実測。出力は無料でも数は出す）。**出すのは問いの名前・鍵・数値だけ。問いの文面・`note`・
   `message` は出さない**（#71 の規律）。鍵は人が設定に書いた識別子で、`run:` 行がコマンド名を出すのと同じ扱い
 - 判定できなかったときは `outcome=undecided reason=jev_error|timeout|too_large|unanswered`
-- 中継した先の配送は既存の `turn start:` / `reply:` にそのまま出る（`via=judge` で見分ける）。撒いたときも
+- 中継した先の配送は既存の `turn start:` / `reply:` にそのまま出る。**`via=judge` が載るのは待ちの輪の拒否の行
+  （`ask refused: … via=judge reason=circular`）だけ** — `turn start:` は `via` を持たないので、判断役を経た配送かは
+  直前の `judge:` 行と `turn start:` の `from=`（呼び出し元）で読む（P1d で実装を読んで訂正。rev4 までは
+  「`turn start:` を `via=judge` で見分ける」と書いていたが、そういう欄は無い）。撒いたときも
   `plan wave:` / `plan bundle:` は**出ない**（波ではないので — D6）。束ねの大きさは `judge:` 行に `bundle_chars=`
 - **Jev のトークンは予算に入れない**（Spec 59 と同じ扱い。$0.042/MTok・出力無料で、中継する先の LLM の
   ターンに比べて桁が小さい）。ただし**払ったことは `judge:` 行に必ず出す**（#103 — 払っているのにどこにも
@@ -542,8 +545,8 @@ Choice / Score を送った記録はどちらのリポジトリにも無い（20
 
 ### P4 — 実機
 
-- [ ] ルナ → 判断役 → イクス / ザリ の振り分けで、`judge:` 行と `turn start: … via=judge` と、答えがルナへ
-      戻ったこと（ルナの `tool:` 行の `body_chars`）
+- [ ] ルナ → 判断役 → イクス / ザリ の振り分けで、`judge:` 行と、その直後の宛先の `turn start: … from=agent`
+      （呼び出し元）と、答えがルナへ戻ったこと（ルナの `tool:` 行の `body_chars`）
 - [ ] `to` が 2 体の規則で、`judge: … outcome=fanned bundle_chars=…` が出て、束ねがルナへ戻り、**波ペインに波が出ない**
 - [ ] `do = "return"` の規則で、配送が起きず判定 1 行と `note` がルナのツール結果になる
 - [ ] `.margin` の規則が境目の依頼で当たらず、次の規則か `otherwise` へ進む

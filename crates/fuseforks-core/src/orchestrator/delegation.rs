@@ -525,6 +525,142 @@ pub(super) async fn run_plan(
     }
 }
 
+/// 並列配送と回収（Spec 62 D6 で `execute_wave` から切り出した純粋な部分）。
+///
+/// **波の記録・イベント・検証役を持たない。** `plan` はその外側（[`execute_wave`]）で担い、
+/// 判断役は持たない（`judge_contract` — 撒きで波ペインに波を出さない・`via` を化けさせない・
+/// 村の既定の検証役を同期のツール呼び出しの裏で走らせない）。
+///
+/// `on_resolved(index, state, elapsed_ms)` は**解決した順に 1 回ずつ**、次の回収の前に
+/// 待たれる。戻りは `(打ち切られたか, 入力順の答え)`。打ち切られたら残りの待ちを畳み、
+/// 答えの無い宛先は `None` のまま返す（部分的な束ねを作るかは呼び手が決める）。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "deliver_and_wait と同じ因果の付随物を運ぶ（予算・打ち切り・参加者・待ちの連鎖）"
+)]
+pub(super) async fn fanout_and_wait<F, Fut>(
+    shared: &Arc<Shared>,
+    from: &Endpoint,
+    tasks: &[(AgentId, String)],
+    next_hop: u8,
+    parent: &tokio_util::sync::CancellationToken,
+    budget: Option<&Arc<BudgetPool>>,
+    participants: Option<&Participants>,
+    waiting: &[AgentId],
+    via: &'static str,
+    auto_approve_plans: bool,
+    mut on_resolved: F,
+) -> (bool, Vec<Option<String>>)
+where
+    F: FnMut(usize, PlanTaskState, u64) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    // 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
+    // 直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
+    // 並列なのは**配送**であって実行ではない。各エージェントの受信箱は
+    // 1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
+    // タスクの所要はここで測る — deliver_and_wait に計時を入れない
+    // （ask に plan の観測の関心を背負わせない）。
+    let mut set = tokio::task::JoinSet::new();
+    for (index, (target, message)) in tasks.iter().enumerate() {
+        let shared = Arc::clone(shared);
+        let from = from.clone();
+        let target = target.clone();
+        let message = message.clone();
+        let parent = parent.clone();
+        // 波の全タスクが**同一の**プールを指す（clone は Arc の複製であって
+        // プールの複製ではない）。タスクごとに新しいプールを作ると天井が
+        // 人数倍に化ける — delegation-fanout race（token_budget の pool）。
+        let budget = budget.cloned();
+        // 参加者の集合も波の全タスクが同一の Arc を指す。**答えを返した
+        // タスクだけが自分を書き込む**ので、波の中で誰が答えたかがそのまま残る。
+        let participants = participants.cloned();
+        // 待ち手の連鎖も全タスクで同じ（追加は deliver_and_wait が行う）。
+        let waiting = waiting.to_vec();
+        set.spawn(async move {
+            let task_started = std::time::Instant::now();
+            let (answer, state) = deliver_and_wait(
+                &shared,
+                &from,
+                &target,
+                &message,
+                next_hop,
+                &parent,
+                budget.as_ref(),
+                participants.as_ref(),
+                &waiting,
+                via,
+                auto_approve_plans,
+            )
+            .await;
+            (index, answer, state, task_started.elapsed().as_millis() as u64)
+        });
+    }
+
+    // 進行役のターンが切られたら、波の待ちもここで畳む（Spec 10 — U2）。
+    // 周回境界の検査だけでは、最悪 ask_timeout（村の設定・既定 600 秒）が割り込み不能の
+    // まま残る。ワーカー側は封筒の子トークンが同じ cancel で連鎖して止まるので、
+    // ここで待ち続けても新しい答えは（打ち切りの報告以外）もう来ない。
+    let mut wave_interrupted = false;
+    let mut answers: Vec<Option<String>> = vec![None; tasks.len()];
+    loop {
+        tokio::select! {
+            biased;
+
+            () = parent.cancelled() => {
+                wave_interrupted = true;
+                break;
+            }
+            joined = set.join_next() => {
+                let Some(joined) = joined else { break };
+                match joined {
+                    Ok((index, answer, state, elapsed_ms)) => {
+                        on_resolved(index, state, elapsed_ms).await;
+                        answers[index] = Some(answer);
+                    }
+                    // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
+                    // 記録上は finish_wave が Running を NoAnswer に倒す。
+                    Err(err) => tracing_note(&err),
+                }
+            }
+        }
+    }
+
+    if wave_interrupted {
+        // set の drop で残りの待ちを畳む。配送済みの封筒はそのまま — 受け手は
+        // 子トークンで自分の周回境界（または着手時）に止まる。
+        drop(set);
+    }
+    (wave_interrupted, answers)
+}
+
+/// 答えを入力順に束ねる（`plan` と判断役の撒きが共有する 1 実装）。
+///
+/// 見出しは `agent_id（表示名）` — 表示名だけにしないのは、表示名の一意性がどこも
+/// 保証されていないから（同名が 2 体いるとどちらの答えか判別できなくなる）。
+/// **配送できなかった宛先も落とさない** — `deliver_and_wait` が返した理由の本文
+/// （予算切れ・待ちの輪の拒否）をその見出しの下に置く。答えが無い（タスクが落ちた）
+/// 宛先は定型文。
+pub(super) fn bundle_answers(
+    tasks: &[(AgentId, String)],
+    answers: Vec<Option<String>>,
+    display_of: &std::collections::HashMap<AgentId, String>,
+) -> String {
+    tasks
+        .iter()
+        .zip(answers)
+        .map(|((target, _), answer)| {
+            let display = display_of
+                .get(target)
+                .map(String::as_str)
+                .unwrap_or_else(|| target.as_str());
+            let body = answer.unwrap_or_else(|| "答えの取得中に問題が起きました。".to_owned());
+            format!("## {target}（{display}）\n{body}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// 波の実行の 1 実装（配送 → 回収 → 束ね。Spec 43 で二相化した際に
 /// `run_plan` から切り出した — ターンの中（ツール結果）とターンの外
 /// （dispatch）の 2 経路がここを共有する）。
@@ -551,96 +687,47 @@ async fn execute_wave(
     // 束ねの検証役（Spec 53）。**解決は呼び手が行う**（凍結 2 — ここでは読まない）。
     verifier: Option<AgentId>,
 ) -> Option<String> {
-    // 並列配送。JoinSet で各タスクを実行時へ載せる — ここが `ask_*` の
-    // 直列委譲との唯一の構造的な差で、壁時計が人数倍にならない理由。
-    // 並列なのは**配送**であって実行ではない。各エージェントの受信箱は
-    // 1 本なので、ワーカーが別の仕事で塞がっていればその分だけ待つ。
-    // タスクの所要はここで測る — deliver_and_wait に計時を入れない
-    // （ask に plan の観測の関心を背負わせない）。
-    let mut set = tokio::task::JoinSet::new();
-    for (index, (target, message)) in wave_tasks.iter().enumerate() {
-        let shared = Arc::clone(shared);
-        let from = Endpoint::Agent { id: from.clone() };
-        let target = target.clone();
-        let message = message.clone();
-        let parent = parent.clone();
-        // 波の全タスクが**同一の**プールを指す（clone は Arc の複製であって
-        // プールの複製ではない）。タスクごとに新しいプールを作ると天井が
-        // 人数倍に化ける — delegation-fanout race（token_budget の pool）。
-        let budget = budget.cloned();
-        // 参加者の集合も波の全タスクが同一の Arc を指す。**答えを返した
-        // タスクだけが自分を書き込む**ので、波の中で誰が答えたかがそのまま残る。
-        let participants = participants.cloned();
-        // 待ち手の連鎖も全タスクで同じ（追加は deliver_and_wait が行う）。
-        let waiting = waiting.to_vec();
-        set.spawn(async move {
-            let task_started = std::time::Instant::now();
-            let (answer, state) = deliver_and_wait(
-                &shared,
-                &from,
-                &target,
-                &message,
-                next_hop,
-                &parent,
-                budget.as_ref(),
-                participants.as_ref(),
-                &waiting,
-                "plan",
-                auto_approve_plans,
-            )
-            .await;
-            (index, answer, state, task_started.elapsed().as_millis() as u64)
-        });
-    }
-
-    // 進行役のターンが切られたら、波の待ちもここで畳む（Spec 10 — U2）。
-    // 周回境界の検査だけでは、最悪 ask_timeout（村の設定・既定 600 秒）が割り込み不能の
-    // まま残る。ワーカー側は封筒の子トークンが同じ cancel で連鎖して止まるので、
-    // ここで待ち続けても新しい答えは（打ち切りの報告以外）もう来ない。
-    let mut wave_interrupted = false;
-    let mut answers: Vec<Option<String>> = vec![None; wave_tasks.len()];
-    loop {
-        tokio::select! {
-            biased;
-
-            () = parent.cancelled() => {
-                wave_interrupted = true;
-                break;
+    // 並列配送と回収は `fanout_and_wait` の 1 実装（Spec 62 D6 — 判断役の撒きと共有する）。
+    // **波の記録とイベントはこの側の仕事**なので、解決のたびに呼ばれる hook で刻む
+    // （解決した順に記録と event を刻む。セルは波の完了を待たず個別に色が変わる —
+    // 全滅まで灰色、にしない）。
+    let from_endpoint = Endpoint::Agent { id: from.clone() };
+    let (wave_interrupted, answers) = fanout_and_wait(
+        shared,
+        &from_endpoint,
+        wave_tasks,
+        next_hop,
+        parent,
+        budget,
+        participants,
+        waiting,
+        "plan",
+        auto_approve_plans,
+        |index, state, elapsed_ms| {
+            let shared = Arc::clone(shared);
+            let to = wave_tasks[index].0.clone();
+            async move {
+                shared
+                    .plan_waves
+                    .write()
+                    .await
+                    .resolve_task(plan_id, &to, state, elapsed_ms);
+                shared.emit(CoreEvent::PlanTaskResolved {
+                    plan_id,
+                    to,
+                    state,
+                    elapsed_ms,
+                });
             }
-            joined = set.join_next() => {
-                let Some(joined) = joined else { break };
-                match joined {
-                    Ok((index, answer, state, elapsed_ms)) => {
-                        // 解決した順に記録と event を刻む。セルは波の完了を待たず
-                        // 個別に色が変わる（全滅まで灰色、にしない）。
-                        let to = wave_tasks[index].0.clone();
-                        shared
-                            .plan_waves
-                            .write()
-                            .await
-                            .resolve_task(plan_id, &to, state, elapsed_ms);
-                        shared.emit(CoreEvent::PlanTaskResolved {
-                            plan_id,
-                            to,
-                            state,
-                            elapsed_ms,
-                        });
-                        answers[index] = Some(answer);
-                    }
-                    // タスク自体が落ちた（パニック）。1 件の異常で波ごと落とさない。
-                    // 記録上は finish_wave が Running を NoAnswer に倒す。
-                    Err(err) => tracing_note(&err),
-                }
-            }
-        }
-    }
+        },
+    )
+    .await;
 
     if wave_interrupted {
-        // set の drop で残りの待ちを畳む。配送済みの封筒はそのまま — ワーカーは
+        // 残りの待ちは fanout_and_wait が畳んだ。配送済みの封筒はそのまま — ワーカーは
         // 子トークンで自分の周回境界（または着手時）に止まる。答えは受け取らない
         // （部分的な束ねを作らない — 束ねると次のターンの進行役が「全員から
         // 答えが揃った」と誤読する）。
-        drop(set);
 
         // 未解決のタスクを interrupted で確定させ、波を閉じる。倒し先が
         // no_answer でないのは、答えなかったのではなく止めさせたから。
@@ -687,19 +774,7 @@ async fn execute_wave(
     // 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
     // 表示名の一意性がどこも保証されていないから（同名が 2 体いると
     // どちらの答えか判別できなくなる）。順序は入力順に戻す。
-    let bundle = wave_tasks
-        .iter()
-        .zip(answers)
-        .map(|((target, _), answer)| {
-            let display = display_of
-                .get(target)
-                .map(String::as_str)
-                .unwrap_or_else(|| target.as_str());
-            let body = answer.unwrap_or_else(|| "答えの取得中に問題が起きました。".to_owned());
-            format!("## {target}（{display}）\n{body}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let bundle = bundle_answers(wave_tasks, answers, display_of);
 
     // 束ねの大きさを記録する（Spec 04 Notes 7 の「実測してから決める」の実測側）。
     // 束ねは進行役の履歴に積まれ、以後の波のたびに入力として運ばれる —
