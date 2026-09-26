@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::judge::{Answer, Judge, JudgeError, JudgeReport, Question};
 use crate::llm::retry::{self, RetryClass, Verdict};
 use crate::prune::{ParagraphScorer, ScoreError, ScoreReport};
 
@@ -203,12 +204,23 @@ struct RawAnswer {
     ty: String,
     #[serde(default)]
     noul: Option<f64>,
+    /// Choice の選ばれた鍵（Spec 62）。
+    #[serde(default)]
+    choice: Option<String>,
+    /// Score の期待値（**0 始まりの小数** — Spec 62 P0 実測）。
+    #[serde(default)]
+    score: Option<f64>,
+    /// Choice は鍵ごと、Score は `"0"` 始まりの段階ごとの確率。
+    #[serde(default)]
+    probabilities: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct JevUsage {
     #[serde(default)]
     input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
 }
 
 /// 受理した答え。v1 は Noul のみ。
@@ -283,6 +295,9 @@ pub enum JevError {
     },
     /// 接続・タイムアウト。
     Http(String),
+    /// 入力が上限を超えた（400 の本文に `max_tokens_exceeded` — Spec 62 P0 実測）。
+    /// 再送しても同じ。
+    TooLarge,
 }
 
 impl JevError {
@@ -292,9 +307,9 @@ impl JevError {
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Api { class, .. } => retry::verdict(*class) == Verdict::Retry,
-            // 接続の失敗は一過性。解釈できない応答は再送しても同じ。
+            // 接続の失敗は一過性。解釈できない応答と上限超えは再送しても同じ。
             Self::Http(_) => true,
-            Self::Parse(_) => false,
+            Self::Parse(_) | Self::TooLarge => false,
         }
     }
 }
@@ -307,6 +322,7 @@ impl std::fmt::Display for JevError {
                 write!(f, "Jev が status={status} を返した (class={})", class.as_str())
             }
             Self::Http(detail) => write!(f, "Jev への接続に失敗: {detail}"),
+            Self::TooLarge => f.write_str("Jev の入力が上限を超えた"),
         }
     }
 }
@@ -360,27 +376,157 @@ impl JevScorer {
         basis: &str,
         batch: &[(usize, &str)],
     ) -> Result<JevAnswers, JevError> {
-        let body = encode(&self.config.model, basis, batch);
+        let raw = self.post(&encode(&self.config.model, basis, batch)).await?;
+        decode(&raw)
+    }
+
+    /// 1 回投げて 2xx の本文を返す。段落の採点と判断役の 2 経路が共有する。
+    async fn post<B: Serialize + ?Sized>(&self, body: &B) -> Result<String, JevError> {
         let resp = self
             .http
             .post(self.config.endpoint())
             .bearer_auth(&self.config.api_token)
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(|e| JevError::Http(e.to_string()))?;
 
         let status = resp.status().as_u16();
         if !resp.status().is_success() {
-            // 本文は**捨てる**。コードの照合には使わず、ログにも出さない
+            // 本文は**上限超えの印を探すためだけに読み、捨てる**。ログにもエラーにも載せない
             // （Cloudflare の本文は受信ヘッダーをエコーすることがある = #71 の系譜）。
-            return Err(JevError::Api {
-                status,
-                class: retry::classify(status, None),
-            });
+            let body = resp.text().await.unwrap_or_default();
+            return Err(api_error(status, &body));
         }
-        let raw = resp.text().await.map_err(|e| JevError::Http(e.to_string()))?;
-        decode(&raw)
+        resp.text().await.map_err(|e| JevError::Http(e.to_string()))
+    }
+
+    /// 判断役の 1 回（一過性の失敗だけ再送する）。
+    async fn judge_with_retries(&self, body: &serde_json::Value) -> Result<JudgeReport, JevError> {
+        let mut attempt = 0u32;
+        loop {
+            match self.post(body).await.and_then(|raw| decode_judge(&raw)) {
+                Ok(report) => return Ok(report),
+                Err(e) => {
+                    if attempt >= MAX_RETRIES || !e.is_transient() {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(Duration::from_secs(1u64 << attempt)).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+}
+
+/// 失敗したステータスを分類する（純関数）。**本文から見るのは上限超えの印 1 つだけ**
+/// （Spec 62 P0 実測 — 400・`code 7003`・`"error_type":"max_tokens_exceeded"`）。
+#[must_use]
+pub fn api_error(status: u16, body: &str) -> JevError {
+    if status == 400 && body.contains("max_tokens_exceeded") {
+        return JevError::TooLarge;
+    }
+    JevError::Api {
+        status,
+        class: retry::classify(status, None),
+    }
+}
+
+/// 判断役の送信ボディを組む（純関数。Spec 62 P0 で確かめた形）。
+///
+/// Choice の `criteria` は「鍵 → 説明文」の map（**ファイルの順**。ワークスペースの serde_json は
+/// `preserve_order`）、Score は説明文の配列（0 始まり）、Noul は `{ "true", "false" }`。
+#[must_use]
+pub fn encode_judge(
+    model: &str,
+    message: &str,
+    questions: &BTreeMap<String, Question>,
+) -> serde_json::Value {
+    let mut qs = serde_json::Map::new();
+    for (name, question) in questions {
+        let q = match question {
+            Question::Choice { ask, options } => {
+                let criteria: serde_json::Map<String, serde_json::Value> = options
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect();
+                serde_json::json!({ "type": "choice", "instructions": ask, "criteria": criteria })
+            }
+            Question::Score { ask, levels } => {
+                serde_json::json!({ "type": "score", "instructions": ask, "criteria": levels })
+            }
+            Question::Noul { ask, true_if, false_if } => serde_json::json!({
+                "type": "noul",
+                "instructions": ask,
+                "criteria": { "true": true_if, "false": false_if },
+            }),
+        };
+        qs.insert(name.clone(), q);
+    }
+    serde_json::json!({
+        "model": model,
+        "input": { "state": { "message": message }, "questions": qs },
+    })
+}
+
+/// 判断役の応答を解く（純関数）。**形の合わない答えは載せない**（未回答として扱われる —
+/// `judge::JudgeFile::evaluate` が規則を評価しない）。
+///
+/// # Errors
+///
+/// JSON として読めない、または `result` が無いとき。
+pub fn decode_judge(raw: &str) -> Result<JudgeReport, JevError> {
+    let env: CfEnvelope =
+        serde_json::from_str(raw).map_err(|e| JevError::Parse(format!("{e}: {}", head(raw))))?;
+    let payload = env
+        .result
+        .and_then(|r| r.result)
+        .ok_or_else(|| JevError::Parse(format!("応答に result が無い: {}", head(raw))))?;
+
+    let prob = |v: &serde_json::Value| v.as_f64();
+    let mut answers = BTreeMap::new();
+    for (name, a) in payload.answers {
+        let answer = match a.ty.as_str() {
+            "noul" => a.noul.map(Answer::Noul),
+            "choice" => match (a.choice, a.probabilities) {
+                (Some(choice), Some(ps)) => ps
+                    .iter()
+                    .map(|(k, v)| prob(v).map(|p| (k.clone(), p)))
+                    .collect::<Option<BTreeMap<String, f64>>>()
+                    .map(|probabilities| Answer::Choice { choice, probabilities }),
+                _ => None,
+            },
+            "score" => match (a.score, a.probabilities) {
+                // 段階の鍵は "0" から隙間なく並ぶはず。1 つでも欠ければ未回答へ倒す。
+                (Some(mean0), Some(ps)) => (0..ps.len())
+                    .map(|i| ps.get(&i.to_string()).and_then(prob))
+                    .collect::<Option<Vec<f64>>>()
+                    .map(|probabilities| Answer::Score { mean0, probabilities }),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(answer) = answer {
+            answers.insert(name, answer);
+        }
+    }
+    let (input_tokens, output_tokens) =
+        payload.usage.map_or((0, 0), |u| (u.input_tokens, u.output_tokens));
+    Ok(JudgeReport { model: payload.model, answers, input_tokens, output_tokens })
+}
+
+#[async_trait::async_trait]
+impl Judge for JevScorer {
+    async fn judge(
+        &self,
+        message: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> Result<JudgeReport, JudgeError> {
+        let body = encode_judge(&self.config.model, message, questions);
+        self.judge_with_retries(&body).await.map_err(|e| match e {
+            JevError::TooLarge => JudgeError::TooLarge,
+            other => JudgeError::Failed(other.to_string()),
+        })
     }
 }
 
@@ -665,6 +811,90 @@ mod tests {
         }
     }
 
+    // ---- 判断役（Spec 62） ----
+
+    fn judge_questions() -> BTreeMap<String, Question> {
+        BTreeMap::from([
+            (
+                "kind".to_owned(),
+                Question::Choice {
+                    ask: "種類".into(),
+                    options: vec![
+                        ("research".into(), "調査".into()),
+                        ("implement".into(), "実装".into()),
+                        ("other".into(), "その他".into()),
+                    ],
+                },
+            ),
+            (
+                "size".to_owned(),
+                Question::Score { ask: "量".into(), levels: vec!["小".into(), "中".into(), "大".into()] },
+            ),
+            (
+                "risky".to_owned(),
+                Question::Noul { ask: "危険".into(), true_if: "消す".into(), false_if: "読む".into() },
+            ),
+        ])
+    }
+
+    #[test]
+    fn encode_judge_matches_the_measured_shape() {
+        let body = encode_judge("typesafe/jev", "依頼の本文", &judge_questions());
+        assert_eq!(body["model"], "typesafe/jev");
+        assert_eq!(body["input"]["state"]["message"], "依頼の本文");
+        let qs = &body["input"]["questions"];
+        assert_eq!(qs["kind"]["type"], "choice");
+        assert_eq!(qs["kind"]["instructions"], "種類");
+        // Choice は map・ファイルの順。
+        let keys: Vec<&str> = qs["kind"]["criteria"].as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["research", "implement", "other"]);
+        // Score は配列（0 始まり）。
+        assert_eq!(qs["size"]["criteria"], serde_json::json!(["小", "中", "大"]));
+        assert_eq!(qs["risky"]["criteria"], serde_json::json!({ "true": "消す", "false": "読む" }));
+    }
+
+    /// Spec 62 P0 の実測応答（mixed）をそのまま解く。
+    #[test]
+    fn decode_judge_reads_the_measured_mixed_response() {
+        let raw = r#"{"result":{"result":{"model":"jev-1.13.0","answers":{"kind":{"type":"choice","choice":"implement","probabilities":{"other":0,"research":0,"implement":1},"confidence":1},"size":{"type":"score","score":1.89,"legend":{"0":"a","1":"b","2":"c"},"probabilities":{"0":0.01,"1":0.09,"2":0.9},"confidence":0.83},"risky":{"type":"noul","noul":0.08}},"usage":{"input_tokens":593,"output_tokens":69}}},"success":true}"#;
+        let report = decode_judge(raw).unwrap();
+        assert_eq!(report.model, "jev-1.13.0");
+        assert_eq!((report.input_tokens, report.output_tokens), (593, 69));
+        assert_eq!(
+            report.answers["kind"],
+            Answer::Choice {
+                choice: "implement".into(),
+                probabilities: BTreeMap::from([
+                    ("implement".into(), 1.0),
+                    ("other".into(), 0.0),
+                    ("research".into(), 0.0),
+                ]),
+            }
+        );
+        assert_eq!(report.answers["size"], Answer::Score { mean0: 1.89, probabilities: vec![0.01, 0.09, 0.9] });
+        assert_eq!(report.answers["risky"], Answer::Noul(0.08));
+    }
+
+    #[test]
+    fn decode_judge_drops_malformed_answers_instead_of_zeroing_them() {
+        // Score の段階に隙間 / Choice に確率が無い → どちらも載せない（未回答）。
+        let raw = r#"{"result":{"result":{"model":"m","answers":{"size":{"type":"score","score":1.0,"probabilities":{"0":0.5,"2":0.5}},"kind":{"type":"choice","choice":"x"}}}}}"#;
+        let report = decode_judge(raw).unwrap();
+        assert!(report.answers.is_empty(), "{:?}", report.answers);
+    }
+
+    #[test]
+    fn a_400_with_max_tokens_exceeded_is_too_large_and_not_transient() {
+        let body = r#"{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":{\"error_type\":\"max_tokens_exceeded\"}}","code":7003}],"success":false}"#;
+        let e = api_error(400, body);
+        assert_eq!(e, JevError::TooLarge);
+        assert!(!e.is_transient());
+        // 他の 400 はいつもの分類（上限超えではない）。
+        assert!(matches!(api_error(400, "{\"errors\":[]}"), JevError::Api { status: 400, .. }));
+        // 400 以外に同じ語があっても上限超えにしない。
+        assert!(matches!(api_error(500, body), JevError::Api { status: 500, .. }));
+    }
+
     /// **クレジット不足（402）は一過性でない** — 残高は再送で増えない。
     /// 判定は Spec 52 の表に委ねてあるので、ここで 2 つ目の規則を持たない。
     #[test]
@@ -685,6 +915,38 @@ mod tests {
         }
         // 解釈できない応答は再送しても同じ。
         assert!(!JevError::Parse("x".into()).is_transient());
+    }
+
+    /// 判断役の口を実鍵で 1 回だけ叩く（Spec 62）。3 型を混ぜた 1 回が、decode を通って
+    /// 全部の答えになることを見る。**既定では走らない**。
+    #[tokio::test]
+    #[ignore = "実鍵と課金が要る"]
+    async fn live_judges_mixed_questions() {
+        let (Ok(account_id), Ok(api_token)) = (
+            std::env::var("JEV_ACCOUNT_ID"),
+            std::env::var("JEV_API_TOKEN"),
+        ) else {
+            panic!("JEV_ACCOUNT_ID / JEV_API_TOKEN が要る");
+        };
+        let scorer = JevScorer::new(JevConfig {
+            account_id,
+            api_token,
+            base_url: DEFAULT_BASE_URL.into(),
+            model: DEFAULT_MODEL.into(),
+            threshold: 0.2,
+        })
+        .expect("client");
+        let report = scorer
+            .judge(
+                "turn.rs の connected_agents を振り分けて、判断役の ID を HandoffTools から外す修正を入れてください。",
+                &judge_questions(),
+            )
+            .await
+            .expect("判定できる");
+        println!("{report:?}");
+        assert_eq!(report.answers.len(), 3, "3 型とも答えが返る");
+        assert!(matches!(report.answers["size"], Answer::Score { ref probabilities, .. } if probabilities.len() == 3));
+        assert!(report.input_tokens > 0);
     }
 
     /// 実鍵で 1 回だけ叩く。**既定では走らない**（`--ignored` で明示したときだけ）。

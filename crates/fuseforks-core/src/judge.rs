@@ -829,6 +829,46 @@ fn check_cmp(
 }
 
 // ---------------------------------------------------------------------------
+// 判断モデルの口（コアは trait だけを知る — D11）
+// ---------------------------------------------------------------------------
+
+/// 判断モデルへの 1 回の問い合わせの結果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct JudgeReport {
+    /// サーバーが名乗ったモデル版（例 `jev-1.13.0`）。
+    pub model: String,
+    /// 問いの名前 → 答え。**未回答の問いは載せない**（0 に潰さない）。
+    pub answers: BTreeMap<String, Answer>,
+    /// 入力トークン（計器へ出す。予算には入れない）。
+    pub input_tokens: u64,
+    /// 出力トークン（Jev は出力が無料でも数を返す — P0 実測）。
+    pub output_tokens: u64,
+}
+
+/// 判断モデルに判定させられなかった理由。**文面は計器に出さない**（#71）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JudgeError {
+    /// 入力が上限を超えた（Jev の 400 `max_tokens_exceeded` — P0 実測）。
+    TooLarge,
+    /// それ以外の失敗（接続・ステータス・解釈）。中身は診断用。
+    Failed(String),
+}
+
+/// 判断モデルの口。コアはこの trait だけを知り、Jev の実装は GUI 側が差し込む
+/// （Spec 59 の `ParagraphScorer` と同じ形。鍵も共有する）。
+///
+/// **締め切りは呼び出し側が持つ**（`tokio::time::timeout`）— 口の中で待ちを抱えない。
+#[async_trait::async_trait]
+pub trait Judge: Send + Sync {
+    /// 全部の問いを 1 回で判定させる（`state = { "message": message }`）。
+    async fn judge(
+        &self,
+        message: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> Result<JudgeReport, JudgeError>;
+}
+
+// ---------------------------------------------------------------------------
 // 答えと評価
 // ---------------------------------------------------------------------------
 
