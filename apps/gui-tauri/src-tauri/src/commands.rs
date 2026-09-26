@@ -238,6 +238,53 @@ pub async fn delete_group(state: State<'_, AppState>, group_id: AgentGroupId) ->
     state.orchestrator.remove_group(&group_id).await
 }
 
+/// 判断役の一覧と有効かどうか（Spec 62。有効の述語は読むたびにコアが求める）。
+#[tauri::command]
+pub async fn list_judges(state: State<'_, AppState>) -> CoreResult<Vec<fuseforks_core::judge::JudgeView>> {
+    Ok(state.orchestrator.judges().await)
+}
+
+/// 判断役を作る。**ID は画面が導く**（サーヴァントと同じ `deriveId`。衝突はコアも拒否する）。
+/// `judge.toml` が無ければ雛形を書く。
+#[tauri::command]
+pub async fn create_judge(state: State<'_, AppState>, spec: fuseforks_core::model::JudgeSpec) -> CoreResult<()> {
+    state.orchestrator.create_judge(spec).await
+}
+
+/// 判断役の表示名と並びを差し替える。
+#[tauri::command]
+pub async fn update_judge(state: State<'_, AppState>, spec: fuseforks_core::model::JudgeSpec) -> CoreResult<()> {
+    state.orchestrator.update_judge(spec).await
+}
+
+/// 判断役を消す（線・座標・`judges/<id>/` も）。
+#[tauri::command]
+pub async fn delete_judge(state: State<'_, AppState>, judge_id: AgentId) -> CoreResult<()> {
+    state.orchestrator.delete_judge(&judge_id).await
+}
+
+/// `judge.toml` の本文。**ID で受けてパスは受けない**（`ConfigFileKind` と同じ規律）。
+#[tauri::command]
+pub async fn read_judge_file(state: State<'_, AppState>, judge_id: AgentId) -> CoreResult<String> {
+    state.orchestrator.read_judge_file(&judge_id).await
+}
+
+/// `judge.toml` を保存する。検査に落ちたら `INVALID_JUDGE_FILE` で拒否し、書かない。
+#[tauri::command]
+pub async fn save_judge_file(state: State<'_, AppState>, judge_id: AgentId, text: String) -> CoreResult<()> {
+    state.orchestrator.save_judge_file(&judge_id, &text).await
+}
+
+/// 「試す」— 編集中の本文とサンプルの文で判定だけを行う。**配送しない。押したときだけ外へ出る。**
+#[tauri::command]
+pub async fn try_judge(
+    state: State<'_, AppState>,
+    text: String,
+    message: String,
+) -> CoreResult<fuseforks_core::orchestrator::JudgeTrial> {
+    state.orchestrator.try_judge(&text, &message).await
+}
+
 /// 動かしたカードの所属（`commit_agent_drop` の `regroup`）。
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

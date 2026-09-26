@@ -145,6 +145,14 @@ pub fn run() {
             commands::upsert_group,
             commands::delete_group,
             commands::commit_agent_drop,
+            // 判断役（Spec 62）
+            commands::list_judges,
+            commands::create_judge,
+            commands::update_judge,
+            commands::delete_judge,
+            commands::read_judge_file,
+            commands::save_judge_file,
+            commands::try_judge,
             // 設定ファイル
             commands::read_agent_config,
             commands::write_agent_config,

@@ -234,6 +234,19 @@ pub async fn apply(
     blocked: bool,
     secrets: &dyn SecretStore,
 ) -> bool {
+    // 判断役（Spec 62）の判断モデルは**鍵があれば差し込む**（圧縮のチェックとは独立）。判断役を
+    // 1 つも作らない村では呼ばれないので、ここで外へ 1 バイトも出ないのは同じ。
+    let judge_ready = can_enable(config, stored_token(secrets).is_some(), blocked);
+    let judge = if judge_ready {
+        scorer_for(config, secrets)
+            .map(|j| Arc::new(j) as Arc<dyn fuseforks_core::judge::Judge>)
+            .map_err(|reason| fuseforks_core::note!("jev: 判断モデルを組めませんでした。判断役は無効です（{reason}）"))
+            .ok()
+    } else {
+        None
+    };
+    orchestrator.set_judge(judge).await;
+
     if !is_active(config, stored_token(secrets).is_some(), blocked) {
         orchestrator.set_paragraph_scorer(None).await;
         return false;

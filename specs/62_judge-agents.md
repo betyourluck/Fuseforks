@@ -534,6 +534,12 @@ Choice / Score を送った記録はどちらのリポジトリにも無い（20
 
 ### P2 — GUI
 
+**進捗（2026-09-27 のセッション終わり）**: Rust 側だけ着地（`commands.rs` に IPC 7 本 = `list_judges` / `create_judge` /
+`update_judge` / `delete_judge` / `read_judge_file` / `save_judge_file` / `try_judge`、`lib.rs` に登録、
+`jev_settings::apply` が**鍵があれば判断モデルを差し込む**（圧縮のチェックとは独立。`can_enable` で判定））。
+GUI crate のテスト 33 本が緑。**画面側（下の 6 項目）は未着手** — 次は `lib/ipc.ts` と `types.ts` から。
+
+
 - [ ] 左ペインの「判断特化」と作成（雛形）・削除
 - [ ] 編集ダイアログ（`CodeEditor` + 「試す」の入力欄と結果）。`selectedAgentId` を変えない
 - [ ] 地図のノードの形・クリックでダイアログ・破線の辺（有効な判断役の `to` から合成）
