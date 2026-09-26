@@ -311,7 +311,8 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
   const targetId = node.getAttribute("data-kizuna-node") as AgentId | null;
   if (!source || !targetId) return;
 
-  const next = tieAddition(state.agents, source.id, targetId);
+  // 判断役のノードにも落とせる（Spec 62 D9 — サーヴァント → 判断役の線は今の線と同じ引き方）。
+  const next = tieAddition(state.agents, source.id, targetId, state.judges.map((j) => j.id));
   if (!next) {
     // 接続済み（方向付き）か自分自身。無音にしない（D3）—
     // 「届いたが張られなかった」ことをノードのパルスで返す。

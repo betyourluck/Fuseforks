@@ -21,6 +21,7 @@ import { avatarHue, avatarInitial } from "../lib/avatar";
 import { compactNumber } from "../lib/format";
 import { fileToWebpIcon } from "../lib/iconImage";
 import * as ipc from "../lib/ipc";
+import { judgesInOrder } from "../lib/judges";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
@@ -45,6 +46,12 @@ const agent = computed(
 const others = computed(() =>
   state.agents.filter((a) => a.id !== props.agentId),
 );
+
+/**
+ * 判断役（Spec 62 D9）。サーヴァント → 判断役の線は、この画面のチェックでも引ける。
+ * 判断役 → サーヴァントは `judge.toml` の `to` が正本なので、ここには出さない。
+ */
+const judgeTargets = computed(() => judgesInOrder(state.judges));
 
 const draft = ref<AgentSpec | null>(null);
 
@@ -755,7 +762,23 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
               />
               <span>{{ other.name }}</span>
             </label>
-            <p v-if="!others.length" class="text-[11px] text-ink-dim">
+            <label
+              v-for="judge in judgeTargets"
+              :key="judge.id"
+              class="flex items-center gap-2 text-[12px]"
+              :data-connect-judge="judge.id"
+            >
+              <input
+                type="checkbox"
+                :checked="draft.connectedAgents.includes(judge.id)"
+                @change="
+                  toggleConnection(judge.id, ($event.target as HTMLInputElement).checked)
+                "
+              />
+              <span>{{ judge.name }}</span>
+              <span class="text-[10px] text-ink-dim">{{ $t("judges.connectionTag") }}</span>
+            </label>
+            <p v-if="!others.length && !judgeTargets.length" class="text-[11px] text-ink-dim">
               {{ $t("agentSettings.othersEmpty") }}
             </p>
           </div>

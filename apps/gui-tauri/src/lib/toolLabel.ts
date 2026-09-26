@@ -23,6 +23,11 @@
 /** 委譲ツールの接頭辞。orchestrator が宛先ごとに合成する。 */
 const ASK_PREFIX = "ask_";
 const TRANSFER_PREFIX = "transfer_to_";
+/**
+ * 判断役へ判定させるツールの接頭辞（Spec 62 D7。Rust の `JUDGE_TOOL_PREFIX`）。
+ * 答えるのは判断役ではなく、判断役が選んだ相手か判定の結果なので、`ask_*` と別の族。
+ */
+const JUDGE_PREFIX = "judge_";
 
 /**
  * この村が名付けたツールの表示名（辞書の鍵の末尾）。
@@ -73,6 +78,9 @@ export function toolLabel(tool: string, nameOf: (agentId: string) => string): To
       key: "tools.transfer",
       target: nameOf(tool.slice(TRANSFER_PREFIX.length)),
     };
+  }
+  if (tool.startsWith(JUDGE_PREFIX)) {
+    return { kind: "known", key: "tools.judge", target: nameOf(tool.slice(JUDGE_PREFIX.length)) };
   }
   if (KNOWN_TOOLS.has(tool)) {
     return { kind: "known", key: `tools.${tool}` };

@@ -353,7 +353,8 @@
       "return": "誰にも渡さず判定だけ返す",
       "undecided": "判定できませんでした（{reason}）",
       "meta": "モデル {model} ・ 入力 {tokens} トークン"
-    }
+    },
+    "connectionTag": "（判断特化）"
   },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",
@@ -1216,6 +1217,7 @@
     "room_log": "会話をたどる",
     "handoff": "引き継ぐ",
     "ask": "{name} に尋ねる",
+    "judge": "{name} に判定させる",
     "transfer": "{name} へ引き継ぐ"
   },
   "closeConfirm": {

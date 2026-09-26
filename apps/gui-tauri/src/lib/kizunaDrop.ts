@@ -28,12 +28,17 @@ export function tieAddition(
   agents: readonly TieHolder[],
   sourceId: AgentId,
   targetId: AgentId,
+  /**
+   * サーヴァント以外に**受け側にだけ**なれる id（Spec 62 の判断役）。判断役は線を持たない
+   * （判断役 → サーヴァントの正本は `judge.toml` の `to`）ので、`source` には来ない。
+   */
+  receivers: readonly AgentId[] = [],
 ): AgentId[] | null {
   if (sourceId === targetId) return null;
 
   const source = agents.find((a) => a.id === sourceId);
   if (!source) return null;
-  if (!agents.some((a) => a.id === targetId)) return null;
+  if (!agents.some((a) => a.id === targetId) && !receivers.includes(targetId)) return null;
   if (source.connectedAgents.includes(targetId)) return null;
 
   return [...source.connectedAgents, targetId];

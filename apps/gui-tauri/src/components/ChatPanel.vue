@@ -317,9 +317,16 @@ function continuesTimeline(index: number): boolean {
   return false;
 }
 
-/** ツール実行の主体名。 */
+/**
+ * ツール実行の主体名。**判断役の名前も引く**（Spec 62 D7 — `judge_*` の表示で判断役の
+ * 表示名を解決する経路。ツール行の主語は呼び出し元のサーヴァントのまま）。
+ */
 function toolActor(agentId: AgentId): string {
-  return state.agents.find((a) => a.id === agentId)?.name ?? agentId;
+  return (
+    state.agents.find((a) => a.id === agentId)?.name ??
+    state.judges.find((j) => j.id === agentId)?.name ??
+    agentId
+  );
 }
 
 /** ツール名の表示指示（2026-08-08）。委譲の宛先は表示名へ、引けなければ id のまま。 */

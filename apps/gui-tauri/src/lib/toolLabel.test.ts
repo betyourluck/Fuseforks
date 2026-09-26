@@ -72,6 +72,11 @@ describe("toolLabel", () => {
       key: "tools.ask",
       target: "ジェミー",
     });
+    expect(toolLabel("judge_router", nameOf)).toEqual({
+      kind: "known",
+      key: "tools.judge",
+      target: nameOf("router"),
+    });
     expect(toolLabel("transfer_to_agent_3", nameOf)).toEqual({
       kind: "known",
       key: "tools.transfer",

@@ -30,6 +30,11 @@ describe("tieAddition", () => {
     expect(tieAddition(agents, "a", "ghost")).toBeNull();
   });
 
+  it("判断役へは張れるが、判断役から張ることはない（Spec 62）", () => {
+    expect(tieAddition(agents, "a", "judge", ["judge"])).toEqual(["b", "judge"]);
+    expect(tieAddition(agents, "judge", "a", ["judge"])).toBeNull();
+  });
+
   it("元の配列を書き換えない", () => {
     tieAddition(agents, "a", "c");
     expect(agents[0].connectedAgents).toEqual(["b"]);

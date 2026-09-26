@@ -43,6 +43,8 @@ import { fitMargin } from "../lib/kizunaFit";
 import { visibleLayouts } from "../lib/kizunaSeed";
 import { visibleAgents, visibleEdges } from "../lib/agentGroups";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
+import { useJudgeDialog } from "../composables/useJudgeDialog";
+import { judgeEdges, judgeStatusText } from "../lib/judges";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -55,6 +57,7 @@ const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const hiddenGroups = useHiddenGroups();
 const { settings } = useUiSettings();
+const judgeDialog = useJudgeDialog();
 
 const graph = ref<InstanceType<typeof VNetworkGraph> | null>(null);
 const canvas = ref<HTMLElement | null>(null);
@@ -80,7 +83,19 @@ const MAX_ZOOM = 2;
  * 残すと Fit が関係ない位置へ寄る（実機 2026-09-08）。出し直せば置いた場所に戻る。
  */
 const visible = computed(() => visibleAgents(state.agents, state.groups, hiddenGroups.hidden));
-const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
+
+/**
+ * 判断役（Spec 62 D9）。**グループに入らないので常に見える。** ノードの形を変え
+ * （菱形・アバター無し）、押すと編集ダイアログが開く（選択状態は変えない）。
+ */
+const judgeIds = computed(() => new Set(state.judges.map((j) => j.id)));
+const isJudge = (id: string) => judgeIds.value.has(id);
+const judgeOf = (id: string) => state.judges.find((j) => j.id === id) ?? null;
+
+/** 地図に載る id（見えているサーヴァント + 判断役）。 */
+const visibleIds = computed(
+  () => new Set([...visible.value.map((a) => a.id), ...state.judges.map((j) => j.id)]),
+);
 
 /**
  * 可視集合が変わったら地図の部品を**作り直す**（`:key`）。
@@ -91,7 +106,7 @@ const visibleIds = computed(() => new Set(visible.value.map((a) => a.id)));
  * （`scalingObjects: true` の枝）、残った座標が Fit を狂わせていたわけではない —
  * #122 の真因はズームの clamp（`MAX_ZOOM` と `fit()` の余白を見よ）。
  */
-const visibleKey = computed(() => visible.value.map((a) => a.id).join(","));
+const visibleKey = computed(() => [...visibleIds.value].join(","));
 
 const nodes = computed<Nodes>(() => {
   const result: Nodes = {};
@@ -99,6 +114,9 @@ const nodes = computed<Nodes>(() => {
     // **`selected` を載せるのは `configs` が読むため。** 選択で半径が変わるので、
     // ここを持たせないと辺の端が旧い半径のまま刺さる。
     result[agent.id] = { name: agent.name, selected: agent.id === state.selectedAgentId };
+  }
+  for (const judge of state.judges) {
+    result[judge.id] = { name: judge.name, selected: false, judge: true };
   }
   return result;
 });
@@ -137,6 +155,19 @@ const edges = computed<Edges>(() => {
       orderOf,
     );
     result[id] = { source, target, bidirectional };
+  }
+
+  // 判断役 → サーヴァント（Spec 62 D9）。**正本は `judge.toml` の `to`** で、保存しない。
+  // **有効な判断役からしか描かない**（`judgeEdges`）。破線にするのは、色が既に通常の辺を
+  // 意味しているから。行き先が隠れたグループに居れば描かない（片端だけの線を作らない）。
+  for (const edge of judgeEdges(state.judges)) {
+    if (!visibleIds.value.has(edge.to)) continue;
+    result[`judge:${edge.from}->${edge.to}`] = {
+      source: edge.from,
+      target: edge.to,
+      bidirectional: false,
+      judge: true,
+    };
   }
 
   return result;
@@ -197,10 +228,7 @@ const layouts = reactive<Layouts>({ nodes: {} });
  * `node:dragend` でコアへ返し、コアの投影がここへ戻ってくる。
  */
 function syncLayouts(): void {
-  const next = visibleLayouts(
-    visible.value.map((a) => a.id),
-    state.topologyPositions,
-  );
+  const next = visibleLayouts([...visibleIds.value], state.topologyPositions);
 
   // 消えた個体と**隠れた個体**の座標は落とす（残すと辺の無い幽霊が描かれ続け、
   // Fit の外接矩形にも入る）。隠れた個体の座標は `state.topologyPositions` に残る。
@@ -211,7 +239,7 @@ function syncLayouts(): void {
 }
 
 watch(
-  () => [visible.value.map((a) => a.id).join(","), state.topologyPositions] as const,
+  () => [visibleKey.value, state.topologyPositions] as const,
   syncLayouts,
   { immediate: true, deep: true },
 );
@@ -254,7 +282,9 @@ const configs = defineConfigs({
       // **稼働中の個体から出ている辺は動く破線**（旧実装の踏襲）。
       // `animate` だけでは足りない — 破線でない線を流しても見た目が変わらない
       // ので、`dasharray` と対で与える。実機で「動かない」と出たのがこれ。
-      dasharray: (edge) => (edgeIsLive(edge as never, running) ? 6 : undefined),
+      // 判断役 → サーヴァントは静止した破線（Spec 62 D9）。稼働中の辺の「動く破線」とは
+      // 動きで分ける — 判断役は起動しないので、この線が流れることはない。
+      dasharray: (edge) => (edge.judge ? 4 : edgeIsLive(edge as never, running) ? 6 : undefined),
       animate: (edge) => edgeIsLive(edge as never, running),
     },
     hover: { width: (edge) => (edge.bidirectional ? 4 : 2.4) },
@@ -271,6 +301,8 @@ const configs = defineConfigs({
 });
 
 function ringClass(id: AgentId): string {
+  const judge = judgeOf(id);
+  if (judge) return judge.status.kind === "active" ? "is-judge" : "is-judge is-judge-off";
   if (id === state.selectedAgentId) return "is-selected";
   const agent = state.agents.find((a) => a.id === id);
   switch (agent?.status) {
@@ -287,7 +319,7 @@ function ringClass(id: AgentId): string {
 }
 
 function nameOf(id: AgentId): string {
-  return state.agents.find((a) => a.id === id)?.name ?? id;
+  return state.agents.find((a) => a.id === id)?.name ?? judgeOf(id)?.name ?? id;
 }
 
 /**
@@ -304,6 +336,14 @@ const hovered = ref<AgentId | null>(null);
 const detail = computed(
   () => state.agents.find((a) => a.id === hovered.value) ?? null,
 );
+
+/** 判断役のホバー（Spec 62 D9）。問いの文面は出さない — 状態と行き先の数だけ。 */
+const judgeDetail = computed(() => {
+  const judge = hovered.value ? judgeOf(hovered.value) : null;
+  if (!judge) return null;
+  const status = judgeStatusText(judge.status);
+  return { judge, status: t(status.key, status.params), active: status.active };
+});
 
 /**
  * パネルに出す役職名。引けなければ `null` で**バッジごと描かない**
@@ -369,7 +409,9 @@ async function removeEdge(edgeId: string): Promise<void> {
 }
 
 const handlers: EventHandlers = {
-  "node:click": ({ node }) => orchestrator.select(node as AgentId),
+  // 判断役は会話の相手ではないので選択状態に入れず、編集ダイアログを開く（Spec 62 D10）。
+  "node:click": ({ node }) =>
+    isJudge(node) ? judgeDialog.open(node as AgentId) : orchestrator.select(node as AgentId),
   "node:pointerover": ({ node }) => {
     hovered.value = node as AgentId;
   },
@@ -388,8 +430,9 @@ const handlers: EventHandlers = {
     pan.value = { x: position.x, y: position.y };
   },
   // まとめ表示のときは `edge` が無く `edges` が来るので、単体のときだけ切る。
+  // 判断役 → サーヴァントの線は `judge.toml` が正本なので、地図から切らない。
   "edge:click": ({ edge }) => {
-    if (edge) void removeEdge(edge);
+    if (edge && !edges.value[edge]?.judge) void removeEdge(edge);
   },
   // ドラッグの結果を `world.json` へ返す。**移動した個体だけ**を書く。
   "node:dragend": (positions) => {
@@ -542,6 +585,29 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
+      <aside
+        v-else-if="judgeDetail"
+        class="kizuna-hud pointer-events-none absolute right-2 top-2 z-10 w-60"
+      >
+        <div class="kizuna-hud-edge">
+          <div class="kizuna-hud-body">
+            <div class="kizuna-hud-title">JUDGE_PROFILE</div>
+            <div class="kizuna-hud-head">
+              <span class="kizuna-hud-tick" />
+              <span class="kizuna-hud-name">{{ judgeDetail.judge.name }}</span>
+            </div>
+            <div class="kizuna-hud-id">{{ judgeDetail.judge.id }}</div>
+            <div class="kizuna-hud-section">[JUDGE_STATUS]</div>
+            <dl class="kizuna-hud-rows">
+              <dt>STS</dt>
+              <dd :title="judgeDetail.status">[{{ judgeDetail.status }}]</dd>
+              <dt>DST</dt>
+              <dd class="tabular-nums">{{ judgeDetail.judge.targets.length }}</dd>
+            </dl>
+          </div>
+        </div>
+      </aside>
+
       <!--
         表示の操作（左下）。**Vue Flow の `Controls` と同じ位置と作法**に戻した
         （2026-08-13 利用者要望）。ヘッダへ文字のボタンとして置いていたが、
@@ -618,7 +684,35 @@ onBeforeUnmount(() => {
           ので、こちらが当たりさえすればイベントは届く。
         -->
         <template #override-node="{ nodeId, scale, config }">
-          <g :data-kizuna-node="nodeId" :class="['kizuna-node', ringClass(nodeId as AgentId)]">
+          <!-- 判断役（Spec 62 D9）。菱形・アバター無し。drop の当たりは同じ属性で取る。 -->
+          <g
+            v-if="isJudge(nodeId)"
+            :data-kizuna-node="nodeId"
+            :data-judge-node="nodeId"
+            :class="['kizuna-node', ringClass(nodeId as AgentId)]"
+          >
+            <polygon
+              class="kizuna-ring"
+              :points="`0,${-config.radius * scale} ${config.radius * scale},0 0,${config.radius * scale} ${-config.radius * scale},0`"
+            />
+            <text
+              class="kizuna-judge-mark"
+              text-anchor="middle"
+              dominant-baseline="central"
+              :font-size="14 * scale"
+            >
+              ?
+            </text>
+            <text
+              class="kizuna-name"
+              text-anchor="middle"
+              :y="(config.radius + 14) * scale"
+              :font-size="11 * scale"
+            >
+              {{ nameOf(nodeId as AgentId) }}
+            </text>
+          </g>
+          <g v-else :data-kizuna-node="nodeId" :class="['kizuna-node', ringClass(nodeId as AgentId)]">
             <circle class="kizuna-ring" :r="config.radius * scale" />
 
             <image
@@ -737,6 +831,20 @@ onBeforeUnmount(() => {
   100% {
     transform: scale(1);
   }
+}
+
+/* 判断役（Spec 62）。有効なら accent の枠、無効なら warn の破線。アバターを持たない。 */
+.kizuna :deep(.is-judge .kizuna-ring) {
+  stroke: var(--color-accent);
+  stroke-width: 3;
+}
+.kizuna :deep(.is-judge-off .kizuna-ring) {
+  stroke: var(--color-warn);
+  stroke-dasharray: 4 3;
+}
+.kizuna :deep(.kizuna-judge-mark) {
+  fill: var(--color-ink-dim);
+  font-weight: 600;
 }
 
 .kizuna :deep(.kizuna-initial) {

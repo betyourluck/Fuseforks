@@ -353,7 +353,8 @@
       "return": "Return the judgment only, deliver to no one",
       "undecided": "Could not decide ({reason})",
       "meta": "Model {model} · {tokens} input tokens"
-    }
+    },
+    "connectionTag": "(judge)"
   },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",
@@ -1216,6 +1217,7 @@
     "room_log": "read the room log",
     "handoff": "hand off",
     "ask": "ask {name}",
+    "judge": "have {name} judge",
     "transfer": "hand off to {name}"
   },
   "closeConfirm": {
