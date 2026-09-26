@@ -2440,6 +2440,16 @@ entities:
                                     # ▶ が死んだボタンになる)。個体の batchStart は別の門で、
                                     # 全体 ▶ の対象 = agent.batchStart && (無所属 || group.batchStart)
 
+  JudgeSpec:
+    description: |
+      判断特化のエージェント (Spec 62)。PersistedWorld.judges、world.json。**問いと規則は
+      {workspace}/judges/<id>/judge.toml** で、ここには持たない。起動・受信箱・履歴を持たない。
+      ID は AgentId 型でサーヴァントと同じ名前空間 (一意性は 2 つの一覧をまたぐ)。詳細は judge_contract。
+    fields:
+      id: AgentId                   # AgentId::is_safe を通る。サーヴァントの ID と重ならない
+      name: String                  # 表示名。サーヴァントの表示名とも重ならない
+      order: u32                    # 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立
+
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
     fields:
@@ -5647,6 +5657,108 @@ conversation_termination:
     start_agent でクリアすると、**再起動して開いた会話の履歴を、エージェントを
     起動した瞬間に捨てる** — 起動時に自動起動しない契約と組み合わさって、
     Spec 12 の S1 (続きから始められる) が原理的に成立しない。
+
+  judge_contract: |
+    判断特化のエージェント = 人が書いた問いの集合と規則で、判断専用モデル Jev の型付きの答えから
+    行き先を決める部品 (Spec 62 rev4、2026-09-27 凍結)。**本節は実装より先に凍結した契約で、
+    着地は P1〜P4。判断役を 1 つも作らない村ではバイト等価。**
+    **2026-08-22 の裁定「動的ルーティングは採らない」を覆す** (利用者裁定 —「エージェントに
+    すべて任せることは現段階の技術では難しい」)。宛先を選ぶ判断を自由文のモデルから外し、
+    選択肢 (人が書いた to) と問いの文面 (人が書いて固定) と分岐 (人が書いた if 文) を閉じる。
+    規則の評価は決定的で、揺らぐのは Jev の答えだけ。
+
+    実測 (2026-09-27 の P0。実物の Cloudflare Workers AI /ai/run・typesafe/jev・jev-1.13.0):
+      - 要求の形は SDK @typesafe-ai/sdk 0.6.0 と同じ。Choice の criteria は「鍵 → 説明文」の
+        map、Score の criteria は説明文の配列 (0 始まり)、Noul の criteria は {true, false}
+      - **3 型を 1 回の呼び出しに混ぜて 200** (593 入力トークン・0.27 秒)
+      - **Score の score は 0 始まりの期待値の小数** (probabilities の鍵も "0" から)。
+        確率は小数第 2 位で丸めて返る。confidence は 1 位の確率と別の値で定義は不明
+      - 同じ入力を 8 回 × 2 依頼で、選ばれる選択肢は 16/16 不変・margin の幅 0.06・
+        Score の期待値の幅 0.05〜0.08
+      - 上限超えは HTTP 400・code 7003・本文に "error_type":"max_tokens_exceeded"。
+        Score の段階は 2〜10 (1 と 11 は 400)。Choice 1 択は Jev は受ける
+
+    不変条件:
+      - **判断役は別の型** (JudgeSpec = { id, name, order } だけ。World.judges)。AgentSpec に
+        同居させない。**ID は AgentId 型で、サーヴァントと同じ名前空間**。ID の検証は
+        AgentId::is_safe を同じ関数のまま掛ける (2 つ目の検証を書かない)。**ID と表示名の
+        一意性は 2 つの一覧をまたぐ**。衝突は既存の DUPLICATE_AGENT / DUPLICATE_AGENT_NAME
+        で拒否する (新しい variant を作らない)
+      - **線は向きで置き場が違う。** connected_agents が持つのはサーヴァント → 判断役だけ。
+        判断役 → サーヴァントは保存しない (正本は judge.toml の to。描画時に合成し破線)。
+        topologyPositions は判断役の ID も鍵に持つ。World::from_persisted の known と
+        validate_connections は判断役の ID を含める (含めないと新版でも再起動で線と座標が消える)
+      - **旧版 (判断役を知らない版) で開くと、サーヴァント → 判断役の線と判断役の座標は
+        読み込みで捨てられ、保存で消える。** judges 配列は UnknownFields で書き戻る。
+        直せないので配布のノートの「利用者が負う条件」に書く
+      - **判断役は起動を持たない。** 受信箱もターンも履歴も持たず、起動のトグル・一括起動・
+        グループ (Spec 51)・状態の輪・コンテキスト使用率の輪・Alt + ↑↓・会話の宛先・@@ の
+        候補・顔ぶれ (Spec 06) の対象外。選ぶと編集ダイアログが開き、selectedAgentId は変えない
+      - **問いと規則は {workspace}/judges/<id>/judge.toml** (TOML。toml_edit の serde で読む)。
+        読み書きの IPC は判断役の ID で受け、パスを受けない。保存時に検査し、落ちたら保存を拒否
+      - **judge.toml の形**:
+          [questions.<名前>] type = "choice" | "score" | "noul", ask = 問いの文面
+            choice: options = { 鍵 = 説明文 } — 2〜255 択
+            score:  levels = [説明文, …] — 低い順・2〜10 段階
+            noul:   true_if / false_if — 真偽それぞれ一文
+          [[rules]] when = 条件式, to = [サーヴァントの ID, …] か do = "return" のどちらか 1 つ, note?
+          [otherwise] = 規則から when を除いた形。**必須**
+        名前と Choice の鍵は [a-z][a-z0-9_]*・予約語 and / or / not / in は拒否。to は 1 体以上・
+        重複なし・判断役の ID は書けない。note は 200 字まで (Unicode のコードポイント数)
+      - **条件式は閉じた文法**: 比較 (== != >= <= > <)・in [...]・and / or / not・括弧・
+        値は q / q.p / q.margin / q.mean。NUMBER は [0-9]+(.[0-9]+)? (負・先頭の . は不可)。
+        四則演算・関数・変数・文字列の加工は持たない
+          choice の q = 選ばれた鍵 (== != in のみ)・.p = その確率・.margin = 1 位と 2 位の差
+          score  の q = **確率が最も高い段階の番号 (1 始まりの整数。コアが probabilities から
+                  求める。同じ確率なら低い段階)**・.p = その確率・.margin = 1 位と 2 位の差・
+                  .mean = Jev の期待値 + 1 (小数)。比較すべて、in は q だけ
+          noul   の q = 確率 0〜1 (比較のみ。.p / .margin / .mean / in は不可)
+        **型と定義域の合わない式は保存時に拒否** (実行時に偽として通さない): 存在しない鍵・
+        段階の外の番号・整数でない段階の番号・確率の 0〜1 の外・in の左辺が q 以外。
+        .confidence は書けない (定義が分からない)
+      - **評価は呼び出し元のツール呼び出しの中で同期的に。** Jev を 1 回呼び (全部の問い +
+        state = { message })、規則を上から評価して**最初に当たった 1 つ**を実行する。当たらなければ
+        otherwise。**state に入れるのは message だけ** (会話の履歴・広場ログ・黒板・RAG は送らない)
+      - **Jev の失敗・タイムアウト・上限超え (400 code 7003 max_tokens_exceeded)・どれかの問いが
+        未回答なら、規則を評価せず「判定できなかった (理由)」を返す。otherwise に流さない**
+        (fail-closed)。未回答を 0 に潰さない。送る前の字数の事前検査は持たない
+      - **行き先は 3 種**: to が 1 体 = deliver_and_wait(from = 呼び出し元, via = "judge") /
+        to が 2 体以上 = **fanout_and_bundle(…, via = "judge")** — plan と共有する並列配送と
+        束ねの純粋な部分で、**execute_wave を通らない** (波の記録・PlanTaskResolved /
+        PlanWaveFinished・verify_bundle が付かない。plan の挙動はバイト等価) / do = "return" =
+        判定 1 行と note を返す。配送できなかった宛先は理由の本文を束ねの中に入れて落とさない
+      - **答えは構造上呼び出し元へ戻る。送り手は呼び出し元** (封筒は呼び出し元の名乗り、本文の
+        末尾に判定 1 行)。判定の行と note は Spec 26 の defuse を通す。判断役は文章を書かない。
+        中継の next_hop は呼び出し元の hop + 1。待ちの連鎖は呼び出し元を含み、判断役は入らない
+        (受信箱が無いので待ち合わない)。輪は既存の circular で拒否され、伸びる連鎖は max_hops と
+        予算が切る。**呼び出しの深さのカウンタは持たない**
+      - **connected_agents を振り分ける。** 判断役の ID は HandoffTools (ask_* / transfer_to_* /
+        plan) に入れず judge_* の合成へ送る。plan が生える条件 (接続 2 体以上) もサーヴァントだけで
+        数える。judge_* の引数は message だけ。説明文は判断役の名前・行き先になりうる相手・
+        「判定だけ返すことがある」だけで、問いと規則は書かない
+      - **有効の述語は 1 つ** (JudgeStatus)。有効 = ファイルが在る ∧ TOML が読める ∧ 形・文法・
+        型・定義域の検査に通る ∧ to の ID が全部実在するサーヴァント ∧ Jev の設定が在る。
+        ツールを生やすか・左ペインの表示・地図の線はこの 1 つを読む。評価は保存時・起動時・
+        サーヴァントの削除時・Jev の設定の変更時。サーヴァントを消したら、そのサーヴァントを
+        to に書いている判断役を名指しで知らせる
+      - **囲い**: ToolContext に judges_dir を持たせ、file / sd / yq の書き込み系は正規化後のパスが
+        その配下なら拒否する (BlackboardFence と同じ配線)。judge.toml を書けるのは人だけ
+      - **コアは Judge の trait だけを知る**。Jev は GUI 側が Spec 59 の jev.json と資格情報ストアの
+        鍵から組んで差し込む (判断役ごとに鍵を持たない)
+      - **Jev のトークンは予算に入れない** (Spec 59 と同じ)。払ったことは計器に必ず出す
+      - **計器 judge: を 1 行**: caller / judge / rule=<番号|otherwise|none> / outcome=routed|fanned|
+        returned|undecided / reason=jev_error|timeout|too_large|unanswered (undecided のとき) /
+        answers=名前:値/p/margin,… / to / bundle_chars (fanned のとき) / input_tokens / output_tokens。
+        **問いの文面・note・message は出さない** (#71)。撒いたときに plan wave: / plan bundle: は出ない
+      - **外へ送るもの**: message と、問いの文面・選択肢と段階の説明文・成立条件が Cloudflare へ。
+        判断役を 1 つも作らなければ 1 バイトも出ない。「試す」は押したときだけ (PRIVACY 4-4 に節を足す)
+
+    **退けた形**: 判断役を AgentSpec に同居 / 受信箱を持つ個体にする / 判断役を送り手として名乗らせる /
+    判断役 → サーヴァントの線を保存して規則と別に持つ / 撒きで execute_wave を呼ぶ / 呼び出しの深さの
+    カウンタ / 判断役を選んだら中央ペインを差し替える / YAML (読む依存が無く serde_yaml は
+    アーカイブ済み) / 条件を構造で書く / 汎用の式言語を埋め込む / Choice の上位 k 件へ撒く (確率は
+    「どれか 1 つ」の前提の迷い方。複数へは宛先ごとの Noul) / Score の q を期待値にする (確率の 90% が
+    最上段でも size >= 3 が偽になる — P0 実測) / 送る前の字数の事前検査 / confidence を条件に書かせる
 
 # ---------------------------------------------------------------------------
 concurrency:
