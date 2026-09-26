@@ -20,6 +20,14 @@ import {
 import { useI18n } from "vue-i18n";
 
 import { noteKey, useBlackboardCollapse } from "../composables/useBlackboardCollapse";
+import { useBlackboardFilter } from "../composables/useBlackboardFilter";
+import {
+  effectiveFilter,
+  filterColumns,
+  foldAllAction,
+  ownerOptions,
+  type OwnerFilter,
+} from "../lib/blackboardFilter";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
@@ -76,8 +84,18 @@ type Section = {
  * その他（フォルダごと・あれば）。列順は純関数が持つ（コアの返却順は別のもの）。
  * `まとめ.md` の先頭固定は Spec 55 D5 で廃止した。
  */
+/** 持ち主の絞り込み（部品の外に持つ・保存しない）。 */
+const ownerFilter = useBlackboardFilter();
+const owners = computed(() => ownerOptions(board.value.columns));
+/** 選べなくなった値は `all` として扱う（付箋が消えたのに黒板が空に見えるのを防ぐ）。 */
+const activeFilter = computed<OwnerFilter>(() => effectiveFilter(ownerFilter.value, owners.value));
+
+function onFilter(value: string): void {
+  ownerFilter.value = value as OwnerFilter;
+}
+
 const sections = computed<Section[]>(() =>
-  board.value.columns.map((column) => ({
+  filterColumns(board.value.columns, activeFilter.value).map((column) => ({
     key: column.kind === "unfiled" ? "unfiled" : `${column.kind}:${column.state}`,
     column,
     notes: column.notes,
@@ -110,6 +128,18 @@ function columnDot(section: Section): string {
   if (state === "on-hold") return "bg-warn";
   if (state === "done") return "bg-accent";
   return "bg-line";
+}
+
+/** いま見えている付箋（絞り込み後）。「すべて畳む」と件数が読む。 */
+const visibleNotes = computed(() => sections.value.flatMap((s) => s.notes));
+
+const foldAction = computed(() =>
+  foldAllAction(visibleNotes.value, (note) => collapse.isCollapsed(note)),
+);
+
+/** 見えている付箋だけをまとめて畳む / 開く。絞り込みで隠れている付箋には触らない。 */
+function foldAll(): void {
+  collapse.setCollapsed(visibleNotes.value, foldAction.value === "collapse");
 }
 
 function isDone(section: Section): boolean {
@@ -214,10 +244,12 @@ async function clearAll(): Promise<void> {
  * 一覧が返した `dir` / `state` / `name` で 1 枚ずつ `delete_blackboard_note` を呼ぶ
  * （Spec 54 凍結 8。新しい IPC は無い）。途中で失敗したら残りは消さずに止め、
  * エラーを出して読み直す。
+ *
+ * **絞り込み中は見えている付箋だけを消す**（列の見出しの件数と確認の件数が同じ数になる）。
+ * 見出しの消しゴム（全消し）は絞り込みに関わらず黒板全体で、件数も全体を出す。
  */
 async function clearDone(): Promise<void> {
-  const targets = board.value.columns.find((c) => c.kind === "state" && c.state === "done")
-    ?.notes ?? [];
+  const targets = sections.value.find((s) => isDone(s))?.notes ?? [];
   if (busy.value || targets.length === 0) return;
   const ok = await askConfirm({
     title: t("blackboard.confirmClearDoneTitle"),
@@ -285,7 +317,64 @@ function formatTime(ms: number): string {
       class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
     >
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
-      <span v-if="notes.length">{{ $t("blackboard.noteCount", { count: notes.length }) }}</span>
+      <span v-if="notes.length && activeFilter !== 'all'">{{
+        $t("blackboard.noteCountFiltered", { shown: visibleNotes.length, count: notes.length })
+      }}</span>
+      <span v-else-if="notes.length">{{ $t("blackboard.noteCount", { count: notes.length }) }}</span>
+      <!--
+        持ち主の絞り込み（2026-09-27）。選べるのは付箋を持つ個体だけ。列の形は変えない。
+        保存しない（再起動をまたいで黒板の一部だけが見える状態から始めない）。
+      -->
+      <label
+        v-if="owners.owners.length > 0 || owners.hasUnowned"
+        class="ml-auto flex items-center text-[10px]"
+        :title="$t('blackboard.filterTitle')"
+      >
+        <select
+          :value="activeFilter"
+          data-blackboard-filter
+          :aria-label="$t('blackboard.filter')"
+          class="rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
+          @change="onFilter(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="all">{{ $t("blackboard.filterAll") }}</option>
+          <option v-for="owner in owners.owners" :key="owner.id" :value="owner.id">
+            {{ owner.name }}
+          </option>
+          <option v-if="owners.hasUnowned" value="unowned">
+            {{ $t("blackboard.filterUnowned") }}
+          </option>
+        </select>
+      </label>
+      <!--
+        見えている付箋をまとめて畳む ⇄ 開く（2026-09-27）。1 枚でも開いていれば畳む側。
+        絞り込みで隠れている付箋の畳みには触らない。
+      -->
+      <button
+        :class="[
+          'grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim',
+          owners.owners.length > 0 || owners.hasUnowned ? '' : 'ml-auto',
+        ]"
+        data-blackboard-fold-all
+        :disabled="visibleNotes.length === 0"
+        :title="$t(foldAction === 'collapse' ? 'blackboard.collapseAll' : 'blackboard.expandAll')"
+        :aria-label="$t(foldAction === 'collapse' ? 'blackboard.collapseAll' : 'blackboard.expandAll')"
+        @click="foldAll"
+      >
+        <svg
+          class="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path v-if="foldAction === 'collapse'" d="m7 20 5-5 5 5M7 4l5 5 5-5" />
+          <path v-else d="m7 15 5 5 5-5M7 9l5-5 5 5" />
+        </svg>
+      </button>
       <!--
         一括削除。**確認を出す**（全部まとめて消えるので、押し間違いの代償が
         1 枚とは桁で違う）。アイコンはチャット入力の表示クリアと同じ消しゴム —
@@ -293,7 +382,7 @@ function formatTime(ms: number): string {
         ただし**あちらは表示だけ・こちらは実体**なので、確認の文面で言い切る。
       -->
       <button
-        class="ml-auto grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
         :disabled="notes.length === 0 || busy"
         :title="$t('blackboard.clearAllTitle')"
         :aria-label="$t('blackboard.clearAll')"

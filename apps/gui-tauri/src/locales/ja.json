@@ -432,7 +432,14 @@
     "clearDoneTitle": "完了の列の付箋だけをごみ箱へ移します",
     "confirmClearDoneTitle": "完了の付箋を消しますか？",
     "confirmClearDoneMessage": "{count} 枚の付箋をごみ箱へ移します（他の列は残ります）。完全には削除しないので、OS のごみ箱から戻せます。",
-    "confirmClearDoneLabel": "完了を消す"
+    "confirmClearDoneLabel": "完了を消す",
+    "noteCountFiltered": "{shown} / {count} 枚",
+    "filter": "持ち主で絞り込む",
+    "filterTitle": "付箋を持ち主（サーヴァント）で絞り込みます。表示だけで、付箋は消えません",
+    "filterAll": "すべての持ち主",
+    "filterUnowned": "持ち主不明",
+    "collapseAll": "見えている付箋をすべて畳む",
+    "expandAll": "見えている付箋をすべて開く"
   },
   "waves": {
     "state": {

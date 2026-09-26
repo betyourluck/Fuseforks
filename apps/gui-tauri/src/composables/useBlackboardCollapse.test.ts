@@ -75,6 +75,17 @@ describe("useBlackboardCollapse", () => {
     expect(mod.useBlackboardCollapse().isCollapsed(A)).toBe(true);
   });
 
+  it("setCollapsed は渡した付箋だけを畳む / 開く。渡さなかった付箋（絞り込みで隠れた側）には触らない", async () => {
+    const { useBlackboardCollapse } = await freshModule(fakeStorage());
+    const c = useBlackboardCollapse();
+    c.toggle(A2);
+    c.setCollapsed([A, B], true);
+    expect([c.isCollapsed(A), c.isCollapsed(B), c.isCollapsed(A2)]).toEqual([true, true, true]);
+    c.setCollapsed([A, B], true); // 二度押しても鍵は重複しない
+    c.setCollapsed([A], false);
+    expect([c.isCollapsed(A), c.isCollapsed(B), c.isCollapsed(A2)]).toEqual([false, true, true]);
+  });
+
   it("起動時に保存値を読む", async () => {
     const storage = fakeStorage({ [STORAGE_KEY]: JSON.stringify(["D:\\one:ルナ.md"]) });
     const { useBlackboardCollapse } = await freshModule(storage);

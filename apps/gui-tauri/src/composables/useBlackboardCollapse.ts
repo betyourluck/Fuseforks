@@ -76,6 +76,16 @@ export function useBlackboardCollapse() {
     },
 
     /**
+     * 渡した付箋をまとめて畳む（`true`）/ 開く（`false`）。**渡さなかった付箋には
+     * 触らない** — 絞り込み中に押しても、見えていない付箋の畳みは変わらない。
+     */
+    setCollapsed(notes: readonly NoteRef[], value: boolean): void {
+      const targets = new Set(notes.map(noteKey));
+      const rest = collapsed.keys.filter((k) => !targets.has(k));
+      collapsed.keys = value ? [...rest, ...targets] : rest;
+    },
+
+    /**
      * 一覧に無い付箋の鍵を落とす。読み直すたびに呼ぶ。
      * 何も変わらないときは配列を差し替えない（保存の書き込みを増やさない）。
      */

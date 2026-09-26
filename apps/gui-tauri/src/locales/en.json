@@ -432,7 +432,14 @@
     "clearDoneTitle": "Move only the Done column's notes to the trash",
     "confirmClearDoneTitle": "Clear the done notes?",
     "confirmClearDoneMessage": "{count} notes will be moved to the trash (other columns stay). They are not deleted permanently, so you can restore them from the OS trash.",
-    "confirmClearDoneLabel": "Clear done"
+    "confirmClearDoneLabel": "Clear done",
+    "noteCountFiltered": "{shown} / {count} notes",
+    "filter": "Filter by owner",
+    "filterTitle": "Show only the notes of one servant. This changes the view only; no note is removed",
+    "filterAll": "All owners",
+    "filterUnowned": "Unknown owner",
+    "collapseAll": "Collapse all visible notes",
+    "expandAll": "Expand all visible notes"
   },
   "waves": {
     "state": {
