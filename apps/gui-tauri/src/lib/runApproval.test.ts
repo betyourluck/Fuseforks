@@ -7,7 +7,7 @@ import ja from "../locales/ja.json";
 import { nextRunApproval, RUN_APPROVAL_ORDER, runApprovalLabelKey } from "./runApproval";
 
 describe("runApproval: クリックで巡るモード", () => {
-  it("承認あり → 自動許可＋承認 → 自動許可 → 承認あり の順に巡る", () => {
+  it("承認あり → 自動承認 → 自動許可 → 承認あり の順に巡る", () => {
     expect(nextRunApproval("required")).toBe("auto_approve");
     expect(nextRunApproval("auto_approve")).toBe("no_approval");
     expect(nextRunApproval("no_approval")).toBe("required");

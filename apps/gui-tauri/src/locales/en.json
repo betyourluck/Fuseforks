@@ -1091,9 +1091,9 @@
     "bypassAria": "Skip plan reviews",
     "bypassOnLabel": "Plan: no review",
     "runApprovalAria": "Command approval",
-    "runApprovalTitle": "How the run tool treats commands that are not on the allowed list (each click moves approval → auto-allow + approve → auto-allow). Approval = do not run, wait for approval / auto-allow + approve = run and add to the allowed list / auto-allow = run without recording. Denied commands never run in any mode. Remembered on this device; the next launch starts in the same mode",
+    "runApprovalTitle": "How the run tool treats commands that are not on the allowed list (each click moves approval → auto-approve → auto-allow). Approval = do not run, wait for approval / auto-approve = run and add to the allowed list / auto-allow = run without recording. Denied commands never run in any mode. Remembered on this device; the next launch starts in the same mode",
     "runApprovalRequired": "Command: approval",
-    "runApprovalAutoApprove": "Command: auto-allow + approve",
+    "runApprovalAutoApprove": "Command: auto-approve",
     "runApprovalNoApproval": "Command: auto-allow",
     "bypassOffLabel": "Plan: review",
     "statsLabel": "Stats"
