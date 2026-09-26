@@ -52,14 +52,15 @@
  *
  * # コマンドの承認モード（Spec 61・2026-09-27）
  *
- * `run` の許可リストに無い呼び出しの扱いを 3 つから選ぶ（承認が必要 / 自動承認して許可 /
- * 承認せずに許可）。**禁止（deny）はどのモードでも実行しない。** 既定以外の間は
+ * `run` の許可リストに無い呼び出しの扱いを、**押すたびに 3 つ巡る**（帯の字は
+ * コマンド：承認あり → 自動許可＋承認 → 自動許可。2026-09-27 利用者裁定で select から変更）。
+ * **禁止（deny）はどのモードでも実行しない。** 既定以外の間は
  * 計画の確認のスイッチと同じく発光させる — 自動承認は注意色、承認せずに許可は
  * 失敗色（記録も残らないので、より強く知らせる）。
  *
  * # 統計への入口（Spec 39・2026-08-16 に TitleBar から移した）
  *
- * 時計の左にアイコンだけで置く。タイトルバーへ置いて
+ * 時計の左に置く（2026-09-27 からアイコン + 「統計」の字）。タイトルバーへ置いて
  * いたときは、ダイアログの入口 6 つの列に**面ごと差し替える 1 つ**が混ざり、
  * 同じ見た目で振る舞いが違った（利用者判断）。ここなら列の性質が割れない。
  *
@@ -71,7 +72,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { formatClock } from "../lib/clock";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import type { RunApproval } from "../types";
+import { nextRunApproval, runApprovalLabelKey } from "../lib/runApproval";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -81,16 +82,14 @@ function toggleBypass(): void {
   void orchestrator.setPlanReviewBypass(!state.planReviewBypass);
 }
 
-/** コマンドの承認モード（Spec 61）。失敗は `mutate` がトーストへ。 */
-function changeRunApproval(value: string): void {
-  void orchestrator.setRunApproval(value as RunApproval);
+/**
+ * コマンドの承認モード（Spec 61）を次へ進める（承認あり → 自動許可＋承認 → 自動許可 →
+ * 承認あり）。**クリックで巡る**（2026-09-27 利用者裁定。初版の select から変更）。
+ * 失敗は `mutate` がトーストへ。
+ */
+function cycleRunApproval(): void {
+  void orchestrator.setRunApproval(nextRunApproval(state.runApproval));
 }
-
-const RUN_APPROVAL_OPTIONS: { value: RunApproval; key: string }[] = [
-  { value: "required", key: "statusBar.runApprovalRequired" },
-  { value: "auto_approve", key: "statusBar.runApprovalAutoApprove" },
-  { value: "no_approval", key: "statusBar.runApprovalNoApproval" },
-];
 
 const props = defineProps<{ statsActive?: boolean }>();
 const emit = defineEmits<{ (e: "toggle-stats"): void }>();
@@ -156,8 +155,9 @@ onBeforeUnmount(() => {
     <!-- 扉が閉じている間は左が空くので、右寄せを保つ詰め物を置く。 -->
     <span v-else class="mr-auto" />
     <!--
-      計画の確認を飛ばすスイッチ（Spec 53）。オンの間は注意色で発光し、字も出す —
-      人の確認が外れていることは、アイコンの色だけでなく言葉で読めるようにする。
+      計画の確認を飛ばすスイッチ（Spec 53）。**字は常に出す**（「計画：確認する」/
+      「計画：確認なし」。2026-09-27 利用者裁定 — アイコンだけでは何のスイッチか読めない）。
+      オンの間は注意色で発光する。
     -->
     <button
       type="button"
@@ -183,19 +183,23 @@ onBeforeUnmount(() => {
         <path d="M5 4l10 8-10 8V4z" />
         <path d="M19 5v14" />
       </svg>
-      <span v-if="state.planReviewBypass">{{ $t("statusBar.bypassOnLabel") }}</span>
+      <span>{{ $t(state.planReviewBypass ? "statusBar.bypassOnLabel" : "statusBar.bypassOffLabel") }}</span>
     </button>
     <!--
-      コマンドの承認モード（Spec 61）。3 つから選ぶので select。既定以外の間は発光する。
+      コマンドの承認モード（Spec 61）。**押すたびに次のモードへ巡る**（select にしない —
+      2026-09-27 利用者裁定）。字でいまのモードを出し、既定以外の間は発光する。
     -->
-    <label
+    <button
+      type="button"
       class="run-approval"
       :class="{
         'is-auto': state.runApproval === 'auto_approve',
         'is-none': state.runApproval === 'no_approval',
       }"
       :title="$t('statusBar.runApprovalTitle')"
+      :aria-label="$t('statusBar.runApprovalAria')"
       data-run-approval
+      @click="cycleRunApproval"
     >
       <svg
         width="13"
@@ -211,18 +215,11 @@ onBeforeUnmount(() => {
         <path d="m4 17 6-6-6-6" />
         <path d="M12 19h8" />
       </svg>
-      <select
-        :value="state.runApproval"
-        :aria-label="$t('statusBar.runApprovalAria')"
-        @change="changeRunApproval(($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="o in RUN_APPROVAL_OPTIONS" :key="o.value" :value="o.value">
-          {{ $t(o.key) }}
-        </option>
-      </select>
-    </label>
+      <span>{{ $t(runApprovalLabelKey(state.runApproval)) }}</span>
+    </button>
     <!--
-      統計（Spec 39）。字を持たずアイコンだけ。
+      統計（Spec 39）。アイコンの右に「統計」の字（2026-09-27 利用者裁定。字が並ぶ帯で
+      アイコンだけだと何の入口か読めない）。
       開いている間は緑（`--color-run` = 稼働の色）に発光させる — 押せる場所が
       1 つしか無い帯では、点いているかどうかが状態そのものを指す。
     -->
@@ -250,6 +247,7 @@ onBeforeUnmount(() => {
       >
         <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
       </svg>
+      <span>{{ $t("statusBar.statsLabel") }}</span>
     </button>
     <!--
       tabular-nums は必須。等幅でないと桁の太さが毎秒変わり、
@@ -304,21 +302,16 @@ onBeforeUnmount(() => {
 .run-approval {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   margin-right: 10px;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
   color: var(--color-ink-dim);
+  cursor: pointer;
   transition:
     color 0.15s,
     filter 0.15s;
-}
-.run-approval select {
-  height: 16px;
-  padding: 0 2px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
 }
 .run-approval:hover {
   color: var(--color-ink);
@@ -336,6 +329,7 @@ onBeforeUnmount(() => {
 .stats-btn {
   display: flex;
   align-items: center;
+  gap: 4px;
   margin-right: 10px;
   padding: 0 2px;
   background: transparent;

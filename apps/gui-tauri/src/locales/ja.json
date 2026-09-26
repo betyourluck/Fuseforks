@@ -1089,12 +1089,14 @@
     "bypassOffTitle": "計画の確認を飛ばす（オンの間は、計画の確認をオンにしたサーヴァントも承認待ちで止まらずに配ります。この端末に記憶され、次の起動でも同じ状態で始まります）",
     "bypassOnTitle": "計画の確認を飛ばしています（押すと元に戻します。この端末に記憶され、次の起動でもオンのまま始まります）",
     "bypassAria": "計画の確認を飛ばす",
-    "bypassOnLabel": "確認なし",
+    "bypassOnLabel": "計画：確認なし",
     "runApprovalAria": "コマンドの承認",
-    "runApprovalTitle": "run ツールで、許可リストに無いコマンドをどう扱うか。禁止したコマンドはどのモードでも実行しません。この端末に記憶され、次の起動でも同じモードで始まります",
-    "runApprovalRequired": "承認が必要",
-    "runApprovalAutoApprove": "自動承認して許可",
-    "runApprovalNoApproval": "承認せずに許可"
+    "runApprovalTitle": "run ツールで、許可リストに無いコマンドをどう扱うか（押すたびに 承認あり → 自動許可＋承認 → 自動許可 の順に切り替わります）。承認あり = 実行せず承認を待つ / 自動許可＋承認 = 実行し、許可リストへ書き足す / 自動許可 = 実行するだけで記録しない。禁止したコマンドはどのモードでも実行しません。この端末に記憶され、次の起動でも同じモードで始まります",
+    "runApprovalRequired": "コマンド：承認あり",
+    "runApprovalAutoApprove": "コマンド：自動許可＋承認",
+    "runApprovalNoApproval": "コマンド：自動許可",
+    "bypassOffLabel": "計画：確認する",
+    "statsLabel": "統計"
   },
   "roles": {
     "title": "役職",

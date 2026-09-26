@@ -1089,12 +1089,14 @@
     "bypassOffTitle": "Skip plan reviews (while on, servants with plan review on dispatch without waiting for approval. Remembered on this device; the next launch starts the same way)",
     "bypassOnTitle": "Skipping plan reviews (click to turn off. Remembered on this device; the next launch starts with it on)",
     "bypassAria": "Skip plan reviews",
-    "bypassOnLabel": "No review",
+    "bypassOnLabel": "Plan: no review",
     "runApprovalAria": "Command approval",
-    "runApprovalTitle": "How the run tool treats commands that are not on the allowed list. Denied commands never run in any mode. Remembered on this device; the next launch starts in the same mode",
-    "runApprovalRequired": "Approval required",
-    "runApprovalAutoApprove": "Auto-approve and allow",
-    "runApprovalNoApproval": "Allow without approval"
+    "runApprovalTitle": "How the run tool treats commands that are not on the allowed list (each click moves approval → auto-allow + approve → auto-allow). Approval = do not run, wait for approval / auto-allow + approve = run and add to the allowed list / auto-allow = run without recording. Denied commands never run in any mode. Remembered on this device; the next launch starts in the same mode",
+    "runApprovalRequired": "Command: approval",
+    "runApprovalAutoApprove": "Command: auto-allow + approve",
+    "runApprovalNoApproval": "Command: auto-allow",
+    "bypassOffLabel": "Plan: review",
+    "statsLabel": "Stats"
   },
   "roles": {
     "title": "Roles",
