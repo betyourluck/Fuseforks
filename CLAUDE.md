@@ -7083,6 +7083,25 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 62](specs/62_judge-agents.md)（判断特化のエージェント — Choice / Score / Noul で宛先を決める）:
+  **Draft rev4**（2026-09-27 起票 → rev2 → 査読 2 系統 29 点で rev3 → 査読「P0 へ」→ **P0 の測定で rev4**。`judge_contract` の凍結は未決 0 = Score の値の定義の裁定待ち）。起点は利用者 —「Jev のような判断特化型モデル
+  （System One）のエージェントを置けるようにしたい」→「System One Model は応用が効く if 文。それを
+  ユーザーが書ければより柔軟性が増す」。**利用者裁定 4 点** = 左ペインのサーヴァントの下に「判断特化」の
+  見出しを作って別に登録し、繋ぐことはできる / **2026-08-22 の「動的ルーティングは採らない」を覆す**
+  （「エージェントにすべて任せることは現段階の技術では難しい」）/ 問いと規則はユーザーが書く / 形式は TOML・
+  条件は文字列の式。骨格 = 別の型 `JudgeSpec`（id / 名前 / 並びだけ）で ID の名前空間だけ共有（`deriveId` は
+  `state.agents` しか見ないので衝突の検査をまたがせる）/ 問いの集合と `[[rules]]` + `[otherwise]` は
+  `{workspace}/judges/<id>/judge.toml` / 条件式は比較・`in`・`and/or/not`・`.p`・`.margin` だけの閉じた文法 /
+  起動を持たず、呼び出し元のツール呼び出しの中で Jev を 1 回呼んで規則を上から評価 → `to` 1 体は
+  `deliver_and_wait(from = 呼び出し元)`・2 体以上は `execute_wave` で撒いて既存の束ね・`do = "return"` は
+  判定だけ返す = 答えは構造上呼び出し元へ戻り Spec 44 の輪検出がそのまま効く / Jev の失敗は `otherwise` に
+  流さない / 判断役から出る線の正本はファイルの `to`。**Choice と Score はどちらのリポジトリでも 1 度も
+  送っていない**（Kataribe の `consistency.rs` の `score` は Noul の確率の欄名）。答えの欄は Qiita の SDK 記事で
+  分かった。**P0 実測（実物の Cloudflare の口へ撃った）**: 要求の形は SDK `@typesafe-ai/sdk` 0.6.0 と同じ（Choice の
+  `criteria` は map・Score は配列）/ 3 型を 1 回に混ぜて 200 / **Score の `score` は 0 始まりの期待値の小数**で、rev3 の
+  「選ばれた段階の番号」は Jev が返さない → rev4 で `q` = 確率が最も高い段階（コアが求める）・`.mean` = 期待値へ /
+  同じ入力 8 回で選ばれる選択肢は 16/16 不変・margin の幅 0.06 / 上限超えは 400 `code 7003` `max_tokens_exceeded` /
+  `confidence` は 1 位の確率と別の値で定義不明（条件に書かせない）/ `toml_edit` の `serde` で `Cargo.lock` は増えない
 - [Spec 61](specs/61_run-approval-mode.md)（コマンドの承認モード — ステータスバーの 3 択）:
   **Done**（2026-09-27。起票から Done まで同日。P4 実機 5 件 = (1)(5) はログで観測・(2)(3)(4) は利用者が確認。査読の窓は開けていない —
   決めどころ 2 点を利用者がその場で裁定）。変わるのは `Decision::Unknown` の扱いだけで、
