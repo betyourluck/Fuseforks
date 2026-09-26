@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
 
 <template>
   <footer
-    class="flex h-[33px] shrink-0 select-none items-center border-t border-line bg-surface-1 px-4 text-[13px] text-ink-dim"
+    class="flex h-[26px] shrink-0 select-none items-center border-t border-line bg-surface-1 px-3 text-[12px] text-ink-dim"
   >
     <!--
       MCP サーバーが待ち受けている間だけ左端に出す（Spec 25）。
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
       class="mr-auto flex items-center gap-1.5 text-accent"
       :title="$t('statusBar.mcpHostTitle', { port: state.mcpHost?.port ?? 0 })"
     >
-      <span class="size-2 rounded-full bg-accent" aria-hidden="true" />
+      <span class="size-[7px] rounded-full bg-accent" aria-hidden="true" />
       {{ $t("statusBar.mcpHost", { port: state.mcpHost?.port ?? 0 }) }}
     </span>
     <!-- 扉が閉じている間は左が空くので、右寄せを保つ詰め物を置く。 -->
@@ -170,8 +170,8 @@ onBeforeUnmount(() => {
       @click="toggleBypass"
     >
       <svg
-        width="16"
-        height="16"
+        width="15"
+        height="15"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -202,8 +202,8 @@ onBeforeUnmount(() => {
       @click="cycleRunApproval"
     >
       <svg
-        width="16"
-        height="16"
+        width="15"
+        height="15"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -235,8 +235,8 @@ onBeforeUnmount(() => {
       @click="emit('toggle-stats')"
     >
       <svg
-        width="16"
-        height="16"
+        width="15"
+        height="15"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -267,7 +267,7 @@ onBeforeUnmount(() => {
       ラベルは訳さない（版番号は語ではなく識別子で、報告と突き合わせる対象）。
     -->
     <span
-      class="selectable ml-4 tabular-nums"
+      class="selectable ml-3 tabular-nums"
       :title="$t('statusBar.versionTitle')"
       :aria-label="$t('statusBar.versionAria', { version })"
     >
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-right: 14px;
+  margin-right: 12px;
   padding: 0 2px;
   background: transparent;
   border: none;
@@ -303,7 +303,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-right: 14px;
+  margin-right: 12px;
   padding: 0 2px;
   background: transparent;
   border: none;
@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-right: 14px;
+  margin-right: 12px;
   padding: 0 2px;
   background: transparent;
   border: none;
