@@ -119,3 +119,25 @@
   通り、別の引数は拒否される (3) `deny` に書いたコマンドはどのモードでも走らない
   (4) モードとスイッチを入れたまま再起動して、同じ状態で始まる（帯が発光している）
   (5) 空白入りの引数を自動承認で走らせて `recorded=unrepresentable` になり、`allow` が増えない
+
+## P4 実機記録（2026-09-27）
+
+**(1) と (5) を観測**（ミュゼに `lake build` を頼んだ 1 ターン）:
+
+```text
+02:48:37 run bypass: agent=agent_9 command=lake args=1 mode=auto_approve recorded=yes            (allow 5 → 6)
+02:48:49 run bypass: agent=agent_9 command=lake args=1 mode=auto_approve recorded=yes            (allow 6 → 7)
+02:49:00〜02:49:52 run bypass: agent=agent_9 command=bash args=2 mode=auto_approve recorded=unrepresentable ×7 (allow は 7 のまま)
+```
+
+`bash -c "…lake.exe build"` は引数に空白を含むので書き足さずに実行し、`Build completed successfully
+(141 jobs)` まで走った。**残りは (2) (3) (4)。**
+
+**前段で 1 つ躓いた** — 最初の依頼ではミュゼに `run` のチェックが無く（有効なのはザリとルナだけ）、
+モードに関係なく道具が提示されなかった。ミュゼは道具が無いので `MCP_DOCKER__mcp-add` /
+`mcp-config-set` でシェル実行の MCP サーバーを自分で足そうとした。**利用者裁定: `run` を渡して
+いない個体は使えないほうがよい**（モードは許可リストの段にだけ効き、道具を持つかどうかの段は
+個体ごとのチェックのまま）。MCP の動的追加は今回は触らない（別件）。
+
+コストの観察: このターンは 22 周・`prompt=572786 cached=484022`。`lake` を直接呼ぶ形が通らず
+（WSL 側に lake が無い）、`bash -c` で実体のパスを探しながら試行した分。
