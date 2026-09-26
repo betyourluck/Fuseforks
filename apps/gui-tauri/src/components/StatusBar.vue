@@ -47,6 +47,16 @@
  * 帯を見ればオンだと分かる**ようにする（MCP の扉と同じ「つけっぱなしに気づける」
  * 理由 — 状態はコアのメモリだけにあり、再起動で必ず OFF に戻る）。
  *
+ * **2026-09-27 に「保存しない」を覆した**（利用者裁定）— コアはメモリだけに持つままだが、
+ * 画面が端末の `localStorage` に覚え、起動時に設定し直す（`lib/switchMemory.ts`）。
+ *
+ * # コマンドの承認モード（Spec 61・2026-09-27）
+ *
+ * `run` の許可リストに無い呼び出しの扱いを 3 つから選ぶ（承認が必要 / 自動承認して許可 /
+ * 承認せずに許可）。**禁止（deny）はどのモードでも実行しない。** 既定以外の間は
+ * 計画の確認のスイッチと同じく発光させる — 自動承認は注意色、承認せずに許可は
+ * 失敗色（記録も残らないので、より強く知らせる）。
+ *
  * # 統計への入口（Spec 39・2026-08-16 に TitleBar から移した）
  *
  * 時計の左にアイコンだけで置く。タイトルバーへ置いて
@@ -61,6 +71,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { formatClock } from "../lib/clock";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import type { RunApproval } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -69,6 +80,17 @@ const { state } = orchestrator;
 function toggleBypass(): void {
   void orchestrator.setPlanReviewBypass(!state.planReviewBypass);
 }
+
+/** コマンドの承認モード（Spec 61）。失敗は `mutate` がトーストへ。 */
+function changeRunApproval(value: string): void {
+  void orchestrator.setRunApproval(value as RunApproval);
+}
+
+const RUN_APPROVAL_OPTIONS: { value: RunApproval; key: string }[] = [
+  { value: "required", key: "statusBar.runApprovalRequired" },
+  { value: "auto_approve", key: "statusBar.runApprovalAutoApprove" },
+  { value: "no_approval", key: "statusBar.runApprovalNoApproval" },
+];
 
 const props = defineProps<{ statsActive?: boolean }>();
 const emit = defineEmits<{ (e: "toggle-stats"): void }>();
@@ -164,6 +186,42 @@ onBeforeUnmount(() => {
       <span v-if="state.planReviewBypass">{{ $t("statusBar.bypassOnLabel") }}</span>
     </button>
     <!--
+      コマンドの承認モード（Spec 61）。3 つから選ぶので select。既定以外の間は発光する。
+    -->
+    <label
+      class="run-approval"
+      :class="{
+        'is-auto': state.runApproval === 'auto_approve',
+        'is-none': state.runApproval === 'no_approval',
+      }"
+      :title="$t('statusBar.runApprovalTitle')"
+      data-run-approval
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </svg>
+      <select
+        :value="state.runApproval"
+        :aria-label="$t('statusBar.runApprovalAria')"
+        @change="changeRunApproval(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="o in RUN_APPROVAL_OPTIONS" :key="o.value" :value="o.value">
+          {{ $t(o.key) }}
+        </option>
+      </select>
+    </label>
+    <!--
       統計（Spec 39）。字を持たずアイコンだけ。
       開いている間は緑（`--color-run` = 稼働の色）に発光させる — 押せる場所が
       1 つしか無い帯では、点いているかどうかが状態そのものを指す。
@@ -242,6 +300,38 @@ onBeforeUnmount(() => {
 .bypass-btn.is-on {
   color: var(--color-warn);
   filter: drop-shadow(0 0 4px var(--color-warn));
+}
+.run-approval {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 10px;
+  color: var(--color-ink-dim);
+  transition:
+    color 0.15s,
+    filter 0.15s;
+}
+.run-approval select {
+  height: 16px;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.run-approval:hover {
+  color: var(--color-ink);
+}
+/* 既定以外の間は発光（人の承認が外れている）。自動承認は注意色、承認せずは記録も
+   残らないので失敗色。色だけに頼らない — 選んでいるモードの名前が字で出ている。 */
+.run-approval.is-auto {
+  color: var(--color-warn);
+  filter: drop-shadow(0 0 4px var(--color-warn));
+}
+.run-approval.is-none {
+  color: var(--color-fail);
+  filter: drop-shadow(0 0 4px var(--color-fail));
 }
 .stats-btn {
   display: flex;

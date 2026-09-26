@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   getUserIcon: vi.fn(async () => null),
   // Spec 53。起動直後のスイッチは必ず OFF、既定の検証役は「なし」。
   getPlanReviewBypass: vi.fn(async () => false),
+  getRunApproval: vi.fn(async () => "required"),
+  setRunApproval: vi.fn(async () => undefined),
   getDefaultVerifier: vi.fn(async () => null),
   // 扉（Spec 25）。既定は OFF なので、起動直後の素の村はこの形。
   mcpHostStatus: vi.fn(async () => ({

@@ -1259,6 +1259,7 @@ mod tests {
             ],
             uses_blackboard: true,
             language: Language::Ja,
+            run_approval: crate::command::RunApproval::Required,
         }
     }
 

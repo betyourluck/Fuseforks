@@ -166,6 +166,8 @@ pub fn run() {
             commands::set_ask_timeout,
             commands::get_plan_review_bypass,
             commands::set_plan_review_bypass,
+            commands::get_run_approval,
+            commands::set_run_approval,
             commands::get_default_verifier,
             commands::set_default_verifier,
             commands::get_language,

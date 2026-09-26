@@ -78,6 +78,10 @@ pub struct ToolContext {
     /// この値で書き分けられる。`work_dir` と同じく、ツール自身に world を
     /// 引かせず、オーケストレーターが解決して渡す。
     pub language: crate::world::Language,
+    /// ステータスバーのコマンド承認モード（Spec 61）。**見るのは `run` だけ** —
+    /// 提示（`spec_for` の説明文）と実行（`Unknown` の扱い）が同じ値を読む。
+    /// 状態はコアのメモリ（`Shared`）にあり、オーケストレーターが解決して渡す。
+    pub run_approval: crate::command::RunApproval,
 }
 
 /// 実行可能なツール。
@@ -311,6 +315,7 @@ mod tests {
             agent_names: Vec::new(),
             uses_blackboard: true,
             language: crate::world::Language::Ja,
+            run_approval: crate::command::RunApproval::Required,
         }
     }
 

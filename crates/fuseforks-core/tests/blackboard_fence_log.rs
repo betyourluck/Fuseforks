@@ -78,6 +78,7 @@ async fn refused_writes_and_the_delete_sweep_each_leave_one_line() {
         agent_names: Vec::new(),
         uses_blackboard: true,
         language: fuseforks_core::world::Language::Ja,
+        run_approval: fuseforks_core::command::RunApproval::Required,
     };
     let note = format!("blackboard/doing/agent - {TASK}.md");
     let refused = FileTool

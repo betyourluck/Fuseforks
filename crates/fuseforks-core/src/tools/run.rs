@@ -29,7 +29,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::command::{CommandPolicy, Decision};
+use crate::command::{CommandPolicy, Decision, RunApproval, exact_allow_pattern};
 use crate::config_store::ConfigStore;
 use crate::error::CoreResult;
 use crate::llm::ToolSpec;
@@ -104,6 +104,50 @@ impl RunTool {
             }
         }
     }
+
+    /// 自動承認（Spec 61）: 完全一致のパターンを `allow` へ書き足す。戻りはログの `recorded=`。
+    ///
+    /// **書き足せなくても実行の答えは変えない**（`note_pending` と同じ規律）— モードが
+    /// 「許可」なので、記録の失敗で呼び出しを拒否すると利用者の選んだモードと食い違う。
+    /// 完全一致で表せない呼び出し（空白入りの引数・末尾の `*`）は書かない —
+    /// 死んだ行や、「以降は自由」へ広がる行を `allow` に残さない。
+    async fn auto_record(&self, id: &AgentId, command: &str, args: &[String]) -> &'static str {
+        let Some(pattern) = exact_allow_pattern(command, args) else {
+            return "unrepresentable";
+        };
+        match self
+            .store
+            .update_command_policy(id, |policy| policy.auto_approve(&pattern))
+            .await
+        {
+            Ok(true) => "yes",
+            Ok(false) => "already",
+            Err(err) => {
+                crate::note!("command auto approve save failed: agent={id} command={command} err={err}");
+                "save_failed"
+            }
+        }
+    }
+}
+
+/// 承認を省いているモードの説明（Spec 61）。`Required` では `None` —
+/// **既定のモードの提示文は 1 バイトも変えない**（golden が留める）。
+fn bypass_note(mode: RunApproval, language: crate::world::Language) -> Option<&'static str> {
+    match mode {
+        RunApproval::Required => None,
+        RunApproval::AutoApprove => Some(language.pick(
+            "**いまは利用者が承認を省いている（自動承認）。** 一覧に一致しない呼び出しも実行され、             その呼び出しがそのまま許可の一覧へ加えられる。利用者が禁止したコマンドは実行されない。
+",
+            "**The user has currently waived approval (auto-approve).** Calls that match none of              the patterns also run, and the exact call is added to the allowed list. Commands the              user has denied still do not run.
+",
+        )),
+        RunApproval::NoApproval => Some(language.pick(
+            "**いまは利用者が承認を省いている。** 一覧に一致しない呼び出しも実行される             （許可の一覧には加えない）。利用者が禁止したコマンドは実行されない。
+",
+            "**The user has currently waived approval.** Calls that match none of the patterns              also run (they are not added to the allowed list). Commands the user has denied              still do not run.
+",
+        )),
+    }
 }
 
 #[async_trait]
@@ -156,6 +200,25 @@ impl AgentTool for RunTool {
         // **提示も判定も同じ経路でファイルを読む。** 写しを持つと、
         // 「利用者が今さっき許可したのに提示されない」が生まれる。
         let policy = self.load(&ctx.agent_id).await;
+        let bypass = bypass_note(ctx.run_approval, ctx.language);
+
+        // 承認を省いているモード（Spec 61）で `allow` が空なら、「何も実行できない」は嘘になる。
+        if !policy.allows_anything()
+            && let Some(note) = bypass
+        {
+            let mut text = String::from(ctx.language.pick(
+                "コマンドを実行する。**シェルは介さない**（パイプ・                 リダイレクト・変数展開は使えない）。
+",
+                "Run a command. **No shell is involved** (pipes,                  redirection and variable expansion do not work).
+",
+            ));
+            text.push_str(note);
+            return Some(ToolSpec {
+                name: self.name().to_owned(),
+                description: text,
+                parameters: self.parameters(ctx.language),
+            });
+        }
 
         // **`allow` が空でも提示する**（2026-08-06 利用者裁定）。提示しないと
         // 呼び出しがフィルタで弾かれ、`pending` へ 1 件も積めない —
@@ -193,6 +256,21 @@ impl AgentTool for RunTool {
         ));
         for pattern in &policy.allow {
             text.push_str(&format!("- `{pattern}`\n"));
+        }
+        if let Some(note) = bypass {
+            // 最後の一文（「一致しない呼び出しは実行されず…」）だけがモードで変わる。
+            text.push_str(ctx.language.pick(
+                "パターン末尾の `*` は「以降の引数は自由」で、**引数なしの呼び出しにも当たる**                 （`git status *` は `git status` も覆う）。`*` が無いパターンは                 **引数なしの呼び出しにしか一致しない**。
+",
+                "A trailing `*` in a pattern means \"any further arguments\", and it                  **also matches a call with no arguments** (`git status *` covers                  `git status` too). A pattern without `*` **matches only a call with                  no arguments**.
+",
+            ));
+            text.push_str(note);
+            return Some(ToolSpec {
+                name: self.name().to_owned(),
+                description: text,
+                parameters: self.parameters(ctx.language),
+            });
         }
         text.push_str(ctx.language.pick(
             "パターン末尾の `*` は「以降の引数は自由」で、**引数なしの呼び出しにも当たる**\
@@ -264,10 +342,28 @@ impl AgentTool for RunTool {
                      **この呼び出しは何度試しても通りません。** 別の手段で進めてください。"
                 ));
             }
-            Decision::Unknown => {
-                self.note_pending(&ctx.agent_id, command, &argv).await;
-                return Ok(unknown_refusal(command, &argv, &ctx.agent_id));
-            }
+            Decision::Unknown => match ctx.run_approval {
+                RunApproval::Required => {
+                    self.note_pending(&ctx.agent_id, command, &argv).await;
+                    return Ok(unknown_refusal(command, &argv, &ctx.agent_id));
+                }
+                // 承認を省いているモード（Spec 61）。**1 呼び出しごとに 1 行残す** —
+                // 人の承認を経ずに走ったものが、後からログで数えられるように。
+                // 引数は数だけ（`run decision:` と同じ。秘密を運びうるので中身は書かない）。
+                mode @ (RunApproval::AutoApprove | RunApproval::NoApproval) => {
+                    let recorded = if mode == RunApproval::AutoApprove {
+                        self.auto_record(&ctx.agent_id, command, &argv).await
+                    } else {
+                        "-"
+                    };
+                    crate::note!(
+                        "run bypass: agent={} command={command} args={} mode={} recorded={recorded}",
+                        ctx.agent_id,
+                        argv.len(),
+                        mode.label(),
+                    );
+                }
+            },
             Decision::Allowed => {}
         }
 
@@ -495,6 +591,129 @@ mod tests {
         assert!(text.contains("このターンでは実行できません"));
     }
 
+    /// 承認モード（Spec 61）のテスト用の土台。PATH で必ず見つかるシェルを名前で呼ぶ。
+    fn bypass_fixture(tag: &str, mode: RunApproval) -> (std::path::PathBuf, RunTool, ToolContext) {
+        let dir = std::env::temp_dir().join(format!(
+            "fuseforks-bypass-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tool = RunTool::new(ConfigStore::new(&dir));
+        let ctx = ToolContext {
+            agent_id: AgentId::from("agent_01"),
+            work_dir: Some(dir.clone()),
+            cancel: None,
+            rag_roots: Vec::new(),
+            agent_names: Vec::new(),
+            uses_blackboard: true,
+            language: crate::world::Language::Ja,
+            run_approval: mode,
+        };
+        (dir, tool, ctx)
+    }
+
+    /// 空白を含まない引数で、何か 1 行を出す呼び出し（完全一致で書ける形）。
+    fn plain_call() -> Value {
+        if cfg!(windows) {
+            serde_json::json!({ "command": "cmd", "args": ["/C", "ver"] })
+        } else {
+            serde_json::json!({ "command": "sh", "args": ["-c", "pwd"] })
+        }
+    }
+
+    fn plain_pattern() -> &'static str {
+        if cfg!(windows) { "cmd /C ver" } else { "sh -c pwd" }
+    }
+
+    const REFUSED: &str = "このターンでは実行できません";
+
+    /// **承認が必要（既定）は Spec 15 以来の挙動のまま** — 実行せず `pending` へ積む。
+    #[tokio::test]
+    async fn required_mode_refuses_and_queues_the_request() {
+        let (dir, tool, ctx) = bypass_fixture("required", RunApproval::Required);
+        let out = tool.call(&ctx, &plain_call()).await.unwrap();
+        assert!(out.contains(REFUSED), "{out}");
+        let policy = tool.load(&ctx.agent_id).await;
+        assert!(policy.allow.is_empty());
+        assert_eq!(policy.pending.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **承認せずに許可は、その場で走らせるだけで何も記録しない**（Spec 61）。
+    /// スイッチを戻せば同じ呼び出しは元どおり拒否される。
+    #[tokio::test]
+    async fn no_approval_runs_without_recording_anything() {
+        let (dir, tool, ctx) = bypass_fixture("none", RunApproval::NoApproval);
+        let out = tool.call(&ctx, &plain_call()).await.unwrap();
+        assert!(!out.contains(REFUSED), "{out}");
+        let policy = tool.load(&ctx.agent_id).await;
+        assert!(policy.allow.is_empty(), "allow は増えない: {:?}", policy.allow);
+        assert!(policy.pending.is_empty(), "要求も積まない: {:?}", policy.pending);
+
+        let back = ToolContext { run_approval: RunApproval::Required, ..ctx };
+        let out = tool.call(&back, &plain_call()).await.unwrap();
+        assert!(out.contains(REFUSED), "戻せば拒否される: {out}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **自動承認は完全一致を `allow` へ書き足してから走らせる**（Spec 61）。
+    /// 記録が残るので、スイッチを戻しても同じ呼び出しは通り続ける。
+    #[tokio::test]
+    async fn auto_approve_records_the_exact_call_then_runs_it() {
+        let (dir, tool, ctx) = bypass_fixture("auto", RunApproval::AutoApprove);
+        let out = tool.call(&ctx, &plain_call()).await.unwrap();
+        assert!(!out.contains(REFUSED), "{out}");
+        let policy = tool.load(&ctx.agent_id).await;
+        assert_eq!(policy.allow, vec![plain_pattern().to_string()]);
+
+        let back = ToolContext { run_approval: RunApproval::Required, ..ctx };
+        let out = tool.call(&back, &plain_call()).await.unwrap();
+        assert!(!out.contains(REFUSED), "記録が残るので戻しても通る: {out}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **禁止はどのモードでも禁止。** 承認を省いても `deny` は越えない。
+    #[tokio::test]
+    async fn denied_stays_denied_in_every_mode() {
+        for mode in [RunApproval::AutoApprove, RunApproval::NoApproval] {
+            let (dir, tool, ctx) = bypass_fixture(mode.label(), mode);
+            let head = if cfg!(windows) { "cmd *" } else { "sh *" };
+            tool.store
+                .update_command_policy(&ctx.agent_id, |p| p.deny.push(head.to_string()))
+                .await
+                .unwrap();
+            let out = tool.call(&ctx, &plain_call()).await.unwrap();
+            assert!(out.contains("禁止しています"), "{mode:?}: {out}");
+            assert!(tool.load(&ctx.agent_id).await.allow.is_empty(), "{mode:?}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// 承認を省いているモードでは、提示文が「何も実行できない」「実行されず」と言わない
+    /// （言うと、モデルは使える道具を使わずに諦める）。既定のモードの文面は golden が留める。
+    #[tokio::test]
+    async fn the_description_tells_the_truth_about_the_mode() {
+        for mode in [RunApproval::AutoApprove, RunApproval::NoApproval] {
+            let (dir, tool, ctx) = bypass_fixture("desc", mode);
+            let empty = tool.spec_for(&ctx).await.unwrap().description;
+            assert!(!empty.contains("何も実行できない"), "{mode:?}: {empty}");
+            assert!(empty.contains("承認を省いている"), "{mode:?}: {empty}");
+
+            tool.store
+                .update_command_policy(&ctx.agent_id, |p| p.allow.push("git status *".into()))
+                .await
+                .unwrap();
+            let listed = tool.spec_for(&ctx).await.unwrap().description;
+            assert!(listed.contains("`git status *`"), "{listed}");
+            assert!(!listed.contains("実行されず"), "{mode:?}: {listed}");
+            assert!(listed.contains("承認を省いている"), "{mode:?}: {listed}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
     /// **`allow` が空でも `run` を提示する。**（2026-08-06 利用者裁定）
     ///
     /// 提示しないと呼び出しがフィルタで弾かれ、`pending` へ 1 件も積めない。
@@ -525,6 +744,7 @@ mod tests {
             agent_names: Vec::new(),
             uses_blackboard: true,
             language: crate::world::Language::Ja,
+            run_approval: crate::command::RunApproval::Required,
         };
 
         let spec = tool

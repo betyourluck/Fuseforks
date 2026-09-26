@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   })),
   // 画面の再読み込みの形 — コアではスイッチが ON・既定の検証役が居る。
   getPlanReviewBypass: vi.fn(async () => true),
+  getRunApproval: vi.fn(async () => "required"),
+  setRunApproval: vi.fn(async () => undefined),
   getDefaultVerifier: vi.fn(async () => "agent_v"),
   getExternalName: vi.fn(async () => null),
   getExternalIcon: vi.fn(async () => null),

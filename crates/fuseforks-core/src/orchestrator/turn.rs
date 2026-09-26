@@ -1173,6 +1173,9 @@ async fn present_tools(
         agent_names,
         uses_blackboard: spec.uses_blackboard,
         language,
+        // コマンド承認モード（Spec 61）。`run` の説明文がモードで変わるので、
+        // 提示と実行が同じ値を読む（切り替えた周から両方が揃って変わる）。
+        run_approval: shared.run_approval(),
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -3198,6 +3201,7 @@ async fn execute_tool(
         // Spec 10 の不変条件 1（検査点は周回境界だけ）はターンループの話で、
         // 葉で 1 箇所見ることはその構造を変えない。
         cancel: Some(cancel.clone()),
+        run_approval: shared.run_approval(),
     };
     tool.call(&ctx, &call.args).await
 }

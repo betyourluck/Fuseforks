@@ -46,6 +46,7 @@ fn ctx(work_dir: &Path) -> ToolContext {
         agent_names: Vec::new(),
         uses_blackboard: true,
         language: fuseforks_core::world::Language::Ja,
+        run_approval: fuseforks_core::command::RunApproval::Required,
     }
 }
 

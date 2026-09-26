@@ -92,6 +92,30 @@ impl Orchestrator {
         self.shared.emit(CoreEvent::PlanReviewBypassChanged { on });
     }
 
+    /// コマンドの承認モード（Spec 61）。
+    pub fn run_approval(&self) -> crate::command::RunApproval {
+        self.shared.run_approval()
+    }
+
+    /// コマンドの承認モードを切り替える（Spec 61）。
+    ///
+    /// **`world.json` にも `run.json` にも書かない** — メモリだけの状態で、次の
+    /// `run` の提示と判定から効く。切り替えは 1 行ログに残す（緩めた時刻が後から読める）。
+    pub fn set_run_approval(&self, mode: crate::command::RunApproval) {
+        let before = self
+            .shared
+            .run_approval
+            .swap(mode.to_u8(), std::sync::atomic::Ordering::Relaxed);
+        if before != mode.to_u8() {
+            crate::note!(
+                "run approval: mode={} was={}",
+                mode.label(),
+                crate::command::RunApproval::from_u8(before).label()
+            );
+        }
+        self.shared.emit(CoreEvent::RunApprovalChanged { mode });
+    }
+
     /// 束ねの既定の検証役（Spec 53）。`None` = なし（削除済みの個体も `None`）。
     pub async fn default_verifier(&self) -> Option<AgentId> {
         self.shared.world.read().await.default_verifier().cloned()

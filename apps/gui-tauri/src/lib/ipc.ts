@@ -38,6 +38,7 @@ import type {
   PlanTaskInput,
   PlanWaveRecord,
   Recurrence,
+  RunApproval,
   ToolCallDetail,
   ScheduleOptions,
   ScheduleView,
@@ -384,12 +385,22 @@ export const setAskTimeout = (secs: number | null) => call<void>("set_ask_timeou
 
 /**
  * 計画の確認を飛ばすスイッチ（Spec 53 — ステータスバー）。**コアのメモリだけ**の状態で、
- * 起動時は必ず `false`（保存しない）。
+ * 起動時は必ず `false`（コアは保存しない）。再起動をまたいで戻すのは画面側
+ * （`lib/switchMemory.ts`。2026-09-27 利用者裁定）。
  */
 export const getPlanReviewBypass = () => call<boolean>("get_plan_review_bypass");
 
 /** スイッチを切り替える。変化は `planReviewBypassChanged` イベントでも届く。 */
 export const setPlanReviewBypass = (on: boolean) => call<void>("set_plan_review_bypass", { on });
+
+/**
+ * コマンドの承認モード（Spec 61 — ステータスバー）。**コアのメモリだけ**の状態で、
+ * 起動時は必ず `required`。再起動をまたいで戻すのは画面側（`lib/switchMemory.ts`）。
+ */
+export const getRunApproval = () => call<RunApproval>("get_run_approval");
+
+/** モードを切り替える。変化は `runApprovalChanged` イベントでも届く。 */
+export const setRunApproval = (mode: RunApproval) => call<void>("set_run_approval", { mode });
 
 /** 束ねの既定の検証役（Spec 53）。`null` = なし（削除済みの個体も `null`）。 */
 export const getDefaultVerifier = () => call<AgentId | null>("get_default_verifier");

@@ -14,6 +14,7 @@ import { snapshotToSpec } from "../lib/agentSpec";
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
 import { formatError } from "../lib/errorText";
+import { loadSwitchMemory, rememberSwitch } from "../lib/switchMemory";
 import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
@@ -39,6 +40,7 @@ import type {
   SessionSummary,
   TopologyPosition,
   TopologyEdge,
+  RunApproval,
 } from "../types";
 
 /** Rust 側が emit するイベント名。`state.rs` の `CORE_EVENT` と一致させること。 */
@@ -113,6 +115,11 @@ interface OrchestratorState {
    * 状態で、起動時に 1 回読み、以後は `planReviewBypassChanged` で追う。
    */
   planReviewBypass: boolean;
+  /**
+   * コマンドの承認モード（Spec 61 — ステータスバー）。コアのメモリだけの状態で、
+   * 起動時に 1 回読み、以後は `runApprovalChanged` で追う。
+   */
+  runApproval: RunApproval;
   /**
    * 束ねの既定の検証役（Spec 53）。`null` = なし。**削除済みの個体はコアが `null` で
    * 返す**ので、画面は「削除済み」を区別できない（区別する欄をワイヤに持たない）。
@@ -217,6 +224,7 @@ const state = reactive<OrchestratorState>({
   userIcon: null,
   mcpHost: null,
   planReviewBypass: false,
+  runApproval: "required",
   defaultVerifier: null,
   externalName: null,
   externalIcon: null,
@@ -733,6 +741,11 @@ function applyEvent(event: CoreEvent): void {
 
     case "planReviewBypassChanged":
       state.planReviewBypass = event.on;
+      rememberSwitch({ planReviewBypass: event.on });
+      break;
+    case "runApprovalChanged":
+      state.runApproval = event.mode;
+      rememberSwitch({ runApproval: event.mode });
       break;
 
     case "planWaveDiscarded": {
@@ -834,6 +847,26 @@ async function initialize(): Promise<void> {
     // 計画の確認を飛ばすスイッチと既定の検証役（Spec 53）。スイッチは起動直後なら
     // 必ず OFF だが、画面の再読み込み（コアは生きている）では ON のことがあるので読む。
     state.planReviewBypass = await ipc.getPlanReviewBypass();
+    state.runApproval = await ipc.getRunApproval();
+    // 端末に覚えたスイッチ（2026-09-27 利用者裁定）。コアは起動のたびに既定へ戻るので、
+    // 覚えた値と違えば設定し直す。画面の再読み込み（コアは生きている）では同じ値なので
+    // 何も呼ばない。**失敗しても起動は止めない**（既定 = 確認あり の側に残るだけ）。
+    const remembered = loadSwitchMemory();
+    try {
+      if (
+        remembered.planReviewBypass !== undefined &&
+        remembered.planReviewBypass !== state.planReviewBypass
+      ) {
+        await ipc.setPlanReviewBypass(remembered.planReviewBypass);
+        state.planReviewBypass = remembered.planReviewBypass;
+      }
+      if (remembered.runApproval !== undefined && remembered.runApproval !== state.runApproval) {
+        await ipc.setRunApproval(remembered.runApproval);
+        state.runApproval = remembered.runApproval;
+      }
+    } catch (error) {
+      console.warn("restoring the status bar switches failed", error);
+    }
     state.defaultVerifier = await ipc.getDefaultVerifier();
     // 外部クライアントの呼び名とアイコン（Spec 25）。会話ペインの外部の行に
     // 出るので、覆いが外れる前に当てておく（利用者の呼び名と同じ理由）。
@@ -959,7 +992,23 @@ export function useOrchestrator() {
       const done = await mutate("orchestrator.op.setPlanReviewBypass", () =>
         ipc.setPlanReviewBypass(on),
       );
-      if (succeeded(done)) state.planReviewBypass = on;
+      if (succeeded(done)) {
+        state.planReviewBypass = on;
+        rememberSwitch({ planReviewBypass: on });
+      }
+      return succeeded(done);
+    },
+
+    /**
+     * コマンドの承認モードを切り替える（Spec 61 — ステータスバー）。
+     * 成功した値だけを端末に覚える（コアが受け入れなかった値を次の起動で戻さない）。
+     */
+    async setRunApproval(mode: RunApproval): Promise<boolean> {
+      const done = await mutate("orchestrator.op.setRunApproval", () => ipc.setRunApproval(mode));
+      if (succeeded(done)) {
+        state.runApproval = mode;
+        rememberSwitch({ runApproval: mode });
+      }
       return succeeded(done);
     },
 

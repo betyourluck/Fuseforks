@@ -1143,6 +1143,7 @@ mod tests {
             agent_names: Vec::new(),
             uses_blackboard: true,
             language: crate::world::Language::Ja,
+            run_approval: crate::command::RunApproval::Required,
         }
     }
 

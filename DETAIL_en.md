@@ -128,7 +128,7 @@ Fuseforks/
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
-                ├── StatusBar.vue                      Bottom: MCP server listening state, **the switch that skips plan reviews**, **the stats entry point**, date, time (same format as the diagnostic log), and version
+                ├── StatusBar.vue                      Bottom: MCP server listening state, **the switch that skips plan reviews**, **the command approval mode**, **the stats entry point**, date, time (same format as the diagnostic log), and version
                 └── PaneSplitter.vue / ErrorBoundary.vue / ToastHost.vue / ConfirmHost.vue
 ```
 
@@ -177,7 +177,7 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is filled by the model template's "Fetch" button together with the rates ([Spec 50](specs/50_context-length-fetch.md); models absent from the table keep the hand-typed value), so a number above 100% still means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
-| Bottom | Status bar (**MCP server listening state**, **the switch that skips plan reviews** ([Spec 53](specs/53_unattended-plan-and-verifier.md); glows and reads "No review" while on; not saved, off after restart), date and time, version) | Always visible (a 22px strip) |
+| Bottom | Status bar (**MCP server listening state**, **the switch that skips plan reviews** ([Spec 53](specs/53_unattended-plan-and-verifier.md); glows and reads "No review" while on), **the command approval mode** ([Spec 61](specs/61_run-approval-mode.md): approval required / auto-approve and allow / allow without approval; glows when not the default). **Both switches are remembered on this device and the next launch starts the same way**, date and time, version) | Always visible (a 22px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
@@ -675,7 +675,7 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 - **A delegated turn skips the window** (2026-09-02). When a servant with Plan Review on is itself called via `ask` or `plan`, its `plan` in that turn fans out and bundles inside the turn as before and returns to the requester. Opening the window would end the turn at the proposal, so the requester would receive only "proposed"; the bundle would arrive later as a new causality with no return path and drift to the user — the requester could never receive it. Same shape as the rule that a delegated turn is never offered the handoff tool
 - **The window can be skipped for unattended runs** ([Spec 53](specs/53_unattended-plan-and-verifier.md), 2026-09-15). There are two routes; if either holds, the plan fans out without opening the window:
   - **A schedule's "Approve plan reviews automatically"** — applies only to work started by that schedule, and carries through delegations, transfers and acceptance re-requests. **Saved with the village; survives restarts**
-  - **The status bar switch** — while on, even your own requests do not open the window. **Not saved** (left on across a restart, it would silently remove reviews from a village that needs them; for unattended runs that must survive restarts, use the schedule option)
+  - **The status bar switch** — while on, even your own requests do not open the window. **Not saved in the village, but remembered on this device, so the next launch starts with it on** (changed on 2026-09-27; before that it always turned off on restart). The status bar glows while it is on, so leaving it on is visible. Handing the village to someone else does not switch off their reviews
   - A skip writes one line, `plan review skipped: agent=… reason=schedule|bypass` (`schedule` when both hold). Without it, "I turned review on but it did not stop" cannot be read from the log
 
 #### Bundle Verifier ([Spec 53](specs/53_unattended-plan-and-verifier.md))
@@ -959,8 +959,21 @@ control).
     **the ceiling starts fresh every time** (the same treatment as a scheduled run).
 - **There is no "approve all."** Bulk approval skips the decision of *what* to permit,
   which is the substance of allow-listing.
+- **There is a mode that skips approval itself** ([Spec 61](specs/61_run-approval-mode.md)),
+  chosen in the status bar: **approval required** (the default, as above) /
+  **auto-approve and allow** (calls not on the list also run, and the exact call is added
+  to `allow` — it stays recorded, so the same call keeps working after you switch back and
+  you can review it later) / **allow without approval** (runs and records nothing; switching
+  back refuses it again).
+  - **Denied commands (`deny`) never run in any mode.**
+  - A call that cannot be written as an exact pattern (an argument with whitespace, or a
+    last argument of `*`) runs without being added even under auto-approve — writing it would
+    produce a line that never matches, or one that widens to "any further arguments".
+  - Each call that ran without approval leaves one `run bypass:` line in `fuseforks.log`.
+  - **Remembered on this device; the next launch starts in the same mode.** It is not saved
+    in the village, so handing the village over does not waive approval for the recipient.
 - **Once even one entry is permitted, that servant can run commands from its next
-  turn** (before that, the tool is not even offered to it).
+  turn** (before that the tool is still offered, but calling it only queues a request).
 - **Pressing a request that has already been pushed out does nothing** (waiting
   requests are capped at 20 per servant, oldest discarded). The screen says so.
 

@@ -591,6 +591,26 @@ pub async fn set_plan_review_bypass(state: State<'_, AppState>, on: bool) -> Cor
     Ok(())
 }
 
+/// コマンドの承認モード（Spec 61）。**コアのメモリだけの状態で、起動時は必ず `required`**
+/// （再起動をまたいで戻すのは画面側 — 端末の `localStorage` から設定し直す）。
+#[tauri::command]
+pub async fn get_run_approval(
+    state: State<'_, AppState>,
+) -> CoreResult<fuseforks_core::command::RunApproval> {
+    Ok(state.orchestrator.run_approval())
+}
+
+/// コマンドの承認モードを切り替える（Spec 61）。`world.json` にも `run.json` にも書かない。
+/// 次の `run` の提示と判定から効く。
+#[tauri::command]
+pub async fn set_run_approval(
+    state: State<'_, AppState>,
+    mode: fuseforks_core::command::RunApproval,
+) -> CoreResult<()> {
+    state.orchestrator.set_run_approval(mode);
+    Ok(())
+}
+
 /// 束ねの既定の検証役（Spec 53）。`null` = なし（削除済みの個体も `null`）。
 #[tauri::command]
 pub async fn get_default_verifier(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {

@@ -71,6 +71,88 @@ pub enum Decision {
     Malformed,
 }
 
+/// `allow` にも `deny` にも無い呼び出し（[`Decision::Unknown`]）をどう扱うか（Spec 61）。
+///
+/// **変わるのは `Unknown` の扱いだけ。** `Denied`（利用者が一度した判断）と
+/// `Malformed`（照合できない形）はどのモードでも拒否する。
+///
+/// 置き場はステータスバーで、**コアはメモリだけに持つ**（`world.json` にも
+/// `run.json` にも書かない）。再起動をまたいで戻すのは画面側の仕事
+/// （2026-09-27 利用者裁定。端末の `localStorage` に覚え、起動時に設定し直す）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunApproval {
+    /// 承認が必要（既定）。実行せず `pending` へ積む — Spec 15 以来の挙動。
+    #[default]
+    Required,
+    /// 自動承認して許可。その呼び出しの**完全一致**を `allow` へ書き足してから実行する。
+    /// 記録が残るので、スイッチを戻しても同じ呼び出しは通り続け、承認画面や
+    /// `run.json` から後で見直せる。
+    AutoApprove,
+    /// 承認せずに許可。その場で実行するだけで `allow` には何も足さない。
+    /// スイッチを戻せば元どおり拒否される。
+    NoApproval,
+}
+
+impl RunApproval {
+    /// ログと IPC に出す名前（serde の綴りと同じ）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::AutoApprove => "auto_approve",
+            Self::NoApproval => "no_approval",
+        }
+    }
+
+    /// `AtomicU8` に載せるための番号。
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Required => 0,
+            Self::AutoApprove => 1,
+            Self::NoApproval => 2,
+        }
+    }
+
+    /// [`Self::to_u8`] の逆。**知らない番号は `Required`**（fail closed）。
+    pub fn from_u8(n: u8) -> Self {
+        match n {
+            1 => Self::AutoApprove,
+            2 => Self::NoApproval,
+            _ => Self::Required,
+        }
+    }
+}
+
+/// 呼び出しを**完全一致**で表すパターン。表せないときは `None`（Spec 61）。
+///
+/// パターンは空白で割って 1 語ずつ照合し、末尾の `*` は「以降の引数は自由」なので、
+/// 次の 3 つは完全一致として書けない（書くと別物になる）:
+///
+/// - 空白を含む引数（`-Command "lake build"` — 割られて 2 語になり、永久に一致しない。#137）
+/// - 空の引数（割ると消える）
+/// - **最後の引数が `*`**（完全一致のつもりが「以降は自由」へ広がる）
+///
+/// 自動承認はこれが `None` のとき**記録せずに実行する**（`recorded=unrepresentable`）。
+/// 広がる形や死んだ行を `allow` へ書かない。
+pub fn exact_allow_pattern(command: &str, args: &[String]) -> Option<String> {
+    normalize_command(command)?;
+    if args
+        .iter()
+        .any(|a| a.is_empty() || a.contains(char::is_whitespace))
+    {
+        return None;
+    }
+    if args.last().is_some_and(|a| a == "*") {
+        return None;
+    }
+    Some(
+        std::iter::once(command.trim())
+            .chain(args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 /// エージェントが呼んだが `allow` にも `deny` にも無かった記録。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -296,6 +378,20 @@ impl CommandPolicy {
         }
     }
 
+    /// 自動承認（Spec 61）: 完全一致のパターンを `allow` へ足す。**足したら `true`。**
+    ///
+    /// 承認画面の [`Self::approve`] と違い `pending` に無くても足す — 要求を積まずに
+    /// その場で許すのがこのモードの意味。すでに同じ行があれば何もしない。足した行が
+    /// 覆う判断待ちは [`Self::prune_settled`] が落とす（承認と同じ後始末）。
+    pub fn auto_approve(&mut self, pattern: &str) -> bool {
+        if self.allow.iter().any(|p| p == pattern) {
+            return false;
+        }
+        self.allow.push(pattern.to_owned());
+        self.prune_settled();
+        true
+    }
+
     /// 承認: `pending` の 1 件を消し、パターンを `allow` へ足す（Spec 20）。
     pub fn approve(&mut self, command: &str, args: &[String], open: bool) -> ApprovalOutcome {
         self.resolve(command, args, open, true)
@@ -443,6 +539,45 @@ fn pattern_matches(pattern: &str, tokens: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 自動承認が書くパターンは、**その呼び出しにだけ一致する**（Spec 61）。
+    /// 表せない形では書かない — 死んだ行か、「以降は自由」へ広がる行になる。
+    #[test]
+    fn the_exact_pattern_matches_only_that_call_or_is_not_written() {
+        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let pattern = exact_allow_pattern("git", &a(&["log", "-5"])).unwrap();
+        assert_eq!(pattern, "git log -5");
+        let p = CommandPolicy { allow: vec![pattern], ..CommandPolicy::default() };
+        assert_eq!(p.decide("git", &a(&["log", "-5"])), Decision::Allowed);
+        assert_eq!(p.decide("git", &a(&["log", "-5", "x"])), Decision::Unknown);
+        assert_eq!(p.decide("git", &a(&["log"])), Decision::Unknown);
+
+        assert_eq!(exact_allow_pattern("ls", &[]).as_deref(), Some("ls"));
+        assert_eq!(exact_allow_pattern("pwsh", &a(&["-Command", "lake build"])), None, "空白入り");
+        assert_eq!(exact_allow_pattern("echo", &a(&["", "x"])), None, "空の引数");
+        assert_eq!(exact_allow_pattern("ls", &a(&["*"])), None, "末尾の * は広がる");
+        assert_eq!(exact_allow_pattern("./ls", &[]), None, "照合できない command");
+        // 途中の `*` は文字どおりの一致なので書いてよい。
+        assert_eq!(exact_allow_pattern("ls", &a(&["*", "-l"])).as_deref(), Some("ls * -l"));
+    }
+
+    #[test]
+    fn auto_approve_adds_once_and_settles_covered_pending() {
+        let mut p = CommandPolicy::default();
+        let _ = p.note_pending("git", &["log".to_string()], 1);
+        assert!(p.auto_approve("git log"));
+        assert!(!p.auto_approve("git log"), "同じ行は 2 度足さない");
+        assert_eq!(p.allow, vec!["git log".to_string()]);
+        assert!(p.pending.is_empty(), "覆った判断待ちは落ちる");
+    }
+
+    #[test]
+    fn unknown_mode_numbers_fall_back_to_required() {
+        for mode in [RunApproval::Required, RunApproval::AutoApprove, RunApproval::NoApproval] {
+            assert_eq!(RunApproval::from_u8(mode.to_u8()), mode);
+        }
+        assert_eq!(RunApproval::from_u8(9), RunApproval::Required);
+    }
 
     /// **`*` は 0 個以上の引数に一致する。**
     ///

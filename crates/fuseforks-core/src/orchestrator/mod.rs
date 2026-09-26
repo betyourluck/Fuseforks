@@ -410,6 +410,12 @@ struct Shared {
     /// またいで無人で回すものは予定の `autoApprovePlans` が担う。
     /// 1 プロセス 1 村なので、スコープはプロセス全体 = その村。
     plan_review_bypass: std::sync::atomic::AtomicBool,
+    /// ステータスバーのコマンド承認モード（Spec 61。[`crate::command::RunApproval::to_u8`]）。
+    ///
+    /// **メモリだけで、コアは保存しない。起動時は必ず `Required`。** 再起動をまたいで
+    /// 戻すのは画面側（端末の `localStorage` から設定し直す。2026-09-27 利用者裁定）。
+    /// 画面が居ない起動（将来の core 単独実行）では常に承認が必要なまま始まる。
+    run_approval: std::sync::atomic::AtomicU8,
     /// ツール結果の関連度を採点する器（Spec 59 D3 / `tool_prune_contract`）。
     ///
     /// **`None` が既定で、そのとき圧縮の機構は丸ごと存在しない** — ツール結果は
@@ -521,6 +527,13 @@ impl Shared {
     /// イベントを押し出す。購読者が居なければ黙って捨てる。
     fn emit(&self, event: CoreEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// コマンドの承認モード（Spec 61）。提示と実行の `ToolContext` がここから読む。
+    fn run_approval(&self) -> crate::command::RunApproval {
+        crate::command::RunApproval::from_u8(
+            self.run_approval.load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 
     /// ツール呼び出しのリング（Spec 57）を握る。

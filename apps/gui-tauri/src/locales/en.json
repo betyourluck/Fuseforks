@@ -1074,7 +1074,8 @@
       "createGroup": "create group",
       "saveGroup": "save group",
       "deleteGroup": "delete group",
-      "commitDrop": "save order and group"
+      "commitDrop": "save order and group",
+      "setRunApproval": "Changing the command approval mode"
     }
   },
   "statusBar": {
@@ -1085,10 +1086,15 @@
     "mcpHost": "MCP server listening :{port}",
     "mcpHostTitle": "Accepting requests from external LLMs (127.0.0.1:{port}). Turn it off under Settings > Integration > MCP server when not in use.",
     "statsTitle": "Stats (what this village has paid; toggles with the village view)",
-    "bypassOffTitle": "Skip plan reviews (while on, servants with plan review on dispatch without waiting for approval. Not saved; turns off on restart)",
-    "bypassOnTitle": "Skipping plan reviews (click to turn off; also turns off on restart)",
+    "bypassOffTitle": "Skip plan reviews (while on, servants with plan review on dispatch without waiting for approval. Remembered on this device; the next launch starts the same way)",
+    "bypassOnTitle": "Skipping plan reviews (click to turn off. Remembered on this device; the next launch starts with it on)",
     "bypassAria": "Skip plan reviews",
-    "bypassOnLabel": "No review"
+    "bypassOnLabel": "No review",
+    "runApprovalAria": "Command approval",
+    "runApprovalTitle": "How the run tool treats commands that are not on the allowed list. Denied commands never run in any mode. Remembered on this device; the next launch starts in the same mode",
+    "runApprovalRequired": "Approval required",
+    "runApprovalAutoApprove": "Auto-approve and allow",
+    "runApprovalNoApproval": "Allow without approval"
   },
   "roles": {
     "title": "Roles",

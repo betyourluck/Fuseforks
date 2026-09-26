@@ -44,6 +44,28 @@ fn plan_review_bypass_event_wire_is_frozen() {
     );
 }
 
+/// コマンドの承認モードの変化（Spec 61）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `RunApproval` と `CoreEvent` の `runApprovalChanged` を直すこと**
+/// （値の綴りは IPC の引数と `localStorage` の保存値にも使っている。変わると、覚えた
+/// モードが起動時に「知らない値」として捨てられ、黙って承認が必要へ戻る）。
+#[test]
+fn run_approval_event_wire_is_frozen() {
+    use fuseforks_core::command::RunApproval;
+    for (mode, wire) in [
+        (RunApproval::Required, "required"),
+        (RunApproval::AutoApprove, "auto_approve"),
+        (RunApproval::NoApproval, "no_approval"),
+    ] {
+        let event = fuseforks_core::event::CoreEvent::RunApprovalChanged { mode };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({ "type": "runApprovalChanged", "mode": wire }),
+        );
+        assert_eq!(mode.label(), wire, "ログの mode= と IPC の綴りを揃える");
+    }
+}
+
 #[test]
 fn wire_field_sets_are_frozen() {
     assert_eq!(

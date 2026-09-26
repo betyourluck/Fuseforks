@@ -1074,7 +1074,8 @@
       "createGroup": "グループの作成",
       "saveGroup": "グループの保存",
       "deleteGroup": "グループの削除",
-      "commitDrop": "並びと所属の保存"
+      "commitDrop": "並びと所属の保存",
+      "setRunApproval": "コマンドの承認モードの切り替え"
     }
   },
   "statusBar": {
@@ -1085,10 +1086,15 @@
     "mcpHost": "MCP サーバー 待ち受け中 :{port}",
     "mcpHostTitle": "外部の LLM から依頼を受け付けています（127.0.0.1:{port}）。使わないときはシステム設定の「外部連携 > MCP サーバー」で切ってください。",
     "statsTitle": "統計（この村がいくら払ったか。村の画面と切り替え）",
-    "bypassOffTitle": "計画の確認を飛ばす（オンの間は、計画の確認をオンにしたサーヴァントも承認待ちで止まらずに配ります。保存されず、再起動でオフに戻ります）",
-    "bypassOnTitle": "計画の確認を飛ばしています（押すと元に戻します。再起動でもオフに戻ります）",
+    "bypassOffTitle": "計画の確認を飛ばす（オンの間は、計画の確認をオンにしたサーヴァントも承認待ちで止まらずに配ります。この端末に記憶され、次の起動でも同じ状態で始まります）",
+    "bypassOnTitle": "計画の確認を飛ばしています（押すと元に戻します。この端末に記憶され、次の起動でもオンのまま始まります）",
     "bypassAria": "計画の確認を飛ばす",
-    "bypassOnLabel": "確認なし"
+    "bypassOnLabel": "確認なし",
+    "runApprovalAria": "コマンドの承認",
+    "runApprovalTitle": "run ツールで、許可リストに無いコマンドをどう扱うか。禁止したコマンドはどのモードでも実行しません。この端末に記憶され、次の起動でも同じモードで始まります",
+    "runApprovalRequired": "承認が必要",
+    "runApprovalAutoApprove": "自動承認して許可",
+    "runApprovalNoApproval": "承認せずに許可"
   },
   "roles": {
     "title": "役職",

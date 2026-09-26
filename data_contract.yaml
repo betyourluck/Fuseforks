@@ -1077,10 +1077,20 @@ enums:
           対象は data-tour="…" を付けた実物の要素で、**空の村にも存在する要素に限る**
           (起動の歩はカードのトグルではなく一覧ヘッダの一括 ▶)。配線は
           lib/tourTargets.test.ts が走査で留める。呼び直しは ユーザーインターフェース > 案内 の 1 経路だけ
+        - **端末に保存 → localStorage "fuseforks.switches.v1"** (2026-09-27 利用者裁定)。
+          ステータスバーの 2 つのスイッチ { planReviewBypass: bool, runApproval:
+          "required" | "auto_approve" | "no_approval" } (lib/switchMemory.ts)。
+          **コアはどちらもメモリだけに持ち、起動時は必ず既定** (確認あり / 承認が必要) —
+          画面が起動時に読み、違えば IPC で設定し直す。**書くのはコアが受け入れた値だけ**
+          (設定の成功とイベント)。起動時にコアから読んだ既定を書くと、覚えた値を
+          読む前に消す。**村には持たせない** — 配った先で受け取った人の確認が
+          黙って外れないように。知らない値はその欄だけ捨てる (既定へ倒す)
       **置き場ではないもの** (保存しない状態。3 つ目の置き場を作ったのではない):
-        - **計画の確認を飛ばすスイッチ plan_review_bypass** (Spec 53・2026-09-15)。
-          コアの Shared のメモリだけで、**起動時は必ず OFF**。入口はステータスバー
-          (システム設定ではない)。保存しない理由と意味論は plan_edit_window 凍結 11 (b) が正
+        - ~~**計画の確認を飛ばすスイッチ plan_review_bypass** (Spec 53・2026-09-15)。
+          コアの Shared のメモリだけで、**起動時は必ず OFF**~~ → **2026-09-27 に覆した**。
+          コアのメモリだけ・起動時は OFF で始まるのは同じだが、画面が上の
+          "fuseforks.switches.v1" から戻す。入口はステータスバー (システム設定ではない)。
+          意味論は plan_edit_window 凍結 11 (b) が正
       不変条件:
         - **左メニューの分類は主題で切る。保存先で切らない** (2026-08-03 の実機
           指摘で rev3 から変更)。分類は 全般 (ユーザー / 言語) /
@@ -3997,7 +4007,11 @@ conversation_termination:
            (b) **ステータスバーのスイッチ plan_review_bypass** — Shared のメモリだけ
            (AtomicBool)。**保存しない・起動時は必ず OFF** (付けっぱなしで再起動すると
            確認が要る村で黙って確認が消え続けるため。再起動をまたいで無人で回すものは
-           (a) が担う)。1 プロセス 1 村なのでスコープはプロセス全体 = その村
+           (a) が担う)。**→ 2026-09-27 に利用者裁定で一部覆した** — コアは今も保存せず
+           OFF で起動するが、**画面が端末の localStorage に覚えて起動時に設定し直す**
+           (settings_contract の "fuseforks.switches.v1")。覆した理由は利用者の運用 —
+           スイッチを入れて使う村では、起動のたびに入れ直す手間のほうが大きい。
+           帯の発光で「入っている」ことは見えるので、黙って消え続ける形にはならない。1 プロセス 1 村なのでスコープはプロセス全体 = その村
            (IPC は村の識別子を持たない)。
            利用者裁定「予定で自動で通すならスイッチが OFF でも飛ばす」は (a) OR (b) で成立。
            **既定 (予定の欄が偽・スイッチ OFF) なら凍結 1 のとおりバイト等価**
@@ -5080,6 +5094,35 @@ conversation_termination:
         その個体に残っている判断待ちの件数で、**コアが run.json を読んで自分で数える** —
         フロントから承認件数を受け取らないのは、ログのために IPC の表面を増やすことに
         なり、**フロントが渡す数をコアは検証できない**ため
+
+    **承認モード RunApproval (Spec 61。2026-09-27 利用者要望 → 同日着地)**。
+    ステータスバーで 3 つから選ぶ — required (承認が必要・既定) / auto_approve
+    (自動承認して許可) / no_approval (承認せずに許可)。**Spec 15 の閉じた許容を、
+    人がステータスバーで一時的に緩める経路**で、緩めたことを本節に書く
+    (failures.md #56 — 覆すときは覆したと分かるように)。
+      - **変わるのは Decision::Unknown の扱いだけ**。Denied と Malformed は
+        どのモードでも拒否する (deny は「利用者が一度した判断」なので承認を省いても越えない)
+      - auto_approve = **その呼び出しの完全一致** (exact_allow_pattern) を allow へ
+        書き足してから実行 (update_command_policy の差分適用。覆った pending は
+        prune_settled が落とす)。**記録が残るのでスイッチを戻しても同じ呼び出しは通る**。
+        完全一致で書けない形 (空白入りの引数 = #137 / 空の引数 / 末尾の `*` =
+        「以降は自由」へ広がる) は**書かずに実行する** (recorded=unrepresentable)。
+        書き足しの失敗でも実行の答えは変えない (note_pending と同じ規律)
+      - no_approval = その場で実行するだけ。allow にも pending にも何も書かない
+      - **状態はコアの Shared のメモリだけ (AtomicU8)**。world.json にも run.json にも
+        書かず、起動時は必ず required。**再起動をまたいで戻すのは画面側**
+        (localStorage "fuseforks.switches.v1"。2026-09-27 利用者裁定。settings_contract)。
+        画面の居ない起動では常に required で始まる
+      - **提示と実行が同じ値を読む** (ToolContext.run_approval。turn.rs の 2 箇所で
+        shared.run_approval() から解く)。required 以外では run の説明文に 1 文足す
+        (一覧に無い呼び出しも実行される / 禁止は実行されない)。**required の説明文は
+        1 バイトも変えない** (tool_spec_golden が留める)。切り替えた周から tools の
+        前方一致は切れる (入力キャッシュの書き直し 1 回。切り替えは稀なので受ける)
+      - **計器**: 承認を経ずに走った呼び出しごとに
+        `run bypass: agent=… command=… args=N mode=… recorded=yes|already|unrepresentable|save_failed|-`
+        を 1 行 (引数は数だけ — `run decision:` と同じ)。切り替えは
+        `run approval: mode=… was=…`。イベントは CoreEvent::RunApprovalChanged { mode }
+        (値の綴りは IPC と保存値と同じ snake_case。ipc_contract が留める)
 
   tool_reason_contract: |
     ツール呼び出しの理由表示 = モデルが 1 行で書く意図を画面へ出す

@@ -1140,6 +1140,12 @@ export type BottomTab = "blackboard" | "waves";
 export type Language = "ja" | "en";
 
 /**
+ * コマンドの承認モード（Spec 61）。Rust 側 `command::RunApproval` の serde 値と一致させる。
+ * 変わるのは `allow` にも `deny` にも無い呼び出しの扱いだけ（禁止は常に禁止）。
+ */
+export type RunApproval = "required" | "auto_approve" | "no_approval";
+
+/**
  * ツール呼び出しの理由の状態（Spec 27）。Rust 側 `tool_reason::ReasonState` の写し。
  *
  * **`string | null` にしない。** 空欄が 3 種類あり、`null` では区別できない —
@@ -1287,6 +1293,8 @@ export type CoreEvent =
   | { type: "planWaveDiscarded"; planId: number }
   /** 計画の確認を飛ばすスイッチが切り替わった（Spec 53 — ステータスバー）。 */
   | { type: "planReviewBypassChanged"; on: boolean }
+  /** コマンドの承認モードが切り替わった（Spec 61 — ステータスバー）。 */
+  | { type: "runApprovalChanged"; mode: RunApproval }
   /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
       流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };
