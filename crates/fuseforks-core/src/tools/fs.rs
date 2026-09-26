@@ -221,6 +221,26 @@ pub(crate) fn is_under_blackboard(work_dir: &Path, resolved: &Path) -> bool {
         .is_some_and(|first| first.eq_ignore_ascii_case(crate::blackboard::BLACKBOARD_DIR))
 }
 
+/// 正規化済みのパスが判断役の `judges/`（ワークスペース直下）の配下か（Spec 62 の囲い）。
+/// 大文字小文字は黒板と同じ理由で無視する。
+pub(crate) fn is_under_judges(judges_dir: &Path, resolved: &Path) -> bool {
+    // 基準はワークスペース（`judges_dir` の親）。`judges/` がまだ無い村でも、その下へ作ろうとする
+    // 書き込みを塞げるように、存在する親を正規化してから先頭の成分を比べる（黒板と同じ形）。
+    let (Some(workspace), Some(name)) = (judges_dir.parent(), judges_dir.file_name()) else {
+        return false;
+    };
+    let Ok(root) = workspace.canonicalize() else {
+        return false;
+    };
+    resolved
+        .strip_prefix(&root)
+        .ok()
+        .and_then(|rel| rel.components().next())
+        .and_then(|first| first.as_os_str().to_str())
+        .zip(name.to_str())
+        .is_some_and(|(first, name)| first.eq_ignore_ascii_case(name))
+}
+
 /// `blackboard/` の囲い（Spec 55 凍結 9）。`file` / `sd` / `yq` の**書き込み系**が、
 /// 対象を解決した直後にこれを通す。読み取り系は呼ばない。
 ///
@@ -230,6 +250,9 @@ pub(crate) struct BlackboardFence {
     agent: String,
     uses_blackboard: bool,
     language: crate::world::Language,
+    /// 判断役のファイルの置き場（Spec 62 の囲い。`None` = 囲わない）。**同じ書き込み系の入口で
+    /// 塞ぐので、ここに相乗りする** — 別の囲いを作ると 6 か所の配線がもう 1 組要る。
+    judges_dir: Option<std::path::PathBuf>,
 }
 
 impl BlackboardFence {
@@ -238,12 +261,29 @@ impl BlackboardFence {
             agent: ctx.agent_id.as_str().to_owned(),
             uses_blackboard: ctx.uses_blackboard,
             language: ctx.language,
+            judges_dir: ctx.judges_dir.clone(),
         }
     }
 
     /// 塞ぐなら拒否の文面。計器 `blackboard fence:` も 1 行出す（パスは出さない —
     /// ファイル名には仕事名が入る）。
+    ///
+    /// **判断役の `judges/` も同じ入口で塞ぐ**（Spec 62 — 作業フォルダがワークスペースを含む村では
+    /// ツールで `judge.toml` を書き換えられてしまう）。計器は `judges fence:`。
     pub(crate) fn refuse(&self, work_dir: &Path, resolved: &Path, tool: &str, op: &str) -> Option<String> {
+        if let Some(judges) = &self.judges_dir
+            && is_under_judges(judges, resolved)
+        {
+            crate::note!("judges fence: agent={} tool={tool} op={op}", self.agent);
+            return Some(
+                self.language
+                    .pick(
+                        "`judges/` は判断役の設定で、ツールからは書き換えられません（何も変えていません）。                         判断役の問いと規則は人が画面で編集します。",
+                        "`judges/` holds judge settings and cannot be changed by tools (nothing was changed).                          A human edits a judge's questions and rules in the app.",
+                    )
+                    .to_owned(),
+            );
+        }
         if !is_under_blackboard(work_dir, resolved) {
             return None;
         }
@@ -1144,6 +1184,7 @@ mod tests {
             uses_blackboard: true,
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
+            judges_dir: None,
         }
     }
 

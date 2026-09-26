@@ -517,6 +517,7 @@ mod tests {
             uses_blackboard: true,
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
+            judges_dir: None,
         }
     }
 
@@ -799,6 +800,47 @@ mod tests {
 
         let reply = call(&dir, serde_json::json!({ "op": "read", "path": "bin.dat" })).await;
         assert!(reply.contains("バイナリ"), "{reply}");
+    }
+
+    /// 判断役の `judges/`（Spec 62 の囲い）。**作業フォルダがワークスペースそのものの村**で、書き込み系は
+    /// 断り、読み取りと囲いの外は通す。片方だけだと「全部断る」も「全部通す」も緑になる。
+    #[tokio::test]
+    async fn writes_under_the_judges_dir_are_refused_when_the_work_dir_is_the_workspace() {
+        let dir = TempDir::new("judges-fence");
+        dir.write("judges/router/judge.toml", "元の規則");
+        let mut ctx = ctx_with(Some(&dir.0));
+        ctx.judges_dir = Some(dir.0.join("judges"));
+
+        let over = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "write", "path": "judges/router/judge.toml", "content": "x", "overwrite": true }))
+            .await
+            .unwrap();
+        assert!(over.contains("`judges/`"), "{over}");
+        assert_eq!(dir.read("judges/router/judge.toml"), "元の規則", "書き換わっていない");
+        // まだ無い判断役の置き場を作る書き込みも断る。
+        let fresh = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "write", "path": "judges/new/judge.toml", "content": "x" }))
+            .await
+            .unwrap();
+        assert!(fresh.contains("`judges/`"), "{fresh}");
+        assert!(!dir.0.join("judges/new").exists());
+        let removed = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "remove", "path": "judges/router/judge.toml" }))
+            .await
+            .unwrap();
+        assert!(removed.contains("`judges/`"), "{removed}");
+        assert!(dir.0.join("judges/router/judge.toml").exists());
+        // 読み取りは通る・囲いの外は書ける。
+        let read = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "read", "path": "judges/router/judge.toml" }))
+            .await
+            .unwrap();
+        assert!(read.ends_with("元の規則"), "{read}");
+        let plain = FileTool
+            .call(&ctx, &serde_json::json!({ "op": "write", "path": "notes.md", "content": "x" }))
+            .await
+            .unwrap();
+        assert!(plain.contains("作成しました"), "{plain}");
     }
 
     /// `blackboard/` の囲い（Spec 55）。**書き込み系は断り、読み取りは通す** — 対で見る。

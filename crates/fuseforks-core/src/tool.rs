@@ -82,6 +82,10 @@ pub struct ToolContext {
     /// 提示（`spec_for` の説明文）と実行（`Unknown` の扱い）が同じ値を読む。
     /// 状態はコアのメモリ（`Shared`）にあり、オーケストレーターが解決して渡す。
     pub run_approval: crate::command::RunApproval,
+    /// 判断役のファイルの置き場（`{workspace}/judges`。Spec 62 の囲い）。**書き込み系（`file` / `sd` /
+    /// `yq`）はこの配下を書き換えない** — `judge.toml` を書けるのは人だけ（画面の保存）。
+    /// `None` = 囲わない（テストと、ワークスペースを知らない呼び出し）。
+    pub judges_dir: Option<std::path::PathBuf>,
 }
 
 /// 実行可能なツール。
@@ -316,6 +320,7 @@ mod tests {
             uses_blackboard: true,
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
+            judges_dir: None,
         }
     }
 

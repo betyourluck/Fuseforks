@@ -97,6 +97,9 @@ const ICON_MAX_BYTES: usize = 512 * 1024;
 /// 物理的な順序（条例が最上段）として表現される。
 const ORDINANCE_FILE: &str = "Ordinance.md";
 
+/// 判断役の問いと規則のファイル名（Spec 62）。
+pub const JUDGE_FILE: &str = "judge.toml";
+
 /// 設定ファイルの読み書きを担う。
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
@@ -459,6 +462,60 @@ impl ConfigStore {
         tokio::fs::write(&path, json)
             .await
             .map_err(|e| Self::io_err(&path, e))
+    }
+
+    /// 判断役のファイルの置き場（`{workspace}/judges`）。**囲い（`ToolContext::judges_dir`）の基準**。
+    pub fn judges_dir(&self) -> PathBuf {
+        self.root.join("judges")
+    }
+
+    /// 判断役 1 つのディレクトリ（`{workspace}/judges/<id>`）。**ID は `is_safe` を通ったものだけ**。
+    fn judge_dir(&self, id: &AgentId) -> CoreResult<PathBuf> {
+        if !id.is_safe() {
+            return Err(CoreError::UnsafeIdentifier { value: id.to_string() });
+        }
+        Ok(self.judges_dir().join(id.as_str()))
+    }
+
+    /// `judge.toml` を読む。**無ければ `None`**（空文字とは分ける — 「無い」は有効の述語の 1 状態）。
+    ///
+    /// # Errors
+    /// ID が不正・読めない。
+    pub async fn read_judge_file(&self, id: &AgentId) -> CoreResult<Option<String>> {
+        let path = self.judge_dir(id)?.join(JUDGE_FILE);
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => Ok(Some(text)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// `judge.toml` を書く（一時ファイル + rename）。検査は呼び手の仕事。
+    ///
+    /// # Errors
+    /// ID が不正・書けない。
+    pub async fn write_judge_file(&self, id: &AgentId, text: &str) -> CoreResult<()> {
+        let dir = self.judge_dir(id)?;
+        tokio::fs::create_dir_all(&dir).await.map_err(|e| Self::io_err(&dir, e))?;
+        let final_path = dir.join(JUDGE_FILE);
+        let temp_path = dir.join(format!("{JUDGE_FILE}.tmp"));
+        tokio::fs::write(&temp_path, text).await.map_err(|e| Self::io_err(&temp_path, e))?;
+        tokio::fs::rename(&temp_path, &final_path)
+            .await
+            .map_err(|e| Self::io_err(&final_path, e))
+    }
+
+    /// 判断役のディレクトリを消す（無ければ何もしない）。
+    ///
+    /// # Errors
+    /// ID が不正・消せない。
+    pub async fn remove_judge_dir(&self, id: &AgentId) -> CoreResult<()> {
+        let dir = self.judge_dir(id)?;
+        match tokio::fs::remove_dir_all(&dir).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(Self::io_err(&dir, err)),
+        }
     }
 
     /// エージェントの設定ディレクトリごと削除する。存在しなければ何もしない。

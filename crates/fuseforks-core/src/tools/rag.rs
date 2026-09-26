@@ -584,6 +584,7 @@ mod tests {
             uses_blackboard: true,
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
+            judges_dir: None,
         }
     }
 

@@ -117,6 +117,18 @@ pub enum CoreError {
     #[error("トークン制限に 0 は設定できません。制限を外すには「制限なし」を選んでください")]
     InvalidTokenBudget,
 
+    /// 判断役の `judge.toml` が検査に落ちた（Spec 62）。**保存しない。**
+    ///
+    /// `location` は `questions.kind` / `rules[2].when` / `otherwise` / `TOML` / `to` の形で、
+    /// 画面は編集中の欄の隣にそのまま出す。
+    #[error("判断役のファイルに誤りがあります（{location}: {message}）")]
+    InvalidJudgeFile {
+        /// どこで落ちたか。
+        location: String,
+        /// 何が悪いか。
+        message: String,
+    },
+
     /// トポロジー（接続関係）が不正。自己ループや未登録先への接続など。
     #[error("トポロジーが不正です: {reason}")]
     InvalidTopology {
@@ -374,6 +386,7 @@ impl CoreError {
             Self::SessionStore { .. } => "SESSION_STORE_FAILED",
             Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
             Self::InvalidTokenBudget => "INVALID_TOKEN_BUDGET",
+            Self::InvalidJudgeFile { .. } => "INVALID_JUDGE_FILE",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",

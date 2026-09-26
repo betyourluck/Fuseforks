@@ -1245,7 +1245,11 @@ impl Outcome {
 /// 転送先ごとのツール定義と、その逆引き。
 pub(super) struct HandoffTools {
     /// `(ツール名, 転送先, 表示名)`。名前からの逆引きと、説明文の生成に使う。
+    /// **サーヴァントだけ**（Spec 62 — 判断役は `ask_*` / `transfer_to_*` / `plan` の宛先に入れない）。
     entries: Vec<(String, AgentId, String)>,
+    /// 判断役のツール（Spec 62）。**`is_empty` / `offers_plan` / 名簿は数えない** — 判断役は
+    /// 会話の相手ではない。ここに載るのは有効な判断役だけ（`judging::judge_entries`）。
+    judges: Vec<super::judging::JudgeEntry>,
 }
 
 impl HandoffTools {
@@ -1277,7 +1281,23 @@ impl HandoffTools {
             };
             entries.push((name, target.clone(), display.clone()));
         }
-        Self { entries }
+        Self { entries, judges: Vec::new() }
+    }
+
+    /// 判断役のツールを添える（Spec 62）。
+    pub(super) fn with_judges(mut self, judges: Vec<super::judging::JudgeEntry>) -> Self {
+        self.judges = judges;
+        self
+    }
+
+    /// 判断役のツール定義。
+    pub(super) fn judge_specs(&self, language: Language) -> Vec<ToolSpec> {
+        self.judges.iter().map(|j| j.spec(language)).collect()
+    }
+
+    /// 判断役のツール名から判断役を逆引きする。
+    pub(super) fn resolve_judge(&self, name: &str) -> Option<&super::judging::JudgeEntry> {
+        self.judges.iter().find(|j| j.tool == name)
     }
 
     /// 転送先が 1 つも無いか。

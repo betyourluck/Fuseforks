@@ -1079,6 +1079,177 @@ fn eval(expr: &Expr, values: &BTreeMap<String, Resolved>) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 有効の述語・表示・計器（純関数）
+// ---------------------------------------------------------------------------
+
+/// 判断役が有効か（`judge_contract` の**有効の述語は 1 つ**）。ツールを生やすか・左ペインの表示・
+/// 地図の線はこの 1 つを読む — 別々に判定すると「ツールは生えないのに線は描かれる」が生まれる。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum JudgeStatus {
+    /// 使える。
+    Active,
+    /// `judge.toml` が無い。
+    NoFile,
+    /// 検査に落ちている（手で編集したファイル）。
+    #[serde(rename_all = "camelCase")]
+    Invalid {
+        /// どこで。
+        location: String,
+        /// 何が。
+        message: String,
+    },
+    /// `to` にサーヴァントでない ID がある（消したサーヴァント・判断役の ID）。
+    #[serde(rename_all = "camelCase")]
+    MissingTargets {
+        /// 名指し。
+        targets: Vec<AgentId>,
+    },
+    /// 判断モデル（Jev）の設定が無い。
+    NoJudgeModel,
+}
+
+/// 有効の述語（純関数）。判定の順は「ファイル → 検査 → 行き先 → 判断モデル」。
+///
+/// `file` は読み込みと検査の結果（`None` = ファイルが無い）。
+pub fn status_of(
+    file: Option<&Result<JudgeFile, JudgeFileError>>,
+    is_servant: impl Fn(&AgentId) -> bool,
+    has_judge_model: bool,
+) -> JudgeStatus {
+    match file {
+        None => JudgeStatus::NoFile,
+        Some(Err(e)) => JudgeStatus::Invalid { location: e.location.clone(), message: e.message.clone() },
+        Some(Ok(parsed)) => {
+            let missing = parsed.missing_targets(is_servant);
+            if !missing.is_empty() {
+                JudgeStatus::MissingTargets { targets: missing }
+            } else if !has_judge_model {
+                JudgeStatus::NoJudgeModel
+            } else {
+                JudgeStatus::Active
+            }
+        }
+    }
+}
+
+impl JudgeStatus {
+    /// 計器の `reason=` の語。
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::NoFile => "no_file",
+            Self::Invalid { .. } => "invalid",
+            Self::MissingTargets { .. } => "missing_targets",
+            Self::NoJudgeModel => "no_judge_model",
+        }
+    }
+}
+
+/// 判断役 1 つの一覧用の姿（IPC へ出す形）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeView {
+    /// ID（サーヴァントと同じ名前空間）。
+    pub id: AgentId,
+    /// 表示名。
+    pub name: String,
+    /// 並び。
+    pub order: u32,
+    /// 有効かどうか。
+    pub status: JudgeStatus,
+    /// 行き先になりうる相手（ファイルが読めたときだけ。地図の破線はここから描く）。
+    pub targets: Vec<AgentId>,
+}
+
+/// 規則が読んだ値を 1 つの文字列にする（計器の `answers=` と「試す」の表示）。
+///
+/// Choice は `鍵/p/margin`、Score は `段階/p/margin`、Noul は `確率`。**数値と鍵だけ**で、
+/// 問いの文面は出さない（#71）。鍵は人が設定に書いた識別子。
+pub fn answers_line(values: &BTreeMap<String, Resolved>) -> String {
+    values
+        .iter()
+        .map(|(name, v)| match v {
+            Resolved::Choice { key, p, margin } => format!("{name}:{key}/{p:.2}/{margin:.2}"),
+            Resolved::Score { level, p, margin, .. } => format!("{name}:{level}/{p:.2}/{margin:.2}"),
+            Resolved::Noul { p } => format!("{name}:{p:.2}"),
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 中継する本文の末尾に添える判定 1 行（**封筒の寄せは呼び手が掛ける**）。
+///
+/// 例: `［判断: 振り分け役 → kind=research(0.82) size=3(0.60) risky=0.12］`
+pub fn judgment_line(judge_name: &str, values: &BTreeMap<String, Resolved>, language: crate::world::Language) -> String {
+    let parts: Vec<String> = values
+        .iter()
+        .map(|(name, v)| match v {
+            Resolved::Choice { key, p, .. } => format!("{name}={key}({p:.2})"),
+            Resolved::Score { level, p, .. } => format!("{name}={level}({p:.2})"),
+            Resolved::Noul { p } => format!("{name}={p:.2}"),
+        })
+        .collect();
+    match language {
+        crate::world::Language::Ja => format!("［判断: {judge_name} → {}］", parts.join(" ")),
+        crate::world::Language::En => format!("[Judgment: {judge_name} → {}]", parts.join(" ")),
+    }
+}
+
+/// 新しい判断役の雛形（D10）。**`to` を書かない** — 雛形の時点ではどのサーヴァントが居るか
+/// 分からず、存在しない ID を書くと保存の検査に落ちる。行き先はコメントで案内する。
+pub fn starter_template(language: crate::world::Language) -> &'static str {
+    match language {
+        crate::world::Language::Ja => STARTER_JA,
+        crate::world::Language::En => STARTER_EN,
+    }
+}
+
+const STARTER_JA: &str = r#"# 判断役の問いと規則（Spec 62）。規則は上から評価し、最初に当たった 1 つだけを実行する。
+# 行き先は to = ["サーヴァントの ID", …]（2 体以上なら撒いて束ねる）か do = "return"（渡さない）。
+
+[questions.kind]
+type = "choice"
+ask = "依頼 `message` の主な作業の種類を選んでください。"
+options = { research = "外部情報の調査・比較", implement = "コードの変更・実装", other = "上記のいずれにも当てはまらない" }
+
+[[rules]]
+when = "kind == other"
+do = "return"
+note = "どの作業にも当てはまらないので振り分けませんでした"
+
+[[rules]]
+# 例: do = "return" を to = ["agent_1"] に書き換えると、その相手へ渡る
+when = "kind == research and kind.margin >= 0.2"
+do = "return"
+
+[otherwise]
+do = "return"
+"#;
+
+const STARTER_EN: &str = r#"# Questions and rules of a judge (Spec 62). Rules are evaluated top-down; only the first match runs.
+# A destination is to = ["servant id", ...] (2 or more fans out and bundles) or do = "return" (deliver nothing).
+
+[questions.kind]
+type = "choice"
+ask = "Pick the main kind of work the request `message` asks for."
+options = { research = "Research or comparison of outside information", implement = "Changing or implementing code", other = "None of the above" }
+
+[[rules]]
+when = "kind == other"
+do = "return"
+note = "Not routed: it matched none of the kinds"
+
+[[rules]]
+# Example: replace do = "return" with to = ["agent_1"] to deliver to that servant
+when = "kind == research and kind.margin >= 0.2"
+do = "return"
+
+[otherwise]
+do = "return"
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1389,5 +1560,42 @@ do = "return"
         assert!(when_err("risky = 0.5").contains("「=」"));
         assert!(when_err("kind.foo == research").contains(".p / .margin / .mean"));
         assert!(when_err("size + 1 > 2").contains("「+」"), "四則演算は持たない");
+    }
+
+    // ---- 有効の述語・表示 ----
+
+    #[test]
+    fn status_checks_file_then_parse_then_targets_then_model() {
+        let ok = JudgeFile::parse(EXAMPLE);
+        let bad: Result<JudgeFile, JudgeFileError> = Err(JudgeFileError::new("rules[1].when", "x"));
+        let all = |_: &AgentId| true;
+        assert_eq!(status_of(None, all, true), JudgeStatus::NoFile);
+        assert!(matches!(status_of(Some(&bad), all, true), JudgeStatus::Invalid { .. }));
+        assert_eq!(
+            status_of(Some(&ok), |id: &AgentId| id.as_str() == "agent_3", true),
+            JudgeStatus::MissingTargets { targets: vec![AgentId::new("agent_10")] }
+        );
+        assert_eq!(status_of(Some(&ok), all, false), JudgeStatus::NoJudgeModel);
+        assert_eq!(status_of(Some(&ok), all, true), JudgeStatus::Active);
+    }
+
+    #[test]
+    fn the_starter_templates_parse_in_both_languages() {
+        for language in [crate::world::Language::Ja, crate::world::Language::En] {
+            let file = JudgeFile::parse(starter_template(language)).expect("雛形は検査に通る");
+            assert!(file.targets().is_empty(), "雛形は to を書かない");
+        }
+    }
+
+    #[test]
+    fn the_judgment_line_and_the_log_line_carry_values_but_no_question_text() {
+        let file = JudgeFile::parse(EXAMPLE).unwrap();
+        let a = answers(("research", &[("research", 0.82), ("implement", 0.18), ("other", 0.0)]), (1.2, &[0.1, 0.6, 0.3]), 0.12);
+        let d = file.evaluate(&a).unwrap();
+        let line = judgment_line("振り分け役", &d.values, crate::world::Language::Ja);
+        assert_eq!(line, "［判断: 振り分け役 → kind=research(0.82) risky=0.12 size=2(0.60)］");
+        let log = answers_line(&d.values);
+        assert_eq!(log, "kind:research/0.82/0.64,risky:0.12,size:2/0.60/0.30");
+        assert!(!log.contains("依頼") && !line.contains("依頼"), "問いの文面は出さない");
     }
 }

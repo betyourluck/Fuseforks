@@ -2699,6 +2699,7 @@ entities:
       - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
       - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
       - INVALID_TOKEN_BUDGET    # Spec 13。set_token_budget の Some(0)。0 のマジック値を作らない
+      - INVALID_JUDGE_FILE      # Spec 62。judge.toml が検査に落ちた（保存しない）。location: message
       - INVALID_TOPOLOGY
       - ALREADY_RUNNING
       - NOT_RUNNING
@@ -5738,9 +5739,11 @@ conversation_termination:
         「判定だけ返すことがある」だけで、問いと規則は書かない
       - **有効の述語は 1 つ** (JudgeStatus)。有効 = ファイルが在る ∧ TOML が読める ∧ 形・文法・
         型・定義域の検査に通る ∧ to の ID が全部実在するサーヴァント ∧ Jev の設定が在る。
-        ツールを生やすか・左ペインの表示・地図の線はこの 1 つを読む。評価は保存時・起動時・
-        サーヴァントの削除時・Jev の設定の変更時。サーヴァントを消したら、そのサーヴァントを
-        to に書いている判断役を名指しで知らせる
+        ツールを生やすか・左ペインの表示・地図の線はこの 1 つを読む。**ファイルの読み込みと検査は
+        起動時と保存時だけ**で結果をメモリに持ち、**有効かどうかは読むたびにその時点の村と判断モデルの
+        有無から求める** (P1 で確定 — 状態として持たないので、サーヴァントの削除や Jev の設定の変更の
+        後に古いまま残らない)。サーヴァントを消したら、そのサーヴァントを to に書いている判断役を
+        名指しで知らせる (System 行 + judge disabled: の計器)
       - **囲い**: ToolContext に judges_dir を持たせ、file / sd / yq の書き込み系は正規化後のパスが
         その配下なら拒否する (BlackboardFence と同じ配線)。judge.toml を書けるのは人だけ
       - **コアは Judge の trait だけを知る**。Jev は GUI 側が Spec 59 の jev.json と資格情報ストアの

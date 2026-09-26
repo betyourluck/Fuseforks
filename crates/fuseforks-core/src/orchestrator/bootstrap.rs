@@ -173,6 +173,9 @@ impl Orchestrator {
             }
         };
 
+        // 判断役の judge.toml を読んで検査する（Spec 62）。落ちている判断役は無効のまま起動する。
+        let judge_files = super::judging::load_judge_files(&store, &world.judges()).await;
+
         let shared = Arc::new(Shared {
             world: RwLock::new(world),
             mailboxes: RwLock::new(HashMap::new()),
@@ -205,6 +208,9 @@ impl Orchestrator {
             // 既定は None = 圧縮の機構ごと存在しない（Spec 59 Goal 4）。
             // GUI 層が設定とキーから組んで差し込む。
             paragraph_scorer: RwLock::new(None),
+            // 判断モデルも既定は None（Spec 62 — 判断役は全部無効）。
+            judge: RwLock::new(None),
+            judge_files: RwLock::new(judge_files),
             config,
         });
 

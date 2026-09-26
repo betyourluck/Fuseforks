@@ -237,6 +237,8 @@ impl Orchestrator {
         };
         self.shared.store.remove_agent_dir(id).await?;
         self.persist().await?;
+        // その個体を行き先に書いている判断役を名指しで知らせる（Spec 62 — 黙って無効にしない）。
+        super::judging::note_judges_losing(&self.shared, id).await;
 
         // その個体の付箋をごみ箱へ（Spec 55 凍結 12）。**id は再利用される**ので、残すと
         // 同じ id の新しい個体が引き継いで書けてしまう。届くのは現在の作業フォルダだけ。

@@ -918,6 +918,8 @@ pub(super) async fn handle_message(
         let entries: Vec<String> = spec
             .connected_agents
             .iter()
+            // 判断役は顔ぶれに載せない（Spec 62 — 会話の相手ではない。ツールの説明文が名乗る）。
+            .filter(|id| world.judge(id).is_none())
             .map(|id| {
                 world
                     .agent(id)
@@ -988,6 +990,9 @@ pub(super) async fn handle_message(
         let world = shared.world.read().await;
         spec.connected_agents
             .iter()
+            // **判断役は振り分ける**（Spec 62 D7）。ここへ流すと判断役に ask_* / transfer_to_* が
+            // 生え、接続 2 体以上に数えられて plan が生え、plan の宛先にも混ざる。
+            .filter(|id| world.judge(id).is_none())
             .map(|id| {
                 let display = world
                     .agent(id)
@@ -998,7 +1003,8 @@ pub(super) async fn handle_message(
             })
             .collect()
     };
-    let handoffs = HandoffTools::build(&targets);
+    let judges = super::judging::judge_entries(shared, &spec.connected_agents).await;
+    let handoffs = HandoffTools::build(&targets).with_judges(judges);
     // **委譲（`ask` / `plan`）で呼ばれたターンか。** 真なら答えを待っている
     // 相手が居る（`reply_to` はその戻り口）。
     let awaiting_reply = reply_to.is_some();
@@ -1153,6 +1159,11 @@ async fn present_tools(
     } else {
         Vec::new()
     };
+    // 判断役（Spec 62）。**サーヴァントの接続が 0 でも出す**（判断役にだけ繋いだ個体）ので
+    // `use_handoff_tools` ではなくモデルがツールを扱えるかで決める。
+    if template.use_tools {
+        specs.extend(handoffs.judge_specs(language));
+    }
     // 広場ログの全文読み（Spec 22 — `room_log_pull` 契約）。提示は
     // hears_room_log ただ 1 点で決まる — 抜粋が届かない個体は ID を知る経路が
     // 無い。ログが空かどうかでは揺らさない（提示は静的・状態は動的）。
@@ -1176,6 +1187,8 @@ async fn present_tools(
         // コマンド承認モード（Spec 61）。`run` の説明文がモードで変わるので、
         // 提示と実行が同じ値を読む（切り替えた周から両方が揃って変わる）。
         run_approval: shared.run_approval(),
+        // 判断役のファイルの囲い（Spec 62）。
+        judges_dir: Some(shared.store.judges_dir()),
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -2110,6 +2123,8 @@ impl CallRunner<'_> {
             // `not_found` を返すほうが「そんなツールはありません」より正直。
             || (!self.pruned.is_empty()
                 && call.name == crate::prune::OMITTED_TOOL_NAME)
+            // 判断役（Spec 62）も orchestrator 合成。条件は提示と同じ（有効な判断役だけが載る）。
+            || self.handoffs.resolve_judge(&call.name).is_some()
     }
 
     /// 1 本走らせる。`round` は 1 始まりの周回数（ログの `round=`）。
@@ -2228,6 +2243,22 @@ impl CallRunner<'_> {
             // 落とした段落へ戻る（Spec 59 D7）。`room_log` と同じ規則で、
             // orchestrator 合成の名前は registry より先に解決される。
             Ok(self.read_omitted(call))
+        } else if let Some(entry) = handoffs.resolve_judge(&call.name) {
+            // 判断役（Spec 62）。呼び出し元のツール呼び出しの中で同期的に判定し、中継する。
+            super::judging::run_judge(
+                shared,
+                agent_id,
+                entry,
+                call,
+                incoming.hop,
+                &turn.token,
+                budget.as_ref(),
+                participants.as_ref(),
+                waiting,
+                incoming.attachments.first().map(|a| a.kind()),
+                self.auto_approve_plans,
+            )
+            .await
         } else {
             match handoffs.resolve_ask(&call.name) {
                 Some(target) if use_handoff_tools => {
@@ -3202,6 +3233,8 @@ async fn execute_tool(
         // 葉で 1 箇所見ることはその構造を変えない。
         cancel: Some(cancel.clone()),
         run_approval: shared.run_approval(),
+        // 判断役のファイルの囲い（Spec 62）。
+        judges_dir: Some(shared.store.judges_dir()),
     };
     tool.call(&ctx, &call.args).await
 }

@@ -55,6 +55,8 @@ use context::{
 };
 mod schedules;
 use schedules::spawn_schedule_ticker;
+mod judging;
+pub use judging::JudgeTrial;
 mod sessions;
 
 use std::collections::HashMap;
@@ -425,6 +427,12 @@ struct Shared {
     /// **コアは HTTP を知らない**（[`crate::prune`] も同じ）。ここが trait なのは、
     /// 結合テストが偽の採点器で圧縮の経路を丸ごと試せるようにするため。
     paragraph_scorer: tokio::sync::RwLock<Option<Arc<dyn crate::prune::ParagraphScorer>>>,
+    /// 判断モデル（Spec 62 D11）。**`None` のとき判断役は全部無効**（ツールが生えない）。
+    /// GUI 層が Spec 59 と同じ鍵から組んで差し込む。
+    judge: tokio::sync::RwLock<Option<Arc<dyn crate::judge::Judge>>>,
+    /// 判断役の `judge.toml` を読み込んで検査した結果（鍵が無い = ファイルが無い）。
+    /// **呼び出しのたびには読まない** — 起動時と保存時に置き換える。
+    judge_files: tokio::sync::RwLock<judging::JudgeFiles>,
     config: OrchestratorConfig,
 }
 
