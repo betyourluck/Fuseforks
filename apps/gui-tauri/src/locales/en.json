@@ -314,6 +314,47 @@
     "addGroup": "+ Add group",
     "addGroupPlaceholder": "Group name (task)"
   },
+  "judges": {
+    "heading": "Judges",
+    "count": "{count}",
+    "add": "Add judge",
+    "namePlaceholder": "Judge name (e.g. Router)",
+    "empty": "A judge decides where a request goes from answers to its questions and its rules. It writes no text.",
+    "nameLabel": "Judge name",
+    "description": "Write questions ([questions.*]) and rules ([[rules]] and [otherwise]). Rules are evaluated top to bottom and only the first match runs. Draw a line from a servant to this judge to give that servant a tool that asks the judge.",
+    "loading": "Loading…",
+    "unsaved": "Unsaved changes",
+    "save": "Save",
+    "saving": "Saving…",
+    "saveNote": "Saving checks the format, the rules and the destinations. Nothing is saved if a check fails.",
+    "delete": "Delete",
+    "deleteTitle": "Delete \"{name}\"?",
+    "deleteMessage": "judge.toml and the lines from servants to this judge are removed too.",
+    "discardCloseTitle": "Discard unsaved changes and close?",
+    "discardCloseMessage": "Your changes to judge.toml have not been saved.",
+    "discardCloseConfirm": "Discard and close",
+    "keepEditing": "Keep editing",
+    "status": {
+      "active": "Active",
+      "noFile": "judge.toml is missing",
+      "invalid": "judge.toml has an error ({location}: {message})",
+      "missingTargets": "Destinations include IDs that are not servants: {targets}",
+      "noJudgeModel": "No judge model (Jev) is set (System settings > Integration > Jev)"
+    },
+    "trial": {
+      "heading": "Try",
+      "help": "Judges a sample request against the text being edited (unsaved is fine). Nothing is delivered. Data is sent to Jev only when you press the button.",
+      "placeholder": "An example of a request a servant would pass",
+      "run": "Try",
+      "running": "Judging…",
+      "rule": "Rule {n}",
+      "otherwise": "otherwise",
+      "to": "Deliver to: {targets}",
+      "return": "Return the judgment only, deliver to no one",
+      "undecided": "Could not decide ({reason})",
+      "meta": "Model {model} · {tokens} input tokens"
+    }
+  },
   "agentCard": {
     "lastToolRanAt": "{tool} at {time}",
     "lastToolRanAtFailed": "{tool} at {time} (returned an error)",
@@ -993,7 +1034,8 @@
     "JEV_PROBE": "Could not check the connection to Jev",
     "PLAN_WAVE_NOT_PENDING": "Not a plan awaiting review",
     "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched",
-    "INVALID_QUOTE": "The quote was rejected"
+    "INVALID_QUOTE": "The quote was rejected",
+    "INVALID_JUDGE_FILE": "The judge file has an error"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",
@@ -1075,7 +1117,10 @@
       "saveGroup": "save group",
       "deleteGroup": "delete group",
       "commitDrop": "save order and group",
-      "setRunApproval": "Changing the command approval mode"
+      "setRunApproval": "Changing the command approval mode",
+      "createJudge": "create judge",
+      "saveJudge": "save judge",
+      "deleteJudge": "delete judge"
     }
   },
   "statusBar": {

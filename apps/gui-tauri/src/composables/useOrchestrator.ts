@@ -23,6 +23,8 @@ import type {
   AgentMessage,
   ForkPoint,
   GroupId,
+  JudgeSpec,
+  JudgeView,
   AgentSnapshot,
   AgentSpec,
   ApprovalOutcome,
@@ -75,6 +77,11 @@ interface OrchestratorState {
   roles: Role[];
   /** グループ（Spec 51）。村の配列順 = 見出しの並び。 */
   groups: AgentGroup[];
+  /**
+   * 判断役（Spec 62）。`order` の昇順。**選択状態には入らない**（会話の相手ではない。
+   * `selectedAgentId` はサーヴァントの id である前提で会話ペインが読む）。
+   */
+  judges: JudgeView[];
   workspace: string;
   selectedAgentId: AgentId | null;
   toasts: Toast[];
@@ -213,6 +220,7 @@ const state = reactive<OrchestratorState>({
   templates: [],
   roles: [],
   groups: [],
+  judges: [],
   workspace: "",
   selectedAgentId: null,
   toasts: [],
@@ -409,13 +417,14 @@ function refreshAll(): Promise<void> {
 
 /** 取り直しの実体。呼び出しは [`refreshAll`] 経由に限る（直列化の内側）。 */
 async function fetchAndAssign(): Promise<void> {
-  const [agents, edges, topologyPositions, templates, roles, groups] = await Promise.all([
+  const [agents, edges, topologyPositions, templates, roles, groups, judges] = await Promise.all([
     ipc.listAgents(),
     ipc.listTopology(),
     ipc.listTopologyPositions(),
     ipc.listModelTemplates(),
     ipc.listRoles(),
     ipc.listGroups(),
+    ipc.listJudges(),
   ]);
   state.agents = agents;
   // 会話の送信先と左右ペインの強調表示を必ず同じ選択状態にする。
@@ -427,6 +436,7 @@ async function fetchAndAssign(): Promise<void> {
   state.templates = templates;
   state.roles = roles;
   state.groups = groups;
+  state.judges = [...judges].sort((a, b) => a.order - b.order);
   await refreshIcons();
 }
 
@@ -1119,6 +1129,26 @@ export function useOrchestrator() {
       if (regroup) patchAgent(regroup.id, { groupId: regroup.groupId });
       state.agents.sort((a, b) => a.order - b.order);
       await mutate("orchestrator.op.commitDrop", () => ipc.commitAgentDrop(order, regroup));
+    },
+
+    // ---- 判断役（Spec 62） --------------------------------------------------
+
+    /** 判断役を作る。id は呼び手が 2 つの一覧をまたいで導く（`deriveId`）。 */
+    async createJudge(spec: JudgeSpec): Promise<boolean> {
+      const result = await mutate("orchestrator.op.createJudge", () => ipc.createJudge(spec));
+      return succeeded(result);
+    },
+
+    /** 表示名と並びを差し替える。 */
+    async updateJudge(spec: JudgeSpec): Promise<boolean> {
+      const result = await mutate("orchestrator.op.saveJudge", () => ipc.updateJudge(spec));
+      return succeeded(result);
+    },
+
+    /** 判断役を消す（線・座標・`judges/<id>/` も）。 */
+    async deleteJudge(judgeId: AgentId): Promise<boolean> {
+      const result = await mutate("orchestrator.op.deleteJudge", () => ipc.deleteJudge(judgeId));
+      return succeeded(result);
     },
 
     async deleteAgent(agentId: AgentId): Promise<void> {

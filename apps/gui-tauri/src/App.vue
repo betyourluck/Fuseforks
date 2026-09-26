@@ -25,6 +25,7 @@ import AgentList from "./components/AgentList.vue";
 import BlackboardPane from "./components/BlackboardPane.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
+import JudgeDialog from "./components/JudgeDialog.vue";
 import McpDialog from "./components/McpDialog.vue";
 import OrdinanceDialog from "./components/OrdinanceDialog.vue";
 import PlanWavePane from "./components/PlanWavePane.vue";
@@ -47,6 +48,7 @@ import { closeConfirmLines } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
 import { askConfirm } from "./composables/useConfirm";
+import { useJudgeDialog } from "./composables/useJudgeDialog";
 import { useOrchestrator } from "./composables/useOrchestrator";
 import { usePaneLayout } from "./composables/usePaneLayout";
 import { useUiSettings } from "./composables/useUiSettings";
@@ -61,6 +63,7 @@ const FirstRunTour = defineAsyncComponent(() => import("./components/FirstRunTou
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+const judgeDialog = useJudgeDialog();
 const hiddenGroups = useHiddenGroups();
 
 /**
@@ -378,6 +381,9 @@ onBeforeUnmount(() => {
   <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
 
   <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" @show-tour="replayTour" />
+
+  <!-- 判断役の編集（Spec 62 D10）。入口は左ペインと地図の 2 つなので、ここに 1 つだけ置く。 -->
+  <JudgeDialog v-if="judgeDialog.openId.value" :key="judgeDialog.openId.value" :judge-id="judgeDialog.openId.value" @close="judgeDialog.close()" />
 
   <!-- 初回起動のナビゲーション。z は 55（ダイアログ 40 の上・確認とトースト 60 の下）。 -->
   <FirstRunTour v-if="showTour" @close="showTour = false" />

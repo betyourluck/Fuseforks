@@ -13,6 +13,7 @@ import AgentCard from "./AgentCard.vue";
 import AgentSettingsDialog from "./AgentSettingsDialog.vue";
 import BatchWorkDirDialog from "./BatchWorkDirDialog.vue";
 import GroupDialog from "./GroupDialog.vue";
+import JudgeList from "./JudgeList.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -25,6 +26,7 @@ import {
 } from "../lib/agentGroups";
 import { inListOrder } from "../lib/agentNav";
 import { batchAction, batchLabel } from "../lib/batchStart";
+import { deriveId } from "../lib/judges";
 import { dropPoint, tieAddition } from "../lib/kizunaDrop";
 import type { AgentGroup, AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
 
@@ -150,19 +152,12 @@ async function runBatch(): Promise<void> {
   await orchestrator.runBatch(batch.value.targets, batch.value.mode === "start");
 }
 
-/** ID を名前から機械的に導く。衝突したら連番を足す。 */
-function deriveId(name: string): AgentId {
-  const base =
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "agent";
-
-  if (!state.agents.some((a) => a.id === base)) return base;
-  let n = 2;
-  while (state.agents.some((a) => a.id === `${base}_${n}`)) n += 1;
-  return `${base}_${n}`;
+/**
+ * ID を名前から機械的に導く。**判断役の id とも衝突させない**（Spec 62 — 名前空間は 1 つ。
+ * サーヴァントの一覧だけ見ると、コアが `DUPLICATE_AGENT` で拒む id を作る）。
+ */
+function deriveAgentId(name: string): AgentId {
+  return deriveId(name, [...state.agents.map((a) => a.id), ...state.judges.map((j) => j.id)]);
 }
 
 /** 新規作成で選ぶ役職。`null` = 役職なし（今までどおりの作成）。 */
@@ -180,7 +175,7 @@ async function submitNew(): Promise<void> {
   }
 
   const spec: AgentSpec = {
-    id: deriveId(name),
+    id: deriveAgentId(name),
     name,
     modelTemplateId: template.id,
     ragSources: [],
@@ -623,6 +618,9 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       >
         {{ $t("agentList.addGroup") }}
       </button>
+
+      <!-- 判断特化（Spec 62 D2）。サーヴァントの一覧の下。起動・一括起動・グループ・選択の外。 -->
+      <JudgeList />
     </div>
 
     <!--

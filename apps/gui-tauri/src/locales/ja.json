@@ -314,6 +314,47 @@
     "addGroup": "＋ グループを追加",
     "addGroupPlaceholder": "グループ名（タスク名）"
   },
+  "judges": {
+    "heading": "判断特化",
+    "count": "{count} 件",
+    "add": "判断役を追加",
+    "namePlaceholder": "判断役の名前（例: 振り分け役）",
+    "empty": "判断役は、問いへの答えと規則で依頼の行き先を決めます。文章は書きません。",
+    "nameLabel": "判断役の名前",
+    "description": "問い（[questions.*]）と規則（[[rules]]・[otherwise]）を書きます。上の規則から順に評価し、最初に当たった 1 つだけを実行します。サーヴァントからこの判断役へ線を引くと、そのサーヴァントに「判定させる」ツールが生えます。",
+    "loading": "読み込み中…",
+    "unsaved": "未保存の変更があります",
+    "save": "保存",
+    "saving": "保存中…",
+    "saveNote": "保存するときに書式・規則・行き先を検査します。誤りがあれば保存しません。",
+    "delete": "削除",
+    "deleteTitle": "「{name}」を削除しますか？",
+    "deleteMessage": "judge.toml と、サーヴァントからこの判断役へ引いた線も消えます。",
+    "discardCloseTitle": "未保存の変更を破棄して閉じますか？",
+    "discardCloseMessage": "judge.toml への変更は保存されていません。",
+    "discardCloseConfirm": "破棄して閉じる",
+    "keepEditing": "編集を続ける",
+    "status": {
+      "active": "有効",
+      "noFile": "judge.toml がありません",
+      "invalid": "judge.toml に誤りがあります（{location}: {message}）",
+      "missingTargets": "行き先にサーヴァントでない ID があります: {targets}",
+      "noJudgeModel": "判断モデル（Jev）が未設定です（システム設定 ＞ 外部連携 ＞ Jev）"
+    },
+    "trial": {
+      "heading": "試す",
+      "help": "編集中の本文（未保存でも可）とサンプルの依頼で判定だけを行います。配送はしません。押したときだけ Jev へ送ります。",
+      "placeholder": "サーヴァントから渡される依頼の例",
+      "run": "試す",
+      "running": "判定中…",
+      "rule": "規則 {n}",
+      "otherwise": "otherwise",
+      "to": "渡す: {targets}",
+      "return": "誰にも渡さず判定だけ返す",
+      "undecided": "判定できませんでした（{reason}）",
+      "meta": "モデル {model} ・ 入力 {tokens} トークン"
+    }
+  },
   "agentCard": {
     "lastToolRanAt": "{time} に {tool}",
     "lastToolRanAtFailed": "{time} に {tool}（エラーで返った）",
@@ -993,7 +1034,8 @@
     "JEV_PROBE": "Jev への接続を確かめられませんでした",
     "PLAN_WAVE_NOT_PENDING": "承認待ちの計画ではありません",
     "PLAN_DISPATCH_INVALID": "計画を配送できません",
-    "INVALID_QUOTE": "参照を受け付けられません"
+    "INVALID_QUOTE": "参照を受け付けられません",
+    "INVALID_JUDGE_FILE": "判断役のファイルに誤りがあります"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
@@ -1075,7 +1117,10 @@
       "saveGroup": "グループの保存",
       "deleteGroup": "グループの削除",
       "commitDrop": "並びと所属の保存",
-      "setRunApproval": "コマンドの承認モードの切り替え"
+      "setRunApproval": "コマンドの承認モードの切り替え",
+      "createJudge": "判断役の作成",
+      "saveJudge": "判断役の保存",
+      "deleteJudge": "判断役の削除"
     }
   },
   "statusBar": {

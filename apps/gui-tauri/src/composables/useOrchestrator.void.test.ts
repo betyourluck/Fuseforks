@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   listRoles: vi.fn(async () => []),
   // Spec 51。refreshAll が list_groups も引くので、無いと起動の網に掛かる（意図した網）。
   listGroups: vi.fn(async () => []),
+  listJudges: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
   // Tauri は Rust の () を null として返す。成功しても null。

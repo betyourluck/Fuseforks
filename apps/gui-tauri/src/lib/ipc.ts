@@ -31,6 +31,9 @@ import type {
   ModelTemplateId,
   AgentGroup,
   GroupId,
+  JudgeSpec,
+  JudgeTrial,
+  JudgeView,
   Role,
   RoleId,
   McpConfig,
@@ -313,6 +316,37 @@ export const commitAgentDrop = (
   order: AgentId[],
   regroup: { id: AgentId; groupId: GroupId | null } | null,
 ) => call<void>("commit_agent_drop", { order, regroup });
+
+// ---- 判断役（Spec 62） ------------------------------------------------------
+
+/** 判断役の一覧と、有効かどうか（コアが読むたびに求める）。 */
+export const listJudges = () => call<JudgeView[]>("list_judges");
+
+/**
+ * 判断役を作る。**id は画面が導く**（`deriveId` をサーヴァントと判断役の両方の一覧で。
+ * 衝突はコアも `DUPLICATE_AGENT` で拒む）。`judge.toml` が無ければコアが雛形を書く。
+ */
+export const createJudge = (spec: JudgeSpec) => call<void>("create_judge", { spec });
+
+/** 表示名と並びを差し替える。 */
+export const updateJudge = (spec: JudgeSpec) => call<void>("update_judge", { spec });
+
+/** 判断役を消す（サーヴァント → 判断役の線・座標・`judges/<id>/` も）。 */
+export const deleteJudge = (judgeId: AgentId) => call<void>("delete_judge", { judgeId });
+
+/** `judge.toml` の本文。**id で受けてパスは受けない**。 */
+export const readJudgeFile = (judgeId: AgentId) => call<string>("read_judge_file", { judgeId });
+
+/** `judge.toml` を保存する。検査に落ちたら `INVALID_JUDGE_FILE` で拒まれ、書かれない。 */
+export const saveJudgeFile = (judgeId: AgentId, text: string) =>
+  call<void>("save_judge_file", { judgeId, text });
+
+/**
+ * 「試す」— 編集中の本文とサンプルの文で判定だけを行う。**配送しない。押したときだけ
+ * Jev へ送る**（開いただけでは 1 バイトも出ない）。
+ */
+export const tryJudge = (text: string, message: string) =>
+  call<JudgeTrial>("try_judge", { text, message });
 
 // ---- 設定ファイル -----------------------------------------------------------
 

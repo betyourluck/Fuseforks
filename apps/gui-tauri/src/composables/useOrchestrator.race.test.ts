@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   listModelTemplates: vi.fn(),
   listRoles: vi.fn(),
   listGroups: vi.fn(),
+  listJudges: vi.fn(),
   listRagSources: vi.fn(),
   getAgentIcon: vi.fn(),
 }));
@@ -77,6 +78,7 @@ describe("refreshAll の並行競合", () => {
     h.listModelTemplates.mockResolvedValue([]);
     h.listRoles.mockResolvedValue([]);
     h.listGroups.mockResolvedValue([]);
+    h.listJudges.mockResolvedValue([]);
     h.listRagSources.mockResolvedValue([]);
     h.getAgentIcon.mockResolvedValue(null);
 
@@ -110,6 +112,7 @@ describe("refreshAll の並行競合", () => {
     h.listModelTemplates.mockResolvedValue([]);
     h.listRoles.mockResolvedValue([]);
     h.listGroups.mockResolvedValue([]);
+    h.listJudges.mockResolvedValue([]);
     h.listRagSources.mockResolvedValue([]);
     h.getAgentIcon.mockResolvedValue(null);
 

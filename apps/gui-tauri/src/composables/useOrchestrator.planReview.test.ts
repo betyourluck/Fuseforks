@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   listModelTemplates: vi.fn(async () => []),
   listRoles: vi.fn(async () => []),
   listGroups: vi.fn(async () => []),
+  listJudges: vi.fn(async () => []),
   listRagSources: vi.fn(async () => []),
   listMessages: vi.fn(async () => []),
   listPlanWaves: vi.fn(async () => []),

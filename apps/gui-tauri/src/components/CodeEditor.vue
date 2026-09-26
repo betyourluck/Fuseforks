@@ -23,7 +23,11 @@ import { useUiSettings, type Theme } from "../composables/useUiSettings";
 import { currentLocale } from "../i18n";
 import { searchPhrases } from "../lib/editorPhrases";
 
-type EditorLanguage = "markdown" | "json";
+/**
+ * `plain` は色付けなし（Spec 62 の `judge.toml`）。TOML の構文モードは依存に無いので足さない —
+ * 検査はコアが保存時に行い、落ちた場所（`rules[2].when` 等）を画面が出す。
+ */
+type EditorLanguage = "markdown" | "json" | "plain";
 
 const props = withDefaults(
   defineProps<{
@@ -58,7 +62,8 @@ let editor: EditorView | null = null;
 const { settings } = useUiSettings();
 
 function languageExtension(language: EditorLanguage) {
-  return language === "json" ? [json(), linter(jsonParseLinter())] : markdown();
+  if (language === "json") return [json(), linter(jsonParseLinter())];
+  return language === "markdown" ? markdown() : [];
 }
 
 function readOnlyExtension(readonly: boolean) {

@@ -216,6 +216,55 @@ export interface AgentGroup {
 }
 
 /**
+ * 判断特化のエージェント（Spec 62・`judge_contract`）。村（`world.json`）に住むのは
+ * id・表示名・並びだけで、**問いと規則は `judges/<id>/judge.toml`**。
+ *
+ * **id はサーヴァントと同じ名前空間**（`AgentId`）— 衝突の検査は 2 つの一覧をまたぐ。
+ * 起動・受信箱・会話を持たないので、選択状態（`selectedAgentId`）にも入らない。
+ */
+export interface JudgeSpec {
+  id: AgentId;
+  name: string;
+  order: number;
+}
+
+/**
+ * 判断役が有効か（**有効の述語は 1 つ**。コアが読むたびに求める）。ツールを生やすか・
+ * 左ペインの表示・地図の線はこの 1 つを読む。
+ */
+export type JudgeStatus =
+  | { kind: "active" }
+  | { kind: "noFile" }
+  | { kind: "invalid"; location: string; message: string }
+  | { kind: "missingTargets"; targets: AgentId[] }
+  | { kind: "noJudgeModel" };
+
+/** 判断役 1 つの一覧用の姿。`targets` は地図の破線の正本（ファイルが読めたときだけ）。 */
+export interface JudgeView {
+  id: AgentId;
+  name: string;
+  order: number;
+  status: JudgeStatus;
+  targets: AgentId[];
+}
+
+/** 「試す」の結果（配送はしない）。 */
+export interface JudgeTrial {
+  /** 判断モデルの版。 */
+  model: string;
+  /** 規則が読んだ値（問いの名前 → 表示用の文字列）。未回答の問いは載らない。 */
+  values: Record<string, string>;
+  /** 当たった規則（1 始まり）。`null` = otherwise または判定できなかった。 */
+  rule: number | null;
+  otherwise: boolean;
+  /** 判定できなかった理由（`jev_error` / `timeout` / `too_large` / `unanswered`）。 */
+  undecided: string | null;
+  /** 当たった規則の行き先（`null` = return か判定できなかった）。 */
+  to: AgentId[] | null;
+  inputTokens: number;
+}
+
+/**
  * 役職バッジの色（Spec 14）。**閉じた列挙**で、実際の色値は持たない。
  *
  * 対応する CSS 変数は `style.css` の `--color-role-*`。明度と彩度は固定で、

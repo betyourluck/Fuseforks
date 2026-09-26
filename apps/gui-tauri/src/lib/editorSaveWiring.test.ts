@@ -24,6 +24,7 @@ const EDITABLE_HOSTS = [
   "McpDialog.vue",
   "MarkdownEditor.vue",
   "RoleDialog.vue",
+  "JudgeDialog.vue",
 ];
 
 const sources = new Map(
