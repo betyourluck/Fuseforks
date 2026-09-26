@@ -239,6 +239,18 @@ export type JudgeStatus =
   | { kind: "missingTargets"; targets: AgentId[] }
   | { kind: "noJudgeModel" };
 
+/** 問いの型（`judge.toml` の `type`）。 */
+export type QuestionKind = "choice" | "score" | "noul";
+
+/**
+ * `judge.toml` の概形（地図のホバー）。**問いの文面・選択肢・規則の中身は運ばない** —
+ * 名前と型と数だけ。`rules` は `[[rules]]` の本数（`[otherwise]` は数えない）。
+ */
+export interface JudgeOutline {
+  questions: { name: string; kind: QuestionKind }[];
+  rules: number;
+}
+
 /** 判断役 1 つの一覧用の姿。`targets` は地図の破線の正本（ファイルが読めたときだけ）。 */
 export interface JudgeView {
   id: AgentId;
@@ -246,6 +258,8 @@ export interface JudgeView {
   order: number;
   status: JudgeStatus;
   targets: AgentId[];
+  /** `null` = ファイルが無いか検査に落ちている（「読めない」と「0 本」を畳まない）。 */
+  outline: JudgeOutline | null;
 }
 
 /** 「試す」の結果（配送はしない）。 */

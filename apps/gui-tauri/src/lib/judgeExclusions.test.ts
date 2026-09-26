@@ -63,6 +63,12 @@ describe("判断役の線（Spec 62 D9）", () => {
     expect(map).toContain("if (edge && !edges.value[edge]?.judge) void removeEdge(edge);");
   });
 
+  it("ホバーの概形は、ファイルが読めたときだけ出す（0 と書くと「規則が無い」に読める）", () => {
+    const map = src("../components/TopologyMap.vue");
+    expect(map).toContain('<template v-if="judgeDetail.judge.outline">');
+    expect(map).toContain('v-if="judgeDetail.judge.outline?.questions.length"');
+  });
+
   it("カードの drop は判断役を受け側にできる", () => {
     const list = src("../components/AgentList.vue");
     expect(list).toContain("tieAddition(state.agents, source.id, targetId, state.judges.map((j) => j.id))");

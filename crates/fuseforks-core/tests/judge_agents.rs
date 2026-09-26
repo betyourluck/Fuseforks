@@ -80,6 +80,11 @@ async fn without_a_judge_model_no_judge_tool_is_offered() {
     assert!(!coordinator.iter().any(|t| t.starts_with("judge_")), "判断モデルが無ければ生えない: {coordinator:?}");
     let views = v.orchestrator.judges().await;
     assert_eq!(views[0].status, JudgeStatus::NoJudgeModel);
+    // 概形はファイルだけで決まる（判断モデルの有無と独立）— 地図のホバーが読む。
+    let outline = views[0].outline.as_ref().expect("ファイルは読めている");
+    assert_eq!(outline.rules, 3);
+    assert_eq!(outline.questions.len(), 1);
+    assert_eq!(outline.questions[0].name, "kind");
 }
 
 #[tokio::test]

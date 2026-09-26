@@ -603,7 +603,25 @@ onBeforeUnmount(() => {
               <dd :title="judgeDetail.status">[{{ judgeDetail.status }}]</dd>
               <dt>DST</dt>
               <dd class="tabular-nums">{{ judgeDetail.judge.targets.length }}</dd>
+              <!-- 概形（Spec 62 D9）。ファイルが読めないときは出さない — 0 と書くと「規則が無い」に読める。 -->
+              <template v-if="judgeDetail.judge.outline">
+                <dt>RUL</dt>
+                <dd class="tabular-nums">{{ judgeDetail.judge.outline.rules }}</dd>
+              </template>
             </dl>
+            <!--
+              問いの名前と型。**型は `judge.toml` の `type` の語のまま**（訳さない — 規則の式や
+              ファイルと突き合わせる識別子で、語ではない。HUD の略号と同じ扱い）。
+            -->
+            <template v-if="judgeDetail.judge.outline?.questions.length">
+              <div class="kizuna-hud-section">[QUESTIONS]</div>
+              <dl class="kizuna-hud-rows" data-judge-questions>
+                <template v-for="(q, i) in judgeDetail.judge.outline.questions" :key="q.name">
+                  <dt>Q{{ i + 1 }}</dt>
+                  <dd :title="`${q.name} · ${q.kind}`">{{ q.name }} <span class="text-ink-dim">· {{ q.kind }}</span></dd>
+                </template>
+              </dl>
+            </template>
           </div>
         </div>
       </aside>

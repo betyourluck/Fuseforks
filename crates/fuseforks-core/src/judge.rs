@@ -267,6 +267,18 @@ impl JudgeFile {
         missing
     }
 
+    /// 概形（地図のホバー）。**問いの文面・選択肢・規則の中身は出さない** — 名前と型と数だけ。
+    pub fn outline(&self) -> JudgeOutline {
+        JudgeOutline {
+            questions: self
+                .questions
+                .iter()
+                .map(|(name, q)| QuestionOutline { name: name.clone(), kind: q.question_kind() })
+                .collect(),
+            rules: self.rules.len(),
+        }
+    }
+
     /// 行き先になりうる相手（全規則と `otherwise` の `to` の和・重複なし・出現順）。
     pub fn targets(&self) -> Vec<&AgentId> {
         let mut out: Vec<&AgentId> = Vec::new();
@@ -1147,6 +1159,49 @@ impl JudgeStatus {
     }
 }
 
+/// 問いの型（`judge.toml` の `type`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuestionKind {
+    /// 順序の無い選択肢から 1 つ。
+    Choice,
+    /// 順序つきの段階。
+    Score,
+    /// 命題が成り立つ確率。
+    Noul,
+}
+
+impl Question {
+    /// 型。
+    pub fn question_kind(&self) -> QuestionKind {
+        match self {
+            Self::Choice { .. } => QuestionKind::Choice,
+            Self::Score { .. } => QuestionKind::Score,
+            Self::Noul { .. } => QuestionKind::Noul,
+        }
+    }
+}
+
+/// 問い 1 つの概形。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOutline {
+    /// 問いの名前（規則の式で使う識別子）。
+    pub name: String,
+    /// 型。
+    pub kind: QuestionKind,
+}
+
+/// `judge.toml` の概形（Spec 62 D9 — 地図のホバーに出す「問いの名前と型・規則の数」）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeOutline {
+    /// 問い。名前の順。
+    pub questions: Vec<QuestionOutline>,
+    /// `[[rules]]` の本数（`[otherwise]` は数えない — 必ず 1 つある）。
+    pub rules: usize,
+}
+
 /// 判断役 1 つの一覧用の姿（IPC へ出す形）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1161,6 +1216,9 @@ pub struct JudgeView {
     pub status: JudgeStatus,
     /// 行き先になりうる相手（ファイルが読めたときだけ。地図の破線はここから描く）。
     pub targets: Vec<AgentId>,
+    /// ファイルの概形。**`None` = ファイルが無いか検査に落ちている**（「読めない」と「0 本」を
+    /// 同じ値に畳まない）。
+    pub outline: Option<JudgeOutline>,
 }
 
 /// 規則が読んだ値を 1 つの文字列にする（計器の `answers=` と「試す」の表示）。
@@ -1344,6 +1402,23 @@ do = "return"
             [&AgentId::new("agent_3"), &AgentId::new("agent_10")],
             "行き先は重複なし・出現順"
         );
+    }
+
+    #[test]
+    fn the_outline_carries_names_kinds_and_the_rule_count_only() {
+        let outline = JudgeFile::parse(EXAMPLE).unwrap().outline();
+        let got: Vec<(&str, QuestionKind)> =
+            outline.questions.iter().map(|q| (q.name.as_str(), q.kind)).collect();
+        assert_eq!(
+            got,
+            [("kind", QuestionKind::Choice), ("risky", QuestionKind::Noul), ("size", QuestionKind::Score)],
+            "名前の順"
+        );
+        assert_eq!(outline.rules, 5, "otherwise は数えない");
+        // 画面へ出る形。問いの文面は載らない（#71 — 人が書いた文を必要のない面へ運ばない）。
+        let wire = serde_json::to_string(&outline).unwrap();
+        assert!(!wire.contains("取り消せない"), "{wire}");
+        assert!(wire.contains(r#""kind":"noul""#), "{wire}");
     }
 
     #[test]

@@ -743,11 +743,17 @@ vitest 702 → **733**・vue-tsc 0・build 緑。**実機は未確認**（P4）�
   otherwise / 判定できなかった理由 → 行き先（表示名 + id）と、問いごとの値（`key p= margin=` の文字列はコアが組む）
 - 改名はダイアログの見出しの入力欄（Enter か blur で `update_judge`）。削除は見出しのボタン（確認つき）
 
-### D9 から外したこと（1 点）
+### ホバーの概形（同日に利用者裁定で広げた）
 
-- **ホバーのパネルに問いの名前と型・規則の数は出していない。** `JudgeView` が持つのは状態と `targets` だけで、
-  出すには IPC の形を広げる必要がある。今は `JUDGE_PROFILE` に名前・id・状態・行き先の数だけ。要るなら
-  `JudgeView` に `questions: [{name, kind}]` と `rules: usize` を足す（コアの `JudgeFile` は両方持っている）
+- 初版は `JUDGE_PROFILE` に名前・id・状態・行き先の数だけで、D9 の「問いの名前と型・規則の数」を外していた
+  （`JudgeView` に無かった）。利用者の「ホバーの情報も広げて」で **`JudgeView.outline: Option<JudgeOutline>`** を
+  足した — `questions: [{name, kind}]`（名前の順）と `rules`（`[[rules]]` の本数。`[otherwise]` は数えない）
+- **`None` = ファイルが無いか検査に落ちている。** 空の配列と 0 で表すと「読めない」と「規則が 0 本」が同じ値に畳まれる。
+  画面は `outline` があるときだけ `RUL` と `[QUESTIONS]` を出す（走査テストが留める）
+- **問いの文面・選択肢・規則の中身は運ばない**（単体テストがワイヤに文面が載らないことを留める）。型の語
+  （`choice` / `score` / `noul`）は `judge.toml` の `type` のまま訳さない — HUD の略号と同じく識別子
+- 既存の `Question::kind() -> &'static str`（エラー文用・非公開）と名前が衝突したので、新しい方は `question_kind()`
+- 変異（`outline` を常に `None`）で結合テストの 1 本だけが赤。Rust 1,182 本・vitest 734 本
 
 ### テストと変異
 

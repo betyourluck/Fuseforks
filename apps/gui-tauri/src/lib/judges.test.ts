@@ -4,7 +4,7 @@ import { deriveId, judgeEdges, judgeStatusText, judgesInOrder, nextJudgeOrder } 
 import type { JudgeStatus, JudgeView } from "../types";
 
 function view(id: string, status: JudgeStatus, targets: string[] = [], order = 0): JudgeView {
-  return { id, name: id, order, status, targets };
+  return { id, name: id, order, status, targets, outline: null };
 }
 
 describe("deriveId", () => {

@@ -410,11 +410,11 @@ impl Orchestrator {
             .map(|j| {
                 let file = files.get(&j.id);
                 let status = status_of(file, |t| world.is_servant(t), has_model);
-                let targets = match file {
-                    Some(Ok(parsed)) => parsed.targets().into_iter().cloned().collect(),
-                    _ => Vec::new(),
+                let (targets, outline) = match file {
+                    Some(Ok(parsed)) => (parsed.targets().into_iter().cloned().collect(), Some(parsed.outline())),
+                    _ => (Vec::new(), None),
                 };
-                JudgeView { id: j.id, name: j.name, order: j.order, status, targets }
+                JudgeView { id: j.id, name: j.name, order: j.order, status, targets, outline }
             })
             .collect()
     }
