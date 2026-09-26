@@ -139,7 +139,9 @@ tokio-util = "0.7"
 # （先頭コメント消失・数値の文字列化・set_path の構造破壊・clone 間の変更共有。
 # Spec 01 Phase 4 の記録参照）。コメント保持で信頼できる YAML 編集 crate が
 # 現状のエコシステムに無い。
-toml_edit = "0.25"
+# `serde` は判断役の judge.toml を読むため（Spec 62）。引く serde_spanned 1.1.1 は
+# tauri-build の build 依存が既に Cargo.lock に持っていたので、新しい crate は増えない（P0 実測）。
+toml_edit = { version = "0.25", features = ["serde"] }
 # 同梱 file ツールの削除（Spec 09）。**完全削除の経路を作らない**ための依存で、
 # Windows ごみ箱 / macOS Trash / freedesktop Trash を同一 API で扱う。
 # ファイル操作の本体は std::fs で足りる（create_dir_all / rename / copy /

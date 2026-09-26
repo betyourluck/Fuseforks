@@ -71,6 +71,7 @@ pub mod doc_index;
 pub mod error;
 pub mod event;
 pub mod jev;
+pub mod judge;
 pub mod llm;
 pub mod mcp;
 pub mod model;
