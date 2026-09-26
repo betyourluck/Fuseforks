@@ -553,8 +553,10 @@ publish の 49 分後）。** **→ 0.3.3 = PR #437288（2026-09-18 提出。同
 `Validation-Completed` は提出の 37 分後（13:08 UTC）に付いており、止まっていたのは
 `Moderator-Approved` = 人の承認の段。こちらから打てる手は無かった）。** **→ 0.3.5 = PR #438606
 （2026-09-21 18:22 UTC 提出 = publish の 33 秒後。同じ 1 段。`ProductCode` は `{4F31B646-…}`。
-`InstallerLocale` 無しを引き写し・`InstallerSha256` は Release の digest と一致。マージ待ち）。** 所要を測れた update PR は
-これで 10 版（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.4）で、**9 版は 49 分〜3 時間 52 分・中央値 1 時間前後、
+`InstallerLocale` 無しを引き写し・`InstallerSha256` は Release の digest と一致。**2026-09-21 19:39 UTC マージ =
+publish の 78 分後**）。** **→ 0.3.6 = PR #439165（2026-09-22 提出。同じ 1 段。`ProductCode` は `{FB0E4806-…}`。
+**2026-09-22 17:35 UTC マージ = publish の 88 分後**）。** 所要を測れた update PR は
+これで 12 版（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.6）で、**11 版は 49 分〜3 時間 52 分・中央値 1 時間前後、
 1 版（0.3.4）だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
@@ -2721,7 +2723,7 @@ git: main はローカルが origin より先行（台帳と Spec 59 のコミ�
   `@` / `@@` の案内（初回案内にも足さない）/ 絆の見出しの「（非表示: サーヴァント N / 絆 M）」
   （Spec 51 の追補 2。`group_contract` 凍結 6 に撤回を記録）。どちらも利用者が実機で確認
 - **`v0.3.5` = `e7cc020`**（タグは利用者）— Release publish 2026-09-21 18:21 UTC / winget PR #438606
-  （18:22 UTC 提出。19:27 UTC の時点で `Validation-Completed`・人の承認待ち）/ tap `7e6dcfb` / LP は触らない
+  （18:22 UTC 提出。19:39 UTC マージ = publish の 78 分後）/ tap `7e6dcfb` / LP は触らない
 - **外から MCP の扉へ繋ぐ形**（AionUi discussion #3137 が起点）— 利用者の見立ては「サーバー認証で仲介する形」。
   未起票の材料として「設計の材料 3 件」の節へ
 - **TypeSafe Jev の検討 → [Spec 59](specs/59_jev-tool-result-pruning.md) 起票 → rev2 → rev3 → P0 /
@@ -2815,8 +2817,9 @@ JSON 表現と文字列連結の差は小さい（JSON を採る）/ **Jev は `
 **条例の改訂案（Spec 55 Notes 4）を貼る — 開発機は v0.3.2 で P4 の版が入る**（貼るのは利用者）/
 ~~**winget 0.3.4（PR #437997）のマージ確認**~~（**→ 2026-09-21 17:44 UTC マージ = publish の
 29 時間 21 分後**。実績の幅 49 分〜3 時間 52 分を初めて大きく外れた。待っていたのは人の承認）/
-**winget 0.3.5（PR #438606）と 0.3.6（PR #439165）のマージ確認**（0.3.6 は 2026-09-22 16:1x UTC 提出。
-`v0.3.6` = `d87c5d8` は Release publish・tap `9c603b6` まで配信済み）/
+~~**winget 0.3.5（PR #438606）と 0.3.6（PR #439165）のマージ確認**~~（**→ 0.3.5 は 2026-09-21 19:39 UTC /
+0.3.6 は 2026-09-22 17:35 UTC にマージ = publish の 78 分 / 88 分後**。0.3.4 の 29 時間は 1 回きりで、
+実績の幅へ戻った。2026-09-27 に確認）/
 **Spec 56 のツールチップの文面だけ実機で未確認**（`disabled` は観測済み。辞書と配線は
 走査テストが留めている）/ 評価基盤の「完遂」の軸。
 **core 単独実行（クラウドのコンテナ）は最終目標として
@@ -3809,7 +3812,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **設定画面の注記が `rag` を対象と書いたまま配布された**（辞書の追従漏れ。`f0b4973` で直し、次の版から）/
   トークンは資格情報ストア）。**タグとビルドは利用者、publish・winget・tap は Neo** — winget 0.3.6 =
   PR #439165（`gh repo sync` → `wingetcreate update … --token` の 1 段。`InstallerLocale` 無しを引き写し・
-  ProductCode は `{FB0E4806-…}`・`InstallerSha256` は Release の digest と一致）/ tap `9c603b6`
+  ProductCode は `{FB0E4806-…}`・`InstallerSha256` は Release の digest と一致。2026-09-22 17:35 UTC マージ =
+  publish の 88 分後）/ tap `9c603b6`
   （sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.3.5` = `e7cc020`（2026-09-22 JST タグ。17 コミット）— [Spec 57](specs/57_tool-call-detail.md) Done
   （ツール行を開いて引数と出力を見る・連続するツール行を束ねる）+ [Spec 58](specs/58_quote-reference.md) Done
@@ -3821,8 +3825,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   毎ターンのトークンになる / **参照は、ある事業者のモデルが書いた文を別の事業者へ送る**（PRIVACY への追記に触れた）/
   `@@` の案内は画面に出していない）。**ノートに入れなかったもの** = 入力欄の案内の撤回（P2 で足して同じ版の中で
   外したので、v0.3.4 との差が無い）。**タグは利用者、publish・winget・tap は Neo** — winget 0.3.5 = PR #438606
-  （`gh repo sync` → `wingetcreate update … --token` の 1 段。ProductCode は `{4F31B646-…}`）/
-  tap `7e6dcfb`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
+  （`gh repo sync` → `wingetcreate update … --token` の 1 段。ProductCode は `{4F31B646-…}`。
+  2026-09-21 19:39 UTC マージ = publish の 78 分後）/ tap `7e6dcfb`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.3.4` = `b2acc22`（2026-09-20。13 コミット・うちコードは 3 本）— `failures.md` #128
   （空白入り `command` を照合前に拒否）+ [Spec 56](specs/56_resume-after-approval.md) Done
   （承認して続けさせる）**。3 OS 緑・アセット 7 件・publish 2026-09-20 12:23 UTC。
