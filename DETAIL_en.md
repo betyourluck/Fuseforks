@@ -40,6 +40,7 @@ Fuseforks/
 │       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery, acceptance check)
 │       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
+│       │   │   ├── judging.rs       Judges (offering and relaying judge_*, "Try", the list; Spec 62)
 │       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
@@ -49,7 +50,8 @@ Fuseforks/
 │       │   ├── room_log.rs          Plaza-log pure mechanics (visibility predicate / ID resolution / display-ID lengthening)
 │       │   ├── quote.rs             Message-reference pure mechanics (ID resolution / copies / frame rendering; [Spec 58](specs/58_quote-reference.md))
 │       │   ├── prune.rs             Tool-result pruning pure mechanics (split into paragraphs / batch / render; knows no HTTP; [Spec 59](specs/59_jev-tool-result-pruning.md))
-│       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; the one `ParagraphScorer` implementation)
+│       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; implements `ParagraphScorer` and `Judge`)
+│       │   ├── judge.rs             Judges, pure mechanism (judge.toml checks, condition grammar, rule evaluation, the active predicate; [Spec 62](specs/62_judge-agents.md))
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
@@ -86,7 +88,7 @@ Fuseforks/
         │   ├── commands.rs          IPC commands (thin forwarding layer)
         │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
         │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
-        │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59)
+        │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
         │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
@@ -100,6 +102,7 @@ Fuseforks/
             ├── lib/contextUsage.ts  ratio and tone of the context-usage ring (pure functions, [Spec 49](specs/49_context-usage-ring.md))
             ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
             ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
+            ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines (pure; Spec 62)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -108,6 +111,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
             ├── composables/useWaveClear.ts      Clearing the Work Status view (display only, finished waves only)
             ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
+            ├── composables/useJudgeDialog.ts    Whether the judge editor is open (two entry points: the list and the map; Spec 62)
             ├── composables/useToolCallDetails.ts Contents of tool rows opened in the chat pane (open state and fetch state; not stored)
             ├── App.vue              3-pane grid
             └── components/
@@ -125,6 +129,7 @@ Fuseforks/
                 ├── FirstRunTour.vue                   First-launch guide (nine steps; shown only in an empty village; replay from Settings > User Interface > Guide)
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── GroupDialog.vue                    Modal: create / rename / delete groups ([Spec 51](specs/51_agent-groups.md))
+                ├── JudgeList.vue / JudgeDialog.vue    Left: the Judges list / Modal: editing judge.toml and "Try" (Spec 62)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
@@ -173,13 +178,14 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 
 | Position | Content | Reason for Permanence |
 |---|---|---|
-| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together). In a village with groups the list is **sectioned under headings**, each carrying an eye (show/hide), a pencil (rename / delete), ▶/■, and a batch-start switch, and a dashed area at the bottom of the list adds a group ([Spec 51](specs/51_agent-groups.md); dragging a card into another section changes its group) | Always visible |
+| Left | Agent list (status, uptime, tokens, startup). The header is the **create** side (model registration, add); the **footer is the operate-on-many side** (change work folders together). In a village with groups the list is **sectioned under headings**, each carrying an eye (show/hide), a pencil (rename / delete), ▶/■, and a batch-start switch, and a dashed area at the bottom of the list adds a group ([Spec 51](specs/51_agent-groups.md); dragging a card into another section changes its group). Below the servants, **"Judges"** ([Spec 62](specs/62_judge-agents.md): the judges, whether each is active, and why not if it isn't. Judges have no start/stop) | Always visible |
 | Upper Center | Kizuna | Always visible |
 | Lower Center | Tabs: **Blackboard** (shared working notes) / **Work Status** (execution traces of `plan`, [Spec 08](specs/08_plan-wave-pane.md)) | Always visible (collapsible down to 80px via splitter) |
 | Right | Chat (speech bubble format). Below the input box, a button to **clear the view** (**display only — the conversation stays**) and, to its left, a **context-usage ring** ([Spec 49](specs/49_context-usage-ring.md)): the selected servant's **last single LLM call** input ÷ the template's **context length**. Amber from 75%, red from 90%. **It does not move during a turn; it follows within a second after the turn settles.** The denominator is filled by the model template's "Fetch" button together with the rates ([Spec 50](specs/50_context-length-fetch.md); models absent from the table keep the hand-typed value), so a number above 100% still means the template's context length is smaller than the model's real window. After a restart it stays hidden until the first turn | Always visible |
 | Bottom | Status bar (**MCP server listening state**, **the switch that skips plan reviews** ([Spec 53](specs/53_unattended-plan-and-verifier.md); glows and reads "No review" while on), **the command approval mode** ([Spec 61](specs/61_run-approval-mode.md): the label reads "Command: approval" → "Command: auto-approve" → "Command: auto-allow", and each click moves to the next; glows when not the default. The plan switch reads "Plan: review / Plan: no review"; stats is the icon plus "Stats"). **Both switches are remembered on this device and the next launch starts the same way**, date and time, version) | Always visible (a 26px strip) |
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
+| Modal | Judge editor and "Try" (from a row under "Judges" on the left, or a diamond node in Kizuna; [Spec 62](specs/62_judge-agents.md)) | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
 | Modal | Command approval (from "Commands" in the title bar, [Spec 20](specs/20_command-approval.md)) | Opened occasionally |
 | Modal | Schedule list, addition, **editing**, deletion, pre-checks, acceptance checks and approvals (from "Schedule" in the title bar; two panes — list on the left, form on the right. 2026-08-30) | Opened occasionally |
@@ -213,6 +219,12 @@ handles at all, so **dragging between handles on the map never existed**. The
 `@connect` handler was there but unreachable.
 
 Ties are **directed** (arrow at the end); a bidirectional pair is drawn as a single line with arrows on both ends. A card drop starts from the card's side — the dropped-on servant becomes someone the card's servant can delegate to. Dropping onto a servant that already has the reverse tie makes it bidirectional. Dropping onto an already-connected servant or onto yourself makes the node pulse briefly — "it arrived but nothing was drawn" (success is signaled by the line itself appearing; no toast). While dragging, the cursor turns to `copy` over the map.
+
+**Ties to a judge (a diamond node) are drawn the same two ways** ([Spec 62](specs/62_judge-agents.md)).
+The **dashed** lines leaving a judge are drawn from the destinations in its `judge.toml` and
+**cannot be drawn or cut on the map** — the file is the source of truth, and writing the same
+fact in two places lets the drawn destinations drift from where requests really go. An inactive
+judge draws no dashed lines.
 
 **Only the label changed; the types did not** — `TopologyEdge` / `topologyPositions` / `TopologyMap.vue` / `list_topology` are untouched, following the same discipline as "servant vs. agent" above: do not bind what changes easily to what changes with difficulty. (The wave pane set the precedent when its display name became "Work status" while its contract stayed put.)
 
@@ -699,6 +711,91 @@ The eraser at the right end of the header **hides finished waves from view** (20
 Agent-initiated broadcasts (where a single body passes the same content to multiple recipients) continue to work. Each such message includes a list of all destinations, and the recipient's prompt contains a note stating, "Everyone has already received this." Without this, each agent decides that "only I have heard this" and conscientiously transfers to connection partners, causing echoes (failures.md #20).
 
 Since the tool cannot read from the fact that not calling means termination, the procedure is explicitly stated via system messages (same intent as `RECOMMENDED_PROMPT_PREFIX` of the same SDK). For servers that do not implement tool calls, the termination marker `[[END]]` is provided (isomorphic to AutoGen v0.2's `is_termination_msg`).
+
+### Judges — destinations decided by rules a human wrote ([Spec 62](specs/62_judge-agents.md))
+
+A part for **not leaving the choice of destination entirely to a model that writes prose**.
+Create a judge under "Judges" on the left and draw a tie from a servant to it; that servant
+gains a tool `judge_<id>` (shown as "have ◯◯ judge" in the chat pane). Calling it has the
+judgement-only model Jev give typed answers to **questions a human wrote**, then evaluates
+**rules a human wrote** top to bottom and hands the request to the destination of the first
+rule that matches.
+
+**A judge writes no text and is not someone you talk to.** It is a function with no inbox and
+no turns, evaluated synchronously inside the calling servant's tool call. So it is never a start
+toggle, a batch-start target, a group member, an Alt+↑↓ stop, a chat recipient, or an `@@` candidate.
+
+**Questions and rules live in `judges/<id>/judge.toml`** (part of the village, so they travel
+with it).
+
+```toml
+[questions.kind]
+type = "choice"
+ask  = "Choose the main kind of work in `message`."
+options = { research = "Research and comparison", implement = "Code changes", other = "None of the above" }
+
+[questions.size]
+type = "score"
+ask  = "Rate the amount of work in `message`."
+levels = ["One search", "Comparing a few sources", "Several separate steps"]
+
+[[rules]]
+when = "kind == other"
+do   = "return"
+
+[[rules]]
+when = "kind == research and size >= 3"
+to   = ["agent_3", "agent_10"]
+
+[[rules]]
+when = "kind == research and kind.margin >= 0.2"
+to   = ["agent_3"]
+
+[otherwise]
+do = "return"
+```
+
+- **Three question types** — `choice` (one of the options) / `score` (levels, lowest first; rules
+  use 1-based level numbers) / `noul` (probability 0–1 that a statement holds, with `true_if` /
+  `false_if`)
+- **The condition language is small and closed** — comparisons, `in`, `and` / `or` / `not`, plus
+  `.p` (probability of the chosen answer), `.margin` (gap between first and second) and `.mean`
+  (a score's expected value). No arithmetic, functions or variables (a language you can script in
+  would open the same hole as the general-purpose interpreter `run` refused)
+- **Three outcomes** — with one `to`, the request is handed over as-is and the answer comes back
+  to the caller / with two or more, it fans out and the **bundled answers** come back (not a `plan`
+  wave, so nothing appears in the Work status tab) / with `do = "return"`, nothing is delivered and
+  only the judgement comes back. **Every outcome returns to the caller**, so the delegation-cycle
+  rejection, hops, the budget and interrupts all apply unchanged
+- **The sender stays the caller.** A one-line judgement is appended to the delivered text (e.g.
+  `[Judgment: Router → kind=research(0.82)]` in an English village)
+
+**Rule evaluation is deterministic; only Jev's answers vary.** Sending the same input 8 times moved
+values by up to 0.11 (measured in Spec 59), so how to treat the borderline is written by a human
+with `.margin`.
+
+**A failed judgement never falls through to `otherwise`.** If Jev fails, the 20-second limit
+passes, the input is too large, or any question goes unanswered, nothing is delivered and
+"could not judge (reason)" comes back. `otherwise` means only "judged, but no rule matched".
+
+**Whether a judge is active is one predicate in the core** — the file exists, passes its checks,
+names only existing servants as destinations, and a Jev key is set. If any of these fails, no
+tool appears, no dashed lines are drawn, and the reason shows on the left. **Saving checks the
+format, the rules and the destinations and refuses to save on failure** (the editor shows where
+and why). Removing a servant named as a destination disables the judge and says so by name in the
+chat pane.
+
+**"Try"** (in the editor) judges a sample request against the text being edited (unsaved is fine)
+and shows the matched rule, the destination and each question's value. **Nothing is delivered.**
+One sentence of a question can shift the confidence, so you can check a change on the spot.
+
+**The Jev key is shared with tool-result pruning** (System Settings > Integration > Jev). Pruning
+does not need to be on for judges to work. **If you create no judges, not a byte leaves the
+machine.** What is sent and what is not is defined in [`PRIVACY_en.md`](PRIVACY_en.md), section 4-4.
+
+**Opening the village with v0.3.7 or earlier drops the servant → judge ties and the judges'
+positions** (older versions drop unknown IDs from connections and positions). The judges and their
+`judges/` files remain, so reopen with a newer version and redraw the ties.
 
 ### Layer 2: Mechanical Limits — Safety Net
 
@@ -1454,6 +1551,8 @@ Agent settings reside in the OS application-data area.
     Construct.md
     mcp.json                  Per-agent MCP (presented only to this agent; edit in the configuration-files tab)
     icon.webp                 Agent icon (only when configured; UI converts and stores it as WebP)
+  judges/{judge_id}/
+    judge.toml                A judge's questions and rules (Spec 62; written in the editor opened from "Judges" on the left)
   user/
     icon.webp                 Your icon (only when configured; same handling as above, different location)
   external/
@@ -1552,6 +1651,15 @@ that were never attempted do not bloat the log). Jev's tokens appear as `jev_tok
 **do not enter the card totals or the budget** — its rates differ by an order of magnitude,
 and the village ceiling is denominated in effective tokens, so mixing them would make the
 number mean two things.
+
+**Calling a judge emits one `judge:` line** ([Spec 62](specs/62_judge-agents.md)):
+`caller=` (the calling servant), `judge=`, `rule=` (matched rule number / `otherwise` / `none`),
+`outcome=` (`routed` / `fanned` / `returned` / `undecided` / `interrupted` / `hop_limit`),
+`answers=` (question names, the chosen key or level, probability and margin), `to=`,
+`bundle_chars=` when it fanned out, and `input_tokens=` / `output_tokens=`. **Question text,
+`note` and the delivered text are not written.** The delivery itself is read from the next
+`turn start:` line's `from=` (the caller). Jev's tokens stay out of the budget as with pruning,
+but the spend is always recorded on this line.
 
 The primary purpose of a `tool` line is **`body_chars`**. Tool results are added to history and resent in every subsequent round, so **the size of one tool result affects input tokens for every round of that turn**. `rounds` and `prompt` in a `turn` line alone could not identify what made the prompt large.
 
@@ -1758,7 +1866,7 @@ Three things have since been added into this frame: the theme, your own name and
 |---|---|
 | General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
-| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Jev** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default). **Price table** (the URL it is fetched from) |
+| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Jev** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default. **The key is shared with judges (Spec 62)** — with a key set, judges work even while pruning is off). **Price table** (the URL it is fetched from) |
 | User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
 
 - **Your name is both the display name on screen and the name servants read**

@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-08-11**
+**Last updated: 2026-09-28**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -57,6 +57,7 @@ is transmitted anywhere.
 | `schedules.json` | Time-triggered request settings |
 | `mcp.json` | Declarations of MCP servers to connect to |
 | `agents/<id>/` | Per-agent persona, memory, icon, and the list of commands you allowed |
+| `judges/<id>/judge.toml` | The questions and rules you wrote for a judge (see 4-4) |
 | `user/icon.webp`, `external/icon.webp` | Icons you set (only if set) |
 | `attachments/*.webp` | Images attached to conversations (**auto-deleted after 30 days or 500MB total**) |
 | `exports/*.jsonl` | Conversations you explicitly exported |
@@ -70,7 +71,7 @@ is transmitted anywhere.
 | `mcp_server.json` | Enable/disable, port, and access token for the local intake feature described below |
 | `probe_approvals.json` | Record of which pre-check commands you allowed to run on this device |
 | `pricing.json` | The URL the price table is fetched from |
-| `jev.json` | Enable/disable, account ID, and strength for tool-result pruning (see 4-4) |
+| `jev.json` | Jev settings (see 4-4) — enable/disable, account ID, and strength for tool-result pruning |
 
 **These live outside the village (workspace).** Handing your village to someone else
 never puts their copy in a state where it talks to a destination they do not know about.
@@ -88,7 +89,7 @@ Keys you enter are stored in your **operating system's credential store**:
 - Linux: freedesktop Secret Service
 
 The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
-this is also where the Cloudflare API token for tool-result pruning (see 4-4) is kept.
+this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) is kept.
 **Neither can be read back** — the screen only shows whether a key is stored.
 
 The app's configuration files (such as `world.json`) **have no field capable of
@@ -144,10 +145,14 @@ configured are sent with every request to that destination** (including an
 Authorization header, i.e. your access token). Headers are stored in plaintext
 `mcp.json`, so distributing your workspace distributes the token with it.
 
-### 4-4. Tool-result pruning (Jev)
+### 4-4. The judgement-only model Jev (tool-result pruning, judges)
 
 **Off by default.** It runs only once you enter your own Cloudflare account ID and
 API token. In a village where those are not set, this path does not exist.
+Two features use Jev (from TypeSafe AI, reached through Cloudflare Workers AI) and share
+the key. Each sends only what is listed under it.
+
+#### Tool-result pruning
 
 When on, long bodies returned by MCP tools have paragraphs unrelated to the current
 request dropped, and the judgement is asked of **Jev**, a judgement-only model
@@ -174,6 +179,26 @@ those).
 
 The diagnostic log (section 6) records **counts and character totals only** — not one
 character of the body.
+
+#### Judges
+
+A judge decides where a request goes, using questions and rules you wrote. **If you have
+created no judges, nothing leaves your device through this path.** Data is sent only when:
+
+- a servant asks a judge to judge (only if you drew a tie from that servant to the judge), or
+- you press "Try" in the judge editor.
+
+**Exactly two things are sent:**
+
+- the material to judge — the text the servant passed to the judge (`message`; **it may
+  include the text of your request**). For "Try", the sample text you typed
+- the **questions** you wrote in `judge.toml` — each question's name and text, the keys and
+  descriptions of options, the descriptions of levels, and the true / false conditions
+
+**Rules, destinations, notes (`note`), conversation history, the plaza log, the blackboard,
+search results and village data are never sent.** Rules are evaluated on your device. The
+diagnostic log (section 6) records only question names, the chosen answers, probabilities and
+token counts — not the material judged and not the question text.
 
 ---
 

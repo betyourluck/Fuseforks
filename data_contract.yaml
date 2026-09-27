@@ -5724,7 +5724,7 @@ conversation_termination:
         未回答なら、規則を評価せず「判定できなかった (理由)」を返す。otherwise に流さない**
         (fail-closed)。未回答を 0 に潰さない。送る前の字数の事前検査は持たない
       - **行き先は 3 種**: to が 1 体 = deliver_and_wait(from = 呼び出し元, via = "judge") /
-        to が 2 体以上 = **fanout_and_bundle(…, via = "judge")** — plan と共有する並列配送と
+        to が 2 体以上 = **fanout_and_wait(…, via = "judge") + bundle_answers** (P1d で 2 つに割った。起票時の仮名は fanout_and_bundle) — plan と共有する並列配送と
         束ねの純粋な部分で、**execute_wave を通らない** (波の記録・PlanTaskResolved /
         PlanWaveFinished・verify_bundle が付かない。plan の挙動はバイト等価) / do = "return" =
         判定 1 行と note を返す。配送できなかった宛先は理由の本文を束ねの中に入れて落とさない

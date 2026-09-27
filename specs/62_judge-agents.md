@@ -549,7 +549,7 @@ GUI crate のテスト 33 本が緑。**→ 2026-09-28 に画面側も着地**�
 
 ### P3 — 台帳
 
-- [ ] DETAIL 日英 / README 3 言語の 1 行 / PRIVACY 日英の 4-4 / CLAUDE.md の覆し（D14）
+- [x] DETAIL 日英 / README 3 言語の 1 行 / PRIVACY 日英の 4-4 / CLAUDE.md の覆し（D14）（2026-09-28。下の「P3 台帳記録」）
 
 ### P4 — 実機
 
@@ -774,3 +774,30 @@ vitest 702 → **733**・vue-tsc 0・build 緑。**実機は未確認**（P4）�
   自分を守らない**（CLAUDE.md にも P1 の記録にも書いてあった）— 以後、変異を戻すのは sed の逆置換だけ
 - Bash の heredoc で Python を渡すと、本文のバッククォート入りの文字列で bash の構文解析が落ちた
   （`unexpected EOF while looking for matching`）。スクリプトはファイルへ書いてから実行する
+
+## P3 台帳記録（2026-09-28）
+
+**数えたのはファイル単位**（#51 (b)）。書いたのは 10 ファイル:
+
+| ファイル | 書いたこと |
+|---|---|
+| `DETAIL.md` / `DETAIL_en.md` | 新しい節「判断役 — 人が書いた規則で宛先を決める」（層 2 の直前）/ ディレクトリ木（`judge.rs` / `judging.rs` / `lib/judges.ts` / `useJudgeDialog.ts` / `JudgeList.vue` / `JudgeDialog.vue`、`jev.rs` と `jev_settings.rs` の説明）/ 画面の構成表（左ペインの「判断特化」・編集ダイアログの行）/ 絆の張り方（判断役へも同じ 2 つで引ける・破線は地図で引けず切れない）/ ワークスペースの木（`judges/{judge_id}/judge.toml`）/ 診断ログ（`judge:` 行の欄）/ システム設定の表（Jev の鍵は判断役と共有） |
+| `DETAIL_zh.md` | 抄訳の節とディレクトリ木の `judging.rs`（zh は抄訳なので、画面の表と診断ログの欄までは写していない — Spec 59 のときと同じ粒度） |
+| `README.md` / `README_jp.md` / `README_zh.md` | 圧縮の行の直後に「判断役」の 1 行。170 / 170 / 166 行（上限 160 を超えた記録は CLAUDE.md の冒頭に足した） |
+| `PRIVACY.md` / `PRIVACY_en.md` | 4-4 を「判断専用モデル Jev（ツール結果の圧縮・判断役）」へ改め、小節「判断役」— 送る 2 つ（`message` と問い）と送らないもの（規則・行き先・`note`・履歴・広場ログ・黒板・検索結果・村の情報）。保存の表に `judges/<id>/judge.toml`、`jev.json` と資格情報の行に「共有」。最終更新 2026-09-28 |
+| `CLAUDE.md` | D14 の覆し 3 箇所（スイッチの節の裁定に取り消し線 / LangGraph の「落とし込むなら 1」/ 外部研究の受領の分類）+ ルーターの分類の 5 つ目 + README の行数 + Spec の状態 |
+| `data_contract.yaml` | 追従漏れの回収 1 件（下） |
+
+**PRIVACY の「送るもの」は実装を読んで書いた**（`jev.rs` の `encode_judge`）— `input.state` は `message` だけで、
+問いは名前・`instructions`・`criteria`（選択肢の鍵と説明文 / 段階の説明文 / 真偽の条件）。規則と `note` は
+`judge.rs` の評価側にしか無く、送る形に現れない。
+
+**追従の grep で回収したもの 2 件**:
+
+- `data_contract.yaml` の `judge_contract` が並列配送を **`fanout_and_bundle`**（起票時の仮名）と書いたまま。P1d で
+  `fanout_and_wait` + `bundle_answers` に割ったのに、凍結側が古い名前を指していた
+- `CLAUDE.md` の Spec の状態の行が「2 体以上は `execute_wave` で撒いて」のまま — rev3 の D6 で**通らない**と決めた
+  関数を名指ししていた（起票時の文が rev を 3 回越えて残った。#51 (b) の「腐るのはその機能の節ではなく隣の節」の形）
+
+**grep 網の外**: ランディングページは固有の機能を列挙しておらず、「LLM 以外の外向き通信は単価表だけ」は Jev が
+利用者の鍵で設定するモデルの口なので今も正しい（Spec 59 と同じ判断）。Qiita の記事は判断役に触れていない。
