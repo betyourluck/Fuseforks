@@ -235,7 +235,8 @@
     }
   },
   "common": {
-    "close": "閉じる"
+    "close": "閉じる",
+    "save": "保存"
   },
   "confirm": {
     "yes": "はい",

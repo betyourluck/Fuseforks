@@ -235,7 +235,8 @@
     }
   },
   "common": {
-    "close": "Close"
+    "close": "Close",
+    "save": "Save"
   },
   "confirm": {
     "yes": "Yes",
