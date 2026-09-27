@@ -1282,7 +1282,8 @@ function selectPage(next: Page): void {
             対象のモデルが決まっている場所でだけ押せる。
           -->
           <!--
-            外部連携 > Jev（Spec 59 P2）。**押した時点で反映する**（MCP のページと同じ）。
+            外部連携 > 判断特化モデル（Jev）（Spec 59 P2。Spec 62 の判断役も同じ鍵を使うので、
+            ページの見出しは鍵の側で名付け、圧縮は小見出しの下に置く）。**押した時点で反映する**（MCP のページと同じ）。
             **「接続を確かめる」だけが外へ出る** — 開いただけでは 1 バイトも出ない。
             チェックは Account ID とトークンが揃うまで `disabled`（`canEnable` は
             Rust が決めた判定で、ここで組み直さない）。
@@ -1374,7 +1375,8 @@ function selectPage(next: Page): void {
               </span>
             </div>
 
-            <div class="mt-4 rounded border border-line bg-surface-0 p-3">
+            <h4 class="mt-5 mb-1 text-xs font-semibold text-ink">{{ $t("settings.jev.pruneHeading") }}</h4>
+            <div class="rounded border border-line bg-surface-0 p-3">
               <label class="flex items-start gap-2">
                 <input
                   type="checkbox"

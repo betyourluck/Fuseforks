@@ -187,10 +187,10 @@
       "nameSave": "保存",
       "nameSaved": "保存しました"
     },
-    "menuJev": "Jev（ツール結果の圧縮）",
+    "menuJev": "判断特化モデル（Jev）",
     "jev": {
-      "heading": "Jev でツール結果を圧縮する",
-      "lead": "MCP のツールと rag が返した長い本文から、そのターンの依頼に関係の無い段落を、サーヴァントへ渡す前に落とします。判定は TypeSafe AI の判断専用モデル Jev（Cloudflare Workers AI 経由）です。既定は OFF で、鍵を入れるまで通信は 1 度も起きません。",
+      "heading": "判断特化モデル（Jev）",
+      "lead": "TypeSafe AI の判断専用モデル Jev（Cloudflare Workers AI 経由）の鍵です。文章を書かず、問いに型付きの答えだけを返すモデルで、この村では「判断特化」の判断役と、下のツール結果の圧縮の 2 つが使います（鍵は共有。判断役は圧縮を有効にしなくても使えます）。既定では何も入っておらず、鍵を入れるまで通信は 1 度も起きません。",
       "blocked": "設定ファイル jev.json を読めないため、圧縮は掛からず設定も保存できません。ファイルを直すか削除してください（{reason}）。",
       "accountLabel": "Cloudflare のアカウント ID",
       "accountPlaceholder": "32 桁の 16 進",
@@ -205,6 +205,7 @@
       "tokenCleared": "トークンを削除しました",
       "test": "接続を確かめる",
       "testResult": "{model} ／ {ms} ms ／ 依頼の核 {relevant}・定型文 {boilerplate}",
+      "pruneHeading": "ツール結果の圧縮",
       "enable": "ツール結果を Jev で圧縮する",
       "enableNote": "対象は MCP のツールだけです。file・run・rag は圧縮しません（編集の材料には逐語が要り、rag の出力は段落に割れないため）。",
       "needsKeys": "アカウント ID と API トークンを両方入れると選べます。",
@@ -343,7 +344,7 @@
       "noFile": "judge.toml がありません",
       "invalid": "judge.toml に誤りがあります（{location}: {message}）",
       "missingTargets": "行き先にサーヴァントでない ID があります: {targets}",
-      "noJudgeModel": "判断モデル（Jev）が未設定です（システム設定 ＞ 外部連携 ＞ Jev）"
+      "noJudgeModel": "判断特化モデル（Jev）が未設定です（システム設定 ＞ 外部連携 ＞ 判断特化モデル（Jev））"
     },
     "trial": {
       "heading": "試す",

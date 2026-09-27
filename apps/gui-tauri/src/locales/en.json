@@ -187,10 +187,10 @@
       "nameSave": "Save",
       "nameSaved": "Saved"
     },
-    "menuJev": "Jev (tool result pruning)",
+    "menuJev": "Judge model (Jev)",
     "jev": {
-      "heading": "Prune tool results with Jev",
-      "lead": "Drops paragraphs unrelated to the current request from long bodies returned by MCP tools and rag, before the servant sees them. The judgement comes from Jev, TypeSafe AI's judgement-only model (via Cloudflare Workers AI). Off by default; nothing is sent until you enter a key.",
+      "heading": "Judge model (Jev)",
+      "lead": "The key for Jev, TypeSafe AI's judgement-only model (via Cloudflare Workers AI). It writes no text and only returns typed answers to questions. In this village two features use it: the judges under \"Judges\" and the tool-result pruning below (they share the key; judges work without turning pruning on). Nothing is set by default, and nothing is sent until you enter a key.",
       "blocked": "jev.json could not be read, so pruning is off and settings cannot be saved. Fix or delete the file ({reason}).",
       "accountLabel": "Cloudflare account ID",
       "accountPlaceholder": "32 hex digits",
@@ -205,6 +205,7 @@
       "tokenCleared": "Token deleted",
       "test": "Check the connection",
       "testResult": "{model} / {ms} ms / relevant {relevant}, boilerplate {boilerplate}",
+      "pruneHeading": "Tool-result pruning",
       "enable": "Prune tool results with Jev",
       "enableNote": "Only MCP tools are pruned. file, run and rag are left alone (edits need the text verbatim; rag output does not split into paragraphs).",
       "needsKeys": "Enter both the account ID and the API token to enable this.",
@@ -343,7 +344,7 @@
       "noFile": "judge.toml is missing",
       "invalid": "judge.toml has an error ({location}: {message})",
       "missingTargets": "Destinations include IDs that are not servants: {targets}",
-      "noJudgeModel": "No judge model (Jev) is set (System settings > Integration > Jev)"
+      "noJudgeModel": "No judge model (Jev) is set (System settings > Integration > Judge model (Jev))"
     },
     "trial": {
       "heading": "Try",
