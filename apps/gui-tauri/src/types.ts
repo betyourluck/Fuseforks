@@ -226,6 +226,8 @@ export interface JudgeSpec {
   id: AgentId;
   name: string;
   order: number;
+  /** 利用者の有効/無効（左ペインのトグル）。**必ず送る** — 省くとコアは既定（有効）で読む。 */
+  enabled: boolean;
 }
 
 /**
@@ -234,6 +236,7 @@ export interface JudgeSpec {
  */
 export type JudgeStatus =
   | { kind: "active" }
+  | { kind: "disabled" }
   | { kind: "noFile" }
   | { kind: "invalid"; location: string; message: string }
   | { kind: "missingTargets"; targets: AgentId[] }
@@ -256,6 +259,8 @@ export interface JudgeView {
   id: AgentId;
   name: string;
   order: number;
+  /** 利用者の有効/無効。更新を組み直すときに写す（写さないと名前を直しただけで有効へ戻る）。 */
+  enabled: boolean;
   status: JudgeStatus;
   targets: AgentId[];
   /** `null` = ファイルが無いか検査に落ちている（「読めない」と「0 本」を畳まない）。 */

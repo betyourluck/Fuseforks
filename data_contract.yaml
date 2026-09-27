@@ -2449,6 +2449,8 @@ entities:
       id: AgentId                   # AgentId::is_safe を通る。サーヴァントの ID と重ならない
       name: String                  # 表示名。サーヴァントの表示名とも重ならない
       order: u32                    # 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立
+      enabled: bool                 # 利用者の有効/無効 (左ペインのトグル。P4 の実機で追加)。欄が無ければ true
+                                    # で読む (既存の判断役を止めない)。偽なら JudgeStatus は最初に disabled
 
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
@@ -5680,7 +5682,7 @@ conversation_termination:
         Score の段階は 2〜10 (1 と 11 は 400)。Choice 1 択は Jev は受ける
 
     不変条件:
-      - **判断役は別の型** (JudgeSpec = { id, name, order } だけ。World.judges)。AgentSpec に
+      - **判断役は別の型** (JudgeSpec = { id, name, order, enabled } だけ。World.judges)。AgentSpec に
         同居させない。**ID は AgentId 型で、サーヴァントと同じ名前空間**。ID の検証は
         AgentId::is_safe を同じ関数のまま掛ける (2 つ目の検証を書かない)。**ID と表示名の
         一意性は 2 つの一覧をまたぐ**。衝突は既存の DUPLICATE_AGENT / DUPLICATE_AGENT_NAME
@@ -5737,8 +5739,10 @@ conversation_termination:
         plan) に入れず judge_* の合成へ送る。plan が生える条件 (接続 2 体以上) もサーヴァントだけで
         数える。judge_* の引数は message だけ。説明文は判断役の名前・行き先になりうる相手・
         「判定だけ返すことがある」だけで、問いと規則は書かない
-      - **有効の述語は 1 つ** (JudgeStatus)。有効 = ファイルが在る ∧ TOML が読める ∧ 形・文法・
-        型・定義域の検査に通る ∧ to の ID が全部実在するサーヴァント ∧ Jev の設定が在る。
+      - **有効の述語は 1 つ** (JudgeStatus)。有効 = 利用者が有効にしている (enabled) ∧ ファイルが在る ∧
+        TOML が読める ∧ 形・文法・型・定義域の検査に通る ∧ to の ID が全部実在するサーヴァント ∧
+        Jev の設定が在る。**利用者の無効 (disabled) を最初に見る** — 人が止めたものは他の理由より先に
+        そう読める。止めてもファイル・線・座標は残す。
         ツールを生やすか・左ペインの表示・地図の線はこの 1 つを読む。**ファイルの読み込みと検査は
         起動時と保存時だけ**で結果をメモリに持ち、**有効かどうかは読むたびにその時点の村と判断モデルの
         有無から求める** (P1 で確定 — 状態として持たないので、サーヴァントの削除や Jev の設定の変更の

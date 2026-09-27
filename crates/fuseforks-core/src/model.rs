@@ -282,6 +282,11 @@ pub struct JudgeSpec {
     /// 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立。
     #[serde(default)]
     pub order: u32,
+    /// 利用者の有効/無効（左ペインのトグル）。**既定は有効** — この欄より前に作った判断役
+    /// （欄の無い `world.json`）は有効のまま読む。無効なら有効の述語が最初に `Disabled` を返し、
+    /// ツールも地図の破線も出ない。**ファイル・線・座標は残す**（戻したときにそのまま使える）。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// この版が知らない欄（[`UnknownFields`]）。
     #[serde(flatten)]
     pub unknown: UnknownFields,
@@ -1791,5 +1796,14 @@ mod spec33_wire_shape {
             filled.get("reasoning_summary").is_none(),
             "snake_case では出ない（出ていたら画面に何も映らない）"
         );
+    }
+
+    /// **`enabled` の無い判断役は有効で読む**（Spec 62 P4 で足した欄）。無効へ落ちると、
+    /// 更新しただけで既存の村の判断役が全部止まる。
+    #[test]
+    fn a_judge_without_the_enabled_field_reads_as_enabled() {
+        let json = r#"{ "id": "judge", "name": "振り分け", "order": 0 }"#;
+        let parsed: JudgeSpec = serde_json::from_str(json).expect("旧形が読めること");
+        assert!(parsed.enabled);
     }
 }

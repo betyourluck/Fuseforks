@@ -63,10 +63,32 @@ describe("判断役の線（Spec 62 D9）", () => {
     expect(map).toContain("if (edge && !edges.value[edge]?.judge) void removeEdge(edge);");
   });
 
+  it("見出しの「絆」の本数は判断役 → サーヴァントの破線を数えない（P4 の実機で 7 + 3 = 10 と出た）", () => {
+    const map = src("../components/TopologyMap.vue");
+    expect(map).toContain("Object.values(edges.value).filter((e) => !e.judge).length");
+    expect(map).toContain('$t("map.summary", { nodes: visible.length, edges: tieCount })');
+  });
+
   it("ホバーの概形は、ファイルが読めたときだけ出す（0 と書くと「規則が無い」に読める）", () => {
     const map = src("../components/TopologyMap.vue");
     expect(map).toContain('<template v-if="judgeDetail.judge.outline">');
     expect(map).toContain('v-if="judgeDetail.judge.outline?.questions.length"');
+  });
+
+  it("一覧の行は編集の鉛筆とトグルを持ち、行そのものは押しても開かない（P4 の実機で裁定）", () => {
+    const list = src("../components/JudgeList.vue");
+    // 開くのは鉛筆の 1 箇所だけ（作成直後に開く 1 箇所を除く）。
+    expect(list.match(/@click="dialog\.open\(judge\.id\)"/g)?.length).toBe(1);
+    expect(list).toContain(':title="$t(\'judges.edit\')"');
+    expect(list).toContain('role="switch"');
+    expect(list).toContain("setEnabled(judge, !judge.enabled)");
+    // 切り替えは一覧の写しで組み直す — 名前・並びを巻き戻さない。
+    expect(list).toContain("{ id: judge.id, name: judge.name, order: judge.order, enabled }");
+  });
+
+  it("名前の更新は enabled を写す（写さないとコアの既定＝有効へ戻る）", () => {
+    const dialog = src("../components/JudgeDialog.vue");
+    expect(dialog).toContain("enabled: current.enabled");
   });
 
   it("カードの drop は判断役を受け側にできる", () => {

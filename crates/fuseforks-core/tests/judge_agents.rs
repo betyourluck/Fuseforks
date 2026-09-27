@@ -88,6 +88,33 @@ async fn without_a_judge_model_no_judge_tool_is_offered() {
 }
 
 #[tokio::test]
+async fn a_judge_turned_off_offers_no_tool_and_keeps_its_file() {
+    let v = village("off", Some(("research", 0.9)), true, true).await;
+    let off = |enabled| JudgeSpec {
+        id: "router".into(),
+        name: "振り分け役".into(),
+        order: 0,
+        enabled,
+        unknown: UnknownFields::default(),
+    };
+    v.orchestrator.update_judge(off(false)).await.unwrap();
+    run(&v).await;
+
+    let rounds = v.seen.lock().unwrap().clone();
+    let coordinator = rounds.iter().find(|n| n.iter().any(|t| t == "ask_agent_02")).expect("進行役の周");
+    assert!(!coordinator.iter().any(|t| t.starts_with("judge_")), "無効なら生えない: {coordinator:?}");
+    let views = v.orchestrator.judges().await;
+    assert_eq!(views[0].status, JudgeStatus::Disabled);
+    assert!(!views[0].enabled);
+    // ファイルと行き先は残る（戻したときにそのまま使える）。地図の破線は状態で止める。
+    assert!(views[0].outline.is_some());
+    assert!(!views[0].targets.is_empty());
+
+    v.orchestrator.update_judge(off(true)).await.unwrap();
+    assert_eq!(v.orchestrator.judges().await[0].status, JudgeStatus::Active);
+}
+
+#[tokio::test]
 async fn a_judge_gets_no_ask_transfer_or_plan_and_does_not_count_as_a_plan_target() {
     let v = village("split", Some(("research", 0.9)), true, true).await;
     run(&v).await;
@@ -141,7 +168,7 @@ async fn saving_rejects_invalid_rules_and_unknown_destinations() {
 async fn a_new_judge_starts_from_a_template_that_passes_the_checks() {
     let v = village("template", Some(("research", 0.9)), true, false).await;
     v.orchestrator
-        .create_judge(JudgeSpec { id: "second".into(), name: "二番目".into(), order: 1, unknown: UnknownFields::default() })
+        .create_judge(JudgeSpec { id: "second".into(), name: "二番目".into(), order: 1, enabled: true, unknown: UnknownFields::default() })
         .await
         .unwrap();
     let text = v.orchestrator.read_judge_file(&"second".into()).await.unwrap();

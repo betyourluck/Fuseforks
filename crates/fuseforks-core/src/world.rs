@@ -2006,7 +2006,7 @@ mod tests {
     // ---- 判断役（Spec 62・judge_contract） ----
 
     fn judge(id: &str, name: &str) -> JudgeSpec {
-        JudgeSpec { id: id.into(), name: name.to_owned(), order: 0, unknown: UnknownFields::default() }
+        JudgeSpec { id: id.into(), name: name.to_owned(), order: 0, enabled: true, unknown: UnknownFields::default() }
     }
 
     #[test]

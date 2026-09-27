@@ -2,11 +2,13 @@
 /**
  * 左ペインの「判断特化」（Spec 62 D2）。サーヴァントの一覧の下に置く。
  *
- * **判断役には起動が無い**（受信箱もターンも持たない関数）ので、起動のトグル・一括起動・
- * 状態の輪・グループ・Alt+↑↓ の選択・会話の宛先のどれにも入らない。代わりに出すのは
+ * **判断役には起動が無い**（受信箱もターンも持たない関数）ので、起動の電源・一括起動・
+ * 状態の輪・グループ・Alt+↑↓ の選択・会話の宛先のどれにも入らない。出すのは
  * 「有効かどうか」と、無効ならその理由（コアの有効の述語 `JudgeStatus` をそのまま写す）。
  *
- * 行を押すと編集ダイアログが開く。**選択状態（`selectedAgentId`）は変えない。**
+ * **有効/無効のトグルと編集の鉛筆**はサーヴァントのカードと同じ形（P4 の実機で利用者が裁定）。
+ * トグルは `JudgeSpec.enabled`（`world.json` に保存）で、止めてもファイル・線・座標は残る。
+ * 行そのものは押しても何も起きない — **選択状態（`selectedAgentId`）を持たない**ので。
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -14,6 +16,7 @@ import { useI18n } from "vue-i18n";
 import { useJudgeDialog } from "../composables/useJudgeDialog";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { deriveId, judgeStatusText, judgesInOrder, nextJudgeOrder } from "../lib/judges";
+import type { JudgeView } from "../types";
 
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
@@ -30,13 +33,18 @@ async function submit(): Promise<void> {
   if (!name) return;
   // 名前空間は 1 つ — サーヴァントの id とも衝突させない（コアも DUPLICATE_AGENT で拒む）。
   const id = deriveId(name, [...state.agents.map((a) => a.id), ...state.judges.map((j) => j.id)], "judge");
-  const ok = await orchestrator.createJudge({ id, name, order: nextJudgeOrder(state.judges) });
+  const ok = await orchestrator.createJudge({ id, name, order: nextJudgeOrder(state.judges), enabled: true });
   if (ok) {
     newName.value = "";
     creating.value = false;
     // 作ったらそのまま雛形を開く — 規則を書くまで使えない（無効の理由も画面に出る）。
     dialog.open(id);
   }
+}
+
+/** 有効/無効を切り替える。ほかの欄は一覧の写しをそのまま送る（名前・並びを巻き戻さない）。 */
+async function setEnabled(judge: JudgeView, enabled: boolean): Promise<void> {
+  await orchestrator.updateJudge({ id: judge.id, name: judge.name, order: judge.order, enabled });
 }
 
 function statusLine(status: Parameters<typeof judgeStatusText>[0]) {
@@ -91,12 +99,10 @@ function statusLine(status: Parameters<typeof judgeStatusText>[0]) {
 
     <ul class="space-y-1.5">
       <li v-for="judge in judges" :key="judge.id">
-        <button
-          type="button"
-          class="flex w-full items-start gap-2 rounded border border-line bg-surface-1 px-2 py-1.5 text-left text-[11px] transition-colors hover:border-accent"
+        <div
+          class="flex w-full items-start gap-2 rounded border border-line bg-surface-1 px-2 py-1.5 text-left text-[11px]"
           :data-judge-id="judge.id"
           :title="judge.id"
-          @click="dialog.open(judge.id)"
         >
           <!-- 菱形 = 判断役（地図のノードと同じ形。サーヴァントの丸いアバターと分ける）。 -->
           <svg class="mt-0.5 size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"
@@ -105,14 +111,45 @@ function statusLine(status: Parameters<typeof judgeStatusText>[0]) {
           </svg>
           <span class="min-w-0 flex-1">
             <span class="block truncate font-medium text-ink">{{ judge.name }}</span>
+            <!-- 無効にしているときは理由を警告色にしない — 人が選んだ状態で、直すものではない。 -->
             <span
               class="block break-words"
-              :class="statusLine(judge.status).active ? 'text-ink-dim' : 'text-warn'"
+              :class="statusLine(judge.status).active || judge.status.kind === 'disabled' ? 'text-ink-dim' : 'text-warn'"
             >
               {{ statusLine(judge.status).label }}
             </span>
           </span>
-        </button>
+
+          <!-- 編集（サーヴァントのカードの鉛筆と同じ形）。 -->
+          <button
+            type="button"
+            class="shrink-0 rounded px-1 py-0.5 text-ink-dim hover:text-accent"
+            :title="$t('judges.edit')"
+            :aria-label="$t('judges.edit')"
+            @click="dialog.open(judge.id)"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+
+          <!-- 有効/無効（サーヴァントのカードのトグルと同じ形）。 -->
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="judge.enabled"
+            :title="judge.enabled ? $t('judges.turnOff') : $t('judges.turnOn')"
+            class="relative mt-px h-5 w-9 shrink-0 rounded-full transition-colors"
+            :class="judge.enabled ? 'bg-accent' : 'bg-line'"
+            @click="setEnabled(judge, !judge.enabled)"
+          >
+            <span
+              class="absolute top-0.5 size-4 rounded-full bg-surface-0 transition-all"
+              :class="judge.enabled ? 'left-4.5' : 'left-0.5'"
+            />
+          </button>
+        </div>
       </li>
     </ul>
   </section>

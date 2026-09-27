@@ -173,6 +173,13 @@ const edges = computed<Edges>(() => {
   return result;
 });
 
+/**
+ * 見出しの「絆」の本数。**判断役 → サーヴァントの破線は数えない** — あれは人が引いた絆ではなく
+ * `judge.toml` の `to` の写しで（Spec 62 D9）、見出しの「サーヴァント N」も判断役を数えていない。
+ * サーヴァント → 判断役の線は `connected_agents` に保存された絆なので数える。
+ */
+const tieCount = computed(() => Object.values(edges.value).filter((e) => !e.judge).length);
+
 /** 双方向にまとまった辺の本数。見出しの内訳に出す。 */
 const bidirectionalCount = computed(
   () => Object.values(edges.value).filter((e) => e.bidirectional).length,
@@ -504,7 +511,7 @@ onBeforeUnmount(() => {
     >
       <span class="font-medium text-ink">{{ $t("map.heading") }}</span>
       <span>
-        {{ $t("map.summary", { nodes: visible.length, edges: Object.keys(edges).length }) }}
+        {{ $t("map.summary", { nodes: visible.length, edges: tieCount }) }}
         <span v-if="bidirectionalCount" class="text-ink">
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
         </span>

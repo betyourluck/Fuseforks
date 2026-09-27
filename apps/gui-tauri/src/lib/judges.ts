@@ -53,6 +53,8 @@ export function judgeStatusText(status: JudgeStatus): JudgeStatusText {
   switch (status.kind) {
     case "active":
       return { key: "judges.status.active", params: {}, active: true };
+    case "disabled":
+      return { key: "judges.status.disabled", params: {}, active: false };
     case "noFile":
       return { key: "judges.status.noFile", params: {}, active: false };
     case "invalid":

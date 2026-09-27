@@ -321,6 +321,9 @@
     "namePlaceholder": "Judge name (e.g. Router)",
     "empty": "A judge decides where a request goes from answers to its questions and its rules. It writes no text.",
     "nameLabel": "Judge name",
+    "edit": "Edit",
+    "turnOn": "Turn on",
+    "turnOff": "Turn off",
     "description": "Write questions ([questions.*]) and rules ([[rules]] and [otherwise]). Rules are evaluated top to bottom and only the first match runs. Draw a line from a servant to this judge to give that servant a tool that asks the judge.",
     "loading": "Loading…",
     "unsaved": "Unsaved changes",
@@ -336,6 +339,7 @@
     "keepEditing": "Keep editing",
     "status": {
       "active": "Active",
+      "disabled": "Turned off",
       "noFile": "judge.toml is missing",
       "invalid": "judge.toml has an error ({location}: {message})",
       "missingTargets": "Destinations include IDs that are not servants: {targets}",

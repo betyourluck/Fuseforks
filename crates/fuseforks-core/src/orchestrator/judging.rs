@@ -100,7 +100,7 @@ pub(super) async fn judge_entries(shared: &Arc<Shared>, connected: &[AgentId]) -
     for (index, id) in connected.iter().enumerate() {
         let Some(judge) = world.judge(id) else { continue };
         let file = files.get(id);
-        if status_of(file, |t| world.is_servant(t), has_model) != JudgeStatus::Active {
+        if status_of(judge.enabled, file, |t| world.is_servant(t), has_model) != JudgeStatus::Active {
             continue;
         }
         let Some(Ok(parsed)) = file else { continue };
@@ -409,12 +409,12 @@ impl Orchestrator {
             .into_iter()
             .map(|j| {
                 let file = files.get(&j.id);
-                let status = status_of(file, |t| world.is_servant(t), has_model);
+                let status = status_of(j.enabled, file, |t| world.is_servant(t), has_model);
                 let (targets, outline) = match file {
                     Some(Ok(parsed)) => (parsed.targets().into_iter().cloned().collect(), Some(parsed.outline())),
                     _ => (Vec::new(), None),
                 };
-                JudgeView { id: j.id, name: j.name, order: j.order, status, targets, outline }
+                JudgeView { id: j.id, name: j.name, order: j.order, enabled: j.enabled, status, targets, outline }
             })
             .collect()
     }

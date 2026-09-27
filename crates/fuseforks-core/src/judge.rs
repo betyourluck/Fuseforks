@@ -1102,6 +1102,8 @@ fn eval(expr: &Expr, values: &BTreeMap<String, Resolved>) -> bool {
 pub enum JudgeStatus {
     /// 使える。
     Active,
+    /// 利用者が無効にしている（左ペインのトグル。`JudgeSpec::enabled`）。
+    Disabled,
     /// `judge.toml` が無い。
     NoFile,
     /// 検査に落ちている（手で編集したファイル）。
@@ -1122,14 +1124,19 @@ pub enum JudgeStatus {
     NoJudgeModel,
 }
 
-/// 有効の述語（純関数）。判定の順は「ファイル → 検査 → 行き先 → 判断モデル」。
+/// 有効の述語（純関数）。判定の順は「利用者の無効 → ファイル → 検査 → 行き先 → 判断モデル」。
 ///
-/// `file` は読み込みと検査の結果（`None` = ファイルが無い）。
+/// **利用者の無効を最初に見る** — 人が止めたものは、ほかの理由より先にそう読めるべき
+/// （戻したあとに残りの理由が出る）。`file` は読み込みと検査の結果（`None` = ファイルが無い）。
 pub fn status_of(
+    enabled: bool,
     file: Option<&Result<JudgeFile, JudgeFileError>>,
     is_servant: impl Fn(&AgentId) -> bool,
     has_judge_model: bool,
 ) -> JudgeStatus {
+    if !enabled {
+        return JudgeStatus::Disabled;
+    }
     match file {
         None => JudgeStatus::NoFile,
         Some(Err(e)) => JudgeStatus::Invalid { location: e.location.clone(), message: e.message.clone() },
@@ -1151,6 +1158,7 @@ impl JudgeStatus {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Disabled => "disabled",
             Self::NoFile => "no_file",
             Self::Invalid { .. } => "invalid",
             Self::MissingTargets { .. } => "missing_targets",
@@ -1212,6 +1220,9 @@ pub struct JudgeView {
     pub name: String,
     /// 並び。
     pub order: u32,
+    /// 利用者の有効/無効（`JudgeSpec::enabled` の写し）。画面が更新を組み直すときに要る —
+    /// 無いと名前を直しただけで既定（有効）へ戻る（Spec 14 P1 の「投影から組み直して欄が消える」）。
+    pub enabled: bool,
     /// 有効かどうか。
     pub status: JudgeStatus,
     /// 行き先になりうる相手（ファイルが読めたときだけ。地図の破線はここから描く）。
@@ -1640,18 +1651,22 @@ do = "return"
     // ---- 有効の述語・表示 ----
 
     #[test]
-    fn status_checks_file_then_parse_then_targets_then_model() {
+    fn status_checks_disabled_then_file_then_parse_then_targets_then_model() {
         let ok = JudgeFile::parse(EXAMPLE);
         let bad: Result<JudgeFile, JudgeFileError> = Err(JudgeFileError::new("rules[1].when", "x"));
         let all = |_: &AgentId| true;
-        assert_eq!(status_of(None, all, true), JudgeStatus::NoFile);
-        assert!(matches!(status_of(Some(&bad), all, true), JudgeStatus::Invalid { .. }));
+        // 利用者の無効は、ほかのどの理由より先に出る（ファイルが無くても・壊れていても）。
+        assert_eq!(status_of(false, Some(&ok), all, true), JudgeStatus::Disabled);
+        assert_eq!(status_of(false, None, all, true), JudgeStatus::Disabled);
+        assert_eq!(status_of(false, Some(&bad), all, false), JudgeStatus::Disabled);
+        assert_eq!(status_of(true, None, all, true), JudgeStatus::NoFile);
+        assert!(matches!(status_of(true, Some(&bad), all, true), JudgeStatus::Invalid { .. }));
         assert_eq!(
-            status_of(Some(&ok), |id: &AgentId| id.as_str() == "agent_3", true),
+            status_of(true, Some(&ok), |id: &AgentId| id.as_str() == "agent_3", true),
             JudgeStatus::MissingTargets { targets: vec![AgentId::new("agent_10")] }
         );
-        assert_eq!(status_of(Some(&ok), all, false), JudgeStatus::NoJudgeModel);
-        assert_eq!(status_of(Some(&ok), all, true), JudgeStatus::Active);
+        assert_eq!(status_of(true, Some(&ok), all, false), JudgeStatus::NoJudgeModel);
+        assert_eq!(status_of(true, Some(&ok), all, true), JudgeStatus::Active);
     }
 
     #[test]

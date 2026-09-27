@@ -186,7 +186,7 @@ pub async fn village_in(dir: TempDir, answer: Option<(&'static str, f64)>, with_
         orchestrator.create_agent(AgentSpec::new(AgentId::from(id), name, "tpl")).await.unwrap();
     }
     orchestrator
-        .create_judge(JudgeSpec { id: "router".into(), name: "振り分け役".into(), order: 0, unknown: UnknownFields::default() })
+        .create_judge(JudgeSpec { id: "router".into(), name: "振り分け役".into(), order: 0, enabled: true, unknown: UnknownFields::default() })
         .await
         .unwrap();
     orchestrator.create_agent(AgentSpec::new(AgentId::from(COORDINATOR), "ルナ", "tpl")).await.unwrap();

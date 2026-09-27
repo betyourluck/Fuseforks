@@ -99,7 +99,7 @@ async function commitName(): Promise<void> {
     if (current) nameDraft.value = current.name;
     return;
   }
-  const ok = await orchestrator.updateJudge({ id: current.id, name, order: current.order });
+  const ok = await orchestrator.updateJudge({ id: current.id, name, order: current.order, enabled: current.enabled });
   if (!ok) nameDraft.value = current.name;
 }
 

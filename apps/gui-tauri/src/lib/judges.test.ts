@@ -4,7 +4,7 @@ import { deriveId, judgeEdges, judgeStatusText, judgesInOrder, nextJudgeOrder } 
 import type { JudgeStatus, JudgeView } from "../types";
 
 function view(id: string, status: JudgeStatus, targets: string[] = [], order = 0): JudgeView {
-  return { id, name: id, order, status, targets, outline: null };
+  return { id, name: id, order, enabled: status.kind !== "disabled", status, targets, outline: null };
 }
 
 describe("deriveId", () => {
@@ -42,6 +42,11 @@ describe("judgeStatusText", () => {
     expect(judgeStatusText({ kind: "active" }).active).toBe(true);
     expect(judgeStatusText({ kind: "noFile" }).active).toBe(false);
     expect(judgeStatusText({ kind: "noJudgeModel" }).active).toBe(false);
+    expect(judgeStatusText({ kind: "disabled" }).active).toBe(false);
+  });
+
+  it("利用者が無効にした判断役からは破線を描かない（行き先はファイルに残っていても）", () => {
+    expect(judgeEdges([view("a", { kind: "disabled" }, ["agent_3"])])).toEqual([]);
   });
 
   it("検査に落ちた理由と場所を運ぶ", () => {

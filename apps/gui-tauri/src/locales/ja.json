@@ -321,6 +321,9 @@
     "namePlaceholder": "判断役の名前（例: 振り分け役）",
     "empty": "判断役は、問いへの答えと規則で依頼の行き先を決めます。文章は書きません。",
     "nameLabel": "判断役の名前",
+    "edit": "編集",
+    "turnOn": "有効にする",
+    "turnOff": "無効にする",
     "description": "問い（[questions.*]）と規則（[[rules]]・[otherwise]）を書きます。上の規則から順に評価し、最初に当たった 1 つだけを実行します。サーヴァントからこの判断役へ線を引くと、そのサーヴァントに「判定させる」ツールが生えます。",
     "loading": "読み込み中…",
     "unsaved": "未保存の変更があります",
@@ -336,6 +339,7 @@
     "keepEditing": "編集を続ける",
     "status": {
       "active": "有効",
+      "disabled": "無効にしています",
       "noFile": "judge.toml がありません",
       "invalid": "judge.toml に誤りがあります（{location}: {message}）",
       "missingTargets": "行き先にサーヴァントでない ID があります: {targets}",
