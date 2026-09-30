@@ -7132,6 +7132,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 63](specs/63_ai-draft-assist.md)（AI による下書き補助 — SKILL.md / Construct.md / `judge.toml`）:
+  **Draft rev1**（2026-09-30 起票）。起点は利用者 —「『〜をするスキルを作りたい』と書くだけで、ヒアリングから
+  下書きまで」。利用者裁定 3 点 = 生成役はダイアログで選ぶテンプレート / 範囲は SKILL・Construct・判断役
+  （条例は範囲外）/ 下書きまで（評価の輪は入れない）。**前提の違いが 1 つ** — この村の SKILL.md は発火条件で
+  読み込まれるスキルではなく**毎ターン全文がプロンプトに入る**ので、skill-creator の手順は借りても書き方の
+  指南は写さない。骨格 = 入口は `MarkdownEditor` の SKILL / Construct タブと `JudgeDialog` / 状態を持たない
+  IPC `assist_draft` / 質問と下書きはツール `submit_draft` の有無で分ける / 判断役は `save_judge_file` と同じ
+  検査を共有して落ちたら 3 回まで直させる / 反映は編集中の本文へ・保存は人 / 村の会話からは頼まない
+  （書き込み先が `file` の囲いの外で、開けると個体が別の個体の設定を書き換えられる）/ `assist:` 行に本文を書かない
 - [Spec 62](specs/62_judge-agents.md)（判断特化のエージェント — Choice / Score / Noul で宛先を決める）:
   **Done**（2026-09-28。P4 = 実機検収 6 件すべて観測 — I / Z / F / R の振り分けと束ね・Jev の鍵を外した状態・判断役の
   クリック・`.margin`（文を固定して閾値だけ 0.6 → 0.99 に変え、同じ答え `research/0.99/0.98` が routed → otherwise）。
