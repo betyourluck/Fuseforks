@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::budget::effective_tokens;
 use crate::llm::Usage;
-use crate::session_store::{SessionSummary, TurnRecord, TurnStop};
+use crate::session_store::{AssistRecord, SessionSummary, TurnRecord, TurnStop};
 
 /// `series` に残す末尾の件数（`MESSAGE_LIMIT` と同数）。落とした件数は
 /// [`StatsSeries::dropped`] に出す — **溢れは数える**（#72）。
@@ -239,6 +239,34 @@ pub struct StatsReport {
     /// 村を知らない。埋めるのは `Orchestrator::session_stats`（呼び出し側）。
     #[serde(default)]
     pub cost: Option<crate::pricing::CostSummary>,
+    /// AI 下書き補助の使用量（Spec 63 D10）。**`totals` はターンだけのまま**（意味を変えない）—
+    /// 画面の総計と `≈ $` は `totals + assist.total` で組む。**[`aggregate`] は空で返し、
+    /// 呼び出し側が [`aggregate_assist`] で埋める**（原本が別の種別なので列を分ける）。
+    #[serde(default)]
+    pub assist: AssistStatsReport,
+}
+
+/// AI 下書き補助の 1 行（テンプレートのモデル別）。`slice.turns` は **LLM 呼び出しの回数**。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistStats {
+    /// モデル名（単価を引く鍵）。
+    pub model: String,
+    /// テンプレート。
+    pub template_id: String,
+    /// 使用量。
+    #[serde(flatten)]
+    pub slice: StatsSlice,
+}
+
+/// AI 下書き補助の集計（Spec 63 D10）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistStatsReport {
+    /// モデル別。実効トークンの多い順、同点はモデル名 → テンプレート順。
+    pub rows: Vec<AssistStats>,
+    /// 合計。
+    pub total: StatsSlice,
 }
 
 /// `TurnRecord` の使用量を `Usage` の形へ（実効の重み関数が `Usage` を受けるため）。
@@ -254,6 +282,19 @@ fn usage_of(turn: &TurnRecord) -> Usage {
         cache_write_1h: 0,
         reasoning: turn.reasoning,
     }
+}
+
+/// AI 下書き補助 1 回の実効トークン（ターンと同じ重み関数）。
+fn effective_of_assist(record: &AssistRecord) -> u64 {
+    effective_tokens(&Usage {
+        prompt: record.prompt,
+        completion: record.completion,
+        cache_read: record.cached,
+        // ターンと同じく書き込みは 1.0×（Spec 40 D3）。
+        cache_write: 0,
+        cache_write_1h: 0,
+        reasoning: record.reasoning,
+    })
 }
 
 /// ターン 1 本の実効トークン。**`budget.rs` の 1 実装を呼ぶ**（`reasoning` は
@@ -293,6 +334,20 @@ impl SliceAcc {
         self.cache_write_1h = self.cache_write_1h.saturating_add(turn.cache_write_1h);
         self.effective = self.effective.saturating_add(effective_of(turn));
         self.elapsed_ms = self.elapsed_ms.saturating_add(turn.elapsed_ms);
+    }
+
+    fn push_assist(&mut self, record: &AssistRecord) {
+        self.turns += 1;
+        if record.outcome == crate::assist::AssistOutcome::Failed {
+            self.failed += 1;
+        }
+        self.prompt = self.prompt.saturating_add(record.prompt);
+        self.cached = self.cached.saturating_add(record.cached);
+        self.completion = self.completion.saturating_add(record.completion);
+        self.reasoning = self.reasoning.saturating_add(record.reasoning);
+        self.cache_write = self.cache_write.saturating_add(record.cache_write);
+        self.cache_write_1h = self.cache_write_1h.saturating_add(record.cache_write_1h);
+        self.effective = self.effective.saturating_add(effective_of_assist(record));
     }
 
     fn finish(&self) -> StatsSlice {
@@ -467,7 +522,44 @@ pub fn aggregate(
         series,
         // **純関数はここを埋めない**（単価は村に住む）。呼び出し側が後から入れる。
         cost: None,
+        assist: AssistStatsReport::default(),
     }
+}
+
+/// AI 下書き補助の集計 — **純関数**（Spec 63 D10）。
+///
+/// `records` はスコープの会話から集めたもの（`session` ならその会話、`all` なら全会話）。
+/// **期間の規則は `turn` と同じ** — `all` の `period` は `ts_ms` の半開区間で切る。
+#[must_use]
+pub fn aggregate_assist(records: &[AssistRecord], scope: &StatsScope) -> AssistStatsReport {
+    let period = match scope {
+        StatsScope::All { period } => *period,
+        StatsScope::Session { .. } => None,
+    };
+    let mut total = SliceAcc::default();
+    let mut rows: BTreeMap<(&str, &str), SliceAcc> = BTreeMap::new();
+    for record in records.iter().filter(|r| period.is_none_or(|p| p.contains(r.ts_ms))) {
+        total.push_assist(record);
+        rows.entry((record.model.as_str(), record.template_id.as_str()))
+            .or_default()
+            .push_assist(record);
+    }
+    let mut rows: Vec<AssistStats> = rows
+        .into_iter()
+        .map(|((model, template_id), acc)| AssistStats {
+            model: model.to_owned(),
+            template_id: template_id.to_owned(),
+            slice: acc.finish(),
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.slice
+            .effective
+            .cmp(&a.slice.effective)
+            .then_with(|| a.model.cmp(&b.model))
+            .then_with(|| a.template_id.cmp(&b.template_id))
+    });
+    AssistStatsReport { rows, total: total.finish() }
 }
 
 #[cfg(test)]

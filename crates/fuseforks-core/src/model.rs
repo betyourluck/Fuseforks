@@ -925,6 +925,33 @@ impl ModelTemplate {
             .unwrap_or_else(|| crate::llm::Provider::detect(&self.base_url))
     }
 
+    /// 固有スキル（検索・pro モード・URL 取得など）を**すべて外した**複製（Spec 63 D2）。
+    ///
+    /// AI 下書き補助の生成役は調べものをしない（文脈はコアが渡す）。付けたまま呼ぶと
+    /// ツールの定義と pro モードの固定費を払う — P0 実測で gpt-6-sol は外すだけで
+    /// 入力が 11,854 → 170 トークン。**`id` は変えない**（資格情報はテンプレート ID で引く）
+    /// ので、この複製をバックエンドのキャッシュへ入れてはいけない。
+    ///
+    /// 固有スキルを足したらここにも 1 行要る。**漏れはテストが留める**
+    /// （直列化した `bool` の欄が `useTools` 以外すべて偽であること）。
+    #[must_use]
+    pub fn without_provider_skills(&self) -> Self {
+        Self {
+            google_search: false,
+            xai_web_search: false,
+            xai_x_search: false,
+            openai_web_search: false,
+            openai_reasoning_pro: false,
+            meta_web_search: false,
+            perplexity_web_search: false,
+            perplexity_finance_search: false,
+            perplexity_people_search: false,
+            perplexity_fetch_url: false,
+            gemini_url_context: false,
+            ..self.clone()
+        }
+    }
+
     /// Google 検索による接地が**実際に起きる**か。
     ///
     /// `google_search` が真でも、ワイヤが Gemini ネイティブでなければ接地は起きない
@@ -1805,5 +1832,38 @@ mod spec33_wire_shape {
         let json = r#"{ "id": "judge", "name": "振り分け", "order": 0 }"#;
         let parsed: JudgeSpec = serde_json::from_str(json).expect("旧形が読めること");
         assert!(parsed.enabled);
+    }
+}
+
+#[cfg(test)]
+mod spec63_provider_skills {
+    use super::*;
+
+    /// **固有スキルを 1 つでも外し損ねると赤くなる**（Spec 63 D2）。
+    ///
+    /// 全部 ON にしたテンプレートを直列化し、`bool` の欄が `useTools` 以外すべて偽かを見る。
+    /// 欄を列挙して比べないのは、**足した固有スキルが列挙の外に落ちる**のを捕まえるため —
+    /// 直列化は構造体の全欄を出すので、`without_provider_skills` が知らない欄も出てくる。
+    #[test]
+    fn every_provider_skill_is_turned_off() {
+        let mut all_on = serde_json::to_value(ModelTemplate::new("tpl", "既定", "m")).unwrap();
+        for (key, value) in all_on.as_object_mut().unwrap() {
+            if value.is_boolean() {
+                *value = serde_json::Value::Bool(true);
+            }
+            let _ = key;
+        }
+        let template: ModelTemplate = serde_json::from_value(all_on).unwrap();
+        let stripped = serde_json::to_value(template.without_provider_skills()).unwrap();
+        let left_on: Vec<&String> = stripped
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, value)| key.as_str() != "useTools" && value.as_bool() == Some(true))
+            .map(|(key, _)| key)
+            .collect();
+        assert!(left_on.is_empty(), "外し損ねた固有スキル: {left_on:?}");
+        assert_eq!(stripped["useTools"], serde_json::Value::Bool(true), "useTools は残す");
+        assert_eq!(stripped["id"], "tpl", "id は変えない（資格情報はテンプレート ID で引く）");
     }
 }

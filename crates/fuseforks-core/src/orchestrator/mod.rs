@@ -56,6 +56,9 @@ use context::{
 mod schedules;
 use schedules::spawn_schedule_ticker;
 mod judging;
+
+// AI による下書き補助（Spec 63）。
+mod assist;
 pub use judging::JudgeTrial;
 mod sessions;
 

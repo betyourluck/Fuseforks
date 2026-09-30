@@ -489,19 +489,7 @@ impl Orchestrator {
             if world.judge(id).is_none() {
                 return Err(CoreError::AgentNotFound(id.to_string()));
             }
-            let parsed = JudgeFile::parse(text).map_err(|e| CoreError::InvalidJudgeFile {
-                location: e.location,
-                message: e.message,
-            })?;
-            let missing = parsed.missing_targets(|t| world.is_servant(t));
-            if !missing.is_empty() {
-                let names = missing.iter().map(AgentId::as_str).collect::<Vec<_>>().join(", ");
-                return Err(CoreError::InvalidJudgeFile {
-                    location: "to".to_owned(),
-                    message: format!("サーヴァントではない ID があります: {names}"),
-                });
-            }
-            parsed
+            check_judge_text(&world, text)?
         };
         self.shared.store.write_judge_file(id, text).await?;
         self.shared.judge_files.write().await.insert(id.clone(), Ok(parsed));
@@ -592,4 +580,27 @@ pub(super) async fn note_judges_losing(shared: &Arc<Shared>, removed: &AgentId) 
             .record(crate::model::AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
             .await;
     }
+}
+
+/// `judge.toml` の本文の検査（形・文法・型・定義域・`to` の実在）。
+///
+/// **保存（[`Orchestrator::save_judge_file`]）と AI 下書き補助（Spec 63 D8）の 1 実装。**
+/// 2 箇所に書くと、下書きでは通るのに保存で落ちる形が生まれる。
+///
+/// # Errors
+/// [`CoreError::InvalidJudgeFile`]（落ちた場所と理由）。
+pub(super) fn check_judge_text(world: &crate::world::World, text: &str) -> CoreResult<JudgeFile> {
+    let parsed = JudgeFile::parse(text).map_err(|e| CoreError::InvalidJudgeFile {
+        location: e.location,
+        message: e.message,
+    })?;
+    let missing = parsed.missing_targets(|t| world.is_servant(t));
+    if !missing.is_empty() {
+        let names = missing.iter().map(AgentId::as_str).collect::<Vec<_>>().join(", ");
+        return Err(CoreError::InvalidJudgeFile {
+            location: "to".to_owned(),
+            message: format!("サーヴァントではない ID があります: {names}"),
+        });
+    }
+    Ok(parsed)
 }

@@ -212,7 +212,45 @@ pub struct TurnRecord {
     pub elapsed_ms: u64,
 }
 
-/// 保存されるレコード。**4 種別で閉じる**（Spec 39 P0 で `turn` を加算。
+/// AI 下書き補助の LLM 呼び出し 1 回ぶんの使用量（Spec 63 D10・`Record::Assist` の中身）。
+///
+/// **`assist:` 行と同じ値から書く。** 統計画面の `StatsReport.assist` の原本。
+/// **履歴の入力にはならない**（`restore_histories` / `tail_messages` / `fork_points` は
+/// 読まない — `Turn` と同じ）。
+///
+/// 入れない欄: ヒアリングの会話・編集中の本文・下書き（数字の記録に本文を混ぜない。#71）/
+/// 対象の id（使用量は対象ではなくテンプレートに付く。対象は `kind` だけ）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistRecord {
+    /// 呼び出しの開始の壁時計（epoch ms）。統計の期間はこれで切る。
+    pub ts_ms: u64,
+    /// 何の下書きか。**欄名は `kind` にできない** — `Record` が `kind` を種別のタグに使っており、
+    /// 同名の欄があると書けても読み戻しで `duplicate field kind` になる（P1 の結合テストで判明）。
+    pub draft_kind: crate::assist::AssistKind,
+    /// テンプレートのモデル名（単価を引く鍵）。
+    pub model: String,
+    /// 生成役に選んだテンプレート。
+    pub template_id: String,
+    /// 入力トークン。
+    pub prompt: u64,
+    /// 入力のうちキャッシュから読んだぶん。
+    pub cached: u64,
+    /// 入力のうちキャッシュへ書き込んだぶん（`prompt` の内数）。
+    #[serde(default)]
+    pub cache_write: u64,
+    /// うち 1 時間 TTL のぶん（`cache_write` の部分集合）。
+    #[serde(default)]
+    pub cache_write_1h: u64,
+    /// 出力トークン。
+    pub completion: u64,
+    /// 出力のうち思考のぶん（`completion` の内数）。
+    pub reasoning: u64,
+    /// この呼び出しの結末。
+    pub outcome: crate::assist::AssistOutcome,
+}
+
+/// 保存されるレコード。**5 種別で閉じる**（Spec 39 P0 で `turn`、Spec 63 P1 で `assist` を加算。
 /// 既存 3 種別のシリアライズは不変 — 新しい版は旧い `sessions.redb` をそのまま
 /// 読める。旧い版で新しい村を開くのは非サポート）。
 ///
@@ -258,6 +296,9 @@ pub enum Record {
 
     /// ターン 1 本の使用量（Spec 39）。統計画面の原本。
     Turn(Box<TurnRecord>),
+
+    /// AI 下書き補助の LLM 呼び出し 1 回ぶんの使用量（Spec 63）。
+    Assist(Box<AssistRecord>),
 }
 
 impl Record {
@@ -269,6 +310,11 @@ impl Record {
     /// ターン 1 本の使用量のレコードを作る。
     pub fn turn(record: TurnRecord) -> Self {
         Self::Turn(Box::new(record))
+    }
+
+    /// AI 下書き補助の使用量のレコードを作る。
+    pub fn assist(record: AssistRecord) -> Self {
+        Self::Assist(Box::new(record))
     }
 
     /// 履歴 1 往復のレコードを作る。
@@ -625,7 +671,7 @@ impl SessionStore {
             match record {
                 // 会話ログと使用量は履歴の入力ではない（Spec 39 D2 — `Turn` を
                 // 読むと統計の記録が履歴へ混ざり、送信と保存が食い違う）。
-                Record::Message(_) | Record::Turn(_) => {}
+                Record::Message(_) | Record::Turn(_) | Record::Assist(_) => {}
                 Record::Exchange {
                     agent_id,
                     sent,

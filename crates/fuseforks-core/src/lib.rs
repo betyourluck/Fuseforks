@@ -60,6 +60,7 @@
 //! # }
 //! ```
 
+pub mod assist;
 pub mod attachment;
 pub mod blackboard;
 pub mod budget;

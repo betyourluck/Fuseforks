@@ -220,19 +220,30 @@ impl Orchestrator {
             crate::stats::StatsScope::All { .. } => store.list_sessions()?,
         };
         let mut turns = Vec::new();
+        let mut assists = Vec::new();
         for session in &sessions {
             for (_, record) in store.records(&session.id)? {
-                if let Record::Turn(turn) = record {
-                    turns.push((session.id.clone(), *turn));
+                match record {
+                    Record::Turn(turn) => turns.push((session.id.clone(), *turn)),
+                    Record::Assist(assist) => assists.push(*assist),
+                    _ => {}
                 }
             }
         }
+        let assist = crate::stats::aggregate_assist(&assists, &scope);
         let mut report = crate::stats::aggregate(&turns, &sessions, scope);
+        report.assist = assist;
         // **金額はここで足す**（Spec 41）。`aggregate` は純関数で村を知らないが、
         // 単価は `ModelTemplate` に住む。**引けなかった行は合計から外れ、外れたことが
         // `priced_rows` / `priced_tokens` に出る** — 部分合計が全体に見えないように。
         let templates = self.shared.world.read().await.templates();
-        let summary = crate::pricing::summarize(&report.by_agent, |model| {
+        // **AI 下書き補助の行も同じ規則で金額へ入れる**（Spec 63 D10）。
+        let rows = report
+            .by_agent
+            .iter()
+            .map(|r| (r.model.as_str(), &r.slice))
+            .chain(report.assist.rows.iter().map(|r| (r.model.as_str(), &r.slice)));
+        let summary = crate::pricing::summarize(rows, |model| {
             templates
                 .iter()
                 .find(|t| t.model == model)

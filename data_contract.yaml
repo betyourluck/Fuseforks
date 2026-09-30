@@ -252,13 +252,15 @@ enums:
         exchange : { agentId, sent, replied } — 履歴 1 往復。
                    **sent は実際に送った文字列そのもの** (#45 の規律を保存側へ延長)
         summary  : { agentId, text, coversUpToSeq } — 要約 1 本
-        assist   : { tsMs, kind, model, templateId, prompt, cached, cacheWrite,
+        assist   : { tsMs, draftKind, model, templateId, prompt, cached, cacheWrite,
                      cacheWrite1h, completion, reasoning, outcome } — AI 下書き補助の
                    LLM 呼び出し 1 回ぶんの使用量 (Spec 63 D10)。**本文・会話・下書きは
                    入れない**。開いている会話へ書く。**履歴の入力にはならない**
                    (restore_histories / tail_messages / fork_points は読まない — turn と同じ)。
                    互換の向きは turn と同じ (新しい版は旧い記録を読める / 旧い版は
-                   kind: "assist" で records() が落ちる)
+                   kind: "assist" で records() が落ちる)。**欄名は kind にできない** —
+                   Record の種別タグが kind なので、同名の欄は書けても読み戻しで
+                   duplicate field になる (P1 の結合テストで判明。draftKind にした)
         turn     : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached,
                      completion, reasoning, cacheWrite, cacheWrite1h,
                      model, backend, elapsedMs }
@@ -633,9 +635,10 @@ enums:
           byStop:  [{ stop, code?, count }],      # failed は CODE ごとに分ける
           series:  Option<{ points: [{ tsMs, agentId, effective, prompt, completion, stop }],
                             dropped: u32 }>,      # session のみ。all では null
-          assist:  { rows: [{ model, templateId, calls, prompt, cached, completion, reasoning,
-                              cacheWrite, cacheWrite1h, effective }],
-                     total: 同じ欄 },              # Spec 63 D10。加算 (#[serde(default)])。
+          assist:  { rows: [{ model, templateId, ...Slice }],
+                     total: Slice },               # Spec 63 D10。加算 (#[serde(default)])。
+                                                  # **Slice.turns は LLM 呼び出しの回数**、failed は
+                                                  # outcome=failed の回数、avgElapsedMs は 0 (測らない)。
                                                   # **totals はターンだけのまま** (意味を変えない)。
                                                   # 画面の総計と ≈ $ は totals + assist.total で組む。
                                                   # スコープと期間の規則は turn と同じ

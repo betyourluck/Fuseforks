@@ -3112,7 +3112,7 @@ fn leaked_markers(text: &str) -> Vec<&'static str> {
 ///
 /// **`None` は「全同梱ツール」ではない**（Spec 15 の破壊的変更）。`run` だけが
 /// 既定集合の外に居るので、更新しただけで実行能力が増えることはない。
-fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
+pub(super) fn is_bundled_tool_presented(name: &str, spec: &AgentSpec) -> bool {
     if !crate::tools::BUNDLED_TOOL_NAMES.contains(&name) {
         return true;
     }

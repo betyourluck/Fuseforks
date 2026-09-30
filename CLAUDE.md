@@ -7134,7 +7134,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 63](specs/63_ai-draft-assist.md)（AI による下書き補助 — SKILL.md / Construct.md / `judge.toml`）:
-  **rev3 → P0 完了**（2026-09-30。P0 = 実物のアダプタで 7 ワイヤへ撃ち、`data_contract` の `assist_contract` /
+  **rev3 → P0〜P1 完了**（P1 = コア: `assist.rs` + `Orchestrator::assist_draft` + `Record::Assist` + 統計・金額への加算。
+  単体 12 + 結合 12・変異 5 回（M1 だけ予測 1 に対し 2 本 — 関数自身の単体を数え忘れ）。**結合テストが
+  `Record` の種別タグ `kind` と欄 `kind` の衝突を捕まえた**（書けるのに読み戻しで落ちる。`failures.md` #140）。
+  記録は Spec の「P1 実装記録」）。以下は P0 の記録 — **rev3 → P0 完了**（2026-09-30。P0 = 実物のアダプタで 7 ワイヤへ撃ち、`data_contract` の `assist_contract` /
   `entities` / `Record` の 5 種別目 `assist` / `StatsReport.assist` を凍結。**強制を送れないのは Anthropic（400）と
   Meta（アダプタが `tool_choice` を送らない）** / 逐語往復は 7 ワイヤ全部で 2 周目が通った / **テンプレートの
   固有スキルが付いてくるので外す**（gpt-6-sol は 11,854 → 170 入力トークン）/ 別件で `uses_max_completion_tokens`

@@ -1,6 +1,7 @@
 # Spec 63: AI による下書き補助（SKILL.md / Construct.md / judge.toml）
 
-- 状態: **rev3 → P0 完了**（2026-09-30 起票 → 同日、査読 2 系統 15 点（重複を畳んで 13 項目）を反映して rev2 →
+- 状態: **rev3 → P0〜P1 完了**（P1 = コア。記録は末尾の「P1 実装記録」）。以下は P0 時点の記述 —
+  **rev3 → P0 完了**（2026-09-30 起票 → 同日、査読 2 系統 15 点（重複を畳んで 13 項目）を反映して rev2 →
   P0 の測定を反映して rev3 → `data_contract.yaml` の `assist_contract` と `entities` を凍結。rev3 の差分は D2 / D5 / D10 と「P0 実測」）
 - 起点: 利用者（2026-09-30）—「SKILL.md や Construct.md、条例、判断特化の設定を AI 自動生成で書き込む
   仕組みをつけたい。世間一般の skill-creator などを参考に、AI に生成補助させたい。『〜をするスキルを
@@ -272,13 +273,13 @@ skill-creator の**手順**（意図の確認 → 質問 → 下書き → 直�
 **使用量の置き場は `Record::Assist` の 1 つ。** 統計画面はそこから読み、ログ行は同じ値から書く。
 
 - **`Record::Assist`**（`sessions.redb` の `Record` に variant を 1 つ足す）— LLM 呼び出し 1 回ごとに 1 件、
-  **開いている会話**へ書く。欄は `ts_ms` / `kind` / `model` / `templateId` / `prompt` / `cacheRead` / `cacheWrite` /
+  **開いている会話**へ書く。欄は `ts_ms` / `draftKind`（`kind` は `Record` の種別タグと衝突する — P1 実装記録）/ `model` / `templateId` / `prompt` / `cacheRead` / `cacheWrite` /
   `cacheWrite1h` / `completion` / `reasoning` / `outcome`。**本文・会話・下書きは入れない**
   - 統計画面では個体の行とは別に「AI 作成補助（モデル）」の行として出し、合計と `≈ $` に入れる
     （単価の当て方は `Record::Turn` と同じ `pricing.rs`）
   - **`StatsReport` の既存の欄の意味は変えない**（`totals` はターンだけ・`turns` は数え方が違う）。
-    足すのは `assist: { rows: [{ model, templateId, calls, prompt, cached, completion, reasoning, cacheWrite,
-    cacheWrite1h, effective }], total }` の 1 欄（加算。`#[serde(default)]`）。スコープと期間の規則は `turn` と同じ
+    足すのは `assist: { rows: [{ model, templateId, ...Slice }], total: Slice }` の 1 欄（加算。`#[serde(default)]`。
+    **`Slice.turns` は LLM 呼び出しの回数**）。スコープと期間の規則は `turn` と同じ
     （`session` はその会話、`all` は `tsMs` の半開区間）。**画面の総計と `≈ $` は `totals + assist.total`** で組む
   - 履歴の入力にはならない（`restore_histories` / `tail_messages` / `fork_points` は読まない — `Turn` と同じ）
   - 会話を開いていない（保存先が開けない）ときは書けない。そのときはログ行だけになり、WARN を 1 行出す
@@ -350,7 +351,8 @@ SKILL を日本語の村で書く、は正当な使い方（Spec 35 P5 — 偏�
 ### P2 — 画面
 - IPC `assist_draft` と型 / `AssistPanel.vue`（左に会話、右に下書き。`MarkdownEditor` と `JudgeDialog` から開く）/
   テンプレートの選択と `fuseforks.assist.v1` / 「下書きを出して」ボタン / 反映前の差（字数と行数）/ 反映と取り消し /
-  閉じるときの確認 / 統計画面の「AI 作成補助」の行 / 辞書 ja/en
+  閉じるときの確認 / 統計画面の「AI 作成補助」の行 / 辞書 ja/en（`errors.INVALID_ASSIST_REQUEST` を含む — P1 で足したコード。
+  コードと辞書を突き合わせるテストは無く、欠けると原文のまま出る）
 - 走査テスト: 入口が SKILL / Construct / 判断役の 3 箇所だけにあること / フロントが `appended` の中身を読まないこと
 
 ### P3 — 台帳
@@ -401,3 +403,51 @@ SKILL を日本語の村で書く、は正当な使い方（Spec 35 P5 — 偏�
 | 11 | MCP のサーバー名だけでは関数名を捏造する | 2 | 採用 — 接続中はツール名まで渡し、未接続は推測しないと指針に書く（`McpServerStatus.tools` の実在を確認） | D6 / D7 |
 | 12 | `judgeId` だけ欄名が違う | 2 | 採用 — `id` に統一 | D4 |
 | 13 | 「下書きを出して」の契約が無い / 文言一致だと多言語で壊れる | 2 | **採用して形を変えた** — `forceDraft` で型として運び、`tool_choice` を強制する。強制を受け付けないワイヤは P0 で測る | D5 / P0 |
+
+## P1 実装記録（2026-09-30）
+
+コアだけ。IPC と画面は P2。
+
+### 置いたもの
+
+- `crates/fuseforks-core/src/assist.rs`（純機構）: 型（`AssistKind` / `AssistTarget` / `AssistRequest` / `AssistReply` /
+  `AssistValidation` / `AssistOutcome` / `AssistContext`）/ 指針 6 本（3 種 × ja/en）/ `compose_system`（安定部）と
+  `current_block`（利用者の区画）/ `submit_draft_spec` / `classify` / `check_history` / `force_supported` / 定型文 4 本
+- `orchestrator/assist.rs`: `Orchestrator::assist_draft` — 形の検査 → テンプレート → 文脈 → 呼び出し（判断役は輪）→
+  `assist:` 行と `Record::Assist`
+- `ModelTemplate::without_provider_skills` / `judging::check_judge_text`（`save_judge_file` と共有）/
+  `CoreError::InvalidAssistRequest`（`INVALID_ASSIST_REQUEST`）/ `Record::Assist` + `AssistRecord` /
+  `stats::aggregate_assist` + `StatsReport.assist` / `pricing::summarize` を「(モデル, 切片) の列」へ
+
+### 実装で決まったこと
+
+- **生成役のバックエンドはキャッシュへ入れない。** 固有スキルを外した複製は `id` が元と同じなので、`backend_for` の
+  キャッシュへ入れると**村の個体がスキル無しのバックエンドを掴む**。`factory.create` を毎回呼ぶ（安い）。退避
+  （`degraded_reason`）は生成役では拒否にする — エコー応答を「質問」として画面へ出さないため
+- **`classify` は最初の `submit_draft` だけを見る。** ツール結果を対で付ける側（`pair_calls`）と規則を揃えないと、
+  空の 1 本目の後ろの 2 本目を拾ったとき、どの呼び出しに `draft_shown` を返したかがずれる
+- **質問・空の応答にも呼び出しの対を付ける**（`extra_call_ignored`）— 下書きにならなかった呼び出しでも、答えずに
+  履歴へ残すと次の呼び出しでプロバイダが拒否する
+- **`Record::Assist` の欄名は `draftKind`**（`kind` は種別タグと衝突する。`failures.md` #140）
+- **`StatsReport.assist` の行は `StatsSlice` を展開する形**（`turns` = 呼び出しの回数、`avgElapsedMs` は 0）。
+  金額は `by_agent` と `assist.rows` を同じ列で `summarize` へ渡す
+- 使用量が分からない失敗（HTTP の失敗など）は `assist:` 行だけで、`Record::Assist` は書かない（数字を捏造しない）
+
+### テストと変異
+
+単体 12 本（`assist::tests` 11 + `model::spec63_provider_skills` 1）+ 結合 12 本（`tests/assist_draft.rs` 11 +
+`tests/assist_log.rs` 1）。**変異は予測を先に書いてから回した**:
+
+| 変異 | 予測 | 実際 |
+|---|---|---|
+| M1 `force_supported` を常に真 | 1 本 | **2 本** — 関数自身の単体テストを数え忘れた |
+| M2 判断役の検査を素通し（常に通る） | 判断役 4 + ログ 1 | 5 本（一致） |
+| M3 生成役に固有スキルを付けたまま / M3b 1 欄だけ外し忘れ | 各 1 本 | 各 1 本（結合 / 単体の直列化検査） |
+| M4 `Record::Assist` を書かない | 1 本 | 1 本（統計） |
+| M5 ツール結果を対で付けない | 3 本 | 3 本（往復・輪の再試行・輪の途中の質問） |
+
+**変異スクリプトが 2 回、コンパイルエラーを「赤 0 本」と読んだ**（M2 の最初の 2 回。存在しない関数 / import していない型を
+変異に書いた）。スクリプトにコンパイルエラーの検出を足してから数え直した — **赤が 0 のとき、まずビルドが通ったかを見る**。
+workspace 全体のテスト・clippy は緑（clippy が出したのは `summarize` が列を受けるようになってテストの `vec!` が
+配列で足りるようになった 3 件だけで、直した）。
+

@@ -4,13 +4,13 @@
 //! 1.0×）で、こちらは請求の推定。**同じ関数にすると、片方を直すともう片方が動く**
 //! （Spec 40 D3 で分けたばかりの区別）。
 //!
-//! 掛ける相手は [`crate::stats::AgentStats`] の行 = **(個体, モデル) ごとの切片**。
+//! 掛ける相手は **(モデル, 切片) の列** — [`crate::stats::AgentStats`] の行（(個体, モデル) ごと）と、AI 下書き補助の行（Spec 63）。
 //! **単価はモデルごとに違うので、行がモデルで割れていないと掛けられない**
 //! （Spec 39 rev4 で `by_agent` の鍵を `(agentId, model)` にしたのが前提）。
 
 use serde::{Deserialize, Serialize};
 
-use crate::stats::{AgentStats, StatsSlice};
+use crate::stats::StatsSlice;
 
 /// 100 万トークンあたりの単価（USD）。**未設定は「無い」であって 0 ではない。**
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -122,8 +122,9 @@ impl CostSummary {
 /// **外れたことが `priced_rows` / `priced_tokens` に出る** — これが無いと
 /// **部分合計が全体の合計に見える**（Spec 39 D6 と同型）。
 #[must_use]
-pub fn summarize<F>(rows: &[AgentStats], lookup: F) -> CostSummary
+pub fn summarize<'a, I, F>(rows: I, lookup: F) -> CostSummary
 where
+    I: IntoIterator<Item = (&'a str, &'a StatsSlice)>,
     F: Fn(&str) -> Option<(Rates, Option<String>)>,
 {
     let mut s = CostSummary {
@@ -134,11 +135,13 @@ where
         total_tokens: 0,
         as_of: None,
     };
-    for row in rows {
-        let tokens = row.slice.prompt.saturating_add(row.slice.completion);
+    // 行は **(モデル, 切片)** の列 — 個体の行（`by_agent`）と AI 下書き補助の行（Spec 63）を
+    // 同じ規則で数える。
+    for (model, slice) in rows {
+        let tokens = slice.prompt.saturating_add(slice.completion);
         s.total_rows += 1;
         s.total_tokens = s.total_tokens.saturating_add(tokens);
-        let Some((rates, as_of)) = lookup(&row.model) else {
+        let Some((rates, as_of)) = lookup(model) else {
             continue;
         };
         let Some(resolved) = resolve(&rates) else {
@@ -146,7 +149,7 @@ where
         };
         s.priced_rows += 1;
         s.priced_tokens = s.priced_tokens.saturating_add(tokens);
-        s.total_usd += cost_of(&row.slice, &resolved);
+        s.total_usd += cost_of(slice, &resolved);
         if let Some(d) = as_of {
             // 最も古い時点を採る。RFC3339 / YYYY-MM-DD は辞書順が時間順。
             s.as_of = Some(match s.as_of.take() {
@@ -280,6 +283,7 @@ pub fn parse_table(raw: &str) -> Result<ParsedTable, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stats::AgentStats;
 
     fn slice(prompt: u64, cached: u64, write: u64, write_1h: u64, completion: u64) -> StatsSlice {
         StatsSlice {
@@ -389,11 +393,11 @@ mod tests {
     /// **引けなかった行は合計から外れ、外れたことが数に出る**（D4）。
     #[test]
     fn unpriced_rows_are_excluded_and_counted() {
-        let rows = vec![
+        let rows = [
             row("priced", slice(1_000, 0, 0, 0, 100)),
             row("unknown", slice(4_000, 0, 0, 0, 0)),
         ];
-        let s = summarize(&rows, |m| {
+        let s = summarize(rows.iter().map(|r| (r.model.as_str(), &r.slice)), |m| {
             (m == "priced").then(|| (full(), Some("2026-08-18".to_owned())))
         });
         assert_eq!((s.priced_rows, s.total_rows), (1, 2));
@@ -405,8 +409,8 @@ mod tests {
     /// 1 行も引けなければ画面に金額の行を出さない（0 と書かない）。
     #[test]
     fn a_village_without_any_price_reports_nothing() {
-        let rows = vec![row("unknown", slice(1_000, 0, 0, 0, 100))];
-        let s = summarize(&rows, |_| None);
+        let rows = [row("unknown", slice(1_000, 0, 0, 0, 100))];
+        let s = summarize(rows.iter().map(|r| (r.model.as_str(), &r.slice)), |_| None);
         assert!(s.is_empty());
         assert_eq!(s.total_usd, 0.0);
         assert_eq!(s.total_tokens, 1_100, "被覆率の分母は引けなくても数える");
@@ -415,11 +419,11 @@ mod tests {
     /// `as_of` は**最も古い**時点を採る。
     #[test]
     fn as_of_takes_the_oldest_price() {
-        let rows = vec![
+        let rows = [
             row("new", slice(10, 0, 0, 0, 1)),
             row("old", slice(10, 0, 0, 0, 1)),
         ];
-        let s = summarize(&rows, |m| {
+        let s = summarize(rows.iter().map(|r| (r.model.as_str(), &r.slice)), |m| {
             let d = if m == "old" { "2026-06-01" } else { "2026-08-18" };
             Some((full(), Some(d.to_owned())))
         });

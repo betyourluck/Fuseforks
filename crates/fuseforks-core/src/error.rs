@@ -129,6 +129,14 @@ pub enum CoreError {
         message: String,
     },
 
+    /// AI 下書き補助（Spec 63）の要求を受け付けられない。**送る前に**拒否する —
+    /// ツールを使わないテンプレート / 履歴の形が崩れている / 生成役の設定不備。
+    #[error("AI 下書き補助を実行できません: {reason}")]
+    InvalidAssistRequest {
+        /// 受け付けない理由。
+        reason: String,
+    },
+
     /// トポロジー（接続関係）が不正。自己ループや未登録先への接続など。
     #[error("トポロジーが不正です: {reason}")]
     InvalidTopology {
@@ -387,6 +395,7 @@ impl CoreError {
             Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
             Self::InvalidTokenBudget => "INVALID_TOKEN_BUDGET",
             Self::InvalidJudgeFile { .. } => "INVALID_JUDGE_FILE",
+            Self::InvalidAssistRequest { .. } => "INVALID_ASSIST_REQUEST",
             Self::InvalidTopology { .. } => "INVALID_TOPOLOGY",
             Self::AlreadyRunning { .. } => "ALREADY_RUNNING",
             Self::NotRunning { .. } => "NOT_RUNNING",
