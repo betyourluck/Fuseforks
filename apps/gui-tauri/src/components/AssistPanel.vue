@@ -175,7 +175,7 @@ async function requestClose(): Promise<void> {
     @click.self="requestClose"
   >
     <div
-      class="flex h-[680px] max-h-[92vh] w-[960px] max-w-[96vw] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
+      class="flex h-[680px] max-h-[92vh] w-[1120px] max-w-[96vw] flex-col overflow-hidden rounded-lg border border-line bg-surface-1 shadow-2xl"
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
         <svg class="size-3.5 shrink-0 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -240,9 +240,9 @@ async function requestClose(): Promise<void> {
               @keydown="onKeydown"
             />
             <div class="mt-1.5 flex items-center gap-2">
-              <span class="text-[10px] text-ink-dim">{{ t("assist.sendNote") }}</span>
+              <span class="min-w-0 flex-1 text-[10px] text-ink-dim">{{ t("assist.sendNote") }}</span>
               <button
-                class="ml-auto rounded border border-line px-2 py-1 text-[11px] hover:border-accent hover:text-accent disabled:opacity-40"
+                class="shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-[11px] hover:border-accent hover:text-accent disabled:opacity-40"
                 :disabled="!canForce"
                 data-assist-force
                 @click="send(true)"
@@ -250,7 +250,7 @@ async function requestClose(): Promise<void> {
                 {{ t("assist.forceDraft") }}
               </button>
               <button
-                class="rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
+                class="shrink-0 whitespace-nowrap rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
                 :disabled="!canSend"
                 @click="send(false)"
               >
