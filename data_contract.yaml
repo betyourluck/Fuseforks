@@ -612,6 +612,11 @@ enums:
       (session_id, TurnRecord) に集める。**I/O はここまで。集計は純関数**:
 
         aggregate(turns: &[(SessionId, TurnRecord)], sessions: &[SessionSummary], scope) -> StatsReport
+        aggregate_assist(records: &[AssistRecord], &scope) -> AssistStatsReport   # Spec 63
+
+      同じ走査で **assist レコードも集め**、aggregate_assist で別に畳んで StatsReport.assist へ入れる
+      (Spec 63 D10。期間の規則は turn と同じ)。金額は by_agent と assist.rows を**同じ列**で
+      pricing::summarize へ渡す (summarize は (モデル, 切片) の列を受ける)。
 
       時計を読まず I/O をしない (budget.rs と同じ形)。IPC は session_stats(scope) の
       1 本で「集める → aggregate」の 2 段。フロントは描くだけ。

@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-09-28**
+**Last updated: 2026-09-30**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -125,6 +125,21 @@ is sent to another provider. This covers requests and answers between agents, ex
 the shared conversation, and copies of messages you picked with `@@` in the input box and
 attached to your request.
 
+**When you use "Draft with AI" (drafting assistance), the following is sent to the provider of
+the model you picked in that panel.** It is sent only when you press send; opening the panel
+sends nothing.
+
+- What you type in the panel, and the questions and drafts exchanged within it
+- The text you are editing (including unsaved changes)
+- Part of the target's settings — for a SKILL.md / Construct.md draft: the target agent's name,
+  its tool names (tool names of connected MCP servers included), the names of the agents it is
+  connected to, and the paired file (Construct.md for SKILL.md and vice versa); for a judge draft:
+  the IDs, names and roles of the agents it can route to
+
+**Not sent:** memory (Memory.md), the shared rules (ordinance), and the conversation history.
+The exchange in the panel is not saved and disappears when you close it (only the token counts
+are kept in the conversation store).
+
 **Handling of transmitted data is governed by each provider's own privacy policy.**
 The developer of this app does not mediate that traffic and retains none of it.
 
@@ -224,6 +239,7 @@ tool names and result sizes, and errors.
 
 - Prompt bodies
 - Tool result bodies
+- The "Draft with AI" exchange and draft text (only character counts and token counts are recorded)
 - Credentials
 
 Opening a tool row in the chat shows the arguments passed to that tool and the text it returned.

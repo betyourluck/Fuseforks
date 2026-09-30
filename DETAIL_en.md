@@ -41,6 +41,7 @@ Fuseforks/
 │       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
 │       │   │   ├── judging.rs       Judges (offering and relaying judge_*, "Try", the list; Spec 62)
+│       │   │   ├── assist.rs        AI drafting (calling the drafter, the judge check loop, recording; Spec 63)
 │       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
@@ -52,6 +53,7 @@ Fuseforks/
 │       │   ├── prune.rs             Tool-result pruning pure mechanics (split into paragraphs / batch / render; knows no HTTP; [Spec 59](specs/59_jev-tool-result-pruning.md))
 │       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; implements `ParagraphScorer` and `Judge`)
 │       │   ├── judge.rs             Judges, pure mechanism (judge.toml checks, condition grammar, rule evaluation, the active predicate; [Spec 62](specs/62_judge-agents.md))
+│       │   ├── assist.rs            AI drafting, pure mechanism (guides, the two-section context, submit_draft, classification, history checks; [Spec 63](specs/63_ai-draft-assist.md))
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
@@ -103,6 +105,7 @@ Fuseforks/
             ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
             ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
             ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines (pure; Spec 62)
+            ├── lib/assist.ts        AI drafting: picking the template, the before-apply difference (pure; Spec 63)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -130,6 +133,7 @@ Fuseforks/
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── GroupDialog.vue                    Modal: create / rename / delete groups ([Spec 51](specs/51_agent-groups.md))
                 ├── JudgeList.vue / JudgeDialog.vue    Left: the Judges list / Modal: editing judge.toml and "Try" (Spec 62)
+                ├── AssistPanel.vue                    Modal: drafting with AI (from the SKILL / Construct / judge.toml editors; Spec 63)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
@@ -186,12 +190,13 @@ The bridge is established via `compute::spawn_rayon` using a `oneshot` channel, 
 | Modal | Agent settings + configuration file editing (via the settings button on agent cards) | **Opened occasionally** |
 | Modal | Model template management (from the agent list header) | Opened occasionally |
 | Modal | Judge editor and "Try" (from the pencil on a row under "Judges" on the left, or a diamond node in Kizuna; [Spec 62](specs/62_judge-agents.md)) | Opened occasionally |
+| Modal | Drafting with AI (from "Draft with AI" on the SKILL / Construct tabs of the servant settings and in the judge editor; [Spec 63](specs/63_ai-draft-assist.md)). **It does not save** — save an applied draft with the save button of the screen you came from | Opened occasionally |
 | Modal | Role list, add, edit, and delete (from "Roles" in the title bar, [Spec 14](specs/14_role-label.md)) | Opened occasionally |
 | Modal | Command approval (from "Commands" in the title bar, [Spec 20](specs/20_command-approval.md)) | Opened occasionally |
 | Modal | Schedule list, addition, **editing**, deletion, pre-checks, acceptance checks and approvals (from "Schedule" in the title bar; two panes — list on the left, form on the right. 2026-08-30) | Opened occasionally |
 | Modal | System settings (from "System Settings" in the title bar, [Spec 13](specs/13_settings-dialog.md)) | Opened occasionally |
 | Modal | Conversation list, forking, and export (from "Conversations" in the chat pane, [Spec 12](specs/12_session-persistence.md)) | Opened occasionally |
-| **Full screen** | **Stats** (the bar chart icon to the left of the clock, in the bottom bar, toggles it with the three panes; [Spec 39](specs/39_stats-view.md)) — what this village has paid, by conversation × **servant × model** × how each turn ended (**a servant that switched models gets one row per model** — prices differ per model, so folding them together makes any cost estimate wrong). **Hovering the cache-rate cell shows the input breakdown** (cache read / cache write / fresh; [Spec 40](specs/40_cache-write-accounting.md) — **no extra column**: a ninth column in an eight-column table makes horizontal scrolling permanent). **In a village with registered rates, two lines of `≈ $` appear at the top** ([Spec 41](specs/41_model-pricing.md): the amount and the rate date, then the coverage). **Coverage has two axes** (rows and tokens) because **either one alone misleads** — a real run showed `5/7 rows · 99.9% of tokens`: by rows it looks a third short, by tokens it looks complete. **Not a modal: it replaces the three panes wholesale** (they are only hidden — a half-typed message and the current selection survive). The title bar and the status bar stay, but **the title bar's dialog entries are disabled while it is open** (the window controls are not). **"All conversations" shows one month at a time, cut at the closing day** ([Spec 42](specs/42_stats-period.md): with closing day 25 you see "2026-08 (7/26–8/25)"; with end of month, the 1st through the last day. `◀ ▶` page through earlier months — `▶` stops at the current period, `◀` at the month holding the first record. **"All time" restores the lifetime totals.** When a period is applied, only conversations that paid within it are listed) | Opened occasionally |
+| **Full screen** | **Stats** (the bar chart icon to the left of the clock, in the bottom bar, toggles it with the three panes; [Spec 39](specs/39_stats-view.md)) — what this village has paid, by conversation × **servant × model** × how each turn ended (**a servant that switched models gets one row per model** — prices differ per model, so folding them together makes any cost estimate wrong). **Hovering the cache-rate cell shows the input breakdown** (cache read / cache write / fresh; [Spec 40](specs/40_cache-write-accounting.md) — **no extra column**: a ninth column in an eight-column table makes horizontal scrolling permanent). **In a village with registered rates, two lines of `≈ $` appear at the top** ([Spec 41](specs/41_model-pricing.md): the amount and the rate date, then the coverage). **Coverage has two axes** (rows and tokens) because **either one alone misleads** — a real run showed `5/7 rows · 99.9% of tokens`: by rows it looks a third short, by tokens it looks complete. **Not a modal: it replaces the three panes wholesale** (they are only hidden — a half-typed message and the current selection survive). The title bar and the status bar stay, but **the title bar's dialog entries are disabled while it is open** (the window controls are not). **"All conversations" shows one month at a time, cut at the closing day** ([Spec 42](specs/42_stats-period.md): with closing day 25 you see "2026-08 (7/26–8/25)"; with end of month, the 1st through the last day. `◀ ▶` page through earlier months — `▶` stops at the current period, `◀` at the month holding the first record. **"All time" restores the lifetime totals.** When a period is applied, only conversations that paid within it are listed). **What AI drafting paid appears in a separate "AI drafting" table** ([Spec 63](specs/63_ai-draft-assist.md): per template; "calls" counts LLM calls). It is not in the totals tiles or the servant table above, but it is in `≈ $` | Opened occasionally |
 
 Configuration is excluded from persistent panes because **occasionally opened items consume screen area meant for items that are always watched**.
 
@@ -796,6 +801,39 @@ machine.** What is sent and what is not is defined in [`PRIVACY_en.md`](PRIVACY_
 **Opening the village with v0.3.7 or earlier drops the servant → judge ties and the judges'
 positions** (older versions drop unknown IDs from connections and positions). The judges and their
 `judges/` files remain, so reopen with a newer version and redraw the ties.
+
+### Drafting with AI ([Spec 63](specs/63_ai-draft-assist.md))
+
+**Write one line about what you want**, and an AI asks questions and drafts SKILL.md, Construct.md or a
+judge's `judge.toml`. The entry is "Draft with AI" on the SKILL / Construct tabs of the servant settings
+and in the judge editor.
+
+**The draft only goes into the text you are editing; nothing is saved.** Save it with the save button of
+the screen you came from (no new write path). Before applying you see the character counts and how many
+lines are added and removed; after applying, "Undo apply" reverts once.
+
+- **Pick the model in the panel** (the last choice is remembered on this machine). Templates that don't
+  use tools can't be picked — the draft comes back as a tool call (`submit_draft`). **The template's
+  provider skills such as search are turned off** (leaving them on pays for search definitions and the
+  pro mode that are never used)
+- **The drafter has no personality and no conversation history.** It gets a writing guide per kind and
+  facts the app collected — for SKILL / Construct: the target's name, its tools (MCP tool names when
+  connected, server names otherwise), its connections, and **the paired file** (Construct for SKILL and
+  vice versa, to avoid duplication); for a judge: the ids, display names and roles of the servants it can
+  route to. **Memory, the ordinance and the conversation log are not sent**
+- **In this village SKILL.md goes into the prompt in full on every turn** (it is not a skill loaded on
+  demand), so the guide asks for no "when to use" section or frontmatter and for brevity. Construct is
+  written as behavior rather than a role label
+- **A judge draft goes through the same check as saving.** If it fails, the reason goes back and the
+  drafter tries again, up to 3 times; if all fail, the draft is shown with the reason (you can apply it,
+  but it can't be saved as is). After applying, the existing "Try" confirms it
+- "Draft now" asks for a draft with what is known so far (assumptions are noted). Anthropic and Meta
+  endpoints can't force the tool call, so there the request is made in words only
+- **The conversation is not saved** (it disappears when closed). Tokens paid go into the "AI drafting"
+  table and `≈ $` in the stats view, and an `assist:` line goes to the diagnostic log (no text). **They
+  are not counted against the village budget (token limit) or the card totals** — it is your action, not
+  the village's work
+- What is sent is defined in [`PRIVACY_en.md`](PRIVACY_en.md), section 4-1
 
 ### Layer 2: Mechanical Limits — Safety Net
 
@@ -1632,6 +1670,8 @@ The start and failure kinds were added later. The `turn` line existed **only on 
 **The `turn` line is now emitted for failed turns too** (2026-08-16). A turn whose output hit the token limit with an empty body had been paid for at the provider, yet had no `turn` line and showed up in neither the card totals nor the budget (`failures.md` #103). Now a failed turn still writes one `turn` line with `stop=failed:<CODE>` **in the same columns as a successful one**, and what it paid lands in the card and the budget. `turn failed` stays as the line that carries the reason text — **count `turn` lines only** (a failed turn now produces two lines). Each of the four turn exits writes exactly one usage line: `turn interrupted` for interrupts and `turn budget exhausted` for budget cut-offs. **All four lines end with `model=`** (the template's model name; [Spec 39](specs/39_stats-view.md) — the prefix and the existing columns are unchanged, so earlier greps keep working).
 
 **The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all four exits). That is what the stats view (the bar chart icon in the bottom bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
+
+**AI drafting** ([Spec 63](specs/63_ai-draft-assist.md)) writes one `assist:` line and one `assist` record in `sessions.redb` (into the open conversation) per LLM call. The line reads `assist: kind=… model=… attempt=… forced=no|yes|fallback outcome=question|draft|invalid|draft_invalid|empty|failed …` and **never carries the conversation, the text being edited, or the draft** (only character counts). The stats view's "AI drafting" table reads the records. **Opening a conversation holding `assist` records with an older version (v0.3.7 or earlier) fails to load it** (as when `turn` was added).
 
 **Records written up to `v0.1.9` carry no `cacheWrite` / `cacheWrite1h`** (added in Spec 40 P3). They read back as 0, but **that 0 means "never recorded", not "nothing was written"** — the screen folds the difference into the "fresh" bucket rather than claiming a breakdown it does not have.
 
