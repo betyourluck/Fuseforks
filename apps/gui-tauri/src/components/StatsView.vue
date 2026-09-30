@@ -158,6 +158,11 @@ watch([scope, () => state.turnRecordedTick], () => void refresh(), { immediate: 
 
 const notice = computed(() => statsNotice(report.value));
 
+/** AI 下書き補助の行のテンプレート名（Spec 63）。消えたテンプレートは id のまま。 */
+function templateName(templateId: string): string {
+  return state.templates.find((t) => t.id === templateId)?.name ?? templateId;
+}
+
 /** 個体の表示名（カードと同じ）。居なくなった個体は id のまま。 */
 function agentName(agentId: string): string {
   return state.agents.find((a) => a.id === agentId)?.name ?? agentId;
@@ -478,6 +483,45 @@ const totals = computed(() => report.value?.totals ?? null);
                 </td>
                 <td class="num">{{ formatPercent(row.outputShare) }}</td>
                 <td class="num">{{ formatDuration(row.avgElapsedMs) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!--
+          AI 下書き補助（Spec 63 D10）。**上のタイルと個体の表には入らない**（ターンではない）が、
+          金額（≈ $）には入っている。行は生成役のテンプレート別で、「回数」は LLM 呼び出しの回数。
+        -->
+        <div
+          v-if="report.assist && report.assist.rows.length > 0"
+          class="mb-4 overflow-x-auto rounded border border-line"
+          data-stats-assist
+        >
+          <div class="border-b border-line bg-surface-1 px-3 py-1.5 text-xs text-ink-dim">
+            {{ t("stats.assist.title") }}
+            <span class="ml-1">{{ t("stats.assist.note") }}</span>
+          </div>
+          <table class="stats-table">
+            <thead>
+              <tr>
+                <th>{{ t("stats.assist.template") }}</th>
+                <th>{{ t("stats.columns.model") }}</th>
+                <th class="num">{{ t("stats.assist.calls") }}</th>
+                <th class="num">{{ t("stats.columns.failed") }}</th>
+                <th class="num">{{ t("stats.columns.effective") }}</th>
+                <th class="num">{{ t("stats.columns.cacheRate") }}</th>
+                <th class="num">{{ t("stats.columns.outputShare") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in report.assist.rows" :key="`${row.templateId}/${row.model}`">
+                <td :title="row.templateId">{{ templateName(row.templateId) }}</td>
+                <td class="font-mono text-xs text-ink-dim">{{ row.model }}</td>
+                <td class="num">{{ exactNumber(row.turns) }}</td>
+                <td class="num" :class="{ 'text-warn': row.failed > 0 }">{{ exactNumber(row.failed) }}</td>
+                <td class="num" :title="exactNumber(row.effective)">{{ compactNumber(row.effective) }}</td>
+                <td class="num" :title="breakdownTitle(row)">{{ formatPercent(row.cacheRate) }}</td>
+                <td class="num">{{ formatPercent(row.outputShare) }}</td>
               </tr>
             </tbody>
           </table>

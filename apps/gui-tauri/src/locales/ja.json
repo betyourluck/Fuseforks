@@ -623,6 +623,49 @@
     "insertTemplate": "ひな型を作る",
     "runPlaceholder": "allow に一致する呼び出しだけが実行されます。deny は allow より優先。\nどちらにも無い呼び出しは pending に記録されるので、ここで allow か deny へ動かしてください。\n末尾の * は「以降の引数は自由」。* が無いパターンは引数なしの呼び出しにしか一致しません。\nこれは安全装置ではありません — 許可したコマンドにできること全部を許しています。\n\n{'{'}\n  \"version\": 1,\n  \"allow\": [\"ruff *\", \"cargo test *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n{'}'}\n"
   },
+  "assist": {
+    "open": "AI で作成",
+    "title": {
+      "skill": "AI で SKILL.md の下書きを作る",
+      "construct": "AI で Construct.md の下書きを作る",
+      "judge": "AI で judge.toml の下書きを作る"
+    },
+    "templateLabel": "生成に使うモデル",
+    "noTemplate": "ツールを使うテンプレートがありません",
+    "templateNoTools": "ツールを使わない設定のテンプレートは、下書きを受け取れないので選べません",
+    "templateNoToolsShort": "ツールなし",
+    "description": "作りたいものを書くと、AI が質問しながら下書きを作ります。下書きは編集中の本文へ流し込むだけで、保存はこの画面の外の保存ボタンで行います。検索などの固有スキルは使いません。",
+    "empty": "例:「毎朝の天気を 3 行で要約するスキルを作りたい」",
+    "you": "あなた",
+    "generator": "生成役",
+    "thinking": "考えています…",
+    "placeholder": {
+      "skill": "このサーヴァントにさせたい手順を書いてください（Ctrl+Enter で送る）",
+      "construct": "このサーヴァントの人格や役割を書いてください（Ctrl+Enter で送る）",
+      "judge": "どう振り分けたいかを書いてください（Ctrl+Enter で送る）"
+    },
+    "sendNote": "送ると、会話・編集中の本文・対象の設定の一部が選んだモデルの接続先へ送られます",
+    "forceDraft": "下書きを出して",
+    "forceDraftSent": "（ここまでの情報で下書きを出してください）",
+    "send": "送る",
+    "sending": "送信中…",
+    "draftHeading": "下書き",
+    "delta": "{before} 字 → {after} 字（+{added} 行 / −{removed} 行）",
+    "noDraft": "まだ下書きはありません",
+    "validationOk": "保存の検査に通りました（{attempts} 回目）",
+    "validationNg": "保存の検査に通っていません（{location}: {message}）。反映はできますが、このままでは保存できません",
+    "notes": "仮定・確認したいこと",
+    "draftShown": "下書きを出しました（{chars} 字）",
+    "applyNote": "反映しても保存はされません",
+    "undo": "反映を取り消す",
+    "apply": "エディタへ反映",
+    "applyConfirmTitle": "編集中の本文を置き換えますか？",
+    "applyConfirmMessage": "エディタの本文を下書きで置き換えます。反映した後に「反映を取り消す」で 1 回だけ戻せます。",
+    "keep": "戻る",
+    "closeConfirmTitle": "会話を閉じますか？",
+    "closeConfirmMessage": "この会話は保存されません。閉じると消えます（反映した下書きはエディタに残ります）。",
+    "closeConfirm": "閉じる"
+  },
   "ordinance": {
     "title": "村の条例",
     "loadError": "条例を読み込めませんでした: {error}",
@@ -1042,7 +1085,8 @@
     "PLAN_WAVE_NOT_PENDING": "承認待ちの計画ではありません",
     "PLAN_DISPATCH_INVALID": "計画を配送できません",
     "INVALID_QUOTE": "参照を受け付けられません",
-    "INVALID_JUDGE_FILE": "判断役のファイルに誤りがあります"
+    "INVALID_JUDGE_FILE": "判断役のファイルに誤りがあります",
+    "INVALID_ASSIST_REQUEST": "AI 下書き補助を実行できません"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
@@ -1324,6 +1368,12 @@
       "asOf": "（{date} 時点の単価）",
       "asOfUnknown": "（単価の時点は未記録）",
       "coverage": "{priced}/{total} 体・トークン {percent}"
+    },
+    "assist": {
+      "title": "AI 作成補助",
+      "note": "（上の数字には含まれません。金額には含まれます）",
+      "template": "テンプレート",
+      "calls": "回数"
     }
   },
   "groups": {

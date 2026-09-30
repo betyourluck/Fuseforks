@@ -17,7 +17,8 @@ export type StatsNotice = "loading" | "empty" | "ready";
 
 export function statsNotice(report: StatsReport | null): StatsNotice {
   if (!report) return "loading";
-  if (report.scopeMeta.recordedSince === null) return "empty";
+  // AI 下書き補助（Spec 63）だけを使った会話もある — 補助の記録があれば「記録が無い」とは言わない。
+  if (report.scopeMeta.recordedSince === null && (report.assist?.total.turns ?? 0) === 0) return "empty";
   return "ready";
 }
 

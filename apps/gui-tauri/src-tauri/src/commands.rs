@@ -285,6 +285,16 @@ pub async fn try_judge(
     state.orchestrator.try_judge(&text, &message).await
 }
 
+/// AI 下書き補助の 1 往復（Spec 63）。**押したときだけ外へ出る**（選んだテンプレートの接続先へ）。
+/// 返るのは下書きまでで、保存は既存の `write_agent_config` / `save_judge_file` を人が押す。
+#[tauri::command]
+pub async fn assist_draft(
+    state: State<'_, AppState>,
+    req: fuseforks_core::assist::AssistRequest,
+) -> CoreResult<fuseforks_core::assist::AssistReply> {
+    state.orchestrator.assist_draft(req).await
+}
+
 /// 動かしたカードの所属（`commit_agent_drop` の `regroup`）。
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

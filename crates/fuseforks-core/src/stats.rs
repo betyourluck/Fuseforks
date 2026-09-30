@@ -240,7 +240,7 @@ pub struct StatsReport {
     #[serde(default)]
     pub cost: Option<crate::pricing::CostSummary>,
     /// AI 下書き補助の使用量（Spec 63 D10）。**`totals` はターンだけのまま**（意味を変えない）—
-    /// 画面の総計と `≈ $` は `totals + assist.total` で組む。**[`aggregate`] は空で返し、
+    /// **`cost`（`≈ $`）は両方を含む**（呼び出し側が同じ列で合算する）。**[`aggregate`] は空で返し、
     /// 呼び出し側が [`aggregate_assist`] で埋める**（原本が別の種別なので列を分ける）。
     #[serde(default)]
     pub assist: AssistStatsReport,

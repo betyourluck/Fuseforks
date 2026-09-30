@@ -19,6 +19,8 @@ import type {
   AgentSnapshot,
   AgentSpec,
   ApprovalOutcome,
+  AssistReply,
+  AssistRequest,
   AttachmentPayload,
   BlackboardNote,
   CommandPolicyView,
@@ -347,6 +349,13 @@ export const saveJudgeFile = (judgeId: AgentId, text: string) =>
  */
 export const tryJudge = (text: string, message: string) =>
   call<JudgeTrial>("try_judge", { text, message });
+
+/**
+ * AI 下書き補助の 1 往復（Spec 63）。**押したときだけ**選んだテンプレートの接続先へ送る。
+ * 返った `appended` は**中身を解釈せず**次の `history` の末尾へ足す（コアが作ったメッセージを
+ * 逐語で往復する — 思考署名を落とすと 2 回目が 400 で落ちる）。保存はしない。
+ */
+export const assistDraft = (req: AssistRequest) => call<AssistReply>("assist_draft", { req });
 
 // ---- 設定ファイル -----------------------------------------------------------
 

@@ -7134,6 +7134,9 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 63](specs/63_ai-draft-assist.md)（AI による下書き補助 — SKILL.md / Construct.md / `judge.toml`）:
+  **rev3 → P0〜P2 完了**（P2 = 画面: `AssistPanel.vue` + 入口 3 箇所 + 統計の「AI 作成補助」の表 + 辞書 ja/en。
+  vitest 758・変異 5 回（F4 だけ既存の鍵集合テストも赤で 2 本）。**統計のタイルはターンだけのまま・補助は別の表・金額は
+  コアで合算**（D10 の「総計を合算で組む」は採らなかった）。**実機は未確認**。以下は P1 の記録 —
   **rev3 → P0〜P1 完了**（P1 = コア: `assist.rs` + `Orchestrator::assist_draft` + `Record::Assist` + 統計・金額への加算。
   単体 12 + 結合 12・変異 5 回（M1 だけ予測 1 に対し 2 本 — 関数自身の単体を数え忘れ）。**結合テストが
   `Record` の種別タグ `kind` と欄 `kind` の衝突を捕まえた**（書けるのに読み戻しで落ちる。`failures.md` #140）。

@@ -623,6 +623,49 @@
     "insertTemplate": "Insert template",
     "runPlaceholder": "Only calls matching allow are executed; deny wins over allow.\nCalls in neither list are recorded under pending — move them to allow or deny here.\nA trailing * means \"any remaining arguments\"; a pattern without * matches only a call with no arguments.\nThis is not a safety mechanism: allowing a command permits everything that command can do.\n\n{'{'}\n  \"version\": 1,\n  \"allow\": [\"ruff *\", \"cargo test *\"],\n  \"deny\": [],\n  \"pending\": [],\n  \"timeoutSecs\": 60\n{'}'}\n"
   },
+  "assist": {
+    "open": "Draft with AI",
+    "title": {
+      "skill": "Draft SKILL.md with AI",
+      "construct": "Draft Construct.md with AI",
+      "judge": "Draft judge.toml with AI"
+    },
+    "templateLabel": "Model to use",
+    "noTemplate": "No template uses tools",
+    "templateNoTools": "Templates that don't use tools can't return a draft, so they can't be picked",
+    "templateNoToolsShort": "no tools",
+    "description": "Describe what you want and the AI will ask questions and write a draft. The draft only goes into the text you are editing; saving is done with the save button outside this panel. Provider skills such as search are not used.",
+    "empty": "e.g. \"I want a skill that summarizes the weather in 3 lines every morning\"",
+    "you": "You",
+    "generator": "Drafter",
+    "thinking": "Thinking…",
+    "placeholder": {
+      "skill": "Describe the procedure you want this servant to follow (Ctrl+Enter to send)",
+      "construct": "Describe this servant's personality and role (Ctrl+Enter to send)",
+      "judge": "Describe how you want requests routed (Ctrl+Enter to send)"
+    },
+    "sendNote": "Sending shares the conversation, the text being edited, and part of the target's settings with the chosen model's endpoint",
+    "forceDraft": "Draft now",
+    "forceDraftSent": "(Please draft with what you have so far)",
+    "send": "Send",
+    "sending": "Sending…",
+    "draftHeading": "Draft",
+    "delta": "{before} → {after} chars (+{added} / −{removed} lines)",
+    "noDraft": "No draft yet",
+    "validationOk": "Passed the save check (attempt {attempts})",
+    "validationNg": "Did not pass the save check ({location}: {message}). You can apply it, but it can't be saved as is",
+    "notes": "Assumptions and points to confirm",
+    "draftShown": "Here is a draft ({chars} chars)",
+    "applyNote": "Applying does not save",
+    "undo": "Undo apply",
+    "apply": "Apply to editor",
+    "applyConfirmTitle": "Replace the text being edited?",
+    "applyConfirmMessage": "The editor's text will be replaced with the draft. You can undo it once with \"Undo apply\".",
+    "keep": "Back",
+    "closeConfirmTitle": "Close the conversation?",
+    "closeConfirmMessage": "This conversation is not saved and disappears when closed (an applied draft stays in the editor).",
+    "closeConfirm": "Close"
+  },
   "ordinance": {
     "title": "Village Ordinance",
     "loadError": "Could not load the ordinance: {error}",
@@ -1042,7 +1085,8 @@
     "PLAN_WAVE_NOT_PENDING": "Not a plan awaiting review",
     "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched",
     "INVALID_QUOTE": "The quote was rejected",
-    "INVALID_JUDGE_FILE": "The judge file has an error"
+    "INVALID_JUDGE_FILE": "The judge file has an error",
+    "INVALID_ASSIST_REQUEST": "AI drafting could not run"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",
@@ -1324,6 +1368,12 @@
       "asOf": "(rates as of {date})",
       "asOfUnknown": "(rate date not recorded)",
       "coverage": "{priced}/{total} rows · {percent} of tokens"
+    },
+    "assist": {
+      "title": "AI drafting",
+      "note": "(not in the figures above; included in the cost)",
+      "template": "Template",
+      "calls": "Calls"
     }
   },
   "groups": {

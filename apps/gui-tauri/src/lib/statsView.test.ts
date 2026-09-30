@@ -36,7 +36,9 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(resolve(here, rel), "utf-8");
 
-function report(overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number }): StatsReport {
+function report(
+  overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number; assistCalls?: number },
+): StatsReport {
   const turns = overrides.turns ?? 0;
   return {
     scope: { kind: "session", sessionId: "s1" },
@@ -64,10 +66,28 @@ function report(overrides: Partial<StatsReport["scopeMeta"]> & { turns?: number 
     byStop: [],
     cost: null,
     series: null,
+    assist: {
+      rows: [],
+      total: { ...{
+        turns,
+        failed: 0,
+        prompt: 0,
+        cached: 0,
+        completion: 0,
+        reasoning: 0,
+        cacheWrite: 0,
+        cacheWrite1h: 0,
+        effective: 0,
+        cacheRate: 0,
+        outputShare: 0,
+        avgElapsedMs: 0,
+        avgTokensPerTurn: 0,
+      }, turns: overrides.assistCalls ?? 0 },
+    },
   };
 }
 
-describe("statsNotice — 判定は recordedSince だけを見る", () => {
+describe("statsNotice — 判定は recordedSince と AI 下書き補助の記録だけを見る", () => {
   it("報告が無ければ loading", () => {
     expect(statsNotice(null)).toBe("loading");
   });
@@ -81,6 +101,11 @@ describe("statsNotice — 判定は recordedSince だけを見る", () => {
 
   it("recordedSince があれば ready（turns が 0 でも表を出す — 記録はある）", () => {
     expect(statsNotice(report({ recordedSince: 1, turns: 0 }))).toBe("ready");
+  });
+
+  it("ターンの記録が無くても AI 下書き補助の記録があれば ready（Spec 63 D10）", () => {
+    expect(statsNotice(report({ recordedSince: null, assistCalls: 2 }))).toBe("ready");
+    expect(statsNotice(report({ recordedSince: null, assistCalls: 0 }))).toBe("empty");
   });
 });
 

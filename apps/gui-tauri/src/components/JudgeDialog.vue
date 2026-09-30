@@ -13,6 +13,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import AssistPanel from "./AssistPanel.vue";
 import CodeEditor from "./CodeEditor.vue";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -45,6 +46,9 @@ const busy = ref(false);
 const saveError = ref("");
 
 const dirty = computed(() => text.value !== saved.value);
+
+/** 「AI で作成」（Spec 63）。下書きは `text` へ流し込むだけで、保存は下の既存の保存ボタン。 */
+const assistOpen = ref(false);
 
 onMounted(async () => {
   try {
@@ -230,6 +234,14 @@ const statusView = computed(() => {
           <div class="mb-1 flex items-center gap-2 text-[11px]">
             <span class="font-mono text-ink-dim">judge.toml</span>
             <span v-if="dirty" class="ml-auto text-warn">{{ $t("judges.unsaved") }}</span>
+            <button
+              class="rounded border border-line px-2 py-0.5 text-ink-dim hover:border-accent hover:text-accent"
+              :class="dirty ? 'ml-2' : 'ml-auto'"
+              data-assist-open
+              @click="assistOpen = true"
+            >
+              {{ $t("assist.open") }}
+            </button>
           </div>
           <CodeEditor v-model="text" class="h-72" language="plain" @save="saveFromEditor" />
           <p v-if="saveError" class="selectable mt-1.5 text-[11px] text-fail">{{ saveError }}</p>
@@ -281,5 +293,13 @@ const statusView = computed(() => {
         </button>
       </div>
     </div>
+
+    <AssistPanel
+      v-if="assistOpen"
+      :target="{ kind: 'judge', id: judgeId }"
+      :current="text"
+      @apply="text = $event"
+      @close="assistOpen = false"
+    />
   </div>
 </template>

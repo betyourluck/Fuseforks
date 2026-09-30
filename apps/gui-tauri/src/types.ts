@@ -267,6 +267,60 @@ export interface JudgeView {
   outline: JudgeOutline | null;
 }
 
+// ---- AI 下書き補助（Spec 63） ---------------------------------------------------
+
+/** 何の下書きか。 */
+export type AssistKind = "skill" | "construct" | "judge";
+
+/** 下書きの対象。**欄名は種類に依らず `id`**。 */
+export interface AssistTarget {
+  kind: AssistKind;
+  id: AgentId;
+}
+
+/**
+ * コアが作ったメッセージ。**フロントは中身を解釈しない** — 受け取ったまま保持し、
+ * 次の呼び出しの `history` の末尾へ足して送り返すだけ（思考署名を含むので、組み立て直すと
+ * 2 回目が 400 で落ちる — Spec 63 D3）。
+ */
+export type AssistMessage = unknown;
+
+export interface AssistRequest {
+  target: AssistTarget;
+  templateId: ModelTemplateId;
+  /** これまでの `appended` を順に（利用者の発話もその中に入っている）。 */
+  history: AssistMessage[];
+  /** 今回の利用者の発話。`forceDraft` のときは `null` でよい。 */
+  input: string | null;
+  /** 「下書きを出して」ボタン。 */
+  forceDraft: boolean;
+  /** 編集中の本文（未保存の変更を含む）。 */
+  current: string;
+}
+
+/** 判断役の下書きの検査結果（判別共用体 1 つ）。 */
+export type AssistValidation =
+  | { valid: true }
+  | { valid: false; location: string; message: string };
+
+export type AssistReply =
+  | { type: "question"; appended: AssistMessage[]; text: string }
+  | {
+      type: "draft";
+      appended: AssistMessage[];
+      /** 生成役が下書きに添えた本文。 */
+      text: string | null;
+      /** 下書き。 */
+      content: string;
+      /** 仮定・未確認点。 */
+      notes: string | null;
+      /** `content` のコードポイント数。 */
+      draftChars: number;
+      /** 判断役だけ。SKILL / Construct は `null`（検査しない）。 */
+      validation: AssistValidation | null;
+      attempts: number;
+    };
+
 /** 「試す」の結果（配送はしない）。 */
 export interface JudgeTrial {
   /** 判断モデルの版。 */
@@ -1176,6 +1230,22 @@ export interface StatsReport {
    * 画面は金額の塊ごと出さない（0 と書かない）。
    */
   cost: CostSummary | null;
+  /**
+   * AI 下書き補助の使用量（Spec 63 D10）。**`totals` はターンだけ**で、ここは別に出る。
+   * `turns` は LLM 呼び出しの回数。金額（`cost`）には両方が入っている。
+   */
+  assist: AssistStatsReport;
+}
+
+/** AI 下書き補助の 1 行（モデル別）。 */
+export interface AssistStats extends StatsSlice {
+  model: string;
+  templateId: ModelTemplateId;
+}
+
+export interface AssistStatsReport {
+  rows: AssistStats[];
+  total: StatsSlice;
 }
 
 /** 村の黒板の付箋 1 枚（work_dir の `blackboard/` 直下。読み取り専用の投影）。 */

@@ -153,6 +153,7 @@ pub fn run() {
             commands::read_judge_file,
             commands::save_judge_file,
             commands::try_judge,
+            commands::assist_draft,
             // 設定ファイル
             commands::read_agent_config,
             commands::write_agent_config,

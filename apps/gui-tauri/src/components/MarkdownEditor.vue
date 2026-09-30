@@ -10,6 +10,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import AssistPanel from "./AssistPanel.vue";
 import CodeEditor from "./CodeEditor.vue";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
@@ -66,6 +67,14 @@ const template = computed(() => CONFIG_FILE_TEMPLATES[kind.value] ?? null);
 const canUseTemplate = computed(
   () => props.editable && template.value !== null && content.value.trim() === "",
 );
+
+/**
+ * 「AI で作成」（Spec 63）。**SKILL と Construct だけ**（Memory は本人が `remember` で書くもの、
+ * mcp.json / run.json は許可の設定で、生成させる種類の文ではない）。下書きは `content` へ
+ * 流し込むだけで、保存は下の既存の保存ボタン。
+ */
+const canAssist = computed(() => props.editable && (kind.value === "skill" || kind.value === "construct"));
+const assistOpen = ref(false);
 
 /** ひな型をテキストエリアへ入れる。**保存はしない** — 中身を見てから人が押す。 */
 function insertTemplate(): void {
@@ -148,7 +157,24 @@ watch(
         {{ $t("editor.insertTemplate") }}
       </button>
       <span v-if="dirty()" class="ml-auto text-[11px] text-warn">{{ $t("editor.unsaved") }}</span>
+      <button
+        v-if="canAssist"
+        class="rounded border border-line px-2 py-0.5 text-[11px] text-ink-dim hover:border-accent hover:text-accent"
+        :class="dirty() ? 'ml-2' : 'ml-auto'"
+        data-assist-open
+        @click="assistOpen = true"
+      >
+        {{ $t("assist.open") }}
+      </button>
     </div>
+
+    <AssistPanel
+      v-if="assistOpen && (kind === 'skill' || kind === 'construct')"
+      :target="{ kind, id: agentId }"
+      :current="content"
+      @apply="content = $event"
+      @close="assistOpen = false"
+    />
 
     <div class="min-h-0 flex-1 p-3">
       <p v-if="loading" class="text-[11px] text-ink-dim">{{ $t("editor.loading") }}</p>

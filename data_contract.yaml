@@ -640,7 +640,9 @@ enums:
                                                   # **Slice.turns は LLM 呼び出しの回数**、failed は
                                                   # outcome=failed の回数、avgElapsedMs は 0 (測らない)。
                                                   # **totals はターンだけのまま** (意味を変えない)。
-                                                  # 画面の総計と ≈ $ は totals + assist.total で組む。
+                                                  # **≈ $ (cost) は両方を含む** (コアが by_agent と assist.rows を
+                                                  # 同じ列で summarize へ渡す)。画面のタイルと個体の表は
+                                                  # ターンだけのまま、補助は別の表 (Spec 63 P2)。
                                                   # スコープと期間の規則は turn と同じ
         }
         Slice { turns, failed, prompt, cached, completion, reasoning,

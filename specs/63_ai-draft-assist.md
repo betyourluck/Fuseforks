@@ -1,6 +1,7 @@
 # Spec 63: AI による下書き補助（SKILL.md / Construct.md / judge.toml）
 
-- 状態: **rev3 → P0〜P1 完了**（P1 = コア。記録は末尾の「P1 実装記録」）。以下は P0 時点の記述 —
+- 状態: **rev3 → P0〜P2 完了**（P2 = 画面。記録は末尾の「P2 実装記録」。**実機は未確認**）。以下は P1 時点 —
+  **rev3 → P0〜P1 完了**（P1 = コア。記録は末尾の「P1 実装記録」）。以下は P0 時点の記述 —
   **rev3 → P0 完了**（2026-09-30 起票 → 同日、査読 2 系統 15 点（重複を畳んで 13 項目）を反映して rev2 →
   P0 の測定を反映して rev3 → `data_contract.yaml` の `assist_contract` と `entities` を凍結。rev3 の差分は D2 / D5 / D10 と「P0 実測」）
 - 起点: 利用者（2026-09-30）—「SKILL.md や Construct.md、条例、判断特化の設定を AI 自動生成で書き込む
@@ -280,7 +281,8 @@ skill-creator の**手順**（意図の確認 → 質問 → 下書き → 直�
   - **`StatsReport` の既存の欄の意味は変えない**（`totals` はターンだけ・`turns` は数え方が違う）。
     足すのは `assist: { rows: [{ model, templateId, ...Slice }], total: Slice }` の 1 欄（加算。`#[serde(default)]`。
     **`Slice.turns` は LLM 呼び出しの回数**）。スコープと期間の規則は `turn` と同じ
-    （`session` はその会話、`all` は `tsMs` の半開区間）。**画面の総計と `≈ $` は `totals + assist.total`** で組む
+    （`session` はその会話、`all` は `tsMs` の半開区間）。**`≈ $`（`cost`）は両方を含む**（コアが合算。P1）。画面の合計タイルと個体の表はターンだけのまま、
+    補助は別の表「AI 作成補助」に出す（P2 で決めた — タイルに混ぜると「ターン数」の欄の意味が割れる）
   - 履歴の入力にはならない（`restore_histories` / `tail_messages` / `fork_points` は読まない — `Turn` と同じ）
   - 会話を開いていない（保存先が開けない）ときは書けない。そのときはログ行だけになり、WARN を 1 行出す
   - **互換**: 旧い版は `kind: "assist"` で `records()` が落ちる（前提の実測の最後の点。`turn` と同じ位置づけ）
@@ -451,3 +453,45 @@ SKILL を日本語の村で書く、は正当な使い方（Spec 35 P5 — 偏�
 workspace 全体のテスト・clippy は緑（clippy が出したのは `summarize` が列を受けるようになってテストの `vec!` が
 配列で足りるようになった 3 件だけで、直した）。
 
+## P2 実装記録（2026-09-30。画面側）
+
+### 置いたもの
+
+- Tauri コマンド `assist_draft`（引数は `req` 1 つ）/ `lib/ipc.ts` の `assistDraft` / `types.ts` の `AssistKind` /
+  `AssistTarget` / `AssistMessage`（`unknown`）/ `AssistRequest` / `AssistReply` / `AssistValidation` /
+  `StatsReport.assist` + `AssistStats` / `AssistStatsReport`
+- `lib/assist.ts`（純関数）: `templateChoices` / `pickTemplate` / `readRemembered` / `writeRemembered`
+  （`fuseforks.assist.v1`）/ `codePoints` / `draftDelta` / `applyNeedsConfirm`
+- `AssistPanel.vue`: 左にヒアリング、右に下書き（原文のまま）・`notes`・検査の結果・反映前の差。「エディタへ反映」
+  （空でなければ確認）/「反映を取り消す」（1 段）/「下書きを出して」/ Ctrl+Enter で送る / 会話があれば閉じる前に確認
+- 入口: `MarkdownEditor.vue` の SKILL / Construct タブ（`editable` のとき）と `JudgeDialog.vue` の `judge.toml` の見出し行
+- 統計画面: 「AI 作成補助」の表（テンプレート別。回数 = 呼び出しの回数）。`statsNotice` は補助の記録だけがある会話を
+  「記録が無い」にしない
+- 辞書 ja/en: `assist.*`（33 鍵）/ `stats.assist.*` / `errors.INVALID_ASSIST_REQUEST`
+
+### 実装で決まったこと
+
+- **統計の合計タイルと個体の表はターンだけのまま**で、補助は別の表に出す。**金額（`≈ $`）はコアが合算済み**。
+  D10 の「総計は `totals + assist.total` で組む」は、タイルに混ぜると「ターン数」の欄の意味が割れるので採らなかった
+  （Spec の D10 と契約の注記を書き換えた）
+- **画面の会話は `appended` から組まない。** 利用者の入力と返り値の `text` から組む。「下書きを出して」の発話は
+  コアが村の言語の定型文を足すが、画面には「（ここまでの情報で下書きを出してください）」と出す
+- **送れなかった発話は画面の会話から外す**（コアの履歴にも入っていない — 送り直せる）
+- **閉じた後に返ってきた結果は捨てる**（`seq`）。払いは `assist:` 行と `Record::Assist` に残る
+- パネルの覆いは `z-50` の `bg-scrim` — ダイアログ（`z-40`）の上、確認（`z-60`）の下。`bg-scrim` は「/」で会話の
+  入力欄へ移る判定が見る印
+
+### テストと変異
+
+vitest 740 → 758（`lib/assist.test.ts` 7 / `lib/assistWiring.test.ts` 10 / `statsView.test.ts` +1）・
+vue-tsc 0・build 緑・Tauri 側の clippy 0・コアの単体に要求の形（camelCase）を読むテスト +1。
+
+| 変異 | 予測 | 実際 |
+|---|---|---|
+| F1 `appended` を履歴へ足さない | 1 本 | 1 本（配線） |
+| F2 Memory タブにも入口を出す | 1 本 | 1 本（配線） |
+| F3 補助の記録を「記録が無い」の判定に数えない | 1 本 | 1 本（統計） |
+| F4 en の `assist.placeholder.judge` を消す | 1 本 | **2 本** — 既存の「ja と en の鍵集合が一致する」も赤 |
+| F5 消えた行を数えない | 1 本 | 1 本 |
+
+**実機は未確認**（P4）。この環境の Browser ペインでは Tauri の IPC が無いので、パネルを開いて送る経路は実機でしか通らない。

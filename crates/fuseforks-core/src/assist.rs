@@ -753,6 +753,24 @@ mod tests {
         );
     }
 
+    /// フロント（`types.ts` の `AssistRequest`）が送る形をそのまま読める（P2 の IPC）。
+    #[test]
+    fn the_request_reads_the_front_shape() {
+        let wire = json!({
+            "target": { "kind": "judge", "id": "router" },
+            "templateId": "gen",
+            "history": [],
+            "input": null,
+            "forceDraft": true,
+            "current": "[questions.kind]"
+        });
+        let req: AssistRequest = serde_json::from_value(wire).unwrap();
+        assert_eq!(req.target, AssistTarget { kind: AssistKind::Judge, id: "router".into() });
+        assert_eq!(req.template_id, ModelTemplateId::from("gen"));
+        assert!(req.force_draft && req.input.is_none());
+        assert_eq!(req.current, "[questions.kind]");
+    }
+
     #[test]
     fn the_reply_is_camel_case_with_a_type_tag() {
         let reply = AssistReply::Draft {
