@@ -5510,7 +5510,8 @@ log には System 行や他人宛の発話があり、どの history にも入�
 `{workspace}/sessions.redb` にテーブル 2 つ（`sessions` / `records`、
 records のキーは `(session_id, seq)`）。`Record` は **message / exchange /
 summary の 3 種別**（**→ 2026-08-16 に [Spec 39](specs/39_stats-view.md) P0 で
-`turn` を足して 4 種別。** ターン 1 本の使用量。履歴の入力にはならない）。
+`turn` を足して 4 種別。** ターン 1 本の使用量。履歴の入力にはならない。**→ 2026-09-30 に
+[Spec 63](specs/63_ai-draft-assist.md) P0 で `assist` を足して 5 種別の凍結**（AI 下書き補助の使用量。実装は P1））。
 復元しないものは波・予算・MCP 接続・稼働状態（作業の寿命）。
 索引は作らない・要約は手動のみ。**`export_session`（JSONL 書き出し）は P1 の
 完了条件** — 読めない保存先を作るなら出口は機構の一部（この企画の診断は
@@ -7133,7 +7134,11 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 63](specs/63_ai-draft-assist.md)（AI による下書き補助 — SKILL.md / Construct.md / `judge.toml`）:
-  **Draft rev2**（2026-09-30 起票 → 同日、査読 2 系統 15 点 = 13 項目 → 採用 9 / 形を変えて採用 4。
+  **rev3 → P0 完了**（2026-09-30。P0 = 実物のアダプタで 7 ワイヤへ撃ち、`data_contract` の `assist_contract` /
+  `entities` / `Record` の 5 種別目 `assist` / `StatsReport.assist` を凍結。**強制を送れないのは Anthropic（400）と
+  Meta（アダプタが `tool_choice` を送らない）** / 逐語往復は 7 ワイヤ全部で 2 周目が通った / **テンプレートの
+  固有スキルが付いてくるので外す**（gpt-6-sol は 11,854 → 170 入力トークン）/ 別件で `uses_max_completion_tokens`
+  が `gpt-6` を拾わない。以下は rev2 の記録 — 起票 → 同日、査読 2 系統 15 点 = 13 項目 → 採用 9 / 形を変えて採用 4。
   最重は「`submit_draft` の呼び出しが会話の履歴から消える」で、**コアが作ったメッセージを不透明なまま
   フロントと逐語で往復する**形にした（`ToolCall::extra` = Gemini の思考署名を落とさないため）。使用量は
   `Record::Assist` の 1 つに置いて統計画面の行と合計へ入れる。「下書きを出して」は `forceDraft` で

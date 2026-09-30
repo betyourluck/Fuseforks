@@ -1,6 +1,7 @@
 # Spec 63: AI による下書き補助（SKILL.md / Construct.md / judge.toml）
 
-- 状態: **Draft rev2**（2026-09-30 起票 → 同日、査読 2 系統 15 点（重複を畳んで 13 項目）を反映。表は Notes 2）
+- 状態: **rev3 → P0 完了**（2026-09-30 起票 → 同日、査読 2 系統 15 点（重複を畳んで 13 項目）を反映して rev2 →
+  P0 の測定を反映して rev3 → `data_contract.yaml` の `assist_contract` と `entities` を凍結。rev3 の差分は D2 / D5 / D10 と「P0 実測」）
 - 起点: 利用者（2026-09-30）—「SKILL.md や Construct.md、条例、判断特化の設定を AI 自動生成で書き込む
   仕組みをつけたい。世間一般の skill-creator などを参考に、AI に生成補助させたい。『〜をするスキルを
   作りたい』と書くだけで、要件のヒアリングから SKILL.md のドラフト生成までを自動で行ってくれるイメージ」
@@ -24,6 +25,38 @@
 - **MCP はツール名まで渡す**（接続している個体のとき。D7）/ **言語は利用者の明示の指定を優先**（D12）/
   **検証の輪の異常系を定義**（D8）/ **テンプレートの選択は「選べない」に統一**（D2）/ `AssistTarget` の欄名を
   `id` に統一（D4）/ 反映の前に字数と行数の差を出す（D9）
+
+## P0 実測（2026-09-30。**こちらが正**）
+
+村の `world.json` のテンプレートと OS の資格情報ストアの鍵で、**実物のアダプタ**（`HttpBackendFactory::strict`）から
+撃った。プローブは `crates/fuseforks-core/examples/` の使い捨て（コミットしない。数字はここが正）。
+依頼は「天気予報を調べて 3 行で要約するスキルを作りたい。質問はせず下書きを出して」、2 周目は応答を
+**`serde_json` で文字列にして戻した** `assistant` + `tool` の 2 通 + 「もっと短く、2 行に」。
+**予測を先に書いた**（Anthropic は 400 / Meta は強制したつもりで auto / 他の 5 ワイヤは通る / 往復は全ワイヤ通る）
+— **4 つとも当たった**。
+
+| ワイヤ（テンプレート） | (A) `Specific("submit_draft")` | (B) 逐語往復の 2 周目 |
+|---|---|---|
+| OpenAI 互換（Gemini 3.8 Flash を `/v1beta/openai` で） | ✓ 下書き 1,090 字 | ✓ `json_equal=true`・`extra` あり（思考署名）・1,090 → 516 字 |
+| **Anthropic**（claude-opus-5-5） | **✗ 400** `tool_choice: type "tool" and "any" are not supported for this model.` | ✓（auto で下書き → 2 周目 1,081 → 807 字） |
+| Gemini ネイティブ（3.8 Flash） | ✓ 808 字・`extra` あり | ✓ 808 → 572 字 |
+| xAI Responses（grok-4.7） | ✓ 804 字 | ✓ 804 → 117 字 |
+| OpenAI Responses（gpt-6-sol） | ✓ 508 字 | ✓ 508 → 70 字 |
+| **Meta Responses**（muse-spark-1.3） | **✓ に見えるが強制ではない** — アダプタは `tool_choice` を送らない（Spec 37:`auto` のみ受理）。指針の文だけで呼んだ | ✓ 516 → 326 字 |
+| Perplexity Responses（`perplexity/sonar` / `openai/gpt-5-mini`） | ✓ 681 字 / 2,677 字 | ✓ 681 → 291 / 2,677 → 2,185 字 |
+
+- **2 周目は全ワイヤで通った。** JSON を往復した `ChatMessage` は元と `==`（`extra` = 思考署名も含めて）で、
+  2 周目も 7 ワイヤすべてが `submit_draft` を呼んで下書きを縮めた（平文に落ちた例は 0）
+- **強制を受け付けないのは Anthropic（5 世代）と Meta の 2 つ。** 本番のコードで `Specific` / `Required` を送る
+  経路は今まで 1 本も無い（`orchestrator` の grep は 0 件。`emit_plan` はテストの fixture だけ）ので、
+  **`forceDraft` が本番で初めて強制を送る経路になる**。D5 のフォールバックの条件はワイヤで決める
+- **固有スキルがテンプレートから付いてくる。** 1 回目の gpt-6-sol は `prompt=11854`（`openaiWebSearch` と
+  `openaiReasoningPro` が ON）で、**外すと 170**。grok-4.7 は 3,008 → 1,452（`xaiWebSearch` / `xaiXSearch`）。
+  **生成役からは固有スキルを外す**（D2）
+- 条件側で撃てなかったもの（測定の外）: `claude_sonnet` / `claude_fable5` / `cloud_opus_5` の鍵は無効（401）/
+  `perplexity` テンプレートのモデル `perplexity/deepseek-v4-flash-0731` は Perplexity 側が受け付けない
+  （`model ... is not supported`）/ gpt-6-sol を OpenAI 互換で撃つと `max_tokens` が拒否される —
+  `uses_max_completion_tokens` が `gpt-5` と o 系の名前しか見ていない（**別件**。村の実運用は Responses ワイヤ）
 
 ## Goal
 
@@ -81,6 +114,9 @@
 - 前回の選択は `localStorage` の `fuseforks.assist.v1`（`{ templateId }`）に覚える。一覧に無い id・`use_tools` が
   偽になった id は捨てる
 - 生成役は**人格・履歴・Memory・村のシステムプロンプトを持たない**。渡すのは D6 の指針と D7 の文脈だけ
+- **テンプレートの固有スキル（検索・pro モード・URL 取得など）はすべて外して呼ぶ**（P0 実測 — gpt-6-sol は
+  外すだけで入力が 11,854 → 170 トークン）。生成役は調べものをしない（文脈は D7 でコアが渡す）。
+  思考段階（`effort`）はテンプレートのまま使う — 強いモデルを選ぶ理由の側
 - **村の予算（`tokenBudget`）と個体の累計には入れない。** 村の仕事の因果ではなく人が押した操作で、判断役には
   そもそも個体の累計が無い。使用量の置き場は D10 の 1 つ
 
@@ -151,9 +187,11 @@ type AssistReply = {
 - **`forceDraft: false` のとき `tool_choice` は auto。`true` のときは `Specific("submit_draft")` で必ず下書きにする。**
   あわせてコアが**定型の利用者発話**（「ここまでの情報で下書きを出してください。分からない点は仮定として
   notes に書いてください」。村の言語）を足す。ボタンの意味を型で運ぶので、文言の一致に頼らず言語にも依らない
-  - 強制した呼び出しを受け付けないワイヤ・モデルの組み合わせがありうる（Anthropic は思考と強制の併用に
-    制約がある）。**P0 で 7 ワイヤに撃って確かめ**、受け付けないものは auto + 定型発話へ落とす（落としたことは
-    `assist:` 行の `forced=fallback` で出す）
+  - **強制を送らないワイヤは Anthropic と Meta の 2 つ**（P0 実測 — Anthropic は 400、Meta はアダプタが
+    `tool_choice` を送らない）。この 2 つでは auto + 定型発話で呼び、`assist:` 行に `forced=fallback` と出す。
+    判定は `Provider` の述語 1 本（ワイヤで決める。モデル名では決めない）
+  - フォールバックでも下書きが返らなかった（生成役が質問を返した）ときは `type: "question"` で返す — 強制できない
+    ワイヤで「必ず下書き」を約束しない。P0 では 2 つとも定型の依頼で下書きを返した
 - 下書きの後も会話は続けられる（「もっと短く」→ 新しい下書き）
 
 ### D6. 指針（生成役のシステムプロンプト）— 種類ごとに Fuseforks 用に書く
@@ -238,6 +276,10 @@ skill-creator の**手順**（意図の確認 → 質問 → 下書き → 直�
   `cacheWrite1h` / `completion` / `reasoning` / `outcome`。**本文・会話・下書きは入れない**
   - 統計画面では個体の行とは別に「AI 作成補助（モデル）」の行として出し、合計と `≈ $` に入れる
     （単価の当て方は `Record::Turn` と同じ `pricing.rs`）
+  - **`StatsReport` の既存の欄の意味は変えない**（`totals` はターンだけ・`turns` は数え方が違う）。
+    足すのは `assist: { rows: [{ model, templateId, calls, prompt, cached, completion, reasoning, cacheWrite,
+    cacheWrite1h, effective }], total }` の 1 欄（加算。`#[serde(default)]`）。スコープと期間の規則は `turn` と同じ
+    （`session` はその会話、`all` は `tsMs` の半開区間）。**画面の総計と `≈ $` は `totals + assist.total`** で組む
   - 履歴の入力にはならない（`restore_histories` / `tail_messages` / `fork_points` は読まない — `Turn` と同じ）
   - 会話を開いていない（保存先が開けない）ときは書けない。そのときはログ行だけになり、WARN を 1 行出す
   - **互換**: 旧い版は `kind: "assist"` で `records()` が落ちる（前提の実測の最後の点。`turn` と同じ位置づけ）
@@ -282,7 +324,7 @@ SKILL を日本語の村で書く、は正当な使い方（Spec 35 P5 — 偏�
 
 ## Tasks
 
-### P0 — 測ってから凍結する
+### P0 — 測ってから凍結する（**2026-09-30 完了。上の「P0 実測」が正**）
 - **`Specific("submit_draft")` を 7 ワイヤ（OpenAI 互換 / Anthropic / Gemini / xAI / OpenAI / Meta / Perplexity の
   Responses）に撃つ** — 受け付けるか、思考との併用で 400 になるか。受け付けない組み合わせを D5 の
   フォールバックの条件として凍結する

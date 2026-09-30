@@ -245,13 +245,20 @@ enums:
         title は自動生成 (最初のユーザー発話の先頭 30 字)。
         parentId / forkedAtSeq は fork で生まれたときだけ入る。
         「最新」の判定は **updatedAt** で行う (session_id の辞書順に依存しない)。
-      Record は **4 種別で閉じる** (kind の閉じた列挙。~~3 種別~~ → **Spec 39 P0 で
-      turn を追加**・2026-08-16):
+      Record は **5 種別で閉じる** (kind の閉じた列挙。~~3 種別~~ → **Spec 39 P0 で
+      turn を追加**・2026-08-16 → ~~4 種別~~ → **Spec 63 P0 で assist を追加**・2026-09-30):
         message  : AgentMessage **丸ごと** (grounding / coRecipients も含む —
                    再開後の表示に要る)
         exchange : { agentId, sent, replied } — 履歴 1 往復。
                    **sent は実際に送った文字列そのもの** (#45 の規律を保存側へ延長)
         summary  : { agentId, text, coversUpToSeq } — 要約 1 本
+        assist   : { tsMs, kind, model, templateId, prompt, cached, cacheWrite,
+                     cacheWrite1h, completion, reasoning, outcome } — AI 下書き補助の
+                   LLM 呼び出し 1 回ぶんの使用量 (Spec 63 D10)。**本文・会話・下書きは
+                   入れない**。開いている会話へ書く。**履歴の入力にはならない**
+                   (restore_histories / tail_messages / fork_points は読まない — turn と同じ)。
+                   互換の向きは turn と同じ (新しい版は旧い記録を読める / 旧い版は
+                   kind: "assist" で records() が落ちる)
         turn     : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached,
                      completion, reasoning, cacheWrite, cacheWrite1h,
                      model, backend, elapsedMs }
@@ -626,6 +633,12 @@ enums:
           byStop:  [{ stop, code?, count }],      # failed は CODE ごとに分ける
           series:  Option<{ points: [{ tsMs, agentId, effective, prompt, completion, stop }],
                             dropped: u32 }>,      # session のみ。all では null
+          assist:  { rows: [{ model, templateId, calls, prompt, cached, completion, reasoning,
+                              cacheWrite, cacheWrite1h, effective }],
+                     total: 同じ欄 },              # Spec 63 D10。加算 (#[serde(default)])。
+                                                  # **totals はターンだけのまま** (意味を変えない)。
+                                                  # 画面の総計と ≈ $ は totals + assist.total で組む。
+                                                  # スコープと期間の規則は turn と同じ
         }
         Slice { turns, failed, prompt, cached, completion, reasoning,
                 cacheWrite, cacheWrite1h, effective,
@@ -2451,6 +2464,28 @@ entities:
       order: u32                    # 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立
       enabled: bool                 # 利用者の有効/無効 (左ペインのトグル。P4 の実機で追加)。欄が無ければ true
                                     # で読む (既存の判断役を止めない)。偽なら JudgeStatus は最初に disabled
+
+  AssistTarget:
+    description: |
+      AI 下書き補助 (Spec 63) の対象。IPC assist_draft の引数。詳細は assist_contract。
+    fields:
+      kind: skill | construct | judge   # skill / construct は agents/<id>/、judge は judges/<id>/judge.toml
+      id: AgentId                   # サーヴァントか判断役。欄名は種類に依らず id
+
+  AssistReply:
+    description: |
+      assist_draft の返り値 (Spec 63 D4)。appended は**コアが作ったメッセージ**で、フロントは
+      中身を解釈せず逐語で保持し、次の呼び出しの history の末尾へ足して送り返す。
+    fields:
+      appended: ChatMessage[]       # 今回の利用者の発話 + コアが作ったメッセージ (不透明。ToolCall.extra を含む)
+      type: question | draft
+      text: String | null           # question では質問の本文 (必須)。draft では生成役が添えた本文
+      content: String               # draft のみ。下書き
+      notes: String | null          # draft のみ。submit_draft の notes (仮定・未確認点)
+      draftChars: u32               # draft のみ。content のコードポイント数
+      validation: "null | {valid: true} | {valid: false, location, message}"
+                                    # draft のみ。null = skill / construct (検査しない)。判別共用体 1 つ
+      attempts: u32                 # draft のみ。検証の輪の回数 (skill / construct は 1)
 
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
@@ -5766,6 +5801,76 @@ conversation_termination:
     アーカイブ済み) / 条件を構造で書く / 汎用の式言語を埋め込む / Choice の上位 k 件へ撒く (確率は
     「どれか 1 つ」の前提の迷い方。複数へは宛先ごとの Noul) / Score の q を期待値にする (確率の 90% が
     最上段でも size >= 3 が偽になる — P0 実測) / 送る前の字数の事前検査 / confidence を条件に書かせる
+
+  assist_contract: |
+    AI による下書き補助 = SKILL.md / Construct.md / judge.toml の下書きを、利用者が選んだモデル
+    テンプレートとのヒアリングで作る部品 (Spec 63 rev3、2026-09-30 凍結)。**本節は実装より先に
+    凍結した契約で、着地は P1〜P4。押さなければ 1 バイトも外へ出ず、村の挙動はバイト等価。**
+
+    不変条件:
+      1. **書き込みの経路を増やさない。** 下書きは編集中の本文へ流し込むだけで、保存は既存の
+         保存ボタン / Ctrl+S (writeConfig / saveJudgeFile) が人の操作で行う。自動保存は無い
+      2. **入口は 3 箇所だけ** — MarkdownEditor の SKILL / Construct タブ (editable のとき) と
+         JudgeDialog。Memory / mcp.json / run.json / 条例 / 役職の Construct には無い。
+         **村の会話 (サーヴァントへの依頼) から作らせない** — 書き込み先が file の囲いの外で、
+         開けると個体が別の個体の設定を書き換えられる経路になる
+      3. **生成役はダイアログで選ぶテンプレート** (利用者裁定)。選べるのは use_tools が真のもの
+         だけ (偽は disabled + 理由)。前回の選択は localStorage の fuseforks.assist.v1 ({ templateId })。
+         生成役は人格・履歴・Memory・村のシステムプロンプトを持たない。**テンプレートの固有スキル
+         (検索・pro モード・URL 取得など) はすべて外して呼ぶ** (P0 実測: gpt-6-sol は 11,854 → 170
+         入力トークン)。effort はテンプレートのまま
+      4. **会話の履歴はコアが作ったメッセージを逐語で往復する。** assist_draft は状態を持たず、
+         返り値の appended (ChatMessage[]。ToolCall.extra = 思考署名を含む) をフロントは解釈せず
+         保持して次の history の末尾へ足す。フロントが作るのは利用者の発話だけ。コアは受け取った
+         履歴の**形だけ**を検査する (役割 / 最後が user / ツール結果が直前の呼び出しと対) — 崩れて
+         いれば送らずに拒否。P0 実測: 7 ワイヤすべてで JSON 往復後の ChatMessage は元と == で、
+         2 周目も submit_draft で下書きを縮めた
+      5. **質問と下書きは型で分ける。** 提示するツールは submit_draft { content, notes? } の 1 本。
+         呼び出しがあれば下書き / 無く本文があれば質問 / 両方なら下書き / どちらも無ければ empty。
+         本文の目印で分けない (Spec 08 の凍結と同じ理由)。下書きの呼び出しには**コアがツール結果を
+         必ず対で付ける** (村の言語の定型文。検査に落ちたら理由)
+      6. **「下書きを出して」は forceDraft で運ぶ** (文言の一致に頼らない)。真のとき、コアが村の言語の
+         定型の利用者発話を足し、tool_choice を Specific("submit_draft") にする。**Anthropic と Meta の
+         ワイヤでは強制を送らず** auto + 定型発話 (P0 実測: Anthropic は 400「tool_choice: type "tool"
+         and "any" are not supported for this model」/ Meta のアダプタは tool_choice を送らない)。
+         判定は Provider の述語 1 本 (モデル名で決めない)。フォールバックで質問が返れば question で返す
+      7. **判断役の下書きは保存と同じ検査を通す** (JudgeFile::parse → missing_targets を関数 1 本に
+         切り出して save_judge_file と共有)。落ちたら同じ呼び出しの中でツール結果に location と
+         message を返して作り直させる。**上限 3 回** (コードの定数)。3 回とも落ちたら最後の下書きを
+         validation.valid = false で返す (反映はできるが保存は既存の検査が拒否する)。輪の途中で
+         質問が返れば question で返す (不正な下書きと理由は appended に残る)。LLM の失敗・空の応答は、
+         それまでに下書きがあれば最後の下書きを valid = false で返し、無ければ CoreError
+      8. **文脈はコアが対象の id から集め、種類ごとに閉じた範囲で渡す**:
+           skill / construct: 個体の表示名 / 有効な同梱ツールの名前 / MCP (接続中はツール名まで・
+             未接続は名前だけ) / 接続先の表示名 / 村の言語 / 対になるファイルの保存済み本文
+             (SKILL なら Construct、逆も)。**渡さない**: Memory.md / 条例 / 会話ログ / 役職名
+           judge: 判断役の名前 / 接続先に選べるサーヴァントの ID・表示名・役職名 / 村の言語。
+             **渡さない**: 各サーヴァントの Construct・SKILL / 条例 / 会話ログ
+         プロンプトは「村の事実 (コアが集めたもの)」と「利用者が書いたもの」の 2 区画に分ける。
+         current (編集中の本文。未保存の変更を含む) は**フロントから受け取る唯一の本文**で、後者の
+         区画に見出しを付けて入れる (区画は生成役の取り違えを防ぐため)
+      9. **指針は Fuseforks 用に自前で書く** (skill-creator の手順は借りるが本文は写さない)。
+         **この村の SKILL.md は毎ターン全文がプロンプトに入る** (発火条件も前付けも読まない) ので、
+         description / 発火条件 / 前付けは書かせない。Construct は役職のラベルに寄せず振る舞いで
+         書かせる (Spec 14 D6)。判断役の文法の正はコアのパーサー
+     10. **使用量の置き場は Record::Assist の 1 つ** (session_store の 5 種別目)。LLM 呼び出し 1 回ごとに
+         1 件、開いている会話へ。統計画面の StatsReport.assist と ≈ $ に入る。**村の予算
+         (tokenBudget) と個体の累計には入れない** (村の仕事の因果ではなく人の操作。判断役には個体の
+         累計が無い)。会話を開いていなければログ行だけで WARN を 1 行
+     11. **計器 assist: を LLM 呼び出し 1 回ごとに 1 行**: kind / model / attempt / forced=no|yes|fallback /
+         outcome=question|draft|invalid|draft_invalid|empty|failed / prompt / cached / total / reasoning /
+         current_chars / draft_chars。**本文・会話・下書きは出さない** (#71)。失敗でも LlmError::usage()
+         が Some なら数字を出し Record::Assist にも書く (#103)
+     12. **言語**: 指針とコアの定型文は村の language。下書きの言語も既定は村の言語で、利用者が会話の
+         中で別の言語を指定したらそれに従う
+     13. **外へ送るもの**: 送り先は選んだテンプレートの接続先だけ (新しい送り先は増えない)。送る中身は
+         ヒアリングの会話 / current / 8 の文脈。押したときだけ (ダイアログを開いただけでは送らない)。
+         PRIVACY 4-1 に追記する
+
+    **退けた形**: 村の会話から頼んでサーヴァントに書かせる / 自動保存 / 対象の個体のモデルで書く /
+    評価の輪 (試しに走らせて比べる) / skill-creator の書き方の指南をそのまま渡す / 本文の目印で質問と
+    下書きを分ける / 履歴をフロントが平文で組み立てる / 「下書きを出して」を文言の一致で判定する /
+    使用量を対象の個体の累計へ積む / 固有スキルを付けたまま呼ぶ
 
 # ---------------------------------------------------------------------------
 concurrency:
