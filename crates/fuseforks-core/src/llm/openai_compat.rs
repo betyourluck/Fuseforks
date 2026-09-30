@@ -84,15 +84,29 @@ fn is_o_series(model: &str) -> bool {
     model.starts_with('o') && model.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
 }
 
+/// OpenAI の gpt-5 以降の世代か（gpt-5.6-terra / gpt-6-sol ...）。
+///
+/// `gpt-` の直後の数字を世代として読む。接頭辞 `gpt-5` で判定していたので
+/// gpt-6 系が漏れ、`max_tokens` を送って 400 になった（2026-09-30 Spec 63 P0、
+/// gpt-6-sol）。**数字で読むのは次の世代で同じ穴を開けないため。**
+/// `gpt-oss-120b` は直後が数字でないので世代を持たず、`gpt-4o` は 4 で外れる。
+fn is_gpt5_or_later(model: &str) -> bool {
+    model
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 5)
+}
+
 /// 出力上限をどちらの欄名で送るかを決める（純関数）。
 ///
-/// gpt-5 系と o 系は思考トークンを含めて上限を管理する方式へ移っており、
+/// gpt-5 以降と o 系は思考トークンを含めて上限を管理する方式へ移っており、
 /// 旧欄 `max_tokens` を送ると 400 `unsupported_parameter` で拒否する
-/// （2026-08-06 実機、gpt-5.6-luna）。一方で互換サーバ（llama.cpp / vLLM /
-/// gpt-oss 系）には新欄 `max_completion_tokens` を知らないものがあるため、
-/// 全面的な置き換えはできない。`reasoning_effort` と同じくモデル名で送り分ける。
+/// （2026-08-06 実機 gpt-5.6-luna / 2026-09-30 実機 gpt-6-sol）。一方で互換サーバ
+/// （llama.cpp / vLLM / gpt-oss 系）には新欄 `max_completion_tokens` を知らないものが
+/// あるため、全面的な置き換えはできない。`reasoning_effort` と同じくモデル名で送り分ける。
 pub fn uses_max_completion_tokens(model: &str) -> bool {
-    model.starts_with("gpt-5") || is_o_series(model)
+    is_gpt5_or_later(model) || is_o_series(model)
 }
 
 /// canonical の 1 発話を OpenAI 互換の形へ写す。
@@ -208,7 +222,11 @@ pub fn reasoning_effort(
     //
     // **ツールを送らない周では触らない。** 制約は併用に掛かっており思考自体では
     // ないので、一律に止めるとツールを持たない個体の思考まで殺す。
-    if model.starts_with("gpt-5") {
+    //
+    // gpt-6 系も同じ扱いにする。**ただし gpt-6 でこの 400 を見たことは無い** —
+    // 2026-09-30 の実機は `max_tokens` の 400 で先に止まった（400 は 1 つずつしか
+    // 教えない）。同じ世代の推論モデルとして同じ制約だと推定している。
+    if is_gpt5_or_later(model) {
         return sends_function_tools.then_some("none");
     }
 
@@ -597,7 +615,7 @@ mod tests {
         );
     }
 
-    /// gpt-5 系には `max_completion_tokens`、それ以外には `max_tokens` を送る。
+    /// gpt-5 以降には `max_completion_tokens`、それ以外には `max_tokens` を送る。
     ///
     /// 旧欄は gpt-5 系 / o 系が 400 (`unsupported_parameter`) で拒否し、
     /// 新欄は知らない互換サーバがあるので、ワイヤには**常に片方だけ**現れる。
@@ -619,8 +637,12 @@ mod tests {
     fn uses_max_completion_tokens_targets_only_openai_new_families() {
         assert!(uses_max_completion_tokens("gpt-5.6-terra"));
         assert!(uses_max_completion_tokens("gpt-5.6-luna"));
+        // 2026-09-30 実機: 接頭辞 `gpt-5` の判定から漏れて `max_tokens` で 400。
+        assert!(uses_max_completion_tokens("gpt-6-sol"));
+        assert!(uses_max_completion_tokens("gpt-6.1"));
         assert!(uses_max_completion_tokens("o3-mini"));
         assert!(!uses_max_completion_tokens("gpt-4o"));
+        assert!(!uses_max_completion_tokens("gpt-4.1"));
         assert!(!uses_max_completion_tokens("grok-4.3"));
         assert!(!uses_max_completion_tokens("gpt-oss-120b"));
         assert!(!uses_max_completion_tokens("gemini-3.5-flash-lite"));
@@ -664,6 +686,10 @@ mod tests {
     #[test]
     fn reasoning_effort_targets_only_reasoning_models() {
         assert_eq!(reasoning_effort("gpt-4o", Some(Effort::High), true), None);
+        assert_eq!(reasoning_effort("gpt-oss-120b", Some(Effort::High), true), None);
+        // gpt-6 系は gpt-5 系と同じ扱い（ツールを送る周だけ none・送らない周は触らない）。
+        assert_eq!(reasoning_effort("gpt-6-sol", Some(Effort::High), true), Some("none"));
+        assert_eq!(reasoning_effort("gpt-6-sol", Some(Effort::High), false), None);
         assert_eq!(reasoning_effort("grok-4.3-mini", None, true), Some("none"));
         assert_eq!(reasoning_effort("grok-4.5", None, true), Some("low"));
         // 未対応の段階は high へ丸める。
