@@ -10,5 +10,8 @@
 //! 単価の取得先も付いてこない、を置き場で成立させている。
 
 pub mod jev_settings;
+// 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
+// **公開しているのは扉の部品であって、扉そのものではない。**
+pub mod mcp_server;
 pub mod pricing_source;
 pub mod probe_approvals;

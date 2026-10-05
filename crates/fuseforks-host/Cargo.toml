@@ -16,6 +16,24 @@ tokio.workspace = true
 # core と同じ workspace 依存なので、依存の木は増えない（実測で確認）。
 reqwest.workspace = true
 
+# 外の LLM から依頼を受ける扉（Spec 25）。**MCP サーバー側は村を開いたプロセスに住む** —
+# 村は 1 プロセスの中にしかおらず（村の排他ロック / redb の単一書き手 /
+# 稼働個体はメモリ）、別プロセスのサーバーは構造的に成立しない。
+rmcp.workspace = true
+# `StreamableHttpService` は tower の Service なので、載せる HTTP サーバーが要る。
+# 既定 feature は落とす（json / query / form は 1 つも使わない）。
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+# 扉の合鍵の生成。v4 = 122 bit の乱数で、既に依存ツリーに居る。
+uuid.workspace = true
+# 扉の停止（rmcp の StreamableHttpServerConfig が CancellationToken を取る）。
+# 既にツリーに居るので新規クレートはゼロ。
+tokio-util = { version = "0.7", default-features = false }
+
+[dev-dependencies]
+# 合鍵の層を要求 1 本で叩く（ServiceExt::oneshot）。既にツリーに居るので新規はゼロ。
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tokio = { workspace = true, features = ["macros"] }
+
 [lints.rust]
 # GUI 層への逆依存を機械的に禁じるための最低限の衛生設定（core と同じ）。
 unsafe_code = "forbid"
