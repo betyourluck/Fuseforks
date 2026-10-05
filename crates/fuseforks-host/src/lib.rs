@@ -9,9 +9,14 @@
 //! **workspace の外**（`data_dir` 直下）に住む — 村を配っても扉は開かず、承認も
 //! 単価の取得先も付いてこない、を置き場で成立させている。
 
+pub mod boot;
 pub mod jev_settings;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
 // **公開しているのは扉の部品であって、扉そのものではない。**
 pub mod mcp_server;
+pub mod paths;
 pub mod pricing_source;
 pub mod probe_approvals;
+
+pub use boot::{build_host, Host, HostBootOptions, HostError};
+pub use paths::HostPaths;

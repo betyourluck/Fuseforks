@@ -501,13 +501,11 @@ mod tests {
     /// `apply` は HTTP クライアントを組むだけで送信しないが、`probe` は実際に
     /// 外へ出る。起動時に呼ぶ実装へ変わったら、押していないのに送信が起きる。
     ///
-    /// 走査先は今は GUI の `state.rs`（Spec 64 P1 の途中）。組み立ての本体が
-    /// `build_host` へ移った時点で `src/boot.rs` に差し替える。
+    /// 走査先は `build_host`（`boot.rs`）— 起動の配線はそこ 1 実装（Spec 64 P1）。
     #[test]
     fn startup_installs_the_scorer_but_never_probes() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps/gui-tauri/src-tauri/src/state.rs");
-        let src = std::fs::read_to_string(path).expect("state.rs を読めること");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/boot.rs");
+        let src = std::fs::read_to_string(path).expect("boot.rs を読めること");
         assert!(
             src.contains("jev_settings::apply"),
             "起動時に採点器を差し込んでいない"

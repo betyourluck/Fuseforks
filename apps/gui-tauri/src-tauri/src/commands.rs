@@ -53,13 +53,13 @@ pub fn boot_status(app: tauri::AppHandle) -> BootStatus {
 /// 登録済みエージェントを表示順で返す。
 #[tauri::command]
 pub async fn list_agents(state: State<'_, AppState>) -> CoreResult<Vec<AgentSnapshot>> {
-    Ok(state.orchestrator.snapshots().await)
+    Ok(state.host.orchestrator.snapshots().await)
 }
 
 /// トポロジーの全辺を返す。
 #[tauri::command]
 pub async fn list_topology(state: State<'_, AppState>) -> CoreResult<Vec<TopologyEdge>> {
-    Ok(state.orchestrator.edges().await)
+    Ok(state.host.orchestrator.edges().await)
 }
 
 /// 接続マップの保存済みノード座標を返す。
@@ -67,7 +67,7 @@ pub async fn list_topology(state: State<'_, AppState>) -> CoreResult<Vec<Topolog
 pub async fn list_topology_positions(
     state: State<'_, AppState>,
 ) -> CoreResult<HashMap<AgentId, TopologyPosition>> {
-    Ok(state.orchestrator.topology_positions().await.into_iter().collect())
+    Ok(state.host.orchestrator.topology_positions().await.into_iter().collect())
 }
 
 /// メッセージログを返す。`limit` 指定時は末尾からその件数。
@@ -76,7 +76,7 @@ pub async fn list_messages(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> CoreResult<Vec<AgentMessage>> {
-    Ok(state.orchestrator.message_log(limit).await)
+    Ok(state.host.orchestrator.message_log(limit).await)
 }
 
 /// plan 波の記録を返す（Spec 08 — 波ペイン。古い順・実行中の波も含む）。
@@ -84,7 +84,7 @@ pub async fn list_messages(
 pub async fn list_plan_waves(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<fuseforks_core::plan::PlanWaveRecord>> {
-    Ok(state.orchestrator.list_plan_waves().await)
+    Ok(state.host.orchestrator.list_plan_waves().await)
 }
 
 /// ツール呼び出し 1 件の中身を返す（Spec 57 — 会話ペインの行を開いたとき）。
@@ -96,19 +96,19 @@ pub async fn get_tool_call(
     state: State<'_, AppState>,
     call_id: u64,
 ) -> CoreResult<Option<fuseforks_core::tool_calls::ToolCallDetail>> {
-    Ok(state.orchestrator.tool_call(call_id))
+    Ok(state.host.orchestrator.tool_call(call_id))
 }
 
 /// エージェント別のトークン消費量を返す（Rayon で集計）。
 #[tauri::command]
 pub async fn token_usage(state: State<'_, AppState>) -> CoreResult<HashMap<AgentId, u64>> {
-    state.orchestrator.token_usage_by_agent().await
+    state.host.orchestrator.token_usage_by_agent().await
 }
 
 /// 登録済みモデルテンプレートを返す。
 #[tauri::command]
 pub async fn list_model_templates(state: State<'_, AppState>) -> CoreResult<Vec<ModelTemplate>> {
-    Ok(state.orchestrator.templates().await)
+    Ok(state.host.orchestrator.templates().await)
 }
 
 // ---- 定義の編集 -------------------------------------------------------------
@@ -119,7 +119,7 @@ pub async fn create_agent(
     state: State<'_, AppState>,
     spec: AgentSpec,
 ) -> CoreResult<AgentSnapshot> {
-    state.orchestrator.create_agent(spec).await
+    state.host.orchestrator.create_agent(spec).await
 }
 
 /// エージェント定義を差し替える。
@@ -128,13 +128,13 @@ pub async fn update_agent(
     state: State<'_, AppState>,
     spec: AgentSpec,
 ) -> CoreResult<AgentSnapshot> {
-    state.orchestrator.update_agent(spec).await
+    state.host.orchestrator.update_agent(spec).await
 }
 
 /// エージェントを削除する。稼働中なら停止してから消す。
 #[tauri::command]
 pub async fn delete_agent(state: State<'_, AppState>, agent_id: AgentId) -> CoreResult<()> {
-    state.orchestrator.delete_agent(&agent_id).await
+    state.host.orchestrator.delete_agent(&agent_id).await
 }
 
 /// 接続先を差し替える（グラフ上の辺の付け替え）。
@@ -144,13 +144,13 @@ pub async fn set_connections(
     agent_id: AgentId,
     targets: Vec<AgentId>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_connections(&agent_id, targets).await
+    state.host.orchestrator.set_connections(&agent_id, targets).await
 }
 
 /// 左ペインの並び順を確定する。
 #[tauri::command]
 pub async fn reorder_agents(state: State<'_, AppState>, order: Vec<AgentId>) -> CoreResult<()> {
-    state.orchestrator.reorder_agents(&order).await
+    state.host.orchestrator.reorder_agents(&order).await
 }
 
 /// 接続マップ上で移動したノードの座標を保存する。
@@ -161,7 +161,7 @@ pub async fn set_topology_position(
     position: TopologyPosition,
 ) -> CoreResult<()> {
     state
-        .orchestrator
+        .host.orchestrator
         .set_topology_position(&agent_id, position)
         .await
 }
@@ -172,7 +172,7 @@ pub async fn upsert_model_template(
     state: State<'_, AppState>,
     template: ModelTemplate,
 ) -> CoreResult<()> {
-    state.orchestrator.upsert_template(template).await
+    state.host.orchestrator.upsert_template(template).await
 }
 
 /// モデルテンプレートを削除する。参照中のエージェントが居れば拒否される。
@@ -181,7 +181,7 @@ pub async fn delete_model_template(
     state: State<'_, AppState>,
     template_id: ModelTemplateId,
 ) -> CoreResult<()> {
-    state.orchestrator.remove_template(&template_id).await
+    state.host.orchestrator.remove_template(&template_id).await
 }
 
 // ---- 役職 (Spec 14) ---------------------------------------------------------
@@ -189,7 +189,7 @@ pub async fn delete_model_template(
 /// 登録済みの役職一覧。
 #[tauri::command]
 pub async fn list_roles(state: State<'_, AppState>) -> CoreResult<Vec<AgentRole>> {
-    Ok(state.orchestrator.list_roles().await)
+    Ok(state.host.orchestrator.list_roles().await)
 }
 
 /// 役職を登録または更新する。
@@ -199,7 +199,7 @@ pub async fn list_roles(state: State<'_, AppState>) -> CoreResult<Vec<AgentRole>
 /// 参照しているバッジと顔ぶれだけ。
 #[tauri::command]
 pub async fn upsert_role(state: State<'_, AppState>, role: AgentRole) -> CoreResult<()> {
-    state.orchestrator.upsert_role(role).await
+    state.host.orchestrator.upsert_role(role).await
 }
 
 /// 役職を削除する。**参照中でも拒まない**（モデルテンプレートとの決定的な差）。
@@ -208,7 +208,7 @@ pub async fn upsert_role(state: State<'_, AppState>, role: AgentRole) -> CoreRes
 /// バッジと顔ぶれの `[...]` が消えるだけ（role_contract 凍結 5）。
 #[tauri::command]
 pub async fn delete_role(state: State<'_, AppState>, role_id: AgentRoleId) -> CoreResult<()> {
-    state.orchestrator.remove_role(&role_id).await
+    state.host.orchestrator.remove_role(&role_id).await
 }
 
 // ---- グループ（Spec 51） ----------------------------------------------------
@@ -216,63 +216,63 @@ pub async fn delete_role(state: State<'_, AppState>, role_id: AgentRoleId) -> Co
 /// グループの一覧（配列順 = 見出しの並び）。
 #[tauri::command]
 pub async fn list_groups(state: State<'_, AppState>) -> CoreResult<Vec<AgentGroup>> {
-    Ok(state.orchestrator.list_groups().await)
+    Ok(state.host.orchestrator.list_groups().await)
 }
 
 /// グループを新設する。**id はコアが発行する**（UUID v4・再発行しない）。
 #[tauri::command]
 pub async fn create_group(state: State<'_, AppState>, name: String) -> CoreResult<AgentGroup> {
-    state.orchestrator.create_group(&name).await
+    state.host.orchestrator.create_group(&name).await
 }
 
 /// 改名 / 全体 ▶ のスイッチ。既存のサーヴァントには何も起きない。
 #[tauri::command]
 pub async fn upsert_group(state: State<'_, AppState>, group: AgentGroup) -> CoreResult<()> {
-    state.orchestrator.upsert_group(group).await
+    state.host.orchestrator.upsert_group(group).await
 }
 
 /// グループを削除する。**個体の `groupId` には触らない**（`group_contract` 凍結 3 —
 /// 引けない id は無所属として描かれ、次に所属を書く操作で `null` へ正規化される）。
 #[tauri::command]
 pub async fn delete_group(state: State<'_, AppState>, group_id: AgentGroupId) -> CoreResult<()> {
-    state.orchestrator.remove_group(&group_id).await
+    state.host.orchestrator.remove_group(&group_id).await
 }
 
 /// 判断役の一覧と有効かどうか（Spec 62。有効の述語は読むたびにコアが求める）。
 #[tauri::command]
 pub async fn list_judges(state: State<'_, AppState>) -> CoreResult<Vec<fuseforks_core::judge::JudgeView>> {
-    Ok(state.orchestrator.judges().await)
+    Ok(state.host.orchestrator.judges().await)
 }
 
 /// 判断役を作る。**ID は画面が導く**（サーヴァントと同じ `deriveId`。衝突はコアも拒否する）。
 /// `judge.toml` が無ければ雛形を書く。
 #[tauri::command]
 pub async fn create_judge(state: State<'_, AppState>, spec: fuseforks_core::model::JudgeSpec) -> CoreResult<()> {
-    state.orchestrator.create_judge(spec).await
+    state.host.orchestrator.create_judge(spec).await
 }
 
 /// 判断役の表示名と並びを差し替える。
 #[tauri::command]
 pub async fn update_judge(state: State<'_, AppState>, spec: fuseforks_core::model::JudgeSpec) -> CoreResult<()> {
-    state.orchestrator.update_judge(spec).await
+    state.host.orchestrator.update_judge(spec).await
 }
 
 /// 判断役を消す（線・座標・`judges/<id>/` も）。
 #[tauri::command]
 pub async fn delete_judge(state: State<'_, AppState>, judge_id: AgentId) -> CoreResult<()> {
-    state.orchestrator.delete_judge(&judge_id).await
+    state.host.orchestrator.delete_judge(&judge_id).await
 }
 
 /// `judge.toml` の本文。**ID で受けてパスは受けない**（`ConfigFileKind` と同じ規律）。
 #[tauri::command]
 pub async fn read_judge_file(state: State<'_, AppState>, judge_id: AgentId) -> CoreResult<String> {
-    state.orchestrator.read_judge_file(&judge_id).await
+    state.host.orchestrator.read_judge_file(&judge_id).await
 }
 
 /// `judge.toml` を保存する。検査に落ちたら `INVALID_JUDGE_FILE` で拒否し、書かない。
 #[tauri::command]
 pub async fn save_judge_file(state: State<'_, AppState>, judge_id: AgentId, text: String) -> CoreResult<()> {
-    state.orchestrator.save_judge_file(&judge_id, &text).await
+    state.host.orchestrator.save_judge_file(&judge_id, &text).await
 }
 
 /// 「試す」— 編集中の本文とサンプルの文で判定だけを行う。**配送しない。押したときだけ外へ出る。**
@@ -282,7 +282,7 @@ pub async fn try_judge(
     text: String,
     message: String,
 ) -> CoreResult<fuseforks_core::orchestrator::JudgeTrial> {
-    state.orchestrator.try_judge(&text, &message).await
+    state.host.orchestrator.try_judge(&text, &message).await
 }
 
 /// AI 下書き補助の 1 往復（Spec 63）。**押したときだけ外へ出る**（選んだテンプレートの接続先へ）。
@@ -292,7 +292,7 @@ pub async fn assist_draft(
     state: State<'_, AppState>,
     req: fuseforks_core::assist::AssistRequest,
 ) -> CoreResult<fuseforks_core::assist::AssistReply> {
-    state.orchestrator.assist_draft(req).await
+    state.host.orchestrator.assist_draft(req).await
 }
 
 /// 動かしたカードの所属（`commit_agent_drop` の `regroup`）。
@@ -313,7 +313,7 @@ pub async fn commit_agent_drop(
     regroup: Option<DropRegroup>,
 ) -> CoreResult<()> {
     state
-        .orchestrator
+        .host.orchestrator
         .commit_agent_drop(
             &order,
             regroup.as_ref().map(|r| (&r.id, r.group_id.clone())),
@@ -330,7 +330,7 @@ pub async fn read_agent_config(
     agent_id: AgentId,
     kind: ConfigFileKind,
 ) -> CoreResult<String> {
-    state.orchestrator.read_config(&agent_id, kind).await
+    state.host.orchestrator.read_config(&agent_id, kind).await
 }
 
 /// 設定ファイルを書く。
@@ -342,7 +342,7 @@ pub async fn write_agent_config(
     content: String,
 ) -> CoreResult<()> {
     state
-        .orchestrator
+        .host.orchestrator
         .write_config(&agent_id, kind, &content)
         .await
 }
@@ -356,7 +356,7 @@ pub async fn set_model_credential(
     template_id: ModelTemplateId,
     secret: String,
 ) -> CoreResult<()> {
-    state.orchestrator.set_credential(&template_id, &secret).await
+    state.host.orchestrator.set_credential(&template_id, &secret).await
 }
 
 /// モデルテンプレートの API キーを資格情報ストアから削除する。
@@ -365,7 +365,7 @@ pub async fn clear_model_credential(
     state: State<'_, AppState>,
     template_id: ModelTemplateId,
 ) -> CoreResult<()> {
-    state.orchestrator.clear_credential(&template_id).await
+    state.host.orchestrator.clear_credential(&template_id).await
 }
 
 /// API キーが登録済みかどうかだけを返す。**値は返さない。**
@@ -376,13 +376,13 @@ pub async fn model_credential_exists(
     state: State<'_, AppState>,
     template_id: ModelTemplateId,
 ) -> CoreResult<bool> {
-    state.orchestrator.has_credential(&template_id)
+    state.host.orchestrator.has_credential(&template_id)
 }
 
 /// ワークスペースのパスを返す。「フォルダを開く」導線で使う。
 #[tauri::command]
 pub async fn workspace_path(state: State<'_, AppState>) -> CoreResult<String> {
-    Ok(state.workspace.display().to_string())
+    Ok(state.host.workspace.display().to_string())
 }
 
 // ---- 外の LLM から依頼を受ける扉（Spec 25） ------------------------------------
@@ -397,11 +397,11 @@ pub async fn mcp_host_status(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::mcp_server::McpHostStatus> {
     let last_error = state
-        .mcp_server_error
+        .host.mcp_server_error
         .lock()
         .map(|guard| guard.clone())
         .unwrap_or_default();
-    Ok(state.mcp_server.lock().await.status(last_error))
+    Ok(state.host.mcp_server.lock().await.status(last_error))
 }
 
 /// 扉の ON / OFF とポートを設定して、その場で反映する。
@@ -418,7 +418,7 @@ pub async fn set_mcp_host(
     enabled: bool,
     port: u16,
 ) -> CoreResult<crate::mcp_server::McpHostStatus> {
-    let mut manager = state.mcp_server.lock().await;
+    let mut manager = state.host.mcp_server.lock().await;
     let last_error = manager
         .apply(enabled, port)
         .await
@@ -426,7 +426,7 @@ pub async fn set_mcp_host(
             path: crate::mcp_server::CONFIG_FILE.to_owned(),
             source: std::io::Error::other(reason),
         })?;
-    if let Ok(mut slot) = state.mcp_server_error.lock() {
+    if let Ok(mut slot) = state.host.mcp_server_error.lock() {
         *slot = last_error.clone();
     }
     Ok(manager.status(last_error))
@@ -440,7 +440,7 @@ pub async fn set_mcp_host(
 pub async fn regenerate_mcp_host_token(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::mcp_server::McpHostStatus> {
-    let mut manager = state.mcp_server.lock().await;
+    let mut manager = state.host.mcp_server.lock().await;
     let last_error = manager
         .regenerate_token()
         .await
@@ -448,7 +448,7 @@ pub async fn regenerate_mcp_host_token(
             path: crate::mcp_server::CONFIG_FILE.to_owned(),
             source: std::io::Error::other(reason),
         })?;
-    if let Ok(mut slot) = state.mcp_server_error.lock() {
+    if let Ok(mut slot) = state.host.mcp_server_error.lock() {
         *slot = last_error.clone();
     }
     Ok(manager.status(last_error))
@@ -457,7 +457,7 @@ pub async fn regenerate_mcp_host_token(
 /// 外部クライアントの呼び名（未設定なら `null` = 名乗りをそのまま使う）。
 #[tauri::command]
 pub async fn get_external_name(state: State<'_, AppState>) -> CoreResult<Option<String>> {
-    Ok(state.orchestrator.external_name().await)
+    Ok(state.host.orchestrator.external_name().await)
 }
 
 /// 外部クライアントの呼び名を設定する。`null` で未設定へ戻す。
@@ -469,31 +469,31 @@ pub async fn set_external_name(
     state: State<'_, AppState>,
     name: Option<String>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_external_name(name.as_deref()).await
+    state.host.orchestrator.set_external_name(name.as_deref()).await
 }
 
 /// 外部クライアントのアイコン（WebP バイト列）を返す。未設定なら `null`。
 #[tauri::command]
 pub async fn get_external_icon(state: State<'_, AppState>) -> CoreResult<Option<Vec<u8>>> {
-    state.orchestrator.external_icon().await
+    state.host.orchestrator.external_icon().await
 }
 
 /// 外部クライアントのアイコンを設定する。検証は他のアイコンと同じ述語を通る。
 #[tauri::command]
 pub async fn set_external_icon(state: State<'_, AppState>, data: Vec<u8>) -> CoreResult<()> {
-    state.orchestrator.set_external_icon(&data).await
+    state.host.orchestrator.set_external_icon(&data).await
 }
 
 /// 外部クライアントのアイコンを削除する。
 #[tauri::command]
 pub async fn clear_external_icon(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.clear_external_icon().await
+    state.host.orchestrator.clear_external_icon().await
 }
 
 /// 外部からの依頼を受ける窓口（未設定なら `None`）。
 #[tauri::command]
 pub async fn get_reception(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {
-    Ok(state.orchestrator.reception().await)
+    Ok(state.host.orchestrator.reception().await)
 }
 
 /// 窓口を差し替える。`None` で未設定へ戻す。
@@ -502,7 +502,7 @@ pub async fn get_reception(state: State<'_, AppState>) -> CoreResult<Option<Agen
 /// 指定したエージェントが未登録の場合 [`CoreError::AgentNotFound`]。
 #[tauri::command]
 pub async fn set_reception(state: State<'_, AppState>, agent_id: Option<AgentId>) -> CoreResult<()> {
-    state.orchestrator.set_reception(agent_id.as_ref()).await
+    state.host.orchestrator.set_reception(agent_id.as_ref()).await
 }
 
 // ---- MCP ---------------------------------------------------------------------
@@ -510,7 +510,7 @@ pub async fn set_reception(state: State<'_, AppState>, agent_id: Option<AgentId>
 /// `mcp.json` の宣言を返す。
 #[tauri::command]
 pub async fn read_mcp_config(state: State<'_, AppState>) -> CoreResult<fuseforks_core::McpConfig> {
-    state.orchestrator.mcp_config().await
+    state.host.orchestrator.mcp_config().await
 }
 
 /// `mcp.json` を書き、その場で接続し直す。
@@ -519,13 +519,13 @@ pub async fn write_mcp_config(
     state: State<'_, AppState>,
     config: fuseforks_core::McpConfig,
 ) -> CoreResult<()> {
-    state.orchestrator.set_mcp_config(&config).await
+    state.host.orchestrator.set_mcp_config(&config).await
 }
 
 /// MCP サーバーへ接続し直す。設定を変えずに再試行したいときに使う。
 #[tauri::command]
 pub async fn reload_mcp(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.reload_mcp().await
+    state.host.orchestrator.reload_mcp().await
 }
 
 /// 各 MCP サーバーの接続状態。
@@ -533,7 +533,7 @@ pub async fn reload_mcp(state: State<'_, AppState>) -> CoreResult<()> {
 pub async fn list_mcp_servers(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<fuseforks_core::McpServerStatus>> {
-    Ok(state.orchestrator.mcp_statuses().await)
+    Ok(state.host.orchestrator.mcp_statuses().await)
 }
 
 /// エージェント別 MCP の状態（Spec 02）。停止中は「未接続」が返る。
@@ -542,7 +542,7 @@ pub async fn agent_mcp_status(
     state: State<'_, AppState>,
     agent_id: AgentId,
 ) -> CoreResult<fuseforks_core::AgentMcpStatus> {
-    state.orchestrator.agent_mcp_status(&agent_id).await
+    state.host.orchestrator.agent_mcp_status(&agent_id).await
 }
 
 // ---- 村の条例 ----------------------------------------------------------------
@@ -550,13 +550,13 @@ pub async fn agent_mcp_status(
 /// 村の条例（全エージェント共通の規則）を読む。未設定なら空文字。
 #[tauri::command]
 pub async fn read_ordinance(state: State<'_, AppState>) -> CoreResult<String> {
-    state.orchestrator.read_ordinance().await
+    state.host.orchestrator.read_ordinance().await
 }
 
 /// 村の条例を書く。次の発話からすべてのエージェントに反映される。
 #[tauri::command]
 pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> CoreResult<()> {
-    state.orchestrator.write_ordinance(&content).await
+    state.host.orchestrator.write_ordinance(&content).await
 }
 
 // ---- 村の黒板 ----------------------------------------------------------------
@@ -568,7 +568,7 @@ pub async fn write_ordinance(state: State<'_, AppState>, content: String) -> Cor
 pub async fn list_blackboard(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<fuseforks_core::BlackboardNote>> {
-    state.orchestrator.read_blackboard().await
+    state.host.orchestrator.read_blackboard().await
 }
 
 /// 付箋を 1 枚**ごみ箱へ移す**（2026-08-12 の UI 追加）。
@@ -590,7 +590,7 @@ pub async fn delete_blackboard_note(
     state: State<'_, AppState>,
 ) -> CoreResult<()> {
     state
-        .orchestrator
+        .host.orchestrator
         .delete_blackboard_note(&dir, note_state.as_deref(), &name)
         .await
 }
@@ -598,7 +598,7 @@ pub async fn delete_blackboard_note(
 /// 付箋を全部ごみ箱へ移す。戻り値は移した枚数。
 #[tauri::command]
 pub async fn clear_blackboard(state: State<'_, AppState>) -> CoreResult<usize> {
-    state.orchestrator.clear_blackboard().await
+    state.host.orchestrator.clear_blackboard().await
 }
 
 // ---- 村の設定（Spec 13） -------------------------------------------------------
@@ -606,7 +606,7 @@ pub async fn clear_blackboard(state: State<'_, AppState>) -> CoreResult<usize> {
 /// トークン予算の天井（実効トークン建て）。`null` = 天井なし。
 #[tauri::command]
 pub async fn get_token_budget(state: State<'_, AppState>) -> CoreResult<Option<u64>> {
-    Ok(state.orchestrator.token_budget().await)
+    Ok(state.host.orchestrator.token_budget().await)
 }
 
 /// トークン予算の天井を差し替える。メモリの `World` を変えてから `world.json` へ
@@ -617,13 +617,13 @@ pub async fn set_token_budget(
     state: State<'_, AppState>,
     ceiling: Option<u64>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_token_budget(ceiling).await
+    state.host.orchestrator.set_token_budget(ceiling).await
 }
 
 /// 委譲の待ち時間・秒（Spec 44）。`null` = 既定（600 秒）。
 #[tauri::command]
 pub async fn get_ask_timeout(state: State<'_, AppState>) -> CoreResult<Option<u64>> {
-    Ok(state.orchestrator.ask_timeout_secs().await)
+    Ok(state.host.orchestrator.ask_timeout_secs().await)
 }
 
 /// 委譲の待ち時間を差し替える。`deliver_and_wait` が呼び出しごとに `World` から
@@ -631,20 +631,20 @@ pub async fn get_ask_timeout(state: State<'_, AppState>) -> CoreResult<Option<u6
 /// 30..=3600 の外は `INVALID_ASK_TIMEOUT` で拒否（UI 側の入力検査との二重化）。
 #[tauri::command]
 pub async fn set_ask_timeout(state: State<'_, AppState>, secs: Option<u64>) -> CoreResult<()> {
-    state.orchestrator.set_ask_timeout(secs).await
+    state.host.orchestrator.set_ask_timeout(secs).await
 }
 
 /// 計画の確認を飛ばすスイッチ（Spec 53 D3）。**メモリだけの状態で、起動時は必ず偽**。
 #[tauri::command]
 pub async fn get_plan_review_bypass(state: State<'_, AppState>) -> CoreResult<bool> {
-    Ok(state.orchestrator.plan_review_bypass())
+    Ok(state.host.orchestrator.plan_review_bypass())
 }
 
 /// 計画の確認を飛ばすスイッチを切り替える。**`world.json` へは書かない**
 /// （再起動で OFF に戻る — plan_edit_window 凍結 11 (b)）。次のターンの窓の判定から効く。
 #[tauri::command]
 pub async fn set_plan_review_bypass(state: State<'_, AppState>, on: bool) -> CoreResult<()> {
-    state.orchestrator.set_plan_review_bypass(on);
+    state.host.orchestrator.set_plan_review_bypass(on);
     Ok(())
 }
 
@@ -654,7 +654,7 @@ pub async fn set_plan_review_bypass(state: State<'_, AppState>, on: bool) -> Cor
 pub async fn get_run_approval(
     state: State<'_, AppState>,
 ) -> CoreResult<fuseforks_core::command::RunApproval> {
-    Ok(state.orchestrator.run_approval())
+    Ok(state.host.orchestrator.run_approval())
 }
 
 /// コマンドの承認モードを切り替える（Spec 61）。`world.json` にも `run.json` にも書かない。
@@ -664,14 +664,14 @@ pub async fn set_run_approval(
     state: State<'_, AppState>,
     mode: fuseforks_core::command::RunApproval,
 ) -> CoreResult<()> {
-    state.orchestrator.set_run_approval(mode);
+    state.host.orchestrator.set_run_approval(mode);
     Ok(())
 }
 
 /// 束ねの既定の検証役（Spec 53）。`null` = なし（削除済みの個体も `null`）。
 #[tauri::command]
 pub async fn get_default_verifier(state: State<'_, AppState>) -> CoreResult<Option<AgentId>> {
-    Ok(state.orchestrator.default_verifier().await)
+    Ok(state.host.orchestrator.default_verifier().await)
 }
 
 /// 束ねの既定の検証役を差し替える。`null` で「なし」へ戻す。次の plan から効く。
@@ -683,13 +683,13 @@ pub async fn set_default_verifier(
     state: State<'_, AppState>,
     agent_id: Option<AgentId>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_default_verifier(agent_id.as_ref()).await
+    state.host.orchestrator.set_default_verifier(agent_id.as_ref()).await
 }
 
 /// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
 #[tauri::command]
 pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_core::world::Language> {
-    Ok(state.orchestrator.language().await)
+    Ok(state.host.orchestrator.language().await)
 }
 
 /// UI の表示言語を差し替える。未知の値は serde の段階で弾かれる。
@@ -699,7 +699,7 @@ pub async fn set_language(
     state: State<'_, AppState>,
     language: fuseforks_core::world::Language,
 ) -> CoreResult<()> {
-    state.orchestrator.set_language(language).await
+    state.host.orchestrator.set_language(language).await
 }
 
 // ---- コマンドの承認（Spec 20） ------------------------------------------------
@@ -709,7 +709,7 @@ pub async fn set_language(
 pub async fn list_command_requests(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<fuseforks_core::CommandPolicyView>> {
-    Ok(state.orchestrator.command_policies().await)
+    Ok(state.host.orchestrator.command_policies().await)
 }
 
 /// 判断待ちの 1 件を承認して `allow` へ入れる。
@@ -726,7 +726,7 @@ pub async fn approve_command(
     open: bool,
 ) -> CoreResult<fuseforks_core::ApprovalOutcome> {
     state
-        .orchestrator
+        .host.orchestrator
         .approve_command(&agent_id, &command, &args, open)
         .await
 }
@@ -741,7 +741,7 @@ pub async fn reject_command(
     open: bool,
 ) -> CoreResult<fuseforks_core::ApprovalOutcome> {
     state
-        .orchestrator
+        .host.orchestrator
         .reject_command(&agent_id, &command, &args, open)
         .await
 }
@@ -760,7 +760,7 @@ pub async fn resume_after_approval(
     state: State<'_, AppState>,
     agent_id: AgentId,
 ) -> CoreResult<()> {
-    state.orchestrator.resume_after_approval(&agent_id).await
+    state.host.orchestrator.resume_after_approval(&agent_id).await
 }
 // ---- 利用者（Spec 19） --------------------------------------------------------
 
@@ -770,7 +770,7 @@ pub async fn resume_after_approval(
 /// するため（`language` と違い、未設定が正常な状態）。
 #[tauri::command]
 pub async fn get_user_name(state: State<'_, AppState>) -> CoreResult<Option<String>> {
-    Ok(state.orchestrator.user_name().await)
+    Ok(state.host.orchestrator.user_name().await)
 }
 
 /// 利用者の呼び名を設定する。`null` で既定（「ユーザー」）へ戻す。
@@ -782,25 +782,25 @@ pub async fn set_user_name(
     state: State<'_, AppState>,
     name: Option<String>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_user_name(name.as_deref()).await
+    state.host.orchestrator.set_user_name(name.as_deref()).await
 }
 
 /// 利用者のアイコン（WebP バイト列）を返す。未設定なら `null`。
 #[tauri::command]
 pub async fn get_user_icon(state: State<'_, AppState>) -> CoreResult<Option<Vec<u8>>> {
-    state.orchestrator.user_icon().await
+    state.host.orchestrator.user_icon().await
 }
 
 /// 利用者のアイコンを設定する。検証はエージェントのアイコンと同じ述語を通る。
 #[tauri::command]
 pub async fn set_user_icon(state: State<'_, AppState>, data: Vec<u8>) -> CoreResult<()> {
-    state.orchestrator.set_user_icon(&data).await
+    state.host.orchestrator.set_user_icon(&data).await
 }
 
 /// 利用者のアイコンを削除する。
 #[tauri::command]
 pub async fn clear_user_icon(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.clear_user_icon().await
+    state.host.orchestrator.clear_user_icon().await
 }
 
 // ---- アイコン ----------------------------------------------------------------
@@ -811,7 +811,7 @@ pub async fn get_agent_icon(
     state: State<'_, AppState>,
     agent_id: AgentId,
 ) -> CoreResult<Option<Vec<u8>>> {
-    state.orchestrator.agent_icon(&agent_id).await
+    state.host.orchestrator.agent_icon(&agent_id).await
 }
 
 /// エージェントのアイコンを設定する。
@@ -824,7 +824,7 @@ pub async fn set_agent_icon(
     agent_id: AgentId,
     data: Vec<u8>,
 ) -> CoreResult<()> {
-    state.orchestrator.set_agent_icon(&agent_id, &data).await
+    state.host.orchestrator.set_agent_icon(&agent_id, &data).await
 }
 
 /// エージェントのアイコンを削除する。
@@ -833,7 +833,7 @@ pub async fn clear_agent_icon(
     state: State<'_, AppState>,
     agent_id: AgentId,
 ) -> CoreResult<()> {
-    state.orchestrator.clear_agent_icon(&agent_id).await
+    state.host.orchestrator.clear_agent_icon(&agent_id).await
 }
 
 // ---- ライフサイクルと配送 ---------------------------------------------------
@@ -841,13 +841,13 @@ pub async fn clear_agent_icon(
 /// エージェントを起動する。
 #[tauri::command]
 pub async fn start_agent(state: State<'_, AppState>, agent_id: AgentId) -> CoreResult<()> {
-    state.orchestrator.start_agent(&agent_id).await
+    state.host.orchestrator.start_agent(&agent_id).await
 }
 
 /// エージェントを停止する。
 #[tauri::command]
 pub async fn stop_agent(state: State<'_, AppState>, agent_id: AgentId) -> CoreResult<()> {
-    state.orchestrator.stop_agent(&agent_id).await
+    state.host.orchestrator.stop_agent(&agent_id).await
 }
 
 /// 飛行中のターンを協調的に打ち切る（Spec 10）。
@@ -856,14 +856,14 @@ pub async fn stop_agent(state: State<'_, AppState>, agent_id: AgentId) -> CoreRe
 /// 履歴も残る。飛行中のターンが無ければ何もしない（成功）。
 #[tauri::command]
 pub async fn interrupt_turn(state: State<'_, AppState>, agent_id: AgentId) -> CoreResult<()> {
-    state.orchestrator.interrupt_turn(&agent_id).await;
+    state.host.orchestrator.interrupt_turn(&agent_id).await;
     Ok(())
 }
 
 /// 村の飛行中ターンを全部打ち切る（Spec 10）。冪等 — 飛行中が 0 でも成功。
 #[tauri::command]
 pub async fn interrupt_all(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.interrupt_all().await;
+    state.host.orchestrator.interrupt_all().await;
     Ok(())
 }
 
@@ -882,7 +882,7 @@ pub async fn dispatch_plan_wave(
     verifier: Option<fuseforks_core::model::AgentId>,
 ) -> CoreResult<()> {
     state
-        .orchestrator
+        .host.orchestrator
         .dispatch_plan_wave(plan_id, tasks, verifier)
         .await
 }
@@ -890,7 +890,7 @@ pub async fn dispatch_plan_wave(
 /// 承認待ちの計画を破棄する（Spec 43）。配送は一度も起きない。
 #[tauri::command]
 pub async fn discard_plan_wave(state: State<'_, AppState>, plan_id: u64) -> CoreResult<()> {
-    state.orchestrator.discard_plan_wave(plan_id).await
+    state.host.orchestrator.discard_plan_wave(plan_id).await
 }
 
 /// トグルスイッチ 1 つで起動・停止を切り替える。
@@ -904,9 +904,9 @@ pub async fn set_agent_running(
     running: bool,
 ) -> CoreResult<AgentSnapshot> {
     let result = if running {
-        state.orchestrator.start_agent(&agent_id).await
+        state.host.orchestrator.start_agent(&agent_id).await
     } else {
-        state.orchestrator.stop_agent(&agent_id).await
+        state.host.orchestrator.stop_agent(&agent_id).await
     };
 
     match result {
@@ -915,7 +915,7 @@ pub async fn set_agent_running(
         Err(err) => return Err(err),
     }
 
-    state.orchestrator.snapshot(&agent_id).await
+    state.host.orchestrator.snapshot(&agent_id).await
 }
 
 /// ユーザー発話をエージェントへ投入する。
@@ -950,7 +950,7 @@ pub async fn send_user_message(
         });
     }
     state
-        .orchestrator
+        .host.orchestrator
         .send_user_message_full(
             &agent_id,
             &content,
@@ -972,7 +972,7 @@ pub async fn list_work_dir_files(
     state: State<'_, AppState>,
     agent_id: AgentId,
 ) -> CoreResult<fuseforks_core::WorkDirListing> {
-    state.orchestrator.list_work_dir_files(&agent_id).await
+    state.host.orchestrator.list_work_dir_files(&agent_id).await
 }
 
 /// 添付画像の実体（WebP バイト列）を返す（Spec 23。表示用）。
@@ -982,7 +982,7 @@ pub async fn read_attachment(
     state: State<'_, AppState>,
     id: String,
 ) -> CoreResult<Option<Vec<u8>>> {
-    state.orchestrator.read_attachment(&id).await
+    state.host.orchestrator.read_attachment(&id).await
 }
 
 /// IPC で届く添付画像 1 枚（Spec 23）。
@@ -1007,7 +1007,7 @@ pub struct AttachmentPayload {
 /// `SESSION_SWITCH_BLOCKED` で失敗する — 答えが別の会話へ着地するのを防ぐため。
 #[tauri::command]
 pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
-    state.orchestrator.reset_conversation().await
+    state.host.orchestrator.reset_conversation().await
 }
 
 // ---- 会話（セッション。Spec 12） ---------------------------------------------
@@ -1017,13 +1017,13 @@ pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
 pub async fn list_sessions(
     state: State<'_, AppState>,
 ) -> CoreResult<Vec<fuseforks_core::SessionSummary>> {
-    state.orchestrator.list_sessions().await
+    state.host.orchestrator.list_sessions().await
 }
 
 /// いま開いている会話の ID。保存先が開けていない村では空文字。
 #[tauri::command]
 pub async fn current_session(state: State<'_, AppState>) -> CoreResult<String> {
-    Ok(state.orchestrator.current_session())
+    Ok(state.host.orchestrator.current_session())
 }
 
 /// 保存されている会話を開き直す。
@@ -1032,7 +1032,7 @@ pub async fn current_session(state: State<'_, AppState>) -> CoreResult<String> {
 /// 答えが別の会話へ着地するのを防ぐため。
 #[tauri::command]
 pub async fn resume_session(state: State<'_, AppState>, session_id: String) -> CoreResult<()> {
-    state.orchestrator.resume_session(&session_id).await
+    state.host.orchestrator.resume_session(&session_id).await
 }
 
 /// 分岐できる地点（その会話のユーザー発話）を古い順で返す。
@@ -1041,7 +1041,7 @@ pub async fn list_fork_points(
     state: State<'_, AppState>,
     session_id: String,
 ) -> CoreResult<Vec<fuseforks_core::ForkPoint>> {
-    state.orchestrator.list_fork_points(&session_id).await
+    state.host.orchestrator.list_fork_points(&session_id).await
 }
 
 /// 会話を `at_seq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。
@@ -1051,13 +1051,13 @@ pub async fn fork_session(
     session_id: String,
     at_seq: u64,
 ) -> CoreResult<String> {
-    state.orchestrator.fork_session(&session_id, at_seq).await
+    state.host.orchestrator.fork_session(&session_id, at_seq).await
 }
 
 /// 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。
 #[tauri::command]
 pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> CoreResult<()> {
-    state.orchestrator.delete_session(&session_id).await
+    state.host.orchestrator.delete_session(&session_id).await
 }
 
 /// いまの会話を要約して続ける（Spec 12 P4）。要約できたサーヴァント数を返す。
@@ -1066,7 +1066,7 @@ pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> C
 /// = トークンで、`token_budget` の天井と競合する。
 #[tauri::command]
 pub async fn summarize_session(state: State<'_, AppState>) -> CoreResult<usize> {
-    state.orchestrator.summarize_session().await
+    state.host.orchestrator.summarize_session().await
 }
 
 /// 会話を JSONL で書き出し、**書き出し先のパス**を返す。
@@ -1080,7 +1080,7 @@ pub async fn export_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> CoreResult<String> {
-    let dir = state.workspace.join("exports");
+    let dir = state.host.workspace.join("exports");
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|err| CoreError::ConfigIo {
@@ -1088,7 +1088,7 @@ pub async fn export_session(
             source: err,
         })?;
     let dest = dir.join(format!("{session_id}.jsonl"));
-    state.orchestrator.export_session(&session_id, &dest).await?;
+    state.host.orchestrator.export_session(&session_id, &dest).await?;
     Ok(dest.display().to_string())
 }
 
@@ -1099,7 +1099,7 @@ pub async fn session_stats(
     state: State<'_, AppState>,
     scope: fuseforks_core::stats::StatsScope,
 ) -> CoreResult<fuseforks_core::stats::StatsReport> {
-    state.orchestrator.session_stats(scope).await
+    state.host.orchestrator.session_stats(scope).await
 }
 
 // ---- 予定（Spec 07） -----------------------------------------------------------
@@ -1179,18 +1179,18 @@ impl ScheduleView {
 /// 登録済みの予定（登録順）。
 #[tauri::command]
 pub async fn list_schedules(state: State<'_, AppState>) -> CoreResult<Vec<ScheduleView>> {
-    let village_id = state.orchestrator.village_id().await;
-    let reports = state.orchestrator.probe_reports().await;
-    let acceptance_reports = state.orchestrator.acceptance_reports().await;
+    let village_id = state.host.orchestrator.village_id().await;
+    let reports = state.host.orchestrator.probe_reports().await;
+    let acceptance_reports = state.host.orchestrator.acceptance_reports().await;
     Ok(state
-        .orchestrator
+        .host.orchestrator
         .schedules()
         .await
         .into_iter()
         .map(|task| {
             ScheduleView::of(
                 task,
-                &state.probe_approvals,
+                &state.host.probe_approvals,
                 &village_id,
                 &reports,
                 &acceptance_reports,
@@ -1217,7 +1217,7 @@ pub async fn create_schedule(
     options: Option<fuseforks_core::schedule::ScheduleOptions>,
 ) -> CoreResult<ScheduleView> {
     let options = options.unwrap_or_default();
-    let village_id = state.orchestrator.village_id().await;
+    let village_id = state.host.orchestrator.village_id().await;
 
     // **前判定と後判定の両方を承認する**（Spec 46 — 後判定も同じ承認機構に乗る。
     // 書いた人 = 承認した人、の理屈も同じ）。
@@ -1229,7 +1229,7 @@ pub async fn create_schedule(
         .chain(options.acceptance.as_ref().map(|acceptance| &acceptance.probe));
     for probe in probes {
         state
-            .probe_approvals
+            .host.probe_approvals
             .approve(probe.approval_key(&village_id))
             .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
                 path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
@@ -1238,24 +1238,24 @@ pub async fn create_schedule(
     }
 
     let task = state
-        .orchestrator
+        .host.orchestrator
         .create_schedule(to, message, recurrence, options)
         .await?;
 
     // 使われなくなった承認を落とす（**時計ではなく参照で**肥大化を止める）。
     // 失敗しても登録は成立しているので、警告に留める。
     if let Err(reason) = state
-        .probe_approvals
-        .retain_for(&state.orchestrator.schedules().await, &village_id)
+        .host.probe_approvals
+        .retain_for(&state.host.orchestrator.schedules().await, &village_id)
     {
         fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
 
-    let reports = state.orchestrator.probe_reports().await;
-    let acceptance_reports = state.orchestrator.acceptance_reports().await;
+    let reports = state.host.orchestrator.probe_reports().await;
+    let acceptance_reports = state.host.orchestrator.acceptance_reports().await;
     Ok(ScheduleView::of(
         task,
-        &state.probe_approvals,
+        &state.host.probe_approvals,
         &village_id,
         &reports,
         &acceptance_reports,
@@ -1281,7 +1281,7 @@ pub async fn update_schedule(
     options: Option<fuseforks_core::schedule::ScheduleOptions>,
 ) -> CoreResult<ScheduleView> {
     let options = options.unwrap_or_default();
-    let village_id = state.orchestrator.village_id().await;
+    let village_id = state.host.orchestrator.village_id().await;
 
     let probes = options
         .probe
@@ -1289,7 +1289,7 @@ pub async fn update_schedule(
         .chain(options.acceptance.as_ref().map(|acceptance| &acceptance.probe));
     for probe in probes {
         state
-            .probe_approvals
+            .host.probe_approvals
             .approve(probe.approval_key(&village_id))
             .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
                 path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
@@ -1298,24 +1298,24 @@ pub async fn update_schedule(
     }
 
     let task = state
-        .orchestrator
+        .host.orchestrator
         .update_schedule(&id, to, message, recurrence, options)
         .await?;
 
     // 差し替えで参照されなくなった旧コマンドの承認を落とす（create / delete と
     // 同じ掃除。失敗しても更新は成立しているので警告に留める）。
     if let Err(reason) = state
-        .probe_approvals
-        .retain_for(&state.orchestrator.schedules().await, &village_id)
+        .host.probe_approvals
+        .retain_for(&state.host.orchestrator.schedules().await, &village_id)
     {
         fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
 
-    let reports = state.orchestrator.probe_reports().await;
-    let acceptance_reports = state.orchestrator.acceptance_reports().await;
+    let reports = state.host.orchestrator.probe_reports().await;
+    let acceptance_reports = state.host.orchestrator.acceptance_reports().await;
     Ok(ScheduleView::of(
         task,
-        &state.probe_approvals,
+        &state.host.probe_approvals,
         &village_id,
         &reports,
         &acceptance_reports,
@@ -1335,8 +1335,8 @@ pub async fn update_schedule(
 /// 該当 ID が無い、probe を 1 つも持たない、または承認ファイルへ書けない場合。
 #[tauri::command]
 pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> CoreResult<()> {
-    let village_id = state.orchestrator.village_id().await;
-    let tasks = state.orchestrator.schedules().await;
+    let village_id = state.host.orchestrator.village_id().await;
+    let tasks = state.host.orchestrator.schedules().await;
     let task = tasks
         .iter()
         .find(|task| task.id == id)
@@ -1354,7 +1354,7 @@ pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> C
 
     for probe in probes {
         state
-            .probe_approvals
+            .host.probe_approvals
             .approve(probe.approval_key(&village_id))
             .map_err(|reason| fuseforks_core::CoreError::ConfigIo {
                 path: crate::probe_approvals::APPROVALS_FILE.to_owned(),
@@ -1376,13 +1376,13 @@ pub async fn approve_schedule_probe(state: State<'_, AppState>, id: String) -> C
 /// こちらは**予定だけ消えて承認が残るほうが危険**なので、予定を消してから掃除する。
 #[tauri::command]
 pub async fn delete_schedule(state: State<'_, AppState>, id: String) -> CoreResult<()> {
-    state.orchestrator.delete_schedule(&id).await?;
+    state.host.orchestrator.delete_schedule(&id).await?;
 
     // 掃除に失敗しても削除は成立しているので、警告に留める（create 側と同じ）。
-    let village_id = state.orchestrator.village_id().await;
+    let village_id = state.host.orchestrator.village_id().await;
     if let Err(reason) = state
-        .probe_approvals
-        .retain_for(&state.orchestrator.schedules().await, &village_id)
+        .host.probe_approvals
+        .retain_for(&state.host.orchestrator.schedules().await, &village_id)
     {
         fuseforks_core::note!("WARN probe approvals: 掃除に失敗しました: {reason}");
     }
@@ -1396,7 +1396,7 @@ pub async fn set_schedule_enabled(
     id: String,
     enabled: bool,
 ) -> CoreResult<()> {
-    state.orchestrator.set_schedule_enabled(&id, enabled).await
+    state.host.orchestrator.set_schedule_enabled(&id, enabled).await
 }
 
 /// 単価表の取得元の設定を返す（Spec 41）。**取りに行かない。**
@@ -1404,7 +1404,7 @@ pub async fn set_schedule_enabled(
 pub async fn pricing_source_status(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::pricing_source::PricingSourceView> {
-    let store = state.pricing_source.lock().await;
+    let store = state.host.pricing_source.lock().await;
     Ok(crate::pricing_source::PricingSourceView {
         url: store.config().url.clone(),
         blocked: store.blocked().map(str::to_owned),
@@ -1420,7 +1420,7 @@ pub async fn save_pricing_source(
     state: State<'_, AppState>,
     url: String,
 ) -> CoreResult<crate::pricing_source::PricingSourceView> {
-    let mut store = state.pricing_source.lock().await;
+    let mut store = state.host.pricing_source.lock().await;
     store
         .save(crate::pricing_source::PricingSourceConfig { url })
         .map_err(|reason| CoreError::ConfigIo {
@@ -1445,7 +1445,7 @@ pub async fn fetch_model_prices(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::pricing_source::FetchedPrices> {
     let url = {
-        let store = state.pricing_source.lock().await;
+        let store = state.host.pricing_source.lock().await;
         store.config().url.clone()
     };
     // **`ConfigIo` へ畳まない**（`PricingFetch` の doc）。理由ごとに次の手が違う —
@@ -1469,8 +1469,8 @@ pub async fn fetch_model_prices(
 pub async fn get_jev_settings(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::jev_settings::JevSettingsView> {
-    let store = state.jev.lock().await;
-    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+    let store = state.host.jev.lock().await;
+    Ok(crate::jev_settings::view(&store, state.host.secrets.as_ref()))
 }
 
 /// 圧縮の設定を保存し、採点器を差し込み直す。**押した時点で反映**（MCP のページと同じ）。
@@ -1484,7 +1484,7 @@ pub async fn set_jev_settings(
     account_id: String,
     threshold: f32,
 ) -> CoreResult<crate::jev_settings::JevSettingsView> {
-    let mut store = state.jev.lock().await;
+    let mut store = state.host.jev.lock().await;
     store
         .save(crate::jev_settings::JevSettingsConfig {
             enabled,
@@ -1496,7 +1496,7 @@ pub async fn set_jev_settings(
             source: std::io::Error::other(reason),
         })?;
     apply_jev(&state, &store).await;
-    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+    Ok(crate::jev_settings::view(&store, state.host.secrets.as_ref()))
 }
 
 /// API トークンを資格情報ストアへ書き、採点器を差し込み直す。
@@ -1512,11 +1512,11 @@ pub async fn set_jev_token(
 ) -> CoreResult<crate::jev_settings::JevSettingsView> {
     // 貼り付け由来の前後空白を落とす（`set_credential` と同じ規律）。
     state
-        .secrets
+        .host.secrets
         .set(crate::jev_settings::TOKEN_KEY, secret.trim())?;
-    let store = state.jev.lock().await;
+    let store = state.host.jev.lock().await;
     apply_jev(&state, &store).await;
-    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+    Ok(crate::jev_settings::view(&store, state.host.secrets.as_ref()))
 }
 
 /// API トークンを削除し、採点器を外す。
@@ -1527,10 +1527,10 @@ pub async fn set_jev_token(
 pub async fn clear_jev_token(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::jev_settings::JevSettingsView> {
-    state.secrets.delete(crate::jev_settings::TOKEN_KEY)?;
-    let store = state.jev.lock().await;
+    state.host.secrets.delete(crate::jev_settings::TOKEN_KEY)?;
+    let store = state.host.jev.lock().await;
     apply_jev(&state, &store).await;
-    Ok(crate::jev_settings::view(&store, state.secrets.as_ref()))
+    Ok(crate::jev_settings::view(&store, state.host.secrets.as_ref()))
 }
 
 /// 接続を確かめる。**2 段落を 1 回投げる唯一の入口。**
@@ -1544,8 +1544,8 @@ pub async fn clear_jev_token(
 #[tauri::command]
 pub async fn test_jev(state: State<'_, AppState>) -> CoreResult<crate::jev_settings::JevProbeView> {
     let scorer = {
-        let store = state.jev.lock().await;
-        crate::jev_settings::scorer_for(store.config(), state.secrets.as_ref())
+        let store = state.host.jev.lock().await;
+        crate::jev_settings::scorer_for(store.config(), state.host.secrets.as_ref())
     }
     .map_err(|reason| CoreError::JevProbe { reason })?;
     let probe = scorer
@@ -1561,10 +1561,10 @@ async fn apply_jev(
     store: &crate::jev_settings::JevSettingsStore,
 ) {
     crate::jev_settings::apply(
-        &state.orchestrator,
+        &state.host.orchestrator,
         store.config(),
         store.blocked().is_some(),
-        state.secrets.as_ref(),
+        state.host.secrets.as_ref(),
     )
     .await;
 }

@@ -74,7 +74,7 @@ pub fn run() {
                     Ok(app_state) => {
                         state::spawn_event_bridge(
                             handle.clone(),
-                            std::sync::Arc::clone(&app_state.orchestrator),
+                            std::sync::Arc::clone(&app_state.host.orchestrator),
                         );
                         handle.manage(app_state);
                     }

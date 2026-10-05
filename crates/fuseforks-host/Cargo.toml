@@ -11,6 +11,7 @@ license.workspace = true
 fuseforks-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 # 単価表の取得（Spec 41 P2）。**この村で 1 本目の非 LLM 外向き通信**。
 # core と同じ workspace 依存なので、依存の木は増えない（実測で確認）。

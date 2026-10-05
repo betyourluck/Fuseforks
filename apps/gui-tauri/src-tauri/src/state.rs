@@ -1,18 +1,18 @@
 //! アプリ状態の組み立てと、コアイベントの Tauri への中継。
 //!
 //! この層の役割は 2 つだけ:
-//! 1. [`Orchestrator`] をワークスペースのパスとバックエンドを与えて起こす
+//! 1. Tauri にしか無い 2 つ（データの置き場と版）を [`build_host`] へ渡して
+//!    [`Host`] を起こす
 //! 2. `broadcast` で流れてくる [`CoreEvent`] をウィンドウへ転送する
 //!
-//! ここが **fuseforks-core と Tauri の唯一の接点**であり、コア側は Tauri を知らない。
+//! ここが **fuseforks-host と Tauri の唯一の接点**であり、ホスト側もコア側も
+//! Tauri を知らない。組み立ての配線（同梱ツール・扉・前判定の承認・Jev・単価表の
+//! 取得元）は `fuseforks-host` の `boot.rs` が 1 実装で持つ（Spec 64 P1）。
 
 use std::sync::Arc;
 
-use fuseforks_core::{
-    BlackboardTool, ConfigStore, CoreEvent, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
-    KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool, RememberTool, RunTool, SdTool,
-    SecretStore, YqTool,
-};
+use fuseforks_core::{CoreEvent, Orchestrator};
+use fuseforks_host::{build_host, Host, HostBootOptions, HostPaths};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// フロントエンドが購読するイベント名。
@@ -20,41 +20,8 @@ pub const CORE_EVENT: &str = "core://event";
 
 /// Tauri の管理状態。
 pub struct AppState {
-    /// オーケストレーター本体。
-    pub orchestrator: Arc<Orchestrator>,
-    /// ワークスペースのルート。「フォルダを開く」導線で使う。
-    pub workspace: std::path::PathBuf,
-    /// 外の LLM から依頼を受ける扉（Spec 25）。
-    ///
-    /// **設定は workspace の外**（`{app_data_dir}/mcp_server.json`）に住むので、
-    /// `ConfigStore` ではなくこちらが持つ。開け閉めは 1 本の Mutex で直列化する
-    /// （ポートの bind と解放が交差すると「開いているのに繋がらない」が出る）。
-    pub mcp_server: tokio::sync::Mutex<crate::mcp_server::McpServerManager>,
-    /// 直近の扉の起動失敗（ポート衝突など）。画面へそのまま出す。
-    pub mcp_server_error: std::sync::Mutex<Option<String>>,
-    /// 単価表の取得元（Spec 41）。
-    ///
-    /// **workspace の外**（`{app_data_dir}/pricing.json`）に住む — 村の中に置くと
-    /// 取得先ごと配布され、**受け取った人の村が、その人の知らない URL へ
-    /// 取りに行ける状態**になる。**単価そのものは `ModelTemplate` に住み、
-    /// 村と一緒に配られる**（公開情報でテンプレートの属性）。
-    pub pricing_source: tokio::sync::Mutex<crate::pricing_source::PricingSourceStore>,
-    /// 予定の前判定をこの端末で実行してよいかの記録（Spec 28）。
-    ///
-    /// **workspace の外**（`{app_data_dir}/probe_approvals.json`）に住む —
-    /// 村の中に置くと承認ごと配布され、他人が用意したコマンドが受け取った側で
-    /// 黙って走る。コアへは `ProbeApprovals` として差し込んであり、
-    /// **書き戻す口はここ（IPC の層）にしかない**。
-    pub probe_approvals: Arc<crate::probe_approvals::ApprovalStore>,
-    /// ツール結果の即時圧縮の設定（Spec 59）。
-    ///
-    /// **workspace の外**（`{app_data_dir}/jev.json`）に住む — `pricing.json` と
-    /// 同じ理由で、**村を配ったときに、受け取った人の村が知らない送信先へ
-    /// ツール結果を送る状態を作らない**。API トークンは資格情報ストア。
-    pub jev: tokio::sync::Mutex<crate::jev_settings::JevSettingsStore>,
-    /// 資格情報ストア。**Jev のトークンの読み書きに使う**（モデルのキーは
-    /// `Orchestrator` 側の口を通るので、ここを読むのは Jev だけ）。
-    pub secrets: Arc<dyn SecretStore>,
+    /// 開いた村（組み立て済みの部品の束）。IPC はここを読む。
+    pub host: Host,
 }
 
 /// バックグラウンド初期化の失敗理由。
@@ -65,156 +32,25 @@ pub struct AppState {
 #[derive(Default)]
 pub struct BootError(pub std::sync::Mutex<Option<String>>);
 
-/// アプリ起動時にオーケストレーターを組み立てる。
+/// アプリ起動時に村を組み立てる。
 ///
-/// バックエンドは [`HttpBackendFactory::echo_on_failure`] で構築する。API キーが
-/// 未設定でもアプリは動くが、退避したことと理由は `BackendDegraded` イベントと
-/// 応答本文の両方に現れる。`strict` にすると、キーを入れるまで画面が沈黙し、
-/// 設定不備なのか実装不具合なのか切り分けられなくなる。
+/// **GUI が渡すのは Tauri にしか無いものだけ** — データの置き場（`app_data_dir`）と
+/// 版（`package_info`。CI がタグから書き換える側）。残りは `build_host` が決める。
 ///
 /// # Errors
-/// ワークスペースのディレクトリを解決・作成できない場合、
-/// または保存済み `world.json` が壊れている場合。
+/// データの置き場を解決・作成できない場合、または保存済み `world.json` が壊れている場合。
 pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error::Error>> {
-    let workspace = app.path().app_data_dir()?.join("workspace");
-    tokio::fs::create_dir_all(&workspace).await?;
-
-    // 診断ログの出口を開く。**失敗しても起動は止めない** — ログが書けないことは
-    // アプリが動かない理由にならず、stderr への出力は残る。
-    // 置き場をワークスペース直下にするのは、「フォルダを開く」導線でそのまま
-    // 辿り着けるから（不具合の報告時に場所を説明せずに済む）。
-    if let Err(err) = fuseforks_core::open_log(&workspace.join("fuseforks.log")) {
-        eprintln!("[fuseforks] ログファイルを開けませんでした（stderr のみ）: {err}");
-    }
-    // **どの配布物が村を触ったかを、ログだけで読めるようにする**（2026-08-20）。
-    //
-    // 起点は事故 — 旧い版（単価の欄をまだ知らない世代）で村を開くと、`world.json` の
-    // 未知の欄が**黙って落ちて書き戻される**。単価が消えて統計の金額が出なくなったが、
-    // 起動の区切りが「起動しました」だけだったので、**3 回の起動のどれが古い版か**を
-    // ログから判別できなかった（`failures.md` #112）。
-    //
-    // **`CARGO_PKG_VERSION` は使えない** — CI がタグから書き換えるのは
-    // `tauri.conf.json` の `version` だけで、workspace の version はどのビルドでも
-    // `0.1.0` のまま。ここが読むのは書き換えられる側（`package_info`）。
-    //
-    // **判別できる範囲**: 配布物（`0.1.8` 等）と手元のビルド（`0.1.0`）は分かれる。
-    // **手元のビルド同士は区別できない** — 全部 `0.1.0` になる。コミットや
-    // ビルド時刻まで要るなら `build.rs` が要り、それはこの 1 行の射程の外。
-    // `profile` はその半分を埋める（`tauri dev` = debug / `tauri build` = release）。
-    fuseforks_core::note!(
-        "version: app={} profile={}",
-        app.package_info().version,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
-    );
-
-    // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
-    // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。
-    let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::new());
-    let factory = Arc::new(HttpBackendFactory::echo_on_failure(Arc::clone(&secrets)));
-
-    let store = ConfigStore::new(&workspace);
-    let orchestrator = Orchestrator::bootstrap(
-        store.clone(),
-        factory,
-        Arc::clone(&secrets),
-        OrchestratorConfig::default(),
+    let paths = HostPaths::new(app.path().app_data_dir()?);
+    let host = build_host(
+        &paths,
+        HostBootOptions {
+            app_version: app.package_info().version.to_string(),
+            // GUI は常に扉を設定どおりに開く（開かないのは `ask` / `check` だけ）。
+            open_door: true,
+        },
     )
     .await?;
-
-    // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
-    // 実行時に解決されるため、ここでは登録するだけでよい。
-    orchestrator
-        .register_tool(Arc::new(RememberTool::new(store.clone())))
-        .await;
-    orchestrator.register_tool(Arc::new(GrepTool)).await;
-    orchestrator.register_tool(Arc::new(FdTool)).await;
-    orchestrator.register_tool(Arc::new(DiffTool)).await;
-    orchestrator.register_tool(Arc::new(SdTool)).await;
-    orchestrator.register_tool(Arc::new(YqTool)).await;
-    orchestrator.register_tool(Arc::new(FileTool)).await;
-
-    // 見出し索引（Spec 18）。宣言フォルダは各エージェントの rag_sources から
-    // 呼び出しの瞬間に解決される。**宣言が空でも登録しておく** — 提示するかは
-    // spec_for が個体ごとに決める（run と同じで、ここで出し分けない）。
-    orchestrator.register_tool(Arc::new(RagTool)).await;
-
-    // 村の黒板（Spec 55）。`enabled_tools` の対象外で、提示するかは spec_for が個体ごとに決める
-    // （作業フォルダがある && 黒板を使う設定）。**`file` / `sd` / `yq` は `blackboard/` の下へ
-    // 書けない**（囲い）ので、これを登録しないと黒板へ書く経路が 1 本も無くなる。
-    orchestrator.register_tool(Arc::new(BlackboardTool)).await;
-
-    // コマンド実行（Spec 15 rev4）。**ポリシーはエージェント別の
-    // `agents/{id}/run.json` に住み、呼び出しの瞬間に読む** — 起動時に
-    // 読み込んで保持しない（利用者が手で直したら次のターンから効いてほしい）。
-    // **登録が 0 件でも登録しておく。** 提示するかは `spec_for` が個体ごとに
-    // 決める（`allow` が空なら自分を落とす）ので、ここで出し分けない。
-    orchestrator
-        .register_tool(Arc::new(RunTool::new(store.clone())))
-        .await;
-
-    // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
-    // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。
-    // そこで起動しなくなるのは筋が悪い（各サーバーの結果は list_mcp_servers で読める）。
-    // `mcp.json` 自体が壊れている場合もここで握る — 設定を直す画面へ到達できないと
-    // 利用者は詰む。
-    if let Err(err) = orchestrator.reload_mcp().await {
-        fuseforks_core::note!("MCP の初期接続に失敗しました: {err}");
-    }
-
-    let orchestrator = Arc::new(orchestrator);
-
-    // 外の LLM から依頼を受ける扉（Spec 25）。**設定は workspace の外**
-    // （`{app_data_dir}/mcp_server.json`）— 村を配っても扉は開かない、を
-    // 置き場で成立させている。既定は OFF なので、多くの村ではここは何もしない。
-    //
-    // **開けなくても起動は止めない**（MCP クライアントの初期接続と同じ判断）。
-    let app_data_dir = app.path().app_data_dir()?;
-    let mut mcp_server =
-        crate::mcp_server::McpServerManager::load(&app_data_dir, Arc::clone(&orchestrator));
-    let mcp_server_error = mcp_server.start_if_enabled().await;
-
-    // 前判定の承認（Spec 28）。**同じ棚（app_data_dir）に置く理由も同じ** —
-    // 村を配っても承認は付いてこない。差し込むまで前判定は 1 本も走らないので、
-    // **ここを忘れると「全部 unapproved」という安全側で止まる**。
-    let probe_approvals = Arc::new(crate::probe_approvals::ApprovalStore::load(&app_data_dir));
-    orchestrator
-        .set_probe_approvals(Arc::clone(&probe_approvals) as Arc<dyn fuseforks_core::orchestrator::ProbeApprovals>)
-        .await;
-
-    // ツール結果の即時圧縮（Spec 59）。**設定と鍵が揃っている村でだけ採点器が
-    // 差し込まれる** — 揃っていなければ `Shared.paragraph_scorer` は `None` のままで、
-    // 圧縮の経路そのものが走らない（既定 OFF）。
-    //
-    // **ここでは 1 バイトも外へ出ない。** `apply` は HTTP クライアントを組むだけで、
-    // 送信が起きるのはツールが 4,000 字以上を返したときから（Spec 59 D10）。
-    // 「接続を確かめる」は画面のボタンからだけ呼ぶ（この関数は `probe` を持たない）。
-    let jev = crate::jev_settings::JevSettingsStore::load(&app_data_dir);
-    let jev_active = crate::jev_settings::apply(
-        &orchestrator,
-        jev.config(),
-        jev.blocked().is_some(),
-        secrets.as_ref(),
-    )
-    .await;
-    fuseforks_core::note!(
-        "jev: enabled={} active={jev_active} blocked={}",
-        jev.config().enabled,
-        jev.blocked().is_some()
-    );
-
-    Ok(AppState {
-        orchestrator,
-        workspace,
-        mcp_server: tokio::sync::Mutex::new(mcp_server),
-        mcp_server_error: std::sync::Mutex::new(mcp_server_error),
-        // **読むだけ**。ここでは 1 度も取りに行かない（Spec 41 の凍結）。
-        pricing_source: tokio::sync::Mutex::new(
-            crate::pricing_source::PricingSourceStore::load(&app_data_dir),
-        ),
-        probe_approvals,
-        jev: tokio::sync::Mutex::new(jev),
-        secrets,
-    })
+    Ok(AppState { host })
 }
 
 /// コアイベントをウィンドウへ中継するタスクを起こす。

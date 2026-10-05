@@ -310,14 +310,10 @@ mod tests {
         }
     }
 
-    /// **起動経路が取得を呼ばない。** 起動の配線は棚を読むだけ。
-    ///
-    /// 走査先は今は GUI の `state.rs`（Spec 64 P1 の途中）。組み立ての本体が
-    /// `build_host` へ移った時点で `src/boot.rs` に差し替える。
+    /// **起動経路が取得を呼ばない。** `build_host`（`boot.rs`）は棚を読むだけ。
     #[test]
     fn startup_only_loads_the_shelf_and_never_fetches() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps/gui-tauri/src-tauri/src/state.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/boot.rs");
         let src = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("{} を読めない: {e}", path.display()));
         assert!(
