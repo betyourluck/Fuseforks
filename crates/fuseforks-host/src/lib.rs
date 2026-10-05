@@ -10,3 +10,4 @@
 //! 単価の取得先も付いてこない、を置き場で成立させている。
 
 pub mod pricing_source;
+pub mod probe_approvals;
