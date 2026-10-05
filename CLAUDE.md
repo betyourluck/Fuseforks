@@ -2534,11 +2534,11 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 - **次のタグで「利用者が負う条件」に入れるもの**: 旧版（v0.3.7 以前）は `assist` レコードを読めない — 含む会話は履歴なしで始まり、
   統計の「全会話」は集計ごと失敗する（レコードは消えない）。判断役の「旧版で開くと線と座標が消える」と並べる
 - **開発機での検収の作法**: 開発ビルドは配布版と同じ村を開くので、**最初の操作を新規チャットにする**（今回は 1 本が普段の会話へ入った）
-- **次の一手**: winget 0.4.0（PR #444645）のマージ確認 → タグ履歴へ所要を書き戻す / Spec 62 の未決 3 つ（Jev のトークンを統計へ /
+- **次の一手**: ~~winget 0.4.0（PR #444645）のマージ確認~~（**→ 2026-09-30 23:29 UTC マージ = publish の 50 分後**。タグ履歴へ書き戻し済み）/ Spec 62 の未決 3 つ（Jev のトークンを統計へ /
   `.confidence` / 問いの数の上限）と Spec 63 の未決 2 つ（反映時の全文差分 / 条例と役職の Construct への拡張）は使ってから /
   2026-09-27 の次の一手の (2)(3)（`refusal=` の検証 / MCP_DOCKER の動的追加）はそのまま
-- **別件で残っているもの**: Anthropic の鍵（`claude_sonnet` / `claude_fable5` / `cloud_opus_5`）が無効 / Perplexity の
-  `perplexity/deepseek-v4-flash-0731` が提供終了 / ~~`gpt-6` の `max_tokens` は別セッションのタスク~~ → 2026-10-01 に解消（「OpenAI 互換のパラメータ差の吸収」の 3 例目）
+- **別件で残っているもの**: ~~Anthropic の鍵（`claude_sonnet` / `claude_fable5` / `cloud_opus_5`）が無効 / Perplexity の
+  `perplexity/deepseek-v4-flash-0731` が提供終了~~ → 2026-10-05 までに利用者が対応済み（村の設定の側。コード変更なし）/ ~~`gpt-6` の `max_tokens` は別セッションのタスク~~ → 2026-10-01 に解消（「OpenAI 互換のパラメータ差の吸収」の 3 例目）
 
 ## 現在地（2026-09-28 更新）
 
@@ -3934,7 +3934,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   入らない / AI 下書きは選んだモデルの接続先へ送り、予算には入らず統計には出る / v0.3.7 以前で開くと判断役の線と座標が消え、
   `assist` レコードを含む会話は履歴なしで始まり「全会話」の統計が集計ごと失敗する）。**タグは利用者、publish・winget・tap は Neo** —
   winget 0.4.0 = PR #444645（`gh repo sync` → `wingetcreate update … --token` の 1 段。`InstallerLocale` 無しを引き写し・
-  ProductCode は `{426A12C1-…}`・`InstallerSha256` は Release の digest と一致。**マージ待ち**）/ tap `c3f4e3a`
+  ProductCode は `{426A12C1-…}`・`InstallerSha256` は Release の digest と一致。**2026-09-30 23:29 UTC マージ = publish の 50 分後**）/ tap `c3f4e3a`
   （sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.3.7` = `0095245`（2026-09-27 JST タグ。14 コミット）— [Spec 61](specs/61_run-approval-mode.md) Done
   （コマンドの承認モード = ステータスバーで 承認あり / 自動承認 / 自動許可 を巡る）+ ステータスバーを字で読める表記へ・
