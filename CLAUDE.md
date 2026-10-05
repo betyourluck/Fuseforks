@@ -1733,6 +1733,11 @@ lost update の観測は今もゼロ（2026-08-11 の黒板は stale であっ�
 
 ### core 単独実行の構想（GUI = 設計面 / コンテナ = 実行面。**構想の段階**）
 
+**→ 2026-10-06 に [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）として起票し、rev2・未決 0。**
+下のギャップ 6 つの行き先は Spec の Notes 1 が正（閉じる 4 / コードを変えずに越える 1 = 扉は同じ名前空間の
+プロキシで受ける / 既に解けていた 1 = 承認鍵は `villageId` に結び付く）。コンテナの像・配布・配置は次の Spec。
+以下は起票前の材料。
+
 利用者 —「**coreだけで回せられる様になりたい。GUI で配線を引いて設定ファイルを
 作ったら Core と設定フォルダを docker コンテナにして回す**」。前段の議論 —
 ヘッドレス実行とチェックポイント永続化の 2 欠けは「無人での耐久性」1 つに
@@ -2525,6 +2530,33 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 （`stop_agent` は `Stopping` にした直後に受信箱を外す）。Spec の P1 テスト項目も
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
+
+## 現在地（2026-10-06 更新）
+
+**この日は台帳の書き戻し・単価表の更新・Qiita の記事の草案・Spec 64 の起票。** git: main は origin より先行
+（`1b33d9d` / `3ee7ca9` / `69b46a6` = Spec 64 の 3 本と本台帳。push は利用者の指示待ち）。タグは `v0.4.0` のまま。
+
+- **winget 0.4.0（PR #444645）は 2026-09-30 23:29 UTC マージ = publish の 50 分後**（タグ履歴へ書き戻し済み）。
+  別件の 2 つ（Anthropic の鍵が無効 / Perplexity の `deepseek-v4-flash-0731` の提供終了）は利用者が対応済み
+- **`prices.json` を LiteLLM `9cc15e9` に追従**（Pages リポジトリ `870ddb4`。単価 38 件・新規 111 件。push 済み）。
+  9/23 の更新は使ったスクリプトが残っておらず規則を差分から逆算したので、**`tools/refresh_prices.py`** にした
+  （次回は `--base 9cc15e9 --dry-run` から）。規則 = 前回の元データで単価 5 欄が一致した LiteLLM の項目を出所とし、
+  その項目が変わった鍵だけ更新 / 手写しの 50 件は不変 / **同名の別項目が古い単価のまま残る鍵は触らない**
+  （openrouter の `deepseek-v4.1-flash` だけが入力 0.3 → 0.003 に化けていた）/ 新規は chat・responses だけ。
+  続けて **Jais の 2 件（`jais-13b-chat` / `jais-30b-chat`）を外した**（`9295b72`。$1,000/MTok 超で Fuseforks の
+  `MAX_RATE` が毎回「不正な 2 件」として落としていた）
+- **Qiita の記事の草案（ザリ名義・Jev のイベント「判断特化 AI『Jev』で遊ぼう！」・締切 2026-10-18）** —
+  Spec 59 / 60 / 62 の実測で「Jev を読む前に捨てる門番と、人が書く if 文として置いた」。査読 6 点のうち、
+  課金経路（Neurons）は**前提が違った**（Cloudflare のモデルページ自体が入力 $0.042 / 出力 $0 / 100 万トークンを表示）。
+  調べる途中で**公式 Cookbook「Classifying RAG passages」が Spec 59 とほぼ同じ使い方**だと分かり、記事に差分 3 つを書いた。
+  公式の既知の限界（`docs.typesafe.ai/model-jaggedness/jev-1.13`）の「無関係な内容で state が大きいほど精度が落ちる」が、
+  束ね方で 0.17〜0.29 動く実測の根拠になる。**草案はリポジトリの外**（利用者の手元）
+- **[Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）を起票 → 査読 2 系統 26 点で rev2 → 再査読で未決 0。**
+  「Spec の状態」の行が正
+
+**次の一手**: **Spec 64 の P0**（GUI の起動ログの採取 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS で /
+`data_contract` の `headless_host_contract` の凍結）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
+`refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
 
@@ -7164,6 +7196,19 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
+  **Draft rev2・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
+  **次は P0**）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
+  GUI を常駐プロセスのクライアントにする形（agent-orchestrator）は採らない。骨格 = 新 crate `fuseforks-host`
+  （`build_state` の本体と扉・前判定の承認・単価表・Jev の 4 ファイル。入口は `build_host(paths, HostBootOptions)` の 1 実装で、
+  予定を回すか・扉を開くか・秘密の読み先は呼び出し側が決める）/ 新 bin `fuseforks-cli` の `check` / `ask` / `serve` /
+  `--data-dir` と `--start` は必須で既定なし（`none` は無い）/ 村の排他ロック `{workspace}/.fuseforks.lock`（OS のロック・
+  MSRV 1.89）+ `sessions.redb` の `DatabaseAlreadyOpen` だけは起動を止める / `EnvSecretStore` は読み取り専用で
+  `FUSEFORKS_SECRET_*`・衝突は `bootstrap` の直後に拒む / 起動前の検査は拒否 3 つ（計画の確認 ON・秘密なし・窓口未設定）/
+  `ask` は既定で新しい会話・送り手は `External` / 終了コード 0〜9（**`ask_external` は `PlanTaskState` を既に受け取って
+  捨てているだけ**なので `ask_external_outcome` を 1 本足す）/ 扉の bind は 127.0.0.1 のまま（コンテナでは同じ名前空間の
+  プロキシ）/ 配布はしない。**起票時の実測**: 今は同じ村を別プロセスが開くと `sessions.redb` だけが WARN で降り、
+  `world.json` と予定は二重に動く（単一インスタンスのプラグインは GUI 同士しか止めていない）
 - [Spec 63](specs/63_ai-draft-assist.md)（AI による下書き補助 — SKILL.md / Construct.md / `judge.toml`）:
   **Done**（2026-10-01。**起票から Done まで 2 日**。P4 = 実機検収 6 件すべて観測 — 記録は Spec の「P4 実機記録」。
   決め手は検収 3 の 2 本目の `cached=5847` が 1 本目の `prompt=5851` と 4 トークン差 = 逐語往復が実ワイヤのキャッシュで
