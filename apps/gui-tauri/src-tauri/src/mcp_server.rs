@@ -341,7 +341,11 @@ pub async fn start(
         tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     let actual_port = listener.local_addr()?.port();
     let shutdown = cancel.clone();
-    tauri::async_runtime::spawn(async move {
+    // `tokio::spawn` で足りる — ここを呼ぶのは Tauri の async runtime（= tokio）の
+    // タスクの中か、`fuseforks-cli` の `#[tokio::main]` の中で、どちらも tokio の
+    // 文脈にいる。`tauri::async_runtime::spawn` にしないのは、このファイルが
+    // ホスト層（Tauri を知らない crate）へ移るため（Spec 64 P1）。
+    tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app)
             .with_graceful_shutdown(async move { shutdown.cancelled().await })
             .await
