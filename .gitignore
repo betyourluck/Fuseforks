@@ -1,5 +1,7 @@
 # Cargo ワークスペースのビルド成果物（target はルートに集約される）
 /target
+# Spec 64 P0 の測定用 probe（ルートの workspace の外に居る独立した crate）
+tools/lock_probe/target/
 
 # フロントエンド
 node_modules

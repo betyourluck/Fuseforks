@@ -1,0 +1,31 @@
+name: Probe file locks (Spec 64 P0)
+
+# **手動でしか走らない。** Spec 64 D3（村の排他ロック）の前提 —
+# `std::fs::File::try_lock` と redb 4.1 の `DatabaseAlreadyOpen` が、同じプロセス・
+# 別プロセス・殺したプロセスの 3 通りでどう振る舞うか — を 3 OS で測る。
+#
+# 開発機は Windows しか無いので、macOS と Linux はここでしか測れない
+# （`verify-notary.yml` / `verify-cask.yml` と同じ理由）。ビルドは tools/lock_probe
+# だけで、ルートの workspace には触れない。
+#
+# 数字を Spec 64 の P0 記録へ写したら、この workflow と tools/lock_probe は消してよい
+# （probe は台帳に数字が残れば要らない — Spec 34 / 48 と同じ扱い）。
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Toolchain
+        run: rustc --version && cargo --version
+      # 予測と違う行があると exit 1 で赤くなる（行ごとの OK / UNEXPECTED はログで読む）。
+      - name: Run probe
+        shell: bash
+        run: cargo run --release --manifest-path tools/lock_probe/Cargo.toml
