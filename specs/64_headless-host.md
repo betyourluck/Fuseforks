@@ -1,7 +1,8 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **Draft rev2・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
-  rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた）
+- 状態: **rev2・P0 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+  rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 5 行 /
+  ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正。**次は P1**）
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -165,7 +166,11 @@ impl HostPaths {
 - **ロックファイルの存在ではなく OS のロックで判定する。** プロセスが落ちれば OS が外すので、強制終了の後に
   残ったファイルを人が消す手順が要らない
 - ロックは `Host` が持ち、`Host` が Drop されるまで外さない
-- **MSRV を 1.89 へ上げる**（`File::try_lock` の安定化）。開発機は 1.98。CI の toolchain は stable なので影響なし
+- **MSRV を 1.89 へ上げる**（`File::try_lock` の安定化）。開発機は 1.98。CI の toolchain は stable なので影響なし。
+  **P0 で分かった — redb 4.1.0 自身が `rust-version = "1.89"` で、内部のロックも `File::try_lock`**
+  （`file_backend/optimized.rs:31`。`WouldBlock` を `DatabaseAlreadyOpen` へ写しているだけ）。workspace の 1.85 は
+  redb 4.1 を入れた時点で既に下回っており、上げるのは新しい制約ではなく宣言の追従。帰結として
+  **ロックファイルと `sessions.redb` のロックは同じ機構**で、OS ごとの挙動が割れることはない
 - 単一インスタンスのプラグインは**残す**。役目が違う — プラグインは「2 つ目の GUI を前面化して閉じる」
   （利用者への見せ方）、ロックは「村を 2 重に開かない」（データの安全）
 - **ロックの中身には何も書かない。** Windows の `LockFileEx` はロック中のファイルを他プロセスから読めなくする
@@ -401,12 +406,15 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P0 — 測ってから凍結する
 
-- [ ] GUI の起動ログ（`fuseforks.log` の起動から `jev:` 行まで）を今のビルドで採取し、P1 の比較の基準にする
-- [ ] `File::try_lock` の挙動を 3 OS で確かめる（同じプロセス内で 2 回取ったとき / 別プロセス / プロセスを殺した後）。CI のランナーで
-- [ ] redb 4.1 の `Database::create` が、別プロセスが開いているときに `DatabaseAlreadyOpen` を返すことを確かめる
-      （同じプロセス内で 2 回開いたときと区別して）
-- [ ] `data_contract.yaml` に `headless_host_contract` を凍結（D2 / D3 / D4 / D5 の拒否 3 つ / D6 / D7 / D10）
+- [x] GUI の起動ログ（`fuseforks.log` の起動から `jev:` 行まで）を今のビルドで採取し、P1 の比較の基準にする
+      （2026-10-06。「P0 実測記録」）
+- [x] `File::try_lock` の挙動を 3 OS で確かめる（同じプロセス内で 2 回取ったとき / 別プロセス / プロセスを殺した後）。CI のランナーで
+      （同日。probe は `922fdaf`・3 OS とも予測どおり）
+- [x] redb 4.1 の `Database::create` が、別プロセスが開いているときに `DatabaseAlreadyOpen` を返すことを確かめる
+      （同じプロセス内で 2 回開いたときと区別して）（同日。**区別できない** — 同じ値が返る。「P0 実測記録」）
+- [x] `data_contract.yaml` に `headless_host_contract` を凍結（D2 / D3 / D4 / D5 の拒否 3 つ / D6 / D7 / D10）
       と、`batch_start_invariant` への注記（GUI では不変・ヘッドレスは `--start` を必須にして明示のときだけ）
+      （同日。凍結 15 本 + `session_store` / `codes` に `SESSION_STORE_LOCKED`）
 
 ### P1 — ホストの切り出し（挙動を 1 つも変えない）
 
@@ -453,6 +461,68 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 - [ ] `--secrets env` で、keyring に何も無い状態から `ask` が通る
 - [ ] 計画の確認 ON の進行役が居る村で `serve --start batch` → 3 で止まり、`--bypass-plan-review` で通る
 - [ ] `ask` の途中で Ctrl+C → 8 で終わり、`turn:` 行が残る
+
+## P0 実測記録（2026-10-06）
+
+### 起動ログの基準（P1 で 1 行ずつ突き合わせる）
+
+配布版 0.4.0 の直近 5 回の起動（2026-10-01〜10-05・`%APPDATA%\jp.outcasts.fuseforks\workspace\fuseforks.log`）で、
+`version:` から `jev:` までは**常に 5 行・同じ並び**:
+
+```text
+[fuseforks] version: app=0.4.0 profile=release
+[fuseforks] session: <id> を開きました（発話 N 件 / 履歴 N 体 / 要約 N 体）
+[fuseforks] attachment gc: removed=N remaining=N bytes=N kinds=image:N,audio:0,video:0,pdf:0
+[fuseforks] mcp server: 127.0.0.1:39641/mcp で待ち受けます
+[fuseforks] jev: enabled=true active=true blocked=false
+```
+
+- 動くのは数字だけ（`session:` の id と件数・`attachment gc:` の件数）。10-01 の 1 回だけ `session:` の前に
+  「復元した履歴のうち 1 体分は、該当エージェントが居ないため捨てました」が 1 行入った（`session:` の WARN は
+  この位置に出る）
+- `mcp server:` は扉が ON の村だから出る（OFF の村では行ごと無い）。MCP の初期接続・前判定の承認・単価表の取得元は
+  この帯に行を出さない（失敗したときだけ）
+- **P1 の検収は「version → (session の WARN) → session → attachment gc → mcp server → jev」の並びが
+  同じであること**。D1 の「扉を開く処理を `build_host` の外へ出さない」の根拠がこの並び — 外へ出すと `mcp server:` が
+  `jev:` の後ろへ動く
+
+### ロックの実測（`tools/lock_probe`・commit `922fdaf`・3 OS の CI・rustc 1.99.0）
+
+**予測を先に書いて撃った。3 OS とも 12 場面すべて一致（unexpected = 0）。** 開発機の Windows（rustc 1.98.1）も同じ。
+
+| 場面 | Linux | macOS | Windows |
+|---|---|---|---|
+| `try_lock` 同じハンドルで 2 回目 | **Ok** | **Ok** | **WouldBlock** |
+| 同じプロセスの別ハンドル | WouldBlock | WouldBlock | WouldBlock |
+| 別プロセスが持つ | WouldBlock | WouldBlock | WouldBlock |
+| 持ち主が exit した後 | Ok・0 ms | Ok・0 ms | Ok・0 ms |
+| 持ち主を kill（SIGKILL / TerminateProcess）した後 | Ok・0 ms（ファイルは残る） | 同左 | Ok・0〜1 ms（同左） |
+| ロック中のファイルを他プロセスが open / read | Ok / **Ok(7 bytes)** | Ok / Ok(7 bytes) | Ok / **Err os=33**（`ERROR_LOCK_VIOLATION`・kind `Uncategorized`） |
+| redb `create`、同じプロセスで 2 回目 | DatabaseAlreadyOpen | 同左 | 同左 |
+| redb `create`、別プロセスが開いている | DatabaseAlreadyOpen | 同左 | 同左 |
+| redb、持ち主の exit / kill の後 | Ok・1 / 0 ms | Ok・3 / 3 ms | Ok・16 / 26 ms |
+
+- **redb は同じプロセスと別プロセスを区別しない** — どちらも `DatabaseAlreadyOpen`。理由は redb 4.1.0 自身が
+  `File::try_lock` の `WouldBlock` を写しているだけだから（`file_backend/optimized.rs:31`）。**ロックファイルと
+  `sessions.redb` のロックは同じ機構**で、D3 の「二重の網」は同じ網を 2 つのファイルに張る形。鳴るのは
+  「ロックを迂回して `sessions.redb` だけを開いた」ときに限る
+- **同じハンドルの 2 回目だけが OS で割れる**（Unix の `flock` は再取得を通し、Windows の `LockFileEx` は同じ範囲の
+  再ロックを `ERROR_LOCK_VIOLATION` で拒む）。std の doc も「未規定・OS 依存」。1 つの `File` で 2 回呼ぶ実装を
+  書くと Unix では黙って通る — `Host` が `File` を 1 つ持って 1 回だけ呼ぶ形で避ける
+- **Windows ではロック中のファイルを他プロセスが読めない**（open は通り read が落ちる）。D3 の「中身を書かない」の
+  実測の裏付け — 書いても Unix でしか読めず、Windows では read が `Uncategorized` で落ちる
+- 殺した後は 3 OS とも 1 ms 以内に取れ、ファイルは残る = 「存在ではなく OS のロックで判定する」の根拠
+- redb は殺した後も 30 ms 以内に `Ok`。修復が走ったかは観測していない（redb はログを持たない）
+- **redb 4.1.0 の `rust-version` は 1.89**。workspace の宣言 1.85 は redb 4.1 を入れた時点で既に下回っていた
+  （cargo の MSRV-aware resolver は 1.85 互換の redb 4.1 が無いので fallback している）。D3 の「MSRV を 1.89 へ」は
+  宣言の追従
+- probe と手動 workflow（`.github/workflows/probe-lock.yml`）は数字を写したので同日に消した（Spec 34 / 48 と同じ扱い。
+  `git show 922fdaf` で戻せる）。P2 の結合テストは同じ場面を実装の側で留める
+
+### 凍結
+
+`data_contract.yaml` の `headless_host_contract`（15 本）+ `batch_start_invariant` の注記 + `session_store` と
+`codes` に `SESSION_STORE_LOCKED`。
 
 ## 未決
 

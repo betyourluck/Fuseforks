@@ -443,7 +443,11 @@ enums:
         {"seq":N,"kind":...} — **ヘッダ行は kind を持たない** (`"kind":"message"` の
         grep がヘッダに引っかからないようにするため)。
         エラーは SESSION_NOT_FOUND / SESSION_STORE_FAILED (operation に
-        開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)
+        開始/読み込み/書き込み/確定/開く/初期化/作成/書き出しのどれかを載せる)。
+        **開くときに redb が DatabaseAlreadyOpen を返したら SESSION_STORE_LOCKED**
+        (Spec 64 凍結 4。P0 凍結・P2 着地) — 別のプロセスが開いている印で、
+        bootstrap は**これだけ**を起動の失敗にする (他の理由は WARN で
+        「会話を保存しない起動」を続ける)
       P2 で着地した配線 (orchestrator・2026-08-03):
         書き込み点は **2 つだけ** — Shared::record (message) と
         Shared::push_exchange (exchange)。後者は履歴へ積む処理と保存を
@@ -2276,6 +2280,10 @@ entities:
         - **AgentSettingsDialog の seed() にも写す。** 画面に UI は無いが、
           写さないと設定保存で既定 (true) へ戻り、対象から外していた個体が
           黙って復帰する (ipc_contract の凍結テストでは捕まらない経路)
+        - **ヘッドレス (Spec 64) でもこの不変条件は GUI では不変。** fuseforks-cli は
+          --start を必須にして (既定値なし・none は無い)、引数に書いたときだけ
+          その集合を起動する。引数は明示の意図で、「開いただけ」ではない。
+          batch は GUI の全体 ▶ と同じ述語 (headless_host_contract 凍結 7)
     name_invariant: |
       表示名は trim 後の完全一致で村内一意 (Spec 06, 2026-07-30)。
       表示名は会話・束ね (Spec 04) ・入退室通知・顔ぶれの語彙で、重複すると
@@ -2747,6 +2755,8 @@ entities:
       - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
       - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
       - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
+      - SESSION_STORE_LOCKED    # Spec 64 (P0 凍結・着地は P2)。sessions.redb を別のプロセスが開いている
+                                # (redb の DatabaseAlreadyOpen)。bootstrap はこれだけを止める
       - INVALID_TOKEN_BUDGET    # Spec 13。set_token_budget の Some(0)。0 のマジック値を作らない
       - INVALID_JUDGE_FILE      # Spec 62。judge.toml が検査に落ちた（保存しない）。location: message
       - INVALID_TOPOLOGY
@@ -3834,6 +3844,105 @@ entities:
       - 覆いは 2 段共有: index.html の #app 内 (Vue マウント前) と App.vue
         (state.ready まで)。同じ .boot-splash / .boot-spinner (style.css) を
         使い、切り替わりの継ぎ目を見せない
+  headless_host_contract: |
+    コアを GUI なしで動かす (Spec 64 rev2、2026-10-06 P0 凍結)。組み立ての本体を GUI 層から
+    crate fuseforks-host へ持ち上げ、同じ build_host を GUI と実行ファイル fuseforks-cli
+    (check / ask / serve) が呼ぶ。**本節は実装より先に凍結した契約で、着地は P1〜P4。
+    既定の GUI の起動はバイト等価 (起動ログ 5 行の並びを P1 で 1 行ずつ突き合わせる)。**
+
+    P0 実測 (2026-10-06。tools/lock_probe を 3 OS の CI で。予測を先に書いて 3 OS とも全部一致):
+      - std::fs::File::try_lock: 別プロセスが持つ → WouldBlock / 同じプロセスの別ハンドル →
+        WouldBlock / 持ち主が exit でも kill (SIGKILL / TerminateProcess) でも、その後 0〜1 ms で
+        取れる (ロックファイルは残る) — 3 OS 共通。**同じハンドルの 2 回目は OS で割れる**
+        (Linux・macOS = Ok、Windows = WouldBlock) — 1 つの File で 2 回呼ばない。
+        **Windows はロック中のファイルを他プロセスが読めない** (open は通り read が os error 33
+        ERROR_LOCK_VIOLATION・kind は Uncategorized。Unix は読める) — 中身を書いても読み手が OS で
+        割れるので書かない
+      - redb 4.1.0 の Database::create: 別プロセスが開いている → DatabaseAlreadyOpen / 同じ
+        プロセスで 2 回目 → **同じ DatabaseAlreadyOpen** (区別できない。redb 自身が
+        File::try_lock の WouldBlock を写しているだけ — file_backend/optimized.rs:31) / 持ち主の
+        exit・kill の後 → Ok (Linux 0〜1 ms / macOS 3 ms / Windows 16〜26 ms。修復が走ったかは
+        観測していない)
+      - **redb 4.1.0 は rust-version = "1.89" で、内部のロックも File::try_lock。** workspace の
+        rust-version 1.85 は redb 4.1 を入れた時点で既に下回っていた (宣言だけが古い)。
+        D3 の「MSRV を 1.89 へ」は新しい制約ではなく宣言の追従
+
+    凍結:
+      1. **組み立ては build_host(paths, HostBootOptions) の 1 実装。** GUI と CLI で起動の配線を
+         2 本にしない (同梱ツールの登録漏れ・前判定の承認の差し込み漏れが片方だけに起きる)。
+         順序は今の GUI と同じで、D3 と D4 の 2 手が足されるだけ:
+         create_dir_all → ロック → ログ → version: 行 → 秘密のストア → bootstrap →
+         (Env のときだけ) 変数名の衝突検査 → 同梱ツール 9 本 → MCP の初期接続 → 扉 (open_door) →
+         前判定の承認 → Jev → 単価表の取得元。呼び出しごとに違うのは HostBootOptions の 4 欄
+         (app_version / secrets / run_schedules / open_door) だけ。**扉を開く処理を build_host の
+         外へ出さない** (GUI の起動ログの行の順序が変わる)
+      2. **パスは data_dir の 1 欄から導く。** workspace = data_dir/workspace。GUI は app_data_dir()、
+         CLI は --data-dir を必須にする (既定値を持たない — 開発機で GUI の村を意図せずヘッドレスで
+         触る形が一番起きやすい)。棚 (mcp_server.json / pricing.json / probe_approvals.json /
+         jev.json) は data_dir 直下のまま
+      3. **村の排他ロック = {workspace}/.fuseforks.lock の OS ロック (File::try_lock)。** build_host の
+         最初の手 (create_dir_all の直後) で、取れなければそれ以上何も開かずに HostError::Locked。
+         **ファイルの存在では判定しない** (殺された後もファイルは残るが、ロックは OS が外す —
+         P0 実測)。**中身は書かない** (Windows では相手が読めない)。Host が Drop するまで外さない。
+         tauri-plugin-single-instance は残す (役目が違う: 2 つ目の GUI を前面化して閉じる)
+      4. **sessions.redb を別のプロセスが開いているときは起動を止める (二重の網)。**
+         SessionStore::open が redb の DatabaseAlreadyOpen を CoreError::SessionStoreLocked
+         (SESSION_STORE_LOCKED) として区別して返し、bootstrap はそれだけをエラーで返す。
+         他の理由 (破損・権限) は今までどおり WARN で「会話を保存しない起動」を続ける。
+         P0 実測のとおり redb は同じプロセスと別プロセスを区別しないので、この網が鳴るのは
+         「ロック (3) を迂回して sessions.redb だけを開いた」ときに限る
+      5. **秘密は EnvSecretStore (読み取り専用) を SecretStore の 3 つ目の実装として足す。**
+         鍵 → FUSEFORKS_SECRET_ + 鍵を大文字化・英数字以外は _ (claude_sonnet →
+         FUSEFORKS_SECRET_CLAUDE_SONNET)。起動時に 1 回だけ読み、以後は環境を見ない。
+         set / delete はエラー。値をどこにも出さない。既定は keyring (GUI は常に keyring)。
+         **2 つ以上の鍵が同じ変数名に写るなら組み立てを止める** (HostError::SecretNameCollision、
+         終了コード 5。数えるのは村のテンプレート ID 全部 + 固定の鍵 jev_api_token。
+         bootstrap の直後・MCP の接続より前 = ここで止めれば何も外へ出ていない)
+      6. **GUI でしか解けない待ちは起動前に名指しで拒む** (headless_preflight = コアの純関数。
+         材料はファイルと秘密の有無だけで LLM も MCP も呼ばない)。拒否は 3 つ:
+         計画の確認 (planReview) ON の個体が起動する集合に居る (--bypass-plan-review で通す =
+         Spec 53 のスイッチを立てるだけ) / 起動する集合のテンプレートに選んだストアの秘密が無い /
+         ask で窓口 (reception) が未設定・削除済み。警告 4 つ・情報 2 つは Spec 64 D5 の表が正。
+         ask と serve は自分の起動の途中で同じ検査を走らせ、拒否が 1 件でもあれば LLM を 1 回も
+         呼ばずに止まる。拒否と警告の文は直し方を書く (#44)
+      7. **batch_start_invariant は GUI では不変。ヘッドレスは --start を必須にする** (既定値なし。
+         none は持たない)。値は batch (GUI の全体 ▶ と同じ述語 = Spec 51 凍結 7) / reception
+         (窓口だけ) / <id>,<id>,…。**ask はどの値でも窓口を集合に足す**
+      8. **ask と check は予定のティッカーを回さない** (OrchestratorConfig::run_schedules。既定 true =
+         GUI はバイト等価)。lastConsumedDueMs にも触れない。serve は回し、宛先が集合の外の予定は
+         GUI と同じ「停止中なのでスキップ」で消化する
+      9. **ask = ask_external を 1 回呼ぶ。** 送り手は Endpoint::External (既定の名乗り fuseforks-cli、
+         --client で変えられる。村の externalName が勝つ)。既定で新しい会話 (--continue-session で
+         今の会話へ続ける。扉は今の会話へ続けるまま)。待ちの上限は村の ask_timeout。
+         **答えだけを標準出力へ** (改行 1 つ)。コアに ask_external_outcome(client, message) ->
+         (String, PlanTaskState) を足し、ask_external はそれを呼んで状態を捨てる 1 行へ
+         (扉の挙動は 1 つも変わらない)
+     10. **終了コード**: 0 答えが返った (Answered / HandedOff)・check の拒否 0 件・serve の正常終了 /
+         1 CoreError / 2 引数の誤り / 3 検査で拒否 / 4 ロックが取れない・sessions.redb を別プロセスが
+         開いている / 5 組み立てに失敗 (world.json の破損・秘密の変数名の衝突) / 6 NoAnswer・
+         Undeliverable / 7 TimedOut / 8 Interrupted (Ctrl+C を含む) / 9 BudgetExhausted。
+         6〜9 でも定型文は標準出力へ書く (終了コードは機械が読む結末、本文は人が読む結末)
+     11. **閉じ方は ask と serve で共通**: 新しい配送を止める → 飛行中のターンに打ち切り
+         (interrupt_all) → 個体を止める → ロックを外す。猶予 30 秒。超えたら打ち切りを待たずに終わり、
+         払いの記録が欠けうることを標準エラーへ 1 行 (#103 を黙って作らない)。2 回目の Ctrl+C は
+         猶予を待たない
+     12. **扉の bind は 127.0.0.1 のまま** (mcp_server_contract 凍結 4 は動かさない)。コンテナは同じ
+         ネットワーク名前空間のプロキシで受け、Host を 127.0.0.1:<port> へ書き換える (rmcp の既定
+         allowed_hosts が loopback 3 種)。/healthz 等の状態の口は作らない
+     13. **--events jsonl の間は標準エラーの全行が JSON** (CoreEvent は IPC と同じワイヤ形で 1 行
+         1 件、CLI 自身の行は {"type":"cli","level":…,"code":…,"message":…})。プレーンテキストを
+         混ぜない。標準出力は答えだけ
+     14. **版番号**: build_host は HostBootOptions.app_version を受けて今と同じ version: 行を書く。
+         CLI は build.rs で git describe --tags --abbrev=0 と rev-parse --short HEAD から
+         0.4.0+g1b33d9d の形 (取れなければ 0.0.0 / ハッシュ無し。panic しない)
+     15. **外へ送るものは GUI と同じ。新しい送信先は無い。** PRIVACY 日英に 1 節 (環境変数に置いた
+         秘密は資格情報ストアの保護を受けない — 置き場を選ぶのは実行する人)。fuseforks-cli は
+         配らない (ソースからのビルドだけ。配布はコンテナの Spec で決める)
+
+    **退けた形**: GUI を常駐プロセスのクライアントにする (IPC 117 本をソケット越しにする工事で、得る
+    ものは serve が既に与える) / CLI に既定の data_dir / ロックファイルの存在で判定 / 扉を 0.0.0.0 で
+    開く設定 / ask の --to (外部の入口が 2 本になる) / 検査を警告だけに (計画の確認の待ちは
+    ヘッドレスでは永久に解けない) / 扉を開く処理を build_host の外へ / --start の既定値
   degradation_rule: |
     設定不備で代替バックエンドへ退避したときは、必ず backendDegraded を出し、
     退避先の応答本文にも理由を書く。さらに退避結果はキャッシュしない

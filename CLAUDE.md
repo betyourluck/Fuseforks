@@ -2554,8 +2554,8 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 - **[Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）を起票 → 査読 2 系統 26 点で rev2 → 再査読で未決 0。**
   「Spec の状態」の行が正
 
-**次の一手**: **Spec 64 の P0**（GUI の起動ログの採取 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS で /
-`data_contract` の `headless_host_contract` の凍結）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
+**次の一手**: ~~**Spec 64 の P0**~~（**→ 同日夕に完了**。probe は `922fdaf` で足して数字を写してから消した）→
+**Spec 64 の P1**（`crates/fuseforks-host` の切り出し。挙動を 1 つも変えない — 検収は起動ログ 5 行の並びの一致）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
 `refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
@@ -7198,7 +7198,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Draft rev2・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
-  **次は P0**）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
+  **→ P0 完了**（同日。起動ログの基準 5 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
+  予測 12 場面すべて一致・redb は同じプロセスと別プロセスを区別しない・同じハンドルの 2 回目だけ OS で割れる /
+  `headless_host_contract` 凍結 15 本。**redb 4.1.0 が `rust-version 1.89` で内部も `File::try_lock`** = workspace の
+  1.85 は宣言だけ古い。記録は Spec の「P0 実測記録」）。**次は P1**）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
   GUI を常駐プロセスのクライアントにする形（agent-orchestrator）は採らない。骨格 = 新 crate `fuseforks-host`
   （`build_state` の本体と扉・前判定の承認・単価表・Jev の 4 ファイル。入口は `build_host(paths, HostBootOptions)` の 1 実装で、
   予定を回すか・扉を開くか・秘密の読み先は呼び出し側が決める）/ 新 bin `fuseforks-cli` の `check` / `ask` / `serve` /
