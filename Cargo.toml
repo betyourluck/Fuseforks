@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["apps/gui-tauri/src-tauri", "crates/fuseforks-core"]
+members = [
+  "apps/gui-tauri/src-tauri",
+  "crates/fuseforks-core",
+  "crates/fuseforks-host",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +16,8 @@ license = "MPL-2.0"
 
 [workspace.dependencies]
 fuseforks-core = { path = "crates/fuseforks-core" }
+# ホスト層（Spec 64）。GUI と fuseforks-cli が同じ組み立てを呼ぶ。Tauri を知らない。
+fuseforks-host = { path = "crates/fuseforks-host" }
 
 async-trait = "0.1"
 # 予定の発火規則（Spec 07）で使うカレンダー計算。「次の木曜 17 時（現地時刻）」は

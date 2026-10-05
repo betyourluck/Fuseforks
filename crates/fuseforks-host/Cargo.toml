@@ -1,0 +1,22 @@
+[package]
+name = "fuseforks-host"
+description = "Fuseforks のホスト層。村を開いて組み立て、閉じる。Tauri を知らない。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# 中核ロジック。依存はこの一方向だけ（core はホストを知らない）。
+fuseforks-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+# 単価表の取得（Spec 41 P2）。**この村で 1 本目の非 LLM 外向き通信**。
+# core と同じ workspace 依存なので、依存の木は増えない（実測で確認）。
+reqwest.workspace = true
+
+[lints.rust]
+# GUI 層への逆依存を機械的に禁じるための最低限の衛生設定（core と同じ）。
+unsafe_code = "forbid"
+missing_docs = "warn"

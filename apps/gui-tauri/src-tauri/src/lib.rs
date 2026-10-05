@@ -10,7 +10,9 @@ mod commands;
 pub mod jev_settings;
 pub mod mcp_server;
 pub mod probe_approvals;
-pub mod pricing_source;
+// ホスト層（Spec 64）へ持ち上げた棚。`crate::pricing_source::…` の読み替えを
+// 起こさないために同じ名前で再公開する。
+pub use fuseforks_host::pricing_source;
 mod state;
 
 use tauri::Manager;
