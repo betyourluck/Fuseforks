@@ -7,10 +7,10 @@
 mod commands;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
 // **公開しているのは扉の部品であって、扉そのものではない。**
-pub mod jev_settings;
 pub mod mcp_server;
 // ホスト層（Spec 64）へ持ち上げた棚。`crate::pricing_source::…` の読み替えを
 // 起こさないために同じ名前で再公開する。
+pub use fuseforks_host::jev_settings;
 pub use fuseforks_host::pricing_source;
 pub use fuseforks_host::probe_approvals;
 mod state;

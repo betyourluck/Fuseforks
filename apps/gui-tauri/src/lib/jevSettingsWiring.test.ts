@@ -25,8 +25,9 @@ import {
  *    押していないのにツール結果の採点（= 外部送信）が起きる（D10 の凍結）
  */
 const dialog = readFileSync(new URL("../components/SettingsDialog.vue", import.meta.url), "utf8");
+// Spec 64 P1 でホスト crate へ移った（GUI の src-tauri には無い）。
 const settingsRs = readFileSync(
-  new URL("../../src-tauri/src/jev_settings.rs", import.meta.url),
+  new URL("../../../../crates/fuseforks-host/src/jev_settings.rs", import.meta.url),
   "utf8",
 );
 

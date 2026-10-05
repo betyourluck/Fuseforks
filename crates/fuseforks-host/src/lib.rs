@@ -9,5 +9,6 @@
 //! **workspace の外**（`data_dir` 直下）に住む — 村を配っても扉は開かず、承認も
 //! 単価の取得先も付いてこない、を置き場で成立させている。
 
+pub mod jev_settings;
 pub mod pricing_source;
 pub mod probe_approvals;
