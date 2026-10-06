@@ -128,6 +128,29 @@ pub fn set_stderr_json(on: bool) {
     STDERR_JSON.store(on, Ordering::Relaxed);
 }
 
+/// stderr の行を JSON にしているか（[`set_stderr_json`]）。
+///
+/// MCP の stdio サーバーの子プロセスは既定で標準エラーを親から継ぐ（rmcp の既定が
+/// inherit）ので、JSON の間だけ piped にして [`child_stderr_line`] で包み直す — 素の行が
+/// 1 行でも混ざると凍結 13 が破れる。
+pub fn stderr_json() -> bool {
+    STDERR_JSON.load(Ordering::Relaxed)
+}
+
+/// 子プロセスの標準エラーの 1 行を、こちらの標準エラーへ JSON で写す。
+///
+/// **ファイル（`fuseforks.log`）には書かない。** 子が何を出すかはこちらが決められず
+/// （秘密を出す MCP サーバーもありうる — `failures.md` #71 の向き）、継いでいたときも
+/// ファイルには残っていなかった。残る場所を増やさない。
+pub fn child_stderr_line(source: &str, line: &str) {
+    eprintln!("{}", child_line(source, line));
+}
+
+/// 子プロセスの 1 行を組む（`{"type":"log","source":…,"message":…}`）。
+fn child_line(source: &str, line: &str) -> String {
+    serde_json::json!({ "type": "log", "source": source, "message": line }).to_string()
+}
+
 /// stderr へ出す 1 行を組む。
 fn stderr_line(line: &str, json: bool) -> String {
     if json {
@@ -183,6 +206,16 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["type"], "log");
         assert_eq!(value["message"], tricky);
+    }
+
+    /// 子プロセスの行も `type: "log"` の 1 行で、どの子かを `source` に持つ。
+    #[test]
+    fn child_lines_are_single_line_log_json_with_a_source() {
+        let json = child_line("mcp:memoria", "\u{1b}[32m INFO\u{1b}[0m \"x\"\nnext");
+        assert!(!json.contains('\n'), "1 行に収まる: {json}");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["type"], "log");
+        assert_eq!(value["source"], "mcp:memoria");
     }
 
     /// テスト用の一時ファイル。終了時に本体と `.old` を消す。

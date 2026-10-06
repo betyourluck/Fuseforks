@@ -773,7 +773,8 @@ CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全
   （組み立ての前で止まった）。足した後の M4 で新しい 1 本だけが赤
 - workspace の全テストの 1 回目は `session_persistence` のリンクが `link.exe` 1181 で落ち、**集計が空**だった
   （1 本も走っていない）。単体で組み直すと通り、全体を回し直して 1,269 本。ディスクの空きは 34 GiB あり、
-  P3 のディスク満杯とは別の一過性の失敗（掴み合いと見ているが確かめていない）
+  P3 のディスク満杯とは別の一過性の失敗（掴み合いと見ているが確かめていない）— **→ P6 で、同じディスク満杯だったと
+  ほぼ確定**（P6 実機記録の「ディスク」）
 
 ## P5 台帳記録（2026-10-06）
 
@@ -798,6 +799,42 @@ CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全
   コードを変えずに越える 1 = 3 / 既に解けていた 1 = 4）。README の行数の記録に 1 行
 - **触っていない外向きの面**: ランディングページと Qiita の記事は固有の機能を列挙していないので嘘にならない。
   `fuseforks-cli` は配布していないので winget / tap / Release のノートにも入らない
+
+## P6 実機記録（2026-10-06・途中）
+
+**写し**: 開発機の村（`%APPDATA%\jp.outcasts.fuseforks`）を scratchpad の `p6-data` へ写した。GUI が `sessions.redb` を
+握っていたので**それとログ・添付・書き出しを除いた**（`ask` は既定で新しい会話を作るので要らない）。予定 2 件はどちらも
+無効で、`serve` で発火しない。
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | 写しで `check` → `ask` → `serve` | `check --for ask` / `--for serve` とも 3（計画の確認 ON のザリ・ルナを名指し）。**`ask --bypass-plan-review` は 0** — 標準出力は答えの 1 行だけ・`turn: … stop=- … model=gpt-6.1-sol`・`reply: … to=external:fuseforks-cli`・`agent stopped: … joined=true`。33 秒のうち 22 秒は Docker の MCP の起動。`serve` は未（利用者の端末で Ctrl+C まで） |
+| 2 | GUI を開いたまま `ask` → 4 / `serve` 中に GUI → 覆い | **前半は成立** — 開発ビルドの GUI（pid 38424）が開いている本物の村へ `ask` → 4、GUI の `fuseforks.log` は前後とも 27,520 行（ロックが最初の手で止め、1 行も書いていない）。後半は未 |
+| 3 | `--secrets env` で keyring 空から `ask` | 未。要る変数は `check --secrets env` で読めた — `FUSEFORKS_SECRET_GPT_6_SOL`（ルナ）と、Jev を使うなら `FUSEFORKS_SECRET_JEV_API_TOKEN`。値は利用者が設定する |
+| 4 | 計画の確認 ON で `serve` → 3、`--bypass-plan-review` で通る | **前半は成立**（`serve --start batch` → 3。LLM も MCP も呼ばない）。後半は 1 の `serve` と一緒に |
+| 5 | `ask` の途中で Ctrl+C → 8 と `turn:` 行 | 未（利用者の端末で） |
+
+**実機で見つかった穴 2 つ**（どちらも直して変異で赤を確認。未コミット — 下のディスク満杯で全体テストが回せていない）:
+
+- **`--events jsonl` の約束（凍結 13）が MCP を繋ぐ村では必ず破れていた。** rmcp の `TokioChildProcess` は子の標準エラーを
+  既定で **inherit** するので、Docker の MCP ゲートウェイと memoria の出力が素の行のまま標準エラーへ流れた（素の `ask` の
+  実機出力で見えた）。結合テストの村には MCP が無かったので緑のまま通っていた。処方 = JSON の間だけ子の標準エラーを
+  piped にし、1 行ずつ `{"type":"log","source":"mcp:<名前>","message":…}` に包んで**標準エラーへだけ**写す
+  （`fuseforks.log` には書かない — 子が何を出すかは決められない。#71 の向き）。GUI と JSON でない CLI は今までどおり継ぐ。
+  子プロセスの標準エラーを継いでいたのは MCP の stdio だけ（`run` と前判定は `process.rs` で piped 済み）。
+  結合 8 本目 `events_jsonl_wraps_the_stderr_of_mcp_children`（子は実行ファイル自身を誤った引数で起こす = 標準エラーへ
+  使い方を出して 2 で終わる。OS を問わずある実行ファイル）。変異（分岐を常に継ぐ側へ）で新しい 1 本だけ赤
+- **情報 `RECEPTION_TARGETS_OUTSIDE` に判断役が混ざっていた**（実機のルナは判断役 `judge` に繋がっている）。判断役は
+  起動する個体ではなく呼び出し元のツール呼び出しの中で動くので、「委譲は NOT_RUNNING で返る」はその id については誤り。
+  処方 = 窓口の接続先から判断役を除く（判断役の行き先 = `judge.toml` の `to` は、ファイルを読まない純関数の材料に入って
+  いないので数えない）。単体に 2 断言を足し、変異（除外を消す）で 1 本だけ赤
+- 版番号: P4 のコミット前にビルドしたバイナリは `+gf5b9446` を返し、再ビルドで `+g5473874` に追従した（`build.rs` が
+  ブランチの ref を見張っている、の実機での確認）
+
+**ディスク**: 全体テストの途中で D: の空きが 42 MB（100%）になり、`link.exe` 1104 / 1140 と指紋ファイルの書き込み失敗が
+並んだ。同じ日の P3 と同じ形。前半の `link.exe` 1181 / 1（「一過性」と書いたもの）もおそらく同じ原因で、**確かめずに
+「掴み合い」と書いたのは誤りだった**。GUI の開発ビルドが `target\debuguseforks.exe` を握っている間は GUI のパッケージも
+組み直せない。
 
 ## 未決
 

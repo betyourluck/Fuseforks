@@ -262,10 +262,15 @@ pub fn headless_preflight(
                 // 4. 窓口の接続先が起動する集合の外 — ask・情報。
                 //    委譲は NOT_RUNNING で返り、窓口が自分で答える。--start reception は
                 //    利用者が選んだ形なので毎回の警告にはしない。
+                //    **判断役は数えない**（Spec 64 P6 の実機で混ざっていた）— 判断役は起動する
+                //    個体ではなく、呼び出し元のツール呼び出しの中で動くので「集合の外」に居ても
+                //    NOT_RUNNING にならない。判断役の行き先（judge.toml の to）はこの検査の材料に
+                //    入っていない（ファイルを読まない純関数のまま）。
                 let outside: Vec<String> = world
                     .connections_of(reception)
                     .unwrap_or_default()
                     .into_iter()
+                    .filter(|target| world.judge(target).is_none())
                     .filter(|target| !view.start.contains(target))
                     .map(|target| target.to_string())
                     .collect();
@@ -697,6 +702,35 @@ mod tests {
         assert_eq!(codes_of(&findings), vec![codes::RECEPTION_TARGETS_OUTSIDE]);
         assert_eq!(findings[0].level, FindingLevel::Info);
         assert!(findings[0].message.contains('b'));
+
+        // 判断役は起動しないので「集合の外」に数えない（P6 の実機で混ざっていた）。
+        world
+            .register_judge(JudgeSpec {
+                id: AgentId::from("judge_1"),
+                name: "判断役".to_owned(),
+                order: 0,
+                enabled: true,
+                unknown: UnknownFields::default(),
+            })
+            .unwrap();
+        world
+            .set_connections(
+                &AgentId::from("a"),
+                vec![AgentId::from("b"), AgentId::from("judge_1")],
+            )
+            .unwrap();
+        let findings = headless_preflight(&world, &[], &ask);
+        assert_eq!(codes_of(&findings), vec![codes::RECEPTION_TARGETS_OUTSIDE]);
+        assert!(!findings[0].message.contains("judge_1"), "{}", findings[0].message);
+        let with_b = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let ask_b = with_b.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
+        assert!(
+            headless_preflight(&world, &[], &ask_b).is_empty(),
+            "判断役だけが外なら黙る"
+        );
 
         let serve = base.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
         assert!(headless_preflight(&world, &[], &serve).is_empty());

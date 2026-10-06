@@ -27,7 +27,8 @@ serde_json.workspace = true
 sha2.workspace = true
 similar.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+# io-util: MCP の子の標準エラーを 1 行ずつ読む（Spec 64 凍結 13。--events jsonl の間だけ）。
+tokio = { workspace = true, features = ["io-util"] }
 tokio-util.workspace = true
 toml_edit.workspace = true
 trash.workspace = true

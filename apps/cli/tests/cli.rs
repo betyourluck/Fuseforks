@@ -339,6 +339,38 @@ fn events_jsonl_makes_every_stderr_line_json() {
     assert!(types.contains("log"), "{types:?}");
 }
 
+/// MCP の stdio サーバーの子が標準エラーへ素の行を出しても、`--events jsonl` の間は
+/// 全行が JSON（凍結 13）。**P6 の実機で破れているのが見つかった穴** — rmcp の既定は子の
+/// 標準エラーを継ぐので、Docker の MCP ゲートウェイや memoria の出力が素のまま流れていた。
+/// 子には実行ファイル自身を誤った引数で起こす（標準エラーへ使い方を出して 2 で終わる。
+/// OS を問わずある実行ファイルで、MCP としては接続に失敗するだけ）。
+#[test]
+fn events_jsonl_wraps_the_stderr_of_mcp_children() {
+    let dir = TempDir::new("jsonl-mcp");
+    make_village(&dir, &spawn_stub(Stub::Answer).0, None);
+    let mcp = serde_json::json!({
+        "mcpServers": { "noisy": { "command": BIN, "args": ["nonsense"] } }
+    });
+    std::fs::write(dir.workspace().join("mcp.json"), mcp.to_string()).unwrap();
+    let run = run(
+        &[
+            "ask", "--data-dir", data_dir(&dir), "--start", "reception", "--secrets", "env",
+            "--events", "jsonl", "こんにちは",
+        ],
+        true,
+    );
+    assert_eq!(run.code, 0, "stderr={}", run.stderr);
+    let mut from_child = 0;
+    for line in run.stderr.lines().filter(|l| !l.trim().is_empty()) {
+        let value: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|err| panic!("JSON でない行: {line} ({err})"));
+        if value["source"] == "mcp:noisy" {
+            from_child += 1;
+        }
+    }
+    assert!(from_child > 0, "子の行が 1 行も写っていない: {}", run.stderr);
+}
+
 /// 天井 5 で毎周ツールを呼ぶ → 2 周目の予約が通らず予算切れ = 9。
 /// **1 周で答えるスタブでは 9 にならない**（予約の見積もりは min(床, 天井) で 1 周目が通る）。
 #[test]

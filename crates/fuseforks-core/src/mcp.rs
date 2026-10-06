@@ -619,15 +619,53 @@ async fn serve_stdio(
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let transport = TokioChildProcess::new(command).map_err(|err| CoreError::Mcp {
+    let spawn_error = |err: std::io::Error| CoreError::Mcp {
         server: name.to_owned(),
         message: format!("起動できませんでした: {err}"),
-    })?;
+    };
+    // 子の標準エラーは rmcp の既定で親から継がれる。`fuseforks-cli --events jsonl` の間は
+    // 標準エラーの全行が JSON（Spec 64 凍結 13）なので、そのときだけ piped にして 1 行ずつ
+    // 包み直す。GUI（と JSON でない CLI）は今までどおり継ぐ — 挙動を変えない。
+    let transport = if crate::diag::stderr_json() {
+        let (transport, stderr) = TokioChildProcess::builder(command)
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(spawn_error)?;
+        if let Some(stderr) = stderr {
+            tokio::spawn(forward_child_stderr(format!("mcp:{name}"), stderr));
+        }
+        transport
+    } else {
+        TokioChildProcess::new(command).map_err(spawn_error)?
+    };
 
     ().serve(transport).await.map_err(|err| CoreError::Mcp {
         server: name.to_owned(),
         message: format!("接続に失敗しました: {err}"),
     })
+}
+
+/// 子の標準エラーを 1 行ずつ読み、JSON の 1 行で写す（`--events jsonl` の間だけ動く）。
+///
+/// UTF-8 でない出力（Windows の子が出すコードページの文字）も落とさず、不正な並びは
+/// 置き換えて写す。子が閉じれば終わる。
+async fn forward_child_stderr(source: String, stderr: tokio::process::ChildStderr) {
+    use tokio::io::AsyncBufReadExt;
+    let mut reader = tokio::io::BufReader::new(stderr);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let line = String::from_utf8_lossy(&buf);
+                let line = line.trim_end_matches(['\r', '\n']);
+                if !line.is_empty() {
+                    crate::diag::child_stderr_line(&source, line);
+                }
+            }
+        }
+    }
 }
 
 /// リモート（Streamable HTTP）サーバーへ initialize まで済ませる（Spec 47 P2）。
