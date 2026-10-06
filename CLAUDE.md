@@ -7246,7 +7246,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   stdio の MCP は `docker` / Windows の exe / `npx` で像の中では動かず、http の 4 体ぶんが平文の `Authorization` /
   ティッカーは `chrono::Local` でコンテナの既定 UTC だと「火曜 16:38」が日本時間 01:38 に発火する /
   Linux の C 依存は `libdbus-sys`（keyring）と `aws-lc-sys`（rustls）/ `schedules.json` と `run.json` は設計と実行が
-  1 ファイルに同居。未決 4（承認を `bake` が運ぶか・GHCR 公開・`Memory.md` を写すか・Windows 向けの CLI を配るか）
+  1 ファイルに同居。**未決ゼロ**（同日。承認は `bake` が運ぶ・GHCR に公開しない・`Memory.md` は初回だけ写す・
+  Windows 向けの CLI は配らない — 4 つとも推奨どおり。再査読の支持を利用者が回答として転送）。次は P0（Docker の中の実測）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
