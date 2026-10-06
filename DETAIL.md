@@ -81,17 +81,27 @@ Fuseforks/
 │       │       └── error.rs         LlmError（再試行可否の判断軸）
 │       ├── tests/orchestrator.rs    結合テスト（ネットワーク不要）
 │       └── tests/external_ask.rs    結合テスト: 外の LLM からの依頼（Spec 25）
+│   └── fuseforks-host/                  ★ ホスト層。村を開いて組み立て、閉じる。Tauri を知らない（Spec 64）
+│       ├── src/
+│       │   ├── boot.rs              build_host — GUI と fuseforks-cli が呼ぶ組み立ての 1 実装
+│       │   ├── paths.rs             HostPaths（data_dir と、そこから導く workspace）
+│       │   ├── lock.rs              村の排他ロック（{workspace}/.fuseforks.lock）
+│       │   ├── preflight.rs         起動前検査の材料集め（村を開かず、ファイルと秘密の有無だけを読む）
+│       │   ├── mcp_server.rs        外の LLM から依頼を受ける扉（HTTP + 合鍵。Spec 25）
+│       │   ├── pricing_source.rs    単価表の取得元（押したときだけ取りに行く。Spec 41）
+│       │   ├── jev_settings.rs      ツール結果の圧縮の設定と採点器の差し込み（Spec 59）。鍵があれば判断役の判断モデルも差し込む（Spec 62）
+│       │   └── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
+│       └── tests/                   扉のワイヤ / 村のロック
 │
 └── apps/
-    └── gui-tauri/                   ★ 外殻。fuseforks-core に依存する
+    ├── cli/                         実行ファイル fuseforks-cli。GUI なしで check / ask / serve（Spec 64）
+    │   ├── src/                     args.rs（引数）/ exit.rs（終了コード）/ output.rs / run.rs / main.rs
+    │   └── tests/cli.rs             結合テスト: 子プロセスで起こし、LLM はループバックのスタブ
+    └── gui-tauri/                   ★ 外殻。fuseforks-host に依存する
         ├── src-tauri/src/
         │   ├── lib.rs               ウィンドウ起動と IPC コマンド登録
-        │   ├── state.rs             オーケストレーター組み立て + イベント中継
-        │   ├── commands.rs          IPC コマンド（薄い転送層）
-        │   ├── mcp_server.rs        外の LLM から依頼を受ける扉（HTTP + 合鍵。Spec 25）
-        │   ├── pricing_source.rs    単価表の取得元（押したときだけ取りに行く。Spec 41）
-        │   ├── jev_settings.rs      ツール結果の圧縮の設定と採点器の差し込み（Spec 59）。鍵があれば判断役の判断モデルも差し込む（Spec 62）
-        │   └── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
+        │   ├── state.rs             データの置き場と版を build_host へ渡す + イベント中継
+        │   └── commands.rs          IPC コマンド（薄い転送層）
         └── src/
             ├── types.ts             Rust 型のミラー（手で同期させる契約）
             ├── lib/ipc.ts           型付き invoke ラッパ
@@ -155,10 +165,14 @@ Fuseforks/
 依存は一方向だけ。
 
 ```text
-apps/gui-tauri  ──依存──▶  crates/fuseforks-core
+apps/gui-tauri  ──依存──▶  crates/fuseforks-host  ──依存──▶  crates/fuseforks-core
+apps/cli        ──依存──▶  crates/fuseforks-host
 ```
 
-`crates/fuseforks-core/Cargo.toml` に `tauri` が現れないことが、この分離の機械的な保証になっている。
+`crates/fuseforks-core/Cargo.toml` と `crates/fuseforks-host/Cargo.toml` に `tauri` が現れないことが、
+この分離の機械的な保証になっている。**組み立ての配線（同梱ツールの登録・扉・前判定の承認・Jev・単価表の取得元）は
+`fuseforks-host` の `build_host` の 1 実装**で、GUI と `fuseforks-cli` は同じ関数を呼ぶ — 片方だけ同梱ツールの
+登録を忘れる、承認の差し込みを忘れる、という形が起きない（[Spec 64](specs/64_headless-host.md)）。
 GUI への通知は `CoreEvent` を `broadcast` チャネルへ流すだけで、受け手が Tauri か
 テストコードかをコア層は知らない。結果として、**GUI を起動せずに全経路を検証できる**。
 
@@ -1921,6 +1935,10 @@ pub enum CredentialSource {
 サーバー側の 401 になる。同じ理由で、キーを削除したときは `NotRequired` ではなく
 `Unset` へ戻す。
 
+**GUI なしで動かすときだけ、環境変数からも読める**（`fuseforks-cli --secrets env`。下の「GUI なしで動かす」）。
+コンテナには資格情報ストアが無く、デプロイ時に注入する環境変数が正しい置き場になるため。**読み取り専用**で、
+画面から設定したキーが環境変数へ流れる経路は無い。GUI は常に資格情報ストアだけを使う。
+
 秘密がプロセス内を通る区間は `LlmConfig::from_template` から HTTP ヘッダまでで、
 設定ファイル・イベント・エラーメッセージ・IPC 応答のいずれにも現れない。
 UI へ返るのは「登録済みかどうか」だけで、**値を読み出す API は存在しない**。
@@ -1993,6 +2011,7 @@ API キーが未設定でもアプリは動く。`HttpBackendFactory::echo_on_fa
 {app_data_dir}/workspace/
   world.json                  エージェント定義・モデルテンプレート・役職・絆の座標
   fuseforks.log               診断ログ（下記。8MB で fuseforks.log.old へ 1 世代だけ回る）
+  .fuseforks.lock             村の排他ロック（中身は空。同じ村を 2 つのプロセスが開かないための OS のロック。Spec 64）
   schedules.json              予定（時刻で発火する依頼。タイトルバーの「予定」から管理）
   village_id                  この村の識別子（Spec 28。前判定の承認をこの村に束ねるための乱数）
   Ordinance.md                村の条例（全エージェント共通の規則。タイトルバーの「条例」から編集）
@@ -2483,6 +2502,97 @@ Claude Code のような MCP クライアントから、**この村へ依頼を 
 あって、それは依頼の本文そのもの** — そちらは上の「本文が送り手を名乗れない
 ようにしてある」で塞いでいる。アイコンは自分のアイコンとは
 別に持つ — 同じ顔にすると、外の道具が頼んだことが自分の依頼に見える。
+
+### GUI なしで動かす（[Spec 64](specs/64_headless-host.md)）
+
+**村は GUI を開かずに動かせる。** 実行ファイル `fuseforks-cli` が、GUI と同じ組み立て
+（`fuseforks-host` の `build_host`）で村を開く。違うのは「予定を回すか」「扉を開くか」「秘密をどこから読むか」の
+3 つだけ。用途は、GUI で安定させた流れを cron・CI・コンテナから回すこと — **設計は GUI、実行は端末の外**。
+
+**配布はしていない。** ソースからビルドする（Release・winget・Homebrew には入っていない）:
+
+```bash
+cargo build -p fuseforks-cli --release
+```
+
+| 命令 | すること |
+|---|---|
+| `check --for ask\|serve` | 起動前の検査だけ。**村を開かず、LLM も MCP も呼ばない**（CI やイメージのビルド時に安く回せる） |
+| `ask <依頼文>` | 窓口へ 1 通送り、**答えだけを標準出力へ**出して閉じる。`-` で依頼文を標準入力から読む |
+| `serve` | 常駐して予定と扉（外の LLM から依頼を受ける MCP サーバー）を回す。Ctrl+C / SIGTERM で閉じる |
+
+```bash
+fuseforks-cli check --for ask --data-dir /data --start reception --secrets env
+fuseforks-cli ask   --data-dir /data --start reception --secrets env "今週の進捗をまとめて"
+fuseforks-cli serve --data-dir /data --start batch     --secrets env
+```
+
+**`--data-dir` と `--start` は必須で、既定値が無い。**
+
+- `--data-dir` は GUI の `{app_data_dir}` に当たる場所（村は `<dir>/workspace`、端末ごとの設定は `<dir>` 直下）。
+  既定で GUI と同じ場所を開くと、開発機で GUI の村を意図せず触る形がいちばん起きやすい
+- `--start` は起動する個体 — `batch`（GUI の全体 ▶ と同じ対象。個体の一括起動 × グループのスイッチ）/
+  `reception`（窓口だけ。`ask` 専用）/ `<id>,<id>,…`。**`ask` はどの値でも窓口を足す。**
+  「アプリを開いただけでは誰も走らない」という GUI の規則は変えていない — 引数で書くことが明示の起動になる
+
+**起動前の検査は `ask` と `serve` も必ず通る。** 拒否が 1 件でもあれば、LLM にも MCP にも触れずに止まる
+（`check` を別に打たなくても安全側に倒れる）。GUI なら人が画面で解く待ちを、ここで名指しする:
+
+| 重さ | 検査 |
+|---|---|
+| 拒否 | 計画の確認が ON の個体が起動する集合に居る（波が人の承認を永久に待つ）。`--bypass-plan-review` で通す — ステータスバーの「計画の確認を自動で通す」と同じスイッチ |
+| 拒否 | 起動する個体のテンプレートの API キーが、選んだ置き場に無い（1 通目で 401 になり、偽の応答が返る） |
+| 拒否 | `ask` で窓口が未設定・削除済み |
+| 警告 | 予定の宛先が起動する集合の外 / コマンドの承認が「承認が必要」で `run` を持つ個体が居る（`--run-approval` で変えられる）/ 前判定・後判定がこの端末で未承認 / 判断役や圧縮があるのに Jev の鍵が無い |
+| 情報 | 窓口の委譲先が起動する集合の外 / 起動に実行ファイルが要る MCP サーバー（`ask` では `--verbose` のときだけ出す — cron で毎回並ぶと本当の警告が埋もれる） |
+
+指摘はどれも**直し方を書く**。`check --json` は `{"findings":[…],"start":[…]}` の 1 行で、`start` は解決した
+起動する集合（`batch` で誰が起動するかを、起動せずに読める）。
+
+**秘密**は `--secrets keyring`（既定）か `env`。`env` では、鍵（テンプレート ID）を大文字にして英数字以外を
+`_` にした名前に `FUSEFORKS_SECRET_` を付けた環境変数を読む（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`、
+Jev のトークンは `FUSEFORKS_SECRET_JEV_API_TOKEN`）。起動時に 1 回だけ読み、書き込みはできない。
+**2 つの鍵が同じ変数名になる村は起動しない**（`a-b` と `a_b` — どちらの値か決められない）。
+
+**`ask`** は既定で**新しい会話**を作る（`--continue-session` で今の会話へ続ける）。GUI で使っている会話に
+cron の依頼を積まないため。代わりに、次に GUI を開くと `ask` の会話が開く（会話の一覧から戻れる）。
+送り手は外部クライアントで、名乗りは `fuseforks-cli`（`--client` で変える。村に外部クライアントの呼び名が
+設定されていればそちらが勝つ）。`ask` は予定を回さず、扉も開かない。待ちの上限は村の「委譲の待ち時間」。
+
+**終了コード**（日本語の定型文を解析しなくても、結末を機械が読める）:
+
+| コード | 意味 |
+|---|---|
+| 0 | `ask` の答えが返った / `check` の拒否が 0 件 / `serve` がシグナルで閉じた |
+| 1 | コアがエラーを返した（識別子と文面を 1 行） |
+| 2 | 引数の誤り |
+| 3 | 起動前の検査で拒否された |
+| 4 | 村を別のプロセスが開いている |
+| 5 | 組み立てに失敗した（`world.json` が壊れている・秘密の変数名が衝突した 等） |
+| 6 | `ask` の答えが返らなかった |
+| 7 | `ask` が待ちの上限を超えた |
+| 8 | `ask` が打ち切られた（Ctrl+C を含む） |
+| 9 | `ask` が予算の天井で止まった |
+
+6〜9 でも定型文は標準出力へ書く（終了コードは機械が読む結末、本文は人が読む結末）。
+
+- **`--events jsonl`** の間は**標準エラーの全行が JSON** — `CoreEvent`（画面へ届くのと同じ形）/
+  CLI 自身の行 `{"type":"cli","level","code","message"}` / 診断の行 `{"type":"log","message"}` の 3 種類だけ。
+  素の行は 1 行も混ざらない。標準出力は答えのまま
+- **閉じ方**は `ask` と `serve` で同じ — 扉を閉じる → 飛行中のターンに打ち切り → 起動した個体を止める →
+  ロックを外す。**30 秒待っても終わらなければ待たずに閉じ**、そのターンの払いの記録が欠けうることを 1 行書く。
+  2 回目の Ctrl+C は待たない
+- **同じ村を開けるのは 1 プロセスだけ。** `{workspace}/.fuseforks.lock` の OS のロックで判定するので、
+  **GUI にも効く** — GUI を開いたまま同じ村へ `ask` すると 4 で止まり、`serve` 中に GUI を開くと起動の覆いに
+  その旨が出る。落ちたプロセスのロックは OS が外すので、残ったファイルを消す手順は要らない
+- 版は `fuseforks-cli --version`（`0.4.0+g46022e5` の形 — 直近のタグと手元のコミット）。ログの
+  `version: app=` にも同じ値が出るので、GUI（`0.1.0` 等）と CLI のどちらが村を触ったかを読み分けられる
+
+**コンテナの外から扉へ繋ぐとき。** 扉の待ち受けは `127.0.0.1` のまま変えていない。k8s の Pod や
+`docker run --network container:<id>` のように**同じネットワーク名前空間に置いたプロキシ**からなら届くので、
+外向きの TLS・認証・回数の上限はプロキシに持たせる。プロキシは `Host` ヘッダーを `127.0.0.1:<port>` へ
+書き換えること（扉は loopback 以外の `Host` を拒む）。状態を見る口（`/healthz` 等）は作っていない —
+プロセスが生きていること自体が状態で、中身は `fuseforks.log` にある。
 
 ---
 

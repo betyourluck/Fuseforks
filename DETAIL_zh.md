@@ -75,16 +75,18 @@ Fuseforks/
 │       │   │   └── error.rs         LlmError（重试可行性的判断轴）
 │       │   ├── tests/orchestrator.rs    集成测试（不需要网络）
 │       │   └── tests/external_ask.rs    集成测试: 外部 LLM 的请求（Spec 25）
+│   └── fuseforks-host/                  ★ 宿主层。打开、组装、关闭村庄。不依赖 Tauri（Spec 64）
+│       └── src/                     boot.rs（build_host — GUI 与 fuseforks-cli 共用的唯一组装实现）/ paths.rs / lock.rs（村庄排他锁）/
+│                                    preflight.rs（启动前检查）/ mcp_server.rs（Spec 25）/ pricing_source.rs（Spec 41）/
+│                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）
 │
 └── apps/
-    └── gui-tauri/                   ★ 外壳。依赖 fuseforks-core
+    ├── cli/                         可执行文件 fuseforks-cli。无需 GUI 的 check / ask / serve（Spec 64）
+    └── gui-tauri/                   ★ 外壳。依赖 fuseforks-host
         ├── src-tauri/src/
         │   ├── lib.rs               窗口启动与 IPC 命令注册
-        │   ├── state.rs             编排器组装 + 事件中继
-        │   ├── commands.rs          IPC 命令（轻量转发层）
-        │   ├── mcp_server.rs        接收外部 LLM 请求的大门（HTTP + 合同密钥。Spec 25）
-        │   ├── jev_settings.rs      工具结果压缩的设定与评分器的装入（Spec 59）
-        │   └── probe_approvals.rs   记录是否可在当前终端执行前置判定（Spec 28）
+        │   ├── state.rs             把数据位置与版本交给 build_host + 事件中继
+        │   └── commands.rs          IPC 命令（轻量转发层）
         └── src/
             ├── types.ts             Rust 类型的镜像（手动同步的契约）
             ├── lib/ipc.ts           带类型的 invoke 包装器
@@ -142,10 +144,13 @@ Fuseforks/
 依赖是单向的。
 
 ```text
-apps/gui-tauri  ──依存──▶  crates/fuseforks-core
+apps/gui-tauri  ──依存──▶  crates/fuseforks-host  ──依存──▶  crates/fuseforks-core
+apps/cli        ──依存──▶  crates/fuseforks-host
 ```
 
-`crates/fuseforks-core/Cargo.toml` 中不出现 `tauri`，便是这种分离的机械保证。
+`crates/fuseforks-core/Cargo.toml` 与 `crates/fuseforks-host/Cargo.toml` 中不出现 `tauri`，便是这种分离的机械保证。
+组装的接线（内置工具的注册・大门・前置判定的批准・Jev・价格表来源）只有 `fuseforks-host` 的 `build_host` 这一处实现，
+GUI 与 `fuseforks-cli` 调用同一个函数（[Spec 64](specs/64_headless-host.md)）。
 向 GUI 发送通知只需将 `CoreEvent` 传入 `broadcast` 通道，核心层并不知道接收者是 Tauri 还是测试代码。因此，**无需启动 GUI 即可验证所有路径**。
 
 ---
@@ -522,6 +527,7 @@ SKILL / Construct 标签与判断者编辑对话框中的“用 AI 创建”。
 API 密钥保存在 **OS 的凭据存储**中（Windows 凭据管理器 / macOS 钥匙串 / freedesktop Secret Service）。`ModelTemplate` 仅持有密钥的“存在与否”这一布尔状态，实际的字符串绝不写入配置文件（`world.json` 等），也绝不保存在日志中。
 - 如果凭据存储不可用（或者在某些 Linux 运行环境中缺少 Secret Service 服务），则回退到内存保持，并在启动日志中输出警告。
 - 密钥的更新通过模态对话框完成。输入后的密钥会直接写入 OS 凭据存储，配置管理中只更新其引用。
+- **仅在不使用 GUI 运行时**，也可以从环境变量读取（`fuseforks-cli --secrets env`。见下文“无需 GUI 运行”）。容器里没有凭据存储。只读，GUI 始终只使用凭据存储。
 
 ## 运营
 
@@ -576,6 +582,21 @@ LLM 出现 `429`（RateLimit）或 `5xx` 时，采用指数退避加抖动重试
 ### 接收外部 LLM 的请求（[Spec 25](specs/25_mcp-server.md)）
 
 Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证），允许外部的 LLM 或客户端通过标准接口向本村のエージェント发送协作依頼，实现跨系统、跨实例的自动化联动。
+
+### 无需 GUI 运行（[Spec 64](specs/64_headless-host.md)）
+
+可执行文件 `fuseforks-cli` 用与 GUI 相同的组装（`build_host`）打开村庄，不同之处只有“是否运行计划”“是否打开大门”“从哪里读取密钥”三点。用途是把在 GUI 中稳定下来的流程交给 cron・CI・容器运行。**不分发**，请从源码构建：`cargo build -p fuseforks-cli --release`。
+
+- `check --for ask|serve`：只做启动前检查，不打开村庄，不调用 LLM 和 MCP。有一项拒绝即退出码 3（`--json` 输出 `{"findings":[…],"start":[…]}`）
+- `ask <请求>`：向窗口发送 1 条消息，**只把回答写到标准输出**后关闭（`-` 从标准输入读取）。默认新建会话（`--continue-session` 续接当前会话）
+- `serve`：常驻并运行计划与大门（MCP 服务器），Ctrl+C / SIGTERM 关闭
+- `--data-dir` 与 `--start`（`batch` / `reception` / `<id>,<id>,…`）为必填，没有默认值。`ask` 无论取何值都会加入窗口
+- `ask` 与 `serve` 也一定先做同样的检查。拒绝有 3 种：计划确认为 ON 的个体在启动集合中（`--bypass-plan-review` 放行）/ 模板的 API 密钥不在所选存放位置 / `ask` 时窗口未设置或已删除
+- 密钥：`--secrets keyring`（默认）或 `env`。`env` 读取 `FUSEFORKS_SECRET_` + 把键（模板 ID）转大写、非字母数字改为 `_` 的变量（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）。启动时读取一次，不可写入
+- 退出码：0 成功 / 1 核心错误 / 2 参数错误 / 3 检查拒绝 / 4 村庄被其他进程打开 / 5 组装失败 / 6 未得到回答 / 7 超时 / 8 被中断 / 9 达到预算上限
+- `--events jsonl` 时标准错误的每一行都是 JSON（CoreEvent / `{"type":"cli"}` / `{"type":"log"}`）
+- **同一个村庄只能由 1 个进程打开**（`{workspace}/.fuseforks.lock` 的 OS 锁，对 GUI 同样有效）
+- 从容器外连接大门时：大门仍只监听 `127.0.0.1`，由同一网络命名空间内的代理接收，并把 `Host` 改写为 `127.0.0.1:<port>`
 
 ## 有意未实现的部分
 

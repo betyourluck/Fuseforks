@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-09-30**
+**Last updated: 2026-10-06**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -63,6 +63,7 @@ is transmitted anywhere.
 | `exports/*.jsonl` | Conversations you explicitly exported |
 | `village_id` | A random value identifying this configuration set (it does not identify your device or you) |
 | `fuseforks.log` | Diagnostic log (see section 6) |
+| `.fuseforks.lock` | A marker so that two processes never open the same configuration set at once (**empty**) |
 
 ### Per-device settings (outside the workspace)
 
@@ -97,6 +98,18 @@ holding a key**. Because those files are stored in plain text, the place where a
 secret could be written was removed from the structure itself.
 
 Credentials are also never written to the diagnostic log.
+
+### When running without the GUI (`fuseforks-cli`)
+
+The `fuseforks-cli` executable, which you build from source, **sends the same things as the GUI**.
+It opens the same configuration set through the same machinery, so no destination is added.
+
+`fuseforks-cli` can also **read API keys from environment variables** instead of the operating system's
+credential store (`--secrets env`, for containers and other places without a credential store; the default is
+the credential store). If you choose this, **the keys sit in the process environment and the credential store's
+protection does not apply** (other programs running as the same user, or tools that record the environment, may
+be able to read them). **Which place to use is the choice of whoever runs it.** The app only reads environment
+variables and never writes to them. The GUI always uses the credential store only.
 
 ---
 

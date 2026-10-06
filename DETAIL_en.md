@@ -81,17 +81,27 @@ Fuseforks/
 │       │       └── error.rs         LlmError (retry decision axis)
 │       ├── tests/orchestrator.rs    Integration tests (no network required)
 │       └── tests/external_ask.rs    Integration tests: requests from external LLMs (Spec 25)
+│   └── fuseforks-host/                  ★ The host layer. Opens, assembles and closes a village. Knows nothing of Tauri (Spec 64)
+│       ├── src/
+│       │   ├── boot.rs              build_host — the one assembly that both the GUI and fuseforks-cli call
+│       │   ├── paths.rs             HostPaths (data_dir, and the workspace derived from it)
+│       │   ├── lock.rs              The village lock ({workspace}/.fuseforks.lock)
+│       │   ├── preflight.rs         Gathers the pre-start check (reads files and secret presence only; opens nothing)
+│       │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
+│       │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
+│       │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
+│       │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
+│       └── tests/                   Door wire / village lock
 │
 └── apps/
-    └── gui-tauri/                   ★ The shell. Depends on fuseforks-core
+    ├── cli/                         The fuseforks-cli executable. check / ask / serve without the GUI (Spec 64)
+    │   ├── src/                     args.rs (arguments) / exit.rs (exit codes) / output.rs / run.rs / main.rs
+    │   └── tests/cli.rs             Integration tests: run as a child process, with a loopback stub as the LLM
+    └── gui-tauri/                   ★ The shell. Depends on fuseforks-host
         ├── src-tauri/src/
         │   ├── lib.rs               Window launch and IPC command registration
-        │   ├── state.rs             Orchestrator assembly + event relay
-        │   ├── commands.rs          IPC commands (thin forwarding layer)
-        │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
-        │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
-        │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
-        │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
+        │   ├── state.rs             Hands the data location and version to build_host + event relay
+        │   └── commands.rs          IPC commands (thin forwarding layer)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
@@ -156,10 +166,14 @@ Fuseforks/
 Dependencies flow in only one direction.
 
 ```text
-apps/gui-tauri  ──depends on──▶  crates/fuseforks-core
+apps/gui-tauri  ──depends on──▶  crates/fuseforks-host  ──depends on──▶  crates/fuseforks-core
+apps/cli        ──depends on──▶  crates/fuseforks-host
 ```
 
-The absence of `tauri` in `crates/fuseforks-core/Cargo.toml` mechanically guarantees this separation.
+The absence of `tauri` in `crates/fuseforks-core/Cargo.toml` and `crates/fuseforks-host/Cargo.toml` mechanically guarantees this separation.
+**The assembly wiring (registering the bundled tools, the door, pre-check approvals, Jev, the price-table source) is one implementation,
+`build_host` in `fuseforks-host`**, and the GUI and `fuseforks-cli` call the same function — so one side cannot forget a bundled
+tool or an approval hook that the other has ([Spec 64](specs/64_headless-host.md)).
 Notifications sent to the GUI merely stream `CoreEvent` into a `broadcast` channel; the core layer remains entirely unaware of whether the receiver is Tauri or test code. Consequently, **the entire pipeline can be verified without launching the GUI**.
 
 ---
@@ -1524,6 +1538,11 @@ pub enum CredentialSource {
 
 `Unset` and `NotRequired` are separate because **"not entered yet" and "not required" are different states**. Combining them makes a template missing a key appear unauthenticated, sends a request without an authentication header to the outside, and turns a local configuration error into a server-side 401. For the same reason, deleting a key returns to `Unset`, not `NotRequired`.
 
+**Only when running without the GUI can secrets also come from environment variables** (`fuseforks-cli --secrets env`; see
+"Running without the GUI" below). A container has no credential store, and an environment variable injected at deploy time is the
+right place there. It is **read-only** — there is no path for a key set on screen to flow into an environment variable. The GUI always
+uses the credential store only.
+
 Secrets pass through the process only from `LlmConfig::from_template` to the HTTP headers. They never appear in configuration files, events, error messages, or IPC responses. The UI receives only whether one is registered; **there is no API to read its value**.
 
 > This was rebuilt twice. Initially, `apiKeyEnv` was a `String`, and the only defense was a UI label and warning text. A real key was pasted on the first day of use and persisted in plaintext. The next design required an environment variable name, but that did not fit a desktop GUI: it required terminal work and restart, and on Windows configured variables do not propagate to an already-running process. **Warnings are not controls. It is not enough to make writing impossible; the design must provide a correct place for the user to put the value.**
@@ -1576,6 +1595,7 @@ Agent settings reside in the OS application-data area.
 {app_data_dir}/workspace/
   world.json                  Agent definitions, model templates, roles, and connection-map coordinates
   fuseforks.log               Diagnostic log (below; rotates one generation to fuseforks.log.old at 8 MB)
+  .fuseforks.lock             Village lock (empty; an OS lock so that two processes never open the same village. Spec 64)
   schedules.json              Schedules (time-triggered requests; managed from "Schedule" in the title bar)
   village_id                  This village's identifier (Spec 28; a random value that binds pre-check approvals to this village)
   Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
@@ -2018,6 +2038,98 @@ string no longer reaches the prompt** — that string is a value a caller can wr
 so configuring a name closes that path. **A caller can write one other thing: the request
 body itself** — that path is closed by the paragraph above. The icon is kept separate from your own:
 sharing one face would make an outside tool's request look like your own.
+
+### Running without the GUI ([Spec 64](specs/64_headless-host.md))
+
+**A village runs without opening the GUI.** The `fuseforks-cli` executable opens the village with the same assembly as the GUI
+(`build_host` in `fuseforks-host`). Only three things differ: whether schedules run, whether the door opens, and where secrets
+are read from. The use is running a flow you have stabilised in the GUI from cron, CI or a container — **design in the GUI,
+run outside the desktop**.
+
+**It is not distributed.** Build it from source (it is not in Releases, winget or Homebrew):
+
+```bash
+cargo build -p fuseforks-cli --release
+```
+
+| Command | What it does |
+|---|---|
+| `check --for ask\|serve` | Only the pre-start check. **Opens no village and calls neither an LLM nor MCP** (cheap enough for CI or an image build) |
+| `ask <request>` | Sends one message to the reception, writes **only the answer to stdout**, and closes. `-` reads the request from stdin |
+| `serve` | Stays up and runs schedules and the door (the MCP server that takes requests from external LLMs). Closes on Ctrl+C / SIGTERM |
+
+```bash
+fuseforks-cli check --for ask --data-dir /data --start reception --secrets env
+fuseforks-cli ask   --data-dir /data --start reception --secrets env "Summarise this week's progress"
+fuseforks-cli serve --data-dir /data --start batch     --secrets env
+```
+
+**`--data-dir` and `--start` are required and have no default.**
+
+- `--data-dir` is the equivalent of the GUI's `{app_data_dir}` (the village is `<dir>/workspace`; per-device settings sit directly in
+  `<dir>`). Defaulting to the GUI's location would make it all too easy to touch the GUI's village from a dev machine by accident
+- `--start` is who starts — `batch` (the same set as the GUI's global ▶: each servant's batch-start × its group's switch) /
+  `reception` (only the reception; `ask` only) / `<id>,<id>,…`. **`ask` adds the reception whatever the value.**
+  The GUI's rule "opening the app starts no one" is unchanged — writing it in the arguments is the explicit start
+
+**`ask` and `serve` always go through the pre-start check too.** If there is even one rejection, they stop without touching an LLM
+or MCP (so you are on the safe side even without running `check` separately). Waits that a person would resolve on screen in the GUI
+are named here:
+
+| Level | Check |
+|---|---|
+| Reject | A servant with plan review ON is in the start set (the wave would wait for human approval forever). Pass `--bypass-plan-review` — the same switch as "auto-approve plans" in the status bar |
+| Reject | The API key of a starting servant's template is not in the chosen store (the first message would 401 and a fake reply would come back) |
+| Reject | For `ask`, the reception is unset or deleted |
+| Warn | A schedule's target is outside the start set / command approval is "approval required" and a servant has `run` (change it with `--run-approval`) / a pre- or post-check is unapproved on this machine / judges or pruning exist but there is no Jev key |
+| Info | The reception's delegates are outside the start set / an MCP server that needs an executable to start (for `ask`, shown only with `--verbose` — repeated on every cron run, it would bury the real warnings) |
+
+Every finding says **how to fix it**. `check --json` prints one line, `{"findings":[…],"start":[…]}`; `start` is the resolved start set
+(so you can read who `batch` would start without starting anyone).
+
+**Secrets** come from `--secrets keyring` (default) or `env`. With `env`, the key (the template ID) is upper-cased, every non-alphanumeric
+character becomes `_`, and `FUSEFORKS_SECRET_` is prefixed (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`; the Jev token is
+`FUSEFORKS_SECRET_JEV_API_TOKEN`). They are read once at start, and cannot be written. **A village where two keys map to the same
+variable name does not start** (`a-b` and `a_b` — it cannot tell whose value it is).
+
+**`ask`** creates a **new conversation** by default (`--continue-session` continues the current one), so cron requests do not pile
+onto the conversation you use in the GUI. The price is that the next time you open the GUI, the `ask` conversation opens (you can go
+back from the conversation list). The sender is an external client named `fuseforks-cli` (change it with `--client`; the village's
+external-client name wins if set). `ask` runs no schedules and opens no door. The wait limit is the village's delegation timeout.
+
+**Exit codes** (so machines can read the outcome without parsing Japanese boilerplate):
+
+| Code | Meaning |
+|---|---|
+| 0 | `ask` got an answer / `check` found no rejection / `serve` closed on a signal |
+| 1 | The core returned an error (identifier and text on one line) |
+| 2 | Bad arguments |
+| 3 | Rejected by the pre-start check |
+| 4 | Another process has the village open |
+| 5 | Assembly failed (`world.json` broken, secret variable names collide, etc.) |
+| 6 | `ask` got no answer |
+| 7 | `ask` exceeded the wait limit |
+| 8 | `ask` was interrupted (including Ctrl+C) |
+| 9 | `ask` stopped at the budget ceiling |
+
+For 6–9 the boilerplate text is still written to stdout (the exit code is the outcome for machines, the body is the outcome for people).
+
+- With **`--events jsonl`**, **every stderr line is JSON** — `CoreEvent` (the same shape the screen receives) / the CLI's own lines
+  `{"type":"cli","level","code","message"}` / diagnostic lines `{"type":"log","message"}`, and nothing else. Not one plain line slips
+  in. stdout is still only the answer
+- **Closing** is the same for `ask` and `serve` — close the door → interrupt in-flight turns → stop the started servants → release the
+  lock. **If that has not finished after 30 seconds it closes without waiting**, and says in one line that the spend record for that
+  turn may be missing. A second Ctrl+C does not wait
+- **Only one process can open a village.** It is decided by the OS lock on `{workspace}/.fuseforks.lock`, so **it applies to the GUI
+  too** — `ask` against a village the GUI has open stops with 4, and opening the GUI while `serve` runs shows it on the start-up
+  overlay. The OS releases the lock of a process that died, so there is no stale file to delete
+- The version is `fuseforks-cli --version` (like `0.4.0+g46022e5` — the latest tag and the local commit). The same value appears in the
+  log's `version: app=`, so you can tell whether the GUI (`0.1.0`, etc.) or the CLI touched a village
+
+**Reaching the door from outside a container.** The door still listens on `127.0.0.1` only. A **proxy in the same network namespace**
+(a k8s Pod, `docker run --network container:<id>`) can reach it, so give outward TLS, authentication and rate limits to the proxy.
+The proxy must rewrite the `Host` header to `127.0.0.1:<port>` (the door rejects any `Host` that is not loopback). There is no status
+endpoint (`/healthz` etc.) — a live process is the status, and the details are in `fuseforks.log`.
 
 ---
 
