@@ -14,6 +14,16 @@
  * のに、そちらを見ていなかった。
  *
  * 手口は `toolLabel.test.ts` / `defaultEnabledTools.test.ts` と同じ。
+ *
+ * **2 例目（2026-10-06）: この網の出所そのものが腐っていた。** 読んでいる凍結テスト
+ * `grounding_engine_wire_values_are_frozen` が Spec 37 の `Meta` / Spec 45 の
+ * `Perplexity` を 6〜8 週間載せておらず、網は 3 値で緑のまま、実機の vite コンソールに
+ * `[intlify] Not found 'grounding.engine.perplexity' key in 'ja'` が出た。
+ * **凍結テストを出所にする判断は保つ**（`frozenEngineValues` の doc のとおり
+ * snake_case を再実装しない）が、**出所が enum に追従しているか**を別に見る —
+ * `enumVariants` が enum 本体の variant 名を読み、凍結テストに対応する期待値が
+ * あることを突き合わせる（`failures.md` #141。#124「数を留める検算は片方の辺を
+ * 実物から取る」のテスト側の 2 例目）。
  */
 import { describe, expect, it } from "vitest";
 // @ts-expect-error @types/node を入れない方針のため（vite.config.ts と同じ扱い）
@@ -53,6 +63,23 @@ function frozenEngineValues(): string[] {
   return values.sort();
 }
 
+/**
+ * `pub enum GroundingEngine { … }` の本体から variant 名を読む。
+ *
+ * **ワイヤ値の綴りを決めるためではない**（それは凍結テストの仕事）。使うのは
+ * 「凍結テストが enum に追従しているか」の検定だけで、突き合わせは
+ * 「`_` を落として小文字にした期待値 == variant 名の小文字」という緩い対応に
+ * とどめる（`open_ai` ↔ `OpenAi`。`XHigh` → `xhigh` のような rename の例外も通る）。
+ * 緩いのは意図で、厳密な snake_case をここで再実装すると、それ自身が間違える。
+ */
+function enumVariants(): string[] {
+  const block = rustSource.match(/pub enum GroundingEngine \{([\s\S]*?)\n\}/);
+  if (!block) throw new Error("Rust 側に pub enum GroundingEngine が見つかりません");
+  const names = [...block[1].matchAll(/^ {4}([A-Z][A-Za-z0-9]*),\s*$/gm)].map((m) => m[1]);
+  if (names.length === 0) throw new Error("GroundingEngine の variant が読めません");
+  return names;
+}
+
 describe("grounding.engine の辞書鍵", () => {
   // 計器の検定を先に取る（#90）— 走査が空振りしていないことを確かめてから
   // 「欠けは無い」を読む。0 件の結果は「起きなかった」と「読めていない」を畳む。
@@ -61,6 +88,21 @@ describe("grounding.engine の辞書鍵", () => {
     expect(values).toContain("google");
     expect(values).toContain("xai");
     expect(values.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // 出所の鮮度。凍結テストが enum に追従していなければ、下の 2 本は古い値の集合で
+  // 緑のまま、画面には生の鍵が出る（2026-10-06 に `meta` / `perplexity` で実際にそうなっていた）。
+  it("enum の全 variant が凍結テストに期待値を持つ（出所の鮮度）", () => {
+    const variants = enumVariants();
+    expect(variants).toContain("Google");
+    expect(variants.length).toBeGreaterThanOrEqual(3);
+    const frozen = frozenEngineValues();
+    const unfrozen = variants.filter(
+      (v) => !frozen.some((f) => f.replace(/_/g, "") === v.toLowerCase()),
+    );
+    expect(unfrozen, `凍結テストに期待値が無い variant: ${unfrozen.join(", ")}`).toEqual([]);
+    // 逆向き — 消えた variant の期待値が残れば、辞書の「余った鍵」も網の外に残る
+    expect(frozen.length, "凍結された値の数が variant の数と違う").toBe(variants.length);
   });
 
   it("すべてのワイヤ値が ja と en の両方に鍵を持つ", () => {

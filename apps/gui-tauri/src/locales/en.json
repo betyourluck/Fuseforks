@@ -254,7 +254,9 @@
     "engine": {
       "google": "Google Search",
       "xai": "Live Search (xAI)",
-      "open_ai": "Web search (OpenAI)"
+      "open_ai": "Web search (OpenAI)",
+      "meta": "Web search (Meta)",
+      "perplexity": "Search & fetch (Perplexity)"
     },
     "queries": "Queries",
     "sourcesMissing": "No sources were returned (URLs in the reply are not confirmed citations).",
