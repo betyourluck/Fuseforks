@@ -1,7 +1,9 @@
 # Spec 65: 村をコンテナで回す（bake・像・参照構成）
 
-- 状態: **Draft rev2・未決ゼロ**（2026-10-07 起票 → 同日、査読 2 系統 27 点を反映して rev2。表は Notes 3 →
-  同日、再査読が未決 4 つの推奨を支持し、利用者がそれを回答として転送して未決ゼロ。次は P0）
+- 状態: **P0 完了**（2026-10-07 起票 → 同日、査読 2 系統 27 点を反映して rev2。表は Notes 3 →
+  同日、再査読が未決 4 つの推奨を支持し、利用者がそれを回答として転送して未決ゼロ → **同日に P0 完了** —
+  像のビルドと像の中の測定 9 項目・`container_contract` 凍結 14 本。予測の外れ 3 つが設計を 2 か所動かした
+  （時刻帯の名前は `TZ` を先に見る / `RUN_COMMAND_NOT_FOUND` は同名の別プログラムを見分けない）。「P0 実測記録」が正）
 - 起点: 利用者（2026-10-07）—「コンテナの SPEC を起票しましょう」。Spec 64 D12 が「配るなら Linux 向けの
   静的リンク・コンテナの像・署名の扱いが要り、それはコンテナの Spec で一緒に決める」と送った先
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -76,7 +78,7 @@ GUI の村とコンテナの村の双方向の同期 / 会話（`sessions.redb`�
   | stdio | `docker mcp gateway run`（5 体） | 像の中に docker は無い |
   | stdio | `D:\memoria\MemoriaAeterna.exe` / `D:\memoria\manuale.exe` | Windows の実行ファイル。Linux では動かない |
   | stdio | `npx @browsermcp/mcp@latest` | node が要る。しかもブラウザ拡張が相手 |
-  | http | `https://outcasts.jp/mcp` / `elythworld.com` / `api.alphaxiv.org` | 届く。**`headers.Authorization` が平文**（4 体ぶん） |
+  | http | `https://outcasts.jp/mcp` / `elythworld.com` / `api.alphaxiv.org` | 届く。**`headers.Authorization` が平文**（3 体・6 接続先 — ザリが 4 つ、ルナと agent_9 が 1 つずつ。rev2 までの「4 体ぶん」は数え間違い） |
   | http | `http://127.0.0.1:39642/mcp`（lorelei） | 開発機のローカルのサービス。クラウドからは届かない |
 
   stdio の `env` にもパス（`MEMORIA_DB_PATH` / `MANUALE_ROOT`）と Windows の変数（`LOCALAPPDATA` / `ProgramData`）が入っている
@@ -244,7 +246,7 @@ pub struct HostView<'a> {
     pub mcp_secret_refs: &'a [(String, String)],           // (サーバー名, NAME)。起動する集合の共通と個体別から
     pub door_port: Option<u16>,                            // --door-port
     pub door_token_present: bool,
-    pub process_time_zone: Option<&'a str>,                // 読めなければ None
+    pub process_time_zone: Option<&'a str>,                // TZ があればその値、無ければ iana-time-zone（P0）
     pub baked_time_zone: Option<&'a str>,                  // bake.json が無ければ None
 }
 ```
@@ -255,15 +257,26 @@ pub struct HostView<'a> {
 | `DOOR_TOKEN_MISSING` | `--door-port` があるのに `door_token` が無い | **拒否** | 扉を開くと言ったのに開けない（D9） |
 | `WORK_DIR_MISSING` | 起動する集合の `workDir` が設定されていて、存在しない・フォルダでない | **拒否** | ファイル系のツールが全部「作業フォルダが存在しません」を返す。ヘッドレスでは誰も直さない |
 | `RAG_SOURCE_MISSING` | `ragSources` の 1 つが存在しない | 警告 | `rag` はその宣言を飛ばして動く |
-| `MCP_COMMAND_NOT_FOUND` | stdio の `command` が絶対パスなら存在しない、名前なら PATH に無い | 警告（**今の情報 `MCP_STDIO` を置き換える**） | その MCP サーバーは繋がらず、個体はそのツール無しで動く。直し方はリモート MCP（Spec 47）か派生した像 |
+| `MCP_COMMAND_NOT_FOUND` | **有効な**（`enabled` が偽でない）stdio の `command` が絶対パスなら存在しない、名前なら PATH に無い | 警告（**今の情報 `MCP_STDIO` を置き換える**） | その MCP サーバーは繋がらず、個体はそのツール無しで動く。直し方はリモート MCP（Spec 47）か派生した像 |
 | `RUN_COMMAND_NOT_FOUND` | `run.json` の `allow` の先頭の語が PATH に無い | 警告 | 許可しても実行時に「見つからない」 |
-| `TIMEZONE_MISMATCH` | **有効な**（`enabled`）`daily` / `weekly` の予定があり、プロセスの IANA 名が `bake.json` の `sourceTimeZone` と違うか、プロセスの側が読めない | 警告 | 予定が GUI で決めた時刻と違う時刻に発火する。直し方は `TZ=<sourceTimeZone>` |
+| `TIMEZONE_MISMATCH` | **有効な**（`enabled`）`daily` / `weekly` の予定があり、プロセスの時刻帯の名前が `bake.json` の `sourceTimeZone` と違うか、`TZ` の値に対応する時刻帯のファイルが無い | 警告 | 予定が GUI で決めた時刻と違う時刻に発火する。直し方は `TZ=<sourceTimeZone>` |
 
 - **`MCP_STDIO`（情報）の撤去は契約の破壊的変更**。`headless_host_contract` の識別子の列挙を直し、`--json` の `code` を読む
   側（Spec 64 は配布していないので利用者はいない）へ向けて契約に記録する
 - `bake.json` が無い村（GUI の村を `--data-dir` で直接開いた場合）では `TIMEZONE_MISMATCH` を出さない（比べる相手が無い）
 - **`WORK_DIR_MISSING` は `bake.json` の有無に関わらず拒否**。GUI の村を直接開いた場合でも、存在しない作業フォルダの個体は
   ツールが全部失敗する。Spec 64 の CLI は配布していないので、挙動の変化で困る利用者はいない
+- **プロセスの時刻帯の名前は `TZ` を先に見る**（P0）。`TZ` が設定されていればその値（先頭の `:` を落とす）、無ければ
+  `iana-time-zone`。**Linux の `iana-time-zone` は `TZ` を見ない**（`/etc/localtime` を読む）ので、`TZ=Asia/Tokyo` の
+  コンテナで `Etc/UTC` を返す — そのまま比べると、`TZ` を正しく設定した運用者に警告が出る。`TZ` の値に
+  `/usr/share/zoneinfo/<値>` が無ければ `chrono` は**黙って UTC で動く**ので、読めないとして同じ識別子で名指しする
+- **`RUN_COMMAND_NOT_FOUND` は PATH にあるかしか見ない。同じ名前の別のプログラムは見分けない**（P0。Debian の login
+  パッケージの `sg` が、ast-grep の `sg` と同名で「ある」と判定された）。像の中の `sg` 呼び出しは黙って別のプログラムを
+  実行する。見分ける手段は無い（版の出力の形を推測で読む形にしない）ので、`deploy/README.md` に名前の衝突を書き、
+  ast-grep を入れる派生した像では `ast-grep` の名前で許可する手順を書く
+- `MCP_COMMAND_NOT_FOUND` と `SECRET_MISSING`（`headers` の参照）は**有効なサーバーだけ**を数える（今の `MCP_STDIO` と同じ。
+  P0 で私の数えが `enabled: false` の 3 つを数えて 12 件になり、実装の 9 件と食い違った — 実装が正しかった）。
+  一方 D2 の 4 の平文の鍵は**無効なサーバーも数える**（ファイルの中身は有効に関わらず写る）
 - **PATH の解決は `run` と同じ規則**（`env_clear` した子に渡す `PATH`）。`check` の側だけ別の PATH を見ると、
   `check` が通って実行時に見つからない形が生まれる
 
@@ -303,8 +316,9 @@ deploy/Dockerfile    多段ビルド
   - **bind mount はホストの所有者のまま**。`deploy/README.md` に `chown 10001:10001` の手順を書く。書けなければ
     `build_host` の `create_dir_all` が Permission denied で 5（組み立ての失敗）になる
 - **`trash` はごみ箱を `$HOME/.local/share/Trash` か、ボリュームの頂点の `.Trash-<uid>` に作る**（freedesktop の規則。
-  ボリュームをまたぐ移動はできないので、作業フォルダが `/home` と別のボリュームなら頂点の側）。頂点に書けないと
-  `file remove` と黒板の削除が失敗する — P0 で測る
+  P0 で確かめた）。頂点に書けないと `PermissionDenied` で失敗し、ファイルは消えずに残る（安全側）。
+  **`/work` は親のフォルダとしてマウントする** — リポジトリ自体をマウントすると、`.Trash-10001` がリポジトリの直下に
+  生まれて `git status` に出る。ごみ箱は自動では空にならないので、容量は運用者が見る（`deploy/README.md`）
 - **像に村を焼かない。** `/data` はボリューム。像は村を知らない — 同じ像で何個の村でも回せる
 - 道具の追加（`lake` / `elan` / `dyff` / `sg` / node など）は**派生した像**（`FROM`）で行う。基本の像に積むほど、
   使わない人の像が大きくなる
@@ -332,7 +346,9 @@ deploy/.env.example
 ```
 
 - **`stop_grace_period` を書く理由**: Docker の既定は 10 秒で、超えると SIGKILL が来る。Spec 64 D8 の猶予は 30 秒なので、
-  既定のままだと飛行中のターンの `turn:` 行と `Record::Turn` が欠ける（#103 の形）
+  既定のままだと飛行中のターンの `turn:` 行と `Record::Turn` が欠ける（#103 の形）。**P0 で実測した** — 20 秒で答える
+  スタブへの `ask` を `docker stop -t 10` で止めると 11 秒で **137（SIGKILL）・`turn:` 行なし・標準出力は空**、`-t 40` なら
+  25 秒で **0・`turn: … stop=-`・答え**
 - **止める順序**: `depends_on` があるので、`docker compose down` は `proxy` を先に止めてから `fuseforks` を止める
   （依存の逆順）。`proxy` が名前空間の持ち主より後まで残る形にはならない
 - **`ports:` を `fuseforks` の側に置く理由**: `network_mode: "service:…"` のサービスは自分では `ports:` を持てない（Docker の
@@ -387,19 +403,15 @@ deploy/.env.example
 
 ## Tasks
 
-### P0 — 測ってから凍結する
+### P0 — 測ってから凍結する（**完了**・2026-10-07。「P0 実測記録」）
 
-- [ ] 開発機の Docker で、`deploy/Dockerfile` の試作をビルドする（所要・像の大きさ・`aws-lc-sys` が bookworm で通るか）
-- [ ] 像の中で測る: (a) UID 10001 で `trash::delete` が、`/home` と別の名前付きボリュームの上のファイルで動くか・bind mount の上で
-  どうなるか (b) 名前付きボリュームが像の `/data` の所有者 10001 を引き継ぐか (c) `TZ=Asia/Tokyo` で `chrono::Local` と
-  `iana-time-zone` が `Asia/Tokyo` を返すか・`TZ` 無しで UTC / 読めないか (d) `tini` の下で `docker stop` が SIGTERM を届け、
-  `ask` / `serve` が Spec 64 の終了コードで閉じるか (e) `network_mode: service:` の Caddy から `127.0.0.1:39641` へ届くか
-- [ ] `iana-time-zone` が Windows の開発機で `Asia/Tokyo` を返すか
-- [ ] 開発機の村の写しを scratchpad に手で作り（パスを手で置き換え）、像の中で `check --for serve` を回して、
-  D5 の各識別子が何件ずつ出るかの予測を先に書いてから突き合わせる
-- [ ] `data_contract.yaml` に `container_contract` を凍結（D1 の表 / D2 の閉じた許容・欄の集合・終了コード / D3 の展開規則と
-  衝突検査の鍵 / D4 / D5 の識別子 / D9）。`headless_host_contract` の `MCP_STDIO` を置き換え、`probe_approvals` の
-  「GUI の IPC だけが書く」に `bake` を足す。写しの `world.json` は値として等しい（バイトではない）を書く
+- [x] 開発機の Docker で試作の像をビルドする — 429 秒（うち `cargo build` 6 分 29 秒）・241 MB・`aws-lc-sys` と
+  `libdbus-sys` は bookworm で通る
+- [x] 像の中で測る (a) ごみ箱 (b) 名前付きボリュームの所有者 (c) 時刻帯 (d) `tini` と `docker stop` (e) Caddy
+- [x] `iana-time-zone` が Windows の開発機で `Asia/Tokyo` を返す
+- [x] 開発機の村の写しで `check --for serve` と D5 の数え（予測を先に書いて突き合わせた）
+- [x] `data_contract.yaml` に `container_contract` を凍結（14 本）。`probe_approvals` の書き手に `bake` を、
+  `headless_host_contract` の `MCP_STDIO` に置き換えの予告を足した
 
 ### P1 — コア
 
@@ -422,6 +434,10 @@ deploy/.env.example
 
 ### P3 — 像と参照構成
 
+- **版番号を像へ渡す**（P0 で見つけた）: 除外リストで `.git` を外すと `build.rs` の `git describe` が取れず、
+  `fuseforks-cli --version` が `0.0.0` になる（Spec 64 D11 のとおりの値）。`build.rs` が環境変数
+  `FUSEFORKS_CLI_VERSION` を先に見るようにして、Dockerfile の `ARG` から渡す（`.git` を像のビルドに送らない）
+
 - [ ] `deploy/Dockerfile` / `deploy/compose.yaml` / `deploy/Caddyfile.example` / `deploy/.env.example` / `deploy/README.md`（日英）
 - [ ] `.github/workflows/verify-image.yml`（手動）と、像で回す小さな村の fixture
 
@@ -442,6 +458,86 @@ deploy/.env.example
 - [ ] `docker compose down` で `turn:` 行が欠けない（飛行中のターンがあるとき）
 - [ ] GUI で Construct を直して再 `bake --update` → コンテナの Memory・会話・予定の消化が残り、Construct だけ変わる
 - [ ] 平文の `Authorization` を持つ村の `bake` が 10 で止まり、`${secret:…}` に直すと通る
+
+## P0 実測記録（2026-10-07）
+
+**道具**: 開発機の Docker 29.8.1（Docker Desktop・linux/amd64・16 CPU・メモリ 7.1 GB）。試作の Dockerfile・測定用の
+小さなプログラム（`trash` 5.2.6 / `iana-time-zone` 0.1.65 / `chrono` を固定）・遅い OpenAI 互換のスタブ・写しを作るスクリプトは
+scratchpad に置き、リポジトリには入れていない（P3 で `deploy/` に正式に書く）。**予測は測る前に書いた**（外れは下の表の太字）。
+
+### 像のビルド
+
+- **429 秒で通った**（`docker build` 全体。うち `cargo build -p fuseforks-cli --release --locked` が 6 分 29 秒、
+  apt が 39 秒）。像は **241 MB**。`aws-lc-sys` と `libdbus-sys` は `rust:1-bookworm` に `cmake` / `clang` /
+  `libdbus-1-dev` / `pkg-config` を足すだけで通った。`ldd` で動的に繋がるのは `libdbus-1` とその依存
+  （`libsystemd` / `libgcrypt` / `libzstd` ほか）と glibc
+- ビルドの入力から `target/` / `.git` / `node_modules` / `specs/` などを外した（`Dockerfile.dockerignore`）。
+  **帰結として `fuseforks-cli --version` は `0.0.0`**（`.git` が無いので Spec 64 D11 のとおりに落ちた）→ P3 に 1 項目
+- 像の中: `id` = 10001 / `/data` `/work` `/home/fuseforks` の所有者 10001 / `git` `curl` `bash` `python` `rg` `ssh`
+  `pwd` `tini` は PATH にある
+
+### 像の中の測定
+
+| # | 項目 | 予測 | 結果 |
+|---|---|---|---|
+| (a1) | UID 10001・`/home` と別の名前付きボリューム `/work` の上で `trash::delete` | 頂点の `/work/.Trash-10001` に作って Ok | **一致**（`files/` と `info/` を作った） |
+| (a2) | `$HOME` の下 | `~/.local/share/Trash` | **一致** |
+| (a3) | 頂点が root の所有（`/work/sub` だけ 10001） | Err | **一致** — `PermissionDenied` で `/work/.Trash-10001` を作れず、**ファイルは残った** |
+| (a4) | bind mount（Docker Desktop。Windows のフォルダ） | — | 頂点が root・0777 に見えて書ける。Ok |
+| (b) | 名前付きボリュームを初めてマウント | 像の所有者 10001 を引き継ぐ | **一致**（`/data` `/work` とも 10001） |
+| (c1) | `TZ` なし | `Etc/UTC`・+00:00 | **一致** |
+| (c2) | `TZ=Asia/Tokyo` | `iana-time-zone` = `Asia/Tokyo`・+09:00 | **外れ** — `chrono::Local` は +09:00 だが、**`iana-time-zone` は `Etc/UTC` を返した**（Linux では `TZ` を見ず `/etc/localtime` を読む） |
+| (c3) | `TZ=Bogus/Zone` | （予測なし） | `chrono::Local` は**黙って +00:00**・`iana-time-zone` は `Etc/UTC` |
+| (d1) | `tini` の下の `serve`（5 体）を `docker stop` | 閉じ方を通って 0 | **一致** — 587 ms で 0。「閉じます」→ 5 体とも `joined=true` |
+| (d2) | 20 秒で答えるスタブへの `ask` を飛行中に `docker stop -t 10` | — | 11 秒で **137（SIGKILL）**。`turn:` 行なし・標準出力は空 |
+| (d3) | 同じく `docker stop -t 40` | — | 25 秒で **0**。`turn: … stop=- prompt=10 total=12 … model=stub`・標準出力は答え |
+| (e1) | `--network container:` の Caddy（`header_up Host 127.0.0.1:39641`）→ 扉。外の Host は `fuseforks.example.com`・合鍵あり | 200 | **一致** |
+| (e2) | 同じ要求を Host の書き換え無しで | 403 か 400 | **一致** — `403 Forbidden: Host header is not allowed` |
+| (e3) | 書き換えありで合鍵なし / 誤った合鍵 | 401 | **一致**（2 つとも 401） |
+| (e4) | 書き換え無しで、外の Host が `127.0.0.1:18444` | （予測なし） | **200** — rmcp の Host の検査はポートを見ない（loopback の名前なら通る） |
+| (e5) | `ports:` を名前空間の持ち主（スタブのコンテナ）に置き、`network_mode` 側の Caddy の 8443 へ届くか | — | 届いた（D8 の形） |
+| (f) | Windows の開発機の `iana-time-zone` | `Asia/Tokyo` | **一致**（Windows の名前は `Tokyo Standard Time`） |
+
+### 実機の村の写しで `check` と D5 の数え
+
+開発機の村から会話・ログ・添付・`mcp_server.json` を除いて写し、`--map` の代わりにパスを手で置き換えた
+（`D:\Github\Outcasts-MathLab` → `/work/mathlab` ほか 2 つ）。起動する集合（batch）は 5 体・テンプレート 5 種。
+`/work` は空・秘密は 1 つも渡さない。
+
+**今の `check --for serve --start batch --secrets env`**（Spec 64 の識別子）: 終了コード 3。
+
+| 識別子 | 予測 | 結果 |
+|---|---|---|
+| 拒否 `PLAN_REVIEW_WAITS` | ザリとルナの 2 | 2 |
+| 拒否 `SECRET_MISSING` | 5 | 5 |
+| 警告 `RUN_APPROVAL_REQUIRED` | 1（3 体を名指し） | 1 |
+| 警告 `JEV_TOKEN_MISSING` | 2 | 2 |
+| 情報 `MCP_STDIO` | 名前で 4 | **9**（個体ごとに出る。`enabled: false` の 3 つは出ない） |
+
+**D5 の数え**（像の中のファイルと PATH。実装は P1 なので、数えるスクリプトで代えた）:
+
+| 識別子 | 予測 | 結果 |
+|---|---|---|
+| `WORK_DIR_MISSING` | 5 | 5 |
+| `RAG_SOURCE_MISSING` | 6 | 6 |
+| `MCP_COMMAND_NOT_FOUND` | 12 | 12 — **ただしスクリプトが `enabled: false` を見ていなかった**。有効なものだけなら 9 で、今の `MCP_STDIO` と同じ数 |
+| `RUN_COMMAND_NOT_FOUND` | 6 | **4** — `sg` が PATH に**ある**と判定された。Debian の login パッケージの `sg`（別のグループで実行する）で、ザリと agent_9 が許可している ast-grep の `sg` とは別物 |
+| 平文の鍵（D2 の 4） | — | 3 体・6 接続先（rev2 までの「4 体ぶん」は数え間違い） |
+
+### 外れが動かしたもの
+
+1. **時刻帯の名前は `TZ` を先に見る**（D5・契約 11）。rev2 の「プロセスの IANA 名」をそのまま実装すると、`TZ` を正しく
+   設定したコンテナで必ず `TIMEZONE_MISMATCH` が出る。`TZ` が読めない値のときに `chrono` が黙って UTC に落ちることも、
+   同じ識別子で名指しする
+2. **`RUN_COMMAND_NOT_FOUND` は同じ名前の別プログラムを見分けない**（D5・契約 10）。検査は「無い」しか言えず、
+   「別物がある」は言えない — 限界として書き、`deploy/README.md` で手順を書く
+3. **有効なサーバーだけを数える**（D5）。外したのは実装ではなく私の数えで、今の `MCP_STDIO` が既に `enabled` を見ていた。
+   **平文の鍵は無効なサーバーも数える**ので、2 つの検査で数える範囲が違うことを書いた
+4. （予測の外れではない）`stop_grace_period` の理由が数字になった — 既定の 10 秒では 137 と `turn:` 行の欠落
+
+**作業で踏んだもの**: Git Bash が `docker run` の引数 `/p0/stub.py` を `C:/Program Files/Git/p0/stub.py` に書き換えた
+（`MSYS_NO_PATHCONV=1` が要る場面の 4 例目）/ ヒアドキュメントの中の `\\` が `\` に崩れた（スクリプトはファイルに書いて回した）。
+測定用のコンテナとボリュームは消した。像 `fuseforks:p0` は P3 の比較のために残している。
 
 ## 未決
 
@@ -481,7 +577,7 @@ deploy/.env.example
 - MCP: `docker` の gateway（5 体）/ Windows の exe 2 つ（memoria 5 体・manuale 1 体）/ `npx` の browsermcp / lorelei（127.0.0.1）
   → 写しで動くのは http の 3 つ（outcasts / elyth / alphaxiv）だけ。memoria と manuale はリモート MCP 化か Linux 版の派生像
 - `run` の許可: `lake` / `elan` / `dyff` / `sg` は基本の像に無い（D7 の派生した像）
-- `headers`: 4 体ぶんの `Authorization` を `${secret:…}` へ直すまで `bake` は 10 で止まる（D2 の 4）
+- `headers`: 3 体・6 接続先の `Authorization` を `${secret:…}` へ直すまで `bake` は 10 で止まる（D2 の 4）
 - 計画の確認（`planReview`）が ON の個体がザリ・ルナに居る（Spec 64 P6）— 無人で回すなら `--bypass-plan-review` か予定の
   「計画の確認を自動で通す」（Spec 53）
 
