@@ -2576,8 +2576,10 @@ P6 の記録と Done。push は利用者の指示待ち）。タグは `v0.4.0` 
   村の排他ロック（GUI にも効く）。「Spec の状態」の行と Spec の各 Phase の記録が正
 - **次のタグで「利用者が負う条件」に入れるもの**: (a) **同じ村を 2 つのプロセスが開くと、後から開いた側が止まる**（GUI
   同士・GUI と `fuseforks-cli`）— ただし**ロックを知らない v0.4.0 以前の GUI とは止め合えない**（`sessions.redb` の網だけが効く）。
-  同じ端末に新旧の配布物が並ぶ #112 の形 (b) `fuseforks-cli` は配布しない（ソースからビルド）(c) **Unix の分岐（SIGINT / SIGTERM の
-  受け口・`sigint_during_ask_interrupts_and_exits_eight`）が初めてコンパイルされるのはそのタグの CI** — 手元に Linux のターゲットが無い
+  同じ端末に新旧の配布物が並ぶ #112 の形 (b) `fuseforks-cli` は配布しない（ソースからビルド）(c) ~~**Unix の分岐（SIGINT / SIGTERM の
+  受け口・`sigint_during_ask_interrupts_and_exits_eight`）が初めてコンパイルされるのはそのタグの CI** — 手元に Linux のターゲットが無い~~
+  → **2026-10-07 に閉じた**（Spec 65 P1 で `rust:1-bookworm` のコンテナの中でコア・ホスト・CLI のテストを回し、1,283 本が通った。
+  **手元に Linux のターゲットが無くても、Docker の中で Linux のテストは回せる** — 以後、Unix だけの分岐はタグの前にここで確かめる）
 - **ディスク**: `target/` が 1 日で 2 回満杯になった（`cargo clean` で 84.4 GiB → 100.1 GiB）。**フルビルド 1 回で約 30 GB**
   使う（空き 90 → 60 GB）。`link.exe` の 1104 / 1140 / 1181 / 1 と「指紋ファイルを書けない」が並んだら、まず `df` を見る。
   GUI の開発ビルドが動いている間は `target\debug\fuseforks.exe` を消せず `cargo test --workspace` が落ちる（README の注記どおり）
@@ -7250,7 +7252,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   Windows 向けの CLI は配らない — 4 つとも推奨どおり。再査読の支持を利用者が回答として転送）→ **同日に P0 完了**（像 241 MB・ビルド 429 秒・`container_contract` 凍結 14 本。
   予測の外れが設計を 2 か所動かした — **Linux の `iana-time-zone` は `TZ` を見ない**（`TZ=Asia/Tokyo` で `Etc/UTC`。
   時刻帯の名前は `TZ` を先に見る）/ **Debian の `sg`（login）が ast-grep の `sg` と同名**で PATH の検査を通る。
-  `docker stop` の既定 10 秒では飛行中の `ask` が 137 で `turn:` 行が残らず、40 秒なら 0。「P0 実測記録」が正）。次は P1（コア）
+  `docker stop` の既定 10 秒では飛行中の `ask` が 137 で `turn:` 行が残らず、40 秒なら 0。「P0 実測記録」が正）→
+  **同日に P1 完了**（`headers` の `${secret:NAME}` の展開 = 全か無か・書式は `mcp.json` の読み込みで拒む / 起動前検査に識別子 6 つ・
+  `MCP_STDIO` を撤去・指摘はパスやコマンドごとに 1 件。Windows 1,282 本・**Linux のコンテナで 1,283 本**・変異 5 本とも予測どおり。
+  「P1 実装記録」が正）。次は P2（ホストと `bake`）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —

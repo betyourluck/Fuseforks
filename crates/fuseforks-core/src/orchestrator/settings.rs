@@ -338,7 +338,8 @@ impl Orchestrator {
     /// 全ツールが黙って消えると、利用者は原因に辿り着けない。
     pub async fn reload_mcp(&self) -> CoreResult<()> {
         let config = self.shared.store.read_mcp_config().await?;
-        let next = crate::mcp::McpManager::connect_all(&config).await;
+        let next =
+            crate::mcp::McpManager::connect_all(&config, self.shared.secrets.as_ref()).await;
 
         // 古い接続のツールを先に外す。消さずに新しいものを登録すると、
         // 繋がっていないサーバーのツールがモデルへ提示され続ける。

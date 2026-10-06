@@ -29,7 +29,7 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{CoreError, CoreResult};
+use crate::secret::{env_secret_name, SecretStore};
 use crate::tool::{AgentTool, ToolContext};
 
 /// ツール名に使える最大長。OpenAI / Anthropic 双方の関数名制限に合わせる。
@@ -117,6 +118,103 @@ impl McpServerConfig {
     }
 }
 
+impl McpHttpConfig {
+    /// `headers` の値が参照する秘密の名前（Spec 65 D3）。並びは名前の順・重複なし。
+    ///
+    /// 書き方は読み込み（[`validate_entry`]）で検査済みなので、ここでは不正な参照を
+    /// 数えない。起動前検査と、秘密の変数名の衝突検査が読む。
+    pub fn secret_ref_names(&self) -> BTreeSet<String> {
+        self.headers
+            .values()
+            .filter_map(|value| secret_ref_names(value).ok())
+            .flatten()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// `headers` の値に書ける秘密の参照の書き出し（Spec 65 D3）。`${secret:NAME}` の形で、
+/// NAME は英大文字・数字・`_` だけ。
+const SECRET_REF_OPEN: &str = "${secret:";
+
+/// 秘密の参照の書き方の誤りと、引けなかった名前（Spec 65 D3）。**値は持たない。**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretRefError {
+    /// `${secret:` の後に `}` が無い・名前が空・名前に使えない文字がある。
+    Malformed,
+    /// 引けなかった名前（現れた順・重複なし）。
+    Missing(Vec<String>),
+}
+
+/// 参照の名前から [`SecretStore`] の鍵を作る（`mcp:NAME`）。env では
+/// [`env_secret_name`] で `FUSEFORKS_SECRET_MCP_NAME` に写る。
+pub fn mcp_secret_key(name: &str) -> String {
+    format!("mcp:{name}")
+}
+
+/// 値の中の参照の名前を、現れた順に拾う。`${secret:` を含まない値は空を返す
+/// （**参照を書かない値には何もしない** — バイト等価の前提）。
+///
+/// # Errors
+/// 書き方が不正なら [`SecretRefError::Malformed`]。
+pub fn secret_ref_names(value: &str) -> Result<Vec<&str>, SecretRefError> {
+    let mut names = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(SECRET_REF_OPEN) {
+        let after = &rest[start + SECRET_REF_OPEN.len()..];
+        let end = after.find('}').ok_or(SecretRefError::Malformed)?;
+        let name = &after[..end];
+        let valid = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+        if !valid {
+            return Err(SecretRefError::Malformed);
+        }
+        names.push(name);
+        rest = &after[end + 1..];
+    }
+    Ok(names)
+}
+
+/// 値の中の参照を、`lookup` で引いた値へ置き換える。参照の無い値はそのまま返す。
+///
+/// # Errors
+/// 書き方が不正なら [`SecretRefError::Malformed`]、引けない名前があれば
+/// [`SecretRefError::Missing`]（**1 つでも引けなければ置き換えた値を返さない** —
+/// 一部だけ置き換えた値やプレースホルダの文字列を相手へ送らない）。
+pub fn expand_secret_refs(
+    value: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, SecretRefError> {
+    let names = secret_ref_names(value)?;
+    if names.is_empty() {
+        return Ok(value.to_owned());
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut missing: Vec<String> = Vec::new();
+    let mut rest = value;
+    for name in names {
+        let start = rest.find(SECRET_REF_OPEN).expect("名前を拾えた参照は必ずある");
+        out.push_str(&rest[..start]);
+        match lookup(name) {
+            Some(secret) => out.push_str(&secret),
+            None => {
+                if !missing.iter().any(|m| m == name) {
+                    missing.push(name.to_owned());
+                }
+            }
+        }
+        rest = &rest[start + SECRET_REF_OPEN.len() + name.len() + 1..];
+    }
+    out.push_str(rest);
+    if missing.is_empty() {
+        Ok(out)
+    } else {
+        Err(SecretRefError::Missing(missing))
+    }
+}
+
 impl Serialize for McpServerConfig {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -188,10 +286,10 @@ impl TryFrom<RawMcpConfig> for McpConfig {
     }
 }
 
-/// エントリ 1 件の検証（Spec 47 D2 — **5 段の固定順**、最初の違反 1 つを
+/// エントリ 1 件の検証（Spec 47 D2 — **固定順**、最初の違反 1 つを
 /// エントリ名と欄で名指しする）:
 /// 1. 形の判別 → 2. 相互排他（両向き） → 3. 必須欄 → 4. 値の形式 →
-/// 5. URL スキーム（D4）。
+/// 5. URL スキーム（D4） → 6. `headers` の秘密の参照の書き方（Spec 65 D3。http だけ）。
 ///
 /// **`enabled: false` でも検証は掛かる** — 無効のまま不正な URL や平文 http を
 /// 残せる形にしない（スキップされるのは接続だけ）。
@@ -246,9 +344,20 @@ fn validate_entry(name: &str, raw: RawServerConfig) -> Result<McpServerConfig, S
                  外へ飛ぶ形を塞いでいます）"
             ));
         }
+        // 6. 秘密の参照の書き方（Spec 65 D3）。**読み込みで拒む** — 接続の時点で起きうる
+        //    失敗を「秘密が無い」の 1 つにする。値は載せず、エントリとヘッダーの名前だけ。
+        let headers = raw.headers.unwrap_or_default();
+        for (key, value) in &headers {
+            if secret_ref_names(value).is_err() {
+                return Err(format!(
+                    "`{name}`: ヘッダー `{key}` の値の ${{secret:…}} の書き方が不正です\
+                     （名前は英大文字・数字・_ だけで、}} で閉じる。値は表示しません）"
+                ));
+            }
+        }
         Ok(McpServerConfig::Http(McpHttpConfig {
             url,
-            headers: raw.headers.unwrap_or_default(),
+            headers,
             enabled,
         }))
     } else {
@@ -493,7 +602,10 @@ impl McpManager {
     /// [`McpServerStatus::error`] に理由を残して次へ進む。MCP サーバーは
     /// 外部コマンドであり、未インストール・パス違い・権限で普通に落ちる。
     /// そこでアプリが起動しなくなるのは筋が悪い。
-    pub async fn connect_all(config: &McpConfig) -> Self {
+    ///
+    /// `secrets` は `headers` の `${secret:NAME}` を引く置き場（Spec 65 D3。GUI は資格情報
+    /// ストア、`--secrets env` は環境変数）。参照を書かない `mcp.json` はここを 1 度も読まない。
+    pub async fn connect_all(config: &McpConfig, secrets: &dyn SecretStore) -> Self {
         let mut manager = Self::default();
 
         for (name, server) in &config.servers {
@@ -507,7 +619,7 @@ impl McpManager {
                 continue;
             }
 
-            let attempt = tokio::time::timeout(CONNECT_TIMEOUT, connect_one(name, server))
+            let attempt = tokio::time::timeout(CONNECT_TIMEOUT, connect_one(name, server, secrets))
                 .await
                 .unwrap_or_else(|_| {
                     Err(CoreError::Mcp {
@@ -567,10 +679,14 @@ impl McpManager {
 async fn connect_one(
     name: &str,
     config: &McpServerConfig,
+    secrets: &dyn SecretStore,
 ) -> CoreResult<(RunningService<RoleClient, ()>, Vec<Arc<dyn AgentTool>>)> {
     let service = match config {
         McpServerConfig::Stdio(config) => serve_stdio(name, config).await?,
-        McpServerConfig::Http(config) => serve_http(name, config).await?,
+        McpServerConfig::Http(config) => {
+            let headers = resolve_headers(name, &config.headers, secrets)?;
+            serve_http(name, &config.url, &headers).await?
+        }
     };
 
     let listed = service.list_all_tools().await.map_err(|err| CoreError::Mcp {
@@ -688,6 +804,61 @@ where
     }
 }
 
+/// `headers` の値の `${secret:NAME}` を引いて置き換える（Spec 65 D3）。
+///
+/// **1 つでも引けなければ接続しない** — プレースホルダの文字列も、一部だけ置き換えた値も
+/// 相手へ送らない。理由は**名前と変数名だけ**を書く（値は書かない — Spec 47 D7）。
+/// 置き場の読み取りが失敗した鍵も「無い」として数える（値が手元に無いことは同じ）。
+fn resolve_headers(
+    name: &str,
+    headers: &BTreeMap<String, String>,
+    secrets: &dyn SecretStore,
+) -> CoreResult<BTreeMap<String, String>> {
+    let lookup = |ref_name: &str| secrets.get(&mcp_secret_key(ref_name)).ok().flatten();
+    let mut resolved = BTreeMap::new();
+    let mut missing: Vec<String> = Vec::new();
+    for (key, value) in headers {
+        match expand_secret_refs(value, &lookup) {
+            Ok(expanded) => {
+                resolved.insert(key.clone(), expanded);
+            }
+            Err(SecretRefError::Missing(names)) => {
+                for ref_name in names {
+                    if !missing.contains(&ref_name) {
+                        missing.push(ref_name);
+                    }
+                }
+            }
+            Err(SecretRefError::Malformed) => {
+                return Err(CoreError::Mcp {
+                    server: name.to_owned(),
+                    message: format!(
+                        "ヘッダー `{key}` の値の ${{secret:…}} の書き方が不正です（値は表示しません）"
+                    ),
+                });
+            }
+        }
+    }
+    if missing.is_empty() {
+        return Ok(resolved);
+    }
+    let listed = missing
+        .iter()
+        .map(|ref_name| {
+            format!(
+                "{ref_name}（keyring の鍵 {} / 環境変数 {}）",
+                mcp_secret_key(ref_name),
+                env_secret_name(&mcp_secret_key(ref_name))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    Err(CoreError::Mcp {
+        server: name.to_owned(),
+        message: format!("ヘッダーが参照する秘密がありません: {listed}。接続していません"),
+    })
+}
+
 /// リモート（Streamable HTTP）サーバーへ initialize まで済ませる（Spec 47 P2）。
 ///
 /// **HTTP は最初の initialize が返って初めて成否が確定する**（stdio は spawn の
@@ -699,14 +870,15 @@ where
 /// ここで凍結する（期限切れの Bearer で叩き続ける形を作らない）。
 async fn serve_http(
     name: &str,
-    config: &McpHttpConfig,
+    url: &str,
+    headers: &BTreeMap<String, String>,
 ) -> CoreResult<RunningService<RoleClient, ()>> {
     use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
-    let mut transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.clone());
+    let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.to_owned());
     let mut custom: std::collections::HashMap<http::HeaderName, http::HeaderValue> =
         std::collections::HashMap::new();
-    for (key, value) in &config.headers {
+    for (key, value) in headers {
         // Authorization の Bearer は rmcp の `auth_header` へ。**渡すのは素の
         // トークン** — reqwest の `bearer_auth` が接頭辞を付ける（P0 の実装読みと
         // 実測。`custom_headers` へ回すと `Bearer Bearer …` にはならないが、
@@ -856,6 +1028,98 @@ mod tests {
         for word in expected_words {
             assert!(err.contains(word), "`{word}` が文言に無い: {err}");
         }
+    }
+
+    /// 秘密の参照の名前を現れた順に拾う。参照の無い値は空。書き方の誤りは Malformed。
+    #[test]
+    fn secret_refs_are_parsed_in_order_and_malformed_ones_are_rejected() {
+        assert_eq!(secret_ref_names("Bearer ${secret:OUTCASTS}").unwrap(), vec!["OUTCASTS"]);
+        assert_eq!(
+            secret_ref_names("${secret:A_1}:${secret:B2}").unwrap(),
+            vec!["A_1", "B2"]
+        );
+        assert!(secret_ref_names("Bearer plain-token").unwrap().is_empty());
+        // `$` や `${` を含んでも `${secret:` で始まる部分が無ければ参照ではない。
+        assert!(secret_ref_names("price $5 and ${HOME}").unwrap().is_empty());
+        for bad in [
+            "${secret:}",
+            "${secret:lower}",
+            "${secret:HAS-DASH}",
+            "${secret:NO_CLOSE",
+            "ok ${secret:A} then ${secret:",
+        ] {
+            assert_eq!(secret_ref_names(bad), Err(SecretRefError::Malformed), "{bad}");
+        }
+    }
+
+    /// 置き換えは参照だけ。参照の無い値はそのまま。引けない名前は全部返し、置き換えた値を返さない。
+    #[test]
+    fn expansion_replaces_only_refs_and_refuses_partial_values() {
+        let lookup = |name: &str| (name == "A").then(|| "alpha".to_owned());
+        assert_eq!(
+            expand_secret_refs("Bearer ${secret:A}", &lookup).unwrap(),
+            "Bearer alpha"
+        );
+        assert_eq!(
+            expand_secret_refs("x${secret:A}y${secret:A}z", &lookup).unwrap(),
+            "xalphayalphaz"
+        );
+        assert_eq!(expand_secret_refs("no refs $x", &lookup).unwrap(), "no refs $x");
+        assert_eq!(
+            expand_secret_refs("${secret:A} ${secret:B} ${secret:C} ${secret:B}", &lookup),
+            Err(SecretRefError::Missing(vec!["B".to_owned(), "C".to_owned()]))
+        );
+    }
+
+    /// 書き方の誤りは読み込みで拒む（エントリとヘッダーを名指し・値は出さない）。
+    #[test]
+    fn a_malformed_secret_ref_in_headers_is_rejected_at_parse() {
+        rejects(
+            "outcasts",
+            r#"{ "type": "http", "url": "https://example.com/mcp",
+                 "headers": { "Authorization": "Bearer ${secret:bad-name} tail" } }"#,
+            &["Authorization", "${secret:…}"],
+        );
+        let err = parse_entry(
+            "outcasts",
+            r#"{ "type": "http", "url": "https://example.com/mcp",
+                 "headers": { "Authorization": "Bearer ${secret:bad-name} tail" } }"#,
+        )
+        .unwrap_err();
+        assert!(!err.contains("bad-name"), "値が漏れている: {err}");
+
+        // 正しい参照は通り、名前を拾える。
+        let config = parse_entry(
+            "outcasts",
+            r#"{ "type": "http", "url": "https://example.com/mcp",
+                 "headers": { "Authorization": "Bearer ${secret:OUTCASTS}", "X-Other": "${secret:OTHER}" } }"#,
+        )
+        .unwrap();
+        let McpServerConfig::Http(http) = &config.servers["outcasts"] else {
+            panic!("http のはず");
+        };
+        assert_eq!(
+            http.secret_ref_names().into_iter().collect::<Vec<_>>(),
+            vec!["OTHER".to_owned(), "OUTCASTS".to_owned()]
+        );
+    }
+
+    /// 引けない参照があれば接続しない。理由は名前と変数名だけ（値もプレースホルダも出ない）。
+    #[test]
+    fn unresolved_header_secrets_refuse_to_connect_and_name_only() {
+        let store = crate::secret::InMemorySecretStore::new();
+        store.set("mcp:A", "alpha-secret").unwrap();
+        let mut headers = BTreeMap::new();
+        headers.insert("Authorization".to_owned(), "Bearer ${secret:A}".to_owned());
+        headers.insert("X-Key".to_owned(), "${secret:MISSING}".to_owned());
+        let err = resolve_headers("srv", &headers, &store).unwrap_err().to_string();
+        assert!(err.contains("MISSING"), "{err}");
+        assert!(err.contains("FUSEFORKS_SECRET_MCP_MISSING"), "{err}");
+        assert!(!err.contains("alpha-secret"), "値が漏れている: {err}");
+
+        headers.remove("X-Key");
+        let resolved = resolve_headers("srv", &headers, &store).unwrap();
+        assert_eq!(resolved["Authorization"], "Bearer alpha-secret");
     }
 
     #[test]

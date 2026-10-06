@@ -3054,7 +3054,8 @@ fn merge_tool_specs(shared_specs: Vec<ToolSpec>, personal: Vec<ToolSpec>) -> Vec
 pub(super) async fn connect_agent_mcp(shared: &Shared, id: &AgentId) {
     let state = match shared.store.read_agent_mcp_config(id).await {
         Ok(config) => AgentMcpState {
-            manager: crate::mcp::McpManager::connect_all(&config).await,
+            manager: crate::mcp::McpManager::connect_all(&config, shared.secrets.as_ref())
+                .await,
             load_error: None,
         },
         Err(err) => AgentMcpState {

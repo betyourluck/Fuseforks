@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use fuseforks_core::mcp::{McpConfig, McpManager, McpServerConfig, McpStdioConfig};
 use fuseforks_core::tool::ToolContext;
-use fuseforks_core::AgentId;
+use fuseforks_core::{AgentId, InMemorySecretStore};
 
 /// テスト用の一時ディレクトリ。
 struct TempDir(PathBuf);
@@ -70,7 +70,8 @@ async fn a_claude_desktop_config_works_verbatim() {
         }),
     );
 
-    let manager = McpManager::connect_all(&McpConfig { servers }).await;
+    let manager =
+        McpManager::connect_all(&McpConfig { servers }, &InMemorySecretStore::new()).await;
     let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
     assert!(
         status.connected,
@@ -104,7 +105,8 @@ async fn connects_to_a_real_server_and_calls_a_tool() {
         }),
     );
 
-    let manager = McpManager::connect_all(&McpConfig { servers }).await;
+    let manager =
+        McpManager::connect_all(&McpConfig { servers }, &InMemorySecretStore::new()).await;
     let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
     assert!(
         status.connected,

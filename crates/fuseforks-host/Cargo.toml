@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 # 中核ロジック。依存はこの一方向だけ（core はホストを知らない）。
 fuseforks-core.workspace = true
+iana-time-zone.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

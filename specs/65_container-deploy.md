@@ -244,6 +244,7 @@ pub struct HostView<'a> {
     pub command_on_path: &'a dyn Fn(&str) -> bool,         // run と同じ PATH で解決できるか
     pub stdio_mcp_commands: &'a [(String, String)],        // (サーバー名, command)。今の stdio_mcp_servers を置き換える
     pub mcp_secret_refs: &'a [(String, String)],           // (サーバー名, NAME)。起動する集合の共通と個体別から
+    pub run_commands: &'a [(AgentId, String)],             // run.json の allow の先頭の語（P1 で足した）
     pub door_port: Option<u16>,                            // --door-port
     pub door_token_present: bool,
     pub process_time_zone: Option<&'a str>,                // TZ があればその値、無ければ iana-time-zone（P0）
@@ -413,12 +414,14 @@ deploy/.env.example
 - [x] `data_contract.yaml` に `container_contract` を凍結（14 本）。`probe_approvals` の書き手に `bake` を、
   `headless_host_contract` の `MCP_STDIO` に置き換えの予告を足した
 
-### P1 — コア
+### P1 — コア（**完了**・2026-10-07。「P1 実装記録」）
 
-- [ ] `mcp.rs`: `headers` の値の `${secret:NAME}` の展開（接続の直前・`SecretStore` 経由・引けなければ接続しない）
-- [ ] `headless.rs`: D5 の表。`HostView` の欄（`stdio_mcp_servers` を `stdio_mcp_commands` へ置き換え）
-- [ ] 単体: 展開（参照なし = バイト等価 / 部分展開 / 複数 / 未定義 / 不正な名前）・D5 の各行・`bake.json` が無いとき
+- [x] `mcp.rs`: `headers` の値の `${secret:NAME}` の展開（接続の直前・`SecretStore` 経由・引けなければ接続しない）
+- [x] `headless.rs`: D5 の表。`HostView` の欄（`stdio_mcp_servers` を `stdio_mcp_commands` へ置き換え）
+- [x] 単体: 展開（参照なし = バイト等価 / 部分展開 / 複数 / 未定義 / 不正な名前）・D5 の各行・`bake.json` が無いとき
   `TIMEZONE_MISMATCH` が出ない・無効な予定では出ない
+- [x] （ホストの材料集め — 型を変えたのでホストもこの Phase で合わせた）`preflight.rs` が新しい材料を集める。
+  扉（`door_port`）は P2 で足すまで `None`
 
 ### P2 — ホストと `bake`
 
@@ -538,6 +541,42 @@ scratchpad に置き、リポジトリには入れていない（P3 で `deploy/
 **作業で踏んだもの**: Git Bash が `docker run` の引数 `/p0/stub.py` を `C:/Program Files/Git/p0/stub.py` に書き換えた
 （`MSYS_NO_PATHCONV=1` が要る場面の 4 例目）/ ヒアドキュメントの中の `\\` が `\` に崩れた（スクリプトはファイルに書いて回した）。
 測定用のコンテナとボリュームは消した。像 `fuseforks:p0` は P3 の比較のために残している。
+
+## P1 実装記録（2026-10-07）
+
+**コア 2 ファイル + ホスト 1 ファイル + 結合 2 ファイル。** Windows で 1,282 本、Linux（`rust:1-bookworm` の
+コンテナ・375 秒）で 1,283 本が通った（差の 1 本は Unix だけの時刻帯のテスト）。clippy 0。
+
+- **秘密の参照の書式は `mcp.json` の読み込みで検査する**（`validate_entry` の 6 段目）。書式が誤っていれば、エントリ名と
+  ヘッダー名だけを名指しして読み込みを拒む（値は出さない）。接続の時点で起きうる失敗を「秘密が無い」の 1 つにするため
+- **展開は全か無か** — 1 つでも引けない名前があれば、置き換えた値もプレースホルダの文字列も返さない
+  （`expand_secret_refs` / `resolve_headers`）。理由には名前と、keyring の鍵・環境変数の名前だけを書く
+- **`connect_all` は秘密の置き場を引数で受け取る**（呼び出しは本体 2 か所 = 共通の `reload_mcp` と個体別の
+  `connect_agent_mcp`、テスト 3 か所）。参照を書かない `mcp.json` は置き場を 1 度も読まない
+- **起動前検査の指摘は、パスやコマンドごとに 1 件へまとめて個体を列挙する**（今ある `RUN_APPROVAL_REQUIRED` と同じ形）。
+  P0 の写しで個体ごとに出すと、作業フォルダだけで 5 件並ぶ
+- **`HostView` に Spec より 1 欄多く足した** — `run_commands`（`run.json` の `allow` の先頭の語）。Spec の D5 の素描には無く、
+  無いと `RUN_COMMAND_NOT_FOUND` の材料が渡らない。数えるのは `run` を持つ起動する個体だけで、絞り込みは検査の側
+- **時刻帯は `ProcessTimeZone` の 3 値**（名前が分かった / `TZ` が読めない / OS からも読めない）。ホストは `TZ` を先に見て、
+  Unix では `/usr/share/zoneinfo/<値>` が無ければ「読めない」にする。Windows には置き場が無いので `TZ` の値をそのまま名前にする
+- **`bake.json` の読み手は `sourceTimeZone` の 1 欄だけ**。目録の型の全体は書き手と一緒に P2 で決める
+- 依存: `iana-time-zone` をホストの直接の依存にした（`Cargo.lock` は 1 行。crate は chrono の clock が既に連れていた）
+
+**変異 5 本（予測を先に書いた）**: M1 引けない名前を数えない → 3 本（展開・`resolve_headers` の単体と、相手へ接続しない
+結合）/ M2 読み込みで書式を検査しない → 1 本 / M3 作業フォルダの代わりにファイルがあっても見逃す → 1 本 / M4 時刻帯の
+名前の食い違いを見ない → 1 本 / M5 `run` を持たない個体の許可コマンドも数える → 1 本。すべて予測どおり。
+戻しはバックアップからの書き戻しで、5 本とも SHA-256 が元と一致した。
+
+- **M3 は最初のテストでは緑のまま通る形だった** — 作業フォルダの検査は「無い」と「ファイルがある」の両方を拒むが、
+  テストは「無い」しか通っていなかった。変異を入れる前に、ファイルの場合の断言を足した
+- **集計の誤り 1 つ** — 赤の名前を拾う正規表現が、変異で未使用になった変数の警告の行（`    |`）も拾った。数えるときに外した
+
+**Spec 64 の持ち越しが 1 つ閉じた** — Linux のコンテナで `fuseforks-cli` のテストを回したので、Unix だけの
+`sigint_during_ask_interrupts_and_exits_eight` が初めてコンパイルされ、通った（Spec 64 は「次のタグの CI で初めて」と書いていた）。
+
+**作業で踏んだもの**: Windows の全体テストで `link.exe` が 2 回 1104 で落ちた — 1 回目は対象のファイル、2 回目は
+`libucrt.lib`（Windows SDK）を開けない。D: の空きは 48 GB あり、Spec 64 のディスク満杯とは別。並列のリンクが同じ
+ライブラリを同時に開く競合と見て（**確かめていない**）、`-j 4` で回すと通った。
 
 ## 未決
 

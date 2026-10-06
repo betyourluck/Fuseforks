@@ -13,14 +13,20 @@
 //!
 //! 表（D5）の 9 行をそのまま写した。行ごとの重さは `Reject` / `Warn` / `Info` の
 //! 閉じた 3 値で、結果は重い順に並ぶ。
+//!
+//! **Spec 65（コンテナ）で 6 行を足し、情報 `MCP_STDIO` を警告 `MCP_COMMAND_NOT_FOUND` へ
+//! 置き換えた**（`container_contract` 10）。足した行の材料（パスの有無・PATH・`run.json` の
+//! `allow`・`headers` の参照・時刻帯）も `HostView` の関数と値で受け、純関数のまま保つ。
+//! パスとコマンドの指摘は**パスやコマンドごとに 1 件**へまとめ、該当する個体を列挙する。
 
 use std::collections::BTreeSet;
 
 use serde::Serialize;
 
 use crate::command::RunApproval;
+use crate::mcp::mcp_secret_key;
 use crate::model::{AgentId, CredentialSource};
-use crate::schedule::ScheduledTask;
+use crate::schedule::{Recurrence, ScheduledTask};
 use crate::schedule_probe::ScheduleProbe;
 use crate::secret::env_secret_name;
 use crate::world::{Language, World};
@@ -83,8 +89,69 @@ pub mod codes {
     pub const PROBE_UNAPPROVED: &str = "PROBE_UNAPPROVED";
     /// 判断役か圧縮があるのに Jev の鍵が無い（警告）。
     pub const JEV_TOKEN_MISSING: &str = "JEV_TOKEN_MISSING";
-    /// MCP サーバーが `command` で起動する stdio（情報）。
-    pub const MCP_STDIO: &str = "MCP_STDIO";
+    /// 有効な stdio の MCP サーバーの `command` が見つからない（警告。Spec 65 —
+    /// Spec 64 の情報 `MCP_STDIO` を置き換えた）。
+    pub const MCP_COMMAND_NOT_FOUND: &str = "MCP_COMMAND_NOT_FOUND";
+    /// `serve --door-port` があるのに扉の合鍵が無い（拒否。Spec 65）。
+    pub const DOOR_TOKEN_MISSING: &str = "DOOR_TOKEN_MISSING";
+    /// 起動する個体の作業フォルダが存在しない・フォルダでない（拒否。Spec 65）。
+    pub const WORK_DIR_MISSING: &str = "WORK_DIR_MISSING";
+    /// 起動する個体の `ragSources` の 1 つが存在しない（警告。Spec 65）。
+    pub const RAG_SOURCE_MISSING: &str = "RAG_SOURCE_MISSING";
+    /// `run.json` の `allow` の先頭の語が PATH に無い（警告。Spec 65）。
+    pub const RUN_COMMAND_NOT_FOUND: &str = "RUN_COMMAND_NOT_FOUND";
+    /// 壁時計の予定があり、時刻帯が `bake.json` と違う・読めない（警告。Spec 65）。
+    pub const TIMEZONE_MISMATCH: &str = "TIMEZONE_MISMATCH";
+}
+
+/// パスの種類（[`HostView::path_kind`] が返す）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// フォルダ。
+    Dir,
+    /// ファイル（フォルダを期待した場所にあれば「フォルダでない」）。
+    File,
+    /// 存在しない（読めない場合も含む）。
+    Missing,
+}
+
+/// 有効な stdio の MCP サーバー 1 台（共通は名前、個体別は `id:名前`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StdioCommand {
+    /// 表示用のサーバー名。
+    pub server: String,
+    /// `mcp.json` の `command` そのまま。
+    pub command: String,
+}
+
+/// 有効な http の MCP サーバーの `headers` が参照する秘密 1 つ（Spec 65 D3）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretRef {
+    /// 表示用のサーバー名。
+    pub server: String,
+    /// `${secret:NAME}` の NAME。
+    pub name: String,
+}
+
+/// 起動する個体の `run.json` の `allow` の先頭の語 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunCommand {
+    /// 持ち主。
+    pub agent: AgentId,
+    /// 先頭の語（コマンド名）。
+    pub command: String,
+}
+
+/// プロセスの時刻帯（Spec 65 契約 11）。**`TZ` を先に見る** — Linux の `iana-time-zone` は
+/// `TZ` を見ずに `/etc/localtime` を読む（P0 実測: `TZ=Asia/Tokyo` でも `Etc/UTC`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessTimeZone<'a> {
+    /// 名前が分かった（`TZ` の値で時刻帯のファイルがあるか、`TZ` が無く OS から読めた）。
+    Named(&'a str),
+    /// `TZ` は設定されているが時刻帯のファイルが無い — `chrono` は**黙って UTC で動く**。
+    Unreadable(&'a str),
+    /// `TZ` が無く、OS からも読めなかった。
+    Unknown,
 }
 
 /// 検査の材料のうち、`World` と予定の外にあるもの。
@@ -107,13 +174,47 @@ pub struct HostView<'a> {
     pub bypass_plan_review: bool,
     /// コマンドの承認モード（Spec 61）。
     pub run_approval: RunApproval,
-    /// `command` で起動する stdio の MCP サーバー名（共通と個体別を呼び出し側が集める）。
-    pub stdio_mcp_servers: &'a [String],
+    /// 有効な stdio の MCP サーバー（共通と、起動する個体の個体別。呼び出し側が集める）。
+    pub stdio_mcp_commands: &'a [StdioCommand],
+    /// 有効な http の MCP サーバーの `headers` が参照する秘密（同上）。
+    pub mcp_secret_refs: &'a [SecretRef],
+    /// 起動する個体の `run.json` の `allow` の先頭の語（`run` を持たない個体の分も
+    /// 渡してよい — 数えるのは `run` を持つ個体だけ）。
+    pub run_commands: &'a [RunCommand],
+    /// パスの種類。値（パス）だけを見る。
+    pub path_kind: &'a dyn Fn(&str) -> PathKind,
+    /// `run` と同じ規則で PATH から見つかるか（絶対パスならその存在）。
+    pub command_on_path: &'a dyn Fn(&str) -> bool,
+    /// `serve --door-port`（Spec 65 D9）。`None` なら扉の合鍵は見ない。
+    pub door_port: Option<u16>,
+    /// 扉の合鍵（秘密 `door_token`）が選んだストアにあるか。
+    pub door_token_present: bool,
+    /// プロセスの時刻帯。
+    pub process_time_zone: ProcessTimeZone<'a>,
+    /// `{data_dir}/bake.json` の `sourceTimeZone`。`bake.json` が無ければ `None`。
+    pub baked_time_zone: Option<&'a str>,
 }
 
 /// Jev のトークンの鍵。置き場はホスト層（`jev_settings.rs` の `TOKEN_KEY`）で、
 /// ここは直し方の文に変数名を書くためだけに同じ綴りを持つ。
 const JEV_TOKEN_KEY: &str = "jev_api_token";
+
+/// 扉の合鍵の鍵（Spec 65 D9）。置き場はホスト層で、ここは直し方の文に変数名を書くため。
+pub const DOOR_TOKEN_KEY: &str = "door_token";
+
+/// 値を最初に現れた順のまま、鍵ごとに束ねる（指摘をパスやコマンドごとに 1 件にする）。
+fn group_in_order<K: PartialEq, V>(
+    items: impl IntoIterator<Item = (K, V)>,
+) -> Vec<(K, Vec<V>)> {
+    let mut out: Vec<(K, Vec<V>)> = Vec::new();
+    for (key, value) in items {
+        match out.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, values)) => values.push(value),
+            None => out.push((key, vec![value])),
+        }
+    }
+    out
+}
 
 /// 起動前検査の本体。純関数 — ファイルも環境も読まず、LLM も MCP も呼ばない。
 ///
@@ -433,25 +534,227 @@ pub fn headless_preflight(
         }
     }
 
-    // 9. MCP サーバーが command で起動する stdio — 両方・情報。
-    //    その実行ファイルがあるかは検査からは分からない（接続は起動時に試す）。
-    for name in view.stdio_mcp_servers {
+    // 9. 有効な stdio の MCP サーバーの command が見つからない — 両方・警告（Spec 65。
+    //    Spec 64 の情報 MCP_STDIO を置き換えた）。そのサーバーは繋がらず、個体はそのツール
+    //    無しで動く。コマンドごとに 1 件。
+    let missing_commands = group_in_order(
+        view.stdio_mcp_commands
+            .iter()
+            .filter(|s| !(view.command_on_path)(&s.command))
+            .map(|s| (s.command.as_str(), s.server.as_str())),
+    );
+    for (command, servers) in missing_commands {
+        let listed = servers.join(", ");
         out.push(Finding {
-            level: FindingLevel::Info,
-            code: codes::MCP_STDIO,
+            level: FindingLevel::Warn,
+            code: codes::MCP_COMMAND_NOT_FOUND,
             message: lang
                 .pick(
-                    &format!("MCP サーバー {name} は command で起動する stdio です。実行ファイルがあるかは起動時に接続して初めて分かります"),
-                    &format!("MCP server {name} is a stdio server started by a command; whether the executable exists is only known when connecting at boot"),
+                    &format!("MCP サーバー {listed} の起動コマンド {command} が見つかりません。そのサーバーは繋がらず、個体はそのツール無しで動きます"),
+                    &format!("The command {command} of MCP server {listed} is not found; the server will not connect and the servants run without its tools"),
                 )
                 .to_owned(),
             fix: lang
                 .pick(
-                    "コンテナの像にその実行ファイルを入れる（起動時のログ「MCP の初期接続に失敗しました」で確かめる）",
-                    "Put the executable in the container image (check the boot log line about the MCP connection failing)",
+                    "リモート MCP（type: http）へ寄せるか、そのコマンドを入れた像を作る（FROM で派生させる）。使わないなら mcp.json で enabled: false",
+                    "Move to a remote MCP server (type: http) or build an image that contains the command (derive with FROM). If unused, set enabled: false in mcp.json",
                 )
                 .to_owned(),
         });
+    }
+
+    // 10. headers が参照する秘密が選んだストアに無い — 両方・拒否（Spec 65 D3）。
+    //     そのサーバーは接続しない（プレースホルダを送らない）。名前ごとに 1 件。
+    let missing_refs = group_in_order(
+        view.mcp_secret_refs
+            .iter()
+            .filter(|r| !(view.secret_present)(&mcp_secret_key(&r.name)))
+            .map(|r| (r.name.as_str(), r.server.as_str())),
+    );
+    for (name, servers) in missing_refs {
+        let listed = servers.join(", ");
+        let key = mcp_secret_key(name);
+        let variable = env_secret_name(&key);
+        out.push(Finding {
+            level: FindingLevel::Reject,
+            code: codes::SECRET_MISSING,
+            message: lang
+                .pick(
+                    &format!("MCP の headers が参照する秘密 {name}（{listed}）が選んだストアにありません。そのサーバーには接続しません"),
+                    &format!("The secret {name} referenced by MCP headers ({listed}) is not in the chosen secret store; the server will not connect"),
+                )
+                .to_owned(),
+            fix: lang
+                .pick(
+                    &format!("keyring なら GUI の MCP の設定で値を保存する（鍵 {key}）。env なら {variable} を設定する"),
+                    &format!("With keyring, save the value in the GUI MCP settings (key {key}). With env, set {variable}"),
+                )
+                .to_owned(),
+        });
+    }
+
+    // 11. serve --door-port があるのに扉の合鍵が無い — serve・拒否（Spec 65 D9）。
+    //     開くと言ったのに開けない、を作らない。
+    if view.mode == HeadlessMode::Serve
+        && let Some(port) = view.door_port
+        && !view.door_token_present
+    {
+        let variable = env_secret_name(DOOR_TOKEN_KEY);
+        out.push(Finding {
+            level: FindingLevel::Reject,
+            code: codes::DOOR_TOKEN_MISSING,
+            message: lang
+                .pick(
+                    &format!("--door-port {port} で扉を開く指定ですが、扉の合鍵（{DOOR_TOKEN_KEY}）が選んだストアにありません"),
+                    &format!("--door-port {port} asks to open the door, but the door token ({DOOR_TOKEN_KEY}) is not in the chosen secret store"),
+                )
+                .to_owned(),
+            fix: lang
+                .pick(
+                    &format!("env なら {variable} を設定する。扉を開かないなら --door-port を外す"),
+                    &format!("With env, set {variable}. To keep the door closed, drop --door-port"),
+                )
+                .to_owned(),
+        });
+    }
+
+    // 12. 起動する個体の作業フォルダが存在しない・フォルダでない — 両方・拒否（Spec 65）。
+    //     ファイル系のツールが全部「作業フォルダが存在しません」を返す。ヘッドレスでは誰も
+    //     直さない。bake.json の有無に関わらない。パスごとに 1 件。
+    let mut work_dirs = Vec::new();
+    let mut rag_sources = Vec::new();
+    for id in view.start {
+        let Ok(record) = world.agent(id) else {
+            continue;
+        };
+        if let Some(dir) = record.spec.work_dir.as_deref()
+            && (view.path_kind)(dir) != PathKind::Dir
+        {
+            work_dirs.push((dir.to_owned(), id.to_string()));
+        }
+        for source in &record.spec.rag_sources {
+            if (view.path_kind)(source) != PathKind::Dir {
+                rag_sources.push((source.clone(), id.to_string()));
+            }
+        }
+    }
+    for (dir, agents) in group_in_order(work_dirs) {
+        let listed = agents.join(", ");
+        out.push(Finding {
+            level: FindingLevel::Reject,
+            code: codes::WORK_DIR_MISSING,
+            message: lang
+                .pick(
+                    &format!("作業フォルダ {dir}（{listed}）がありません。ファイル系のツールが全部失敗します"),
+                    &format!("The work folder {dir} ({listed}) does not exist; every file tool would fail"),
+                )
+                .to_owned(),
+            fix: lang
+                .pick(
+                    "そのパスにフォルダを用意する（コンテナなら /work の下へクローンしてマウントする）か、bake の --map で置き換え先を直す",
+                    "Provide the folder at that path (in a container, clone under /work and mount it), or fix the target of bake's --map",
+                )
+                .to_owned(),
+        });
+    }
+
+    // 13. ragSources の 1 つが存在しない — 両方・警告（Spec 65）。rag はその宣言を飛ばして動く。
+    for (source, agents) in group_in_order(rag_sources) {
+        let listed = agents.join(", ");
+        out.push(Finding {
+            level: FindingLevel::Warn,
+            code: codes::RAG_SOURCE_MISSING,
+            message: lang
+                .pick(
+                    &format!("rag の宣言フォルダ {source}（{listed}）がありません。rag はその宣言を飛ばして動きます"),
+                    &format!("The rag source {source} ({listed}) does not exist; rag skips that declaration"),
+                )
+                .to_owned(),
+            fix: lang
+                .pick(
+                    "そのパスにフォルダを用意するか、bake の --map で置き換え先を直す",
+                    "Provide the folder at that path, or fix the target of bake's --map",
+                )
+                .to_owned(),
+        });
+    }
+
+    // 14. run.json の allow の先頭の語が PATH に無い — 両方・警告（Spec 65）。
+    //     許可しても実行時に「見つからない」。数えるのは run を持つ起動する個体だけ。
+    //     **PATH にあるかしか見ない** — 同じ名前の別のプログラムは見分けない（P0: Debian の sg）。
+    let with_run = |agent: &AgentId| {
+        view.start.contains(agent)
+            && world.agent(agent).is_ok_and(|record| {
+                record
+                    .spec
+                    .enabled_tools
+                    .as_deref()
+                    .is_some_and(|tools| tools.iter().any(|t| t == "run"))
+            })
+    };
+    let missing_run = group_in_order(
+        view.run_commands
+            .iter()
+            .filter(|r| with_run(&r.agent) && !(view.command_on_path)(&r.command))
+            .map(|r| (r.command.as_str(), r.agent.to_string())),
+    );
+    for (command, agents) in missing_run {
+        let listed = agents.join(", ");
+        out.push(Finding {
+            level: FindingLevel::Warn,
+            code: codes::RUN_COMMAND_NOT_FOUND,
+            message: lang
+                .pick(
+                    &format!("run の許可コマンド {command}（{listed}）が PATH にありません。許可しても実行時に見つかりません"),
+                    &format!("The allowed run command {command} ({listed}) is not on PATH; it will not be found at run time"),
+                )
+                .to_owned(),
+            fix: lang
+                .pick(
+                    "そのコマンドを入れた像を作る（FROM で派生させる）か、run.json の allow から外す",
+                    "Build an image that contains the command (derive with FROM), or remove it from run.json's allow",
+                )
+                .to_owned(),
+        });
+    }
+
+    // 15. 壁時計の予定があり、時刻帯が bake.json と違う・読めない — serve・警告（Spec 65 契約 11）。
+    //     予定が GUI で決めた時刻と違う時刻に発火する。bake.json が無い村では比べる相手が無いので出さない。
+    let wall_clock = schedules
+        .iter()
+        .any(|t| t.enabled && !matches!(t.recurrence, Recurrence::Interval { .. }));
+    if view.mode == HeadlessMode::Serve
+        && wall_clock
+        && let Some(baked) = view.baked_time_zone
+    {
+        let message = match view.process_time_zone {
+            ProcessTimeZone::Named(name) if name == baked => None,
+            ProcessTimeZone::Named(name) => Some(lang.pick(
+                &format!("このプロセスの時刻帯は {name} で、村を作った端末（{baked}）と違います。毎日・毎週の予定が GUI で決めた時刻と違う時刻に発火します"),
+                &format!("This process runs in {name}, not in the village's time zone ({baked}); daily and weekly schedules fire at different times than set in the GUI"),
+            ).to_owned()),
+            ProcessTimeZone::Unreadable(tz) => Some(lang.pick(
+                &format!("TZ={tz} の時刻帯が読めません。時刻は黙って UTC で動き、毎日・毎週の予定が村の時刻帯（{baked}）と違う時刻に発火します"),
+                &format!("TZ={tz} cannot be read; time silently runs in UTC and daily and weekly schedules fire at different times than in the village's time zone ({baked})"),
+            ).to_owned()),
+            ProcessTimeZone::Unknown => Some(lang.pick(
+                &format!("このプロセスの時刻帯が読めません。毎日・毎週の予定が村の時刻帯（{baked}）どおりに発火するか分かりません"),
+                &format!("This process's time zone cannot be read; daily and weekly schedules may not fire in the village's time zone ({baked})"),
+            ).to_owned()),
+        };
+        if let Some(message) = message {
+            out.push(Finding {
+                level: FindingLevel::Warn,
+                code: codes::TIMEZONE_MISMATCH,
+                message,
+                fix: lang
+                    .pick(
+                        &format!("TZ={baked} を設定する（像には tzdata が入っている）"),
+                        &format!("Set TZ={baked} (the image includes tzdata)"),
+                    )
+                    .to_owned(),
+            });
+        }
     }
 
     // 重い順に並べる。同じ重さの中は検査の順のまま（stable）。
@@ -524,10 +827,11 @@ mod tests {
         }
     }
 
-    /// 全部そろった view（秘密あり・承認あり・鍵あり・承認モードは自動承認）。
+    /// 全部そろった view（秘密あり・承認あり・鍵あり・承認モードは自動承認・パスは全部
+    /// フォルダ・コマンドは全部 PATH にある・扉は開かない・`bake.json` は無い）。
     struct Base {
         start: BTreeSet<AgentId>,
-        stdio: Vec<String>,
+        stdio: Vec<StdioCommand>,
     }
 
     impl Base {
@@ -546,8 +850,36 @@ mod tests {
                 jev_pruning_enabled: false,
                 bypass_plan_review: false,
                 run_approval: RunApproval::AutoApprove,
-                stdio_mcp_servers: &self.stdio,
+                stdio_mcp_commands: &self.stdio,
+                mcp_secret_refs: &[],
+                run_commands: &[],
+                path_kind: &all_dirs,
+                command_on_path: &everywhere,
+                door_port: None,
+                door_token_present: false,
+                process_time_zone: ProcessTimeZone::Named("Asia/Tokyo"),
+                baked_time_zone: None,
             }
+        }
+    }
+
+    fn all_dirs(_: &str) -> PathKind {
+        PathKind::Dir
+    }
+    fn everywhere(_: &str) -> bool {
+        true
+    }
+    fn nowhere(_: &str) -> bool {
+        false
+    }
+    fn nothing_exists(_: &str) -> PathKind {
+        PathKind::Missing
+    }
+
+    fn stdio(server: &str, command: &str) -> StdioCommand {
+        StdioCommand {
+            server: server.to_owned(),
+            command: command.to_owned(),
         }
     }
 
@@ -860,20 +1192,216 @@ mod tests {
         assert!(headless_preflight(&world, &[], &view).is_empty());
     }
 
-    /// 9. stdio の MCP サーバーは情報。
+    /// 9. stdio の MCP の command が見つからなければ警告（コマンドごとに 1 件・サーバーを列挙）。
+    ///    見つかれば黙る（Spec 64 の情報 MCP_STDIO は撤去した）。
     #[test]
-    fn stdio_mcp_servers_are_informational() {
+    fn missing_mcp_commands_warn_once_per_command() {
         let mut world = village();
         world.set_reception(Some(&AgentId::from("a"))).unwrap();
         let base = Base {
             start: ids(&["a", "b"]),
-            stdio: vec!["filesystem".to_owned()],
+            stdio: vec![
+                stdio("a:docker", "docker"),
+                stdio("a:memoria", "D:\\memoria\\m.exe"),
+                stdio("b:docker", "docker"),
+            ],
         };
-        let view = base.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
+        let mut view = base.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
+        assert!(headless_preflight(&world, &[], &view).is_empty(), "見つかれば黙る");
+
+        view.command_on_path = &nowhere;
         let findings = headless_preflight(&world, &[], &view);
-        assert_eq!(codes_of(&findings), vec![codes::MCP_STDIO]);
-        assert_eq!(findings[0].level, FindingLevel::Info);
-        assert!(findings[0].message.contains("filesystem"));
+        assert_eq!(
+            codes_of(&findings),
+            vec![codes::MCP_COMMAND_NOT_FOUND, codes::MCP_COMMAND_NOT_FOUND],
+            "docker と m.exe の 2 件（docker の 2 台は 1 件にまとまる）"
+        );
+        assert_eq!(findings[0].level, FindingLevel::Warn);
+        assert!(findings[0].message.contains("a:docker, b:docker"), "{}", findings[0].message);
+        assert!(findings[1].message.contains("D:\\memoria\\m.exe"));
+    }
+
+    /// 10. headers の参照が選んだストアに無ければ拒否（名前ごとに 1 件）。鍵は mcp:NAME。
+    #[test]
+    fn a_missing_header_secret_is_rejected_once_per_name() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        let base = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let refs = [
+            SecretRef { server: "a:outcasts".to_owned(), name: "OUTCASTS".to_owned() },
+            SecretRef { server: "b:outcasts".to_owned(), name: "OUTCASTS".to_owned() },
+        ];
+        // テンプレートの鍵（tpl）はあり、mcp:OUTCASTS だけが無い置き場。
+        let only_template = |key: &str| key == "tpl";
+        let mut view = base.view(HeadlessMode::Ask, &only_template, &yes_probe);
+        view.mcp_secret_refs = &refs;
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(codes_of(&findings), vec![codes::SECRET_MISSING]);
+        assert_eq!(findings[0].level, FindingLevel::Reject);
+        assert!(findings[0].message.contains("a:outcasts, b:outcasts"), "{}", findings[0].message);
+        assert!(findings[0].fix.contains("FUSEFORKS_SECRET_MCP_OUTCASTS"), "{}", findings[0].fix);
+        assert!(findings[0].fix.contains("mcp:OUTCASTS"));
+
+        let with_ref = |key: &str| key == "tpl" || key == "mcp:OUTCASTS";
+        let mut view = base.view(HeadlessMode::Ask, &with_ref, &yes_probe);
+        view.mcp_secret_refs = &refs;
+        assert!(headless_preflight(&world, &[], &view).is_empty());
+    }
+
+    /// 11. --door-port があって合鍵が無ければ serve だけ拒否。--door-port が無ければ見ない。
+    #[test]
+    fn a_door_port_without_a_token_is_rejected_for_serve() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        let base = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let mut view = base.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
+        assert!(headless_preflight(&world, &[], &view).is_empty(), "扉を開かないなら見ない");
+
+        view.door_port = Some(39641);
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(codes_of(&findings), vec![codes::DOOR_TOKEN_MISSING]);
+        assert!(findings[0].fix.contains("FUSEFORKS_SECRET_DOOR_TOKEN"), "{}", findings[0].fix);
+
+        view.door_token_present = true;
+        assert!(headless_preflight(&world, &[], &view).is_empty());
+
+        let mut ask = base.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
+        ask.door_port = Some(39641);
+        assert!(headless_preflight(&world, &[], &ask).is_empty(), "ask は扉を開かない");
+    }
+
+    /// 12・13. 作業フォルダが無い・ファイルなら拒否、rag の宣言が無ければ警告（パスごとに 1 件）。
+    ///         未設定の作業フォルダと、起動しない個体のパスは見ない。
+    #[test]
+    fn missing_work_dirs_are_rejected_and_rag_sources_warn() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        for (id, dir, rag) in [
+            ("a", Some("/work/mathlab"), vec!["/work/rag".to_owned()]),
+            ("b", Some("/work/mathlab"), vec!["/work/rag".to_owned(), "/work/ok".to_owned()]),
+        ] {
+            let mut spec = world.agent(&AgentId::from(id)).unwrap().spec.clone();
+            spec.work_dir = dir.map(str::to_owned);
+            spec.rag_sources = rag;
+            world.update_agent(spec).unwrap();
+        }
+        let only_ok = |path: &str| match path {
+            "/work/ok" => PathKind::Dir,
+            "/work/rag" => PathKind::File,
+            _ => PathKind::Missing,
+        };
+        let base = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let mut view = base.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
+        view.path_kind = &only_ok;
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(
+            codes_of(&findings),
+            vec![codes::WORK_DIR_MISSING, codes::RAG_SOURCE_MISSING]
+        );
+        assert_eq!(findings[0].level, FindingLevel::Reject);
+        assert!(findings[0].message.contains("/work/mathlab（a, b）"), "{}", findings[0].message);
+        assert!(findings[1].message.contains("/work/rag（a, b）"), "{}", findings[1].message);
+
+        // フォルダの代わりにファイルがあっても拒否（「無い」と同じ扱い）。
+        let all_files = |_: &str| PathKind::File;
+        view.path_kind = &all_files;
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(
+            codes_of(&findings),
+            vec![codes::WORK_DIR_MISSING, codes::RAG_SOURCE_MISSING, codes::RAG_SOURCE_MISSING]
+        );
+
+        // 作業フォルダが未設定なら見ない。起動しない個体のパスも見ない。
+        let mut spec = world.agent(&AgentId::from("a")).unwrap().spec.clone();
+        spec.work_dir = None;
+        spec.rag_sources = Vec::new();
+        world.update_agent(spec).unwrap();
+        let only_a = Base {
+            start: ids(&["a"]),
+            stdio: Vec::new(),
+        };
+        let mut view = only_a.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
+        view.path_kind = &only_ok;
+        assert!(headless_preflight(&world, &[], &view).is_empty());
+    }
+
+    /// 14. run の許可コマンドが PATH に無ければ警告。数えるのは run を持つ起動する個体だけ。
+    #[test]
+    fn missing_run_commands_warn_only_for_starting_run_servants() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        let mut spec = world.agent(&AgentId::from("b")).unwrap().spec.clone();
+        spec.enabled_tools = Some(vec!["run".to_owned()]);
+        world.update_agent(spec).unwrap();
+        let runs = [
+            RunCommand { agent: AgentId::from("a"), command: "lake".to_owned() },
+            RunCommand { agent: AgentId::from("b"), command: "lake".to_owned() },
+            RunCommand { agent: AgentId::from("b"), command: "git".to_owned() },
+        ];
+        let only_git = |c: &str| c == "git";
+        let base = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let mut view = base.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
+        view.run_commands = &runs;
+        view.command_on_path = &only_git;
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(codes_of(&findings), vec![codes::RUN_COMMAND_NOT_FOUND]);
+        assert!(findings[0].message.contains("lake（b）"), "a は run を持たないので数えない: {}", findings[0].message);
+    }
+
+    /// 15. 時刻帯 — serve で、有効な壁時計の予定があり、bake.json があるときだけ比べる。
+    #[test]
+    fn the_time_zone_is_compared_only_when_it_matters() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        let base = Base {
+            start: ids(&["a", "b"]),
+            stdio: Vec::new(),
+        };
+        let weekly = [task("t1", "b")];
+        let mut view = base.view(HeadlessMode::Serve, &yes_secret, &yes_probe);
+        view.process_time_zone = ProcessTimeZone::Named("Etc/UTC");
+        assert!(headless_preflight(&world, &weekly, &view).is_empty(), "bake.json が無ければ比べない");
+
+        view.baked_time_zone = Some("Asia/Tokyo");
+        let findings = headless_preflight(&world, &weekly, &view);
+        assert_eq!(codes_of(&findings), vec![codes::TIMEZONE_MISMATCH]);
+        assert!(findings[0].message.contains("Etc/UTC") && findings[0].message.contains("Asia/Tokyo"));
+        assert!(findings[0].fix.contains("TZ=Asia/Tokyo"));
+
+        view.process_time_zone = ProcessTimeZone::Unreadable("Bogus/Zone");
+        let findings = headless_preflight(&world, &weekly, &view);
+        assert_eq!(codes_of(&findings), vec![codes::TIMEZONE_MISMATCH]);
+        assert!(findings[0].message.contains("TZ=Bogus/Zone"), "{}", findings[0].message);
+
+        view.process_time_zone = ProcessTimeZone::Unknown;
+        assert_eq!(codes_of(&headless_preflight(&world, &weekly, &view)), vec![codes::TIMEZONE_MISMATCH]);
+
+        view.process_time_zone = ProcessTimeZone::Named("Asia/Tokyo");
+        assert!(headless_preflight(&world, &weekly, &view).is_empty(), "同じなら黙る");
+
+        // 無効な予定・interval だけの村・ask では比べない。
+        view.process_time_zone = ProcessTimeZone::Named("Etc/UTC");
+        let mut paused = task("t2", "b");
+        paused.enabled = false;
+        let mut interval = task("t3", "b");
+        interval.recurrence = Recurrence::Interval { every_minutes: 5 };
+        assert!(headless_preflight(&world, &[paused, interval], &view).is_empty());
+        let mut ask = base.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
+        ask.process_time_zone = ProcessTimeZone::Named("Etc/UTC");
+        ask.baked_time_zone = Some("Asia/Tokyo");
+        assert!(headless_preflight(&world, &weekly, &ask).is_empty());
     }
 
     /// 結果は重い順（拒否 → 警告 → 情報）。同じ重さの中は表の順。
@@ -882,19 +1410,24 @@ mod tests {
         let mut world = village();
         // 表の順と重さが逆転する組を入れる: 4 行目（情報: 窓口の接続先 b が集合の外）は
         // 6 行目（警告: 承認モード）より表の上にある。並べ替えが無いと情報が警告の前に出る。
-        // あわせて拒否（1 行目: 計画の確認）と、同じ重さの中の順（情報 4 行目 → 9 行目）も見る。
+        // あわせて拒否（1 行目: 計画の確認 → 12 行目: 作業フォルダ）と、同じ重さの中の順
+        // （警告 6 行目 → 8 行目 → 9 行目）も見る。12 行目の拒否は表の下にあるので、
+        // 並べ替えが無いと警告の後に出る（Spec 65 で表の下に拒否が足された）。
         world.set_reception(Some(&AgentId::from("a"))).unwrap();
         let base = Base {
             start: ids(&["a"]),
-            stdio: vec!["fs".to_owned()],
+            stdio: vec![stdio("fs", "fs-server")],
         };
         let mut view = base.view(HeadlessMode::Ask, &yes_secret, &yes_probe);
         view.jev_token_present = false;
         view.jev_pruning_enabled = true;
         view.run_approval = RunApproval::Required;
+        view.command_on_path = &nowhere;
+        view.path_kind = &nothing_exists;
         let mut spec = world.agent(&AgentId::from("a")).unwrap().spec.clone();
         spec.enabled_tools = Some(vec!["run".to_owned()]);
         spec.plan_review = true;
+        spec.work_dir = Some("/work/x".to_owned());
         world.update_agent(spec).unwrap();
 
         let findings = headless_preflight(&world, &[], &view);
@@ -902,10 +1435,11 @@ mod tests {
             codes_of(&findings),
             vec![
                 codes::PLAN_REVIEW_WAITS,
+                codes::WORK_DIR_MISSING,
                 codes::RUN_APPROVAL_REQUIRED,
                 codes::JEV_TOKEN_MISSING,
+                codes::MCP_COMMAND_NOT_FOUND,
                 codes::RECEPTION_TARGETS_OUTSIDE,
-                codes::MCP_STDIO,
             ]
         );
     }

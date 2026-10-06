@@ -35,6 +35,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # 「存在しない時刻・曖昧な時刻で panic しない」契約を実際に走らせるため。
 # 日本には DST が無いので、実行機の Local ではこの経路を一度も通れない。
 chrono-tz = "0.10"
+# プロセスの時刻帯の名前（Spec 65 D5 の TIMEZONE_MISMATCH と bake の sourceTimeZone）。
+# chrono の clock が既に連れている crate なので、依存の木は増えない。**Linux では TZ を
+# 見ない**（/etc/localtime を読む — P0 実測）ので、呼び出し側は TZ を先に見る。
+iana-time-zone = "0.1"
 # OS の資格情報ストア。Windows 資格情報マネージャー / macOS Keychain /
 # freedesktop Secret Service を同一 API で扱う。各 feature は target_os で
 # ゲートされるため、全プラットフォーム分を列挙してよい。
