@@ -66,9 +66,11 @@ enum Stub {
     Answer,
     /// 毎周ツールを呼ぶ（本文を返さない）。予算の天井に当てるため。
     ToolEveryRound,
-    /// 3 秒待ってから本文を返す（Ctrl+C を飛行中のターンへ当てるため）。
+    /// 3 秒待ってから毎周ツールを呼ぶ（Ctrl+C を飛行中のターンへ当てるため）。
+    /// **1 周で答えるスタブでは打ち切りにならない** — 打ち切りは周回の境目で効く（Spec 10）ので、
+    /// 飛行中の 1 周で答え終わるターンは答えが返って 0 になる（P6 の実機で観測）。
     #[cfg_attr(not(unix), allow(dead_code))]
-    SlowAnswer,
+    SlowToolEveryRound,
 }
 
 /// ループバックに OpenAI 互換スタブを立て、`(base_url, 受けた要求の数)` を返す。
@@ -106,11 +108,11 @@ fn spawn_stub(stub: Stub) -> (String, Arc<AtomicUsize>) {
                         break;
                     }
                 }
-                if matches!(stub, Stub::SlowAnswer) {
+                if matches!(stub, Stub::SlowToolEveryRound) {
                     std::thread::sleep(Duration::from_secs(3));
                 }
                 let payload = match stub {
-                    Stub::Answer | Stub::SlowAnswer => serde_json::json!({
+                    Stub::Answer => serde_json::json!({
                         "choices": [{
                             "message": { "role": "assistant", "content": ANSWER },
                             "finish_reason": "stop",
@@ -119,7 +121,7 @@ fn spawn_stub(stub: Stub) -> (String, Arc<AtomicUsize>) {
                     }),
                     // 呼び出しの id と引数を周ごとに変える（RepeatGuard に止めさせない —
                     // 止まるべきは予算の天井）。名前は提示外でもよい（L3 が結果を返して周が続く）。
-                    Stub::ToolEveryRound => serde_json::json!({
+                    Stub::ToolEveryRound | Stub::SlowToolEveryRound => serde_json::json!({
                         "choices": [{
                             "message": {
                                 "role": "assistant",
@@ -395,13 +397,14 @@ fn a_budget_stop_exits_nine() {
 }
 
 /// `ask` の途中の SIGINT（端末の Ctrl+C）は打ち切りになり 8。閉じ方を通るので、飛行中の
-/// ターンの払いの記録（`turn:` 行）も残る（凍結 11・#103）。**Unix だけ** — Windows で子へ
-/// Ctrl+C を送るにはコンソールを共有する必要があり、自動では送れない（P6 の実機で確かめる）。
+/// ターンの払いの記録（`turn:` 行）も残る（凍結 11・#103）。スタブは毎周ツールを呼ぶ —
+/// 1 周目の飛行中に送り、2 周目の境目で打ち切りが効く。**Unix だけ** — Windows で子へ
+/// Ctrl+C を送るにはコンソールに付く必要があり（unsafe が要る）、P6 の実機で確かめた。
 #[cfg(unix)]
 #[test]
 fn sigint_during_ask_interrupts_and_exits_eight() {
     let dir = TempDir::new("sigint");
-    make_village(&dir, &spawn_stub(Stub::SlowAnswer).0, None);
+    make_village(&dir, &spawn_stub(Stub::SlowToolEveryRound).0, None);
     let mut child = Command::new(BIN)
         .args([
             "ask", "--data-dir", data_dir(&dir), "--start", "reception", "--secrets", "env",
@@ -435,7 +438,8 @@ fn sigint_during_ask_interrupts_and_exits_eight() {
     child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
     assert_eq!(code, 8, "stderr={stderr}");
     let log = std::fs::read_to_string(dir.workspace().join("fuseforks.log")).unwrap();
-    assert!(log.contains("] turn: agent="), "払いの turn: 行が残る: {log}");
+    // 打ち切りの出口の払いの行は `turn interrupted:`（`turn: agent=` ではない — P6 の実機で確認）。
+    assert!(log.contains("] turn interrupted: agent="), "払いの行が残る: {log}");
 }
 
 /// `--start` を省くと引数の誤り = 2（既定値は無い）。
