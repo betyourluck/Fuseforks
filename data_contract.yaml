@@ -3858,7 +3858,11 @@ entities:
     P2 (凍結 3・4 = 村の排他ロックと二重の網) と P3 (凍結 5・6・8・9 のコア側 = EnvSecretStore と
     衝突の検査・headless_preflight・run_schedules・ask_external_outcome) も同日に着地。
     HostBootOptions は 4 欄 (app_version / secrets / run_schedules / open_door) になり、GUI は
-    HostBootOptions::gui (keyring・予定を回す・扉を開く) を渡す。残る P4 は実行ファイル fuseforks-cli。
+    HostBootOptions::gui (keyring・予定を回す・扉を開く) を渡す。P4 (実行ファイル fuseforks-cli =
+    apps/cli の check / ask / serve。凍結 6・7・9・10・11・13・14 の CLI 側) も同日に着地。
+    ask / serve も組み立ての前に check と同じ起動前検査 (fuseforks_host::preflight — ファイルと秘密の
+    有無だけを読み、ロックも MCP の接続もしない) を走らせ、拒否が 1 件でもあれば LLM にも MCP にも
+    触れずに 3 で止まる (凍結 6 の「LLM を呼ばずに」より 1 段強い)。
 
     P0 実測 (2026-10-06。tools/lock_probe を 3 OS の CI で。予測を先に書いて 3 OS とも全部一致):
       - std::fs::File::try_lock: 別プロセスが持つ → WouldBlock / 同じプロセスの別ハンドル →
@@ -3948,7 +3952,10 @@ entities:
          allowed_hosts が loopback 3 種)。/healthz 等の状態の口は作らない
      13. **--events jsonl の間は標準エラーの全行が JSON** (CoreEvent は IPC と同じワイヤ形で 1 行
          1 件、CLI 自身の行は {"type":"cli","level":…,"code":…,"message":…})。プレーンテキストを
-         混ぜない。標準出力は答えだけ
+         混ぜない。標準出力は答えだけ。**追補 (P4・2026-10-06)**: 診断の行 (note!) は
+         {"type":"log","message":…} の 1 行で出す (diag::set_stderr_json。ファイル fuseforks.log の
+         書式は変えない) — note! はログを開く前も後も必ず標準エラーへ素の行を出していたので、無いと
+         最初の 1 行で破れる。行の種類は CoreEvent / cli / log の 3 つ
      14. **版番号**: build_host は HostBootOptions.app_version を受けて今と同じ version: 行を書く。
          CLI は build.rs で git describe --tags --abbrev=0 と rev-parse --short HEAD から
          0.4.0+g1b33d9d の形 (取れなければ 0.0.0 / ハッシュ無し。panic しない)

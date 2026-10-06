@@ -145,6 +145,44 @@ fn describe_collisions(found: &[SecretNameCollision]) -> String {
         .join("; ")
 }
 
+/// 選んだ置き場の秘密のストアを作る（D4）。
+///
+/// `build_host` と起動前検査（[`crate::preflight`]）の 1 実装 — 検査が見た置き場と
+/// 組み立てが読む置き場を食い違わせない（`check` が通ってコンテナで落ちる形を作らない）。
+pub fn secret_store(source: SecretSource) -> Arc<dyn SecretStore> {
+    match source {
+        SecretSource::Keyring => Arc::new(KeyringSecretStore::new()),
+        SecretSource::Env => Arc::new(EnvSecretStore::from_env()),
+    }
+}
+
+/// 環境変数名の衝突の検査（D4）。**環境変数から読むときだけ数える**（keyring は鍵を
+/// 変数名に写さないので衝突が無い）。
+///
+/// 数える鍵は村のテンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン）。
+/// `build_host`（`bootstrap` の直後・MCP の接続より前）と起動前検査が同じ関数を呼ぶ。
+///
+/// # Errors
+/// 2 つ以上の鍵が同じ変数名に写る場合 [`HostError::SecretNameCollision`]。
+pub(crate) fn check_secret_names<'a>(
+    source: SecretSource,
+    template_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), HostError> {
+    if source != SecretSource::Env {
+        return Ok(());
+    }
+    let found = secret_name_collisions(
+        template_ids
+            .into_iter()
+            .chain(std::iter::once(crate::jev_settings::TOKEN_KEY)),
+    );
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(HostError::SecretNameCollision(found))
+    }
+}
+
 /// 村を開いて組み立てる。
 ///
 /// バックエンドは [`HttpBackendFactory::echo_on_failure`] で構築する。API キーが
@@ -169,7 +207,9 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     // 置き場をワークスペース直下にするのは、「フォルダを開く」導線でそのまま
     // 辿り着けるから（不具合の報告時に場所を説明せずに済む）。
     if let Err(err) = fuseforks_core::open_log(&workspace.join("fuseforks.log")) {
-        eprintln!("[fuseforks] ログファイルを開けませんでした（stderr のみ）: {err}");
+        // `note!` を通す — `fuseforks-cli --events jsonl` の間は stderr の全行が JSON
+        // （Spec 64 凍結 13）で、素の `eprintln!` はその約束を破る唯一の行だった。
+        fuseforks_core::note!("ログファイルを開けませんでした（stderr のみ）: {err}");
     }
     // **どの配布物が村を触ったかを、ログだけで読めるようにする**（2026-08-20）。
     //
@@ -195,10 +235,7 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
     // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。コンテナでは
     // デプロイ時に注入する環境変数を読む（読み取り専用。D4）。
-    let secrets: Arc<dyn SecretStore> = match opts.secrets {
-        SecretSource::Keyring => Arc::new(KeyringSecretStore::new()),
-        SecretSource::Env => Arc::new(EnvSecretStore::from_env()),
-    };
+    let secrets = secret_store(opts.secrets);
     let factory = Arc::new(HttpBackendFactory::echo_on_failure(Arc::clone(&secrets)));
 
     let store = ConfigStore::new(&workspace);
@@ -216,18 +253,8 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     // 環境変数名の衝突（D4）。**`bootstrap` の直後・MCP の接続より前** — `bootstrap` は
     // LLM も MCP も呼ばないので、ここで止めれば何も外へ出ていない。数える鍵は村の
     // テンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン）。
-    if opts.secrets == SecretSource::Env {
-        let templates = orchestrator.templates().await;
-        let found = secret_name_collisions(
-            templates
-                .iter()
-                .map(|t| t.id.as_str())
-                .chain(std::iter::once(crate::jev_settings::TOKEN_KEY)),
-        );
-        if !found.is_empty() {
-            return Err(HostError::SecretNameCollision(found));
-        }
-    }
+    let templates = orchestrator.templates().await;
+    check_secret_names(opts.secrets, templates.iter().map(|t| t.id.as_str()))?;
 
     // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
     // 実行時に解決されるため、ここでは登録するだけでよい。

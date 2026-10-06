@@ -1,14 +1,15 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **rev2・P3 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+- 状態: **rev2・P4 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
   rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 6 行 /
   ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正
   → **同日夜に P1 完了** — `crates/fuseforks-host` へ 4 ファイル + `build_host`（6 コミット・挙動不変・
   起動ログ 6 行が一致）。「P1 実装記録」が正 → **同日深夜に P2 完了** — 村の排他ロック + 二重の網 +
   覆いの文言 + MSRV 1.89（2 コミット）。「P2 実装記録」が正 → **同日に P3 完了** — `EnvSecretStore` と
   衝突の検査 / `headless_preflight`（9 行 → 識別子 11）/ `run_schedules` / `ask_external_outcome`。変異 6 本とも
-  狙った 1 本だけ赤（1 本は並びのテストの穴を直してから）。「P3 実装記録」が正。**次は P4**（実行ファイル
-  `fuseforks-cli`））
+  狙った 1 本だけ赤（1 本は並びのテストの穴を直してから）。「P3 実装記録」が正 → **同日に P4 完了** — 実行ファイル
+  `fuseforks-cli`（`check` / `ask` / `serve`）・結合 7 本（Tasks の 6 本 + 変異で見つけた穴の 1 本）・変異 4 本。
+  「P4 実装記録」が正。**次は P5**（台帳））
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -454,10 +455,11 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P4 — 実行ファイル
 
-- [ ] `apps/cli`（`fuseforks-cli`）: `check` / `ask` / `serve`、引数の解析、終了コード、Ctrl+C、`build.rs` の版番号
-- [ ] 結合テスト: 秘密の無いテンプレートの村で `check --for ask` が 3 / echo のバックエンドで `ask` が答えを標準出力へ
+- [x] `apps/cli`（`fuseforks-cli`）: `check` / `ask` / `serve`、引数の解析、終了コード、Ctrl+C、`build.rs` の版番号
+- [x] 結合テスト: 秘密の無いテンプレートの村で `check --for ask` が 3 / echo のバックエンドで `ask` が答えを標準出力へ
       書いて 0 / ロック中に開くと 4 / `--events jsonl` のとき標準エラーの全行が JSON として読める /
-      `ask` の天井を小さくした村で 9 / `--start` を省くと 2
+      `ask` の天井を小さくした村で 9 / `--start` を省くと 2（+ 変異 M4 で見つけた穴: 拒否された `ask` は LLM を
+      1 回も呼ばずに 3）
 
 ### P5 — 台帳
 
@@ -694,6 +696,83 @@ vitest 760・vue-tsc 0・変異 6 本とも狙った 1 本だけ赤。
 - **道具の罠**: D: の空きが 0.1 GB になり、リンクが `LNK1104` / `LNK1318` / `LNK1180` / `0xc000009a` /
   os error 112 で落ちた。**正体はディスク満杯で、`target/debug` が 84.4 GiB** あった（`cargo clean` で解消）。
   `failures.md` #132 の「リンクが落ちて 1 本も走っていない」と同じ症状の、別の原因
+
+## P4 実装記録（2026-10-06）
+
+**着地**: `apps/cli`（`fuseforks-cli`）= `args.rs` / `exit.rs` / `output.rs` / `run.rs` / `main.rs` + `build.rs`、
+workspace の members へ追加。コアに `World::batch_start_ids` / `ConfigStore::read_village_id` /
+`diag::set_stderr_json`、ホストに `preflight.rs`（`boot.rs` から `secret_store` / `check_secret_names` を切り出し）。
+CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全体で 65 ターゲット・1,269 本が緑・clippy 0。
+
+**決めたこと**（次に触る人が要る順）:
+
+- **`check` は `build_host` を通さない。** `build_host` は組み立ての途中で `reload_mcp()` を呼び、共通の
+  `mcp.json` のサーバーへ繋ぐ（stdio なら子プロセスを起こす）ので、D5 の「`check` は LLM も MCP も呼ばない」が
+  成立しない。ホストに **`preflight.rs`** を新設した — ファイルと秘密の有無だけを読み、ロックを取らず、
+  `bootstrap` も MCP の接続もせず、何も書かない（村の識別子が無くても作らない）。**`ask` と `serve` も組み立ての
+  前に同じ `preflight` を呼ぶ**ので、拒否があれば LLM にも MCP にも触れずに止まる（D5 の「LLM を呼ばずに」より
+  1 段強い）。材料は `world.json` / `schedules.json`（宛先の無い予定は `bootstrap` と同じく数えない）/
+  共通と起動する個体の `mcp.json` / `village_id` / 棚の `probe_approvals.json` と `jev.json`
+- **秘密の置き場と衝突の検査は 1 実装** — `boot.rs` から `secret_store(source)` と
+  `check_secret_names(source, ids)` を切り出し、`build_host` と `preflight` が同じ関数を呼ぶ（検査が見た置き場と
+  組み立てが読む置き場を食い違わせない）
+- **`--start` の解決は `preflight` の中**（`resolve_start`）。`batch` = 新設の **`World::batch_start_ids`**
+  （画面の `lib/agentGroups.ts` の `batchEligible` と同じ規則 — 個体のトグル × グループのスイッチ・引けない
+  グループ id は無所属・非表示は見ない・並びは `order`）/ `reception` を `ask` 以外で使うと引数の誤り（2）/
+  村に居ない id も 2 / **`ask` はどの値でも窓口を足す**（未設定・削除済みなら足さず、検査の拒否に任せる）
+- **村の識別子を書かずに読む口 `ConfigStore::read_village_id`** をコアに足した（`village_id()` は無ければ作る）
+- **`--events jsonl` の間は `note!` の標準エラーの行も JSON** — `diag::set_stderr_json(true)` で
+  `{"type":"log","message":…}` の 1 行になる（ファイルの書式は変えない）。`note!` は**ログを開く前も後も必ず
+  標準エラーへ素の行を出していた**ので、これが無いと凍結 13（標準エラーの全行が JSON）が最初の 1 行で破れる。
+  本番の経路で標準エラーへ直接書いていたのは `boot.rs` の 1 行（ログを開けなかったとき）だけで、`note!` へ寄せた。
+  **凍結 13 の追補** — 行の種類は CoreEvent / `{"type":"cli"}` / `{"type":"log"}` の 3 つ
+- **版番号（`build.rs`）は HEAD だけでなく今のブランチの ref も見張る** — HEAD の中身は `ref: refs/heads/main` の
+  ままでコミットでは動かないので、HEAD だけを `rerun-if-changed` にすると `+g<hash>` が古いまま残る。置き場は
+  worktree で変わるので `git rev-parse --git-path` で解決し、無いパスは書かない
+- 引数は依存を足さずに手で解析（clap はツリーに無い）。`--flag value` と `--flag=value`・`--` の後は依頼文・
+  旗は命令ごとに閉じる（知らない旗は 2）・`--run-approval` は `required | auto-approve | no-approval`
+- 終了コードの写像は `exit.rs` の純関数 3 本（結末 → コード / 組み立ての失敗 → 4 か 5 / 検査の材料の失敗 →
+  2 か 4 か 5）。`Running` は確定していないので 6（0 にすると確定していないものを成功と読む）
+
+- **標準出力は答え（`ask`）か検査の結果（`check`）だけ。** 検査の指摘・CLI の行・診断は全部標準エラー。
+  `check` の標準出力は人が読む形（指摘ごとの 2 行 + 件数）か `--json` の `{"findings":[…],"start":[…]}` の 1 行
+  （`start` は解決した起動する集合 — 「batch で誰が起動するか」を起動せずに読む唯一の口）。CoreEvent は
+  `--events jsonl` のときだけ流す（人が読む形で流すと毎秒の統計で答えと指摘が埋もれる）
+- **指摘を jsonl で出すときは `type: "cli"` の行に `fix` を足す** — 行の種類を 3 つから増やさない（凍結 13）
+- **引数の誤りでも `--events jsonl` が書いてあれば JSON で出す** — 解析に失敗した後でも凍結 13 を守るため、
+  `main` が生の引数を先に走査する（`--` の後は依頼文なので数えない）。`set_stderr_json` も解析の直後・
+  ランタイムを作る前に立てる（組み立ての最初の `note!` から JSON）
+- **閉じ方は `close()` の 1 実装**（`ask` / `serve` / 起動の途中で落ちたとき）。扉 → `interrupt_all` → 起動した
+  個体だけ `stop_agent` → 呼び出し側が `Host` を落とす。猶予 30 秒は `select!` で、2 回目のシグナルも同じ
+  `select!` の腕。`ask` の 1 回目の Ctrl+C は `interrupt_all` だけを打って答えを待ち続ける（打ち切られた結末 = 8 を
+  コアから受け取る）、2 回目は待たずに 8
+- **`main` はランタイムを `shutdown_timeout(2 秒)` で落とす** — MCP の子プロセスや残った待ちで終了が延びない
+- **結合テストの村は本物の保存の経路で作る** — テストの中の別ランタイムで `Orchestrator::bootstrap` → 登録 →
+  ランタイムごと落とす（`sessions.redb` を手放させる）。**村を作る側のストアにも鍵を置く** — `upsert_template` は
+  秘密の裏付けの無い keyring 主張を「未登録」へ引き戻す（`failures.md` #16 の網）ので、置かないと CLI の
+  `--secrets env` に鍵があっても `SECRET_MISSING` になる（最初の実行で 4 本が赤 = テスト側の誤り）。
+  スタブは std の `TcpListener` を別スレッドで持つ（子プロセスの実行中ずっと応答する）。子プロセスは 120 秒で殺す
+  （`failures.md` #86 — 待ちが壊れても永久に返らない形を作らない）
+
+**変異**（予測を先に書いた。復元は scratchpad の写しから戻し SHA-1 で確認）:
+
+| # | 変異 | 予測 | 実測 |
+|---|---|---|---|
+| M1 | `ask` の答えの `println!` を消す | 3（答え / jsonl の標準出力 / 予算の定型文） | 3 |
+| M2 | `main` の `set_stderr_json(true)` を消す | 1（jsonl） | 1 |
+| M3 | ロックの網を 5 へ写す | 2（exit の単体 + ロックの結合） | 2 |
+| M4 | `ask` の「拒否なら止まる」を消す | **0（穴の確認）** | 0 → 7 本目を足して 1 |
+
+- **M3 の 1 回目は変異の書き方が誤りだった** — 腕を消すと match が網羅でなくなってコンパイルが落ち、結果行が
+  1 行も出なかった（「赤が 0」と区別が付かない）。腕を残して写し先だけ変えて入れ直した。**変異の結果は
+  `test result` の行が出たことまで見る**（`failures.md` #132 の同族）
+- **M4 は予測どおりの穴** — Tasks の 6 本は `ask` が拒否で止まる経路を 1 本も通らない（拒否は `check` でしか
+  見ていない）。7 本目 `ask_stops_on_a_rejection_without_calling_the_llm` = 秘密の無い村で `ask` → 3 /
+  **スタブが受けた要求が 0 件**（D5 の「LLM を 1 回も呼ばない」を数で読む）/ ロックファイルも作られていない
+  （組み立ての前で止まった）。足した後の M4 で新しい 1 本だけが赤
+- workspace の全テストの 1 回目は `session_persistence` のリンクが `link.exe` 1181 で落ち、**集計が空**だった
+  （1 本も走っていない）。単体で組み直すと通り、全体を回し直して 1,269 本。ディスクの空きは 34 GiB あり、
+  P3 のディスク満杯とは別の一過性の失敗（掴み合いと見ているが確かめていない）
 
 ## 未決
 

@@ -146,6 +146,21 @@ impl ConfigStore {
         Ok(fresh)
     }
 
+    /// 村の識別子を**書かずに**読む（Spec 64 D5 の起動前検査）。無い・書式に合わない
+    /// なら `None`。
+    ///
+    /// [`Self::village_id`] は無ければ作るが、`fuseforks-cli check` は村を開かずに
+    /// ファイルだけを読む検査なので、識別子を作る副作用を持たせない。`None` のとき
+    /// 承認鍵は組めず、前判定・後判定はすべて未承認として数える（実際に開いたときも、
+    /// 作り直された識別子では古い承認と一致しないので同じ結論になる）。
+    pub async fn read_village_id(&self) -> Option<String> {
+        let text = tokio::fs::read_to_string(self.root.join(VILLAGE_ID_FILE))
+            .await
+            .ok()?;
+        let trimmed = text.trim();
+        is_village_id(trimmed).then(|| trimmed.to_owned())
+    }
+
     /// エージェントの設定ディレクトリを解決する。
     ///
     /// # Errors

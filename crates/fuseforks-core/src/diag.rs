@@ -27,6 +27,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// 1 ファイルの上限（バイト）。超えたら `.old` へ 1 世代だけ回す。
@@ -114,12 +115,34 @@ pub fn open_log(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// stderr の行を JSON にするか（Spec 64 凍結 13）。既定は偽 = 今までどおりの素の行。
+static STDERR_JSON: AtomicBool = AtomicBool::new(false);
+
+/// stderr へ出す行を JSON にする（`fuseforks-cli --events jsonl`）。
+///
+/// **`--events jsonl` の間は標準エラーの全行が JSON**（凍結 13）なので、診断の行も
+/// `{"type":"log","message":…}` の 1 行で出す。素の `[fuseforks] …` が 1 行でも混ざると
+/// 読む側のパーサが壊れる。**ファイル（`fuseforks.log`）の書式は変えない** — あちらは
+/// 人と grep が読む台帳で、計器の行の書式が凍結されている。GUI は呼ばない。
+pub fn set_stderr_json(on: bool) {
+    STDERR_JSON.store(on, Ordering::Relaxed);
+}
+
+/// stderr へ出す 1 行を組む。
+fn stderr_line(line: &str, json: bool) -> String {
+    if json {
+        serde_json::json!({ "type": "log", "message": line }).to_string()
+    } else {
+        format!("[fuseforks] {line}")
+    }
+}
+
 /// 1 行出す。stderr へは必ず、ファイルへは開いていれば。
 ///
 /// 呼び出し側は `[fuseforks]` を付けない（ここで付ける）。
 /// 通常は [`note!`](crate::note) マクロ経由で呼ぶ。
 pub fn note(line: &str) {
-    eprintln!("[fuseforks] {line}");
+    eprintln!("{}", stderr_line(line, STDERR_JSON.load(Ordering::Relaxed)));
     let Some(sink) = SINK.get() else {
         return;
     };
@@ -148,6 +171,19 @@ macro_rules! note {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// stderr の行は既定で素の `[fuseforks] …`、JSON の間は `{"type":"log"}` の 1 行。
+    /// 改行や引用符を含む行でも JSON として読める（1 行 1 件が崩れない）。
+    #[test]
+    fn stderr_lines_are_plain_by_default_and_json_on_request() {
+        assert_eq!(stderr_line("起動しました", false), "[fuseforks] 起動しました");
+        let tricky = "turn: \"q\"\n2 行目";
+        let json = stderr_line(tricky, true);
+        assert!(!json.contains('\n'), "1 行に収まる: {json}");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["type"], "log");
+        assert_eq!(value["message"], tricky);
+    }
 
     /// テスト用の一時ファイル。終了時に本体と `.old` を消す。
     struct TempLog(PathBuf);

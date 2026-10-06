@@ -16,9 +16,11 @@ pub mod lock;
 // **公開しているのは扉の部品であって、扉そのものではない。**
 pub mod mcp_server;
 pub mod paths;
+pub mod preflight;
 pub mod pricing_source;
 pub mod probe_approvals;
 
-pub use boot::{build_host, Host, HostBootOptions, HostError, SecretSource};
+pub use boot::{build_host, secret_store, Host, HostBootOptions, HostError, SecretSource};
 pub use lock::{LockError, VillageLock, LOCK_FILE};
 pub use paths::HostPaths;
+pub use preflight::{preflight, PreflightError, PreflightReport, PreflightRequest, StartSpec};

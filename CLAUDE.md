@@ -2561,7 +2561,10 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 ~~**Spec 64 の P1**~~（**→ 同日夜に完了**。6 コミット・起動ログ 6 行が一致）→ ~~**Spec 64 の P2**~~（**→ 同日深夜に
 完了**。`f7ebb37` + `e7eecd6`）→ ~~**Spec 64 の P3**~~（**→ 同日に完了**。`cargo clean` で D: の 84.4 GiB を
 空けてから回した。同じ日に別セッションの PR #5（接地エンジンの辞書鍵 = `failures.md` #141）をマージ）→
-**Spec 64 の P4**（実行ファイル `fuseforks-cli` の `check` / `ask` / `serve`）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
+~~**Spec 64 の P4**~~（**→ 同日に完了**。実行ファイル `fuseforks-cli` の `check` / `ask` / `serve`・結合 7 本・
+変異 4 本。7 本目は変異で見つけた穴 = 拒否された `ask` が LLM を呼ばないことを留める本が無かった）→
+**Spec 64 の P5**（台帳 — DETAIL 3 言語 / README 3 言語 / PRIVACY 日英 / 「core 単独実行の構想」への書き戻し）→
+P6 実機。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
 `refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
@@ -7222,7 +7225,16 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   `RECEPTION_UNSET` / `RECEPTION_MISSING` へ割った）/ `run_schedules`（偽ならティッカーを起こさない。期限の来た予定で
   真なら消化・偽なら触れないを対で確かめた）/ `ask_external_outcome`。変異 6 本 — **並べ替えを消す変異が最初は
   生き残った**（入力が表の順のまま重い順にもなっていた）ので、表の順と重さが逆転する入力へ直してから赤を確認。
-  記録は Spec の「P3 実装記録」）。**次は P4**（実行ファイル `fuseforks-cli`）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
+  記録は Spec の「P3 実装記録」）**→ P4 完了**（同日。`check` は `build_host` を通さない —
+  組み立てが `reload_mcp()` で MCP に繋ぐため。ホストに `preflight.rs`（ファイルと秘密の有無だけを読む・ロックを
+  取らない・何も書かない）を新設し、`ask` / `serve` も組み立ての前に同じ検査を呼ぶ / コアに
+  `World::batch_start_ids`・`ConfigStore::read_village_id`・`diag::set_stderr_json`（`--events jsonl` の間は
+  `note!` も `{"type":"log"}` — 凍結 13 の追補）/ `apps/cli` は `exit.rs` と `args.rs` まで。`main.rs` /
+  `output.rs`（標準出力は答えか検査の結果だけ）/ `run.rs`（閉じ方は `close()` の 1 実装・猶予 30 秒・2 回目の
+Ctrl+C は待たない）/ `main.rs`（引数の誤りでも `--events jsonl` なら JSON）。結合 7 本 — Tasks の 6 本 +
+変異 M4 で見つけた穴（拒否された `ask` はスタブへの要求 0 件で 3）。村は本物の保存の経路で作り、作る側の
+ストアにも鍵を置く（`upsert_template` が裏付けの無い keyring 主張を引き戻す = #16 の網）。記録は Spec の
+「P4 実装記録」）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
   GUI を常駐プロセスのクライアントにする形（agent-orchestrator）は採らない。骨格 = 新 crate `fuseforks-host`
   （`build_state` の本体と扉・前判定の承認・単価表・Jev の 4 ファイル。入口は `build_host(paths, HostBootOptions)` の 1 実装で、
   予定を回すか・扉を開くか・秘密の読み先は呼び出し側が決める）/ 新 bin `fuseforks-cli` の `check` / `ask` / `serve` /

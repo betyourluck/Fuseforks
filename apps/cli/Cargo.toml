@@ -1,0 +1,30 @@
+[package]
+name = "fuseforks-cli"
+description = "Fuseforks を GUI なしで動かす実行ファイル（check / ask / serve）。Spec 64。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# 配らない（Spec 64 D12）— ソースからのビルドだけ。配布はコンテナの Spec で決める。
+publish = false
+
+[[bin]]
+name = "fuseforks-cli"
+path = "src/main.rs"
+
+[dependencies]
+fuseforks-core.workspace = true
+fuseforks-host.workspace = true
+serde_json.workspace = true
+# Ctrl+C / SIGTERM（D7 / D8 の閉じ方）。signal は workspace の tokio に無い機能なので
+# ここでだけ足す（crate は増えない — tokio 本体の feature）。
+tokio = { workspace = true, features = ["signal"] }
+
+[dev-dependencies]
+# 結合テストが LLM の代わりにループバックの OpenAI 互換スタブを立てる
+# （`attachment_fallback.rs` と同じ形）。tokio 本体の feature で、crate は増えない。
+tokio = { workspace = true, features = ["net", "io-util", "process"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

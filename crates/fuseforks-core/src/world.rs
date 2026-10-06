@@ -1262,6 +1262,37 @@ impl World {
         self.groups.clone()
     }
 
+    /// 全体 ▶ の対象（Spec 51 `group_contract` 凍結 7）—
+    /// `agent.batch_start && (無所属 || group.batch_start)`。
+    ///
+    /// **引けないグループ id は無所属として扱い、非表示は見ない**（画面の
+    /// `lib/agentGroups.ts` の `batchEligible` と同じ規則。あちらは画面の ▶、
+    /// こちらはヘッドレスの `--start batch`（Spec 64 D6）が使う）。並びは一覧の
+    /// 表示順（`order`、同点は id）。**起動はしない** — 誰を起こすかを返すだけで、
+    /// 実行経路はグループを読まない（凍結 5）。
+    pub fn batch_start_ids(&self) -> Vec<AgentId> {
+        let mut eligible: Vec<&AgentRecord> = self
+            .agents
+            .values()
+            .filter(|record| {
+                record.spec.batch_start
+                    && record.spec.group_id.as_ref().is_none_or(|group_id| {
+                        self.groups
+                            .iter()
+                            .find(|group| &group.id == group_id)
+                            .is_none_or(|group| group.batch_start)
+                    })
+            })
+            .collect();
+        eligible.sort_by(|a, b| {
+            a.spec
+                .order
+                .cmp(&b.spec.order)
+                .then_with(|| a.spec.id.cmp(&b.spec.id))
+        });
+        eligible.into_iter().map(|record| record.spec.id.clone()).collect()
+    }
+
     /// drop の確定（`group_contract` 凍結 8）。**並びと所属を 1 回で書く** —
     /// `reorder` + `update_agent` の 2 段に割ると、片方だけ通った状態が `world.json` に残る。
     ///
@@ -1842,6 +1873,43 @@ mod tests {
         assert_eq!(groups[0].name, "A'");
         assert!(!groups[0].batch_start);
         assert_eq!(groups[1].id, b.id);
+    }
+
+    /// 全体 ▶ の対象（凍結 7）。個体のトグルとグループのスイッチの 2 段で、引けない
+    /// グループ id は無所属として数える。並びは `order`（id 順ではない）。
+    #[test]
+    fn batch_start_ids_follow_the_two_gates_in_list_order() {
+        let mut world = World::new();
+        world.upsert_template(ModelTemplate::new("tpl", "既定", "m"));
+        let on = world.create_group("on").unwrap();
+        let off = world.create_group("off").unwrap();
+        world
+            .upsert_group(AgentGroup {
+                batch_start: false,
+                ..off.clone()
+            })
+            .unwrap();
+        let agent = |id: &str, order: u32, batch: bool, group: Option<&AgentGroupId>| {
+            let mut spec = AgentSpec::new(id, id, "tpl");
+            spec.order = order;
+            spec.batch_start = batch;
+            spec.group_id = group.cloned();
+            spec
+        };
+        let dangling = AgentGroupId::from("gone".to_owned());
+        // 登録順（= id 順）と表示順をわざと食い違わせる。
+        world.register_agent(agent("a_free", 3, true, None)).unwrap();
+        world.register_agent(agent("b_toggle_off", 0, false, None)).unwrap();
+        world.register_agent(agent("c_group_on", 1, true, Some(&on.id))).unwrap();
+        world.register_agent(agent("d_group_off", 2, true, Some(&off.id))).unwrap();
+        world.register_agent(agent("e_dangling", 0, true, Some(&dangling))).unwrap();
+
+        let ids: Vec<String> = world
+            .batch_start_ids()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        assert_eq!(ids, ["e_dangling", "c_group_on", "a_free"]);
     }
 
     /// 削除は個体の `group_id` を巻き込まない（凍結 3）。空名は拒む。

@@ -1253,6 +1253,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuseforks-cli"
+version = "0.1.0"
+dependencies = [
+ "fuseforks-core",
+ "fuseforks-host",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fuseforks-core"
 version = "0.1.0"
 dependencies = [

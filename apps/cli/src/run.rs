@@ -1,0 +1,372 @@
+//! `check` / `ask` / `serve` の本体（Spec 64 D5 / D7 / D8）。
+//!
+//! 3 つとも**最初に同じ起動前検査**（[`fuseforks_host::preflight`]）を走らせる。検査は村を
+//! 開かず、LLM にも MCP にも触れない — `ask` と `serve` は拒否が 1 件でもあればここで止まる。
+//!
+//! 閉じ方は `ask` と `serve` で共通（凍結 11）: 扉を閉じる → 飛行中のターンに打ち切り →
+//! 起動した個体を止める → `Host` を落とす（= ロックを外す）。猶予 30 秒・超えたら払いの
+//! 記録が欠けうることを 1 行・2 回目の Ctrl+C は猶予を待たない。
+
+use std::io::{Read, Write};
+use std::time::Duration;
+
+use fuseforks_core::headless::HeadlessMode;
+use fuseforks_core::model::AgentId;
+use fuseforks_core::CoreError;
+use fuseforks_host::{
+    build_host, preflight, Host, HostBootOptions, HostPaths, PreflightReport, PreflightRequest,
+};
+use tokio::sync::broadcast::error::RecvError;
+
+use crate::args::{AskArgs, CheckArgs, Command, Common, MessageSource, ServeArgs};
+use crate::exit;
+use crate::output::{check_report, Level, Output};
+
+/// 閉じるときの猶予（凍結 11）。
+const CLOSE_GRACE: Duration = Duration::from_secs(30);
+
+/// 版番号（`build.rs`。D11）。
+pub const VERSION: &str = env!("FUSEFORKS_CLI_VERSION");
+
+/// 命令を実行して終了コードを返す。`Help` / `Version` は呼び出し側（`main`）が先に処理する。
+pub async fn dispatch(command: Command) -> u8 {
+    match command {
+        Command::Check(args) => check(args).await,
+        Command::Ask(args) => ask(args).await,
+        Command::Serve(args) => serve(args).await,
+        Command::Help | Command::Version => exit::OK,
+    }
+}
+
+fn request(common: &Common, mode: HeadlessMode) -> PreflightRequest {
+    PreflightRequest {
+        mode,
+        start: common.start.clone(),
+        secrets: common.secrets,
+        bypass_plan_review: common.bypass_plan_review,
+        run_approval: common.run_approval,
+    }
+}
+
+/// 検査を走らせる。材料が揃わなければ理由を 1 行出して `Err(終了コード)`。
+async fn run_preflight(
+    out: Output,
+    paths: &HostPaths,
+    common: &Common,
+    mode: HeadlessMode,
+) -> Result<PreflightReport, u8> {
+    preflight(paths, &request(common, mode)).await.map_err(|err| {
+        let code = exit::for_preflight_error(&err);
+        let id = if code == exit::USAGE { "USAGE" } else { "PREFLIGHT" };
+        out.cli(Level::Error, id, &err.to_string());
+        code
+    })
+}
+
+/// `check` — 検査だけ。村を開かない。拒否が 1 件でもあれば 3。
+async fn check(args: CheckArgs) -> u8 {
+    // `check` は `--events` を持たない — 標準エラーは素の行のまま。
+    let out = Output { jsonl: false };
+    let paths = HostPaths::new(&args.common.data_dir);
+    let report = match run_preflight(out, &paths, &args.common, args.mode).await {
+        Ok(report) => report,
+        Err(code) => return code,
+    };
+    let start: Vec<String> = report.start.iter().map(ToString::to_string).collect();
+    print!("{}", check_report(args.json, &report.findings, &start));
+    if args.json {
+        println!();
+    }
+    let _ = std::io::stdout().flush();
+    if report.rejected() { exit::REJECTED } else { exit::OK }
+}
+
+/// 組み立てる。失敗は理由を 1 行出して `Err(終了コード)`。
+async fn open(
+    out: Output,
+    paths: &HostPaths,
+    common: &Common,
+    run_schedules: bool,
+    open_door: bool,
+) -> Result<Host, u8> {
+    let opts = HostBootOptions {
+        app_version: VERSION.to_owned(),
+        secrets: common.secrets,
+        run_schedules,
+        open_door,
+    };
+    let host = build_host(paths, opts).await.map_err(|err| {
+        let code = exit::for_host_error(&err);
+        let id = if code == exit::LOCKED { "LOCKED" } else { "BOOT" };
+        out.cli(Level::Error, id, &err.to_string());
+        code
+    })?;
+    host.orchestrator.set_plan_review_bypass(common.bypass_plan_review);
+    host.orchestrator.set_run_approval(common.run_approval);
+    Ok(host)
+}
+
+/// コアのエラーを 1 行（`code` と文面）。
+fn core_error(out: Output, err: &CoreError) -> u8 {
+    out.cli(Level::Error, err.code(), &err.to_string());
+    exit::CORE
+}
+
+/// `--events jsonl` のときだけ CoreEvent を標準エラーへ流すタスク。
+fn forward_events(out: Output, host: &Host) -> Option<tokio::task::JoinHandle<()>> {
+    if !out.jsonl {
+        return None;
+    }
+    let mut rx = host.orchestrator.subscribe();
+    Some(tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => out.event(&event),
+                Err(RecvError::Lagged(n)) => out.cli(
+                    Level::Warn,
+                    "EVENTS_LAGGED",
+                    &format!("イベントを {n} 件取りこぼしました（読み手が遅れています）"),
+                ),
+                Err(RecvError::Closed) => break,
+            }
+        }
+    }))
+}
+
+/// 起動する集合を立ち上げる。立ち上がった id を返す（閉じるときに止める対象）。
+async fn start_agents(out: Output, host: &Host, ids: &[AgentId]) -> Result<Vec<AgentId>, u8> {
+    let mut started = Vec::new();
+    for id in ids {
+        match host.orchestrator.start_agent(id).await {
+            Ok(()) => started.push(id.clone()),
+            Err(err) => {
+                // 途中で落ちたら、それまでに立ち上げた個体は閉じ方で止める。
+                close(out, host, &started, &mut Signals::new()).await;
+                return Err(core_error(out, &err));
+            }
+        }
+    }
+    Ok(started)
+}
+
+/// 閉じ方（凍結 11）。猶予を超える・2 回目のシグナルが来たら待たずに返る。
+async fn close(out: Output, host: &Host, started: &[AgentId], signals: &mut Signals) {
+    let graceful = async {
+        host.mcp_server.lock().await.stop();
+        host.orchestrator.interrupt_all().await;
+        for id in started {
+            // 既に落ちている個体（失敗した個体）は NotRunning — 止める対象が無いだけ。
+            let _ = host.orchestrator.stop_agent(id).await;
+        }
+    };
+    tokio::select! {
+        () = graceful => {}
+        () = tokio::time::sleep(CLOSE_GRACE) => out.cli(
+            Level::Warn,
+            "CLOSE_TIMEOUT",
+            "30 秒待っても飛行中のターンが終わりませんでした。待たずに閉じます（このターンの払いの記録が欠けることがあります）",
+        ),
+        () = signals.next() => out.cli(
+            Level::Warn,
+            "CLOSE_FORCED",
+            "2 回目の中断で、待たずに閉じます（飛行中のターンの払いの記録が欠けることがあります）",
+        ),
+    }
+}
+
+/// 転送タスクに残りのイベントを書き切る時間を少しだけ与えてから止める。
+async fn finish_events(task: Option<tokio::task::JoinHandle<()>>) {
+    if let Some(task) = task {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        task.abort();
+    }
+}
+
+/// 依頼文を読む（`-` なら標準入力を全部）。空なら引数の誤り。
+fn read_message(source: &MessageSource) -> Result<String, String> {
+    let text = match source {
+        MessageSource::Text(text) => text.clone(),
+        MessageSource::Stdin => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|err| format!("標準入力を読めませんでした: {err}"))?;
+            buf
+        }
+    };
+    if text.trim().is_empty() {
+        return Err("依頼文が空です".to_owned());
+    }
+    Ok(text)
+}
+
+/// `ask` — 1 通送って、答えを標準出力へ出して、閉じる（D7）。
+async fn ask(args: AskArgs) -> u8 {
+    let out = Output {
+        jsonl: args.events_jsonl,
+    };
+    let message = match read_message(&args.message) {
+        Ok(message) => message,
+        Err(reason) => {
+            out.cli(Level::Error, "USAGE", &reason);
+            return exit::USAGE;
+        }
+    };
+    let paths = HostPaths::new(&args.common.data_dir);
+    let report = match run_preflight(out, &paths, &args.common, HeadlessMode::Ask).await {
+        Ok(report) => report,
+        Err(code) => return code,
+    };
+    out.findings(&report.findings, args.verbose);
+    if report.rejected() {
+        return exit::REJECTED;
+    }
+
+    let host = match open(out, &paths, &args.common, false, false).await {
+        Ok(host) => host,
+        Err(code) => return code,
+    };
+    let events = forward_events(out, &host);
+    let code = ask_in(out, &host, &report, &args, &message).await;
+    drop(host);
+    finish_events(events).await;
+    code
+}
+
+async fn ask_in(
+    out: Output,
+    host: &Host,
+    report: &PreflightReport,
+    args: &AskArgs,
+    message: &str,
+) -> u8 {
+    let mut signals = Signals::new();
+    if !args.continue_session
+        && let Err(err) = host.orchestrator.reset_conversation().await
+    {
+        return core_error(out, &err);
+    }
+    let started = match start_agents(out, host, &report.start).await {
+        Ok(started) => started,
+        Err(code) => return code,
+    };
+
+    let asked = host.orchestrator.ask_external_outcome(&args.client, message);
+    tokio::pin!(asked);
+    let mut interrupted = false;
+    let result = loop {
+        tokio::select! {
+            result = &mut asked => break result,
+            () = signals.next() => {
+                if interrupted {
+                    // 2 回目は猶予を待たない（凍結 11）。
+                    out.cli(Level::Warn, "CLOSE_FORCED", "2 回目の中断で、待たずに閉じます");
+                    return exit::INTERRUPTED;
+                }
+                interrupted = true;
+                out.cli(Level::Info, "INTERRUPTING", "中断します（もう一度押すと待たずに閉じます）");
+                host.orchestrator.interrupt_all().await;
+            }
+        }
+    };
+
+    let code = match result {
+        Ok((answer, state)) => {
+            // 6〜9 でも定型文は標準出力へ（凍結 10 — 本文は人が読む結末）。
+            println!("{answer}");
+            let _ = std::io::stdout().flush();
+            exit::for_outcome(state)
+        }
+        Err(err) => core_error(out, &err),
+    };
+    close(out, host, &started, &mut signals).await;
+    code
+}
+
+/// `serve` — 常駐して予定と扉を回す（D8）。シグナルで閉じて 0。
+async fn serve(args: ServeArgs) -> u8 {
+    let out = Output {
+        jsonl: args.events_jsonl,
+    };
+    let paths = HostPaths::new(&args.common.data_dir);
+    let report = match run_preflight(out, &paths, &args.common, HeadlessMode::Serve).await {
+        Ok(report) => report,
+        Err(code) => return code,
+    };
+    out.findings(&report.findings, true);
+    if report.rejected() {
+        return exit::REJECTED;
+    }
+
+    let host = match open(out, &paths, &args.common, true, true).await {
+        Ok(host) => host,
+        Err(code) => return code,
+    };
+    let events = forward_events(out, &host);
+    let code = serve_in(out, &host, &report).await;
+    drop(host);
+    finish_events(events).await;
+    code
+}
+
+async fn serve_in(out: Output, host: &Host, report: &PreflightReport) -> u8 {
+    let mut signals = Signals::new();
+    let door_error = host
+        .mcp_server_error
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(reason) = door_error {
+        out.cli(Level::Warn, "DOOR_NOT_OPEN", &reason);
+    }
+    let started = match start_agents(out, host, &report.start).await {
+        Ok(started) => started,
+        Err(code) => return code,
+    };
+    out.cli(
+        Level::Info,
+        "SERVING",
+        &format!(
+            "{} 体を起動しました。Ctrl+C で閉じます",
+            started.len()
+        ),
+    );
+    signals.next().await;
+    out.cli(Level::Info, "CLOSING", "閉じます（もう一度押すと待たずに閉じます）");
+    close(out, host, &started, &mut signals).await;
+    exit::OK
+}
+
+/// Ctrl+C と（Unix では）SIGTERM。コンテナの停止は SIGTERM で来る。
+struct Signals {
+    #[cfg(unix)]
+    term: Option<tokio::signal::unix::Signal>,
+}
+
+impl Signals {
+    fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            term: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok(),
+        }
+    }
+
+    /// 次のシグナルを待つ。
+    async fn next(&mut self) {
+        #[cfg(unix)]
+        {
+            if let Some(term) = self.term.as_mut() {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+                return;
+            }
+        }
+        // ctrl_c の登録に失敗した環境では待ち続ける（シグナル以外で閉じる手段は
+        // プロセスを殺すことだけ — ロックは OS が外す）。
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
