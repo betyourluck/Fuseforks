@@ -1,6 +1,6 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **rev2・P5 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+- 状態: **Done**（2026-10-06。起票から Done まで同日・P0〜P6）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
   rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 6 行 /
   ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正
   → **同日夜に P1 完了** — `crates/fuseforks-host` へ 4 ファイル + `build_host`（6 コミット・挙動不変・
@@ -10,7 +10,8 @@
   狙った 1 本だけ赤（1 本は並びのテストの穴を直してから）。「P3 実装記録」が正 → **同日に P4 完了** — 実行ファイル
   `fuseforks-cli`（`check` / `ask` / `serve`）・結合 7 本（Tasks の 6 本 + 変異で見つけた穴の 1 本）・変異 4 本。
   「P4 実装記録」が正 → **同日に P5 完了** — DETAIL 3 言語 / README 3 言語 / PRIVACY 日英 / CLAUDE.md のギャップ 6 つ。
-  「P5 台帳記録」が正。**次は P6**（実機））
+  「P5 台帳記録」が正 → **同日に P6 完了 = Done** — 実機 5 件すべて成立、実機で見つかった穴 3 つ + レビューの 1 つを
+  直した（MCP の子の標準エラー / 判断役の誤った情報 / Ctrl+C の受け口 / 子の 1 行の上限）。「P6 実機記録」が正）
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -470,11 +471,12 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P6 — 実機
 
-- [ ] 開発機の村を `--data-dir` でコピーし、`check` → `ask` → `serve` を通す
-- [ ] GUI を開いたまま同じ村へ `ask` → 4 で止まる / 逆に `serve` 中に GUI を開く → 覆いに文言
-- [ ] `--secrets env` で、keyring に何も無い状態から `ask` が通る
-- [ ] 計画の確認 ON の進行役が居る村で `serve --start batch` → 3 で止まり、`--bypass-plan-review` で通る
-- [ ] `ask` の途中で Ctrl+C → 8 で終わり、`turn:` 行が残る
+- [x] 開発機の村を `--data-dir` でコピーし、`check` → `ask` → `serve` を通す
+- [x] GUI を開いたまま同じ村へ `ask` → 4 で止まる / 逆に `serve` 中に GUI を開く → 覆いに文言
+- [x] `--secrets env` で、keyring に何も無い状態から `ask` が通る
+- [x] 計画の確認 ON の進行役が居る村で `serve --start batch` → 3 で止まり、`--bypass-plan-review` で通る
+- [x] `ask` の途中で Ctrl+C → 8 で終わり、`turn:` 行が残る（**複数周のターンのとき**。打ち切りの払いの行は
+      `turn interrupted:`。1 周で答え終わるターンは答えが返って 0 — P6 実機記録）
 
 ## P0 実測記録（2026-10-06）
 
@@ -800,7 +802,7 @@ CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全
 - **触っていない外向きの面**: ランディングページと Qiita の記事は固有の機能を列挙していないので嘘にならない。
   `fuseforks-cli` は配布していないので winget / tap / Release のノートにも入らない
 
-## P6 実機記録（2026-10-06・途中）
+## P6 実機記録（2026-10-06）
 
 **写し**: 開発機の村（`%APPDATA%\jp.outcasts.fuseforks`）を scratchpad の `p6-data` へ写した。GUI が `sessions.redb` を
 握っていたので**それとログ・添付・書き出しを除いた**（`ask` は既定で新しい会話を作るので要らない）。予定 2 件はどちらも
@@ -810,8 +812,8 @@ CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全
 |---|---|---|
 | 1 | 写しで `check` → `ask` → `serve` | **成立。** `check --for ask` / `--for serve` とも 3（計画の確認 ON のザリ・ルナを名指し）。`ask --bypass-plan-review` は 0 — 標準出力は答えの 1 行だけ・`turn: … stop=- … model=gpt-6.1-sol`・`reply: … to=external:fuseforks-cli`・`agent stopped: … joined=true`。33 秒のうち 22 秒は Docker の MCP の起動。`serve --start batch --bypass-plan-review` は 5 体を起動 → 実コンソールの Ctrl+C で「閉じます」→ 5 体とも `joined=true` → **0**。閉じるのに 13 秒（1 体 3 秒・順番に止める。30 秒の猶予に対して 10 体なら届く — 頻度を見てから並列化を考える） |
 | 2 | GUI を開いたまま `ask` → 4 / `serve` 中に GUI → 覆い | **成立。** 前半 — 開発ビルドの GUI（pid 38424）が開いている本物の村へ `ask` → 4、GUI の `fuseforks.log` は前後とも 27,520 行（ロックが最初の手で止め、1 行も書いていない）。後半 — 本物の村で `serve --start batch` を立ててから開発ビルドの GUI を起こすと、起動の覆いに「オーケストレーターの起動に失敗しました / [BOOT_FAILED] この村は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）。そちらを閉じてから、アプリを起動し直してください」+ ロックファイルのパス（利用者のスクリーンショット）。角括弧の識別子が `BOOT_FAILED` なのは設計どおり（起動の失敗は全部この識別子で再試行ボタンを出さない。`VILLAGE_LOCKED` は本文の文言を選ぶ印）。その後 `serve` を実コンソールの Ctrl+C で閉じて 0。**1 回目は 2 時間待って GUI が開かれず、二重オープン（v0.4.0 にはロックが無い）を避けて閉じた** — `serve` を先に立てる順番は、利用者が「準備できた」と言ってから立てる形でやり直した |
-| 3 | `--secrets env` で keyring 空から `ask` | 未。要る変数は `check --secrets env` で読めた — `FUSEFORKS_SECRET_GPT_6_SOL`（ルナ）と、Jev を使うなら `FUSEFORKS_SECRET_JEV_API_TOKEN`。値は利用者が設定する |
-| 4 | 計画の確認 ON で `serve` → 3、`--bypass-plan-review` で通る | **前半は成立**（`serve --start batch` → 3。LLM も MCP も呼ばない）。後半は 1 の `serve` と一緒に |
+| 3 | `--secrets env` で keyring 空から `ask` | **成立。** 要る変数は `check --secrets env` で読めた — `FUSEFORKS_SECRET_GPT_6_SOL`（ルナ）。利用者が自分の端末で `Read-Host` で置いて `ask --secrets env` → 答えの 1 行・`turn: … stop=-`・`reply: … to=external:fuseforks-cli`。Jev のトークンは置いていないので警告 `JEV_TOKEN_MISSING` が 2 件（判断役は無効・圧縮は走らない）と `jev: … active=false` — 名指しどおり。資格情報ストアは一切読まない（`EnvSecretStore`）ので「keyring が空」と同じ条件。終了コードの行は貼られた出力に無かった（答えが返った結末は 0 に写る — 単体で留めてある） |
+| 4 | 計画の確認 ON で `serve` → 3、`--bypass-plan-review` で通る | **成立。** `serve --start batch` → 3（LLM も MCP も呼ばない）。`--bypass-plan-review` を付けると 1 の `serve` のとおり 5 体が起動して閉じる |
 | 5 | `ask` の途中で Ctrl+C → 8 と `turn:` 行 | **成立（3 通り）。** ① ツールを使う依頼で最初の `tool:` 行の後に送る → 2 周目の境目で `turn interrupted: … rounds=2 … prompt=101093 total=101627`（払いの行が残る）→ 定型文「打ち切られました」→ **8** ② 起動 3 秒後に送る → 「起動の途中で中断しました（何も送っていません）」→ **8**（`turn start:` は出ない・2.2 秒で閉じる = P6 で直した穴が実コンソールで塞がっている）③ **1 周で答え終わるターンの飛行中に送ると 0** — 打ち切りは周回の境目で効く（Spec 10）ので、飛行中の 1 周がそのまま答えになって返る（払った答えなので返すのが正しく、D10 の「答えが返った」= 0）。項目 5 の「→ 8」は複数周のターンの話だった |
 
 **Ctrl+C の送り方**: 利用者の端末（PowerShell 7 + oh-my-posh の 2 行プロンプト）は、端末のタブへコマンドを流す道具が
