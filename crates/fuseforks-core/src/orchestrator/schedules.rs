@@ -232,12 +232,12 @@ pub(super) async fn schedule_tick<Tz: chrono::TimeZone>(
             task.last_consumed_due_ms = Some(due_ms);
         }
     }
-    if shared.schedules_blocked.is_none() {
-        if let Err(err) = shared.store.save_schedules(&schedules).await {
-            // 保存失敗は発火を止める理由にならない。in-memory は既に消化済みで
-            // 二重発火は起きず、次の消化で再度保存を試みる。
-            note!("schedule: schedules.json の保存に失敗しました: {err}");
-        }
+    if shared.schedules_blocked.is_none()
+        && let Err(err) = shared.store.save_schedules(&schedules).await
+    {
+        // 保存失敗は発火を止める理由にならない。in-memory は既に消化済みで
+        // 二重発火は起きず、次の消化で再度保存を試みる。
+        note!("schedule: schedules.json の保存に失敗しました: {err}");
     }
 }
 

@@ -205,10 +205,10 @@ pub fn plan_wait(attempt: u32, hint: Option<Duration>, u: f64) -> WaitPlan {
         .checked_mul(1u32 << shift)
         .unwrap_or(BACKOFF_CAP)
         .min(BACKOFF_CAP);
-    if let Some(hint) = hint {
-        if hint > MAX_HONORED_RETRY_AFTER {
-            return WaitPlan::StopHintTooLong(hint);
-        }
+    if let Some(hint) = hint
+        && hint > MAX_HONORED_RETRY_AFTER
+    {
+        return WaitPlan::StopHintTooLong(hint);
     }
     let base = hint.map_or(exp, |h| exp.max(h));
     let u = if u.is_finite() { u.clamp(0.0, 1.0) } else { 0.0 };

@@ -128,10 +128,10 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
         match item.kind.as_str() {
             "message" => {
                 for part in item.content.unwrap_or_default() {
-                    if let Some(text) = part.text {
-                        if !text.is_empty() {
-                            texts.push(text);
-                        }
+                    if let Some(text) = part.text
+                        && !text.is_empty()
+                    {
+                        texts.push(text);
                     }
                     for ann in part.annotations {
                         if ann.kind != "url_citation" {

@@ -89,7 +89,7 @@ Ollama や LM Studio などローカル LLM の口にもそのまま繋がる。
 
 ## ビルド
 
-必要なもの: **Rust 1.85 以上**（edition 2024）、**[Bun](https://bun.sh)**、
+必要なもの: **Rust 1.89 以上**（edition 2024）、**[Bun](https://bun.sh)**、
 各 OS の Tauri v2 前提（Windows は WebView2、Linux は WebKitGTK、macOS は Xcode CLT）。
 
 ```bash

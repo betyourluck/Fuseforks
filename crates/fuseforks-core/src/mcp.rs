@@ -356,10 +356,10 @@ pub fn render_tool_result(result: &CallToolResult) -> String {
     }
 
     // 構造化結果を持つサーバーは、content が空でもこちらに本体を入れてくる。
-    if let Some(structured) = &result.structured_content {
-        if parts.is_empty() {
-            parts.push(structured.to_string());
-        }
+    if let Some(structured) = &result.structured_content
+        && parts.is_empty()
+    {
+        parts.push(structured.to_string());
     }
 
     if parts.is_empty() {

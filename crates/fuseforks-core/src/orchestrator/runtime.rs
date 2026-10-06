@@ -243,10 +243,10 @@ impl Orchestrator {
 
         {
             let mut world = self.shared.world.write().await;
-            if let Ok(record) = world.agent_mut(id) {
-                if let Some(started) = record.started_at.take() {
-                    record.accumulated_uptime_secs += started.elapsed().as_secs();
-                }
+            if let Ok(record) = world.agent_mut(id)
+                && let Some(started) = record.started_at.take()
+            {
+                record.accumulated_uptime_secs += started.elapsed().as_secs();
             }
         }
         self.shared.set_status(id, AgentStatus::Idle).await;

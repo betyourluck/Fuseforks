@@ -90,18 +90,18 @@ impl LlmBackend for PlanProposerBackend {
 
         // 依頼主の合図（委譲されたターンの窓のテスト用）。`ask_*` が 1 本でも
         // 提示されていれば、その相手へ「撒いて」を委譲する。
-        if latest.contains("訊いて") {
-            if let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_")) {
-                return Ok(ok_response(
-                    "",
-                    vec![ToolCall {
-                        id: "call_ask".into(),
-                        name: ask.name.clone(),
-                        args: serde_json::json!({ "message": "撒いて" }),
-                        extra: None,
-                    }],
-                ));
-            }
+        if latest.contains("訊いて")
+            && let Some(ask) = req.tools.iter().find(|t| t.name.starts_with("ask_"))
+        {
+            return Ok(ok_response(
+                "",
+                vec![ToolCall {
+                    id: "call_ask".into(),
+                    name: ask.name.clone(),
+                    args: serde_json::json!({ "message": "撒いて" }),
+                    extra: None,
+                }],
+            ));
         }
         // 進行役を長いターンで塞ぐための合図（受信箱飽和のテスト用）。
         if has_plan && latest.contains("眠って") {

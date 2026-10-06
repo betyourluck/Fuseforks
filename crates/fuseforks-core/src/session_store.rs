@@ -522,10 +522,10 @@ impl SessionStore {
 
             meta.updated_at = now_ms();
             meta.record_count = meta.record_count.saturating_add(1);
-            if meta.title.is_empty() {
-                if let Some(title) = auto_title(record) {
-                    meta.title = title;
-                }
+            if meta.title.is_empty()
+                && let Some(title) = auto_title(record)
+            {
+                meta.title = title;
             }
             if meta.record_count == RECORD_COUNT_WARN.saturating_add(1) {
                 note!(

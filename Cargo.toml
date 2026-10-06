@@ -9,7 +9,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# 1.89 = `std::fs::File::try_lock` の安定化（Spec 64 D3 の村の排他ロック）。
+# redb 4.1.0 自身が rust-version 1.89 を要求しており、それまでの 1.85 は宣言だけが
+# 古かった（P0 実測。cargo の MSRV 解決は互換版が無いので fallback していた）。
+rust-version = "1.89"
 # MPL-2.0 (2026-08-05 に AGPL-3.0-or-later から変更。MIT → AGPL → MPL の 3 つ目。
 # README「ライセンス」節が意図の正)。
 license = "MPL-2.0"

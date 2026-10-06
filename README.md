@@ -89,7 +89,7 @@ Don't add configuration to look businesslike.
 
 ## Build
 
-Requirements: **Rust 1.85+** (edition 2024), **[Bun](https://bun.sh)**, and the Tauri v2
+Requirements: **Rust 1.89+** (edition 2024), **[Bun](https://bun.sh)**, and the Tauri v2
 prerequisites for your OS (WebView2 on Windows, WebKitGTK on Linux, Xcode CLT on macOS).
 
 ```bash

@@ -87,7 +87,7 @@ Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。应用内的显示名称为
 
 ## 构建
 
-所需条件：**Rust 1.85 以上**（edition 2024）、**[Bun](https://bun.sh)**、
+所需条件：**Rust 1.89 以上**（edition 2024）、**[Bun](https://bun.sh)**、
 并满足各操作系统的 Tauri v2 前置要求（Windows 需要 WebView2，Linux 需要 WebKitGTK，macOS 需要 Xcode CLT）。
 
 ```bash

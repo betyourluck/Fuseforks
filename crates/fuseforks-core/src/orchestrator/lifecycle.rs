@@ -61,15 +61,14 @@ impl Orchestrator {
         // **登録の後**に書くのは、id の検査を通った後でないとディレクトリを
         // 作る先が確定しないため。書き込みの失敗で登録を巻き戻さない —
         // 個体は既に村に居り、本文は設定ダイアログから書き直せる。
-        if !construct.trim().is_empty() {
-            if let Err(err) = self
+        if !construct.trim().is_empty()
+            && let Err(err) = self
                 .shared
                 .store
                 .write_config(&id, ConfigFileKind::Construct, &construct)
                 .await
-            {
-                crate::note!("role apply: Construct.md を書けませんでした: {err}");
-            }
+        {
+            crate::note!("role apply: Construct.md を書けませんでした: {err}");
         }
 
         self.persist().await?;
