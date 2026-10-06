@@ -2552,8 +2552,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 ## 現在地（2026-10-06 更新）
 
-**この日は台帳の書き戻し・単価表の更新・Qiita の記事の草案・Spec 64 の起票。** git: main は origin より先行
-（`1b33d9d` / `3ee7ca9` / `69b46a6` = Spec 64 の 3 本と本台帳。push は利用者の指示待ち）。タグは `v0.4.0` のまま。
+**この日は台帳の書き戻し・単価表の更新・Qiita の記事の草案と、[Spec 64](specs/64_headless-host.md)（コアを GUI なしで
+動かす）の起票から Done まで（P0〜P6 を同日）。** git: main は origin より先行（`5fe75d3` / `ac6e107` / `8212838` =
+P6 の記録と Done。push は利用者の指示待ち）。タグは `v0.4.0` のまま — **Spec 64 はまだ配布物に入っていない**。
 
 - **winget 0.4.0（PR #444645）は 2026-09-30 23:29 UTC マージ = publish の 50 分後**（タグ履歴へ書き戻し済み）。
   別件の 2 つ（Anthropic の鍵が無効 / Perplexity の `deepseek-v4-flash-0731` の提供終了）は利用者が対応済み
@@ -2570,8 +2571,20 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
   調べる途中で**公式 Cookbook「Classifying RAG passages」が Spec 59 とほぼ同じ使い方**だと分かり、記事に差分 3 つを書いた。
   公式の既知の限界（`docs.typesafe.ai/model-jaggedness/jev-1.13`）の「無関係な内容で state が大きいほど精度が落ちる」が、
   束ね方で 0.17〜0.29 動く実測の根拠になる。**草案はリポジトリの外**（利用者の手元）
-- **[Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）を起票 → 査読 2 系統 26 点で rev2 → 再査読で未決 0。**
-  「Spec の状態」の行が正
+- **[Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）を起票 → rev2 → P0〜P6 で Done。** crate
+  `fuseforks-host`（`build_host` = GUI と CLI の組み立ての 1 実装）+ 実行ファイル `fuseforks-cli`（`check` / `ask` / `serve`）+
+  村の排他ロック（GUI にも効く）。「Spec の状態」の行と Spec の各 Phase の記録が正
+- **次のタグで「利用者が負う条件」に入れるもの**: (a) **同じ村を 2 つのプロセスが開くと、後から開いた側が止まる**（GUI
+  同士・GUI と `fuseforks-cli`）— ただし**ロックを知らない v0.4.0 以前の GUI とは止め合えない**（`sessions.redb` の網だけが効く）。
+  同じ端末に新旧の配布物が並ぶ #112 の形 (b) `fuseforks-cli` は配布しない（ソースからビルド）(c) **Unix の分岐（SIGINT / SIGTERM の
+  受け口・`sigint_during_ask_interrupts_and_exits_eight`）が初めてコンパイルされるのはそのタグの CI** — 手元に Linux のターゲットが無い
+- **ディスク**: `target/` が 1 日で 2 回満杯になった（`cargo clean` で 84.4 GiB → 100.1 GiB）。**フルビルド 1 回で約 30 GB**
+  使う（空き 90 → 60 GB）。`link.exe` の 1104 / 1140 / 1181 / 1 と「指紋ファイルを書けない」が並んだら、まず `df` を見る。
+  GUI の開発ビルドが動いている間は `target\debug\fuseforks.exe` を消せず `cargo test --workspace` が落ちる（README の注記どおり）
+- **端末のタブへコマンドを流す道具は、この端末（PowerShell 7 + oh-my-posh の 2 行プロンプト）のプロンプトを認識できず
+  使えなかった。** 実コンソールの Ctrl+C を確かめる手段は、隠したコンソールへ `CTRL_C_EVENT` を送る補助（scratchpad の
+  `driver.py` / `sendctrlc.py` / `enablectrlc.py`。リポジトリには入れていない）— こちらの実行環境は「Ctrl+C 無効」の印を
+  子孫へ継承するので、印を外す包み役が要る（`failures.md` #143）
 
 **次の一手**: ~~**Spec 64 の P0**~~（**→ 同日夕に完了**。probe は `922fdaf` で足して数字を写してから消した）→
 ~~**Spec 64 の P1**~~（**→ 同日夜に完了**。6 コミット・起動ログ 6 行が一致）→ ~~**Spec 64 の P2**~~（**→ 同日深夜に
@@ -2582,8 +2595,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 ~~**Spec 64 の P5**~~（**→ 同日に完了**。DETAIL 3 言語 / README 3 言語 / PRIVACY 日英 / ギャップ 6 つへの書き戻し。
 P1 の移動にディレクトリ木が 4 ファイルぶん追従していなかったのも回収）→ ~~**Spec 64 の P6**~~（**→ 同日に完了 = Spec 64 は Done**。実機 5 件すべて成立。実機で見つかった穴 3 つ
 （MCP の子の標準エラーが素の行で流れる / 判断役が情報の指摘に混ざる / 組み立て中・起動中の Ctrl+C を拾えない）と
-レビューの 1 つ（子の 1 行の上限）を直した。`failures.md` #142 / #143）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
-`refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
+レビューの 1 つ（子の 1 行の上限）を直した。`failures.md` #142 / #143）。**次**: push → コンテナの Spec（像・配布・配置）を
+起票するかは利用者の判断（材料は Spec 64 の Notes と「core 単独実行の構想」）。その後は従来どおり — Spec 62 / 63 の未決は
+使ってから / `refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
 
