@@ -646,22 +646,42 @@ async fn serve_stdio(
 }
 
 /// 子の標準エラーを 1 行ずつ読み、JSON の 1 行で写す（`--events jsonl` の間だけ動く）。
+async fn forward_child_stderr(source: String, stderr: tokio::process::ChildStderr) {
+    forward_lines(stderr, |line| crate::diag::child_stderr_line(&source, line)).await;
+}
+
+/// 子の出力 1 行の上限（バイト）。超えたらそこで切って 1 行として写す。
+///
+/// **改行を出さない子（プログレス表示・バイナリの垂れ流し）で読み手のバッファが際限なく
+/// 伸びない**ための上限。無人で回す `serve` では、1 つの子が親のメモリを食い尽くす形を
+/// 作らない。切った位置で UTF-8 の文字が割れることがあり、その文字は置き換えて写す。
+const CHILD_LINE_MAX: usize = 64 * 1024;
+
+/// 読み手を 1 行ずつ（最長 [`CHILD_LINE_MAX`] バイト）に切って `emit` へ渡す。空行は渡さない。
 ///
 /// UTF-8 でない出力（Windows の子が出すコードページの文字）も落とさず、不正な並びは
-/// 置き換えて写す。子が閉じれば終わる。
-async fn forward_child_stderr(source: String, stderr: tokio::process::ChildStderr) {
-    use tokio::io::AsyncBufReadExt;
-    let mut reader = tokio::io::BufReader::new(stderr);
+/// 置き換えて渡す。読み手が閉じるか読めなくなれば終わる。
+async fn forward_lines<R>(reader: R, mut emit: impl FnMut(&str))
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+    let mut reader = tokio::io::BufReader::new(reader);
     let mut buf = Vec::new();
     loop {
         buf.clear();
-        match reader.read_until(b'\n', &mut buf).await {
+        // `take` で 1 回に読む量を上限で切る — 改行が来なくても上限で返る。
+        match (&mut reader)
+            .take(CHILD_LINE_MAX as u64)
+            .read_until(b'\n', &mut buf)
+            .await
+        {
             Ok(0) | Err(_) => return,
             Ok(_) => {
                 let line = String::from_utf8_lossy(&buf);
                 let line = line.trim_end_matches(['\r', '\n']);
                 if !line.is_empty() {
-                    crate::diag::child_stderr_line(&source, line);
+                    emit(line);
                 }
             }
         }
@@ -768,6 +788,19 @@ fn find_http_status(text: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    /// 子の出力は改行で切れ、改行の無い長い出力は上限で切れる（バッファが伸び続けない）。
+    #[tokio::test]
+    async fn child_output_is_split_by_newline_and_capped_without_one() {
+        let mut input = b"one\r\ntwo\n\n".to_vec();
+        input.extend(std::iter::repeat_n(b'x', CHILD_LINE_MAX * 2 + 10));
+        let mut lines: Vec<String> = Vec::new();
+        forward_lines(&input[..], |line| lines.push(line.to_owned())).await;
+        assert_eq!(lines[0], "one");
+        assert_eq!(lines[1], "two");
+        let rest: Vec<usize> = lines[2..].iter().map(String::len).collect();
+        assert_eq!(rest, vec![CHILD_LINE_MAX, CHILD_LINE_MAX, 10], "上限で切れる");
+    }
+
     use super::*;
 
     /// サーバーが実際に返すワイヤ形（JSON）から結果を組む。
