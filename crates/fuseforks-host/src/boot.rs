@@ -8,8 +8,9 @@
 //! 順序は GUI がそれまで `build_state` で持っていたものと同じ:
 //! `create_dir_all` → ログ → `version:` 行 → 秘密のストア → `bootstrap` →
 //! 同梱ツール 9 本 → MCP の初期接続 → 扉 → 前判定の承認 → Jev → 単価表の取得元。
-//! 起動ログの並び（P0 で採った基準）は `version:` → `session:` → `attachment gc:` →
-//! `mcp server:` → `jev:` で、**扉を開く処理を外へ出さない**のはこの並びを変えないため。
+//! 起動ログの並び（P0 で採った基準。P1 で一致を確認）は `起動しました`（`open_log` が出す）→
+//! `version:` → `session:` → `attachment gc:` → `mcp server:` → `jev:` で、
+//! **扉を開く処理を外へ出さない**のはこの並びを変えないため。
 
 use std::path::PathBuf;
 use std::sync::Arc;

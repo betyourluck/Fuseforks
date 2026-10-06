@@ -3848,7 +3848,10 @@ entities:
     コアを GUI なしで動かす (Spec 64 rev2、2026-10-06 P0 凍結)。組み立ての本体を GUI 層から
     crate fuseforks-host へ持ち上げ、同じ build_host を GUI と実行ファイル fuseforks-cli
     (check / ask / serve) が呼ぶ。**本節は実装より先に凍結した契約で、着地は P1〜P4。
-    既定の GUI の起動はバイト等価 (起動ログ 5 行の並びを P1 で 1 行ずつ突き合わせる)。**
+    既定の GUI の起動はバイト等価 (起動ログ 6 行 — 起動しました / version: / session: /
+    attachment gc: / mcp server: / jev: — の並びを P1 で突き合わせ、2026-10-06 に一致を確認)。**
+    P1 は同日に着地 (crates/fuseforks-host の boot.rs / paths.rs + 4 ファイルの移動。
+    HostBootOptions は app_version / open_door の 2 欄で、secrets / run_schedules は P3 で)。
 
     P0 実測 (2026-10-06。tools/lock_probe を 3 OS の CI で。予測を先に書いて 3 OS とも全部一致):
       - std::fs::File::try_lock: 別プロセスが持つ → WouldBlock / 同じプロセスの別ハンドル →

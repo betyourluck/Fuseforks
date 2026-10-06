@@ -1,8 +1,10 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **rev2・P0 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
-  rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 5 行 /
-  ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正。**次は P1**）
+- 状態: **rev2・P1 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+  rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 6 行 /
+  ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正
+  → **同日夜に P1 完了** — `crates/fuseforks-host` へ 4 ファイル + `build_host`（6 コミット・挙動不変・
+  起動ログ 6 行が一致）。「P1 実装記録」が正。**次は P2**（村の排他ロック））
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -418,12 +420,14 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P1 — ホストの切り出し（挙動を 1 つも変えない）
 
-- [ ] `crates/fuseforks-host` を新設し、4 ファイルを**中身を変えずに**移す（1 コミット 1 ファイル。`use` と可視性だけ）
-- [ ] **別のコミットで** `mcp_server.rs` の `tauri::async_runtime::spawn` を `tokio::spawn` へ替える。
+- [x] `crates/fuseforks-host` を新設し、4 ファイルを**中身を変えずに**移す（1 コミット 1 ファイル。`use` と可視性だけ）
+      （2026-10-06。`84603df` / `be9b362` / `439654d` / `e7b861d`。「P1 実装記録」）
+- [x] **別のコミットで** `mcp_server.rs` の `tauri::async_runtime::spawn` を `tokio::spawn` へ替える。
       `tests/mcp_server_wire.rs` が緑のまま（移動の差分と中身の差分を混ぜない — 巨大ファイル分割の 6 箇条の 3）
-- [ ] `build_state` の本体を `build_host(paths, HostBootOptions)` へ移し、GUI は呼ぶだけにする
-- [ ] `commands.rs` の読み替え（`state.host.…`）。IPC の名前・形は不変（`tests/ipc_contract.rs` が緑）
-- [ ] P0 で採った起動ログと 1 行ずつ一致することを確かめる
+      （同日。`e713e48` — 移動の**前**に剥がした）
+- [x] `build_state` の本体を `build_host(paths, HostBootOptions)` へ移し、GUI は呼ぶだけにする（同日。`038c7c6`）
+- [x] `commands.rs` の読み替え（`state.host.…`）。IPC の名前・形は不変（`tests/ipc_contract.rs` が緑）（同日。154 箇所）
+- [x] P0 で採った起動ログと 1 行ずつ一致することを確かめる（同日 09:20。6 行とも種類・順序・書式が同じ。「P1 実装記録」）
 
 ### P2 — 村の排他ロック（GUI にも効く唯一の挙動の変化）
 
@@ -467,9 +471,10 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 ### 起動ログの基準（P1 で 1 行ずつ突き合わせる）
 
 配布版 0.4.0 の直近 5 回の起動（2026-10-01〜10-05・`%APPDATA%\jp.outcasts.fuseforks\workspace\fuseforks.log`）で、
-`version:` から `jev:` までは**常に 5 行・同じ並び**:
+起動の帯は**常に 6 行・同じ並び**:
 
 ```text
+[fuseforks] 起動しました
 [fuseforks] version: app=0.4.0 profile=release
 [fuseforks] session: <id> を開きました（発話 N 件 / 履歴 N 体 / 要約 N 体）
 [fuseforks] attachment gc: removed=N remaining=N bytes=N kinds=image:N,audio:0,video:0,pdf:0
@@ -477,14 +482,17 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 [fuseforks] jev: enabled=true active=true blocked=false
 ```
 
+- **1 行目の `起動しました` は `open_log`（`diag.rs:113`）が出す。** P0 の採取は `version:` から切っていたので
+  この 1 行を数え落としていた — P1 の突き合わせで、開発ビルドの帯に `version:` の前の行があることで気づいた
+  （基準を「5 行」と書いたのは誤りで、ここで訂正した。並びの主張は変わらない）
 - 動くのは数字だけ（`session:` の id と件数・`attachment gc:` の件数）。10-01 の 1 回だけ `session:` の前に
   「復元した履歴のうち 1 体分は、該当エージェントが居ないため捨てました」が 1 行入った（`session:` の WARN は
   この位置に出る）
 - `mcp server:` は扉が ON の村だから出る（OFF の村では行ごと無い）。MCP の初期接続・前判定の承認・単価表の取得元は
   この帯に行を出さない（失敗したときだけ）
-- **P1 の検収は「version → (session の WARN) → session → attachment gc → mcp server → jev」の並びが
-  同じであること**。D1 の「扉を開く処理を `build_host` の外へ出さない」の根拠がこの並び — 外へ出すと `mcp server:` が
-  `jev:` の後ろへ動く
+- **P1 の検収は「起動しました → version → (session の WARN) → session → attachment gc → mcp server → jev」の
+  並びが同じであること**。D1 の「扉を開く処理を `build_host` の外へ出さない」の根拠がこの並び — 外へ出すと
+  `mcp server:` が `jev:` の後ろへ動く
 
 ### ロックの実測（`tools/lock_probe`・commit `922fdaf`・3 OS の CI・rustc 1.99.0）
 
@@ -523,6 +531,58 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 `data_contract.yaml` の `headless_host_contract`（15 本）+ `batch_start_invariant` の注記 + `session_store` と
 `codes` に `SESSION_STORE_LOCKED`。
+
+## P1 実装記録（2026-10-06）
+
+**コミット 6 本。各コミットで clippy 0・`cargo test --workspace` 全緑（59 バイナリ）・vitest 758。**
+
+| commit | 内容 |
+|---|---|
+| `84603df` | `crates/fuseforks-host` 新設 + `pricing_source.rs`（`reqwest` の依存も GUI からホストへ） |
+| `be9b362` | `probe_approvals.rs` |
+| `439654d` | `jev_settings.rs`（`jevSettingsWiring.test.ts` の走査先を追従） |
+| `e713e48` | `mcp_server.rs` の `tauri::async_runtime::spawn` → `tokio::spawn`（移動の**前**・別コミット） |
+| `e7b861d` | `mcp_server.rs` + `tests/mcp_server_wire.rs`（`rmcp` / `axum` / `uuid` / `tokio-util` / dev の `tower` も） |
+| `038c7c6` | `paths.rs`（`HostPaths`）/ `boot.rs`（`build_host` / `Host` / `HostBootOptions` / `HostError`）。GUI の `state.rs` は Tauri にしか無い 2 つを渡すだけ・`AppState { host }`・`commands.rs` の読み替え 154 箇所 |
+
+- **再公開で読み替えを起こさない。** GUI の `lib.rs` に `pub use fuseforks_host::X;` を置くと `crate::X::…` が
+  そのまま解決するので、**4 ファイルの移動で `commands.rs` は 1 行も変わらなかった**。読み替えが要ったのは
+  `build_host` の着地（`AppState` が `Host` 1 つになった）のときだけ
+- **「中身を変えずに」が破れた箇所は走査テストのパス 3 つ。** `pricing_source.rs` と `jev_settings.rs` の
+  「起動経路が取得 / 接続の確認を呼ばない」の走査は `CARGO_MANIFEST_DIR` 相対で `src/state.rs` を読んでいたので、
+  crate を移った瞬間に読む先が消えた（移動のコミットでは GUI の `state.rs` を `../../apps/…` で指し、
+  `build_host` の着地で `src/boot.rs` へ）。`jevSettingsWiring.test.ts` も同じ。**走査テストは「どの crate に
+  居るか」を暗黙の入力に持つ** — `failures.md` #101（テストがホストの OS ロケールを暗黙に受けていた）と同じ形
+- **`HostBootOptions` は 2 欄で着地**（`app_version` / `open_door`）。D1 の 4 欄のうち `secrets` と `run_schedules` は
+  機構が着地する P3 で足す（今日足すと読まれない欄になる）
+- **`HostError` は `transparent`。** 起動の覆いが読むのは `to_string()` で、包み直すと「どこで落ちたか」が 1 段ぼやける。
+  覆いの文面は 1 文字も変わらない
+- **読み替えの機械置換は改行で割れたメソッド連鎖を拾わない。** `state\n    .orchestrator` の形が 19 箇所あり、
+  1 行の `sed` では 135 箇所しか当たらなかった（clippy の E0609 で分かった）。`perl -0` で改行をまたいで当て直して
+  154 箇所。差分の全行が `.host.` の有無だけで対になることを数えてからコミットした
+- `missing_docs = "warn"` をホストにも敷いたが、移した 4 ファイルは 1 件も警告を出さなかった
+- **起動ログの突き合わせ（検収）— 一致。** `038c7c6` の開発ビルド（`bun run tauri dev`・2026-10-06 09:20）の帯:
+
+  ```text
+  [fuseforks] 起動しました
+  [fuseforks] version: app=0.1.0 profile=debug
+  [fuseforks] session: 1791191865252-4ff5da88 を開きました（発話 15 件 / 履歴 1 体 / 要約 0 体）
+  [fuseforks] attachment gc: removed=0 remaining=2 bytes=29894 kinds=image:29894,audio:0,video:0,pdf:0
+  [fuseforks] mcp server: 127.0.0.1:39641/mcp で待ち受けます
+  [fuseforks] jev: enabled=true active=true blocked=false
+  ```
+
+  P0 の基準（配布版 0.4.0・同じ村）と**行の種類・順序・書式が 6 行とも同じ**。違うのは数字だけ —
+  `app=0.1.0 profile=debug`（手元のビルドの版の規則どおり）/ 発話 15 件・履歴 1 体（村がその後使われた）/
+  gc の `removed=0`（前回 1 件消した後）。`version:` の前に `起動しました` があることで、P0 の基準が 1 行目を
+  数え落としていたことが分かった（「P0 実測記録」に訂正を書いた）
+- **1 回目の起動は無駄撃ちだった。** 利用者の 0.4.0 GUI が動いていて、単一インスタンスのプラグインが 2 つ目を
+  止めた（識別子が同じなので配布版と開発ビルドの間でも効く — exit 0・ログに 1 行も出ない）。動いていないと
+  読んだのは自分の検査の誤り — Git Bash の `tasklist /FI` は `/FI` をパスに変換して落ち、`2>/dev/null` で
+  握っていたので「出力なし = 動いていない」と読んだ（`MSYS_NO_PATHCONV` の 3 例目。プロセスの有無は
+  PowerShell の `Get-Process` で見る）。利用者に GUI を閉じてもらってから取り直した
+- 副産物: 開発ビルドの vite のコンソールに `[intlify] Not found 'grounding.engine.perplexity' key in 'ja'`
+  が出た（本 Spec とは無関係。別件）
 
 ## 未決
 

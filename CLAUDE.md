@@ -695,7 +695,10 @@ publish の 78 分後**）。** **→ 0.3.6 = PR #439165（2026-09-22 提出。�
   **`-A` は改行なし**（折り返した base64 は `$GITHUB_ENV` の 1 行形式に載らない）
 - **`MSYS_NO_PATHCONV=1` が要る場面が 2 つ** — openssl の `-subj` と
   `git show <ref>:<path>`。どちらも Git Bash がコロン付き引数を
-  Windows のパスへ変換して壊す
+  Windows のパスへ変換して壊す。**3 つ目（2026-10-06）: `tasklist /FI` / `taskkill /IM`** —
+  `/FI` が `C:/Program Files/Git/FI` へ化けて落ち、`2>/dev/null` で握ると
+  「出力なし = 動いていない」と誤読する（実際は利用者の GUI が動いていた）。
+  プロセスの有無は PowerShell の `Get-Process -Name fuseforks` で見る
 - **`openssl rand -hex` は末尾に改行を付ける。** そのまま `gh secret set` へ流すと
   パスワードが 1 文字ずれて CI の証明書取り込みが落ちる
 - **`.github/workflows/verify-notary.yml`（手動）を新設した。** 公証の資格情報だけを
@@ -2555,7 +2558,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
   「Spec の状態」の行が正
 
 **次の一手**: ~~**Spec 64 の P0**~~（**→ 同日夕に完了**。probe は `922fdaf` で足して数字を写してから消した）→
-**Spec 64 の P1**（`crates/fuseforks-host` の切り出し。挙動を 1 つも変えない — 検収は起動ログ 5 行の並びの一致）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
+~~**Spec 64 の P1**~~（**→ 同日夜に完了**。6 コミット・起動ログ 6 行が一致）→ **Spec 64 の P2**（村の排他ロック —
+`lock.rs` + `build_host` の最初の手 / `CoreError::SessionStoreLocked` / 覆いの文言 ja・en / 結合テスト 4 場面。
+MSRV を 1.89 へ = 宣言の追従）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
 `refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
@@ -7198,10 +7203,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Draft rev2・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
-  **→ P0 完了**（同日。起動ログの基準 5 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
+  **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
   予測 12 場面すべて一致・redb は同じプロセスと別プロセスを区別しない・同じハンドルの 2 回目だけ OS で割れる /
   `headless_host_contract` 凍結 15 本。**redb 4.1.0 が `rust-version 1.89` で内部も `File::try_lock`** = workspace の
-  1.85 は宣言だけ古い。記録は Spec の「P0 実測記録」）。**次は P1**）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
+  1.85 は宣言だけ古い。記録は Spec の「P0 実測記録」）**→ P1 完了**（同日夜。`crates/fuseforks-host` を新設し
+  4 ファイル + `build_host` を 6 コミットで持ち上げた — 各コミットで clippy 0・全テスト緑・GUI の `commands.rs` は
+  再公開（`pub use`）で 4 ファイルの移動では 1 行も変わらず、`build_host` の着地で `state.host.` の読み替え 154 箇所。
+  開発ビルドの起動ログ 6 行が配布版の基準と一致。**`HostBootOptions` は 2 欄**（`secrets` / `run_schedules` は
+  機構と一緒に P3 で）。記録は Spec の「P1 実装記録」）。**次は P2**（村の排他ロック）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
   GUI を常駐プロセスのクライアントにする形（agent-orchestrator）は採らない。骨格 = 新 crate `fuseforks-host`
   （`build_state` の本体と扉・前判定の承認・単価表・Jev の 4 ファイル。入口は `build_host(paths, HostBootOptions)` の 1 実装で、
   予定を回すか・扉を開くか・秘密の読み先は呼び出し側が決める）/ 新 bin `fuseforks-cli` の `check` / `ask` / `serve` /
