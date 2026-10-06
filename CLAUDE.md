@@ -7237,6 +7237,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 65](specs/65_container-deploy.md)（村をコンテナで回す — `bake`・像・compose の参照構成）:
+  **Draft rev1**（2026-10-07 起票）。起票前の裁定 3 点（利用者）= 配置先は汎用の Docker ホスト / 村は `bake` で
+  パスを置き換えた写しを作り、以後は同期しない / MCP はリモートを主にし `headers` の鍵は `${secret:NAME}` の参照で持つ。
+  **起票時の実測**: 10 体の `workDir` と `ragSources` が `D:\…` で、起動前検査は作業フォルダの実在を見ていない /
+  stdio の MCP は `docker` / Windows の exe / `npx` で像の中では動かず、http の 4 体ぶんが平文の `Authorization` /
+  ティッカーは `chrono::Local` でコンテナの既定 UTC だと「火曜 16:38」が日本時間 01:38 に発火する /
+  Linux の C 依存は `libdbus-sys`（keyring）と `aws-lc-sys`（rustls）/ `schedules.json` と `run.json` は設計と実行が
+  1 ファイルに同居。未決 4（承認を `bake` が運ぶか・扉の合鍵・GHCR 公開・`Memory.md` を写すか）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
