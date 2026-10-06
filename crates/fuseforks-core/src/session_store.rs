@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, DatabaseError, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
@@ -423,10 +423,19 @@ impl SessionStore {
             restrict_to_owner(parent, 0o700);
         }
 
-        let db = Database::create(&path).map_err(|err| CoreError::SessionStore {
-            path: path.display().to_string(),
-            operation: "開く",
-            reason: err.to_string(),
+        // **別のプロセスが開いている印だけを別の variant で返す**（Spec 64 D3）。
+        // redb 自身が `File::try_lock` で守っており、同じプロセスの別ハンドルでも
+        // 別プロセスでも同じ `DatabaseAlreadyOpen` が返る（P0 実測）。`bootstrap` は
+        // これだけを起動の失敗にし、壊れたファイル・権限は WARN で続ける。
+        let db = Database::create(&path).map_err(|err| match err {
+            DatabaseError::DatabaseAlreadyOpen => CoreError::SessionStoreLocked {
+                path: path.display().to_string(),
+            },
+            err => CoreError::SessionStore {
+                path: path.display().to_string(),
+                operation: "開く",
+                reason: err.to_string(),
+            },
         })?;
         restrict_to_owner(&path, 0o600);
 
@@ -1013,6 +1022,25 @@ mod tests {
 
     use super::*;
     use crate::llm::Role;
+
+    /// **開いている保存先をもう一度開くと `SessionStoreLocked`**（Spec 64 D3）。
+    /// 同じプロセスの別ハンドルでも別プロセスと同じ値が返る（redb は区別しない —
+    /// P0 実測）。相手が閉じれば開ける。
+    #[test]
+    fn opening_an_open_store_again_is_locked_not_failed() {
+        let dir = TempDir::new();
+        let path = dir.0.join("sessions.redb");
+        let first = SessionStore::open(&path).expect("1 回目は開ける");
+        let second = SessionStore::open(&path);
+        let err = second.expect_err("2 回目は開けない");
+        assert!(
+            matches!(err, CoreError::SessionStoreLocked { .. }),
+            "別の variant で返る: {err}"
+        );
+        assert_eq!(err.code(), "SESSION_STORE_LOCKED");
+        drop(first);
+        SessionStore::open(&path).expect("相手が閉じれば開ける");
+    }
 
     /// テスト用の一時フォルダ。redb のファイルを開いたまま消せないので、
     /// `SessionStore` を先に落としてから片付ける。

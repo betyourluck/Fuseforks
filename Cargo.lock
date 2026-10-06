@@ -1290,6 +1290,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "fuseforks-core",
+ "redb",
  "reqwest 0.12.28",
  "rmcp",
  "serde",

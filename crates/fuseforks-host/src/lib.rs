@@ -11,6 +11,7 @@
 
 pub mod boot;
 pub mod jev_settings;
+pub mod lock;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。
 // **公開しているのは扉の部品であって、扉そのものではない。**
 pub mod mcp_server;
@@ -19,4 +20,5 @@ pub mod pricing_source;
 pub mod probe_approvals;
 
 pub use boot::{build_host, Host, HostBootOptions, HostError};
+pub use lock::{LockError, VillageLock, LOCK_FILE};
 pub use paths::HostPaths;

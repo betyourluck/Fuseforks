@@ -1052,6 +1052,7 @@
     "SCHEDULE_STORE_BLOCKED": "schedules.json が壊れているため予定を変更できません",
     "SESSION_NOT_FOUND": "会話が保存されていません",
     "SESSION_STORE_FAILED": "会話の保存先の操作に失敗しました",
+    "SESSION_STORE_LOCKED": "会話の保存先を別のプロセスが開いています",
     "SESSION_SWITCH_BLOCKED": "飛行中のターンがあるため会話を切り替えられません",
     "INVALID_TOKEN_BUDGET": "トークン制限に 0 は設定できません",
     "INVALID_ASK_TIMEOUT": "委譲の待ち時間は 30〜3600 秒の範囲で指定してください",
@@ -1091,6 +1092,7 @@
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
     "bootFailed": "バックエンドの初期化に失敗しました。アプリを再起動してください。",
+    "villageLocked": "この村は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）。そちらを閉じてから、アプリを起動し直してください。",
     "opFailed": "{op}に失敗しました",
     "toolLimit": "{name} がツール実行の上限に達しました",
     "toolLimitDetail": "上限 {max} 回。サーヴァント設定で上げるか、依頼を小さく分けてください",

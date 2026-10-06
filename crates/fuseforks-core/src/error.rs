@@ -106,6 +106,18 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// 会話の保存先（`sessions.redb`）を別のプロセスが開いている（Spec 64 D3）。
+    ///
+    /// redb の `DatabaseAlreadyOpen` だけをここへ写す。**`bootstrap` が起動を止めるのは
+    /// この 1 つだけ** — 壊れたファイルや権限（[`Self::SessionStore`]）は今までどおり
+    /// WARN で「会話を保存しない起動」を続ける。2 重オープンはそれらと違い、続けると
+    /// `world.json` と `schedules.json` を 2 つのプロセスが書く事故になる。
+    #[error("会話の保存先 `{path}` は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）")]
+    SessionStoreLocked {
+        /// 対象パス。
+        path: String,
+    },
+
     /// トークン予算の天井として受け付けられない値（Spec 13）。
     ///
     /// `0` は「即打ち切りの村」ではなく不正値（`token_budget` 契約の ceiling —
@@ -392,6 +404,7 @@ impl CoreError {
             Self::ScheduleStoreBlocked { .. } => "SCHEDULE_STORE_BLOCKED",
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::SessionStore { .. } => "SESSION_STORE_FAILED",
+            Self::SessionStoreLocked { .. } => "SESSION_STORE_LOCKED",
             Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
             Self::InvalidTokenBudget => "INVALID_TOKEN_BUDGET",
             Self::InvalidJudgeFile { .. } => "INVALID_JUDGE_FILE",

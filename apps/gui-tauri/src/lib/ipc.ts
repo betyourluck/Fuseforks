@@ -115,6 +115,11 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export interface BootStatus {
   ready: boolean;
   error: string | null;
+  /**
+   * 失敗の印（Spec 64 D3）。村を別のプロセスが開いているときだけ `VILLAGE_LOCKED`。
+   * 画面はこれで文言（ja / en）を選び、他は `error` の原文を出す。
+   */
+  errorCode: string | null;
 }
 
 /**

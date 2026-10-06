@@ -459,6 +459,12 @@ async fn a_probe_is_persisted_and_reloads() {
         "偽のままの欄は書き出さない: {saved}"
     );
 
+    // 再起動 = 前のプロセスは閉じている。`Shared` を握ったまま開き直すと
+    // `sessions.redb` の 2 重オープンになり、Spec 64 D3 からは WARN で続かず
+    // `SessionStoreLocked` で止まる（`session_persistence.rs` の shutdown と同じ作法）。
+    drop(orchestrator);
+    tokio::task::yield_now().await;
+
     // 読み直しても同じ形で戻る。
     let reopened = Orchestrator::bootstrap(
         ConfigStore::new(&dir.0),

@@ -32,8 +32,10 @@ use tauri::Manager;
 /// `lastConsumedDueMs` を競って書くため消化の記録が壊れる。
 ///
 /// **プラグインは登録順に走るので、これを最初に登録する**（プラグインの要件）。
-/// コア側には何も足さない — プロセスの一意性は OS/フレームワークの層の仕事で、
-/// ここでロックファイルを自作すると強制終了後の残留を自分で面倒みることになる。
+/// **村そのものの排他は `build_host` の村のロック（Spec 64 D3）が持つ** — OS の
+/// ファイルロックなので強制終了後の残留は無く、GUI と `fuseforks-cli` の間でも効く。
+/// プラグインの役目は「2 つ目の GUI を前面化して閉じる」（利用者への見せ方）で、
+/// ロックの役目は「村を 2 重に開かない」（データの安全）。役目が違うので両方残す。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -78,13 +80,13 @@ pub fn run() {
                         );
                         handle.manage(app_state);
                     }
-                    Err(err) => {
+                    Err(failure) => {
                         // ウィンドウは既に出ている。ここで panic せず理由を残し、
                         // フロントの覆いに「初期化に失敗した」と表示させる。
-                        fuseforks_core::note!("初期化に失敗しました: {err}");
+                        fuseforks_core::note!("初期化に失敗しました: {}", failure.message);
                         let slot = handle.state::<state::BootError>();
                         if let Ok(mut guard) = slot.0.lock() {
-                            *guard = Some(err.to_string());
+                            *guard = Some(failure);
                         }
                     }
                 }

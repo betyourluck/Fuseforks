@@ -5,8 +5,9 @@
 //! 登録漏れ・前判定の承認の差し込み漏れが片方だけに起きる。呼び出しごとに違うのは
 //! [`HostBootOptions`] だけ。
 //!
-//! 順序は GUI がそれまで `build_state` で持っていたものと同じ:
-//! `create_dir_all` → ログ → `version:` 行 → 秘密のストア → `bootstrap` →
+//! 順序は GUI がそれまで `build_state` で持っていたものに、村の排他ロック（D3）が
+//! 最初の手として足されただけ:
+//! `create_dir_all` → **ロック** → ログ → `version:` 行 → 秘密のストア → `bootstrap` →
 //! 同梱ツール 9 本 → MCP の初期接続 → 扉 → 前判定の承認 → Jev → 単価表の取得元。
 //! 起動ログの並び（P0 で採った基準。P1 で一致を確認）は `起動しました`（`open_log` が出す）→
 //! `version:` → `session:` → `attachment gc:` → `mcp server:` → `jev:` で、
@@ -22,6 +23,7 @@ use fuseforks_core::{
 };
 
 use crate::jev_settings::JevSettingsStore;
+use crate::lock::{LockError, VillageLock};
 use crate::mcp_server::McpServerManager;
 use crate::paths::HostPaths;
 use crate::pricing_source::PricingSourceStore;
@@ -44,8 +46,11 @@ pub struct HostBootOptions {
 
 /// 開いた村。組み立てが済んだ部品の束で、IPC と CLI はここを読む。
 ///
-/// `Drop` されるまで村を持つ（P2 でここに村の排他ロックが加わる）。
+/// **`Drop` されるまで村を持つ** — 排他ロック（D3）は `Host` と同じ寿命で、落とすと
+/// 別のプロセスが同じ村を開けるようになる。
 pub struct Host {
+    /// 村の排他ロック（D3）。読まないが、`Host` が生きている間は握り続ける。
+    _lock: VillageLock,
     /// オーケストレーター本体。
     pub orchestrator: Arc<Orchestrator>,
     /// ワークスペースのルート（`HostPaths::workspace`）。「フォルダを開く」導線で使う。
@@ -92,6 +97,10 @@ pub enum HostError {
     /// `data_dir` / `workspace` を作れない。
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// 村を別のプロセスが開いている（[`LockError::Held`]）か、ロックファイルを
+    /// 作れない（[`LockError::Io`]）。どちらも村を 1 つも開かずに返る（D3）。
+    #[error(transparent)]
+    Lock(#[from] LockError),
     /// `bootstrap` が失敗した（保存済み `world.json` が壊れている等）。
     #[error(transparent)]
     Core(#[from] fuseforks_core::CoreError),
@@ -105,11 +114,16 @@ pub enum HostError {
 /// 設定不備なのか実装不具合なのか切り分けられなくなる。
 ///
 /// # Errors
-/// ワークスペースのディレクトリを作成できない場合、または保存済み `world.json` が
-/// 壊れている場合。
+/// ワークスペースのディレクトリを作成できない場合、別のプロセスが同じ村を開いている
+/// 場合（[`HostError::Lock`]）、または保存済み `world.json` が壊れている場合。
 pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host, HostError> {
     let workspace = paths.workspace();
     tokio::fs::create_dir_all(&workspace).await?;
+
+    // 村の排他ロック（D3）。**最初の手** — 取れなければログもファイルも 1 つも
+    // 開かずに返す。相手がログへ書いている最中に、こちらが同じファイルを開いて
+    // `起動しました` を混ぜ込む形を作らない。
+    let lock = VillageLock::acquire(&workspace)?;
 
     // 診断ログの出口を開く。**失敗しても起動は止めない** — ログが書けないことは
     // アプリが動かない理由にならず、stderr への出力は残る。
@@ -241,6 +255,7 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     );
 
     Ok(Host {
+        _lock: lock,
         orchestrator,
         workspace,
         mcp_server: tokio::sync::Mutex::new(mcp_server),

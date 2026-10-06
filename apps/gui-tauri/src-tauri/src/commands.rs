@@ -30,6 +30,9 @@ pub struct BootStatus {
     pub ready: bool,
     /// 初期化の失敗理由。`null` なら失敗していない（進行中か完了）。
     pub error: Option<String>,
+    /// 失敗の印（Spec 64 D3）。村を別のプロセスが開いているときだけ
+    /// `VILLAGE_LOCKED`。画面はこれで文言（ja / en）を選び、他は `error` の原文を出す。
+    pub error_code: Option<&'static str>,
 }
 
 /// 初期化が終わったかを答える。
@@ -42,10 +45,14 @@ pub struct BootStatus {
 pub fn boot_status(app: tauri::AppHandle) -> BootStatus {
     use tauri::Manager;
     let ready = app.try_state::<AppState>().is_some();
-    let error = app
+    let failure = app
         .try_state::<crate::state::BootError>()
         .and_then(|slot| slot.0.lock().ok().and_then(|guard| guard.clone()));
-    BootStatus { ready, error }
+    BootStatus {
+        ready,
+        error: failure.as_ref().map(|f| f.message.clone()),
+        error_code: failure.and_then(|f| f.code),
+    }
 }
 
 // ---- 参照系 -----------------------------------------------------------------

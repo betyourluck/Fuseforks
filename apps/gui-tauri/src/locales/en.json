@@ -1052,6 +1052,7 @@
     "SCHEDULE_STORE_BLOCKED": "schedules.json is broken, so schedules cannot be changed",
     "SESSION_NOT_FOUND": "The conversation is not stored",
     "SESSION_STORE_FAILED": "A session-store operation failed",
+    "SESSION_STORE_LOCKED": "Another process has the session store open",
     "SESSION_SWITCH_BLOCKED": "Cannot switch conversations while turns are in flight",
     "INVALID_TOKEN_BUDGET": "0 cannot be set as the token limit (choose No limit instead)",
     "INVALID_ASK_TIMEOUT": "The delegation wait time must be between 30 and 3600 seconds",
@@ -1091,6 +1092,7 @@
   "orchestrator": {
     "ipcFailed": "IPC call failed",
     "bootFailed": "Failed to initialize the backend. Please restart the app.",
+    "villageLocked": "Another process has this village open (the Fuseforks GUI or fuseforks-cli). Close it, then start the app again.",
     "opFailed": "{op} failed",
     "toolLimit": "{name} reached the tool execution limit",
     "toolLimitDetail": "Limit: {max} calls. Raise it in the servant settings or split the request into smaller pieces",

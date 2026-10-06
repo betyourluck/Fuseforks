@@ -34,6 +34,9 @@ tokio-util = { version = "0.7", default-features = false }
 # 合鍵の層を要求 1 本で叩く（ServiceExt::oneshot）。既にツリーに居るので新規はゼロ。
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tokio = { workspace = true, features = ["macros"] }
+# 村の排他ロックの結合テスト（Spec 64 D3）— ロックを迂回して sessions.redb だけを
+# 開いた形を作るため。core と同じ版（配布物の依存は増えない）。
+redb.workspace = true
 
 [lints.rust]
 # GUI 層への逆依存を機械的に禁じるための最低限の衛生設定（core と同じ）。

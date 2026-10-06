@@ -814,9 +814,15 @@ async function initialize(): Promise<void> {
     for (;;) {
       const boot = await ipc.bootStatus();
       if (boot.error) {
+        // 村を別のプロセスが開いている（Spec 64 D3）ときだけ文言を変える —
+        // 「再起動してください」では直らず、閉じるべきものが別にある。
+        const key =
+          boot.errorCode === "VILLAGE_LOCKED"
+            ? "orchestrator.villageLocked"
+            : "orchestrator.bootFailed";
         throw {
           code: "BOOT_FAILED",
-          message: i18n.global.t("orchestrator.bootFailed"),
+          message: i18n.global.t(key),
           detail: boot.error,
           agentId: null,
           retryable: false,

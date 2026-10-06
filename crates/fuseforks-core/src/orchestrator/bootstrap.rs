@@ -129,6 +129,12 @@ impl Orchestrator {
                         None => (None, String::new(), Vec::new(), BTreeMap::new()),
                     }
                 }
+                // **別のプロセスが開いているときだけ止める**（Spec 64 D3 の二重の網）。
+                // 村の排他ロックが効いていればここには来ない。ロックを迂回して
+                // `sessions.redb` だけを開かれた形で、2 重オープンを黙って続ける
+                // 経路を残さない（続けると `world.json` と `schedules.json` を
+                // 2 つのプロセスが書く）。
+                Err(err @ crate::error::CoreError::SessionStoreLocked { .. }) => return Err(err),
                 Err(err) => {
                     note!(
                         "WARN session store: 会話を保存できません（この起動では会話は\

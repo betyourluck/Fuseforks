@@ -12,11 +12,18 @@
 use std::sync::Arc;
 
 use fuseforks_core::{CoreEvent, Orchestrator};
-use fuseforks_host::{build_host, Host, HostBootOptions, HostPaths};
+use fuseforks_host::{build_host, Host, HostBootOptions, HostError, HostPaths, LockError};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// フロントエンドが購読するイベント名。
 pub const CORE_EVENT: &str = "core://event";
+
+/// 起動の失敗の印のうち、村を別のプロセスが開いているもの（Spec 64 D3）。
+///
+/// 画面はこの印で「別のプロセスが開いています」の文言（ja / en）を選ぶ。
+/// ホストは村の言語を知らない（言語は `world.json` に住み、ロックはそれを読む前に
+/// 取る）ので、文言は画面側の辞書が持つ。
+pub const VILLAGE_LOCKED: &str = "VILLAGE_LOCKED";
 
 /// Tauri の管理状態。
 pub struct AppState {
@@ -30,7 +37,31 @@ pub struct AppState {
 /// 別に要る。こちらは起動直後（初期化の開始前）に manage しておき、
 /// `boot_status` コマンドが「まだか・失敗したか」を常に答えられるようにする。
 #[derive(Default)]
-pub struct BootError(pub std::sync::Mutex<Option<String>>);
+pub struct BootError(pub std::sync::Mutex<Option<BootFailure>>);
+
+/// 失敗の中身。
+#[derive(Debug, Clone)]
+pub struct BootFailure {
+    /// 画面が文言を選ぶための印。今は [`VILLAGE_LOCKED`] だけで、他は `None`
+    /// （画面は原文を出す）。
+    pub code: Option<&'static str>,
+    /// 原文（`to_string()`）。
+    pub message: String,
+}
+
+impl BootFailure {
+    /// 組み立ての失敗を覆いの材料へ。**印を付けるのは村のロックだけ。**
+    fn from_host(err: &HostError) -> Self {
+        let code = match err {
+            HostError::Lock(LockError::Held { .. }) => Some(VILLAGE_LOCKED),
+            _ => None,
+        };
+        Self {
+            code,
+            message: err.to_string(),
+        }
+    }
+}
 
 /// アプリ起動時に村を組み立てる。
 ///
@@ -38,18 +69,23 @@ pub struct BootError(pub std::sync::Mutex<Option<String>>);
 /// 版（`package_info`。CI がタグから書き換える側）。残りは `build_host` が決める。
 ///
 /// # Errors
-/// データの置き場を解決・作成できない場合、または保存済み `world.json` が壊れている場合。
-pub async fn build_state(app: &AppHandle) -> Result<AppState, Box<dyn std::error::Error>> {
-    let paths = HostPaths::new(app.path().app_data_dir()?);
+/// データの置き場を解決・作成できない場合、別のプロセスが同じ村を開いている場合
+/// （[`VILLAGE_LOCKED`] の印つき）、または保存済み `world.json` が壊れている場合。
+pub async fn build_state(app: &AppHandle) -> Result<AppState, BootFailure> {
+    let data_dir = app.path().app_data_dir().map_err(|err| BootFailure {
+        code: None,
+        message: err.to_string(),
+    })?;
     let host = build_host(
-        &paths,
+        &HostPaths::new(data_dir),
         HostBootOptions {
             app_version: app.package_info().version.to_string(),
             // GUI は常に扉を設定どおりに開く（開かないのは `ask` / `check` だけ）。
             open_door: true,
         },
     )
-    .await?;
+    .await
+    .map_err(|err| BootFailure::from_host(&err))?;
     Ok(AppState { host })
 }
 
