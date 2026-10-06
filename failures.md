@@ -5356,3 +5356,36 @@ D4 の判定では「JSON だから素通し」に落ちる）。「Markdown の
 **一般化**: **内部タグ付き enum（`#[serde(tag = "…")]`）の variant に構造体を載せるときは、その構造体の欄名を
 タグ名と突き合わせる。** 直列化は重複鍵を拒否しないので、**書けたことは読めることの証拠にならない**。
 保存形式を足すテストは、書いた後に同じ経路で読み戻すまでを 1 本に含める（書き込みだけのテストはこの形を緑で通す）。
+
+## #141 接地エンジンの辞書鍵が `meta` / `perplexity` で 6〜8 週間欠け、それを留める走査テストは緑だった（2026-10-06）
+
+**症状**: 開発ビルドの vite コンソールに
+`[intlify] Not found 'grounding.engine.perplexity' key in 'ja' locale messages.` が出た（Spec 64 P0 の起動中に
+副産物として観測）。`GroundingNote.vue` は ``$t(`grounding.engine.${view.engine}`)`` で鍵を実行時に組むが、
+`ja.json` / `en.json` の `grounding.engine` は `google` / `xai` / `open_ai` の 3 つだけで、Rust の `GroundingEngine`
+（`canonical.rs`）には Spec 37 の `Meta`（2026-08-13）と Spec 45 の `Perplexity`（2026-08-27）が既に居た。
+vue-i18n は欠けた鍵を鍵の字面で表示する（#139）ので、Perplexity で接地した発話の来歴には
+`grounding.engine.perplexity` がそのまま出る。`types.ts` の `GroundingEngine` union も 3 値のままだった。
+
+**真因**: この鍵を留める網 `groundingEngineKeys.test.ts`（Spec 34 P3）は「すべてのワイヤ値が ja と en の両方に鍵を持つ」
+を検査していたが、**出所が enum ではなく Rust の凍結テスト `grounding_engine_wire_values_are_frozen` の期待値**
+（snake_case を TS で再実装しないため — その判断は正しい）。その凍結テストが `for` の配列リテラルで 3 値を並べる形で、
+variant を足しても落ちない。Spec 37 / 45 は enum に variant を足し、`data_contract` の `GroundingEngine.values` も
+直したが（Spec 45 P0）、凍結テスト・辞書・`types.ts` の 3 箇所は追従せず、網は 3 値どうしの一致で緑のまま。
+**検算の両辺（凍結テストの期待値と辞書の鍵）がどちらも手書きの定数で、実物の enum がどちらの辺にも入っていなかった**。
+#139 の `usedKeys.test.ts` は字面の鍵しか拾わないので組み立てる鍵は最初から射程の外 — #139 は「組み立てる鍵は
+各機能の配線テストが列挙と突き合わせている」と書いたが、**その配線テストの列挙のほうが腐っていた**。
+
+**処方**: (1) 辞書へ `meta`（「web 検索（Meta）」/ "Web search (Meta)"）と `perplexity`（「検索・取得（Perplexity）」/
+"Search & fetch (Perplexity)" — Spec 45 D5 が固有スキル 4 本を 1 値で写すので、どれか 1 本の名ではなく括りの名）を足し、
+`types.ts` の union を 5 値へ。(2) Rust の凍結テストの期待値を `match` の網羅へ（腕が無ければコンパイルが落ちる）。
+(3) 走査テストへ「enum の全 variant が凍結テストに期待値を持つ（出所の鮮度）」を足す — enum 本体の variant 名を読み、
+`_` を落として小文字にした期待値と突き合わせる緩い対応で、snake_case は再実装しない。変異 2 回とも狙った本が赤
+（凍結テストの腕を消す → 鮮度 + 余った鍵の 2 本 / ja の鍵を消す → 「両方に鍵を持つ」+ 鍵集合の一致の 2 本）。
+
+**一般化**:
+- **走査テストの出所が別のテストの期待値なら、その期待値が実物に追従していることを別の検査で留める。**
+  出所を 1 段間接にした理由（再実装を避ける）が正しくても、間接の先が腐れば網ごと腐る。
+  #124「数を留める検算は、片方の辺を実物から取る」のテスト側の 2 例目
+- **「配列を `for` で回して期待値と比べる」凍結テストは、集合が増えても落ちない。** 列挙の全値を留めるなら
+  `match` の腕で書く — 腕が無ければコンパイラが指す（Spec 37 で `Provider::carries` を 1 腕ずつへ直したのと同じ形）

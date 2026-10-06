@@ -582,7 +582,7 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
   握っていたので「出力なし = 動いていない」と読んだ（`MSYS_NO_PATHCONV` の 3 例目。プロセスの有無は
   PowerShell の `Get-Process` で見る）。利用者に GUI を閉じてもらってから取り直した
 - 副産物: 開発ビルドの vite のコンソールに `[intlify] Not found 'grounding.engine.perplexity' key in 'ja'`
-  が出た（本 Spec とは無関係。別件）
+  が出た（本 Spec とは無関係。別件。**→ 2026-10-06 に直した — `failures.md` #141**）
 
 ## 未決
 

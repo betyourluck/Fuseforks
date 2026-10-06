@@ -615,14 +615,31 @@ mod tests {
     /// 鍵に**そのまま使われる**ので、食い違うと画面に生の鍵が出る —
     /// 型検査にも lint にも掛からない種類の退行（`failures.md` #54 と同じ形で、
     /// あちらは実行時に組み立てる `var(--color-role-${色})` だった）。
+    ///
+    /// **期待値は `match` で網羅する。** `for` の配列だけだと variant を足しても
+    /// この関数は落ちず、ここの期待値を出所にする `groundingEngineKeys.test.ts` も
+    /// 緑のまま辞書の鍵が欠ける（Spec 37 の `Meta` / Spec 45 の `Perplexity` が
+    /// 実際に 6〜8 週間そうなっていた — `failures.md` #141）。`match` に腕が無ければ
+    /// コンパイルが落ち、variant を足した人が必ずここへ来る。
     #[test]
     fn grounding_engine_wire_values_are_frozen() {
-        for (engine, expected) in [
-            (GroundingEngine::Google, r#""google""#),
-            (GroundingEngine::Xai, r#""xai""#),
-            (GroundingEngine::OpenAi, r#""open_ai""#),
+        fn expected(engine: GroundingEngine) -> &'static str {
+            match engine {
+                GroundingEngine::Google => r#""google""#,
+                GroundingEngine::Xai => r#""xai""#,
+                GroundingEngine::OpenAi => r#""open_ai""#,
+                GroundingEngine::Meta => r#""meta""#,
+                GroundingEngine::Perplexity => r#""perplexity""#,
+            }
+        }
+        for engine in [
+            GroundingEngine::Google,
+            GroundingEngine::Xai,
+            GroundingEngine::OpenAi,
+            GroundingEngine::Meta,
+            GroundingEngine::Perplexity,
         ] {
-            assert_eq!(serde_json::to_string(&engine).unwrap(), expected);
+            assert_eq!(serde_json::to_string(&engine).unwrap(), expected(engine));
         }
     }
 

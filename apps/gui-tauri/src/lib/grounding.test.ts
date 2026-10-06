@@ -156,7 +156,7 @@ describe("sourceLabel", () => {
 
 describe("groundingView の engine", () => {
   it("記録の engine をそのまま運ぶ", () => {
-    for (const engine of ["google", "xai", "open_ai"] as const) {
+    for (const engine of ["google", "xai", "open_ai", "meta", "perplexity"] as const) {
       const view = groundingView(message({ engine, queries: ["x"], sources: [] }));
       expect(view?.engine).toBe(engine);
     }

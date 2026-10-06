@@ -671,8 +671,15 @@ export interface GroundingSource {
  * `open_ai_compat` / `open_ai_responses` と同じ綴りで揃う）。**出典は普通の web URL** なので、
  * `sourceLabel` / `sourceIcon` の X 専用分岐は触らない — アイコンが意味を
  * 足すのはラベルがホストを語らないときだけ。
+ *
+ * 4 値目 `meta`（Spec 37 D4）と 5 値目 `perplexity`（Spec 45 D5）も出典は普通の
+ * web URL で、X 専用分岐は触らない。**`perplexity` は固有スキル 4 本
+ * （web / 金融 / 人物 / URL 取得）を 1 値で写す**ので、辞書の表示名はどれか 1 本の
+ * 名ではなく「検索・取得」— どのツールが走ったかは記録に無い（`pplx tools:` 行が持つ）。
+ * この 2 値は Rust の列挙に 6〜8 週間先に入っており、ここと辞書が追従していなかった
+ * （`failures.md` #141）。
  */
-export type GroundingEngine = "google" | "xai" | "open_ai";
+export type GroundingEngine = "google" | "xai" | "open_ai" | "meta" | "perplexity";
 
 export interface Grounding {
   queries: string[];
