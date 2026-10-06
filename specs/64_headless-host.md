@@ -808,11 +808,25 @@ CLI の単体 13 本 + 結合 7 本（`apps/cli/tests/cli.rs`）。workspace 全
 
 | # | 項目 | 結果 |
 |---|---|---|
-| 1 | 写しで `check` → `ask` → `serve` | `check --for ask` / `--for serve` とも 3（計画の確認 ON のザリ・ルナを名指し）。**`ask --bypass-plan-review` は 0** — 標準出力は答えの 1 行だけ・`turn: … stop=- … model=gpt-6.1-sol`・`reply: … to=external:fuseforks-cli`・`agent stopped: … joined=true`。33 秒のうち 22 秒は Docker の MCP の起動。`serve` は未（利用者の端末で Ctrl+C まで） |
-| 2 | GUI を開いたまま `ask` → 4 / `serve` 中に GUI → 覆い | **前半は成立** — 開発ビルドの GUI（pid 38424）が開いている本物の村へ `ask` → 4、GUI の `fuseforks.log` は前後とも 27,520 行（ロックが最初の手で止め、1 行も書いていない）。後半は未 |
+| 1 | 写しで `check` → `ask` → `serve` | **成立。** `check --for ask` / `--for serve` とも 3（計画の確認 ON のザリ・ルナを名指し）。`ask --bypass-plan-review` は 0 — 標準出力は答えの 1 行だけ・`turn: … stop=- … model=gpt-6.1-sol`・`reply: … to=external:fuseforks-cli`・`agent stopped: … joined=true`。33 秒のうち 22 秒は Docker の MCP の起動。`serve --start batch --bypass-plan-review` は 5 体を起動 → 実コンソールの Ctrl+C で「閉じます」→ 5 体とも `joined=true` → **0**。閉じるのに 13 秒（1 体 3 秒・順番に止める。30 秒の猶予に対して 10 体なら届く — 頻度を見てから並列化を考える） |
+| 2 | GUI を開いたまま `ask` → 4 / `serve` 中に GUI → 覆い | **前半は成立** — 開発ビルドの GUI（pid 38424）が開いている本物の村へ `ask` → 4、GUI の `fuseforks.log` は前後とも 27,520 行（ロックが最初の手で止め、1 行も書いていない）。後半は未 — 本物の村で `serve` を 24 分立てて待ったが GUI を開く機会が無く、二重オープンの危険（インストール済みの v0.4.0 にはロックが無い）を避けて閉じた。**閉じ方は本物の村でも成立** — 実コンソールの Ctrl+C で 5 体とも `joined=true` → 0（約 21 秒） |
 | 3 | `--secrets env` で keyring 空から `ask` | 未。要る変数は `check --secrets env` で読めた — `FUSEFORKS_SECRET_GPT_6_SOL`（ルナ）と、Jev を使うなら `FUSEFORKS_SECRET_JEV_API_TOKEN`。値は利用者が設定する |
 | 4 | 計画の確認 ON で `serve` → 3、`--bypass-plan-review` で通る | **前半は成立**（`serve --start batch` → 3。LLM も MCP も呼ばない）。後半は 1 の `serve` と一緒に |
-| 5 | `ask` の途中で Ctrl+C → 8 と `turn:` 行 | 未（利用者の端末で） |
+| 5 | `ask` の途中で Ctrl+C → 8 と `turn:` 行 | **成立（3 通り）。** ① ツールを使う依頼で最初の `tool:` 行の後に送る → 2 周目の境目で `turn interrupted: … rounds=2 … prompt=101093 total=101627`（払いの行が残る）→ 定型文「打ち切られました」→ **8** ② 起動 3 秒後に送る → 「起動の途中で中断しました（何も送っていません）」→ **8**（`turn start:` は出ない・2.2 秒で閉じる = P6 で直した穴が実コンソールで塞がっている）③ **1 周で答え終わるターンの飛行中に送ると 0** — 打ち切りは周回の境目で効く（Spec 10）ので、飛行中の 1 周がそのまま答えになって返る（払った答えなので返すのが正しく、D10 の「答えが返った」= 0）。項目 5 の「→ 8」は複数周のターンの話だった |
+
+**Ctrl+C の送り方**: 利用者の端末（PowerShell 7 + oh-my-posh の 2 行プロンプト）は、端末のタブへコマンドを流す道具が
+プロンプトと認識できず使えなかった。代わりに CLI を**隠した専用のコンソール**で起こし、補助プロセスがそのコンソールに
+付いて（`AttachConsole`）自分は Ctrl+C を無視したうえで `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)` を出した — 端末で
+Ctrl+C を押したときに OS が送るのと同じイベント。**1 回目は届かなかった** — こちらの実行環境が `CREATE_NEW_PROCESS_GROUP`
+で起こされており、その「Ctrl+C 無効」の印が子孫の CLI へ継承されていた。包み役が `SetConsoleCtrlHandler(NULL, FALSE)` で
+印を外してから CLI を起こすと届いた。**利用者の普通の端末では印は付かない**ので実装の穴ではないが、Windows のサービスや
+`CREATE_NEW_PROCESS_GROUP` で起こす監督プロセスの下では CLI も Ctrl+C を受けない（CTRL_BREAK は別のイベントで、今は受けて
+いない）。スクリプトは scratchpad（`driver.py` / `sendctrlc.py` / `enablectrlc.py`）で、リポジトリには入れていない
+
+**Unix の SIGINT テストの期待が 2 つ誤っていた**（実機の観測で分かった・`3e3c008`）— (a) 1 周で答えるスタブでは 8 に
+ならない（上の ③）→ 毎周ツールを呼ぶ遅いスタブへ (b) 打ち切りの払いの行は `turn interrupted:` で `turn: agent=` ではない。
+どちらも CI（Unix）で必ず赤になる形で、Windows では `#[cfg(unix)]` で 1 度もコンパイルされていなかった。**実機の観測が、
+走っていないテストの誤りを先に見つけた**
 
 **実機で見つかった穴**（どれも直して変異で赤を確認。コミットは `4c7a3a8` / `b96d300`。**数を見出しに書かない** — `b96d300` で 3 つ目を足したとき見出しの「2 つ」が残った = #67 の形。レビューの指摘で直した）:
 
