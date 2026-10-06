@@ -1,10 +1,12 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **rev2・P1 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+- 状態: **rev2・P2 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
   rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 6 行 /
   ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正
   → **同日夜に P1 完了** — `crates/fuseforks-host` へ 4 ファイル + `build_host`（6 コミット・挙動不変・
-  起動ログ 6 行が一致）。「P1 実装記録」が正。**次は P2**（村の排他ロック））
+  起動ログ 6 行が一致）。「P1 実装記録」が正 → **同日深夜に P2 完了** — 村の排他ロック + 二重の網 +
+  覆いの文言 + MSRV 1.89（2 コミット）。「P2 実装記録」が正。**次は P3**（コア: `EnvSecretStore` /
+  `headless_preflight` / `run_schedules` / `ask_external_outcome`））
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -431,12 +433,13 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P2 — 村の排他ロック（GUI にも効く唯一の挙動の変化）
 
-- [ ] `lock.rs` + `build_host` の最初の手（`create_dir_all` の後）。MSRV 1.89
-- [ ] `CoreError::SessionStoreLocked` と、`bootstrap` がそれだけを止める分岐
-- [ ] GUI の起動の覆いの文言（ja / en）
-- [ ] 結合テスト: 同じ村を 2 回 `build_host` すると 2 回目が `Locked` / 1 回目を Drop した後は取れる /
+- [x] `lock.rs` + `build_host` の最初の手（`create_dir_all` の後）。MSRV 1.89
+      （2026-10-06。MSRV は `f7ebb37`・ロックは `e7eecd6`。「P2 実装記録」）
+- [x] `CoreError::SessionStoreLocked` と、`bootstrap` がそれだけを止める分岐（同日。`e7eecd6`）
+- [x] GUI の起動の覆いの文言（ja / en）（同日。`BootStatus.errorCode` = `VILLAGE_LOCKED` の印で画面が選ぶ）
+- [x] 結合テスト: 同じ村を 2 回 `build_host` すると 2 回目が `Locked` / 1 回目を Drop した後は取れる /
       別プロセス（テストから子プロセスを起こす）でも取れない / ロックを迂回して `sessions.redb` だけを
-      開いておくと `bootstrap` が `SessionStoreLocked` で止まる
+      開いておくと `bootstrap` が `SessionStoreLocked` で止まる（同日。host 3 本 + core 2 本 + 単体 4 本）
 
 ### P3 — コア
 
@@ -583,6 +586,51 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
   PowerShell の `Get-Process` で見る）。利用者に GUI を閉じてもらってから取り直した
 - 副産物: 開発ビルドの vite のコンソールに `[intlify] Not found 'grounding.engine.perplexity' key in 'ja'`
   が出た（本 Spec とは無関係。別件）
+
+## P2 実装記録（2026-10-06）
+
+**コミット 2 本。** `f7ebb37` = MSRV 1.89（宣言の追従）+ それで解禁された clippy の指摘 9 件 + README 3 言語 /
+`e7eecd6` = ロック本体。clippy 0・Rust 61 バイナリ 1,221 本緑・vitest 759・vue-tsc 0。
+
+- **ロックはログより前。** `create_dir_all` の直後に `VillageLock::acquire` し、取れなければ `open_log` も
+  呼ばずに返す。相手がログへ書いている最中に、こちらが同じファイルを開いて `起動しました` を混ぜ込まない。
+  帰結として**ロックで止まった起動は `fuseforks.log` に 1 行も残らない**（stderr と覆いにだけ出る）
+- **unlink しない。** Drop で消すと、同じパスを開いて待っていた相手が消えた inode のロックを取り、その隙に
+  新しいプロセスが新しいファイルを作って別のロックを取る（lock file の unlink 競合）。解放は `File` の close
+  だけに任せる。D3 の「存在ではなく OS のロックで判定」はここでも効く
+- **`HostError::Lock(LockError)`** で `Held`（別プロセス）と `Io`（作れない・ロックの無い OS）を分ける —
+  直し方が違う。どちらも村を開かない（fail closed）
+- **覆いの文言は印で選ぶ。** ホストは村の言語を知らない（言語は `world.json` に住み、ロックはそれを読む前に
+  取る）ので、`BootStatus` に `errorCode`（`VILLAGE_LOCKED` のときだけ）を**加算**し、画面が
+  `orchestrator.villageLocked`（ja / en）を選ぶ。印の無い失敗は今までどおり原文。旧いフロントは欄を無視する
+- **`SessionStoreLocked` は `DatabaseAlreadyOpen` だけを写す。** `bootstrap` が止めるのはこれだけで、壊れた
+  ファイル・権限は WARN で「会話を保存しない起動」を続ける（対照のテストで留めた）
+- **別プロセスのテストは自分を持ち主役として起こす** — `current_exe()` を `--exact lock_holder_process` で起動し、
+  環境変数があるときだけその関数がロックを取って `holder.ready` を書き、標準入力が閉じるまで持つ（無ければ
+  何もしない空のテスト）。P0 の probe と同じ形で、テストバイナリの外に実行ファイルを置かない
+- **「Drop の後は取れる」は `build_host` ではなく `VillageLock::acquire` で確かめた。** `Host` を落としても
+  オーケストレーターの背景タスク（予定・統計のティッカー）が `Shared` を握ったままなら `sessions.redb` は
+  開いたままで、もう 1 度 `build_host` すると凍結 4 の網に当たる。ロックの寿命を確かめる検査にその経路を混ぜない
+- **旧挙動に寄りかかっていたテストが 1 本。** `schedule_probe_wiring::a_probe_is_persisted_and_reloads` が前の
+  オーケストレーターを握ったまま `bootstrap` し直しており、WARN で続く旧挙動で通っていた。再起動は前のプロセスが
+  閉じていることなので、`session_persistence.rs` の `shutdown` と同じく drop + `yield_now` してから開き直す形へ
+  （1,221 本中この 1 本だけ）
+- **MSRV を上げると clippy の指摘が 9 件増えた** — `collapsible_if`（let 連鎖。1.88 で安定）×8 と
+  `is_multiple_of`（1.87）×1。宣言が古かった間は MSRV で黙っていたもの。`cargo clippy --fix` は本体の字下げを
+  1 段深いまま残すので 9 箇所とも手で整えた。ロックのコミットより前に置く（`try_lock` は 1.85 宣言のままだと
+  `incompatible_msrv` に当たる）
+- **道具の罠 2 つ**: `cargo test --workspace` が `LNK1104` / `0xc000009a` で 2 回落ち、`-j 6` で通った
+  （`failures.md` #132 の家族。vitest と並走させたときに出た）/ hunk を選んで `git apply --cached` する
+  Python が**text モードの stdout で `\n` を `\r\n` に変えて** patch を壊した（`sys.stdout.buffer` で書く。
+  `-X utf8` だけでは足りない）
+- **実機（P6 の「serve 中に GUI を開く」の前倒し）**: 持ち主役（`village_lock` の `lock_holder_process` を
+  環境変数つきで起こす）に開発機の村のロックを握らせ、開発ビルドの GUI を起動した（2026-10-06 10:14）。
+  stderr に `初期化に失敗しました: この村は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）:
+  …\workspace\.fuseforks.lock` が 1 行出て、**`fuseforks.log` には 1 行も増えなかった**（ロックがログより前の
+  設計どおり）。覆いの文言（`orchestrator.villageLocked`）は vitest の `useOrchestrator.boot.test.ts` で
+  `errorCode` の有無による切り替えを留めた（画面の目視は P6）。1 回目は前回の `tauri dev` が残した vite が
+  ポート 1420 を握っていて `beforeDevCommand` が落ちた — `Stop-Process -Name fuseforks` は GUI だけを殺し、
+  vite は残る
 
 ## 未決
 

@@ -72,6 +72,25 @@ describe("起動ハンドシェイク", () => {
     expect(h.listAgents).not.toHaveBeenCalled();
   });
 
+  // Spec 64 D3。村を別のプロセスが開いているときは「再起動してください」では直らないので、
+  // errorCode の印で文言を変える。印の無い失敗は今までどおりの文言。
+  it("VILLAGE_LOCKED の印があるときだけ「別のプロセスが開いています」の文言になる", async () => {
+    h.bootStatus.mockResolvedValueOnce({
+      ready: false,
+      error: "この村は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）: C:\\ws\\.fuseforks.lock",
+      errorCode: "VILLAGE_LOCKED",
+    });
+
+    const orchestrator = useOrchestrator();
+    await orchestrator.init();
+
+    expect(orchestrator.state.initError?.code).toBe("BOOT_FAILED");
+    expect(orchestrator.state.initError?.message).toContain("別のプロセス");
+    expect(orchestrator.state.initError?.message).not.toContain("再起動");
+    expect(orchestrator.state.initError?.detail).toContain(".fuseforks.lock");
+    expect(h.listAgents).not.toHaveBeenCalled();
+  });
+
   it("ready が返るまで待ってから読み込みを始める", async () => {
     // 1 回目は準備中 → 2 回目で完了。ポーリングを 1 周は回す。
     h.bootStatus
