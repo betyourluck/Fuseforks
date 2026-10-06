@@ -205,6 +205,9 @@ async fn ask(args: AskArgs) -> u8 {
     let out = Output {
         jsonl: args.events_jsonl,
     };
+    // 受け口は**最初に**作る（P6 の穴）。作るまでの Ctrl+C は既定の処理でプロセスごと落ち、
+    // 8 にも閉じ方にもならない — MCP の起動を待つ 20 秒余りがまるごと素通しだった。
+    let mut signals = Signals::new();
     let message = match read_message(&args.message) {
         Ok(message) => message,
         Err(reason) => {
@@ -222,12 +225,19 @@ async fn ask(args: AskArgs) -> u8 {
         return exit::REJECTED;
     }
 
-    let host = match open(out, &paths, &args.common, false, false).await {
-        Ok(host) => host,
-        Err(code) => return code,
+    let host = tokio::select! {
+        opened = open(out, &paths, &args.common, false, false) => match opened {
+            Ok(host) => host,
+            Err(code) => return code,
+        },
+        () = signals.next() => {
+            // 組み立ての途中で落とす — 握ったロックは future と一緒に外れる。
+            out.cli(Level::Info, "INTERRUPTED", "組み立ての途中で中断しました（何も送っていません）");
+            return exit::INTERRUPTED;
+        }
     };
     let events = forward_events(out, &host);
-    let code = ask_in(out, &host, &report, &args, &message).await;
+    let code = ask_in(out, &host, &report, &args, &message, &mut signals).await;
     drop(host);
     finish_events(events).await;
     code
@@ -239,16 +249,28 @@ async fn ask_in(
     report: &PreflightReport,
     args: &AskArgs,
     message: &str,
+    signals: &mut Signals,
 ) -> u8 {
-    let mut signals = Signals::new();
-    if !args.continue_session
-        && let Err(err) = host.orchestrator.reset_conversation().await
-    {
-        return core_error(out, &err);
-    }
-    let started = match start_agents(out, host, &report.start).await {
-        Ok(started) => started,
-        Err(code) => return code,
+    let prepare = async {
+        if !args.continue_session
+            && let Err(err) = host.orchestrator.reset_conversation().await
+        {
+            return Err(core_error(out, &err));
+        }
+        start_agents(out, host, &report.start).await
+    };
+    let started = tokio::select! {
+        prepared = prepare => match prepared {
+            Ok(started) => started,
+            Err(code) => return code,
+        },
+        () = signals.next() => {
+            // 起動の途中 — どこまで立ち上がったか分からないので、集合の全員に止めを送る
+            // （立ち上がっていない個体は NotRunning で返るだけ）。
+            out.cli(Level::Info, "INTERRUPTED", "起動の途中で中断しました（何も送っていません）");
+            close(out, host, &report.start, signals).await;
+            return exit::INTERRUPTED;
+        }
     };
 
     let asked = host.orchestrator.ask_external_outcome(&args.client, message);
@@ -279,7 +301,7 @@ async fn ask_in(
         }
         Err(err) => core_error(out, &err),
     };
-    close(out, host, &started, &mut signals).await;
+    close(out, host, &started, signals).await;
     code
 }
 
@@ -288,6 +310,7 @@ async fn serve(args: ServeArgs) -> u8 {
     let out = Output {
         jsonl: args.events_jsonl,
     };
+    let mut signals = Signals::new();
     let paths = HostPaths::new(&args.common.data_dir);
     let report = match run_preflight(out, &paths, &args.common, HeadlessMode::Serve).await {
         Ok(report) => report,
@@ -298,19 +321,27 @@ async fn serve(args: ServeArgs) -> u8 {
         return exit::REJECTED;
     }
 
-    let host = match open(out, &paths, &args.common, true, true).await {
-        Ok(host) => host,
-        Err(code) => return code,
+    let host = tokio::select! {
+        opened = open(out, &paths, &args.common, true, true) => match opened {
+            Ok(host) => host,
+            Err(code) => return code,
+        },
+        // serve のシグナルは正常な閉じ方（0）。
+        () = signals.next() => return exit::OK,
     };
     let events = forward_events(out, &host);
-    let code = serve_in(out, &host, &report).await;
+    let code = serve_in(out, &host, &report, &mut signals).await;
     drop(host);
     finish_events(events).await;
     code
 }
 
-async fn serve_in(out: Output, host: &Host, report: &PreflightReport) -> u8 {
-    let mut signals = Signals::new();
+async fn serve_in(
+    out: Output,
+    host: &Host,
+    report: &PreflightReport,
+    signals: &mut Signals,
+) -> u8 {
     let door_error = host
         .mcp_server_error
         .lock()
@@ -319,9 +350,15 @@ async fn serve_in(out: Output, host: &Host, report: &PreflightReport) -> u8 {
     if let Some(reason) = door_error {
         out.cli(Level::Warn, "DOOR_NOT_OPEN", &reason);
     }
-    let started = match start_agents(out, host, &report.start).await {
-        Ok(started) => started,
-        Err(code) => return code,
+    let started = tokio::select! {
+        started = start_agents(out, host, &report.start) => match started {
+            Ok(started) => started,
+            Err(code) => return code,
+        },
+        () = signals.next() => {
+            close(out, host, &report.start, signals).await;
+            return exit::OK;
+        }
     };
     out.cli(
         Level::Info,
@@ -333,40 +370,68 @@ async fn serve_in(out: Output, host: &Host, report: &PreflightReport) -> u8 {
     );
     signals.next().await;
     out.cli(Level::Info, "CLOSING", "閉じます（もう一度押すと待たずに閉じます）");
-    close(out, host, &started, &mut signals).await;
+    close(out, host, &started, signals).await;
     exit::OK
 }
 
-/// Ctrl+C と（Unix では）SIGTERM。コンテナの停止は SIGTERM で来る。
+/// Ctrl+C（SIGINT）と、Unix では SIGTERM。コンテナの停止は SIGTERM で来る。
+///
+/// **作った時点で受け口を登録する**（`tokio::signal::ctrl_c()` は async fn で、poll される
+/// まで何も登録しない — 待っていない間の Ctrl+C は既定の処理でプロセスごと落ちる）。
+/// 登録した後に来たシグナルは、次の [`Signals::next`] で受け取れる。
 struct Signals {
+    #[cfg(windows)]
+    ctrl_c: Option<tokio::signal::windows::CtrlC>,
     #[cfg(unix)]
-    term: Option<tokio::signal::unix::Signal>,
+    interrupt: Option<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
 }
 
 impl Signals {
     fn new() -> Self {
-        Self {
-            #[cfg(unix)]
-            term: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok(),
+        #[cfg(windows)]
+        {
+            Self {
+                ctrl_c: tokio::signal::windows::ctrl_c().ok(),
+            }
+        }
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            Self {
+                interrupt: signal(SignalKind::interrupt()).ok(),
+                terminate: signal(SignalKind::terminate()).ok(),
+            }
         }
     }
 
-    /// 次のシグナルを待つ。
+    /// 次のシグナルを待つ。受け口を 1 つも登録できなかった環境では待ち続ける（シグナル以外で
+    /// 閉じる手段はプロセスを殺すことだけ — ロックは OS が外す）。
     async fn next(&mut self) {
-        #[cfg(unix)]
+        #[cfg(windows)]
         {
-            if let Some(term) = self.term.as_mut() {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {}
-                    _ = term.recv() => {}
+            match self.ctrl_c.as_mut() {
+                Some(ctrl_c) => {
+                    ctrl_c.recv().await;
                 }
-                return;
+                None => std::future::pending::<()>().await,
             }
         }
-        // ctrl_c の登録に失敗した環境では待ち続ける（シグナル以外で閉じる手段は
-        // プロセスを殺すことだけ — ロックは OS が外す）。
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
+        #[cfg(unix)]
+        {
+            async fn recv(signal: Option<&mut tokio::signal::unix::Signal>) {
+                match signal {
+                    Some(signal) => {
+                        signal.recv().await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            }
+            tokio::select! {
+                () = recv(self.interrupt.as_mut()) => {}
+                () = recv(self.terminate.as_mut()) => {}
+            }
         }
     }
 }

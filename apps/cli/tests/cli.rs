@@ -66,6 +66,9 @@ enum Stub {
     Answer,
     /// 毎周ツールを呼ぶ（本文を返さない）。予算の天井に当てるため。
     ToolEveryRound,
+    /// 3 秒待ってから本文を返す（Ctrl+C を飛行中のターンへ当てるため）。
+    #[cfg_attr(not(unix), allow(dead_code))]
+    SlowAnswer,
 }
 
 /// ループバックに OpenAI 互換スタブを立て、`(base_url, 受けた要求の数)` を返す。
@@ -103,8 +106,11 @@ fn spawn_stub(stub: Stub) -> (String, Arc<AtomicUsize>) {
                         break;
                     }
                 }
+                if matches!(stub, Stub::SlowAnswer) {
+                    std::thread::sleep(Duration::from_secs(3));
+                }
                 let payload = match stub {
-                    Stub::Answer => serde_json::json!({
+                    Stub::Answer | Stub::SlowAnswer => serde_json::json!({
                         "choices": [{
                             "message": { "role": "assistant", "content": ANSWER },
                             "finish_reason": "stop",
@@ -386,6 +392,50 @@ fn a_budget_stop_exits_nine() {
     );
     assert_eq!(run.code, 9, "stdout={} stderr={}", run.stdout, run.stderr);
     assert!(!run.stdout.is_empty(), "定型文は標準出力へ書く（凍結 10）");
+}
+
+/// `ask` の途中の SIGINT（端末の Ctrl+C）は打ち切りになり 8。閉じ方を通るので、飛行中の
+/// ターンの払いの記録（`turn:` 行）も残る（凍結 11・#103）。**Unix だけ** — Windows で子へ
+/// Ctrl+C を送るにはコンソールを共有する必要があり、自動では送れない（P6 の実機で確かめる）。
+#[cfg(unix)]
+#[test]
+fn sigint_during_ask_interrupts_and_exits_eight() {
+    let dir = TempDir::new("sigint");
+    make_village(&dir, &spawn_stub(Stub::SlowAnswer).0, None);
+    let mut child = Command::new(BIN)
+        .args([
+            "ask", "--data-dir", data_dir(&dir), "--start", "reception", "--secrets", "env",
+            "こんにちは",
+        ])
+        .env(SECRET_VAR, "dummy-key")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // スタブが 3 秒待っている間（ターンの飛行中）に送る。
+    std::thread::sleep(Duration::from_millis(1500));
+    let status = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status.code().unwrap_or(-1);
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("60 秒で終わらなかった");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    assert_eq!(code, 8, "stderr={stderr}");
+    let log = std::fs::read_to_string(dir.workspace().join("fuseforks.log")).unwrap();
+    assert!(log.contains("] turn: agent="), "払いの turn: 行が残る: {log}");
 }
 
 /// `--start` を省くと引数の誤り = 2（既定値は無い）。
