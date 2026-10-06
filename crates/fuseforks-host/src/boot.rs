@@ -16,10 +16,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fuseforks_core::secret::{secret_name_collisions, SecretNameCollision};
 use fuseforks_core::{
-    BlackboardTool, ConfigStore, DiffTool, FdTool, FileTool, GrepTool, HttpBackendFactory,
-    KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool, RememberTool, RunTool, SdTool,
-    SecretStore, YqTool,
+    BlackboardTool, ConfigStore, DiffTool, EnvSecretStore, FdTool, FileTool, GrepTool,
+    HttpBackendFactory, KeyringSecretStore, Orchestrator, OrchestratorConfig, RagTool,
+    RememberTool, RunTool, SdTool, SecretStore, YqTool,
 };
 
 use crate::jev_settings::JevSettingsStore;
@@ -29,19 +30,44 @@ use crate::paths::HostPaths;
 use crate::pricing_source::PricingSourceStore;
 use crate::probe_approvals::ApprovalStore;
 
+/// 秘密をどこから読むか（Spec 64 D4）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretSource {
+    /// OS の資格情報ストア。**GUI は常にこれ。** CLI の既定もこれ。
+    Keyring,
+    /// 環境変数（`FUSEFORKS_SECRET_*`）。読み取り専用。コンテナ向け。
+    Env,
+}
+
 /// 呼び出し側（GUI / CLI）ごとに違う、組み立ての選択。
 ///
-/// Spec 64 D1 の形は 4 欄（`app_version` / `secrets` / `run_schedules` / `open_door`）だが、
-/// **欄はその機構が着地した Phase で足す** — `secrets`（`EnvSecretStore`）と
-/// `run_schedules`（`OrchestratorConfig` の欄）は P3 で。今日の 2 欄はどちらも読まれる。
+/// 欄は Spec 64 D1 の 4 つ。**欄はその機構が着地した Phase で足した**（P1 で
+/// `app_version` / `open_door`、P3 で `secrets` / `run_schedules`）— 読まれない欄を
+/// 先に置かない。
 #[derive(Debug, Clone)]
 pub struct HostBootOptions {
     /// `version: app=… profile=…` の行に書く版（D11）。GUI は `package_info().version`、
     /// CLI は `build.rs` が取った `0.4.0+g1b33d9d` の形。
     pub app_version: String,
+    /// 秘密をどこから読むか（D4）。GUI は常に [`SecretSource::Keyring`]。
+    pub secrets: SecretSource,
+    /// 予定のティッカーを回すか（D6）。GUI と `serve` は真、`ask` と `check` は偽。
+    pub run_schedules: bool,
     /// `mcp_server.json` の設定どおり扉を開くか（D9）。GUI と `serve` は真、
     /// `ask` と `check` は偽。偽でも棚（設定）は読む — 開かないだけ。
     pub open_door: bool,
+}
+
+impl HostBootOptions {
+    /// GUI の組み立て（keyring・予定を回す・扉を設定どおりに開く）。
+    pub fn gui(app_version: impl Into<String>) -> Self {
+        Self {
+            app_version: app_version.into(),
+            secrets: SecretSource::Keyring,
+            run_schedules: true,
+            open_door: true,
+        }
+    }
 }
 
 /// 開いた村。組み立てが済んだ部品の束で、IPC と CLI はここを読む。
@@ -101,9 +127,22 @@ pub enum HostError {
     /// 作れない（[`LockError::Io`]）。どちらも村を 1 つも開かずに返る（D3）。
     #[error(transparent)]
     Lock(#[from] LockError),
+    /// 環境変数から読むとき、2 つ以上の鍵が同じ変数名に写る（D4）。どちらの鍵の値か
+    /// 決められないので組み立てを止める。`bootstrap` の直後・MCP の接続より前で止まるので、
+    /// 何も外へ出ていない。**値は載せない**（変数名と鍵だけ）。
+    #[error("秘密の環境変数名が衝突しています（どちらの鍵か決められません）: {}", describe_collisions(.0))]
+    SecretNameCollision(Vec<SecretNameCollision>),
     /// `bootstrap` が失敗した（保存済み `world.json` が壊れている等）。
     #[error(transparent)]
     Core(#[from] fuseforks_core::CoreError),
+}
+
+fn describe_collisions(found: &[SecretNameCollision]) -> String {
+    found
+        .iter()
+        .map(|c| format!("{} ← {}", c.variable, c.keys.join(" / ")))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// 村を開いて組み立てる。
@@ -154,8 +193,12 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     );
 
     // 秘密は OS の資格情報ストアにだけ置く。ワークスペースの `world.json` は
-    // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。
-    let secrets: Arc<dyn SecretStore> = Arc::new(KeyringSecretStore::new());
+    // 平文で保存されるため、そちらへ秘密が入る経路を持たせない。コンテナでは
+    // デプロイ時に注入する環境変数を読む（読み取り専用。D4）。
+    let secrets: Arc<dyn SecretStore> = match opts.secrets {
+        SecretSource::Keyring => Arc::new(KeyringSecretStore::new()),
+        SecretSource::Env => Arc::new(EnvSecretStore::from_env()),
+    };
     let factory = Arc::new(HttpBackendFactory::echo_on_failure(Arc::clone(&secrets)));
 
     let store = ConfigStore::new(&workspace);
@@ -163,9 +206,28 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         store.clone(),
         factory,
         Arc::clone(&secrets),
-        OrchestratorConfig::default(),
+        OrchestratorConfig {
+            run_schedules: opts.run_schedules,
+            ..OrchestratorConfig::default()
+        },
     )
     .await?;
+
+    // 環境変数名の衝突（D4）。**`bootstrap` の直後・MCP の接続より前** — `bootstrap` は
+    // LLM も MCP も呼ばないので、ここで止めれば何も外へ出ていない。数える鍵は村の
+    // テンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン）。
+    if opts.secrets == SecretSource::Env {
+        let templates = orchestrator.templates().await;
+        let found = secret_name_collisions(
+            templates
+                .iter()
+                .map(|t| t.id.as_str())
+                .chain(std::iter::once(crate::jev_settings::TOKEN_KEY)),
+        );
+        if !found.is_empty() {
+            return Err(HostError::SecretNameCollision(found));
+        }
+    }
 
     // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
     // 実行時に解決されるため、ここでは登録するだけでよい。

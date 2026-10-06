@@ -2559,8 +2559,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 **次の一手**: ~~**Spec 64 の P0**~~（**→ 同日夕に完了**。probe は `922fdaf` で足して数字を写してから消した）→
 ~~**Spec 64 の P1**~~（**→ 同日夜に完了**。6 コミット・起動ログ 6 行が一致）→ ~~**Spec 64 の P2**~~（**→ 同日深夜に
-完了**。`f7ebb37` + `e7eecd6`）→ **Spec 64 の P3**（コア — `EnvSecretStore` と衝突の検査 / `headless_preflight` の
-純関数と D5 の表 9 行 / `OrchestratorConfig::run_schedules` / `ask_external_outcome`）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
+完了**。`f7ebb37` + `e7eecd6`）→ ~~**Spec 64 の P3**~~（**→ 同日に完了**。`cargo clean` で D: の 84.4 GiB を
+空けてから回した。同じ日に別セッションの PR #5（接地エンジンの辞書鍵 = `failures.md` #141）をマージ）→
+**Spec 64 の P4**（実行ファイル `fuseforks-cli` の `check` / `ask` / `serve`）。その後は従来どおり — Spec 62 / 63 の未決は使ってから /
 `refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-01 更新）
@@ -7215,8 +7216,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   `DatabaseAlreadyOpen` を `SESSION_STORE_LOCKED` で返し `bootstrap` はそれだけを止める / `BootStatus.errorCode` =
   `VILLAGE_LOCKED` で覆いの文言を ja・en の辞書から / **MSRV 1.89 は別コミット**で、解禁された clippy 9 件も同時に
   （`f7ebb37` → `e7eecd6`）。旧挙動の WARN 続行に寄りかかっていたテストが 1 本あり drop してから再起動する形へ。
-  記録は Spec の「P2 実装記録」）。**次は P3**（コア: `EnvSecretStore` / `headless_preflight` / `run_schedules` /
-  `ask_external_outcome`）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
+  記録は Spec の「P2 実装記録」）**→ P3 完了**（同日。`EnvSecretStore`（読み取り専用・文面に変数名だけ）と変数名の
+  衝突の検査（村のテンプレート ID + 固定の鍵 `jev_api_token`。env のときだけ）/ `headless_preflight` = D5 の 9 行を
+  閉じた識別子 11 個で返す純関数（秘密の行を `SECRET_MISSING` / `MODEL_TEMPLATE_MISSING`、窓口の行を
+  `RECEPTION_UNSET` / `RECEPTION_MISSING` へ割った）/ `run_schedules`（偽ならティッカーを起こさない。期限の来た予定で
+  真なら消化・偽なら触れないを対で確かめた）/ `ask_external_outcome`。変異 6 本 — **並べ替えを消す変異が最初は
+  生き残った**（入力が表の順のまま重い順にもなっていた）ので、表の順と重さが逆転する入力へ直してから赤を確認。
+  記録は Spec の「P3 実装記録」）。**次は P4**（実行ファイル `fuseforks-cli`）。起点は利用者「fuseforks-core と GUI の完全分離構想の仕様を」。**「分離」は GUI なしで回せる意味**で、
   GUI を常駐プロセスのクライアントにする形（agent-orchestrator）は採らない。骨格 = 新 crate `fuseforks-host`
   （`build_state` の本体と扉・前判定の承認・単価表・Jev の 4 ファイル。入口は `build_host(paths, HostBootOptions)` の 1 実装で、
   予定を回すか・扉を開くか・秘密の読み先は呼び出し側が決める）/ 新 bin `fuseforks-cli` の `check` / `ask` / `serve` /

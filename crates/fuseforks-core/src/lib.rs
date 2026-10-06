@@ -71,6 +71,7 @@ pub mod diag;
 pub mod doc_index;
 pub mod error;
 pub mod event;
+pub mod headless;
 pub mod jev;
 pub mod judge;
 pub mod llm;
@@ -125,7 +126,7 @@ pub use schedule::{
     GRACE_MINUTES, InvalidRecurrence, Recurrence, ScheduledTask, Tick, Weekday, due_interval,
     due_wall_clock,
 };
-pub use secret::{InMemorySecretStore, KeyringSecretStore, SecretStore};
+pub use secret::{EnvSecretStore, InMemorySecretStore, KeyringSecretStore, SecretStore};
 pub use session_store::{
     ForkPoint, Record, RestoredHistories, SessionMeta, SessionStore, SessionSummary,
 };

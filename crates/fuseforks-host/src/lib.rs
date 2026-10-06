@@ -19,6 +19,6 @@ pub mod paths;
 pub mod pricing_source;
 pub mod probe_approvals;
 
-pub use boot::{build_host, Host, HostBootOptions, HostError};
+pub use boot::{build_host, Host, HostBootOptions, HostError, SecretSource};
 pub use lock::{LockError, VillageLock, LOCK_FILE};
 pub use paths::HostPaths;

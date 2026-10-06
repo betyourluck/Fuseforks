@@ -564,6 +564,26 @@ impl Orchestrator {
     /// - 窓口が停止中 [`CoreError::NotRunning`]
     /// - 別の外部依頼を処理中 [`CoreError::ExternalBusy`]
     pub async fn ask_external(&self, client: &str, message: &str) -> CoreResult<String> {
+        // 分類は捨てる（`ask` と同じ）。**失敗も文字列で返る** — 相手が
+        // 答えなかった・時間切れだったは会話の事実であって、扉の故障ではない。
+        let (answer, _state) = self.ask_external_outcome(client, message).await?;
+        Ok(answer)
+    }
+
+    /// [`Self::ask_external`] と同じ 1 通を送り、答えと**配送の結末**を返す（Spec 64 D10）。
+    ///
+    /// 扉（MCP サーバー）は結末を捨てて文字列だけを返す。`fuseforks-cli ask` は結末を
+    /// 終了コードに写す（Answered / HandedOff = 0・NoAnswer / Undeliverable = 6・
+    /// TimedOut = 7・Interrupted = 8・BudgetExhausted = 9）— コンテナや CI が日本語の
+    /// 定型文を解析せずに結末を読めるようにする。**配送そのものは 1 つも変わらない。**
+    ///
+    /// # Errors
+    /// [`Self::ask_external`] と同じ。
+    pub async fn ask_external_outcome(
+        &self,
+        client: &str,
+        message: &str,
+    ) -> CoreResult<(String, crate::plan::PlanTaskState)> {
         // D7 — 同時 1 本。**待たずに即断る**（待つと閉路のデッドロックが
         // ask_timeout ぶん居座り、呼ぶ側からは「重い依頼」と区別が付かない）。
         // permit はこの関数を抜けるまで握る = 答えが返るまで次を通さない。
@@ -600,7 +620,7 @@ impl Orchestrator {
         // 因果の根なので親トークンを持たない。打ち切りは既存の
         // `interrupt_turn` / `interrupt_all` が窓口のターンに効く。
         let cancel = tokio_util::sync::CancellationToken::new();
-        let (answer, _state) = deliver_and_wait(
+        let outcome = deliver_and_wait(
             &self.shared,
             &from,
             &to,
@@ -617,9 +637,7 @@ impl Orchestrator {
             false,
         )
         .await;
-        // 分類は捨てる（`ask` と同じ）。**失敗も文字列で返る** — 相手が
-        // 答えなかった・時間切れだったは会話の事実であって、扉の故障ではない。
-        Ok(answer)
+        Ok(outcome)
     }
 
     // ---- 予定（Spec 07） -----------------------------------------------------

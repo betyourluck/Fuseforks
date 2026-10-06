@@ -154,6 +154,13 @@ pub struct OrchestratorConfig {
     /// 長い発話 1 つでログ全体が埋まるのを防ぐ。要点だけ見えれば
     /// 「誰が何の話をしていたか」は伝わる。
     pub room_log_excerpt_chars: usize,
+    /// 予定のティッカーを起こすか（Spec 64 D6）。
+    ///
+    /// 既定 true（GUI と `serve`）。`ask` と `check` は偽にする — その間に期限の来た予定が
+    /// 同じプロセスで走ると、頼んでいない仕事が走る。偽でも消化の記録
+    /// （`lastConsumedDueMs`）には触れないので、次に真で開いたときは今までどおり
+    /// 「再開時に 1 回だけ」が働く。
+    pub run_schedules: bool,
     // 委譲の待ち時間（旧 `ask_timeout`）は Spec 44 で `World::ask_timeout()` へ
     // 移した — 既定 600 秒はあちらの 1 箇所に住み、二重定義を作らない。
     // 輪の解放も時計の仕事ではなくなった（`Envelope.waiting` の構造検出）。
@@ -172,6 +179,7 @@ impl Default for OrchestratorConfig {
             log_capacity: 5_000,
             room_log_window: 12,
             room_log_excerpt_chars: 200,
+            run_schedules: true,
         }
     }
 }
@@ -1051,7 +1059,8 @@ pub struct Orchestrator {
     stats_task: JoinHandle<()>,
     /// スケジューラ層の実行時状態（Spec 07）。ticker タスクと共有する。
     schedule_runtime: Arc<ScheduleRuntime>,
-    schedule_task: JoinHandle<()>,
+    /// 予定のティッカー。`run_schedules` が偽なら起こさないので `None`（Spec 64 D6）。
+    schedule_task: Option<JoinHandle<()>>,
 }
 
 impl Orchestrator {
@@ -1350,7 +1359,9 @@ impl Drop for Orchestrator {
         // 予定ティッカーも同じ。消化の永続化は tick 単位で完結しており、
         // tick の途中で切っても「消化したのに発火していない」は起きない
         // （消化の書き込みは配送成功の後）。
-        self.schedule_task.abort();
+        if let Some(task) = &self.schedule_task {
+            task.abort();
+        }
     }
 }
 

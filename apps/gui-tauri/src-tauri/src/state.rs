@@ -76,13 +76,11 @@ pub async fn build_state(app: &AppHandle) -> Result<AppState, BootFailure> {
         code: None,
         message: err.to_string(),
     })?;
+    // GUI は常に keyring・予定を回す・扉を設定どおりに開く（ヘッドレスの `ask` /
+    // `check` だけがそれぞれを外す）。
     let host = build_host(
         &HostPaths::new(data_dir),
-        HostBootOptions {
-            app_version: app.package_info().version.to_string(),
-            // GUI は常に扉を設定どおりに開く（開かないのは `ask` / `check` だけ）。
-            open_door: true,
-        },
+        HostBootOptions::gui(app.package_info().version.to_string()),
     )
     .await
     .map_err(|err| BootFailure::from_host(&err))?;

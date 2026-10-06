@@ -3855,6 +3855,10 @@ entities:
     attachment gc: / mcp server: / jev: — の並びを P1 で突き合わせ、2026-10-06 に一致を確認)。**
     P1 は同日に着地 (crates/fuseforks-host の boot.rs / paths.rs + 4 ファイルの移動。
     HostBootOptions は app_version / open_door の 2 欄で、secrets / run_schedules は P3 で)。
+    P2 (凍結 3・4 = 村の排他ロックと二重の網) と P3 (凍結 5・6・8・9 のコア側 = EnvSecretStore と
+    衝突の検査・headless_preflight・run_schedules・ask_external_outcome) も同日に着地。
+    HostBootOptions は 4 欄 (app_version / secrets / run_schedules / open_door) になり、GUI は
+    HostBootOptions::gui (keyring・予定を回す・扉を開く) を渡す。残る P4 は実行ファイル fuseforks-cli。
 
     P0 実測 (2026-10-06。tools/lock_probe を 3 OS の CI で。予測を先に書いて 3 OS とも全部一致):
       - std::fs::File::try_lock: 別プロセスが持つ → WouldBlock / 同じプロセスの別ハンドル →
@@ -3887,7 +3891,8 @@ entities:
          触る形が一番起きやすい)。棚 (mcp_server.json / pricing.json / probe_approvals.json /
          jev.json) は data_dir 直下のまま
       3. **村の排他ロック = {workspace}/.fuseforks.lock の OS ロック (File::try_lock)。** build_host の
-         最初の手 (create_dir_all の直後) で、取れなければそれ以上何も開かずに HostError::Locked。
+         最初の手 (create_dir_all の直後) で、取れなければそれ以上何も開かずに HostError::Lock (LockError::Held = 別プロセス /
+         LockError::Io = 作れない・ロックの無い OS)。
          **ファイルの存在では判定しない** (殺された後もファイルは残るが、ロックは OS が外す —
          P0 実測)。**中身は書かない** (Windows では相手が読めない)。Host が Drop するまで外さない。
          tauri-plugin-single-instance は残す (役目が違う: 2 つ目の GUI を前面化して閉じる)
@@ -3909,6 +3914,12 @@ entities:
          計画の確認 (planReview) ON の個体が起動する集合に居る (--bypass-plan-review で通す =
          Spec 53 のスイッチを立てるだけ) / 起動する集合のテンプレートに選んだストアの秘密が無い /
          ask で窓口 (reception) が未設定・削除済み。警告 4 つ・情報 2 つは Spec 64 D5 の表が正。
+         **行と識別子は 1 対 1 ではない** (P3): 表の 9 行を閉じた識別子 11 個で返す — 拒否
+         PLAN_REVIEW_WAITS / SECRET_MISSING / MODEL_TEMPLATE_MISSING (テンプレートが村に無いと秘密の
+         有無が問えない) / RECEPTION_UNSET / RECEPTION_MISSING (直し方が違う)、警告
+         SCHEDULE_TARGET_OUTSIDE / RUN_APPROVAL_REQUIRED / PROBE_UNAPPROVED / JEV_TOKEN_MISSING
+         (判断役と圧縮の 2 つの理由で同じ識別子)、情報 RECEPTION_TARGETS_OUTSIDE / MCP_STDIO。
+         結果は重い順 (拒否 → 警告 → 情報。同じ重さの中は表の順)。文は村の言語
          ask と serve は自分の起動の途中で同じ検査を走らせ、拒否が 1 件でもあれば LLM を 1 回も
          呼ばずに止まる。拒否と警告の文は直し方を書く (#44)
       7. **batch_start_invariant は GUI では不変。ヘッドレスは --start を必須にする** (既定値なし。

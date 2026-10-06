@@ -1,12 +1,14 @@
 # Spec 64: コアを GUI なしで動かす（ホストの切り出しとヘッドレス実行）
 
-- 状態: **rev2・P2 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
+- 状態: **rev2・P3 完了・未決 0**（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2。表は Notes 4。
   rev2 の再査読で未決 1 を rev2 の方針どおりに閉じた → **同日夕に P0 完了** — 起動ログの基準 6 行 /
   ロックの実測 3 OS・12 場面すべて予測どおり / `headless_host_contract` 凍結 15 本。「P0 実測記録」が正
   → **同日夜に P1 完了** — `crates/fuseforks-host` へ 4 ファイル + `build_host`（6 コミット・挙動不変・
   起動ログ 6 行が一致）。「P1 実装記録」が正 → **同日深夜に P2 完了** — 村の排他ロック + 二重の網 +
-  覆いの文言 + MSRV 1.89（2 コミット）。「P2 実装記録」が正。**次は P3**（コア: `EnvSecretStore` /
-  `headless_preflight` / `run_schedules` / `ask_external_outcome`））
+  覆いの文言 + MSRV 1.89（2 コミット）。「P2 実装記録」が正 → **同日に P3 完了** — `EnvSecretStore` と
+  衝突の検査 / `headless_preflight`（9 行 → 識別子 11）/ `run_schedules` / `ask_external_outcome`。変異 6 本とも
+  狙った 1 本だけ赤（1 本は並びのテストの穴を直してから）。「P3 実装記録」が正。**次は P4**（実行ファイル
+  `fuseforks-cli`））
 - 起点: 利用者（2026-10-06）—「以前から構想されていた fuseforks-core と GUI の完全分離構想について、
   仕様を作ってください」
 - 前提の裁定（2026-09-14 利用者）:「最初は GUI で回して、そのフローが自動化で失敗しないようになったら、
@@ -164,7 +166,8 @@ impl HostPaths {
 
 - `build_host` の最初の手として `data_dir` と `workspace` を `create_dir_all` し（初回起動では無いので）、
   `{workspace}/.fuseforks.lock` を作って OS の排他ロックを取る（`std::fs::File::try_lock`）。
-  取れなければ**それ以上何も開かずに** `HostError::Locked` で返す
+  取れなければ**それ以上何も開かずに** ~~`HostError::Locked`~~ `HostError::Lock(LockError::Held)` で返す
+  （型名は P2 の実装で `Lock(LockError)` へ。`Held` = 別プロセス / `Io` = 作れない・ロックの無い OS）
   - GUI: 起動の覆いに「この村は別のプロセスが開いています（Fuseforks の GUI か、fuseforks-cli）」
   - CLI: 終了コード 4（D10）と同じ文を標準エラーへ
 - **ロックファイルの存在ではなく OS のロックで判定する。** プロセスが落ちれば OS が外すので、強制終了の後に
@@ -443,10 +446,11 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 
 ### P3 — コア
 
-- [ ] `EnvSecretStore`（変数名の写像・set/delete はエラー・値をエラー文に載せない）と衝突の検査（固定の鍵を含む）
-- [ ] `headless_preflight`（純関数。D5 の表の 9 行を 1 つずつ単体で、`Ask` と `Serve` の両方で）
-- [ ] `OrchestratorConfig::run_schedules`（偽ならティッカーを起こさない。既定 true でバイト等価）
-- [ ] `ask_external_outcome`。`ask_external` はそれを呼ぶ 1 行へ（扉の結合テストが緑のまま）
+- [x] `EnvSecretStore`（変数名の写像・set/delete はエラー・値をエラー文に載せない）と衝突の検査（固定の鍵を含む）
+      （2026-10-06。「P3 実装記録」）
+- [x] `headless_preflight`（純関数。D5 の表の 9 行を 1 つずつ単体で、`Ask` と `Serve` の両方で）（同日。行 → 識別子は 11）
+- [x] `OrchestratorConfig::run_schedules`（偽ならティッカーを起こさない。既定 true でバイト等価）（同日）
+- [x] `ask_external_outcome`。`ask_external` はそれを呼ぶ 1 行へ（扉の結合テストが緑のまま）（同日）
 
 ### P4 — 実行ファイル
 
@@ -631,6 +635,65 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
   `errorCode` の有無による切り替えを留めた（画面の目視は P6）。1 回目は前回の `tauri dev` が残した vite が
   ポート 1420 を握っていて `beforeDevCommand` が落ちた — `Stop-Process -Name fuseforks` は GUI だけを殺し、
   vite は残る
+
+## P3 実装記録（2026-10-06）
+
+**コミット 1 本。** コア 3 つ（`secret.rs` の `EnvSecretStore` / 新設 `headless.rs` / `run_schedules` と
+`ask_external_outcome`）+ ホストの `HostBootOptions` 4 欄。clippy 0・Rust 63 バイナリ 1,247 本緑（PR #5 を取り込んだ後）・
+vitest 760・vue-tsc 0・変異 6 本とも狙った 1 本だけ赤。
+**GUI の起動はバイト等価**（`HostBootOptions::gui` = keyring・予定を回す・扉を開く。`run_schedules=false` の
+ときだけ出る `schedule: ティッカーは起こしません` の行は GUI では出ない）。
+
+- **`EnvSecretStore`** — `from_env`（UTF-8 でない変数は読まない）/ `from_vars`（テストと、環境を差し替えたい
+  呼び出し側のため）/ `variable_names`（`check` が「どの変数が有るか」を出すため。値は返さない）。`set` / `delete` は
+  `CoreError::SecretStore` を返し、**文面には変数名だけを載せる**（「`FUSEFORKS_SECRET_X` を設定して起動し直して
+  ください」）。写像は `env_secret_name`、衝突は純関数 `secret_name_collisions` で、**どちらもコアに置いた** —
+  `headless_preflight` が直し方の文に変数名を書くのに同じ写像を使うため
+- **衝突の検査は `opts.secrets == Env` のときだけ、`bootstrap` の直後・同梱ツールの登録と MCP の接続より前。**
+  数える鍵は村のテンプレート ID の全部 + `jev_settings::TOKEN_KEY`。`HostError::SecretNameCollision` の文は
+  `変数名 ← 鍵 / 鍵` の形で値を載せない（値はそもそも読んでいない）。**固定の鍵を数えないと、テンプレート ID が
+  `jev-api-token` の村で Jev のトークンとテンプレートの鍵が同じ変数を指す** — 結合テストを 1 本足して留めた
+- **`secret.rs` の doc の 1 段落（P5 の項目）はここで書いた** — 「なぜ環境変数ではないのか」はデスクトップの話として
+  残し、コンテナでは逆になること・読み取り専用にしたのは #1 の教訓の側であることを足した。型の隣の doc は型と
+  一緒に動くのが正しい単位（Spec 27 P0 で `event.rs` の doc を P1 へ送ったのと同じ判断）
+- **`headless_preflight` は D5 の表の 9 行を、閉じた識別子 11 個で返す。** 行と識別子が 1 対 1 でないのは 2 行:
+  - 2 行目（秘密が無い）を `SECRET_MISSING` / `MODEL_TEMPLATE_MISSING` へ — **テンプレートが村に無い個体は秘密の
+    有無が問えない**。引けなかった個体を黙って飛ばすと「拒否 0 件」で通り、起動後に別のエラーで落ちる
+  - 3 行目（窓口）を `RECEPTION_UNSET` / `RECEPTION_MISSING` へ — 直し方が違う（初めて設定する / 設定し直す。
+    Spec 25 P1 が `EXTERNAL_RECEPTION_UNSET` と `AGENT_NOT_FOUND` を分けたのと同じ区別）
+  - 逆に 8 行目（判断役 / 圧縮）は理由が 2 つでも識別子は `JEV_TOKEN_MISSING` 1 つ（直し方が同じ）
+- **秘密の判定は `CredentialSource` で分けた** — `NotRequired` は問わない / `Unset` は選んだストアに関係なく拒否
+  （どのストアにも鍵が無い）/ `Keyring` だけ `secret_present` に訊く。文の直し方には env の変数名を書く
+- **`HostView` は D5 の素描より 1 欄多い** — `stdio_mcp_servers`（9 行目の材料）。`mcp.json` は `World` の外に
+  あるので、共通と個体別を呼び出し側（P4 の CLI）が集めて渡す。純関数のままファイルを読まない
+- **結果は重い順（拒否 → 警告 → 情報）で、同じ重さの中は表の順（stable sort）。** 文は村の言語（未確定なら ja）
+- **並びのテストが最初は何も確かめていなかった（変異 M6 で発覚）。** 入力の指摘が表の順のまま重い順にもなって
+  いたので、並べ替えを消しても緑だった。**表の順と重さが逆転するのは 4 行目（情報）が 5〜8 行目（警告）より上に
+  あるところだけ**で、そこを踏む入力（窓口の接続先が集合の外 + 承認モード）に直して赤を確認した。
+  **一般化: 並べ替えのテストは、並べ替える前の順と後の順が違う入力で書く** — 同じなら並べ替えの有無を区別しない
+- **`run_schedules`** — `Orchestrator.schedule_task` を `Option<JoinHandle>` にし、偽なら起こさない（Drop は
+  `if let Some`）。`lastConsumedDueMs` に触れないので、次に GUI か `serve` で開いたとき「再開時に 1 回だけ」が働く。
+  `runs_schedules()` を足したが、**テストはフラグではなく振る舞いで見る** — 期限の来た予定（作成時刻を 10 分前へ
+  ずらした 1 分間隔）を置いて実ティッカーを 20 ms で回し、真なら消化・偽なら 500 ms 待っても `None`、を対で
+  確かめた（正の対照が無いと、ティッカーが何もしない実装でも偽の側は緑）。手動の `run_schedule_tick` は偽でも
+  呼べる（テストの足場）
+- **`ask_external_outcome`** — `deliver_and_wait` の結末をそのまま返し、`ask_external` はそれを呼んで状態を捨てる
+  1 行。`external_ask.rs`（扉側）は無改変で緑
+- **予測を 1 つ外した** — `BudgetExhausted` の結末を「天井 5 なら初回の見積もりの床 1,000 に届かず、LLM を呼ばずに
+  止まる」と読んで echo で書いたら `Answered` が返った。**初回の見積もりは `min(床, 天井)` に丸められる**
+  （`reserve_estimate_milli`）ので 1 周目は通り、echo は 1 周で答える。`external_ask.rs` と同じく毎周ツールを
+  呼ぶバックエンドで 2 周目を天井に当てる形へ直した（1 周目の実効 = 未キャッシュ 1 + 出力 1 × 4 = 5 でちょうど尽きる）
+- **keyring の組み立てを結合テストにしなかった** — `build_host` は Jev の設定を当てるときに資格情報ストアから
+  `jev_api_token` を読みに行く（`jev_settings::apply` → `stored_token`）ので、テストから開発機や CI の資格情報
+  ストアに触れることになる。既存のテスト名 `…_only_for_env` は keyring で止めないことまで確かめているように
+  読めたので `colliding_secret_names_stop_an_env_boot` へ改名した
+- **変異 6 本**（予測を先に書き、戻した後に SHA-1 で一致を確認）: 計画の確認の門を外す → 1 / `run_schedules` を
+  無視する → 1（偽の側）/ 接頭辞の絞り込みを外す → 1 / 固定の鍵を数えない → 1 / 結末を常に `Answered` → 1 /
+  並べ替えを消す → **0（上の穴）→ 直して 1**。回したのは各変異の crate の lib と、その変異を留める結合テストの
+  バイナリだけ（全バイナリではない — #133 の形を避けるためバイナリを名指しした）
+- **道具の罠**: D: の空きが 0.1 GB になり、リンクが `LNK1104` / `LNK1318` / `LNK1180` / `0xc000009a` /
+  os error 112 で落ちた。**正体はディスク満杯で、`target/debug` が 84.4 GiB** あった（`cargo clean` で解消）。
+  `failures.md` #132 の「リンクが落ちて 1 本も走っていない」と同じ症状の、別の原因
 
 ## 未決
 

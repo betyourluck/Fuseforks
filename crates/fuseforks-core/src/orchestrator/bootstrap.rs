@@ -222,11 +222,20 @@ impl Orchestrator {
 
         let stats_task = spawn_stats_ticker(Arc::downgrade(&shared));
         let schedule_runtime = Arc::new(ScheduleRuntime::default());
-        let schedule_task = spawn_schedule_ticker(
-            Arc::downgrade(&shared),
-            Arc::clone(&schedule_runtime),
-            shared.events.subscribe(),
-        );
+        // 予定のティッカー（Spec 07）。`run_schedules` が偽なら起こさない（Spec 64 D6 —
+        // `ask` / `check` の間に期限の来た予定が同じプロセスで走らないように）。
+        // 消化の記録（`lastConsumedDueMs`）にも触れないので、次に GUI か `serve` で
+        // 開いたときは今までどおり「再開時に 1 回だけ」が働く。
+        let schedule_task = if shared.config.run_schedules {
+            Some(spawn_schedule_ticker(
+                Arc::downgrade(&shared),
+                Arc::clone(&schedule_runtime),
+                shared.events.subscribe(),
+            ))
+        } else {
+            note!("schedule: ティッカーは起こしません（run_schedules=false）");
+            None
+        };
 
         Ok(Self {
             shared,
@@ -235,6 +244,14 @@ impl Orchestrator {
             schedule_runtime,
             schedule_task,
         })
+    }
+
+    /// 予定のティッカーが回っているか（`OrchestratorConfig::run_schedules`）。
+    ///
+    /// 偽でも [`Self::run_schedule_tick`] は手で呼べる（テストの足場）— 止めているのは
+    /// 壁時計で勝手に回る側だけ。
+    pub fn runs_schedules(&self) -> bool {
+        self.schedule_task.is_some()
     }
 }
 
