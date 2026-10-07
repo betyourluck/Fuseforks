@@ -3931,6 +3931,9 @@ entities:
       7. **batch_start_invariant は GUI では不変。ヘッドレスは --start を必須にする** (既定値なし。
          none は持たない)。値は batch (GUI の全体 ▶ と同じ述語 = Spec 51 凍結 7) / reception
          (窓口だけ) / <id>,<id>,…。**ask はどの値でも窓口を集合に足す**
+         **--data-dir に world.json が無ければ check / ask / serve とも 5 で止まり、何も作らない**
+         (PreflightError::VillageMissing。Spec 65 P3 の後に足した — それまでは check が空の集合で 0、
+         serve は空の村を作って何も起動せずに走った。GUI は初回起動で村を作るのが正しいまま)
       8. **ask と check は予定のティッカーを回さない** (OrchestratorConfig::run_schedules。既定 true =
          GUI はバイト等価)。lastConsumedDueMs にも触れない。serve は回し、宛先が集合の外の予定は
          GUI と同じ「停止中なのでスキップ」で消化する

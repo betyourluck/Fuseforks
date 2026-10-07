@@ -2578,8 +2578,8 @@ git: P2 までの 8 コミットは push 済み（`496932d..08b2a29`）。P3 は
 **次に触る人が要る 3 点**: (a) **村のロックは Docker Desktop の bind mount を越えない**（実測。コンテナの `serve` が開いている写しを
 Windows の `fuseforks-cli` も開けた）— 参照構成は写しを bind で置くので、`bake --update` の前に `docker compose stop`（契約 15）
 (b) 扉は profile ではなく `compose.door.yaml` を重ねる（profile は `fuseforks` の `command` と `ports:` を変えられない）
-(c) **存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」**で、`serve` は空の村を作って走る — 起動前検査で拒むかは
-利用者の判断（未決）。次は P4（GUI の秘密の参照の保存欄）→ P5 台帳 → P6 実機。
+(c) ~~存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」~~ → **同日に塞いだ**（`world.json` が無ければ 5・何も作らない。
+`PreflightError::VillageMissing`）。次は P4（GUI の秘密の参照の保存欄）→ P5 台帳 → P6 実機。
 
 ## 現在地（2026-10-06 更新）
 

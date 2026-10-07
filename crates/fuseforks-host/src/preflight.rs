@@ -90,6 +90,15 @@ pub enum PreflightError {
     /// `--start reception` を `ask` 以外で使った（引数の誤り — 終了コード 2）。
     #[error("--start reception は ask でだけ使えます（serve では batch か id を書いてください）")]
     ReceptionOnlyForAsk,
+    /// `{data_dir}/workspace/world.json` が無い（終了コード 5。`bake` の「元の村がありません」と同じ）。
+    ///
+    /// **GUI は初回起動で村を作るのが正しいが、ヘッドレスで空の村から始めて役に立つ場面は無い** —
+    /// `--data-dir` の綴り間違い・マウントの漏れ・Git Bash のパス変換（`/data` →
+    /// `C:/Program Files/Git/data`）のどれでも、検査は「起動する集合: （なし）・問題ありません」を返し、
+    /// `serve` はその場所に空の村を作って何も起動せずに走っていた（Spec 65 P3 で実測）。
+    /// 検査の指摘（村の中身について）ではなく、その手前で止める。
+    #[error("村がありません: {0}（world.json が無い。--data-dir に GUI の data_dir か bake の写しを書いてください）")]
+    VillageMissing(String),
     /// `world.json` が読めない・秘密の変数名が衝突する（組み立ての失敗と同じ — 終了コード 5）。
     #[error(transparent)]
     Host(#[from] HostError),
@@ -104,6 +113,9 @@ pub async fn preflight(
     req: &PreflightRequest,
 ) -> Result<PreflightReport, PreflightError> {
     let store = ConfigStore::new(paths.workspace());
+    if !store.world_exists() {
+        return Err(PreflightError::VillageMissing(paths.workspace().display().to_string()));
+    }
     let world = World::from_persisted(store.load_world().await.map_err(HostError::Core)?);
 
     // 組み立てと同じ置き場・同じ衝突の検査（D4）。衝突は組み立ての失敗として返す。

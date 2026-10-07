@@ -2106,7 +2106,7 @@ external-client name wins if set). `ask` runs no schedules and opens no door. Th
 | 2 | Bad arguments |
 | 3 | Rejected by the pre-start check |
 | 4 | Another process has the village open |
-| 5 | Assembly failed (`world.json` broken, secret variable names collide, etc.) |
+| 5 | Assembly failed (`world.json` broken or **missing** — no village at `--data-dir` — secret variable names collide, etc.) |
 | 6 | `ask` got no answer |
 | 7 | `ask` exceeded the wait limit |
 | 8 | `ask` was interrupted (including Ctrl+C) |

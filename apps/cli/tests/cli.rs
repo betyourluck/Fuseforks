@@ -601,3 +601,20 @@ fn the_image_fixture_passes_check() {
     files.sort();
     assert_eq!(files, ["village_id", "world.json"], "check が fixture に書いた");
 }
+
+/// `world.json` の無い `--data-dir` は 5 で止まり、何も作らない（Spec 65 P3 で見つけた穴）。
+/// それまでは `check` が「起動する集合: （なし）・問題ありません」で 0 を返し、`serve` は
+/// その場所に空の村を作って何も起動せずに走り続けた。綴り間違い・マウントの漏れ・Git Bash の
+/// パス変換のどれでも同じ形になる。
+#[test]
+fn a_data_dir_without_a_village_exits_five_and_writes_nothing() {
+    let dir = TempDir::new("novillage");
+    let base = ["--data-dir", data_dir(&dir), "--start", "batch", "--secrets", "env"];
+    for command in [&["check", "--for", "serve"][..], &["serve"][..]] {
+        let args = [command, &base[..]].concat();
+        let run = run(&args, true);
+        assert_eq!(run.code, 5, "{command:?} stdout={} stderr={}", run.stdout, run.stderr);
+        assert!(run.stderr.contains("村がありません"), "{}", run.stderr);
+        assert!(!Path::new(&dir.workspace()).exists(), "{command:?} が workspace を作った");
+    }
+}

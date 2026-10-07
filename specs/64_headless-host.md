@@ -352,7 +352,9 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 | 2 | 引数の誤り |
 | 3 | D5 の検査で拒否された（`check` は拒否が 1 件以上） |
 | 4 | 村のロックが取れない（D3）/ `sessions.redb` を別のプロセスが開いている |
-| 5 | 組み立てに失敗した（`world.json` が壊れている・秘密の変数名が衝突した 等） |
+| 5 | 組み立てに失敗した（`world.json` が壊れている・**無い**（`--data-dir` に村が無い）・秘密の変数名が衝突した 等） |
+
+（**`world.json` が無い**を足したのは Spec 65 P3 の後 — それまで `check` は「起動する集合: （なし）・問題ありません」で 0 を返し、`serve` は空の村を作って走っていた。`PreflightError::VillageMissing`）
 | 6 | `ask`: 答えが返らなかった（`NoAnswer` / `Undeliverable`） |
 | 7 | `ask`: 待ちの上限を超えた（`TimedOut`） |
 | 8 | `ask`: 打ち切られた（`Interrupted` — Ctrl+C を含む） |

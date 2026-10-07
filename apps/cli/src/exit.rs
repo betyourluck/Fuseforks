@@ -77,6 +77,7 @@ pub fn for_host_error(err: &HostError) -> u8 {
 pub fn for_preflight_error(err: &PreflightError) -> u8 {
     match err {
         PreflightError::UnknownAgent(_) | PreflightError::ReceptionOnlyForAsk => USAGE,
+        PreflightError::VillageMissing(_) => BOOT,
         PreflightError::Host(host) => for_host_error(host),
     }
 }
@@ -132,6 +133,10 @@ mod tests {
         );
         assert_eq!(
             for_preflight_error(&PreflightError::Host(collision)),
+            5
+        );
+        assert_eq!(
+            for_preflight_error(&PreflightError::VillageMissing("x".into())),
             5
         );
     }
