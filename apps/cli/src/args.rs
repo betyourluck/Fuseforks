@@ -28,7 +28,8 @@ fuseforks-cli — Fuseforks を GUI なしで動かす（Spec 64）
                       [--bypass-plan-review] [--run-approval <mode>] [--door-port <N>]
                       [--events jsonl]
   fuseforks-cli bake  --data-dir <GUI の dir> --out <写しの dir> --map <元>=<先> [--map …]
-                      [--update] [--source-time-zone <IANA 名>] [--allow-plaintext-headers] [--json]
+                      [--update] [--source-time-zone <IANA 名>] [--allow-plaintext-headers]
+                      [--env-out <.env の道筋>] [--json]
   fuseforks-cli --version | --help
 
   <集合>   batch（GUI の全体 ▶ と同じ対象）| reception（窓口だけ。ask 専用）| <id>,<id>,…
@@ -40,6 +41,8 @@ fuseforks-cli — Fuseforks を GUI なしで動かす（Spec 64）
            --map は作業フォルダ・rag の宣言・予定の cwd の絶対パスを置き換える（最長前方一致）。
            置き換えなかったパスが 1 つでもあれば写しを作らない。--update は写しを作り直す
            （会話・Memory・予定の消化・承認待ちは写し先のものを残す。--map を省けば前回のもの）
+           --env-out は資格情報ストアの鍵をコンテナの .env の形で書く（Spec 66。写しの外だけ・
+           村が要る鍵だけ・値は平文。既にあれば --update のときだけ足りない名前を足す）
 ";
 
 /// 解析した命令。
@@ -74,6 +77,8 @@ pub struct BakeArgs {
     pub source_time_zone: Option<String>,
     /// `--allow-plaintext-headers`。
     pub allow_plaintext_headers: bool,
+    /// `--env-out <path>`（Spec 66）— 資格情報ストアの鍵をコンテナの `.env` の形で書く。
+    pub env_out: Option<PathBuf>,
     /// `--json`。
     pub json: bool,
 }
@@ -169,6 +174,7 @@ fn parse_bake(args: &[String]) -> Result<Command, String> {
     let mut out = None;
     let mut maps = Vec::new();
     let mut source_time_zone = None;
+    let mut env_out = None;
     let mut switches: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -179,7 +185,7 @@ fn parse_bake(args: &[String]) -> Result<Command, String> {
             _ => (arg.as_str(), None),
         };
         match flag {
-            "--data-dir" | "--out" | "--map" | "--source-time-zone" => {
+            "--data-dir" | "--out" | "--map" | "--source-time-zone" | "--env-out" => {
                 let value = match inline {
                     Some(value) => value,
                     None => {
@@ -201,6 +207,7 @@ fn parse_bake(args: &[String]) -> Result<Command, String> {
                     "--data-dir" => once(&mut data_dir)?,
                     "--out" => once(&mut out)?,
                     "--source-time-zone" => once(&mut source_time_zone)?,
+                    "--env-out" => once(&mut env_out)?,
                     _ => {
                         let Some((from, to)) = value.split_once('=') else {
                             return Err(format!("--map は <元>=<先> の形です: {value}"));
@@ -237,6 +244,7 @@ fn parse_bake(args: &[String]) -> Result<Command, String> {
         update,
         source_time_zone: source_time_zone.filter(|tz| !tz.trim().is_empty()),
         allow_plaintext_headers: switches.contains(&"--allow-plaintext-headers"),
+        env_out: env_out.filter(|p| !p.trim().is_empty()).map(PathBuf::from),
         json: switches.contains(&"--json"),
     }))
 }
@@ -573,6 +581,13 @@ mod tests {
         assert_eq!(bake.maps[1].to, "/b");
         assert!(bake.json && !bake.update);
 
+        assert_eq!(bake.env_out, None, "--env-out は渡したときだけ（Spec 66 D1）");
+        let with_env = parse(&argv(&[
+            "bake", "--data-dir", "G", "--out", "O", "--map", "a=/a", "--env-out", "deploy/.env",
+        ]))
+        .unwrap();
+        let Command::Bake(with_env) = with_env else { panic!() };
+        assert_eq!(with_env.env_out, Some(PathBuf::from("deploy/.env")));
         let update = parse(&argv(&["bake", "--data-dir", "G", "--out", "O", "--update"])).unwrap();
         let Command::Bake(update) = update else { panic!() };
         assert!(update.update && update.maps.is_empty());

@@ -95,6 +95,7 @@ async fn make_source(dir: &Path) -> String {
     let store = ConfigStore::new(&workspace);
     let secrets = InMemorySecretStore::new();
     secrets.set("stub", "setup-only").unwrap();
+    secrets.set("spare", "setup-only").unwrap();
     let orchestrator = Orchestrator::bootstrap(
         store.clone(),
         Arc::new(FixedBackendFactory::echo("[echo]")),
@@ -109,6 +110,10 @@ async fn make_source(dir: &Path) -> String {
     let mut template = ModelTemplate::new("stub", "スタブ", "stub-model");
     template.credential = CredentialSource::Keyring;
     orchestrator.upsert_template(template).await.unwrap();
+    // 個体が使わないテンプレート（--env-out は書き出さない — Spec 66 D3）。
+    let mut spare = ModelTemplate::new("spare", "予備", "spare-model");
+    spare.credential = CredentialSource::Keyring;
+    orchestrator.upsert_template(spare).await.unwrap();
     let mut spec = AgentSpec::new(id("agent_1"), "窓口", "stub");
     spec.work_dir = Some(WORK.to_owned());
     spec.rag_sources = vec![RAG.to_owned()];
@@ -185,6 +190,7 @@ fn request(source: &Path, out: &Path, maps: Vec<PathMap>, update: bool) -> BakeR
         source_time_zone: Some("Asia/Tokyo".to_owned()),
         allow_plaintext_headers: false,
         app_version: "test".to_owned(),
+        env_out: None,
     }
 }
 
@@ -196,7 +202,7 @@ async fn an_initial_bake_maps_paths_carries_approvals_and_skips_the_door() {
     let out_dir = TempDir::new("out");
     let out = out_dir.0.join("copy");
 
-    let report = bake(&request(&src.0, &out, maps(), false)).await.unwrap();
+    let report = bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new()).await.unwrap();
     assert_eq!(report.mapped_fields, 4, "workDir 1 + ragSources 1 + cwd 2（前判定と後判定）");
     assert_eq!(report.carried_approvals, 4);
     assert_eq!(report.seeded_memories, vec!["agent_1".to_owned()]);
@@ -257,7 +263,7 @@ async fn an_unmapped_path_stops_without_writing() {
     let out_dir = TempDir::new("out");
     let out = out_dir.0.join("copy");
     let only_work = vec![PathMap { from: WORK.to_owned(), to: "/work/mathlab".to_owned() }];
-    let err = bake(&request(&src.0, &out, only_work, false)).await.unwrap_err();
+    let err = bake(&request(&src.0, &out, only_work, false), &InMemorySecretStore::new()).await.unwrap_err();
     let BakeError::Unmapped(found) = &err else { panic!("{err}") };
     assert_eq!(found, &vec![format!("agents[agent_1].ragSources[0] = {RAG}")]);
     assert!(!out.exists(), "写し先は作らない");
@@ -284,7 +290,7 @@ async fn plaintext_headers_stop_unless_allowed() {
         .unwrap();
     let out_dir = TempDir::new("out");
     let out = out_dir.0.join("copy");
-    let err = bake(&request(&src.0, &out, maps(), false)).await.unwrap_err();
+    let err = bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new()).await.unwrap_err();
     let BakeError::PlaintextHeaders(found) = &err else { panic!("{err}") };
     assert_eq!(found, &vec!["agents/agent_1/mcp.json: elyth / Authorization".to_owned()], "無効なサーバーも数える");
     assert!(!err.to_string().contains("plain-token"), "値は載せない: {err}");
@@ -292,7 +298,7 @@ async fn plaintext_headers_stop_unless_allowed() {
 
     let mut allowed = request(&src.0, &out, maps(), false);
     allowed.allow_plaintext_headers = true;
-    let report = bake(&allowed).await.unwrap();
+    let report = bake(&allowed, &InMemorySecretStore::new()).await.unwrap();
     assert!(report.warnings.iter().any(|w| w.code == "PLAINTEXT_HEADER_COPIED"));
 }
 
@@ -303,7 +309,7 @@ async fn an_update_replaces_design_and_keeps_what_grew_in_the_container() {
     make_source(&src.0).await;
     let out_dir = TempDir::new("out");
     let out = out_dir.0.join("copy");
-    bake(&request(&src.0, &out, maps(), false)).await.unwrap();
+    bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new()).await.unwrap();
 
     // コンテナの側で育ったもの。
     let out_ws = HostPaths::new(&out).workspace();
@@ -330,7 +336,7 @@ async fn an_update_replaces_design_and_keeps_what_grew_in_the_container() {
     src_store.write_config(&agent, ConfigFileKind::Construct, "# 窓口 v2").await.unwrap();
     src_store.save_schedules(&[task("t-plain", None)]).await.unwrap();
 
-    let report = bake(&request(&src.0, &out, Vec::new(), true)).await.unwrap();
+    let report = bake(&request(&src.0, &out, Vec::new(), true), &InMemorySecretStore::new()).await.unwrap();
     assert!(report.update);
     assert_eq!(report.maps, maps(), "--map を省けば前回のものを引き継ぐ");
 
@@ -368,14 +374,194 @@ async fn out_state_and_the_source_lock_stop_the_bake() {
 
     // --update なしで空でない写し先。
     std::fs::write(out_dir.0.join("something"), b"x").unwrap();
-    let err = bake(&request(&src.0, &out_dir.0, maps(), false)).await.unwrap_err();
+    let err = bake(&request(&src.0, &out_dir.0, maps(), false), &InMemorySecretStore::new()).await.unwrap_err();
     assert!(matches!(err, BakeError::OutState(_)), "{err}");
     // --update で bake.json が無い写し先。
-    let err = bake(&request(&src.0, &out_dir.0, maps(), true)).await.unwrap_err();
+    let err = bake(&request(&src.0, &out_dir.0, maps(), true), &InMemorySecretStore::new()).await.unwrap_err();
     assert!(matches!(err, BakeError::OutState(_)), "{err}");
 
     // GUI が元の村を開いている（ロックを持っている）。
     let _held = VillageLock::acquire(&HostPaths::new(&src.0).workspace()).unwrap();
-    let err = bake(&request(&src.0, &out_dir.0.join("copy"), maps(), false)).await.unwrap_err();
+    let err = bake(&request(&src.0, &out_dir.0.join("copy"), maps(), false), &InMemorySecretStore::new()).await.unwrap_err();
     assert!(matches!(err, BakeError::Lock(_)), "{err}");
+}
+
+
+// ---- Spec 66: --env-out ----
+
+fn with_env(source: &Path, out: &Path, env: &Path, update: bool) -> BakeRequest {
+    let mut req = request(source, out, if update { Vec::new() } else { maps() }, update);
+    req.env_out = Some(env.to_path_buf());
+    req
+}
+
+fn store_with(pairs: &[(&str, &str)]) -> InMemorySecretStore {
+    let store = InMemorySecretStore::new();
+    for (key, value) in pairs {
+        store.set(key, value).unwrap();
+    }
+    store
+}
+
+fn active_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// 書き出すのは村が要る鍵だけ（使わないテンプレート・無効な Jev は書かない）。ストアに無い MCP の参照は
+/// 印つきコメント。値は単一引用符。扉の合鍵は 32 桁 hex で新しく作る。報告に値は載らない。
+#[tokio::test]
+async fn env_out_writes_only_what_the_village_needs() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let env = out_dir.0.join("deploy").join(".env");
+    let secrets = store_with(&[("stub", "sk-$x#y"), ("spare", "must-not-appear")]);
+
+    let report = bake(&with_env(&src.0, &out, &env, false), &secrets).await.unwrap();
+    let text = std::fs::read_to_string(&env).unwrap();
+    let active = active_lines(&text);
+    assert_eq!(active[0], "TZ='Asia/Tokyo'");
+    assert_eq!(active[1], "FUSEFORKS_SECRET_STUB='sk-$x#y'");
+    let door = active[2]
+        .strip_prefix("FUSEFORKS_SECRET_DOOR_TOKEN='")
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap();
+    assert!(door.len() == 32 && door.chars().all(|c| c.is_ascii_hexdigit()), "{door}");
+    assert_eq!(active.len(), 3, "{text}");
+    assert!(text.contains("# FUSEFORKS_SECRET_MCP_OUTCASTS=   # bake:"), "{text}");
+    assert!(!text.contains("SPARE") && !text.contains("must-not-appear"), "{text}");
+    assert!(!text.contains("JEV"), "Jev は無効・判断役なし: {text}");
+
+    let env_report = report.env.clone().unwrap();
+    assert_eq!(env_report.written, ["TZ", "FUSEFORKS_SECRET_STUB"]);
+    assert_eq!(env_report.missing, ["FUSEFORKS_SECRET_MCP_OUTCASTS"]);
+    assert!(env_report.door_token_created);
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(!json.contains("sk-$x#y") && !json.contains(door), "報告に値が出た: {json}");
+    assert!(out.join("bake.json").is_file(), "写しも作る");
+}
+
+/// 圧縮が有効なら Jev の鍵も対象（ストアに無ければ印つきコメント）。
+#[tokio::test]
+async fn env_out_includes_jev_only_when_pruning_or_judges_are_on() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    std::fs::write(src.0.join("jev.json"), r#"{"enabled":true}"#).unwrap();
+    let out_dir = TempDir::new("out");
+    let env = out_dir.0.join(".env");
+    bake(&with_env(&src.0, &out_dir.0.join("copy"), &env, false), &store_with(&[("stub", "k")]))
+        .await
+        .unwrap();
+    let text = std::fs::read_to_string(&env).unwrap();
+    assert!(text.contains("# FUSEFORKS_SECRET_JEV_API_TOKEN=   # bake:"), "{text}");
+}
+
+/// 既にある .env は上書きしない — `--update` なしなら 11 で止め、写しも作らない（計画の段）。
+#[tokio::test]
+async fn an_existing_env_without_update_stops_before_writing_anything() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let env = out_dir.0.join(".env");
+    std::fs::write(&env, "FUSEFORKS_DOMAIN=example.com\n").unwrap();
+    let err = bake(&with_env(&src.0, &out, &env, false), &store_with(&[("stub", "k")]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BakeError::OutState(ref m) if m.contains("--env-out")), "{err}");
+    assert!(!out.exists(), "写しも作らない");
+    assert_eq!(std::fs::read_to_string(&env).unwrap(), "FUSEFORKS_DOMAIN=example.com\n");
+}
+
+/// 写しと同じ・写しの下・`..` を挟んで写しの下 → 引数の誤り（2）。何も書かない。
+#[tokio::test]
+async fn an_env_inside_the_copy_is_a_usage_error() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    for env in [
+        out.clone(),
+        out.join("workspace").join(".env"),
+        out_dir.0.join("deploy").join("..").join("copy").join(".env"),
+    ] {
+        let err = bake(&with_env(&src.0, &out, &env, false), &store_with(&[("stub", "k")]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BakeError::Usage(_)), "{}: {err}", env.display());
+        assert!(!out.exists(), "{}", env.display());
+    }
+}
+
+/// `--update`: 既にある行（運用者の行・扉の合鍵）は残し、印つきコメントは値が揃えば置き換える。
+#[tokio::test]
+async fn an_update_fills_placeholders_and_keeps_the_operators_lines() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let env = out_dir.0.join(".env");
+    bake(&with_env(&src.0, &out, &env, false), &store_with(&[("stub", "k1")]))
+        .await
+        .unwrap();
+    let first = std::fs::read_to_string(&env).unwrap();
+    let door = first
+        .lines()
+        .find(|l| l.starts_with("FUSEFORKS_SECRET_DOOR_TOKEN="))
+        .unwrap()
+        .to_owned();
+    std::fs::write(&env, format!("{first}FUSEFORKS_DOMAIN=fuseforks.example.com\n")).unwrap();
+
+    let report = bake(
+        &with_env(&src.0, &out, &env, true),
+        &store_with(&[("stub", "k2"), ("mcp:OUTCASTS", "o1")]),
+    )
+    .await
+    .unwrap();
+    let text = std::fs::read_to_string(&env).unwrap();
+    assert!(text.lines().any(|l| l == "FUSEFORKS_SECRET_MCP_OUTCASTS='o1'"), "{text}");
+    assert!(!text.contains("# FUSEFORKS_SECRET_MCP_OUTCASTS="), "{text}");
+    assert!(text.lines().any(|l| l == "FUSEFORKS_SECRET_STUB='k1'"), "値は書き換えない: {text}");
+    assert!(text.lines().any(|l| l == door), "扉の合鍵は作り直さない");
+    assert!(text.lines().any(|l| l == "FUSEFORKS_DOMAIN=fuseforks.example.com"), "{text}");
+    let env_report = report.env.clone().unwrap();
+    assert_eq!(env_report.written, ["FUSEFORKS_SECRET_MCP_OUTCASTS"]);
+    assert_eq!(env_report.differs, ["FUSEFORKS_SECRET_STUB"]);
+    assert!(!env_report.door_token_created);
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.code == "ENV_VALUE_DIFFERS" && !w.message.contains("k2")));
+}
+
+/// 資格情報ストアが読めなければ 5 — 写しも .env も書かない（計画の段）。
+#[tokio::test]
+async fn an_unreadable_store_stops_before_writing_anything() {
+    struct Broken;
+    impl SecretStore for Broken {
+        fn get(&self, _: &str) -> fuseforks_core::CoreResult<Option<String>> {
+            Err(fuseforks_core::CoreError::SecretStore {
+                operation: "取得",
+                message: "no service".into(),
+            })
+        }
+        fn set(&self, _: &str, _: &str) -> fuseforks_core::CoreResult<()> {
+            unreachable!()
+        }
+        fn delete(&self, _: &str) -> fuseforks_core::CoreResult<()> {
+            unreachable!()
+        }
+    }
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let env = out_dir.0.join(".env");
+    let err = bake(&with_env(&src.0, &out, &env, false), &Broken).await.unwrap_err();
+    assert!(matches!(err, BakeError::Io(ref m) if m.contains("資格情報ストア")), "{err}");
+    assert!(!out.exists() && !env.exists());
 }

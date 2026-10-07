@@ -52,8 +52,11 @@ async fn bake(args: crate::args::BakeArgs) -> u8 {
         source_time_zone: args.source_time_zone,
         allow_plaintext_headers: args.allow_plaintext_headers,
         app_version: VERSION.to_owned(),
+        env_out: args.env_out,
     };
-    let report = match bake(&request).await {
+    // 資格情報ストアを読むのは --env-out のときだけ（Spec 66）。GUI と同じサービス名。
+    let secrets = fuseforks_core::KeyringSecretStore::new();
+    let report = match bake(&request, &secrets).await {
         Ok(report) => report,
         Err(err) => {
             out.cli(Level::Error, "BAKE", &err.to_string());
@@ -76,6 +79,16 @@ async fn bake(args: crate::args::BakeArgs) -> u8 {
         }
         for id in &report.seeded_memories {
             println!("  Memory を写した: {id}");
+        }
+        if let Some(env) = &report.env {
+            println!(
+                ".env を{}: 値を書いた鍵 {}・ストアに無い {}・書けない {}{}",
+                if report.update { "更新しました" } else { "書きました" },
+                env.written.len(),
+                env.missing.len(),
+                env.unwritable.len(),
+                if env.door_token_created { "・扉の合鍵を新しく作った" } else { "" }
+            );
         }
         for warning in &report.warnings {
             println!("警告 {}: {}", warning.code, warning.message);

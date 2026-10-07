@@ -11,6 +11,7 @@
 
 pub mod bake;
 pub mod boot;
+pub mod env_file;
 pub mod jev_settings;
 pub mod lock;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。

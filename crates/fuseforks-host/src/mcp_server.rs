@@ -78,12 +78,12 @@ impl McpServerConfig {
     /// クライアントの設定ファイルへ貼る値なので、短さより桁を採る。
     pub fn ensure_token(&mut self) -> &str {
         self.token
-            .get_or_insert_with(|| uuid::Uuid::new_v4().simple().to_string())
+            .get_or_insert_with(new_door_token)
     }
 
     /// 合鍵を作り直す。**古い鍵で開いている接続は次の要求から弾かれる。**
     pub fn regenerate_token(&mut self) -> &str {
-        self.token = Some(uuid::Uuid::new_v4().simple().to_string());
+        self.token = Some(new_door_token());
         self.token.as_deref().unwrap_or_default()
     }
 }
@@ -171,6 +171,12 @@ impl McpServerStore {
 /// **Windows では何もしない。** `app_data_dir` は既に利用者ごとに分かれており、
 /// ACL を自前で組むと「効いているつもりで効いていない」を作りやすい。
 /// できないことをできたふりの処理で覆わない。
+/// 扉の合鍵を 1 つ作る（uuid v4 の 32 桁 hex）。**GUI の扉と、`bake --env-out` がコンテナ用に作る合鍵の
+/// 1 実装**（Spec 66 D5 — 書式を 2 通りにしない）。
+pub fn new_door_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
 fn restrict_permissions(path: &Path) {
     #[cfg(unix)]
     {

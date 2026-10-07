@@ -26,15 +26,17 @@ use fuseforks_core::config_store::{
     AGENTS_DIR, EXTERNAL_DIR, ICON_FILE, JUDGES_DIR, JUDGE_FILE, MCP_FILE, ORDINANCE_FILE,
     SCHEDULES_FILE, USER_DIR, VILLAGE_ID_FILE, WORLD_FILE,
 };
-use fuseforks_core::mcp::{McpConfig, McpServerConfig};
-use fuseforks_core::model::{AgentId, ConfigFileKind};
+use fuseforks_core::mcp::{mcp_secret_key, McpConfig, McpServerConfig};
+use fuseforks_core::model::{AgentId, ConfigFileKind, CredentialSource};
 use fuseforks_core::orchestrator::ProbeApprovals;
 use fuseforks_core::schedule::ScheduledTask;
 use fuseforks_core::schedule_probe::ScheduleProbe;
+use fuseforks_core::secret::{env_secret_name, secret_name_collisions, SecretStore};
 use fuseforks_core::world::PersistedWorld;
 use fuseforks_core::ConfigStore;
 use serde::{Deserialize, Serialize};
 
+use crate::env_file::{self, EnvReport, Kind, Wanted};
 use crate::lock::{LockError, VillageLock};
 use crate::paths::HostPaths;
 use crate::probe_approvals::{carried_file, restrict_permissions, ApprovalStore, APPROVALS_FILE};
@@ -105,6 +107,9 @@ pub struct BakeRequest {
     pub allow_plaintext_headers: bool,
     /// `bake.json` の `appVersion`。
     pub app_version: String,
+    /// `--env-out <path>`（Spec 66）。渡したときだけ、資格情報ストアの鍵をコンテナの `.env` の形で書く。
+    /// 写し（`out`）と同じか下なら引数の誤り。
+    pub env_out: Option<PathBuf>,
 }
 
 /// 警告 1 件（写しは作る）。
@@ -126,6 +131,18 @@ pub mod warning_codes {
     pub const CONSUMED_RECORD_DROPPED: &str = "CONSUMED_RECORD_DROPPED";
     /// 再 `bake` で、写し先の `allow` にあって GUI の `allow` に無い行が消えた。
     pub const ALLOW_LINE_DROPPED: &str = "ALLOW_LINE_DROPPED";
+    /// `.env` に書けない文字を含む鍵を印つきコメントにした（Spec 66 D4。名前だけ）。
+    pub const ENV_VALUE_UNWRITABLE: &str = "ENV_VALUE_UNWRITABLE";
+    /// 既にある `.env` の値が資格情報ストアと違う（D6。名前だけ・書き換えない）。
+    pub const ENV_VALUE_DIFFERS: &str = "ENV_VALUE_DIFFERS";
+    /// 村が要らなくなった `FUSEFORKS_SECRET_*` が `.env` に残っている（D6。消さない）。
+    pub const ENV_UNUSED: &str = "ENV_UNUSED";
+    /// 印の無いコメントで止められている名前（D6。触らない）。
+    pub const ENV_COMMENTED_OUT: &str = "ENV_COMMENTED_OUT";
+    /// 既にある `TZ` が `sourceTimeZone` と違う（D6。両方の値を出す — 秘密ではない）。
+    pub const ENV_TZ_DIFFERS: &str = "ENV_TZ_DIFFERS";
+    /// 資格情報ストアに鍵が無いので印つきコメントにした（D3。名前だけ）。
+    pub const ENV_SECRET_MISSING: &str = "ENV_SECRET_MISSING";
 }
 
 /// 写しの結果。
@@ -150,6 +167,8 @@ pub struct BakeReport {
     pub source_time_zone: String,
     /// 警告。
     pub warnings: Vec<BakeWarning>,
+    /// `--env-out` の結果（名前と件数だけ。値は持たない — Spec 66 D7）。
+    pub env: Option<EnvReport>,
 }
 
 /// 写しを作れなかった理由。終了コードは CLI が写す（D2 の表）。
@@ -173,7 +192,7 @@ pub enum BakeError {
         .0.join("; ")
     )]
     PlaintextHeaders(Vec<String>),
-    /// 写し先の状態が食い違う（11）。
+    /// 出力先（`--out` か `--env-out`）の状態が食い違う（11。Spec 66 で `--env-out` へ広げた）。
     #[error("{0}")]
     OutState(String),
 }
@@ -181,12 +200,20 @@ pub enum BakeError {
 /// 書くもの（`Some`）・消すもの（`None`）。パスは写しの `data_dir` からの相対。
 type Plan = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
-/// 写しを作る（計画 → 適用）。
+/// 写しを作る（計画 → 適用）。`secrets` は `--env-out` のときだけ読む（Spec 66 — CLI は資格情報ストア）。
 ///
 /// # Errors
-/// [`BakeError`] を参照。止まるときは写しへ 1 バイトも書かない。
-pub async fn bake(req: &BakeRequest) -> Result<BakeReport, BakeError> {
+/// [`BakeError`] を参照。止まるときは写しへも `.env` へも 1 バイトも書かない。
+pub async fn bake(req: &BakeRequest, secrets: &dyn SecretStore) -> Result<BakeReport, BakeError> {
     validate_maps(&req.maps)?;
+    if let Some(env_out) = &req.env_out
+        && is_same_or_inside(env_out, &req.out)
+    {
+        return Err(BakeError::Usage(format!(
+            "--env-out {} は写し（--out）と同じか、その下です。写しはボリュームやバックアップへ流れるので、.env は写しの外に置いてください（例: deploy/.env）",
+            env_out.display()
+        )));
+    }
     let source = HostPaths::new(&req.source);
     let source_ws = source.workspace();
     if !source_ws.join(WORLD_FILE).is_file() {
@@ -220,6 +247,20 @@ pub async fn bake(req: &BakeRequest) -> Result<BakeReport, BakeError> {
         }
         None
     };
+    if let Some(env_out) = &req.env_out {
+        if env_out.is_dir() {
+            return Err(BakeError::OutState(format!(
+                "--env-out {} はフォルダです（.env のファイルの道筋を書いてください）",
+                env_out.display()
+            )));
+        }
+        if env_out.exists() && !req.update {
+            return Err(BakeError::OutState(format!(
+                "--env-out {} は既にあります（足りない名前だけ足すなら --update。上書きはしません）",
+                env_out.display()
+            )));
+        }
+    }
     let _out_lock = if req.update {
         Some(VillageLock::acquire(&out_ws)?)
     } else {
@@ -435,9 +476,204 @@ pub async fn bake(req: &BakeRequest) -> Result<BakeReport, BakeError> {
     };
     put(&mut plan, PathBuf::from(BAKE_FILE), json_bytes(&manifest));
 
+    // 12. --env-out（Spec 66）: 鍵の集合とストアの読みと既存の .env の分類も、ここ（計画の段）で済ませる。
+    let env_plan = match &req.env_out {
+        None => None,
+        Some(path) => {
+            let wanted = env_wanted(
+                &world,
+                &source_ws,
+                &agent_ids,
+                source.data_dir(),
+                &manifest.source_time_zone,
+                secrets,
+            )
+            .await?;
+            let existing = if path.is_file() {
+                Some(std::fs::read_to_string(path).map_err(|err| {
+                    BakeError::OutState(format!("--env-out {} が読めません: {err}", path.display()))
+                })?)
+            } else {
+                None
+            };
+            Some(env_file::plan(
+                existing.as_deref(),
+                &wanted,
+                &mut crate::mcp_server::new_door_token,
+            ))
+        }
+    };
+
     // ---- ここから適用。上で止まる理由は全部出し終えている。 ----
     apply(&plan, &req.out, req.update, &mut report)?;
+    if let (Some(path), Some((text, env_report))) = (&req.env_out, env_plan) {
+        write_env(path, &text)?;
+        push_env_warnings(&env_report, &mut report);
+        report.env = Some(env_report);
+    }
     Ok(report)
+}
+
+/// 書き出す鍵（Spec 66 D3）: 村の個体が使う keyring のテンプレート / 村の有効な http の MCP の参照 /
+/// 条件つきで Jev / 扉の合鍵 / `TZ`。**数え方は既存の関数から組む**（2 つ目を作らない）。
+async fn env_wanted(
+    world: &PersistedWorld,
+    source_ws: &Path,
+    agent_ids: &[AgentId],
+    data_dir: &Path,
+    time_zone: &str,
+    secrets: &dyn SecretStore,
+) -> Result<Vec<Wanted>, BakeError> {
+    let used: BTreeSet<&str> = world.agents.iter().map(|a| a.model_template_id.as_str()).collect();
+    let mut keys: Vec<(String, Kind)> = world
+        .model_templates
+        .iter()
+        .filter(|t| t.credential == CredentialSource::Keyring && used.contains(t.id.as_str()))
+        .map(|t| (t.id.as_str().to_owned(), Kind::Template))
+        .collect();
+    for (name, _) in crate::preflight::village_mcp_secret_refs(source_ws, agent_ids).await {
+        keys.push((mcp_secret_key(&name), Kind::Mcp));
+    }
+    let jev = crate::jev_settings::JevSettingsStore::load(data_dir).config().enabled
+        || world.judges.iter().any(|judge| judge.enabled);
+    if jev {
+        keys.push((crate::jev_settings::TOKEN_KEY.to_owned(), Kind::Jev));
+    }
+    // 2 つの鍵が同じ変数名に写るなら、コンテナは起動しない（Spec 64 の 5）。.env も書かない。
+    let mut all: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();
+    all.push(crate::boot::DOOR_TOKEN_KEY);
+    let collisions = secret_name_collisions(all);
+    if !collisions.is_empty() {
+        return Err(BakeError::Io(format!(
+            "2 つの鍵が同じ環境変数名になります（コンテナは起動しません。テンプレート ID か ${{secret:NAME}} の名前を変えてください）: {}",
+            collisions
+                .iter()
+                .map(|c| format!("{} ← {}", c.variable, c.keys.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+    let mut wanted = vec![Wanted {
+        name: "TZ".to_owned(),
+        kind: Kind::Tz,
+        value: Some(time_zone.to_owned()),
+    }];
+    for (key, kind) in keys {
+        let value = secrets.get(&key).map_err(|err| {
+            BakeError::Io(format!("資格情報ストアが読めません（{key}）: {err}"))
+        })?;
+        wanted.push(Wanted { name: env_secret_name(&key), kind, value });
+    }
+    wanted.push(Wanted {
+        name: env_secret_name(crate::boot::DOOR_TOKEN_KEY),
+        kind: Kind::Door,
+        value: None,
+    });
+    Ok(wanted)
+}
+
+/// `.env` を一時ファイル + rename で書く。親フォルダが無ければ作る。Unix では 0600（Spec 66 D7 —
+/// 同じ機械の他のユーザー対策。配布とバックアップへの備えは「写しの外だけ」が持つ）。
+fn write_env(path: &Path, text: &str) -> Result<(), BakeError> {
+    let io = |what: &str, at: &Path, err: std::io::Error| {
+        BakeError::Io(format!(".env を書けませんでした（{what} {}）: {err}", at.display()))
+    };
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| io("mkdir", parent, e))?;
+    }
+    let tmp = path.with_file_name(format!(
+        ".{}.bake-tmp",
+        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+    ));
+    std::fs::write(&tmp, text).map_err(|e| io("write", &tmp, e))?;
+    restrict_permissions(&tmp);
+    std::fs::rename(&tmp, path).map_err(|e| io("rename", path, e))?;
+    Ok(())
+}
+
+/// `.env` の報告を警告へ写す（名前だけ。`TZ` の違いだけ両方の時刻帯の名前）。
+fn push_env_warnings(env: &EnvReport, report: &mut BakeReport) {
+    let mut push = |code: &'static str, message: String| {
+        report.warnings.push(BakeWarning { code, message });
+    };
+    for name in &env.missing {
+        push(
+            warning_codes::ENV_SECRET_MISSING,
+            format!("{name} は資格情報ストアに無いので、.env には名前だけをコメントで残しました"),
+        );
+    }
+    for name in &env.unwritable {
+        push(
+            warning_codes::ENV_VALUE_UNWRITABLE,
+            format!("{name} の値は .env に書けない文字（' か \\ か改行）を含むので書いていません。この 1 行だけ手で書いてください"),
+        );
+    }
+    for name in &env.differs {
+        push(
+            warning_codes::ENV_VALUE_DIFFERS,
+            format!("{name} の値が資格情報ストアと違います（書き換えていません）"),
+        );
+    }
+    for name in &env.unused {
+        push(
+            warning_codes::ENV_UNUSED,
+            format!("{name} は村が要らなくなった鍵です（消していません。要らなければ手で消してください）"),
+        );
+    }
+    for name in &env.commented_out {
+        push(
+            warning_codes::ENV_COMMENTED_OUT,
+            format!("{name} はコメントで止められています（触っていません）"),
+        );
+    }
+    if let Some((existing, source)) = &env.tz_differs {
+        push(
+            warning_codes::ENV_TZ_DIFFERS,
+            format!("TZ が {existing} で、村を作った端末の時刻帯 {source} と違います（書き換えていません）"),
+        );
+    }
+}
+
+/// `child` が `parent` と同じか、その下か（Spec 66 D1）。両方とも「存在する最も近い祖先を
+/// `canonicalize` + 残りの成分」に直してから成分単位で比べる（`..` もシンボリックリンクも解ける。
+/// まだ無い `--out` でも比べられる）。Windows では大文字小文字を無視する。
+fn is_same_or_inside(child: &Path, parent: &Path) -> bool {
+    let child = resolved(child);
+    let parent = resolved(parent);
+    let key = |p: &Path| -> Vec<String> {
+        p.components()
+            .map(|c| {
+                let s = c.as_os_str().to_string_lossy().into_owned();
+                if cfg!(windows) { s.to_lowercase() } else { s }
+            })
+            .collect()
+    };
+    let (child, parent) = (key(&child), key(&parent));
+    child.len() >= parent.len() && child[..parent.len()] == parent[..]
+}
+
+fn resolved(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut existing = absolute.clone();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name().map(|n| n.to_os_string()), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    let mut base = std::fs::canonicalize(&existing).unwrap_or(existing);
+    for name in rest.into_iter().rev() {
+        base.push(name);
+    }
+    base
 }
 
 /// `--map` の検査（2）。元は空でない、先は `/` で始まり `\` を含まない、同じ元は 2 度書かない。
