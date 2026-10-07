@@ -2550,6 +2550,31 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
 
+## 現在地（2026-10-07 更新）
+
+**この日は Spec 64 の push と、[Spec 65](specs/65_container-deploy.md)（村をコンテナで回す）の起票から P2 まで。**
+git: main は origin より 7 コミット先（`adeba12` 起票 / `5078ae7` rev2 / `7fb4ec0` 未決ゼロ / `fcd3d9c` P0 / `ca0d713` P1 /
+`4abd088` P2a / `a6a584d` P2b。push は利用者の指示待ち）。タグは `v0.4.0` のまま — Spec 64・65 とも配布物に入っていない。
+
+- **Spec 64 の 4 コミットを push した**（`3e3c008..496932d`）
+- **`fuseforks-cli` は単体で配らない**（利用者の問いへの回答。Spec 64 D12 / Spec 65 未決 5 で確定）— 像の定義だけを置き、
+  `bake` する人はソースからビルドする
+- **Spec 65 の骨格**（「Spec の状態」と Spec 本体が正）: 置き場の表（設計 / 同居 / 実行 / 棚）/ `bake`（パスの欄 3 つを最長前方一致で
+  置き換え・置き換え漏れや平文の鍵では 1 バイトも書かない・承認は置き換えた後の鍵で運ぶ・再 `bake` は会話と Memory に触れない）/
+  `headers` の `${secret:NAME}` / 起動前検査の識別子 6 つ / `serve --door-port` と秘密の `door_token` / 像は Debian slim + glibc + tini・UID 10001
+- **P0 で外れた予測が設計を動かした** — Linux の `iana-time-zone` は `TZ` を見ない（時刻帯の名前は `TZ` を先に見る）/ Debian の `sg`（login）は
+  ast-grep の `sg` と同名で PATH の検査を通る / `docker stop` の既定 10 秒では飛行中の `ask` が SIGKILL（137）で `turn:` 行が残らない
+- **Linux のテストは Docker の中で回せる**（`rust:1-bookworm`・ボリューム `ff-linux-target`・初回 375 秒・2 回目 229 秒）。Spec 64 の
+  Unix の SIGINT のテストも初めて通った。**Unix だけの分岐は以後、タグの前にここで確かめる**
+- **作業で踏んだもの**: Windows の全体テストで `link.exe` が 1104（`libucrt.lib` を開けない。ディスクは 48 GB 空いていた）— `-j 4` で通る /
+  ヒアドキュメントの中の `\\n` と `\\` が崩れる（この日 3 回。スクリプトは `Write` で書く）/ Git Bash が `docker run` の `/p0/...` を
+  Windows のパスに書き換える（`MSYS_NO_PATHCONV=1`）/ `tests/bake.rs` の一時フォルダの名前がナノ秒の衝突で共有された（通し番号で直した）
+
+**次の一手**: (1) push（7 コミット）(2) **Spec 65 の P3** — `deploy/` の Dockerfile・compose・Caddyfile・`.env.example`・README 日英 /
+`verify-image.yml`（手動）/ 版番号を `build.rs` へ環境変数で渡す（`.git` を像のビルドに送らないので今は `0.0.0`）(3) P4 = GUI の MCP の設定に
+`${secret:…}` の値を保存する欄 (4) P5 台帳（`build.yml` の「members = 2 つ」のコメントも）(5) P6 実機（開発機の村を `bake` → `docker compose up`）。
+試作の像 `fuseforks:p0` と scratchpad の `p0/` は P3 の比較用に残している。
+
 ## 現在地（2026-10-06 更新）
 
 **この日は台帳の書き戻し・単価表の更新・Qiita の記事の草案と、[Spec 64](specs/64_headless-host.md)（コアを GUI なしで
