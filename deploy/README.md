@@ -33,7 +33,7 @@ cargo build -p fuseforks-cli --release
 ### 2. Close the GUI and `bake`
 
 ```powershell
-target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work"
+target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work" --env-out deploy\.env
 ```
 
 - `--map <from>=<to>` rewrites exactly three fields: work folders, `rag` declarations and the `cwd` of
@@ -56,15 +56,22 @@ directly at `/work`**: when a file is deleted, the trash is created at the top o
 
 Results travel back through the work folder: servants push with `git` via `run`. Neither `bake` nor compose copies work folders.
 
-### 4. Write `.env`
+### 4. Check `.env`
 
-```bash
-cp deploy/.env.example deploy/.env
-```
+`--env-out` in step 2 has written the keys the village needs **from the GUI's credential store** into `deploy/.env`
+(Spec 66). **The values are plain text** — do not commit or share the file (it is in `.gitignore`).
 
-- Set `TZ` to the `sourceTimeZone` in `bake.json` (for example `Asia/Tokyo`). Without it the container runs
-  in UTC and `daily` / `weekly` schedules fire at different times than in the GUI
-- Name each secret after its template ID in upper case (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`)
+- It writes the keys of the templates servants use, the `${secret:NAME}` of enabled http MCP servers, the Jev key (only when
+  pruning or judges are on), plus `TZ` (the `sourceTimeZone` in `bake.json`) and **a door key newly made for the container**
+  (separate from the GUI's door key)
+- **Lines marked `# … # bake:` are gaps for keys that could not be written**; the reason is at the end of the line
+  - "not in the credential store" — register the key in the GUI and run `bake --update --env-out` again, or write that line by hand
+  - "characters `.env` cannot hold" — the value contains `'`, `\` or a newline. Write just that line by hand
+- To expose the door, add `FUSEFORKS_DOMAIN` by hand (`--env-out` does not write it)
+- On macOS the keychain may ask for permission once per key (`fuseforks-cli` is a different executable from the GUI)
+
+You can also write it by hand without `--env-out` (`cp deploy/.env.example deploy/.env`). Name each secret after its template
+ID in upper case (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`).
 
 ### 5. Check before starting
 
@@ -100,7 +107,7 @@ After editing `Construct.md` or settings in the GUI, rebuild the copy.
 
 ```powershell
 docker compose -f deploy\compose.yaml stop
-target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --update
+target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --update --env-out deploy\.env
 docker compose -f deploy\compose.yaml up -d
 ```
 

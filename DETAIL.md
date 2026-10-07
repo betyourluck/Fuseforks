@@ -1945,7 +1945,8 @@ pub enum CredentialSource {
 
 秘密がプロセス内を通る区間は `LlmConfig::from_template` から HTTP ヘッダまでで、
 設定ファイル・イベント・エラーメッセージ・IPC 応答のいずれにも現れない。
-UI へ返るのは「登録済みかどうか」だけで、**値を読み出す API は存在しない**。
+UI へ返るのは「登録済みかどうか」だけで、**画面へ値を戻す API は存在しない**。例外は 1 つで、`fuseforks-cli bake --env-out` を
+**明示したときだけ**、コンテナ用に平文の `.env` へ書き出す（[Spec 66](specs/66_bake-env-out.md)。下の「コンテナで回す」）。
 
 > ここは 2 度作り直している。当初は `String` の `apiKeyEnv` で、防御は UI のラベルと
 > 注意書きだけだった。運用初日に実キーが貼られて平文で保存された。
@@ -2635,6 +2636,12 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
 - `mcp.json` の `headers` に平文の鍵があれば 10（`--allow-plaintext-headers` で通す）。`${secret:…}` に直せば通る
 - 前判定・後判定の承認は、置き換えた `cwd` で鍵を計算し直して写しへ運ぶ（コマンド行は 1 文字も変えない）
 - 写しの直下に `bake.json`（`sourceTimeZone` と `--map`）を書く。コンテナの `TZ` はこの値に合わせる
+- **`--env-out <path>` を渡すと、資格情報ストアの鍵をコンテナの `.env` の形で書き出す**（[Spec 66](specs/66_bake-env-out.md)）。
+  写しの外だけ（写しと同じか下なら 2）。書くのは村が要る鍵だけ — 個体が使うテンプレート・有効な http の MCP の `${secret:…}`・
+  （圧縮か判断役が有効なら）Jev — と `TZ`、それに**コンテナ用に新しく作る扉の合鍵**（GUI の扉の合鍵は引き継がない）。
+  値は単一引用符で書く（引用符なしだと compose が `$` を展開して消す）。`'` `\` 改行を含む値とストアに無い鍵は、
+  `# bake:` の印つきのコメントで名前だけ残す。**既にある `.env` は上書きしない**（`--update` で足りない名前だけ足す）。
+  値は標準出力にも `--json` にも出さない（名前と件数だけ）
 
 **作り直し（`bake --update`）は設計のファイルだけを置き換える** — `world.json`・条例・`Construct.md`・`SKILL.md`・
 `mcp.json`・アイコン。**会話・`Memory.md`・予定の消化の記録・承認待ちのコマンドはコンテナの側を残す**。
@@ -2648,9 +2655,9 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
 | 2 | 引数の誤り（`--map` の書き方・時刻帯が読めない 等） |
 | 3 | 置き換えなかった絶対パスが残る |
 | 4 | 元の村か写しを別のプロセスが開いている |
-| 5 | 元の村が読めない・写しを書けない |
+| 5 | 元の村が読めない・写しを書けない・資格情報ストアが読めない・書き出す鍵どうしが同じ変数名になる |
 | 10 | `headers` に平文の鍵がある |
-| 11 | 写し先の状態が食い違う（`--update` なしで空でない / `--update` で `bake.json` が無い） |
+| 11 | 出力先の状態が食い違う（`--update` なしで写し先が空でない・`--env-out` が既にある / `--update` で `bake.json` が無い） |
 
 **像**は Debian slim + glibc + tini、UID 10001。`git` / `curl` / `bash` / `python` / `ssh` / `rg` を入れてあり、
 足りない道具は派生した像で足す。**`TZ` は既定で設定しない**（他の地域の予定が黙ってずれる）。compose の

@@ -530,6 +530,7 @@ API 密钥保存在 **OS 的凭据存储**中（Windows 凭据管理器 / macOS 
 - 如果凭据存储不可用（或者在某些 Linux 运行环境中缺少 Secret Service 服务），则回退到内存保持，并在启动日志中输出警告。
 - 密钥的更新通过模态对话框完成。输入后的密钥会直接写入 OS 凭据存储，配置管理中只更新其引用。
 - **仅在不使用 GUI 运行时**，也可以从环境变量读取（`fuseforks-cli --secrets env`。见下文“无需 GUI 运行”）。容器里没有凭据存储。只读，GUI 始终只使用凭据存储。
+- 没有把值返回到画面的 API。唯一的例外是**明确指定** `fuseforks-cli bake --env-out` 时，为容器把密钥写入明文的 `.env`（[Spec 66](specs/66_bake-env-out.md)）。
 
 ## 运营
 
@@ -605,6 +606,7 @@ Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证）�
 `deploy/` 中有用 Docker 容器运行在 GUI 中稳定下来的村庄的参考配置（步骤见 [deploy/README.md](deploy/README.md)）。**镜像不公开**，由运维者从源码构建。设置始终在 GUI 一侧修改，容器中的村庄是副本。
 
 - `bake`：在 GUI 的终端、关闭 GUI 后运行，从 GUI 的村庄制作副本。只改写 3 个字段（`workDir` / `ragSources` / 前判定・后判定的 `cwd`，`--map` 取最长前缀）；有未改写的绝对路径则一个字节也不写并退出 3；`headers` 中有明文密钥则退出 10（改成 `${secret:…}` 即可通过）
+- `bake --env-out <path>`：把凭据存储中村庄需要的密钥写成容器用的 `.env`（[Spec 66](specs/66_bake-env-out.md)）。只能写在副本之外；值用单引号包裹；含 `'` `\` 换行的值与存储中没有的密钥以 `# bake:` 注释只留名字；为容器新建大门密钥（不沿用 GUI 的）；已有的 `.env` 不覆盖（`--update` 只补缺少的名字）；值不输出到任何地方
 - `bake --update` 只替换设计文件（`world.json`・条例・Construct・SKILL・`mcp.json`・图标），**会话・`Memory.md`・计划的消化记录・待批准的命令保留容器一侧**。**重建前先停止容器** — Docker Desktop 的 bind mount 上，村庄锁不跨越 Windows 与容器（实测）
 - 镜像：Debian slim + glibc + tini，UID 10001。默认不设置 `TZ`（在 `.env` 中写 `bake.json` 的 `sourceTimeZone`）。compose 的 `stop_grace_period` 为 40 秒（默认 10 秒会用 SIGKILL 切断进行中的轮次，`turn:` 行丢失）
 

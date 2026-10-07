@@ -33,7 +33,7 @@ cargo build -p fuseforks-cli --release
 ### 2. GUI を閉じて `bake` する
 
 ```powershell
-target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work"
+target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work" --env-out deploy\.env
 ```
 
 - `--map <元>=<先>` は作業フォルダ・`rag` の宣言・前判定の `cwd` の 3 つの欄だけを置き換えます。
@@ -55,15 +55,21 @@ git clone <リポジトリ> deploy/work/<名前>
 
 成果の戻り道は作業フォルダの側です。個体は `run` の `git` で push します（`bake` も compose も作業フォルダを写しません）。
 
-### 4. `.env` を書く
+### 4. `.env` を確かめる
 
-```bash
-cp deploy/.env.example deploy/.env
-```
+手順 2 の `--env-out` が、**GUI の資格情報ストアから**村が要る鍵を `deploy/.env` に書き出しています（Spec 66）。
+**値は平文**なので、git に入れない・配らないでください（`.gitignore` 済み）。
 
-- `TZ` に `bake.json` の `sourceTimeZone` を書く（例: `Asia/Tokyo`）。書かないとコンテナは UTC で動き、
-  `daily` / `weekly` の予定が GUI とずれた時刻に発火します
-- 秘密はテンプレート ID を大文字にした名前で書く（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）
+- 書き出すのは、個体が使うテンプレートの鍵・有効な http の MCP サーバーの `${secret:名前}`・（圧縮か判断役が有効なら）Jev の鍵、
+  それに `TZ`（`bake.json` の `sourceTimeZone`）と、**コンテナ用に新しく作った扉の合鍵**（GUI の扉の合鍵とは別）
+- **`# … # bake:` の付いた行は、書けなかった鍵の空き**です。理由が行の末尾にあります
+  - 「資格情報ストアに無い」— GUI で鍵を登録して `bake --update --env-out` し直すか、その行を手で書く
+  - 「`.env` に書けない文字」— 値に `'` か `\` か改行がある。その 1 行だけ手で書く
+- 扉を外へ出すなら `FUSEFORKS_DOMAIN` を手で足す（`--env-out` は書かない）
+- macOS では、鍵ごとにキーチェーンの許可のダイアログが出ることがあります（`fuseforks-cli` は GUI と別の実行ファイルなので）
+
+`--env-out` を使わずに手で書くこともできます（`cp deploy/.env.example deploy/.env`）。秘密はテンプレート ID を大文字にした名前で
+書きます（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）。
 
 ### 5. 起動前に確かめる
 
@@ -99,7 +105,7 @@ GUI で `Construct.md` や設定を直したら、写しを作り直します。
 
 ```powershell
 docker compose -f deploy\compose.yaml stop
-target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --update
+target\release\fuseforks-cli.exe bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --update --env-out deploy\.env
 docker compose -f deploy\compose.yaml up -d
 ```
 
@@ -110,6 +116,9 @@ docker compose -f deploy\compose.yaml up -d
   **会話・`Memory.md`・予定の消化の記録・承認待ちのコマンドはコンテナの側が残ります**
 - コンテナの「自動承認して許可」が `run.json` の `allow` に書き足した行は、再 `bake` で消えます（GUI が `allow` の持ち主）。
   消える行は標準エラーに名指しされます。残したければ GUI の村へ写してください
+- `--update --env-out` は**既にある `.env` の行を書き換えません**。足りない名前を足し、空きの行に値が揃えば埋めるだけです。
+  知らせるだけのもの（名前だけ）: ストアと値が違う鍵（`ENV_VALUE_DIFFERS`）/ 村が要らなくなった鍵（`ENV_UNUSED` — 要らなければ
+  手で消す）/ `TZ` の違い（`ENV_TZ_DIFFERS`）。扉の合鍵は作り直しません
 - `--map` を省くと前回のものを引き継ぎます
 
 ## 扉を外へ出す（任意）

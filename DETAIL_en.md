@@ -1547,7 +1547,9 @@ pub enum CredentialSource {
 right place there. It is **read-only** — there is no path for a key set on screen to flow into an environment variable. The GUI always
 uses the credential store only.
 
-Secrets pass through the process only from `LlmConfig::from_template` to the HTTP headers. They never appear in configuration files, events, error messages, or IPC responses. The UI receives only whether one is registered; **there is no API to read its value**.
+Secrets pass through the process only from `LlmConfig::from_template` to the HTTP headers. They never appear in configuration files, events, error messages, or IPC responses. The UI receives only whether one is registered; **there is no API that returns a value to the screen**. The single exception is
+`fuseforks-cli bake --env-out`, which **only when given explicitly** writes keys to a plain-text `.env` for a container
+([Spec 66](specs/66_bake-env-out.md); see "Running in a container" below).
 
 > This was rebuilt twice. Initially, `apiKeyEnv` was a `String`, and the only defense was a UI label and warning text. A real key was pasted on the first day of use and persisted in plaintext. The next design required an environment variable name, but that did not fit a desktop GUI: it required terminal work and restart, and on Windows configured variables do not propagate to an already-running process. **Warnings are not controls. It is not enough to make writing impossible; the design must provide a correct place for the user to put the value.**
 
@@ -2175,6 +2177,13 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
 - Pre- and post-check approvals are carried over with their keys recomputed for the rewritten `cwd` (the command line is not changed by
   a single character)
 - `bake.json` (`sourceTimeZone` and `--map`) is written at the top of the copy. Set the container's `TZ` to this value
+- **`--env-out <path>` writes the keys from the credential store as a container `.env`** ([Spec 66](specs/66_bake-env-out.md)).
+  Only outside the copy (the same path or one under it exits 2). Only the keys the village needs — templates servants use, the
+  `${secret:…}` of enabled http MCP servers, and Jev when pruning or judges are on — plus `TZ` and **a door key newly made for the
+  container** (the GUI's door key is not carried over). Values are single-quoted (unquoted, compose expands `$` and drops it).
+  Values containing `'`, `\` or a newline, and keys missing from the store, are left as `# bake:`-marked comments with the name
+  only. **An existing `.env` is never overwritten** (`--update` adds only missing names). Values never appear on stdout or in
+  `--json` (names and counts only)
 
 **Rebuilding (`bake --update`) replaces design files only** — `world.json`, the ordinance, `Construct.md`, `SKILL.md`, `mcp.json`, icons.
 **Conversations, `Memory.md`, consumed schedule records and pending command approvals stay as the container left them.** `Memory.md` is
@@ -2188,9 +2197,9 @@ does not cross between Windows and the container (measured: rebuilding without s
 | 2 | Bad arguments (`--map` syntax, unreadable time zone, etc.) |
 | 3 | An unmapped absolute path remains |
 | 4 | Another process has the source village or the copy open |
-| 5 | The source village cannot be read, or the copy cannot be written |
+| 5 | The source village cannot be read, the copy cannot be written, the credential store cannot be read, or two keys to write map to the same variable name |
 | 10 | A plaintext key in `headers` |
-| 11 | The target is in the wrong state (not empty without `--update` / no `bake.json` with `--update`) |
+| 11 | An output is in the wrong state (the copy is not empty or `--env-out` already exists without `--update` / no `bake.json` with `--update`) |
 
 **The image** is Debian slim + glibc + tini, running as UID 10001. It ships `git` / `curl` / `bash` / `python` / `ssh` / `rg`; add
 other tools in a derived image. **`TZ` is not set by default** (schedules elsewhere would shift silently). compose sets

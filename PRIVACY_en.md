@@ -92,7 +92,9 @@ Keys you enter are stored in your **operating system's credential store**:
 The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
 this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) and the
 values that MCP server headers reference as `${secret:NAME}` (see 4-3) are kept.
-**None of them can be read back** — the screen only shows whether a key is stored.
+**None of them can be shown back on screen** — the screen only shows whether a key is stored. The single exception is
+`fuseforks-cli bake --env-out`, run without the GUI: **only when you pass it explicitly**, it writes keys to a plain-text
+file for use in a container (see "When running in a container" below).
 
 The app's configuration files (such as `world.json`) **have no field capable of
 holding a key**. Because those files are stored in plain text, the place where a
@@ -123,6 +125,12 @@ container sends the same things as the GUI.
 flows into volumes and backups). Rewriting it as a `${secret:NAME}` reference lets it through. If you pass
 `--allow-plaintext-headers` instead, the value goes into the copy in plain text. Whether a value looks like a key is
 guessed from the header's name; there is no guarantee that every secret is recognised.
+
+Only when you add `--env-out <file>` to `bake`, the keys in the credential store that the village uses (the API keys of the
+models in use, the values MCP server headers reference, and the Jev API token) are **written in plain text to an `.env`
+file** for passing to the container. Without the option nothing is written. The file stays on your machine; the app does not
+send it anywhere. **Handling that file (not sharing it, not committing it to a repository, deleting it when no longer needed)
+is your responsibility.** Values are never displayed on screen or on standard output.
 
 ---
 
