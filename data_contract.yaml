@@ -3998,7 +3998,9 @@ entities:
      5. **bake は GUI の端末で動かす** (元の村のロックと元の端末の時刻帯を読むため)。元か写し先のロックが
         取れなければ 4。--update なしで {out} が存在して空でない / --update で {out}/bake.json が無いなら 11。
         終了コード = 0 写した / 2 引数の誤り / 3 置き換え漏れ / 4 ロック / 5 元の村が読めない・写しを書けない / 10 平文の鍵 /
-        11 写し先の状態。元の端末の時刻帯が読めず --source-time-zone も無ければ 2 (推測の値を書かない)
+        11 写し先の状態。元の端末の時刻帯が読めず --source-time-zone も無ければ 2 (推測の値を書かない)。
+        **Spec 66 で 11 を「出力先 (--out か --env-out) の状態が食い違う」へ広げる** (エラー文はどちらの出力先かを名指しする。
+        bake だけの番号なので他のコマンドの意味は動かない)
      6. **平文の鍵**: mcp.json (共通と個体別・有効と無効の両方 — ファイルの中身は有効に関わらず写る) の headers で、
         名前を小文字にして authorization / proxy-authorization / cookie / x-api-key / x-auth-token / api-key の
         どれかに一致するか -key / -token / -secret / -password で終わり、値に ${secret: を含まないものがあれば
@@ -4006,7 +4008,8 @@ entities:
      7. **headers の値の ${secret:NAME}** (NAME = [A-Z0-9_]+・1 つの値に複数可): 接続の直前に SecretStore の
         鍵 mcp:NAME で引く (env では FUSEFORKS_SECRET_MCP_NAME)。引けなければ接続しない・理由は名前だけ
         (値を書かない)。**展開は headers の値だけ** (env / args / url に広げない)。参照の無い mcp.json はバイト等価。
-        **GUI は値を書くだけ** (P4: set_mcp_secret / has_mcp_secret / clear_mcp_secret。値を返す口は無い。名前の検査は
+        **GUI は値を書くだけ** (P4: set_mcp_secret / has_mcp_secret / clear_mcp_secret。値を返す口は無い — **画面へは。
+        CLI の bake --env-out だけが明示で平文のファイルへ書き出す = 16。Spec 66**。名前の検査は
         mcp::is_secret_ref_name の 1 実装。書けない名前は INVALID_SECRET_NAME)。欄に出す名前は衝突検査と同じ範囲
         (有効な http・共通と全個体) から拾う
      8. **秘密の変数名の衝突検査が数える鍵** = テンプレート ID の全部 + jev_api_token + door_token +
@@ -4047,11 +4050,39 @@ entities:
         bake --update が直接書けるため — ので、**bake --update の前にコンテナを止める手順を deploy/README に
         書く** (機構では止めない)。扉は profiles ではなく重ねる compose ファイル (compose.door.yaml) で開く —
         profile では fuseforks の command (--door-port) と ports を変えられない
+    16. **bake --env-out <path> (Spec 66)**: 資格情報ストアの鍵をコンテナの .env の形で書き出す。
+        (a) **明示の引数のときだけ書く** (既定で書かない)。**写しの外だけ** — <path> が --out と同じか下なら 2。判定は
+            両方とも「存在する最も近い祖先を canonicalize + 残りの成分」を成分単位で比べる (Windows は大文字小文字を無視)。
+            <path> の親フォルダが無ければ作る
+        (b) **判定は計画の段・書き込みは写しの後** — ストアの読み・既存の .env の分類・(a) の判定はすべて計画で行い、止まる
+            ときは写しも .env も書かない。資格情報ストアが読めなければ 5
+        (c) **書き出すのは村が要る鍵だけ** — 村の個体が使うテンプレート (credential: keyring) / 村の有効な http の MCP
+            サーバーの ${secret:NAME} (village_mcp_secret_refs と同じ範囲) / Jev の鍵 (圧縮か判断役が有効なときだけ) /
+            扉の合鍵 / TZ (bake.json の sourceTimeZone)。数え方は既存の関数から組み、2 つ目を作らない。ストアに値が無い鍵は
+            `# NAME=   # bake: …` の印つきコメント
+        (d) **値は常に単一引用符で書く。' と \ と改行・制御文字を含む値は書かない** (印つきコメント + ENV_VALUE_UNWRITABLE)。
+            根拠は compose の実測: 引用符なしの $x は展開されて消える / 単一引用符の中は $ # " 空白がそのまま /
+            単一引用符の中のエスケープは \' だけで、\ で終わる値と区別できない
+        (e) **扉の合鍵は GUI の mcp_server.json から引き継がず、コンテナ用に新しく作る** (uuid v4 の simple = 32 桁 hex。
+            mcp_server.rs と生成を共有する)。既にある .env に行があれば作り直さない
+        (f) **既にある .env は上書きしない** — --update なしで存在すれば 11。--update では足りない名前だけ足し、bake の印つき
+            コメントはストアに値があれば代入へ置き換える。印の無いコメントの `# NAME=` は運用者が止めた名前として触らない
+            (ENV_COMMENTED_OUT)。値の違いは名前だけ (ENV_VALUE_DIFFERS。compose と同じ規則で引用符を外して比べる。
+            対象はストアから読む鍵だけ)。TZ の違いは両方の値を出す (ENV_TZ_DIFFERS)。要らなくなった FUSEFORKS_SECRET_* は
+            消さずに名前だけ (ENV_UNUSED。扉の合鍵は除く)。警告がいくつあっても 0
+        (g) **値はどこにも表示しない** — 標準出力・標準エラー・--json に出るのは名前と件数 (--json では名前の配列) だけ。
+            Unix では 0600 (同じ機械の他ユーザー対策。配布とバックアップへの備えは (a))。Windows では ACL を組まない
+        **覆す約束**: 「保存した値を読み出す経路を持たない」と書いた箇所 = PRIVACY 日英の 3 / DETAIL 3 言語の認証情報の節 /
+        この契約の 7 の「GUI は値を書くだけ」。**画面へ値を戻す経路は作らないまま**、CLI で明示したときだけ平文のファイルへ
+        書き出す、へ書き直す (Spec 66 P2)
 
     **退けた形**: 起動時にパスを読み替える / GUI の村とコンテナの村を同期する / 像に村を焼く /
     Docker-in-Docker / ${env:NAME} / CLI に approve / 自由記述のパスを書き換える / 自由記述のパスで 3 にする /
     未決着の pending を消す / 環境変数があるだけで扉を開く / コンテナの中で bake する / 静的リンク (musl) /
-    distroless / keyring の feature を落とす / 像を公開する (Spec 65 未決 3)
+    distroless / keyring の feature を落とす / 像を公開する (Spec 65 未決 3) /
+    (Spec 66) .env を既定で書く / 写しの中に書く / テンプレートを全部書き出す / 既にある .env を上書きする・要らない行を消す /
+    GUI に書き出すボタン / 値の違いを自動で直す / GUI の扉の合鍵を引き継ぐ / 値をエスケープして何でも書く /
+    bake --start で鍵を絞る
   degradation_rule: |
     設定不備で代替バックエンドへ退避したときは、必ず backendDegraded を出し、
     退避先の応答本文にも理由を書く。さらに退避結果はキャッシュしない
