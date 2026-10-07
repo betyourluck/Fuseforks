@@ -46,3 +46,7 @@ sessions.redb.lock
 /sqz-claude-guidance.md
 RundingPage
 manifests/
+# コンテナの参照構成（Spec 65）。運用者の手元のもの — 村の写し・作業フォルダ・秘密。
+/deploy/village/
+/deploy/work/
+/deploy/.env

@@ -1,0 +1,63 @@
+{
+  "agents": [
+    {
+      "id": "agent_1",
+      "name": "reception",
+      "modelTemplateId": "stub",
+      "ragSources": [],
+      "connectedAgents": [],
+      "order": 0,
+      "workDir": null,
+      "maxToolIterations": null,
+      "enabledTools": null,
+      "hearsRoomLog": true,
+      "allowHandoff": true,
+      "usesBlackboard": true,
+      "planReview": false,
+      "batchStart": true,
+      "roleId": null,
+      "groupId": null
+    }
+  ],
+  "modelTemplates": [
+    {
+      "id": "stub",
+      "name": "stub",
+      "baseUrl": "http://127.0.0.1:9/v1",
+      "model": "stub-model",
+      "contextLength": 128000,
+      "temperature": null,
+      "maxOutputTokens": 8192,
+      "credential": "keyring",
+      "provider": "open_ai_compat",
+      "useTools": true,
+      "effort": null,
+      "googleSearch": false,
+      "xaiWebSearch": false,
+      "xaiXSearch": false,
+      "openaiWebSearch": false,
+      "openaiReasoningPro": false,
+      "metaWebSearch": false,
+      "perplexityWebSearch": false,
+      "perplexityFinanceSearch": false,
+      "perplexityPeopleSearch": false,
+      "perplexityFetchUrl": false,
+      "geminiUrlContext": false,
+      "requestTimeoutSecs": 120,
+      "maxRetries": 1,
+      "inputPerMtok": null,
+      "outputPerMtok": null,
+      "cacheReadPerMtok": null,
+      "cacheWritePerMtok": null,
+      "cacheWrite1hPerMtok": null,
+      "pricingAsOf": null
+    }
+  ],
+  "topologyPositions": {},
+  "tokenBudget": 100000,
+  "language": "en",
+  "roles": [],
+  "groups": [],
+  "judges": [],
+  "reception": "agent_1"
+}

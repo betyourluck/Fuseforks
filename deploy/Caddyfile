@@ -1,0 +1,15 @@
+# 扉を外へ出す Caddy の設定（Spec 65 D8）。compose.door.yaml がそのままマウントする。ドメインは .env の FUSEFORKS_DOMAIN。
+#
+# - 証明書は Caddy が {$FUSEFORKS_DOMAIN} で自動取得する（80 / 443 が外から届くこと）。
+#   取り方と認証の方式は運用者が決める — これは 1 つの例
+# - 合鍵（Authorization: Bearer）は扉が検査する。Caddy はそのまま通す
+# - Host は 127.0.0.1:39641 へ書き換える。書き換えないと扉が 403 Host header is not allowed を返す（P0）
+# - 回数の上限は素の Caddy に無い。外部依頼は 1 件ごとに新しい予算で走るので、合鍵が漏れたときの
+#   損失は「1 依頼の天井 × 回数」— 要るならレート制限のプラグインを足した Caddy を使う
+{$FUSEFORKS_DOMAIN} {
+	reverse_proxy 127.0.0.1:39641 {
+		header_up Host 127.0.0.1:39641
+		# MCP の Streamable HTTP は応答を流す。溜めずにすぐ渡す
+		flush_interval -1
+	}
+}

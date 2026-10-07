@@ -7,6 +7,11 @@
 //! `0.0.0`（打っていないリリースを名乗らない。ステータスバーと同じ規則）、コミットが
 //! 無ければ `+g…` を付けない。
 //!
+//! **環境変数 `FUSEFORKS_CLI_VERSION` が空でなければ、git より先にそれを使う**（Spec 65 P3）。
+//! 像のビルドは `.git` を送らない（`deploy/Dockerfile.dockerignore`）ので、git からは
+//! `0.0.0` しか取れない。`deploy/Dockerfile` の `ARG` がこの名前で渡す。空なら渡していないのと同じ
+//! （compose の `${FUSEFORKS_CLI_VERSION:-}` は未設定を空文字で渡す）。
+//!
 //! `+g<hash>` は `failures.md` #112 の「手元のビルド同士は区別できない」をヘッドレスの
 //! 側だけ埋める（GUI は `build.rs` の射程の外のまま、`0.1.0` を書く）。
 
@@ -23,6 +28,14 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=FUSEFORKS_CLI_VERSION");
+    if let Ok(given) = std::env::var("FUSEFORKS_CLI_VERSION")
+        && !given.trim().is_empty()
+    {
+        println!("cargo:rustc-env=FUSEFORKS_CLI_VERSION={}", given.trim());
+        println!("cargo:rerun-if-changed=build.rs");
+        return;
+    }
     let tag = git(&["describe", "--tags", "--abbrev=0"]);
     let base = tag
         .as_deref()

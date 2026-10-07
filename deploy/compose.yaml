@@ -1,0 +1,31 @@
+# Fuseforks の村をコンテナで回す参照構成（Spec 65 D8）。手順は README.md。
+#
+#   docker compose up -d                                      # 扉なし（予定と一括起動だけ）
+#   docker compose -f compose.yaml -f compose.door.yaml up -d # 扉を Caddy 越しに外へ出す
+#
+# 置き場:
+#   ./village  bake --out で作った村の写し（/data）。再 bake --update もここへ書く
+#   ./work     作業フォルダの親。運用者がリポジトリをクローンする（/work。リポジトリ自体をマウントしない）
+#   ./.env     TZ と秘密（FUSEFORKS_SECRET_*）。git に入れない
+name: fuseforks
+
+services:
+  fuseforks:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        # 未設定なら空 = 0.0.0（README の「版番号」）
+        FUSEFORKS_CLI_VERSION: ${FUSEFORKS_CLI_VERSION:-}
+    image: fuseforks:local
+    volumes:
+      # bind にしているのは、GUI の端末の bake --update がこのフォルダへ直接書くため。
+      # Docker Desktop の bind はロックがコンテナと Windows の間を越えない（P3 実測）—
+      # bake --update の前に必ず docker compose stop する（README）。
+      - ./village:/data
+      - ./work:/work
+    env_file: .env
+    command: [serve, --data-dir, /data, --secrets, env, --start, batch]
+    # Spec 64 D8 の猶予 30 秒 + 余裕。既定の 10 秒では飛行中のターンが SIGKILL で切れ、
+    # turn: 行が残らない（P0: 137）。
+    stop_grace_period: 40s

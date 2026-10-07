@@ -1,0 +1,30 @@
+# 扉（MCP サーバー）を外へ出すときだけ重ねる（Spec 65 D8 / D9）。
+#
+#   docker compose -f compose.yaml -f compose.door.yaml up -d
+#
+# 扉は 127.0.0.1:39641 に bind したまま（Spec 64 D9）。Caddy を同じネットワーク名前空間に置き、
+# TLS を終端して 127.0.0.1 へ渡す。合鍵（Bearer）は扉が検査するので Caddy は持たない。
+services:
+  fuseforks:
+    command: [serve, --data-dir, /data, --secrets, env, --start, batch, --door-port, "39641"]
+    # network_mode: service: の側は ports: を持てない（Docker の仕様）ので、Caddy の口は
+    # 名前空間の持ち主のこちらで公開する。39641 は 127.0.0.1 なので公開しても外からは届かない。
+    ports:
+      - "443:443"
+      - "80:80"
+
+  proxy:
+    image: caddy:2
+    network_mode: "service:fuseforks"
+    depends_on: [fuseforks]
+    environment:
+      # Caddyfile が {$FUSEFORKS_DOMAIN} で読む。秘密は渡さない（.env を丸ごと渡さない）
+      FUSEFORKS_DOMAIN: ${FUSEFORKS_DOMAIN:?FUSEFORKS_DOMAIN を .env に書いてください}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

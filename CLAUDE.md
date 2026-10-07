@@ -2552,9 +2552,8 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 ## 現在地（2026-10-07 更新）
 
-**この日は Spec 64 の push と、[Spec 65](specs/65_container-deploy.md)（村をコンテナで回す）の起票から P2 まで。**
-git: main は origin より 7 コミット先（`adeba12` 起票 / `5078ae7` rev2 / `7fb4ec0` 未決ゼロ / `fcd3d9c` P0 / `ca0d713` P1 /
-`4abd088` P2a / `a6a584d` P2b。push は利用者の指示待ち）。タグは `v0.4.0` のまま — Spec 64・65 とも配布物に入っていない。
+**この日は Spec 64 の push と、[Spec 65](specs/65_container-deploy.md)（村をコンテナで回す）の起票から P3 まで。**
+git: P2 までの 8 コミットは push 済み（`496932d..08b2a29`）。P3 は 1 コミット（push は利用者の指示待ち）。タグは `v0.4.0` のまま — Spec 64・65 とも配布物に入っていない。
 
 - **Spec 64 の 4 コミットを push した**（`3e3c008..496932d`）
 - **`fuseforks-cli` は単体で配らない**（利用者の問いへの回答。Spec 64 D12 / Spec 65 未決 5 で確定）— 像の定義だけを置き、
@@ -2574,6 +2573,13 @@ git: main は origin より 7 コミット先（`adeba12` 起票 / `5078ae7` rev
 `verify-image.yml`（手動）/ 版番号を `build.rs` へ環境変数で渡す（`.git` を像のビルドに送らないので今は `0.0.0`）(3) P4 = GUI の MCP の設定に
 `${secret:…}` の値を保存する欄 (4) P5 台帳（`build.yml` の「members = 2 つ」のコメントも）(5) P6 実機（開発機の村を `bake` → `docker compose up`）。
 試作の像 `fuseforks:p0` と scratchpad の `p0/` は P3 の比較用に残している。
+
+**→ P3 完了**（同日。`deploy/` と `verify-image.yml` と fixture・`build.rs` の `FUSEFORKS_CLI_VERSION`。Spec の「P3 実装記録」が正）。
+**次に触る人が要る 3 点**: (a) **村のロックは Docker Desktop の bind mount を越えない**（実測。コンテナの `serve` が開いている写しを
+Windows の `fuseforks-cli` も開けた）— 参照構成は写しを bind で置くので、`bake --update` の前に `docker compose stop`（契約 15）
+(b) 扉は profile ではなく `compose.door.yaml` を重ねる（profile は `fuseforks` の `command` と `ports:` を変えられない）
+(c) **存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」**で、`serve` は空の村を作って走る — 起動前検査で拒むかは
+利用者の判断（未決）。次は P4（GUI の秘密の参照の保存欄）→ P5 台帳 → P6 実機。
 
 ## 現在地（2026-10-06 更新）
 
@@ -7283,7 +7289,10 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   「P1 実装記録」が正）→ **同日に P2 完了**（P2a = `serve --door-port` と秘密の `door_token`・衝突検査に `door_token` と
   村の全個体の `mcp:NAME` / P2b = `bake` 本体。計画と適用の 2 段で、止まるときは 1 バイトも書かない・ファイル名はコアの定数から読む・
   `CommandPolicy::adopt_rules_from`。全 1,301 本・変異 10 本とも予測どおり。**揺れるテストを 1 本作って直した**（一時フォルダの名前が
-  ナノ秒の衝突で共有された — 変異の赤が予測より多いときは、まず同じ変異を単独で回す）。「P2 実装記録」が正）。次は P3（像と参照構成）
+  ナノ秒の衝突で共有された — 変異の赤が予測より多いときは、まず同じ変異を単独で回す）。「P2 実装記録」が正）→ **同日に P3 完了**
+  （`deploy/` の Dockerfile・compose 2 枚・Caddyfile・README 日英・fixture と `verify-image.yml`・版番号の環境変数。README の手順を fixture で
+  通し、扉は Caddy 越しに 200 / 401 / 401。**D8 を 2 点動かした** — `/data` は bind（`bake --update` が直接書くため。ロックは bind を越えないので
+  止めてから作り直す = 契約 15）/ 扉は重ねる compose ファイル。「P3 実装記録」が正）。次は P4（GUI）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —

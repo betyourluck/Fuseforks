@@ -578,3 +578,26 @@ fn omitting_start_is_a_usage_error() {
     // 村を開いていない — workspace すら作られない。
     assert!(!Path::new(&dir.workspace()).exists());
 }
+
+/// 像を確かめる村（`deploy/fixtures/village`。Spec 65 D10）がこの版の CLI で読めて、
+/// 秘密があれば 0・無ければ 3 になる。**読めないと `verify-image.yml` が像の不具合に見える** —
+/// 村の欄が変わって fixture が古くなったら、ここで先に落ちる。`check` は何も書かないので
+/// リポジトリの中の fixture を直接開いてよい（終わったあと何も増えていないことも見る）。
+#[test]
+fn the_image_fixture_passes_check() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/fixtures/village");
+    let fixture = fixture.to_str().unwrap();
+    let args = ["check", "--for", "serve", "--data-dir", fixture, "--start", "batch", "--secrets", "env"];
+    let with_secret = run(&args, true);
+    assert_eq!(with_secret.code, 0, "stdout={} stderr={}", with_secret.stdout, with_secret.stderr);
+    let without = run(&args, false);
+    assert_eq!(without.code, 3, "stdout={}", without.stdout);
+    assert!(without.stdout.contains(SECRET_VAR), "{}", without.stdout);
+
+    let mut files: Vec<_> = std::fs::read_dir(Path::new(fixture).join("workspace"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    files.sort();
+    assert_eq!(files, ["village_id", "world.json"], "check が fixture に書いた");
+}

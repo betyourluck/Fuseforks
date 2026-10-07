@@ -1,0 +1,67 @@
+# **手動でしか走らない。** deploy/Dockerfile の像がビルドでき、同梱の小さな村
+# （deploy/fixtures/village）を check で開けるかを見る（Spec 65 D10）。
+#
+# タグの CI（build.yml）に入れない理由は待ち時間 — 3 OS の Tauri ビルドの横に
+# 6〜7 分の像のビルドを足すと、リリースの待ちが延びる。像は配布していない
+# （運用者が自分でビルドする。Spec 65 未決 3）ので、版ごとに確かめる必要は無い。
+# Dockerfile や依存の C ライブラリを触ったときに回す。
+#
+# fixture は Rust のテスト（apps/cli/tests/cli.rs の the_image_fixture_passes_check）でも
+# 開いているので、ここが落ちて Rust のテストが通っているなら、壊れているのは像の側。
+name: verify-image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      # タグから版番号を作るので履歴ごと取る（像のビルドには .git を送らない）
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version
+        id: version
+        run: |
+          tag=$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
+          v="${tag#v}+g$(git rev-parse --short HEAD)"
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "  version = $v"
+
+      - name: Build
+        run: |
+          docker build -f deploy/Dockerfile \
+            --build-arg FUSEFORKS_CLI_VERSION="${{ steps.version.outputs.value }}" \
+            -t fuseforks:verify .
+          docker image ls fuseforks:verify
+
+      # .git を送っていないので、ARG が届いていなければ 0.0.0 になる
+      - name: --version carries the build arg
+        run: |
+          got=$(docker run --rm fuseforks:verify --version)
+          echo "  $got"
+          test "$got" = "fuseforks-cli ${{ steps.version.outputs.value }}"
+
+      - name: Runs as UID 10001
+        run: test "$(docker run --rm --entrypoint id fuseforks:verify -u)" = "10001"
+
+      # 読み取り専用でマウントする — check は何も書かない（Spec 64）
+      - name: check opens the fixture (secret present -> 0)
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/fixtures/village:/data:ro" \
+            -e FUSEFORKS_SECRET_STUB=dummy \
+            fuseforks:verify check --for serve --data-dir /data --start batch --secrets env
+
+      # 検査が空振りしていないことの対照（秘密が無ければ拒否 = 3）
+      - name: check rejects the fixture without its secret (-> 3)
+        run: |
+          set +e
+          docker run --rm \
+            -v "$PWD/deploy/fixtures/village:/data:ro" \
+            fuseforks:verify check --for serve --data-dir /data --start batch --secrets env
+          code=$?
+          echo "  exit = $code"
+          test "$code" = 3

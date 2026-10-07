@@ -328,6 +328,9 @@ deploy/Dockerfile    多段ビルド
 
 ### D8. compose の参照構成
 
+**P3 で 2 点を動かした**（「P3 実装記録」）— `/data` は名前付きボリュームではなく **bind（`./village:/data`）**、
+扉は `profiles: [door]` ではなく**重ねる compose ファイル `compose.door.yaml`**。下の図は rev2 のまま残す。
+
 ```text
 deploy/compose.yaml
   fuseforks:
@@ -437,14 +440,14 @@ deploy/.env.example
 - [x] 結合: 初回 / 再 `bake` で Memory と消化と `pending` が残る / 置き換え漏れで 1 バイトも書かない（3）/ 平文の鍵（10）/
   写し先の状態（11）/ GUI が開いていると 4 / `--map` の最長一致 / `--update` で `maps` を引き継ぐ
 
-### P3 — 像と参照構成
+### P3 — 像と参照構成（**完了**・2026-10-07。「P3 実装記録」）
 
 - **版番号を像へ渡す**（P0 で見つけた）: 除外リストで `.git` を外すと `build.rs` の `git describe` が取れず、
   `fuseforks-cli --version` が `0.0.0` になる（Spec 64 D11 のとおりの値）。`build.rs` が環境変数
   `FUSEFORKS_CLI_VERSION` を先に見るようにして、Dockerfile の `ARG` から渡す（`.git` を像のビルドに送らない）
 
-- [ ] `deploy/Dockerfile` / `deploy/compose.yaml` / `deploy/Caddyfile.example` / `deploy/.env.example` / `deploy/README.md`（日英）
-- [ ] `.github/workflows/verify-image.yml`（手動）と、像で回す小さな村の fixture
+- [x] `deploy/Dockerfile` / `deploy/compose.yaml` / ~~`deploy/Caddyfile.example`~~ `deploy/Caddyfile` / `deploy/compose.door.yaml` / `deploy/.env.example` / `deploy/README.md`（日英）
+- [x] `.github/workflows/verify-image.yml`（手動）と、像で回す小さな村の fixture（`deploy/fixtures/village`）
 
 ### P4 — GUI
 
@@ -458,7 +461,7 @@ deploy/.env.example
 
 ### P6 — 実機
 
-- [ ] 開発機の村を `bake` → `docker compose --profile door up` → 扉へプロキシ越しに 1 件依頼して答えが返る
+- [ ] 開発機の村を `bake` → ~~`docker compose --profile door up`~~ `docker compose -f compose.yaml -f compose.door.yaml up`（P3）→ 扉へプロキシ越しに 1 件依頼して答えが返る
 - [ ] 壁時計の予定が `TZ` どおりの時刻に発火する
 - [ ] `docker compose down` で `turn:` 行が欠けない（飛行中のターンがあるとき）
 - [ ] GUI で Construct を直して再 `bake --update` → コンテナの Memory・会話・予定の消化が残り、Construct だけ変わる
@@ -543,6 +546,60 @@ scratchpad に置き、リポジトリには入れていない（P3 で `deploy/
 **作業で踏んだもの**: Git Bash が `docker run` の引数 `/p0/stub.py` を `C:/Program Files/Git/p0/stub.py` に書き換えた
 （`MSYS_NO_PATHCONV=1` が要る場面の 4 例目）/ ヒアドキュメントの中の `\\` が `\` に崩れた（スクリプトはファイルに書いて回した）。
 測定用のコンテナとボリュームは消した。像 `fuseforks:p0` は P3 の比較のために残している。
+
+## P3 実装記録（2026-10-07）
+
+**置いたもの**: `deploy/` に `Dockerfile` / `Dockerfile.dockerignore` / `compose.yaml` / `compose.door.yaml` / `Caddyfile` /
+`.env.example` / `README.md`（英）/ `README_jp.md`（日）/ `fixtures/village/workspace/{world.json, village_id}`。
+`.github/workflows/verify-image.yml`（手動）。`apps/cli/build.rs` が `FUSEFORKS_CLI_VERSION` を git より先に見る。
+`.gitignore` に `/deploy/village/` / `/deploy/work/` / `/deploy/.env`。
+
+**手元で確かめたこと**（開発機の Docker Desktop。`verify-image.yml` の各段を手で回した）:
+
+- `docker compose build`（版番号を引数で渡す）が通り、像は **241 MB**（P0 と同じ）。`cargo build` の段は 212.6 秒
+  （P0 のレジストリのキャッシュが効いた）。`--version` = `fuseforks-cli 0.4.0+g08b2a29`（`.git` を送らずに版が届いた）/
+  `id -u` = 10001
+- fixture を読み取り専用でマウントして `check`: 秘密あり 0 / 秘密なし 3。Rust の結合テスト
+  `the_image_fixture_passes_check` も同じ 2 つと「`check` が fixture に何も書かない」を見る。fixture は
+  **本物の保存の経路**（`Orchestrator::bootstrap` → テンプレート・個体・窓口）で作り、生成用のテストは消した。
+  変異 1 本（個体のテンプレート参照を存在しない ID へ）で赤
+- README の手順を fixture の写しで通した: `bake --out deploy/village` → `docker compose run --rm fuseforks check` 0 →
+  `compose.yaml` + `compose.door.yaml` で起動 → `https://localhost/mcp`（Caddy の内部 CA）へ `initialize`: 正しい合鍵 **200**・
+  誤った合鍵 **401**・無し **401** → `down` が 2 秒で `joined=true`。`TZ=Asia/Tokyo` でログの時刻が現地時刻になった
+
+**D8 から動かした 2 点**:
+
+1. **`/data` は bind（`./village:/data`）。名前付きボリュームにしなかった。** 写しを作り直すのは GUI の端末の
+   `bake --update` で、名前付きボリュームだとそこから届かない（届けるには書き出し → 作り直し → 取り込みの 3 段が要る）。
+   **測った結果、bind ではロックが守りにならない** — コンテナの `serve` が写しを開いたまま、Windows の
+   `fuseforks-cli serve` が同じ写しを開いて 5 体を起動した。`.fuseforks.lock`（Linux の flock と Windows の
+   `LockFileEx`）も `sessions.redb` のロックも Docker Desktop の bind mount を越えない（**コンテナ同士なら 4 で止まった**）。
+   帰結として契約 5 の「写し先のロックが取れなければ 4」は同じカーネルのプロセスどうしでしか成り立たない。
+   **機構では止めず、`deploy/README` に「`--update` の前に `docker compose stop`」を書いた**（契約 15）。
+   副産物: `TZ` を渡していないコンテナは同じ `fuseforks.log` に UTC で書く（Windows の行と 9 時間ずれて並んだ）
+2. **扉は `profiles: [door]` ではなく重ねる compose ファイル `compose.door.yaml`。** profile は「サービスを足す」ことしか
+   できず、`fuseforks` の `command`（`--door-port`）と `ports:` を変えられない。profile のままだと扉を開かない
+   `serve` の前に Caddy が立ち、`502` を返し続ける。`ports:` は扉を開くときだけ要るので、`compose.yaml` には置かない
+   （置くと扉を使わない人のホストの 443 を塞ぐ）
+
+**ほかに決めたこと**:
+
+- **Caddy は合鍵を持たない。** Bearer の検査は扉がする（`.env` を Caddy に渡すと全部の秘密が Caddy に入る）。
+  Caddy に渡すのはドメインだけ。`flush_interval -1`（MCP の Streamable HTTP は応答を流す）。80 も公開する（ACME の HTTP 検証）
+- **Caddyfile は雛形をコピーさせず、環境変数だけで動く `deploy/Caddyfile` を直接マウントする。** コピーを忘れると
+  Docker は無いパスを**フォルダとして作り**、Caddy が「not a directory」で起動しない（実際に踏んだ）。
+  P3 の Tasks の `Caddyfile.example` を変えた
+- `restart:` は書かない。起動前検査の拒否（3）・ロック（4）・組み立ての失敗（5）は再起動しても直らないので、
+  `unless-stopped` を既定にすると止まらない再起動の輪になる
+- 基本の像は `rust:1-bookworm`（`ARG RUST_IMAGE` で差し替えられる）。MSRV 1.89 以上なら動く
+
+**見つけた穴（直していない。P3 の範囲の外）**: **存在しない `--data-dir` に `check` を掛けると「起動する集合: （なし）・
+問題ありません・0」になる。** `serve` は同じ場所に空の村を作って何も起動せずに走る。きっかけは Git Bash が `docker compose run` の
+`--data-dir /data` を `C:/Program Files/Git/data` に書き換えたこと（`MSYS_NO_PATHCONV=1` が要る場面の 5 例目）で、
+マウントの綴り間違いでも同じ形になる。GUI は初回起動で村を作るのが正しいが、ヘッドレスで空の村から始めて役に立つ場面は無い。
+起動前検査に「`world.json` の無い `data_dir`」の拒否を足すかは利用者の判断（Spec 64 の領域）
+
+**作業で踏んだもの**: Python のヒアドキュメントで README の `target\release\fuseforks-cli.exe` を書き換えたら、区切りの `\` と続く `r` `f` が復帰と改ページの制御文字に化けた（#130 の家族。この記録を書いたスクリプトでも同じ化けを 1 度起こした — 直しは `chr(92)` で組むスクリプトをファイルに書いた）/ 一時の生成テストの関数名 `gen` が Rust 2024 の予約語だった
 
 ## P1 実装記録（2026-10-07）
 

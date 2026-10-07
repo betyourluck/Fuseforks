@@ -4034,6 +4034,13 @@ entities:
     14. **/work は親のフォルダとしてマウントする** (P0: trash はマウントの頂点に .Trash-<uid> を作る。
         リポジトリ自体をマウントするとリポジトリの直下に生まれて git status に出る。頂点に 10001 が書けなければ
         trash は PermissionDenied で失敗し、ファイルは消えずに残る)
+    15. **村のロックは Docker Desktop の bind mount を越えない** (P3 実測: コンテナの serve が写しを開いたまま、
+        Windows の fuseforks-cli も同じ写しを開いて 5 体を起動した。.fuseforks.lock も sessions.redb のロックも
+        効かなかった。コンテナ同士なら 4 で止まる)。**帰結: 5 の「写し先のロックが取れなければ 4」は同じカーネルの
+        プロセスどうしでしか成り立たない。** 参照構成は写しを bind (./village:/data) で置く — GUI の端末の
+        bake --update が直接書けるため — ので、**bake --update の前にコンテナを止める手順を deploy/README に
+        書く** (機構では止めない)。扉は profiles ではなく重ねる compose ファイル (compose.door.yaml) で開く —
+        profile では fuseforks の command (--door-port) と ports を変えられない
 
     **退けた形**: 起動時にパスを読み替える / GUI の村とコンテナの村を同期する / 像に村を焼く /
     Docker-in-Docker / ${env:NAME} / CLI に approve / 自由記述のパスを書き換える / 自由記述のパスで 3 にする /

@@ -1,0 +1,21 @@
+# 像のビルドに送らないもの（deploy/Dockerfile 専用。BuildKit が読む）。
+# .git を送らないので、版番号は ARG FUSEFORKS_CLI_VERSION で渡す（Dockerfile を見る）。
+target
+**/target
+.git
+.claude
+apps/gui-tauri/node_modules
+apps/gui-tauri/dist
+apps/gui-tauri/src-tauri/gen
+RundingPage
+extra
+images
+manifests
+blackboard
+briefs
+specs
+*.log
+# 運用者の手元のもの（村の写し・作業フォルダ・秘密）を像の文脈に入れない
+deploy/village
+deploy/work
+deploy/.env
