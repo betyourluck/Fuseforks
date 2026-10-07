@@ -148,6 +148,7 @@ Fuseforks/
                 ├── GroupDialog.vue                    Modal: create / rename / delete groups ([Spec 51](specs/51_agent-groups.md))
                 ├── JudgeList.vue / JudgeDialog.vue    Left: the Judges list / Modal: editing judge.toml and "Try" (Spec 62)
                 ├── AssistPanel.vue                    Modal: drafting with AI (from the SKILL / Construct / judge.toml editors; Spec 63)
+                ├── McpSecretsButton.vue / McpSecretsDialog.vue   Modal: MCP secret values (from the shared MCP dialog and a servant's mcp.json tab)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
@@ -1763,8 +1764,8 @@ moved from `/sse` to a single endpoint such as `/mcp`.
 - **A `headers` value can reference a secret as `${secret:NAME}`** ([Spec 65](specs/65_container-deploy.md);
   `"Authorization": "Bearer ${secret:OUTCASTS_TOKEN}"`; names are upper-case letters, digits and `_`). It is looked up just before
   connecting, from the credential store (GUI) or the environment variable `FUSEFORKS_SECRET_MCP_<NAME>` (`fuseforks-cli --secrets env`),
-  and **if it cannot be found the server is not contacted** (the reason names only the name). Enter the value in the "Secret values"
-  field of the MCP settings screen; it is never shown again. Written as a reference, no key stays in `mcp.json`. Only `headers`
+  and **if it cannot be found the server is not contacted** (the reason names only the name). Enter the value in the dialog opened from the key icon "Secret values"
+  (from the mcp.json row of the shared MCP dialog or the mcp.json tab of a servant's edit dialog; both show the shared and every servant's references in one list); it is never shown again. Written as a reference, no key stays in `mcp.json`. Only `headers`
   values are expanded (not `env`, `args` or `url`)
 - Mistakes are rejected at save time **naming the entry and the field**
   (`type: "http"` without `url`, a stdio entry with `url`, and so on). Disabled

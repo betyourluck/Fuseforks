@@ -12,6 +12,7 @@ import { useI18n } from "vue-i18n";
 
 import AssistPanel from "./AssistPanel.vue";
 import CodeEditor from "./CodeEditor.vue";
+import McpSecretsButton from "./McpSecretsButton.vue";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
@@ -75,6 +76,13 @@ const canUseTemplate = computed(
  */
 const canAssist = computed(() => props.editable && (kind.value === "skill" || kind.value === "construct"));
 const assistOpen = ref(false);
+
+/**
+ * 「秘密の値」（Spec 65 P4）。**mcp.json のタブのときだけ**、「AI で作成」と同じ位置に出す。
+ * 開くのは共通 MCP ダイアログと同じ一覧（共通と全個体の参照）。値は本文に入らず資格情報ストアへ
+ * 行くので、編集モードでなくても押せる（本文の保存とは別の操作）。
+ */
+const canOpenSecrets = computed(() => kind.value === "mcp");
 
 /** ひな型をテキストエリアへ入れる。**保存はしない** — 中身を見てから人が押す。 */
 function insertTemplate(): void {
@@ -166,6 +174,7 @@ watch(
       >
         {{ $t("assist.open") }}
       </button>
+      <McpSecretsButton v-if="canOpenSecrets" :class="dirty() || canUseTemplate ? 'ml-2' : 'ml-auto'" />
     </div>
 
     <AssistPanel

@@ -712,7 +712,7 @@
     "saving": "保存中…",
     "saveAndConnect": "保存して接続",
     "secretsHeading": "秘密の値",
-    "secretsHint": "保存した mcp.json（共通と各サーヴァント）の headers にある `${'{'}secret:名前{'}'}` を拾います。値は OS の資格情報ストアに入り、画面には戻りません。",
+    "secretsHint": "共通の mcp.json と、各サーヴァントの mcp.json（サーヴァントの編集ダイアログの mcp.json タブ）の headers にある `${'{'}secret:名前{'}'}` を、まとめてここで扱います。共通 MCP とサーヴァントのどちらから開いても同じ一覧です。同じ名前を書いたサーバーは 1 つの値を共有します。拾うのは保存済みの mcp.json からで、編集中の本文からは拾いません。値は OS の資格情報ストアに入り、画面には戻りません。",
     "secretsEmpty": "参照はありません。headers に `\"Authorization\": \"Bearer ${'{'}secret:OUTCASTS_TOKEN{'}'}\"` のように書くと、ここに欄が出ます。",
     "secretStored": "保存済み",
     "secretMissing": "未保存",
@@ -723,7 +723,10 @@
     "secretClearConfirm": "{name} の値を資格情報ストアから消します。このサーバーは次に繋ぎ直すときから接続しません。",
     "secretSaved": "{name} を保存して接続し直しました",
     "secretCleared": "{name} を消して接続し直しました",
-    "secretUsedBy": "使っているサーバー: {servers}"
+    "secretUsedBy": "使っているサーバー: {servers}",
+    "secretsOpenTitle": "共通と全サーヴァントの mcp.json が参照する秘密の値を入れる",
+    "secretsDiscardTitle": "入力した値を捨てますか？",
+    "secretsDiscardMessage": "保存していない値があります。閉じると入力した値は捨てられます。"
   },
   "uiErrors": {
     "canvasContext": "canvas 2D コンテキストを取得できません",

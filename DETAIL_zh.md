@@ -122,6 +122,7 @@ Fuseforks/
                 ├── ModelTemplateDialog.vue            模态框: 模型
                 ├── BatchWorkDirDialog.vue             模态框: 批量切换工作目录（自列表页脚）
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   模态框: 条例 / MCP / 定时任务
+                ├── McpSecretsButton.vue / McpSecretsDialog.vue   模态框: MCP 的密钥值（从共享 MCP 与仆从的 mcp.json 标签打开）
                 ├── SettingsDialog.vue / SessionDialog.vue    模态框: 系统设置 / 会话列表
                 ├── FirstRunTour.vue                   初次启动引导（9 步。仅在空村庄出现。设置 ＞ 用户界面 ＞ 引导中可重新调用）
                 ├── RoleDialog.vue                     模态框: 职务（Servant 的雏形）

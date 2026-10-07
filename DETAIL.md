@@ -148,6 +148,7 @@ Fuseforks/
                 ├── GroupDialog.vue                    モーダル: グループの作成・改名・削除（[Spec 51](specs/51_agent-groups.md)）
                 ├── JudgeList.vue / JudgeDialog.vue    左: 判断特化の一覧 / モーダル: judge.toml の編集と「試す」（Spec 62）
                 ├── AssistPanel.vue                    モーダル: AI で下書きを作る（SKILL / Construct / judge.toml の編集から。Spec 63）
+                ├── McpSecretsButton.vue / McpSecretsDialog.vue   モーダル: MCP の秘密の値（共通 MCP とサーヴァントの mcp.json タブから）
                 ├── CommandApprovalDialog.vue          モーダル: コマンド承認（判断待ちの pending）
                 ├── StatsView.vue                      全画面: 統計（3 ペインを丸ごと差し替える。Spec 39）
                 ├── TitleBar.vue                       カスタムタイトルバー（条例・役職・MCP・コマンド承認・予定・システム設定）
@@ -2219,7 +2220,7 @@ Claude Desktop / Claude Code と互換。旧 SSE 形式は**意図的な非互�
 - **`headers` の値には `${secret:名前}` で秘密を参照できる**（[Spec 65](specs/65_container-deploy.md)。
   `"Authorization": "Bearer ${secret:OUTCASTS_TOKEN}"`。名前は英大文字・数字・`_`）。接続の直前に資格情報ストア
   （GUI）か環境変数 `FUSEFORKS_SECRET_MCP_<名前>`（`fuseforks-cli --secrets env`）から引き、**引けなければ接続しない**
-  （理由には名前だけを書く）。値は MCP の設定画面の「秘密の値」の欄から入れ、画面には戻らない。参照で書けば
+  （理由には名前だけを書く）。値は鍵のアイコンの「秘密の値」から開くダイアログで入れ、画面には戻らない（入口は共通 MCP の mcp.json の行と、サーヴァントの編集ダイアログの mcp.json タブの 2 つ。どちらも共通と全サーヴァントの参照を同じ一覧で出す）。参照で書けば
   `mcp.json` に鍵は残らない。展開するのは `headers` の値だけ（`env` / `args` / `url` には広げない）
 - 書き間違いは**エントリ名と欄を名指し**して保存時に拒否される（`type: "http"`
   なのに `url` が無い、stdio のエントリに `url` がある、など）。無効化

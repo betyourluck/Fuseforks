@@ -712,7 +712,7 @@
     "saving": "Saving…",
     "saveAndConnect": "Save and connect",
     "secretsHeading": "Secret values",
-    "secretsHint": "Collected from `${'{'}secret:NAME{'}'}` in the headers of the saved mcp.json files (shared and per servant). Values go to the OS credential store and are never shown again.",
+    "secretsHint": "Handles every `${'{'}secret:NAME{'}'}` in the headers of the shared mcp.json and of each servant's mcp.json (the mcp.json tab of the servant's edit dialog). The list is the same whether you open it from the shared MCP dialog or from a servant. Servers that use the same name share one value. Only saved mcp.json files are read, not the text being edited. Values go to the OS credential store and are never shown again.",
     "secretsEmpty": "No references. Write a header such as `\"Authorization\": \"Bearer ${'{'}secret:OUTCASTS_TOKEN{'}'}\"` and a field appears here.",
     "secretStored": "Stored",
     "secretMissing": "Not stored",
@@ -723,7 +723,10 @@
     "secretClearConfirm": "Remove the value of {name} from the credential store. Servers using it will not connect from the next reconnect.",
     "secretSaved": "Saved {name} and reconnected",
     "secretCleared": "Removed {name} and reconnected",
-    "secretUsedBy": "Used by: {servers}"
+    "secretUsedBy": "Used by: {servers}",
+    "secretsOpenTitle": "Store the secret values referenced by the shared and every servant's mcp.json",
+    "secretsDiscardTitle": "Discard the values you entered?",
+    "secretsDiscardMessage": "Some values are not saved. Closing discards what you entered."
   },
   "uiErrors": {
     "canvasContext": "Could not get a canvas 2D context",
