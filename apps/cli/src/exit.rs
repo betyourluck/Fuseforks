@@ -28,6 +28,24 @@ pub const TIMED_OUT: u8 = 7;
 pub const INTERRUPTED: u8 = 8;
 /// `ask`: 予算の天井で止まった（`BudgetExhausted`）。
 pub const BUDGET: u8 = 9;
+/// `bake`: `headers` に平文の鍵がある（Spec 65 D2。`bake` だけの番号は 10 番台）。
+pub const PLAINTEXT_HEADERS: u8 = 10;
+/// `bake`: 写し先の状態が食い違う（`--update` なしで空でない / `--update` で `bake.json` が無い）。
+pub const OUT_STATE: u8 = 11;
+
+/// `bake` の失敗 → 終了コード（Spec 65 D2 の表）。**Spec 64 の番号と意味を共有する** —
+/// 引数の誤り 2・置き換え漏れ 3（検査で拒否）・ロック 4・読み書きの失敗 5。
+pub fn for_bake_error(err: &fuseforks_host::bake::BakeError) -> u8 {
+    use fuseforks_host::bake::BakeError;
+    match err {
+        BakeError::Usage(_) => USAGE,
+        BakeError::Unmapped(_) => REJECTED,
+        BakeError::Lock(_) => LOCKED,
+        BakeError::Io(_) => BOOT,
+        BakeError::PlaintextHeaders(_) => PLAINTEXT_HEADERS,
+        BakeError::OutState(_) => OUT_STATE,
+    }
+}
 
 /// 配送の結末 → 終了コード。
 ///
@@ -78,6 +96,19 @@ mod tests {
         assert_eq!(for_outcome(PlanTaskState::TimedOut), 7);
         assert_eq!(for_outcome(PlanTaskState::Interrupted), 8);
         assert_eq!(for_outcome(PlanTaskState::BudgetExhausted), 9);
+    }
+
+    /// `bake` の失敗は Spec 64 の番号と意味を共有し、`bake` だけのものは 10 番台（Spec 65 D2 の表）。
+    #[test]
+    fn bake_errors_map_to_the_d2_table() {
+        use fuseforks_host::bake::BakeError;
+        assert_eq!(for_bake_error(&BakeError::Usage(String::new())), 2);
+        assert_eq!(for_bake_error(&BakeError::Unmapped(Vec::new())), 3);
+        let held = fuseforks_host::LockError::Held { path: "x".into() };
+        assert_eq!(for_bake_error(&BakeError::Lock(held)), 4);
+        assert_eq!(for_bake_error(&BakeError::Io(String::new())), 5);
+        assert_eq!(for_bake_error(&BakeError::PlaintextHeaders(Vec::new())), 10);
+        assert_eq!(for_bake_error(&BakeError::OutState(String::new())), 11);
     }
 
     /// ロックの 2 つの網はどちらも 4。組み立ての他の失敗は 5、`--start` の誤りは 2。

@@ -3976,7 +3976,8 @@ entities:
         mcp.json (共通と個体別) / agents/<id>/{Construct.md, SKILL.md, icon.webp} /
         judges/<id>/judge.toml / user/icon.webp / external/icon.webp。同居 = schedules.json (定義は GUI・
         lastConsumedDueMs はコンテナ) / agents/<id>/run.json (allow と deny は GUI・pending はコンテナ)。
-        実行 = agents/<id>/Memory.md (初回だけ GUI から seed) / sessions.redb / attachments / exports /
+        実行 = agents/<id>/Memory.md (写し先に無い個体だけ GUI から seed — 初回は全員・再 bake では新しい個体) /
+        sessions.redb / attachments / exports /
         fuseforks.log / .fuseforks.lock。棚 = bake.json (bake が作る) / probe_approvals.json (変換して写す) /
         jev.json / pricing.json (写す) / mcp_server.json (写さない)。**表に無いファイルは写さない**
      2. **再 bake (--update) は設計と棚を置き換え、実行に触れない。** 同居のファイルは: schedules.json =
@@ -3993,7 +3994,7 @@ entities:
         正しさは「読み直して、置き換えた欄以外が値として等しい」で確かめる
      5. **bake は GUI の端末で動かす** (元の村のロックと元の端末の時刻帯を読むため)。元か写し先のロックが
         取れなければ 4。--update なしで {out} が存在して空でない / --update で {out}/bake.json が無いなら 11。
-        終了コード = 0 写した / 2 引数の誤り / 3 置き換え漏れ / 4 ロック / 5 元の村が読めない / 10 平文の鍵 /
+        終了コード = 0 写した / 2 引数の誤り / 3 置き換え漏れ / 4 ロック / 5 元の村が読めない・写しを書けない / 10 平文の鍵 /
         11 写し先の状態。元の端末の時刻帯が読めず --source-time-zone も無ければ 2 (推測の値を書かない)
      6. **平文の鍵**: mcp.json (共通と個体別・有効と無効の両方 — ファイルの中身は有効に関わらず写る) の headers で、
         名前を小文字にして authorization / proxy-authorization / cookie / x-api-key / x-auth-token / api-key の

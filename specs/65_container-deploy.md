@@ -179,7 +179,8 @@ Windows のロックと噛み合う保証は無く、元の端末の時刻帯も
    （保証は `${secret:}` で書くこと）。止める理由は #1 と同じ形 — 写しはボリュームやバックアップへ流れる
 5. **時刻帯**: 元の端末の IANA 名を `iana-time-zone` で読む。読めなければ `--source-time-zone` を求めて **2** で止まる
    （`bake.json` に推測の値を書かない）。`--source-time-zone` は読めたときも優先する
-6. `{out}/bake.json` を書く: `{ bakedAt, appVersion, sourceVillageId, sourceTimeZone, maps: [{from, to}] }`
+6. `{out}/bake.json` を書く: `{ bakedAtMs, appVersion, sourceVillageId, sourceTimeZone, maps: [{from, to}] }`
+   （P2 で `bakedAt` → `bakedAtMs` — 村の他の時刻の欄と同じミリ秒の整数）
 7. 結果を標準出力に書く — 写したファイル・置き換えた欄の数・運んだ承認の数・警告。`--json` で機械向け
 
 **終了コード**（Spec 64 D10 の番号と意味を共有し、`bake` だけのものに 10 番台を使う）:
@@ -424,16 +425,16 @@ deploy/.env.example
 - [x] （ホストの材料集め — 型を変えたのでホストもこの Phase で合わせた）`preflight.rs` が新しい材料を集める。
   扉（`door_port`）は P2 で足すまで `None`
 
-### P2 — ホストと `bake`
+### P2 — ホストと `bake`（**完了**・2026-10-07。「P2 実装記録」）
 
-- [ ] `check_secret_names` に `door_token` と `mcp:NAME` を足す
-- [ ] `serve --door-port`（`mcp_server.rs` が合鍵を `SecretStore` から受けて開く口）
-- [ ] `fuseforks-host` に写しの組み立て（D1 の表を 1 か所の定数に。ファイルごとの規則はそこから引く）
-- [ ] パスの置き換え（最長前方一致・成分の境界・Windows 形の大文字小文字）と、置き換え漏れ・自由記述のパスの名指し
-- [ ] 同居のファイルの合流（`schedules.json` の消化と孤児 / `run.json` の `pending` と `prune_settled`）と、消える `allow` の名指し
-- [ ] 承認の運搬（D4。後判定を含む）
-- [ ] `fuseforks-cli bake` と終了コード（D2 の表）
-- [ ] 結合: 初回 / 再 `bake` で Memory と消化と `pending` が残る / 置き換え漏れで 1 バイトも書かない（3）/ 平文の鍵（10）/
+- [x] `check_secret_names` に `door_token` と `mcp:NAME` を足す
+- [x] `serve --door-port`（`mcp_server.rs` が合鍵を `SecretStore` から受けて開く口）
+- [x] `fuseforks-host` に写しの組み立て（D1 の表を 1 か所の定数に。ファイルごとの規則はそこから引く）
+- [x] パスの置き換え（最長前方一致・成分の境界・Windows 形の大文字小文字）と、置き換え漏れ・自由記述のパスの名指し
+- [x] 同居のファイルの合流（`schedules.json` の消化と孤児 / `run.json` の `pending` と `prune_settled`）と、消える `allow` の名指し
+- [x] 承認の運搬（D4。後判定を含む）
+- [x] `fuseforks-cli bake` と終了コード（D2 の表）
+- [x] 結合: 初回 / 再 `bake` で Memory と消化と `pending` が残る / 置き換え漏れで 1 バイトも書かない（3）/ 平文の鍵（10）/
   写し先の状態（11）/ GUI が開いていると 4 / `--map` の最長一致 / `--update` で `maps` を引き継ぐ
 
 ### P3 — 像と参照構成
@@ -578,6 +579,60 @@ scratchpad に置き、リポジトリには入れていない（P3 で `deploy/
 **作業で踏んだもの**: Windows の全体テストで `link.exe` が 2 回 1104 で落ちた — 1 回目は対象のファイル、2 回目は
 `libucrt.lib`（Windows SDK）を開けない。D: の空きは 48 GB あり、Spec 64 のディスク満杯とは別。並列のリンクが同じ
 ライブラリを同時に開く競合と見て（**確かめていない**）、`-j 4` で回すと通った。
+
+## P2 実装記録（2026-10-07）
+
+**2 コミットに分けた** — P2a（`4abd088`。扉と衝突検査）と P2b（`bake` 本体）。全体で Windows 1,301 本（テストのバイナリ 62 個）・
+clippy 0。
+
+### P2a — `serve --door-port` と衝突検査
+
+- **`HostBootOptions.door_port`**。`Some` なら `mcp_server.json` を読まずに 127.0.0.1:N で開き、合鍵は秘密の `door_token`
+  （鍵の綴りはコアの `headless::DOOR_TOKEN_KEY` の 1 か所）。開く処理は `McpServerManager::start_with` に切り出して
+  `start_if_enabled` と共有した。**設定ファイルは書かない**（結合テストが「`mcp_server.json` が無いまま開き、書かれない」を留める）
+- CLI の `--door-port` は `check` と `serve` だけ（`check` は検査するコマンドと同じ引数を取る — Spec 64 D5）。0 は受けない
+  （OS が空きを選ぶ意味で、プロキシの向け先が決まらない）
+- **衝突検査の範囲を契約 8 から訂正した** — 「起動する集合の `mcp.json`」ではなく**村の有効な http サーバー（共通と全個体）**。
+  `build_host` は起動する集合を知らないので、起動前検査と組み立てで数える範囲を揃えるにはこちらしかない
+- **既存の穴を 1 つ見つけた（直していない）** — テンプレート ID がちょうど固定の鍵（`door_token` / `jev_api_token`）と同じ綴りだと、
+  `secret_name_collisions` は同じ鍵を 1 つに畳むので衝突に数えない。2 つの秘密が資格情報ストアの同じ鍵を共有する別の問題で、
+  Jev の時代から keyring でも起きる（環境変数の衝突検査の射程の外）。頻度を見てから
+- 変異 3 本（`--door-port` を無視する / 衝突検査から扉の合鍵を外す / 起動前検査で合鍵が常にあることにする）— 予測どおり各 1 本
+
+### P2b — `bake`
+
+- **計画と適用の 2 段**（`crates/fuseforks-host/src/bake.rs`）。止まる理由（2 / 3 / 4 / 5 / 10 / 11）は全部、計画の段で出る。
+  計画は「写しの `data_dir` からの相対パス → 書く中身 / 消す」の表で、適用は初回なら一時フォルダ（`.<名前>.baking-<pid>`）に
+  組んでから入れ替え、再 `bake` なら 1 ファイルずつ一時ファイル + rename。結合テストが「置き換え漏れで写し先も一時フォルダも残らない」を留める
+- **ファイル名をコアの定数から読む** — `config_store.rs` の private な定数（`WORLD_FILE` ほか 8 つ）を `pub` にし、`agents` と
+  `judges` を `AGENTS_DIR` / `JUDGES_DIR` へ出した（`ConfigStore` の 2 か所もその定数を読む）。ホストは `WORKSPACE_DIR`。
+  `bake` の表に同じ綴りを書き写すと、改名したときに写しが黙って欠ける
+- **`CommandPolicy::adopt_rules_from`** — 規則（`allow` / `deny` / `timeoutSecs`）だけを差し替えて判断待ちを残し、決着したものを
+  既存の `prune_settled` で落とす（`prune_settled` は外へ出していない）
+- **承認の棚は「書く」ではなく「中身を作る」**（`probe_approvals::carried_file`）— 書くのは適用の段で、書いた後に権限を絞る
+- **Spec から動かした点**:
+  - `bake.json` の時刻は `bakedAtMs`（ミリ秒の整数。村の他の時刻の欄と揃えた）
+  - **`Memory.md` の seed は「写し先に無ければ写す」** — 初回は全員、再 `bake` では GUI で新しく足した個体だけが対象になる
+    （「初回だけ」の意味を、村の初回ではなく個体の初回と読んだ）
+  - **設計のファイルは鏡写し** — 元に無くなったもの（GUI で消した条例・アイコン・個体の `mcp.json` 等）は写し先からも消す。
+    ただし **GUI で消した個体のフォルダは残す**（写し先の `Memory.md` が住んでいる。`world.json` に居ないので使われない）
+  - 元の `run.json` / `mcp.json` が壊れていれば 5 で止める（GUI は壊れた個体別の `mcp.json` を起動を止めずに読み飛ばすが、
+    `bake` は平文の鍵を確かめられないまま写さない）。写し先の `schedules.json` / `run.json` が壊れていれば 11
+  - 終了コード 5 は「元の村が読めない・写しを書けない」の 2 つ（Spec 64 の 5 = 組み立ての失敗と同じ並び）
+- 警告の識別子は 4 つ（`FREE_TEXT_WINDOWS_PATH` / `PLAINTEXT_HEADER_COPIED` / `CONSUMED_RECORD_DROPPED` / `ALLOW_LINE_DROPPED`）。
+  文に値は書かない（欄の位置とファイル名・`allow` の行だけ。`allow` は秘密ではなく人が承認した規則）
+- テスト: 単体 4 本（置き換え・`--map` の検査・鍵らしいヘッダー名・自由記述の Windows パス）/ 結合 5 本（初回 / 置き換え漏れ /
+  平文の鍵 / 再 `bake` / 写し先の状態とロック）/ CLI の結合 1 本（`bake` → 写しに `check` → 2 回目は 11 → `--update`）/ 終了コードの単体 1 本
+- **変異 7 本（予測を先に書いた）** — 最長一致をやめる 2 本 / 置き換え漏れで止めない 1 / 平文の鍵を有効なサーバーだけで数える 1 /
+  Memory を上書きする 1 / 消化の記録を残さない 1 / 承認を元の鍵で運ぶ 1 / `prune_settled` を呼ばない 1。すべて予測どおり
+
+**揺れるテストを 1 本作って直した** — 変異の一括実行で、最長一致の変異（M9）だけ予測の 2 本に対して 3 本が赤になった。
+M9 だけを入れて再 `bake` のテストを単独で 3 回回すと 3 回とも通り、変異なしでファイル全体を 6 回回すと 1 回落ちた。
+原因は `tests/bake.rs` の一時フォルダの名前（プロセス ID + ナノ秒）で、全部のテストが同じ札（`src` / `out`）を使っていたので、
+並列に走る 2 本が同じナノ秒を引くと 1 つのフォルダを共有した（Windows の時刻の分解能は 100 ns）。通し番号を足すと 12 回とも通り、
+M9 は予測どおり 2 本になった。**変異の赤が予測より多いとき、まず疑うのは変異ではなくテストの揺れ** —
+同じ変異を単独で回して確かめる。他のテストファイル（`cli.rs` / `village_lock.rs`）も同じ名前の作り方だが、テストごとに札が違うので
+衝突は起きにくい（確かめていない）
 
 ## 未決
 

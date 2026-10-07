@@ -529,6 +529,45 @@ fn serve_with_a_door_port_opens_the_door_with_the_secret_token() {
     assert!(!dir.0.join("mcp_server.json").exists(), "設定ファイルは書かない");
 }
 
+/// `bake` → 写しに対する `check --for serve` → 同じ写し先への 2 回目の `bake` は 11（Spec 65）。
+/// 写しは別の data_dir として開けて、写しの棚に `bake.json` がある。
+#[test]
+fn bake_makes_a_copy_that_check_can_open() {
+    let dir = TempDir::new("bakesrc");
+    make_village(&dir, "http://127.0.0.1:9/v1", None);
+    let out_root = TempDir::new("bakeout");
+    let out = out_root.0.join("copy");
+    let out_str = out.to_str().unwrap();
+    let bake = |extra: &[&str]| {
+        let mut args = vec![
+            "bake", "--data-dir", data_dir(&dir), "--out", out_str, "--map", "D:\\Github=/work",
+            "--source-time-zone", "Asia/Tokyo",
+        ];
+        args.extend_from_slice(extra);
+        run(&args, true)
+    };
+    let first = bake(&["--json"]);
+    assert_eq!(first.code, 0, "stdout={} stderr={}", first.stdout, first.stderr);
+    let report: serde_json::Value = serde_json::from_str(first.stdout.trim()).unwrap();
+    assert_eq!(report["sourceTimeZone"], "Asia/Tokyo");
+    assert!(out.join("bake.json").is_file());
+
+    let check = run(
+        &["check", "--for", "serve", "--data-dir", out_str, "--start", "batch", "--secrets", "env"],
+        true,
+    );
+    assert_eq!(check.code, 0, "stdout={} stderr={}", check.stdout, check.stderr);
+
+    let again = bake(&[]);
+    assert_eq!(again.code, 11, "stderr={}", again.stderr);
+    let update = run(
+        &["bake", "--data-dir", data_dir(&dir), "--out", out_str, "--update", "--source-time-zone", "Asia/Tokyo"],
+        true,
+    );
+    assert_eq!(update.code, 0, "stdout={} stderr={}", update.stdout, update.stderr);
+    assert!(update.stdout.contains("作り直し"), "{}", update.stdout);
+}
+
 /// `--start` を省くと引数の誤り = 2（既定値は無い）。
 #[test]
 fn omitting_start_is_a_usage_error() {

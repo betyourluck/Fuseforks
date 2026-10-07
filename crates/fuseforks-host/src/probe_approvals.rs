@@ -21,6 +21,10 @@
 //! モジュール内へ閉じ、公開するのは `AppState` 経由の 3 本だけ）。
 //! **モデルが `schedules.json` を `file write` で書いても承認は付かない** —
 //! 「呼ばない約束」ではなく「呼べない構造」で守る。
+//!
+//! **Spec 65 で書き手が 1 つ増えた — `bake`**（[`carried_file`]。crate の外へは出さない）。
+//! 運ぶのは**元の棚で人が承認済み**の前判定・後判定だけで、`command` と `args` は 1 文字も変えず、
+//! 変わるのは人が `--map` で明示した `cwd` だけ（`container_contract` 9）。
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -148,6 +152,18 @@ impl ApprovalStore {
     }
 }
 
+/// `bake` の写しの棚に置く承認ファイルの中身を、運ぶ承認だけで**作り直す**（Spec 65 D4）。
+/// 書くのは `bake` の適用の段（検査が全部通ってから）で、書いた後に
+/// [`restrict_permissions`] を掛ける。
+///
+/// 再 `bake` でも足し合わせない — 写し先の古い鍵は残さない（コンテナの中で承認が増える経路は
+/// 無いので、作り直して失うものは無い）。並びは固定（[`ApprovalStore`] と同じ形で書く）。
+pub(crate) fn carried_file(keys: impl IntoIterator<Item = String>) -> String {
+    let mut hashes: Vec<String> = keys.into_iter().collect::<HashSet<_>>().into_iter().collect();
+    hashes.sort_unstable();
+    serde_json::to_string_pretty(&Stored { hashes }).expect("文字列の配列は必ず直列化できる")
+}
+
 impl ProbeApprovals for ApprovalStore {
     fn is_approved(&self, key: &str) -> bool {
         match self.hashes.read() {
@@ -163,7 +179,7 @@ impl ProbeApprovals for ApprovalStore {
 /// **Windows では何もしない** — `app_data_dir` は既に利用者ごとに分かれており、
 /// ACL を自前で組むと「効いているつもりで効いていない」を作りやすい
 /// （`mcp_server.rs` と同じ判断）。**中身がハッシュだけなのは、この前提の保険**。
-fn restrict_permissions(path: &Path) {
+pub(crate) fn restrict_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

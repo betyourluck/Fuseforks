@@ -378,6 +378,17 @@ impl CommandPolicy {
         }
     }
 
+    /// 規則（`allow` / `deny` / `timeoutSecs`）だけを `source` のものへ差し替え、**判断待ち
+    /// （`pending`）は残す**（Spec 65 の再 `bake` — 規則の真実の持ち主は GUI、判断待ちは
+    /// コンテナで積まれたもの）。新しい規則で決着した判断待ちは [`Self::prune_settled`] で落とす
+    /// （承認と同じ後始末。未決着のものは消さない — 人がまだ決めていない記録で、実行は止めない）。
+    pub fn adopt_rules_from(&mut self, source: &CommandPolicy) {
+        self.allow = source.allow.clone();
+        self.deny = source.deny.clone();
+        self.timeout_secs = source.timeout_secs;
+        self.prune_settled();
+    }
+
     /// 自動承認（Spec 61）: 完全一致のパターンを `allow` へ足す。**足したら `true`。**
     ///
     /// 承認画面の [`Self::approve`] と違い `pending` に無くても足す — 要求を積まずに

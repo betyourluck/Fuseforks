@@ -34,8 +34,55 @@ pub async fn dispatch(command: Command) -> u8 {
         Command::Check(args) => check(args).await,
         Command::Ask(args) => ask(args).await,
         Command::Serve(args) => serve(args).await,
+        Command::Bake(args) => bake(args).await,
         Command::Help | Command::Version => exit::OK,
     }
+}
+
+/// `bake` — GUI の村から写しを作る（Spec 65 D2）。村を組み立てない（LLM も MCP も呼ばない）。
+/// 結果は標準出力（`--json` なら [`fuseforks_host::bake::BakeReport`] の形）、失敗は標準エラーに 1 行。
+async fn bake(args: crate::args::BakeArgs) -> u8 {
+    use fuseforks_host::bake::{bake, BakeRequest};
+    let out = Output { jsonl: false };
+    let request = BakeRequest {
+        source: args.data_dir,
+        out: args.out,
+        maps: args.maps,
+        update: args.update,
+        source_time_zone: args.source_time_zone,
+        allow_plaintext_headers: args.allow_plaintext_headers,
+        app_version: VERSION.to_owned(),
+    };
+    let report = match bake(&request).await {
+        Ok(report) => report,
+        Err(err) => {
+            out.cli(Level::Error, "BAKE", &err.to_string());
+            return exit::for_bake_error(&err);
+        }
+    };
+    if args.json {
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+    } else {
+        println!(
+            "{}写しを作りました: {} ファイル・置き換えたパス {}・運んだ承認 {}・時刻帯 {}",
+            if report.update { "（作り直し）" } else { "" },
+            report.written.len(),
+            report.mapped_fields,
+            report.carried_approvals,
+            report.source_time_zone
+        );
+        for removed in &report.removed {
+            println!("  消した: {removed}");
+        }
+        for id in &report.seeded_memories {
+            println!("  Memory を写した: {id}");
+        }
+        for warning in &report.warnings {
+            println!("警告 {}: {}", warning.code, warning.message);
+        }
+    }
+    let _ = std::io::stdout().flush();
+    exit::OK
 }
 
 fn request(common: &Common, mode: HeadlessMode) -> PreflightRequest {

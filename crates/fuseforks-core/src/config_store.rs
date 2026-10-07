@@ -29,20 +29,20 @@ use crate::schedule::ScheduledTask;
 use crate::world::{Language, PersistedWorld};
 
 /// 登録簿の永続化ファイル名。
-const WORLD_FILE: &str = "world.json";
+pub const WORLD_FILE: &str = "world.json";
 
 /// 予定の永続化ファイル名（Spec 07）。
 ///
 /// `world.json` に入れないのは、予定が**エージェントの定義ではない**から。
 /// `Ordinance.md` / `mcp.json` が別ファイルなのと同じ理由。
-const SCHEDULES_FILE: &str = "schedules.json";
+pub const SCHEDULES_FILE: &str = "schedules.json";
 
 /// 村の識別子のファイル名（Spec 28）。
 ///
 /// **村の内容物**なので配布に載る（`world.json` と同じ棚）。
 /// **人に見せる名前ではない** — 表示名や村の説明に使わないこと。
 /// 使い始めると「読みやすい id」への要望が生まれ、乱数である性質が壊れる。
-const VILLAGE_ID_FILE: &str = "village_id";
+pub const VILLAGE_ID_FILE: &str = "village_id";
 
 /// 村の識別子として受け付けられる書式か（UUID の 16 進小文字 + ハイフン 36 字）。
 ///
@@ -59,7 +59,7 @@ fn is_village_id(text: &str) -> bool {
 ///
 /// Claude Desktop の `claude_desktop_config.json` と同じ `mcpServers` 形式を採る
 /// ので、利用者が既に持っている設定をそのまま貼れる。
-const MCP_FILE: &str = "mcp.json";
+pub const MCP_FILE: &str = "mcp.json";
 
 /// アイコンのファイル名。**中身は WebP に固定する。**
 ///
@@ -69,19 +69,19 @@ const MCP_FILE: &str = "mcp.json";
 /// **アイコンは 2 種類ある**（`icon_contract`）— エージェントの
 /// `agents/{id}/icon.webp` と利用者の `user/icon.webp`（Spec 19）。
 /// **ファイル名も検証も共有し、違うのは親フォルダだけ。**
-const ICON_FILE: &str = "icon.webp";
+pub const ICON_FILE: &str = "icon.webp";
 
 /// 利用者の設定を置くフォルダ名（Spec 19）。
 ///
 /// `agents/` と並ぶ位置に置く。**`AgentId` に「利用者」を表す特別な値を作らない** —
 /// 作ると、その値が `world.agents` の検索や `Endpoint::Agent` の照合へ漏れる。
-const USER_DIR: &str = "user";
+pub const USER_DIR: &str = "user";
 
 /// 外部クライアントの設定を置くフォルダ名（Spec 25）。
 ///
 /// `user/` と並ぶ位置に置く。**利用者のフォルダを共用しない** — 共用すると
 /// 「外の道具が頼んだこと」と「自分の依頼」が同じ顔で並ぶ。
-const EXTERNAL_DIR: &str = "external";
+pub const EXTERNAL_DIR: &str = "external";
 
 /// アイコンの許容上限（bytes）。
 ///
@@ -95,10 +95,16 @@ const ICON_MAX_BYTES: usize = 512 * 1024;
 /// 規則の序列は「ベンダーの憲法（モデル側） > 村の条例 > 各エージェントの
 /// 個別設定（Construct / SKILL / Memory）」。序列はそのままプロンプトの
 /// 物理的な順序（条例が最上段）として表現される。
-const ORDINANCE_FILE: &str = "Ordinance.md";
+pub const ORDINANCE_FILE: &str = "Ordinance.md";
 
 /// 判断役の問いと規則のファイル名（Spec 62）。
 pub const JUDGE_FILE: &str = "judge.toml";
+
+/// 個体別の設定のフォルダ（`{workspace}/agents/<id>`）。Spec 65 の `bake` が同じ綴りを読む。
+pub const AGENTS_DIR: &str = "agents";
+
+/// 判断役のファイルのフォルダ（`{workspace}/judges/<id>`）。Spec 65 の `bake` が同じ綴りを読む。
+pub const JUDGES_DIR: &str = "judges";
 
 /// 設定ファイルの読み書きを担う。
 #[derive(Debug, Clone)]
@@ -171,7 +177,7 @@ impl ConfigStore {
                 value: id.to_string(),
             });
         }
-        Ok(self.root.join("agents").join(id.as_str()))
+        Ok(self.root.join(AGENTS_DIR).join(id.as_str()))
     }
 
     /// I/O エラーへパス情報を添える。
@@ -481,7 +487,7 @@ impl ConfigStore {
 
     /// 判断役のファイルの置き場（`{workspace}/judges`）。**囲い（`ToolContext::judges_dir`）の基準**。
     pub fn judges_dir(&self) -> PathBuf {
-        self.root.join("judges")
+        self.root.join(JUDGES_DIR)
     }
 
     /// 判断役 1 つのディレクトリ（`{workspace}/judges/<id>`）。**ID は `is_safe` を通ったものだけ**。

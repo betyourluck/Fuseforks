@@ -33,9 +33,12 @@ impl HostPaths {
 
     /// 村のルート。**常に `data_dir/workspace`**。
     pub fn workspace(&self) -> PathBuf {
-        self.data_dir.join("workspace")
+        self.data_dir.join(WORKSPACE_DIR)
     }
 }
+
+/// `data_dir` の中の村のフォルダ名。Spec 65 の `bake` が写しを組むときに同じ綴りを読む。
+pub const WORKSPACE_DIR: &str = "workspace";
 
 #[cfg(test)]
 mod tests {

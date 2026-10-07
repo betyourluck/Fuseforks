@@ -27,6 +27,8 @@ fuseforks-cli — Fuseforks を GUI なしで動かす（Spec 64）
   fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
                       [--bypass-plan-review] [--run-approval <mode>] [--door-port <N>]
                       [--events jsonl]
+  fuseforks-cli bake  --data-dir <GUI の dir> --out <写しの dir> --map <元>=<先> [--map …]
+                      [--update] [--source-time-zone <IANA 名>] [--allow-plaintext-headers] [--json]
   fuseforks-cli --version | --help
 
   <集合>   batch（GUI の全体 ▶ と同じ対象）| reception（窓口だけ。ask 専用）| <id>,<id>,…
@@ -34,6 +36,10 @@ fuseforks-cli — Fuseforks を GUI なしで動かす（Spec 64）
   <mode>   required（既定）| auto-approve | no-approval
   <N>      扉のポート（1〜65535）。mcp_server.json を読まずに 127.0.0.1:N で開き、合鍵は秘密の
            door_token（env なら FUSEFORKS_SECRET_DOOR_TOKEN）。書かなければ mcp_server.json のとおり
+  bake     GUI の村から、コンテナで回す写しを作る（Spec 65）。GUI を閉じてから GUI の端末で動かす。
+           --map は作業フォルダ・rag の宣言・予定の cwd の絶対パスを置き換える（最長前方一致）。
+           置き換えなかったパスが 1 つでもあれば写しを作らない。--update は写しを作り直す
+           （会話・Memory・予定の消化・承認待ちは写し先のものを残す。--map を省けば前回のもの）
 ";
 
 /// 解析した命令。
@@ -49,6 +55,27 @@ pub enum Command {
     Ask(AskArgs),
     /// 常駐して、予定と扉を回す。
     Serve(ServeArgs),
+    /// GUI の村から、コンテナで回す写しを作る（Spec 65）。
+    Bake(BakeArgs),
+}
+
+/// `bake` の引数（Spec 65 D2）。`--start` も `--secrets` も取らない — 村を組み立てない。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BakeArgs {
+    /// `--data-dir`（必須）— GUI の data_dir（元の村）。
+    pub data_dir: PathBuf,
+    /// `--out`（必須）— 写しの data_dir。
+    pub out: PathBuf,
+    /// `--map <元>=<先>`（何度でも）。`--update` なら省ける。
+    pub maps: Vec<fuseforks_host::bake::PathMap>,
+    /// `--update`。
+    pub update: bool,
+    /// `--source-time-zone`。
+    pub source_time_zone: Option<String>,
+    /// `--allow-plaintext-headers`。
+    pub allow_plaintext_headers: bool,
+    /// `--json`。
+    pub json: bool,
 }
 
 /// 3 つの命令に共通の引数。
@@ -131,8 +158,87 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "check" => parse_command(Kind::Check, rest),
         "ask" => parse_command(Kind::Ask, rest),
         "serve" => parse_command(Kind::Serve, rest),
-        other => Err(format!("知らない命令です: {other}（check / ask / serve）")),
+        "bake" => parse_bake(rest),
+        other => Err(format!("知らない命令です: {other}（check / ask / serve / bake）")),
     }
+}
+
+/// `bake` の引数（他の 3 命令と形が違う — `--map` を何度も書き、`--start` を取らない）。
+fn parse_bake(args: &[String]) -> Result<Command, String> {
+    let mut data_dir = None;
+    let mut out = None;
+    let mut maps = Vec::new();
+    let mut source_time_zone = None;
+    let mut switches: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        i += 1;
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_owned())),
+            _ => (arg.as_str(), None),
+        };
+        match flag {
+            "--data-dir" | "--out" | "--map" | "--source-time-zone" => {
+                let value = match inline {
+                    Some(value) => value,
+                    None => {
+                        let Some(value) = args.get(i) else {
+                            return Err(format!("{flag} に値がありません"));
+                        };
+                        i += 1;
+                        value.clone()
+                    }
+                };
+                let once = |slot: &mut Option<String>| {
+                    if slot.replace(value.clone()).is_some() {
+                        Err(format!("{flag} が 2 回あります"))
+                    } else {
+                        Ok(())
+                    }
+                };
+                match flag {
+                    "--data-dir" => once(&mut data_dir)?,
+                    "--out" => once(&mut out)?,
+                    "--source-time-zone" => once(&mut source_time_zone)?,
+                    _ => {
+                        let Some((from, to)) = value.split_once('=') else {
+                            return Err(format!("--map は <元>=<先> の形です: {value}"));
+                        };
+                        maps.push(fuseforks_host::bake::PathMap {
+                            from: from.trim().to_owned(),
+                            to: to.trim().to_owned(),
+                        });
+                    }
+                }
+            }
+            "--update" | "--allow-plaintext-headers" | "--json" => {
+                if inline.is_some() {
+                    return Err(format!("{flag} は値を取りません"));
+                }
+                if switches.contains(&flag) {
+                    return Err(format!("{flag} が 2 回あります"));
+                }
+                switches.push(flag);
+            }
+            other => return Err(format!("bake では使えない引数です: {other}")),
+        }
+    }
+    let data_dir = data_dir.ok_or("--data-dir がありません（GUI の data_dir。既定値は無い）")?;
+    let out = out.ok_or("--out がありません（写しの data_dir）")?;
+    let update = switches.contains(&"--update");
+    if maps.is_empty() && !update {
+        return Err("--map がありません（<元>=<先> を 1 つ以上。--update なら前回のものを引き継ぎます）".to_owned());
+    }
+    Ok(Command::Bake(BakeArgs {
+        data_dir: PathBuf::from(data_dir),
+        out: PathBuf::from(out),
+        maps,
+        update,
+        source_time_zone: source_time_zone.filter(|tz| !tz.trim().is_empty()),
+        allow_plaintext_headers: switches.contains(&"--allow-plaintext-headers"),
+        json: switches.contains(&"--json"),
+    }))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -449,6 +555,35 @@ mod tests {
         for bad in ["0", "70000", "x"] {
             let serve = [&["serve"][..], &base, &["--door-port", bad]].concat();
             assert!(parse(&argv(&serve)).unwrap_err().contains("--door-port"), "{bad}");
+        }
+    }
+
+    /// `bake` は `--map` を何度も書け、`--start` を取らない。`--update` なら `--map` を省ける。
+    #[test]
+    fn bake_takes_repeated_maps_and_no_start() {
+        let cmd = parse(&argv(&[
+            "bake", "--data-dir", "G", "--out=O", "--map", "D:\\a=/a", "--map=D:\\b = /b", "--json",
+        ]))
+        .unwrap();
+        let Command::Bake(bake) = cmd else { panic!("{cmd:?}") };
+        assert_eq!(bake.data_dir, PathBuf::from("G"));
+        assert_eq!(bake.out, PathBuf::from("O"));
+        assert_eq!(bake.maps.len(), 2);
+        assert_eq!(bake.maps[1].from, "D:\\b");
+        assert_eq!(bake.maps[1].to, "/b");
+        assert!(bake.json && !bake.update);
+
+        let update = parse(&argv(&["bake", "--data-dir", "G", "--out", "O", "--update"])).unwrap();
+        let Command::Bake(update) = update else { panic!() };
+        assert!(update.update && update.maps.is_empty());
+
+        for bad in [
+            &["bake", "--data-dir", "G", "--out", "O"][..],
+            &["bake", "--out", "O", "--map", "a=/a"],
+            &["bake", "--data-dir", "G", "--out", "O", "--map", "no-equals"],
+            &["bake", "--data-dir", "G", "--out", "O", "--map", "a=/a", "--start", "batch"],
+        ] {
+            assert!(parse(&argv(bad)).is_err(), "{bad:?}");
         }
     }
 
