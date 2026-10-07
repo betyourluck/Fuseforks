@@ -7303,7 +7303,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   通し、扉は Caddy 越しに 200 / 401 / 401。**D8 を 2 点動かした** — `/data` は bind（`bake --update` が直接書くため。ロックは bind を越えないので
   止めてから作り直す = 契約 15）/ 扉は重ねる compose ファイル。「P3 実装記録」が正）→ **同日に P4 完了**（MCP ダイアログの「秘密の値」の欄・IPC 3 本・値を返す口は無い。実機は未確認。「P4 実装記録」が正）。
   あわせて `world.json` の無い `--data-dir` を 5 で止めた（`PreflightError::VillageMissing`）→ **同日に P5 完了**（DETAIL 3 言語に
-  「コンテナで回す」の節・README 3 言語に 1 行・PRIVACY 日英・Spec 47 / 64 への行き先・`build.yml` のコメント）。次は P6（実機）
+  「コンテナで回す」の節・README 3 言語に 1 行・PRIVACY 日英・Spec 47 / 64 への行き先・`build.yml` のコメント）→ **同日に P6 完了 = Done**（開発機の村で実機 5 件。「P6 実機記録」が正）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —
