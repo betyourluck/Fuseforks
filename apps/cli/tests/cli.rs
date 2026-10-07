@@ -442,6 +442,93 @@ fn sigint_during_ask_interrupts_and_exits_eight() {
     assert!(log.contains("] turn interrupted: agent="), "払いの行が残る: {log}");
 }
 
+/// 扉の合鍵（`door_token`）が無いまま `--door-port` を付けた `check --for serve` は拒否 = 3
+/// （Spec 65 D9 — 開くと言ったのに開けない、を起動前に止める）。
+#[test]
+fn a_door_port_without_its_token_is_rejected() {
+    let dir = TempDir::new("doorcheck");
+    make_village(&dir, "http://127.0.0.1:9/v1", None);
+    let run = run(
+        &[
+            "check", "--for", "serve", "--data-dir", data_dir(&dir), "--start", "batch",
+            "--secrets", "env", "--door-port", "39641",
+        ],
+        true,
+    );
+    assert_eq!(run.code, 3, "stdout={} stderr={}", run.stdout, run.stderr);
+    assert!(run.stdout.contains("DOOR_TOKEN_MISSING"), "{}", run.stdout);
+    assert!(run.stdout.contains("FUSEFORKS_SECRET_DOOR_TOKEN"), "{}", run.stdout);
+}
+
+/// 空いているループバックのポートを 1 つ選ぶ（選んで手放す。直後に別のプロセスに取られる
+/// ことはありうるが、テストの間の競合は起きない程度）。
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+/// 扉へ MCP の initialize を 1 回送り、HTTP の状態コードを返す。届かなければ `None`。
+fn door_status(port: u16, token: Option<&str>) -> Option<u16> {
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#;
+    let auth = token
+        .map(|t| format!("authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nhost: 127.0.0.1:{port}\r\ncontent-type: application/json\r\n\
+         accept: application/json, text/event-stream\r\n{auth}content-length: {}\r\n\
+         connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok()?;
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).ok()?;
+    String::from_utf8_lossy(&head[9..12]).parse().ok()
+}
+
+/// `serve --door-port` は `mcp_server.json` を読まずに、秘密の `door_token` を合鍵にして扉を開く
+/// （Spec 65 D9）。合鍵が合えば 200、無ければ 401。村には `mcp_server.json` が無い（= GUI の設定では
+/// 扉は閉じている）ので、開いたのは引数と秘密だけによる。
+#[test]
+fn serve_with_a_door_port_opens_the_door_with_the_secret_token() {
+    let dir = TempDir::new("door");
+    make_village(&dir, &spawn_stub(Stub::Answer).0, None);
+    assert!(!dir.0.join("mcp_server.json").exists(), "GUI の扉の設定は無い");
+    let port = free_port();
+    let mut child = Command::new(BIN)
+        .args([
+            "serve", "--data-dir", data_dir(&dir), "--start", "batch", "--secrets", "env",
+            "--door-port", &port.to_string(),
+        ])
+        .env(SECRET_VAR, "dummy-key")
+        .env("FUSEFORKS_SECRET_DOOR_TOKEN", "door-test-token")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let opened = loop {
+        if let Some(code) = door_status(port, Some("door-test-token")) {
+            break code;
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("serve が先に終わった: {status:?}");
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("60 秒で扉が開かなかった");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let without = door_status(port, None);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(opened, 200, "合鍵が合えば通る");
+    assert_eq!(without, Some(401), "合鍵が無ければ通さない");
+    assert!(!dir.0.join("mcp_server.json").exists(), "設定ファイルは書かない");
+}
+
 /// `--start` を省くと引数の誤り = 2（既定値は無い）。
 #[test]
 fn omitting_start_is_a_usage_error() {

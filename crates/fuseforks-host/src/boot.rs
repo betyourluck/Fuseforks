@@ -16,6 +16,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub use fuseforks_core::headless::DOOR_TOKEN_KEY;
+use fuseforks_core::mcp::mcp_secret_key;
 use fuseforks_core::secret::{secret_name_collisions, SecretNameCollision};
 use fuseforks_core::{
     BlackboardTool, ConfigStore, DiffTool, EnvSecretStore, FdTool, FileTool, GrepTool,
@@ -56,6 +58,10 @@ pub struct HostBootOptions {
     /// `mcp_server.json` の設定どおり扉を開くか（D9）。GUI と `serve` は真、
     /// `ask` と `check` は偽。偽でも棚（設定）は読む — 開かないだけ。
     pub open_door: bool,
+    /// `serve --door-port`（Spec 65 D9）。`Some` なら `mcp_server.json` を読まずに
+    /// 127.0.0.1:N で開き、合鍵は秘密の [`DOOR_TOKEN_KEY`]。`None` なら設定どおり。
+    /// `open_door` が偽なら見ない。
+    pub door_port: Option<u16>,
 }
 
 impl HostBootOptions {
@@ -66,6 +72,7 @@ impl HostBootOptions {
             secrets: SecretSource::Keyring,
             run_schedules: true,
             open_door: true,
+            door_port: None,
         }
     }
 }
@@ -159,7 +166,11 @@ pub fn secret_store(source: SecretSource) -> Arc<dyn SecretStore> {
 /// 環境変数名の衝突の検査（D4）。**環境変数から読むときだけ数える**（keyring は鍵を
 /// 変数名に写さないので衝突が無い）。
 ///
-/// 数える鍵は村のテンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン）。
+/// 数える鍵は村のテンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン・扉の合鍵）+
+/// 村の有効な http の MCP サーバーが `headers` で参照する `mcp:NAME` の全部（Spec 65 D3）。
+/// テンプレート ID `mcp_outcasts` と参照 `OUTCASTS` は同じ `FUSEFORKS_SECRET_MCP_OUTCASTS` に写る。
+/// **参照は起動する集合ではなく村の全個体から数える** — `build_host` は起動する集合を知らないので、
+/// 起動前検査と組み立てで数える範囲を揃えるため（`check` が通って組み立てで落ちる形を作らない）。
 /// `build_host`（`bootstrap` の直後・MCP の接続より前）と起動前検査が同じ関数を呼ぶ。
 ///
 /// # Errors
@@ -167,15 +178,18 @@ pub fn secret_store(source: SecretSource) -> Arc<dyn SecretStore> {
 pub(crate) fn check_secret_names<'a>(
     source: SecretSource,
     template_ids: impl IntoIterator<Item = &'a str>,
+    mcp_ref_names: &[String],
 ) -> Result<(), HostError> {
     if source != SecretSource::Env {
         return Ok(());
     }
-    let found = secret_name_collisions(
-        template_ids
-            .into_iter()
-            .chain(std::iter::once(crate::jev_settings::TOKEN_KEY)),
-    );
+    let keys: Vec<String> = template_ids
+        .into_iter()
+        .map(str::to_owned)
+        .chain([crate::jev_settings::TOKEN_KEY, DOOR_TOKEN_KEY].map(str::to_owned))
+        .chain(mcp_ref_names.iter().map(|name| mcp_secret_key(name)))
+        .collect();
+    let found = secret_name_collisions(keys.iter().map(String::as_str));
     if found.is_empty() {
         Ok(())
     } else {
@@ -254,7 +268,9 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     // LLM も MCP も呼ばないので、ここで止めれば何も外へ出ていない。数える鍵は村の
     // テンプレート ID の全部 + コードが持つ固定の鍵（Jev のトークン）。
     let templates = orchestrator.templates().await;
-    check_secret_names(opts.secrets, templates.iter().map(|t| t.id.as_str()))?;
+    let agent_ids: Vec<_> = orchestrator.snapshots().await.into_iter().map(|s| s.id).collect();
+    let mcp_refs = crate::preflight::mcp_secret_ref_names(&store, &agent_ids).await;
+    check_secret_names(opts.secrets, templates.iter().map(|t| t.id.as_str()), &mcp_refs)?;
 
     // 同梱ツール。grep / diff の探索範囲（作業フォルダ）は各エージェントの設定から
     // 実行時に解決されるため、ここでは登録するだけでよい。
@@ -305,11 +321,24 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
     // **開けなくても起動は止めない**（MCP クライアントの初期接続と同じ判断）。
     // `open_door` が偽なら設定を読むだけで開かない（`ask` / `check`）。
     let data_dir = paths.data_dir();
+    //
+    // `--door-port`（Spec 65 D9）は設定ファイルを読まずに開く — コンテナには扉を ON にする
+    // 画面が無い。合鍵は他の秘密と同じ置き場から読み、**環境変数があるだけでは開かない**
+    // （開くかどうかは引数で書く）。合鍵が無ければ開かない（起動前検査が先に拒んでいる）。
     let mut mcp_server = McpServerManager::load(data_dir, Arc::clone(&orchestrator));
-    let mcp_server_error = if opts.open_door {
-        mcp_server.start_if_enabled().await
-    } else {
-        None
+    let mcp_server_error = match (opts.open_door, opts.door_port) {
+        (false, _) => None,
+        (true, None) => mcp_server.start_if_enabled().await,
+        (true, Some(port)) => match secrets.get(DOOR_TOKEN_KEY).ok().flatten() {
+            Some(token) => mcp_server.start_with(port, token).await,
+            None => {
+                let reason = format!(
+                    "扉の合鍵（{DOOR_TOKEN_KEY}）が無いため、--door-port {port} の扉を開きませんでした"
+                );
+                fuseforks_core::note!("mcp server: {reason}");
+                Some(reason)
+            }
+        },
     };
 
     // 前判定の承認（Spec 28）。**同じ棚（data_dir）に置く理由も同じ** —
@@ -355,4 +384,66 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         jev: tokio::sync::Mutex::new(jev),
         secrets,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collisions(result: Result<(), HostError>) -> Vec<(String, Vec<String>)> {
+        match result {
+            Ok(()) => Vec::new(),
+            Err(HostError::SecretNameCollision(found)) => {
+                found.into_iter().map(|c| (c.variable, c.keys)).collect()
+            }
+            Err(other) => panic!("衝突以外: {other}"),
+        }
+    }
+
+    /// テンプレート ID と headers の参照が同じ変数名に写れば止める（Spec 65 D3）。
+    #[test]
+    fn a_template_id_and_a_header_ref_can_collide() {
+        let found = collisions(check_secret_names(
+            SecretSource::Env,
+            ["mcp_outcasts", "other"],
+            &["OUTCASTS".to_owned()],
+        ));
+        assert_eq!(
+            found,
+            vec![(
+                "FUSEFORKS_SECRET_MCP_OUTCASTS".to_owned(),
+                vec!["mcp:OUTCASTS".to_owned(), "mcp_outcasts".to_owned()]
+            )]
+        );
+    }
+
+    /// 扉の合鍵は固定の鍵として数える（テンプレート ID `door-token` が同じ変数名に写る）。
+    ///
+    /// **同じ綴りの鍵（テンプレート ID がちょうど `door_token`）は衝突に数えない** —
+    /// `secret_name_collisions` は同じ鍵を 1 つに畳む。その形は 2 つの秘密が資格情報ストアの
+    /// 同じ鍵を共有する別の問題で、Jev の `jev_api_token` から在る（環境変数の衝突検査の射程の外）。
+    #[test]
+    fn the_door_token_is_a_fixed_key() {
+        let found = collisions(check_secret_names(SecretSource::Env, ["door-token"], &[]));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "FUSEFORKS_SECRET_DOOR_TOKEN");
+        assert_eq!(found[0].1, vec!["door-token".to_owned(), "door_token".to_owned()]);
+    }
+
+    /// keyring は鍵を変数名に写さないので数えない。衝突の無い組は通す。
+    #[test]
+    fn keyring_and_distinct_keys_pass() {
+        assert!(collisions(check_secret_names(
+            SecretSource::Keyring,
+            ["mcp_outcasts"],
+            &["OUTCASTS".to_owned()],
+        ))
+        .is_empty());
+        assert!(collisions(check_secret_names(
+            SecretSource::Env,
+            ["stub"],
+            &["OUTCASTS".to_owned()],
+        ))
+        .is_empty());
+    }
 }

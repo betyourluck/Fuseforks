@@ -57,6 +57,8 @@ pub struct PreflightRequest {
     pub bypass_plan_review: bool,
     /// `--run-approval`。
     pub run_approval: RunApproval,
+    /// `serve --door-port`（Spec 65 D9）。`ask` では `None`。
+    pub door_port: Option<u16>,
 }
 
 /// 検査の結果。
@@ -107,7 +109,9 @@ pub async fn preflight(
     // 組み立てと同じ置き場・同じ衝突の検査（D4）。衝突は組み立ての失敗として返す。
     let secrets = secret_store(req.secrets);
     let templates = world.templates();
-    check_secret_names(req.secrets, templates.iter().map(|t| t.id.as_str()))?;
+    let all_ids: Vec<AgentId> = world.agent_names().into_iter().map(|(id, _)| id).collect();
+    let village_refs = mcp_secret_ref_names(&store, &all_ids).await;
+    check_secret_names(req.secrets, templates.iter().map(|t| t.id.as_str()), &village_refs)?;
 
     let start = resolve_start(&world, req)?;
     let start_set: BTreeSet<AgentId> = start.iter().cloned().collect();
@@ -158,9 +162,8 @@ pub async fn preflight(
         run_commands: &run_commands,
         path_kind: &path_kind,
         command_on_path: &command_on_path,
-        // 扉を開く `serve --door-port` は Spec 65 P2 で足す。それまで扉の合鍵は見ない。
-        door_port: None,
-        door_token_present: false,
+        door_port: req.door_port,
+        door_token_present: secrets.contains(crate::boot::DOOR_TOKEN_KEY).unwrap_or(false),
         process_time_zone: process_time_zone.as_view(),
         baked_time_zone: baked_time_zone.as_deref(),
     };
@@ -253,6 +256,15 @@ async fn mcp_materials(
         }
     }
     (stdio, refs)
+}
+
+/// 有効な http の MCP サーバーが `headers` で参照する秘密の名前（共通と、渡した個体の個体別。
+/// 重複なし・名前の順）。秘密の変数名の衝突検査（[`check_secret_names`]）が読む — `build_host` と
+/// 起動前検査は**村の全個体**を渡して、数える範囲を揃える。
+pub(crate) async fn mcp_secret_ref_names(store: &ConfigStore, ids: &[AgentId]) -> Vec<String> {
+    let (_, refs) = mcp_materials(store, ids).await;
+    let names: BTreeSet<String> = refs.into_iter().map(|r| r.name).collect();
+    names.into_iter().collect()
 }
 
 /// 起動する個体の `run.json` の `allow` の先頭の語（重複は個体ごとに 1 つ）。`run` を持つかは

@@ -4003,7 +4003,8 @@ entities:
         鍵 mcp:NAME で引く (env では FUSEFORKS_SECRET_MCP_NAME)。引けなければ接続しない・理由は名前だけ
         (値を書かない)。**展開は headers の値だけ** (env / args / url に広げない)。参照の無い mcp.json はバイト等価
      8. **秘密の変数名の衝突検査が数える鍵** = テンプレート ID の全部 + jev_api_token + door_token +
-        起動する集合の mcp.json が参照する mcp:NAME の全部
+        **村の**有効な http の MCP サーバー（共通と全個体）が参照する mcp:NAME の全部 (P2 で訂正 —
+        build_host は起動する集合を知らないので、起動前検査と数える範囲を揃えて村の全個体にした)
      9. **承認の運搬**: 元の棚で承認された前判定と後判定だけ、置き換えた cwd で鍵を計算し直して写しへ書く。
         command と args は 1 文字も変えない。再 bake は写しの probe_approvals.json を元から作り直す。
         **承認を書くのは GUI の保存 IPC と bake の 2 つ** (probe_approvals の「GUI の保存 IPC だけ」を 1 点広げる)

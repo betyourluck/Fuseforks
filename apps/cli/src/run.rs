@@ -45,6 +45,7 @@ fn request(common: &Common, mode: HeadlessMode) -> PreflightRequest {
         secrets: common.secrets,
         bypass_plan_review: common.bypass_plan_review,
         run_approval: common.run_approval,
+        door_port: common.door_port,
     }
 }
 
@@ -94,6 +95,7 @@ async fn open(
         secrets: common.secrets,
         run_schedules,
         open_door,
+        door_port: common.door_port,
     };
     let host = build_host(paths, opts).await.map_err(|err| {
         let code = exit::for_host_error(&err);

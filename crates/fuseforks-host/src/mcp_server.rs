@@ -429,6 +429,14 @@ impl McpServerManager {
             return Some(reason);
         };
         let port = config.port;
+        self.start_with(port, token).await
+    }
+
+    /// 設定ファイルを読まずに、渡したポートと合鍵で扉を開ける（Spec 65 D9 の
+    /// `serve --door-port`。合鍵は呼び出し側が秘密の置き場から読む）。**設定ファイルは
+    /// 書き換えない**（コンテナの扉は引数と秘密だけで決まる）。失敗の理由を返すが、
+    /// 起動は止めない（[`Self::start_if_enabled`] と同じ）。
+    pub async fn start_with(&mut self, port: u16, token: String) -> Option<String> {
         match start(Arc::clone(&self.orchestrator), port, token).await {
             Ok(handle) => {
                 self.running = Some(handle);

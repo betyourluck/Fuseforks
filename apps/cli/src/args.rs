@@ -20,17 +20,20 @@ fuseforks-cli — Fuseforks を GUI なしで動かす（Spec 64）
 
 使い方:
   fuseforks-cli check --for ask|serve --data-dir <dir> --start <集合> [--secrets keyring|env]
-                      [--bypass-plan-review] [--run-approval <mode>] [--json]
+                      [--bypass-plan-review] [--run-approval <mode>] [--door-port <N>] [--json]
   fuseforks-cli ask   --data-dir <dir> --start <集合> [--secrets keyring|env] [--continue-session]
                       [--client <名前>] [--bypass-plan-review] [--run-approval <mode>]
                       [--events jsonl] [--verbose] <依頼文 | - で標準入力>
   fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
-                      [--bypass-plan-review] [--run-approval <mode>] [--events jsonl]
+                      [--bypass-plan-review] [--run-approval <mode>] [--door-port <N>]
+                      [--events jsonl]
   fuseforks-cli --version | --help
 
   <集合>   batch（GUI の全体 ▶ と同じ対象）| reception（窓口だけ。ask 専用）| <id>,<id>,…
            ask はどの値でも窓口を足す。既定値は無い
   <mode>   required（既定）| auto-approve | no-approval
+  <N>      扉のポート（1〜65535）。mcp_server.json を読まずに 127.0.0.1:N で開き、合鍵は秘密の
+           door_token（env なら FUSEFORKS_SECRET_DOOR_TOKEN）。書かなければ mcp_server.json のとおり
 ";
 
 /// 解析した命令。
@@ -61,6 +64,8 @@ pub struct Common {
     pub bypass_plan_review: bool,
     /// `--run-approval`（既定 required = コアの既定）。
     pub run_approval: RunApproval,
+    /// `--door-port`（Spec 65 D9。`check` と `serve` だけ。`ask` は扉を開かない）。
+    pub door_port: Option<u16>,
 }
 
 /// `check` の引数。
@@ -142,12 +147,12 @@ fn takes_value(kind: Kind, flag: &str) -> Option<bool> {
     let common_value = matches!(flag, "--data-dir" | "--start" | "--secrets" | "--run-approval");
     let common_switch = flag == "--bypass-plan-review";
     let (value, switch) = match kind {
-        Kind::Check => (flag == "--for", flag == "--json"),
+        Kind::Check => (matches!(flag, "--for" | "--door-port"), flag == "--json"),
         Kind::Ask => (
             matches!(flag, "--client" | "--events"),
             matches!(flag, "--continue-session" | "--verbose"),
         ),
-        Kind::Serve => (flag == "--events", false),
+        Kind::Serve => (matches!(flag, "--events" | "--door-port"), false),
     };
     if common_value || value {
         Some(true)
@@ -241,12 +246,21 @@ fn parse_command(kind: Kind, args: &[String]) -> Result<Command, String> {
             ));
         }
     };
+    // ポート 0 は「OS が空きを選ぶ」の意味で、プロキシが向ける先が決まらないので受けない。
+    let door_port = match value("--door-port") {
+        None => None,
+        Some(raw) => match raw.trim().parse::<u16>() {
+            Ok(port) if port != 0 => Some(port),
+            _ => return Err(format!("--door-port は 1〜65535 のポート番号です: {raw}")),
+        },
+    };
     let common = Common {
         data_dir: PathBuf::from(data_dir),
         start,
         secrets,
         bypass_plan_review: switch("--bypass-plan-review"),
         run_approval,
+        door_port,
     };
     let events_jsonl = match value("--events") {
         None => false,
@@ -418,6 +432,24 @@ mod tests {
         };
         assert_eq!(serve.common.run_approval, RunApproval::NoApproval);
         assert!(serve.events_jsonl);
+    }
+
+    /// `--door-port` は check と serve だけ。1〜65535 で、0 と数でない値は誤り。
+    #[test]
+    fn door_port_is_for_check_and_serve_only() {
+        let base = ["--data-dir", "D", "--start", "batch"];
+        let serve = [&["serve"][..], &base, &["--door-port", "39641"]].concat();
+        let Command::Serve(serve) = parse(&argv(&serve)).unwrap() else { panic!() };
+        assert_eq!(serve.common.door_port, Some(39641));
+        let check = [&["check", "--for", "serve"][..], &base, &["--door-port=39641"]].concat();
+        let Command::Check(check) = parse(&argv(&check)).unwrap() else { panic!() };
+        assert_eq!(check.common.door_port, Some(39641));
+        let ask = [&["ask"][..], &base, &["--door-port", "39641", "やあ"]].concat();
+        assert!(parse(&argv(&ask)).unwrap_err().contains("--door-port"));
+        for bad in ["0", "70000", "x"] {
+            let serve = [&["serve"][..], &base, &["--door-port", bad]].concat();
+            assert!(parse(&argv(&serve)).unwrap_err().contains("--door-port"), "{bad}");
+        }
     }
 
     #[test]

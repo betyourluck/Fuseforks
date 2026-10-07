@@ -211,7 +211,8 @@ Windows のロックと噛み合う保証は無く、元の端末の時刻帯も
 - **展開は `headers` の値だけ。** `env` / `args` / `url` には広げない（`env` に秘密を書かせない、は Spec 47 の凍結。
   広げると「どこに秘密を書いてよいか」の規則が欄の数だけ増える）
 - **変数名の衝突検査が数える鍵を広げる**（`check_secret_names`）: 村のテンプレート ID の全部 + `jev_api_token` +
-  `door_token`（D9）+ **起動する集合の `mcp.json`（共通と個体別）が参照する `mcp:NAME` の全部**。テンプレート ID が
+  `door_token`（D9）+ **村の有効な http の MCP サーバー（共通と全個体）が参照する `mcp:NAME` の全部**
+  （P2 で「起動する集合」から訂正 — `build_host` は起動する集合を知らないので、起動前検査と数える範囲を揃えた）。テンプレート ID が
   `mcp_outcasts` で参照が `OUTCASTS` なら、どちらも `FUSEFORKS_SECRET_MCP_OUTCASTS` に写るので組み立てを止める（Spec 64 の 5）
 - GUI: MCP の設定画面が `mcp.json` の本文から参照の名前を拾い、名前ごとに「値を保存」の欄を出す
   （資格情報ストアへ書く。画面に値を戻さない — モデルの API キーと同じ扱い）

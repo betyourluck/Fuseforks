@@ -52,6 +52,7 @@ fn opts() -> HostBootOptions {
         // ティッカーも扉も起こさない（ポートを掴まない）。
         run_schedules: false,
         open_door: false,
+        door_port: None,
     }
 }
 
