@@ -1,7 +1,7 @@
 # Spec 65: 村をコンテナで回す（bake・像・参照構成）
 
-- 状態: **P0〜P5 完了・残りは P6（実機）**（P1 = コア / P2 = `serve --door-port` と `bake` / P3 = 像と `deploy/` /
-  P4 = GUI の「秘密の値」の欄 / P5 = 台帳。各「実装記録」が正。以下は起票と P0 の経緯）（2026-10-07 起票 → 同日、査読 2 系統 27 点を反映して rev2。表は Notes 3 →
+- 状態: **Done**（2026-10-07。**起票から Done まで同日**・P0〜P6。P1 = コア / P2 = `serve --door-port` と `bake` / P3 = 像と
+  `deploy/` / P4 = GUI の「秘密の値」の欄 / P5 = 台帳 / P6 = 開発機の村で実機 5 件。各「実装記録」が正。以下は起票と P0 の経緯）（2026-10-07 起票 → 同日、査読 2 系統 27 点を反映して rev2。表は Notes 3 →
   同日、再査読が未決 4 つの推奨を支持し、利用者がそれを回答として転送して未決ゼロ → **同日に P0 完了** —
   像のビルドと像の中の測定 9 項目・`container_contract` 凍結 14 本。予測の外れ 3 つが設計を 2 か所動かした
   （時刻帯の名前は `TZ` を先に見る / `RUN_COMMAND_NOT_FOUND` は同名の別プログラムを見分けない）。「P0 実測記録」が正）
@@ -460,13 +460,13 @@ deploy/.env.example
   Spec 47 の「headers は平文」の注記 / Spec 64 の D12・Notes 2・`MCP_STDIO` へ行き先 / `.github/workflows/build.yml` の
   「members = 2 つ」のコメント（Spec 64 で 4 つになっていた）
 
-### P6 — 実機
+### P6 — 実機（**完了**・2026-10-07。「P6 実機記録」）
 
-- [ ] 開発機の村を `bake` → ~~`docker compose --profile door up`~~ `docker compose -f compose.yaml -f compose.door.yaml up`（P3）→ 扉へプロキシ越しに 1 件依頼して答えが返る
-- [ ] 壁時計の予定が `TZ` どおりの時刻に発火する
-- [ ] `docker compose down` で `turn:` 行が欠けない（飛行中のターンがあるとき）
-- [ ] GUI で Construct を直して再 `bake --update` → コンテナの Memory・会話・予定の消化が残り、Construct だけ変わる
-- [ ] 平文の `Authorization` を持つ村の `bake` が 10 で止まり、`${secret:…}` に直すと通る
+- [x] 開発機の村を `bake` → ~~`docker compose --profile door up`~~ `docker compose -f compose.yaml -f compose.door.yaml up`（P3）→ 扉へプロキシ越しに 1 件依頼して答えが返る
+- [x] 壁時計の予定が `TZ` どおりの時刻に発火する
+- [x] `docker compose down` で `turn:` 行が欠けない（飛行中のターンがあるとき）
+- [x] GUI で Construct を直して再 `bake --update` → コンテナの Memory・会話・予定の消化が残り、Construct だけ変わる
+- [x] 平文の `Authorization` を持つ村の `bake` が 10 で止まり、`${secret:…}` に直すと通る
 
 ## P0 実測記録（2026-10-07）
 
@@ -547,6 +547,31 @@ scratchpad に置き、リポジトリには入れていない（P3 で `deploy/
 **作業で踏んだもの**: Git Bash が `docker run` の引数 `/p0/stub.py` を `C:/Program Files/Git/p0/stub.py` に書き換えた
 （`MSYS_NO_PATHCONV=1` が要る場面の 4 例目）/ ヒアドキュメントの中の `\\` が `\` に崩れた（スクリプトはファイルに書いて回した）。
 測定用のコンテナとボリュームは消した。像 `fuseforks:p0` は P3 の比較のために残している。
+
+## P6 実機記録（2026-10-07）
+
+**開発機の村**（10 体・テンプレート 5 種・`mcp.json` に平文の `Authorization` が 3 体・6 接続先）を、Docker Desktop の上で回した。
+起動する集合は利用者の裁定で**窓口のルナ（`agent_8`・gpt-6.1-sol）1 体**（`--start agent_8 --bypass-plan-review`。`serve` に
+`--start reception` は使えない — `ask` 専用）。予定は写しの側にだけ 1 本足した（利用者裁定。GUI の村には触れていない）。
+compose は `compose.yaml` + `compose.door.yaml` に、`--start` を変える使い捨ての重ねファイル（scratchpad）を重ねた。
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 5 | 平文の `Authorization` で 10・参照に直すと通る | **成立。** 平文のまま `bake` → **10**・写し先は作られない。エラー文は `agents/agent/mcp.json: alphaxiv / Authorization` の形で、`Bearer` も値も含まない（文字数と `Bearer` の出現 0 で確かめた）。利用者が GUI で 6 か所を `Bearer ${secret:…}` に直し、MCP ダイアログの「秘密の値」の欄で値を保存（**P4 の欄の実機確認を兼ねた**。接続状態は緑）→ `bake` **0**（57 ファイル・置き換えたパス 16・運んだ承認 1）。写しのどこにも平文の `Bearer <鍵>` が無い。警告 `FREE_TEXT_WINDOWS_PATH` 16 件は stdio の MCP（memoria / manuale / MCP_DOCKER）のコマンドと `env` |
+| 1 | 扉へプロキシ越しに 1 件依頼して答えが返る | **成立。** `https://localhost/mcp`（Caddy）→ 扉 → ルナ。依頼は「outcasts の `me` を 1 回呼び、アカウント名だけを答える」で、`tool: … name=outcasts__me ok=true body_chars=958` → 答え「ルナ」（11.1 秒）。**この 1 件が `${secret:…}` の実機の確認にもなった** — `.env` の `FUSEFORKS_SECRET_MCP_OUTCASTS_AGENT_8` がコンテナの中から outcasts.jp の `Authorization` に届いた |
+| 2 | 壁時計の予定が `TZ` どおりに発火する | **成立。** 写しに毎日 15:34 の予定（ルナ宛て）を足して起動 → **15:34:14（JST）に `turn start: … from=system`**。`TZ` が効いていなければ UTC の 15:34（日本時間 0:34）まで発火しない。対照: `TZ` を空にした `check` は `TIMEZONE_MISMATCH`（`Etc/UTC` 対 `Asia/Tokyo`）、`TZ=Asia/Tokyo` では出ない。起動直後の「（毎日 15:34）の予定時刻を猶予超過で消化（発火せず）」は前日の 15:34 の分で、仕様どおり |
+| 3 | 止めても `turn:` 行が欠けない | **成立。** 扉へ 2 周かかる依頼を投げ、ルナのターンが始まって 3 秒後に `docker compose stop` → 4 秒で閉じて**終了コード 0**。順序は Spec 64 D8 のとおり — 扉を閉じる → `tool: … outcasts__recent_posts ok=true` の周の境目で `turn interrupted: … prompt=34564 cached=27278 total=34621`（払いの行）→ `agent stopped: … joined=true`。外の呼び出し側は、扉が先に閉じたので結果を受け取らない（`null`） |
+| 4 | GUI で Construct を直して `bake --update` | **成立。** コンテナを止めた状態で、利用者が GUI でルナの `Construct.md` に追記して閉じる → `bake --update` **0**。ハッシュで比べると、**`Construct.md` だけが変わり**（GUI の村のものとバイトで一致）、`Memory.md` と `sessions.redb` は前と同じ。写しにだけ足した予定は `CONSUMED_RECORD_DROPPED` で名指しされて消えた（D1 のとおり — 予定の定義は GUI が持つ）。起動し直すと同じ会話（`1791354554970-3f6a0dd1`）を「発話 8 件 / 履歴 1 体」で開いた |
+
+**気づいたこと**:
+
+- **ヘッドレスのログには MCP サーバーごとの接続の成否が出ない**（GUI は MCP ダイアログの「接続状態」で見る）。今回は項目 1 の
+  ツール呼び出しで確かめた。stdio の MCP は起動前検査が名指しするが、**loopback の http（lorelei = `http://127.0.0.1:39642`）は
+  名指ししない** — コンテナの中の 127.0.0.1 にはホストのサーバーが居ないので、接続は失敗し、その個体はツール無しで動く。
+  頻度を見てから（接続の結果を `mcp:` の 1 行で出す計器が要るかは、コンテナで回す人が増えてから）
+- 使った像は P3 で作ったもの（`0.4.0+g08b2a29`）。この確認で使った機能（P1 の参照・P2 の扉と `bake`）はすべてその時点で入っている。
+  `bake` は手元の CLI（`0.4.0+g6df0a0b`）
+- 写しと作業フォルダ（`deploy/village` / `deploy/work`）と `deploy/.env` は開発機に残してある（どれも git の外）。`.env` には本物の鍵が入っている
 
 ## P5 台帳記録（2026-10-07）
 

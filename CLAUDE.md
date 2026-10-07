@@ -2587,7 +2587,8 @@ Windows の `fuseforks-cli` も開けた）— 参照構成は写しを bind で
 (b) 扉は profile ではなく `compose.door.yaml` を重ねる（profile は `fuseforks` の `command` と `ports:` を変えられない）
 (c) ~~存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」~~ → **同日に塞いだ**（`world.json` が無ければ 5・何も作らない。
 `PreflightError::VillageMissing`）。~~次は P4~~ **→ P4 完了**（同日。MCP ダイアログに「秘密の値」の欄・IPC 3 本・値を返す口は無い。
-実機は未確認。「P4 実装記録」が正）。**→ P5 完了**（台帳）。次は P6 実機（開発機の村を `bake` → `docker compose up`）。
+実機は未確認。「P4 実装記録」が正）。**→ P5 完了**（台帳）。**→ P6 完了 = Spec 65 は Done**（同日。開発機の村で 5 件 — 平文の鍵で 10・参照に直して 0 / 扉越しの依頼で `outcasts__me` が通る = `${secret:…}` がコンテナから届く / 毎日 15:34 の予定が 15:34:14 JST に発火 / 途中で止めて 0・払いの行 / `bake --update` で Construct だけ変わり Memory と会話が残る。「P6 実機記録」が正）。
+**次の一手**: タグを打つなら「利用者が負う条件」に — 同じ村を GUI とコンテナが開いても bind mount ではロックが効かない / MCP の `headers` は `${secret:…}` で書く（平文だと `bake` が止まる）/ 写しの `.env` に本物の鍵が入る。
 
 ## 現在地（2026-10-06 更新）
 
