@@ -78,10 +78,12 @@ Fuseforks/
 │   └── fuseforks-host/                  ★ 宿主层。打开、组装、关闭村庄。不依赖 Tauri（Spec 64）
 │       └── src/                     boot.rs（build_host — GUI 与 fuseforks-cli 共用的唯一组装实现）/ paths.rs / lock.rs（村庄排他锁）/
 │                                    preflight.rs（启动前检查）/ mcp_server.rs（Spec 25）/ pricing_source.rs（Spec 41）/
-│                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）
+│                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）/ bake.rs（Spec 65）
+│
+├── deploy/                          在容器中运行的参考配置（Spec 65）。Dockerfile / compose / Caddyfile / README
 │
 └── apps/
-    ├── cli/                         可执行文件 fuseforks-cli。无需 GUI 的 check / ask / serve（Spec 64）
+    ├── cli/                         可执行文件 fuseforks-cli。无需 GUI 的 check / ask / serve（Spec 64）/ bake（Spec 65）
     └── gui-tauri/                   ★ 外壳。依赖 fuseforks-host
         ├── src-tauri/src/
         │   ├── lib.rs               窗口启动与 IPC 命令注册
@@ -591,12 +593,20 @@ Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证）�
 - `ask <请求>`：向窗口发送 1 条消息，**只把回答写到标准输出**后关闭（`-` 从标准输入读取）。默认新建会话（`--continue-session` 续接当前会话）
 - `serve`：常驻并运行计划与大门（MCP 服务器），Ctrl+C / SIGTERM 关闭
 - `--data-dir` 与 `--start`（`batch` / `reception` / `<id>,<id>,…`）为必填，没有默认值。`ask` 无论取何值都会加入窗口
-- `ask` 与 `serve` 也一定先做同样的检查。拒绝有 3 种：计划确认为 ON 的个体在启动集合中（`--bypass-plan-review` 放行）/ 模板的 API 密钥不在所选存放位置 / `ask` 时窗口未设置或已删除
-- 密钥：`--secrets keyring`（默认）或 `env`。`env` 读取 `FUSEFORKS_SECRET_` + 把键（模板 ID）转大写、非字母数字改为 `_` 的变量（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）。启动时读取一次，不可写入
-- 退出码：0 成功 / 1 核心错误 / 2 参数错误 / 3 检查拒绝 / 4 村庄被其他进程打开 / 5 组装失败 / 6 未得到回答 / 7 超时 / 8 被中断 / 9 达到预算上限
+- `ask` 与 `serve` 也一定先做同样的检查。拒绝：计划确认为 ON 的个体在启动集合中（`--bypass-plan-review` 放行）/ 模板的 API 密钥或 MCP `headers` 的 `${secret:…}` 不在所选存放位置 / `ask` 时窗口未设置或已删除 / 启动个体的工作文件夹不存在 / 给了 `--door-port` 却没有大门密钥
+- 密钥：`--secrets keyring`（默认）或 `env`。`env` 读取 `FUSEFORKS_SECRET_` + 把键（模板 ID）转大写、非字母数字改为 `_` 的变量（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`；MCP 的 `${secret:NAME}` 为 `FUSEFORKS_SECRET_MCP_<NAME>`，大门密钥为 `FUSEFORKS_SECRET_DOOR_TOKEN`）。启动时读取一次，不可写入
+- 退出码：0 成功 / 1 核心错误 / 2 参数错误 / 3 检查拒绝 / 4 村庄被其他进程打开 / 5 组装失败（含 `--data-dir` 下没有村庄。此时不创建任何东西）/ 6 未得到回答 / 7 超时 / 8 被中断 / 9 达到预算上限
 - `--events jsonl` 时标准错误的每一行都是 JSON（CoreEvent / `{"type":"cli"}` / `{"type":"log"}`）
 - **同一个村庄只能由 1 个进程打开**（`{workspace}/.fuseforks.lock` 的 OS 锁，对 GUI 同样有效）
-- 从容器外连接大门时：大门仍只监听 `127.0.0.1`，由同一网络命名空间内的代理接收，并把 `Host` 改写为 `127.0.0.1:<port>`
+- 从容器外连接大门时：大门仍只监听 `127.0.0.1`，由同一网络命名空间内的代理接收，并把 `Host` 改写为 `127.0.0.1:<port>`。只有给了 `serve --door-port <N>`（或在 GUI 中启用了大门）时才打开
+
+### 在容器中运行（[Spec 65](specs/65_container-deploy.md)）
+
+`deploy/` 中有用 Docker 容器运行在 GUI 中稳定下来的村庄的参考配置（步骤见 [deploy/README.md](deploy/README.md)）。**镜像不公开**，由运维者从源码构建。设置始终在 GUI 一侧修改，容器中的村庄是副本。
+
+- `bake`：在 GUI 的终端、关闭 GUI 后运行，从 GUI 的村庄制作副本。只改写 3 个字段（`workDir` / `ragSources` / 前判定・后判定的 `cwd`，`--map` 取最长前缀）；有未改写的绝对路径则一个字节也不写并退出 3；`headers` 中有明文密钥则退出 10（改成 `${secret:…}` 即可通过）
+- `bake --update` 只替换设计文件（`world.json`・条例・Construct・SKILL・`mcp.json`・图标），**会话・`Memory.md`・计划的消化记录・待批准的命令保留容器一侧**。**重建前先停止容器** — Docker Desktop 的 bind mount 上，村庄锁不跨越 Windows 与容器（实测）
+- 镜像：Debian slim + glibc + tini，UID 10001。默认不设置 `TZ`（在 `.env` 中写 `bake.json` 的 `sourceTimeZone`）。compose 的 `stop_grace_period` 为 40 秒（默认 10 秒会用 SIGKILL 切断进行中的轮次，`turn:` 行丢失）
 
 ## 有意未实现的部分
 

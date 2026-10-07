@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-06**
+**Last updated: 2026-10-07**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -90,8 +90,9 @@ Keys you enter are stored in your **operating system's credential store**:
 - Linux: freedesktop Secret Service
 
 The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
-this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) is kept.
-**Neither can be read back** — the screen only shows whether a key is stored.
+this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) and the
+values that MCP server headers reference as `${secret:NAME}` (see 4-3) are kept.
+**None of them can be read back** — the screen only shows whether a key is stored.
 
 The app's configuration files (such as `world.json`) **have no field capable of
 holding a key**. Because those files are stored in plain text, the place where a
@@ -110,6 +111,18 @@ the credential store). If you choose this, **the keys sit in the process environ
 protection does not apply** (other programs running as the same user, or tools that record the environment, may
 be able to read them). **Which place to use is the choice of whoever runs it.** The app only reads environment
 variables and never writes to them. The GUI always uses the credential store only.
+
+### When running in a container (`fuseforks-cli bake`)
+
+If you use `bake`, which makes a copy of a GUI village to run in a container, **the copy of the village (including
+the conversations and memory that build up in the container) and the secrets passed as environment variables sit on
+the host of whoever runs the container**. The app does not send that copy or those secrets anywhere, and running in a
+container sends the same things as the GUI.
+
+`bake` **stops without making a copy** if an MCP server header contains what looks like a key in plain text (the copy
+flows into volumes and backups). Rewriting it as a `${secret:NAME}` reference lets it through. If you pass
+`--allow-plaintext-headers` instead, the value goes into the copy in plain text. Whether a value looks like a key is
+guessed from the header's name; there is no guarantee that every secret is recognised.
 
 ---
 
@@ -170,8 +183,11 @@ you chose.
 
 If you declare a remote MCP server (`"type": "http"`), **the headers you
 configured are sent with every request to that destination** (including an
-Authorization header, i.e. your access token). Headers are stored in plaintext
-`mcp.json`, so distributing your workspace distributes the token with it.
+Authorization header, i.e. your access token). A value written directly into a
+header is stored in plaintext `mcp.json`, so distributing your workspace distributes
+the token with it. If a header value is written as `${secret:NAME}`, the value is read
+from the operating system's credential store (see 3) just before connecting and does not
+stay in `mcp.json`. If it cannot be found, the app does not connect to that server.
 
 ### 4-4. The judgement-only model Jev (tool-result pruning, judges)
 

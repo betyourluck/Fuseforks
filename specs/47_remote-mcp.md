@@ -109,6 +109,11 @@ serde の untagged は「どの variant にも一致しない」としか言え�
 
 ### D3: `headers` は平文で受ける。ただし `env` より 1 段重いことを明記する
 
+**→ 2026-10-07 に [Spec 65](65_container-deploy.md) D3 で参照の形を足した**（平文で受けることは変えていない）。
+`headers` の値に `${secret:NAME}` と書くと、接続の直前に資格情報ストア（GUI）か `FUSEFORKS_SECRET_MCP_<NAME>`
+（`fuseforks-cli --secrets env`）から引き、引けなければ接続しない。値は MCP ダイアログの「秘密の値」の欄から入れる
+（下の (a) が「別の UI が要る」と書いた欄が Spec 65 P4 で入った）。`bake` は平文の鍵を持つ村の写しを作らない（10）
+
 - keyring 参照化は本 Spec では作らない。理由は 2 つ:
   (a) `mcp.json` は設定ファイルタブの**生テキスト編集**が入口で、keyring 参照を
   作るには別の UI（値の入力欄・保存経路）が要る — 本 Spec の射程を超える

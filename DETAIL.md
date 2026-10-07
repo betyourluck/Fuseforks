@@ -87,14 +87,18 @@ Fuseforks/
 │       │   ├── paths.rs             HostPaths（data_dir と、そこから導く workspace）
 │       │   ├── lock.rs              村の排他ロック（{workspace}/.fuseforks.lock）
 │       │   ├── preflight.rs         起動前検査の材料集め（村を開かず、ファイルと秘密の有無だけを読む）
+│       │   ├── bake.rs              bake — GUI の村からコンテナで回す写しを作る（計画と適用の 2 段。Spec 65）
 │       │   ├── mcp_server.rs        外の LLM から依頼を受ける扉（HTTP + 合鍵。Spec 25）
 │       │   ├── pricing_source.rs    単価表の取得元（押したときだけ取りに行く。Spec 41）
 │       │   ├── jev_settings.rs      ツール結果の圧縮の設定と採点器の差し込み（Spec 59）。鍵があれば判断役の判断モデルも差し込む（Spec 62）
 │       │   └── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
-│       └── tests/                   扉のワイヤ / 村のロック
+│       └── tests/                   扉のワイヤ / 村のロック / bake
+│
+├── deploy/                          コンテナで回す参照構成（Spec 65）。Dockerfile / compose.yaml / compose.door.yaml /
+│                                    Caddyfile / .env.example / README（英・日）/ fixtures/village（像を確かめる小さな村）
 │
 └── apps/
-    ├── cli/                         実行ファイル fuseforks-cli。GUI なしで check / ask / serve（Spec 64）
+    ├── cli/                         実行ファイル fuseforks-cli。GUI なしで check / ask / serve（Spec 64）/ bake（Spec 65）
     │   ├── src/                     args.rs（引数）/ exit.rs（終了コード）/ output.rs / run.rs / main.rs
     │   └── tests/cli.rs             結合テスト: 子プロセスで起こし、LLM はループバックのスタブ
     └── gui-tauri/                   ★ 外殻。fuseforks-host に依存する
@@ -2207,10 +2211,15 @@ Claude Desktop / Claude Code と互換。旧 SSE 形式は**意図的な非互�
 
 - **URL は https、または loopback（127.0.0.1 / [::1] / localhost）の http だけ** —
   平文 http で Authorization が外へ飛ぶ形を既定で塞ぐ
-- **`headers` は平文の `mcp.json` に保存され、村と一緒に配られる。** `env` より
+- **`headers` に鍵を直接書くと、平文の `mcp.json` に保存され、村と一緒に配られる。** `env` より
   1 段重い — env はローカルの子プロセス止まりだが、headers の Authorization は
   **外部へ送信される**。接続エラーにはヘッダーの値も相手の応答本文も載せない
   （応答本文に受信ヘッダーをエコーするサーバーが実在する）
+- **`headers` の値には `${secret:名前}` で秘密を参照できる**（[Spec 65](specs/65_container-deploy.md)。
+  `"Authorization": "Bearer ${secret:OUTCASTS_TOKEN}"`。名前は英大文字・数字・`_`）。接続の直前に資格情報ストア
+  （GUI）か環境変数 `FUSEFORKS_SECRET_MCP_<名前>`（`fuseforks-cli --secrets env`）から引き、**引けなければ接続しない**
+  （理由には名前だけを書く）。値は MCP の設定画面の「秘密の値」の欄から入れ、画面には戻らない。参照で書けば
+  `mcp.json` に鍵は残らない。展開するのは `headers` の値だけ（`env` / `args` / `url` には広げない）
 - 書き間違いは**エントリ名と欄を名指し**して保存時に拒否される（`type: "http"`
   なのに `url` が無い、stdio のエントリに `url` がある、など）。無効化
   （`enabled: false`）していても検査は掛かる — 飛ばされるのは接続だけ
@@ -2520,6 +2529,7 @@ cargo build -p fuseforks-cli --release
 | `check --for ask\|serve` | 起動前の検査だけ。**村を開かず、LLM も MCP も呼ばない**（CI やイメージのビルド時に安く回せる） |
 | `ask <依頼文>` | 窓口へ 1 通送り、**答えだけを標準出力へ**出して閉じる。`-` で依頼文を標準入力から読む |
 | `serve` | 常駐して予定と扉（外の LLM から依頼を受ける MCP サーバー）を回す。Ctrl+C / SIGTERM で閉じる |
+| `bake` | GUI の村から、パスを置き換えたコンテナ用の写しを作る（下の「コンテナで回す」） |
 
 ```bash
 fuseforks-cli check --for ask --data-dir /data --start reception --secrets env
@@ -2541,17 +2551,20 @@ fuseforks-cli serve --data-dir /data --start batch     --secrets env
 | 重さ | 検査 |
 |---|---|
 | 拒否 | 計画の確認が ON の個体が起動する集合に居る（波が人の承認を永久に待つ）。`--bypass-plan-review` で通す — ステータスバーの「計画の確認を自動で通す」と同じスイッチ |
-| 拒否 | 起動する個体のテンプレートの API キーが、選んだ置き場に無い（1 通目で 401 になり、偽の応答が返る） |
+| 拒否 | 起動する個体のテンプレートの API キーが、選んだ置き場に無い（1 通目で 401 になり、偽の応答が返る）/ 有効な MCP サーバーの `headers` の `${secret:…}` が引けない |
 | 拒否 | `ask` で窓口が未設定・削除済み |
+| 拒否 | 起動する個体の作業フォルダが無い（ファイル系のツールが全部失敗する）/ `--door-port` を渡したのに扉の合鍵が無い |
 | 警告 | 予定の宛先が起動する集合の外 / コマンドの承認が「承認が必要」で `run` を持つ個体が居る（`--run-approval` で変えられる）/ 前判定・後判定がこの端末で未承認 / 判断役や圧縮があるのに Jev の鍵が無い |
-| 情報 | 窓口の委譲先が起動する集合の外 / 起動に実行ファイルが要る MCP サーバー（`ask` では `--verbose` のときだけ出す — cron で毎回並ぶと本当の警告が埋もれる） |
+| 警告 | `rag` の宣言フォルダが無い / 有効な stdio の MCP サーバーのコマンドが見つからない / `run` で許可したコマンドが PATH に無い（**同じ名前の別のプログラムは見分けない**）/ 毎日・毎週の予定があり、時刻帯が `bake.json` の `sourceTimeZone` と違う |
+| 情報 | 窓口の委譲先が起動する集合の外（`ask` では `--verbose` のときだけ出す — cron で毎回並ぶと本当の警告が埋もれる） |
 
 指摘はどれも**直し方を書く**。`check --json` は `{"findings":[…],"start":[…]}` の 1 行で、`start` は解決した
 起動する集合（`batch` で誰が起動するかを、起動せずに読める）。
 
 **秘密**は `--secrets keyring`（既定）か `env`。`env` では、鍵（テンプレート ID）を大文字にして英数字以外を
 `_` にした名前に `FUSEFORKS_SECRET_` を付けた環境変数を読む（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`、
-Jev のトークンは `FUSEFORKS_SECRET_JEV_API_TOKEN`）。起動時に 1 回だけ読み、書き込みはできない。
+Jev のトークンは `FUSEFORKS_SECRET_JEV_API_TOKEN`、扉の合鍵は `FUSEFORKS_SECRET_DOOR_TOKEN`、MCP の `${secret:名前}` は
+`FUSEFORKS_SECRET_MCP_<名前>`）。起動時に 1 回だけ読み、書き込みはできない。
 **2 つの鍵が同じ変数名になる村は起動しない**（`a-b` と `a_b` — どちらの値か決められない）。
 
 **`ask`** は既定で**新しい会話**を作る（`--continue-session` で今の会話へ続ける）。GUI で使っている会話に
@@ -2588,11 +2601,62 @@ cron の依頼を積まないため。代わりに、次に GUI を開くと `as
 - 版は `fuseforks-cli --version`（`0.4.0+g46022e5` の形 — 直近のタグと手元のコミット）。ログの
   `version: app=` にも同じ値が出るので、GUI（`0.1.0` 等）と CLI のどちらが村を触ったかを読み分けられる
 
+**扉を開くのは `serve --door-port <N>` を渡したときか、GUI で扉を有効にした村だけ。** `--door-port` は
+`mcp_server.json` を読まずに `127.0.0.1:<N>` で開き、合鍵は秘密 `door_token` から読む（環境変数があるだけでは
+開かない — 開くかどうかは引数で書く）。
+
 **コンテナの外から扉へ繋ぐとき。** 扉の待ち受けは `127.0.0.1` のまま変えていない。k8s の Pod や
 `docker run --network container:<id>` のように**同じネットワーク名前空間に置いたプロキシ**からなら届くので、
 外向きの TLS・認証・回数の上限はプロキシに持たせる。プロキシは `Host` ヘッダーを `127.0.0.1:<port>` へ
 書き換えること（扉は loopback 以外の `Host` を拒む）。状態を見る口（`/healthz` 等）は作っていない —
-プロセスが生きていること自体が状態で、中身は `fuseforks.log` にある。
+プロセスが生きていること自体が状態で、中身は `fuseforks.log` にある。参照構成は `deploy/compose.door.yaml`
+（Caddy を同じ名前空間に置く。下の「コンテナで回す」）。
+
+**`--data-dir` に村が無ければ 5 で止まり、何も作らない**（`world.json` が無い。綴り間違い・マウントの漏れで
+空の村を作って黙って走る形を作らない）。
+
+### コンテナで回す（[Spec 65](specs/65_container-deploy.md)）
+
+GUI で作って安定させた村を Docker のコンテナで回す参照構成が `deploy/` にある（Dockerfile・compose・Caddyfile。
+手順は [deploy/README_jp.md](deploy/README_jp.md)）。**像は公開していない**（運用者がソースからビルドする）。
+**設定を直すのはいつも GUI の側**で、コンテナの村は写し。
+
+**`bake`** は GUI の村から写しを作る。**GUI の端末で、GUI を閉じてから動かす**（元の村のロックと、元の端末の
+時刻帯を読むため）:
+
+```powershell
+fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work"
+```
+
+- **置き換えるのは 3 つの欄だけ** — 個体の作業フォルダ（`workDir`）/ `rag` の宣言（`ragSources`）/ 前判定・後判定の
+  `cwd`。`--map <元>=<先>` は最長の前方一致。置き換えなかった絶対パスが 1 つでも残れば、写しを 1 バイトも書かずに 3
+- **自由記述は書き換えない** — `Construct.md` / `SKILL.md` の本文・`run.json` の許可・MCP の stdio のコマンド。
+  Windows のパスを含むものは警告で名指しする（写しは作る）
+- `mcp.json` の `headers` に平文の鍵があれば 10（`--allow-plaintext-headers` で通す）。`${secret:…}` に直せば通る
+- 前判定・後判定の承認は、置き換えた `cwd` で鍵を計算し直して写しへ運ぶ（コマンド行は 1 文字も変えない）
+- 写しの直下に `bake.json`（`sourceTimeZone` と `--map`）を書く。コンテナの `TZ` はこの値に合わせる
+
+**作り直し（`bake --update`）は設計のファイルだけを置き換える** — `world.json`・条例・`Construct.md`・`SKILL.md`・
+`mcp.json`・アイコン。**会話・`Memory.md`・予定の消化の記録・承認待ちのコマンドはコンテナの側を残す**。
+`Memory.md` は初回だけ GUI から写し、会話は持ち出さない。コンテナで「自動承認して許可」が `allow` へ足した行は
+消える（名指しする）。**コンテナを止めてから作り直す** — Docker Desktop の bind mount では村のロックが Windows と
+コンテナの間を越えない（実測。止めずに作り直すと、走っている村の下でファイルが置き換わる）。
+
+| `bake` の終了コード | 意味 |
+|---|---|
+| 0 | 写しを作った（警告があっても 0） |
+| 2 | 引数の誤り（`--map` の書き方・時刻帯が読めない 等） |
+| 3 | 置き換えなかった絶対パスが残る |
+| 4 | 元の村か写しを別のプロセスが開いている |
+| 5 | 元の村が読めない・写しを書けない |
+| 10 | `headers` に平文の鍵がある |
+| 11 | 写し先の状態が食い違う（`--update` なしで空でない / `--update` で `bake.json` が無い） |
+
+**像**は Debian slim + glibc + tini、UID 10001。`git` / `curl` / `bash` / `python` / `ssh` / `rg` を入れてあり、
+足りない道具は派生した像で足す。**`TZ` は既定で設定しない**（他の地域の予定が黙ってずれる）。compose の
+`stop_grace_period` は 40 秒 — Docker の既定の 10 秒では飛行中のターンが SIGKILL で切れ、`turn:` 行が残らない。
+扉は `compose.door.yaml` を重ねると、Caddy が同じネットワーク名前空間から受けて TLS を終端する（合鍵は扉が検査する）。
+**同じ村の写しを 2 つのコンテナで回さない**（前判定の承認が村の ID に結び付いている）。
 
 ---
 

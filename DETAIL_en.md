@@ -87,14 +87,18 @@ Fuseforks/
 │       │   ├── paths.rs             HostPaths (data_dir, and the workspace derived from it)
 │       │   ├── lock.rs              The village lock ({workspace}/.fuseforks.lock)
 │       │   ├── preflight.rs         Gathers the pre-start check (reads files and secret presence only; opens nothing)
+│       │   ├── bake.rs              bake — makes a container copy of a GUI village (plan, then apply; Spec 65)
 │       │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
 │       │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
 │       │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
 │       │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
-│       └── tests/                   Door wire / village lock
+│       └── tests/                   Door wire / village lock / bake
+│
+├── deploy/                          Reference setup for running in a container (Spec 65). Dockerfile / compose.yaml /
+│                                    compose.door.yaml / Caddyfile / .env.example / README (en, ja) / fixtures/village
 │
 └── apps/
-    ├── cli/                         The fuseforks-cli executable. check / ask / serve without the GUI (Spec 64)
+    ├── cli/                         The fuseforks-cli executable. check / ask / serve without the GUI (Spec 64) / bake (Spec 65)
     │   ├── src/                     args.rs (arguments) / exit.rs (exit codes) / output.rs / run.rs / main.rs
     │   └── tests/cli.rs             Integration tests: run as a child process, with a loopback stub as the LLM
     └── gui-tauri/                   ★ The shell. Depends on fuseforks-host
@@ -1749,11 +1753,17 @@ moved from `/sse` to a single endpoint such as `/mcp`.
 
 - **URLs must be https, or http to loopback only (127.0.0.1 / [::1] /
   localhost)** — sending Authorization over plaintext http is blocked by default
-- **`headers` are stored in plaintext `mcp.json` and travel with the village.**
-  They are one step heavier than `env` — env stops at the local child process,
+- **A key written directly into `headers` is stored in plaintext `mcp.json` and travels with the village.**
+  It is one step heavier than `env` — env stops at the local child process,
   but an Authorization header is **sent to the outside**. Connection errors
   carry neither header values nor the server's response body (servers that echo
   received headers into the body exist)
+- **A `headers` value can reference a secret as `${secret:NAME}`** ([Spec 65](specs/65_container-deploy.md);
+  `"Authorization": "Bearer ${secret:OUTCASTS_TOKEN}"`; names are upper-case letters, digits and `_`). It is looked up just before
+  connecting, from the credential store (GUI) or the environment variable `FUSEFORKS_SECRET_MCP_<NAME>` (`fuseforks-cli --secrets env`),
+  and **if it cannot be found the server is not contacted** (the reason names only the name). Enter the value in the "Secret values"
+  field of the MCP settings screen; it is never shown again. Written as a reference, no key stays in `mcp.json`. Only `headers`
+  values are expanded (not `env`, `args` or `url`)
 - Mistakes are rejected at save time **naming the entry and the field**
   (`type: "http"` without `url`, a stdio entry with `url`, and so on). Disabled
   entries (`enabled: false`) are still validated — only the connection is skipped
@@ -2057,6 +2067,7 @@ cargo build -p fuseforks-cli --release
 | `check --for ask\|serve` | Only the pre-start check. **Opens no village and calls neither an LLM nor MCP** (cheap enough for CI or an image build) |
 | `ask <request>` | Sends one message to the reception, writes **only the answer to stdout**, and closes. `-` reads the request from stdin |
 | `serve` | Stays up and runs schedules and the door (the MCP server that takes requests from external LLMs). Closes on Ctrl+C / SIGTERM |
+| `bake` | Makes a container copy of a GUI village with its paths rewritten (see "Running in a container" below) |
 
 ```bash
 fuseforks-cli check --for ask --data-dir /data --start reception --secrets env
@@ -2079,17 +2090,20 @@ are named here:
 | Level | Check |
 |---|---|
 | Reject | A servant with plan review ON is in the start set (the wave would wait for human approval forever). Pass `--bypass-plan-review` — the same switch as "auto-approve plans" in the status bar |
-| Reject | The API key of a starting servant's template is not in the chosen store (the first message would 401 and a fake reply would come back) |
+| Reject | The API key of a starting servant's template is not in the chosen store (the first message would 401 and a fake reply would come back) / a `${secret:…}` in the `headers` of an enabled MCP server cannot be found |
 | Reject | For `ask`, the reception is unset or deleted |
+| Reject | A starting servant's work folder does not exist (every file tool would fail) / `--door-port` was given but there is no door key |
 | Warn | A schedule's target is outside the start set / command approval is "approval required" and a servant has `run` (change it with `--run-approval`) / a pre- or post-check is unapproved on this machine / judges or pruning exist but there is no Jev key |
-| Info | The reception's delegates are outside the start set / an MCP server that needs an executable to start (for `ask`, shown only with `--verbose` — repeated on every cron run, it would bury the real warnings) |
+| Warn | A `rag` declaration folder does not exist / the command of an enabled stdio MCP server cannot be found / a command allowed for `run` is not on PATH (**a different program with the same name is not told apart**) / there are daily or weekly schedules and the time zone differs from `sourceTimeZone` in `bake.json` |
+| Info | The reception's delegates are outside the start set (for `ask`, shown only with `--verbose` — repeated on every cron run, it would bury the real warnings) |
 
 Every finding says **how to fix it**. `check --json` prints one line, `{"findings":[…],"start":[…]}`; `start` is the resolved start set
 (so you can read who `batch` would start without starting anyone).
 
 **Secrets** come from `--secrets keyring` (default) or `env`. With `env`, the key (the template ID) is upper-cased, every non-alphanumeric
 character becomes `_`, and `FUSEFORKS_SECRET_` is prefixed (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`; the Jev token is
-`FUSEFORKS_SECRET_JEV_API_TOKEN`). They are read once at start, and cannot be written. **A village where two keys map to the same
+`FUSEFORKS_SECRET_JEV_API_TOKEN`, the door key is `FUSEFORKS_SECRET_DOOR_TOKEN`, and an MCP `${secret:NAME}` is
+`FUSEFORKS_SECRET_MCP_<NAME>`). They are read once at start, and cannot be written. **A village where two keys map to the same
 variable name does not start** (`a-b` and `a_b` — it cannot tell whose value it is).
 
 **`ask`** creates a **new conversation** by default (`--continue-session` continues the current one), so cron requests do not pile
@@ -2126,10 +2140,63 @@ For 6–9 the boilerplate text is still written to stdout (the exit code is the 
 - The version is `fuseforks-cli --version` (like `0.4.0+g46022e5` — the latest tag and the local commit). The same value appears in the
   log's `version: app=`, so you can tell whether the GUI (`0.1.0`, etc.) or the CLI touched a village
 
+**The door opens only when `serve --door-port <N>` is given, or in a village where the GUI enabled it.** `--door-port` opens
+`127.0.0.1:<N>` without reading `mcp_server.json`, and reads the key from the secret `door_token` (an environment variable alone does
+not open it — whether to open is written in the arguments).
+
 **Reaching the door from outside a container.** The door still listens on `127.0.0.1` only. A **proxy in the same network namespace**
 (a k8s Pod, `docker run --network container:<id>`) can reach it, so give outward TLS, authentication and rate limits to the proxy.
 The proxy must rewrite the `Host` header to `127.0.0.1:<port>` (the door rejects any `Host` that is not loopback). There is no status
-endpoint (`/healthz` etc.) — a live process is the status, and the details are in `fuseforks.log`.
+endpoint (`/healthz` etc.) — a live process is the status, and the details are in `fuseforks.log`. The reference setup is
+`deploy/compose.door.yaml` (Caddy in the same namespace; see "Running in a container" below).
+
+**If there is no village at `--data-dir`, it stops with 5 and creates nothing** (no `world.json`; a typo or a missing mount must not
+quietly start an empty village).
+
+### Running in a container ([Spec 65](specs/65_container-deploy.md))
+
+`deploy/` holds a reference setup for running a village you built and stabilised in the GUI inside a Docker container (Dockerfile,
+compose, Caddyfile; steps in [deploy/README.md](deploy/README.md)). **The image is not published** (operators build it from source).
+**Settings are always changed on the GUI side**; the container's village is a copy.
+
+**`bake`** makes the copy. **Run it on the GUI machine, with the GUI closed** (it takes the source village's lock and reads the source
+machine's time zone):
+
+```powershell
+fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\village --map "D:\Github=/work"
+```
+
+- **Only three fields are rewritten** — a servant's work folder (`workDir`), `rag` declarations (`ragSources`) and the `cwd` of pre- and
+  post-checks. `--map <from>=<to>` uses the longest prefix. If any absolute path is left unmapped, not one byte is written and it exits 3
+- **Free text is not rewritten** — the text of `Construct.md` / `SKILL.md`, `run.json`'s allowed commands, stdio MCP commands. Anything
+  containing a Windows path is named as a warning (the copy is still written)
+- A plaintext key in the `headers` of an `mcp.json` exits 10 (`--allow-plaintext-headers` lets it through). Rewriting it as `${secret:…}`
+  passes
+- Pre- and post-check approvals are carried over with their keys recomputed for the rewritten `cwd` (the command line is not changed by
+  a single character)
+- `bake.json` (`sourceTimeZone` and `--map`) is written at the top of the copy. Set the container's `TZ` to this value
+
+**Rebuilding (`bake --update`) replaces design files only** — `world.json`, the ordinance, `Construct.md`, `SKILL.md`, `mcp.json`, icons.
+**Conversations, `Memory.md`, consumed schedule records and pending command approvals stay as the container left them.** `Memory.md` is
+copied from the GUI only the first time, and conversations are never carried over. Lines that "auto-approve and allow" added to `allow`
+in the container disappear (they are named). **Stop the container before rebuilding** — on a Docker Desktop bind mount the village lock
+does not cross between Windows and the container (measured: rebuilding without stopping replaces files underneath a running village).
+
+| `bake` exit code | Meaning |
+|---|---|
+| 0 | The copy was made (0 even with warnings) |
+| 2 | Bad arguments (`--map` syntax, unreadable time zone, etc.) |
+| 3 | An unmapped absolute path remains |
+| 4 | Another process has the source village or the copy open |
+| 5 | The source village cannot be read, or the copy cannot be written |
+| 10 | A plaintext key in `headers` |
+| 11 | The target is in the wrong state (not empty without `--update` / no `bake.json` with `--update`) |
+
+**The image** is Debian slim + glibc + tini, running as UID 10001. It ships `git` / `curl` / `bash` / `python` / `ssh` / `rg`; add
+other tools in a derived image. **`TZ` is not set by default** (schedules elsewhere would shift silently). compose sets
+`stop_grace_period` to 40 seconds — with Docker's default of 10 an in-flight turn is cut by SIGKILL and its `turn:` line is lost.
+Overlaying `compose.door.yaml` puts Caddy in the same network namespace to receive the door and terminate TLS (the door checks the key).
+**Do not run two copies of the same village in two containers** (pre-check approvals are tied to the village ID).
 
 ---
 

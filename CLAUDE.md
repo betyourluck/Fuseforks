@@ -28,7 +28,9 @@
   使うと外部へ送る）。**2026-09-30 に Spec 63（AI で下書き）の行を足して 171 / 171 / 167 行** — 同じ判断
   （押すまで送らず、送ると選んだモデルの接続先へ会話と編集中の本文が出る）。**2026-10-06 に Spec 64（GUI なしで
   動かす）の行を足して 172 / 172 / 168 行** — 配布していない機能だが、同じ村の開き方が GUI にも効く
-  （同じ村を 2 つのプロセスが開くと止まる）ので入口で読めるべき側
+  （同じ村を 2 つのプロセスが開くと止まる）ので入口で読めるべき側。**2026-10-07 に Spec 65（コンテナで回す）の行を
+  足して 173 / 173 / 169 行** — 配布していない構成だが、MCP の `headers` に平文の鍵を書いた村は `bake` が止まる
+  （`${secret:名前}` へ直す）ので、鍵の書き方が変わることは入口で読めるべき側
 - **全体像・設計判断**: [DETAIL.md](DETAIL.md)（ディレクトリ・並行モデル・画面・
   同梱ツール・ワイヤ層・運用）
 - ドメイン契約（実装より先にここが正）: [data_contract.yaml](data_contract.yaml)
@@ -1740,7 +1742,9 @@ lost update の観測は今もゼロ（2026-08-11 の黒板は stale であっ�
 
 **→ 2026-10-06 に [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす）として起票し、rev2・未決 0。**
 下のギャップ 6 つの行き先は Spec の Notes 1 が正（閉じる 4 / コードを変えずに越える 1 = 扉は同じ名前空間の
-プロキシで受ける / 既に解けていた 1 = 承認鍵は `villageId` に結び付く）。コンテナの像・配布・配置は次の Spec。
+プロキシで受ける / 既に解けていた 1 = 承認鍵は `villageId` に結び付く）。~~コンテナの像・配布・配置は次の Spec。~~
+**→ [Spec 65](specs/65_container-deploy.md)（村をコンテナで回す）が受けた**（2026-10-07。`bake`・像・`deploy/` の参照構成。
+像も CLI も配らない。各ギャップの末尾の「→ Spec 65」が書き戻し）。
 以下は起票前の材料。
 
 利用者 —「**coreだけで回せられる様になりたい。GUI で配線を引いて設定ファイルを
@@ -1803,7 +1807,8 @@ lost update の観測は今もゼロ（2026-08-11 の黒板は stale であっ�
 3. **扉の bind 127.0.0.1 固定** — コンテナ内の loopback は外から届かない。
    bind を設定可能にし、境界を合鍵 + コンテナのネットワーク境界へ移す判断が要る
    **→ コードを変えずに越える（D9）。** bind は 127.0.0.1 のまま、同じネットワーク名前空間のプロキシで受け、
-   `Host` を `127.0.0.1:<port>` へ書き換える。手順はコンテナの Spec
+   `Host` を `127.0.0.1:<port>` へ書き換える。~~手順はコンテナの Spec~~ **→ Spec 65 で `deploy/compose.door.yaml`**
+   （Caddy を `network_mode: service:` で同じ名前空間に置く・合鍵は扉が検査する・`serve --door-port` と秘密 `door_token`）
 4. **`probe_approvals.json` の焼き込み** — 今は `{app_data_dir}` に居て GUI の
    IPC だけが書く。設計時に承認してデプロイ物へ含める形へ（ハッシュ承認は
    「人がこのコマンドを見て承認した」の証明で、どの端末かは本質ではない）
@@ -1814,7 +1819,9 @@ lost update の観測は今もゼロ（2026-08-11 の黒板は stale であっ�
    同じフォルダを同時に開く経路を構造で塞ぐ。示唆されるのは design
    （`world.json`）/ runtime（`sessions.redb`）の状態分離を bake の段で行うこと
    **→ 閉じた（P2）。** `{workspace}/.fuseforks.lock` の OS ロック（GUI にも効く）+ `sessions.redb` の
-   `DatabaseAlreadyOpen` だけは起動を止める二重の網。設計 / 実行の状態の分離はコンテナの Spec に残した
+   `DatabaseAlreadyOpen` だけは起動を止める二重の網。~~設計 / 実行の状態の分離はコンテナの Spec に残した~~
+   **→ Spec 65 D1 で分けた**（設計 / 同居 / 実行 / 棚の 4 つの置き場。`bake --update` は設計だけを置き換え、会話と
+   `Memory.md` に触れない）。**ただし村のロックは Docker Desktop の bind mount を越えない**（P3 実測。作り直す前にコンテナを止める）
 6. **GUI 前提機能の design-time lint** — 計画の編集窓 ON の個体が居る村を
    ヘッドレスで回すと**波が黙って永遠に承認待ちする**。起動時に「この村は
    GUI が要る設定を含む」と名指しで拒否する（沈黙を作らない規律）
@@ -2580,7 +2587,7 @@ Windows の `fuseforks-cli` も開けた）— 参照構成は写しを bind で
 (b) 扉は profile ではなく `compose.door.yaml` を重ねる（profile は `fuseforks` の `command` と `ports:` を変えられない）
 (c) ~~存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」~~ → **同日に塞いだ**（`world.json` が無ければ 5・何も作らない。
 `PreflightError::VillageMissing`）。~~次は P4~~ **→ P4 完了**（同日。MCP ダイアログに「秘密の値」の欄・IPC 3 本・値を返す口は無い。
-実機は未確認。「P4 実装記録」が正）。次は P5 台帳 → P6 実機。
+実機は未確認。「P4 実装記録」が正）。**→ P5 完了**（台帳）。次は P6 実機（開発機の村を `bake` → `docker compose up`）。
 
 ## 現在地（2026-10-06 更新）
 
@@ -7294,7 +7301,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   （`deploy/` の Dockerfile・compose 2 枚・Caddyfile・README 日英・fixture と `verify-image.yml`・版番号の環境変数。README の手順を fixture で
   通し、扉は Caddy 越しに 200 / 401 / 401。**D8 を 2 点動かした** — `/data` は bind（`bake --update` が直接書くため。ロックは bind を越えないので
   止めてから作り直す = 契約 15）/ 扉は重ねる compose ファイル。「P3 実装記録」が正）→ **同日に P4 完了**（MCP ダイアログの「秘密の値」の欄・IPC 3 本・値を返す口は無い。実機は未確認。「P4 実装記録」が正）。
-  あわせて `world.json` の無い `--data-dir` を 5 で止めた（`PreflightError::VillageMissing`）。次は P5（台帳）
+  あわせて `world.json` の無い `--data-dir` を 5 で止めた（`PreflightError::VillageMissing`）→ **同日に P5 完了**（DETAIL 3 言語に
+  「コンテナで回す」の節・README 3 言語に 1 行・PRIVACY 日英・Spec 47 / 64 への行き先・`build.yml` のコメント）。次は P6（実機）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —

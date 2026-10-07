@@ -260,7 +260,7 @@ pub fn headless_preflight(world: &World, schedules: &[ScheduledTask], view: &Hos
 | コマンドの承認モードが「承認が必要」で、`run` を持つ個体が居る | 両方 | 警告（`--run-approval` で変えられる） | 待ちにはならない（未承認は拒否文が返ってターンは進む — `tools/run.rs`）。ただし `pending` は誰も承認しない |
 | 前判定・後判定のコマンドがこの棚で未承認 | serve | 警告 | 予定は発火しても配送しない（`unapproved`）。承認は棚の `probe_approvals.json` を GUI で作ってから一緒に持っていく |
 | 判断役があるのに Jev の鍵が無い / ツール結果の圧縮が ON で鍵が無い | 両方 | 警告 | 判断役は無効で起動し、圧縮は走らない（Spec 59 / 62 の述語どおり） |
-| MCP サーバーが `command` で起動する stdio | 両方 | 情報 | その実行ファイルがあるかは検査からは分からない（接続は起動時に試す） |
+| MCP サーバーが `command` で起動する stdio | 両方 | 情報 | その実行ファイルがあるかは検査からは分からない（接続は起動時に試す）。**→ Spec 65 で撤去し、警告 `MCP_COMMAND_NOT_FOUND`（有効な stdio のコマンドが絶対パスなら存在、名前なら PATH に無い）へ置き換えた** |
 
 - 拒否と警告の文は**直し方を書く**（`failures.md` #44）
 
@@ -383,6 +383,10 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
     GUI 同士の比較なので、この差は当たらない
 
 ### D12. 配布はしない（この Spec では）
+
+**→ 行き先（2026-10-07）**: [Spec 65](65_container-deploy.md) でも `fuseforks-cli` は単体で配らない（未決 5）。像も公開せず、
+`deploy/Dockerfile` を置いて運用者がソースからビルドする（未決 3）。下の「静的リンク」は採らなかった（Spec 65 D7 —
+配るのは実行ファイルではなく像なので、glibc と `libdbus-1-3` を像に入れれば足りる）
 
 - `fuseforks-cli` は**ソースからのビルドだけ**（`cargo build -p fuseforks-cli --release`）。Release の
   アセット・winget・tap には足さない
@@ -897,6 +901,11 @@ Ctrl+C を押したときに OS が送るのと同じイベント。**1 回目�
 | 6. GUI 前提機能の検査 | **閉じる**（D5） |
 
 ### 2. 次の Spec（コンテナ）へ渡す材料
+
+**→ 行き先（2026-10-07。[Spec 65](65_container-deploy.md)）**: 像 = Debian slim + glibc + tini（静的リンクにしない・
+`keyring` の feature も落とさない — D7）/ 起動 = 下の形のまま（`deploy/compose.yaml`。ただし `/data` は bind で、
+`bake` の写しを置く — P3）/ 外向き = 同じ名前空間のプロキシ（`deploy/compose.door.yaml` の Caddy）/
+MCP の stdio = 像に同梱せず、リモート MCP へ寄せる（起動前検査が `MCP_COMMAND_NOT_FOUND` で名指しする）
 
 - 像: Linux の静的リンク（`rustls` 前提なので C の TLS は要らない。`keyring` は Linux で Secret Service を引くので、
   `--secrets env` しか使わない像では feature を落とせるか確かめる）

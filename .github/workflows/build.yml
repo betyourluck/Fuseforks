@@ -77,8 +77,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # **ワークスペースはルートに 1 つだけ**（members = apps/gui-tauri/src-tauri,
-      # crates/fuseforks-core）。target もルートに 1 つなので、キャッシュ対象も 1 つでよい。
+      # **ワークスペースはルートに 1 つだけ**（members = apps/gui-tauri/src-tauri, apps/cli,
+      # crates/fuseforks-core, crates/fuseforks-host）。target もルートに 1 つなので、キャッシュ対象も 1 つでよい。
       - name: Rust cache
         uses: swatinem/rust-cache@v2
 
