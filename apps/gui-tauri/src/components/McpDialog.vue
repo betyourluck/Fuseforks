@@ -9,6 +9,12 @@
  * 保存すると即座に接続し直し、各サーバーの結果（繋がったか / 何のツールが
  * 見えたか / なぜ失敗したか）を下に出す。**繋がらなかった理由が見えないと、
  * 利用者は直しようがない。**
+ *
+ * `headers` の値に書いた `${secret:NAME}` は「秘密の値」の欄に出て、値を OS の
+ * 資格情報ストアへ入れられる（Spec 65 P4）。**値は画面へ戻さない** — 欄は保存済みか
+ * どうかだけを見せる（モデルの API キー・Jev のトークンと同じ扱い）。拾うのは
+ * **保存済み**の mcp.json（共通と全個体）からで、編集中の本文からは拾わない
+ * （コアが接続に使うのと同じ範囲を見せる）。
  */
 import { computed, onMounted, ref } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
@@ -17,7 +23,8 @@ import CodeEditor from "./CodeEditor.vue";
 import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import type { McpServerStatus } from "../types";
+import { formatError } from "../lib/errorText";
+import type { McpSecretView, McpServerStatus } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -28,6 +35,12 @@ const text = ref("");
 /** コアから読み出した最新の保存内容。dirty 判定の基準。 */
 const saved = ref("");
 const statuses = ref<McpServerStatus[]>([]);
+/** `${secret:NAME}` の一覧。値は持たない。 */
+const secrets = ref<McpSecretView[]>([]);
+/** 名前ごとの入力欄。保存したら空に戻す（値をメモリに残しておかない）。 */
+const secretInputs = ref<Record<string, string>>({});
+const secretBusy = ref(false);
+const secretNotice = ref("");
 const loading = ref(true);
 const busy = ref(false);
 const loadError = ref("");
@@ -64,6 +77,7 @@ async function load(): Promise<void> {
     text.value = rendered;
     saved.value = rendered;
     statuses.value = await ipc.listMcpServers();
+    secrets.value = await ipc.listMcpSecrets();
   } catch (error) {
     // 読めない状態で空のまま保存させると、既存の宣言を消しうる。
     loadError.value = t("mcp.loadError", {
@@ -100,6 +114,7 @@ async function save(): Promise<void> {
     if (ok) {
       saved.value = text.value;
       statuses.value = await ipc.listMcpServers();
+      secrets.value = await ipc.listMcpSecrets();
     }
   } finally {
     busy.value = false;
@@ -114,6 +129,49 @@ async function reconnect(): Promise<void> {
     statuses.value = await ipc.listMcpServers();
   } finally {
     busy.value = false;
+  }
+}
+
+/** 値を保存して繋ぎ直す。繋ぎ直さないと、保存した値を使う接続が次の再起動まで起きない。 */
+async function saveSecret(name: string): Promise<void> {
+  const value = (secretInputs.value[name] ?? "").trim();
+  if (!value || secretBusy.value) return;
+  secretBusy.value = true;
+  secretNotice.value = "";
+  try {
+    await ipc.setMcpSecret(name, value);
+    secretInputs.value[name] = "";
+    await orchestrator.reloadMcp();
+    statuses.value = await ipc.listMcpServers();
+    secrets.value = await ipc.listMcpSecrets();
+    secretNotice.value = t("mcp.secretSaved", { name });
+  } catch (err) {
+    secretNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    secretBusy.value = false;
+  }
+}
+
+async function clearSecret(name: string): Promise<void> {
+  if (secretBusy.value) return;
+  const ok = await askConfirm({
+    title: t("mcp.secretClear"),
+    message: t("mcp.secretClearConfirm", { name }),
+    danger: true,
+  });
+  if (!ok) return;
+  secretBusy.value = true;
+  secretNotice.value = "";
+  try {
+    await ipc.clearMcpSecret(name);
+    await orchestrator.reloadMcp();
+    statuses.value = await ipc.listMcpServers();
+    secrets.value = await ipc.listMcpSecrets();
+    secretNotice.value = t("mcp.secretCleared", { name });
+  } catch (err) {
+    secretNotice.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    secretBusy.value = false;
   }
 }
 
@@ -202,6 +260,60 @@ async function requestClose(): Promise<void> {
             :placeholder="$t('mcp.editorPlaceholder')"
             @save="saveFromEditor"
           />
+
+          <!-- 秘密の値（Spec 65 P4）。値は画面に戻さない。 -->
+          <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("mcp.secretsHeading") }}</h3>
+          <p class="mb-1.5 text-[11px] text-ink-dim">{{ $t("mcp.secretsHint") }}</p>
+          <p v-if="!secrets.length" class="text-[11px] text-ink-dim">{{ $t("mcp.secretsEmpty") }}</p>
+          <ul v-else class="space-y-1.5">
+            <li
+              v-for="secret in secrets"
+              :key="secret.name"
+              class="rounded border border-line bg-surface-0 p-2 text-[11px]"
+              data-mcp-secret
+            >
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-ink">{{ secret.name }}</span>
+                <span :class="secret.stored ? 'text-run' : 'text-warn'">
+                  {{ secret.stored ? $t("mcp.secretStored") : $t("mcp.secretMissing") }}
+                </span>
+                <span class="ml-auto truncate text-ink-dim" :title="secret.servers.join(', ')">
+                  {{ $t("mcp.secretUsedBy", { servers: secret.servers.join(", ") }) }}
+                </span>
+              </div>
+              <div class="mt-1.5 flex items-center gap-2">
+                <input
+                  v-model="secretInputs[secret.name]"
+                  type="password"
+                  spellcheck="false"
+                  autocomplete="off"
+                  :placeholder="
+                    secret.stored ? $t('mcp.secretPlaceholderStored') : $t('mcp.secretPlaceholder')
+                  "
+                  class="flex-1 rounded border border-line bg-surface-1 px-2 py-1 font-mono text-[11px] outline-none focus:border-accent"
+                  @keydown.enter="saveSecret(secret.name)"
+                />
+                <button
+                  type="button"
+                  class="rounded border border-line px-2 py-1 hover:border-accent hover:text-accent disabled:opacity-40"
+                  :disabled="!(secretInputs[secret.name] ?? '').trim() || secretBusy"
+                  @click="saveSecret(secret.name)"
+                >
+                  {{ $t("mcp.secretSave") }}
+                </button>
+                <button
+                  v-if="secret.stored"
+                  type="button"
+                  class="rounded border border-line px-2 py-1 text-warn hover:border-warn disabled:opacity-40"
+                  :disabled="secretBusy"
+                  @click="clearSecret(secret.name)"
+                >
+                  {{ $t("mcp.secretClear") }}
+                </button>
+              </div>
+            </li>
+          </ul>
+          <p v-if="secretNotice" class="mt-1 text-[11px] text-ink-dim">{{ secretNotice }}</p>
 
           <!-- 接続結果。繋がらなかった理由が見えないと利用者は直しようがない。 -->
           <h3 class="mt-4 mb-1 text-[11px] font-semibold text-ink-dim">{{ $t("mcp.statusHeading") }}</h3>

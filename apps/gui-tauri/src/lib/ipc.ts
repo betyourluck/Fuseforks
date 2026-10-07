@@ -39,6 +39,7 @@ import type {
   Role,
   RoleId,
   McpConfig,
+  McpSecretView,
   McpServerStatus,
   PlanTaskInput,
   PlanWaveRecord,
@@ -227,7 +228,7 @@ export const setReception = (agentId: AgentId | null) =>
 /**
  * API キーを OS の資格情報ストアへ登録する。
  *
- * 秘密がフロントを通るのはこの 1 本だけで、方向は片道。
+ * 秘密がフロントを通る経路はどれも片道（ほかに Jev のトークンと MCP の秘密の値）。
  * 読み出す API は存在しない。
  */
 export const setModelCredential = (templateId: ModelTemplateId, secret: string) =>
@@ -236,6 +237,16 @@ export const setModelCredential = (templateId: ModelTemplateId, secret: string) 
 /** API キーを資格情報ストアから削除する。 */
 export const clearModelCredential = (templateId: ModelTemplateId) =>
   call<void>("clear_model_credential", { templateId });
+
+/** 村の MCP の `${secret:NAME}` の一覧（Spec 65 P4）。値は返らない。 */
+export const listMcpSecrets = () => call<McpSecretView[]>("list_mcp_secrets");
+
+/** MCP の秘密の値を資格情報ストアへ保存する。片道で、読み出す API は無い。 */
+export const setMcpSecret = (name: string, secret: string) =>
+  call<void>("set_mcp_secret", { name, secret });
+
+/** MCP の秘密の値を資格情報ストアから消す。 */
+export const clearMcpSecret = (name: string) => call<void>("clear_mcp_secret", { name });
 
 /** API キーが登録済みかだけを問い合わせる。値は返らない。 */
 export const modelCredentialExists = (templateId: ModelTemplateId) =>

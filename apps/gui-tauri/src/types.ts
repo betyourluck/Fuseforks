@@ -818,6 +818,16 @@ export interface McpConfig {
 }
 
 /** MCP サーバー 1 台の接続状態。 */
+/**
+ * MCP の `headers` の `${secret:NAME}` 1 つ（Spec 65 P4）。**値は持たない** — 保存済みかだけ。
+ * 村の有効な http サーバー（共通と全個体）から拾う。個体別のサーバーは `id:名前`。
+ */
+export interface McpSecretView {
+  name: string;
+  servers: string[];
+  stored: boolean;
+}
+
 export interface McpServerStatus {
   name: string;
   connected: boolean;

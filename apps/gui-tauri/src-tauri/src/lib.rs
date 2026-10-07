@@ -130,6 +130,9 @@ pub fn run() {
             commands::set_model_credential,
             commands::clear_model_credential,
             commands::model_credential_exists,
+            commands::list_mcp_secrets,
+            commands::set_mcp_secret,
+            commands::clear_mcp_secret,
             // 定義の編集
             commands::create_agent,
             commands::update_agent,

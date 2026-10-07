@@ -279,6 +279,28 @@ pub(crate) async fn mcp_secret_ref_names(store: &ConfigStore, ids: &[AgentId]) -
     names.into_iter().collect()
 }
 
+/// 村の MCP の秘密の参照（名前 → それを参照するサーバー。どちらも名前の順・重複なし）。
+/// GUI の MCP ダイアログの「秘密の値」の欄が読む（Spec 65 P4）。
+///
+/// **数える範囲は [`mcp_secret_ref_names`] と同じ**（有効な http のサーバー・共通と渡した個体の
+/// 個体別）— 画面に出る名前と、起動前検査・変数名の衝突検査が数える名前を食い違わせない。
+/// 個体別のサーバーは `id:名前` で出る。
+pub async fn village_mcp_secret_refs(
+    workspace: &Path,
+    ids: &[AgentId],
+) -> Vec<(String, Vec<String>)> {
+    let store = ConfigStore::new(workspace.to_path_buf());
+    let (_, refs) = mcp_materials(&store, ids).await;
+    let mut by_name: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
+    for r in refs {
+        by_name.entry(r.name).or_default().insert(r.server);
+    }
+    by_name
+        .into_iter()
+        .map(|(name, servers)| (name, servers.into_iter().collect()))
+        .collect()
+}
+
 /// 起動する個体の `run.json` の `allow` の先頭の語（重複は個体ごとに 1 つ）。`run` を持つかは
 /// 検査の側が見る。読めない `run.json` は飛ばす（`run` は読めないとき全部を承認待ちにする）。
 async fn run_commands(store: &ConfigStore, start: &[AgentId]) -> Vec<RunCommand> {
@@ -416,6 +438,45 @@ mod tests {
             time_zone_from_env("Bogus/Zone"),
             OwnedTimeZone::Unreadable(v) if v == "Bogus/Zone"
         ));
+    }
+
+    /// GUI の「秘密の値」の欄に出る参照（Spec 65 P4）。**有効な http だけ**を数え（無効なサーバーの
+    /// 参照・stdio は出ない）、同じ名前を参照するサーバーは 1 行に束ねる。個体別は `id:名前`。
+    #[tokio::test]
+    async fn village_refs_group_enabled_http_servers_by_name() {
+        let ws = std::env::temp_dir().join(format!("ff-mcprefs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(ws.join("agents").join("agent_1")).unwrap();
+        let http = |reference: &str, enabled: bool| {
+            format!(
+                r#"{{"type":"http","url":"https://example.com/mcp","headers":{{"Authorization":"Bearer ${{secret:{reference}}}"}},"enabled":{enabled}}}"#
+            )
+        };
+        let common = format!(
+            r#"{{"mcpServers":{{"shared":{},"off":{},"local":{{"command":"npx","args":[]}}}}}}"#,
+            http("TOKEN_A", true),
+            http("TOKEN_B", false)
+        );
+        std::fs::write(ws.join("mcp.json"), common).unwrap();
+        let own = format!(
+            r#"{{"mcpServers":{{"own":{},"own2":{}}}}}"#,
+            http("TOKEN_A", true),
+            http("TOKEN_C", true)
+        );
+        std::fs::write(ws.join("agents").join("agent_1").join("mcp.json"), own).unwrap();
+
+        let refs = village_mcp_secret_refs(&ws, &[AgentId::from("agent_1")]).await;
+        assert_eq!(
+            refs,
+            vec![
+                (
+                    "TOKEN_A".to_owned(),
+                    vec!["agent_1:own".to_owned(), "shared".to_owned()]
+                ),
+                ("TOKEN_C".to_owned(), vec!["agent_1:own2".to_owned()]),
+            ]
+        );
+        std::fs::remove_dir_all(&ws).unwrap();
     }
 
     /// 棚の bake.json の sourceTimeZone だけを読む。無い・壊れていれば None。

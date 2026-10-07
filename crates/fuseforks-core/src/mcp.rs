@@ -152,6 +152,15 @@ pub fn mcp_secret_key(name: &str) -> String {
     format!("mcp:{name}")
 }
 
+/// 参照の名前として書けるか（`[A-Z0-9_]+`。Spec 65 D3）。**1 実装** — `headers` の読み取りと、
+/// GUI が値を保存するときの検査（[`crate::Orchestrator::set_mcp_secret`]）が同じ述語を読む。
+pub fn is_secret_ref_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+}
+
 /// 値の中の参照の名前を、現れた順に拾う。`${secret:` を含まない値は空を返す
 /// （**参照を書かない値には何もしない** — バイト等価の前提）。
 ///
@@ -164,11 +173,7 @@ pub fn secret_ref_names(value: &str) -> Result<Vec<&str>, SecretRefError> {
         let after = &rest[start + SECRET_REF_OPEN.len()..];
         let end = after.find('}').ok_or(SecretRefError::Malformed)?;
         let name = &after[..end];
-        let valid = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
-        if !valid {
+        if !is_secret_ref_name(name) {
             return Err(SecretRefError::Malformed);
         }
         names.push(name);

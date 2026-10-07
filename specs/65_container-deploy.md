@@ -449,9 +449,9 @@ deploy/.env.example
 - [x] `deploy/Dockerfile` / `deploy/compose.yaml` / ~~`deploy/Caddyfile.example`~~ `deploy/Caddyfile` / `deploy/compose.door.yaml` / `deploy/.env.example` / `deploy/README.md`（日英）
 - [x] `.github/workflows/verify-image.yml`（手動）と、像で回す小さな村の fixture（`deploy/fixtures/village`）
 
-### P4 — GUI
+### P4 — GUI（**完了**・2026-10-07。「P4 実装記録」。実機は未確認）
 
-- [ ] MCP の設定画面: `${secret:…}` の名前を拾って値を保存する欄（資格情報ストア。値を画面に戻さない）
+- [x] MCP の設定画面: `${secret:…}` の名前を拾って値を保存する欄（資格情報ストア。値を画面に戻さない）
 
 ### P5 — 台帳
 
@@ -546,6 +546,25 @@ scratchpad に置き、リポジトリには入れていない（P3 で `deploy/
 **作業で踏んだもの**: Git Bash が `docker run` の引数 `/p0/stub.py` を `C:/Program Files/Git/p0/stub.py` に書き換えた
 （`MSYS_NO_PATHCONV=1` が要る場面の 4 例目）/ ヒアドキュメントの中の `\\` が `\` に崩れた（スクリプトはファイルに書いて回した）。
 測定用のコンテナとボリュームは消した。像 `fuseforks:p0` は P3 の比較のために残している。
+
+## P4 実装記録（2026-10-07）
+
+- **コア**: `Orchestrator::set_mcp_secret` / `has_mcp_secret` / `clear_mcp_secret`（鍵は接続が引くのと同じ `mcp_secret_key` =
+  `mcp:NAME`・値は前後の空白を落とす・**値を返す口は作らない**）。名前の検査は `mcp::is_secret_ref_name` へ切り出し、`headers` の
+  読み取りと共有した（1 実装）。書けない名前は新設の `CoreError::InvalidSecretName`（`INVALID_SECRET_NAME`）で、ストアに触れない
+- **ホスト**: `village_mcp_secret_refs(workspace, ids)` — 名前 → 参照しているサーバー。**数える範囲は変数名の衝突検査と同じ**
+  （`mcp_materials` を共有 = 有効な http のサーバー・共通と全個体）。画面に出る名前と、起動前検査が数える名前を食い違わせない
+- **GUI**: IPC 3 本（`list_mcp_secrets` / `set_mcp_secret` / `clear_mcp_secret`）。MCP ダイアログのエディタの下に「秘密の値」の欄 —
+  名前・保存済みか・使っているサーバー・パスワード欄・保存・消す。保存と消去の後に繋ぎ直す（繋ぎ直さないと、保存した値を使う
+  接続が次の再起動まで起きない）。拾うのは**保存済み**の `mcp.json` からで、編集中の本文からは拾わない（接続に使う範囲を見せる）。
+  入力欄は保存したら空に戻す。説明文の「秘密は書かないでください」を「`${secret:名前}` で参照してください」へ直した
+- **辞書**: vue-i18n は `{` をプレースホルダーと読むので、`${secret:名前}` を `${'{'}secret:名前{'}'}` でエスケープした
+  （`{'@'}` と同じ罠の 3 例目。`i18n/index.test.ts` のコンパイル検査が留める）
+- **無効なサーバーの参照は欄に出ない。** 無効のまま値を入れておく、はできない — 有効にして保存すると、接続の失敗の理由
+  （名前だけ）と欄が同時に出る。必要が出たら数える範囲を広げる（衝突検査と一緒に）
+- テスト: コア結合 2 本（`tests/mcp_secret_values.rs`）/ ホスト単体 1 本（有効な http だけ・同じ名前は 1 行・個体別は `id:名前`）。
+  **変異 3 本（予測を先に書いた）** — 鍵を名前のままにする / 空白を落とさない / 名前の検査を外す。すべて予測どおり各 1 本
+- **実機は未確認**（画面は `bun tauri dev` でしか描けない — コアが Tauri の Rust 側に居る）。P6 の「`${secret:…}` に直すと通る」で見る
 
 ## P3 実装記録（2026-10-07）
 

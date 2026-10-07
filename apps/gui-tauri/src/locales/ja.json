@@ -697,7 +697,7 @@
     "description": "外部ツールを {mcp}（Model Context Protocol）で繋ぎます。書式は {sameAs}なので、既存の設定を{asIs}貼れます（`npx` などのコマンドは PATH から解決します）。保存すると即座に接続し直し、各サーヴァントが次の発話から使えるようになります。{secrets} — このファイルは平文で保存されます。",
     "descriptionSame": "Claude Desktop と同じ",
     "descriptionAsIs": "加工せずそのまま",
-    "descriptionSecrets": "API キーなどの秘密は書かないでください",
+    "descriptionSecrets": "API キーなどの秘密は直接書かず、`${'{'}secret:名前{'}'}` で参照してください",
     "loading": "読み込み中…",
     "template": "記入例",
     "templateTitle": "記入例を貼る",
@@ -710,7 +710,20 @@
     "notConnected": "未接続",
     "saveNote": "保存すると接続し直します（アプリの再起動は不要）",
     "saving": "保存中…",
-    "saveAndConnect": "保存して接続"
+    "saveAndConnect": "保存して接続",
+    "secretsHeading": "秘密の値",
+    "secretsHint": "保存した mcp.json（共通と各サーヴァント）の headers にある `${'{'}secret:名前{'}'}` を拾います。値は OS の資格情報ストアに入り、画面には戻りません。",
+    "secretsEmpty": "参照はありません。headers に `\"Authorization\": \"Bearer ${'{'}secret:OUTCASTS_TOKEN{'}'}\"` のように書くと、ここに欄が出ます。",
+    "secretStored": "保存済み",
+    "secretMissing": "未保存",
+    "secretPlaceholder": "値を貼り付け",
+    "secretPlaceholderStored": "保存済み（上書きするなら貼り付け）",
+    "secretSave": "保存",
+    "secretClear": "消す",
+    "secretClearConfirm": "{name} の値を資格情報ストアから消します。このサーバーは次に繋ぎ直すときから接続しません。",
+    "secretSaved": "{name} を保存して接続し直しました",
+    "secretCleared": "{name} を消して接続し直しました",
+    "secretUsedBy": "使っているサーバー: {servers}"
   },
   "uiErrors": {
     "canvasContext": "canvas 2D コンテキストを取得できません",
@@ -1089,7 +1102,8 @@
     "PLAN_DISPATCH_INVALID": "計画を配送できません",
     "INVALID_QUOTE": "参照を受け付けられません",
     "INVALID_JUDGE_FILE": "判断役のファイルに誤りがあります",
-    "INVALID_ASSIST_REQUEST": "AI 下書き補助を実行できません"
+    "INVALID_ASSIST_REQUEST": "AI 下書き補助を実行できません",
+    "INVALID_SECRET_NAME": "秘密の名前に使えない文字があります（英大文字・数字・_ だけ）"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",

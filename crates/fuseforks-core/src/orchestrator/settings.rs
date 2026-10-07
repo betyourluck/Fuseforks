@@ -308,6 +308,49 @@ impl Orchestrator {
         self.shared.secrets.contains(id.as_str())
     }
 
+    /// MCP の `headers` の `${secret:NAME}` が引く値を保存する（Spec 65 D3 / P4）。鍵は
+    /// [`crate::mcp::mcp_secret_key`]（`mcp:NAME`）。前後の空白は落とす（[`Self::set_credential`]
+    /// と同じ理由）。**値はどこにも返さない。** 接続し直すのは呼び出し側（GUI は保存の後に
+    /// `reload_mcp` を呼ぶ）。
+    ///
+    /// # Errors
+    /// 名前が書けない形なら [`CoreError::InvalidSecretName`]、ストアの失敗は
+    /// [`CoreError::SecretStore`]。
+    pub fn set_mcp_secret(&self, name: &str, secret: &str) -> CoreResult<()> {
+        Self::check_secret_name(name)?;
+        self.shared
+            .secrets
+            .set(&crate::mcp::mcp_secret_key(name), secret.trim())
+    }
+
+    /// [`Self::set_mcp_secret`] で保存した値を消す。
+    ///
+    /// # Errors
+    /// [`Self::set_mcp_secret`] と同じ。
+    pub fn clear_mcp_secret(&self, name: &str) -> CoreResult<()> {
+        Self::check_secret_name(name)?;
+        self.shared.secrets.delete(&crate::mcp::mcp_secret_key(name))
+    }
+
+    /// 値が保存されているかだけを返す。**値は返さない。**
+    ///
+    /// # Errors
+    /// [`Self::set_mcp_secret`] と同じ。
+    pub fn has_mcp_secret(&self, name: &str) -> CoreResult<bool> {
+        Self::check_secret_name(name)?;
+        self.shared.secrets.contains(&crate::mcp::mcp_secret_key(name))
+    }
+
+    fn check_secret_name(name: &str) -> CoreResult<()> {
+        if crate::mcp::is_secret_ref_name(name) {
+            Ok(())
+        } else {
+            Err(CoreError::InvalidSecretName {
+                name: name.to_owned(),
+            })
+        }
+    }
+
     /// 設定ファイルを読む。
     pub async fn read_config(&self, id: &AgentId, kind: ConfigFileKind) -> CoreResult<String> {
         // 未登録エージェントのファイルを読めてしまわないよう存在確認を先に行う。

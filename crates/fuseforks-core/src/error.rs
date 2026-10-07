@@ -340,6 +340,15 @@ pub enum CoreError {
     #[error("別の外部依頼を処理中です。終わってからもう一度お試しください")]
     ExternalBusy,
 
+    /// MCP の `headers` の秘密の参照名が書けない形（`[A-Z0-9_]+` でない。Spec 65 D3）。
+    ///
+    /// GUI は `mcp.json` から拾った名前しか出さないので、ここへ来るのは IPC を直接叩いたとき。
+    #[error("秘密の名前 `{name}` は使えません（英大文字・数字・`_` だけ）")]
+    InvalidSecretName {
+        /// 拒否した名前（秘密の値ではない）。
+        name: String,
+    },
+
     /// OS の資格情報ストアの操作に失敗した。
     ///
     /// **秘密そのものはこのエラーに載せない。** 保管の失敗を伝えるために
@@ -426,6 +435,7 @@ impl CoreError {
             Self::InvalidQuote { .. } => "INVALID_QUOTE",
             Self::AttachmentNotCarried { .. } => "ATTACHMENT_NOT_CARRIED",
             Self::InvalidUserName { .. } => "INVALID_USER_NAME",
+            Self::InvalidSecretName { .. } => "INVALID_SECRET_NAME",
             Self::ExternalReceptionUnset => "EXTERNAL_RECEPTION_UNSET",
             Self::ExternalBusy => "EXTERNAL_BUSY",
             Self::SecretStore { .. } => "SECRET_STORE_FAILED",

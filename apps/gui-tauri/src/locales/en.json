@@ -697,7 +697,7 @@
     "description": "Connect external tools via {mcp} (Model Context Protocol). The format is {sameAs}, so you can paste an existing configuration {asIs} (commands such as `npx` are resolved from PATH). Saving reconnects immediately, and each servant can use the tools from its next message. {secrets} — this file is stored in plain text.",
     "descriptionSame": "the same as Claude Desktop",
     "descriptionAsIs": "as-is",
-    "descriptionSecrets": "Do not write secrets such as API keys here",
+    "descriptionSecrets": "Do not write secrets such as API keys here; reference them as `${'{'}secret:NAME{'}'}`",
     "loading": "Loading…",
     "template": "Example",
     "templateTitle": "Paste an example",
@@ -710,7 +710,20 @@
     "notConnected": "Not connected",
     "saveNote": "Saving reconnects the servers (no app restart needed)",
     "saving": "Saving…",
-    "saveAndConnect": "Save and connect"
+    "saveAndConnect": "Save and connect",
+    "secretsHeading": "Secret values",
+    "secretsHint": "Collected from `${'{'}secret:NAME{'}'}` in the headers of the saved mcp.json files (shared and per servant). Values go to the OS credential store and are never shown again.",
+    "secretsEmpty": "No references. Write a header such as `\"Authorization\": \"Bearer ${'{'}secret:OUTCASTS_TOKEN{'}'}\"` and a field appears here.",
+    "secretStored": "Stored",
+    "secretMissing": "Not stored",
+    "secretPlaceholder": "Paste the value",
+    "secretPlaceholderStored": "Stored (paste to replace)",
+    "secretSave": "Save",
+    "secretClear": "Remove",
+    "secretClearConfirm": "Remove the value of {name} from the credential store. Servers using it will not connect from the next reconnect.",
+    "secretSaved": "Saved {name} and reconnected",
+    "secretCleared": "Removed {name} and reconnected",
+    "secretUsedBy": "Used by: {servers}"
   },
   "uiErrors": {
     "canvasContext": "Could not get a canvas 2D context",
@@ -1089,7 +1102,8 @@
     "PLAN_DISPATCH_INVALID": "The plan cannot be dispatched",
     "INVALID_QUOTE": "The quote was rejected",
     "INVALID_JUDGE_FILE": "The judge file has an error",
-    "INVALID_ASSIST_REQUEST": "AI drafting could not run"
+    "INVALID_ASSIST_REQUEST": "AI drafting could not run",
+    "INVALID_SECRET_NAME": "The secret name has characters that cannot be used (upper-case letters, digits and _ only)"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

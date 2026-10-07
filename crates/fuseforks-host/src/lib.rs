@@ -24,4 +24,6 @@ pub mod probe_approvals;
 pub use boot::{build_host, secret_store, Host, HostBootOptions, HostError, SecretSource};
 pub use lock::{LockError, VillageLock, LOCK_FILE};
 pub use paths::HostPaths;
-pub use preflight::{preflight, PreflightError, PreflightReport, PreflightRequest, StartSpec};
+pub use preflight::{
+    preflight, village_mcp_secret_refs, PreflightError, PreflightReport, PreflightRequest, StartSpec,
+};

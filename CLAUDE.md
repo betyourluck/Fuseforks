@@ -2579,7 +2579,8 @@ git: P2 までの 8 コミットは push 済み（`496932d..08b2a29`）。P3 は
 Windows の `fuseforks-cli` も開けた）— 参照構成は写しを bind で置くので、`bake --update` の前に `docker compose stop`（契約 15）
 (b) 扉は profile ではなく `compose.door.yaml` を重ねる（profile は `fuseforks` の `command` と `ports:` を変えられない）
 (c) ~~存在しない `--data-dir` への `check` は「（なし）・問題ありません・0」~~ → **同日に塞いだ**（`world.json` が無ければ 5・何も作らない。
-`PreflightError::VillageMissing`）。次は P4（GUI の秘密の参照の保存欄）→ P5 台帳 → P6 実機。
+`PreflightError::VillageMissing`）。~~次は P4~~ **→ P4 完了**（同日。MCP ダイアログに「秘密の値」の欄・IPC 3 本・値を返す口は無い。
+実機は未確認。「P4 実装記録」が正）。次は P5 台帳 → P6 実機。
 
 ## 現在地（2026-10-06 更新）
 
@@ -7292,7 +7293,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   ナノ秒の衝突で共有された — 変異の赤が予測より多いときは、まず同じ変異を単独で回す）。「P2 実装記録」が正）→ **同日に P3 完了**
   （`deploy/` の Dockerfile・compose 2 枚・Caddyfile・README 日英・fixture と `verify-image.yml`・版番号の環境変数。README の手順を fixture で
   通し、扉は Caddy 越しに 200 / 401 / 401。**D8 を 2 点動かした** — `/data` は bind（`bake --update` が直接書くため。ロックは bind を越えないので
-  止めてから作り直す = 契約 15）/ 扉は重ねる compose ファイル。「P3 実装記録」が正）。次は P4（GUI）
+  止めてから作り直す = 契約 15）/ 扉は重ねる compose ファイル。「P3 実装記録」が正）→ **同日に P4 完了**（MCP ダイアログの「秘密の値」の欄・IPC 3 本・値を返す口は無い。実機は未確認。「P4 実装記録」が正）。
+  あわせて `world.json` の無い `--data-dir` を 5 で止めた（`PreflightError::VillageMissing`）。次は P5（台帳）
 - [Spec 64](specs/64_headless-host.md)（コアを GUI なしで動かす — ホストの切り出しとヘッドレス実行）:
   **Done**（2026-10-06。**起票から Done まで同日**・P0〜P6。以下は経緯）（2026-10-06 起票 → 同日、査読 2 系統 26 点を反映して rev2 → 再査読で未決 1 を rev2 の方針で閉じた。
   **→ P0 完了**（同日。起動ログの基準 6 行 / `File::try_lock` と redb の `DatabaseAlreadyOpen` を 3 OS の CI で実測 —

@@ -375,6 +375,58 @@ pub async fn clear_model_credential(
     state.host.orchestrator.clear_credential(&template_id).await
 }
 
+/// MCP の秘密の参照 1 つ（Spec 65 P4）。**値は持たない** — 保存済みかだけ。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSecretView {
+    /// `${secret:NAME}` の NAME。
+    pub name: String,
+    /// 参照しているサーバー（個体別は `id:名前`）。
+    pub servers: Vec<String>,
+    /// 資格情報ストアに値があるか。
+    pub stored: bool,
+}
+
+/// 村の `mcp.json`（共通と全個体）の `headers` が参照する秘密の一覧。
+#[tauri::command]
+pub async fn list_mcp_secrets(state: State<'_, AppState>) -> CoreResult<Vec<McpSecretView>> {
+    let ids: Vec<_> = state
+        .host
+        .orchestrator
+        .snapshots()
+        .await
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let refs = fuseforks_host::village_mcp_secret_refs(&state.host.workspace, &ids).await;
+    refs.into_iter()
+        .map(|(name, servers)| {
+            let stored = state.host.orchestrator.has_mcp_secret(&name)?;
+            Ok(McpSecretView {
+                name,
+                servers,
+                stored,
+            })
+        })
+        .collect()
+}
+
+/// MCP の秘密の値を資格情報ストアへ保存する。**値は画面へ戻さない。**
+#[tauri::command]
+pub async fn set_mcp_secret(
+    state: State<'_, AppState>,
+    name: String,
+    secret: String,
+) -> CoreResult<()> {
+    state.host.orchestrator.set_mcp_secret(&name, &secret)
+}
+
+/// MCP の秘密の値を資格情報ストアから消す。
+#[tauri::command]
+pub async fn clear_mcp_secret(state: State<'_, AppState>, name: String) -> CoreResult<()> {
+    state.host.orchestrator.clear_mcp_secret(&name)
+}
+
 /// API キーが登録済みかどうかだけを返す。**値は返さない。**
 ///
 /// 表示のために値を取り出すと、秘密が UI 層のメモリへ載る理由が無いのに載る。
