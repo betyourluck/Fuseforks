@@ -111,7 +111,8 @@ docker compose -f deploy\compose.yaml up -d
 
 - **必ずコンテナを止めてから `--update` してください。** `bake --update` は写し先のロックを取りますが、
   **Docker Desktop の bind mount ではロックが Windows とコンテナの間を越えません**（実測。コンテナが村を
-  開いたまま、Windows の側からも同じ村を開けた）。止めずに作り直すと、走っている村の下でファイルが置き換わります
+  開いたまま、Windows の側からも同じ村を開けた。Linux のサーバーでは確かめていません）。
+  ロックが効いても効かなくても、止めずに作り直すと、走っている村の下でファイルが置き換わります
 - 置き換わるのは設計のファイル（`world.json`・条例・`Construct.md`・`SKILL.md`・`mcp.json` など）だけです。
   **会話・`Memory.md`・予定の消化の記録・承認待ちのコマンドはコンテナの側が残ります**
 - コンテナの「自動承認して許可」が `run.json` の `allow` に書き足した行は、再 `bake` で消えます（GUI が `allow` の持ち主）。

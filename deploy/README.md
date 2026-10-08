@@ -113,8 +113,8 @@ docker compose -f deploy\compose.yaml up -d
 
 - **Always stop the container before `--update`.** `bake --update` takes the copy's lock, but **on Docker
   Desktop the lock does not cross a bind mount between Windows and the container** (measured: with the
-  container holding the village, a Windows process opened the same village too). Rebuilding without stopping
-  replaces files underneath a running village
+  container holding the village, a Windows process opened the same village too; not checked on a Linux
+  server). Whether or not the lock holds, rebuilding without stopping replaces files underneath a running village
 - Only design files are replaced (`world.json`, the ordinance, `Construct.md`, `SKILL.md`, `mcp.json`, …).
   **Conversations, `Memory.md`, consumed schedule records and pending command approvals stay as the container left them**
 - Lines that "auto-approve and allow" added to `run.json`'s `allow` inside the container disappear on re-`bake`
