@@ -19,7 +19,7 @@
 //! 写さない**（会話・添付・ログ・書き出し・ロック）。
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use fuseforks_core::command::CommandPolicy;
 use fuseforks_core::config_store::{
@@ -652,26 +652,33 @@ fn is_same_or_inside(child: &Path, parent: &Path) -> bool {
     child.len() >= parent.len() && child[..parent.len()] == parent[..]
 }
 
+/// 成分を左から 1 つずつ足し、実在する間は `canonicalize` し直す。`..` は 1 つ戻す — 手前が実在すれば
+/// canonicalize 済み（シンボリックリンクが解けている）なので本当の親へ、実在しなければ字面で戻る
+/// （無いフォルダはシンボリックリンクになれないので、字面の解決が書き込むときの道筋と一致する）。
+/// 後ろから「実在する祖先」を探す形は、末尾が `..` の道筋（`deploy/..`）で `file_name()` が無く止まり、
+/// Unix では `deploy` が無いと `..` が解けずに残った（Windows は Win32 が字面で解くので通っていた）。
 fn resolved(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
-    let mut existing = absolute.clone();
-    let mut rest = Vec::new();
-    while !existing.exists() {
-        match (existing.file_name().map(|n| n.to_os_string()), existing.parent()) {
-            (Some(name), Some(parent)) => {
-                rest.push(name);
-                existing = parent.to_path_buf();
+    let mut base = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                base.pop();
             }
-            _ => break,
+            // 接頭辞と根は canonicalize しない（Windows の `C:` 単独はドライブの現在のフォルダを指す）。
+            Component::Prefix(_) | Component::RootDir => base.push(component),
+            Component::Normal(_) => {
+                base.push(component);
+                if let Ok(real) = std::fs::canonicalize(&base) {
+                    base = real;
+                }
+            }
         }
-    }
-    let mut base = std::fs::canonicalize(&existing).unwrap_or(existing);
-    for name in rest.into_iter().rev() {
-        base.push(name);
     }
     base
 }
