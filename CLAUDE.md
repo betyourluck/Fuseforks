@@ -2557,6 +2557,16 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
 
+## 現在地（2026-10-09 更新）
+
+**`v0.5.0` = `51f1f20` を 4 経路で配った**（Spec 64・65・66 と秘密の値のダイアログが初めて配布物に入った。タグ履歴が正）。
+**1 度目のタグ（`9f79fd3`）は macOS / Ubuntu の CI が `bake` の 1 本で赤**（`failures.md` #144 — `--env-out` が写しの下かの判定が、
+Unix では存在しない中間フォルダを挟んだ `..` を解かなかった。Windows は Win32 が字面で解くので通っていた）。draft とタグを消し、
+修正 `51f1f20` に付け直した（利用者裁定。v0.3.2 と同じ扱い）。**タグの前に Docker の Linux で回すのは、`cfg(unix)` があるときだけでなく、
+パスやプロセスに触れた変更すべて**（#144 の一般化）。GUI の crate は Docker では組めないので `--exclude fuseforks` で回す（1,318 本）。
+
+**次の一手**: (1) winget 0.5.0（PR #449191）のマージ確認 (2) `deploy\.env` を消す（本物の鍵が平文）。
+
 ## 現在地（2026-10-08 更新）
 
 **[Spec 66](specs/66_bake-env-out.md)（`bake --env-out`）を P3 の実機で Done にした。** git: Spec 66 P3（`a7001e7`）までは push 済み。秘密の値のダイアログとこの台帳は未 push。
@@ -4077,6 +4087,16 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.5.0` = `51f1f20`（2026-10-09 JST タグ。58 コミット）— [Spec 64](specs/64_headless-host.md)（GUI なしで動かす・村の排他ロック）+
+  [Spec 65](specs/65_container-deploy.md)（`bake`・像・compose）+ [Spec 66](specs/66_bake-env-out.md)（`--env-out`）+ 秘密の値のダイアログ +
+  #141（接地エンジンの辞書鍵）+ gpt-6 の `max_completion_tokens`**。3 OS 緑・アセット 7 件・publish 2026-10-08 23:51 UTC。
+  **1 度目のタグ（利用者が `9f79fd3` に打った）は macOS / Ubuntu の `bake` の 1 本で赤**（#144）。draft（Windows の 2 件）とタグを消し、
+  修正に付け直した。ノートは英日併記で主題は 3 つ（`${secret:…}` / 村のロック / ソースからの CLI とコンテナ — CLI と `deploy/` は
+  インストーラーに入らないと明記）、「利用者が負う条件」4 つ（v0.4.0 以前はロックを知らない / Docker Desktop の bind mount では
+  ロックが越えない・Linux のサーバーは未確認 / `bake` は平文の `headers` で止まる / `--env-out` は鍵を平文で書く）。**タグは利用者、
+  付け直し・publish・winget・tap は Neo** — winget 0.5.0 = PR #449191（`gh repo sync` → `wingetcreate update … --token` の 1 段。
+  `InstallerLocale` 無しを引き写し・ProductCode は `{E4662172-…}`・`InstallerSha256` は Release の digest と一致）/ tap `3fdafae`
+  （sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.4.0` = `43e4f72`（2026-10-01 JST タグ。30 コミット）— [Spec 62](specs/62_judge-agents.md) Done（判断役 —
   人が書いた問いと規則で宛先を決める）+ [Spec 63](specs/63_ai-draft-assist.md) Done（AI で下書きを作る — SKILL.md /
   Construct.md / `judge.toml`）+ #139（`common.save` が鍵の字面のまま）+ Jev のページを「判断特化モデル（Jev）」へ改名**。
