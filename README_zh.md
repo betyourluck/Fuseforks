@@ -15,9 +15,7 @@ Outcasts Fuseforks 是一款让多个 AI 智能体相互协作、对话的
 委派、分工、汇总，时机一到便会自动工作。
 这一切都呈现在一个三栏的单一界面中。
 
-![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
-
-![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
+![Outcasts Fuseforks Japanese Light](images/fuseforks_02.webp)
 
 <video src="https://github.com/user-attachments/assets/08c421eb-a1a8-48c0-a682-978a9b35dfd0" controls="controls" muted="muted" width="100%"></video>
 

@@ -16,9 +16,7 @@ They delegate, divide work, bundle results, and work on their own when the time 
 Everything is visible in a single screen across 3 panes.
 
 
-![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
-
-![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
+![Outcasts Fuseforks English Dark](images/fuseforks_02.webp)
 
 <video src="https://github.com/user-attachments/assets/08c421eb-a1a8-48c0-a682-978a9b35dfd0" controls="controls" muted="muted" width="100%"></video>
 

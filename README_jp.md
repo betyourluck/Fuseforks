@@ -15,9 +15,7 @@ Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会
 委譲し、手分けし、束ね、時刻が来れば勝手に働く。
 その全部が 3 ペインの 1 画面に見えています。
 
-![Outcasts Fuseforks Japanese Light](images/fuseforks.webp)
-
-![Outcasts Fuseforks English Dark](images/fuseforks_en.webp)
+![Outcasts Fuseforks Japanese Light](images/fuseforks_01.webp)
 
 <video src="https://github.com/user-attachments/assets/08c421eb-a1a8-48c0-a682-978a9b35dfd0" controls="controls" muted="muted" width="100%"></video>
 
