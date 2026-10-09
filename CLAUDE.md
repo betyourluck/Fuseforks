@@ -565,7 +565,8 @@ publish の 78 分後**）。** **→ 0.3.6 = PR #439165（2026-09-22 提出。�
 **2026-09-22 17:35 UTC マージ = publish の 88 分後**）。** **→ 0.3.7 = PR #441837（2026-09-26 提出。同じ 1 段。
 `ProductCode` は `{67B7D756-…}`。`InstallerLocale` 無しを引き写し・`InstallerSha256` は Release の digest と一致。
 **2026-09-26 19:34 UTC マージ = publish の 56 分後**。2026-09-27 に利用者が開発機で `winget` から 0.3.7 へ
-更新した）。** 所要を測れた update PR は
+更新した）。** **→ 0.4.0 = PR #444645（publish の 50 分後にマージ）/ 0.5.0 = PR #449191（2026-10-09 00:40 UTC
+マージ = publish の 49 分後）。** 所要を測れた update PR は
 これで 13 版（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7）で、**12 版は 49 分〜3 時間 52 分・中央値 1 時間前後、
 1 版（0.3.4）だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
@@ -2565,7 +2566,10 @@ Unix では存在しない中間フォルダを挟んだ `..` を解かなかっ
 修正 `51f1f20` に付け直した（利用者裁定。v0.3.2 と同じ扱い）。**タグの前に Docker の Linux で回すのは、`cfg(unix)` があるときだけでなく、
 パスやプロセスに触れた変更すべて**（#144 の一般化）。GUI の crate は Docker では組めないので `--exclude fuseforks` で回す（1,318 本）。
 
-**次の一手**: (1) winget 0.5.0（PR #449191）のマージ確認 (2) `deploy\.env` を消す（本物の鍵が平文）。
+**winget 0.5.0（PR #449191）は 2026-10-09 00:40 UTC にマージ**（publish の 49 分後）。
+
+**次の一手**: (1) `deploy\.env` を消す（本物の鍵が平文。利用者）(2) 従来の残り — Spec 62 / 63 の未決は使ってから /
+`refusal=yes` 0 本の検証 / MCP_DOCKER の動的追加。
 
 ## 現在地（2026-10-08 更新）
 
@@ -4095,7 +4099,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   インストーラーに入らないと明記）、「利用者が負う条件」4 つ（v0.4.0 以前はロックを知らない / Docker Desktop の bind mount では
   ロックが越えない・Linux のサーバーは未確認 / `bake` は平文の `headers` で止まる / `--env-out` は鍵を平文で書く）。**タグは利用者、
   付け直し・publish・winget・tap は Neo** — winget 0.5.0 = PR #449191（`gh repo sync` → `wingetcreate update … --token` の 1 段。
-  `InstallerLocale` 無しを引き写し・ProductCode は `{E4662172-…}`・`InstallerSha256` は Release の digest と一致）/ tap `3fdafae`
+  `InstallerLocale` 無しを引き写し・ProductCode は `{E4662172-…}`・`InstallerSha256` は Release の digest と一致。
+  **2026-10-09 00:40 UTC マージ = publish の 49 分後**）/ tap `3fdafae`
   （sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.4.0` = `43e4f72`（2026-10-01 JST タグ。30 コミット）— [Spec 62](specs/62_judge-agents.md) Done（判断役 —
   人が書いた問いと規則で宛先を決める）+ [Spec 63](specs/63_ai-draft-assist.md) Done（AI で下書きを作る — SKILL.md /
