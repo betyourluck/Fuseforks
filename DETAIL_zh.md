@@ -559,6 +559,12 @@ LLM 出现 `429`（RateLimit）或 `5xx` 时，采用指数退避加抖动重试
 
 每个エージェント可以独立配置专属的 Model Context Protocol (MCP) 服务端或工具，实现不同サーヴァント各司其职、各用其工具。
 
+### MCP_DOCKER 请用 `--servers` 明确指定服务端
+
+若**不带参数**连接 Docker MCP Toolkit 网关（`docker mcp gateway run`），在开启了 Docker 实验功能 `dynamic-tools` 的环境中，サーヴァント除了原本的工具外还会看到 **8 个管理工具**（`mcp-find` / `mcp-add` / `mcp-remove` / `mcp-exec` / `mcp-config-set` / `code-mode` / `mcp-create-profile` / `mcp-activate-profile`），从而可以**自行从目录（约 300 个）添加服务端并执行**。Fuseforks 只在连接时获取一次工具列表，新增的工具不会出现在提示集合中，但可以通过 `mcp-exec` 按名称调用。目录中有能在容器内执行终端命令、并读写 `paths` 所列主机文件夹的服务端（如 `desktop-commander`），一旦被添加，工作文件夹的边界、黑板的边界、`run` 的许可列表与审批模式、仅限回收站的删除都会被**一并绕过**。这种情况**确实发生过**（2026-09-27、2026-08-19）。
+
+**对策是用 `--servers` 明确列出服务端**，这样管理工具就不会出现；只用 `--tools` 或 `--profile` 无法去掉（2026-10-11 用 `docker mcp` v0.44.1 实测）。若 Docker 侧的配置文件缩减了工具，请同时写上 `--tools`：`"args": ["mcp", "gateway", "run", "--servers", "fetch,wikipedia-mcp", "--tools", "fetch,search_wikipedia,get_article"]`。代价是在 Docker Desktop 侧新增的服务端不会反映到村里。在 Docker 侧执行 `docker mcp feature disable dynamic-tools` 也能去掉，但会影响该机器上的所有客户端（如 Claude Code）。
+
 ### 远程 MCP（Streamable HTTP）
 
 支持通过 Streamable HTTP 方式连接远程 MCP 服务器，使エージェント能够调用外部托管的工具和数据源。

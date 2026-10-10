@@ -2573,7 +2573,27 @@ Unix では存在しない中間フォルダを挟んだ `..` を解かなかっ
 
 **次の一手**: ~~(1) `deploy\.env` を消す~~（**→ 2026-10-10 に削除済みを確認**）(2) 従来の残り — Spec 62 / 63 の未決は使ってから /
 ~~`refusal=yes` 0 本の検証~~（**→ 2026-10-10 に検証 = 語彙のずれ・広げない。副産物で `reply:` 行に `author=` を足した**。
-2026-09-27 の完遂の軸の段落が正）/ MCP_DOCKER の動的追加。
+2026-09-27 の完遂の軸の段落が正）/ ~~MCP_DOCKER の動的追加~~（**→ 2026-10-11 に調査して塞いだ**。下の段落）。
+
+**MCP_DOCKER の動的追加（2026-10-11。コード変更なし・村の設定と DETAIL 3 言語）。** 素の
+`docker mcp gateway run` は、Docker の実験機能 `dynamic-tools`（この端末では有効）のせいで管理用の道具 8 本
+（`mcp-find` / `mcp-add` / `mcp-remove` / `mcp-exec` / `mcp-config-set` / `code-mode` / `mcp-create-profile` /
+`mcp-activate-profile`）を出す。Fuseforks は道具一覧を接続時に 1 回しか取らない（`mcp.rs` の `connect_one`。
+`list_changed` は扱わない）ので足した道具は提示集合に出ないが、**`mcp-exec` に名前を渡せば呼べる**。カタログ
+314 件には `desktop-commander`（設定は `paths` = ホストのフォルダをコンテナへ渡す。中で端末コマンド）が
+あり、足されると作業フォルダと黒板の囲い・`run` の許可リストと承認モード・ごみ箱だけの削除をまとめて迂回する。
+**ログの実例 40 行**: 08-19 ジェミー（`run` なし）が `mcp-add` → `mcp-exec` ×8 で調査に使い完走 / 09-27 ミュゼが
+`mcp-add` → `mcp-config-set`（引数 82 字）→ 利用者が打ち切り（`mcp-exec` は無し）/ ほか 3 回は打ち切り。
+**引数はログに無いので、何を足したかは未確認。** `registry.yaml` / `config.yaml` は 4 月のまま、Default Profile
+（6 サーバー）にも無い = 永続化の痕跡なし。**使い捨てのゲートウェイで tools/list を取った実測**（`docker mcp`
+v0.44.1）: 引数なし 27 本（管理 8）/ `--tools` だけ・`--profile default` は管理 8 が残る / **`--servers` を明示すると
+管理 8 が消える** / `--servers` 6 サーバー + `--tools` 19 本で今と同じ 19 本・管理 0。**処方 = 村の 5 体
+（ザリ・ジェミー・ルナ・ミュゼ + 無効のイクス）の `agents/{id}/mcp.json` の `args` をその形へ**（`args` 以外は
+JSON 比較で不変を確認。元は scratchpad に退避）。代償は Docker Desktop 側でサーバーを足しても村へ反映されない
+こと。`docker mcp feature disable dynamic-tools` でも消えるが、端末の全クライアント（この Claude Code を含む）に
+効くので採らなかった。DETAIL 3 言語の「エージェント別 MCP」の次に節を足した（他の利用者向けの注意）。
+**反映は個体の再起動か MCP 設定の開き直しから。** コードで塞ぐ案（サーバーごとの道具の許可欄）は Spec 規模なので
+起票していない。
 
 ## 現在地（2026-10-08 更新）
 

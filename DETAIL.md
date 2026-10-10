@@ -2202,6 +2202,43 @@ Jev のトークンは圧縮と同じく予算に入らないが、払ったこ�
   永続化しない — 状態ファイルはプロセスが消えても「接続済み」を残して嘘をつく
 - 個別ツールは他のエージェントからは実行できない（名前を知っていても）
 
+### MCP_DOCKER は `--servers` で使うサーバーを明示する
+
+Docker MCP Toolkit のゲートウェイ（`docker mcp gateway run`）を**引数なしで**繋ぐと、
+Docker 側の実験機能 `dynamic-tools` が有効な環境では、本来の道具に加えて
+**管理用の道具 8 本**（`mcp-find` / `mcp-add` / `mcp-remove` / `mcp-exec` /
+`mcp-config-set` / `code-mode` / `mcp-create-profile` / `mcp-activate-profile`）が
+サーヴァントに提示される。これを使うと、サーヴァントは**カタログ（約 300 件）から
+サーバーを自分で足して実行できる**。
+
+- Fuseforks は MCP の道具一覧を**接続した時に 1 回だけ**取るので、足した道具は
+  提示集合に現れない。ただし `mcp-exec` に名前を渡せば呼べる
+- カタログには、コンテナの中で端末のコマンドを実行し、`paths` に書いたホストのフォルダを
+  読み書きできるサーバー（`desktop-commander` など）がある。足されると、作業フォルダの囲い・
+  黒板の囲い・`run` の許可リストと承認モード・ごみ箱だけの削除を**まとめて迂回**される
+- **実際に起きた** — `run` を持たないサーヴァントが `mcp-add` → `mcp-config-set` で
+  シェル実行のサーバーを足そうとした（2026-09-27）。別の個体は `mcp-add` のあと
+  `mcp-exec` を 8 回呼んで調査に使った（2026-08-19）
+
+**処方は `--servers` で使うサーバーを明示すること。** 明示すると管理用の 8 本は
+出なくなる。`--tools` だけ・`--profile` だけでは消えない（2026-10-11 に
+`docker mcp` v0.44.1 で実測）。Docker 側のプロファイルで道具を絞っているなら、
+`--tools` も併せて書くと同じ一覧になる:
+
+```json
+"MCP_DOCKER": {
+  "command": "docker",
+  "args": ["mcp", "gateway", "run",
+           "--servers", "fetch,wikipedia-mcp",
+           "--tools", "fetch,search_wikipedia,get_article"]
+}
+```
+
+代償は、Docker Desktop 側でサーバーを足しても村に反映されないこと（足すなら
+`mcp.json` も直す）。**Docker 側で `docker mcp feature disable dynamic-tools` を
+打っても消える**が、こちらはその端末の全クライアント（Claude Code など）から
+管理用の道具が消える。
+
 ### リモート MCP（Streamable HTTP）
 
 `mcp.json` のエントリは 2 形ある（Spec 47・2026-08-30）。従来の stdio

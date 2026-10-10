@@ -1745,6 +1745,42 @@ This clock alone **does not follow the language setting**. English locale format
 - Broken JSON is rejected when saving. External edits that break it do not stop startup; the error is readable from the Settings dialog's "Per-Agent MCP" field. Connection state is not persisted, because a state file would falsely retain "connected" after a process exits.
 - Per-agent tools cannot be called by other agents, even if they know the name.
 
+### Name the servers for MCP_DOCKER with `--servers`
+
+If you connect the Docker MCP Toolkit gateway (`docker mcp gateway run`) **with no arguments**
+on a machine where Docker's experimental `dynamic-tools` feature is enabled, servants are shown
+**8 management tools** in addition to the real ones (`mcp-find` / `mcp-add` / `mcp-remove` /
+`mcp-exec` / `mcp-config-set` / `code-mode` / `mcp-create-profile` / `mcp-activate-profile`).
+With them, a servant can **add servers from the catalog (about 300) on its own and run them**.
+
+- Fuseforks lists a server's MCP tools **once, at connect time**, so the added tools do not appear
+  in the presented set. They can still be called by passing their name to `mcp-exec`
+- The catalog includes servers that run terminal commands inside a container and read and write the
+  host folders listed in `paths` (such as `desktop-commander`). Adding one **bypasses all at once**
+  the work-folder fence, the blackboard fence, the `run` allow list and approval mode, and
+  trash-only deletion
+- **This has happened** — a servant without `run` tried to add a shell server with `mcp-add` →
+  `mcp-config-set` (2026-09-27). Another servant called `mcp-exec` 8 times after `mcp-add` and used
+  the result in its research (2026-08-19)
+
+**The fix is to name the servers with `--servers`.** With an explicit list the 8 management tools
+are not shown. `--tools` alone or `--profile` alone does not remove them (measured 2026-10-11 with
+`docker mcp` v0.44.1). If your Docker profile narrows the tools, add `--tools` as well to get the
+same list:
+
+```json
+"MCP_DOCKER": {
+  "command": "docker",
+  "args": ["mcp", "gateway", "run",
+           "--servers", "fetch,wikipedia-mcp",
+           "--tools", "fetch,search_wikipedia,get_article"]
+}
+```
+
+The cost is that servers you add in Docker Desktop no longer reach the village (edit `mcp.json`
+too). **`docker mcp feature disable dynamic-tools` on the Docker side also removes them**, but for
+every client on that machine (Claude Code and others).
+
 ### Remote MCP (Streamable HTTP)
 
 `mcp.json` entries come in two forms (Spec 47, 2026-08-30). Besides the
