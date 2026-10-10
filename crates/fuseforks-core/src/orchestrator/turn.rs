@@ -302,6 +302,10 @@ struct TurnProduct {
     /// 思考の要約（Spec 33）。**履歴へは載らない** — 積む先の
     /// [`ChatMessage`] にこの欄が無く、型で閉じている。
     reasoning_summary: Vec<String>,
+    /// 本文を**コアが本人に代わって書いた**か（2026-10-10）。本文が空だったので
+    /// 正直な文言（ツール実行の上限 / 本文が返らなかった）へ置き換えた回だけ真。
+    /// `reply:` 行の `author=` に写すだけで、配送にも履歴にも効かない。
+    written_by_core: bool,
 }
 
 /// 割り込みで打ち切られたターンの出口（Spec 10 — 契約の出口 2a）。
@@ -1895,9 +1899,11 @@ async fn run_turn_inner(
     // 積まれ、**次のターンの API リクエストが 400 (text content blocks must be
     // non-empty) で落ちてエージェントごと止まる**。空という値は連鎖的に
     // 毒になる（failures.md #29、実機で発生）。
+    let mut written_by_core = false;
     if let Outcome::Finish { content } = &mut outcome
         && content.trim().is_empty()
     {
+        written_by_core = true;
         // 理由を必ず添える。「失敗しました」だけでは、設定を直せば済むのか
         // ワイヤの障害なのかを利用者が判別できない。
         let reason = || {
@@ -1991,6 +1997,7 @@ async fn run_turn_inner(
         tokens: spend.tokens,
         grounding,
         reasoning_summary,
+        written_by_core,
     }))
 }
 
@@ -2836,6 +2843,7 @@ async fn dispatch_outcome(
         tokens,
         mut grounding,
         mut reasoning_summary,
+        written_by_core,
     } = product;
     let next_hop = incoming.hop.saturating_add(1);
     let from = Endpoint::Agent {
@@ -2861,8 +2869,12 @@ async fn dispatch_outcome(
             // `refusal=` は**断り形**の観測（`crate::refusal`）。完遂の軸の 2 本目で、
             // to= が宛先の取り違えを、refusal= が「返したが中身が辞退」を数える。
             // 配送には一切効かない — 効かせると Spec 08 の凍結（分類は型で運ぶ）を破る。
+            //
+            // `author=` は本文を**誰が書いたか**（2026-10-10）。`core` はコアが空の本文を
+            // 正直な文言へ置き換えた回で、完遂の軸で本文を読まずに数えられる未完遂。
+            // `refusal=` の語彙ではこの文面を拾えない（拾うべきでもない — 断りではない）。
             note!(
-                "reply: agent={agent_id} to={} hop={next_hop} chars={} refusal={}",
+                "reply: agent={agent_id} to={} hop={next_hop} chars={} refusal={} author={}",
                 endpoint_log_label(&destination),
                 content.chars().count(),
                 if crate::refusal::is_refusal_form(content) {
@@ -2870,6 +2882,7 @@ async fn dispatch_outcome(
                 } else {
                     "no"
                 },
+                if written_by_core { "core" } else { "model" },
             );
             let mut outgoing = AgentMessage::new(from, destination, content, next_hop);
             outgoing.tokens = tokens as u32;
