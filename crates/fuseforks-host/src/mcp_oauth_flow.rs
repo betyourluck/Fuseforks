@@ -162,7 +162,7 @@ async fn run_authorize(
     timeout: Duration,
 ) -> AuthorizeOutcome {
     // 1. メタデータ。PKCE（S256）を名乗らなければ進まない（仕様の MUST — D3）。
-    let mut manager = match AuthorizationManager::new(resource).await {
+    let mut manager = match fuseforks_core::mcp_oauth::new_manager(resource).await {
         Ok(manager) => manager,
         Err(err) => return failed(&fuseforks_core::mcp_oauth::auth_error_label(&err)),
     };
@@ -357,10 +357,7 @@ fn query_value(raw: &str, key: &str) -> Option<String> {
 
 /// 認証なしの initialize を送り、401 の `WWW-Authenticate` の `scope` を拾う（D9 の ①）。取れなければ `None`。
 async fn probe_challenge_scope(url: &str) -> Option<String> {
-    let client = reqwest_rmcp::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .ok()?;
+    let client = fuseforks_core::mcp_oauth::http_client(true).ok()?;
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"fuseforks","version":"0"}}}"#;
     let response = client
         .post(url)
@@ -385,11 +382,7 @@ pub fn challenge_scope(header: &str) -> Option<String> {
 
 /// 認可口が戻り先を拒むか（ログインの手前で 400 を返すか。P0 の実測の形）。リダイレクトは辿らない。
 async fn authorize_rejects_redirect(auth_url: &str) -> bool {
-    let Ok(client) = reqwest_rmcp::Client::builder()
-        .redirect(reqwest_rmcp::redirect::Policy::none())
-        .timeout(HTTP_TIMEOUT)
-        .build()
-    else {
+    let Ok(client) = fuseforks_core::mcp_oauth::http_client(false) else {
         return false;
     };
     match client.get(auth_url).send().await {
@@ -507,7 +500,7 @@ async fn revoke_remote(
     refresh_token: &str,
     secrets: &Arc<dyn SecretStore>,
 ) -> bool {
-    let Ok(manager) = AuthorizationManager::new(resource).await else {
+    let Ok(manager) = fuseforks_core::mcp_oauth::new_manager(resource).await else {
         return false;
     };
     let Ok(Ok(metadata)) = tokio::time::timeout(HTTP_TIMEOUT, manager.discover_metadata()).await else {
@@ -524,7 +517,7 @@ async fn revoke_remote(
     let client_id = read_client_record(secrets.as_ref(), issuer)
         .map(|record| record.client_id)
         .unwrap_or_default();
-    let Ok(client) = reqwest_rmcp::Client::builder().timeout(HTTP_TIMEOUT).build() else {
+    let Ok(client) = fuseforks_core::mcp_oauth::http_client(true) else {
         return false;
     };
     let body = url::form_urlencoded::Serializer::new(String::new())

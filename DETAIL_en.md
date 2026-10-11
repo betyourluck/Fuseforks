@@ -56,6 +56,7 @@ Fuseforks/
 │       │   ├── assist.rs            AI drafting, pure mechanism (guides, the two-section context, submit_draft, classification, history checks; [Spec 63](specs/63_ai-draft-assist.md))
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
+│       │   ├── mcp_oauth.rs         OAuth for remote MCP (one authorization manager per server, two-tier storage with the credential store, state; [Spec 67](specs/67_mcp-oauth.md))
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tool_calls.rs        Ring of tool-call arguments and output (memory only; never in the log or the saved conversation. [Spec 57](specs/57_tool-call-detail.md))
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
@@ -89,10 +90,11 @@ Fuseforks/
 │       │   ├── preflight.rs         Gathers the pre-start check (reads files and secret presence only; opens nothing)
 │       │   ├── bake.rs              bake — makes a container copy of a GUI village (plan, then apply; Spec 65)
 │       │   ├── mcp_server.rs        The door for external LLMs (HTTP + token; Spec 25)
+│       │   ├── mcp_oauth_flow.rs    The OAuth authorization flow (loopback receiver, dynamic registration, code exchange, revocation; Spec 67)
 │       │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
 │       │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
 │       │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
-│       └── tests/                   Door wire / village lock / bake
+│       └── tests/                   Door wire / village lock / bake / the OAuth authorization flow
 │
 ├── deploy/                          Reference setup for running in a container (Spec 65). Dockerfile / compose.yaml /
 │                                    compose.door.yaml / Caddyfile / .env.example / README (en, ja) / fixtures/village
@@ -149,6 +151,7 @@ Fuseforks/
                 ├── JudgeList.vue / JudgeDialog.vue    Left: the Judges list / Modal: editing judge.toml and "Try" (Spec 62)
                 ├── AssistPanel.vue                    Modal: drafting with AI (from the SKILL / Construct / judge.toml editors; Spec 63)
                 ├── McpSecretsButton.vue / McpSecretsDialog.vue   Modal: MCP secret values (from the shared MCP dialog and a servant's mcp.json tab)
+                ├── McpOAuthControls.vue      OAuth in an MCP status row (Authorize / Cancel / Revoke authorization)
                 ├── CommandApprovalDialog.vue          Modal: command approval (waiting `pending` requests)
                 ├── StatsView.vue                      Full-screen: stats (replaces the three panes wholesale; Spec 39)
                 ├── TitleBar.vue                       Custom title bar (Ordinance, Roles, MCP, Commands, Schedule, System Settings)
@@ -1807,6 +1810,43 @@ moved from `/sse` to a single endpoint such as `/mcp`.
   (`type: "http"` without `url`, a stdio entry with `url`, and so on). Disabled
   entries (`enabled: false`) are still validated — only the connection is skipped
 
+### Connecting a remote MCP server with OAuth ([Spec 67](specs/67_mcp-oauth.md))
+
+Servers you authorize by signing in through a browser instead of pasting an API key (such as TradingView's MCP) are connected by
+adding `"auth": "oauth"` to an http entry:
+
+```json
+"tradingview": { "type": "http", "url": "https://mcp.tradingview.com/mcp", "auth": "oauth" }
+```
+
+- **Only entries that say so use OAuth.** A 401 does not switch an entry to OAuth on its own (the reason a browser opened would be
+  invisible). When an undeclared entry is asked for OAuth, its connection status offers both choices: add `"auth": "oauth"`, or, for a
+  server that takes an API key, set it in the Authorization of `headers`
+- `auth` can only be written on http entries, and its only value is `"oauth"`. **Combining it with an `Authorization` in `headers` is
+  rejected at save time** (with two seats for credentials you cannot tell which one worked). Other `headers` can stay
+- **Three states** — `none` (not an OAuth entry) / `authorized` (an authorization record exists and covers the needed scopes) /
+  `required` (no record, scopes not covered, or a refresh was refused). **A `required` entry is not connected at all.** The state
+  shows as a badge in the MCP status rows of the shared MCP dialog and of a servant's edit dialog (on the servant side only for
+  running servants — a stopped servant has no connection status row)
+- **A browser opens only when you press "Authorize".** Starting a servant, reconnecting or a turn in progress never opens one.
+  Pressing it waits for the return at `http://127.0.0.1:<port>/callback` (up to 10 minutes; the time left and "Cancel" are shown
+  meanwhile), and once you approve in the browser, the shared MCP and every running servant using that server reconnect.
+  Registration with the authorization server (dynamic registration) happens once, and since the sign-in happens inside the browser,
+  **Fuseforks never sees that service's password**
+- **Two-tier storage** — per-server refresh token and scopes, and per-authorization-server registration (`client_id`, redirect URI),
+  live in the OS credential store (keys `mcp-oauth:<server>` / `mcp-oauth-client:<authorization server>`). **The access token lives in
+  memory only**; after a restart one refresh from the record reconnects (no browser). **One authorization per server however many
+  servants use it**, and refreshes run one at a time inside the process (a public client's refresh token is replaced on every refresh,
+  so two servants refreshing at once would cut one of them off)
+- **Tokens do not travel with the village** (`mcp.json` only says `"auth": "oauth"` — the same line as `${secret:…}`)
+- **"Revoke authorization"** asks first, then deletes the local record (also blocking an in-flight refresh from writing it back) and,
+  if the authorization server has a revocation endpoint, asks it to revoke the refresh token. A failed revocation does not restore the
+  local record
+- **Scopes are chosen in the MCP specification's order** — the 401's `scope` → the server metadata's `scopes_supported` → if neither,
+  none is sent (the authorization server's default). The authorization server's own list of scopes is not used
+- A server whose authorization server does not advertise PKCE (S256) or has no dynamic registration is not authorized, naming the reason
+- The log has one line `mcp oauth: server=… resource=… outcome=…`; tokens, authorization codes and `client_id` are not written
+
 ### Village Ordinance
 
 Rules stack in three layers: **vendor constitution (model-side, immutable) > village ordinance > individual agent settings**. The ordinance enters the top of every agent's system prompt and applies from the next utterance after saving. Since everyone receives the same document as the rules of the place, it is also a normalization layer that aligns behavior differences between models.
@@ -2132,6 +2172,7 @@ are named here:
 | Reject | The API key of a starting servant's template is not in the chosen store (the first message would 401 and a fake reply would come back) / a `${secret:…}` in the `headers` of an enabled MCP server cannot be found |
 | Reject | For `ask`, the reception is unset or deleted |
 | Reject | A starting servant's work folder does not exist (every file tool would fail) / `--door-port` was given but there is no door key |
+| Reject | An enabled OAuth MCP server (`"auth": "oauth"`) has no authorization record (`MCP_OAUTH_REQUIRED`; there is no browser here to authorize — authorize in the GUI first) / an enabled OAuth MCP server with `--secrets env` (`MCP_OAUTH_HEADLESS`; the refresh token is replaced on every refresh and cannot be written back to an environment variable, so it stops even with a record) |
 | Warn | A schedule's target is outside the start set / command approval is "approval required" and a servant has `run` (change it with `--run-approval`) / a pre- or post-check is unapproved on this machine / judges or pruning exist but there is no Jev key |
 | Warn | A `rag` declaration folder does not exist / the command of an enabled stdio MCP server cannot be found / a command allowed for `run` is not on PATH (**a different program with the same name is not told apart**) / there are daily or weekly schedules and the time zone differs from `sourceTimeZone` in `bake.json` |
 | Info | The reception's delegates are outside the start set (for `ask`, shown only with `--verbose` — repeated on every cron run, it would bury the real warnings) |
@@ -2211,6 +2252,10 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
   containing a Windows path is named as a warning (the copy is still written)
 - A plaintext key in the `headers` of an `mcp.json` exits 10 (`--allow-plaintext-headers` lets it through). Rewriting it as `${secret:…}`
   passes
+- **OAuth MCP servers (`"auth": "oauth"`) do not run in a container.** When an enabled one goes into the copy, `bake` names it with the
+  warning `MCP_OAUTH_IN_COPY` (the copy is still written). Starting the copy with `--secrets env` stops at the pre-start check with
+  `MCP_OAUTH_HEADLESS` — the refresh token is replaced on every refresh, so one passed through an environment variable dies at the first
+  refresh. `--env-out` does not write out authorization records either. Set `enabled: false` on entries you do not use
 - Pre- and post-check approvals are carried over with their keys recomputed for the rewritten `cwd` (the command line is not changed by
   a single character)
 - `bake.json` (`sourceTimeZone` and `--map`) is written at the top of the copy. Set the container's `TZ` to this value

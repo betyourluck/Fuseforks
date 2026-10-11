@@ -33,8 +33,9 @@ use async_trait::async_trait;
 use oauth2::basic::BasicTokenType;
 use oauth2::{AccessToken, RefreshToken, TokenResponse};
 use rmcp::transport::auth::{
-    AuthClient, AuthError, AuthorizationManager, CredentialStore, OAuthTokenResponse,
-    StoredCredentials, VendorExtraTokenFields,
+    AuthClient, AuthError, AuthorizationManager, CredentialStore, OAuthHttpClient,
+    OAuthHttpClientError, OAuthHttpClientFuture, OAuthHttpRedirectPolicy, OAuthHttpRequest,
+    OAuthTokenResponse, StoredCredentials, VendorExtraTokenFields,
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,91 @@ pub const CREDENTIAL_VALUE_LIMIT_UTF16: usize = 1280;
 
 /// 認可サーバーのメタデータと保護リソースのメタデータを取りに行く上限。
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// OAuth と MCP の HTTP 要求に付ける User-Agent（Spec 67 P4）。**User-Agent の無い要求を 403 で
+/// 断る認可サーバーが実在する**（`www.tradingview.com` — curl の既定の UA なら 200、UA 無しは 403）。
+/// rmcp の既定のクライアントは UA を付けないので、メタデータの取得が 403 で落ち、rmcp は黙って
+/// `{MCP の origin}/authorize` という推測の値へ落ちる（PKCE も名乗らない）。版も端末も付けない —
+/// 動的登録の `client_name` と同じ値で、識別子を増やさない。
+pub const USER_AGENT: &str = "Fuseforks";
+
+/// 上限が 1 MiB の応答本文（rmcp の既定と同じ）。
+const MAX_OAUTH_BODY_BYTES: usize = 1024 * 1024;
+
+/// User-Agent を付けた reqwest 0.13 のクライアント。こちらから直接撃つ要求（保護リソースの
+/// メタデータ・401 の scope・認可口の事前確認・失効）と、MCP の接続（`AuthClient`）に使う。
+///
+/// # Errors
+/// クライアントを組めないとき（TLS の初期化の失敗など）。
+pub fn http_client(redirects: bool) -> Result<reqwest_rmcp::Client, String> {
+    let mut builder = reqwest_rmcp::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(30));
+    if !redirects {
+        builder = builder.redirect(reqwest_rmcp::redirect::Policy::none());
+    }
+    builder.build().map_err(|err| err.to_string())
+}
+
+/// rmcp の認可の HTTP（探索・動的登録・コードの交換・リフレッシュ）を User-Agent 付きで通す。
+/// rmcp の `ReqwestOAuthHttpClient` は外から組めない（`new` が非公開）ので、同じ形を写した。
+struct UserAgentOAuthHttpClient {
+    follow_redirects: reqwest_rmcp::Client,
+    stop_redirects: reqwest_rmcp::Client,
+}
+
+impl OAuthHttpClient for UserAgentOAuthHttpClient {
+    fn execute(&self, request: OAuthHttpRequest) -> OAuthHttpClientFuture<'_> {
+        Box::pin(async move {
+            let client = match request.redirect_policy {
+                OAuthHttpRedirectPolicy::Stop => &self.stop_redirects,
+                _ => &self.follow_redirects,
+            };
+            let request = reqwest_rmcp::Request::try_from(request.request)
+                .map_err(|err| OAuthHttpClientError::new(err.to_string()))?;
+            let response = client
+                .execute(request)
+                .await
+                .map_err(|err| OAuthHttpClientError::new(err.to_string()))?;
+            let mut builder = oauth2::http::Response::builder()
+                .status(response.status())
+                .version(response.version());
+            for (name, value) in response.headers() {
+                builder = builder.header(name, value);
+            }
+            let body = response
+                .bytes()
+                .await
+                .map_err(|err| OAuthHttpClientError::new(err.to_string()))?;
+            if body.len() > MAX_OAUTH_BODY_BYTES {
+                return Err(OAuthHttpClientError::new(format!(
+                    "OAuth HTTP response body exceeds {MAX_OAUTH_BODY_BYTES} bytes"
+                )));
+            }
+            builder
+                .body(body.to_vec())
+                .map_err(|err| OAuthHttpClientError::new(err.to_string()))
+        })
+    }
+}
+
+/// User-Agent 付きの HTTP で `AuthorizationManager` を作る。**rmcp の `AuthorizationManager::new` を
+/// 直接呼ばない**（UA の無いクライアントになる）。
+///
+/// # Errors
+/// クライアントを組めないとき、または rmcp が URL を受け付けないとき。
+pub async fn new_manager(resource: &str) -> Result<AuthorizationManager, AuthError> {
+    let follow = http_client(true).map_err(AuthError::InternalError)?;
+    let stop = http_client(false).map_err(AuthError::InternalError)?;
+    AuthorizationManager::new_with_oauth_http_client(
+        resource,
+        Arc::new(UserAgentOAuthHttpClient {
+            follow_redirects: follow,
+            stop_redirects: stop,
+        }),
+    )
+    .await
+}
 
 /// 接続先の状態（D6）。`McpServerStatus.auth` へ写る。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -502,7 +588,7 @@ impl McpOAuthRegistry {
         let client_record = read_client_record(self.secrets.as_ref(), &record.issuer)
             .ok_or(OAuthConnectError::Required("no_client"))?;
 
-        let mut manager = AuthorizationManager::new(resource.as_str())
+        let mut manager = new_manager(resource.as_str())
             .await
             .map_err(|err| OAuthConnectError::Failed(auth_error_label(&err)))?;
         let metadata = tokio::time::timeout(DISCOVERY_TIMEOUT, manager.discover_metadata())
@@ -535,7 +621,8 @@ impl McpOAuthRegistry {
             client_record.client_id.clone(),
         );
         manager.set_credential_store(store.clone());
-        let client = AuthClient::new(reqwest_rmcp::Client::new(), manager);
+        let http = http_client(true).map_err(OAuthConnectError::Failed)?;
+        let client = AuthClient::new(http, manager);
         entries.insert(
             resource,
             RegistryEntry {
@@ -568,7 +655,7 @@ pub async fn fetch_resource_scopes(url: &str) -> Option<Vec<String>> {
         candidates.push(format!("{origin}/.well-known/oauth-protected-resource{path}"));
     }
     candidates.push(format!("{origin}/.well-known/oauth-protected-resource"));
-    let client = reqwest_rmcp::Client::new();
+    let client = http_client(true).ok()?;
     for candidate in candidates {
         let Ok(Ok(response)) =
             tokio::time::timeout(DISCOVERY_TIMEOUT, client.get(&candidate).send()).await

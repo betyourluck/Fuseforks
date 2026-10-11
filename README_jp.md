@@ -17,8 +17,6 @@ Outcasts Fuseforks は、複数の AI エージェントが相互に連携・会
 
 ![Outcasts Fuseforks Japanese Light](images/fuseforks_01.webp)
 
-<video src="https://github.com/user-attachments/assets/08c421eb-a1a8-48c0-a682-978a9b35dfd0" controls="controls" muted="muted" width="100%"></video>
-
 Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は「Fuseforks」。
 
 ## 何ができるか
@@ -30,7 +28,7 @@ Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。アプリ内の表示名は
 | ⏰ **予定** | 「毎週 木曜 17:00」「10 分ごと」で依頼が時刻発火する。cron 式は書かせない |
 | 🔎 **前判定** | 発火時にまずコマンドを走らせ、**出力が合図と一致したときだけ**依頼する。一致しない回はトークンを 1 つも使わない。配られた村のコマンドは承認するまで走らない |
 | ✅ **後判定** | 依頼が終わったら検収コマンドを走らせ、**出力が合図と一致しなければ失敗の内容つきで出し直す**（回数の上限つき・既定は出し直し 1 回）。判定そのものはトークンを使わない |
-| 🔌 **MCP** | Claude Desktop の `mcp.json` を**そのまま貼れる**。共通 + エージェント別。stdio とリモート（Streamable HTTP）の両対応 |
+| 🔌 **MCP** | Claude Desktop の `mcp.json` を**そのまま貼れる**。共通 + エージェント別。stdio とリモート（Streamable HTTP）の両対応。ブラウザでログインして認可するサーバー（TradingView の MCP など）は `"auth": "oauth"` で繋ぐ — **ブラウザが開くのは「認可する」を押したときだけ**で、リフレッシュトークンは OS の資格情報ストアに、アクセストークンはメモリだけに置く。コンテナ（`--secrets env`）では使えない（[Spec 67](specs/67_mcp-oauth.md)。送るものは [PRIVACY.md](PRIVACY.md)） |
 | 🔍 **グラウンディング** | Gemini の Google 検索と URL 取得、Grok の Live Search（web / X）、OpenAI と Meta の web 検索、Perplexity の web・金融・人物検索と URL 取得。**検索した事実と、出典が返らない事実を区別して見せる** |
 | 🧠 **思考の要約** | モデルが考えたことの要約を、答えとは**別の枠**に畳んで置く。出典は検証できる指し先、要約は検証できない申告なので混ぜない |
 | 🛠️ **同梱ツール** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `blackboard` / `run`。ファイル系は作業フォルダの外を構造的に読めない（例外は宣言したフォルダを読む `rag` と、囲いが許可リストである `run`。許可リストに無いコマンドの承認は、ステータスバーで「自動承認して許可」「承認せずに許可」へ緩められる — 禁止したコマンドはどのモードでも走らない）。黒板の付箋は `blackboard` でだけ書け、書けるのは自分の付箋だけ |

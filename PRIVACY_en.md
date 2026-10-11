@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-07**
+**Last updated: 2026-10-11**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -18,7 +18,8 @@
 - All data you create is stored **entirely on your own device**.
 
 The app communicates externally with **only two kinds of destination**: the ones **you configure
-yourself**, and the **model price table**.
+yourself**, and the **model price table** (for an MCP server you chose to authorize with OAuth, this includes the
+authorization server that MCP server names; see 4-3).
 
 **About the price-table fetch** (used to fill in per-model rates on screen):
 
@@ -92,6 +93,10 @@ Keys you enter are stored in your **operating system's credential store**:
 The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
 this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) and the
 values that MCP server headers reference as `${secret:NAME}` (see 4-3) are kept.
+The records for MCP servers connected with OAuth authorization (see 4-3) are kept here too — per server, the
+authorization server's identifier, the refresh token, the authorized scopes and when it was received; per authorization
+server, the client ID and redirect URL it was registered with. **Access tokens are not stored; they live only in the app's
+memory** and are gone when the app exits.
 **None of them can be shown back on screen** — the screen only shows whether a key is stored. The single exception is
 `fuseforks-cli bake --env-out`, run without the GUI: **only when you pass it explicitly**, it writes keys to a plain-text
 file for use in a container (see "When running in a container" below).
@@ -113,6 +118,9 @@ the credential store). If you choose this, **the keys sit in the process environ
 protection does not apply** (other programs running as the same user, or tools that record the environment, may
 be able to read them). **Which place to use is the choice of whoever runs it.** The app only reads environment
 variables and never writes to them. The GUI always uses the credential store only.
+MCP servers connected with OAuth authorization work only with the credential store. With environment variables the
+pre-start check stops (the refresh token is replaced on every refresh and cannot be written back to an environment
+variable).
 
 ### When running in a container (`fuseforks-cli bake`)
 
@@ -130,7 +138,8 @@ Only when you add `--env-out <file>` to `bake`, the keys in the credential store
 models in use, the values MCP server headers reference, and the Jev API token) are **written in plain text to an `.env`
 file** for passing to the container. Without the option nothing is written. The file stays on your machine; the app does not
 send it anywhere. **Handling that file (not sharing it, not committing it to a repository, deleting it when no longer needed)
-is your responsibility.** Values are never displayed on screen or on standard output.
+is your responsibility.** Values are never displayed on screen or on standard output. OAuth authorization records are
+not written out.
 
 ---
 
@@ -196,6 +205,25 @@ header is stored in plaintext `mcp.json`, so distributing your workspace distrib
 the token with it. If a header value is written as `${secret:NAME}`, the value is read
 from the operating system's credential store (see 3) just before connecting and does not
 stay in `mcp.json`. If it cannot be found, the app does not connect to that server.
+
+If you declare **OAuth authorization** (`"auth": "oauth"`) for a remote MCP server, pressing "Authorize" opens that
+authorization server's sign-in page in **your default browser**. You sign in inside the browser; the app never sees that
+service's password. **A browser opens only when you press the button** — never on its own at startup or when connecting.
+
+The app then fetches the authorization guidance (protected resource metadata) from the MCP server and talks to the
+**authorization server** it names (metadata, client registration, authorization-code exchange, token refresh,
+revocation). What is sent to the authorization server is only:
+
+- The client name `Fuseforks` (no device or user name is added). The HTTP User-Agent is also just `Fuseforks` (no version)
+- The redirect URL (`http://127.0.0.1:<port>/callback` — your own device)
+- PKCE values, the server identifier and the requested scopes
+- The authorization code, the refresh token and the client ID
+
+To receive the return from the browser, the app listens on `127.0.0.1` (your own device) only during authorization (up
+to 10 minutes; it closes on completion, cancellation or timeout). After authorization, each request to the MCP server
+carries an access token. Pressing "Revoke authorization" deletes the local record and, if the authorization server
+offers a revocation endpoint, asks it to revoke the refresh token. **Distributing your workspace does not distribute
+the authorization record** (`mcp.json` only says `"auth": "oauth"`).
 
 ### 4-4. The judgement-only model Jev (tool-result pruning, judges)
 
@@ -277,7 +305,8 @@ tool names and result sizes, and errors.
 - Prompt bodies
 - Tool result bodies
 - The "Draft with AI" exchange and draft text (only character counts and token counts are recorded)
-- Credentials
+- Credentials (for OAuth authorization only the server identifier and the kind of outcome are recorded — never tokens,
+  authorization codes or client IDs)
 
 Opening a tool row in the chat shows the arguments passed to that tool and the text it returned.
 These are **held only in the app's memory** and are gone when the app exits.
@@ -308,6 +337,8 @@ sharing a workspace with someone else does not enable intake on their machine.
   conversations, settings, and attached images.
 - **Deleting credentials**: remove the entry from your OS credential store, or
   delete it from the app's model registration screen.
+- **Revoking OAuth authorization**: "Revoke authorization" in the MCP settings deletes the local record and asks
+  the authorization server to revoke the token.
 - **Stopping transmission**: if you register no model, nothing is sent anywhere.
 - **Exporting**: conversations can be exported to JSONL by your own action.
 

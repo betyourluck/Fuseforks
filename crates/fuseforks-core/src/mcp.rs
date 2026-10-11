@@ -1064,7 +1064,14 @@ async fn serve_http_oauth(
 fn is_auth_rejection(text: &str) -> bool {
     text.contains("OAuth authorization required")
         || text.contains("OAuth token refresh failed")
-        || text.contains("AuthRequired")
+        || is_auth_required_text(text)
+}
+
+/// rmcp が OAuth の challenge（401 + `WWW-Authenticate`）を返したか。**形が 2 つある** — 内部表記の
+/// `AuthRequired(...)`（alphaXiv で実測）と、表示用の文面 `Auth required, when send initialize request`
+/// （Spec 67 P4・TradingView で実測。`Send message error Transport [...]` に包まれて届く）。
+fn is_auth_required_text(text: &str) -> bool {
+    text.contains("AuthRequired") || text.contains("Auth required")
 }
 
 /// [`OAuthConnectError`] を、利用者の次の手が読める文へ（相手の応答本文は載せない）。
@@ -1143,7 +1150,7 @@ fn classify_http_connect_error(text: &str) -> String {
     // OAuth の challenge（WWW-Authenticate）は rmcp が `AuthRequired` として
     // 返す（alphaXiv で実測 — 401 の HTTP 行を持たない別の形）。Spec 67 D11 —
     // auth を書いていないエントリへの案内に、OAuth の選択肢を足す（両方を出す。自動では書き換えない）。
-    if text.contains("AuthRequired") {
+    if is_auth_required_text(text) {
         return "認証が必要です。このサーバーが OAuth の認可を求めているなら、mcp.json の\
                 エントリに \"auth\": \"oauth\" を足して MCP の設定の「認可する」を押してください。\
                 API キーを受けるサーバーなら headers の Authorization（Bearer）に設定してください。\
@@ -1596,6 +1603,16 @@ mod tests {
         // Spec 67 D11 — OAuth の選択肢も出す（両方。自動では書き換えない）。
         assert!(classified.contains(r#""auth": "oauth""#), "実際: {classified}");
         assert!(!classified.contains("well-known"), "生文のまま: {classified}");
+    }
+
+    #[test]
+    fn the_display_form_of_an_oauth_challenge_is_classified_too() {
+        // Spec 67 P4 — TradingView の実機で GUI に出た文面（表示用の形）。内部表記の
+        // `AuthRequired` だけを探していたので、案内が出ずに生文が出ていた。
+        let raw = "Send message error Transport [rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<reqwest::async_impl::client::Client>>] error: Auth required, when send initialize request";
+        let classified = classify_http_connect_error(raw);
+        assert!(classified.contains(r#""auth": "oauth""#), "実際: {classified}");
+        assert!(!classified.contains("WorkerTransport"), "生文のまま: {classified}");
     }
 
     #[test]

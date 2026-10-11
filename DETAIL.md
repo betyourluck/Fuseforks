@@ -56,6 +56,7 @@ Fuseforks/
 │       │   ├── assist.rs            AI 下書き補助の純機構（指針・文脈の 2 区画・submit_draft・振り分け・履歴の検査。[Spec 63](specs/63_ai-draft-assist.md)）
 │       │   ├── attachment.rs        添付の検証・置き場・GC（純機構。種別は magic で判定）
 │       │   ├── secret.rs            秘密の保管（OS 資格情報ストア / テスト用の in-memory）
+│       │   ├── mcp_oauth.rs         リモート MCP の OAuth（接続先ごとの認可の管理者・資格情報ストアとの二層・状態。[Spec 67](specs/67_mcp-oauth.md)）
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry（MCP の受け口）
 │       │   ├── tool_calls.rs        ツール呼び出しの引数と出力のリング（メモリだけ。ログにも保存先にも出さない。[Spec 57](specs/57_tool-call-detail.md)）
 │       │   ├── tools/memory.rs      同梱ツール: remember（Memory.md へ追記）
@@ -89,10 +90,11 @@ Fuseforks/
 │       │   ├── preflight.rs         起動前検査の材料集め（村を開かず、ファイルと秘密の有無だけを読む）
 │       │   ├── bake.rs              bake — GUI の村からコンテナで回す写しを作る（計画と適用の 2 段。Spec 65）
 │       │   ├── mcp_server.rs        外の LLM から依頼を受ける扉（HTTP + 合鍵。Spec 25）
+│       │   ├── mcp_oauth_flow.rs    OAuth の認可の流れ（ループバックの受け口・動的登録・コードの交換・取り消し。Spec 67）
 │       │   ├── pricing_source.rs    単価表の取得元（押したときだけ取りに行く。Spec 41）
 │       │   ├── jev_settings.rs      ツール結果の圧縮の設定と採点器の差し込み（Spec 59）。鍵があれば判断役の判断モデルも差し込む（Spec 62）
 │       │   └── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
-│       └── tests/                   扉のワイヤ / 村のロック / bake
+│       └── tests/                   扉のワイヤ / 村のロック / bake / OAuth の認可の流れ
 │
 ├── deploy/                          コンテナで回す参照構成（Spec 65）。Dockerfile / compose.yaml / compose.door.yaml /
 │                                    Caddyfile / .env.example / README（英・日）/ fixtures/village（像を確かめる小さな村）
@@ -149,6 +151,7 @@ Fuseforks/
                 ├── JudgeList.vue / JudgeDialog.vue    左: 判断特化の一覧 / モーダル: judge.toml の編集と「試す」（Spec 62）
                 ├── AssistPanel.vue                    モーダル: AI で下書きを作る（SKILL / Construct / judge.toml の編集から。Spec 63）
                 ├── McpSecretsButton.vue / McpSecretsDialog.vue   モーダル: MCP の秘密の値（共通 MCP とサーヴァントの mcp.json タブから）
+                ├── McpOAuthControls.vue      MCP の状態の行の OAuth（認可する / キャンセル / 認可を取り消す）
                 ├── CommandApprovalDialog.vue          モーダル: コマンド承認（判断待ちの pending）
                 ├── StatsView.vue                      全画面: 統計（3 ペインを丸ごと差し替える。Spec 39）
                 ├── TitleBar.vue                       カスタムタイトルバー（条例・役職・MCP・コマンド承認・予定・システム設定）
@@ -2263,6 +2266,41 @@ Claude Desktop / Claude Code と互換。旧 SSE 形式は**意図的な非互�
   なのに `url` が無い、stdio のエントリに `url` がある、など）。無効化
   （`enabled: false`）していても検査は掛かる — 飛ばされるのは接続だけ
 
+### リモート MCP を OAuth の認可で繋ぐ（[Spec 67](specs/67_mcp-oauth.md)）
+
+API キーを貼るのではなく、ブラウザでログインして認可するサーバー（TradingView の MCP など）は、http のエントリに
+`"auth": "oauth"` を足して繋ぐ:
+
+```json
+"tradingview": { "type": "http", "url": "https://mcp.tradingview.com/mcp", "auth": "oauth" }
+```
+
+- **明示したエントリだけが OAuth になる。** 401 を受けて勝手に OAuth へ切り替えることはしない（ブラウザが開く理由が
+  人に見えないため）。宣言していないエントリが OAuth を求められたら、接続の状態に「`"auth": "oauth"` を足すか、
+  API キーを受けるサーバーなら headers の Authorization に設定してください」と両方の選択肢を出す
+- `auth` を書けるのは http のエントリだけで、値は `"oauth"` だけ。**`headers` の `Authorization` との併記は保存の
+  時点で拒否する**（認証の席が 2 つあるとどちらが効いたか読めない）。他の `headers` は併記できる
+- **状態は 3 つ** — `none`（OAuth でないエントリ）/ `authorized`（認可の記録があり、要るスコープを含む）/ `required`
+  （記録が無い・スコープが足りない・更新が拒まれた）。`required` のエントリには**接続を試みない**。状態は共通 MCP の
+  ダイアログと、サーヴァントの編集ダイアログの MCP の状態の行にバッジで出る（サーヴァントの側は稼働中の個体だけ —
+  停止中の個体には接続の状態の行そのものが無い）
+- **ブラウザが開くのは「認可する」を押したときだけ。** 個体の起動・再接続・ターンの途中では開かない。押すと
+  `http://127.0.0.1:<ポート>/callback` で戻りを待ち（最長 10 分。待っている間は残り時間と「キャンセル」が出る）、
+  ブラウザで承認すると接続先を使っている共通と稼働中の個体の MCP が繋ぎ直される。認可サーバーへの登録（動的登録）は
+  初回の 1 回だけで、ログインはブラウザの中で済むので **Fuseforks はそのサービスのパスワードを見ない**
+- **置き場は二層** — 接続先ごとのリフレッシュトークン・スコープと、認可サーバーごとの登録（`client_id`・戻り先）は
+  OS の資格情報ストア（鍵は `mcp-oauth:<接続先>` / `mcp-oauth-client:<認可サーバー>`）。**アクセストークンは
+  メモリだけ**で、再起動の後は記録から 1 回更新して繋がる（ブラウザは開かない）。**同じ接続先は個体が何体いても
+  認可は 1 つ**で、更新もプロセスの中で 1 本ずつ行う（公開クライアントのリフレッシュトークンは更新のたびに入れ替わる
+  ので、2 体が同時に更新すると片方が切れる）
+- **村を配ってもトークンは付いていかない**（`mcp.json` には `"auth": "oauth"` しか無い。`${secret:…}` と同じ線）
+- **「認可を取り消す」** は確認のうえ、手元の記録を消し（飛行中の更新が後から書き戻すことも塞ぐ）、認可サーバーが
+  失効の窓口を持っていればリフレッシュトークンの失効を頼む。失効に失敗しても手元の記録は戻さない
+- **スコープは MCP 仕様の順で選ぶ** — 401 の `scope` → 接続先のメタデータの `scopes_supported` → どちらも無ければ
+  送らない（認可サーバーの既定に任せる）。認可サーバーが名乗るスコープの一覧は使わない
+- 認可サーバーが PKCE（S256）を名乗らない・動的登録を持たない接続先は、理由を名指しして認可しない
+- ログは `mcp oauth: server=… resource=… outcome=…` の 1 行で、トークン・認可コード・`client_id` は書かない
+
 ### 村の条例
 
 規則は 3 層で積む。**ベンダーの憲法（モデル側、変更不可） > 村の条例 >
@@ -2593,6 +2631,7 @@ fuseforks-cli serve --data-dir /data --start batch     --secrets env
 | 拒否 | 起動する個体のテンプレートの API キーが、選んだ置き場に無い（1 通目で 401 になり、偽の応答が返る）/ 有効な MCP サーバーの `headers` の `${secret:…}` が引けない |
 | 拒否 | `ask` で窓口が未設定・削除済み |
 | 拒否 | 起動する個体の作業フォルダが無い（ファイル系のツールが全部失敗する）/ `--door-port` を渡したのに扉の合鍵が無い |
+| 拒否 | 有効な OAuth の MCP サーバー（`"auth": "oauth"`）に認可の記録が無い（`MCP_OAUTH_REQUIRED`。ブラウザが無いのでここでは認可できない — GUI で認可してから）/ `--secrets env` で有効な OAuth の MCP サーバーがある（`MCP_OAUTH_HEADLESS`。リフレッシュトークンは更新のたびに入れ替わり、環境変数には書き戻せないので、記録があっても止める） |
 | 警告 | 予定の宛先が起動する集合の外 / コマンドの承認が「承認が必要」で `run` を持つ個体が居る（`--run-approval` で変えられる）/ 前判定・後判定がこの端末で未承認 / 判断役や圧縮があるのに Jev の鍵が無い |
 | 警告 | `rag` の宣言フォルダが無い / 有効な stdio の MCP サーバーのコマンドが見つからない / `run` で許可したコマンドが PATH に無い（**同じ名前の別のプログラムは見分けない**）/ 毎日・毎週の予定があり、時刻帯が `bake.json` の `sourceTimeZone` と違う |
 | 情報 | 窓口の委譲先が起動する集合の外（`ask` では `--verbose` のときだけ出す — cron で毎回並ぶと本当の警告が埋もれる） |
@@ -2672,6 +2711,10 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
 - **自由記述は書き換えない** — `Construct.md` / `SKILL.md` の本文・`run.json` の許可・MCP の stdio のコマンド。
   Windows のパスを含むものは警告で名指しする（写しは作る）
 - `mcp.json` の `headers` に平文の鍵があれば 10（`--allow-plaintext-headers` で通す）。`${secret:…}` に直せば通る
+- **OAuth の MCP（`"auth": "oauth"`）はコンテナでは動かない。** 有効なエントリが写しに入ると、`bake` は警告
+  `MCP_OAUTH_IN_COPY` で名指しする（写しは作る）。写しを `--secrets env` で起こすと起動前検査が `MCP_OAUTH_HEADLESS`
+  で止める — リフレッシュトークンは更新のたびに入れ替わるので、環境変数で渡しても 1 回目の更新で無効になる。
+  `--env-out` も認可の記録は書き出さない。使わないエントリは `enabled: false` にする
 - 前判定・後判定の承認は、置き換えた `cwd` で鍵を計算し直して写しへ運ぶ（コマンド行は 1 文字も変えない）
 - 写しの直下に `bake.json`（`sourceTimeZone` と `--map`）を書く。コンテナの `TZ` はこの値に合わせる
 - **`--env-out <path>` を渡すと、資格情報ストアの鍵をコンテナの `.env` の形で書き出す**（[Spec 66](specs/66_bake-env-out.md)）。

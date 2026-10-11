@@ -121,6 +121,14 @@ fn handle(state: &Shared, port: u16, request: &Request) -> String {
     let origin = format!("http://127.0.0.1:{port}");
     let mut s = state.lock().unwrap();
     s.hits += 1;
+    // www.tradingview.com の実測（Spec 67 P4）— User-Agent の無い要求は 403。
+    if !request
+        .headers
+        .iter()
+        .any(|(k, v)| k == "user-agent" && v == "Fuseforks")
+    {
+        return response("403 Forbidden", "application/json", "", "{}");
+    }
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path.starts_with("/.well-known/oauth-protected-resource") => {
             let mut body = serde_json::json!({

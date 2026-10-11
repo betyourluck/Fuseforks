@@ -34,7 +34,7 @@ struct StubState {
 
 type Shared = Arc<Mutex<StubState>>;
 
-async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<(String, String, String)> {
+async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<(String, String, String, bool)> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
     let header_end = loop {
@@ -57,6 +57,10 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<(String, Str
         .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
         .and_then(|(_, v)| v.trim().parse::<usize>().ok())
         .unwrap_or(0);
+    let user_agent = head
+        .lines()
+        .filter_map(|l| l.split_once(':'))
+        .any(|(k, v)| k.trim().eq_ignore_ascii_case("user-agent") && v.trim() == "Fuseforks");
     let mut body = buffer[header_end..].to_vec();
     while body.len() < length {
         let read = stream.read(&mut chunk).await.ok()?;
@@ -65,7 +69,7 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<(String, Str
         }
         body.extend_from_slice(&chunk[..read]);
     }
-    Some((method, target, String::from_utf8_lossy(&body).into_owned()))
+    Some((method, target, String::from_utf8_lossy(&body).into_owned(), user_agent))
 }
 
 fn reply(status: &str, extra: &str, body: &str) -> String {
@@ -85,10 +89,14 @@ fn param(list: &[(String, String)], key: &str) -> Option<String> {
     list.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
 }
 
-fn handle(state: &Shared, port: u16, method: &str, target: &str, body: &str) -> String {
+fn handle(state: &Shared, port: u16, method: &str, target: &str, body: &str, user_agent: bool) -> String {
     let origin = format!("http://127.0.0.1:{port}");
     let mut s = state.lock().unwrap();
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    // www.tradingview.com の実測（Spec 67 P4）— User-Agent の無い要求は 403。認可口はブラウザが開くので除く。
+    if !user_agent && path != "/authorize" {
+        return reply("403 Forbidden", "", "{}");
+    }
     match (method, path) {
         ("GET", p) if p.starts_with("/.well-known/oauth-protected-resource") => reply(
             "200 OK",
@@ -178,8 +186,8 @@ async fn spawn_stub(state: Shared) -> u16 {
             };
             let state = Arc::clone(&state);
             tokio::spawn(async move {
-                if let Some((method, target, body)) = read_request(&mut stream).await {
-                    let answer = handle(&state, port, &method, &target, &body);
+                if let Some((method, target, body, user_agent)) = read_request(&mut stream).await {
+                    let answer = handle(&state, port, &method, &target, &body, user_agent);
                     let _ = stream.write_all(answer.as_bytes()).await;
                 }
                 let _ = stream.shutdown().await;

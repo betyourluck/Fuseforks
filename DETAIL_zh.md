@@ -50,6 +50,7 @@ Fuseforks/
 │       │   ├── room_log.rs          广场日志的纯机构（可见谓词 / ID 解析 / 显示 ID 扩展）
 │       │   ├── attachment.rs        附件的验证·存放·GC（纯机构。类型通过 magic 判定）
 │       │   ├── secret.rs            秘密的保管（OS 凭据存储 / 测试用的 in-memory）
+│       │   ├── mcp_oauth.rs         远程 MCP 的 OAuth（每个连接目标一个授权管理者・与凭据存储的两层・状态。[Spec 67](specs/67_mcp-oauth.md)）
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry（MCP 的接入点）
 │       │   ├── tool_calls.rs        工具调用的参数与输出环（仅限内存。不写入日志也不写入保存目标。[Spec 57](specs/57_tool-call-detail.md)）
 │       │   ├── tools/memory.rs      内置工具: remember（追加到 Memory.md）
@@ -78,7 +79,8 @@ Fuseforks/
 │   └── fuseforks-host/                  ★ 宿主层。打开、组装、关闭村庄。不依赖 Tauri（Spec 64）
 │       └── src/                     boot.rs（build_host — GUI 与 fuseforks-cli 共用的唯一组装实现）/ paths.rs / lock.rs（村庄排他锁）/
 │                                    preflight.rs（启动前检查）/ mcp_server.rs（Spec 25）/ pricing_source.rs（Spec 41）/
-│                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）/ bake.rs（Spec 65）
+│                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）/ bake.rs（Spec 65）/
+│                                    mcp_oauth_flow.rs（OAuth 授权流程。Spec 67）
 │
 ├── deploy/                          在容器中运行的参考配置（Spec 65）。Dockerfile / compose / Caddyfile / README
 │
@@ -123,6 +125,7 @@ Fuseforks/
                 ├── BatchWorkDirDialog.vue             模态框: 批量切换工作目录（自列表页脚）
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   模态框: 条例 / MCP / 定时任务
                 ├── McpSecretsButton.vue / McpSecretsDialog.vue   模态框: MCP 的密钥值（从共享 MCP 与仆从的 mcp.json 标签打开）
+                ├── McpOAuthControls.vue      MCP 状态行中的 OAuth（授权 / 取消 / 撤销授权）
                 ├── SettingsDialog.vue / SessionDialog.vue    模态框: 系统设置 / 会话列表
                 ├── FirstRunTour.vue                   初次启动引导（9 步。仅在空村庄出现。设置 ＞ 用户界面 ＞ 引导中可重新调用）
                 ├── RoleDialog.vue                     模态框: 职务（Servant 的雏形）
@@ -569,6 +572,16 @@ LLM 出现 `429`（RateLimit）或 `5xx` 时，采用指数退避加抖动重试
 
 支持通过 Streamable HTTP 方式连接远程 MCP 服务器，使エージェント能够调用外部托管的工具和数据源。
 
+### 用 OAuth 授权连接远程 MCP（[Spec 67](specs/67_mcp-oauth.md)）
+
+不粘贴 API 密钥、而是在浏览器中登录授权的服务器（如 TradingView 的 MCP），在 http 条目中加上 `"auth": "oauth"` 即可连接：`"tradingview": { "type": "http", "url": "https://mcp.tradingview.com/mcp", "auth": "oauth" }`。
+
+- **只有明确声明的条目才使用 OAuth**。收到 401 不会自动切换为 OAuth（否则打开浏览器的理由对人不可见）。`auth` 只能写在 http 条目上，值只有 `"oauth"`；与 `headers` 的 `Authorization` 并写会在保存时被拒绝
+- 状态有 3 种：`none` / `authorized`（有授权记录且包含所需范围）/ `required`（无记录・范围不足・刷新被拒）。`required` 的条目**不尝试连接**。状态以徽章显示在共享 MCP 与仆从编辑对话框的 MCP 状态行中
+- **只有按下“授权”时才打开浏览器**，启动・重连・轮次进行中都不会打开。在 `http://127.0.0.1:<端口>/callback` 等待返回（最长 10 分钟，可“取消”），批准后使用该连接目标的共享 MCP 与运行中个体会重新连接。登录在浏览器中完成，**Fuseforks 看不到该服务的密码**
+- 刷新令牌・范围（每个连接目标）与注册信息（每个授权服务器的 `client_id`・回调地址）保存在 OS 凭据存储中（键 `mcp-oauth:<连接目标>` / `mcp-oauth-client:<授权服务器>`）；**访问令牌只在内存中**。同一连接目标无论多少个体使用都只有 1 个授权，刷新在进程内逐个进行。分发村庄时令牌不会随之而去
+- “撤销授权”在确认后删除本地记录，若授权服务器有撤销端点则请求吊销刷新令牌。日志只有 `mcp oauth: server=… resource=… outcome=…` 一行，不写令牌・授权码・`client_id`
+
 ### 村庄条例
 
 村庄条例（Ordinance）是整个村庄的共同约束规则，所有エージェント在执行任务时均需遵守。条例存放在专属文件中，可在对应的管理界面进行查阅和更新。
@@ -601,7 +614,7 @@ Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证）�
 - `ask <请求>`：向窗口发送 1 条消息，**只把回答写到标准输出**后关闭（`-` 从标准输入读取）。默认新建会话（`--continue-session` 续接当前会话）
 - `serve`：常驻并运行计划与大门（MCP 服务器），Ctrl+C / SIGTERM 关闭
 - `--data-dir` 与 `--start`（`batch` / `reception` / `<id>,<id>,…`）为必填，没有默认值。`ask` 无论取何值都会加入窗口
-- `ask` 与 `serve` 也一定先做同样的检查。拒绝：计划确认为 ON 的个体在启动集合中（`--bypass-plan-review` 放行）/ 模板的 API 密钥或 MCP `headers` 的 `${secret:…}` 不在所选存放位置 / `ask` 时窗口未设置或已删除 / 启动个体的工作文件夹不存在 / 给了 `--door-port` 却没有大门密钥
+- `ask` 与 `serve` 也一定先做同样的检查。拒绝：计划确认为 ON 的个体在启动集合中（`--bypass-plan-review` 放行）/ 模板的 API 密钥或 MCP `headers` 的 `${secret:…}` 不在所选存放位置 / `ask` 时窗口未设置或已删除 / 启动个体的工作文件夹不存在 / 给了 `--door-port` 却没有大门密钥 / 启用的 OAuth MCP 服务器没有授权记录（`MCP_OAUTH_REQUIRED`，请先在 GUI 中授权）/ 用 `--secrets env` 时有启用的 OAuth MCP 服务器（`MCP_OAUTH_HEADLESS`，刷新令牌每次刷新都会更换，无法写回环境变量）
 - 密钥：`--secrets keyring`（默认）或 `env`。`env` 读取 `FUSEFORKS_SECRET_` + 把键（模板 ID）转大写、非字母数字改为 `_` 的变量（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`；MCP 的 `${secret:NAME}` 为 `FUSEFORKS_SECRET_MCP_<NAME>`，大门密钥为 `FUSEFORKS_SECRET_DOOR_TOKEN`）。启动时读取一次，不可写入
 - 退出码：0 成功 / 1 核心错误 / 2 参数错误 / 3 检查拒绝 / 4 村庄被其他进程打开 / 5 组装失败（含 `--data-dir` 下没有村庄。此时不创建任何东西）/ 6 未得到回答 / 7 超时 / 8 被中断 / 9 达到预算上限
 - `--events jsonl` 时标准错误的每一行都是 JSON（CoreEvent / `{"type":"cli"}` / `{"type":"log"}`）
@@ -613,6 +626,7 @@ Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证）�
 `deploy/` 中有用 Docker 容器运行在 GUI 中稳定下来的村庄的参考配置（步骤见 [deploy/README.md](deploy/README.md)）。**镜像不公开**，由运维者从源码构建。设置始终在 GUI 一侧修改，容器中的村庄是副本。
 
 - `bake`：在 GUI 的终端、关闭 GUI 后运行，从 GUI 的村庄制作副本。只改写 3 个字段（`workDir` / `ragSources` / 前判定・后判定的 `cwd`，`--map` 取最长前缀）；有未改写的绝对路径则一个字节也不写并退出 3；`headers` 中有明文密钥则退出 10（改成 `${secret:…}` 即可通过）
+- **OAuth 的 MCP（`"auth": "oauth"`）在容器中不能运行**：启用的条目进入副本时，`bake` 以警告 `MCP_OAUTH_IN_COPY` 点名（仍会制作副本）；用 `--secrets env` 启动副本时启动前检查以 `MCP_OAUTH_HEADLESS` 停止。`--env-out` 也不写出授权记录。不用的条目请设为 `enabled: false`
 - `bake --env-out <path>`：把凭据存储中村庄需要的密钥写成容器用的 `.env`（[Spec 66](specs/66_bake-env-out.md)）。只能写在副本之外；值用单引号包裹；含 `'` `\` 换行的值与存储中没有的密钥以 `# bake:` 注释只留名字；为容器新建大门密钥（不沿用 GUI 的）；已有的 `.env` 不覆盖（`--update` 只补缺少的名字）；值不输出到任何地方
 - `bake --update` 只替换设计文件（`world.json`・条例・Construct・SKILL・`mcp.json`・图标），**会话・`Memory.md`・计划的消化记录・待批准的命令保留容器一侧**。**重建前先停止容器** — Docker Desktop 的 bind mount 上，村庄锁不跨越 Windows 与容器（实测）
 - 镜像：Debian slim + glibc + tini，UID 10001。默认不设置 `TZ`（在 `.env` 中写 `bake.json` 的 `sourceTimeZone`）。compose 的 `stop_grace_period` 为 40 秒（默认 10 秒会用 SIGKILL 切断进行中的轮次，`turn:` 行丢失）

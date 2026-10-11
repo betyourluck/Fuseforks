@@ -340,5 +340,11 @@ http にも掛かり、typed 出力の往復で http エントリが stdio と�
 2. OAuth（rmcp の `auth` feature・Dynamic Client Registration）は射程外。
    Bearer を人が取って貼る形が今の主流の運用で、OAuth フローはブラウザ連携ごと
    要るので別の獣
+   **→ 2026-10-11 に [Spec 67](67_mcp-oauth.md) で覆した。** 起点は TradingView の MCP
+   （API キーを発行せず OAuth だけで繋ぐ）と、利用者の「時代は Authorize MCP」。
+   形は `"auth": "oauth"` の明示のオプトイン（401 で勝手に切り替えない）・ループバックの
+   戻り先・動的登録・リフレッシュトークンだけを OS の資格情報ストアへ。rmcp の `auth`
+   feature を使う。この節の「AuthRequired は Bearer を設定せよと案内する」も、OAuth を
+   宣言する選択肢を併記する文へ変わった（Spec 67 D11）
 3. 旧 SSE transport の受け皿を後から足す判断が来たら、D1 の拒否文言が
    その要望の頻度計になる（名指しで拒否している限り、踏んだ人は必ず気づく）

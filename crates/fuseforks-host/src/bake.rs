@@ -927,7 +927,8 @@ fn oauth_warnings(mcp_files: &[(String, McpConfig)], report: &mut BakeReport) {
                 report.warnings.push(BakeWarning {
                     code: warning_codes::MCP_OAUTH_IN_COPY,
                     message: format!(
-                        "{label}: {server} は OAuth の認可で繋ぐエントリです。コンテナ（--secrets env）では動きません                         （起動前検査が MCP_OAUTH_HEADLESS で止めます）。使わないなら enabled: false にしてください"
+                        "{label}: {server} は OAuth の認可で繋ぐエントリです。コンテナ（--secrets env）では動きません\
+                         （起動前検査が MCP_OAUTH_HEADLESS で止めます）。使わないなら enabled: false にしてください"
                     ),
                 });
             }

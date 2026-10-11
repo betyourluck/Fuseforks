@@ -332,6 +332,8 @@ async fn oauth_entries_in_the_copy_are_named_but_do_not_stop_the_bake() {
         .collect();
     assert_eq!(named.len(), 1, "有効な OAuth のエントリだけ: {named:?}");
     assert!(named[0].contains("tv") && named[0].contains("MCP_OAUTH_HEADLESS"), "{}", named[0]);
+    // 行継続の `\` が落ちると文面の途中に字下げの空白が並ぶ（実際に起きた形）。
+    assert!(!named[0].contains("  "), "文面に空白の連なりがある: {:?}", named[0]);
 }
 
 /// 再 bake: 設計は置き換え、実行（Memory・会話）は触らず、同居は欄ごとに合流する（契約 2）。
