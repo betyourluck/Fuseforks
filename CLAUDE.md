@@ -2563,9 +2563,8 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 ## 現在地（2026-10-11 更新）
 
-**この日は台帳 2 件と [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）の起票から Done まで。**
-git: `dc2346e`（P3 + P4 の修正）まで push 済み。P4 の記録と Done は次のコミット（push は利用者の指示待ち）。
-タグは `v0.5.0` のまま — Spec 67 は配布物に入っていない。
+**この日は台帳 2 件と [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）の起票から Done まで、
+続けて `v0.6.0` = `f63577b` を 4 経路で配った**（Spec 67 が初めて配布物に入った。タグ履歴が正。winget PR #450608 はマージ待ち）。
 
 - **台帳 2 件**: `refusal=` の 0 本は語彙のずれ（広げない）で、`reply:` 行に `author=model|core` を足した /
   MCP_DOCKER は `--servers` で使うサーバーを明示すると管理用の道具 8 本が消える（村の 5 体の `mcp.json` を直した）
@@ -2577,7 +2576,7 @@ git: `dc2346e`（P3 + P4 の修正）まで push 済み。P4 の記録と Done �
 - **TradingView の `mcp-tv-run-screener` は 1 回 7〜9 万字**で、圧縮は入れ子の JSON で素通り（頻度を見てから）
 
 **次の一手**: ~~(1) Spec 67 の確認 7 → Done (2) P4 の記録をコミット~~（**→ 同日に完了**。取り消しは `revoked remote=yes`）
-(3) リリースするなら「利用者が負う条件」に — OAuth の MCP はコンテナ（`--secrets env`）では
+(3) ~~リリースするなら「利用者が負う条件」に~~（**→ v0.6.0 のノートに 4 つとも入れた**）— OAuth の MCP はコンテナ（`--secrets env`）では
 動かない / 認可するとブラウザで外部のログイン画面が開く / 認可サーバーへ User-Agent `Fuseforks` とクライアント名を送る
 （動的登録したクライアントは認可サーバー側に残る）/ **v0.5.0 以前で開くと `"auth"` は効かず、旧版で共通 MCP のダイアログを
 保存すると消える**（4 つ目。条件を書く段でコードを読んで見つけた — v0.5.0 の `RawServerConfig` は未知の欄を読み飛ばし、
@@ -4159,6 +4158,16 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   **v0.1.7 のノートに書いた条件が 1 つ解消した**（失敗したターンの払いが
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
+- **`v0.6.0` = `f63577b`（2026-10-11 JST タグ。12 コミット）— [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の
+  認可で繋ぐ）+ `reply:` 行の `author=`**。3 OS 緑・アセット 7 件・publish 2026-10-11 12:42 UTC。**タグの前に Docker の Linux で
+  テストを回していなかった**（#144 の規律に反する）が、今回は 3 OS とも 1 度目で緑だった。ノートは英日併記で主題は OAuth 1 本、
+  「利用者が負う条件」4 つ（資格情報ストアのある端末だけ = コンテナでは `MCP_OAUTH_HEADLESS` / 押すとブラウザでログイン画面が
+  開き 10 分 `127.0.0.1` で待ち受ける / 認可サーバーへクライアント名と UA `Fuseforks`・戻り先を送り、登録したクライアントは
+  向こうに残る / **v0.5.0 以前で開くと `auth` が効かず、旧版で共通 MCP を保存すると消える** — 4 つ目は条件を書く段で v0.5.0 の
+  コードを読んで見つけた）。TradingView の結果の量（1 回 7〜9 万字）は特定の MCP の話なので入れない（利用者裁定）。
+  **タグは利用者、publish・winget・tap は Neo** — winget 0.6.0 = PR #450608（`gh repo sync` → `wingetcreate update … --token`
+  の 1 段。`InstallerLocale` 無しを引き写し・ProductCode は `{DA7BF3CA-…}`・`InstallerSha256` は Release の digest と一致。
+  マージ待ち）/ tap `276cf5b`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.5.0` = `51f1f20`（2026-10-09 JST タグ。58 コミット）— [Spec 64](specs/64_headless-host.md)（GUI なしで動かす・村の排他ロック）+
   [Spec 65](specs/65_container-deploy.md)（`bake`・像・compose）+ [Spec 66](specs/66_bake-env-out.md)（`--env-out`）+ 秘密の値のダイアログ +
   #141（接地エンジンの辞書鍵）+ gpt-6 の `max_completion_tokens`**。3 OS 緑・アセット 7 件・publish 2026-10-08 23:51 UTC。
