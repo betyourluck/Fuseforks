@@ -1,6 +1,8 @@
 # Spec 67: リモート MCP を OAuth の認可で繋ぐ
 
-- 状態: **Draft rev2**（2026-10-11 起票 → 同日、査読 3 系統 20 点（重なりを除いて 18 項目）+ 仕様の本文から拾った 1 項目を反映して rev2・未決ゼロ。
+- 状態: **rev2 → P0 完了**（2026-10-11。P0 = 契約 `mcp_oauth_contract` の凍結 / Windows の資格情報マネージャーの上限は
+  **UTF-16 で 1,280 単位**と実測（D4 を訂正）/ rmcp `auth` でビルドが通る / 空のスコープは `scope` を付けない —
+  「P0 実測記録」）（2026-10-11 起票 → 同日、査読 3 系統 20 点（重なりを除いて 18 項目）+ 仕様の本文から拾った 1 項目を反映して rev2・未決ゼロ。
   表は Notes 3。P0 の実測のうち、TradingView への動的登録と戻り先の検査は起票前に済ませた — 「前提の実測」が正）
 - 起点: 利用者（2026-10-11）—「Authorize で MCP を繋げられるようにしたい。TradingView の MCP を使いたいというのがある。
   あと時代は Authorize MCP になっている」。参照: TradingView の告知
@@ -156,8 +158,11 @@ OAuth を宣言したエントリに「認可する」の入口を作り、宣�
 メタデータに `resource` が無ければ `url` を同じ規則で揃えたもの。**同じ接続先なら個体が何体いても 1 組**。
 
 **OS の資格情報ストアに置くもの**（JSON 1 つ）: `{ issuer, refreshToken, scopes, receivedAt }`。
-**アクセストークンは置かない** — 保存する秘密を減らすためと、Windows の資格情報マネージャーの値の上限
-（`CRED_MAX_CREDENTIAL_BLOB_SIZE` = 2,560 バイト。**記憶に基づく値で、P0 で実測して確かめる**）に JWT が近づきうるため。
+**アクセストークンは置かない** — 保存する秘密を減らすためと、Windows の資格情報マネージャーの値の上限に
+JWT が収まらないことがあるため。**上限は P0 で実測した: UTF-16 で 1,280 単位**（`keyring` 3 は Windows で値を
+UTF-16 で保存し、上限 2,560 バイトがその単位で掛かる。ASCII でも日本語でも 1,280 字は通り 1,281 字で失敗 —
+「P0 実測記録」）。**OS の記録がこれを超えるなら、黙って落とさず名前の付いたエラー（`token_too_large`）で止める**
+（リフレッシュトークンが長いサーバーでは JSON で包んだ記録が超えうる）。
 
 **rmcp の `CredentialStore` との繋ぎ方**（`KeyringCredentialStore`。接続先ごとに 1 つ、全接続で共有）:
 
@@ -240,6 +245,9 @@ OAuth を宣言したエントリに「認可する」の入口を作り、宣�
 - TradingView は ① も ② も無いので `scope` を送らない。**それで道具が使えるトークンが出るかは P4 で見る**。
   実行時に `403 insufficient_scope` が来たら、`WWW-Authenticate` の `scope` で再認可が要る状態（`required`）へ落とす
   （自動の再認可はしない — D6）
+- **rmcp は `resource` に、manager が受け取った URL の `Url::to_string()` を送る**（P0 で読んだ）。パスの無い URL
+  （`https://mcp.example.com`）は末尾に `/` が付き、D4 の正準形とずれる。manager へは正準形の URL を渡し、
+  それでも付くならトークン要求の `resource` を自前で揃える（P1 で確かめる）
 
 ### D10. 計器 — 値を 1 文字も書かない
 
@@ -290,15 +298,13 @@ OAuth を宣言したエントリに「認可する」の入口を作り、宣�
 
 ## Tasks
 
-### P0 — 契約と残りの実測
+### P0 — 契約と残りの実測（**完了**・2026-10-11。「P0 実測記録」）
 
-- `data_contract.yaml` に `mcp_oauth_contract`（D1〜D12 の凍結。D12 の送り先と保存先を含む）。Spec 47 の `remote_mcp` の節へ
-  「Notes 2 を覆した」を追記
-- Windows の資格情報マネージャーに 2,560 / 2,561 / 4,096 バイトの値を `KeyringSecretStore` で書いて、上限を実測する
-  （D4 の根拠を記憶から実測へ）
-- rmcp の `auth` feature を足して `cargo build` が通ること・依存の増分（10 crate）を確定
-- rmcp の `get_authorization_url` に空のスコープを渡したとき、`scope` パラメータを送らないかを読む（D9。送るなら
-  自前で URL を組む）
+- [x] `data_contract.yaml` に `mcp_oauth_contract`（D1〜D12 を不変条件 12 本で凍結。D12 の送り先と保存先を含む）。
+  `mcp_contract` の末尾へ「Spec 67 で OAuth を足した・401/403 即確定は OAuth でないエントリの規律」を追記
+- [x] Windows の資格情報マネージャーの上限を `KeyringSecretStore` で実測 — **UTF-16 で 1,280 単位**（D4 を訂正）
+- [x] rmcp の `auth` feature を足して `cargo check -p fuseforks-core -p fuseforks-host` が通る（47 秒）
+- [x] rmcp の `get_authorization_url` に空のスコープを渡すと `scope` パラメータは付かない（`oauth2` 5.0 の実装を読んだ）
 
 ### P1 — コア
 
@@ -316,6 +322,8 @@ OAuth を宣言したエントリに「認可する」の入口を作り、宣�
   - スコープが記録に含まれない → `required`
   - `headers` の `Authorization` との併記の拒否 / stdio への `auth` の拒否 / `S256` の無い認可サーバーで止まる
   - 鍵の正準化（末尾の `/`・大文字の host・fragment が同じ鍵になる）
+  - OS の記録が UTF-16 で 1,280 単位を超えるとき `token_too_large` で止まり、メモリだけで動き続けない（D4）
+  - manager へ渡す URL は正準形 — パスの無い URL でも `resource` に末尾の `/` が付かない（D9）
 
 ### P2 — 認可の流れ（ホスト）と画面
 
@@ -346,6 +354,30 @@ OAuth を宣言したエントリに「認可する」の入口を作り、宣�
 ## 未決
 
 （なし。rev1 の未決 2 つは査読で閉じた — スコープは D9、待ちの上限は D2 の 10 分）
+
+## P0 実測記録（2026-10-11）
+
+**Windows の資格情報マネージャーの上限** — 製品と同じ `KeyringSecretStore` を試験用のサービス名
+（`fuseforks-p0-probe`）で作り、値を書いて読み戻して消した（残骸 0 を `cmdkey /list` で確認）:
+
+| 値 | 結果 |
+|---|---|
+| ASCII 1,280 字 | 保存・読み戻しとも一致 |
+| ASCII 1,281 / 2,560 / 2,561 / 4,096 字 | 失敗 — `Attribute 'password encoded as UTF-16' is longer than platform limit of 2560 chars` |
+| 「あ」853 / 854 / 1,280 字 | 保存できる |
+| 「あ」1,281 字 | 失敗（同じ文面） |
+
+rev2 の「2,560 バイト」は記憶の値で、バイト数としては合っていたが、`keyring` 3 が UTF-16 で保存するので
+**実際に入るのは 1,280 字**。UTF-8 のバイト数とは関係が無い。D4 を訂正し、超えたときの `token_too_large` を足した。
+既存の API キーや `${secret:…}` の値も同じ上限を受けるが、短いので今まで当たっていない。
+
+**rmcp の `auth` feature** — `Cargo.toml` に足して `cargo check -p fuseforks-core -p fuseforks-host` が 47 秒で通った。
+依存は起票時の数え（`cargo tree -p fuseforks-core -e normal` で 200 → 222 行・一意の crate +10）のまま。
+
+**空のスコープ** — rmcp の `get_authorization_url(scopes)` は `scopes` の各要素を `add_scope` するだけで、
+`oauth2` 5.0 の `code.rs` は `if !scopes.is_empty()` のときだけ `scope` を付ける（トークン要求の `endpoint.rs` も同じ）。
+D9 の「送らない」は `get_authorization_url(&[])` で実現できる。あわせて、`resource` が manager の受け取った URL の
+`Url::to_string()` であること（パスの無い URL で末尾に `/` が付く）を読んだ — D9 と P1 に足した。
 
 ## Notes
 

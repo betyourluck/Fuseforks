@@ -173,6 +173,86 @@ enums:
         - **接続状態は永続化しない**: プロセス寿命の map + IPC で可視化
           (状態ファイルはプロセスが消えても「接続済み」を残して嘘をつく)。
           World の同期純データ原則を守り AgentRecord には入れない
+      **Spec 67 (2026-10-11) で OAuth の認可を足した** — 正は末尾の mcp_oauth_contract。
+      上の「401/403 は即確定し自動再試行しない」は auth: "oauth" でないエントリの規律で、
+      OAuth のエントリは状態 (none / authorized / required) で扱う。rmcp の feature に
+      "auth" を足した (依存 +10 crate・純 Rust)。
+    mcp_oauth_contract: |
+      リモート MCP を OAuth 2.1 の認可で繋ぐ (Spec 67 rev2・2026-10-11 凍結)。
+      Spec 47 Notes 2 (OAuth は射程外) を覆した。一次資料は MCP 仕様 2025-11-25「Authorization」。
+      不変条件:
+        1. **明示のオプトイン** — http エントリの `auth: "oauth"` (閉じた列挙・今は oauth だけ)。
+           stdio への auth、headers の Authorization との併記、未知の値は保存の時点で名指しで拒否。
+           401 を受けても自動では OAuth へ切り替えない (ブラウザが開く理由が人に見えない)
+        2. **戻り先は http://127.0.0.1:<port>/callback** (localhost は使わない — TradingView は 400)。
+           ポートは登録時のものを先に試し、埋まっていれば空きを使う。受け口は「認可する」で開き、
+           (a) パス /callback かつ state 一致の要求を 1 本受けた (b) 10 分を超えた (c) キャンセル
+           (d) 同じ接続先の認可をもう一度始めた — の 4 つで閉じ、必ずソケットを解放する。
+           (a) に当たらない要求には 400 を返して待ち続ける。戻り先のページは自前の最小 HTML で、
+           認可サーバーの error_description を写さない
+        3. **クライアント登録は認可サーバーごと** — 鍵 `mcp-oauth-client:<issuer>`、値
+           { clientId, redirectUri }。client_name は "Fuseforks" (端末名・利用者名を足さない)、
+           application_type native、token_endpoint_auth_method none。戻り先の不一致で拒まれたら
+           その認可の中で 1 回だけ登録し直す。code_challenge_methods_supported に S256 が無ければ
+           進まない (仕様の MUST)。動的登録が無いサーバーは名指しで止め、client_id を人が書く口は作らない
+        4. **トークンの置き場は二層** — 鍵 `mcp-oauth:<resource>` (resource は保護リソースの
+           メタデータの resource を正準形へ: scheme と host を小文字・既定のポートと fragment と
+           末尾の / を落とす・query は残す。無ければ url を同じ規則で)。OS の資格情報ストアには
+           { issuer, refreshToken, scopes, receivedAt } だけを置き、**アクセストークンはメモリだけ**。
+           rmcp の CredentialStore 実装 (KeyringCredentialStore) は接続先ごとに 1 つで全接続が共有し、
+           load = メモリが無ければ OS の記録から「アクセストークン空・期限 0」の token_response を組む
+           (rmcp の get_access_token が期限切れと読んで 1 回リフレッシュする) / save = メモリを置き換え、
+           OS はリフレッシュトークンかスコープが変わったときだけ書く / clear = 両方を消して世代を進める。
+           **OS の記録は UTF-16 で 1,280 単位に収まらなければ名前の付いたエラーで止める** (P0 実測:
+           keyring 3 は Windows で値を UTF-16 で保存し、上限 2,560 バイト = 1,280 単位。ASCII でも
+           日本語でも 1,281 字で失敗)。要求するスコープが記録に含まれなければ required。
+           村を配ってもトークンは付いていかない (mcp.json には auth: "oauth" しか無い)
+        5. **接続先ごとに認可の管理者を 1 つ** (McpOAuthRegistry: resource → AuthClient +
+           KeyringCredentialStore)。個体の接続はその複製を使い、リフレッシュは Mutex で直列。
+           プロセスをまたぐ取り合いは、リフレッシュが invalid_grant で拒まれたらメモリを捨てて
+           OS の記録を読み直し、リフレッシュトークンが変わっていれば 1 回だけやり直す
+           (公開クライアントのリフレッシュトークンは回る — 仕様の MUST)。ファイルロックは作らない
+        6. **状態は接続先ごと** — none (OAuth でない) / authorized (OS の記録があり要求スコープを含む。
+           アクセストークンの有無は問わない。接続を試みる) / required (記録なし・スコープ不足・
+           回復しないリフレッシュの拒否。**serve_http を呼ばない**)。McpServerStatus.auth へ写し、
+           稼働していない個体の画面にも同じ状態を出す。**ブラウザは人が「認可する」を押したときだけ
+           開く** — 起動・再接続・ターンの途中では開かない。ターンの途中でリフレッシュが拒まれたら、
+           ツール呼び出しは再認可を頼む文を本文で返し、状態を required へ落とす
+        7. **取り消しは順序つき** — (1) 世代を進める (共有する全複製が同じ番号を見る。飛行中の
+           リフレッシュの save は書き戻されない) (2) メモリと OS を消す (3) その接続先を使う個体の
+           MCP 接続を切り required へ (4) revocation_endpoint があれば失効を要求 (失敗しても 1〜3 は
+           戻さない)。認可後の繋ぎ直しは MCP の設定を保存したときと同じ経路
+        8. **GUI なしの実行** — --secrets keyring (既定) は OS の記録があれば使い、無ければ
+           headless_preflight の拒否 MCP_OAUTH_REQUIRED。--secrets env は拒否 MCP_OAUTH_HEADLESS
+           (読み取り専用で、回ったリフレッシュトークンを書き戻せない)。bake は OAuth のエントリを
+           出力の警告 1 行で名指しする (止めない)
+        9. **スコープは MCP 仕様の順** — 401 の WWW-Authenticate の scope → 保護リソースの
+           scopes_supported を全部 → どちらも無ければ scope を送らない。**認可サーバーの
+           scopes_supported は使わない** (仕様の順位に無い。rmcp の select_scopes は ③ として使うので
+           呼ばない)。認可サーバーが offline_access を名乗れば足す。rmcp の get_authorization_url に
+           空のスコープを渡すと oauth2 5.0 は scope パラメータを付けない (P0 で実装を読んで確認)。
+           実行時の 403 insufficient_scope は required へ落とす (自動の再認可はしない)。
+           **rmcp は resource に受け取った URL の Url::to_string() を送る** — パスの無い URL では
+           末尾に / が付くので、manager へは 4 の正準形の URL を渡す
+        10. **計器** — `mcp oauth: server=… resource=… outcome=…`。outcome は閉じた列挙
+            (authorized / refreshed / refetched / required / denied / timeout / cancelled /
+            reregistered / no_registration / no_pkce / revoked / error)。トークン・認可コード・
+            state・PKCE の値・client_id・認可サーバーの応答本文は書かない。resource はサーバーの
+            識別子で利用者の個人情報ではないので書く
+        11. **宣言していないエントリへの案内** — auth の無い http エントリが resource_metadata 付きの
+            401 (AuthRequired) を受けたら、「auth: "oauth" を足して認可する」と「API キーを headers へ」の
+            両方を案内する。自動では書き換えない
+        12. **外へ送るもの・保存するもの** — 送り先は認可サーバー (メタデータ / 動的登録 / コードの
+            交換 / リフレッシュ / 失効)。送るのは client_name "Fuseforks"・ループバックの戻り先・
+            PKCE の値・resource・認可コード・リフレッシュトークン・client_id。OS の資格情報ストアには
+            接続先ごとに issuer・リフレッシュトークン・スコープ・時刻、認可サーバーごとに client_id・
+            登録した戻り先。メモリだけにアクセストークン。開発者へは何も送らない。PRIVACY 日英の
+            3 と 4-3 に書く
+      退けた形: 401 で自動的に OAuth へ切り替える / 認可サーバーの scopes_supported を全部要求する
+      (rev1 の推奨。rmcp を写した誤り) / client_id を人が書く欄 / Client ID Metadata Document
+      (rmcp 2.2 に無い) / カスタムスキームの戻り先 / アクセストークンの保存 / 個体ごとの認可 /
+      プロセスをまたぐファイルロック / コンテナへ環境変数でリフレッシュトークンを渡す /
+      デバイスフロー / client_name に端末名
     ordinance_contract: |
       村の条例 = {workspace}/Ordinance.md (2026-07-28)。ワークスペース全体
       (= 村) の規則で、エージェント個別ではなく場に属するため agents/ の外に置く。

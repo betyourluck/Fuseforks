@@ -112,6 +112,10 @@ rmcp = { version = "2.2", default-features = false, features = [
   # 落ちる**（P0 probe で実測）。rustls なのは自前の reqwest と同じ判断。
   "transport-streamable-http-client-reqwest",
   "reqwest",
+  # Spec 67 — リモート MCP の OAuth の認可（クライアント側）。AuthorizationManager /
+  # AuthClient / CredentialStore を使う。依存 +10 crate（oauth2 5.0 ほか。純 Rust・P0 実測）。
+  # スコープの選び方（select_scopes）は MCP 仕様と 1 段違うので使わない（Spec 67 D9）。
+  "auth",
   # Spec 25 — 村を MCP **サーバー**にする側（外の LLM から依頼を受ける扉）。
   # クライアント側とは向きが逆で、同じ crate の別の顔を使う。
   "server",
