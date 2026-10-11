@@ -2561,6 +2561,26 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
 
+## 現在地（2026-10-11 更新）
+
+**この日は台帳 2 件と [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）の起票から Done まで。**
+git: `dc2346e`（P3 + P4 の修正）まで push 済み。P4 の記録と Done は次のコミット（push は利用者の指示待ち）。
+タグは `v0.5.0` のまま — Spec 67 は配布物に入っていない。
+
+- **台帳 2 件**: `refusal=` の 0 本は語彙のずれ（広げない）で、`reply:` 行に `author=model|core` を足した /
+  MCP_DOCKER は `--servers` で使うサーバーを明示すると管理用の道具 8 本が消える（村の 5 体の `mcp.json` を直した）
+- **Spec 67**: 起点は利用者「TradingView の MCP を使いたい。時代は Authorize MCP」。`"auth": "oauth"` の明示・ループバックの
+  戻り先・動的登録・リフレッシュトークンだけを OS の資格情報ストアへ・アクセストークンはメモリだけ。**TradingView で認可して
+  ザリが日本株の週間騰落を答えた**。P4 で出た穴は 2 つで同日に直した — `www.tradingview.com` は User-Agent の無い要求を
+  403 で断り rmcp が黙って推測の口へ落ちる（`failures.md` #145）/ D11 の案内が表示用の文面 `Auth required` に当たらない
+- **ランディングページの FAQ Q3「LLM 以外の外向き通信はモデル単価表の取得だけ」は未更新**（利用者の判断待ち）
+- **TradingView の `mcp-tv-run-screener` は 1 回 7〜9 万字**で、圧縮は入れ子の JSON で素通り（頻度を見てから）
+
+**次の一手**: ~~(1) Spec 67 の確認 7 → Done (2) P4 の記録をコミット~~（**→ 同日に完了**。取り消しは `revoked remote=yes`）
+(3) リリースするなら「利用者が負う条件」に — OAuth の MCP はコンテナ（`--secrets env`）では
+動かない / 認可するとブラウザで外部のログイン画面が開く / 認可サーバーへ User-Agent `Fuseforks` とクライアント名を送る
+(4) 別件 — ルナの 429（`max_retries` を上げる + Web 検索を切る、の判断待ち）
+
 ## 現在地（2026-10-09 更新）
 
 **`v0.5.0` = `51f1f20` を 4 経路で配った**（Spec 64・65・66 と秘密の値のダイアログが初めて配布物に入った。タグ履歴が正）。
@@ -7385,7 +7405,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **rev2 → P0〜P3 完了。P4 の実機中**（P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
+- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **Done**（2026-10-11。**起票から Done まで同日**。P4 = 実機の確認 8 件すべて観測 — 認可・道具の呼び出し・再起動後の自動接続・2 体で更新 1 回・キャンセルと時間切れ・**取り消しで `revoked remote=yes` → `required` ×2・間に `refreshed` 無し（書き戻し無し）・`mcp-oauth:` の鍵が消える**（動的登録の `mcp-oauth-client:` は設計どおり残る）・CLI の keyring で通り env で `MCP_OAUTH_HEADLESS`。記録は Spec の「P4 実機記録」。**計器 `refreshed` はコードの交換の初回保存でも出る** — 直後の `authorized` まで 40 ms なら認可の流れ、0.8 秒前後なら繋ぎ直し（P4 記録の初版はこれを取り違えていた。名前は据え置き）。P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
   DETAIL 3 言語にリモート MCP の OAuth の節・GUI なしの拒否の行・「コンテナで回す」に D8・ディレクトリ木 / README 3 言語は
   既存の MCP の行を延ばした（行数は 171 / 171 / 167 のまま）/ **PRIVACY 日英の要旨・3・4-3・6・8**（送り先に MCP サーバーが
   名指す認可サーバーが増える = 要旨の「設定した接続先と単価表の 2 つだけ」に括弧で足した）/ Spec 47 Notes 2 の覆し。
