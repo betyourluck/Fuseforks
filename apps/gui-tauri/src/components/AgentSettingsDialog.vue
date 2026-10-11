@@ -16,6 +16,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import MarkdownEditor from "./MarkdownEditor.vue";
+import McpOAuthControls from "./McpOAuthControls.vue";
 import { snapshotToSpec } from "../lib/agentSpec";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { compactNumber } from "../lib/format";
@@ -713,6 +714,8 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
                 <p v-if="server.error" class="mt-0.5 text-[10px] text-fail">
                   {{ server.error }}
                 </p>
+                <!-- OAuth のエントリだけ（Spec 67 D7）。終わったら状態を読み直す。 -->
+                <McpOAuthControls :status="server" @changed="refreshMcpStatus" />
               </div>
             </template>
           </div>

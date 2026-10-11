@@ -470,6 +470,10 @@ pub struct McpServerStatus {
     /// 接続の有無と独立に、資格情報ストアの記録とこの実行の拒否から決まる。
     #[serde(default)]
     pub auth: crate::mcp_oauth::McpAuthState,
+    /// OAuth のエントリの `url`（Spec 67 P2。画面の「認可する」「認可を取り消す」が接続先を名指す）。
+    /// OAuth でないエントリでは `None` で、ワイヤにも出ない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// ツール名を「サーバー名で修飾した、安全な名前」へ変換する（純関数）。
@@ -679,6 +683,7 @@ impl McpManager {
                     tools: Vec::new(),
                     error: Some("無効化されています".to_owned()),
                     auth: auth_state_of(server, oauth),
+                    url: oauth_url_of(server),
                 });
                 continue;
             }
@@ -704,6 +709,7 @@ impl McpManager {
                         tools: tools.iter().map(|t| t.name().to_owned()).collect(),
                         error: None,
                         auth: auth_state_of(server, oauth),
+                    url: oauth_url_of(server),
                     });
                     manager.tools.extend(tools);
                     manager.connections.push(service);
@@ -715,6 +721,7 @@ impl McpManager {
                         tools: Vec::new(),
                         error: Some(err.to_string()),
                         auth: auth_state_of(server, oauth),
+                    url: oauth_url_of(server),
                     });
                 }
             }
@@ -740,6 +747,28 @@ impl McpManager {
             let _ = connection.cancel().await;
         }
     }
+}
+
+/// OAuth のエントリの `url`（画面のボタンのため）。OAuth でなければ `None`。
+fn oauth_url_of(server: &McpServerConfig) -> Option<String> {
+    match server {
+        McpServerConfig::Http(config) if config.auth.is_some() => Some(config.url.clone()),
+        _ => None,
+    }
+}
+
+/// `mcp.json` に、正準形が同じ `url` を持つ OAuth のエントリがあるか（Spec 67 P2 — 認可・取り消しの
+/// 後に繋ぎ直す接続を選ぶ）。
+pub fn config_uses_oauth_url(config: &McpConfig, url: &str) -> bool {
+    let Some(target) = crate::mcp_oauth::canonical_resource(url) else {
+        return false;
+    };
+    config.servers.values().any(|server| match server {
+        McpServerConfig::Http(own) if own.auth.is_some() => {
+            crate::mcp_oauth::canonical_resource(&own.url).as_deref() == Some(target.as_str())
+        }
+        _ => false,
+    })
 }
 
 /// エントリの認可の状態（Spec 67 D6）。OAuth でなければ `none`。

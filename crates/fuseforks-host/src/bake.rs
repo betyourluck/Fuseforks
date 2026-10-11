@@ -143,6 +143,9 @@ pub mod warning_codes {
     pub const ENV_TZ_DIFFERS: &str = "ENV_TZ_DIFFERS";
     /// 資格情報ストアに鍵が無いので印つきコメントにした（D3。名前だけ）。
     pub const ENV_SECRET_MISSING: &str = "ENV_SECRET_MISSING";
+    /// 写しに OAuth の MCP のエントリが入る（Spec 67 D8）。コンテナ（`--secrets env`）では
+    /// 起動前検査の `MCP_OAUTH_HEADLESS` で止まる — 止めずに名指しだけする。
+    pub const MCP_OAUTH_IN_COPY: &str = "MCP_OAUTH_IN_COPY";
 }
 
 /// 写しの結果。
@@ -385,6 +388,7 @@ pub async fn bake(req: &BakeRequest, secrets: &dyn SecretStore) -> Result<BakeRe
 
     // 10. 自由記述の中の Windows パス（警告。書き換えない）。
     free_text_warnings(&source_ws, &agent_ids, &mcp_files, &source_policies, &tasks, &mut report);
+    oauth_warnings(&mcp_files, &mut report);
 
     // 11. 写し先（再 bake のときだけ）を読み、同居のファイルを合流する。
     let out_store = ConfigStore::new(&out_ws);
@@ -907,6 +911,27 @@ fn free_text_warnings(
             code: warning_codes::FREE_TEXT_WINDOWS_PATH,
             message: format!("{place} に Windows の絶対パスがあります（自由記述なので書き換えていません）"),
         });
+    }
+}
+
+/// 写しに入る OAuth の MCP のエントリを名指す（Spec 67 D8。止めない）。認可の記録（リフレッシュ
+/// トークン）は資格情報ストアにあり、`--env-out` でも書き出さない — コンテナでは回ったトークンを
+/// 書き戻せないので、写しの起動前検査が `MCP_OAUTH_HEADLESS` で止める。
+fn oauth_warnings(mcp_files: &[(String, McpConfig)], report: &mut BakeReport) {
+    for (label, config) in mcp_files {
+        for (server, entry) in &config.servers {
+            if let McpServerConfig::Http(http) = entry
+                && http.auth.is_some()
+                && http.enabled
+            {
+                report.warnings.push(BakeWarning {
+                    code: warning_codes::MCP_OAUTH_IN_COPY,
+                    message: format!(
+                        "{label}: {server} は OAuth の認可で繋ぐエントリです。コンテナ（--secrets env）では動きません                         （起動前検査が MCP_OAUTH_HEADLESS で止めます）。使わないなら enabled: false にしてください"
+                    ),
+                });
+            }
+        }
     }
 }
 

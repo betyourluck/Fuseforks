@@ -302,6 +302,38 @@ async fn plaintext_headers_stop_unless_allowed() {
     assert!(report.warnings.iter().any(|w| w.code == "PLAINTEXT_HEADER_COPIED"));
 }
 
+/// Spec 67 D8 — 写しに OAuth のエントリが入るなら名指しの警告（止めない）。無効なエントリは数えない
+/// （無効ならコンテナでも接続しないので、止まる理由が無い）。
+#[tokio::test]
+async fn oauth_entries_in_the_copy_are_named_but_do_not_stop_the_bake() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let store = ConfigStore::new(HostPaths::new(&src.0).workspace());
+    store
+        .write_config(
+            &id("agent_1"),
+            ConfigFileKind::Mcp,
+            r#"{ "mcpServers": {
+                 "tv": { "type": "http", "url": "https://mcp.tradingview.com/mcp", "auth": "oauth" },
+                 "off": { "type": "http", "url": "https://other.example/mcp", "auth": "oauth", "enabled": false } } }"#,
+        )
+        .await
+        .unwrap();
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let report = bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new())
+        .await
+        .expect("止めない");
+    let named: Vec<&str> = report
+        .warnings
+        .iter()
+        .filter(|w| w.code == "MCP_OAUTH_IN_COPY")
+        .map(|w| w.message.as_str())
+        .collect();
+    assert_eq!(named.len(), 1, "有効な OAuth のエントリだけ: {named:?}");
+    assert!(named[0].contains("tv") && named[0].contains("MCP_OAUTH_HEADLESS"), "{}", named[0]);
+}
+
 /// 再 bake: 設計は置き換え、実行（Memory・会話）は触らず、同居は欄ごとに合流する（契約 2）。
 #[tokio::test]
 async fn an_update_replaces_design_and_keeps_what_grew_in_the_container() {

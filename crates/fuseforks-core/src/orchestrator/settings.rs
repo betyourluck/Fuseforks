@@ -405,6 +405,38 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// リモート MCP の OAuth の認可の管理者（Spec 67 D5）。認可の流れ（ホスト）が、認可の後に
+    /// 拒否の印を外し、取り消しで世代を進めるために使う。プロセスに 1 つ。
+    pub fn mcp_oauth(&self) -> Arc<crate::mcp_oauth::McpOAuthRegistry> {
+        Arc::clone(&self.shared.mcp_oauth)
+    }
+
+    /// `url` の接続先を使う MCP 接続を繋ぎ直す（Spec 67 D7 — 認可・取り消しの後）。共通の `mcp.json` が
+    /// 使っていれば共通を、**稼働中の個体**のうち個体別の `mcp.json` が使っていればその個体の接続を、
+    /// MCP の設定を保存したときと同じ経路で張り直す（道具一覧は接続のときにしか取らないため）。
+    /// 停止中の個体は次の起動で繋がる。読めない設定は飛ばす。
+    pub async fn reconnect_mcp_for(&self, url: &str) {
+        if let Ok(common) = self.shared.store.read_mcp_config().await
+            && crate::mcp::config_uses_oauth_url(&common, url)
+            && let Err(err) = self.reload_mcp().await
+        {
+            crate::note!("mcp oauth: reconnect common failed: {err}");
+        }
+        let running: Vec<AgentId> = self.tasks.lock().await.keys().cloned().collect();
+        for id in running {
+            let Ok(own) = self.shared.store.read_agent_mcp_config(&id).await else {
+                continue;
+            };
+            if !crate::mcp::config_uses_oauth_url(&own, url) {
+                continue;
+            }
+            if let Some(old) = self.shared.agent_mcp.write().await.remove(&id) {
+                old.manager.shutdown().await;
+            }
+            connect_agent_mcp(&self.shared, &id).await;
+        }
+    }
+
     /// 各 MCP サーバーの接続状態。UI へそのまま出せる。
     pub async fn mcp_statuses(&self) -> Vec<crate::mcp::McpServerStatus> {
         self.shared.mcp.read().await.statuses().to_vec()

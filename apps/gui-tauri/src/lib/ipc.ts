@@ -40,6 +40,8 @@ import type {
   RoleId,
   McpConfig,
   McpSecretView,
+  McpOAuthOutcome,
+  McpOAuthRevokeOutcome,
   McpServerStatus,
   PlanTaskInput,
   PlanWaveRecord,
@@ -557,6 +559,20 @@ export const reloadMcp = () => call<void>("reload_mcp");
 
 /** 各 MCP サーバーの接続状態。 */
 export const listMcpServers = () => call<McpServerStatus[]>("list_mcp_servers");
+
+/**
+ * リモート MCP を OAuth で認可する（Spec 67）。ブラウザを開き、戻りを待つ（最長 10 分）。
+ * **ブラウザを開くのはこの呼び出しだけ**（起動・再接続では開かない）。
+ */
+export const mcpOAuthAuthorize = (server: string, url: string) =>
+  call<McpOAuthOutcome>("mcp_oauth_authorize", { server, url });
+
+/** 進行中の認可をキャンセルする（受け口を閉じる）。 */
+export const mcpOAuthCancel = (url: string) => call<void>("mcp_oauth_cancel", { url });
+
+/** 認可を取り消す（手元の記録を消し、接続先へ失効を頼み、繋ぎ直す）。 */
+export const mcpOAuthRevoke = (server: string, url: string) =>
+  call<McpOAuthRevokeOutcome>("mcp_oauth_revoke", { server, url });
 
 /** エージェント別 MCP の状態。停止中は running: false でサーバー一覧は空。 */
 export const agentMcpStatus = (agentId: AgentId) =>

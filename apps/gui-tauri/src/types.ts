@@ -834,6 +834,32 @@ export interface McpServerStatus {
   /** 提供されたツール名（サーバー名で修飾済み）。 */
   tools: string[];
   error: string | null;
+  /**
+   * OAuth の認可の状態（Spec 67 D6）。`auth: "oauth"` でないエントリは `none`。
+   * 接続の有無と独立に、資格情報ストアの記録とこの実行の拒否から決まる。
+   */
+  auth: McpAuthState;
+  /** OAuth のエントリの url（「認可する」「認可を取り消す」が接続先を名指す）。それ以外は無い。 */
+  url?: string;
+}
+
+/** OAuth の認可の状態（Spec 67 D6。`mcp_oauth.rs` の `McpAuthState` と一致させること）。 */
+export type McpAuthState = "none" | "authorized" | "required";
+
+/** 認可の結末（Spec 67 P2。`mcp_oauth_flow.rs` の `AuthorizeOutcome` と一致させること）。 */
+export type McpOAuthOutcome =
+  | { kind: "authorized" }
+  | { kind: "cancelled" }
+  | { kind: "timedOut" }
+  | { kind: "denied" }
+  | { kind: "failed"; message: string };
+
+/** 取り消しの結末（`mcp_oauth_flow.rs` の `RevokeOutcome`）。 */
+export interface McpOAuthRevokeOutcome {
+  /** 手元の記録を消した（常に真）。 */
+  localCleared: boolean;
+  /** 接続先への失効の要求が通ったか。 */
+  remoteRevoked: boolean;
 }
 
 /**

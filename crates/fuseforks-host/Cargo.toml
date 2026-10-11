@@ -22,6 +22,9 @@ reqwest.workspace = true
 # 村は 1 プロセスの中にしかおらず（村の排他ロック / redb の単一書き手 /
 # 稼働個体はメモリ）、別プロセスのサーバーは構造的に成立しない。
 rmcp.workspace = true
+# Spec 67 P2 — 認可の流れ（認可口の事前の確認・失効の要求）。rmcp と同じ reqwest 0.13（crate は増えない）。
+reqwest_rmcp.workspace = true
+url.workspace = true
 # `StreamableHttpService` は tower の Service なので、載せる HTTP サーバーが要る。
 # 既定 feature は落とす（json / query / form は 1 つも使わない）。
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

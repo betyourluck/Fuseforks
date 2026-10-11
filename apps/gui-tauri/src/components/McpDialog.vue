@@ -19,6 +19,7 @@ import { computed, onMounted, ref } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
 
 import CodeEditor from "./CodeEditor.vue";
+import McpOAuthControls from "./McpOAuthControls.vue";
 import McpSecretsButton from "./McpSecretsButton.vue";
 import * as ipc from "../lib/ipc";
 import { askConfirm } from "../composables/useConfirm";
@@ -246,6 +247,8 @@ async function requestClose(): Promise<void> {
               <p v-if="status.error" class="selectable mt-1 pl-4 text-fail">
                 {{ status.error }}
               </p>
+              <!-- OAuth のエントリだけ（Spec 67 D7）。終わったら状態を読み直す。 -->
+              <McpOAuthControls :status="status" @changed="refreshStatuses" />
               <p v-if="status.tools.length" class="mt-1 pl-4 font-mono text-ink-dim">
                 {{ status.tools.join(", ") }}
               </p>

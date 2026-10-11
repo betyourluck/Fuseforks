@@ -554,7 +554,7 @@ impl McpOAuthRegistry {
 /// 保護リソースのメタデータの `scopes_supported` を取る（仕様の順: エンドポイントのパスを挟んだ
 /// well-known → ルートの well-known）。取れない・名乗らないなら `None`。**失敗は照合しない側へ倒す** —
 /// メタデータが一時的に取れないだけで認可済みの接続先を `required` にしない。
-async fn fetch_resource_scopes(url: &str) -> Option<Vec<String>> {
+pub async fn fetch_resource_scopes(url: &str) -> Option<Vec<String>> {
     let parsed = url::Url::parse(url).ok()?;
     let origin = format!(
         "{}://{}{}",

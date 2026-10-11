@@ -227,10 +227,16 @@ enums:
            リフレッシュの save は書き戻されない) (2) メモリと OS を消す (3) その接続先を使う個体の
            MCP 接続を切り required へ (4) revocation_endpoint があれば失効を要求 (失敗しても 1〜3 は
            戻さない)。認可後の繋ぎ直しは MCP の設定を保存したときと同じ経路
+           (Orchestrator::reconnect_mcp_for)。**P2 で 3 と 4 の順を入れ替えた** — 手元の記録を先に
+           消すので、既存の接続の次の要求は load が None を返して認可エラーになり、失効の要求の間に古い
+           トークンで要求が通ることは無い。認可の流れでは rmcp の configure_client_id を使わない (戻り先に
+           MCP の URL が入る)。ポートまで照合するサーバーは戻りが来ない形で失敗するので、ブラウザを開く
+           前に認可 URL を 1 回 GET し、400 なら登録し直す。リフレッシュトークンが返らなければ保存しない。
+           McpServerStatus に url (OAuth のエントリだけ。画面のボタンが接続先を名指す)
         8. **GUI なしの実行** — --secrets keyring (既定) は OS の記録があれば使い、無ければ
            headless_preflight の拒否 MCP_OAUTH_REQUIRED。--secrets env は拒否 MCP_OAUTH_HEADLESS
-           (読み取り専用で、回ったリフレッシュトークンを書き戻せない)。bake は OAuth のエントリを
-           出力の警告 1 行で名指しする (止めない)
+           (読み取り専用で、回ったリフレッシュトークンを書き戻せない)。bake は有効な OAuth のエントリを
+           警告 MCP_OAUTH_IN_COPY で名指しする (止めない。P2)
         9. **スコープは MCP 仕様の順** — 401 の WWW-Authenticate の scope → 保護リソースの
            scopes_supported を全部 → どちらも無ければ scope を送らない。**認可サーバーの
            scopes_supported は使わない** (仕様の順位に無い。rmcp の select_scopes は ③ として使うので

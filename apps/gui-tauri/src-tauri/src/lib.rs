@@ -203,6 +203,9 @@ pub fn run() {
             commands::reload_mcp,
             commands::list_mcp_servers,
             commands::agent_mcp_status,
+            commands::mcp_oauth_authorize,
+            commands::mcp_oauth_cancel,
+            commands::mcp_oauth_revoke,
             // ライフサイクルと配送
             commands::start_agent,
             commands::stop_agent,

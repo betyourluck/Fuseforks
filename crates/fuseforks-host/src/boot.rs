@@ -116,9 +116,11 @@ pub struct Host {
     /// 同じ理由で、**村を配ったときに、受け取った人の村が知らない送信先へ
     /// ツール結果を送る状態を作らない**。API トークンは資格情報ストア。
     pub jev: tokio::sync::Mutex<JevSettingsStore>,
-    /// 資格情報ストア。**Jev のトークンの読み書きに使う**（モデルのキーは
-    /// `Orchestrator` 側の口を通るので、ここを読むのは Jev だけ）。
+    /// 資格情報ストア。**Jev のトークンと、リモート MCP の OAuth の認可の記録の読み書きに使う**
+    /// （モデルのキーは `Orchestrator` 側の口を通る）。オーケストレーターが持つものと同じ実体。
     pub secrets: Arc<dyn SecretStore>,
+    /// 進行中の OAuth の認可（Spec 67 P2。接続先ごとに 1 つ — もう一度始めると古い受け口を閉じる）。
+    pub mcp_oauth_flows: crate::mcp_oauth_flow::McpOAuthFlows,
 }
 
 /// 組み立ての失敗理由。
@@ -383,6 +385,7 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         probe_approvals,
         jev: tokio::sync::Mutex::new(jev),
         secrets,
+        mcp_oauth_flows: crate::mcp_oauth_flow::McpOAuthFlows::new(),
     })
 }
 

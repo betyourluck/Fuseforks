@@ -726,7 +726,26 @@
     "secretUsedBy": "Used by: {servers}",
     "secretsOpenTitle": "Store the secret values referenced by the shared and every servant's mcp.json",
     "secretsDiscardTitle": "Discard the values you entered?",
-    "secretsDiscardMessage": "Some values are not saved. Closing discards what you entered."
+    "secretsDiscardMessage": "Some values are not saved. Closing discards what you entered.",
+    "oauth": {
+      "authorized": "Authorized",
+      "authRequired": "Authorization required",
+      "authorize": "Authorize",
+      "authorizeTitle": "Sign in and approve in your browser (the browser opens only when you press this)",
+      "revoke": "Revoke",
+      "revokeTitle": "Delete the local authorization record and ask the server to revoke it",
+      "revokeConfirmTitle": "Revoke the authorization?",
+      "revokeConfirmMessage": "This deletes the authorization record for {server} from this machine. To use it again, press Authorize again.",
+      "waiting": "Finish the authorization in your browser ({minutes} min left)",
+      "cancel": "Cancel",
+      "outcomeAuthorized": "Authorized and reconnected.",
+      "outcomeCancelled": "Authorization cancelled.",
+      "outcomeTimedOut": "Timed out (10 min). Press Authorize again.",
+      "outcomeDenied": "Not authorized (the server returned a denial).",
+      "outcomeFailed": "Could not authorize: {message}",
+      "revokedRemote": "Revoked (the server revoked it too).",
+      "revokedLocal": "Deleted the local record (the server has no revocation endpoint, or the request did not go through)."
+    }
   },
   "uiErrors": {
     "canvasContext": "Could not get a canvas 2D context",

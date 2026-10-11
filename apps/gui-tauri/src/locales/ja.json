@@ -726,7 +726,26 @@
     "secretUsedBy": "使っているサーバー: {servers}",
     "secretsOpenTitle": "共通と全サーヴァントの mcp.json が参照する秘密の値を入れる",
     "secretsDiscardTitle": "入力した値を捨てますか？",
-    "secretsDiscardMessage": "保存していない値があります。閉じると入力した値は捨てられます。"
+    "secretsDiscardMessage": "保存していない値があります。閉じると入力した値は捨てられます。",
+    "oauth": {
+      "authorized": "認可済み",
+      "authRequired": "認可が必要",
+      "authorize": "認可する",
+      "authorizeTitle": "ブラウザでログインして承認します（このボタンを押したときだけブラウザを開きます）",
+      "revoke": "認可を取り消す",
+      "revokeTitle": "手元の認可の記録を消し、接続先に失効を頼みます",
+      "revokeConfirmTitle": "認可を取り消しますか？",
+      "revokeConfirmMessage": "{server} の認可の記録をこの端末から消します。使うには、もう一度「認可する」を押す必要があります。",
+      "waiting": "ブラウザで認可を完了してください（残り {minutes} 分）",
+      "cancel": "キャンセル",
+      "outcomeAuthorized": "認可しました。接続し直しました。",
+      "outcomeCancelled": "認可をキャンセルしました。",
+      "outcomeTimedOut": "時間切れです（10 分）。もう一度「認可する」を押してください。",
+      "outcomeDenied": "認可されませんでした（接続先が拒否を返しました）。",
+      "outcomeFailed": "認可できませんでした: {message}",
+      "revokedRemote": "取り消しました（接続先の失効も済みました）。",
+      "revokedLocal": "手元の記録を消しました（接続先には失効の口が無いか、失効の要求が通りませんでした）。"
+    }
   },
   "uiErrors": {
     "canvasContext": "canvas 2D コンテキストを取得できません",

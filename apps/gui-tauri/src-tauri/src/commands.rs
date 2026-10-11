@@ -595,6 +595,73 @@ pub async fn list_mcp_servers(
     Ok(state.host.orchestrator.mcp_statuses().await)
 }
 
+/// リモート MCP を OAuth で認可する（Spec 67 D7）。ブラウザで認可 URL を開き、戻りを待つ
+/// （最長 10 分。キャンセルは [`mcp_oauth_cancel`]）。認可できたら、その接続先を使う MCP 接続を
+/// 繋ぎ直す（道具一覧は接続のときにしか取らない）。
+///
+/// **ブラウザを開くのはここだけ**（D6 — 起動・再接続・ターンの途中では開かない）。
+#[tauri::command]
+pub async fn mcp_oauth_authorize(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    server: String,
+    url: String,
+) -> CoreResult<fuseforks_host::mcp_oauth_flow::AuthorizeOutcome> {
+    use tauri_plugin_opener::OpenerExt;
+    let host = &state.host;
+    let registry = host.orchestrator.mcp_oauth();
+    let opener = app.clone();
+    let open = move |auth_url: &str| {
+        opener
+            .opener()
+            .open_url(auth_url, None::<&str>)
+            .map_err(|err| err.to_string())
+    };
+    let outcome = host
+        .mcp_oauth_flows
+        .authorize(
+            &server,
+            &url,
+            std::sync::Arc::clone(&host.secrets),
+            &registry,
+            &open,
+            fuseforks_host::mcp_oauth_flow::AUTHORIZE_TIMEOUT,
+        )
+        .await;
+    if outcome == fuseforks_host::mcp_oauth_flow::AuthorizeOutcome::Authorized {
+        host.orchestrator.reconnect_mcp_for(&url).await;
+    }
+    Ok(outcome)
+}
+
+/// 進行中の認可をキャンセルする（Spec 67 D2 の c）。受け口は閉じてポートを解放する。
+#[tauri::command]
+pub async fn mcp_oauth_cancel(state: State<'_, AppState>, url: String) -> CoreResult<()> {
+    state.host.mcp_oauth_flows.cancel(&url);
+    Ok(())
+}
+
+/// 認可を取り消す（Spec 67 D7）。手元の記録を消し（失効の要求の成否に関わらず）、その接続先を使う
+/// MCP 接続を繋ぎ直す（状態は `required` へ）。認可サーバーに失効の口があれば失効も要求する。
+#[tauri::command]
+pub async fn mcp_oauth_revoke(
+    state: State<'_, AppState>,
+    server: String,
+    url: String,
+) -> CoreResult<fuseforks_host::mcp_oauth_flow::RevokeOutcome> {
+    let host = &state.host;
+    let registry = host.orchestrator.mcp_oauth();
+    let outcome = fuseforks_host::mcp_oauth_flow::revoke(
+        &server,
+        &url,
+        std::sync::Arc::clone(&host.secrets),
+        &registry,
+    )
+    .await;
+    host.orchestrator.reconnect_mcp_for(&url).await;
+    Ok(outcome)
+}
+
 /// エージェント別 MCP の状態（Spec 02）。停止中は「未接続」が返る。
 #[tauri::command]
 pub async fn agent_mcp_status(

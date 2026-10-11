@@ -7385,7 +7385,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **rev2 → P0〜P1 完了**（P1 = 新しいファイル
+- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **rev2 → P0〜P2 完了**（P2 = ホストの認可の流れ
+  `mcp_oauth_flow.rs`（受け口と 4 つの閉じ方・登録を認可サーバーごとに使い回す・ポートまで照合するサーバーは
+  ブラウザを開く前に認可 URL を GET して 400 なら登録し直す・取り消し）/ GUI の IPC 3 本と `McpOAuthControls.vue`
+  （共通 MCP とサーヴァントの状態の行に「認可する」・残り時間とキャンセル・「認可を取り消す」）/ 認可・取り消しの後は
+  `reconnect_mcp_for` で繋ぎ直す / `bake` の警告 `MCP_OAUTH_IN_COPY` / host の結合 8 本と走査テスト 4 本。
+  **rmcp の `configure_client_id` は戻り先に MCP の URL を入れる**ので流れでは使わない。変異で見つけたテストの穴 2 つ
+  （登録の記録を比べていて実際のポートを見ていない / spawn したタスクの中の assert は本体へ伝わらない）。**実機は P4**）。
+  P1 は（P1 = 新しいファイル
   `mcp_oauth.rs`（二層の置き場 `KeyringCredentialStore`・接続先ごとの `McpOAuthRegistry`・純関数）/ `auth` 欄・
   `McpServerStatus.auth`・`serve_http_oauth`・D11 の案内 / 起動前検査の `MCP_OAUTH_REQUIRED`・`MCP_OAUTH_HEADLESS` /
   結合 7 本はループバックの認可サーバー + MCP サーバーのスタブで rmcp の実際の経路を通す・変異 6 本（1 本は期限切れの
