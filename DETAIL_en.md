@@ -1846,6 +1846,11 @@ adding `"auth": "oauth"` to an http entry:
   none is sent (the authorization server's default). The authorization server's own list of scopes is not used
 - A server whose authorization server does not advertise PKCE (S256) or has no dynamic registration is not authorized, naming the reason
 - The log has one line `mcp oauth: server=… resource=… outcome=…`; tokens, authorization codes and `client_id` are not written
+- **Opening the village in v0.5.0 or earlier ignores `"auth": "oauth"`** (the old version does not know the field and skips
+  it, so it connects without authorization and is refused). Worse, **opening and saving the shared MCP dialog in the old
+  version removes `"auth"` from the shared `mcp.json`**, because the old version writes the shared `mcp.json` back from the
+  type it parsed. A servant's `mcp.json` is saved as text and keeps it. This happens when old and new builds sit on the
+  same machine (the shape of `failures.md` #112)
 
 ### Village Ordinance
 
