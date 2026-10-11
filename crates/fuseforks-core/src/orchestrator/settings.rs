@@ -382,7 +382,7 @@ impl Orchestrator {
     pub async fn reload_mcp(&self) -> CoreResult<()> {
         let config = self.shared.store.read_mcp_config().await?;
         let next =
-            crate::mcp::McpManager::connect_all(&config, self.shared.secrets.as_ref()).await;
+            crate::mcp::McpManager::connect_all(&config, self.shared.secrets.as_ref(), &self.shared.mcp_oauth).await;
 
         // 古い接続のツールを先に外す。消さずに新しいものを登録すると、
         // 繋がっていないサーバーのツールがモデルへ提示され続ける。

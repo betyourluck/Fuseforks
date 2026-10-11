@@ -188,6 +188,7 @@ impl Orchestrator {
             events,
             factory,
             backends: RwLock::new(HashMap::new()),
+            mcp_oauth: Arc::new(crate::mcp_oauth::McpOAuthRegistry::new(Arc::clone(&secrets))),
             secrets,
             store,
             attachments,

@@ -102,6 +102,11 @@ pub mod codes {
     pub const RUN_COMMAND_NOT_FOUND: &str = "RUN_COMMAND_NOT_FOUND";
     /// 壁時計の予定があり、時刻帯が `bake.json` と違う・読めない（警告。Spec 65）。
     pub const TIMEZONE_MISMATCH: &str = "TIMEZONE_MISMATCH";
+    /// OAuth の MCP サーバーに認可の記録が無い（拒否。Spec 67 D8 — keyring なら記録があれば使える）。
+    pub const MCP_OAUTH_REQUIRED: &str = "MCP_OAUTH_REQUIRED";
+    /// OAuth の MCP サーバーを読み取り専用の置き場（`--secrets env`）で動かそうとしている
+    /// （拒否。Spec 67 D8 — 公開クライアントのリフレッシュトークンは回るので書き戻せない）。
+    pub const MCP_OAUTH_HEADLESS: &str = "MCP_OAUTH_HEADLESS";
 }
 
 /// パスの種類（[`HostView::path_kind`] が返す）。
@@ -131,6 +136,15 @@ pub struct SecretRef {
     pub server: String,
     /// `${secret:NAME}` の NAME。
     pub name: String,
+}
+
+/// 有効な OAuth の MCP サーバー 1 台（Spec 67 D8）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthServer {
+    /// 表示用のサーバー名（共通は名前、個体別は `id:名前`）。
+    pub server: String,
+    /// 設定の `url`（鍵は正準形にして引く）。
+    pub url: String,
 }
 
 /// 起動する個体の `run.json` の `allow` の先頭の語 1 つ。
@@ -178,6 +192,10 @@ pub struct HostView<'a> {
     pub stdio_mcp_commands: &'a [StdioCommand],
     /// 有効な http の MCP サーバーの `headers` が参照する秘密（同上）。
     pub mcp_secret_refs: &'a [SecretRef],
+    /// 有効な OAuth の MCP サーバー（同上。Spec 67 D8）。
+    pub oauth_mcp: &'a [OAuthServer],
+    /// 選んだ置き場へ書き戻せるか（keyring なら真、`--secrets env` なら偽。Spec 67 D8）。
+    pub secrets_writable: bool,
     /// 起動する個体の `run.json` の `allow` の先頭の語（`run` を持たない個体の分も
     /// 渡してよい — 数えるのは `run` を持つ個体だけ）。
     pub run_commands: &'a [RunCommand],
@@ -593,6 +611,52 @@ pub fn headless_preflight(
         });
     }
 
+    // 10b. OAuth の MCP サーバー — 両方・拒否（Spec 67 D8）。読み取り専用の置き場では回った
+    //      リフレッシュトークンを書き戻せない（HEADLESS）。書ける置き場でも記録が無ければ、
+    //      ここ（ブラウザが無い）では認可できない（REQUIRED）。
+    for oauth in view.oauth_mcp {
+        let server = &oauth.server;
+        if !view.secrets_writable {
+            out.push(Finding {
+                level: FindingLevel::Reject,
+                code: codes::MCP_OAUTH_HEADLESS,
+                message: lang
+                    .pick(
+                        &format!("OAuth の MCP サーバー {server} は、読み取り専用の秘密の置き場（--secrets env）では動きません（リフレッシュトークンが回り、書き戻せないため）"),
+                        &format!("The OAuth MCP server {server} cannot run with a read-only secret store (--secrets env): its refresh token rotates and cannot be written back"),
+                    )
+                    .to_owned(),
+                fix: lang
+                    .pick(
+                        "--secrets keyring で動かすか、mcp.json のそのエントリを enabled: false にする",
+                        "Run with --secrets keyring, or set enabled: false on that mcp.json entry",
+                    )
+                    .to_owned(),
+            });
+            continue;
+        }
+        let authorized = crate::mcp_oauth::canonical_resource(&oauth.url)
+            .is_some_and(|resource| (view.secret_present)(&crate::mcp_oauth::token_key(&resource)));
+        if !authorized {
+            out.push(Finding {
+                level: FindingLevel::Reject,
+                code: codes::MCP_OAUTH_REQUIRED,
+                message: lang
+                    .pick(
+                        &format!("OAuth の MCP サーバー {server} は認可されていません。ブラウザが無いのでここでは認可できません"),
+                        &format!("The OAuth MCP server {server} is not authorized; it cannot be authorized here because there is no browser"),
+                    )
+                    .to_owned(),
+                fix: lang
+                    .pick(
+                        "GUI の MCP の設定で「認可する」を押してから、同じ端末で --secrets keyring で動かす",
+                        "Press Authorize in the GUI MCP settings, then run on the same machine with --secrets keyring",
+                    )
+                    .to_owned(),
+            });
+        }
+    }
+
     // 11. serve --door-port があるのに扉の合鍵が無い — serve・拒否（Spec 65 D9）。
     //     開くと言ったのに開けない、を作らない。
     if view.mode == HeadlessMode::Serve
@@ -852,6 +916,8 @@ mod tests {
                 run_approval: RunApproval::AutoApprove,
                 stdio_mcp_commands: &self.stdio,
                 mcp_secret_refs: &[],
+                oauth_mcp: &[],
+                secrets_writable: true,
                 run_commands: &[],
                 path_kind: &all_dirs,
                 command_on_path: &everywhere,
@@ -1219,6 +1285,58 @@ mod tests {
         assert_eq!(findings[0].level, FindingLevel::Warn);
         assert!(findings[0].message.contains("a:docker, b:docker"), "{}", findings[0].message);
         assert!(findings[1].message.contains("D:\\memoria\\m.exe"));
+    }
+
+    /// 10b. OAuth の MCP サーバー（Spec 67 D8）— keyring で記録があれば黙る / 記録が無ければ
+    /// REQUIRED / 読み取り専用の置き場なら記録の有無に関わらず HEADLESS。鍵は正準形の URL で引く。
+    #[test]
+    fn oauth_servers_need_a_record_and_a_writable_store() {
+        let mut world = village();
+        world.set_reception(Some(&AgentId::from("a"))).unwrap();
+        let base = Base {
+            start: ids(&["a"]),
+            stdio: Vec::new(),
+        };
+        let servers = [OAuthServer {
+            server: "tv".to_owned(),
+            url: "https://MCP.tradingview.com/mcp/".to_owned(),
+        }];
+        // 比べる相手は「同じビューから OAuth のエントリだけを抜いた結果」（テスト用の村は
+        // OAuth と関係の無い指摘を持ちうるので、0 件と比べない）。
+        let oauth_codes = |findings: &[Finding]| {
+            findings
+                .iter()
+                .filter(|f| f.code.starts_with("MCP_OAUTH"))
+                .map(|f| f.code)
+                .collect::<Vec<_>>()
+        };
+        let authorized = |key: &str| key == "tpl" || key == "mcp-oauth:https://mcp.tradingview.com/mcp";
+        let mut view = base.view(HeadlessMode::Ask, &authorized, &yes_probe);
+        let baseline = headless_preflight(&world, &[], &view);
+        view.oauth_mcp = &servers;
+        assert_eq!(
+            codes_of(&headless_preflight(&world, &[], &view)),
+            codes_of(&baseline),
+            "記録があれば何も足さない（鍵は正準形で引く）"
+        );
+
+        let only_template = |key: &str| key == "tpl";
+        let mut view = base.view(HeadlessMode::Ask, &only_template, &yes_probe);
+        view.oauth_mcp = &servers;
+        let findings = headless_preflight(&world, &[], &view);
+        assert_eq!(oauth_codes(&findings), vec![codes::MCP_OAUTH_REQUIRED]);
+        let finding = findings.iter().find(|f| f.code == codes::MCP_OAUTH_REQUIRED).unwrap();
+        assert_eq!(finding.level, FindingLevel::Reject);
+        assert!(finding.message.contains("tv"));
+
+        let mut view = base.view(HeadlessMode::Ask, &authorized, &yes_probe);
+        view.oauth_mcp = &servers;
+        view.secrets_writable = false;
+        assert_eq!(
+            oauth_codes(&headless_preflight(&world, &[], &view)),
+            vec![codes::MCP_OAUTH_HEADLESS],
+            "env では記録があっても止める（回ったトークンを書き戻せない）"
+        );
     }
 
     /// 10. headers の参照が選んだストアに無ければ拒否（名前ごとに 1 件）。鍵は mcp:NAME。

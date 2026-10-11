@@ -1,6 +1,6 @@
 # Spec 67: リモート MCP を OAuth の認可で繋ぐ
 
-- 状態: **rev2 → P0 完了**（2026-10-11。P0 = 契約 `mcp_oauth_contract` の凍結 / Windows の資格情報マネージャーの上限は
+- 状態: **rev2 → P0〜P1 完了**（2026-10-11。P1 = コアの実装と結合テスト 7 本 —「P1 実装記録」。P0 = 契約 `mcp_oauth_contract` の凍結 / Windows の資格情報マネージャーの上限は
   **UTF-16 で 1,280 単位**と実測（D4 を訂正）/ rmcp `auth` でビルドが通る / 空のスコープは `scope` を付けない —
   「P0 実測記録」）（2026-10-11 起票 → 同日、査読 3 系統 20 点（重なりを除いて 18 項目）+ 仕様の本文から拾った 1 項目を反映して rev2・未決ゼロ。
   表は Notes 3。P0 の実測のうち、TradingView への動的登録と戻り先の検査は起票前に済ませた — 「前提の実測」が正）
@@ -306,7 +306,7 @@ UTF-16 で保存し、上限 2,560 バイトがその単位で掛かる。ASCII 
 - [x] rmcp の `auth` feature を足して `cargo check -p fuseforks-core -p fuseforks-host` が通る（47 秒）
 - [x] rmcp の `get_authorization_url` に空のスコープを渡すと `scope` パラメータは付かない（`oauth2` 5.0 の実装を読んだ）
 
-### P1 — コア
+### P1 — コア（**完了**・2026-10-11。「P1 実装記録」）
 
 - `mcp.rs`: `auth` 欄の型と検査（D1）/ 鍵の正準化（D4）/ `KeyringCredentialStore`（二層・世代。D4・D7）/
   `McpOAuthRegistry`（D5・D6）/ `serve_http` の OAuth の枝（`AuthClient` を `StreamableHttpClientTransport` へ）/
@@ -323,7 +323,8 @@ UTF-16 で保存し、上限 2,560 バイトがその単位で掛かる。ASCII 
   - `headers` の `Authorization` との併記の拒否 / stdio への `auth` の拒否 / `S256` の無い認可サーバーで止まる
   - 鍵の正準化（末尾の `/`・大文字の host・fragment が同じ鍵になる）
   - OS の記録が UTF-16 で 1,280 単位を超えるとき `token_too_large` で止まり、メモリだけで動き続けない（D4）
-  - manager へ渡す URL は正準形 — パスの無い URL でも `resource` に末尾の `/` が付かない（D9）
+  - ~~manager へ渡す URL は正準形 — パスの無い URL でも `resource` に末尾の `/` が付かない（D9）~~ → 付くことは避けられない
+    （`url` の `Url` はパスの無い URL を常に `/` で表す）。「P1 実装記録」の 4
 
 ### P2 — 認可の流れ（ホスト）と画面
 
@@ -354,6 +355,49 @@ UTF-16 で保存し、上限 2,560 バイトがその単位で掛かる。ASCII 
 ## 未決
 
 （なし。rev1 の未決 2 つは査読で閉じた — スコープは D9、待ちの上限は D2 の 10 分）
+
+## P1 実装記録（2026-10-11）
+
+**新しいファイル `crates/fuseforks-core/src/mcp_oauth.rs`**（`mcp.rs` は既に 1,400 行を超えていたので分けた）—
+純関数（`canonical_resource` / `select_scopes` / `scopes_cover` / `fits_credential_limit`）、記録の型と読み書き
+（`TokenRecord` / `ClientRecord`。`TokenRecord` の Debug はリフレッシュトークンを伏せる）、二層の置き場
+`KeyringCredentialStore`、接続先ごとの `McpOAuthRegistry`。`mcp.rs` は `auth` 欄（型・検査・書き戻し）、
+`McpServerStatus.auth`、`connect_all` の第 3 引数、`serve_http_oauth`、D11 の案内。`Shared` に
+`mcp_oauth: Arc<McpOAuthRegistry>`（プロセスに 1 つ）。`headless.rs` に 2 つの識別子と `OAuthServer`、host の
+`preflight.rs` が OAuth のエントリと置き場の種類（`secrets_writable`）を渡す。
+
+**依存**: rmcp の `auth` に加え、`reqwest_rmcp`（reqwest 0.13 の別名）と `oauth2` 5 を直接の依存へ。どちらも木に
+既にある版に揃うので crate は増えない（`cargo tree` 200 → 210 = P0 の +10 のまま）。Spec 47 の「reqwest の型を
+名指ししない」は版の食い違いを避ける判断で、0.13 に固定した別名なら rmcp が版を上げたときにコンパイルエラーとして
+表に出る。
+
+**実装で決めた・訂正したこと**:
+
+1. **鍵と `resource` は設定の `url` の正準形**（D4 の「保護リソースのメタデータの `resource`」から変えた）。
+   鍵を引くのにメタデータを取りに行かずに済み（記録が無ければネットワークに出ずに `required` にできる）、
+   MCP 仕様の「MCP サーバーを特定する最も具体的な URI」にも当たる。TradingView は 2 つが同じ値
+2. **プロセスをまたぐ取り合い（D5）は `load` の照合で吸収する**（rev2 の「`invalid_grant` で読み直して 1 回やり直す」を
+   前へ倒した）。rmcp の manager は要求ごとに `load` を呼ぶので、そのたびに OS の記録と照合し、別のプロセスが回した
+   リフレッシュトークンを**自分がリフレッシュする前に**拾う。アクセストークンが生きていればそのまま使い、次の
+   リフレッシュだけを新しいトークンで行う — 双方が回し合わないため。代償は要求ごとに資格情報ストアを 1 回読むこと。
+   接続が拒否で失敗し、OS のトークンが使ったものと違うときの 1 回のやり直しも残した（`refetched`）
+3. **この実行で拒まれた接続先は、人が認可し直すまで接続を試みない**（`McpOAuthRegistry` の `required` の集合）。
+   rmcp はリフレッシュの失敗を通信の失敗も含めて `TokenRefreshFailed` に畳むので、**OS の記録は消さない**
+   （一時的な障害で認可を失わせない）。次の起動では 1 回だけ試す
+4. **パスの無い URL では `resource` に末尾の `/` が付く** — rmcp は manager の `base_url`（`Url`）を `to_string()` で
+   送り、`url` の `Url` はパスの無い URL を常に `/` で表す。正準形の文字列を渡しても避けられない。MCP 仕様は
+   「付けない」を SHOULD としている。TradingView は `/mcp` のパスがあるので当たらない。自前で揃えるには rmcp の
+   トークン要求を組み直すことになるので、当たる接続先が出るまで据え置く
+5. **期限切れの形は 2 つの条件で作っている**（`expires_in` 0 と `token_received_at` 0）。どちらか片方だけでも
+   rmcp はリフレッシュする（変異で確かめた — 片方だけの変異は緑、両方で 4 本が赤）
+6. **計器の `outcome` に `token_too_large` を足した**（P0 の契約の列挙に無かった）。`refreshed` は `save` で記録が
+   書き換わったときに出す（サーバー名はこの層に無いので `server=-`）
+7. **`McpServerStatus.auth` は `#[serde(default)]`** — 旧いフロントが読んでも壊れない。画面は P2
+
+**テスト**: 単体（`mcp_oauth.rs` 10 本・`mcp.rs` に 2 本・`headless.rs` に 1 本）と結合 `tests/mcp_oauth.rs` 7 本。
+結合はループバックに保護リソースのメタデータ・認可サーバー・MCP サーバー（Bearer を検査する initialize / tools/list）を
+1 つで受けるスタブを立て、rmcp の実際の経路を通す。**変異 6 本のうち 5 本は予測どおり狙った 1 本だけが赤**、
+M1（期限だけを 3600 にする）は 5 の理由で緑、両方を壊す変異で赤を確認した。
 
 ## P0 実測記録（2026-10-11）
 

@@ -76,6 +76,7 @@ pub mod jev;
 pub mod judge;
 pub mod llm;
 pub mod mcp;
+pub mod mcp_oauth;
 pub mod model;
 pub mod orchestrator;
 pub mod plan;

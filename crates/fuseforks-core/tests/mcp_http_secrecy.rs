@@ -13,6 +13,13 @@ use fuseforks_core::mcp::{McpConfig, McpManager};
 use fuseforks_core::{InMemorySecretStore, SecretStore};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// OAuth のエントリを持たない設定用の、空の認可の管理者（Spec 67。読まれない）。
+fn no_oauth() -> fuseforks_core::mcp_oauth::McpOAuthRegistry {
+    fuseforks_core::mcp_oauth::McpOAuthRegistry::new(std::sync::Arc::new(
+        fuseforks_core::InMemorySecretStore::new(),
+    ))
+}
+
 /// 受けた要求の Authorization を記録して 401 を返す（Spec 65 D3 の結合）。
 /// 返すのは 401 だけ — 確かめたいのは「何が送られたか」と「送られたか」で、接続の成否ではない。
 async fn spawn_recording_401_server() -> (u16, Arc<Mutex<Vec<String>>>) {
@@ -66,7 +73,7 @@ async fn a_resolved_secret_ref_is_sent_as_the_secret() {
     let store = InMemorySecretStore::new();
     store.set("mcp:REF_TOKEN", "resolved-value-42").unwrap();
 
-    let manager = McpManager::connect_all(&config_with_ref(port), &store).await;
+    let manager = McpManager::connect_all(&config_with_ref(port), &store, &no_oauth()).await;
     let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
     assert!(!status.connected, "相手は 401 を返す");
     let error = status.error.expect("理由が残ること");
@@ -91,7 +98,7 @@ async fn an_unresolved_secret_ref_never_contacts_the_server() {
     let (port, seen) = spawn_recording_401_server().await;
 
     let manager =
-        McpManager::connect_all(&config_with_ref(port), &InMemorySecretStore::new()).await;
+        McpManager::connect_all(&config_with_ref(port), &InMemorySecretStore::new(), &no_oauth()).await;
     let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
     assert!(!status.connected);
     let error = status.error.expect("理由が残ること");
@@ -156,7 +163,7 @@ async fn a_401_with_an_echoing_body_does_not_leak_the_token() {
     );
     let config: McpConfig = serde_json::from_str(&raw).expect("受理されること");
 
-    let manager = McpManager::connect_all(&config, &InMemorySecretStore::new()).await;
+    let manager = McpManager::connect_all(&config, &InMemorySecretStore::new(), &no_oauth()).await;
     let status = manager.statuses().first().expect("1 台ぶんの状態").clone();
 
     assert!(!status.connected, "401 で接続失敗になること");

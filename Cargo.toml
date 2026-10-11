@@ -88,6 +88,14 @@ url = "2"
 # Spec 47 P2 — headers を rmcp の custom_headers（http::HeaderName/Value）へ
 # 写すため。ツリーには 1.4.2 が 1 版だけ居る（reqwest 0.12 / 0.13 で共有）。
 http = "1"
+# Spec 67 — rmcp の AuthClient に渡す HTTP クライアントは reqwest 0.13 の Client（rmcp が
+# StreamableHttpClient を実装しているのはこの型だけ）。LLM クライアントの 0.12 とは別の実体なので
+# **別名で 0.13 を名指しする**。依存の木に既にある版（rmcp が持ち込む）に揃うので crate は増えない。
+# rmcp が reqwest の版を上げたら、ここがコンパイルエラーとして表に出る（黙って二重にはならない）。
+reqwest_rmcp = { package = "reqwest", version = "0.13", default-features = false }
+# Spec 67 — トークン応答（StandardTokenResponse）を組み立て・読むため。rmcp は oauth2 の型を
+# 再公開しない。rmcp の auth が持ち込む 5.0 と同じ版なので crate は増えない。
+oauth2 = { version = "5", default-features = false }
 # UI 言語の初回確定（Spec 13）。Webview の navigator.language は OS 設定と
 # ズレるため、OS のロケールを直接読む。使うのは起動時の 1 回だけで、
 # コアは確定した値で分岐しない（settings_contract の案 A）。依存ゼロの小 crate。

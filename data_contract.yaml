@@ -195,9 +195,10 @@ enums:
            application_type native、token_endpoint_auth_method none。戻り先の不一致で拒まれたら
            その認可の中で 1 回だけ登録し直す。code_challenge_methods_supported に S256 が無ければ
            進まない (仕様の MUST)。動的登録が無いサーバーは名指しで止め、client_id を人が書く口は作らない
-        4. **トークンの置き場は二層** — 鍵 `mcp-oauth:<resource>` (resource は保護リソースの
-           メタデータの resource を正準形へ: scheme と host を小文字・既定のポートと fragment と
-           末尾の / を落とす・query は残す。無ければ url を同じ規則で)。OS の資格情報ストアには
+        4. **トークンの置き場は二層** — 鍵 `mcp-oauth:<resource>` (resource は設定の url を正準形へ:
+           scheme と host を小文字・既定のポートと fragment と末尾の / を落とす・query は残す。
+           P1 で「保護リソースのメタデータの resource」から変えた — 鍵を引くのにメタデータを取りに
+           行かずに済む。認可サーバーへ送る resource も同じ値)。OS の資格情報ストアには
            { issuer, refreshToken, scopes, receivedAt } だけを置き、**アクセストークンはメモリだけ**。
            rmcp の CredentialStore 実装 (KeyringCredentialStore) は接続先ごとに 1 つで全接続が共有し、
            load = メモリが無ければ OS の記録から「アクセストークン空・期限 0」の token_response を組む
@@ -211,7 +212,11 @@ enums:
            KeyringCredentialStore)。個体の接続はその複製を使い、リフレッシュは Mutex で直列。
            プロセスをまたぐ取り合いは、リフレッシュが invalid_grant で拒まれたらメモリを捨てて
            OS の記録を読み直し、リフレッシュトークンが変わっていれば 1 回だけやり直す
-           (公開クライアントのリフレッシュトークンは回る — 仕様の MUST)。ファイルロックは作らない
+           (公開クライアントのリフレッシュトークンは回る — 仕様の MUST)。ファイルロックは作らない。
+           **P1 で前へ倒した**: load が要求ごとに OS の記録と照合し、相手が回したリフレッシュトークンを
+           自分がリフレッシュする前に拾う (アクセストークンが生きていればそのまま使う — 回し合わない)。
+           この実行で拒まれた接続先は人が認可し直すまで接続を試みない (OS の記録は消さない —
+           rmcp は通信の失敗もリフレッシュの失敗に畳むので、一時的な障害で認可を失わせない)
         6. **状態は接続先ごと** — none (OAuth でない) / authorized (OS の記録があり要求スコープを含む。
            アクセストークンの有無は問わない。接続を試みる) / required (記録なし・スコープ不足・
            回復しないリフレッシュの拒否。**serve_http を呼ばない**)。McpServerStatus.auth へ写し、
@@ -233,10 +238,12 @@ enums:
            空のスコープを渡すと oauth2 5.0 は scope パラメータを付けない (P0 で実装を読んで確認)。
            実行時の 403 insufficient_scope は required へ落とす (自動の再認可はしない)。
            **rmcp は resource に受け取った URL の Url::to_string() を送る** — パスの無い URL では
-           末尾に / が付くので、manager へは 4 の正準形の URL を渡す
+           末尾に / が付き、正準形の文字列を渡しても避けられない (url の Url はパスの無い URL を常に
+           / で表す。P1 で確認)。当たる接続先が出るまで据え置く (TradingView はパスがある)
         10. **計器** — `mcp oauth: server=… resource=… outcome=…`。outcome は閉じた列挙
             (authorized / refreshed / refetched / required / denied / timeout / cancelled /
-            reregistered / no_registration / no_pkce / revoked / error)。トークン・認可コード・
+            reregistered / no_registration / no_pkce / revoked / token_too_large / error。
+            token_too_large は P1 で足した)。トークン・認可コード・
             state・PKCE の値・client_id・認可サーバーの応答本文は書かない。resource はサーバーの
             識別子で利用者の個人情報ではないので書く
         11. **宣言していないエントリへの案内** — auth の無い http エントリが resource_metadata 付きの

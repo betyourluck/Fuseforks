@@ -321,6 +321,9 @@ struct Shared {
     backends: RwLock<HashMap<ModelTemplateId, Arc<dyn LlmBackend>>>,
     /// 秘密の保管先。設定ファイルとは別系統で、平文の `world.json` には触れない。
     secrets: Arc<dyn SecretStore>,
+    /// リモート MCP の OAuth の認可の管理者（Spec 67 D5）。**プロセスに 1 つ**を共通と全個体の
+    /// MCP 接続で共有する — 接続先ごとに `AuthClient` を 1 つにして、リフレッシュを取り合わせない。
+    mcp_oauth: Arc<crate::mcp_oauth::McpOAuthRegistry>,
     store: ConfigStore,
     /// 添付画像の置き場（Spec 23）。`{workspace}/attachments/`。
     attachments: crate::attachment::AttachmentStore,

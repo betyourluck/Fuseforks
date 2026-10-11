@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{CoreError, CoreResult};
+use crate::mcp_oauth::{McpAuthState, McpOAuthRegistry, OAuthConnectError};
 use crate::secret::{env_secret_name, SecretStore};
 use crate::tool::{AgentTool, ToolContext};
 
@@ -104,8 +105,27 @@ pub struct McpHttpConfig {
     /// 止まりだが、ここの Authorization は**外部へ送信され**、村（workspace）を
     /// 配るとトークンごと配られる。値はエラーにもログにも出さない（D7）。
     pub headers: BTreeMap<String, String>,
+    /// 認証の仕方（Spec 67 D1）。`Some(OAuth)` のとき、接続は OAuth の認可で行う
+    /// （`headers` の `Authorization` との併記は読み込みで拒否済み）。`None` は従来どおり。
+    pub auth: Option<McpAuthMode>,
     /// 無効化フラグ。**検証は enabled に関わらず掛かる**（スキップは接続だけ）。
     pub enabled: bool,
+}
+
+/// http エントリの `auth` 欄（Spec 67 D1。閉じた列挙 — 今は `"oauth"` だけ）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAuthMode {
+    /// OAuth 2.1 の認可（ブラウザでのログインと承認）。
+    OAuth,
+}
+
+impl McpAuthMode {
+    /// ワイヤの綴り。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OAuth => "oauth",
+        }
+    }
 }
 
 impl McpServerConfig {
@@ -235,10 +255,16 @@ impl Serialize for McpServerConfig {
                 out.end()
             }
             Self::Http(config) => {
-                let mut out = serializer.serialize_struct("McpServerConfig", 4)?;
+                let len = if config.auth.is_some() { 5 } else { 4 };
+                let mut out = serializer.serialize_struct("McpServerConfig", len)?;
                 out.serialize_field("type", "http")?;
                 out.serialize_field("url", &config.url)?;
                 out.serialize_field("headers", &config.headers)?;
+                // Spec 67 — **書き戻しで消さない**（共通の mcp.json は構造体から書き戻す本番の
+                // 経路。Spec 47 rev2.1 の type と同じ形）。None のときは出さず、従来形とバイト一致。
+                if let Some(auth) = config.auth {
+                    out.serialize_field("auth", auth.as_str())?;
+                }
                 out.serialize_field("enabled", &config.enabled)?;
                 out.end()
             }
@@ -269,6 +295,7 @@ struct RawServerConfig {
     env: Option<BTreeMap<String, String>>,
     url: Option<String>,
     headers: Option<BTreeMap<String, String>>,
+    auth: Option<String>,
     enabled: Option<bool>,
 }
 
@@ -360,14 +387,34 @@ fn validate_entry(name: &str, raw: RawServerConfig) -> Result<McpServerConfig, S
                 ));
             }
         }
+        // 7. 認証の仕方（Spec 67 D1）。閉じた列挙で、Authorization との併記は拒否 —
+        //    認証の席が 2 つあると、どちらが効いたかが読めない。
+        let auth = match raw.auth.as_deref() {
+            None => None,
+            Some("oauth") => Some(McpAuthMode::OAuth),
+            Some(other) => {
+                return Err(format!("`{name}`: auth `{other}` は使えません（oauth だけ）"));
+            }
+        };
+        if auth.is_some() && headers.keys().any(|key| key.eq_ignore_ascii_case("authorization")) {
+            return Err(format!(
+                "`{name}`: auth が oauth のエントリに headers の Authorization は書けません\
+                 （トークンは認可で得ます。どちらか一方にしてください）"
+            ));
+        }
         Ok(McpServerConfig::Http(McpHttpConfig {
             url,
             headers,
+            auth,
             enabled,
         }))
     } else {
         // 2. 相互排他（逆向き）。
-        for (field, present) in [("url", raw.url.is_some()), ("headers", raw.headers.is_some())] {
+        for (field, present) in [
+            ("url", raw.url.is_some()),
+            ("headers", raw.headers.is_some()),
+            ("auth", raw.auth.is_some()),
+        ] {
             if present {
                 return Err(format!(
                     "`{name}`: stdio のエントリに {field} は書けません（リモートサーバー\
@@ -419,6 +466,10 @@ pub struct McpServerStatus {
     pub tools: Vec<String>,
     /// 失敗した理由。接続できていれば `None`。
     pub error: Option<String>,
+    /// OAuth の認可の状態（Spec 67 D6）。`auth: "oauth"` でないエントリは `none`。
+    /// 接続の有無と独立に、資格情報ストアの記録とこの実行の拒否から決まる。
+    #[serde(default)]
+    pub auth: crate::mcp_oauth::McpAuthState,
 }
 
 /// ツール名を「サーバー名で修飾した、安全な名前」へ変換する（純関数）。
@@ -610,7 +661,14 @@ impl McpManager {
     ///
     /// `secrets` は `headers` の `${secret:NAME}` を引く置き場（Spec 65 D3。GUI は資格情報
     /// ストア、`--secrets env` は環境変数）。参照を書かない `mcp.json` はここを 1 度も読まない。
-    pub async fn connect_all(config: &McpConfig, secrets: &dyn SecretStore) -> Self {
+    ///
+    /// `oauth` は `auth: "oauth"` のエントリの認可の管理者（Spec 67 D5。プロセスに 1 つを共有する —
+    /// 個体ごとに作るとリフレッシュを取り合う）。OAuth のエントリが無ければ 1 度も読まない。
+    pub async fn connect_all(
+        config: &McpConfig,
+        secrets: &dyn SecretStore,
+        oauth: &McpOAuthRegistry,
+    ) -> Self {
         let mut manager = Self::default();
 
         for (name, server) in &config.servers {
@@ -620,12 +678,14 @@ impl McpManager {
                     connected: false,
                     tools: Vec::new(),
                     error: Some("無効化されています".to_owned()),
+                    auth: auth_state_of(server, oauth),
                 });
                 continue;
             }
 
-            let attempt = tokio::time::timeout(CONNECT_TIMEOUT, connect_one(name, server, secrets))
-                .await
+            let attempt =
+                tokio::time::timeout(CONNECT_TIMEOUT, connect_one(name, server, secrets, oauth))
+                    .await
                 .unwrap_or_else(|_| {
                     Err(CoreError::Mcp {
                         server: name.clone(),
@@ -643,6 +703,7 @@ impl McpManager {
                         connected: true,
                         tools: tools.iter().map(|t| t.name().to_owned()).collect(),
                         error: None,
+                        auth: auth_state_of(server, oauth),
                     });
                     manager.tools.extend(tools);
                     manager.connections.push(service);
@@ -653,6 +714,7 @@ impl McpManager {
                         connected: false,
                         tools: Vec::new(),
                         error: Some(err.to_string()),
+                        auth: auth_state_of(server, oauth),
                     });
                 }
             }
@@ -680,17 +742,29 @@ impl McpManager {
     }
 }
 
+/// エントリの認可の状態（Spec 67 D6）。OAuth でなければ `none`。
+fn auth_state_of(server: &McpServerConfig, oauth: &McpOAuthRegistry) -> McpAuthState {
+    match server {
+        McpServerConfig::Http(config) if config.auth.is_some() => oauth.state_of(&config.url),
+        _ => McpAuthState::None,
+    }
+}
+
 /// 1 台へ接続し、ツール一覧まで取る。
 async fn connect_one(
     name: &str,
     config: &McpServerConfig,
     secrets: &dyn SecretStore,
+    oauth: &McpOAuthRegistry,
 ) -> CoreResult<(RunningService<RoleClient, ()>, Vec<Arc<dyn AgentTool>>)> {
     let service = match config {
         McpServerConfig::Stdio(config) => serve_stdio(name, config).await?,
         McpServerConfig::Http(config) => {
             let headers = resolve_headers(name, &config.headers, secrets)?;
-            serve_http(name, &config.url, &headers).await?
+            match config.auth {
+                Some(McpAuthMode::OAuth) => serve_http_oauth(name, &config.url, &headers, oauth).await?,
+                None => serve_http(name, &config.url, &headers).await?,
+            }
         }
     };
 
@@ -878,6 +952,116 @@ async fn serve_http(
     url: &str,
     headers: &BTreeMap<String, String>,
 ) -> CoreResult<RunningService<RoleClient, ()>> {
+    let transport_config = http_transport_config(name, url, headers)?;
+    // `from_config` は rmcp 側の reqwest(0.13) Client を内部で作る。
+    let transport = rmcp::transport::StreamableHttpClientTransport::from_config(transport_config);
+    ().serve(transport).await.map_err(|err| CoreError::Mcp {
+        server: name.to_owned(),
+        message: classify_http_connect_error(&err.to_string()),
+    })
+}
+
+/// OAuth の認可で繋ぐ（Spec 67）。トークンは接続先ごとに 1 つの `AuthClient` が要求ごとに付け、
+/// 期限の手前で黙ってリフレッシュする（D5）。**ここからブラウザは開かない**（D6）。
+///
+/// 接続が認可の拒否で失敗し、OS の記録のリフレッシュトークンが使ったものと違う（別のプロセスが回した）
+/// ときだけ 1 回やり直す（D5）。それでも拒まれたら、この実行の間は `required` として接続を試みない。
+async fn serve_http_oauth(
+    name: &str,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    oauth: &McpOAuthRegistry,
+) -> CoreResult<RunningService<RoleClient, ()>> {
+    let resource = crate::mcp_oauth::canonical_resource(url).unwrap_or_else(|| "-".to_owned());
+    let fail = |message: String| CoreError::Mcp {
+        server: name.to_owned(),
+        message,
+    };
+    for attempt in 0..2 {
+        let client = match oauth.client_for(url).await {
+            Ok(client) => client,
+            Err(err) => {
+                crate::note!(
+                    "mcp oauth: server={name} resource={resource} outcome={}",
+                    err.outcome()
+                );
+                if err == OAuthConnectError::Required("scope") {
+                    oauth.mark_required(url);
+                }
+                return Err(fail(oauth_connect_message(&err)));
+            }
+        };
+        let transport_config = http_transport_config(name, url, headers)?;
+        let transport =
+            rmcp::transport::StreamableHttpClientTransport::with_client(client, transport_config);
+        match ().serve(transport).await {
+            Ok(service) => {
+                crate::note!(
+                    "mcp oauth: server={name} resource={resource} outcome={}",
+                    if attempt == 0 { "authorized" } else { "refetched" }
+                );
+                return Ok(service);
+            }
+            Err(err) => {
+                let text = err.to_string();
+                if text.contains("token_too_large") {
+                    crate::note!("mcp oauth: server={name} resource={resource} outcome=token_too_large");
+                    return Err(fail(
+                        "認可の記録が資格情報ストアの上限を超えたため保存できません（token_too_large）"
+                            .to_owned(),
+                    ));
+                }
+                if is_auth_rejection(&text) {
+                    if attempt == 0 && oauth.os_has_other_refresh_token(url).await {
+                        continue;
+                    }
+                    oauth.mark_required(url);
+                    crate::note!("mcp oauth: server={name} resource={resource} outcome=required");
+                    return Err(fail(
+                        "認可が切れました（リフレッシュが拒まれました）。MCP の設定の「認可する」から\
+                         認可し直してください"
+                            .to_owned(),
+                    ));
+                }
+                crate::note!("mcp oauth: server={name} resource={resource} outcome=error");
+                return Err(fail(classify_http_connect_error(&text)));
+            }
+        }
+    }
+    Err(fail("認可に失敗しました".to_owned()))
+}
+
+/// 接続の失敗が「認可が要る・拒まれた」か（rmcp の `AuthError` の表示と、MCP サーバーの 401 の challenge）。
+fn is_auth_rejection(text: &str) -> bool {
+    text.contains("OAuth authorization required")
+        || text.contains("OAuth token refresh failed")
+        || text.contains("AuthRequired")
+}
+
+/// [`OAuthConnectError`] を、利用者の次の手が読める文へ（相手の応答本文は載せない）。
+fn oauth_connect_message(err: &OAuthConnectError) -> String {
+    match err {
+        OAuthConnectError::Required("scope") => {
+            "認可が必要です（接続先が求めるスコープが、保存した認可に含まれていません）。\
+             MCP の設定の「認可する」から認可し直してください"
+                .to_owned()
+        }
+        OAuthConnectError::Required(_) => {
+            "認可が必要です（MCP の設定の「認可する」から）。自動ではブラウザを開きません".to_owned()
+        }
+        OAuthConnectError::NoPkce => {
+            "認可サーバーが PKCE（S256）に対応していないため、認可できません".to_owned()
+        }
+        OAuthConnectError::Failed(message) => format!("認可の準備に失敗しました: {message}"),
+    }
+}
+
+/// Streamable HTTP の接続の設定を組む（`headers` の検査と、Bearer を rmcp の `auth_header` へ渡すこと）。
+fn http_transport_config(
+    name: &str,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+) -> CoreResult<rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig> {
     use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
     let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.to_owned());
@@ -913,15 +1097,7 @@ async fn serve_http(
     if !custom.is_empty() {
         transport_config = transport_config.custom_headers(custom);
     }
-
-    // `from_config` は rmcp 側の reqwest(0.13) Client を内部で作る。**こちらから
-    // reqwest の型を名指ししない** — ワークスペースの 0.12（LLM クライアント）とは
-    // 別の実体で、名指しすると版の不一致でコンパイルが落ちる（P0 実測）。
-    let transport = rmcp::transport::StreamableHttpClientTransport::from_config(transport_config);
-    ().serve(transport).await.map_err(|err| CoreError::Mcp {
-        server: name.to_owned(),
-        message: classify_http_connect_error(&err.to_string()),
-    })
+    Ok(transport_config)
 }
 
 /// HTTP 接続エラーを、**相手の応答本文を含まない**分類文字列へ落とす（純関数。
@@ -936,11 +1112,13 @@ async fn serve_http(
 /// 全部を丸めると「動かないが理由が分からない」へ戻る。
 fn classify_http_connect_error(text: &str) -> String {
     // OAuth の challenge（WWW-Authenticate）は rmcp が `AuthRequired` として
-    // 返す（alphaXiv で実測 — 401 の HTTP 行を持たない別の形）。対話の
-    // OAuth フローは持たない（Spec 47 Notes 2）ので、案内は API キーの側。
+    // 返す（alphaXiv で実測 — 401 の HTTP 行を持たない別の形）。Spec 67 D11 —
+    // auth を書いていないエントリへの案内に、OAuth の選択肢を足す（両方を出す。自動では書き換えない）。
     if text.contains("AuthRequired") {
-        return "認証が必要です。headers の Authorization に API キー（Bearer）を\
-                設定してください。自動では再試行しません"
+        return "認証が必要です。このサーバーが OAuth の認可を求めているなら、mcp.json の\
+                エントリに \"auth\": \"oauth\" を足して MCP の設定の「認可する」を押してください。\
+                API キーを受けるサーバーなら headers の Authorization（Bearer）に設定してください。\
+                自動では再試行しません"
             .to_owned();
     }
     let Some(code) = find_http_status(text) else {
@@ -1138,6 +1316,49 @@ mod tests {
         ));
     }
 
+    /// Spec 67 D1 — `auth: "oauth"` は読めて、**書き戻しで消えない**（共通の mcp.json は構造体から
+    /// 書き戻す本番の経路。Spec 47 rev2.1 の type と同じ落とし穴）。
+    #[test]
+    fn oauth_entries_are_accepted_and_survive_the_write_back() {
+        let config = parse_entry(
+            "tradingview",
+            r#"{ "type": "http", "url": "https://mcp.tradingview.com/mcp", "auth": "oauth" }"#,
+        )
+        .expect("受理されること");
+        let Some(McpServerConfig::Http(server)) = config.servers.get("tradingview") else {
+            panic!("http と読めること");
+        };
+        assert_eq!(server.auth, Some(McpAuthMode::OAuth));
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains(r#""auth":"oauth""#), "書き戻しで消えた: {json}");
+        let back: McpConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, config);
+        // auth の無いエントリは従来形のまま（auth の欄が生えない）。
+        let plain = parse_entry("p", r#"{ "type": "http", "url": "https://example.com/mcp" }"#).unwrap();
+        assert!(!serde_json::to_string(&plain).unwrap().contains("auth"));
+    }
+
+    #[test]
+    fn oauth_conflicts_and_unknown_values_are_rejected_by_name() {
+        rejects(
+            "both",
+            r#"{ "type": "http", "url": "https://example.com/mcp", "auth": "oauth", "headers": { "authorization": "Bearer x" } }"#,
+            &["auth", "Authorization"],
+        );
+        rejects(
+            "odd",
+            r#"{ "type": "http", "url": "https://example.com/mcp", "auth": "basic" }"#,
+            &["auth", "basic"],
+        );
+        rejects("local", r#"{ "command": "npx", "auth": "oauth" }"#, &["auth"]);
+        // Authorization 以外の headers は併記できる。
+        parse_entry(
+            "extra",
+            r#"{ "type": "http", "url": "https://example.com/mcp", "auth": "oauth", "headers": { "X-Client": "fuseforks" } }"#,
+        )
+        .expect("Authorization 以外は併記できる");
+    }
+
     #[test]
     fn http_entry_is_accepted_with_url_and_headers() {
         // 起点の実機入力（type: http + url + headers）は新設計では正常系（rev2.1）。
@@ -1285,6 +1506,7 @@ mod tests {
                         "Authorization".to_owned(),
                         "Bearer x".to_owned(),
                     )]),
+                    auth: None,
                     enabled: true,
                 }),
             )]),
@@ -1342,6 +1564,8 @@ mod tests {
         let raw = r#"AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"mcp\", resource_metadata=\"https://api.example.org/.well-known/oauth-protected-resource\"" })"#;
         let classified = classify_http_connect_error(raw);
         assert!(classified.contains("API キー"), "実際: {classified}");
+        // Spec 67 D11 — OAuth の選択肢も出す（両方。自動では書き換えない）。
+        assert!(classified.contains(r#""auth": "oauth""#), "実際: {classified}");
         assert!(!classified.contains("well-known"), "生文のまま: {classified}");
     }
 

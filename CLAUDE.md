@@ -7385,7 +7385,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **rev2 → P0 完了**（同日。契約 `mcp_oauth_contract`
+- [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **rev2 → P0〜P1 完了**（P1 = 新しいファイル
+  `mcp_oauth.rs`（二層の置き場 `KeyringCredentialStore`・接続先ごとの `McpOAuthRegistry`・純関数）/ `auth` 欄・
+  `McpServerStatus.auth`・`serve_http_oauth`・D11 の案内 / 起動前検査の `MCP_OAUTH_REQUIRED`・`MCP_OAUTH_HEADLESS` /
+  結合 7 本はループバックの認可サーバー + MCP サーバーのスタブで rmcp の実際の経路を通す・変異 6 本（1 本は期限切れの
+  形が二重なので片方だけでは緑、両方で赤）。**訂正 3 つ** = 鍵と `resource` は設定の `url` の正準形 / プロセスをまたぐ
+  取り合いは `load` が要求ごとに OS と照合して吸収 / パスの無い URL の末尾の `/` は rmcp の都合で避けられない（据え置き）。
+  reqwest 0.13 と oauth2 5 を別名で直接の依存へ — crate は増えない）。P0 は（同日。契約 `mcp_oauth_contract`
   を不変条件 12 本で凍結 / **Windows の資格情報マネージャーに入る値は UTF-16 で 1,280 単位**（`keyring` 3 が UTF-16 で保存し、
   上限 2,560 バイトがその単位で掛かる。ASCII でも日本語でも 1,281 字で失敗 — 記憶の「2,560 バイト」は字数では半分だった。
   既存の API キーや `${secret:…}` も同じ上限）/ rmcp `auth` でビルドが通る / 空のスコープは `oauth2` 5.0 が `scope` を付けない /

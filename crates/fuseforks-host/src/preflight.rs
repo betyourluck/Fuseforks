@@ -20,8 +20,8 @@ use std::path::Path;
 
 use fuseforks_core::command::RunApproval;
 use fuseforks_core::headless::{
-    headless_preflight, Finding, HeadlessMode, HostView, PathKind, ProcessTimeZone, RunCommand,
-    SecretRef, StdioCommand,
+    headless_preflight, Finding, HeadlessMode, HostView, OAuthServer, PathKind, ProcessTimeZone,
+    RunCommand, SecretRef, StdioCommand,
 };
 use fuseforks_core::mcp::McpServerConfig;
 use fuseforks_core::model::AgentId;
@@ -153,7 +153,7 @@ pub async fn preflight(
     let jev = JevSettingsStore::load(paths.data_dir());
     let jev_token_present = stored_token(secrets.as_ref()).is_some();
 
-    let (stdio_mcp_commands, mcp_secret_refs) = mcp_materials(&store, &start).await;
+    let (stdio_mcp_commands, mcp_secret_refs, oauth_mcp) = mcp_materials(&store, &start).await;
     let run_commands = run_commands(&store, &start).await;
     let process_time_zone = read_process_time_zone();
     let baked_time_zone = read_baked_time_zone(paths.data_dir());
@@ -171,6 +171,8 @@ pub async fn preflight(
         run_approval: req.run_approval,
         stdio_mcp_commands: &stdio_mcp_commands,
         mcp_secret_refs: &mcp_secret_refs,
+        oauth_mcp: &oauth_mcp,
+        secrets_writable: matches!(req.secrets, SecretSource::Keyring),
         run_commands: &run_commands,
         path_kind: &path_kind,
         command_on_path: &command_on_path,
@@ -235,9 +237,10 @@ fn resolve_start(world: &World, req: &PreflightRequest) -> Result<Vec<AgentId>, 
 async fn mcp_materials(
     store: &ConfigStore,
     start: &[AgentId],
-) -> (Vec<StdioCommand>, Vec<SecretRef>) {
+) -> (Vec<StdioCommand>, Vec<SecretRef>, Vec<OAuthServer>) {
     let mut stdio = Vec::new();
     let mut refs = Vec::new();
+    let mut oauth = Vec::new();
     let mut collect = |label: String, config: &McpServerConfig| {
         if !config.enabled() {
             return;
@@ -247,12 +250,19 @@ async fn mcp_materials(
                 server: label,
                 command: own.command.clone(),
             }),
-            McpServerConfig::Http(own) => refs.extend(own.secret_ref_names().into_iter().map(
-                |name| SecretRef {
+            McpServerConfig::Http(own) => {
+                refs.extend(own.secret_ref_names().into_iter().map(|name| SecretRef {
                     server: label.clone(),
                     name,
-                },
-            )),
+                }));
+                // Spec 67 D8 — OAuth のエントリは起動前検査で記録と置き場の種類を見る。
+                if own.auth.is_some() {
+                    oauth.push(OAuthServer {
+                        server: label.clone(),
+                        url: own.url.clone(),
+                    });
+                }
+            }
         }
     };
     if let Ok(common) = store.read_mcp_config().await {
@@ -267,14 +277,14 @@ async fn mcp_materials(
             }
         }
     }
-    (stdio, refs)
+    (stdio, refs, oauth)
 }
 
 /// 有効な http の MCP サーバーが `headers` で参照する秘密の名前（共通と、渡した個体の個体別。
 /// 重複なし・名前の順）。秘密の変数名の衝突検査（[`check_secret_names`]）が読む — `build_host` と
 /// 起動前検査は**村の全個体**を渡して、数える範囲を揃える。
 pub(crate) async fn mcp_secret_ref_names(store: &ConfigStore, ids: &[AgentId]) -> Vec<String> {
-    let (_, refs) = mcp_materials(store, ids).await;
+    let (_, refs, _) = mcp_materials(store, ids).await;
     let names: BTreeSet<String> = refs.into_iter().map(|r| r.name).collect();
     names.into_iter().collect()
 }
@@ -290,7 +300,7 @@ pub async fn village_mcp_secret_refs(
     ids: &[AgentId],
 ) -> Vec<(String, Vec<String>)> {
     let store = ConfigStore::new(workspace.to_path_buf());
-    let (_, refs) = mcp_materials(&store, ids).await;
+    let (_, refs, _) = mcp_materials(&store, ids).await;
     let mut by_name: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
     for r in refs {
         by_name.entry(r.name).or_default().insert(r.server);
