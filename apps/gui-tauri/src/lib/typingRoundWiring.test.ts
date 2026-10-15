@@ -44,14 +44,20 @@ describe("入力中バブルの周回数の配線", () => {
     expect(orchestrator).toContain("round: event.round,");
   });
 
-  it("ChatPanel は入力中バブルの中でだけ読み、分母は個体の上限", () => {
+  it("ChatPanel は入力中バブルの中でだけ読み、バッジは純関数の形・全文は title", () => {
     const bubble = /class="typing-bubble[\s\S]*?<\/div>/.exec(panel);
     expect(bubble, "入力中バブルが無い").not.toBeNull();
     expect(bubble![0]).toContain('v-if="state.toolRound[agent.id]"');
-    expect(bubble![0]).toContain("typingRoundText(agent)");
-    expect(panel).toContain("agent.maxToolIterations");
+    // バッジの文字と警告は lib/typingRound.ts の規則から（画面で数を組まない）。
+    expect(bubble![0]).toContain("roundBadgeOf(agent).label");
+    expect(bubble![0]).toContain("roundBadgeOf(agent).nearLimit ? 'typing-round-near'");
+    expect(panel).toContain("roundBadge(state.toolRound[agent.id] ?? 0, agent.maxToolIterations)");
+    // 全文（「ツール N 周目」）は title / aria-label に残す。
+    expect(bubble![0]).toContain(':title="typingRoundText(agent)"');
     expect(panel).toContain('t("chat.typingRoundOf", { round, max: agent.maxToolIterations })');
     expect(panel).toContain('t("chat.typingRound", { round })');
+    // 警告色のクラスは scoped CSS に在る。
+    expect(panel).toMatch(/\.typing-round-near\s*\{/);
   });
 
   it("辞書の鍵が ja と en の両方に在り、引数が揃っている", () => {

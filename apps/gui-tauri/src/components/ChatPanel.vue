@@ -32,6 +32,7 @@ import {
   type Searchable,
 } from "../lib/chatSearch";
 import { hasOpenOverlay } from "../lib/chatFocus";
+import { roundBadge, type RoundBadge } from "../lib/typingRound";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
@@ -402,6 +403,14 @@ function typingRoundText(agent: AgentSnapshot): string {
   return agent.maxToolIterations
     ? t("chat.typingRoundOf", { round, max: agent.maxToolIterations })
     : t("chat.typingRound", { round });
+}
+
+/**
+ * バッジに出す形（2026-10-15 利用者裁定 — ミニマル・バッジ型）。普段は数だけ、上限の 8 割から
+ * 「N / 上限」と警告色。規則は `lib/typingRound.ts`。全文（「ツール N 周目」）は `title` に残す。
+ */
+function roundBadgeOf(agent: AgentSnapshot): RoundBadge {
+  return roundBadge(state.toolRound[agent.id] ?? 0, agent.maxToolIterations);
 }
 
 /** 宛先の表示。同報は「〇〇 他X名」。 */
@@ -1657,14 +1666,33 @@ async function newChat(): Promise<void> {
         >
           <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
           <!--
-            周回数（2026-10-15）。ツールを呼んだターンでだけ「ツール N 周目」が点の右に出る —
-            分単位のターンで、画面の変化が点の点滅だけだと止まっているのか進んでいるのかが
-            読めない。分母は個体の上限（未設定なら出さない — 既定値は画面が知らない）。
+            周回数のバッジ（2026-10-15）。ツールを呼んだターンでだけ点の右に出る — 分単位の
+            ターンで、画面の変化が点の点滅だけだと止まっているのか進んでいるのかが読めない。
+            **普段は数だけ**（回る矢印 + N）。上限の 8 割からだけ「N / 上限」と警告色
+            （規則は lib/typingRound.ts）。全文は title で読める。アイコンは要約ボタンと同じ
+            SVG — 絵文字の ⟳ は字形と大きさが環境ごとに変わり、色も継承しない。
           -->
           <span
             v-if="state.toolRound[agent.id]"
-            class="ml-1.5 text-[10px] text-ink-dim tabular-nums"
-          >{{ typingRoundText(agent) }}</span>
+            class="typing-round"
+            :class="roundBadgeOf(agent).nearLimit ? 'typing-round-near' : ''"
+            :title="typingRoundText(agent)"
+            :aria-label="typingRoundText(agent)"
+          >
+            <svg
+              class="typing-round-icon size-3"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+              <path d="M20 4v5h-5" />
+            </svg>
+            <span class="tabular-nums">{{ roundBadgeOf(agent).label }}</span>
+          </span>
         </div>
         <!--
           ターンの打ち切り（Spec 10）。切りたくなるのは「考え込んでいる相手」を
@@ -1777,6 +1805,37 @@ async function newChat(): Promise<void> {
 }
 .chat-search-button:disabled {
   opacity: 0.4;
+}
+
+/*
+ * 周回数のバッジ（2026-10-15）。点の右に置く小さな丸い札。上限が近いときだけ警告色。
+ * 矢印は点の波とは別の周期でゆっくり回す — 同じ周期にすると 1 つの模様に見えて
+ * 「別の情報」だと読めない。
+ */
+.typing-round {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 1px 6px 1px 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  background-color: var(--color-surface-1);
+  color: var(--color-ink-dim);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.typing-round-near {
+  color: var(--color-warn);
+  border-color: color-mix(in oklab, var(--color-warn) 60%, transparent);
+}
+.typing-round-icon {
+  animation: typing-spin 1.8s linear infinite;
+}
+@keyframes typing-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 入力中バブルの 3 点アニメーション。位相を 1/6 周期ずつずらして波にする。 */

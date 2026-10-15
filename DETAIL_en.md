@@ -978,10 +978,12 @@ code block and "Copy code" appears; it copies only that block's contents (no Mar
 language name). It is separate from the per-message copy button below the bubble. Blackboard notes
 do not get it.
 
-**The typing bubble shows "tool round N".** While a servant is calling tools, the bubble shows how
-many rounds it has gone through next to the dots (N equals `round=` on the `tool:` line in
-`fuseforks.log`). If the servant has a "tool iteration limit" set, it reads "N / limit". Turns that
-call no tools show only the dots, and the number disappears when the turn ends. Streaming the reply
+**The typing bubble shows a round badge.** While a servant is calling tools, a small pill with a
+spinning arrow and the round number appears next to the dots (the number equals `round=` on the
+`tool:` line in `fuseforks.log`). Normally only the number is shown; once a servant with a "tool
+iteration limit" reaches **80% of that limit**, the badge turns to "N / limit" in the warning colour.
+Hovering shows the full text ("tool round N"). Turns that call no tools show only the dots, and the
+badge disappears when the turn ends. Streaming the reply
 text is intentionally not implemented — retries, interruption, token accounting and pruning are all
 built on top of a completed response.
 
