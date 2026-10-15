@@ -1433,6 +1433,8 @@ export type CoreEvent =
        * 会話の切り替えの後だけ。
        */
       callId: number;
+      /** この呼び出しが走った周回（1 始まり。ログの `tool:` 行の `round=` と同じ。2026-10-15）。 */
+      round: number;
     }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った

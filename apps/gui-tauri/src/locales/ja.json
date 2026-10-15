@@ -588,6 +588,17 @@
     },
     "reasonOmitted": "理由なし",
     "reasonUnsupported": "外部ツール",
+    "search": {
+      "placeholder": "会話を検索（Enter で次・Shift+Enter で前・Esc で閉じる）",
+      "count": "{current} / {total}",
+      "none": "一致なし",
+      "prev": "前へ（Shift+Enter）",
+      "next": "次へ（Enter）",
+      "close": "閉じる（Esc）"
+    },
+    "codeCopy": "コードをコピー",
+    "typingRound": "ツール {round} 周目",
+    "typingRoundOf": "ツール {round} / {max} 周目",
     "typingTitle": "{name} が応答を作成しています",
     "interruptTurn": "■ 停止",
     "interruptTurnTitle": "{name} のこのターンを打ち切ります（稼働は降ろしません。会話と履歴は残ります）",

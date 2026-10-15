@@ -588,6 +588,17 @@
     },
     "reasonOmitted": "no reason given",
     "reasonUnsupported": "external tool",
+    "search": {
+      "placeholder": "Search the conversation (Enter: next, Shift+Enter: previous, Esc: close)",
+      "count": "{current} / {total}",
+      "none": "No matches",
+      "prev": "Previous (Shift+Enter)",
+      "next": "Next (Enter)",
+      "close": "Close (Esc)"
+    },
+    "codeCopy": "Copy code",
+    "typingRound": "tool round {round}",
+    "typingRoundOf": "tool round {round} / {max}",
     "typingTitle": "{name} is composing a response",
     "interruptTurn": "■ Stop",
     "interruptTurnTitle": "Interrupts {name}'s current turn (the servant stays running; the conversation and history are kept)",

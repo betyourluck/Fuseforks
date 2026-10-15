@@ -679,12 +679,14 @@ fn blackboard_note_wire_fields_are_frozen() {
     );
 }
 
-/// ツール実行の通知（Spec 27 の `reason` + Spec 57 の `callId`）のワイヤ形。
+/// ツール実行の通知（Spec 27 の `reason` + Spec 57 の `callId` + 2026-10-15 の `round`）の
+/// ワイヤ形。
 ///
 /// **落ちたら `types.ts` の `CoreEvent` の `toolInvoked` を直すこと。**
 /// この欄はこれまで 1 つも留められておらず、Spec 27 で `reason` を足したとき
 /// `data_contract.yaml` の `events` の行が 3 欄のまま残った（Spec 57 の P0 で回収）。
 /// **引数と結果の本文はここに載らない** — 鍵（`callId`）だけを運ぶ。
+/// `round` は 1 始まりの周回数で、ログの `tool:` 行の `round=` と同じ値。
 #[test]
 fn tool_invoked_event_wire_is_frozen() {
     let event = fuseforks_core::event::CoreEvent::ToolInvoked {
@@ -693,6 +695,7 @@ fn tool_invoked_event_wire_is_frozen() {
         ok: true,
         reason: fuseforks_core::tool_reason::ReasonState::Omitted,
         call_id: 7,
+        round: 3,
     };
     assert_eq!(
         serde_json::to_value(&event).unwrap(),
@@ -703,6 +706,7 @@ fn tool_invoked_event_wire_is_frozen() {
             "ok": true,
             "reason": { "kind": "omitted" },
             "callId": 7,
+            "round": 3,
         }),
     );
 }

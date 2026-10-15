@@ -960,6 +960,31 @@ on for everyone by default. Measured over 969 tool calls across 355 turns in
 `concordia.log`, it adds **1.5–2.2% effective tokens on turns that call tools**, and
 **zero on turns that call none**.
 
+### Searching the conversation, copying a code block, seeing the round (2026-10-15)
+
+Three small conveniences in the chat pane. All of them are front-end only; the core changed in one
+place — `toolInvoked` now carries the round number.
+
+**Ctrl+F (Cmd+F on mac) searches the conversation log.** A search row opens under the header, and
+messages containing the text are framed; the matched characters themselves are highlighted (the
+current one in the accent colour). Enter moves to the next match (newer), Shift+Enter to the previous,
+Esc closes. The count reads "current / total". The search covers **the messages currently on
+screen** — after the agent filter and the view clear — and does not look inside tool rows. Inside an
+editor, Ctrl+F still opens the editor's own search (see "Editor keys" above). Switching conversations
+closes the search.
+
+**A copy button appears at the top-right of every code block.** Hover a fenced (```) or indented
+code block and "Copy code" appears; it copies only that block's contents (no Markdown fence, no
+language name). It is separate from the per-message copy button below the bubble. Blackboard notes
+do not get it.
+
+**The typing bubble shows "tool round N".** While a servant is calling tools, the bubble shows how
+many rounds it has gone through next to the dots (N equals `round=` on the `tool:` line in
+`fuseforks.log`). If the servant has a "tool iteration limit" set, it reads "N / limit". Turns that
+call no tools show only the dots, and the number disappears when the turn ends. Streaming the reply
+text is intentionally not implemented — retries, interruption, token accounting and pruning are all
+built on top of a completed response.
+
 ### Opening and folding tool rows ([Spec 57](specs/57_tool-call-detail.md))
 
 A tool row in the chat pane **opens when clicked** and shows **the arguments the model sent (Input)** and **the text returned to the model (Output)**. This is where you read what `grep` searched for, what `run` printed, and what `file` wrote. Click again to close.

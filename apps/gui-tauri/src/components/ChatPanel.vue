@@ -14,7 +14,7 @@
  * 画面である。エージェント同士の発話は「誰から誰へ」が本質的な情報なので、
  * 吹き出しの外側に宛先と hop を残す。会話らしさのために情報を捨てない。
  */
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Translation as I18nT, useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -22,6 +22,16 @@ import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
 import ThinkingNote from "./ThinkingNote.vue";
 import { isLongPrompt } from "../lib/longPrompt";
+import {
+  findMatches,
+  initialCurrent,
+  isChatSearchKey,
+  matchRanges,
+  normalizeQuery,
+  stepCurrent,
+  type Searchable,
+} from "../lib/chatSearch";
+import { hasOpenOverlay } from "../lib/chatFocus";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
@@ -54,7 +64,7 @@ import { getToolCall, readAttachment } from "../lib/ipc";
 import type { PendingAttachment } from "../lib/attachment";
 import type { AttachmentKind } from "../lib/carries";
 import type { Attachment } from "../types";
-import type { AgentId, AgentMessage, Endpoint, QuotedMessage } from "../types";
+import type { AgentId, AgentMessage, AgentSnapshot, Endpoint, QuotedMessage } from "../types";
 
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
@@ -380,6 +390,20 @@ const typingAgents = computed(() =>
   ),
 );
 
+/**
+ * 入力中バブルの周回数（2026-10-15）。`toolInvoked` の `round` を `useOrchestrator` が
+ * 個体ごとに写し、ターンの終わりで消す。ツールを 1 本も呼んでいないターンでは空。
+ * 分母は個体の `maxToolIterations`。**未設定（`null`）なら分母を出さない** —
+ * 既定値はコアの設定にあり、画面はそれを知らない（知っているふりの数字を書かない）。
+ */
+function typingRoundText(agent: AgentSnapshot): string {
+  const round = state.toolRound[agent.id];
+  if (!round) return "";
+  return agent.maxToolIterations
+    ? t("chat.typingRoundOf", { round, max: agent.maxToolIterations })
+    : t("chat.typingRound", { round });
+}
+
 /** 宛先の表示。同報は「〇〇 他X名」。 */
 function toLabel(row: ChatRow): string {
   const first = label(row.message.to);
@@ -426,13 +450,45 @@ function isRenderedAsMarkdown(message: AgentMessage): boolean {
   return message.from.kind === "agent";
 }
 
-/** 描画済み Markdown（ID キャッシュ付き。発話は不変なので安全）。 */
+/**
+ * 描画済み Markdown（ID キャッシュ付き。発話は不変なので安全）。
+ * コードブロックには「コードをコピー」のボタンを添える（2026-10-15）— ラベルは
+ * ここで訳して渡す（`renderMarkdown` は i18n を知らない）。
+ */
 function markdownOf(message: AgentMessage): string {
-  return renderMarkdownCached(message.id, message.content);
+  return renderMarkdownCached(message.id, message.content, {
+    codeCopyLabel: t("chat.codeCopy"),
+  });
 }
 
 /**
- * Markdown 内リンクのクリックを横取りし、外部ブラウザで開く。
+ * コードブロック単位のコピー（2026-10-15 利用者要望）。
+ *
+ * ボタンは `renderMarkdown` が HTML に埋めた `data-code-copy` で、**Vue の管理外**
+ * （`v-html`）。だから押した合図も DOM を直に書く — 1.4 秒だけ ✓ にして戻す
+ * （発話全体のコピーと同じ長さ）。写すのは `<pre><code>` の `textContent` =
+ * フェンスの中身そのままで、Markdown の記法も言語名も含まない。末尾の改行 1 つは落とす
+ * （markdown-it がフェンスの閉じの前に必ず 1 つ残す — 貼り付け先で空行になる）。
+ */
+async function copyCodeBlock(button: HTMLElement): Promise<void> {
+  const code = button.closest(".code-block")?.querySelector("pre code")?.textContent ?? "";
+  await copyText(code.replace(/\n$/, ""));
+  const label = button.dataset.label ?? button.getAttribute("aria-label") ?? "";
+  button.dataset.label = label;
+  button.dataset.copied = "";
+  button.textContent = "✓";
+  button.setAttribute("aria-label", t("chat.copied"));
+  button.setAttribute("title", t("chat.copied"));
+  setTimeout(() => {
+    delete button.dataset.copied;
+    button.textContent = "⧉";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+  }, 1400);
+}
+
+/**
+ * Markdown 内のクリックを横取りする — コードブロックのコピー、リンクは外部ブラウザへ。
  *
  * webview 内でそのまま遷移するとアプリ画面ごとリンク先へ置き換わる。
  * `renderMarkdown` が `target="_blank"` を付けているため既定では何も
@@ -440,7 +496,14 @@ function markdownOf(message: AgentMessage): string {
  * 開くのは http / https のみ（LLM 出力由来のリンクを信頼しない）。
  */
 function onMarkdownClick(event: MouseEvent): void {
-  const anchor = (event.target as HTMLElement).closest("a");
+  const target = event.target as HTMLElement;
+  const copyButton = target.closest<HTMLElement>("button[data-code-copy]");
+  if (copyButton) {
+    event.preventDefault();
+    void copyCodeBlock(copyButton);
+    return;
+  }
+  const anchor = target.closest("a");
   if (!anchor) return;
   event.preventDefault();
   const href = anchor.getAttribute("href") ?? "";
@@ -479,19 +542,17 @@ const copiedId = ref<string | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
- * 発話の本文をクリップボードへコピーする。
+ * 文字列をクリップボードへ写す。発話全体のコピーとコードブロックのコピーが共有する 1 実装。
  *
- * コピーするのは描画前の**生テキスト**（Markdown ソース）。見た目の HTML を
- * 渡すと、貼り付け先（エディタ・チャット）で再利用できない。
  * クリップボード API を WebView が拒否した場合は textarea 経由の旧手法へ
  * 退避する（プラグイン依存を増やさないための二段構え）。
  */
-async function copyMessage(message: AgentMessage): Promise<void> {
+async function copyText(text: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(message.content);
+    await navigator.clipboard.writeText(text);
   } catch {
     const area = document.createElement("textarea");
-    area.value = message.content;
+    area.value = text;
     area.style.position = "fixed";
     area.style.opacity = "0";
     document.body.appendChild(area);
@@ -502,6 +563,16 @@ async function copyMessage(message: AgentMessage): Promise<void> {
       area.remove();
     }
   }
+}
+
+/**
+ * 発話の本文をクリップボードへコピーする。
+ *
+ * コピーするのは描画前の**生テキスト**（Markdown ソース）。見た目の HTML を
+ * 渡すと、貼り付け先（エディタ・チャット）で再利用できない。
+ */
+async function copyMessage(message: AgentMessage): Promise<void> {
+  await copyText(message.content);
   copiedId.value = message.id;
   clearTimeout(copiedTimer);
   copiedTimer = setTimeout(() => (copiedId.value = null), 1400);
@@ -543,6 +614,195 @@ async function send(
     quoteIds,
   );
 }
+
+// ---- 会話の検索（2026-10-15） ------------------------------------------------
+
+/**
+ * 検索の状態。**保存しない**し、会話を切り替えたら閉じる — 問いは「いま読みたいもの」で、
+ * 開き直した会話に前の問いが残っていると、何も光らない理由が読めない。
+ * 規則は `lib/chatSearch.ts`、ここは配線と DOM だけ。
+ */
+const search = reactive({ open: false, query: "", current: -1 });
+const searchInput = ref<HTMLInputElement | null>(null);
+const panelRoot = ref<HTMLElement | null>(null);
+/** 開く前にフォーカスしていた要素。閉じたら戻す（入力欄で Ctrl+F → Esc で入力欄へ）。 */
+let searchReturnFocus: HTMLElement | null = null;
+
+/**
+ * 検索の対象 = **いま画面に出ている発話**（絞り込み・表示クリアを通った後の `rows`）。
+ * 照合するのは Markdown の**原文**（`message.content`）で、光らせるのは描画後の文字。
+ * `**` のような記法で探すと行は当たるが光らない — 原文で照合するのは、純関数で
+ * 留められる側を正とするため。
+ */
+const searchables = computed<Searchable[]>(() =>
+  rows.value.map((row) => ({ id: row.message.id, text: row.message.content })),
+);
+
+const searchMatches = computed(() =>
+  search.open ? findMatches(searchables.value, search.query) : [],
+);
+const searchHits = computed(() => new Set(searchMatches.value));
+const searchCurrentId = computed(() => searchMatches.value[search.current] ?? null);
+
+/** 件数の表示。問いが空なら何も出さず、一致が無ければ数ではなく言葉で言う（`0 / 0` は読めない）。 */
+const searchCountText = computed(() => {
+  if (!normalizeQuery(search.query)) return "";
+  const total = searchMatches.value.length;
+  if (!total) return t("chat.search.none");
+  return t("chat.search.count", { current: search.current + 1, total });
+});
+
+// 一致の列が変わったら現在位置を直す。**同じ発話が残っていればそこに留まる**（問いを
+// 1 文字足して絞ったとき・新着が末尾に増えたとき）。消えていれば末尾（最も新しい一致）へ。
+watch(searchMatches, (matches, previous) => {
+  const previousId = previous?.[search.current];
+  const kept = previousId === undefined ? -1 : matches.indexOf(previousId);
+  search.current = kept >= 0 ? kept : initialCurrent(matches.length);
+});
+
+/**
+ * Ctrl+F / Cmd+F。窓ごと聴く（Alt+↑↓ と同じ）が、奪うのは会話ペインが見えていて
+ * 覆いの層が無いときだけ。**エディタの中の Ctrl+F は CodeMirror が先に受けて
+ * `defaultPrevented` を立てる**ので、ここでは拾わない（エディタはどれもダイアログの
+ * 中なので覆いの判定でも落ちる — 二重の網）。統計画面では会話ペインが `v-show` で
+ * 隠れており `offsetParent` が `null` になる。
+ */
+function onSearchHotkey(event: KeyboardEvent): void {
+  if (!isChatSearchKey(event)) return;
+  if (event.defaultPrevented) return;
+  const root = panelRoot.value;
+  if (!root || root.offsetParent === null) return;
+  if (hasOpenOverlay(document)) return;
+  event.preventDefault();
+  openSearch();
+}
+
+function openSearch(): void {
+  if (!search.open) {
+    const active = document.activeElement;
+    searchReturnFocus =
+      active instanceof HTMLElement && active !== searchInput.value ? active : null;
+    search.open = true;
+  }
+  void nextTick(() => {
+    searchInput.value?.focus();
+    searchInput.value?.select();
+  });
+}
+
+function closeSearch(): void {
+  if (!search.open) return;
+  search.open = false;
+  const back = searchReturnFocus;
+  searchReturnFocus = null;
+  if (back?.isConnected) back.focus();
+}
+
+function moveSearch(delta: 1 | -1): void {
+  search.current = stepCurrent(search.current, searchMatches.value.length, delta);
+}
+
+/** 検索欄の鍵。Enter = 次（新しい側）、Shift+Enter = 前、Esc = 閉じる。IME の確定は奪わない。 */
+function onSearchInputKey(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSearch();
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    moveSearch(event.shiftKey ? -1 : 1);
+  }
+}
+
+/** 行に付ける印。一致した行は枠、現在位置はアクセントの枠。 */
+function searchRowClass(id: string): string {
+  if (!search.open || !searchHits.value.has(id)) return "";
+  return id === searchCurrentId.value ? "chat-search-row chat-search-row-current" : "chat-search-row";
+}
+
+function searchRowElement(id: string): HTMLElement | null {
+  return scroller.value?.querySelector<HTMLElement>(`[data-chat-row="${CSS.escape(id)}"]`) ?? null;
+}
+
+/**
+ * 一致した文字を光らせる — **CSS Custom Highlight API**（`CSS.highlights`）。DOM を
+ * 書き換えないので、`v-html` の Markdown も連続発言の畳みも触らず、座標計算も要らない
+ * （会話ペインは `zoom` の場所。矩形を測る API を持ち込まない）。
+ * 対応しない WebView では行の枠だけが出る（光らないが壊れない）。
+ */
+const SEARCH_HIGHLIGHT = "chat-search";
+const SEARCH_HIGHLIGHT_CURRENT = "chat-search-current";
+
+function highlightRegistry(): HighlightRegistry | null {
+  return typeof CSS !== "undefined" && "highlights" in CSS ? CSS.highlights : null;
+}
+
+function clearSearchHighlights(): void {
+  const registry = highlightRegistry();
+  if (!registry) return;
+  registry.delete(SEARCH_HIGHLIGHT);
+  registry.delete(SEARCH_HIGHLIGHT_CURRENT);
+}
+
+function collectTextRanges(element: Element, query: string, out: Range[]): void {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text;
+    for (const [start, end] of matchRanges(text.data, query)) {
+      const range = new Range();
+      range.setStart(text, start);
+      range.setEnd(text, end);
+      out.push(range);
+    }
+  }
+}
+
+function applySearchHighlights(): void {
+  const registry = highlightRegistry();
+  if (!registry) return;
+  const all: Range[] = [];
+  const current: Range[] = [];
+  for (const id of searchHits.value) {
+    const row = searchRowElement(id);
+    if (!row) continue;
+    const bucket = id === searchCurrentId.value ? current : all;
+    for (const element of row.querySelectorAll("[data-chat-text]")) {
+      collectTextRanges(element, search.query, bucket);
+    }
+  }
+  registry.set(SEARCH_HIGHLIGHT, new Highlight(...all));
+  registry.set(SEARCH_HIGHLIGHT_CURRENT, new Highlight(...current));
+}
+
+// 開閉・問い・現在位置・描く並びのどれが変わっても、描画の後に光と位置を直す。
+watch(
+  [() => search.open, () => search.query, searchCurrentId, display],
+  async () => {
+    await nextTick();
+    if (!search.open) {
+      clearSearchHighlights();
+      return;
+    }
+    applySearchHighlights();
+    const id = searchCurrentId.value;
+    if (id) searchRowElement(id)?.scrollIntoView({ block: "center" });
+  },
+  { flush: "post" },
+);
+
+// 会話を切り替えたら閉じる（問いは「いま読みたいもの」）。
+watch(
+  () => state.currentSessionId,
+  () => closeSearch(),
+);
+
+onMounted(() => window.addEventListener("keydown", onSearchHotkey));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onSearchHotkey);
+  clearSearchHighlights();
+});
 
 // ---- 会話の参照の表示（Spec 58） ---------------------------------------------
 
@@ -691,7 +951,7 @@ async function newChat(): Promise<void> {
 </script>
 
 <template>
-  <div class="chat-panel flex h-full flex-col">
+  <div class="chat-panel flex h-full flex-col" ref="panelRoot">
     <!-- 高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。 -->
     <header
       class="flex h-[38px] shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-ink-dim"
@@ -827,6 +1087,65 @@ async function newChat(): Promise<void> {
         </option>
       </select>
     </header>
+
+    <!--
+      会話の検索（Ctrl+F / Cmd+F。2026-10-15）。見出し行とは別の 1 行にする — 見出しは
+      4 ペイン共通の 38px で、入力欄を押し込むと隣と高さが揃わない。**倍率は掛けない**
+      （見出し行と同じ理由。`chatZoomWiring.test.ts` の「2 つ」の外）。
+      件数は「現在 / 総数」。一致が無いときは数ではなく言葉で言う（`0 / 0` は読めない）。
+    -->
+    <div
+      v-if="search.open"
+      class="flex shrink-0 items-center gap-1.5 border-b border-line bg-surface-1 px-3 py-1 text-[11px] text-ink-dim"
+      data-chat-search
+    >
+      <input
+        ref="searchInput"
+        v-model="search.query"
+        type="text"
+        spellcheck="false"
+        class="min-w-0 flex-1 rounded border border-line bg-surface-0 px-1.5 py-0.5 text-ink outline-none focus:border-accent"
+        :placeholder="$t('chat.search.placeholder')"
+        :aria-label="$t('chat.search.placeholder')"
+        @keydown="onSearchInputKey"
+      />
+      <span class="shrink-0 tabular-nums">{{ searchCountText }}</span>
+      <button
+        type="button"
+        class="chat-search-button"
+        :disabled="!searchMatches.length"
+        :title="$t('chat.search.prev')"
+        :aria-label="$t('chat.search.prev')"
+        @click="moveSearch(-1)"
+      >
+        <svg class="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m4 10 4-4 4 4" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="chat-search-button"
+        :disabled="!searchMatches.length"
+        :title="$t('chat.search.next')"
+        :aria-label="$t('chat.search.next')"
+        @click="moveSearch(1)"
+      >
+        <svg class="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="chat-search-button"
+        :title="$t('chat.search.close')"
+        :aria-label="$t('chat.search.close')"
+        @click="closeSearch"
+      >
+        <svg class="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="m4 4 8 8M12 4l-8 8" />
+        </svg>
+      </button>
+    </div>
 
     <!--
       overflow-x-hidden は保険。中身は下の折り返し規則（wrap-anywhere /
@@ -1036,9 +1355,11 @@ async function newChat(): Promise<void> {
       <div
         v-else-if="entry.kind === 'message' && isSystemNotice(entry.row.message)"
         class="flex items-center gap-1.5 pl-9 text-[10px] text-ink-dim"
+        :class="searchRowClass(entry.row.message.id)"
+        :data-chat-row="entry.row.message.id"
       >
         <span class="inline-block size-1.5 shrink-0 rounded-full bg-accent" />
-        <span class="selectable truncate">{{ entry.row.message.content }}</span>
+        <span class="selectable truncate" data-chat-text>{{ entry.row.message.content }}</span>
         <span class="ml-auto shrink-0 tabular-nums">
           {{ timestamp(entry.row.message.tsMs) }}
         </span>
@@ -1047,7 +1368,11 @@ async function newChat(): Promise<void> {
       <div
         v-else
         class="flex gap-2"
-        :class="isMine(entry.row.message) ? 'flex-row-reverse' : 'flex-row'"
+        :class="[
+          isMine(entry.row.message) ? 'flex-row-reverse' : 'flex-row',
+          searchRowClass(entry.row.message.id),
+        ]"
+        :data-chat-row="entry.row.message.id"
       >
         <!-- アバター。連続発言では場所だけ空けて揃える。
              画像が設定されていればそれを、無ければ頭文字の円を出す。
@@ -1225,6 +1550,7 @@ async function newChat(): Promise<void> {
           <div
             v-if="isRenderedAsMarkdown(entry.row.message)"
             class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
+            data-chat-text
             @click="onMarkdownClick"
             v-html="markdownOf(entry.row.message)"
           />
@@ -1239,6 +1565,7 @@ async function newChat(): Promise<void> {
                 ? 'rounded-2xl rounded-tr-sm bg-accent text-surface-0'
                 : 'rounded-2xl rounded-tl-sm bg-surface-2 text-ink'
             "
+            data-chat-text
           >
             <!-- 行数の制限は内側の要素に掛ける。吹き出し（余白 py-2 を持つ側）に掛けると、
                  overflow が隠すのは余白の外側なので、7 行目の上半分が下の余白に描かれる
@@ -1329,6 +1656,15 @@ async function newChat(): Promise<void> {
           :title="$t('chat.typingTitle', { name: agent.name })"
         >
           <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
+          <!--
+            周回数（2026-10-15）。ツールを呼んだターンでだけ「ツール N 周目」が点の右に出る —
+            分単位のターンで、画面の変化が点の点滅だけだと止まっているのか進んでいるのかが
+            読めない。分母は個体の上限（未設定なら出さない — 既定値は画面が知らない）。
+          -->
+          <span
+            v-if="state.toolRound[agent.id]"
+            class="ml-1.5 text-[10px] text-ink-dim tabular-nums"
+          >{{ typingRoundText(agent) }}</span>
         </div>
         <!--
           ターンの打ち切り（Spec 10）。切りたくなるのは「考え込んでいる相手」を
@@ -1412,6 +1748,35 @@ async function newChat(): Promise<void> {
     display: inline;
     font-size: 10px;
   }
+}
+
+/*
+ * 会話の検索（2026-10-15）。一致した行は淡い枠、現在位置はアクセントの枠。
+ * 文字そのものの光は style.css の `::highlight(chat-search)`（Highlight API はグローバル）。
+ * 枠は `outline` で描く — 行の箱の大きさを変えない（`border` だと 1px 分だけ行が動く）。
+ */
+.chat-search-row {
+  outline: 1px solid color-mix(in oklab, var(--color-accent) 35%, transparent);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.chat-search-row-current {
+  outline: 2px solid var(--color-accent);
+}
+.chat-search-button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--color-ink-dim);
+  transition: color 0.12s;
+}
+.chat-search-button:hover:not(:disabled) {
+  color: var(--color-accent);
+}
+.chat-search-button:disabled {
+  opacity: 0.4;
 }
 
 /* 入力中バブルの 3 点アニメーション。位相を 1/6 周期ずつずらして波にする。 */

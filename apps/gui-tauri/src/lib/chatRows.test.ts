@@ -90,6 +90,7 @@ describe("buildTimeline", () => {
     ok,
     reason: { kind: "omitted" },
     tsMs,
+    round: 1,
   });
 
   it("発話とツール実行を時刻順に 1 本へ畳む", () => {
@@ -235,7 +236,7 @@ describe("groupToolRuns（Spec 57 D8）", () => {
     return {
       kind: "tool",
       key: `tool-${next}`,
-      run: { id: `tool-${next}`, callId: next, agentId, tool: "grep", ok, reason: { kind: "omitted" }, tsMs: next },
+      run: { id: `tool-${next}`, callId: next, agentId, tool: "grep", ok, reason: { kind: "omitted" }, tsMs: next, round: 1 },
     };
   };
   /** 発話 1 通。 */

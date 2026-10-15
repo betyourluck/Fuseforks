@@ -42,10 +42,57 @@ describe("renderMarkdown", () => {
   });
 });
 
+describe("コードブロックのコピーボタン（2026-10-15）", () => {
+  const fenced = "```rust\nfn main() {}\n```";
+
+  it("ラベルを渡さなければ出力は従来どおり（包みもボタンも生えない）", () => {
+    const html = renderMarkdown(fenced);
+    expect(html).not.toContain("code-block");
+    expect(html).not.toContain("data-code-copy");
+    expect(renderMarkdown(fenced, {})).toBe(html);
+  });
+
+  it("ラベルを渡すと pre を包んでボタンを添える。pre 自体は既定の描画のまま", () => {
+    const plain = renderMarkdown(fenced);
+    const html = renderMarkdown(fenced, { codeCopyLabel: "コードをコピー" });
+    expect(html).toContain(`<div class="code-block">${plain.trimEnd()}`);
+    expect(html).toContain('<button type="button" class="code-copy" data-code-copy');
+    expect(html).toContain('aria-label="コードをコピー"');
+  });
+
+  it("インデントコードにも同じボタンが付く", () => {
+    const html = renderMarkdown("本文\n\n    indented()\n", { codeCopyLabel: "Copy" });
+    expect(html).toContain("code-block");
+    expect(html).toContain("indented()");
+  });
+
+  it("ラベルは属性として安全に埋め込む（引用符・タグをエスケープ）", () => {
+    const html = renderMarkdown(fenced, { codeCopyLabel: 'a"b<c>' });
+    expect(html).toContain('aria-label="a&quot;b&lt;c&gt;"');
+    expect(html).not.toContain('aria-label="a"b');
+  });
+
+  it("インラインの code には付かない", () => {
+    const html = renderMarkdown("`x` だけ", { codeCopyLabel: "Copy" });
+    expect(html).not.toContain("code-block");
+  });
+});
+
 describe("renderMarkdownCached", () => {
   it("同じ ID は再 parse せず同一の結果を返す", () => {
     const first = renderMarkdownCached("msg-1", "# a");
     const second = renderMarkdownCached("msg-1", "変わっても無視される");
     expect(second).toBe(first);
+  });
+
+  it("ラベルが変わったら描き直す（言語の切り替えで古いラベルのボタンを残さない）", () => {
+    const fenced = "```\nx\n```";
+    const ja = renderMarkdownCached("msg-2", fenced, { codeCopyLabel: "コードをコピー" });
+    expect(ja).toContain('aria-label="コードをコピー"');
+    const en = renderMarkdownCached("msg-2", fenced, { codeCopyLabel: "Copy code" });
+    expect(en).toContain('aria-label="Copy code"');
+    expect(en).not.toContain("コードをコピー");
+    // 同じラベルなら再 parse しない。
+    expect(renderMarkdownCached("msg-2", "別の本文", { codeCopyLabel: "Copy code" })).toBe(en);
   });
 });

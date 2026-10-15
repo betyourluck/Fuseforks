@@ -174,6 +174,13 @@ interface OrchestratorState {
    */
   lastTool: Record<AgentId, ToolRun>;
   /**
+   * 処理中の個体が、いま何周目のツール呼び出しまで進んだか（2026-10-15）。
+   * 入力中バブルに「ツール N 周目」を出す。`toolInvoked` の `round` を写し、
+   * ターンの終わり（`agentTyping` の終了）で消す — 残すと次のターンの冒頭で
+   * 前のターンの周回が出る。ツールを 1 本も呼んでいないターンでは鍵が無い。
+   */
+  toolRound: Record<AgentId, number>;
+  /**
    * カードの失敗理由を人が閉じた個体（2026-08-11）。
    *
    * **コアへは送らない。** `AgentRecord.last_error` は `#[derive(Debug)]` だけで
@@ -240,6 +247,7 @@ const state = reactive<OrchestratorState>({
   interruptPending: {},
   toolRuns: [],
   lastTool: {},
+  toolRound: {},
   dismissedErrors: [],
   planWaves: [],
   sessions: [],
@@ -535,6 +543,7 @@ function applyEvent(event: CoreEvent): void {
       // 通常は agentTyping の終了イベントが対で消すが、二重の網にしておく。
       if (event.status !== "running" && event.status !== "starting") {
         delete state.typing[event.agentId];
+        delete state.toolRound[event.agentId];
       }
       break;
 
@@ -571,6 +580,7 @@ function applyEvent(event: CoreEvent): void {
         // ターンは何らかの形で終わった。打ち切り要求が検知される前に完走で
         // 逃げ切った場合、ここで消さないと「停止要求中…」が永遠に残る。
         delete state.interruptPending[event.agentId];
+        delete state.toolRound[event.agentId];
       }
       break;
 
@@ -592,8 +602,11 @@ function applyEvent(event: CoreEvent): void {
         ok: event.ok,
         reason: event.reason,
         tsMs: Date.now(),
+        round: event.round,
       };
       state.toolRuns.push(run);
+      // 入力中バブルの「ツール N 周目」。同じ周の並列呼び出しは同じ値を書くだけ。
+      state.toolRound[event.agentId] = event.round;
       if (state.toolRuns.length > MESSAGE_LIMIT) {
         state.toolRuns.splice(0, state.toolRuns.length - MESSAGE_LIMIT);
       }

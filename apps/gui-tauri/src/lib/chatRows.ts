@@ -40,6 +40,8 @@ export interface ToolRun {
   reason: ReasonState;
   /** 受信時刻。コアは時刻を載せないので、受け取った側で打つ。 */
   tsMs: number;
+  /** この呼び出しが走った周回（1 始まり。`toolInvoked` の `round`。2026-10-15）。 */
+  round: number;
 }
 
 /**

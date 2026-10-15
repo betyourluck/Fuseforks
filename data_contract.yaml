@@ -3793,8 +3793,10 @@ entities:
     agentTyping: { agentId, active }
     conversationCleared: {}
     # reason は Spec 27 (ReasonState の 4 値)、callId は Spec 57 (コアのリングの鍵。
-    # 引数と結果本文はこのイベントに載せない — tool_call_detail_contract)
-    toolInvoked: { agentId, tool, ok, reason, callId }
+    # 引数と結果本文はこのイベントに載せない — tool_call_detail_contract)、
+    # round は 1 始まりの周回数 (ログの tool: 行の round= と同じ値。2026-10-15 —
+    # 会話ペインの入力中バブルが「ツール N 周目」を出す。加算的変更)
+    toolInvoked: { agentId, tool, ok, reason, callId, round }
     toolLimitReached: { agentId, maxIterations }
     # 同一のツール呼び出しの繰り返しを検出して実行せずに打ち切った
     # (failures.md #41 の処方 1)。repeats = 同じ結果が続いた回数 (打ち切り時は 2)

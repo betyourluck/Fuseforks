@@ -382,6 +382,47 @@ textarea,
   padding: 0;
   font-size: 0.95em;
 }
+/*
+ * コードブロック単位のコピー（2026-10-15）。`renderMarkdown` が `<pre>` を `.code-block` で
+ * 包み、右上にボタンを置く。ボタンは**ホバーかフォーカスで現れる** — 常時出すと
+ * 1 行のコードでも右端が食われる。押した合図（`data-copied`）の間は出したまま。
+ * 余白は pre が持っていた分を包みへ移す（包みと pre の両方に付くと倍になる）。
+ */
+.md-body .code-block {
+  position: relative;
+  margin: 0.45em 0;
+}
+.md-body .code-block > pre {
+  margin: 0;
+}
+.md-body .code-copy {
+  position: absolute;
+  top: 0.35em;
+  right: 0.35em;
+  padding: 2px 5px;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  background-color: var(--color-surface-1);
+  color: var(--color-ink-dim);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    color 0.12s;
+}
+.md-body .code-block:hover .code-copy,
+.md-body .code-copy:focus-visible,
+.md-body .code-copy[data-copied] {
+  opacity: 1;
+}
+.md-body .code-copy:hover {
+  color: var(--color-accent);
+}
+.md-body .code-copy[data-copied] {
+  color: var(--color-run);
+}
 .md-body blockquote {
   border-left: 3px solid var(--color-line);
   padding-left: 0.8em;
@@ -412,6 +453,22 @@ textarea,
 .md-body th {
   background-color: var(--color-surface-1);
   font-weight: 600;
+}
+
+/*
+ * 会話ログの検索（ChatPanel。2026-10-15）。一致した文字を CSS Custom Highlight API で光らせる —
+ * DOM を書き換えないので、v-html の Markdown も連続発言の畳みも触らない。名前は ChatPanel の
+ * `CSS.highlights.set(...)` と手で揃えている（`chatSearchWiring.test.ts` が留める）。
+ * 対応しない WebView ではこの規則が効かず、行の枠（ChatPanel の scoped）だけが出る。
+ * 現在位置は文字色まで反転させる — 淡い光だけでは、同じ行に一致が 2 つあるときに
+ * どちらに居るかが読めない。
+ */
+::highlight(chat-search) {
+  background-color: color-mix(in oklab, var(--color-warn) 40%, transparent);
+}
+::highlight(chat-search-current) {
+  background-color: var(--color-accent);
+  color: var(--color-surface-0);
 }
 
 ::-webkit-scrollbar {
