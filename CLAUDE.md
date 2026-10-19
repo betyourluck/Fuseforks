@@ -7568,6 +7568,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 68](specs/68_template-connection-test.md)（モデルテンプレートの接続テスト — `ModelTemplateDialog.vue` に「接続テスト」ボタン）:
+  **Draft rev1**（2026-10-19 起票・査読前・実装なし。外部レビュー ② の受け皿）。推奨 = 保存済みのテンプレートだけ確かめる（未保存は押せない・
+  `isTemplateDirty` を新設）/ 成功は 2xx かつプロトコルとして解釈できた（`OutputTruncated` も成功・「1 トークンだけ」は採らない）/
+  固有スキルとツールは外し思考段階と最大出力はテンプレートのまま / `max_retries = 1` / 失敗は表示用の閉じた `ProbeFailure` 10 値で
+  `RetryClass` は不変（`LLM_API` に畳まれる分類を結果の型で運ぶ）/ ログ `template probe:` 1 行（本文・鍵なし）。未決 3 = 統計へ入れるか /
+  ダミーの関数を添えるか / 下書きへ広げるか。P0 で 7 ワイヤに不正な鍵とモデル名を撃つ（Gemini の不正な鍵は 400 の予測）。
+  別件 = `client.rs:460` の `body.truncate(2_000)` が文字境界を見ず多バイトの途中で panic しうる
 - [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **Done**（2026-10-11。**起票から Done まで同日**。P4 = 実機の確認 8 件すべて観測 — 認可・道具の呼び出し・再起動後の自動接続・2 体で更新 1 回・キャンセルと時間切れ・**取り消しで `revoked remote=yes` → `required` ×2・間に `refreshed` 無し（書き戻し無し）・`mcp-oauth:` の鍵が消える**（動的登録の `mcp-oauth-client:` は設計どおり残る）・CLI の keyring で通り env で `MCP_OAUTH_HEADLESS`。記録は Spec の「P4 実機記録」。**計器 `refreshed` はコードの交換の初回保存でも出る** — 直後の `authorized` まで 40 ms なら認可の流れ、0.8 秒前後なら繋ぎ直し（P4 記録の初版はこれを取り違えていた。名前は据え置き）。P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
   DETAIL 3 言語にリモート MCP の OAuth の節・GUI なしの拒否の行・「コンテナで回す」に D8・ディレクトリ木 / README 3 言語は
   既存の MCP の行を延ばした（行数は 171 / 171 / 167 のまま）/ **PRIVACY 日英の要旨・3・4-3・6・8**（送り先に MCP サーバーが
