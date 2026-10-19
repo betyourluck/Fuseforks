@@ -74,6 +74,16 @@ pub trait LlmBackend: Send + Sync {
         let _ = cancel;
         self.chat(req).await
     }
+
+    /// **再試行の輪を通らない** 1 往復（Spec 68 D5。モデルテンプレートの接続テストが使う）。
+    ///
+    /// 接続テストでは 429 も 5xx も「結果そのもの」が情報なので、待たずに 1 回で返したい。
+    /// 既定の実装は [`Self::chat`] へ委ねる — 輪を持たない実装（`EchoBackend` / 結合テストのバックエンド）は
+    /// 上書きしなくてよい（`chat_cancellable` と同じく、trait の署名を変えずに加算的な既定メソッドにした）。
+    /// 上書きするのは輪を持つ `HttpLlmBackend` だけ。
+    async fn chat_once(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.chat(req).await
+    }
 }
 
 /// バックエンドの解決結果。

@@ -856,9 +856,20 @@ impl LlmBackend for HttpLlmBackend {
     /// リクエストが 400 で拒否されたときだけ、**JPEG へ再エンコードして
     /// 1 回だけ**再送する。互換サーバには WebP のデコーダを持たないものが
     /// あり（xAI は公式文書上 jpg/png のみ）、形式を変えれば通る可能性がある。
-    /// それでも落ちたら「画像を受け付けない接続先」として理由を本文へ書く。
+    /// それでも落ちたら [`LlmError::ImagesRejected`] で返す（本文は接続先の原文のまま。案内の文は
+    /// 言語を知っている層が書く — 2026-10-20）。
     async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
         self.chat_inner(req, None).await
+    }
+
+    /// 再試行の輪を通らない 1 往復（Spec 68 D5。モデルテンプレートの接続テスト）。
+    ///
+    /// 中身は [`Self::attempt`] の 1 回だけ — 要求の組み立て・送信・ステータスと `error_signal` の読み取り・
+    /// decode・`reject_empty_reasoning` は本番の 1 往復と同じ経路を通る（確認と本番で写しを割らない）。
+    /// 通らないのは**待ち・再送・計器 `llm retry:` / `llm retry stop:`・JPEG の再送**だけ。429 の
+    /// `retry_after` は 60 秒を超えても値のまま返る。
+    async fn chat_once(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.attempt(&req).await
     }
 
     /// 打ち切りの token つき（Spec 52 D4）。ターンループはこちらを呼ぶ。

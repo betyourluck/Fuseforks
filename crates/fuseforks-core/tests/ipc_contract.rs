@@ -66,6 +66,57 @@ fn run_approval_event_wire_is_frozen() {
     }
 }
 
+/// モデルテンプレートの接続テストの結果（Spec 68 D7）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `TemplateProbe` を直すこと**（画面は `result` と `outcome` / `failure` で辞書の鍵を
+/// 選び、`limit` / `status` / `retryAfterSecs` を引数に埋める。欄名が変わると結果の区画が黙って空になる）。
+#[test]
+fn template_probe_wire_is_frozen() {
+    use fuseforks_core::llm::retry::RetryClass;
+    use fuseforks_core::llm::{ChatResponse, Finish, LlmError, Usage};
+    use fuseforks_core::template_probe::judge;
+
+    let usage = Usage { prompt: 14, completion: 2, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 1 };
+    let response = |text: Option<&str>| ChatResponse {
+        text: text.map(str::to_owned),
+        tool_calls: Vec::new(),
+        finish: Finish::Stop,
+        usage,
+        grounding: Default::default(),
+        reasoning_summary: Vec::new(),
+    };
+    let wire_usage = serde_json::json!({ "prompt": 14, "completion": 2, "reasoning": 1 });
+
+    assert_eq!(
+        serde_json::to_value(judge(Ok(response(Some("OK"))), 9)).unwrap(),
+        serde_json::json!({ "result": "reached", "elapsedMs": 9, "outcome": "replied", "text": "OK", "usage": wire_usage }),
+    );
+    assert_eq!(
+        serde_json::to_value(judge(Err(LlmError::OutputTruncated { limit: 16, usage }), 9)).unwrap(),
+        serde_json::json!({ "result": "reached", "elapsedMs": 9, "outcome": "truncated", "limit": 16, "usage": wire_usage }),
+    );
+    assert_eq!(
+        serde_json::to_value(judge(Ok(response(None)), 9)).unwrap(),
+        serde_json::json!({ "result": "reached", "elapsedMs": 9, "outcome": "no_text", "finish": "stop", "usage": wire_usage }),
+    );
+    let failed = serde_json::to_value(judge(
+        Err(LlmError::Api {
+            status: 429,
+            body: "slow down".into(),
+            class: RetryClass::RateLimit,
+            code: None,
+            retry_after: Some(std::time::Duration::from_secs(120)),
+            hint_src: fuseforks_core::llm::retry::HintSource::Header,
+        }),
+        9,
+    ))
+    .unwrap();
+    assert_eq!(wire_keys(&failed), vec!["elapsedMs", "error", "failure", "result", "retryAfterSecs", "status"]);
+    assert_eq!(failed["result"], "failed");
+    assert_eq!(failed["failure"], "rate_limit");
+    assert_eq!(failed["retryAfterSecs"], 120);
+}
+
 #[test]
 fn wire_field_sets_are_frozen() {
     assert_eq!(

@@ -59,6 +59,8 @@ mod judging;
 
 // AI による下書き補助（Spec 63）。
 mod assist;
+// モデルテンプレートの接続テスト（Spec 68）。
+mod template_probe;
 pub use judging::JudgeTrial;
 mod sessions;
 
