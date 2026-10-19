@@ -2850,6 +2850,9 @@ entities:
       detail: String | null         # source 連鎖を平坦化した文字列
       agentId: String | null
       retryable: bool
+      retryAfterSecs: u64 | null    # 2026-10-19。接続先が 60 秒を超える待ちを明示して再試行をやめた
+                                    # ときの秒数（LlmError::retry_after_too_long）。文は運ばず、画面の
+                                    # formatError が表示の言語で添える。欄の無い古い記録は null で読む
     codes:
       - AGENT_NOT_FOUND
       - DUPLICATE_AGENT
@@ -6308,8 +6311,12 @@ llm_wire:
     待ちの式と順序（`plan_wait(attempt, hint, u)`。attempt は 0 始まり・u ∈ [0, 1]）:
       1. exp = min(200ms × 2^attempt, 5s) — 指数部の天井 5 秒は据え置き
       2. hint > 60s（MAX_HONORED_RETRY_AFTER = code constant）なら StopHintTooLong —
-         再試行せず、本文へ「プロバイダは N 秒後の再試行を求めています」を前置して返す
-         （JPEG フォールバックの文面差し替えと同じ層・同じ形）
+         再試行せず、**本文は書き換えずに**返す（2026-10-19 に覆した。それまでは本文へ日本語固定の
+         「プロバイダは N 秒後の再試行を求めています」を前置しており、言語を知らない LLM の層が
+         文を作るので英語の村の表示と失敗の注記に日本語が混ざった）。秒数は `retry_after` が運び、
+         `LlmError::retry_after_too_long()`（分類が Retry かつ hint > 60s。plan_wait と同じ厳密な大なり）
+         で読む。文にするのは言語を知っている 2 か所 — 画面の formatError（ErrorPayload.retryAfterSecs）
+         と失敗したターンの注記（record_failed_turn。村の言語で書く）
       3. base = max(exp, hint) — 明示値は下限
       4. wait = base × (1 + 0.1 × u) — jitter は max の後・上向きだけ（明示値を下回らない）
       天井の判定は jitter 前の hint。jitter 後の wait は最大 66 秒。u の本番の生成は

@@ -84,6 +84,7 @@ export function toErrorPayload(error: unknown): ErrorPayload {
     detail: error instanceof Error ? error.message : null,
     agentId: null,
     retryable: false,
+    retryAfterSecs: null,
   };
 }
 

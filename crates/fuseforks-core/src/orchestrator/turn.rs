@@ -48,13 +48,37 @@ pub(super) async fn record_failed_turn(
     error: &CoreError,
 ) {
     let attributed = attribute_sender(shared, incoming).await;
-    let note = format!(
-        "（このターンは失敗し、返答できませんでした: {error}。\
-         依頼は未処理のまま残っています）"
-    );
-
     let mut world = shared.world.write().await;
+    let language = world.language().unwrap_or(crate::world::Language::Ja);
+    let note = failed_turn_note(language, error);
     shared.push_exchange(&mut world, agent_id, &attributed, &note);
+}
+
+/// 失敗したターンの注記（履歴の応答側に積む文）。**村の言語で書く**（2026-10-19。それまでは日本語固定で、
+/// 英語の村でもモデルは日本語の注記を読んでいた）。
+///
+/// 接続先が 60 秒を超える待ちを明示して止まったときは、その秒数を添える。秒数の文は以前は LLM の層が
+/// エラーの本文へ日本語固定で書き足していたもので、ここへ移した（`tests/failed_turn_note_language.rs`）。
+/// **日本語は秒数の文が無い限り従来とバイト等価。**
+///
+/// `{error}` はコアのエラー文（Spec 13 で日本語に固定。画面は訳語を併記する）なので、英語の注記にも
+/// エラーの種類名（「API エラー」など）は日本語で残る。
+pub(super) fn failed_turn_note(language: crate::world::Language, error: &CoreError) -> String {
+    let wait = error.retry_after_too_long().map(|wait| wait.as_secs());
+    match language {
+        crate::world::Language::Ja => {
+            let hint = wait
+                .map(|secs| format!("プロバイダは {secs} 秒後の再試行を求めています。"))
+                .unwrap_or_default();
+            format!("（このターンは失敗し、返答できませんでした: {error}。{hint}依頼は未処理のまま残っています）")
+        }
+        crate::world::Language::En => {
+            let hint = wait
+                .map(|secs| format!(" The provider asks to retry after {secs} seconds."))
+                .unwrap_or_default();
+            format!("(This turn failed and could not be answered: {error}.{hint} The request is still unprocessed.)")
+        }
+    }
 }
 
 /// ターンの**飛行中台帳** — 始まった時点で作り、**どの出口でも**清算する。

@@ -114,7 +114,9 @@ world.template(&id)?.clone()           // 保存済みの値を読む
   - 非一過性の `Api`（400 / 401 / 403 / 404 / `insufficient_quota`）では、返す前に **`llm retry stop:` 行**を出す（612〜618 行）
   - 待ち時間の判定（`plan_wait`）は回数の判定より先に来る。**429 の明示値が 60 秒
     （`MAX_HONORED_RETRY_AFTER`）を超えると `StopHintTooLong`** になり、`with_hint_too_long`（790 行）が `Api.body` の
-    先頭に**日本語固定の文**「プロバイダは N 秒後の再試行を求めています。…」を書き足す（英語の村でも日本語）
+    先頭に**日本語固定の文**「プロバイダは N 秒後の再試行を求めています。…」を書き足す（英語の村でも日本語）。
+    **→ 2026-10-19 に撤去**（本文は書き換えない。秒数は `LlmError::retry_after_too_long()` で読み、画面は
+    `ErrorPayload.retryAfterSecs`）。D5 の `chat_once` の理由のうち残るのは `llm retry stop:` 行の重複だけ
 - **空の本文は `Ok` で返る**（rev2 で追記。点 3）。7 ワイヤとも decode の後に `reject_empty_reasoning`
   （`openai_compat.rs:349`、`client.rs:501〜562` の 7 箇所）を通り、**本文が空・ツール呼び出しが無い・`finish = Length`
   の 3 つが揃ったときだけ** `OutputTruncated { limit, usage }` になる。それ以外の空の本文は
@@ -573,7 +575,9 @@ rev2 で未決の増減は無い（査読 7 点はどれも実コードで決着
   塞ぐ（B の確認が「API キーを登録してから」で止まる）。入力欄を選択の切り替えで空にするかは別件
 - **`with_hint_too_long`（`client.rs:790`）の書き足しは日本語固定**（rev2 で追記。点 4）— 本番のターンでも、
   英語の村のエラー表示に日本語の文が混ざる。Spec 35（二言語化）の網から漏れている。接続テストは `chat_once` で
-  ここを通らない
+  ここを通らない。**→ 2026-10-19 に修正**（`with_hint_too_long` を撤去し、文は画面と失敗の注記が言語ごとに組む。
+  CLAUDE.md の現在地（2026-10-19 更新）が正）。同じ形の JPEG フォールバックの文（`client.rs` の「この接続先は画像を
+  受け付けません」）は未修正。選択の切り替えで鍵の入力欄が残る件（1 つ上）と `client.rs` の `truncate` の件も同日に修正
 - `RetryFacts` の doc が「本文は `turn failed` 行が既に運んでいる」と書いている — 接続先のエラー本文は
   `turn failed:` 行（`orchestrator/mod.rs:1557` が `payload.message` をそのまま書く）経由で `fuseforks.log` に入っている。
   PRIVACY の 6 は「プロンプトの本文」「ツール結果の本文」を記録しないと書いているが、エラー本文には触れていない。

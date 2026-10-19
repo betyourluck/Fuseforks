@@ -1309,7 +1309,7 @@ Production pitfalls are listed in `llm_wire.invariants` in `data_contract.yaml`.
 - Retry as an "empty inference response" only when the body is empty, `tool_calls` is empty, and `finish == length`.
 - Preserve the **raw** data on parse failure; it is the material for returning the rejection reason and requesting regeneration.
 - **Whether to retry is decided by a closed classification** ([Spec 52](specs/52_retry-classification.md)). 429 / 529 / 5xx / transport failures / empty inference responses are resent; 401 / 403 / 400 / 404 and **`insufficient_quota` (which OpenAI-family APIs return as a 429)** are not. The classification lives in the pure functions of `llm/retry.rs`; each adapter's `error_signal` extracts the provider code from the body.
-- **A server-stated wait is a floor** (the `Retry-After` header, and Gemini's in-body `google.rpc.RetryInfo.retryDelay`). The wait is the larger of that and the exponential backoff (200 ms × 2ⁿ, capped at 5 s), plus 0–10% upward jitter. **A stated wait above 60 seconds is not honored**: the call stops and the body is prefixed with "the provider asks you to retry in N seconds".
+- **A server-stated wait is a floor** (the `Retry-After` header, and Gemini's in-body `google.rpc.RetryInfo.retryDelay`). The wait is the larger of that and the exponential backoff (200 ms × 2ⁿ, capped at 5 s), plus 0–10% upward jitter. **A stated wait above 60 seconds is not honored**: the call stops, and the error display adds "The provider asks to retry after N seconds" in the display language (the failed turn's note in the servant's history is written in the village language too; the provider's body itself is left as is).
 
 ### Prompt Cache
 

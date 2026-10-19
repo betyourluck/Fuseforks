@@ -248,18 +248,23 @@ async fn retries_wait_for_the_hint_and_stop_on_billing_or_a_too_long_hint() {
     let (status, _, class, ..) = api(err);
     assert_eq!((status, class), (429, RetryClass::Billing));
 
-    // 5. 天井超えの明示値 — 1 回で止まり、本文の先頭に秒数（S6）。
+    // 5. 天井超えの明示値 — 1 回で止まり、秒数は `retry_after` の構造で運ぶ（S6）。
+    //    **本文は接続先の原文のまま**（2026-10-19）。それまでは LLM の層が日本語固定の
+    //    「プロバイダは N 秒後の再試行を求めています」を本文の先頭へ書き足しており、英語の村の
+    //    エラー表示と失敗の注記に日本語が混ざった。文にするのは言語を知っている層
+    //    （画面の formatError / 失敗の注記）で、ここは事実だけを返す。
     let (url, hits) = spawn_stub(Policy::HintTooLong).await;
     let err = backend(&url, Provider::OpenAiCompat).chat(request()).await.expect_err("429");
     assert_eq!(*hits.lock().unwrap(), 1, "天井を超える待ちはしない");
+    assert_eq!(
+        err.retry_after_too_long(),
+        Some(Duration::from_secs(3600)),
+        "秒数は構造で運び、読む側は判定関数で読む"
+    );
     let (status, body, class, retry_after, _) = api(err);
     assert_eq!((status, class), (429, RetryClass::RateLimit), "分類は元のまま");
     assert_eq!(retry_after, Some(Duration::from_secs(3600)));
-    assert!(
-        body.starts_with("プロバイダは 3600 秒後の再試行を求めています。"),
-        "本文の先頭に秒数: {body}"
-    );
-    assert!(body.contains("slow down"), "元の本文は残す: {body}");
+    assert_eq!(body, r#"{"error":{"message":"slow down"}}"#, "本文は原文のまま: {body}");
 
     // 6. Gemini の本文 `RetryInfo` — **ヘッダ無しでも 1 秒待つ**（変わる挙動 2・S1・検収 1）。
     let (url, hits) = spawn_stub(Policy::GeminiRetryInfo).await;

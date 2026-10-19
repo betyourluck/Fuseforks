@@ -474,6 +474,16 @@ impl CoreError {
         }
     }
 
+    /// 接続先が 60 秒を超える待ちを明示したので再試行をやめた失敗なら、その待ち時間（2026-10-19）。
+    /// 判定は [`crate::llm::LlmError::retry_after_too_long`] に委譲する。読むのは失敗したターンの注記と
+    /// [`ErrorPayload::retry_after_secs`] — どちらも村や画面の言語で文にする側。
+    pub fn retry_after_too_long(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Llm(err) => err.retry_after_too_long(),
+            _ => None,
+        }
+    }
+
     /// エージェントの稼働を降ろすべき失敗か。
     ///
     /// **[`Self::is_retryable`] とは別の問い。** 再試行の可否は「**この 1 件**を
@@ -517,6 +527,14 @@ pub struct ErrorPayload {
     pub agent_id: Option<String>,
     /// 再試行で回復しうるか。
     pub retryable: bool,
+    /// 接続先が 60 秒を超える待ちを明示して再試行をやめたときの秒数。それ以外は `None`（2026-10-19）。
+    ///
+    /// **コアは秒数だけを運び、文にするのは画面**（`formatError` が表示の言語で「接続先は N 秒後の
+    /// 再試行を求めています」を添える）。それまでは LLM の層が日本語固定の文を `message` の中へ
+    /// 書き足しており、英語の表示に日本語が混ざった。`world.json` の `lastError` にも入るので、
+    /// 欄の無い古い記録は `default` で `None` として読む。
+    #[serde(default)]
+    pub retry_after_secs: Option<u64>,
 }
 
 impl From<&CoreError> for ErrorPayload {
@@ -538,6 +556,7 @@ impl From<&CoreError> for ErrorPayload {
             detail: if detail.is_empty() { None } else { Some(detail) },
             agent_id: err.agent_id().map(str::to_owned),
             retryable: err.is_retryable(),
+            retry_after_secs: err.retry_after_too_long().map(|wait| wait.as_secs()),
         }
     }
 }
@@ -614,5 +633,36 @@ mod tests {
 
         assert_eq!(json["code"], "COMPUTE_FAILED");
         assert_eq!(json["retryable"], true);
+    }
+
+    /// 接続先が 60 秒を超える待ちを求めて止まった失敗は、秒数を `retryAfterSecs` で運ぶ（2026-10-19）。
+    /// 文は運ばない — 画面が表示の言語で組む。
+    #[test]
+    fn payload_carries_the_seconds_of_a_too_long_hint() {
+        let stopped = CoreError::Llm(crate::llm::LlmError::Api {
+            status: 429,
+            body: r#"{"error":{"message":"slow down"}}"#.into(),
+            class: crate::llm::retry::RetryClass::RateLimit,
+            code: None,
+            retry_after: Some(std::time::Duration::from_secs(3600)),
+            hint_src: crate::llm::retry::HintSource::Header,
+        });
+        let json = serde_json::to_value(&stopped).expect("シリアライズできること");
+        assert_eq!(json["retryAfterSecs"], 3600);
+        assert!(
+            !json["message"].as_str().unwrap().contains("秒後の再試行"),
+            "コアは文を書かない: {json}"
+        );
+
+        // 秒数が無い失敗では null（欄そのものは常にある）。
+        let plain = serde_json::to_value(CoreError::Llm(crate::llm::LlmError::api(500, "boom"))).unwrap();
+        assert!(plain["retryAfterSecs"].is_null());
+
+        // 欄の無い古い記録（world.json の lastError）も読める。
+        let old: ErrorPayload = serde_json::from_str(
+            r#"{"code":"LLM_API","message":"m","detail":null,"agentId":null,"retryable":true}"#,
+        )
+        .expect("欄の無い記録を読めること");
+        assert_eq!(old.retry_after_secs, None);
     }
 }

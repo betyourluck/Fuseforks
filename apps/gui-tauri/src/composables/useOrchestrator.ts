@@ -839,6 +839,7 @@ async function initialize(): Promise<void> {
           detail: boot.error,
           agentId: null,
           retryable: false,
+          retryAfterSecs: null,
         } satisfies ErrorPayload;
       }
       if (boot.ready) break;

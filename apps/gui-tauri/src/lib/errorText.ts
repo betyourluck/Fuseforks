@@ -11,15 +11,25 @@
  *   辞書が持てないので、訳語だけにするとその情報が失われる。原文が残れば
  *   不具合報告の grep も成立する
  * - 未知の `code`（新しいコアと古い辞書の組み合わせ）: 原文へ落とす
+ * - 接続先が 60 秒を超える待ちを求めて止まったとき（`retryAfterSecs`）: 表示の言語で
+ *   「接続先は N 秒後の再試行を求めています」を `message` の前に添える（2026-10-19）。
+ *   それまではコアの LLM の層が日本語固定の文を `message` の中へ書き足しており、
+ *   英語の表示に日本語の案内が混ざった。鍵 `errors.retryAfterTooLong` はコードではない
+ *   （コードは大文字の UPPER_SNAKE なので `errors.${code}` の引きとは重ならない）
  */
 import { i18n } from "../i18n";
 import type { ErrorPayload } from "../types";
 
 export function formatError(payload: ErrorPayload): string {
   const { code, message } = payload;
-  if (i18n.global.locale.value === "ja") return `[${code}] ${message}`;
+  // 古い記録（欄の無い lastError）は `undefined` で来るので `== null` で見る。
+  const body =
+    payload.retryAfterSecs == null
+      ? message
+      : `${i18n.global.t("errors.retryAfterTooLong", { secs: payload.retryAfterSecs })} ${message}`;
+  if (i18n.global.locale.value === "ja") return `[${code}] ${body}`;
 
   const key = `errors.${code}`;
-  if (!i18n.global.te(key)) return `[${code}] ${message}`;
-  return `[${code}] ${i18n.global.t(key)} — ${message}`;
+  if (!i18n.global.te(key)) return `[${code}] ${body}`;
+  return `[${code}] ${i18n.global.t(key)} — ${body}`;
 }

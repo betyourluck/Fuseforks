@@ -13,7 +13,7 @@ import { formatError } from "./errorText";
 import type { ErrorPayload } from "../types";
 
 function payload(code: string, message: string): ErrorPayload {
-  return { code, message, detail: null, agentId: null, retryable: false };
+  return { code, message, detail: null, agentId: null, retryable: false, retryAfterSecs: null };
 }
 
 afterEach(() => {
@@ -33,6 +33,31 @@ describe("formatError", () => {
     expect(text).toContain("The API key is not registered");
     // 原文（可変部）が残ること — 訳語だけにするとテンプレート名が失われる。
     expect(text).toContain("`tpl`");
+  });
+
+  // 2026-10-19: 秒数の文はコアの LLM の層が日本語固定で本文へ書き足していた（英語の表示に日本語が
+  // 混ざった）。コアは秒数を `retryAfterSecs` で運び、文にするのはここ。
+  it("接続先が 60 秒を超える待ちを求めて止まったときは、表示の言語で秒数を添える", () => {
+    const stopped: ErrorPayload = {
+      ...payload("LLM_API", 'API エラー (status=429): {"error":{"message":"slow down"}}'),
+      retryAfterSecs: 3600,
+    };
+
+    i18n.global.locale.value = "en";
+    const en = formatError(stopped);
+    expect(en).toContain("The provider asks to retry after 3600 seconds.");
+    expect(en).not.toContain("秒後の再試行");
+    expect(en).toContain("slow down");
+
+    i18n.global.locale.value = "ja";
+    const ja = formatError(stopped);
+    expect(ja).toContain("プロバイダは 3600 秒後の再試行を求めています。");
+    expect(ja).toContain("slow down");
+  });
+
+  it("秒数が無ければ何も添えない（従来の表示のまま）", () => {
+    const text = formatError(payload("LLM_API", "API エラー (status=500): boom"));
+    expect(text).toBe("[LLM_API] API エラー (status=500): boom");
   });
 
   it("未知の code は原文へ落とす", () => {

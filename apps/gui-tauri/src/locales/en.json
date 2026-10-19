@@ -1098,6 +1098,7 @@
     "deleteAction": "Delete"
   },
   "errors": {
+    "retryAfterTooLong": "The provider asks to retry after {secs} seconds. Please try again later.",
     "AGENT_NOT_FOUND": "The servant is not registered",
     "DUPLICATE_AGENT": "A servant with the same ID already exists",
     "DUPLICATE_AGENT_NAME": "The display name is already in use by another servant",

@@ -106,6 +106,11 @@ export interface ErrorPayload {
   detail: string | null;
   agentId: string | null;
   retryable: boolean;
+  /**
+   * 接続先が 60 秒を超える待ちを明示して再試行をやめたときの秒数。それ以外は `null`（2026-10-19）。
+   * コアは秒数だけを運び、文にするのは `formatError`（表示の言語で添える）。
+   */
+  retryAfterSecs: number | null;
 }
 
 /** ユーザーが編集するエージェント定義。 */

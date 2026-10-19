@@ -586,8 +586,9 @@ impl HttpLlmBackend {
     /// 指数バックオフつきの往復（JPEG フォールバックの内側）。Spec 52。
     ///
     /// 判断は全部 `retry.rs` の純関数に委ね、ここは順序と計器だけを持つ:
-    /// 分類が Stop → 即返す（`llm retry stop:`）/ 明示値が天井超え → 本文へ秒数を書いて
-    /// 返す（`llm retry stop: … reason=hint_too_long`）/ それ以外 → `plan_wait` の時間だけ
+    /// 分類が Stop → 即返す（`llm retry stop:`）/ 明示値が天井超え → 本文は書き換えずに
+    /// 返す（`llm retry stop: … reason=hint_too_long`。秒数は `retry_after` が運び、
+    /// `LlmError::retry_after_too_long` で読む）/ それ以外 → `plan_wait` の時間だけ
     /// 待って再送（`llm retry:`）。最後の試行の失敗はそのまま返す（行は出ない —
     /// 「M 回試行 = M − 1 行」）。
     ///
@@ -643,9 +644,13 @@ impl HttpLlmBackend {
             // アドレス（個体ごとに 1 インスタンス = 波で同時に落ちても種が割れる）を畳む。
             let u = jitter_unit(std::time::SystemTime::now(), attempt, self as *const Self as usize);
             match plan_wait(attempt, hint, u) {
-                WaitPlan::StopHintTooLong(hint) => {
+                // 天井を超えた明示値（D3）。**本文は書き換えずに返す**（2026-10-19）— 秒数は
+                // `retry_after` に入っており、文にするのは村の言語を知っている層
+                // （`LlmError::retry_after_too_long` を読む画面と失敗の注記）。この層で日本語の
+                // 文を前置していた頃は、英語の村の表示と履歴に日本語が混ざった。
+                WaitPlan::StopHintTooLong(_) => {
                     stop(" reason=hint_too_long");
-                    return Err(with_hint_too_long(err, hint));
+                    return Err(err);
                 }
                 WaitPlan::Wait(_) if attempt + 1 >= attempts => return Err(err),
                 WaitPlan::Wait(wait) => {
@@ -797,36 +802,6 @@ fn jitter_unit(now: std::time::SystemTime, attempt: u32, instance: usize) -> f64
         }
     }
     (h % 1001) as f64 / 1000.0
-}
-
-/// 天井を超えた明示値で止めるとき、本文の先頭に秒数を書く（D3）。
-///
-/// 生の 429 本文だけでは、利用者は「待てば通る」にも「今日はもう無理」にも辿り着けない。
-/// JPEG フォールバックの「この接続先は画像を受け付けません」と同じ層・同じ形。
-/// `status` と `class` は元のまま。
-fn with_hint_too_long(err: LlmError, hint: Duration) -> LlmError {
-    match err {
-        LlmError::Api {
-            status,
-            body,
-            class,
-            code,
-            retry_after,
-            hint_src,
-        } => LlmError::Api {
-            status,
-            body: format!(
-                "プロバイダは {} 秒後の再試行を求めています。時間を置いて依頼し直して\
-                 ください。プロバイダの応答: {body}",
-                hint.as_secs()
-            ),
-            class,
-            code,
-            retry_after,
-            hint_src,
-        },
-        other => other,
-    }
 }
 
 /// WebP の添付を JPEG へ再エンコードしたリクエストを作る（Spec 23 D3 の純関数）。

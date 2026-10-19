@@ -2692,8 +2692,31 @@ Spec の Notes 5 — 文字境界を見ない `truncate` の panic / 鍵の入�
   境界まで戻るループを外す → 単体と結合の 2 本 / 入力欄を空にする watch を外す → 走査の 1 本。Rust 1,354 全緑・clippy 0・
   vitest 824 全緑・build 緑
 
-**次の一手**: ① と ③ と別件 2 つを配るなら次のタグ。Spec 68 の未決 3 つの裁定。`with_hint_too_long` の日本語固定（英語の村の
-エラー表示に日本語が混ざる。Spec 35 の網の外）は未修正。残りの観測（`maxRetries` 6 の効き）はそのまま。
+**同日、`with_hint_too_long` の日本語固定も直した**（利用者「こちらはなおしたい」）。接続先が 60 秒を超える待ちを
+求めて再試行をやめたとき、言語を知らない LLM の層が日本語固定の「プロバイダは N 秒後の再試行を求めています」を
+エラーの本文へ書き足しており、英語の村では画面のエラー表示と、モデルの履歴に入る失敗の注記の両方に日本語が混ざった。
+
+- **書き足しを撤去し、秒数は構造で運ぶ。** `LlmError::retry_after_too_long()`（分類が Retry かつ `retry_after` >
+  `MAX_HONORED_RETRY_AFTER`。`plan_wait` と同じ厳密な大なりで、経路ではなくエラーの形から決めるので印の欄が要らない）。
+  **文にするのは言語を知っている 2 か所** — 画面（`ErrorPayload.retryAfterSecs` → `formatError` が表示の言語で前に添える。
+  辞書 `errors.retryAfterTooLong`）と、失敗したターンの注記（`record_failed_turn` → `failed_turn_note`）
+- **失敗の注記はそもそも丸ごと日本語固定だった**（Spec 35 の網から漏れていた、モデルへ届く面）。村の言語で書く形にした。
+  **日本語は秒数の文が無い限りバイト等価**（既存の `a_failed_turn_still_remembers_what_was_asked` が無改変で緑）
+- **赤を 3 つ先に確かめた** — 本文が原文のままであること（`retry_hint_log.rs` の場面 5）/ 英語の村の注記が英語で秒数を
+  持つこと・日本語の村の注記が秒数の文を持つこと（`failed_turn_note_language.rs`）/ 英語の表示に英語の案内が出ること
+  （`errorText.test.ts`）。単体 2 本（判定の境界 60 / 61 秒・課金切れ / `ErrorPayload` の欄と古い記録の読み込み）
+- **型検査がフロントの `ErrorPayload` の手組み 2 か所を捕まえた**（起動失敗の `BOOT_FAILED` と `IPC_FAILED`）
+- **ミューテーション 3 回とも予測どおり 1 本だけ赤**（注記を常に日本語で書く → 英語の村の 1 本 / 判定を `>=` にする → 境界の
+  単体 1 本 / `formatError` が秒数を無視する → errorText の 1 本）。Rust 1,357 全緑（GUI の crate は除外 — 開発ビルドが起動中で
+  `target\debug\fuseforks.exe` を消せない）・clippy 0・vitest 826 全緑・build 緑。**検証で踏んだ形 2 つ**: 背景の全体テストの集計が
+  `passed= failed=`（空）で返った = 1 本も走っていない（#132 の形。真因は上の exe のロック）/ 変異の確認で `--test` を複数並べて
+  `--no-fail-fast` を付けず、最初の赤で後ろの対象が走らなかった（#133 の形。付けて回し直した）
+- **残る日本語**（今回の範囲外）: コアのエラー文そのもの（「API エラー (status=…)」など。Spec 13 で日本語に固定し、画面は
+  訳語を併記する作り）は英語の注記にも残る / JPEG フォールバックの「この接続先は画像を受け付けません」も同じ層で日本語固定の
+  文に本文を差し替えている（`client.rs`。Spec 23 D3）
+
+**次の一手**: ① と ③ と別件 2 つと日本語固定の修正を配るなら次のタグ。Spec 68 の未決 3 つの裁定。JPEG フォールバックの
+日本語固定（同じ家族）を直すかは利用者の判断。残りの観測（`maxRetries` 6 の効き）はそのまま。
 
 ## 現在地（2026-10-15 更新）
 
@@ -7598,7 +7621,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   ログ `template probe:` 1 行（本文・鍵なし）。未決 3 = 統計へ入れるか / ダミーの関数を添えるか / 下書きへ広げるか。
   別件 = `client.rs:460` の `body.truncate(2_000)` が文字境界を見ない / 選択を切り替えても鍵の入力欄が残る / `with_hint_too_long` が日本語固定
   → **前の 2 つは 2026-10-19 に修正済み**（どちらも赤を先に確かめた。`tests/error_body_truncation.rs` / `templateSecretInputWiring.test.ts`。
-  現在地（2026-10-19 更新）が正）。`with_hint_too_long` の日本語固定は未修正
+  現在地（2026-10-19 更新）が正）。`with_hint_too_long` の日本語固定も同日に修正（撤去。秒数は構造で運ぶ）
 - [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **Done**（2026-10-11。**起票から Done まで同日**。P4 = 実機の確認 8 件すべて観測 — 認可・道具の呼び出し・再起動後の自動接続・2 体で更新 1 回・キャンセルと時間切れ・**取り消しで `revoked remote=yes` → `required` ×2・間に `refreshed` 無し（書き戻し無し）・`mcp-oauth:` の鍵が消える**（動的登録の `mcp-oauth-client:` は設計どおり残る）・CLI の keyring で通り env で `MCP_OAUTH_HEADLESS`。記録は Spec の「P4 実機記録」。**計器 `refreshed` はコードの交換の初回保存でも出る** — 直後の `authorized` まで 40 ms なら認可の流れ、0.8 秒前後なら繋ぎ直し（P4 記録の初版はこれを取り違えていた。名前は据え置き）。P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
   DETAIL 3 言語にリモート MCP の OAuth の節・GUI なしの拒否の行・「コンテナで回す」に D8・ディレクトリ木 / README 3 言語は
   既存の MCP の行を延ばした（行数は 171 / 171 / 167 のまま）/ **PRIVACY 日英の要旨・3・4-3・6・8**（送り先に MCP サーバーが

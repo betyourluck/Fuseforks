@@ -160,6 +160,29 @@ impl LlmError {
         }
     }
 
+    /// 接続先が **60 秒を超える待ち**を明示したので再試行をやめた失敗なら、その待ち時間（2026-10-19）。
+    ///
+    /// `chat_with_backoff` が `WaitPlan::StopHintTooLong` で返すのはちょうどこの形 — 分類が Retry で、
+    /// 明示値（`retry_after`）が [`MAX_HONORED_RETRY_AFTER`](crate::llm::retry::MAX_HONORED_RETRY_AFTER) を
+    /// 超える（判定は `plan_wait` と同じ厳密な大なり）。**経路ではなくエラーの形から決める**ので、
+    /// 印の欄を足さずに済む。
+    ///
+    /// それまでは LLM の層が日本語固定の「プロバイダは N 秒後の再試行を求めています」を `body` の先頭へ
+    /// 書き足していた。この層は村の言語を知らないので、英語の村のエラー表示と失敗の注記に日本語が
+    /// 混ざった。**秒数はこの関数で読み、文にするのは言語を知っている層**（画面の `formatError` /
+    /// 失敗したターンの注記）。`body` は接続先の原文のまま。
+    pub fn retry_after_too_long(&self) -> Option<std::time::Duration> {
+        use crate::llm::retry::{verdict, Verdict, MAX_HONORED_RETRY_AFTER};
+        match self {
+            Self::Api {
+                class,
+                retry_after: Some(hint),
+                ..
+            } if verdict(*class) == Verdict::Retry && *hint > MAX_HONORED_RETRY_AFTER => Some(*hint),
+            _ => None,
+        }
+    }
+
     /// 再試行で回復しうるか。
     ///
     /// 対象は HTTP 障害・理由不明の空応答・`Api` のうち分類が Retry のもの
@@ -237,6 +260,32 @@ mod tests {
             .is_transient()
         );
         assert!(!LlmError::Config("キー未設定".into()).is_transient());
+    }
+
+    /// 天井超えの判定は `plan_wait` と同じ境界（厳密な大なり）で、分類が Retry のときだけ。
+    #[test]
+    fn retry_after_too_long_matches_the_stop_on_a_long_hint() {
+        use crate::llm::retry::{HintSource, RetryClass};
+        use std::time::Duration;
+        let with = |class: RetryClass, secs: u64| LlmError::Api {
+            status: 429,
+            body: String::new(),
+            class,
+            code: None,
+            retry_after: Some(Duration::from_secs(secs)),
+            hint_src: HintSource::Header,
+        };
+        // 60 秒は待つ側（StopHintTooLong にならない）。61 秒から止まる側。
+        assert_eq!(with(RetryClass::RateLimit, 60).retry_after_too_long(), None);
+        assert_eq!(
+            with(RetryClass::RateLimit, 61).retry_after_too_long(),
+            Some(Duration::from_secs(61))
+        );
+        // 分類が Stop（課金切れ）なら明示値があっても「待ちが長すぎて止めた」ではない。
+        assert_eq!(with(RetryClass::Billing, 3600).retry_after_too_long(), None);
+        // 明示値が無い失敗・Api 以外は None。
+        assert_eq!(LlmError::api(429, "").retry_after_too_long(), None);
+        assert_eq!(LlmError::EmptyResponse.retry_after_too_long(), None);
     }
 
     /// 払ったことが分かる失敗だけが usage を運ぶ（#103）。

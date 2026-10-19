@@ -222,7 +222,11 @@ pub fn plan_wait(attempt: u32, hint: Option<Duration>, u: f64) -> WaitPlan;
   払う。止めて本文に秒数を書けば次の手が人に渡る（fail-closed。Spec 46 の「判定不能は
   宛先を持たない」と同じ向き）。60 秒の根拠 = 実機の 2 件が 56 / 51 秒（分単位の
   quota 窓）で、これを通す最小の切り
-- **止めたときの本文**: `chat_with_backoff` が `LlmError::Api` の `body` を
+- **→ 2026-10-19 に覆した（本文は書き換えない）。** 下の差し替えは言語を知らない LLM の層で日本語固定の
+  文を作るので、英語の村のエラー表示と失敗したターンの注記に日本語が混ざった。秒数は `retry_after` が運び、
+  `LlmError::retry_after_too_long()` で読み、文にするのは画面（`ErrorPayload.retryAfterSecs` → `formatError`）と
+  失敗の注記（`record_failed_turn`。村の言語）。`data_contract` の同じ節が正。以下は当時の記録
+- ~~**止めたときの本文**~~: `chat_with_backoff` が `LlmError::Api` の `body` を
   `format!("プロバイダは {secs} 秒後の再試行を求めています。時間を置いて依頼し直して\
   ください。プロバイダの応答: {body}")` へ差し替えて返す — **JPEG フォールバックの
   「この接続先は画像を受け付けません」（`client.rs:636-643`）と同じ形・同じ層**。
