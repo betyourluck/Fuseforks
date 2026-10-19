@@ -39,6 +39,16 @@ const saving = ref(false);
 /** 未保存の変更があるか。タブ切り替え時の警告に使う。 */
 const dirty = () => content.value !== original.value;
 
+/**
+ * 未保存のファイルの種別。無ければ `null`。
+ *
+ * 親（設定ダイアログ）が**閉じるときの確認**とフッターの表示に使う。閉じる操作は親の側に
+ * あるので、ここが出さないと右だけを書き換えて閉じたときに確認なしで消える（2026-10-19 まで
+ * そうだった）。タブを切り替えるときは確認するので、未保存は常に高々 1 つ。
+ */
+const unsavedKind = computed<ConfigFileKind | null>(() => (dirty() ? kind.value : null));
+defineExpose({ unsavedKind });
+
 /** 種別ごとの案内文。mcp.json だけは Markdown ではなく JSON。 */
 const placeholder = computed(() =>
   kind.value === "mcp"

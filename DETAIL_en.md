@@ -1120,7 +1120,10 @@ under `pending`, where **you press approve or reject** in "Commands" on the titl
 ([Spec 20](specs/20_command-approval.md)). Every servant's waiting requests gather in
 one screen, and the entry shows **the village-wide total**. You never have to open the
 JSON and copy lines by hand (direct editing of `run.json` remains available for finer
-control).
+control). While anything is waiting, **a thin strip also appears above the chat input**
+("Luna is waiting for command approval (2)" with "Open approvals", 2026-10-19). The strip
+is not part of the conversation flow and disappears once nothing is waiting; its count is
+the same as the title bar's.
 
 - **Approving asks what to permit**: this call only (exact match), or any arguments
   after this prefix (trailing `*`). **The narrow one is the default**, and the

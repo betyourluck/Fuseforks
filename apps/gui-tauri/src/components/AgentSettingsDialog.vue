@@ -18,6 +18,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import McpOAuthControls from "./McpOAuthControls.vue";
 import { snapshotToSpec } from "../lib/agentSpec";
+import { unsavedSummary } from "../lib/agentSettingsUnsaved";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { compactNumber } from "../lib/format";
 import { fileToWebpIcon } from "../lib/iconImage";
@@ -220,6 +221,16 @@ const dirty = computed(() => {
   );
 });
 
+/** 右の設定ファイルのエディタ。未保存のファイルを読むためだけに持つ。 */
+const editor = ref<InstanceType<typeof MarkdownEditor> | null>(null);
+
+/**
+ * 左の設定と右のファイルの未保存をまとめたもの。**閉じるときの確認とフッターの表示が
+ * 同じものを読む。** 左の「保存」は右のファイルを保存しないので、どちらが未保存かを名指しする。
+ * 左だけを見ていた頃は、右だけを書き換えて閉じると確認なしで編集が消えた（2026-10-19）。
+ */
+const unsaved = computed(() => unsavedSummary(dirty.value, editor.value?.unsavedKind ?? null));
+
 async function save(): Promise<void> {
   if (!draft.value) return;
   await orchestrator.updateAgent(draft.value);
@@ -228,11 +239,12 @@ async function save(): Promise<void> {
 }
 
 async function requestClose(): Promise<void> {
+  const summary = unsaved.value;
   if (
-    dirty.value &&
+    summary !== null &&
     !(await askConfirm({
       title: t("agentSettings.discardTitle"),
-      message: t("agentSettings.discardMessage"),
+      message: t(summary.messageKey, summary.params),
       confirmLabel: t("agentSettings.discardConfirm"),
       cancelLabel: t("agentSettings.discardCancel"),
       danger: true,
@@ -794,7 +806,9 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
           >
             {{ $t("agentSettings.delete") }}
           </button>
-          <span v-if="dirty" class="text-[11px] text-warn">{{ $t("agentSettings.unsaved") }}</span>
+          <span v-if="unsaved" class="min-w-0 truncate text-[11px] text-warn">{{
+            $t(unsaved.noteKey, unsaved.params)
+          }}</span>
           <button
             class="ml-auto rounded bg-accent px-3 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
             :disabled="!dirty"
@@ -815,7 +829,7 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             ✕
           </button>
         </header>
-        <MarkdownEditor :agent-id="agentId" :editable="true" />
+        <MarkdownEditor ref="editor" :agent-id="agentId" :editable="true" />
       </div>
     </div>
   </div>

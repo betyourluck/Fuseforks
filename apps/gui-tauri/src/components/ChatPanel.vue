@@ -33,6 +33,7 @@ import {
 } from "../lib/chatSearch";
 import { hasOpenOverlay } from "../lib/chatFocus";
 import { roundBadge, type RoundBadge } from "../lib/typingRound";
+import { approvalBanner } from "../lib/approvalBanner";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
@@ -70,6 +71,15 @@ import type { AgentId, AgentMessage, AgentSnapshot, Endpoint, QuotedMessage } fr
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const { state } = orchestrator;
+
+/** 承認画面を開くのは親（タイトルバーの「コマンド承認」と同じ入口を開く）。 */
+const emit = defineEmits<{ (e: "open-command-approval"): void }>();
+
+/**
+ * コマンドの承認待ちの帯（2026-10-19）。入力欄の上に、承認待ちがある間だけ出す。
+ * 件数は `run` が呼ばれるたびに取り直されている投影を読むだけ（`lib/approvalBanner.ts`）。
+ */
+const approval = computed(() => approvalBanner(state.commandRequests));
 const { settings } = useUiSettings();
 const chatClear = useChatClear();
 
@@ -1717,6 +1727,27 @@ async function newChat(): Promise<void> {
       <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
         {{ $t("chat.empty") }}
       </p>
+    </div>
+
+    <!--
+      コマンドの承認待ち（2026-10-19）。会話の途中に行として挿さず、入力欄の上に置く —
+      承認すると消えるものを会話の流れに混ぜると、行が途中から消えるか古い行が残る。
+      会話の表示倍率は掛けない（見出し行と同じく、ペインの枠の側の要素）。
+    -->
+    <div
+      v-if="approval"
+      class="flex shrink-0 items-center gap-2 border-t border-warn/40 bg-warn/10 px-3 py-1.5 text-[11px] text-warn"
+      role="status"
+    >
+      <span class="min-w-0 truncate" :title="$t(approval.key, approval.params)">
+        {{ $t(approval.key, approval.params) }}
+      </span>
+      <button
+        class="ml-auto shrink-0 rounded border border-warn/60 px-1.5 py-0.5 text-[10px] transition hover:bg-warn/20"
+        @click="emit('open-command-approval')"
+      >
+        {{ $t("chat.approvalOpen") }}
+      </button>
     </div>
 
     <ChatInput

@@ -350,7 +350,7 @@ onBeforeUnmount(() => {
     <!-- 右ペイン: 会話 -->
     <aside class="min-w-0 overflow-hidden">
       <ErrorBoundary :label="$t('app.regions.chat')">
-        <ChatPanel />
+        <ChatPanel @open-command-approval="commandApprovalOpen = true" />
       </ErrorBoundary>
     </aside>
   </div>

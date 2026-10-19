@@ -11,6 +11,7 @@
 import { computed } from "vue";
 
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { pendingTotal } from "../lib/approvalBanner";
 
 const { state } = useOrchestrator();
 
@@ -40,11 +41,9 @@ const emit = defineEmits<{
  *
  * 個体ごとの最大値ではなく合計。承認画面が村全体を 1 画面で扱うので、
  * 入口の数も村全体の判断待ち件数を指すのが素直。**丸めない** — 溜まりすぎが
- * 数で見えること自体に意味がある。
+ * 数で見えること自体に意味がある。会話ペインの承認待ちの帯と同じ関数で数える。
  */
-const pendingCount = computed(() =>
-  state.commandRequests.reduce((sum, view) => sum + view.pending.length, 0),
-);
+const pendingCount = computed(() => pendingTotal(state.commandRequests));
 
 async function win(method: "minimize" | "toggleMaximize" | "close") {
   try {
