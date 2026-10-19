@@ -1,8 +1,8 @@
 # Spec 68: モデルテンプレートの接続テスト
 
-- 状態: **Draft rev2・未決 0**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2。判定は 7 点とも採用 —
-  うち点 4 は処方を査読の案から変えた。対応表は Notes 6。2026-10-20 に未決 3 つを利用者が推奨どおりに閉じた。
-  実装は 1 行も無い）
+- 状態: **rev2・未決 0 → P0 完了**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2。判定は 7 点とも採用 —
+  うち点 4 は処方を査読の案から変えた。対応表は Notes 6。2026-10-20 に未決 3 つを利用者が推奨どおりに閉じ、
+  同日 P0 = 7 ワイヤへ撃って D6 を確定し `data_contract` の `template_probe_contract` を凍結）
 - 起点: 利用者が持ち込んだ外部レビュー（2026-10-19。設定・管理ダイアログの 3 点）の ② —
   「モデルテンプレートを登録しても、繋がるかどうかを確かめる手段が無い」。① と ③ は同日に着地した
   （`2fc3c14`。CLAUDE.md「設定ダイアログを閉じるときの確認と、承認待ちの帯」の節）。② は
@@ -327,10 +327,11 @@ class, code)` から写す**。
 - **「残高不足」の判定は狭い** — `Billing` になるのは code が `insufficient_quota` のときだけ（Spec 52）。
   Anthropic の「残高が足りない」は 400 の `invalid_request_error` で返ると記憶しており、その場合は
   `rejected` に落ちる（未測定）。**本文を必ず一緒に出すのはこのため** — 分類が外れても接続先の文が理由を言う
-- **鍵の誤りが `auth` にならない接続先がある見込み** — Gemini の不正な鍵は 401 ではなく 400 の
-  `INVALID_ARGUMENT`（詳細に `API_KEY_INVALID`）で返ると記憶している（未測定）。そうなら `rejected` に落ちる。
-  **P0 で 7 ワイヤに不正な鍵とモデル名を撃ち、status と code の表を作ってから**、プロバイダの code で
-  `auth` / `not_found` を補う腕を足すかを決める（`error_signal` は既に code を取り出している）
+- ~~**鍵の誤りが `auth` にならない接続先がある見込み** — Gemini の不正な鍵は 401 ではなく 400 の
+  `INVALID_ARGUMENT`（詳細に `API_KEY_INVALID`）で返ると記憶している（未測定）。~~ **→ P0 で外れた**: Gemini は 401
+  `UNAUTHENTICATED`。鍵の誤りが 400 で返るのは xAI だけ、モデル名の誤りが 400 で返るのはさくらと Perplexity。
+  **プロバイダの code で補う腕は足さない**（P0 実測記録。status だけで鍵は 7 中 6、モデル名は 7 中 5 が当たり、外れる 3 つは
+  本文が理由を名指しする）
 
 ### D7. コアと IPC（rev2 で結果の型と原文の運び方を直した）
 
@@ -447,7 +448,7 @@ testModelTemplate(templateId: ModelTemplateId): Promise<TemplateProbe>;   // IPC
 
 ## Tasks
 
-### P0 — 測ってから凍結する
+### P0 — 測ってから凍結する（**完了 2026-10-20**。下の「P0 実測記録」）
 
 **予測を先に書いてから撃つ**（Spec 63 P0 と同じ）。村のテンプレートと資格情報ストアの鍵で、実物のアダプタ
 （`HttpBackendFactory::strict`）から D3 の要求を撃つ。プローブは `crates/fuseforks-core/examples/` の使い捨て
@@ -467,6 +468,51 @@ testModelTemplate(templateId: ModelTemplateId): Promise<TemplateProbe>;   // IPC
   成功の基準 / 送る中身 / 再試行の輪を通らない `chat_once` / 閉じた分類 / 原文の運び方 / ログに本文・鍵・base URL を
   書かない / 予算と個体の累計に入れない / キャッシュに入れない / `degraded_reason` を成功にしない / 押したときだけ）と
   `entities` の `TemplateProbe` / `ProbeFailure` / `ProbeFinish`
+
+### P0 実測記録（2026-10-20）
+
+**予測（撃つ前に書いた）**。テンプレートは村のもの（OpenAI 互換 = Qwen3-VL-30B（さくら）/ Anthropic = claude-opus-5-5（low）/
+Gemini = gemini-3.5-flash-lite / xAI = grok-4.5（grok-4.7・medium）/ OpenAI = gpt-6-sol（gpt-6.1-sol・medium）/
+Meta = muse-spark-1.2（low）/ Perplexity = perplexity（deepseek-v4-pro））。`max_retries` は 1 にして撃つ（`chat_once` の前の代用）。
+
+| ワイヤ | 正しい設定 | 鍵を 1 文字変える | モデル名を 1 文字変える |
+|---|---|---|---|
+| OpenAI 互換（さくら） | replied | 401 → auth | 404 → not_found |
+| Anthropic | replied（思考 0〜100） | 401 → auth | 404 → not_found |
+| Gemini | replied | **400 `INVALID_ARGUMENT`（API_KEY_INVALID）→ rejected** | 404 → not_found |
+| xAI | replied（思考あり） | **400 → rejected** | 404 → not_found |
+| OpenAI Responses | replied（思考あり） | 401 → auth | **400 `model_not_found` → rejected** |
+| Meta | replied | 401 → auth | 400 → rejected |
+| Perplexity | replied | 401 → auth | 400 → rejected |
+
+- 最大出力 1（gpt-6.1-sol）: **400（`max_output_tokens` の下限 16）**
+- 空の `tools` + `ToolChoice::None`: 7 ワイヤとも `tools` / `tool_choice`（Gemini は `toolConfig`）を送らない
+
+**結果**（`crates/fuseforks-core/examples/template_probe_p0.rs`。使い捨てで、撃った後に消した）。太字が予測の外れ:
+
+| ワイヤ | 正しい設定（所要・入力/出力/思考） | 鍵を 1 文字変える | モデル名を 1 文字変える |
+|---|---|---|---|
+| OpenAI 互換（さくら） | OK「OK」1.6 秒・22 / 2 / 0 | 401 `Auth` → auth | **400 `ClientError`「This model is not available.」→ rejected** |
+| Anthropic | OK 1.4 秒・27 / 4 / 0 | 401 `authentication_error` → auth | 404 `not_found_error` → not_found |
+| Gemini | OK 1.2 秒・13 / 1 / 0 | **401 `UNAUTHENTICATED` → auth** | 404 `NOT_FOUND` → not_found |
+| xAI | OK 1.6 秒・**1,255（キャッシュ 1,152）/ 83 / 82** | 400 `ClientError`（本文の `code` は `invalid-argument`）→ rejected | 404 → not_found |
+| OpenAI Responses | OK 3.0 秒・20 / 5 / 0 | 401 `invalid_api_key` → auth | **404 `model_not_found` → not_found** |
+| Meta | OK 3.2 秒・21 / **170 / 160** | 401 `invalid_api_key` → auth | **404 `model_not_found` → not_found** |
+| Perplexity | OK 2.2 秒・38 / 12 / 0 | 401 `invalid_api_key` → auth | 400 `invalid_request`（本文がモデル名を名指し）→ rejected |
+
+- 最大出力 1（gpt-6.1-sol）: 400 `integer_below_min_value`「Expected a value >= 16」— **予測どおり**。D2 の「1 トークンだけは採らない」の根拠が実測になった
+- オフライン（ループバックへ撃って本文を見た）: 7 ワイヤとも `tools` / `tool_choice` / `toolConfig` / `functionDeclarations` を**送らない** — 予測どおり
+- **1 回の確認の値段**: 7 ワイヤ中 5 つは入力 13〜38・出力 1〜12 トークン。高いのは xAI（接続先が入力へ 1,200 トークン余りを足す。大半はキャッシュ）と
+  Meta（思考段階 low でも思考 160）。どちらも 1 回で数百トークンの桁で、D4 の「払いはログと画面で見せる」で足りる
+- **D6 の決定 — プロバイダの code で `auth` / `not_found` を補う腕は足さない。** status だけで鍵の誤りは 7 中 6（外れは xAI の 400）、
+  モデル名の誤りは 7 中 5（外れはさくらと Perplexity の 400）が当たる。外れる 3 つの本文はどれも理由を名指しする
+  （「Incorrect API key provided」/「This model is not available.」/「model … is not supported」）ので、本文を必ず一緒に出す D6 の
+  処方で読める。補うなら xAI のトップレベルの `code: "invalid-argument"` を見ることになるが、これは鍵以外の誤りにも出る汎用の値で、
+  補うと別の 400 を「鍵の誤り」と誤って名指しする
+- **観察（範囲外）**: OpenAI は不正な鍵の 401 本文に**鍵の末尾 4 文字**を返す（`sk-proj-****…abcd`）。接続テストは `template probe:` 行に
+  本文を書かない（D4）ので、ログには入らない。画面には `formatError` で出る — これは今の会話の失敗のトーストと同じで、利用者自身の
+  画面に、利用者が入れた（誤った）鍵の末尾が出るだけ。**ただし通常のターンの失敗は `turn failed:` 行が本文ごと `fuseforks.log` に
+  書いている**（Notes 5 の最後の項と同じ観察）
 
 ### P1 — コア（rev2 でテストの数え方を直した。点 6）
 

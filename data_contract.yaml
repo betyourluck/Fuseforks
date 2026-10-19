@@ -2617,6 +2617,35 @@ entities:
                                     # draft のみ。null = skill / construct (検査しない)。判別共用体 1 つ
       attempts: u32                 # draft のみ。検証の輪の回数 (skill / construct は 1)
 
+  TemplateProbe:
+    description: |
+      test_model_template の返り値 (Spec 68 D7)。result で判別する共用体で、outcome ごとに持つ欄が決まる。
+      **コアは訳した文字列を入れない** (画面が outcome / failure / finish から辞書の鍵を選ぶ)。
+      LLM の失敗も Err ではなくここ (result: failed) で返す。template_probe_contract が正。
+    fields:
+      result: reached | failed
+      elapsedMs: u64
+      # reached のとき (outcome で判別)
+      outcome: replied | truncated | no_text
+      text: String                  # replied のみ。応答本文の先頭 200 字 (コードポイント)
+      limit: u32                    # truncated のみ。適用されていた最大出力トークン
+      finish: ProbeFinish | null    # no_text のみ。到達しない腕 (EmptyResponse / Blocked) では null
+      usage: "{prompt: u64, completion: u64, reasoning: u64} | null"
+                                    # replied / truncated は必ずある。no_text は到達しない腕でだけ null
+      # failed のとき
+      failure: ProbeFailure
+      status: u16 | null            # Api のときだけ
+      retryAfterSecs: u64 | null    # Api で接続先が明示したときだけ (60 秒を超えても値のまま)
+      error: ErrorPayload           # 原文。画面は formatError に通す。作り方は template_probe_contract 7
+
+  ProbeFailure:
+    description: 接続テストの失敗の表示用の分類 (Spec 68 D6)。RetryClass とは別の閉じた列挙
+    values: [config, auth, not_found, rejected, rate_limit, billing, server_error, timeout, network, unexpected_shape]
+
+  ProbeFinish:
+    description: 接続テストで本文が空だった応答の終了理由 (Spec 68 D2。canonical の Finish の写し)
+    values: [stop, length, tool_use, other]
+
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
     fields:
@@ -6251,6 +6280,63 @@ conversation_termination:
     評価の輪 (試しに走らせて比べる) / skill-creator の書き方の指南をそのまま渡す / 本文の目印で質問と
     下書きを分ける / 履歴をフロントが平文で組み立てる / 「下書きを出して」を文言の一致で判定する /
     使用量を対象の個体の累計へ積む / 固有スキルを付けたまま呼ぶ
+
+  template_probe_contract: |
+    モデルテンプレートの接続テスト = モデルテンプレート登録ダイアログから、保存済みのテンプレートで LLM を
+    1 回だけ呼び、繋がったかどうかを見せる部品 (Spec 68 rev2、2026-10-20 P0 で凍結)。**本節は実装より先に
+    凍結した契約で、着地は P1〜P4。押さなければ 1 バイトも外へ出ず、村の挙動はバイト等価。**
+
+    不変条件:
+      1. **確かめるのは保存済みのテンプレート (world.json) と登録済みの鍵 (資格情報ストア) だけ** (利用者裁定
+         2026-10-20)。IPC は templateId だけを受け、コアが world.template(&id) で読む。画面は未保存の間
+         (下書きが保存済みの値と違う / 新規の下書き / **鍵の入力欄 secretInput に文字が残っている**) ボタンを
+         押せない。未保存の鍵を IPC で渡す経路を作らない
+      2. **成功の基準は「接続先が 2xx を返し、選んだプロトコルの応答として解釈できた」。** chat_once の結果を
+         LlmError の網羅 match で振り分ける (_ => を書かない)。Ok で本文あり → replied / Ok で本文が空 →
+         no_text (使用量あり) / OutputTruncated → truncated (**成功に数える**) / EmptyResponse・Blocked →
+         no_text で使用量 null (実経路では到達しない腕)。**「1 トークンだけ返させる」は採らない** (P0 実測:
+         gpt-6.1-sol の max_output_tokens=1 は 400 integer_below_min_value・下限 16)
+      3. **送る中身**: テンプレートの without_provider_skills() の複製・利用者発話 1 通だけ (村の言語の定型文)・
+         tools 空 + ToolChoice::None (P0 実測: 7 ワイヤとも tools / tool_choice / toolConfig を送らない)・
+         effort / max_tokens / temperature はテンプレートの値・cacheable_prefix_len 0。**ダミーの関数は添えない**
+         (利用者裁定 2026-10-20。ツールを送ったときだけ出る拒否は確かめないものとして注記する)
+      4. **再試行の輪を通らない。** LlmBackend::chat_once (既定の実装は chat。HttpLlmBackend は attempt の 1 回で
+         上書き)。待ち・再送・llm retry: / llm retry stop: 行・JPEG の再送を通らない。429 の retry_after は
+         60 秒を超えても値のまま運ぶ
+      5. **失敗の分類は表示用の閉じた列挙 ProbeFailure (10 値) に置き、RetryClass は 1 値も変えない。** 写しは
+         純関数 classify_failure の 1 本で、LlmError と RetryClass の両方を網羅 match で書く。Api からは
+         status と class だけで写す — Auth → auth / ClientError かつ 404 → not_found / それ以外の ClientError と
+         ContextLength → rejected / RateLimit → rate_limit / Billing → billing / ServerError・Overloaded →
+         server_error。**プロバイダの code で補う腕は持たない** (P0 実測: 鍵の誤りは 7 ワイヤ中 6 が 401、
+         xAI だけ 400 / モデル名の誤りは 7 中 5 が 404、さくらと Perplexity が 400。外れる 3 つは本文が理由を
+         名指しするので、本文を必ず一緒に出す)
+      6. **LLM の失敗は Err ではなく result: "failed" で返す** (CoreError だと画面に LLM_API しか届かない)。
+         Err(CoreError) はテンプレートが無いとき (MODEL_TEMPLATE_NOT_FOUND) だけ。**コアは訳した文字列を
+         結果に入れない** — 画面が outcome / failure / finish から辞書の鍵を選ぶ
+      7. **原文 (error) の作り方は経路ごとに 1 つ** — Api / Http / Config / ファクトリの Err は
+         ErrorPayload::from(&CoreError::Llm(err)) / degraded_reason は { code: LLM_CONFIG, message:
+         degraded_reason } (LlmError::Config に包み直さない — 接頭辞が二重になる) / Parse は受け取った本文の
+         先頭 2,000 字 (コードポイントで切る) を message、serde の理由を detail
+      8. **degraded_reason を成功にしない。** GUI のファクトリは設定不備をエコー応答へ退避させるので、
+         degraded_reason が Some なら呼ばずに config で返す。**複製をキャッシュ (backend_for) へ入れない**
+         (id が同じなので、入れると村の個体がスキル無しのバックエンドを掴む)
+      9. **計器 template probe: を 1 回の確認ごとに 1 行** (成功でも失敗でも): template / wire / model /
+         outcome / finish / status / class / code / elapsed_ms / prompt / completion / reasoning。
+         **書かないもの = 送った文・応答の本文・接続先のエラー本文・受け取った本文・API キー・base URL**
+         (#71。P0 実測: OpenAI は不正な鍵の 401 本文に鍵の末尾 4 文字を返す)。使用量の欄の - は使用量を
+         持たない結果だけ (0 を捏造しない)
+     10. **払いは村の予算 (tokenBudget) と個体の累計に入れない。統計画面 (Record) にも入れない** (利用者裁定
+         2026-10-20)。払いが見える場所はログの 1 行と画面のその場の表示
+     11. **押したときだけ外へ出る。** 呼び出し元はボタンの click ハンドラ 1 つだけ。ダイアログを開いたとき・
+         選んだとき・保存したとき・起動したときには送らない (Spec 59 D10 / pricing_fetch_freeze と同じ)。
+         送り先はテンプレートに登録した接続先だけで、送る中身に利用者の依頼・会話・ファイル・記憶は 1 字も
+         含まない (PRIVACY は改訂不要)
+
+    **退けた形**: 編集中の下書きを確かめる / 1 トークンだけ返させる / 固有スキルを付けたまま確かめる /
+    思考段階を外して確かめる / 再試行してから結果を出す / max_retries = 1 の複製で chat を呼ぶ /
+    degraded_reason を LlmError::Config に包み直す / RetryClass に not_found を足す / プロバイダの code で
+    auth・not_found を補う / CoreError を新設して失敗を Err で返す / 自動で確かめる / 結果を保存して一覧に
+    バッジを出す / fuseforks-cli check に足す / 統計へ入れる / ダミーの関数を添える
 
 # ---------------------------------------------------------------------------
 concurrency:
