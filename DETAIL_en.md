@@ -42,6 +42,7 @@ Fuseforks/
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
 │       │   │   ├── judging.rs       Judges (offering and relaying judge_*, "Try", the list; Spec 62)
 │       │   │   ├── assist.rs        AI drafting (calling the drafter, the judge check loop, recording; Spec 63)
+│       │   │   ├── template_probe.rs Model template connection test (one round trip, verdict, one log line; Spec 68)
 │       │   │   └── context.rs       Context that goes into the prompt (public square log, presence)
 │       │   ├── compute.rs           ★ CPU-bound processing and Tokio↔Rayon bridging
 │       │   ├── schedule.rs          Schedule types and firing rules (pure functions. time and timezone as args)
@@ -54,6 +55,7 @@ Fuseforks/
 │       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; implements `ParagraphScorer` and `Judge`)
 │       │   ├── judge.rs             Judges, pure mechanism (judge.toml checks, condition grammar, rule evaluation, the active predicate; [Spec 62](specs/62_judge-agents.md))
 │       │   ├── assist.rs            AI drafting, pure mechanism (guides, the two-section context, submit_draft, classification, history checks; [Spec 63](specs/63_ai-draft-assist.md))
+│       │   ├── template_probe.rs    Connection test, pure mechanism (fixed prompt, verdict, the 10 failure categories, the log line; [Spec 68](specs/68_template-connection-test.md))
 │       │   ├── attachment.rs        Attachments: validation, storage, GC (pure mechanics; kind decided by magic bytes)
 │       │   ├── secret.rs            Secret storage (OS credential store / in-memory for tests)
 │       │   ├── mcp_oauth.rs         OAuth for remote MCP (one authorization manager per server, two-tier storage with the credential store, state; [Spec 67](specs/67_mcp-oauth.md))
@@ -122,6 +124,8 @@ Fuseforks/
             ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
             ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines (pure; Spec 62)
             ├── lib/assist.ts        AI drafting: picking the template, the before-apply difference (pure; Spec 63)
+            ├── lib/templateDraft.ts Whether a model template draft differs from the saved one (pure; the connection test's gate)
+            ├── lib/templateProbe.ts Connection test button gate, result tone and dictionary keys (pure; Spec 68)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -1603,6 +1607,14 @@ The app works even without an API key. `HttpBackendFactory::echo_on_failure` fal
 > When the implementation identified itself only as an "echo response," fake replies continued because settings had not reached the backend, and the cause could not be found. **Fallback is allowed, but silent fallback is not.**
 
 To connect to an LLM, create a model template from the agent list header, paste a key in the `API Key` field, and press `Register`. **Everything is completed inside the app.** No terminal operation or restart is needed.
+
+**"Test connection" in the dialog checks whether it connects** ([Spec 68](specs/68_template-connection-test.md)). It calls the LLM once with the saved template and the registered key, and within seconds shows either "The provider answered with these settings" or a failure category (authentication refused / the model name or base URL path does not exist / the request shape was rejected / rate limit / out of balance / provider failure / timeout / base URL unreachable / the response is not in the selected protocol's shape / no backend could be built from the template) together with the provider's body. You no longer have to assign the template to a servant, start it and wait for the first request to fail.
+
+- **It sends only when pressed** (not when the dialog opens, a template is selected or saved). What it sends is one fixed message ("This is a connection check. Reply with just "OK".") and no conversation, files or memory. It goes only to that template's endpoint
+- **It checks the saved values only.** It cannot be pressed while there are unsaved changes, or while a key typed into `API Key` has not been `Register`ed
+- The thinking level, max output tokens and temperature are sent as in the template (to catch those being rejected). **Not checked**: tool calls, provider skills (search etc.), attachments, long inputs and rate-limit headroom. A reply cut at the output limit, or one with no text, counts as "answered" with a note
+- The tokens it spends appear in the result and in one `template probe:` log line (on 5 of the 7 wires: 13–38 input and 1–12 output tokens; xAI adds over 1,200 input tokens on its side, mostly cached, and Meta spends 160 thinking tokens even at the low thinking level). **They do not count toward the village budget, the servant totals or the statistics**
+- A wrong key is a 401 on most endpoints (400 on xAI); a wrong model name is a 404 on most (400 on Sakura and Perplexity). Endpoints that answer with 400 show "the request shape was rejected", and the body below names the reason
 
 Changing `Protocol` updates the `base URL` default (`https://api.openai.com/v1` for OpenAI-compatible, `https://api.anthropic.com/v1` for Anthropic). A manually entered URL is never overwritten.
 

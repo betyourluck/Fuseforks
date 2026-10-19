@@ -41,6 +41,7 @@ Fuseforks/
 │       │   │   ├── delegation.rs    委托与转发（ask / plan / transfer 的提示与判定）
 │       │   │   ├── judging.rs       判断者（judge_* 的提示与转交、“试用”、列表。[Spec 62](specs/62_judge-agents.md)）
 │       │   │   ├── assist.rs        AI 起草辅助（调用起草模型・判断者的检查循环・记录。[Spec 63](specs/63_ai-draft-assist.md)）
+│       │   │   ├── template_probe.rs 模型模板的连接测试（只往返一次・判定・一行日志。[Spec 68](specs/68_template-connection-test.md)）
 │       │   │   └── context.rs       加载进 Prompt 的上下文（广场日志·进出室）
 │       │   ├── compute.rs           ★ CPU 密集型处理与 Tokio↔Rayon 的桥梁
 │       │   ├── schedule.rs          定时任务类型与触发规则（纯函数。时间和时区均为参数）
@@ -48,6 +49,7 @@ Fuseforks/
 │       │   ├── process.rs           子进程的启动与等待（run 工具与前置判定共用）
 │       │   ├── doc_index.rs         Markdown 标题索引（纯函数。PageIndex 的思路）
 │       │   ├── room_log.rs          广场日志的纯机构（可见谓词 / ID 解析 / 显示 ID 扩展）
+│       │   ├── template_probe.rs    连接测试的纯机构（固定消息・判定・失败的 10 分类・一行日志。[Spec 68](specs/68_template-connection-test.md)）
 │       │   ├── attachment.rs        附件的验证·存放·GC（纯机构。类型通过 magic 判定）
 │       │   ├── secret.rs            秘密的保管（OS 凭据存储 / 测试用的 in-memory）
 │       │   ├── mcp_oauth.rs         远程 MCP 的 OAuth（每个连接目标一个授权管理者・与凭据存储的两层・状态。[Spec 67](specs/67_mcp-oauth.md)）
@@ -102,6 +104,7 @@ Fuseforks/
             ├── lib/contextUsage.ts  上下文使用率圆环的比例与颜色（纯函数。[Spec 49](specs/49_context-usage-ring.md)）
             ├── lib/agentGroups.ts   组的分类・可见集合・批量启动门・drop 确定（纯函数。[Spec 51](specs/51_agent-groups.md)）
             ├── lib/jevThreshold.ts  工具结果压缩的阈值与标签键（纯函数。值以 Rust 为准，由扫描测试比对）
+            ├── lib/templateProbe.ts 连接测试按钮的门槛・结果区的颜色与字典键（纯函数。Spec 68）
             ├── lib/assist.ts        AI 起草辅助的模板选择・应用前的差异（纯函数。Spec 63）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）
@@ -545,6 +548,10 @@ API 密钥保存在 **OS 的凭据存储**中（Windows 凭据管理器 / macOS 
 - 密钥的更新通过模态对话框完成。输入后的密钥会直接写入 OS 凭据存储，配置管理中只更新其引用。
 - **仅在不使用 GUI 运行时**，也可以从环境变量读取（`fuseforks-cli --secrets env`。见下文“无需 GUI 运行”）。容器里没有凭据存储。只读，GUI 始终只使用凭据存储。
 - 没有把值返回到画面的 API。唯一的例外是**明确指定** `fuseforks-cli bake --env-out` 时，为容器把密钥写入明文的 `.env`（[Spec 66](specs/66_bake-env-out.md)）。
+
+### 连接测试（Spec 68）
+
+模型模板对话框里的**“连接测试”**会用已保存的模板和已登记的密钥调用一次 LLM，几秒内显示“接入点已用此设置作答”，或显示失败分类（认证被拒 / 模型名或 base URL 路径不存在 / 请求形式被拒 / 速率限制 / 余额不足 / 接入点故障 / 超时 / 无法到达 base URL / 响应形式与协议不符 / 无法由模板构建）以及接入点返回的正文。只在按下时向外发送（打开、选择、保存时都不发送），发送内容是一条固定消息，不含会话、文件与记忆。存在未保存的更改，或在 `API キー` 栏输入了密钥但尚未“登记”时，按钮不可用。不检查工具调用、提供商专属技能、附件与长输入。所花的 token 显示在结果和日志的 `template probe:` 一行中，不计入村子的预算、仆从的累计和统计。
 
 ## 运营
 

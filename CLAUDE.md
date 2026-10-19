@@ -2716,7 +2716,9 @@ Spec の Notes 5 — 文字境界を見ない `truncate` の panic / 鍵の入�
   文に本文を差し替えている~~（→ 2026-10-20 に直した。下）
 
 **2026-10-20、Spec 68 の未決 3 つを利用者が推奨どおりに閉じた**（統計へ入れない / ダミーの関数を添えない / 保存済みだけ）。
-Spec は rev2・未決 0 で、実装（P0）への着手はまだ指示されていない。
+~~Spec は rev2・未決 0 で、実装（P0）への着手はまだ指示されていない。~~ → **同日に利用者「Spec68の着手をお願いします」で P0〜P3 を通した**
+（`136ef3c` / `a63bc85` / `108838b` + P3 の台帳）。モデル登録のダイアログに「接続テスト」が付き、保存済みのテンプレートと登録済みの鍵で
+1 回だけ呼んで、応答したか・失敗の 10 分類と接続先の本文を出す。**残は P4 の実機 7 件**（Spec 68 の「P4 — 実機」が正）。
 
 **同日、JPEG フォールバックの日本語固定も直した**（利用者「JPEG フォールバックの日本語固定もなおして」。上の `with_hint_too_long` と
 同じ家族）。WebP の添付が 400 → JPEG で送り直しても 400、のとき（Spec 23 D3。OpenAI 互換の口だけ）、`chat_inner` が本文を
@@ -2739,7 +2741,7 @@ Spec は rev2・未決 0 で、実装（P0）への着手はまだ指示され�
 - 台帳: `data_contract` の添付の凍結 4 に覆しを明記・`ErrorPayload` に `imagesRejected` / Spec 23 の P3 実装記録の「400 本文へ
   前置」に取り消し線 / DETAIL 日英に 1 句（中文版は該当の記述が無い）
 
-**次の一手**: ① と ③ と別件 2 つと日本語固定の修正 2 つを配るなら次のタグ。Spec 68 の P0（着手は利用者の判断）。
+**次の一手**: Spec 68 の P4（実機 7 件・利用者）→ Done。① と ③ と別件 2 つと日本語固定の修正 2 つと接続テストを配るなら次のタグ。
 残りの観測（`maxRetries` 6 の効き）はそのまま。
 
 ## 現在地（2026-10-15 更新）
@@ -7638,7 +7640,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 68](specs/68_template-connection-test.md)（モデルテンプレートの接続テスト — `ModelTemplateDialog.vue` に「接続テスト」ボタン）:
-  **Draft rev2**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2 = 7 点とも採用・点 4 は処方を変更。実装なし）。推奨 = 保存済みのテンプレートと
+  **rev2 → P0〜P3 完了。残は P4 実機**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2 = 7 点とも採用・点 4 は処方を変更 →
+  2026-10-20 に P0〜P3）。推奨 = 保存済みのテンプレートと
   登録済みの鍵だけ確かめる（未保存・鍵の入力欄に文字が残っている間は押せない・`isTemplateDirty` を新設）/ 成功は 2xx かつプロトコルとして解釈できた
   （`OutputTruncated` も成功・空の本文は使用量つきの `Ok` から `no_text`）/ 固有スキルとツールは外し思考段階と最大出力はテンプレートのまま /
   再試行の輪を通らない `LlmBackend::chat_once` / 失敗は表示用の閉じた `ProbeFailure` 10 値（`Api` から写るのは 6 値）で `RetryClass` は不変 /
@@ -7650,7 +7653,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   トークン、xAI は接続先が 1,200 余りを足し、Meta は思考 160。OpenAI は不正な鍵の 401 本文に鍵の末尾 4 文字を返す。
   別件 = `client.rs:460` の `body.truncate(2_000)` が文字境界を見ない / 選択を切り替えても鍵の入力欄が残る / `with_hint_too_long` が日本語固定
   → **前の 2 つは 2026-10-19 に修正済み**（どちらも赤を先に確かめた。`tests/error_body_truncation.rs` / `templateSecretInputWiring.test.ts`。
-  現在地（2026-10-19 更新）が正）。`with_hint_too_long` の日本語固定も同日に修正（撤去。秒数は構造で運ぶ）
+  現在地（2026-10-19 更新）が正）。`with_hint_too_long` の日本語固定も同日に修正（撤去。秒数は構造で運ぶ）。
+  **P1（2026-10-20）** = `LlmBackend::chat_once`（既定は `chat`。`HttpLlmBackend` だけ `attempt` の 1 回で上書き = 再試行の輪を通らない）/
+  純機構 `template_probe.rs`（`judge` は `LlmError` と `RetryClass` を `_ =>` なしの網羅 match で振り分ける）/ `Orchestrator::probe_template`
+  （`without_provider_skills()` の複製はファクトリのキャッシュに入れない・使用量は個体の累計に入れない）。単体 13 + 結合 6 + HTTP 1
+  （429 + `Retry-After: 120` で 1 回だけ撃つ）+ ワイヤ形の凍結 1、変異 4 回とも予測どおり。**P2** = IPC `test_model_template` /
+  `lib/templateDraft.ts` の `isTemplateDirty` / `lib/templateProbe.ts`（押せない理由・結果の色・辞書の鍵）/ ダイアログのフッター左端の
+  「接続テスト」と結果の区画 / 辞書 `modelTemplate.probe.*`。純関数 12 + 走査 6（TS の 10 値が Rust の `ProbeFailure::as_str` と一致）、
+  変異 3 回とも 1 本だけ赤。Rust 1,381・vitest 845。**P3** = DETAIL 3 言語（段落と木）/ README 3 言語の 🏘️ の行に 1 文（行は足さない）/
+  PRIVACY は改訂しない（D10）。**実機は未確認**（P4 の 7 件は Spec が正）
 - [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **Done**（2026-10-11。**起票から Done まで同日**。P4 = 実機の確認 8 件すべて観測 — 認可・道具の呼び出し・再起動後の自動接続・2 体で更新 1 回・キャンセルと時間切れ・**取り消しで `revoked remote=yes` → `required` ×2・間に `refreshed` 無し（書き戻し無し）・`mcp-oauth:` の鍵が消える**（動的登録の `mcp-oauth-client:` は設計どおり残る）・CLI の keyring で通り env で `MCP_OAUTH_HEADLESS`。記録は Spec の「P4 実機記録」。**計器 `refreshed` はコードの交換の初回保存でも出る** — 直後の `authorized` まで 40 ms なら認可の流れ、0.8 秒前後なら繋ぎ直し（P4 記録の初版はこれを取り違えていた。名前は据え置き）。P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
   DETAIL 3 言語にリモート MCP の OAuth の節・GUI なしの拒否の行・「コンテナで回す」に D8・ディレクトリ木 / README 3 言語は
   既存の MCP の行を延ばした（行数は 171 / 171 / 167 のまま）/ **PRIVACY 日英の要旨・3・4-3・6・8**（送り先に MCP サーバーが
