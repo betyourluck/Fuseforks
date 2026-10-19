@@ -85,6 +85,7 @@ export function toErrorPayload(error: unknown): ErrorPayload {
     agentId: null,
     retryable: false,
     retryAfterSecs: null,
+    imagesRejected: false,
   };
 }
 

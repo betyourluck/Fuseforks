@@ -840,6 +840,7 @@ async function initialize(): Promise<void> {
           agentId: null,
           retryable: false,
           retryAfterSecs: null,
+          imagesRejected: false,
         } satisfies ErrorPayload;
       }
       if (boot.ready) break;

@@ -1099,6 +1099,7 @@
   },
   "errors": {
     "retryAfterTooLong": "プロバイダは {secs} 秒後の再試行を求めています。時間を置いて依頼し直してください。",
+    "imagesRejected": "この接続先は画像を受け付けません（WebP と JPEG の両方が拒否されました）。画像なしで送り直してください。",
     "AGENT_NOT_FOUND": "指定のサーヴァントが登録されていません",
     "DUPLICATE_AGENT": "同じ ID のサーヴァントが既にあります",
     "DUPLICATE_AGENT_NAME": "表示名が他のサーヴァントと重複しています",

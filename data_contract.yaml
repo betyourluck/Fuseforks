@@ -1544,7 +1544,11 @@ enums:
       フロントは常に WebP を作る (長辺 1568px へ縮小・縮小したことを画面に出す)。
       Provider::OpenAiCompat かつ画像付きで 400 が返った **1 回だけ** JPEG へ
       再エンコードして再試行し、それも落ちたら「この接続先は画像を受け付けません」を
-      画面へ出す (黙って落とさない)。**アニメーション WebP は拒否**
+      画面へ出す (黙って落とさない)。**文を作るのは言語を知っている層** (2026-10-20 に覆した —
+      それまでは LLM の層が 400 本文を日本語固定のこの文へ差し替えており、英語の村に日本語が
+      混ざった)。LLM の層は `LlmError::ImagesRejected { body }` (本文は接続先の原文・表示と
+      code は 400 の Api と同じ LLM_API・非一過性) を返すだけで、画面は ErrorPayload.imagesRejected
+      → formatError、履歴は失敗したターンの注記がそれぞれの言語で書く。**アニメーション WebP は拒否**
       (Anthropic は先頭フレームしか読まず、利用者の意図と食い違う。判定は
       magic では足りず VP8X チャンクのフラグを見る)。
       上限: 1 発話 1 枚 / 元ファイル 10MB で拒否 / 変換後 2MB で拒否 (D5)。
@@ -2853,6 +2857,9 @@ entities:
       retryAfterSecs: u64 | null    # 2026-10-19。接続先が 60 秒を超える待ちを明示して再試行をやめた
                                     # ときの秒数（LlmError::retry_after_too_long）。文は運ばず、画面の
                                     # formatError が表示の言語で添える。欄の無い古い記録は null で読む
+      imagesRejected: bool          # 2026-10-20。この接続先が画像を受け付けなかった (WebP も JPEG も 400。
+                                    # LlmError::ImagesRejected)。同じく文は運ばず formatError が添える。
+                                    # 欄の無い古い記録は false で読む
     codes:
       - AGENT_NOT_FOUND
       - DUPLICATE_AGENT

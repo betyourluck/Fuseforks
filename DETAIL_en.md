@@ -510,7 +510,8 @@ layer, xAI, and a Sakura-hosted Qwen3-VL — and **all ten combinations read the
 correctly**. Hence WebP is the default. Some compatibility servers may still lack a WebP
 decoder (xAI's own documentation lists only jpg/png), so **on a 400 the request is
 re-encoded to JPEG and sent once more.** If both are refused, the screen says this
-endpoint does not accept images.
+endpoint does not accept images (in the display language; the failed turn's note in the
+servant's history is written in the village language too).
 
 ---
 

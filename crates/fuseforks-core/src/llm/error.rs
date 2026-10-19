@@ -57,6 +57,22 @@ pub enum LlmError {
         hint_src: crate::llm::retry::HintSource,
     },
 
+    /// **この接続先は画像を受け付けない** — WebP の添付が 400 で拒否され、JPEG に替えて送り直しても 400 だった
+    /// （Spec 23 D3 の JPEG フォールバック。OpenAI 互換の口だけ）。`body` は 2 回目の接続先の原文。
+    ///
+    /// 2026-10-20 までは `Api { status: 400 }` の本文を日本語固定の「この接続先は画像を受け付けません（WebP と
+    /// JPEG の両方が拒否されました）。画像なしで送り直してください。…」へ差し替えて返していた。言語を知らない
+    /// LLM の層で文を作ると英語の村の表示と失敗の注記に日本語が混ざるので、**事実だけをこの variant で運び、
+    /// 文にするのは言語を知っている層**（画面の `formatError` / 失敗したターンの注記）。
+    ///
+    /// **表示と `code()` は 400 の `Api` と同じにしてある**（利用者から見ればどちらも接続先の 400 で、違いは
+    /// 添える案内だけ）。再試行しない・個体を止める扱いも従来の 400 と同じ（`is_transient` が偽）。
+    #[error("API エラー (status=400): {body}")]
+    ImagesRejected {
+        /// 2 回目（JPEG）の応答本文（先頭のみ）。
+        body: String,
+    },
+
     /// 応答が空。理由が `length` 以外の場合（プロバイダが 200 + 空本文を返した等）。
     /// 再抽選で回復しうるため一過性として扱う。
     #[error("LLM が空の応答を返しました")]
@@ -151,7 +167,8 @@ impl LlmError {
         match self {
             Self::Config(_) => "LLM_CONFIG",
             Self::Http { .. } => "LLM_HTTP",
-            Self::Api { .. } => "LLM_API",
+            // 画像の拒否も UI から見れば接続先の 400。違いは `images_rejected()` が運ぶ。
+            Self::Api { .. } | Self::ImagesRejected { .. } => "LLM_API",
             Self::EmptyResponse => "LLM_EMPTY_RESPONSE",
             Self::OutputTruncated { .. } => "LLM_OUTPUT_TRUNCATED",
             Self::Blocked { .. } => "LLM_BLOCKED",
@@ -181,6 +198,12 @@ impl LlmError {
             } if verdict(*class) == Verdict::Retry && *hint > MAX_HONORED_RETRY_AFTER => Some(*hint),
             _ => None,
         }
+    }
+
+    /// この接続先が画像を受け付けなかった（WebP も JPEG も 400）失敗か（2026-10-20）。読むのは画面
+    /// （`ErrorPayload.images_rejected`）と失敗したターンの注記 — どちらも言語を知っている側で文にする。
+    pub fn images_rejected(&self) -> bool {
+        matches!(self, Self::ImagesRejected { .. })
     }
 
     /// 再試行で回復しうるか。

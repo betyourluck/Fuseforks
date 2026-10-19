@@ -13,7 +13,7 @@ import { formatError } from "./errorText";
 import type { ErrorPayload } from "../types";
 
 function payload(code: string, message: string): ErrorPayload {
-  return { code, message, detail: null, agentId: null, retryable: false, retryAfterSecs: null };
+  return { code, message, detail: null, agentId: null, retryable: false, retryAfterSecs: null, imagesRejected: false };
 }
 
 afterEach(() => {
@@ -53,6 +53,26 @@ describe("formatError", () => {
     const ja = formatError(stopped);
     expect(ja).toContain("プロバイダは 3600 秒後の再試行を求めています。");
     expect(ja).toContain("slow down");
+  });
+
+  // 2026-10-20: JPEG フォールバックの「この接続先は画像を受け付けません」も、コアの LLM の層が日本語固定で
+  // 本文を差し替えていた。コアは事実を `imagesRejected` で運び、文にするのはここ。
+  it("接続先が画像を受け付けなかったときは、表示の言語で原因と次の手を添える", () => {
+    const rejected = {
+      ...payload("LLM_API", "API エラー (status=400): unsupported image format"),
+      imagesRejected: true,
+    };
+
+    i18n.global.locale.value = "en";
+    const en = formatError(rejected);
+    expect(en).toContain("This endpoint does not accept images");
+    expect(en).not.toContain("画像を受け付けません");
+    expect(en).toContain("unsupported image format");
+
+    i18n.global.locale.value = "ja";
+    const ja = formatError(rejected);
+    expect(ja).toContain("この接続先は画像を受け付けません");
+    expect(ja).toContain("unsupported image format");
   });
 
   it("秒数が無ければ何も添えない（従来の表示のまま）", () => {

@@ -111,6 +111,11 @@ export interface ErrorPayload {
    * コアは秒数だけを運び、文にするのは `formatError`（表示の言語で添える）。
    */
   retryAfterSecs: number | null;
+  /**
+   * この接続先が画像を受け付けなかった（WebP も JPEG も 400）か（2026-10-20）。
+   * コアは事実だけを運び、文にするのは `formatError`（表示の言語で原因と次の手を添える）。
+   */
+  imagesRejected: boolean;
 }
 
 /** ユーザーが編集するエージェント定義。 */

@@ -16,17 +16,26 @@
  *   それまではコアの LLM の層が日本語固定の文を `message` の中へ書き足しており、
  *   英語の表示に日本語の案内が混ざった。鍵 `errors.retryAfterTooLong` はコードではない
  *   （コードは大文字の UPPER_SNAKE なので `errors.${code}` の引きとは重ならない）
+ * - 接続先が画像を受け付けなかったとき（`imagesRejected`）: 同じ形で「この接続先は画像を
+ *   受け付けません…画像なしで送り直してください」を添える（2026-10-20。JPEG フォールバックの
+ *   結末。それまではコアが日本語固定の文で本文を差し替えていた）。鍵は `errors.imagesRejected`
  */
 import { i18n } from "../i18n";
 import type { ErrorPayload } from "../types";
 
+/** コアが運んだ事実から、表示の言語の案内を組む。古い記録（欄の無い lastError）は欄が `undefined`。 */
+function guidance(payload: ErrorPayload): string[] {
+  const lines: string[] = [];
+  if (payload.retryAfterSecs != null) {
+    lines.push(i18n.global.t("errors.retryAfterTooLong", { secs: payload.retryAfterSecs }));
+  }
+  if (payload.imagesRejected === true) lines.push(i18n.global.t("errors.imagesRejected"));
+  return lines;
+}
+
 export function formatError(payload: ErrorPayload): string {
   const { code, message } = payload;
-  // 古い記録（欄の無い lastError）は `undefined` で来るので `== null` で見る。
-  const body =
-    payload.retryAfterSecs == null
-      ? message
-      : `${i18n.global.t("errors.retryAfterTooLong", { secs: payload.retryAfterSecs })} ${message}`;
+  const body = [...guidance(payload), message].join(" ");
   if (i18n.global.locale.value === "ja") return `[${code}] ${body}`;
 
   const key = `errors.${code}`;

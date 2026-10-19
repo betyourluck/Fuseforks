@@ -705,19 +705,14 @@ impl HttpLlmBackend {
                 match self.chat_with_backoff(&jpeg_req, cancel).await {
                     Ok(resp) => Ok(resp),
                     // 両形式とも拒否 = この接続先は画像を受け付けない。
-                    // 生の 400 本文だけでは利用者が「画像が原因」へ辿り着けない。
+                    // 生の 400 本文だけでは利用者が「画像が原因」へ辿り着けないので、事実を
+                    // variant で運ぶ。**本文は接続先の原文のまま**（2026-10-20。それまでは
+                    // 日本語固定の案内へ差し替えており、英語の村に日本語が混ざった）。
                     Err(LlmError::Api {
                         status: 400,
                         body: second,
                         ..
-                    }) => Err(LlmError::api(
-                        400,
-                        format!(
-                            "この接続先は画像を受け付けません（WebP と JPEG の両方が\
-                             拒否されました）。画像なしで送り直してください。\
-                             プロバイダの応答: {second}"
-                        ),
-                    )),
+                    }) => Err(LlmError::ImagesRejected { body: second }),
                     Err(other) => Err(other),
                 }
             }

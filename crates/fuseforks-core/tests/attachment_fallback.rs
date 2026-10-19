@@ -179,9 +179,12 @@ async fn a_webp_rejection_retries_once_as_jpeg_and_succeeds() {
     );
 }
 
-/// **両方拒まれたら、画像が原因だと分かる文面で返す。**
+/// **両方拒まれたら、画像が原因だと分かる形で返す。**
 ///
-/// 生の 400 本文だけでは、利用者は「画像が原因」へ辿り着けない。
+/// 生の 400 本文だけでは、利用者は「画像が原因」へ辿り着けない。2026-10-20 までは LLM の層が本文を
+/// 日本語固定の「この接続先は画像を受け付けません…」へ差し替えていたが、この層は村の言語を知らないので
+/// 英語の村の表示と失敗の注記に日本語が混ざった。**ここは事実（`images_rejected`）と接続先の原文だけを
+/// 返し、文にするのは画面（`ErrorPayload.imagesRejected` → `formatError`）と失敗の注記。**
 #[tokio::test]
 async fn refusing_both_formats_names_the_image_as_the_cause() {
     let (url, bodies) = spawn_stub(Policy::NoImagesAtAll).await;
@@ -192,9 +195,10 @@ async fn refusing_both_formats_names_the_image_as_the_cause() {
 
     let text = err.to_string();
     assert!(
-        text.contains("この接続先は画像を受け付けません"),
-        "画像が原因だと名指しすること: {text}"
+        !text.contains("画像を受け付けません") && !text.contains("送り直してください"),
+        "LLM の層は案内の文を書かない（村の言語を知らない）: {text}"
     );
+    assert!(err.images_rejected(), "画像が原因だという事実は構造で運ぶ: {text}");
     // プロバイダの応答も落とさない（診断の材料を捨てない）。
     assert!(text.contains("unsupported image format"), "{text}");
     assert_eq!(bodies.lock().unwrap().len(), 2, "試すのは 2 回まで");

@@ -484,6 +484,13 @@ impl CoreError {
         }
     }
 
+    /// この接続先が画像を受け付けなかった（WebP も JPEG も 400）失敗か（2026-10-20）。判定は
+    /// [`crate::llm::LlmError::images_rejected`] に委譲する。読むのは失敗したターンの注記と
+    /// [`ErrorPayload::images_rejected`] — どちらも村や画面の言語で文にする側。
+    pub fn images_rejected(&self) -> bool {
+        matches!(self, Self::Llm(err) if err.images_rejected())
+    }
+
     /// エージェントの稼働を降ろすべき失敗か。
     ///
     /// **[`Self::is_retryable`] とは別の問い。** 再試行の可否は「**この 1 件**を
@@ -535,6 +542,13 @@ pub struct ErrorPayload {
     /// 欄の無い古い記録は `default` で `None` として読む。
     #[serde(default)]
     pub retry_after_secs: Option<u64>,
+    /// この接続先が画像を受け付けなかった（WebP も JPEG も 400）か（2026-10-20）。
+    ///
+    /// `retry_after_secs` と同じく**コアは事実だけを運び、文にするのは画面**（`formatError` が表示の言語で
+    /// 「この接続先は画像を受け付けません…画像なしで送り直してください」を添える）。それまでは LLM の層が
+    /// 日本語固定の文を `message` の中へ差し替えていた。欄の無い古い記録は `default` で偽として読む。
+    #[serde(default)]
+    pub images_rejected: bool,
 }
 
 impl From<&CoreError> for ErrorPayload {
@@ -557,6 +571,7 @@ impl From<&CoreError> for ErrorPayload {
             agent_id: err.agent_id().map(str::to_owned),
             retryable: err.is_retryable(),
             retry_after_secs: err.retry_after_too_long().map(|wait| wait.as_secs()),
+            images_rejected: err.images_rejected(),
         }
     }
 }
@@ -664,5 +679,24 @@ mod tests {
         )
         .expect("欄の無い記録を読めること");
         assert_eq!(old.retry_after_secs, None);
+        assert!(!old.images_rejected);
+    }
+
+    /// 画像を受け付けなかった失敗は `imagesRejected` で運ぶ（2026-10-20）。コードと表示は 400 の `Api` と同じ。
+    #[test]
+    fn payload_carries_the_image_rejection() {
+        let rejected = CoreError::Llm(crate::llm::LlmError::ImagesRejected {
+            body: "unsupported image format".into(),
+        });
+        let json = serde_json::to_value(&rejected).expect("シリアライズできること");
+        assert_eq!(json["imagesRejected"], true);
+        assert_eq!(json["code"], "LLM_API", "UI の分岐キーは従来の 400 と同じ");
+        let message = json["message"].as_str().unwrap();
+        assert!(!message.contains("画像を受け付けません"), "コアは案内の文を書かない: {message}");
+        assert!(message.contains("unsupported image format"), "接続先の原文は残す: {message}");
+        assert!(!rejected.is_retryable(), "再送しても回復しない（従来の 400 と同じ）");
+
+        let plain = serde_json::to_value(CoreError::Llm(crate::llm::LlmError::api(400, "boom"))).unwrap();
+        assert_eq!(plain["imagesRejected"], false);
     }
 }
