@@ -178,6 +178,17 @@ async function refreshCredentialState(templateId: string | undefined): Promise<v
 
 watch(() => draft.value?.id, refreshCredentialState, { immediate: true });
 
+/**
+ * 下書きの id が変わったら（別のテンプレートを選んだ / 新規 / 削除）、鍵の入力欄を空にする。
+ *
+ * 入力欄は `draft` の欄ではないので、空にしないと A で打った鍵が B を選んだ後も残り、「登録」で
+ * **B の鍵として保存された**（`saveSecret` はいま選んでいる下書きの id へ保存する。2026-10-19 まで）。
+ * 判定を id の 1 点に置く — 選択を変える経路（`edit` / `create` / `remove` / `reseedDraft`）を 1 つずつ
+ * 数えると、経路が増えたときに漏れる。同じ id のまま読み直す `reseedDraft` では空にしない
+ * （登録の後は `saveSecret` が既に空にしている）。
+ */
+watch(() => draft.value?.id, () => { secretInput.value = ""; });
+
 /** 入力されたキーを資格情報ストアへ預ける。 */
 async function saveSecret(): Promise<void> {
   const template = draft.value;

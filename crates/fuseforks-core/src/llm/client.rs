@@ -21,9 +21,26 @@ use super::{
 use crate::model::{CredentialSource, ModelTemplate};
 use crate::secret::SecretStore;
 
-/// エラー応答本文をログ・UI に載せる際の最大文字数。
+/// エラー応答本文をログ・UI に載せる際の最大**バイト数**（文字数ではない）。
 /// プロバイダによっては HTML を丸ごと返すため、青天井にしない。
 const MAX_ERROR_BODY: usize = 2_000;
+
+/// `text` を `max` バイト以下に切る。**文字の途中では切らず、直前の文字の境界まで戻る。**
+///
+/// `String::truncate` は切る位置が UTF-8 の文字の途中だと panic する。2026-10-19 まではエラー本文を
+/// それで切っていたので、2,000 バイト目が日本語などの多バイト文字の途中に来る本文で、エラーを返すはずの
+/// 呼び出しが panic した（`tests/error_body_truncation.rs`）。`str::floor_char_boundary` は MSRV 1.89 では
+/// 使えないので手で戻る（文字は最大 4 バイトなので高々 3 回）。
+fn truncate_on_char_boundary(text: &mut String, max: usize) {
+    if text.len() <= max {
+        return;
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+}
 
 /// LLM の話し方（ワイヤプロトコル）。
 ///
@@ -457,7 +474,7 @@ impl HttpLlmBackend {
                     super::retry::parse_retry_after(v, std::time::SystemTime::now())
                 });
             let mut body = response.text().await.unwrap_or_default();
-            body.truncate(MAX_ERROR_BODY);
+            truncate_on_char_boundary(&mut body, MAX_ERROR_BODY);
             let signal = match self.config.provider {
                 Provider::OpenAiCompat
                 | Provider::XaiResponses
@@ -942,6 +959,31 @@ mod tests {
     use crate::llm::BackendFactory;
     use crate::model::ModelTemplate;
     use crate::secret::InMemorySecretStore;
+
+    #[test]
+    fn truncate_on_char_boundary_never_cuts_inside_a_char() {
+        // 上限より短ければ触らない。
+        let mut short = "あい".to_owned();
+        truncate_on_char_boundary(&mut short, 100);
+        assert_eq!(short, "あい");
+
+        // 上限がちょうど境界ならそこで切る。
+        let mut exact = "abあ".to_owned();
+        truncate_on_char_boundary(&mut exact, 2);
+        assert_eq!(exact, "ab");
+
+        // 3 バイト文字の途中（1 / 2 バイト目）なら直前の境界まで戻る。
+        for max in [3, 4] {
+            let mut mid = "abあい".to_owned();
+            truncate_on_char_boundary(&mut mid, max);
+            assert_eq!(mid, "ab", "max={max}");
+        }
+
+        // 4 バイト文字（絵文字）の 3 バイト目でも戻れる（戻るのは高々 3 回）。
+        let mut emoji = "a😀".to_owned();
+        truncate_on_char_boundary(&mut emoji, 4);
+        assert_eq!(emoji, "a");
+    }
 
     #[test]
     fn provider_detection_defaults_to_compat() {

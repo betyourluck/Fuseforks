@@ -2674,8 +2674,26 @@ gpt-6.1-sol）の 4 ターン（6〜12 周）はすべて `stop=-`、`cache:` �
 （`09ef2fd`。7 点とも採用）。未決 3 つは利用者の裁定待ち。rev2 の途中で**別件の実バグが 2 つ**出た（Spec 68 の行と
 Spec の Notes 5 — 文字境界を見ない `truncate` の panic / 鍵の入力欄が別のテンプレートへ持ち越される）。
 
-**次の一手**: ① と ③ を配るなら次のタグ。Spec 68 の未決 3 つの裁定。別件 2 つの修正（どちらも小さく、Spec 68 の P1 より
-前に直すのが筋）。残りの観測（`maxRetries` 6 の効き）はそのまま。
+**別件 2 つは同日に直した**（どちらも先に赤を確かめてから）:
+
+- **エラー本文の切り方** — `HttpLlmBackend::attempt` は失敗した応答の本文を `String::truncate(MAX_ERROR_BODY)`（2,000 バイト）で
+  切っており、2,000 バイト目が日本語などの多バイト文字の途中に来ると**エラーを返すはずの呼び出しが panic した**。
+  `tests/error_body_truncation.rs`（ループバックの HTTP スタブが 400 と「あ」×1,000 の本文を返す）で
+  `assertion failed: self.is_char_boundary(new_len)` の赤を出してから、`truncate_on_char_boundary`（直前の文字の境界まで戻る。
+  MSRV 1.89 なので `floor_char_boundary` は使えない）へ替えた。`MAX_ERROR_BODY` の doc の「最大文字数」も「最大バイト数」へ
+  訂正（実際はバイト）。**一般化: `String::truncate` / スライス `&s[..n]` にバイトの上限を渡す箇所は、日本語の本文が来た日に
+  panic する。テストが ASCII だけだと通る**（`MAX_*_CHARS` と `len()` を突き合わせる罠と同じ家族の、落ち方が panic の側）
+- **鍵の入力欄の持ち越し** — `ModelTemplateDialog.vue` の `secretInput` は `draft` の欄ではなく、テンプレートの選択を切り替えても
+  空にならなかったので、A で打った鍵が B を選んだ後も残り、「登録」で **B の鍵として保存された**（`saveSecret` はいま選んでいる
+  下書きの id へ保存する）。`templateSecretInputWiring.test.ts` の赤を確かめてから、`watch(() => draft.value?.id, …)` で入力欄を
+  空にした。判定を id の 1 点に置いたのは、選択を変える経路（`edit` / `create` / `remove` / `reseedDraft`）を 1 つずつ数えると
+  経路が増えたときに漏れるため
+- **ミューテーション 3 回とも予測どおり** — 呼び出しを `String::truncate` へ戻す → 結合の 1 本だけ赤（単体は関数を直接呼ぶので緑）/
+  境界まで戻るループを外す → 単体と結合の 2 本 / 入力欄を空にする watch を外す → 走査の 1 本。Rust 1,354 全緑・clippy 0・
+  vitest 824 全緑・build 緑
+
+**次の一手**: ① と ③ と別件 2 つを配るなら次のタグ。Spec 68 の未決 3 つの裁定。`with_hint_too_long` の日本語固定（英語の村の
+エラー表示に日本語が混ざる。Spec 35 の網の外）は未修正。残りの観測（`maxRetries` 6 の効き）はそのまま。
 
 ## 現在地（2026-10-15 更新）
 
@@ -7573,18 +7591,14 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 68](specs/68_template-connection-test.md)（モデルテンプレートの接続テスト — `ModelTemplateDialog.vue` に「接続テスト」ボタン）:
-  **Draft rev2**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2 = 7 点とも採用・点 4 は処方を変えた。実装なし。
-  外部レビュー ② の受け皿。対応表は Spec の Notes 6）。推奨 = 保存済みのテンプレートだけ確かめる（未保存と、**鍵の入力欄に
-  未登録の文字があるときは押せない** — rev1 の「鍵だけ未保存は起きない」は向きが逆だった）/ 結果は `reseedDraft` の 1 点で消す
-  （保存・鍵の登録・鍵の削除の 3 経路が通る）/ 成功は 2xx かつプロトコルとして解釈できた（`OutputTruncated` も成功。7 ワイヤの
-  decode は `EmptyResponse` も `Blocked` も作らないので、本文が空の 200 は使用量つきの `Ok` から `no_text` を作る）/
-  **再試行の輪を通らない `LlmBackend::chat_once`**（rev1 の `max_retries = 1` では `llm retry stop:` 行と、60 秒超の待ち要求で
-  本文の先頭に書き足される日本語の文が残った）/ 固有スキルとツールは外し思考段階と最大出力はテンプレートのまま /
-  結果の型は outcome ごとの判別共用体（コアは訳した文字列を入れない）/ ログ `template probe:` 1 行（本文・鍵なし）。
-  未決 3 = 統計へ入れるか / ダミーの関数を添えるか / 下書きへ広げるか（rev2 で増減なし）。P0 で 7 ワイヤに不正な鍵とモデル名を撃つ。
-  **別件 2 つ（どちらも親のセッションでコードを確かめた・未修正）**: `client.rs:460` の `body.truncate(2_000)` が文字境界を
-  見ず多バイトの途中で panic しうる / `ModelTemplateDialog.vue` の `secretInput` は `edit()` / `create()` で空にならず、
-  テンプレート A で打った鍵を B を選んでから「登録」すると B の鍵として保存される（`saveSecret` は `draft.value.id` を使う）
+  **Draft rev2**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2 = 7 点とも採用・点 4 は処方を変更。実装なし）。推奨 = 保存済みのテンプレートと
+  登録済みの鍵だけ確かめる（未保存・鍵の入力欄に文字が残っている間は押せない・`isTemplateDirty` を新設）/ 成功は 2xx かつプロトコルとして解釈できた
+  （`OutputTruncated` も成功・空の本文は使用量つきの `Ok` から `no_text`）/ 固有スキルとツールは外し思考段階と最大出力はテンプレートのまま /
+  再試行の輪を通らない `LlmBackend::chat_once` / 失敗は表示用の閉じた `ProbeFailure` 10 値（`Api` から写るのは 6 値）で `RetryClass` は不変 /
+  ログ `template probe:` 1 行（本文・鍵なし）。未決 3 = 統計へ入れるか / ダミーの関数を添えるか / 下書きへ広げるか。
+  別件 = `client.rs:460` の `body.truncate(2_000)` が文字境界を見ない / 選択を切り替えても鍵の入力欄が残る / `with_hint_too_long` が日本語固定
+  → **前の 2 つは 2026-10-19 に修正済み**（どちらも赤を先に確かめた。`tests/error_body_truncation.rs` / `templateSecretInputWiring.test.ts`。
+  現在地（2026-10-19 更新）が正）。`with_hint_too_long` の日本語固定は未修正
 - [Spec 67](specs/67_mcp-oauth.md)（リモート MCP を OAuth の認可で繋ぐ）: **Done**（2026-10-11。**起票から Done まで同日**。P4 = 実機の確認 8 件すべて観測 — 認可・道具の呼び出し・再起動後の自動接続・2 体で更新 1 回・キャンセルと時間切れ・**取り消しで `revoked remote=yes` → `required` ×2・間に `refreshed` 無し（書き戻し無し）・`mcp-oauth:` の鍵が消える**（動的登録の `mcp-oauth-client:` は設計どおり残る）・CLI の keyring で通り env で `MCP_OAUTH_HEADLESS`。記録は Spec の「P4 実機記録」。**計器 `refreshed` はコードの交換の初回保存でも出る** — 直後の `authorized` まで 40 ms なら認可の流れ、0.8 秒前後なら繋ぎ直し（P4 記録の初版はこれを取り違えていた。名前は据え置き）。P4 で穴 2 つ = **`www.tradingview.com` は User-Agent の無い要求を 403 で断り、rmcp は黙って推測の口（PKCE なし）へ落ちていた**（`failures.md` #145。`mcp_oauth::USER_AGENT` = `Fuseforks` を付けたクライアントを `OAuthHttpClient` の自前実装で rmcp へ渡す・スタブを UA 無しで 403 に）/ D11 の案内が rmcp の表示用の文面 `Auth required` に当たっていなかった（`is_auth_required_text`）。P3 = 台帳:
   DETAIL 3 言語にリモート MCP の OAuth の節・GUI なしの拒否の行・「コンテナで回す」に D8・ディレクトリ木 / README 3 言語は
   既存の MCP の行を延ばした（行数は 171 / 171 / 167 のまま）/ **PRIVACY 日英の要旨・3・4-3・6・8**（送り先に MCP サーバーが
