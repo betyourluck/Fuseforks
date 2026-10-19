@@ -1681,6 +1681,21 @@ pub async fn test_jev(state: State<'_, AppState>) -> CoreResult<crate::jev_setti
     Ok(probe.into())
 }
 
+/// モデルテンプレートの接続テスト（Spec 68）。**保存済みの**テンプレートで LLM を 1 回だけ呼ぶ。
+///
+/// **押したときだけ呼ぶ**（起動経路・画面遷移・タイマーから呼ばない — D9）。LLM の失敗は `Err` ではなく
+/// 結果の `result: "failed"` で返る（画面へ表示用の分類を届けるため）。
+///
+/// # Errors
+/// テンプレートが保存されていない（`MODEL_TEMPLATE_NOT_FOUND`）ときだけ。
+#[tauri::command]
+pub async fn test_model_template(
+    state: State<'_, AppState>,
+    template_id: ModelTemplateId,
+) -> CoreResult<fuseforks_core::template_probe::TemplateProbe> {
+    state.host.orchestrator.probe_template(&template_id).await
+}
+
 /// 設定・トークンを変えた後に採点器を差し込み直す。**呼び出し元は上の 3 本だけ。**
 async fn apply_jev(
     state: &State<'_, AppState>,

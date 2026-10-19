@@ -971,6 +971,39 @@
       "notFound": "{model} is not in the table. Enter the rates by hand.",
       "contextFilled": "Context length filled in too.",
       "contextMissing": "Context length is not in the table (left as entered)."
+    },
+    "probe": {
+      "button": "Test connection",
+      "busy": "Checking",
+      "saveFirst": "Save first, then test",
+      "registerKeyFirst": "Register the API key first, then test",
+      "running": "Checking… (up to {seconds} seconds)",
+      "usage": "Input {prompt} / output {completion} / thinking {reasoning} tokens",
+      "retryAfter": "The provider asks to retry after {seconds} seconds",
+      "notChecked": "Tool calls, provider skills, attachments and long inputs were not checked.",
+      "reached": {
+        "replied": "The provider answered with these settings — reply \"{text}\" ({seconds} s)",
+        "truncated": "The provider answered, but the reply was cut at the output limit of {limit} (it may have spent the budget on thinking; {seconds} s)",
+        "no_text": "The provider answered, but with no text ({seconds} s)"
+      },
+      "failure": {
+        "config": "Could not build a backend from this template. Fix the reason below and save again",
+        "auth": "Authentication was refused. Check the API key",
+        "not_found": "The model name or the base URL path does not exist on the provider",
+        "rejected": "The provider rejected the request shape (thinking level, max output tokens, temperature, ...). The body below may name the reason",
+        "rate_limit": "Hit a rate limit. The settings may well be fine",
+        "billing": "Out of balance or quota",
+        "server_error": "A temporary failure on the provider side",
+        "timeout": "No answer within {seconds} seconds",
+        "network": "Could not reach the base URL",
+        "unexpected_shape": "A response came back, but not in the shape of the selected protocol. Check the protocol choice"
+      },
+      "finish": {
+        "stop": "Finish reason: normal stop",
+        "length": "Finish reason: output limit",
+        "tool_use": "Finish reason: tool call",
+        "other": "Finish reason: other (safety filter, etc.)"
+      }
     }
   },
   "schedule": {

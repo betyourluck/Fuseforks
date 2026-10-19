@@ -57,6 +57,7 @@ import type {
   PricingSourceView,
   StatsReport,
   StatsScope,
+  TemplateProbe,
   TopologyEdge,
   TopologyPosition,
   WorkDirListing,
@@ -678,6 +679,13 @@ export const clearJevToken = () => call<JevSettingsView>("clear_jev_token");
  * 外へ出る経路を作らない。Spec 59 D10）。
  */
 export const testJev = () => call<JevProbeView>("test_jev");
+
+/**
+ * モデルテンプレートの接続テスト（Spec 68）。**保存済みの**テンプレートで LLM を 1 回だけ呼ぶ。
+ * **押したときだけ呼ぶ**（ダイアログを開いた・選んだ・保存したときには呼ばない — D9）。
+ */
+export const testModelTemplate = (templateId: ModelTemplateId) =>
+  call<TemplateProbe>("test_model_template", { templateId });
 
 // ---- アイコン ----------------------------------------------------------------
 

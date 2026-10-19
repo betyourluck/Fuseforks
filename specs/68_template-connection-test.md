@@ -1,8 +1,9 @@
 # Spec 68: モデルテンプレートの接続テスト
 
-- 状態: **rev2・未決 0 → P0 完了**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2。判定は 7 点とも採用 —
+- 状態: **rev2・未決 0 → P0〜P2 完了**（2026-10-19 起票 → 同日、査読 7 点を実コードに当てて rev2。判定は 7 点とも採用 —
   うち点 4 は処方を査読の案から変えた。対応表は Notes 6。2026-10-20 に未決 3 つを利用者が推奨どおりに閉じ、
-  同日 P0 = 7 ワイヤへ撃って D6 を確定し `data_contract` の `template_probe_contract` を凍結）
+  同日 P0 = 7 ワイヤへ撃って D6 を確定し `data_contract` の `template_probe_contract` を凍結 / P1 = コア / P2 = IPC と画面。
+  残りは P3 台帳と P4 実機）
 - 起点: 利用者が持ち込んだ外部レビュー（2026-10-19。設定・管理ダイアログの 3 点）の ② —
   「モデルテンプレートを登録しても、繋がるかどうかを確かめる手段が無い」。① と ③ は同日に着地した
   （`2fc3c14`。CLAUDE.md「設定ダイアログを閉じるときの確認と、承認待ちの帯」の節）。② は
@@ -538,6 +539,41 @@ Meta = muse-spark-1.2（low）/ Perplexity = perplexity（deepseek-v4-pro））�
   - 要求が D3 の表どおり（固有スキル偽・tools 空・effort と上限がテンプレートの値・発話 1 通）
   - ログ行に本文と鍵が出ない・使用量の `-` が D4 の規則どおり・キャッシュ（`backend_for`）に複製が入らない・
     ワイヤ形の凍結（`tests/ipc_contract.rs`）
+
+### P1 実装記録（2026-10-20）
+
+- `LlmBackend::chat_once`（既定 = `chat`。`HttpLlmBackend` だけ `attempt` の 1 回で上書き）/ 純機構
+  `crates/fuseforks-core/src/template_probe.rs`（`judge` が `LlmError` と `RetryClass` を `_ =>` なしの網羅 match で振り分ける・
+  `factory_failure` / `degraded_failure` / `ProbeFacts` / `log_line`）/ `Orchestrator::probe_template`
+  （`orchestrator/template_probe.rs`）
+- **2026-10-20 に足された `LlmError::ImagesRejected`**（JPEG フォールバックの日本語固定の修正）も網羅 match に入る。接続テストは
+  添付を送らないので到達しない腕で、写し先は `rejected`（status 400）
+- テスト: 単体 13（成功の腕 4・`Api` の 8 行・`Api` 以外の失敗・`Parse` の本文の先頭と多バイト・退避の接頭辞 1 回・
+  ログ行に本文と鍵の末尾が出ない・ワイヤ形・定型文の言語）/ 結合 6（`tests/template_probe.rs` — D3 の要求・英語の定型文・
+  **複製がキャッシュに入らず個体はスキルつきのバックエンドを掴む・確認の払いが個体の累計に入らない**・LLM の失敗は `Err` に
+  ならない・テンプレートが無いときだけ `Err`・**退避型のファクトリでエコー応答を成功と出さない**）/ HTTP 1
+  （`tests/template_probe_once.rs` — 429 + `Retry-After: 120` で 1 回だけ撃ち、`llm retry` の行を出さず、`retry_after` を 120 の
+  まま運び、`template probe:` 行に本文と base URL を書かない）/ ワイヤ形の凍結 1（`tests/ipc_contract.rs`）
+- **ミューテーション 4 回とも予測どおり** — `chat_once` を輪つきへ戻す → HTTP の 1 本 / 退避の理由を無視する → 退避の 1 本 /
+  固有スキルを外さない → 送る中身とキャッシュの 2 本 / 404 の分けを潰す → 写しの単体と形の 2 本
+- **作業の罠**: 変異の戻しに `git checkout --` を使い、**まだ追跡されていない新しいファイルには効かず**変異が残った（SHA の
+  照合で気づいて手で戻した）。以後は逐語の置換スクリプトで入れて戻し、SHA で確かめた
+
+### P2 実装記録（2026-10-20）
+
+- IPC `test_model_template`（`commands.rs` / `lib.rs`）と型 `TemplateProbe` / `ProbeFailure` / `ProbeFinish`（`types.ts`）/
+  `lib/templateDraft.ts` の `isTemplateDirty`（欄が無いことと `null` を同じに扱う）/ `lib/templateProbe.ts` の
+  `probeBlockedKey`・`probeView`・`probeFinishKey`（辞書の鍵を返す純関数）/ `ModelTemplateDialog.vue` のフッター左端の
+  「接続テスト」と結果の区画（`data-template-probe`）/ 辞書 `modelTemplate.probe.*`（ja / en。`json` の往復がバイト等価で
+  あることを先に確かめてから挿した）
+- 結果を消すのは `reseedDraft`（保存・鍵の登録・鍵の削除）/ `edit` / `create` / 削除。確認中に別のテンプレートへ移ったら
+  返ってきた結果を捨てる。テンプレートが無いときの `Err` は `formatError` の文で区画に出す
+- テスト: 純関数 12（`templateProbe.test.ts`）/ 走査 6（`templateProbeWiring.test.ts` — 呼び出しが click の 1 箇所・起動経路が
+  `probe_template` を呼ばない・押せない条件が鍵の入力欄を読む・結果の消去が `reseedDraft` の中・`formatError` を通し `v-html` を
+  使わない・3 つの列挙の鍵が ja / en に在る・**TS の 10 値が Rust の `ProbeFailure::as_str` と一致**）
+- **ミューテーション 3 回とも予測どおり 1 本だけ赤**（押せない条件から鍵の入力欄を落とす / `reseedDraft` の消去を外す /
+  純関数が鍵の入力を無視する）。Rust 1,381 全緑（GUI の crate は除外）・clippy 0（GUI の crate を含む）・vitest 845・build 緑
+- **実機は未確認**（P4）
 
 ### P2 — 画面（rev2 で押せない条件と消す契機を足した）
 

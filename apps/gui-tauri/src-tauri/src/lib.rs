@@ -116,6 +116,7 @@ pub fn run() {
             commands::set_jev_token,
             commands::clear_jev_token,
             commands::test_jev,
+            commands::test_model_template,
             commands::mcp_host_status,
             commands::set_mcp_host,
             commands::regenerate_mcp_host_token,

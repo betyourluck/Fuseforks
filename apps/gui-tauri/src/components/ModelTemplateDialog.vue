@@ -10,7 +10,10 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import { formatError } from "../lib/errorText";
 import { parsePriceInput, todayIsoDate } from "../lib/priceInput";
+import { isTemplateDirty } from "../lib/templateDraft";
+import { probeBlockedKey, probeFinishKey, probeView } from "../lib/templateProbe";
 import {
   baseUrlMismatch as checkBaseUrlMismatch,
   presetBaseUrlFor,
@@ -19,7 +22,7 @@ import {
 } from "../lib/providerSkills";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import type { Effort, ModelTemplate, ModelTemplateId, Provider } from "../types";
+import type { Effort, ErrorPayload, ModelTemplate, ModelTemplateId, Provider, TemplateProbe } from "../types";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -492,13 +495,88 @@ function blank(): ModelTemplate {
 }
 
 function edit(template: ModelTemplate): void {
+  clearProbe();
   selectedId.value = template.id;
   draft.value = { ...template };
 }
 
 function create(): void {
+  clearProbe();
   draft.value = blank();
   selectedId.value = null;
+}
+
+/**
+ * 接続テスト（Spec 68）の結果。**押したテンプレートに結び付け**、保存済みの値が変わる契機
+ * （`reseedDraft` = 保存・鍵の登録・鍵の削除の 3 経路）と、選択の切り替え・削除で消す（D8）。
+ * 編集を始めただけでは消さない — 結果は「保存済みの設定」についての事実のまま正しい（ボタンは押せなくなる）。
+ */
+const probe = ref<{ templateId: ModelTemplateId; result: TemplateProbe } | null>(null);
+/** 確かめている最中。2 回目は塞ぐ（コアには排他を置かない — D7）。 */
+const probing = ref(false);
+/** 確認を始められなかった（テンプレートが無い等）ときの原文。 */
+const probeError = ref<string | null>(null);
+
+function clearProbe(): void {
+  probe.value = null;
+  probeError.value = null;
+}
+
+/** 保存済みの値。未保存の判定（`isTemplateDirty`）の比較相手。 */
+const savedTemplate = computed(() =>
+  draft.value ? (state.templates.find((t) => t.id === draft.value!.id) ?? null) : null,
+);
+
+/**
+ * 押せない理由（辞書の鍵）。押せるなら `null`（D8）。**鍵の入力欄 `secretInput` も読む** — 入力欄は下書きの
+ * 欄ではないので、未保存の判定だけでは「テンプレートは保存済み・鍵だけ未登録」を検知できない（rev2 点 1）。
+ */
+const probeBlocked = computed(() =>
+  draft.value
+    ? probeBlockedKey({
+        dirty: isTemplateDirty(draft.value, savedTemplate.value),
+        secretTyped: secretInput.value.trim() !== "",
+        busy: probing.value,
+      })
+    : "modelTemplate.probe.saveFirst",
+);
+
+/** いま選んでいるテンプレートの結果だけを出す。 */
+const shownProbe = computed(() =>
+  probe.value && draft.value && probe.value.templateId === draft.value.id ? probe.value.result : null,
+);
+const shownProbeView = computed(() => (shownProbe.value ? probeView(shownProbe.value) : null));
+const shownFinishKey = computed(() => (shownProbe.value ? probeFinishKey(shownProbe.value) : null));
+const probeToneClass = computed(() => {
+  switch (shownProbeView.value?.tone) {
+    case "run":
+      return "text-run";
+    case "warn":
+      return "text-warn";
+    default:
+      return "text-fail";
+  }
+});
+
+/**
+ * 接続テスト（Spec 68）。**呼び出し元はボタンの click の 1 箇所だけ**（D9 — ダイアログを開いた・選んだ・
+ * 保存したときには外へ出ない）。確かめるのは保存済みのテンプレートと登録済みの鍵（D1）。
+ */
+async function runProbe(): Promise<void> {
+  const current = draft.value;
+  if (!current || probeBlocked.value !== null) return;
+  const templateId = current.id;
+  clearProbe();
+  probing.value = true;
+  try {
+    const result = await ipc.testModelTemplate(templateId);
+    // 確かめている間に別のテンプレートへ移っていたら捨てる。
+    if (draft.value?.id === templateId) probe.value = { templateId, result };
+  } catch (err) {
+    probeError.value = formatError(err as ErrorPayload);
+  } finally {
+    probing.value = false;
+  }
 }
 
 /**
@@ -510,6 +588,9 @@ function create(): void {
  * 保存後もその項目に留まり、コアが受け取った値をそのまま表示する。
  */
 function reseedDraft(id: ModelTemplateId): void {
+  // 保存済みの値が変わる 3 経路（保存・鍵の登録・鍵の削除）がここを通る。接続テストの結果は
+  // 「前の保存済みの値」についての事実になるので消す（Spec 68 D8・rev2 点 2）。
+  clearProbe();
   const saved = state.templates.find((t) => t.id === id);
   draft.value = saved ? { ...saved } : null;
   selectedId.value = saved ? saved.id : null;
@@ -552,6 +633,7 @@ async function remove(template: ModelTemplate): Promise<void> {
   removing.value = template.id;
   try {
     await orchestrator.deleteTemplate(template.id);
+    if (probe.value?.templateId === template.id) clearProbe();
     if (selectedId.value === template.id) selectedId.value = null;
     if (draft.value?.id === template.id) draft.value = null;
   } finally {
@@ -1210,7 +1292,43 @@ function onTemperature(raw: string): void {
           {{ $t("modelTemplate.noSelection") }}
         </div>
 
+        <!-- 接続テストの結果（Spec 68 D8）。応答の本文と接続先の原文は素のテキストで出す（v-html を使わない）。 -->
+        <div
+          v-if="draft && (probing || shownProbeView || probeError)"
+          class="space-y-0.5 border-t border-line px-4 py-2 text-[11px]"
+          data-template-probe
+        >
+          <p v-if="probing" class="text-ink-dim">
+            {{ $t("modelTemplate.probe.running", { seconds: draft.requestTimeoutSecs }) }}
+          </p>
+          <p v-else-if="probeError" class="whitespace-pre-wrap break-all text-fail">{{ probeError }}</p>
+          <template v-else-if="shownProbe && shownProbeView">
+            <p :class="probeToneClass">{{ $t(shownProbeView.key, shownProbeView.params) }}</p>
+            <p v-if="shownFinishKey" class="text-ink-dim">{{ $t(shownFinishKey) }}</p>
+            <p v-if="shownProbeView.retryAfterSecs !== null" class="text-ink-dim">
+              {{ $t("modelTemplate.probe.retryAfter", { seconds: shownProbeView.retryAfterSecs }) }}
+            </p>
+            <p v-if="shownProbeView.usage" class="text-ink-dim">
+              {{ $t("modelTemplate.probe.usage", shownProbeView.usage) }}
+            </p>
+            <p
+              v-if="shownProbe.result === 'failed'"
+              class="max-h-24 overflow-y-auto whitespace-pre-wrap break-all rounded bg-surface-0 px-2 py-1 font-mono text-[10px] text-ink-dim"
+            >{{ formatError(shownProbe.error) }}</p>
+            <p v-else class="text-ink-dim">{{ $t("modelTemplate.probe.notChecked") }}</p>
+          </template>
+        </div>
+
         <div v-if="draft" class="flex justify-end gap-2 border-t border-line px-4 py-2.5">
+          <!-- 接続テスト（Spec 68）。保存済みの値だけを確かめるので、未保存・鍵の未登録・確認中は押せない。 -->
+          <button
+            class="mr-auto rounded border border-line px-2 py-1 text-[11px] text-ink-dim hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line disabled:hover:text-ink-dim"
+            :disabled="probeBlocked !== null"
+            :title="probeBlocked ? $t(probeBlocked) : undefined"
+            @click="runProbe"
+          >
+            {{ $t("modelTemplate.probe.button") }}
+          </button>
           <button
             class="rounded px-2 py-1 text-[11px] text-ink-dim hover:text-ink"
             @click="draft = null"

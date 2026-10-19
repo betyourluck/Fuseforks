@@ -118,6 +118,51 @@ export interface ErrorPayload {
   imagesRejected: boolean;
 }
 
+/** モデルテンプレートの接続テスト（Spec 68）の失敗の分類。`template_probe.rs` の `ProbeFailure` の写し。 */
+export type ProbeFailure =
+  | "config"
+  | "auth"
+  | "not_found"
+  | "rejected"
+  | "rate_limit"
+  | "billing"
+  | "server_error"
+  | "timeout"
+  | "network"
+  | "unexpected_shape";
+
+/** 本文が空だった応答の終了理由（Spec 68）。 */
+export type ProbeFinish = "stop" | "length" | "tool_use" | "other";
+
+/** 接続テストで払ったトークン。 */
+export interface TemplateProbeUsage {
+  prompt: number;
+  completion: number;
+  reasoning: number;
+}
+
+/** 接続先が応答したときの形（`outcome` で判別）。 */
+export type TemplateProbeReached =
+  | { outcome: "replied"; text: string; usage: TemplateProbeUsage }
+  | { outcome: "truncated"; limit: number; usage: TemplateProbeUsage }
+  | { outcome: "no_text"; finish: ProbeFinish | null; usage: TemplateProbeUsage | null };
+
+/**
+ * IPC `test_model_template` の返り値（Spec 68 D7。`tests/ipc_contract.rs` が形を凍結）。
+ * LLM の失敗も `result: "failed"` で返る（`Err` になるのはテンプレートが無いときだけ）。
+ * **コアは訳した文字列を入れない** — 画面が `outcome` / `failure` / `finish` から辞書の鍵を選ぶ。
+ */
+export type TemplateProbe =
+  | ({ result: "reached"; elapsedMs: number } & TemplateProbeReached)
+  | {
+      result: "failed";
+      failure: ProbeFailure;
+      status: number | null;
+      retryAfterSecs: number | null;
+      error: ErrorPayload;
+      elapsedMs: number;
+    };
+
 /** ユーザーが編集するエージェント定義。 */
 export interface AgentSpec {
   id: AgentId;
