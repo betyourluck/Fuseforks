@@ -7663,7 +7663,15 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 69](specs/69_launch-and-exit.md)（起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動）:
-  **Draft rev3・未決 0・P0 待ち**（2026-10-20 起票。調査だけのターンを 1 回取ってから書いた。**同日に利用者が未決 7 つを
+  **rev3・未決 0 → P0 完了**（2026-10-20。**P0** = 計器入りの開発ビルドを別の識別子 `jp.outcasts.fuseforks.p0` で作り、
+  窓の作り方 3 通りを測った — 隠して作った窓でも webview は読み込まれ `initialize()` は最後まで走る / 2 回目の起動で
+  窓が戻る / `create: false` + `from_config` の OFF の経路は今と同じ範囲 → **D5 は案 A**。レジストリは使い捨ての probe で
+  確かめ、**管理者でない起動では HKLM の `Run` を書き込みで開く段で値の有無に依らず `0x80070005`** と分かったので、外すときは
+  HKLM に値があるときだけ消しにいく形へ絞った。依存の増分（名前で）は `tray-icon` が Windows +1 / Linux +4 / macOS +2、
+  自動起動が +1 / +2 / +5。Linux の deb / rpm / AppImage の AppIndicator は Tauri CLI が `tray-icon` を見て足す（ソースの読み）。
+  `data_contract` に `launch_exit_contract` を凍結し、`settings_contract` の「置き場は 2 つ」が Spec 25 以降嘘になっていたのを
+  端末の棚の行で回収。**測り方の罠**: .NET の `MainWindowHandle` は隠した窓でも 0 にならない（`IsWindowVisible` で窓ごとに見る）。
+  記録は Spec の「P0 実測記録」。P1 には着手していない）（2026-10-20 起票。調査だけのターンを 1 回取ってから書いた。**同日に利用者が未決 7 つを
   推奨どおりに裁定し、条件を 2 つ付けて rev3** — Windows の自動起動の登録は `windows-registry` で自前で書く・外すときは
   HKCU と HKLM の両方を消しにいく（拒否されたら `scope: machine` で返す）/ 組み立てに失敗したら必ず窓を出す。裁定の前提のうち
   3 つは rev2 の実測と食い違っていたが結論は変えず、食い違いを Spec の Notes 6 に残した。**同日に査読 2 系統 19 点で rev2** —

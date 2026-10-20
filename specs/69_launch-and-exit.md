@@ -1,8 +1,10 @@
 # Spec 69: 起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動
 
-- 状態: **Draft rev3・未決 0・P0 待ち**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
+- 状態: **rev3・未決 0 → P0 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
   判定は採用 12 / 前提を訂正して採用 5 / 反証 2。対応表は Notes 4。→ 同日、利用者が未決 7 つを推奨どおりに裁定し、
-  条件 2 つ（未決 4・5）を付けた。裁定を反映して rev3。裁定の表は Notes 6。P0 には着手していない）
+  条件 2 つ（未決 4・5）を付けた。裁定を反映して rev3。裁定の表は Notes 6。同日 P0 = 窓の作り方 3 通り・レジストリ・
+  依存の増分・Linux の実行時依存を測り、`data_contract` の `launch_exit_contract` を凍結。D5 は案 A に決まった。
+  記録は「P0 実測記録」。P1 には着手していない）
 - 利用者裁定（2026-10-20）: 7 つとも推奨どおり。理由はいずれも Goal 4（OFF なら今と何も変わらない）。
   条件つきが 2 つ — **未決 4**: Windows の登録は `windows-registry` で自前で書く / 外すときは HKCU と HKLM の両方を消す /
   登録名は実機の値で大小まで固定する。**未決 5**: 組み立てに失敗したら必ず窓を出す（rev2 の D0 の 5 と同じ）
@@ -306,8 +308,10 @@ Spec 64 のまま）。
   振る舞い — チェックを入れたのに OS 側の無効が残って起動しない形を作らない）。**HKLM には書かない**
 - **Windows の読み（`is_enabled` 相当）**: HKLM と HKCU の両方の `Run` を読み、どちらかに値があり、かつ両方の
   `StartupApproved\Run` で無効になっていなければ真（`auto-launch` 0.6 の `is_enabled` と同じ判定。ここは写す）
-- **Windows の外し（`disable`）**: HKCU の値を消し、**HKLM の値も消しにいく**（裁定の条件）。管理者でない起動では
-  HKLM の削除が拒否される（`E_ACCESSDENIED`）— そのときは握らず、返り値の `scope` を `machine` にし、画面が
+- **Windows の外し（`disable`）**: HKCU の値を消し、**HKLM に値があるときだけ HKLM の値も消しにいく**（裁定の条件。
+  P0 で、管理者でない起動では HKLM の `Run` を書き込みで開く段で値の有無に依らず拒否されると分かった — 常に開きにいくと
+  値が無くても `scope: machine` を誤って出す）。値がある HKLM の削除が拒否されたら（`E_ACCESSDENIED`）握らず、
+  返り値の `scope` を `machine` にし、画面が
   「全ユーザー向けの登録が残っています。管理者として `Run` キーから `fuseforks` を削除してください」と出す。
   値が無いことによる失敗（`E_FILENOTFOUND`）は成功として扱う
 - **HKLM に値が入る経路は Fuseforks には無い**（自動起動を配ったことが無く、本 Spec も HKCU にしか書かない）。
@@ -333,18 +337,14 @@ Spec 64 のまま）。
   **判定を 2 つの時点に割って実装する** — `setup` の時点では組み立てが終わっていない（`ready` は必ず偽）ので、
   1 つの時点で評価すると常に `show()` になり隠せない。`setup` で「隠して作るか」を決め（D0 の 1・2）、
   組み立ての結果が出た時点で「失敗なら出す」を決める（D0 の 4・5）。2 つ合わせて裁定の 3 行と同じ結果になる
-- 作り方は 2 案あり、**P0 で比べて決める**:
-  - **案 A（推奨）**: `tauri.conf.json` の窓に `"create": false` を足し、`setup` で
-    `WebviewWindowBuilder::from_config(…).visible(!隠す).build()`。見える側は作った瞬間から見えるので一瞬の点滅が無い。
-    ただし OFF のときも作り方が「設定ファイル」から「`setup` の中」へ変わるので、**最初に描かれるまでの時間を
-    今と比べる**（Goal 4）
-  - **案 B（査読 1-5 の代案）**: 窓は今のまま見える状態で作り、隠して起動するときだけ `setup` で `hide()`。
-    OFF の作り方は 1 つも変わらないが、隠して起動するとき一瞬見えて消える
-- **隠した窓でも webview が読み込まれ、`initialize()` が走るかは未確認**（P0）。走らなければ:
-  - 2 つのスイッチは戻らず、既定（確認あり / 承認が必要）のまま動く（厳しい側。D10）
-  - トレイの「終了」のイベントを受ける側が居ない — この場合は「終了」を Rust だけで処理する形（確認を出すために
-    窓を出して `initialize()` を待つ）へ設計を変える。P0 の結果で改訂する（裁定は「P0 の結果次第で隠さない側へ
-    倒す余地を残す」）
+- 作り方は **案 A**（P0 で決定。P0 実測記録）: `tauri.conf.json` の窓に `"create": false` を足し、`setup` で
+  `WebviewWindowBuilder::from_config(…).visible(!隠す).build()`。見える側は作った瞬間から見え、隠す側は 1 度も見えない
+  - OFF の経路の時間は今と同じ範囲（ページの読み込み完了 958 対 921〜939 ms、初期化の最後の呼び出し 1,070 対 1,030〜1,066 ms）
+  - 退けた案 B（窓は今のまま作り、隠して起動するときだけ `setup` で `hide()`）は、窓が `setup` の前に見える状態で
+    作られ、隠すまで見えている
+- **隠した窓でも webview は読み込まれ、`initialize()` は最後まで走る**（P0 で確かめた）。2 つのスイッチは隠したままでも
+  戻り、トレイの「終了」のイベントも画面が受けられる。rev3 まで書いていた「走らなければ『終了』を Rust だけで処理する
+  形へ変える」の分岐は要らなかった
 
 ### D6. 閉じる確認の置き場（2026-10-20 裁定）
 
@@ -449,31 +449,90 @@ Spec 64 D6 の「GUI では不変」の行へ、本 Spec で例外が 1 つ入�
 
 ## Tasks
 
-### P0 — 測ってから凍結する
+### P0 — 測ってから凍結する（**完了 2026-10-20**。下の「P0 実測記録」）
 
-- [ ] Windows: `tray-icon` を有効にした開発ビルドで、`hide()` → トレイのクリックで `show()` が戻ること /
-  隠した窓へ二度目の起動が `show()` すること（多重起動のコールバック）
-- [ ] Windows: 隠して作った窓でも webview が読み込まれ `initialize()` が走ること。**P0 の間だけ**
-  `boot_status` の初回の呼び出しに `note!` を仕込み、時刻を `fuseforks.log` で読む（P0 の後に外す）
-- [ ] Windows: D5 の案 A と案 B を比べる — OFF のときに最初に描かれるまでの時間（今と同じか）/ 隠して起動したときの点滅
-- [ ] Windows: 自前の書き込み（D4）で `HKCU\…\Run` の値 `fuseforks` が `"{パス}" --autostart` で書かれること /
-  タスクマネージャーで無効にすると読みが偽になり、チェックを入れ直すと `StartupApproved` が有効へ戻ること /
-  HKLM に同名の値があるとき、管理者でない起動で外すと HKCU だけが消え、`scope` が `machine` で返ること
-  （HKLM の値は管理者のシェルで手で置き、測った後に手で消す）
-- [ ] 依存の増分を数える（`cargo tree` の一意 crate の前後。Windows は `windows-registry` だけ /
-  macOS と Linux は `auto-launch` 0.6 と、macOS の `smappservice-rs`・Linux の `dirs`）
-- [ ] Linux: CI の deb / rpm の依存に AppIndicator の実行時ライブラリが入るか（成果物の control を読む）
-- [ ] macOS: **実機が無い**。CI（`macos-latest`）でビルドが通ることまで。`Reopen` と Cmd+Q の経路は
-  上の「現況」のソースの読みを根拠とし、実測ではないと記録に書く
-- [ ] `data_contract.yaml` へ `launch_exit_contract` を新設して凍結（D0〜D7・D9〜D11 の規則）/
-  `batch_start_invariant` の書き換え（D8）/ `settings_contract` の `confirmClose` と置き場の列挙へ
-  `startup.json` を足す
+- [x] Windows: 隠して作った窓でも webview が読み込まれ `initialize()` が最後まで走ること / 隠した窓へ二度目の起動が
+  `show()` すること — 案 A・案 B とも成立
+- [x] Windows: D5 の案 A と案 B を比べる — **案 A を採る**（OFF の経路の時間は今と同じ範囲。案 B は作られた窓が
+  `setup` で隠されるまで見えている）
+- [x] Windows: レジストリの書き方 — 引用符つきのパスがそのまま読み戻せる / 値の名前は大文字小文字を区別しない /
+  `StartupApproved\Run` の無効・有効の書き換え / 無い値を消すと `0x80070002` / **管理者でない起動では HKLM の `Run` を
+  書き込みで開くこと自体が `0x80070005`**（値の有無に依らない）
+- [x] 依存の増分を数える
+- [x] Linux: deb / rpm / AppImage に AppIndicator の実行時ライブラリが入るか — Tauri CLI のソースで確かめた（下）
+- [x] macOS: `Reopen` と Cmd+Q の経路はソースの読み（現況）を根拠とし、実測ではないと記録した
+- [x] `data_contract.yaml` へ `launch_exit_contract` を新設して凍結 / `batch_start_invariant` の書き換え（D8）/
+  `settings_contract` の `confirmClose` と置き場の列挙へ `startup.json` を足す / `boot_contract` に隠して起動する
+  ときの例外を足す
+- **P0 で測らなかったもの（P4 へ送る）**: トレイのアイコンのクリックで窓が戻ること（トレイのコードが P1 で入る）/
+  タスクマネージャーで実際に無効にしたときの読み（P0 は `StartupApproved\Run` の値を直接書いて確かめた）/
+  HKLM に値を手で置いたときの外し（管理者が要る）/ macOS の CI ビルド（コードが入る P1 の後）/ 案 B の点滅を目で見ること
+
+### P0 実測記録（2026-10-20）
+
+**測り方**: 計器入りの開発ビルドを識別子 `jp.outcasts.fuseforks.p0` で作った（`tauri build --debug --no-bundle --config`。
+データの棚・多重起動の枠・村のロックが本物と分かれる）。計器は `p0probe.rs`（`run()` に入ってからの経過ミリ秒を
+`FF_P0_LOG` へ書く）と 7 行の差し込みで、測った後に外した（コミットしていない）。窓が見えているかは
+`IsWindowVisible` でタイトル `Fuseforks` の窓を見た — **.NET の `MainWindowHandle` は隠した窓でも 0 にならないので
+可視の判定に使えない**（最初の 2 本はそれで読み違えかけた）。
+
+**窓の作り方**（暖まった状態の 2〜3 本。ミリ秒は `run()` から）
+
+| 作り方 | `setup` に入る | 窓 | ページの読み込み完了 | 初期化の最後の呼び出し | 隠した窓 |
+|---|---|---|---|---|---|
+| 今（設定ファイルの窓） | 582〜584 | `setup` の前に作られる | 921〜939 | 1,030〜1,066 | — |
+| 案 A（`create: false` + `from_config`）見える | 18〜42 | 607〜890 で作る | 958（1 本目は 1,227） | 1,070（1 本目は 1,338） | — |
+| 案 A 隠す | 42 | 647 で見えない状態で作る | 999（`window_visible=false`） | 1,114 | 11,947 ms の 2 回目の起動で `visible=True` |
+| 案 B（作ってから `setup` で `hide()`） | 528〜627 | `setup` の前に見える状態で作られ、543〜642 で隠す | 866〜1,028（`window_visible=false`） | 974〜1,138 | 12,009 ms の 2 回目の起動で `visible=True` |
+
+- **隠した窓でも webview は読み込まれ、画面の `initialize()` は最後の呼び出し（`get_external_icon`）まで走る**（案 A・B とも）。
+  D5 の「走らなければ設計を変える」の分岐は要らなかった。裁定 5 の推奨（隠して起こす）を倒す理由は出なかった
+- **案 A の OFF の経路は今と同じ範囲**（ページの読み込み完了 958 対 921〜939 ms、初期化 1,070 対 1,030〜1,066 ms）。
+  1 本目だけ遅いのは今の側の最初の 1 本（1,505 / 1,663 ms・村を作った回）と同じ傾向
+- **案 B は、窓が `setup` の前に見える状態で作られ、`setup` で隠すまで見えている**（ページの読み込みが始まるのは
+  隠した後なので、出るとすれば中身の無い枠）。点滅を目では見ていないが、構造として案 A には無い窓なので案 A を採る
+- 多重起動の受け口（`get_webview_window("main")` → `show()`）は、`from_config` で作った窓にも効いた
+  （ラベルは既定の `main`）
+
+**レジストリ**（使い捨ての probe。試験用の値 `fuseforks-p0probe` を HKCU に書いて読み、最後に消した。HKLM は読むだけ）
+
+| 確かめたこと | 結果 |
+|---|---|
+| 測る前の登録 | HKCU・HKLM とも `fuseforks` の値は無い |
+| `"C:\Program Files\fuseforks\fuseforks.exe" --autostart` を書いて読む | 1 字も変わらず読み戻せる |
+| 大文字の名前（`FUSEFORKS-P0PROBE`）で読む | 読める（値の名前は大文字小文字を区別しない） |
+| `HKCU\…\Explorer\StartupApproved\Run` | キーは在る。先頭のバイト `0x03`（無効）/ `0x02`（有効）の 12 バイトを書いて読める |
+| 消した値をもう一度消す | `0x80070002`（`E_FILENOTFOUND`） |
+| 管理者でない起動で HKLM の `Run` を書き込みで開く | **`0x80070005`（`E_ACCESSDENIED`）。値の有無に依らず開く段で拒否される** |
+
+- 帰結（D4 へ反映）: 外すときに HKLM へ常に書き込みで開きにいくと、HKLM に値が無くても毎回拒否が返り、
+  `scope: machine` を誤って出す。**HKLM は読みで値の有無を見てから、ある場合だけ消しにいく**
+
+**依存の増分**（名前で数えた。本体のロックに同じ名前がある crate は既存の版に揃うので数えない）
+
+| | Windows | Linux | macOS |
+|---|---|---|---|
+| `tray-icon` 機能 | +1（`tray-icon`） | +4（`tray-icon`・`libappindicator`・`libappindicator-sys`・`libloading`） | +2（`tray-icon`・`objc2-core-graphics`） |
+| 自動起動 | +1（`windows-registry`） | +2（`auto-launch`・`os_info`） | +5（`auto-launch`・`os_info`・`smappservice-rs`・`objc2-security`・`objc2-service-management`） |
+
+- `tray-icon` 0.24.2 は機能を有効にしてもロックの行は増えない（ロックは機能に依らず解決済み）。上の数は `cargo tree` の
+  一意 crate の前後の差
+- 測った後に `Cargo.toml` とロックファイルを退避から戻し、`git status` で差分が無いことを確かめた
+
+**Linux の実行時依存**（ソースの読み。Tauri CLI 2.11.4 のタグ `tauri-cli-v2.11.4` の `crates/tauri-cli/src/interface/rust.rs:1398〜1454`）
+
+- 有効な機能に `tray-icon` があると、CLI は pkg-config で AppIndicator の種類を決め、Ayatana なら
+  **deb の `Depends` に `libayatana-appindicator3-1`**、**rpm の `Requires` に `libayatana-appindicator3.so.1()(64bit)`** を足し、
+  **AppImage には `libayatana-appindicator3.so.1` を `/usr/lib/` へ同梱する**
+- CI は `libayatana-appindicator3-dev` を入れているので Ayatana 側に決まる。成果物の control はまだ読んでいない
+  （トレイが入ったタグのビルドで読む）
+- GNOME は AppIndicator 拡張が無いとトレイが出ない（依存とは別の問題）。その端末で窓を戻す道は、もう一度起動すること
 
 ### P1 — Rust（GUI クレート）
 
 - [ ] `src-tauri/src/startup.rs`: `startup.json` の読み書き（`jev_settings.rs` と同じ形の load / save）と
   argv の `--autostart` の判別（純関数）
-- [ ] `lib.rs`: D0 の順序 / 窓の作り方（D5 の案 A か B）/ `RunEvent` を受ける形（macOS の `Reopen`）/
+- [ ] `tauri.conf.json` の窓に `"create": false` / `lib.rs`: D0 の順序 / 窓の作り方（D5 の案 A — `from_config` の `visible`）/ `RunEvent` を受ける形（macOS の `Reopen`）/
   失敗時に隠していれば `show()` + `set_focus()`
 - [ ] トレイ: 組み立て成功後に作る / `set_startup_settings` で出し入れ / メニュー 2 項目と OS ごとのクリック /
   「終了」で `show()` → `trayQuitRequested`
@@ -581,7 +640,7 @@ Spec 64 D6 の「GUI では不変」の行へ、本 Spec で例外が 1 つ入�
 | 1-2 | トレイを作る時点と隠す判定の順序が決まっていない | 採用 | D0 を新設 |
 | 1-3 | トレイ ON で Cmd+Q が `hide()` に吸われて終了できなくなる | 前提を訂正して採用 | ソースの読みで Cmd+Q は `CloseRequested` を通らない（現況）。隠す分岐は `CloseRequested` の 1 箇所だけと D2 に明記。副産物で Cmd+Q が今も閉じる確認を素通りしていると分かった（Notes 5） |
 | 1-4 | 旧プラグインが書いた HKLM が残り、`CurrentUser` の `is_enabled` は HKCU しか見ない | 前提を訂正して採用 | 旧プラグインは存在しない（自動起動を配ったことが無い）。`is_enabled` は両方を読む。ただし `disable` は HKCU しか消さないので、HKLM に値があると外せない — `scope` を返して直し方を出す（D4） |
-| 1-5 | 隠した窓で webview が走るか / OFF の作り方が変わる | 採用 | D5 に案 A・B を並べ P0 で比べる。走らない場合の設計の分岐を書いた |
+| 1-5 | 隠した窓で webview が走るか / OFF の作り方が変わる | 採用 | D5 に案 A・B を並べ P0 で比べる。走らない場合の設計の分岐を書いた（→ P0 で走ると分かり、案 A に決まった） |
 | 1-6 | `auto-launch` は引用符を渡す口が無い。フォークか自前か | 前提を訂正して採用 | `build` はパスを検査しないので、包んだ文字列を渡せば値に入る。macOS は包まない。版を留めて値を P0 で読む（D4） |
 | 1-7 | Rust で起動するとフロントが `AgentStatusChanged` を取りこぼす | **反証** | `initialize()` は購読を張ってから `refreshAll()` で全件を取り直す（`useOrchestrator.ts` の「購読を先に張る」）。D3 にその根拠を書いた |
 | 1 軽微 | 登録名の大小（`Fuseforks` かもしれない） | **反証（実測）** | `tauri.conf.json` の `productName` は `fuseforks`。現況に書いた |

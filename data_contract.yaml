@@ -1076,7 +1076,12 @@ enums:
       **器へ足したものを列挙する形にして、総数を書かない**。入口はタイトルバーの「スケジュール」の右
       (COG の SVG + 「システム設定」)。画面は 2 ペイン (左メニュー・右ページ、
       Kataribe と同型) — **左メニューが「設定できるものの目録」になる**。
-      置き場は 2 つ (これ以外を作らない):
+      置き場は次のとおり (これ以外を作らない。**Spec 13 の時点で「2 つ」と書いた数は Spec 25 の
+      mcp_server.json 以降嘘になっていた** — 2026-10-20 に Spec 69 P0 で端末の棚の行を足して回収。総数で守らず列挙する):
+        - **端末の棚 → {app_data_dir}/*.json** (村を配っても付いて回らない): mcp_server.json (Spec 25・扉) /
+          pricing.json (Spec 41・単価表の取得先) / jev.json (Spec 59・判断特化モデル) /
+          startup.json (Spec 69・起動と終了。詳細は launch_exit_contract)。サインイン時の自動起動は
+          どの棚にも置かず OS の登録そのものを読む
         - **村に保存 → world.json**: tokenBudget (Option<u64>。単位と正規化は
           token_budget.ceiling が正)、
           askTimeoutSecs (Option<u64>。None = 既定 600。30..=3600 の外は保存時に
@@ -1098,8 +1103,10 @@ enums:
           冗長だと利用者が裁定し、加えて**チェックボックスが「確認する」なのに
           聞かない場合があると壊れて見える**。小言にしないのは**中身**の側の仕事で、
           閉じると止まるもの (飛行中のターン / MCP の扉 / 予定) を
-          そのときの状態から数えて出す。**この村はタスクトレイに常駐しない**ので、
-          予定が止まる事実は**他のどの画面にも出ておらず、ここが唯一言う場所**) /
+          そのときの状態から数えて出す。トレイ常駐が OFF (既定) の間は、予定が止まる事実が
+          **他のどの画面にも出ておらず、ここが唯一言う場所**。**Spec 69 以降、トレイ常駐が ON のとき ✕ は
+          窓を隠すだけで確認は出ず、確認はトレイの「終了」に掛かる** (launch_exit_contract 2・4)。
+          画面の置き場は 全般 ＞ 起動と終了 へ移る (鍵は変えない)) /
           showPresenceNotices (boolean。**既定 true** = これまでどおり入退室を
           会話ペインに出す。2026-08-08 追加。**隠すほうをオプトイン**にしたのは、
           既定を変えると既存の村の画面が黙って変わるため。
@@ -2352,6 +2359,9 @@ entities:
       押す手間の解消。
       **自動起動ではない。** アプリを開いた時点では誰も走らない —
       開いただけで課金が始まる作りにしない。▶ を押したときの対象の選択だけを持つ。
+      **例外は GUI の端末側の明示のオプトイン 1 つだけ** (Spec 69 batchStartOnLaunch。既定 false・
+      {app_data_dir}/startup.json・村には入らない。launch_exit_contract 5)。**ヘッドレス (fuseforks-cli) は
+      この例外を持たず --start を必須にする** (Spec 64 D6。変更なし)。
       **稼働状態 (AgentStatus) とは別の軸。** 元の UI は 1 つのトグルに
       両方を兼ねさせており、「今は止まっているが次の一括起動では起こしたい」を
       表現できなかった (だから毎回 1 体ずつ押すしかなかった)。
@@ -2377,7 +2387,7 @@ entities:
         - **AgentSettingsDialog の seed() にも写す。** 画面に UI は無いが、
           写さないと設定保存で既定 (true) へ戻り、対象から外していた個体が
           黙って復帰する (ipc_contract の凍結テストでは捕まらない経路)
-        - **ヘッドレス (Spec 64) でもこの不変条件は GUI では不変。** fuseforks-cli は
+        - **ヘッドレス (Spec 64) でもこの不変条件は GUI では不変** (Spec 69 以降は上の例外 1 つを除く)。fuseforks-cli は
           --start を必須にして (既定値なし・none は無い)、引数に書いたときだけ
           その集合を起動する。引数は明示の意図で、「開いただけ」ではない。
           batch は GUI の全体 ▶ と同じ述語 (headless_host_contract 凍結 7)
@@ -3977,6 +3987,8 @@ entities:
         返す設計のため、wire 2 系統 + trait + 逐次描画まで全層に触る
   boot_contract: |
     起動ハンドシェイク = boot_status コマンド (2026-07-29)。
+    **例外 (Spec 69)**: --autostart かつ minimizeToTray のときだけ窓を見えない状態で作り、組み立てに
+    失敗したら show() + set_focus() して覆いを見せる (launch_exit_contract 1)。以下はそれ以外の起動の規則。
     ウィンドウを先に出し、オーケストレーターの初期化 (MCP 接続を含む、
     10 秒超あり) はバックグラウンドで走らせる。setup の block_on は廃止 —
     その間ウィンドウが 1 枚も出ず、起動と故障を区別できなかった。
@@ -3995,6 +4007,65 @@ entities:
       - 覆いは 2 段共有: index.html の #app 内 (Vue マウント前) と App.vue
         (state.ready まで)。同じ .boot-splash / .boot-spinner (style.css) を
         使い、切り替わりの継ぎ目を見せない
+  launch_exit_contract: |
+    起動と終了 (Spec 69 rev3、2026-10-20 P0 凍結)。システム設定 ＞ 全般 ＞ 起動と終了 の 3 つの設定
+    (閉じるでトレイへ / 起動時に一括起動 / サインイン時の自動起動) と、閉じる確認の置き場。
+    **3 つとも既定 OFF。OFF のままなら閉じる・起動の挙動は今と 1 つも変わらない** (Spec 69 Goal 4)。
+    覆した凍結は 2 つ — 「この村はタスクトレイに常駐しない」(2026-08-07〜08) と
+    batch_start_invariant の GUI での不変 (Spec 64 D6)。どちらも端末側の明示のオプトインで、
+    村 (world.json) には入らない。
+    置き場:
+      - {app_data_dir}/startup.json: { minimizeToTray: bool, batchStartOnLaunch: bool } (既定は両方 false)。
+        GUI のクレートの棚。fuseforks-host には置かない (CLI はトレイも一括起動の設定も持たず、--start で明示する)。
+        読めない・壊れたファイルは既定として読み、書き込みは拒否しない (消えて困る値を持たない)。WARN を 1 行。
+        **bake (container_contract) の写す表に入れない** — GUI だけの棚で、コンテナには窓もトレイも無い
+      - サインイン時の自動起動: **OS の登録そのもの**。アプリは写しを持たず、画面を開くたびに読む
+      - confirmClose: localStorage "fuseforks.settings.v1" のまま (鍵は変えない)。画面の置き場だけを
+        ユーザーインターフェース ＞ メッセージ表示/非表示 から 全般 ＞ 起動と終了 へ移す
+    不変条件:
+      1. 起動の順序 (Spec 69 D0): setup で startup.json と argv の --autostart を読む → 窓を作る
+         (tauri.conf.json の窓は create: false。setup で WebviewWindowBuilder::from_config(…).visible(…)。
+         見えない状態で作るのは --autostart かつ minimizeToTray のときだけ) → build_state を別のタスクへ。
+         成功: spawn_event_bridge → manage → minimizeToTray ならトレイを作る → batchStartOnLaunch なら一括起動を
+         別のタスクで。**失敗: 見えない状態で作っていたら show() + set_focus() して覆いの理由を見せる。トレイは作らない**
+      2. **窓を隠すのは onCloseRequested の 1 箇所だけ**。条件は minimizeToTray かつ組み立て済み
+         (state.ready かつ initError なし)。組み立てていない間は隠さず今のまま (確認 → destroy)。
+         RunEvent::ExitRequested / Exit では隠さない。capability に core:window:allow-hide を足す
+      3. トレイのアイコンは minimizeToTray が真の間だけ出す。作るのは組み立てが成功した後。
+         メニューは「Fuseforks を表示」「終了」の 2 項目で、文言は村の言語 (set_language の成功で差し替える)
+      4. トレイの「終了」は閉じる確認を通る (Rust が show() → set_focus() → イベント trayQuitRequested、
+         画面が confirmClose に従って確認 → destroy)。終了の確認を出している間は 2 回目を積まない
+         (exitConfirmInFlight)。他の確認は取り消さない
+      5. 一括起動はプロセスに 1 回、manage の後に別のタスクで World::batch_start_ids の順に直列。
+         画面の initialize() には置かない (F5 で再発火する)。1 体の失敗で残りを止めない。
+         画面は購読を張ってから全件を取り直す既存の順序で取りこぼさない (新しい IPC は無い)
+      6. 自動起動の登録名は "fuseforks" (productName。小文字。値の名前は大文字小文字を区別しない)。
+         引数は --autostart
+      7. Windows の登録は windows-registry で自前で書く: HKCU\Software\Microsoft\Windows\CurrentVersion\Run の
+         値 fuseforks = "\"{current_exe}\" --autostart"。HKLM には書かない。登録するとき
+         HKCU\…\Explorer\StartupApproved\Run の同名の値が無効 (先頭バイト 0x03) なら有効 (0x02) へ上書きする
+      8. Windows の読み: HKLM と HKCU の両方の Run を読み、どちらかに値があり、両方の StartupApproved\Run で
+         無効でなければ有効。scope = user / machine / both / none
+      9. Windows の外し: HKCU の値を消す。**HKLM は読みで値の有無を見て、ある場合だけ消しにいく** —
+         管理者でない起動では HKLM の Run を書き込みで開く段で値の有無に依らず 0x80070005 が返る (P0 実測)。
+         値がある HKLM の削除の拒否は握らず scope: machine で返す。値が無い (0x80070002) は成功
+     10. macOS / Linux は auto-launch 0.6 (macOS は MacOSLaunchMode::LaunchAgent を明示し、パスは包まない。
+         Linux は Exec に渡すパスを引用符で包む)。Windows の依存には入れない
+     11. 計器: launch: source=autostart|manual hidden=true|false / launch batch: targets= started= failed=
+         (失敗した個体の id を列挙。理由の文は載せない)
+     12. 外部への送信は増えない。アプリの外 (OS の登録) へ書くのは自動起動の 1 つだけ (PRIVACY 2・8)
+    P0 の実測 (2026-10-20。詳細は Spec 69 の「P0 実測記録」):
+      - 隠して作った窓でも webview は読み込まれ、画面の initialize() は最後の呼び出しまで走る。
+        2 回目の起動で多重起動の受け口が show() し、IsWindowVisible が真に戻る (from_config で作った窓にも効く)
+      - create: false + from_config の OFF の経路は今と同じ範囲 (ページの読み込み完了 958 対 921〜939 ms、
+        初期化の最後の呼び出し 1,070 対 1,030〜1,066 ms)
+      - 依存の増分 (名前で): tray-icon 機能 = Windows +1 / Linux +4 / macOS +2。自動起動 = Windows +1
+        (windows-registry) / Linux +2 / macOS +5
+      - Linux の実行時依存: Tauri CLI 2.11.4 は tray-icon 機能を見ると deb の Depends に
+        libayatana-appindicator3-1、rpm に libayatana-appindicator3.so.1()(64bit) を足し、AppImage に同梱する
+        (ソースの読み)
+      - macOS の Cmd+Q は CloseRequested を通らずに終了へ進む (muda の terminate: → tao の
+        applicationWillTerminate。ソースの読みで実測ではない)。ゆえに不変条件 2 で Cmd+Q は隠されない
   headless_host_contract: |
     コアを GUI なしで動かす (Spec 64 rev2、2026-10-06 P0 凍結)。組み立ての本体を GUI 層から
     crate fuseforks-host へ持ち上げ、同じ build_host を GUI と実行ファイル fuseforks-cli
