@@ -168,6 +168,35 @@ async fn a_blank_group_name_is_refused() {
     assert_eq!(err.code(), "GROUP_NOT_FOUND");
 }
 
+/// 起動時の一括起動（Spec 69 D3）が読む対象は、全体 ▶ と同じ 2 段の門を通り、一覧の表示順で並ぶ。
+#[tokio::test]
+async fn batch_start_ids_follow_both_gates_in_list_order() {
+    let dir = TempDir::new("batch-ids");
+    let orchestrator = setup(&dir).await;
+    let mut off = orchestrator.create_group("休止").await.unwrap();
+    off.batch_start = false;
+    orchestrator.upsert_group(off.clone()).await.unwrap();
+
+    let mut first = AgentSpec::new("agent_01", "一番目", "tpl");
+    first.order = 1;
+    let mut opted_out = AgentSpec::new("agent_02", "外した", "tpl");
+    opted_out.order = 2;
+    opted_out.batch_start = false;
+    let mut in_off_group = AgentSpec::new("agent_03", "休止組", "tpl");
+    in_off_group.order = 3;
+    in_off_group.group_id = Some(off.id.clone());
+    let mut earliest = AgentSpec::new("agent_04", "先頭", "tpl");
+    earliest.order = 0;
+    for spec in [first, opted_out, in_off_group, earliest] {
+        orchestrator.create_agent(spec).await.unwrap();
+    }
+
+    assert_eq!(
+        orchestrator.batch_start_ids().await,
+        vec![AgentId::from("agent_04"), AgentId::from("agent_01")]
+    );
+}
+
 /// **実行経路はグループを読まない**（凍結 5）。配送・委譲・ターン・予定・文脈の
 /// 本体に `group` の語が 1 つも無いことを走査で留める — `pricing` が `budget` を
 /// 読まない網と同じ形。CRUD の包み（`lifecycle.rs`）だけが例外。

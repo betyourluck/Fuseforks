@@ -7663,7 +7663,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 69](specs/69_launch-and-exit.md)（起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動）:
-  **rev3・未決 0 → P0 完了**（2026-10-20。**P0** = 計器入りの開発ビルドを別の識別子 `jp.outcasts.fuseforks.p0` で作り、
+  **rev3・未決 0 → P0〜P1 完了**（2026-10-20。**P1** = Rust 側 — `startup.rs`（棚と `--autostart`）/ `autostart.rs`（Windows は
+  `windows-registry` で自前、非 Windows は `auto-launch`）/ `tray.rs` / `launch.rs`（直列・1 体の失敗で止まらない）/ `lib.rs` の
+  起動の順序（窓は `create: false` から `.visible(!hidden)`、失敗なら窓を出す、隠しているのにトレイが無ければ窓を出す）/ IPC 4 本 /
+  コアに `Orchestrator::batch_start_ids` と `CoreError::Autostart`。単体 16 + 走査 4 + コア結合 1、変異 9 回とも予測どおり 1 本だけ赤。
+  **`auto-launch` 0.6 はタスクマネージャーの無効を「末尾 8 バイトが 0 か」で見ており、こちらの「先頭バイトの最下位ビット」と
+  見方が違う** — 実物の値で食い違うかは P4。macOS / Linux の分岐は手元でコンパイルされない（非 Windows の `platform` を
+  使い捨ての crate へ写して Windows 上で `cargo check` まで）。記録は Spec の「P1 実装記録」。**P0** = 計器入りの開発ビルドを別の識別子 `jp.outcasts.fuseforks.p0` で作り、
   窓の作り方 3 通りを測った — 隠して作った窓でも webview は読み込まれ `initialize()` は最後まで走る / 2 回目の起動で
   窓が戻る / `create: false` + `from_config` の OFF の経路は今と同じ範囲 → **D5 は案 A**。レジストリは使い捨ての probe で
   確かめ、**管理者でない起動では HKLM の `Run` を書き込みで開く段で値の有無に依らず `0x80070005`** と分かったので、外すときは

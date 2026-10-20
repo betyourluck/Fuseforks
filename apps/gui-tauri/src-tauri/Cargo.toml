@@ -31,7 +31,8 @@ base64.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = [] }
+# トレイ（Spec 69 D2）。tray-icon はロックに既に在り、機能を有効にしても行は増えない（P0 実測）。
+tauri = { version = "2", features = ["tray-icon"] }
 # 作業フォルダを選ぶネイティブダイアログ（パスを返すだけ。開く側は opener）。
 # 絶対パスを手で打たせると、区切り文字と綴りの取り違えがそのまま
 # 「作業フォルダが存在しません」になり、直す手掛かりが画面に無い。
@@ -46,6 +47,17 @@ tokio.workspace = true
 # それ以降の依存がすべて target 条件つきとして再分類される（TOML の節の意味論）。
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.3"
+
+# サインイン時の自動起動（Spec 69 D4）。Windows は windows-registry で自前で書く（裁定 4）—
+# 値の形が auto-launch の内部の format! に寄りかからず、登録先を読む側と同じ crate で揃う。
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
+# エラーの型（HRESULT のコード）を名指しするため。windows-registry は Error を公開していない。
+windows-result = "0.4"
+
+# macOS（LaunchAgent）と Linux（XDG）は auto-launch 0.6。Windows の依存には入れない。
+[target.'cfg(not(windows))'.dependencies]
+auto-launch = "0.6"
 
 # リリースプロファイルはワークスペースルートで定義している
 # （非ルートパッケージの [profile] は無視されるため）。

@@ -4,6 +4,7 @@
 //! コアイベントの中継しか行わない。オーケストレーションの判断はすべて
 //! `fuseforks-core` 側にあり、このクレートを外しても中核は単体で動く。
 
+mod autostart;
 mod commands;
 // ホスト層（Spec 64）へ持ち上げた扉と棚。`crate::mcp_server::…` の読み替えを
 // 起こさないために同じ名前で再公開する。
@@ -11,7 +12,10 @@ pub use fuseforks_host::jev_settings;
 pub use fuseforks_host::mcp_server;
 pub use fuseforks_host::pricing_source;
 pub use fuseforks_host::probe_approvals;
+mod launch;
+mod startup;
 mod state;
+mod tray;
 
 use tauri::Manager;
 
@@ -23,6 +27,11 @@ use tauri::Manager;
 /// その間ウィンドウが 1 枚も出ないと、起動したのか失敗したのか区別できない。
 /// ウィンドウを先に出し、フロントは `boot_status` を訊きながら
 /// 「初期起動中…」の覆いを見せる。
+///
+/// **例外は 1 つ（Spec 69 D0）** — サインイン時の自動起動（`--autostart`）かつ
+/// 「閉じるとトレイに隠れる」が ON のときだけ、窓を見えない状態で作る。組み立てに
+/// 失敗したら必ず窓を出して覆いの理由を見せ（窓もトレイも無いプロセスを残さない）、
+/// 成功したらトレイを作って隠したまま動く。
 ///
 /// [`state::AppState`] は初期化が成功した瞬間に manage される。それまでの
 /// 失敗理由は [`state::BootError`]（起動直後に manage 済み）へ入るので、
@@ -47,46 +56,64 @@ pub fn run() {
             // プラグインが既に終了させている）。ここでやるのは「起動しなかった」
             // ことを利用者に伝えることだけ — 無言だと二度押ししたようにしか
             // 見えず、動くはずのものが動かない理由が画面のどこにも無い。
-            let Some(window) = app
-                .get_webview_window("main")
-                .or_else(|| app.webview_windows().into_values().next())
-            else {
-                fuseforks_core::note!("2 つ目の起動を止めたが、前面に出すウィンドウが無い");
-                return;
-            };
-
-            // 3 つとも失敗を握り潰す。最小化の解除が効かない環境でも
-            // 前面化は試す価値があり、ここで早期 return すると
-            // 「一部の環境でだけ無反応」という一番読めない形になる。
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+            // **トレイに隠した窓もこれで戻る**（Spec 69 P0 実測）。
+            tray::show_main(app);
         }));
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(state::BootError::default());
 
+            // 起動と終了の端末側の設定（Spec 69 D0 の 1）。小さいので同期で読む。
+            let store = startup::StartupStore::load(&app.path().app_data_dir()?);
+            let autostart = startup::launched_by_autostart(std::env::args_os());
+            let hidden = startup::starts_hidden(store.settings(), autostart);
+            app.manage(startup::StartupState {
+                store: std::sync::Mutex::new(store),
+            });
+
+            // 窓は設定ファイル（`create: false`）から作る（D0 の 2・D5 の案 A）。
+            // 見える側は作った瞬間から見え、隠す側は 1 度も見えない。
+            let config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .cloned()
+                .ok_or("tauri.conf.json に窓の設定がありません")?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .visible(!hidden)
+                .build()?;
+
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match state::build_state(&handle).await {
+                let outcome = state::build_state(&handle).await;
+                // ログは組み立ての中で開くので、出せる時点（結果が出た後）で 1 行。
+                fuseforks_core::note!(
+                    "launch: source={} hidden={hidden}",
+                    if autostart { "autostart" } else { "manual" }
+                );
+                match outcome {
                     Ok(app_state) => {
-                        state::spawn_event_bridge(
-                            handle.clone(),
-                            std::sync::Arc::clone(&app_state.host.orchestrator),
-                        );
+                        let orchestrator = std::sync::Arc::clone(&app_state.host.orchestrator);
+                        state::spawn_event_bridge(handle.clone(), std::sync::Arc::clone(&orchestrator));
                         handle.manage(app_state);
+                        after_boot(&handle, orchestrator, hidden).await;
                     }
                     Err(failure) => {
-                        // ウィンドウは既に出ている。ここで panic せず理由を残し、
-                        // フロントの覆いに「初期化に失敗した」と表示させる。
+                        // ここで panic せず理由を残し、フロントの覆いに「初期化に失敗した」と
+                        // 表示させる。**隠して作っていたら窓を出す**（D0 の 5）— 窓もトレイも
+                        // 無いプロセスが多重起動の枠だけを握って居座る形を作らない。
                         fuseforks_core::note!("初期化に失敗しました: {}", failure.message);
                         let slot = handle.state::<state::BootError>();
                         if let Ok(mut guard) = slot.0.lock() {
                             *guard = Some(failure);
+                        }
+                        if hidden {
+                            tray::show_main(&handle);
                         }
                     }
                 }
@@ -236,7 +263,57 @@ pub fn run() {
             commands::approve_schedule_probe,
             commands::delete_schedule,
             commands::set_schedule_enabled,
+            // 起動と終了（Spec 69）
+            commands::get_startup_settings,
+            commands::set_startup_settings,
+            commands::get_autostart,
+            commands::set_autostart,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Tauri アプリケーションの起動に失敗しました");
+
+    app.run(|_app, _event| {
+        // macOS: 隠した窓は Dock のアイコンを押しても戻らない（Reopen を受けないと何も起きない）。
+        // **窓を隠す分岐はここに置かない** — 隠すのは onCloseRequested の 1 箇所だけ
+        // （launch_exit_contract 2）。Cmd+Q は CloseRequested を通らずに終了へ進む。
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            tray::show_main(_app);
+        }
+    });
+}
+
+/// 組み立てが成功して `AppState` を manage した後の 2 つ（Spec 69 D0 の 4）。
+///
+/// トレイを作ってから、一括起動を**別のタスクで**回す（`start_agent` は MCP の接続を待つ）。
+/// 設定は**この時点の値**を読む — 組み立ての間に画面から切り替えた値も拾う。
+async fn after_boot(
+    handle: &tauri::AppHandle,
+    orchestrator: std::sync::Arc<fuseforks_core::Orchestrator>,
+    hidden: bool,
+) {
+    let settings = handle
+        .state::<startup::StartupState>()
+        .store
+        .lock()
+        .map(|store| store.settings())
+        .unwrap_or_default();
+
+    let tray_ready = settings.minimize_to_tray
+        && match tray::install(handle, orchestrator.language().await) {
+            Ok(()) => true,
+            Err(err) => {
+                fuseforks_core::note!("トレイを作れませんでした: {err}");
+                false
+            }
+        };
+    // **隠しているのにトレイが無い形を作らない** — 戻す手段がもう一度起動することしか残らない。
+    // トレイを作れなかったときと、組み立ての間に設定が切られたときの両方をここで受ける。
+    if hidden && !tray_ready {
+        tray::show_main(handle);
+    }
+
+    if settings.batch_start_on_launch {
+        tauri::async_runtime::spawn(launch::run(orchestrator));
+    }
 }

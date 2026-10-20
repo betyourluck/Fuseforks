@@ -295,6 +295,12 @@ impl Orchestrator {
         self.shared.world.read().await.groups()
     }
 
+    /// 全体 ▶ の対象を一覧の表示順で返す（[`crate::world::World::batch_start_ids`] と同じ規則）。
+    /// **起動はしない。** GUI の起動時の一括起動（Spec 69 D3）が誰を起こすかを決めるのに使う。
+    pub async fn batch_start_ids(&self) -> Vec<AgentId> {
+        self.shared.world.read().await.batch_start_ids()
+    }
+
     /// グループを新設する。id はコアが発行する。
     pub async fn create_group(&self, name: &str) -> CoreResult<AgentGroup> {
         let group = self.shared.world.write().await.create_group(name)?;

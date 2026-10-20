@@ -223,6 +223,17 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// サインイン時の自動起動を OS へ登録・解除・読み取りできなかった（Spec 69 D4）。
+    ///
+    /// **`ConfigIo` へ畳まない理由は [`Self::PricingFetch`] と同じ** — 書く先は設定ファイルではなく
+    /// OS の登録（Windows のレジストリ / macOS の LaunchAgent / Linux の autostart）で、
+    /// 「設定ファイルの入出力に失敗」では何が起きたかが嘘になる。理由は本文で運ぶ。
+    #[error("サインイン時の自動起動を設定できませんでした: {reason}")]
+    Autostart {
+        /// 設定できなかった理由（そのまま画面へ出る）。
+        reason: String,
+    },
+
     /// 設定ファイルの読み書きに失敗した。
     #[error("設定ファイル `{path}` の入出力に失敗しました")]
     ConfigIo {
@@ -427,6 +438,7 @@ impl CoreError {
             Self::MailboxFull { .. } => "MAILBOX_FULL",
             Self::PricingFetch { .. } => "PRICING_FETCH",
             Self::JevProbe { .. } => "JEV_PROBE",
+            Self::Autostart { .. } => "AUTOSTART",
             Self::ConfigIo { .. } => "CONFIG_IO",
             Self::BlackboardDeleteFailed { .. } => "BLACKBOARD_DELETE_FAILED",
             Self::UnsafeIdentifier { .. } => "UNSAFE_IDENTIFIER",

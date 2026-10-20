@@ -1,10 +1,10 @@
 # Spec 69: 起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動
 
-- 状態: **rev3・未決 0 → P0 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
+- 状態: **rev3・未決 0 → P0〜P1 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
   判定は採用 12 / 前提を訂正して採用 5 / 反証 2。対応表は Notes 4。→ 同日、利用者が未決 7 つを推奨どおりに裁定し、
   条件 2 つ（未決 4・5）を付けた。裁定を反映して rev3。裁定の表は Notes 6。同日 P0 = 窓の作り方 3 通り・レジストリ・
   依存の増分・Linux の実行時依存を測り、`data_contract` の `launch_exit_contract` を凍結。D5 は案 A に決まった。
-  記録は「P0 実測記録」。P1 には着手していない）
+  記録は「P0 実測記録」。同日 P1 = Rust 側（記録は「P1 実装記録」）。P2 には着手していない）
 - 利用者裁定（2026-10-20）: 7 つとも推奨どおり。理由はいずれも Goal 4（OFF なら今と何も変わらない）。
   条件つきが 2 つ — **未決 4**: Windows の登録は `windows-registry` で自前で書く / 外すときは HKCU と HKLM の両方を消す /
   登録名は実機の値で大小まで固定する。**未決 5**: 組み立てに失敗したら必ず窓を出す（rev2 の D0 の 5 と同じ）
@@ -260,7 +260,7 @@ Spec 64 のまま）。
   - Windows / Linux: 左クリックで「表示」と同じ。右クリックでメニュー
   - macOS: クリックでメニューを開く（メニューバーの作法）
 - **「終了」は今の閉じる確認を通る。** Rust はメニューのイベントで窓を `show()` + `set_focus()` し、フロントへ
-  イベント `trayQuitRequested` を送る。フロントは:
+  イベント `tray://quit-requested` を送る（P1 で名前を決めた）。フロントは:
   - 終了の確認を出している最中（`exitConfirmInFlight`）なら何もしない（窓は前面に出ている）。**2 回目を積まない**
   - `confirmClose` が真なら `askConfirm` → 承認で `destroy()`。他の確認が待ち行列の先にあれば、それに答えた後に
     出る（他の確認を取り消さない — 別の操作の結果を黙って変えない）
@@ -528,27 +528,74 @@ Spec 64 D6 の「GUI では不変」の行へ、本 Spec で例外が 1 つ入�
   （トレイが入ったタグのビルドで読む）
 - GNOME は AppIndicator 拡張が無いとトレイが出ない（依存とは別の問題）。その端末で窓を戻す道は、もう一度起動すること
 
-### P1 — Rust（GUI クレート）
+### P1 — Rust（GUI クレート）（**完了 2026-10-20**。下の「P1 実装記録」）
 
-- [ ] `src-tauri/src/startup.rs`: `startup.json` の読み書き（`jev_settings.rs` と同じ形の load / save）と
-  argv の `--autostart` の判別（純関数）
-- [ ] `tauri.conf.json` の窓に `"create": false` / `lib.rs`: D0 の順序 / 窓の作り方（D5 の案 A — `from_config` の `visible`）/ `RunEvent` を受ける形（macOS の `Reopen`）/
-  失敗時に隠していれば `show()` + `set_focus()`
-- [ ] トレイ: 組み立て成功後に作る / `set_startup_settings` で出し入れ / メニュー 2 項目と OS ごとのクリック /
-  「終了」で `show()` → `trayQuitRequested`
-- [ ] `commands::set_language` に `AppHandle` を足し、保存が成功したらトレイの文言を差し替える
-- [ ] 一括起動（D3）と計器 `launch batch:` / `launch: source=… hidden=…`
-- [ ] 自動起動: Windows は `windows-registry` で書く・読む・消す（HKLM の拒否を `scope: machine` へ写す）/
-  macOS と Linux は `auto-launch` / IPC 2 本（D4）/ 登録のコマンドを読む 3 OS の小さな関数
-- [ ] IPC `get_startup_settings` / `set_startup_settings`
-- [ ] テスト: `startup.json` の壊れた読み（既定へ落ちる）/ `--autostart` の判別 / 一括起動が `batch_start_ids` の
-  順に直列で走り、1 体の失敗で止まらない（結合）/ plist と `.desktop` の読み（`auto-launch` が書く形の文字列から）。
-  **レジストリへ書くテストは CI に置かない**（端末の登録を汚す）
+- [x] `src-tauri/src/startup.rs`: `startup.json` の読み書きと argv の `--autostart` の判別（純関数）
+- [x] `tauri.conf.json` の窓に `"create": false` / `lib.rs`: D0 の順序 / 窓の作り方（D5 の案 A — `from_config` の `visible`）/
+  `RunEvent` を受ける形（macOS の `Reopen`）/ 失敗時に隠していれば `show()` + `set_focus()`
+- [x] トレイ（`tray.rs`）: 組み立て成功後に作る / `set_startup_settings` で出し入れ / メニュー 2 項目と OS ごとのクリック /
+  「終了」で `show()` → イベント `tray://quit-requested`
+- [x] `commands::set_language` に `AppHandle` を足し、保存が成功したらトレイの文言を差し替える
+- [x] 一括起動（`launch.rs`）と計器 `launch batch:` / `launch: source=… hidden=…`
+- [x] 自動起動（`autostart.rs`）: Windows は `windows-registry` で書く・読む・消す / macOS と Linux は `auto-launch` /
+  IPC 2 本 / 登録のコマンドを読む小さな関数
+- [x] IPC `get_startup_settings` / `set_startup_settings`
+- [x] テスト（下の記録）。**レジストリへ書くテストは CI に置いていない**（端末の登録を汚す）
+
+### P1 実装記録（2026-10-20）
+
+**足したもの**
+
+| ファイル | 中身 |
+|---|---|
+| `src-tauri/src/startup.rs` | `StartupSettings`（camelCase の 2 欄・既定 false）/ `StartupStore`（読めなければ既定 + WARN・一時ファイルから置き換えて書く）/ `launched_by_autostart`（先頭の実行ファイルは見ない）/ `starts_hidden` / `StartupState`（棚だけ） |
+| `src-tauri/src/autostart.rs` | `AutostartView { enabled, scope, registeredCommand, currentExe }` / `AutostartScope`（user / machine / both / none）/ 純関数 `windows_command`・`approved_disabled`・`windows_view`・`parse_plist_program_arguments`・`parse_desktop_exec` / `platform` を Windows（`windows-registry`）と非 Windows（`auto-launch`）に割った |
+| `src-tauri/src/tray.rs` | `install`（既にあれば何もしない）/ `remove` / `relabel` / `show_main`（多重起動の受け口・トレイ・Dock が共有）/ 文言 `labels`（ja / en） |
+| `src-tauri/src/launch.rs` | `start_in_order`（直列・1 体の失敗で止まらない。起動の口を引数で受けるので純粋に試せる）/ `LaunchBatchReport::line` / `run` |
+| `lib.rs` | D0 の順序。窓は `setup` で `from_config(…).visible(!hidden)`。`build(…)` → `run(|app, event|)` で macOS の `Reopen` を受ける。`after_boot` = トレイ → **隠しているのにトレイが無ければ窓を出す**（トレイを作れなかったときと、組み立ての間に設定が切られたときの両方）→ 一括起動を別のタスク |
+| `commands.rs` | IPC 4 本（`get_startup_settings` / `set_startup_settings` / `get_autostart` / `set_autostart`）。`set_language` は保存の成功後にトレイの文言を差し替える |
+| コア | `Orchestrator::batch_start_ids`（`World::batch_start_ids` を読むだけ）/ `CoreError::Autostart { reason }`（コード `AUTOSTART`） |
+| 依存 | tauri の機能 `tray-icon` / Windows: `windows-registry` 0.6・`windows-result` 0.4 / 非 Windows: `auto-launch` 0.6。ロックに増えた名前は P0 で数えた 6 つと一致 |
+
+**Spec から動いた点**
+
+- **画面へのイベント名は `tray://quit-requested`**（rev3 は `trayQuitRequested` と書いていた）。コアのイベント `core://event` と
+  同じ書き方に揃えた。`data_contract` の `launch_exit_contract` 4 も同じ名前へ直した
+- **`StartupState` は棚だけを持つ。** rev3 は自動起動か・隠して作ったかも置くと書いたが、どちらも `setup` の中で決まり、
+  組み立ての結果を待つタスクへそのまま渡せば足りた（置くと読まれない欄になり警告が出た）
+- **`CoreError::Autostart` を新設した。** `ConfigIo` へ寄せると「設定ファイルの入出力に失敗しました」になり、書く先が
+  レジストリ / LaunchAgent / autostart のときに嘘の 1 文になる（`PricingFetch` / `JevProbe` を新設したのと同じ理由）。
+  画面の辞書 `errors.AUTOSTART` は P2 で足す
+- **`StartupApproved\Run` の「無効」は先頭バイトの最下位ビットで見る。** `auto-launch` 0.6 は「末尾 8 バイトが全部 0 なら有効」
+  （無効にした時刻の有無）で見ている。P0 で書いた 12 バイトの `0x03 00…` は `auto-launch` の見方では有効と読まれる形で、
+  **2 つの見方が実際のタスクマネージャーの値で食い違うかは P4 で確かめる**（P4 の 7）
+- `set_autostart` は書いた後に `autostart: enabled=… scope=…` を 1 行出す（Spec に無かった計器。登録・解除の事実をログで読むため）
+- `windows-registry` は `Error` 型を公開していないので、HRESULT を読むために `windows-result` を直接の依存に足した
+
+**テスト**（GUI のクレートの単体 16 本 + 走査 4 本 + コアの結合 1 本。すべて緑）
+
+- 単体: 棚（無い / 壊れた / 欄が欠けた / camelCase で往復して一時ファイルを残さない）/ `--autostart` の判別 / 隠す条件 /
+  Windows の値の形 / 無効の判定 / 両方の hive とタスクマネージャーの組み合わせ / JSON の形 / plist（`ProgramArguments` より前に
+  別の配列があっても取り違えない）/ `.desktop` / 一括起動（直列・失敗で止まらない・対象 0）/ 計器の 1 行 / トレイの文言
+- 走査（`tests/launch_exit_wiring.rs`）: 窓は `create: false` から `.visible(!hidden)` で作る / 成功は中継 → manage → `after_boot`、
+  失敗は理由を残してから隠していれば窓を出しトレイは作らない / `after_boot` はトレイ → 隠しているのにトレイが無ければ窓を出す → 一括起動を別のタスクで /
+  **Rust 側（`src/*.rs`）に `.hide(` が無い** / `set_language` は保存の成功後にトレイの文言を差し替える
+- コアの結合（`agent_groups.rs`）: `Orchestrator::batch_start_ids` が 2 段の門を通り一覧の順で並ぶ
+- **変異 9 回とも予測どおり 1 本だけ赤**（窓を常に見える / 失敗で窓を出さない / 一括起動をトレイより先に / 隠しているのにトレイが無いとき窓を出さない /
+  一括起動を最初の失敗で止める / 無効の判定を `0x03` だけ / HKLM 側の無効化を見ない / `--autostart` で先頭を飛ばさない /
+  コアの対象を逆順）。変異は元のバイトを退避して戻し、SHA-256 の一致を確かめた
+- **macOS / Linux の分岐は手元でコンパイルされない。** 非 Windows の `platform` モジュールを使い捨ての crate へ写し、`cfg` を外して
+  Windows の上で `auto-launch` 0.6 に対して `cargo check` を通した（API と型の確認まで）。macOS 固有の 2 行（`set_macos_launch_mode`・
+  plist の読み）と Linux 固有の 1 行（`APPIMAGE` と引用符）は、トレイが入ったタグの CI で初めてコンパイルされる
+
+**P2 までの中間の状態**: 画面にまだ入口が無いので、3 つの設定は `startup.json` を手で書かない限り OFF のまま（既定の挙動は今と同じ）。
+`minimizeToTray` を手で真にするとトレイは出るが、✕ で隠す分岐と「終了」を受ける側は P2 で入る（それまでトレイの「終了」は窓を出すだけ）
 
 ### P2 — 画面
 
 - [ ] `initialize()` で `get_startup_settings` を `state.startup` へ（`state.mcpHost` の隣）
-- [ ] `App.vue` の `registerCloseGuard` を分岐（D2）/ `trayQuitRequested` を受ける（`exitConfirmInFlight`）
+- [ ] `App.vue` の `registerCloseGuard` を分岐（D2）/ `tray://quit-requested` を受ける（`exitConfirmInFlight`）/
+  辞書 `errors.AUTOSTART`（P1 で新設した `CoreError::Autostart`）
 - [ ] capability に `core:window:allow-hide`
 - [ ] `SettingsDialog.vue` に「起動と終了」のページ（D7）。`confirmClose` を移す（D6）
 - [ ] 辞書 ja / en（`settings.startup.*`、`settings.messages.closeWindow.*` の移動と intro の書き換え）

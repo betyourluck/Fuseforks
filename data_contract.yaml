@@ -4033,7 +4033,7 @@ entities:
          RunEvent::ExitRequested / Exit では隠さない。capability に core:window:allow-hide を足す
       3. トレイのアイコンは minimizeToTray が真の間だけ出す。作るのは組み立てが成功した後。
          メニューは「Fuseforks を表示」「終了」の 2 項目で、文言は村の言語 (set_language の成功で差し替える)
-      4. トレイの「終了」は閉じる確認を通る (Rust が show() → set_focus() → イベント trayQuitRequested、
+      4. トレイの「終了」は閉じる確認を通る (Rust が show() → set_focus() → イベント tray://quit-requested、
          画面が confirmClose に従って確認 → destroy)。終了の確認を出している間は 2 回目を積まない
          (exitConfirmInFlight)。他の確認は取り消さない
       5. 一括起動はプロセスに 1 回、manage の後に別のタスクで World::batch_start_ids の順に直列。
@@ -4043,7 +4043,9 @@ entities:
          引数は --autostart
       7. Windows の登録は windows-registry で自前で書く: HKCU\Software\Microsoft\Windows\CurrentVersion\Run の
          値 fuseforks = "\"{current_exe}\" --autostart"。HKLM には書かない。登録するとき
-         HKCU\…\Explorer\StartupApproved\Run の同名の値が無効 (先頭バイト 0x03) なら有効 (0x02) へ上書きする
+         HKCU\…\Explorer\StartupApproved\Run の同名の値を有効 (0x02 + 0 が 11 バイト) で上書きする (キーがあるとき)。
+         無効の判定は先頭バイトの最下位ビット (0x03 / 0x07 が無効)。auto-launch 0.6 は末尾 8 バイトが 0 かで見ており、
+         実際のタスクマネージャーの値で食い違うかは Spec 69 P4 で確かめる
       8. Windows の読み: HKLM と HKCU の両方の Run を読み、どちらかに値があり、両方の StartupApproved\Run で
          無効でなければ有効。scope = user / machine / both / none
       9. Windows の外し: HKCU の値を消す。**HKLM は読みで値の有無を見て、ある場合だけ消しにいく** —
@@ -4052,8 +4054,11 @@ entities:
      10. macOS / Linux は auto-launch 0.6 (macOS は MacOSLaunchMode::LaunchAgent を明示し、パスは包まない。
          Linux は Exec に渡すパスを引用符で包む)。Windows の依存には入れない
      11. 計器: launch: source=autostart|manual hidden=true|false / launch batch: targets= started= failed=
-         (失敗した個体の id を列挙。理由の文は載せない)
+         (失敗した個体の id を列挙。理由の文は載せない) / autostart: enabled= scope= (登録・解除の後)
      12. 外部への送信は増えない。アプリの外 (OS の登録) へ書くのは自動起動の 1 つだけ (PRIVACY 2・8)
+     13. 自動起動の失敗は CoreError::Autostart { reason } (コード AUTOSTART)。ConfigIo へ畳まない — 書く先は
+         設定ファイルではなく OS の登録で、「設定ファイルの入出力に失敗」では嘘になる。画面へのイベント名は
+         tray://quit-requested、IPC は get_startup_settings / set_startup_settings / get_autostart / set_autostart
     P0 の実測 (2026-10-20。詳細は Spec 69 の「P0 実測記録」):
       - 隠して作った窓でも webview は読み込まれ、画面の initialize() は最後の呼び出しまで走る。
         2 回目の起動で多重起動の受け口が show() し、IsWindowVisible が真に戻る (from_config で作った窓にも効く)

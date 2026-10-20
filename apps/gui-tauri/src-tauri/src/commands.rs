@@ -820,12 +820,100 @@ pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_co
 
 /// UI の表示言語を差し替える。未知の値は serde の段階で弾かれる。
 /// コアは言語で分岐しないため、システムプロンプトは変わらない。
+///
+/// **保存が成功したらトレイの文言も差し替える**（Spec 69 D2）。トレイが無ければ何もしない。
 #[tauri::command]
 pub async fn set_language(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     language: fuseforks_core::world::Language,
 ) -> CoreResult<()> {
-    state.host.orchestrator.set_language(language).await
+    state.host.orchestrator.set_language(language).await?;
+    if let Err(err) = crate::tray::relabel(&app, language) {
+        fuseforks_core::note!("トレイの文言を差し替えられませんでした: {err}");
+    }
+    Ok(())
+}
+
+// ---- 起動と終了（Spec 69） ------------------------------------------------------
+
+/// 端末側の 2 つの設定（閉じるでトレイへ / 起動時に一括起動）。**組み立て前でも読める**
+/// （`StartupState` は `setup` の最初に manage する）。
+#[tauri::command]
+pub fn get_startup_settings(
+    startup: State<'_, crate::startup::StartupState>,
+) -> crate::startup::StartupSettings {
+    startup
+        .store
+        .lock()
+        .map(|store| store.settings())
+        .unwrap_or_default()
+}
+
+/// 端末側の 2 つの設定を保存し、トレイを出し入れする。**押した時点で反映**（保存ボタンを持たない）。
+///
+/// 書けなかったときは手元の値も変えない（画面は押す前の値へ戻す。Spec 69 D7）。
+/// トレイは組み立てが済んでいるときだけ作る — 済んでいなければ組み立ての後に作られる。
+///
+/// # Errors
+/// `startup.json` を書けなかった場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn set_startup_settings(
+    app: tauri::AppHandle,
+    startup: State<'_, crate::startup::StartupState>,
+    minimize_to_tray: bool,
+    batch_start_on_launch: bool,
+) -> CoreResult<crate::startup::StartupSettings> {
+    use tauri::Manager;
+    let next = crate::startup::StartupSettings {
+        minimize_to_tray,
+        batch_start_on_launch,
+    };
+    {
+        let mut store = startup.store.lock().map_err(|_| CoreError::ConfigIo {
+            path: crate::startup::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other("設定の棚を開けませんでした"),
+        })?;
+        store.save(next).map_err(|reason| CoreError::ConfigIo {
+            path: crate::startup::CONFIG_FILE.to_owned(),
+            source: std::io::Error::other(reason),
+        })?;
+    }
+    if minimize_to_tray {
+        if let Some(state) = app.try_state::<AppState>() {
+            let language = state.host.orchestrator.language().await;
+            if let Err(err) = crate::tray::install(&app, language) {
+                fuseforks_core::note!("トレイを作れませんでした: {err}");
+            }
+        }
+    } else {
+        crate::tray::remove(&app);
+    }
+    Ok(next)
+}
+
+/// サインイン時の自動起動の状態。**OS の登録そのものを読む**（アプリは写しを持たない）。
+///
+/// # Errors
+/// OS の登録を読めなかった場合 [`CoreError::Autostart`]。
+#[tauri::command]
+pub async fn get_autostart() -> CoreResult<crate::autostart::AutostartView> {
+    crate::autostart::read().map_err(|reason| CoreError::Autostart { reason })
+}
+
+/// サインイン時の自動起動を入れる / 切る。書いた後の状態を返す（画面はこの値で表示し直す）。
+///
+/// # Errors
+/// OS の登録を書けなかった場合 [`CoreError::Autostart`]。
+#[tauri::command]
+pub async fn set_autostart(enabled: bool) -> CoreResult<crate::autostart::AutostartView> {
+    let view = crate::autostart::set(enabled).map_err(|reason| CoreError::Autostart { reason })?;
+    fuseforks_core::note!(
+        "autostart: enabled={} scope={:?}",
+        view.enabled,
+        view.scope
+    );
+    Ok(view)
 }
 
 // ---- コマンドの承認（Spec 20） ------------------------------------------------
