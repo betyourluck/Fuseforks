@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-11**
+**Last updated: 2026-10-20**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -74,9 +74,22 @@ is transmitted anywhere.
 | `probe_approvals.json` | Record of which pre-check commands you allowed to run on this device |
 | `pricing.json` | The URL the price table is fetched from |
 | `jev.json` | Jev settings (see 4-4) — enable/disable, account ID, and strength for tool-result pruning |
+| `startup.json` | Startup and exit settings — whether closing hides the app in the tray, and whether it batch-starts servants on launch (both off by default) |
 
 **These live outside the village (workspace).** Handing your village to someone else
 never puts their copy in a state where it talks to a destination they do not know about.
+
+### Outside the app (OS registration)
+
+Only when you turn on "Launch Fuseforks when you sign in" does the app write to the OS's launch-at-sign-in
+registration (**off by default**). It contains only the path to this app's executable and the argument `--autostart`,
+and nothing is sent anywhere.
+
+| OS | Written to |
+|---|---|
+| Windows | Registry value `fuseforks` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (current user only) |
+| macOS | `~/Library/LaunchAgents/fuseforks.plist` |
+| Linux | `~/.config/autostart/fuseforks.desktop` |
 
 ---
 
@@ -340,6 +353,9 @@ sharing a workspace with someone else does not enable intake on their machine.
 - **Revoking OAuth authorization**: "Revoke authorization" in the MCP settings deletes the local record and asks
   the authorization server to revoke the token.
 - **Stopping transmission**: if you register no model, nothing is sent anywhere.
+- **Removing launch at sign-in**: turn off "Launch Fuseforks when you sign in" under System Settings > General >
+  Startup and exit, or remove it from the OS (Startup apps in Windows Task Manager, Login Items on macOS).
+  **Turn it off before uninstalling** — the Windows MSI does not remove the registration when uninstalled.
 - **Exporting**: conversations can be exported to JSONL by your own action.
 
 ---

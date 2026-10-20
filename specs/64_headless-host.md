@@ -267,6 +267,8 @@ pub fn headless_preflight(world: &World, schedules: &[ScheduledTask], view: &Hos
 ### D6. 起動する個体と、一括起動の不変条件
 
 - **`batch_start_invariant`（アプリを開いた時点では誰も走らない）は GUI では不変。**
+  **→ 2026-10-20 [Spec 69](69_launch-and-exit.md) で GUI に例外が 1 つ入った** — 端末側の明示のオプトイン
+  「起動したら一括起動」（既定 false・`{app_data_dir}/startup.json`・村には入らない）。ヘッドレスは変わらず `--start` が必須
 - **ヘッドレスは `--start` を必須にする。既定値を持たない。** 値は次の 3 つ:
 
   | 値 | 起動する集合 |

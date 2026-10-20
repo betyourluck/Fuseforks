@@ -92,6 +92,10 @@ Fuseforks/
         ├── src-tauri/src/
         │   ├── lib.rs               窗口启动与 IPC 命令注册
         │   ├── state.rs             把数据位置与版本交给 build_host + 事件中继
+        │   ├── startup.rs           启动与退出的终端侧设置（startup.json）与 --autostart 的判别（Spec 69）
+        │   ├── autostart.rs         登录时自动启动的注册・读取・解除（3 种 OS）
+        │   ├── tray.rs              托盘图标与菜单（显示 / 退出）
+        │   ├── launch.rs            启动时的批量启动（逐个进行・1 个失败不影响其余）
         │   └── commands.rs          IPC 命令（轻量转发层）
         └── src/
             ├── types.ts             Rust 类型的镜像（手动同步的契约）
@@ -105,6 +109,8 @@ Fuseforks/
             ├── lib/agentGroups.ts   组的分类・可见集合・批量启动门・drop 确定（纯函数。[Spec 51](specs/51_agent-groups.md)）
             ├── lib/jevThreshold.ts  工具结果压缩的阈值与标签键（纯函数。值以 Rust 为准，由扫描测试比对）
             ├── lib/templateProbe.ts 连接测试按钮的门槛・结果区的颜色与字典键（纯函数。Spec 68）
+            ├── lib/closeConfirm.ts  关闭确认的内容，以及 ✕ 是否隐藏窗口（纯函数。Spec 69）
+            ├── lib/startupSettings.ts 启动与退出页面的提示判定（纯函数。Spec 69）
             ├── lib/assist.ts        AI 起草辅助的模板选择・应用前的差异（纯函数。Spec 63）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）
@@ -619,6 +625,18 @@ LLM 出现 `429`（RateLimit）或 `5xx` 时，采用指数退避加抖动重试
 ### 系统设置
 
 系统的全局参数配置（如系统语言、默认模型、全局天井等）可通过标题栏的“システム設定”进行统一管理（[Spec 13](specs/13_settings-dialog.md)）。
+
+### 启动与退出（[Spec 69](specs/69_launch-and-exit.md)）
+
+系统设置 ＞ 全般 ＞ 起動と終了 中有 4 项。**新增的 3 项默认全部关闭，保持关闭时关闭与启动的行为与以往完全相同。**
+全部保存在本机，不进入村庄 — 分发的村庄不会因为被打开就唤醒 Servant。
+
+- **关闭时隐藏到托盘**（`{app_data_dir}/startup.json`）：✕ 只隐藏窗口，Servant・计划・MCP 入口不会停止。通过托盘图标或再次启动即可恢复窗口。退出请使用托盘菜单的「終了」（会经过退出确认）。初始化完成前与失败后不会隐藏，而是直接退出
+- **启动时批量启动**（同上）：启动时将列表 ▶ 的对象逐个唤醒 1 次。页面重新加载（F5）不会再次唤醒。仅唤醒不产生费用
+- **登录时启动**（OS 的注册本身，应用不保存副本）：Windows 为 `HKCU\…\CurrentVersion\Run` 的值 `fuseforks`（`"{路径}" --autostart`），macOS 为 `~/Library/LaunchAgents/fuseforks.plist`，Linux 为 `~/.config/autostart/fuseforks.desktop`。**卸载前请先关闭** — MSI（winget 安装的版本）卸载时不会删除注册
+- **退出前确认**：从「ユーザーインターフェース」移到此页。隐藏到托盘时 ✕ 不确认，由托盘的「終了」确认
+- 3 项全部开启时，**仅登录就会在无人查看时触发计划**（页面底部会提示）。没有按时间计算的上限，请先确认 Token 上限
+- 在 Linux 的 GNOME 上，没有 AppIndicator 扩展时托盘图标不会显示（再次启动可恢复窗口）。macOS 的 Cmd+Q 不经过退出确认（当前版本亦然）
 
 ### 接收外部 LLM 的请求（[Spec 25](specs/25_mcp-server.md)）
 

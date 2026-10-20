@@ -107,8 +107,12 @@ Fuseforks/
     │   └── tests/cli.rs             Integration tests: run as a child process, with a loopback stub as the LLM
     └── gui-tauri/                   ★ The shell. Depends on fuseforks-host
         ├── src-tauri/src/
-        │   ├── lib.rs               Window launch and IPC command registration
+        │   ├── lib.rs               Window launch (startup order) and IPC command registration
         │   ├── state.rs             Hands the data location and version to build_host + event relay
+        │   ├── startup.rs           Device-side startup and exit settings (startup.json) and the --autostart check (Spec 69)
+        │   ├── autostart.rs         Register, read and remove launch at sign-in (3 OSes)
+        │   ├── tray.rs              Tray icon and menu (Show / Quit)
+        │   ├── launch.rs            Batch start on launch (one at a time; one failure does not stop the rest)
         │   └── commands.rs          IPC commands (thin forwarding layer)
         └── src/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
@@ -126,6 +130,8 @@ Fuseforks/
             ├── lib/assist.ts        AI drafting: picking the template, the before-apply difference (pure; Spec 63)
             ├── lib/templateDraft.ts Whether a model template draft differs from the saved one (pure; the connection test's gate)
             ├── lib/templateProbe.ts Connection test button gate, result tone and dictionary keys (pure; Spec 68)
+            ├── lib/closeConfirm.ts  What the close confirmation says, and whether ✕ hides the window (pure; Spec 69)
+            ├── lib/startupSettings.ts Notes on the Startup and exit page (pure; Spec 69)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -265,13 +271,17 @@ Node coordinates moved by hand in Kizuna are saved to `topologyPositions` in `wo
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).
 
 Originally, a single toggle served both purposes, making it impossible to express *"stopped right now, but I want to wake this lineup next"* — users were forced to press them one by one every time.
-Note that ▶ does not trigger automatic startup; no agents run when the application first opens (avoiding a design where opening the app immediately consumes tokens). When pressed in a mixed state, **startup takes priority** — stopping everything right then would abruptly kill active conversations.
+Note that ▶ does not trigger automatic startup; no agents run when the application first opens (avoiding a design where opening the app immediately consumes tokens). **The one exception is a device-side setting** — "Batch start on launch" under System Settings > General > Startup and exit (off by default, not stored in the village; see "Startup and exit" below). When pressed in a mixed state, **startup takes priority** — stopping everything right then would abruptly kill active conversations.
 
 ### Startup
 
 The window appears **first**. Orchestrator initialization involves connecting to MCP servers (launching child processes of external commands), which can take over 10 seconds — previously, `setup` used `block_on`, preventing any window from rendering during that time.
 Initialization now runs in the background, displaying a blocking screen with a CSS spinner reading "Initializing..." until completion. The frontend polls the `boot_status` command and waits; only when it turns `ready` does it begin invoking other commands (since `AppState` is managed the exact moment initialization succeeds, calling it earlier would fail due to unregistered state).
 Initialization failures surface visibly on top of the overlay with a reason provided — making it visually distinguishable whether one should wait or if something is broken.
+
+**There is one exception** ([Spec 69](specs/69_launch-and-exit.md)): when Fuseforks is launched at sign-in and
+"Hide in the tray when closed" is on, it starts without showing the window and shows only the tray icon. Even then,
+**a failed initialization shows the window with the reason** (no process is left with neither a window nor a tray icon).
 
 Chat displays conversations in speech bubbles separating speakers by side, grouping consecutive messages under a single avatar and name.
 **The name and icon on your own rows come from "System Settings" > "General" > "User"**
@@ -2061,10 +2071,10 @@ Three things have since been added into this frame: the theme, your own name and
 
 | Page | Content |
 |---|---|
-| General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards |
+| General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards. **Startup and exit** (hide in the tray when closed / batch start on launch / launch at sign-in / confirm before quitting; see "Startup and exit" below) |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
 | Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Judge model (Jev)** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default. **The key is shared with judges (Spec 62)** — with a key set, judges work even while pruning is off). **Price table** (the URL it is fetched from) |
-| User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has three: the confirmation for **cutting a tie**, the confirmation **before closing**, and whether **join and leave notices** appear in the chat pane |
+| User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has two: the confirmation for **cutting a tie**, and whether **join and leave notices** appear in the chat pane (the confirmation **before closing** moved to General > Startup and exit, because hiding in the tray changes what it means) |
 
 - **Your name is both the display name on screen and the name servants read**
   ([Spec 19](specs/19_user-identity.md)). Leave it unset and the screen says "You" while
@@ -2091,10 +2101,12 @@ Three things have since been added into this frame: the theme, your own name and
   as *text* colour, so a light hue is unreadable on a light ground. **Adding a token to only
   one theme leaves exactly the places that use it in the other theme's colour**, so
   `theme.test.ts` checks mechanically that both themes define the same set.
-- **There are two storage locations.** Language and token limit are **stored in the village**
+- **Settings are stored in separate places.** Language and token limit are **stored in the village**
   (`world.json`), so they travel with it when shared. Screen settings (theme, confirmations)
   are **stored on the device**, so opening the same village on another PC gives different
-  values. Each page states which one applies
+  values. The door, the price-table source, Jev and Startup and exit live on the **device shelf**
+  (JSON files under `{app_data_dir}`, outside the village). Launch at sign-in is **not stored anywhere;
+  the OS registration itself is read**. Each page states which one applies
 - **Unimplemented pages are not listed in the left menu.** Listing something you cannot touch
   would be a lie that shows the impossible as possible
 - **Orchestrator internals are not exposed** (history depth, hop limit, public-square-log window, and
@@ -2118,6 +2130,46 @@ written in **the village's language at the moment of recording** and never retra
 (retranslating would put the exported JSONL and the screen out of sync; a village that switched
 languages keeps its old lines in the old language — an honest record, like the user's own past
 messages).
+
+### Startup and exit ([Spec 69](specs/69_launch-and-exit.md))
+
+Four items under System Settings > General > Startup and exit. **The three new settings are all off by default, and
+while they stay off, closing and starting behave exactly as before.** All of them are stored on the device and not in
+the village — opening a shared village never wakes its servants by itself.
+
+| Setting | What happens | Stored in |
+|---|---|---|
+| Hide in the tray when closed | ✕ (and the OS close action) hides the window and the process keeps running. Servants, schedules and the MCP door do not stop. The tray icon (left click on Windows / Linux; "Show Fuseforks" in the menu on macOS) or starting Fuseforks again brings the window back. The tray icon is shown only while this is on | `{app_data_dir}/startup.json` |
+| Batch start on launch | When Fuseforks starts, wake the same servants as the ▶ in the list, once, one at a time. One failure does not stop the rest. Reloading the page (F5) does not wake them again | Same |
+| Launch at sign-in | Start Fuseforks when you sign in to the OS. With "Hide in the tray" on, it starts without showing the window | The OS registration itself (below) |
+| Confirm before quitting | Before quitting, list what stops (running servants, the door, schedules) and ask. While hiding in the tray, ✕ does not ask; the tray's Quit does | Screen setting on the device (`localStorage`) |
+
+- **Waking servants costs nothing by itself** (idle servants do not call the LLM). Spending starts when a schedule or an
+  outside request arrives. With all three on, **signing in alone fires schedules while nobody is watching** — the page
+  says so at the bottom. There is no per-hour ceiling (the token limit applies per request), so check the token limit first
+- **Only ✕ hides the window.** Before initialization finishes (while the overlay is up) and after it fails, closing quits
+  instead — a process that could not open the village would otherwise stay in the tray and swallow the next launch
+- Where launch at sign-in is registered:
+
+  | OS | Location | Content |
+  |---|---|---|
+  | Windows | Value `fuseforks` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | `"{path to the executable}" --autostart`. Nothing is written for all users (HKLM) |
+  | macOS | `~/Library/LaunchAgents/fuseforks.plist` | The executable path and `--autostart` |
+  | Linux | `~/.config/autostart/fuseforks.desktop` | `Exec="{path}" --autostart` (the AppImage itself for an AppImage) |
+
+  **The checkbox reads the OS registration every time.** If it was turned off in Task Manager's Startup apps (Login
+  Items on macOS), it shows as off. If the registered command points at a different Fuseforks from the one running
+  (turned on from a development build, or MSI and NSIS installed side by side), the page says so. If a registration for
+  all users remains, the page shows how to remove it as an administrator
+- **Turn off "Launch at sign-in" before uninstalling.** The NSIS uninstaller removes its own user's registration, but
+  **the MSI (what winget installs) does not** — the leftover entry points at a missing file and Windows silently fails
+  at sign-in (a dead item stays in the startup list). Homebrew removes the plist with `zap`
+- **On GNOME (Linux), the tray icon does not appear without the AppIndicator extension.** If the window is hidden there,
+  starting Fuseforks again brings it back
+- **On macOS, Cmd+Q (quitting the app) quits without going through the close confirmation** (true of the current version
+  as well; outside Spec 69)
+- The log gets `launch: source=autostart|manual hidden=…` (one line per start), `launch batch: targets=… started=… failed=…`
+  (batch start on launch) and `autostart: enabled=… scope=…` (after registering or removing)
 
 ### Accepting requests from external LLMs ([Spec 25](specs/25_mcp-server.md))
 
@@ -2358,7 +2410,7 @@ It can return under either condition:
 |---|---|---|
 | Per-agent MCP test connection | A stopped agent's MCP only shows "not connected" because connections are tied to operation. | At save time, connect once for testing and show only the result (Spec 02 Notes) |
 | Long-term memory (Memoria connection) | `Memory.md` (`remember`) works. Multi-layer memory is unconnected, but **the door is open**. | Start according to the policy below |
-| Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. |
+| Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. **Tray residency arrived with [Spec 69](specs/69_launch-and-exit.md)**; notifications (sound, toasts) still do not exist. |
 | Variable store (Airflow Variables/XCom equivalent, user request, 2026-07-30) | Two alternatives are working: `Memory.md` (prose, per agent, persistent) and bundle text (handoff between waves). | Structured values keyed by name. This conflicts with the "few settings" concept, so review should make that tension its main battleground when specified. |
 | Conversation persistence and session management (user requests, 2026-07-30 / 2026-08-02) | **Implemented** ([Spec 12](specs/12_session-persistence.md) is done). Close and reopen the app and the previous conversation comes back, with agents answering in light of what was said before. "Conversations" in the chat pane header lists saved conversations: reopen, fork (go back to just before a request, with its text returned to the input box), export, delete. "New chat" now opens a new conversation instead of discarding the current one. "Summarize and continue" shortens subsequent prompts for running servants (manual only — it costs tokens, so it never runs on its own). **Conversations are stored on disk in plain text.** | Store everything in a single `{workspace}/sessions.redb`, keep several conversations, and switch between them. **The original hypothesis "histories are candidates to die" was refuted**: this village has two layers of history (the village conversation log and each agent's own prompt history), and **neither can be reconstructed from the other**. Persisting only the conversation log yields a screen that looks correct while every agent starts amnesiac. |
 

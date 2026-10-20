@@ -10,8 +10,8 @@ const keys = (state: Parameters<typeof closeConfirmLines>[0]) =>
 
 describe("closeConfirmLines", () => {
   it("何も走っていなくても、前置きと予定は必ず出る", () => {
-    // **予定が止まる事実は稼働状態に依らない。** しかもこの村は
-    // タスクトレイに常駐しないので、他のどの画面にも出ていない。
+    // **予定が止まる事実は稼働状態に依らない。** しかも終了すれば予定は発火せず、
+    // その事実は他のどの画面にも出ていない（トレイに隠れている間は終了していない）。
     expect(keys({ runningAgents: 0, mcpListening: false })).toEqual([
       "closeConfirm.lead",
       "closeConfirm.schedules",

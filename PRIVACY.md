@@ -1,6 +1,6 @@
 # プライバシーポリシー — Outcasts Fuseforks
 
-**最終更新: 2026-10-11**
+**最終更新: 2026-10-20**
 
 English version: [PRIVACY_en.md](PRIVACY_en.md)
 
@@ -74,9 +74,21 @@ English version: [PRIVACY_en.md](PRIVACY_en.md)
 | `probe_approvals.json` | 予定の前判定コマンドをこの端末で実行してよいかの記録 |
 | `pricing.json` | 単価表の取得先 URL |
 | `jev.json` | Jev の設定（下記 4-4）— ツール結果の圧縮の有効/無効・アカウント ID・落とす強さ |
+| `startup.json` | 起動と終了の設定 — 閉じるとトレイに隠れるか・起動したら一括起動するか（どちらも既定は無効） |
 
 **これらは村（ワークスペース）の外にあります。** 村を配っても、受け取った人の村が
 知らない送信先へ通信する状態にはなりません。
+
+### アプリの外（OS の登録）
+
+利用者が「サインインしたら Fuseforks を起動する」を有効にしたときだけ、OS の自動起動の登録へ書きます
+（**既定は無効**）。中身は本アプリの実行ファイルのパスと引数 `--autostart` だけで、外部へは送信しません。
+
+| OS | 書く先 |
+|---|---|
+| Windows | レジストリ `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` の値 `fuseforks`（今の利用者の分だけ） |
+| macOS | `~/Library/LaunchAgents/fuseforks.plist` |
+| Linux | `~/.config/autostart/fuseforks.desktop` |
 
 ---
 
@@ -333,6 +345,9 @@ Cloudflare Workers AI）へ判定を依頼します。
 - **OAuth の認可の取り消し**: MCP の設定画面の「認可を取り消す」で、手元の記録を消し、
   認可サーバーへ失効を依頼できます
 - **送信の停止**: モデルを登録しなければ、外部への送信は発生しません
+- **自動起動の解除**: システム設定 ＞ 全般 ＞ 起動と終了 で「サインインしたら Fuseforks を起動する」を
+  無効にするか、OS の設定（Windows のタスクマネージャーのスタートアップ・macOS のログイン項目）から外せます。
+  **アンインストールする前に無効にしてください** — Windows の MSI 版はアンインストールで登録を消しません
 - **設定の持ち出し**: 会話は利用者の操作で JSONL 形式へ書き出せます
 
 ---
