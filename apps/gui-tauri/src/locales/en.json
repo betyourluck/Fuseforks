@@ -48,6 +48,7 @@
     "groupUi": "User interface",
     "menuUser": "User",
     "menuLanguage": "Language",
+    "menuStartup": "Startup and exit",
     "menuTour": "Guide",
     "menuTokenLimit": "Token limit",
     "menuTheme": "Theme",
@@ -124,6 +125,37 @@
       "save": "Save",
       "saving": "Saving…"
     },
+    "startup": {
+      "heading": "Startup and exit",
+      "intro": "What Fuseforks does when you close it, when it starts, and when you sign in to your computer. All three start off, and while they stay off nothing changes.",
+      "deviceScope": "Saved on this computer. It does not travel with the village.",
+      "unattended": "All three are on. Signing in alone starts the servants and fires the schedules while nobody is watching. Check the token limit (Cost management).",
+      "tray": {
+        "heading": "Hide in the tray when closed",
+        "checkbox": "Hide in the tray (notification area) instead of quitting when closed",
+        "onNote": "✕ only hides the window; the servants, schedules and MCP door keep running. Quit from the tray icon's menu. The tray icon, or starting Fuseforks again, brings the window back.",
+        "offNote": "Closing stops the servants, the schedules and the MCP door."
+      },
+      "batch": {
+        "heading": "Batch start on launch",
+        "checkbox": "Start the batch-start servants when Fuseforks launches",
+        "note": "The same servants as the ▶ in the servant list. Starting them costs nothing by itself, but they act once a schedule or an outside request arrives."
+      },
+      "autostart": {
+        "heading": "Launch at sign-in",
+        "checkbox": "Launch Fuseforks when you sign in to your computer",
+        "note": "Registers Fuseforks with the OS startup (Login Items on macOS). With \"Hide in the tray\" on, it starts without showing the window. Turn this off before uninstalling.",
+        "registered": "Registered command: {command}",
+        "elsewhere": "A Fuseforks in another location is registered. Checking the box again registers the one running now.",
+        "machine": "A registration for all users remains. This screen cannot remove it; delete fuseforks from the Run key as an administrator."
+      },
+      "confirm": {
+        "heading": "Confirm before quitting",
+        "checkbox": "Show a confirmation dialog before quitting",
+        "trayNote": "While hiding in the tray, ✕ does not ask; the tray's Quit does.",
+        "offWarning": "While confirmation is off, a single quit action quits."
+      }
+    },
     "tour": {
       "heading": "Getting-started guide",
       "intro": "The nine-step guide shown on first launch. Open it again from here.",
@@ -139,12 +171,6 @@
         "intro": "In Kizuna, clicking a tie cuts it. A cut tie cannot be restored.",
         "checkbox": "Show a confirmation dialog before deleting",
         "offWarning": "While confirmation is off, a single click on a tie cuts it."
-      },
-      "closeWindow": {
-        "heading": "Closing the window",
-        "intro": "This app does not stay in the tray. Closing it stops the servants and the schedules.",
-        "checkbox": "Ask for confirmation before closing",
-        "offWarning": "While confirmation is off, one click on the close button quits."
       },
       "presence": {
         "heading": "Join and leave notices",
@@ -1178,7 +1204,8 @@
     "INVALID_QUOTE": "The quote was rejected",
     "INVALID_JUDGE_FILE": "The judge file has an error",
     "INVALID_ASSIST_REQUEST": "AI drafting could not run",
-    "INVALID_SECRET_NAME": "The secret name has characters that cannot be used (upper-case letters, digits and _ only)"
+    "INVALID_SECRET_NAME": "The secret name has characters that cannot be used (upper-case letters, digits and _ only)",
+    "AUTOSTART": "Could not set launch at sign-in"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",

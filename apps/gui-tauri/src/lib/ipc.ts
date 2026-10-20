@@ -29,6 +29,8 @@ import type {
   ForkPoint,
   Language,
   McpHostStatus,
+  StartupSettings,
+  AutostartView,
   ModelTemplate,
   ModelTemplateId,
   AgentGroup,
@@ -205,6 +207,24 @@ export const setMcpHost = (enabled: boolean, port: number) =>
 /** 合鍵を作り直す（開いていれば新しい鍵で開き直す）。 */
 export const regenerateMcpHostToken = () =>
   call<McpHostStatus>("regenerate_mcp_host_token");
+
+/**
+ * 起動と終了の端末側の 2 つの設定（Spec 69 D1）。**組み立て前でも読める**（覆いの間も呼べる）。
+ */
+export const getStartupSettings = () => call<StartupSettings>("get_startup_settings");
+
+/** 2 つの設定を保存し、トレイを出し入れする（押した時点で反映）。書けなければ例外で、値は変わらない。 */
+export const setStartupSettings = (settings: StartupSettings) =>
+  call<StartupSettings>("set_startup_settings", {
+    minimizeToTray: settings.minimizeToTray,
+    batchStartOnLaunch: settings.batchStartOnLaunch,
+  });
+
+/** サインイン時の自動起動の状態。**OS の登録そのものを読む**（Spec 69 D4）。 */
+export const getAutostart = () => call<AutostartView>("get_autostart");
+
+/** サインイン時の自動起動を入れる / 切る。書いた後の状態が返る。 */
+export const setAutostart = (enabled: boolean) => call<AutostartView>("set_autostart", { enabled });
 
 /** 外部クライアントの呼び名。未設定なら `null`（名乗りをそのまま使う）。 */
 export const getExternalName = () => call<string | null>("get_external_name");

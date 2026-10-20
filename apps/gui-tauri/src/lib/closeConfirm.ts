@@ -48,3 +48,30 @@ export function closeConfirmLines(state: CloseState): CloseConfirmLine[] {
   lines.push({ key: "closeConfirm.schedules" });
   return lines;
 }
+
+/** 閉じる操作を「隠す」に変えるかの判定に要る状態（Spec 69 D2）。 */
+export interface HideOnCloseState {
+  /** 閉じるとトレイに隠れる設定。まだ読んでいなければ `false` として扱う。 */
+  minimizeToTray: boolean;
+  /** 組み立てが済んでいるか（`state.ready`）。 */
+  ready: boolean;
+  /** 組み立てに失敗しているか（`state.initError` がある）。 */
+  failed: boolean;
+}
+
+/**
+ * 閉じる操作（✕ / OS の閉じる操作）で窓を隠すか（Spec 69 D2。`launch_exit_contract` 2）。
+ *
+ * **組み立てていない間は隠さない。** 村を開けていないプロセスがトレイに残ると、多重起動の枠だけを
+ * 握り、次の起動が「前面化して閉じる」に吸われて村を開けなくなる。隠さないときは今のまま
+ * （閉じる確認 → 終了）。**隠すときは確認を出さない** — 何も止まらない。
+ */
+export function hidesOnClose(state: HideOnCloseState): boolean {
+  return state.minimizeToTray && state.ready && !state.failed;
+}
+
+/**
+ * トレイの「終了」が押されたことを知らせるイベント名（Spec 69 D2）。Rust の `tray.rs` の
+ * `QUIT_EVENT` と同じ文字列 — 走査テストが 2 つを突き合わせる。
+ */
+export const TRAY_QUIT_EVENT = "tray://quit-requested";

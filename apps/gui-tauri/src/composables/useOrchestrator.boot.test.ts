@@ -43,6 +43,7 @@ const h = vi.hoisted(() => ({
   // 外部クライアントの呼び名とアイコン（Spec 25）。既定はどちらも未設定。
   getExternalName: vi.fn(async () => null),
   getExternalIcon: vi.fn(async () => null),
+  getStartupSettings: vi.fn(async () => ({ minimizeToTray: false, batchStartOnLaunch: false })),
   listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
 }));

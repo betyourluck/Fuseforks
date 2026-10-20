@@ -43,6 +43,7 @@ const h = vi.hoisted(() => ({
   getDefaultVerifier: vi.fn(async () => "agent_v"),
   getExternalName: vi.fn(async () => null),
   getExternalIcon: vi.fn(async () => null),
+  getStartupSettings: vi.fn(async () => ({ minimizeToTray: false, batchStartOnLaunch: false })),
   listSessions: vi.fn(async () => []),
   getAgentIcon: vi.fn(async () => null),
   setPlanReviewBypass: vi.fn(async () => {}),

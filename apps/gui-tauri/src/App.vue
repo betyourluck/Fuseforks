@@ -19,6 +19,7 @@
  */
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import AgentList from "./components/AgentList.vue";
@@ -44,7 +45,7 @@ import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
 import { hasOpenOverlay, isEditableElement, isFocusChatKey } from "./lib/chatFocus";
-import { closeConfirmLines } from "./lib/closeConfirm";
+import { TRAY_QUIT_EVENT, closeConfirmLines, hidesOnClose } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
 import { askConfirm } from "./composables/useConfirm";
@@ -173,28 +174,75 @@ const centerRows = computed(
  * （capability に `core:window:allow-destroy` を足したのはこのため）。
  *
  * ここに置くのは、**中身が村の状態を要る**から（稼働中の数・扉の開閉）。
- * 判定は純関数（`closeConfirmLines`）に出し、ここは訳語を引いて繋ぐだけ。
+ * 判定は純関数（`closeConfirmLines` / `hidesOnClose`）に出し、ここは訳語を引いて繋ぐだけ。
+ *
+ * **トレイ常駐（Spec 69）**: 「閉じるとトレイに隠れる」が ON で組み立て済みなら、✕ は窓を隠すだけで
+ * 確認は出さない（何も止まらない）。**窓を隠すのはこの 1 箇所だけ**（`launch_exit_contract` 2）。
+ * 確認はトレイの「終了」（`TRAY_QUIT_EVENT`）に掛かる。
  */
+async function confirmExit(): Promise<boolean> {
+  const lines = closeConfirmLines({
+    runningAgents: state.agents.filter((a) => a.status === "running").length,
+    mcpListening: state.mcpHost?.listening === true,
+  });
+  return askConfirm({
+    title: t("closeConfirm.title"),
+    message: lines.map((line) => t(line.key, line.params ?? {})).join("\n"),
+    confirmLabel: t("closeConfirm.confirm"),
+    cancelLabel: t("closeConfirm.cancel"),
+    // **飛行中のターンは戻らない。** 初期フォーカスを取り消し側へ寄せる。
+    danger: true,
+  });
+}
+
 async function registerCloseGuard(): Promise<void> {
   const win = getCurrentWindow();
   await win.onCloseRequested(async (event) => {
+    if (
+      hidesOnClose({
+        minimizeToTray: state.startup?.minimizeToTray === true,
+        ready: state.ready,
+        failed: state.initError !== null,
+      })
+    ) {
+      event.preventDefault();
+      await win.hide();
+      return;
+    }
     if (!settings.confirmClose) return;
     event.preventDefault();
-
-    const lines = closeConfirmLines({
-      runningAgents: state.agents.filter((a) => a.status === "running").length,
-      mcpListening: state.mcpHost?.listening === true,
-    });
-    const ok = await askConfirm({
-      title: t("closeConfirm.title"),
-      message: lines.map((line) => t(line.key, line.params ?? {})).join("\n"),
-      confirmLabel: t("closeConfirm.confirm"),
-      cancelLabel: t("closeConfirm.cancel"),
-      // **飛行中のターンは戻らない。** 初期フォーカスを取り消し側へ寄せる。
-      danger: true,
-    });
-    if (ok) await win.destroy();
+    if (await confirmExit()) await win.destroy();
   });
+}
+
+/**
+ * トレイの「終了」（Spec 69 D2。Rust の `tray.rs` が窓を出してから送る）。
+ *
+ * **終了の確認を出している間は 2 回目を積まない**（`askConfirm` は待ち行列なので、積むと確認が 2 つ並ぶ）。
+ * 他の確認が先に出ていれば、それに答えた後に出る — 他の確認を取り消すと、別の操作の答えを黙って
+ * 「取り消し」に変えることになる。
+ */
+let exitConfirmInFlight = false;
+
+async function onTrayQuit(): Promise<void> {
+  if (exitConfirmInFlight) return;
+  const win = getCurrentWindow();
+  if (!settings.confirmClose) {
+    await win.destroy();
+    return;
+  }
+  exitConfirmInFlight = true;
+  try {
+    if (await confirmExit()) await win.destroy();
+  } finally {
+    exitConfirmInFlight = false;
+  }
+}
+
+let unlistenTrayQuit: (() => void) | null = null;
+
+async function registerTrayQuit(): Promise<void> {
+  unlistenTrayQuit = await listen(TRAY_QUIT_EVENT, () => void onTrayQuit());
 }
 
 /**
@@ -246,11 +294,13 @@ onMounted(() => {
   void orchestrator.init();
   // 失敗しても画面は使える（確認が付かないだけ）。閉じられなくなるほうが害が大きい。
   void registerCloseGuard().catch(() => undefined);
+  void registerTrayQuit().catch(() => undefined);
   window.addEventListener("keydown", onNavKey);
   window.addEventListener("keydown", onFocusChatKey);
 });
 
 onBeforeUnmount(() => {
+  unlistenTrayQuit?.();
   window.removeEventListener("keydown", onNavKey);
   window.removeEventListener("keydown", onFocusChatKey);
 });

@@ -7663,7 +7663,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 69](specs/69_launch-and-exit.md)（起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動）:
-  **rev3・未決 0 → P0〜P1 完了**（2026-10-20。**P1** = Rust 側 — `startup.rs`（棚と `--autostart`）/ `autostart.rs`（Windows は
+  **rev3・未決 0 → P0〜P2 完了**（2026-10-20。**P2** = 画面 — `state.startup`・✕ で隠す分岐（`hidesOnClose`）・トレイの「終了」（`tray://quit-requested`・2 回目を積まない）・全般 ＞ 起動と終了 のページ（閉じる確認を移した）・`allow-hide`・辞書。vitest 862 全緑、変異 8 回のうち 7 回は予測どおりで F1 だけ 2 本赤（`.hide(` が 0 個になり走査も落ちる）。**実機は未確認（P4）**。**P1** = Rust 側 — `startup.rs`（棚と `--autostart`）/ `autostart.rs`（Windows は
   `windows-registry` で自前、非 Windows は `auto-launch`）/ `tray.rs` / `launch.rs`（直列・1 体の失敗で止まらない）/ `lib.rs` の
   起動の順序（窓は `create: false` から `.visible(!hidden)`、失敗なら窓を出す、隠しているのにトレイが無ければ窓を出す）/ IPC 4 本 /
   コアに `Orchestrator::batch_start_ids` と `CoreError::Autostart`。単体 16 + 走査 4 + コア結合 1、変異 9 回とも予測どおり 1 本だけ赤。

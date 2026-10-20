@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { closeConfirmLines } from "./closeConfirm";
+import { closeConfirmLines, hidesOnClose } from "./closeConfirm";
 import ja from "../locales/ja.json";
 import en from "../locales/en.json";
 
@@ -65,5 +65,19 @@ describe("closeConfirmLines", () => {
       expect(ja.closeConfirm).toHaveProperty(leaf);
       expect(en.closeConfirm).toHaveProperty(leaf);
     }
+  });
+});
+
+describe("hidesOnClose（Spec 69 D2）", () => {
+  it("トレイ ON で組み立て済みなら隠す", () => {
+    expect(hidesOnClose({ minimizeToTray: true, ready: true, failed: false })).toBe(true);
+  });
+  it("トレイ OFF なら隠さない（今までどおり確認 → 終了）", () => {
+    expect(hidesOnClose({ minimizeToTray: false, ready: true, failed: false })).toBe(false);
+  });
+  it("組み立てていない間は隠さない — 村を開けていないプロセスをトレイに残さない", () => {
+    expect(hidesOnClose({ minimizeToTray: true, ready: false, failed: false })).toBe(false);
+    expect(hidesOnClose({ minimizeToTray: true, ready: false, failed: true })).toBe(false);
+    expect(hidesOnClose({ minimizeToTray: true, ready: true, failed: true })).toBe(false);
   });
 });

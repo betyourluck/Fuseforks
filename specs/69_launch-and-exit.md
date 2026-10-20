@@ -1,10 +1,10 @@
 # Spec 69: 起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動
 
-- 状態: **rev3・未決 0 → P0〜P1 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
+- 状態: **rev3・未決 0 → P0〜P2 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
   判定は採用 12 / 前提を訂正して採用 5 / 反証 2。対応表は Notes 4。→ 同日、利用者が未決 7 つを推奨どおりに裁定し、
   条件 2 つ（未決 4・5）を付けた。裁定を反映して rev3。裁定の表は Notes 6。同日 P0 = 窓の作り方 3 通り・レジストリ・
   依存の増分・Linux の実行時依存を測り、`data_contract` の `launch_exit_contract` を凍結。D5 は案 A に決まった。
-  記録は「P0 実測記録」。同日 P1 = Rust 側（記録は「P1 実装記録」）。P2 には着手していない）
+  記録は「P0 実測記録」。同日 P1 = Rust 側 / P2 = 画面（記録は「P1 実装記録」「P2 実装記録」）。P3 には着手していない）
 - 利用者裁定（2026-10-20）: 7 つとも推奨どおり。理由はいずれも Goal 4（OFF なら今と何も変わらない）。
   条件つきが 2 つ — **未決 4**: Windows の登録は `windows-registry` で自前で書く / 外すときは HKCU と HKLM の両方を消す /
   登録名は実機の値で大小まで固定する。**未決 5**: 組み立てに失敗したら必ず窓を出す（rev2 の D0 の 5 と同じ）
@@ -591,16 +591,60 @@ Spec 64 D6 の「GUI では不変」の行へ、本 Spec で例外が 1 つ入�
 **P2 までの中間の状態**: 画面にまだ入口が無いので、3 つの設定は `startup.json` を手で書かない限り OFF のまま（既定の挙動は今と同じ）。
 `minimizeToTray` を手で真にするとトレイは出るが、✕ で隠す分岐と「終了」を受ける側は P2 で入る（それまでトレイの「終了」は窓を出すだけ）
 
-### P2 — 画面
+### P2 — 画面（**完了 2026-10-20**。下の「P2 実装記録」）
 
-- [ ] `initialize()` で `get_startup_settings` を `state.startup` へ（`state.mcpHost` の隣）
-- [ ] `App.vue` の `registerCloseGuard` を分岐（D2）/ `tray://quit-requested` を受ける（`exitConfirmInFlight`）/
+- [x] `initialize()` で `get_startup_settings` を `state.startup` へ（`state.mcpHost` の隣）
+- [x] `App.vue` の `registerCloseGuard` を分岐（D2）/ `tray://quit-requested` を受ける（`exitConfirmInFlight`）/
   辞書 `errors.AUTOSTART`（P1 で新設した `CoreError::Autostart`）
-- [ ] capability に `core:window:allow-hide`
-- [ ] `SettingsDialog.vue` に「起動と終了」のページ（D7）。`confirmClose` を移す（D6）
-- [ ] 辞書 ja / en（`settings.startup.*`、`settings.messages.closeWindow.*` の移動と intro の書き換え）
-- [ ] 走査テスト: 閉じる分岐が組み立て前に隠さないこと / ページの 3 つのチェックが IPC と localStorage の
-  正しい側へ繋がっていること / `selectPage('startup')` が 2 本の読み直しを呼ぶこと
+- [x] capability に `core:window:allow-hide`
+- [x] `SettingsDialog.vue` に「起動と終了」のページ（D7）。`confirmClose` を移す（D6）
+- [x] 辞書 ja / en（`settings.startup.*` を足し、`settings.messages.closeWindow.*` を消した）
+- [x] 走査テスト（下の記録）
+
+### P2 実装記録（2026-10-20）
+
+**足したもの**
+
+| ファイル | 中身 |
+|---|---|
+| `types.ts` | `StartupSettings` / `AutostartScope` / `AutostartView`（Rust の camelCase と同じ形） |
+| `lib/ipc.ts` | `getStartupSettings` / `setStartupSettings` / `getAutostart` / `setAutostart` |
+| `composables/useOrchestrator.ts` | `state.startup`（`initialize()` で `state.mcpHost` の隣に読む）/ `setStartupSettings`（**投影を持つので `orchestrator` 経由** — 閉じる経路が読む） |
+| `lib/closeConfirm.ts` | 純関数 `hidesOnClose`（トレイ ON かつ組み立て済みで失敗していないときだけ真）/ 定数 `TRAY_QUIT_EVENT` |
+| `App.vue` | 閉じる経路を `hidesOnClose` → `win.hide()` → `return`（確認を出さない）/ それ以外は今のまま。確認の本文は `confirmExit()` に出して ✕ とトレイの「終了」で共有。`onTrayQuit` は `exitConfirmInFlight` で 2 回目を積まず、`confirmClose` が偽ならすぐ `destroy()` |
+| `lib/startupSettings.ts` | 純関数 `registeredElsewhere`（登録のコマンドが今の exe を指していないか。小文字で比べる）/ `machineRegistrationLeft` / `runsUnattended` |
+| `SettingsDialog.vue` | 全般 ＞ 起動と終了（`Page` に `startup`。村のページには入れない）。ページを選ぶたびに `getStartupSettings` と `getAutostart` を読み直す。4 つの節（トレイ / 一括起動 / 自動起動 / 終了する前に確認）と、3 つとも ON のときの 1 文。「メッセージ表示/非表示」から閉じる確認の節を外した |
+| capability | `core:window:allow-hide`（窓を戻す `show()` は Rust 側なので `allow-show` は足していない） |
+| 辞書 ja / en | `settings.menuStartup` / `settings.startup.*` / `errors.AUTOSTART` を足し、`settings.messages.closeWindow.*` を消した（「このアプリはタスクトレイに常駐しません」は廃止。トレイの ON / OFF で `onNote` / `offNote` を出し分ける） |
+
+**決めたこと**
+
+- **チェックの見た目は保存の結果で必ず上書きする。** `:checked` と `@change` の形では、保存に失敗して値を押す前へ戻しても、
+  値が変わらないので Vue は DOM を書き直さず、チェックだけが押した後の見た目で残る。`applyStartup` / `applyAutostart` は
+  `finally` で `target.checked` を状態の値へ書く
+- **自動起動の失敗は OS を読み直した値で出す**（`startup.json` の失敗は押す前の値へ戻す）— OS 側が途中まで書いた可能性があるので、
+  押す前の値を信じない（D7）
+- 自動起動の節には、登録されているコマンドそのもの・別の場所の Fuseforks が登録されているときの注記・全ユーザー向けの登録が
+  残っているときの直し方を出す（`registeredElsewhere` / `machineRegistrationLeft`）
+
+**テスト**（単体 9 + 走査 8 = 17 本を足した。vitest 845 → 862 全緑・vue-tsc 0・build 緑）
+
+- 単体: `hidesOnClose`（トレイ ON・組み立て済み / トレイ OFF / 組み立て前と失敗）/ `registeredElsewhere`（大文字小文字・別の場所・登録なし）/
+  `machineRegistrationLeft` / `runsUnattended`
+- 走査（`lib/launchExitWiring.test.ts`）: ✕ は隠す判定を確認より先に通り、隠すときは `return` / **画面の src 全体で `.hide(` は
+  `App.vue` の 1 つだけ** / `TRAY_QUIT_EVENT` が Rust の `tray.rs` の `QUIT_EVENT` と同じ文字列 / 2 回目を積まない /
+  capability の `allow-hide` / `initialize()` が `state.startup` を読む / 村のページではなく開くたびに 2 本を読み直す /
+  `confirmClose` のチェックは「起動と終了」にだけある / 4 本の IPC が Rust の `generate_handler` に登録されている
+- **起動のテスト 3 本（`useOrchestrator.boot` / `planReview` / `switchMemory`）が新しい IPC の未モックで赤になった** — 想定どおりの網で、
+  モックに `getStartupSettings` を 1 行ずつ足した（Spec 25 でも同じ網が新しい IPC を捕まえた）
+- **変異 8 回のうち 7 回は予測どおり 1 本だけ赤。F1（隠す分岐を消す）だけ 2 本が赤で、予測を 1 本外した** — `.hide(` が 0 個に
+  なり「App.vue の 1 箇所だけ」の走査も同時に落ちる。どちらも正しい反応で、テストの穴ではない。変異は元のバイトを退避して戻し、
+  SHA-256 の一致を確かめた
+- **踏んだ罠 3 つ**: Python のヒアドキュメント経由で書いた `join("\n")` が実改行に化けた（`failures.md` #130 の家族。Edit で直した）/
+  1 ファイル（`useOrchestrator.switchMemory.test.ts`）だけ作業コピーが CRLF で、LF 前提の置換が空振りした / `python -I` は
+  `PYTHONIOENCODING` を無視するので、変異の出力が cp932 で落ちた（スクリプトの中で `sys.stdout.reconfigure` した）
+
+**実機は未確認**（P4）。P1 と P2 が揃って初めて、トレイに隠す・トレイから終了する・設定を画面から変えるが通る
 
 ### P3 — 台帳
 

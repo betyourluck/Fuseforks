@@ -35,7 +35,15 @@ import {
   labelParamsOf,
   type ClosingDay,
 } from "../lib/statsPeriod";
-import type { AgentId, JevProbeView, JevSettingsView, Language } from "../types";
+import { machineRegistrationLeft, registeredElsewhere, runsUnattended } from "../lib/startupSettings";
+import type {
+  AgentId,
+  AutostartView,
+  JevProbeView,
+  JevSettingsView,
+  Language,
+  StartupSettings,
+} from "../types";
 
 const emit = defineEmits<{ (e: "close"): void; (e: "show-tour"): void }>();
 
@@ -52,6 +60,7 @@ const { state } = orchestrator;
 type Page =
   | "user"
   | "language"
+  | "startup"
   | "tour"
   | "tokenBudget"
   | "mcpHost"
@@ -107,6 +116,74 @@ async function savePricingUrl() {
     pricingSaving.value = false;
   }
 }
+/**
+ * 起動と終了（Spec 69）。**端末側の設定**で、村には入らない。
+ *
+ * - 閉じるとトレイに隠れる / 起動したら一括起動 → `{app_data_dir}/startup.json`（`orchestrator` 経由 —
+ *   閉じる経路が `state.startup` を読む）
+ * - サインインしたら起動 → **OS の登録そのもの**。ページを開くたびに読み直す（タスクマネージャーで
+ *   切った状態が開き直しで出る。`pricing` / `jev` と同じ `selectPage` の形）
+ * - 終了する前に確認 → localStorage（`confirmClose`。鍵は変えず、置き場だけここへ移した）
+ *
+ * **押した時点で反映する**（保存ボタンを持たない）。失敗したら、`startup.json` は押す前の値へ戻し、
+ * 自動起動は OS を読み直した値で出す（OS 側が途中まで書いた可能性があるので、押す前の値を信じない。D7）。
+ */
+const startupView = ref<StartupSettings | null>(null);
+const autostart = ref<AutostartView | null>(null);
+const startupBusy = ref(false);
+const startupError = ref("");
+
+async function loadStartup() {
+  startupError.value = "";
+  try {
+    startupView.value = await ipc.getStartupSettings();
+  } catch (err) {
+    startupError.value = formatError(ipc.toErrorPayload(err));
+  }
+  try {
+    autostart.value = await ipc.getAutostart();
+  } catch (err) {
+    startupError.value = formatError(ipc.toErrorPayload(err));
+  }
+}
+
+/** 2 つの設定のどちらかを変える。**チェックの見た目は保存の結果で必ず上書きする**（失敗で戻すため）。 */
+async function applyStartup(patch: Partial<StartupSettings>, target: HTMLInputElement) {
+  const before = startupView.value;
+  if (!before || startupBusy.value) return;
+  startupBusy.value = true;
+  startupError.value = "";
+  try {
+    startupView.value = await orchestrator.setStartupSettings({ ...before, ...patch });
+  } catch (err) {
+    startupView.value = before;
+    startupError.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    startupBusy.value = false;
+    const key = Object.keys(patch)[0] as keyof StartupSettings;
+    target.checked = startupView.value?.[key] ?? false;
+  }
+}
+
+async function applyAutostart(enabled: boolean, target: HTMLInputElement) {
+  if (startupBusy.value) return;
+  startupBusy.value = true;
+  startupError.value = "";
+  try {
+    autostart.value = await ipc.setAutostart(enabled);
+  } catch (err) {
+    startupError.value = formatError(ipc.toErrorPayload(err));
+    try {
+      autostart.value = await ipc.getAutostart();
+    } catch {
+      // 読み直しにも失敗したら、最後に読めた値を出したままにする（理由は上に出ている）。
+    }
+  } finally {
+    startupBusy.value = false;
+    target.checked = autostart.value?.enabled ?? false;
+  }
+}
+
 /**
  * ツール結果の即時圧縮（Spec 59）。**設定は `{app_data_dir}/jev.json`**、
  * トークンは資格情報ストア。**判定（`canEnable` / `active`）は Rust が返す**ものを
@@ -673,6 +750,8 @@ function selectPage(next: Page): void {
   // **設定を読むだけ。接続の確認はしない**（Spec 59 D10 — 開いただけで
   // 外へ出る経路を作らない。`pricing` と同じ凍結の形）。
   if (next === "jev") void loadJev();
+  // **OS の登録はページを開くたびに読み直す**（タスクマネージャーで切った状態が開き直しで出る。Spec 69 D7）。
+  if (next === "startup") void loadStartup();
 }
 </script>
 
@@ -712,6 +791,13 @@ function selectPage(next: Page): void {
             @click="selectPage('language')"
           >
             {{ $t("settings.menuLanguage") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'startup' }"
+            @click="selectPage('startup')"
+          >
+            {{ $t("settings.menuStartup") }}
           </button>
 
           <p class="px-3 pb-1 pt-3 font-semibold text-ink-dim">{{ $t("settings.groupCost") }}</p>
@@ -916,6 +1002,100 @@ function selectPage(next: Page): void {
               </div>
             </div>
             <p class="mt-2 text-ink-dim">{{ $t("settings.villageScope") }}</p>
+          </template>
+
+          <!--
+            全般 > 起動と終了（Spec 69）。**端末側の設定**で、村には入らない。押した時点で反映する。
+            「終了する前に確認する」はユーザーインターフェース > メッセージ表示/非表示 から移した —
+            トレイが ON のとき確認が掛かるのは ✕ ではなくトレイの「終了」になり、意味がトレイの設定に依る。
+          -->
+          <template v-else-if="page === 'startup'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.startup.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.startup.intro") }}</p>
+
+            <p
+              v-if="startupError"
+              class="selectable mb-2 rounded border border-fail/50 bg-surface-0 p-2 text-fail"
+            >
+              {{ startupError }}
+            </p>
+
+            <section class="space-y-2 rounded border border-line bg-surface-0 p-3" data-startup="tray">
+              <h4 class="font-semibold text-ink">{{ $t("settings.startup.tray.heading") }}</h4>
+              <label class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  :checked="startupView?.minimizeToTray ?? false"
+                  :disabled="startupBusy || startupView === null"
+                  @change="applyStartup({ minimizeToTray: ($event.target as HTMLInputElement).checked }, $event.target as HTMLInputElement)"
+                />
+                <span>{{ $t("settings.startup.tray.checkbox") }}</span>
+              </label>
+              <p class="pl-6 text-ink-dim">
+                {{ startupView?.minimizeToTray ? $t("settings.startup.tray.onNote") : $t("settings.startup.tray.offNote") }}
+              </p>
+            </section>
+
+            <section class="mt-3 space-y-2 rounded border border-line bg-surface-0 p-3" data-startup="batch">
+              <h4 class="font-semibold text-ink">{{ $t("settings.startup.batch.heading") }}</h4>
+              <label class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  :checked="startupView?.batchStartOnLaunch ?? false"
+                  :disabled="startupBusy || startupView === null"
+                  @change="applyStartup({ batchStartOnLaunch: ($event.target as HTMLInputElement).checked }, $event.target as HTMLInputElement)"
+                />
+                <span>{{ $t("settings.startup.batch.checkbox") }}</span>
+              </label>
+              <p class="pl-6 text-ink-dim">{{ $t("settings.startup.batch.note") }}</p>
+            </section>
+
+            <section class="mt-3 space-y-2 rounded border border-line bg-surface-0 p-3" data-startup="autostart">
+              <h4 class="font-semibold text-ink">{{ $t("settings.startup.autostart.heading") }}</h4>
+              <label class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  :checked="autostart?.enabled ?? false"
+                  :disabled="startupBusy || autostart === null"
+                  @change="applyAutostart(($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
+                />
+                <span>{{ $t("settings.startup.autostart.checkbox") }}</span>
+              </label>
+              <p class="pl-6 text-ink-dim">{{ $t("settings.startup.autostart.note") }}</p>
+              <p v-if="autostart?.registeredCommand" class="selectable pl-6 text-ink-dim">
+                {{ $t("settings.startup.autostart.registered", { command: autostart.registeredCommand }) }}
+              </p>
+              <p v-if="autostart && registeredElsewhere(autostart)" class="pl-6 text-warn">
+                {{ $t("settings.startup.autostart.elsewhere") }}
+              </p>
+              <p v-if="autostart && machineRegistrationLeft(autostart)" class="pl-6 text-warn">
+                {{ $t("settings.startup.autostart.machine") }}
+              </p>
+            </section>
+
+            <section class="mt-3 space-y-2 rounded border border-line bg-surface-0 p-3" data-startup="confirm">
+              <h4 class="font-semibold text-ink">{{ $t("settings.startup.confirm.heading") }}</h4>
+              <label class="flex items-center gap-2">
+                <input v-model="settings.confirmClose" type="checkbox" />
+                <span>{{ $t("settings.startup.confirm.checkbox") }}</span>
+              </label>
+              <p v-if="startupView?.minimizeToTray" class="pl-6 text-ink-dim">
+                {{ $t("settings.startup.confirm.trayNote") }}
+              </p>
+              <p v-if="!settings.confirmClose" class="pl-6 text-warn">
+                {{ $t("settings.startup.confirm.offWarning") }}
+              </p>
+            </section>
+
+            <p
+              v-if="startupView && runsUnattended(startupView, autostart)"
+              class="mt-3 rounded border border-warn/50 bg-surface-0 p-2 text-warn"
+            >
+              {{ $t("settings.startup.unattended") }}
+            </p>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.startup.deviceScope") }}</p>
           </template>
 
           <!--
@@ -1532,25 +1712,6 @@ function selectPage(next: Page): void {
               </p>
             </section>
 
-            <!--
-              閉じる確認（2026-08-08 利用者要望）。**ON なら常に聞く** —
-              「何か走っているときだけ」は冗長で、しかもチェックボックスが
-              「確認する」なのに聞かない場合があると壊れて見える。
-              小言にしないのは**ダイアログの中身**の側の仕事（App.vue）。
-            -->
-            <section class="mt-3 space-y-2 rounded border border-line bg-surface-0 p-3">
-              <h4 class="font-semibold text-ink">
-                {{ $t("settings.messages.closeWindow.heading") }}
-              </h4>
-              <p class="text-ink-dim">{{ $t("settings.messages.closeWindow.intro") }}</p>
-              <label class="flex items-center gap-2">
-                <input v-model="settings.confirmClose" type="checkbox" />
-                <span>{{ $t("settings.messages.closeWindow.checkbox") }}</span>
-              </label>
-              <p v-if="!settings.confirmClose" class="pl-6 text-warn">
-                {{ $t("settings.messages.closeWindow.offWarning") }}
-              </p>
-            </section>
             <!--
               入退室の通知（2026-08-08）。**表示だけの設定**なので、
               intro でモデルへ届く量が変わらないことを言い切る。

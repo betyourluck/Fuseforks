@@ -74,6 +74,33 @@ export type Endpoint =
   | { kind: "external"; client: string };
 
 /**
+ * 起動と終了の端末側の設定（Spec 69 D1）。`{app_data_dir}/startup.json`。**既定は両方 false。**
+ * 村（`world.json`）には入らない — 配った先で開いただけで起動しないため。
+ */
+export interface StartupSettings {
+  /** 閉じる（✕ / OS の閉じる操作）で窓を隠し、トレイに残るか。 */
+  minimizeToTray: boolean;
+  /** 起動したとき、一括起動の対象（全体 ▶ と同じ集合）を 1 回だけ起こすか。 */
+  batchStartOnLaunch: boolean;
+}
+
+/** サインイン時の自動起動の登録がどこにあるか（Spec 69 D4）。 */
+export type AutostartScope = "user" | "machine" | "both" | "none";
+
+/**
+ * サインイン時の自動起動の状態（Spec 69 D4）。**OS の登録そのものを読んだ結果**で、アプリは写しを持たない。
+ */
+export interface AutostartView {
+  /** サインインで起動するか（タスクマネージャーなど OS 側の無効化まで見た結果）。 */
+  enabled: boolean;
+  scope: AutostartScope;
+  /** 登録されているコマンド。無ければ `null`。 */
+  registeredCommand: string | null;
+  /** 今動いている実行ファイルのパス。 */
+  currentExe: string;
+}
+
+/**
  * 村が**自分で立てている** MCP サーバーの状態（Spec 25）。
  *
  * **`McpServerStatus` とは別物。** あちらは村が**接続しに行く**先のサーバーの

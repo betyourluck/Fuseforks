@@ -35,6 +35,7 @@ import type {
   ErrorPayload,
   McpConfig,
   McpHostStatus,
+  StartupSettings,
   ModelTemplate,
   Role,
   PlanTaskInput,
@@ -117,6 +118,13 @@ interface OrchestratorState {
    * 見えている帯に出す価値がある数少ない情報（`StatusBar` の規律）。
    */
   mcpHost: McpHostStatus | null;
+  /**
+   * 起動と終了の端末側の 2 つの設定（Spec 69 D1）。`null` = まだ読んでいない。
+   *
+   * **共有状態に置くのは、閉じる経路（`App.vue`）が読むから。** 設定ダイアログを
+   * 1 度も開かずに ✕ を押しても、トレイに隠すかどうかを知っていなければならない。
+   */
+  startup: StartupSettings | null;
   /**
    * 計画の確認を飛ばすスイッチ（Spec 53 — ステータスバー）。**コアのメモリだけ**の
    * 状態で、起動時に 1 回読み、以後は `planReviewBypassChanged` で追う。
@@ -238,6 +246,7 @@ const state = reactive<OrchestratorState>({
   userName: null,
   userIcon: null,
   mcpHost: null,
+  startup: null,
   planReviewBypass: false,
   runApproval: "required",
   defaultVerifier: null,
@@ -875,6 +884,8 @@ async function initialize(): Promise<void> {
     // 起動・設定の適用・合鍵の作り直しの 3 つで、どれもこの composable を通る。
     // 定期的に引き直す理由が無い（`refreshAll` にも混ぜない）。
     state.mcpHost = await ipc.mcpHostStatus();
+    // 起動と終了（Spec 69）。閉じる経路が読むので、設定ダイアログを開く前に持っておく。
+    state.startup = await ipc.getStartupSettings();
     // 計画の確認を飛ばすスイッチと既定の検証役（Spec 53）。スイッチは起動直後なら
     // 必ず OFF だが、画面の再読み込み（コアは生きている）では ON のことがあるので読む。
     state.planReviewBypass = await ipc.getPlanReviewBypass();
@@ -1390,6 +1401,16 @@ export function useOrchestrator() {
       const status = await ipc.setMcpHost(enabled, port);
       state.mcpHost = status;
       return status;
+    },
+
+    /**
+     * 起動と終了の端末側の設定を保存する（Spec 69）。**投影を持つので `orchestrator` 経由** —
+     * 閉じる経路（`App.vue`）が `state.startup` を読む。書けなければ例外で、`state.startup` は変えない。
+     */
+    async setStartupSettings(next: StartupSettings): Promise<StartupSettings> {
+      const saved = await ipc.setStartupSettings(next);
+      state.startup = saved;
+      return saved;
     },
 
     /** 扉の合鍵を作り直す（開いていれば新しい鍵で開き直す）。 */
