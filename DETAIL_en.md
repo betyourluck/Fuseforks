@@ -328,6 +328,8 @@ Note that text bodies are displayed all at once upon completion rather than stre
 **Agent statements are rendered in Markdown** (`lib/markdown.ts`, markdown-it).
 Models frequently return Markdown, and raw syntax makes text unreadable. User inputs and system notifications remain plain text — if strings typed by the user were transformed by rendering, verification of sent contents would become impossible. LLM output is treated as untrusted text, utilizing `html: false` from the outset to prevent interpreting raw HTML as tags (and `javascript:` links are caught by markdown-it's default validation). Link clicks are intercepted and opened in an external browser (navigating within the webview would replace the entire app screen).
 
+**Math is rendered too** (2026-10-24). `$…$` and `$$…$$` (the same notation as GitHub; ```` ```math ````, `\(…\)` and `\[…\]` as well) are drawn with KaTeX, while a `$` in a price or inside code is left alone. The fonts are bundled, and a TeX syntax error shows the source text in the warning color. The same rendering applies to blackboard notes (`lib/markdownMath.ts`).
+
 **Long messages you sent are collapsed.** A sent message over 12 lines or 800 characters is
 clamped to 6 lines with a "Show all" button. The decision uses the text alone (no measuring of
 rendered height — the chat pane is where the display-scale `zoom` applies, and it keeps no

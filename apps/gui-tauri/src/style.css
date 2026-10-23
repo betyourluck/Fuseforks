@@ -412,6 +412,23 @@ textarea,
     opacity 0.12s,
     color 0.12s;
 }
+/*
+ * 数式（2026-10-24）。`renderMarkdown` が KaTeX の HTML を出す（`lib/markdownMath.ts`）。
+ * KaTeX の CSS とフォントはそのファイルが同梱で読み、色は `currentColor` だけなので
+ * テーマに追従する（構文エラーの色だけ KaTeX が `style` に書くので、`--color-warn` の参照を渡してある）。
+ * 大きさは KaTeX の既定（1.21em）のまま = 本文の em に乗るので表示倍率にも追従する。
+ * 表示数式は横に長いと**数式の枠の中で横スクロール**（pre と同じ不変条件 — 会話全体に
+ * 横スクロールバーを生やさない）。余白は段落と揃える（KaTeX の既定は 1em）。
+ */
+.md-body .katex-display {
+  margin: 0.45em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md-body .math-error {
+  color: var(--color-warn);
+}
 .md-body .code-block:hover .code-copy,
 .md-body .code-copy:focus-visible,
 .md-body .code-copy[data-copied] {

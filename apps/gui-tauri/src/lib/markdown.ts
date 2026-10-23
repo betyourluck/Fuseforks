@@ -18,6 +18,8 @@
  */
 import MarkdownIt from "markdown-it";
 
+import { markdownMath } from "./markdownMath";
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -72,6 +74,11 @@ for (const rule of ["fence", "code_block"] as const) {
     return `<div class="code-block">${html}${codeCopyButton(label)}</div>`;
   };
 }
+
+// 数式（2026-10-24）。**コピーボタンの包み込みより後に組み込む** — ```math のフェンスは
+// 数式の規則が先に受けてコードブロックにせず、それ以外のフェンスだけを上の包み込みへ渡す
+// （順を逆にすると KaTeX の出力が `.code-block` に包まれてボタンが生える）。
+md.use(markdownMath);
 
 /**
  * Markdown を HTML 文字列へ描画する。戻り値は `v-html` で挿す前提。
