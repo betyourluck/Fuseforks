@@ -107,6 +107,8 @@ payload 無しで送ると `input_video content part requires video_url or file_
 `function_call_output.output` は **string のみ**（object を渡すと
 `input[2].output did not match any supported type`）。**共有 encoder の
 関数往復部分はそのまま使える。**
+（**→ 訂正 2026-10-25、[Spec 70](70_mcp-image-results.md)**: 拒否されたのは object で、
+`input_text` + `input_image` の配列は受けた — 「string のみ」は撃った形 1 つからの一般化だった。）
 
 **新しい制約を 1 つ見つけた（rev1 に無い）— `tool_choice` は `"auto"` のみ。**
 `none` / `required` / 名指しは 400 で

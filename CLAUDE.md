@@ -7811,12 +7811,16 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 70](specs/70_mcp-image-results.md)（MCP のツール結果で画像を受け取る）: **rev2・P0〜P2 完了**（2026-10-24〜25。
+- [Spec 70](specs/70_mcp-image-results.md)（MCP のツール結果で画像を受け取る）: **rev2・P0〜P3 完了**（2026-10-24〜25。
+  **P3 = 台帳**: DETAIL 3 言語に節「MCP のツール結果の画像」と木 / PRIVACY 日英の 4-1・4-3・4-4・6（**送信先は増えず、
+  送るものが 1 種類増えた** — 要旨の「通信先は 2 つ」は不変）/ README 3 言語は MCP の行に 1 句（行数は不変）。追従の grep で
+  `data_contract` の Meta の節と Spec 37 の「`function_call_output.output` は string のみ」を回収（拒否されたのは object で、
+  配列は撃っていなかった）。**残りは P4（NIK のライブビューで実機）**。以下は P2 —
   **P2 = 各ワイヤ**: Anthropic は `tool_result` の中（画像 → テキスト）/ Gemini は `functionResponse.parts` / Responses 4 社は
   共有の `responses_input.rs` の 1 箇所で `function_call_output.output` を列に（テキスト → 画像）/ OpenAI 互換は `role: "tool"` を
   文字列のまま、画像は続けて並ぶツール結果の後ろの利用者の発話へ。**画像の無いツール結果は 7 ワイヤとも前と同じバイト列**
   （既存の llm の単体 171 本が無改変で通った）。置き場の表は `tests/tool_image_placement.rs` が凍結し、**`Provider` の述語は
-  置かなかった**（実行時に表を読む者が居ない）。これで画像がワイヤへ出る。**残りは P3（台帳）と P4（NIK で実機）**。以下は P1 —
+  置かなかった**（実行時に表を読む者が居ない）。これで画像がワイヤへ出る。以下は P1 —
   **P1 = コア**: `tool_image.rs`（正規化の 2 経路・1 要求 20 枚・400 の外し方・コアが足す文 6 つ）/ `ToolOutput` と
   `AgentTool::call_with_media` / `render_tool_output` / `ChatMessage.attachment_caption` / ターンの層の送り直し・
   RepeatGuard の要約値・計器 3 行。P1 の時点では adapter を変えておらず画像はワイヤへ出なかった（P2 で解けた）。

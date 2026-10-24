@@ -7499,6 +7499,9 @@ llm_wire:
       (object は `input[2].output did not match any supported type` で 400)。
       **wire::ResponsesInputItem::FunctionCallOutput.output: String** なので
       型で既に成立している — **緩めると 3 社で割れる。**
+      **→ Spec 70 で訂正 (2026-10-24 P0 / 2026-10-25 P2)**: 「string のみ」は言い過ぎだった。拒否されたのは
+      object で、**input_text + input_image の配列は Meta を含む 4 社とも受けた** (P0 で画像の色まで読めた)。
+      型は ResponsesContent (文字列 / 列) へ広げた。object を作る経路は今も無く、画像の無いツール結果は文字列のまま
 
       ## tool_choice は "auto" のみ
 

@@ -28,7 +28,7 @@ Rust（`fuseforks-core`）+ Tauri v2 + Vue 3 + Bun。应用内的显示名称为
 | ⏰ **日程** | 通过「每周四 17:00」「每 10 分钟」让请求按时间触发。不写 cron 表达式 |
 | 🔎 **前置判定** | 触发时先运行命令，**仅当输出与信号一致时才**发起请求。不一致的次数不消耗任何 token。分发给村庄的命令未经批准不会运行 |
 | ✅ **后置判定** | 请求完成后运行验收命令，**输出与信号不一致时会附上失败内容重新发出请求**（有次数上限・默认重发 1 次）。判定本身不消耗 token |
-| 🔌 **MCP** | 可以直接**粘贴** Claude Desktop 的 `mcp.json`。公共 + 按智能体区分。支持 stdio 与远程（Streamable HTTP）。需要在浏览器中登录授权的服务器（如 TradingView 的 MCP）用 `"auth": "oauth"` 连接 — **只有按下“授权”时才打开浏览器**，刷新令牌保存在 OS 凭据存储中，访问令牌只在内存中。容器（`--secrets env`）中不可用（[Spec 67](specs/67_mcp-oauth.md)。送出的内容以 [PRIVACY.md](PRIVACY.md) 为准）|
+| 🔌 **MCP** | 可以直接**粘贴** Claude Desktop 的 `mcp.json`。公共 + 按智能体区分。支持 stdio 与远程（Streamable HTTP）。需要在浏览器中登录授权的服务器（如 TradingView 的 MCP）用 `"auth": "oauth"` 连接 — **只有按下“授权”时才打开浏览器**，刷新令牌保存在 OS 凭据存储中，访问令牌只在内存中。容器（`--secrets env`）中不可用（[Spec 67](specs/67_mcp-oauth.md)。送出的内容以 [PRIVACY.md](PRIVACY.md) 为准）。**工具返回的图像（如相机画面）会交给仆从的模型查看** — 图像会发送给该模型的提供商（[Spec 70](specs/70_mcp-image-results.md)）|
 | 🔍 **接地（Grounding）** | Gemini 的 Google 搜索与 URL 抓取、Grok 的 Live Search（web / X）、OpenAI 与 Meta 的 web 搜索，以及 Perplexity 的 web・金融・人物搜索与 URL 抓取。**明确区分显示搜索到的事实与未返回来源的事实** |
 | 🧠 **思考摘要** | 将模型思考内容的摘要折叠到与答案**不同的框**中。来源是可验证的指向，摘要是不可验证的申报，因此不混在一起 |
 | 🛠️ **自带工具** | `remember` / `grep` / `fd` / `diff` / `sd` / `yq` / `file` / `rag` / `blackboard` / `run`。文件类工具无法结构化地读取工作文件夹之外的内容（例外是读取已声明文件夹的 `rag`，以及围栏为允许列表的 `run`；允许列表之外的命令的批准可在状态栏放宽为“自动批准并允许”或“不批准直接允许”——被禁止的命令在任何模式下都不会运行）。黑板便签只能通过 `blackboard` 写入，且只能写自己的便签 |

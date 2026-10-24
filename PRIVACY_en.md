@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-20**
+**Last updated: 2026-10-25**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -170,6 +170,7 @@ When you register a model, the following is sent to that provider:
 - Rules, personas, and memory text you wrote
 - Results of tools the agent ran (which may include file contents and search results)
 - Images attached to conversations
+- Images an MCP server returned as a tool result (including images of the real world, such as a camera's; see 4-3)
 - Your API key, for authentication
 
 The destination is whatever endpoint you registered — for example Anthropic,
@@ -219,6 +220,12 @@ the token with it. If a header value is written as `${secret:NAME}`, the value i
 from the operating system's credential store (see 3) just before connecting and does not
 stay in `mcp.json`. If it cannot be found, the app does not connect to that server.
 
+**If an MCP server returns an image as a tool result, that image is sent to the model provider
+of the agent that called the tool** (see 4-1). With an MCP server that connects a camera, what
+the camera sees is sent. The app does not store the image — it is sent only during that exchange
+and is kept neither in the saved conversation nor in the diagnostic log (large images are shrunk
+and converted to JPEG before sending).
+
 If you declare **OAuth authorization** (`"auth": "oauth"`) for a remote MCP server, pressing "Authorize" opens that
 authorization server's sign-in page in **your default browser**. You sign in inside the browser; the app never sees that
 service's password. **A browser opens only when you press the button** — never on its own at startup or when connecting.
@@ -266,7 +273,7 @@ paragraphs to score.
   **the JSON text of each array element** (key names included).
 
 **Tool names, arguments, conversation history, model names, and village data are never
-sent.** The body that is sent may contain whatever a connected MCP server returned
+sent.** Nor are images an MCP server returned as a tool result. The body that is sent may contain whatever a connected MCP server returned
 (including memories, mail, or internal documents, if you connected a server that returns
 those).
 
@@ -317,6 +324,7 @@ tool names and result sizes, and errors.
 
 - Prompt bodies
 - Tool result bodies
+- Images returned by MCP tools (only the count, and the reasons for images that could not be passed on, are recorded)
 - The "Draft with AI" exchange and draft text (only character counts and token counts are recorded)
 - Credentials (for OAuth authorization only the server identifier and the kind of outcome are recorded — never tokens,
   authorization codes or client IDs)

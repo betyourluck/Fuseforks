@@ -61,6 +61,7 @@ Fuseforks/
 │       │   ├── mcp_oauth.rs         OAuth for remote MCP (one authorization manager per server, two-tier storage with the credential store, state; [Spec 67](specs/67_mcp-oauth.md))
 │       │   ├── tool.rs              ★ AgentTool / ToolRegistry (MCP reception point)
 │       │   ├── tool_calls.rs        Ring of tool-call arguments and output (memory only; never in the log or the saved conversation. [Spec 57](specs/57_tool-call-detail.md))
+│       │   ├── tool_image.rs        Images in MCP tool results (format check, JPEG re-encoding, 20 per request, the sentences the core adds; pure mechanics. [Spec 70](specs/70_mcp-image-results.md))
 │       │   ├── tools/memory.rs      Built-in tool: remember (appends to Memory.md)
 │       │   ├── tools/fs.rs          Built-in tool: grep / fd / diff (read-only. restricted to work folder)
 │       │   ├── tools/edit.rs        Built-in tool: sd / yq (write. preview default + diff required)
@@ -1923,6 +1924,59 @@ adding `"auth": "oauth"` to an http entry:
   version removes `"auth"` from the shared `mcp.json`**, because the old version writes the shared `mcp.json` back from the
   type it parsed. A servant's `mcp.json` is saved as text and keeps it. This happens when old and new builds sit on the
   same machine (the shape of `failures.md` #112)
+
+### Images in MCP tool results ([Spec 70](specs/70_mcp-image-results.md))
+
+When an MCP tool returns an image (`type: "image"`), the servant sees it and answers from it. The starting point was an MCP
+server that returns a camera's live view (NIK, which connects a Nikon camera). Until then the image was replaced by a one-line
+notice that non-text content could not be handled on this path.
+
+- **Images only.** Audio and embedded resources keep the one-line notice (written in the village language). Built-in tools
+  return no images
+- **The format is decided from the bytes** (the server's `mimeType` is not read — if the claim and the bytes disagree, the
+  provider answers 400). JPEG and WebP within 1568px on the long side and 2MB are sent **as they are**. PNG, animated WebP and
+  anything over the limits is shrunk to 1568px and re-encoded as **JPEG (quality 85)**, with transparency painted white
+- **Dropped images are written into the body** — GIF, unreadable data, anything that would decode to more than 16,384px on a
+  side (a guard against a small file claiming a huge image), anything still over 2MB after re-encoding, and the fifth image
+  onward. The body gets the count and the reasons, such as "(1 image(s) could not be passed on: unsupported format: 1)"
+- **Up to 4 images per result and 20 per request.** Within a turn, earlier rounds' images are sent again on every round, so
+  taking pictures again and again piles them up. Beyond 20 the oldest are taken out and the result they belonged to gets
+  "(Images from earlier rounds were left out.)". That round rewrites the input cache (dropping the newest instead was not
+  chosen — a watching job needs the latest picture)
+- **Images reach the model only within the turn** (like tool results; not in the history, not in `sessions.redb`)
+
+**Where the image goes depends on the wire** (decided on 2026-10-24 by sending a synthetic image to 7 wires and checking
+whether the model read its colours):
+
+| Wire | Placement |
+|---|---|
+| Anthropic | Inside the tool result (`tool_result`) |
+| Gemini native | `functionResponse.parts` |
+| Responses (OpenAI / xAI / Meta / Perplexity) | `function_call_output.output` |
+| OpenAI-compatible | **One user message added right after the tool results** (its text is "(N image(s) from the {tool} result)") |
+
+OpenAI-compatible is the odd one out because an image inside a tool result works or fails depending on the endpoint
+(Gemini's compatible endpoint answers 400; xAI's passes). The cost is one extra message even where the image could have gone
+inside. A servant using xAI through the Responses wire gets the image inside. When one round calls several tools, the added
+messages are placed after the whole run of tool results.
+
+**Models that cannot read images** — if a request with images comes back 400, the images are taken out, "(The images could
+not be sent to this model.)" is added to the body, and the request is sent once more. The rest of the turn continues without
+images (on the OpenAI-compatible endpoint the attachment mechanism first retries with WebP turned into JPEG). **Some models
+do not answer 400** — they answer 200, silently ignore the image, and either say they cannot see it or **describe something
+that is not in it** (measured on 2026-10-24: sakura's gpt-oss-120b named colours that were not in the image). The core cannot
+tell them apart, so **give image-returning tools to servants whose model reads images.**
+
+- **Repeat detection looks at images too** — the same body with a different image is a different result (a camera returns the
+  same JSON with a different picture)
+- **Screen**: opening a tool row shows one line after the output, such as "(1 image(s): JPEG 21 KB)". The image itself is
+  not shown (and is not kept in the ring that row reads from)
+- **Log**: `images=N` on the `tool:` line (only when images came back; other tools' lines are unchanged) / `tool image dropped:`
+  (count and reasons) / `tool image capped:` (taken out at 20) / `tool image fallback:` (taken out and retried after a 400,
+  with the outcome). **What the image shows is never written anywhere**
+- **Tool-result pruning (Jev) looks at the body only** — images are neither sent to Jev nor dropped
+- **One more thing leaves the machine** — an image an MCP server returned is sent to that servant's model provider
+  ([PRIVACY_en.md](PRIVACY_en.md)), including images of the real world such as a camera's
 
 ### Village Ordinance
 
