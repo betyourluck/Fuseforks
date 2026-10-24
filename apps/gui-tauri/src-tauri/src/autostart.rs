@@ -98,7 +98,9 @@ fn windows_command(exe: &str) -> String {
 /// （有効 `0x02` / `0x06`、無効 `0x03` / `0x07`）。
 ///
 /// `auto-launch` 0.6 は「末尾 8 バイトが全部 0 なら有効」（無効にした時刻の有無）で見ている。
-/// 2 つの見方が実際のタスクマネージャーの値で食い違うかは Spec 69 P4 で確かめる。
+/// 実際のタスクマネージャーの値では 2 つの見方は食い違わない（Spec 69 P4 実測: 無効にすると
+/// `03 00 00 00` + 無効にした時刻の FILETIME を書く）。食い違うのは先頭 0x03・時刻 0 の形だけで、
+/// タスクマネージャーはその形を作らない。
 #[cfg(any(windows, test))]
 fn approved_disabled(bytes: &[u8]) -> bool {
     bytes.first().is_some_and(|first| first & 1 == 1)

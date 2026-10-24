@@ -1,11 +1,13 @@
 # Spec 69: 起動と終了 — トレイ常駐・起動時の一括起動・サインイン時の自動起動
 
-- 状態: **rev3・未決 0 → P0〜P3 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
+- 状態: **Done**（2026-10-24。P4 の実機 10 件をすべて観測。記録は「P4 実機記録」。Windows のみ — macOS と Linux は
+  実機で踏んでいない）
+- 経緯: **rev3・未決 0 → P0〜P3 完了**（2026-10-20 起票 → 同日、査読 2 系統 19 点を実コードと依存のソースに当てて rev2。
   判定は採用 12 / 前提を訂正して採用 5 / 反証 2。対応表は Notes 4。→ 同日、利用者が未決 7 つを推奨どおりに裁定し、
   条件 2 つ（未決 4・5）を付けた。裁定を反映して rev3。裁定の表は Notes 6。同日 P0 = 窓の作り方 3 通り・レジストリ・
   依存の増分・Linux の実行時依存を測り、`data_contract` の `launch_exit_contract` を凍結。D5 は案 A に決まった。
   記録は「P0 実測記録」。同日 P1 = Rust 側 / P2 = 画面 / P3 = 台帳（記録は「P1 実装記録」「P2 実装記録」「P3 台帳記録」）。
-  残りは P4 の実機 10 件）
+  残りは P4 の実機 10 件 → 2026-10-24 に完了）
 - 利用者裁定（2026-10-20）: 7 つとも推奨どおり。理由はいずれも Goal 4（OFF なら今と何も変わらない）。
   条件つきが 2 つ — **未決 4**: Windows の登録は `windows-registry` で自前で書く / 外すときは HKCU と HKLM の両方を消す /
   登録名は実機の値で大小まで固定する。**未決 5**: 組み立てに失敗したら必ず窓を出す（rev2 の D0 の 5 と同じ）
@@ -668,7 +670,8 @@ Spec 64 D6 の「GUI では不変」の行へ、本 Spec で例外が 1 つ入�
 | コードの doc | `closeConfirm.ts` / `useUiSettings.ts` の「この村はタスクトレイに常駐しない」を、トレイ OFF のとき ✕ が終了・ON のとき確認はトレイの「終了」に掛かる、へ。`closeConfirm.test.ts` のコメントも同じ |
 | Spec 07 / 64 | 論点 13（トレイ常駐後に重くなる論点）と D6（`batch_start_invariant` は GUI では不変）へ、本 Spec への行き先 |
 | `data_contract` | 予定の `known_limits` へ「Spec 69 でトレイ常駐と自動起動が入った（どちらも既定 OFF）。ON でもプロセスが動いている間しか発火しないので告知の文言は今も正しい」 |
-| Homebrew tap | `Casks/fuseforks.rb` の `zap` に `~/Library/LaunchAgents/fuseforks.plist` と、それが「サインイン時に起動」を ON にしたときだけ在ることのコメント。**`betyourluck/homebrew-tap` の作業コピーを変えただけで、コミットも push もしていない**（別リポジトリなので利用者の判断）。この端末に `ruby` が無いので `ruby -c` は通していない（足したのは配列の文字列 1 つとコメント） |
+| Homebrew tap | `Casks/fuseforks.rb` の `zap` に `~/Library/LaunchAgents/fuseforks.plist` と、それが「サインイン時に起動」を ON にしたときだけ在ることのコメント。**`betyourluck/homebrew-tap` の作業コピーを変えただけで、コミットも push もしていない**（別リポジトリなので利用者の判断）。
+→ v0.6.2 の tap のコミット `ea17683`（`fuseforks 0.6.2`）に入って push 済みだった（2026-10-24 に `git log -S` で確認）。この端末に `ruby` が無いので `ruby -c` は通していない（足したのは配列の文字列 1 つとコメント） |
 
 **grep の結果**: 「常駐しない」「常駐しません」「closeWindow」を `specs/` `CLAUDE.md` `failures.md` の外で引き直し、残るのは覆したことを
 書いている 2 箇所（`closeConfirm.ts` の doc と `data_contract` の `launch_exit_contract`）だけ。**ランディングページと Qiita の記事は
@@ -695,6 +698,53 @@ grep の網の外**で、どちらもトレイや自動起動に触れていな�
 9. 同じ状態（村を掴まれている）・トレイ ON で `fuseforks.exe --autostart` を起動すると、**窓が出て覆いに失敗の理由が出る**。
    トレイは出ない（D0 の 5）
 10. 言語を切り替えると、トレイのメニューの文言が切り替わる
+
+### P4 実機記録（2026-10-24。Windows 11・配布版 v0.6.2 = `%LOCALAPPDATA%\fuseforks\fuseforks.exe`）
+
+**10 件とも合格。** 判定の材料は `fuseforks.log`（起点は 32,909 行目）/ レジストリ / System のイベントログ /
+窓の可視（`IsWindowVisible`）。ログに出ない項目（2・3・4・10 と、8・9 の画面）は利用者の画面の報告とスクリーンショットで受けた。
+
+| # | 根拠 |
+|---|---|
+| 1 | 15:12:20 `version: app=0.6.2 profile=release` → `launch: source=manual hidden=false`。一括起動 OFF の起動の後に `launch batch:` は出ない。✕ で確認 → 承認で終了（画面） |
+| 2 | ✕ で窓が消え確認は出ない。トレイの左クリックで戻る（画面） |
+| 3 | トレイの「終了」で確認が出る。出ている間にもう一度押しても確認は 1 つ。承認で終了（画面） |
+| 4 | 隠した状態でもう一度起動すると窓が戻る（画面。多重起動の受け口はログに行を出さない） |
+| 5 | 03:13:55 起動 → 5 体が 1 体ずつ起動（各行の時刻 = 前の行の時刻 + `elapsed_ms` が 1 ms 以内で一致）→ 03:15:04.805 `launch batch: targets=5 started=5 failed=0`（10 体中、グループの門で 5 体）。03:18:40 にジェミーを止めて F5 → `agent started` も 2 本目の `launch batch:` も出ない |
+| 6 | 15:38:44 `autostart: enabled=true scope=User`。`HKCU\…\Run` の値名は `fuseforks`（小文字）、値は `"C:\Users\conan\AppData\Local\fuseforks\fuseforks.exe" --autostart`。19:31:10 の再起動 → 19:32:07 サインイン（Winlogon 7001）→ 19:35:12 プロセス開始 → 19:35:13.879 `launch: source=autostart hidden=true` → 19:36:56 `launch batch:`。窓は `IsWindowVisible` が偽 |
+| 7 | タスクマネージャーで無効にすると `StartupApproved\Run` の `fuseforks` が `03 00 00 00 E1 9F F7 31 A6 63 DD 01`（先頭 0x03 + 無効にした時刻の FILETIME = 19:55:34。キーの最終書き込みも 19:55:34）。`Run` の値は残る。設定ページを開き直すとチェックが OFF。チェックを ON に戻すと 19:57:24.249 `autostart: enabled=true scope=User` と同じ秒に `02 00 … 00`（`ENABLED_BYTES`）へ上書き |
+| 8 | 20:12:03 `fuseforks-cli serve --start agent_2`（`version: app=0.6.1+ga07ab1b profile=debug`）が村を開いた後に GUI を起動 → 覆いに失敗の理由 → ✕ で隠れずに確認 → 承認で終了（画面）。serve を閉じた 20:30:53 までの間に GUI の行は 1 本も無い |
+| 9 | 同じ状態でトレイ ON・`--autostart` → 窓が出て、覆いは `[BOOT_FAILED]` + `orchestrator.villageLocked` の文面 + ロックファイルのパス（スクリーンショット）。トレイのアイコンは出ない（隠れているインジケーターのスクリーンショット）。✕ → 確認 → 承認で終了 |
+| 10 | English で `Show Fuseforks` / `Quit`、日本語に戻すと `Fuseforks を表示` / `終了`（画面） |
+
+**P1 から持ち越した問いの答え**
+
+- **`StartupApproved\Run` の見方は、実際の値では食い違わない。** タスクマネージャーは無効の値に必ず時刻を書くので、
+  先頭バイトの最下位ビット（こちら）でも末尾 8 バイトが 0 か（`auto-launch` 0.6）でも「無効」になる。食い違うのは P0 で
+  手で書いた `03` + 時刻 0 の形だけで、タスクマネージャーはその形を作らない。判定は変えない
+- **実機の値名は `Run` も `StartupApproved\Run` も `fuseforks`（小文字）**（裁定 4 の「実機の値名は P4 で読む」）
+
+**実機で分かったこと**
+
+- **サインインから自動起動のプロセスが立ち上がるまで約 3 分**（19:32:07 → 19:35:12）。Windows がスタートアップの登録を
+  処理するまでの待ちで、組み立ては 2 秒弱（19:35:12 → 19:35:13.879）。この 3 分はプロセスそのものが無い
+- 19:26:16 のサインインの後には `launch: source=autostart` が無く、19:29:33 に利用者が手で起動した `source=manual` だけがある。
+  遅れて来た自動起動は、多重起動の受け口で既存の窓を前に出して終わったと読める（受け口はログに行を出さない）。
+  **`launch: source=autostart` で自動起動の回数を数えるとき、手で先に開いていた回は数えに乗らない**
+- **村のロックが取れなかった起動はログに 1 行も残さない** — `build_host` はロック（`VillageLock::acquire`）を取ってから
+  ログを開く（`open_log`）。8・9 は画面と「CLI の行の間に GUI の行が無いこと」で読んだ。自動起動がロックで失敗した回も
+  `launch:` に数えられない。機構は足さない（失敗は窓を出して画面に見せている）
+- `enable()` は `Run` の値も毎回書き直すが、`Run` キーの最終書き込み時刻は 17:48:06 から動かなかった。同じ値の書き込みでは
+  Windows がキーの時刻を更新しないと読んでいる（推測。中身は正しい）
+- 6 はサインアウトではなく再起動で踏んだ（17:32 / 17:36 / 19:31。System の 1074）
+
+**検収の進め方で外したこと**（`failures.md` #150）: 最初の 3 は開発ビルド（`app=0.1.0 profile=debug`）で踏んでおり、
+開発ビルドの画面の設定（読み込み元 `http://localhost:1420`）は `"confirmClose":false` だったので、トレイの「終了」は仕様どおり
+確認なしで閉じた。配布版で踏み直して合格。また、利用者の「すべて確認できました」の時点ではログに 6〜9 の行が無く、
+その後に踏まれて揃った。
+
+**踏んでいないもの**: macOS と Linux（LaunchAgent / `.desktop` の登録、AppIndicator、Dock の `Reopen`）。
+どちらも手元に実機が無く、ソースの読みと CI のコンパイルまで。HKLM に値を手で置いたときの外し（管理者が要る）も踏んでいない。
 
 ## 裁定（2026-10-20。旧未決 1〜7。7 つとも推奨どおり）
 
