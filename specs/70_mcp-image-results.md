@@ -1,10 +1,10 @@
 # Spec 70: MCP のツール結果で画像を受け取る
 
-- 状態: **rev2・P0〜P3 完了**（2026-10-24 起票。利用者が推しの 6 点のまま裁定し、同日 P0 = 7 ワイヤの実測と
+- 状態: **Done**（2026-10-25。P4 = 実機 7 項目を `fuseforks.log` で観測。記録は「P4 実機記録」）（2026-10-24 起票。利用者が推しの 6 点のまま裁定し、同日 P0 = 7 ワイヤの実測と
   `data_contract` の `mcp_image_result_contract` 凍結。記録は「P0 実測記録」。D1 の表が埋まった。→ 同日、査読 9 点を
   実装と P0 の記録に当てて rev2。判定は採用 6 / 前提を訂正して採用 1 / 範囲を広げて採用 1 / 反証 1。表は Notes 2。
   → 同日 P1 = コア。記録は「P1 実装記録」。→ 2026-10-25 P2 = 各ワイヤ。記録は「P2 実装記録」。画像がワイヤへ出る
-  ようになった。→ 同日 P3 = 台帳（DETAIL 3 言語・PRIVACY 日英・README 3 言語の 1 句）。**残りは P4（NIK のライブビューでの実機）**）
+  ようになった。→ 同日 P3 = 台帳（DETAIL 3 言語・PRIVACY 日英・README 3 言語の 1 句）。→ 同日 P4 = NIK のライブビューで実機）
 
 ## rev1 からの変更（査読 9 点の反映。詳細は Notes 2）
 
@@ -435,6 +435,83 @@ N4 を留めるのは 2 つのツールを呼んだ周の 1 本だけ — 表の
 - ランディングページ（リポジトリの外）は MCP の機能を列挙していないので触っていない
 
 ### P4 — 実機（NIK のライブビュー）
+
+**前提**: NIK を `agent_9`（ミュゼ）の個別 MCP に `type: "http"` で繋いである（`127.0.0.1:47321/mcp`）。
+**比べる元の行**は 2026-10-24 21:11 の `tool: agent=agent_9 round=1 name=nik__live_view_image ok=true … body_chars=87`
+（Spec 70 の前。画像は「扱えません」の注記に置き換わり、`images=` は無い）。判定はすべて `fuseforks.log` の行で読む。
+**依頼文は全項目で同じ**:「NIK のライブビューを 1 枚撮って、写っているものを 1 文で説明して」。テンプレートの切り替えは
+ミュゼの設定ダイアログで行い、終わったら `muse-spark-latest` へ戻す。
+
+- [x] 準備 — 配布版が動いていないこと / 開発ビルドの起動行が `version: app=0.1.0 profile=debug`（#150）/ NIK でカメラと
+  ライブビューが付いていて、`live_view_image` が NIK の設定で入っている（呼ぶたびに NIK が許可を求める）
+- [x] 検収 1 Meta（`muse-spark-latest`）— `tool: … name=nik__live_view_image ok=true … images=1` と `turn: … backend=meta-responses stop=-`。
+  `tool image dropped:` / `tool image fallback:` は出ない。答えがカメラの映っているものと合う（利用者が見比べる）
+- [x] 検収 2 Anthropic（`claude_sonnet`）— 同じ行で `backend=anthropic`
+- [x] 検収 3 Gemini（`gemini-3.8-flash`）— 同じ行で `backend=gemini`
+- [x] 検収 4 OpenAI Responses（`gpt-6-sol`）— 同じ行で `backend=openai-responses`
+- [x] 検収 5 OpenAI 互換＝代替（任意。テンプレートを 1 つ足す — プロトコル「OpenAI 互換」・baseUrl
+  `https://generativelanguage.googleapis.com/v1beta/openai`・モデル `gemini-3.5-flash-lite`・鍵は Gemini の鍵）—
+  **この接続先はツール結果の中の画像を 400 で断る**（P0）ので、代替の経路を判別できる。`images=1` / `backend=openai-compat` /
+  **`tool image fallback:` も `attachment fallback:` も出ない** / 答えが映っているものと合う
+- [x] 検収 6 画像を読めないモデル（`perplexity` = `perplexity/deepseek-v4-pro-0813`）— `tool image fallback: agent=agent_9
+  model=perplexity/deepseek-v4-pro-0813 removed=1 outcome=ok` が 1 本、`turn: … stop=-`（ターンが落ちない = Goal 4）。
+  答えは画像を見られなかった旨になる
+- [x] 検収 7 画面 — 検収 1 のツール行を開くと、出力の後ろに「（画像 1 枚: JPEG … KB）」の 1 行。画像そのものは出ない
+
+**負の対照は同じ走行に入る** — ミュゼが先に `nik__camera_status` などを呼べば、その `tool:` 行には `images=` が無い（Goal 2）。
+
+**実機では判定にならないもの**（結合テストが留める）: RepeatGuard（NIK の本文の JSON は `seq` を持ちフレームごとに
+変わるので、本文だけで既に別の結果になる — 画像の要約値を見ているかを実機では区別できない）/ 1 要求 20 枚（21 回の
+許可が要る）/ 落とした画像（NIK は上限の内側の JPEG を返す）。
+
+### P4 実機記録（2026-10-25。利用者・NIK のライブビュー・ミュゼ = `agent_9`）
+
+**7 項目すべてを `fuseforks.log` の行で観測した。** ビルドは開発ビルドではなく**このリポジトリから作ったリリースビルド**
+（起動行 `version: app=0.1.0 profile=release`。インストール版なら `app=0.6.2` なので、#150 の取り違えではない。
+`images=` の欄は P1 以降、画像をワイヤへ出すのは P2 以降にしか無い）。
+
+| 項目 | 時刻 | テンプレート | `tool:` 行 | `turn:` 行 | 2 周目の入力の増え方 |
+|---|---|---|---|---|---|
+| 1 Meta | 03:03:29 | `muse-spark-latest` | `images=1`・`body_chars=56` | `backend=meta-responses stop=-` | +450 |
+| 2 Anthropic | 03:06:59 | `claude_sonnet` | `images=1` | `backend=anthropic stop=-` | +456（`cache_write=458`） |
+| 3 Gemini | 03:08:08 | `gemini-3.8-flash` | `images=1` | `backend=gemini stop=-` | +1,407 |
+| 4 OpenAI Responses | 03:09:27 | `gpt-6-sol` | `images=1` | `backend=openai-responses stop=-` | +390 |
+| 5 OpenAI 互換 | 03:16:51 | `gemini-3.8-flash` をプロトコル「OpenAI 互換」へ | `images=1` | `backend=openai-compat stop=-` | +1,228 |
+| 6 画像を読めない | 03:20:46 | `perplexity`（deepseek-v4-pro） | `images=1` | `backend=perplexity-responses stop=-` | **+76**（画像を外した） |
+
+- **画像がモデルに届いた証拠は 2 周目の入力の増え方。** ツール結果の本文は 56〜57 字で、文字だけなら数十トークンしか
+  増えない。1〜5 は 390〜1,407 増え、画像を外した 6 だけが +76。接続先ごとの差は画像の数え方の差（Gemini が最も多い）
+- **項目 1〜5 で `tool image dropped:` / `tool image fallback:` / `attachment fallback:` / `llm retry` / `turn failed` は 0 本。**
+  項目 5 は `handoff:` も無い（下の 1 回目と区別する）
+- **項目 6** — `llm retry stop: … status=400 class=client_error code=invalid_request` の直後に
+  `tool image fallback: agent=agent_9 model=perplexity/deepseek-v4-pro-0813 removed=1 outcome=ok` が 1 本。400 は HTTP の層では
+  再試行せず（Spec 52 の分類どおり）、ターンの層が画像を外して 1 回送り直した。ターンは `stop=-` で終わり、答えは
+  「画像の取得は成功したが、このモデルには渡せず中身を確認できない」と正直に書いた（Goal 4）
+- **項目 7** — 項目 5 のツール行を開くと、入力 `{}`（2 字）と、出力の本文の後ろに「（画像 1 枚: JPEG 19 KB）」。表示の字数
+  「出力（78 字）」は本文 57 + 改行 1 + その 1 行 20 と一致。画像そのものは出ない
+- **比べる元の行との差** — 10-24 21:11 は `body_chars=87`・`images=` 無し。今回は `body_chars=56`・`images=1`。縮んだ
+  31 字はおおむね「扱えません」の注記（30 字 + 改行）の分（`seq` の桁は回ごとに違うので 1 字単位では比べない）
+- **答えの照合は利用者**（画像の中身は Neo には見えない）。項目 1〜4 はミュゼの履歴が 8〜16 往復ぶん残った状態で、
+  前の回の説明が履歴にあった。画像が届いた根拠は上の 2 つ（`images=1` と入力の増え方）で、履歴に依らない。項目 5 は
+  **履歴に無い新しい場面**を説明したので、画像を見て答えたと読める
+
+**検収 5 の 1 回目は成立していなかった**（03:13）。使ったのは `Qwen3-VL-30B-A3B-Instruct`（sakura）のテンプレートで、
+**「ツールを使う」がオフ**（P0 で、sakura のサーバー側がこのモデルでツールを受けない設定と分かっていた）。ミュゼは NIK を
+呼ばず、ツール非対応の経路どおり最初の接続先のルナへ渡した（`handoff: agent=agent_9 to=agent_8`。入力は 6,862 で
+ツールの定義を送っていない）。画面では答えが返っていたので取れたように見えたが、履歴に前の回の説明が 16 往復ぶん
+残っており、**画像を見ずに説明を書けた**。**一般化: 実機の確認で答えの中身を照合するときは、同じ答えを履歴から
+書ける状態かを先に数える。**`images=1` の行と入力の増え方のように、履歴に依らない証拠をログで取る
+
+**ずれと残り**:
+
+- 項目 5 は計画の `…/v1beta/openai` + `gemini-3.5-flash-lite` ではなく、既存の `gemini-3.8-flash` のプロトコルを
+  「OpenAI 互換」へ切り替え、baseUrl は `…/v1beta` のまま（`/openai` 無しでも応答は返った）。P0 で「ツール結果の中の
+  画像を 400 で断る」と測ったのは前者の組み合わせなので、**この組み合わせで中に置いたら断られるかは測っていない**。
+  確かめたのは「OpenAI 互換では直後の発話の画像をモデルが読める」こと
+- **負の対照（画像を返さないツールの行に `images=` が無い）はこの走行に無かった**（呼ばれたツールは
+  `nik__live_view_image` だけ）。結合テスト `tool_image_log.rs` が留めている
+- 走行の後に、ミュゼのテンプレートを `muse-spark-latest` へ、`gemini-3.8-flash` のプロトコルを Gemini（ネイティブ）へ戻す
+  （利用者）
 
 ## 未決
 
