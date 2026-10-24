@@ -2809,6 +2809,12 @@ entities:
       # 効く (gemini_url_context_active() の AND 述語)。google_search と同じ棚。
       # 思考段階 (thinkingLevel) は新しい欄を持たない — 既存の effort を写す (D1)
       geminiUrlContext: bool
+      # --- Anthropic の固有スキル (Spec 71 D2)。既定 false、provider == anthropic でのみ
+      # 効く (anthropic_web_search_active() の AND 述語)。モデル名の門は掛けない (P0 で
+      # opus-5-5 / sonnet-5-5 / fable-5-1 とも 200)。without_provider_skills が外す
+      # (Spec 63 / 68 の 1 回ごとに検索を走らせない)。他社の web 検索のフラグからの
+      # 自動の写しは作らない (Spec 45 と同じ — 切り替えただけで課金の面を開かない)
+      anthropicWebSearch: bool
       requestTimeoutSecs: u32
       maxRetries: u32
       # --- 単価 (Spec 41)。すべて Option + #[serde(default)]。$ / 100 万トークン ---
@@ -2957,7 +2963,7 @@ entities:
     fields: { uri: String, title: String }   # title は取れなければ空文字
 
   GroundingEngine:
-    values: [google, xai, open_ai, meta, perplexity]
+    values: [google, xai, open_ai, meta, perplexity, anthropic]
     note: |
       表示の「エンジン」ラベルはこの値から辞書で引く (grounding.engine の
       「Google 検索」固定を Spec 31 P3 で置き換える)。自由文字列にしないのは
@@ -2971,6 +2977,9 @@ entities:
       output item から写す (search_results / people_search_results /
       fetch_url_results / finance_results の 4 種。finance だけ URL 裸の
       文字列配列で title を持たない)。
+      anthropic は Spec 71 D6 — 出典は本文の citations (web_search_result_location)
+      から写す。引用されたものだけで、検索結果の一覧 (web_search_result) は件数だけ
+      数える。cited_text は 0 字のことがあり (P0 で 5 件)、写すのは url と title だけ。
 
   ErrorPayload:
     fields:
@@ -7705,3 +7714,92 @@ llm_wire:
         (search / people = url + title、finance = sources のみ)。
         usage 側は cost (ResponsesCost) と tool_calls_details
         (**BTreeMap** — 計器の列挙順を決定的にする) を加算
+
+  anthropic_server_tools:
+    why: |
+      Anthropic の web 検索 (Spec 71。サーバー側ツール web_search) を固有スキルの
+      トグル anthropicWebSearch で通す。ワイヤは既存の Provider::Anthropic
+      (/v1/messages) のままで、新しいワイヤは切らない。前提の穴が 2 つあった —
+      pause_turn は周回ループが finish を見ないので途中の本文が最終回答になる /
+      村のツールと同じ周で検索を呼ぶと検索は保留され、encode_message が assistant の
+      発話を本文 + tool_use に組み直すので保留のブロックが次の要求に乗らない。
+      処方は canonical の「応答のブロックの写し」(replay) 1 つ。
+    invariants: |
+      - **版は web_search_20250305 (基本版)。** 定義は
+        {"type": "web_search_20250305", "name": "web_search", "max_uses": N} を
+        tools の末尾に 1 つ。ベータヘッダーは要らない。20260209 以降 (dynamic
+        filtering) は既定で応答にコード実行のブロックと入れ子の caller が混ざるので
+        採らない (P0 (j): 検索 3 回・入力 36,675・引用 0 件)。**max_uses は定数 5**
+        (ANTHROPIC_WEB_SEARCH_MAX_USES。Spec 71 未決 1 の利用者裁定 2026-10-25)。
+        1 要求の天井で、1 ターンは 5 × max_tool_iterations。送らない 1 要求は
+        検索 17 回・入力 236,999・55 秒になった (P0 (e0))
+      - 判定は anthropic_web_search_active() = anthropic_web_search AND
+        effective_provider() == anthropic の 1 本。モデル名の門は掛けない。
+        base URL は見ない (検索を拒む中継は 400 になり Spec 52 の分類で止まる)
+      - 提示集合 (MCP 由来を含む) に関数ツール web_search が居たら、サーバー側
+        ツールを送らず WARN を 1 行出す。重複すると 400
+        "tools: Tool names must be unique." (P0 (k))。今の命名規則
+        (mcp::qualified_tool_name が必ず接頭辞を付ける) では起きない — 網
+      - **写し (replay)**: canonical の ChatResponse.replay と ChatMessage.replay
+        (Option<serde_json::Value>)。中身を読むのは書いた adapter だけ
+        (ToolCall::extra と同じ規律)。ChatMessage.replay は #[serde(skip)] —
+        sessions.redb にも golden にも出ない。**寿命は 1 ターン**。ターンをまたいで
+        検索結果を持ち越さない (公式の使い方より安い)
+      - 写しを作るのは、応答にサーバー側ツールのブロック (server_tool_use /
+        web_search_tool_result) が 1 つでも在るとき、または stop_reason が
+        pause_turn のとき。それ以外は None で、送信バイトは従来と 1 バイトも
+        変わらない (golden)
+      - 写しが在る assistant の発話は、encode_message が添付・本文・tool_calls からの
+        組み立てを丸ごと飛ばし、写しのブロックを受け取った順に並べる。tool_use を
+        tool_calls から二重に作らない (写しの中の tool_use の ID 集合 = tool_calls の
+        ID 集合)。写しを持つ発話は #29 の「空の発話」に数えない
+      - **写しに思考のブロック (thinking / redacted_thinking) は入れない** (P0 (c3)
+        で 200)。この村は思考のブロックを送らない — preserved thinking の検査を
+        ターンの中に持ち込まない
+      - キャッシュの境界は anthropic::encode の place_message_breakpoint が打つ。
+        写しはワイヤの生のブロック (AnthropicRequestBlock::Raw) になり、同じ関数が
+        cache_control を書き足す。server_tool_use / web_search_tool_result に
+        打っても 200 (P0 (f))
+      - **保留** (結果の無い server_tool_use + stop_reason tool_use): 写しつきの
+        assistant の発話を積み、村のツールの tool_result だけを続ける。次の応答の
+        先頭に web_search_tool_result が来て、server_tool_use は繰り返されない
+        (P0 (c1))。周の途中で tool_result 以外の user ブロックを積まない
+        (積むと「結果の無いサーバー側ツール」の 400 — 文書)。
+        保留を落として組み直しても 200 で、モデルが検索を出し直す (P0 (c2)) —
+        写しを使うのは払い (入力 10,901 対 13,910) とまとめの中身のため
+      - **pause_turn** (canonical Finish::Paused。作るのは Anthropic の decode だけ):
+        ツール呼び出しが 0 本なら、写しつきの assistant の発話を積み、利用者の発話を
+        足さずに次の周を回す。続きの周は普通の 1 周で、max_tool_iterations が上限
+        (新しい定数は無い)。**P0 で 2 回とも再現しなかった** — この項は文書だけに
+        接地している
+      - **まとめ呼び出し** (tools を残して system に 1 文 + tool_choice none):
+        保留の写しはそのまま送る (P0 (g1): 保留の検索が実行され、引用して答えた)。
+        検索の済んだ組の写しもそのまま送る (P0 (g3): 引用 3 件。組み直すと引用 0 件)。
+        **最後の周で止まった (Paused) 応答だけは積まない** — 積むと要求が assistant の
+        発話で終わり、5 世代の prefill 禁止に掛かりうる (P0 で撃てていない)。上限の
+        到達として扱う (tool_limit_hit)
+    decode: |
+      - 新しいブロック 2 種: server_tool_use {id (srvtoolu_…), name, input.query}
+        / web_search_tool_result {tool_use_id, content}。content は
+        **web_search_result の配列** ({url, title, page_age, encrypted_content, type}。
+        page_age は "36 days ago" の相対形) か、**失敗のオブジェクト**
+        {"type": "web_search_tool_result_error", "error_code": …}
+        (too_many_requests / invalid_tool_input / max_uses_exceeded / query_too_long /
+        request_too_large / unavailable)。失敗でもターンは止めない (P0 (h))
+      - text の citations: web_search_result_location {url, title, cited_text,
+        encrypted_index, type}。cited_text は 150 字 + "..." の 153 字まで、0 字の
+        ことがある。本文 0 字で citations だけのブロックがある (P0 (e0) で 7 件)
+      - Grounding: queries = server_tool_use.input.query、sources = 引用の url
+        (重複を落とす。title が空なら url)、engine = anthropic
+      - 既知のブロックは dropped content blocks: に入れない
+      - usage.server_tool_use {web_search_requests, web_fetch_requests} は検索を
+        実行しなかった応答では欄ごと無い (0 と読む)。検索結果は input_tokens に入る
+        (1 検索 約 10,000〜12,000 トークン。P0 (a))。**検索料 (1,000 検索 $10) は
+        予算・統計・金額に入れない** — ログの requests= だけ
+    observability: |
+      anthropic search: calls= results= cited= requests= errors= deferred= paused=
+      の 1 行。検索を含む応答でだけ出す。本文と検索語は書かない (#71)。agent= は
+      無い (decode 層は個体を知らない。gemini tools: / pplx tools: と同じ)。
+      calls と requests は 1 対 1 にならない — 保留の応答は calls=1 requests=0、
+      その次の応答は calls=0 requests=1 (P0 (c0)(c1)) / 失敗した検索は課金されない
+      ので calls に数えて requests に数えない (P0 (h))
