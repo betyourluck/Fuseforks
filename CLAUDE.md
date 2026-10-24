@@ -2775,7 +2775,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 - **利用者の後始末**: ミュゼのテンプレートを `muse-spark-latest` へ、`gemini-3.8-flash` のプロトコルを Gemini（ネイティブ）へ戻す
 
 **次の一手**: winget 0.6.3（PR #461026）のマージ確認 → タグ履歴へ書き戻し / 数式の残り 2 つ（表示倍率との組み合わせ・
-黒板の付箋）/ `maxRetries` 6 の観測。
+黒板の付箋）/ `maxRetries` 6 の観測。winget の PR は 2026-10-24 19:02 UTC（日曜 04:02 JST）に提出し、同日のうちに自動検証
+（`Azure-Pipeline-Passed`）まで通って**人の承認待ち**。利用者の見立ては「日曜なので 1 日くらい」— 実績でも、承認の段で
+止まった 0.3.4 は 29 時間だった。
 
 ## 現在地（2026-10-24 更新）
 
@@ -4551,8 +4553,8 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   数式は黒板の付箋と表示倍率との組み合わせを個別に確かめていない）。捏造したモデルの名前はノートに出さなかった（実測の記録は
   Spec 70 の P0 が持つ）。**タグは利用者、publish・winget・tap は Neo** — winget 0.6.3 = PR #461026（`gh repo sync` →
   `wingetcreate update … --out` で生成して確かめてから `wingetcreate submit --token`。`InstallerLocale` 無しを引き写し・ProductCode は
-  `{99C49CCF-…}`・`InstallerSha256` は Release の digest と一致）/ tap `155c0a2`（sha256 は Release API の `digest`）/
-  LP は `releases/latest` なので触らない
+  `{99C49CCF-…}`・`InstallerSha256` は Release の digest と一致。2026-10-24 19:02 UTC 提出 = publish の 1 分後、自動検証は通過・
+  人の承認待ち）/ tap `155c0a2`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.6.2` = `6e2c8cf`（2026-10-20 JST タグ。23 コミット）— [Spec 69](specs/69_launch-and-exit.md)（起動と終了 — トレイ常駐・
   起動時の一括起動・サインイン時の自動起動。3 つとも既定 OFF）+ [Spec 68](specs/68_template-connection-test.md)（モデルテンプレートの
   接続テスト）+ 設定ダイアログを閉じるときの確認に右のファイルを含める・承認待ちの帯 + 修正（エラー本文の文字境界の panic /
