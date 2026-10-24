@@ -7843,13 +7843,16 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 71](specs/71_anthropic-web-search.md)（Anthropic の web 検索 — サーバー側ツールと、1 ターンの中で応答のブロックを
-  送り返す欄）: **Draft rev1**（2026-10-25 起票。P0 未着手・未決 2 = `max_uses` を定数 5 で送るか / web fetch を同じ Spec に入れるか）。
+  送り返す欄）: **Draft rev2**（2026-10-25 起票 → 同日、査読 10 点で rev2 = 採用 4 / 前提を訂正して採用 3 / 一部採用 1 / 不採用 1 /
+  反証 1。表は Spec の Notes 2。最大の変更は**最後の周で止まった・保留が残ったときはまとめ呼び出しへ持ち込まない** — まとめ呼び出しは
+  system を足して `tool_choice: none` で呼ぶので、止まった応答を積むと要求が assistant で終わり 5 世代の prefill 禁止に掛かる。
+  P0 未着手・未決 2 = `max_uses` を定数 5 で送るか（1 要求 $0.05・1 ターンは `5 × max_tool_iterations`）/ web fetch を同じ Spec に入れるか）。
   起点は利用者が持ち込んだ公式文書。版は `web_search_20250305`（dynamic filtering の 20260209 以降は応答にコード実行の
   ブロックが混ざるので後の段）。**前提の穴が 2 つ** — `pause_turn` は周回ループが `finish` を見ないので途中の本文が
   最終回答になる / 村のツールと同じ周で検索を呼ぶと検索は保留され、`encode_message` が assistant の発話を本文 +
   `tool_use` に組み直すので保留のブロックが次の要求に乗らない。処方は canonical に**応答のブロックの写し**
   （`replay`・`#[serde(skip)]`・1 ターン限り）を足すこと = **Spec 48 D3「不透明な part の席を作らない」を Anthropic について
-  覆す**（Gemini は落としても取り直しで払いが同額だったが、こちらは検索そのものが走らない）。P0 は 15 項目の probe 表
+  覆す**（Gemini は落としても取り直しで払いが同額だったが、こちらは検索そのものが走らない）。P0 は 16 項目の probe 表
   （予測つき・見積もり 3 ドル前後・組織の設定を変える (i) は利用者が撃つか決める）
 - [Spec 70](specs/70_mcp-image-results.md)（MCP のツール結果で画像を受け取る）: **Done**（2026-10-24〜25。
   **P4 = NIK のライブビューで実機 7 項目**（Meta / Anthropic / Gemini / OpenAI Responses / OpenAI 互換で `images=1` と入力の増え、
