@@ -132,6 +132,7 @@ Fuseforks/
             ├── lib/templateProbe.ts Connection test button gate, result tone and dictionary keys (pure; Spec 68)
             ├── lib/closeConfirm.ts  What the close confirmation says, and whether ✕ hides the window (pure; Spec 69)
             ├── lib/startupSettings.ts Notes on the Startup and exit page (pure; Spec 69)
+            ├── lib/kizunaLink.ts    Who can start a tie on the map, and which direction of a bidirectional tie is cut (pure)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -146,6 +147,7 @@ Fuseforks/
             └── components/
                 ├── AgentList.vue / AgentCard.vue      Left: agent list
                 ├── TopologyMap.vue                    Center-top: Kizuna (the servant ties)
+                ├── TieCutVisual.vue                   Avatars and direction glyphs in the dialog for cutting a bidirectional tie
                 ├── PlanWavePane.vue                   Center-bottom: Work Status tab (plan execution trace)
                 ├── BlackboardPane.vue / BottomPaneTabs.vue   Center-bottom: Blackboard tab (shared working notes)
                 ├── ChatPanel.vue / ChatInput.vue      Right: conversation (speech bubbles)
@@ -243,11 +245,12 @@ stays true even when the artwork changes.
 
 **The upper-center pane, "Kizuna" (絆 — bonds between servants), shows who can speak to whom** (renamed 2026-08-05; formerly "village map"). The name comes from the *Kizuna* system in KOEI TECMO's *Romance of the Three Kingdoms XIII*: as there, **the ties themselves are the mechanism, not decoration**. Without a tie an utterance does not arrive; draw one and it does. The pane keeps the name `Kizuna` in English too — *ties* and *connections* are used as common nouns in prose, but **the name on screen is Kizuna**.
 
-**There are two ways to draw a tie** (both human operations — humans draw the lines):
+**There are three ways to draw a tie** (all human operations — humans draw the lines):
 
 | Entry point | Operation | Applied |
 |---|---|---|
 | Servant list | **Drag a card onto a node in Kizuna** (2026-08-06) | Immediately |
+| Kizuna | **Right-click a node → "Draw a tie from here" → click the destination node** (2026-10-24) | Immediately |
 | Servant settings | Connection checkboxes | On save |
 
 ~~| Kizuna | Drag between node handles |~~ — **this row was wrong** (removed
@@ -257,7 +260,21 @@ handles at all, so **dragging between handles on the map never existed**. The
 
 Ties are **directed** (arrow at the end); a bidirectional pair is drawn as a single line with arrows on both ends. A card drop starts from the card's side — the dropped-on servant becomes someone the card's servant can delegate to. Dropping onto a servant that already has the reverse tie makes it bidirectional. Dropping onto an already-connected servant or onto yourself makes the node pulse briefly — "it arrived but nothing was drawn" (success is signaled by the line itself appearing; no toast). While dragging, the cursor turns to `copy` over the map.
 
-**Ties to a judge (a diamond node) are drawn the same two ways** ([Spec 62](specs/62_judge-agents.md)).
+**Drawing a tie on the map takes two clicks** (2026-10-24). Choose "Draw a tie from here" from a node's
+right-click menu: the source node's ring turns into a moving dashed line and the header shows a hint.
+Clicking the destination node draws the one tie source → destination and ends. The rules are the same
+as a card drop; clicking an already-connected node makes it pulse and lets you pick another destination.
+Clicking the source again, clicking empty space, clicking a tie, or Esc cancels. It is not a drag because
+dragging a node already moves it. No line follows the pointer (per-frame drawing fell below 60 fps in
+Spec 21 and was dropped). A judge cannot be the source (its menu does not open).
+
+**Clicking a tie cuts it.** A one-way tie asks for confirmation (which can be turned off under System
+Settings > User Interface > Message visibility, "Cutting a tie"). **A bidirectional tie opens a dialog to choose "Cut both
+directions / Cut only A → B / Cut only B → A"** (2026-10-24) — it is a choice of direction, not a
+confirmation, so it appears even with that setting off. Before, clicking a bidirectional tie cut both
+directions, and keeping one of them meant going to the settings dialog.
+
+**Ties to a judge (a diamond node) can be drawn all three ways — card drop, map, or settings** ([Spec 62](specs/62_judge-agents.md)).
 The **dashed** lines leaving a judge are drawn from the destinations in its `judge.toml` and
 **cannot be drawn or cut on the map** — the file is the source of truth, and writing the same
 fact in two places lets the drawn destinations drift from where requests really go. An inactive

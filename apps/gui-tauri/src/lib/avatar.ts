@@ -24,6 +24,7 @@
  * - `AgentList.vue`（カード。`AgentCard.vue` へ prop で渡す）
  * - `AgentSettingsDialog.vue`（設定のプレビュー）
  * - `CommandApprovalDialog.vue`（コマンド承認の見出し）
+ * - `TieCutVisual.vue`（双方向の絆を切るダイアログの見出しと選択肢の絵）
  * - `SettingsDialog.vue`（利用者のアイコン。ここだけ `state.userIcon`）
  */
 

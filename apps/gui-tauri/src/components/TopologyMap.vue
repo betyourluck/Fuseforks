@@ -19,10 +19,14 @@
  * **失ったものが 1 つある** — このライブラリには**辺をドラッグで作る機構が無い**
  * （イベントに接続系が無い）。Spec 21 の 3 経路のうち**ハンドル引きが消える**。
  * カードの drop と役職ダイアログのチェックは残るので、辺を作れなくはならない。
+ * **2026-10-24 に地図の上の入口を足した** — ノードの右クリックメニュー「ここから絆を伸ばす」→
+ * 行き先のノードをクリック（接続モード）。ドラッグはノードの配置の移動に使っているので、
+ * 張る操作はクリック 2 回にした。規則は drop と同じ `tieAddition`。
  *
  * 辺の追加・削除はグラフ上の操作をそのままコアへ流す。
  * 自己ループと未登録先はコア側が拒否するので、ここでは事前検査しない
- * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。
+ * （検査を二重に持つと、片方だけ直したときに規則が食い違う）。接続モードで張るときだけは
+ * カード drop と同じ `tieAddition` を通す — 接続済みの相手を「張れなかった」と光らせるため。
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -46,7 +50,10 @@ import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useJudgeDialog } from "../composables/useJudgeDialog";
 import { judgeEdges, judgeStatusText } from "../lib/judges";
 import { avatarHue, avatarInitial } from "../lib/avatar";
-import { askConfirm } from "../composables/useConfirm";
+import { tieAddition } from "../lib/kizunaDrop";
+import { canStartLink, edgeCutPlan, type EdgeCut } from "../lib/kizunaLink";
+import { askChoice } from "../composables/useConfirm";
+import TieCutVisual from "./TieCutVisual.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
 import { STATUS_LABEL_KEYS, type AgentId } from "../types";
@@ -310,6 +317,8 @@ const configs = defineConfigs({
 function ringClass(id: AgentId): string {
   const judge = judgeOf(id);
   if (judge) return judge.status.kind === "active" ? "is-judge" : "is-judge is-judge-off";
+  // 接続モードの起点。選択より先に見る — 起点が選択中の個体でも、いま何をしているかを示す。
+  if (id === linkSource.value) return "is-link-source";
   if (id === state.selectedAgentId) return "is-selected";
   const agent = state.agents.find((a) => a.id === id);
   switch (agent?.status) {
@@ -373,52 +382,190 @@ function agentLabel(id: string): string {
 /**
  * 辺を切る。
  *
- * 双方向を 1 本で描いている以上、その線を切れば**両方向とも切れる**のが
- * 見た目と一致する。片方だけ残すなら、設定ダイアログの接続先チェックで行う。
+ * **双方向の線は、どの向きを切るかを選ばせる**（2026-10-24）—「両方切る / A → B だけ /
+ * B → A だけ」。1 本で描いている以上、黙って両方切るのは見た目と一致するが、片方だけ残したい
+ * ときに設定ダイアログへ回らせていた。**この選択は「線削除の確認」の OFF でも出す** — 確認ではなく
+ * 向きの選択で、出さなければ何を切るかが決まらない。
  *
- * 線は棚卸しで**唯一、確認なしで消える破壊的操作**だった（Spec 13 S4）。
- * 確認は既定 ON で、システム設定「線削除の確認」から切れる。
+ * 片方向の線は今までどおり。線は棚卸しで**唯一、確認なしで消える破壊的操作**だった
+ * （Spec 13 S4）ので、確認は既定 ON で、システム設定「線削除の確認」から切れる。
  */
 async function removeEdge(edgeId: string): Promise<void> {
   const edge = edges.value[edgeId];
   if (!edge) return;
 
-  if (settings.confirmEdgeDelete) {
-    const arrow = edge.bidirectional ? "⇄" : "→";
-    const ok = await askConfirm({
-      title: t("map.confirmDeleteTitle"),
-      message:
-        `${agentLabel(edge.source)} ${arrow} ${agentLabel(edge.target)}` +
-        (edge.bidirectional ? `\n${t("map.bidirectionalNote")}` : ""),
-      confirmLabel: t("map.confirmDeleteLabel"),
-      danger: true,
+  const from = nameOf(edge.source as AgentId);
+  const to = nameOf(edge.target as AgentId);
+  const visual = (mode: "pair" | "both" | "one", a: string, b: string) => ({
+    component: TieCutVisual,
+    props: { mode, from: a, to: b, bidirectional: edge.bidirectional === true },
+  });
+
+  let cut: EdgeCut = "both";
+  if (edge.bidirectional) {
+    const choice = await askChoice({
+      title: t("map.cutTitle"),
+      message: `${agentLabel(edge.source)} ⇄ ${agentLabel(edge.target)}`,
+      lead: visual("pair", edge.source, edge.target),
+      choices: [
+        {
+          key: "both",
+          label: t("map.cutBoth"),
+          description: t("map.cutBothNote"),
+          visual: visual("both", edge.source, edge.target),
+          danger: true,
+          emphasis: true,
+        },
+        {
+          key: "forward",
+          label: t("map.cutOne", { from, to }),
+          description: t("map.cutOneNote", { from, to }),
+          visual: visual("one", edge.source, edge.target),
+          danger: true,
+        },
+        {
+          key: "backward",
+          label: t("map.cutOne", { from: to, to: from }),
+          description: t("map.cutOneNote", { from: to, to: from }),
+          visual: visual("one", edge.target, edge.source),
+          danger: true,
+        },
+      ],
     });
-    if (!ok) return;
+    if (!choice) return;
+    cut = choice as EdgeCut;
+  } else if (settings.confirmEdgeDelete) {
+    // 片方向の線も同じ札の形で確かめる（2026-10-24 利用者要望 — 見た目をそろえる）。
+    // 見出しは「どの向きを〜」にしない。切れる向きは 1 つしかなく、問いの答えが 1 つになる。
+    const choice = await askChoice({
+      title: t("map.confirmDeleteTitle"),
+      message: `${agentLabel(edge.source)} → ${agentLabel(edge.target)}`,
+      lead: visual("pair", edge.source, edge.target),
+      choices: [
+        {
+          key: "forward",
+          label: t("map.cutSingle", { from, to }),
+          description: t("map.cutSingleNote"),
+          visual: visual("one", edge.source, edge.target),
+          danger: true,
+        },
+      ],
+    });
+    if (!choice) return;
   }
 
-  const forward = state.agents.find((a) => a.id === edge.source);
-  const backward = edge.bidirectional
-    ? state.agents.find((a) => a.id === edge.target)
-    : undefined;
-
-  if (forward) {
-    await orchestrator.setConnections(
-      forward.id,
-      forward.connectedAgents.filter((id) => id !== edge.target),
-    );
-  }
-  if (backward) {
-    await orchestrator.setConnections(
-      backward.id,
-      backward.connectedAgents.filter((id) => id !== edge.source),
-    );
+  const drawn = { source: edge.source, target: edge.target, bidirectional: edge.bidirectional === true };
+  for (const change of edgeCutPlan(state.agents, drawn, cut)) {
+    await orchestrator.setConnections(change.id, change.connectedAgents);
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 地図の上で絆を張る（2026-10-24）— 右クリックメニュー →「ここから絆を伸ばす」→
+ * 行き先のノードをクリック。ポインタを追う線は描かない（毎フレームの描画は Spec 21 の
+ * D2 で 60fps を割って見送った前例がある）。起点の輪と見出しの案内で状態を示す。
+ * ------------------------------------------------------------------ */
+
+/** 右クリックメニュー。座標は地図の枠（`canvas`）の中の位置。 */
+const menu = ref<{ id: AgentId; x: number; y: number } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+
+/** 接続モードの起点。`null` なら通常のクリック（選択）。 */
+const linkSource = ref<AgentId | null>(null);
+
+/** メニューのおおよその大きさ。枠の右端・下端で切れないように寄せるためだけに使う。 */
+const MENU_SIZE = { width: 184, height: 40 };
+
+function openMenu(id: AgentId, event: MouseEvent): void {
+  const box = canvas.value?.getBoundingClientRect();
+  if (!box) return;
+  menu.value = {
+    id,
+    x: Math.max(0, Math.min(event.clientX - box.left, box.width - MENU_SIZE.width)),
+    y: Math.max(0, Math.min(event.clientY - box.top, box.height - MENU_SIZE.height)),
+  };
+}
+
+function startLink(id: AgentId): void {
+  menu.value = null;
+  linkSource.value = id;
+}
+
+function cancelLink(): void {
+  linkSource.value = null;
+}
+
+/** 張れなかったノードを短く光らせる（drop と同じ合図 — 「届いたが張られなかった」）。 */
+function pulse(id: AgentId): void {
+  const node = canvas.value?.querySelector(`[data-kizuna-node="${CSS.escape(id)}"]`);
+  if (!node) return;
+  node.classList.add("kizuna-pulse");
+  window.setTimeout(() => node.classList.remove("kizuna-pulse"), 400);
+}
+
+/**
+ * 接続モードで行き先をクリックした。**1 本張ったら終わる。** 起点をもう一度押せば取り消し。
+ * 張れない相手（接続済み・自分自身）は光らせて、モードは続ける — 別の相手を選び直せる。
+ */
+async function finishLink(target: AgentId): Promise<void> {
+  const source = linkSource.value;
+  if (!source) return;
+  if (target === source) {
+    cancelLink();
+    return;
+  }
+  const next = tieAddition(state.agents, source, target, state.judges.map((j) => j.id));
+  if (!next) {
+    pulse(target);
+    return;
+  }
+  cancelLink();
+  await orchestrator.setConnections(source, next);
+}
+
+/** Esc で接続モードとメニューを閉じる。 */
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key !== "Escape") return;
+  if (menu.value) menu.value = null;
+  else if (linkSource.value) cancelLink();
+}
+
+/** メニューの外を押したら閉じる。 */
+function onPointerdown(event: PointerEvent): void {
+  if (!menu.value) return;
+  if (menuEl.value && event.target instanceof Node && menuEl.value.contains(event.target)) return;
+  menu.value = null;
+}
+
+// 起点やメニューの個体が見えなくなったら（グループを隠した・削除した）閉じる。
+watch(visibleIds, (ids) => {
+  if (linkSource.value && !ids.has(linkSource.value)) cancelLink();
+  if (menu.value && !ids.has(menu.value.id)) menu.value = null;
+});
+
 const handlers: EventHandlers = {
+  // 接続モードの間は、クリックを行き先の選択に使う（選択状態も判断役のダイアログも変えない）。
   // 判断役は会話の相手ではないので選択状態に入れず、編集ダイアログを開く（Spec 62 D10）。
-  "node:click": ({ node }) =>
-    isJudge(node) ? judgeDialog.open(node as AgentId) : orchestrator.select(node as AgentId),
+  "node:click": ({ node }) => {
+    if (linkSource.value) {
+      void finishLink(node as AgentId);
+      return;
+    }
+    void (isJudge(node) ? judgeDialog.open(node as AgentId) : orchestrator.select(node as AgentId));
+  },
+  // 右クリックメニュー。**OS のメニューは止める**（配布ビルドは main.ts が止めているが、
+  // 開発ビルドでは出る）。起点にできない個体（判断役）では開かない。
+  "node:contextmenu": ({ node, event }) => {
+    event.preventDefault();
+    if (!canStartLink(state.agents, node as AgentId)) return;
+    cancelLink();
+    openMenu(node as AgentId, event);
+  },
+  // 何も無いところのクリックで接続モードを取り消す。
+  "view:click": () => {
+    menu.value = null;
+    cancelLink();
+  },
   "node:pointerover": ({ node }) => {
     hovered.value = node as AgentId;
   },
@@ -430,15 +577,23 @@ const handlers: EventHandlers = {
     fit();
   },
   // 点描は容器の CSS 背景なので、視点の変化をこちらで写す。
+  // メニューは地図の枠に固定で置くので、視点が動いたら閉じる（ノードから離れたまま残さない）。
   "view:zoom": (level) => {
     zoom.value = level;
+    menu.value = null;
   },
   "view:pan": (position) => {
     pan.value = { x: position.x, y: position.y };
+    menu.value = null;
   },
   // まとめ表示のときは `edge` が無く `edges` が来るので、単体のときだけ切る。
   // 判断役 → サーヴァントの線は `judge.toml` が正本なので、地図から切らない。
+  // 接続モードの間に線を押したら、切らずにモードを取り消す（張るつもりの操作で線を消さない）。
   "edge:click": ({ edge }) => {
+    if (linkSource.value) {
+      cancelLink();
+      return;
+    }
     if (edge && !edges.value[edge]?.judge) void removeEdge(edge);
   },
   // ドラッグの結果を `world.json` へ返す。**移動した個体だけ**を書く。
@@ -492,12 +647,16 @@ function scheduleFit(): void {
 }
 
 onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("pointerdown", onPointerdown, true);
   if (typeof ResizeObserver !== "function" || !canvas.value) return;
   observer = new ResizeObserver(scheduleFit);
   observer.observe(canvas.value);
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("pointerdown", onPointerdown, true);
   observer?.disconnect();
   if (settle) clearTimeout(settle);
 });
@@ -516,10 +675,41 @@ onBeforeUnmount(() => {
           {{ $t("map.bidirectional", { count: bidirectionalCount }) }}
         </span>
       </span>
+      <!-- 接続モードの案内。起点の輪と対で、いま何を待っているかを示す。 -->
+      <span v-if="linkSource" class="min-w-0 truncate text-accent" data-kizuna-link-hint>
+        {{ $t("map.linkHint", { name: nameOf(linkSource) }) }}
+      </span>
 
     </header>
 
-    <div ref="canvas" class="kizuna relative min-h-0 flex-1" :style="dotStyle" data-tour="kizuna">
+    <div
+      ref="canvas"
+      class="kizuna relative min-h-0 flex-1"
+      :class="{ 'is-linking': linkSource }"
+      :style="dotStyle"
+      data-tour="kizuna"
+    >
+      <!--
+        ノードの右クリックメニュー（2026-10-24）。**地図の枠の中に absolute で置く** — 視点が動くと
+        閉じる（`view:pan` / `view:zoom`）。外を押す・Esc でも閉じる。項目は「ここから絆を伸ばす」だけ。
+      -->
+      <div
+        v-if="menu"
+        ref="menuEl"
+        class="kizuna-menu absolute z-20 min-w-44 overflow-hidden rounded border border-line bg-surface-1 py-1 text-[12px] shadow-lg"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+        role="menu"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          class="block w-full px-3 py-1 text-left whitespace-nowrap text-ink transition hover:bg-accent/10 hover:text-accent"
+          @click="startLink(menu.id)"
+        >
+          {{ $t("map.linkFrom") }}
+        </button>
+      </div>
+
       <!--
         選択中の個体の詳細。**ノードから外した 3 つ（役職・モデル・トークン）の
         行き先**で、地図の上に重ねる（2026-08-13 利用者要望）。
@@ -828,6 +1018,26 @@ onBeforeUnmount(() => {
 .kizuna :deep(.is-selected .kizuna-ring) {
   stroke: var(--color-accent);
   stroke-width: 8;
+}
+
+/*
+ * 接続モードの起点（2026-10-24）。**流れる破線の accent** — 選択（太い実線）とも、稼働中の辺の
+ * 動く破線（辺の側）とも形で分かれる。行き先を待っている間だけ動く。
+ */
+.kizuna :deep(.is-link-source .kizuna-ring) {
+  stroke: var(--color-accent);
+  stroke-width: 6;
+  stroke-dasharray: 6 4;
+  animation: kizuna-link-dash 0.8s linear infinite;
+}
+@keyframes kizuna-link-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+/* 行き先を選んでいる間は、ノードの上で十字のカーソル（掴むカーソルのままだと配置の移動に見える）。 */
+.kizuna.is-linking :deep(.kizuna-node) {
+  cursor: crosshair;
 }
 
 /*

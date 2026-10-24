@@ -111,6 +111,7 @@ Fuseforks/
             ├── lib/templateProbe.ts 连接测试按钮的门槛・结果区的颜色与字典键（纯函数。Spec 68）
             ├── lib/closeConfirm.ts  关闭确认的内容，以及 ✕ 是否隐藏窗口（纯函数。Spec 69）
             ├── lib/startupSettings.ts 启动与退出页面的提示判定（纯函数。Spec 69）
+            ├── lib/kizunaLink.ts    在地图上牵羁绊的起点判定・双向连线切断哪个方向（纯函数）
             ├── lib/assist.ts        AI 起草辅助的模板选择・应用前的差异（纯函数。Spec 63）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）
@@ -125,6 +126,7 @@ Fuseforks/
             └── components/
                 ├── AgentList.vue / AgentCard.vue      左: Agent 列表
                 ├── TopologyMap.vue                    中上段: Servant 的羁绊
+                ├── TieCutVisual.vue                   切断双向羁绊的对话框中的头像与方向图示
                 ├── PlanWavePane.vue                   中下段: 工作情况标签页（plan 的执行痕迹）
                 ├── BlackboardPane.vue / BottomPaneTabs.vue   中下段: 黑板标签页（共享工作便签的浏览与删除）
                 ├── ChatPanel.vue / ChatInput.vue      右: 会话（气泡形式）

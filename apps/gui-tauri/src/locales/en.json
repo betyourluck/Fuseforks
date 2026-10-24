@@ -168,9 +168,9 @@
       "instantNote": "Changes are saved immediately, on this machine only (not part of the village configuration).",
       "edgeDelete": {
         "heading": "Cutting a tie",
-        "intro": "In Kizuna, clicking a tie cuts it. A cut tie cannot be restored.",
+        "intro": "In Kizuna, clicking a tie cuts it. A cut tie cannot be restored. For a bidirectional tie, a dialog asking which direction to cut appears regardless of this setting.",
         "checkbox": "Show a confirmation dialog before deleting",
-        "offWarning": "While confirmation is off, a single click on a tie cuts it."
+        "offWarning": "While confirmation is off, a single click on a one-way tie cuts it."
       },
       "presence": {
         "heading": "Join and leave notices",
@@ -266,7 +266,8 @@
   },
   "confirm": {
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "cancel": "Cancel"
   },
   "errorBoundary": {
     "renderFailed": "Failed to render: {label}",
@@ -559,13 +560,20 @@
   },
   "map": {
     "heading": "Kizuna",
-    "headingHelp": "Drop a card onto a node to tie them / click a tie to cut it (bidirectional ties are cut both ways) / drag nodes to move them",
+    "headingHelp": "Drop a card onto a node, or right-click a node and choose \"Draw a tie from here\", to tie them / click a tie to cut it (for a bidirectional tie you choose the direction) / drag nodes to move them",
     "summary": "{nodes} servants / {edges} ties",
     "bidirectional": "({count} bidirectional)",
     "agentLabel": "{id} ({name})",
     "confirmDeleteTitle": "Cut this tie?",
-    "bidirectionalNote": "This is a bidirectional tie, so both directions will be cut.",
-    "confirmDeleteLabel": "Cut the tie",
+    "cutSingle": "Cut {from} → {to}",
+    "cutSingleNote": "No tie will remain between these two",
+    "cutTitle": "Which direction do you want to cut?",
+    "cutBoth": "Cut both directions",
+    "cutBothNote": "Cuts the tie between these two in both directions",
+    "cutOne": "Cut only {from} → {to}",
+    "cutOneNote": "{to} → {from} stays",
+    "linkFrom": "Draw a tie from here",
+    "linkHint": "Click the node to draw a tie from {name} to (Esc to cancel)",
     "autoFit": "Fit automatically after the pane is resized",
     "fit": "Fit",
     "fitTitle": "Fit the whole graph into view",
