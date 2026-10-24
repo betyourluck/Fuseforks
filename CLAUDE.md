@@ -7811,12 +7811,17 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 70](specs/70_mcp-image-results.md)（MCP のツール結果で画像を受け取る）: **rev2・P0〜P1 完了**（2026-10-24。
+- [Spec 70](specs/70_mcp-image-results.md)（MCP のツール結果で画像を受け取る）: **rev2・P0〜P2 完了**（2026-10-24〜25。
+  **P2 = 各ワイヤ**: Anthropic は `tool_result` の中（画像 → テキスト）/ Gemini は `functionResponse.parts` / Responses 4 社は
+  共有の `responses_input.rs` の 1 箇所で `function_call_output.output` を列に（テキスト → 画像）/ OpenAI 互換は `role: "tool"` を
+  文字列のまま、画像は続けて並ぶツール結果の後ろの利用者の発話へ。**画像の無いツール結果は 7 ワイヤとも前と同じバイト列**
+  （既存の llm の単体 171 本が無改変で通った）。置き場の表は `tests/tool_image_placement.rs` が凍結し、**`Provider` の述語は
+  置かなかった**（実行時に表を読む者が居ない）。これで画像がワイヤへ出る。**残りは P3（台帳）と P4（NIK で実機）**。以下は P1 —
   **P1 = コア**: `tool_image.rs`（正規化の 2 経路・1 要求 20 枚・400 の外し方・コアが足す文 6 つ）/ `ToolOutput` と
   `AgentTool::call_with_media` / `render_tool_output` / `ChatMessage.attachment_caption` / ターンの層の送り直し・
-  RepeatGuard の要約値・計器 3 行。**adapter は 1 行も変えていないので、P1 の時点では画像はワイヤへ出ない — P1 と P2 の
-  間で版を出さない**。形式は `mimeType` ではなくバイト列で決める / 展開は 1 辺 16,384px まで（伸張爆弾）/ 画像だけの結果は
-  「（画像 N 枚）」。変異 9 回とも予測どおり。記録は Spec の「P1 実装記録」。**次は P2（各ワイヤ）**。以下は P0 と rev2 —
+  RepeatGuard の要約値・計器 3 行。P1 の時点では adapter を変えておらず画像はワイヤへ出なかった（P2 で解けた）。
+  形式は `mimeType` ではなくバイト列で決める / 展開は 1 辺 16,384px まで（伸張爆弾）/ 画像だけの結果は
+  「（画像 N 枚）」。変異 9 回とも予測どおり。記録は Spec の「P1 実装記録」。以下は P0 と rev2 —
   **rev2 = 査読 9 点** → 採用 6 / 前提を訂正して採用 1（利用者の添付と共有するのは 1 枚の上限の値で予算ではない — ただし
   ターンの中で画像が積み上がり Anthropic の 1 要求 100 枚に届く穴があったので「1 要求 20 枚・古いものから外す」を新設）/
   範囲を広げて採用 1（D5 の送り直しを `LlmBackend::chat` に置いていた = 言語を知らない層が文を書く #149 の形。ターンの層へ移し、

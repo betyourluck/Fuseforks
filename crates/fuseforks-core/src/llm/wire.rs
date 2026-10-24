@@ -472,8 +472,8 @@ pub enum AnthropicRequestBlock {
     ToolResult {
         /// 対応する `tool_use` の ID。
         tool_use_id: String,
-        /// 結果本文。
-        content: String,
+        /// 結果本文。画像が無ければ素の文字列、あれば画像とテキストのブロック列（Spec 70）。
+        content: AnthropicToolResultContent,
         /// キャッシュ指示。ここまでを再利用対象にする。
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
@@ -496,6 +496,38 @@ pub enum AnthropicRequestBlock {
         /// キャッシュ指示。ここまでを再利用対象にする。
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
+    },
+}
+
+/// `tool_result` の本文（Spec 70 D1 = ネイティブ）。
+///
+/// **画像が無ければ素の文字列** — Spec 70 の前と同じバイト列を保つ（`OaiContent` と同じ規律。
+/// 常にブロック列を作ると、画像を一度も返さないツールの要求まで形が変わる）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum AnthropicToolResultContent {
+    /// 素の文字列（既定）。
+    Text(String),
+    /// ブロック列（画像を返したツール結果だけ）。
+    Blocks(Vec<AnthropicToolResultBlock>),
+}
+
+/// `tool_result` の中に置けるブロック（Spec 70）。
+///
+/// **`cache_control` を持たせない** — 境界は `tool_result` ブロック自身に打つ
+/// （`place_message_breakpoint`）。中のブロックに打つ経路を作ると、境界が 2 段になる。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicToolResultBlock {
+    /// テキスト。
+    Text {
+        /// 本文。
+        text: String,
+    },
+    /// ツールが返した画像。
+    Image {
+        /// 画像の実体（base64）。
+        source: AnthropicBase64Source,
     },
 }
 
@@ -798,6 +830,11 @@ pub struct GeminiFunctionResponse {
     pub name: String,
     /// 結果オブジェクト。文字列を直に置けないので `{"result": ...}` で包む。
     pub response: serde_json::Value,
+    /// ツールが返した画像（Spec 70 D1 = ネイティブ。`inlineData` だけを持つ part の列）。
+    ///
+    /// **空なら欄ごと出さない** — 画像を返さないツールの結果は Spec 70 の前と同じバイト列。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<GeminiPart>,
 }
 
 /// Google 側が実行した組み込みツールの記録。
@@ -1243,8 +1280,9 @@ pub enum ResponsesInputItem {
         kind: &'static str,
         /// 対応する呼び出しの ID。
         call_id: String,
-        /// 実行結果の本文。
-        output: String,
+        /// 実行結果の本文。**画像が無ければ素の文字列**、あれば `input_text` と
+        /// `input_image` の列（Spec 70 D1 = ネイティブ。4 社とも P0 で通った）。
+        output: ResponsesContent,
     },
 }
 

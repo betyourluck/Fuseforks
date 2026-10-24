@@ -2072,6 +2072,15 @@ enums:
            (代償: ネイティブで読める接続先でも利用者の発話が 1 つ増える)。
            **「代替」は「ツール結果の直後の利用者の発話」の 1 つの意味だけ** (rev2)。本文は
            「({ツール名} の結果の画像 N 枚)」で、送り手封筒は付けない
+           P2 (各ワイヤ): 表は tests/tool_image_placement.rs が逐語で凍結する (画像を載せたとき要求の
+           発話の列が 1 つ伸びるか = 代替、伸びないか = ネイティブ)。**Provider の述語は置かない** —
+           実行時に表を読む者が居ないので、置くとテストだけが読む 2 つ目の写しになる (carries は送信の
+           入口が読むので述語がある)。並びは P0 で通った形: Anthropic は画像 → テキスト / Responses 4 社は
+           input_text → input_image (part は利用者の発話と同じ part_for) / Gemini は functionResponse.parts。
+           運ぶのは画像の種別だけ。OpenAI 互換の運び台は、続けて並ぶツール結果の後ろへまとめて置く
+           (role: "tool" の並びを途切れさせない。本文が無ければ画像だけ)。互換の口の WebP は Spec 23 の
+           JPEG フォールバックを通る。**画像の無いツール結果は 7 ワイヤとも Spec 70 の前と同じバイト列**
+           (Anthropic の content は文字列 / Responses の output は文字列 / Gemini は parts の欄ごと出さない)
         3. 形式と大きさ (rev2 で 2 経路に割った):
            - 再エンコードしない: image/jpeg・image/webp で長辺 1568px 以下・2 MB 以下。MCP が返した
              バイト列をそのまま送る (WebP の透明は残る)

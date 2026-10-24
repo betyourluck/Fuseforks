@@ -22,7 +22,7 @@ use super::wire;
 /// system メッセージとして末尾に積む。`tool_choice` を実装していない互換サーバ
 /// （ローカル推論サーバなど）でも構造化出力を得るためのフォールバック経路。
 pub fn encode(req: &ChatRequest, use_tools: bool) -> wire::OaiRequest {
-    let mut messages: Vec<wire::OaiMessage> = req.messages.iter().map(encode_message).collect();
+    let mut messages = encode_messages(&req.messages);
 
     let (tools, tool_choice) = if req.tools.is_empty() {
         (Vec::new(), None)
@@ -107,6 +107,62 @@ fn is_gpt5_or_later(model: &str) -> bool {
 /// あるため、全面的な置き換えはできない。`reasoning_effort` と同じくモデル名で送り分ける。
 pub fn uses_max_completion_tokens(model: &str) -> bool {
     is_gpt5_or_later(model) || is_o_series(model)
+}
+
+/// canonical の発話列を写す。**ツール結果の画像は利用者の発話へ回す**（Spec 70 D1 の代替）。
+///
+/// `role: "tool"` の本文は文字列のまま — ツール結果の中の画像は接続先しだいで通らない
+/// （P0: Gemini の互換の口は 400 `Invalid content part type: image_url`、xAI の互換の口は通る）。
+///
+/// **画像を運ぶ発話は、続けて並ぶツール結果の後ろへまとめて置く。** 1 つの assistant が
+/// 複数のツールを呼んだ周で、`role: "tool"` の並びの途中に利用者の発話を挟まない
+/// （OpenAI の規則は「`tool_calls` の後には各呼び出しへの `tool` の発話が続く」。挟んだ形は
+/// 測っていない — 並びを保つ側へ倒した）。周をまたいでは追記にしかならないので、
+/// 入力キャッシュの前方一致は切れない（D3）。
+fn encode_messages(messages: &[ChatMessage]) -> Vec<wire::OaiMessage> {
+    let mut out = Vec::with_capacity(messages.len());
+    let mut carriers: Vec<wire::OaiMessage> = Vec::new();
+    for message in messages {
+        if message.role != Role::Tool {
+            out.append(&mut carriers);
+        }
+        out.push(encode_message(message));
+        if message.role == Role::Tool {
+            carriers.extend(tool_image_message(message));
+        }
+    }
+    out.append(&mut carriers);
+    out
+}
+
+/// ツール結果の画像を運ぶ利用者の発話（Spec 70 D1 の代替）。画像が無ければ `None`。
+///
+/// 画像はテキストより前（利用者の添付と同じ並び）。本文はターンの層が村の言語で組んだ
+/// `attachment_caption` で、**adapter は文を書かない**（`failures.md` #149）— 本文が
+/// 無ければ画像だけを送る。送り手封筒は付けない（利用者の発話ではなく、コアが組んだ運び台）。
+fn tool_image_message(message: &ChatMessage) -> Option<wire::OaiMessage> {
+    let mut parts: Vec<wire::OaiContentPart> = message
+        .attachments
+        .iter()
+        .filter(|a| a.kind() == AttachmentKind::Image)
+        .map(|a| wire::OaiContentPart::ImageUrl {
+            image_url: wire::OaiImageUrl { url: a.data_url() },
+        })
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    if let Some(caption) = message.attachment_caption.as_deref().filter(|c| !c.is_empty()) {
+        parts.push(wire::OaiContentPart::Text {
+            text: caption.to_owned(),
+        });
+    }
+    Some(wire::OaiMessage {
+        role: wire::OaiRole::User,
+        content: Some(wire::OaiContent::Blocks(parts)),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+    })
 }
 
 /// canonical の 1 発話を OpenAI 互換の形へ写す。
@@ -850,5 +906,105 @@ mod tests {
         assert_eq!(typed.code.as_deref(), Some("server_error"), "code が無ければ type");
         assert_eq!(error_signal("not json").code, None);
         assert_eq!(error_signal(r#"{"error":{"code":""}}"#).code, None, "空文字は無し");
+    }
+
+    fn camera_call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            name: "camera".into(),
+            args: json!({}),
+            extra: None,
+        }
+    }
+
+    /// 画像つきのツール結果（Spec 70）。`caption` が `None` なら代替の本文を持たない。
+    fn image_result(id: &str, caption: Option<&str>) -> ChatMessage {
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
+        let mut result = ChatMessage::tool_result(id, "camera", r#"{"width":8}"#);
+        result.attachments = vec![PromptAttachment::new(PromptMediaType::Jpeg, "SU1H")];
+        result.attachment_caption = caption.map(str::to_owned);
+        result
+    }
+
+    /// `role: "tool"` は本文だけ、画像は直後の利用者の発話へ（Spec 70 D1 の代替）。
+    /// **同じ周のツール結果の並びは途切れさせない** — 画像の発話は並びの後ろへ。
+    #[test]
+    fn tool_images_ride_on_a_user_message_after_the_tool_results() {
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("撮って"),
+                ChatMessage::assistant_tool_calls("", vec![camera_call("a"), camera_call("b")]),
+                image_result("a", Some("（camera の結果の画像 1 枚）")),
+                ChatMessage::tool_result("b", "camera", "撮れませんでした"),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "tool", "user"]);
+        assert_eq!(messages[2]["content"], r#"{"width":8}"#, "tool の本文は文字列のまま");
+        assert_eq!(
+            messages[4]["content"],
+            json!([
+                {"type":"image_url","image_url":{"url":"data:image/jpeg;base64,SU1H"}},
+                {"type":"text","text":"（camera の結果の画像 1 枚）"},
+            ])
+        );
+    }
+
+    /// 画像の発話は、ツール結果の並びが終わったところで出る（次の assistant より前）。
+    #[test]
+    fn a_carrier_is_flushed_before_the_next_turn_of_the_model() {
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("撮って"),
+                ChatMessage::assistant_tool_calls("", vec![camera_call("a")]),
+                image_result("a", Some("（camera の結果の画像 1 枚）")),
+                ChatMessage::assistant("緑と赤です"),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        let roles: Vec<&str> = json["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "user", "assistant"]);
+    }
+
+    /// 代替の本文が無ければ画像だけを送る（adapter は文を書かない — `failures.md` #149）。
+    #[test]
+    fn a_carrier_without_a_caption_sends_only_the_image() {
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("撮って"),
+                ChatMessage::assistant_tool_calls("", vec![camera_call("a")]),
+                image_result("a", None),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        assert_eq!(
+            json["messages"][3]["content"],
+            json!([{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,SU1H"}}])
+        );
+    }
+
+    /// 画像の無いツール結果では発話を足さない（Spec 70 の前と同じ並び）。
+    #[test]
+    fn a_tool_result_without_images_adds_no_message() {
+        let req = ChatRequest {
+            messages: vec![
+                ChatMessage::user("撮って"),
+                ChatMessage::assistant_tool_calls("", vec![camera_call("a")]),
+                ChatMessage::tool_result("a", "camera", r#"{"width":8}"#),
+            ],
+            ..req_with_tool(ToolChoice::Auto)
+        };
+        let json = serde_json::to_value(encode(&req, true)).unwrap();
+        assert_eq!(json["messages"].as_array().unwrap().len(), 3);
     }
 }

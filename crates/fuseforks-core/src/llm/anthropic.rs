@@ -265,7 +265,17 @@ fn message_tokens(messages: &[wire::AnthropicMessage]) -> usize {
             wire::AnthropicRequestBlock::ToolUse { name, input, .. } => {
                 approx_tokens(name) + approx_tokens(&input.to_string())
             }
-            wire::AnthropicRequestBlock::ToolResult { content, .. } => approx_tokens(content),
+            wire::AnthropicRequestBlock::ToolResult { content, .. } => match content {
+                wire::AnthropicToolResultContent::Text(text) => approx_tokens(text),
+                // 中の画像は下の Image と同じ理由で数えない。
+                wire::AnthropicToolResultContent::Blocks(blocks) => blocks
+                    .iter()
+                    .map(|block| match block {
+                        wire::AnthropicToolResultBlock::Text { text } => approx_tokens(text),
+                        wire::AnthropicToolResultBlock::Image { .. } => 0,
+                    })
+                    .sum(),
+            },
             // 視覚トークンは寸法（28px パッチ数）からしか出ず、adapter は base64 しか
             // 持たない。数えない = **少なめに見積もる側へ倒す**（この関数の既定の向き。
             // 画像つきの発話はどのみち履歴に残らないので恒常的な過小にはならない）。
@@ -321,7 +331,7 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
             role: "user",
             content: vec![wire::AnthropicRequestBlock::ToolResult {
                 tool_use_id: message.tool_call_id.clone().unwrap_or_default(),
-                content: message.content.clone(),
+                content: tool_result_content(message),
                 cache_control: None,
             }],
         };
@@ -384,6 +394,36 @@ fn encode_message(message: &ChatMessage) -> wire::AnthropicMessage {
         },
         content,
     }
+}
+
+/// ツール結果の本文（Spec 70 D1 = ネイティブ）。
+///
+/// 画像は `tool_result` の `content` の配列へ、**テキストより前**に置く（P0 で通った並び。
+/// 利用者の発話の添付と同じ向き）。運ぶのは画像だけ — ツール結果に他の種別は載らない
+/// （`mcp_image_result_contract` の凍結 1）。**画像が無ければ素の文字列**のまま。
+fn tool_result_content(message: &ChatMessage) -> wire::AnthropicToolResultContent {
+    let mut blocks: Vec<wire::AnthropicToolResultBlock> = message
+        .attachments
+        .iter()
+        .filter(|a| a.kind() == AttachmentKind::Image)
+        .map(|a| wire::AnthropicToolResultBlock::Image {
+            source: wire::AnthropicBase64Source {
+                kind: "base64",
+                media_type: a.media_type.as_str().to_owned(),
+                data: a.data.clone(),
+            },
+        })
+        .collect();
+    if blocks.is_empty() {
+        return wire::AnthropicToolResultContent::Text(message.content.clone());
+    }
+    // 空のテキストブロックは拒否されるので、本文があるときだけ積む。
+    if !message.content.is_empty() {
+        blocks.push(wire::AnthropicToolResultBlock::Text {
+            text: message.content.clone(),
+        });
+    }
+    wire::AnthropicToolResultContent::Blocks(blocks)
 }
 
 /// system プロンプトをキャッシュ境界で分割する（純関数）。
@@ -1235,6 +1275,59 @@ mod tests {
         assert_eq!(resp.usage.cache_write, 400);
         assert_eq!(resp.usage.cache_write_1h, 0, "内訳が無ければ 0");
         assert_eq!(resp.usage.prompt, 410);
+    }
+
+    /// ツールを呼んで結果が返った 3 発話（Spec 70）。`with_image` なら結果に画像と代替の本文が付く。
+    fn tool_image_request(with_image: bool) -> ChatRequest {
+        use crate::llm::canonical::{PromptAttachment, PromptMediaType};
+        let mut result = ChatMessage::tool_result("call_1", "camera", r#"{"width":8}"#);
+        if with_image {
+            result.attachments = vec![PromptAttachment::new(PromptMediaType::Jpeg, "SU1H")];
+            result.attachment_caption = Some("（camera の結果の画像 1 枚）".into());
+        }
+        let call = ToolCall {
+            id: "call_1".into(),
+            name: "camera".into(),
+            args: json!({}),
+            extra: None,
+        };
+        ChatRequest::plain(
+            "claude-sonnet-5",
+            vec![
+                ChatMessage::user("撮って"),
+                ChatMessage::assistant_tool_calls("", vec![call]),
+                result,
+            ],
+            256,
+        )
+    }
+
+    /// 画像は `tool_result` の中へ、テキストより前（Spec 70 D1 = ネイティブ）。
+    #[test]
+    fn a_tool_result_image_goes_inside_the_tool_result() {
+        let json = serde_json::to_value(encode(&tool_image_request(true))).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3, "画像のために発話を足さない");
+        let result = &messages[2]["content"][0];
+        assert_eq!(result["type"], "tool_result");
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"SU1H"}},
+                {"type":"text","text":r#"{"width":8}"#},
+            ])
+        );
+        assert!(
+            !json.to_string().contains("camera の結果の画像"),
+            "代替の本文はネイティブのワイヤでは使わない"
+        );
+    }
+
+    /// 画像の無いツール結果は Spec 70 の前と同じ素の文字列。
+    #[test]
+    fn a_tool_result_without_images_keeps_a_plain_string() {
+        let json = serde_json::to_value(encode(&tool_image_request(false))).unwrap();
+        assert_eq!(json["messages"][2]["content"][0]["content"], r#"{"width":8}"#);
     }
 
     #[test]

@@ -1,9 +1,10 @@
 # Spec 70: MCP のツール結果で画像を受け取る
 
-- 状態: **rev2・P0〜P1 完了**（2026-10-24 起票。利用者が推しの 6 点のまま裁定し、同日 P0 = 7 ワイヤの実測と
+- 状態: **rev2・P0〜P2 完了**（2026-10-24 起票。利用者が推しの 6 点のまま裁定し、同日 P0 = 7 ワイヤの実測と
   `data_contract` の `mcp_image_result_contract` 凍結。記録は「P0 実測記録」。D1 の表が埋まった。→ 同日、査読 9 点を
   実装と P0 の記録に当てて rev2。判定は採用 6 / 前提を訂正して採用 1 / 範囲を広げて採用 1 / 反証 1。表は Notes 2。
-  → 同日 P1 = コア。記録は「P1 実装記録」。**adapter は未変更なので画像はまだワイヤへ出ない — P2 まで版を出さない**）
+  → 同日 P1 = コア。記録は「P1 実装記録」。→ 2026-10-25 P2 = 各ワイヤ。記録は「P2 実装記録」。**画像がワイヤへ出る
+  ようになった。残りは P3（台帳）と P4（NIK のライブビューでの実機）**）
 
 ## rev1 からの変更（査読 9 点の反映。詳細は Notes 2）
 
@@ -339,7 +340,74 @@ M7 と M9 が同じ 1 本で赤になるのは、その本が「JPEG へ再エ�
 
 ワークスペース全体で 1,428 本通過・失敗 0（77 バイナリ）・clippy 0。
 
-### P2 — 各ワイヤ
+### P2 — 各ワイヤ（**完了 2026-10-25**。下の「P2 実装記録」）
+
+- [x] Anthropic — `tool_result` の `content` を画像とテキストのブロック列に
+- [x] Gemini — `functionResponse.parts` に `inlineData`
+- [x] Responses 4 社 — `function_call_output.output` を `input_text` + `input_image` の列に（共有の `responses_input.rs` の 1 箇所）
+- [x] OpenAI 互換 — `role: "tool"` は本文だけ、画像は直後の利用者の発話（本文は `attachment_caption`）
+- [x] 7 ワイヤの置き場の表をテストで凍結し、変異で赤を確かめる
+
+### P2 実装記録（2026-10-25）
+
+**これで画像がワイヤへ出る。** P1 の「P2 まで版を出さない」はここで解けた。
+
+**入れたもの**:
+
+- `llm/wire.rs` — `AnthropicToolResultContent`（素の文字列かブロック列。untagged）と `AnthropicToolResultBlock`
+  （テキスト / 画像。`cache_control` を持たせない — 境界は `tool_result` ブロック自身に打つ）/
+  `GeminiFunctionResponse.parts`（空なら欄ごと出さない）/ Responses の `function_call_output.output` を `ResponsesContent` へ
+- `llm/anthropic.rs` — `tool_result_content`（画像 → テキストの並び。キャッシュの概算は中のテキストだけを数える）
+- `llm/gemini.rs` — ツール結果の `functionResponse` に `parts`
+- `llm/responses_input.rs` — `encode_tool_output`（テキスト → 画像の並び。part は利用者の発話と同じ `part_for`）。
+  4 社が共有するので 1 箇所で済んだ
+- `llm/openai_compat.rs` — `encode_messages`（運び台を続けて並ぶツール結果の後ろへまとめる）と `tool_image_message`
+
+**実装で決めたこと**:
+
+- **`Provider` の述語は置かなかった**（D1 は「述語 1 実装と adapter の一致をテストで留める」と書いていた）。
+  `Provider::carries` は送信の入口が実行時に読むが、ツール結果の置き場は adapter が決めて終わりで、実行時に表を
+  読む者が居ない。述語を置くとテストだけが読む 2 つ目の写しになる。表は `tests/tool_image_placement.rs` が逐語で
+  凍結し、7 ワイヤの adapter の組み立てから置き場を読み取って突き合わせる（見るのは「画像を載せたとき発話の列が
+  1 つ伸びるか」の 1 点。型名は社ごとに違うので、形はそれぞれの単体が持つ）
+- **並びは P0 で通った形のまま** — Anthropic は画像 → テキスト、Responses はテキスト → 画像。社ごとに逆だが、
+  どちらも P0 の撃ち方そのもので、逆の並びは測っていない
+- **OpenAI 互換の運び台は、続けて並ぶツール結果の後ろへまとめて置く** — 1 つの assistant が複数のツールを
+  呼んだ周で、`role: "tool"` の並びの途中に利用者の発話を挟まない（OpenAI の規則は「`tool_calls` の後には
+  各呼び出しへの `tool` の発話が続く」。挟んだ形は測っていない — 並びを保つ側へ倒した）。周をまたいでは
+  追記にしかならないので、前方一致は切れない（D3）
+- **代替の本文が無ければ画像だけを送る** — adapter は文を書かない（#149）。ターンの層は画像を載せるとき必ず
+  本文を組むので、実運用で本文の無い運び台は出ない
+- **運ぶのは画像の種別だけ** — ツール結果の `attachments` に他の種別は載らない（凍結 1）が、adapter でも
+  画像に絞った（最後の砦）
+- **互換の口の WebP は Spec 23 の JPEG フォールバックを通る**（`with_jpeg_attachments` は全発話の添付を見る）。
+  2 回とも 400 なら `ImagesRejected` で、ターンの層が画像を外して送り直す（P1）
+- **Gemini 2.5 系は `functionResponse.parts` を測っていない**（P0 は 3.5-flash-lite と 3.8-flash）。受けないモデルが
+  400 を返せば D5 の送り直しが受ける
+- 誤りを 1 つ回収 — `responses_input.rs` の doc が `function_call_output.output` を「string 限定」と書いていた。
+  列を送ったことが無かっただけで、P0 で 4 社とも列を受けた
+
+**テスト**: 単体 10 本（Anthropic 2 / Gemini 2 / OpenAI 互換 4 / Responses 2。どれも「画像を載せた形」と「画像の
+無い結果が Spec 70 の前と同じ形」の対）+ 結合 `tests/tool_image_placement.rs` 2 本（7 ワイヤの置き場の表 / 画像の
+無い結果は 7 ワイヤとも文字列）。既存の llm の単体 171 本は無改変で通った（画像の無いツール結果のバイト列は不変）。
+
+**変異 9 回とも予測どおり**（赤になる本を先に書いてから回した。戻しは SHA-256 で確認）:
+
+| | 変異 | 赤 |
+|---|---|---|
+| N1 | Anthropic が画像を落とす | Anthropic の単体 1 本 + 表の 1 本 |
+| N2 | Gemini が画像を落とす | Gemini の単体 1 本 + 表の 1 本 |
+| N3 | Responses が画像を落とす | Responses の単体 1 本 + 表の 1 本 |
+| N4 | 互換が運び台をツール結果の並びの途中へ置く | 互換の単体 1 本（2 つのツールを呼んだ周） |
+| N5 | 互換が運び台を出さない | 互換の単体 3 本 + 表の 1 本 |
+| N6 | Anthropic がテキストを画像より前に置く | Anthropic の単体 1 本 |
+| N7 | 互換が代替の本文を落とす | 互換の単体 1 本 + 表の 1 本 |
+| N8 | Responses が画像の無い結果も列にする | Responses の単体 1 本 + 既存の xAI・OpenAI Responses の単体 2 本 + 「画像の無い結果は文字列」の 1 本 |
+| N9 | Gemini が画像の無い結果にも `parts` を出す | Gemini の単体 1 本 + 「画像の無い結果は文字列」の 1 本 |
+
+N4 を留めるのは 2 つのツールを呼んだ周の 1 本だけ — 表のテストはツールを 1 つしか呼ばないので、並びの途中か後ろかを区別しない。
+
+ワークスペース全体で 1,440 本通過・失敗 0（78 バイナリ）・clippy 0。
 
 ### P3 — 台帳（DETAIL 3 言語・PRIVACY 日英・README の 1 行の要否）
 

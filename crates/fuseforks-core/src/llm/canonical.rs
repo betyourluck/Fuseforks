@@ -40,7 +40,8 @@ pub enum Role {
 pub enum PromptMediaType {
     /// WebP（画像の既定。P0 実測で 5 系統すべて通過）。
     Webp,
-    /// JPEG（互換層が WebP を 400 で拒んだときのフォールバック。**ワイヤ専用**）。
+    /// JPEG（互換層が WebP を 400 で拒んだときのフォールバックと、MCP のツール結果の
+    /// 画像（Spec 70）。**ワイヤ専用** — どちらもファイルには置かない）。
     Jpeg,
     /// mp3（音声）。
     Mp3,
