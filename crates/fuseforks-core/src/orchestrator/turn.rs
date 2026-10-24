@@ -745,7 +745,12 @@ struct SeenCall {
     args: serde_json::Value,
     /// 直近にこの呼び出しが返した本文。
     body: String,
-    /// `body` が**変わらないまま**返ってきた回数。
+    /// 直近にこの呼び出しが返した画像の SHA-256 の列（Spec 70 D4。画像が無ければ空）。
+    ///
+    /// **本文と組で「同じ結果」を決める** — 本文が同じで画像だけが違う結果
+    /// （ライブビューを撮り直す）を、同じ結果の 3 回目として止めない。
+    images: Vec<[u8; 32]>,
+    /// `body` と `images` が**変わらないまま**返ってきた回数。
     count: u32,
     /// この (name, args) が呼ばれた**総数**。`count` と違い、結果が変わっても
     /// リセットしない（2026-09-22 の計器）。
@@ -819,19 +824,34 @@ impl RepeatGuard {
         self.find(name, args).map_or(0, |seen| seen.count)
     }
 
-    /// 実行した 1 件を記録する。**実行の後**に引く。
+    /// 実行した 1 件を記録する。**実行の後**に引く。画像を返さない結果の形。
     fn observe(&mut self, name: &str, args: &serde_json::Value, body: &str) {
+        self.observe_result(name, args, body, &[]);
+    }
+
+    /// 実行した 1 件を、**本文と画像の要約値の組**で記録する（Spec 70 D4）。
+    ///
+    /// 要約値は**接続先へ送るバイト列**で取ったもの（`ToolImage::digest`）。落とした画像は
+    /// 列に入らない。画像を返さないツールは空の列で、判定は Spec 70 の前と同じ。
+    fn observe_result(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+        body: &str,
+        images: &[[u8; 32]],
+    ) {
         match self.position(name, args) {
             Some(index) => {
                 let seen = &mut self.seen[index];
                 seen.calls += 1;
-                if seen.body == body {
+                if seen.body == body && seen.images == images {
                     seen.count += 1;
                 } else {
                     // 結果が変わった = この呼び出しは行き詰まっていない。数え直す。
                     // **`calls` は数え直さない** — 「同じ引数で何回呼んだか」は
                     // 結果が変わっても失われない（計器の目的がそこにある）。
                     seen.body = body.to_owned();
+                    seen.images = images.to_vec();
                     seen.count = 1;
                 }
             }
@@ -839,6 +859,7 @@ impl RepeatGuard {
                 name: name.to_owned(),
                 args: args.clone(),
                 body: body.to_owned(),
+                images: images.to_vec(),
                 count: 1,
                 calls: 1,
             }),
@@ -1485,6 +1506,17 @@ async fn run_turn_inner(
     // 本来の使い方で必ず `not_found` になる（rev1 の骨格の誤り）。
     // `repeat_guard` / `plan_wave` と同じく `&mut` で渡す。
     let mut pruned_raws: Vec<PrunedRaw> = Vec::new();
+    // ツール結果の画像（Spec 70）の、ターンの層の持ち物。村の言語（足す文を書く）と、
+    // このモデルが画像を受けなかったか（D5）。
+    let mut tool_images = ToolImageState {
+        language: shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja),
+        rejected: false,
+    };
 
     for iteration in 0..max_tool_iterations {
         // 割り込みの検査点（Spec 10 — 契約の不変条件 1）。周回境界 =
@@ -1549,9 +1581,9 @@ async fn run_turn_inner(
             None => None,
         };
 
-        let request = ChatRequest {
+        let build = |messages: &[ChatMessage]| ChatRequest {
             model: template.model.clone(),
-            messages: messages.clone(),
+            messages: messages.to_vec(),
             tools: if use_tools { specs.clone() } else { Vec::new() },
             tool_choice: if use_tools {
                 crate::llm::ToolChoice::Auto
@@ -1566,9 +1598,18 @@ async fn run_turn_inner(
 
         // Spec 52 D4: token は再試行の待ちだけを切る。HTTP 往復は完走させる
         // （切ると払いの記録を失う）。打ち切りの分類は周回境界（上の `is_cancelled`）。
-        let mut response = match backend
-            .chat_cancellable(request, Some(turn.token.clone()))
-            .await
+        //
+        // ツール結果の画像を含む要求が 400 なら、画像を外して 1 回だけ送り直す（Spec 70 D5）。
+        let mut response = match chat_with_tool_image_fallback(
+            backend,
+            &mut messages,
+            build,
+            &turn.token,
+            &mut tool_images,
+            agent_id,
+            &template.model,
+        )
+        .await
         {
             Ok(response) => response,
             Err(err) => {
@@ -1733,20 +1774,40 @@ async fn run_turn_inner(
                 repeat_guard: &mut repeat_guard,
                 plan_wave: &mut plan_wave,
                 pruned: &mut pruned_raws,
+                language: tool_images.language,
             };
             for call in &calls {
-                let (body, executed, blocked) = match runner.on_call(call, iteration + 1).await {
-                    CallOutcome::Executed(body) => (body, true, None),
-                    CallOutcome::Blocked { body, tool } => (body, false, Some(tool)),
-                };
+                let (body, images, executed, blocked) =
+                    match runner.on_call(call, iteration + 1).await {
+                        CallOutcome::Executed { body, images } => (body, images, true, None),
+                        CallOutcome::Blocked { body, tool } => {
+                            (body, Vec::new(), false, Some(tool))
+                        }
+                    };
                 if executed {
                     executed_in_round += 1;
                 }
                 if let Some(tool) = blocked {
                     blocked_in_round.get_or_insert(tool);
                 }
-                messages.push(ChatMessage::tool_result(&call.id, &call.name, body));
+                let mut result = ChatMessage::tool_result(&call.id, &call.name, body);
+                tool_images.attach(&mut result, images);
+                messages.push(result);
             }
+        }
+        // 1 要求に載せるツール結果の画像は新しいものから 20 枚まで（Spec 70 D2b）。
+        // 画像が積み上がるのは周を重ねたときだけなので、確かめるのは周の終わりの 1 回。
+        let removed = crate::tool_image::cap_tool_images(
+            &mut messages,
+            crate::tool_image::TOOL_IMAGES_PER_REQUEST,
+            tool_images.language,
+        );
+        if removed > 0 {
+            note!(
+                "tool image capped: agent={agent_id} round={} removed={removed} limit={}",
+                iteration + 1,
+                crate::tool_image::TOOL_IMAGES_PER_REQUEST,
+            );
         }
 
         // **この周が丸ごと空振りだったときだけ**打ち切る。1 本が重複しただけの
@@ -1845,9 +1906,9 @@ async fn run_turn_inner(
         // `tools` を空にすると Anthropic が「tool ブロックを含むなら tools の定義が
         // 必須」の 400 を返し、**まとめはモデルに届く前にワイヤで死ぬ**
         // （実機で発生。failures.md #36）。定義は残し、使用だけを禁じる。
-        let request = ChatRequest {
+        let build = |messages: &[ChatMessage]| ChatRequest {
             model: template.model.clone(),
-            messages: messages.clone(),
+            messages: messages.to_vec(),
             tools: if use_tools { specs.clone() } else { Vec::new() },
             tool_choice: crate::llm::ToolChoice::None,
             temperature: template.temperature,
@@ -1858,9 +1919,19 @@ async fn run_turn_inner(
         // まとめの失敗でターンごと落とさない。ただし**理由は握り潰さない** —
         // ここを `if let Ok` で書いていた間、まとめが落ちても理由はログにも
         // イベントにもフォールバック文言にも残らず、現場から診断不能だった。
-        match backend
-            .chat_cancellable(request, Some(turn.token.clone()))
-            .await
+        //
+        // まとめの 1 回も、最後の周に返った画像を初めて運ぶ呼び出しになりうるので、
+        // 周と同じ送り直しを通す（Spec 70 D5）。
+        match chat_with_tool_image_fallback(
+            backend,
+            &mut messages,
+            build,
+            &turn.token,
+            &mut tool_images,
+            agent_id,
+            &template.model,
+        )
+        .await
         {
             Ok(mut response) => {
                 // まとめ呼び出しの周。**ここは必ず書き込みになる** —
@@ -2048,7 +2119,12 @@ async fn run_turn_inner(
 enum CallOutcome {
     /// 実行した。**「そんな道具は無い」を返した場合も含む** — 新しい情報を
     /// 返しているので、空振りの周には数えない。
-    Executed(String),
+    Executed {
+        /// モデルへ返す本文。
+        body: String,
+        /// ツール結果に載せる画像（Spec 70。返すのは MCP のツールだけで、ほかは空）。
+        images: Vec<crate::tool_image::ToolImage>,
+    },
     /// 繰り返しで止めた。結果は積むが、この周の実行数には数えない。
     Blocked {
         /// モデルへ返す本文。
@@ -2098,6 +2174,8 @@ struct CallRunner<'a> {
     /// `run_turn_inner` のローカルを借りる — ここをフィールドにすると
     /// 次の周の `omitted` が必ず `not_found` になる。
     pruned: &'a mut Vec<PrunedRaw>,
+    /// 村の言語（Spec 70。ツールの出力の表示に足す画像の 1 行を書く）。
+    language: crate::world::Language,
 }
 
 /// 圧縮した 1 件の生本文（Spec 59 D7 / `tool_prune_contract`）。
@@ -2239,7 +2317,10 @@ impl CallRunner<'_> {
             // 数えるのは**モデルへ返した本文**（RepeatGuard の規律と同じ）。
             self.repeat_guard.observe(&call.name, &call.args, &body);
             // 「無い」と伝えるのも新しい情報なので、空振りの周にはしない。
-            return CallOutcome::Executed(body);
+            return CallOutcome::Executed {
+                body,
+                images: Vec::new(),
+            };
         }
 
         // 理由（Spec 27）の既定は `Excluded` = **合成側**（plan / room_log /
@@ -2251,6 +2332,9 @@ impl CallRunner<'_> {
         // 書くと、同じ規律が 2 箇所に生えて片方だけ古くなる。
         // 既定値 + 実際に通った枝での上書きなら、**枝が増えても既定へ落ちる**。
         let mut reason = (crate::tool_reason::ReasonState::Excluded, 0usize);
+        // 画像を運べるのは registry の枝（`call_with_media`）だけ（Spec 70 D7）。
+        // 合成側の枝は本文だけを返すので、ここで `ToolOutput::text` に包む。
+        let text = crate::tool::ToolOutput::text;
         // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
         // 上限（`max_tool_iterations`）の消費も 1 回で済む。
         let result = if use_handoff_tools
@@ -2258,7 +2342,7 @@ impl CallRunner<'_> {
             && call.name == HandoffTools::PLAN
         {
             *self.plan_wave += 1;
-            Ok(run_plan(
+            Ok(text(run_plan(
                 shared,
                 agent_id,
                 handoffs,
@@ -2276,7 +2360,7 @@ impl CallRunner<'_> {
                 incoming.attachments.first().map(|a| a.kind()),
                 self.auto_approve_plans,
             )
-            .await)
+            .await))
         } else if spec.hears_room_log
             && call.name == crate::room_log::ROOM_LOG_TOOL_NAME
         {
@@ -2285,11 +2369,11 @@ impl CallRunner<'_> {
             // 名前は registry（MCP 由来の同名）より先に解決される。
             // hears_room_log = false の個体では素通りして registry 側へ
             // 落ちる（その個体にこのツールは合成されていない）。
-            Ok(read_room_log(shared, agent_id, call).await)
+            Ok(text(read_room_log(shared, agent_id, call).await))
         } else if call.name == crate::prune::OMITTED_TOOL_NAME && !self.pruned.is_empty() {
             // 落とした段落へ戻る（Spec 59 D7）。`room_log` と同じ規則で、
             // orchestrator 合成の名前は registry より先に解決される。
-            Ok(self.read_omitted(call))
+            Ok(text(self.read_omitted(call)))
         } else if let Some(entry) = handoffs.resolve_judge(&call.name) {
             // 判断役（Spec 62）。呼び出し元のツール呼び出しの中で同期的に判定し、中継する。
             super::judging::run_judge(
@@ -2306,6 +2390,7 @@ impl CallRunner<'_> {
                 self.auto_approve_plans,
             )
             .await
+            .map(text)
         } else {
             match handoffs.resolve_ask(&call.name) {
                 Some(target) if use_handoff_tools => {
@@ -2323,6 +2408,7 @@ impl CallRunner<'_> {
                         self.auto_approve_plans,
                     )
                     .await
+                    .map(text)
                 }
                 _ => {
                     reason = registry_reason(shared, agent_id, call).await;
@@ -2334,10 +2420,14 @@ impl CallRunner<'_> {
         // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
         let reason_kind = crate::tool_reason::kind_label(&reason);
         let ok = result.is_ok();
-        let raw = match result {
-            Ok(text) => text,
+        let (raw, images, dropped) = match result {
+            Ok(output) => (output.text, output.images, output.dropped),
             // 失敗しても会話を止めない。モデルが読んで次を決める。
-            Err(err) => format!("ツールの実行に失敗しました: {err}"),
+            Err(err) => (
+                format!("ツールの実行に失敗しました: {err}"),
+                Vec::new(),
+                Vec::new(),
+            ),
         };
         // ツール結果の即時圧縮（Spec 59 / `tool_prune_contract`）。
         //
@@ -2355,7 +2445,15 @@ impl CallRunner<'_> {
         // 発行が先だと、行が出た瞬間に開いた人が「詳細なし」を引く。
         // 記録する点はここ 1 つで、上の「提示していない名前」の枝では記録しない
         // （あちらは `ToolInvoked` を出さないので、開く入口が無い）。
-        let call_id = shared.tool_calls_lock().record(&call.args, &body);
+        //
+        // 画像を返した結果は、表示にだけ「（画像 N 枚: JPEG 21 KB）」を足す（Spec 70 D8）。
+        // **画像そのものはリングに持たない**。モデルへ返す本文（`body`）には足さない。
+        let call_id = match crate::tool_image::display_suffix(self.language, &images) {
+            Some(suffix) => shared
+                .tool_calls_lock()
+                .record(&call.args, &format!("{body}\n{suffix}")),
+            None => shared.tool_calls_lock().record(&call.args, &body),
+        };
         shared.emit(CoreEvent::ToolInvoked {
             agent_id: agent_id.clone(),
             tool: call.name.clone(),
@@ -2381,13 +2479,31 @@ impl CallRunner<'_> {
         // （書かなかった / 外部なので尋ねていない / 対象外）。**畳むと後から
         // 区別できない** — 実機の初日に、尋ねていない 2 件を「短い理由」として
         // 平均へ混ぜる誤りを踏んだ（Spec 27 の P4 実装記録）。
+        //
+        // **`images=` は画像を返したときだけ足す**（Spec 70 D8）— 画像を返さない
+        // ツールの行は 1 バイトも変わらない。画像の中身は書かない（枚数だけ）。
+        let images_field = if images.is_empty() {
+            String::new()
+        } else {
+            format!(" images={}", images.len())
+        };
         note!(
-            "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}",
+            "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}{images_field}",
             round,
             call.name,
             call.args.to_string().chars().count(),
             body.chars().count(),
         );
+        // 落とした画像（Spec 70 D7）。モデルへは本文の注記で伝わっており、ここは数えるだけ。
+        if !dropped.is_empty() {
+            note!(
+                "tool image dropped: agent={agent_id} round={} name={} count={} reason={}",
+                round,
+                call.name,
+                dropped.len(),
+                crate::tool_image::reasons_label(&dropped),
+            );
+        }
         // 数えるのは**圧縮前の本文**（Spec 59 D2）。同梱ツールの失敗は `Err` では
         // なくこの本文に乗るので、ここで数えないと実機の失敗ループは検出できない。
         //
@@ -2395,8 +2511,13 @@ impl CallRunner<'_> {
         // 決定的でないため同じ失敗が回ごとに 1 段落ずれて完全一致の数えに乗らない。
         // **この選択が「戻る道を作らない案」を構造で排除する** — 同じ引数で
         // 呼び直すと 3 回目に止まり、モデルに残る手は `omitted` だけになる。
-        self.repeat_guard.observe(&call.name, &call.args, &raw);
-        CallOutcome::Executed(body)
+        //
+        // 画像の要約値も同じ結果の一部として数える（Spec 70 D4）— 本文が同じで画像だけが
+        // 違う結果（ライブビューを撮り直す）は、繰り返しではない。
+        let digests: Vec<[u8; 32]> = images.iter().map(|image| image.digest).collect();
+        self.repeat_guard
+            .observe_result(&call.name, &call.args, &raw, &digests);
+        CallOutcome::Executed { body, images }
     }
 
     /// `omitted` の本体（Spec 59 D7）。落とした段落を逐語で返す。
@@ -3247,13 +3368,13 @@ async fn execute_tool(
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
     cancel: &tokio_util::sync::CancellationToken,
-) -> CoreResult<String> {
+) -> CoreResult<crate::tool::ToolOutput> {
     // 実行解決は提示と同じ規則の逆引き（[`resolve_registry_tool`] の 1 実装）。
     let Some(tool) = resolve_registry_tool(shared, agent_id, &call.name).await else {
-        return Ok(format!(
+        return Ok(crate::tool::ToolOutput::text(format!(
             "`{}` というツールはありません。提示された名前から選んでください。",
             call.name
-        ));
+        )));
     };
 
     // 作業フォルダ（grep / diff の探索範囲）と宣言フォルダ（rag）は
@@ -3295,7 +3416,93 @@ async fn execute_tool(
         // 判断役のファイルの囲い（Spec 62）。
         judges_dir: Some(shared.store.judges_dir()),
     };
-    tool.call(&ctx, &call.args).await
+    // 本文と画像（Spec 70 D7）。画像を返すのは `McpTool` だけで、同梱ツールは
+    // 既定実装が `call` の本文を包むだけ。
+    tool.call_with_media(&ctx, &call.args).await
+}
+
+/// ツール結果の画像（Spec 70）について、ターンの層が持つもの。
+///
+/// **ターンの層は村の言語を知っている**ので、ツール結果へ足す文（代替の本文・省いた注記・
+/// 送れなかった注記）はここで書く。adapter は文を 1 つも書かない（`failures.md` #149）。
+struct ToolImageState {
+    /// 村の言語。
+    language: crate::world::Language,
+    /// このモデルが画像を受けなかったか（D5）。真になったら以後の周の画像は載せず、
+    /// 本文に注記を書く — 同じ 400 を毎周踏まない。
+    rejected: bool,
+}
+
+impl ToolImageState {
+    /// ツール結果へ画像を載せる（D1）。送り直しの後（`rejected`）は載せずに注記を書く。
+    fn attach(&self, message: &mut ChatMessage, images: Vec<crate::tool_image::ToolImage>) {
+        if images.is_empty() {
+            return;
+        }
+        if self.rejected {
+            crate::tool_image::append_note(
+                &mut message.content,
+                crate::tool_image::fallback_note(self.language),
+            );
+            return;
+        }
+        let attachments = images.into_iter().map(|image| image.attachment).collect();
+        crate::tool_image::attach(message, attachments, self.language);
+    }
+}
+
+/// 画像を受けないモデルの拒否か（D5 の発火条件）。
+///
+/// `ImagesRejected` は OpenAI 互換の口の JPEG フォールバック（Spec 23 D3）が 2 回とも 400 を
+/// 受けた形 — ツール結果の WebP もそこを通るので、ここでも同じ拒否として数える。
+fn rejects_images(err: &crate::llm::LlmError) -> bool {
+    matches!(
+        err,
+        crate::llm::LlmError::Api { status: 400, .. } | crate::llm::LlmError::ImagesRejected { .. }
+    )
+}
+
+/// LLM を 1 回呼ぶ。**ツール結果の画像を含む要求が 400 なら、画像を外して 1 回だけ送り直す**
+/// （Spec 70 D5 / `mcp_image_result_contract` 凍結 6）。
+///
+/// - **置き場はターンの層**（rev2）— `LlmBackend::chat` は村の言語を知らないので、足す一文が
+///   日本語固定になる（`failures.md` #149 が直した形）
+/// - 外すのは `messages` の上で — 以後の周も同じ `messages` から組むので、画像なしで続く
+/// - 400 は画像以外の理由でも返る。画像を外しても同じ 400 なら、その 2 回目の失敗を返す
+///   （呼び出し側の扱いは今までの 400 と同じ）
+/// - 打ち切り（`token`）が立っていたら送り直さない（cancel が最優先）
+///
+/// 外したことは `tool image fallback:` の 1 行（送り直しの結末つき）。
+async fn chat_with_tool_image_fallback(
+    backend: &Arc<dyn crate::llm::LlmBackend>,
+    messages: &mut [ChatMessage],
+    build: impl Fn(&[ChatMessage]) -> ChatRequest,
+    token: &tokio_util::sync::CancellationToken,
+    state: &mut ToolImageState,
+    agent_id: &AgentId,
+    model: &str,
+) -> Result<crate::llm::ChatResponse, crate::llm::LlmError> {
+    let had_images = crate::tool_image::count_tool_images(messages) > 0;
+    let first = backend
+        .chat_cancellable(build(messages), Some(token.clone()))
+        .await;
+    match first {
+        Err(err)
+            if had_images && !state.rejected && rejects_images(&err) && !token.is_cancelled() =>
+        {
+            let removed = crate::tool_image::strip_tool_images(messages, state.language);
+            state.rejected = true;
+            let second = backend
+                .chat_cancellable(build(messages), Some(token.clone()))
+                .await;
+            note!(
+                "tool image fallback: agent={agent_id} model={model} removed={removed} outcome={}",
+                if second.is_ok() { "ok" } else { "failed" },
+            );
+            second
+        }
+        other => other,
+    }
 }
 
 

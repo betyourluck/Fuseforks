@@ -26,6 +26,36 @@ use serde_json::Value;
 use crate::error::CoreResult;
 use crate::llm::ToolSpec;
 use crate::model::AgentId;
+use crate::tool_image::{DropReason, ToolImage};
+
+/// ツールの実行結果（Spec 70 D7。[`AgentTool::call_with_media`] の戻り値）。
+///
+/// **3 つを分けて持つ**のは、モデルが読むもの・送るもの・数えるものが別だから:
+///
+/// - `text` — モデルが読む本文。落とした画像の注記（村の言語）もここに入る
+/// - `images` — 送る画像だけ（D2 を通ったもの。最大 4 枚）。**落とした画像は入れない**
+/// - `dropped` — 落とした画像の理由。**計器だけが読む**（`tool image dropped:` 行）
+///
+/// 部分的な成功はエラーにしない — 本文と残った画像は届ける。
+#[derive(Debug, Clone, Default)]
+pub struct ToolOutput {
+    /// モデルが読む本文。
+    pub text: String,
+    /// 送る画像。
+    pub images: Vec<ToolImage>,
+    /// 落とした画像の理由。
+    pub dropped: Vec<DropReason>,
+}
+
+impl ToolOutput {
+    /// 本文だけの結果（同梱ツール・合成ツール）。
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Self::default()
+        }
+    }
+}
 
 /// ツール実行時に渡される文脈。
 ///
@@ -110,6 +140,17 @@ pub trait AgentTool: Send + Sync {
     /// # Errors
     /// 実行できなかった理由。呼び出し側が文字列へ落としてモデルへ返す。
     async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String>;
+
+    /// 実行して、**本文と画像**を返す（Spec 70 D7）。ターンの層が呼ぶのはこちらだけ。
+    ///
+    /// 既定は [`Self::call`] の本文をそのまま包む（画像なし）。**上書きするのは
+    /// [`crate::mcp::McpTool`] だけ** — 同梱ツールは画像を返さないので 1 行も変えない。
+    ///
+    /// # Errors
+    /// [`Self::call`] と同じ。
+    async fn call_with_media(&self, ctx: &ToolContext, args: &Value) -> CoreResult<ToolOutput> {
+        self.call(ctx, args).await.map(ToolOutput::text)
+    }
 
     /// モデルへ提示する定義。
     fn spec(&self, language: crate::world::Language) -> ToolSpec {

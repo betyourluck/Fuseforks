@@ -179,8 +179,18 @@ pub struct ChatMessage {
     /// **1 ターン限り**（D1）— プロンプトを組む側が現在の発話にだけ付け、
     /// 履歴として積む [`ChatMessage`] には入れない。`skip_serializing_if` により、
     /// 添付が無い発話のシリアライズ結果は欄の追加前と 1 バイトも変わらない。
+    ///
+    /// [`Role::Tool`] では **MCP のツール結果が返した画像**（Spec 70）。ツール結果の中へ
+    /// 置くか（ネイティブ）、直後の利用者の発話へ置くか（代替）は adapter が決める。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<PromptAttachment>,
+    /// [`Role::Tool`] の画像を**代替**（直後の利用者の発話）で運ぶワイヤが、その発話の本文に使う一文
+    /// （Spec 70 D1。例「（camera__snapshot の結果の画像 1 枚）」）。
+    ///
+    /// **ターンの層が村の言語で組んで渡す** — adapter は言語を知らないので文を書かない
+    /// （`failures.md` #149）。ネイティブで運ぶワイヤは読まない。画像が無ければ `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_caption: Option<String>,
 }
 
 impl ChatMessage {
@@ -193,6 +203,7 @@ impl ChatMessage {
             tool_call_id: None,
             tool_name: None,
             attachments: Vec::new(),
+            attachment_caption: None,
         }
     }
 

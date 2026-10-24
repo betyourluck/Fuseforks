@@ -95,6 +95,7 @@ pub mod stats;
 pub mod template_probe;
 pub mod tool;
 pub mod tool_calls;
+pub mod tool_image;
 pub mod tool_reason;
 pub mod tools;
 pub mod world;

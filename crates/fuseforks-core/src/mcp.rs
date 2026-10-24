@@ -44,7 +44,7 @@ use serde_json::Value;
 use crate::error::{CoreError, CoreResult};
 use crate::mcp_oauth::{McpAuthState, McpOAuthRegistry, OAuthConnectError};
 use crate::secret::{env_secret_name, SecretStore};
-use crate::tool::{AgentTool, ToolContext};
+use crate::tool::{AgentTool, ToolContext, ToolOutput};
 
 /// ツール名に使える最大長。OpenAI / Anthropic 双方の関数名制限に合わせる。
 const MAX_TOOL_NAME: usize = 64;
@@ -509,18 +509,43 @@ pub fn qualified_tool_name(server: &str, tool: &str) -> String {
     tail
 }
 
-/// MCP のツール実行結果を、モデルへ返す 1 本の文字列へ落とす（純関数）。
+/// MCP のツール実行結果を、モデルへ返す本文と画像へ落とす（純関数。Spec 70 D7）。
 ///
-/// テキスト以外のブロック（画像・音声・埋め込みリソース）は、そのまま渡せないので
-/// **種別だけを明示して落とす**。黙って捨てると、モデルは「空の結果が返った」と
-/// 解釈して同じツールを呼び直す。
-pub fn render_tool_result(result: &CallToolResult) -> String {
+/// - **テキスト**はそのまま本文へ
+/// - **画像**（`type: "image"`）は [`crate::tool_image::normalize`] で送れる形へ寄せ、`images` へ
+///   （1 つの結果につき 4 枚まで）。落とした画像は本文に 1 文で書き、理由を `dropped` へ
+/// - **音声・埋め込みリソース**は、そのまま渡せないので**種別だけを明示して落とす**。
+///   黙って捨てると、モデルは「空の結果が返った」と解釈して同じツールを呼び直す
+///
+/// **コアが足す文はすべて村の言語**（`mcp_image_result_contract` 凍結 9）。日本語の村の本文は
+/// Spec 70 の前と 1 バイトも変わらない（画像を返さない結果では）。
+pub fn render_tool_output(result: &CallToolResult, language: crate::world::Language) -> ToolOutput {
+    use crate::world::Language;
+
     let mut parts: Vec<String> = Vec::new();
+    let mut images = Vec::new();
+    let mut dropped = Vec::new();
 
     for block in &result.content {
-        match block.as_text() {
-            Some(text) => parts.push(text.text.clone()),
-            None => parts.push("（テキスト以外の内容が返されました。この経路では扱えません）".to_owned()),
+        if let Some(text) = block.as_text() {
+            parts.push(text.text.clone());
+        } else if let Some(image) = block.as_image() {
+            if images.len() >= crate::tool_image::TOOL_IMAGES_PER_RESULT {
+                dropped.push(crate::tool_image::DropReason::TooMany);
+                continue;
+            }
+            match crate::tool_image::normalize(&image.data) {
+                Ok(image) => images.push(image),
+                Err(reason) => dropped.push(reason),
+            }
+        } else {
+            parts.push(
+                match language {
+                    Language::Ja => "（テキスト以外の内容が返されました。この経路では扱えません）",
+                    Language::En => "(Non-text content was returned. It cannot be handled on this path.)",
+                }
+                .to_owned(),
+            );
         }
     }
 
@@ -531,16 +556,36 @@ pub fn render_tool_result(result: &CallToolResult) -> String {
         parts.push(structured.to_string());
     }
 
+    if let Some(note) = crate::tool_image::dropped_note(language, &dropped) {
+        parts.push(note);
+    }
+
     if parts.is_empty() {
-        parts.push("（空の結果）".to_owned());
+        // 画像だけが返った結果を「空の結果」と書くと嘘になる。
+        parts.push(if images.is_empty() {
+            match language {
+                Language::Ja => "（空の結果）".to_owned(),
+                Language::En => "(empty result)".to_owned(),
+            }
+        } else {
+            crate::tool_image::images_only_text(language, images.len())
+        });
     }
 
     let body = parts.join("\n");
     // 失敗は隠さない。会話は止めないが、モデルが「失敗した」と分かる形で返す。
-    if result.is_error.unwrap_or(false) {
-        format!("ツールはエラーを返しました:\n{body}")
+    let text = if result.is_error.unwrap_or(false) {
+        match language {
+            Language::Ja => format!("ツールはエラーを返しました:\n{body}"),
+            Language::En => format!("The tool returned an error:\n{body}"),
+        }
     } else {
         body
+    };
+    ToolOutput {
+        text,
+        images,
+        dropped,
     }
 }
 
@@ -619,7 +664,13 @@ impl AgentTool for McpTool {
         true
     }
 
-    async fn call(&self, _ctx: &ToolContext, args: &Value) -> CoreResult<String> {
+    /// 本文だけが要る呼び出し側のための形。ターンの層は [`Self::call_with_media`] を呼ぶ。
+    async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String> {
+        self.call_with_media(ctx, args).await.map(|output| output.text)
+    }
+
+    /// 画像を運ぶ唯一の実装（Spec 70 D7）。
+    async fn call_with_media(&self, ctx: &ToolContext, args: &Value) -> CoreResult<ToolOutput> {
         // MCP の arguments はオブジェクト。オブジェクト以外は引数なしとして送る
         // （モデルが `null` や文字列を寄越すことは実際にある）。
         let arguments = args.as_object().cloned();
@@ -637,7 +688,7 @@ impl AgentTool for McpTool {
                 message: err.to_string(),
             })?;
 
-        Ok(render_tool_result(&result))
+        Ok(render_tool_output(&result, ctx.language))
     }
 }
 
@@ -1653,12 +1704,41 @@ mod tests {
         assert!(name.ends_with("fetch_the_document"), "実際: {name}");
     }
 
+    use crate::world::Language;
+
+    /// 日本語の村の本文（Spec 70 の前の `render_tool_result` と同じ形）。
+    fn rendered_ja(result: &CallToolResult) -> String {
+        render_tool_output(result, Language::Ja).text
+    }
+
+    /// 合成の JPEG を base64 で（MCP の `ImageContent.data` の形）。
+    fn jpeg_b64() -> String {
+        use base64::Engine as _;
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            8,
+            6,
+            image::Rgb([0, 200, 0]),
+        ));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut out, image::ImageFormat::Jpeg)
+            .expect("書けること");
+        base64::engine::general_purpose::STANDARD.encode(out.into_inner())
+    }
+
+    fn image_block(data: &str) -> String {
+        format!(r#"{{"type":"image","data":"{data}","mimeType":"image/jpeg"}}"#)
+    }
+
     #[test]
     fn text_blocks_are_joined_as_is() {
         let result = result_from_wire(
             r#"{"content":[{"type":"text","text":"結果です"}],"isError":false}"#,
         );
-        assert_eq!(render_tool_result(&result), "結果です");
+        let output = render_tool_output(&result, Language::Ja);
+        assert_eq!(output.text, "結果です");
+        assert!(output.images.is_empty());
+        assert!(output.dropped.is_empty());
     }
 
     #[test]
@@ -1667,32 +1747,95 @@ mod tests {
         let result = result_from_wire(
             r#"{"content":[{"type":"text","text":"ファイルがありません"}],"isError":true}"#,
         );
-        let rendered = render_tool_result(&result);
+        let rendered = rendered_ja(&result);
         assert!(rendered.contains("エラー"), "実際: {rendered}");
         assert!(rendered.contains("ファイルがありません"));
+        let en = render_tool_output(&result, Language::En).text;
+        assert!(en.starts_with("The tool returned an error:\n"), "実際: {en}");
     }
 
+    /// 音声・埋め込みリソースは今の注記のまま（D6）。**注記は村の言語で**書く —
+    /// 以前は日本語固定で、英語の村にも日本語のまま入っていた（#149 の家族）。
     #[test]
     fn non_text_blocks_are_reported_rather_than_dropped() {
         // 黙って捨てると、モデルは「空が返った」と読んで同じツールを呼び直す。
         let result = result_from_wire(
-            r#"{"content":[{"type":"image","data":"ZGF0YQ==","mimeType":"image/png"}]}"#,
+            r#"{"content":[{"type":"audio","data":"ZGF0YQ==","mimeType":"audio/wav"}]}"#,
         );
-        let rendered = render_tool_result(&result);
-        assert!(!rendered.is_empty());
-        assert!(rendered.contains("テキスト以外"), "実際: {rendered}");
+        let rendered = rendered_ja(&result);
+        assert_eq!(
+            rendered, "（テキスト以外の内容が返されました。この経路では扱えません）",
+            "日本語の村は Spec 70 の前と同じ文"
+        );
+        let en = render_tool_output(&result, Language::En).text;
+        assert!(en.is_ascii() && !en.is_empty(), "英語の村に日本語を混ぜない: {en}");
+    }
+
+    /// NIK の `live_view_image` の形 — 画像 1 枚とテキスト 1 ブロック。
+    /// 本文はテキストのブロックだけで、画像は `images` に入る（注記は付かない）。
+    #[test]
+    fn an_image_travels_beside_the_text() {
+        let text = r#"{\"height\":424,\"seq\":1,\"width\":640}"#;
+        let result = result_from_wire(&format!(
+            r#"{{"content":[{},{{"type":"text","text":"{text}"}}]}}"#,
+            image_block(&jpeg_b64()),
+        ));
+        let output = render_tool_output(&result, Language::Ja);
+        assert_eq!(output.text, r#"{"height":424,"seq":1,"width":640}"#);
+        assert_eq!(output.images.len(), 1);
+        assert!(output.dropped.is_empty());
+        assert!(!output.images[0].reencoded, "上限の内側の JPEG はそのまま送る");
+    }
+
+    /// 読めない画像は落とし、**落としたことを本文に書く**（#44）。
+    #[test]
+    fn an_unreadable_image_is_named_in_the_text() {
+        let result = result_from_wire(&format!(
+            r#"{{"content":[{{"type":"text","text":"撮りました"}},{}]}}"#,
+            image_block("ZGF0YQ=="),
+        ));
+        let output = render_tool_output(&result, Language::Ja);
+        assert!(output.images.is_empty());
+        assert_eq!(output.dropped, vec![crate::tool_image::DropReason::Decode]);
+        assert_eq!(
+            output.text,
+            "撮りました\n（画像 1 枚は渡せませんでした: 読み取れない画像 1 枚）"
+        );
+    }
+
+    /// 1 つの結果につき 4 枚まで。5 枚目以降は落として本文に書く。
+    #[test]
+    fn a_fifth_image_is_dropped_and_named() {
+        let jpeg = jpeg_b64();
+        let blocks: Vec<String> = (0..5).map(|_| image_block(&jpeg)).collect();
+        let result = result_from_wire(&format!(r#"{{"content":[{}]}}"#, blocks.join(",")));
+        let output = render_tool_output(&result, Language::En);
+        assert_eq!(output.images.len(), crate::tool_image::TOOL_IMAGES_PER_RESULT);
+        assert_eq!(output.dropped, vec![crate::tool_image::DropReason::TooMany]);
+        assert!(output.text.contains("over the limit of 4"), "実際: {}", output.text);
+    }
+
+    /// 画像だけが返った結果を「空の結果」と書かない（嘘になる）。
+    #[test]
+    fn an_image_only_result_is_not_called_empty() {
+        let result =
+            result_from_wire(&format!(r#"{{"content":[{}]}}"#, image_block(&jpeg_b64())));
+        let output = render_tool_output(&result, Language::Ja);
+        assert_eq!(output.text, "（画像 1 枚）");
+        assert_eq!(output.images.len(), 1);
     }
 
     #[test]
     fn structured_content_is_used_when_there_is_no_text() {
         let result = result_from_wire(r#"{"content":[],"structuredContent":{"count":3}}"#);
-        assert!(render_tool_result(&result).contains("count"));
+        assert!(rendered_ja(&result).contains("count"));
     }
 
     #[test]
     fn an_entirely_empty_result_still_says_something() {
         // content 欠落は仕様上ありうる（サーバーによっては返さない）。
         let result = result_from_wire(r#"{"isError":false}"#);
-        assert!(!render_tool_result(&result).is_empty());
+        assert_eq!(rendered_ja(&result), "（空の結果）");
+        assert_eq!(render_tool_output(&result, Language::En).text, "(empty result)");
     }
 }

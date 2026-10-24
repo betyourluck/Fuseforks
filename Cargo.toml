@@ -53,9 +53,10 @@ rayon = "1.10"
 base64 = "0.22"
 # 画像添付の JPEG フォールバック（Spec 23 D3）。互換層が WebP を 400 で
 # 拒んだ 1 回だけ、WebP を decode して JPEG へ再エンコードする。
-# default-features = false で webp / jpeg の 2 コーデックだけを持つ
-# （どちらも純 Rust。C 依存は増えない）。
-image = { version = "0.25", default-features = false, features = ["webp", "jpeg"] }
+# default-features = false で webp / jpeg / png の 3 コーデックだけを持つ
+# （どれも純 Rust。C 依存は増えない）。png は MCP のツール結果の画像（Spec 70 D2）を
+# JPEG へ寄せるため — 増える 7 crate はロックファイルに既にある（GUI 側の依存）。
+image = { version = "0.25", default-features = false, features = ["webp", "jpeg", "png"] }
 # 会話の永続化（Spec 12）の保存先。**純 Rust・C 依存なし・依存 2 個**の
 # 組み込み KV ストアで、`(session_id, seq)` のタプルキー範囲走査が
 # 「後ろから N 件」を O(log n + k) で返す（実測 0.03 ms / 20,000 件）。

@@ -397,6 +397,15 @@ fn parse_features(bytes: &[u8]) -> WebpFeatures {
     features
 }
 
+/// アニメーション WebP か（VP8X のフラグ、または ANIM / ANMF チャンク）。
+///
+/// MCP のツール結果の画像（Spec 70）は、アニメーションなら先頭フレームを JPEG へ寄せる
+/// （そのまま送ると、モデルに何が渡るかが接続先しだいになる）。判定は利用者の添付の
+/// 検証と同じ 1 実装。
+pub(crate) fn is_animated_webp(bytes: &[u8]) -> bool {
+    is_webp(bytes) && parse_features(bytes).animated
+}
+
 /// **画像の**受け入れ検証。通れば `(幅, 高さ)` を返す。
 ///
 /// # Errors
