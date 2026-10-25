@@ -232,6 +232,7 @@ export function providerSkills(draft: Pick<
   | "perplexityPeopleSearch"
   | "perplexityFetchUrl"
   | "geminiUrlContext"
+  | "anthropicWebSearch"
 >): {
   google: SkillVisibility;
   /**
@@ -267,6 +268,11 @@ export function providerSkills(draft: Pick<
   perplexityFinance: SkillVisibility;
   perplexityPeople: SkillVisibility;
   perplexityFetch: SkillVisibility;
+  /**
+   * Anthropic の web 検索（Spec 71）。Anthropic ネイティブ限定。**パッシブの
+   * プロンプトキャッシュと並ぶ最初の操作できる固有スキル**。
+   */
+  anthropicWeb: SkillVisibility;
   /** 設定を持たない固有スキルの辞書キー。 */
   passive: string[];
   /**
@@ -281,6 +287,7 @@ export function providerSkills(draft: Pick<
   const onOpenAi = draft.provider === "open_ai_responses";
   const onMeta = draft.provider === "meta_responses";
   const onPerplexity = draft.provider === "perplexity_responses";
+  const onAnthropic = draft.provider === "anthropic";
 
   const google = visibility(draft.googleSearch, onGemini);
   const geminiUrlContext = visibility(draft.geminiUrlContext, onGemini);
@@ -293,6 +300,7 @@ export function providerSkills(draft: Pick<
   const perplexityFinance = visibility(draft.perplexityFinanceSearch, onPerplexity);
   const perplexityPeople = visibility(draft.perplexityPeopleSearch, onPerplexity);
   const perplexityFetch = visibility(draft.perplexityFetchUrl, onPerplexity);
+  const anthropicWeb = visibility(draft.anthropicWebSearch, onAnthropic);
 
   const passive = passiveSkills(draft.provider);
 
@@ -308,6 +316,7 @@ export function providerSkills(draft: Pick<
     perplexityFinance,
     perplexityPeople,
     perplexityFetch,
+    anthropicWeb,
     passive,
     anyOffered:
       google.offered ||
@@ -321,6 +330,7 @@ export function providerSkills(draft: Pick<
       perplexityFinance.offered ||
       perplexityPeople.offered ||
       perplexityFetch.offered ||
+      anthropicWeb.offered ||
       passive.length > 0,
   };
 }

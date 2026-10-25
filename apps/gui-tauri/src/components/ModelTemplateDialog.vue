@@ -287,6 +287,7 @@ const skills = computed(() =>
       perplexityPeopleSearch: false,
       perplexityFetchUrl: false,
       geminiUrlContext: false,
+      anthropicWebSearch: false,
     },
   ),
 );
@@ -415,6 +416,15 @@ const strandedRows = computed(() => {
       afterKey: "modelTemplate.strandedOpenAiAfter",
       clear: () => (d.openaiReasoningPro = false),
     });
+  if (s.anthropicWeb.stranded)
+    rows.push({
+      key: "anthropicWeb",
+      labelKey: "modelTemplate.anthropicWebSearch",
+      ownerKey: "modelTemplate.providerAnthropic",
+      strongKey: "modelTemplate.strandedAnthropicStrong",
+      afterKey: "modelTemplate.strandedAnthropicAfter",
+      clear: () => (d.anthropicWebSearch = false),
+    });
   return rows;
 });
 
@@ -481,6 +491,8 @@ function blank(): ModelTemplate {
     perplexityFetchUrl: false,
     // Spec 48。既定 OFF（取得本文は入力単価で課金 — 実測 1 ページ 8,999 トークン）。
     geminiUrlContext: false,
+    // Spec 71。既定 OFF（検索料 1,000 回 $10 は上限の外・結果は 1 検索 約 1 万トークン）。
+    anthropicWebSearch: false,
     requestTimeoutSecs: 120,
     maxRetries: 3,
     // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
@@ -1087,6 +1099,24 @@ function onTemperature(raw: string): void {
                   {{ $t("modelTemplate.openaiReasoningProHint") }}
                 </span>
               </label>
+            </template>
+
+            <!--
+              Anthropic の web 検索（Spec 71）。Anthropic ネイティブを選んだときだけ出す。
+              **注記に払いを 2 つ書く** — 検索料（1,000 回 $10。トークンの上限にも統計にも
+              入らない）と、結果が入力に入る量（1 検索 約 1 万トークン — P0 (a)）。
+            -->
+            <template v-if="skills.anthropicWeb.offered">
+              <label class="text-ink-dim">{{ $t("modelTemplate.anthropicWebSearch") }}</label>
+              <label class="flex items-center gap-2">
+                <input v-model="draft.anthropicWebSearch" type="checkbox" />
+                <span class="text-ink-dim">
+                  {{ $t("modelTemplate.anthropicWebSearchHint") }}
+                </span>
+              </label>
+              <div class="col-span-2 text-[11px] text-ink-dim">
+                {{ $t("modelTemplate.anthropicSearchCost") }}
+              </div>
             </template>
 
             <!--

@@ -988,6 +988,11 @@
     "perplexitySwitchNote": "OpenAI Responses の web 検索のチェックが残っていますが、このワイヤでは効きません。Perplexity で検索するには、この欄の「web 検索」を有効にしてください（設定は自動では引き継ぎません）。",
     "strandedPerplexityStrong": "プロトコルが Perplexity（Responses）ではないため効きません",
     "strandedPerplexityAfter": "。この機能は Perplexity の Responses 経路にしかありません。使うならプロトコルを「Perplexity（Responses）」にしてください。",
+    "anthropicWebSearch": "web 検索",
+    "anthropicWebSearchHint": "web を検索して裏を取ってから答えます（出典の URL が返ります）。1 回の要求で 5 回まで検索します",
+    "anthropicSearchCost": "検索した要求は結果が入力に入り、1 回の検索でおよそ 1 万トークン増えます。検索料（1,000 回あたり $10）は別に課金され、トークンの上限にも統計にも入りません。",
+    "strandedAnthropicStrong": "プロトコルが Anthropic ネイティブではないため効きません",
+    "strandedAnthropicAfter": "。この機能は Anthropic ネイティブ経路にしかありません。使うならプロトコルを「Anthropic ネイティブ」にしてください。",
     "pricing": {
       "title": "単価（$ / 100 万トークン）",
       "hint": "空欄は「未設定」。キャッシュ系は空なら 1 段上の単価へ落ちます。",

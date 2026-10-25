@@ -625,6 +625,13 @@ export interface ModelTemplate {
    * `prompt` へ畳んで数える（D4）。既定 OFF。
    */
   geminiUrlContext: boolean;
+  /**
+   * Anthropic の web 検索（Spec 71）。サーバー側ツール `web_search_20250305` を 1 要求 5 回まで。
+   * **`provider === "anthropic"` のときだけ効く**（コアの `anthropic_web_search_active` が AND で判定）。
+   * 検索結果は入力トークンに入り（1 検索 約 1 万トークン）、**検索料（1,000 回 $10）は
+   * トークンの上限にも統計にも入らない**。既定 OFF。
+   */
+  anthropicWebSearch: boolean;
   requestTimeoutSecs: number;
   maxRetries: number;
   /**

@@ -988,6 +988,11 @@
     "perplexitySwitchNote": "The OpenAI Responses web search toggle is still on, but it has no effect on this wire. To search with Perplexity, enable \"Web search\" in this section (settings do not carry over automatically).",
     "strandedPerplexityStrong": "has no effect because the protocol is not Perplexity (Responses)",
     "strandedPerplexityAfter": ". This feature exists only on the Perplexity Responses wire. To use it, set the protocol to \"Perplexity (Responses)\".",
+    "anthropicWebSearch": "Web search",
+    "anthropicWebSearchHint": "Searches the web and checks its facts before answering (source URLs are returned). Up to 5 searches per request",
+    "anthropicSearchCost": "Requests that search take the results into the input, about 10,000 tokens per search. Search fees ($10 per 1,000 searches) are billed separately and count toward neither the token limit nor the statistics.",
+    "strandedAnthropicStrong": "has no effect because the protocol is not Anthropic native",
+    "strandedAnthropicAfter": ". This feature exists only on the Anthropic native path. To use it, set the protocol to \"Anthropic native\".",
     "pricing": {
       "title": "Rates ($ per 1M tokens)",
       "hint": "Blank means \"unset\". Blank cache rates fall back to the next rate up.",

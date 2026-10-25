@@ -7,7 +7,8 @@
   （「覆す判断」の理由を書き直した）/ 保留 × `tool_choice: none` は 200 で検索まで走る（D5 の保守的な規則を外した）。
   `pause_turn` は 2 回とも再現せず。`data_contract` の `anthropic_server_tools` へ凍結）→ **未決 0**（同日、利用者が
   推しのまま裁定 — `max_uses` は定数 5 / web fetch は別の Spec）→ **P1 完了**（同日。コア。記録は「P1 実装記録」。
-  単体 12 + 結合 3・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり）
+  単体 12 + 結合 3・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり）→ **P2 完了**（同日。画面のトグル・注記・
+  stranded の行。stranded の行の走査テストを新設。vitest 896 本全緑）
 - 起点: 利用者が公式文書（`platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool`）を
   持ち込んだ → 公式文書 3 ページと Anthropic ワイヤの実装を突き合わせた（同日）→
   「Spec 71（Anthropic の web 検索）として起票して。P0 の probe 項目も Spec に入れて」
@@ -484,9 +485,29 @@ scratchpad に置いて使い捨て、数字だけをこの Spec の「P0 実測
   `-j 4` で通った（CLAUDE.md の既知の処方）/ 1 回目の集計が `passed= failed=`（空）だった = 1 本も走っていない。
   件数を見ずに緑と読まない（`failures.md` #132）
 
-### P2 — 画面
+### P2 — 画面（**完了 2026-10-25**。下の「P2 実装記録」）
 
 D11 の全箇所 + vitest（`anyOffered` の名指し検査・辞書の鍵）。
+
+### P2 実装記録（2026-10-25）
+
+- `types.ts` の `ModelTemplate.anthropicWebSearch` / `providerSkills.ts` の `anthropicWeb`（`provider === "anthropic"` の
+  ときだけ offered。`anyOffered` にも足した）/ `ModelTemplateDialog.vue` のトグル・注記（検索料が上限の外・
+  1 検索 約 1 万トークン）・`draft` の初期化 2 か所・stranded の行 / 辞書 ja・en の 5 鍵
+  （`anthropicWebSearch` / `anthropicWebSearchHint` / `anthropicSearchCost` / `strandedAnthropicStrong` /
+  `strandedAnthropicAfter`）。置き場は Pro 推論モードの後・パッシブのバッジの前
+- **`anyOffered` の名指し検査は書けない** — Anthropic の見出しはパッシブのバッジ（プロンプトキャッシュ）が既に
+  立てているので、`anthropicWeb` を足し忘れても見出しは消えない（Gemini の URL context と同じ形。Tasks の
+  「`anyOffered` の名指し検査」はこのワイヤでは判定にならない）。単体は offered と stranded の対応を留めた
+- **走査テストを 1 本新設** — `lib/strandedRowsWiring.test.ts`。`providerSkills()` の操作できるスキルの鍵と
+  ダイアログの stranded 行の `key` の集合が一致すること / 各行の辞書の鍵が ja・en に在ること / 消し方
+  （`clear`）を持つこと。**行を足し忘れても今まではどのテストも落ちなかった**（行は手書きで、辞書の鍵は実行時に
+  引く）。他の 12 スキルの行はすべて揃っていた。初版の 2 本目は正規表現が 1 件も当たらなくても緑になる
+  書き方だったので、当たった行の数がスキルの数と一致することを先に確かめる形にした
+- vitest 103 ファイル・896 本全緑・vue-tsc 0・build 緑
+- **ミューテーション 2 回とも予測どおり**: F1 Anthropic の判定を外す → 新しい単体の 1 本 / F2 stranded の行を消す →
+  走査の 2 本（集合の一致と行の数）。戻したあと SHA-256 の一致を確かめた
+- **実機は未確認**（P4）
 
 ### P3 — 台帳
 

@@ -24,6 +24,7 @@ type Draft = Pick<
   | "perplexityPeopleSearch"
   | "perplexityFetchUrl"
   | "geminiUrlContext"
+  | "anthropicWebSearch"
 >;
 
 function draft(over: Partial<Draft> = {}): Draft {
@@ -31,6 +32,7 @@ function draft(over: Partial<Draft> = {}): Draft {
     provider: null,
     googleSearch: false,
     geminiUrlContext: false,
+    anthropicWebSearch: false,
     xaiWebSearch: false,
     xaiXSearch: false,
     openaiWebSearch: false,
@@ -208,6 +210,24 @@ describe("providerSkills", () => {
     const back = providerSkills(draft({ provider: "gemini", geminiUrlContext: true }));
     expect(back.geminiUrlContext.offered).toBe(true);
     expect(back.geminiUrlContext.stranded).toBe(false);
+  });
+
+  // Spec 71 D11。**Anthropic の見出しはパッシブのバッジ（プロンプトキャッシュ）が既に
+  // 立てている**ので、anyOffered に anthropicWeb を足し忘れても静かに通る — ここで
+  // 留められるのは offered と stranded の対応だけ（Gemini の URL context と同じ形）。
+  it("Anthropic を明示選択したときだけ web 検索を出し、互換へ戻すと stranded になる", () => {
+    const s = providerSkills(draft({ provider: "anthropic" }));
+    expect(s.anthropicWeb.offered).toBe(true);
+    expect(s.openaiWeb.offered).toBe(false);
+    expect(s.metaWeb.offered).toBe(false);
+    expect(s.passive).toEqual(["passivePromptCache"]);
+
+    const moved = providerSkills(draft({ provider: "open_ai_compat", anthropicWebSearch: true }));
+    expect(moved.anthropicWeb.offered).toBe(false);
+    expect(moved.anthropicWeb.stranded).toBe(true);
+    const back = providerSkills(draft({ provider: "anthropic", anthropicWebSearch: true }));
+    expect(back.anthropicWeb.offered).toBe(true);
+    expect(back.anthropicWeb.stranded).toBe(false);
   });
 
   it("互換のままでは 1 つも出ない", () => {
