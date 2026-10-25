@@ -92,7 +92,7 @@
 
 ```text
 world.template(&id)?.clone()           // 保存済みの値を読む
-  → .without_provider_skills()         // 固有スキル 11 欄を偽に（model.rs:938）
+  → .without_provider_skills()         // 固有スキル 11 欄を偽に（model.rs:938。Spec 71 で 12 欄）
   → self.shared.factory.create(&t)?    // キャッシュ（backend_for）を通さずに組む
   → resolution.degraded_reason が Some なら拒否
 ```

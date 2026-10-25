@@ -73,7 +73,7 @@ Fuseforks/
 │       │       ├── canonical.rs     Provider-neutral types
 │       │       ├── wire.rs          Provider raw JSON (single source of truth)
 │       │       ├── openai_compat.rs OpenAI-compatible adapter (encode/decode pure functions)
-│       │       ├── anthropic.rs     Anthropic Messages API adapter
+│       │       ├── anthropic.rs     Anthropic Messages API adapter (prompt caching, web search and its replay)
 │       │       ├── gemini.rs        Gemini native adapter (Google Search grounding, URL context, thinking level)
 │       │       ├── xai_responses.rs xAI Responses adapter (Grok Live Search)
 │       │       ├── openai_responses.rs OpenAI Responses adapter (thinking summary, web search)
@@ -1594,6 +1594,61 @@ When finance search is enabled, the core sends a **step budget
 (`max_steps: 5`) as its pair** — without it the endpoint merely loads the tool
 and never runs it, **failing silently with a 200** (measured). The field is
 not exposed on screen (keeping the pair consistent is the core's job).
+
+### Anthropic Web Search ([Spec 71](specs/71_anthropic-web-search.md))
+
+Set the protocol to **"Anthropic native"** in a model template and **web search**
+appears under provider-specific skills (just before the passive prompt-caching
+badge). The village sends one server tool, `web_search_20250305` (the basic
+version), at the end of `tools`, and **searches at most 5 times per request**
+(`max_uses`). The version is not chosen by model name, so Opus, Sonnet, and
+Fable all accept the same shape (measured).
+
+**Sources come back as real URLs** (the same side as Grok and Perplexity). They
+are copied from the citations on the body (`web_search_result_location`), and
+**only cited pages become sources**; the list of search results is only counted
+in the log.
+
+**A search costs in two ways.** The results enter the input, **about 10,000
+tokens per search**. **The search fee ($10 per 1,000 searches) is billed
+separately and counts toward neither the token limit nor the statistics** (only
+the `requests=` count on the `anthropic search:` log line shows it). Without
+`max_uses`, one request that asked about 15 companies ran 17 searches, 236,999
+input tokens, and 55 seconds (measured) — the limit of 5 caps input and latency
+as well as the fee. One turn can search up to `5 × max_tool_iterations` times.
+
+**Search blocks are sent back as received, to the next round of the same turn.**
+If the model calls a search in the same round as a village tool (`file`, MCP,
+and so on), the search is held and only runs on the next request, when the
+response's `server_tool_use` block is sent back. A long search can also stop
+halfway with `pause_turn`, and it resumes when the stopped response is sent back
+unchanged. Rebuilding the assistant turn from its text and calls changes both
+shapes, so the canonical layer carries **a copy of the response blocks**
+(`replay`), and only the Anthropic adapter reads it.
+
+- **The copy is never saved** (`#[serde(skip)]`). History is still stored as
+  text, so **search results do not carry over to later turns** — cheaper than
+  the official pattern, where results are resent and billed every turn
+- **The copy leaves out thinking blocks** (it works without them — measured).
+  The village does not send thinking blocks back
+- Rebuilding does not fail with a 400; the model searches again (measured). The
+  copy pays off in cost (10,901 vs. 13,910 input tokens on a held round) and in
+  the summary call: with the copy the summary quoted the search results, and
+  without it the summary answered with no sources
+- **A stopped response on the last round is not added; the turn goes to the
+  summary call instead.** The summary call appends a system line and sends
+  `tool_choice: none`, so adding the stopped response would end the request on
+  an assistant turn, which generation-5 models can reject as a prefill. The
+  fee for that round is paid, but its results do not reach the summary
+
+**The dynamic-filtering versions (`web_search_20260209` and later) are not
+used.** Their responses mix in code-execution blocks, and in one measured
+request they used 3× the input with zero citations.
+
+**If the organization has web search disabled, the request stops with a 400**
+(per the official docs; the endpoint's message is shown as-is; not measured in this
+village). The connection test turns
+provider-specific skills off, so it cannot detect this.
 
 ---
 

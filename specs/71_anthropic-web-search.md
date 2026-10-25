@@ -8,7 +8,8 @@
   `pause_turn` は 2 回とも再現せず。`data_contract` の `anthropic_server_tools` へ凍結）→ **未決 0**（同日、利用者が
   推しのまま裁定 — `max_uses` は定数 5 / web fetch は別の Spec）→ **P1 完了**（同日。コア。記録は「P1 実装記録」。
   単体 12 + 結合 3・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり）→ **P2 完了**（同日。画面のトグル・注記・
-  stranded の行。stranded の行の走査テストを新設。vitest 896 本全緑）
+  stranded の行。stranded の行の走査テストを新設。vitest 896 本全緑）→ **P3 完了**（同日。台帳。記録は「P3 台帳記録」。
+  PRIVACY は改訂しない）
 - 起点: 利用者が公式文書（`platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool`）を
   持ち込んだ → 公式文書 3 ページと Anthropic ワイヤの実装を突き合わせた（同日）→
   「Spec 71（Anthropic の web 検索）として起票して。P0 の probe 項目も Spec に入れて」
@@ -514,6 +515,25 @@ D11 の全箇所 + vitest（`anyOffered` の名指し検査・辞書の鍵）。
 DETAIL 3 言語（固有スキルの表・Anthropic の段落・ディレクトリ木）/ README 3 言語（グラウンディングの
 行に 1 語）/ PRIVACY 日英の読み直し（D10）/ CLAUDE.md / `data_contract` の回収。
 **ランディングページと Qiita 記事は grep 網の外** — 固有スキルの列挙が載っていれば別に数える。
+
+### P3 台帳記録（2026-10-25）
+
+- **README 3 言語** — グラウンディングの行の「OpenAI と Meta の web 検索」に Anthropic を足した（1 語。行数は 170 / 170 / 166 のまま）
+- **DETAIL 3 言語** — Perplexity の節の後ろに「Anthropic の web 検索」の節（日英は全文・中文は抄訳）。書いたのは
+  トグルの出る条件・`max_uses` 5 と 1 ターンの上限・検索料が予算と統計の外であること・1 ターンの写し・`pause_turn` と
+  最後の周・保留・計器の 1 行（`anthropic search:`）・組織で無効のときの 400（公式文書による。未実測と明記）と、
+  接続テストは固有スキルを外すのでそれを検出できないこと。ディレクトリ木の `anthropic.rs` の説明に web 検索と写しを足した
+- **PRIVACY 日英は改訂しない**（D10 の観点で読み直した）— 4-2 は「モデルの提供事業者が代行して web 検索…を行います。
+  検索語は提供事業者へ送信されます」と事業者を名指ししておらず、Anthropic の検索も同じ文で読める。写しで送り返す
+  `encrypted_content` は Anthropic が返したものを Anthropic へ戻すだけで、送り先も送る種類も増えない
+- **`data_contract`** — P0 で凍結した 3 か所（`ModelTemplate` の欄・`GroundingEngine.values`・`llm_wire.anthropic_server_tools`）の
+  ほかに直すものは無かった
+- **追従の grep で 1 件回収** — Spec 68 の設計の図が「固有スキル 11 欄を偽に」のままだった（`without_provider_skills` は
+  12 欄になった）。その場に「Spec 71 で 12 欄」と注記した
+- **grep 網の外に 1 件残した** — ランディングページ（`betyourluck.github.io/docs/fuseforks.html`）の日英 2 行が web 検索の
+  提供元を「Gemini / Grok / OpenAI / Meta / Perplexity」と列挙している。**この機能はまだ配布物に入っていない**ので、
+  直すのは次のタグを公開するとき（直す前の今は嘘になっていない）
+- Qiita の記事は固有スキルを列挙していないので嘘にならない
 
 ### P4 — 実機
 

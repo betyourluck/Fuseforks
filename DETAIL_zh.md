@@ -67,7 +67,7 @@ Fuseforks/
 │       │       ├── canonical.rs     提供商中立的类型
 │       │   │   ├── wire.rs          提供商的原始 JSON 形式（唯一的真相）
 │       │   │   ├── openai_compat.rs OpenAI 兼容 adapter（encode/decode 纯函数）
-│       │   │   ├── anthropic.rs     Anthropic Messages API adapter
+│       │   │   ├── anthropic.rs     Anthropic Messages API adapter（提示词缓存·web 搜索与回传）
 │       │   │   ├── gemini.rs        Gemini 原生 adapter（Google 搜索接地·URL context·思考阶段）
 │       │   │   ├── xai_responses.rs xAI Responses adapter（Grok 的 Live Search）
 │       │   │   ├── openai_responses.rs OpenAI Responses adapter（思考摘要·web 搜索）
@@ -551,6 +551,14 @@ SKILL / Construct 标签与判断者编辑对话框中的“用 AI 创建”。
 ### Perplexity 的ツール（[Spec 45](specs/45_perplexity-tools.md)）
 
 当在模型模板中将**协议设为“Perplexity（Responses）”**时，可以使用 Perplexity 的 4 种搜索工具及引用来源。
+
+### Anthropic 的 web 搜索（[Spec 71](specs/71_anthropic-web-search.md)）
+
+当在模型模板中将**协议设为“Anthropic 原生”**时，固有技能中会出现 **web 搜索**。
+- 在 tools 末尾发送 1 个服务器端工具 `web_search_20250305`（基础版），**每次请求最多搜索 5 次**（`max_uses`）。
+- **出处以真实 URL 返回**，只把正文中被引用的页面作为出处。
+- 搜索结果计入输入（每次搜索约 1 万 token）。**搜索费（每 1,000 次 $10）另行计费，不计入 token 上限和统计**。
+- 搜索的块只在同一回合内原样回传给下一轮（`replay`），不保存，也不带到之后的回合。
 
 ### API 密钥的存放位置
 
