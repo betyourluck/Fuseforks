@@ -9,7 +9,8 @@
   推しのまま裁定 — `max_uses` は定数 5 / web fetch は別の Spec）→ **P1 完了**（同日。コア。記録は「P1 実装記録」。
   単体 12 + 結合 3・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり）→ **P2 完了**（同日。画面のトグル・注記・
   stranded の行。stranded の行の走査テストを新設。vitest 896 本全緑）→ **P3 完了**（同日。台帳。記録は「P3 台帳記録」。
-  PRIVACY は改訂しない）
+  PRIVACY は改訂しない）→ **P4 完了 = Done**（同日。実機検収 6 件のうち 5 件を観測し、`pause_turn`（検収 3）は実機で
+  出ず計画どおり結合テストが受ける。記録は「P4 実機記録」）
 - 起点: 利用者が公式文書（`platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool`）を
   持ち込んだ → 公式文書 3 ページと Anthropic ワイヤの実装を突き合わせた（同日）→
   「Spec 71（Anthropic の web 検索）として起票して。P0 の probe 項目も Spec に入れて」
@@ -544,6 +545,35 @@ DETAIL 3 言語（固有スキルの表・Anthropic の段落・ディレクト�
 4. 別のプロバイダへ切り替えると stranded の行に出て、「オフにする」で消える
 5. 接続テスト（Spec 68）で `anthropic search:` の行が出ない
 6. `max_uses` を超える依頼で `errors=max_uses_exceeded` が出て、ターンが完走する
+
+### P4 実機記録（2026-10-25。開発ビルド `app=0.1.0 profile=debug`・ザリ = `claude-opus-5-5`・`fuseforks.log`）
+
+| 検収 | 結果 | 決め手の行 |
+|---|---|---|
+| 1 | **観測** | `anthropic search: calls=1 results=9 cited=8 requests=1 errors=- deferred=0 paused=0` → `turn: rounds=1/64 stop=-` |
+| 2 | **観測** | 1 周目 `calls=1 results=0 requests=0 deferred=1` と同じ周で `tool: name=fd` → 2 周目 `calls=0 results=10 requests=1 deferred=0` → 4 周目で `turn: rounds=4/64 stop=-` |
+| 3 | **実機では出ず、結合テストへ預けた** | 6 本の `anthropic search:` 行がすべて `paused=0`。結合テスト `a_paused_response_continues_without_a_user_message` / `a_pause_on_the_last_round_is_not_carried_into_the_summary` が受ける（P0 でも 2 回とも再現しなかった） |
+| 4 | **観測**（画面。利用者が確認） | プロトコルを切り替えると stranded の行が出て、「オフにする」で消えた。ログに行は残らない |
+| 5 | **観測** | `template probe: template=claude-opus-5-5 wire=Anthropic outcome=replied … prompt=27 completion=4 reasoning=0`。前後に `anthropic search:` の行は無い。トークン数は Spec 68 P0 の Anthropic の行と一致 |
+| 6 | **観測** | `calls=8 results=49 cited=12 requests=5 errors=max_uses_exceeded+max_uses_exceeded+max_uses_exceeded` → `turn: rounds=1/64 stop=-`。8 回呼んで 5 回走り、残り 3 回を接続先が断った。1 要求の中で上限が効き、ターンは止まらない |
+
+- **検収 2 で保留の往復が端から端まで通った** — 1 周目は `requests=0`（検索は走っておらず検索料も掛かっていない）で、
+  写しのまま送り返した 2 周目に `requests=1 results=10` が出た。D5（写しを送って `tool_result` だけを続ける）の実物
+- **検収 2 の最後の本文には引用が付かなかった** — 結果が届いた 2 周目の応答は検索結果 + 村のツールの呼び出しで本文が無く
+  （`cited=0`）、本文を書いた 4 周目の応答には検索のブロックが無い（`anthropic search:` の行が出ない）。注記は検索語だけで
+  参照元が無い形になるはず（ログからの推論で、画面は確かめていない）。**モデルは後の周の本文で前の周の検索結果を引用しなかった**。
+  機構の欠けではなく、引用を付けるかはモデルが決める。頻度を見てから
+- **検索した要求は、同じプロンプトを 2 回読む**（推定）— 検収 1 は `prompt=136795` = 1 時間の書き込み 65,007 + 読み 65,007 +
+  1 時間ではない書き込み 6,775。同じザリの冷えた 1 周目（10-25 05:06、検索なし）は `prompt=62305` がすべて書き込みだった。
+  読みが書き込みと同じ数なので、接続先の中で検索の前後に 2 回サンプリングしていると読める。2 回目はキャッシュの読み（0.1 倍）。
+  検収 6 は `prompt=174332` = 読み 132,929（ほぼ 2 回分）+ 書き込み 1,125 + 素の入力 40,278。**検索結果の数え方が 2 つの
+  ターンで違う**（検収 1 は 1 時間ではない書き込み、検収 6 は素の入力）。理由は確かめていない
+- **検収 2 の 2 周目から 3 周目でキャッシュが 1 段外れた** — 2 周目は `prompt=77214 cached=65902 cache_write=11310
+  cache_write_1h=2556`、3 周目は `cached=65902`（1 周目までの分）で `cache_write=11617` を書き直した。2 周目に書いた 1 時間の
+  分を 3 周目が読んでいない。保留の検索の結果を接続先が内部でどこに置いたかと、こちらが送り返した並びが違う可能性があるが、
+  確かめていない。払いは 1 回の書き直し（約 1.1 万トークン × 2.0）で、頻度を見てから
+- 検収 2 では、ザリは `fd` と検索のほかに `run` で python を 2 回呼んだ（承認モードは「承認せずに許可」）。検収の範囲の外
+- **Done**（検収 3 は計画どおり結合テストが受ける）
 
 ## 未決
 
