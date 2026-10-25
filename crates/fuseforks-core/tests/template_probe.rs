@@ -49,6 +49,7 @@ fn ok(text: &str) -> Result<ChatResponse, LlmError> {
         usage: Usage { prompt: 14, completion: 2, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: 0 },
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     })
 }
 

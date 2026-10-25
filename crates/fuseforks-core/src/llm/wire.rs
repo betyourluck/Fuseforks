@@ -382,9 +382,9 @@ pub struct AnthropicRequest {
     /// サンプリング温度。明示設定時のみ送る。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    /// ツール定義。
+    /// ツール定義。関数ツールのあとに、固有スキルのサーバー側ツールが末尾に並ぶ（Spec 71 D1）。
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<AnthropicTool>,
+    pub tools: Vec<AnthropicToolDef>,
     /// ツール選択の強制。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<AnthropicToolChoice>,
@@ -497,6 +497,12 @@ pub enum AnthropicRequestBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
     },
+    /// 応答のブロックの写し（Spec 71 D3）。**受け取ったオブジェクトをそのまま送る** —
+    /// `server_tool_use` / `web_search_tool_result` / 引用つきの `text` / `tool_use`。
+    /// `type` は中身が持っているので、この variant だけタグを付けない。
+    /// キャッシュの境界は `place_message_breakpoint` がオブジェクトへ鍵を書き足す。
+    #[serde(untagged)]
+    Raw(serde_json::Value),
 }
 
 /// `tool_result` の本文（Spec 70 D1 = ネイティブ）。
@@ -560,6 +566,31 @@ pub struct AnthropicTool {
     pub input_schema: serde_json::Value,
 }
 
+/// `tools` の 1 要素。関数ツールか、Anthropic のサーバー側ツール（Spec 71）。
+///
+/// タグを付けない — 関数ツールは `type` を持たず（送る形は Spec 71 の前と 1 バイトも
+/// 変わらない）、サーバー側ツールは自分の `type` を持つ。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum AnthropicToolDef {
+    /// こちらが実行する関数ツール。
+    Function(AnthropicTool),
+    /// サーバー側の web 検索（`web_search_20250305`）。
+    WebSearch(AnthropicWebSearchTool),
+}
+
+/// サーバー側の web 検索の定義（Spec 71 D1）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnthropicWebSearchTool {
+    /// 版。常に `"web_search_20250305"`（基本版）。
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    /// 常に `"web_search"`。
+    pub name: &'static str,
+    /// 1 要求あたりの検索回数の上限。超えた検索は 200 の中の `max_uses_exceeded` になる。
+    pub max_uses: u32,
+}
+
 /// Anthropic のツール選択指定。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AnthropicToolChoice {
@@ -574,15 +605,39 @@ pub struct AnthropicToolChoice {
 /// Anthropic Messages API のレスポンス本体。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AnthropicResponse {
-    /// 応答コンテンツブロック列。
+    /// 応答コンテンツブロック列。各ブロックは**型に読んだ形と生のオブジェクトの両方**を持つ
+    /// （生のほうは写し = Spec 71 D3 の材料）。
     #[serde(default)]
-    pub content: Vec<AnthropicContentBlock>,
+    pub content: Vec<AnthropicResponseBlock>,
     /// 終了理由（`end_turn` / `tool_use` / `max_tokens` ...）。
     #[serde(default)]
     pub stop_reason: Option<String>,
     /// 使用量。
     #[serde(default)]
     pub usage: Option<AnthropicUsage>,
+}
+
+/// 応答の 1 ブロック — 型に読んだ形（[`AnthropicContentBlock`]）と、受け取ったままの
+/// オブジェクト（`raw`）の対（Spec 71 D3）。
+///
+/// 生のほうを持つのは、サーバー側ツールのブロックを**同じターンの次の周へ受け取った
+/// まま送り返す**ため（`encrypted_content` が欠けるか変わると 400 — 公式文書）。
+/// 型に読み直してから組み立てると、型に無い欄（`encrypted_content` / `encrypted_index` /
+/// `caller` …）が落ちる。
+#[derive(Debug, Clone)]
+pub struct AnthropicResponseBlock {
+    /// 型に読んだ形。
+    pub block: AnthropicContentBlock,
+    /// 受け取ったままのオブジェクト。
+    pub raw: serde_json::Value,
+}
+
+impl<'de> Deserialize<'de> for AnthropicResponseBlock {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let block = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        Ok(Self { block, raw })
+    }
 }
 
 /// 応答のコンテンツブロック。
@@ -594,9 +649,12 @@ pub struct AnthropicResponse {
 pub enum AnthropicContentBlock {
     /// テキスト。
     Text {
-        /// 本文。
+        /// 本文。**0 字で `citations` だけを持つブロックがある**（Spec 71 P0 (e0) で 7 件）。
         #[serde(default)]
         text: String,
+        /// 引用（Spec 71）。web 検索の引用は `web_search_result_location`。
+        #[serde(default)]
+        citations: Vec<AnthropicCitation>,
     },
     /// ツール呼び出し。`input` は **JSON オブジェクト**（文字列ではない）。
     ToolUse {
@@ -625,9 +683,50 @@ pub enum AnthropicContentBlock {
     },
     /// 伏せられた拡張思考。扱いは [`Self::Thinking`] と同じ。
     RedactedThinking,
+    /// サーバー側ツールの呼び出し（Spec 71）。`id` は `srvtoolu_` 始まり。
+    /// **村の側では実行しない** — 結果は同じ応答の `web_search_tool_result` か、
+    /// 村のツールと同じ周なら次の応答の先頭に来る（保留）。
+    ServerToolUse {
+        /// 呼び出し ID。
+        #[serde(default)]
+        id: String,
+        /// ツール名（`web_search`）。
+        #[serde(default)]
+        name: String,
+        /// 引数（`{"query": …}`）。
+        #[serde(default)]
+        input: serde_json::Value,
+    },
+    /// web 検索の結果（Spec 71）。`content` は `web_search_result` の**配列**か、
+    /// 失敗の**オブジェクト**（`{"type": "web_search_tool_result_error", "error_code": …}`）。
+    WebSearchToolResult {
+        /// 対応する `server_tool_use` の ID。
+        #[serde(default)]
+        tool_use_id: String,
+        /// 結果の配列か失敗のオブジェクト。
+        #[serde(default)]
+        content: serde_json::Value,
+    },
     /// 未知の種別。将来のブロック種別で丸ごと壊れないための受け皿。
     #[serde(other)]
     Other,
+}
+
+/// 本文の引用 1 件（Spec 71）。**web 検索の引用は `web_search_result_location`**。
+///
+/// `cited_text` は 150 字 + `...` の 153 字まで、0 字のことがある（P0 で 5 件）。
+/// この村が写すのは `url` と `title` だけで、`encrypted_index` は写しの側に残る。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AnthropicCitation {
+    /// 引用の種別（`web_search_result_location` / 文書の `char_location` など）。
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    /// 引用元の URL（web 検索の引用だけが持つ）。
+    #[serde(default)]
+    pub url: String,
+    /// 引用元の表題。
+    #[serde(default)]
+    pub title: String,
 }
 
 /// 拡張思考の要求（Spec 33）。
@@ -679,6 +778,22 @@ pub struct AnthropicUsage {
     /// 既定で思考するため（実測 2026-08-10。5/5 の応答に出た）。
     #[serde(default)]
     pub output_tokens_details: Option<AnthropicOutputTokensDetails>,
+    /// サーバー側ツールの実行回数（Spec 71）。**検索を実行しなかった応答では欄ごと無い**
+    /// （保留の応答・写しで続けた応答。P0 (c0)(d2)）。無ければ 0 と読む。
+    #[serde(default)]
+    pub server_tool_use: Option<AnthropicServerToolUsage>,
+}
+
+/// サーバー側ツールの実行回数（Spec 71）。**課金の単位**（1,000 検索 $10）で、
+/// 失敗した検索は数えない（P0 (h)）。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AnthropicServerToolUsage {
+    /// web 検索の実行回数。
+    #[serde(default)]
+    pub web_search_requests: u64,
+    /// web fetch の実行回数（この村は web fetch を使わないので 0）。
+    #[serde(default)]
+    pub web_fetch_requests: u64,
 }
 
 /// Anthropic のキャッシュ書き込みの TTL 別内訳（Spec 40）。
@@ -1708,13 +1823,18 @@ mod tests {
         assert_eq!(resp.content.len(), 4);
         // Spec 33: `thinking` の本文まで受ける（要約の受け取り）。
         assert!(matches!(
-            &resp.content[0],
+            &resp.content[0].block,
             AnthropicContentBlock::Thinking { thinking } if thinking == "..."
         ));
-        assert!(matches!(resp.content[1], AnthropicContentBlock::RedactedThinking));
+        assert!(matches!(resp.content[1].block, AnthropicContentBlock::RedactedThinking));
         // **本当に未知のものだけが `Other`。** thinking を一緒くたにすると、
         // ログの `kinds=` が「unknown」しか言えなくなる。
-        assert!(matches!(resp.content[2], AnthropicContentBlock::Other));
-        assert!(matches!(&resp.content[3], AnthropicContentBlock::Text { text } if text == "ok"));
+        assert!(matches!(resp.content[2].block, AnthropicContentBlock::Other));
+        assert!(matches!(
+            &resp.content[3].block,
+            AnthropicContentBlock::Text { text, .. } if text == "ok"
+        ));
+        // 生のオブジェクトも持つ（Spec 71 D3 — 写しの材料）。未知の欄ごと残る。
+        assert_eq!(resp.content[2].raw["x"], 1);
     }
 }

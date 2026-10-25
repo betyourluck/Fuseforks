@@ -109,6 +109,7 @@ impl LlmBackend for AskThenDrift {
             usage,
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         };
 
         // 進行役（`ask_*` を提示されている側）。
@@ -128,6 +129,7 @@ impl LlmBackend for AskThenDrift {
                 usage,
                 grounding: Default::default(),
                 reasoning_summary: Vec::new(),
+                replay: None,
             });
         }
 
@@ -148,6 +150,7 @@ impl LlmBackend for AskThenDrift {
             usage,
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

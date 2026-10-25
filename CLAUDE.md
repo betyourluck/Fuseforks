@@ -7854,7 +7854,11 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   2 回とも再現せず（並列に 15〜17 本投げてループが伸びない）、**`max_uses` なしの 1 要求が検索 17 回・入力 236,999・55 秒**に
   なった（未決 1 の材料）。dynamic filtering（20260209）は 1 回の観測で入力 3 倍・引用 0 件。
   **未決 0**（同日、利用者が推しのまま裁定 = `max_uses` は定数 5（1 要求 $0.05・1 ターンは `5 × max_tool_iterations`）/
-  web fetch は別の Spec）。
+  web fetch は別の Spec）。→ **同日 P1 完了**（コア。canonical の `replay`（`#[serde(skip)]`）と `Finish::Paused` /
+  wire は応答の各ブロックを「型に読んだ形 + 生のオブジェクト」の対で持つ / `encode(req, AnthropicSkills)` / turn.rs は
+  写しを積み、`pause_turn` は最後の周以外なら続ける。単体 12 + 結合 3（実物の decode / encode を通すスクリプトの
+  バックエンド）・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり。`ChatResponse` のリテラル 119 か所へ欄を
+  機械で足した。記録は Spec の「P1 実装記録」）。**残りは P2（画面）・P3（台帳）・P4（実機）**。
   起点は利用者が持ち込んだ公式文書。版は `web_search_20250305`（dynamic filtering の 20260209 以降は応答にコード実行の
   ブロックが混ざるので後の段）。**前提の穴が 2 つ** — `pause_turn` は周回ループが `finish` を見ないので途中の本文が
   最終回答になる / 村のツールと同じ周で検索を呼ぶと検索は保留され、`encode_message` が assistant の発話を本文 +

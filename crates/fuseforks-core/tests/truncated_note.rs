@@ -33,6 +33,7 @@ fn truncated() -> ChatResponse {
         },
         grounding: Grounding::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 

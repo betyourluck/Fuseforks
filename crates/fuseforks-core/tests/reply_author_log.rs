@@ -70,6 +70,7 @@ impl LlmBackend for SilentOnCue {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

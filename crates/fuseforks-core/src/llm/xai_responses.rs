@@ -298,6 +298,7 @@ pub fn decode(resp: wire::ResponsesResponse) -> Result<ChatResponse, LlmError> {
         usage,
         grounding,
         reasoning_summary,
+        replay: None,
     })
 }
 

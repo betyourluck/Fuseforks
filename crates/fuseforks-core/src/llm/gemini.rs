@@ -468,6 +468,7 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
             usage,
             grounding: Grounding::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         });
     };
 
@@ -591,6 +592,7 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         usage,
         grounding,
         reasoning_summary,
+        replay: None,
     })
 }
 

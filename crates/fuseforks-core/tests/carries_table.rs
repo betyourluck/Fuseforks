@@ -55,7 +55,8 @@ fn adapter_emits(provider: Provider, kind: AttachmentKind) -> bool {
             serde_json::to_string(&fuseforks_core::llm::openai_compat::encode(&req, true)).unwrap()
         }
         Provider::Anthropic => {
-            serde_json::to_string(&fuseforks_core::llm::anthropic::encode(&req)).unwrap()
+            let body = fuseforks_core::llm::anthropic::encode(&req, Default::default());
+            serde_json::to_string(&body).unwrap()
         }
         Provider::Gemini => {
             serde_json::to_string(&fuseforks_core::llm::gemini::encode(&req, fuseforks_core::llm::gemini::GeminiSkills::default())).unwrap()
@@ -185,7 +186,9 @@ fn no_attachment_means_no_block_list_on_any_wire() {
     let oai = serde_json::to_value(fuseforks_core::llm::openai_compat::encode(&req, true)).unwrap();
     assert_eq!(oai["messages"][0]["content"], "こんにちは", "互換は素の文字列");
 
-    let ant = serde_json::to_value(fuseforks_core::llm::anthropic::encode(&req)).unwrap();
+    let ant =
+        serde_json::to_value(fuseforks_core::llm::anthropic::encode(&req, Default::default()))
+            .unwrap();
     assert_eq!(ant["messages"][0]["content"][0]["type"], "text");
     assert_eq!(ant["messages"][0]["content"].as_array().unwrap().len(), 1);
 

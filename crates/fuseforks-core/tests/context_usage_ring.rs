@@ -63,6 +63,7 @@ fn stop(prompt: u64, cache_read: u64) -> ChatResponse {
         usage: usage(prompt, cache_read),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 
@@ -81,6 +82,7 @@ fn call_unknown(prompt: u64) -> ChatResponse {
         usage: usage(prompt, 0),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 

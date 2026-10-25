@@ -104,6 +104,7 @@ impl LlmBackend for AskThenTruncatedWorker {
                     usage: tiny,
                     grounding: Default::default(),
                     reasoning_summary: Vec::new(),
+                    replay: None,
                 });
             }
             return Ok(ChatResponse {
@@ -118,6 +119,7 @@ impl LlmBackend for AskThenTruncatedWorker {
                 usage: tiny,
                 grounding: Default::default(),
                 reasoning_summary: Vec::new(),
+                replay: None,
             });
         }
         // ワーカー。プロバイダは 200 を返し、こちらが `Err` へ変える形（実機の

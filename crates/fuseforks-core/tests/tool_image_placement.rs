@@ -62,7 +62,7 @@ fn encoded(provider: Provider, req: &ChatRequest) -> (Value, &'static str) {
             "messages",
         ),
         Provider::Anthropic => (
-            serde_json::to_value(anthropic::encode(req)).unwrap(),
+            serde_json::to_value(anthropic::encode(req, Default::default())).unwrap(),
             "messages",
         ),
         Provider::Gemini => (

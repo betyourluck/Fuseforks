@@ -147,6 +147,7 @@ impl LlmBackend for RejectsImages {
                     usage,
                     grounding: Default::default(),
                     reasoning_summary: Vec::new(),
+                    replay: None,
                 });
             }
         };
@@ -162,6 +163,7 @@ impl LlmBackend for RejectsImages {
             usage,
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

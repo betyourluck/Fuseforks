@@ -74,6 +74,7 @@ fn response(text: &str, usage: Usage) -> ChatResponse {
         usage,
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 
@@ -107,6 +108,7 @@ impl LlmBackend for LoopingBackend {
             usage: self.usage,
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

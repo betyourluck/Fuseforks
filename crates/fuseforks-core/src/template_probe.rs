@@ -96,7 +96,10 @@ impl ProbeFinish {
             Finish::Stop => Self::Stop,
             Finish::Length => Self::Length,
             Finish::ToolUse => Self::ToolUse,
-            Finish::Other => Self::Other,
+            // `pause_turn` はサーバー側ツールのループが止まった印（Spec 71）。接続テストは
+            // `without_provider_skills` でサーバー側ツールを外して撃つので来ないはずの形で、
+            // 来ても値を増やさず「判別不能」に畳む（`ProbeFinish` は閉じた表示の語彙）。
+            Finish::Paused | Finish::Other => Self::Other,
         }
     }
 
@@ -402,6 +405,7 @@ mod tests {
             usage: usage(),
             grounding: Grounding::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         }
     }
 

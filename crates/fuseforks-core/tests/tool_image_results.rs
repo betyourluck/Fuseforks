@@ -192,6 +192,7 @@ fn done(text: &str) -> ChatResponse {
         usage: usage(),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 
@@ -235,6 +236,7 @@ impl LlmBackend for Script {
             usage: usage(),
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

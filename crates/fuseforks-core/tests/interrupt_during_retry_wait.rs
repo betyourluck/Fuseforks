@@ -82,6 +82,7 @@ impl LlmBackend for WaitsForCancel {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 

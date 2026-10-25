@@ -192,6 +192,17 @@ pub struct ChatMessage {
     /// （`failures.md` #149）。ネイティブで運ぶワイヤは読まない。画像が無ければ `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_caption: Option<String>,
+    /// [`Role::Assistant`] の発話の**応答のブロックの写し**（Spec 71 D3）。
+    /// [`ChatResponse::replay`] をターンの層が写す。
+    ///
+    /// **中身を読むのは書いた adapter だけ**（[`ToolCall::extra`] と同じ規律）。
+    /// 今は Anthropic のサーバー側ツール（web 検索）の保留・停止・済んだ組を、同じ
+    /// ターンの次の周へ受け取った順のまま送り返すためにある。
+    ///
+    /// **`#[serde(skip)]` — 寿命は 1 ターン。** 保存（`sessions.redb`）にも golden にも出ず、
+    /// 履歴は今までどおり本文の文字列で積む（ターンをまたいで検索結果を持ち越さない）。
+    #[serde(skip)]
+    pub replay: Option<Value>,
 }
 
 impl ChatMessage {
@@ -205,7 +216,15 @@ impl ChatMessage {
             tool_name: None,
             attachments: Vec::new(),
             attachment_caption: None,
+            replay: None,
         }
+    }
+
+    /// 応答のブロックの写しを付ける（Spec 71 D3）。`None` なら何も変わらない。
+    #[must_use]
+    pub fn with_replay(mut self, replay: Option<Value>) -> Self {
+        self.replay = replay;
+        self
     }
 
     /// 添付画像つきのユーザーメッセージを作る（Spec 23）。
@@ -396,6 +415,11 @@ pub enum Finish {
     ToolUse,
     /// 出力上限に到達して打ち切られた。
     Length,
+    /// サーバー側ツールのループが止まった（Anthropic の `pause_turn`。Spec 71 D4）。
+    ///
+    /// **終了ではない** — 止まった応答を写しつきの assistant の発話として積み、利用者の
+    /// 発話を足さずに次の周を回すと続く。作るのは Anthropic の decode だけ。
+    Paused,
     /// 判別不能・プロバイダ固有。
     ///
     /// 既定値でもある。**分からないものを「正常終了」に倒さない**ため。
@@ -541,6 +565,11 @@ pub enum GroundingEngine {
     /// `finance_results` の 4 種。annotations は全 probe で 0 件 —
     /// 実測 2026-08-27）。finance だけ URL 裸の文字列配列で表題を持たない。
     Perplexity,
+    /// Anthropic の web 検索（サーバー側ツール `web_search_20250305`。Spec 71）。
+    ///
+    /// 出典は本文の `citations`（`web_search_result_location`）から写す。**引用された
+    /// ものだけ**で、検索結果の一覧（`web_search_result`）は計器で件数だけ数える。
+    Anthropic,
 }
 
 impl Grounding {
@@ -614,6 +643,11 @@ pub struct ChatResponse {
     /// 要約が付かない回があったことは `dropped content blocks:` の計器が
     /// 別に数えているので、ここを空で埋めても診断は増えない。
     pub reasoning_summary: Vec<String>,
+    /// 応答のブロックの写し（Spec 71 D3）。ターンの層が [`ChatMessage::replay`] へ写す。
+    ///
+    /// 作るのは Anthropic の decode だけで、応答にサーバー側ツールのブロックが在るか
+    /// `pause_turn` のときに限る。それ以外は `None`（送信バイトは従来のまま）。
+    pub replay: Option<Value>,
 }
 
 #[cfg(test)]
@@ -633,6 +667,20 @@ mod tests {
     /// 緑のまま辞書の鍵が欠ける（Spec 37 の `Meta` / Spec 45 の `Perplexity` が
     /// 実際に 6〜8 週間そうなっていた — `failures.md` #141）。`match` に腕が無ければ
     /// コンパイルが落ち、variant を足した人が必ずここへ来る。
+    /// Spec 71 D3 — **写しは保存されない**（`#[serde(skip)]`）。発話を直列化しても `replay` の
+    /// 鍵は出ず、読み戻すと `None`。履歴は本文の文字列で積むので、ターンをまたいで検索結果を
+    /// 持ち越さない。
+    #[test]
+    fn the_replay_never_reaches_serialized_messages() {
+        let message = ChatMessage::assistant("答え")
+            .with_replay(Some(serde_json::json!([{ "type": "server_tool_use", "id": "s" }])));
+        let json = serde_json::to_value(&message).unwrap();
+        assert!(json.get("replay").is_none(), "{json}");
+        assert_eq!(json, serde_json::to_value(ChatMessage::assistant("答え")).unwrap());
+        let back: ChatMessage = serde_json::from_value(json).unwrap();
+        assert_eq!(back.replay, None);
+    }
+
     #[test]
     fn grounding_engine_wire_values_are_frozen() {
         fn expected(engine: GroundingEngine) -> &'static str {
@@ -642,6 +690,7 @@ mod tests {
                 GroundingEngine::OpenAi => r#""open_ai""#,
                 GroundingEngine::Meta => r#""meta""#,
                 GroundingEngine::Perplexity => r#""perplexity""#,
+                GroundingEngine::Anthropic => r#""anthropic""#,
             }
         }
         for engine in [
@@ -650,6 +699,7 @@ mod tests {
             GroundingEngine::OpenAi,
             GroundingEngine::Meta,
             GroundingEngine::Perplexity,
+            GroundingEngine::Anthropic,
         ] {
             assert_eq!(serde_json::to_string(&engine).unwrap(), expected(engine));
         }

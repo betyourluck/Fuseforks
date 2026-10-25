@@ -68,6 +68,7 @@ fn ok_response(text: &str, tool_calls: Vec<ToolCall>) -> ChatResponse {
         },
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 

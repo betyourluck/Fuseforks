@@ -655,6 +655,7 @@ mod tests {
             usage: Usage::default(),
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         }
     }
 

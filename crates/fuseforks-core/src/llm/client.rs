@@ -273,6 +273,9 @@ pub struct LlmConfig {
     /// Gemini の URL context（Spec 48）。[`Provider::Gemini`] でのみ効く。
     /// 値は [`ModelTemplate::gemini_url_context_active`] の判定済み。
     pub gemini_url_context: bool,
+    /// Anthropic の web 検索（Spec 71）。[`Provider::Anthropic`] でのみ効く。
+    /// 値は [`ModelTemplate::anthropic_web_search_active`] の判定済み。
+    pub anthropic_web_search: bool,
 }
 
 impl LlmConfig {
@@ -338,6 +341,7 @@ impl LlmConfig {
             perplexity_people_search: template.perplexity_people_search_active(),
             perplexity_fetch_url: template.perplexity_fetch_url_active(),
             gemini_url_context: template.gemini_url_context_active(),
+            anthropic_web_search: template.anthropic_web_search_active(),
         })
     }
 }
@@ -376,7 +380,12 @@ impl HttpLlmBackend {
                 b
             }
             Provider::Anthropic => {
-                let body = anthropic::encode(req);
+                let body = anthropic::encode(
+                    req,
+                    anthropic::AnthropicSkills {
+                        web_search: self.config.anthropic_web_search,
+                    },
+                );
                 self.http
                     .post(&url)
                     .header("x-api-key", &self.config.api_key)

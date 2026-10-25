@@ -801,6 +801,15 @@ pub struct ModelTemplate {
     /// モデル名の門は無い（`gemini-2.5-flash-lite` でも 200 — Spec 48 P0 (e)）。
     #[serde(default)]
     pub gemini_url_context: bool,
+    /// Anthropic の web 検索（Spec 71）。サーバー側ツール `web_search_20250305` を
+    /// tools の末尾に付ける。**検索料（1,000 検索 $10）は予算の外**で、検索結果は
+    /// 入力トークンに入る（1 検索 約 1 万トークン — Spec 71 P0 (a)）。
+    ///
+    /// **[`crate::llm::Provider::Anthropic`] のテンプレートでのみ効く。**
+    /// 判定はフラグ単独ではなく [`ModelTemplate::anthropic_web_search_active`] を使うこと。
+    /// モデル名の門は無い（opus-5-5 / sonnet-5-5 / fable-5-1 とも 200 — Spec 71 P0 (b)）。
+    #[serde(default)]
+    pub anthropic_web_search: bool,
     /// 1 リクエストのタイムアウト秒数。
     #[serde(default = "default_timeout_secs")]
     pub request_timeout_secs: u32,
@@ -948,6 +957,7 @@ impl ModelTemplate {
             perplexity_people_search: false,
             perplexity_fetch_url: false,
             gemini_url_context: false,
+            anthropic_web_search: false,
             ..self.clone()
         }
     }
@@ -1032,6 +1042,13 @@ impl ModelTemplate {
         self.gemini_url_context && self.effective_provider() == crate::llm::Provider::Gemini
     }
 
+    /// Anthropic の web 検索が**実際に効く**か（Spec 71 D2）。
+    ///
+    /// [`ModelTemplate::grounding_active`] と同型の AND 述語。フラグ単独を判定に使わない。
+    pub fn anthropic_web_search_active(&self) -> bool {
+        self.anthropic_web_search && self.effective_provider() == crate::llm::Provider::Anthropic
+    }
+
     /// Pro 推論モードが**実際に効く**か（Spec 34 D4）。
     pub fn openai_reasoning_pro_active(&self) -> bool {
         self.openai_reasoning_pro
@@ -1067,6 +1084,7 @@ impl ModelTemplate {
             perplexity_people_search: false,
             perplexity_fetch_url: false,
             gemini_url_context: false,
+            anthropic_web_search: false,
             request_timeout_secs: default_timeout_secs(),
             max_retries: default_max_retries(),
             // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
@@ -1534,6 +1552,25 @@ mod tests {
 
         template.gemini_url_context = false;
         assert!(!template.gemini_url_context_active());
+    }
+
+    /// Anthropic の web 検索の AND 述語（Spec 71 D2）。`grounding_active` と同型。
+    #[test]
+    fn anthropic_web_search_is_inactive_unless_the_wire_is_actually_anthropic() {
+        let mut template = ModelTemplate::new("tpl", "ザリ", "claude-opus-5-5");
+        template.provider = Some(crate::llm::Provider::OpenAiCompat);
+        template.anthropic_web_search = true;
+        assert!(!template.anthropic_web_search_active(), "互換経路では効かない");
+
+        template.provider = Some(crate::llm::Provider::Anthropic);
+        assert!(template.anthropic_web_search_active());
+        assert!(
+            !template.without_provider_skills().anthropic_web_search_active(),
+            "接続テストと下書き補助は検索を外して撃つ（Spec 63 / 68）"
+        );
+
+        template.anthropic_web_search = false;
+        assert!(!template.anthropic_web_search_active());
     }
 
     /// Live Search の AND 述語（Spec 31 D4）。`grounding_active` と同型で、

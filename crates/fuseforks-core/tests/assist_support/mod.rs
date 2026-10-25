@@ -44,6 +44,7 @@ fn response(text: Option<&str>, calls: Vec<ToolCall>) -> ChatResponse {
         usage: usage(),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 

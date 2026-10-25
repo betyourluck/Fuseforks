@@ -84,6 +84,7 @@ fn template_probe_wire_is_frozen() {
         usage,
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     };
     let wire_usage = serde_json::json!({ "prompt": 14, "completion": 2, "reasoning": 1 });
 
@@ -122,6 +123,8 @@ fn wire_field_sets_are_frozen() {
     assert_eq!(
         wire_keys(&ModelTemplate::new("tpl", "既定", "gpt-4o")),
         vec![
+            // Anthropic の web 検索（Spec 71 D2）。types.ts も同時に足すこと（P2）。
+            "anthropicWebSearch",
             "baseUrl",
             // 単価（Spec 41 P1）。Option + serde(default) で既存の world.json も読める。
             "cacheReadPerMtok",

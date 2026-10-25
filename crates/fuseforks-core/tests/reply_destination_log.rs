@@ -85,6 +85,7 @@ impl LlmBackend for HandoffOnceBackend {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }
@@ -189,6 +190,7 @@ impl LlmBackend for ToolProbe {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }
@@ -320,6 +322,7 @@ impl LlmBackend for AsksThenEmptyBackend {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

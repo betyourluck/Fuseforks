@@ -121,6 +121,7 @@ impl fuseforks_core::llm::LlmBackend for LoopingBackend {
             },
             grounding: fuseforks_core::llm::Grounding::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

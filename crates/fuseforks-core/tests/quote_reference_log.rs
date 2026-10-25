@@ -86,6 +86,7 @@ impl LlmBackend for Probe {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

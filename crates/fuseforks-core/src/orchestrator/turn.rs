@@ -1719,6 +1719,33 @@ async fn run_turn_inner(
         // （到達不能な分岐だった）。結果を返せばモデルは自分で直せる。
         let calls: Vec<_> = response.tool_calls.clone();
 
+        // サーバー側ツールのループが止まった（Anthropic の `pause_turn`。Spec 71 D4）。
+        // **終了ではない** — 止まった応答を写しつきの assistant の発話として積み、
+        // 利用者の発話を足さずに次の周を回すと続く（「続けて」を足すと別の発話になる）。
+        // 続きの周は普通の 1 周で、上限は `max_tool_iterations`（新しい定数は無い）。
+        if calls.is_empty() && response.finish == crate::llm::Finish::Paused {
+            if iteration + 1 < max_tool_iterations {
+                messages.push(
+                    ChatMessage::assistant(response.text.clone().unwrap_or_default())
+                        .with_replay(response.replay.take()),
+                );
+                continue;
+            }
+            // **最後の周で止まった応答は積まない**（D4）。まとめ呼び出しは system を足して
+            // `tool_choice: none` で呼ぶので、積むと要求が assistant の発話で終わり 5 世代の
+            // prefill 禁止に掛かりうる。止まった周の検索結果はまとめに入らない（払いは残る）。
+            // 上限の到達として扱い、本文を空にしてまとめ呼び出しへ進める。
+            outcome = Outcome::Finish {
+                content: String::new(),
+            };
+            shared.emit(CoreEvent::ToolLimitReached {
+                agent_id: agent_id.clone(),
+                max_iterations: max_tool_iterations,
+            });
+            tool_limit_hit = true;
+            break;
+        }
+
         if calls.is_empty() {
             // ツールを呼ばなかった = 最終出力。
             //
@@ -1744,10 +1771,16 @@ async fn run_turn_inner(
 
         // 呼び出しと結果は**対で**積む。呼び出しを残さずに結果だけ積むと、
         // プロバイダが「対応する呼び出しが無い結果」として拒否する。
-        messages.push(ChatMessage::assistant_tool_calls(
-            response.text.clone().unwrap_or_default(),
-            calls.clone(),
-        ));
+        //
+        // 写し（Spec 71 D3）が在れば一緒に積む — サーバー側ツールの保留（D5）と済んだ組を
+        // 次の周へ受け取ったまま送り返す。写しは adapter が読み、ここでは触らない。
+        messages.push(
+            ChatMessage::assistant_tool_calls(
+                response.text.clone().unwrap_or_default(),
+                calls.clone(),
+            )
+            .with_replay(response.replay.take()),
+        );
 
         // この周で実際に走った本数と、繰り返しで止めた本数。
         // **全部止めた周だけがループの打ち切り条件**（新しいことを何もしていない周）。

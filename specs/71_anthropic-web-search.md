@@ -6,7 +6,8 @@
   記録は「P0 実測記録」。**予測が 2 つ外れて設計が 2 か所動いた** — 保留を落としても検索は消えずモデルが出し直す
   （「覆す判断」の理由を書き直した）/ 保留 × `tool_choice: none` は 200 で検索まで走る（D5 の保守的な規則を外した）。
   `pause_turn` は 2 回とも再現せず。`data_contract` の `anthropic_server_tools` へ凍結）→ **未決 0**（同日、利用者が
-  推しのまま裁定 — `max_uses` は定数 5 / web fetch は別の Spec）
+  推しのまま裁定 — `max_uses` は定数 5 / web fetch は別の Spec）→ **P1 完了**（同日。コア。記録は「P1 実装記録」。
+  単体 12 + 結合 3・コア 1,325 本全緑・ミューテーション 4 回とも予測どおり）
 - 起点: 利用者が公式文書（`platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool`）を
   持ち込んだ → 公式文書 3 ページと Anthropic ワイヤの実装を突き合わせた（同日）→
   「Spec 71（Anthropic の web 検索）として起票して。P0 の probe 項目も Spec に入れて」
@@ -414,7 +415,7 @@ scratchpad に置いて使い捨て、数字だけをこの Spec の「P0 実測
 **踏んだもの**: 環境変数の鍵が古かった（上記）/ 端末の表示が cp932 で日本語の検索語が化けた
 （保存した JSON は UTF-8 で正しい。数字の読み取りには影響なし）。
 
-### P1 — コア
+### P1 — コア（**完了 2026-10-25**。下の「P1 実装記録」）
 
 `wire.rs`（サーバー側ツールの定義 / `ServerToolUse`・`WebSearchToolResult` のブロック / `text` の
 `citations` / `usage.server_tool_use`）/ `anthropic.rs`（`encode(req, AnthropicSkills)` / 写しの
@@ -439,6 +440,49 @@ scratchpad に置いて使い捨て、数字だけをこの Spec の「P0 実測
   （P0 (g1) で確定。rev2 の「載らない」から反転）
 - **ミューテーション**（予測を先に書く）: 写しを使わず組み直す / `Paused` を `Other` に戻す /
   `without_provider_skills` から欄を外す / まとめ呼び出しに止まった応答を積む — それぞれ狙った 1 本だけ赤
+
+### P1 実装記録（2026-10-25）
+
+- **canonical**: `ChatMessage.replay`（`#[serde(skip)]`）+ `with_replay` / `ChatResponse.replay` /
+  `Finish::Paused` / `GroundingEngine::Anthropic`。`ChatResponse` の構造体リテラル **119 か所**（テストを含む
+  42 ファイル）へ `replay: None` を機械で足した — `-> ChatResponse {`（関数の戻り型の直後の本体）に当てない
+  ように、直前の字が `->` の一致を除いた（構造体リテラルの置換が戻り型にも当たる罠。2026-09-27 の自己観察）
+- **wire**: `AnthropicRequest.tools` を `Vec<AnthropicToolDef>`（タグなしの `Function` / `WebSearch`。関数ツールの
+  送る形は 1 バイトも変わらない）/ `AnthropicRequestBlock::Raw(Value)`（その variant だけ `#[serde(untagged)]`）/
+  応答の各ブロックを `AnthropicResponseBlock { block, raw }` にして、**型に読んだ形と生のオブジェクトの両方を
+  持つ**（`Deserialize` を手で書いた。型に読み直してから組むと `encrypted_content` などの欄が落ちるため）/
+  `ServerToolUse` / `WebSearchToolResult` / `Text.citations` / `AnthropicCitation` / `usage.server_tool_use`
+- **anthropic.rs**: `encode(req, AnthropicSkills)`（値渡し。Gemini の `GeminiSkills` と同じ形）/
+  `ANTHROPIC_WEB_SEARCH_MAX_USES = 5` / 名前の衝突は送らずに `anthropic web search skipped: reason=name_clash`
+  の 1 行 / 写しがある発話は `encode_message` が組み立てを飛ばして写しのブロックだけを並べる / #29 の網に
+  `replay.is_some()` / `place_message_breakpoint` が `Raw` へ `cache_control` を書き足す / decode は
+  `SearchTally`（検索語・引用からの出典・計器の数・保留の判定）と写し（思考を除く）を返す / 計器
+  `anthropic search: calls= results= cited= requests= errors= deferred= paused=`
+- **turn.rs**: 呼び出しを積むときに写しを一緒に積む / `Finish::Paused` かつ呼び出し 0 本なら、最後の周でなければ
+  写しつきの assistant を積んで `continue`、最後の周なら積まずに本文を空にし `ToolLimitReached` → まとめ呼び出し
+- **model.rs / client.rs**: `anthropic_web_search` の欄 / `anthropic_web_search_active()` / `without_provider_skills` /
+  `LlmConfig.anthropic_web_search` / `from_template`
+- **template_probe.rs**: `ProbeFinish::of` に `Finish::Paused` の腕（`Other` へ畳む。接続テストは固有スキルを外して
+  撃つので来ないはずの形 — `ProbeFinish` の値は増やさない）
+- **P2 から前倒しした 3 行**: `types.ts` の `GroundingEngine` に `"anthropic"` / 辞書 ja・en の
+  `grounding.engine.anthropic`。`groundingEngineKeys.test.ts` が Rust の列挙と辞書を突き合わせるので、P1 の時点で
+  vitest を赤にしないため（`failures.md` #141 の網）。`ModelTemplate.anthropicWebSearch` の TS 側と画面は P2
+- **テスト**: 単体 12（anthropic 10・canonical 1・model 1）+ 結合 3（`tests/anthropic_web_search_turn.rs`）。
+  **結合は HTTP のスタブではなく、実物の `anthropic::decode` / `anthropic::encode` を通すスクリプトのバックエンド
+  にした**（Tasks の「スタブの HTTP」から変えた）— 見たいのは decode → ターンの層 → encode の往復で、HTTP の層は
+  写しの規則に関わらない。「周の途中で `tool_result` 以外の user のブロックを積まない」は結合の保留の 1 本が
+  続く発話のブロックの種別まで留めている。golden（`encoding_without_attachments_matches_the_golden_bytes` ほか）は
+  `skills` 既定のまま無改変で緑 = OFF の送信バイトは変わらない
+- コア 66 バイナリ・1,325 本全緑・clippy 0・vitest 893 全緑・`cargo check --workspace --all-targets` 0
+- **ミューテーション 4 回とも予測どおり**（予測を先に書いた。戻したあと SHA-256 の一致を確かめた）:
+  M1 写しを使わず組み直す → 3 本（単体の「写しをそのまま送る」・結合の保留・止まった応答の続き）/
+  M2 `pause_turn` を `Other` へ → 3 本（単体の `Paused`・結合の続き・最後の周）/
+  M3 `without_provider_skills` から欄を抜く → 2 本（新しい単体と、既存の `every_provider_skill_is_turned_off` —
+  固有スキルの欄が全部外れることを列挙で確かめる既存の網が効いた）/
+  M4 最後の周の止まった応答も積む → 1 本（結合の最後の周）
+- **踏んだもの**: 全体のテストで `link.exe` の 1104（`OLDNAMES.lib` を開けない。ディスクの空きは 38 GB）—
+  `-j 4` で通った（CLAUDE.md の既知の処方）/ 1 回目の集計が `passed= failed=`（空）だった = 1 本も走っていない。
+  件数を見ずに緑と読まない（`failures.md` #132）
 
 ### P2 — 画面
 

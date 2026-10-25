@@ -88,6 +88,7 @@ impl LlmBackend for SummarizingProbe {
             },
             grounding: Default::default(),
             reasoning_summary: vec![SUMMARY.into()],
+            replay: None,
         })
     }
 }

@@ -46,6 +46,7 @@ pub fn stop(text: &str) -> ChatResponse {
         usage: usage(),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 
@@ -62,6 +63,7 @@ pub fn call(name: &str, message: &str) -> ChatResponse {
         usage: usage(),
         grounding: Default::default(),
         reasoning_summary: Vec::new(),
+        replay: None,
     }
 }
 

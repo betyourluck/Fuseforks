@@ -76,6 +76,7 @@ impl LlmBackend for RecordingBackend {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }
@@ -145,6 +146,7 @@ impl LlmBackend for SummarizingBackend {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }
@@ -174,6 +176,7 @@ impl LlmBackend for SlowBackend {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }

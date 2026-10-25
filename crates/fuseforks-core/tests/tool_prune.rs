@@ -178,6 +178,7 @@ impl LlmBackend for CallThenOmit {
             usage,
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         };
         match results {
             0 => Ok(call("c1", self.tool, serde_json::json!({}))),
@@ -193,6 +194,7 @@ impl LlmBackend for CallThenOmit {
                 usage,
                 grounding: Default::default(),
                 reasoning_summary: Vec::new(),
+                replay: None,
             }),
         }
     }

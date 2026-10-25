@@ -761,7 +761,7 @@ export interface GroundingSource {
  * この 2 値は Rust の列挙に 6〜8 週間先に入っており、ここと辞書が追従していなかった
  * （`failures.md` #141）。
  */
-export type GroundingEngine = "google" | "xai" | "open_ai" | "meta" | "perplexity";
+export type GroundingEngine = "google" | "xai" | "open_ai" | "meta" | "perplexity" | "anthropic";
 
 export interface Grounding {
   queries: string[];

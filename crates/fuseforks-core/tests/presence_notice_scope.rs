@@ -86,6 +86,7 @@ impl LlmBackend for FullPromptProbe {
             },
             grounding: Default::default(),
             reasoning_summary: Vec::new(),
+            replay: None,
         })
     }
 }
