@@ -2417,6 +2417,9 @@ entities:
       稼働状態はプロセス寿命で再起動後に実在しないため保存しない。座標だけを保存し、
       未配置ノードは UI が円環に自動配置する。エージェント削除時と world.json 読み込み時に
       存在しない AgentId の座標を落とす。AgentSpec に混ぜないので、座標更新はエージェント設定を変更しない。
+      まとめて保存する経路 set_topology_positions (2026-10-27。地図の「重なりをほどく」) は
+      全部の id を先に検査してから書く — 1 件でも未登録なら 1 件も書かない。world.json の
+      書き込みと TopologyChanged の通知はどちらも 1 回。
   AgentSpec:
     description: ユーザーが編集する永続的な定義
     fields:

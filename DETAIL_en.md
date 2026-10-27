@@ -134,6 +134,8 @@ Fuseforks/
             ├── lib/closeConfirm.ts  What the close confirmation says, and whether ✕ hides the window (pure; Spec 69)
             ├── lib/startupSettings.ts Notes on the Startup and exit page (pure; Spec 69)
             ├── lib/kizunaLink.ts    Who can start a tie on the map, and which direction of a bidirectional tie is cut (pure)
+            ├── lib/kizunaUntangle.ts "Untangle overlaps" on the map — pushes apart only the pairs that are too close (pure)
+            ├── lib/agentSearch.ts   Matching for the servant list filter (name, id, role, model; pure)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
@@ -142,6 +144,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
             ├── composables/useWaveClear.ts      Clearing the Work Status view (display only, finished waves only)
             ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
+            ├── composables/useAgentSearch.ts    The list filter's query (not saved; the list and Alt+↑↓ read the same query)
             ├── composables/useJudgeDialog.ts    Whether the judge editor is open (two entry points: the list and the map; Spec 62)
             ├── composables/useToolCallDetails.ts Contents of tool rows opened in the chat pane (open state and fetch state; not stored)
             ├── App.vue              3-pane grid
@@ -285,6 +288,8 @@ judge draws no dashed lines.
 
 Node coordinates moved by hand in Kizuna are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
 
+**"Untangle overlaps"** at the bottom left of the map (2026-10-27) pushes apart only the pairs whose centres are closer than 96. **It does not rearrange the whole map** — regular layouts such as rings and radial arrangements were rejected twice on the device, and nodes that are already apart keep their coordinates. Each pair is pushed equally in opposite directions, so the overall centre of mass does not move. Only nodes visible on the map (judges included) move; servants in hidden groups stay where they are. The moved coordinates are saved in one call (IPC `set_topology_positions` — saving one node at a time would write the file and refetch the map once per node). The button is disabled while no pair overlaps.
+
 **Startup is split into two axes** (2026-07-31). The card toggle determines
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).
 
@@ -360,7 +365,8 @@ Input fields follow Kataribe's `ActionInput.vue` (`ChatInput.vue`).
 - Stops growing at 220px and switches to internal scrolling
 - The send button floats **inside** the input field and appears only when content is present (↵ icon)
 - Enter to send, Shift+Enter for a line break
-- **Alt + ↑↓ moves the selection in the servant list** (works even while typing in the input box)
+- **Alt + ↑↓ moves the selection in the servant list** (works even while typing in the input box;
+  while the list is filtered it cycles only through the matches, and it also works inside the filter box)
 - **"/" jumps to the input box** (when focus is outside it. It does nothing inside another text
   field or editor, while a dialog or the guided tour is open, or on the statistics screen — there
   "/" is typed as a character)
@@ -2138,6 +2144,24 @@ Deleting a group does not break its servants; they return to the ungrouped secti
 binary drops groups and membership as unknown fields** ([failures.md](failures.md) #112).
 Later versions write fields they do not recognise back to `world.json` unchanged, so the next
 field added will not disappear the same way.
+
+### Filtering the list
+
+The box under the servant list heading (2026-10-27). It filters by partial match on **display
+name, id, role name and model name**, ignoring case and full-width/half-width differences. Words
+separated by spaces keep only servants that match every word (`gpt research` = a researcher
+running gpt). It is always shown, whatever the number of servants.
+
+- Sections with no match disappear, heading included; the remaining headings show "matches /
+  total". A heading's ▶/■ and switch still act on the whole section
+- **Servants in hidden groups do not get their cards shown even when they match** (the filter
+  does not undo "hide"). A hidden section with matches keeps its heading, so the eye brings them back
+- **While filtering, cards cannot be reordered or moved between groups.** Reordering rebuilds an
+  order that includes the servants filtered out, but the drag component only returns the cards it
+  rendered, so their positions cannot be decided. Dropping a card onto a map node to draw a tie still works
+- The selected servant (the chat recipient) does not change. Alt+↑↓ cycles only through the matches
+- The query is not saved (it is empty after a restart). Esc clears it, and leaves the box when it is
+  already empty. No shortcut key is assigned ("/" goes to the chat input and Ctrl+F to chat search)
 
 ### Scheduling
 

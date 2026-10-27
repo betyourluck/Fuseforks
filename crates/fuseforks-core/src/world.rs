@@ -851,6 +851,25 @@ impl World {
         Ok(())
     }
 
+    /// 接続マップの複数ノードの座標をまとめて保存する（地図の「重なりをほどく」）。
+    ///
+    /// **全部の id を先に検査してから書く。** 途中の 1 件で落ちたとき、前の何件かだけが
+    /// 動いた配置を残さない（1 件ずつ書くと、ほどいた途中の形が地図に出る）。
+    pub fn set_topology_positions(
+        &mut self,
+        positions: &BTreeMap<AgentId, TopologyPosition>,
+    ) -> CoreResult<()> {
+        for id in positions.keys() {
+            if !self.judges.contains_key(id) {
+                self.agent(id)?;
+            }
+        }
+        for (id, position) in positions {
+            self.topology_positions.insert(id.clone(), *position);
+        }
+        Ok(())
+    }
+
     /// 接続先を差し替える。
     pub fn set_connections(&mut self, id: &AgentId, targets: Vec<AgentId>) -> CoreResult<()> {
         self.validate_connections(id, &targets)?;
@@ -1748,6 +1767,30 @@ mod tests {
 
         world.remove_agent(&planner).unwrap();
         assert!(world.topology_positions().is_empty());
+    }
+
+    /// まとめて保存は**全部通るか、1 件も書かないか**（地図の「重なりをほどく」）。
+    /// 未登録の id が 1 つ混ざったら、手前の登録済みの座標も書かない。
+    #[test]
+    fn topology_positions_in_bulk_are_all_or_nothing() {
+        let mut world = world_with_two_agents();
+        let planner = AgentId::from("agent_01");
+        let critic = AgentId::from("agent_02");
+        let before = TopologyPosition { x: 0.0, y: 0.0 };
+        world.set_topology_position(&planner, before).unwrap();
+
+        let moved = TopologyPosition { x: 96.0, y: 0.0 };
+        let with_ghost = BTreeMap::from([
+            (planner.clone(), moved),
+            (AgentId::from("agent_99"), moved),
+        ]);
+        assert!(world.set_topology_positions(&with_ghost).is_err());
+        assert_eq!(world.topology_positions().get(&planner), Some(&before));
+
+        let both = BTreeMap::from([(planner.clone(), moved), (critic.clone(), moved)]);
+        world.set_topology_positions(&both).unwrap();
+        assert_eq!(world.topology_positions().get(&planner), Some(&moved));
+        assert_eq!(world.topology_positions().get(&critic), Some(&moved));
     }
 
     // ---- 役職（Spec 14 P1） -------------------------------------------------

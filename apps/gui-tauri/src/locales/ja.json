@@ -344,7 +344,13 @@
     "groupBatchStop": "「{name}」の稼働中 {count} 体を停止",
     "groupBatchNoTargets": "対象 0 体（カードのトグルで選んでください）",
     "addGroup": "＋ グループを追加",
-    "addGroupPlaceholder": "グループ名（タスク名）"
+    "addGroupPlaceholder": "グループ名（タスク名）",
+    "searchPlaceholder": "名前・id・役職・モデルで絞り込む",
+    "searchLabel": "サーヴァントを絞り込む",
+    "searchHelp": "空白で区切ると、すべての語に当たるサーヴァントだけが残ります。絞り込んでいる間は並べ替えとグループの移動はできません（地図への drop はできます）。Esc で解除",
+    "searchClear": "絞り込みを解除（Esc）",
+    "searchNoMatch": "一致するサーヴァントはいません。",
+    "searchMatches": "{matched} / {total} 体"
   },
   "judges": {
     "heading": "判断特化",
@@ -578,7 +584,10 @@
     "autoFit": "ペインの大きさが変わったら自動でフィット",
     "fit": "フィット",
     "fitTitle": "全体が入るように表示を合わせる",
-    "autoFitShort": "自動フィット"
+    "autoFitShort": "自動フィット",
+    "untangle": "重なりをほどく",
+    "untangleTitle": "近すぎるノードだけを離す（ほかの配置は動かさない）",
+    "untangleNone": "重なっているノードはありません"
   },
   "chat": {
     "heading": "会話",

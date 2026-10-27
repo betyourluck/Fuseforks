@@ -355,6 +355,25 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// 複数ノードの座標をまとめて保存する（地図の「重なりをほどく」）。
+    ///
+    /// **書き込みも通知も 1 回。** 1 体ずつ `set_topology_position` を呼ぶと、
+    /// `world.json` の書き込みと地図の取り直しが体数ぶん走り、ほどいている途中の
+    /// 配置が地図に出る。
+    pub async fn set_topology_positions(
+        &self,
+        positions: &BTreeMap<AgentId, TopologyPosition>,
+    ) -> CoreResult<()> {
+        self.shared
+            .world
+            .write()
+            .await
+            .set_topology_positions(positions)?;
+        self.persist().await?;
+        self.shared.emit(CoreEvent::TopologyChanged);
+        Ok(())
+    }
+
     /// モデルテンプレートを登録または更新する。
     ///
     /// 構築済みバックエンドのキャッシュを破棄する。これを怠ると、

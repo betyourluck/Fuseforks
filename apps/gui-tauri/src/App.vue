@@ -44,6 +44,8 @@ import ConfirmHost from "./components/ConfirmHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
+import { filterAgents } from "./lib/agentSearch";
+import { useAgentSearch } from "./composables/useAgentSearch";
 import { hasOpenOverlay, isEditableElement, isFocusChatKey } from "./lib/chatFocus";
 import { TRAY_QUIT_EVENT, closeConfirmLines, hidesOnClose } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
@@ -66,6 +68,7 @@ const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const judgeDialog = useJudgeDialog();
 const hiddenGroups = useHiddenGroups();
+const agentSearch = useAgentSearch();
 
 /**
  * 選択の落ち着き先（Spec 51 D3）。隠した瞬間に選択中だった個体は見えている先頭へ、
@@ -260,8 +263,13 @@ function onNavKey(event: KeyboardEvent): void {
   if (!isNavigableFocus(document.activeElement)) return;
 
   // 隠したグループの個体は巡らない（Spec 51 D3。可視 0 体なら null で何もしない）。
+  // 一覧を絞り込んでいる間は、当たった個体の中だけを巡る（画面に出ていない個体へ飛ばない）。
   const next = nextAgentId(
-    visibleAgents(state.agents, state.groups, hiddenGroups.hidden),
+    filterAgents(
+      visibleAgents(state.agents, state.groups, hiddenGroups.hidden),
+      state.roles,
+      agentSearch.query.value,
+    ),
     state.selectedAgentId,
     delta,
   );

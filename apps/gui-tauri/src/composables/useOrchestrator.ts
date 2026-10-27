@@ -1207,6 +1207,11 @@ export function useOrchestrator() {
       );
     },
 
+    /** 複数ノードの座標をまとめて保存する（地図の「重なりをほどく」）。 */
+    async setTopologyPositions(positions: Record<AgentId, TopologyPosition>): Promise<void> {
+      await mutate("orchestrator.op.savePosition", () => ipc.setTopologyPositions(positions));
+    },
+
     async reorder(order: AgentId[]): Promise<void> {
       // 並び替えは即座に見た目へ反映しないと操作感が壊れるので、先に order を振る。
       order.forEach((id, index) => patchAgent(id, { order: index }));

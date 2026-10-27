@@ -8,7 +8,7 @@
 //! `{ code, message, detail, agentId, retryable }` へ落とすので、
 //! フロントは `code` で分岐し `message` を表示できる。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use fuseforks_core::model::{
     AgentGroup, AgentGroupId, AgentId, AgentMessage, AgentRole, AgentRoleId, AgentSnapshot,
@@ -170,6 +170,18 @@ pub async fn set_topology_position(
     state
         .host.orchestrator
         .set_topology_position(&agent_id, position)
+        .await
+}
+
+/// 接続マップの複数ノードの座標をまとめて保存する（「重なりをほどく」）。
+#[tauri::command]
+pub async fn set_topology_positions(
+    state: State<'_, AppState>,
+    positions: BTreeMap<AgentId, TopologyPosition>,
+) -> CoreResult<()> {
+    state
+        .host.orchestrator
+        .set_topology_positions(&positions)
         .await
 }
 

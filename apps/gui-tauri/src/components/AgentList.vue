@@ -15,6 +15,7 @@ import BatchWorkDirDialog from "./BatchWorkDirDialog.vue";
 import GroupDialog from "./GroupDialog.vue";
 import JudgeList from "./JudgeList.vue";
 import ModelTemplateDialog from "./ModelTemplateDialog.vue";
+import { useAgentSearch } from "../composables/useAgentSearch";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import {
@@ -25,6 +26,7 @@ import {
   type Section,
 } from "../lib/agentGroups";
 import { inListOrder } from "../lib/agentNav";
+import { filterAgents } from "../lib/agentSearch";
 import { batchAction, batchLabel } from "../lib/batchStart";
 import { deriveId } from "../lib/judges";
 import { dropPoint, tieAddition } from "../lib/kizunaDrop";
@@ -60,6 +62,56 @@ const hasGroups = computed(() => state.groups.length > 0);
 
 function isCollapsed(section: Section<AgentSnapshot>): boolean {
   return section.group !== null && hiddenGroups.isHidden(section.group.id);
+}
+
+// ---- 絞り込み（2026-10-27）------------------------------------------------------
+//
+// 照合は `lib/agentSearch` の 1 実装で、Alt+↑↓（`App.vue`）も同じ問いと関数を読む。
+// **隠したグループの個体は、当たってもカードを出さない**（Spec 51 の「隠す」を検索で
+// 破らない）。当たりのある隠した区分けは見出しだけ残るので、目を押せば出せる。
+// 1 体も当たらない区分けは見出しごと消す。
+
+const { query: searchQuery, active: searching, clear: clearSearch } = useAgentSearch();
+
+const matchIds = computed(
+  () => new Set(filterAgents(state.agents, state.roles, searchQuery.value).map((a) => a.id)),
+);
+
+/** 描く区分け。`section` は区分けの全員（▶ と数はこちら）、`shown` は当たった個体。 */
+interface ShownSection {
+  section: Section<AgentSnapshot>;
+  shown: AgentSnapshot[];
+}
+
+const shownSections = computed<ShownSection[]>(() => {
+  if (!searching.value) return sections.value.map((section) => ({ section, shown: section.agents }));
+  return sections.value
+    .map((section) => ({ section, shown: section.agents.filter((a) => matchIds.value.has(a.id)) }))
+    .filter((entry) => entry.shown.length > 0);
+});
+
+/** 箱に描くカード。隠した区分けは空（絞り込みに当たっても隠したまま）。 */
+function cardsOf(section: Section<AgentSnapshot>, shown: AgentSnapshot[]): AgentSnapshot[] {
+  return isCollapsed(section) ? [] : shown;
+}
+
+/**
+ * 絞り込み中のドラッグの箱。**並べ替えとグループの移動を止め、地図への drop だけを残す。**
+ *
+ * 並べ替えは隠れた個体も含めた順番を組み直す処理だが、Sortable は描いたカードしか返さない
+ * （畳んだ区分けと同じ問題）。絞った状態で並べ替えると、隠れた個体の位置が決まらない。
+ * `sort: false` で箱の中の並べ替えを、`put: false` で別の箱への受け入れを止める —
+ * 掴んで動かすこと自体は止めないので、地図のノードの上で離せば絆は張れる
+ * （判定は `onDragEnd` の `elementFromPoint` で、Sortable の外にある）。
+ */
+const SEARCH_DRAG_GROUP = { name: "agents", pull: true, put: false } as const;
+
+/** Esc は問いを消す。空ならフォーカスを外す（IME の変換中は触らない）。 */
+function onSearchEscape(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+  event.preventDefault();
+  if (searchQuery.value) clearSearch();
+  else (event.target as HTMLInputElement).blur();
 }
 
 /** 見出しの ▶/■。**全体と同じ純関数に部分集合を渡すだけ**（凍結 7）。 */
@@ -232,6 +284,8 @@ interface DragEndEvent {
 let pendingBySection: Record<string, AgentId[]> = {};
 
 function holdReorder(section: Section<AgentSnapshot>, reordered: AgentSnapshot[]): void {
+  // 絞り込み中は並べ替えを止めている（`SEARCH_DRAG_GROUP`）。届いても保留しない。
+  if (searching.value) return;
   const incoming = reordered.map((a) => a.id);
   // 畳んだ区分けにはカードが描かれていないので、Sortable が返すのは落ちたカード
   // だけ。**畳まれた中の個体を先に置き、落ちたカードを末尾へ**（凍結 8「末尾へ」）。
@@ -244,6 +298,17 @@ function holdReorder(section: Section<AgentSnapshot>, reordered: AgentSnapshot[]
 function sectionOf(el: HTMLElement | undefined): Section<AgentSnapshot> | undefined {
   const key = el?.dataset.sectionKey ?? UNASSIGNED;
   return sections.value.find((s) => s.key === key);
+}
+
+/**
+ * 掴んだカード。**Sortable の `oldIndex` は描いたカードの中の位置**なので、描いた並び
+ * （`cardsOf`）から引く — 絞り込み中に区分けの全員から引くと、別の個体を掴んだことになる。
+ */
+function draggedAgent(evt: DragEndEvent): AgentSnapshot | undefined {
+  if (typeof evt.oldIndex !== "number") return undefined;
+  const key = evt.from?.dataset.sectionKey ?? UNASSIGNED;
+  const entry = shownSections.value.find((e) => e.section.key === key);
+  return entry ? cardsOf(entry.section, entry.shown)[evt.oldIndex] : undefined;
 }
 
 /** ドラッグ開始時に測った地図の矩形。copy カーソルの判定に使う。 */
@@ -272,10 +337,8 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
 
   const pending = pendingBySection;
   pendingBySection = {};
-  const fromSection = sectionOf(evt.from);
   const toSection = sectionOf(evt.to);
-  const source =
-    typeof evt.oldIndex === "number" ? fromSection?.agents[evt.oldIndex] : undefined;
+  const source = draggedAgent(evt);
 
   // 分身はイベント配送前に除去済みなので素の elementFromPoint でよい
   // （Spec 21 P0 実測 2）。closest は輪・名前等の子要素から辿るため。
@@ -450,6 +513,51 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
     </form>
 
     <!--
+      絞り込み（2026-10-27）。**体数に依らず常に出す** — 出たり消えたりすると置き場を覚えられない。
+      問いは保存しない。`data-agent-search` は Alt+↑↓ の許容（`isNavigableFocus`）の印。
+    -->
+    <div class="shrink-0 border-b border-line px-3 py-1.5">
+      <label
+        class="flex items-center gap-1.5 rounded border border-line bg-surface-1 px-2 py-1 text-[11px] focus-within:border-accent"
+      >
+        <svg
+          class="size-3.5 shrink-0 text-ink-dim"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="m20 20-4.2-4.2" />
+        </svg>
+        <input
+          v-model="searchQuery"
+          type="text"
+          data-agent-search
+          class="min-w-0 flex-1 bg-transparent outline-none"
+          :placeholder="$t('agentList.searchPlaceholder')"
+          :aria-label="$t('agentList.searchLabel')"
+          :title="$t('agentList.searchHelp')"
+          @keydown.escape="onSearchEscape"
+        />
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="shrink-0 rounded text-ink-dim hover:text-accent"
+          :title="$t('agentList.searchClear')"
+          :aria-label="$t('agentList.searchClear')"
+          @click="clearSearch"
+        >
+          <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </label>
+    </div>
+
+    <!--
       force-fallback を外さないこと。Tauri の既定 dragDropEnabled=true は
       Windows WebView2 でページ内のネイティブ DnD と衝突する報告があり、
       外すと並び替えごと動かなくなる（Spec 21。断定形への裏取りは P4 の実機で）。
@@ -463,7 +571,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
     -->
     <!-- data-tour: 初回の案内が「ここから地図へ drop」として地図のキャンバスと束ねて照らす。 -->
     <div class="min-h-0 flex-1 overflow-y-auto p-3" data-tour="kizuna">
-      <template v-for="section in sections" :key="section.key">
+      <template v-for="{ section, shown } in shownSections" :key="section.key">
         <div
           v-if="hasGroups"
           class="mb-1 mt-2 flex items-center gap-1.5 text-[11px] first:mt-0"
@@ -487,8 +595,13 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
           <span class="truncate font-semibold">
             {{ section.group?.name ?? $t("agentList.unassigned") }}
           </span>
+          <!-- 絞り込み中は「当たった数 / 全員」。▶ と門は区分けの全員に効くまま。 -->
           <span class="tabular-nums text-ink-dim">
-            {{ $t("agentList.groupMembers", { count: section.agents.length }) }}
+            {{
+              searching
+                ? $t("agentList.searchMatches", { matched: shown.length, total: section.agents.length })
+                : $t("agentList.groupMembers", { count: section.agents.length })
+            }}
           </span>
           <span v-if="isCollapsed(section)" class="text-ink-dim">
             {{ $t("agentList.groupHidden") }}
@@ -541,9 +654,10 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
           </button>
         </div>
         <VueDraggable
-          :model-value="isCollapsed(section) ? [] : section.agents"
+          :model-value="cardsOf(section, shown)"
           tag="div"
-          group="agents"
+          :group="searching ? SEARCH_DRAG_GROUP : 'agents'"
+          :sort="!searching"
           :data-section-key="section.key"
           class="space-y-2"
           :class="isCollapsed(section) ? 'min-h-2 rounded border border-dashed border-line/60' : hasGroups ? 'min-h-6' : ''"
@@ -558,7 +672,7 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
           @end="onDragEnd"
         >
           <AgentCard
-            v-for="agent in isCollapsed(section) ? [] : section.agents"
+            v-for="agent in cardsOf(section, shown)"
             :key="agent.id"
             :data-agent-id="agent.id"
             :agent="agent"
@@ -580,6 +694,13 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       >
         {{ $t("agentList.emptyLine1") }}<br />
         {{ $t("agentList.emptyLine2") }}
+      </p>
+      <p
+        v-else-if="searching && !shownSections.length"
+        class="px-2 py-6 text-center text-[11px] text-ink-dim"
+        data-agent-search-empty
+      >
+        {{ $t("agentList.searchNoMatch") }}
       </p>
 
       <!--

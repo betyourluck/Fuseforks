@@ -303,6 +303,10 @@ export const reorderAgents = (order: AgentId[]) =>
 export const setTopologyPosition = (agentId: AgentId, position: TopologyPosition) =>
   call<void>("set_topology_position", { agentId, position });
 
+/** 複数ノードの座標をまとめて保存する（「重なりをほどく」）。書き込みも通知も 1 回。 */
+export const setTopologyPositions = (positions: Record<AgentId, TopologyPosition>) =>
+  call<void>("set_topology_positions", { positions });
+
 /** モデルテンプレートを登録または更新する。 */
 export const upsertModelTemplate = (template: ModelTemplate) =>
   call<void>("upsert_model_template", { template });

@@ -113,6 +113,8 @@ Fuseforks/
             ├── lib/closeConfirm.ts  关闭确认的内容，以及 ✕ 是否隐藏窗口（纯函数。Spec 69）
             ├── lib/startupSettings.ts 启动与退出页面的提示判定（纯函数。Spec 69）
             ├── lib/kizunaLink.ts    在地图上牵羁绊的起点判定・双向连线切断哪个方向（纯函数）
+            ├── lib/kizunaUntangle.ts 地图的「解开重叠」— 只推开距离过近的组（纯函数）
+            ├── lib/agentSearch.ts   Servant 列表筛选的匹配（名称・id・职务・模型。纯函数）
             ├── lib/assist.ts        AI 起草辅助的模板选择・应用前的差异（纯函数。Spec 63）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）
@@ -122,6 +124,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      会话面板的显示清空（仅显示·按会话）
             ├── composables/useWaveClear.ts      工作情况标签页的显示清空（仅显示·仅已结束的波）
             ├── composables/useHiddenGroups.ts   隐藏组的集合（保存在终端中。[Spec 51](specs/51_agent-groups.md)）
+            ├── composables/useAgentSearch.ts    列表筛选的查询（不保存。列表与 Alt+↑↓ 读同一个查询）
             ├── composables/useToolCallDetails.ts 会话面板中打开的工具行内容（开闭与获取状态。不保存）
             ├── App.vue              3 分栏网格
             └── components/
@@ -645,6 +648,11 @@ MCP 工具返回图像（`type: "image"`）时，仆从会看到该图像并据�
 ### 群组（Group）
 
 群组（Group）用于对エージェント进行分类管理、可視集合控制、一括启动以及批量 drop 确定（[Spec 51](specs/51_agent-groups.md)）。在エージェント列表的头部或折叠区可以对群组进行新建、改名和删除。
+
+### 列表筛选与地图的「解开重叠」（2026-10-27）
+
+- **列表筛选**：Servant 列表头部下方的输入框。按**显示名・id・职务名・模型名**部分匹配，不区分大小写与全角半角；空格分隔的多个词须全部匹配。没有匹配的分区连标题一起隐藏；**隐藏的群组即使匹配也不显示卡片**（只留标题）。**筛选期间不能重新排序或移动群组**（拖到地图节点上牵羁绊仍可）。不改变当前选择，Alt+↑↓ 只在匹配项中循环。查询不保存，Esc 清除。未分配快捷键
+- **解开重叠**：地图左下的按钮。只把中心距离小于 96 的组推开，**不重新排列整体**（规则排列在实机上被否决过两次），已分开的节点坐标不动。只移动地图上可见的节点，移动后的坐标一次性保存（IPC `set_topology_positions`）。没有重叠时按钮不可按
 
 ### 计划（定时 / 周期执行）
 

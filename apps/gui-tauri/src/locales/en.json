@@ -344,7 +344,13 @@
     "groupBatchStop": "Stop {count} running servants in \"{name}\"",
     "groupBatchNoTargets": "No targets (choose with the toggle on each card)",
     "addGroup": "+ Add group",
-    "addGroupPlaceholder": "Group name (task)"
+    "addGroupPlaceholder": "Group name (task)",
+    "searchPlaceholder": "Filter by name, id, role or model",
+    "searchLabel": "Filter servants",
+    "searchHelp": "Separate words with spaces to keep only servants that match every word. While filtering, cards cannot be reordered or moved between groups (dropping onto the map still works). Esc clears",
+    "searchClear": "Clear the filter (Esc)",
+    "searchNoMatch": "No servants match.",
+    "searchMatches": "{matched} / {total}"
   },
   "judges": {
     "heading": "Judges",
@@ -578,7 +584,10 @@
     "autoFit": "Fit automatically after the pane is resized",
     "fit": "Fit",
     "fitTitle": "Fit the whole graph into view",
-    "autoFitShort": "Auto fit"
+    "autoFitShort": "Auto fit",
+    "untangle": "Untangle overlaps",
+    "untangleTitle": "Push apart only the nodes that are too close (others stay where they are)",
+    "untangleNone": "No nodes overlap"
   },
   "chat": {
     "heading": "Chat",

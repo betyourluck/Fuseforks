@@ -79,8 +79,10 @@ export function agentNavDelta(event: NavKeyEvent): 1 | -1 | null {
 /**
  * そのフォーカス位置で効かせてよいか。**閉じた許容**（除外リストではない）。
  *
- * 通すのは 2 つだけ — **何もフォーカスしていない**（`body` / `null`）と
- * **チャット入力欄**（`[data-chat-input]`）。
+ * 通すのは 3 つだけ — **何もフォーカスしていない**（`body` / `null`）と
+ * **チャット入力欄**（`[data-chat-input]`）と**一覧の絞り込み欄**（`[data-agent-search]`。
+ * 2026-10-27 — 絞り込んだまま当たった個体の中を巡れるように。1 行の `input` なので
+ * ↑↓ に奪われる編集操作が無い）。
  *
  * 除外リストにしない理由は、**新しい入力面が増えるたびに黙って奪う側へ倒れる**から。
  * 特に `CodeEditor.vue`（CodeMirror）は既定の keymap で **Alt+↑↓ に行の移動**を
@@ -90,5 +92,5 @@ export function agentNavDelta(event: NavKeyEvent): 1 | -1 | null {
 export function isNavigableFocus(active: Element | null): boolean {
   if (active === null) return true;
   if (active.tagName === "BODY") return true;
-  return active.hasAttribute("data-chat-input");
+  return active.hasAttribute("data-chat-input") || active.hasAttribute("data-agent-search");
 }

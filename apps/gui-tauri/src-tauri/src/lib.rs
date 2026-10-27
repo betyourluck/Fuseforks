@@ -168,6 +168,7 @@ pub fn run() {
             commands::set_connections,
             commands::reorder_agents,
             commands::set_topology_position,
+            commands::set_topology_positions,
             commands::upsert_model_template,
             commands::delete_model_template,
             commands::upsert_role,

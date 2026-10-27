@@ -3,14 +3,18 @@
  *
  * **自動整列は入れない**（2026-08-13 利用者裁定 —「自動整列みたいなのはなくても
  * よいかもしれない」）。人が置くのが本線で、ここが埋めるのは
- * **「まだ一度も置かれていない個体をどこに出すか」だけ**。
+ * **「まだ一度も置かれていない個体をどこに出すか」だけ**。押したときに重なりだけを
+ * 離す操作は `kizunaUntangle`（2026-10-27）で、そちらも並べ直しはしない。
  *
  * **乱数も現在時刻も使わない**（`clock.ts` / `schedule.rs` と同じ規律）。
  * 種は id のハッシュなので、同じ村なら毎回同じ所に出る。
  */
 
-/** 文字列 → 32bit（FNV-1a）。`Math.random` を使わないための種。 */
-function hash(text: string): number {
+/**
+ * 文字列 → 32bit（FNV-1a）。`Math.random` を使わないための種。
+ * `kizunaUntangle` も同じ種で向きを決める（種の規則を 2 つ持たない）。
+ */
+export function hash(text: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
     h ^= text.charCodeAt(i);

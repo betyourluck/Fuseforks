@@ -15,6 +15,8 @@
  * 「なくてもよいかもしれない」が利用者の裁定で、規則的な配置は実機で
  * 2 度却下されている（円環・エゴ中心の放射とも「網ではなく図表に見える」）。
  * 埋めるのは**一度も置かれていない個体だけ**で、規則は `lib/kizunaSeed`。
+ * 左下の「重なりをほどく」（2026-10-27）も並べ直しではなく、近すぎる組を離すだけ
+ * （`lib/kizunaUntangle`）。押したときだけ動き、離れている個体の座標には触れない。
  *
  * **失ったものが 1 つある** — このライブラリには**辺をドラッグで作る機構が無い**
  * （イベントに接続系が無い）。Spec 21 の 3 経路のうち**ハンドル引きが消える**。
@@ -45,6 +47,7 @@ import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
 import { fitMargin } from "../lib/kizunaFit";
 import { visibleLayouts } from "../lib/kizunaSeed";
+import { hasOverlap, untangle } from "../lib/kizunaUntangle";
 import { visibleAgents, visibleEdges } from "../lib/agentGroups";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useJudgeDialog } from "../composables/useJudgeDialog";
@@ -77,6 +80,13 @@ const NODE_RADIUS = 26;
  * 2 箇所に書くと「Fit が上限を超えた zoom を要求して pan だけがずれる」（#122）が戻る。
  */
 const MAX_ZOOM = 2;
+
+/**
+ * 「重なりをほどく」で離す中心どうしの距離。円だけなら直径 52 で足りるが、**名前は円の下に
+ * 出る**（円の下端から 14 + 字 11）ので、縦に並ぶと名前が下の円へ届き、横に並ぶと
+ * 8 字ほどの名前（約 88px）どうしがぶつかる。両方を避ける幅として 96。
+ */
+const UNTANGLE_GAP = NODE_RADIUS * 2 + 44;
 
 /* ------------------------------------------------------------------ *
  * データ
@@ -633,6 +643,26 @@ function fit(): void {
 }
 
 /**
+ * 重なっている組があるか。**押せないときはボタンを `disabled` にする**（押しても何も
+ * 起きないボタンを押させない）。見るのは地図に載っている個体だけ — 隠したグループの
+ * 個体は `layouts` に居ないので、動かす対象にも重なりの相手にもならない。
+ */
+const canUntangle = computed(() => hasOverlap(layouts.nodes, UNTANGLE_GAP));
+
+/**
+ * 近すぎる組だけを離す（2026-10-27）。**動いた個体だけを 1 回で保存する** —
+ * 1 体ずつ `setTopologyPosition` を呼ぶと、書き込みと地図の取り直しが体数ぶん走り、
+ * ほどいている途中の配置が出る。先に `layouts` へ当てて画面を待たせない
+ * （保存に失敗したら `mutate` の取り直しが元の座標へ戻す）。
+ */
+async function untangleNodes(): Promise<void> {
+  const moved = untangle(layouts.nodes, UNTANGLE_GAP);
+  if (Object.keys(moved).length === 0) return;
+  Object.assign(layouts.nodes, moved);
+  await orchestrator.setTopologyPositions(moved);
+}
+
+/**
  * 落ち着いてから 1 回だけ掛ける。**仕切りのドラッグ中は毎フレーム発火する**ので、
  * そのたびに掛けると視点が追いかけ続けて操作感が悪くなる（利用者の言葉も
  * 「大きさが変わった**後**に」）。
@@ -831,6 +861,10 @@ onBeforeUnmount(() => {
         自動 Fit が Fit の**下**なのは元と同じ並び。ボタンを増やす判断は
         「操作ボタンは地図の面積を奪う」と逆向きに見えるが、これは**操作ではなく
         状態の切り替え**で、押した後は押さないもの。
+
+        「重なりをほどく」（2026-10-27）は操作のボタンだが、**ほかに入口が無い**
+        （重なったノードは 1 体ずつドラッグで戻すしかなかった）ので面積を払う。
+        重なりが無い間は `disabled`。
       -->
       <div
         class="kizuna-controls absolute bottom-2 left-2 z-10 flex flex-col overflow-hidden rounded border border-line bg-surface-1/80 backdrop-blur"
@@ -858,6 +892,29 @@ onBeforeUnmount(() => {
             <path
               d="M15.0027 4.49838L15.7121 5.23289C15.9998 5.53084 16.4746 5.53911 16.7726 5.25137C17.0705 4.96362 17.0788 4.48882 16.7911 4.19087L14.9701 2.30532C14.577 1.89823 13.9246 1.89823 13.5315 2.30532L11.7105 4.19087C11.4228 4.48882 11.431 4.96362 11.729 5.25137C12.0269 5.53911 12.5017 5.53084 12.7895 5.23289L13.5027 4.49433V7.25C13.5027 7.66421 13.8385 8 14.2527 8C14.667 8 15.0027 7.66421 15.0027 7.25V4.49838ZM3 5C3 3.89543 3.89543 3 5 3H9.25C9.66421 3 10 3.33579 10 3.75C10 4.16421 9.66421 4.5 9.25 4.5H5C4.72386 4.5 4.5 4.72386 4.5 5V15C4.5 15.2761 4.72386 15.5 5 15.5H9.25C9.66421 15.5 10 15.8358 10 16.25C10 16.6642 9.66421 17 9.25 17H5C3.89543 17 3 16.1046 3 15V5ZM15.7121 14.7671L15.0027 15.5016V12.75C15.0027 12.3358 14.667 12 14.2527 12C13.8385 12 13.5027 12.3358 13.5027 12.75V15.5057L12.7895 14.7671C12.5017 14.4692 12.0269 14.4609 11.729 14.7486C11.431 15.0364 11.4228 15.5112 11.7105 15.8091L13.5315 17.6947C13.9246 18.1018 14.577 18.1018 14.9701 17.6947L16.7911 15.8091C17.0788 15.5112 17.0705 15.0364 16.7726 14.7486C16.4746 14.4609 15.9998 14.4692 15.7121 14.7671Z"
             />
+          </svg>
+        </button>
+        <button
+          type="button"
+          data-kizuna-untangle
+          :disabled="!canUntangle"
+          :title="canUntangle ? $t('map.untangleTitle') : $t('map.untangleNone')"
+          :aria-label="$t('map.untangle')"
+          @click="untangleNodes"
+        >
+          <!-- 2 つの円と、外へ向かう矢 = 重なった組を離す。 -->
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="6.5" cy="8" r="3" />
+            <circle cx="13.5" cy="8" r="3" />
+            <path d="M7.5 15.5h-5m0 0 1.8-1.8m-1.8 1.8 1.8 1.8M12.5 15.5h5m0 0-1.8-1.8m1.8 1.8-1.8 1.8" />
           </svg>
         </button>
       </div>
@@ -1272,8 +1329,12 @@ onBeforeUnmount(() => {
 .kizuna-controls button + button {
   border-top: 1px solid var(--color-line);
 }
-.kizuna-controls button:hover {
+.kizuna-controls button:hover:not(:disabled) {
   background-color: var(--color-surface-2);
+}
+.kizuna-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .kizuna-controls button svg {
   width: 14px;

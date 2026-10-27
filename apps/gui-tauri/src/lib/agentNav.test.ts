@@ -113,6 +113,10 @@ describe("isNavigableFocus", () => {
     expect(isNavigableFocus(element("TEXTAREA", ["data-chat-input"]))).toBe(true);
   });
 
+  it("一覧の絞り込み欄でも効く（当たった個体の中を巡る）", () => {
+    expect(isNavigableFocus(element("INPUT", ["data-agent-search"]))).toBe(true);
+  });
+
   it("印の無い入力面では効かない", () => {
     // CodeMirror は既定の keymap で Alt+↑↓ に行の移動を持っている。
     // **除外リストではなく許容側で書いているので、印が無ければ既定で安全。**
