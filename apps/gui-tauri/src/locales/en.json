@@ -54,6 +54,7 @@
     "menuTheme": "Theme",
     "menuChatZoom": "Chat text",
     "menuMessages": "Message visibility",
+    "menuShortcuts": "Keyboard shortcuts",
     "theme": {
       "heading": "Theme",
       "intro": "Choose the colour scheme. It switches the moment you pick one.",
@@ -161,6 +162,49 @@
       "intro": "The nine-step guide shown on first launch. Open it again from here.",
       "show": "Show the guide",
       "showNote": "Closes the settings and overlays the guide on the screen."
+    },
+    "shortcuts": {
+      "heading": "Keyboard shortcuts",
+      "intro": "Keys you can use on this screen. Press \"?\" to open this page at any time.",
+      "typingNote": "While the cursor is in a field you can type into, \"?\" and \"/\" are typed as characters. While an IME is composing, every key goes to the IME.",
+      "remapNote": "Shortcuts cannot be reassigned yet.",
+      "or": "or",
+      "section": {
+        "global": "Anywhere",
+        "chatInput": "Chat input",
+        "chatSearch": "Chat search",
+        "village": "Servant list, Kizuna map, and dividers",
+        "editor": "Editor (ordinance, roles, config files, AI draft)",
+        "dialogs": "Confirmations and the guide"
+      },
+      "item": {
+        "showShortcuts": "Open this list of shortcuts",
+        "focusChat": "Move to the chat input",
+        "selectAgent": "Move the servant selection up or down (also works in the chat input and the list filter; while filtering, only matching servants)",
+        "searchChat": "Search the chat (when the chat pane is visible)",
+        "send": "Send",
+        "newline": "Insert a line break",
+        "pasteImage": "Pasting an image attaches it",
+        "completePath": "Complete a file path in the working folder",
+        "quoteMessage": "Attach a servant's message from the chat as a reference",
+        "pickCandidate": "Choose a completion candidate",
+        "confirmCandidate": "Confirm the candidate",
+        "closeCompletion": "Close the completion",
+        "nextMatch": "Next match (newer)",
+        "prevMatch": "Previous match (older)",
+        "closeSearch": "Close the search and return to where you were",
+        "clearAgentSearch": "List filter: clear the query; if it is empty, leave the field",
+        "cancelLink": "Kizuna map: close the connect mode and the menu",
+        "resizePane": "With a pane divider focused, move it 16px at a time",
+        "saveFile": "Save",
+        "findInFile": "Open find and replace",
+        "noReload": "Does nothing (so a reload cannot discard the text you are editing)",
+        "sendAssist": "AI draft: send",
+        "cancelConfirm": "Cancel a confirmation dialog",
+        "tourNext": "Guide: next",
+        "tourBack": "Guide: back",
+        "tourClose": "Guide: close"
+      }
     },
     "messages": {
       "heading": "Message visibility",

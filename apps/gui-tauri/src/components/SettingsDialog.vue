@@ -36,6 +36,7 @@ import {
   type ClosingDay,
 } from "../lib/statsPeriod";
 import { machineRegistrationLeft, registeredElsewhere, runsUnattended } from "../lib/startupSettings";
+import { SHORTCUT_SECTIONS, keyLabel, platformOf } from "../lib/shortcuts";
 import type {
   AgentId,
   AutostartView,
@@ -68,8 +69,19 @@ type Page =
   | "pricing"
   | "theme"
   | "chatZoom"
-  | "messages";
-const page = ref<Page>("user");
+  | "messages"
+  | "shortcuts";
+
+/**
+ * 開いたときのページ。省けば目録の先頭。「?」（`App.vue`）だけが `"shortcuts"` を渡す —
+ * 一覧を独立のダイアログにせず設定のページに置いたのは、割り当ての変更（後日）が
+ * 同じページに載るから。
+ */
+const props = defineProps<{ initialPage?: Page }>();
+const page = ref<Page>(props.initialPage ?? "user");
+
+/** ショートカット一覧の鍵の表記（mac は ⌘ ⌥ ⇧）。表示だけで、鍵を受ける側は両方見ている。 */
+const keyPlatform = platformOf(navigator.userAgent);
 
 /**
  * 村（`world.json`）に保存されるページ。読み込みに IPC が要る側でもあるので、
@@ -858,6 +870,13 @@ function selectPage(next: Page): void {
           </button>
           <button
             class="menu-item"
+            :class="{ active: page === 'shortcuts' }"
+            @click="selectPage('shortcuts')"
+          >
+            {{ $t("settings.menuShortcuts") }}
+          </button>
+          <button
+            class="menu-item"
             :class="{ active: page === 'tour' }"
             @click="selectPage('tour')"
           >
@@ -1118,6 +1137,53 @@ function selectPage(next: Page): void {
               </button>
               <span class="text-ink-dim">{{ $t("settings.tour.showNote") }}</span>
             </div>
+          </template>
+
+          <!--
+            ユーザーインターフェース > キーボードショートカット（2026-10-27。チートシート）。
+            中身は `lib/shortcuts.ts` の写しで、鍵を受ける handler とは `shortcutsWiring.test.ts` が
+            突き合わせる。割り当ての変更は後日（そのときもこのページに載る）。
+          -->
+          <template v-else-if="page === 'shortcuts'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.shortcuts.heading") }}
+            </h3>
+            <p class="mb-1 text-ink-dim">{{ $t("settings.shortcuts.intro") }}</p>
+            <p class="mb-3 text-ink-dim">
+              {{ $t("settings.shortcuts.typingNote") }} {{ $t("settings.shortcuts.remapNote") }}
+            </p>
+            <section
+              v-for="section in SHORTCUT_SECTIONS"
+              :key="section.id"
+              :data-shortcut-section="section.id"
+              class="mb-3 rounded border border-line bg-surface-0"
+            >
+              <h4 class="border-b border-line px-3 py-1.5 font-semibold text-ink">
+                {{ $t(`settings.shortcuts.section.${section.id}`) }}
+              </h4>
+              <ul>
+                <li
+                  v-for="item in section.items"
+                  :key="item.id"
+                  class="flex items-baseline gap-3 border-b border-line/60 px-3 py-1.5 last:border-b-0"
+                >
+                  <span class="min-w-0 flex-1 text-ink">
+                    {{ $t(`settings.shortcuts.item.${item.id}`) }}
+                  </span>
+                  <span class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    <template v-for="(combo, ci) in item.keys" :key="ci">
+                      <span v-if="ci > 0" class="text-ink-dim">{{ $t("settings.shortcuts.or") }}</span>
+                      <template v-for="(token, ti) in combo" :key="ti">
+                        <span v-if="ti > 0" class="text-ink-dim">+</span>
+                        <kbd
+                          class="min-w-[1.6em] rounded border border-line bg-surface-2 px-1.5 py-px text-center font-mono text-[10px] text-ink"
+                        >{{ keyLabel(token, keyPlatform) }}</kbd>
+                      </template>
+                    </template>
+                  </span>
+                </li>
+              </ul>
+            </section>
           </template>
 
           <!-- コスト管理 -->

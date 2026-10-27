@@ -54,6 +54,7 @@
     "menuTheme": "テーマ",
     "menuChatZoom": "会話の文字",
     "menuMessages": "メッセージ表示/非表示",
+    "menuShortcuts": "キーボードショートカット",
     "theme": {
       "heading": "テーマ",
       "intro": "画面の配色を選びます。選んだ瞬間に切り替わります。",
@@ -161,6 +162,49 @@
       "intro": "初回起動に出る 9 つの手順の案内です。もう一度見たいときはここから開きます。",
       "show": "案内を見る",
       "showNote": "設定を閉じて、画面の上に案内を重ねます。"
+    },
+    "shortcuts": {
+      "heading": "キーボードショートカット",
+      "intro": "この画面で使えるキーの一覧です。「?」でいつでもこのページを開けます。",
+      "typingNote": "「?」と「/」は、文字を打ち込める欄にカーソルがあるときは文字として入ります。日本語の変換中は、どのキーも変換に使われます。",
+      "remapNote": "割り当ての変更は、今はできません。",
+      "or": "または",
+      "section": {
+        "global": "どこでも",
+        "chatInput": "会話の入力欄",
+        "chatSearch": "会話の検索",
+        "village": "サーヴァント一覧・絆の地図・仕切り",
+        "editor": "エディタ（条例・役職・設定ファイル・AI で下書き）",
+        "dialogs": "確認と案内"
+      },
+      "item": {
+        "showShortcuts": "このショートカット一覧を開く",
+        "focusChat": "会話の入力欄へ移る",
+        "selectAgent": "サーヴァントの選択を上下に移す（入力欄と絞り込み欄の中でも効く。絞り込み中は当たった個体の中だけ）",
+        "searchChat": "会話を検索する（会話ペインが見えているとき）",
+        "send": "送る",
+        "newline": "改行する",
+        "pasteImage": "画像を貼り付けると添付になる",
+        "completePath": "作業フォルダのファイルパスを補完する",
+        "quoteMessage": "会話の中のサーヴァントの発話を参照として添える",
+        "pickCandidate": "補完の候補を選ぶ",
+        "confirmCandidate": "候補を確定する",
+        "closeCompletion": "補完を閉じる",
+        "nextMatch": "次の一致（新しい側）へ",
+        "prevMatch": "前の一致（古い側）へ",
+        "closeSearch": "検索を閉じて、元の場所へ戻る",
+        "clearAgentSearch": "一覧の絞り込み欄: 問いを消す。空なら欄から抜ける",
+        "cancelLink": "絆の地図: 接続モードとメニューを閉じる",
+        "resizePane": "ペインの仕切りにフォーカスして、16px ずつ動かす",
+        "saveFile": "保存する",
+        "findInFile": "検索と置換を開く",
+        "noReload": "何もしない（編集中の本文を再読み込みで失わないため）",
+        "sendAssist": "AI で下書き: 送る",
+        "cancelConfirm": "確認ダイアログを取り消す",
+        "tourNext": "案内: 次へ",
+        "tourBack": "案内: 戻る",
+        "tourClose": "案内: 閉じる"
+      }
     },
     "messages": {
       "heading": "メッセージ表示/非表示",

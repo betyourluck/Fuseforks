@@ -390,6 +390,19 @@ CodeMirror editor (`CodeEditor.vue`). Three keys work **only while the editor ha
 
 **`Ctrl+R` is swallowed only inside the editor**; everywhere else the window reloads as before.
 
+### List of keys (cheat sheet)
+
+The available keys are collected under **System settings > User interface > Keyboard shortcuts**
+(anywhere / chat input / chat search / servant list, Kizuna map, and dividers / editor / confirmations and the guide).
+**Pressing "?" outside a text field opens that page** — it uses the same conditions as "/": it does nothing inside
+another text field or editor, while a dialog or the guided tour is open, or on the statistics screen, and there
+"?" is typed as a character. On macOS the modifiers are shown as ⌘ ⌥ ⇧ (the handlers accept both Ctrl and Cmd,
+so only the labels differ).
+
+The list itself is a copy in `lib/shortcuts.ts`, **separate from the code that handles the keys**. If a handler's key
+changes and the list is not updated, only the screen would be wrong, so `shortcutsWiring.test.ts` checks each item
+against the handler's source text. **Keys cannot be reassigned yet** (if that is added, it will live on this page).
+
 ---
 
 ## UI Synchronization Rules

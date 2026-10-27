@@ -47,6 +47,7 @@ import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
 import { filterAgents } from "./lib/agentSearch";
 import { useAgentSearch } from "./composables/useAgentSearch";
 import { hasOpenOverlay, isEditableElement, isFocusChatKey } from "./lib/chatFocus";
+import { isShortcutsKey } from "./lib/shortcuts";
 import { TRAY_QUIT_EVENT, closeConfirmLines, hidesOnClose } from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
@@ -117,6 +118,16 @@ const mcpOpen = ref(false);
 const schedulesOpen = ref(false);
 /** システム設定ダイアログの表示状態（Spec 13）。 */
 const settingsOpen = ref(false);
+/**
+ * 開くときのページ。タイトルバーからは目録の先頭（`undefined`）、「?」からは
+ * ショートカット一覧。開くたびに入れ直すので、前に開いたページは引き継がない。
+ */
+const settingsPage = ref<"shortcuts" | undefined>(undefined);
+
+function openSettings(page?: "shortcuts"): void {
+  settingsPage.value = page;
+  settingsOpen.value = true;
+}
 
 /**
  * 初回起動のナビゲーション。**`state.ready` が立ってから 1 回だけ判定する** —
@@ -298,6 +309,22 @@ function onFocusChatKey(event: KeyboardEvent): void {
   input.focus();
 }
 
+/**
+ * 「?」でショートカット一覧（システム設定のページ）を開く（2026-10-27）。規則は `lib/shortcuts.ts`。
+ *
+ * **奪う条件は「/」と同じ** — 入力できる要素にフォーカスがあるときは文字として打たれる
+ * べきで、覆いの層が出ているとき・統計画面のとき（タイトルバーの設定の入口が `disabled`）・
+ * 案内の最中は何もしない。
+ */
+function onShortcutsKey(event: KeyboardEvent): void {
+  if (!isShortcutsKey(event)) return;
+  if (view.value !== "village" || showTour.value) return;
+  if (isEditableElement(document.activeElement)) return;
+  if (hasOpenOverlay(document)) return;
+  event.preventDefault();
+  openSettings("shortcuts");
+}
+
 onMounted(() => {
   void orchestrator.init();
   // 失敗しても画面は使える（確認が付かないだけ）。閉じられなくなるほうが害が大きい。
@@ -305,12 +332,14 @@ onMounted(() => {
   void registerTrayQuit().catch(() => undefined);
   window.addEventListener("keydown", onNavKey);
   window.addEventListener("keydown", onFocusChatKey);
+  window.addEventListener("keydown", onShortcutsKey);
 });
 
 onBeforeUnmount(() => {
   unlistenTrayQuit?.();
   window.removeEventListener("keydown", onNavKey);
   window.removeEventListener("keydown", onFocusChatKey);
+  window.removeEventListener("keydown", onShortcutsKey);
 });
 </script>
 
@@ -323,7 +352,7 @@ onBeforeUnmount(() => {
     @open-command-approval="commandApprovalOpen = true"
     @open-mcp="mcpOpen = true"
     @open-schedules="schedulesOpen = true"
-    @open-settings="settingsOpen = true"
+    @open-settings="openSettings()"
   />
   <!--
     統計画面（Spec 39 D4）は 3 ペインを丸ごと差し替える。**グリッドは v-show で
@@ -438,7 +467,12 @@ onBeforeUnmount(() => {
 
   <ScheduleDialog v-if="schedulesOpen" @close="schedulesOpen = false" />
 
-  <SettingsDialog v-if="settingsOpen" @close="settingsOpen = false" @show-tour="replayTour" />
+  <SettingsDialog
+    v-if="settingsOpen"
+    :initial-page="settingsPage"
+    @close="settingsOpen = false"
+    @show-tour="replayTour"
+  />
 
   <!-- 判断役の編集（Spec 62 D10）。入口は左ペインと地図の 2 つなので、ここに 1 つだけ置く。 -->
   <JudgeDialog v-if="judgeDialog.openId.value" :key="judgeDialog.openId.value" :judge-id="judgeDialog.openId.value" @close="judgeDialog.close()" />
