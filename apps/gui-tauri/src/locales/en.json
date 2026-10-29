@@ -578,7 +578,8 @@
       "no_answer": "No answer",
       "timed_out": "Timed out",
       "interrupted": "Interrupted",
-      "budget_exhausted": "Budget exhausted"
+      "budget_exhausted": "Budget exhausted",
+      "approval_pending": "Awaiting approval"
     },
     "startedAt": "Started {time}",
     "elapsedSlowest": "Took {duration} (slowest single servant)",
@@ -694,6 +695,8 @@
     "interruptPending": "Stop requested… (it will stop once the current operation finishes)",
     "approvalWaitingOne": "{name} is waiting for command approval ({count})",
     "approvalWaitingMany": "{name} and {others} more are waiting for command approval ({count})",
+    "approvalStoppedOne": "{name} stopped and is waiting for approval",
+    "approvalStoppedMany": "{name} and {others} more stopped and are waiting for approval",
     "approvalOpen": "Open approvals",
     "hopTitle": "Forwarded {hop} times (h{hop})",
     "tokens": "{count} tokens",
@@ -1431,9 +1434,12 @@
     "exact": "This call only",
     "prefix": "Any arguments after this prefix",
     "approve": "Approve",
-    "approveAndResume": "Approve and resume",
+    "resume": "Resume",
+    "stoppedNote": "This servant stopped at commands awaiting approval. Settle every request above, then press Resume to let it run them in its next turn.",
+    "resumeBlockedPending": "{count} request(s) are still waiting. Approve or reject them first.",
+    "resumeBlockedBroken": "run.json cannot be read, so the servant cannot be resumed. Fix it from the configuration files.",
     "resumeDisabled": "This servant is not Running, so it cannot be resumed. Start it first.",
-    "resumeFailed": "The approval was saved. The follow-up message was not delivered (the servant is not running, or its inbox is full). Check that it is started, then ask again.",
+    "resumeFailed": "The follow-up message was not delivered (the servant is not running, or its inbox is full). Check that it is started, then press again.",
     "reject": "Reject",
     "count": "{count}x",
     "gone": "This request is no longer listed (newer requests pushed it out). Nothing was added to the permitted or forbidden lists.",
@@ -1542,7 +1548,8 @@
       "failed": "Failed",
       "interrupted": "Interrupted by the user",
       "budgetExhausted": "Budget exhausted",
-      "reserveShort": "Budget short (could not reserve the next call)"
+      "reserveShort": "Budget short (could not reserve the next call)",
+      "approvalPending": "Stopped for approval"
     },
     "breakdown": {
       "cached": "cache read {n}",

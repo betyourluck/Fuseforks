@@ -378,7 +378,8 @@ async function mutate<T>(
  *
  * **`refreshAll` には混ぜない** — あらゆる操作のたびに全個体の `run.json` を
  * 読むのは払いすぎ。引くのは (1) 起動時 (2) 承認・却下のあと
- * (3) **`run` が呼ばれたとき**の 3 つだけ。
+ * (3) **`run` が呼ばれたとき** (4) `approvalStopped` を受けたとき (5) 「続けさせる」の戻り、
+ * の 5 つだけ（(4)(5) は Spec 72 — 止まった印は `run.json` に無いので (3) では動かない）。
  *
  * (3) が要るのは実機の指摘（2026-08-05）— それまで引き直しが (1)(2) しか
  * 無かったので、**サーヴァントが判断待ちを積んでも件数が動かなかった**。
@@ -778,6 +779,12 @@ function applyEvent(event: CoreEvent): void {
     case "runApprovalChanged":
       state.runApproval = event.mode;
       rememberSwitch({ runApproval: event.mode });
+      break;
+    case "approvalStopped":
+      // 止まった印は `run.json` に無い（Spec 72 D5）ので、`toolInvoked` の経路では動かない。
+      // 立てる・外すの両方で取り直す — 外す側を取り直さないと「続けさせる」を押した直後も
+      // 押せるまま残り、連打で 2 通目が出る。
+      void refreshCommandRequests();
       break;
 
     case "planWaveDiscarded": {

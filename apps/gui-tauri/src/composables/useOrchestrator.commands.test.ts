@@ -22,6 +22,7 @@ const view = (pending: string[], broken = false): CommandPolicyView => ({
     count: 1,
   })),
   broken,
+  stoppedForApproval: false,
 });
 
 const h = vi.hoisted(() => ({

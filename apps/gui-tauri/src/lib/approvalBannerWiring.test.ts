@@ -56,12 +56,25 @@ describe("承認待ちの帯の配線", () => {
 
   it("帯の辞書の鍵は ja / en の両方にある", () => {
     // 鍵を実行時に選ぶので、欠けても vue-tsc も i18n のコンパイル検査も通る。
-    const one: CommandPolicyView[] = [{ agentId: "a", name: "A", pending: [{ command: "git", args: [], firstRequestedAtMs: 0, count: 1 }], broken: false }];
+    const one: CommandPolicyView[] = [{ agentId: "a", name: "A", pending: [{ command: "git", args: [], firstRequestedAtMs: 0, count: 1 }], broken: false, stoppedForApproval: false }];
     const many: CommandPolicyView[] = [...one, { ...one[0]!, agentId: "b", name: "B" }];
-    for (const views of [one, many]) {
+    // 止まった個体の帯（Spec 72 D6）の 2 鍵も同じ網に入れる。
+    const stoppedOne: CommandPolicyView[] = [{ agentId: "a", name: "A", pending: [], broken: false, stoppedForApproval: true }];
+    const stoppedMany: CommandPolicyView[] = [...stoppedOne, { ...stoppedOne[0]!, agentId: "b", name: "B" }];
+    for (const views of [one, many, stoppedOne, stoppedMany]) {
       const key = approvalBanner(views)!.key;
       expect(lookup(ja, key), `ja: ${key}`).toBeTypeOf("string");
       expect(lookup(en, key), `en: ${key}`).toBeTypeOf("string");
+    }
+  });
+
+  it("止まった個体の帯の文は「承認画面を開く」を含まない（右隣のボタンと二重になる）", () => {
+    for (const dict of [ja, en]) {
+      for (const key of ["chat.approvalStoppedOne", "chat.approvalStoppedMany", "chat.approvalWaitingOne"]) {
+        const text = lookup(dict, key) as string;
+        const open = lookup(dict, "chat.approvalOpen") as string;
+        expect(text.includes(open), `${key} が ${JSON.stringify(open)} を含む`).toBe(false);
+      }
     }
   });
 });

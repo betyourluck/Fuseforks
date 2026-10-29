@@ -578,7 +578,8 @@
       "no_answer": "無応答",
       "timed_out": "時間切れ",
       "interrupted": "打ち切り",
-      "budget_exhausted": "予算切れ"
+      "budget_exhausted": "予算切れ",
+      "approval_pending": "承認待ち"
     },
     "startedAt": "開始 {time}",
     "elapsedSlowest": "所要 {duration}（最遅 1 体分）",
@@ -694,6 +695,8 @@
     "interruptPending": "停止要求中…（実行中の処理が終わり次第止まります）",
     "approvalWaitingOne": "{name} がコマンドの承認を待っています（{count} 件）",
     "approvalWaitingMany": "{name} ほか {others} 体がコマンドの承認を待っています（{count} 件）",
+    "approvalStoppedOne": "{name} が承認待ちで止まっています",
+    "approvalStoppedMany": "{name} ほか {others} 体が承認待ちで止まっています",
     "approvalOpen": "承認画面を開く",
     "hopTitle": "転送 {hop} 回目（h{hop}）",
     "tokens": "{count} tokens",
@@ -1431,9 +1434,12 @@
     "exact": "この呼び出しだけ",
     "prefix": "この先頭に続く任意の引数",
     "approve": "承認",
-    "approveAndResume": "承認して続けさせる",
+    "resume": "続けさせる",
+    "stoppedNote": "このサーヴァントは承認待ちのコマンドで止まっています。判断待ちをすべて片付けてから「続けさせる」を押すと、次のターンで実行して答えます。",
+    "resumeBlockedPending": "判断待ちが {count} 件残っています。先に承認か却下をしてください。",
+    "resumeBlockedBroken": "run.json が読めないため続けさせられません。設定ファイルから直してください。",
     "resumeDisabled": "このサーヴァントは稼働中ではないため、続けさせられません。起動してから押してください。",
-    "resumeFailed": "承認は保存しました。続きは配送できていません（サーヴァントが稼働中でないか、受信箱がいっぱいです）。起動を確かめてから依頼し直してください。",
+    "resumeFailed": "続きは配送できていません（サーヴァントが稼働中でないか、受信箱がいっぱいです）。起動を確かめてからもう一度押してください。",
     "reject": "却下",
     "count": "{count} 回",
     "gone": "この要求はもう一覧にありません（新しい要求に押し出されました）。許可も禁止も増えていません。",
@@ -1542,7 +1548,8 @@
       "failed": "失敗",
       "interrupted": "ユーザーが打ち切り",
       "budgetExhausted": "予算切れ",
-      "reserveShort": "予算不足（次の呼び出しぶんを確保できず）"
+      "reserveShort": "予算不足（次の呼び出しぶんを確保できず）",
+      "approvalPending": "承認待ちで停止"
     },
     "breakdown": {
       "cached": "キャッシュ読み {n}",

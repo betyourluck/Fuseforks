@@ -99,6 +99,7 @@ const STATE_LABEL_KEYS: Record<PlanTaskState, string> = {
   timed_out: "waves.state.timed_out",
   interrupted: "waves.state.interrupted",
   budget_exhausted: "waves.state.budget_exhausted",
+  approval_pending: "waves.state.approval_pending",
 };
 
 function taskFor(wave: PlanWaveRecord, agentId: AgentId): PlanTaskRecord | undefined {
@@ -118,8 +119,10 @@ function cellClass(taskState: PlanTaskState): string {
       return "bg-run";
     case "handed_off":
     case "interrupted":
+    case "approval_pending":
       // 注意色。打ち切りは人が止めさせた結果で、失敗ではない
       // （data_contract の turn_interrupt 不変条件 4 と同じ判断）。
+      // 承認待ち（Spec 72）も次の手が人なので同じ腕 — `default` は失敗色なので明示する。
       return "bg-warn";
     default:
       // undeliverable / no_answer / timed_out / budget_exhausted。

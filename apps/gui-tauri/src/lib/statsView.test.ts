@@ -279,10 +279,12 @@ describe("seriesBars — 線形・0 の扱い", () => {
     expect(stopTone("interrupted")).toBe("fail");
     expect(stopTone("budget_exhausted")).toBe("fail");
     expect(stopTone("reserve_short")).toBe("fail");
+    // Spec 72 — 承認待ちで閉じたターンは「払ったが答えが無い」。作業状況のセルの注意色とは別の分類。
+    expect(stopTone("approval_pending")).toBe("fail");
   });
 });
 
-describe("辞書 — 終わり方 7 値の鍵が ja / en に揃っている", () => {
+describe("辞書 — 終わり方 8 値の鍵が ja / en に揃っている", () => {
   const ja = JSON.parse(read("../locales/ja.json")) as { stats: { stop: Record<string, string> } };
   const en = JSON.parse(read("../locales/en.json")) as { stats: { stop: Record<string, string> } };
 
@@ -292,7 +294,8 @@ describe("辞書 — 終わり方 7 値の鍵が ja / en に揃っている", ()
       expect(ja.stats.stop[leaf], `ja: ${key}`).toBeTruthy();
       expect(en.stats.stop[leaf], `en: ${key}`).toBeTruthy();
     }
-    expect(Object.keys(STOP_LABEL_KEYS)).toHaveLength(7);
+    // 8 値目は Spec 72 の approval_pending。
+    expect(Object.keys(STOP_LABEL_KEYS)).toHaveLength(8);
   });
 });
 

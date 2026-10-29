@@ -1130,7 +1130,9 @@ export type PlanTaskState =
   /** 人が止めさせた（Spec 10）。失敗ではない — セル色も失敗色にしない。 */
   | "interrupted"
   /** トークン予算の天井が止めた（Spec 11）。資源の事実なので色は失敗系。 */
-  | "budget_exhausted";
+  | "budget_exhausted"
+  /** `run` の承認待ちで止まった（Spec 72）。次の手は人なので色は注意色（失敗ではない）。 */
+  | "approval_pending";
 
 /** `planWaveStarted` が運ぶタスクの告知形（開始時点で確定している 2 欄だけ）。 */
 export interface PlanTaskAnnounced {
@@ -1226,8 +1228,9 @@ export interface ForkPoint {
 // ---- 統計（Spec 39）— stats_contract のミラー ------------------------------------
 
 /**
- * ターンの終わり方（`Record::Turn.stop`）。閉じた列挙 7 値。`repeat` は止めたツール名、
- * `failed` はエラーのコードを持つ。
+ * ターンの終わり方（`Record::Turn.stop`）。閉じた列挙 8 値。`repeat` は止めたツール名、
+ * `failed` はエラーのコードを持つ。`approval_pending` は Spec 72（`run` の承認待ちで閉じた —
+ * 払ったが答えが無いので統計の色は失敗側。作業状況のセルの注意色とは別の分類）。
  */
 export type TurnStop =
   | { kind: "completed" }
@@ -1236,7 +1239,8 @@ export type TurnStop =
   | { kind: "failed"; code: string }
   | { kind: "interrupted" }
   | { kind: "budget_exhausted" }
-  | { kind: "reserve_short" };
+  | { kind: "reserve_short" }
+  | { kind: "approval_pending" };
 
 /** 集計の範囲。閉じた列挙 2 値。 */
 export type StatsScope =
@@ -1567,6 +1571,10 @@ export type CoreEvent =
   | { type: "planReviewBypassChanged"; on: boolean }
   /** コマンドの承認モードが切り替わった（Spec 61 — ステータスバー）。 */
   | { type: "runApprovalChanged"; mode: RunApproval }
+  /** `run` の承認待ちで止まった個体の印が変わった（Spec 72 D5）。立てる（真）と外す（偽）の
+      両方で来る — 偽が来ないと「続けさせる」を押した直後も押せるまま残る。受け手は承認画面と帯
+      （`refreshCommandRequests`）。印は `run.json` に無いので `toolInvoked` の経路では動かない。 */
+  | { type: "approvalStopped"; agentId: AgentId; stopped: boolean }
   /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
       流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };
@@ -1595,6 +1603,10 @@ export interface CommandPolicyView {
   name: string;
   pending: PendingCommand[];
   broken: boolean;
+  /** 直近のターンが `run` の承認待ちで止まり、まだ続けさせていない（Spec 72 D5）。
+      `run.json` に無い印（コアのメモリの写し。再起動と会話の切り替えで消える）。
+      真なら判断待ちが 0 件でも個体の節を残し、「続けさせる」を出す。 */
+  stoppedForApproval: boolean;
 }
 
 /** 承認・却下の結果（Spec 20）。`NotFound` は「もう一覧に無い」。 */

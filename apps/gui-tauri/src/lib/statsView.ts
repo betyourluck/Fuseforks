@@ -31,11 +31,14 @@ export const STOP_LABEL_KEYS: Record<TurnStop["kind"], string> = {
   interrupted: "stats.stop.interrupted",
   budget_exhausted: "stats.stop.budgetExhausted",
   reserve_short: "stats.stop.reserveShort",
+  approval_pending: "stats.stop.approvalPending",
 };
 
 /**
  * 終わり方の色調。**完走の 3 値は通常色、残りは警告色** — `TurnStop::is_failure` と
  * 同じ境界（払ったが答えが無かった）。色は CSS 変数（`style.css`）から引く。
+ * `approval_pending`（Spec 72）も警告色 — 統計は払いの結末で、作業状況のセルの注意色
+ * （次の手が人）とは別の分類。
  */
 export function stopTone(kind: TurnStop["kind"]): "ok" | "fail" {
   return kind === "completed" || kind === "repeat" || kind === "tool_limit" ? "ok" : "fail";

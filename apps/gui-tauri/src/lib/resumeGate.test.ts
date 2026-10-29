@@ -1,31 +1,49 @@
 import { describe, expect, it } from "vitest";
+import { canResume, canResumeNow, resumeBlock } from "./resumeGate";
+import type { AgentStatus, CommandPolicyView } from "../types";
 
-import { canResume } from "./resumeGate";
-import type { AgentStatus } from "../types";
+function view(over: Partial<CommandPolicyView> = {}): CommandPolicyView {
+  return {
+    agentId: "agent_1",
+    name: "ザリ",
+    pending: [],
+    broken: false,
+    stoppedForApproval: true,
+    ...over,
+  };
+}
 
-describe("canResume", () => {
-  /**
-   * **5 状態を全部書く。** 「止まっている側」をまとめて 1 本にすると、
-   * 状態が 1 つ増えたときにどちらへ倒れるかが実測で決まらなくなる
-   * （型は網羅を強制しない — `canResume` は列挙の match ではなく比較なので、
-   * 新しい状態は黙って偽側へ落ちる）。
-   */
-  const cases: [AgentStatus, boolean][] = [
-    ["idle", false],
-    ["starting", true],
-    ["running", true],
-    ["stopping", false],
-    ["failed", false],
-  ];
+const pending = { command: "git", args: ["status"], firstRequestedAtMs: 0, count: 1 };
 
-  for (const [status, expected] of cases) {
-    it(`${status} は ${expected ? "押せる" : "押せない"}`, () => {
-      expect(canResume(status)).toBe(expected);
-    });
-  }
+describe("resumeBlock / canResumeNow（Spec 72 D5）", () => {
+  it("止まっていて・判断待ち 0・読めて・稼働中なら押せる", () => {
+    expect(resumeBlock(view(), "running")).toBeNull();
+    expect(canResumeNow(view(), "running")).toBe(true);
+    expect(canResumeNow(view(), "starting")).toBe(true);
+  });
 
-  it("一覧に居ない個体は押せない", () => {
-    // 削除された直後・まだ読めていない、のどちらでも押せない側へ倒す。
-    expect(canResume(undefined)).toBe(false);
+  it("止まっていなければ押す対象が無い", () => {
+    expect(resumeBlock(view({ stoppedForApproval: false }), "running")).toBe("notStopped");
+  });
+
+  it("判断待ちが残っていれば先に片付けさせる（再開しても最初の Unknown でまた止まる）", () => {
+    expect(resumeBlock(view({ pending: [pending] }), "running")).toBe("pending");
+    expect(canResumeNow(view({ pending: [pending] }), "running")).toBe(false);
+  });
+
+  it("run.json が読めなければ直させる（全部 Unknown に落ちるので同じ所で止まる）", () => {
+    expect(resumeBlock(view({ broken: true }), "running")).toBe("broken");
+  });
+
+  it("稼働していなければ Spec 56 と同じ理由", () => {
+    for (const status of ["idle", "stopping", "failed", undefined] as (AgentStatus | undefined)[]) {
+      expect(resumeBlock(view(), status), String(status)).toBe("notRunning");
+      expect(canResume(status)).toBe(false);
+    }
+  });
+
+  it("理由の順は 判断待ち → 壊れている → 稼働していない", () => {
+    expect(resumeBlock(view({ pending: [pending], broken: true }), "idle")).toBe("pending");
+    expect(resumeBlock(view({ broken: true }), "idle")).toBe("broken");
   });
 });
