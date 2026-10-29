@@ -5621,3 +5621,39 @@ rmcp 2.2 の `AuthorizationManager::new` が作る HTTP クライアントは UA
 - 同じ P4 で、利用者の「すべて確認できました」の時点ではログに 6〜9 の行が 1 本も無かった（`autostart:` 行・`Run` の値・
   サインインの記録・CLI の行のどれも）。その後に踏まれて揃った。**検収の報告は、その操作が残す行と登録を数えてから受け取る**
   （Spec 68 P4 と同じ形の 2 例目）
+
+## #151 開発ビルドの終了時の 255 を再現しようとして、Tauri CLI と同じ止め方で利用者の Edge を 11 プロセス止めた（2026-10-27）
+
+**症状**: 利用者の問い —「`bun run tauri dev` で起動したアプリを閉じると、`> Stop watching for updates` と
+`error: script "dev" exited with code 255` が出て終わる。なぜか」。再現のため scratchpad に `bun run dev`（中身は眠り続ける
+`node`）を `cmd /S /C` で起こし、Tauri CLI と同じ PowerShell の `Kill-Tree` を当てた。直前の木の表示で、テスト用の `node`
+（PID 4444）の下に **`msedge.exe` が 11 個**並んでいた。`Kill-Tree` はそれも子として `Stop-Process` し、終わった後の
+`msedge.exe` は 0 個だった。開発ビルド（`target\debug\fuseforks.exe`）と WebView2 は無事。
+
+**真因**: `Kill-Tree` は子を「`Win32_Process.ParentProcessId` が一致するもの」で探す。**Windows の ParentProcessId は、親が
+終わっても書き換わらず、PID は使い回される。** Edge の本体を起動した親（既に終了済み）の PID が 4444 で、テスト用の `node` が
+同じ番号を引き当てたので、Edge の 11 プロセスが `node` の子に見えた。止め方は Tauri CLI 2.11.4 の `dev.rs` の
+`kill_before_dev_process` をそのまま写したもので、**同じ危うさは Tauri CLI 自身の後片付けにもある**（開発ビルドを閉じるたびに
+低い確率で無関係なプロセスを止めうる。こちらのコードではない）。
+
+問いの答えはソースの読みで出た（実験ではなく）:
+- `error: script "dev" exited with code 255` は `beforeDevCommand`（`bun run dev` = vite）の側の行。アプリが終わると
+  `on_app_exit` → `kill_before_dev_process()` が `cmd` → `bun run dev` → `vite.exe`（bun の .bin の shim）→ `node vite.js`
+  の木を深い順に `Stop-Process` し、それを `bun run dev` が 0 以外の終了として報告する。その後 `exit(アプリの終了コード)` に
+  進むので、アプリ自身は正常に閉じている。255 が強制終了の -1（0xFFFFFFFF）の見え方だというのは推定で、再現では `cmd` が -1 で
+  終わったが bun はメッセージを出す前に止められ、255 の行そのものは見ていない
+- `> Stop watching for updates` は `docker-mcp.exe`（村の MCP_DOCKER のゲートウェイ）の文言（バイナリの中の文字列で確認）。
+  Fuseforks が閉じて MCP の接続が切れたときの終了の行
+
+**処方**: 実験をその場で止め、利用者へ Edge を止めたことを先に伝えた（Edge は開き直すと前回のタブを復元するか尋ねる）。
+コードは変えていない。メモリに「ParentProcessId をたどって止める実験は自分で走らせない」を残した。
+
+**一般化**:
+- **ParentProcessId をたどって子孫を止める処理は、PID の使い回しで無関係なプロセスまで止める。** 子とみなすのは
+  「親の PID が一致し、かつ親より後に起動したもの」に限る（作成時刻を突き合わせる）。この判定を持たない止め方は、
+  他人のコードでも写して走らせない
+- **終了の順序や終了コードを確かめたいだけなら、止めずに見張る。** 対象の PID を名指しで待ち、終わった時刻と終了コードを
+  記録すれば、木を作って止める実験は要らない。**問いが「なぜ止まるか」でも、確かめる操作に「止める」を選ばない**
+- 再現の実験を組むときは、その実験が触る範囲を走らせる前に列挙する。今回は木の表示に `msedge.exe` が並んだ時点で
+  気づけたが、表示と停止を同じスクリプトで続けて走らせたので止まる前に見る機会が無かった — **表示と破壊的な操作は
+  別の呼び出しに分ける**
