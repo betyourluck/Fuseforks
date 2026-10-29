@@ -777,7 +777,7 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 
 - **The plan review panel lets you choose again per wave** (initially the village default; "None" is allowed). An approved wave uses **the selection at the moment you pressed Dispatch**; the village default is not substituted
 - **The verifier needs no tie** — it is a destination a person chose explicitly, treated like a schedule's destination
-- If a verifier is set but verification could not happen, **one reason line is written into the bundle and the bundle is still returned** ("(Not verified: …)"; seven closed reasons — took part in the bundle / is the coordinator / stopped / waiting cycle / timed out / budget exhausted / returned no answer)
+- If a verifier is set but verification could not happen, **one reason line is written into the bundle and the bundle is still returned** ("(Not verified: …)"; eight closed reasons — took part in the bundle / is the coordinator / stopped / waiting cycle / timed out / budget exhausted / returned no answer / the verifier stopped at command approval)
 - **With "None", the bundle and the instrumentation are unchanged to the byte.** With a verifier, each `plan` adds one verifier turn, and the whole bundle becomes its input
 - Instrumentation: `plan verify: agent=… plan_id=… verifier=… outcome=ok|skipped:<reason> chars=… elapsed_ms=…`
 - **A village whose ordinance describes its own bundle verification ends up verifying twice** (the coordinator asks yet another servant). Once a verifier is set, remove that ordinance section or change it to "leave it to the mechanism when a verifier is set"
@@ -1177,27 +1177,49 @@ JSON and copy lines by hand (direct editing of `run.json` remains available for 
 control). While anything is waiting, **a thin strip also appears above the chat input**
 ("Luna is waiting for command approval (2)" with "Open approvals", 2026-10-19). The strip
 is not part of the conversation flow and disappears once nothing is waiting; its count is
-the same as the title bar's.
+the same as the title bar's. **Once the requests are settled, the strip changes to "Luna stopped
+and is waiting for approval" for as long as a servant stopped at approval remains**
+([Spec 72](specs/72_approval-stops-the-turn.md); waiting requests are shown first).
 
 - **Approving asks what to permit**: this call only (exact match), or any arguments
   after this prefix (trailing `*`). **The narrow one is the default**, and the
   resulting pattern is shown literally so you can check it before pressing.
 - **Rejecting writes to `deny`**, not merely removing it from the list — removal alone
   would let the same command queue up again on the next call.
-- **"Approve and resume" starts the work again from there**
-  ([Spec 56](specs/56_resume-after-approval.md)). Approving alone **does not start a
-  new turn** — the servant's turn ended the moment it was refused, and it stays put
-  until you say something. This button approves and then sends one message:
-  "Approved. Please continue."
+- **An unapproved command stops the turn at the end of that round**
+  ([Spec 72](specs/72_approval-stops-the-turn.md); in the approval-required mode).
+  Other tools called in the same round still finish, and allowed commands run.
+  The stopped servant leaves one line in the conversation ("stopped here: N command(s)
+  await approval"), and its requester (the delegating servant or the wave) is told it
+  stopped awaiting approval. The work-status cell reads "Awaiting approval" (the caution
+  color) and the stats show the ending "Stopped for approval".
+  - Before this, the servant kept going after the refusal. With three requests waiting
+    you pressed "Approve and resume" three times, **and the same servant ran the same
+    request three times in parallel and returned three answers** (the
+    [Spec 56](specs/56_resume-after-approval.md) form, replaced by Spec 72).
+  - **If you do not want it to stop, use a mode that skips approval** (auto-approve or
+    auto-allow, below).
+- **"Resume" is one button per stopped servant**, at the end of that servant's section in
+  the approval screen. Settle every request (approve or reject), then press it: it sends one
+  message, "Approved. Please continue.", and the servant carries on in a new turn.
+  Approving and resuming are separate buttons.
   - **Only that fixed line is sent; your original request is not re-sent** (it is
     still in the requester's conversation).
-  - **One press, one message.** With three requests waiting, clear two with
-    "Approve" and press this on the last one (sending three would start the same
-    turn three times).
-  - **It cannot be pressed for a servant that is not running** (the button says why).
-    Start it first.
+  - **It can be pressed only when no request is left, `run.json` is readable, and the
+    servant is running.** Otherwise the button says why (with a request left, resuming would
+    stop at that command again).
+  - **The section disappears as soon as you press it; the answer arrives a few seconds later**
+    (the message goes through the inbox).
   - **The continuation runs as a new request.** In a village with a token limit,
     **the ceiling starts fresh every time** (the same treatment as a scheduled run).
+  - **The stopped mark lives only in memory.** Restarting the app, switching conversations, or
+    stopping the servant clears it. Approvals stay in `allow`, so afterwards just ask it to
+    continue in the conversation.
+- **When a scheduled run stops this way, its acceptance check and its follow-up summary are
+  skipped** — so a request that is only waiting for approval is not read as finished and
+  re-issued. The log shows `acceptance: … outcome=skipped reason=approval_pending`. A turn
+  restarted with "Resume" is not a scheduled delivery, so the acceptance check does not run
+  when it finishes; the schedule's next firing does it again.
 - **There is no "approve all."** Bulk approval skips the decision of *what* to permit,
   which is the substance of allow-listing.
 - **There is a mode that skips approval itself** ([Spec 61](specs/61_run-approval-mode.md)),
@@ -1844,9 +1866,9 @@ the number of `note!` calls, and writing a total here would rot every time one i
 
 The start and failure kinds were added later. The `turn` line existed **only on the success path**, so a turn that died left no line at all; and rounds that call no tool (waiting on the LLM) emit nothing. **"Still in flight" and "died three minutes ago" looked like the same silence.**
 
-**The `turn` line is now emitted for failed turns too** (2026-08-16). A turn whose output hit the token limit with an empty body had been paid for at the provider, yet had no `turn` line and showed up in neither the card totals nor the budget (`failures.md` #103). Now a failed turn still writes one `turn` line with `stop=failed:<CODE>` **in the same columns as a successful one**, and what it paid lands in the card and the budget. `turn failed` stays as the line that carries the reason text — **count `turn` lines only** (a failed turn now produces two lines). Each of the four turn exits writes exactly one usage line: `turn interrupted` for interrupts and `turn budget exhausted` for budget cut-offs. **All four lines end with `model=`** (the template's model name; [Spec 39](specs/39_stats-view.md) — the prefix and the existing columns are unchanged, so earlier greps keep working).
+**The `turn` line is now emitted for failed turns too** (2026-08-16). A turn whose output hit the token limit with an empty body had been paid for at the provider, yet had no `turn` line and showed up in neither the card totals nor the budget (`failures.md` #103). Now a failed turn still writes one `turn` line with `stop=failed:<CODE>` **in the same columns as a successful one**, and what it paid lands in the card and the budget. `turn failed` stays as the line that carries the reason text — **count `turn` lines only** (a failed turn now produces two lines). Each of the five turn exits writes exactly one usage line: `turn interrupted` for interrupts, `turn budget exhausted` for budget cut-offs, and for a turn stopped at command approval the `turn` line itself with `stop=approval_pending` (the round that stopped also writes `turn cut: … reason=approval_pending unknown=N`; [Spec 72](specs/72_approval-stops-the-turn.md)). **Every usage line ends with `model=`** (the template's model name; [Spec 39](specs/39_stats-view.md) — the prefix and the existing columns are unchanged, so earlier greps keep working).
 
-**The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all four exits). That is what the stats view (the bar chart icon in the bottom bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
+**The same numbers are also kept in `sessions.redb` as `turn` records** (Spec 39; one record per turn, at all five exits). That is what the stats view (the bar chart icon in the bottom bar) reads: `fuseforks.log` rotates at 8 MB with one generation, while the records stay with the conversation. **Conversations from before this version have none** — a conversation without records shows "no records" rather than zeros.
 
 **AI drafting** ([Spec 63](specs/63_ai-draft-assist.md)) writes one `assist:` line and one `assist` record in `sessions.redb` (into the open conversation) per LLM call. The line reads `assist: kind=… model=… attempt=… forced=no|yes|fallback outcome=question|draft|invalid|draft_invalid|empty|failed …` and **never carries the conversation, the text being edited, or the draft** (only character counts). The stats view's "AI drafting" table reads the records. **Older versions (v0.3.7 or earlier) cannot read `assist` records** (an unknown kind fails the load). The app does not crash, but that conversation opens with an empty chat pane and no restored histories (a `WARN session store:` line), and the stats view's "all conversations" fails as a whole while any conversation holds one. **The records are not deleted** — reopening with a newer version reads them.
 
@@ -2438,7 +2460,7 @@ are named here:
 | Reject | For `ask`, the reception is unset or deleted |
 | Reject | A starting servant's work folder does not exist (every file tool would fail) / `--door-port` was given but there is no door key |
 | Reject | An enabled OAuth MCP server (`"auth": "oauth"`) has no authorization record (`MCP_OAUTH_REQUIRED`; there is no browser here to authorize — authorize in the GUI first) / an enabled OAuth MCP server with `--secrets env` (`MCP_OAUTH_HEADLESS`; the refresh token is replaced on every refresh and cannot be written back to an environment variable, so it stops even with a record) |
-| Warn | A schedule's target is outside the start set / command approval is "approval required" and a servant has `run` (change it with `--run-approval`) / a pre- or post-check is unapproved on this machine / judges or pruning exist but there is no Jev key |
+| Warn | A schedule's target is outside the start set / command approval is "approval required" and a servant has `run` (an unapproved command stops the turn and `ask` exits 12; change it with `--run-approval`) / a pre- or post-check is unapproved on this machine / judges or pruning exist but there is no Jev key |
 | Warn | A `rag` declaration folder does not exist / the command of an enabled stdio MCP server cannot be found / a command allowed for `run` is not on PATH (**a different program with the same name is not told apart**) / there are daily or weekly schedules and the time zone differs from `sourceTimeZone` in `bake.json` |
 | Info | The reception's delegates are outside the start set (for `ask`, shown only with `--verbose` — repeated on every cron run, it would bury the real warnings) |
 
@@ -2470,8 +2492,9 @@ external-client name wins if set). `ask` runs no schedules and opens no door. Th
 | 7 | `ask` exceeded the wait limit |
 | 8 | `ask` was interrupted (including Ctrl+C) |
 | 9 | `ask` stopped at the budget ceiling |
+| 12 | `ask` stopped at command approval (in the approval-required mode; [Spec 72](specs/72_approval-stops-the-turn.md). Nobody approves, so change `--run-approval` or add to `allow` in `run.json`) |
 
-For 6–9 the boilerplate text is still written to stdout (the exit code is the outcome for machines, the body is the outcome for people).
+For 6–9 and 12 the boilerplate text is still written to stdout (the exit code is the outcome for machines, the body is the outcome for people). 10 and 11 belong to `bake` (the table under "Running in a container" below).
 
 - With **`--events jsonl`**, **every stderr line is JSON** — `CoreEvent` (the same shape the screen receives) / the CLI's own lines
   `{"type":"cli","level","code","message"}` / diagnostic lines `{"type":"log","message"}`, and nothing else. Not one plain line slips
