@@ -126,6 +126,13 @@ pub enum TurnStop {
     BudgetExhausted,
     /// 残額はあるが次の 1 呼び出しの見積もりに届かない（Spec 38）。
     ReserveShort,
+    /// `run` の承認待ちが出た周の終わりで閉じた（Spec 72。`stop=approval_pending`）。
+    ///
+    /// **払ったが答えが無い**ので [`Self::is_failure`] は真（統計の `failed` の定義どおり）。
+    /// 作業状況のセルが注意色なのは別の分類（次の手が人）で、統計の色とは揃えない。
+    /// **旧版（v0.6.4 以前）はこの `kind` を読めない** — 含む会話の統計は集計ごと失敗する
+    /// （Spec 63 の `assist` と同じ形。利用者が負う条件）。
+    ApprovalPending,
 }
 
 impl TurnStop {
@@ -140,11 +147,14 @@ impl TurnStop {
             Self::Interrupted => "interrupted".to_owned(),
             Self::BudgetExhausted => "budget_exhausted".to_owned(),
             Self::ReserveShort => "reserve_short".to_owned(),
+            Self::ApprovalPending => "approval_pending".to_owned(),
         }
     }
 
     /// 払ったが答えが無かった終わり方か（統計の `failed` の数え）。
     /// 完走の 3 値（`Completed` / `Repeat` / `ToolLimit`）は本文を返しているので偽。
+    /// `ApprovalPending`（Spec 72）は真 — 承認画面を迂回して続けさせ続けると
+    /// この数がそのぶん増えるのは意図した数え方（`stats.rs` のテストが留める）。
     #[must_use]
     pub fn is_failure(&self) -> bool {
         !matches!(self, Self::Completed | Self::Repeat { .. } | Self::ToolLimit)
@@ -154,8 +164,8 @@ impl TurnStop {
 /// ターン 1 本の使用量（Spec 39 D1・`Record::Turn` の中身）。
 ///
 /// **`turn:` 行と同じ構造体（`TurnSpend`）から 1 実装 `settle_turn` が書く** —
-/// 行とレコードが食い違う形を構造で作らない。4 出口（完走 / 失敗 / 割り込み /
-/// 予算）すべてで 1 件。**履歴の入力にはならない**（`restore_histories` /
+/// 行とレコードが食い違う形を構造で作らない。5 出口（完走 / 失敗 / 割り込み /
+/// 予算 / 承認待ち = Spec 72）すべてで 1 件。**履歴の入力にはならない**（`restore_histories` /
 /// `tail_messages` / `fork_points` はこの variant を読まない）。
 ///
 /// 入れない欄: 予算の残額（因果ごと・プロセス寿命）/ 依頼文・本文（`exchange` が

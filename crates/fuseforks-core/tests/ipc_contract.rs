@@ -66,6 +66,45 @@ fn run_approval_event_wire_is_frozen() {
     }
 }
 
+/// 承認待ちの印（Spec 72 D5）のワイヤ形。**落ちたら `types.ts` の `CoreEvent` の
+/// `approvalStopped` を直すこと。** `stopped` は立った（真）/ 外れた（偽）で、画面は
+/// どちらでも承認画面を取り直す — 偽が来ないと「続けさせる」を押した直後も押せるまま残る。
+#[test]
+fn approval_stopped_event_wire_is_frozen() {
+    for stopped in [true, false] {
+        let event = fuseforks_core::event::CoreEvent::ApprovalStopped {
+            agent_id: AgentId::from("agent_1"),
+            stopped,
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({ "type": "approvalStopped", "agentId": "agent_1", "stopped": stopped }),
+        );
+    }
+}
+
+/// 承認画面の 1 体分の投影（Spec 20 + Spec 72 の `stoppedForApproval`）のワイヤ形。
+/// **落ちたら `types.ts` の `CommandPolicyView` を直すこと。** 印は `run.json` に無いので、
+/// この欄が落ちると画面は判断待ち 0 件の個体の節を消し、「続けさせる」の出る場所が無くなる。
+#[test]
+fn command_policy_view_wire_is_frozen() {
+    let view = fuseforks_core::command::CommandPolicyView {
+        agent_id: AgentId::from("agent_1"),
+        name: "ロボットくん".into(),
+        pending: Vec::new(),
+        broken: false,
+        stopped_for_approval: true,
+    };
+    assert_eq!(
+        wire_keys(&view),
+        vec!["agentId", "broken", "name", "pending", "stoppedForApproval"],
+    );
+    assert_eq!(
+        serde_json::to_value(&view).unwrap()["stoppedForApproval"],
+        serde_json::json!(true),
+    );
+}
+
 /// モデルテンプレートの接続テストの結果（Spec 68 D7）のワイヤ形。
 ///
 /// **落ちたら `types.ts` の `TemplateProbe` を直すこと**（画面は `result` と `outcome` / `failure` で辞書の鍵を

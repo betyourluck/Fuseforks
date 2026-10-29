@@ -45,6 +45,14 @@ pub struct ToolOutput {
     pub images: Vec<ToolImage>,
     /// 落とした画像の理由。
     pub dropped: Vec<DropReason>,
+    /// この呼び出しが **`run` の承認待ち**になった（Spec 72 D2 — `Decision::Unknown` ×
+    /// `RunApproval::Required`）。
+    ///
+    /// **立てるのは `run` だけ。** ターンループはこの旗を周の終わりに数え、1 本でも
+    /// 立っていればその周でターンを閉じる（`command_tool_contract` の Spec 72 の節）。
+    /// 本文の文字列で判定しないための欄 — 拒否文の字面で止めると、MCP のツールが
+    /// 同じ文を返した日に止まる（Spec 08 の凍結「分類は文言 parse でなく型で運ぶ」）。
+    pub approval_pending: bool,
 }
 
 impl ToolOutput {

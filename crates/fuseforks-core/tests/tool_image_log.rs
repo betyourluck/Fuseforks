@@ -83,6 +83,7 @@ impl AgentTool for CameraTool {
             text: "撮りました".to_owned(),
             images: vec![fuseforks_core::tool_image::normalize(&data).expect("通ること")],
             dropped: vec![DropReason::Format],
+            approval_pending: false,
         })
     }
 }

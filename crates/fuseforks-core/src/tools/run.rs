@@ -35,7 +35,7 @@ use crate::error::CoreResult;
 use crate::llm::ToolSpec;
 use crate::model::AgentId;
 use crate::process::{Ran, display_path, resolve_program};
-use crate::tool::{AgentTool, ToolContext};
+use crate::tool::{AgentTool, ToolContext, ToolOutput};
 use crate::tools::fs::MAX_OUTPUT_CHARS;
 
 /// stderr に確保する文字数。**融通しない。**
@@ -291,9 +291,17 @@ impl AgentTool for RunTool {
         })
     }
 
+    /// 本文だけが要る呼び出し側のための形。ターンの層は [`Self::call_with_media`] を呼ぶ。
     async fn call(&self, ctx: &ToolContext, args: &Value) -> CoreResult<String> {
+        self.call_with_media(ctx, args).await.map(|output| output.text)
+    }
+
+    /// 承認待ちの旗を運ぶ唯一の実装（Spec 72 D2）。`Unknown` × `required` の腕でだけ
+    /// `approval_pending` を立てる — ターンループが周の終わりに数え、1 本でも立っていれば
+    /// その周でターンを閉じる。本文は `call` と同じ。
+    async fn call_with_media(&self, ctx: &ToolContext, args: &Value) -> CoreResult<ToolOutput> {
         let Some(command) = args.get("command").and_then(Value::as_str) else {
-            return Ok("引数 `command` が必要です。".into());
+            return Ok(ToolOutput::text("引数 `command` が必要です。"));
         };
         let argv: Vec<String> = args
             .get("args")
@@ -328,24 +336,30 @@ impl AgentTool for RunTool {
         // 文面は 3 つとも別にする（#44。理由が違えば次の手も違う）。
         match decision {
             Decision::Malformed => {
-                return Ok(format!(
+                return Ok(ToolOutput::text(format!(
                     "`{command}` は実行ファイル名として受け付けられません\
                      （空白とパス区切り `/` `\\` `:` を含めないでください）。\n\
                      **2 語以上を 1 つの `command` に書かないでください** — \
                      `command: \"git\", args: [\"status\"]` のように分けます。\n\
                      名前だけで呼び直してください（探索は PATH に任せます）。"
-                ));
+                )));
             }
             Decision::Denied => {
-                return Ok(format!(
+                return Ok(ToolOutput::text(format!(
                     "`{command}` は利用者が禁止しています。\n\
                      **この呼び出しは何度試しても通りません。** 別の手段で進めてください。"
-                ));
+                )));
             }
             Decision::Unknown => match ctx.run_approval {
                 RunApproval::Required => {
                     self.note_pending(&ctx.agent_id, command, &argv).await;
-                    return Ok(unknown_refusal(command, &argv, &ctx.agent_id));
+                    // 承認待ちの旗（Spec 72 D2）。**ここだけが立てる。** `deny` / `Malformed` は
+                    // 承認しても通らないので人の手番が生まれず、立てない。
+                    return Ok(ToolOutput {
+                        text: unknown_refusal(command, &argv, &ctx.agent_id),
+                        approval_pending: true,
+                        ..ToolOutput::default()
+                    });
                 }
                 // 承認を省いているモード（Spec 61）。**1 呼び出しごとに 1 行残す** —
                 // 人の承認を経ずに走ったものが、後からログで数えられるように。
@@ -368,21 +382,20 @@ impl AgentTool for RunTool {
         }
 
         let Some(cwd) = ctx.work_dir.clone() else {
-            return Ok(
+            return Ok(ToolOutput::text(
                 "作業フォルダが設定されていないため実行できません。\
-                 利用者にエージェント設定の「作業フォルダ」欄を設定してもらってください。"
-                    .into(),
-            );
+                 利用者にエージェント設定の「作業フォルダ」欄を設定してもらってください。",
+            ));
         };
 
         // **実行時に PATH で解決する。** 登録制と違い絶対パスを持っていないので、
         // 「構造的に決まる」とは言えない — 代わりに**決まった結果を毎回見せる**。
         // キャッシュしないのは、PATH を直したら次の実行から変わってほしいため。
         let Some(program) = resolve_program(command) else {
-            return Ok(format!(
+            return Ok(ToolOutput::text(format!(
                 "`{command}` が PATH に見つかりません。\n\
                  利用者に、そのコマンドがこの端末へ入っているか確かめてもらってください。"
-            ));
+            )));
         };
 
         crate::note!(
@@ -401,6 +414,7 @@ impl AgentTool for RunTool {
             ctx.cancel.clone(),
         )
         .await
+        .map(ToolOutput::text)
     }
 }
 
@@ -498,7 +512,7 @@ fn unknown_refusal(command: &str, argv: &[String], agent_id: &AgentId) -> String
         );
     }
     out.push_str(
-        "**このターンでは実行できません。** 利用者へ依頼するか、別の手段で進めてください。",
+        "**このターンはここで止まります。** 利用者が承認すると、次のターンで実行できます。",
     );
     out
 }
@@ -588,7 +602,9 @@ mod tests {
         let plain = ["status".to_string()];
         let text = unknown_refusal("git", &plain, &id);
         assert!(!text.contains("空白を含む引数"), "空白が無ければ 1 行足さない: {text}");
-        assert!(text.contains("このターンでは実行できません"));
+        // Spec 72 — ターンはここで閉じるので「別の手段で進めて」とは書かない（嘘になる）。
+        assert!(text.contains("このターンはここで止まります"), "{text}");
+        assert!(!text.contains("別の手段で進めて"), "{text}");
     }
 
     /// 承認モード（Spec 61）のテスト用の土台。PATH で必ず見つかるシェルを名前で呼ぶ。
@@ -629,17 +645,41 @@ mod tests {
         if cfg!(windows) { "cmd /C ver" } else { "sh -c pwd" }
     }
 
-    const REFUSED: &str = "このターンでは実行できません";
+    const REFUSED: &str = "このターンはここで止まります";
 
     /// **承認が必要（既定）は Spec 15 以来の挙動のまま** — 実行せず `pending` へ積む。
+    /// Spec 72 で足したのは旗 1 つ: `call_with_media` が `approval_pending` を立てる
+    /// （ターンループはこれを数えて周の終わりで閉じる。本文の字面では判定しない）。
     #[tokio::test]
     async fn required_mode_refuses_and_queues_the_request() {
         let (dir, tool, ctx) = bypass_fixture("required", RunApproval::Required);
-        let out = tool.call(&ctx, &plain_call()).await.unwrap();
-        assert!(out.contains(REFUSED), "{out}");
+        let out = tool.call_with_media(&ctx, &plain_call()).await.unwrap();
+        assert!(out.text.contains(REFUSED), "{}", out.text);
+        assert!(out.approval_pending, "required の Unknown は承認待ちの旗を立てる");
         let policy = tool.load(&ctx.agent_id).await;
         assert!(policy.allow.is_empty());
         assert_eq!(policy.pending.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 旗を立てるのは `Unknown` × `required` だけ（Spec 72 D2）。禁止・形の誤り・
+    /// 承認を省いたモードでは立たない — 承認しても通らない呼び出しに人の手番は無い。
+    #[tokio::test]
+    async fn only_a_required_unknown_raises_the_approval_flag() {
+        let (dir, tool, ctx) = bypass_fixture("flag", RunApproval::NoApproval);
+        let out = tool.call_with_media(&ctx, &plain_call()).await.unwrap();
+        assert!(!out.approval_pending, "no_approval は走らせるだけ: {}", out.text);
+
+        let auto = ToolContext { run_approval: RunApproval::AutoApprove, ..ctx };
+        let out = tool.call_with_media(&auto, &plain_call()).await.unwrap();
+        assert!(!out.approval_pending, "auto_approve は書き足して走らせる: {}", out.text);
+
+        let required = ToolContext { run_approval: RunApproval::Required, ..auto };
+        let malformed = tool
+            .call_with_media(&required, &serde_json::json!({ "command": "git status", "args": [] }))
+            .await
+            .unwrap();
+        assert!(!malformed.approval_pending, "Malformed は pending へ積まないので旗も無い");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

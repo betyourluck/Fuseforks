@@ -142,7 +142,7 @@ pub struct AgentStats {
 #[serde(rename_all = "camelCase")]
 pub struct StopCount {
     /// [`TurnStop`] の種別名（`completed` / `repeat` / `tool_limit` / `failed` /
-    /// `interrupted` / `budget_exhausted` / `reserve_short`）。
+    /// `interrupted` / `budget_exhausted` / `reserve_short` / `approval_pending`）。
     pub stop: String,
     /// `failed` のとき、エラーのコード。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -389,6 +389,7 @@ fn stop_kind(stop: &TurnStop) -> &'static str {
         TurnStop::Interrupted => "interrupted",
         TurnStop::BudgetExhausted => "budget_exhausted",
         TurnStop::ReserveShort => "reserve_short",
+        TurnStop::ApprovalPending => "approval_pending",
     }
 }
 
@@ -664,10 +665,17 @@ mod tests {
             ("s1".to_owned(), turn("a", 4, 1, 0, 1, TurnStop::Failed { code: "X".into() })),
             ("s1".to_owned(), turn("a", 5, 1, 0, 1, TurnStop::ReserveShort)),
             ("s1".to_owned(), turn("a", 6, 1, 0, 1, TurnStop::ToolLimit)),
+            // Spec 72 — 承認待ちで閉じたターンは「払ったが答えが無い」なので失敗に数える。
+            // 承認画面を迂回して続けさせ続けると、この数がそのぶん増えるのは意図した数え方。
+            ("s1".to_owned(), turn("a", 7, 1, 0, 1, TurnStop::ApprovalPending)),
         ];
         let report = aggregate(&turns, &[session("s1", None)], scope_s());
-        assert_eq!(report.totals.turns, 6);
-        assert_eq!(report.totals.failed, 4, "failed ×3 + reserve_short（tool_limit は完走）");
+        assert_eq!(report.totals.turns, 7);
+        assert_eq!(
+            report.totals.failed,
+            5,
+            "failed ×3 + reserve_short + approval_pending（tool_limit は完走）"
+        );
         let stops: Vec<(String, Option<String>, u64)> = report
             .by_stop
             .iter()
@@ -677,6 +685,7 @@ mod tests {
             stops,
             vec![
                 ("failed".into(), Some("X".into()), 2),
+                ("approval_pending".into(), None, 1),
                 ("completed".into(), None, 1),
                 ("failed".into(), Some("Y".into()), 1),
                 ("reserve_short".into(), None, 1),

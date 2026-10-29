@@ -224,6 +224,8 @@ impl Orchestrator {
         self.shared.set_status(id, AgentStatus::Stopping).await;
         // 受信箱を先に外し、停止処理中に新しい発話が積まれないようにする。
         self.shared.mailboxes.write().await.remove(id);
+        // 承認待ちの印も外す（Spec 72 D5 (c)）— 受信箱が無い個体に「続けさせる」は届かない。
+        self.shared.set_approval_stopped(id, false);
 
         let _ = handle.shutdown.send(true);
         // 処理中の LLM 呼び出しが終わるのを待つ。無限には待たない。

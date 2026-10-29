@@ -586,6 +586,8 @@ pub fn render_tool_output(result: &CallToolResult, language: crate::world::Langu
         text,
         images,
         dropped,
+        // MCP のツールは承認待ちを作らない（旗を立てるのは `run` だけ — Spec 72 D2）。
+        approval_pending: false,
     }
 }
 

@@ -120,6 +120,7 @@ impl AgentTool for CameraTool {
             text: "{\"width\":8}".to_owned(),
             images,
             dropped: Vec::new(),
+            approval_pending: false,
         })
     }
 }

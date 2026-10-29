@@ -47,6 +47,38 @@ pub(super) fn spawn_schedule_ticker(
                         // 答え終わっている（`ask` / `plan` は答えを待って初めて
                         // 呼び出し元のターンが進むため）。
                         //
+                        // **例外 1 つ（Spec 72 D3）: 根のターンが `run` の承認待ちで止まった
+                        // ときは、後判定も要約も見送る。** どちらもこの合図で発火するので、
+                        // 承認待ちの停止を「終わった」と読む — 後判定は未承認のまま検収コマンドを
+                        // 走らせ、不一致で再依頼し（門は財布の残額だけ）、その入口で印を消す。
+                        // 要約は承認を待つ途中の履歴（注記）を畳む。登録は外す（捨てる）—
+                        // 承認して続けさせた次のターンの完了は、その予定の次の発火が受ける。
+                        if shared
+                            .upgrade()
+                            .is_some_and(|shared| shared.is_approval_stopped(&agent_id))
+                        {
+                            let acceptance =
+                                runtime.pending_acceptances.lock().await.remove(&agent_id);
+                            let summary =
+                                runtime.pending_summaries.lock().await.remove(&agent_id);
+                            if let Some(state) = acceptance {
+                                note!(
+                                    "acceptance: schedule={} attempt={}/{} outcome=skipped \
+                                     reason=approval_pending{}",
+                                    state.task_id,
+                                    state.attempt,
+                                    state.acceptance.max_attempts,
+                                    if state.summarize_after { " summarize=skipped" } else { "" },
+                                );
+                            } else if summary.is_some() {
+                                note!(
+                                    "schedule summarize: root={agent_id} outcome=skipped \
+                                     reason=approval_pending"
+                                );
+                            }
+                            continue;
+                        }
+                        //
                         // **受け手は 1 本・後判定が先（Spec 46 D2 の直列）。**
                         // 後判定つきの予定は配送時に `pending_acceptances` へだけ
                         // 登録されるので、ここの 2 つの取り出しは構造的に排他 —

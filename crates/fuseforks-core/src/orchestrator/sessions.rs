@@ -34,6 +34,8 @@ impl Orchestrator {
             self.shared.world.write().await.clear_histories();
             // 保存先の無い村でも、前の会話の引数と出力は持ち続けない（Spec 57）。
             self.shared.tool_calls_lock().clear();
+            // 承認待ちの印も同じ（Spec 72 D5 (d)。保存先のある村は `open_session` が外す）。
+            self.shared.clear_approval_stopped();
             self.shared.emit(CoreEvent::ConversationCleared);
             return Ok(());
         }

@@ -599,6 +599,106 @@ async fn finish_budget_exhausted(
     Ok(())
 }
 
+/// `run` の承認待ちが出た周でターンを閉じる出口（Spec 72 D3）。
+///
+/// 既存の早期終了 2 つ（[`finish_interrupted`] / [`finish_budget_exhausted`]）と同じ **4 段** —
+/// (1) 会話ログへ System 行 (2) 履歴の注記 (3) [`settle_turn`] (4) 依頼主への返信。
+/// **(1) が無いと、利用者が直接頼んだターンは会話ペインに何も出ず個体が黙る**（rev1 の抜け）。
+///
+/// **まとめ呼び出しはしない**（半端な答えそのもので、払いが 1 呼び出し増える）。
+/// **稼働は降ろさない**（閉じるのはターンだけ。`token_budget.exhaustion` と同型）。
+/// **`reply:` 行は書かない**（`dispatch_outcome` を通らないので `author=core` も付かない —
+/// 完遂の軸でこの未完遂を数えるのは `turn:` の `stop=approval_pending`）。
+/// **予算の予約・清算は足さない** — 周の終わりに `ReservationGuard` は握られていない。
+///
+/// `unknown` はこの周で `run` が承認待ちを返した本数（`turn cut:` の `unknown=` と同じ値。
+/// `run.json` の `pending.len()` ではない — 畳みと承認で食い違う）。
+#[allow(clippy::too_many_arguments)]
+async fn finish_approval_pending(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    reply_to: Option<tokio::sync::oneshot::Sender<Reply>>,
+    ctx: &TurnContext,
+    sent_user_turn: &str,
+    spend: TurnSpend,
+    waves: u32,
+    max_tool_iterations: u8,
+    unknown: usize,
+) -> CoreResult<()> {
+    let (display, language) = {
+        let world = shared.world.read().await;
+        (
+            world
+                .agent(agent_id)
+                .map(|record| record.spec.name.clone())
+                .unwrap_or_else(|_| agent_id.to_string()),
+            world.language().unwrap_or(crate::world::Language::Ja),
+        )
+    };
+
+    // (2) 履歴の注記 — モデルのプロンプト履歴にだけ入る。**「未処理」と書かない**（周の途中で
+    //     走った `allow` のコマンドは実行済み）。**画面の操作名を書かない**（`ask_fuseforks` の
+    //     呼び出し側とヘッドレスにも届く）。コマンド名も書かない（承認画面に全部出る）。
+    {
+        let note = match language {
+            crate::world::Language::Ja => format!(
+                "（承認待ちのコマンドが {unknown} 件あるため、このターンはここで止めました。\
+                 利用者が承認すると、次のターンで実行できます）"
+            ),
+            crate::world::Language::En => format!(
+                "(Stopped here: {unknown} command(s) await the user's approval. \
+                 They can run in the next turn once approved.)"
+            ),
+        };
+        let mut world = shared.world.write().await;
+        shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
+    }
+    // (3) 清算。**`turn:` 行を書く側**（`own_line` の 3 出口と違う）なので、分母と `repeat_max` を
+    //     正しく渡す — `None` だと `rounds=N/-`、写さないと `repeat_max=0` の嘘の観測になる
+    //     （`repeat_max` は呼び出し側が `spend` へ写してから渡す）。
+    settle_turn(
+        shared,
+        agent_id,
+        ctx,
+        &spend,
+        waves,
+        TurnStop::ApprovalPending,
+        Some(u32::from(max_tool_iterations)),
+    )
+    .await;
+
+    // (1) System 行。名指しは既存 2 出口と同じ `{agent_id}（{display}）`（表示名は一意でない）。
+    //     因果で 1 回の CAS は要らない — 個体ごとの事実で、波の N 体が同じ文を出すのは正しい。
+    let text = match language {
+        crate::world::Language::Ja => format!(
+            "{agent_id}（{display}）は承認待ちのコマンドが {unknown} 件あり、このターンをここで\
+             止めました。承認が揃ったら「続けさせる」で再開します"
+        ),
+        crate::world::Language::En => format!(
+            "{agent_id} ({display}) stopped here: {unknown} command(s) await approval. \
+             Resume once they are settled."
+        ),
+    };
+    shared
+        .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+        .await;
+
+    // 止まった個体の印（Spec 72 D5）。承認画面が節を残し「続けさせる」を出す根拠。
+    // **System 行の後に立てる** — 画面は印のイベントで承認画面を取り直すので、先に立てると
+    // 取り直した画面に会話の行がまだ無い瞬間ができる。
+    shared.set_approval_stopped(agent_id, true);
+
+    // (4) 依頼主への返信。送信の失敗は無視する（相手が先に確定していることはある）。
+    //     本文は既存 2 出口の形。束ねはこの text をそのまま載せる（状態別の文の表は無い）。
+    if let Some(reply_to) = reply_to {
+        let _ = reply_to.send(Reply {
+            text: "この依頼は承認待ちのコマンドで止まりました。答えはありません。".to_owned(),
+            kind: PlanTaskState::ApprovalPending,
+        });
+    }
+    Ok(())
+}
+
 /// 予約に失敗した周の**理由の分類**（Spec 38 P4 / Spec 39 D1）。`budget stop:` の
 /// 1 行を書き、同じ判定を [`TurnStop`] として返す — 行とレコードで理由が食い違わない
 /// ように、判定は 1 箇所。**打ち切った周にしか呼ばれない**（通常運転では 1 行も増えない）。
@@ -957,6 +1057,10 @@ pub(super) async fn handle_message(
         endpoint_log_label(&incoming.from),
         incoming.content.chars().count(),
     );
+    // 承認待ちの印を外す（Spec 72 D5 (a)）。**`run_turn` の入口ではなくここ** — 段 1〜2 の
+    // `?` で抜けた経路を通らず、`Failed` と印が同時に立つ。続行の配送でも人の新しい依頼でも
+    // 予定の発火でも同じ 1 箇所。立っていなければイベントは出ない。
+    shared.set_approval_stopped(agent_id, false);
     // 1. 定義とテンプレートを取り出す。ロックはここで手放し、LLM 呼び出しは持たずに行う。
     let (spec, template) = {
         let world = shared.world.read().await;
@@ -1786,6 +1890,9 @@ async fn run_turn_inner(
         // **全部止めた周だけがループの打ち切り条件**（新しいことを何もしていない周）。
         let mut executed_in_round = 0usize;
         let mut blocked_in_round: Option<String> = None;
+        // この周で `run` が承認待ちを返した本数（Spec 72 D2）。**`pending` の件数ではない** —
+        // `note_pending` は同一 (command, args) を畳み、承認で減る。1 本でもあれば周の終わりで閉じる。
+        let mut approval_pending_in_round = 0usize;
 
         // 1 本ぶんの処理は CallRunner へ出した。**ここに残したのは
         // `messages` と周ごとのカウンタ**で、戻り値で受ければ借用が 1 つ減る。
@@ -1810,15 +1917,22 @@ async fn run_turn_inner(
                 language: tool_images.language,
             };
             for call in &calls {
-                let (body, images, executed, blocked) =
+                let (body, images, executed, blocked, approval_pending) =
                     match runner.on_call(call, iteration + 1).await {
-                        CallOutcome::Executed { body, images } => (body, images, true, None),
+                        CallOutcome::Executed {
+                            body,
+                            images,
+                            approval_pending,
+                        } => (body, images, true, None, approval_pending),
                         CallOutcome::Blocked { body, tool } => {
-                            (body, Vec::new(), false, Some(tool))
+                            (body, Vec::new(), false, Some(tool), false)
                         }
                     };
                 if executed {
                     executed_in_round += 1;
+                }
+                if approval_pending {
+                    approval_pending_in_round += 1;
                 }
                 if let Some(tool) = blocked {
                     blocked_in_round.get_or_insert(tool);
@@ -1841,6 +1955,51 @@ async fn run_turn_inner(
                 iteration + 1,
                 crate::tool_image::TOOL_IMAGES_PER_REQUEST,
             );
+        }
+
+        // `run` の承認待ちが出た周は、ここでターンを閉じる（Spec 72 D1 / D3）。
+        //
+        // 置き場は**周の終わり** — 呼び出しと結果の対が揃い（#29）、周の残りの呼び出しは
+        // 走り終えている（最初の 1 本で切ると、並列に呼んだ残りが `pending` に乗らず承認が
+        // 分かれる）。腕の中で cancel を先に見る（`token_budget.precedence`: cancel が最優先。
+        // 今の周の終わりに cancel の検査点は無いので、ここに 1 点足す）。RepeatGuard とは
+        // 構造的に同時成立しない — `Unknown` を返した `run` は `Executed` に数えるので
+        // `executed_in_round >= 1`。最終周で出ても同じ腕で閉じ、上限の通知もまとめ呼び出しも
+        // しない（当たったのは上限ではない。理由を 1 つに保つ）。
+        // `auto_approve` / `no_approval` では `run` が旗を立てないので、この腕は通らない。
+        if approval_pending_in_round > 0 {
+            if turn.token.is_cancelled() {
+                return finish_interrupted(
+                    shared,
+                    agent_id,
+                    reply_to.take(),
+                    turn,
+                    ctx,
+                    &sent_user_turn,
+                    *spend,
+                    plan_wave,
+                )
+                .await
+                .map(|()| None);
+            }
+            note!(
+                "turn cut: agent={agent_id} round={} reason=approval_pending unknown={approval_pending_in_round}",
+                iteration + 1,
+            );
+            spend.repeat_max = repeat_guard.max_calls();
+            return finish_approval_pending(
+                shared,
+                agent_id,
+                reply_to.take(),
+                ctx,
+                &sent_user_turn,
+                *spend,
+                plan_wave,
+                max_tool_iterations,
+                approval_pending_in_round,
+            )
+            .await
+            .map(|()| None);
         }
 
         // **この周が丸ごと空振りだったときだけ**打ち切る。1 本が重複しただけの
@@ -2157,6 +2316,9 @@ enum CallOutcome {
         body: String,
         /// ツール結果に載せる画像（Spec 70。返すのは MCP のツールだけで、ほかは空）。
         images: Vec<crate::tool_image::ToolImage>,
+        /// `run` の承認待ちになった（Spec 72 D2。立てるのは `run` だけ）。周の終わりに数え、
+        /// 1 本でも真ならその周でターンを閉じる。
+        approval_pending: bool,
     },
     /// 繰り返しで止めた。結果は積むが、この周の実行数には数えない。
     Blocked {
@@ -2353,6 +2515,7 @@ impl CallRunner<'_> {
             return CallOutcome::Executed {
                 body,
                 images: Vec::new(),
+                approval_pending: false,
             };
         }
 
@@ -2453,13 +2616,21 @@ impl CallRunner<'_> {
         // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
         let reason_kind = crate::tool_reason::kind_label(&reason);
         let ok = result.is_ok();
-        let (raw, images, dropped) = match result {
-            Ok(output) => (output.text, output.images, output.dropped),
+        // `approval_pending` も**ここで取る**（Spec 72 D2）— 欄アクセスの分解はコンパイラが
+        // 指さないので、欄を足したら書き忘れが黙って偽に落ちる場所。
+        let (raw, images, dropped, approval_pending) = match result {
+            Ok(output) => (
+                output.text,
+                output.images,
+                output.dropped,
+                output.approval_pending,
+            ),
             // 失敗しても会話を止めない。モデルが読んで次を決める。
             Err(err) => (
                 format!("ツールの実行に失敗しました: {err}"),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         };
         // ツール結果の即時圧縮（Spec 59 / `tool_prune_contract`）。
@@ -2550,7 +2721,11 @@ impl CallRunner<'_> {
         let digests: Vec<[u8; 32]> = images.iter().map(|image| image.digest).collect();
         self.repeat_guard
             .observe_result(&call.name, &call.args, &raw, &digests);
-        CallOutcome::Executed { body, images }
+        CallOutcome::Executed {
+            body,
+            images,
+            approval_pending,
+        }
     }
 
     /// `omitted` の本体（Spec 59 D7）。落とした段落を逐語で返す。

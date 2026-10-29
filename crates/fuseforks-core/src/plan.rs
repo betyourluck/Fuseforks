@@ -50,6 +50,11 @@ pub enum PlanTaskState {
     /// `token_budget.precedence`（cancel > budget_exhausted > RepeatGuard >
     /// hop / rounds）。
     BudgetExhausted,
+    /// `run` の承認待ちで止まった（Spec 72）。**次の手は人**なので色は注意色
+    /// （`Interrupted` / `HandedOff` と同じ腕。`PlanWavePane` の `cellClass` の
+    /// 既定は失敗色なので腕を明示する）。刻み手は周の終わりの出口
+    /// `finish_approval_pending` の 1 箇所。
+    ApprovalPending,
 }
 
 /// 波レベルの状態（Spec 43）。**セルの分類（[`PlanTaskState`]）とは別の軸** —
@@ -392,6 +397,30 @@ mod tests {
         assert_eq!(wire, "\"budget_exhausted\"");
         let round: PlanTaskState = serde_json::from_str(&wire).unwrap();
         assert_eq!(round, PlanTaskState::BudgetExhausted);
+    }
+
+    /// `ApprovalPending` も加算的変更であること（Spec 72 P1 — 旧 8 値が
+    /// そのまま読め、新値が snake_case で往復する）。
+    #[test]
+    fn approval_pending_is_an_additive_wire_value() {
+        for (wire, expected) in [
+            ("\"running\"", PlanTaskState::Running),
+            ("\"answered\"", PlanTaskState::Answered),
+            ("\"handed_off\"", PlanTaskState::HandedOff),
+            ("\"undeliverable\"", PlanTaskState::Undeliverable),
+            ("\"no_answer\"", PlanTaskState::NoAnswer),
+            ("\"timed_out\"", PlanTaskState::TimedOut),
+            ("\"interrupted\"", PlanTaskState::Interrupted),
+            ("\"budget_exhausted\"", PlanTaskState::BudgetExhausted),
+        ] {
+            let parsed: PlanTaskState = serde_json::from_str(wire).unwrap();
+            assert_eq!(parsed, expected, "旧値 {wire} が読めること");
+        }
+
+        let wire = serde_json::to_string(&PlanTaskState::ApprovalPending).unwrap();
+        assert_eq!(wire, "\"approval_pending\"");
+        let round: PlanTaskState = serde_json::from_str(&wire).unwrap();
+        assert_eq!(round, PlanTaskState::ApprovalPending);
     }
 
     /// 波レベル状態は加算的変更であること（Spec 43）。

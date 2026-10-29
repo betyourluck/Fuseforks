@@ -228,6 +228,9 @@ impl Orchestrator {
     /// エージェントを削除する。稼働中なら先に停止する。
     pub async fn delete_agent(&self, id: &AgentId) -> CoreResult<()> {
         self.stop_agent(id).await.ok();
+        // `stop_agent` は `tasks` に居ないと `NotRunning` で早期に返るので、印はここでも外す
+        // （Spec 72 D5 (c)。居ない個体の印が残ると承認画面に節だけが残る）。
+        self.shared.set_approval_stopped(id, false);
         let work_dir = {
             let mut world = self.shared.world.write().await;
             let work_dir = world.agent(id).ok().and_then(|record| record.spec.work_dir.clone());

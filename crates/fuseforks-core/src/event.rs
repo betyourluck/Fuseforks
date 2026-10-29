@@ -254,6 +254,23 @@ pub enum CoreEvent {
         mode: crate::command::RunApproval,
     },
 
+    /// `run` の承認待ちで止まった個体の印（`Shared.approval_stopped`）が**変わった**
+    /// （Spec 72 D5）。立てる（周の終わりの出口）と外す（`handle_message` の先頭 /
+    /// `resume_after_approval` の配送成功 / `stop_agent`・`delete_agent` /
+    /// `open_session`・`reset_conversation`）の**両方で出す** — 外す側に無いと、
+    /// 「続けさせる」を押した直後も押せるまま画面に残り、連打で 2 通目が出る
+    /// （Spec 72 が直そうとしている症状そのもの）。
+    ///
+    /// 受け手は承認画面と帯（`refreshCommandRequests`）。印は `run.json` に無いので、
+    /// `toolInvoked` の経路では動かない。加算的変更。ワイヤ形は `ipc_contract` が留める。
+    #[serde(rename_all = "camelCase")]
+    ApprovalStopped {
+        /// 対象の個体。
+        agent_id: AgentId,
+        /// 立った（真）か外れた（偽）か。
+        stopped: bool,
+    },
+
     /// 転送上限に達して発話の連鎖を打ち切った。
     ///
     /// 相互接続されたエージェントは放置すると無限に往復する。打ち切りを

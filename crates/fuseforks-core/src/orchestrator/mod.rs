@@ -434,6 +434,15 @@ struct Shared {
     /// 戻すのは画面側（端末の `localStorage` から設定し直す。2026-09-27 利用者裁定）。
     /// 画面が居ない起動（将来の core 単独実行）では常に承認が必要なまま始まる。
     run_approval: std::sync::atomic::AtomicU8,
+    /// `run` の承認待ちで止まった個体の印（Spec 72 D5）。
+    ///
+    /// **メモリだけ。再起動と会話の切り替えで消える。** 立てるのは周の終わりの出口
+    /// `finish_approval_pending`、外すのは `handle_message` の先頭 / `resume_after_approval` の
+    /// 配送成功 / `stop_agent`・`delete_agent` / `open_session`・`reset_conversation`。
+    /// 出し入れは [`Shared::set_approval_stopped`] の 1 実装で、**変わったときだけ**
+    /// [`CoreEvent::ApprovalStopped`] を出す。ターンより長生きするが、予算・打ち切り・hop の
+    /// 所有者ではない — `pending` が `run.json` に残るのと同じ「人の手番を待つ印」。
+    approval_stopped: std::sync::Mutex<std::collections::HashSet<AgentId>>,
     /// ツール結果の関連度を採点する器（Spec 59 D3 / `tool_prune_contract`）。
     ///
     /// **`None` が既定で、そのとき圧縮の機構は丸ごと存在しない** — ツール結果は
@@ -558,6 +567,54 @@ impl Shared {
         crate::command::RunApproval::from_u8(
             self.run_approval.load(std::sync::atomic::Ordering::Relaxed),
         )
+    }
+
+    /// 承認待ちの印（Spec 72 D5）を立てる / 外す。**変わったときだけ**
+    /// [`CoreEvent::ApprovalStopped`] を出す — 外す点は 4 つあり、立っていない個体で
+    /// 毎回イベントが出ると画面が取り直しを繰り返す。
+    fn set_approval_stopped(&self, id: &AgentId, stopped: bool) {
+        let changed = {
+            let mut set = self
+                .approval_stopped
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if stopped {
+                set.insert(id.clone())
+            } else {
+                set.remove(id)
+            }
+        };
+        if changed {
+            self.emit(CoreEvent::ApprovalStopped {
+                agent_id: id.clone(),
+                stopped,
+            });
+        }
+    }
+
+    /// 全個体の承認待ちの印を外す（会話の切り替え・新規チャット。Spec 72 D5 (d)）。
+    /// 外れた個体ごとにイベントを出す。
+    fn clear_approval_stopped(&self) {
+        let cleared: Vec<AgentId> = self
+            .approval_stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain()
+            .collect();
+        for id in cleared {
+            self.emit(CoreEvent::ApprovalStopped {
+                agent_id: id,
+                stopped: false,
+            });
+        }
+    }
+
+    /// その個体に承認待ちの印が立っているか。
+    fn is_approval_stopped(&self, id: &AgentId) -> bool {
+        self.approval_stopped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(id)
     }
 
     /// ツール呼び出しのリング（Spec 57）を握る。
@@ -866,6 +923,9 @@ impl Shared {
         // 前の会話の引数と出力を持ち続けない（Spec 57）。画面の行は
         // `ConversationCleared` で消えるので、詳細だけ残る状態を作らない。
         self.tool_calls_lock().clear();
+        // 承認待ちの印も会話に属する（Spec 72 D5 (d)）。残すと切り替え先の無関係な会話に
+        // 帯と「続けさせる」が出て、押すと注記も依頼も無い会話へ「続けてください」が届く。
+        self.clear_approval_stopped();
         self.emit(CoreEvent::ConversationCleared);
         self.emit(CoreEvent::SessionSwitched {
             session_id: session_id.to_owned(),

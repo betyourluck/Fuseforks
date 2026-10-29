@@ -28,10 +28,17 @@ pub const TIMED_OUT: u8 = 7;
 pub const INTERRUPTED: u8 = 8;
 /// `ask`: 予算の天井で止まった（`BudgetExhausted`）。
 pub const BUDGET: u8 = 9;
-/// `bake`: `headers` に平文の鍵がある（Spec 65 D2。`bake` だけの番号は 10 番台）。
+/// `bake`: `headers` に平文の鍵がある（Spec 65 D2。10 / 11 は `bake` だけの番号、
+/// 12 は `ask` の承認待ち = Spec 72）。
 pub const PLAINTEXT_HEADERS: u8 = 10;
 /// `bake`: 写し先の状態が食い違う（`--update` なしで空でない / `--update` で `bake.json` が無い）。
 pub const OUT_STATE: u8 = 11;
+/// `ask`: `run` の承認待ちで止まった（`ApprovalPending`。Spec 72 D4）。
+///
+/// **`NO_ANSWER` へ畳まない** — 直し方が違う結末（`--run-approval` か `run.json` の
+/// `allow`）を同じ番号にすると CI が分けられない。Spec 64 D10 が rev1 の「予算切れを 0」を
+/// 退けた論拠と同じ。
+pub const APPROVAL_PENDING: u8 = 12;
 
 /// `bake` の失敗 → 終了コード（Spec 65 D2 の表）。**Spec 64 の番号と意味を共有する** —
 /// 引数の誤り 2・置き換え漏れ 3（検査で拒否）・ロック 4・読み書きの失敗 5。
@@ -60,6 +67,7 @@ pub fn for_outcome(state: PlanTaskState) -> u8 {
         PlanTaskState::TimedOut => TIMED_OUT,
         PlanTaskState::Interrupted => INTERRUPTED,
         PlanTaskState::BudgetExhausted => BUDGET,
+        PlanTaskState::ApprovalPending => APPROVAL_PENDING,
     }
 }
 
@@ -97,6 +105,8 @@ mod tests {
         assert_eq!(for_outcome(PlanTaskState::TimedOut), 7);
         assert_eq!(for_outcome(PlanTaskState::Interrupted), 8);
         assert_eq!(for_outcome(PlanTaskState::BudgetExhausted), 9);
+        // Spec 72 — 10 / 11 は bake なので 12。
+        assert_eq!(for_outcome(PlanTaskState::ApprovalPending), 12);
     }
 
     /// `bake` の失敗は Spec 64 の番号と意味を共有し、`bake` だけのものは 10 番台（Spec 65 D2 の表）。

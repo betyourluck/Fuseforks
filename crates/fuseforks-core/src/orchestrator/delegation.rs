@@ -846,6 +846,12 @@ pub(super) enum VerifySkip {
     Budget,
     /// 答えを返さなかった（転送した・答えずに終えた）。
     NoAnswer,
+    /// 検証役自身が `run` の承認待ちで止まった（Spec 72 D4）。
+    ///
+    /// `Interrupted` と同じ `Err(None)` にしない — あれは `execute_wave` が `None` を返す
+    /// 枝で、束ねが丸ごと捨てられ「plan はユーザーの指示で打ち切られました」と嘘が書かれる。
+    /// ワーカーが承認待ちで返っても束ねと検証は普通に走る（ここが見るのは検証役の結末だけ）。
+    ApprovalPending,
 }
 
 impl VerifySkip {
@@ -859,6 +865,7 @@ impl VerifySkip {
             Self::TimedOut => "timed_out",
             Self::Budget => "budget",
             Self::NoAnswer => "no_answer",
+            Self::ApprovalPending => "approval_pending",
         }
     }
 
@@ -876,6 +883,9 @@ impl VerifySkip {
                     Self::TimedOut => format!("検証役「{verifier}」の答えが時間内に返らなかった"),
                     Self::Budget => "トークン予算の上限に達した".to_owned(),
                     Self::NoAnswer => format!("検証役「{verifier}」が答えを返さなかった"),
+                    Self::ApprovalPending => {
+                        format!("検証役「{verifier}」が承認待ちのコマンドで止まった")
+                    }
                 };
                 format!("（{reason}ため、検証していません）")
             }
@@ -890,6 +900,9 @@ impl VerifySkip {
                     Self::TimedOut => format!("the verifier \"{verifier}\" did not answer in time"),
                     Self::Budget => "the token budget was exhausted".to_owned(),
                     Self::NoAnswer => format!("the verifier \"{verifier}\" returned no answer"),
+                    Self::ApprovalPending => format!(
+                        "the verifier \"{verifier}\" stopped at a command awaiting approval"
+                    ),
                 };
                 format!("(Not verified: {reason}.)")
             }
@@ -912,6 +925,9 @@ pub(super) fn verification_of(state: PlanTaskState) -> Result<(), Option<VerifyS
         PlanTaskState::HandedOff | PlanTaskState::NoAnswer | PlanTaskState::Running => {
             Err(Some(VerifySkip::NoAnswer))
         }
+        // 検証役自身が承認待ちで止まった（Spec 72 D4）。**`Interrupted` の `Err(None)` へ
+        // 寄せない** — 束ねが丸ごと捨てられ「ユーザーの指示で打ち切り」と嘘が書かれる。
+        PlanTaskState::ApprovalPending => Err(Some(VerifySkip::ApprovalPending)),
         PlanTaskState::Interrupted => Err(None),
     }
 }
@@ -1779,6 +1795,12 @@ mod waiting_chain_tests {
         assert_eq!(verification_of(S::HandedOff), Err(Some(VerifySkip::NoAnswer)));
         assert_eq!(verification_of(S::NoAnswer), Err(Some(VerifySkip::NoAnswer)));
         assert_eq!(verification_of(S::Running), Err(Some(VerifySkip::NoAnswer)));
+        // Spec 72 — 検証役自身の承認待ちは理由つきの見送りで、打ち切り（None）ではない。
+        // None にすると束ねが丸ごと捨てられる。
+        assert_eq!(
+            verification_of(S::ApprovalPending),
+            Err(Some(VerifySkip::ApprovalPending))
+        );
         assert_eq!(
             verification_of(S::Interrupted),
             Err(None),
@@ -1786,7 +1808,7 @@ mod waiting_chain_tests {
         );
     }
 
-    /// 理由の 1 行は「〜ため、検証していません」の形で、計器の語は閉じた 7 つ。
+    /// 理由の 1 行は「〜ため、検証していません」の形で、計器の語は閉じた 8 つ（Spec 72 で 8 つ目）。
     #[test]
     fn verify_skip_notes_and_labels_are_closed() {
         let all = [
@@ -1797,9 +1819,10 @@ mod waiting_chain_tests {
             VerifySkip::TimedOut,
             VerifySkip::Budget,
             VerifySkip::NoAnswer,
+            VerifySkip::ApprovalPending,
         ];
         let labels: std::collections::HashSet<_> = all.iter().map(|s| s.label()).collect();
-        assert_eq!(labels.len(), 7, "計器の語は 7 つとも別の語");
+        assert_eq!(labels.len(), 8, "計器の語は 8 つとも別の語");
         for skip in all {
             let ja = skip.note(Language::Ja, "検証くん");
             assert!(

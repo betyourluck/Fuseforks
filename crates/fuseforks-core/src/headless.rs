@@ -442,7 +442,8 @@ pub fn headless_preflight(
     }
 
     // 6. 承認モードが「承認が必要」で run を持つ個体が居る — 両方・警告。
-    //    待ちにはならない（未承認は拒否文が返ってターンは進む）が、pending は誰も承認しない。
+    //    Spec 72 以降、未承認のコマンドが出た周でターンが閉じる（`ask` は終了コード 12）。
+    //    誰も承認しないので、直すのは `--run-approval` か `run.json` の `allow`。
     if view.run_approval == RunApproval::Required {
         let with_run: Vec<String> = view
             .start
@@ -465,8 +466,8 @@ pub fn headless_preflight(
                 code: codes::RUN_APPROVAL_REQUIRED,
                 message: lang
                     .pick(
-                        &format!("コマンドの承認モードが「承認が必要」で、run を持つ個体（{listed}）が居ます。未承認のコマンドは拒否され、誰も承認しません"),
-                        &format!("Command approval is \"required\" and servants with run ({listed}) are starting; unapproved commands are refused and nobody approves them"),
+                        &format!("コマンドの承認モードが「承認が必要」で、run を持つ個体（{listed}）が居ます。未承認のコマンドが出るとそのターンは承認待ちのまま止まり（ask は終了コード 12）、誰も承認しません"),
+                        &format!("Command approval is \"required\" and servants with run ({listed}) are starting; a turn that reaches an unapproved command stops and waits for approval (ask exits with 12), and nobody approves it"),
                     )
                     .to_owned(),
                 fix: lang

@@ -486,18 +486,22 @@ impl Orchestrator {
     pub async fn command_policies(&self) -> Vec<CommandPolicyView> {
         let mut views = Vec::new();
         for snapshot in self.snapshots().await {
+            // 止まった印は `run.json` に無い（Spec 72 D5）。`Shared` から写す。
+            let stopped_for_approval = self.shared.is_approval_stopped(&snapshot.id);
             let view = match self.shared.store.read_command_policy(&snapshot.id).await {
                 Ok(policy) => CommandPolicyView {
                     agent_id: snapshot.id,
                     name: snapshot.name,
                     pending: policy.pending,
                     broken: false,
+                    stopped_for_approval,
                 },
                 Err(_) => CommandPolicyView {
                     agent_id: snapshot.id,
                     name: snapshot.name,
                     pending: Vec::new(),
                     broken: true,
+                    stopped_for_approval,
                 },
             };
             views.push(view);
@@ -613,6 +617,9 @@ impl Orchestrator {
             false,
         )
         .await?;
+        // 受信箱に入った時点で承認待ちの印を外す（Spec 72 D5 (b)）。ターンの入口まで
+        // 待つと、押した直後の画面に印が残り、連打で 2 通目が出る。
+        self.shared.set_approval_stopped(id, false);
         // 配送してから記録する（`deliver_scheduled` と同じ順序 — 逆にすると、
         // 受信箱が飽和していたときに「配られていない発話」が会話ペインへ残る）。
         self.shared.record(message).await;

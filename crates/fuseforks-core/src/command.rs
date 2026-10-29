@@ -222,6 +222,11 @@ pub struct CommandPolicyView {
     pub pending: Vec<PendingCommand>,
     /// `run.json` が壊れていて読めなかった。
     pub broken: bool,
+    /// 直近のターンが `run` の承認待ちで止まり、まだ続けさせていない（Spec 72 D5）。
+    ///
+    /// **`run.json` には無い印**（`Shared.approval_stopped` の写し。メモリだけで再起動で消える）。
+    /// 承認画面はこれが真なら判断待ちが 0 件でも個体の節を残し、「続けさせる」を出す。
+    pub stopped_for_approval: bool,
 }
 /// `agents/{id}/run.json` の中身。
 ///
