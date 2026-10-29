@@ -103,7 +103,7 @@ turn : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached, completion,
 | `backend` | `backend.name()` | ワイヤ名 |
 | `elapsedMs` | `TurnContext.started.elapsed()` | **P1 で訂正** — 起票時に書いた `requested_at` は*割り込みを要求された時刻*で、ターンの開始時刻はどこにも無かった。`run_turn` の入口で `TurnContext` を作って 4 出口へ渡す |
 
-**`stop` の閉じた列挙 7 値と、出口 4 つの対応**（rev2 で表にした。利用者査読の細目 1）:
+**`stop` の閉じた列挙 ~~7 値~~ 8 値と、出口 ~~4 つ~~ 5 つの対応**（rev2 で表にした。利用者査読の細目 1。8 値目は Spec 72）:
 
 | `stop` | 出口（呼ぶ関数） | 既存のログ行 | 付随する欄 |
 |---|---|---|---|
@@ -114,6 +114,7 @@ turn : { agentId, tsMs, hop, rounds, waves, stop, prompt, cached, completion,
 | `interrupted` | `record_interrupted_turn` | `turn interrupted: …` | — |
 | `budget_exhausted` | `finish_budget_exhausted`（残額 0） | `turn budget exhausted: …` | — |
 | `reserve_short` | `finish_budget_exhausted`（残額 > 0 だが見積もり未満） | `turn budget exhausted: …`（理由は直前の `budget stop: … reason=reserve_short`） | — |
+| `approval_pending` | `finish_approval_pending`（`run` の承認待ちが出た周の終わり。**[Spec 72](72_approval-stops-the-turn.md) P0 で追加・2026-10-30** = 7 値 → 8 値、出口 4 つ → 5 つ） | `turn: … stop=approval_pending`（直前に `turn cut: … reason=approval_pending unknown=K`。接頭辞が `turn:` なのは割り込み・予算と違い Spec 39 の後に生まれた出口だから） | — |
 
 **`budget_exhausted` / `reserve_short` は同じ関数の同じ行から出る。** 分けるのは
 Spec 38 D3 の帰結（「使い切った」と「次の 1 呼び出しぶんを確保できなかった」は
@@ -126,7 +127,7 @@ Spec 38 D3 の帰結（「使い切った」と「次の 1 呼び出しぶんを
 「どの因果の」が消える）/ 依頼文・本文（`exchange` が持つ。数字の記録に本文を混ぜない —
 `observability_rule` と同じ規律）/ セッション id（キーが持つ）。
 
-### D2. 書く場所は 4 出口・書く関数は 1 つ
+### D2. 書く場所は 4 出口・書く関数は 1 つ（**→ 2026-10-30 Spec 72 で 5 出口**。5 つ目 `finish_approval_pending` も同じ `settle_turn` を呼ぶ）
 
 `settle_turn(shared, spend, outcome) -> ()` を新設し、**`turn:` 行（と後ろ 2 出口の
 行）とレコードの両方をここから出す**。4 出口（`run_turn` の完走 / `settle_failed_turn` /

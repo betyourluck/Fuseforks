@@ -257,7 +257,7 @@ pub fn headless_preflight(world: &World, schedules: &[ScheduledTask], view: &Hos
 | 窓口（`reception`）が未設定・削除済み | ask | **拒否** | `ask_external` が即座に断る。起動して MCP を繋いでから断るより前で止める |
 | 窓口の接続先（委譲・転送・`plan` の相手）が起動する集合の外 | ask | 情報（`check` と `--verbose` のときだけ表示） | 委譲は `NOT_RUNNING` で返り、窓口が自分で答える。`--start reception` は利用者が選んだ形なので、毎回の警告にはしない |
 | 予定の宛先が起動する集合の外 | serve | 警告 | その予定は発火しても配送されない（GUI と同じ「停止中なのでスキップ」）|
-| コマンドの承認モードが「承認が必要」で、`run` を持つ個体が居る | 両方 | 警告（`--run-approval` で変えられる） | 待ちにはならない（未承認は拒否文が返ってターンは進む — `tools/run.rs`）。ただし `pending` は誰も承認しない |
+| コマンドの承認モードが「承認が必要」で、`run` を持つ個体が居る | 両方 | 警告（`--run-approval` で変えられる） | ~~待ちにはならない（未承認は拒否文が返ってターンは進む — `tools/run.rs`）。ただし `pending` は誰も承認しない~~ → **[Spec 72](72_approval-stops-the-turn.md)（2026-10-30）で変わった**: 未承認のコマンドで**承認待ちのまま止まる**（`ask` は終了コード 12）。直し方は `--run-approval` か `run.json` の `allow`。重さは警告のまま |
 | 前判定・後判定のコマンドがこの棚で未承認 | serve | 警告 | 予定は発火しても配送しない（`unapproved`）。承認は棚の `probe_approvals.json` を GUI で作ってから一緒に持っていく |
 | 判断役があるのに Jev の鍵が無い / ツール結果の圧縮が ON で鍵が無い | 両方 | 警告 | 判断役は無効で起動し、圧縮は走らない（Spec 59 / 62 の述語どおり） |
 | MCP サーバーが `command` で起動する stdio | 両方 | 情報 | その実行ファイルがあるかは検査からは分からない（接続は起動時に試す）。**→ Spec 65 で撤去し、警告 `MCP_COMMAND_NOT_FOUND`（有効な stdio のコマンドが絶対パスなら存在、名前なら PATH に無い）へ置き換えた** |
@@ -361,6 +361,7 @@ fuseforks-cli serve --data-dir <dir> --start <集合> [--secrets keyring|env]
 | 7 | `ask`: 待ちの上限を超えた（`TimedOut`） |
 | 8 | `ask`: 打ち切られた（`Interrupted` — Ctrl+C を含む） |
 | 9 | `ask`: 予算の天井で止まった（`BudgetExhausted`） |
+| 12 | `ask`: `run` の承認待ちで止まった（`ApprovalPending`。**[Spec 72](72_approval-stops-the-turn.md) P0 で追加・2026-10-30**。10 / 11 は Spec 65 の `bake` が使う。`NoAnswer` の 6 へ畳まないのは、直し方が違う結末を同じ番号にすると CI が分けられないため — rev1 の「予算切れを 0」を退けた論拠と同じ） |
 
 - **`ask_external` は配送の結末を既に受け取って捨てている**（前提の実測）。コアに
   `ask_external_outcome(client, message) -> CoreResult<(String, PlanTaskState)>` を足し、`ask_external` はそれを呼んで

@@ -365,22 +365,27 @@ enums:
                    cacheWrite は prompt の内数、cacheWrite1h は cacheWrite の部分集合。
                    — ターン 1 本の使用量 (Spec 39 D1)。**`turn:` 行と同じ構造体
                    (TurnSpend) から 1 実装 settle_turn が書く** — 行とレコードが
-                   食い違う形を構造で作らない。**4 出口 (完走 / 失敗 / 割り込み /
-                   予算) すべてで 1 件**。tsMs は**ターン開始**の壁時計
+                   食い違う形を構造で作らない。**5 出口 (完走 / 失敗 / 割り込み /
+                   予算 / 承認待ち = Spec 72) すべてで 1 件**。tsMs は**ターン開始**の壁時計
                    (`run_turn` の入口 = TurnContext.started。**TurnHandle.requested_at
                    ではない** — あれは割り込みを要求された時刻。P1 で訂正)。
                    `completion = tokens − prompt` は**書く側の settle_turn が 1 箇所で
                    引く** (TurnSpend は total を持つ。読む側は引き算をしない)。
                    reasoning は completion の**内数** (Spec 32 D2)。
                    **model は Option ではない** — テンプレートは handle_message の
-                   段 1 で 4 出口のどれより先に解決され、引けなければターン自体が
+                   段 1 で 5 出口のどれより先に解決され、引けなければターン自体が
                    始まらない (observability_rule の「解決前に落ちたターンは turn 行を
                    持たない」と同じ位置)。
-                   stop は閉じた列挙 7 値 (出口との対応は Spec 39 D1 の表が正):
+                   stop は閉じた列挙 8 値 (出口との対応は Spec 39 D1 の表が正):
                      completed | repeat{tool} | tool_limit | failed{code} |
-                     interrupted | budget_exhausted | reserve_short
+                     interrupted | budget_exhausted | reserve_short | approval_pending
                    budget_exhausted / reserve_short は finish_budget_exhausted の
                    同じ行から出る (理由を引数で運ぶ — Spec 38 D3 の区別をレコードへ)。
+                   approval_pending は **Spec 72 P0 (2026-10-30) で加算** — run の承認待ちが
+                   出た周の終わりでターンを閉じた (finish_approval_pending)。is_failure は真
+                   (払ったが答えが無い — 統計の failed の定義どおり。セルの注意色とは別の分類)。
+                   **旧版 (v0.6.4 以前) はこの kind を読めず、含む会話の統計は集計ごと失敗する**
+                   (Spec 63 の assist と同じ形。利用者が負う条件)
                    **入れない欄**: 予算の残額 (因果ごと・プロセス寿命) / 依頼文・
                    本文 (exchange が持つ。数字の記録に本文を混ぜない) / セッション id
                    (キーが持つ)。
@@ -3547,6 +3552,17 @@ entities:
       acceptance: schedule=… attempt=1/2 outcome=match|no_match|error|timeout|unapproved
       **試行のたびに 1 行。outcome の語彙は schedule probe: 行と同一**
       (書式も判定も 1 実装を再利用するので、パーサが 2 つの語彙を持たない)。
+      **例外 1 つ (Spec 72 P0・2026-10-30)**: 根のターンが run の承認待ちで止まった
+      (Shared.approval_stopped が立っている) ときは検収コマンドを走らせず
+      `acceptance: schedule=… attempt=k/N outcome=skipped reason=approval_pending [summarize=skipped]`
+      を 1 行 (黙って飛ばさない — #44)。後判定と summarizeAfter はどちらも
+      AgentTyping { active: false } で発火し、承認待ちの停止を「終わった」と読む —
+      再依頼の門 should_redeliver は財布の残額しか見ないので、未承認のまま検収 → 不一致 →
+      再依頼 → その入口で印が消える、を max_attempts まで回していた。見送るときは
+      pending_acceptances / pending_summaries の登録を捨てる (残すと、続けさせた次のターンの
+      完了で止まる前の試行の検収が走る)。だから承認して続けさせたターン (from=system の新しい根)
+      の完了では後判定も要約も走らず、後判定はその予定の次の発火がやり直す
+      (P4 で訂正。P0 の文「続けさせた次のターンの完了は普通に後判定の対象」は P1 の実装と食い違っていた)。
       完遂の軸の 3 本目 — reply: to= / refusal= に続き、これだけが
       「成果物の検証」を機械で直接言う列。
       画面はスケジュールダイアログに直近の結末 (lastProbe と同じ器・
@@ -3573,7 +3589,7 @@ entities:
   # GUI 表示名は 2026-08-02 から「作業状況」(黒板とタブ切り替え。契約は不変)。
   # 描画は読み取り専用 — ここから plan を操作する経路は作らない。
   PlanTaskState:
-    values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted, budget_exhausted]
+    values: [running, answered, handed_off, undeliverable, no_answer, timed_out, interrupted, budget_exhausted, approval_pending]
     note: |
       plan の 1 タスクの解決分類。**文言 parse では取らない** (文言を直した瞬間に
       黙って壊れる)。取得の構造は 2 つ:
@@ -3590,8 +3606,15 @@ entities:
                         turn_interrupt の不変条件 4 とここの色は同じ判断を指す)
         budget_exhausted → 失敗色 (Spec 11。天井が止めた = 資源の事実。
                         人の打ち切り interrupted の注意色と混ぜない)
+        approval_pending → 注意色 (Spec 72。run の承認待ちで止まった = 次の手は人。
+                        interrupted / handed_off と同じ腕。PlanWavePane の cellClass の
+                        default は失敗色なので腕を明示する)
       interrupted は **2026-08-01 Spec 10 Phase 0 で追加** (rev2 査読承認)。
       budget_exhausted は **2026-08-02 Spec 11 P0 で追加** (rev2 LGTM)。
+      approval_pending は **2026-10-30 Spec 72 P0 で追加** (rev3 承認)。刻み手は
+      周の終わりの出口 finish_approval_pending の 1 箇所 (command_tool_contract の
+      Spec 72 の節)。Reply.text は「この依頼は承認待ちのコマンドで止まりました。
+      答えはありません。」で、束ねの本文はこの text そのもの (状態別の文の表は無い)。
       どちらも加算的変更 — 旧レコードのマイグレーション不要、刻み手は
       Spec 11 P2 の周回境界の検査点 (token_budget.precedence の順)。
       加算的変更 — 旧レコードのマイグレーションは不要で、既存の finish_wave が
@@ -3847,7 +3870,9 @@ entities:
       ツール結果は正常に受け取り記録する。分類は budget_exhausted
       (PlanTaskState / Reply.kind へ加算追加・色は失敗系 — 人が止めた
       interrupted の注意色と混ぜない。天井が止めたのは資源の事実)。
-      稼働は降ろさない — 閉じるのはターンだけ (turn_interrupt と同型)。
+      稼働は降ろさない — 閉じるのはターンだけ (turn_interrupt と同型。
+      **Spec 72 の承認待ち approval_pending も同じ** — 閉じるのはターンだけで個体は
+      Running のまま。AgentFailed は出さず last_error にも書かない)。
       System 行は事実 + 次の道 (failures.md #44 の規律):
       「次の呼び出しぶんの予算（上限は実効 N トークン）を確保できなかったため
       打ち切りました。続きが要るなら改めて依頼してください
@@ -3863,9 +3888,17 @@ entities:
     precedence: |
       歯止めの優先順位 (同じ周回境界で複数が同時成立したときの分類。検査も
       この順で行い、先に成立した歯止めが Reply.kind を確定する):
-        cancel (interrupted) > budget_exhausted > RepeatGuard > hop / rounds 上限
-      人の明示停止が最優先、次に資源の事実。race の勝敗が分類を変えない
+        cancel (interrupted) > budget_exhausted > approval_pending (Spec 72) > RepeatGuard > hop / rounds 上限
+      人の明示停止が最優先、次に資源の事実、次に人の手番。race の勝敗が分類を変えない
       (turn_interrupt と同じ規律) を静的な順序で担保する。
+      **approval_pending の検査点は周の終わり** (その周のツール結果を全部積んだ後、
+      RepeatGuard の判定の直前。腕の中で cancel を先に見る)。**周の終わりに予算の検査は
+      足さない** — 予算は周の頭の予約で判定済みで、周の終わりでは競合しない。
+      **RepeatGuard とは構造的に同時成立しない** — RepeatGuard の打ち切りは
+      executed_in_round == 0 が条件だが、Unknown を返した run は Executed に数えるので
+      承認待ちの周では必ず executed_in_round >= 1。同じ周の終わりで競合しうるのは
+      cancel と最終周の上限到達の 2 つだけ (最終周でも approval_pending で閉じ、
+      ToolLimitReached は出さずまとめ呼び出しへ進まない — 理由を 1 つに保つ)。
     reservation: |
       (Spec 38 P0 凍結・2026-08-14。実装は P1 以降 = 着手日の
       YYYYMMDD_reserve ブランチ。D0=(1) を採る — やらないへ倒す場合の
@@ -3975,13 +4008,21 @@ entities:
     # (「今どのセッションを見ているか」の唯一の通知路)。
     sessionSwitched: { sessionId }
     # Spec 39 (統計画面)。ターンの使用量が Record::Turn として保存された直後に
-    # 1 通 (4 出口すべて)。**id だけを運び、数字を運ばない** — 数字は
+    # 1 通 (5 出口すべて — 承認待ち approval_pending は Spec 72)。**id だけを運び、数字を運ばない** — 数字は
     # session_stats が aggregate から出す 1 経路に留める (イベントで運ぶと
     # 2 経路目になる)。受け手はフロントの統計画面だけで、**開いていない間は
     # 読み捨てる**。コストは agentStatsUpdated (稼働中の個体ごとに毎秒) の
     # 1/数十以下 — rev1 で「払いすぎ」と見積もって 10 秒 pull にしたのが誤り。
     # **加算的変更** (既存 variant の意味は変えない)。
     turnRecorded: { agentId, sessionId }
+    # Spec 72 (承認待ちでターンを止める)。run の承認待ちで止まった個体の印
+    # (Shared.approval_stopped) が**変わったとき**だけ 1 通 — 立てる (出口) と外す
+    # (handle_message の先頭 / resume_after_approval の配送成功 / stop_agent・delete_agent /
+    # open_session・reset_conversation) の両方で出す。**外す側にも出す**のは、無いと
+    # 「続けさせる」を押した直後も押せるまま画面に残り、連打で 2 通目が出るため
+    # (Spec 72 が直そうとしている症状そのもの)。受け手は承認画面と帯 (refreshCommandRequests)。
+    # **加算的変更**。ワイヤ形は ipc_contract が留める
+    approvalStopped: { agentId, stopped }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
@@ -4017,14 +4058,17 @@ entities:
     「飛行中」と「3 分前に死んだ」が同じ無音に見えた (2026-07-31)。
     **turn 行は失敗したターンにも出る** (2026-08-16、failures.md #103) —
     `stop=failed:{CODE}` で、欄の並びは成功と同じ (prompt / cached / total /
-    reasoning / backend)。使用量の行はターンの出口 4 つに 1 行ずつ:
+    reasoning / backend)。使用量の行はターンの出口 5 つに 1 行ずつ:
     完走 = turn (stop=- / repeat:x / tool_limit) / 失敗 = turn (stop=failed:…) /
-    割り込み = turn interrupted / 予算 = turn budget exhausted。
+    割り込み = turn interrupted / 予算 = turn budget exhausted /
+    承認待ち = turn (stop=approval_pending。Spec 72 で 5 つ目。自前の行を持たず turn 行が出る —
+    割り込みと予算が自前の行を持つのは Spec 39 より前に生まれたから。止めた周には別に
+    turn cut: … reason=approval_pending unknown=K が出る)。
     turn failed は**理由の文面**を運ぶ行として残り、数字は turn 行が持つ
     (失敗したターンは 2 行になる — 数えるのは turn 行だけでよい)。
     出るのは実行ループへ入ったターンだけで、バックエンドの解決 (設定不備)
     より前に落ちたターンは LLM を 1 度も呼んでいないので turn 行を持たない。
-    **使用量の 4 行は末尾に `model=` を持つ** (Spec 39 P0・2026-08-16。着地は P1) —
+    **使用量の行は全部、末尾に `model=` を持つ** (Spec 39 P0・2026-08-16。着地は P1。Spec 72 の 5 つ目も turn 行なので同じ) —
     turn / turn interrupted / turn budget exhausted のすべてで、**接頭辞と既存の
     欄の並びは変えず、増えるのは末尾の `model=` 1 つだけ** (既存の grep を
     壊さない)。後ろ 2 行に backend= / elapsed_ms= は**足さない** — 欄を揃えたければ
@@ -4254,7 +4298,11 @@ entities:
          PLAN_REVIEW_WAITS / SECRET_MISSING / MODEL_TEMPLATE_MISSING (テンプレートが村に無いと秘密の
          有無が問えない) / RECEPTION_UNSET / RECEPTION_MISSING (直し方が違う)、警告
          SCHEDULE_TARGET_OUTSIDE / RUN_APPROVAL_REQUIRED / PROBE_UNAPPROVED / JEV_TOKEN_MISSING
-         (判断役と圧縮の 2 つの理由で同じ識別子)、情報 RECEPTION_TARGETS_OUTSIDE / MCP_STDIO
+         (判断役と圧縮の 2 つの理由で同じ識別子)、情報 RECEPTION_TARGETS_OUTSIDE / MCP_STDIO。
+         **RUN_APPROVAL_REQUIRED の理由文は Spec 72 P0 (2026-10-30) で書き換える** — 旧「待ちには
+         ならない (未承認は拒否文が返ってターンは進む)」は Spec 72 で嘘になる。新「required で run を
+         持つ個体は未承認のコマンドで承認待ちのまま止まる (ask は終了コード 12)。--run-approval で
+         変えるか run.json の allow に書く」。重さは Warn のまま (allow を書けば通る)
          (**Spec 65 で MCP_STDIO を警告 MCP_COMMAND_NOT_FOUND へ置き換え、識別子を足す** — container_contract 10)。
          結果は重い順 (拒否 → 警告 → 情報。同じ重さの中は表の順)。文は村の言語
          ask と serve は自分の起動の途中で同じ検査を走らせ、拒否が 1 件でもあれば LLM を 1 回も
@@ -4277,8 +4325,9 @@ entities:
      10. **終了コード**: 0 答えが返った (Answered / HandedOff)・check の拒否 0 件・serve の正常終了 /
          1 CoreError / 2 引数の誤り / 3 検査で拒否 / 4 ロックが取れない・sessions.redb を別プロセスが
          開いている / 5 組み立てに失敗 (world.json の破損・秘密の変数名の衝突) / 6 NoAnswer・
-         Undeliverable / 7 TimedOut / 8 Interrupted (Ctrl+C を含む) / 9 BudgetExhausted。
-         6〜9 でも定型文は標準出力へ書く (終了コードは機械が読む結末、本文は人が読む結末)
+         Undeliverable / 7 TimedOut / 8 Interrupted (Ctrl+C を含む) / 9 BudgetExhausted /
+         12 ApprovalPending (Spec 72 で追加。10 と 11 は bake の番号 = container_contract)。
+         6〜9 と 12 でも定型文は標準出力へ書く (終了コードは機械が読む結末、本文は人が読む結末)
      11. **閉じ方は ask と serve で共通**: 新しい配送を止める → 飛行中のターンに打ち切り
          (interrupt_all) → 個体を止める → ロックを外す。猶予 30 秒。超えたら打ち切りを待たずに終わり、
          払いの記録が欠けうることを標準エラーへ 1 行 (#103 を黙って作らない)。2 回目の Ctrl+C は
@@ -4694,11 +4743,16 @@ conversation_termination:
            区切りは既存の束ねと同じ `## agent_id（表示名）` の見出しで、`---` は使わない
            (答えは Markdown で普通に現れる)。封筒構文は配送の wrap が既存どおり無害化する
         4. **検証役が指定されているのに検証しなかったときは、理由を束ねに 1 行書く**
-           (黙って飛ばさない — failures.md #44)。理由は閉じた 7 つ: 検証役が波の宛先に
+           (黙って飛ばさない — failures.md #44)。理由は閉じた 8 つ: 検証役が波の宛先に
            含まれる (自己採点しない) / 検証役が進行役自身 / 停止中 / 待ちの輪
            (ask_cycle_contract の拒否) / 時間切れ / 予算切れ / **答えを返さなかった
            (転送した・答えずに終えた。P2 で追加 — 起票時の 6 つのどれにも当たらず、
-           他の理由へ寄せると計器が嘘をつく)**。判定の順は 参加者 → 進行役 → 輪 → 停止中
+           他の理由へ寄せると計器が嘘をつく)** / **検証役自身が run の承認待ちで止まった
+           (Spec 72 P0 で追加。VerifySkip::ApprovalPending。Interrupted と同じ Err(None) に
+           すると束ねが丸ごと捨てられ「ユーザーの指示で打ち切り」と嘘が書かれる —
+           verification_of が見るのは検証役自身の Reply.kind で、ワーカーの結末ではない。
+           ワーカーが approval_pending で返っても束ねと検証は普通に走る)**。
+           判定の順は 参加者 → 進行役 → 輪 → 停止中
            (配送の前) → 配送後の結末。**どれも束ねは返す**
            (検証の失敗で仕事の結果を捨てない)。波が打ち切られた場合は検証しない
            (束ねを作らない既存の経路のまま)
@@ -5013,6 +5067,12 @@ conversation_termination:
       繰り返した failures.md #39) は 1 件も検出できない。失敗が型に載って
       いない以上、モデルへ返る本文の完全一致が失敗の一致を表す唯一の実体。
       文言を parse して失敗かどうかを推定するのはやらない。
+      **「ツールの失敗で会話を止めない」規律の例外が 1 つ (Spec 72 P0・2026-10-30)**:
+      run の承認待ち (Decision::Unknown × RunApproval::Required) は**ツールの失敗では
+      なく人の手番**で、ツール層は変えない (run は Ok(String) を返したまま。RepeatGuard
+      の数え方も不変) が、**ターンループの層**がその周の終わりでターンを閉じる
+      (予算切れ・割り込みと同じ列)。信号は本文の文字列ではなく ToolOutput.approval_pending
+      の型で運ぶ (command_tool_contract の Spec 72 の節が正)。
       不変条件:
         - 判定はターン内でだけ持つ。ターンを跨ぐ繰り返しは縛らない
           (同じ依頼が同じ失敗をたどるのは正しい)
@@ -5577,12 +5637,15 @@ conversation_termination:
         「実行してよいか」は同じ問いの裏表**なので、別の述語を置くと
         2 つの答えがずれる。人が run.json を手編集して allow を足した場合も、
         次に run が呼ばれた時点で掃除される (一覧が自己修復する)
-      - **判断待ちの引き直しは 3 経路** (2026-08-05 実機の指摘): 起動時 /
-        承認・却下のあと / **run が呼ばれたとき**。3 つ目が無いと、サーヴァントが
+      - **判断待ちの引き直しは 5 経路** (2026-08-05 実機の指摘で 3 つ。Spec 72 P0 で 2 つ足した):
+        起動時 / 承認・却下のあと / **run が呼ばれたとき** / **approvalStopped を受けたとき** /
+        **続けさせるの戻り**。3 つ目が無いと、サーヴァントが
         積んでもバッジが動かず、**「開かなくても気づける」ために置いたバッジが
         開くまで気づけない**状態になる。run の呼び出しは判断待ちが増える
         **唯一の**経路なので、そこだけ見れば足りる (refreshAll には混ぜない —
-        あらゆる操作のたびに全個体の run.json を読むのは払いすぎ)
+        あらゆる操作のたびに全個体の run.json を読むのは払いすぎ)。4 つ目と 5 つ目は
+        **止まった印** (CommandPolicyView.stoppedForApproval) のためで、印は run.json に
+        無いので run の呼び出しでは動かない
       - **入口はタイトルバー**（村の内容物であってアプリの設定ではない。
         settings_contract の分類には入れない）。**バッジは村の合計**
         `sum(policy.pending.len())`。0 件でも入口は残す
@@ -5665,11 +5728,14 @@ conversation_termination:
         **deny は「うっかり」を減らす道具であって、敵対的な入力を止める壁ではない** —
         deny をセキュリティ機構として説明しないことが、この機構を持つ条件
 
-      ## 承認して続けさせる (Spec 56。2026-09-20 rev2 承認 → P0 で本節を凍結)
+      ## 承認して続けさせる (Spec 56。2026-09-20 rev2 承認 → P0 で本節を凍結。
+      ## **2026-10-30 Spec 72 P0 で 3 点を覆した** — 取り消し線の行が正。下の「承認待ちで
+      ## ターンを止める (Spec 72)」の節と併せて読む)
 
-      承認した直後に、その個体へ「続けてください」を 1 通配送して新しいターンを
-      起こす経路。**承認そのものは今までどおり run.json へ行を足すだけ**で、
-      配送は別の操作として足す。
+      ~~承認した直後に、その個体へ「続けてください」を 1 通配送して新しいターンを
+      起こす経路。~~ → **Spec 72**: 承認は 1 件ずつ、続行は**個体ごとに 1 つのボタン**で
+      判断待ちが 0 件のときだけ押せる。**承認そのものは今までどおり run.json へ行を足すだけ**で、
+      配送は別の操作として足す (この 1 文は不変)。
 
       - **承認による続行は新しい因果の根**。`new_root_budget` を呼び、**元のターンの
         BudgetPool は継承しない**。継げない理由は寿命 — BudgetPool は Arc でターンの
@@ -5683,11 +5749,14 @@ conversation_termination:
         続けてください。` / en は `【Command approval】\nApproved. Please continue.`。
         **元の依頼文は再送しない** (依頼主の履歴に残っている。利用者裁定 —
         「トークンの無駄」)。**【】は両言語で共通** (構造の印。Spec 35 D5 と同じ)
-      - **同一の個体への操作 1 回 = 配送 1 通**。ボタンは判断待ち 1 件ごとに置き、
+      - ~~**同一の個体への操作 1 回 = 配送 1 通**。ボタンは判断待ち 1 件ごとに置き、
         押した 1 件を承認してから配送する。**「まとめて承認」の UI は存在しない**ので
         (CommandApprovalDialog は判断待ち 1 件ごとに承認 / 却下を並べる)、
-        この規則は常に 1 つの agent_id の中で閉じる。3 通送ると受信箱に 3 つ並び
-        同じターンを 3 回起こす
+        この規則は常に 1 つの agent_id の中で閉じる。~~ 3 通送ると受信箱に 3 つ並び
+        同じターンを 3 回起こす — **→ Spec 72 で覆した**。この規則は「2 件は承認で片付けて
+        最後の 1 件だけ続けさせる」という**人の押し方**に寄りかかっており、3 件とも
+        「承認して続けさせる」で片付けると 3 ターン走った (2026-10-29 利用者の実機)。
+        ボタンは個体ごとに 1 つ、判断待ちが 0 件のときだけ押せる
       - **送り手は Endpoint::System。Endpoint::User を名乗らない** — 利用者が書いた
         文ではないので User にすると封筒が嘘になる (sender_envelope_contract の系譜)。
         **System なので封筒は 【送り手: Fuseforks】 になり、だからこそ本文の先頭に
@@ -5724,7 +5793,10 @@ conversation_termination:
         **配送に失敗しても allow は戻さない** — 承認は人の判断で、配送の失敗が
         それを取り消す理由にならない。同一トランザクションにもしない
         (承認は ConfigStore のファイル、配送は受信箱で層が違う)。
-        部分的に成功したときは画面が 2 つを分けて出す
+        ~~部分的に成功したときは画面が 2 つを分けて出す~~ → **Spec 72**: 承認と続行が
+        別のボタンになったので「承認は保存したが配送に失敗」の 2 段の形は到達不能。
+        続行の失敗は「続きは配送できていません (稼働中でないか、受信箱がいっぱいです)」の
+        1 段 (承認の成否を言わない)
       - **自動で続行する経路は作らない**。押すのは人。承認を検知して勝手に走らせる
         機構を足すと、**人が引いた線という根拠が消える**
       - **failures.md #128 の修正が前提** — 空白入りの command は照合前に Malformed で
@@ -5764,6 +5836,102 @@ conversation_termination:
         を 1 行 (引数は数だけ — `run decision:` と同じ)。切り替えは
         `run approval: mode=… was=…`。イベントは CoreEvent::RunApprovalChanged { mode }
         (値の綴りは IPC と保存値と同じ snake_case。ipc_contract が留める)
+
+    ## 承認待ちでターンを止める (Spec 72。2026-10-29 起票 → rev3 承認 → 2026-10-30 P0 で本節を凍結)
+
+    起点は利用者の実機 — 3 件の判断待ちを「承認して続けさせる」で片付けると、同じ個体で
+    3 本のターンが順に走って 3 つの答えが返った。裁定 —「止めたくないときは自動承認 /
+    自動許可にしているので、一本で止めてよい」。**Spec 15 / 20 の「どちらにも無い = 拒否して
+    pending へ積む」は変えず、required では積んだ周でターンを閉じる**。
+
+      - **止める条件と点**: 承認モードが required で、その周の run の呼び出しに
+        Decision::Unknown が 1 本以上あったとき、**その周の終わり** (ツール結果を全部積んだ後、
+        RepeatGuard の判定の直前) でターンを閉じる。**周の残りの呼び出しは走らせる** —
+        1 周に 3 本並べて 1 本が allow・2 本が Unknown なら、1 本は実行し 2 本は pending へ積む。
+        最初の 1 本で切ると残りが pending に乗らず承認が分かれる。腕の中で cancel を先に見る
+        (token_budget.precedence)。auto_approve / no_approval では Unknown の腕が pending へ
+        行かないので何も変わらない。**deny / Malformed では止めない** (承認しても通らないので
+        人の手番が生まれない。拒否文を返してターンは続く)
+      - **信号は型で運ぶ**: ToolOutput.approval_pending (既定 false)。run が call_with_media を
+        実装し Unknown × required の腕でだけ true。CallRunner::on_call は Ok(output) の分解で
+        欄を取り CallOutcome::Executed に乗せ、周の終わりに approval_pending_in_round として
+        数える。**本文の文字列で判定しない** (Spec 08「分類は文言 parse でなく型で運ぶ」。
+        MCP のツールが同じ文を返した日に止まる)。Blocked (RepeatGuard) には乗せない。
+        数えるのは**この周で true を返した本文** — pending.len() は note_pending の畳み
+        (同一 (command, args) は count++) と承認で食い違う
+      - **出口は 4 段** (finish_approval_pending。finish_interrupted / finish_budget_exhausted と同じ形):
+        (1) 会話ログへ System 行 (Endpoint::System → User。名指しは `{agent_id}（{display}）`。
+        「…は承認待ちのコマンドが N 件あり、このターンをここで止めました。承認が揃ったら
+        「続けさせる」で再開します」。N = unknown=K) — **無いと利用者が直接頼んだターンは
+        会話ペインに何も出ず個体が黙る** (2) 履歴の注記 (コアが書く。村の言語。「（承認待ちの
+        コマンドが N 件あるため、このターンはここで止めました。利用者が承認すると、次のターンで
+        実行できます）」。**「未処理」と書かない** — 周の途中で走った allow のコマンドは実行済み。
+        **画面の操作名を書かない** — ask_fuseforks の呼び出し側とヘッドレスにも届く。コマンド名も
+        書かない) (3) settle_turn を TurnStop::ApprovalPending で (rounds_cap は Some(max)、
+        repeat_max は写してから — own_line の出口と違い turn: 行を書く側なので嘘の観測を出さない)
+        (4) reply_to があれば Reply { text: 「この依頼は承認待ちのコマンドで止まりました。答えは
+        ありません。」, kind: PlanTaskState::ApprovalPending }。
+        **reply: 行は書かない** (既存の早期終了 2 つと同じ。dispatch_outcome を通らないので
+        author=core も付かない)。完遂の軸でこの未完遂を数えるのは turn: の stop=approval_pending。
+        **まとめ呼び出しはしない** (半端な答えそのもので、払いが 1 呼び出し増える)。
+        **稼働は降ろさない** (token_budget.exhaustion)。**予算の予約・清算は足さない** (周の終わりに
+        ReservationGuard は握られていない。budget_reserve_wiring の数は動かない)
+      - **unknown_refusal の末尾** (required のとき): 「**このターンはここで止まります。** 利用者が
+        承認すると、次のターンで実行できます」。auto_approve / no_approval はこの関数に到達しない
+      - **予定の後判定と完了後要約は、根のターンがこの出口で閉じたとき見送る**
+        (Acceptance.instrumentation の例外。計器 acceptance: … outcome=skipped reason=approval_pending)
+      - **止まった個体の印**: Shared.approval_stopped: Mutex<HashSet<AgentId>>。出し入れは 1 実装
+        set_approval_stopped(id, bool) が担い、**変わったときだけ** CoreEvent::ApprovalStopped
+        { agentId, stopped }。立てる: 出口。**外す 4 点**: (a) その個体へ封筒が届いて **handle_message
+        の先頭**に入った時 (run_turn の入口ではない — 段 1〜2 の ? で抜けた経路を通らず Failed と
+        同時に立つ) (b) resume_after_approval の配送が成功した時 (入口まで待つと押した直後の画面に
+        印が残り連打で 2 通目) (c) stop_agent の受信箱を外す所と delete_agent (stop_agent は tasks に
+        居ないと NotRunning で早期に返るので両方に置く) (d) open_session / reset_conversation
+        (全個体。切り替え先の無関係な会話に帯とボタンが残り、押すと注記も依頼も無い会話へ
+        「続けてください」が届く)。agent_loop が cancel 済みの封筒を畳む経路 (turn_interrupt 2b)
+        は handle_message に入らないので印は残る (意図)。**メモリだけ** — 再起動で消える。
+        失われるのはボタンだけで、承認は allow に残り、新しい依頼を打てば pending の有無に
+        依らず実行できる (利用者が負う条件)。Record::Turn から組み直す形は採らない
+        (「どの会話の止まり方か」を決める規則がもう 1 つ要る)
+      - **CommandPolicyView に stoppedForApproval: bool** (command_policies が Shared から写す。
+        ipc_contract が留める)
+      - **承認画面**: 個体の節は pending.length > 0 || broken || stoppedForApproval で出す
+        (**空状態の v-if にも !stoppedForApproval** — 片方だけ広げると空状態の文と節が並ぶ)。
+        判断待ち 1 件ごとの「承認して続けさせる」は撤去 (承認 / 却下は残る)。節の末尾に
+        **「続けさせる」1 つ**。押せる条件 = stoppedForApproval && pending.length === 0 &&
+        !broken && canResume(status) (lib/resumeGate.ts の純関数 canResumeNow)。判断待ちが
+        残っていれば灰色 + 件数のツールチップ (再開しても最初の Unknown でまた止まるだけ)。
+        broken なら「run.json を直してください」(読みが既定へ落ちて全部 Unknown)。押した後は
+        busy の間ボタンを殺し、戻りで refreshCommandRequests。**節は押した直後に消え、答えは
+        数秒後に来る** (配送は受信箱を経て非同期) — バグではなく仕様。
+        **コア側の門は変えない** (resume_after_approval は受信箱の有無だけ。判断待ちが残っていても
+        呼べる — 画面の disabled は導線であって保証ではない。承認と配送を別の操作に保つ)。
+        代償: 画面を迂回して呼び続けると再開 → 最初の Unknown でまた approval_pending を繰り返し、
+        is_failure が真なので統計の failed がそのぶん増える (意図した数え方)
+      - **帯** (approvalBanner): 判断待ちを全部片付けた後も止まった個体が居る間は
+        「{name} が承認待ちで止まっています」(複数は One / Many の既存の形)。**文に「承認画面を
+        開く」を入れない** (ChatPanel が帯の右隣にそのボタンを常時描く)。**優先は判断待ち > 止まった
+        個体** (承認が先、続行が後)。**帯から直接続けさせない** (判断待ち 0 件の確認を飛ばせる)
+      - **計器**: 止めた周に `turn cut: agent=… round=N reason=approval_pending unknown=K`
+        (reason=repeat と同じ接頭辞。**pending= と書かない** — run decision: の pending= と
+        resume after approval: の pending_left= はファイルの件数で K と食い違う)。turn: 行の
+        stop=approval_pending (observability_rule の使用量の行は出口 5 つ。接頭辞は turn: —
+        割り込みと予算が自前の行を持つのは Spec 39 より前に生まれたから)。
+        resume after approval: の pending_left=0 が常態になる (0 でない行は run.json を手で
+        触ったか導線を迂回した印)
+      - **ヘッドレス** (Spec 64): 承認モードは --run-approval で選べ既定は required。required で run を
+        持つ個体が Unknown を踏むと **ask は承認待ちで止まり、終了コード 12** (PlanTaskState::
+        ApprovalPending。NoAnswer の 6 へ畳まない — 直し方が違う結末を同じ番号にすると CI が
+        分けられない。Spec 64 D10)。直し方は --run-approval か run.json の allow。起動前検査の
+        警告 RUN_APPROVAL_REQUIRED は**既に在り**、理由文を「未承認のコマンドで承認待ちのまま
+        止まります」へ書き換える (headless_host_contract 6)
+      - **旧版との互換 / 利用者が負う条件**: v0.6.4 以前はこの kind の Record::Turn を含む会話の
+        統計が集計ごと失敗する / 「承認して続けさせる」が無くなる / 印は再起動と会話の切り替えで
+        消える / ヘッドレスの ask が承認待ちで止まるようになる (今は黙って続いていた)
+      - **採らなかった形**: ターンを開けたまま承認を待つ (予算・打ち切り・hop の所有者がターン建て) /
+        最初の Unknown で周の途中で切る / まとめ呼び出し / pending が 0 件になったら自動で続行
+        (押すのは人) / 全部承認して続けさせる (粒度の決定を飛ばす) / resume_after_approval に
+        判断待ちの門 / 終了コードを 6 へ畳む / 印を Record::Turn から組み直す / 帯から直接続けさせる
 
   tool_reason_contract: |
     ツール呼び出しの理由表示 = モデルが 1 行で書く意図を画面へ出す
