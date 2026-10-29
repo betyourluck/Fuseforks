@@ -5550,7 +5550,9 @@ conversation_termination:
         `allow: ["python"]` がどのバイナリを走らせたかはその時の PATH で変わるので、
         **「構造的に決まる」とは言わない。代わりに決まった結果を毎回見せる**。
         resolve_program は毎回呼び、**キャッシュしない** (PATH を直したら
-        次の実行から変わってほしい)
+        次の実行から変わってほしい)。**見つけたパスをそのまま返し、シンボリックリンクを辿らない**
+        (2026-10-30。failures.md #152 — canonicalize で辿ると、呼び出された名前で振る舞いを変える
+        実行ファイル (rustup の cargo / rustc) が別物として動いた。相対の PATH 項目だけ絶対にする)
       - **置き場は agents/{id}/run.json** (ConfigFileKind::Run)。
         **ファイル名は設定する対象 (run ツール) の名前をそのまま採る** —
         mcp.json と同じ規則 (2026-08-05 改名)。旧名 shell.json は「実行はシェルを

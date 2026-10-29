@@ -254,11 +254,20 @@ pub fn resolve_program(name: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    for dir in std::env::split_paths(&path) {
-        for ext in &exts {
+    resolve_in(name, &path, &exts)
+}
+
+/// `PATH` の値と拡張子の列を受け取って探す本体（テストが環境変数に触れずに呼べるよう分けた）。
+fn resolve_in(name: &str, path: &std::ffi::OsStr, exts: &[String]) -> Option<PathBuf> {
+    for dir in std::env::split_paths(path) {
+        for ext in exts {
             let candidate = dir.join(format!("{name}{ext}"));
             if candidate.is_file() {
-                return candidate.canonicalize().ok().or(Some(candidate));
+                // **リンクを辿らない**（`canonicalize()` を使わない。`failures.md` #152）。呼び出された
+                // 名前で振る舞いを変える実行ファイル（rustup の cargo / rustc）は、リンクの名前で
+                // 起動しないと別物として動く。相対の PATH 項目だけは今の作業フォルダで絶対にする
+                // （起動時の `current_dir` は作業フォルダなので、相対のままだと別の場所を指す）。
+                return Some(std::path::absolute(&candidate).unwrap_or(candidate));
             }
         }
     }
@@ -268,6 +277,62 @@ pub fn resolve_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "fuseforks-process-{tag}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// **見つけたパスをそのまま返す。リンクを辿らない**（2026-10-30 実機。`failures.md` #152）。
+    /// この端末の `~/.cargo/bin/cargo.exe` は `rustup.exe` へのシンボリックリンクで、`canonicalize()` で
+    /// 辿った先を起動すると rustup が自分の名前で動き、`cargo --version` に rustup の版を返した
+    /// （rustup は起動された名前で cargo / rustc / rustup を切り替える）。
+    #[test]
+    fn the_found_path_is_returned_as_is_without_following_links() {
+        let dir = TempDir::new("link");
+        let target = dir.0.join("real-tool.exe");
+        std::fs::write(&target, b"").unwrap();
+        let exts = vec![".exe".to_owned()];
+        let path = std::ffi::OsString::from(dir.0.as_os_str());
+
+        // 素のファイル: PATH の項目と名前を繋いだ形のまま返る（`\\?\` の前置も付かない）。
+        assert_eq!(
+            resolve_in("real-tool", &path, &exts),
+            Some(dir.0.join("real-tool.exe"))
+        );
+
+        // リンク: リンクの名前のまま返る（作れない端末では素のファイルの主張だけで終える）。
+        let link = dir.0.join("alias.exe");
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, &link);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, &link);
+        match made {
+            Ok(()) => assert_eq!(
+                resolve_in("alias", &path, &exts),
+                Some(dir.0.join("alias.exe")),
+                "リンクを辿ると、呼び出し名で振る舞いを変える実行ファイル（rustup）が別物として動く"
+            ),
+            Err(e) => eprintln!("シンボリックリンクを作れないのでリンクの主張は skip: {e}"),
+        }
+    }
 
     /// **`PATHEXT` を渡さないと、PowerShell は `& '<絶対パス>.exe'` を黙って飛ばす**
     /// （2026-09-24 実機。`failures.md` #138）。exit 0・出力 0 字で返るので、
