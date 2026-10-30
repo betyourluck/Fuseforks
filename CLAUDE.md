@@ -247,7 +247,7 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 | 3 | OAuth の認可 URL のスキーム未検証 / 失効がリダイレクトを辿る | **半分妥当・直した** | 認可口は `http` / `https` だけブラウザへ（`outcome=bad_scheme`）。失効は `http_client(false)` + スキーム検査。失効側は発行者が既にトークンを持つので Low |
 | 4 | `csp: null` + Markdown の画像展開でゼロクリックの外向き GET | **妥当。前半だけ直した** | `md.disable("image")` の 1 行。**CSP は別件**（`blob:` / `data:` / KaTeX のフォント / Vue の `:style` / `devCsp` に掛かり 3 OS の実機が要る） |
 | 5 | `export_session` の走査と存在確認前の `File::create` | 妥当だが Low | 呼べるのは自前のフロントだけ（`html: false` で攻撃者の JS が入る経路が無い） |
-| 6 | 黒板が symlink を辿る | 半分（Low） | 読む側は辿る。`trash::delete` は**リンクそのもの**を捨てるので「外のファイルをごみ箱へ」は誤りの可能性が高い（未実験） |
+| 6 | 黒板が symlink を辿る | **妥当・直した**（同日の実験で判定を訂正） | `failures.md` #154。ジャンクションで実験すると、`blackboard/` がリンクなら読み手が辿り、状態フォルダがリンクなら消し口が辿って**外のファイルをごみ箱へ送った**（付箋そのものがリンクなら消えるのはリンクだけ）。`is_link` で両方断る |
 | 7 | 子プロセスの出力を無制限に読む | **妥当・直した** | `read_capped` = 4 MiB で切って残りは `sink` へ読み捨て（読み捨てをやめるとパイプが詰まって子が止まる） |
 | 8 | `validateLink` がカスタムスキームを通す / 黒板にクリックの横取りが無い | 妥当（Low） | クリックが要る。`ChatPanel` は `https?://` だけ開く |
 | 9 | `bake` の `env` 平文未検査 / `world.json` の id 未検証 | 半分（Low） | `stdio.env` は本当に未検査。id は利用者自身の `world.json` |
@@ -264,7 +264,8 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 **実機で別件が 1 つ出た**（`b7c2a3a` / `7bd079c`）— 合鍵の作り直しや ON のままの適用で、扉を閉じた直後の bind が AddrInUse（Windows 10048）で
 落ちて扉が閉じたままになっていた。`RunningServer::stop` は cancel を投げるだけで、axum は accept ループを抜けてからリスナーを drop するため。
 `bind_with_retry` = AddrInUse のときだけ 50 ms × 40 回（実機で閉じてから開き直すまで 53 ms と 734 ms）。
-**別件**: CSP（4 の後半）/ 6（頻度を見てから）。
+**6 も同日に直した**（上の表の行と `failures.md` #154。判定の段の「誤りの可能性が高い（未実験）」はジャンクション 1 本の実験で半分外れた）。
+**別件**: CSP（4 の後半）。
 
 **テスト**: 単体 `creatable_rejects_the_work_dir_itself_however_it_is_spelled` / `the_work_dir_itself_cannot_be_a_transfer_destination` /
 `overwrite_never_removes_a_directory` / `child_output_is_capped_but_the_pipe_is_drained` + 結合 `an_authorization_url_that_is_not_http_is_refused_before_the_browser` /

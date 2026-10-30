@@ -126,6 +126,19 @@ pub async fn delete_note(work_dir: &Path, state: Option<&str>, name: &str) -> Co
         });
     }
     let mut path = work_dir.join(BLACKBOARD_DIR);
+    // `blackboard/` と状態フォルダがリンク（symlink / ジャンクション）なら辿らない。
+    // 辿るとリンク先のファイルをごみ箱へ送る（2026-10-30 の監査 6。ジャンクションで実測）。
+    // 付箋そのものがリンクなら消えるのはリンクだけなので、そこは見ない。
+    let state_is_link = match state {
+        Some(state) => is_link(&path.join(state)).await,
+        None => false,
+    };
+    if is_link(&path).await || state_is_link {
+        return Err(CoreError::BlackboardDeleteFailed {
+            name: name.to_owned(),
+            reason: "黒板のフォルダがリンクになっているため、辿って消しません".to_owned(),
+        });
+    }
     if let Some(state) = state {
         path.push(state);
     }
@@ -191,6 +204,15 @@ pub async fn trash_notes_of(work_dir: &Path, owner: &str) -> (usize, usize) {
 ///   順序がコアと辞書の 2 箇所に住む
 pub async fn read_blackboard_dir(work_dir: &Path) -> CoreResult<Vec<BlackboardNote>> {
     let dir = work_dir.join(BLACKBOARD_DIR);
+    // `blackboard/` そのものがリンクなら読まない（リンク先のファイルが付箋として並び、
+    // 画面から消すとリンク先がごみ箱へ行く）。中のフォルダとファイルは
+    // `DirEntry::metadata` がリンクを辿らないので、下の `is_dir` / `is_file` が既に外す。
+    if is_link(&dir).await {
+        return Err(io_err(
+            &dir,
+            std::io::Error::other("黒板のフォルダがリンク（symlink / ジャンクション）になっているため読みません"),
+        ));
+    }
     let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(rd) => rd,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -264,6 +286,13 @@ async fn read_note(
 }
 
 /// I/O エラーへパス情報を添える（`ConfigStore` と同じ形）。
+/// パスそのものがリンク（symlink / Windows のジャンクション）か。無いパスは偽。
+async fn is_link(path: &Path) -> bool {
+    tokio::fs::symlink_metadata(path)
+        .await
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
 fn io_err(path: &Path, source: std::io::Error) -> CoreError {
     CoreError::ConfigIo {
         path: path.display().to_string(),
@@ -543,5 +572,58 @@ mod tests {
             assert!(root.join(rel).exists(), "他人の付箋は残る: {rel}");
         }
         assert_eq!(trash_notes_of(&dir.0, "agent").await, (0, 0), "2 回目は何もしない");
+    }
+
+    /// フォルダへのリンクを作る。Windows は管理者権限の要らないジャンクション、Unix は symlink。
+    fn link_dir(link: &std::path::Path, target: &std::path::Path) {
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "ジャンクションを作れない");
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    /// **`blackboard/` そのものがリンクなら読まない**（2026-10-30 の監査 6）。読むと
+    /// リンク先のファイルが付箋として並び、画面から消すとリンク先がごみ箱へ行く。
+    #[tokio::test]
+    async fn a_linked_blackboard_folder_is_not_read() {
+        let dir = TempDir::new("bb-link-root");
+        let outside = dir.0.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("agent - 外.md"), "外").unwrap();
+        let ws = dir.0.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        link_dir(&ws.join(BLACKBOARD_DIR), &outside);
+
+        assert!(read_blackboard_dir(&ws).await.is_err(), "リンクの先を付箋として読んだ");
+        assert!(delete_note(&ws, None, "agent - 外.md").await.is_err());
+        assert!(outside.join("agent - 外.md").exists(), "リンクの先を消した");
+        assert_eq!(trash_notes_of(&ws, "agent").await, (0, 0));
+        assert!(outside.join("agent - 外.md").exists(), "掃除がリンクの先を消した");
+    }
+
+    /// **状態フォルダがリンクなら、名指しで消されても辿らない。** 読み手は元から
+    /// `DirEntry::metadata`（リンクを辿らない）で外していたが、消し口は `doing` を
+    /// そのまま繋いでリンク先のファイルをごみ箱へ送っていた（実測）。
+    #[tokio::test]
+    async fn a_linked_state_folder_is_neither_read_nor_deleted_through() {
+        let dir = TempDir::new("bb-link-state");
+        let outside = dir.0.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("agent - 外.md"), "外").unwrap();
+        let ws = dir.0.join("ws");
+        std::fs::create_dir_all(ws.join(BLACKBOARD_DIR)).unwrap();
+        link_dir(&ws.join(BLACKBOARD_DIR).join("doing"), &outside);
+
+        assert!(read_blackboard_dir(&ws).await.unwrap().is_empty());
+        assert!(delete_note(&ws, Some("doing"), "agent - 外.md").await.is_err());
+        assert!(outside.join("agent - 外.md").exists(), "リンクの先を消した");
     }
 }

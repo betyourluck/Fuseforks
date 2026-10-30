@@ -5713,5 +5713,33 @@ rustup 自身の版だった。
    `remove` の名前ではなく、`remove_dir_all` / `remove_file` の呼び出し元で数える
 3. **外部の監査は「読んで書いた」主張なので、直す前にテストで赤を出す。** 同じ監査の 12 件のうち 1 件（dangling symlink
    経由の書き込み）は OS が `mkdir` / `open` を拒むので成立せず、1 件（`trash::delete` が symlink の先を消す）は誤りの
-   可能性が高かった。成立する 4 件だけを直した（CLAUDE.md「外部の脆弱性監査」の節）
+   可能性が高かった。成立する 4 件だけを直した（CLAUDE.md「外部の脆弱性監査」の節）。
+   **→ 同日の実験で「誤りの可能性が高い」は半分外れた**（#154）— 付箋のファイルがリンクなら消えるのはリンクだけだったが、
+   状態フォルダや `blackboard/` がリンクなら、消し口がそれを辿ってリンク先のファイルをごみ箱へ送った
 
+
+## #154 黒板の消し口が状態フォルダのジャンクションを辿り、作業フォルダの外のファイルをごみ箱へ送った（2026-10-30・外部監査 6）
+
+**症状**: 監査の 6 件目（黒板が symlink を辿る）を、判定の段では読むだけで「読む側は辿る / `trash::delete` はリンクそのものを
+捨てるので外は消えない（未実験）」と書いた。同日に実験すると 3 つの形で結果が割れた — (A) `blackboard/` そのものが
+ジャンクションなら、読み手は辿ってリンク先のファイルを付箋として並べる (B) 状態フォルダ `blackboard/doing` が
+ジャンクションなら、読み手は飛ばすが、`delete_note(Some("doing"), …)` はそのまま繋いで**リンク先のファイルをごみ箱へ送った**
+(C) 付箋のファイルが symlink なら、読み手は飛ばし、消し口が消すのはリンクだけ。実害の経路は (A) の画面からの削除と
+`trash_notes_of`（個体を消したときの掃除）。リンクを作れるのは人か `run` だけ。
+
+**真因**: 読み手と消し手が同じパスを別の方法で組んでいた。読み手の `DirEntry::metadata` はリンクを辿らない（lstat）ので
+中のリンクは `is_dir` / `is_file` が偽になって外れるが、`blackboard/` を開く `read_dir` は辿る。消し手は
+`work_dir.join("blackboard").join(state).join(name)` を組んでそのまま `trash::delete` へ渡すので、途中のリンクを全部辿る。
+`blackboard` ツールの書き込みは `resolve_creatable` / `resolve_in_work_dir`（canonicalize + 前方一致）を通るので外へ出ない。
+
+**処方**: `blackboard.rs` に `is_link`（`symlink_metadata` の `is_symlink`。Windows のジャンクションも真）を置き、
+`read_blackboard_dir` は `blackboard/` がリンクなら読まずに理由つきのエラー、`delete_note` は `blackboard/` か状態フォルダが
+リンクなら辿らずに断る。付箋そのもののリンクは消えるのがリンクだけなので見ない。単体 2 本
+（`a_linked_blackboard_folder_is_not_read` / `a_linked_state_folder_is_neither_read_nor_deleted_through`）。
+変異 2 回とも予測どおり（読み手の検査を外す → 1 本 / 消し手の検査を外す → 2 本）。
+
+**一般化**:
+1. **リンクを辿るかは関数ごとに違う。** `DirEntry::metadata` / `symlink_metadata` は辿らず、`read_dir` / `metadata` /
+   `Path::join` からの操作は辿る。読み手が安全でも、同じ場所を名前で組み直す消し手は別の経路なので、それぞれで数える
+2. **「〜の可能性が高い（未実験）」と書いた判定は、実験のコストが小さければその場で確かめる。** この件はジャンクション
+   1 本（管理者権限なし）で 1 分だった。判定を書いた時点で走らせていれば、#153 の一般化 3 を訂正せずに済んだ
