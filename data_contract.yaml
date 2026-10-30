@@ -592,7 +592,10 @@ enums:
         IPC が往復する)。
         export の書き出し先は {workspace}/exports/{session_id}.jsonl に固定
         (ファイル選択ダイアログのために plugin を足すより、置き場所を 1 つ決めて
-        パスを通知に出すほうが依存も操作も少ない)。
+        パスを通知に出すほうが依存も操作も少ない)。**ID は is_safe_identifier を通るものだけ**
+        (Orchestrator::export_session が UnsafeIdentifier で拒む — `..` を含む ID は exports の外を
+        指せる)、**ファイルを作るのは存在を確かめた後** (export_session_to_file。居ないセッションの
+        書き出しはディスクに触らない。2026-10-30 の監査 5)。
         新規チャットの確認ダイアログは**残すが文言を変えた** (D9) —
         「この会話を閉じて、新しい会話を始めますか？／今の会話は保存され、
         「会話一覧」からいつでも戻れます」。捨てないので警告色は外した
@@ -4480,7 +4483,12 @@ entities:
      6. **平文の鍵**: mcp.json (共通と個体別・有効と無効の両方 — ファイルの中身は有効に関わらず写る) の headers で、
         名前を小文字にして authorization / proxy-authorization / cookie / x-api-key / x-auth-token / api-key の
         どれかに一致するか -key / -token / -secret / -password で終わり、値に ${secret: を含まないものがあれば
-        写しを作らない (10。--allow-plaintext-headers で通す)。**推測の規則で保証ではない** (保証は参照で書くこと)
+        写しを作らない (10。--allow-plaintext-headers で通す)。**推測の規則で保証ではない** (保証は参照で書くこと)。
+        **stdio の env も同じ門** (2026-10-30 の監査 9): 名前の `_` を `-` に読み替えて同じ規則に当て、
+        token / secret / password / apikey / api_key だけの名前も数える。env は参照を展開しない (7) ので
+        値は見ない — 通すには値を消す (stdio のサーバーはコンテナでは動かない) か --allow-plaintext-headers。
+        あわせて **world.json の個体と判断役の id は is_safe を通るものだけ** (外れていれば 5 — id は
+        agents/<id> / judges/<id> にそのまま繋ぐので、パスを組む前に止める)
      7. **headers の値の ${secret:NAME}** (NAME = [A-Z0-9_]+・1 つの値に複数可): 接続の直前に SecretStore の
         鍵 mcp:NAME で引く (env では FUSEFORKS_SECRET_MCP_NAME)。引けなければ接続しない・理由は名前だけ
         (値を書かない)。**展開は headers の値だけ** (env / args / url に広げない)。参照の無い mcp.json はバイト等価。
@@ -5552,7 +5560,9 @@ conversation_termination:
           2. 祖先から宛先までの残り成分に `..` と絶対パス成分が無いこと
              (canonicalize できない区間は文字列検査しか手が無い。`..` を許すと
              祖先の検査をすり抜けて外へ出られる)
-          3. symlink は辿らない (リンクを踏むと囲いが破れる。既存と同じ)
+          3. symlink は辿らない (リンクを踏むと囲いが破れる。既存と同じ)。**祖先を遡る判定は
+             exists() ではなく symlink_metadata で取る** (2026-10-30 の監査 2 — exists() は先の無い
+             symlink を「無い」と読み、リンクの下へ作らせる形だった。先の無いリンクが祖先に居たら拒む)
       - **write の上書きは明示ゲート**: 既存ファイルへの write は overwrite: true
         が無ければ拒否し、部分編集は sd / yq、丸ごと置換は overwrite への案内を返す。
         preview は持たない — 新規作成は壊すものが無く、上書きはこのゲートが
@@ -7159,7 +7169,9 @@ llm_wire:
         同じ規律)。既定値を書き戻すと合鍵とポートを消す = #70 の再演になる
       - 合鍵は `Uuid::new_v4().simple()` の 32 桁 16 進。Unix では 0600 へ絞る
         (**Windows では何もしない** — ACL を自前で組むと効いているつもりで
-        効いていない形になる)
+        効いていない形になる)。**保存は一時ファイルへ書いて権限を絞ってから rename**
+        (2026-10-30 の監査 11 — 本名へ直に書いてから絞ると、Unix では書いた直後の一瞬だけ
+        合鍵が既定の権限で見えた。電源断で半端に残る形も同じ 1 手で閉じる)
       - `Authorization: Bearer` の検査は axum の middleware で**扉の内側へ入る前**。
         突き合わせは定数時間 (**効くのは別利用者のプロセスに対してだけ** —
         同じ利用者のプロセスは設定ファイルそのものを読める)

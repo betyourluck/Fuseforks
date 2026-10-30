@@ -159,11 +159,25 @@ impl McpServerStore {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
-        std::fs::write(&self.path, raw).map_err(|err| err.to_string())?;
-        restrict_permissions(&self.path);
+        write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         self.config = config;
         Ok(())
     }
+}
+
+/// 一時ファイルへ書き、権限を絞ってから本名へ rename する（2026-10-30 の監査 11）。
+///
+/// 旧実装は本名へ直に書いてから権限を絞っており、Unix では書いた直後の一瞬だけ合鍵の入った
+/// ファイルが既定の権限で見えた。電源断で本体が半端に残る形も同じ 1 手で閉じる
+/// （`ConfigStore::write_atomic` / `bake` の `.env` と同じ形）。
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+    ));
+    std::fs::write(&tmp, bytes)?;
+    restrict_permissions(&tmp);
+    std::fs::rename(&tmp, path)
 }
 
 /// 設定ファイルを本人だけが読める権限にする（Unix のみ）。
@@ -581,6 +595,40 @@ mod tests {
         let config = McpServerConfig::default();
         assert!(!config.enabled, "既定は OFF");
         assert_eq!(config.port, DEFAULT_PORT);
+    }
+
+    /// 保存は一時ファイルへ書いて rename する（2026-10-30 の監査 11）。合鍵を持つファイルなので、
+    /// 権限を絞る前の本体が本名で見える窓と、電源断で本体が半端に残る形の両方を閉じる。
+    /// 原子性そのものは振る舞いで観測できないので、`save` が本体へ直に書かないことをソースで留める。
+    #[test]
+    fn save_goes_through_the_atomic_writer_and_leaves_no_temp_file() {
+        let source = include_str!("mcp_server.rs");
+        let save_start = source.find("pub fn save(&mut self").expect("save があること");
+        let save_body = &source[save_start..source[save_start..].find("\n    }\n").map_or(source.len(), |i| save_start + i)];
+        assert!(
+            !save_body.contains("std::fs::write("),
+            "save は本体へ直に書かない（write_atomic を通す）: {save_body}"
+        );
+        assert!(save_body.contains("write_atomic("), "save は write_atomic を呼ぶ");
+
+        let dir = std::env::temp_dir().join(format!(
+            "fuseforks-mcpcfg-atomic-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = McpServerStore::load(&dir);
+        store.save(McpServerConfig::default()).unwrap();
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != CONFIG_FILE)
+            .collect();
+        assert!(leftovers.is_empty(), "一時ファイルを残さない: {leftovers:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// 壊れたファイルは**既定へ落として読むが、書き戻さない**（#70）。

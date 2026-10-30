@@ -184,13 +184,22 @@ impl Orchestrator {
     ///
     /// 読める出口は機構の一部（この企画の診断は grep に依存している）。
     ///
+    /// **ID は名前の規則（英数字・`-`・`_`）を通るものだけ**（2026-10-30 の監査 5）。GUI は
+    /// `exports/{session_id}.jsonl` を組むので、`..` を含む ID は exports の外を指せる。保存先の
+    /// 存在の照会より前に、ディスクに触らず名指しで拒む（`UnsafeIdentifier`）。
+    ///
     /// # Errors
-    /// 保存先が開けていない、会話が存在しない、または書き出しに失敗した場合。
+    /// ID が規則の外、保存先が開けていない、会話が存在しない、または書き出しに失敗した場合。
     pub async fn export_session(
         &self,
         session_id: &str,
         dest: impl AsRef<std::path::Path>,
     ) -> CoreResult<u64> {
+        if !crate::model::is_safe_identifier(session_id) {
+            return Err(CoreError::UnsafeIdentifier {
+                value: session_id.to_owned(),
+            });
+        }
         self.sessions()?.export_session_to_file(session_id, dest)
     }
 

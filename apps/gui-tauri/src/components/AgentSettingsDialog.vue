@@ -12,6 +12,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { join } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
@@ -303,11 +304,14 @@ async function remove(): Promise<void> {
  * 失敗は通知へ落とす。ここで reject を素通しにすると Vue の ErrorBoundary
  * まで昇り、無関係な「エージェント一覧」の区画が丸ごと落ちたうえに
  * 失敗の主語まで取り違えられる（実際に起きた。failures.md #28）。
+ *
+ * 区切りは tauri の `join` に任せる — 旧実装は `\agents\` を直書きしており、
+ * macOS / Linux では存在しないパスを開きに行った（2026-10-30 の監査 10）。
  */
 async function openFolder(): Promise<void> {
   if (!state.workspace) return;
   try {
-    await openPath(`${state.workspace}\\agents\\${props.agentId}`);
+    await openPath(await join(state.workspace, "agents", props.agentId));
   } catch (error) {
     orchestrator.notify(
       "error",

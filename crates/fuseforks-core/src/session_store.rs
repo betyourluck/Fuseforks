@@ -920,9 +920,14 @@ impl SessionStore {
 
     /// [`Self::export_session`] の結果をファイルへ書く。
     ///
+    /// **存在を確かめてからファイルを作る**（2026-10-30 の監査 5）。先に `File::create` すると、
+    /// 居ないセッションでも空のファイルを作り、既存のファイルなら 0 バイトに切り詰めてから
+    /// `SessionNotFound` を返す — 失敗する呼び出しがディスクに触っていた。
+    ///
     /// # Errors
     /// セッションが存在しない、またはファイルを作れない・書けない場合。
     pub fn export_session_to_file(&self, session_id: &str, path: impl AsRef<Path>) -> CoreResult<u64> {
+        self.ensure_exists(session_id)?;
         let path = path.as_ref();
         let mut file = std::fs::File::create(path).map_err(|err| CoreError::SessionStore {
             path: path.display().to_string(),
@@ -1685,6 +1690,16 @@ mod tests {
             Err(CoreError::SessionNotFound(_))
         ));
         assert!(store.session_meta("居ない").unwrap().is_none(), "問い合わせは None");
+
+        // 書き出しは**存在を確かめてからファイルを作る**（2026-10-30 の監査 5）。
+        // 旧実装は `File::create` が先で、居ないセッションでも空のファイルを作って（既存なら
+        // 0 バイトに切り詰めて）から SessionNotFound を返していた。
+        let out = dir.0.join("never.jsonl");
+        assert!(matches!(
+            store.export_session_to_file("居ない", &out),
+            Err(CoreError::SessionNotFound(_))
+        ));
+        assert!(!out.exists(), "居ないセッションの書き出しはディスクに触らない");
         store.delete_session("居ない").expect("削除は冪等");
     }
 }

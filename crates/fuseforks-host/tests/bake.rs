@@ -302,6 +302,66 @@ async fn plaintext_headers_stop_unless_allowed() {
     assert!(report.warnings.iter().any(|w| w.code == "PLAINTEXT_HEADER_COPIED"));
 }
 
+/// stdio の `env` の平文の鍵も止める（2026-10-30 の監査 9）。`headers` と同じ門で、同じ `--allow-plaintext-headers` で通す。
+/// `env` は `${secret:…}` を展開しない（契約 7）ので、通すには値を消す（stdio のサーバーはコンテナでは動かない）。
+#[tokio::test]
+async fn plaintext_env_in_stdio_servers_stops_unless_allowed() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let store = ConfigStore::new(HostPaths::new(&src.0).workspace());
+    store
+        .write_config(
+            &id("agent_1"),
+            ConfigFileKind::Mcp,
+            r#"{ "mcpServers": { "local": { "command": "npx", "args": ["-y", "some-server"], "enabled": false,
+                 "env": { "OUTCASTS_API_KEY": "plain-key", "NODE_ENV": "production" } } } }"#,
+        )
+        .await
+        .unwrap();
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let err = bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new()).await.unwrap_err();
+    let BakeError::PlaintextHeaders(found) = &err else { panic!("{err}") };
+    assert_eq!(
+        found,
+        &vec!["agents/agent_1/mcp.json: local / env OUTCASTS_API_KEY".to_owned()],
+        "鍵らしい名前だけを数え、NODE_ENV は数えない"
+    );
+    assert!(!err.to_string().contains("plain-key"), "値は載せない: {err}");
+    assert!(!out.exists());
+
+    let mut allowed = request(&src.0, &out, maps(), false);
+    allowed.allow_plaintext_headers = true;
+    let report = bake(&allowed, &InMemorySecretStore::new()).await.unwrap();
+    assert!(report.warnings.iter().any(|w| w.code == "PLAINTEXT_HEADER_COPIED"));
+}
+
+/// `world.json` の id が名前の規則（英数字・`-`・`_`）の外なら、パスを組む前に止める（2026-10-30 の監査 9）。
+/// 旧実装は id をそのまま `agents/<id>` / `judges/<id>` に繋いでおり、`..` を含む id は写しの外へ書けた
+/// （個体は設定の読み取りが先に拒んでいたが、判断役は何も見ていなかった）。
+#[tokio::test]
+async fn unsafe_ids_in_world_json_stop_the_bake_before_any_path_is_built() {
+    let src = TempDir::new("src");
+    make_source(&src.0).await;
+    let store = ConfigStore::new(HostPaths::new(&src.0).workspace());
+    let mut world = store.load_world().await.unwrap();
+    world.judges.push(fuseforks_core::model::JudgeSpec {
+        id: id("../../escape"),
+        name: "外へ".to_owned(),
+        order: 0,
+        enabled: true,
+        unknown: Default::default(),
+    });
+    store.save_world(&world).await.unwrap();
+
+    let out_dir = TempDir::new("out");
+    let out = out_dir.0.join("copy");
+    let err = bake(&request(&src.0, &out, maps(), false), &InMemorySecretStore::new()).await.unwrap_err();
+    let BakeError::Io(message) = &err else { panic!("{err}") };
+    assert!(message.contains("world.json") && message.contains("../../escape"), "{message}");
+    assert!(!out.exists(), "1 バイトも書かない");
+}
+
 /// Spec 67 D8 — 写しに OAuth のエントリが入るなら名指しの警告（止めない）。無効なエントリは数えない
 /// （無効ならコンテナでも接続しないので、止まる理由が無い）。
 #[tokio::test]

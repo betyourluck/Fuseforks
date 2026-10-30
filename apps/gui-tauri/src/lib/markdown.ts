@@ -7,8 +7,9 @@
  * - `html: false` — 原文中の生 HTML はタグとして解釈せず、そのままテキストへ
  *   エスケープされる。サニタイザを後掛けするのではなく、HTML を解釈する経路を
  *   最初から持たない（DOMPurify を足す理由ごと消す）。
- * - リンク先は markdown-it 既定の `validateLink` が `javascript:` 等の
- *   危険スキームを弾く。
+ * - リンク先は `lib/links.ts` の閉じた許容（http / https / mailto だけ描く）。
+ *   markdown-it 既定の `validateLink` は `javascript:` 等を落とす除外リストで、
+ *   カスタムスキームを通していた（2026-10-30 の監査 8）。
  *
  * # 改行の扱い
  *
@@ -18,6 +19,7 @@
  */
 import MarkdownIt from "markdown-it";
 
+import { isRenderableLink } from "./links";
 import { markdownMath } from "./markdownMath";
 
 const md = new MarkdownIt({
@@ -25,6 +27,10 @@ const md = new MarkdownIt({
   linkify: true,
   breaks: true,
 });
+
+// 描くリンクは閉じた許容で決める（既定は除外リスト）。linkify が拾った素の URL も同じ門を通る。
+// 落ちたリンクは `[text](url)` の文字のまま出る（黙って消えない）。
+md.validateLink = (url) => isRenderableLink(url);
 
 // **画像は展開しない**（2026-10-30 の監査）。`![](https://…)` を `<img>` にすると、描画した
 // 瞬間に WebView がその URL へ GET を出す — 利用者のクリックなしに、本文へ混ぜた文字列が

@@ -18,6 +18,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { Translation as I18nT, useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { isOpenableLink } from "../lib/links";
+
 import ChatInput from "./ChatInput.vue";
 import GroundingNote from "./GroundingNote.vue";
 import ThinkingNote from "./ThinkingNote.vue";
@@ -512,7 +514,8 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
  * webview 内でそのまま遷移するとアプリ画面ごとリンク先へ置き換わる。
  * `renderMarkdown` が `target="_blank"` を付けているため既定では何も
  * 起きないが、それでは「押しても無反応」なので、ここで opener へ渡す。
- * 開くのは http / https のみ（LLM 出力由来のリンクを信頼しない）。
+ * 開くのは http / https のみ（LLM 出力由来のリンクを信頼しない。述語は `lib/links.ts` の
+ * 1 実装で、黒板ペインも同じものを読む）。
  */
 function onMarkdownClick(event: MouseEvent): void {
   const target = event.target as HTMLElement;
@@ -526,7 +529,7 @@ function onMarkdownClick(event: MouseEvent): void {
   if (!anchor) return;
   event.preventDefault();
   const href = anchor.getAttribute("href") ?? "";
-  if (/^https?:\/\//i.test(href)) {
+  if (isOpenableLink(href)) {
     void openUrl(href);
   }
 }

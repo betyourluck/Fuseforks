@@ -705,7 +705,7 @@ Fuseforks 提供了一个内建的 HTTP 服务器网关（配合合键认证）�
 
 `deploy/` 中有用 Docker 容器运行在 GUI 中稳定下来的村庄的参考配置（步骤见 [deploy/README.md](deploy/README.md)）。**镜像不公开**，由运维者从源码构建。设置始终在 GUI 一侧修改，容器中的村庄是副本。
 
-- `bake`：在 GUI 的终端、关闭 GUI 后运行，从 GUI 的村庄制作副本。只改写 3 个字段（`workDir` / `ragSources` / 前判定・后判定的 `cwd`，`--map` 取最长前缀）；有未改写的绝对路径则一个字节也不写并退出 3；`headers` 中有明文密钥则退出 10（改成 `${secret:…}` 即可通过）
+- `bake`：在 GUI 的终端、关闭 GUI 后运行，从 GUI 的村庄制作副本。只改写 3 个字段（`workDir` / `ragSources` / 前判定・后判定的 `cwd`，`--map` 取最长前缀）；有未改写的绝对路径则一个字节也不写并退出 3；`headers` 中有明文密钥则退出 10（改成 `${secret:…}` 即可通过；stdio 的 `env` 中像密钥的名字也退出 10 — `env` 不展开引用，删除该值即可通过）
 - **OAuth 的 MCP（`"auth": "oauth"`）在容器中不能运行**：启用的条目进入副本时，`bake` 以警告 `MCP_OAUTH_IN_COPY` 点名（仍会制作副本）；用 `--secrets env` 启动副本时启动前检查以 `MCP_OAUTH_HEADLESS` 停止。`--env-out` 也不写出授权记录。不用的条目请设为 `enabled: false`
 - `bake --env-out <path>`：把凭据存储中村庄需要的密钥写成容器用的 `.env`（[Spec 66](specs/66_bake-env-out.md)）。只能写在副本之外；值用单引号包裹；含 `'` `\` 换行的值与存储中没有的密钥以 `# bake:` 注释只留名字；为容器新建大门密钥（不沿用 GUI 的）；已有的 `.env` 不覆盖（`--update` 只补缺少的名字）；值不输出到任何地方
 - `bake --update` 只替换设计文件（`world.json`・条例・Construct・SKILL・`mcp.json`・图标），**会话・`Memory.md`・计划的消化记录・待批准的命令保留容器一侧**。**重建前先停止容器** — Docker Desktop 的 bind mount 上，村庄锁不跨越 Windows 与容器（实测）

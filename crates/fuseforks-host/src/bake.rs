@@ -189,9 +189,9 @@ pub enum BakeError {
     /// 元の村が読めない・写しを書けない（5）。
     #[error("{0}")]
     Io(String),
-    /// `headers` に平文の鍵がある（10）。**値は載せない**（ファイル・サーバー・ヘッダーの名前だけ）。
+    /// `headers` か stdio の `env` に平文の鍵がある（10）。**値は載せない**（ファイル・サーバー・欄の名前だけ）。
     #[error(
-        "headers に平文の鍵があります（${{secret:NAME}} で書くか、--allow-plaintext-headers で通してください）: {}",
+        "headers / env に平文の鍵があります（headers は ${{secret:NAME}} で書く・env は値を消す・または --allow-plaintext-headers で通す）: {}",
         .0.join("; ")
     )]
     PlaintextHeaders(Vec<String>),
@@ -313,6 +313,23 @@ pub async fn bake(req: &BakeRequest, secrets: &dyn SecretStore) -> Result<BakeRe
             "{VILLAGE_ID_FILE} がありません（GUI で一度開いた村から bake してください）"
         ))
     })?;
+    // **id は名前の規則（英数字・`-`・`_`）の外なら、パスを組む前に止める**（2026-10-30 の監査 9）。
+    // 個体の id は `agents/<id>`、判断役の id は `judges/<id>` にそのまま繋ぐ。`..` を含む id は
+    // 写しの外を読み書きできた（個体は設定の読み取りが先に拒んでいたが、判断役は何も見ていなかった）。
+    let unsafe_ids: Vec<String> = world
+        .agents
+        .iter()
+        .map(|a| &a.id)
+        .chain(world.judges.iter().map(|j| &j.id))
+        .filter(|id| !id.is_safe())
+        .map(ToString::to_string)
+        .collect();
+    if !unsafe_ids.is_empty() {
+        return Err(BakeError::Io(format!(
+            "{WORLD_FILE} の id が名前の規則（英数字・-・_）の外です（GUI で作り直してください）: {}",
+            unsafe_ids.join("; ")
+        )));
+    }
     let agent_ids: Vec<AgentId> = world.agents.iter().map(|a| a.id.clone()).collect();
 
     // 5. 承認の運搬に使う元の鍵は、置き換える前の予定で数える（D4）。
@@ -826,17 +843,38 @@ fn secret_like_header(name: &str) -> bool {
         .any(|suffix| lower.ends_with(suffix))
 }
 
-/// `headers` の平文の鍵（**有効と無効の両方** — ファイルの中身は有効に関わらず写る）。
+/// 鍵らしい環境変数の名前（2026-10-30 の監査 9）。`_` を `-` に読み替えて [`secret_like_header`] と
+/// 同じ規則（`OUTCASTS_API_KEY` → `outcasts-api-key`）に、変数名でよく使う単語だけの形を足す。
+/// **推測の規則で保証ではない**。
+fn secret_like_env(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(lower.as_str(), "token" | "secret" | "password" | "apikey" | "api_key")
+        || secret_like_header(&lower.replace('_', "-"))
+}
+
+/// `headers` と stdio の `env` の平文の鍵（**有効と無効の両方** — ファイルの中身は有効に関わらず写る）。
+///
+/// `env` は `${secret:…}` を展開しない（契約 7 — 展開は `headers` だけ）ので、値に参照が書かれて
+/// いても鍵として数える。通すには値を消すか `--allow-plaintext-headers`（stdio のサーバーは
+/// コンテナでは動かないので、写しに鍵を持ち込む理由が無い）。
 fn plaintext_headers(files: &[(String, McpConfig)]) -> Vec<String> {
     let mut found = Vec::new();
     for (label, config) in files {
         for (server, entry) in &config.servers {
-            let McpServerConfig::Http(http) = entry else {
-                continue;
-            };
-            for (name, value) in &http.headers {
-                if secret_like_header(name) && !value.contains("${secret:") {
-                    found.push(format!("{label}: {server} / {name}"));
+            match entry {
+                McpServerConfig::Http(http) => {
+                    for (name, value) in &http.headers {
+                        if secret_like_header(name) && !value.contains("${secret:") {
+                            found.push(format!("{label}: {server} / {name}"));
+                        }
+                    }
+                }
+                McpServerConfig::Stdio(stdio) => {
+                    for name in stdio.env.keys() {
+                        if secret_like_env(name) {
+                            found.push(format!("{label}: {server} / env {name}"));
+                        }
+                    }
                 }
             }
         }

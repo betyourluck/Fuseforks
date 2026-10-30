@@ -10,6 +10,7 @@
  * 監視せず、モデルへの push 注入もしない（黒板の運用と同じ形）。
  */
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import {
   clearBlackboard,
@@ -41,6 +42,7 @@ import {
   type NoteBadge,
 } from "../lib/blackboardLanes";
 import { formatError } from "../lib/errorText";
+import { isOpenableLink } from "../lib/links";
 import { renderMarkdown } from "../lib/markdown";
 import type { BlackboardNote, BottomTab, ErrorPayload } from "../types";
 import BottomPaneTabs from "./BottomPaneTabs.vue";
@@ -195,6 +197,23 @@ const busy = ref(false);
  * 完全削除の経路は持たない）。**取り消せる操作に確認を積むと、
  * 取り消せない操作の確認まで軽く読まれる。**
  */
+/**
+ * 付箋の本文のリンクを横取りして外部ブラウザへ渡す（2026-10-30 の監査 8）。
+ *
+ * 会話ペインと同じ形。それまで黒板には横取りが無く、`renderMarkdown` が付ける
+ * `target="_blank"` の保険で webview 内の遷移は起きないが「押しても無反応」だった。
+ * 開くのは http / https だけ（述語は `lib/links.ts` の 1 実装）。
+ */
+function onMarkdownClick(event: MouseEvent): void {
+  const anchor = (event.target as HTMLElement).closest("a");
+  if (!anchor) return;
+  event.preventDefault();
+  const href = anchor.getAttribute("href") ?? "";
+  if (isOpenableLink(href)) {
+    void openUrl(href);
+  }
+}
+
 async function remove(note: BlackboardNote): Promise<void> {
   if (busy.value) return;
   busy.value = true;
@@ -595,6 +614,7 @@ function formatTime(ms: number): string {
         <div
           v-show="!collapse.isCollapsed(note)"
           class="md-body selectable px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
+          @click="onMarkdownClick"
           v-html="renderMarkdown(note.content)"
         />
       </article>

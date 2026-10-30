@@ -148,17 +148,29 @@ pub(crate) fn resolve_creatable(
     }
 
     // 実在する最深の祖先まで遡る。ここまでは canonicalize が効く。
+    // **「無い」の判定は `symlink_metadata` で取る**（2026-10-30 の監査 2）— `exists()` は先の無い
+    // symlink（dangling）を「無い」と読むので、リンクの下へ作らせる形になっていた。OS は mkdir を
+    // EEXIST で断るが、検査がリンクの存在を見ていないことが抜けだった。リンクが居たら、その先が
+    // あるか無いかに関わらずここで止める（宛先自身の symlink を弾くのと同じ線）。
     let mut existing = joined.as_path();
     let mut trailing: Vec<&std::ffi::OsStr> = Vec::new();
-    while !existing.exists() {
-        let Some(name) = existing.file_name() else {
-            return Err(outside());
-        };
-        trailing.push(name);
-        let Some(parent) = existing.parent() else {
-            return Err(outside());
-        };
-        existing = parent;
+    loop {
+        match existing.symlink_metadata() {
+            Ok(meta) if meta.file_type().is_symlink() && !existing.exists() => {
+                return Err(outside());
+            }
+            Ok(_) => break,
+            Err(_) => {
+                let Some(name) = existing.file_name() else {
+                    return Err(outside());
+                };
+                trailing.push(name);
+                let Some(parent) = existing.parent() else {
+                    return Err(outside());
+                };
+                existing = parent;
+            }
+        }
     }
 
     let anchor = existing.canonicalize().map_err(|_| outside())?;
@@ -1339,6 +1351,32 @@ mod tests {
         }
 
         let err = resolve_creatable(&dir.0, "link.txt").expect_err("symlink の宛先は拒否されること");
+        assert!(err.contains("作業フォルダの外"), "{err}");
+    }
+
+    /// 宛先の祖先が **dangling symlink**（先の無いリンク）でも拒む（2026-10-30 の監査 2）。
+    ///
+    /// 旧実装は `exists()` で祖先を遡っており、先の無いリンクを「無い」と読んで
+    /// `root/dangling/new.txt` を通していた。OS は `mkdir` を EEXIST で断るので実害は無いが、
+    /// 検査が「リンクが居る」ことを見ていなかった — リンクそのものを `symlink_metadata` で見る。
+    #[test]
+    fn creatable_rejects_a_dangling_symlink_ancestor() {
+        let dir = TempDir::new("creatable-dangling");
+        let missing = dir.0.join("gone");
+
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&missing, dir.0.join("dangling"));
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&missing, dir.0.join("dangling"));
+
+        if made.is_err() {
+            eprintln!("[test] symlink を作れないため creatable_rejects_a_dangling_symlink_ancestor は未検証");
+            return;
+        }
+        assert!(!dir.0.join("dangling").exists(), "先の無いリンクは exists() が偽（前提の確認）");
+
+        let err = resolve_creatable(&dir.0, "dangling/new.txt")
+            .expect_err("先の無い symlink の下は拒否されること");
         assert!(err.contains("作業フォルダの外"), "{err}");
     }
 

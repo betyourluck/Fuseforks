@@ -350,6 +350,16 @@ async fn the_saved_exchange_matches_the_string_that_was_actually_sent() {
     assert_eq!(exchange["replied"], "了解");
     assert_eq!(exchange["agentId"], "agent_01");
 
+    // 走査の形の ID は、存在の照会より前に名指しで拒む（2026-10-30 の監査 5）。GUI は
+    // `exports/{session_id}.jsonl` を組むので、`..` を含む ID は exports の外を指せる。
+    let outside = dir.0.join("evil.jsonl");
+    let refused = orchestrator.export_session("../evil", &outside).await;
+    assert!(
+        matches!(refused, Err(fuseforks_core::CoreError::UnsafeIdentifier { .. })),
+        "走査の形の ID は UnsafeIdentifier: {refused:?}"
+    );
+    assert!(!outside.exists(), "拒んだ書き出しはディスクに触らない");
+
     // 会話ログ側も同じ書き出しに載る（2 層が両方保存されている）。
     let messages: Vec<&serde_json::Value> =
         saved.iter().filter(|line| line["kind"] == "message").collect();

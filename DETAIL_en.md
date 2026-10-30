@@ -350,7 +350,7 @@ The core streams the start and end of utterance processing as paired `agentTypin
 Note that text bodies are displayed all at once upon completion rather than streamed (SSE support is a candidate for future specs).
 
 **Agent statements are rendered in Markdown** (`lib/markdown.ts`, markdown-it).
-Models frequently return Markdown, and raw syntax makes text unreadable. User inputs and system notifications remain plain text — if strings typed by the user were transformed by rendering, verification of sent contents would become impossible. LLM output is treated as untrusted text, utilizing `html: false` from the outset to prevent interpreting raw HTML as tags (and `javascript:` links are caught by markdown-it's default validation). **Image syntax is not expanded into `<img>`** (external audit, 2026-10-30): rendering `![](https://…)` would make the WebView issue a GET to that URL the moment it is drawn, so text smuggled into a reply would reach the outside without any click. Attached images are drawn through a separate path, so nothing is lost. Link clicks are intercepted and opened in an external browser (navigating within the webview would replace the entire app screen).
+Models frequently return Markdown, and raw syntax makes text unreadable. User inputs and system notifications remain plain text — if strings typed by the user were transformed by rendering, verification of sent contents would become impossible. LLM output is treated as untrusted text, utilizing `html: false` from the outset to prevent interpreting raw HTML as tags (**only `http` / `https` / `mailto` are rendered as links** — markdown-it's default validation is a deny list that drops `javascript:` and the like while letting custom schemes through; external audit, 2026-10-30). **Image syntax is not expanded into `<img>`** (same audit): rendering `![](https://…)` would make the WebView issue a GET to that URL the moment it is drawn, so text smuggled into a reply would reach the outside without any click. Attached images are drawn through a separate path, so nothing is lost. Link clicks are intercepted and opened in an external browser (navigating within the webview would replace the entire app screen; only `http` / `https` are opened, and the notes on the Blackboard tab go through the same predicate).
 
 **Math is rendered too** (2026-10-24). `$…$` and `$$…$$` (the same notation as GitHub; ```` ```math ````, `\(…\)` and `\[…\]` as well) are drawn with KaTeX, while a `$` in a price or inside code is left alone. The fonts are bundled, and a TeX syntax error shows the source text in the warning color. The same rendering applies to blackboard notes (`lib/markdownMath.ts`).
 
@@ -1401,7 +1401,7 @@ While `sd` / `yq` **partially edit existing files**, `file` operates on **the ex
 - **Only this tool can create new files.** The trigger was a real agent spinning its wheels: asked to translate, it had no creation method and repeatedly attempted `sd` ([failures.md](failures.md) #39). Along with adding the capability, `sd` / `yq` report "editing only; cannot create a file. Use `file` `write` to create one" when a file is not found.
 - **Overwrite has an explicit gate**: `write` to an existing path is rejected unless `overwrite: true` is supplied, and it explains both partial editing (`sd` / `yq`) and overwriting. There is no preview: creation has nothing to damage, and this gate serves the same role for overwrites.
 - **Removal moves items to the trash only** (the `trash` crate). There is no permanent-deletion path. If trash is unavailable, it **returns failure** rather than silently falling back to permanent deletion. The work folder itself cannot be removed, nor used as the destination of `move` / `copy`. **A directory is never overwritten, even with `overwrite: true`** — overwriting bypasses the trash, so applying it to a directory would delete the whole tree irrecoverably (closed after the external audit of 2026-10-30).
-- The boundary is the same enclosure as read tools, but the destination of a new file does not exist, so it cannot be canonicalized. Equivalent strength is maintained in three stages: prefix matching the deepest existing ancestor, rejecting `..` in the remaining components, and not following symlinks (`resolve_creatable`). `move` / `copy` check both ends.
+- The boundary is the same enclosure as read tools, but the destination of a new file does not exist, so it cannot be canonicalized. Equivalent strength is maintained in three stages: prefix matching the deepest existing ancestor, rejecting `..` in the remaining components, and not following symlinks (`resolve_creatable`; a dangling symlink among the ancestors is refused too — audit 2, 2026-10-30). `move` / `copy` check both ends.
 
 ### Prerequisite for Convergence: History
 
@@ -1820,7 +1820,7 @@ Agent settings reside in the OS application-data area.
   Ordinance.md                Village ordinance (rules shared by all agents; edit from "Ordinance" in the title bar)
   mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
   sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
-  exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list)
+  exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list; the id is letters, digits, - and _ only, and the file is created only after the session is found)
   attachments/{uuid}.{ext}    Attachment bodies (webp / mp3 / wav / mp4 / pdf; auto-deleted after 30 days / above 500 MB total)
   agents/{agent_id}/
     SKILL.md
@@ -2579,7 +2579,8 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
 - **Free text is not rewritten** — the text of `Construct.md` / `SKILL.md`, `run.json`'s allowed commands, stdio MCP commands. Anything
   containing a Windows path is named as a warning (the copy is still written)
 - A plaintext key in the `headers` of an `mcp.json` exits 10 (`--allow-plaintext-headers` lets it through). Rewriting it as `${secret:…}`
-  passes
+  passes. **A key-like name in a stdio server's `env` (`*_API_KEY` / `*_TOKEN` and so on) exits 10 as well** — `env` does not expand
+  references, so remove the value to pass (stdio servers do not run in the container). An id in `world.json` outside the naming rule exits 5
 - **OAuth MCP servers (`"auth": "oauth"`) do not run in a container.** When an enabled one goes into the copy, `bake` names it with the
   warning `MCP_OAUTH_IN_COPY` (the copy is still written). Starting the copy with `--secrets env` stops at the pre-start check with
   `MCP_OAUTH_HEADLESS` — the refresh token is replaced on every refresh, so one passed through an environment variable dies at the first
