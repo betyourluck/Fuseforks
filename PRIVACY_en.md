@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-25**
+**Last updated: 2026-10-30**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -60,7 +60,7 @@ is transmitted anywhere.
 | `agents/<id>/` | Per-agent persona, memory, icon, and the list of commands you allowed |
 | `judges/<id>/judge.toml` | The questions and rules you wrote for a judge (see 4-4) |
 | `user/icon.webp`, `external/icon.webp` | Icons you set (only if set) |
-| `attachments/*.webp` | Images attached to conversations (**auto-deleted after 30 days or 500MB total**) |
+| `attachments/*` | Images, audio, video, and PDFs attached to conversations (**auto-deleted after 30 days or 500MB total**; re-sending one restarts its clock) |
 | `exports/*.jsonl` | Conversations you explicitly exported |
 | `village_id` | A random value identifying this configuration set (it does not identify your device or you) |
 | `fuseforks.log` | Diagnostic log (see section 6) |
@@ -169,7 +169,7 @@ When you register a model, the following is sent to that provider:
 - Conversation history (a recent window)
 - Rules, personas, and memory text you wrote
 - Results of tools the agent ran (which may include file contents and search results)
-- Images attached to conversations
+- Images, audio, video, and PDFs attached to conversations
 - Images an MCP server returned as a tool result (including images of the real world, such as a camera's; see 4-3)
 - Your API key, for authentication
 
@@ -181,6 +181,11 @@ models from different providers to different agents, text written by one provide
 is sent to another provider. This covers requests and answers between agents, excerpts of
 the shared conversation, and copies of messages you picked with `@@` in the input box and
 attached to your request.
+
+**An attachment can reach a different provider than the one it was first pasted for.** If you
+re-send a past attachment to another agent with "To input" in the chat pane, the same file is
+sent to that agent's model provider. This happens only when you re-send it yourself; an agent
+never fetches and sends a past attachment on its own.
 
 **When you use "Draft with AI" (drafting assistance), the following is sent to the provider of
 the model you picked in that panel.** It is sent only when you press send; opening the panel
@@ -355,7 +360,7 @@ sharing a workspace with someone else does not enable intake on their machine.
 ## 8. Your controls
 
 - **Deleting data**: removing the workspace folder erases everything, including
-  conversations, settings, and attached images.
+  conversations, settings, and attachments.
 - **Deleting credentials**: remove the entry from your OS credential store, or
   delete it from the app's model registration screen.
 - **Revoking OAuth authorization**: "Revoke authorization" in the MCP settings deletes the local record and asks

@@ -119,6 +119,7 @@ Fuseforks/
             ├── types.ts             Mirror of Rust types (hand-synced contract)
             ├── lib/ipc.ts           Typed invoke wrapper
             ├── lib/attachment.ts    Attachment pure functions (kind detection / scaling math / base64)
+            ├── lib/attachmentList.ts The input's attachment list (5-item / 12MB checks / splitting for send. Spec 73)
             ├── lib/carries.ts       Which wire carries which kind (screen-side copy, for warnings)
             ├── lib/pathComplete.ts  Trigger detection for `@` / `@@`, plus ranking and commit for path completion
             ├── lib/quoteRef.ts      Message references (`@@`): candidates, ranking, chips, restoring the draft after a failed send (pure functions)
@@ -417,14 +418,25 @@ Do not substitute values locally with the assumption that "it should be like thi
 
 ---
 
-## Attachments ([Spec 23](specs/23_image-attachment.md) = images / [Spec 36](specs/36_multimodal-attachments.md) = audio, video, PDF)
+## Attachments ([Spec 23](specs/23_image-attachment.md) = images / [Spec 36](specs/36_multimodal-attachments.md) = audio, video, PDF / [Spec 73](specs/73_multi-attachment-and-reattach.md) = several at once and re-sending)
 
-**Paste** a file into the input box (Ctrl+V) or **pick** one with the clip button on
-the left, and the addressed servant sees or hears it and answers. Drag-and-drop is
+**Paste** files into the input box (Ctrl+V) or **pick** them with the clip button on
+the left, and the addressed servant sees or hears them and answers. Drag-and-drop is
 deliberately not an entry point — Tauri intercepts in-page drops (and Ctrl+V is the main
 path for screenshots anyway).
 
-**One attachment per utterance.** There are four kinds — **image / audio / video / PDF** —
+**Up to 5 attachments per utterance, 12 MB in total.** Pasting takes every file on the
+clipboard, and the clip button accepts several files. Attachments line up above the input as
+chips, each removable with ×, and a line under them shows the count and total size in the form
+"3 / 5 files · 4.2 MB / 12.0 MB". **Anything over the limits is refused before it is taken in,
+with the reason shown under the input** (the sixth file is never silently dropped). The 12 MB
+total follows the same basis as the per-kind limits (Gemini's 20 MB inline request total, minus
+base64 expansion and headroom for the prompt); the per-kind limits still apply to each file.
+
+Kinds **may be mixed** (an image together with a PDF, say). But if even one attachment is a kind
+the recipient cannot carry, **the whole utterance is refused** (sending only the ones that travel
+would leave the screen unable to say what actually arrived).
+There are four kinds — **image / audio / video / PDF** —
 and **the kind is always decided by the magic bytes of the content** (neither the file
 name's extension nor its MIME type is read; both can be rewritten, and trusting them lets
 content and kind disagree all the way to the wire).
@@ -504,7 +516,8 @@ times**. The measured magnitudes differ sharply by kind:
 
 That **breaks the one-to-one correspondence between what you pay and the act of
 attaching**. If you want the model to look again, attach it again: an explicit action has
-clearer causality than automatic retention.
+clearer causality than automatic retention. **Attaching several at once does not change this** —
+it raises what one turn pays, never what later turns pay.
 
 **Within a turn it is resent every round, but the cache absorbs that.** In the turn that
 actually carried the PDF above (3 rounds), `prompt` swelled to 520,323 — yet the uncached
@@ -520,7 +533,34 @@ from the next turn on." So when you later ask it to "show that image to X," it c
 Before that line existed, a servant *remembered the description it had written but did
 not know an image had ever existed*. Asked to forward it, the recipient received a body
 with no explanation. **An image not being forwarded matters less than nobody being able
-to tell why**, so the fact alone is kept.
+to tell why**, so the fact alone is kept. With several attachments the line counts them by kind,
+as in "2 images and 1 PDF" (always in the order image, audio, video, PDF — not the order they
+were pasted). **With a single attachment the text is exactly what it was before several were
+allowed.**
+
+### Re-sending a past attachment (Spec 73)
+
+Attachments on **your own utterances** in the chat pane get a "To input" button. Pressing it puts
+that attachment back in the input as a chip (marked "Re-sent"), ready to go to **the servant you
+have selected now** — showing an image to a different servant than the one it was first pasted
+for is the main use. It does not send anything (it only adds the chip).
+
+- **Only the attachment's ID travels.** The core looks the original reference up in the
+  conversation log and copies it onto the new utterance. **The file is not duplicated** (unlike
+  pasting the same image twice, which stores it twice)
+- **If the file has already been removed by the retention rule, the button refuses at once**
+  ("This attachment was deleted after its retention period"), rather than sending it and having
+  the model answer that it cannot see anything. Removed attachments get no button at all
+- **Re-sending extends the file's retention** (its modification time is set to now when it is
+  sent — otherwise an image from 29 days ago would vanish the day after you re-sent it). The
+  trade-off: when several utterances point at the same file, they all show "deleted" together
+  once it does go
+- A different recipient may carry different kinds, so re-sent attachments pass the same
+  combinations check
+- **There is no path for the model to fetch past attachments by itself.** A servant asked to
+  "look at that image again" says it no longer has it and asks for it to be attached again; you
+  answer with this button. **How many times an attachment reaches a model is always decided by a
+  person.**
 
 ### People who never use it never pay for it
 
@@ -535,8 +575,8 @@ anything, nothing sent and nothing paid changes.
 | Path | Attachment | What happens instead |
 |---|---|---|
 | User → servant | **Delivered** (if the wire carries the kind) | Otherwise the entrance refuses — nothing stored, no turn started |
-| Servant → servant (`ask` / `plan` / transfer) | **Always** dropped | The delivered body is prefixed with "(the 1 image is not forwarded)" |
-| Plaza log (excerpts of others' conversations) | Dropped | Only its existence is noted, as "(1 image)" |
+| Servant → servant (`ask` / `plan` / transfer) | **Always** dropped | The delivered body is prefixed with "(the attached image is not forwarded)" (with several: "(the attached 1 image and 1 PDF are not forwarded)") |
+| Plaza log (excerpts of others' conversations) | Dropped | Nothing appears — only the user's utterances carry attachments, and the plaza log does not include the user's utterances |
 
 **Forwarding drops the attachment even when the recipient could carry it.** Passing it on
 would turn one attachment into N turns' worth of payment and break the one-to-one
