@@ -256,6 +256,13 @@ async fn run_authorize(
     let Some(state) = query_value(&auth_url, "state") else {
         return failed("認可 URL に state がありません");
     };
+    // **ブラウザへ渡すのは http / https だけ**（2026-10-30 の監査）。認可口はメタデータが名指す
+    // 文字列で、`open_url` は OS の URL ハンドラへそのまま渡す — `ms-word:` や `file:` を
+    // 書いた認可サーバーが、利用者の 1 クリックで任意のハンドラを起こせていた。
+    if let Err(reason) = browser_url_scheme(&auth_url) {
+        fuseforks_core::note!("mcp oauth: server={server} resource={resource} outcome=bad_scheme");
+        return failed(&format!("認可 URL が http / https ではないため、ブラウザを開きません（{reason}）"));
+    }
 
     // 6. ブラウザを開き、戻りを待つ。
     if let Err(message) = open(&auth_url) {
@@ -324,6 +331,16 @@ async fn register(
         .set(&client_key(issuer), &json)
         .map_err(|err| failed(&err.to_string()))?;
     Ok(config.client_id)
+}
+
+/// ブラウザや HTTP クライアントへ渡してよい URL か — スキームが `http` / `https` でホストがあること。
+/// 外れたときはスキームの名前を返す（文面に出す。URL 全体は出さない）。
+fn browser_url_scheme(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|err| err.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(format!("scheme={}", parsed.scheme()));
+    }
+    Ok(())
 }
 
 /// 認可サーバーの識別子。メタデータに `issuer` が無ければ認可口のオリジン。
@@ -514,10 +531,15 @@ async fn revoke_remote(
     else {
         return false;
     };
+    // 送るのはリフレッシュトークンそのもの。宛先は http / https に限り、**リダイレクトは
+    // 辿らない**（2026-10-30 の監査）— 307 / 308 は POST の本文ごと別のホストへ運ぶ。
+    if browser_url_scheme(&endpoint).is_err() {
+        return false;
+    }
     let client_id = read_client_record(secrets.as_ref(), issuer)
         .map(|record| record.client_id)
         .unwrap_or_default();
-    let Ok(client) = fuseforks_core::mcp_oauth::http_client(true) else {
+    let Ok(client) = fuseforks_core::mcp_oauth::http_client(false) else {
         return false;
     };
     let body = url::form_urlencoded::Serializer::new(String::new())

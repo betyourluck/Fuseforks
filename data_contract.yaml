@@ -248,8 +248,9 @@ enums:
            / で表す。P1 で確認)。当たる接続先が出るまで据え置く (TradingView はパスがある)
         10. **計器** — `mcp oauth: server=… resource=… outcome=…`。outcome は閉じた列挙
             (authorized / refreshed / refetched / required / denied / timeout / cancelled /
-            reregistered / no_registration / no_pkce / revoked / token_too_large / error。
-            token_too_large は P1 で足した)。トークン・認可コード・
+            reregistered / no_registration / no_pkce / bad_scheme / revoked / token_too_large / error。
+            token_too_large は P1 で足した。bad_scheme は 2026-10-30 の監査で足した = 認可口が http / https
+            でないのでブラウザを開かなかった)。トークン・認可コード・
             state・PKCE の値・client_id・認可サーバーの応答本文は書かない。resource はサーバーの
             識別子で利用者の個人情報ではないので書く
         11. **宣言していないエントリへの案内** — auth の無い http エントリが resource_metadata 付きの
@@ -5561,6 +5562,12 @@ conversation_termination:
         黙って完全削除へフォールバックしない (縮退の方向を安全側に固定)
       - **move / copy は両端を検査する。** 移動元は実在必須 (resolve_in_work_dir)、
         宛先は resolve_creatable。片端だけの検査は囲いの穴になる
+      - **作業フォルダそのものは宛先にできない** (2026-10-30 の外部監査)。resolve_creatable は
+        `"."` の字面しか見ておらず、`"./"` / `"./."` は CurDir だけの成分として通って作業フォルダに
+        解決していた。判定は字面ではなく解決した結果 (resolved == root) で行う
+      - **宛先がフォルダなら overwrite でも上書きしない** (同じ監査)。上書きはごみ箱を通らないので、
+        フォルダへ掛けると中身ごと戻せない削除 (remove_dir_all) だった — 「`"./"` へ overwrite: true」で
+        作業フォルダが丸ごと消える経路。上書きで退けるのはファイル (remove_file) だけ
       - 読み取りの上限は bundled_tools_contract と共有 (1 ファイル 2 MiB /
         出力 12,000 字 / バイナリ拒否)。write の content にも同じ上限を掛ける
       - **read に offset / range は持たない。** 続きを取る引数が無い以上、

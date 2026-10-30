@@ -152,23 +152,14 @@ pub async fn spawn_and_wait(
     let out_pipe = child.inner().stdout.take();
     let err_pipe = child.inner().stderr.take();
     let drain = tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let (mut out, mut err) = (Vec::new(), Vec::new());
         match (out_pipe, err_pipe) {
-            (Some(mut o), Some(mut e)) => {
-                // **同時に読む。** 片方ずつ読むと、もう片方のパイプが満杯に
-                // なった子が止まり、読んでいる側も終わらない。
-                let _ = tokio::try_join!(o.read_to_end(&mut out), e.read_to_end(&mut err));
-            }
-            (Some(mut o), None) => {
-                let _ = o.read_to_end(&mut out).await;
-            }
-            (None, Some(mut e)) => {
-                let _ = e.read_to_end(&mut err).await;
-            }
-            (None, None) => {}
+            // **同時に読む。** 片方ずつ読むと、もう片方のパイプが満杯に
+            // なった子が止まり、読んでいる側も終わらない。
+            (Some(o), Some(e)) => tokio::join!(read_capped(o), read_capped(e)),
+            (Some(o), None) => (read_capped(o).await, Vec::new()),
+            (None, Some(e)) => (Vec::new(), read_capped(e).await),
+            (None, None) => (Vec::new(), Vec::new()),
         }
-        (out, err)
     });
 
     let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -208,6 +199,25 @@ pub async fn spawn_and_wait(
         Waited::TimedOut => Ran::TimedOut,
         Waited::Cancelled => Ran::Cancelled,
     }
+}
+
+/// 子の stdout / stderr それぞれをメモリに置く上限（バイト）。
+///
+/// 読み手は `run` の出力枠（`MAX_OUTPUT_CHARS` = 12,000 字）と前判定の 1 行目で、
+/// どちらもこの上限の内側。上限が無いと `yes` や大きなファイルの `cat` が、打ち切りまでの
+/// 60 秒でメモリを GB 単位で食う（2026-10-30 の監査）。
+pub const CHILD_OUTPUT_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// パイプを上限まで読み、**残りは読み捨てる**。
+///
+/// 読むのをやめるとパイプが満杯になって子が止まり、待ちが永久に返らない — 上限の
+/// 後も EOF まで読み続けることが、上限を足す側の条件。
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let _ = (&mut reader).take(CHILD_OUTPUT_MAX_BYTES).read_to_end(&mut kept).await;
+    let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
+    kept
 }
 
 /// 待ちの結果。`tokio::select!` の腕を型で分ける（`Result` の入れ子を読ませない）。
@@ -277,6 +287,21 @@ fn resolve_in(name: &str, path: &std::ffi::OsStr, exts: &[String]) -> Option<Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-10-30 の監査。上限の無い `read_to_end` は、出力の多い子が打ち切りまでに
+    /// メモリを GB 単位で食う。上限の後も EOF まで読み捨てることが、パイプを詰まらせない条件。
+    #[tokio::test]
+    async fn child_output_is_capped_but_the_pipe_is_drained() {
+        let over = usize::try_from(CHILD_OUTPUT_MAX_BYTES).unwrap() + 1_000_000;
+        let big = vec![b'y'; over];
+        let mut reader = big.as_slice();
+        let kept = read_capped(&mut reader).await;
+        assert_eq!(kept.len(), usize::try_from(CHILD_OUTPUT_MAX_BYTES).unwrap(), "上限で切る");
+        assert!(reader.is_empty(), "残りは EOF まで読み捨てる（止まると子がパイプで詰まる）");
+
+        let small = b"short".to_vec();
+        assert_eq!(read_capped(small.as_slice()).await, small, "上限の内側は 1 バイトも落とさない");
+    }
 
     struct TempDir(PathBuf);
 

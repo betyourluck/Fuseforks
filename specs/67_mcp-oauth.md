@@ -254,7 +254,7 @@ UTF-16 で保存し、上限 2,560 バイトがその単位で掛かる。ASCII 
 
 - `mcp oauth: server=… resource=… outcome=…` を 1 行。`outcome` は閉じた列挙
   （`authorized` / `refreshed` / `refetched`（D5 の読み直しで回復）/ `required` / `denied` / `timeout` / `cancelled` /
-  `reregistered` / `no_registration` / `no_pkce` / `revoked` / `error`）
+  `reregistered` / `no_registration` / `no_pkce` / `bad_scheme`（2026-10-30 の監査で追加）/ `revoked` / `error`）
 - トークン・認可コード・`state`・PKCE の値・`client_id`・認可サーバーの応答本文は書かない（#71 の系譜）。
   `client_id` は秘密ではないが、利用者のアカウントへ紐づく識別子なので書かない
 - `resource`（と表示しない `issuer`）は**サーバーの識別子で、利用者の個人情報ではない**ので書く — 既存の計器も

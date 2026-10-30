@@ -191,6 +191,16 @@ pub(crate) fn resolve_creatable(
     for name in trailing.into_iter().rev() {
         resolved.push(name);
     }
+
+    // **作業フォルダそのものは宛先にできない**（2026-10-30 の監査）。上の `"."` の検査は
+    // 字面しか見ておらず、`"./"` や `"./."` は `CurDir` だけの成分として通って `root` に
+    // 解決していた。move / copy の `overwrite: true` はその宛先を先に退けるので、
+    // 作業フォルダが丸ごと消える経路になっていた。字面を数え上げずに結果で弾く。
+    if resolved == root {
+        return Err(
+            "作業フォルダそのものは宛先にできません。作業フォルダからの相対パスを指定してください。".to_owned(),
+        );
+    }
     let display = resolved
         .strip_prefix(&root)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -1288,6 +1298,24 @@ mod tests {
                 "`{attempt}` は宛先として拒否されること"
             );
         }
+    }
+
+    /// 2026-10-30 の監査。`"."` の字面しか見ていなかったので、`CurDir` だけの並びは
+    /// 作業フォルダそのものに解決していた。判定は字面ではなく解決した結果で行う。
+    #[test]
+    fn creatable_rejects_the_work_dir_itself_however_it_is_spelled() {
+        let dir = TempDir::new("creatable-root");
+        dir.write("a.txt", "x");
+        for attempt in ["./", "./.", ".//.", "a.txt/.."] {
+            let err = resolve_creatable(&dir.0, attempt)
+                .expect_err(&format!("`{attempt}` は作業フォルダそのものなので拒否されること"));
+            assert!(
+                err.contains("作業フォルダそのもの") || err.contains("作業フォルダの外"),
+                "{attempt}: {err}"
+            );
+        }
+        // 1 段下は通る（境界の内側を狭めていない）。
+        assert!(resolve_creatable(&dir.0, "./a.txt").is_ok());
     }
 
     #[test]

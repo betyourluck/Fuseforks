@@ -405,6 +405,15 @@ fn run_transfer(
              （move なら フォルダのまま移動できます）。"
         );
     }
+    // **宛先がフォルダなら上書きしない**（2026-10-30 の監査）。上書きはごみ箱を通らないので、
+    // フォルダへ掛けると中身ごと戻せない削除になる。`a.txt` を `src` へ置き換えたい依頼は
+    // 実在しない（`src/a.txt` を指すつもりの取り違えが大半）ので、名指しで断って次の手を書く。
+    if dest.is_dir() {
+        return format!(
+            "`{dest_display}` はフォルダです。フォルダへの上書きはできません。\
+             中へ入れるなら `{dest_display}/<ファイル名>` のように宛先をファイルで指定してください。"
+        );
+    }
     if let Some(parent) = dest.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
@@ -414,7 +423,7 @@ fn run_transfer(
     // （Windows は既存宛先で失敗しうる）、copy は黙って潰す。
     if dest.exists()
         && overwrite
-        && let Err(err) = remove_existing(&dest)
+        && let Err(err) = std::fs::remove_file(&dest)
     {
         return format!("`{dest_display}` を置き換えられません: {err}");
     }
@@ -427,16 +436,6 @@ fn run_transfer(
     match result {
         Ok(()) => format!("`{source_display}` を `{dest_display}` へ{verb}しました。"),
         Err(err) => format!("`{source_display}` を{verb}できません: {err}"),
-    }
-}
-
-/// 上書き時に宛先を退ける。ここは利用者の明示（`overwrite: true`）があるので
-/// ごみ箱を経由しない — 経由すると「置き換え」がごみ箱を汚し続ける。
-fn remove_existing(path: &Path) -> std::io::Result<()> {
-    if path.is_dir() {
-        std::fs::remove_dir_all(path)
-    } else {
-        std::fs::remove_file(path)
     }
 }
 
@@ -760,6 +759,60 @@ mod tests {
 
         assert!(reply.contains("作業フォルダそのもの"), "{reply}");
         assert!(dir.0.is_dir());
+    }
+
+    /// 2026-10-30 の監査。`to: "./"` は `"."` の字面の検査を抜けて作業フォルダに解決し、
+    /// `overwrite: true` が宛先を先に退ける = `remove_dir_all(作業フォルダ)` だった。
+    #[tokio::test]
+    async fn the_work_dir_itself_cannot_be_a_transfer_destination() {
+        let dir = TempDir::new("transfer-root");
+        dir.write("a.txt", "A");
+        dir.write("blackboard/doing/agent_1 - 仕事.md", "付箋");
+
+        for to in ["./", "./.", "a/.."] {
+            for op in ["move", "copy"] {
+                let reply = call(
+                    &dir,
+                    serde_json::json!({ "op": op, "path": "a.txt", "to": to, "overwrite": true }),
+                )
+                .await;
+                assert!(
+                    reply.contains("作業フォルダそのもの") || reply.contains("作業フォルダの外"),
+                    "{op} to `{to}`: {reply}"
+                );
+            }
+        }
+        assert_eq!(dir.read("a.txt"), "A", "元も宛先も 1 バイトも動かない");
+        assert!(dir.exists("blackboard/doing/agent_1 - 仕事.md"), "作業フォルダの中身が残る");
+    }
+
+    /// 同じ監査。宛先が既存のフォルダでも、上書きは木ごとの永久削除になっていた。
+    #[tokio::test]
+    async fn overwrite_never_removes_a_directory() {
+        let dir = TempDir::new("transfer-dir-dest");
+        dir.write("a.txt", "A");
+        dir.write("src/keep.txt", "残る");
+
+        for op in ["move", "copy"] {
+            let reply = call(
+                &dir,
+                serde_json::json!({ "op": op, "path": "a.txt", "to": "src", "overwrite": true }),
+            )
+            .await;
+            assert!(reply.contains("フォルダへの上書きはできません"), "{op}: {reply}");
+            assert!(reply.contains("src/<ファイル名>"), "次の手を書く: {reply}");
+        }
+        assert_eq!(dir.read("src/keep.txt"), "残る");
+        assert_eq!(dir.read("a.txt"), "A");
+
+        // 元ファイルが宛先フォルダの中にある形（`src/a.txt` → `src`）も同じ門で止まる。
+        let reply = call(
+            &dir,
+            serde_json::json!({ "op": "move", "path": "src/keep.txt", "to": "src", "overwrite": true }),
+        )
+        .await;
+        assert!(reply.contains("フォルダへの上書きはできません"), "{reply}");
+        assert_eq!(dir.read("src/keep.txt"), "残る");
     }
 
     #[tokio::test]

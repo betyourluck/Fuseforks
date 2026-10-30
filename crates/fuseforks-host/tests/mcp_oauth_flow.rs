@@ -22,6 +22,12 @@ struct StubState {
     strict_redirect: bool,
     /// メタデータに PKCE を出すか。
     pkce: bool,
+    /// 認可口の URL を差し替える（`None` は `{origin}/authorize`）。2026-10-30 の監査の検査用。
+    authorization_endpoint: Option<String>,
+    /// 失効口が 307 で `/revoke-elsewhere` へ逃がすか。
+    revoke_redirect: bool,
+    /// 逃がした先で受けた token（辿っていれば入る）。
+    revoked_elsewhere: Vec<String>,
     /// 登録した戻り先（登録順）。
     registered: Vec<String>,
     /// トークン要求の本文。
@@ -107,7 +113,7 @@ fn handle(state: &Shared, port: u16, method: &str, target: &str, body: &str, use
         ("GET", p) if p.starts_with("/.well-known/oauth-authorization-server") => {
             let mut meta = serde_json::json!({
                 "issuer": origin,
-                "authorization_endpoint": format!("{origin}/authorize"),
+                "authorization_endpoint": s.authorization_endpoint.clone().unwrap_or_else(|| format!("{origin}/authorize")),
                 "token_endpoint": format!("{origin}/token"),
                 "registration_endpoint": format!("{origin}/register"),
                 "revocation_endpoint": format!("{origin}/revoke"),
@@ -167,8 +173,17 @@ fn handle(state: &Shared, port: u16, method: &str, target: &str, body: &str, use
             )
         }
         ("POST", "/revoke") => {
+            if s.revoke_redirect {
+                return reply("307 Temporary Redirect", &format!("Location: {origin}/revoke-elsewhere\r\n"), "{}");
+            }
             if let Some(token) = param(&params(body), "token") {
                 s.revoked.push(token);
+            }
+            reply("200 OK", "", "{}")
+        }
+        ("POST", "/revoke-elsewhere") => {
+            if let Some(token) = param(&params(body), "token") {
+                s.revoked_elsewhere.push(token);
             }
             reply("200 OK", "", "{}")
         }
@@ -415,6 +430,39 @@ async fn an_authorization_server_without_pkce_is_refused_before_the_browser() {
     assert!(matches!(outcome, AuthorizeOutcome::Failed { message } if message.contains("PKCE")));
     assert!(!*opened.lock().unwrap(), "ブラウザを開かない");
     assert!(f.secrets.get(&client_key(&f.issuer())).unwrap().is_none(), "登録もしない");
+}
+
+/// 2026-10-30 の監査。認可口はメタデータの文字列で、`open_url` は OS のハンドラへそのまま渡す。
+#[tokio::test]
+async fn an_authorization_url_that_is_not_http_is_refused_before_the_browser() {
+    let f = fixture().await;
+    f.state.lock().unwrap().authorization_endpoint = Some("ms-word:ofe|u|https://evil.example/x".to_owned());
+    let opened = Arc::new(Mutex::new(false));
+    let flag = Arc::clone(&opened);
+    let open = move |_: &str| {
+        *flag.lock().unwrap() = true;
+        Ok(())
+    };
+    let outcome = f.authorize(&open, Duration::from_secs(10)).await;
+    assert!(
+        matches!(&outcome, AuthorizeOutcome::Failed { message } if message.contains("http / https") && message.contains("ms-word")),
+        "{outcome:?}"
+    );
+    assert!(!*opened.lock().unwrap(), "ブラウザを開かない");
+}
+
+/// 同じ監査。失効はリフレッシュトークンを本文に載せる POST なので、307 を辿ると別の宛先へ運ぶ。
+#[tokio::test]
+async fn revoking_does_not_follow_a_redirect_with_the_token() {
+    let f = fixture().await;
+    assert_eq!(f.authorize(&browser(None), Duration::from_secs(10)).await, AuthorizeOutcome::Authorized);
+    f.state.lock().unwrap().revoke_redirect = true;
+    let outcome = revoke("tv", &f.url, f.secrets.clone(), &f.registry).await;
+    assert!(outcome.local_cleared, "手元の記録は消す");
+    assert!(!outcome.remote_revoked, "307 は成功ではない");
+    let s = f.state.lock().unwrap();
+    assert!(s.revoked_elsewhere.is_empty(), "逃がした先へトークンが届いていない");
+    assert!(s.revoked.is_empty());
 }
 
 #[tokio::test]
