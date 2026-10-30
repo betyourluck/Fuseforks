@@ -265,7 +265,21 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 落ちて扉が閉じたままになっていた。`RunningServer::stop` は cancel を投げるだけで、axum は accept ループを抜けてからリスナーを drop するため。
 `bind_with_retry` = AddrInUse のときだけ 50 ms × 40 回（実機で閉じてから開き直すまで 53 ms と 734 ms）。
 **6 も同日に直した**（上の表の行と `failures.md` #154。判定の段の「誤りの可能性が高い（未実験）」はジャンクション 1 本の実験で半分外れた）。
-**別件**: CSP（4 の後半）。
+
+**CSP（4 の後半）も同日に入れた。Windows の配布ビルドで確かめ、macOS と Linux は未確認。** `tauri.conf.json` の `security.csp` =
+`default-src 'self'` / `script-src 'self'` / `style-src 'self' 'unsafe-inline'` / `img-src 'self' data: blob:` / `font-src 'self' data:` /
+`connect-src ipc: http://ipc.localhost` / `worker-src 'self'` / `object-src` `frame-src` `base-uri` `form-action` は `'none'`。
+**`dangerousDisableAssetCspModification: ["style-src"]` が要の 1 行** — Tauri は自前で配る資源の CSP にハッシュを足し、ハッシュがあると
+ブラウザは `'unsafe-inline'` を無視するので、KaTeX が `v-html` の出力に書く `style="…"` が止まる（Vue の `:style` は CSSOM 経由なので無関係）。
+外部へ通信する宛先は 1 つも要らない（LLM・単価表・MCP は Rust 側から出る。画面のコードに `fetch(` は 0 件）。
+- **確かめ方**: 配布ビルドを `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>` で起動し、CDP でページの中から
+  見た（scratchpad の使い捨て `csp_probe.py`）。応答ヘッダに CSP が乗り、`style-src` にハッシュが無い / `innerHTML` で差した `style` 属性と
+  `<style>` 要素が効く / `data:`・`blob:` の画像が出る / 外部の画像と `new Function` は遮断（違反はこの 2 つだけ = 画面のコード由来の違反は 0）/
+  添付変換の worker が `'self'` から読める / `KaTeX_Main` と `DotGothic16` が読める / IPC が通る
+- **開発ビルドでは CSP が効かない**（Windows の開発ビルドは Vite のページを直接読み、文書の応答ヘッダは `Content-Type` だけ。`devCsp` は
+  書いたが掛かっていない）。CSP の違反は**配布ビルドでしか出ない**ので、外部の資源を足す変更は配布ビルドで確かめる
+- **測り方の罠**: Git Bash は `/assets/…` の引数を `C:/Program Files/Git/assets/…` へ書き換える（worker の判定が 1 回これで外れた。`MSYS_NO_PATHCONV=1`）
+- **残り**: macOS / Linux の WebKit で同じ設定が効くか（IPC の口は `ipc:` のスキームで両方を覆う見込み）。次のタグの CI と実機で見る
 
 **テスト**: 単体 `creatable_rejects_the_work_dir_itself_however_it_is_spelled` / `the_work_dir_itself_cannot_be_a_transfer_destination` /
 `overwrite_never_removes_a_directory` / `child_output_is_capped_but_the_pipe_is_drained` + 結合 `an_authorization_url_that_is_not_http_is_refused_before_the_browser` /

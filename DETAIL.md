@@ -2280,6 +2280,18 @@ npx tauri icon <正方形の PNG>
 SVG）。アイコンを差し替えても画面の中は変わらない — 実行ファイルの見た目と
 画面の中の意匠は、変える理由が違うので繋げていない。
 
+### 画面の Content Security Policy
+
+配布ビルドの画面は CSP で読み込める資源を絞っています（`tauri.conf.json` の `security.csp`）。読めるのはアプリに同梱した
+スクリプト・スタイル・フォント・worker と、`data:` / `blob:` の画像（添付のプレビューとアイコン）だけで、外部の画像・スクリプト・
+フォントや `eval` は止まります。画面から外へ通信する宛先は 1 つもありません — LLM・単価表・MCP への通信は Rust 側から出ます。
+会話の Markdown が `![](https://…)` を `<img>` にしないこと（同じ日の変更）と合わせて、表示しただけで外へ取りに行く経路を塞いでいます。
+
+- `style-src` は `'unsafe-inline'` を許し、Tauri が自動で足すハッシュを切っています（`dangerousDisableAssetCspModification`）。
+  ハッシュがあると `'unsafe-inline'` が無視され、数式（KaTeX）が出力に書く `style` 属性が止まるためです
+- **開発ビルドには掛かりません**（Windows の開発ビルドは Vite のページを直接読むため）。外部の資源を足す変更は配布ビルドで確かめてください
+- 確かめたのは Windows の配布ビルドです。macOS と Linux は未確認です
+
 ### 診断ログ
 
 `[fuseforks]` で始まる観測行は stderr と `workspace/fuseforks.log` の両方へ出る。

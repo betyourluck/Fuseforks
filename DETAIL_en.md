@@ -1878,6 +1878,18 @@ npx tauri icon <square PNG>
 the look of the executable and the look of the interface change for different
 reasons, so they are deliberately not coupled.
 
+### Content Security Policy of the window
+
+Release builds restrict what the window may load with a CSP (`security.csp` in `tauri.conf.json`). Only the scripts, styles, fonts
+and worker bundled with the app, plus `data:` / `blob:` images (attachment previews and icons), are allowed; external images, scripts,
+fonts and `eval` are blocked. The window itself talks to no outside host — LLM, price-table and MCP traffic all leaves from the Rust side.
+Together with Markdown no longer turning `![](https://…)` into `<img>` (same day), this closes the paths that fetch from outside just by displaying something.
+
+- `style-src` allows `'unsafe-inline'`, and the hashes Tauri would add are turned off (`dangerousDisableAssetCspModification`).
+  With a hash present, browsers ignore `'unsafe-inline'`, which would block the `style` attributes that math (KaTeX) writes into its output
+- **Dev builds are not covered** (on Windows the dev build loads Vite's page directly). Check changes that add an outside resource in a release build
+- Verified on a Windows release build; macOS and Linux are not verified yet
+
 ### Diagnostic Log
 
 Observation lines beginning with `[fuseforks]` go to both stderr and `workspace/fuseforks.log`. Stderr remains only in the terminal that launched `tauri dev`; **nobody could read it until a user pasted it**. Diagnosing a path that used 730,406 input tokens in one turn could not proceed until the log was copied manually (2026-07-31).
