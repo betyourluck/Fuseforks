@@ -255,7 +255,15 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
 | 11 | Jev の `account_id` / `McpServerStore::save` の権限の窓 | Low | 自分が入れる値 / Unix だけ一瞬 |
 | 12 | APPIMAGE の引用 / Markdown キャッシュの `source` 照合 | 安全性ではない | 発話は不変で `message.id` が鍵 |
 
-**安い衛生としてまとめて直す候補**（未着手）: 2 のループ内 symlink 検査 / 5 / 8 / 9 の両方 / 11 の tmp → rename / 10 の `\` 直書き。
+**安い衛生 6 件も同日に直した**（別セッション・ブランチ `claude/vigorous-agnesi-8491e9` を main へ fast-forward。`af24923`）—
+2 = `resolve_creatable` の祖先の判定を `symlink_metadata` へ / 5 = `export_session_to_file` は存在を確かめてから作る・ID は
+`is_safe_identifier` の外を `UnsafeIdentifier` で拒む / 8 = `lib/links.ts` の `isOpenableLink`（http / https / mailto の閉じた許容）を
+`validateLink` と会話・黒板のクリックの横取りが共有（黒板はそれまで横取りが無かった）/ 9 = `bake` が stdio の `env` の鍵らしい名前を
+`headers` と同じ 10 で止め、`world.json` の個体と判断役の id が安全な形でなければパスを組む前に 5（**判断役の id は実際に写しの外へ書けた**）/
+10 = 「フォルダを開く」を `@tauri-apps/api/path` の `join` へ / 11 = `McpServerStore::save` を一時ファイル → 権限 → rename へ。
+**実機で別件が 1 つ出た**（`b7c2a3a` / `7bd079c`）— 合鍵の作り直しや ON のままの適用で、扉を閉じた直後の bind が AddrInUse（Windows 10048）で
+落ちて扉が閉じたままになっていた。`RunningServer::stop` は cancel を投げるだけで、axum は accept ループを抜けてからリスナーを drop するため。
+`bind_with_retry` = AddrInUse のときだけ 50 ms × 40 回（実機で閉じてから開き直すまで 53 ms と 734 ms）。
 **別件**: CSP（4 の後半）/ 6（頻度を見てから）。
 
 **テスト**: 単体 `creatable_rejects_the_work_dir_itself_however_it_is_spelled` / `the_work_dir_itself_cannot_be_a_transfer_destination` /
