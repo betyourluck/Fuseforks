@@ -1160,6 +1160,9 @@ pub async fn send_user_message(
     // 本文を受け取る形にすると、検証できない文字列が「サーヴァントの発話」の
     // 名札でプロンプトへ入る（`quote_reference_contract` 凍結 1）。
     quote_ids: Option<Vec<String>>,
+    // 再添付（Spec 73 D5）。**添付 ID だけ**を受け取り、参照はコアがリングから引く —
+    // 形式やファイル名をフロントから受け取ると、コアが検証できない参照が発話に載る。
+    attachment_refs: Option<Vec<String>>,
 ) -> CoreResult<()> {
     // 添付は base64 で届く（Spec 23）。復号はここで 1 回、検証と保存はコアが行う。
     let mut uploads = Vec::new();
@@ -1183,6 +1186,7 @@ pub async fn send_user_message(
             co_recipients.as_deref().unwrap_or(&[]),
             uploads,
             quote_ids.as_deref().unwrap_or(&[]),
+            attachment_refs.as_deref().unwrap_or(&[]),
         )
         .await
 }

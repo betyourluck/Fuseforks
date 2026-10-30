@@ -72,6 +72,16 @@ pub const ATTACHMENT_VIDEO_MAX_BYTES: usize = 12 * 1024 * 1024;
 /// 宛先によって通ったり落ちたりすると規則が画面から読めないため。
 pub const ATTACHMENT_PDF_MAX_BYTES: usize = 10 * 1024 * 1024;
 
+/// 1 発話に付けられる添付の件数（Spec 73 D1）。新しく貼ったものと再添付の合計で数える。
+pub const ATTACHMENT_MAX_PER_MESSAGE: usize = 5;
+
+/// 1 発話の添付の合計バイト（Spec 73 D2）。数えるのは保存されるバイト。
+///
+/// 根拠は種別ごとの上限と同じ計算 — 運べる最も狭い Gemini のインライン 20MB（要求全体）を、
+/// base64 で 16.0MB + プロンプトの余白 4.0MB に割る。**ワイヤ別の門は作らない**。
+/// 種別ごとの上限（`ATTACHMENT_*_MAX_BYTES`）は 1 件ずつの門として残る。
+pub const ATTACHMENT_MAX_MESSAGE_BYTES: u64 = 12 * 1024 * 1024;
+
 /// 保持期間。起動時の GC がこれより古いファイルを消す（Spec 23 D9）。
 pub const ATTACHMENT_RETENTION_DAYS: u64 = 30;
 
@@ -781,6 +791,38 @@ impl AttachmentStore {
             }
         }
         Ok(None)
+    }
+
+    /// 保存済みの添付のバイト数を返す。**ファイルが無ければ `None`**（Spec 73 D2 / D5）。
+    ///
+    /// 再添付の合計バイトはここで数える。`Attachment` に大きさの欄を足さないのは、
+    /// `Record::Message` の形を変えないため（S73-2）。
+    pub async fn stored_len(&self, attachment: &Attachment) -> CoreResult<Option<u64>> {
+        let path = self.path_for(&attachment.id, attachment.format)?;
+        match tokio::fs::metadata(&path).await {
+            Ok(meta) => Ok(Some(meta.len())),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(Self::io_err(&path, err)),
+        }
+    }
+
+    /// 再添付したファイルの mtime を `now` へ更新する（Spec 73 D6）。
+    ///
+    /// GC は mtime だけを見るので、更新しないと 29 日前の画像を渡し直した翌日の起動で消え、
+    /// 渡し直した発話の表示が「削除されました」になる。索引は作らない（凍結 8）。
+    pub async fn touch(&self, attachment: &Attachment, now: SystemTime) -> CoreResult<()> {
+        let path = self.path_for(&attachment.id, attachment.format)?;
+        let target = path.clone();
+        tokio::task::spawn_blocking(move || {
+            // 書き込みで開くが中身は触らない（truncate しない）。
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&target)?
+                .set_modified(now)
+        })
+        .await
+        .map_err(|e| Self::io_err(&path, std::io::Error::other(e)))?
+        .map_err(|e| Self::io_err(&path, e))
     }
 
     /// 保持期間と容量上限で古い添付を消す（D9。呼ぶのは起動時）。

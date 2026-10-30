@@ -1854,17 +1854,145 @@ pub(super) fn attachment_kind_label(
 /// 断り書きを読んで、画像の内容をテキストへ書き起こして渡した）。
 fn note_dropped_attachment(
     message: &str,
-    dropped: Option<crate::attachment::AttachmentKind>,
+    dropped: &[crate::attachment::AttachmentKind],
     language: crate::world::Language,
 ) -> String {
-    let Some(kind) = dropped else {
-        return message.to_owned();
+    let counts = attachment_kind_counts(dropped);
+    match (counts.as_slice(), language) {
+        ([], _) => message.to_owned(),
+        // **1 件の文は Spec 73 以前と 1 バイトも変えない**（S73-4）。
+        ([(kind, 1)], crate::world::Language::Ja) => format!(
+            "（{} 1 件は転送されません）\n\n{message}",
+            attachment_kind_label(*kind, language)
+        ),
+        ([(kind, 1)], crate::world::Language::En) => format!(
+            "(the attached {} is not forwarded)\n\n{message}",
+            attachment_kind_label(*kind, language)
+        ),
+        (_, crate::world::Language::Ja) => format!(
+            "（{}は転送されません）\n\n{message}",
+            attachment_summary(dropped, language)
+        ),
+        (_, crate::world::Language::En) => format!(
+            "(the attached {} are not forwarded)\n\n{message}",
+            attachment_summary(dropped, language)
+        ),
+    }
+}
+
+/// 添付の参照の列から種別の列を取る（Spec 73 — 先頭だけを読まない）。
+pub(super) fn attachment_kinds(
+    attachments: &[crate::attachment::Attachment],
+) -> Vec<crate::attachment::AttachmentKind> {
+    attachments.iter().map(|a| a.kind()).collect()
+}
+
+/// 種別ごとの件数を `AttachmentKind` の宣言順（画像・音声・動画・PDF）で数える。
+///
+/// **並びを貼った順にしない**（Spec 73 S73-4）— 同じ組でも貼った順で文字列が変わり、
+/// モデルへ届く文の golden が書けなくなる。件数 0 の種別は返さない。
+pub(super) fn attachment_kind_counts(
+    kinds: &[crate::attachment::AttachmentKind],
+) -> Vec<(crate::attachment::AttachmentKind, usize)> {
+    use crate::attachment::AttachmentKind as K;
+    [K::Image, K::Audio, K::Video, K::Pdf]
+        .into_iter()
+        .map(|k| (k, kinds.iter().filter(|x| **x == k).count()))
+        .filter(|(_, n)| *n > 0)
+        .collect()
+}
+
+/// 添付の組を「画像 2 件と PDF 1 件」/ "2 images and 1 PDF" の語にする（Spec 73 S73-4）。
+///
+/// モデルへ届く 2 つの文（畳んだ文脈の 1 行・転送の断り書き）が共有する 1 実装。
+/// 空の列は空文字（呼び出し側が「添付なし」の枝を持つ）。
+pub(super) fn attachment_summary(
+    kinds: &[crate::attachment::AttachmentKind],
+    language: crate::world::Language,
+) -> String {
+    use crate::world::Language as L;
+    let parts: Vec<String> = attachment_kind_counts(kinds)
+        .into_iter()
+        .map(|(kind, n)| match language {
+            L::Ja => format!("{} {n} 件", attachment_kind_label(kind, language)),
+            L::En => {
+                let label = attachment_kind_label(kind, language);
+                match (kind, n) {
+                    (_, 1) => format!("1 {label}"),
+                    // 音声は数えられない名詞なので "file" で数える。
+                    (crate::attachment::AttachmentKind::Audio, _) => format!("{n} audio files"),
+                    (crate::attachment::AttachmentKind::Video, _) => format!("{n} videos"),
+                    (crate::attachment::AttachmentKind::Pdf, _) => format!("{n} PDFs"),
+                    (crate::attachment::AttachmentKind::Image, _) => format!("{n} images"),
+                }
+            }
+        })
+        .collect();
+    let (sep, last_sep) = match language {
+        L::Ja => ("、", "と"),
+        L::En => (", ", " and "),
     };
-    let label = attachment_kind_label(kind, language);
-    match language {
-        crate::world::Language::Ja => format!("（{label} 1 件は転送されません）\n\n{message}"),
-        crate::world::Language::En => {
-            format!("(the attached {label} is not forwarded)\n\n{message}")
-        }
+    // 「と」の後ろに英字の種別語（PDF）が来たら半角の空白を 1 つ挟む — 「画像 2 件と PDF 1 件」。
+    let last_sep = match (language, parts.last()) {
+        (L::Ja, Some(last)) if last.starts_with(|c: char| c.is_ascii_alphabetic()) => "と ",
+        _ => last_sep,
+    };
+    match parts.as_slice() {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{}{last_sep}{last}", init.join(sep)),
+    }
+}
+
+#[cfg(test)]
+mod attachment_summary_tests {
+    use super::{attachment_summary, note_dropped_attachment};
+    use crate::attachment::AttachmentKind as K;
+    use crate::world::Language as L;
+
+    #[test]
+    fn the_summary_follows_the_declared_kind_order_not_the_pasted_order() {
+        // 貼った順（PDF → 画像 → 画像）ではなく宣言順（画像 → 音声 → 動画 → PDF）。
+        assert_eq!(attachment_summary(&[K::Pdf, K::Image, K::Image], L::Ja), "画像 2 件と PDF 1 件");
+        assert_eq!(attachment_summary(&[K::Pdf, K::Image, K::Image], L::En), "2 images and 1 PDF");
+        assert_eq!(
+            attachment_summary(&[K::Pdf, K::Audio, K::Image], L::Ja),
+            "画像 1 件、音声 1 件と PDF 1 件"
+        );
+        assert_eq!(
+            attachment_summary(&[K::Audio, K::Audio, K::Video], L::En),
+            "2 audio files and 1 video"
+        );
+        assert_eq!(attachment_summary(&[], L::Ja), "");
+    }
+
+    #[test]
+    fn a_single_dropped_attachment_keeps_the_pre_spec73_bytes() {
+        // Spec 73 S73-4 — 1 件の文は 1 バイトも変えない。
+        assert_eq!(
+            note_dropped_attachment("本文", &[K::Image], L::Ja),
+            "（画像 1 件は転送されません）\n\n本文"
+        );
+        assert_eq!(
+            note_dropped_attachment("body", &[K::Pdf], L::En),
+            "(the attached PDF is not forwarded)\n\nbody"
+        );
+        assert_eq!(note_dropped_attachment("本文", &[], L::Ja), "本文");
+    }
+
+    #[test]
+    fn several_dropped_attachments_are_named_by_kind_and_count() {
+        assert_eq!(
+            note_dropped_attachment("本文", &[K::Image, K::Image], L::Ja),
+            "（画像 2 件は転送されません）\n\n本文"
+        );
+        assert_eq!(
+            note_dropped_attachment("本文", &[K::Pdf, K::Image], L::Ja),
+            "（画像 1 件と PDF 1 件は転送されません）\n\n本文"
+        );
+        assert_eq!(
+            note_dropped_attachment("body", &[K::Image, K::Pdf], L::En),
+            "(the attached 1 image and 1 PDF are not forwarded)\n\nbody"
+        );
     }
 }

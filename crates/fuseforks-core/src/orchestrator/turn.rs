@@ -2553,7 +2553,7 @@ impl CallRunner<'_> {
                 budget.as_ref(),
                 participants.as_ref(),
                 waiting,
-                incoming.attachments.first().map(|a| a.kind()),
+                &super::attachment_kinds(&incoming.attachments),
                 self.auto_approve_plans,
             )
             .await))
@@ -2582,7 +2582,7 @@ impl CallRunner<'_> {
                 budget.as_ref(),
                 participants.as_ref(),
                 waiting,
-                incoming.attachments.first().map(|a| a.kind()),
+                &super::attachment_kinds(&incoming.attachments),
                 self.auto_approve_plans,
             )
             .await
@@ -2600,7 +2600,7 @@ impl CallRunner<'_> {
                         budget.as_ref(),
                         participants.as_ref(),
                         waiting,
-                        incoming.attachments.first().map(|a| a.kind()),
+                        &super::attachment_kinds(&incoming.attachments),
                         self.auto_approve_plans,
                     )
                     .await
@@ -3128,10 +3128,31 @@ async fn build_prompt(
     // **この 1 行は `context` へ入るので `sent_user_turn` の一部になり、
     // #45 の規律でそのまま履歴へ残る。** 画像そのものは入らないので D1 は不変。
     if !image_attachments.is_empty() {
-        // 種別語で書く（Spec 36）。D5 で 1 発話 1 件なので先頭を見れば足りる。
-        let kind = image_attachments[0].kind();
+        // 種別語で書く（Spec 36）。**種別が 1 つなら Spec 73 以前の文の件数だけが変わる**
+        // （1 件の文はバイト等価）。混ざったら件数の語を最初の 1 か所に置き、文中で種別語を
+        // 繰り返していた所は「添付」で受ける — 先頭の種別名で全件を呼ぶと嘘になる（S73-4）。
+        let kinds: Vec<_> = image_attachments.iter().map(|a| a.kind()).collect();
+        let counts = super::attachment_kind_counts(&kinds);
+        let kind = counts[0].0;
         let label = super::attachment_kind_label(kind, language);
+        let summary = super::attachment_summary(&kinds, language);
         context.push(match language {
+            crate::world::Language::Ja if counts.len() > 1 => format!(
+                "【添付】この発話には{summary}が付いています。\
+                 **添付が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
+                 見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
+                 するときも添付は渡りません。**後から「あの添付を見せて」と頼まれたら、\
+                 もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**"
+            ),
+            crate::world::Language::En if counts.len() > 1 => format!(
+                "[Attachment] This message carries {summary}. \
+                 **The attachments reach you only on this turn** — from the next turn \
+                 on you cannot see them (they stay visible to the user). They are not \
+                 forwarded when you hand off or delegate to another servant either. \
+                 **If you are later asked to show those attachments, say that you no longer \
+                 have them and ask the user to attach them again, addressed to the \
+                 servant who needs them.**"
+            ),
             crate::world::Language::Ja => format!(
                 "【添付】この発話には{label}が {} 件付いています。\
                  **{label}が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
@@ -3334,14 +3355,14 @@ async fn dispatch_outcome(
         .await
         .language()
         .unwrap_or(crate::world::Language::Ja);
-    let dropped_kind = incoming.attachments.first().map(|a| a.kind());
+    let dropped_kinds = super::attachment_kinds(&incoming.attachments);
     let mut queued = Vec::with_capacity(deliveries.len());
     for (index, (to, message)) in deliveries.iter().enumerate() {
         let mut outgoing = AgentMessage::new(
             from.clone(),
             Endpoint::Agent { id: to.clone() },
             // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
-            note_dropped_attachment(message, dropped_kind, language),
+            note_dropped_attachment(message, &dropped_kinds, language),
             next_hop,
         );
         outgoing.tokens = if index == 0 { tokens as u32 } else { 0 };

@@ -303,7 +303,7 @@ impl Orchestrator {
     /// 添付つきのユーザー発話を投入する（Spec 23 = 画像 / Spec 36 = 多モーダル）。
     ///
     /// 添付はここで検証して `{workspace}/attachments/` へ保存し、発話には
-    /// **参照だけ**を載せる。上限は 1 発話 1 件（D5）。
+    /// **参照だけ**を載せる。上限は 1 発話 5 件・合計 12MB（Spec 73 D1 / D2）。
     ///
     /// # 門は 2 つあり、順序が意味を持つ（Spec 36 rev2）
     ///
@@ -315,7 +315,7 @@ impl Orchestrator {
     /// 逆にすると、拒否した添付のファイルが GC まで残る。
     ///
     /// # Errors
-    /// - 2 件以上・検証に落ちる添付は [`CoreError::InvalidAttachment`]
+    /// - 件数・合計バイトの超過、検証に落ちる添付は [`CoreError::InvalidAttachment`]
     /// - 宛先のワイヤが運べない種別は [`CoreError::AttachmentNotCarried`]
     ///
     /// どちらも**何も書かず、発話も投入しない**。
@@ -326,7 +326,7 @@ impl Orchestrator {
         co_recipients: &[AgentId],
         uploads: Vec<AttachmentUpload>,
     ) -> CoreResult<()> {
-        self.send_user_message_full(to, content, co_recipients, uploads, &[])
+        self.send_user_message_full(to, content, co_recipients, uploads, &[], &[])
             .await
     }
 
@@ -342,9 +342,22 @@ impl Orchestrator {
     /// 参照の検査は**何も書かない**ので先に済ませる。添付の保存を先にすると、参照で
     /// 拒否した発話の添付ファイルが GC まで残る（上の「1 が先」と同じ理由）。
     ///
+    /// # 再添付（Spec 73 D5）
+    ///
+    /// `attachment_refs` は会話ペインの「入力欄へ」で選んだ過去の添付の ID。**運ぶのは
+    /// ID だけ**で、形式・寸法・ファイル名はリング（`Shared.log`）の利用者の発話から引く。
+    /// ファイルは複製せず、通ったら mtime を更新して保持期間を延ばす（D6）。
+    ///
+    /// # 検査の順序（`attachment_contract` S73-5）
+    ///
+    /// 参照（Spec 58）→ 件数 → 再添付の解決 → `carries` → 合計バイト → 保存 → mtime。
+    /// **どの段で断っても何も書かない。** 発話の添付の並びは新しく貼ったもの → 再添付。
+    ///
     /// # Errors
     /// - 上の [`Self::send_user_message_with_attachments`] の 2 つ
     /// - 参照が無い・サーヴァント発でない・件数超過は [`CoreError::InvalidQuote`]
+    /// - 再添付の ID が引けない・ファイルが消えている・件数や合計の超過は
+    ///   [`CoreError::InvalidAttachment`]
     ///
     /// どれも**何も書かず、発話も投入しない**。
     pub async fn send_user_message_full(
@@ -354,34 +367,93 @@ impl Orchestrator {
         co_recipients: &[AgentId],
         uploads: Vec<AttachmentUpload>,
         quote_ids: &[String],
+        attachment_refs: &[String],
     ) -> CoreResult<()> {
+        use crate::attachment::{ATTACHMENT_MAX_MESSAGE_BYTES, ATTACHMENT_MAX_PER_MESSAGE};
+
         // **参照が無ければリングを 1 回も読まない** — 使わない村の経路を変えない。
         let quotes = if quote_ids.is_empty() {
             Vec::new()
         } else {
             self.resolve_quotes(to, quote_ids).await?
         };
-        if uploads.len() > 1 {
+        // 同じ ID が 2 回並んだら 1 件にまとめてから数える（S73-1。参照と同じ順序）。
+        let mut ref_ids: Vec<&str> = Vec::with_capacity(attachment_refs.len());
+        for id in attachment_refs {
+            if !ref_ids.contains(&id.as_str()) {
+                ref_ids.push(id);
+            }
+        }
+        let count = uploads.len() + ref_ids.len();
+        if count > ATTACHMENT_MAX_PER_MESSAGE {
             return Err(CoreError::InvalidAttachment {
-                reason: "1 つの発話に添付できるのは 1 件までです".to_owned(),
+                reason: format!(
+                    "1 つの発話に添付できるのは {ATTACHMENT_MAX_PER_MESSAGE} 件までです（{count} 件）"
+                ),
             });
         }
-        // 宛先のワイヤがこの種別を運べるか（Spec 36 D2）。
+        // 再添付の参照をリングから引き、ファイルが残っているかと大きさを見る（S73-5）。
+        let mut reattached = Vec::with_capacity(ref_ids.len());
+        let mut ref_bytes: u64 = 0;
+        for id in &ref_ids {
+            let attachment = self.find_reattachable(id).await?;
+            let Some(len) = self.shared.attachments.stored_len(&attachment).await? else {
+                return Err(CoreError::InvalidAttachment {
+                    reason: "この添付は保持期間を過ぎて削除されました".to_owned(),
+                });
+            };
+            ref_bytes += len;
+            reattached.push(attachment);
+        }
+        // 宛先のワイヤがこの種別を運べるか（Spec 36 D2）。1 件ずつ見て、1 件でも
+        // 運べなければ発話ごと断る（S73-3）。
         //
         // **添付が無ければテンプレートを 1 回も引かない** — 添付を使わない村の
         // 経路が 1 ミリも変わらないことが Goal（使わない人に払わせない）の機械側。
-        if !uploads.is_empty() {
-            self.reject_uncarried_attachments(to, &uploads).await?;
+        if count > 0 {
+            self.reject_uncarried_attachments(to, &uploads, &reattached)
+                .await?;
+        }
+        // 合計バイト（S73-2）。新しく貼ったものは保存されるバイト = 受け取ったバイト。
+        let total = uploads.iter().map(|u| u.bytes.len() as u64).sum::<u64>() + ref_bytes;
+        if total > ATTACHMENT_MAX_MESSAGE_BYTES {
+            return Err(CoreError::InvalidAttachment {
+                reason: format!(
+                    "1 つの発話の添付は合計 {} MB までです（{:.1} MB）",
+                    ATTACHMENT_MAX_MESSAGE_BYTES / (1024 * 1024),
+                    total as f64 / (1024.0 * 1024.0)
+                ),
+            });
         }
         // 保存は発話の記録より**前**。検証に落ちたら発話ごと拒否する —
         // 「添付なしで送信されました」は、送った人の意図と黙って食い違う。
-        let mut attachments = Vec::with_capacity(uploads.len());
+        let mut attachments = Vec::with_capacity(count);
         for upload in &uploads {
             attachments.push(
                 self.shared
                     .attachments
                     .save(&upload.file_name, &upload.bytes)
                     .await?,
+            );
+        }
+        // 再添付は保持期間を延ばす（D6）。**失敗しても送信は止めない** — 延びないだけで、
+        // 今回のターンには影響しない。
+        let now = std::time::SystemTime::now();
+        for attachment in &reattached {
+            if let Err(err) = self.shared.attachments.touch(attachment, now).await {
+                note!(
+                    "attachment touch failed: agent={to} id={} err={err}",
+                    attachment.id
+                );
+            }
+        }
+        attachments.extend(reattached);
+        // 2 件以上か再添付があるときだけ 1 行（S73-8）。添付 1 件の新しい発話では
+        // ログが Spec 73 以前と変わらない。
+        if count > 1 || !ref_ids.is_empty() {
+            note!(
+                "attachments: agent={to} count={count} bytes={total} refs={}",
+                ref_ids.len()
             );
         }
 
@@ -456,6 +528,25 @@ impl Orchestrator {
         }
     }
 
+    /// 再添付の ID から、リングに残っている**利用者の発話**の添付の参照を引く（Spec 73 D5）。
+    ///
+    /// 画面が出す添付は `listMessages`（= このリング）から引いているので、押せる添付は
+    /// 必ずここにある（Spec 58 の「候補の源は解決の源の部分集合」）。添付を持つのは
+    /// 利用者の発話だけだが、送り手は明示して確かめる — 別の送り手が添付を持つように
+    /// なった日に、他人の添付を黙って渡し直せる形にしない。新しい側から探す。
+    async fn find_reattachable(&self, id: &str) -> CoreResult<crate::attachment::Attachment> {
+        let log = self.shared.log.read().await;
+        log.iter()
+            .rev()
+            .filter(|message| matches!(message.from, Endpoint::User))
+            .flat_map(|message| message.attachments.iter())
+            .find(|attachment| attachment.id == id)
+            .cloned()
+            .ok_or_else(|| CoreError::InvalidAttachment {
+                reason: "この添付はもう参照できません".to_owned(),
+            })
+    }
+
     /// 「どの接続先なら運べるか」を **`carries` の表から組み立てる**（Spec 36 D2）。
     ///
     /// **案内文に接続先の名前を書き下さない。** 書き下すと表を変えたときに
@@ -501,6 +592,7 @@ impl Orchestrator {
         &self,
         to: &AgentId,
         uploads: &[AttachmentUpload],
+        reattached: &[crate::attachment::Attachment],
     ) -> CoreResult<()> {
         let provider = {
             let world = self.shared.world.read().await;
@@ -517,21 +609,23 @@ impl Orchestrator {
             .language()
             .unwrap_or(crate::world::Language::Ja);
 
-        for upload in uploads {
-            let Some(format) = crate::attachment::detect_format(&upload.bytes) else {
-                continue; // 形式不明は save の検証が断る
-            };
-            let kind = format.kind();
+        // 新しく貼ったもの → 再添付の順。形式不明の upload は save の検証が断るので飛ばす。
+        let kinds = uploads
+            .iter()
+            .filter_map(|upload| crate::attachment::detect_format(&upload.bytes))
+            .map(|format| (format.kind(), "upload"))
+            .chain(reattached.iter().map(|a| (a.kind(), "ref")));
+        for (kind, source) in kinds {
             if provider.carries(kind) {
                 note!(
-                    "attachment kind: agent={to} kind={} provider={} outcome=ok",
+                    "attachment kind: agent={to} kind={} provider={} outcome=ok source={source}",
                     kind.as_str(),
                     provider.as_str(),
                 );
                 continue;
             }
             note!(
-                "attachment kind: agent={to} kind={} provider={} outcome=rejected",
+                "attachment kind: agent={to} kind={} provider={} outcome=rejected source={source}",
                 kind.as_str(),
                 provider.as_str(),
             );

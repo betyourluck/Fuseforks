@@ -183,7 +183,7 @@ pub(super) async fn run_judge(
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
     waiting: &[AgentId],
-    drops_attachment: Option<crate::attachment::AttachmentKind>,
+    drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
 ) -> CoreResult<String> {
     let language = shared.world.read().await.language().unwrap_or(Language::Ja);

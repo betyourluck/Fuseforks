@@ -3,7 +3,8 @@
 - 起票: 2026-10-30
 - 状態: **Draft rev2・未決 0**（2026-10-30 利用者裁定「推奨どおりで」— 件数の上限は 5 / 再添付は `@@` に
   混ぜずボタンだけ）→ **P0 完了**（同日。`data_contract` の `attachment_contract` に「Spec 73 改訂」の節 =
-  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）。査読は開けていない
+  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）→ **P1 完了**（同日。コア。記録は「P1 実装記録」）。
+  査読は開けていない
 - 起点: 利用者（2026-10-29）の要望 3 つのうち 2 つ目と 3 つ目（1 つ目は [Spec 72](72_approval-stops-the-turn.md)）—
   「添付画像は現在 1 つまでしか貼れない。これは複数貼れたほうが良い」
   「過去の添付画像をもう一度、エージェントのプロンプトで見せられるようにしたい」。
@@ -230,3 +231,31 @@ mtime の更新に失敗しても送信は止めない（計器 1 行。保持�
   気付く契機が無かった。2 つの鍵を切り出して読み、別々の鍵として読めることを確かめた
 - **追従**: Spec 23 D5 / Spec 36 D5 / Spec 70 の上限の段落に行き先を 1 行ずつ。コードのコメント
   （`runtime.rs:306 / 366`・`turn.rs:3131`・`ChatInput.vue:17 / 140`・`tests/orchestrator.rs:7940`）は P1・P2 で直す
+
+## P1 実装記録（2026-10-30）
+
+- **送信入口**（`runtime.rs` の `send_user_message_full` に引数 `attachment_refs: &[String]`）— 参照（Spec 58）→ 件数 →
+  再添付の解決 → `carries` → 合計バイト → 保存 → mtime の順で、どの段で断っても何も書かない。再添付の解決は
+  `find_reattachable`（リングを新しい側から、**送り手が利用者の発話だけ**を見る）+ `AttachmentStore::stored_len`
+  （ファイルが無ければ `None` = 「削除されました」）。発話の添付の並びは新しく貼ったもの → 再添付
+- **定数** `ATTACHMENT_MAX_PER_MESSAGE` = 5 / `ATTACHMENT_MAX_MESSAGE_BYTES` = 12MB（`attachment.rs`）。
+  `AttachmentStore::touch` は `spawn_blocking` で書き込みに開いて `set_modified` するだけ（中身は触らない）
+- **`reject_uncarried_attachments`** は新しく貼ったもの（形式不明は飛ばして `save` に任せる）→ 再添付の順に種別を見る。
+  計器 `attachment kind:` の末尾に `source=upload|ref`。`attachments: agent=… count=N bytes=… refs=M` は 2 件以上か
+  再添付があるときだけ / mtime の更新に失敗したら `attachment touch failed:`
+- **モデルへ届く 2 つの文** — `mod.rs` に `attachment_kinds` / `attachment_kind_counts` / `attachment_summary`。
+  `note_dropped_attachment` は `Option<AttachmentKind>` から種別の列へ（`ask` / `plan` / 判断役 / 転送の 5 箇所）。
+  畳んだ文脈の 1 行は種別が混ざったときだけ別の文（件数の語を 1 か所・残りは「添付」/ "attachments"・英語は
+  them / They で受ける）。**日本語の「と」の後ろに英字の種別語が来たら半角の空白を 1 つ挟む**（「画像 2 件と PDF 1 件」。
+  1 回目の単体で「画像 2 件とPDF 1 件」になって赤 — 契約と Spec の例の表記に実装を合わせた）
+- **IPC の Rust 側**（`commands.rs` の `send_user_message` に `attachment_refs: Option<Vec<String>>`）も入れた。
+  フロントが渡すのは P2
+- **テスト** — 単体 3 本（`attachment_summary_tests`：宣言順・1 件の文のバイト等価・複数の断り書き）/ 結合 12 本
+  （`tests/orchestrator.rs`：6 件目の拒否（旧「2 件目の拒否」を置き換え）/ 1 件の文の golden（直前の turn.rs の文面を写した）/
+  3 枚 / 混在の文 / 混在に運べない 1 件 / 合計 12MB 超と 1 件なら通る対照 / 再添付で同じ id・ファイルが増えない・
+  同じ id の 2 回は 1 件 / 引けない id と消えたファイル / mtime / 再添付も件数に入る / Gemini に送った動画を
+  OpenAI 互換へ渡し直すと断る / 転送の断り書き「画像 2 件」）
+- **変異 6 回とも予測どおり**（重複をまとめない → 1 本 / 件数の門を外す → 2 本 / 合計の門 → 1 本 / 再添付を carries に
+  通さない → 1 本 / mtime を更新しない → 1 本 / 混在の文の枝を外す → 1 本）。復元は SHA で確認
+- **検証**: GUI を除く workspace 1,469 本全緑・clippy 0。**1 回目の全体テストは集計が空**だった — `link.exe` の 1181
+  （D: の空き 3.5 GB）で 1 本も走っていなかった（#132 の形）。`target/debug/incremental`（19 GB）を消して回し直した

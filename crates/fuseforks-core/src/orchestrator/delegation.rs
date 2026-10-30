@@ -59,7 +59,7 @@ pub(super) async fn ask_agent(
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
     waiting: &[AgentId],
-    drops_attachment: Option<crate::attachment::AttachmentKind>,
+    drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
 ) -> CoreResult<String> {
     // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
@@ -313,7 +313,7 @@ pub(super) async fn run_plan(
     budget: Option<&Arc<BudgetPool>>,
     participants: Option<&Participants>,
     waiting: &[AgentId],
-    drops_attachment: Option<crate::attachment::AttachmentKind>,
+    drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
 ) -> String {
     // 断り書きは記録時の言語で書く（Spec 35 D6）。波の全タスクで同じ値なので

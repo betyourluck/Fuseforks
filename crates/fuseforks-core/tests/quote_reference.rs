@@ -181,7 +181,7 @@ async fn send_with_quotes(
     ids: &[String],
 ) -> Result<(), CoreError> {
     orchestrator
-        .send_user_message_full(&reader(), content, &[], Vec::new(), ids)
+        .send_user_message_full(&reader(), content, &[], Vec::new(), ids, &[])
         .await
 }
 

@@ -7937,9 +7937,10 @@ async fn an_attached_image_reaches_the_model_once_and_never_again() {
     );
 }
 
-/// 1 発話 1 枚の上限（D5）。2 枚は発話ごと拒否され、何も書かれない。
+/// 1 発話 5 件の上限（Spec 73 S73-1。旧 D5 の「2 件目は拒否」を置き換えた）。
+/// 6 件は発話ごと拒否され、何も書かれない。
 #[tokio::test]
-async fn a_second_attachment_is_rejected_before_anything_is_written() {
+async fn a_sixth_attachment_is_rejected_before_anything_is_written() {
     let dir = TempDir::new("attach-limit");
     let orchestrator = setup(&dir, OrchestratorConfig::default()).await;
 
@@ -7955,13 +7956,429 @@ async fn a_second_attachment_is_rejected_before_anything_is_written() {
         bytes: tiny_webp(),
     };
     let err = orchestrator
-        .send_user_message_with_attachments(&a, "2 枚見て", &[], vec![upload(), upload()])
+        .send_user_message_with_attachments(&a, "6 枚見て", &[], (0..6).map(|_| upload()).collect())
         .await
         .unwrap_err();
     assert_eq!(err.code(), "INVALID_ATTACHMENT");
+    assert!(err.to_string().contains("5 件"), "上限が文面に出ること: {err}");
     assert!(
         !dir.0.join("attachments").exists(),
         "拒否した発話の画像が書かれていないこと"
+    );
+}
+
+/// 起動した 1 体（既定のテンプレート = OpenAI 互換）を用意する。
+async fn single_agent(dir: &TempDir, backend: Arc<RequestProbeBackend>) -> (Orchestrator, AgentId) {
+    let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
+    let a = AgentId::from("agent_a");
+    orchestrator
+        .create_agent(AgentSpec::new(a.clone(), "ザリ", "tpl"))
+        .await
+        .unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    (orchestrator, a)
+}
+
+fn webp_upload(name: &str) -> fuseforks_core::AttachmentUpload {
+    fuseforks_core::AttachmentUpload {
+        file_name: name.into(),
+        bytes: tiny_webp(),
+    }
+}
+
+/// 最後の user 発話（添付つきの 1 通）を返す。
+fn last_user_turn(request: &ChatRequest) -> &fuseforks_core::llm::ChatMessage {
+    request
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .expect("user 発話があること")
+}
+
+/// **添付 1 件の文は Spec 73 以前と 1 バイトも変わらない**（S73-4。Goal 3）。
+///
+/// 期待値は Spec 73 の直前の turn.rs の文面をそのまま写した。
+#[tokio::test]
+async fn a_single_attachment_note_keeps_the_pre_spec73_bytes() {
+    let dir = TempDir::new("attach-single-golden");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, a) = single_agent(&dir, backend.clone()).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(&a, "見て", &[], vec![webp_upload("a.png")])
+        .await
+        .unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.requests.lock().unwrap();
+    let turn = last_user_turn(&requests[0]);
+    let expected = "【添付】この発話には画像が 1 件付いています。\
+         **画像が渡るのはこのターンだけ**で、次のターン以降はあなたからは\
+         見えません（利用者の画面には残ります）。他のサーヴァントへ転送・委譲\
+         するときも画像は渡りません。**後から「あの画像を見せて」と頼まれたら、\
+         もう手元に無いことを伝え、宛先を指定して貼り直すよう案内してください。**";
+    assert!(turn.content.contains(expected), "1 件の文: {}", turn.content);
+    assert_eq!(turn.attachments.len(), 1);
+}
+
+/// 3 枚を 1 発話で送ると、3 枚ともモデルへ渡る（Spec 73 D1）。
+#[tokio::test]
+async fn three_images_reach_the_model_in_one_turn() {
+    let dir = TempDir::new("attach-three");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, a) = single_agent(&dir, backend.clone()).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "3 枚を比べて",
+            &[],
+            vec![webp_upload("1.png"), webp_upload("2.png"), webp_upload("3.png")],
+        )
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let sent = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::User)
+        .expect("ユーザー発話が記録されること");
+    assert_eq!(sent.attachments.len(), 3);
+    let requests = backend.requests.lock().unwrap();
+    let turn = last_user_turn(&requests[0]);
+    assert_eq!(turn.attachments.len(), 3, "3 枚ともワイヤに載ること");
+    assert!(turn.content.contains("この発話には画像が 3 件付いています"), "{}", turn.content);
+}
+
+/// 種別が混ざった組は、件数の語を 1 か所に置き残りを「添付」で受ける（S73-4）。
+#[tokio::test]
+async fn a_mixed_set_is_named_by_kind_and_count() {
+    let dir = TempDir::new("attach-mixed");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, a) = single_agent(&dir, backend.clone()).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "画像と PDF を読んで",
+            &[],
+            vec![
+                fuseforks_core::AttachmentUpload {
+                    file_name: "report.pdf".into(),
+                    bytes: tiny_pdf(),
+                },
+                webp_upload("shot.png"),
+            ],
+        )
+        .await
+        .unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let requests = backend.requests.lock().unwrap();
+    let turn = last_user_turn(&requests[0]);
+    assert_eq!(turn.attachments.len(), 2);
+    assert!(
+        turn.content.contains("この発話には画像 1 件と PDF 1 件が付いています"),
+        "{}",
+        turn.content
+    );
+    assert!(turn.content.contains("あの添付を見せて"), "{}", turn.content);
+    assert!(!turn.content.contains("あの画像を見せて"), "先頭の種別名で全件を呼ばないこと");
+}
+
+/// 1 件でも運べない種別が混ざると、発話ごと断る（S73-3）。
+#[tokio::test]
+async fn one_uncarried_kind_rejects_the_whole_set() {
+    let dir = TempDir::new("attach-mixed-uncarried");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, a) = single_agent(&dir, backend.clone()).await;
+
+    let err = orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "画像と動画",
+            &[],
+            vec![
+                webp_upload("shot.png"),
+                fuseforks_core::AttachmentUpload {
+                    file_name: "clip.mp4".into(),
+                    bytes: tiny_mp4(),
+                },
+            ],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "ATTACHMENT_NOT_CARRIED");
+    assert!(!dir.0.join("attachments").exists(), "画像も書かれていないこと");
+    assert!(backend.requests.lock().unwrap().is_empty());
+}
+
+/// 1 件ずつは上限内でも、合計が 12MB を超えると断る（S73-2）。
+#[tokio::test]
+async fn a_set_over_the_total_limit_is_rejected() {
+    let dir = TempDir::new("attach-total");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, a) = single_agent(&dir, backend.clone()).await;
+
+    // 7MB の PDF（1 件の上限 10MB の内側）を 2 つ = 14MB。
+    let big_pdf = || {
+        let mut bytes = tiny_pdf();
+        bytes.resize(7 * 1024 * 1024, b' ');
+        fuseforks_core::AttachmentUpload {
+            file_name: "big.pdf".into(),
+            bytes,
+        }
+    };
+    let err = orchestrator
+        .send_user_message_with_attachments(&a, "2 つ読んで", &[], vec![big_pdf(), big_pdf()])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ATTACHMENT");
+    assert!(err.to_string().contains("12 MB"), "上限が文面に出ること: {err}");
+    assert!(!dir.0.join("attachments").exists(), "何も書かれていないこと");
+
+    // 正の対照: 1 つなら通る（門は合計にあって 1 件にはない）。
+    orchestrator
+        .send_user_message_with_attachments(&a, "1 つ読んで", &[], vec![big_pdf()])
+        .await
+        .expect("7MB の PDF 1 つは通ること");
+}
+
+/// 2 体を起動し、A へ画像を 1 枚送って、その添付の id を返す。
+async fn two_agents_after_an_image(
+    dir: &TempDir,
+    backend: Arc<RequestProbeBackend>,
+) -> (Orchestrator, AgentId, String) {
+    let orchestrator = setup_with(dir, backend, OrchestratorConfig::default()).await;
+    let a = AgentId::from("agent_a");
+    let b = AgentId::from("agent_b");
+    for (id, name) in [(&a, "ザリ"), (&b, "ブラボー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(&a, "この画像は何？", &[], vec![webp_upload("shot.png")])
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let id = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::User)
+        .expect("ユーザー発話が記録されること")
+        .attachments[0]
+        .id
+        .clone();
+    (orchestrator, b, id)
+}
+
+fn attachment_file_count(dir: &TempDir) -> usize {
+    std::fs::read_dir(dir.0.join("attachments")).unwrap().count()
+}
+
+/// 過去の添付を ID で別の個体へ渡し直せる。ファイルは複製しない（Spec 73 D5）。
+#[tokio::test]
+async fn a_past_attachment_can_be_sent_again_to_another_servant() {
+    let dir = TempDir::new("attach-reattach");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, b, id) = two_agents_after_an_image(&dir, backend.clone()).await;
+    assert_eq!(attachment_file_count(&dir), 1);
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_full(&b, "これも見て", &[], Vec::new(), &[], &[id.clone(), id.clone()])
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let sent = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::User && m.to == Endpoint::Agent { id: b.clone() })
+        .expect("B 宛ての発話が記録されること");
+    assert_eq!(sent.attachments.len(), 1, "同じ id の 2 回は 1 件にまとまること");
+    assert_eq!(sent.attachments[0].id, id, "元の発話と同じ id を指すこと");
+    assert_eq!(attachment_file_count(&dir), 1, "ファイルは複製されないこと");
+
+    let requests = backend.requests.lock().unwrap();
+    let turn = last_user_turn(requests.last().unwrap());
+    assert_eq!(turn.attachments.len(), 1);
+    use base64::Engine as _;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(&turn.attachments[0].data)
+            .unwrap(),
+        tiny_webp(),
+        "B のワイヤに元の画像が載ること"
+    );
+}
+
+/// 引けない id・消えたファイルは送信入口で断り、何も記録しない（S73-5）。
+#[tokio::test]
+async fn an_unknown_or_collected_attachment_cannot_be_sent_again() {
+    let dir = TempDir::new("attach-reattach-missing");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, b, id) = two_agents_after_an_image(&dir, backend.clone()).await;
+    let requests_before = backend.requests.lock().unwrap().len();
+
+    let err = orchestrator
+        .send_user_message_full(&b, "見て", &[], Vec::new(), &[], &["no-such-id".into()])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ATTACHMENT");
+    assert!(err.to_string().contains("もう参照できません"), "{err}");
+
+    std::fs::remove_file(dir.0.join("attachments").join(format!("{id}.webp"))).unwrap();
+    let err = orchestrator
+        .send_user_message_full(&b, "見て", &[], Vec::new(), &[], &[id])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ATTACHMENT");
+    assert!(err.to_string().contains("削除されました"), "{err}");
+    assert_eq!(
+        backend.requests.lock().unwrap().len(),
+        requests_before,
+        "どちらもターンを起こさないこと"
+    );
+}
+
+/// 再添付したファイルは mtime が今へ動き、保持期間が延びる（S73-6）。
+#[tokio::test]
+async fn sending_an_attachment_again_extends_its_retention() {
+    let dir = TempDir::new("attach-reattach-touch");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, b, id) = two_agents_after_an_image(&dir, backend.clone()).await;
+
+    let path = dir.0.join("attachments").join(format!("{id}.webp"));
+    let old = std::time::SystemTime::now() - Duration::from_secs(20 * 24 * 60 * 60);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+
+    let before = std::time::SystemTime::now() - Duration::from_secs(1);
+    orchestrator
+        .send_user_message_full(&b, "これも見て", &[], Vec::new(), &[], &[id])
+        .await
+        .unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    assert!(modified >= before, "mtime が送信時刻へ動くこと: {modified:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), tiny_webp(), "中身は変わらないこと");
+}
+
+/// 件数は新しく貼ったものと再添付の合計で数える（S73-1）。
+#[tokio::test]
+async fn reattachments_count_toward_the_limit() {
+    let dir = TempDir::new("attach-reattach-count");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let (orchestrator, b, id) = two_agents_after_an_image(&dir, backend.clone()).await;
+
+    let five: Vec<_> = (0..5).map(|i| webp_upload(&format!("{i}.png"))).collect();
+    let err = orchestrator
+        .send_user_message_full(&b, "6 件", &[], five, &[], &[id])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "INVALID_ATTACHMENT", "新しく貼った 5 件 + 再添付 1 件 = 6 件");
+    assert_eq!(attachment_file_count(&dir), 1, "5 件も書かれていないこと");
+}
+
+/// 再添付は**新しい宛先の** carries で判定する（S73-5）。Gemini へ送った動画を、
+/// 動画を運べない OpenAI 互換の個体へ渡し直すと断る。
+#[tokio::test]
+async fn a_reattached_kind_is_checked_against_the_new_destination() {
+    let dir = TempDir::new("attach-reattach-carries");
+    let backend = Arc::new(RequestProbeBackend::default());
+    let orchestrator = setup_with(&dir, backend.clone(), OrchestratorConfig::default()).await;
+    let mut gemini = ModelTemplate::new("gem", "Gemini", "mock-model");
+    gemini.provider = Some(fuseforks_core::llm::Provider::Gemini);
+    orchestrator.upsert_template(gemini).await.unwrap();
+
+    let g = AgentId::from("agent_g");
+    let a = AgentId::from("agent_a");
+    for (id, name, tpl) in [(&g, "ジェミー", "gem"), (&a, "ザリ", "tpl")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, tpl))
+            .await
+            .unwrap();
+        orchestrator.start_agent(id).await.unwrap();
+    }
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &g,
+            "この動画は？",
+            &[],
+            vec![fuseforks_core::AttachmentUpload {
+                file_name: "clip.mp4".into(),
+                bytes: tiny_mp4(),
+            }],
+        )
+        .await
+        .expect("Gemini は動画を運べる");
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+    let id = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::User)
+        .unwrap()
+        .attachments[0]
+        .id
+        .clone();
+    let requests_before = backend.requests.lock().unwrap().len();
+
+    let err = orchestrator
+        .send_user_message_full(&a, "これも見て", &[], Vec::new(), &[], &[id])
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "ATTACHMENT_NOT_CARRIED");
+    assert_eq!(backend.requests.lock().unwrap().len(), requests_before, "ターンが起きないこと");
+}
+
+/// 転送の断り書きも件数で書く（S73-4）。
+#[tokio::test]
+async fn a_transfer_notes_every_dropped_attachment() {
+    let dir = TempDir::new("attach-transfer-many");
+    let orchestrator =
+        setup_with(&dir, Arc::new(AlwaysHandoffBackend), OrchestratorConfig::default()).await;
+
+    let a = AgentId::from("agent_a");
+    let b = AgentId::from("agent_b");
+    for (id, name) in [(&a, "ザリ"), (&b, "ブラボー")] {
+        orchestrator
+            .create_agent(AgentSpec::new(id.clone(), name, "tpl"))
+            .await
+            .unwrap();
+    }
+    orchestrator.set_connections(&a, vec![b.clone()]).await.unwrap();
+    orchestrator.start_agent(&a).await.unwrap();
+    orchestrator.start_agent(&b).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message_with_attachments(
+            &a,
+            "この 2 枚をブラボーに見せて",
+            &[],
+            vec![webp_upload("1.png"), webp_upload("2.png")],
+        )
+        .await
+        .unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    let forwarded = messages(&events)
+        .into_iter()
+        .find(|m| m.from == Endpoint::Agent { id: a.clone() } && m.to == Endpoint::Agent { id: b.clone() })
+        .expect("A から B への転送があること");
+    assert!(
+        forwarded.content.starts_with("（画像 2 件は転送されません）"),
+        "{}",
+        forwarded.content
     );
 }
 
