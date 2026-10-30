@@ -7181,12 +7181,13 @@ llm_wire:
         「ON なのに開いていない」が起こるので 1 つの真偽値に畳まない。
         bind の失敗は保存の失敗ではないので、エラーにせず `lastError` で返す
       - **閉じた直後の開け直しは bind をやり直す** (2026-10-30。`bind_with_retry` =
-        `AddrInUse` だけ 50 ms × 最長 20 回)。`stop` は cancel を投げるだけで serve
+        `AddrInUse` だけ 50 ms × 最長 40 回 = 2 秒。開発ビルドの実測は閉じてから開き直すまで
+        53 ms と 734 ms)。`stop` は cancel を投げるだけで serve
         タスクの終了を待たず、axum は accept ループを抜けてからリスナーを drop するので、
         合鍵の作り直し・ON のままの適用で**閉じた 1 ms 後の bind が 10048 で落ち、扉が
         閉じたままになっていた** (開発ビルドで実測)。serve タスクの終了を待つ形は採らない —
         graceful shutdown は飛行中の接続 (外部クライアントの SSE) が閉じるまで返らず、
-        リスナーの drop はその前に済む。本当に埋まっているポートは 1 秒後に同じ
+        リスナーの drop はその前に済む。本当に埋まっているポートは 2 秒後に同じ
         `AddrInUse` で `lastError` へ
 
     P0 実測 (2026-08-07。probe = rmcp 2.2 server + axum / scratchpad):

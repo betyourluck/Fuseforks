@@ -330,8 +330,10 @@ impl RunningServer {
 /// drop はその前に済んでいるので、待つ相手が違う。
 ///
 /// やり直すのは `AddrInUse` だけで、有界（[`BIND_RETRY_ATTEMPTS`] ×
-/// [`BIND_RETRY_DELAY`] = 最長 1 秒）。本当に他のプロセスが掴んでいるポートは
+/// [`BIND_RETRY_DELAY`] = 最長 2 秒）。本当に他のプロセスが掴んでいるポートは
 /// その窓の後に同じ `AddrInUse` で返り、画面の「待ち受けられませんでした」が出る。
+/// 窓の幅は実測から — 開発ビルドで閉じてから開き直すまで 53 ms と **734 ms** の
+/// 2 例があり、1 秒では余裕が薄い。
 pub(crate) async fn bind_with_retry(port: u16) -> std::io::Result<tokio::net::TcpListener> {
     let mut attempt = 1;
     loop {
@@ -346,7 +348,7 @@ pub(crate) async fn bind_with_retry(port: u16) -> std::io::Result<tokio::net::Tc
 }
 
 /// bind をやり直す回数の上限（最初の 1 回を含む）。
-const BIND_RETRY_ATTEMPTS: u32 = 20;
+const BIND_RETRY_ATTEMPTS: u32 = 40;
 /// やり直しの間隔。前のリスナーの drop は cancel の直後に走るタスクの中で済むので、
 /// 実際に待つのは最初の 1〜2 回で足りる。
 const BIND_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
