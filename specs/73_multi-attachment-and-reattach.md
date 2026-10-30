@@ -3,7 +3,7 @@
 - 起票: 2026-10-30
 - 状態: **Draft rev2・未決 0**（2026-10-30 利用者裁定「推奨どおりで」— 件数の上限は 5 / 再添付は `@@` に
   混ぜずボタンだけ）→ **P0 完了**（同日。`data_contract` の `attachment_contract` に「Spec 73 改訂」の節 =
-  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）→ **P1 完了**（同日。コア。記録は「P1 実装記録」）→ **P2 完了**（同日。画面。記録は「P2 実装記録」）→ **P3 完了**（同日。台帳。記録は「P3 台帳記録」）。
+  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）→ **P1 完了**（同日。コア。記録は「P1 実装記録」）→ **P2 完了**（同日。画面。記録は「P2 実装記録」）→ **P3 完了**（同日。台帳。記録は「P3 台帳記録」）→ **P4 完了 = Done**（同日。実機 6 件。合計 12MB の断りだけは実機で踏まずテストへ預けた。記録は「P4 実機記録」）。
   査読は開けていない
 - 起点: 利用者（2026-10-29）の要望 3 つのうち 2 つ目と 3 つ目（1 つ目は [Spec 72](72_approval-stops-the-turn.md)）—
   「添付画像は現在 1 つまでしか貼れない。これは複数貼れたほうが良い」
@@ -311,3 +311,31 @@ mtime の更新に失敗しても送信は止めない（計器 1 行。保持�
   回収 — 置き場の表の `attachments/*.webp` と 4-1 の「添付した画像」と削除の行（音声・動画・PDF を数えていなかった）。
   置き場の表に「渡し直すとその時点から数え直す」。最終更新日を 2026-10-30 へ
 - ランディングページは添付の件数を書いていないので触らない
+
+## P4 実機記録（2026-10-30）
+
+開発ビルド（`version: app=0.1.0 profile=debug`、15:40:44 起動）。判定は利用者の画面の報告と `fuseforks.log` の行を突き合わせた。
+
+- **検収 1 成立** — 15:43:08 にミュゼ（`agent_9`・meta-responses）へ画像 3 枚。`attachment kind: … kind=image … outcome=ok source=upload` が
+  3 行と `attachments: agent=agent_9 count=3 bytes=250488 refs=0`。答えは 3 枚を区別していた（利用者の確認）
+- **検収 2 成立** — 15:46:26 に PDF と画像を 1 通で（PDF を先に貼った）。`count=2 bytes=90927`。次のターンでモデルが
+  「画像 1 件と PDF 1 件」と答えた = 畳んだ文脈の 1 行は貼った順ではなく宣言順（画像・音声・動画・PDF）で書かれている。
+  文面の無い送信（`chars=0`）も通った
+- **検収 3 は半分だけ実機で見た** — 6 件目を貼ると取り込まれず、件数の理由が入力欄の下に出た（スクリーンショット）。
+  **合計 12MB の断りは実機で踏んでいない。** 画面の判定は `attachmentList.test.ts` の「合計が 12 MB を超える 1 件は合計で断り、
+  ちょうどは通す」、コアの門は `tests/orchestrator.rs` の `a_set_over_the_total_limit_is_rejected` に預けた（Spec 55 P6 と同じ扱い）
+  **追記（同日）**: 利用者が検収 3 として報告したトースト「添付が大きすぎます（画像 10MB / 音声・PDF 10MB / 動画 12MB）」は
+  `chatInput.attachTooLarge` = **1 件のファイルが種別ごとの上限を超えたときの断り**（Spec 36 D4・`lib/attachment.ts` の `prepareFile`）で、
+  合計の断り（`chatInput.attachLimit.bytes`「添付の合計が 12 MB を超えるため、取り込んでいません。」・入力欄の下）ではない。
+  合計の断りを踏むには、1 件ずつは上限の内側で足すと 12MB を超える組（7MB の PDF を 2 件など）を貼る
+- **検収 4 成立** — 15:50:06 にミュゼ（Meta）へ送った画像を「入力欄へ」で戻し、ザリ（`agent`・anthropic・claude-opus-5-5）へ送った。
+  `attachment kind: agent=agent kind=image provider=anthropic outcome=ok source=ref` と `attachments: … count=1 bytes=108886 refs=1`。
+  ターンは `stop=-` で完走し、`attachments/` のファイル数は 47 のまま（複製していない）。**事業者をまたいで渡し直せた**
+  （PRIVACY 4-1 に書いた形がそのまま起きた）
+- **検収 5 成立** — 渡し直した `46143275-…webp`（108,886 バイト = `bytes=` と一致）の作成時刻は 15:43:08、更新時刻は 15:50:06
+  = 送信の時刻。`attachment touch failed` の行は無い
+- **検収 6 成立** — 15:52:54 にルナ（`agent_8`・openai-responses・gpt-6.1-sol）へ動画を含む組を送ると
+  `attachment kind: agent=agent_8 kind=video provider=openai-responses outcome=rejected source=upload` の 1 行だけが出て、
+  **`turn start:` は出ていない**。利用者は入力欄に戻った組から動画を外して 15:53:04 に送り直し、画像だけで `turn start: … chars=0` →
+  `stop=-` で完走した = 失敗の後に文面と添付が入力欄へ戻ること（`restoreDraft`）も同じ走行で読める。
+  断られた送信で画像の `ok` 行が出ていないのは、判定が最初に運べない 1 件で止まるため（貼った順に見る。動画を先に貼った）
