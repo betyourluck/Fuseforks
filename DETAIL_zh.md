@@ -601,6 +601,13 @@ LLM 出现 `429`（RateLimit）或 `5xx` 时，采用指数退避加抖动重试
 
 应用图标源自 `fuseforks_icon.png`。如需重新生成，可按照既定脚本和规程对图标源文件进行处理。
 
+### 窗口的 Content Security Policy
+
+发布版的窗口用 CSP 限制可加载的资源（`tauri.conf.json` 的 `security.csp`）。只允许应用自带的脚本、样式、字体、worker，以及
+`data:` / `blob:` 图像；外部的图像、脚本、字体和 `eval` 会被拦截。窗口本身不与任何外部主机通信 — LLM、价格表、MCP 的通信都从 Rust 侧发出。
+`style-src` 允许 `'unsafe-inline'` 并关闭了 Tauri 自动追加的哈希（`dangerousDisableAssetCspModification`），否则数学公式（KaTeX）写出的 `style` 属性会被拦截。
+**开发版不受 CSP 约束**（Windows 开发版直接加载 Vite 的页面）。已在 Windows 发布版上验证，macOS 与 Linux 尚未验证。
+
 ### 诊断日志
 
 应用会记录详细的诊断日志，格式统一规范。可以通过界面或后台日志文件进行排查，便于追踪错误、超时及调用链异常。
