@@ -318,6 +318,39 @@ impl RunningServer {
     }
 }
 
+/// 127.0.0.1 の `port` を bind する。
+///
+/// **閉じた直後の開け直しは、前のリスナーがまだ手放されていない窓を踏む。**
+/// [`RunningServer::stop`] は cancel を投げるだけで serve タスクの終了を待たず、
+/// axum は accept ループを抜けてからリスナーを drop する（`axum::serve` の graceful
+/// shutdown）。その drop より先に同じポートへ bind すると `AddrInUse`（Windows は
+/// 10048）で落ち、扉が閉じたままになる — 2026-10-30 に合鍵の作り直しで実機で踏んだ
+/// （閉じた 1 ms 後の bind）。serve タスクの終了を待つ形は採らない — graceful
+/// shutdown は飛行中の接続（外部クライアントの SSE）が閉じるまで返らず、リスナーの
+/// drop はその前に済んでいるので、待つ相手が違う。
+///
+/// やり直すのは `AddrInUse` だけで、有界（[`BIND_RETRY_ATTEMPTS`] ×
+/// [`BIND_RETRY_DELAY`] = 最長 1 秒）。本当に他のプロセスが掴んでいるポートは
+/// その窓の後に同じ `AddrInUse` で返り、画面の「待ち受けられませんでした」が出る。
+pub(crate) async fn bind_with_retry(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    let mut attempt = 1;
+    loop {
+        match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await {
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse && attempt < BIND_RETRY_ATTEMPTS => {
+                attempt += 1;
+                tokio::time::sleep(BIND_RETRY_DELAY).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// bind をやり直す回数の上限（最初の 1 回を含む）。
+const BIND_RETRY_ATTEMPTS: u32 = 20;
+/// やり直しの間隔。前のリスナーの drop は cancel の直後に走るタスクの中で済むので、
+/// 実際に待つのは最初の 1〜2 回で足りる。
+const BIND_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// 扉を開ける。
 ///
 /// bind は **127.0.0.1 固定**（凍結 4）。トークン必須でも `0.0.0.0` で開けば
@@ -357,8 +390,7 @@ pub async fn start(
             require_bearer_token,
         ));
 
-    let listener =
-        tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+    let listener = bind_with_retry(port).await?;
     let actual_port = listener.local_addr()?.port();
     let shutdown = cancel.clone();
     // `tokio::spawn` で足りる — ここを呼ぶのは Tauri の async runtime（= tokio）の
@@ -691,5 +723,61 @@ mod tests {
         assert_eq!(reloaded.config().token.as_deref(), Some(token.as_str()));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 閉じた直後の開け直し — **前のリスナーが手放されるまで bind をやり直す。**
+    ///
+    /// 実機の形（2026-10-30）: 合鍵の作り直しで `stop()` の 1 ms 後に同じポートへ
+    /// bind し、10048 で扉が閉じたままになった。ここでは前のリスナーを別のタスクが
+    /// 少し遅れて drop する形で同じ窓を作る（実時間 0.2 秒）。
+    #[tokio::test]
+    async fn rebinding_right_after_a_close_waits_for_the_old_listener() {
+        let old = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = old.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            drop(old);
+        });
+
+        let listener = bind_with_retry(port)
+            .await
+            .expect("前のリスナーが手放された後に bind できること");
+        assert_eq!(listener.local_addr().unwrap().port(), port);
+    }
+
+    /// やり直しは有界 — **本当に他のプロセスが掴んでいるポートは `AddrInUse` で返す**
+    /// （永遠に待つと「ポートが埋まっている」が画面に出ない）。やり直しの窓ぶんの実時間を払う。
+    #[tokio::test]
+    async fn a_port_that_stays_taken_is_still_reported_as_in_use() {
+        let held = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = held.local_addr().unwrap().port();
+
+        let err = bind_with_retry(port)
+            .await
+            .expect_err("掴まれたままのポートは失敗で返ること");
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+        drop(held);
+    }
+
+    /// `start` が直に bind せず、やり直しの経路を通ることを**字面で留める**
+    /// （直に bind へ戻すと、上の 2 本は緑のまま扉だけが再び閉じたままになる）。
+    #[test]
+    fn start_binds_through_the_retrying_helper() {
+        let source = include_str!("mcp_server.rs");
+        let start = source.find("pub async fn start(").expect("start があること");
+        let end = source[start..]
+            .find("Ok(RunningServer {")
+            .map(|i| start + i)
+            .expect("start の終わりがあること");
+        let body = &source[start..end];
+        assert!(body.contains("bind_with_retry(port)"), "start はやり直しの経路で bind する");
+        assert!(
+            !body.contains("TcpListener::bind("),
+            "start の中で直に bind しない"
+        );
     }
 }
