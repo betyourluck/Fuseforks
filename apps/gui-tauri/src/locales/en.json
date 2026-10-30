@@ -468,10 +468,22 @@
     "sendEnter": "Send (Enter)",
     "cannotSend": "Cannot send",
     "hint": "Enter to send / Shift+Enter for a new line",
-    "attach": "Attach a file (image, audio, video, PDF — paste also works)",
+    "attach": "Attach files (image, audio, video, PDF — up to 5; paste also works)",
     "attachNote": "This attachment is sent to the model for this turn only. From the next turn on, the model cannot see it (it stays visible here).",
     "attachScaled": "Scaled down to {px}px on the long edge.",
     "attachRemove": "Remove attachment",
+    "attachRef": "Re-sent",
+    "attachRefHint": "A past attachment re-sent from the chat pane. Only its ID is sent, not the file.",
+    "attachTotal": "{count} / {max} files · {size} MB / {limit} MB",
+    "attachLimit": {
+      "count": "A message can carry up to {max} attachments. The rest were not added.",
+      "bytes": "Not added: the attachments would exceed {limit} MB in total.",
+      "duplicate": "This attachment is already in the input."
+    },
+    "attachOver": {
+      "count": "More than {max} attachments. Remove some before sending.",
+      "bytes": "The attachments exceed {limit} MB in total. Remove some before sending."
+    },
     "attachConverting": "Converting image…",
     "attachTooLarge": "The attachment is too large (image 10MB / audio, PDF 10MB / video 12MB)",
     "attachConvertedTooLarge": "The converted image is too large (limit: 2MB)",
@@ -704,6 +716,9 @@
     "copy": "Copy text",
     "empty": "No messages yet.",
     "attachmentDeleted": "This attachment was deleted after its retention period",
+    "reattach": "To input",
+    "reattachHint": "Put this attachment back in the input to send it to the selected servant (the file is not copied)",
+    "reattachBlocked": "The selected servant is not running, so the attachment cannot be put back in the input",
     "externalBadge": "external",
     "clearedNote": "Earlier messages hidden: {count} (the conversation is still there)",
     "clearedRestore": "Show all",

@@ -14,9 +14,13 @@
  * 画像の添付（Spec 23 P4）。入口は**貼り付けと「参照…」の 2 つ**（D4 —
  * ドラッグ&ドロップは Tauri の `dragDropEnabled` が drop を横取りするので
  * 入れない）。変換（縮小 + WebP 化）は WebWorker で行い、この画面は
- * チップの表示と送信への同乗だけを持つ。上限は 1 発話 1 枚（D5）で、
- * 2 枚目を選んだら**置き換える**（チップが 1 枚しか出ない画面で「2 枚目は
- * 拒否」にすると、置き換えたつもりの操作が黙って無視される）。
+ * チップの表示と送信への同乗だけを持つ。
+ *
+ * 添付は**列**（Spec 73 D7）。1 発話 5 件・合計 12 MB まで（コアと同じ上限）。
+ * 貼り付けはクリップボードの全ファイルを、「参照…」は複数選択を受ける。上限を超える分は
+ * **取り込む前に断り、理由を入力欄の下に出す**（6 件目以降を黙って捨てない）。
+ * 会話ペインの「入力欄へ」で過去の添付を渡し直せ、そのチップは**添付 ID だけ**を運ぶ
+ * （ファイルは読み直して大きさを測るだけで、送らない）。規則は `lib/attachmentList.ts`。
  *
  * 会話の参照（Spec 58）。`@@` でこの会話のサーヴァントの発話を選ぶと、参照の
  * チップが付く。**入力欄の文面には何も挿さない** — 運ぶのは発話 ID だけで、写しを
@@ -28,10 +32,26 @@ import { useI18n } from "vue-i18n";
 import {
   AttachmentError,
   MAX_EDGE_PX,
+  bytesToBase64,
   prepareFile,
   type PendingAttachment,
 } from "../lib/attachment";
-import { carries, carriersOf, effectiveProvider } from "../lib/carries";
+import {
+  MAX_ATTACHMENTS,
+  MAX_MESSAGE_BYTES,
+  admit,
+  formatMegabytes,
+  kindOf,
+  kindsIn,
+  overLimit,
+  refKey,
+  roomFor,
+  splitForSend,
+  totalBytes,
+  type AttachLimit,
+  type DraftAttachment,
+} from "../lib/attachmentList";
+import { carries, carriersOf, effectiveProvider, type AttachmentKind } from "../lib/carries";
 import {
   applyCompletion,
   findTrigger,
@@ -52,10 +72,10 @@ import {
   type QuoteCandidate,
   type QuoteChip,
 } from "../lib/quoteRef";
-import { listWorkDirFiles } from "../lib/ipc";
+import { listWorkDirFiles, readAttachment } from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { contextArc, contextPercent, contextRatio, contextTone } from "../lib/contextUsage";
-import type { AgentId } from "../types";
+import type { AgentId, Attachment } from "../types";
 
 const props = defineProps<{
   /** 送信できない状態か。 */
@@ -99,6 +119,8 @@ const props = defineProps<{
     text: string,
     attachments: PendingAttachment[],
     quoteIds: string[],
+    /** 渡し直す過去の添付の ID（Spec 73 D5）。本体は送らない。 */
+    attachmentRefs: string[],
   ) => Promise<boolean>;
 }>();
 
@@ -137,34 +159,86 @@ const text = ref("");
 const area = ref<HTMLTextAreaElement | null>(null);
 const filePicker = ref<HTMLInputElement | null>(null);
 
-/** 送信待ちの添付（D5: 1 枚まで）。 */
-const attachment = ref<PendingAttachment | null>(null);
+/** 送信待ちの添付の列（Spec 73 D7。5 件・合計 12 MB まで）。 */
+const attachments = ref<DraftAttachment[]>([]);
 /** 変換中か。中は送信もチップの × も待たせる。 */
 const converting = ref(false);
+/**
+ * 取り込みを断った理由（入力欄の下に出す）。次に足せたとき・外したとき・送ったときに消す —
+ * 残すと、もう当てはまらない理由が出続ける。
+ */
+const attachRefusal = ref<AttachLimit | null>(null);
+/** 再添付のサムネイル（data URL）。鍵はチップの `key`。画像のときだけ。 */
+const refPreviews = ref<Record<string, string>>({});
+/** 新しく貼ったものの鍵。毎回別の値にする（同じファイルを 2 回貼っても 2 件）。 */
+let uploadSeq = 0;
 /** 送信待ちの会話の参照（Spec 58。3 件まで）。 */
 const quotes = ref<readonly QuoteChip[]>([]);
 /** 参照が上限に達しているか。候補の行を押せなくし、理由を出す。 */
 const quotesFull = computed(() => quotes.value.length >= MAX_QUOTES);
 
+/**
+ * 列が上限を超えているか（送信を止める）。普通の操作では `admit` が手前で断るので、
+ * 起きるのは送信に失敗した下書きを戻して待っている間の分と重なったときだけ。
+ */
+const attachmentsOver = computed(() => overLimit(attachments.value));
+
 const canSend = computed(
   () =>
-    (!!text.value.trim() || !!attachment.value || quotes.value.length > 0) &&
+    (!!text.value.trim() || attachments.value.length > 0 || quotes.value.length > 0) &&
     !props.disabled &&
-    !converting.value,
+    !converting.value &&
+    attachmentsOver.value === null,
 );
 
 /** チップに出すサイズ表記。 */
-const attachmentSize = computed(() => {
-  if (!attachment.value) return "";
-  return `${Math.max(1, Math.round(attachment.value.bytes / 1024))} KB`;
-});
+function chipSize(item: DraftAttachment): string {
+  const bytes = item.source === "upload" ? item.file.bytes : item.bytes;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 /** チップに出す寸法（画像のときだけ）。 */
-const attachmentDimensions = computed(() => {
-  const a = attachment.value;
-  if (!a || a.width === undefined || a.height === undefined) return "";
+function chipDimensions(item: DraftAttachment): string {
+  const a = item.source === "upload" ? item.file : item.ref;
+  if (a.width === undefined || a.height === undefined) return "";
   return `${a.width}×${a.height} / `;
-});
+}
+
+/** チップのファイル名。 */
+function chipName(item: DraftAttachment): string {
+  return item.source === "upload" ? item.file.fileName : item.ref.fileName;
+}
+
+/** チップのサムネイル（画像のときだけ。無ければアイコン）。 */
+function chipPreview(item: DraftAttachment): string | null {
+  if (kindOf(item) !== "image") return null;
+  if (item.source === "upload") return `data:image/webp;base64,${item.file.dataBase64}`;
+  return refPreviews.value[item.key] ?? null;
+}
+
+/** 列の合計の行「3 件・4.2 MB / 12 MB」。 */
+const attachmentTotal = computed(() =>
+  t("chatInput.attachTotal", {
+    count: attachments.value.length,
+    max: MAX_ATTACHMENTS,
+    size: formatMegabytes(totalBytes(attachments.value)),
+    limit: formatMegabytes(MAX_MESSAGE_BYTES),
+  }),
+);
+
+/** 1 件でも縮小したか（注記は件数に依らず 1 つ）。 */
+const anyScaled = computed(() =>
+  attachments.value.some((a) => a.source === "upload" && a.file.scaled),
+);
+
+/** 画像以外の種別（コストの定型文を種別ごとに 1 つ出す）。 */
+const costKinds = computed(() => kindsIn(attachments.value).filter((k) => k !== "image"));
+
+/** 列から 1 件外す。 */
+function removeAttachment(key: string): void {
+  attachments.value = attachments.value.filter((a) => a.key !== key);
+  attachRefusal.value = null;
+}
 
 /**
  * 宛先のワイヤ（Spec 36 D12）。テンプレート未設定なら base URL から推定する
@@ -186,14 +260,19 @@ const targetProvider = computed(() => {
  * **送信は止めない** — 止めるのはコア側の門で、ここは「貼った時点で分かる」
  * ためだけ。2 箇所で止めると、表の同期が切れたときにどちらが正か読めなくなる。
  */
-const carryWarning = computed(() => {
-  const a = attachment.value;
+const carryWarnings = computed(() => {
   const provider = targetProvider.value;
-  if (!a || !provider || carries(provider, a.kind)) return "";
-  return t("chatInput.attachNotCarried", {
-    kind: t(`chatInput.attachKind.${a.kind}`),
-    carriers: carriersOf(a.kind).join(" / "),
-  });
+  if (!provider) return [];
+  // 種別ごとに 1 行（同じ種別を 3 件貼っても警告は 1 つ）。1 件でも運べなければ
+  // コアは発話ごと断る（S73-3）ので、ここで名指しするのは運べない種別だけ。
+  return kindsIn(attachments.value)
+    .filter((kind: AttachmentKind) => !carries(provider, kind))
+    .map((kind) =>
+      t("chatInput.attachNotCarried", {
+        kind: t(`chatInput.attachKind.${kind}`),
+        carriers: carriersOf(kind).join(" / "),
+      }),
+    );
 });
 
 // ---- パス補完（Spec 24 P2） -------------------------------------------------
@@ -447,28 +526,32 @@ function autoGrow(): void {
  */
 async function send(): Promise<void> {
   if (!canSend.value) return;
-  const failed = { text: text.value, attachment: attachment.value, quotes: quotes.value };
+  const failed = { text: text.value, attachments: attachments.value, quotes: quotes.value };
   text.value = "";
-  attachment.value = null;
+  attachments.value = [];
+  attachRefusal.value = null;
   quotes.value = [];
   closeCompletion();
   // 空にした後で高さを最小へ戻す。
   await nextTick();
   autoGrow();
 
+  const { uploads, refIds } = splitForSend(failed.attachments);
   const ok = await props.submit(
     failed.text,
-    failed.attachment ? [failed.attachment] : [],
+    uploads,
     failed.quotes.map((chip) => chip.id),
+    refIds,
   );
   if (ok) return;
 
   const restored = restoreDraft(
-    { text: text.value, attachment: attachment.value, quotes: quotes.value },
+    { text: text.value, attachments: attachments.value, quotes: quotes.value },
     failed,
+    (item) => item.key,
   );
   text.value = restored.text;
-  attachment.value = restored.attachment;
+  attachments.value = [...restored.attachments];
   quotes.value = restored.quotes;
   await nextTick();
   autoGrow();
@@ -516,45 +599,110 @@ function notifyAttachError(error: unknown): void {
   orchestrator.notify("error", t(ATTACH_ERROR_KEYS[kind]));
 }
 
-/** ファイルを 1 件受け取り、（画像なら変換して）チップに載せる。 */
-async function attach(file: File): Promise<void> {
-  if (props.disabled || converting.value) return;
-  converting.value = true;
-  try {
-    attachment.value = await prepareFile(file);
-  } catch (error) {
-    notifyAttachError(error);
-  } finally {
-    converting.value = false;
+/**
+ * 1 件を列へ足す。足せなければ理由を残して `false`。
+ *
+ * 判定は `admit` の 1 実装（件数 → 合計。コアの送信入口と同じ順）。理由を消すのは
+ * 呼び手が操作の頭で 1 回だけ（複数件の途中で断った理由を、後の成功で消さない）。
+ */
+function push(item: DraftAttachment): boolean {
+  const refused = admit(attachments.value, item);
+  if (refused) {
+    attachRefusal.value = refused;
+    return false;
   }
+  attachments.value = [...attachments.value, item];
+  return true;
 }
 
 /**
- * 貼り付け。クリップボードに画像があるときだけ横取りする —
- * テキストの貼り付けは textarea の既定動作のまま。
+ * ファイルを受け取り、（画像なら変換して）チップに載せる。
+ *
+ * **件数は変換の前に切る** — 変換は重いので、断る分まで変換してから捨てない。
+ * 切った残りは理由を出す（黙って捨てない）。合計は変換後の大きさでしか分からないので、
+ * 1 件ずつ変換してから `admit` に掛ける。
+ */
+async function attach(files: File[]): Promise<void> {
+  if (props.disabled || converting.value || files.length === 0) return;
+  const room = roomFor(attachments.value);
+  const taken = files.slice(0, room);
+  attachRefusal.value = null;
+  converting.value = true;
+  try {
+    for (const file of taken) {
+      try {
+        push({ source: "upload", key: `upload:${++uploadSeq}`, file: await prepareFile(file) });
+      } catch (error) {
+        notifyAttachError(error);
+      }
+    }
+  } finally {
+    converting.value = false;
+  }
+  // 件数で切った分の理由は最後に出す（途中の合計の断りで上書きされないように）。
+  if (taken.length < files.length) attachRefusal.value = "count";
+}
+
+/**
+ * 貼り付け。クリップボードにファイルがあるときだけ横取りする —
+ * テキストの貼り付けは textarea の既定動作のまま。**全ファイルを順に取り込む**（D7）。
  */
 function onPaste(event: ClipboardEvent): void {
   const items = event.clipboardData?.items ?? [];
+  const files: File[] = [];
   for (const item of items) {
     // **種別の判定は中身（magic）が決める**ので、ここは「ファイルが来たか」
     // だけを見る。MIME で絞ると、クリップボードが型を伏せた添付を取り落とす。
-    if (item.kind === "file") {
-      const file = item.getAsFile();
-      if (file) {
-        event.preventDefault();
-        void attach(file);
-      }
-      return;
-    }
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
   }
+  if (files.length === 0) return;
+  event.preventDefault();
+  void attach(files);
 }
 
-/** 「参照…」。同じファイルを選び直せるよう、読んだら value を戻す。 */
+/** 「参照…」（複数選択）。同じファイルを選び直せるよう、読んだら value を戻す。 */
 function onFilePicked(event: Event): void {
   const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
+  const files = Array.from(input.files ?? []);
   input.value = "";
-  if (file) void attach(file);
+  void attach(files);
+}
+
+/**
+ * 過去の添付を入力欄へ渡し直す（Spec 73 D5。会話ペインの「入力欄へ」）。
+ *
+ * **運ぶのは ID だけ**。ファイルを読むのは大きさを測ってサムネイルを出すためで、送らない
+ * （コアは自分で測り直し、元の参照を会話ログから引く）。読めなければ（保持期間で消えた）
+ * その場で断る — 送ってから断られるより、押した時点で分かるほうが手間が少ない。
+ */
+async function addAttachmentRef(ref: Attachment, kind: AttachmentKind): Promise<void> {
+  if (props.disabled) return;
+  attachRefusal.value = null;
+  const key = refKey(ref.id);
+  if (attachments.value.some((a) => a.key === key)) {
+    attachRefusal.value = "duplicate";
+    return;
+  }
+  let bytes: number[] | null;
+  try {
+    bytes = await readAttachment(ref.id);
+  } catch {
+    bytes = null;
+  }
+  if (!bytes) {
+    orchestrator.notify("error", t("chat.attachmentDeleted"));
+    return;
+  }
+  if (!push({ source: "ref", key, ref, kind, bytes: bytes.length })) return;
+  if (kind === "image") {
+    refPreviews.value = {
+      ...refPreviews.value,
+      [key]: `data:image/webp;base64,${bytesToBase64(new Uint8Array(bytes))}`,
+    };
+  }
+  area.value?.focus();
 }
 
 /**
@@ -577,74 +725,109 @@ async function fill(payload: string): Promise<void> {
   el.setSelectionRange(payload.length, payload.length);
 }
 
-defineExpose({ fill });
+defineExpose({ fill, addAttachmentRef });
 </script>
 
 <template>
     <div class="relative shrink-0 border-t border-line px-3 py-2.5" data-tour="chat">
     <!-- 添付チップ（Spec 23）。× で外せる。S4 の注記をすぐ下に置く —
          「1 ターン限り」は設定ではなく仕様なので、添付のたびに見える場所で言う。 -->
-    <div v-if="attachment || converting" class="mb-2 px-1">
-      <div
-        class="inline-flex max-w-full items-center gap-2 rounded-lg bg-surface-1 px-2.5 py-1.5 ring-1 ring-line"
-      >
-        <!-- 画像アイコン（SVG。絵文字は恒久要素に使わない）。 -->
-        <svg
-          viewBox="0 0 24 24"
-          class="size-4 shrink-0 text-ink-dim"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
+    <div v-if="attachments.length || converting || attachRefusal" class="mb-2 px-1" data-attachment-chips>
+      <!-- チップの列（Spec 73 D7）。新しく貼ったものと渡し直した過去の添付は同じチップで、
+           1 件ずつ × で外せる。 -->
+      <div class="flex flex-wrap items-center gap-1.5">
+        <div
+          v-for="item in attachments"
+          :key="item.key"
+          class="inline-flex max-w-full items-center gap-2 rounded-lg bg-surface-1 px-2.5 py-1.5 ring-1 ring-line"
         >
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <circle cx="9" cy="10" r="1.6" />
-          <path d="m3 17 5-5 4 4 3-3 6 6" />
-        </svg>
-        <template v-if="converting">
-          <span class="text-[11px] text-ink-dim">{{ $t("chatInput.attachConverting") }}</span>
-        </template>
-        <template v-else-if="attachment">
-          <span class="truncate text-[11px] text-ink" :title="attachment.fileName">
-            {{ attachment.fileName }}
+          <!-- 画像はサムネイル、それ以外はアイコン（SVG。絵文字は恒久要素に使わない）。 -->
+          <img
+            v-if="chipPreview(item)"
+            :src="chipPreview(item)!"
+            alt=""
+            class="size-5 shrink-0 rounded object-cover ring-1 ring-line"
+          />
+          <svg
+            v-else
+            viewBox="0 0 24 24"
+            class="size-4 shrink-0 text-ink-dim"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <circle cx="9" cy="10" r="1.6" />
+            <path d="m3 17 5-5 4 4 3-3 6 6" />
+          </svg>
+          <span class="truncate text-[11px] text-ink" :title="chipName(item)">
+            {{ chipName(item) }}
           </span>
           <!-- 種別を語で出す（Spec 36）。アイコンは 1 つに畳んであるので、
                何を貼ったかはこのラベルが唯一の手掛かりになる。 -->
           <span class="shrink-0 rounded bg-surface-2 px-1 text-[10px] text-ink-dim">
-            {{ $t(`chatInput.attachKind.${attachment.kind}`) }}
+            {{ $t(`chatInput.attachKind.${kindOf(item)}`) }}
+          </span>
+          <!-- 渡し直した過去の添付の印。ファイルは送らず、ID だけを運ぶ。 -->
+          <span
+            v-if="item.source === 'ref'"
+            class="shrink-0 rounded bg-surface-2 px-1 text-[10px] text-ink-dim"
+            :title="$t('chatInput.attachRefHint')"
+          >
+            {{ $t("chatInput.attachRef") }}
           </span>
           <span class="shrink-0 text-[10px] text-ink-dim tabular-nums">
-            {{ attachmentDimensions }}{{ attachmentSize }}
+            {{ chipDimensions(item) }}{{ chipSize(item) }}
           </span>
           <button
             type="button"
             class="shrink-0 rounded px-0.5 text-[12px] leading-none text-ink-dim transition hover:text-warn"
             :title="$t('chatInput.attachRemove')"
             :aria-label="$t('chatInput.attachRemove')"
-            @click="attachment = null"
+            :disabled="converting"
+            @click="removeAttachment(item.key)"
           >
             ×
           </button>
-        </template>
+        </div>
+        <div
+          v-if="converting"
+          class="inline-flex items-center gap-2 rounded-lg bg-surface-1 px-2.5 py-1.5 ring-1 ring-line"
+        >
+          <span class="text-[11px] text-ink-dim">{{ $t("chatInput.attachConverting") }}</span>
+        </div>
       </div>
-      <p class="mt-1 text-[10px] text-ink-dim">
+      <p v-if="attachments.length" class="mt-1 text-[10px] text-ink-dim">
+        <!-- 合計の行（D7）。件数と大きさの両方を上限と並べる。 -->
+        <span class="tabular-nums">{{ attachmentTotal }}</span>
+        ·
+        <!-- 凍結 3 の注記は件数に依らず 1 つ。 -->
         {{ $t("chatInput.attachNote") }}
-        <template v-if="attachment?.scaled">
+        <template v-if="anyScaled">
           {{ $t("chatInput.attachScaled", { px: MAX_EDGE_PX }) }}
         </template>
         <!-- S6: コストの桁は貼った時点で言う（請求で知るのでは遅い）。
              **数字は計算せず定型文**で出す — 各社のレートは実測で桁が違い
              （同じ画像で Gemini 1,064 対 OpenAI 130）、表を持つと必ず腐る。 -->
-        <template v-if="attachment && attachment.kind !== 'image'">
-          {{ $t(`chatInput.attachCost.${attachment.kind}`) }}
+        <template v-for="kind in costKinds" :key="kind">
+          {{ $t(`chatInput.attachCost.${kind}`) }}
         </template>
+      </p>
+      <!-- 取り込みを断った理由（D7）。6 件目以降を黙って捨てない。 -->
+      <p v-if="attachRefusal" class="mt-1 text-[10px] text-warn" data-attach-refusal>
+        {{ $t(`chatInput.attachLimit.${attachRefusal}`, { max: MAX_ATTACHMENTS, limit: formatMegabytes(MAX_MESSAGE_BYTES) }) }}
+      </p>
+      <!-- 送信に失敗した下書きを戻して上限を超えたとき（送信は止まる）。 -->
+      <p v-if="attachmentsOver" class="mt-1 text-[10px] text-warn" data-attach-over>
+        {{ $t(`chatInput.attachOver.${attachmentsOver}`, { max: MAX_ATTACHMENTS, limit: formatMegabytes(MAX_MESSAGE_BYTES) }) }}
       </p>
       <!-- 宛先が運べないときの警告（D12）。**送信は止めない** — 止めるのは
            コア側の門で、ここは貼った時点で分かるようにするためだけ。 -->
-      <p v-if="carryWarning" class="mt-1 text-[10px] text-warn">
-        {{ carryWarning }}
+      <p v-for="warning in carryWarnings" :key="warning" class="mt-1 text-[10px] text-warn">
+        {{ warning }}
       </p>
     </div>
 
@@ -859,6 +1042,7 @@ defineExpose({ fill });
         ref="filePicker"
         type="file"
         accept="image/*,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,video/mp4,application/pdf"
+        multiple
         class="hidden"
         @change="onFilePicked"
       />
@@ -873,7 +1057,7 @@ defineExpose({ fill });
            複数行へ伸びたときは下端に寄る — 伸びる方向は下なので、
            **書いている行の隣にボタンが残る**（中央に置くと文章の途中を指す）。 -->
       <button
-        v-show="text.trim() || attachment || quotes.length"
+        v-show="text.trim() || attachments.length || quotes.length"
         type="button"
         :disabled="!canSend"
         :aria-label="$t('chatInput.send')"

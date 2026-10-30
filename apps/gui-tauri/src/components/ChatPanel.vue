@@ -621,6 +621,7 @@ async function send(
   content: string,
   attachments: PendingAttachment[],
   quoteIds: string[],
+  attachmentRefs: string[],
 ): Promise<boolean> {
   if (!canSend.value || !state.selectedAgentId) return false;
   return orchestrator.send(
@@ -631,7 +632,18 @@ async function send(
     attachments.map((a) => ({ fileName: a.fileName, dataBase64: a.dataBase64 })),
     // 会話の参照（Spec 58）。運ぶのは発話 ID だけ。
     quoteIds,
+    // 渡し直す過去の添付（Spec 73 D5）。これも ID だけ。
+    attachmentRefs,
   );
+}
+
+/**
+ * 過去の添付を入力欄へ渡し直す（Spec 73 D5 の「入力欄へ」）。宛先は**いま選んでいる
+ * サーヴァント**（入力欄の宛先）で、元の発話の宛先ではない — 別の個体に見せ直すのが
+ * この操作の主な用途。送信はしない（チップとして載せるだけ）。
+ */
+function reattach(att: Attachment): void {
+  void input.value?.addAttachmentRef(att, attachmentKindOf(att));
 }
 
 // ---- 会話の検索（2026-10-15） ------------------------------------------------
@@ -1509,6 +1521,33 @@ async function newChat(): Promise<void> {
             >
               {{ $t("chat.attachmentDeleted") }}
             </div>
+            <!-- 「入力欄へ」（Spec 73 D5）。過去の添付を、いま選んでいるサーヴァントへ
+                 渡し直す。出すのは**利用者の発話**の添付だけ（コアが受けるのも利用者の
+                 発話の添付だけ）で、ファイルが消えていれば出さない。送信はしない。 -->
+            <button
+              v-if="isMine(entry.row.message) && attachmentUrl(att.id)"
+              type="button"
+              class="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="!canSend"
+              :title="canSend ? $t('chat.reattachHint') : $t('chat.reattachBlocked')"
+              data-reattach
+              @click="reattach(att)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                class="size-3 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 14 4 9l5-5" />
+                <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+              </svg>
+              {{ $t("chat.reattach") }}
+            </button>
           </template>
 
           <!-- 会話の参照（Spec 58）。利用者が `@@` で添えた発話を、チップで示す。

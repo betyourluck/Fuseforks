@@ -119,28 +119,39 @@ describe("addChip", () => {
 
 describe("restoreDraft", () => {
   const chip = (id: string): QuoteChip => ({ id, fromName: "ジェミー", tsMs: 0, chars: 1 });
-  const empty = { text: "", attachment: null, quotes: [] };
+  const empty = { text: "", attachments: [] as string[], quotes: [] };
+  const id = (a: string) => a;
 
   it("空の入力欄へは、失敗した下書きをそのまま戻す", () => {
-    const failed = { text: "依頼文", attachment: "画像", quotes: [chip("a")] };
-    expect(restoreDraft(empty, failed)).toEqual(failed);
+    const failed = { text: "依頼文", attachments: ["画像", "PDF"], quotes: [chip("a")] };
+    expect(restoreDraft(empty, failed, id)).toEqual(failed);
   });
 
   it("待っている間に打たれた文を上書きしない", () => {
-    const current = { text: "次の文", attachment: null, quotes: [chip("b")] };
-    const failed = { text: "依頼文", attachment: "画像", quotes: [chip("a")] };
-    const restored = restoreDraft(current, failed);
+    const current = { text: "次の文", attachments: [] as string[], quotes: [chip("b")] };
+    const failed = { text: "依頼文", attachments: ["画像"], quotes: [chip("a")] };
+    const restored = restoreDraft(current, failed, id);
     expect(restored.text).toBe("依頼文\n次の文");
-    expect(restored.attachment).toBe("画像");
+    expect(restored.attachments).toEqual(["画像"]);
     expect(restored.quotes.map((c) => c.id)).toEqual(["a", "b"]);
   });
 
-  it("貼り直された添付は新しいほうを残し、参照は上限までで重複させない", () => {
-    const current = { text: "", attachment: "新", quotes: [chip("a"), chip("c"), chip("d")] };
-    const failed = { text: "", attachment: "旧", quotes: [chip("a"), chip("b")] };
-    const restored = restoreDraft(current, failed);
-    expect(restored.attachment).toBe("新");
+  it("添付は失敗した側を先に繋ぎ、同じ鍵は 1 件にする。参照は上限までで重複させない", () => {
+    const current = {
+      text: "",
+      attachments: ["ref:x", "新"],
+      quotes: [chip("a"), chip("c"), chip("d")],
+    };
+    const failed = { text: "", attachments: ["旧", "ref:x"], quotes: [chip("a"), chip("b")] };
+    const restored = restoreDraft(current, failed, id);
+    expect(restored.attachments).toEqual(["旧", "ref:x", "新"]);
     expect(restored.quotes.map((c) => c.id)).toEqual(["a", "b", "c"]);
     expect(restored.text).toBe("");
+  });
+
+  it("上限では切らない（どれを捨てるかは利用者が決める）", () => {
+    const failed = { text: "", attachments: ["1", "2", "3", "4"], quotes: [] };
+    const current = { text: "", attachments: ["5", "6"], quotes: [] };
+    expect(restoreDraft(current, failed, id).attachments).toHaveLength(6);
   });
 });

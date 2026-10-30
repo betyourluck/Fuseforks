@@ -762,8 +762,20 @@ export const sendUserMessage = (
    * `INVALID_QUOTE` で発話ごと拒否される。
    */
   quoteIds?: string[],
+  /**
+   * 渡し直す過去の添付の ID（Spec 73 D5）。**本体は送らない** — コアが会話ログから元の
+   * 参照を引き、ファイルの保持期間を延ばす。無い ID・消えたファイルは発話ごと拒否される。
+   */
+  attachmentRefs?: string[],
 ) =>
-  call<void>("send_user_message", { agentId, content, coRecipients, attachments, quoteIds });
+  call<void>("send_user_message", {
+    agentId,
+    content,
+    coRecipients,
+    attachments,
+    quoteIds,
+    attachmentRefs,
+  });
 
 /**
  * 添付画像の実体（WebP バイト列）を読む（Spec 23）。

@@ -151,10 +151,10 @@ export function addChip(chips: readonly QuoteChip[], chip: QuoteChip): readonly 
   return [...chips, chip];
 }
 
-/** 入力欄の下書き — 文面・添付・参照の 3 つ。 */
+/** 入力欄の下書き — 文面・添付・参照の 3 つ。添付は列（Spec 73 D7）。 */
 export interface Draft<A> {
   text: string;
-  attachment: A | null;
+  attachments: readonly A[];
   quotes: readonly QuoteChip[];
 }
 
@@ -167,18 +167,27 @@ export interface Draft<A> {
  *
  * **待っている間に打たれたものを上書きしない** — 送信は数百 ms で返るが、その間に
  * 次の文を打ち始める人は居る。失敗した側を先頭に、今ある側を後ろへ繋ぐ。
+ *
+ * 添付も同じ向きで繋ぎ、**同じ鍵（`keyOf`）は 1 件にする**（再添付は過去の添付の ID が
+ * 鍵なので、待っている間に同じものを渡し直していても二重にならない）。件数と合計の
+ * 上限では切らない — どちらを捨てるかは機械が決めず、超えたことを入力欄が出して
+ * 利用者に外してもらう（`attachmentList.ts` の `overLimit`）。
  */
-export function restoreDraft<A>(current: Draft<A>, failed: Draft<A>): Draft<A> {
+export function restoreDraft<A>(
+  current: Draft<A>,
+  failed: Draft<A>,
+  keyOf: (attachment: A) => string,
+): Draft<A> {
   const text =
     current.text && failed.text
       ? `${failed.text}\n${current.text}`
       : failed.text || current.text;
   let quotes: readonly QuoteChip[] = failed.quotes;
   for (const chip of current.quotes) quotes = addChip(quotes, chip);
-  return {
-    text,
-    // 添付は 1 枚。待っている間に貼り直されていたら、新しいほうが利用者の意図。
-    attachment: current.attachment ?? failed.attachment,
-    quotes,
-  };
+  const seen = new Set(failed.attachments.map(keyOf));
+  const attachments = [
+    ...failed.attachments,
+    ...current.attachments.filter((a) => !seen.has(keyOf(a))),
+  ];
+  return { text, attachments, quotes };
 }

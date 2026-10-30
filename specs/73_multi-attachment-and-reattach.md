@@ -3,7 +3,7 @@
 - 起票: 2026-10-30
 - 状態: **Draft rev2・未決 0**（2026-10-30 利用者裁定「推奨どおりで」— 件数の上限は 5 / 再添付は `@@` に
   混ぜずボタンだけ）→ **P0 完了**（同日。`data_contract` の `attachment_contract` に「Spec 73 改訂」の節 =
-  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）→ **P1 完了**（同日。コア。記録は「P1 実装記録」）。
+  凍結 S73-1〜8。記録は末尾の「P0 契約記録」）→ **P1 完了**（同日。コア。記録は「P1 実装記録」）→ **P2 完了**（同日。画面。記録は「P2 実装記録」）。
   査読は開けていない
 - 起点: 利用者（2026-10-29）の要望 3 つのうち 2 つ目と 3 つ目（1 つ目は [Spec 72](72_approval-stops-the-turn.md)）—
   「添付画像は現在 1 つまでしか貼れない。これは複数貼れたほうが良い」
@@ -259,3 +259,38 @@ mtime の更新に失敗しても送信は止めない（計器 1 行。保持�
   通さない → 1 本 / mtime を更新しない → 1 本 / 混在の文の枝を外す → 1 本）。復元は SHA で確認
 - **検証**: GUI を除く workspace 1,469 本全緑・clippy 0。**1 回目の全体テストは集計が空**だった — `link.exe` の 1181
   （D: の空き 3.5 GB）で 1 本も走っていなかった（#132 の形）。`target/debug/incremental`（19 GB）を消して回し直した
+
+## P2 実装記録（2026-10-30）
+
+- **規則は `lib/attachmentList.ts` の純関数**（`admit` / `roomFor` / `overLimit` / `splitForSend` / `kindsIn` /
+  `totalBytes` / `formatMegabytes`）。上限の値 `MAX_ATTACHMENTS` = 5 / `MAX_MESSAGE_BYTES` = 12MB はコアの定数と同じで、
+  走査テストが `attachment.rs` の字面と突き合わせる。入力欄の 1 件は `DraftAttachment`（`upload` = 変換済みの本体 /
+  `ref` = 過去の添付の参照 + 読んだファイルの長さ）。鍵は新規が毎回別の値、再添付が `ref:<添付 ID>`
+- **`ChatInput.vue`** — 添付は列。チップを横に並べて 1 件ずつ × で外す / 画像のチップはサムネイル（新規は base64、
+  再添付は `read_attachment` で読んだ実体）/ 再添付のチップに「渡し直し」の印 / 合計の行「3 / 5 件・4.2 MB / 12.0 MB」/
+  凍結 3 の注記・縮小の注記・コストの定型文（画像以外の種別ごと）・運べない種別の警告（種別ごと）はどれも 1 つずつ。
+  **件数は変換の前に切る**（変換は重いので、断る分まで変換しない）。合計は変換後の大きさでしか分からないので 1 件ずつ
+  `admit` に掛ける。列へ足す代入は `push` の 1 箇所だけ（走査テストが 1 行であることを数える）。断った理由
+  （`count` / `bytes` / `duplicate`）は入力欄の下に出し、操作の頭で 1 回だけ消す（複数件の途中で断った理由を後の成功で
+  消さない）。貼り付けはクリップボードの全ファイル / 「参照…」は `multiple`
+- **再添付の入口** — 会話ペインの添付の行に「入力欄へ」。出すのは利用者の発話の、消えていない添付だけ（コアが受けるのも
+  利用者の発話の添付だけ）で、宛先が稼働していなければ押せない。押すと `addAttachmentRef(att, kind)` が実体を
+  `read_attachment` で読み、**読めなければその場で「削除されました」**（送ってから断られるより手前）。送るのは ID だけ
+- **送信に失敗したら列ごと戻す** — `restoreDraft` の `Draft.attachment` を `attachments` の列へ。失敗した側を先に繋ぎ、
+  同じ鍵は 1 件（引数 `keyOf`）。**上限では切らない** — 待っている間に貼られた分と合わせて超えたら、どれを捨てるかは
+  機械が決めず、入力欄が `attachOver` の文を出して送信を止める（`overLimit`）
+- **IPC** — `sendUserMessage` の 6 つ目の引数 `attachmentRefs`、`orchestrator.send` と `ChatPanel.send` も 1 つずつ
+- **辞書 ja/en** — `chatInput.attachRef` / `attachRefHint` / `attachTotal` / `attachLimit.{count,bytes,duplicate}` /
+  `attachOver.{count,bytes}` / `chat.reattach` / `reattachHint` / `reattachBlocked`。`chatInput.attach` に「5 件まで」。
+  `attachLimit` / `attachOver` は実行時に組む鍵なので、走査テストが ja・en の表と型の値を突き合わせる
+- **既存テストの追従 3 つ** — `quoteRef.test.ts` の `restoreDraft`（列と重複除去、上限で切らないことを 1 本足した）/
+  `quoteRefWiring.test.ts`（IPC の呼び出しの字面と戻す欄）/ `shortcutsWiring.test.ts` の `pasteImage` の根拠
+  （貼り付けの実装の字面が変わった — 走査テストは字面の契約）
+- **テスト** — 単体 `attachmentList.test.ts` 11 本 / 走査 `attachmentListWiring.test.ts` 11 本（上限の値 2・IPC 2・入力欄 4・
+  「入力欄へ」1・辞書 2）。**変異 7 回とも予測どおり**（件数の門を外す → 1 本 / `restoreDraft` の重複除去 → 1 本 /
+  貼り付けを 1 件目で止める → 2 本 / `splitForSend` が再添付を落とす → 1 本 / 入力欄が再添付の ID を渡さない → 1 本 /
+  en の辞書の 1 鍵を欠く → 2 本 / 「入力欄へ」を利用者の発話に限らない → 1 本）。復元は SHA で確認
+- **検証**: vitest 993 全緑・vue-tsc 0・build 緑。**1 回目の build で新しい走査テストが `node:fs` の型で落ちた** —
+  `@types/node` を入れない方針で、他の走査テストは `// @ts-expect-error` を付けて import している（揃えた）。
+  その前に単独で回した `vue-tsc` が何も出さなかったのは、まだそのファイルを書く前だったから
+- **実機は未確認**（P4）

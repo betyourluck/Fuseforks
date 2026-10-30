@@ -27,7 +27,7 @@ describe("会話の参照の配線（Spec 58）", () => {
     // Tauri は `quoteIds` を `quote_ids` へ写す。片方だけ改名すると、参照は
     // **黙って空になる**（`Option` なのでエラーにならず、参照なしで送られる）。
     expect(read("src-tauri/src/commands.rs")).toMatch(/quote_ids: Option<Vec<String>>/);
-    expect(read("src/lib/ipc.ts")).toMatch(/attachments, quoteIds \}\)/);
+    expect(read("src/lib/ipc.ts")).toMatch(/attachments,\s*quoteIds,/);
   });
 
   it("件数の上限がコアと同じ数", () => {
@@ -47,7 +47,7 @@ describe("会話の参照の配線（Spec 58）", () => {
       /const ok = await props\.submit\([\s\S]*?\);\s*if \(ok\) return;\s*const restored = restoreDraft\(/,
     );
     // 戻すのは 3 つとも。片方だけ戻す形にしない。
-    for (const field of ["text.value = restored.text", "attachment.value = restored.attachment", "quotes.value = restored.quotes"]) {
+    for (const field of ["text.value = restored.text", "attachments.value = [...restored.attachments]", "quotes.value = restored.quotes"]) {
       expect(input, field).toContain(field);
     }
     expect(panel).toContain(':submit="send"');

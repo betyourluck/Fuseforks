@@ -78,7 +78,7 @@ const EVIDENCE: Record<string, readonly Evidence[]> = {
   newline: [{ file: CHAT_INPUT, text: '@keydown.enter.exact="onEnter"' }],
   pasteImage: [
     { file: CHAT_INPUT, text: '@paste="onPaste"' },
-    { file: CHAT_INPUT, text: 'if (item.kind === "file") {' },
+    { file: CHAT_INPUT, text: 'if (item.kind !== "file") continue;' },
   ],
   completePath: [{ file: "./pathComplete.ts", text: 'kind: found.length === 1 ? "file" : "message",' }],
   quoteMessage: [{ file: "./pathComplete.ts", text: 'kind: found.length === 1 ? "file" : "message",' }],

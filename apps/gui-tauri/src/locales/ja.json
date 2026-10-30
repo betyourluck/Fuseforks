@@ -468,10 +468,22 @@
     "sendEnter": "送信（Enter）",
     "cannotSend": "送信できません",
     "hint": "Enter で送信 / Shift+Enter で改行",
-    "attach": "添付する（画像・音声・動画・PDF。貼り付けも可）",
+    "attach": "添付する（画像・音声・動画・PDF。5 件まで・貼り付けも可）",
     "attachNote": "この添付は今回のみモデルへ渡ります。2 ターン目以降はモデルからは見えません（画面には残ります）。",
     "attachScaled": "長辺 {px}px へ縮小しました。",
     "attachRemove": "添付を外す",
+    "attachRef": "渡し直し",
+    "attachRefHint": "会話ペインから渡し直した過去の添付です。ファイルは送らず、ID だけを送ります。",
+    "attachTotal": "{count} / {max} 件・{size} MB / {limit} MB",
+    "attachLimit": {
+      "count": "1 回の発話に添付できるのは {max} 件までです。超えた分は取り込んでいません。",
+      "bytes": "添付の合計が {limit} MB を超えるため、取り込んでいません。",
+      "duplicate": "この添付は既に入力欄にあります。"
+    },
+    "attachOver": {
+      "count": "添付が {max} 件を超えています。外してから送ってください。",
+      "bytes": "添付の合計が {limit} MB を超えています。外してから送ってください。"
+    },
     "attachConverting": "画像を変換中…",
     "attachTooLarge": "添付が大きすぎます（画像 10MB / 音声・PDF 10MB / 動画 12MB）",
     "attachConvertedTooLarge": "変換後の画像が大きすぎます（上限 2MB）",
@@ -704,6 +716,9 @@
     "copy": "本文をコピー",
     "empty": "まだ発話がありません。",
     "attachmentDeleted": "添付は保持期間を過ぎて削除されました",
+    "reattach": "入力欄へ",
+    "reattachHint": "この添付を入力欄に戻し、いま選んでいるサーヴァントへ渡し直します（ファイルは複製しません）",
+    "reattachBlocked": "宛先のサーヴァントが稼働していないため、入力欄へ戻せません",
     "externalBadge": "外部",
     "clearedNote": "これより前の {count} 件は表示していません（会話は残っています）",
     "clearedRestore": "すべて表示",
