@@ -7968,8 +7968,8 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 - [Spec 73](specs/73_multi-attachment-and-reattach.md)（添付を複数件にする・過去の添付をもう一度渡す）:
   **Done**（2026-10-30。**起票から Done まで同日**。P4 = 開発ビルドで実機 6 件 — 3 枚の区別 / 画像と PDF の要約が宣言順 /
   6 件目の断り / Meta へ送った画像を Anthropic のザリへ渡し直して `source=ref`・ファイル数 47 のまま / mtime が送信時刻へ /
-  OpenAI Responses へ動画を含む組で `outcome=rejected` だけ出て `turn start:` 無し。**合計 12MB の断りは実機で踏まず**
-  単体と結合テストへ預けた。記録は Spec の「P4 実機記録」。配布物にはまだ入っていない）。以下は経緯 —
+  OpenAI Responses へ動画を含む組で `outcome=rejected` だけ出て `turn start:` 無し / 9.8 MB の列へ 5 件目を貼ると合計の断り
+  （件数の余地があっても合計で断る）。記録は Spec の「P4 実機記録」。配布物にはまだ入っていない）。以下は経緯 —
   **Draft rev2・未決 0**（2026-10-30 起票 → 同日、利用者が未決 2 つを推奨どおりに裁定 = 件数 5 / `@@` には混ぜない。
   → 同日 **P0 完了** = `attachment_contract` に凍結 S73-1〜8。Spec 36 P0 が消していた `role_contract: |` の鍵の行も戻した。
   → 同日 **P1 完了**（コア: 送信入口の 5 件・12MB・再添付・mtime / `attachment_summary` / IPC の Rust 側。結合 12 + 単体 3・
