@@ -234,6 +234,43 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
   （機構はどちらでも成立。`force-fallback` コメントは断定形にしない形で維持）。
   vitest 142 → 151
 
+## 外部の脆弱性監査 12 件の判定と、直した 4 件（2026-10-30。Spec 不要と判断）
+
+起点は利用者が持ち込んだ監査の報告（12 件・Critical 1 / High 3 / Medium 5 / Low 3）。**全部を実装に当てて判定し、
+成立する 4 件を同日に直した。** 1 件は Windows の実験で不成立を確かめ、残りは Low か別件。コードは変えずに判定だけ
+先に返し、利用者裁定「今すぐ直せる 4 件を直して」で着手。
+
+| # | 報告 | 判定 | 要点 |
+|---|---|---|---|
+| 1 | `move` / `copy` + `overwrite` で作業フォルダ全体が消える | **妥当・直した** | `failures.md` #153。`to: "./"` が root に解決し `remove_dir_all` |
+| 2 | dangling symlink 越しに外へ書ける | **不成立** | Windows の実験で `mkdir` は 183・`open` は ENOENT。POSIX も `mkdir(2)` は dangling でも EEXIST。検査の抜け（`exists()` が dangling を「無い」と読む）だけ在る |
+| 3 | OAuth の認可 URL のスキーム未検証 / 失効がリダイレクトを辿る | **半分妥当・直した** | 認可口は `http` / `https` だけブラウザへ（`outcome=bad_scheme`）。失効は `http_client(false)` + スキーム検査。失効側は発行者が既にトークンを持つので Low |
+| 4 | `csp: null` + Markdown の画像展開でゼロクリックの外向き GET | **妥当。前半だけ直した** | `md.disable("image")` の 1 行。**CSP は別件**（`blob:` / `data:` / KaTeX のフォント / Vue の `:style` / `devCsp` に掛かり 3 OS の実機が要る） |
+| 5 | `export_session` の走査と存在確認前の `File::create` | 妥当だが Low | 呼べるのは自前のフロントだけ（`html: false` で攻撃者の JS が入る経路が無い） |
+| 6 | 黒板が symlink を辿る | 半分（Low） | 読む側は辿る。`trash::delete` は**リンクそのもの**を捨てるので「外のファイルをごみ箱へ」は誤りの可能性が高い（未実験） |
+| 7 | 子プロセスの出力を無制限に読む | **妥当・直した** | `read_capped` = 4 MiB で切って残りは `sink` へ読み捨て（読み捨てをやめるとパイプが詰まって子が止まる） |
+| 8 | `validateLink` がカスタムスキームを通す / 黒板にクリックの横取りが無い | 妥当（Low） | クリックが要る。`ChatPanel` は `https?://` だけ開く |
+| 9 | `bake` の `env` 平文未検査 / `world.json` の id 未検証 | 半分（Low） | `stdio.env` は本当に未検査。id は利用者自身の `world.json` |
+| 10 | `opener:allow-open-path` の scope / `--workspace` との不整合 | 半分不成立 | GUI に `--workspace` は無い。`\agents\` の直書きは **macOS / Linux で「フォルダを開く」が壊れる移植性のバグ** |
+| 11 | Jev の `account_id` / `McpServerStore::save` の権限の窓 | Low | 自分が入れる値 / Unix だけ一瞬 |
+| 12 | APPIMAGE の引用 / Markdown キャッシュの `source` 照合 | 安全性ではない | 発話は不変で `message.id` が鍵 |
+
+**安い衛生としてまとめて直す候補**（未着手）: 2 のループ内 symlink 検査 / 5 / 8 / 9 の両方 / 11 の tmp → rename / 10 の `\` 直書き。
+**別件**: CSP（4 の後半）/ 6（頻度を見てから）。
+
+**テスト**: 単体 `creatable_rejects_the_work_dir_itself_however_it_is_spelled` / `the_work_dir_itself_cannot_be_a_transfer_destination` /
+`overwrite_never_removes_a_directory` / `child_output_is_capped_but_the_pipe_is_drained` + 結合 `an_authorization_url_that_is_not_http_is_refused_before_the_browser` /
+`revoking_does_not_follow_a_redirect_with_the_token`（`/revoke` が 307 で別の口へ飛ばすスタブ）+ vitest 1 本。**変異 6 回とも予測どおり**
+（root の検査を外す → 2 本 / フォルダへの上書きを `remove_dir_all` へ戻す → 1 本 / `md.disable("image")` を外す → 1 本 / 上限を `u64::MAX` へ → 1 本 /
+失効を `http_client(true)` へ → 1 本 / 認可 URL の検査を外す → 1 本。復元は `git checkout --` の後に SHA で確認）。
+core + host 1,446 本・vitest 994・vue-tsc 0・build 緑・clippy 0。コミットは `99e57ba`。
+
+**踏んだ罠**: 全テストの途中で D: が 100% になり `rustc-LLVM ERROR: IO failure on output stream: no space on device` で
+8 本がコンパイルで落ちた（集計は `ok=0` = #132 の形）。`target/debug/incremental` 16 GB を消しても 13 GB しか空かず、
+次の走行が食い尽くした。**本体は `target/debug/deps/*.pdb` = 412 本・64.9 GB**（テスト実行ファイルのデバッグ情報。古い
+ハッシュの分が溜まる）。`*.pdb` と `*.exe` を消すとリンクし直しだけで戻り、70 GB 空いた。**PowerShell の `Get-ChildItem -Include`
+は `-Recurse` かワイルドカードのパスが無いと 1 件も当たらず、エラーも出ない**（1 回目は 0 件消して「free 0.0 GB」）。
+
 ## 地図の「重なりをほどく」と一覧の絞り込み（2026-10-27 着地。Spec 不要と判断）
 
 起点は利用者が持ち込んだ外部レビュー（① 地図にワンクリックの整列（円環 / グリッドへ再配置）の手動ボタン /

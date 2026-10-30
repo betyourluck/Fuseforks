@@ -5682,3 +5682,36 @@ rustup 自身の版だった。
   パスを使うと、名前で振る舞いを変える実行ファイル（rustup・busybox・Git for Windows の一部）が別物として動く
 - **照合に通ったことと、意図したものが走ったことは別。** 許可リストは名前を照合し、起動は解決したパスで行う。
   2 つが別の値なら、その間で何が起きるかを数える
+
+## #153 `file` の `move` / `copy` へ `to: "./"` + `overwrite: true` を渡すと、作業フォルダが丸ごと `remove_dir_all` で消えた（2026-10-30・外部監査）
+
+**症状**: 利用者が持ち込んだ脆弱性監査の 1 件目。`{"op": "move", "path": "a.txt", "to": "./", "overwrite": true}` で
+`resolve_creatable` が宛先を作業フォルダそのものに解決し、`run_transfer` の上書きが `remove_existing(&dest)` →
+`std::fs::remove_dir_all(作業フォルダ)` を呼ぶ。`blackboard/` も `.git/` もごみ箱を通らずに消える。宛先が
+`src` のような既存のフォルダでも同じで、木ごと永久削除になる。実機では踏んでいない（監査のコードの読みを
+テストで再現して赤を出してから直した）。
+
+**真因**: 2 つの検査がどちらも「半分」だった。(1) `resolve_creatable` は `user_path == "."` の**字面**だけを弾き、
+`"./"` は `root.join("./")` が実在するので祖先の走査が 1 歩も進まず、残り成分は `CurDir` だけなので通る =
+`resolved == root`。(2) `remove_existing` はファイルとフォルダを同じ「退ける」で扱い、フォルダには
+`remove_dir_all` を当てていた。「上書きはごみ箱を汚さないため通さない」という doc の理由はファイルの話で、
+フォルダまで含めた形になっていた。`BlackboardFence` は `blackboard/` の下だけを見るので、親のルートへの操作は素通り。
+
+**処方**: `resolve_creatable` の末尾で `resolved == root` を拒む（字面を数え上げず結果で弾く — `Path::join` の絶対パスを
+`starts_with` の結果で弾いているのと同じ形）/ `run_transfer` は宛先がフォルダなら `overwrite` に関わらず断り、
+`src/<ファイル名>` の形を案内する。`remove_existing` は消し、上書きで退けるのは `remove_file` だけ。
+単体 3 本（`creatable_rejects_the_work_dir_itself_however_it_is_spelled` / `the_work_dir_itself_cannot_be_a_transfer_destination` /
+`overwrite_never_removes_a_directory`）。
+
+**一般化**:
+1. **「`.` を弾く」のように字面で特別扱いを書いた検査は、同じ場所を指す別の綴り（`./` / `./.` / `a/..`）で抜ける。**
+   拒みたいのは綴りではなく解決した先なので、解決した結果（`resolved == root`）で判定する。同じファイルの
+   `resolve_in_work_dir` は `user_path == "."` を**受け入れる**側で書いており、`run_remove` が改めてルートを弾いていた —
+   2 つの関数で「ルート」の扱いが逆だったのに、片方しかルートの検査を持っていなかった
+2. **「取り消せる側へ倒す」規律（削除はごみ箱だけ）は、別の名前の操作に同じ削除が隠れていると破れる。**
+   `remove` は守っていたが、`move` / `copy` の `overwrite` が `remove_dir_all` を持っていた。削除の経路を数えるときは
+   `remove` の名前ではなく、`remove_dir_all` / `remove_file` の呼び出し元で数える
+3. **外部の監査は「読んで書いた」主張なので、直す前にテストで赤を出す。** 同じ監査の 12 件のうち 1 件（dangling symlink
+   経由の書き込み）は OS が `mkdir` / `open` を拒むので成立せず、1 件（`trash::delete` が symlink の先を消す）は誤りの
+   可能性が高かった。成立する 4 件だけを直した（CLAUDE.md「外部の脆弱性監査」の節）
+
