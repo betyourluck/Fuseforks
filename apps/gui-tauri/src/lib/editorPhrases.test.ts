@@ -42,25 +42,26 @@ describe("searchPhrases", () => {
     expect(phrasesUsedByLibrary(librarySource).length).toBeGreaterThan(10);
   });
 
-  it("ライブラリが引く原文をすべて日本語で持っている", () => {
-    const ja = searchPhrases("ja");
-    const missing = phrasesUsedByLibrary(librarySource).filter((p) => !(p in ja));
-    expect(missing).toEqual([]);
-  });
+  for (const locale of ["ja", "zh-Hans"] as const) {
+    it(`${locale}: ライブラリが引く原文をすべて持っている`, () => {
+      const table = searchPhrases(locale);
+      const missing = phrasesUsedByLibrary(librarySource).filter((p) => !(p in table));
+      expect(missing).toEqual([]);
+    });
 
-  it("使われていない鍵を抱えていない", () => {
-    // 逆向き。ライブラリ更新で文面が消えたときに、死んだ鍵が残り続けるのを防ぐ。
-    const used = new Set(phrasesUsedByLibrary(librarySource));
-    const stale = Object.keys(searchPhrases("ja")).filter((k) => !used.has(k));
-    expect(stale).toEqual([]);
-  });
+    it(`${locale}: 使われていない鍵を抱えていない`, () => {
+      // 逆向き。ライブラリ更新で文面が消えたときに、死んだ鍵が残り続けるのを防ぐ。
+      const used = new Set(phrasesUsedByLibrary(librarySource));
+      const stale = Object.keys(searchPhrases(locale)).filter((k) => !used.has(k));
+      expect(stale).toEqual([]);
+    });
 
-  it("差し替えの席 `$` を落としていない", () => {
-    const ja = searchPhrases("ja");
-    for (const [key, value] of Object.entries(ja)) {
-      expect(value.includes("$"), `${key} の $ が落ちている`).toBe(key.includes("$"));
-    }
-  });
+    it(`${locale}: 差し替えの席 \`$\` を落としていない`, () => {
+      for (const [key, value] of Object.entries(searchPhrases(locale))) {
+        expect(value.includes("$"), `${key} の $ が落ちている`).toBe(key.includes("$"));
+      }
+    });
+  }
 
   it("英語は上書きしない", () => {
     expect(searchPhrases("en")).toEqual({});

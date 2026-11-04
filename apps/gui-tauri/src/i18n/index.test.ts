@@ -3,14 +3,18 @@
  *
  * **鍵集合は全言語で一致させる。** 片方にだけある鍵は fallback（日本語）で
  * 表示されるため画面は壊れないが、「訳が漏れている」ことは画面から読めない —
- * ここで落として気づかせる。言語を足すとき（zh-Hans / de / fr 予定）も、
- * このテストに追加するだけで同じ網に入る。
+ * ここで落として気づかせる。言語を足すとき（zh-Hans は Spec 74 で足した。de / fr は予定）も、
+ * `DICTS` に 1 行足すだけで同じ網に入る。
  */
 import { describe, expect, it } from "vitest";
 import { createI18n } from "vue-i18n";
 
 import en from "../locales/en.json";
 import ja from "../locales/ja.json";
+import zhHans from "../locales/zh-Hans.json";
+
+/** 網に掛ける全言語。`DisplayLanguage` の 3 値と同じ並び。 */
+const DICTS = { ja, en, "zh-Hans": zhHans } as const;
 
 /** 入れ子の辞書を "a.b.c" 形式の鍵一覧へ畳む。 */
 function flattenKeys(node: unknown, prefix = ""): string[] {
@@ -21,12 +25,14 @@ function flattenKeys(node: unknown, prefix = ""): string[] {
 }
 
 describe("翻訳辞書", () => {
-  it("ja と en の鍵集合が一致する（訳の漏れ・余りを作らない）", () => {
-    expect(flattenKeys(en).sort()).toEqual(flattenKeys(ja).sort());
-  });
+  for (const [locale, dict] of Object.entries(DICTS)) {
+    it(`${locale} の鍵集合が ja と一致する（訳の漏れ・余りを作らない）`, () => {
+      expect(flattenKeys(dict).sort()).toEqual(flattenKeys(ja).sort());
+    });
+  }
 
   it("すべての値が空文字ではない", () => {
-    for (const dict of [ja, en]) {
+    for (const dict of Object.values(DICTS)) {
       const walk = (node: unknown, path: string): void => {
         if (typeof node === "string") {
           expect(node.trim(), path).not.toBe("");
@@ -66,15 +72,14 @@ describe("メッセージのコンパイル", () => {
       }
     };
 
-    for (const locale of ["ja", "en"] as const) {
-      const messages = locale === "ja" ? ja : en;
+    for (const [locale, messages] of Object.entries(DICTS)) {
       const keys: string[][] = [];
       walk(messages, [], keys);
 
       const i18n = createI18n({
         legacy: false,
         locale,
-        messages: { ja, en },
+        messages: DICTS,
       });
 
       for (const path of keys) {

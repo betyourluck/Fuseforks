@@ -1408,10 +1408,12 @@ export interface BlackboardNote {
 export type BottomTab = "blackboard" | "waves";
 
 /**
- * UI の表示言語（Spec 13）。Rust 側 `world::Language` の serde 値と一致させる。
- * 選択肢は 2 つだけ — 「自動」は無く、初回起動時に OS から確定して保存される。
+ * 画面の表示言語（Spec 13 / Spec 74）。Rust 側 `world::DisplayLanguage` の serde 値と一致させる。
+ * 選択肢は 3 つ — 「自動」は無く、初回起動時に OS から確定して保存される。
+ * **简体中文の村のモデルへの指示は英語**（コアの声は Rust 側の `voice()` が決める。画面は知らなくてよい）。
+ * 名前を Rust と揃えたのは、将来コアに中国語を入れる日に「言語」が 2 つある状態を作らないため。
  */
-export type Language = "ja" | "en";
+export type DisplayLanguage = "ja" | "en" | "zh-Hans";
 
 /**
  * コマンドの承認モード（Spec 61）。Rust 側 `command::RunApproval` の serde 値と一致させる。

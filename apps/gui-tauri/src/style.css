@@ -212,6 +212,15 @@ body {
   overflow: hidden;
 }
 
+/* 简体中文の画面だけ SC のフォントを先に立てる（Spec 74 D4）。Noto Sans JP の入った端末では、
+   これが無いと漢字が日本の字形で描かれ、簡体字にしか無い字（们・这）だけが別のフォントへ落ちて
+   字形が混ざる。フォントは同梱しない。<html lang> は setLocale が書く（起動画面の間は "ja" のまま）。 */
+html:lang(zh-Hans) body {
+  font-family:
+    "Inter", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+}
+
 /* ネイティブアプリらしさのため、テキスト以外の選択は無効にする。 */
 body {
   user-select: none;

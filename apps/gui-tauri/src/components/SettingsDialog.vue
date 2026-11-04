@@ -42,7 +42,7 @@ import type {
   AutostartView,
   JevProbeView,
   JevSettingsView,
-  Language,
+  DisplayLanguage,
   StartupSettings,
 } from "../types";
 
@@ -392,8 +392,8 @@ const askTimeoutNote = ref("");
 // ---- 言語（村の設定） ----------------------------------------------------------
 
 /** 保存済みの言語。差分検出の基準。 */
-const savedLanguage = ref<Language>("ja");
-const languageInput = ref<Language>("ja");
+const savedLanguage = ref<DisplayLanguage>("ja");
+const languageInput = ref<DisplayLanguage>("ja");
 
 const languageDirty = computed(() => languageInput.value !== savedLanguage.value);
 
@@ -996,7 +996,7 @@ function selectPage(next: Page): void {
             </p>
 
             <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
-              <!-- 言語名は常に自国語で書く（日本語 / English）。訳さない —
+              <!-- 言語名は常に自国語で書く（日本語 / English / 简体中文）。訳さない —
                    いま読めない言語の一覧から自分の言語を探す人が読むため。 -->
               <label class="flex items-center gap-2">
                 <input v-model="languageInput" type="radio" value="ja" />
@@ -1005,6 +1005,10 @@ function selectPage(next: Page): void {
               <label class="flex items-center gap-2">
                 <input v-model="languageInput" type="radio" value="en" />
                 <span>English</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input v-model="languageInput" type="radio" value="zh-Hans" />
+                <span lang="zh-Hans">简体中文</span>
               </label>
 
               <p class="text-ink-dim">{{ $t("settings.language.promptNote") }}</p>

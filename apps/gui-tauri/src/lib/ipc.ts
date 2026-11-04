@@ -27,7 +27,7 @@ import type {
   ConfigFileKind,
   ErrorPayload,
   ForkPoint,
-  Language,
+  DisplayLanguage,
   McpHostStatus,
   StartupSettings,
   AutostartView,
@@ -498,13 +498,13 @@ export const setDefaultVerifier = (agentId: AgentId | null) =>
   call<void>("set_default_verifier", { agentId });
 
 /** UI の表示言語。bootstrap が初回に OS から確定済みなので、必ず値が返る。 */
-export const getLanguage = () => call<Language>("get_language");
+export const getLanguage = () => call<DisplayLanguage>("get_language");
 
 /**
  * UI の表示言語を差し替える。保存されるのは `world.json` の 1 フィールドだけで、
  * システムプロンプトは変わらない（settings_contract の多言語化 3 層）。
  */
-export const setLanguage = (language: Language) =>
+export const setLanguage = (language: DisplayLanguage) =>
   call<void>("set_language", { language });
 
 // ---- コマンドの承認（Spec 20） ------------------------------------------------

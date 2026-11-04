@@ -13,7 +13,9 @@ import { createI18n } from "vue-i18n";
 
 import en from "../locales/en.json";
 import ja from "../locales/ja.json";
-import type { Language } from "../types";
+// 綴りは大文字小文字までファイル名と一致させる（Linux は区別する。CI の Ubuntu が落とす）。
+import zhHans from "../locales/zh-Hans.json";
+import type { DisplayLanguage } from "../types";
 
 export const i18n = createI18n({
   legacy: false,
@@ -22,17 +24,17 @@ export const i18n = createI18n({
   locale: "ja",
   /**
    * 訳が欠けたキーは日本語で出す。空白よりも「訳が漏れている」が見える —
-   * 辞書の鍵集合は ja / en で一致をテストで固定しているので、平時は使われない。
+   * 辞書の鍵集合は 3 言語（ja / en / zh-Hans）で一致をテストで固定しているので、平時は使われない。
    */
   fallbackLocale: "ja",
-  messages: { ja, en },
+  messages: { ja, en, "zh-Hans": zhHans },
 });
 
 /**
  * 表示言語を切り替える。`<html lang>` も追従させる
  * （スクリーンリーダーの読み上げ言語とフォント選択がここを見る）。
  */
-export function setLocale(locale: Language): void {
+export function setLocale(locale: DisplayLanguage): void {
   i18n.global.locale.value = locale;
   // vitest（node 環境）には document が居ない。存在検査は本番では常に真。
   if (typeof document !== "undefined") {
@@ -41,6 +43,6 @@ export function setLocale(locale: Language): void {
 }
 
 /** いまの表示言語。 */
-export function currentLocale(): Language {
-  return i18n.global.locale.value as Language;
+export function currentLocale(): DisplayLanguage {
+  return i18n.global.locale.value as DisplayLanguage;
 }

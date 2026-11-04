@@ -121,7 +121,7 @@
     "language": {
       "heading": "Language",
       "help": "Display language of the UI. The switch takes effect the moment you save.",
-      "promptNote": "Instructions to servants (system prompts and tool descriptions) are not translated — translating them would change the prompts. System lines in the conversation log stay in the language they were written in.",
+      "promptNote": "In 日本語 and English, the instructions to servants (system prompts and tool descriptions) switch too. In 简体中文 only the screen switches; the instructions and the System lines in the conversation log are in English. System lines stay in the language they were written in.",
       "saved": "Saved.",
       "save": "Save",
       "saving": "Saving…"
@@ -1037,7 +1037,7 @@
     "openaiReasoningProHint": "Spends more computation on hard questions. In the published benchmark, terra goes 23.3% -> 28.5% (about level with standard sol at 28.7%). Every request costs roughly 1,500 more input tokens, and replies get slower.",
     "openaiSearchCost": "Turning on web search adds about 4,400 input tokens to every request, even ones that never search (the tool declaration is injected into the prompt). Later requests hit the cache, so the effective cost is roughly a tenth of that. Requests that actually search grow further, because the results are injected too.",
     "openaiResponsesCaveats": "This protocol does not support temperature (the endpoint rejects it).",
-    "strandedOpenAiStrong": "but it does nothing because the protocol is not OpenAI native (Responses)",
+    "strandedOpenAiStrong": "it does nothing because the protocol is not OpenAI native (Responses)",
     "strandedOpenAiAfter": ". This capability exists only on the Responses path. Set the protocol to \"OpenAI native (Responses)\" to use it.",
     "responsesHint": "Switching this model's protocol to \"OpenAI native (Responses)\" enables reasoning summaries and web search (on the compatible protocol, reasoning stops entirely while tools are offered). Temperature becomes unavailable after the switch.",
     "providerMetaResponses": "Meta native (Responses)",

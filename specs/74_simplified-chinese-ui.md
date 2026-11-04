@@ -2,7 +2,7 @@
 
 **ID**: 74
 **Date**: 2026-11-04
-**Status**: rev2 → **P0〜P1 完了**（2026-11-04。P0 = `settings_contract` の凍結 / P1 = Rust の `DisplayLanguage`・テスト 1,510 本全緑。記録は末尾）
+**Status**: rev2 → **P0〜P2 完了**（2026-11-04。P0 = `settings_contract` の凍結 / P1 = Rust の `DisplayLanguage` / P2 = 画面と `zh-Hans.json` 1,420 鍵。記録は末尾）
 **Branch**: main 直（Phase ごとにコミット）
 
 ---
@@ -312,3 +312,32 @@ v0.6.5 以前は `"zh-Hans"` を未知の値として「未確定」へ倒し、
   （`failures.md` #133 の再演）。結合テストを分けて回し直して予測と一致した
 - 全テストの 1 回目は `LNK1104`（`user32.lib` を開けない）で 1 本も走らなかった（集計が空 = #132 の形）。
   clippy と並走させていた。`-j 4` で回し直して **ワークスペース 1,510 本全緑**（85 バイナリ）・clippy 0
+
+---
+
+## P2 実装記録（2026-11-04）
+
+- `types.ts` の `Language` を **`DisplayLanguage`** へ改名して `"zh-Hans"` を足した（読む 4 ファイルは型検査が指した）。
+  設定ページに「简体中文」の選択肢（`<span lang="zh-Hans">`）。i18n の `messages` に `"zh-Hans"`
+- `locales/zh-Hans.json`（1,420 鍵）。**区分けごとに 4 本の翻訳役へ並列で出し**、用語集（README_zh の
+  仆从 / 村庄 / 羁绊 / 判断者 / 条例 / 黑板 / 职务 / 委派 / 汇总 / 计划 / 定时任务 / 工具 / 模型模板 / 工作文件夹 /
+  固有技能 / 系统设置）を渡した。束ねるスクリプトが en の鍵の並びで組み直し、鍵の集合・`{…}` の集合・裸の `@`・
+  空の値を検査する。**担当をまたいで食い違った語が 4 つ出て、画面に実際に出る見出しの訳へ揃えた** —
+  MCP の扉（「MCP 入口」/「MCP 服务端」→ 見出しの「MCP 服务器」）/ Jev のページ名（「判断专用模型」→
+  見出しの「判断特化模型（Jev）」）/ 初回案内の「公共 MCP」→ タイトルバーの「共享 MCP」/ 初回案内の黒板の列
+  「保留」→ 列名の「暂停」。引用符は中国本土の “” に揃えた（担当によって「」が混ざった）
+- **ほかに選んだ語**: handoff = 转交 / village square（広場ログ）= 村庄广场 / roster = 成员名单 / endpoint = 连接端 /
+  黒板の付箋 = 便签 / 黒板の列 = 进行中・暂停・完成 / tour = 新手引导 / pruning = 裁剪
+- `editorPhrases.ts` に ZH_HANS の表（`switch` で 3 言語を網羅）。テストは ja と zh-Hans の両方でライブラリの原文と
+  突き合わせる
+- `style.css` に `html:lang(zh-Hans) body` のフォント（D4）。`index.html` は触っていない
+- D8: `settings.language.promptNote` を 3 言語とも実態へ（ja / en は Spec 35 以降「指示は翻訳されません」のまま
+  だった）
+- テスト: `i18n/index.test.ts` を 3 言語へ（`DICTS` に 1 行足せば次の言語も同じ網に入る）/ 新設の走査
+  `displayLanguageWiring.test.ts` — Rust の `DisplayLanguage` の serde 値・`types.ts`・設定の選択肢・i18n の辞書・
+  フォントの規則の 5 か所が同じ 3 値を持つ。**変異 5 回とも予測どおり各 1 本赤**（選択肢を消す / 中文の鍵を 1 つ消す /
+  SC のフォントを消す / エディタの表の 1 語を消す / 型から `"zh-Hans"` を消す）。vitest 1,013・vue-tsc 0・build 緑
+- **別件で 1 つ直した**: 英語の `modelTemplate.strandedOpenAiStrong` が「but」で始まり、前に付く
+  `strandedBefore`（"This is enabled, but "）と合わせて「but but」になっていた。翻訳役が見つけた
+- **P3 への宿題**: `README_zh.md` に台湾寄りの語（金钥・位元组・阵列）が混ざっている（翻訳役の指摘。辞書は本土の
+  密钥・字节・数组 の系統）
