@@ -2910,10 +2910,9 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 ## 現在地（2026-11-04 更新）
 
 **[Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 — コアは英語のまま）を起票から Done まで同日で通し、
-利用者が `v0.6.6` = `9eeb252` のタグを push した**（CI は 06:52 UTC 開始）。中文の村はモデルへ英語を送るので、
-`ChatRequest` は英語の村と同じ（結合テストが留める）。**未着手**: Release の publish / winget / tap / リリースノート。
-ノートの「利用者が負う条件」の候補 = 中文は画面だけで System 行と判断の注記は英語 / コアのエラーの原文と CLI の枠は日本語 /
-日時の整形は ja-JP 固定 / **v0.6.5 以前で中文の村を開くと言語が ja か en へ書き戻される** / 中文は AI の翻訳。
+利用者が `v0.6.6` = `9eeb252` のタグを push し、4 経路で配った**（タグ履歴が正。publish 07:29 UTC / winget PR #470409 / tap `4e58148`）。中文の村はモデルへ英語を送るので、
+`ChatRequest` は英語の村と同じ（結合テストが留める）。**次の一手**: winget 0.6.6（PR #470409）のマージ確認 → タグ履歴と
+winget の節へ書き戻し / 従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
 
 ## 現在地（2026-10-30 更新）
 
@@ -4742,7 +4741,13 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   予算に計上されない）— **条件は足すだけでなく、消えたことも書く**
 
 - **`v0.6.6` = `9eeb252`（2026-11-04 JST タグ。6 コミット）— [Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 —
-  コアは英語のまま）**。タグは利用者。CI は 06:52 UTC 開始。publish・winget・tap は未着手
+  コアは英語のまま）**。3 OS 緑・アセット 7 件・publish 2026-11-04 07:29 UTC。ノートは英・中・日の 3 部（この版の主題が中文なので
+  中文の節を初めて足した）で主題は画面の简体中文、「利用者が負う条件」4 つ（中文の村でも System 行と判断の注記は英語 / コアの
+  エラーの原文・予定のラベル・CLI の枠は日本語・日時は日本式 / **v0.6.5 以前で開くと言語が ja か en へ戻って保存される** /
+  中文は AI の翻訳）。**タグは利用者、publish・winget・tap は Neo** — winget 0.6.6 = PR #470409（`gh repo sync` →
+  `wingetcreate update … --out` で生成して確かめてから `wingetcreate submit --token`。`InstallerLocale` 無しを引き写し・ProductCode は
+  `{32197D67-…}`・`InstallerSha256` は Release の digest と一致。2026-11-04 提出 = publish の数分後）/ tap `4e58148`（sha256 は
+  Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.6.5` = `7510a1e`（2026-10-30 JST タグ。23 コミット）— [Spec 72](specs/72_approval-stops-the-turn.md)（承認待ちでターンを止める）+
   [Spec 73](specs/73_multi-attachment-and-reattach.md)（添付を複数件に・過去の添付を渡し直す）+ 外部の脆弱性監査の修正（4 件 + 衛生 6 件 +
   黒板がリンクを辿らない + 画面の CSP）+ 扉の開け直し・「フォルダを開く」の区切り・`run` のシンボリックリンク（#152）**。3 OS 緑・アセット 7 件・
