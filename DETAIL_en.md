@@ -139,7 +139,7 @@ Fuseforks/
             ├── lib/agentSearch.ts   Matching for the servant list filter (name, id, role, model; pure)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
-            ├── locales/ja.json / en.json        UI text dictionaries (key-set parity enforced by test)
+            ├── locales/ja.json / en.json / zh-Hans.json  UI text dictionaries (three-language key-set parity enforced by test)
             ├── composables/useOrchestrator.ts   Single store
             ├── composables/useUiSettings.ts     This-screen settings (stored on the device)
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
@@ -386,7 +386,7 @@ CodeMirror editor (`CodeEditor.vue`). Three keys work **only while the editor ha
 | Key | What happens |
 |---|---|
 | **Ctrl+S** (Cmd+S on macOS) | Saves. **Does nothing when the save button is disabled** (unchanged / already saving / broken JSON) |
-| **Ctrl+F** | Opens the search panel. **The replace fields live in there too** (localized when the UI language is Japanese) |
+| **Ctrl+F** | Opens the search panel. **The replace fields live in there too** (localized when the UI language is Japanese or Simplified Chinese) |
 | **Ctrl+R** | **Nothing happens** — the page reload is swallowed, because it would discard the text being edited |
 
 **`Ctrl+R` is swallowed only inside the editor**; everywhere else the window reloads as before.
@@ -2310,7 +2310,7 @@ Three things have since been added into this frame: the theme, your own name and
 
 | Page | Content |
 |---|---|
-| General | **User** (your own name and icon) and language (Japanese / English). The language is inferred from the OS on first launch only; never re-inferred afterwards. **Startup and exit** (hide in the tray when closed / batch start on launch / launch at sign-in / confirm before quitting; see "Startup and exit" below) |
+| General | **User** (your own name and icon) and language (日本語 / English / 简体中文). The language is inferred from the OS on first launch only; never re-inferred afterwards (a Simplified Chinese OS gets 简体中文; Traditional Chinese regions get English). **Startup and exit** (hide in the tray when closed / batch start on launch / launch at sign-in / confirm before quitting; see "Startup and exit" below) |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
 | Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Judge model (Jev)** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default. **The key is shared with judges (Spec 62)** — with a key set, judges work even while pruning is off). **Price table** (the URL it is fetched from) |
 | User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has two: the confirmation for **cutting a tie**, and whether **join and leave notices** appear in the chat pane (the confirmation **before closing** moved to General > Startup and exit, because hiding in the tray changes what it means) |
@@ -2369,6 +2369,17 @@ written in **the village's language at the moment of recording** and never retra
 (retranslating would put the exported JSONL and the screen out of sync; a village that switched
 languages keeps its old lines in the old language — an honest record, like the user's own past
 messages).
+
+**Simplified Chinese covers the screen only** ([Spec 74](specs/74_simplified-chinese-ui.md)). In a 简体中文
+village the UI text and the tray menu are Chinese, while **what the core says to the servants (system prompts,
+tool descriptions, envelopes) and System lines are in English** — Chinese models work fine from English
+instructions, and the user could not catch mistakes in Chinese instructions (a mistranslated screen is only
+cosmetic). The original text shown with core errors stays Japanese (as on the English screen), and the
+schedule's recurrence labels ("毎週 木曜 17:00") and date formats stay Japanese too. So that Chinese characters
+are not drawn with Japanese glyph shapes, the SC fonts (Noto Sans SC / Microsoft YaHei / PingFang SC) come
+first only in 简体中文 (no fonts are bundled). **Opening a 简体中文 village with an older version writes the
+language back to Japanese or English** (the older version treats `"zh-Hans"` as unknown, leaves it
+undetermined, and re-infers it from the OS on the next launch).
 
 ### Startup and exit ([Spec 69](specs/69_launch-and-exit.md))
 

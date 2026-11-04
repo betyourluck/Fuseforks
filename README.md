@@ -50,7 +50,7 @@ Rust (`fuseforks-core`) + Tauri v2 + Vue 3 + Bun. The in-app display name is "Fu
 | 📁 **Change work folders together** | When you point the whole village at another project, set every checked servant's work folder in one go. **Running servants pick it up from their next message** |
 | 💾 **Conversation Persistence** | Close and reopen to pick up where you left off. Hold multiple conversations, switch between them, and fork from any point |
 | 📊 **Stats** | What this village has paid, by conversation × **servant × model** × how each turn ended (a servant that switched models gets one row per model). Units are tokens (the same effective-token weights the budget uses). **Register per-model rates and it also shows an approximate cost (`≈ $`)** ([Spec 41](specs/41_model-pricing.md); rates come from a "fetch" button or by hand — the button also fills in the context length ([Spec 50](specs/50_context-length-fetch.md)). **Models without rates drop out of the total, and the screen says so**). Failed turns are counted too. **"All conversations" shows one month at a time, cut at a closing day, and you can page back to earlier months** (the closing day is set under System Settings > Cost Management; the default is end of month, and "All time" is still available — [Spec 42](specs/42_stats-period.md)). **Recording starts with this version** (earlier conversations cannot be counted) |
-| ⚙️ **System Settings** | Your own name and icon, language (switches both the screen and what the core says to the servants), token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
+| ⚙️ **System Settings** | Your own name and icon, language (日本語 / English / 简体中文. In Japanese and English both the screen and what the core says to the servants switch; in Simplified Chinese only the screen does, and the servants are instructed in English), token limit, confirmation dialogs. **The left menu is the catalog of what can be configured** |
 
 The connection target is OpenAI-compatible / Anthropic / Gemini / xAI / OpenAI / Meta / Perplexity native. **The base URL is flexible**,
 so it connects directly to local LLMs like Ollama or LM Studio.
@@ -139,7 +139,7 @@ trigger it. **The macOS build is Apple Silicon only** — Intel Macs are not a t
 - **Tailwind CSS v4** — colors live in one place; light and dark both supported
 - **v-network-graph** — Kizuna, the map in the upper center pane (SVG, so nodes are Vue slots)
 - **CodeMirror 6** — editing surface for the ordinance, roles, and settings
-- **vue-i18n** — Japanese / English
+- **vue-i18n** — Japanese / English / Simplified Chinese
 - Tests run on **vitest**; the package manager is **Bun**
 
 ## Further Reading
