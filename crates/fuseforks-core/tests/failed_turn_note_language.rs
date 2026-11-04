@@ -20,7 +20,7 @@ use fuseforks_core::event::CoreEvent;
 use fuseforks_core::llm::retry::{HintSource, RetryClass};
 use fuseforks_core::llm::{ChatMessage, ChatRequest, ChatResponse, Finish, LlmBackend, LlmError, Usage};
 use fuseforks_core::model::{AgentId, AgentSpec, AgentStatus, ModelTemplate};
-use fuseforks_core::world::Language;
+use fuseforks_core::world::{DisplayLanguage, Language};
 use fuseforks_core::{
     ConfigStore, FixedBackendFactory, InMemorySecretStore, Orchestrator, OrchestratorConfig,
 };
@@ -107,7 +107,11 @@ async fn drain_until_quiet(rx: &mut Receiver<CoreEvent>, quiet: Duration) {
 }
 
 /// 1 ターン目を `first` で失敗させ、2 ターン目のプロンプトの本文を全部つないで返す。
-async fn prompt_after_a_failed_turn(language: Language, tag: &str, first: fn() -> LlmError) -> String {
+async fn prompt_after_a_failed_turn(
+    language: impl Into<DisplayLanguage>,
+    tag: &str,
+    first: fn() -> LlmError,
+) -> String {
     let dir = TempDir::new(tag);
     let backend = Arc::new(FailFirstThenRecording {
         first,
@@ -125,7 +129,7 @@ async fn prompt_after_a_failed_turn(language: Language, tag: &str, first: fn() -
     )
     .await
     .expect("bootstrap できること");
-    orchestrator.set_language(language).await.unwrap();
+    orchestrator.set_language(language.into()).await.unwrap();
     orchestrator
         .upsert_template(ModelTemplate::new("tpl", "default", "mock-model"))
         .await
@@ -162,6 +166,21 @@ async fn an_english_village_gets_an_english_failure_note_with_the_seconds() {
     assert!(
         joined.contains("The provider asks to retry after 3600 seconds."),
         "接続先が求めた秒数を注記に書く: {joined}"
+    );
+}
+
+/// 简体中文の村の注記は英語（Spec 74 D1 — コアの声は `voice()` を通る）。
+#[tokio::test]
+async fn a_simplified_chinese_village_gets_the_english_failure_note() {
+    let joined = prompt_after_a_failed_turn(DisplayLanguage::ZhHans, "zh", hint_too_long).await;
+    assert!(
+        !joined.contains("このターンは失敗し") && !joined.contains("秒後の再試行"),
+        "简体中文の村の注記に日本語の文を入れない: {joined}"
+    );
+    assert!(joined.contains("This turn failed"), "注記は英語で書く: {joined}");
+    assert!(
+        joined.contains("The provider asks to retry after 3600 seconds."),
+        "接続先が求めた秒数も英語で: {joined}"
     );
 }
 

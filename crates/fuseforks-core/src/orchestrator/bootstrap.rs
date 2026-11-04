@@ -38,11 +38,11 @@ impl Orchestrator {
 
         // 言語が未確定（新規の村 / 追記前の村 / 手編集の不正値）なら OS から
         // 確定する（Spec 13 の settings_contract — 「自動」の選択肢は無く、
-        // 初回に ja / en のどちらかへ確定して保存する）。下の正規化書き戻しが
+        // 初回に ja / en / zh-Hans のどれかへ確定して保存する。判定表は Spec 74 D3）。下の正規化書き戻しが
         // world.json への実書き込みを担う。コアはこの値（の声）でモデルへの文を
         // 分岐する（Spec 35）。
         if world.language().is_none() {
-            world.set_language(crate::world::Language::from_os_locale(
+            world.set_language(crate::world::DisplayLanguage::from_os_locale(
                 sys_locale::get_locale().as_deref(),
             ));
         }

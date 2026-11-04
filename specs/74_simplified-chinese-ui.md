@@ -2,7 +2,7 @@
 
 **ID**: 74
 **Date**: 2026-11-04
-**Status**: rev2 → **P0 完了**（2026-11-04。`settings_contract` を 3 値・判定の表・型の分離・フォントへ凍結。記録は末尾）
+**Status**: rev2 → **P0〜P1 完了**（2026-11-04。P0 = `settings_contract` の凍結 / P1 = Rust の `DisplayLanguage`・テスト 1,510 本全緑。記録は末尾）
 **Branch**: main 直（Phase ごとにコミット）
 
 ---
@@ -288,3 +288,27 @@ v0.6.5 以前は `"zh-Hans"` を未知の値として「未確定」へ倒し、
   **エラー文の層についての記述**で今も正しい。「選択肢は 2 つだけ」「ja / en のどちらかへ確定」
   （`world.rs` 2 か所・`bootstrap.rs`・`types.ts`）は今のコードの説明なので、コードと一緒に
   P1 / P2 で直す（Tasks に書いた）
+
+---
+
+## P1 実装記録（2026-11-04）
+
+- `world.rs` に `DisplayLanguage { Ja, En, ZhHans }`（serde は `"ja"` / `"en"` / `"zh-Hans"`）+ `voice()` +
+  `from_os_locale`（判定表の 6 行）+ 閉じた `parse` / `as_str` + `From<Language>`。`Language::from_os_locale` は
+  撤去した（呼び出し元は bootstrap だけで、2 値の判定を残すと表が 2 つになる）
+- `World` の保存を `Option<DisplayLanguage>` へ。`language()` は `voice()` を通した値、`display_language()` を新設、
+  `set_language(impl Into<DisplayLanguage>)`。**約 50 ファイルのテストの `set_language(Language::Ja)` は 1 行も
+  書き換えずに通った**
+- `Orchestrator::display_language()` を新設し、`commands::get_language`・`set_startup_settings` のトレイ・
+  `after_boot` のトレイをこちらへ。IPC `set_language` は `DisplayLanguage` を受ける。トレイの 3 本目は
+  「显示 Fuseforks」/「退出」
+- テスト: 単体 3 本（判定表 24 行 / `voice` と保存の往復 / ワイヤ値の閉じた集合）+ 結合 2 本
+  （`display_language_voice.rs` = 中文の村の `ChatRequest` が英語の村と丸ごと一致。負の対照として日本語の村は
+  違うことを先に確かめる / `failed_turn_note_language.rs` に中文の村の注記が英語の 1 本）+ 走査 1 本
+  （`display_language_scope.rs` = コアの src で字面が出るのは 3 ファイルだけ）
+- **変異 4 回とも予測どおり**（`voice` で ZhHans を Ja へ → 3 本 / 地域を文字体系より先に → 1 本 / turn.rs に字面 →
+  1 本 / `parse` が `"zh"` を受ける → 1 本）。**回し方で 1 回外した** — `cargo test --lib world:: --test …` の
+  名前フィルタ `world::` が結合テストにも掛かり、M1 は単体の 1 本しか数えず、M3 は 0 本だった
+  （`failures.md` #133 の再演）。結合テストを分けて回し直して予測と一致した
+- 全テストの 1 回目は `LNK1104`（`user32.lib` を開けない）で 1 本も走らなかった（集計が空 = #132 の形）。
+  clippy と並走させていた。`-j 4` で回し直して **ワークスペース 1,510 本全緑**（85 バイナリ）・clippy 0

@@ -301,7 +301,7 @@ async fn after_boot(
         .unwrap_or_default();
 
     let tray_ready = settings.minimize_to_tray
-        && match tray::install(handle, orchestrator.language().await) {
+        && match tray::install(handle, orchestrator.display_language().await) {
             Ok(()) => true,
             Err(err) => {
                 fuseforks_core::note!("トレイを作れませんでした: {err}");

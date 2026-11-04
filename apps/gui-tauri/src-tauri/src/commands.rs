@@ -824,21 +824,23 @@ pub async fn set_default_verifier(
     state.host.orchestrator.set_default_verifier(agent_id.as_ref()).await
 }
 
-/// UI の表示言語（`"ja"` / `"en"`）。bootstrap が初回に OS から確定済み。
+/// 画面の表示言語（`"ja"` / `"en"` / `"zh-Hans"`）。bootstrap が初回に OS から確定済み。
 #[tauri::command]
-pub async fn get_language(state: State<'_, AppState>) -> CoreResult<fuseforks_core::world::Language> {
-    Ok(state.host.orchestrator.language().await)
+pub async fn get_language(
+    state: State<'_, AppState>,
+) -> CoreResult<fuseforks_core::world::DisplayLanguage> {
+    Ok(state.host.orchestrator.display_language().await)
 }
 
-/// UI の表示言語を差し替える。未知の値は serde の段階で弾かれる。
-/// コアは言語で分岐しないため、システムプロンプトは変わらない。
+/// 画面の表示言語を差し替える。未知の値は serde の段階で弾かれる。
+/// 次のターンからコアの声（Spec 35）も切り替わる — 简体中文の村は英語（Spec 74 D1）。
 ///
 /// **保存が成功したらトレイの文言も差し替える**（Spec 69 D2）。トレイが無ければ何もしない。
 #[tauri::command]
 pub async fn set_language(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    language: fuseforks_core::world::Language,
+    language: fuseforks_core::world::DisplayLanguage,
 ) -> CoreResult<()> {
     state.host.orchestrator.set_language(language).await?;
     if let Err(err) = crate::tray::relabel(&app, language) {
@@ -893,7 +895,7 @@ pub async fn set_startup_settings(
     }
     if minimize_to_tray {
         if let Some(state) = app.try_state::<AppState>() {
-            let language = state.host.orchestrator.language().await;
+            let language = state.host.orchestrator.display_language().await;
             if let Err(err) = crate::tray::install(&app, language) {
                 fuseforks_core::note!("トレイを作れませんでした: {err}");
             }

@@ -8,7 +8,7 @@
 //! [`QUIT_EVENT`] を送るだけ** — 閉じる確認は画面（`App.vue`）が持っているので、確認を出すか・
 //! 出したまま 2 回目を積まないかは画面が決める（`launch_exit_contract` 4）。
 
-use fuseforks_core::world::Language;
+use fuseforks_core::world::DisplayLanguage;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -22,15 +22,17 @@ pub const QUIT_EVENT: &str = "tray://quit-requested";
 const SHOW_ID: &str = "show";
 const QUIT_ID: &str = "quit";
 
-/// メニューの 2 語（表示 / 終了）。**画面の辞書は Rust から読めないので、ここに ja / en を持つ。**
-pub fn labels(language: Language) -> (&'static str, &'static str) {
+/// メニューの 2 語（表示 / 終了）。**画面の辞書は Rust から読めないので、ここに 3 言語を持つ。**
+/// 読むのは表示の言語（Spec 74 — 简体中文の村は中国語。コアの声とは別）。
+pub fn labels(language: DisplayLanguage) -> (&'static str, &'static str) {
     match language {
-        Language::Ja => ("Fuseforks を表示", "終了"),
-        Language::En => ("Show Fuseforks", "Quit"),
+        DisplayLanguage::Ja => ("Fuseforks を表示", "終了"),
+        DisplayLanguage::En => ("Show Fuseforks", "Quit"),
+        DisplayLanguage::ZhHans => ("显示 Fuseforks", "退出"),
     }
 }
 
-fn menu(app: &AppHandle, language: Language) -> tauri::Result<Menu<tauri::Wry>> {
+fn menu(app: &AppHandle, language: DisplayLanguage) -> tauri::Result<Menu<tauri::Wry>> {
     let (show, quit) = labels(language);
     let show = MenuItem::with_id(app, SHOW_ID, show, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT_ID, quit, true, None::<&str>)?;
@@ -57,7 +59,7 @@ pub fn show_main(app: &AppHandle) {
 ///
 /// # Errors
 /// メニューかアイコンを作れなかった場合。
-pub fn install(app: &AppHandle, language: Language) -> tauri::Result<()> {
+pub fn install(app: &AppHandle, language: DisplayLanguage) -> tauri::Result<()> {
     if app.tray_by_id(TRAY_ID).is_some() {
         return Ok(());
     }
@@ -104,7 +106,7 @@ pub fn remove(app: &AppHandle) {
 ///
 /// # Errors
 /// メニューを作り直せなかった場合。
-pub fn relabel(app: &AppHandle, language: Language) -> tauri::Result<()> {
+pub fn relabel(app: &AppHandle, language: DisplayLanguage) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_menu(Some(menu(app, language)?))?;
     }
@@ -117,7 +119,8 @@ mod tests {
 
     #[test]
     fn the_menu_words_follow_the_village_language() {
-        assert_eq!(labels(Language::Ja), ("Fuseforks を表示", "終了"));
-        assert_eq!(labels(Language::En), ("Show Fuseforks", "Quit"));
+        assert_eq!(labels(DisplayLanguage::Ja), ("Fuseforks を表示", "終了"));
+        assert_eq!(labels(DisplayLanguage::En), ("Show Fuseforks", "Quit"));
+        assert_eq!(labels(DisplayLanguage::ZhHans), ("显示 Fuseforks", "退出"));
     }
 }

@@ -134,8 +134,8 @@ impl Orchestrator {
         self.persist().await
     }
 
-    /// UI の表示言語。bootstrap が必ず確定させるので、未確定は起こらない
-    /// （防御の既定は従来の見た目 = 日本語）。
+    /// コアの声（简体中文の村は英語。Spec 74 D1）。bootstrap が必ず確定させるので、
+    /// 未確定は起こらない（防御の既定は従来の見た目 = 日本語）。モデルへ届く文を組む側が読む。
     pub async fn language(&self) -> crate::world::Language {
         self.shared
             .world
@@ -145,14 +145,27 @@ impl Orchestrator {
             .unwrap_or(crate::world::Language::Ja)
     }
 
-    /// UI の表示言語を差し替え、`world.json` へ書き戻す。
+    /// 画面の表示言語（Spec 74 D1）。IPC とトレイが読む。未確定の防御の既定は日本語。
+    pub async fn display_language(&self) -> crate::world::DisplayLanguage {
+        self.shared
+            .world
+            .read()
+            .await
+            .display_language()
+            .unwrap_or(crate::world::DisplayLanguage::Ja)
+    }
+
+    /// 表示言語を差し替え、`world.json` へ書き戻す。`Language` も受け取る（[`From`]）。
     ///
     /// **Spec 35 から、プロンプトの新規生成はこの値で分岐する**（枠組み・
     /// ツールの提示。次のターンから効く）。エラー文言は今も分岐しない
     /// （settings_contract 層 2 の案 A — コアは日本語で返し UI が訳す）。
     /// 履歴・バックエンドには触らず、保存済みの System 行と封筒は
     /// 記録時の言語のまま残る（settings_contract 層 3）。
-    pub async fn set_language(&self, language: crate::world::Language) -> CoreResult<()> {
+    pub async fn set_language(
+        &self,
+        language: impl Into<crate::world::DisplayLanguage>,
+    ) -> CoreResult<()> {
         self.shared.world.write().await.set_language(language);
         self.persist().await
     }

@@ -172,17 +172,6 @@ pub enum Language {
 }
 
 impl Language {
-    /// OS のロケール文字列から確定させる（純関数 — 検出は呼び出し側の責務）。
-    ///
-    /// `ja-JP` / `ja_JP` / `ja` の表記揺れは前方一致で吸収する。日本語以外は
-    /// すべて英語へ倒す（選択肢は 2 つだけ。settings_contract）。
-    pub fn from_os_locale(locale: Option<&str>) -> Self {
-        match locale {
-            Some(s) if s.starts_with("ja") => Language::Ja,
-            _ => Language::En,
-        }
-    }
-
     /// ワイヤ値（`"ja"` / `"en"`）から読む。未知の値は `None`。
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -210,6 +199,110 @@ impl Language {
         match self {
             Language::Ja => ja,
             Language::En => en,
+        }
+    }
+}
+
+/// 画面の表示言語（Spec 74 D1。`settings_contract` の言語の項）。
+///
+/// `world.json` の `language` はこの型で読み書きし、画面・IPC・トレイが読む。
+/// **コアの分岐（`pick` と `match`）はこの型を受け取らない** — 渡すのは
+/// [`Self::voice`] を通した [`Language`] で、简体中文の村のコアの声は英語
+/// （利用者裁定 2026-11-04）。この型の字面がコアの src に現れるのは world.rs /
+/// orchestrator/settings.rs / orchestrator/bootstrap.rs の 3 ファイルだけ
+/// （`tests/display_language_scope.rs` が留める）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DisplayLanguage {
+    /// 日本語。
+    #[serde(rename = "ja")]
+    Ja,
+    /// 英語。
+    #[serde(rename = "en")]
+    En,
+    /// 简体中文。ワイヤ値は `"zh-Hans"` で `"zh"` ではない（Spec 74 D2 —
+    /// 繁体字を足す日に `"zh"` がどちらを指すか読めなくなる）。
+    #[serde(rename = "zh-Hans")]
+    ZhHans,
+}
+
+impl DisplayLanguage {
+    /// コアの声（Spec 74 D1）。**简体中文は英語**。写しはこの 1 実装だけ。
+    pub fn voice(self) -> Language {
+        match self {
+            DisplayLanguage::Ja => Language::Ja,
+            DisplayLanguage::En | DisplayLanguage::ZhHans => Language::En,
+        }
+    }
+
+    /// OS のロケール文字列から確定させる（純関数 — 検出は呼び出し側の責務）。
+    ///
+    /// BCP 47 を `-`（POSIX の `_` も）で割り、**上から順に**評価する。大文字小文字は
+    /// 区別せず、主言語は完全一致（前方一致だと `zha`（壮語）が中文に当たる）。
+    ///
+    /// 1. 主言語 `ja` → Ja
+    /// 2. 主言語 `zh`・文字体系 `Hans` → ZhHans
+    /// 3. 主言語 `zh`・文字体系 `Hant` → En
+    /// 4. 主言語 `zh`・文字体系なし・地域 `TW` / `HK` / `MO` → En
+    /// 5. 主言語 `zh` → ZhHans
+    /// 6. それ以外と取得失敗 → En
+    ///
+    /// **文字体系を地域より先に見る** — 地域が先だと、香港・台湾で簡体字を選んだ
+    /// macOS の `zh-Hans-HK` / `zh-Hans-TW` が英語へ倒れる。
+    pub fn from_os_locale(locale: Option<&str>) -> Self {
+        let Some(raw) = locale else {
+            return DisplayLanguage::En;
+        };
+        // POSIX の `zh_CN.UTF-8` / `fr_FR@euro` の符号化と修飾子を落とす。
+        let tag = raw.split(['.', '@']).next().unwrap_or("");
+        let mut subtags = tag.split(['-', '_']).map(str::to_ascii_lowercase);
+        match subtags.next().as_deref() {
+            Some("ja") => DisplayLanguage::Ja,
+            Some("zh") => {
+                let rest: Vec<String> = subtags.collect();
+                let script = rest
+                    .iter()
+                    .find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_alphabetic()));
+                match script.map(String::as_str) {
+                    Some("hans") => DisplayLanguage::ZhHans,
+                    Some("hant") => DisplayLanguage::En,
+                    _ if rest.iter().any(|s| matches!(s.as_str(), "tw" | "hk" | "mo")) => {
+                        DisplayLanguage::En
+                    }
+                    _ => DisplayLanguage::ZhHans,
+                }
+            }
+            _ => DisplayLanguage::En,
+        }
+    }
+
+    /// ワイヤ値（`"ja"` / `"en"` / `"zh-Hans"`）から読む。**自分が書く 3 値だけを受け付ける
+    /// 閉じた集合**で、`zh-Hant` を含む知らない値は `None`（未確定の道へ。Spec 74 D2）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ja" => Some(DisplayLanguage::Ja),
+            "en" => Some(DisplayLanguage::En),
+            "zh-Hans" => Some(DisplayLanguage::ZhHans),
+            _ => None,
+        }
+    }
+
+    /// ワイヤ値。serde の rename と一致をテストで固定している。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DisplayLanguage::Ja => "ja",
+            DisplayLanguage::En => "en",
+            DisplayLanguage::ZhHans => "zh-Hans",
+        }
+    }
+}
+
+/// コアの声をそのまま表示の言語として書く（`set_language(Language::Ja)` の呼び出し元 —
+/// 主にテスト — を書き換えずに済ませる。Spec 74 D1）。
+impl From<Language> for DisplayLanguage {
+    fn from(language: Language) -> Self {
+        match language {
+            Language::Ja => DisplayLanguage::Ja,
+            Language::En => DisplayLanguage::En,
         }
     }
 }
@@ -342,7 +435,8 @@ pub struct PersistedWorld {
     /// 消えたら「なし」と同じ挙動になるのが契約（凍結 6）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_verifier: Option<AgentId>,
-    /// UI の表示言語（Spec 13。`"ja"` / `"en"`）。
+    /// 画面の表示言語（Spec 13 / Spec 74。`"ja"` / `"en"` / `"zh-Hans"`）。読むのは
+    /// [`DisplayLanguage::parse`]。
     ///
     /// **生の文字列で受ける**（`tokenBudget` の `Some(0)` と同じ判断） —
     /// 手編集の未知の値で world.json が開けなくなるのは罰が重すぎる。
@@ -425,7 +519,7 @@ pub struct World {
     /// 束ねの既定の検証役（Spec 53）。意味論は [`PersistedWorld::default_verifier`]。
     default_verifier: Option<AgentId>,
     /// UI の表示言語（Spec 13）。`None` = 未確定（起動時に OS から確定される）。
-    language: Option<Language>,
+    language: Option<DisplayLanguage>,
     /// 利用者の呼び名（Spec 19）。意味論は [`PersistedWorld::user_name`]。
     /// **ここに入るのは検証を通った値だけ**（読み込みでも保存でも同じ述語を通す）。
     user_name: Option<String>,
@@ -497,10 +591,10 @@ impl World {
         // 手編集した人の意図（何かを変えたかった）に近い挙動になる）。
         world.language = match persisted.language.as_deref() {
             Some(raw) => {
-                let parsed = Language::parse(raw);
+                let parsed = DisplayLanguage::parse(raw);
                 if parsed.is_none() {
                     crate::note!(
-                        "language: `{raw}` は未知の値のため未確定として扱います（ja / en のみ）"
+                        "language: `{raw}` は未知の値のため未確定として扱います（ja / en / zh-Hans のみ）"
                     );
                 }
                 parsed
@@ -704,14 +798,20 @@ impl World {
         Ok(())
     }
 
-    /// UI の表示言語。`None` = 未確定（起動時の確定前だけ観測される）。
+    /// コアの声（[`DisplayLanguage::voice`] を通した値。简体中文の村は英語）。
+    /// `None` = 未確定（起動時の確定前だけ観測される）。モデルへ届く文の分岐はこちらを読む。
     pub fn language(&self) -> Option<Language> {
+        self.language.map(DisplayLanguage::voice)
+    }
+
+    /// 画面の表示言語（Spec 74 D1）。`None` = 未確定。画面・IPC・トレイが読む。
+    pub fn display_language(&self) -> Option<DisplayLanguage> {
         self.language
     }
 
-    /// UI の表示言語を確定させる。
-    pub fn set_language(&mut self, language: Language) {
-        self.language = Some(language);
+    /// 表示言語を確定させる。`Language` も受け取る（[`From`] — 呼び出し元を書き換えない）。
+    pub fn set_language(&mut self, language: impl Into<DisplayLanguage>) {
+        self.language = Some(language.into());
     }
 
     /// 利用者の呼び名。`None` = 未設定（封筒は既定の「ユーザー」になる）。
@@ -1572,17 +1672,82 @@ mod tests {
         );
     }
 
-    /// OS ロケールの表記揺れ（`ja-JP` / `ja_JP` / `ja`）は前方一致で吸収し、
-    /// 日本語以外は取得失敗も含めてすべて英語へ倒す（選択肢は 2 つだけ）。
+    /// OS ロケールの判定表（Spec 74 D3）の全行。文字体系を地域より先に見ること、
+    /// 主言語を完全一致で見ることを留める。
     #[test]
-    fn os_locale_variants_resolve_to_two_languages_only() {
-        for ja in ["ja", "ja-JP", "ja_JP"] {
-            assert_eq!(Language::from_os_locale(Some(ja)), Language::Ja, "{ja}");
+    fn os_locale_resolves_by_the_table_in_order() {
+        let cases: &[(&str, DisplayLanguage)] = &[
+            // 1. 主言語 ja（POSIX の `_` と符号化も読む）
+            ("ja", DisplayLanguage::Ja),
+            ("ja-JP", DisplayLanguage::Ja),
+            ("ja_JP", DisplayLanguage::Ja),
+            ("ja_JP.UTF-8", DisplayLanguage::Ja),
+            // 2. 文字体系 Hans は地域に関わらず中文（地域を先に見ると En へ倒れる行）
+            ("zh-Hans-CN", DisplayLanguage::ZhHans),
+            ("zh-Hans-HK", DisplayLanguage::ZhHans),
+            ("zh-Hans-MO", DisplayLanguage::ZhHans),
+            ("zh-Hans-TW", DisplayLanguage::ZhHans),
+            ("ZH-hans", DisplayLanguage::ZhHans),
+            // 3. 文字体系 Hant は地域に関わらず英語
+            ("zh-Hant-TW", DisplayLanguage::En),
+            ("zh-Hant-CN", DisplayLanguage::En),
+            // 4. 文字体系なし・繁体字の地域
+            ("zh-TW", DisplayLanguage::En),
+            ("zh-HK", DisplayLanguage::En),
+            ("zh_MO", DisplayLanguage::En),
+            // 5. 主言語 zh
+            ("zh", DisplayLanguage::ZhHans),
+            ("zh-CN", DisplayLanguage::ZhHans),
+            ("zh-SG", DisplayLanguage::ZhHans),
+            ("zh_CN.UTF-8", DisplayLanguage::ZhHans),
+            // 6. それ以外（主言語は完全一致 — 前方一致だと壮語 zha が中文、jam が日本語に当たる）
+            ("zha", DisplayLanguage::En),
+            ("jam", DisplayLanguage::En),
+            ("en-US", DisplayLanguage::En),
+            ("de-DE", DisplayLanguage::En),
+            ("", DisplayLanguage::En),
+        ];
+        for (locale, expected) in cases {
+            assert_eq!(DisplayLanguage::from_os_locale(Some(locale)), *expected, "{locale}");
         }
-        for other in ["en-US", "zh-Hans-CN", "de-DE", "fr"] {
-            assert_eq!(Language::from_os_locale(Some(other)), Language::En, "{other}");
+        assert_eq!(DisplayLanguage::from_os_locale(None), DisplayLanguage::En);
+    }
+
+    /// 简体中文のコアの声は英語（Spec 74 D1）。写しは `voice` の 1 実装。
+    #[test]
+    fn simplified_chinese_speaks_english_to_the_models() {
+        assert_eq!(DisplayLanguage::Ja.voice(), Language::Ja);
+        assert_eq!(DisplayLanguage::En.voice(), Language::En);
+        assert_eq!(DisplayLanguage::ZhHans.voice(), Language::En);
+
+        let mut world = World::default();
+        world.set_language(DisplayLanguage::ZhHans);
+        assert_eq!(world.language(), Some(Language::En), "コアの声");
+        assert_eq!(world.display_language(), Some(DisplayLanguage::ZhHans), "表示の言語");
+        assert_eq!(world.to_persisted().language.as_deref(), Some("zh-Hans"));
+        assert_eq!(
+            World::from_persisted(world.to_persisted()).display_language(),
+            Some(DisplayLanguage::ZhHans),
+            "保存して読み戻しても简体中文のまま"
+        );
+    }
+
+    /// 表示言語のワイヤ値は自分が書く 3 値だけ。`zh-Hant` / `zh` は未確定へ倒す（Spec 74 D2）。
+    #[test]
+    fn display_language_wire_values_are_a_closed_set() {
+        for lang in [DisplayLanguage::Ja, DisplayLanguage::En, DisplayLanguage::ZhHans] {
+            let json = serde_json::to_value(lang).unwrap();
+            assert_eq!(json.as_str(), Some(lang.as_str()));
+            assert_eq!(DisplayLanguage::parse(lang.as_str()), Some(lang));
         }
-        assert_eq!(Language::from_os_locale(None), Language::En);
+        for unknown in ["zh-Hant", "zh", "zh-hans", "ZH-HANS", "jp"] {
+            assert_eq!(DisplayLanguage::parse(unknown), None, "{unknown}");
+            let persisted = PersistedWorld {
+                language: Some(unknown.into()),
+                ..PersistedWorld::default()
+            };
+            assert_eq!(World::from_persisted(persisted).display_language(), None, "{unknown}");
+        }
     }
 
     /// `as_str` と serde の直列化値の一致を固定する（Effort の `xhigh` で
