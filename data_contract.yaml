@@ -1102,7 +1102,8 @@ enums:
           拒否。Spec 44 — 委譲の待ち時間。詳細は ask_cycle_contract)、
           defaultVerifier (Option<AgentId>。None = なし。Spec 53 — 束ねの既定の検証役。
           画面の入口は作業状況タブの見出し。詳細は plan_verifier_contract)、
-          language ("ja" | "en")、
+          language ("ja" | "en" | "zh-Hans"。**検証する型は DisplayLanguage** —
+          Spec 74。コアの分岐が受け取るのは 2 値の Language で、下の言語の項が正)、
           userName (Option<String>。Spec 19。意味論は user_identity_contract が正)。
           村を配れば設定も付いて回る。System 行は会話ログに保存されるので、
           言語は村の共有物 — localStorage には置けない。
@@ -1304,20 +1305,55 @@ enums:
           「保存したのに黙って別の値になる」を画面に作らない)。
           制限なし (None) の村は**設定画面がその場でその状態を示す**。
           起動 WARN を待たせない
-        - 言語の選択肢は 日本語 / English の 2 つだけ。「自動」は**出さない** —
-          初回起動時に OS の言語を見て ja / en のどちらかへ**確定して保存**する。
+        - 言語の選択肢は 日本語 / English / 简体中文 の 3 つ (简体中文は Spec 74。
+          旧文「2 つだけ」は Spec 74 で改訂)。「自動」は**出さない** —
+          初回起動時に OS の言語を見て 3 値のどれかへ**確定して保存**する。
           検出は sys-locale (コア側。Webview の navigator.language は OS 設定と
-          ズレる)、`ja` 前方一致で Ja・それ以外と取得失敗は En。
+          ズレる)。判定 (DisplayLanguage::from_os_locale) は BCP 47 を `-` で割り、
+          **上から順に評価する** (大文字小文字は区別しない・主言語は完全一致):
+            1. 主言語 ja → Ja
+            2. 主言語 zh・文字体系サブタグ Hans → ZhHans
+            3. 主言語 zh・文字体系サブタグ Hant → En
+            4. 主言語 zh・文字体系サブタグ無し・地域 TW / HK / MO → En
+            5. 主言語 zh → ZhHans (zh / zh-CN / zh-SG …)
+            6. それ以外と取得失敗 → En
+          **文字体系を地域より先に見る** — 地域が先だと zh-Hans-HK / zh-Hans-TW
+          (香港・台湾で簡体字を選んだ macOS) が En へ倒れる。主言語を前方一致に
+          すると zha (壮語) が中文に当たる。
           **確定済みの値は再起動で再判定しない** (利用者の選択が OS より勝つ)。
+          **ワイヤ値は "zh-Hans" で "zh" ではない** (繁体字を足す日に "zh" が
+          どちらを指すか読めなくなる)。DisplayLanguage::parse は自分が書く
+          3 値だけを受け付ける閉じた集合で、zh-Hant を含む知らない値は下の
+          「未確定」の道へ落ちる (保存値に上の判定は掛けない)。
           world.json の未知の言語コードは「未確定」へ倒して note 1 行 →
           次の起動で OS から確定し直す (tokenBudget=0 → None と同じ道。
           serde で落とすと world.json ごと開けなくなる)。
-          UI の辞書は vue-i18n + locales/{ja,en}.json。**鍵集合の全言語一致を
+          UI の辞書は vue-i18n + locales/{ja,en,zh-Hans}.json (ファイル名と
+          import の綴りは大文字小文字まで一致させる)。**鍵集合の全言語一致を
           テストで固定** (訳の漏れは fallback で画面に出ず、テストでしか見えない)。
-          言語選択肢のラベル (日本語 / English) は**訳さない** — いま読めない
+          言語選択肢のラベル (日本語 / English / 简体中文) は**訳さない** — いま読めない
           言語の一覧から自分の言語を探す人が読む
+        - **表示の言語とコアの声は別の型** (Spec 74 D1):
+          DisplayLanguage { Ja, En, ZhHans } は world.json に保存し、画面・IPC・トレイが
+          読む。Language { Ja, En } はコアの声で、モデルへ届く文の分岐 (pick と match)
+          はこの型しか受け取らない。写しは DisplayLanguage::voice の 1 実装で
+          **ZhHans → En** (利用者裁定 2026-11-04 — 中文の村では画面だけが中国語で、
+          システムプロンプト・ツール説明・System 行・封筒の語は英語)。
+          読む口は 2 つ: World::language / Orchestrator::language はコアの声
+          (voice を通した値)、display_language は表示の言語。書く口は
+          impl Into<DisplayLanguage> で受ける (From<Language>)。
+          **保証するのは「分岐が ZhHans を受け取らない」ことで、手段は型の分離**。
+          DisplayLanguage の字面がコアの src に現れるのは world.rs /
+          orchestrator/settings.rs / orchestrator/bootstrap.rs の 3 ファイルだけ
+          (走査テストで留める)
+        - **简体中文の画面のフォント** (Spec 74 D4): `html:lang(zh-Hans) body` で
+          "Noto Sans SC" / "Microsoft YaHei UI" / "Microsoft YaHei" / "PingFang SC" を
+          Noto Sans JP より先に立てる (入っている端末で漢字が日本の字形になり、簡体字
+          にしか無い字だけが別のフォントへ落ちて混ざる)。フォントは同梱しない。
+          index.html の起動画面は対象外 (その間 <html lang> は "ja" のままで、
+          字も漢字を含まない)
         - 多言語化は 3 層で、層ごとに判断が違う:
-          (1) UI 文言 = 訳す (辞書は P3。vue-i18n + locales/{ja,en}.json)
+          (1) UI 文言 = 訳す (辞書は P3。vue-i18n + locales/{ja,en,zh-Hans}.json)
           (2) コアのエラー (#[error] 31 本) = コアは日本語のまま返し、UI が
               ErrorPayload.code で errors.{code} の辞書を引いて訳す
               (**コアは言語を知らない**。案 A)。表示は formatError (errorText.ts):
@@ -1328,7 +1364,9 @@ enums:
               生キーを画面に出さない)
           (3) システムプロンプト・ツール説明 = **置換はしない。加算で二言語**
               (Spec 35 で改訂。2026-08-12)。日本語をバイト等価で据え置き、英語を
-              足して world.json の language でどちらか一方だけを送る。旧文
+              足して world.json の language でどちらか一方だけを送る
+              (**简体中文の村は英語を送る** — Spec 74 D1 の voice。中国語の腕は
+              作らない)。旧文
               「訳さない」が禁じていたのは**置換** (翻訳ではなくプロンプトの
               変更で、Spec 08 の「束ねの文言・plan のツール説明は 1 字も
               変えない」と衝突する) — 日本語が 1 バイトも変わらない加算は
@@ -4286,7 +4324,7 @@ entities:
          (state.ready かつ initError なし)。組み立てていない間は隠さず今のまま (確認 → destroy)。
          RunEvent::ExitRequested / Exit では隠さない。capability に core:window:allow-hide を足す
       3. トレイのアイコンは minimizeToTray が真の間だけ出す。作るのは組み立てが成功した後。
-         メニューは「Fuseforks を表示」「終了」の 2 項目で、文言は村の言語 (set_language の成功で差し替える)
+         メニューは「Fuseforks を表示」「終了」の 2 項目で、文言は村の**表示の言語** (DisplayLanguage — 简体中文の村では中国語。Spec 74。set_language の成功で差し替える)
       4. トレイの「終了」は閉じる確認を通る (Rust が show() → set_focus() → イベント tray://quit-requested、
          画面が confirmClose に従って確認 → destroy)。終了の確認を出している間は 2 回目を積まない
          (exitConfirmInFlight)。他の確認は取り消さない

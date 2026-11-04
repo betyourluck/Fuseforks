@@ -152,12 +152,16 @@ pub struct TopologyPosition {
     pub y: f64,
 }
 
-/// UI の表示言語（Spec 13 の settings_contract）。
+/// コアの声 — モデルへ届く文（システムプロンプト・ツール説明・System 行・封筒の語）の
+/// 言語（Spec 35 の二言語化）。
 ///
-/// **コアはこの値で分岐しない。** 多言語化 3 層の (2) は「コアは日本語のまま返し、
-/// UI が `ErrorPayload.code` で引いて訳す」（案 A — コアは言語を知らない）。
-/// コアの仕事は村の共有物としての保存だけ。System 行は会話ログに保存されるため、
-/// この値はペイン幅と同じ棚（`localStorage`）には置けない。
+/// **コアはこの値で分岐する**（`pick` と `match`。Spec 35 以前の doc は「分岐しない」と
+/// 書いていたが、二言語化の後は嘘だった）。分岐しないのはコアのエラー文だけで、
+/// あちらは日本語のまま返し UI が `ErrorPayload.code` で引いて訳す（Spec 13 の案 A）。
+///
+/// **2 値のまま据え置く**（Spec 74 D1）。画面の言語は 3 値の `DisplayLanguage` で、
+/// 简体中文の村のコアの声は英語。保存は `world.json`（System 行が会話ログに残るので、
+/// ペイン幅と同じ棚の `localStorage` には置けない）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {

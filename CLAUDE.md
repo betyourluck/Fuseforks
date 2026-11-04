@@ -8051,6 +8051,20 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 — コアは英語のまま）:
+  **rev2 → P0 完了**（2026-11-04。`settings_contract` を 3 値・判定の表・型の分離・フォントへ凍結）。経緯 — **Draft rev2**（2026-11-04 起票 → 同日、査読 2 系統 12 点 = 採用 9 / 前提を訂正して採用 1 / 反証 1 / 不採用 1。
+  表は Spec の Notes 3。rev2 で変わった骨格 = 読む口を `language()`（コアの声）と `display_language()` に割り書く口は
+  `impl Into<DisplayLanguage>`（テスト約 50 ファイルを書き換えない）/ OS の判定は文字体系を地域より先に見る（`zh-Hans-HK` が
+  英語へ倒れる穴）/ `index.html` の起動画面はフォントの対象外 / 設定ページの `promptNote` が Spec 35 以降嘘のままだった既存の
+  腐りを D8 で回収。反証 = 旧い画面と新しいコアの組み合わせ（同じ配布物に同梱）。以下は rev1 の記録 —）。起点は利用者 —「中国製 LLM に対応したい。中文にすれば中国の
+  開発者を呼び込めて、自分が使わない中国 LLM のワイヤを作ってもらえるかもしれない」。**利用者裁定 = コア（モデルへ渡す文）は
+  英語のまま**（誤りを利用者が検証できない・中国製 LLM は英語で動く・約 200 か所の腕を書かずに済む）。骨格 = 型を
+  `DisplayLanguage { Ja, En, ZhHans }`（保存・画面・IPC・トレイ）と `Language { Ja, En }`（コアの声・据え置き）に割り、
+  `voice()` の 1 実装で `ZhHans → En` / ワイヤ値は `"zh-Hans"` / OS の判定は簡体字だけ中文・繁体字圏は英語 /
+  `:lang(zh-Hans)` で SC のフォントを先に立てる（Noto Sans JP の入った端末で日本の字形が混ざる）/ 用語は README_zh に揃える。
+  **起票時の前提の確認**: 中国製 LLM は今も OpenAI 互換で繋がる（Qwen3-VL・DeepSeek を実走済み）ので、「ワイヤ」の実体は
+  固有機能（DeepSeek の `reasoning_content` はコアで 0 件）。貢献者を呼ぶには `CONTRIBUTING`（ワイヤの足し方）のほうが効く
+  という見立てを範囲の外に残した
 - [Spec 73](specs/73_multi-attachment-and-reattach.md)（添付を複数件にする・過去の添付をもう一度渡す）:
   **Done**（2026-10-30。**起票から Done まで同日**。P4 = 開発ビルドで実機 6 件 — 3 枚の区別 / 画像と PDF の要約が宣言順 /
   6 件目の断り / Meta へ送った画像を Anthropic のザリへ渡し直して `source=ref`・ファイル数 47 のまま / mtime が送信時刻へ /

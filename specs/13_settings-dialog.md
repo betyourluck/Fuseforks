@@ -7,6 +7,9 @@
 `askTimeoutSecs` へ移して設定化**した（12 → 11 個。`OrchestratorConfig` 自体は
 画面に出ないまま = 本 Spec の凍結の形式は不変。「出すなら別 Spec で 1 つずつ」の
 最初の 1 個）。
+**改訂の続報 2**: [Spec 74](74_simplified-chinese-ui.md)（2026-11-04）が言語の選択肢を
+**日本語 / English / 简体中文 の 3 つ**へ広げた（本 Spec の「2 つだけ」を改訂）。保存する型は
+`DisplayLanguage`、コアの分岐は 2 値の `Language` のままで、简体中文の村のコアの声は英語。
 
 **Status**: **rev3 承認 → P0〜P4 完了 + 実機の指摘で分類を改稿 → P5 完了 = Done**
 （Done は 2026-08-08。**P5 の実機確認は「使い続けて問題が出ていない」を利用者が
