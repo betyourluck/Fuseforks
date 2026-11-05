@@ -908,7 +908,7 @@ repos/betyourluck/winget-pkgs/git/refs/heads/master -f sha=<本家の先頭> -F 
 --no-checkout --depth 1 --sparse --branch <新しいブランチ>` → wingetcreate が `--out` で書いた 3 ファイルを `manifests/o/Outcasts/Fuseforks/<版>/`
 へ置いてコミット・push → 前回の PR の本文を雛形に `gh pr create`。**次に wingetcreate が同じ形で落ちたら、再試行を重ねずにこの手順へ移る**。
 0.6.6 = PR #470409（2026-11-04 提出。wingetcreate で通った。09:22 UTC マージ = publish の 1 時間 53 分後）/
-0.6.7 = PR #471660（2026-11-06 提出。wingetcreate で通った。マージ待ち）。** 所要を測れた update PR
+0.6.7 = PR #471660（2026-11-05 19:41 UTC 提出 = publish の 2 時間 12 分後。wingetcreate で通った。2026-11-06 時点でマージ待ち・ラベルは `New-Manifest` だけ）。** 所要を測れた update PR
 （0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.3）は、**0.3.4 を除く全部が 48 分〜3 時間 52 分・
 中央値 1 時間前後、0.3.4 だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
@@ -2909,6 +2909,14 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
 
+## 現在地（2026-11-06 更新）
+
+**`v0.6.7` = `f90d9ba` を publish し、tap を 0.6.7 へ更新、winget は PR #471660 でマージ待ち**（タグ履歴が正）。中身は絆の地図の
+移動のための複数選択（Shift + クリック / Shift + ドラッグ / 左ペインのグループの見出しを Shift + クリック。`lib/moveSelection.ts` +
+`composables/useMoveSelection.ts`）と、グループの並びのドラッグの修正（vue-draggable-plus の model に掴めない「無所属」が混ざって
+index が 1 つずれていた → `groupSections` だけを渡す）。**次の一手**: winget 0.6.7 のマージ確認 → タグ履歴と winget の節へ書き戻し /
+従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
+
 ## 現在地（2026-11-04 更新）
 
 **[Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 — コアは英語のまま）を起票から Done まで同日で通し、
@@ -4748,7 +4756,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   「利用者が負う条件」2 つ（Shift を押したままのクリックでは会話の相手が変わらなくなった / 移動のための選択は保存しない）。
   **タグは利用者、publish・winget・tap は Neo** — winget 0.6.7 = PR #471660（`gh repo sync` → `wingetcreate update … --out` で生成して
   確かめてから `wingetcreate submit --token`。`InstallerLocale` 無しを引き写し・ProductCode は `{79279251-…}`・`InstallerSha256` は
-  Release の digest と一致。2026-11-06 提出）/ tap `1e237c8`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
+  Release の digest と一致。2026-11-05 19:41 UTC 提出 = publish の 2 時間 12 分後。マージ待ち）/ tap `1e237c8`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.6.6` = `9eeb252`（2026-11-04 JST タグ。6 コミット）— [Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 —
   コアは英語のまま）**。3 OS 緑・アセット 7 件・publish 2026-11-04 07:29 UTC。ノートは英・中・日の 3 部（この版の主題が中文なので
   中文の節を初めて足した）で主題は画面の简体中文、「利用者が負う条件」4 つ（中文の村でも System 行と判断の注記は英語 / コアの
