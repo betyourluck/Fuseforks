@@ -378,6 +378,7 @@
     "batchWorkDir": "Change work folders together",
     "manageGroups": "Manage groups",
     "groupDrag": "Drag to reorder groups",
+    "groupMoveSelect": "Shift+click to select this section's servants for moving together on the map",
     "unassigned": "Ungrouped",
     "groupMembers": "{count}",
     "groupHide": "Hide this group from Kizuna and the recipient list (delivery and batch start are unaffected)",

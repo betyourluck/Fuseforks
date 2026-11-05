@@ -136,6 +136,7 @@ Fuseforks/
             ├── lib/startupSettings.ts 起動と終了のページの注記の判定（純関数。Spec 69）
             ├── lib/kizunaLink.ts    地図の上で絆を張る起点の判定・双方向の線のどの向きを切るか（純関数）
             ├── lib/kizunaUntangle.ts 地図の「重なりをほどく」— 近すぎる組だけを押し離す（純関数）
+            ├── lib/moveSelection.ts 地図の移動のための複数選択（Shift の間だけ）の規則（純関数）
             ├── lib/agentSearch.ts   サーヴァント一覧の絞り込みの照合（名前・id・役職・モデル。純関数）
             ├── workers/imageConvert.ts   画像 → WebP 変換の WebWorker（メインスレッドを止めない）
             ├── assets/fonts/        同梱フォント（外部 CDN から取りに行かない）
@@ -145,6 +146,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      会話ペインの表示クリア（表示だけ・会話ごと）
             ├── composables/useWaveClear.ts      作業状況タブの表示クリア（表示だけ・終わった波だけ）
             ├── composables/useHiddenGroups.ts   隠しているグループの集合（端末に保存。[Spec 51](specs/51_agent-groups.md)）
+            ├── composables/useMoveSelection.ts  地図の移動のための選択と Shift の押下（地図と左ペインが共有。保存しない）
             ├── composables/useAgentSearch.ts    一覧の絞り込みの問い（保存しない。一覧と Alt+↑↓ が同じ問いを読む）
             ├── composables/useJudgeDialog.ts    判断役の編集ダイアログを開いているか（入口が一覧と地図の 2 つ。Spec 62）
             ├── composables/useToolCallDetails.ts 会話ペインで開いたツール行の中身（開閉と取得の状態。保存しない）
@@ -317,6 +319,14 @@ OFF にしていても出る。
 動かすのは地図に見えている個体（判断役を含む）だけで、隠したグループの個体は動かさない。
 動いた個体の座標は 1 回でまとめて保存する（IPC `set_topology_positions`。1 体ずつ保存すると
 書き込みと地図の取り直しが体数ぶん走る）。重なっている組が無い間はボタンを押せない。
+
+**複数のノードをまとめて動かす**（2026-11-05）。Shift を押したままノードをクリックすると、
+**移動のための選択**に入る（もう一度押すと外れる）。会話の選択とは別物で、拡大せず枠の色だけが
+変わり、会話の相手も変わらない。Shift を押したまま選んだノードのどれかをドラッグすると選んだ全員が
+一緒に動き、座標は 1 回でまとめて保存する（同じ IPC `set_topology_positions`）。**Shift を離すと
+選択は消える**（ドラッグの途中で離したときはドラッグの終わりで消える。窓の外へフォーカスが移った
+ときも離したものとして扱う）。左ペインのグループの見出しを Shift を押したまま押すと、その区分けの
+個体のうち地図に出ている個体がまとめて選択に入る（もう一度押すと外れる）。選択は保存しない。
 
 **起動は 2 つの軸に分けてある**（2026-07-31）。カードのトグルは
 「一括起動の対象に含めるか」（永続。`world.json` に入る）、その右の

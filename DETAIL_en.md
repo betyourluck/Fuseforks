@@ -136,6 +136,7 @@ Fuseforks/
             ├── lib/startupSettings.ts Notes on the Startup and exit page (pure; Spec 69)
             ├── lib/kizunaLink.ts    Who can start a tie on the map, and which direction of a bidirectional tie is cut (pure)
             ├── lib/kizunaUntangle.ts "Untangle overlaps" on the map — pushes apart only the pairs that are too close (pure)
+            ├── lib/moveSelection.ts Rules for the map's multi-selection for moving (only while Shift is held; pure)
             ├── lib/agentSearch.ts   Matching for the servant list filter (name, id, role, model; pure)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
@@ -145,6 +146,7 @@ Fuseforks/
             ├── composables/useChatClear.ts      Clearing the chat view (display only, per conversation)
             ├── composables/useWaveClear.ts      Clearing the Work Status view (display only, finished waves only)
             ├── composables/useHiddenGroups.ts   The set of hidden groups (stored on the device, [Spec 51](specs/51_agent-groups.md))
+            ├── composables/useMoveSelection.ts  The map's selection for moving and whether Shift is held (shared by the map and the left pane; not saved)
             ├── composables/useAgentSearch.ts    The list filter's query (not saved; the list and Alt+↑↓ read the same query)
             ├── composables/useJudgeDialog.ts    Whether the judge editor is open (two entry points: the list and the map; Spec 62)
             ├── composables/useToolCallDetails.ts Contents of tool rows opened in the chat pane (open state and fetch state; not stored)
@@ -290,6 +292,8 @@ judge draws no dashed lines.
 Node coordinates moved by hand in Kizuna are saved to `topologyPositions` in `world.json` and restored after a restart (2026-07-31). The truth of the topology is only "which edges exist," so coordinates are kept in a separate field rather than mixed into `AgentSpec` — moving a node does not change the agent definition. The UI auto-arranges only unplaced nodes in a ring. Coordinates for IDs that no longer exist are dropped when an agent is deleted and when `world.json` is loaded.
 
 **"Untangle overlaps"** at the bottom left of the map (2026-10-27) pushes apart only the pairs whose centres are closer than 96. **It does not rearrange the whole map** — regular layouts such as rings and radial arrangements were rejected twice on the device, and nodes that are already apart keep their coordinates. Each pair is pushed equally in opposite directions, so the overall centre of mass does not move. Only nodes visible on the map (judges included) move; servants in hidden groups stay where they are. The moved coordinates are saved in one call (IPC `set_topology_positions` — saving one node at a time would write the file and refetch the map once per node). The button is disabled while no pair overlaps.
+
+**Moving several nodes at once** (2026-11-05). Shift+clicking a node adds it to a **selection for moving** (clicking it again removes it). This is separate from the conversation selection: the node does not grow, only its ring changes colour, and the conversation partner does not change. Dragging any selected node with Shift held moves all selected nodes together, and the coordinates are saved in one call (the same IPC `set_topology_positions`). **Releasing Shift clears the selection** (if released mid-drag, it clears when the drag ends; focus leaving the window counts as releasing). Shift+clicking a group heading in the left pane adds that section's servants that are shown on the map (clicking again removes them). The selection is not saved.
 
 **Startup is split into two axes** (2026-07-31). The card toggle determines
 "whether to include in batch startup" (persistent, stored in `world.json`), while the standby button to its right controls the actual start/stop state of that specific instance. Pressing ▶ in the header wakes all targeted agents together, and once all targets are running, the icon changes to ■ (batch stop).

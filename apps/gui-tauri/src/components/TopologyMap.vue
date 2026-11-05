@@ -59,6 +59,8 @@ import { askChoice } from "../composables/useConfirm";
 import TieCutVisual from "./TieCutVisual.vue";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { useUiSettings } from "../composables/useUiSettings";
+import { useMoveSelection } from "../composables/useMoveSelection";
+import { isShiftKey } from "../lib/moveSelection";
 import { STATUS_LABEL_KEYS, type AgentId } from "../types";
 
 const { t } = useI18n();
@@ -67,6 +69,10 @@ const orchestrator = useOrchestrator();
 const { state } = orchestrator;
 const hiddenGroups = useHiddenGroups();
 const { settings } = useUiSettings();
+/** 移動のための複数選択（Shift の間だけ。会話の選択とは別物 — `lib/moveSelection.ts`）。 */
+const { shiftHeld, selection: moveSelection, clear: clearMoveSelection } = useMoveSelection();
+/** ドラッグ中に Shift を離しても、ドラッグが終わるまで選択を残す（途中で追従が外れないように）。 */
+const dragging = ref(false);
 const judgeDialog = useJudgeDialog();
 
 const graph = ref<InstanceType<typeof VNetworkGraph> | null>(null);
@@ -289,7 +295,9 @@ const configs = defineConfigs({
     autoPanAndZoomOnLoad: false,
   },
   node: {
-    selectable: false,
+    // **Shift を押している間だけ選べる**（移動のための複数選択）。Shift なしのクリックで選択を
+    // 作らせない — 作ってから消すと、ライブラリの `update:selectedNodes` が後から届いて戻る。
+    selectable: () => shiftHeld.value,
     draggable: true,
     // **選択中は 1.5 倍。** ここで変えると辺の接続点も一緒に動く
     // （見た目だけ CSS で拡大すると、線がノードの内側へ食い込む）。
@@ -324,7 +332,13 @@ const configs = defineConfigs({
   },
 });
 
+/** 移動のための選択は状態の色と重ねて付ける（拡大はしない — 半径は `selected` だけが変える）。 */
 function ringClass(id: AgentId): string {
+  const base = baseRingClass(id);
+  return moveSelection.value.includes(id) ? `${base} is-move-selected` : base;
+}
+
+function baseRingClass(id: AgentId): string {
   const judge = judgeOf(id);
   if (judge) return judge.status.kind === "active" ? "is-judge" : "is-judge is-judge-off";
   // 接続モードの起点。選択より先に見る — 起点が選択中の個体でも、いま何をしているかを示す。
@@ -535,9 +549,23 @@ async function finishLink(target: AgentId): Promise<void> {
 
 /** Esc で接続モードとメニューを閉じる。 */
 function onKeydown(event: KeyboardEvent): void {
+  if (isShiftKey(event)) {
+    shiftHeld.value = true;
+    return;
+  }
   if (event.key !== "Escape") return;
   if (menu.value) menu.value = null;
   else if (linkSource.value) cancelLink();
+}
+
+/** Shift を離したら移動のための選択を消す。ドラッグ中ならドラッグの終わりまで待つ。 */
+function releaseShift(): void {
+  shiftHeld.value = false;
+  if (!dragging.value) clearMoveSelection();
+}
+
+function onKeyup(event: KeyboardEvent): void {
+  if (isShiftKey(event)) releaseShift();
 }
 
 /** メニューの外を押したら閉じる。 */
@@ -551,13 +579,20 @@ function onPointerdown(event: PointerEvent): void {
 watch(visibleIds, (ids) => {
   if (linkSource.value && !ids.has(linkSource.value)) cancelLink();
   if (menu.value && !ids.has(menu.value.id)) menu.value = null;
+  // 隠れた個体は動かせないので、移動のための選択からも外す。
+  const kept = moveSelection.value.filter((id) => ids.has(id as AgentId) || isJudge(id));
+  if (kept.length !== moveSelection.value.length) moveSelection.value = kept;
 });
 
 const handlers: EventHandlers = {
   // 接続モードの間は、クリックを行き先の選択に使う（選択状態も判断役のダイアログも変えない）。
   // 判断役は会話の相手ではないので選択状態に入れず、編集ダイアログを開く（Spec 62 D10）。
-  "node:click": ({ node }) => {
+  "node:click": ({ node, event }) => {
+    // Shift を押したクリックは移動のための選択だけ（ライブラリが選択を足し引きした後に来る）。
+    // 会話の選択も判断役のダイアログも変えない。
+    if (event.shiftKey && !linkSource.value) return;
     if (linkSource.value) {
+      clearMoveSelection();
       void finishLink(node as AgentId);
       return;
     }
@@ -607,10 +642,22 @@ const handlers: EventHandlers = {
     if (edge && !edges.value[edge]?.judge) void removeEdge(edge);
   },
   // ドラッグの結果を `world.json` へ返す。**移動した個体だけ**を書く。
+  // 複数を動かしたときは 1 回でまとめて保存する（「重なりをほどく」と同じ IPC）。1 体ずつ呼ぶと
+  // 書き込みと地図の取り直しが体数ぶん走り、動かしている途中の配置が出る。
+  "node:dragstart": () => {
+    dragging.value = true;
+  },
   "node:dragend": (positions) => {
-    for (const [id, position] of Object.entries(positions)) {
-      void orchestrator.setTopologyPosition(id as AgentId, position);
+    dragging.value = false;
+    const entries = Object.entries(positions);
+    if (entries.length > 1) {
+      void orchestrator.setTopologyPositions(positions as Record<AgentId, { x: number; y: number }>);
+    } else {
+      for (const [id, position] of entries) {
+        void orchestrator.setTopologyPosition(id as AgentId, position);
+      }
     }
+    if (!shiftHeld.value) clearMoveSelection();
   },
 };
 
@@ -678,6 +725,9 @@ function scheduleFit(): void {
 
 onMounted(() => {
   window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keyup", onKeyup);
+  // 窓の外で Shift を離すと keyup が来ないので、窓がフォーカスを失ったら離したものとして扱う。
+  window.addEventListener("blur", releaseShift);
   window.addEventListener("pointerdown", onPointerdown, true);
   if (typeof ResizeObserver !== "function" || !canvas.value) return;
   observer = new ResizeObserver(scheduleFit);
@@ -686,6 +736,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("keyup", onKeyup);
+  window.removeEventListener("blur", releaseShift);
   window.removeEventListener("pointerdown", onPointerdown, true);
   observer?.disconnect();
   if (settle) clearTimeout(settle);
@@ -925,6 +977,7 @@ onBeforeUnmount(() => {
         :nodes="nodes"
         :edges="edges"
         :layouts="layouts"
+        v-model:selected-nodes="moveSelection"
         :configs="configs"
         :event-handlers="handlers"
       >
@@ -1075,6 +1128,15 @@ onBeforeUnmount(() => {
 .kizuna :deep(.is-selected .kizuna-ring) {
   stroke: var(--color-accent);
   stroke-width: 8;
+}
+/*
+ * 移動のための選択（Shift の間だけ）。**拡大しない・枠の色だけ変える**（2026-11-05 利用者要望）。
+ * 会話の選択の accent から少しずらした色で、状態色（稼働・失敗・注意）と判断役の枠より手前に出す
+ * （判断役の規則は後ろに書いてあるので、`.kizuna-node` を足して特異度で勝つ）。
+ */
+.kizuna :deep(.kizuna-node.is-move-selected .kizuna-ring) {
+  stroke: color-mix(in oklch, var(--color-accent) 55%, var(--color-ink));
+  stroke-width: 6;
 }
 
 /*

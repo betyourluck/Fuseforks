@@ -378,6 +378,7 @@
     "batchWorkDir": "作業フォルダ一括切り替え",
     "manageGroups": "グループを管理",
     "groupDrag": "ドラッグでグループの順を並べ替える",
+    "groupMoveSelect": "Shift を押したままクリックで、この区分けのサーヴァントを地図で一緒に動かせる選択にします",
     "unassigned": "無所属",
     "groupMembers": "{count} 体",
     "groupHide": "このグループを絆と宛先から隠す（配送・一括起動には効きません）",

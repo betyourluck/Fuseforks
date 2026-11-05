@@ -30,6 +30,7 @@ import { filterAgents } from "../lib/agentSearch";
 import { batchAction, batchLabel } from "../lib/batchStart";
 import { deriveId } from "../lib/judges";
 import { dropPoint, tieAddition } from "../lib/kizunaDrop";
+import { useMoveSelection } from "../composables/useMoveSelection";
 import type { AgentGroup, AgentId, AgentSnapshot, AgentSpec, RoleId } from "../types";
 
 const orchestrator = useOrchestrator();
@@ -163,6 +164,18 @@ const groupSections = computed(() => shownSections.value.filter((e) => e.section
 function onSectionsReordered(entries: ShownSection[]): void {
   const order = entries.flatMap((e) => (e.section.group ? [e.section.group.id] : []));
   void orchestrator.reorderGroups(order);
+}
+
+/**
+ * Shift を押したまま見出しを押すと、その区分けの個体を地図の「移動のための選択」に入れる
+ * （もう一度押すと外す。2026-11-05 利用者要望）。**地図に出ている個体だけ** — 隠した区分けの
+ * 個体は地図に居ないので動かせない。ボタンと掴み手の上のクリックはそれぞれの操作に任せる。
+ */
+const moveSelection = useMoveSelection();
+function onHeaderClick(section: Section<AgentSnapshot>, event: MouseEvent): void {
+  if (!event.shiftKey) return;
+  if ((event.target as Element | null)?.closest("button, [data-group-handle]")) return;
+  moveSelection.toggleGroup(isCollapsed(section) ? [] : section.agents.map((a) => a.id));
 }
 
 async function toggleGate(group: AgentGroup): Promise<void> {
@@ -612,10 +625,15 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
         class="mt-2 first:mt-0"
         :data-group-section="section.group ? 'true' : undefined"
       >
+        <!-- Shift + クリックで地図の移動のための選択へ（mousedown で文字の範囲選択を止める）。 -->
         <div
           v-if="hasGroups"
+          data-group-header
           class="mb-1 flex items-center gap-1.5 text-[11px]"
           :class="section.group ? 'text-ink' : 'text-ink-dim'"
+          :title="$t('agentList.groupMoveSelect')"
+          @mousedown="(e: MouseEvent) => e.shiftKey && e.preventDefault()"
+          @click="(e: MouseEvent) => onHeaderClick(section, e)"
         >
           <!-- 掴み手（グループの並び替え）。無所属は先頭に固定なので置かない。 -->
           <span

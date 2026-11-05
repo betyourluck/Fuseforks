@@ -378,6 +378,7 @@
     "batchWorkDir": "批量更改工作文件夹",
     "manageGroups": "管理分组",
     "groupDrag": "拖动以调整分组顺序",
+    "groupMoveSelect": "按住 Shift 点击，可在地图上选中本分组的仆从以便一起移动",
     "unassigned": "未分组",
     "groupMembers": "{count}",
     "groupHide": "在仆从羁绊和收件人列表中隐藏此分组（不影响消息送达和批量启动）",
