@@ -2203,8 +2203,9 @@ Create one from the **dashed area at the bottom of the list** (it turns into a n
 the new heading appears above); rename and delete from the pencil on a heading, which opens the
 group dialog. Membership is set in a servant's settings dialog, or by **dragging a card into
 another section** (the section it lands
-in becomes its group; order and membership are saved in one step). Membership lives in the
-village (`world.json`) and travels with it. **A servant belongs to at most one group**;
+in becomes its group; order and membership are saved in one step). **Reorder the groups by
+dragging the grip on the left of a heading** (ungrouped stays first; the grip disappears while
+the list is filtered). Membership and group order live in the village (`world.json`) and travel with it. **A servant belongs to at most one group**;
 ungrouped is allowed. A worker shared by two lines of work should stay ungrouped — ungrouped
 servants are never hidden, and ties can be drawn regardless of membership.
 

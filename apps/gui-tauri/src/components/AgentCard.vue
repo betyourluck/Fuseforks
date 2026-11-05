@@ -369,11 +369,13 @@ const cacheTone = computed(() => {
       居座り、今の状態と食い違って見えるため。閉じるのは画面の 1 枚だけで、
       コアの `last_error` も `fuseforks.log` の `turn failed:` 行も残る。
       **次の失敗では自動的に開き直る**（`agentFailed` が閉じた印を外す）。
+      **`overflow-wrap: anywhere` で語の途中でも折る**（2026-11-05）— エラー本文は接続先の JSON や URL を
+      逐語で運ぶので、空白の無い長い字の並びが来る。空白でしか折らない既定ではカードの右へはみ出した。
     -->
     <button
       v-if="showsError"
       type="button"
-      class="mt-2 w-full cursor-pointer rounded border border-fail/40 bg-fail/10 px-2 py-1 text-left text-[11px] text-fail hover:bg-fail/20"
+      class="mt-2 w-full min-w-0 cursor-pointer rounded border border-fail/40 bg-fail/10 px-2 py-1 text-left text-[11px] text-fail [overflow-wrap:anywhere] hover:bg-fail/20"
       :title="errorTitle"
       :aria-label="t('agentCard.dismissError')"
       @click.stop="emit('dismiss-error')"

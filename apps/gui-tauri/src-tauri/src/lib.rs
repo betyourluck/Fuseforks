@@ -177,6 +177,7 @@ pub fn run() {
             commands::list_groups,
             commands::create_group,
             commands::upsert_group,
+            commands::reorder_groups,
             commands::delete_group,
             commands::commit_agent_drop,
             // 判断役（Spec 62）

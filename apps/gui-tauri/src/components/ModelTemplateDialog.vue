@@ -12,7 +12,7 @@ import { useI18n } from "vue-i18n";
 import * as ipc from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { parsePriceInput, todayIsoDate } from "../lib/priceInput";
-import { isTemplateDirty } from "../lib/templateDraft";
+import { idTakenByAnother, isTemplateDirty } from "../lib/templateDraft";
 import { probeBlockedKey, probeFinishKey, probeView } from "../lib/templateProbe";
 import {
   baseUrlMismatch as checkBaseUrlMismatch,
@@ -130,8 +130,21 @@ const removing = ref<ModelTemplateId | null>(null);
  * さらに ID は資格情報ストアの鍵でもあり、エージェントからの参照先でもあるため、
  * 変えると登録済みキーが孤児になり、参照していたエージェントが宙に浮く。
  */
-const isNewDraft = computed(
-  () => !!draft.value && !state.templates.some((t) => t.id === draft.value!.id),
+const creating = ref(false);
+/**
+ * 新規かどうかは「新規」を押した事実で持ち、識別子から逆算しない（`idTakenByAnother` の doc）。
+ * 立てるのは `create` だけ、下ろすのは下書きを登録済みの行へ差し替える経路（`edit` / `reseedDraft` / 削除）。
+ */
+const isNewDraft = computed(() => !!draft.value && creating.value);
+/** 新規の識別子が登録済みと重なっている。打ち続けられるまま知らせ、保存だけを止める。 */
+const idTaken = computed(
+  () =>
+    !!draft.value &&
+    idTakenByAnother(
+      creating.value,
+      draft.value.id,
+      state.templates.map((t) => t.id),
+    ),
 );
 
 /**
@@ -172,6 +185,11 @@ const savingSecret = ref(false);
 async function refreshCredentialState(templateId: string | undefined): Promise<void> {
   credentialStored.value = null;
   if (!templateId) return;
+  // 新規の下書きはまだ鍵を持たない。識別子が登録済みと重なっていても、その行の鍵を見せない。
+  if (creating.value) {
+    credentialStored.value = false;
+    return;
+  }
   try {
     credentialStored.value = await ipc.modelCredentialExists(templateId);
   } catch {
@@ -196,7 +214,8 @@ watch(() => draft.value?.id, () => { secretInput.value = ""; });
 async function saveSecret(): Promise<void> {
   const template = draft.value;
   const secret = secretInput.value;
-  if (!template || !secret) return;
+  // 識別子が重なった新規の下書きは止める — 先に打つ upsert が登録済みの行を上書きする。
+  if (!template || !secret || idTaken.value) return;
 
   const id = template.id;
   savingSecret.value = true;
@@ -510,12 +529,14 @@ function edit(template: ModelTemplate): void {
   clearProbe();
   selectedId.value = template.id;
   draft.value = { ...template };
+  creating.value = false;
 }
 
 function create(): void {
   clearProbe();
   draft.value = blank();
   selectedId.value = null;
+  creating.value = true;
 }
 
 /**
@@ -536,7 +557,10 @@ function clearProbe(): void {
 
 /** 保存済みの値。未保存の判定（`isTemplateDirty`）の比較相手。 */
 const savedTemplate = computed(() =>
-  draft.value ? (state.templates.find((t) => t.id === draft.value!.id) ?? null) : null,
+  // 新規の下書きは識別子が登録済みと重なっていても、その行の保存済みの値ではない。
+  draft.value && !creating.value
+    ? (state.templates.find((t) => t.id === draft.value!.id) ?? null)
+    : null,
 );
 
 /**
@@ -606,6 +630,7 @@ function reseedDraft(id: ModelTemplateId): void {
   const saved = state.templates.find((t) => t.id === id);
   draft.value = saved ? { ...saved } : null;
   selectedId.value = saved ? saved.id : null;
+  creating.value = false;
 }
 
 /** 保存の通信中。連打の二重送信を塞ぎ、ボタンの文言も変える。 */
@@ -616,7 +641,7 @@ const savedFlash = ref(false);
 let savedTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function save(): Promise<void> {
-  if (!draft.value || saving.value) return;
+  if (!draft.value || saving.value || idTaken.value) return;
   const id = draft.value.id;
   saving.value = true;
   try {
@@ -647,7 +672,7 @@ async function remove(template: ModelTemplate): Promise<void> {
     await orchestrator.deleteTemplate(template.id);
     if (probe.value?.templateId === template.id) clearProbe();
     if (selectedId.value === template.id) selectedId.value = null;
-    if (draft.value?.id === template.id) draft.value = null;
+    if (draft.value?.id === template.id && !creating.value) draft.value = null;
   } finally {
     removing.value = null;
   }
@@ -745,9 +770,13 @@ function onTemperature(raw: string): void {
                     ? $t('modelTemplate.idNewTitle')
                     : $t('modelTemplate.idLockedTitle')
                 "
-                class="w-full rounded border border-line bg-surface-0 px-2 py-1 font-mono outline-none focus:border-accent read-only:opacity-60"
+                class="w-full rounded border bg-surface-0 px-2 py-1 font-mono outline-none read-only:opacity-60"
+                :class="idTaken ? 'border-fail focus:border-fail' : 'border-line focus:border-accent'"
               />
-              <p v-if="!isNewDraft" class="mt-1 text-[11px] text-ink-dim">
+              <p v-if="idTaken" class="mt-1 text-[11px] text-fail">
+                {{ $t("modelTemplate.idTaken") }}
+              </p>
+              <p v-else-if="!isNewDraft" class="mt-1 text-[11px] text-ink-dim">
                 {{ $t("modelTemplate.idLockedHint") }}
               </p>
             </div>
@@ -830,7 +859,7 @@ function onTemperature(raw: string): void {
                 />
                 <button
                   class="rounded bg-accent px-2.5 py-1 text-[11px] font-medium text-surface-0 disabled:opacity-40"
-                  :disabled="!secretInput || savingSecret"
+                  :disabled="!secretInput || savingSecret || idTaken"
                   @click="saveSecret"
                 >
                   {{ savingSecret ? $t("modelTemplate.registering") : $t("modelTemplate.register") }}
@@ -1370,7 +1399,8 @@ function onTemperature(raw: string): void {
           <button
             class="rounded px-3 py-1 text-[11px] font-medium text-surface-0 transition-colors disabled:opacity-60"
             :class="savedFlash ? 'bg-run' : 'bg-accent'"
-            :disabled="saving"
+            :disabled="saving || idTaken"
+            :title="idTaken ? $t('modelTemplate.idTaken') : undefined"
             @click="save"
           >
             {{

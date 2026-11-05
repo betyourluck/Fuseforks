@@ -250,6 +250,12 @@ pub async fn upsert_group(state: State<'_, AppState>, group: AgentGroup) -> Core
     state.host.orchestrator.upsert_group(group).await
 }
 
+/// グループの並び（見出しの並び）を振り直す。送られなかったグループは元の順で後ろへ残る。
+#[tauri::command]
+pub async fn reorder_groups(state: State<'_, AppState>, order: Vec<AgentGroupId>) -> CoreResult<()> {
+    state.host.orchestrator.reorder_groups(&order).await
+}
+
 /// グループを削除する。**個体の `groupId` には触らない**（`group_contract` 凍結 3 —
 /// 引けない id は無所属として描かれ、次に所属を書く操作で `null` へ正規化される）。
 #[tauri::command]

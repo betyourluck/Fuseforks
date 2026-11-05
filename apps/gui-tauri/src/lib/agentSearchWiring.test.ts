@@ -52,7 +52,9 @@ describe("一覧の絞り込み", () => {
   });
 
   it("絞り込み中はドラッグの並べ替えと受け入れを止める", () => {
-    const box = between(list, "<VueDraggable", ">");
+    // カードの箱（2026-11-05 から一覧の外側にグループの並べ替えの箱が 1 つあるので、最初の
+    // <VueDraggable> ではなく cardsOf を描く箱を引く）。
+    const box = between(list, ':model-value="cardsOf(section, shown)"', "=>");
     expect(box).toContain(`:group="searching ? SEARCH_DRAG_GROUP : 'agents'"`);
     expect(box).toContain(':sort="!searching"');
     expect(list).toMatch(/SEARCH_DRAG_GROUP = \{ name: "agents", pull: true, put: false \}/);

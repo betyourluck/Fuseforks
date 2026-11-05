@@ -317,6 +317,13 @@ impl Orchestrator {
         self.persist().await
     }
 
+    /// グループの並び（見出しの並び）を振り直す。並べ替えたグループは 1 つも失わない
+    /// （[`crate::world::World::reorder_groups`]）。
+    pub async fn reorder_groups(&self, order: &[AgentGroupId]) -> CoreResult<()> {
+        self.shared.world.write().await.reorder_groups(order);
+        self.persist().await
+    }
+
     /// グループを削除する。**個体の `group_id` には触らない**（凍結 3）。
     pub async fn remove_group(&self, id: &AgentGroupId) -> CoreResult<()> {
         self.shared.world.write().await.remove_group(id)?;

@@ -146,6 +146,25 @@ async function runSectionBatch(section: Section<AgentSnapshot>): Promise<void> {
 }
 
 /** 全体 ▶ の門（スイッチ）。見出しだけに置く（`GroupDialog` には置かない — 二重管理にしない）。 */
+/**
+ * 見出しのドラッグでグループの並びを変える（2026-11-05 利用者要望）。外側の箱は区分けを並べるだけで、
+ * カードの箱（`group: 'agents'`）とは別の名前 — カードを見出しの間へ落とせず、見出しをカードの箱へ
+ * 落とせない。動かせるのは掴み手（`data-group-handle`）からだけで、無所属は先頭に固定（並べ直しは
+ * グループの id だけを読むので、無所属がどこへ落ちても描き直すと先頭へ戻る）。
+ */
+const SECTION_DRAG_GROUP = "agent-sections";
+/**
+ * 外側の箱へ渡す配列は**グループの区分けだけ**。vue-draggable-plus は配列を `oldDraggableIndex` /
+ * `newDraggableIndex`（`draggable` に当たる子だけで数えた位置）で入れ替えるので、動かせない無所属を
+ * 配列に混ぜると 1 つずれた位置を入れ替える（2026-11-05 実機 — 並びがおかしくなった）。
+ * DOM の差し戻しは子要素の位置（`oldIndex`）で行うので、描画は無所属込みの `shownSections` のままでよい。
+ */
+const groupSections = computed(() => shownSections.value.filter((e) => e.section.group));
+function onSectionsReordered(entries: ShownSection[]): void {
+  const order = entries.flatMap((e) => (e.section.group ? [e.section.group.id] : []));
+  void orchestrator.reorderGroups(order);
+}
+
 async function toggleGate(group: AgentGroup): Promise<void> {
   await orchestrator.upsertGroup({ ...group, batchStart: !group.batchStart });
 }
@@ -571,12 +590,47 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
     -->
     <!-- data-tour: 初回の案内が「ここから地図へ drop」として地図のキャンバスと束ねて照らす。 -->
     <div class="min-h-0 flex-1 overflow-y-auto p-3" data-tour="kizuna">
-      <template v-for="{ section, shown } in shownSections" :key="section.key">
+      <!--
+        区分けを並べる外側の箱（見出しのドラッグ）。カードの箱とは別の group 名で、動かせるのは
+        掴み手からだけ。絞り込み中とグループの無い村では止める。
+      -->
+      <VueDraggable
+        :model-value="groupSections"
+        tag="div"
+        :group="SECTION_DRAG_GROUP"
+        :disabled="searching || !hasGroups"
+        handle="[data-group-handle]"
+        draggable="[data-group-section]"
+        :animation="150"
+        :force-fallback="true"
+        ghost-class="opacity-40"
+        @update:model-value="onSectionsReordered"
+      >
+      <div
+        v-for="{ section, shown } in shownSections"
+        :key="section.key"
+        class="mt-2 first:mt-0"
+        :data-group-section="section.group ? 'true' : undefined"
+      >
         <div
           v-if="hasGroups"
-          class="mb-1 mt-2 flex items-center gap-1.5 text-[11px] first:mt-0"
+          class="mb-1 flex items-center gap-1.5 text-[11px]"
           :class="section.group ? 'text-ink' : 'text-ink-dim'"
         >
+          <!-- 掴み手（グループの並び替え）。無所属は先頭に固定なので置かない。 -->
+          <span
+            v-if="section.group && !searching"
+            data-group-handle
+            class="-ml-1 cursor-grab rounded px-0.5 text-ink-dim hover:text-accent active:cursor-grabbing"
+            :title="$t('agentList.groupDrag')"
+            :aria-label="$t('agentList.groupDrag')"
+          >
+            <svg class="size-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+              <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+              <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+            </svg>
+          </span>
           <!-- 目（表示/非表示）。無所属には置かない — 無所属は隠れない（凍結 6）。 -->
           <button
             v-if="section.group"
@@ -686,7 +740,8 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
             @dismiss-error="orchestrator.dismissError(agent.id)"
           />
         </VueDraggable>
-      </template>
+      </div>
+      </VueDraggable>
 
       <p
         v-if="!agents.length"

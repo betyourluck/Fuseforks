@@ -348,6 +348,9 @@ export const createGroup = (name: string) => call<AgentGroup>("create_group", { 
 /** 改名 / 全体 ▶ のスイッチ。既存のサーヴァントには何も起きない。 */
 export const upsertGroup = (group: AgentGroup) => call<void>("upsert_group", { group });
 
+/** グループの並び（見出しの並び）を振り直す。送らなかったグループは元の順で後ろへ残る。 */
+export const reorderGroups = (order: GroupId[]) => call<void>("reorder_groups", { order });
+
 /**
  * グループを削除する。**個体の `groupId` には触らない**（group_contract 凍結 3）—
  * 引けない id は無所属として描かれ、次に所属を書く操作で `null` へ正規化される。

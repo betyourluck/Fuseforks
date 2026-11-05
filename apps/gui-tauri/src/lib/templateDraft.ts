@@ -1,6 +1,23 @@
 import type { ModelTemplate } from "../types";
 
 /**
+ * 新規の下書きの識別子が、登録済みのテンプレートと重なっているか。
+ *
+ * **新規かどうかは識別子から逆算しない**（呼び出し側が「新規」を押した事実で持つ）。2026-11-05 まで
+ * 新規かどうかを「識別子が登録済みに無いか」で決めていたので、新規の入力中に既存の識別子と同じ文字列を
+ * 打った瞬間に既存の扱いになり、欄が読み取り専用になって続きを打てなかった（`gpt5` → `gpt5_mini` の途中で
+ * 止まる）。重なりは打ち続けられる状態のまま知らせ、保存だけを止める — 保存すると upsert が既存の行を
+ * 上書きする。
+ */
+export function idTakenByAnother(
+  creating: boolean,
+  id: string,
+  existingIds: readonly string[],
+): boolean {
+  return creating && existingIds.includes(id);
+}
+
+/**
  * モデルテンプレートの下書きが、保存済みの値と違うか（Spec 68 D1）。
  *
  * 接続テストは**保存済みのテンプレート**だけを確かめる（確認と本番の写しを 1 つにする）ので、下書きが保存済みと

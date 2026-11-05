@@ -2826,7 +2826,10 @@ entities:
       (PersistedWorld.groups、world.json。**村を配ると付いて回る**)。
       id はコアが発行する UUID v4 で**削除しても再発行しない** (引けない group_id が
       個体に残る設計 = group_contract 凍結 3 と組むと、再利用した id が削除前の個体を
-      黙って吸う)。並びは groups の**配列順 (作成順)** で、並び替えの UI は持たない。
+      黙って吸う)。並びは groups の**配列順**。~~作成順で、並び替えの UI は持たない~~
+      → 2026-11-05 に覆した (利用者要望): 見出しの掴み手のドラッグで並べ替える。
+      IPC reorder_groups(order) / World::reorder_groups は送られた順を先頭へ置き、送られなかった
+      グループを元の順で後ろへ残す (未知の id・重複は読み飛ばし、1 つも失わない)。無所属は先頭に固定。
     fields:
       id: AgentGroupId
       name: String                  # 見出しに出る。空は拒む。重複は拒まない (タスク名は重なりうる)

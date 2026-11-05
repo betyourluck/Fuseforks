@@ -162,3 +162,15 @@ export function commitDrop<T extends GroupableAgent>(
   if (!crossed && !normalize) return { order, regroup: null };
   return { order, regroup: { id: movedId, groupId: targetGroupId } };
 }
+
+/**
+ * グループの並べ直し（見出しのドラッグ。2026-11-05）。コアの `World::reorder_groups` と同じ規則 —
+ * `order` に並んだ既知の id をその順で先頭へ置き、`order` に無いグループは元の順で後ろへ続ける。
+ * 未知の id と重複は読み飛ばす。**グループを 1 つも失わない**（一覧が古いまま送っても落ちない）。
+ */
+export function reorderGroupIds(current: readonly GroupId[], order: readonly GroupId[]): GroupId[] {
+  const next: GroupId[] = [];
+  for (const id of order) if (current.includes(id) && !next.includes(id)) next.push(id);
+  for (const id of current) if (!next.includes(id)) next.push(id);
+  return next;
+}

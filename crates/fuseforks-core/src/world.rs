@@ -461,7 +461,7 @@ pub struct PersistedWorld {
     /// `#[serde(default)]` なので、役職を 1 つも持たない既存の村もそのまま開く。
     #[serde(default)]
     pub roles: Vec<AgentRole>,
-    /// グループ（Spec 51）。配列順が見出しの並び（作成順）。**旧版のバイナリで村を
+    /// グループ（Spec 51）。配列順が見出しの並び（作成順に積み、`reorder_groups` で並べ替える）。**旧版のバイナリで村を
     /// 開くと未知の欄として消える**（`failures.md` #112 — `default` は「欠けても読める」
     /// だけ）。
     #[serde(default)]
@@ -1266,7 +1266,7 @@ impl World {
     }
 
     /// 既存のグループを書き換える（改名 / 全体 ▶ のスイッチ）。**配列の位置は動かさない**
-    /// （見出しの並び = 作成順を保つ）。
+    /// （見出しの並びを保つ。並べ替えは `reorder_groups` だけ）。
     ///
     /// # Errors
     /// 未登録の id なら [`CoreError::GroupNotFound`]。名前が空なら
@@ -1303,6 +1303,23 @@ impl World {
             return Err(CoreError::GroupNotFound(id.to_string()));
         }
         Ok(())
+    }
+
+    /// グループの並び（= 見出しの並び）を振り直す（2026-11-05 利用者要望 — 一覧でドラッグする）。
+    ///
+    /// **グループを 1 つも失わない**: `order` に並んだ既知の id をその順で先頭へ置き、`order` に無い
+    /// グループは元の順のまま後ろへ続ける。未知の id と重複は読み飛ばす（画面の一覧が古いまま送っても、
+    /// 消えたグループの id で他のグループが落ちない）。個体の `order` と所属には触らない。
+    pub fn reorder_groups(&mut self, order: &[AgentGroupId]) {
+        let mut rest = std::mem::take(&mut self.groups);
+        let mut next = Vec::with_capacity(rest.len());
+        for id in order {
+            if let Some(pos) = rest.iter().position(|g| g.id == *id) {
+                next.push(rest.remove(pos));
+            }
+        }
+        next.append(&mut rest);
+        self.groups = next;
     }
 
     /// 判断役の一覧（`order` の順、同じなら ID の順）。
@@ -2085,6 +2102,28 @@ mod tests {
         assert_eq!(groups[0].name, "A'");
         assert!(!groups[0].batch_start);
         assert_eq!(groups[1].id, b.id);
+    }
+
+    /// 並べ替えは送られた順を先頭へ置き、送られなかったグループを元の順で後ろへ残す。
+    /// 未知の id と重複は読み飛ばし、グループは 1 つも失わない。並びは往復しても残る。
+    #[test]
+    fn reordering_groups_keeps_every_group_and_survives_a_round_trip() {
+        let mut world = World::new();
+        let a = world.create_group("a").unwrap();
+        let b = world.create_group("b").unwrap();
+        let c = world.create_group("c").unwrap();
+        let ghost = AgentGroupId::fresh();
+
+        world.reorder_groups(&[c.id.clone(), ghost, c.id.clone(), a.id.clone()]);
+        let names = |w: &World| w.groups().iter().map(|g| g.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&world), ["c", "a", "b"]);
+
+        let restored = World::from_persisted(world.to_persisted());
+        assert_eq!(names(&restored), ["c", "a", "b"]);
+
+        world.reorder_groups(&[]);
+        assert_eq!(names(&world), ["c", "a", "b"], "空の並びは何も動かさない");
+        assert_eq!(world.groups()[2].id, b.id);
     }
 
     /// 全体 ▶ の対象（凍結 7）。個体のトグルとグループのスイッチの 2 段で、引けない

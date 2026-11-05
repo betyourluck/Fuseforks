@@ -11,6 +11,7 @@ import { reactive, readonly } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { snapshotToSpec } from "../lib/agentSpec";
+import { reorderGroupIds } from "../lib/agentGroups";
 import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
 import { formatError } from "../lib/errorText";
@@ -1147,6 +1148,21 @@ export function useOrchestrator() {
       const index = state.groups.findIndex((g) => g.id === group.id);
       if (index >= 0) state.groups[index] = { ...group };
       const result = await mutate("orchestrator.op.saveGroup", () => ipc.upsertGroup(group));
+      return succeeded(result);
+    },
+
+    /**
+     * グループの並びを振り直す。見た目を先に動かしてから保存する（`commitDrop` と同じ操作感）。
+     * 並べ直しは `reorderGroupIds` の 1 実装 — コアの `reorder_groups` と同じ規則（1 つも失わない）。
+     */
+    async reorderGroups(order: GroupId[]): Promise<boolean> {
+      const ids = reorderGroupIds(
+        state.groups.map((g) => g.id),
+        order,
+      );
+      const byId = new Map(state.groups.map((g) => [g.id, g]));
+      state.groups = ids.map((id) => byId.get(id)!);
+      const result = await mutate("orchestrator.op.saveGroup", () => ipc.reorderGroups(ids));
       return succeeded(result);
     },
 
