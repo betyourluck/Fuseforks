@@ -906,7 +906,8 @@ publish の 78 分後**）。** **→ 0.3.6 = PR #439165（2026-09-22 提出。�
 502 で、何も書かれていなかった）。通った手順 = フォークが本家より遅れているだけ（ahead 0）なら `gh api -X PATCH
 repos/betyourluck/winget-pkgs/git/refs/heads/master -f sha=<本家の先頭> -F force=false` で早送り → `git clone --filter=blob:none
 --no-checkout --depth 1 --sparse --branch <新しいブランチ>` → wingetcreate が `--out` で書いた 3 ファイルを `manifests/o/Outcasts/Fuseforks/<版>/`
-へ置いてコミット・push → 前回の PR の本文を雛形に `gh pr create`。**次に wingetcreate が同じ形で落ちたら、再試行を重ねずにこの手順へ移る**。** 所要を測れた update PR
+へ置いてコミット・push → 前回の PR の本文を雛形に `gh pr create`。**次に wingetcreate が同じ形で落ちたら、再試行を重ねずにこの手順へ移る**。
+0.6.6 = PR #470409（2026-11-04 提出。wingetcreate で通った。09:22 UTC マージ = publish の 1 時間 53 分後）。** 所要を測れた update PR
 （0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.3）は、**0.3.4 を除く全部が 48 分〜3 時間 52 分・
 中央値 1 時間前後、0.3.4 だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
@@ -2911,8 +2912,8 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 **[Spec 74](specs/74_simplified-chinese-ui.md)（画面の簡体字中国語 — コアは英語のまま）を起票から Done まで同日で通し、
 利用者が `v0.6.6` = `9eeb252` のタグを push し、4 経路で配った**（タグ履歴が正。publish 07:29 UTC / winget PR #470409 / tap `4e58148`）。中文の村はモデルへ英語を送るので、
-`ChatRequest` は英語の村と同じ（結合テストが留める）。**次の一手**: winget 0.6.6（PR #470409）のマージ確認 → タグ履歴と
-winget の節へ書き戻し / 従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
+`ChatRequest` は英語の村と同じ（結合テストが留める）。**次の一手**: ~~winget 0.6.6（PR #470409）のマージ確認 → タグ履歴と
+winget の節へ書き戻し~~（**→ 2026-11-04 09:22 UTC マージ = publish の 1 時間 53 分後**。2026-11-05 に書き戻し済み）/ 従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
 
 ## 現在地（2026-10-30 更新）
 
@@ -4746,7 +4747,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   エラーの原文・予定のラベル・CLI の枠は日本語・日時は日本式 / **v0.6.5 以前で開くと言語が ja か en へ戻って保存される** /
   中文は AI の翻訳）。**タグは利用者、publish・winget・tap は Neo** — winget 0.6.6 = PR #470409（`gh repo sync` →
   `wingetcreate update … --out` で生成して確かめてから `wingetcreate submit --token`。`InstallerLocale` 無しを引き写し・ProductCode は
-  `{32197D67-…}`・`InstallerSha256` は Release の digest と一致。2026-11-04 提出 = publish の数分後）/ tap `4e58148`（sha256 は
+  `{32197D67-…}`・`InstallerSha256` は Release の digest と一致。2026-11-04 提出 = publish の数分後。**2026-11-04 09:22 UTC マージ = publish の 1 時間 53 分後**）/ tap `4e58148`（sha256 は
   Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.6.5` = `7510a1e`（2026-10-30 JST タグ。23 コミット）— [Spec 72](specs/72_approval-stops-the-turn.md)（承認待ちでターンを止める）+
   [Spec 73](specs/73_multi-attachment-and-reattach.md)（添付を複数件に・過去の添付を渡し直す）+ 外部の脆弱性監査の修正（4 件 + 衛生 6 件 +
