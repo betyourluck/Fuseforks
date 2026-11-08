@@ -2950,7 +2950,7 @@ Bun（`setup-bun`）・WiX・NSIS・`nsis_tauri_utils.dll` の取得が順に 50
 `gh run rerun --failed` は通った OS を走らせ直さないので、3 OS がそろうまで draft に溜まった（`releaseDraft: true` がまた効いた）。
 **同日、Pages の `prices.json` に `cache_write_1h_per_mtok` を 2 件足した**（`claude-opus-5-5` = $8 / `claude-mythos-5-1` = $20。
 Pages リポジトリ `7062c68`。要望 4 で見つけた「統計の `≈ $` が 1 時間の書き込みを $5 で数える」の手当て）。
-**次の一手**: winget 0.6.8（PR #475070）のマージ確認 → タグ履歴と winget の節へ書き戻し / 外部エディタ・最新へ移動の実機
+**次の一手**: winget 0.6.8（PR #475070。2026-11-08 19:38 UTC 時点で自動検証の途中・未マージ）のマージ確認 → タグ履歴と winget の節へ書き戻し / 外部エディタ・最新へ移動の実機
 （要望 2・3 は利用者が開発ビルドで確認済み）/ 従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
 
 ## 現在地（2026-11-08 更新）
@@ -7523,6 +7523,18 @@ Kataribe（`D:\Github\Kataribe\.github\workflows\build.yml`）を写し、
 更新は入口側へ伝わらない。** 依存を足した本人の手元では動くので、壊れるのは CI か
 別の端末。**ロックファイルは「どちらでも動く」ものではなく、どちらが正かを
 1 つ決めるもの。**
+
+### CI が GitHub の Release のダウンロードで落ちたとき（2026-11-09 追記。v0.6.8 で踏んだ）
+
+**ビルドは外部の GitHub Release から道具を 4 つ取る** — `setup-bun`（Bun 本体）/ Tauri の bundler が取る WiX・NSIS・
+`nsis_tauri_utils.dll`。GitHub 側でダウンロードが 504 を返すと、テストもビルドも通った後の**最後の段**で落ちる
+（v0.6.8 の Windows は 15 分のビルドの後にインストーラの作成で落ちた）。GitHub の状態表示は正常のままだった。
+
+- **再実行は `gh run rerun <run> --failed`。** 通った OS は走らせ直さず、draft の Release にアセットが溜まっていく
+  （`releaseDraft: true` なので片肺の公開にはならない）
+- **再実行の前に、手元から落ちた URL を叩いて 200 が続くのを確かめる。** 200 が 1 回出ただけで再実行すると、また落ちる
+  （v0.6.8 で 1 回やった）。次の段の URL はログの `Downloading` の行に出る — 1 つ通ると次の URL で落ちることがある
+- **コードは変えない。** 落ちたのは配布の段で、タグを打ち直す理由にならない
 
 ### タグを打った後にもう 2 つ仕事がある（2026-08-17 追記）
 
