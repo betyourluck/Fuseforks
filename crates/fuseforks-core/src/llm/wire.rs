@@ -421,6 +421,8 @@ pub struct AnthropicCacheControl {
     /// 間隔がそれを超えると、次のターンの 1 回目はまた書き込みになる。
     /// 書き込みは読み取りの 10 倍以上のコストなので、**1 回でも余計な書き込みが
     /// 減れば長い TTL のほうが得**（1h 書き込み 2.0× < 5m 書き込み 1.25× × 2 回）。
+    /// **ただしツールの周で前へ進む境界は `None`（5 分）**（2026-11-08。読むのは数秒後の次の周だけ。
+    /// `anthropic.rs` の `CACHE_TTL_ROUND`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<&'static str>,
 }

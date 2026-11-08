@@ -250,7 +250,20 @@ const MIN_CACHEABLE_TOKENS: usize = 2_048;
 ///
 /// 5 分で切れて 2 回書くと 2.5×。1 時間なら 1 回で 2.0× + 0.1×。
 /// **1 回の追加書き込みで既に逆転する。**
+///
+/// **ただし逆転するのは「次のターンが読む部分」だけ**（2026-11-08）。ツールの周で増えるブロック
+/// （`tool_use` / `tool_result`）は**履歴に積まれない**ので次のターンの前方一致に入らず、読むのは
+/// 数秒後の次の周だけ — そこを 1 時間で書くと 2.0× を払って 5 分（1.25×）と同じことしかしない。
+/// 実測（2026-08-18〜11-07、Claude 1,152 呼び出し）で書き込みの 37% がこの周の分だった。だから
+/// 境界は TTL を分けて打つ — 次のターンが読む部分（system の安定部分 / そのターンに届いた発話）は
+/// この 1 時間、ツールの周で前へ進む最後の境界は [`CACHE_TTL_ROUND`]（5 分）。
 const CACHE_TTL: &str = "1h";
+
+/// ツールの周で前へ進む境界の生存期間（2026-11-08）。`ttl` を送らない = プロバイダ既定の 5 分。
+///
+/// **長い TTL の境界は短い TTL の境界より前に置く**のが Anthropic の規則で、この境界は常に最後
+/// （1 時間の境界はすべてそれより前）なので満たす。
+const CACHE_TTL_ROUND: Option<&str> = None;
 
 /// 5 分を超える TTL を要求するためのベータ機能名。
 ///
@@ -297,11 +310,16 @@ fn tool_tokens(tools: &[wire::AnthropicToolDef]) -> usize {
         .sum()
 }
 
-/// キャッシュ指示の値。打ち場所によらず同じ TTL を要求する。
+/// キャッシュ指示の値（1 時間。次のターンが読む部分に打つ）。
 fn ephemeral() -> Option<wire::AnthropicCacheControl> {
+    ephemeral_with(Some(CACHE_TTL))
+}
+
+/// TTL を指定したキャッシュ指示の値。`None` はプロバイダ既定（5 分）。
+fn ephemeral_with(ttl: Option<&'static str>) -> Option<wire::AnthropicCacheControl> {
     Some(wire::AnthropicCacheControl {
         kind: "ephemeral",
-        ttl: Some(CACHE_TTL),
+        ttl,
     })
 }
 
@@ -350,9 +368,18 @@ fn message_tokens(messages: &[wire::AnthropicMessage]) -> usize {
 /// `prefix_tokens` は tools + system の概算トークン数。キャッシュされるのは
 /// **tools + system + ここまでの履歴**なので、判定にはその全部を数える。
 ///
-/// **打つのは最後の発話の最後のブロック 1 箇所だけ。** 境界の後方探索は
-/// 20 ブロックまでなので、1 周の追記がそれを超えると前周の書き込みを見つけられず、
-/// その周だけ書き直しになる（実機の 2〜3 本並列は 1 周 7 ブロック前後で収まる）。
+/// **打つのは 2 箇所まで**（2026-11-08。system の 1 つと合わせて上限 4 の内側の 3 つ）:
+///
+/// 1. **そのターンに届いた発話**（最後の、ツール結果ではない `user` の発話）の最後のブロック —
+///    1 時間。次のターンの前方一致はここまで（ツールの周は履歴に積まれない）なので、次のターンが
+///    読むのはこの書き込み
+/// 2. **最後の発話の最後のブロック** — ツールの周（届いた発話より後ろにブロックがあるとき）は
+///    5 分（[`CACHE_TTL_ROUND`]）。読むのは数秒後の次の周だけ
+///
+/// ターンの 1 周目は 1 と 2 が同じブロックなので、1 時間の境界 1 つだけ（2026-11-08 より前と同じ形）。
+/// 届いた発話が見つからない（先頭が assistant 等）ときは最後のブロックに 1 時間を打つ。
+///
+/// 境界の後方探索は 20 位置まで（連続する `tool_use` / `tool_result` は 1 位置に数える）。
 ///
 /// なお**まとめ呼び出しの周は必ず書き込みになる** — `tool_choice` の変更は
 /// tools / system 層のキャッシュは保つが履歴層は落とすため。1 ターンに 1 回なので
@@ -361,7 +388,35 @@ fn place_message_breakpoint(messages: &mut [wire::AnthropicMessage], prefix_toke
     if prefix_tokens + message_tokens(messages) < MIN_CACHEABLE_TOKENS {
         return;
     }
-    let Some(block) = messages.last_mut().and_then(|m| m.content.last_mut()) else {
+    let Some(last) = messages.len().checked_sub(1) else {
+        return;
+    };
+    match turn_anchor(messages) {
+        Some(anchor) if anchor < last => {
+            mark_last_block(&mut messages[anchor], Some(CACHE_TTL));
+            mark_last_block(&mut messages[last], CACHE_TTL_ROUND);
+        }
+        _ => mark_last_block(&mut messages[last], Some(CACHE_TTL)),
+    }
+}
+
+/// そのターンに届いた発話の位置 — 最後の、ツール結果ではない `user` の発話。
+///
+/// wire ではツール結果も `user` ロールに載る（`encode_message`）が、その発話は `tool_result` の
+/// ブロックだけを持つ。ほかの `user` の発話（本文・画像・文書）がターンの入口。
+fn turn_anchor(messages: &[wire::AnthropicMessage]) -> Option<usize> {
+    messages.iter().rposition(|m| {
+        m.role == "user"
+            && !m
+                .content
+                .iter()
+                .all(|b| matches!(b, wire::AnthropicRequestBlock::ToolResult { .. }))
+    })
+}
+
+/// 発話の最後のブロックへキャッシュの境界を打つ。
+fn mark_last_block(message: &mut wire::AnthropicMessage, ttl: Option<&'static str>) {
+    let Some(block) = message.content.last_mut() else {
         return;
     };
     match block {
@@ -372,7 +427,7 @@ fn place_message_breakpoint(messages: &mut [wire::AnthropicMessage], prefix_toke
         // 末尾ブロックが Image になる — ここに打てないと、その周だけ境界が抜ける。
         | wire::AnthropicRequestBlock::Image { cache_control, .. }
         | wire::AnthropicRequestBlock::Document { cache_control, .. } => {
-            *cache_control = ephemeral();
+            *cache_control = ephemeral_with(ttl);
         }
         // 写し（Spec 71 D3）。境界を打つのはこの関数で、オブジェクトへ鍵を書き足す。
         // `server_tool_use` / `web_search_tool_result` に打っても 200（P0 (f)）。
@@ -380,7 +435,7 @@ fn place_message_breakpoint(messages: &mut [wire::AnthropicMessage], prefix_toke
             if let Some(object) = raw.as_object_mut() {
                 object.insert(
                     "cache_control".to_owned(),
-                    serde_json::to_value(ephemeral()).unwrap_or(serde_json::Value::Null),
+                    serde_json::to_value(ephemeral_with(ttl)).unwrap_or(serde_json::Value::Null),
                 );
             }
         }
@@ -1133,38 +1188,43 @@ mod tests {
     /// 1,826,109 が素の値段で通っていた（failures.md #42）。
     #[test]
     fn the_history_carries_a_cache_breakpoint_at_its_tail() {
+        // ターンの 1 周目（最後が届いた発話）。境界は末尾の 1 つだけで、1 時間 —
+        // 2026-11-08 の TTL の分割の前と同じ形（1 周目の送るものは変わらない）。
         let mut req = request(0);
         req.messages = vec![
             ChatMessage::system("短い指示"),
             ChatMessage::user(format!("覚えて{}", "履歴".repeat(3_000))),
             ChatMessage::assistant("承知"),
+            ChatMessage::user("次の依頼"),
         ];
 
         let w = encode(&req, OFF);
 
-        assert_eq!(w.messages.len(), 2);
+        assert_eq!(w.messages.len(), 3);
         assert!(
             matches!(
-                w.messages[1].content.last().unwrap(),
+                w.messages[2].content.last().unwrap(),
                 wire::AnthropicRequestBlock::Text {
-                    cache_control: Some(_),
+                    cache_control: Some(wire::AnthropicCacheControl { ttl: Some("1h"), .. }),
                     ..
                 }
             ),
-            "末尾に打つこと: {:?}",
-            w.messages[1].content
+            "末尾に 1 時間で打つこと: {:?}",
+            w.messages[2].content
         );
-        assert!(
-            matches!(
-                w.messages[0].content.last().unwrap(),
-                wire::AnthropicRequestBlock::Text {
-                    cache_control: None,
-                    ..
-                }
-            ),
-            "打つのは末尾の 1 箇所だけ: {:?}",
-            w.messages[0].content
-        );
+        for earlier in &w.messages[..2] {
+            assert!(
+                matches!(
+                    earlier.content.last().unwrap(),
+                    wire::AnthropicRequestBlock::Text {
+                        cache_control: None,
+                        ..
+                    }
+                ),
+                "打つのは末尾の 1 箇所だけ: {:?}",
+                earlier.content
+            );
+        }
     }
 
     /// ツールループの周は `tool_result` で終わる。そこにも打てること。
@@ -1192,7 +1252,8 @@ mod tests {
 
         assert_eq!(last["content"][0]["type"], "tool_result");
         assert_eq!(last["content"][0]["cache_control"]["type"], "ephemeral");
-        assert_eq!(last["content"][0]["cache_control"]["ttl"], "1h");
+        // ツールの周の最後の境界は 5 分（2026-11-08。次のターンは読まないので 1 時間にしない）。
+        assert!(last["content"][0]["cache_control"].get("ttl").is_none());
     }
 
     /// 短い履歴には要求しないこと（効かない指示は送らない）。
@@ -1805,9 +1866,88 @@ mod tests {
             ]))),
         ];
         let json = serde_json::to_value(encode(&req, WEB_ON)).unwrap();
+        // 止まった応答の続き（同じターンの次の要求）なので、写しは前へ進む 5 分の境界、
+        // 届いた発話が 1 時間の境界（2026-11-08）。
         assert_eq!(
             json["messages"][1]["content"][0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(
+            json["messages"][0]["content"][0]["cache_control"],
             json!({ "type": "ephemeral", "ttl": "1h" })
         );
+    }
+
+    /// ツールの周（2026-11-08）。**次のターンが読む部分（届いた発話）は 1 時間、ツールの周で前へ
+    /// 進む最後の境界は 5 分**。ツールの結果は履歴に積まれないので、1 時間で書いても次のターンは
+    /// 読まない（2.0× を払って 1.25× と同じことしかしない）。長い TTL の境界が前に来る規則も満たす。
+    #[test]
+    fn a_tool_round_marks_the_incoming_message_for_an_hour_and_the_tail_for_five_minutes() {
+        let calls = vec![ToolCall {
+            id: "tu_1".into(),
+            name: "remember".into(),
+            args: json!({ "note": "覚えること" }),
+            extra: None,
+        }];
+        let stable = "指示".repeat(3_000);
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::system(format!("{stable}可変部分")),
+            ChatMessage::user("前の依頼"),
+            ChatMessage::assistant("前の答え"),
+            ChatMessage::user("覚えておいて"),
+            ChatMessage::assistant_tool_calls("", calls),
+            ChatMessage::tool_result("tu_1", "remember", "結果"),
+        ];
+        req.cacheable_prefix_len = stable.chars().count();
+
+        let json = serde_json::to_value(encode(&req, OFF)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+
+        // 前のターンの発話には打たない（次のターンの前方一致は届いた発話まで続く）。
+        assert!(messages[0]["content"][0].get("cache_control").is_none());
+        assert!(messages[1]["content"][0].get("cache_control").is_none());
+        assert_eq!(
+            messages[2]["content"][0]["cache_control"],
+            json!({ "type": "ephemeral", "ttl": "1h" }),
+            "届いた発話は 1 時間"
+        );
+        assert!(messages[3]["content"][0].get("cache_control").is_none());
+        assert_eq!(
+            messages[4]["content"][0]["cache_control"],
+            json!({ "type": "ephemeral" }),
+            "ツールの周の最後は 5 分（ttl を送らない = 既定）"
+        );
+        // system の 1 つと合わせて 3 つ（上限 4 の内側）。
+        assert_eq!(json.to_string().matches(r#""cache_control""#).count(), 3);
+        assert_eq!(json["system"][0]["cache_control"]["ttl"], "1h");
+    }
+
+    /// ツール結果の発話は「届いた発話」ではない。ツール結果が 2 周続いても、1 時間の境界は
+    /// 人の発話に残り、5 分の境界だけが最後へ進む。
+    #[test]
+    fn tool_result_messages_are_never_the_turn_anchor() {
+        let call = |id: &str| {
+            vec![ToolCall {
+                id: id.into(),
+                name: "remember".into(),
+                args: json!({}),
+                extra: None,
+            }]
+        };
+        let mut req = request(0);
+        req.messages = vec![
+            ChatMessage::user(format!("調べて{}", "履歴".repeat(3_000))),
+            ChatMessage::assistant_tool_calls("", call("tu_1")),
+            ChatMessage::tool_result("tu_1", "remember", "1"),
+            ChatMessage::assistant_tool_calls("", call("tu_2")),
+            ChatMessage::tool_result("tu_2", "remember", "2"),
+        ];
+
+        let json = serde_json::to_value(encode(&req, OFF)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["content"][0]["cache_control"]["ttl"], "1h");
+        assert!(messages[2]["content"][0].get("cache_control").is_none(), "1 周目の結果には残さない");
+        assert_eq!(messages[4]["content"][0]["cache_control"], json!({ "type": "ephemeral" }));
     }
 }

@@ -1459,13 +1459,15 @@ Production pitfalls are listed in `llm_wire.invariants` in `data_contract.yaml`.
 
 ### Prompt Cache
 
-On the native Anthropic path, `cache_control` marks **two** boundaries: the end of **tool definitions + the stable part of the system prompt**, and the end of the **conversation history**. In a multi-agent system that sends the same system prompt across agents and turns, this difference maps directly to operating cost.
+On the native Anthropic path, `cache_control` marks **up to three** boundaries: the end of **tool definitions + the stable part of the system prompt**, the end of **the message that started the turn**, and the end of the **conversation history**. In a multi-agent system that sends the same system prompt across agents and turns, this difference maps directly to operating cost.
 
 The decision uses **estimated token count, not character count**, and **includes tool definitions**. Initially it considered only the stable system prompt at 4,000 characters, causing all five Japanese-configured agents to miss the threshold and making the cache never work ([failures.md](failures.md) #33).
 
 The history boundary was added later. Before it, **the tool loop resent the entire history and every tool result at full price on each round** — 1,826,109 of one turn's 2,052,314 input tokens ([failures.md](failures.md) #42). A stable prefix is by definition the small part that does not change, so guarding only that caps the savings at the small part. **Cost is dominated by the part that grows**, and that side needs a boundary too. The wrap-up call still writes rather than reads, because changing `tool_choice` drops the history-layer cache.
 
-**The TTL is one hour.** The default five minutes suits chat speed, but expires on every turn when users read and think before responding. Since writes cost more than ten times reads, **a longer TTL is beneficial whenever it removes one unnecessary write**.
+**The TTL of what the next turn reads is one hour.** The default five minutes suits chat speed, but expires on every turn when users read and think before responding. Since writes cost more than ten times reads, **a longer TTL is beneficial whenever it removes one unnecessary write**.
+
+**Only the boundary that moves through the tool rounds is five minutes** (2026-11-08). Tool calls and results are not kept in the history, so the next turn never reads them; only the next round, seconds later, does. Writing them for an hour (2× the base price) pays extra for what five minutes (1.25×) already does. Measured over 1,152 Claude calls (2026-08-18 to 11-07), 37% of cache writes were these rounds, and input billing is expected to fall by about 11%. The first round of a turn sends exactly what it did before.
 
 Its effect is shown in the UI: the card's "N% of input cached" is the metric, and **0% uses a warning color**. Input is the denominator because output cannot be cached in principle; using total tokens would make 100% unattainable.
 
