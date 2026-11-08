@@ -43,7 +43,7 @@ const rootBlock = block(/^:root\s*\{/m);
  * `:root` 側にだけ住む色トークン。**ユーティリティを生やさない**ので
  * `@theme` には置けない（Tailwind v4 が未使用として落とす — `failures.md` #54）。
  */
-const ROOT_ONLY_COLORS = new Set(["--color-wordmark"]);
+const ROOT_ONLY_COLORS = new Set(["--color-wordmark", "--color-judge"]);
 
 /** ブロック内で定義されているカスタムプロパティ名。 */
 function declared(source: string): string[] {
@@ -71,6 +71,13 @@ describe("テーマ", () => {
       .filter((name) => name.startsWith("--color-"))
       .filter((name) => !dark.has(name) && !ROOT_ONLY_COLORS.has(name));
     expect(strays, `@theme に対応の無い色トークン: ${strays.join(", ")}`).toEqual([]);
+  });
+
+  it("`:root` だけに住む色トークンも両テーマにある", () => {
+    for (const name of ROOT_ONLY_COLORS) {
+      expect(rootBlock, `${name} が :root に無い`).toContain(`${name}:`);
+      expect(lightBlock, `${name} がライトに無い`).toContain(`${name}:`);
+    }
   });
 
   it("個体別の色（役職・アバター）の L/C が両テーマにある", () => {

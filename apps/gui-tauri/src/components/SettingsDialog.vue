@@ -26,6 +26,7 @@ import { fileToWebpIcon } from "../lib/iconImage";
 import { setLocale } from "../i18n";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { useEditorSettings } from "../composables/useEditorSettings";
 import { CHAT_ZOOM_STEPS, formatChatZoom } from "../lib/chatZoom";
 import { JEV_THRESHOLDS, jevThresholdKey } from "../lib/jevThreshold";
 import { useUiSettings, type Theme } from "../composables/useUiSettings";
@@ -70,6 +71,7 @@ type Page =
   | "theme"
   | "chatZoom"
   | "messages"
+  | "editor"
   | "shortcuts";
 
 /**
@@ -302,6 +304,54 @@ const isVillagePage = computed(() => VILLAGE_PAGES.includes(page.value));
 
 /** 端末側の設定（localStorage）。チェックの変更は watch が即座に保存する。 */
 const { settings } = useUiSettings();
+
+/**
+ * 外部エディタ（2026-11-08。端末の棚 `editor.json`）。発話の中のファイルの位置を「エディタで開く」ときに
+ * 起動するコマンド。**既定は空** — 勝手に `code` を探すと、入っていない人には黙って失敗する。
+ * 引数は 1 行 1 引数（シェルを通さないので引用符は要らない）。
+ */
+const editorSettings = useEditorSettings();
+const editorCommand = ref("");
+const editorArgs = ref("");
+const editorNote = ref("");
+const editorError = ref("");
+const editorBusy = ref(false);
+/** 名前の知れたエディタのひな形。押すと欄へ流し込むだけ（保存は人が押す）。 */
+const EDITOR_PRESETS = [
+  { label: "VS Code", command: "code", args: ["-g", "{path}:{line}"] },
+  { label: "Cursor", command: "cursor", args: ["-g", "{path}:{line}"] },
+] as const;
+async function loadEditor(): Promise<void> {
+  editorNote.value = "";
+  editorError.value = "";
+  await editorSettings.reload();
+  editorCommand.value = editorSettings.settings.value.command;
+  editorArgs.value = editorSettings.settings.value.args.join("\n");
+}
+function applyEditorPreset(preset: (typeof EDITOR_PRESETS)[number]): void {
+  editorCommand.value = preset.command;
+  editorArgs.value = preset.args.join("\n");
+  editorNote.value = "";
+}
+async function saveEditor(): Promise<void> {
+  if (editorBusy.value) return;
+  editorBusy.value = true;
+  editorNote.value = "";
+  editorError.value = "";
+  try {
+    const saved = await editorSettings.save({
+      command: editorCommand.value,
+      args: editorArgs.value.split(/\r?\n/),
+    });
+    editorCommand.value = saved.command;
+    editorArgs.value = saved.args.join("\n");
+    editorNote.value = t("settings.editor.saved");
+  } catch (err) {
+    editorError.value = formatError(ipc.toErrorPayload(err));
+  } finally {
+    editorBusy.value = false;
+  }
+}
 
 /** 配色の選択肢。`Theme` と 1 対 1（増やしたら `style.css` にも足す）。 */
 const THEME_OPTIONS: Theme[] = ["dark", "light"];
@@ -764,6 +814,7 @@ function selectPage(next: Page): void {
   if (next === "jev") void loadJev();
   // **OS の登録はページを開くたびに読み直す**（タスクマネージャーで切った状態が開き直しで出る。Spec 69 D7）。
   if (next === "startup") void loadStartup();
+  if (next === "editor") void loadEditor();
 }
 </script>
 
@@ -867,6 +918,13 @@ function selectPage(next: Page): void {
             @click="selectPage('messages')"
           >
             {{ $t("settings.menuMessages") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'editor' }"
+            @click="selectPage('editor')"
+          >
+            {{ $t("settings.menuEditor") }}
           </button>
           <button
             class="menu-item"
@@ -1754,6 +1812,60 @@ function selectPage(next: Page): void {
             <p class="mt-2 text-ink-dim">{{ $t("settings.chatZoom.scopeNote") }}</p>
             <p class="mt-1 text-ink-dim">{{ $t("settings.chatZoom.costNote") }}</p>
             <p class="mt-1 text-ink-dim">{{ $t("settings.chatZoom.deviceNote") }}</p>
+          </template>
+
+          <!-- ユーザーインターフェース > 外部エディタ（2026-11-08。端末の棚 editor.json）。 -->
+          <template v-else-if="page === 'editor'">
+            <h3 class="mb-1 text-xs font-semibold text-ink">
+              {{ $t("settings.editor.heading") }}
+            </h3>
+            <p class="mb-3 text-ink-dim">{{ $t("settings.editor.intro") }}</p>
+
+            <div class="space-y-2 rounded border border-line bg-surface-0 p-3">
+              <div class="flex items-center gap-2">
+                <span class="text-ink-dim">{{ $t("settings.editor.presets") }}</span>
+                <button
+                  v-for="preset in EDITOR_PRESETS"
+                  :key="preset.label"
+                  class="rounded border border-line px-2 py-0.5 text-ink hover:border-accent hover:text-accent"
+                  @click="applyEditorPreset(preset)"
+                >
+                  {{ preset.label }}
+                </button>
+              </div>
+              <label class="block">
+                <span class="mb-1 block text-ink">{{ $t("settings.editor.command") }}</span>
+                <input
+                  v-model="editorCommand"
+                  class="w-full rounded border border-line bg-surface-1 px-2 py-1 font-mono text-ink"
+                  :placeholder="$t('settings.editor.commandPlaceholder')"
+                  spellcheck="false"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-ink">{{ $t("settings.editor.args") }}</span>
+                <textarea
+                  v-model="editorArgs"
+                  rows="3"
+                  class="w-full rounded border border-line bg-surface-1 px-2 py-1 font-mono text-ink"
+                  spellcheck="false"
+                />
+              </label>
+              <p class="text-ink-dim">{{ $t("settings.editor.argsHelp") }}</p>
+              <div class="flex items-center gap-2">
+                <button
+                  class="rounded bg-accent px-3 py-1 text-surface-0 disabled:opacity-50"
+                  :disabled="editorBusy"
+                  @click="saveEditor"
+                >
+                  {{ $t("common.save") }}
+                </button>
+                <span v-if="editorNote" class="text-run">{{ editorNote }}</span>
+                <span v-if="editorError" class="text-fail">{{ editorError }}</span>
+              </div>
+            </div>
+            <p class="mt-2 text-ink-dim">{{ $t("settings.editor.safetyNote") }}</p>
+            <p class="mt-1 text-ink-dim">{{ $t("settings.editor.deviceNote") }}</p>
           </template>
 
           <!--

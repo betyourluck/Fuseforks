@@ -302,6 +302,19 @@
       "urlHint": "只在你按下按钮时获取。不会在启动时、打开此界面时或定时获取。",
       "saved": "已保存",
       "privacy": "请求仅为 HTTP GET，不包含村庄数据、对话或模型名称。对方主机会看到该请求和你的 IP 地址。"
+    },
+    "menuEditor": "外部编辑器",
+    "editor": {
+      "heading": "外部编辑器",
+      "intro": "点击对话或黑板中的文件位置（例如用反引号书写的路径）时，「在编辑器中打开」所启动的命令。",
+      "presets": "模板：",
+      "command": "命令",
+      "commandPlaceholder": "例：code",
+      "args": "参数（每行一个）",
+      "argsHelp": "{'{path}'} 替换为文件路径，{'{line}'} 替换为行号（没有则为 1）。若任何一行都不含 {'{path}'}，则在末尾追加路径。",
+      "saved": "已保存",
+      "safetyNote": "不经由 Shell 启动，并将路径作为一个参数传递。不会用操作系统的默认应用打开（点击的对象是模型写的文字，若是可执行文件就会被执行）。",
+      "deviceNote": "只保存在此设备上（不进入村庄）。"
     }
   },
   "common": {
@@ -703,6 +716,8 @@
     "typingRound": "工具第 {round} 轮",
     "typingRoundOf": "工具第 {round} / {max} 轮",
     "typingTitle": "{name} 正在撰写回复",
+    "jumpToLatest": "跳到最新",
+    "jumpToLatestBusy": "正在回复 — 跳到最新",
     "interruptTurn": "■ 停止",
     "interruptTurnTitle": "中断 {name} 的当前回合（仆从保持运行；对话和历史记录会保留）",
     "interruptTurnAria": "中断 {name} 的回合",
@@ -1655,5 +1670,12 @@
         "body": "仆从读写的文件夹是按仆从设置的，但在这里可以把所有勾选的仆从一次性指向另一个文件夹。换工作内容时使用。"
       }
     }
+  },
+  "pathMenu": {
+    "resolving": "正在确认位置…",
+    "notFound": "找不到（从工作目录解析后也不存在）",
+    "reveal": "在文件管理器中显示",
+    "openEditor": "在编辑器中打开",
+    "editorUnset": "请在 系统设置 > 用户界面 > 外部编辑器 中设置外部编辑器"
   }
 }

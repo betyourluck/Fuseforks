@@ -31,6 +31,7 @@ import {
 } from "../lib/blackboardFilter";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { usePathMenu } from "../composables/usePathMenu";
 import {
   isOrphan,
   kanbanNotes,
@@ -54,6 +55,7 @@ const emit = defineEmits<{ (e: "selectTab", tab: BottomTab): void }>();
 const orchestrator = useOrchestrator();
 /** 付箋の畳み。部品の外（モジュール + localStorage）に持つ — タブを離れても残す。 */
 const collapse = useBlackboardCollapse();
+const pathMenu = usePathMenu();
 
 const notes = ref<BlackboardNote[]>([]);
 
@@ -204,7 +206,14 @@ const busy = ref(false);
  * `target="_blank"` の保険で webview 内の遷移は起きないが「押しても無反応」だった。
  * 開くのは http / https だけ（述語は `lib/links.ts` の 1 実装）。
  */
-function onMarkdownClick(event: MouseEvent): void {
+function onMarkdownClick(event: MouseEvent, note: BlackboardNote): void {
+  // 付箋の中のファイルの位置（2026-11-08）。相対パスは付箋の作業フォルダ（`dir`）から解決する。
+  const pathMark = (event.target as HTMLElement).closest<HTMLElement>("[data-path]");
+  if (pathMark) {
+    event.preventDefault();
+    pathMenu.open(event, pathMark.dataset.path ?? "", note.dir);
+    return;
+  }
   const anchor = (event.target as HTMLElement).closest("a");
   if (!anchor) return;
   event.preventDefault();
@@ -614,7 +623,7 @@ function formatTime(ms: number): string {
         <div
           v-show="!collapse.isCollapsed(note)"
           class="md-body selectable px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
-          @click="onMarkdownClick"
+          @click="onMarkdownClick($event, note)"
           v-html="renderMarkdown(note.content)"
         />
       </article>

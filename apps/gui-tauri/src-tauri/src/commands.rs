@@ -1821,3 +1821,75 @@ async fn apply_jev(
     )
     .await;
 }
+
+// ---- 発話の中のファイルの位置（2026-11-08） -------------------------------------
+
+/// 発話に書かれたパスを解決する。相対パスは `work_dir`（発言した個体・付箋を書いた個体の作業フォルダ。
+/// 画面が投影から渡す）から。**実在しなければ `None`**（画面は「見つかりません」を出す）。
+#[tauri::command]
+pub fn resolve_message_path(
+    work_dir: Option<String>,
+    raw: String,
+) -> Option<crate::editor::ResolvedPath> {
+    let work_dir = work_dir.map(std::path::PathBuf::from);
+    crate::editor::resolve_message_path(work_dir.as_deref(), &raw)
+}
+
+/// 外部エディタの設定（端末の棚 `editor.json`）。組み立て前でも読める。
+#[tauri::command]
+pub fn get_editor_settings(
+    editor: State<'_, crate::editor::EditorState>,
+) -> crate::editor::EditorSettings {
+    editor
+        .store
+        .lock()
+        .map(|store| store.settings())
+        .unwrap_or_default()
+}
+
+/// 外部エディタの設定を保存する。空白だけの引数は落とす。
+///
+/// # Errors
+/// `editor.json` を書けなかった場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub fn set_editor_settings(
+    editor: State<'_, crate::editor::EditorState>,
+    command: String,
+    args: Vec<String>,
+) -> CoreResult<crate::editor::EditorSettings> {
+    let next = crate::editor::EditorSettings {
+        command: command.trim().to_owned(),
+        args: args
+            .into_iter()
+            .map(|arg| arg.trim().to_owned())
+            .filter(|arg| !arg.is_empty())
+            .collect(),
+    };
+    let mut store = editor.store.lock().map_err(|_| CoreError::ConfigIo {
+        path: crate::editor::CONFIG_FILE.to_owned(),
+        source: std::io::Error::other("設定の棚を開けませんでした"),
+    })?;
+    store.save(next.clone()).map_err(|reason| CoreError::ConfigIo {
+        path: crate::editor::CONFIG_FILE.to_owned(),
+        source: std::io::Error::other(reason),
+    })?;
+    Ok(next)
+}
+
+/// 解決済みのパスを外部エディタで開く。起動するコマンドは棚から読む（画面からは渡させない）。
+///
+/// # Errors
+/// 未設定・コマンドが見つからない・パスが無い・起動に失敗した場合（理由の文）。
+#[tauri::command]
+pub fn open_in_editor(
+    editor: State<'_, crate::editor::EditorState>,
+    path: String,
+    line: Option<u32>,
+) -> Result<(), String> {
+    let settings = editor
+        .store
+        .lock()
+        .map(|store| store.settings())
+        .map_err(|_| "設定の棚を開けませんでした".to_owned())?;
+    crate::editor::open_in_editor(&settings, &path, line)
+}

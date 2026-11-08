@@ -75,6 +75,7 @@ is transmitted anywhere.
 | `pricing.json` | The URL the price table is fetched from |
 | `jev.json` | Jev settings (see 4-4) — enable/disable, account ID, and strength for tool-result pruning |
 | `startup.json` | Startup and exit settings — whether closing hides the app in the tray, and whether it batch-starts servants on launch (both off by default) |
+| `editor.json` | The external editor's command and argument template (used by "Open in editor" on a file location in the conversation or on the blackboard; empty by default) |
 
 **These live outside the village (workspace).** Handing your village to someone else
 never puts their copy in a state where it talks to a destination they do not know about.

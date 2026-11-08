@@ -302,6 +302,19 @@
       "urlHint": "Fetched only when you press the button. Never on startup, never when this screen opens, and never on a timer.",
       "saved": "Saved",
       "privacy": "The request is an HTTP GET only. It carries no village data, no conversation, and no model names. The host sees the request and your IP address."
+    },
+    "menuEditor": "External editor",
+    "editor": {
+      "heading": "External editor",
+      "intro": "The command \"Open in editor\" runs when you click a file location in the conversation or on the blackboard (such as a path written in backticks).",
+      "presets": "Templates:",
+      "command": "Command",
+      "commandPlaceholder": "e.g. code",
+      "args": "Arguments (one per line)",
+      "argsHelp": "{'{path}'} is replaced by the file path and {'{line}'} by the line number (1 if there is none). If no line contains {'{path}'}, the path is added at the end.",
+      "saved": "Saved",
+      "safetyNote": "It runs without a shell and passes the path as a single argument. Files are never opened with the OS default app (what you click was written by a model, and an executable would run).",
+      "deviceNote": "Saved on this device only (not in the village)."
     }
   },
   "common": {
@@ -703,6 +716,8 @@
     "typingRound": "tool round {round}",
     "typingRoundOf": "tool round {round} / {max}",
     "typingTitle": "{name} is composing a response",
+    "jumpToLatest": "Jump to latest",
+    "jumpToLatestBusy": "Responding — jump to latest",
     "interruptTurn": "■ Stop",
     "interruptTurnTitle": "Interrupts {name}'s current turn (the servant stays running; the conversation and history are kept)",
     "interruptTurnAria": "Interrupt {name}'s turn",
@@ -1655,5 +1670,12 @@
         "body": "The folder a servant reads and writes is set per servant, but from here you can point every checked servant at another folder at once. Use it when you switch jobs."
       }
     }
+  },
+  "pathMenu": {
+    "resolving": "Locating…",
+    "notFound": "Not found (it does not exist, even relative to the work folder)",
+    "reveal": "Show in file manager",
+    "openEditor": "Open in editor",
+    "editorUnset": "Set an external editor in System settings > User interface > External editor"
   }
 }

@@ -34,6 +34,9 @@ describe("Markdown のリンクの配線", () => {
     expect(blackboard).toContain('import { isOpenableLink } from "../lib/links";');
     expect(blackboard).toContain("if (isOpenableLink(href)) {");
     // v-html の要素そのものが @click を持つ（別の要素に付けると、畳んだときに外れる）。
-    expect(blackboard).toMatch(/@click="onMarkdownClick"\s+v-html="renderMarkdown\(note\.content\)"/);
+    // 付箋を渡すのは、ファイルの位置を付箋の作業フォルダ（`dir`）から解決するため（2026-11-08）。
+    expect(blackboard).toMatch(
+      /@click="onMarkdownClick\(\$event, note\)"\s+v-html="renderMarkdown\(note\.content\)"/,
+    );
   });
 });

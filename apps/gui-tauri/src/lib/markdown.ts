@@ -20,6 +20,7 @@
 import MarkdownIt from "markdown-it";
 
 import { isRenderableLink } from "./links";
+import { parsePathRef } from "./messagePath";
 import { markdownMath } from "./markdownMath";
 
 const md = new MarkdownIt({
@@ -30,7 +31,50 @@ const md = new MarkdownIt({
 
 // 描くリンクは閉じた許容で決める（既定は除外リスト）。linkify が拾った素の URL も同じ門を通る。
 // 落ちたリンクは `[text](url)` の文字のまま出る（黙って消えない）。
-md.validateLink = (url) => isRenderableLink(url);
+// **パスの形をした行き先**（`[foo](src/foo.ts:42)`）も通すが、`<a>` にはしない — 下の
+// `path_links` が `<span data-path>` へ置き換える（webview の中で相対 URL へ遷移させない）。
+md.validateLink = (url) => isRenderableLink(url) || parsePathRef(url) !== null;
+
+/**
+ * ファイルの位置の印（2026-11-08）。バッククォートの中のパスと、パスの形をしたリンクの行き先に
+ * `data-path`（発話に書かれた文字列そのもの）を付ける。押したときの解決と動作は描く側
+ * （`ChatPanel` / `BlackboardPane` の `onMarkdownClick`）が持ち、ここは形だけを見る（`lib/messagePath.ts`）。
+ */
+const defaultCodeInline =
+  md.renderer.rules.code_inline ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+md.renderer.rules.code_inline = (tokens, idx, options, env, self) => {
+  const content = tokens[idx].content;
+  if (parsePathRef(content) !== null) tokens[idx].attrSet("data-path", content);
+  return defaultCodeInline(tokens, idx, options, env, self);
+};
+
+md.core.ruler.push("path_links", (state) => {
+  for (const block of state.tokens) {
+    if (block.type !== "inline" || !block.children) continue;
+    const opened: boolean[] = [];
+    for (const token of block.children) {
+      if (token.type === "link_open") {
+        const href = token.attrGet("href") ?? "";
+        const isPath = !isRenderableLink(href) && parsePathRef(href) !== null;
+        opened.push(isPath);
+        if (isPath) {
+          token.type = "path_open";
+          token.tag = "span";
+          token.attrs = [
+            ["class", "md-path"],
+            ["data-path", href],
+          ];
+        }
+      } else if (token.type === "link_close") {
+        if (opened.pop()) {
+          token.type = "path_close";
+          token.tag = "span";
+        }
+      }
+    }
+  }
+});
 
 // **画像は展開しない**（2026-10-30 の監査）。`![](https://…)` を `<img>` にすると、描画した
 // 瞬間に WebView がその URL へ GET を出す — 利用者のクリックなしに、本文へ混ぜた文字列が

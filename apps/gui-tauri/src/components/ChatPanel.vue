@@ -35,6 +35,8 @@ import {
 } from "../lib/chatSearch";
 import { hasOpenOverlay } from "../lib/chatFocus";
 import { roundBadge, type RoundBadge } from "../lib/typingRound";
+import { isNearBottom } from "../lib/chatScroll";
+import { usePathMenu } from "../composables/usePathMenu";
 import { approvalBanner } from "../lib/approvalBanner";
 import SessionDialog from "./SessionDialog.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
@@ -87,6 +89,29 @@ const chatClear = useChatClear();
 
 const scroller = ref<HTMLElement | null>(null);
 const filterAgentId = ref<AgentId | "">("");
+
+/**
+ * 末尾が見えているか（2026-11-08）。**最新へ飛ぶボタンはこれが偽のときだけ出る。**
+ * 判定は新しい行への追従と同じ `isNearBottom`（`lib/chatScroll.ts`）— ボタンが出ていることと
+ * 追従が止まっていることを一致させる。スクロールのたびと、行の出入りの後に取り直す。
+ */
+const atBottom = ref(true);
+
+const pathMenu = usePathMenu();
+/** 発言した個体の作業フォルダ（投影から）。個体でない・作業フォルダが無いなら `null`。 */
+function workDirOfSender(message: AgentMessage): string | null {
+  if (message.from.kind !== "agent") return null;
+  const id = message.from.id;
+  return state.agents.find((a) => a.id === id)?.workDir ?? null;
+}
+function syncAtBottom(): void {
+  const el = scroller.value;
+  if (el) atBottom.value = isNearBottom(el);
+}
+function jumpToLatest(): void {
+  const el = scroller.value;
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+}
 
 /** 送信の宛先。左ペインまたはサーヴァントの絆で選んだ 1 体。 */
 const hiddenGroups = useHiddenGroups();
@@ -517,12 +542,19 @@ async function copyCodeBlock(button: HTMLElement): Promise<void> {
  * 開くのは http / https のみ（LLM 出力由来のリンクを信頼しない。述語は `lib/links.ts` の
  * 1 実装で、黒板ペインも同じものを読む）。
  */
-function onMarkdownClick(event: MouseEvent): void {
+function onMarkdownClick(event: MouseEvent, message: AgentMessage): void {
   const target = event.target as HTMLElement;
   const copyButton = target.closest<HTMLElement>("button[data-code-copy]");
   if (copyButton) {
     event.preventDefault();
     void copyCodeBlock(copyButton);
+    return;
+  }
+  // 発話の中のファイルの位置（2026-11-08）。相対パスは発言した個体の作業フォルダから解決する。
+  const pathMark = target.closest<HTMLElement>("[data-path]");
+  if (pathMark) {
+    event.preventDefault();
+    pathMenu.open(event, pathMark.dataset.path ?? "", workDirOfSender(message));
     return;
   }
   const anchor = target.closest("a");
@@ -609,10 +641,11 @@ watch(
     if (!el) return;
     // 追従するのは、ユーザーが既に末尾を見ているときだけ。
     // 無条件に追従させると、過去を読んでいる最中に引きずり戻されて読めなくなる。
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (!atBottom) return;
+    const follow = isNearBottom(el);
     await nextTick();
-    el.scrollTop = el.scrollHeight;
+    if (follow) el.scrollTop = el.scrollHeight;
+    // 行が減った（表示クリア・会話の切り替え）ときはスクロールが起きないことがあるので、ここでも取り直す。
+    syncAtBottom();
   },
 );
 
@@ -1190,6 +1223,7 @@ async function newChat(): Promise<void> {
     <div
       ref="scroller"
       class="chat-zoom min-h-0 flex-1 space-y-1.5 overflow-x-hidden overflow-y-auto px-3 py-3"
+      @scroll.passive="syncAtBottom"
     >
       <!--
         表示クリアの案内。**消していないことを画面で言い、そこから戻せる。**
@@ -1612,7 +1646,7 @@ async function newChat(): Promise<void> {
             v-if="isRenderedAsMarkdown(entry.row.message)"
             class="md-body selectable min-w-0 max-w-full rounded-2xl rounded-tl-sm bg-surface-2 px-3 py-2 text-[12px] leading-relaxed wrap-anywhere text-ink"
             data-chat-text
-            @click="onMarkdownClick"
+            @click="onMarkdownClick($event, entry.row.message)"
             v-html="markdownOf(entry.row.message)"
           />
           <div
@@ -1769,6 +1803,38 @@ async function newChat(): Promise<void> {
       <p v-if="!rows.length && !typingAgents.length" class="py-10 text-center text-[11px] text-ink-dim">
         {{ $t("chat.empty") }}
       </p>
+
+      <!--
+        最新へ飛ぶボタン（2026-11-08）。末尾が見えていないときだけ出る（`atBottom`）。
+        流れる側の最後に高さ 0 の sticky の行を置き、その下端の中央にボタンを浮かせる — 流れる側を
+        別の要素で包まず、要素の座標も測らない。応答を作っている個体がいる間は ↓ の代わりに
+        入力中バブルと同じ三点が波打つ（押せば同じく末尾へ）。
+      -->
+      <div v-if="!atBottom" class="pointer-events-none sticky bottom-0 h-0" data-jump-latest>
+        <button
+          class="chat-jump pointer-events-auto absolute bottom-1 left-1/2 flex -translate-x-1/2 size-8 items-center justify-center rounded-full border border-line bg-surface-2 text-ink-dim shadow-md transition hover:border-accent hover:text-accent"
+          :title="typingAgents.length ? $t('chat.jumpToLatestBusy') : $t('chat.jumpToLatest')"
+          :aria-label="typingAgents.length ? $t('chat.jumpToLatestBusy') : $t('chat.jumpToLatest')"
+          @click="jumpToLatest"
+        >
+          <span v-if="typingAgents.length" class="chat-jump-dots" aria-hidden="true">
+            <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
+          </span>
+          <svg
+            v-else
+            class="size-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M6 13l6 6 6-6" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!--
@@ -1929,6 +1995,17 @@ async function newChat(): Promise<void> {
 }
 .typing-dot:nth-child(3) {
   animation-delay: 0.4s;
+}
+/* 最新へ飛ぶボタンの中の三点。入力中バブルと同じ動きを、ボタンの大きさに合わせて小さく。 */
+.chat-jump-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.chat-jump-dots .typing-dot {
+  width: 4px;
+  height: 4px;
+  background-color: currentColor;
 }
 @keyframes typing-wave {
   0%,

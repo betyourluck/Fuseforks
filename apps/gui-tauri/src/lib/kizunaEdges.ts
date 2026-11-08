@@ -56,3 +56,34 @@ export function edgeIsLive(
 ): boolean {
   return isRunning(edge.source) && isRunning(edge.target);
 }
+
+/**
+ * 判断役に触れる辺の色分け（2026-11-08）。
+ *
+ * 起点は利用者 —「判断特化型モデルにつながるサーヴァントのノードとの辺の色を変える
+ * （赤っぽい色がいいかも）」→ 実機で赤系が強すぎたので彩度を抑えた紫へ（同日）。**両方向とも**（サーヴァント → 判断役 = 人が引いた絆 /
+ * 判断役 → サーヴァント = `judge.toml` の `to` の写し）同じ色で塗る。向きの区別は
+ * 今までどおり形（判断役 → サーヴァントだけ破線）が運ぶ。
+ *
+ * 色は `configs` ではなく CSS で塗る（属性では `var()` が解決されずテーマに追従しない）。
+ * 描画ライブラリは辺 1 本ごとのクラスを持たないので、**辺の鍵が `<path>` の
+ * `data-edge-id` に出ることを使い、鍵の頭で選ぶ**。CSS の
+ * `[data-edge-id^="judge:"]` とこの定数は `kizunaEdgeColorWiring.test.ts` が突き合わせる。
+ */
+export const JUDGE_EDGE_PREFIX = "judge:";
+
+/** 判断役に触れる辺の鍵。それ以外の辺の鍵はそのまま返す。 */
+export function edgeKey(base: string, touchesJudge: boolean): string {
+  return touchesJudge ? `${JUDGE_EDGE_PREFIX}${base}` : base;
+}
+
+/**
+ * 判断役に触れる辺の矢印に渡す色。
+ *
+ * 矢印（`<marker>` の中の `polygon`）は辺と別の要素で、`data-edge-id` を持たない。
+ * ライブラリは矢印の id に**色の文字列の base64** を埋め込むので、判断役の辺にだけ
+ * 別の色を渡して別の矢印を作らせ、その id を CSS で選んで `var(--color-judge)` で塗り直す。
+ * 値そのものは CSS が上書きするが、上書きが外れたときに近い色で出るよう、
+ * ダークの `--color-judge`（紫）に近い実色にしてある。
+ */
+export const JUDGE_MARKER_COLOR = "#a48fe0";

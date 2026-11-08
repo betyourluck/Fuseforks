@@ -1094,7 +1094,10 @@ enums:
       mcp_server.json 以降嘘になっていた** — 2026-10-20 に Spec 69 P0 で端末の棚の行を足して回収。総数で守らず列挙する):
         - **端末の棚 → {app_data_dir}/*.json** (村を配っても付いて回らない): mcp_server.json (Spec 25・扉) /
           pricing.json (Spec 41・単価表の取得先) / jev.json (Spec 59・判断特化モデル) /
-          startup.json (Spec 69・起動と終了。詳細は launch_exit_contract)。サインイン時の自動起動は
+          startup.json (Spec 69・起動と終了。詳細は launch_exit_contract) /
+          editor.json (2026-11-08・外部エディタ = 発話の中のファイルの位置を「エディタで開く」ときのコマンドと
+          引数のひな形。既定は空。起動はシェルを通さずパスを 1 引数で渡し、コマンドは画面から受け取らない)。
+          サインイン時の自動起動は
           どの棚にも置かず OS の登録そのものを読む
         - **村に保存 → world.json**: tokenBudget (Option<u64>。単位と正規化は
           token_budget.ceiling が正)、

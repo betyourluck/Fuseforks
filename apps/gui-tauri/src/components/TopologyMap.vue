@@ -43,7 +43,12 @@ import {
 import "v-network-graph/lib/style.css";
 
 import { compactNumber } from "../lib/format";
-import { drawDirection, edgeIsLive } from "../lib/kizunaEdges";
+import {
+  JUDGE_MARKER_COLOR,
+  drawDirection,
+  edgeIsLive,
+  edgeKey,
+} from "../lib/kizunaEdges";
 import { roleBadge } from "../lib/roleLabel";
 import { fitMargin } from "../lib/kizunaFit";
 import { visibleLayouts } from "../lib/kizunaSeed";
@@ -165,9 +170,14 @@ const edges = computed<Edges>(() => {
   // 両端が見えている辺だけ（Spec 51 D3）。片端だけ描くと宙に浮いた線になる。
   for (const edge of visibleEdges(state.edges, visibleIds.value)) {
     const bidirectional = exists(edge.target, edge.source);
-    const id = bidirectional
-      ? [edge.source, edge.target].sort().join("<->")
-      : `${edge.source}->${edge.target}`;
+    // サーヴァント → 判断役の絆は鍵の頭で印を付ける（色を CSS で塗り分けるため。`edgeKey`）。
+    const touchesJudge = isJudge(edge.source) || isJudge(edge.target);
+    const id = edgeKey(
+      bidirectional
+        ? [edge.source, edge.target].sort().join("<->")
+        : `${edge.source}->${edge.target}`,
+      touchesJudge,
+    );
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -177,7 +187,7 @@ const edges = computed<Edges>(() => {
       bidirectional,
       orderOf,
     );
-    result[id] = { source, target, bidirectional };
+    result[id] = { source, target, bidirectional, touchesJudge };
   }
 
   // 判断役 → サーヴァント（Spec 62 D9）。**正本は `judge.toml` の `to`** で、保存しない。
@@ -185,11 +195,12 @@ const edges = computed<Edges>(() => {
   // 意味しているから。行き先が隠れたグループに居れば描かない（片端だけの線を作らない）。
   for (const edge of judgeEdges(state.judges)) {
     if (!visibleIds.value.has(edge.to)) continue;
-    result[`judge:${edge.from}->${edge.to}`] = {
+    result[edgeKey(`${edge.from}->${edge.to}`, true)] = {
       source: edge.from,
       target: edge.to,
       bidirectional: false,
       judge: true,
+      touchesJudge: true,
     };
   }
 
@@ -310,24 +321,36 @@ const configs = defineConfigs({
   edge: {
     selectable: true,
     normal: {
-      width: (edge) => (edge.bidirectional ? 3 : 1.6),
+      // 判断役 → サーヴァントは丸い点の列（下の dasharray / linecap と対）。点は線幅が直径に
+      // なるので、細い 1.6 では見えない — 少しだけ太くする。
+      width: (edge) => (edge.bidirectional ? 3 : edge.judge ? 2.2 : 1.6),
       // **稼働中の個体から出ている辺は動く破線**（旧実装の踏襲）。
       // `animate` だけでは足りない — 破線でない線を流しても見た目が変わらない
       // ので、`dasharray` と対で与える。実機で「動かない」と出たのがこれ。
       // 判断役 → サーヴァントは静止した破線（Spec 62 D9）。稼働中の辺の「動く破線」とは
       // 動きで分ける — 判断役は起動しないので、この線が流れることはない。
-      dasharray: (edge) => (edge.judge ? 4 : edgeIsLive(edge as never, running) ? 6 : undefined),
+      // 判断役の線は「0 の長さの線 + 丸い端」= 点の列（2026-11-08。角張った破線は実機で硬く見えた）。
+      dasharray: (edge) =>
+        edge.judge ? "0 5" : edgeIsLive(edge as never, running) ? 6 : undefined,
+      linecap: (edge) => (edge.judge ? "round" : "butt"),
       animate: (edge) => edgeIsLive(edge as never, running),
     },
-    hover: { width: (edge) => (edge.bidirectional ? 4 : 2.4) },
+    hover: { width: (edge) => (edge.bidirectional ? 4 : edge.judge ? 3 : 2.4) },
     marker: {
       source: {
         // 引数は [edge, stroke] の組（このライブラリの marker だけ形が違う）。
         type: ([edge]) => (edge.bidirectional ? "arrow" : "none"),
         width: 4,
         height: 4,
+        // 判断役に触れる辺だけ別の色を渡し、別の矢印を作らせる（塗りは CSS。`JUDGE_MARKER_COLOR`）。
+        color: ([edge]) => (edge.touchesJudge ? JUDGE_MARKER_COLOR : null),
       },
-      target: { type: "arrow", width: 4, height: 4 },
+      target: {
+        type: "arrow",
+        width: 4,
+        height: 4,
+        color: ([edge]) => (edge.touchesJudge ? JUDGE_MARKER_COLOR : null),
+      },
     },
   },
 });
@@ -1187,10 +1210,14 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 判断役（Spec 62）。有効なら accent の枠、無効なら warn の破線。アバターを持たない。 */
+/* 判断役（Spec 62）。有効なら judge の色の枠（線と同じ色で「判断役まわり」を 1 つの色にまとめる。
+   2026-11-08）、無効なら warn の破線。アバターを持たない。 */
 .kizuna :deep(.is-judge .kizuna-ring) {
-  stroke: var(--color-accent);
+  stroke: var(--color-judge);
   stroke-width: 3;
+}
+.kizuna :deep(.is-judge:not(.is-judge-off) .kizuna-judge-mark) {
+  fill: var(--color-judge);
 }
 .kizuna :deep(.is-judge-off .kizuna-ring) {
   stroke: var(--color-warn);
@@ -1374,6 +1401,25 @@ onBeforeUnmount(() => {
 
 .kizuna :deep(.v-ng-edge) {
   stroke: var(--color-accent);
+}
+/*
+ * 判断役に触れる辺（両方向）。鍵の頭 `judge:` は `JUDGE_EDGE_PREFIX`（lib/kizunaEdges.ts）。
+ * 専用の `--color-judge`（彩度を抑えた紫。値と理由は style.css）。
+ */
+.kizuna :deep(.v-ng-edge[data-edge-id^="judge:"]) {
+  stroke: var(--color-judge);
+  /* 他の線と同じ太さのままでも目に留まるよう、色の近くにだけ薄い光を置く（線を太くしない）。 */
+  filter: drop-shadow(0 0 2px color-mix(in oklab, var(--color-judge) 55%, transparent));
+}
+/*
+ * 矢印。ライブラリは辺の既定色（#4466cc）で塗るので、線と同じ色へ塗り直す。
+ * 判断役の辺の矢印は id に `JUDGE_MARKER_COLOR` の base64（`I2E0OGZlMA`）を持つ。
+ */
+.kizuna :deep(.v-ng-marker polygon) {
+  fill: var(--color-accent);
+}
+.kizuna :deep(.v-ng-marker[id*="I2E0OGZlMA"] polygon) {
+  fill: var(--color-judge);
 }
 
 /*

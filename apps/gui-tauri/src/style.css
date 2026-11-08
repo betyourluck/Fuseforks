@@ -83,6 +83,15 @@
   --wordmark-glow-far: oklch(0.63 0.24 303 / 0.4);
 
   /*
+   * 絆の地図で判断役に触れる辺と、判断役の菱形の色（2026-11-08）。**彩度を抑えた紫**（色相 300）。
+   * 赤系は実機で強すぎた（利用者「色合いがきつい」）うえ、この地図で赤は fail =「失敗した個体の輪」。
+   * 紫は accent（232）・run（152）・warn（82）・fail（25）のどれとも色相が離れ、ワードマーク（303）と
+   * 同じ系統なので画面の中で浮かない。彩度はワードマーク（0.24）の半分以下にして、線が主張しすぎない。
+   * ユーティリティを生やさない色なので `@theme` ではなくここに置く（wordmark と同じ）。
+   */
+  --color-judge: oklch(0.74 0.11 300);
+
+  /*
    * 役職バッジの色（Spec 14）。**明度と彩度を固定し、色相だけを変える。**
    *
    * 自由な色入力にしない理由は 3 つ: (1) 配色を style.css の外へ漏らさない
@@ -194,6 +203,8 @@
   --color-wordmark: oklch(0.48 0.22 303);
   --wordmark-glow-near: oklch(0.48 0.22 303 / 0.2);
   --wordmark-glow-far: oklch(0.48 0.22 303 / 0.08);
+
+  --color-judge: oklch(0.52 0.14 300);
 }
 
 html,
@@ -458,6 +469,19 @@ textarea,
   color: var(--color-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+/*
+ * 発話の中のファイルの位置（2026-11-08。`lib/messagePath.ts` が印を付ける）。押すとメニューが出る。
+ * リンク（実線）と見分けるため点線の下線にする。色は変えない — コードの見た目はそのまま残す。
+ */
+.md-body [data-path] {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in oklab, var(--color-accent) 70%, transparent);
+  text-underline-offset: 2px;
+}
+.md-body [data-path]:hover {
+  text-decoration-color: var(--color-accent);
 }
 .md-body hr {
   border: none;

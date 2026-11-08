@@ -111,6 +111,7 @@ Fuseforks/
         │   ├── lib.rs               Window launch (startup order) and IPC command registration
         │   ├── state.rs             Hands the data location and version to build_host + event relay
         │   ├── startup.rs           Device-side startup and exit settings (startup.json) and the --autostart check (Spec 69)
+        │   ├── editor.rs            Resolving file locations in messages; external editor settings (editor.json) and launch
         │   ├── autostart.rs         Register, read and remove launch at sign-in (3 OSes)
         │   ├── tray.rs              Tray icon and menu (Show / Quit)
         │   ├── launch.rs            Batch start on launch (one at a time; one failure does not stop the rest)
@@ -286,6 +287,10 @@ The **dashed** lines leaving a judge are drawn from the destinations in its `jud
 **cannot be drawn or cut on the map** — the file is the source of truth, and writing the same
 fact in two places lets the drawn destinations drift from where requests really go. An inactive
 judge draws no dashed lines.
+**Everything around a judge shares its own color** (`--color-judge`, a muted violet): the lines touching
+a judge in both directions (arrowheads too) and the judge's diamond. It is not a red, because on this map red
+already means "the ring of an agent that failed". Direction is told by shape (agent → judge is solid,
+judge → agent is a row of round dots).
 
 **Only the label changed; the types did not** — `TopologyEdge` / `topologyPositions` / `TopologyMap.vue` / `list_topology` are untouched, following the same discipline as "servant vs. agent" above: do not bind what changes easily to what changes with difficulty. (The wave pane set the precedent when its display name became "Work status" while its contract stayed put.)
 
@@ -1084,6 +1089,27 @@ Hovering shows the full text ("tool round N"). Turns that call no tools show onl
 badge disappears when the turn ends. Streaming the reply
 text is intentionally not implemented — retries, interruption, token accounting and pruning are all
 built on top of a completed response.
+
+**A jump-to-latest button** (2026-11-08). Once you scroll back far enough that the end of the conversation
+is out of view, a round ↓ button appears at the bottom centre of the conversation; pressing it scrolls
+smoothly back to the latest message. While a servant is composing a reply, the ↓ is replaced by the same
+three waving dots as the typing bubble (when the view is filtered, only that servant counts). It appears
+under exactly the condition in which new messages stop auto-scrolling the view (more than 80px above the
+end; both read `isNearBottom` in `lib/chatScroll.ts`), so the view never moves on its own while the
+button is showing, and following resumes once you are back at the end. The button scales with the
+conversation zoom.
+
+**Opening file locations in messages** (2026-11-08). Paths written in backticks (`src/foo.ts`,
+`src/foo.ts:42`, `D:\x\y.md`) and Markdown links whose target looks like a path (`[here](specs/01.md)`)
+get a dotted underline; clicking one opens a menu with "Show in file manager" and "Open in editor". The same
+works on blackboard notes. Paths in plain prose are not picked up (too many false hits, and models almost
+always put paths in backticks); bare names are picked up only with a known extension (`world.json` yes,
+`state.typing` no; `lib/messagePath.ts`). Relative paths resolve from **the speaking servant's work folder**
+(for a note, the note's work folder); if nothing exists there you see "Not found". Locations outside the work
+folder can be opened too (showing and editing run nothing). "Open in editor" uses System settings > User
+interface > External editor (empty by default; templates for VS Code and Cursor; `{path}` and `{line}` are
+replaced). **Nothing is opened with the OS default app** — what you click was written by a model, and an
+`.exe` or `.bat` would run. The editor is started without a shell, with the path as a single argument.
 
 ### Opening and folding tool rows ([Spec 57](specs/57_tool-call-detail.md))
 

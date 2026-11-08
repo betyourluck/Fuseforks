@@ -41,6 +41,7 @@ import PaneSplitter from "./components/PaneSplitter.vue";
 import StatusBar from "./components/StatusBar.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
+import PathMenuHost from "./components/PathMenuHost.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TopologyMap from "./components/TopologyMap.vue";
 import { agentNavDelta, isNavigableFocus, nextAgentId } from "./lib/agentNav";
@@ -454,6 +455,7 @@ onBeforeUnmount(() => {
   <!-- 確認ダイアログ（はい／いいえ）。ブラウザの confirm() は使わない —
        WebView のネイティブダイアログは localhost を名乗る。 -->
   <ConfirmHost />
+  <PathMenuHost />
 
   <OrdinanceDialog v-if="ordinanceOpen" @close="ordinanceOpen = false" />
 

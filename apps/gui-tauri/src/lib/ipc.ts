@@ -30,6 +30,8 @@ import type {
   DisplayLanguage,
   McpHostStatus,
   StartupSettings,
+  EditorSettings,
+  ResolvedPath,
   AutostartView,
   ModelTemplate,
   ModelTemplateId,
@@ -219,6 +221,24 @@ export const setStartupSettings = (settings: StartupSettings) =>
     minimizeToTray: settings.minimizeToTray,
     batchStartOnLaunch: settings.batchStartOnLaunch,
   });
+
+/**
+ * 発話に書かれたパスを解決する（2026-11-08）。相対パスは `workDir`（発言した個体・付箋を書いた
+ * 個体の作業フォルダ）から。実在しなければ `null`。
+ */
+export const resolveMessagePath = (workDir: string | null, raw: string) =>
+  call<ResolvedPath | null>("resolve_message_path", { workDir, raw });
+
+/** 外部エディタの設定（端末の棚）。 */
+export const getEditorSettings = () => call<EditorSettings>("get_editor_settings");
+
+/** 外部エディタの設定を保存する。空白だけの引数はコアが落とす。 */
+export const setEditorSettings = (settings: EditorSettings) =>
+  call<EditorSettings>("set_editor_settings", { command: settings.command, args: settings.args });
+
+/** 解決済みのパスを外部エディタで開く。起動するコマンドはコアが棚から読む。失敗は理由の文で例外。 */
+export const openInEditor = (path: string, line: number | null) =>
+  call<void>("open_in_editor", { path, line });
 
 /** サインイン時の自動起動の状態。**OS の登録そのものを読む**（Spec 69 D4）。 */
 export const getAutostart = () => call<AutostartView>("get_autostart");

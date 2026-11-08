@@ -13,6 +13,7 @@ pub use fuseforks_host::mcp_server;
 pub use fuseforks_host::pricing_source;
 pub use fuseforks_host::probe_approvals;
 mod launch;
+mod editor;
 mod startup;
 mod state;
 mod tray;
@@ -73,6 +74,9 @@ pub fn run() {
             let hidden = startup::starts_hidden(store.settings(), autostart);
             app.manage(startup::StartupState {
                 store: std::sync::Mutex::new(store),
+            });
+            app.manage(editor::EditorState {
+                store: std::sync::Mutex::new(editor::EditorStore::load(&app.path().app_data_dir()?)),
             });
 
             // 窓は設定ファイル（`create: false`）から作る（D0 の 2・D5 の案 A）。
@@ -268,6 +272,10 @@ pub fn run() {
             // 起動と終了（Spec 69）
             commands::get_startup_settings,
             commands::set_startup_settings,
+            commands::resolve_message_path,
+            commands::get_editor_settings,
+            commands::set_editor_settings,
+            commands::open_in_editor,
             commands::get_autostart,
             commands::set_autostart,
         ])

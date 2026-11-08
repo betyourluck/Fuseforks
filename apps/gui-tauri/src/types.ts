@@ -77,6 +77,21 @@ export type Endpoint =
  * 起動と終了の端末側の設定（Spec 69 D1）。`{app_data_dir}/startup.json`。**既定は両方 false。**
  * 村（`world.json`）には入らない — 配った先で開いただけで起動しないため。
  */
+/** 外部エディタの設定（端末の棚 `editor.json`。2026-11-08）。`command` が空なら未設定。 */
+export interface EditorSettings {
+  /** 実行ファイルの名前か絶対パス（例: `code`）。 */
+  command: string;
+  /** 引数のひな形（1 要素 1 引数）。`{path}` と `{line}` を置き換え、`{path}` が無ければ末尾にパスを足す。 */
+  args: string[];
+}
+
+/** 発話に書かれたパスを解決した結果（実在するものだけ）。 */
+export interface ResolvedPath {
+  /** 絶対パス（Windows の冗長な前置きは表示用に剥がしてある）。 */
+  path: string;
+  isDir: boolean;
+}
+
 export interface StartupSettings {
   /** 閉じる（✕ / OS の閉じる操作）で窓を隠し、トレイに残るか。 */
   minimizeToTray: boolean;
