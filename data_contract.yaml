@@ -349,7 +349,8 @@ enums:
         assist   : { tsMs, draftKind, model, templateId, prompt, cached, cacheWrite,
                      cacheWrite1h, completion, reasoning, outcome } — AI 下書き補助の
                    LLM 呼び出し 1 回ぶんの使用量 (Spec 63 D10)。**本文・会話・下書きは
-                   入れない**。開いている会話へ書く。**履歴の入力にはならない**
+                   入れない**。~~開いている会話へ書く~~ → **下書き補助を始めた時点で開いていた
+                   会話へ書く** (Spec 75 session_binding_contract 凍結 2)。**履歴の入力にはならない**
                    (restore_histories / tail_messages / fork_points は読まない — turn と同じ)。
                    互換の向きは turn と同じ (新しい版は旧い記録を読める / 旧い版は
                    kind: "assist" で records() が落ちる)。**欄名は kind にできない** —
@@ -429,7 +430,10 @@ enums:
           書かれるので、飛行中に落ちると「message はあるが exchange が無い」が残る。
           これは正しい記録 (発話は起きた事実) として扱い、**画面には出すが
           履歴には入れない**。再開後は「頼んだが答えが返らなかった」ように見える
-        - **セッションの切り替えは飛行中ターンが無いときだけ** (interrupt_all の
+        - **→ 2026-11-12 Spec 75 で覆した (session_binding_contract 凍結 1・2・11)** —
+          書き込みが根の会話へ行くので、切り替えは処理中でも拒まない。拒むのは処理の残っている会話を
+          消す操作だけ (SESSION_BUSY)。以下は当時の凍結:
+          ~~**セッションの切り替えは飛行中ターンが無いときだけ**~~ (interrupt_all の
           後か全員 idle)。飛行中に切り替えると答えが別のセッションへ着地する。
           拒否は SESSION_SWITCH_BLOCKED (自動で interrupt_all してから切り替える
           ことはしない — 畳むかどうかは人の判断)。
@@ -606,6 +610,104 @@ enums:
         比較: SQLite FTS5 の既定 unicode61 は**日本語で 0 件ヒット**、
         tokenize='trigram' なら全ヒット — 日本語検索に形態素解析は要らない
         (lindera の 451 依存を外した根拠)
+
+    session_binding_contract: |
+      会話を依頼の根に結び付ける (Spec 75 rev3・2026-11-12 P0 で凍結。実装は P1 から)。
+      **それまでの形**: 書き込みは書き込んだ瞬間に開いている会話 (current_session()) へ行き、
+      ターンを始めた会話はどこにも持っていなかった。処理中に新規チャットへ移ると、依頼は元の会話・
+      答えと 1 往復とターンの記録は新しい会話へ分かれ、その個体だけが新しい会話でも前の依頼を覚え、
+      承認待ちの印は切り替えで消えた。**この契約が覆すもの**: reset_rule の案 A (飛行中ターンの完了
+      書き込みは新しい会話に載る) / session_store の「セッションの切り替えは飛行中ターンが無いときだけ」/
+      approval_stops_the_turn の印の (d) (切り替えで全部外す) / Schedule の sessionMode: fresh の意味
+      (村全体を切り替える・同じ tick の continue も新しい会話へ積む)。
+      凍結:
+        1. **会話は依頼の根の属性。** Envelope の 5 つ目の値 session: SessionRef (会話 ID と、
+           その会話に結び付いた処理の生存数を数える参照。Arc の複製で数える)。新しい根が取る会話の
+           規則は 1 つ — **操作の対象が会話を持っていればその会話、持っていなければそのとき開いている会話**:
+             利用者の発話 / 外部依頼 (ask_external_outcome)       → 送った・受けた時点で開いている会話
+             予定の発火                                          → fresh は予定ごとに作った新しい会話・continue は発火の時点で開いている会話 (凍結 14)
+             検収の再依頼 (Spec 46)                               → 元の発火の会話
+             承認後の続行 (Spec 56・72)                           → 承認待ちの印の会話 (凍結 5)
+             計画の確認の承認で配る波 / 束ねの配送 (Spec 43)       → 計画を提示した会話 (凍結 6)
+           ask / plan / 転送 / 判断役の配送は受け取った封筒の SessionRef を**写す**。上書きしない。
+           deliver_and_wait は新しい根と写す経路の両方から呼ばれるので、**会話を引数で受け取る**
+           (自分では決めない)。封筒に載らない処理 (下書き補助・要約) も、始めた時点で SessionRef を取り
+           終わるまで持つ
+        2. **書き込みは運んできた会話へ。** persist(record, &SessionRef) — 暗黙に current_session() を
+           読む persist は残さない。記録ごとの出どころ:
+             message (因果の中・対象を持つ操作) → 封筒または対象の SessionRef
+             message (村全体の知らせ)           → 書いた時点で開いている会話 (凍結 9)
+             exchange                          → ターンの封筒 (record_failed_turn にも渡す)
+             turn                              → ターンの封筒。TurnRecorded.sessionId も同じ
+             summary                           → 要約を始めたときの SessionRef (凍結 7)
+             assist                            → 下書き補助を始めた時点で開いていた会話
+           Shared::record / push_exchange は、その会話が**開いていれば**今と同じ (メモリの写しへ積み、
+           保存し、MessageSent を出す)。**開いていなければ保存だけ** — 広場ログの輪にも履歴にも積まず、
+           MessageSent も出さず、CoreEvent::SessionUpdated { sessionId } を出す
+        3. **lock の順序は「開いている会話の lock → world → log → summaries」。** 開いている会話の ID を
+           tokio の RwLock にする (std::sync::RwLock<String> から)。書き手は read を取って「開いているか」を
+           判定し、メモリへの積み込みと persist を済ませてから外す。open_session は write を取り、保存先の
+           読み直し → メモリの差し替え → set_session を済ませてから外す。**保存先を読み直している間は
+           world を持たない** (差し替えるときだけ短く取る)。world を握ったまま開いている会話の lock を
+           取る経路を作らない (push_exchange の呼び出し側 5 か所は、先に開いている会話の lock を取る形へ)。
+           帰結: 書き込みが切り替えより先なら読み直しに含まれ、後なら開いた会話のメモリへ積まれる。
+           どちらでも 1 回だけ載る
+        4. **読み取りも運んできた会話から。** 開いていない会話のターンは、履歴 (restore_histories の
+           1 体ぶん) / 要約 / 広場ログの抜粋と入退室の節 (tail_messages) をその会話の保存先から読む
+           (ターンの開始で 2 回)。room_log の pull (read_room_log) は会話を引数に取り、開いていない会話の
+           ターンでは呼び出しのたびにその会話の保存先を読む。開いている会話のターンは今と同じ (写しを読む)
+        5. **承認待ちの印は (個体, 会話)。** Shared.approval_stopped: HashSet<(AgentId, SessionId)>。
+           立てるのは止まったターンの封筒の会話。外すのは同じ会話の出来事だけ (その個体のその会話での
+           次のターンの入口 / その印の「続けさせる」)。**個体の停止と削除は会話を問わず全部外す**。
+           **open_session と reset_conversation は印を外さない** (approval_stops_the_turn の (d) を撤回)。
+           ApprovalStopped イベントに sessionId を足す。帯と承認画面の「続けさせる」は開いている会話の印
+           だけを出し、他の会話の印は「別の会話 (タイトル) で止まっています」の 1 行。コマンドの判断待ち
+           (run.json の pending) は個体の単位のままで、会話を問わず承認できる。印はメモリだけ (再起動で消える)
+        6. **計画の波は提示した会話を持つ。** 承認待ちの波に提示したターンの SessionRef を持たせる。
+           承認で配る波・束ねの配送・配送できなかった束ねの破棄の System 行・計画の破棄の System 行は
+           その会話へ書く。作業状況タブはすべての波を出し、波に会話 ID を持たせて開いていない会話の波に
+           「別の会話」と出す。確認待ちのバッジは全部を数える
+        7. **要約は始めたときの会話に結び付ける。** summarize_agents(session, only)。人が押した要約は
+           押した時点で開いている会話、予定の完了後要約は根の会話。材料・coversUpToSeq・保存・System 行は
+           その会話。メモリ上の要約の差し替えと履歴の畳みは、その会話がいま開いているときだけ
+        8. **予定の後判定と完了後要約は、根の会話のターンの終わりで発火する。** pending_acceptances /
+           pending_summaries に根の SessionRef を持たせ、AgentTyping に sessionId を足して、**個体と会話の
+           両方が一致した active: false** でだけ取り出す。承認待ちの見送りは (個体, 根の会話) の印を見る。
+           in_flight は個体の単位のまま。残る近似: 同じ個体・同じ会話で別のターンが先に終わると早く
+           発火しうる (変えない)
+        9. **村全体の知らせ** (入退室 / 役職の変更 / 判断役の無効化 / 停止中で飛ばした予定) は、書いた
+           時点で開いている会話にだけ記録し、その会話のプロンプトにだけ入る。開いていない会話のターンは
+           その間の変化を節としては見ない — 顔ぶれの節は毎ターン World から組み、入退室の節の末尾が
+           「現在の状態は「今の顔ぶれ」が正です」と書く (Spec 06)
+       10. **画面。** 会話ペインは開いている会話の発話だけを出す (凍結 2 で MessageSent が出ないので
+           コアの側で決まる)。ToolInvoked と AgentTyping に sessionId を足す。state.typing は個体の単位
+           のまま (黒板の持ち主の状態と interruptAll() が読む)。入力中のバブルと周回数は typing の会話が
+           開いている会話のときだけ出す (個体ごとに typingSession)。ツール行は開いている会話の
+           ToolInvoked だけ積む (カードの lastTool は個体の単位のまま)。開き直しでツール行と周回数は
+           戻らない (Spec 57 の利用者が負う条件のまま)。SessionUpdated の受け手は会話一覧の引き直しと
+           知らせ — **開いていない会話にサーヴァントの発話が書かれたとき**だけ「別の会話 ({タイトル}) に
+           {名前} の答えが届きました」のトーストと「開く」。同じ会話への知らせは 1 枚にまとめて最後の
+           送り手と件数を出す。System 行にはしない (failures.md #89 の経路)
+       11. **切り替えは拒まない。消すのは処理の残っていない会話だけ。** 既存の会話を開く・分岐・最新を
+           開くは処理中でも通す (ensure_idle_for_switch を撤去)。会話を消す操作は、その会話の SessionRef
+           を誰かが持っている間は**開いているかを問わず**拒む — 持つもの: 封筒 (受信箱で待っているものも
+           飛行中のものも) / 承認待ちの波 / 予定の後処理の登録 / 走っている要約 / 走っている下書き補助。
+           エラーは SESSION_BUSY。SESSION_SWITCH_BLOCKED は撤去 (作る経路が無くなり、文面が実態と逆に
+           なるので流用しない)。判定と SessionRef の発行は同じ lock の下で行う。SessionNotFound の WARN は
+           網として残す
+       12. **計器。** turn: 行の末尾に session=<会話 ID> (model= と repeat_max= の後。既存の欄の並びは
+           変えない) / 開いていない会話へ書いた発話に `session write: kind=message session=… open=…` /
+           消す操作を拒んだときに `session busy: session=… refs=N`
+       13. **保存先の無い村** は今と同じ。SessionRef は持たず、「開いているか」の分岐をしない (常に開いて
+           いる扱い・書き込みはメモリだけ・新規チャットはメモリを白紙にする)。空の会話 ID を「全会話に
+           共通」と読む経路を作らない
+       14. **予定の fresh は画面を切り替えない。** start_fresh_session は open_session を呼ばず、
+           SessionStore::create_session で会話を作ってその SessionRef を根にする。fresh の予定は 1 件ごとに
+           新しい会話を 1 つ作り、同じ tick の continue は発火の時点で開いている会話を根にする。
+           作った会話のターンは開いていない会話として凍結 4 で読む。作った会話は作った時点から会話一覧に
+           並ぶ。保存先の無い村では今と同じく開いている会話 (メモリ) へ配送する
+      変えないもの: 個体はプロセスのまま (受信箱は 1 本・ターンは個体ごとに直列)。前の会話の処理で
+      忙しい個体は、新しい会話での返事が遅れる。外部依頼に会話を選ばせる口は作らない。
 
     path_completion_contract: |
       入力欄の `@` パス補完 (Spec 24)。**候補を出すだけの機構**で、
@@ -3172,7 +3274,12 @@ entities:
       - SCHEDULE_STORE_BLOCKED  # Spec 07。schedules.json が読めない間は書き込みを保護
       - SESSION_NOT_FOUND       # Spec 12。sessions.redb に無いセッションへの操作
       - SESSION_STORE_FAILED    # Spec 12。sessions.redb の開く/読む/書く/確定のどこかで失敗
-      - SESSION_SWITCH_BLOCKED  # Spec 12。飛行中ターンがある間の resume/fork/delete(開いている方)
+      # SESSION_SWITCH_BLOCKED は Spec 75 (2026-11-12 P0) で撤去 — 切り替えは処理中でも拒まなくなり、
+      # 作る経路が無くなる。文面 (「飛行中のターンがあるため会話を切り替えられません」) が実態と逆になる
+      # ので SESSION_BUSY へ流用しない。撤去は P1 (コアのエラー) と P2 (辞書 3 言語) で
+      - SESSION_BUSY            # Spec 75。消そうとした会話にまだ処理が残っている (その会話の SessionRef を
+                                # 封筒・承認待ちの波・予定の後処理・要約・下書き補助のどれかが持っている)。
+                                # 開いているかを問わない (session_binding_contract 凍結 11)
       - SESSION_STORE_LOCKED    # Spec 64 (P0 凍結・2026-10-06 P2 着地)。sessions.redb を別のプロセスが開いている
                                 # (redb の DatabaseAlreadyOpen)。bootstrap はこれだけを止める
       - INVALID_TOKEN_BUDGET    # Spec 13。set_token_budget の Some(0)。0 のマジック値を作らない
@@ -3490,6 +3597,10 @@ entities:
         (空行)
         【前判定の出力】
         {2 行目以降・原文保持}
+      **→ 2026-11-12 Spec 75 で覆した (session_binding_contract 凍結 14)**: fresh は画面を切り替えず、
+      予定ごとに新しい会話を作ってその会話を根にする。同じ tick の continue は発火の時点で開いている会話へ。
+      下の「1 セッション」「continue も新しいセッションに積む」は当時の規則 (会話が村に 1 つだった頃の、
+      画面を 2 回切り替えないための形)。
       **sessionMode**: fresh は配送前に create_session。
       **create_session は ensure_idle_for_switch を通らない** (検査があるのは
       既存会話を開く側) ので、**他個体**が飛行中でも新規チャットは通る
@@ -3664,6 +3775,8 @@ entities:
         transfer_to_* / plan の波 / スケジュール) の他 4 つに掛けない
         (掛けるなら別 Spec)
       - **再依頼のセッションは continue 固定** (予定の sessionMode は初回だけ)。
+        Spec 75 の後は「**元の発火の会話**」(fresh で作った会話を含む。session_binding_contract 凍結 1) —
+        開いている会話ではない。
         前の試行で何をしたかが見えないと同じ失敗を繰り返す —
         fresh で再依頼すると RepeatGuard に相当する記憶が会話ごと消える
       - **前判定は発火時に 1 回だけ評価する。再依頼は前判定を通らない**
@@ -3717,6 +3830,8 @@ entities:
       完了で止まる前の試行の検収が走る)。だから承認して続けさせたターン (from=system の新しい根)
       の完了では後判定も要約も走らず、後判定はその予定の次の発火がやり直す
       (P4 で訂正。P0 の文「続けさせた次のターンの完了は普通に後判定の対象」は P1 の実装と食い違っていた)。
+      **Spec 75 (2026-11-12)**: 見送りの判定は (個体, 根の会話) の印を見る。後判定と要約の取り出しは
+      個体と会話の両方が一致した AgentTyping { active: false } でだけ (session_binding_contract 凍結 8)。
       完遂の軸の 3 本目 — reply: to= / refusal= に続き、これだけが
       「成果物の検証」を機械で直接言う列。
       画面はスケジュールダイアログに直近の結末 (lastProbe と同じ器・
@@ -4140,13 +4255,16 @@ entities:
     topologyChanged: {}
     agentFailed: { agentId, error }
     backendDegraded: { modelTemplateId, reason }
-    agentTyping: { agentId, active }
+    # sessionId は Spec 75 (P0 凍結・2026-11-12。加算)。そのターンの根の会話。state.typing は個体の
+    # 単位のまま読み、入力中のバブルだけが開いている会話で絞る (session_binding_contract 凍結 10)
+    agentTyping: { agentId, active, sessionId }
     conversationCleared: {}
     # reason は Spec 27 (ReasonState の 4 値)、callId は Spec 57 (コアのリングの鍵。
     # 引数と結果本文はこのイベントに載せない — tool_call_detail_contract)、
     # round は 1 始まりの周回数 (ログの tool: 行の round= と同じ値。2026-10-15 —
     # 会話ペインの入力中バブルが「ツール N 周目」を出す。加算的変更)
-    toolInvoked: { agentId, tool, ok, reason, callId, round }
+    # sessionId は Spec 75 (加算)。会話ペインのツール行は開いている会話の分だけ積む
+    toolInvoked: { agentId, tool, ok, reason, callId, round, sessionId }
     toolLimitReached: { agentId, maxIterations }
     # 同一のツール呼び出しの繰り返しを検出して実行せずに打ち切った
     # (failures.md #41 の処方 1)。repeats = 同じ結果が続いた回数 (打ち切り時は 2)
@@ -4176,6 +4294,8 @@ entities:
     # 読み捨てる**。コストは agentStatsUpdated (稼働中の個体ごとに毎秒) の
     # 1/数十以下 — rev1 で「払いすぎ」と見積もって 10 秒 pull にしたのが誤り。
     # **加算的変更** (既存 variant の意味は変えない)。
+    # Spec 75 の後、sessionId は**ターンの根の会話** (書いた時点で開いている会話ではない)。
+    # 統計画面は開いている会話の統計を引き直すかを、これと開いている会話の一致で決める
     turnRecorded: { agentId, sessionId }
     # Spec 72 (承認待ちでターンを止める)。run の承認待ちで止まった個体の印
     # (Shared.approval_stopped) が**変わったとき**だけ 1 通 — 立てる (出口) と外す
@@ -4184,7 +4304,14 @@ entities:
     # 「続けさせる」を押した直後も押せるまま画面に残り、連打で 2 通目が出るため
     # (Spec 72 が直そうとしている症状そのもの)。受け手は承認画面と帯 (refreshCommandRequests)。
     # **加算的変更**。ワイヤ形は ipc_contract が留める
-    approvalStopped: { agentId, stopped }
+    # sessionId は Spec 75 (加算)。印は (個体, 会話) — 外すのは同じ会話の出来事だけで、
+    # 上の「open_session・reset_conversation でも外す」は撤回 (session_binding_contract 凍結 5)
+    approvalStopped: { agentId, stopped, sessionId }
+    # Spec 75 (P0 凍結・2026-11-12。加算)。**開いていない会話**へ発話が書かれたときだけ 1 通
+    # (開いている会話への書き込みは messageSent が運ぶ)。受け手は会話一覧の引き直しと、サーヴァントの
+    # 発話だったときのトースト + 「開く」(session_binding_contract 凍結 2・10)。発話の本文は運ばない
+    # (開くと sessionSwitched → list_messages で読む)。送り手の表示名だけをトーストのために運ぶ
+    sessionUpdated: { sessionId, from }
   observability_rule: |
     ツール実行は会話ログに現れない (結果はプロンプトの中で消える)。
     toolInvoked を出すのは、黙って副作用だけ起きる状態を作らないため。
@@ -4238,6 +4365,11 @@ entities:
     settle_turn の 1 実装) であって*出力の欄*ではない。model は #104 が
     「turn の prompt はラウンドの合計・モデル名も無い」と書いた欠けで、
     帯と機種の判断がログだけでできるようになる。
+    **Spec 75 (2026-11-12 P0)**: turn: 行の末尾 (repeat_max= の後) に `session=<会話 ID>` を足す —
+    そのターンの記録がどの会話へ書かれたかをログで読むため (処理中に会話を切り替えても、答えは根の
+    会話へ行く)。turn interrupted / turn budget exhausted の行には足さない (上の model= の規律と同じく
+    Record::Turn を読む)。開いていない会話への発話の書き込みは `session write:`、消す操作の拒否は
+    `session busy:` の行を出す (session_binding_contract 凍結 12)。
     不変条件:
       - 載せるのは観測行だけ。**プロンプト本文・ツール結果の本文・資格情報は
         載せない** (ログは平文でワークスペースに置かれる。failures.md #1)
@@ -4261,7 +4393,9 @@ entities:
       - 飛行中ターンの完了書き込みは**許容** (案 A)。白紙化の直後に
         飛行中だった発話 1 件が載るのは仕様 — 発話は起きた事実であり
         ログに残す (hop 打ち切りの「記録してから打ち切る」と同じ規律)。
-        世代管理による破棄は採らない
+        世代管理による破棄は採らない。
+        **→ 2026-11-12 Spec 75 で覆した** — 完了書き込みは**根の会話**へ行き、新しい会話には載らない
+        (session_binding_contract 凍結 1・2)。発話を記録として残す規律は変えない (書く先が変わるだけ)
     **Spec 12 による改訂 (2026-08-02 rev2 承認、P0 で凍結)**:
       新規チャットは**捨てるのではなく、今のセッションを閉じて新しい
       セッションを開く**。上の処理順と不変条件は**そのまま生きる** —
@@ -4278,10 +4412,15 @@ entities:
           「この会話を閉じて、新しい会話を始めますか」)。捨てないので警告色は外す
         - 切り替え (resume / fork / continue_latest) も同じ 2 イベントを
           この順で出す。新規チャットだけを特別扱いしない
-        - **飛行中ターンの扱いだけは新規チャットが特別**(P2 で確定)。
+        - ~~**飛行中ターンの扱いだけは新規チャットが特別**(P2 で確定)。
           案 A (完了書き込みは許容) はここでそのまま生きる — 着地先が新しい
           空のセッションなので、既存の記録を汚さない。既存の会話を開く
-          resume / fork / continue_latest は SESSION_SWITCH_BLOCKED で拒む
+          resume / fork / continue_latest は SESSION_SWITCH_BLOCKED で拒む~~
+          **→ 2026-11-12 Spec 75 で覆した。** 新規チャットも既存の会話を開く操作も、処理中かどうかで
+          扱いを分けない (session_binding_contract 凍結 11)。「既存の記録を汚さない」は古い会話の側の
+          理屈で、新しい会話には問いの無い答えと前の依頼を覚えた個体が混ざり、古い会話は答えを失っていた
+        - 処理の順 1〜4 は Spec 75 の後もそのまま (開いている会話の lock の write の下で行う — 凍結 3)。
+          **承認待ちの印は消さない** (凍結 5)
         - **保存先が開けていない村では改訂前の挙動のまま** —
           メモリを白紙にして conversationCleared だけを出す (sessionSwitched は
           出さない)。保存できないことは新規チャットを使えなくする理由にならない
@@ -4806,7 +4945,10 @@ conversation_termination:
         1. **既定 OFF。** planReview が偽 (既定) の個体の plan は
            バイト等価の挙動 — 既存の村は 1 ミリも変わらない
         2. **提案は永続化しない** (session_store の「復元しないもの」に
-           提案 pending も含む。再起動で消えたら頼み直し — 作業の寿命)
+           提案 pending も含む。再起動で消えたら頼み直し — 作業の寿命)。
+           **Spec 75 (2026-11-12)**: 提案は提示したターンの会話 (SessionRef) を持ち、承認で配る波・束ね・
+           破棄の System 行はその会話へ書く。作業状況タブは全部の波を出し、開いていない会話の波に
+           「別の会話」と出す (session_binding_contract 凍結 6)
         3. **dispatch の検証は run_plan と 1 実装** (空 / 宛先がその進行役の
            接続先 / 宛先重複。検証は dispatch 時点の接続で掛かる —
            GUI が何でも配送できる形にしない。Spec 20 rev2 の罠の再演防止)
@@ -6062,6 +6204,10 @@ conversation_termination:
         承認すると、次のターンで実行できます」。auto_approve / no_approval はこの関数に到達しない
       - **予定の後判定と完了後要約は、根のターンがこの出口で閉じたとき見送る**
         (Acceptance.instrumentation の例外。計器 acceptance: … outcome=skipped reason=approval_pending)
+      - **→ 2026-11-12 Spec 75 で改訂 (session_binding_contract 凍結 5)**: 印は (個体, 会話) の組で持つ。
+        外すのは同じ会話の出来事だけで、**下の (d) は撤回** (印を会話ごとに持つので、切り替えで外す
+        必要が無い)。ApprovalStopped に sessionId を足す。帯と「続けさせる」は開いている会話の印だけ。
+        以下は Spec 72 当時の凍結:
       - **止まった個体の印**: Shared.approval_stopped: Mutex<HashSet<AgentId>>。出し入れは 1 実装
         set_approval_stopped(id, bool) が担い、**変わったときだけ** CoreEvent::ApprovalStopped
         { agentId, stopped }。立てる: 出口。**外す 4 点**: (a) その個体へ封筒が届いて **handle_message
@@ -6802,7 +6948,9 @@ conversation_termination:
          description / 発火条件 / 前付けは書かせない。Construct は役職のラベルに寄せず振る舞いで
          書かせる (Spec 14 D6)。判断役の文法の正はコアのパーサー
      10. **使用量の置き場は Record::Assist の 1 つ** (session_store の 5 種別目)。LLM 呼び出し 1 回ごとに
-         1 件、開いている会話へ。統計画面の StatsReport.assist と ≈ $ に入る。**村の予算
+         1 件、開いている会話へ (**Spec 75 の後は、下書き補助を始めた時点で開いていた会話へ** —
+         呼び出しの間に会話を切り替えても、始めた会話に残る。session_binding_contract 凍結 2)。
+         統計画面の StatsReport.assist と ≈ $ に入る。**村の予算
          (tokenBudget) と個体の累計には入れない** (村の仕事の因果ではなく人の操作。判断役には個体の
          累計が無い)。会話を開いていなければログ行だけで WARN を 1 行
      11. **計器 assist: を LLM 呼び出し 1 回ごとに 1 行**: kind / model / attempt / forced=no|yes|fallback /

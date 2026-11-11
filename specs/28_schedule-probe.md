@@ -188,6 +188,11 @@ D1 の判定列・段 1〜2 の後ろに置くことの帰結（rev1 から維�
 
 ### D6 セッション選択は `sessionMode`: `continue`（既定）| `fresh`
 
+**→ 2026-11-12 [Spec 75](75_session-bound-roots.md) D14 で覆した。** `fresh` は画面を切り替えず、予定ごとに
+新しい会話を作ってその会話を依頼の根にする。同じ tick の `continue` は発火の時点で開いている会話へ。
+下の「村全体が新しい会話へ切り替わる」「`fresh` が 1 件でもあれば全部を新しい会話へ積む」は当時の規則
+（会話が村に 1 つだった頃の、画面を 2 回切り替えないための形）
+
 - `fresh` は配送前に `create_session`。**`create_session` は
   `ensure_idle_for_switch` を通らない**（`orchestrator:921` — 検査があるのは
   既存会話を開く側 `:1245`）。Spec 12 P2 の裁定どおり、**他個体が飛行中でも**
