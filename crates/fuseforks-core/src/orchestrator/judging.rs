@@ -280,7 +280,7 @@ pub(super) async fn run_judge(
                     max_hops: shared.config.max_hops,
                 });
                 note!("judge: caller={caller} judge={judge_id} rule={rule} outcome=hop_limit answers={answers} {tokens}");
-                return Ok("転送の上限に達したため、これ以上は尋ねられません。".to_owned());
+                return Ok(super::reply_text::hop_limit_ask(language).to_owned());
             }
             // 本文は呼び出し元の message をそのまま + 判定 1 行（+ 注記）。判断役は文章を書かない。
             let mut body = note_dropped_attachment(&message, drops_attachment, language);
@@ -334,7 +334,7 @@ pub(super) async fn run_judge(
                     .to_owned());
             }
             let display_of: HashMap<AgentId, String> = entry.destinations.iter().cloned().collect();
-            let bundle = bundle_answers(&tasks, replies, &display_of);
+            let bundle = bundle_answers(&tasks, replies, &display_of, language);
             note!(
                 "judge: caller={caller} judge={judge_id} rule={rule} outcome=fanned answers={answers} to={to_list} \
                  bundle_chars={} {tokens}",

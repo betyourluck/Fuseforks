@@ -85,7 +85,7 @@ pub(super) async fn ask_agent(
             agent_id: from.clone(),
             max_hops: shared.config.max_hops,
         });
-        return Ok("転送の上限に達したため、これ以上は尋ねられません。".to_owned());
+        return Ok(super::reply_text::hop_limit_ask(language).to_owned());
     }
 
     // ask は分類を捨てる（.0）。分類は波ペインの素材で、ask の関心ではない。
@@ -137,6 +137,14 @@ pub(super) async fn deliver_and_wait(
     // 計画の確認を開けない印（Spec 53 凍結 11 (a)）。依頼元の封筒の値を**写すだけ**。
     auto_approve_plans: bool,
 ) -> (String, PlanTaskState) {
+    // 依頼主が読む結果の文は村の言語で書く（`reply_text`）。どの出口でも同じ値なので先に 1 回。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
+
     // 予算が尽きていたら配送そのものを始めない（token_budget の exhaustion —
     // 「新しい配送を始めない」の実装点。波の並列配送でも、兄弟タスクの消費で
     // 先に尽きたらここで止まる）。
@@ -144,7 +152,7 @@ pub(super) async fn deliver_and_wait(
         && !pool.has_remaining()
     {
         return (
-            "トークン予算の上限に達したため、配送していません。".to_owned(),
+            super::reply_text::budget_not_delivered(language).to_owned(),
             PlanTaskState::BudgetExhausted,
         );
     }
@@ -167,23 +175,8 @@ pub(super) async fn deliver_and_wait(
                 .collect::<Vec<_>>()
                 .join(","),
         );
-        let language = shared
-            .world
-            .read()
-            .await
-            .language()
-            .unwrap_or(crate::world::Language::Ja);
         return (
-            match language {
-                crate::world::Language::Ja => format!(
-                    "宛先「{to}」はこの依頼の因果の中で答えを待っています（循環する委譲）。\
-                     配送していません。依頼主への返信で直接答えてください。"
-                ),
-                crate::world::Language::En => format!(
-                    "Target \"{to}\" is waiting for an answer within this request's causality \
-                     (circular delegation). Nothing was delivered. Answer your requester directly instead."
-                ),
-            },
+            super::reply_text::circular(to.as_str(), language),
             PlanTaskState::Undeliverable,
         );
     }
@@ -217,7 +210,7 @@ pub(super) async fn deliver_and_wait(
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
         // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
         return (
-            format!("相手に尋ねられませんでした: {err}"),
+            super::reply_text::undeliverable(&err, language),
             PlanTaskState::Undeliverable,
         );
     }
@@ -245,11 +238,11 @@ pub(super) async fn deliver_and_wait(
         // 相手が答えずにタスクを終えた（停止・失敗）。転送で応じた場合は
         // handle_message が事実を送るので、ここへは来ない。
         Ok(Err(_)) => (
-            "相手から答えが返りませんでした。".to_owned(),
+            super::reply_text::no_answer(language).to_owned(),
             PlanTaskState::NoAnswer,
         ),
         Err(_) => (
-            "相手からの答えが時間内に返りませんでした。".to_owned(),
+            super::reply_text::timed_out(language).to_owned(),
             PlanTaskState::TimedOut,
         ),
     }
@@ -328,14 +321,13 @@ pub(super) async fn run_plan(
     // 村の既定を**撒く時点で**読む（削除済みの個体は `None` に読める）。
     let verifier = shared.world.read().await.default_verifier().cloned();
 
-    // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。
+    // 1. 静的な不正を全件見る。1 件でも不正なら何も配送しない。文は村の言語（`reply_text`）。
+    use super::reply_text::{PlanDefect, plan_defect};
     let Some(tasks) = call.args.get("tasks").and_then(serde_json::Value::as_array) else {
-        return "plan には tasks（依頼の配列）が必要です。何も配送していません。".to_owned();
+        return plan_defect(PlanDefect::MissingTasks, language);
     };
     if tasks.is_empty() {
-        return "plan の tasks が空です。誰にも頼まずに終わりました。\
-                頼む相手が居ないなら、plan を呼ばずに自分で答えてください。"
-            .to_owned();
+        return plan_defect(PlanDefect::EmptyTasks, language);
     }
 
     let mut wave_tasks: Vec<(AgentId, String)> = Vec::with_capacity(tasks.len());
@@ -345,9 +337,7 @@ pub(super) async fn run_plan(
             task.get("to").and_then(serde_json::Value::as_str),
             task.get("message").and_then(serde_json::Value::as_str),
         ) else {
-            return format!(
-                "{position} 件目の依頼に to と message の両方が必要です。何も配送していません。"
-            );
+            return plan_defect(PlanDefect::MissingFields { position }, language);
         };
 
         let target = AgentId::from(to);
@@ -359,17 +349,14 @@ pub(super) async fn run_plan(
             |t| handoffs.is_target(t),
         ) {
             Some(WaveTaskDefect::NotConnected) => {
-                return format!(
-                    "{position} 件目の宛先「{to}」は、あなたの接続先ではありません。\
-                     頼めるのは {} です。何も配送していません。",
-                    handoffs.roster().join("、")
+                let roster = handoffs.roster();
+                return plan_defect(
+                    PlanDefect::NotConnected { position, to, roster: &roster },
+                    language,
                 );
             }
             Some(WaveTaskDefect::Duplicate) => {
-                return format!(
-                    "宛先「{to}」が同じ波に 2 回あります。1 回の plan で同じ相手へ頼めるのは 1 件です。\
-                     2 件目は次の波で頼んでください。何も配送していません。"
-                );
+                return plan_defect(PlanDefect::Duplicate { to }, language);
             }
             None => {}
         }
@@ -419,15 +406,7 @@ pub(super) async fn run_plan(
             started_at_ms,
         });
         // このターンでは結果を受け取らない（D3 — 嘘を書かない）。
-        return match language {
-            crate::world::Language::Ja => "計画を提示しました。利用者が編集して実行または破棄します。\
-                 このターンでは結果を受け取りません。提示した事実を短く報告して、ターンを終えてください。"
-                .to_owned(),
-            crate::world::Language::En => "The plan has been proposed. The user will edit it, then \
-                 dispatch or discard it. You will not receive the results in this turn. \
-                 Briefly report that the plan was proposed, then end your turn."
-                .to_owned(),
-        };
+        return super::reply_text::plan_proposed(language).to_owned();
     }
 
     // 2. 波全体で一様に決まる制約。1 回だけ確かめ、1 つの文字列で返す
@@ -438,7 +417,7 @@ pub(super) async fn run_plan(
             agent_id: from.clone(),
             max_hops: shared.config.max_hops,
         });
-        return "転送の上限に達したため、これ以上は頼めません。何も配送していません。".to_owned();
+        return super::reply_text::hop_limit_plan(language).to_owned();
     }
 
     // 観測用の波の開始行。宛先と依頼サイズを記録し、後から
@@ -521,7 +500,7 @@ pub(super) async fn run_plan(
         Some(bundle) => bundle,
         // この文字列は進行役の周回に返るが、直後の周回境界で本人も止まるので
         // モデルは読まない。読まれる前提の文言にしない（人がログで読む行）。
-        None => "plan はユーザーの指示で打ち切られました。".to_owned(),
+        None => super::reply_text::plan_interrupted(language).to_owned(),
     }
 }
 
@@ -645,6 +624,8 @@ pub(super) fn bundle_answers(
     tasks: &[(AgentId, String)],
     answers: Vec<Option<String>>,
     display_of: &std::collections::HashMap<AgentId, String>,
+    // 見出しの枠と定型文は村の言語（`reply_text::bundle_section`）。
+    language: Language,
 ) -> String {
     tasks
         .iter()
@@ -654,8 +635,7 @@ pub(super) fn bundle_answers(
                 .get(target)
                 .map(String::as_str)
                 .unwrap_or_else(|| target.as_str());
-            let body = answer.unwrap_or_else(|| "答えの取得中に問題が起きました。".to_owned());
-            format!("## {target}（{display}）\n{body}")
+            super::reply_text::bundle_section(target.as_str(), display, answer, language)
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -774,7 +754,8 @@ async fn execute_wave(
     // 束ねる。見出しは `agent_id（表示名）` — 表示名だけにしないのは、
     // 表示名の一意性がどこも保証されていないから（同名が 2 体いると
     // どちらの答えか判別できなくなる）。順序は入力順に戻す。
-    let bundle = bundle_answers(wave_tasks, answers, display_of);
+    let language = shared.world.read().await.language().unwrap_or(Language::Ja);
+    let bundle = bundle_answers(wave_tasks, answers, display_of, language);
 
     // 束ねの大きさを記録する（Spec 04 Notes 7 の「実測してから決める」の実測側）。
     // 束ねは進行役の履歴に積まれ、以後の波のたびに入力として運ばれる —

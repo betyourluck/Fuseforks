@@ -495,7 +495,8 @@ async fn finish_interrupted(
     // 確定済みの親が受け取らないことではない。
     if let Some(reply_to) = reply_to {
         let _ = reply_to.send(Reply {
-            text: "この依頼はユーザーの指示で打ち切られました。答えはありません。".to_owned(),
+            text: super::reply_text::stopped(super::reply_text::Stopped::Interrupted, language)
+                .to_owned(),
             kind: PlanTaskState::Interrupted,
         });
     }
@@ -624,10 +625,16 @@ async fn finish_budget_exhausted(
     }
 
     // (c) 依頼主への返信。送信の失敗は無視する（相手が先に確定していることは
-    // ある — race の勝敗は分類を変えない）。
+    // ある — race の勝敗は分類を変えない）。村の言語で書く（`reply_text`）。
     if let Some(reply_to) = reply_to {
+        let language = shared
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
         let _ = reply_to.send(Reply {
-            text: "この依頼はトークン予算の上限で打ち切られました。答えはありません。"
+            text: super::reply_text::stopped(super::reply_text::Stopped::BudgetExhausted, language)
                 .to_owned(),
             kind: PlanTaskState::BudgetExhausted,
         });
@@ -744,7 +751,8 @@ async fn finish_approval_pending(
     //     本文は既存 2 出口の形。束ねはこの text をそのまま載せる（状態別の文の表は無い）。
     if let Some(reply_to) = reply_to {
         let _ = reply_to.send(Reply {
-            text: "この依頼は承認待ちのコマンドで止まりました。答えはありません。".to_owned(),
+            text: super::reply_text::stopped(super::reply_text::Stopped::ApprovalPending, language)
+                .to_owned(),
             kind: PlanTaskState::ApprovalPending,
         });
     }
@@ -2260,45 +2268,20 @@ async fn run_turn_inner(
     {
         written_by_core = true;
         // 理由を必ず添える。「失敗しました」だけでは、設定を直せば済むのか
-        // ワイヤの障害なのかを利用者が判別できない。
-        let reason = || {
-            summary_error
-                .as_deref()
-                .map(|err| format!("失敗の理由: {err}。"))
-                .unwrap_or_else(|| "モデルは応答しましたが本文が空でした。".to_owned())
-        };
-        *content = if let Some(tool) = &repeat_stop {
-            // 打ち切りの理由は上限ではないので、上限の直し方を案内しない
-            // （直しても直らないものを勧めると、次の依頼がそのぶん燃える）。
-            format!(
-                "（`{tool}` を同じ引数で繰り返し呼び、同じ結果が返り続けたため\
-                 ツール実行を打ち切りました。まとめの生成にも失敗しています。{}\
-                 頼み方を変えるか、必要な情報を直接渡してください。）",
-                reason()
-            )
+        // ワイヤの障害なのかを利用者が判別できない。文は村の言語で書く（`reply_text` —
+        // この返事は会話ペインに出て、委譲で来た依頼なら依頼主のモデルも読む）。
+        use super::reply_text::EmptyBody;
+        let cause = if let Some(tool) = &repeat_stop {
+            EmptyBody::Repeat { tool }
         } else if tool_limit_hit {
-            format!(
-                "（ツール実行の上限 {max_tool_iterations} 回に達し、まとめの生成にも\
-                 失敗しました。{}\
-                 エージェント設定で上限を上げるか、依頼を小さく分けてください。）",
-                reason()
-            )
+            EmptyBody::ToolLimit { max: u32::from(max_tool_iterations) }
+        } else if last_completion > 0 {
+            EmptyBody::Silent { completion: last_completion }
         } else {
-            // **観測できた事実だけを書く。** 出力トークンがあるのに本文も
-            // ツール呼び出しも無いなら、モデルは**本文以外のブロック**
-            // （拡張思考など）だけを返している。種別は `dropped content blocks:`
-            // の 1 行がログに残す — ここで「thinking です」と断定しない
-            // （見たのはトークン数であって、ブロックの中身ではない）。
-            if last_completion > 0 {
-                format!(
-                    "（モデルは出力 {last_completion} トークンを使いましたが、\
-                     本文もツール呼び出しも返しませんでした。\
-                     もう一度頼んでみてください。繰り返すなら頼み方を変えてください。）"
-                )
-            } else {
-                "（モデルから本文が返りませんでした。もう一度頼んでみてください。）".to_owned()
-            }
+            EmptyBody::Nothing
         };
+        *content =
+            super::reply_text::empty_body(cause, summary_error.as_deref(), tool_images.language);
     }
 
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
@@ -3384,6 +3367,14 @@ async fn dispatch_outcome(
     //
     // 転送そのものは抑制しない。ワーカーの正当な選択を握り潰すと、
     // 「呼んだのに何も起きない」という別の穴に変わる。直すのは文言だけ。
+    //
+    // 返信と下の断り書きは記録時の言語で書く（Spec 35 D6・`reply_text`）。全通で同じ値。
+    let language = shared
+        .world
+        .read()
+        .await
+        .language()
+        .unwrap_or(crate::world::Language::Ja);
     if let Some(reply_to) = reply_to {
         let names = {
             let world = shared.world.read().await;
@@ -3396,27 +3387,15 @@ async fn dispatch_outcome(
                         .unwrap_or_else(|_| to.to_string())
                 })
                 .collect::<Vec<_>>()
-                .join("、")
         };
         let _ = reply_to.send(Reply {
-            text: format!(
-                "相手はこの依頼に自分で答えず、{names} へ会話を渡しました。\
-                 答えはこちらへ戻りません。必要なら別の相手に頼むか、自分で進めてください。"
-            ),
+            text: super::reply_text::handed_off(&names, language),
             kind: PlanTaskState::HandedOff,
         });
     }
 
     // 宛先ごとに 1 通として記録する（fan-out）。トークンは 1 ターンぶんの消費なので、
     // 全通に載せると宛先数で二重計上される。先頭の 1 通にだけ載せる。
-    //
-    // 断り書きは記録時の言語で書く（Spec 35 D6）。全通で同じ値なのでループの外。
-    let language = shared
-        .world
-        .read()
-        .await
-        .language()
-        .unwrap_or(crate::world::Language::Ja);
     let dropped_kinds = super::attachment_kinds(&incoming.attachments);
     let mut queued = Vec::with_capacity(deliveries.len());
     for (index, (to, message)) in deliveries.iter().enumerate() {

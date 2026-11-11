@@ -47,6 +47,8 @@ mod settings;
 mod lifecycle;
 mod turn;
 use turn::{connect_agent_mcp, handle_message, record_failed_turn};
+// 依頼主が読む結果の文（ask / plan / 判断役のツール結果と Reply の本文）。村の言語で書く。
+mod reply_text;
 mod delegation;
 use delegation::{HandoffTools, Outcome, ask_agent, deliver_and_wait, run_plan};
 mod context;
@@ -1534,9 +1536,15 @@ async fn agent_loop(
                         },
                     );
                     if let Some(reply_to) = envelope.reply_to {
+                        // 出口 2a と同じ文（`reply_text` の 1 実装）。村の言語で書く。
+                        let language = shared
+                            .world
+                            .read()
+                            .await
+                            .language()
+                            .unwrap_or(crate::world::Language::Ja);
                         let _ = reply_to.send(Reply {
-                            text: "この依頼はユーザーの指示で打ち切られました。\
-                                   答えはありません。"
+                            text: reply_text::stopped(reply_text::Stopped::Interrupted, language)
                                 .to_owned(),
                             kind: PlanTaskState::Interrupted,
                         });

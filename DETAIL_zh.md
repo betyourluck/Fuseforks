@@ -39,6 +39,7 @@ Fuseforks/
 │       │   │   ├── schedules.rs     定时任务触发（ticker、前置判定、分发、后置判定）
 │       │   │   ├── turn.rs          回合执行（步骤 1-8。**作为核心文件保留** — 见下方注释）
 │       │   │   ├── delegation.rs    委托与转发（ask / plan / transfer 的提示与判定）
+│       │   │   ├── reply_text.rs    委托方读到的结果文本（ask / plan / 判断者的结果与回复正文。用村庄的语言书写）
 │       │   │   ├── judging.rs       判断者（judge_* 的提示与转交、“试用”、列表。[Spec 62](specs/62_judge-agents.md)）
 │       │   │   ├── assist.rs        AI 起草辅助（调用起草模型・判断者的检查循环・记录。[Spec 63](specs/63_ai-draft-assist.md)）
 │       │   │   ├── template_probe.rs 模型模板的连接测试（只往返一次・判定・一行日志。[Spec 68](specs/68_template-connection-test.md)）

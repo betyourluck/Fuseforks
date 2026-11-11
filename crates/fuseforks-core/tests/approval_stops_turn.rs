@@ -590,6 +590,42 @@ async fn a_delegated_worker_returns_approval_pending_to_the_requester() {
     let _: PlanTaskState = PlanTaskState::ApprovalPending;
 }
 
+/// (7') 英語の村では、依頼主に届く定型文も英語（2026-11-12 — `reply_text`。それまでは日本語固定で、
+/// 英語の村の依頼主のモデルも日本語の返信を読んでいた）。(7) と同じ形で、言語だけを変える。
+#[tokio::test]
+async fn a_delegated_worker_returns_approval_pending_in_the_village_language() {
+    let dir = TempDir::new("ask-en");
+    let backend = ScriptedBackend::running(&[("git", &["status"])]);
+    let orchestrator = setup(&dir, backend.clone()).await;
+    orchestrator
+        .set_language(fuseforks_core::world::Language::En)
+        .await
+        .unwrap();
+    let worker = spawn_runner(&orchestrator, &dir, "agent_02").await;
+    let leader = AgentId::from("agent_01");
+    let mut spec = AgentSpec::new(leader.clone(), "Leader", "tpl");
+    spec.connected_agents = vec![worker.clone()];
+    orchestrator.create_agent(spec).await.unwrap();
+    orchestrator.start_agent(&leader).await.unwrap();
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&leader, "have them look").await.unwrap();
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(800)).await;
+
+    let answers = agent_answers(&events, &leader);
+    assert_eq!(answers.len(), 1, "依頼主は答える: {events:?}");
+    assert!(
+        answers[0].contains("This request stopped at a command awaiting approval. There is no answer."),
+        "英語の村の依頼主に届くのは英語の定型文: {}",
+        answers[0]
+    );
+    assert!(
+        !answers[0].contains("答えはありません"),
+        "日本語の定型文は届かない: {}",
+        answers[0]
+    );
+}
+
 /// (8) `plan` で撒かれたワーカーが止まる → 束ねにその定型文が入り、セルの状態は
 /// `ApprovalPending`。進行役の束ねは普通に走る（捨てられない）。
 #[tokio::test]

@@ -40,6 +40,7 @@ Fuseforks/
 │       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery, acceptance check)
 │       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
+│       │   │   ├── reply_text.rs    Result text the requester reads (ask / plan / judge results and replies; in the village language)
 │       │   │   ├── judging.rs       Judges (offering and relaying judge_*, "Try", the list; Spec 62)
 │       │   │   ├── assist.rs        AI drafting (calling the drafter, the judge check loop, recording; Spec 63)
 │       │   │   ├── template_probe.rs Model template connection test (one round trip, verdict, one log line; Spec 68)
@@ -2416,7 +2417,12 @@ occasionally producing Japanese in replies is expected. System lines in the conv
 written in **the village's language at the moment of recording** and never retranslated
 (retranslating would put the exported JSONL and the screen out of sync; a village that switched
 languages keeps its old lines in the old language — an honest record, like the user's own past
-messages).
+messages). **Delegation results the requester receives are written in the village language too**
+(2026-11-12) — the tool results of `ask` / `plan` / judges, the reply text sent back to the requester
+("There is no answer." and the like), the reply the core writes when the model returned no text, and the
+frame of the bundle headings (`## agent_02（Worker）` / `## agent_02 (Worker)`). Built-in tool results
+and the core's error text stay Japanese ([Spec 35](specs/35_bilingual-core.md) D4-4), so the error kind
+still appears in Japanese inside an English sentence.
 
 **Simplified Chinese covers the screen only** ([Spec 74](specs/74_simplified-chinese-ui.md)). In a 简体中文
 village the UI text and the tray menu are Chinese, while **what the core says to the servants (system prompts,
