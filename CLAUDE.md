@@ -909,8 +909,8 @@ repos/betyourluck/winget-pkgs/git/refs/heads/master -f sha=<本家の先頭> -F 
 へ置いてコミット・push → 前回の PR の本文を雛形に `gh pr create`。**次に wingetcreate が同じ形で落ちたら、再試行を重ねずにこの手順へ移る**。
 0.6.6 = PR #470409（2026-11-04 提出。wingetcreate で通った。09:22 UTC マージ = publish の 1 時間 53 分後）/
 0.6.7 = PR #471660（2026-11-05 19:41 UTC 提出 = publish の 2 時間 12 分後。wingetcreate で通った。2026-11-05 20:30 UTC マージ = publish の 3 時間 1 分後。2026-11-08 に `winget search` が 0.6.7 を返すことを確認）/
-0.6.8 = PR #475070（2026-11-08 19:33 UTC 提出 = publish の 1 分後。wingetcreate で通った）。** 所要を測れた update PR
-（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.3）は、**0.3.4 を除く全部が 48 分〜3 時間 52 分・
+0.6.8 = PR #475070（2026-11-08 19:33 UTC 提出 = publish の 1 分後。wingetcreate で通った。2026-11-08 20:25 UTC マージ = publish の 53 分後。2026-11-11 に `winget search` が 0.6.8 を返すことを確認）。** 所要を測れた update PR
+（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.8）は、**0.3.4 を除く全部が 46 分〜3 時間 52 分・
 中央値 1 時間前後、0.3.4 だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
@@ -2950,7 +2950,7 @@ Bun（`setup-bun`）・WiX・NSIS・`nsis_tauri_utils.dll` の取得が順に 50
 `gh run rerun --failed` は通った OS を走らせ直さないので、3 OS がそろうまで draft に溜まった（`releaseDraft: true` がまた効いた）。
 **同日、Pages の `prices.json` に `cache_write_1h_per_mtok` を 2 件足した**（`claude-opus-5-5` = $8 / `claude-mythos-5-1` = $20。
 Pages リポジトリ `7062c68`。要望 4 で見つけた「統計の `≈ $` が 1 時間の書き込みを $5 で数える」の手当て）。
-**次の一手**: winget 0.6.8（PR #475070。2026-11-08 19:38 UTC 時点で自動検証の途中・未マージ）のマージ確認 → タグ履歴と winget の節へ書き戻し / 外部エディタ・最新へ移動の実機
+**次の一手**: ~~winget 0.6.8（PR #475070。2026-11-08 19:38 UTC 時点で自動検証の途中・未マージ）のマージ確認 → タグ履歴と winget の節へ書き戻し~~（**→ 2026-11-08 20:25 UTC マージ = publish の 53 分後**。2026-11-11 に `winget search` が 0.6.8 を返すことを確認し、書き戻し済み）/ 外部エディタ・最新へ移動の実機
 （要望 2・3 は利用者が開発ビルドで確認済み）/ 従来の残り（CSP の macOS・Linux 確認・`maxRetries` 6 の観測）。
 
 ## 現在地（2026-11-08 更新）
@@ -4868,7 +4868,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   「利用者が負う条件」4 つ（外部エディタは既定で未設定・端末にだけ保存 / 作業フォルダの外のパスも開ける / ツールの周が 5 分を超えると
   次の周は 1.25 倍で書き直す / 最新へ移動のボタンは会話の表示倍率で大きくなる）。**タグは利用者、publish・winget・tap は Neo** —
   winget 0.6.8 = PR #475070（`gh repo sync` → `wingetcreate update … --out` で生成して確かめてから `wingetcreate submit --token`。
-  `InstallerLocale` 無しを引き写し・ProductCode は `{41305EF5-…}`・`InstallerSha256` は Release の digest と一致。publish の 1 分後に提出）/
+  `InstallerLocale` 無しを引き写し・ProductCode は `{41305EF5-…}`・`InstallerSha256` は Release の digest と一致。publish の 1 分後に提出。2026-11-08 20:25 UTC マージ = publish の 53 分後）/
   tap `91a0297`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.6.7` = `f90d9ba`（2026-11-06 JST タグ。5 コミット・うちコードは 2 本）— 絆の地図の移動のための複数選択（Shift + クリック /
   Shift + ドラッグでまとめて動かす / 左ペインのグループの見出しを Shift + クリック）+ グループの並びのドラッグの修正 + モデル登録の
