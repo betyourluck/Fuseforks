@@ -330,7 +330,7 @@ addressed from the venue to a servant (a schedule firing) it is a request that r
 arrives, so it keeps its bubble.
 
 **In-flight turns can be interrupted mid-way** ([Spec 10](specs/10_turn-interrupt.md)).
-The "■ Stop" button next to a typing bubble cuts that agent's current turn; "Stop all turns" in the header cuts every in-flight turn in the village. What gets cut is the **turn**, not the agent — it stays running, conversation and history survive, and the next request is handled normally. Interrupting a facilitator also stops only the worker tasks spawned by its plan wave (unrelated requests the same workers were handling in parallel are untouched). Detection happens at round boundaries, so the turn stops as soon as the in-flight LLM call or tool finishes — a "stop requested…" indicator covers the gap. The fact of the interruption is recorded as a single System line in the conversation log.
+The "■ Stop" button next to a typing bubble cuts that agent's current turn; "Stop all turns" in the header cuts every in-flight turn in the village. What gets cut is the **turn**, not the agent — it stays running, conversation and history survive, and the next request is handled normally. Interrupting a facilitator also stops only the worker tasks spawned by its plan wave (unrelated requests the same workers were handling in parallel are untouched). Detection happens at round boundaries, so the turn stops as soon as the in-flight LLM call or tool finishes — a "stop requested…" indicator covers the gap. The fact of the interruption is recorded as a single System line in the conversation log. Whatever the tools already did before the stop (file writes, commands) is not undone, and the note left in the agent's history tells the next turn so, along with the fact that the request is not finished (turns stopped by the token budget or by a failure get the same note).
 
 **A new conversation can be started via "New Chat"** (header button, with confirmation).
 This clears only the conversation log and individual agent histories from the screen, preserving operational status, cumulative statistics, long-term memory (`Memory.md`), and individual MCP connections — switching a "conversation" rather than an "agent". This reflects a token philosophy of avoiding continuous charges for old contexts whenever topics switch. It is intentional specification if a response currently being processed appears once immediately afterward (logging utterances as facts that occurred).
@@ -1254,6 +1254,14 @@ and is waiting for approval" for as long as a servant stopped at approval remain
 - **Approving asks what to permit**: this call only (exact match), or any arguments
   after this prefix (trailing `*`). **The narrow one is the default**, and the
   resulting pattern is shown literally so you can check it before pressing.
+- **If the wide pattern would let anything through, a warning appears before you choose**
+  (2026-11-11). Three kinds: shells and commands that start the command written after them
+  (`bash *` / `pwsh -Command *` / `cmd /c *` / `env *` / `git -c *` …), interpreters that run code
+  passed to them (`python -c *` / `node -e *` / `python *` …), and remote shells (`ssh <host> *`).
+  **It is a warning only; it changes nothing about what runs** (lines in the allow list keep working).
+  The run.json tab of the agent settings also lists broad patterns already in `allow`
+  (`lib/broadPattern.ts`; the list builds on the prefixes openai/codex refuses to add as rules
+  automatically after an approval).
 - **Rejecting writes to `deny`**, not merely removing it from the list — removal alone
   would let the same command queue up again on the next call.
 - **An unapproved command stops the turn at the end of that round**
@@ -1943,6 +1951,13 @@ A `turn` line carries **two more fields than this example**: a trailing
 hardware**. Switching the protocol changed **not one line of the log** unless a
 provider-specific feature such as search was used. An instrument tied to one wire
 is only evidence about **the feature**, never about the path.
+
+A `tool` line also carries fields added after this example: `reason=` / `reason_chars=`
+(whether a reason was written; Spec 27) and **`elapsed_ms=` (how long that tool took to run;
+2026-11-11)**. Tools within a round run one after another, so adding up the `elapsed_ms` of the
+lines in one round gives an upper bound on what running them in parallel could save (the time of
+the compression step (Jev) afterwards is not included). `images=N`, when a tool returns images,
+comes after it.
 
 **The main line kinds are these** (the implementation has more; the authoritative count is
 the number of `note!` calls, and writing a total here would rot every time one is added):

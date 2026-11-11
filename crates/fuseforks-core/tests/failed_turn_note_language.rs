@@ -167,6 +167,10 @@ async fn an_english_village_gets_an_english_failure_note_with_the_seconds() {
         joined.contains("The provider asks to retry after 3600 seconds."),
         "接続先が求めた秒数を注記に書く: {joined}"
     );
+    // 2026-11-11: 失敗が 2 周目以降なら、それまでの周のツールは実行済み。「未処理」と書かない
+    // （打ち切り・予算切れの注記と同じ末尾 — `stopped_turn_note.rs`）。
+    assert!(!joined.contains("unprocessed"), "「未処理」と書かない: {joined}");
+    assert!(joined.contains("not undone"), "実行済みの結果が残ることを書く: {joined}");
 }
 
 /// 简体中文の村の注記は英語（Spec 74 D1 — コアの声は `voice()` を通る）。
@@ -191,6 +195,11 @@ async fn a_japanese_village_keeps_the_japanese_note_and_the_seconds() {
     assert!(
         joined.contains("プロバイダは 3600 秒後の再試行を求めています。"),
         "秒数の文は本文から注記へ移っただけで、日本語の村でも残る: {joined}"
+    );
+    assert!(!joined.contains("未処理"), "「未処理」と書かない（2026-11-11）: {joined}");
+    assert!(
+        joined.contains("その結果は取り消されていません"),
+        "実行済みの結果が残ることを書く: {joined}"
     );
 }
 

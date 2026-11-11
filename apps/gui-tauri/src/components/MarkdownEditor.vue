@@ -15,6 +15,7 @@ import CodeEditor from "./CodeEditor.vue";
 import McpSecretsButton from "./McpSecretsButton.vue";
 import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
+import { broadAllowEntries } from "../lib/broadPattern";
 import {
   CONFIG_FILE_LABELS,
   CONFIG_FILE_TEMPLATES,
@@ -93,6 +94,13 @@ const assistOpen = ref(false);
  * 行くので、編集モードでなくても押せる（本文の保存とは別の操作）。
  */
 const canOpenSecrets = computed(() => kind.value === "mcp");
+
+/**
+ * run.json の `allow` のうち、実質的に何でも通る広いパターン（2026-11-11）。**編集中の本文から
+ * 拾う**ので、書き足した瞬間に出て、消せばその場で消える。判定には使わない（`lib/broadPattern.ts`）。
+ * 承認画面は選ぶ前に知らせ、ここは既に入っているものを見せる — 実際の村には `bash *` があった。
+ */
+const broadEntries = computed(() => (kind.value === "run" ? broadAllowEntries(content.value) : []));
 
 /** ひな型をテキストエリアへ入れる。**保存はしない** — 中身を見てから人が押す。 */
 function insertTemplate(): void {
@@ -194,6 +202,20 @@ watch(
       @apply="content = $event"
       @close="assistOpen = false"
     />
+
+    <div
+      v-if="!loading && broadEntries.length > 0"
+      class="mx-3 mt-3 rounded border border-warn/50 bg-surface-0 px-3 py-2 text-[11px]"
+      data-broad-allow
+    >
+      <p class="mb-1 font-medium text-warn">{{ $t("broadPattern.listTitle") }}</p>
+      <ul class="space-y-0.5">
+        <li v-for="entry in broadEntries" :key="entry.pattern" class="text-ink-dim">
+          <code class="font-mono text-ink">{{ entry.pattern }}</code>
+          — {{ $t(`broadPattern.${entry.kind}`) }}
+        </li>
+      </ul>
+    </div>
 
     <div class="min-h-0 flex-1 p-3">
       <p v-if="loading" class="text-[11px] text-ink-dim">{{ $t("editor.loading") }}</p>

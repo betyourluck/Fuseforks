@@ -59,14 +59,17 @@ pub(super) async fn record_failed_turn(
 ///
 /// 接続先が 60 秒を超える待ちを明示して止まったときはその秒数を、画像を受け付けなかった（WebP も JPEG も
 /// 400）ときはその原因と次の手を添える。どちらの文も以前は LLM の層がエラーの本文へ日本語固定で書いて
-/// いたもので、ここへ移した（`tests/failed_turn_note_language.rs`）。**日本語は添える文が無い限り従来と
-/// バイト等価。**
+/// いたもので、ここへ移した（`tests/failed_turn_note_language.rs`）。
+///
+/// 末尾は [`unfinished_tail`]（2026-11-11 に「依頼は未処理のまま残っています」から差し替え。2 周目以降の
+/// 失敗では、それまでの周のツールは実行済み）。
 ///
 /// `{error}` はコアのエラー文（Spec 13 で日本語に固定。画面は訳語を併記する）なので、英語の注記にも
 /// エラーの種類名（「API エラー」など）は日本語で残る。
 pub(super) fn failed_turn_note(language: crate::world::Language, error: &CoreError) -> String {
     let wait = error.retry_after_too_long().map(|wait| wait.as_secs());
     let images = error.images_rejected();
+    let tail = unfinished_tail(language);
     match language {
         crate::world::Language::Ja => {
             let hint = wait
@@ -78,7 +81,7 @@ pub(super) fn failed_turn_note(language: crate::world::Language, error: &CoreErr
             } else {
                 ""
             };
-            format!("（このターンは失敗し、返答できませんでした: {error}。{hint}{images}依頼は未処理のまま残っています）")
+            format!("（このターンは失敗し、返答できませんでした: {error}。{hint}{images}{tail}）")
         }
         crate::world::Language::En => {
             let hint = wait
@@ -90,9 +93,61 @@ pub(super) fn failed_turn_note(language: crate::world::Language, error: &CoreErr
             } else {
                 ""
             };
-            format!(
-                "(This turn failed and could not be answered: {error}.{hint}{images} The request is still unprocessed.)"
-            )
+            format!("(This turn failed and could not be answered: {error}.{hint}{images} {tail})")
+        }
+    }
+}
+
+/// 止まったターンの注記に共通の末尾（2026-11-11）。失敗（[`failed_turn_note`]）・打ち切り
+/// （[`interrupted_turn_note`]）・予算切れ（[`budget_turn_note`]）の 3 つが**この 1 実装を共有する**。
+///
+/// それまでの 3 つは「依頼は未処理のまま残っています」と書いていた。ところが止めるのは周の境目なので、
+/// それまでの周のツール（ファイルの書き込み・黒板の移動・コマンド）は実行済みで、次のターンのモデルが
+/// 同じ書き込みや追記をやり直す余地があった。Spec 72 の承認待ちの注記だけは「未処理と書かない」と
+/// 明記して直してあり、**規則が兄弟の注記へ伝わっていなかった** — 末尾を 1 か所に置くのはその形を
+/// 繰り返さないため（`tests/stopped_turn_note.rs`）。
+///
+/// 「依頼はまだ終わっていない」は残す — 次のターンで続きを扱うことは変わらない。ツールが 1 本も
+/// 走っていない止まり方（1 周目の失敗）もあるので、結果のことは「あれば」で書く。
+fn unfinished_tail(language: crate::world::Language) -> &'static str {
+    match language {
+        crate::world::Language::Ja => {
+            "依頼はまだ終わっていません。それまでに実行したツールがあれば、その結果は取り消されていません"
+        }
+        crate::world::Language::En => {
+            "The request is not finished. If any tools ran before this, their effects were not undone."
+        }
+    }
+}
+
+/// 打ち切ったターンの注記（Spec 10 — 出口 2a の (b)）。**村の言語で書く**（2026-11-11。それまでは
+/// 日本語固定）。打ち切りは走っている `run` のコマンドを木ごと止める（`failures.md` #98）ので、
+/// 途中で止めたコマンドのことも 1 文添える — 次のターンはそのツール結果を見られない（ツール結果は
+/// ターンの外の履歴に積まない）。
+fn interrupted_turn_note(language: crate::world::Language) -> String {
+    let tail = unfinished_tail(language);
+    match language {
+        crate::world::Language::Ja => format!(
+            "（このターンはユーザーの指示で打ち切られました。{tail}。\
+             打ち切りで止めたコマンドは、一部だけ実行されたかもしれません）"
+        ),
+        crate::world::Language::En => format!(
+            "(This turn was stopped by the user. {tail} \
+             A command cut off by the stop may have run only partly.)"
+        ),
+    }
+}
+
+/// 予算切れで止めたターンの注記（Spec 11 — 出口の (b)）。**村の言語で書く**（2026-11-11。それまでは
+/// 日本語固定）。予算は周の頭で確かめるので、コマンドを途中で止めることは無い。
+fn budget_turn_note(language: crate::world::Language) -> String {
+    let tail = unfinished_tail(language);
+    match language {
+        crate::world::Language::Ja => {
+            format!("（このターンはトークン予算の上限で打ち切られました。{tail}）")
+        }
+        crate::world::Language::En => {
+            format!("(This turn was stopped at the token budget limit. {tail})")
         }
     }
 }
@@ -478,11 +533,9 @@ async fn finish_interrupted(
 /// 数字は積まない — 累計・`Record::Turn` は [`settle_turn`] が 4 出口共通で持つ
 /// （Spec 39 P1 でここから移した。出口ごとに積むと片方だけ既定値のまま化ける — #103 の形）。
 async fn record_interrupted_turn(shared: &Arc<Shared>, agent_id: &AgentId, sent_user_turn: &str) {
-    let note = "（このターンはユーザーの指示で打ち切られました。\
-                依頼は未処理のまま残っています）";
-
     let mut world = shared.world.write().await;
-    shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
+    let note = interrupted_turn_note(world.language().unwrap_or(crate::world::Language::Ja));
+    shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
 }
 
 /// トークン予算で打ち切られたターンの出口（Spec 11 — `token_budget` の
@@ -517,10 +570,9 @@ async fn finish_budget_exhausted(
     // (b) 履歴 + 清算（累計 / Record::Turn / TurnRecorded — Spec 39 の 1 実装）。
     //     ここまでに使ったトークンは実際に消費したので積む。
     {
-        let note = "（このターンはトークン予算の上限で打ち切られました。\
-                    依頼は未処理のまま残っています）";
         let mut world = shared.world.write().await;
-        shared.push_exchange(&mut world, agent_id, sent_user_turn, note);
+        let note = budget_turn_note(world.language().unwrap_or(crate::world::Language::Ja));
+        shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
     }
     let settled = settle_turn(shared, agent_id, ctx, &spend, waves, stop, None).await;
 
@@ -2531,6 +2583,10 @@ impl CallRunner<'_> {
         // 画像を運べるのは registry の枝（`call_with_media`）だけ（Spec 70 D7）。
         // 合成側の枝は本文だけを返すので、ここで `ToolOutput::text` に包む。
         let text = crate::tool::ToolOutput::text;
+        // ツール 1 本の実行時間（`tool:` 行の `elapsed_ms=`。2026-11-11）。測るのは下の振り分け 1 つ
+        // （plan / 委譲 / 同梱 / MCP のどの枝でも）で、後ろの圧縮（Jev）は含めない — 並列化で縮むのは
+        // ツールを待つ時間で、圧縮は `tool prune:` 行が別に持つ。
+        let started = std::time::Instant::now();
         // 並列委譲は 1 回の呼び出しで N 体ぶんの仕事をする。ツール実行の
         // 上限（`max_tool_iterations`）の消費も 1 回で済む。
         let result = if use_handoff_tools
@@ -2612,6 +2668,7 @@ impl CallRunner<'_> {
                 }
             }
         };
+        let elapsed_ms = started.elapsed().as_millis();
         let (reason, reason_chars) = reason;
         // 状態の名前を先に取る（この後 `reason` はイベントへ移る）。
         let reason_kind = crate::tool_reason::kind_label(&reason);
@@ -2686,13 +2743,18 @@ impl CallRunner<'_> {
         //
         // **`images=` は画像を返したときだけ足す**（Spec 70 D8）— 画像を返さない
         // ツールの行は 1 バイトも変わらない。画像の中身は書かない（枚数だけ）。
+        //
+        // **`elapsed_ms=` はそのツールの実行時間**（2026-11-11）。周の中のツールは直列に走るので、
+        // 同じ周の行を足すと「並列にしたら何秒縮むか」の上限が読める（openai/codex の読み比べで
+        // 足した計器 — CLAUDE.md の codex の節）。欄は `reason_chars=` の直後で、`images=` より前
+        // （「画像を返した行は `images=N` で終わる」を保つ）。
         let images_field = if images.is_empty() {
             String::new()
         } else {
             format!(" images={}", images.len())
         };
         note!(
-            "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars}{images_field}",
+            "tool: agent={agent_id} round={} name={} ok={ok} args_chars={} body_chars={} reason={reason_kind} reason_chars={reason_chars} elapsed_ms={elapsed_ms}{images_field}",
             round,
             call.name,
             call.args.to_string().chars().count(),
@@ -3738,6 +3800,38 @@ async fn chat_with_tool_image_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 止まったターンの注記 3 つ × 2 言語が、同じ末尾を持ち「未処理」と書かない（2026-11-11）。
+    ///
+    /// 規則が 1 つの注記にだけ入って兄弟へ伝わらなかったのが元の穴（Spec 72 の承認待ちの注記だけが
+    /// 直っていた）。注記を足したらここへ並べる。
+    #[test]
+    fn every_stopped_turn_note_shares_the_tail_and_never_claims_nothing_ran() {
+        use crate::world::Language;
+        let error = CoreError::AgentNotFound("agent_9".into());
+        for language in [Language::Ja, Language::En] {
+            let tail = unfinished_tail(language);
+            let notes = [
+                ("failed", failed_turn_note(language, &error)),
+                ("interrupted", interrupted_turn_note(language)),
+                ("budget", budget_turn_note(language)),
+            ];
+            for (name, note) in notes {
+                assert!(note.contains(tail), "{name}/{language:?} は共通の末尾を持つ: {note}");
+                assert!(
+                    !note.contains("未処理") && !note.contains("unprocessed"),
+                    "{name}/{language:?} は「未処理」と書かない: {note}"
+                );
+            }
+        }
+        // 英語の注記に日本語を混ぜない（失敗の注記はコアのエラー文が日本語なので除く — 文書化済み）。
+        for note in [interrupted_turn_note(Language::En), budget_turn_note(Language::En)] {
+            assert!(
+                note.is_ascii(),
+                "英語の打ち切り・予算切れの注記は ASCII だけ: {note}"
+            );
+        }
+    }
 
     fn spec_named(name: &str) -> ToolSpec {
         ToolSpec {

@@ -1677,5 +1677,11 @@
     "reveal": "Show in file manager",
     "openEditor": "Open in editor",
     "editorUnset": "Set an external editor in System settings > User interface > External editor"
+  },
+  "broadPattern": {
+    "anyCommand": "Allowing this pattern lets any command through (it is a shell, or it starts the command written after it).",
+    "anyCode": "Allowing this pattern lets the agent run any code it passes (effectively anything).",
+    "remote": "Allowing this pattern runs any command on the remote host.",
+    "listTitle": "The allow list has patterns broad enough to let anything through (a warning only; it does not change what runs)"
   }
 }
