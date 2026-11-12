@@ -1225,7 +1225,7 @@
       "unapproved": "Not approved, did not run"
     },
     "freshToggle": "Start a new conversation each time",
-    "freshHint": "The whole village switches to a new conversation. The previous one is kept and can be reopened from the conversation list.",
+    "freshHint": "Each firing creates its own conversation and writes the request and answers there. The screen does not switch; when an answer arrives, a notice with \"Open\" appears (you can also open it from Sessions).",
     "summarizeToggle": "Summarise memories when finished",
     "summarizeHint": "Summarises only the servants involved in this request. Summaries stay in every later turn (unlike a new conversation, they are not discarded).",
     "autoApproveToggle": "Approve plan reviews automatically",
