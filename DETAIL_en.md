@@ -37,6 +37,7 @@ Fuseforks/
 │       │   │   ├── runtime.rs       Running and entry points (start / stop / interrupt / send)
 │       │   │   ├── settings.rs      Settings and resource access (budget, language, names, MCP, ordinance)
 │       │   │   ├── sessions.rs      Switching conversations (new / resume / fork / summarize)
+│       │   │   ├── session_ref.rs   References to a conversation (carried and copied by each request's root; a conversation with work left cannot be deleted. [Spec 75](specs/75_session-bound-roots.md))
 │       │   │   ├── schedules.rs     Schedule firing (ticker, pre-check, delivery, acceptance check)
 │       │   │   ├── turn.rs          Running a turn (phases 1-8; **kept whole as the core file** — see the note below)
 │       │   │   ├── delegation.rs    Delegation and handoff (ask / plan / transfer)
@@ -140,6 +141,7 @@ Fuseforks/
             ├── lib/kizunaUntangle.ts "Untangle overlaps" on the map — pushes apart only the pairs that are too close (pure)
             ├── lib/moveSelection.ts Rules for the map's multi-selection for moving (only while Shift is held; pure)
             ├── lib/agentSearch.ts   Matching for the servant list filter (name, id, role, model; pure)
+            ├── lib/sessionScope.ts  Rules for narrowing the screen to the open conversation, and counting notices about other conversations (pure; Spec 75)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json / zh-Hans.json  UI text dictionaries (three-language key-set parity enforced by test)
@@ -334,10 +336,12 @@ arrives, so it keeps its bubble.
 The "■ Stop" button next to a typing bubble cuts that agent's current turn; "Stop all turns" in the header cuts every in-flight turn in the village. What gets cut is the **turn**, not the agent — it stays running, conversation and history survive, and the next request is handled normally. Interrupting a facilitator also stops only the worker tasks spawned by its plan wave (unrelated requests the same workers were handling in parallel are untouched). Detection happens at round boundaries, so the turn stops as soon as the in-flight LLM call or tool finishes — a "stop requested…" indicator covers the gap. The fact of the interruption is recorded as a single System line in the conversation log. Whatever the tools already did before the stop (file writes, commands) is not undone, and the note left in the agent's history tells the next turn so, along with the fact that the request is not finished (turns stopped by the token budget or by a failure get the same note).
 
 **A new conversation can be started via "New Chat"** (header button, with confirmation).
-This clears only the conversation log and individual agent histories from the screen, preserving operational status, cumulative statistics, long-term memory (`Memory.md`), and individual MCP connections — switching a "conversation" rather than an "agent". This reflects a token philosophy of avoiding continuous charges for old contexts whenever topics switch. It is intentional specification if a response currently being processed appears once immediately afterward (logging utterances as facts that occurred).
+This clears only the conversation log and individual agent histories from the screen, preserving operational status, cumulative statistics, long-term memory (`Memory.md`), and individual MCP connections — switching a "conversation" rather than an "agent". This reflects a token philosophy of avoiding continuous charges for old contexts whenever topics switch.
+
+**The answer to a request still in progress is written to the conversation that asked** ([Spec 75](specs/75_session-bound-roots.md)). Pressing New Chat or opening another conversation mid-turn does not put the answer into the new one — the delegations it triggered, the bundle, and the exchange all stay with the conversation that asked. When the answer arrives, a notice "{name} answered in another conversation ({title})" appears with an "Open" button (**it does not disappear on its own**; notices for the same conversation fold into one that shows the count and the last sender). The typing bubble and tool rows show only for turns of the open conversation. "Stop all turns" still stops the whole village, whatever conversation is open.
 **When a conversation gets long, press "Summarize and continue"** (Spec 12). Each **running** servant's model is called once to summarize its own memory, which shortens every subsequent prompt (stopped servants are skipped — there are no further turns to shorten, so their tokens are not spent; start one and press again to summarize it). **It never runs on its own** — summarizing is an LLM call, i.e. tokens, and it competes with the token budget ceiling, so it runs only when someone presses the button knowing the cost. The original exchanges are not deleted (they remain readable via export).
 
-**The previous conversation is kept on disk rather than discarded** (Spec 12). The adjacent "Conversations" button reopens it, and also offers **forking**, **exporting** to JSONL, and **deleting**. **Forking means "go back to just before this request"**: the chosen request's text is put back into the input box. Edit it and send, and everything up to that point stays the same while you try a different way of asking (the original conversation is untouched). Reopening and forking are refused while a turn is in flight, because the answer would land in a different conversation — stop it first with "■ Stop".
+**The previous conversation is kept on disk rather than discarded** (Spec 12). The adjacent "Conversations" button reopens it, and also offers **forking**, **exporting** to JSONL, and **deleting**. **Forking means "go back to just before this request"**: the chosen request's text is put back into the input box. Edit it and send, and everything up to that point stays the same while you try a different way of asking (the original conversation is untouched). **Reopening and forking work even while turns are running** (Spec 75 — work is tied to the conversation that asked, so no unrelated answer lands in the one you open). **Only a conversation with work left cannot be deleted**, whether or not it is open: while a request waits in an inbox, a turn is in flight, a plan awaits review, a scheduled acceptance check or follow-up summary is pending, or a summary or AI draft is running, deletion is refused with "this conversation still has work in progress". Delete it after that finishes, or stop it first with "■ Stop". If you open another conversation while a summary is running, the summary is still written to the conversation where you pressed it.
 
 **Plaza logs can be opted out per agent** (Settings → "Conversation Context" → "Can hear plaza conversations").
 By default, every agent receives the latest 12 messages × 200 characters of "conversations exchanged in the plaza" each turn. Excluding roles that do not require shared context eliminates that fixed overhead. **This is a receiver-side setting only**; opting out does not stop an agent's own utterances from being heard by others (it is a cost feature, not a privacy feature).
@@ -814,6 +818,7 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 
 - **The identity of what you saw and what runs is guaranteed structurally** — what dispatches is exactly the data you last edited and confirmed; **no LLM sits on the post-approval path**
 - The proposing turn ends normally and **receives no results**. The dispatch runs as a new request causality (its ceiling comes from the village `tokenBudget` as usual), and the bundle arrives as a System delivery that starts a fresh coordinator turn, where it is summarized and returned
+- **Dispatching goes to the conversation where the plan was proposed** ([Spec 75](specs/75_session-bound-roots.md)). Pressing Dispatch or Discard while another conversation is open still writes the wave, the bundle and the discard line to the proposing conversation; the edit panel says "This plan was proposed in another conversation ({title})"
 - Proposals are not persisted (they vanish on restart — the same working lifetime as wave records). Stopping the coordinator mid-run folds the whole wave (workers stop too; no tokens are spent on a bundle with nowhere to go)
 - **A delegated turn skips the window** (2026-09-02). When a servant with Plan Review on is itself called via `ask` or `plan`, its `plan` in that turn fans out and bundles inside the turn as before and returns to the requester. Opening the window would end the turn at the proposal, so the requester would receive only "proposed"; the bundle would arrive later as a new causality with no return path and drift to the user — the requester could never receive it. Same shape as the rule that a delegated turn is never offered the handoff tool
 - **The window can be skipped for unattended runs** ([Spec 53](specs/53_unattended-plan-and-verifier.md), 2026-09-15). There are two routes; if either holds, the plan fans out without opening the window:
@@ -835,7 +840,7 @@ Turn on "Review plans" in a servant's settings (**off by default**) and that ser
 
 #### Wave Pane — Execution Traces of `plan` ([Spec 08](specs/08_plan-wave-pane.md))
 
-The lower section of the central pane depicts the execution of `plan`. Columns = waves, rows = agents, cells = task resolution states (running / reply / transfer / undeliverable / no response / timed out), equivalent to Airflow's Grid. It is **Airflow "style" rather than Airflow** — the preceding stance that humans do not write DAGs remains unchanged, and what is drawn is the **execution trace** of the plan created by the model, not a place to edit (the only exception is a **wave awaiting review** from Plan Review above — it appears as a dashed column, editable before it becomes a trace). Classification is carried by types rather than word parsing (the core carves it out with `Reply.kind`). Records are process-lifetime in-memory rings (the latest 50 waves), and identification uses `plan_id` (hidden from the model — the bundling phrasing has not changed by a single character). The stderr observation lines `plan wave:` / `plan bundle:` remain as they are.
+The lower section of the central pane depicts the execution of `plan`. Columns = waves, rows = agents, cells = task resolution states (running / reply / transfer / undeliverable / no response / timed out), equivalent to Airflow's Grid. It is **Airflow "style" rather than Airflow** — the preceding stance that humans do not write DAGs remains unchanged, and what is drawn is the **execution trace** of the plan created by the model, not a place to edit (the only exception is a **wave awaiting review** from Plan Review above — it appears as a dashed column, editable before it becomes a trace). Classification is carried by types rather than word parsing (the core carves it out with `Reply.kind`). Records are process-lifetime in-memory rings (the latest 50 waves), and identification uses `plan_id` (hidden from the model — the bundling phrasing has not changed by a single character). The stderr observation lines `plan wave:` / `plan bundle:` remain as they are. **The tab shows every wave, whatever conversation is open** (it is the village's list of work, and the review badge counts them all); a wave fanned out or proposed outside the open conversation is marked "other chat" in its header, with the title in the tooltip ([Spec 75](specs/75_session-bound-roots.md)).
 
 The eraser at the right end of the header **hides finished waves from view** (2026-09-15). As with clearing the chat view, **only the display changes** and the core's records are untouched (while waves are hidden, the header shows the count and "Show all"). Only waves that had already finished when you pressed it are hidden: **waves awaiting review or still running stay**, and a wave that finishes later does not disappear on its own. Hidden waves are remembered by the pair of `planId` and start time, so a new wave is not hidden when a restart renumbers `planId`.
 
@@ -1120,6 +1125,7 @@ A tool row in the chat pane **opens when clicked** and shows **the arguments the
 
 - **Restarting the app discards the contents** (the tool rows themselves are also gone after a restart)
 - **New chat, reopening a conversation, and branching discard them too**
+- **Tool rows from turns running in another conversation do not appear in the open one** (Spec 75), and opening that conversation later does not bring them back (tool rows are an in-memory projection)
 - **Only the latest 500 calls are kept.** Opening a row that was pushed out shows "no longer kept"
 
 **What you put on screen stays in a screenshot.** Before sharing a screenshot of an opened row, check that Input and Output show no secrets.
@@ -1250,7 +1256,8 @@ control). While anything is waiting, **a thin strip also appears above the chat 
 is not part of the conversation flow and disappears once nothing is waiting; its count is
 the same as the title bar's. **Once the requests are settled, the strip changes to "Luna stopped
 and is waiting for approval" for as long as a servant stopped at approval remains**
-([Spec 72](specs/72_approval-stops-the-turn.md); waiting requests are shown first).
+([Spec 72](specs/72_approval-stops-the-turn.md); waiting requests are shown first. The stopped-servant
+strip counts **only servants that stopped in the open conversation** — Spec 75).
 
 - **Approving asks what to permit**: this call only (exact match), or any arguments
   after this prefix (trailing `*`). **The narrow one is the default**, and the
@@ -1291,9 +1298,14 @@ and is waiting for approval" for as long as a servant stopped at approval remain
     (the message goes through the inbox).
   - **The continuation runs as a new request.** In a village with a token limit,
     **the ceiling starts fresh every time** (the same treatment as a scheduled run).
-  - **The stopped mark lives only in memory.** Restarting the app, switching conversations, or
-    stopping the servant clears it. Approvals stay in `allow`, so afterwards just ask it to
-    continue in the conversation.
+  - **The stopped mark lives only in memory.** Restarting the app or stopping the servant
+    clears it. Approvals stay in `allow`, so afterwards just ask it to continue in the
+    conversation.
+  - **The mark belongs to the conversation where the turn stopped** ([Spec 75](specs/75_session-bound-roots.md);
+    switching conversations does not clear it — only New Chat in a village without a session store does).
+    While another conversation is open, the approval screen shows "Stopped for approval in another
+    conversation ({title})" with an "Open" button and no "Resume"; open that conversation to get "Resume",
+    and the continuation's answer goes there. Approving or rejecting pending commands works from any conversation.
 - **When a scheduled run stops this way, its acceptance check and its follow-up summary are
   skipped** — so a request that is only waiting for approval is not read as finished and
   re-issued. The log shows `acceptance: … outcome=skipped reason=approval_pending`. A turn
@@ -2345,10 +2357,10 @@ A scheduled request to a coordinator with Plan Review on used to **stop at the p
 
 Keeping one conversation for a long-running monitor makes the log sent each time grow. Two options are available per schedule:
 
-- **Start a new conversation each time** — the whole village switches to a new conversation. The previous one is kept and can be reopened from the conversation list.
+- **Start a new conversation each time** — each schedule gets a new conversation of its own, and the request, the answers and the follow-up summary are written there. **The screen does not switch** ([Spec 75](specs/75_session-bound-roots.md); the conversation you are viewing stays open). Read the results through the "Open" button on the notice that appears when an answer arrives, or from the conversation list. Schedules firing at the same time without this option go to the open conversation.
 - **Summarise memories when finished** — summarises only the servants involved in that request, never charging the schedule for uninvolved ones.
 
-**The two run in opposite directions, so do not read them as one.** A new conversation *discards* history (keeping it in another conversation and switching away). A summary *stays*, and unlike the sliding window it never falls off — so it is a fixed cost carried by every later turn.
+**The two run in opposite directions, so do not read them as one.** A new conversation *does not carry* history over (it starts empty, and the previous conversation stays as it was). A summary *stays*, and unlike the sliding window it never falls off — so it is a fixed cost carried by every later turn.
 
 ### System Settings
 
@@ -2718,7 +2730,7 @@ It can return under either condition:
 | Long-term memory (Memoria connection) | `Memory.md` (`remember`) works. Multi-layer memory is unconnected, but **the door is open**. | Start according to the policy below |
 | Bells and desktop notifications (Spec 07 P4) | Schedule execution is **implemented** (the Scheduling section above), but its result can only reach the conversation pane. The requested "ring a bell" cannot complete without a tool to make sound. | Task-tray indicator and toast notifications (user decision, 2026-07-30). **Implement separately as one UI task**, because it belongs to the same layer as tray residency. **Tray residency arrived with [Spec 69](specs/69_launch-and-exit.md)**; notifications (sound, toasts) still do not exist. |
 | Variable store (Airflow Variables/XCom equivalent, user request, 2026-07-30) | Two alternatives are working: `Memory.md` (prose, per agent, persistent) and bundle text (handoff between waves). | Structured values keyed by name. This conflicts with the "few settings" concept, so review should make that tension its main battleground when specified. |
-| Conversation persistence and session management (user requests, 2026-07-30 / 2026-08-02) | **Implemented** ([Spec 12](specs/12_session-persistence.md) is done). Close and reopen the app and the previous conversation comes back, with agents answering in light of what was said before. "Conversations" in the chat pane header lists saved conversations: reopen, fork (go back to just before a request, with its text returned to the input box), export, delete. "New chat" now opens a new conversation instead of discarding the current one. "Summarize and continue" shortens subsequent prompts for running servants (manual only — it costs tokens, so it never runs on its own). **Conversations are stored on disk in plain text.** | Store everything in a single `{workspace}/sessions.redb`, keep several conversations, and switch between them. **The original hypothesis "histories are candidates to die" was refuted**: this village has two layers of history (the village conversation log and each agent's own prompt history), and **neither can be reconstructed from the other**. Persisting only the conversation log yields a screen that looks correct while every agent starts amnesiac. |
+| Conversation persistence and session management (user requests, 2026-07-30 / 2026-08-02) | **Implemented** ([Spec 12](specs/12_session-persistence.md) is done). Close and reopen the app and the previous conversation comes back, with agents answering in light of what was said before. "Conversations" in the chat pane header lists saved conversations: reopen, fork (go back to just before a request, with its text returned to the input box), export, delete. "New chat" now opens a new conversation instead of discarding the current one. Switching works even while turns are running, and answers are written to the conversation that asked ([Spec 75](specs/75_session-bound-roots.md)). "Summarize and continue" shortens subsequent prompts for running servants (manual only — it costs tokens, so it never runs on its own). **Conversations are stored on disk in plain text.** | Store everything in a single `{workspace}/sessions.redb`, keep several conversations, and switch between them. **The original hypothesis "histories are candidates to die" was refuted**: this village has two layers of history (the village conversation log and each agent's own prompt history), and **neither can be reconstructed from the other**. Persisting only the conversation log yields a screen that looks correct while every agent starts amnesiac. |
 
 ### Long-Term Memory Policy (Decided, Awaiting Connection)
 
