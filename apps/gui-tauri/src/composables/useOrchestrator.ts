@@ -1760,6 +1760,9 @@ export function useOrchestrator() {
         ipc.deleteSession(sessionId),
       );
       if (succeeded(done)) {
+        // 消した会話を指す知らせを閉じる — 残すと「開く」が無い会話を開きに行く。
+        // 承認待ちの印はコアが削除と同時に外し、`approvalStopped` で承認画面が取り直す。
+        dismissSessionNotice(sessionId);
         const listed = await guard("orchestrator.op.listSessions", () =>
           ipc.listSessions(),
         );

@@ -629,7 +629,15 @@ impl Orchestrator {
             if marked.is_empty() || marked.contains(&open) {
                 self.shared.open_ref()
             } else {
-                self.shared.ref_to(&marked[0])
+                // 参照を取ってから印を確かめ直す — 印を読んだ後、参照を取る前にその会話が
+                // 消されていたら（消す側は参照の表の lock の下で印を外す）、消えた会話へ
+                // 書かない。参照を取った後なら、消す側が断る。
+                let marked_ref = self.shared.ref_to(&marked[0]);
+                if self.shared.is_approval_stopped(id, &marked[0]) {
+                    marked_ref
+                } else {
+                    self.shared.open_ref()
+                }
             }
         };
 

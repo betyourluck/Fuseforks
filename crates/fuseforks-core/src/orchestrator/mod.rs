@@ -664,6 +664,28 @@ impl Shared {
         }
     }
 
+    /// その会話の印を**個体を問わず**全部外す（会話を消したとき。Spec 75 凍結 5 の追補）。
+    /// 外れた個体ごとにイベントを出す。
+    fn clear_approval_stopped_in(&self, session_id: &str) {
+        let cleared: Vec<AgentId> = {
+            let mut set = self.approval_stopped_lock();
+            let agents: Vec<AgentId> = set
+                .iter()
+                .filter(|(_, session)| session == session_id)
+                .map(|(agent, _)| agent.clone())
+                .collect();
+            set.retain(|(_, session)| session != session_id);
+            agents
+        };
+        for agent_id in cleared {
+            self.emit(CoreEvent::ApprovalStopped {
+                agent_id,
+                stopped: false,
+                session_id: session_id.to_owned(),
+            });
+        }
+    }
+
     /// 全個体の印を外す。**保存先の無い村の新規チャットだけ**が使う — 会話の単位が無く、
     /// 白紙にした会話へ「続けてください」を届けないため（Spec 72 D5 (d) は保存先のある村では
     /// Spec 75 凍結 5 で撤回した）。

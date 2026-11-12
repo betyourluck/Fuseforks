@@ -778,3 +778,56 @@ async fn switching_the_conversation_keeps_the_mark_in_its_conversation() {
     orchestrator.resume_session(&first).await.unwrap();
     assert!(stopped_flag(&orchestrator, &agent).await, "元の会話を開くと戻る");
 }
+
+/// (15) 止まった会話を消す → **削除は断られず**（印は処理ではない）、その会話の印が外れて
+/// `stopped: false` が 1 回出る。承認画面に消えた会話の行が残らず、続行は開いている会話へ届く
+/// （Spec 75 凍結 5 の追補 — 印を残すと、続行が消えた会話へ書かれる）。
+#[tokio::test]
+async fn deleting_the_stopped_conversation_clears_its_mark() {
+    let dir = TempDir::new("delete");
+    let backend = ScriptedBackend::running(&[("git", &["status"])]);
+    let orchestrator = setup(&dir, backend.clone()).await;
+    let agent = spawn_runner(&orchestrator, &dir, "agent_01").await;
+
+    let first = orchestrator.current_session();
+    let mut rx = orchestrator.subscribe();
+    orchestrator.send_user_message(&agent, "状態を見て").await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    orchestrator.reset_conversation().await.unwrap();
+    let second = orchestrator.current_session();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+
+    orchestrator
+        .delete_session(&first)
+        .await
+        .expect("止まった印だけなら消せる");
+    let events = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
+    let cleared: Vec<(AgentId, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::ApprovalStopped { agent_id, stopped: false, session_id } => {
+                Some((agent_id.clone(), session_id.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cleared, vec![(agent.clone(), first.clone())], "消した会話の印だけが外れる");
+    let elsewhere: Vec<String> = orchestrator
+        .command_policies()
+        .await
+        .into_iter()
+        .filter(|v| v.agent_id == agent)
+        .flat_map(|v| v.stopped_elsewhere)
+        .collect();
+    assert!(elsewhere.is_empty(), "承認画面に消えた会話の行が残らない: {elsewhere:?}");
+
+    // 続行は消えた会話ではなく、開いている会話へ書かれる。
+    orchestrator.resume_after_approval(&agent).await.unwrap();
+    let _ = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
+    assert_eq!(orchestrator.current_session(), second);
+    let resumed = orchestrator
+        .session_stats(StatsScope::Session { session_id: second.clone() })
+        .await
+        .expect("統計が読めること");
+    assert_eq!(resumed.totals.turns, 1, "続行のターンは開いている会話に記録される");
+}

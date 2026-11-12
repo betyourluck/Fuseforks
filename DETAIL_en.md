@@ -1302,7 +1302,8 @@ strip counts **only servants that stopped in the open conversation** — Spec 75
     clears it. Approvals stay in `allow`, so afterwards just ask it to continue in the
     conversation.
   - **The mark belongs to the conversation where the turn stopped** ([Spec 75](specs/75_session-bound-roots.md);
-    switching conversations does not clear it — only New Chat in a village without a session store does).
+    switching conversations does not clear it — only New Chat in a village without a session store, or
+    deleting that conversation, does. A mark alone does not keep a conversation from being deleted).
     While another conversation is open, the approval screen shows "Stopped for approval in another
     conversation ({title})" with an "Open" button and no "Resume"; open that conversation to get "Resume",
     and the continuation's answer goes there. Approving or rejecting pending commands works from any conversation.

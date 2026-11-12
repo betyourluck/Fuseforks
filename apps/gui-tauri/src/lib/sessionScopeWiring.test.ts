@@ -76,6 +76,18 @@ describe("会話の単位で絞る配線（Spec 75 P2）", () => {
     expect(body).toContain("refreshCommandRequests()");
   });
 
+  it("会話を消したら、その会話を指す知らせを閉じる", () => {
+    const at = orchestrator.indexOf("async deleteSession(sessionId: string)");
+    expect(at, "useOrchestrator に deleteSession が無い").toBeGreaterThan(0);
+    // 行コメントを落としてから見る — コメントにした呼び出しも同じ字面を持つので、落とさないと
+    // 呼び出しを消した状態でも緑のまま残る（変異で実際に踏んだ）。
+    const body = orchestrator
+      .slice(at, orchestrator.indexOf("\n    },", at))
+      .replace(/\/\/.*$/gm, "");
+    // 成功の枝の内側にあること（断られた会話の知らせまで消すと、答えの在りかが分からなくなる）。
+    expect(body).toMatch(/if \(succeeded\(done\)\) \{[\s\S]*?dismissSessionNotice\(sessionId\);/);
+  });
+
   it("開いていない会話への書き込みは一覧を引き直し、サーヴァントの発話だけ知らせる", () => {
     const at = orchestrator.indexOf('case "sessionUpdated":');
     expect(at, "useOrchestrator に sessionUpdated の受け手が無い").toBeGreaterThan(0);
