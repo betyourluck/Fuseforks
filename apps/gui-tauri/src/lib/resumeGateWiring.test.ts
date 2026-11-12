@@ -65,8 +65,15 @@ describe("続けさせるの配線", () => {
   });
 
   it("節は判断待ちが 0 件でも止まった個体なら残し、空状態の条件も対で広げる", () => {
-    expect(dialog).toContain("v.pending.length > 0 || v.broken || v.stoppedForApproval");
-    expect(dialog).toContain("v.pending.length === 0 && !v.broken && !v.stoppedForApproval");
+    // 改行の位置は整形で動くので、空白を 1 つに畳んでから見る。
+    const flat = dialog.replace(/\s+/g, " ");
+    // Spec 75 で別の会話の印（stoppedElsewhere）も節を残す側へ入った。節と空状態は対のまま。
+    expect(flat).toContain(
+      "v.pending.length > 0 || v.broken || v.stoppedForApproval || !!v.stoppedElsewhere?.length",
+    );
+    expect(flat).toContain(
+      "v.pending.length === 0 && !v.broken && !v.stoppedForApproval && !v.stoppedElsewhere?.length",
+    );
   });
 
   it("続けさせた後に取り直す（節は押した直後に畳まれ、答えは後から来る）", () => {

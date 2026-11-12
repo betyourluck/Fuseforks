@@ -635,7 +635,10 @@
     "verifierLabel": "Verifier:",
     "verifierNone": "None",
     "verifierTitle": "Default verifier for bundles. After plan bundles the answers, this servant is asked to check 4 points and its conclusion is appended to the bundle. When approving a plan review you can choose again per wave.",
-    "panelVerifierLabel": "Verifier"
+    "panelVerifierLabel": "Verifier",
+    "otherSession": "other chat",
+    "otherSessionTitle": "Another conversation: {title}",
+    "pendingOtherSession": "This plan was proposed in another conversation ({title}). Dispatching sends and bundles it there."
   },
   "map": {
     "heading": "Kizuna",
@@ -1238,7 +1241,7 @@
     "forkNoticeStrong": "just before",
     "forkNoticeAfter": " the chosen request, and puts that request's text back into the input box. Rewrite and send it to try a different phrasing. The original conversation is left untouched.",
     "listNoticeIntro": "Conversations persist across restarts. Reopen one and the servants answer with the earlier discussion in mind.",
-    "listNoticeLimit": "Switching is only possible while no turn is in flight.",
+    "listNoticeLimit": "You can open one even while turns are running; answers go to the conversation that asked. Only a conversation with no work left can be deleted.",
     "loading": "Loading…",
     "forkEmpty": "There is nothing to fork from. Forking means going back to just before a request, so the very first request cannot be chosen (before it lies an empty conversation, which is the same as starting a new chat).",
     "forkPointAction": "Up to just before this request →",
@@ -1246,7 +1249,7 @@
     "current": "Current",
     "recordCount": "{count} records",
     "forkedFrom": "Fork (up to seq {seq})",
-    "openTitle": "Open this conversation (refused while a turn is in flight)",
+    "openTitle": "Open this conversation (works even while turns are running)",
     "forkBtnTitle": "Copy up to a point and try a different phrasing from there",
     "exportTitle": "Export as JSONL (the store is binary, so this is the readable way out)",
     "deleteBtnTitle": "Delete this conversation (cannot be undone)",
@@ -1272,7 +1275,6 @@
     "SESSION_NOT_FOUND": "The conversation is not stored",
     "SESSION_STORE_FAILED": "A session-store operation failed",
     "SESSION_STORE_LOCKED": "Another process has the session store open",
-    "SESSION_SWITCH_BLOCKED": "Cannot switch conversations while turns are in flight",
     "INVALID_TOKEN_BUDGET": "0 cannot be set as the token limit (choose No limit instead)",
     "INVALID_ASK_TIMEOUT": "The delegation wait time must be between 30 and 3600 seconds",
     "INVALID_TOPOLOGY": "The topology is invalid",
@@ -1308,7 +1310,8 @@
     "INVALID_JUDGE_FILE": "The judge file has an error",
     "INVALID_ASSIST_REQUEST": "AI drafting could not run",
     "INVALID_SECRET_NAME": "The secret name has characters that cannot be used (upper-case letters, digits and _ only)",
-    "AUTOSTART": "Could not set launch at sign-in"
+    "AUTOSTART": "Could not set launch at sign-in",
+    "SESSION_BUSY": "The conversation still has work in progress, so it cannot be deleted"
   },
   "orchestrator": {
     "ipcFailed": "IPC call failed",
@@ -1395,7 +1398,9 @@
       "createJudge": "create judge",
       "saveJudge": "save judge",
       "deleteJudge": "delete judge"
-    }
+    },
+    "answerElsewhere": "{name} answered in another conversation ({title})",
+    "answerElsewhereMany": "{count} answers arrived in another conversation ({title}), the last from {name}"
   },
   "statusBar": {
     "clockTitle": "Current date and time (same format as the diagnostic log prefix)",
@@ -1476,7 +1481,8 @@
     "reject": "Reject",
     "count": "{count}x",
     "gone": "This request is no longer listed (newer requests pushed it out). Nothing was added to the permitted or forbidden lists.",
-    "presentNote": "Once even one entry is permitted, that servant gains the command-running tool from its next turn. For finer control, edit run.json directly from the configuration files."
+    "presentNote": "Once even one entry is permitted, that servant gains the command-running tool from its next turn. For finer control, edit run.json directly from the configuration files.",
+    "stoppedElsewhere": "Stopped for approval in another conversation ({title}). Open that conversation to resume it."
   },
   "tools": {
     "remember": "remember something",

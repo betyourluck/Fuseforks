@@ -5,9 +5,9 @@
  * 開く・分岐する・書き出す・消す、の 4 つだけ。新規チャットは会話ペインの
  * ボタンが担うので、ここには置かない（同じ操作の入口を 2 つ作らない）。
  *
- * **切り替えは飛行中のターンがあると拒否される**。自動で打ち切ってから
- * 切り替えることはしない（畳むかどうかは人の判断）。拒否の理由と直し方は
- * コアのエラー文言（`SESSION_SWITCH_BLOCKED`）がそのまま通知に出る。
+ * **処理中でも開ける・分岐できる**（Spec 75 D11）。処理の答えは依頼した会話へ書かれるので、
+ * 開いた会話に無関係な答えは混ざらない。**消せないのは処理の残っている会話だけ**で、
+ * 開いているかを問わない。拒否の理由はコアのエラー文言（`SESSION_BUSY`）がそのまま通知に出る。
  */
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -138,7 +138,7 @@ async function exportOne(sessionId: string): Promise<void> {
         </template>
         <template v-else>
           {{ $t("session.listNoticeIntro") }}
-          <strong class="text-warn">{{ $t("session.listNoticeLimit") }}</strong>
+          <strong class="text-ink">{{ $t("session.listNoticeLimit") }}</strong>
         </template>
       </p>
 

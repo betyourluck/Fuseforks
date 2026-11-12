@@ -16,6 +16,7 @@ import * as ipc from "../lib/ipc";
 import { toErrorPayload } from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { loadSwitchMemory, rememberSwitch } from "../lib/switchMemory";
+import { answerNotice, isOpenSession, sessionOfLabel } from "../lib/sessionScope";
 import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
@@ -62,6 +63,11 @@ export interface Toast {
   level: "error" | "warn" | "info";
   title: string;
   detail?: string;
+  /**
+   * 「開く」で開く会話（Spec 75 D10 — 開いていない会話に答えが届いた知らせ）。
+   * ある間だけ通知に「開く」ボタンが付く。
+   */
+  openSessionId?: string;
 }
 
 interface OrchestratorState {
@@ -154,8 +160,17 @@ interface OrchestratorState {
   /**
    * 応答を作っている最中のエージェント。会話ペインの「入力中…」表示に使う。
    * true のキーだけを持ち、終了イベントでキーごと消す。
+   *
+   * **個体の単位のまま**（Spec 75 D10）— 会話を問わず「その個体が忙しい」。黒板の持ち主の
+   * 状態と「全ターン停止」がこれを読むので、会話で絞ると壊れる。入力中のバブルだけは
+   * {@link OrchestratorState.typingSession} で開いている会話に絞る。
    */
   typing: Record<AgentId, true>;
+  /**
+   * 処理中のターンの根の会話（Spec 75 D10）。`typing` と同じ時に立てて消す。
+   * 入力中のバブルと周回数は、この会話が開いている会話のときだけ出す。
+   */
+  typingSession: Record<AgentId, string>;
   /**
    * 打ち切り要求中のエージェント（Spec 10）。停止ボタンを押してから、
    * コアが周回境界で検知するまでの間の表示に使う — 検知は飛行中の
@@ -254,6 +269,7 @@ const state = reactive<OrchestratorState>({
   externalName: null,
   externalIcon: null,
   typing: {},
+  typingSession: {},
   interruptPending: {},
   toolRuns: [],
   lastTool: {},
@@ -297,6 +313,59 @@ function pushToast(level: Toast["level"], title: string, detail?: string): void 
 export function dismissToast(id: number): void {
   const index = state.toasts.findIndex((t) => t.id === id);
   if (index >= 0) state.toasts.splice(index, 1);
+}
+
+/**
+ * 会話の表示名（一覧の表題。まだ誰も話していない会話は ID の末尾）。
+ * 一覧（`state.sessions`）に無ければ ID の末尾で出す — 一覧は常時は追いかけていない。
+ */
+function sessionTitle(sessionId: string): string {
+  const title = state.sessions.find((s) => s.id === sessionId)?.meta.title;
+  return title || i18n.global.t("session.untitled", { id: sessionId.slice(-8) });
+}
+
+/**
+ * 開いていない会話に出している知らせ（会話 ID → トーストと件数。Spec 75 D10）。
+ * 同じ会話への知らせは 1 枚にまとめる — 予定の波で 5 体が答えるとトーストが 5 枚並ぶ。
+ */
+const sessionNotices = new Map<string, { toastId: number; count: number }>();
+
+/**
+ * 開いていない会話にサーヴァントの答えが届いたことを知らせる（Spec 75 D10）。
+ *
+ * **自動では消さない**（情報通知の 4 秒の自動消去を使わない）。席を外している間に届いた答えを
+ * 知らせる唯一の経路で、消えると予定の結果がどの会話に書かれたかを人が探すことになる。
+ * 消えるのは ✕・「開く」・その会話が開かれたとき（`sessionSwitched`）。
+ */
+function noticeAnswerElsewhere(sessionId: string, agentId: AgentId): void {
+  // 一覧を引いている間にその会話が開かれていれば、知らせは要らない。
+  if (isOpenSession(sessionId, state.currentSessionId)) return;
+  const name = state.agents.find((a) => a.id === agentId)?.name ?? agentId;
+  const previous = sessionNotices.get(sessionId);
+  const alive = previous && state.toasts.some((toast) => toast.id === previous.toastId);
+  const notice = answerNotice(alive ? previous.count : null);
+  const title = i18n.global.t(notice.key, {
+    title: sessionTitle(sessionId),
+    name,
+    count: notice.count,
+  });
+  if (alive) {
+    const index = state.toasts.findIndex((toast) => toast.id === previous.toastId);
+    state.toasts[index] = { ...state.toasts[index], title };
+    previous.count = notice.count;
+    return;
+  }
+  const toast: Toast = { id: ++toastSeq, level: "info", title, openSessionId: sessionId };
+  state.toasts.push(toast);
+  sessionNotices.set(sessionId, { toastId: toast.id, count: notice.count });
+}
+
+/** その会話を指す知らせを閉じる（その会話が開かれたとき）。 */
+function dismissSessionNotice(sessionId: string): void {
+  const notice = sessionNotices.get(sessionId);
+  if (!notice) return;
+  sessionNotices.delete(sessionId);
+  dismissToast(notice.toastId);
 }
 
 /**
@@ -543,6 +612,8 @@ function upsertPlanWave(incoming: PlanWaveRecord): void {
     }),
     bundleChars: incoming.bundleChars ?? existing.bundleChars,
     elapsedMs: incoming.elapsedMs ?? existing.elapsedMs,
+    // 波の会話は撒いた・提示した時に決まって動かない（Spec 75 凍結 6）。片方にしか無ければそれを採る。
+    sessionId: incoming.sessionId ?? existing.sessionId ?? null,
   };
 }
 
@@ -554,6 +625,7 @@ function applyEvent(event: CoreEvent): void {
       // 通常は agentTyping の終了イベントが対で消すが、二重の網にしておく。
       if (event.status !== "running" && event.status !== "starting") {
         delete state.typing[event.agentId];
+        delete state.typingSession[event.agentId];
         delete state.toolRound[event.agentId];
       }
       break;
@@ -586,8 +658,11 @@ function applyEvent(event: CoreEvent): void {
     case "agentTyping":
       if (event.active) {
         state.typing[event.agentId] = true;
+        // 根の会話（Spec 75 D10）。バブルはこの会話が開いているときだけ出す。
+        state.typingSession[event.agentId] = event.sessionId;
       } else {
         delete state.typing[event.agentId];
+        delete state.typingSession[event.agentId];
         // ターンは何らかの形で終わった。打ち切り要求が検知される前に完走で
         // 逃げ切った場合、ここで消さないと「停止要求中…」が永遠に残る。
         delete state.interruptPending[event.agentId];
@@ -615,12 +690,19 @@ function applyEvent(event: CoreEvent): void {
         tsMs: Date.now(),
         round: event.round,
       };
-      state.toolRuns.push(run);
-      // 入力中バブルの「ツール N 周目」。同じ周の並列呼び出しは同じ値を書くだけ。
-      state.toolRound[event.agentId] = event.round;
-      if (state.toolRuns.length > MESSAGE_LIMIT) {
-        state.toolRuns.splice(0, state.toolRuns.length - MESSAGE_LIMIT);
+      // 会話ペインのツール行は**開いている会話の分だけ**積む（Spec 75 D10）。他の会話の行は
+      // 時系列に混ぜると、その会話に無い行が並ぶ。開き直しても戻らないのは今と同じ
+      // （ツール行はメモリだけの投影 — Spec 57）。
+      if (isOpenSession(event.sessionId, state.currentSessionId)) {
+        state.toolRuns.push(run);
+        if (state.toolRuns.length > MESSAGE_LIMIT) {
+          state.toolRuns.splice(0, state.toolRuns.length - MESSAGE_LIMIT);
+        }
       }
+      // 入力中バブルの「ツール N 周目」。同じ周の並列呼び出しは同じ値を書くだけ。
+      // 個体の単位で持つ（バブルを出すかは `typingSession` が決める）。
+      state.toolRound[event.agentId] = event.round;
+      // カードの直近のツールは個体の単位のまま（会話を問わず「今この個体が何をしているか」）。
       state.lastTool[event.agentId] = run;
       // `run` は判断待ちが増える唯一の経路。押し出されて消えることもあるので、
       // 成否によらず引き直す（拒否されたときにこそ増える）。
@@ -683,10 +765,27 @@ function applyEvent(event: CoreEvent): void {
       // 届くので、**ここでコア側の復元結果を引き直す** — 開き直しと分岐では
       // コアが会話ログを戻しており、空のままにすると画面だけが白紙に見える。
       state.currentSessionId = event.sessionId;
+      // その会話への知らせはもう要らない（開いた）。
+      dismissSessionNotice(event.sessionId);
       void guard("orchestrator.op.loadSession", async () => {
         state.messages = await ipc.listMessages(MESSAGE_LIMIT);
         state.sessions = await ipc.listSessions();
       });
+      // 承認待ちの印は（個体, 会話）で持つ（Spec 75 凍結 5）。「続けさせる」が出るのは
+      // 開いている会話の印だけなので、開いている会話が変わったら取り直す。
+      void refreshCommandRequests();
+      break;
+
+    case "sessionUpdated":
+      // 開いていない会話に発話が書かれた（Spec 75 D10）。受け手は 2 つ — 会話一覧
+      // （並びと更新時刻）と、サーヴァントの発話だったときの知らせ。**System 行にはしない**
+      // （開いている会話のログとプロンプトへ入る = failures.md #89 の経路）。一覧を先に引くのは
+      // 知らせに会話の表題を出すため。引けなくても知らせは出す（表題は ID の末尾で代える）。
+      void (async () => {
+        const listed = await guard("orchestrator.op.listSessions", () => ipc.listSessions());
+        if (succeeded(listed)) state.sessions = listed;
+        if (event.from.kind === "agent") noticeAnswerElsewhere(event.sessionId, event.from.id);
+      })();
       break;
 
     case "agentFailed": {
@@ -749,6 +848,7 @@ function applyEvent(event: CoreEvent): void {
         })),
         bundleChars: null,
         elapsedMs: null,
+        sessionId: sessionOfLabel(event.sessionId),
       });
       break;
 
@@ -770,6 +870,7 @@ function applyEvent(event: CoreEvent): void {
         })),
         bundleChars: null,
         elapsedMs: null,
+        sessionId: sessionOfLabel(event.sessionId),
       });
       break;
 
@@ -1594,9 +1695,8 @@ export function useOrchestrator() {
     /**
      * 保存されている会話を開き直す。
      *
-     * 飛行中のターンがあるとコアが `SESSION_SWITCH_BLOCKED` で拒む。
-     * その通知は guard がそのまま出す — 直し方（停止してから切り替える）は
-     * エラー文言側に書いてある。
+     * **処理中でも開ける**（Spec 75 D11）。処理の答えは依頼した会話へ書かれるので、
+     * 開く会話に無関係な答えが混ざらない。
      */
     async resumeSession(sessionId: string): Promise<boolean> {
       const done = await guard("orchestrator.op.resumeSession", () =>
@@ -1604,6 +1704,26 @@ export function useOrchestrator() {
       );
       return succeeded(done);
     },
+
+    /**
+     * 知らせの「開く」（Spec 75 D10）。その会話を開き、開けたら知らせを閉じる
+     * （`sessionSwitched` でも閉じるが、もう開いている会話を指していた場合に残らないように）。
+     */
+    async openNoticedSession(toast: Toast): Promise<void> {
+      const sessionId = toast.openSessionId;
+      if (!sessionId) return;
+      if (sessionId !== state.currentSessionId) {
+        const done = await guard("orchestrator.op.resumeSession", () =>
+          ipc.resumeSession(sessionId),
+        );
+        if (!succeeded(done)) return;
+      }
+      dismissSessionNotice(sessionId);
+      dismissToast(toast.id);
+    },
+
+    /** 会話の表示名（一覧の表題。無ければ ID の末尾）。 */
+    sessionTitle,
 
     /** 分岐できる地点（その会話のユーザー発話）。 */
     async forkPoints(sessionId: string): Promise<ForkPoint[]> {
@@ -1628,7 +1748,13 @@ export function useOrchestrator() {
       return succeeded(done);
     },
 
-    /** 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。 */
+    /**
+     * 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。
+     *
+     * その会話にまだ処理が残っている（受信箱で待っている依頼・飛行中のターン・承認待ちの計画・
+     * 予定の後処理・要約）とコアが `SESSION_BUSY` で拒む（Spec 75 D11）。開いているかを問わない。
+     * 拒否の文面は guard がそのまま出す。
+     */
     async deleteSession(sessionId: string): Promise<boolean> {
       const done = await guard("orchestrator.op.deleteSession", () =>
         ipc.deleteSession(sessionId),

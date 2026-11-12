@@ -35,6 +35,7 @@ import {
 } from "../lib/chatSearch";
 import { hasOpenOverlay } from "../lib/chatFocus";
 import { roundBadge, type RoundBadge } from "../lib/typingRound";
+import { isOpenSession } from "../lib/sessionScope";
 import { isNearBottom } from "../lib/chatScroll";
 import { usePathMenu } from "../composables/usePathMenu";
 import { approvalBanner } from "../lib/approvalBanner";
@@ -419,11 +420,15 @@ function reasonTitle(run: ToolRun): string {
 /**
  * 応答を作っている最中のエージェント。末尾に「入力中…」バブルを出す。
  * エージェントで絞り込んでいる間は、その相手の分だけを出す。
+ *
+ * **開いている会話のターンだけ**（Spec 75 D10）。別の会話のターンの答えはその会話へ書かれるので、
+ * ここにバブルを出すと、待っても答えの来ない「入力中」が残る。
  */
 const typingAgents = computed(() =>
   state.agents.filter(
     (a) =>
       state.typing[a.id] &&
+      isOpenSession(state.typingSession[a.id], state.currentSessionId) &&
       (!filterAgentId.value || a.id === filterAgentId.value),
   ),
 );
@@ -1117,6 +1122,9 @@ async function newChat(): Promise<void> {
       <!--
         全体停止（Spec 10）。飛行中のターンを全部打ち切る。誰も飛んでいなければ
         押せない — 押しても何も起きないボタンを活性で見せない。
+        押せるかは**村全体の処理中**（`busyAgents` = `state.typing`）で決める（Spec 75 D10）。
+        入力中のバブル（`typingAgents`）は開いている会話で絞るので、それで決めると
+        別の会話のターンが走っている間に止める手段が消える。
         稼働は降ろさない（■ の一括停止とは別物）。
 
         色は**意味トークン `fail`** を使う（生の `red-500` ではない）。配色は
@@ -1128,7 +1136,7 @@ async function newChat(): Promise<void> {
       -->
       <button
         class="chat-action chat-action-danger grid size-6 place-items-center rounded text-fail transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fail disabled:opacity-40"
-        :disabled="!typingAgents.length"
+        :disabled="!busyAgents.size"
         :title="$t('chat.interruptAllTitle')"
         :aria-label="$t('chat.interruptAll')"
         @click="orchestrator.interruptAll()"

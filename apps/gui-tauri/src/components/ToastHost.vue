@@ -41,6 +41,15 @@ const TONE = {
     >
       <div class="flex items-start gap-2">
         <span class="flex-1 font-medium">{{ toast.title }}</span>
+        <!-- 開いていない会話に答えが届いた知らせの「開く」（Spec 75 D10）。処理中でも開ける。 -->
+        <button
+          v-if="toast.openSessionId"
+          class="shrink-0 rounded border border-accent/60 px-1.5 py-0.5 text-[11px] text-accent hover:bg-accent/10"
+          data-open-session
+          @click="orchestrator.openNoticedSession(toast)"
+        >
+          {{ $t("session.open") }}
+        </button>
         <button
           class="opacity-60 hover:opacity-100"
           :title="$t('common.close')"

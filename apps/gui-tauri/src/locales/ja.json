@@ -635,7 +635,10 @@
     "verifierLabel": "検証役:",
     "verifierNone": "なし",
     "verifierTitle": "束ねの既定の検証役。plan の答えを束ねた後に、この個体へ 4 点の検証を頼み、結論を束ねの末尾に付けます。計画の確認で承認するときは波ごとに選び直せます。",
-    "panelVerifierLabel": "検証役"
+    "panelVerifierLabel": "検証役",
+    "otherSession": "別の会話",
+    "otherSessionTitle": "別の会話: {title}",
+    "pendingOtherSession": "別の会話（{title}）で提示された計画です。承認すると、その会話で配って束ねます。"
   },
   "map": {
     "heading": "サーヴァントの絆",
@@ -1238,7 +1241,7 @@
     "forkNoticeStrong": "直前まで",
     "forkNoticeAfter": "を複製し、その依頼の文面を入力欄へ戻します。書き換えて送れば、別の頼み方を試せます。元の会話はそのまま残ります。",
     "listNoticeIntro": "会話は再起動をまたいで残ります。開き直すと、サーヴァントも前の話を踏まえて答えます。",
-    "listNoticeLimit": "切り替えは、飛行中のターンが無いときだけできます。",
+    "listNoticeLimit": "処理中でも開けます。答えは依頼した会話へ書かれます。消せるのは処理の残っていない会話だけです。",
     "loading": "読み込み中…",
     "forkEmpty": "分岐できる地点がありません。分岐は「その依頼を出す直前へ戻る」操作なので、会話のいちばん先頭の依頼は選べません（その手前は空の会話で、それは「新規チャット」と同じになります）。",
     "forkPointAction": "この依頼の直前まで →",
@@ -1246,7 +1249,7 @@
     "current": "表示中",
     "recordCount": "{count} 件",
     "forkedFrom": "分岐（seq {seq} まで）",
-    "openTitle": "この会話を開きます（飛行中のターンがあると拒否されます）",
+    "openTitle": "この会話を開きます（処理中でも開けます）",
     "forkBtnTitle": "ある地点までを複製して、そこから別の頼み方を試します",
     "exportTitle": "JSONL で書き出します（保存先はバイナリなので、読める出口を用意しています）",
     "deleteBtnTitle": "この会話を削除します（元に戻せません）",
@@ -1272,7 +1275,6 @@
     "SESSION_NOT_FOUND": "会話が保存されていません",
     "SESSION_STORE_FAILED": "会話の保存先の操作に失敗しました",
     "SESSION_STORE_LOCKED": "会話の保存先を別のプロセスが開いています",
-    "SESSION_SWITCH_BLOCKED": "飛行中のターンがあるため会話を切り替えられません",
     "INVALID_TOKEN_BUDGET": "トークン制限に 0 は設定できません",
     "INVALID_ASK_TIMEOUT": "委譲の待ち時間は 30〜3600 秒の範囲で指定してください",
     "INVALID_TOPOLOGY": "トポロジーが不正です",
@@ -1308,7 +1310,8 @@
     "INVALID_JUDGE_FILE": "判断役のファイルに誤りがあります",
     "INVALID_ASSIST_REQUEST": "AI 下書き補助を実行できません",
     "INVALID_SECRET_NAME": "秘密の名前に使えない文字があります（英大文字・数字・_ だけ）",
-    "AUTOSTART": "サインイン時の自動起動を設定できませんでした"
+    "AUTOSTART": "サインイン時の自動起動を設定できませんでした",
+    "SESSION_BUSY": "会話にまだ処理が残っているため消せません"
   },
   "orchestrator": {
     "ipcFailed": "IPC 呼び出しに失敗しました",
@@ -1395,7 +1398,9 @@
       "createJudge": "判断役の作成",
       "saveJudge": "判断役の保存",
       "deleteJudge": "判断役の削除"
-    }
+    },
+    "answerElsewhere": "別の会話（{title}）に {name} の答えが届きました",
+    "answerElsewhereMany": "別の会話（{title}）に答えが {count} 件届きました（最後は {name}）"
   },
   "statusBar": {
     "clockTitle": "現在の日付と時刻（診断ログの行頭と同じ形式）",
@@ -1476,7 +1481,8 @@
     "reject": "却下",
     "count": "{count} 回",
     "gone": "この要求はもう一覧にありません（新しい要求に押し出されました）。許可も禁止も増えていません。",
-    "presentNote": "許可が 1 件でも入ると、そのサーヴァントは次のターンからコマンドを実行する道具を持ちます。細かく決めたいときは、設定ファイルの run.json を直接編集できます。"
+    "presentNote": "許可が 1 件でも入ると、そのサーヴァントは次のターンからコマンドを実行する道具を持ちます。細かく決めたいときは、設定ファイルの run.json を直接編集できます。",
+    "stoppedElsewhere": "別の会話（{title}）で承認待ちで止まっています。その会話を開くと続けさせられます。"
   },
   "tools": {
     "remember": "覚える",

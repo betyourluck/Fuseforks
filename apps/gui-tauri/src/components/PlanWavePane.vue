@@ -36,6 +36,16 @@ import type {
 } from "../types";
 import BottomPaneTabs from "./BottomPaneTabs.vue";
 import { pendingWaveCount } from "../lib/wavesBadge";
+import { isOpenSession } from "../lib/sessionScope";
+
+/**
+ * 開いている会話以外で撒いた・提示した波か（Spec 75 凍結 6）。作業状況タブは村の作業の一覧なので
+ * **全部の波を出し**、こうした波に「別の会話」と書く。確認待ちのバッジも全部を数える
+ * （人の手番であることは会話を問わない）。承認すると、配る先は計画を提示した会話。
+ */
+function isElsewhere(wave: PlanWaveRecord): boolean {
+  return !isOpenSession(wave.sessionId, state.currentSessionId);
+}
 
 defineProps<{ activeTab: BottomTab }>();
 
@@ -144,6 +154,8 @@ function waveTitle(wave: PlanWaveRecord): string {
   ];
   if (wave.state === "pending") lines.push(t("waves.pendingBadge"));
   if (wave.state === "discarded") lines.push(t("waves.discardedBadge"));
+  if (wave.sessionId && isElsewhere(wave))
+    lines.push(t("waves.otherSessionTitle", { title: orchestrator.sessionTitle(wave.sessionId) }));
   if (wave.elapsedMs !== null)
     lines.push(t("waves.elapsedSlowest", { duration: formatMs(wave.elapsedMs) }));
   if (wave.bundleChars !== null)
@@ -355,6 +367,15 @@ watch(
           {{ $t("waves.pendingMore", { count: pendingCount - 1 }) }}
         </span>
       </div>
+      <!-- 別の会話で提示された計画（Spec 75 凍結 6）。承認しても配る先は提示した会話で、
+           束ねもそちらへ書かれる — ここを見ている人が答えを待たないように先に言う。 -->
+      <p
+        v-if="pendingWave.sessionId && isElsewhere(pendingWave)"
+        class="mb-1.5 text-[11px] text-ink-dim"
+        data-plan-other-session
+      >
+        {{ $t("waves.pendingOtherSession", { title: orchestrator.sessionTitle(pendingWave.sessionId) }) }}
+      </p>
       <div class="flex flex-col gap-1.5">
         <div
           v-for="(task, index) in draft"
@@ -463,6 +484,10 @@ watch(
             }}<template v-if="wave.state === 'pending'"> · {{ $t("waves.pendingBadge") }}</template
             ><template v-else-if="wave.state === 'discarded'"> · {{ $t("waves.discardedBadge") }}</template
             ><template v-else-if="wave.elapsedMs !== null"> · {{ formatMs(wave.elapsedMs) }}</template>
+          </span>
+          <!-- 別の会話の波（Spec 75 凍結 6）。表題はツールチップ（列の幅が 104px で入らない）。 -->
+          <span v-if="isElsewhere(wave)" class="block truncate text-[10px] text-warn" data-wave-other-session>
+            {{ $t("waves.otherSession") }}
           </span>
         </div>
 

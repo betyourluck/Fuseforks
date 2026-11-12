@@ -63,7 +63,7 @@ describe("割り込み停止の投影規律", () => {
     const orchestrator = useOrchestrator();
     await orchestrator.init();
 
-    fire({ type: "agentTyping", agentId: "agent_a", active: true });
+    fire({ type: "agentTyping", agentId: "agent_a", active: true, sessionId: "s1" });
     await orchestrator.interruptTurn("agent_a");
     expect(h.interruptTurn).toHaveBeenCalledWith("agent_a");
     expect(orchestrator.state.interruptPending["agent_a"]).toBe(true);
@@ -76,12 +76,12 @@ describe("割り込み停止の投影規律", () => {
     const orchestrator = useOrchestrator();
     await orchestrator.init();
 
-    fire({ type: "agentTyping", agentId: "agent_b", active: true });
+    fire({ type: "agentTyping", agentId: "agent_b", active: true, sessionId: "s1" });
     await orchestrator.interruptTurn("agent_b");
     expect(orchestrator.state.interruptPending["agent_b"]).toBe(true);
 
     // 周回境界に到達する前にターンが普通に終わった。
-    fire({ type: "agentTyping", agentId: "agent_b", active: false });
+    fire({ type: "agentTyping", agentId: "agent_b", active: false, sessionId: "s1" });
     expect(orchestrator.state.interruptPending["agent_b"]).toBeUndefined();
   });
 
@@ -89,7 +89,7 @@ describe("割り込み停止の投影規律", () => {
     const orchestrator = useOrchestrator();
     await orchestrator.init();
 
-    fire({ type: "agentTyping", agentId: "agent_flying", active: true });
+    fire({ type: "agentTyping", agentId: "agent_flying", active: true, sessionId: "s1" });
     await orchestrator.interruptAll();
     expect(h.interruptAll).toHaveBeenCalled();
     expect(orchestrator.state.interruptPending["agent_flying"]).toBe(true);

@@ -646,7 +646,7 @@ export const currentSession = () => call<string>("current_session");
 /**
  * 保存されている会話を開き直す。
  *
- * 飛行中のターンがあると `SESSION_SWITCH_BLOCKED` で失敗する。
+ * 処理中でも開ける（Spec 75 D11 — 処理の答えは依頼した会話へ書かれる）。
  */
 export const resumeSession = (sessionId: string) =>
   call<void>("resume_session", { sessionId });
@@ -659,7 +659,11 @@ export const listForkPoints = (sessionId: string) =>
 export const forkSession = (sessionId: string, atSeq: number) =>
   call<string>("fork_session", { sessionId, atSeq });
 
-/** 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。 */
+/**
+ * 会話を消す。開いている会話を消した場合は次の会話へ切り替わる。
+ *
+ * その会話にまだ処理が残っていると `SESSION_BUSY` で失敗する（Spec 75 D11。開いているかを問わない）。
+ */
 export const deleteSession = (sessionId: string) =>
   call<void>("delete_session", { sessionId });
 

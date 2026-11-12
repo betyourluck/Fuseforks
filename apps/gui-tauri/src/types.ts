@@ -1198,6 +1198,11 @@ export interface PlanWaveRecord {
   bundleChars: number | null;
   /** 波全体の所要（= キュー待ち込みの最遅 1 体分）。波の完了時に埋まる。 */
   elapsedMs: number | null;
+  /**
+   * 波を撒いた・提示した会話（Spec 75 凍結 6）。作業状況タブは開いている会話以外の波に
+   * 「別の会話」と出す。保存先の無い村と、欄の無い旧い記録では `null` / 欠落。
+   */
+  sessionId?: string | null;
 }
 
 /** 保存された会話 1 本の表題と系譜（Spec 12）。 */
@@ -1506,8 +1511,18 @@ export type CoreEvent =
       modelTemplateId: ModelTemplateId;
       reason: string;
     }
-  | { type: "agentTyping"; agentId: AgentId; active: boolean }
+  /**
+   * `sessionId` はそのターンの根の会話（Spec 75 凍結 10。保存先の無い村では `"-"`）。
+   * `typing` は個体の単位のまま持ち、入力中のバブルだけを開いている会話で絞る。
+   */
+  | { type: "agentTyping"; agentId: AgentId; active: boolean; sessionId: string }
   | { type: "conversationCleared" }
+  /**
+   * **開いていない会話**へ発話が書かれた（Spec 75 凍結 2・10）。本文は運ばない — 開くと
+   * `sessionSwitched` → `listMessages` で読む。受け手は会話一覧の引き直しと、送り手が
+   * サーヴァントのときの知らせ（トーストと「開く」）。
+   */
+  | { type: "sessionUpdated"; sessionId: string; from: Endpoint }
   /**
    * 開いている会話が変わった（Spec 12）。**加算的変更** —
    * `conversationCleared` の意味は「会話ペインを空にせよ」のまま変えない。
@@ -1545,6 +1560,9 @@ export type CoreEvent =
       callId: number;
       /** この呼び出しが走った周回（1 始まり。ログの `tool:` 行の `round=` と同じ。2026-10-15）。 */
       round: number;
+      /** そのターンの根の会話（Spec 75 凍結 10。保存先の無い村では `"-"`）。会話ペインは
+          開いている会話の行だけ積む。 */
+      sessionId: string;
     }
   | { type: "toolLimitReached"; agentId: AgentId; maxIterations: number }
   /** 同じツール呼び出しの繰り返しを検出して実行せずに打ち切った
@@ -1559,6 +1577,8 @@ export type CoreEvent =
       wave: number;
       tasks: PlanTaskAnnounced[];
       startedAtMs: number;
+      /** 波の会話（Spec 75 凍結 6。保存先の無い村では `"-"`）。 */
+      sessionId: string;
     }
   | {
       type: "planTaskResolved";
@@ -1582,6 +1602,8 @@ export type CoreEvent =
       /** 提案されたタスク（入力順・本文つき — 編集 UI が読む提案の真実）。 */
       tasks: PlanTaskInput[];
       startedAtMs: number;
+      /** 計画を提示した会話（Spec 75 凍結 6。保存先の無い村では `"-"`）。承認すると、配る先はこの会話。 */
+      sessionId: string;
     }
   | { type: "planWaveDiscarded"; planId: number }
   /** 計画の確認を飛ばすスイッチが切り替わった（Spec 53 — ステータスバー）。 */
@@ -1590,8 +1612,9 @@ export type CoreEvent =
   | { type: "runApprovalChanged"; mode: RunApproval }
   /** `run` の承認待ちで止まった個体の印が変わった（Spec 72 D5）。立てる（真）と外す（偽）の
       両方で来る — 偽が来ないと「続けさせる」を押した直後も押せるまま残る。受け手は承認画面と帯
-      （`refreshCommandRequests`）。印は `run.json` に無いので `toolInvoked` の経路では動かない。 */
-  | { type: "approvalStopped"; agentId: AgentId; stopped: boolean }
+      （`refreshCommandRequests`）。印は `run.json` に無いので `toolInvoked` の経路では動かない。
+      `sessionId` は印の会話（Spec 75 凍結 5。印は（個体, 会話）で持つ）。 */
+  | { type: "approvalStopped"; agentId: AgentId; stopped: boolean; sessionId: string }
   /** 飛行中のターンが人の指示で打ち切られた（Spec 10）。飛行中の中断でだけ
       流れる（未着手封筒の畳みでは流れない）。受け手（トースト）は Phase 3。 */
   | { type: "turnInterrupted"; agentId: AgentId; turnSeq: number };
@@ -1621,9 +1644,14 @@ export interface CommandPolicyView {
   pending: PendingCommand[];
   broken: boolean;
   /** 直近のターンが `run` の承認待ちで止まり、まだ続けさせていない（Spec 72 D5）。
-      `run.json` に無い印（コアのメモリの写し。再起動と会話の切り替えで消える）。
+      `run.json` に無い印（コアのメモリの写し。再起動で消える）。
+      **開いている会話の印だけ**（Spec 75 凍結 5。他の会話の印は `stoppedElsewhere`）。
       真なら判断待ちが 0 件でも個体の節を残し、「続けさせる」を出す。 */
   stoppedForApproval: boolean;
+  /** 開いていない会話でこの個体が承認待ちで止まっている、その会話の ID（Spec 75 凍結 5。ID 順）。
+      画面は「別の会話（タイトル）で止まっています」の 1 行で出し、「続けさせる」は出さない
+      （その会話を開くと出る）。欄の無い旧いコアでは欠落。 */
+  stoppedElsewhere?: string[];
 }
 
 /** 承認・却下の結果（Spec 20）。`NotFound` は「もう一覧に無い」。 */

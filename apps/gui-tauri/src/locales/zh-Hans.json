@@ -635,7 +635,10 @@
     "verifierLabel": "验证者：",
     "verifierNone": "无",
     "verifierTitle": "汇总的默认验证者。计划汇总答案后，会请此仆从检查 4 个要点，并把结论附在汇总末尾。在计划确认中批准时，可以按波次重新选择。",
-    "panelVerifierLabel": "验证者"
+    "panelVerifierLabel": "验证者",
+    "otherSession": "另一个对话",
+    "otherSessionTitle": "另一个对话：{title}",
+    "pendingOtherSession": "此计划是在另一个对话（{title}）中提出的。批准后会在该对话中分发并汇总。"
   },
   "map": {
     "heading": "仆从羁绊",
@@ -1238,7 +1241,7 @@
     "forkNoticeStrong": "前一刻",
     "forkNoticeAfter": "，并把该请求的文本放回输入框。改写后发送，即可尝试另一种说法。原对话保持不变。",
     "listNoticeIntro": "对话在重启后依然保留。重新打开后，仆从会在记得之前讨论的前提下回答。",
-    "listNoticeLimit": "只有在没有回合进行中时才能切换。",
+    "listNoticeLimit": "处理中也可以打开。回答会写入发出请求的对话。只有没有剩余处理的对话才能删除。",
     "loading": "正在加载…",
     "forkEmpty": "没有可以分支的地方。分支是回到某个请求的前一刻，因此不能选择第一个请求（它之前是空对话，与新建聊天相同）。",
     "forkPointAction": "截止到此请求的前一刻 →",
@@ -1246,7 +1249,7 @@
     "current": "当前",
     "recordCount": "{count} 条记录",
     "forkedFrom": "分支（截止到 seq {seq}）",
-    "openTitle": "打开此对话（有回合进行中时会被拒绝）",
+    "openTitle": "打开此对话（处理中也可以打开）",
     "forkBtnTitle": "复制到某个位置，从那里尝试另一种说法",
     "exportTitle": "导出为 JSONL（存储为二进制格式，这是可读的导出方式）",
     "deleteBtnTitle": "删除此对话（无法撤销）",
@@ -1272,7 +1275,6 @@
     "SESSION_NOT_FOUND": "该对话未保存",
     "SESSION_STORE_FAILED": "会话存储操作失败",
     "SESSION_STORE_LOCKED": "另一个进程正在打开会话存储",
-    "SESSION_SWITCH_BLOCKED": "有回合进行中时无法切换对话",
     "INVALID_TOKEN_BUDGET": "不能将 token 上限设为 0（请改选“无上限”）",
     "INVALID_ASK_TIMEOUT": "委派的等待时间必须在 30 到 3600 秒之间",
     "INVALID_TOPOLOGY": "拓扑无效",
@@ -1308,7 +1310,8 @@
     "INVALID_JUDGE_FILE": "判断者文件有错误",
     "INVALID_ASSIST_REQUEST": "无法运行 AI 起草",
     "INVALID_SECRET_NAME": "机密名称中含有不可使用的字符（只能使用大写字母、数字和 _）",
-    "AUTOSTART": "无法设置登录时启动"
+    "AUTOSTART": "无法设置登录时启动",
+    "SESSION_BUSY": "该对话仍有未完成的处理，无法删除"
   },
   "orchestrator": {
     "ipcFailed": "IPC 调用失败",
@@ -1395,7 +1398,9 @@
       "createJudge": "创建判断者",
       "saveJudge": "保存判断者",
       "deleteJudge": "删除判断者"
-    }
+    },
+    "answerElsewhere": "另一个对话（{title}）收到了 {name} 的回答",
+    "answerElsewhereMany": "另一个对话（{title}）收到了 {count} 条回答（最后来自 {name}）"
   },
   "statusBar": {
     "clockTitle": "当前日期和时间（与诊断日志的前缀格式相同）",
@@ -1476,7 +1481,8 @@
     "reject": "拒绝",
     "count": "{count} 次",
     "gone": "此请求已不在列表中（被更新的请求挤出）。允许列表和禁止列表均未增加。",
-    "presentNote": "只要有一条被允许，该仆从从下一回合起就会获得运行命令的工具。若要更细致地控制，可直接在配置文件中编辑 run.json。"
+    "presentNote": "只要有一条被允许，该仆从从下一回合起就会获得运行命令的工具。若要更细致地控制，可直接在配置文件中编辑 run.json。",
+    "stoppedElsewhere": "在另一个对话（{title}）中因等待审批而停下。打开该对话即可让它继续。"
   },
   "tools": {
     "remember": "记住",

@@ -83,6 +83,7 @@ describe("波ペインの投影規律", () => {
       wave: 1,
       tasks: [{ to: "agent_w1", msgChars: 10 }],
       startedAtMs: 1000,
+      sessionId: "s1",
     });
     expect(orchestrator.state.planWaves).toHaveLength(1);
     expect(
@@ -102,6 +103,7 @@ describe("波ペインの投影規律", () => {
         { to: "agent_w2", msgChars: 6 },
       ],
       startedAtMs: 2000,
+      sessionId: "s1",
     });
     expect(orchestrator.state.planWaves).toHaveLength(2);
     const second = orchestrator.state.planWaves[1];
@@ -131,6 +133,7 @@ describe("波ペインの投影規律", () => {
         wave: i,
         tasks: [{ to: "agent_w1", msgChars: 1 }],
         startedAtMs: i * 1000,
+        sessionId: "s1",
       });
     }
     expect(orchestrator.state.planWaves).toHaveLength(50);
@@ -155,6 +158,7 @@ describe("波ペインの投影規律", () => {
         { to: "agent_w2", message: "Bを調べて" },
       ],
       startedAtMs: 5000,
+      sessionId: "s1",
     });
     const pending = orchestrator.state.planWaves.find((w) => w.planId === 100)!;
     expect(pending.state).toBe("pending");
@@ -169,6 +173,7 @@ describe("波ペインの投影規律", () => {
       wave: 1,
       tasks: [{ to: "agent_w2", msgChars: 7 }],
       startedAtMs: 6000,
+      sessionId: "s1",
     });
     // upsert は要素を新しいオブジェクトで差し替えるので、取り直して読む
     // （古い参照 `pending` は更新されない — reactive でも要素差し替えは別物）。
@@ -186,6 +191,7 @@ describe("波ペインの投影規律", () => {
       wave: 1,
       tasks: [{ to: "agent_w1", message: "古い提案" }],
       startedAtMs: 5000,
+      sessionId: "s1",
     });
     expect(
       orchestrator.state.planWaves.find((w) => w.planId === 100)!.state,
@@ -200,6 +206,7 @@ describe("波ペインの投影規律", () => {
       wave: 2,
       tasks: [{ to: "agent_w1", message: "破棄される" }],
       startedAtMs: 7000,
+      sessionId: "s1",
     });
     fire({ type: "planWaveDiscarded", planId: 101 });
     const discarded = orchestrator.state.planWaves.find((w) => w.planId === 101)!;
