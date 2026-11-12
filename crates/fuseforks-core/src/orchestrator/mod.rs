@@ -65,6 +65,9 @@ mod assist;
 mod template_probe;
 pub use judging::JudgeTrial;
 mod sessions;
+// 会話への参照（Spec 75）。依頼の根の会話を封筒で運び、書き込みをそこへ向ける。
+mod session_ref;
+use session_ref::{SessionRef, SessionRefs};
 
 use std::collections::HashMap;
 use std::collections::BTreeMap;
@@ -254,6 +257,12 @@ struct Envelope {
     /// 予算と同じ経路で運ぶのは、委譲先・転送先の進行役が撒く計画も同じ
     /// 予定の中の作業だから（人が居ない前提は因果の全体に掛かる）。
     auto_approve_plans: bool,
+    /// この因果の会話（Spec 75 D1・`session_binding_contract` 凍結 1）。
+    ///
+    /// 新しい根で決め、`ask` / `plan` / 転送 / 判断役の配送は**写す**。この因果の書き込み
+    /// （発話・1 往復・ターンの記録）はこの会話へ行き、書き込んだ瞬間に開いている会話へは
+    /// 行かない。複製を持っている間、その会話は消せない（凍結 11）。
+    session: SessionRef,
 }
 
 /// 因果に参加して答えを返し終えた個体の集合（Spec 28）。
@@ -297,6 +306,7 @@ impl Envelope {
         participants: Option<Participants>,
         waiting: Vec<AgentId>,
         auto_approve_plans: bool,
+        session: SessionRef,
     ) -> Self {
         Self {
             incoming,
@@ -306,9 +316,29 @@ impl Envelope {
             participants,
             waiting,
             auto_approve_plans,
+            session,
         }
     }
 }
+
+/// 開いていない会話のプロンプトの材料（Spec 75 凍結 4）。[`Shared::stored_view`] が保存先から組む。
+#[derive(Debug, Default)]
+struct StoredView {
+    /// その会話の会話ログの末尾（広場ログの抜粋・入退室の節・`room_log` の読みの材料）。
+    log: Vec<AgentMessage>,
+    /// その個体の履歴（滑る窓を適用済み）。
+    history: Vec<ChatMessage>,
+    /// その個体の現役の要約。
+    summary: Option<String>,
+}
+
+/// 開いている会話の lock の read guard（Spec 75 D3・凍結 3）。
+///
+/// これを持っている間、開いている会話は切り替わらない。**「開いているか」で分岐して
+/// メモリの写しへ積む書き手は、これを `world` / `log` / `summaries` より先に取る** —
+/// 逆の順で取ると、切り替え（write を取ってから `world` を取る）と待ち合う。
+/// `push_exchange` が引数でこれを要求するのは、取り忘れを型で止めるため。
+type OpenGate<'a> = tokio::sync::RwLockReadGuard<'a, ()>;
 
 /// タスク間で共有される状態。
 struct Shared {
@@ -363,6 +393,12 @@ struct Shared {
     /// plan 実行の観測記録（Spec 08 — 波ペイン）。リングバッファでプロセス寿命。
     /// ファイルへは書かない — 再起動生存は別 Spec の管轄。
     plan_waves: RwLock<PlanWaveStore>,
+    /// 承認待ちの波を提示した会話（Spec 75 凍結 6。key = plan_id）。
+    ///
+    /// `PlanWaveStore` は純粋な記録なので会話への参照（`SessionRef`）を持たせず、ここで持つ。
+    /// 入れるのは `run_plan` の提示、出すのは承認（`dispatch_plan_wave`）と破棄。
+    /// 参照を持っている間、その会話は消せない（凍結 11）。
+    plan_sessions: std::sync::Mutex<HashMap<u64, SessionRef>>,
     /// ツール呼び出しの中身（Spec 57）。リングバッファでプロセス寿命。
     ///
     /// **ファイルへもログへも書かない** — 引数と出力には利用者の秘密が入りうる
@@ -409,11 +445,17 @@ struct Shared {
     summaries: RwLock<BTreeMap<AgentId, String>>,
     /// いま開いているセッションの ID（Spec 12）。
     ///
-    /// **`std::sync::RwLock` で持つ。** 書き込み点（`record` / `push_exchange`）は
-    /// どちらも `world` の write guard を握った同期文脈にあり、そこから
-    /// `await` する経路を作りたくない。中身は短い文字列で、ロックは
-    /// clone するあいだしか握らない。
+    /// **`std::sync::RwLock` で持つ。** 中身は短い文字列で、ロックは clone するあいだしか
+    /// 握らない。**書き換えるのは `open_session` だけで、`switch_gate` の write の下**
+    /// （Spec 75 凍結 3）— だから `switch_gate` の read を持っている間はこの値が動かない。
     session_id: std::sync::RwLock<String>,
+    /// 開いている会話の lock（Spec 75 D3・凍結 3）。中身は持たず、順序だけを守る。
+    ///
+    /// 切り替え（`open_session`）が write、「開いているか」で分岐する書き手と読み手が read。
+    /// **順序は `switch_gate` → `world` → `log` → `summaries`**。
+    switch_gate: tokio::sync::RwLock<()>,
+    /// 会話への参照の表（Spec 75 凍結 1・11）。会話を消せるかはここで数える。
+    session_refs: SessionRefs,
     /// 外部からの依頼の同時実行を 1 本に絞るゲート（Spec 25 D7）。
     ///
     /// **外部入口は新しい因果の根**で、hop は 0 から始まり予算プールも新品に
@@ -438,13 +480,17 @@ struct Shared {
     run_approval: std::sync::atomic::AtomicU8,
     /// `run` の承認待ちで止まった個体の印（Spec 72 D5）。
     ///
-    /// **メモリだけ。再起動と会話の切り替えで消える。** 立てるのは周の終わりの出口
-    /// `finish_approval_pending`、外すのは `handle_message` の先頭 / `resume_after_approval` の
-    /// 配送成功 / `stop_agent`・`delete_agent` / `open_session`・`reset_conversation`。
+    /// **メモリだけ。再起動で消える。** 立てるのは周の終わりの出口
+    /// `finish_approval_pending`、外すのは同じ会話の `handle_message` の先頭 / `resume_after_approval` の
+    /// 配送成功 / `stop_agent`・`delete_agent`（会話を問わず全部）/ 保存先の無い村の新規チャット。
     /// 出し入れは [`Shared::set_approval_stopped`] の 1 実装で、**変わったときだけ**
     /// [`CoreEvent::ApprovalStopped`] を出す。ターンより長生きするが、予算・打ち切り・hop の
     /// 所有者ではない — `pending` が `run.json` に残るのと同じ「人の手番を待つ印」。
-    approval_stopped: std::sync::Mutex<std::collections::HashSet<AgentId>>,
+    ///
+    /// **Spec 75 D5（凍結 5）で（個体, 会話 ID）の組にした。** 外すのは同じ会話の出来事だけで、
+    /// 会話の切り替えでは外さない（止まった会話へ戻ったときに「続けさせる」を出すため）。
+    /// 会話 ID は [`SessionRef::label`]（保存先の無い村では `-`）。
+    approval_stopped: std::sync::Mutex<std::collections::HashSet<(AgentId, String)>>,
     /// ツール結果の関連度を採点する器（Spec 59 D3 / `tool_prune_contract`）。
     ///
     /// **`None` が既定で、そのとき圧縮の機構は丸ごと存在しない** — ツール結果は
@@ -496,7 +542,10 @@ struct ScheduleRuntime {
     /// 片方だけが取りこぼす形が生まれる（イベントの取りこぼしで `in_flight` が
     /// fail open で空にされるとき、こちらだけ残ると要約が永遠に待つ）。
     /// ゆえに**取りこぼしでは一緒に捨てる** — 要約は次の発火でやり直せる。
-    pending_summaries: Mutex<HashMap<AgentId, Participants>>,
+    ///
+    /// 値の 2 つ目は**根の会話**（Spec 75 凍結 7・8）。取り出すのは個体と会話の両方が一致した
+    /// `AgentTyping { active: false }` だけで、要約はこの会話から読みこの会話へ書く。
+    pending_summaries: Mutex<HashMap<AgentId, (Participants, SessionRef)>>,
     /// 根のターンの完了を待っている後判定（Spec 46）。
     ///
     /// キーは**発火の宛先**（因果の根）。`pending_summaries` と**同じ合図に
@@ -574,49 +623,91 @@ impl Shared {
     /// 承認待ちの印（Spec 72 D5）を立てる / 外す。**変わったときだけ**
     /// [`CoreEvent::ApprovalStopped`] を出す — 外す点は 4 つあり、立っていない個体で
     /// 毎回イベントが出ると画面が取り直しを繰り返す。
-    fn set_approval_stopped(&self, id: &AgentId, stopped: bool) {
+    fn set_approval_stopped(&self, id: &AgentId, session: &SessionRef, stopped: bool) {
+        let key = (id.clone(), session.label().to_owned());
         let changed = {
-            let mut set = self
-                .approval_stopped
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut set = self.approval_stopped_lock();
             if stopped {
-                set.insert(id.clone())
+                set.insert(key)
             } else {
-                set.remove(id)
+                set.remove(&key)
             }
         };
         if changed {
             self.emit(CoreEvent::ApprovalStopped {
                 agent_id: id.clone(),
                 stopped,
+                session_id: session.label().to_owned(),
             });
         }
     }
 
-    /// 全個体の承認待ちの印を外す（会話の切り替え・新規チャット。Spec 72 D5 (d)）。
-    /// 外れた個体ごとにイベントを出す。
-    fn clear_approval_stopped(&self) {
-        let cleared: Vec<AgentId> = self
-            .approval_stopped
+    /// その個体の印を**会話を問わず**全部外す（`stop_agent` / `delete_agent`。Spec 72 D5 (c)）。
+    /// 受信箱の無い個体に「続けさせる」は届かない。外れた会話ごとにイベントを出す。
+    fn clear_approval_stopped_of(&self, id: &AgentId) {
+        let cleared: Vec<String> = {
+            let mut set = self.approval_stopped_lock();
+            let sessions: Vec<String> = set
+                .iter()
+                .filter(|(agent, _)| agent == id)
+                .map(|(_, session)| session.clone())
+                .collect();
+            set.retain(|(agent, _)| agent != id);
+            sessions
+        };
+        for session_id in cleared {
+            self.emit(CoreEvent::ApprovalStopped {
+                agent_id: id.clone(),
+                stopped: false,
+                session_id,
+            });
+        }
+    }
+
+    /// 全個体の印を外す。**保存先の無い村の新規チャットだけ**が使う — 会話の単位が無く、
+    /// 白紙にした会話へ「続けてください」を届けないため（Spec 72 D5 (d) は保存先のある村では
+    /// Spec 75 凍結 5 で撤回した）。
+    fn clear_all_approval_stopped(&self) {
+        let cleared: Vec<(AgentId, String)> = self.approval_stopped_lock().drain().collect();
+        for (agent_id, session_id) in cleared {
+            self.emit(CoreEvent::ApprovalStopped {
+                agent_id,
+                stopped: false,
+                session_id,
+            });
+        }
+    }
+
+    /// その個体に、その会話の承認待ちの印が立っているか。
+    fn is_approval_stopped(&self, id: &AgentId, session: &str) -> bool {
+        self.approval_stopped_lock()
+            .contains(&(id.clone(), session.to_owned()))
+    }
+
+    /// その個体の印が立っている会話（並びは ID 順）。
+    fn approval_stopped_sessions(&self, id: &AgentId) -> Vec<String> {
+        let mut sessions: Vec<String> = self
+            .approval_stopped_lock()
+            .iter()
+            .filter(|(agent, _)| agent == id)
+            .map(|(_, session)| session.clone())
+            .collect();
+        sessions.sort();
+        sessions
+    }
+
+    fn plan_sessions_lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, SessionRef>> {
+        self.plan_sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .drain()
-            .collect();
-        for id in cleared {
-            self.emit(CoreEvent::ApprovalStopped {
-                agent_id: id,
-                stopped: false,
-            });
-        }
     }
 
-    /// その個体に承認待ちの印が立っているか。
-    fn is_approval_stopped(&self, id: &AgentId) -> bool {
+    fn approval_stopped_lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashSet<(AgentId, String)>> {
         self.approval_stopped
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(id)
     }
 
     /// ツール呼び出しのリング（Spec 57）を握る。
@@ -635,19 +726,52 @@ impl Shared {
     /// `Shared.log` の [`OrchestratorConfig::log_capacity`] は**メモリ上の上限で
     /// あって保存の上限ではない**（Spec 12）。リングから落ちた発話もファイルには
     /// 残り、起動時に末尾 `log_capacity` 件だけを読み戻す。
-    async fn record(&self, message: AgentMessage) {
-        {
-            let mut log = self.log.write().await;
-            if log.len() >= self.config.log_capacity {
-                // 先頭から捨てる。容量に達したあと無制限に伸ばすと、
-                // 長時間の稼働でメモリを食い潰す。
-                let overflow = log.len() + 1 - self.config.log_capacity;
-                log.drain(..overflow);
+    ///
+    /// **書き先は `session`（Spec 75 凍結 2）。** その会話がいま開いていれば今までどおり
+    /// ログの輪へ積み・保存し・`MessageSent` を出す。開いていなければ**保存だけ**して、
+    /// 輪にも積まず `MessageSent` も出さず、`SessionUpdated` を出す（画面は開いている会話の
+    /// 発話だけを出すので、コアの側で決まる）。判定と書き込みは開いている会話の lock の下。
+    async fn record(&self, message: AgentMessage, session: &SessionRef) {
+        let _gate = self.switch_gate.read().await;
+        self.record_locked(message, session).await;
+    }
+
+    /// 村全体の知らせを書く（Spec 75 凍結 9）。入退室・役職・判断役の無効化・停止中で
+    /// 飛ばした予定は**どの依頼の因果にも属さない**ので、書いた時点で開いている会話へ。
+    async fn record_open(&self, message: AgentMessage) {
+        let _gate = self.switch_gate.read().await;
+        let session = self.open_ref();
+        self.record_locked(message, &session).await;
+    }
+
+    /// [`Self::record`] の本体。呼び出し側が `switch_gate` の read を持っていること。
+    async fn record_locked(&self, message: AgentMessage, session: &SessionRef) {
+        if self.is_open(session) {
+            {
+                let mut log = self.log.write().await;
+                if log.len() >= self.config.log_capacity {
+                    // 先頭から捨てる。容量に達したあと無制限に伸ばすと、
+                    // 長時間の稼働でメモリを食い潰す。
+                    let overflow = log.len() + 1 - self.config.log_capacity;
+                    log.drain(..overflow);
+                }
+                log.push(message.clone());
             }
-            log.push(message.clone());
+            self.persist(&SessionRecord::message(message.clone()), session);
+            self.emit(CoreEvent::MessageSent { message });
+            return;
         }
-        self.persist(&SessionRecord::message(message.clone()));
-        self.emit(CoreEvent::MessageSent { message });
+        self.persist(&SessionRecord::message(message.clone()), session);
+        note!(
+            "session write: kind=message session={} open={} from={}",
+            session.label(),
+            self.current_session(),
+            turn::endpoint_log_label(&message.from),
+        );
+        self.emit(CoreEvent::SessionUpdated {
+            session_id: session.label().to_owned(),
+            from: message.from,
+        });
     }
 
     /// いま開いているセッションの ID。
@@ -658,6 +782,63 @@ impl Shared {
         }
     }
 
+    /// いま開いている会話への参照（Spec 75 凍結 1 — 対象を持たない新しい根が取る）。
+    /// 保存先の無い村では [`SessionRef::none`]。
+    fn open_ref(&self) -> SessionRef {
+        if self.sessions.is_none() {
+            return SessionRef::none();
+        }
+        self.session_refs.issue(&self.current_session())
+    }
+
+    /// 会話 `id` への参照（対象が会話を持つ根 — 印・波・発火の会話を取り直すとき）。
+    fn ref_to(&self, id: &str) -> SessionRef {
+        if self.sessions.is_none() {
+            return SessionRef::none();
+        }
+        self.session_refs.issue(id)
+    }
+
+    /// 開いていない会話のプロンプトの材料を保存先から読む（Spec 75 凍結 4）。
+    ///
+    /// 開いている会話のターンはメモリの写し（`log` / 履歴 / `summaries`）を読むので、これは
+    /// **開いていない会話に結び付いたターン**（切り替えの後に届いた委譲・受信箱で待っていた発話・
+    /// `fresh` の予定）だけが通る。読めなければ WARN を 1 行出して空の材料を返す —
+    /// **開いている会話の写しへ落とさない**（別の会話の履歴で考えると、答えが根の会話に混ざる）。
+    fn stored_view(&self, session: &SessionRef, agent_id: &AgentId) -> StoredView {
+        let (Some(store), Some(session_id)) = (self.sessions.as_ref(), session.id()) else {
+            return StoredView::default();
+        };
+        let log = store
+            .tail_messages(session_id, self.config.log_capacity)
+            .unwrap_or_else(|err| {
+                note!("WARN session store: 会話 `{session_id}` の会話ログを読めませんでした: {err}");
+                Vec::new()
+            });
+        let (history, summary) = match store.restore_histories(session_id, self.config.history_turns)
+        {
+            Ok(mut restored) => (
+                restored.histories.remove(agent_id).unwrap_or_default(),
+                restored.summaries.remove(agent_id),
+            ),
+            Err(err) => {
+                note!("WARN session store: 会話 `{session_id}` の履歴を読めませんでした: {err}");
+                (Vec::new(), None)
+            }
+        };
+        StoredView {
+            log,
+            history,
+            summary,
+        }
+    }
+
+    /// その会話がいま開いているか。**`switch_gate` の read を持って呼ぶ**（持たずに呼ぶと、
+    /// 判定と書き込みの間に切り替わりうる）。保存先の無い村の参照は常に開いている扱い（凍結 13）。
+    fn is_open(&self, session: &SessionRef) -> bool {
+        session.id().is_none_or(|id| id == self.current_session())
+    }
+
     /// 開いているセッションを差し替える。以後の書き込みは新しい側へ着地する。
     fn set_session(&self, session_id: &str) {
         match self.session_id.write() {
@@ -666,9 +847,19 @@ impl Shared {
         }
     }
 
-    async fn summarize_agents(&self, only: Option<&std::collections::HashSet<AgentId>>) -> CoreResult<usize> {
+    /// **要約は始めたときの会話に結び付ける**（Spec 75 凍結 7）。材料・`coversUpToSeq`・保存・
+    /// System 行はすべて `session`。メモリ上の要約の差し替えと履歴の畳みは、その会話が**いま
+    /// 開いているときだけ** — 要約の LLM 呼び出しの間に会話を切り替えても、開いた会話の履歴は
+    /// 畳まない。人が押した要約は押した時点で開いている会話、予定の完了後要約は根の会話。
+    async fn summarize_agents(
+        &self,
+        session: &SessionRef,
+        only: Option<&std::collections::HashSet<AgentId>>,
+    ) -> CoreResult<usize> {
         let store = self.session_store()?;
-        let session_id = self.current_session();
+        let Some(session_id) = session.id().map(str::to_owned) else {
+            return Ok(0);
+        };
 
         // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
         // 「coversUpToSeq < 自身の seq」が破れる。
@@ -684,6 +875,13 @@ impl Shared {
         // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
         // 押せばそのとき要約される — 取り逃がしにはならない。
         let mut skipped = 0usize;
+        // 材料はその会話から（凍結 4 と同じ規則）。開いていれば写し、開いていなければ保存先。
+        let gate = self.switch_gate.read().await;
+        let stored = if self.is_open(session) {
+            None
+        } else {
+            Some(store.restore_histories(&session_id, self.config.history_turns)?)
+        };
         let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
             let world = self.world.read().await;
             world
@@ -697,7 +895,11 @@ impl Shared {
                         return None;
                     }
                     let record = world.agent(&snapshot.id).ok()?;
-                    if record.history.is_empty() {
+                    let history = match &stored {
+                        Some(restored) => restored.histories.get(&snapshot.id).cloned().unwrap_or_default(),
+                        None => record.history.clone(),
+                    };
+                    if history.is_empty() {
                         return None;
                     }
                     if !record.status.is_active() {
@@ -709,16 +911,21 @@ impl Shared {
                         snapshot.id.clone(),
                         record.spec.name.clone(),
                         template,
-                        record.history.clone(),
+                        history,
                     ))
                 })
                 .collect()
         };
+        let stored_summaries = stored.map(|restored| restored.summaries);
+        drop(gate);
 
         let mut done = 0usize;
         for (agent_id, name, template, history) in targets {
             // 要約の要約を許す（`coversUpToSeq` が単調増加するので循環しない）。
-            let previous = self.summaries.read().await.get(&agent_id).cloned();
+            let previous = match &stored_summaries {
+                Some(summaries) => summaries.get(&agent_id).cloned(),
+                None => self.summaries.read().await.get(&agent_id).cloned(),
+            };
 
             // 畳む前の通数と文字数。ログに出す — 「4 往復を要約に置き換えた」のか
             // 「40 往復ぶんか」で、要約の効きの読み方がまるで違う。
@@ -808,11 +1015,17 @@ impl Shared {
                 continue;
             }
 
-            self.persist(&SessionRecord::summary(
-                &agent_id,
-                text.clone(),
-                covers_up_to_seq,
-            ));
+            // 保存はその会話へ。メモリの差し替えと畳みは、その会話がいま開いているときだけ
+            // （凍結 7）。判定は開いている会話の lock の下（凍結 3）。
+            let _gate = self.switch_gate.read().await;
+            self.persist(
+                &SessionRecord::summary(&agent_id, text.clone(), covers_up_to_seq),
+                session,
+            );
+            if !self.is_open(session) {
+                done += 1;
+                continue;
+            }
             self.summaries
                 .write()
                 .await
@@ -875,7 +1088,7 @@ impl Shared {
                      list's export.){note}"
                 ),
             };
-            self.record(AgentMessage::new(Endpoint::System, Endpoint::User, body, 0))
+            self.record(AgentMessage::new(Endpoint::System, Endpoint::User, body, 0), session)
                 .await;
         }
         Ok(done)
@@ -902,32 +1115,36 @@ impl Shared {
     async fn open_session(&self, session_id: &str) -> CoreResult<()> {
         let store = self.session_store()?;
 
-        self.log.write().await.clear();
-        self.world.write().await.clear_histories();
-        // ここで差し替える。以後の書き込みは新しい側へ着地する。
-        self.set_session(session_id);
+        // 開いている会話の lock の write（Spec 75 凍結 3）。これを持っている間、「開いているか」で
+        // 分岐する書き手は待つ — 読み直しと書き込みが混ざらないので、切り替えの前に書かれた
+        // 記録は読み直しに含まれ、後に書かれた記録は開いた会話のメモリへ積まれる（1 回だけ載る）。
+        let _gate = self.switch_gate.write().await;
 
+        // 保存先を先に読む。**この間 `world` は持たない**（読み直しの間に全個体のターンを
+        // 止めない）。読めなければ何も差し替えずに返る（メモリも開いている会話もそのまま）。
         let messages = store.tail_messages(session_id, self.config.log_capacity)?;
         let restored = store.restore_histories(session_id, self.config.history_turns)?;
         {
             let mut world = self.world.write().await;
+            world.clear_histories();
             for (agent_id, history) in restored.histories {
                 if let Ok(record) = world.agent_mut(&agent_id) {
                     record.history = history;
                 }
             }
         }
+        *self.log.write().await = messages;
         // 要約も差し替える（Spec 12 P4）。前の会話の要約が残ると、開いた会話とは
         // 無関係な「これまでの経緯」が次のターンへ混ざる。
         *self.summaries.write().await = restored.summaries;
-        *self.log.write().await = messages;
+        // ここで差し替える。以後の書き込みは新しい側へ着地する。
+        self.set_session(session_id);
 
         // 前の会話の引数と出力を持ち続けない（Spec 57）。画面の行は
         // `ConversationCleared` で消えるので、詳細だけ残る状態を作らない。
         self.tool_calls_lock().clear();
-        // 承認待ちの印も会話に属する（Spec 72 D5 (d)）。残すと切り替え先の無関係な会話に
-        // 帯と「続けさせる」が出て、押すと注記も依頼も無い会話へ「続けてください」が届く。
-        self.clear_approval_stopped();
+        // 承認待ちの印は**消さない**（Spec 75 凍結 5。Spec 72 D5 (d) を撤回）— 印は会話ごとに
+        // 持つので、切り替え先の会話に別の会話の帯は出ず、止まった会話へ戻れば「続けさせる」が出る。
         self.emit(CoreEvent::ConversationCleared);
         self.emit(CoreEvent::SessionSwitched {
             session_id: session_id.to_owned(),
@@ -948,12 +1165,18 @@ impl Shared {
     /// 戻り値は**書けたか**。保存先を持たない村・書けなかった村では偽で、
     /// 呼び出し側は「保存されたことを前提にする後続」（Spec 39 の `TurnRecorded`）を
     /// 抑える。ここで `Err` にしないのは Spec 12 の規律（保存の失敗は WARN 1 行で続行）。
-    fn persist(&self, record: &SessionRecord) -> bool {
+    ///
+    /// **書き先は `session`（Spec 75 凍結 2）。** 暗黙に開いている会話を読む形は残さない —
+    /// 書き込んだ瞬間に開いている会話へ書くと、処理中に会話を切り替えたとき答えが別の会話へ移る。
+    fn persist(&self, record: &SessionRecord, session: &SessionRef) -> bool {
         let Some(store) = self.sessions.as_ref() else {
             return false;
         };
-        let session_id = self.current_session();
-        if let Err(err) = store.append(&session_id, record) {
+        // 保存先のある村の参照は必ず会話 ID を持つ（`open_ref` / `ref_to` が発行する）。
+        let Some(session_id) = session.id() else {
+            return false;
+        };
+        if let Err(err) = store.append(session_id, record) {
             note!("WARN session store: 会話 `{session_id}` へ保存できませんでした: {err}");
             return false;
         }
@@ -965,14 +1188,28 @@ impl Shared {
     /// 押し込む側と保存側を別々に書かない。分けると片方だけ更新される経路が生まれ、
     /// 再開後の履歴が実行中の履歴と食い違う — しかもその食い違いは画面に出ない。
     /// 呼び出し側は `world` の write guard を既に握っているので、guard を受け取る形にしてある。
-    fn push_exchange(&self, world: &mut World, agent_id: &AgentId, sent: &str, replied: &str) {
+    ///
+    /// **`session` が開いていなければ保存だけ**（Spec 75 凍結 2）— メモリ上の履歴は開いている
+    /// 会話の写しなので、別の会話の 1 往復を積むと、その個体だけ前の会話を覚えて始まる。
+    /// `_gate` は開いている会話の lock の read（凍結 3）。`world` より先に取ったことを型で求める。
+    fn push_exchange(
+        &self,
+        _gate: &OpenGate<'_>,
+        world: &mut World,
+        agent_id: &AgentId,
+        session: &SessionRef,
+        sent: &str,
+        replied: &str,
+    ) {
         // 既に消えたエージェントの往復は積まないし、保存もしない。
         // 保存だけ残ると、復元時に宛先の無い exchange が出てくる。
         let Ok(record) = world.agent_mut(agent_id) else {
             return;
         };
-        record.push_exchange(sent, replied, self.config.history_turns);
-        self.persist(&SessionRecord::exchange(agent_id, sent, replied));
+        if self.is_open(session) {
+            record.push_exchange(sent, replied, self.config.history_turns);
+        }
+        self.persist(&SessionRecord::exchange(agent_id, sent, replied), session);
     }
 
     /// テンプレートに対応するバックエンドを取り出す。無ければ組み立てて覚える。
@@ -1070,7 +1307,8 @@ impl Shared {
             // from: System / to: User。User 宛の発話は全エージェントにとって
             // 他人の会話なので、広場ログの is_mine 判定に誰も掛からず全員に
             // 見える。配送は起きない（record のみ。ターンを発火させない）。
-            self.record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+            // 村全体の知らせ — 書いた時点で開いている会話へ（Spec 75 凍結 9）。
+            self.record_open(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
                 .await;
         }
     }
@@ -1326,6 +1564,12 @@ impl Orchestrator {
                 })
                 .collect(),
             started_at_ms,
+            // 提示した会話（Spec 75 凍結 6）。控えは下の配送で取り出す。
+            session_id: self
+                .shared
+                .plan_sessions_lock()
+                .get(&plan_id)
+                .map_or_else(|| self.shared.open_ref().label().to_owned(), |s| s.label().to_owned()),
         });
 
         // 新しい因果の根（凍結 5）。天井の式は増やさない — ユーザー発話・
@@ -1337,6 +1581,13 @@ impl Orchestrator {
             .lock()
             .await
             .insert(plan_id, (coordinator.clone(), cancel.clone()));
+        // 配る先は計画を提示した会話（Spec 75 凍結 6）— 承認を押した時点で開いている会話ではない。
+        // 控えが無い（起こらない形）ときだけ開いている会話へ落とす。
+        let session = self
+            .shared
+            .plan_sessions_lock()
+            .remove(&plan_id)
+            .unwrap_or_else(|| self.shared.open_ref());
         tokio::spawn(delegation::run_dispatched_wave(
             Arc::clone(&self.shared),
             coordinator,
@@ -1347,6 +1598,7 @@ impl Orchestrator {
             budget,
             cancel,
             verifier,
+            session,
         ));
         Ok(())
     }
@@ -1364,6 +1616,12 @@ impl Orchestrator {
             return Err(CoreError::PlanWaveNotPending { plan_id });
         };
         self.shared.plan_waves.write().await.discard_wave(plan_id);
+        // 破棄の行は計画を提示した会話へ（Spec 75 凍結 6）。
+        let session = self
+            .shared
+            .plan_sessions_lock()
+            .remove(&plan_id)
+            .unwrap_or_else(|| self.shared.open_ref());
         crate::note!("plan discard: agent={coordinator} plan_id={plan_id} wave={wave}");
         self.shared.emit(CoreEvent::PlanWaveDiscarded { plan_id });
 
@@ -1379,7 +1637,7 @@ impl Orchestrator {
             crate::world::Language::En => format!("The plan (wave {wave}) was discarded."),
         };
         self.shared
-            .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0))
+            .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0), &session)
             .await;
         Ok(())
     }
@@ -1452,6 +1710,10 @@ async fn new_root_budget(shared: &Shared) -> Option<Arc<BudgetPool>> {
 ///
 /// `try_send` を使うのは背圧を可視化するため。`send().await` にすると、
 /// 詰まった受信箱を待つあいだ送信側のエージェントまで停止して連鎖的に固まる。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "因果の付随物は 1 つへ畳めるが、畳むと『どの配送が何を運ぶか』が呼び出し側から読めなくなる（deliver_and_wait と同じ判断）"
+)]
 async fn deliver(
     shared: &Shared,
     to: &AgentId,
@@ -1460,11 +1722,13 @@ async fn deliver(
     participants: Option<Participants>,
     waiting: Vec<AgentId>,
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。根は決めた値を、転送は受信封筒の値を渡す。
+    session: SessionRef,
 ) -> CoreResult<()> {
     deliver_envelope(
         shared,
         to,
-        Envelope::plain(message, budget, participants, waiting, auto_approve_plans),
+        Envelope::plain(message, budget, participants, waiting, auto_approve_plans, session),
     )
     .await
 }
@@ -1556,6 +1820,9 @@ async fn agent_loop(
                 // handle_message は envelope ごと受け取るので、ここで取っておかないと
                 // 失敗時に依頼文へ触れる手段が無くなる。
                 let incoming = envelope.incoming.clone();
+                // この因果の会話（Spec 75）。失敗の 1 往復と入力中の合図の会話に使う —
+                // handle_message が封筒ごと受け取るので、ここで控えておく。
+                let session = envelope.session.clone();
 
                 // 入力中表示。処理は LLM 呼び出しを含み数十秒かかりうるので、
                 // 開始と終了を対で流す。終了は成功・失敗を問わず必ず流す —
@@ -1563,6 +1830,7 @@ async fn agent_loop(
                 shared.emit(CoreEvent::AgentTyping {
                     agent_id: agent_id.clone(),
                     active: true,
+                    session_id: session.label().to_owned(),
                 });
 
                 // ターンの割り込みハンドル（Spec 10）。ターンごとに新しい seq と
@@ -1608,12 +1876,13 @@ async fn agent_loop(
                 shared.emit(CoreEvent::AgentTyping {
                     agent_id: agent_id.clone(),
                     active: false,
+                    session_id: session.label().to_owned(),
                 });
 
                 if let Err(err) = outcome {
                     // 履歴を先に直す。ここを飛ばすと、依頼が会話ログにしか残らず
                     // どのプロンプト経路にも載らない（失敗のたびに健忘が起きる）。
-                    record_failed_turn(&shared, &agent_id, &incoming, &err).await;
+                    record_failed_turn(&shared, &agent_id, &incoming, &session, &err).await;
 
                     let payload = ErrorPayload::from(&err);
                     let fatal = err.stops_the_agent();

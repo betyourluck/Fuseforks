@@ -613,6 +613,19 @@ impl SessionStore {
         Ok(self.list_sessions()?.into_iter().next().map(|s| s.id))
     }
 
+    /// `except` を除いて最後に更新されたセッション（Spec 75 — 開いている会話を消す前に
+    /// 移る先。消す前に移るので、消す会話自身を選ばないようにする）。
+    ///
+    /// # Errors
+    /// 読み込みに失敗した場合。
+    pub fn latest_session_except(&self, except: &str) -> CoreResult<Option<String>> {
+        Ok(self
+            .list_sessions()?
+            .into_iter()
+            .map(|s| s.id)
+            .find(|id| id != except))
+    }
+
     /// セッションのレコードを seq 昇順で全部返す。
     ///
     /// 索引を作らない根拠がここ — 20,000 件の全走査が 11 ms で、索引が要るのは

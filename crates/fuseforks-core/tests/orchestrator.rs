@@ -2538,12 +2538,12 @@ async fn a_new_chat_resets_the_conversation_but_not_the_agent() {
     );
 }
 
-/// リセット中に飛行していたターンの完了書き込みは許容されること（案 A）。
+/// リセット中に飛行していたターンの答えは、**新しい会話には載らない**（Spec 75 凍結 2 — 案 A を撤回）。
 ///
-/// 発話は起きた事実であり、ログに残す（hop 打ち切りの「記録してから
-/// 打ち切る」と同じ規律）。世代管理による破棄は採らない。
+/// 発話は起きた事実として残すが、書く先は依頼した会話（根の会話）で、開いている新しい会話の
+/// ログ（画面の写し）には出ない。依頼した会話へ書かれたことは `tests/session_binding.rs` が見る。
 #[tokio::test]
-async fn an_in_flight_turn_may_land_after_a_reset() {
+async fn an_in_flight_turn_does_not_land_in_the_new_chat() {
     /// 応答に時間がかかるバックエンド（飛行中状態を作る）。
     struct SlowEchoBackend;
 
@@ -2590,8 +2590,7 @@ async fn an_in_flight_turn_may_land_after_a_reset() {
     drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
 
     let log = orchestrator.message_log(None).await;
-    assert_eq!(log.len(), 1, "飛行中だった発話 1 件だけが載ること: {log:#?}");
-    assert!(log[0].content.contains("遅い応答"), "{log:#?}");
+    assert!(log.is_empty(), "新しい会話には飛行中だった答えが載らないこと: {log:#?}");
 }
 
 /// ユーザーが宛先を選んだ発話は、宛先外のエージェントには広場ログにも出ないこと。

@@ -185,6 +185,8 @@ pub(super) async fn run_judge(
     waiting: &[AgentId],
     drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
 ) -> CoreResult<String> {
     let language = shared.world.read().await.language().unwrap_or(Language::Ja);
     let message = call
@@ -306,6 +308,7 @@ pub(super) async fn run_judge(
                     waiting,
                     "judge",
                     auto_approve_plans,
+                    session,
                 )
                 .await
                 .0);
@@ -324,6 +327,7 @@ pub(super) async fn run_judge(
                 waiting,
                 "judge",
                 auto_approve_plans,
+                session,
                 |_, _, _| async {},
             )
             .await;
@@ -576,8 +580,9 @@ pub(super) async fn note_judges_losing(shared: &Arc<Shared>, removed: &AgentId) 
                 "Judge {id} ({name}) is disabled because its destination {removed} was removed. Fix its judge.toml."
             ),
         };
+        // 村全体の知らせ — 書いた時点で開いている会話へ（Spec 75 凍結 9）。
         shared
-            .record(crate::model::AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+            .record_open(crate::model::AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
             .await;
     }
 }

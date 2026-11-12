@@ -220,8 +220,9 @@ impl Orchestrator {
             (None, None, _) => return,
         };
         // 入退室通知と同じ経路（from: System / to: User。record のみで配送しない）。
+        // 村全体の知らせ — 書いた時点で開いている会話へ（Spec 75 凍結 9）。
         self.shared
-            .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+            .record_open(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
             .await;
     }
 
@@ -230,7 +231,7 @@ impl Orchestrator {
         self.stop_agent(id).await.ok();
         // `stop_agent` は `tasks` に居ないと `NotRunning` で早期に返るので、印はここでも外す
         // （Spec 72 D5 (c)。居ない個体の印が残ると承認画面に節だけが残る）。
-        self.shared.set_approval_stopped(id, false);
+        self.shared.clear_approval_stopped_of(id);
         let work_dir = {
             let mut world = self.shared.world.write().await;
             let work_dir = world.agent(id).ok().and_then(|record| record.spec.work_dir.clone());

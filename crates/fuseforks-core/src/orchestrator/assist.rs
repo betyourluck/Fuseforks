@@ -34,6 +34,9 @@ struct CallNote<'a> {
     current_chars: usize,
     draft_chars: usize,
     started_ms: u64,
+    /// 下書き補助を始めた時点で開いていた会話（Spec 75 凍結 2）。使用量の記録はここへ —
+    /// 呼び出しの間に会話を切り替えても、始めた会話に残る。
+    session: &'a super::SessionRef,
 }
 
 /// 輪の途中で持つ、直前の不正な下書き（失敗・空のときに返す）。
@@ -56,6 +59,8 @@ impl Orchestrator {
     /// - [`CoreError::Llm`]: 呼び出しが失敗し、それまでに下書きが 1 つも無い
     pub async fn assist_draft(&self, req: AssistRequest) -> CoreResult<AssistReply> {
         let language = self.language().await;
+        // 使用量を書く会話（Spec 75 凍結 2）。始めた時点で開いている会話を最後まで持つ。
+        let session = self.shared.open_ref();
         let kind = req.target.kind;
 
         // 1. 送る前に拒否するもの（凍結 4 — 形だけを検査する）。
@@ -134,6 +139,7 @@ impl Orchestrator {
                 current_chars,
                 draft_chars: 0,
                 started_ms,
+                session: &session,
             };
 
             let response = match backend.chat(request).await {
@@ -342,7 +348,7 @@ impl Orchestrator {
             reasoning: usage.reasoning,
             outcome: note.outcome,
         };
-        if !self.shared.persist(&SessionRecord::assist(record)) {
+        if !self.shared.persist(&SessionRecord::assist(record), note.session) {
             note!("WARN assist: 会話の保存先へ書けなかったため、この使用量は統計画面に出ません（この行だけが記録です）");
         }
     }

@@ -148,6 +148,10 @@ pub struct PlanWaveRecord {
     pub bundle_chars: Option<u64>,
     /// 波全体の所要（= キュー待ち込みの最遅 1 体分）。波の完了時に埋まる。
     pub elapsed_ms: Option<u64>,
+    /// 波を撒いた・提示した会話（Spec 75 凍結 6）。作業状況タブは開いている会話以外の波に
+    /// 「別の会話」と出す。保存先の無い村では `None`。
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// 波のリングバッファ。純データで、イベントの発行と時刻の取得は呼び出し側が持つ
@@ -202,6 +206,7 @@ impl PlanWaveStore {
                 .collect(),
             bundle_chars: None,
             elapsed_ms: None,
+            session_id: None,
         });
         plan_id
     }
@@ -241,8 +246,16 @@ impl PlanWaveStore {
                 .collect(),
             bundle_chars: None,
             elapsed_ms: None,
+            session_id: None,
         });
         plan_id
+    }
+
+    /// 波に会話 ID を付ける（Spec 75 凍結 6）。撒いた・提示した直後に呼ぶ。無い波は何もしない。
+    pub fn set_session(&mut self, plan_id: u64, session_id: Option<String>) {
+        if let Some(record) = self.waves.iter_mut().find(|w| w.plan_id == plan_id) {
+            record.session_id = session_id;
+        }
     }
 
     /// 提案の中身を返す（`dispatch_plan_wave` / `discard_plan_wave` の入口検査用）。

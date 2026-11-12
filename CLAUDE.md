@@ -8310,7 +8310,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 ## Spec の状態
 
 - [Spec 75](specs/75_session-bound-roots.md)（会話を依頼の根に結び付ける — 処理中に会話を切り替えても、答えは依頼した会話へ）:
-  **rev3・未決 0 → P0 完了**（同日。`data_contract.yaml` に `session_binding_contract` を凍結 14 本で新設し、`session_store` /
+  **rev3・未決 0 → P0〜P1 完了**（P1 = コア、2026-11-12。根の封筒が `SessionRef` を運び、書き込みは根の会話へ・開いている会話のときだけ
+  メモリと画面にも / 切り替えは止めず、消す操作だけ処理中の会話を `SESSION_BUSY` で拒む / 開いていない会話のターンは保存先から組む /
+  印は（個体, 会話）で `stoppedElsewhere` / 予定の `fresh` は予定ごとの会話を作る。P0 の文面から 1 つ変えた = 開いている会話の lock は
+  会話 ID の型を変えず別の `switch_gate` にした。結合 8 本（`tests/session_binding.rs`）+ 覆した凍結を留めていた既存 3 本の書き換え・
+  変異 6 回（2 回は予測を外し、1 回はテストを強めて再走）・全 1,518 本緑・clippy 0。**Spec の P1 テスト 9〜11（別の会話で止まる /
+  会話をまたぐ計画の承認 / 後判定の会話の照合）は結合テストにしていない**。記録は Spec の「P1 実装記録」。**次は P2（画面）**。
+  以下は P0 —（同日。`data_contract.yaml` に `session_binding_contract` を凍結 14 本で新設し、`session_store` /
   `reset_rule` / イベント（`agentTyping` / `toolInvoked` / `approvalStopped` に `sessionId`、`sessionUpdated { sessionId, from }` を新設）/
   エラーコード（`SESSION_SWITCH_BLOCKED` → `SESSION_BUSY`）/ `observability_rule`（`turn:` 行の `session=`）/ Spec 72 の印 / 予定の
   `fresh` と後判定 / 計画の確認 / 下書き補助へ覆しを書いた。Spec 03・12・28・72 にも追記。`from` は Spec の本文から足した 1 つ

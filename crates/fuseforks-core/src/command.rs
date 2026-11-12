@@ -226,7 +226,15 @@ pub struct CommandPolicyView {
     ///
     /// **`run.json` には無い印**（`Shared.approval_stopped` の写し。メモリだけで再起動で消える）。
     /// 承認画面はこれが真なら判断待ちが 0 件でも個体の節を残し、「続けさせる」を出す。
+    ///
+    /// **開いている会話の印だけ**（Spec 75 凍結 5）。他の会話の印は `stopped_elsewhere`。
     pub stopped_for_approval: bool,
+    /// 開いていない会話でこの個体が承認待ちで止まっている、その会話の ID（Spec 75 凍結 5）。
+    ///
+    /// 画面はこれを「別の会話（タイトル）で止まっています」の 1 行で出し、「続けさせる」は出さない
+    /// （その会話を開くと出る）。並びは ID 順。
+    #[serde(default)]
+    pub stopped_elsewhere: Vec<String>,
 }
 /// `agents/{id}/run.json` の中身。
 ///

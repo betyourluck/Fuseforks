@@ -61,6 +61,8 @@ pub(super) async fn ask_agent(
     waiting: &[AgentId],
     drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
 ) -> CoreResult<String> {
     // 依頼元のターンに添付が付いていたら、届かないことを本文で断る（D6）。
     // System 行と同じく**記録時の言語**で書く（Spec 35 D6）。
@@ -101,6 +103,7 @@ pub(super) async fn ask_agent(
         waiting,
         "ask",
         auto_approve_plans,
+        session,
     )
     .await
     .0)
@@ -136,6 +139,9 @@ pub(super) async fn deliver_and_wait(
     via: &'static str,
     // 計画の確認を開けない印（Spec 53 凍結 11 (a)）。依頼元の封筒の値を**写すだけ**。
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。**自分では決めない** — 新しい根（外部依頼）も写す経路
+    // （ask / plan / 判断役 / 検証）も呼び手が渡す。依頼の発話と封筒はこの会話へ。
+    session: &super::SessionRef,
 ) -> (String, PlanTaskState) {
     // 依頼主が読む結果の文は村の言語で書く（`reply_text`）。どの出口でも同じ値なので先に 1 回。
     let language = shared
@@ -188,7 +194,7 @@ pub(super) async fn deliver_and_wait(
         AgentMessage::new(from.clone(), Endpoint::Agent { id: to.clone() }, question, next_hop);
     // 質問自体のトークンは呼び出し元のターンに計上済み。二重計上しない。
     outgoing.tokens = 0;
-    shared.record(outgoing.clone()).await;
+    shared.record(outgoing.clone(), session).await;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let envelope = Envelope {
@@ -205,6 +211,7 @@ pub(super) async fn deliver_and_wait(
         // 待ち手の連鎖（Spec 44）。上で判定に使った追加後の形をそのまま運ぶ。
         waiting: chain,
         auto_approve_plans,
+        session: session.clone(),
     };
 
     if let Err(err) = deliver_envelope(shared, to, envelope).await {
@@ -308,6 +315,8 @@ pub(super) async fn run_plan(
     waiting: &[AgentId],
     drops_attachment: &[crate::attachment::AttachmentKind],
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
 ) -> String {
     // 断り書きは記録時の言語で書く（Spec 35 D6）。波の全タスクで同じ値なので
     // ループの外で 1 回だけ引く。
@@ -379,6 +388,14 @@ pub(super) async fn run_plan(
             &wave_tasks,
             started_at_ms,
         );
+        shared
+            .plan_waves
+            .write()
+            .await
+            .set_session(plan_id, session.id().map(str::to_owned));
+        // 提示した会話を控える（Spec 75 凍結 6）。承認で配る波・束ね・破棄の行はこの会話へ書く —
+        // 承認を押した時点で開いている会話ではない。参照なので、控えている間その会話は消せない。
+        shared.plan_sessions_lock().insert(plan_id, session.clone());
         note!(
             "plan pending: agent={from} plan_id={plan_id} wave={wave} tasks={} to=[{}] msg_chars={}",
             wave_tasks.len(),
@@ -404,6 +421,7 @@ pub(super) async fn run_plan(
                 })
                 .collect(),
             started_at_ms,
+            session_id: session.label().to_owned(),
         });
         // このターンでは結果を受け取らない（D3 — 嘘を書かない）。
         return super::reply_text::plan_proposed(language).to_owned();
@@ -451,6 +469,11 @@ pub(super) async fn run_plan(
         .write()
         .await
         .begin_wave(from.clone(), wave, &announced, started_at_ms);
+    shared
+        .plan_waves
+        .write()
+        .await
+        .set_session(plan_id, session.id().map(str::to_owned));
     shared.emit(CoreEvent::PlanWaveStarted {
         plan_id,
         agent_id: from.clone(),
@@ -463,6 +486,7 @@ pub(super) async fn run_plan(
             })
             .collect(),
         started_at_ms,
+        session_id: session.label().to_owned(),
     });
 
     // 3.-4. 配送 → 回収 → 束ね。**dispatch 経路（Spec 43）と 1 実装を共有**
@@ -493,6 +517,7 @@ pub(super) async fn run_plan(
         &displays,
         dispatched_at,
         auto_approve_plans,
+        session,
         verifier,
     )
     .await
@@ -528,6 +553,8 @@ pub(super) async fn fanout_and_wait<F, Fut>(
     waiting: &[AgentId],
     via: &'static str,
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
     mut on_resolved: F,
 ) -> (bool, Vec<Option<String>>)
 where
@@ -556,6 +583,8 @@ where
         let participants = participants.cloned();
         // 待ち手の連鎖も全タスクで同じ（追加は deliver_and_wait が行う）。
         let waiting = waiting.to_vec();
+        // 会話も波の全タスクで同じ参照の複製（Spec 75 凍結 1）。
+        let session = session.clone();
         set.spawn(async move {
             let task_started = std::time::Instant::now();
             let (answer, state) = deliver_and_wait(
@@ -570,6 +599,7 @@ where
                 &waiting,
                 via,
                 auto_approve_plans,
+                &session,
             )
             .await;
             (index, answer, state, task_started.elapsed().as_millis() as u64)
@@ -664,6 +694,8 @@ async fn execute_wave(
     // 波の全タスクへ写す印（Spec 53 凍結 11 (a)）。ワーカー自身は委譲ターンなので
     // 窓を開けないが、その先で転送された個体の計画にまで効かせるために運ぶ。
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
     // 束ねの検証役（Spec 53）。**解決は呼び手が行う**（凍結 2 — ここでは読まない）。
     verifier: Option<AgentId>,
 ) -> Option<String> {
@@ -683,6 +715,7 @@ async fn execute_wave(
         waiting,
         "plan",
         auto_approve_plans,
+        session,
         |index, state, elapsed_ms| {
             let shared = Arc::clone(shared);
             let to = wave_tasks[index].0.clone();
@@ -802,6 +835,7 @@ async fn execute_wave(
         participants,
         waiting,
         auto_approve_plans,
+        session,
     )
     .await
 }
@@ -986,6 +1020,8 @@ async fn verify_bundle(
     participants: Option<&Participants>,
     waiting: &[AgentId],
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75 凍結 1）。受け取った値を写すだけで上書きしない。
+    session: &super::SessionRef,
 ) -> Option<String> {
     let started = std::time::Instant::now();
     let (language, coordinator_name, verifier_name) = {
@@ -1042,6 +1078,7 @@ async fn verify_bundle(
                 waiting,
                 "verify",
                 auto_approve_plans,
+                session,
             );
             // 進行役のターン（または承認後の波）が切られたら待ちを畳む — 波の待ちと同じ
             // （`deliver_and_wait` 自身は時間切れしか見ない）。
@@ -1104,6 +1141,8 @@ pub(super) async fn run_dispatched_wave(
     cancel: tokio_util::sync::CancellationToken,
     // 計画の確認パネルで選ばれた検証役（Spec 53 凍結 2 — 村の既定は読まない）。
     verifier: Option<AgentId>,
+    // 計画を提示した会話（Spec 75 凍結 6）。波・束ね・破棄の行はこの会話へ。
+    session: super::SessionRef,
 ) {
     let dispatched_at = std::time::Instant::now();
     let bundle = execute_wave(
@@ -1124,6 +1163,7 @@ pub(super) async fn run_dispatched_wave(
         dispatched_at,
         // 承認後の波は新しい根 — 印は立てない（Spec 53 凍結 11 (a)）。
         false,
+        &session,
         verifier,
     )
     .await;
@@ -1158,11 +1198,20 @@ pub(super) async fn run_dispatched_wave(
     );
     // 束ねの配送は新しい根（Spec 43 凍結 5）— 計画の確認を開けない印は立てない
     // （Spec 53 凍結 11 (a)。人が承認した波の続きで、次の計画は人がまた見る）。
-    match super::deliver(&shared, &coordinator, message.clone(), budget, None, Vec::new(), false)
-        .await
+    match super::deliver(
+        &shared,
+        &coordinator,
+        message.clone(),
+        budget,
+        None,
+        Vec::new(),
+        false,
+        session.clone(),
+    )
+    .await
     {
         Ok(()) => {
-            shared.record(message).await;
+            shared.record(message, &session).await;
         }
         Err(err) => {
             // 凍結 9 — 黙って捨てない。届け先の居ない束ねは破棄し、事実を
@@ -1185,7 +1234,7 @@ pub(super) async fn run_dispatched_wave(
                 ),
             };
             shared
-                .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0))
+                .record(AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0), &session)
                 .await;
         }
     }

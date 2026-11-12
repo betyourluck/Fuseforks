@@ -209,6 +209,9 @@ impl Orchestrator {
             sessions,
             summaries: RwLock::new(restored_summaries),
             session_id: std::sync::RwLock::new(session_id),
+            switch_gate: tokio::sync::RwLock::new(()),
+            plan_sessions: std::sync::Mutex::new(HashMap::new()),
+            session_refs: super::SessionRefs::default(),
             external_gate: tokio::sync::Semaphore::new(1),
             // 起動時は必ず OFF（Spec 53 D3 — 保存しない）。
             plan_review_bypass: std::sync::atomic::AtomicBool::new(false),

@@ -500,7 +500,15 @@ impl Orchestrator {
         let mut views = Vec::new();
         for snapshot in self.snapshots().await {
             // 止まった印は `run.json` に無い（Spec 72 D5）。`Shared` から写す。
-            let stopped_for_approval = self.shared.is_approval_stopped(&snapshot.id);
+            // 印は（個体, 会話）で持つ（Spec 75 凍結 5）— 「続けさせる」は開いている会話の印だけ。
+            let open = if self.shared.sessions.is_some() {
+                self.shared.current_session()
+            } else {
+                super::SessionRef::none().label().to_owned()
+            };
+            let mut stopped_elsewhere = self.shared.approval_stopped_sessions(&snapshot.id);
+            let stopped_for_approval = stopped_elsewhere.contains(&open);
+            stopped_elsewhere.retain(|session| *session != open);
             let view = match self.shared.store.read_command_policy(&snapshot.id).await {
                 Ok(policy) => CommandPolicyView {
                     agent_id: snapshot.id,
@@ -508,6 +516,7 @@ impl Orchestrator {
                     pending: policy.pending,
                     broken: false,
                     stopped_for_approval,
+                    stopped_elsewhere: stopped_elsewhere.clone(),
                 },
                 Err(_) => CommandPolicyView {
                     agent_id: snapshot.id,
@@ -515,6 +524,7 @@ impl Orchestrator {
                     pending: Vec::new(),
                     broken: true,
                     stopped_for_approval,
+                    stopped_elsewhere: stopped_elsewhere.clone(),
                 },
             };
             views.push(view);
@@ -610,6 +620,19 @@ impl Orchestrator {
             0,
         );
 
+        // 根の会話は**印の会話**（Spec 75 凍結 1・5）。画面は開いている会話の印にだけ
+        // 「続けさせる」を出すので通常は開いている会話と同じだが、コアは印から決める。
+        // 印が無い（画面を迂回した呼び出し）ときは開いている会話 — コアの門は受信箱の有無だけ。
+        let session = {
+            let marked = self.shared.approval_stopped_sessions(id);
+            let open = self.shared.current_session();
+            if marked.is_empty() || marked.contains(&open) {
+                self.shared.open_ref()
+            } else {
+                self.shared.ref_to(&marked[0])
+            }
+        };
+
         let budget = new_root_budget(&self.shared).await;
         let ceiling = budget.as_ref().map_or_else(
             || "-".to_owned(),
@@ -628,14 +651,15 @@ impl Orchestrator {
             // 人が押した続行なので計画の確認は普通に開く（Spec 53 の印を
             // 立てるのは無人の発火だけ）。
             false,
+            session.clone(),
         )
         .await?;
         // 受信箱に入った時点で承認待ちの印を外す（Spec 72 D5 (b)）。ターンの入口まで
-        // 待つと、押した直後の画面に印が残り、連打で 2 通目が出る。
-        self.shared.set_approval_stopped(id, false);
+        // 待つと、押した直後の画面に印が残り、連打で 2 通目が出る。外すのはその会話の印だけ。
+        self.shared.set_approval_stopped(id, &session, false);
         // 配送してから記録する（`deliver_scheduled` と同じ順序 — 逆にすると、
         // 受信箱が飽和していたときに「配られていない発話」が会話ペインへ残る）。
-        self.shared.record(message).await;
+        self.shared.record(message, &session).await;
 
         // 人がこの線を何回引いたかを後から数えられるようにする。1 行 = 1 回押した。
         // `pending_left` は**コアが `run.json` を読んで自分で数える** —

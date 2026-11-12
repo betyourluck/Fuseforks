@@ -41,8 +41,25 @@ pub(super) fn spawn_schedule_ticker(
                     schedule_tick(&shared, &runtime, chrono::Local::now()).await;
                 }
                 event = events.recv() => match event {
-                    Ok(CoreEvent::AgentTyping { agent_id, active: false }) => {
+                    Ok(CoreEvent::AgentTyping { agent_id, active: false, session_id }) => {
                         runtime.in_flight.lock().await.remove(&agent_id);
+                        // **根の会話のターンの終わりでだけ後処理する**（Spec 75 凍結 8）。同じ個体が
+                        // 別の会話のターンを終えても、予定の後判定と要約は発火しない — 登録は残す。
+                        let acceptance_elsewhere = runtime
+                            .pending_acceptances
+                            .lock()
+                            .await
+                            .get(&agent_id)
+                            .is_some_and(|state| state.session.label() != session_id);
+                        let summary_elsewhere = runtime
+                            .pending_summaries
+                            .lock()
+                            .await
+                            .get(&agent_id)
+                            .is_some_and(|(_, session)| session.label() != session_id);
+                        if acceptance_elsewhere || summary_elsewhere {
+                            continue;
+                        }
                         // 根のターンが終わった = この因果で待った相手は全員
                         // 答え終わっている（`ask` / `plan` は答えを待って初めて
                         // 呼び出し元のターンが進むため）。
@@ -55,7 +72,7 @@ pub(super) fn spawn_schedule_ticker(
                         // 承認して続けさせた次のターンの完了は、その予定の次の発火が受ける。
                         if shared
                             .upgrade()
-                            .is_some_and(|shared| shared.is_approval_stopped(&agent_id))
+                            .is_some_and(|shared| shared.is_approval_stopped(&agent_id, &session_id))
                         {
                             let acceptance =
                                 runtime.pending_acceptances.lock().await.remove(&agent_id);
@@ -98,13 +115,14 @@ pub(super) fn spawn_schedule_ticker(
                         }
                         // ここが自動要約の起点（後判定なしの予定）。
                         let pending = runtime.pending_summaries.lock().await.remove(&agent_id);
-                        if let Some(participants) = pending
+                        if let Some((participants, session)) = pending
                             && let Some(shared) = shared.upgrade()
                         {
                             // **切り離す。** ここで待つと、要約の LLM 呼び出しの間
                             // ティッカーが止まる（前判定と同じ理由）。
                             tokio::spawn(async move {
-                                summarize_causality(&shared, &agent_id, &participants).await;
+                                summarize_causality(&shared, &agent_id, &participants, &session)
+                                    .await;
                             });
                         }
                     }
@@ -210,8 +228,9 @@ pub(super) async fn schedule_tick<Tz: chrono::TimeZone>(
                             task.to,
                         ),
                     };
+                    // 村全体の知らせ — 書いた時点で開いている会話へ（Spec 75 凍結 9）。
                     shared
-                        .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+                        .record_open(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
                         .await;
                     consumed.push((task.id.clone(), due_ms));
                     continue;
@@ -289,12 +308,8 @@ async fn deliver_batch(
     if candidates.is_empty() {
         return;
     }
-    if candidates
-        .iter()
-        .any(|(task, _)| task.session_mode == SessionMode::Fresh)
-    {
-        start_fresh_session(shared).await;
-    }
+    // `fresh` で村全体を切り替えない（Spec 75 凍結 14）。会話は `deliver_scheduled` が
+    // 予定ごとに決める — `fresh` は予定ごとに新しい会話・`continue` は開いている会話。
     for (task, due_ms) in candidates {
         // **消化するのは配送できたときだけ**（従来の規律を維持）。
         // 背圧で見送った回は消化せず、次の tick が拾い直す。
@@ -363,6 +378,9 @@ async fn deliver_scheduled(
     let budget = new_root_budget(shared).await;
     // 後判定の再依頼が継承する財布（Spec 46 凍結 3 —「新しい封筒・同じ財布」）。
     let budget_for_acceptance = budget.clone();
+    // 発火の根の会話（Spec 75 凍結 1・14）。`fresh` はこの発火のために新しい会話を作り、
+    // **画面は切り替えない**。`continue` は発火の時点で開いている会話。
+    let (session, created) = fire_session(shared, task);
 
     // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2）。
     match deliver(
@@ -374,11 +392,12 @@ async fn deliver_scheduled(
         Vec::new(),
         // 計画の確認を開けない印を立てる 1 箇所目（Spec 53 凍結 11 (a)）。
         task.auto_approve_plans,
+        session.clone(),
     )
     .await
     {
         Ok(()) => {
-            shared.record(message).await;
+            shared.record(message, &session).await;
             runtime.in_flight.lock().await.insert(task.to.clone());
             if let Some(acceptance) = task.acceptance.clone() {
                 // 後判定つきは**こちらへだけ**登録する（Spec 46 D2 の直列 —
@@ -401,6 +420,7 @@ async fn deliver_scheduled(
                         current_participants: participants,
                         summarize_after: task.summarize_after,
                         auto_approve_plans: task.auto_approve_plans,
+                        session: session.clone(),
                     },
                 );
                 return true;
@@ -413,7 +433,7 @@ async fn deliver_scheduled(
                     .pending_summaries
                     .lock()
                     .await
-                    .insert(task.to.clone(), participants);
+                    .insert(task.to.clone(), (participants, session.clone()));
             }
             true
         }
@@ -422,27 +442,49 @@ async fn deliver_scheduled(
             // NotRunning: 上の running 判定との間で停止された競合。
             // どちらも次の tick が正しく拾い直す。
             note!("schedule: {} への配送を見送りました: {err}", task.to);
+            // この発火のために作った会話は空のまま残さない — 次の tick が再試行するたびに
+            // 空の会話が 1 つずつ増える。参照を手放してから消す（誰も持っていないので消せる）。
+            if let Some(id) = created {
+                drop(session);
+                discard_empty_session(shared, &id);
+            }
             false
         }
     }
 }
 
-/// 新しい会話を起こす（`sessionMode: fresh`）。
+/// 発火の根の会話を決める（Spec 75 凍結 14）。戻り値の 2 つ目は、この発火のために作った会話の ID。
 ///
-/// **失敗しても発火は止めない。** 会話が切り替わらないだけで、依頼は届く —
-/// 「新しい会話で始められなかったから今日の監視を落とす」は交換として悪い。
-async fn start_fresh_session(shared: &Arc<Shared>) {
+/// `fresh` は新しい会話を作ってその参照を返し、**開いている会話も画面も動かさない**（Spec 28 D6 の
+/// 「村全体を切り替える」を覆した）。`continue` と保存先の無い村は開いている会話。
+/// **作れなくても発火は止めない** — 開いている会話へ届く。「新しい会話で始められなかったから
+/// 今日の監視を落とす」は交換として悪い。
+fn fire_session(shared: &Arc<Shared>, task: &ScheduledTask) -> (super::SessionRef, Option<String>) {
+    if task.session_mode != SessionMode::Fresh {
+        return (shared.open_ref(), None);
+    }
     let Some(store) = shared.sessions.as_ref() else {
-        // 保存先の無い村では会話の単位そのものが無い。黙って続ける。
-        return;
+        // 保存先の無い村では会話の単位そのものが無い。開いている会話（メモリ）へ。
+        return (shared.open_ref(), None);
     };
     match store.create_session(None) {
-        Ok(session_id) => {
-            if let Err(err) = shared.open_session(&session_id).await {
-                note!("WARN schedule: 新しい会話へ切り替えられませんでした: {err}");
-            }
+        Ok(session_id) => (shared.ref_to(&session_id), Some(session_id)),
+        Err(err) => {
+            note!("WARN schedule: 新しい会話を起こせませんでした: {err}");
+            (shared.open_ref(), None)
         }
-        Err(err) => note!("WARN schedule: 新しい会話を起こせませんでした: {err}"),
+    }
+}
+
+/// 配送を見送った発火のために作った会話を消す（中身は空）。参照が残っていれば消さない。
+fn discard_empty_session(shared: &Arc<Shared>, id: &str) {
+    let Some(store) = shared.sessions.as_ref() else {
+        return;
+    };
+    match shared.session_refs.when_unreferenced(id, || store.delete_session(id)) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => note!("WARN schedule: 空の会話 `{id}` を消せませんでした: {err}"),
+        Err(refs) => note!("WARN schedule: 空の会話 `{id}` は参照が {refs} 件残っているので消しません"),
     }
 }
 
@@ -465,9 +507,7 @@ async fn probe_and_deliver(
     if !outcome.delivers() {
         return;
     }
-    if task.session_mode == SessionMode::Fresh {
-        start_fresh_session(shared).await;
-    }
+    // `fresh` の会話は `deliver_scheduled` が予定ごとに作る（Spec 75 凍結 14）。
     deliver_scheduled(shared, runtime, &task, appendix).await;
 }
 
@@ -620,13 +660,18 @@ async fn probe_once(shared: &Shared, probe: &ScheduleProbe) -> ProbeRun {
 /// **人が押す「要約して続ける」との違いは対象だけ**で、要約そのものの規律
 /// （本人のモデルが書く / ツールは提示しない / 保存が済んでから畳む / 空なら
 /// 畳まない）は 1 つも変えていない。
-async fn summarize_causality(shared: &Shared, root: &AgentId, participants: &Participants) {
+async fn summarize_causality(
+    shared: &Shared,
+    root: &AgentId,
+    participants: &Participants,
+    session: &super::SessionRef,
+) {
     let targets = match participants.lock() {
         Ok(set) => set.clone(),
         // 毒されたロックで要約を諦める理由が無い（中身は名前の集合だけ）。
         Err(poisoned) => poisoned.into_inner().clone(),
     };
-    summarize_targets(shared, root, targets).await;
+    summarize_targets(shared, root, targets, session).await;
 }
 
 /// 要約の本体（`summarize_causality` と後判定の確定が共有する 1 実装）。
@@ -634,11 +679,13 @@ async fn summarize_targets(
     shared: &Shared,
     root: &AgentId,
     mut targets: std::collections::HashSet<AgentId>,
+    // 根の会話（Spec 75 凍結 7）。要約はこの会話から読み、この会話へ書く。
+    session: &super::SessionRef,
 ) {
     // **根は必ず対象。** 依頼を受けて答えた本人で、履歴が最も伸びている。
     targets.insert(root.clone());
 
-    match shared.summarize_agents(Some(&targets)).await {
+    match shared.summarize_agents(session, Some(&targets)).await {
         Ok(0) => {}
         Ok(done) => note!("schedule summarize: root={root} agents={done}"),
         // 要約できないことは、次の発火を止める理由にならない。
@@ -675,6 +722,9 @@ pub(super) struct AcceptancePending {
     /// 再依頼の封筒に計画の確認を開けない印を立てるか（Spec 53 — 発火時の
     /// 予定の値を写す。**メモリだけ**の構造体なので再起動後の再依頼は存在しない）。
     auto_approve_plans: bool,
+    /// 発火の根の会話（Spec 75 凍結 1・8）。再依頼・確定後の要約はこの会話へ。後判定は
+    /// 個体と**この会話**の両方が一致した `AgentTyping { active: false }` でだけ取り出す。
+    session: super::SessionRef,
 }
 
 /// 完了した試行 1 回ぶんの後判定（Spec 46 D2 の「後判定 → 確定 → 要約」の直列）。
@@ -781,11 +831,13 @@ async fn redeliver_for_acceptance(
         Vec::new(),
         // 印を立てる 2 箇所目（Spec 53 凍結 11 (a) — 発火時の予定の値）。
         state.auto_approve_plans,
+        // 元の発火の会話（Spec 75 凍結 1 — `fresh` で作った会話を含む）。
+        state.session.clone(),
     )
     .await
     {
         Ok(()) => {
-            shared.record(message).await;
+            shared.record(message, &state.session).await;
             runtime.in_flight.lock().await.insert(state.to.clone());
             state.attempt += 1;
             state.current_participants = participants;
@@ -814,7 +866,8 @@ async fn redeliver_for_acceptance(
 /// 「予算枯渇時はスキップ」を却下した側）。
 async fn settle_acceptance(shared: &Arc<Shared>, state: &AcceptancePending) {
     if state.summarize_after {
-        summarize_targets(shared, &state.to, state.participants_union.clone()).await;
+        summarize_targets(shared, &state.to, state.participants_union.clone(), &state.session)
+            .await;
     }
 }
 

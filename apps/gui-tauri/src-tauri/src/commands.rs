@@ -1241,8 +1241,8 @@ pub struct AttachmentPayload {
 /// 稼働状態・統計・Memory.md・個別 MCP 接続は残る。
 ///
 /// **Spec 12 で意味が変わった**: 今の会話は捨てられず、閉じて新しい会話が開く
-/// （前の会話はディスクに残り、一覧から戻れる）。飛行中のターンがあると
-/// `SESSION_SWITCH_BLOCKED` で失敗する — 答えが別の会話へ着地するのを防ぐため。
+/// （前の会話はディスクに残り、一覧から戻れる）。処理中でも通る — 処理の答えは
+/// 依頼した会話へ書かれる（Spec 75）。
 #[tauri::command]
 pub async fn reset_conversation(state: State<'_, AppState>) -> CoreResult<()> {
     state.host.orchestrator.reset_conversation().await
@@ -1266,8 +1266,7 @@ pub async fn current_session(state: State<'_, AppState>) -> CoreResult<String> {
 
 /// 保存されている会話を開き直す。
 ///
-/// 飛行中のターンがあると `SESSION_SWITCH_BLOCKED` で失敗する —
-/// 答えが別の会話へ着地するのを防ぐため。
+/// 処理中でも開ける — 処理の答えは依頼した会話へ書かれる（Spec 75）。
 #[tauri::command]
 pub async fn resume_session(state: State<'_, AppState>, session_id: String) -> CoreResult<()> {
     state.host.orchestrator.resume_session(&session_id).await

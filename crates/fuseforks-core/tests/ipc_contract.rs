@@ -72,13 +72,20 @@ fn run_approval_event_wire_is_frozen() {
 #[test]
 fn approval_stopped_event_wire_is_frozen() {
     for stopped in [true, false] {
+        // `sessionId` は Spec 75 凍結 5（印は（個体, 会話）で持つ）。
         let event = fuseforks_core::event::CoreEvent::ApprovalStopped {
             agent_id: AgentId::from("agent_1"),
             stopped,
+            session_id: "s1".into(),
         };
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
-            serde_json::json!({ "type": "approvalStopped", "agentId": "agent_1", "stopped": stopped }),
+            serde_json::json!({
+                "type": "approvalStopped",
+                "agentId": "agent_1",
+                "stopped": stopped,
+                "sessionId": "s1",
+            }),
         );
     }
 }
@@ -94,10 +101,16 @@ fn command_policy_view_wire_is_frozen() {
         pending: Vec::new(),
         broken: false,
         stopped_for_approval: true,
+        stopped_elsewhere: vec!["s2".into()],
     };
+    // `stoppedElsewhere` は Spec 75 凍結 5 — 開いていない会話で止まっている、その会話の ID。
     assert_eq!(
         wire_keys(&view),
-        vec!["agentId", "broken", "name", "pending", "stoppedForApproval"],
+        vec!["agentId", "broken", "name", "pending", "stoppedElsewhere", "stoppedForApproval"],
+    );
+    assert_eq!(
+        serde_json::to_value(&view).unwrap()["stoppedElsewhere"],
+        serde_json::json!(["s2"]),
     );
     assert_eq!(
         serde_json::to_value(&view).unwrap()["stoppedForApproval"],
@@ -436,6 +449,8 @@ fn plan_wave_wire_fields_are_frozen() {
             "bundleChars",
             "elapsedMs",
             "planId",
+            // Spec 75 凍結 6 — 波の会話。作業状況タブが開いていない会話の波に「別の会話」と出す。
+            "sessionId",
             "startedAtMs",
             "state",
             "tasks",
@@ -789,6 +804,7 @@ fn tool_invoked_event_wire_is_frozen() {
         reason: fuseforks_core::tool_reason::ReasonState::Omitted,
         call_id: 7,
         round: 3,
+        session_id: "s1".into(),
     };
     assert_eq!(
         serde_json::to_value(&event).unwrap(),
@@ -800,6 +816,30 @@ fn tool_invoked_event_wire_is_frozen() {
             "reason": { "kind": "omitted" },
             "callId": 7,
             "round": 3,
+            // Spec 75 凍結 10 — 会話ペインは開いている会話の行だけ積む。
+            "sessionId": "s1",
+        }),
+    );
+}
+
+/// 開いていない会話へ発話が書かれた通知（Spec 75 凍結 2・10）のワイヤ形。
+///
+/// **落ちたら `types.ts` の `CoreEvent` の `sessionUpdated` を直すこと。** 本文は運ばない —
+/// 開くと `sessionSwitched` → `list_messages` で読む。`from` はトーストの名前のため。
+#[test]
+fn session_updated_event_wire_is_frozen() {
+    let event = fuseforks_core::event::CoreEvent::SessionUpdated {
+        session_id: "s2".into(),
+        from: fuseforks_core::model::Endpoint::Agent {
+            id: AgentId::from("agent_1"),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({
+            "type": "sessionUpdated",
+            "sessionId": "s2",
+            "from": { "kind": "agent", "id": "agent_1" },
         }),
     );
 }

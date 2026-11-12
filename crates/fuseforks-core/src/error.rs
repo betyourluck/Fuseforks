@@ -78,18 +78,21 @@ pub enum CoreError {
     #[error("会話 `{0}` は保存されていません")]
     SessionNotFound(String),
 
-    /// 飛行中のターンがあるため会話を切り替えられない（Spec 12 の不変条件 11）。
+    /// 消そうとした会話にまだ処理が残っている（Spec 75 凍結 11）。
     ///
-    /// 飛行中に切り替えると、**答えが別のセッションへ着地する** — 頼んだ会話と
-    /// 答えが載る会話が食い違い、しかも画面上その 2 つは区別が付かない。
-    /// 自動で打ち切ってから切り替えることはしない（線は人が引く）。
+    /// 処理（受信箱で待っている依頼・飛行中のターン・承認待ちの計画・予定の後処理・要約・
+    /// 下書き補助）はその会話への参照を持ち、答えをその会話へ書く。消すと答えの書き先が無くなる。
+    /// **開いているかを問わない。** 切り替えは処理中でも拒まない（Spec 12 の不変条件 11 を撤回。
+    /// `SESSION_SWITCH_BLOCKED` は撤去した — 文面が実態と逆になるので流用しない）。
     #[error(
-        "飛行中のターンが {in_flight} 件あるため会話を切り替えられません。\
-         「■ 停止」または「全ターン停止」で止めてから切り替えてください"
+        "会話 `{session_id}` にはまだ処理が残っています（{refs} 件）。\
+         終わってから、または「■ 停止」で止めてから消してください"
     )]
-    SessionSwitchBlocked {
-        /// 飛行中のターン数。
-        in_flight: usize,
+    SessionBusy {
+        /// 会話 ID。
+        session_id: String,
+        /// その会話への参照の数（残っている処理の数の目安）。
+        refs: usize,
     },
 
     /// 会話の保存先（`sessions.redb`）の操作に失敗した（Spec 12）。
@@ -425,7 +428,7 @@ impl CoreError {
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::SessionStore { .. } => "SESSION_STORE_FAILED",
             Self::SessionStoreLocked { .. } => "SESSION_STORE_LOCKED",
-            Self::SessionSwitchBlocked { .. } => "SESSION_SWITCH_BLOCKED",
+            Self::SessionBusy { .. } => "SESSION_BUSY",
             Self::InvalidTokenBudget => "INVALID_TOKEN_BUDGET",
             Self::InvalidJudgeFile { .. } => "INVALID_JUDGE_FILE",
             Self::InvalidAssistRequest { .. } => "INVALID_ASSIST_REQUEST",

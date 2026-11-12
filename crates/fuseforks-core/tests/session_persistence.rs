@@ -505,12 +505,11 @@ async fn fork_opens_the_copy_and_leaves_the_source_untouched() {
     shutdown(orchestrator, &[id]).await;
 }
 
-/// 切り替えの拒否は**既存の会話を開くときだけ**（Spec 12 の不変条件 11）。
-///
-/// 新規チャットは飛行中でも通る — 着地先が新しい空の会話なので、既存の記録を
-/// 汚さない（Spec 03 の案 A は改訂後もそのまま生きる）。
+/// **処理中でも既存の会話を開ける**（Spec 75 凍結 11。Spec 12 の不変条件 11 を撤回し、
+/// `SESSION_SWITCH_BLOCKED` は撤去した）— 処理の書き込みは根の会話へ行くので、開いた会話へ
+/// 無関係な答えは混ざらない。新規チャットも同じく通る。
 #[tokio::test]
-async fn resuming_is_refused_mid_turn_but_a_new_chat_is_not() {
+async fn resuming_and_a_new_chat_both_work_mid_turn() {
     let dir = TempDir::new("switch-busy");
     let id = AgentId::from("agent_01");
     let orchestrator = boot(&dir, Arc::new(SlowBackend)).await;
@@ -528,14 +527,12 @@ async fn resuming_is_refused_mid_turn_but_a_new_chat_is_not() {
     orchestrator.send_user_message(&id, "考えて").await.unwrap();
     tokio::time::sleep(Duration::from_millis(80)).await;
 
-    let refused = orchestrator.resume_session(&first).await;
-    let payload = fuseforks_core::ErrorPayload::from(&refused.expect_err("拒否されること"));
-    assert_eq!(payload.code, "SESSION_SWITCH_BLOCKED");
-    assert_eq!(
-        orchestrator.current_session(),
-        second,
-        "拒否されたら開いている会話は動かない"
-    );
+    orchestrator
+        .resume_session(&first)
+        .await
+        .expect("処理中でも既存の会話を開けること");
+    assert_eq!(orchestrator.current_session(), first);
+    let _ = second;
 
     // 新規チャットは同じ状況でも通る。
     orchestrator

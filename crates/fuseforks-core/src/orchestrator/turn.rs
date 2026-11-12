@@ -45,13 +45,17 @@ pub(super) async fn record_failed_turn(
     shared: &Arc<Shared>,
     agent_id: &AgentId,
     incoming: &AgentMessage,
+    // 失敗したターンの会話（Spec 75 凍結 2）。1 往復はこの会話へ書く。
+    session: &super::SessionRef,
     error: &CoreError,
 ) {
     let attributed = attribute_sender(shared, incoming).await;
+    // 開いている会話の lock を `world` より先に取る（凍結 3）。
+    let gate = shared.switch_gate.read().await;
     let mut world = shared.world.write().await;
     let language = world.language().unwrap_or(crate::world::Language::Ja);
     let note = failed_turn_note(language, error);
-    shared.push_exchange(&mut world, agent_id, &attributed, &note);
+    shared.push_exchange(&gate, &mut world, agent_id, session, &attributed, &note);
 }
 
 /// 失敗したターンの注記（履歴の応答側に積む文）。**村の言語で書く**（2026-10-19。それまでは日本語固定で、
@@ -244,15 +248,22 @@ struct TurnContext {
     started_ts_ms: u64,
     model: String,
     backend: String,
+    /// このターンの根の会話（Spec 75 凍結 1・2）。清算・出口の System 行・1 往復はここへ書く。
+    session: super::SessionRef,
 }
 
 impl TurnContext {
-    fn begin(template: &ModelTemplate, backend: &dyn crate::llm::LlmBackend) -> Self {
+    fn begin(
+        template: &ModelTemplate,
+        backend: &dyn crate::llm::LlmBackend,
+        session: super::SessionRef,
+    ) -> Self {
         Self {
             started: std::time::Instant::now(),
             started_ts_ms: crate::model::now_ms(),
             model: template.model.clone(),
             backend: backend.name().to_owned(),
+            session,
         }
     }
 }
@@ -332,7 +343,7 @@ async fn settle_turn(
         // **止まった理由が既に分かっている**ので、空転の観測の対象にならない。
         note!(
             "turn: agent={agent_id} hop={} rounds={}/{} waves={} stop={} \
-             prompt={} cached={} total={} reasoning={} backend={} model={} repeat_max={}",
+             prompt={} cached={} total={} reasoning={} backend={} model={} repeat_max={} session={}",
             record.hop,
             record.rounds,
             rounds_cap.map_or_else(|| "-".to_owned(), |cap| cap.to_string()),
@@ -345,12 +356,16 @@ async fn settle_turn(
             record.backend,
             record.model,
             spend.repeat_max,
+            // Spec 75 で末尾へ足した（既存の grep は壊れない）— このターンの記録が書かれた会話。
+            // 処理中に会話を切り替えても、根の会話の ID が出る。
+            ctx.session.label(),
         );
     }
-    if shared.persist(&SessionRecord::turn(record.clone())) {
+    // 書き先はターンの根の会話（Spec 75 凍結 2）。`TurnRecorded.sessionId` も同じ値。
+    if shared.persist(&SessionRecord::turn(record.clone()), &ctx.session) {
         shared.emit(CoreEvent::TurnRecorded {
             agent_id: agent_id.clone(),
-            session_id: shared.current_session(),
+            session_id: ctx.session.label().to_owned(),
         });
     }
     record
@@ -453,7 +468,7 @@ async fn finish_interrupted(
     };
 
     // (b) 履歴 + 清算（累計 / Record::Turn / TurnRecorded — Spec 39 の 1 実装）。
-    record_interrupted_turn(shared, agent_id, sent_user_turn).await;
+    record_interrupted_turn(shared, agent_id, &ctx.session, sent_user_turn).await;
     let settled = settle_turn(shared, agent_id, ctx, &spend, waves, TurnStop::Interrupted, None).await;
 
     // (a) 会話ログへ System の 1 行。表示名は「切られた本人」— System 行は
@@ -474,12 +489,10 @@ async fn finish_interrupted(
         }
     };
     shared
-        .record(AgentMessage::new(
-            Endpoint::System,
-            Endpoint::User,
-            interrupt_text,
-            0,
-        ))
+        .record(
+            AgentMessage::new(Endpoint::System, Endpoint::User, interrupt_text, 0),
+            &ctx.session,
+        )
         .await;
 
     // 出口の行はここ（切られたターン自身）だけが書く。割り込んだ側は書かない —
@@ -533,10 +546,17 @@ async fn finish_interrupted(
 ///
 /// 数字は積まない — 累計・`Record::Turn` は [`settle_turn`] が 4 出口共通で持つ
 /// （Spec 39 P1 でここから移した。出口ごとに積むと片方だけ既定値のまま化ける — #103 の形）。
-async fn record_interrupted_turn(shared: &Arc<Shared>, agent_id: &AgentId, sent_user_turn: &str) {
+async fn record_interrupted_turn(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    session: &super::SessionRef,
+    sent_user_turn: &str,
+) {
+    // 開いている会話の lock を `world` より先に取る（Spec 75 凍結 3）。
+    let gate = shared.switch_gate.read().await;
     let mut world = shared.world.write().await;
     let note = interrupted_turn_note(world.language().unwrap_or(crate::world::Language::Ja));
-    shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
+    shared.push_exchange(&gate, &mut world, agent_id, session, sent_user_turn, &note);
 }
 
 /// トークン予算で打ち切られたターンの出口（Spec 11 — `token_budget` の
@@ -571,9 +591,10 @@ async fn finish_budget_exhausted(
     // (b) 履歴 + 清算（累計 / Record::Turn / TurnRecorded — Spec 39 の 1 実装）。
     //     ここまでに使ったトークンは実際に消費したので積む。
     {
+        let gate = shared.switch_gate.read().await;
         let mut world = shared.world.write().await;
         let note = budget_turn_note(world.language().unwrap_or(crate::world::Language::Ja));
-        shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
+        shared.push_exchange(&gate, &mut world, agent_id, &ctx.session, sent_user_turn, &note);
     }
     let settled = settle_turn(shared, agent_id, ctx, &spend, waves, stop, None).await;
 
@@ -615,12 +636,10 @@ async fn finish_budget_exhausted(
             ),
         };
         shared
-            .record(AgentMessage::new(
-                Endpoint::System,
-                Endpoint::User,
-                budget_text,
-                0,
-            ))
+            .record(
+                AgentMessage::new(Endpoint::System, Endpoint::User, budget_text, 0),
+                &ctx.session,
+            )
             .await;
     }
 
@@ -709,8 +728,9 @@ async fn finish_approval_pending(
                  They can run in the next turn once approved.)"
             ),
         };
+        let gate = shared.switch_gate.read().await;
         let mut world = shared.world.write().await;
-        shared.push_exchange(&mut world, agent_id, sent_user_turn, &note);
+        shared.push_exchange(&gate, &mut world, agent_id, &ctx.session, sent_user_turn, &note);
     }
     // (3) 清算。**`turn:` 行を書く側**（`own_line` の 3 出口と違う）なので、分母と `repeat_max` を
     //     正しく渡す — `None` だと `rounds=N/-`、写さないと `repeat_max=0` の嘘の観測になる
@@ -739,13 +759,14 @@ async fn finish_approval_pending(
         ),
     };
     shared
-        .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0))
+        .record(AgentMessage::new(Endpoint::System, Endpoint::User, text, 0), &ctx.session)
         .await;
 
     // 止まった個体の印（Spec 72 D5）。承認画面が節を残し「続けさせる」を出す根拠。
     // **System 行の後に立てる** — 画面は印のイベントで承認画面を取り直すので、先に立てると
     // 取り直した画面に会話の行がまだ無い瞬間ができる。
-    shared.set_approval_stopped(agent_id, true);
+    // 印は（個体, 会話）で持つ（Spec 75 凍結 5）— 止まったターンの根の会話。
+    shared.set_approval_stopped(agent_id, &ctx.session, true);
 
     // (4) 依頼主への返信。送信の失敗は無視する（相手が先に確定していることはある）。
     //     本文は既存 2 出口の形。束ねはこの text をそのまま載せる（状態別の文の表は無い）。
@@ -1066,7 +1087,7 @@ impl RepeatGuard {
 /// `World` から引くが、こちらは **id のまま**出す — ログは表示名の改名を
 /// またいで grep できる必要がある（`fuseforks.log` の `name=` を識別子で
 /// 残した判断と同じ。CLAUDE.md「識別子は `title` に残す」）。
-fn endpoint_log_label(endpoint: &Endpoint) -> String {
+pub(super) fn endpoint_log_label(endpoint: &Endpoint) -> String {
     match endpoint {
         Endpoint::User => "user".to_owned(),
         Endpoint::Agent { id } => id.to_string(),
@@ -1106,6 +1127,9 @@ pub(super) async fn handle_message(
         // 計画の確認を開けない印（Spec 53）。このターンでは**写すだけ**で、
         // 立てたり消したりしない（凍結 11 (a)）。
         auto_approve_plans,
+        // この因果の会話（Spec 75 凍結 1）。このターンの書き込みと、このターンが生む配送
+        // （ask / plan / 転送 / 判断役）はこの会話へ。プロンプトもこの会話から組む（凍結 4）。
+        session,
     } = envelope;
     // ターンの開始を残す。**無音の起点が分からないと、飛行中と落ちた後を
     // 区別できない** — `tool:` 行はツールを呼んだ周にしか出ないので、
@@ -1120,7 +1144,9 @@ pub(super) async fn handle_message(
     // 承認待ちの印を外す（Spec 72 D5 (a)）。**`run_turn` の入口ではなくここ** — 段 1〜2 の
     // `?` で抜けた経路を通らず、`Failed` と印が同時に立つ。続行の配送でも人の新しい依頼でも
     // 予定の発火でも同じ 1 箇所。立っていなければイベントは出ない。
-    shared.set_approval_stopped(agent_id, false);
+    // 外すのは**このターンの会話の印だけ**（Spec 75 凍結 5）— 別の会話のターンが始まっても、
+    // 止まった会話の「続けさせる」は残す。
+    shared.set_approval_stopped(agent_id, &session, false);
     // 1. 定義とテンプレートを取り出す。ロックはここで手放し、LLM 呼び出しは持たずに行う。
     let (spec, template) = {
         let world = shared.world.read().await;
@@ -1273,6 +1299,7 @@ pub(super) async fn handle_message(
         roster.is_some(),
         &handoffs,
         gates,
+        &session,
     )
     .await;
 
@@ -1296,6 +1323,7 @@ pub(super) async fn handle_message(
         prompt,
         tools,
         stable_len,
+        &session,
     )
     .await?
     else {
@@ -1313,6 +1341,7 @@ pub(super) async fn handle_message(
         participants,
         waiting,
         auto_approve_plans,
+        session,
     )
     .await
 }
@@ -1511,9 +1540,11 @@ async fn run_turn(
     prompt: TurnPrompt,
     tools: PresentedTools,
     stable_len: usize,
+    // この因果の会話（Spec 75）。`TurnContext` が持ち、清算・出口・配送が読む。
+    session: &super::SessionRef,
 ) -> CoreResult<Option<TurnProduct>> {
     let backend = shared.backend_for(template).await?;
-    let ctx = TurnContext::begin(template, backend.as_ref());
+    let ctx = TurnContext::begin(template, backend.as_ref(), session.clone());
     let mut spend = TurnSpend {
         hop: incoming.hop,
         ..TurnSpend::default()
@@ -1967,6 +1998,7 @@ async fn run_turn_inner(
                 budget,
                 participants,
                 waiting,
+                session: &ctx.session,
                 executable: &executable,
                 use_handoff_tools,
                 awaiting_reply,
@@ -2289,8 +2321,17 @@ async fn run_turn_inner(
     //    過去のターンだけ出所不明に戻るうえ、**その位置で前方一致が切れて
     //    キャッシュが頭打ちになる**（failures.md #45）。
     {
+        // 開いている会話の lock を `world` より先に取る（Spec 75 凍結 3）。
+        let gate = shared.switch_gate.read().await;
         let mut world = shared.world.write().await;
-        shared.push_exchange(&mut world, agent_id, &sent_user_turn, &outcome.spoken());
+        shared.push_exchange(
+            &gate,
+            &mut world,
+            agent_id,
+            &ctx.session,
+            &sent_user_turn,
+            &outcome.spoken(),
+        );
     }
 
     // 観測用のターン行（Spec 04 Notes 2 / Notes 12 のトリガー判定の実測材料）と
@@ -2383,6 +2424,9 @@ struct CallRunner<'a> {
     participants: &'a Option<Participants>,
     /// 待ち手の連鎖（Spec 44）。ask / plan の配送が deliver_and_wait へ渡す。
     waiting: &'a [AgentId],
+    /// このターンの根の会話（Spec 75）。ask / plan / 判断役の配送へ写し、
+    /// `room_log` の読みと `ToolInvoked` の会話にも使う。
+    session: &'a super::SessionRef,
     /// registry と個別 MCP で実行できるもの（実行可否の判定に使う）。
     executable: &'a [ToolSpec],
     use_handoff_tools: bool,
@@ -2594,6 +2638,7 @@ impl CallRunner<'_> {
                 waiting,
                 &super::attachment_kinds(&incoming.attachments),
                 self.auto_approve_plans,
+                self.session,
             )
             .await))
         } else if spec.hears_room_log
@@ -2604,7 +2649,7 @@ impl CallRunner<'_> {
             // 名前は registry（MCP 由来の同名）より先に解決される。
             // hears_room_log = false の個体では素通りして registry 側へ
             // 落ちる（その個体にこのツールは合成されていない）。
-            Ok(text(read_room_log(shared, agent_id, call).await))
+            Ok(text(read_room_log(shared, agent_id, call, self.session).await))
         } else if call.name == crate::prune::OMITTED_TOOL_NAME && !self.pruned.is_empty() {
             // 落とした段落へ戻る（Spec 59 D7）。`room_log` と同じ規則で、
             // orchestrator 合成の名前は registry より先に解決される。
@@ -2623,6 +2668,7 @@ impl CallRunner<'_> {
                 waiting,
                 &super::attachment_kinds(&incoming.attachments),
                 self.auto_approve_plans,
+                self.session,
             )
             .await
             .map(text)
@@ -2641,6 +2687,7 @@ impl CallRunner<'_> {
                         waiting,
                         &super::attachment_kinds(&incoming.attachments),
                         self.auto_approve_plans,
+                        self.session,
                     )
                     .await
                     .map(text)
@@ -2705,6 +2752,7 @@ impl CallRunner<'_> {
             reason,
             call_id,
             round,
+            session_id: self.session.label().to_owned(),
         });
         // ツール 1 本ごとの実測。**`body_chars` がこの行の主目的** — ツール結果は
         // 履歴に積まれて以後の全周回で再送されるので、1 本の大きさが
@@ -2988,6 +3036,8 @@ async fn build_prompt(
     has_roster: bool,
     handoffs: &HandoffTools,
     gates: HandoffGates,
+    // このターンの根の会話（Spec 75 凍結 4）。開いていなければ材料をその会話の保存先から読む。
+    session: &super::SessionRef,
 ) -> TurnPrompt {
     // 計画の確認を開けない印（Spec 53）はプロンプトに出さない — 窓の判定と
     // 配送だけが使う（モデルに「窓が無い」を知らせる理由が無い）。
@@ -3026,14 +3076,27 @@ async fn build_prompt(
     // push_exchange が先頭から drain する）、埋まると毎ターン先頭の 1 往復が落ちる。
     // 前方一致はそこで切れるので、窓が埋まった瞬間からキャッシュは system 止まりに
     // なる。窓が上限に張り付いているかは通数を見ないと分からない。
-    let history_msgs = {
-        let world = shared.world.read().await;
-        match world.agent(agent_id) {
-            Ok(record) => {
-                messages.extend(record.history.iter().cloned());
-                record.history.len()
+    //
+    // **開いていない会話のターンは、材料をその会話の保存先から読む**（Spec 75 凍結 4）—
+    // メモリの写し（履歴・要約・会話ログ）は開いている会話のもので、それで考えると
+    // 別の会話の文脈が根の会話の答えに混ざる。組み立ての間は開いている会話の lock の read を
+    // 持ち、途中で切り替わらないようにする（凍結 3。LLM 呼び出しはここに無い）。
+    let gate = shared.switch_gate.read().await;
+    let stored = (!shared.is_open(session)).then(|| shared.stored_view(session, agent_id));
+    let history_msgs = match &stored {
+        Some(view) => {
+            messages.extend(view.history.iter().cloned());
+            view.history.len()
+        }
+        None => {
+            let world = shared.world.read().await;
+            match world.agent(agent_id) {
+                Ok(record) => {
+                    messages.extend(record.history.iter().cloned());
+                    record.history.len()
+                }
+                Err(_) => 0,
             }
-            Err(_) => 0,
         }
     };
 
@@ -3057,7 +3120,11 @@ async fn build_prompt(
     //
     // 注入するのは**最新の 1 本だけ**。古い要約はレコードとして残るが、
     // 痕跡であって現役ではない。
-    if let Some(summary) = shared.summaries.read().await.get(agent_id) {
+    let summary = match &stored {
+        Some(view) => view.summary.clone(),
+        None => shared.summaries.read().await.get(agent_id).cloned(),
+    };
+    if let Some(summary) = summary {
         context.push(format!(
             "## これまでの経緯（要約）\n{summary}\n\n\
              （この要約より後のやり取りは、下の履歴にそのまま残っています）"
@@ -3077,7 +3144,13 @@ async fn build_prompt(
     // 切れる**という代償が見えていなかった — 村として使っているときにこそ
     // キャッシュが効かなくなる。
     if spec.hears_room_log
-        && let Some(room) = compose_room_log(shared, agent_id, &shared.config).await
+        && let Some(room) = compose_room_log(
+            shared,
+            agent_id,
+            &shared.config,
+            stored.as_ref().map(|view| view.log.as_slice()),
+        )
+        .await
     {
         context.push(room);
     }
@@ -3086,11 +3159,18 @@ async fn build_prompt(
     // 広場ログのオプトアウトは「場の共有が要らない役から固定費を外す」機能で、
     // 入退室は場の雑談ではなく配送先の正しさに関わる情報。コストの設定が
     // 経路の正しさを黙って壊す形にしない。
-    if let Some(notices) =
-        compose_presence_notices(shared, &shared.config, has_roster).await
+    if let Some(notices) = compose_presence_notices(
+        shared,
+        &shared.config,
+        has_roster,
+        stored.as_ref().map(|view| view.log.as_slice()),
+    )
+    .await
     {
         context.push(notices);
     }
+    // 材料を読み終えた。ここから下は会話のメモリの写しを読まない。
+    drop(gate);
 
     // 送り手の封筒。ユーザーの言葉もエージェントからの転送も同じ user ロールで
     // 届くため、名前を書かないと受信側は区別できない — 実際にユーザーの発話を
@@ -3273,6 +3353,8 @@ async fn dispatch_outcome(
     // 待ち手の連鎖（Spec 44）。転送の配送だけが読む（末尾を除いて運ぶ）。
     waiting: Vec<AgentId>,
     auto_approve_plans: bool,
+    // この因果の会話（Spec 75）。返信の記録と転送の配送はこの会話へ。
+    session: super::SessionRef,
 ) -> CoreResult<()> {
     let TurnProduct {
         outcome,
@@ -3328,7 +3410,7 @@ async fn dispatch_outcome(
             // 思考の要約も同じ経路で表示層へ渡す。**履歴へは載らない** —
             // 積む先の `ChatMessage` にこの欄が無い（型で閉じている）。
             outgoing.reasoning_summary = reasoning_summary;
-            shared.record(outgoing).await;
+            shared.record(outgoing, &session).await;
 
             if let Some(reply_to) = reply_to {
                 // 受け取り手が既に諦めている（タイムアウト）ことはあるので、
@@ -3429,7 +3511,7 @@ async fn dispatch_outcome(
             outgoing.co_recipients = same_content;
         }
 
-        shared.record(outgoing.clone()).await;
+        shared.record(outgoing.clone(), &session).await;
         queued.push((to, outgoing));
     }
 
@@ -3463,6 +3545,8 @@ async fn dispatch_outcome(
             crate::orchestrator::delegation::trimmed_chain(&waiting),
             // 転送先の計画にも効かせる — 受信封筒の印を写すだけ（Spec 53 凍結 11 (a)）。
             auto_approve_plans,
+            // 転送は同じ因果の続き — 会話も写す（Spec 75 凍結 1）。
+            session.clone(),
         )
         .await
         {

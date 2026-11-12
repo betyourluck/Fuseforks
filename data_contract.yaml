@@ -644,8 +644,12 @@ enums:
            Shared::record / push_exchange は、その会話が**開いていれば**今と同じ (メモリの写しへ積み、
            保存し、MessageSent を出す)。**開いていなければ保存だけ** — 広場ログの輪にも履歴にも積まず、
            MessageSent も出さず、CoreEvent::SessionUpdated { sessionId } を出す
-        3. **lock の順序は「開いている会話の lock → world → log → summaries」。** 開いている会話の ID を
-           tokio の RwLock にする (std::sync::RwLock<String> から)。書き手は read を取って「開いているか」を
+        3. **lock の順序は「開いている会話の lock → world → log → summaries」。** ~~開いている会話の ID を
+           tokio の RwLock にする (std::sync::RwLock<String> から)~~ → **P1 で別の lock にした**:
+           Shared.switch_gate: tokio::sync::RwLock<()> (中身を持たず順序だけを守る)。会話 ID は
+           std::sync::RwLock<String> のまま、書き換えは switch_gate の write の下だけ — current_session() を
+           同期のまま呼べる。push_exchange は引数で switch_gate の read guard (OpenGate) を要求し、取り忘れを
+           型で止める。書き手は read を取って「開いているか」を
            判定し、メモリへの積み込みと persist を済ませてから外す。open_session は write を取り、保存先の
            読み直し → メモリの差し替え → set_session を済ませてから外す。**保存先を読み直している間は
            world を持たない** (差し替えるときだけ短く取る)。world を握ったまま開いている会話の lock を
@@ -661,12 +665,18 @@ enums:
            次のターンの入口 / その印の「続けさせる」)。**個体の停止と削除は会話を問わず全部外す**。
            **open_session と reset_conversation は印を外さない** (approval_stops_the_turn の (d) を撤回)。
            ApprovalStopped イベントに sessionId を足す。帯と承認画面の「続けさせる」は開いている会話の印
-           だけを出し、他の会話の印は「別の会話 (タイトル) で止まっています」の 1 行。コマンドの判断待ち
+           だけを出し、他の会話の印は「別の会話 (タイトル) で止まっています」の 1 行 — **P1 で
+           CommandPolicyView.stoppedElsewhere: string[] (開いていない会話の ID・ID 順) を足した**
+           (stoppedForApproval は開いている会話の印だけになった)。「続けさせる」の IPC は個体 ID だけを
+           受け、会話はコアが印から決める (開いている会話に印があればそれ、無ければ最初の印、印が無ければ
+           開いている会話)。コマンドの判断待ち
            (run.json の pending) は個体の単位のままで、会話を問わず承認できる。印はメモリだけ (再起動で消える)
         6. **計画の波は提示した会話を持つ。** 承認待ちの波に提示したターンの SessionRef を持たせる。
            承認で配る波・束ねの配送・配送できなかった束ねの破棄の System 行・計画の破棄の System 行は
            その会話へ書く。作業状況タブはすべての波を出し、波に会話 ID を持たせて開いていない会話の波に
-           「別の会話」と出す。確認待ちのバッジは全部を数える
+           「別の会話」と出す。確認待ちのバッジは全部を数える。**P1 の形**: 控えは Shared.plan_sessions
+           (plan_id → SessionRef。PlanWaveStore は純粋な記録なので参照を持たせない) / PlanWaveRecord.sessionId
+           (Option) / planWaveStarted と planWaveProposed に sessionId
         7. **要約は始めたときの会話に結び付ける。** summarize_agents(session, only)。人が押した要約は
            押した時点で開いている会話、予定の完了後要約は根の会話。材料・coversUpToSeq・保存・System 行は
            その会話。メモリ上の要約の差し替えと履歴の畳みは、その会話がいま開いているときだけ
@@ -4272,7 +4282,8 @@ entities:
     hopLimitReached: { agentId, maxHops }
     # Spec 08 (波ペイン)。順序保証は per planId のみ (Started → Resolved* →
     # Finished)。再投影との突き合わせ規律は entities の PlanWaveRecord.projection_rule
-    planWaveStarted: { planId, agentId, wave, tasks, startedAtMs }   # tasks = [{to, msgChars}]
+    # sessionId は Spec 75 (P1・加算)。波を撒いた会話 — 作業状況タブが「別の会話」と出すため
+    planWaveStarted: { planId, agentId, wave, tasks, startedAtMs, sessionId }   # tasks = [{to, msgChars}]
     planTaskResolved: { planId, to, state, elapsedMs }
     planWaveFinished: { planId, bundleChars, elapsedMs }
     # Spec 10 (割り込み停止)。**飛行中のターンが中断されたときだけ**出す —

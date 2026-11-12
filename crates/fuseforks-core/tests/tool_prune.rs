@@ -456,7 +456,7 @@ async fn an_interrupted_turn_stops_waiting_for_the_scorer() {
     let ended = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match rx.recv().await {
-                Ok(fuseforks_core::event::CoreEvent::AgentTyping { agent_id, active: false })
+                Ok(fuseforks_core::event::CoreEvent::AgentTyping { agent_id, active: false, .. })
                     if agent_id == id =>
                 {
                     return;

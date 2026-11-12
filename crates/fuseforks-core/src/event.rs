@@ -144,6 +144,10 @@ pub enum CoreEvent {
         agent_id: AgentId,
         /// true = 処理開始、false = 処理終了。
         active: bool,
+        /// そのターンの根の会話（Spec 75 凍結 8・10。保存先の無い村では `-`）。
+        /// 予定の後処理は個体と会話の両方が一致したときだけ発火し、画面は開いている会話の
+        /// ターンだけ入力中のバブルを出す。
+        session_id: String,
     },
 
     /// ツールを実行した。
@@ -190,6 +194,8 @@ pub enum CoreEvent {
         /// 2026-10-15）。会話ペインの入力中バブルが「ツール N 周目」を出すのに使う —
         /// ターンの進み具合はそれまでログにしか無く、画面は点の点滅だけだった。
         round: u8,
+        /// そのターンの根の会話（Spec 75 凍結 10）。会話ペインは開いている会話の行だけ積む。
+        session_id: String,
     },
 
     /// ツール実行の上限に達して打ち切った。
@@ -257,7 +263,7 @@ pub enum CoreEvent {
     /// `run` の承認待ちで止まった個体の印（`Shared.approval_stopped`）が**変わった**
     /// （Spec 72 D5）。立てる（周の終わりの出口）と外す（`handle_message` の先頭 /
     /// `resume_after_approval` の配送成功 / `stop_agent`・`delete_agent` /
-    /// `open_session`・`reset_conversation`）の**両方で出す** — 外す側に無いと、
+    /// 保存先の無い村の新規チャット）の**両方で出す**（会話の切り替えでは外さない — Spec 75 凍結 5） — 外す側に無いと、
     /// 「続けさせる」を押した直後も押せるまま画面に残り、連打で 2 通目が出る
     /// （Spec 72 が直そうとしている症状そのもの）。
     ///
@@ -269,6 +275,21 @@ pub enum CoreEvent {
         agent_id: AgentId,
         /// 立った（真）か外れた（偽）か。
         stopped: bool,
+        /// 印の会話（Spec 75 凍結 5。印は（個体, 会話）で持つ）。
+        session_id: String,
+    },
+
+    /// **開いていない会話**へ発話が書かれた（Spec 75 凍結 2・10）。
+    ///
+    /// 開いている会話への書き込みは [`CoreEvent::MessageSent`] が運ぶ。受け手は会話一覧の
+    /// 引き直しと、サーヴァントの発話だったときのトースト（「開く」つき）。**本文は運ばない** —
+    /// 開くと `SessionSwitched` → `list_messages` で読む。送り手はトーストの名前のために運ぶ。
+    #[serde(rename_all = "camelCase")]
+    SessionUpdated {
+        /// 書かれた会話。
+        session_id: String,
+        /// 発話の送り手。
+        from: crate::model::Endpoint,
     },
 
     /// 転送上限に達して発話の連鎖を打ち切った。
@@ -301,6 +322,8 @@ pub enum CoreEvent {
         tasks: Vec<crate::plan::PlanTaskAnnounced>,
         /// 波の開始時刻（epoch ms）。
         started_at_ms: u64,
+        /// 波の会話（Spec 75 凍結 6。保存先の無い村では `-`）。
+        session_id: String,
     },
 
     /// plan の 1 タスクが解決した（Spec 08）。波内の相互順序は解決順で、保証しない。
@@ -342,6 +365,8 @@ pub enum CoreEvent {
         tasks: Vec<crate::plan::PlanTaskInput>,
         /// 提示時刻（epoch ms）。
         started_at_ms: u64,
+        /// 計画を提示した会話（Spec 75 凍結 6。保存先の無い村では `-`）。
+        session_id: String,
     },
 
     /// plan の提案が破棄された（Spec 43）。配送は一度も起きていない。
@@ -378,6 +403,7 @@ mod tests {
         let event = CoreEvent::AgentTyping {
             agent_id: AgentId::from("agent_01"),
             active: true,
+            session_id: "s1".to_owned(),
         };
 
         assert_eq!(
@@ -385,7 +411,8 @@ mod tests {
             serde_json::json!({
                 "type": "agentTyping",
                 "agentId": "agent_01",
-                "active": true
+                "active": true,
+                "sessionId": "s1"
             })
         );
     }

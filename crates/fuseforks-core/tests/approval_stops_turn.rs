@@ -323,7 +323,7 @@ fn approval_stopped(events: &[CoreEvent]) -> Vec<(AgentId, bool)> {
     events
         .iter()
         .filter_map(|e| match e {
-            CoreEvent::ApprovalStopped { agent_id, stopped } => Some((agent_id.clone(), *stopped)),
+            CoreEvent::ApprovalStopped { agent_id, stopped, .. } => Some((agent_id.clone(), *stopped)),
             _ => None,
         })
         .collect()
@@ -745,14 +745,18 @@ async fn another_tool_echoing_the_refusal_text_does_not_stop() {
     assert_eq!(agent_answers(&events, &agent).len(), 1);
 }
 
-/// (14) 止まった後に会話を切り替える（新規チャット）→ 全個体の印が外れる。
+/// (14) 止まった後に会話を切り替える（新規チャット）→ **印は外れず、止まった会話に残る**
+/// （Spec 75 凍結 5。Spec 72 D5 (d) の「全個体の印を外す」は撤回した）。切り替え先の会話では
+/// 「続けさせる」を出さず（`stoppedForApproval` 偽・`stoppedElsewhere` に元の会話）、元の会話を
+/// 開くと戻る。続けさせた依頼は**印の会話**へ届く。
 #[tokio::test]
-async fn switching_the_conversation_clears_every_mark() {
+async fn switching_the_conversation_keeps_the_mark_in_its_conversation() {
     let dir = TempDir::new("switch");
     let backend = ScriptedBackend::running(&[("git", &["status"])]);
     let orchestrator = setup(&dir, backend.clone()).await;
     let agent = spawn_runner(&orchestrator, &dir, "agent_01").await;
 
+    let first = orchestrator.current_session();
     let mut rx = orchestrator.subscribe();
     orchestrator.send_user_message(&agent, "状態を見て").await.unwrap();
     let _ = drain_until_quiet(&mut rx, Duration::from_millis(500)).await;
@@ -760,10 +764,17 @@ async fn switching_the_conversation_clears_every_mark() {
 
     orchestrator.reset_conversation().await.unwrap();
     let events = drain_until_quiet(&mut rx, Duration::from_millis(300)).await;
-    assert_eq!(approval_stopped(&events), vec![(agent.clone(), false)]);
-    assert!(!stopped_flag(&orchestrator, &agent).await);
-    assert!(
-        events.iter().any(|e| matches!(e, CoreEvent::ConversationCleared)),
-        "切り替えの通知と一緒に出る: {events:?}"
-    );
+    assert!(approval_stopped(&events).is_empty(), "切り替えで印は外れない: {events:?}");
+    assert!(!stopped_flag(&orchestrator, &agent).await, "切り替え先の会話では続けさせない");
+    let elsewhere: Vec<String> = orchestrator
+        .command_policies()
+        .await
+        .into_iter()
+        .filter(|v| v.agent_id == agent)
+        .flat_map(|v| v.stopped_elsewhere)
+        .collect();
+    assert_eq!(elsewhere, vec![first.clone()], "印は元の会話に残る");
+
+    orchestrator.resume_session(&first).await.unwrap();
+    assert!(stopped_flag(&orchestrator, &agent).await, "元の会話を開くと戻る");
 }

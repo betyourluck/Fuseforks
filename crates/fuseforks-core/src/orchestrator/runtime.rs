@@ -225,7 +225,7 @@ impl Orchestrator {
         // 受信箱を先に外し、停止処理中に新しい発話が積まれないようにする。
         self.shared.mailboxes.write().await.remove(id);
         // 承認待ちの印も外す（Spec 72 D5 (c)）— 受信箱が無い個体に「続けさせる」は届かない。
-        self.shared.set_approval_stopped(id, false);
+        self.shared.clear_approval_stopped_of(id);
 
         let _ = handle.shutdown.send(true);
         // 処理中の LLM 呼び出しが終わるのを待つ。無限には待たない。
@@ -468,14 +468,17 @@ impl Orchestrator {
         if co_recipients.len() >= 2 {
             message.co_recipients = co_recipients.to_vec();
         }
-        self.shared.record(message.clone()).await;
+        // 因果の根の会話 = 送った時点で開いている会話（Spec 75 凍結 1）。この会話の写しが
+        // この依頼の因果のすべての書き込み先になる — 処理中に会話を切り替えても動かない。
+        let session = self.shared.open_ref();
+        self.shared.record(message.clone(), &session).await;
         // 因果の根 — 予算はここで生まれる（Spec 11）。同報は宛先ごとに
         // このメソッドが呼ばれるので、宛先ごとに独立した予算になる（契約どおり）。
         let budget = new_root_budget(&self.shared).await;
         // 利用者の発話は参加者を数えない — 自動要約は予定の発火だけの機能で、
         // 人が話している間に履歴を畳むのは「押していない操作」になる。
         // 利用者の発話は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
-        deliver(&self.shared, to, message, budget, None, Vec::new(), false).await
+        deliver(&self.shared, to, message, budget, None, Vec::new(), false, session).await
     }
 
     /// 発話 ID の列を写しへ解決し、計器 `quote:` を 1 行出す（Spec 58 凍結 2・7）。
@@ -713,6 +716,8 @@ impl Orchestrator {
             client: crate::world::normalize_client_name(client),
         };
         let budget = new_root_budget(&self.shared).await;
+        // 根の会話 = 受けた時点で開いている会話（Spec 75 凍結 1）。外部依頼に会話を選ばせる口は作らない。
+        let session = self.shared.open_ref();
         // 因果の根なので親トークンを持たない。打ち切りは既存の
         // `interrupt_turn` / `interrupt_all` が窓口のターンに効く。
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -731,6 +736,7 @@ impl Orchestrator {
             "ask",
             // 外部依頼は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
             false,
+            &session,
         )
         .await;
         Ok(outcome)

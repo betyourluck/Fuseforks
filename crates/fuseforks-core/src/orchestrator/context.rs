@@ -25,13 +25,22 @@ pub(super) async fn compose_presence_notices(
     shared: &Shared,
     config: &OrchestratorConfig,
     has_roster: bool,
+    // 開いていない会話のターンの会話ログ（Spec 75 凍結 4）。`None` ならメモリの写しを読む。
+    stored_log: Option<&[AgentMessage]>,
 ) -> Option<String> {
     if config.room_log_window == 0 {
         return None;
     }
 
     let lines: Vec<String> = {
-        let log = shared.log.read().await;
+        let guard;
+        let log: &[AgentMessage] = match stored_log {
+            Some(log) => log,
+            None => {
+                guard = shared.log.read().await;
+                &guard
+            }
+        };
         // 生ログの直近 window 件の中から System 発を拾う。
         // 「System 発だけを window 件」にはしない — それだと古い通知が
         // 会話に押し出されずいつまでも残り、「窓に従う」という契約が嘘になる。
@@ -201,6 +210,8 @@ pub(super) async fn read_room_log(
     shared: &Shared,
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
+    // 呼び出したターンの根の会話（Spec 75 凍結 4）。開いていなければその会話の保存先を読む。
+    session: &super::SessionRef,
 ) -> String {
     use crate::room_log::{ROOM_LOG_READ_MAX_CHARS, RoomLogLookup};
 
@@ -219,8 +230,17 @@ pub(super) async fn read_room_log(
         NotFound { hidden: bool },
     }
     let resolved = {
-        let log = shared.log.read().await;
-        match crate::room_log::resolve_message(&log, agent_id, &requested) {
+        let _gate = shared.switch_gate.read().await;
+        let stored = (!shared.is_open(session)).then(|| shared.stored_view(session, agent_id).log);
+        let guard;
+        let log: &[AgentMessage] = match &stored {
+            Some(log) => log,
+            None => {
+                guard = shared.log.read().await;
+                &guard
+            }
+        };
+        match crate::room_log::resolve_message(log, agent_id, &requested) {
             RoomLogLookup::Found(message) => Resolved::Full(
                 message.from.clone(),
                 message.to.clone(),
@@ -295,6 +315,8 @@ pub(super) async fn compose_room_log(
     shared: &Shared,
     agent_id: &AgentId,
     config: &OrchestratorConfig,
+    // 開いていない会話のターンの会話ログ（Spec 75 凍結 4）。`None` ならメモリの写しを読む。
+    stored_log: Option<&[AgentMessage]>,
 ) -> Option<String> {
     if config.room_log_window == 0 {
         return None;
@@ -307,7 +329,14 @@ pub(super) async fn compose_room_log(
     // 表示してしまい「表示された通りに打てば一意」が破れる。ロックを持って
     // いる間に計算するのは、リング全 ID の複製を避けるため。
     let (overheard, handles): (Vec<AgentMessage>, Vec<Option<String>>) = {
-        let log = shared.log.read().await;
+        let guard;
+        let log: &[AgentMessage] = match stored_log {
+            Some(log) => log,
+            None => {
+                guard = shared.log.read().await;
+                &guard
+            }
+        };
         let overheard: Vec<AgentMessage> = log
             .iter()
             .rev()

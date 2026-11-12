@@ -2,7 +2,7 @@
 
 **ID**: 75
 **Date**: 2026-11-12
-**Status**: rev3・未決 0 → **P0 完了**（2026-11-12 起票 → 同日、査読 2 系統 19 点（重なりを除いて 16 項目）を反映して rev2 → 利用者が未決 2 つを推しのとおりに裁定して rev3 → P0 = `data_contract.yaml` の `session_binding_contract` を凍結 14 本で凍結。記録は末尾の「P0 契約記録」。表は Notes 4）
+**Status**: rev3・未決 0 → **P0〜P1 完了**（2026-11-12 起票 → 同日、査読 2 系統 19 点（重なりを除いて 16 項目）を反映して rev2 → 利用者が未決 2 つを推しのとおりに裁定して rev3 → P0 = `data_contract.yaml` の `session_binding_contract` を凍結 14 本で凍結 → P1 = コア（結合 8 本・変異 6 回・全 1,518 本緑）。記録は末尾の「P0 契約記録」「P1 実装記録」。表は Notes 4。**次は P2（画面）**）
 **Branch**: main 直（Phase ごとにコミット）
 
 ---
@@ -465,3 +465,76 @@ HEAD と作業コピーの両方を読み、差分は意図した 10 節の本�
 
 **P1 で決めること（P0 では決めない）**: `SessionRef` の型の置き場と、会話 ID の弱参照の表の持ち方 / 開いている会話の lock を
 `Shared.session_id` の型変更で作るか別の lock で作るか / `push_exchange` の呼び出し 5 か所の並べ替えの形
+
+---
+
+## P1 実装記録（2026-11-12）
+
+**コアの配線を入れた。** 全 1,518 本緑（GUI の crate を除くワークスペース。84 バイナリ・無視 7 は従来どおり）・
+clippy 0。画面（P2）はまだで、フロントは新しい欄を読んでいない。
+
+### 入れたもの（D ごと）
+
+| D | 実装 |
+|---|---|
+| D1 | `orchestrator/session_ref.rs` を新設 — `SessionRef`（`Option<Arc<Ticket>>`。`None` は保存先の無い村）と `SessionRefs`（会話 ID → `Weak` の表。`issue` / `when_unreferenced`）。`Envelope.session` / `deliver(…, session)` / `deliver_and_wait(…, session)`（自分では決めない）/ `TurnContext.session` / `CallRunner.session` / `dispatch_outcome(…, session)`。根は 7 つ: 利用者の発話と外部依頼 = `open_ref()` / 予定の発火 = `fire_session` / 検収の再依頼 = 発火の会話 / 続行 = 印の会話 / 承認で配る波と束ね = `plan_sessions` の控え |
+| D2 | `persist(record, &SessionRef)`（暗黙の `current_session()` を読む形を撤去）/ `record(message, &SessionRef)` と `record_open`（村全体の知らせ）/ 開いていない会話へは保存だけ + `SessionUpdated { sessionId, from }` + `session write:` 行 / `push_exchange(&OpenGate, …, &SessionRef, …)` |
+| D3 | `Shared.switch_gate: tokio::sync::RwLock<()>`。`open_session` は write を取り、保存先を**先に**読んでから `world` → `log` → `summaries` を差し替え、最後に `set_session` |
+| D4 | `build_prompt` が gate の read を持ったまま、開いていなければ `stored_view`（履歴・要約・会話ログ）で組む。`compose_room_log` / `compose_presence_notices` に `stored_log` / `read_room_log` に会話 |
+| D5 | 印を `HashSet<(AgentId, String)>` に。`open_session` で外さない（保存先の無い村の新規チャットだけ全部外す）/ 停止・削除は会話を問わず外す / `CommandPolicyView.stoppedElsewhere` を足し、`stoppedForApproval` は開いている会話の印だけ |
+| D6 | `Shared.plan_sessions`（plan_id → `SessionRef`）。承認・束ね・破棄の行はその会話へ / `PlanWaveRecord.sessionId` / `PlanWaveStarted`・`PlanWaveProposed` に `sessionId` |
+| D7 | `summarize_agents(session, only)`。開いていなければ材料を保存先から、保存は始めた会話へ、メモリの差し替えと畳みは開いているときだけ。System 行もその会話へ |
+| D8 | `pending_summaries` に `(Participants, SessionRef)` / `AcceptancePending.session` / 完了の合図は `AgentTyping.sessionId` が根の会話と一致したときだけ取り出す |
+| D9 | 入退室・役職・判断役の無効化・停止中で飛ばした予定は `record_open` |
+| D11 | `ensure_idle_for_switch` を撤去。`delete_session` は開いている会話なら先に `latest_session_except` へ移り、`when_unreferenced` の中で消す。`CoreError::SessionBusy`（`SESSION_BUSY`）を新設し `SessionSwitchBlocked` を撤去 |
+| D12 | `turn:` 行の末尾に `session=` / `session write:` / `session busy:` |
+| D14 | `fire_session` が `fresh` の予定ごとに `create_session` して参照を返す（`open_session` は呼ばない）/ 配送を見送ったら作った空の会話を消す（`discard_empty_session` — 見送りのたびに空の会話が 1 つずつ増えないように） |
+
+### P0 の文面から実装で決めた形（契約に追記済み）
+
+- **開いている会話の lock は別の lock にした**（P0 凍結 3 は「会話 ID を tokio の RwLock に」と書いていた）。`switch_gate` は中身を
+  持たず順序だけを守り、会話 ID は `std::sync::RwLock<String>` のまま — `current_session()` を同期のまま呼べる。`push_exchange` は
+  gate の read guard（`OpenGate`）を引数に取り、取り忘れを型で止める
+- **`CommandPolicyView.stoppedElsewhere`**（凍結 5 の「別の会話で止まっています」の材料）。「続けさせる」の IPC は個体 ID だけを受け、
+  会話は印から決める（開いている会話に印があればそれ、無ければ最初の印、印が無ければ開いている会話）
+- **波の会話は `PlanWaveStore` の外**（`plan_sessions`）に控える — 純粋な記録に参照（`SessionRef`）を持たせない。画面のための ID だけ
+  `PlanWaveRecord.sessionId` に写す
+- 予定の `fresh` で配送を見送ったときの空の会話の削除（D14 には無かった）
+
+### テスト
+
+- **結合 `tests/session_binding.rs` 8 本** — 答えは依頼した会話に残り `MessageSent` を出さず `SessionUpdated` を出す / 新しい会話は前の
+  依頼を知らず、処理中でも元の会話を開けて開くと戻る / 切り替えの後に届いた委譲は依頼した会話の履歴で考える / 要約の途中で切り替えても
+  始めた会話へ書く / 村全体の知らせは開いている会話へ / 飛行中・受信箱の発話が残る会話は開いていても消せない / 失敗したターンの記録は
+  ターンの会話へ / `fresh` の予定は画面を切り替えず予定ごとの会話へ・同じ tick の `continue` は開いている会話へ
+- **単体 `session_ref.rs` 3 本**
+- **覆した凍結を留めていた既存の 3 本を書き換えた** — `approval_stops_turn.rs` (14)（切り替えで印が外れる → 元の会話に残る・開くと戻る）/
+  `session_persistence.rs`（処理中の開き直しは拒否 → 通る）/ `orchestrator.rs`（飛行中の答えが新しい会話に載る → 載らない）
+- **ワイヤ形の凍結** — `approvalStopped.sessionId` / `toolInvoked.sessionId` / `sessionUpdated` を新設 / `CommandPolicyView.stoppedElsewhere` /
+  `PlanWaveRecord.sessionId`
+
+### 変異（予測を先に書いた）
+
+| 変異 | 予測 | 結果 |
+|---|---|---|
+| M1 `persist` が開いている会話へ書く | 5 本 | **6 本** — 予測を 1 本外した。`the_new_conversation_forgets_and_reopening_remembers` も赤（1 往復が新しい会話へ行くので、元の会話を開いても戻らない）。説明のつく外れ |
+| M2 `is_open` が常に真 | 5 本 | 1 回目は **4 本** — `fresh` のテストが緑だった（保存先だけを見ていて、開いている会話のメモリへ漏れた `fresh` の発話を見ていなかった）。`message_log` と `MessageSent` の検査を足して再走し **5 本** |
+| M3 プロンプトが保存先を読まない | 1 本 | 1 本 |
+| M4 処理中の会話を消せる | 3 本（結合 1・単体 2） | 3 本 |
+| M5 `fresh` が開いている会話を使う | 1 本 | 1 本 |
+| M6 切り替えで印を全部外す | 1 本 | 1 本 |
+
+**復元の確かめで 1 度読み違えた。** 変異の実行中に行数を数えて「`mod.rs` が 1 行減った」と疑ったが、数えたのは M1（1 行足す）が
+当たっている最中だった。復元後の SHA が一致しなかったのは改行コードだけ（Write / Edit で書いたファイルは LF、復元は CRLF。Git は
+どちらも LF に正規化する）。**変異の実行中にファイルを数えない**。
+
+### 覆っていない項目（P4 か後続で見る）
+
+- **Spec の P1 テスト 9〜11 は結合テストにしていない** — 開いていない会話のターンが承認待ちで止まって印がその会話に付く（9）/
+  A で提示した計画を B で承認・破棄して A へ書く（10）/ 予定の後判定が別の会話のターンの終わりで発火しない（11）。配線はコードの読みと
+  M6 で見たが、経路ごとの結合テストは無い
+- 下書き補助の使用量が始めた会話へ書かれること（読みだけ）
+- `cargo test` は GUI の crate（`fuseforks`）を除いて回した（clippy は通した）
+
+**踏んだ罠**: Bash のヒアドキュメントの中の `\\` がまた `\` に潰れた（Rust の文字列の行継続。2 回）。CLAUDE.md の処方どおり、
+スクリプトは Write でファイルに書いてから実行した。

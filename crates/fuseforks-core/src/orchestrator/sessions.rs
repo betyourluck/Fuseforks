@@ -34,8 +34,10 @@ impl Orchestrator {
             self.shared.world.write().await.clear_histories();
             // 保存先の無い村でも、前の会話の引数と出力は持ち続けない（Spec 57）。
             self.shared.tool_calls_lock().clear();
-            // 承認待ちの印も同じ（Spec 72 D5 (d)。保存先のある村は `open_session` が外す）。
-            self.shared.clear_approval_stopped();
+            // 承認待ちの印も外す（Spec 72 D5 (d)）。**保存先の無い村だけ** — 会話の単位が無く、
+            // 白紙にした会話へ「続けてください」を届けないため。保存先のある村は印を会話ごとに
+            // 持つので外さない（Spec 75 凍結 5）。
+            self.shared.clear_all_approval_stopped();
             self.shared.emit(CoreEvent::ConversationCleared);
             return Ok(());
         }
@@ -77,10 +79,11 @@ impl Orchestrator {
     /// 保存されている会話を開き直す。
     ///
     /// # Errors
-    /// 保存先が開けていない、会話が存在しない、飛行中のターンがある、
-    /// または読み込みに失敗した場合。
+    /// 保存先が開けていない、会話が存在しない、または読み込みに失敗した場合。
+    ///
+    /// **処理中でも開ける**（Spec 75 凍結 11）— 処理の書き込みは根の会話へ行くので、
+    /// 開いた会話へ無関係な答えは混ざらない。
     pub async fn resume_session(&self, session_id: &str) -> CoreResult<()> {
-        self.ensure_idle_for_switch().await?;
         if self.sessions()?.session_meta(session_id)?.is_none() {
             return Err(CoreError::SessionNotFound(session_id.to_owned()));
         }
@@ -90,9 +93,8 @@ impl Orchestrator {
     /// 最後に更新された会話を開き直す。1 件も無ければ新しく作る。
     ///
     /// # Errors
-    /// 保存先が開けていない、飛行中のターンがある、または読み書きに失敗した場合。
+    /// 保存先が開けていない、または読み書きに失敗した場合。処理中でも開ける（Spec 75 凍結 11）。
     pub async fn continue_latest(&self) -> CoreResult<String> {
-        self.ensure_idle_for_switch().await?;
         let store = self.sessions()?;
         let session_id = match store.latest_session()? {
             Some(id) => id,
@@ -113,10 +115,9 @@ impl Orchestrator {
     /// 会話を `at_seq` **まで含めて**複製し、複製した側を開く。元は不変のまま残る。
     ///
     /// # Errors
-    /// 保存先が開けていない、分岐元が存在しない、飛行中のターンがある、
-    /// または書き込みに失敗した場合。
+    /// 保存先が開けていない、分岐元が存在しない、または書き込みに失敗した場合。
+    /// 処理中でも分岐できる（Spec 75 凍結 11）— 分岐元の処理の答えは分岐元へ書かれる。
     pub async fn fork_session(&self, session_id: &str, at_seq: u64) -> CoreResult<String> {
-        self.ensure_idle_for_switch().await?;
         let forked = self.sessions()?.fork_session(session_id, at_seq)?;
         self.switch_to(&forked).await?;
         Ok(forked)
@@ -126,25 +127,57 @@ impl Orchestrator {
     ///
     /// **開いている会話を消した場合は、次の会話へ切り替える**（無ければ新規を作る）。
     /// 消したまま開きっぱなしにすると、以後の発話が行き先の無いセッションへ
-    /// 書かれ続ける。開いていない会話の削除は、飛行中ターンがあっても通る
-    /// （着地先は変わらないため）。
+    /// 書かれ続ける。
+    ///
+    /// **その会話に処理が残っていれば消さない**（Spec 75 凍結 11。開いているかを問わない）—
+    /// 処理はその会話への参照を持ち、答えをその会話へ書く。判定と削除は参照の表の lock を
+    /// 握ったまま行い、判定の後に新しい参照が発行される窓を作らない。
     ///
     /// # Errors
-    /// 保存先が開けていない、開いている会話を消すのに飛行中のターンがある、
+    /// 保存先が開けていない、その会話に処理が残っている（[`CoreError::SessionBusy`]）、
     /// または書き込みに失敗した場合。
     pub async fn delete_session(&self, session_id: &str) -> CoreResult<()> {
         let store = self.sessions()?;
-        if session_id != self.shared.current_session() {
-            return store.delete_session(session_id);
+        let was_open = session_id == self.shared.current_session();
+        // 開いている会話を消すなら、先に次の会話へ移る — 移った後は新しい根がこの会話を
+        // 取らない。移ってから処理が残っていると分かったら、移ったまま消さずに断る。
+        if was_open {
+            self.ensure_unreferenced(session_id)?;
+            let next = match store.latest_session_except(session_id)? {
+                Some(id) => id,
+                None => store.create_session(None)?,
+            };
+            self.switch_to(&next).await?;
         }
+        match self
+            .shared
+            .session_refs
+            .when_unreferenced(session_id, || store.delete_session(session_id))
+        {
+            Ok(result) => result,
+            Err(refs) => {
+                crate::note!("session busy: session={session_id} refs={refs}");
+                Err(CoreError::SessionBusy {
+                    session_id: session_id.to_owned(),
+                    refs,
+                })
+            }
+        }
+    }
 
-        self.ensure_idle_for_switch().await?;
-        store.delete_session(session_id)?;
-        let next = match store.latest_session()? {
-            Some(id) => id,
-            None => store.create_session(None)?,
-        };
-        self.switch_to(&next).await
+    /// その会話に処理が残っていないか（先に断るための確かめ。削除そのものは
+    /// [`SessionRefs::when_unreferenced`](super::SessionRefs) が lock の下でもう一度確かめる）。
+    fn ensure_unreferenced(&self, session_id: &str) -> CoreResult<()> {
+        match self.shared.session_refs.when_unreferenced(session_id, || ()) {
+            Ok(()) => Ok(()),
+            Err(refs) => {
+                crate::note!("session busy: session={session_id} refs={refs}");
+                Err(CoreError::SessionBusy {
+                    session_id: session_id.to_owned(),
+                    refs,
+                })
+            }
+        }
     }
 
     /// いまの会話を要約して続ける（Spec 12 P4）。要約できたエージェント数を返す。
@@ -177,7 +210,9 @@ impl Orchestrator {
         // `summarizeAfter`）が Orchestrator を持たない場所から呼ぶ必要があり、
         // **同じ規律を 2 箇所に書かない**ために下ろした。
         self.sessions()?;
-        self.shared.summarize_agents(None).await
+        // 人が押した要約は、押した時点で開いている会話に結び付ける（Spec 75 凍結 7）。
+        let session = self.shared.open_ref();
+        self.shared.summarize_agents(&session, None).await
     }
 
     /// 会話を JSONL で書き出し、書いたレコード数を返す。
@@ -293,18 +328,6 @@ impl Orchestrator {
                 reason: "起動時に開けませんでした（起動ログの WARN 行に理由が出ています）"
                     .to_owned(),
             })
-    }
-
-    /// 切り替えの前提。**飛行中のターンがあれば拒否する**（Spec 12 の不変条件 11）。
-    ///
-    /// 自動で `interrupt_all` を呼んでから切り替えることは**しない** —
-    /// 飛行中のターンを畳むかどうかは人の判断で、機械が黙って決める場面ではない。
-    async fn ensure_idle_for_switch(&self) -> CoreResult<()> {
-        let in_flight = self.shared.turns.lock().await.len();
-        if in_flight > 0 {
-            return Err(CoreError::SessionSwitchBlocked { in_flight });
-        }
-        Ok(())
     }
 
     /// メモリ上の会話を差し替えて、指定した会話を開いた状態にする。
