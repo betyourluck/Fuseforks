@@ -76,6 +76,50 @@ md.core.ruler.push("path_links", (state) => {
   }
 });
 
+/**
+ * **表のセルの `<br>` は改行にする**（2026-11-15 利用者要望）。表のセルは 1 行しか書けないので、
+ * LLM はセルの中の改行を `<br>` で書く。`html: false` のままだと文字の `<br>` が見えていた。
+ *
+ * - **HTML を解釈する経路は開けない。** 文字列 `<br>` / `<br/>` / `<br />`（大文字小文字不問）だけを
+ *   markdown-it の改行（`hardbreak`）の印へ置き換える。他のタグは今までどおり文字のまま
+ * - **効くのは表のセルの中だけ。** 地の文では `breaks: true` が改行をそのまま描くので要らず、
+ *   「`<br>` タグを使う」のような説明文を書き換えない
+ * - **書いた形のまま残したい `<br>` は残る。** バッククォートの中は `code_inline` で文字の印を持たず、
+ *   `\<br>` と `&lt;br&gt;` は `text_special` に割れているので、それらを畳む `text_join` より前に走らせる
+ */
+const BR_TAG = /<br\s*\/?>/i;
+
+md.core.ruler.before("text_join", "table_cell_breaks", (state) => {
+  state.tokens.forEach((block, index) => {
+    if (block.type !== "inline" || !block.children) return;
+    const opener = state.tokens[index - 1]?.type;
+    if (opener !== "td_open" && opener !== "th_open") return;
+
+    const children: typeof block.children = [];
+    for (const token of block.children) {
+      if (token.type !== "text" || !BR_TAG.test(token.content)) {
+        children.push(token);
+        continue;
+      }
+      // `split` は g フラグが無くても全部の一致で割る（`test` が lastIndex を持ち越さないよう g は付けない）。
+      token.content.split(BR_TAG).forEach((piece, i) => {
+        if (i > 0) {
+          const br = new state.Token("hardbreak", "br", 0);
+          br.level = token.level;
+          children.push(br);
+        }
+        if (piece !== "") {
+          const text = new state.Token("text", "", 0);
+          text.content = piece;
+          text.level = token.level;
+          children.push(text);
+        }
+      });
+    }
+    block.children = children;
+  });
+});
+
 // **画像は展開しない**（2026-10-30 の監査）。`![](https://…)` を `<img>` にすると、描画した
 // 瞬間に WebView がその URL へ GET を出す — 利用者のクリックなしに、本文へ混ぜた文字列が
 // 外へ届く経路になる（web 検索・URL 取得・MCP の fetch で読んだページからの注入が入口）。

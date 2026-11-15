@@ -194,3 +194,41 @@ describe("数式（2026-10-24）", () => {
     expect(html).not.toContain("<a ");
   });
 });
+
+describe("表のセルの <br>（2026-11-15）", () => {
+  const table = (cell: string) => `| 見出し |\n| --- |\n| ${cell} |`;
+
+  it("セルの <br> / <br/> / <br /> / <BR> を改行にする", () => {
+    for (const tag of ["<br>", "<br/>", "<br />", "<BR>"]) {
+      const html = renderMarkdown(table(`1行目${tag}2行目`));
+      expect(html).toContain("<td>1行目<br>\n2行目</td>");
+      expect(html).not.toContain("&lt;br");
+    }
+  });
+
+  it("見出しのセルも改行にする。続く <br> は続く改行になる", () => {
+    const html = renderMarkdown("| 上<br>下 |\n| --- |\n| a<br><br>b |");
+    expect(html).toContain("<th>上<br>\n下</th>");
+    expect(html).toContain("<td>a<br>\n<br>\nb</td>");
+  });
+
+  it("表の外の <br> は文字のまま（地の文は breaks が改行を描く）", () => {
+    const html = renderMarkdown("改行は <br> タグで書く");
+    expect(html).toContain("&lt;br&gt;");
+    expect(html).not.toContain("<br>");
+  });
+
+  it("セルの中でもバッククォート・\\<br>・&lt;br&gt; は書いた形のまま", () => {
+    const html = renderMarkdown(table("`<br>` と \\<br> と &lt;br&gt;"));
+    expect(html).toContain("<code>&lt;br&gt;</code>");
+    expect((html.match(/&lt;br&gt;/g) ?? []).length).toBe(3);
+    expect(html).not.toContain("<br>");
+  });
+
+  it("<br> 以外のタグは改行の規則があっても文字のまま", () => {
+    const html = renderMarkdown(table("a<br><script>alert(1)</script><b>x</b>"));
+    expect(html).toContain("a<br>\n&lt;script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<b>");
+  });
+});
