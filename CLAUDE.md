@@ -8433,6 +8433,28 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
+- [Spec 76](specs/76_image-generation.md)（画像生成 — アプリ全体で 1 つ選ぶ画像生成 API と、同梱ツール `image`）:
+  **rev3 → P0 完了**（2026-11-16 起票 → 同日、査読 2 系統 28 点・重なりを除いて 24 項目 → 採用 21 / 前提を訂正して採用 2 /
+  反証 1（表は Spec の Notes 3）→ **同日 P0**: 4 社の生成・参照つき・接続確認を撃ち（OpenAI と Meta は環境変数の鍵が 401 で、
+  利用者が自分の端末で撃った）、`data_contract.yaml` に `image_gen_contract`（不変条件 15 本）と `attachment_contract` の
+  「Spec 76 改訂」S76-1〜3 を凍結。**予測の外れ 3 つ** = Gemini は PNG でなく JPEG / Meta は 1024² を頼んで 1600² / xAI は 2k だと
+  PNG 8MB。参照は 4 社とも WebP を受け、Gemini と xAI は JPEG も受けた（出力の中央の色で照合）。記録は Spec の「P0 実測記録」。
+  **次は P1（コア）**）。起点は利用者 —「システム設定から画像生成のページを作る / API はアプリで統一 /
+  Lorekeel のワイヤを参考 / 同梱ツールのチェック / 添付画像を参照画像に」。Lorekeel の実体は Kataribe のリポジトリの
+  `app/src-tauri/src/image_gen.rs`（OpenAI / Gemini / Meta / xAI / ComfyUI）。骨格 = 設定は `{app_data_dir}/image_gen.json` +
+  プロバイダごとの鍵を資格情報ストア（Jev と同じ棚・`is_active` の 1 本・偽の理由は閉じた 3 つ）/ 同梱ツール `image` は既定オフ
+  （`BUNDLED_TOOL_NAMES` 8 → 9、`DEFAULT_ENABLED_TOOLS` 7・`WORK_DIR_TOOL_NAMES` 6 のまま）で、チェックと `is_active` の 2 段の門 /
+  参照はそのターンの画像の台帳（利用者の添付 → そのターンに生成した画像の順に参照番号 1 から・3 枚まで。添付は 1 ターン限りのまま）/
+  生成画像は作業フォルダの `generated_images/<日時>-<agent_id>-<番号>` に元のまま + **写し 1 つ**（会話ペイン・モデル・参照が共有。
+  返事の発話が組まれるときだけ書く）/ 打ち切りは要求ごと切る（Spec 52 D4 と逆）/ 送った要求を 1 ターン 4 回まで /
+  生成の費用はトークン予算の外・返した画像のトークンは中 / 失敗は Lorekeel と 1 対 1 の 8 区分 / `bake` は `image_gen.json` を写す。
+  **rev2 の変更の本体 2 つ** — (a) **査読の外で見つけた: rev1 の「生成した画像は『入力欄へ』で渡し直せる」は成り立たない**
+  （Spec 73 の再添付はコアの `find_reattachable` も画面も利用者の発話だけ）→ 送り手を問わない、へ覆す (b) **写しは
+  `tool_image::normalize`（Spec 70）と同じ 1 実装で、画像の添付に JPEG を加える**（rev3。P0 の実測を見た利用者裁定 — 可逆 WebP は
+  2K を 1024px まで縮めて 1.96MB で上限まで 4.5%・元が JPEG だと可逆 WebP で元より大きい 951KB → 1.68MB。JPEG 品質 85 なら
+  2K でも 1568px のまま 931KB。利用者が貼る画像は WebP のまま）。反証 1 = 打ち切りでツール行が残らない
+  （`ToolInvoked` は `CallRunner::on_call` で出す）。
+  **調査の副産物** = Kataribe の `ref_stock.rs:45` の PNG の判定バイトが壊れている（Spec の Notes 1。Fuseforks には持ち込まない）
 - [Spec 75](specs/75_session-bound-roots.md)（会話を依頼の根に結び付ける — 処理中に会話を切り替えても、答えは依頼した会話へ）:
   **Done**（2026-11-12。**起票から Done まで同日**。P4 = 開発ビルドで実機 9 件をすべて `fuseforks.log` の行で観測 — 決め手は
   開いていない会話へ書いたときだけ出る `session write: … session=<依頼した会話> open=<見ていた会話>` の行。**検収 1 と 5 は

@@ -1752,6 +1752,8 @@ enums:
       **← 「1 発話 1 枚」は Spec 73 D1 で覆した (2026-10-30)。覆したと明記して覆す** —
       1 発話 5 件・合計 12MB。1 件ずつの上限 (ここと Spec 36 D4) は不変。末尾の
       「Spec 73 改訂」の節が正。
+      **Spec 76 改訂 (2026-11-16)**: 利用者が貼る画像は今も WebP だけ。サーヴァントの返事の発話に付く
+      生成画像の写しに限り JPEG を加えた (末尾の「Spec 76 改訂」の節が正)。
 
       検証の共有は述語の単位で行う — validate_icon はパラメータ化**しない**
       (あの関数は「2 種類のアイコンが 1 つの上限を共有する」を doc で不変条件に
@@ -1789,6 +1791,10 @@ enums:
       添付を持つのは利用者の発話だけなので、**広場ログに添付は構造上現れない**。
       凍結 6 を守っているのは書かれた機構ではなく可視述語。添付を持つ送り手が
       利用者以外に増えたら (Spec 73 の再添付は利用者の発話のまま)、ここを数え直す。
+      **← Spec 76 で数え直した (2026-11-16)**: サーヴァントの返事の発話が生成画像の写しを持つように
+      なった (末尾の「Spec 76 改訂」の節)。可視述語はその発話を通すが、広場ログの抜粋と room_log の
+      pull は本文だけを書き、添付を書くコードは今も無いので、**広場ログに添付は今も現れない**。
+      `（画像 1 枚）` の表記を書くかは Spec 76 の範囲外 (書かない)。
 
       ## 凍結 7. ~~Gemini ネイティブ経路には実装しない (D8)~~
       ## **← Spec 36 D8 で覆した (2026-08-12 rev2 承認)。覆したと明記して覆す**
@@ -1840,7 +1846,7 @@ enums:
       (ID3・フレーム同期 / RIFF….WAVE / ftyp / %PDF-)。**画像以外は変換しない**
       (音声・動画の変換器は純 Rust で揃わない。JPEG フォールバックの同型は作らない)。
       保存は {workspace}/attachments/{uuid}.{ext} — 画像は変換後 .webp 固定
-      (既存のまま)、他は magic から決めた ext。**利用者のファイル名の拡張子は
+      (既存のまま。**Spec 76 以降、サーヴァントの生成画像の写しだけ .jpg もある**)、他は magic から決めた ext。**利用者のファイル名の拡張子は
       読まない**。~~**1 発話 1 件は種別によらず据え置き (D5)** — 型は Vec のまま
       (Option 化は redb の既存レコードと非互換)、保証は送信入口の検査で持ち、
       「2 件目は拒否」をテストで凍結して「Vec だから複数対応」の誤読を機械で止める。~~
@@ -2006,11 +2012,12 @@ enums:
       IPC send_user_message に加算で `attachmentRefs: String[]` (Rust 側
       attachment_refs。省略・空なら今と同じ。新しく貼る `attachments` とは別の欄)。
       **形式・寸法・ファイル名はフロントから受け取らない** — コアは Shared.log から
-      その ID を持つ利用者の発話の Attachment を探し、そのまま新しい発話へ写す。
+      その ID を持つ発話の Attachment を探し (**Spec 76 以降は送り手を問わない**)、そのまま新しい発話へ写す。
       画面が出す添付は listMessages (= リング) から引いているので、押せる添付は
       必ずリングにある (Spec 58 の「候補の源は解決の源の部分集合」)。
-        - リングに無い ID / 利用者の発話以外の ID → InvalidAttachment
-          (「この添付はもう参照できません」)
+        - リングに無い ID / ~~利用者の発話以外の ID~~ → InvalidAttachment
+          (「この添付はもう参照できません」)。**← 送り手の条件は Spec 76 で外した (2026-11-16。
+          生成画像の写しはサーヴァントの発話に付くため)。末尾の「Spec 76 改訂」の S76-3 が正**
         - ファイルが無い (GC 済み) → 送信入口で断る (「保持期間を過ぎて削除されました」)。
           ターンの中で断る今の経路 (読めなかった添付) まで持ち込まない
         - 宛先が違えば carries も違うので、再添付も S73-3 の門を通る
@@ -2041,6 +2048,40 @@ enums:
       - 送信入口で `attachments: agent=… count=N bytes=… refs=M` を 1 行 —
         **N > 1 または M > 0 のときだけ** (添付 1 件の新しい発話ではログが今と変わらない)
       - `attachment gc:` は不変
+
+      ## Spec 76 改訂 — 生成画像の写し (2026-11-16 P0 で凍結。着地は P1)
+
+      Spec 76 (画像生成。image_gen_contract) の写しを添付の置き場に置くための改訂。**覆したのは 2 つ** —
+      画像の形式 (WebP だけ → サーヴァントの写しに限り JPEG も) と、S73-5 の再添付の送り手 (利用者の
+      発話だけ → 送り手を問わない)。どちらも Spec 76 の「覆す判断」に書いた。
+
+      ### 凍結 S76-1. 写しは tool_image::normalize の 1 実装
+
+      生成画像の写しは mcp_image_result_contract の正規化と同じ関数で作る — 上限の内側 (長辺 1568px・
+      2MB) の JPEG / 静止 WebP はバイト列をそのまま、それ以外 (PNG・上限超え・アニメーション) は長辺
+      1568px の JPEG 品質 85 へ。P0 の実測 (2026-11-16。image 0.25.9 / image-webp 0.2.4): 4 社の 1024² の
+      写実の画像を可逆 WebP にすると 1.64〜1.68MB、2K は 1024px まで縮めて 1.96MB (上限まで 4.5%)、元が
+      JPEG の画像は可逆 WebP で元より大きくなる (951KB → 1.68MB)。JPEG 品質 85 なら 2K でも 1568px のまま
+      931KB。**可逆 WebP で段を踏んで縮める形は退けた** (2026-11-16 利用者裁定)
+        - 利用者が貼る画像は今も WebP だけ (凍結 4 の画面の変換は不変)。JPEG になりうるのはサーヴァントの
+          返事の発話の添付だけ
+        - 保存は {uuid}.webp / {uuid}.jpg。validate_attachment は画像として JPEG を受ける (上限は凍結 4 と
+          同じ 1568px・2MB。寸法は JPEG のヘッダから読む)
+        - ワイヤへ送る media_type は形式から決める。画像の carries は形式に依らない (6 ワイヤとも JPEG を
+          運ぶ — Spec 70 の ToolImage と同じ)
+
+      ### 凍結 S76-2. サーヴァントの発話が添付を持つのは生成画像の写しだけ
+
+      `image` ツールが生成した画像の写しを、そのターンの返事の AgentMessage.attachments に付ける。
+      **写しがモデルへ後から届く経路は作らない** — 履歴は本文だけ、広場ログは本文だけ (凍結 6)、受信箱へ
+      配送する封筒に返事の発話の添付は載らない (他の個体の load_turn_attachments に入らない)。届くのは
+      利用者が「入力欄へ」で渡し直したときだけ (S76-3)
+
+      ### 凍結 S76-3. 再添付は送り手を問わない (S73-5 を覆す)
+
+      find_reattachable は Shared.log の発話を送り手を問わず探す。会話ペインの「入力欄へ」は消えていない
+      添付すべてに出す。凍結 S73-7 (モデルが過去の添付を自分で取り出す経路は作らない) は不変 — 渡し直す
+      のは人の操作のまま。GC と mtime の更新 (凍結 8 / S73-6) は写しにもそのまま効く
 
     role_contract: |
       役職 (Role) — エージェントの雛形と、場に見えるラベル
@@ -2814,6 +2855,11 @@ entities:
         どれにも入らず、提示は **rag_sources の宣言が空または全ルート無効なら
         提示しない** の 1 点だけで決まる (rag_tool_contract)。
         `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` の等式は 8 = 7 + 1
+      - **【Spec 76 で変わる・着地は P1】image (画像生成) が加わり、`BUNDLED_TOOL_NAMES =
+        DEFAULT_ENABLED_TOOLS ∪ {run, image}` = 9 = 7 + 2 になる**。image も既定集合の外 (費用と
+        送信先が増えるので、更新しただけで全個体に生やさない) で、WORK_DIR_TOOL_NAMES にも入れない
+        (作業フォルダが無くても会話とモデルへは届く)。提示は enabledTools かつ is_active の 2 段
+        (image_gen_contract)。P1 で上の等式と本数を書き換える
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
     allow_handoff_invariant: |
@@ -5531,6 +5577,7 @@ conversation_termination:
     下記 bundled_tools_contract / write_tools_contract / file_tool_contract /
     command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
     = DEFAULT_ENABLED_TOOLS は 7 本)。
+    **Spec 76 P1 で image が加わり 9 本になる** (既定集合の外は run と image の 2 本。image_gen_contract)。
     **この列挙の外に居る同梱ツールが 2 本ある** — rag (Spec 18 D13) と blackboard
     (Spec 55。P2 で着地)。どちらも enabledTools の対象外で、提示は spec_for が決める。
     **2026-08-04 に 4 本 → 7 本へ訂正した** — Spec 01 の sd / yq と Spec 09 の
@@ -7046,6 +7093,92 @@ conversation_termination:
     degraded_reason を LlmError::Config に包み直す / RetryClass に not_found を足す / プロバイダの code で
     auth・not_found を補う / CoreError を新設して失敗を Err で返す / 自動で確かめる / 結果を保存して一覧に
     バッジを出す / fuseforks-cli check に足す / 統計へ入れる / ダミーの関数を添える
+
+  image_gen_contract: |
+    画像生成 = アプリ全体で 1 つ選ぶ画像生成 API と、同梱ツール `image` (Spec 76 rev3、2026-11-16 P0 で凍結)。
+    **本節は実装より先に凍結した契約で、着地は P1〜P4。設定していない村・`image` にチェックを付けていない
+    個体はバイト等価 (ツールの提示・プロンプト・ログ)。** 写しの形式と再添付の送り手は attachment_contract の
+    「Spec 76 改訂」の節が正。
+
+    不変条件:
+      1. **置き場は {app_data_dir}/image_gen.json + 資格情報ストア**。world.json に入れない (村を配った先が
+         知らない送信先へ送らない)。中身は選んでいる provider (openai / gemini / meta / xai) と provider ごとの
+         枠 (model / baseUrl / timeoutSecs) と既定の aspect / resolution。切り替えても他の枠の値は残る。鍵は
+         image_gen_key_openai / image_gen_key_gemini / image_gen_key_meta / image_gen_key_xai。値を返す IPC は
+         作らない (登録済みかだけ)。モデルテンプレートの鍵は使い回さない
+      2. **is_active が 1 本**。偽の理由は閉じた 3 つ = config_unreadable / no_provider / no_key。ツールの提示・
+         設定画面・起動時のログが同じ述語と同じ理由を読む。接続確認 (14) の結果は is_active に入れない
+      3. **同梱ツール `image`**: BUNDLED_TOOL_NAMES に足す (8 → 9)。DEFAULT_ENABLED_TOOLS (7) にも
+         WORK_DIR_TOOL_NAMES (6) にも入れない — 作業フォルダが無くても会話とモデルへは届く。提示は enabledTools に
+         `image` がある かつ is_active。呼び出しの時にも is_active を見る (偽なら生成を始めずに inactive で断る)。
+         wants_reason = true / prunable = false。説明文と結果は村の言語 (ja / en。zh-Hans の村は en)
+      4. **引数**: prompt (必須) / aspect (square | landscape | portrait。省略は設定の既定) / references (参照番号の
+         配列・3 つまで)。**解像度はモデルに選ばせない** (設定の既定だけ)
+      5. **参照番号**: そのターンの台帳の画像に 1 から — 利用者がそのターンに添付した画像 (届いた順。画像以外は
+         数えない) → そのターンに生成した画像 (生成した順)。台帳はターンの間だけ生き、次のターンに番号は残らない
+         (attachment_contract 凍結 3 は不変)。利用者の添付の番号は、添付を畳む文脈の 1 行に **`image` を提示して
+         いるターンだけ** 1 句足して知らせる。生成した画像の番号は結果の本文に書く。範囲外 / 4 つ以上 / 番号の
+         付いた画像が無いのに references がある → 生成を始めずに断る (bad_reference)
+      6. **参照として送るのは台帳の画像の写しで、変換しない** (利用者の添付 = 添付の置き場の実体 = WebP、生成した
+         画像 = S76-1 の写し = JPEG か WebP)。1 枚 2MB・長辺 1568px 以下なので Lorekeel の 8MB / 12MB は使わない。
+         P0 で 4 社とも WebP の参照を受け、Gemini と xAI は JPEG の参照も受けた (どれも出力の中央の色で内容を
+         照合)。OpenAI と Meta の JPEG の参照は撃っていない — P4 の「生成した画像を参照番号で直す」で踏む
+      7. **ワイヤ**: コアの image_gen/ (llm/ と分ける)。1 回 1 枚。縦横比 × 解像度の写像は Lorekeel の SizeMap —
+         openai: size 1024x1024 / 1536x1024 / 1024x1536 × quality low / medium / high、gemini: aspectRatio
+         1:1 / 16:9 / 9:16 × imageSize 1K / 2K / 2K、xai: aspect_ratio (gemini と同じ語彙) × (resolution, quality)
+         (1k, low) / (2k, low) / (2k, medium)、meta: size (openai と同じ語彙) だけで**解像度を写さない**。
+         既定のタイムアウトは openai 120 / gemini 90 / meta 120 / xai 120 秒 (下限 5)。**自動の再試行はしない**
+      8. **打ち切りは要求ごと切る** (cancel と HTTP を select! で競わせ、打ち切りが勝ったら要求の future を落とす)。
+         retry_contract (Spec 52 D4) の「待ちだけ切り HTTP は切らない」と逆 — あちらは払いの記録を失わないため、
+         画像生成の費用はもともと予算の外 (12) で、待つと打ち切りが最長 120 秒遅れる。打ち切った後はファイルも
+         写しも書かない (interrupted)。接続先が生成を続けて費用がかかることがある (利用者が負う条件)
+      9. **失敗は閉じた 8 区分** = auth / rate_limited / blocked / timeout / network / shape / api / config
+         (Lorekeel の ImageGenError と 1 対 1。ComfyNodeError だけ除く)。拒否: gemini は 200 で画像が無い
+         (promptFeedback.blockReason / finishReason != STOP)、xai は応答の data[0].respect_moderation: false
+         (文書の記述。Lorekeel でも未観測で、P0 でも拒否を起こす要求は送っていない)。結果の本文に村の言語で
+         理由と次の手 (言い換える / 鍵を確かめる / 待つ) を書く
+     10. **行き先**: (a) 作業フォルダの generated_images/<YYYYMMDD-HHMMSS>-<agent_id>-<番号>.<ext> に元のバイト列
+         (ローカル時刻・コロンを使わない。番号はそのターンの生成の順。ext は中身から png / jpg / webp。create_new で
+         書き、在れば -2・-3 を足して上書きしない。作業フォルダが無い / 書けないときは保存せず生成は成功のまま =
+         saved=no_work_dir | failed) (b) **写しは 1 つ** (attachment_contract S76-1) を会話ペイン・モデル・参照が
+         共有する。写しは**返事の発話が組まれるときだけ**添付の置き場へ書き、返事の AgentMessage.attachments に
+         付ける。組まれないターン (打ち切り・予算切れ・失敗・承認待ち) では書かない — 元は作業フォルダにだけ残り、
+         ツール行 (返事の組み立てと独立に CallRunner::on_call で出る) の本文にパスが出る (c) モデルへは結果の本文
+         (パスと参照番号) + 写しを ToolOutput.images で。委譲の依頼元へ返る Reply は本文だけ
+     11. **上限**: 接続先へ送る生成の要求は 1 ターン 4 回まで。数えるのは送った要求 (成功・送った後の失敗・
+         打ち切り)。生成を始めずに断ったもの (bad_reference / limit / inactive) は数えない。5 回目は limit で断る。
+         **値の 4 は P4 で見直す** (仕組みは凍結、値は改訂してよい)。RepeatGuard はそのまま効く — 成功の結果は
+         本文の参照番号とパスと画像が毎回違うので数えが進まず、同じ拒否が同じ本文で 2 回返ると 3 回目は送らない
+     12. **費用**: 生成の API の費用はトークン予算にも統計にも入れない (単価表も 1 枚の値段を持たない)。モデルへ
+         返した写しは、普通のツール結果の画像と同じく、そのターンの以後の周の入力トークンとして予算と統計に入る
+     13. **計器** `image gen: agent=… provider=… model=… aspect=… refs=N outcome=… elapsed_ms=… bytes=… saved=…`
+         + 返ってきた費用の欄があればその値 (openai の input / output tokens・xai の cost_ticks)。outcome は
+         ok + 9 の 8 区分 + interrupted / limit / bad_reference / inactive の閉じた集合。**プロンプトの本文は書かない**
+     14. **接続確認**: 押したときだけ社ごとの GET を 1 本 (タイムアウト 20 秒・画像は作らない) — openai
+         GET {base}/v1/models / gemini GET {base}/v1beta/models/{model} / meta GET {base}/v1/models/{model} /
+         xai GET {base}/v1/image-generation-models/{model}。2xx = 接続できた / 401・403 = 鍵 / gemini・meta・xai
+         の 404 = モデル名 / それ以外は状態コード。openai はモデル名を見ない。開いただけでは 1 バイトも出ない
+     15. **GUI なし**: ツールの登録は build_host の 1 実装で CLI も同じ門。bake は image_gen.json を写す
+         (SHELF_COPIED。jev.json と同じ行 — 村を他の人へ配るのではなく自分のコンテナへ写す操作)。--env-out は
+         is_active のとき選んでいる provider の鍵だけ。環境変数の名前の衝突検査に 4 つの鍵の名前を足す。
+         起動前検査 (headless_preflight) には足さない
+
+    P0 の実測 (2026-11-16。Lorekeel の既定モデル・写実のプロンプト・標準の段で 1 回ずつ):
+      provider / model                        参照なし                        参照つき (非可逆 WebP 512² 1 枚)
+      openai  gpt-image-1-mini (low)          PNG 1024² 1.62MB 10.4 秒        PNG 1.11MB・usage in 287 (image 256) / out 272
+      gemini  gemini-3.1-flash-lite-image 1K  JPEG 1024² 951KB 4.4 秒         JPEG 261KB・prompt 1146 (image 1120)
+      meta    muse-image-1.0 (size 1024²)     WebP 1600² 1.41MB 11.6 秒       WebP 1600² 41KB・in 4441 (cached 3968)
+      xai     grok-imagine-image-2.0 1k low   JPEG 1024² 507KB 10.0 秒 $0.04  JPEG 85KB・$0.05 (参照ありは高い)
+      - xai の 2k low は PNG 2048² 8.09MB 34.6 秒 $0.06 — **返る形式は社だけでなく解像度でも変わる**
+      - meta は size 1024x1024 を頼んでも 1600² を返す (長辺 1568 を超えるので写しでは縮めて JPEG)。
+        usage の in は 4,000 前後の隠れた前置きを含み (cached 3968)、out に reasoning を含む
+      - 接続確認の GET は 4 社とも 200 (openai と meta は環境変数の古い鍵で 401、利用者の端末の鍵で 200)。
+        xai はモデルの GET が 1 枚の値段の表 (pricing / image_price。単位 1e-10 USD) を返す
+
+    **退けた形**: world.json に置く / 個体ごとに provider を選ぶ / テンプレートの鍵を使い回す / 既定オン /
+    WORK_DIR_TOOL_NAMES に入れる / 解像度をモデルに選ばせる / 予算に換算する / 自動の再試行 / 打ち切りでも
+    HTTP を待つ / 写しを可逆 WebP で段を踏んで縮める / 用途ごとに別の写しを作る / 元のバイト列をモデルへ返す /
+    参照を送る前に変換する / 写しを GC から外す / 生成画像を添付の置き場だけに置く / ComfyUI
 
 # ---------------------------------------------------------------------------
 concurrency:
