@@ -56,6 +56,10 @@ import type {
   ScheduleView,
   SessionSummary,
   FetchedPrices,
+  ImageGenProbeView,
+  ImageGenSettingsConfig,
+  ImageGenSettingsView,
+  ImageProvider,
   JevProbeView,
   JevSettingsView,
   PricingSourceView,
@@ -730,6 +734,34 @@ export const clearJevToken = () => call<JevSettingsView>("clear_jev_token");
  * 外へ出る経路を作らない。Spec 59 D10）。
  */
 export const testJev = () => call<JevProbeView>("test_jev");
+
+// ---- 画像生成（Spec 76 P2） ----------------------------------------------------
+//
+// **投影を持たない**（読むのはシステム設定のページとサーヴァント設定の注記だけ）ので生の `ipc` で呼ぶ。
+// 接続確認以外の 4 本は同じ `ImageGenSettingsView` を返すので、画面は戻り値をそのまま置き換える。
+
+/** 画像生成の設定を読む。**鍵の値は返らない**（登録済みかだけ）。外へは出ない。 */
+export const getImageGenSettings = () => call<ImageGenSettingsView>("get_image_gen_settings");
+
+/** 画像生成の設定を保存し、差し込み口を埋め直す。**押した時点で反映。** */
+export const setImageGenSettings = (config: ImageGenSettingsConfig) =>
+  call<ImageGenSettingsView>("set_image_gen_settings", { config });
+
+/** 接続先の鍵を登録する。**読み出す口は無い。** */
+export const setImageGenKey = (provider: ImageProvider, secret: string) =>
+  call<ImageGenSettingsView>("set_image_gen_key", { provider, secret });
+
+/** 接続先の鍵を削除する。 */
+export const clearImageGenKey = (provider: ImageProvider) =>
+  call<ImageGenSettingsView>("clear_image_gen_key", { provider });
+
+/**
+ * 接続を確かめる。**画像を作らない GET を 1 本投げる唯一の入口。**
+ *
+ * **起動経路・画面遷移・タイマーから呼んではならない**（押していないのに
+ * 外へ出る経路を作らない。Spec 76 D8）。失敗は `outcome` で返る。
+ */
+export const testImageGen = () => call<ImageGenProbeView>("test_image_gen");
 
 /**
  * モデルテンプレートの接続テスト（Spec 68）。**保存済みの**テンプレートで LLM を 1 回だけ呼ぶ。

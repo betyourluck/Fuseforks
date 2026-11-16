@@ -124,6 +124,10 @@ pub struct ToolContext {
     /// `yq`）はこの配下を書き換えない** — `judge.toml` を書けるのは人だけ（画面の保存）。
     /// `None` = 囲わない（テストと、ワークスペースを知らない呼び出し）。
     pub judges_dir: Option<std::path::PathBuf>,
+    /// そのターンの画像の台帳（Spec 76 D3 / D6）。**見るのは `image` だけ** — 参照番号と
+    /// 1 ターンの上限をここで引く。ターンの層が作って呼び出しへ渡す。提示（`spec_for`）では読まない。
+    /// `None` = 渡さない（提示と、ターンの外の呼び出し）。
+    pub turn_images: Option<Arc<crate::tools::image::TurnImages>>,
 }
 
 /// 実行可能なツール。
@@ -370,6 +374,7 @@ mod tests {
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
             judges_dir: None,
+            turn_images: None,
         }
     }
 

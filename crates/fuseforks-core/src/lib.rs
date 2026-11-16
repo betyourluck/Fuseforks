@@ -72,6 +72,7 @@ pub mod doc_index;
 pub mod error;
 pub mod event;
 pub mod headless;
+pub mod image_gen;
 pub mod jev;
 pub mod judge;
 pub mod llm;

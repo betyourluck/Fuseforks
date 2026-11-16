@@ -11,7 +11,7 @@
 
 import type { PendingAttachment } from "./attachment";
 import type { AttachmentKind } from "./carries";
-import type { Attachment } from "../types";
+import type { AgentMessage, Attachment } from "../types";
 
 /** 1 発話の件数の上限。コアの `ATTACHMENT_MAX_PER_MESSAGE` と同じ値。 */
 export const MAX_ATTACHMENTS = 5;
@@ -125,4 +125,14 @@ export function kindsIn(items: readonly DraftAttachment[]): AttachmentKind[] {
  */
 export function formatMegabytes(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+/**
+ * 「入力欄へ」を出す発話か（Spec 73 D5 → Spec 76 S76-3）。**利用者とサーヴァントの発話**の添付は
+ * 渡し直せる（サーヴァントの返事には生成画像の写しが付く）。システムと外部クライアントの発話は
+ * 対象外 — コアの `find_reattachable` の閉じた許容（`Endpoint::User | Endpoint::Agent`）と同じ集合で、
+ * ずれると「押せるのに断られる」ボタンになる（`attachmentListWiring.test.ts` が突き合わせる）。
+ */
+export function canReattachFrom(message: Pick<AgentMessage, "from">): boolean {
+  return message.from.kind === "user" || message.from.kind === "agent";
 }

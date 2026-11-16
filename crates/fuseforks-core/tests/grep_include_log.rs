@@ -48,6 +48,7 @@ fn ctx(work_dir: &Path) -> ToolContext {
         language: fuseforks_core::world::Language::Ja,
         run_approval: fuseforks_core::command::RunApproval::Required,
         judges_dir: None,
+        turn_images: None,
     }
 }
 

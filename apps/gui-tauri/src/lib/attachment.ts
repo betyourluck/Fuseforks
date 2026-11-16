@@ -293,3 +293,26 @@ async function convertImageFile(
     bytes: response.bytes,
   };
 }
+
+/**
+ * 保存してある添付の形式から MIME を引く（表示の object URL / data URL 用）。
+ *
+ * **`jpeg` はサーヴァントの返事に付く生成画像の写しだけ**（Spec 76 S76-1）で、利用者が貼る画像は
+ * 今も WebP。形式欄の無い古いレコードは WebP（Spec 23 の時代の添付はすべて WebP の画像だった）。
+ */
+export function attachmentMime(format: string | undefined): string {
+  switch (format) {
+    case "jpeg":
+      return "image/jpeg";
+    case "mp3":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "mp4":
+      return "video/mp4";
+    case "pdf":
+      return "application/pdf";
+    default:
+      return "image/webp";
+  }
+}

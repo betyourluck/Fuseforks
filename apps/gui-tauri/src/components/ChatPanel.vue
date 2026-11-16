@@ -40,6 +40,7 @@ import { isNearBottom } from "../lib/chatScroll";
 import { usePathMenu } from "../composables/usePathMenu";
 import { approvalBanner } from "../lib/approvalBanner";
 import SessionDialog from "./SessionDialog.vue";
+import ImagePreview from "./ImagePreview.vue";
 import { avatarHue as hueOfName, avatarInitial } from "../lib/avatar";
 import {
   buildTimeline,
@@ -68,7 +69,8 @@ import { useUiSettings } from "../composables/useUiSettings";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { visibleAgents } from "../lib/agentGroups";
 import { getToolCall, readAttachment } from "../lib/ipc";
-import type { PendingAttachment } from "../lib/attachment";
+import { attachmentMime, type PendingAttachment } from "../lib/attachment";
+import { canReattachFrom } from "../lib/attachmentList";
 import type { AttachmentKind } from "../lib/carries";
 import type { Attachment } from "../types";
 import type { AgentId, AgentMessage, AgentSnapshot, Endpoint, QuotedMessage } from "../types";
@@ -911,15 +913,20 @@ function quoteFromName(quote: QuotedMessage): string {
 const attachmentUrls = reactive<Record<string, string | null>>({});
 const attachmentLoading = new Set<string>();
 
-/** 添付の実体を（初回だけ）読みに行く。描画は reactive の更新で追い付く。 */
-function ensureAttachment(id: string): void {
+/**
+ * 添付の実体を（初回だけ）読みに行く。描画は reactive の更新で追い付く。
+ * MIME は**保存してある形式から**引く — サーヴァントの返事に付く生成画像の写しは JPEG のことがある
+ * （Spec 76 S76-1）。
+ */
+function ensureAttachment(att: Attachment): void {
+  const id = att.id;
   if (id in attachmentUrls || attachmentLoading.has(id)) return;
   attachmentLoading.add(id);
   void readAttachment(id)
     .then((bytes) => {
       attachmentUrls[id] = bytes
         ? URL.createObjectURL(
-            new Blob([new Uint8Array(bytes)], { type: "image/webp" }),
+            new Blob([new Uint8Array(bytes)], { type: attachmentMime(att.format) }),
           )
         : null;
     })
@@ -932,9 +939,9 @@ function ensureAttachment(id: string): void {
 }
 
 /** 描画用: 添付の現在の状態。undefined = 読み込み中。 */
-function attachmentUrl(id: string): string | null | undefined {
-  ensureAttachment(id);
-  return attachmentUrls[id];
+function attachmentUrl(att: Attachment): string | null | undefined {
+  ensureAttachment(att);
+  return attachmentUrls[att.id];
 }
 
 /**
@@ -958,6 +965,18 @@ function attachmentKindOf(att: Attachment): AttachmentKind {
 /** インラインで描けるのは画像だけ。 */
 function isImageAttachment(att: Attachment): boolean {
   return attachmentKindOf(att) === "image";
+}
+
+/**
+ * 大きく見ている画像（Spec 76 P2 の実機の要望）。`null` = 閉じている。
+ * URL は投影キャッシュの object URL をそのまま渡す — プレビューのために読み直さないし、捨てもしない。
+ */
+const preview = ref<{ src: string; name: string; width?: number; height?: number } | null>(null);
+
+function openPreview(att: Attachment): void {
+  const src = attachmentUrl(att);
+  if (!src) return;
+  preview.value = { src, name: att.fileName, width: att.width, height: att.height };
 }
 
 /** 会話一覧ダイアログを開いているか（Spec 12）。 */
@@ -1542,17 +1561,25 @@ async function newChat(): Promise<void> {
             <!-- 画像だけがインラインで見える。音声・動画・PDF は
                  **枠とファイル名で存在を示す**（Spec 36）— プレイヤーや
                  ビューアを内蔵すると、画面が「添付を扱う場所」に化ける。 -->
-            <img
-              v-if="isImageAttachment(att) && attachmentUrl(att.id)"
-              :src="attachmentUrl(att.id)!"
-              :alt="att.fileName"
-              :title="att.fileName"
-              class="mb-1 max-h-64 max-w-full rounded-2xl object-contain ring-1 ring-line"
-              :width="att.width"
-              :height="att.height"
-            />
+            <!-- 押すと大きく見る（Spec 76 P2 の実機の要望。利用者の画像も生成画像の写しも同じ）。 -->
+            <button
+              v-if="isImageAttachment(att) && attachmentUrl(att)"
+              type="button"
+              class="mb-1 block max-w-full cursor-zoom-in rounded-2xl"
+              :title="$t('chat.imagePreviewHint', { name: att.fileName })"
+              data-image-preview-open
+              @click="openPreview(att)"
+            >
+              <img
+                :src="attachmentUrl(att)!"
+                :alt="att.fileName"
+                class="max-h-64 max-w-full rounded-2xl object-contain ring-1 ring-line"
+                :width="att.width"
+                :height="att.height"
+              />
+            </button>
             <div
-              v-else-if="!isImageAttachment(att) && attachmentUrl(att.id)"
+              v-else-if="!isImageAttachment(att) && attachmentUrl(att)"
               class="mb-1 inline-flex max-w-full items-center gap-2 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] ring-1 ring-line"
             >
               <span class="shrink-0 rounded bg-surface-1 px-1 text-[10px] text-ink-dim">
@@ -1561,16 +1588,17 @@ async function newChat(): Promise<void> {
               <span class="truncate text-ink" :title="att.fileName">{{ att.fileName }}</span>
             </div>
             <div
-              v-else-if="attachmentUrl(att.id) === null"
+              v-else-if="attachmentUrl(att) === null"
               class="mb-1 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] text-ink-dim ring-1 ring-line"
             >
               {{ $t("chat.attachmentDeleted") }}
             </div>
             <!-- 「入力欄へ」（Spec 73 D5）。過去の添付を、いま選んでいるサーヴァントへ
-                 渡し直す。出すのは**利用者の発話**の添付だけ（コアが受けるのも利用者の
-                 発話の添付だけ）で、ファイルが消えていれば出さない。送信はしない。 -->
+                 渡し直す。出すのは**利用者とサーヴァントの発話**の添付（サーヴァントの返事には
+                 生成画像の写しが付く — Spec 76 S76-3。コアの `find_reattachable` と同じ集合）で、
+                 ファイルが消えていれば出さない。送信はしない。 -->
             <button
-              v-if="isMine(entry.row.message) && attachmentUrl(att.id)"
+              v-if="canReattachFrom(entry.row.message) && attachmentUrl(att)"
               type="button"
               class="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
               :disabled="!canSend"
@@ -1885,6 +1913,15 @@ async function newChat(): Promise<void> {
       v-if="sessionsOpen"
       @close="sessionsOpen = false"
       @prefill="prefill"
+    />
+
+    <ImagePreview
+      v-if="preview"
+      :src="preview.src"
+      :name="preview.name"
+      :width="preview.width"
+      :height="preview.height"
+      @close="preview = null"
     />
   </div>
 </template>

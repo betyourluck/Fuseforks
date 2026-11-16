@@ -8,6 +8,7 @@ pub mod blackboard;
 pub mod edit;
 pub mod file;
 pub mod fs;
+pub mod image;
 pub mod memory;
 pub mod rag;
 pub mod run;
@@ -16,6 +17,7 @@ pub use blackboard::BlackboardTool;
 pub use edit::{SdTool, YqTool};
 pub use file::FileTool;
 pub use fs::{DiffTool, FdTool, GrepTool};
+pub use image::ImageTool;
 pub use memory::RememberTool;
 pub use rag::RagTool;
 pub use run::RunTool;
@@ -32,13 +34,16 @@ pub use run::RunTool;
 /// 増えないため、**フォルダを宣言しても誰にも `rag` が出なかった**。
 /// この集合から外れたことで `is_bundled_tool_presented` を素通りし、
 /// `RagTool::spec_for`（宣言が空または全滅なら提示しない）だけが効く。
-pub const BUNDLED_TOOL_NAMES: [&str; 8] =
-    ["diff", "fd", "file", "grep", "remember", "run", "sd", "yq"];
+///
+/// **`image`（Spec 76）もここに入る** — 提示は `enabledTools` にあること（この表が受ける 1 段目）と、
+/// 画像生成の設定が効いていること（`ImageTool::spec_for` が受ける 2 段目）の両方。
+pub const BUNDLED_TOOL_NAMES: [&str; 9] =
+    ["diff", "fd", "file", "grep", "image", "remember", "run", "sd", "yq"];
 
 /// `enabled_tools: None`（既定に従う）で提示する集合。
 ///
-/// **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}`。** `run` だけが
-/// 既定集合の外に居る（Spec 15、破壊的変更）。
+/// **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run, image}`。** `run`（Spec 15、破壊的変更）と
+/// `image`（Spec 76。費用がかかり外へ送る）が既定集合の外に居る。
 ///
 /// `run` を他の 7 本と同じ扱いにすると、**アプリを更新した瞬間に全個体が
 /// コマンド実行能力を得る**。`batch_start_invariant` が「開いただけで課金が
@@ -51,6 +56,8 @@ pub const DEFAULT_ENABLED_TOOLS: [&str; 7] =
     ["diff", "fd", "file", "grep", "remember", "sd", "yq"];
 
 /// 作業フォルダが無いと動かない同梱ツール。
+///
+/// **`image` は入れない**（Spec 76 D2 — 作業フォルダが無くても会話とモデルへは届き、保存だけが無くなる）。
 ///
 /// 未設定のエージェントには enabled_tools に関わらず**提示しない** —
 /// 呼んでも「未設定です」と答えるだけのツールに、毎ターンスキーマ分の

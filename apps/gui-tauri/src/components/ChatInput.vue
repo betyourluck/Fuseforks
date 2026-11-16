@@ -32,6 +32,7 @@ import { useI18n } from "vue-i18n";
 import {
   AttachmentError,
   MAX_EDGE_PX,
+  attachmentMime,
   bytesToBase64,
   prepareFile,
   type PendingAttachment,
@@ -699,7 +700,8 @@ async function addAttachmentRef(ref: Attachment, kind: AttachmentKind): Promise<
   if (kind === "image") {
     refPreviews.value = {
       ...refPreviews.value,
-      [key]: `data:image/webp;base64,${bytesToBase64(new Uint8Array(bytes))}`,
+      // 渡し直す添付は生成画像の写し（JPEG）のことがある（Spec 76 S76-1）。
+      [key]: `data:${attachmentMime(ref.format)};base64,${bytesToBase64(new Uint8Array(bytes))}`,
     };
   }
   area.value?.focus();

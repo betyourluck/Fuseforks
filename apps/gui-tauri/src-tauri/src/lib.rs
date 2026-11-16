@@ -8,6 +8,7 @@ mod autostart;
 mod commands;
 // ホスト層（Spec 64）へ持ち上げた扉と棚。`crate::mcp_server::…` の読み替えを
 // 起こさないために同じ名前で再公開する。
+pub use fuseforks_host::image_gen_settings;
 pub use fuseforks_host::jev_settings;
 pub use fuseforks_host::mcp_server;
 pub use fuseforks_host::pricing_source;
@@ -147,6 +148,11 @@ pub fn run() {
             commands::set_jev_token,
             commands::clear_jev_token,
             commands::test_jev,
+            commands::get_image_gen_settings,
+            commands::set_image_gen_settings,
+            commands::set_image_gen_key,
+            commands::clear_image_gen_key,
+            commands::test_image_gen,
             commands::test_model_template,
             commands::mcp_host_status,
             commands::set_mcp_host,

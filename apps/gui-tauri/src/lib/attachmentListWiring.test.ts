@@ -15,7 +15,13 @@ import { fileURLToPath } from "node:url";
 
 import en from "../locales/en.json";
 import ja from "../locales/ja.json";
-import { MAX_ATTACHMENTS, MAX_MESSAGE_BYTES, type AttachLimit } from "./attachmentList";
+import { attachmentMime } from "./attachment";
+import {
+  MAX_ATTACHMENTS,
+  MAX_MESSAGE_BYTES,
+  canReattachFrom,
+  type AttachLimit,
+} from "./attachmentList";
 
 const read = (path: string) =>
   readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), "utf8");
@@ -86,10 +92,38 @@ describe("入力欄", () => {
 });
 
 describe("会話ペインの「入力欄へ」", () => {
-  it("利用者の発話の、消えていない添付にだけ出す", () => {
+  it("渡し直せる発話の、消えていない添付にだけ出す（Spec 76 S76-3 — サーヴァントの発話も）", () => {
     expect(panel).toMatch(
-      /v-if="isMine\(entry\.row\.message\) && attachmentUrl\(att\.id\)"[\s\S]*?data-reattach[\s\S]*?@click="reattach\(att\)"/,
+      /v-if="canReattachFrom\(entry\.row\.message\) && attachmentUrl\(att\)"[\s\S]*?data-reattach[\s\S]*?@click="reattach\(att\)"/,
     );
+  });
+
+  it("渡し直せる送り手はコアの find_reattachable と同じ集合", () => {
+    // 画面だけ広げると「押せるのに断られる」、コアだけ広げると「渡せるのに押せない」になる。
+    const runtime = read("../../crates/fuseforks-core/src/orchestrator/runtime.rs");
+    const fn = /async fn find_reattachable[\s\S]*?\n {4}\}\n/.exec(runtime);
+    expect(fn, "runtime.rs に find_reattachable が在ること").not.toBeNull();
+    expect(fn![0]).toContain("matches!(message.from, Endpoint::User | Endpoint::Agent { .. })");
+    expect(canReattachFrom({ from: { kind: "user" } })).toBe(true);
+    expect(canReattachFrom({ from: { kind: "agent", id: "agent_1" } })).toBe(true);
+    expect(canReattachFrom({ from: { kind: "system" } })).toBe(false);
+    expect(canReattachFrom({ from: { kind: "external", client: "Neo" } })).toBe(false);
+  });
+});
+
+describe("保存してある形式で描く（Spec 76 S76-1）", () => {
+  it("会話ペインと入力欄のチップは MIME を形式から引く", () => {
+    expect(panel).toContain("{ type: attachmentMime(att.format) }");
+    expect(input).toContain("data:${attachmentMime(ref.format)};base64,");
+    // 生成画像の写しは JPEG のことがある — WebP の決め打ちに戻さない。
+    expect(panel).not.toContain('{ type: "image/webp" }');
+  });
+
+  it("形式ごとの MIME", () => {
+    expect(attachmentMime("jpeg")).toBe("image/jpeg");
+    expect(attachmentMime("webp")).toBe("image/webp");
+    expect(attachmentMime(undefined)).toBe("image/webp");
+    expect(attachmentMime("pdf")).toBe("application/pdf");
   });
 });
 

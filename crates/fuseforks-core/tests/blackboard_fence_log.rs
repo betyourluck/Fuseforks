@@ -80,6 +80,7 @@ async fn refused_writes_and_the_delete_sweep_each_leave_one_line() {
         language: fuseforks_core::world::Language::Ja,
         run_approval: fuseforks_core::command::RunApproval::Required,
         judges_dir: None,
+        turn_images: None,
     };
     let note = format!("blackboard/doing/agent - {TASK}.md");
     let refused = FileTool

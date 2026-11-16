@@ -416,6 +416,10 @@ struct TurnProduct {
     /// 正直な文言（ツール実行の上限 / 本文が返らなかった）へ置き換えた回だけ真。
     /// `reply:` 行の `author=` に写すだけで、配送にも履歴にも効かない。
     written_by_core: bool,
+    /// このターンに `image` が生成した画像の写し（Spec 76 D5 の 2）。**本文で終わったターン
+    /// （`Outcome::Finish`）の返事の発話にだけ付ける** — 転送の発話に付けると受け手のターンへ
+    /// 添付として届く（S76-2 の違反）。
+    generated_images: Vec<crate::tools::image::GeneratedCopy>,
 }
 
 /// 割り込みで打ち切られたターンの出口（Spec 10 — 契約の出口 2a）。
@@ -1447,6 +1451,8 @@ async fn present_tools(
         run_approval: shared.run_approval(),
         // 判断役のファイルの囲い（Spec 62）。
         judges_dir: Some(shared.store.judges_dir()),
+        // 提示では読まない（`image` の提示は設定が効いているかだけで決まる。Spec 76 D2）。
+        turn_images: None,
     };
     let shared_specs: Vec<ToolSpec> = shared
         .tools
@@ -1641,7 +1647,12 @@ async fn run_turn_inner(
         sent_user_turn,
         system_digest,
         history_depth,
+        user_images,
     } = prompt;
+    // そのターンの画像の台帳（Spec 76 D3 / D6）。**寿命はターン**で、`pruned_raws` と同じく
+    // ここのローカルに置き、呼び出しへは `ToolContext` で渡す。生成した写しはターンの終わりに
+    // 取り出して返事の発話に付ける（`TurnProduct::generated_images`）。
+    let turn_images = Arc::new(crate::tools::image::TurnImages::new(user_images));
     let PresentedTools {
         specs,
         executable,
@@ -2007,6 +2018,7 @@ async fn run_turn_inner(
                 plan_wave: &mut plan_wave,
                 pruned: &mut pruned_raws,
                 language: tool_images.language,
+                turn_images: &turn_images,
             };
             for call in &calls {
                 let (body, images, executed, blocked, approval_pending) =
@@ -2377,6 +2389,7 @@ async fn run_turn_inner(
         grounding,
         reasoning_summary,
         written_by_core,
+        generated_images: turn_images.take_generated(),
     }))
 }
 
@@ -2450,6 +2463,9 @@ struct CallRunner<'a> {
     pruned: &'a mut Vec<PrunedRaw>,
     /// 村の言語（Spec 70。ツールの出力の表示に足す画像の 1 行を書く）。
     language: crate::world::Language,
+    /// そのターンの画像の台帳（Spec 76）。**ターンの寿命**なので `run_turn_inner` のローカルを
+    /// 借りる（`pruned` と同じ理由 — 周ごとに作り直すと参照番号と上限が周で切れる）。
+    turn_images: &'a Arc<crate::tools::image::TurnImages>,
 }
 
 /// 圧縮した 1 件の生本文（Spec 59 D7 / `tool_prune_contract`）。
@@ -2694,7 +2710,7 @@ impl CallRunner<'_> {
                 }
                 _ => {
                     reason = registry_reason(shared, agent_id, call).await;
-                    execute_tool(shared, agent_id, call, &turn.token).await
+                    execute_tool(shared, agent_id, call, &turn.token, self.turn_images).await
                 }
             }
         };
@@ -3018,6 +3034,9 @@ struct TurnPrompt {
     system_digest: SystemDigest,
     /// 滑る窓の深さ（計器）。
     history_depth: HistoryDepth,
+    /// 利用者がこのターンに添付した画像（届いた順。Spec 76 の参照番号 1 から）。
+    /// `messages` の最後の発話に載るものと同じで、画像以外の種別は入れない。
+    user_images: Vec<crate::llm::PromptAttachment>,
 }
 
 /// プロンプトを組む（段 4）。
@@ -3315,6 +3334,12 @@ async fn build_prompt(
     // `sent_user_turn` の文字列だけなので、**画像は履歴に残らない**（D1）。
     context.push(attributed.clone());
     let sent_user_turn = context.join("\n\n");
+    // 画像の参照番号の台帳へ写す（Spec 76 D3）。種別が画像のものだけ、届いた順。
+    let user_images: Vec<crate::llm::PromptAttachment> = image_attachments
+        .iter()
+        .filter(|a| a.kind() == crate::attachment::AttachmentKind::Image)
+        .cloned()
+        .collect();
     messages.push(ChatMessage::user_with_attachments(
         &sent_user_turn,
         image_attachments,
@@ -3332,7 +3357,36 @@ async fn build_prompt(
         sent_user_turn,
         system_digest,
         history_depth,
+        user_images,
     }
+}
+
+/// 生成画像の写しを添付の置き場へ書き、返事の発話に付ける参照を返す（Spec 76 D5 の 2）。
+///
+/// 書けなかった写しは抜いて 1 行残す（発話そのものは止めない — 本文は届けるほうが害が小さい）。
+async fn save_generated_copies(
+    shared: &Arc<Shared>,
+    agent_id: &AgentId,
+    copies: Vec<crate::tools::image::GeneratedCopy>,
+) -> Vec<crate::attachment::Attachment> {
+    use base64::Engine as _;
+    let mut saved = Vec::with_capacity(copies.len());
+    for copy in copies {
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&copy.image.data) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                note!("image copy save failed: agent={agent_id} file={} err={err}", copy.file_name);
+                continue;
+            }
+        };
+        match shared.attachments.save_generated(&copy.file_name, &bytes).await {
+            Ok(attachment) => saved.push(attachment),
+            Err(err) => {
+                note!("image copy save failed: agent={agent_id} file={} err={err}", copy.file_name);
+            }
+        }
+    }
+    saved
 }
 
 /// ターンの出口（段 8）。答えを記録し、宛先へ配送する。
@@ -3362,6 +3416,7 @@ async fn dispatch_outcome(
         mut grounding,
         mut reasoning_summary,
         written_by_core,
+        generated_images,
     } = product;
     let next_hop = incoming.hop.saturating_add(1);
     let from = Endpoint::Agent {
@@ -3410,6 +3465,11 @@ async fn dispatch_outcome(
             // 思考の要約も同じ経路で表示層へ渡す。**履歴へは載らない** —
             // 積む先の `ChatMessage` にこの欄が無い（型で閉じている）。
             outgoing.reasoning_summary = reasoning_summary;
+            // 生成画像の写し（Spec 76 D5 の 2 / S76-2）。**ここで初めて添付の置き場へ書く** —
+            // 返事の発話が組まれないターン（打ち切り・予算切れ・失敗・承認待ち）では写しを書かない。
+            // この発話は記録（会話ペイン）にだけ載り、受信箱へは配送しない（委譲の依頼元へ返る
+            // `Reply` は本文だけ）ので、写しがモデルへ後から届く経路は「入力欄へ」だけ。
+            outgoing.attachments = save_generated_copies(shared, agent_id, generated_images).await;
             shared.record(outgoing, &session).await;
 
             if let Some(reply_to) = reply_to {
@@ -3424,6 +3484,14 @@ async fn dispatch_outcome(
         }
         Outcome::Handoff { deliveries } => deliveries,
     };
+    // 転送で終わったターンの生成画像は発話に付けない（受け手のターンへ添付として届くため。S76-2）。
+    // 元は作業フォルダにあり、ツール行の本文にパスが出ている。黙って捨てず、数だけ残す。
+    if !generated_images.is_empty() {
+        note!(
+            "image copy skipped: agent={agent_id} reason=handoff count={}",
+            generated_images.len()
+        );
+    }
 
     // **転送はどのログ行にも出ていなかった。**`transfer_to_*` は `tool:` 行を
     // 出す前にループを抜けるので（上の `Outcome::Handoff` の break）、
@@ -3722,6 +3790,7 @@ async fn execute_tool(
     agent_id: &AgentId,
     call: &crate::llm::ToolCall,
     cancel: &tokio_util::sync::CancellationToken,
+    turn_images: &Arc<crate::tools::image::TurnImages>,
 ) -> CoreResult<crate::tool::ToolOutput> {
     // 実行解決は提示と同じ規則の逆引き（[`resolve_registry_tool`] の 1 実装）。
     let Some(tool) = resolve_registry_tool(shared, agent_id, &call.name).await else {
@@ -3769,9 +3838,11 @@ async fn execute_tool(
         run_approval: shared.run_approval(),
         // 判断役のファイルの囲い（Spec 62）。
         judges_dir: Some(shared.store.judges_dir()),
+        // そのターンの画像の台帳（Spec 76）。見るのは `image` だけ。
+        turn_images: Some(Arc::clone(turn_images)),
     };
-    // 本文と画像（Spec 70 D7）。画像を返すのは `McpTool` だけで、同梱ツールは
-    // 既定実装が `call` の本文を包むだけ。
+    // 本文と画像（Spec 70 D7）。画像を返すのは `McpTool` と `image`（Spec 76）で、ほかの
+    // 同梱ツールは既定実装が `call` の本文を包むだけ。
     tool.call_with_media(&ctx, &call.args).await
 }
 

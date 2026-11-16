@@ -628,6 +628,7 @@ mod tests {
             language: crate::world::Language::Ja,
             run_approval: mode,
             judges_dir: None,
+            turn_images: None,
         };
         (dir, tool, ctx)
     }
@@ -787,6 +788,7 @@ mod tests {
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
             judges_dir: None,
+            turn_images: None,
         };
 
         let spec = tool

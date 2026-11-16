@@ -2079,9 +2079,13 @@ enums:
 
       ### 凍結 S76-3. 再添付は送り手を問わない (S73-5 を覆す)
 
-      find_reattachable は Shared.log の発話を送り手を問わず探す。会話ペインの「入力欄へ」は消えていない
-      添付すべてに出す。凍結 S73-7 (モデルが過去の添付を自分で取り出す経路は作らない) は不変 — 渡し直す
-      のは人の操作のまま。GC と mtime の更新 (凍結 8 / S73-6) は写しにもそのまま効く
+      find_reattachable は Shared.log の**利用者とサーヴァントの発話**を探す (閉じた許容
+      `Endpoint::User | Endpoint::Agent`。P1 で決めた — システムと外部クライアントの発話は今は添付を持たず、
+      将来持つ送り手が増えても既定で渡せない側に倒すため)。会話ペインの「入力欄へ」は同じ集合の発話の、
+      消えていない添付に出す (画面の述語 canReattachFrom とコアの許容は attachmentListWiring.test.ts が
+      突き合わせる。P2)。凍結 S73-7 (モデルが過去の添付を自分で取り出す経路は作らない) は不変 — 渡し直す
+      のは人の操作のまま。GC と mtime の更新 (凍結 8 / S73-6) は写しにもそのまま効く。画面は添付の MIME を
+      保存してある形式から引く (写しは JPEG のことがある。P2)
 
     role_contract: |
       役職 (Role) — エージェントの雛形と、場に見えるラベル
@@ -2815,7 +2819,7 @@ entities:
       既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
       線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
-      enabledTools は同梱 8 本 (remember / grep / fd / diff / sd / yq / file / run)
+      enabledTools は同梱 9 本 (remember / grep / fd / diff / sd / yq / file / run / image)
       の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
       MCP 由来・転送・委譲は対象外。**rag も対象外** (Spec 18 D13 — 提示は
       rag_sources の宣言だけが決める。詳細は rag_tool_contract)。
@@ -2855,11 +2859,11 @@ entities:
         どれにも入らず、提示は **rag_sources の宣言が空または全ルート無効なら
         提示しない** の 1 点だけで決まる (rag_tool_contract)。
         `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` の等式は 8 = 7 + 1
-      - **【Spec 76 で変わる・着地は P1】image (画像生成) が加わり、`BUNDLED_TOOL_NAMES =
-        DEFAULT_ENABLED_TOOLS ∪ {run, image}` = 9 = 7 + 2 になる**。image も既定集合の外 (費用と
+      - **【Spec 76 P1 で着地 (2026-11-16)】image (画像生成) が加わり、`BUNDLED_TOOL_NAMES =
+        DEFAULT_ENABLED_TOOLS ∪ {run, image}` = 9 = 7 + 2 になった** (上の行の等式は Spec 18 当時のもの)。image も既定集合の外 (費用と
         送信先が増えるので、更新しただけで全個体に生やさない) で、WORK_DIR_TOOL_NAMES にも入れない
         (作業フォルダが無くても会話とモデルへは届く)。提示は enabledTools かつ is_active の 2 段
-        (image_gen_contract)。P1 で上の等式と本数を書き換える
+        (image_gen_contract)
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
     allow_handoff_invariant: |
@@ -5573,11 +5577,11 @@ conversation_termination:
     MCP のツール 1 本を AgentTool 1 つに写せばオーケストレーター側は変わらない。
     条件は、この trait が LLM のワイヤ形にも MCP のワイヤ形にも依存しないこと。
     同梱ツールは Fuseforks 自身が提供する操作だけに限る
-    (**現在 8 本** = remember / grep / fd / diff / sd / yq / file / run。
+    (**現在 9 本** = remember / grep / fd / diff / sd / yq / file / run / image。
     下記 bundled_tools_contract / write_tools_contract / file_tool_contract /
     command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
     = DEFAULT_ENABLED_TOOLS は 7 本)。
-    **Spec 76 P1 で image が加わり 9 本になる** (既定集合の外は run と image の 2 本。image_gen_contract)。
+    **image は Spec 76 P1 で着地** (既定集合の外は run と image の 2 本。image_gen_contract)。
     **この列挙の外に居る同梱ツールが 2 本ある** — rag (Spec 18 D13) と blackboard
     (Spec 55。P2 で着地)。どちらも enabledTools の対象外で、提示は spec_for が決める。
     **2026-08-04 に 4 本 → 7 本へ訂正した** — Spec 01 の sd / yq と Spec 09 の
@@ -6068,7 +6072,7 @@ conversation_termination:
         **run は WORK_DIR_TOOL_NAMES に入れない** (あの集合は「その中しか触らない」
         ツールの集合で、境界を破る run を入れると集合の不変条件が壊れる)
       - **run は既定 OFF**。DEFAULT_ENABLED_TOOLS の外に置き、
-        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}`。
+        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` (Spec 76 からは `∪ {run, image}`)。
         **更新しただけで実行能力が増える作りにしない**
         (batch_start_invariant の「開いただけで課金が始まる作りにしない」と同じ形)
       - **出力は MAX_OUTPUT_CHARS = 12,000 字を上限とし、run では
@@ -7116,8 +7120,9 @@ conversation_termination:
          配列・3 つまで)。**解像度はモデルに選ばせない** (設定の既定だけ)
       5. **参照番号**: そのターンの台帳の画像に 1 から — 利用者がそのターンに添付した画像 (届いた順。画像以外は
          数えない) → そのターンに生成した画像 (生成した順)。台帳はターンの間だけ生き、次のターンに番号は残らない
-         (attachment_contract 凍結 3 は不変)。利用者の添付の番号は、添付を畳む文脈の 1 行に **`image` を提示して
-         いるターンだけ** 1 句足して知らせる。生成した画像の番号は結果の本文に書く。範囲外 / 4 つ以上 / 番号の
+         (attachment_contract 凍結 3 は不変)。**番号の規則はツールの説明文に書く** (P1 で決めた。提示している
+         ターンだけ載る点は同じで、可変の文脈を 1 字も増やさず、説明文は安定部分なのでキャッシュも割らない)。
+         生成した画像の番号は結果の本文に書く。範囲外 / 4 つ以上 / 番号の
          付いた画像が無いのに references がある → 生成を始めずに断る (bad_reference)
       6. **参照として送るのは台帳の画像の写しで、変換しない** (利用者の添付 = 添付の置き場の実体 = WebP、生成した
          画像 = S76-1 の写し = JPEG か WebP)。1 枚 2MB・長辺 1568px 以下なので Lorekeel の 8MB / 12MB は使わない。
@@ -7143,24 +7148,35 @@ conversation_termination:
          saved=no_work_dir | failed) (b) **写しは 1 つ** (attachment_contract S76-1) を会話ペイン・モデル・参照が
          共有する。写しは**返事の発話が組まれるときだけ**添付の置き場へ書き、返事の AgentMessage.attachments に
          付ける。組まれないターン (打ち切り・予算切れ・失敗・承認待ち) では書かない — 元は作業フォルダにだけ残り、
+         **転送で終わったターンでも付けない** (転送の発話は受け手の受信箱へ届くので、付けると受け手のターンへ
+         添付として渡る = S76-2 の違反。`image copy skipped: agent=… reason=handoff count=N` を 1 行残す)。
          ツール行 (返事の組み立てと独立に CallRunner::on_call で出る) の本文にパスが出る (c) モデルへは結果の本文
          (パスと参照番号) + 写しを ToolOutput.images で。委譲の依頼元へ返る Reply は本文だけ
      11. **上限**: 接続先へ送る生成の要求は 1 ターン 4 回まで。数えるのは送った要求 (成功・送った後の失敗・
-         打ち切り)。生成を始めずに断ったもの (bad_reference / limit / inactive) は数えない。5 回目は limit で断る。
+         打ち切り)。生成を始めずに断ったもの (bad_reference / bad_args / limit / inactive) は数えない。5 回目は limit で断る。
          **値の 4 は P4 で見直す** (仕組みは凍結、値は改訂してよい)。RepeatGuard はそのまま効く — 成功の結果は
          本文の参照番号とパスと画像が毎回違うので数えが進まず、同じ拒否が同じ本文で 2 回返ると 3 回目は送らない
      12. **費用**: 生成の API の費用はトークン予算にも統計にも入れない (単価表も 1 枚の値段を持たない)。モデルへ
          返した写しは、普通のツール結果の画像と同じく、そのターンの以後の周の入力トークンとして予算と統計に入る
      13. **計器** `image gen: agent=… provider=… model=… aspect=… refs=N outcome=… elapsed_ms=… bytes=… saved=…`
          + 返ってきた費用の欄があればその値 (openai の input / output tokens・xai の cost_ticks)。outcome は
-         ok + 9 の 8 区分 + interrupted / limit / bad_reference / inactive の閉じた集合。**プロンプトの本文は書かない**
+         ok + 9 の 8 区分 + interrupted / limit / bad_reference / bad_args / inactive の閉じた集合 (bad_args =
+         prompt が空・aspect が知らない語・references が数の配列でない。P1 で足した)。**プロンプトの本文は書かない**
      14. **接続確認**: 押したときだけ社ごとの GET を 1 本 (タイムアウト 20 秒・画像は作らない) — openai
          GET {base}/v1/models / gemini GET {base}/v1beta/models/{model} / meta GET {base}/v1/models/{model} /
          xai GET {base}/v1/image-generation-models/{model}。2xx = 接続できた / 401・403 = 鍵 / gemini・meta・xai
-         の 404 = モデル名 / それ以外は状態コード。openai はモデル名を見ない。開いただけでは 1 バイトも出ない
+         の 404 = モデル名 / それ以外は状態コード。openai はモデル名を見ない。開いただけでは 1 バイトも出ない。
+         **画面 (P2)**: 確かめるのは保存済みの選んでいる接続先と登録済みの鍵だけ (枠の入力が未保存の間は押せない —
+         Spec 68 と同じ)。結果は outcome の閉じた集合 = ok + 9 の 8 区分 + no_provider / no_key で、画面は語から
+         辞書の鍵を組む。auth には接続先の本文を付けない (OpenAI は 401 の本文に鍵の末尾を返す)。ログに
+         `image gen probe: provider=… outcome=… elapsed_ms=… status=…` を 1 行 (本文も鍵も書かない)。IPC は
+         get_image_gen_settings / set_image_gen_settings / set_image_gen_key / clear_image_gen_key /
+         test_image_gen の 5 本で、鍵の値を返す口は無い。起動・設定の保存・鍵の登録と削除の後に、起動時と同じ
+         `image gen: active=… provider=… reason=…` を 1 行出す (apply_and_note の 1 実装)
      15. **GUI なし**: ツールの登録は build_host の 1 実装で CLI も同じ門。bake は image_gen.json を写す
          (SHELF_COPIED。jev.json と同じ行 — 村を他の人へ配るのではなく自分のコンテナへ写す操作)。--env-out は
-         is_active のとき選んでいる provider の鍵だけ。環境変数の名前の衝突検査に 4 つの鍵の名前を足す。
+         **接続先を選んでいるとき**その provider の鍵の行だけを書く (P1 で決めた — Jev と同じく設定の意図で決め、
+         鍵が未登録なら空の行を書いて利用者が埋める。読めない設定では書かない)。環境変数の名前の衝突検査に 4 つの鍵の名前を足す。
          起動前検査 (headless_preflight) には足さない
 
     P0 の実測 (2026-11-16。Lorekeel の既定モデル・写実のプロンプト・標準の段で 1 回ずつ):

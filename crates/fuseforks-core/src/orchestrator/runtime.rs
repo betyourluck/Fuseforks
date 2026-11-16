@@ -531,17 +531,21 @@ impl Orchestrator {
         }
     }
 
-    /// 再添付の ID から、リングに残っている**利用者の発話**の添付の参照を引く（Spec 73 D5）。
+    /// 再添付の ID から、リングに残っている発話の添付の参照を引く（Spec 73 D5）。
     ///
     /// 画面が出す添付は `listMessages`（= このリング）から引いているので、押せる添付は
-    /// 必ずここにある（Spec 58 の「候補の源は解決の源の部分集合」）。添付を持つのは
-    /// 利用者の発話だけだが、送り手は明示して確かめる — 別の送り手が添付を持つように
-    /// なった日に、他人の添付を黙って渡し直せる形にしない。新しい側から探す。
+    /// 必ずここにある（Spec 58 の「候補の源は解決の源の部分集合」）。新しい側から探す。
+    ///
+    /// **送り手は閉じた許容で明示する**（Spec 76 S76-3 で 1 つ広げた）— 利用者の発話と、
+    /// 生成画像の写しを付けたサーヴァントの返事。Spec 73 のときは利用者だけで、
+    /// 「別の送り手が添付を持つようになった日に黙って渡し直せる形にしない」ために
+    /// 明示していた。その日が来たので、広げる判断を契約に書いてから広げた。
+    /// 外部依頼・System の発話は添付を持たないが、持つようになっても通さない。
     async fn find_reattachable(&self, id: &str) -> CoreResult<crate::attachment::Attachment> {
         let log = self.shared.log.read().await;
         log.iter()
             .rev()
-            .filter(|message| matches!(message.from, Endpoint::User))
+            .filter(|message| matches!(message.from, Endpoint::User | Endpoint::Agent { .. }))
             .flat_map(|message| message.attachments.iter())
             .find(|attachment| attachment.id == id)
             .cloned()

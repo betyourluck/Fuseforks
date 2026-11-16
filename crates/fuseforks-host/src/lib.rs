@@ -5,13 +5,14 @@
 //! 橋だけで、組み立ての配線（同梱ツールの登録・扉・前判定の承認・Jev・単価表の
 //! 取得元）は 1 実装をここに置く。
 //!
-//! 棚（`mcp_server.json` / `pricing.json` / `probe_approvals.json` / `jev.json`）は
+//! 棚（`mcp_server.json` / `pricing.json` / `probe_approvals.json` / `jev.json` / `image_gen.json`）は
 //! **workspace の外**（`data_dir` 直下）に住む — 村を配っても扉は開かず、承認も
 //! 単価の取得先も付いてこない、を置き場で成立させている。
 
 pub mod bake;
 pub mod boot;
 pub mod env_file;
+pub mod image_gen_settings;
 pub mod jev_settings;
 pub mod lock;
 // 結合テスト（tests/mcp_server_wire.rs）から合鍵の層を組み立てるため公開する。

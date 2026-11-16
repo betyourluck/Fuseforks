@@ -133,6 +133,9 @@ const BUNDLED_TOOLS = [
   // 作業フォルダは提示条件の一部だが `needsWorkDir` では表せない
   // （登録に `cwd` があれば作業フォルダ無しでも実行できる）ため false。
   { name: "run", labelKey: "agentSettings.tools.run", needsWorkDir: false },
+  // Spec 76。**既定集合の外**（費用がかかり外へ送る）。作業フォルダが無くても会話とモデルへは
+  // 届くので false（保存だけが無くなる）。提示はシステム設定の画像生成が効いているときだけ。
+  { name: "image", labelKey: "agentSettings.tools.image", needsWorkDir: false },
 ] as const;
 
 /**
@@ -385,6 +388,24 @@ async function refreshMcpStatus(): Promise<void> {
 }
 
 watch(() => props.agentId, refreshMcpStatus, { immediate: true });
+
+// ---- 画像生成（Spec 76 D2） -------------------------------------------------
+
+/**
+ * 画像生成がいま効いているか（提示の 2 段の門の 2 段目。判定は Rust の `status` の 1 実装）。
+ * **読むだけで外へは出ない。** `null` = 読めていない — 分からないことを「効いていない」と書かない。
+ */
+const imageGenActive = ref<boolean | null>(null);
+
+async function loadImageGenActive(): Promise<void> {
+  try {
+    imageGenActive.value = (await ipc.getImageGenSettings()).active;
+  } catch {
+    imageGenActive.value = null;
+  }
+}
+
+void loadImageGenActive();
 </script>
 
 <template>
@@ -624,30 +645,51 @@ watch(() => props.agentId, refreshMcpStatus, { immediate: true });
             提示しないツールのスキーマは毎ターンの固定費。雑談役からファイル系を
             外すと基礎トークンが下がる（トークン節約はこの製品の差別化軸）。
           -->
+          <!--
+            ツール固有の注記は**その行の直下**に出す（Spec 76 P2 の実機の指摘）。一覧の下にまとめると、
+            末尾の行の説明に見える — `image` を末尾に足した時点で `run` の注記が `image` の下に来た。
+          -->
           <div class="mb-1 space-y-1">
-            <label
-              v-for="tool in BUNDLED_TOOLS"
-              :key="tool.name"
-              class="flex items-center gap-2 text-[12px]"
-              :class="isToolGated(tool) ? 'opacity-50' : ''"
-            >
-              <input
-                type="checkbox"
-                :checked="isToolChecked(tool.name)"
-                :disabled="isToolGated(tool)"
-                @change="toggleTool(tool.name, ($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{ $t(tool.labelKey) }}</span>
-            </label>
+            <template v-for="tool in BUNDLED_TOOLS" :key="tool.name">
+              <label
+                class="flex items-center gap-2 text-[12px]"
+                :class="isToolGated(tool) ? 'opacity-50' : ''"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isToolChecked(tool.name)"
+                  :disabled="isToolGated(tool)"
+                  @change="toggleTool(tool.name, ($event.target as HTMLInputElement).checked)"
+                />
+                <span>{{ $t(tool.labelKey) }}</span>
+              </label>
+              <p
+                v-if="tool.name === 'remember' && !isToolChecked('remember')"
+                class="pl-5 text-[10px] text-warn"
+                data-tool-note="remember"
+              >
+                {{ $t("agentSettings.rememberOffWarn") }}
+              </p>
+              <p
+                v-if="tool.name === 'run' && isToolChecked('run')"
+                class="pl-5 text-[10px] text-warn"
+                data-tool-note="run"
+              >
+                {{ $t("agentSettings.runOnWarn") }}
+              </p>
+              <!-- チェックだけでは提示されない（2 段の門。`noWorkDirWarn` と同じ形で理由を見せる）。 -->
+              <p
+                v-if="tool.name === 'image' && isToolChecked('image') && imageGenActive === false"
+                class="pl-5 text-[10px] text-warn"
+                data-tool-note="image"
+              >
+                {{ $t("agentSettings.imageInactiveWarn") }}
+              </p>
+            </template>
           </div>
+          <!-- 作業フォルダの注記は複数の行にかかるので、一覧の下に残す。 -->
           <p v-if="!draft.workDir" class="mb-1 text-[10px] text-warn">
             {{ $t("agentSettings.noWorkDirWarn") }}
-          </p>
-          <p v-if="!isToolChecked('remember')" class="mb-1 text-[10px] text-warn">
-            {{ $t("agentSettings.rememberOffWarn") }}
-          </p>
-          <p v-if="isToolChecked('run')" class="mb-1 text-[10px] text-warn">
-            {{ $t("agentSettings.runOnWarn") }}
           </p>
           <label class="flex items-center gap-2 text-[12px]">
             <input type="checkbox" v-model="draft.allowHandoff" />

@@ -20,6 +20,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as ipc from "../lib/ipc";
+import ImageGenSettingsPage from "./ImageGenSettingsPage.vue";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { formatError } from "../lib/errorText";
 import { fileToWebpIcon } from "../lib/iconImage";
@@ -67,6 +68,7 @@ type Page =
   | "tokenBudget"
   | "mcpHost"
   | "jev"
+  | "imageGen"
   | "pricing"
   | "theme"
   | "chatZoom"
@@ -888,6 +890,13 @@ function selectPage(next: Page): void {
             @click="selectPage('jev')"
           >
             {{ $t("settings.menuJev") }}
+          </button>
+          <button
+            class="menu-item"
+            :class="{ active: page === 'imageGen' }"
+            @click="selectPage('imageGen')"
+          >
+            {{ $t("settings.menuImageGen") }}
           </button>
           <button
             class="menu-item"
@@ -1725,6 +1734,9 @@ function selectPage(next: Page): void {
             <p class="mt-4 text-xs text-ink-dim">{{ $t("settings.jev.privacy") }}</p>
             <p class="mt-1 text-xs text-ink-dim">{{ $t("settings.jev.deviceNote") }}</p>
           </template>
+
+          <!-- 画像生成（Spec 76 D8）。読み込みは部品の onMounted — 開いただけでは外へ出ない。 -->
+          <ImageGenSettingsPage v-else-if="page === 'imageGen'" />
 
           <template v-else-if="page === 'pricing'">
             <h3 class="mb-1 text-sm font-semibold">{{ $t("settings.pricing.title") }}</h3>

@@ -8,9 +8,10 @@
 //! 順序は GUI がそれまで `build_state` で持っていたものに、村の排他ロック（D3）が
 //! 最初の手として足されただけ:
 //! `create_dir_all` → **ロック** → ログ → `version:` 行 → 秘密のストア → `bootstrap` →
-//! 同梱ツール 9 本 → MCP の初期接続 → 扉 → 前判定の承認 → Jev → 単価表の取得元。
+//! 同梱ツール（`rag` / `blackboard` / `run` / `image` を含む全部）→ MCP の初期接続 → 扉 → 前判定の承認 →
+//! Jev → 画像生成の設定（Spec 76）→ 単価表の取得元。
 //! 起動ログの並び（P0 で採った基準。P1 で一致を確認）は `起動しました`（`open_log` が出す）→
-//! `version:` → `session:` → `attachment gc:` → `mcp server:` → `jev:` で、
+//! `version:` → `session:` → `attachment gc:` → `mcp server:` → `jev:` → `image gen:` で、
 //! **扉を開く処理を外へ出さない**のはこの並びを変えないため。
 
 use std::path::PathBuf;
@@ -116,6 +117,12 @@ pub struct Host {
     /// 同じ理由で、**村を配ったときに、受け取った人の村が知らない送信先へ
     /// ツール結果を送る状態を作らない**。API トークンは資格情報ストア。
     pub jev: tokio::sync::Mutex<JevSettingsStore>,
+    /// 画像生成の設定（Spec 76 D1）。**workspace の外**（`{data_dir}/image_gen.json`）— `jev.json` と
+    /// 同じ理由で、村を配ったときに受け取った人の村が知らない送信先へ送る状態を作らない。
+    pub image_gen: tokio::sync::Mutex<crate::image_gen_settings::ImageGenSettingsStore>,
+    /// 画像生成の差し込み口（`image` ツールと同じ `Arc`）。設定と鍵を変えたら
+    /// [`crate::image_gen_settings::apply`] で埋め直す。
+    pub image_gen_slot: Arc<fuseforks_core::tools::image::ImageGenSlot>,
     /// 資格情報ストア。**Jev のトークンと、リモート MCP の OAuth の認可の記録の読み書きに使う**
     /// （モデルのキーは `Orchestrator` 側の口を通る）。オーケストレーターが持つものと同じ実体。
     pub secrets: Arc<dyn SecretStore>,
@@ -189,6 +196,8 @@ pub(crate) fn check_secret_names<'a>(
         .into_iter()
         .map(str::to_owned)
         .chain([crate::jev_settings::TOKEN_KEY, DOOR_TOKEN_KEY].map(str::to_owned))
+        // 画像生成の鍵（Spec 76 D10）。テンプレート id と同じ変数名に写れば止める。
+        .chain(crate::image_gen_settings::KEY_NAMES.map(str::to_owned))
         .chain(mcp_ref_names.iter().map(|name| mcp_secret_key(name)))
         .collect();
     let found = secret_name_collisions(keys.iter().map(String::as_str));
@@ -305,6 +314,13 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         .register_tool(Arc::new(RunTool::new(store.clone())))
         .await;
 
+    // 画像生成（Spec 76）。**設定が無効でも登録しておく** — 提示の門は 2 段で、`enabledTools`（名前の表）と
+    // 差し込み口が埋まっているか（`spec_for`）。ここで出し分けない（`run` と同じ）。
+    let image_gen_slot = Arc::new(fuseforks_core::tools::image::ImageGenSlot::new());
+    orchestrator
+        .register_tool(Arc::new(fuseforks_core::tools::ImageTool::new(Arc::clone(&image_gen_slot))))
+        .await;
+
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
     // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。
     // そこで起動しなくなるのは筋が悪い（各サーバーの結果は list_mcp_servers で読める）。
@@ -374,6 +390,12 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         jev.blocked().is_some()
     );
 
+    // 画像生成の設定（Spec 76 D1）。**ここでは 1 バイトも外へ出ない** — 差し込み口を埋めるだけで、
+    // 送信が起きるのはサーヴァントが `image` を呼んだときから。
+    let image_gen = crate::image_gen_settings::ImageGenSettingsStore::load(data_dir);
+    // 効いていない理由はログの 1 行と画面（`view`）が読む。
+    crate::image_gen_settings::apply_and_note(&image_gen_slot, &image_gen, secrets.as_ref());
+
     Ok(Host {
         _lock: lock,
         orchestrator,
@@ -384,6 +406,8 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         pricing_source: tokio::sync::Mutex::new(PricingSourceStore::load(data_dir)),
         probe_approvals,
         jev: tokio::sync::Mutex::new(jev),
+        image_gen: tokio::sync::Mutex::new(image_gen),
+        image_gen_slot,
         secrets,
         mcp_oauth_flows: crate::mcp_oauth_flow::McpOAuthFlows::new(),
     })

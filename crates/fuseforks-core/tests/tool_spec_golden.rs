@@ -96,6 +96,7 @@ async fn en_run_presentation_for_empty_allow_is_english() {
         language: fuseforks_core::world::Language::En,
         run_approval: fuseforks_core::command::RunApproval::Required,
         judges_dir: None,
+        turn_images: None,
     };
     let spec = tool.spec_for(&ctx).await.expect("allow が空でも提示する");
     assert_eq!(ja_chars(&spec.description), 0, "{}", spec.description);

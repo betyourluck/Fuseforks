@@ -91,10 +91,11 @@ impl PromptMediaType {
 
 impl From<AttachmentFormat> for PromptMediaType {
     /// ディスク上の形式からワイヤの形式へ。**逆向きは無い**
-    /// （JPEG はワイヤにしか存在しないので、全射だが単射ではない）。
+    /// （Spec 76 からディスクにも JPEG が在る — サーヴァントの返事に付く生成画像の写し）。
     fn from(format: AttachmentFormat) -> Self {
         match format {
             AttachmentFormat::Webp => Self::Webp,
+            AttachmentFormat::Jpeg => Self::Jpeg,
             AttachmentFormat::Mp3 => Self::Mp3,
             AttachmentFormat::Wav => Self::Wav,
             AttachmentFormat::Mp4 => Self::Mp4,

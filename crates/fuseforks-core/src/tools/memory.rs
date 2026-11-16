@@ -153,6 +153,7 @@ mod tests {
             language: crate::world::Language::Ja,
             run_approval: crate::command::RunApproval::Required,
             judges_dir: None,
+            turn_images: None,
         }
     }
 

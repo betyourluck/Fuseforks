@@ -27,6 +27,8 @@ pub enum Kind {
     Mcp,
     /// Jev の鍵。
     Jev,
+    /// 画像生成の鍵（Spec 76 D10。選んでいる接続先の 1 つだけ）。
+    ImageGen,
     /// 扉の合鍵（コンテナ用。GUI の扉とは別に作る — D5）。
     Door,
 }
@@ -34,7 +36,7 @@ pub enum Kind {
 impl Kind {
     /// 資格情報ストアから読む鍵か（`ENV_VALUE_DIFFERS` の対象。D6）。
     fn read_from_store(self) -> bool {
-        matches!(self, Self::Template | Self::Mcp | Self::Jev)
+        matches!(self, Self::Template | Self::Mcp | Self::Jev | Self::ImageGen)
     }
 
     fn heading(self) -> &'static str {
@@ -43,6 +45,7 @@ impl Kind {
             Self::Template => "# モデルテンプレートの鍵（村の個体が使うものだけ）",
             Self::Mcp => "# MCP の headers の ${secret:NAME}（村の有効な http のサーバー）",
             Self::Jev => "# Jev（ツール結果の圧縮・判断役）",
+            Self::ImageGen => "# 画像生成（選んでいる接続先の鍵）",
             Self::Door => "# 扉の合鍵（コンテナ用。GUI の扉の合鍵とは別。serve --door-port で使う）",
         }
     }

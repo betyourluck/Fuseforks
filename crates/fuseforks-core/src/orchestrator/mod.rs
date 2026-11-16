@@ -2092,8 +2092,8 @@ async fn load_turn_attachments(
         match shared.attachments.read(&reference.id).await {
             Ok(Some(bytes)) => loaded.push(crate::llm::PromptAttachment {
                 // 形式は**保存時に検証で確定したもの**を参照から引く
-                // （利用者のファイル名は見ない）。JPEG はワイヤ上の
-                // フォールバック（Spec 23 D3）でしか現れないので、ここには出ない。
+                // （利用者のファイル名は見ない）。JPEG は生成画像の写しを「入力欄へ」で
+                // 渡し直したときだけ現れる（Spec 76 S76-1 / S76-3）。
                 media_type: reference.format.into(),
                 data: base64::engine::general_purpose::STANDARD.encode(&bytes),
                 // PDF の `input_file` / `file` part がファイル名を要求する。

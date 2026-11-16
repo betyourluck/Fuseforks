@@ -46,9 +46,13 @@ pub const BAKE_FILE: &str = "bake.json";
 
 /// 棚のうち、丸ごと写すもの（D1。秘密を含まない）。`mcp_server.json`（扉の合鍵）は**写さない** —
 /// コンテナの扉は `serve --door-port` と秘密の `door_token` で開く（D9）。
-const SHELF_COPIED: [&str; 2] = [
+///
+/// `image_gen.json`（Spec 76 D10）も写す — 村を他の人へ配るのではなく、同じ利用者が自分のコンテナへ
+/// 自分の村を写す操作なので、`jev.json` と同じ行に置く。写さないとコンテナでは `image` が提示されない。
+const SHELF_COPIED: [&str; 3] = [
     crate::jev_settings::CONFIG_FILE,
     crate::pricing_source::CONFIG_FILE,
+    crate::image_gen_settings::CONFIG_FILE,
 ];
 
 /// 村の直下の設計のファイルのうち、中身を変えずに写すもの（D1）。`world.json` と
@@ -559,6 +563,14 @@ async fn env_wanted(
         || world.judges.iter().any(|judge| judge.enabled);
     if jev {
         keys.push((crate::jev_settings::TOKEN_KEY.to_owned(), Kind::Jev));
+    }
+    // 画像生成（Spec 76 D10）。**Jev と同じく設定の意図で決める** — 接続先を選んでいれば、その接続先の
+    // 鍵の行を書く（鍵が未登録なら空の行で、利用者が埋める）。読めない設定では書かない。
+    let image_gen = crate::image_gen_settings::ImageGenSettingsStore::load(data_dir);
+    if image_gen.blocked().is_none()
+        && let Some(provider) = image_gen.config().provider
+    {
+        keys.push((crate::image_gen_settings::key_name(provider).to_owned(), Kind::ImageGen));
     }
     // 2 つの鍵が同じ変数名に写るなら、コンテナは起動しない（Spec 64 の 5）。.env も書かない。
     let mut all: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();

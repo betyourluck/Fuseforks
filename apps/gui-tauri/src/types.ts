@@ -702,6 +702,77 @@ export interface JevProbeView {
   boilerplate: number | null;
 }
 
+/** 画像生成の接続先（Spec 76 D1）。並びは Rust の `ImageProvider::ALL`。 */
+export type ImageProvider = "openai" | "gemini" | "meta" | "xai";
+
+/** 縦横比（3 値）。 */
+export type ImageAspect = "square" | "landscape" | "portrait";
+
+/** 解像度の段（3 段。**モデルに選ばせない** — 費用を決めるのは利用者）。 */
+export type ImageResolution = "standard" | "high" | "highest";
+
+/** 接続先ごとの枠。空の欄は既定。**切り替えても他の枠の値は残る。** */
+export interface ImageGenProviderSlot {
+  model: string;
+  baseUrl: string;
+  /** `null` = 既定。 */
+  timeoutSecs: number | null;
+}
+
+/** `{app_data_dir}/image_gen.json` の中身そのもの。**鍵は入らない。** */
+export interface ImageGenSettingsConfig {
+  /** `null` = 使わない（既定）。 */
+  provider: ImageProvider | null;
+  perProvider: Partial<Record<ImageProvider, ImageGenProviderSlot>>;
+  aspect: ImageAspect;
+  resolution: ImageResolution;
+}
+
+/** 画像生成が効いていない理由（閉じた 3 つ。Rust の `InactiveReason`）。 */
+export type ImageGenInactiveReason = "config_unreadable" | "no_provider" | "no_key";
+
+/** 接続先 1 つぶんの行。**既定値は Rust から受ける**（画面に同じ表を書かない）。 */
+export interface ImageGenProviderView {
+  id: ImageProvider;
+  slot: ImageGenProviderSlot;
+  /** 鍵が登録済みか。**値は返らない。** */
+  hasKey: boolean;
+  defaultModel: string;
+  defaultBaseUrl: string;
+  defaultTimeoutSecs: number;
+  /** 解像度の段が効くか（Meta は偽）。 */
+  honorsResolution: boolean;
+}
+
+/**
+ * 画像生成の設定（Spec 76 P2）。**鍵の値は返らない。**
+ * `active` / `inactiveReason` は Rust の `status` の 1 実装が決めたもの — 画面で組み直さない。
+ */
+export interface ImageGenSettingsView {
+  provider: ImageProvider | null;
+  aspect: ImageAspect;
+  resolution: ImageResolution;
+  providers: ImageGenProviderView[];
+  active: boolean;
+  inactiveReason: ImageGenInactiveReason | null;
+  /** 設定ファイルが読めない理由（`null` 以外の間は保存できない）。 */
+  blocked: string | null;
+}
+
+/**
+ * 「接続を確かめる」の結果。`outcome` は閉じた集合（`ok` / 失敗の 8 区分 / `no_provider` / `no_key`）。
+ */
+export interface ImageGenProbeView {
+  provider: ImageProvider | null;
+  outcome: string;
+  /** 往復の実測（ms）。送らなかったときは `null`。 */
+  elapsedMs: number | null;
+  /** 状態コード（`api` のときだけ）。 */
+  status: number | null;
+  /** 接続先が返した理由の要点。`auth` には付かない。 */
+  detail: string | null;
+}
+
 /** 単価表の取得元（Spec 41）。**URL は秘密ではない** — 見て変えられることが根拠。 */
 export interface PricingSourceView {
   /** 取得先。**空なら通信そのものが起きない。** */
@@ -802,7 +873,8 @@ export interface Attachment {
    * 形式（Spec 36）。**欄を持たない古いレコードは webp**（Spec 23 の時代の
    * 添付はすべて WebP の画像だった）— コア側の `#[serde(default)]` と対。
    */
-  format?: "webp" | "mp3" | "wav" | "mp4" | "pdf";
+  /** `jpeg` はサーヴァントの返事に付く生成画像の写しだけ（Spec 76 S76-1）。 */
+  format?: "webp" | "jpeg" | "mp3" | "wav" | "mp4" | "pdf";
   /** 幅（px）。**画像のときだけ**（音声・PDF に寸法は無い）。 */
   width?: number;
   /** 高さ（px）。画像のときだけ。 */

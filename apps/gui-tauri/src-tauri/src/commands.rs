@@ -1792,6 +1792,102 @@ pub async fn test_jev(state: State<'_, AppState>) -> CoreResult<crate::jev_setti
     Ok(probe.into())
 }
 
+// ---- 画像生成（Spec 76 P2） --------------------------------------------------
+//
+// **投影を持たない**（読むのはシステム設定のページと、サーヴァント設定の注記だけ）ので、
+// フロントは生の `ipc` で呼ぶ。接続確認以外の 4 本は**同じ `ImageGenSettingsView` を返す** —
+// 「いま効いているか」はコアの `status` の 1 実装が決め、画面は同じ判定を書かない。
+
+/// 画像生成の設定を読む。**鍵の値は返さない**（登録済みかだけ）。外へは 1 バイトも出ない。
+#[tauri::command]
+pub async fn get_image_gen_settings(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::image_gen_settings::ImageGenSettingsView> {
+    let store = state.host.image_gen.lock().await;
+    Ok(crate::image_gen_settings::view(&store, state.host.secrets.as_ref()))
+}
+
+/// 画像生成の設定を保存し、差し込み口を埋め直す。**押した時点で反映**（Jev のページと同じ）。
+///
+/// # Errors
+/// 設定ファイルが読めず保存できない場合 [`CoreError::ConfigIo`]。
+#[tauri::command]
+pub async fn set_image_gen_settings(
+    state: State<'_, AppState>,
+    config: crate::image_gen_settings::ImageGenSettingsConfig,
+) -> CoreResult<crate::image_gen_settings::ImageGenSettingsView> {
+    let mut store = state.host.image_gen.lock().await;
+    store.save(config).map_err(|reason| CoreError::ConfigIo {
+        path: crate::image_gen_settings::CONFIG_FILE.to_owned(),
+        source: std::io::Error::other(reason),
+    })?;
+    crate::image_gen_settings::apply_and_note(
+        &state.host.image_gen_slot,
+        &store,
+        state.host.secrets.as_ref(),
+    );
+    Ok(crate::image_gen_settings::view(&store, state.host.secrets.as_ref()))
+}
+
+/// 接続先の鍵を資格情報ストアへ書き、差し込み口を埋め直す。**値を返す口は作らない。**
+///
+/// # Errors
+/// 資格情報ストアへ書けない場合。
+#[tauri::command]
+pub async fn set_image_gen_key(
+    state: State<'_, AppState>,
+    provider: fuseforks_core::image_gen::ImageProvider,
+    secret: String,
+) -> CoreResult<crate::image_gen_settings::ImageGenSettingsView> {
+    // 貼り付け由来の前後空白を落とす（`set_credential` と同じ規律）。
+    state
+        .host
+        .secrets
+        .set(crate::image_gen_settings::key_name(provider), secret.trim())?;
+    let store = state.host.image_gen.lock().await;
+    crate::image_gen_settings::apply_and_note(
+        &state.host.image_gen_slot,
+        &store,
+        state.host.secrets.as_ref(),
+    );
+    Ok(crate::image_gen_settings::view(&store, state.host.secrets.as_ref()))
+}
+
+/// 接続先の鍵を削除し、差し込み口を埋め直す（選んでいる接続先の鍵なら空く）。
+///
+/// # Errors
+/// 資格情報ストアから削除できない場合。
+#[tauri::command]
+pub async fn clear_image_gen_key(
+    state: State<'_, AppState>,
+    provider: fuseforks_core::image_gen::ImageProvider,
+) -> CoreResult<crate::image_gen_settings::ImageGenSettingsView> {
+    state
+        .host
+        .secrets
+        .delete(crate::image_gen_settings::key_name(provider))?;
+    let store = state.host.image_gen.lock().await;
+    crate::image_gen_settings::apply_and_note(
+        &state.host.image_gen_slot,
+        &store,
+        state.host.secrets.as_ref(),
+    );
+    Ok(crate::image_gen_settings::view(&store, state.host.secrets.as_ref()))
+}
+
+/// 接続を確かめる。**画像を作らない GET を 1 本投げる唯一の入口。**
+///
+/// **起動経路・画面遷移・タイマーから呼んではならない**（押していないのに外へ出る経路を
+/// 作らない。Spec 76 D8・`test_jev` と同じ凍結）。失敗は `Err` ではなく結果の `outcome` で返る。
+#[tauri::command]
+pub async fn test_image_gen(
+    state: State<'_, AppState>,
+) -> CoreResult<crate::image_gen_settings::ImageGenProbeView> {
+    // 設定の写しを取ってから錠を離す（20 秒の往復の間、保存を止めない）。
+    let config = state.host.image_gen.lock().await.config().clone();
+    Ok(crate::image_gen_settings::probe(&config, state.host.secrets.as_ref()).await)
+}
+
 /// モデルテンプレートの接続テスト（Spec 68）。**保存済みの**テンプレートで LLM を 1 回だけ呼ぶ。
 ///
 /// **押したときだけ呼ぶ**（起動経路・画面遷移・タイマーから呼ばない — D9）。LLM の失敗は `Err` ではなく

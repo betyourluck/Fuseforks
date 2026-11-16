@@ -99,7 +99,8 @@ pub const ATTACHMENT_MAX_TOTAL_BYTES: u64 = 500 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentKind {
-    /// 画像（WebP のみ。UI 層が変換する）。
+    /// 画像。利用者の添付は WebP だけ（UI 層が変換する）。サーヴァントの返事に付く
+    /// 生成画像の写しは JPEG もある（Spec 76 / `attachment_contract` S76-1）。
     Image,
     /// 音声（mp3 / wav）。
     Audio,
@@ -145,6 +146,9 @@ pub enum AttachmentFormat {
     /// 画像。**既定** — Spec 23 の時代に書かれた記録は形式欄を持たず、
     /// それらはすべて WebP の画像だった。
     Webp,
+    /// 画像（JPEG）。**サーヴァントの返事に付く生成画像の写しだけ**（Spec 76 S76-1）。
+    /// 利用者の添付の入口（[`validate_any`]）は今も WebP しか通さない。
+    Jpeg,
     /// 音声（MPEG Audio Layer III）。
     Mp3,
     /// 音声（RIFF WAVE）。
@@ -167,7 +171,7 @@ impl AttachmentFormat {
     /// この形式が属する種別。
     pub fn kind(self) -> AttachmentKind {
         match self {
-            Self::Webp => AttachmentKind::Image,
+            Self::Webp | Self::Jpeg => AttachmentKind::Image,
             Self::Mp3 | Self::Wav => AttachmentKind::Audio,
             Self::Mp4 => AttachmentKind::Video,
             Self::Pdf => AttachmentKind::Pdf,
@@ -178,6 +182,7 @@ impl AttachmentFormat {
     pub fn ext(self) -> &'static str {
         match self {
             Self::Webp => "webp",
+            Self::Jpeg => "jpg",
             Self::Mp3 => "mp3",
             Self::Wav => "wav",
             Self::Mp4 => "mp4",
@@ -189,6 +194,7 @@ impl AttachmentFormat {
     pub fn mime(self) -> &'static str {
         match self {
             Self::Webp => "image/webp",
+            Self::Jpeg => "image/jpeg",
             Self::Mp3 => "audio/mpeg",
             Self::Wav => "audio/wav",
             Self::Mp4 => "video/mp4",
@@ -203,6 +209,7 @@ impl AttachmentFormat {
     fn from_ext(ext: &str) -> Option<Self> {
         match ext {
             "webp" => Some(Self::Webp),
+            "jpg" => Some(Self::Jpeg),
             "mp3" => Some(Self::Mp3),
             "wav" => Some(Self::Wav),
             "mp4" => Some(Self::Mp4),
@@ -258,6 +265,14 @@ fn is_mp4_video(bytes: &[u8]) -> bool {
     MP4_VIDEO_BRANDS.iter().any(|b| b.as_slice() == brand)
 }
 
+/// JPEG のマジックバイト判定（SOI + 次のマーカーの先頭 `FF D8 FF`）。
+///
+/// mp3 の素のフレーム同期（`FF` + 上位 3 bit が 1）とは 2 バイト目で分かれる —
+/// `D8` の上位 3 bit は `110` で、フレーム同期の `111` に当たらない。
+fn is_jpeg(bytes: &[u8]) -> bool {
+    bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
+}
+
 /// PDF のマジックバイト判定。
 fn is_pdf(bytes: &[u8]) -> bool {
     bytes.len() >= 5 && &bytes[0..5] == b"%PDF-"
@@ -283,6 +298,10 @@ pub fn detect_format(bytes: &[u8]) -> Option<AttachmentFormat> {
     }
     if is_mp4_video(bytes) {
         return Some(AttachmentFormat::Mp4);
+    }
+    // mp3 の素のフレーム同期より前（どちらも `FF` で始まる。2 バイト目で分かれる）。
+    if is_jpeg(bytes) {
+        return Some(AttachmentFormat::Jpeg);
     }
     if is_mp3(bytes) {
         return Some(AttachmentFormat::Mp3);
@@ -583,6 +602,46 @@ pub fn validate_any(bytes: &[u8]) -> CoreResult<ValidatedAttachment> {
     }
 }
 
+/// **生成画像の写しの**受け入れ検証（Spec 76 S76-1）。JPEG か静止 WebP で、2MB・長辺 1568px 以内。
+///
+/// 写しは `tool_image::normalize` が作るので、ここへ来るのはその出力だけのはず。それでも検査する
+/// のは、置き場へ書く口が 2 つになっても上限が 1 つであることを保つため（利用者の添付と同じ定数）。
+///
+/// # Errors
+/// 上限超・JPEG でも WebP でもない・アニメーション WebP・寸法が読めない・長辺超過は
+/// [`CoreError::InvalidAttachment`]。
+pub fn validate_generated_image(bytes: &[u8]) -> CoreResult<ValidatedAttachment> {
+    if is_webp(bytes) {
+        let (width, height) = validate_attachment(bytes)?;
+        return Ok(ValidatedAttachment {
+            format: AttachmentFormat::Webp,
+            dimensions: Some((width, height)),
+        });
+    }
+    if !is_jpeg(bytes) {
+        return Err(CoreError::InvalidAttachment {
+            reason: "生成画像の写しは JPEG か WebP だけ置けます".to_owned(),
+        });
+    }
+    check_size(bytes, AttachmentKind::Image)?;
+    let (width, height) =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Jpeg)
+            .into_dimensions()
+            .map_err(|_| CoreError::InvalidAttachment {
+                reason: "画像の寸法を読み取れません（JPEG のヘッダが壊れています）".to_owned(),
+            })?;
+    let edge = width.max(height);
+    if edge > ATTACHMENT_IMAGE_MAX_EDGE_PX {
+        return Err(CoreError::InvalidAttachment {
+            reason: format!("長辺が上限を超えています（{edge}px > {ATTACHMENT_IMAGE_MAX_EDGE_PX}px）"),
+        });
+    }
+    Ok(ValidatedAttachment {
+        format: AttachmentFormat::Jpeg,
+        dimensions: Some((width, height)),
+    })
+}
+
 /// GC の判断材料。ファイル 1 つぶんのメタデータ。
 ///
 /// 純関数 [`gc_plan`] の入力。I/O から切り離してあるのは、
@@ -732,6 +791,7 @@ impl AttachmentStore {
         let dir = self.dir();
         Ok([
             AttachmentFormat::Webp,
+            AttachmentFormat::Jpeg,
             AttachmentFormat::Mp3,
             AttachmentFormat::Wav,
             AttachmentFormat::Mp4,
@@ -765,6 +825,33 @@ impl AttachmentStore {
             .await
             .map_err(|e| Self::io_err(&dir, e))?;
         // 拡張子は**検証で確定した形式**から決める（利用者の file_name は表示専用）。
+        let path = self.path_for(&id, validated.format)?;
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|e| Self::io_err(&path, e))?;
+        Ok(Attachment {
+            id,
+            format: validated.format,
+            width: validated.dimensions.map(|(w, _)| w),
+            height: validated.dimensions.map(|(_, h)| h),
+            file_name: file_name.to_owned(),
+        })
+    }
+
+    /// 生成画像の写しを検証して保存し、参照を返す（Spec 76 S76-1）。
+    ///
+    /// 利用者の添付の [`Self::save`] と分けるのは、**入口ごとに受ける形式が違う**から —
+    /// こちらは JPEG も受け、利用者の入口は WebP だけのまま。
+    ///
+    /// # Errors
+    /// 検証に失敗すれば [`CoreError::InvalidAttachment`]（何も書かない）。
+    pub async fn save_generated(&self, file_name: &str, bytes: &[u8]) -> CoreResult<Attachment> {
+        let validated = validate_generated_image(bytes)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let dir = self.dir();
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| Self::io_err(&dir, e))?;
         let path = self.path_for(&id, validated.format)?;
         tokio::fs::write(&path, bytes)
             .await
@@ -1444,5 +1531,50 @@ mod tests {
         let report = store.gc(later).await.unwrap();
         assert_eq!(report.removed, 1, "添付だけが消える");
         assert!(stray.exists(), "添付以外は期限を過ぎても触らない");
+    }
+
+    /// 小さな JPEG（Spec 76 の写しの形）。
+    fn jpeg(w: u32, h: u32) -> Vec<u8> {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(w, h, image::Rgb([9, 9, 9])));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+        out.into_inner()
+    }
+
+    /// JPEG は判る。mp3 の素のフレーム同期（`FF` + 上位 3 bit）とは 2 バイト目で分かれる。
+    #[test]
+    fn jpeg_is_detected_and_not_taken_for_mp3() {
+        assert_eq!(detect_format(&jpeg(4, 4)), Some(AttachmentFormat::Jpeg));
+        assert_eq!(detect_format(&mp3_bare_frame()), Some(AttachmentFormat::Mp3));
+        assert_eq!(AttachmentFormat::Jpeg.kind(), AttachmentKind::Image);
+        assert_eq!(AttachmentFormat::Jpeg.ext(), "jpg");
+    }
+
+    /// **利用者の入口は今も WebP だけ**（S76-1）。JPEG は生成画像の写しの入口だけが受ける。
+    #[test]
+    fn only_the_generated_copy_entry_accepts_jpeg() {
+        let err = validate_any(&jpeg(4, 4)).unwrap_err();
+        assert_eq!(err.code(), "INVALID_ATTACHMENT");
+        let validated = validate_generated_image(&jpeg(40, 30)).unwrap();
+        assert_eq!(validated.format, AttachmentFormat::Jpeg);
+        assert_eq!(validated.dimensions, Some((40, 30)), "寸法は JPEG のヘッダから");
+        assert_eq!(validate_generated_image(&plain_webp(10, 10)).unwrap().format, AttachmentFormat::Webp);
+        assert!(validate_generated_image(b"\x89PNG\r\n\x1a\n rest").is_err(), "PNG は写しの形ではない");
+        let too_wide = validate_generated_image(&jpeg(ATTACHMENT_IMAGE_MAX_EDGE_PX + 1, 2));
+        assert!(too_wide.is_err(), "長辺の上限は利用者の添付と同じ");
+    }
+
+    /// 写しの保存は `.jpg` で書き、id で読み戻せる（読み口は形式を運ばない）。
+    #[tokio::test]
+    async fn a_generated_jpeg_copy_round_trips() {
+        let dir = TempDir::new("generated-jpeg");
+        let store = AttachmentStore::new(&dir.0);
+        let bytes = jpeg(16, 12);
+        let saved = store.save_generated("x-agent-1.png", &bytes).await.unwrap();
+        assert_eq!(saved.format, AttachmentFormat::Jpeg);
+        assert_eq!(saved.file_name, "x-agent-1.png");
+        assert!(dir.0.join(ATTACHMENT_DIR).join(format!("{}.jpg", saved.id)).exists());
+        assert_eq!(store.read(&saved.id).await.unwrap(), Some(bytes));
+        assert!(store.stored_len(&saved).await.unwrap().is_some());
     }
 }

@@ -140,12 +140,25 @@ pub fn normalize(data_b64: &str) -> Result<ToolImage, DropReason> {
     normalize_within(data_b64, Bounds::DEFAULT)
 }
 
+/// バイト列から 1 枚を寄せる（Spec 76 S76-1 — 生成画像の写し）。規則は [`normalize`] と同じ
+/// 1 実装（base64 を経ないだけ）。生成画像の写しを会話ペイン・モデル・参照が共有する。
+///
+/// # Errors
+/// [`normalize`] と同じ。
+pub fn normalize_bytes(bytes: &[u8]) -> Result<ToolImage, DropReason> {
+    normalize_raw(bytes, Bounds::DEFAULT)
+}
+
 fn normalize_within(data_b64: &str, bounds: Bounds) -> Result<ToolImage, DropReason> {
     let engine = base64::engine::general_purpose::STANDARD;
     let bytes = engine
         .decode(data_b64.trim())
         .map_err(|_| DropReason::Decode)?;
-    let format = image::guess_format(&bytes).map_err(|_| DropReason::Decode)?;
+    normalize_raw(&bytes, bounds)
+}
+
+fn normalize_raw(bytes: &[u8], bounds: Bounds) -> Result<ToolImage, DropReason> {
+    let format = image::guess_format(bytes).map_err(|_| DropReason::Decode)?;
     let media_type = match format {
         image::ImageFormat::Jpeg => Some(PromptMediaType::Jpeg),
         image::ImageFormat::WebP => Some(PromptMediaType::Webp),
@@ -153,16 +166,16 @@ fn normalize_within(data_b64: &str, bounds: Bounds) -> Result<ToolImage, DropRea
         _ => return Err(DropReason::Format),
     };
 
-    let decoded = decode(&bytes, format)?;
+    let decoded = decode(bytes, format)?;
     let edge = decoded.width().max(decoded.height());
-    let animated = format == image::ImageFormat::WebP && crate::attachment::is_animated_webp(&bytes);
+    let animated = format == image::ImageFormat::WebP && crate::attachment::is_animated_webp(bytes);
 
     if let Some(media_type) = media_type
         && !animated
         && edge <= bounds.max_edge
         && bytes.len() <= bounds.max_bytes
     {
-        return Ok(ToolImage::new(media_type, &bytes, false));
+        return Ok(ToolImage::new(media_type, bytes, false));
     }
 
     let resized = if edge > bounds.max_edge {
