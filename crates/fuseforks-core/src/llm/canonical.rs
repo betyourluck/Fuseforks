@@ -421,11 +421,29 @@ pub enum Finish {
     /// **終了ではない** — 止まった応答を写しつきの assistant の発話として積み、利用者の
     /// 発話を足さずに次の周を回すと続く。作るのは Anthropic の decode だけ。
     Paused,
+    /// 提供元が安全や利用方針の判定で応答を止めた（Gemini の `promptFeedback.blockReason` /
+    /// 安全系の `finishReason`。2026-11-16 の実機 — 画像を添えた依頼に Gemini が何も返さず、
+    /// 理由を捨てていたので「本文が返りませんでした」としか書けなかった）。
+    ///
+    /// **持つのは段だけ**で、理由の語（`SAFETY` / `PROHIBITED_CONTENT` …）は decode が
+    /// ログの `gemini empty:` 行に残す — 空の本文の文が「入力で止めたのか・出力で止めたのか」を
+    /// 書き分けるのに要る分だけ運ぶ。作るのは Gemini の decode だけ。
+    Blocked(BlockStage),
     /// 判別不能・プロバイダ固有。
     ///
     /// 既定値でもある。**分からないものを「正常終了」に倒さない**ため。
     #[default]
     Other,
+}
+
+/// 提供元が応答を止めた段（[`Finish::Blocked`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockStage {
+    /// 入力（依頼の文面や添付）の判定で止めた — 応答の候補が 1 つも無い。
+    Input,
+    /// 生成した応答の判定で止めた。
+    Output,
 }
 
 /// プロバイダ中立の使用量。

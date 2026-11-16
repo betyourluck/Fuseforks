@@ -3082,6 +3082,9 @@ entities:
   ProbeFinish:
     description: 接続テストで本文が空だった応答の終了理由 (Spec 68 D2。canonical の Finish の写し)
     values: [stop, length, tool_use, other]
+    note: |
+      canonical の Finish::Paused (Spec 71) と Finish::Blocked (2026-11-16。提供元が判定で止めた) は
+      other に畳む — 接続テストの文面は固定の定型文で止められる見込みが無く、表示の語彙を増やす理由が無い
 
   ModelTemplate:
     description: LLM 接続設定。複数登録して各エージェントから参照する
@@ -7892,6 +7895,17 @@ llm_wire:
         URL context か検索を使った周だけ
         `gemini tools: agent=… url_context={retrieved}/{requested} statuses=…
         tool_use_prompt={n} search_queries={n}` を 1 行 (pplx tools: と同じ棚)
+      - **提供元が判定で止めた応答** (2026-11-16。実機で画像を添えた依頼に Gemini が何も返さず、
+        理由を捨てていたので「本文が返りませんでした」としか書けなかった): 入力の段で止められると
+        候補が 0 件で、理由は promptFeedback.blockReason にしか無い → canonical の
+        Finish::Blocked(Input)。安全・利用方針の判定の finishReason (SAFETY / RECITATION / BLOCKLIST /
+        PROHIBITED_CONTENT / SPII / IMAGE_SAFETY / IMAGE_PROHIBITED_CONTENT / IMAGE_RECITATION の閉じた
+        許容) → Finish::Blocked(Output)。判定かどうか分からない語 (OTHER / LANGUAGE /
+        MALFORMED_FUNCTION_CALL …) と理由の無い候補 0 件は Finish::Other のまま (止めたと嘘を書かない)。
+        本文も関数呼び出しも無い応答は `gemini empty: candidates={n} block_reason={語|-} finish={語|-}
+        output_tokens={n}` を 1 行 (語は生のまま。#72 — 握り潰した事実を数える)。コアが代わりに書く
+        空の本文の文は Blocked のときだけ段を書き分ける (「入力（依頼の文面や添付）を判定で止めた」/
+        「生成した応答を判定で止めた」)。理由の語は文に書かない — ログが持つ
     schema_subset: |
       functionDeclarations[].parameters は JSON Schema ではなく OpenAPI 3.0 の部分集合。
       未知キー（$schema / additionalProperties / exclusiveMinimum 等）は黙って無視されず

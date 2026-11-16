@@ -1989,6 +1989,14 @@ tool_use_prompt=… search_queries=…`（組み込みツールを使った周�
 `dropped content blocks: kinds=…`（decode が捨てた part の種別。検索の
 `toolResponse` は毎ターン出る — 今まで無音で捨てていたものの可視化）。
 
+**Gemini が安全や利用方針の判定で応答を止めたときは、そう書く**（2026-11-16）。入力（依頼の文面や添付）で
+止められると応答の候補が 0 件で返り、理由（`promptFeedback.blockReason`）はそこにしか無い。生成した応答を
+止めたときは `finishReason` に判定の語（`SAFETY` / `PROHIBITED_CONTENT` / `IMAGE_SAFETY` など）が付く。
+どちらも会話には「本文が返りませんでした」ではなく「提供元が入力を／生成した応答を判定で止めた」と出る。
+本文も関数呼び出しも返らなかった応答は、ログに `gemini empty: candidates=… block_reason=… finish=…
+output_tokens=…` を 1 行残す（語は Gemini が返したまま）。判定かどうか分からない語（`OTHER` ほか）と
+理由の付かない空の応答は、今までどおり「本文が返りませんでした」。
+
 ### Grok の Live Search（[Spec 31](specs/31_grok-live-search.md)）
 
 モデルテンプレートで**プロトコルを「xAI ネイティブ（Responses）」**にすると、

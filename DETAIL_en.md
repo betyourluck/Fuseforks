@@ -1561,6 +1561,15 @@ tool_use_prompt=… search_queries=…` (only on rounds that used a built-in too
 `toolResponse` appears every turn — this makes visible what was silently dropped
 before).
 
+**When Gemini stops a response at its safety or usage-policy check, the chat says so** (2026-11-16). If the
+input (the request text or attachments) is stopped, the response comes back with zero candidates and the reason
+(`promptFeedback.blockReason`) is only there. If the generated response is stopped, `finishReason` carries a
+check word (`SAFETY` / `PROHIBITED_CONTENT` / `IMAGE_SAFETY`, etc.). Either way the chat shows "the provider
+stopped the input / the generated response at its check" instead of "the model returned no text". A response
+with neither text nor a function call leaves one log line, `gemini empty: candidates=… block_reason=… finish=…
+output_tokens=…` (words as Gemini returned them). Words that may not be a check (`OTHER`, etc.) and empty
+responses without a reason still show "the model returned no text".
+
 ### Grok Live Search ([Spec 31](specs/31_grok-live-search.md))
 
 Set the model template's **protocol to "xAI native (Responses)"** and the

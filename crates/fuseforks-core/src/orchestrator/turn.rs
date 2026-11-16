@@ -1675,6 +1675,9 @@ async fn run_turn_inner(
     // **本文以外のブロック**（拡張思考など）だけを返している。実機で 2 回
     // 続けて起き、「本文が返りませんでした」としか出せなかった（2026-08-06）。
     let mut last_completion = 0u64;
+    // 最後の LLM 応答の終了理由。**空本文の診断に使う**（提供元が判定で止めたなら、
+    // そう書く。2026-11-16 の実機 — Gemini が添付の画像で何も返さなかった）。
+    let mut last_finish = crate::llm::Finish::Other;
     // 接地の来歴は 1 周ぶんではなく**ターンぶん**で持つ。検索した周と
     // 関数を呼んだ周は別なので、周ごとに上書きすると先に起きた接地が消える。
     let mut grounding = crate::llm::Grounding::default();
@@ -1873,6 +1876,7 @@ async fn run_turn_inner(
             history_depth,
         );
         last_completion = response.usage.completion;
+        last_finish = response.finish;
         spend.absorb(&response.usage);
         // 予約を実測で清算する（Spec 11 の consume 側 / Spec 38 P2）。usage が
         // 欠けた応答（テストバックエンド・異常応答）はバイト数で保守的に
@@ -2242,6 +2246,7 @@ async fn run_turn_inner(
                     history_depth,
                 );
                 last_completion = response.usage.completion;
+                last_finish = response.finish;
                 spend.absorb(&response.usage);
                 // まとめ呼び出しも同じ財布で清算する（Spec 11 / Spec 38 P2）。
                 if let Some(guard) = summary_reservation {
@@ -2319,6 +2324,8 @@ async fn run_turn_inner(
             EmptyBody::Repeat { tool }
         } else if tool_limit_hit {
             EmptyBody::ToolLimit { max: u32::from(max_tool_iterations) }
+        } else if let crate::llm::Finish::Blocked(stage) = last_finish {
+            EmptyBody::Blocked { stage }
         } else if last_completion > 0 {
             EmptyBody::Silent { completion: last_completion }
         } else {

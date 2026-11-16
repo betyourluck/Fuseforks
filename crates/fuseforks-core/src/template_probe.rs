@@ -86,7 +86,9 @@ pub enum ProbeFinish {
     Length,
     /// ツール呼び出しで終わった（ツールは送っていない）。
     ToolUse,
-    /// 判別不能（Gemini の安全フィルタ `SAFETY` もここに畳まれる）。
+    /// 判別不能。提供元が判定で止めた形（[`Finish::Blocked`]。Gemini の安全フィルタ `SAFETY` ほか）も
+    /// ここに畳む — 接続テストの文面は固定の定型文で、止められる見込みが無く、表示の語彙を増やす
+    /// 理由が無い（理由の語はログの `gemini empty:` 行に残る）。
     Other,
 }
 
@@ -99,7 +101,7 @@ impl ProbeFinish {
             // `pause_turn` はサーバー側ツールのループが止まった印（Spec 71）。接続テストは
             // `without_provider_skills` でサーバー側ツールを外して撃つので来ないはずの形で、
             // 来ても値を増やさず「判別不能」に畳む（`ProbeFinish` は閉じた表示の語彙）。
-            Finish::Paused | Finish::Other => Self::Other,
+            Finish::Paused | Finish::Blocked(_) | Finish::Other => Self::Other,
         }
     }
 

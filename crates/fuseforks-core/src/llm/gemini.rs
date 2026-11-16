@@ -21,7 +21,7 @@
 use serde_json::{Value, json};
 
 use super::canonical::{
-    ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingSource, Role,
+    BlockStage, ChatMessage, ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingSource, Role,
     ToolCall, ToolChoice, Usage,
 };
 use super::error::LlmError;
@@ -415,6 +415,32 @@ fn thought_signature(call: &ToolCall) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 生成した応答を**提供元の判定で止めた**ことを示す `finishReason`（閉じた許容）。
+///
+/// 載せるのは安全・利用方針の判定の語だけ。`OTHER` / `LANGUAGE` / `MALFORMED_FUNCTION_CALL` のように
+/// 判定かどうか分からない語は入れない（入れると「審査で止まった」と嘘を書く）— それらは
+/// [`Finish::Other`] のまま、生の語はログの `gemini empty:` 行に残る。
+const BLOCK_FINISH_REASONS: [&str; 8] = [
+    "SAFETY",
+    "RECITATION",
+    "BLOCKLIST",
+    "PROHIBITED_CONTENT",
+    "SPII",
+    "IMAGE_SAFETY",
+    "IMAGE_PROHIBITED_CONTENT",
+    "IMAGE_RECITATION",
+];
+
+/// 本文もツール呼び出しも返らなかった応答を 1 行残す（`dropped content blocks:` と同じ棚。
+/// `failures.md` #72 — 握り潰した事実を数えないと、後から原因を追えない）。**語は生のまま**書く。
+fn note_empty(candidates: usize, block_reason: Option<&str>, finish: Option<&str>, completion: u64) {
+    crate::note!(
+        "gemini empty: candidates={candidates} block_reason={} finish={} output_tokens={completion}",
+        block_reason.unwrap_or("-"),
+        finish.unwrap_or("-"),
+    );
+}
+
 /// Gemini wire → canonical。
 ///
 /// ## 終了判定
@@ -460,11 +486,23 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         .map(|u| u.tool_use_prompt_token_count)
         .unwrap_or_default();
 
+    // 入力で止められた理由（候補が 0 件のときだけ意味を持つ）。**捨てない** — 捨てると
+    // 「本文が返りませんでした」としか書けず、審査で止まったのか一時的な空なのかを
+    // 見分けられない（2026-11-16 の実機。同じ画像と文面が 1 分後には通った）。
+    let block_reason = resp.prompt_feedback.and_then(|f| f.block_reason);
+    let candidate_count = resp.candidates.len();
+
     let Some(candidate) = resp.candidates.into_iter().next() else {
+        note_empty(candidate_count, block_reason.as_deref(), None, usage.completion);
         return Ok(ChatResponse {
             text: None,
             tool_calls: Vec::new(),
-            finish: Finish::Other,
+            // 理由が付いていれば入力の段で止められた形。付いていなければ判別不能のまま。
+            finish: if block_reason.is_some() {
+                Finish::Blocked(BlockStage::Input)
+            } else {
+                Finish::Other
+            },
             usage,
             grounding: Grounding::default(),
             reasoning_summary: Vec::new(),
@@ -557,9 +595,20 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         match candidate.finish_reason.as_deref() {
             Some("STOP") => Finish::Stop,
             Some("MAX_TOKENS") => Finish::Length,
+            Some(reason) if BLOCK_FINISH_REASONS.contains(&reason) => {
+                Finish::Blocked(BlockStage::Output)
+            }
             _ => Finish::Other,
         }
     };
+    if text.trim().is_empty() && tool_calls.is_empty() {
+        note_empty(
+            candidate_count,
+            block_reason.as_deref(),
+            candidate.finish_reason.as_deref(),
+            usage.completion,
+        );
+    }
 
     // 捨てた part を数える（Spec 48 D5。Anthropic / Meta と同じ形）。toolResponse は
     // 現行でも毎ターン捨てていた — 可視化であって新事象ではない。
@@ -1206,9 +1255,46 @@ mod tests {
 
     #[test]
     fn unknown_finish_reason_does_not_break_parsing() {
-        let raw = r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"SAFETY"}]}"#;
+        // 2026-11-16 まで入力は `SAFETY` だった（当時は知らない語）。`SAFETY` は判定で止めた語として
+        // 読むようになったので、意図（知らない語でも読めて、正常終了に倒さない）を本当に知らない語で保つ。
+        let raw = r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"SOMETHING_NEW"}]}"#;
         let resp: wire::GeminiResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(decode(resp).unwrap().finish, Finish::Other);
+    }
+
+    /// 入力の段で止められた形 — 候補が 0 件で、理由は `promptFeedback.blockReason` にしか無い。
+    #[test]
+    fn a_blocked_prompt_is_read_from_prompt_feedback() {
+        let raw = r#"{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"},
+            "usageMetadata":{"promptTokenCount":1290,"totalTokenCount":1290}}"#;
+        let resp: wire::GeminiResponse = serde_json::from_str(raw).unwrap();
+        let decoded = decode(resp).unwrap();
+        assert_eq!(decoded.finish, Finish::Blocked(BlockStage::Input));
+        assert_eq!(decoded.text, None);
+        assert_eq!(decoded.usage.prompt, 1290, "止められても入力の払いは読む");
+    }
+
+    /// 候補が 0 件でも理由が無ければ、判定で止めたとは書かない（一時的な空と見分けられないので）。
+    #[test]
+    fn no_candidates_without_a_reason_stays_unknown() {
+        let raw = r#"{"candidates":[],"usageMetadata":{"promptTokenCount":10}}"#;
+        let resp: wire::GeminiResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(decode(resp).unwrap().finish, Finish::Other);
+    }
+
+    /// 出力の段で止められた形。判定の語だけを読み、判定かどうか分からない語は読まない。
+    #[test]
+    fn safety_finish_reasons_are_read_as_blocked_output() {
+        for reason in ["SAFETY", "PROHIBITED_CONTENT", "IMAGE_SAFETY", "RECITATION"] {
+            let raw = format!(r#"{{"candidates":[{{"finishReason":"{reason}"}}]}}"#);
+            let resp: wire::GeminiResponse = serde_json::from_str(&raw).unwrap();
+            assert_eq!(decode(resp).unwrap().finish, Finish::Blocked(BlockStage::Output), "{reason}");
+        }
+        for reason in ["OTHER", "LANGUAGE", "MALFORMED_FUNCTION_CALL"] {
+            let raw = format!(r#"{{"candidates":[{{"finishReason":"{reason}"}}]}}"#);
+            let resp: wire::GeminiResponse = serde_json::from_str(&raw).unwrap();
+            assert_eq!(decode(resp).unwrap().finish, Finish::Other, "{reason}");
+        }
     }
 
     #[test]

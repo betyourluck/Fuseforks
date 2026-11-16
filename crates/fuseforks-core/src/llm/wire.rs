@@ -1086,6 +1086,19 @@ pub struct GeminiResponse {
     /// 使用量。
     #[serde(default)]
     pub usage_metadata: Option<GeminiUsageMetadata>,
+    /// 入力の判定の結果。**入力で止められたときは候補が 0 件で、理由はここにしか無い**
+    /// （`blockReason` = `SAFETY` / `PROHIBITED_CONTENT` / `BLOCKLIST` / `OTHER` …）。
+    #[serde(default)]
+    pub prompt_feedback: Option<GeminiPromptFeedback>,
+}
+
+/// 入力の判定の結果（`promptFeedback`）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiPromptFeedback {
+    /// 入力を止めた理由。止めていなければ無い。
+    #[serde(default)]
+    pub block_reason: Option<String>,
 }
 
 /// 応答の候補。

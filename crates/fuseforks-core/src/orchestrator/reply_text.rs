@@ -223,6 +223,9 @@ pub(super) enum EmptyBody<'a> {
     Repeat { tool: &'a str },
     /// ツール実行の上限に達した。
     ToolLimit { max: u32 },
+    /// 提供元が安全や利用方針の判定で応答を止めた（[`crate::llm::Finish::Blocked`]）。
+    /// 理由の語はログの `gemini empty:` 行に残り、ここでは段だけを書き分ける。
+    Blocked { stage: crate::llm::BlockStage },
     /// 出力トークンはあるのに、本文もツール呼び出しも無い。
     Silent { completion: u64 },
     /// 本文が返らなかった（出力トークンも 0）。
@@ -264,6 +267,29 @@ pub(super) fn empty_body(cause: EmptyBody<'_>, failure: Option<&str>, language: 
              {} Raise the limit in the agent settings, or split the request into smaller parts.)",
             reason()
         ),
+        // 提供元が判定で止めた（段が分かっている）。**理由の語は書かない** — 利用者に要るのは
+        // 「審査で止まった・何を変えれば通りうるか」で、語はログの `gemini empty:` 行が持つ。
+        (EmptyBody::Blocked { stage: crate::llm::BlockStage::Input }, Language::Ja) => {
+            "（モデルの提供元が、入力（依頼の文面や添付）を安全や利用方針の判定で止めたため、\
+             応答が返りませんでした。添付や頼み方を変えてもう一度頼んでみてください。）"
+                .to_owned()
+        }
+        (EmptyBody::Blocked { stage: crate::llm::BlockStage::Input }, Language::En) => {
+            "(The model provider stopped the input (the request text or attachments) at its safety \
+             or usage-policy check, so no response came back. Change the attachment or how you ask, \
+             and try again.)"
+                .to_owned()
+        }
+        (EmptyBody::Blocked { stage: crate::llm::BlockStage::Output }, Language::Ja) => {
+            "（モデルの提供元が、生成した応答を安全や利用方針の判定で止めました。\
+             頼み方を変えてもう一度頼んでみてください。）"
+                .to_owned()
+        }
+        (EmptyBody::Blocked { stage: crate::llm::BlockStage::Output }, Language::En) => {
+            "(The model provider stopped the generated response at its safety or usage-policy \
+             check. Change how you ask and try again.)"
+                .to_owned()
+        }
         // **観測できた事実だけを書く。** 出力トークンがあるのに本文もツール呼び出しも無いなら、
         // モデルは本文以外のブロック（拡張思考など）だけを返している。種別は
         // `dropped content blocks:` の 1 行がログに残す — ここで「thinking です」と断定しない。
@@ -323,6 +349,22 @@ mod tests {
             ("empty:tool_limit", empty_body(EmptyBody::ToolLimit { max: 36 }, None, language)),
             ("empty:silent", empty_body(EmptyBody::Silent { completion: 2048 }, None, language)),
             ("empty:nothing", empty_body(EmptyBody::Nothing, None, language)),
+            (
+                "empty:blocked_input",
+                empty_body(
+                    EmptyBody::Blocked { stage: crate::llm::BlockStage::Input },
+                    None,
+                    language,
+                ),
+            ),
+            (
+                "empty:blocked_output",
+                empty_body(
+                    EmptyBody::Blocked { stage: crate::llm::BlockStage::Output },
+                    None,
+                    language,
+                ),
+            ),
         ]
     }
 
@@ -353,6 +395,9 @@ mod tests {
             "（ツール実行の上限 36 回に達し、まとめの生成にも失敗しました。モデルは応答しましたが本文が空でした。エージェント設定で上限を上げるか、依頼を小さく分けてください。）",
             "（モデルは出力 2048 トークンを使いましたが、本文もツール呼び出しも返しませんでした。もう一度頼んでみてください。繰り返すなら頼み方を変えてください。）",
             "（モデルから本文が返りませんでした。もう一度頼んでみてください。）",
+            // 2026-11-16 に足した 2 つ（提供元が判定で止めた — 入力の段 / 出力の段）。
+            "（モデルの提供元が、入力（依頼の文面や添付）を安全や利用方針の判定で止めたため、応答が返りませんでした。添付や頼み方を変えてもう一度頼んでみてください。）",
+            "（モデルの提供元が、生成した応答を安全や利用方針の判定で止めました。頼み方を変えてもう一度頼んでみてください。）",
         ];
         let texts = every_text(Language::Ja);
         assert_eq!(texts.len(), expected.len(), "文を足したら逐語の期待値にも足す");

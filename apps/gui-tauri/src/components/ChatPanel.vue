@@ -1561,11 +1561,15 @@ async function newChat(): Promise<void> {
             <!-- 画像だけがインラインで見える。音声・動画・PDF は
                  **枠とファイル名で存在を示す**（Spec 36）— プレイヤーや
                  ビューアを内蔵すると、画面が「添付を扱う場所」に化ける。 -->
-            <!-- 押すと大きく見る（Spec 76 P2 の実機の要望。利用者の画像も生成画像の写しも同じ）。 -->
+            <!-- 押すと大きく見る（Spec 76 P2 の実機の要望。利用者の画像も生成画像の写しも同じ）。
+                 **画像は w-auto / h-auto で縦横比のまま縮める** — 幅と高さの属性（元の寸法）だけだと、
+                 幅は会話の幅いっぱい・高さだけ max-h で抑えられ、縦長の絵が横に広い枠の中央に寄って
+                 まわりの空白を ring が囲む（実機の指摘）。属性は残す — 読み込み前の縦横比の予約に使われる。
+                 ボタンも w-fit で絵の大きさに揃える（押せる範囲を空白へ広げない）。 -->
             <button
               v-if="isImageAttachment(att) && attachmentUrl(att)"
               type="button"
-              class="mb-1 block max-w-full cursor-zoom-in rounded-2xl"
+              class="mb-1 block w-fit max-w-full cursor-zoom-in rounded-2xl"
               :title="$t('chat.imagePreviewHint', { name: att.fileName })"
               data-image-preview-open
               @click="openPreview(att)"
@@ -1573,7 +1577,7 @@ async function newChat(): Promise<void> {
               <img
                 :src="attachmentUrl(att)!"
                 :alt="att.fileName"
-                class="max-h-64 max-w-full rounded-2xl object-contain ring-1 ring-line"
+                class="h-auto max-h-64 w-auto max-w-full rounded-2xl object-contain ring-1 ring-line"
                 :width="att.width"
                 :height="att.height"
               />

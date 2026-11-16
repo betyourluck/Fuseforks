@@ -44,6 +44,14 @@ describe("会話の画像を押すと開く", () => {
     expect(panel).toContain('<ImagePreview\n      v-if="preview"');
   });
 
+  it("会話の画像は縦横比のまま縮め、ボタンは絵の大きさに揃える（縦長の絵を横に広い枠へ入れない）", () => {
+    // 幅と高さの属性（元の寸法）だけだと、幅が会話の幅いっぱいに伸び、縦長の絵が空白の中央に寄る
+    // （実機の指摘。ビルドした CSS の最小のページで 1024x1536 が 762x256 の枠になるのを確かめた）。
+    expect(panel).toMatch(
+      /class="mb-1 block w-fit max-w-full cursor-zoom-in rounded-2xl"[\s\S]*?<img[\s\S]*?class="h-auto max-h-64 w-auto max-w-full /,
+    );
+  });
+
   it("開くときに読み直さない（投影キャッシュの URL を渡す）", () => {
     const start = panel.indexOf("function openPreview(");
     const end = panel.indexOf("\n}\n", start);
