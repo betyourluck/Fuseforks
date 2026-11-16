@@ -598,7 +598,8 @@
       "user": "你",
       "system": "Fuseforks",
       "external": "外部"
-    }
+    },
+    "dropHint": "拖放到此处以添加附件"
   },
   "bottomTabs": {
     "blackboard": "黑板",

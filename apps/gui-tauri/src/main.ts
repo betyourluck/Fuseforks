@@ -5,6 +5,7 @@ import "./style.css";
 import App from "./App.vue";
 import { i18n } from "./i18n";
 import { keepsNativeMenu } from "./lib/contextMenu";
+import { installFileDropGuard } from "./lib/fileDrop";
 
 // 配布ビルドでは WebView の既定右クリックメニューを抑止する。判定の理由は
 // `lib/contextMenu.ts` の doc に書いてある（dev で残すのは右クリック →「検証」が
@@ -15,6 +16,10 @@ if (!import.meta.env.DEV) {
     if (!keepsNativeMenu(event.target, hasSelection)) event.preventDefault();
   });
 }
+
+// 入力欄の外へ落ちたファイルを WebView に開かせない（画面がそのファイルに置き換わる）。
+// ファイルを運ぶドラッグだけを止め、受けるのは入力欄（`ChatInput.vue`）。理由は `lib/fileDrop.ts` の doc。
+installFileDropGuard(window);
 
 const app = createApp(App);
 app.use(i18n);

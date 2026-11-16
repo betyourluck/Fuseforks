@@ -598,7 +598,8 @@
       "user": "You",
       "system": "Fuseforks",
       "external": "External"
-    }
+    },
+    "dropHint": "Drop here to attach"
   },
   "bottomTabs": {
     "blackboard": "Blackboard",

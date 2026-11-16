@@ -1821,9 +1821,22 @@ enums:
 
       ## 凍結 9. 入口は貼り付けと「参照…」の 2 つ (D4)
 
-      ドラッグ&ドロップは入れない — Tauri v2 の dragDropEnabled 既定 true が
+      ~~ドラッグ&ドロップは入れない — Tauri v2 の dragDropEnabled 既定 true が
       ページ内の drop を横取りする (Spec 21 P0 の実測)。スクリーンショットの
-      主経路は Ctrl+V なので実害は小さい。
+      主経路は Ctrl+V なので実害は小さい。~~
+      **→ 2026-11-16 に覆した (利用者要望。Spec は切っていない)。入口は 3 つ** —
+      貼り付け / 「参照…」/ 入力欄へのドラッグ&ドロップ。
+      - 窓の dragDropEnabled を false にして、ページの標準の drop で File を受け取る。
+        **Tauri の drop (パスの一覧) は使わない** — 中身を読むには画面が渡したパスを
+        読む IPC が要り、画面から任意のファイルを読める口になる
+      - 3 つの入口は同じ取り込み (ChatInput の attach — 変換・5 件 / 12MB・断りの理由) を
+        通る。入口ごとに規則を持たない
+      - 入力欄の外に落ちたファイルは窓で止める (WebView の既定はそのファイルを開いて
+        画面を置き換える)。止めるのは dataTransfer.types に Files を含むドラッグだけで、
+        テキストのドラッグと、入力欄が受けた (defaultPrevented) ドラッグには触らない
+        (lib/fileDrop.ts の guardFileDrop)
+      - 絆の地図へのカードの drop (Spec 21) は Sortable の force-fallback のまま
+        (標準の drag ではないので、この変更の影響を受けない)
 
       ## P0 実測 (2026-08-06。何が通るかは推測せず叩いて決めた)
 

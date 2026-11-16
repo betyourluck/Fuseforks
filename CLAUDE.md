@@ -234,6 +234,35 @@ Fuseforks のテイストから降りてシステム用語にする**。UI ラ�
   （機構はどちらでも成立。`force-fallback` コメントは断定形にしない形で維持）。
   vitest 142 → 151
 
+## ファイルのドラッグ&ドロップで添付（2026-11-16 着地。Spec 不要と判断）
+
+起点は利用者 —「ボタンで選ぶ・クリップボードから貼るに加えて、画像ファイルをプロンプトへドラッグして添付にしたい」。
+**Spec 23 D4（入口は貼り付けと「参照…」の 2 つ。drop は Tauri が横取りするので入れない）を覆した** —
+横取りは窓の `dragDropEnabled` 既定 `true` の帰結で、`false` にすれば標準の `drop` で `File` が届く。
+覆したことは `attachment_contract` 凍結 9 と Spec 23 D4 の両方に書いた。
+
+- **Tauri の drop（パスの一覧）は使わない。** 中身を読むには「画面が渡したパスを読む IPC」が要り、画面から
+  任意のファイルを読める口になる。標準の drop なら WebView が `File` を渡し、貼り付け・「参照…」と同じ
+  `attach(files)`（変換・5 件 / 12MB・断りの理由）を通る — 入口ごとに規則が割れない
+- **入力欄の外に落ちたファイルは窓で止める**（`lib/fileDrop.ts` の `installFileDropGuard`。`main.ts` で 1 回）。
+  WebView の既定はそのファイルを開いて画面を置き換える。止めるのは `types` に `Files` を含むドラッグだけで、
+  テキストのドラッグと入力欄が受けた（`defaultPrevented`）ドラッグには触らない。**帰結としてエディタ（CodeMirror）の
+  上へのファイルの drop も止まる**（`dragover` を `none` で止めるので `drop` が来ない = 以前と同じく何も起きない。
+  CodeMirror の既定はテキストファイルの中身を挿入する）
+- **入力欄の枠は `pointer-events-none`**、出入りは `dragenter` / `dragleave` の数で数える（子要素をまたぐたびに
+  点滅させない）。`disabled` の間は `dropEffect` を `none` にして枠も出さない
+- **絆の地図へのカードの drop（Spec 21）は Sortable の `force-fallback` のまま。** 窓の設定が変わってもフォールバックは
+  標準の drag を使わないので影響しない（`AgentList.vue` のコメントに追記。Spec 21 の節の「ネイティブ DnD 不発の仮説」は
+  この設定の下でなら成り立たない可能性があるが、測っていない）
+- **テスト**: `fileDrop.test.ts` 10 本（判定・窓の守り・設定と配線の字面）。**変異 5 回とも予測どおり**（守りが
+  `defaultPrevented` を見ない → 1 本 / `onDrop` が `attach` を呼ばない → 1 本 / 設定を `true` へ → 1 本 / `carriesFiles` が
+  常に真 → 2 本 / 枠の `pointer-events-none` を外す → 1 本）。vitest 1,155・vue-tsc 0・build 緑・`cargo check -p fuseforks` 緑
+- **実機で確認済み**（2026-11-16 利用者「すべて確認して問題ない」。Windows の開発ビルド `profile=debug`）—
+  エクスプローラーから画像を入力欄へ落とすとチップになる / 6 件目は断りの理由が出る / 入力欄の外（会話ペイン・地図）に
+  落としても画面が変わらない / エディタの中の文字のドラッグが今までどおり動く / カードを地図へ落として絆が張れる。
+  ドラッグ&ドロップはログに行を残さないので、確認は画面だけ。**macOS と Linux は未確認**（`dragDropEnabled` の挙動は
+  OS ごとに違いうる）
+
 ## 外部の脆弱性監査 12 件の判定と、直した 4 件（2026-10-30。Spec 不要と判断）
 
 起点は利用者が持ち込んだ監査の報告（12 件・Critical 1 / High 3 / Medium 5 / Low 3）。**全部を実装に当てて判定し、

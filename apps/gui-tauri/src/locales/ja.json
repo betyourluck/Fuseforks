@@ -598,7 +598,8 @@
       "user": "あなた",
       "system": "Fuseforks",
       "external": "外部"
-    }
+    },
+    "dropHint": "ここにドロップして添付"
   },
   "bottomTabs": {
     "blackboard": "黒板",

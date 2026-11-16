@@ -11,10 +11,10 @@
  * 高さを CSS だけで賄えないのは、`textarea` に内容ぴったりへ縮む仕組みが無いため。
  * `height: auto` へ戻してから `scrollHeight` を読む、の 2 段が要る。
  *
- * 画像の添付（Spec 23 P4）。入口は**貼り付けと「参照…」の 2 つ**（D4 —
- * ドラッグ&ドロップは Tauri の `dragDropEnabled` が drop を横取りするので
- * 入れない）。変換（縮小 + WebP 化）は WebWorker で行い、この画面は
- * チップの表示と送信への同乗だけを持つ。
+ * 画像の添付（Spec 23 P4）。入口は**貼り付け・「参照…」・ドラッグ&ドロップの 3 つ**（Spec 23 D4 は
+ * 「drop は Tauri の `dragDropEnabled` が横取りするので入れない」だったが、2026-11-16 に窓の設定を
+ * false にしてページの標準の drop で受ける形で覆した。`lib/fileDrop.ts`）。変換（縮小 + WebP 化）は
+ * WebWorker で行い、この画面はチップの表示と送信への同乗だけを持つ。
  *
  * 添付は**列**（Spec 73 D7）。1 発話 5 件・合計 12 MB まで（コアと同じ上限）。
  * 貼り付けはクリップボードの全ファイルを、「参照…」は複数選択を受ける。上限を超える分は
@@ -73,6 +73,7 @@ import {
   type QuoteCandidate,
   type QuoteChip,
 } from "../lib/quoteRef";
+import { carriesFiles, droppedFiles } from "../lib/fileDrop";
 import { listWorkDirFiles, readAttachment } from "../lib/ipc";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { contextArc, contextPercent, contextRatio, contextTone } from "../lib/contextUsage";
@@ -663,6 +664,41 @@ function onPaste(event: ClipboardEvent): void {
   void attach(files);
 }
 
+/**
+ * ドラッグ&ドロップ（2026-11-16。理由と窓の設定は `lib/fileDrop.ts`）。**受けるのはファイルを運ぶドラッグだけ**で、
+ * テキストのドラッグは textarea の既定動作のまま。落ちたファイルは貼り付け・「参照…」と同じ `attach` へ渡す
+ * （変換・件数と合計の上限・断りの理由がそのまま効く）。
+ *
+ * 入力欄の上にいる間だけ点線の枠を出す。子の要素へ移るたびに `dragleave` が出るので、出入りを数える。
+ */
+const dragDepth = ref(0);
+const dropActive = computed(() => dragDepth.value > 0);
+
+function onDragEnter(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer?.types)) return;
+  event.preventDefault();
+  dragDepth.value += 1;
+}
+
+function onDragOver(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer?.types)) return;
+  // ここで止めると窓の守り（`installFileDropGuard`）は手を出さない。送れない間は「不可」のカーソル。
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = props.disabled ? "none" : "copy";
+}
+
+function onDragLeave(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer?.types)) return;
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+}
+
+function onDrop(event: DragEvent): void {
+  if (!carriesFiles(event.dataTransfer?.types)) return;
+  event.preventDefault();
+  dragDepth.value = 0;
+  void attach(droppedFiles(event.dataTransfer));
+}
+
 /** 「参照…」（複数選択）。同じファイルを選び直せるよう、読んだら value を戻す。 */
 function onFilePicked(event: Event): void {
   const input = event.target as HTMLInputElement;
@@ -731,7 +767,23 @@ defineExpose({ fill, addAttachmentRef });
 </script>
 
 <template>
-    <div class="relative shrink-0 border-t border-line px-3 py-2.5" data-tour="chat">
+    <div
+      class="relative shrink-0 border-t border-line px-3 py-2.5"
+      data-tour="chat"
+      @dragenter="onDragEnter"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    >
+    <!-- ファイルを入力欄の上へドラッグしている間だけ出す。pointer-events-none — この枠がドラッグの出入りを
+         横取りすると、枠の出入りで dragleave が出続けて点滅する。 -->
+    <div
+      v-if="dropActive && !disabled"
+      class="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-surface-1/90 text-xs text-accent"
+      data-file-drop-overlay
+    >
+      {{ $t("chatInput.dropHint") }}
+    </div>
     <!-- 添付チップ（Spec 23）。× で外せる。S4 の注記をすぐ下に置く —
          「1 ターン限り」は設定ではなく仕様なので、添付のたびに見える場所で言う。 -->
     <div v-if="attachments.length || converting || attachRefusal" class="mb-2 px-1" data-attachment-chips>

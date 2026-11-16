@@ -594,6 +594,8 @@ async function onDragEnd(evt: DragEndEvent): Promise<void> {
       Windows WebView2 でページ内のネイティブ DnD と衝突する報告があり、
       外すと並び替えごと動かなくなる（Spec 21。断定形への裏取りは P4 の実機で）。
       Spec 21 の絆 drop も fallback の座標を前提にしている。
+      2026-11-16 に窓の dragDropEnabled を false にした（入力欄へのファイルの drop のため。lib/fileDrop.ts）が、
+      **それでも外さない** — 絆の drop が fallback の座標と elementFromPoint に寄りかかっているのは変わらない。
     -->
     <!--
       区分けごとに 1 つの並び替えの箱（Spec 51 D6）。全部に同じ `group` 名を与えて

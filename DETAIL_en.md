@@ -127,6 +127,7 @@ Fuseforks/
             ├── lib/attachment.ts    Attachment pure functions (kind detection / scaling math / base64)
             ├── lib/attachmentList.ts The input's attachment list (5-item / 12MB checks / splitting for send. Spec 73)
             ├── lib/carries.ts       Which wire carries which kind (screen-side copy, for warnings)
+            ├── lib/fileDrop.ts      File drag-and-drop (is this drag carrying files / the window guard that stops drops outside the input)
             ├── lib/pathComplete.ts  Trigger detection for `@` / `@@`, plus ranking and commit for path completion
             ├── lib/quoteRef.ts      Message references (`@@`): candidates, ranking, chips, restoring the draft after a failed send (pure functions)
             ├── lib/scheduleProbe.ts Pre-check display rules (pure functions; returns dictionary keys)
@@ -440,10 +441,15 @@ Do not substitute values locally with the assumption that "it should be like thi
 
 ## Attachments ([Spec 23](specs/23_image-attachment.md) = images / [Spec 36](specs/36_multimodal-attachments.md) = audio, video, PDF / [Spec 73](specs/73_multi-attachment-and-reattach.md) = several at once and re-sending)
 
-**Paste** files into the input box (Ctrl+V) or **pick** them with the clip button on
-the left, and the addressed servant sees or hears them and answers. Drag-and-drop is
-deliberately not an entry point — Tauri intercepts in-page drops (and Ctrl+V is the main
-path for screenshots anyway).
+**Paste** files into the input box (Ctrl+V), **pick** them with the clip button on
+the left, or **drag and drop** them onto the input box, and the addressed servant sees or
+hears them and answers. All three go through the same intake (conversion, count and size
+limits, refusal reasons). While dragging, the input shows a "Drop here to attach" frame.
+**A file dropped outside the input does nothing** (the WebView's default would open that file
+and replace the app screen, so the window stops it; text drags are left alone). To receive
+drops, the window's `dragDropEnabled` is `false` — with the default `true`, Tauri intercepts
+drops from the OS and the page only gets paths (2026-11-16; until then drag-and-drop was not
+an entry point).
 
 **Up to 5 attachments per utterance, 12 MB in total.** Pasting takes every file on the
 clipboard, and the clip button accepts several files. Attachments line up above the input as

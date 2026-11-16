@@ -182,6 +182,11 @@ canonical と各ワイヤは**送信の瞬間だけ**ブロック列へ組み立
   Spec 21 P0 の実測で **Tauri v2 の `dragDropEnabled` 既定 `true` が
   ページ内の `drop` を横取りする**ことが分かっている。**スクリーンショットの
   主経路は Ctrl+V なので実害は小さい**
+  **→ 2026-11-16 に覆した（利用者要望）。** 窓の `dragDropEnabled` を `false` にし、
+  入力欄へのドラッグ&ドロップを 3 つ目の入口にした。横取りは既定値の帰結で、
+  切れば標準の `drop` で `File` が届く。Tauri のパスの一覧は使わない（パスを読む IPC が
+  要り、画面から任意のファイルを読める口になる）。入力欄の外に落ちたファイルは
+  窓で止める（`lib/fileDrop.ts`）。経緯は `data_contract.yaml` の `attachment_contract` 凍結 9
 - **D5 上限は 1 発話あたり 1 枚。元ファイル 10MB で拒否、変換後 2MB で拒否**
   **→ 「1 発話あたり 1 枚」は 2026-10-30 に [Spec 73](73_multi-attachment-and-reattach.md) D1 で覆した**
   （1 発話 5 件・合計 12MB。1 件ずつの上限は不変）
