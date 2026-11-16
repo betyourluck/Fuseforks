@@ -4638,8 +4638,9 @@ entities:
          2 本にしない (同梱ツールの登録漏れ・前判定の承認の差し込み漏れが片方だけに起きる)。
          順序は今の GUI と同じで、D3 と D4 の 2 手が足されるだけ:
          create_dir_all → ロック → ログ → version: 行 → 秘密のストア → bootstrap →
-         (Env のときだけ) 変数名の衝突検査 → 同梱ツール 9 本 → MCP の初期接続 → 扉 (open_door) →
-         前判定の承認 → Jev → 単価表の取得元。呼び出しごとに違うのは HostBootOptions の 4 欄
+         (Env のときだけ) 変数名の衝突検査 → 同梱ツール (rag / blackboard / run / image を含む全部。本数は書かない —
+         足すたびに腐る。Spec 76 で image が増えたとき 9 本と書いた行が実数と合っていなかった) → MCP の初期接続 →
+         扉 (open_door) → 前判定の承認 → Jev → 画像生成の設定 (Spec 76) → 単価表の取得元。呼び出しごとに違うのは HostBootOptions の 4 欄
          (app_version / secrets / run_schedules / open_door) だけ。**扉を開く処理を build_host の
          外へ出さない** (GUI の起動ログの行の順序が変わる)
       2. **パスは data_dir の 1 欄から導く。** workspace = data_dir/workspace。GUI は app_data_dir()、
@@ -6815,6 +6816,7 @@ conversation_termination:
         出なかった** (ゲート 1 で落ち、ゲート 2 に到達しない)。処方は警告の
         追加ではなくスイッチの一本化 — 穴を表示で覆うのではなく、穴ごと消す。
         BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run} の等式は 8 = 7 + 1 へ戻る
+        (Spec 18 当時。Spec 76 で ∪ {run, image} = 9 = 7 + 2 — enabled_tools_invariant の P1 の行が正)
       - **宣言されたルートは実在検査を掛ける。無効化であって削除ではない。**
         検査は起動時と呼び出し時の両方 (起動時だけだと、開いたまま外付けドライブを
         外した村が素通りする)。落ちたルートは無効印を付けるだけでファイルからは

@@ -55,6 +55,7 @@ Fuseforks/
 │       │   ├── quote.rs             Message-reference pure mechanics (ID resolution / copies / frame rendering; [Spec 58](specs/58_quote-reference.md))
 │       │   ├── prune.rs             Tool-result pruning pure mechanics (split into paragraphs / batch / render; knows no HTTP; [Spec 59](specs/59_jev-tool-result-pruning.md))
 │       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; implements `ParagraphScorer` and `Judge`)
+│       │   ├── image_gen.rs         The image-generation API wire (four providers' requests and responses, 8 failure classes, connection check; [Spec 76](specs/76_image-generation.md))
 │       │   ├── judge.rs             Judges, pure mechanism (judge.toml checks, condition grammar, rule evaluation, the active predicate; [Spec 62](specs/62_judge-agents.md))
 │       │   ├── assist.rs            AI drafting, pure mechanism (guides, the two-section context, submit_draft, classification, history checks; [Spec 63](specs/63_ai-draft-assist.md))
 │       │   ├── template_probe.rs    Connection test, pure mechanism (fixed prompt, verdict, the 10 failure categories, the log line; [Spec 68](specs/68_template-connection-test.md))
@@ -70,6 +71,7 @@ Fuseforks/
 │       │   ├── tools/file.rs        Built-in tool: file (create / move / copy / trash. new files only here)
 │       │   ├── tools/rag.rs         Built-in tool: rag (heading index over declared reference folders. read-only)
 │       │   ├── tools/blackboard.rs  Built-in tool: blackboard (blackboard notes. a servant writes only its own)
+│       │   ├── tools/image.rs       Built-in tool: image (draws an image; off by default; goes to the one image-generation API chosen for the app; Spec 76)
 │       │   └── llm/
 │       │       ├── mod.rs           LlmBackend / BackendFactory / EchoBackend
 │       │       ├── canonical.rs     Provider-neutral types
@@ -98,6 +100,7 @@ Fuseforks/
 │       │   ├── mcp_oauth_flow.rs    The OAuth authorization flow (loopback receiver, dynamic registration, code exchange, revocation; Spec 67)
 │       │   ├── pricing_source.rs    Where the price table is fetched from (only when pressed; Spec 41)
 │       │   ├── jev_settings.rs      Tool-result pruning settings and scorer installation (Spec 59); with a key, also installs the judge model (Spec 62)
+│       │   ├── image_gen_settings.rs Image-generation settings (image_gen.json), a key per provider, whether it is active, the connection check (Spec 76)
 │       │   └── probe_approvals.rs   Whether a pre-check may run on this machine (Spec 28)
 │       └── tests/                   Door wire / village lock / bake / the OAuth authorization flow
 │
@@ -132,6 +135,7 @@ Fuseforks/
             ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
             ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
             ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines (pure; Spec 62)
+            ├── lib/imageGenSettings.ts the image-generation settings page's rules (building the saved config, unsaved edits, the connection-check gate; pure; Spec 76)
             ├── lib/assist.ts        AI drafting: picking the template, the before-apply difference (pure; Spec 63)
             ├── lib/templateDraft.ts Whether a model template draft differs from the saved one (pure; the connection test's gate)
             ├── lib/templateProbe.ts Connection test button gate, result tone and dictionary keys (pure; Spec 68)
@@ -168,6 +172,8 @@ Fuseforks/
                 ├── BatchWorkDirDialog.vue             Modal: change work folders together (from the list footer)
                 ├── OrdinanceDialog.vue / McpDialog.vue / ScheduleDialog.vue   Modal: ordinance / MCP / schedule
                 ├── SettingsDialog.vue / SessionDialog.vue    Modal: system settings / conversation list
+                ├── ImageGenSettingsPage.vue               System settings > Integration > Image generation (Spec 76)
+                ├── ImagePreview.vue                       Click an image in the chat to view it window-sized (rendered into body)
                 ├── FirstRunTour.vue                   First-launch guide (nine steps; shown only in an empty village; replay from Settings > User Interface > Guide)
                 ├── RoleDialog.vue                     Modal: roles (servant templates)
                 ├── GroupDialog.vue                    Modal: create / rename / delete groups ([Spec 51](specs/51_agent-groups.md))
@@ -457,7 +463,7 @@ content and kind disagree all the way to the wire).
 
 | Kind | Accepted formats | Limit | Conversion |
 |---|---|---|---|
-| Image | anything the browser can decode (png / jpeg / gif / webp …) | 10 MB source → 2 MB converted | **UI scales to 1568px long edge and converts to WebP** |
+| Image | anything the browser can decode (png / jpeg / gif / webp …) | 10 MB source → 2 MB converted | **UI scales to 1568px long edge and converts to WebP** (only the copy of a generated image on a servant's reply may be JPEG — Spec 76) |
 | Audio | mp3 / wav | 10 MB | none |
 | Video | mp4 | 12 MB | none |
 | PDF | pdf | 10 MB | none |
@@ -554,10 +560,14 @@ allowed.**
 
 ### Re-sending a past attachment (Spec 73)
 
-Attachments on **your own utterances** in the chat pane get a "To input" button. Pressing it puts
+Attachments on **your own utterances and on servants' utterances** in the chat pane get a "To input" button
+(a servant's reply carries the copy of an image it generated — [Spec 76](specs/76_image-generation.md); system
+and external-client utterances carry no attachments, so they get none). Pressing it puts
 that attachment back in the input as a chip (marked "Re-sent"), ready to go to **the servant you
 have selected now** — showing an image to a different servant than the one it was first pasted
-for is the main use. It does not send anything (it only adds the chip).
+for, or handing a generated image back as a reference to revise it, are the main uses. It does not send
+anything (it only adds the chip). **Click an image in the chat to view it window-sized** (click the
+backdrop, ✕ or Esc to close).
 
 - **Only the attachment's ID travels.** The core looks the original reference up in the
   conversation log and copies it onto the new utterance. **The file is not duplicated** (unlike
@@ -590,7 +600,8 @@ anything, nothing sent and nothing paid changes.
 |---|---|---|
 | User → servant | **Delivered** (if the wire carries the kind) | Otherwise the entrance refuses — nothing stored, no turn started |
 | Servant → servant (`ask` / `plan` / transfer) | **Always** dropped | The delivered body is prefixed with "(the attached image is not forwarded)" (with several: "(the attached 1 image and 1 PDF are not forwarded)") |
-| Plaza log (excerpts of others' conversations) | Dropped | Nothing appears — only the user's utterances carry attachments, and the plaza log does not include the user's utterances |
+| Plaza log (excerpts of others' conversations) | Dropped | Nothing appears — the plaza log carries text only (the copy of a generated image on a servant's reply does not appear either) |
+| A servant's reply → later turns | Dropped | The copy of a generated image reaches a model later only when a person re-sends it with "To input" (Spec 76) |
 
 **Forwarding drops the attachment even when the recipient could carry it.** Passing it on
 would turn one attachment into N turns' worth of payment and break the one-to-one
@@ -606,7 +617,8 @@ transcribed the picture's contents into text and passed that along instead.
 Images enter neither the conversation log nor the conversation store (`sessions.redb`).
 The body lives at `{workspace}/attachments/{uuid}.{ext}`, and the utterance carries only a
 reference. **On startup, anything older than 30 days — and, beyond a 500 MB total, the
-oldest first — is deleted.** A deleted image becomes a "this image was deleted after its
+oldest first — is deleted.** Copies of generated images (sometimes `.jpg`) follow the same rule — the original
+stays in the work folder's `generated_images/` (Spec 76). A deleted image becomes a "this image was deleted after its
 retention period" placeholder in the conversation pane; showing nothing would make it look
 as if the attachment had never happened.
 
@@ -1352,6 +1364,52 @@ you must enable it per agent *and* have at least one `allow` pattern.
 > (blocking `rm` leaves `python -c`). The value of `deny` is **remembering a
 > decision you already made**, not stopping hostile input.
 
+### Drawing images (`image`, [Spec 76](specs/76_image-generation.md))
+
+Servants make images with the built-in tool `image`. **There is one destination for the whole app** (pick OpenAI / Gemini / Meta / xAI in
+System settings > Integration > Image generation); servants do not each pick one. A key per provider goes to the OS credential store
+(separate from model-template keys), and nothing returns its value to the screen. The settings live in `{app_data_dir}/image_gen.json`
+(the device shelf), so **they do not travel with a shared village** — a recipient's village never sends prompts and images to a
+destination its user does not know.
+
+- **Off by default.** `image` sits outside the default set (like `run` — it costs money and sends things out, so an app update alone
+  does not give everyone the ability). It is presented only when **the agent's checkbox is on and image generation is active**; the
+  reasons it can be inactive are a closed three (the settings file cannot be read / no provider is selected / that provider has no
+  key), shown at the top of the settings page and under the agent's checkbox
+- **Three arguments** — `prompt` (required) / `aspect` (square, landscape, portrait; the settings' default when left out) /
+  `references` (reference numbers, up to 3). **Servants cannot choose the resolution** (only the setting's three levels; higher levels
+  cost more per image). Meta uses only the aspect ratio, so the resolution field cannot be changed while Meta is selected (the value
+  is kept)
+- **Reference numbers count "this turn's images" from 1** — the images the user attached this turn, then the images generated this
+  turn. A generated image's number appears in the result, so it can be revised within the same turn ("change only the background of
+  that one"). Numbers do not carry into the next turn (attachments last one turn). **To use an earlier turn's image, re-send it with
+  the chat pane's "To input"**
+- **A generated image goes three places**:
+  1. The work folder's `generated_images/<date-time>-<agent_id>-<number>.<ext>`, **byte-for-byte as received** (the number is the order
+     sent in that turn; if the name exists, `-2` is added instead of overwriting; with no work folder it is not saved, and the result
+     says so)
+  2. **One copy** attached to the servant's reply (it shows in the chat pane). A JPEG / WebP within the limits is kept as is; anything
+     else (PNG, over the limits) becomes a JPEG at 1568px on the long edge. Turns that do not build a reply (interrupted, out of budget,
+     failed, waiting for approval, handed off) attach nothing — the original stays in the work folder and the tool row shows its path
+  3. The same copy is returned to the model (the servant sees its own picture and can ask for a revision). The reply returned to a
+     delegating servant carries text only
+- **Up to 4 generation requests per turn** (a success, a failure after sending, and an interruption each count once; calls refused
+  before generating — a wrong reference number, malformed arguments, inactive — do not count)
+- **Failures fall into a closed 8 classes** (key / rate limit / provider refusal / timeout / cannot connect / response shape / other
+  error / settings) and the result states the reason and the next step. **No automatic retry** — whether to rephrase is the model's call
+- **An interruption drops the request** (it does not wait). The image is not received and neither the file nor the copy is written.
+  The provider may keep generating and charge for it
+- **Image-generation charges count toward neither the token limit nor the statistics** (there is no per-image price). The copy
+  returned to the model enters later rounds of that turn as input tokens, like any tool-result image
+- "Check connection" **sends one request that makes no image** (up to 20 seconds). It checks the saved provider and the registered key
+  only, and cannot be pressed while fields are unsaved. For OpenAI only the key is checked (the model name shows up when generating).
+  Opening the page sends nothing
+- Each generation logs `image gen: agent=… provider=… model=… aspect=… refs=… outcome=… elapsed_ms=… bytes=… saved=…` (plus the
+  returned cost fields when present — OpenAI's tokens, xAI's `cost_ticks`). **The prompt text is never logged.** Changing settings or
+  keys logs `image gen: active=… provider=… reason=…`, and the connection check logs `image gen probe:`
+- **Opening the village with v0.7.0 or earlier starts any conversation containing a generated image's copy (JPEG) empty and without
+  history** (the old version does not know the format; the records are not lost and come back when opened with a newer version)
+
 ### Heading index (`rag`)
 
 **Queries the Markdown in declared folders through the heading hierarchy the
@@ -1405,7 +1463,8 @@ Output is always bounded (100 matches, 240 characters per line, 12,000 character
 
 **The schema of an unpresented tool is a fixed cost every turn**, and all agents spend from one person's wallet. Giving every capability to every agent is not a feature but waste. The default should be to give only the tools needed; that is this product's differentiator from large orchestration systems.
 
-- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (the default set is presented; new tools that join the default set appear automatically, and `run` sits outside it); an explicit selection presents only the needed tools and does not grow automatically.
+- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (the default set is presented; new tools that join the default set appear automatically, and `run` and `image` sit outside it); an explicit selection presents only the needed tools and does not grow automatically.
+- **`image` is not presented even when checked unless image generation is active in system settings** (a two-step gate; the agent settings show "not offered until it is set up in system settings" right under the checkbox).
 - **If no work folder is configured, the six file tools are not presented regardless of selection**. Do not pay schema cost for tools that can only answer "not configured."
 - **`rag` is outside this mechanism.** It has no checkbox; its presentation is decided solely by the "RAG folders" declaration (only a human can write the declaration, so the declaration itself is the opt-in — two switches for one intent create the trap of enabling one and wondering why nothing appears, which a real run hit on day one).
 - Removing `remember` stops **only writing**. `Memory.md` still enters the prompt; to remove that injection, empty the file instead of duplicating control mechanisms whose effects cannot be distinguished.
@@ -1884,7 +1943,7 @@ Agent settings reside in the OS application-data area.
   mcp.json                    Shared MCP server declaration (presented to every agent; edit from "MCP" in the title bar)
   sessions.redb               Conversation store (multiple conversations in one file; Spec 12)
   exports/{session_id}.jsonl  Conversation export destination (written by "Export" in the conversation list; the id is letters, digits, - and _ only, and the file is created only after the session is found)
-  attachments/{uuid}.{ext}    Attachment bodies (webp / mp3 / wav / mp4 / pdf; auto-deleted after 30 days / above 500 MB total)
+  attachments/{uuid}.{ext}    Attachment bodies (webp / jpg / mp3 / wav / mp4 / pdf; jpg only for copies of generated images; auto-deleted after 30 days / above 500 MB total)
   agents/{agent_id}/
     SKILL.md
     Memory.md
@@ -1906,6 +1965,7 @@ Agent settings reside in the OS application-data area.
 {app_data_dir}/probe_approvals.json  Whether a schedule's pre-check may run on this machine (Spec 28)
 {app_data_dir}/pricing.json          Where the price table is fetched from (Spec 41)
 {app_data_dir}/jev.json              Tool-result pruning enabled/disabled, account ID, strength (Spec 59)
+{app_data_dir}/image_gen.json        Image-generation provider, each provider's model / URL / timeout, default aspect and resolution (Spec 76)
 ```
 
 What you hand over when sharing a village is the workspace, so **keeping these outside
@@ -1984,7 +2044,7 @@ comes after it.
 
 **The main line kinds are these** (the implementation has more; the authoritative count is
 the number of `note!` calls, and writing a total here would rot every time one is added):
-`turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>` / **`failed:<CODE>`**), `turn failed` (the reason a turn died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), and `schedule` (schedule firing).
+`turn start` / `turn` (turn start and aggregate; `stop=` records the exit: `-` / `tool_limit` / `repeat:<tool>` / **`failed:<CODE>`**), `turn failed` (the reason a turn died), `tool` (measurement per tool invocation), `tool blocked` (repeat cutoff), `plan wave` / `plan bundle` (wave delivery and convergence), `schedule` (schedule firing), and `image gen` (each image generation, and whether it is active after settings or keys change; see "Drawing images" above).
 
 The start and failure kinds were added later. The `turn` line existed **only on the success path**, so a turn that died left no line at all; and rounds that call no tool (waiting on the LLM) emit nothing. **"Still in flight" and "died three minutes ago" looked like the same silence.**
 
@@ -2383,7 +2443,7 @@ Three things have since been added into this frame: the theme, your own name and
 |---|---|
 | General | **User** (your own name and icon) and language (日本語 / English / 简体中文). The language is inferred from the OS on first launch only; never re-inferred afterwards (a Simplified Chinese OS gets 简体中文; Traditional Chinese regions get English). **Startup and exit** (hide in the tray when closed / batch start on launch / launch at sign-in / confirm before quitting; see "Startup and exit" below) |
 | Cost Management | Token limit (the ceiling described under "Token Budget" above). "Limited (value)" or "Unlimited". **Delegation wait time** (seconds to wait for an `ask` / `plan` answer; default 600, range 30–3600 — [Spec 44](specs/44_ask-cycle-detection.md)). **Closing day** (the month that "All conversations" in Stats is cut at: the 1st–28th or end of month, default end of month. **Stored on this device, applied the moment you pick it**, with the resulting "current period" shown right below — [Spec 42](specs/42_stats-period.md)) |
-| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Judge model (Jev)** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default. **The key is shared with judges (Spec 62)** — with a key set, judges work even while pruning is off). **Price table** (the URL it is fetched from) |
+| Integration | **MCP server** (see "Accepting requests from external LLMs" below). Disabled by default. **Judge model (Jev)** (see "Tool-result pruning" above: Cloudflare account ID and API token, connection check, pruning on/off, how much to drop; disabled by default. **The key is shared with judges (Spec 62)** — with a key set, judges work even while pruning is off). **Image generation** (see "Drawing images" above: the provider, a key and model / URL / timeout per provider, the connection check, default aspect and resolution; not used by default). **Price table** (the URL it is fetched from) |
 | User Interface | **Theme** (Dark / Light), **Chat text** (the zoom of the conversation pane; seven steps from 90% to 200%, default 100%, **saved on this device and applied the moment you choose**), message visibility, and **Guide** (replay the nine-step walkthrough shown on first launch). Message visibility has two: the confirmation for **cutting a tie**, and whether **join and leave notices** appear in the chat pane (the confirmation **before closing** moved to General > Startup and exit, because hiding in the tray changes what it means) |
 
 - **Your name is both the display name on screen and the name servants read**
@@ -2414,7 +2474,7 @@ Three things have since been added into this frame: the theme, your own name and
 - **Settings are stored in separate places.** Language and token limit are **stored in the village**
   (`world.json`), so they travel with it when shared. Screen settings (theme, confirmations)
   are **stored on the device**, so opening the same village on another PC gives different
-  values. The door, the price-table source, Jev and Startup and exit live on the **device shelf**
+  values. The door, the price-table source, Jev, image generation and Startup and exit live on the **device shelf**
   (JSON files under `{app_data_dir}`, outside the village). Launch at sign-in is **not stored anywhere;
   the OS registration itself is read**. Each page states which one applies
 - **Unimplemented pages are not listed in the left menu.** Listing something you cannot touch
@@ -2608,8 +2668,8 @@ Every finding says **how to fix it**. `check --json` prints one line, `{"finding
 
 **Secrets** come from `--secrets keyring` (default) or `env`. With `env`, the key (the template ID) is upper-cased, every non-alphanumeric
 character becomes `_`, and `FUSEFORKS_SECRET_` is prefixed (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`; the Jev token is
-`FUSEFORKS_SECRET_JEV_API_TOKEN`, the door key is `FUSEFORKS_SECRET_DOOR_TOKEN`, and an MCP `${secret:NAME}` is
-`FUSEFORKS_SECRET_MCP_<NAME>`). They are read once at start, and cannot be written. **A village where two keys map to the same
+`FUSEFORKS_SECRET_JEV_API_TOKEN`, the door key is `FUSEFORKS_SECRET_DOOR_TOKEN`, an MCP `${secret:NAME}` is
+`FUSEFORKS_SECRET_MCP_<NAME>`, and an image-generation key looks like `FUSEFORKS_SECRET_IMAGE_GEN_KEY_OPENAI`). They are read once at start, and cannot be written. **A village where two keys map to the same
 variable name does not start** (`a-b` and `a_b` — it cannot tell whose value it is).
 
 **`ask`** creates a **new conversation** by default (`--continue-session` continues the current one), so cron requests do not pile
@@ -2686,10 +2746,12 @@ fuseforks-cli bake --data-dir "$env:APPDATA\jp.outcasts.fuseforks" --out deploy\
   refresh. `--env-out` does not write out authorization records either. Set `enabled: false` on entries you do not use
 - Pre- and post-check approvals are carried over with their keys recomputed for the rewritten `cwd` (the command line is not changed by
   a single character)
+- Of the device shelf, `jev.json` / `pricing.json` / `image_gen.json` are copied into the copy as they are (this copies your own village
+  into your own container, so unlike sharing a village with someone, the settings travel; keys are not copied — `--env-out` writes them)
 - `bake.json` (`sourceTimeZone` and `--map`) is written at the top of the copy. Set the container's `TZ` to this value
 - **`--env-out <path>` writes the keys from the credential store as a container `.env`** ([Spec 66](specs/66_bake-env-out.md)).
   Only outside the copy (the same path or one under it exits 2). Only the keys the village needs — templates servants use, the
-  `${secret:…}` of enabled http MCP servers, and Jev when pruning or judges are on — plus `TZ` and **a door key newly made for the
+  `${secret:…}` of enabled http MCP servers, Jev when pruning or judges are on, and the selected image-generation provider's key — plus `TZ` and **a door key newly made for the
   container** (the GUI's door key is not carried over). Values are single-quoted (unquoted, compose expands `$` and drops it).
   Values containing `'`, `\` or a newline, and keys missing from the store, are left as `# bake:`-marked comments with the name
   only. **An existing `.env` is never overwritten** (`--update` adds only missing names). Values never appear on stdout or in

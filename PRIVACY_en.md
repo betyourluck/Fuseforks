@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-10-30**
+**Last updated: 2026-11-16**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -60,7 +60,7 @@ is transmitted anywhere.
 | `agents/<id>/` | Per-agent persona, memory, icon, and the list of commands you allowed |
 | `judges/<id>/judge.toml` | The questions and rules you wrote for a judge (see 4-4) |
 | `user/icon.webp`, `external/icon.webp` | Icons you set (only if set) |
-| `attachments/*` | Images, audio, video, and PDFs attached to conversations (**auto-deleted after 30 days or 500MB total**; re-sending one restarts its clock) |
+| `attachments/*` | Images, audio, video, and PDFs attached to conversations, and copies of images agents generated (see 4-5) (**auto-deleted after 30 days or 500MB total**; re-sending one restarts its clock) |
 | `exports/*.jsonl` | Conversations you explicitly exported |
 | `village_id` | A random value identifying this configuration set (it does not identify your device or you) |
 | `fuseforks.log` | Diagnostic log (see section 6) |
@@ -74,6 +74,7 @@ is transmitted anywhere.
 | `probe_approvals.json` | Record of which pre-check commands you allowed to run on this device |
 | `pricing.json` | The URL the price table is fetched from |
 | `jev.json` | Jev settings (see 4-4) — enable/disable, account ID, and strength for tool-result pruning |
+| `image_gen.json` | Image-generation settings (see 4-5) — the chosen provider, each provider's model, URL and timeout, the default aspect ratio and resolution (no API keys) |
 | `startup.json` | Startup and exit settings — whether closing hides the app in the tray, and whether it batch-starts servants on launch (both off by default) |
 | `editor.json` | The external editor's command and argument template (used by "Open in editor" on a file location in the conversation or on the blackboard; empty by default) |
 
@@ -105,7 +106,8 @@ Keys you enter are stored in your **operating system's credential store**:
 - Linux: freedesktop Secret Service
 
 The service name used for storage is `jp.outcasts.fuseforks`. Besides model API keys,
-this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges) and the
+this is also where the Cloudflare API token for Jev (see 4-4; shared by tool-result pruning and judges), the API key
+for each image-generation provider (see 4-5; kept separately from model API keys), and the
 values that MCP server headers reference as `${secret:NAME}` (see 4-3) are kept.
 The records for MCP servers connected with OAuth authorization (see 4-3) are kept here too — per server, the
 authorization server's identifier, the refresh token, the authorized scopes and when it was received; per authorization
@@ -149,7 +151,8 @@ flows into volumes and backups). Rewriting it as a `${secret:NAME}` reference le
 guessed from the header's name; there is no guarantee that every secret is recognised.
 
 Only when you add `--env-out <file>` to `bake`, the keys in the credential store that the village uses (the API keys of the
-models in use, the values MCP server headers reference, and the Jev API token) are **written in plain text to an `.env`
+models in use, the values MCP server headers reference, the Jev API token, and the selected image-generation provider's API
+key) are **written in plain text to an `.env`
 file** for passing to the container. Without the option nothing is written. The file stays on your machine; the app does not
 send it anywhere. **Handling that file (not sharing it, not committing it to a repository, deleting it when no longer needed)
 is your responsibility.** Values are never displayed on screen or on standard output. OAuth authorization records are
@@ -172,6 +175,7 @@ When you register a model, the following is sent to that provider:
 - Results of tools the agent ran (which may include file contents and search results)
 - Images, audio, video, and PDFs attached to conversations
 - Images an MCP server returned as a tool result (including images of the real world, such as a camera's; see 4-3)
+- Copies of images an agent generated (see 4-5; to the generating agent's model, for that turn only)
 - Your API key, for authentication
 
 The destination is whatever endpoint you registered — for example Anthropic,
@@ -306,6 +310,34 @@ search results and village data are never sent.** Rules are evaluated on your de
 diagnostic log (section 6) records only question names, the chosen answers, probabilities and
 token counts — not the material judged and not the question text.
 
+### 4-5. Image-generation API
+
+**Off by default. It works only after you pick a provider in system settings and register its API key**, and only agents
+whose settings enable the image tool (`image`) can use it. Without that setup, this transmission path does not exist. There is
+**one destination for the whole app**: OpenAI, Google (Gemini), Meta or xAI as you choose (or an endpoint you configure).
+
+**Data is sent only in these two cases:**
+
+- when an agent calls the image tool (at most 4 times per turn)
+- when you press "Check connection" on the settings page — **a request that makes no image**; it sends the API key and the
+  model name (for OpenAI, the API key only)
+
+**When drawing an image, only the following is sent:**
+
+- the image description the agent wrote (the prompt; **it may include the content of your request**)
+- reference images (up to 3) — the ones the agent points to by number, which are **images you attached in that turn** or
+  **images generated in that turn**
+- the aspect ratio, the resolution level, the model name, and your API key for authentication
+
+**Conversation history, the rules, personas and memory you wrote, tool results and village data are never sent.**
+
+A generated image is saved in the agent's working folder under `generated_images/`, and a copy is placed in the conversation's
+attachment store (section 2). The copy is sent to the generating agent's model provider for that turn only (see 4-1). If you
+re-send it with "To input" in the chat pane, it is also sent to the model provider of the agent you send it to.
+
+**Sharing your workspace does not share these settings or API keys** (the settings sit on the device shelf, the keys in the
+OS credential store). The diagnostic log (section 6) **records neither the prompt text nor the images**.
+
 ---
 
 ## 5. Operations performed on your device
@@ -315,6 +347,8 @@ Agents perform local operations only within limits you set.
 - **File reads and writes** are confined to the **working folder you assign to
   each agent** (plus any folders you explicitly declare for read-only reference).
 - **File deletion moves items to the trash only.** There is no permanent-delete path.
+- **Image generation** (see 4-5) saves generated images in the working folder under `generated_images/`
+  (an existing file with the same name is never overwritten).
 - **Command execution** runs only commands matching the **allow list you wrote for
   that agent**. Requests outside it are not executed; they are only recorded as
   pending your approval. Nothing is allowed by default.
@@ -332,6 +366,8 @@ tool names and result sizes, and errors.
 - Tool result bodies
 - Images returned by MCP tools (only the count, and the reasons for images that could not be passed on, are recorded)
 - The "Draft with AI" exchange and draft text (only character counts and token counts are recorded)
+- Image-generation prompts and images (only the provider, model, outcome class, elapsed time, byte count, whether it was
+  saved, and any cost fields the provider returned are recorded)
 - Credentials (for OAuth authorization only the server identifier and the kind of outcome are recorded — never tokens,
   authorization codes or client IDs)
 
@@ -366,7 +402,8 @@ sharing a workspace with someone else does not enable intake on their machine.
   delete it from the app's model registration screen.
 - **Revoking OAuth authorization**: "Revoke authorization" in the MCP settings deletes the local record and asks
   the authorization server to revoke the token.
-- **Stopping transmission**: if you register no model, nothing is sent anywhere.
+- **Stopping transmission**: if you register no model, nothing is sent anywhere. Image generation stops when you set
+  the provider to "Don't use" on the image-generation settings page or delete its API key.
 - **Removing launch at sign-in**: turn off "Launch Fuseforks when you sign in" under System Settings > General >
   Startup and exit, or remove it from the OS (Startup apps in Windows Task Manager, Login Items on macOS).
   **Turn it off before uninstalling** — the Windows MSI does not remove the registration when uninstalled.
