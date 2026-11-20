@@ -61,6 +61,18 @@ fn default_port() -> u16 {
     DEFAULT_PORT
 }
 
+/// 扉に使えるポートの下限（画面の入力と同じ 1024〜65535。Spec 77 #25a）。0 は OS がポートを選ぶので、
+/// 引数のポートで組む Origin の許可と合わなくなる。1024 未満は管理者の権限が要る OS がある。
+pub const MIN_PORT: u16 = 1024;
+
+/// ポートが範囲の中か。外なら理由の文。
+fn check_port(port: u16) -> Result<(), String> {
+    if port < MIN_PORT {
+        return Err(format!("ポート {port} は使えません（{MIN_PORT}〜65535）"));
+    }
+    Ok(())
+}
+
 impl Default for McpServerConfig {
     fn default() -> Self {
         Self {
@@ -107,7 +119,12 @@ impl McpServerStore {
     /// 解析の失敗と同じく「読めない」（Spec 77 #5。`settings_file::load`）。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CONFIG_FILE);
-        match crate::settings_file::load::<McpServerConfig>(&path) {
+        // 手で書いたファイルの範囲の外のポートは、読めないファイルと同じ扱い（扉を開かず、保存も断る）。
+        let loaded = crate::settings_file::load::<McpServerConfig>(&path).and_then(|config| match config {
+            Some(config) => check_port(config.port).map(|()| Some(config)),
+            None => Ok(None),
+        });
+        match loaded {
             Ok(config) => Self {
                 path,
                 blocked: None,
@@ -148,6 +165,7 @@ impl McpServerStore {
                 "{CONFIG_FILE} が読めないため保存できません。ファイルを直すか削除してください（{reason}）"
             ));
         }
+        check_port(config.port)?;
         let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
         // 一時ファイルへ書いて rename（2026-10-30 の監査 11。Unix で権限を絞る前の本体が見える窓と、
         // 電源断で本体が半端に残る形を閉じる）。
@@ -684,6 +702,62 @@ mod tests {
         assert_eq!(reloaded.config().port, 40000);
         assert_eq!(reloaded.config().token.as_deref(), Some(token.as_str()));
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Spec 77 #25a: ポート 0 と 1024 未満は保存しない（画面の入力と同じ 1024〜65535）。0 で開くと
+    /// OS が選んだポートで待ち受け、Origin の許可（引数のポートで組む）と合わなくなる。
+    #[test]
+    fn a_port_outside_the_range_is_refused_on_save() {
+        let dir = std::env::temp_dir().join(format!(
+            "fuseforks-mcpcfg-port-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = McpServerStore::load(&dir);
+        for port in [0u16, 80, 1023] {
+            let config = McpServerConfig {
+                port,
+                ..McpServerConfig::default()
+            };
+            let err = store.save(config).expect_err("範囲の外のポートは保存しない");
+            assert!(err.contains(&port.to_string()), "実際: {err}");
+        }
+        assert!(!dir.join(CONFIG_FILE).exists(), "1 バイトも書かない");
+        store
+            .save(McpServerConfig {
+                port: 1024,
+                ..McpServerConfig::default()
+            })
+            .expect("1024 は保存できる");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 手で書いたファイルのポートが範囲の外なら、読めないファイルと同じく扉を開かず保存も断る。
+    #[test]
+    fn a_port_outside_the_range_in_the_file_blocks_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "fuseforks-mcpcfg-port0-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(CONFIG_FILE);
+        let raw = r#"{"enabled":true,"port":0,"token":"0123456789abcdef0123456789abcdef"}"#;
+        std::fs::write(&path, raw).unwrap();
+
+        let store = McpServerStore::load(&dir);
+        let reason = store.blocked().expect("ポート 0 は読めないファイルと同じ扱い");
+        assert!(reason.contains('0'), "実際: {reason}");
+        assert!(!store.config().enabled, "扉は開かない");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "ファイルは触らない");
         std::fs::remove_dir_all(&dir).ok();
     }
 

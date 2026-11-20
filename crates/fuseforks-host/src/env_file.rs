@@ -306,10 +306,14 @@ pub fn plan(
                         report.unwritable.push(name.clone());
                         out.push(line.to_owned());
                     }
+                    // 扉の合鍵の空きは、ここで `bake` が値を作って埋める（Spec 77 N4 — `.env.example` の
+                    // 扉の行は印つきの空きで、作らずに残すと合鍵の無い `.env` になる）。
+                    Some(item) if item.kind == Kind::Door => {
+                        out.push(render(item, &mut report, new_token));
+                    }
                     // まだストアに無い秘密。行は書き換えない（印つきコメントのまま）が、足りない秘密として
-                    // 報告する（Spec 77 #6 — 報告しないと CLI は「ストアに無い 0」と出す）。扉の合鍵は
-                    // `bake` が値を作るので、ここで足りない側に数えない。
-                    Some(item) if item.kind != Kind::Door => {
+                    // 報告する（Spec 77 #6 — 報告しないと CLI は「ストアに無い 0」と出す）。
+                    Some(_) => {
                         report.missing.push(name.clone());
                         out.push(line.to_owned());
                     }
@@ -349,6 +353,38 @@ mod tests {
 
     fn token() -> impl FnMut() -> String {
         || "0123456789abcdef0123456789abcdef".to_owned()
+    }
+
+    /// Spec 77 N4: `deploy/.env.example` を写してから `--update` すると、例の秘密の行が埋まる。
+    /// 例の行が印の無い `# NAME=` だと「運用者が止めた名前」（`CommentedOut`）に分類され、どの秘密も
+    /// 埋まらなかった。扉の合鍵の空きは `bake` が作って埋める。
+    #[test]
+    fn the_example_file_is_filled_by_update() {
+        let example = include_str!("../../../deploy/.env.example").replace("\r\n", "\n");
+        let wanted = [
+            w("FUSEFORKS_SECRET_CLAUDE_SONNET", Kind::Template, Some("sk-a")),
+            w("FUSEFORKS_SECRET_MCP_OUTCASTS", Kind::Mcp, Some("tok-b")),
+            w("FUSEFORKS_SECRET_DOOR_TOKEN", Kind::Door, None),
+        ];
+        let mut next = token();
+        let (text, report) = plan(Some(&example), &wanted, &mut next);
+        assert!(report.commented_out.is_empty(), "例の行が止めた名前に見えている: {report:?}");
+        assert!(text.contains("FUSEFORKS_SECRET_CLAUDE_SONNET='sk-a'"), "{text}");
+        assert!(text.contains("FUSEFORKS_SECRET_MCP_OUTCASTS='tok-b'"), "{text}");
+        assert!(
+            text.contains("FUSEFORKS_SECRET_DOOR_TOKEN='0123456789abcdef0123456789abcdef'"),
+            "扉の合鍵の空きが埋まっていない: {text}"
+        );
+        assert!(report.door_token_created);
+        // 数えるのは `NAME=` の形（説明の行 `claude_sonnet → FUSEFORKS_SECRET_CLAUDE_SONNET` も名前を含む）。
+        assert_eq!(
+            text.matches("FUSEFORKS_SECRET_CLAUDE_SONNET=").count(),
+            1,
+            "同じ名前を末尾に足し直さない: {text}"
+        );
+        // 村が使わない例の行は空きのまま残り、足りない秘密としても数えない（村が要らない名前）。
+        assert!(text.contains("# FUSEFORKS_SECRET_JEV_API_TOKEN="), "{text}");
+        assert!(report.missing.is_empty(), "{report:?}");
     }
 
     /// compose の実測の表（Spec 66 の前提）をそのまま写す。

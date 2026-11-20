@@ -150,6 +150,7 @@ Fuseforks/
             ├── lib/moveSelection.ts 地図の移動のための複数選択（Shift の間だけ）の規則（純関数）
             ├── lib/agentSearch.ts   サーヴァント一覧の絞り込みの照合（名前・id・役職・モデル。純関数）
             ├── lib/sessionScope.ts  会話の単位で画面を絞る規則・別の会話への知らせの数え（純関数。Spec 75）
+            ├── lib/messageMerge.ts  会話を読み直した結果と、読んでいる間に届いた発話を合わせる（純関数。Spec 77）
             ├── workers/imageConvert.ts   画像 → WebP 変換の WebWorker（メインスレッドを止めない）
             ├── assets/fonts/        同梱フォント（外部 CDN から取りに行かない）
             ├── locales/ja.json / en.json / zh-Hans.json  UI 文言の辞書（3 言語の鍵集合の一致をテストで保証）

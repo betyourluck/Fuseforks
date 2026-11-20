@@ -83,11 +83,21 @@ fn current_exe_string() -> String {
 /// `/tmp/.mount_…`）ではなく AppImage そのもの（`APPIMAGE`）。**登録と、読み戻して比べる側の両方が
 /// これを使う**（Spec 77 #8a — 比べる側だけ `current_exe` だったので、登録が今の Fuseforks を指して
 /// いても「別の Fuseforks」と出続けた）。
+///
+/// **`APPIMAGE` は、今の実行ファイルがマウント先（`{temp}/.mount_…`）にいるときだけ使う**（Spec 77 N7。
+/// tauri-utils の `Env::default` と同じ確かめ方）。いないときに使うと、環境変数 1 つで自動起動の登録先を
+/// 任意のファイルへ向けられる。
 #[cfg(any(target_os = "linux", test))]
-fn launch_target(appimage: Option<std::ffi::OsString>, current_exe: impl FnOnce() -> String) -> String {
-    appimage
-        .map(|path| std::path::PathBuf::from(path).display().to_string())
-        .unwrap_or_else(current_exe)
+fn launch_target(
+    appimage: Option<std::ffi::OsString>,
+    current_exe: String,
+    temp_dir: &std::path::Path,
+) -> String {
+    let mount = format!("{}/.mount_", temp_dir.display());
+    match appimage {
+        Some(path) if current_exe.starts_with(&mount) => std::path::PathBuf::from(path).display().to_string(),
+        _ => current_exe,
+    }
 }
 
 fn scope_of(user: bool, machine: bool) -> AutostartScope {
@@ -275,7 +285,7 @@ mod platform {
     fn app_target() -> String {
         #[cfg(target_os = "linux")]
         {
-            super::launch_target(std::env::var_os("APPIMAGE"), current_exe_string)
+            super::launch_target(std::env::var_os("APPIMAGE"), current_exe_string(), &std::env::temp_dir())
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -356,11 +366,12 @@ mod tests {
     /// 分岐はこの端末ではコンパイルされないので、規則は純関数で、配線は字面で留める。
     #[test]
     fn an_appimage_registers_and_compares_the_same_path() {
+        let tmp = std::path::Path::new("/tmp");
         assert_eq!(
-            launch_target(Some("/home/u/Fuseforks.AppImage".into()), || "/tmp/.mount_x/fuseforks".to_owned()),
+            launch_target(Some("/home/u/Fuseforks.AppImage".into()), "/tmp/.mount_x/fuseforks".to_owned(), tmp),
             "/home/u/Fuseforks.AppImage"
         );
-        assert_eq!(launch_target(None, || "/usr/bin/fuseforks".to_owned()), "/usr/bin/fuseforks");
+        assert_eq!(launch_target(None, "/usr/bin/fuseforks".to_owned(), tmp), "/usr/bin/fuseforks");
 
         let src = include_str!("autostart.rs").replace("\r\n", "\n");
         let unix = &src[src.find("fn registered_command()").expect("非 Windows の読み取り")..];
@@ -369,6 +380,27 @@ mod tests {
         assert!(
             read.contains("current_exe: app_target()"),
             "読み戻して比べる側が登録と別の規則で実行ファイルを組んでいる: {read}"
+        );
+    }
+
+    /// Spec 77 N7: `APPIMAGE` は、今の実行ファイルが AppImage のマウント先（`{temp}/.mount_…`）に
+    /// いるときだけ使う（tauri-utils の `Env::default` と同じ確かめ方）。いなければ環境変数 1 つで
+    /// 自動起動の登録先を任意のファイルへ向けられる。
+    #[test]
+    fn appimage_is_used_only_when_running_from_its_mount() {
+        assert_eq!(
+            launch_target(Some("/home/u/evil".into()), "/usr/bin/fuseforks".to_owned(), std::path::Path::new("/tmp")),
+            "/usr/bin/fuseforks",
+            "マウント先で動いていないのに APPIMAGE を使っている"
+        );
+        // 別の一時フォルダの `.mount_` も、名前が似ているだけのフォルダも通さない。
+        assert_eq!(
+            launch_target(
+                Some("/home/u/evil".into()),
+                "/var/tmp/.mount_x/fuseforks".to_owned(),
+                std::path::Path::new("/tmp")
+            ),
+            "/var/tmp/.mount_x/fuseforks"
         );
     }
 

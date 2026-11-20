@@ -63,10 +63,15 @@ pub fn encode(
         }
     }
 
-    let tool_choice = match &req.tool_choice {
-        ToolChoice::None | ToolChoice::Auto => None,
-        ToolChoice::Required => Some(Value::String("required".into())),
-        ToolChoice::Specific(name) => Some(serde_json::json!({ "type": "function", "name": name })),
+    // ツールを 1 本も送らない要求には `tool_choice` も送らない（Anthropic と同じ。Spec 77 #17a）。
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        match &req.tool_choice {
+            ToolChoice::None | ToolChoice::Auto => None,
+            ToolChoice::Required => Some(Value::String("required".into())),
+            ToolChoice::Specific(name) => Some(serde_json::json!({ "type": "function", "name": name })),
+        }
     };
 
     wire::OpenAiResponsesRequest {
@@ -468,6 +473,23 @@ mod tests {
             !json.contains(r#"{"type":"web_search"}"#),
             "検索ツールが漏れている: {json}"
         );
+    }
+
+    /// Spec 77 #17a: ツールを 1 本も送らない要求には `tool_choice` も送らない
+    /// （Anthropic と同じ。送れば存在しないツールを名指す要求になる）。
+    #[test]
+    fn no_tools_means_no_tool_choice() {
+        for choice in [ToolChoice::Required, ToolChoice::Specific("get_price".into())] {
+            let mut req = base_request();
+            req.tool_choice = choice.clone();
+            let body = encode(&req, false, true, false);
+            assert!(body.tools.is_empty(), "前提: use_tools が偽ならツールは送らない");
+            assert_eq!(body.tool_choice, None, "{choice:?} がツール無しで送られている");
+        }
+        // ツールを送るときは今までどおり。
+        let mut req = base_request();
+        req.tool_choice = ToolChoice::Required;
+        assert!(encode(&req, true, false, false).tool_choice.is_some());
     }
 
     /// `web_search_preview` は送らない（別名で、input_tokens が完全に一致する）。

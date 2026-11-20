@@ -69,7 +69,8 @@ git clone <リポジトリ> deploy/work/<名前>
 - macOS では、鍵ごとにキーチェーンの許可のダイアログが出ることがあります（`fuseforks-cli` は GUI と別の実行ファイルなので）
 
 `--env-out` を使わずに手で書くこともできます（`cp deploy/.env.example deploy/.env`）。秘密はテンプレート ID を大文字にした名前で
-書きます（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）。
+書きます（`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`）。写した後で `bake --env-out deploy/.env --update` を打つと、
+`# bake:` の付いた例の行のうち村が使う名前が資格情報ストアから埋まります（村が使わない行は空きのまま残ります）。
 
 ### 5. 起動前に確かめる
 

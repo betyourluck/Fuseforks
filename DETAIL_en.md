@@ -150,6 +150,7 @@ Fuseforks/
             ├── lib/moveSelection.ts Rules for the map's multi-selection for moving (only while Shift is held; pure)
             ├── lib/agentSearch.ts   Matching for the servant list filter (name, id, role, model; pure)
             ├── lib/sessionScope.ts  Rules for narrowing the screen to the open conversation, and counting notices about other conversations (pure; Spec 75)
+            ├── lib/messageMerge.ts  Merges a re-read of the conversation with messages that arrived during the read (pure; Spec 77)
             ├── workers/imageConvert.ts   Image → WebP conversion WebWorker (keeps the main thread free)
             ├── assets/fonts/        Bundled fonts (never fetched from an external CDN)
             ├── locales/ja.json / en.json / zh-Hans.json  UI text dictionaries (three-language key-set parity enforced by test)

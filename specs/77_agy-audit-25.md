@@ -1,10 +1,11 @@
 # Spec 77: agy が挙げた 25 件の指摘の検証と、修正の TODO
 
-- 状態: **A 群 7 件・B 群 17 件が着地・C 群 9 件は未着手**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
+- 状態: **A 群 7 件・B 群 17 件・C 群 9 件が着地 — TODO（修正）は #8b の 1 件を残して閉じた**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
   不成立 6 / 設計どおり 2。ほかに指摘に無い問題 14 件（N1〜N14）。**N8 = OpenAI の課金切れの 429 が再試行されている、は `fuseforks.log` の
   実測**。→ 同日、利用者「A 群から着手」で A 群の 7 件（N8 / #3 / #5 + N2 + N3 / #15 / #11 + N11 / #14 / #1 + N9）を、どれも赤いテストを
   先に書いてから直した。全体 93 本・1,606 本が緑・clippy 0。記録は末尾の「A 群の実装記録」（`9a195f1`）。→ 2026-11-20、利用者「B 群から着手」で
-  B 群の 17 件を同じ規律で直した（画面の 4 件はサブエージェント）。記録は末尾の「B 群の実装記録」。**実機は A 群・B 群とも未確認**）
+  B 群の 17 件を同じ規律で直した（画面の 4 件はサブエージェント）。記録は末尾の「B 群の実装記録」（`a8ee8b9`）。→ 同日、利用者「C 群から着手」で
+  C 群の 9 件も同じ規律で直した。記録は末尾の「C 群の実装記録」。**実機は A〜C 群とも未確認**）
 - 起点: 利用者（2026-11-19）—「agy で発見した 25 件のバグをこちらに書きます。TODO のリストを spec に作り、
   バグであるかを調査してください」。agy の報告は `fuseforks-core` / `fuseforks-host` / `apps/cli` / `apps/gui-tauri` の
   全体を対象にした 25 項目（枝を数えると 36 主張）
@@ -509,15 +510,15 @@
 
 ### C. 任意（防御だけ・害が小さい）
 
-- [ ] **#23** `expand_args` を 1 回の走査で置き換える
-- [ ] **#20b** `refPreviews` を `attachments` に残っている鍵へ絞る
-- [ ] **#20c** `bitmap.close()` を `finally` へ
-- [ ] **#17a** Responses 系 3 adapter で `tools` が空なら `tool_choice` を送らない
-- [ ] **#25a** `set_mcp_host` と `load` でポート 0 と 1024 未満を拒む
-- [ ] **#25e** `log_capacity` を組み立て時に `max(1)`
-- [ ] **#18 + N13** `sessionSwitched` の読み直しを、いま開いている会話の ID で照らす
-- [ ] **N4** `.env.example` の秘密の行に `# bake:` の印を付けるか、手順を README へ
-- [ ] **N7** `APPIMAGE` がマウント先にいるかを確かめてから使う
+- [x] **#23** `expand_args` を 1 回の走査で置き換える
+- [x] **#20b** `refPreviews` を `attachments` に残っている鍵へ絞る
+- [x] **#20c** `bitmap.close()` を `finally` へ
+- [x] **#17a** Responses 系 3 adapter で `tools` が空なら `tool_choice` を送らない
+- [x] **#25a** `set_mcp_host` と `load` でポート 0 と 1024 未満を拒む
+- [x] **#25e** `log_capacity` を組み立て時に `max(1)`（受信箱とイベントの容量も同じ形なので一緒に）
+- [x] **#18 + N13** `sessionSwitched` の読み直しを、いま開いている会話の ID で照らす
+- [x] **N4** `.env.example` の秘密の行に `# bake:` の印を付ける（扉の合鍵の空きも埋まるようにした）
+- [x] **N7** `APPIMAGE` がマウント先にいるかを確かめてから使う
 
 ### A 群の実装記録（2026-11-19）
 
@@ -586,6 +587,32 @@
 - **作業で踏んだもの**: `schedules.rs` の作業コピーが CRLF のまま、ヒアドキュメントで LF の行を足して混在した（LF にそろえた。走査テストは
   `\r\n` を `\n` へ直してから読む）/ clippy の `large_enum_variant` が `Registered::Acceptance` に掛かった（箱に入れた）
 - **検証**: Rust 全体 94 本・1,631 本が緑・clippy 0 / vitest 137 ファイル・1,190 本・vue-tsc 0・build 緑
+
+### C 群の実装記録（2026-11-20）
+
+9 件とも**赤いテストを先に書いて、狙った主張で赤になることを確かめてから**直した（今回は画面の 3 件もメインが直した）。
+**どの項目も実機では確かめていない。**
+
+| 項目 | 赤のテスト | 赤の出方 | 処方 |
+|---|---|---|---|
+| #23 | 単体 `editor.rs` の `a_placeholder_inside_the_path_is_left_as_is` | `C:\work\7\{path}\a.rs:7`（パスの中の `{line}` が置き換わった） | `expand_one` = ひな形を左から 1 回だけ走査し、差し込んだ値はもう走査しない。知らない `{…}` と閉じていない `{` はそのまま |
+| #17a | 単体 `openai_responses.rs` / `xai_responses.rs` / `perplexity_responses.rs` の `no_tools_means_no_tool_choice` | 3 本とも `Some("required")` | ツールを 1 本も送らない要求には `tool_choice` も送らない（Anthropic と同じ形） |
+| #25a | 単体 `mcp_server.rs` の `a_port_outside_the_range_is_refused_on_save` / `a_port_outside_the_range_in_the_file_blocks_the_store` | 0 / 80 / 1023 を保存できた / ポート 0 のファイルを読めるものとして扱った | `MIN_PORT` = 1024 と `check_port`。`save` は範囲の外を断り、`load` は範囲の外のポートを読めないファイルと同じ扱い（扉を開かず保存も断る） |
+| #25e | 単体 `race_tests::zero_capacities_are_raised_to_one` | イベントの channel の構築で panic（`broadcast channel capacity cannot be zero`） | `OrchestratorConfig::with_capacity_floors` を `bootstrap` の入口で掛け、会話ログ・受信箱・イベントの容量を 1 以上へ。**受信箱と会話ログの下限は 1 つずつ外す変異で赤を確かめた**（`runtime.rs:91` の `mpsc::channel(0)` / `drain` の範囲外） |
+| N7 | 単体 `autostart.rs` の `appimage_is_used_only_when_running_from_its_mount` | `/home/u/evil` を返した | `launch_target` は今の実行ファイルが `{temp}/.mount_` の下にいるときだけ `APPIMAGE` を使う（tauri-utils の `Env::default` と同じ確かめ方）。**非 Windows の分岐はこの端末ではコンパイルされていない** |
+| N4 | 単体 `env_file.rs` の `the_example_file_is_filled_by_update`（`deploy/.env.example` を `include_str!` で読む） | 例の秘密の行がすべて `commented_out` | 例の 5 行へ `# bake: 例` の印と、先頭に手順の 2 行。**扉の合鍵の印つきの空きを `bake` が作って埋めるようにした** — B 群の #6 で「扉の合鍵は `bake` が値を作る」と書いたが、空きの枝では作っていなかった（例のファイルに扉の行の空きが入って初めて届く経路。`failures.md` #160） |
+| #18 + N13 | `messageMerge.test.ts` の配線 2 本（関数を先に置いてから走らせた） | 読み直しが `state.messages = await ipc.listMessages` / 待った後に開いている会話を確かめていない | `lib/messageMerge.ts` の `mergeFetchedMessages`（読んだ結果の後ろに、読んでいる間に届いた発話のうちまだ無いものを足す）を、切り替えの読み直しと起動時の 2 か所が使う。切り替えの読み直しは、待った後にいま開いている会話が同じときだけ当てる |
+| #20b | `attachmentListWiring.test.ts` の 1 本 / `attachmentList.test.ts` の `keepPreviews` 2 本 | 外したとき・送れたときに絞っていない | `keepPreviews` を `removeAttachment` と送信の成功の枝で呼ぶ。送る前には絞らない（失敗して戻したチップのサムネイルが消える） |
+| #20c | `imageConvertWiring.test.ts` の 1 本 | `finally` が無い | `try { … } finally { bitmap.close(); }` |
+
+- **テストの側で 2 つ直した**: N4 の初版は名前の出現数で「末尾に足し直さない」を数えていて、`.env.example` の説明の行
+  （`claude_sonnet → FUSEFORKS_SECRET_CLAUDE_SONNET`）を拾って 2 件になった（`NAME=` の形で数える）/ `quoteRefWiring.test.ts` が
+  送信の成功の枝を `if (ok) return;` の字面で留めていた（#20b でブロックになった。成功の枝が抜けることと、中で戻さないことは留めたまま
+  ブロックも通す形へ）
+- **#25e で範囲を 1 つ広げた**: TODO は `log_capacity` だけだったが、受信箱（`mpsc::channel(0)`）とイベント（`broadcast::channel(0)`）も
+  0 で構築が panic する同じ形なので一緒に寄せた。**間隔の 0（`stats_interval` / `schedule_interval`）は寄せていない** — `tokio::time::interval`
+  は 0 で panic するはずだが、切り離したタスクの中なので落ちるのはティッカーだけで、確かめるテストを書いていない（コードの読み）
+- **検証**: Rust 全体 94 本・1,640 本が緑・clippy 0 / vitest 139 ファイル・1,200 本・vue-tsc 0・build 緑
 
 ### 直さないと決めるもの
 

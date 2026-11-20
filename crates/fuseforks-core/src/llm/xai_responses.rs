@@ -58,11 +58,16 @@ pub fn encode(
         }
     }
 
-    let tool_choice = match &req.tool_choice {
-        ToolChoice::None | ToolChoice::Auto => None,
-        ToolChoice::Required => Some(Value::String("required".into())),
-        ToolChoice::Specific(name) => {
-            Some(serde_json::json!({ "type": "function", "name": name }))
+    // ツールを 1 本も送らない要求には `tool_choice` も送らない（Anthropic と同じ。Spec 77 #17a）。
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        match &req.tool_choice {
+            ToolChoice::None | ToolChoice::Auto => None,
+            ToolChoice::Required => Some(Value::String("required".into())),
+            ToolChoice::Specific(name) => {
+                Some(serde_json::json!({ "type": "function", "name": name }))
+            }
         }
     };
 
@@ -386,6 +391,21 @@ mod tests {
     fn use_tools_false_sends_no_tools() {
         let body = encode(&base_request(), false, true, true);
         assert!(body.tools.is_empty());
+    }
+
+    /// Spec 77 #17a: ツールを 1 本も送らない要求には `tool_choice` も送らない。
+    #[test]
+    fn no_tools_means_no_tool_choice() {
+        for choice in [ToolChoice::Required, ToolChoice::Specific("get_price".into())] {
+            let mut req = base_request();
+            req.tool_choice = choice.clone();
+            let body = encode(&req, false, true, true);
+            assert!(body.tools.is_empty(), "前提: use_tools が偽ならツールは送らない");
+            assert_eq!(body.tool_choice, None, "{choice:?} がツール無しで送られている");
+        }
+        let mut req = base_request();
+        req.tool_choice = ToolChoice::Required;
+        assert!(encode(&req, true, false, false).tool_choice.is_some());
     }
 
     /// トグルが偽なら対応するサーバー側ツールが tools に入らない。

@@ -17,6 +17,7 @@ import { toErrorPayload } from "../lib/ipc";
 import { formatError } from "../lib/errorText";
 import { loadSwitchMemory, rememberSwitch } from "../lib/switchMemory";
 import { answerNotice, isOpenSession, sessionOfLabel } from "../lib/sessionScope";
+import { mergeFetchedMessages } from "../lib/messageMerge";
 import { i18n, setLocale } from "../i18n";
 import type { ToolRun } from "../lib/chatRows";
 import type {
@@ -768,7 +769,12 @@ function applyEvent(event: CoreEvent): void {
       // その会話への知らせはもう要らない（開いた）。
       dismissSessionNotice(event.sessionId);
       void guard("orchestrator.op.loadSession", async () => {
-        state.messages = await ipc.listMessages(MESSAGE_LIMIT);
+        const fetched = await ipc.listMessages(MESSAGE_LIMIT);
+        // 待っている間に別の会話へ切り替わったら、この読み取りは古い会話のもの（Spec 77 #18）。
+        // 読んでいる間に届いた発話は消さずに後ろへ残す（N13）。
+        if (state.currentSessionId === event.sessionId) {
+          state.messages = mergeFetchedMessages(fetched, state.messages, MESSAGE_LIMIT);
+        }
         state.sessions = await ipc.listSessions();
       });
       // 承認待ちの印は（個体, 会話）で持つ（Spec 75 凍結 5）。「続けさせる」が出るのは
@@ -970,7 +976,10 @@ async function initialize(): Promise<void> {
     unlisten = await listen<CoreEvent>(CORE_EVENT, (e) => applyEvent(e.payload));
 
     await refreshAll();
-    state.messages = await ipc.listMessages(MESSAGE_LIMIT);
+    // 購読は上で張ってあるので、読んでいる間に届いた発話は投影に積まれている。読んだ結果で
+    // 丸ごと置き換えず、後ろへ残す（Spec 77 N13）。
+    const fetched = await ipc.listMessages(MESSAGE_LIMIT);
+    state.messages = mergeFetchedMessages(fetched, state.messages, MESSAGE_LIMIT);
     // 波の再投影（Spec 08）。リスナーは上で登録済みなので、この取得中に
     // 飛んだ event は取りこぼさない。同じ波が両経路から来たら upsert が合流する。
     for (const wave of await ipc.listPlanWaves()) {

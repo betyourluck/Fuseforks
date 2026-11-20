@@ -71,7 +71,8 @@ Results travel back through the work folder: servants push with `git` via `run`.
 - On macOS the keychain may ask for permission once per key (`fuseforks-cli` is a different executable from the GUI)
 
 You can also write it by hand without `--env-out` (`cp deploy/.env.example deploy/.env`). Name each secret after its template
-ID in upper case (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`).
+ID in upper case (`claude_sonnet` → `FUSEFORKS_SECRET_CLAUDE_SONNET`). After copying, `bake --env-out deploy/.env --update`
+fills the example lines marked `# bake:` with the names your village uses, from the credential store (lines it does not use stay empty).
 
 ### 5. Check before starting
 

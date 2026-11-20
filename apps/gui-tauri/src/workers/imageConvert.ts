@@ -32,11 +32,16 @@ async function convert(id: number, buffer: ArrayBuffer): Promise<void> {
       bitmap.height,
       MAX_EDGE_PX,
     );
+    // 描き終えたら（失敗しても）ビットマップを解放する。worker は使い回すので、例外の経路で
+    // 残すと GC まで持ち続ける（Spec 77 #20c）。
     const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
+    try {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("2d context unavailable");
+      ctx.drawImage(bitmap, 0, 0, width, height);
+    } finally {
+      bitmap.close();
+    }
 
     const blob = await canvas.convertToBlob({
       type: "image/webp",

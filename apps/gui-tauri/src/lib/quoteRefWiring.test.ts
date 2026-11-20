@@ -43,9 +43,13 @@ describe("会話の参照の配線（Spec 58）", () => {
     expect(input).not.toMatch(/emit\("send"/);
     // **戻すのは失敗したときだけ、かつ必ず** — 成否の枝ごと留める（コンポーネントを
     // マウントする土台が無いので、順序はここで見る。規則そのものは `restoreDraft` の単体）。
-    expect(input).toMatch(
-      /const ok = await props\.submit\([\s\S]*?\);\s*if \(ok\) return;\s*const restored = restoreDraft\(/,
+    // 成功の枝はブロックでもよい（Spec 77 #20b で送れた分のサムネイルを絞る 1 行が入った）が、
+    // 必ず抜け、中で戻さない。
+    const success = /const ok = await props\.submit\([\s\S]*?\);\s*if \(ok\) (return;|\{([^}]*?)return;\s*\})\s*const restored = restoreDraft\(/.exec(
+      input,
     );
+    expect(success).not.toBeNull();
+    expect(success?.[2] ?? "").not.toMatch(/restoreDraft\(/);
     // 戻すのは 3 つとも。片方だけ戻す形にしない。
     for (const field of ["text.value = restored.text", "attachments.value = [...restored.attachments]", "quotes.value = restored.quotes"]) {
       expect(input, field).toContain(field);

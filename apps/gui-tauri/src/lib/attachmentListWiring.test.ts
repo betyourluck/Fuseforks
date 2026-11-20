@@ -89,6 +89,21 @@ describe("入力欄", () => {
     expect(input).toMatch(/defineExpose\(\{ fill, addAttachmentRef \}\)/);
     expect(panel).toMatch(/input\.value\?\.addAttachmentRef\(att, attachmentKindOf\(att\)\)/);
   });
+
+  // Spec 77 #20b: 再添付のサムネイル（base64 で最大約 2.7MB）は、列に残っているチップの分だけ持つ。
+  // 外したとき・送れたときに絞る。送る前には絞らない（送信に失敗して `restoreDraft` で戻した
+  // チップのサムネイルが消える）。
+  it("再添付のサムネイルは外したとき・送れたときに、列に残っている分へ絞る", () => {
+    const remove = /function removeAttachment\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(input);
+    expect(remove?.[1]).toMatch(/refPreviews\.value = keepPreviews\(refPreviews\.value, attachments\.value\)/);
+    const send = /async function send\(\)[^{]*\{([\s\S]*?)\n\}/.exec(input);
+    expect(send?.[1]).toMatch(
+      /if \(ok\) \{\s*refPreviews\.value = keepPreviews\(refPreviews\.value, attachments\.value\);\s*return;\s*\}/,
+    );
+    // 送る前（下書きを空にする所）では絞らない。
+    const beforeSubmit = send?.[1].slice(0, send[1].indexOf("props.submit")) ?? "";
+    expect(beforeSubmit).not.toMatch(/keepPreviews/);
+  });
 });
 
 describe("会話ペインの「入力欄へ」", () => {

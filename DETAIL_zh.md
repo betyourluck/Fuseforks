@@ -127,6 +127,7 @@ Fuseforks/
             ├── lib/moveSelection.ts 地图上用于移动的多选（仅在按住 Shift 时）的规则（纯函数）
             ├── lib/agentSearch.ts   Servant 列表筛选的匹配（名称・id・职务・模型。纯函数）
             ├── lib/sessionScope.ts  按当前对话缩小画面的规则・其他对话通知的计数（纯函数。Spec 75）
+            ├── lib/messageMerge.ts  合并重新读取的对话与读取期间到达的消息（纯函数。Spec 77）
             ├── lib/assist.ts        AI 起草辅助的模板选择・应用前的差异（纯函数。Spec 63）
             ├── workers/imageConvert.ts   图像 → WebP 转换的 WebWorker（不阻塞主线程）
             ├── assets/fonts/        内置字体（不向外部 CDN 获取）

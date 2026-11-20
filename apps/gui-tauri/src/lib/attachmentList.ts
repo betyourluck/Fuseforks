@@ -110,6 +110,18 @@ export function splitForSend(items: readonly DraftAttachment[]): {
   return { uploads, refIds };
 }
 
+/**
+ * 再添付のサムネイル（鍵 → data URL）を、列に残っているチップの鍵だけへ絞る（Spec 77 #20b）。
+ * サムネイルは base64 で最大約 2.7MB あり、外したチップや送った発話の分を持ち続けない。
+ */
+export function keepPreviews(
+  previews: Readonly<Record<string, string>>,
+  items: readonly DraftAttachment[],
+): Record<string, string> {
+  const keys = new Set(items.map((item) => item.key));
+  return Object.fromEntries(Object.entries(previews).filter(([key]) => keys.has(key)));
+}
+
 /** 列に含まれる種別（重複なし・`AttachmentKind` の宣言順）。 */
 export function kindsIn(items: readonly DraftAttachment[]): AttachmentKind[] {
   const order: AttachmentKind[] = ["image", "audio", "video", "pdf"];

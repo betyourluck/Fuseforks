@@ -118,16 +118,39 @@ pub fn resolve_message_path(work_dir: Option<&Path>, raw: &str) -> Option<Resolv
 }
 
 /// 引数のひな形を展開する。`{path}` と `{line}` を置き換え、`{path}` がどこにも無ければ末尾にパスを足す。
+///
+/// **ひな形だけを 1 回で走査する**（Spec 77 #23）。`replace` を 2 回重ねると、差し込んだパスの中の
+/// `{line}` まで行番号に置き換わる（フォルダ名に `{line}` を含むと存在しないパスでエディタが開く）。
 pub fn expand_args(template: &[String], path: &str, line: Option<u32>) -> Vec<String> {
     let line = line.unwrap_or(1).max(1).to_string();
-    let mut args: Vec<String> = template
-        .iter()
-        .map(|arg| arg.replace(PATH_PLACEHOLDER, path).replace(LINE_PLACEHOLDER, &line))
-        .collect();
+    let mut args: Vec<String> = template.iter().map(|arg| expand_one(arg, path, &line)).collect();
     if !template.iter().any(|arg| arg.contains(PATH_PLACEHOLDER)) {
         args.push(path.to_owned());
     }
     args
+}
+
+/// ひな形の引数 1 つを左から 1 回だけ走査し、`{path}` と `{line}` を置き換える。差し込んだ値は
+/// もう走査しない。知らない `{…}` と閉じていない `{` はそのまま残す。
+fn expand_one(arg: &str, path: &str, line: &str) -> String {
+    let mut out = String::with_capacity(arg.len() + path.len());
+    let mut rest = arg;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        if let Some(after) = tail.strip_prefix(PATH_PLACEHOLDER) {
+            out.push_str(path);
+            rest = after;
+        } else if let Some(after) = tail.strip_prefix(LINE_PLACEHOLDER) {
+            out.push_str(line);
+            rest = after;
+        } else {
+            out.push('{');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 外部エディタでパスを開く。**待たない**（エディタは開いたまま残る）。
@@ -223,6 +246,21 @@ mod tests {
             vec!["--new-window".to_owned(), path.to_owned()]
         );
         assert_eq!(expand_args(&[], path, None), vec![path.to_owned()]);
+    }
+
+    /// Spec 77 #23: 差し込んだパスの中の `{line}` は置き換えない（ひな形だけを 1 回で走査する）。
+    #[test]
+    fn a_placeholder_inside_the_path_is_left_as_is() {
+        let path = r"C:\work\{line}\{path}\a.rs";
+        assert_eq!(
+            expand_args(&["-g".to_owned(), "{path}:{line}".to_owned()], path, Some(7)),
+            vec!["-g".to_owned(), format!("{path}:7")]
+        );
+        // ひな形の中の閉じていない `{` や、知らない `{name}` もそのまま残す。
+        assert_eq!(
+            expand_args(&["{x}{line".to_owned(), "{{line}}".to_owned()], "p", Some(3)),
+            vec!["{x}{line".to_owned(), "{3}".to_owned(), "p".to_owned()]
+        );
     }
 
     #[test]

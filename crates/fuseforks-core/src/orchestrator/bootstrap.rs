@@ -22,6 +22,7 @@ impl Orchestrator {
         secrets: Arc<dyn SecretStore>,
         config: OrchestratorConfig,
     ) -> CoreResult<Self> {
+        let config = config.with_capacity_floors();
         // world.json の有無は load の**前**に見る（load は不在を空の世界として
         // 返すため、後からは新規と空を区別できない）。
         let fresh_world = !store.world_exists();

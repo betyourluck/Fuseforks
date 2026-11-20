@@ -173,6 +173,18 @@ pub struct OrchestratorConfig {
     // 輪の解放も時計の仕事ではなくなった（`Envelope.waiting` の構造検出）。
 }
 
+impl OrchestratorConfig {
+    /// 0 のままでは使えない容量を 1 へ寄せる（Spec 77 #25e）。会話ログの押し出しは長さを超えて drain し、
+    /// 受信箱とイベントの channel は 0 の容量で構築が panic する。組み立ての入口（`bootstrap`）で 1 回だけ掛ける。
+    #[must_use]
+    pub fn with_capacity_floors(mut self) -> Self {
+        self.log_capacity = self.log_capacity.max(1);
+        self.mailbox_capacity = self.mailbox_capacity.max(1);
+        self.event_capacity = self.event_capacity.max(1);
+        self
+    }
+}
+
 impl Default for OrchestratorConfig {
     fn default() -> Self {
         Self {
@@ -2485,6 +2497,55 @@ mod race_tests {
             still_exists || open_now != target,
             "開いている会話が消えた会話を指す: opened={opened:?} deleted={deleted:?} open={open_now}"
         );
+    }
+
+    /// Spec 77 #25e: 容量 0 の設定で組み立てても落ちない。0 のまま使うと、会話ログの押し出しが
+    /// 長さを超えて drain し（log）、受信箱とイベントの channel は構築で panic する。
+    /// 組み立て時に 1 へ寄せる。
+    #[tokio::test]
+    async fn zero_capacities_are_raised_to_one() {
+        let dir = TempDir(std::env::temp_dir().join(format!(
+            "fuseforks-zerocap-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let orchestrator = Orchestrator::bootstrap(
+            ConfigStore::new(&dir.0),
+            Arc::new(FixedBackendFactory::echo("[echo]")),
+            Arc::new(InMemorySecretStore::new()),
+            OrchestratorConfig {
+                schedule_interval: Duration::from_secs(3600),
+                log_capacity: 0,
+                mailbox_capacity: 0,
+                event_capacity: 0,
+                ..OrchestratorConfig::default()
+            },
+        )
+        .await
+        .expect("bootstrap できること");
+        orchestrator
+            .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+            .await
+            .unwrap();
+        let agent = AgentId::from("zero_cap");
+        orchestrator
+            .create_agent(AgentSpec::new(agent.clone(), "ゼロ", "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(&agent).await.expect("起動できること");
+        orchestrator
+            .send_user_message(&agent, "こんにちは")
+            .await
+            .expect("送れること");
+        orchestrator
+            .send_user_message(&agent, "もう 1 通")
+            .await
+            .ok();
+        let log = orchestrator.shared.log.read().await;
+        assert_eq!(log.len(), 1, "会話ログは 1 件まで保つ");
     }
 }
 

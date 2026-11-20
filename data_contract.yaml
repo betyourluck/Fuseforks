@@ -586,7 +586,9 @@ enums:
         **投影の要点**: conversationCleared が messages を空にした直後に
         sessionSwitched が届くので、**そこで list_messages を引き直す** —
         開き直しと分岐ではコアが会話ログを戻しており、空のままにすると
-        画面だけが白紙に見える。
+        画面だけが白紙に見える。**読んだ結果で丸ごと置き換えない** (Spec 77 N13 —
+        読んでいる間に messageSent で積まれた発話が消える。`lib/messageMerge.ts` が後ろへ残す。
+        起動時の読み込みも同じ)。**待った後に開いている会話が変わっていたら当てない** (#18)。
         **conversationCleared では通知を出さない** (P3 で変更)。この 1 本は
         新規チャット・開き直し・分岐のどれでも同じように飛ぶので、
         「新規チャットを開始しました」と言うと開き直しのときに嘘になる。
@@ -1222,7 +1224,8 @@ enums:
           pricing.json (Spec 41・単価表の取得先) / jev.json (Spec 59・判断特化モデル) /
           startup.json (Spec 69・起動と終了。詳細は launch_exit_contract) /
           editor.json (2026-11-08・外部エディタ = 発話の中のファイルの位置を「エディタで開く」ときのコマンドと
-          引数のひな形。既定は空。起動はシェルを通さずパスを 1 引数で渡し、コマンドは画面から受け取らない)。
+          引数のひな形。既定は空。起動はシェルを通さずパスを 1 引数で渡し、コマンドは画面から受け取らない。
+          ひな形の {path} / {line} は 1 回の走査で置き換え、差し込んだパスの中の {line} は置き換えない — Spec 77 #23)。
           サインイン時の自動起動は
           どの棚にも置かず OS の登録そのものを読む
         - **村に保存 → world.json**: tokenBudget (Option<u64>。単位と正規化は
@@ -4631,7 +4634,10 @@ entities:
          管理者でない起動では HKLM の Run を書き込みで開く段で値の有無に依らず 0x80070005 が返る (P0 実測)。
          値がある HKLM の削除の拒否は握らず scope: machine で返す。値が無い (0x80070002) は成功
      10. macOS / Linux は auto-launch 0.6 (macOS は MacOSLaunchMode::LaunchAgent を明示し、パスは包まない。
-         Linux は Exec に渡すパスを引用符で包む)。Windows の依存には入れない
+         Linux は Exec に渡すパスを引用符で包む)。Windows の依存には入れない。
+         Linux の AppImage は、登録するのも読み戻して比べるのも AppImage そのもの (`APPIMAGE`。Spec 77 #8a) だが、
+         **今の実行ファイルが `{temp}/.mount_` の下にいるときだけ使う** (Spec 77 N7。tauri-utils の Env::default と
+         同じ確かめ方。いないときに使うと環境変数 1 つで登録先を任意のファイルへ向けられる)
      11. 計器: launch: source=autostart|manual hidden=true|false / launch batch: targets= started= failed=
          (失敗した個体の id を列挙。理由の文は載せない) / autostart: enabled= scope= (登録・解除の後)
      12. 外部への送信は増えない。アプリの外 (OS の登録) へ書くのは自動起動の 1 つだけ (PRIVACY 2・8)
@@ -4882,7 +4888,8 @@ entities:
         (f) **既にある .env は上書きしない** — --update なしで存在すれば 11。--update では足りない名前だけ足し、bake の印つき
             コメントはストアに値があれば代入へ置き換え、**無ければ行をそのまま残して足りない秘密 (missing) に数える**
             (Spec 77 #6 — 数えないと CLI は「ストアに無い 0」と出し、コンテナの起動で初めて SECRET_MISSING で止まる。
-            扉の合鍵は bake が作るので数えない)。印の無いコメントの `# NAME=` は運用者が止めた名前として触らない
+            扉の合鍵の空きは bake が作って埋める — Spec 77 N4。deploy/.env.example の秘密の行は `# bake: 例` の
+            印つきで、写してから --update すると村が使う名前が埋まる)。印の無いコメントの `# NAME=` は運用者が止めた名前として触らない
             (ENV_COMMENTED_OUT)。値の違いは名前だけ (ENV_VALUE_DIFFERS。compose と同じ規則で引用符を外して比べる。
             対象はストアから読む鍵だけ)。TZ の違いは両方の値を出す (ENV_TZ_DIFFERS)。要らなくなった FUSEFORKS_SECRET_* は
             消さずに名前だけ (ENV_UNUSED。扉の合鍵は除く)。警告がいくつあっても 0
@@ -7581,6 +7588,9 @@ llm_wire:
       4. **bind は 127.0.0.1 固定。** Host / Origin 検査は rmcp の
          StreamableHttpServerConfig が持つ (allowed_hosts 既定 =
          localhost/127.0.0.1/::1 = DNS rebinding 対策。実測で確認)。
+         **ポートは 1024〜65535** (画面の入力と同じ範囲を mcp_server.json の保存と読み込みでも見る — Spec 77 #25a。
+         0 は OS が選ぶポートで待ち受け、引数のポートで組む Origin の許可と合わなくなる。範囲の外のファイルは
+         読めないファイルと同じ扱いで、扉を開かず保存も断る)。
       5. **同時外部依頼は 1 本まで。2 本目は「処理中」で即拒否 (busy)。**
          効き先 3 つ: 併走の予算二重消費 / 自己登録の閉路 / 自己呼び出しの
          デッドロック。**外部入口は新しい因果の根で hop も予算も新品になる —
@@ -8078,7 +8088,9 @@ llm_wire:
         output} で返す (roundtrip 実測済み — 返した値で答えることを確認)
       - tool_choice が None の呼び出し (summarize 等) では検索ツールも関数ツールも
         **どちらも送らない**。「ツールを使わせない」は server-side tool にも及ぶ —
-        要約の呼び出しで検索が走ると、押した人が検索の注入 input まで払う
+        要約の呼び出しで検索が走ると、押した人が検索の注入 input まで払う。
+        **ツールを 1 本も送らない要求には tool_choice も送らない** (Responses の 3 ワイヤ = OpenAI / xAI /
+        Perplexity。Anthropic と同じ形。Spec 77 #17a — 送れば存在しないツールを名指す要求になる)
       - 検索語は **2 つの形で来る**。片方だけを読むと、もう片方の経路で
         queries が黙って空になる (実機の 2 走行がどちらも queries=0 だった):
           * web_search_call: action.query に素の文字列

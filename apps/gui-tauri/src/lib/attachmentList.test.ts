@@ -5,6 +5,7 @@ import {
   MAX_MESSAGE_BYTES,
   admit,
   formatMegabytes,
+  keepPreviews,
   kindsIn,
   overLimit,
   refKey,
@@ -97,5 +98,17 @@ describe("合計と種別", () => {
     expect(formatMegabytes(0)).toBe("0.0");
     expect(formatMegabytes(4.2 * MB)).toBe("4.2");
     expect(formatMegabytes(12 * MB)).toBe("12.0");
+  });
+});
+
+describe("keepPreviews（Spec 77 #20b）", () => {
+  it("列に残っているチップの鍵だけを持つ", () => {
+    const previews = { [refKey("x")]: "data:x", [refKey("y")]: "data:y", [refKey("z")]: "data:z" };
+    const kept = keepPreviews(previews, [ref("y", 1), upload("a", 1)]);
+    expect(kept).toEqual({ [refKey("y")]: "data:y" });
+  });
+
+  it("列が空なら空", () => {
+    expect(keepPreviews({ [refKey("x")]: "data:x" }, [])).toEqual({});
   });
 });

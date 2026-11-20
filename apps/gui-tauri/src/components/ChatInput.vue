@@ -42,6 +42,7 @@ import {
   MAX_MESSAGE_BYTES,
   admit,
   formatMegabytes,
+  keepPreviews,
   kindOf,
   kindsIn,
   overLimit,
@@ -240,6 +241,8 @@ const costKinds = computed(() => kindsIn(attachments.value).filter((k) => k !== 
 /** 列から 1 件外す。 */
 function removeAttachment(key: string): void {
   attachments.value = attachments.value.filter((a) => a.key !== key);
+  // 外したチップのサムネイルは持ち続けない（Spec 77 #20b）。
+  refPreviews.value = keepPreviews(refPreviews.value, attachments.value);
   attachRefusal.value = null;
 }
 
@@ -583,7 +586,12 @@ async function send(): Promise<void> {
     failed.quotes.map((chip) => chip.id),
     refIds,
   );
-  if (ok) return;
+  if (ok) {
+    // 送れた発話のサムネイルは要らない。待っている間に足したチップの分は残す（Spec 77 #20b）。
+    // 送る前には絞らない — 送信に失敗したら `restoreDraft` でチップを戻すので、その分が消える。
+    refPreviews.value = keepPreviews(refPreviews.value, attachments.value);
+    return;
+  }
 
   const restored = restoreDraft(
     { text: text.value, attachments: attachments.value, quotes: quotes.value },
