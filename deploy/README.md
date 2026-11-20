@@ -120,6 +120,9 @@ docker compose -f deploy\compose.yaml up -d
   **Conversations, `Memory.md`, consumed schedule records and pending command approvals stay as the container left them**
 - Lines that "auto-approve and allow" added to `run.json`'s `allow` inside the container disappear on re-`bake`
   (the GUI owns `allow`). They are named on stderr; copy them into the GUI's village if you want to keep them
+- `--update --env-out` **does not rewrite lines already in `.env`**. It only adds missing names and fills a gap line once its value is available.
+  These are only reported (by name): a key whose value differs from the store (`ENV_VALUE_DIFFERS`) / a key the village no longer
+  needs (`ENV_UNUSED` — delete it by hand if you don't need it) / a different `TZ` (`ENV_TZ_DIFFERS`). The door key is never regenerated
 - Omitting `--map` reuses the previous mappings
 
 ## Exposing the door (optional)
