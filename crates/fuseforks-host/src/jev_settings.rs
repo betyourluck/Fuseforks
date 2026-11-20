@@ -98,38 +98,32 @@ pub struct JevSettingsStore {
 }
 
 impl JevSettingsStore {
-    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で OFF）。
+    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で OFF）。それ以外の読み取りエラーは
+    /// 解析の失敗と同じく「読めない」（Spec 77 #5。`settings_file::load`）。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CONFIG_FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<JevSettingsConfig>(&raw) {
-                Ok(mut config) => {
-                    config.threshold = normalize_threshold(config.threshold);
-                    Self {
-                        path,
-                        blocked: None,
-                        config,
-                    }
+        match crate::settings_file::load::<JevSettingsConfig>(&path) {
+            Ok(config) => {
+                let mut config = config.unwrap_or_default();
+                config.threshold = normalize_threshold(config.threshold);
+                Self {
+                    path,
+                    blocked: None,
+                    config,
                 }
-                Err(err) => {
-                    // **黙って OFF にしない**（D9）。利用者の意図は失われるが、
-                    // 失われたことは画面（`blocked`）とログの両方に出る。
-                    fuseforks_core::note!(
-                        "jev: {CONFIG_FILE} を読めませんでした。圧縮は掛からず、設定の保存も拒みます（{err}）"
-                    );
-                    Self {
-                        path,
-                        blocked: Some(err.to_string()),
-                        config: JevSettingsConfig::default(),
-                    }
+            }
+            Err(err) => {
+                // **黙って OFF にしない**（D9）。利用者の意図は失われるが、
+                // 失われたことは画面（`blocked`）とログの両方に出る。
+                fuseforks_core::note!(
+                    "jev: {CONFIG_FILE} を読めませんでした。圧縮は掛からず、設定の保存も拒みます（{err}）"
+                );
+                Self {
+                    path,
+                    blocked: Some(err),
+                    config: JevSettingsConfig::default(),
                 }
-            },
-            // 未作成。初回はこれが正常。
-            Err(_) => Self {
-                path,
-                blocked: None,
-                config: JevSettingsConfig::default(),
-            },
+            }
         }
     }
 
@@ -156,10 +150,7 @@ impl JevSettingsStore {
         config.threshold = normalize_threshold(config.threshold);
         config.account_id = config.account_id.trim().to_owned();
         let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        std::fs::write(&self.path, raw).map_err(|err| err.to_string())?;
+        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         self.config = config;
         Ok(())
     }

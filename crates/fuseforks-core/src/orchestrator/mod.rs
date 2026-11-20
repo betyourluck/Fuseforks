@@ -724,6 +724,47 @@ impl Shared {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// 波の記録の上限で押し出された確認待ちの提案を片付ける（Spec 77 #14）。
+    ///
+    /// 提示した会話の控え（`plan_sessions`）を外し、破棄の事実をその会話へ System 行で残す
+    /// （`discard_plan_wave` と同じ書き先）。控えを外すのは承認と破棄の 2 か所だけで、どちらも提案が
+    /// 記録に残っていることを先に確かめるので、押し出された提案には届かない — ここで外さないと、参照が
+    /// 再起動まで残って提示した会話を削除できない（`SessionBusy`）。提案も何の知らせもなく消える。
+    async fn release_evicted_proposals(&self, evicted: Vec<crate::plan::EvictedProposal>) {
+        if evicted.is_empty() {
+            return;
+        }
+        let language = self
+            .world
+            .read()
+            .await
+            .language()
+            .unwrap_or(crate::world::Language::Ja);
+        for proposal in evicted {
+            let crate::plan::EvictedProposal { plan_id, agent_id, wave } = proposal;
+            let session = self
+                .plan_sessions_lock()
+                .remove(&plan_id)
+                .unwrap_or_else(|| self.open_ref());
+            note!("plan evicted: agent={agent_id} plan_id={plan_id} wave={wave}");
+            self.emit(CoreEvent::PlanWaveDiscarded { plan_id });
+            let capacity = crate::plan::PLAN_WAVE_CAPACITY;
+            let notice = match language {
+                crate::world::Language::Ja => format!(
+                    "計画（波 {wave}）は破棄されました（作業状況の記録が上限の {capacity} 件に達したため）。"
+                ),
+                crate::world::Language::En => format!(
+                    "The plan (wave {wave}) was discarded because the plan-wave record reached its limit of {capacity}."
+                ),
+            };
+            self.record(
+                AgentMessage::new(Endpoint::System, Endpoint::User, notice, 0),
+                &session,
+            )
+            .await;
+        }
+    }
+
     fn approval_stopped_lock(
         &self,
     ) -> std::sync::MutexGuard<'_, std::collections::HashSet<(AgentId, String)>> {
@@ -883,12 +924,6 @@ impl Shared {
             return Ok(0);
         };
 
-        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
-        // 「coversUpToSeq < 自身の seq」が破れる。
-        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
-            return Ok(0);
-        };
-
         // 材料を先に集める。LLM 呼び出しの間、world のロックは持たない。
         //
         // **対象は稼働中のサーヴァントだけ。** 要約の目的は「以後のプロンプトを
@@ -897,15 +932,24 @@ impl Shared {
         // 履歴は停止しても消えない（Spec 12 P2）ので、起動して会話へ加わってから
         // 押せばそのとき要約される — 取り逃がしにはならない。
         let mut skipped = 0usize;
-        // 材料はその会話から（凍結 4 と同じ規則）。開いていれば写し、開いていなければ保存先。
         let gate = self.switch_gate.read().await;
+        // **境界と写しは world の読み取りロックの下で一緒に取る**（Spec 77 N11）。往復は `push_exchange` が
+        // world の書き込みロックの下で「履歴へ積む」と「保存先へ書く」を一緒に行うので、このロックを持つ間は
+        // 1 往復も積まれない。境界を先に別に取ると、その間に積まれた往復が要約の本文に入ったうえで境界の
+        // 外にも残り、再起動後に生の往復としても戻る（二重になる）。
+        let world = self.world.read().await;
+        // 覆う境界は**書く前に**取る。書いた後だと自分自身を覆う要約になり、
+        // 「coversUpToSeq < 自身の seq」が破れる。
+        let Some(covers_up_to_seq) = store.last_seq(&session_id)? else {
+            return Ok(0);
+        };
+        // 材料はその会話から（凍結 4 と同じ規則）。開いていれば写し、開いていなければ保存先。
         let stored = if self.is_open(session) {
             None
         } else {
             Some(store.restore_histories(&session_id, self.config.history_turns)?)
         };
         let targets: Vec<(AgentId, String, ModelTemplate, Vec<ChatMessage>)> = {
-            let world = self.world.read().await;
             world
                 .snapshots()
                 .into_iter()
@@ -938,6 +982,7 @@ impl Shared {
                 })
                 .collect()
         };
+        drop(world);
         let stored_summaries = stored.map(|restored| restored.summaries);
         drop(gate);
 
@@ -966,6 +1011,8 @@ impl Shared {
                 )));
                 messages.push(ChatMessage::assistant("承知しました。"));
             }
+            // 畳むときに「写しの後に積まれた往復」を見分けるため、写しを残しておく（Spec 77 #11）。
+            let snapshot = history.clone();
             messages.extend(history);
             messages.push(ChatMessage::user(SUMMARY_INSTRUCTION));
 
@@ -1054,8 +1101,14 @@ impl Shared {
                 .insert(agent_id.clone(), text);
             // 畳むのは**保存が済んでから**。先に畳むと、保存に失敗した瞬間に
             // 履歴も要約も無い状態になる。
+            //
+            // **写しの後に積まれた往復は残す**（Spec 77 #11）。要約の LLM を待つ間に終わったターンの往復は、
+            // 写しにも要約にも入っていない。旧実装は `clear()` で全部消し、その個体は直前のやり取りを忘れた
+            // （保存先には残るので、開き直すか再起動すると戻る — 実行中と再開後で履歴が食い違っていた）。
             if let Ok(record) = self.world.write().await.agent_mut(&agent_id) {
-                record.history.clear();
+                let keep = crate::world::appended_since(&snapshot, &record.history);
+                let folded = record.history.len() - keep;
+                record.history.drain(..folded);
             }
             done += 1;
         }

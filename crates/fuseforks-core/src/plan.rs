@@ -154,12 +154,27 @@ pub struct PlanWaveRecord {
     pub session_id: Option<String>,
 }
 
+/// リングから押し出された**確認待ちの提案**（Spec 77 #14）。押し出しは状態を問わないので、承認も
+/// 破棄もされないまま提案が消える。呼び出し側はこれを取り出して、提示した会話の控え（`plan_sessions`）を
+/// 外し、破棄の行を残す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvictedProposal {
+    /// 押し出された提案の `plan_id`。
+    pub plan_id: u64,
+    /// 提示した進行役。
+    pub agent_id: AgentId,
+    /// ターン内連番。
+    pub wave: u32,
+}
+
 /// 波のリングバッファ。純データで、イベントの発行と時刻の取得は呼び出し側が持つ
 /// （壁時計を内蔵するとテストが実行機の時計に依存する — schedule の純関数と同じ判断）。
 pub struct PlanWaveStore {
     waves: VecDeque<PlanWaveRecord>,
     /// 次に払い出す `plan_id`。1 始まり。
     next_id: u64,
+    /// 押し出されてまだ取り出されていない提案（[`Self::take_evicted_proposals`]）。
+    evicted_proposals: Vec<EvictedProposal>,
 }
 
 impl Default for PlanWaveStore {
@@ -167,11 +182,36 @@ impl Default for PlanWaveStore {
         Self {
             waves: VecDeque::new(),
             next_id: 1,
+            evicted_proposals: Vec::new(),
         }
     }
 }
 
 impl PlanWaveStore {
+    /// 上限に達していたら最も古い波を 1 つ押し出す。**状態を問わず**古い方から — 実行中の波を
+    /// 特別扱いすると、詰まった波が居座り続けて上限が上限でなくなる。押し出したのが確認待ちの
+    /// 提案なら控えへ積む（Spec 77 #14 — 提案を黙って消さない）。
+    fn make_room(&mut self) {
+        if self.waves.len() < PLAN_WAVE_CAPACITY {
+            return;
+        }
+        if let Some(evicted) = self.waves.pop_front()
+            && evicted.state == PlanWaveState::Pending
+        {
+            self.evicted_proposals.push(EvictedProposal {
+                plan_id: evicted.plan_id,
+                agent_id: evicted.agent_id,
+                wave: evicted.wave,
+            });
+        }
+    }
+
+    /// 押し出された確認待ちの提案を取り出す（Spec 77 #14）。`begin_wave` / `begin_pending_wave` の直後に、
+    /// **同じ書き込みロックの下で**呼ぶ。取り出した側が提示した会話の控えを外し、破棄の行を残す。
+    pub fn take_evicted_proposals(&mut self) -> Vec<EvictedProposal> {
+        std::mem::take(&mut self.evicted_proposals)
+    }
+
     /// 波を開始し、`plan_id` を払い出す。タスクは `(宛先, 本文の文字数)` の入力順。
     pub fn begin_wave(
         &mut self,
@@ -183,11 +223,7 @@ impl PlanWaveStore {
         let plan_id = self.next_id;
         self.next_id += 1;
 
-        if self.waves.len() >= PLAN_WAVE_CAPACITY {
-            // 状態を問わず古い方から捨てる。実行中の波を特別扱いすると、
-            // 詰まった波が居座り続けて上限が上限でなくなる。
-            self.waves.pop_front();
-        }
+        self.make_room();
         self.waves.push_back(PlanWaveRecord {
             plan_id,
             agent_id,
@@ -225,9 +261,7 @@ impl PlanWaveStore {
         let plan_id = self.next_id;
         self.next_id += 1;
 
-        if self.waves.len() >= PLAN_WAVE_CAPACITY {
-            self.waves.pop_front();
-        }
+        self.make_room();
         self.waves.push_back(PlanWaveRecord {
             plan_id,
             agent_id,
@@ -596,6 +630,29 @@ mod tests {
         );
         // 古い順を保つ。
         assert!(waves.windows(2).all(|pair| pair[0].plan_id < pair[1].plan_id));
+    }
+
+    /// 押し出したのが確認待ちの提案なら控えに積み、取り出すと空になる（Spec 77 #14）。
+    /// 配送済みの波の押し出しは積まない（控えを持つのは提案だけ）。
+    #[test]
+    fn an_evicted_proposal_is_handed_back_once() {
+        let mut store = PlanWaveStore::default();
+        let proposal =
+            store.begin_pending_wave(agent("agent_1"), 1, &[(agent("agent_2"), "調べて".to_owned())], 0);
+        for i in 0..PLAN_WAVE_CAPACITY - 1 {
+            store.begin_wave(agent("agent_1"), i as u32 + 2, &[(agent("agent_2"), 1)], 0);
+        }
+        assert!(store.take_evicted_proposals().is_empty(), "上限までは何も押し出さない");
+
+        store.begin_wave(agent("agent_1"), 99, &[(agent("agent_2"), 1)], 0);
+        assert_eq!(
+            store.take_evicted_proposals(),
+            vec![EvictedProposal { plan_id: proposal, agent_id: agent("agent_1"), wave: 1 }],
+        );
+        assert!(store.take_evicted_proposals().is_empty(), "取り出したら空");
+
+        store.begin_wave(agent("agent_1"), 100, &[(agent("agent_2"), 1)], 0);
+        assert!(store.take_evicted_proposals().is_empty(), "配送済みの波の押し出しは積まない");
     }
 
     #[test]

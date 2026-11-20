@@ -103,35 +103,28 @@ pub struct McpServerStore {
 }
 
 impl McpServerStore {
-    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で OFF）。
+    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で OFF）。それ以外の読み取りエラーは
+    /// 解析の失敗と同じく「読めない」（Spec 77 #5。`settings_file::load`）。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CONFIG_FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<McpServerConfig>(&raw) {
-                Ok(config) => Self {
-                    path,
-                    blocked: None,
-                    config,
-                },
-                Err(err) => {
-                    // **値は出さない**（合鍵が入っているファイルなので、
-                    // 読めなかった中身をログへ流さない）。
-                    fuseforks_core::note!(
-                        "mcp server: {CONFIG_FILE} を読めませんでした。扉は開かず、設定の保存も拒みます（{err}）"
-                    );
-                    Self {
-                        path,
-                        blocked: Some(err.to_string()),
-                        config: McpServerConfig::default(),
-                    }
-                }
-            },
-            // 未作成。初回はこれが正常。
-            Err(_) => Self {
+        match crate::settings_file::load::<McpServerConfig>(&path) {
+            Ok(config) => Self {
                 path,
                 blocked: None,
-                config: McpServerConfig::default(),
+                config: config.unwrap_or_default(),
             },
+            Err(err) => {
+                // **値は出さない**（合鍵が入っているファイルなので、
+                // 読めなかった中身をログへ流さない）。
+                fuseforks_core::note!(
+                    "mcp server: {CONFIG_FILE} を読めませんでした。扉は開かず、設定の保存も拒みます（{err}）"
+                );
+                Self {
+                    path,
+                    blocked: Some(err),
+                    config: McpServerConfig::default(),
+                }
+            }
         }
     }
 
@@ -156,51 +149,18 @@ impl McpServerStore {
             ));
         }
         let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
+        // 一時ファイルへ書いて rename（2026-10-30 の監査 11。Unix で権限を絞る前の本体が見える窓と、
+        // 電源断で本体が半端に残る形を閉じる）。
+        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         self.config = config;
         Ok(())
     }
 }
 
-/// 一時ファイルへ書き、権限を絞ってから本名へ rename する（2026-10-30 の監査 11）。
-///
-/// 旧実装は本名へ直に書いてから権限を絞っており、Unix では書いた直後の一瞬だけ合鍵の入った
-/// ファイルが既定の権限で見えた。電源断で本体が半端に残る形も同じ 1 手で閉じる
-/// （`ConfigStore::write_atomic` / `bake` の `.env` と同じ形）。
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
-    ));
-    std::fs::write(&tmp, bytes)?;
-    restrict_permissions(&tmp);
-    std::fs::rename(&tmp, path)
-}
-
-/// 設定ファイルを本人だけが読める権限にする（Unix のみ）。
-///
-/// **Windows では何もしない。** `app_data_dir` は既に利用者ごとに分かれており、
-/// ACL を自前で組むと「効いているつもりで効いていない」を作りやすい。
-/// できないことをできたふりの処理で覆わない。
 /// 扉の合鍵を 1 つ作る（uuid v4 の 32 桁 hex）。**GUI の扉と、`bake --env-out` がコンテナ用に作る合鍵の
 /// 1 実装**（Spec 66 D5 — 書式を 2 通りにしない）。
 pub fn new_door_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
-}
-
-fn restrict_permissions(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(err) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-            fuseforks_core::note!("mcp server: 設定ファイルの権限を絞れませんでした（{err}）");
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }
 
 /// 合鍵を定数時間で突き合わせる。

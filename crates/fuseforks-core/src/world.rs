@@ -139,6 +139,18 @@ pub fn exchange_pair(received: &str, replied: &str) -> [ChatMessage; 2] {
     [ChatMessage::user(received), ChatMessage::assistant(replied)]
 }
 
+/// 履歴の写し `snapshot` を取った後に、今の履歴 `current` の**末尾へ積まれた**メッセージの数（Spec 77 #11）。
+///
+/// 写しの後に積まれる往復は末尾に付き、滑る窓（[`AgentRecord::push_exchange`]）は先頭から落とすので、
+/// `current` の先頭側は `snapshot` の末尾と一致する。一致する最も短い末尾の長さを返す。何も積まれて
+/// いなければ 0。`current` が写しと無関係（会話を切り替えて別の履歴になった）なら `current.len()` —
+/// 何も畳まない側へ倒す。要約が畳むのは写しの分だけで、待つ間に終わったターンの往復は残すために使う。
+pub(crate) fn appended_since(snapshot: &[ChatMessage], current: &[ChatMessage]) -> usize {
+    (0..=current.len())
+        .find(|&appended| snapshot.ends_with(&current[..current.len() - appended]))
+        .unwrap_or(current.len())
+}
+
 /// 接続マップ上のノード座標。
 ///
 /// 稼働状態と違い、再起動後にも意味が残る表示設定。座標の真実はこの型にだけ置き、
@@ -1473,6 +1485,32 @@ mod tests {
             .register_agent(AgentSpec::new("agent_02", "Critic", "tpl"))
             .unwrap();
         world
+    }
+
+    /// 要約の写しの後に積まれた往復の数（Spec 77 #11）。
+    #[test]
+    fn appended_since_counts_only_what_landed_after_the_snapshot() {
+        let [a, b] = exchange_pair("一つ目", "了解");
+        let [c, d] = exchange_pair("二つ目", "了解");
+        let snapshot = vec![a.clone(), b.clone()];
+        assert_eq!(appended_since(&snapshot, &snapshot), 0, "何も積まれていない");
+        assert_eq!(
+            appended_since(&snapshot, &[a.clone(), b.clone(), c.clone(), d.clone()]),
+            2,
+            "末尾に 1 往復"
+        );
+        assert_eq!(
+            appended_since(&snapshot, &[b.clone(), c.clone(), d.clone()]),
+            2,
+            "滑る窓が先頭を落としても、積まれた分だけを数える"
+        );
+        assert_eq!(
+            appended_since(&snapshot, &[a.clone(), b.clone(), a.clone(), b.clone()]),
+            2,
+            "同じ文面の往復がもう一度積まれても、写しとの重なりで数える"
+        );
+        assert_eq!(appended_since(&snapshot, &[c.clone(), d.clone()]), 2, "写しと無関係なら全部（畳まない側）");
+        assert_eq!(appended_since(&[], &[c, d]), 2, "写しが空なら全部");
     }
 
     /// 委譲の待ち時間（Spec 44）。既定 600 は `World::ask_timeout()` の

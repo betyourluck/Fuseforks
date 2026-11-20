@@ -5822,3 +5822,26 @@ rustup 自身の版だった。
 理由が返っていても読めず、読めないことはどこにも出ない（#93 の「自分の型を見て相手のワイヤを見なかった」と同族）。
 空の応答を受けたときに利用者が次にすること（言い換える・添付を変える・もう一度頼む）は理由で変わるので、理由が来る欄は
 型に置き、来たかどうかを 1 行残す。
+
+## #158 OpenAI の課金切れの 429 を rate_limit と読んで 2 回再試行していた — 分類の語が 2 つの欄に割れていた（2026-09-24 に起き、2026-11-19 に発見）
+
+**症状**: 2026-09-24、ルナ（gpt-6-sol）の要約が 429 で失敗した。`fuseforks.log` には失敗の前に
+`llm retry: model=gpt-6-sol attempt=1/3 status=429 class=rate_limit code=credit_balance_exhausted …` と `attempt=2/3` の
+2 行があり、同じ日の 05:10 にも同じ 2 行があった。Spec 52 は「`insufficient_quota` は 429 でも止める（再試行しても回復しない）」と
+決めていたのに、課金切れを 2 回ずつ再送していた。気づいたのは agy の監査の検証中（Spec 77 N8。agy の指摘 #2 は同じ症状を
+「エラー本文を 2,000 バイトで切ってから JSON を読むせい」としていたが、実物の本文は 262 バイトで、原因は別だった）。
+
+**真因**: 実物の本文は `"type": "insufficient_quota"` と `"code": "credit_balance_exhausted"` を**両方**持つ。
+`openai_compat::error_signal` は「`code` を優先し、無ければ `type`」で 1 つだけ拾っていたので、分類の表に無い
+`credit_balance_exhausted` が渡り、`classify` は表に当たらず 429 の既定の `RateLimit` を返した。doc は
+「`insufficient_quota` は両方に出ることが多い」と書いており、**両方に同じ語が出る形しか想定していなかった**。単体テストも
+`"type":"insufficient_quota","code":"insufficient_quota"` の 1 形だけだった。
+
+**処方**: `code` と `type` のうち**分類の表にある語を先に**渡す（`retry::is_classified_code` — 表は `classify` と同じ定数だけ）。
+どちらも表に無ければ従来どおり `code` → `type`。実物の本文をそのまま単体テストに入れ、修正の前に `Billing` にならない赤を
+確かめた（`openai_compat.rs` の `billing_is_found_in_type_when_the_code_is_not_in_the_table`）。計器の `code=` はこの本文では
+`insufficient_quota` を出すようになる。
+
+**一般化**: **プロバイダが同じ分類を 2 つの欄に分けて返すとき、「片方を優先して 1 つ拾う」は、優先した側に細かい語が来た
+瞬間に分類を落とす。** 細かい語（`credit_balance_exhausted`）は増え続け、粗い語（`insufficient_quota`）が分類を運ぶ。表を細かい語で
+増やすのではなく、表に当たる側を選ぶ。単体テストの本文は想定した形ではなく、ログに残った実物から取る。

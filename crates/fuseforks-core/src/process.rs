@@ -268,9 +268,23 @@ pub fn resolve_program(name: &str) -> Option<PathBuf> {
 }
 
 /// `PATH` の値と拡張子の列を受け取って探す本体（テストが環境変数に触れずに呼べるよう分けた）。
+///
+/// **名前が既に拡張子の候補のどれかで終わっていれば（`python.exe`）、そのままの名前を先に試す**
+/// （Spec 77 #1。大文字小文字は問わない — Windows の PATHEXT は `.EXE`、書く人は `.exe`）。許可の判定は
+/// PATHEXT の拡張子を剥がしてから比べるので、ここで試さないと「許可は通るのに見つからない」になる。
+/// Unix の拡張子の列は空文字 1 つなので、この分岐には入らない。
 fn resolve_in(name: &str, path: &std::ffi::OsStr, exts: &[String]) -> Option<PathBuf> {
+    let lower = name.to_ascii_lowercase();
+    let carries_ext = exts
+        .iter()
+        .any(|ext| !ext.is_empty() && lower.len() > ext.len() && lower.ends_with(&ext.to_ascii_lowercase()));
+    let suffixes: Vec<&str> = carries_ext
+        .then_some("")
+        .into_iter()
+        .chain(exts.iter().map(String::as_str))
+        .collect();
     for dir in std::env::split_paths(path) {
-        for ext in exts {
+        for ext in &suffixes {
             let candidate = dir.join(format!("{name}{ext}"));
             if candidate.is_file() {
                 // **リンクを辿らない**（`canonicalize()` を使わない。`failures.md` #152）。呼び出された
@@ -329,6 +343,32 @@ mod tests {
     /// この端末の `~/.cargo/bin/cargo.exe` は `rustup.exe` へのシンボリックリンクで、`canonicalize()` で
     /// 辿った先を起動すると rustup が自分の名前で動き、`cargo --version` に rustup の版を返した
     /// （rustup は起動された名前で cargo / rustc / rustup を切り替える）。
+    /// 拡張子まで書いた名前（`python.exe`）も見つける（Spec 77 #1）。
+    ///
+    /// 許可の判定（`command.rs` の `normalize_command`）は PATHEXT の拡張子を剥がしてから比べるので
+    /// `python.exe` を `python` として通すのに、解決は `python.exe.EXE` しか探さず「PATH に見つかりません」で
+    /// 終わっていた（Spec 15 の「`python` と `python.exe` を別物にしない」に反する）。拡張子の列は引数で
+    /// 渡すので、この主張は OS を問わず回る。
+    #[test]
+    fn a_name_that_already_carries_an_extension_is_found() {
+        let dir = TempDir::new("ext");
+        std::fs::write(dir.0.join("tool.exe"), b"").unwrap();
+        let exts = vec![".EXE".to_owned(), ".CMD".to_owned()];
+        let path = std::ffi::OsString::from(dir.0.as_os_str());
+
+        assert_eq!(
+            resolve_in("tool.exe", &path, &exts),
+            Some(dir.0.join("tool.exe")),
+            "拡張子まで書いた名前はそのまま探す"
+        );
+        assert_eq!(
+            resolve_in("tool", &path, &exts).map(|p| p.file_name().unwrap().to_ascii_lowercase()),
+            Some(std::ffi::OsString::from("tool.exe")),
+            "拡張子の無い名前は従来どおり拡張子を足して探す"
+        );
+        assert_eq!(resolve_in("tool.bat", &path, &exts), None, "無いものは無い");
+    }
+
     #[test]
     fn the_found_path_is_returned_as_is_without_following_links() {
         let dir = TempDir::new("link");

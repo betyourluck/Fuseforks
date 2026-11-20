@@ -340,6 +340,51 @@ async fn discarding_a_pending_plan_delivers_nothing() {
     ));
 }
 
+/// 波の記録の上限で押し出された確認待ちの提案は、提示した会話の参照を残さず、破棄の行を残す
+/// （Spec 77 #14）。
+///
+/// 旧実装はリングの押し出しで提案を捨てても `plan_sessions` の控えを外さなかった。控えを外すのは承認と
+/// 破棄の 2 か所だけで、どちらも提案が記録に残っていることを先に確かめるので、押し出された提案には
+/// 届かない。参照が再起動まで残り、提示した会話は `SessionBusy` で削除できなかった。提案は何の知らせも
+/// なく一覧から消えていた。
+#[tokio::test]
+async fn an_evicted_pending_plan_releases_its_conversation() {
+    let (_dir, orchestrator, coordinator, _worker_a, _worker_b) =
+        setup("evict", Duration::ZERO, true, ("evict_c", "evict_wa", "evict_wb")).await;
+    let mut rx = orchestrator.subscribe();
+    // 波の記録の上限は 50。提案を 51 回させると最初の 1 件が押し出される。
+    for _ in 0..51 {
+        orchestrator
+            .send_user_message(&coordinator, "撒いて")
+            .await
+            .unwrap();
+    }
+    drain(&mut rx).await;
+    let waves = orchestrator.list_plan_waves().await;
+    assert_eq!(waves.len(), 50, "記録は上限で頭打ち");
+
+    // 残っている提案を全部破棄すれば、会話を参照するものは無くなるはず。
+    for wave in &waves {
+        orchestrator.discard_plan_wave(wave.plan_id).await.unwrap();
+    }
+    drain(&mut rx).await;
+    let sent = sent_pairs(&orchestrator).await;
+    let discarded = sent
+        .iter()
+        .filter(|(from, to, body)| from == "System" && to == "User" && body.contains("破棄"))
+        .count();
+
+    let session_id = orchestrator.current_session();
+    orchestrator
+        .delete_session(&session_id)
+        .await
+        .expect("押し出された提案が、提示した会話の参照を残していないこと");
+    assert_eq!(
+        discarded, 51,
+        "押し出された提案も、破棄の事実を System 行で会話に残すこと（破棄 50 + 押し出し 1）"
+    );
+}
+
 /// S4 — 既定（OFF）の個体は従来どおり即配送（対照。この 1 本が無いと
 /// 「常に提示する実装」でも他のテストが緑になる）。
 #[tokio::test]

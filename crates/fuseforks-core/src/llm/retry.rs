@@ -128,6 +128,12 @@ const CODE_INSUFFICIENT_QUOTA: &str = "insufficient_quota";
 /// OpenAI 系が文脈超過に付ける code。400 で返る。
 const CODE_CONTEXT_LENGTH: &str = "context_length_exceeded";
 
+/// 分類の表にある code か。本文が code を 2 つの欄に持つとき（OpenAI 系の `code` と `type`）、
+/// どちらを [`classify`] へ渡すかをこれで決める（Spec 77 N8）。表は [`classify`] と同じ定数だけ。
+pub fn is_classified_code(code: &str) -> bool {
+    code == CODE_INSUFFICIENT_QUOTA || code == CODE_CONTEXT_LENGTH
+}
+
 /// HTTP status とプロバイダ code から分類する。
 ///
 /// **code が表にあれば status より優先**（busbar の `error_map` と同じ向き）。
@@ -245,7 +251,9 @@ pub fn parse_proto_duration(value: &str) -> Option<Duration> {
     if !secs.is_finite() || secs < 0.0 {
         return None;
     }
-    Some(Duration::from_secs_f64(secs))
+    // `from_secs_f64` は `Duration` に入らない有限値（約 1.845e19 秒以上）で panic する。配布ビルドは
+    // `panic = "abort"` なので、接続先の 1 応答でプロセスごと落ちる（Spec 77 #3）。
+    Duration::try_from_secs_f64(secs).ok()
 }
 
 #[cfg(test)]
@@ -313,6 +321,14 @@ mod tests {
         assert_eq!(parse_proto_duration("56"), None, "単位が無い");
         assert_eq!(parse_proto_duration("-1s"), None, "負");
         assert_eq!(parse_proto_duration("soon"), None);
+    }
+
+    /// `Duration` に入らない有限値（約 1.845e19 秒以上）は panic せず `None`（Spec 77 #3）。
+    /// 配布ビルドは `panic = "abort"` なので、接続先の 1 応答で GUI がプロセスごと落ちていた。
+    #[test]
+    fn proto_duration_beyond_duration_max_is_none_not_a_panic() {
+        assert_eq!(parse_proto_duration("1e20s"), None);
+        assert_eq!(parse_proto_duration("1.8446744073709552e19s"), None);
     }
 
     /// status 既定の表。busbar の `normalize_raw_error` の Step 2 と同じ並び。

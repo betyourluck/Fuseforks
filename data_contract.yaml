@@ -3668,6 +3668,14 @@ entities:
       **読めない probe_approvals.json は空として扱い (全 probe が unapproved =
       安全側)、既定を書き戻さない** (failures.md #70 — 読みの安全側と書きの
       安全側は別。書き戻すと壊れる前の承認の記録を捨てる)。
+      **「読めない」は JSON の解析の失敗だけではない** (Spec 77 #5、2026-11-19)。
+      未作成 (NotFound) だけが「まだ 1 件も承認していない」で、それ以外の読み取り
+      エラー (中身が UTF-8 でない・権限が無い・他のプロセスが共有なしで開いている)
+      も読めない側。それまでは `read_to_string` の Err をすべて未作成と読み、次の
+      承認でそれまでの承認を全部消していた。ホストの棚 5 つ (mcp_server.json /
+      jev.json / image_gen.json / pricing.json / probe_approvals.json) は同じ
+      `settings_file::load` を通り、保存は一時ファイル + rename
+      (`settings_file::write_atomic`。Spec 77 N3) で書く。
       権限: **Unix は 0600 を明示。Windows は chmod 相当が無いので偽らない**
       ({app_data_dir} が利用者プロファイル配下で OS の既定 ACL が利用者に
       閉じている、が実態。中身がハッシュだけなのはこの前提の保険でもある)。
@@ -4023,6 +4031,13 @@ entities:
         押し出された波への後続更新は窓の外として無視する (event は普通に飛ぶ
         ので、投影側の欠けであって配送の欠けではない)。概算 1 波 ≈ 400 byte、
         50 波 ≈ 20 KB — 律速はメモリではなく「見て意味のある遡り幅」
+      - **押し出したのが確認待ちの提案 (state=pending) なら、破棄と同じ後始末をする**
+        (Spec 77 #14、2026-11-19): 提示した会話の控え (plan_sessions) を外し、
+        planWaveDiscarded を出し、破棄の事実を「作業状況の記録が上限に達したため」と
+        添えて提示した会話へ System 行で残す。計器は plan evicted:。それまでは控えを
+        外すのが承認と破棄の 2 か所だけで、押し出された提案には届かず、参照が
+        再起動まで残って提示した会話を削除できなかった (SessionBusy)。押し出しの規則
+        (状態を問わず古い方から) は変えない — 画面も同じ規則で一覧を切る
       - 計時: startedAtMs は壁時計 (epoch ms)、elapsedMs は単調時計 (Instant)。
         **計測点は run_plan の JoinSet タスク内** — deliver_and_wait の
         シグネチャに計時を入れない (ask に不要な荷物を背負わせない)
@@ -4121,7 +4136,12 @@ entities:
              組み立てが済んでいるので attributed へ縮める理由が無く、
              前方一致も切れない = 打ち切りでキャッシュはリセットされない)
              (c) 依頼主が居れば Reply { kind: interrupted }。3 点とも必須。
-             まとめの LLM 呼び出しはしない。ここまでに使ったトークンは統計へ積む
+             まとめの LLM 呼び出しはしない。ここまでに使ったトークンは統計へ積む。
+             **検査点は周の頭に加えて、まとめの分岐の先頭 (予算の予約より前)**
+             (Spec 77 #15、2026-11-19)。最終周の LLM 呼び出し・ツール実行の最中や、
+             全呼び出しが RepeatGuard で止まった周の最中に届いた打ち切りは、ループを
+             抜けた後に次の周が無いので周の頭では見えない。それまではまとめの 1 回を
+             送って課金し、ターンを上限到達 / 繰り返しとして閉じていた
          2b. 未着手で畳まれた封筒: (c) の Reply { interrupted } **だけが必須**。
              会話ログへ出さず・履歴へ積まず・turnInterrupted も出さない。
              debug ログへ turn folded: の 1 行 (Spec 07 の猶予超過と同じ判断)。
@@ -5108,7 +5128,8 @@ conversation_termination:
       Spec 14 P1 の規律)。UI ラベルは「計画の確認」(分類・ラベルは
       システム用語側 — 用語境界)。
       計器: plan pending: (提示) / plan dispatch: (実行の起点) /
-      plan discard: (破棄) / plan bundle discarded: (M2 の破棄)。
+      plan discard: (破棄) / plan bundle discarded: (M2 の破棄) /
+      plan evicted: (波の記録の上限で押し出された提案。Spec 77 #14)。
       既存の plan wave: 〜 plan bundle: は dispatch 後の配送で従来どおり出る。
       提案の段では plan wave: を出さない (検収 1 の負の対照)。
       **Spec 53 で加算**: plan review skipped: agent=… reason=schedule|bypass
@@ -5952,7 +5973,11 @@ conversation_termination:
         同時に切れる**。**args の空白は拒否しない** (逐語で比較する値なので
         `args: ["a b"]` は正当)
         (3) 比較は**小文字化して**行う (4) Windows では PATHEXT の拡張子を
-        **剥がしてから**比較する (python と python.exe を別物にしない)
+        **剥がしてから**比較する (python と python.exe を別物にしない)。
+        **解決も同じ扱い** (Spec 77 #1、2026-11-19): resolve_program は名前が既に
+        PATHEXT の拡張子で終わっていれば (大文字小文字を問わない) そのままの名前を
+        先に試す。それまでは `python.exe.EXE` しか探さず、許可は通るのに「PATH に
+        見つかりません」で終わっていた (予定の前判定・外部エディタ・起動前検査も同じ関数)
       - **解決したフルパスを結果本文とログに必ず出す** (rev1 査読の CRITICAL 1)。
         `allow: ["python"]` がどのバイナリを走らせたかはその時の PATH で変わるので、
         **「構造的に決まる」とは言わない。代わりに決まった結果を毎回見せる**。
@@ -7267,6 +7292,11 @@ llm_wire:
       - Billing と読む code は OpenAI 互換・Responses 4 本の `insufficient_quota` だけ。
         Anthropic / Gemini は無し（Gemini の RESOURCE_EXHAUSTED は RateLimit。課金起因の
         429 を再試行するリスクを許容する）。表に無い code は status 既定へ落ちる
+      - OpenAI 系の本文は code を `code` と `type` の 2 欄に持つ。**分類の表にある語を先に**
+        渡し（`retry::is_classified_code`）、どちらも表に無ければ `code` → `type` の順
+        （Spec 77 N8、2026-11-19）。課金切れは `type: insufficient_quota` +
+        `code: credit_balance_exhausted` で返ることがあり（2026-09-24 の gpt-6-sol の実物）、
+        `code` だけを見ていた間は rate_limit に落ちて 2 回再試行していた
       - 分類は `LlmError::Api.class` が持つ（`is_transient` は `CoreError::is_retryable` から
         引数無しで呼ばれるため）
       - **今と変わる挙動は 2 つだけ**: Billing を再試行しない / 明示値を下限として待つ

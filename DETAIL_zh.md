@@ -87,7 +87,8 @@ Fuseforks/
 │       └── src/                     boot.rs（build_host — GUI 与 fuseforks-cli 共用的唯一组装实现）/ paths.rs / lock.rs（村庄排他锁）/
 │                                    preflight.rs（启动前检查）/ mcp_server.rs（Spec 25）/ pricing_source.rs（Spec 41）/
 │                                    jev_settings.rs（Spec 59 / 62）/ probe_approvals.rs（Spec 28）/ bake.rs（Spec 65）/
-│                                    mcp_oauth_flow.rs（OAuth 授权流程。Spec 67）/ image_gen_settings.rs（图像生成的设置。Spec 76）
+│                                    mcp_oauth_flow.rs（OAuth 授权流程。Spec 67）/ image_gen_settings.rs（图像生成的设置。Spec 76）/
+│                                    settings_file.rs（上述 5 个设置文件的共用读写。只有文件不存在才算“尚未创建”，保存经由临时文件 + rename。Spec 77）
 │
 ├── deploy/                          在容器中运行的参考配置（Spec 65）。Dockerfile / compose / Caddyfile / README
 │

@@ -382,12 +382,11 @@ pub(super) async fn run_plan(
     // 提示の時点の hop は配送の可否を決めない。
     if review {
         let started_at_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        let plan_id = shared.plan_waves.write().await.begin_pending_wave(
-            from.clone(),
-            wave,
-            &wave_tasks,
-            started_at_ms,
-        );
+        let (plan_id, evicted) = {
+            let mut waves = shared.plan_waves.write().await;
+            let plan_id = waves.begin_pending_wave(from.clone(), wave, &wave_tasks, started_at_ms);
+            (plan_id, waves.take_evicted_proposals())
+        };
         shared
             .plan_waves
             .write()
@@ -396,6 +395,8 @@ pub(super) async fn run_plan(
         // 提示した会話を控える（Spec 75 凍結 6）。承認で配る波・束ね・破棄の行はこの会話へ書く —
         // 承認を押した時点で開いている会話ではない。参照なので、控えている間その会話は消せない。
         shared.plan_sessions_lock().insert(plan_id, session.clone());
+        // 上限で押し出された提案の控えを外す（Spec 77 #14）。
+        shared.release_evicted_proposals(evicted).await;
         note!(
             "plan pending: agent={from} plan_id={plan_id} wave={wave} tasks={} to=[{}] msg_chars={}",
             wave_tasks.len(),
@@ -464,16 +465,18 @@ pub(super) async fn run_plan(
         .iter()
         .map(|(target, message)| (target.clone(), message.chars().count() as u32))
         .collect();
-    let plan_id = shared
-        .plan_waves
-        .write()
-        .await
-        .begin_wave(from.clone(), wave, &announced, started_at_ms);
+    let (plan_id, evicted) = {
+        let mut waves = shared.plan_waves.write().await;
+        let plan_id = waves.begin_wave(from.clone(), wave, &announced, started_at_ms);
+        (plan_id, waves.take_evicted_proposals())
+    };
     shared
         .plan_waves
         .write()
         .await
         .set_session(plan_id, session.id().map(str::to_owned));
+    // 上限で押し出された確認待ちの提案の控えを外す（Spec 77 #14）。
+    shared.release_evicted_proposals(evicted).await;
     shared.emit(CoreEvent::PlanWaveStarted {
         plan_id,
         agent_id: from.clone(),

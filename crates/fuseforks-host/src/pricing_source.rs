@@ -67,38 +67,49 @@ pub struct PricingSourceStore {
 }
 
 impl PricingSourceStore {
-    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で空の URL）。
+    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定の配信元）。それ以外の読み取りエラーは
+    /// 解析の失敗と同じく「読めない」（Spec 77 #5。`settings_file::load`）。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CONFIG_FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<PricingSourceConfig>(&raw) {
-                Ok(config) => Self {
-                    path,
-                    blocked: None,
-                    config,
-                },
-                Err(err) => {
-                    fuseforks_core::note!(
-                        "pricing: {CONFIG_FILE} を読めませんでした。取得はできず、設定の保存も拒みます（{err}）"
-                    );
-                    Self {
-                        path,
-                        blocked: Some(err.to_string()),
-                        config: PricingSourceConfig::default(),
-                    }
-                }
-            },
-            Err(_) => Self {
+        match crate::settings_file::load::<PricingSourceConfig>(&path) {
+            Ok(config) => Self {
                 path,
                 blocked: None,
-                config: PricingSourceConfig::default(),
+                config: config.unwrap_or_default(),
             },
+            Err(err) => {
+                fuseforks_core::note!(
+                    "pricing: {CONFIG_FILE} を読めませんでした。取得はできず、設定の保存も拒みます（{err}）"
+                );
+                Self {
+                    path,
+                    blocked: Some(err),
+                    config: PricingSourceConfig::default(),
+                }
+            }
         }
     }
 
     /// 現在の設定。
     pub fn config(&self) -> &PricingSourceConfig {
         &self.config
+    }
+
+    /// 取得に使う URL。**読めないあいだは渡さない**（Spec 77 N2）。
+    ///
+    /// 読めないときの設定は既定（開発者の配信元）なので、`config().url` をそのまま使うと、URL を空にして
+    /// 外へ出ない設定にしていた人でも「取得」を押した瞬間に既定の配信元へ出る。取得の入口（IPC 1 箇所）は
+    /// これだけを呼ぶ。
+    ///
+    /// # Errors
+    /// `pricing.json` が読めないとき（理由の文）。
+    pub fn fetch_url(&self) -> Result<String, String> {
+        if let Some(reason) = &self.blocked {
+            return Err(format!(
+                "{CONFIG_FILE} が読めないため取得しません。ファイルを直すか削除してください（{reason}）"
+            ));
+        }
+        Ok(self.config.url.clone())
     }
 
     /// 読み込みに失敗した理由（`Some` の間は保存できない）。
@@ -117,10 +128,7 @@ impl PricingSourceStore {
             ));
         }
         let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        std::fs::write(&self.path, raw).map_err(|err| err.to_string())?;
+        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         self.config = config;
         Ok(())
     }

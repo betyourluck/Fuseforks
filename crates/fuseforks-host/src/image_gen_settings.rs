@@ -103,33 +103,27 @@ pub struct ImageGenSettingsStore {
 }
 
 impl ImageGenSettingsStore {
-    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で未選択）。
+    /// 設定を読み込む。**ファイルが無いのは失敗ではない**（既定で未選択）。それ以外の読み取りエラーは
+    /// 解析の失敗と同じく「読めない」（Spec 77 #5。`settings_file::load`）。
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(CONFIG_FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<ImageGenSettingsConfig>(&raw) {
-                Ok(config) => Self {
-                    path,
-                    blocked: None,
-                    config,
-                },
-                Err(err) => {
-                    // 黙って未選択にしない — 失われたことは画面とログの両方に出る。
-                    fuseforks_core::note!(
-                        "image gen: {CONFIG_FILE} を読めませんでした。画像生成は効かず、設定の保存も拒みます（{err}）"
-                    );
-                    Self {
-                        path,
-                        blocked: Some(err.to_string()),
-                        config: ImageGenSettingsConfig::default(),
-                    }
-                }
-            },
-            Err(_) => Self {
+        match crate::settings_file::load::<ImageGenSettingsConfig>(&path) {
+            Ok(config) => Self {
                 path,
                 blocked: None,
-                config: ImageGenSettingsConfig::default(),
+                config: config.unwrap_or_default(),
             },
+            Err(err) => {
+                // 黙って未選択にしない — 失われたことは画面とログの両方に出る。
+                fuseforks_core::note!(
+                    "image gen: {CONFIG_FILE} を読めませんでした。画像生成は効かず、設定の保存も拒みます（{err}）"
+                );
+                Self {
+                    path,
+                    blocked: Some(err),
+                    config: ImageGenSettingsConfig::default(),
+                }
+            }
         }
     }
 
@@ -154,10 +148,7 @@ impl ImageGenSettingsStore {
             ));
         }
         let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        std::fs::write(&self.path, raw).map_err(|err| err.to_string())?;
+        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         self.config = config;
         Ok(())
     }

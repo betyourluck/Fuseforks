@@ -101,7 +101,8 @@ Fuseforks/
 │       │   ├── pricing_source.rs    単価表の取得元（押したときだけ取りに行く。Spec 41）
 │       │   ├── jev_settings.rs      ツール結果の圧縮の設定と採点器の差し込み（Spec 59）。鍵があれば判断役の判断モデルも差し込む（Spec 62）
 │       │   ├── image_gen_settings.rs 画像生成の設定（image_gen.json）・接続先ごとの鍵・いま効いているか・接続確認（Spec 76）
-│       │   └── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
+│       │   ├── probe_approvals.rs   前判定をこの端末で実行してよいかの記録（Spec 28）
+│       │   └── settings_file.rs     上の棚 5 つの読み書きの共通部分（無いファイルだけを未作成とし、保存は一時ファイル + rename。Spec 77）
 │       └── tests/                   扉のワイヤ / 村のロック / bake / OAuth の認可の流れ
 │
 ├── deploy/                          コンテナで回す参照構成（Spec 65）。Dockerfile / compose.yaml / compose.door.yaml /
@@ -1005,6 +1006,8 @@ Airflow の Grid 相当。**Airflow「風」であって Airflow ではない** 
 刻む）。記録はプロセス寿命の in-memory リング（直近 50 波）で、同定は `plan_id`
 （モデルには見せない — 束ねの文言は 1 字も変えていない）。stderr の
 `plan wave:` / `plan bundle:` 観測線はそのまま残っている。
+リングがあふれて押し出されたのが**確認待ちの波**なら、破棄したのと同じ扱いになり、提示した会話に
+「計画（波 N）は破棄されました（作業状況の記録が上限の 50 件に達したため）」と残る（Spec 77）。
 **タブは会話を問わず全部の波を出す**（村の作業の一覧。確認待ちのバッジも全部を数える）。
 開いている会話以外で撒いた・提示した波の見出しには「別の会話」と出て、表題はツールチップで読める
 （[Spec 75](specs/75_session-bound-roots.md)）。

@@ -1681,9 +1681,13 @@ pub async fn save_pricing_source(
 pub async fn fetch_model_prices(
     state: State<'_, AppState>,
 ) -> CoreResult<crate::pricing_source::FetchedPrices> {
+    // **読めない `pricing.json` のあいだは取りに行かない**（Spec 77 N2）。読めないときの設定は既定の配信元
+    // なので、`config().url` をそのまま使うと、外へ出ない設定にしていた人でも既定の配信元へ出る。
     let url = {
         let store = state.host.pricing_source.lock().await;
-        store.config().url.clone()
+        store
+            .fetch_url()
+            .map_err(|reason| CoreError::PricingFetch { reason })?
     };
     // **`ConfigIo` へ畳まない**（`PricingFetch` の doc）。理由ごとに次の手が違う —
     // 未設定なら URL を入れる / https でないなら直す / 通信の失敗なら回線か URL /

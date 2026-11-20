@@ -23,6 +23,7 @@ pub mod paths;
 pub mod preflight;
 pub mod pricing_source;
 pub mod probe_approvals;
+mod settings_file;
 
 pub use boot::{build_host, secret_store, Host, HostBootOptions, HostError, SecretSource};
 pub use lock::{LockError, VillageLock, LOCK_FILE};

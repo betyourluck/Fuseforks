@@ -679,6 +679,114 @@ async fn a_summary_is_injected_into_the_next_turn_and_folds_the_history() {
     shutdown(orchestrator, std::slice::from_ref(&id)).await;
 }
 
+/// 要約の呼び出しだけ門で止めるバックエンド（Spec 77 #11）。要約の依頼が届いたら `started` で知らせ、
+/// テストが許可するまで返らない。通常のターンはすぐ「了解」を返す。
+struct GatedSummaryBackend {
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    started: tokio::sync::mpsc::UnboundedSender<()>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait::async_trait]
+impl LlmBackend for GatedSummaryBackend {
+    fn name(&self) -> &str {
+        "gated-summary"
+    }
+
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let summarizing = is_summary_request(&req.messages);
+        self.seen.lock().unwrap().push(req.messages.clone());
+        let text = if summarizing {
+            let _ = self.started.send(());
+            self.gate.acquire().await.expect("gate は閉じない").forget();
+            "・アルファという合言葉を預かった"
+        } else {
+            "了解"
+        };
+        Ok(ChatResponse {
+            text: Some(text.into()),
+            tool_calls: Vec::new(),
+            finish: Finish::Stop,
+            usage: Usage {
+                prompt: 1,
+                completion: 1,
+                cache_read: 0,
+                cache_write: 0,
+                cache_write_1h: 0,
+                reasoning: 0,
+            },
+            grounding: Default::default(),
+            reasoning_summary: Vec::new(),
+            replay: None,
+        })
+    }
+}
+
+/// 要約の LLM 呼び出しを待つ間に終わった往復は、畳まずに残す（Spec 77 #11）。
+///
+/// 要約は写しを取ってからロックを持たずに LLM を待ち、終わったら履歴を畳む。旧実装は畳むときに
+/// `history.clear()` を無条件に呼び、**待つ間に積まれた往復**（写しにも要約にも入っていない）まで消していた。
+/// 保存先には残るので、開き直すか再起動すると戻る — 実行中と再開後で履歴が食い違っていた。
+#[tokio::test]
+async fn an_exchange_that_lands_while_the_summary_is_pending_is_kept() {
+    let dir = TempDir::new("summarize-pending");
+    let id = AgentId::from("agent_01");
+    let (tx, mut summary_started) = tokio::sync::mpsc::unbounded_channel();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let backend = Arc::new(GatedSummaryBackend {
+        seen: std::sync::Mutex::new(Vec::new()),
+        started: tx,
+        gate: Arc::clone(&gate),
+    });
+    let orchestrator = boot(&dir, Arc::clone(&backend) as Arc<dyn LlmBackend>).await;
+
+    start_agent(&orchestrator, &id).await;
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "合言葉はアルファ")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    // 要約の呼び出しが門で止まっている間に、2 往復目を終わらせる。
+    let summarize = orchestrator.summarize_session();
+    let interleave = async {
+        summary_started.recv().await.expect("要約の呼び出しが始まること");
+        orchestrator
+            .send_user_message(&id, "合言葉はブラボー")
+            .await
+            .unwrap();
+        drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+        gate.add_permits(1);
+    };
+    let (summarized, ()) = tokio::join!(summarize, interleave);
+    assert_eq!(summarized.unwrap(), 1, "履歴を持つサーヴァント 1 体が要約されること");
+
+    orchestrator.send_user_message(&id, "続きです").await.unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    let seen = backend.seen.lock().unwrap().clone();
+    let after = seen
+        .iter()
+        .rev()
+        .find(|messages| !is_summary_request(messages))
+        .expect("要約後のターンがあること");
+    let history: Vec<&ChatMessage> = after[..after.len() - 1]
+        .iter()
+        .filter(|m| m.role != Role::System)
+        .collect();
+    assert!(
+        history.iter().any(|m| m.content.contains("合言葉はブラボー")),
+        "要約を待つ間に終わった往復は履歴に残ること: {after:#?}"
+    );
+    assert!(
+        !history.iter().any(|m| m.content.contains("合言葉はアルファ")),
+        "要約が覆った往復は畳まれること: {after:#?}"
+    );
+
+    shutdown(orchestrator, std::slice::from_ref(&id)).await;
+}
+
 /// 要約は再起動をまたいで効く（元のレコードは消えていない）。
 #[tokio::test]
 async fn a_summary_survives_a_restart() {

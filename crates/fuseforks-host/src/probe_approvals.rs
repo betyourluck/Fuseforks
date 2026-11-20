@@ -58,22 +58,27 @@ pub struct ApprovalStore {
 
 impl ApprovalStore {
     /// 承認ファイルを読み込む。**読めなければ空**（＝どの前判定も走らない）。
+    ///
+    /// 未作成（`NotFound`）だけが「まだ 1 件も承認していない」。それ以外の読み取りエラーは解析の失敗と
+    /// 同じく「読めない」で、書き込みを拒む（Spec 77 #5。旧実装は読み取りエラーを未作成と読み、次の承認で
+    /// それまでの承認を全部消していた — 契約の「読めない probe_approvals.json は…既定を書き戻さない」に反する）。
     pub fn load(app_data_dir: &Path) -> Self {
         let path = app_data_dir.join(APPROVALS_FILE);
-        let (hashes, blocked) = match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<Stored>(&raw) {
-                Ok(stored) => (stored.hashes.into_iter().collect(), None),
-                Err(err) => {
-                    // 空として扱うのは**安全側**（全部の前判定が unapproved になる
-                    // だけで、危険側へは倒れない）。ただし書き戻さない。
-                    fuseforks_core::note!(
-                        "WARN probe approvals: {APPROVALS_FILE} が読めません（前判定は実行されません）: {err}"
-                    );
-                    (HashSet::new(), Some(err.to_string()))
-                }
-            },
-            // 未作成は「まだ 1 件も承認していない」— 異常ではない。
-            Err(_) => (HashSet::new(), None),
+        let (hashes, blocked) = match crate::settings_file::load::<Stored>(&path) {
+            Ok(stored) => (
+                stored
+                    .map(|stored| stored.hashes.into_iter().collect())
+                    .unwrap_or_default(),
+                None,
+            ),
+            Err(err) => {
+                // 空として扱うのは**安全側**（全部の前判定が unapproved になる
+                // だけで、危険側へは倒れない）。ただし書き戻さない。
+                fuseforks_core::note!(
+                    "WARN probe approvals: {APPROVALS_FILE} が読めません（前判定は実行されません）: {err}"
+                );
+                (HashSet::new(), Some(err))
+            }
         };
         Self {
             path,
@@ -143,11 +148,9 @@ impl ApprovalStore {
             Stored { hashes }
         };
         let raw = serde_json::to_string_pretty(&snapshot).map_err(|err| err.to_string())?;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        std::fs::write(&self.path, raw).map_err(|err| err.to_string())?;
-        restrict_permissions(&self.path);
+        // 一時ファイルへ書いて rename（Spec 77 N3）。本名へ直に書いて途中で落ちると、壊れた JSON が残り、
+        // 次の起動で人が直すまで前判定と後判定が全部止まる。
+        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
         Ok(())
     }
 }
@@ -174,22 +177,11 @@ impl ProbeApprovals for ApprovalStore {
     }
 }
 
-/// 承認ファイルを本人だけが読める権限にする（Unix のみ）。
+/// 承認ファイルを本人だけが読める権限にする（Unix のみ。実装は棚の共通部分 `settings_file`）。
 ///
-/// **Windows では何もしない** — `app_data_dir` は既に利用者ごとに分かれており、
-/// ACL を自前で組むと「効いているつもりで効いていない」を作りやすい
-/// （`mcp_server.rs` と同じ判断）。**中身がハッシュだけなのは、この前提の保険**。
-pub(crate) fn restrict_permissions(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(err) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-            fuseforks_core::note!("probe approvals: 承認ファイルの権限を絞れませんでした（{err}）");
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-}
+/// **Windows では何もしない**。**中身がハッシュだけなのは、この前提の保険**。`bake` が写しの棚へ
+/// 承認ファイルを書いた後にも掛ける。
+pub(crate) use crate::settings_file::restrict_permissions;
 
 #[cfg(test)]
 mod tests {

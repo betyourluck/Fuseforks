@@ -2153,6 +2153,24 @@ async fn run_turn_inner(
         && content.trim().is_empty()
         && (tool_limit_hit || repeat_stop.is_some())
     {
+        // 打ち切りの検査点（Spec 10 / Spec 77 #15）。周の頭の検査は、最終周の LLM 呼び出し・ツール実行の
+        // 最中や、全呼び出しが RepeatGuard で止まった周の最中に届いた打ち切りを見ない（ループを抜けた後に
+        // 次の周が無い）。ここで見ないと、打ち切った後にまとめの 1 回を送って課金し、ターンが打ち切りでは
+        // なく上限到達として閉じる。**予算の予約より前** — 優先順位は cancel > budget_exhausted。
+        if turn.token.is_cancelled() {
+            return finish_interrupted(
+                shared,
+                agent_id,
+                reply_to.take(),
+                turn,
+                ctx,
+                &sent_user_turn,
+                *spend,
+                plan_wave,
+            )
+            .await.map(|()| None);
+        }
+
         // まとめの 1 回も同じ財布から**予約**する（Spec 38 P2）。確保できな
         // ければまとめを呼ばない — 尽きたら新しい LLM 呼び出しを始めない
         // （token_budget の exhaustion。打ち切りの直後にもう 1 回課金しない、

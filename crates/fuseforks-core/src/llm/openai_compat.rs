@@ -445,20 +445,28 @@ fn json_instruction(schema: &Value) -> String {
 
 /// エラー本文から再試行の材料を取り出す（Spec 52 D1。純関数）。
 ///
-/// OpenAI 系の封筒 `{"error": {"code": …, "type": …, "message": …}}`。**`code` を優先し、
-/// 無ければ `type`**（`insufficient_quota` は両方に出ることが多く、`context_length_exceeded`
-/// は `code`）。Responses の 4 本（OpenAI / xAI / Meta / Perplexity）も同じ封筒なので共有する。
+/// OpenAI 系の封筒 `{"error": {"code": …, "type": …, "message": …}}`。**分類の表にある語を先に**
+/// （[`super::retry::is_classified_code`]）、どちらも表に無ければ **`code` を優先し、無ければ `type`**。
+/// 課金切れは `type: insufficient_quota` + `code: credit_balance_exhausted` で返ることがあり
+/// （2026-09-24 の gpt-6-sol の実物）、code だけを見ると表に当たらず 429 の既定の rate_limit で
+/// 再送していた（Spec 77 N8）。`context_length_exceeded` は `code` に出る。
+/// Responses の 4 本（OpenAI / xAI / Meta / Perplexity）も同じ封筒なので共有する。
 /// 本文に待ち時間は無い（OpenAI 系は `Retry-After` ヘッダ側）。JSON でなければ空。
 pub fn error_signal(body: &str) -> super::retry::ErrorSignal {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
         return super::retry::ErrorSignal::default();
     };
     let error = &value["error"];
-    let code = ["code", "type"]
+    let fields: Vec<&str> = ["code", "type"]
         .iter()
-        .find_map(|key| error[*key].as_str())
+        .filter_map(|key| error[*key].as_str())
         .filter(|s| !s.is_empty())
-        .map(str::to_owned);
+        .collect();
+    let code = fields
+        .iter()
+        .find(|field| super::retry::is_classified_code(field))
+        .or_else(|| fields.first())
+        .map(|field| (*field).to_owned());
     super::retry::ErrorSignal {
         code,
         retry_after: None,
@@ -909,6 +917,27 @@ mod tests {
         assert_eq!(typed.code.as_deref(), Some("server_error"), "code が無ければ type");
         assert_eq!(error_signal("not json").code, None);
         assert_eq!(error_signal(r#"{"error":{"code":""}}"#).code, None, "空文字は無し");
+    }
+
+    #[test]
+    fn billing_is_found_in_type_when_the_code_is_not_in_the_table() {
+        // 2026-09-24 の実物（gpt-6-sol・fuseforks.log）。code は分類の表に無い語で、
+        // 課金切れであることは type にだけ書いてある（Spec 77 N8）。code だけを見ると
+        // 429 の既定 = rate_limit に落ち、回復しない要求を 2 回再送していた。
+        let body = r#"{
+  "error": {
+    "message": "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+    "type": "insufficient_quota",
+    "param": null,
+    "code": "credit_balance_exhausted"
+  }
+}"#;
+        let s = error_signal(body);
+        assert_eq!(
+            crate::llm::retry::classify(429, s.code.as_deref()),
+            crate::llm::retry::RetryClass::Billing,
+            "code が表に無くても、type が表にあればそちらで分類する",
+        );
     }
 
     fn camera_call(id: &str) -> ToolCall {
