@@ -105,17 +105,22 @@ impl OAuthHttpClient for UserAgentOAuthHttpClient {
             for (name, value) in response.headers() {
                 builder = builder.header(name, value);
             }
-            let body = response
-                .bytes()
+            // 1 塊ずつ読み、溜める前に上限を見る（Spec 77 #7b — 写し元の rmcp は `bytes_stream()` で
+            // そうしているのに、写したときに全量を読んでから見る形になっていた）。
+            let mut response = response;
+            let body = match crate::http_body::read_capped(&mut response, MAX_OAUTH_BODY_BYTES)
                 .await
-                .map_err(|err| OAuthHttpClientError::new(err.to_string()))?;
-            if body.len() > MAX_OAUTH_BODY_BYTES {
-                return Err(OAuthHttpClientError::new(format!(
-                    "OAuth HTTP response body exceeds {MAX_OAUTH_BODY_BYTES} bytes"
-                )));
-            }
+                .map_err(|err| OAuthHttpClientError::new(err.to_string()))?
+            {
+                crate::http_body::CappedBody::Complete(body) => body,
+                crate::http_body::CappedBody::Exceeded => {
+                    return Err(OAuthHttpClientError::new(format!(
+                        "OAuth HTTP response body exceeds {MAX_OAUTH_BODY_BYTES} bytes"
+                    )));
+                }
+            };
             builder
-                .body(body.to_vec())
+                .body(body)
                 .map_err(|err| OAuthHttpClientError::new(err.to_string()))
         })
     }
@@ -665,7 +670,17 @@ pub async fn fetch_resource_scopes(url: &str) -> Option<Vec<String>> {
         if !response.status().is_success() {
             continue;
         }
-        let Ok(Ok(body)) = tokio::time::timeout(DISCOVERY_TIMEOUT, response.text()).await else {
+        // 上限を見ながら読む（Spec 77 #7b）。超えたら名乗らなかったのと同じ（次の候補へ）。
+        let mut response = response;
+        let Ok(Ok(crate::http_body::CappedBody::Complete(bytes))) = tokio::time::timeout(
+            DISCOVERY_TIMEOUT,
+            crate::http_body::read_capped(&mut response, MAX_OAUTH_BODY_BYTES),
+        )
+        .await
+        else {
+            continue;
+        };
+        let Ok(body) = String::from_utf8(bytes) else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) else {

@@ -83,8 +83,9 @@ const EVIDENCE: Record<string, readonly Evidence[]> = {
   completePath: [{ file: "./pathComplete.ts", text: 'kind: found.length === 1 ? "file" : "message",' }],
   quoteMessage: [{ file: "./pathComplete.ts", text: 'kind: found.length === 1 ? "file" : "message",' }],
   pickCandidate: [
-    { file: CHAT_INPUT, text: '@keydown.down="moveSelection(1, $event)"' },
-    { file: CHAT_INPUT, text: '@keydown.up="moveSelection(-1, $event)"' },
+    // `.exact` なので Alt+↑↓（サーヴァントの選択）は候補を動かさない（N14）。
+    { file: CHAT_INPUT, text: '@keydown.down.exact="moveSelection(1, $event)"' },
+    { file: CHAT_INPUT, text: '@keydown.up.exact="moveSelection(-1, $event)"' },
   ],
   confirmCandidate: [
     { file: CHAT_INPUT, text: "confirmSelected();" },

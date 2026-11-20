@@ -128,30 +128,36 @@ impl ApprovalStore {
         self.mutate(|set| set.retain(|key| live.contains(key)))
     }
 
-    /// 読み書きの共通経路。**メモリを直してからディスクへ書く。**
+    /// 読み書きの共通経路。**書き込みロックを持ったまま、編集 → ファイルへ書く → 書けなければ編集前へ
+    /// 戻す**（Spec 77 #4b）。ロックの外で書くと、並んだ 2 つの編集が古い内容で互いを踏み合い、書けなかった
+    /// 編集がメモリにだけ残る（消したはずの承認が次の起動で戻る / 書けなかった承認が今だけ効く）。
     fn mutate(&self, edit: impl FnOnce(&mut HashSet<String>)) -> Result<(), String> {
         if let Some(reason) = &self.blocked {
             return Err(format!(
                 "{APPROVALS_FILE} が読めないため保存できません。ファイルを直すか削除してください（{reason}）"
             ));
         }
-        let snapshot = {
-            let mut guard = match self.hashes.write() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            edit(&mut guard);
-            // **並びを固定して書く。** 同じ内容で保存し直したときに
-            // ファイルが変わると、差分が「何か変わった」と嘘をつく。
-            let mut hashes: Vec<String> = guard.iter().cloned().collect();
-            hashes.sort_unstable();
-            Stored { hashes }
-        };
-        let raw = serde_json::to_string_pretty(&snapshot).map_err(|err| err.to_string())?;
-        // 一時ファイルへ書いて rename（Spec 77 N3）。本名へ直に書いて途中で落ちると、壊れた JSON が残り、
-        // 次の起動で人が直すまで前判定と後判定が全部止まる。
-        crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())?;
-        Ok(())
+        // 毒されたロックでは書かない（Spec 77 #4a — 中身の整合を保証できない）。
+        let mut guard = self.hashes.write().map_err(|_| {
+            format!("{APPROVALS_FILE} の記録が壊れた状態のため保存できません（アプリを再起動してください）")
+        })?;
+        let before = guard.clone();
+        edit(&mut guard);
+        // **並びを固定して書く。** 同じ内容で保存し直したときに
+        // ファイルが変わると、差分が「何か変わった」と嘘をつく。
+        let mut hashes: Vec<String> = guard.iter().cloned().collect();
+        hashes.sort_unstable();
+        let written = serde_json::to_string_pretty(&Stored { hashes })
+            .map_err(|err| err.to_string())
+            // 一時ファイルへ書いて rename（Spec 77 N3）。本名へ直に書いて途中で落ちると、壊れた JSON が
+            // 残り、次の起動で人が直すまで前判定と後判定が全部止まる。
+            .and_then(|raw| {
+                crate::settings_file::write_atomic(&self.path, raw.as_bytes()).map_err(|err| err.to_string())
+            });
+        if written.is_err() {
+            *guard = before;
+        }
+        written
     }
 }
 
@@ -171,8 +177,9 @@ impl ProbeApprovals for ApprovalStore {
     fn is_approved(&self, key: &str) -> bool {
         match self.hashes.read() {
             Ok(guard) => guard.contains(key),
-            // 毒されたロックで承認を通さない。**読めないなら走らせない側へ倒す。**
-            Err(poisoned) => poisoned.into_inner().contains(key),
+            // 毒されたロックで承認を通さない。**読めないなら走らせない側へ倒す**（Spec 77 #4a — 旧実装は
+            // コメントと逆に中身を取り戻して通していた）。
+            Err(_) => false,
         }
     }
 }
@@ -226,6 +233,36 @@ mod tests {
             acceptance: None,
             auto_approve_plans: false,
         }
+    }
+
+    #[test]
+    fn a_poisoned_lock_approves_nothing() {
+        // Spec 77 #4a — コメントは「毒されたロックで承認を通さない」、実装は中身を取り戻して通していた。
+        let dir = temp_dir("poisoned");
+        let store = ApprovalStore::load(&dir);
+        store.approve("k".repeat(64)).unwrap();
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.hashes.write().unwrap();
+            panic!("ロックの中で落ちる");
+        }));
+        assert!(poison.is_err());
+        assert!(store.hashes.is_poisoned(), "前提: ロックが毒されている");
+        assert!(!store.is_approved(&"k".repeat(64)), "毒されたロックで承認を通さない");
+        assert!(store.approve("m".repeat(64)).is_err(), "毒されたロックで書かない");
+    }
+
+    #[test]
+    fn a_failed_write_leaves_memory_as_it_was() {
+        // Spec 77 #4b — 書き込みに失敗してもメモリは編集済みのままで、ファイルと食い違っていた
+        // （消したはずの承認が次の起動で戻る / 書けなかった承認が今の起動の間だけ効く）。
+        let dir = temp_dir("write-fails");
+        let store = ApprovalStore::load(&dir);
+        // 本名の位置に中身のあるフォルダを置き、一時ファイルからの置き換えを失敗させる。
+        let target = dir.join(APPROVALS_FILE);
+        std::fs::create_dir_all(target.join("occupied")).unwrap();
+        let key = "a".repeat(64);
+        assert!(store.approve(key.clone()).is_err(), "前提: 書き込みが失敗する");
+        assert!(!store.is_approved(&key), "書けなかった承認は効かない");
     }
 
     #[test]

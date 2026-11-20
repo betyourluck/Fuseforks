@@ -92,10 +92,13 @@ describe("入力欄", () => {
 });
 
 describe("会話ペインの「入力欄へ」", () => {
-  it("渡し直せる発話の、消えていない添付にだけ出す（Spec 76 S76-3 — サーヴァントの発話も）", () => {
+  it("渡し直せる発話の添付にだけ出し、画像は消えていないものだけ（Spec 76 S76-3 — サーヴァントの発話も）", () => {
+    // 画像以外は本体を読まない（N12）ので消えたかが分からない — 押したときに入力欄が読んで確かめる。
     expect(panel).toMatch(
-      /v-if="canReattachFrom\(entry\.row\.message\) && attachmentUrl\(att\)"[\s\S]*?data-reattach[\s\S]*?@click="reattach\(att\)"/,
+      /v-if="canReattachFrom\(entry\.row\.message\) && \(!isImageAttachment\(att\) \|\| attachmentUrl\(att\)\)"[\s\S]*?data-reattach[\s\S]*?@click="reattach\(att\)"/,
     );
+    // 押したときの確かめ: 入力欄は読めなければ「削除されました」と断る。
+    expect(input).toMatch(/bytes = await readAttachment\(ref\.id\)[\s\S]*?if \(!bytes\) \{\s*orchestrator\.notify\("error", t\("chat\.attachmentDeleted"\)\);/);
   });
 
   it("渡し直せる送り手はコアの find_reattachable と同じ集合", () => {

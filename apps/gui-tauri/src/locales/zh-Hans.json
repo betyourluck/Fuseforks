@@ -570,6 +570,7 @@
     "attachTooLarge": "附件过大（图片 10MB / 音频、PDF 10MB / 视频 12MB）",
     "attachConvertedTooLarge": "转换后的图片过大（上限 2MB）",
     "attachFailed": "无法读取图片",
+    "attachReadFailed": "无法读取文件",
     "completeNoWorkDir": "此仆从未设置工作文件夹，无法补全文件。",
     "completeLoading": "正在查找文件…",
     "completeFailed": "无法获取文件列表。",

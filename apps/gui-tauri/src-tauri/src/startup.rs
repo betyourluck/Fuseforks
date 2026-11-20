@@ -32,6 +32,16 @@ pub struct StartupSettings {
     pub batch_start_on_launch: bool,
 }
 
+/// 実行中に「閉じるとトレイに隠れる」を ON にしたとき、トレイを作れなかったら OFF にして保存する
+/// （Spec 77 N1）。✕ で隠すかは設定の値だけで決まる（`hidesOnClose`）ので、トレイが無いまま ON を
+/// 保存すると、✕ で窓が隠れて戻す入口が無くなる。起動時は `after_boot` が同じ形を防いでいる（Spec 69 D5）。
+pub fn with_tray_outcome(requested: StartupSettings, tray_failed: bool) -> StartupSettings {
+    StartupSettings {
+        minimize_to_tray: requested.minimize_to_tray && !tray_failed,
+        ..requested
+    }
+}
+
 /// `startup.json` の読み書き。
 #[derive(Debug)]
 pub struct StartupStore {
@@ -114,6 +124,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// トレイを作れなければ「トレイに隠れる」は保存しない（Spec 77 N1）。規則は純関数、配線は字面で留める
+    /// （`set_startup_settings` は `AppHandle` が要るので結合テストを組めない）。
+    #[test]
+    fn a_tray_that_could_not_be_made_turns_hiding_off() {
+        let on = StartupSettings {
+            minimize_to_tray: true,
+            batch_start_on_launch: true,
+        };
+        assert_eq!(
+            with_tray_outcome(on, true),
+            StartupSettings {
+                minimize_to_tray: false,
+                batch_start_on_launch: true,
+            }
+        );
+        assert_eq!(with_tray_outcome(on, false), on);
+
+        let src = include_str!("commands.rs").replace("\r\n", "\n");
+        let body = &src[src.find("pub async fn set_startup_settings(").expect("set_startup_settings")..];
+        let body = &body[..body.find("\n}\n").expect("終わり")];
+        let decided = body.find("with_tray_outcome(").expect("トレイの結果で保存する値を決めていない");
+        let saved = body.find(".save(next)").expect("保存");
+        assert!(decided < saved, "トレイを作る前に保存している");
     }
 
     #[test]

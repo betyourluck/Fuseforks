@@ -265,4 +265,26 @@ mod tests {
         let err = open_in_editor(&settings, "Z:/definitely/not/here.rs", None).unwrap_err();
         assert!(err.contains("見つかりません"), "{err}");
     }
+
+    /// パスの解決とエディタの起動は UI のスレッドの外で走る（Spec 77 #25c）。
+    ///
+    /// `async` でない Tauri のコマンドは受け取った場所（Windows では WebView2 の要求のイベントの中 =
+    /// UI のスレッド）で同期に呼ばれる。中で `canonicalize` / `exists` / PATH の探索 / `spawn` をするので、
+    /// 応答しない UNC の共有を指すと SMB のタイムアウトまで窓が「応答なし」になる。
+    #[test]
+    fn the_path_commands_run_off_the_ui_thread() {
+        let src = include_str!("commands.rs").replace("\r\n", "\n");
+        for name in ["resolve_message_path", "open_in_editor"] {
+            let at = src
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} が見つからない"));
+            let head = &src[..at];
+            let attribute = head.rfind("#[tauri::command").expect("属性");
+            assert!(
+                head[attribute..].starts_with("#[tauri::command(async)]"),
+                "{name} が UI のスレッドで同期に走る: {}",
+                &head[attribute..]
+            );
+        }
+    }
 }

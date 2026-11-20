@@ -570,6 +570,7 @@
     "attachTooLarge": "The attachment is too large (image 10MB / audio, PDF 10MB / video 12MB)",
     "attachConvertedTooLarge": "The converted image is too large (limit: 2MB)",
     "attachFailed": "Could not read the image",
+    "attachReadFailed": "Could not read the file",
     "completeNoWorkDir": "This servant has no work folder set, so file completion is unavailable.",
     "completeLoading": "Looking for files…",
     "completeFailed": "Could not load the file list.",

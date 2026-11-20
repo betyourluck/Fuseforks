@@ -49,7 +49,12 @@ import { filterAgents } from "./lib/agentSearch";
 import { useAgentSearch } from "./composables/useAgentSearch";
 import { hasOpenOverlay, isEditableElement, isFocusChatKey } from "./lib/chatFocus";
 import { isShortcutsKey } from "./lib/shortcuts";
-import { TRAY_QUIT_EVENT, closeConfirmLines, hidesOnClose } from "./lib/closeConfirm";
+import {
+  TRAY_QUIT_EVENT,
+  closeConfirmLines,
+  hidesOnClose,
+  singleExitConfirm,
+} from "./lib/closeConfirm";
 import { formatError } from "./lib/errorText";
 import { TOUR_DONE_KEY, shouldShowTour } from "./lib/tour";
 import { askConfirm } from "./composables/useConfirm";
@@ -210,9 +215,21 @@ async function confirmExit(): Promise<boolean> {
   });
 }
 
+/**
+ * 終了の確認（✕・OS の閉じる要求・トレイの「終了」が**この 1 つを共有する**。#21）。
+ *
+ * **確認を出している間は 2 回目を積まない**（`askConfirm` は待ち行列なので、積むと確認が 2 つ並ぶ）。
+ * 2 回目は `null` で返る。他の確認が先に出ていれば、それに答えた後に出る — 他の確認を取り消すと、
+ * 別の操作の答えを黙って「取り消し」に変えることになる。
+ */
+const confirmExitOnce = singleExitConfirm(confirmExit);
+
+/** 閉じる要求の購読の解除（開発時の HMR で二重に登録しないため。トレイの「終了」と同じ扱い）。 */
+let unlistenCloseRequested: (() => void) | null = null;
+
 async function registerCloseGuard(): Promise<void> {
   const win = getCurrentWindow();
-  await win.onCloseRequested(async (event) => {
+  unlistenCloseRequested = await win.onCloseRequested(async (event) => {
     if (
       hidesOnClose({
         minimizeToTray: state.startup?.minimizeToTray === true,
@@ -225,33 +242,23 @@ async function registerCloseGuard(): Promise<void> {
       return;
     }
     if (!settings.confirmClose) return;
+    // 答えを待つ前に止める。確認中（`null`）に返ったときも窓は閉じない。
     event.preventDefault();
-    if (await confirmExit()) await win.destroy();
+    if ((await confirmExitOnce()) === true) await win.destroy();
   });
 }
 
 /**
  * トレイの「終了」（Spec 69 D2。Rust の `tray.rs` が窓を出してから送る）。
- *
- * **終了の確認を出している間は 2 回目を積まない**（`askConfirm` は待ち行列なので、積むと確認が 2 つ並ぶ）。
- * 他の確認が先に出ていれば、それに答えた後に出る — 他の確認を取り消すと、別の操作の答えを黙って
- * 「取り消し」に変えることになる。
+ * 確認は ✕ と同じ `confirmExitOnce` を通る — 確認を出している間に押されても 2 つ目を積まない。
  */
-let exitConfirmInFlight = false;
-
 async function onTrayQuit(): Promise<void> {
-  if (exitConfirmInFlight) return;
   const win = getCurrentWindow();
   if (!settings.confirmClose) {
     await win.destroy();
     return;
   }
-  exitConfirmInFlight = true;
-  try {
-    if (await confirmExit()) await win.destroy();
-  } finally {
-    exitConfirmInFlight = false;
-  }
+  if ((await confirmExitOnce()) === true) await win.destroy();
 }
 
 let unlistenTrayQuit: (() => void) | null = null;
@@ -337,6 +344,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  unlistenCloseRequested?.();
   unlistenTrayQuit?.();
   window.removeEventListener("keydown", onNavKey);
   window.removeEventListener("keydown", onFocusChatKey);

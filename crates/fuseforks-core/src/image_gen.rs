@@ -26,6 +26,12 @@ use crate::llm::{PromptAttachment, PromptMediaType};
 /// 失敗の `detail` に残す接続先の本文の上限（文字）。
 const DETAIL_MAX_CHARS: usize = 300;
 
+/// 応答本文を読む上限（Spec 77 N5 — `text()` は全部読んでから返す）。返る画像は base64 で数 MB。
+const MAX_RESPONSE_BODY: usize = 64 * 1024 * 1024;
+
+/// 失敗の分類のために読むエラー本文の上限（先頭だけあれば足りる）。
+const MAX_ERROR_READ: usize = 64 * 1024;
+
 /// 接続確認のタイムアウト（Lorekeel と同じ 20 秒）。
 pub const PROBE_TIMEOUT_SECS: u64 = 20;
 
@@ -803,10 +809,22 @@ async fn send(
         .await
         .map_err(|err| transport_failure(&err))?;
     let status = response.status().as_u16();
-    let body = response
-        .text()
+    // 本文は上限を見ながら読む（Spec 77 N5）。返る画像は base64 で数 MB（xAI の 2k で約 11 MB）。
+    let mut response = response;
+    let body = match crate::http_body::read_capped(&mut response, MAX_RESPONSE_BODY)
         .await
-        .map_err(|err| transport_failure(&err))?;
+        .map_err(|err| transport_failure(&err))?
+    {
+        crate::http_body::CappedBody::Complete(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        crate::http_body::CappedBody::Exceeded => {
+            return Err(ImageGenFailure::Shape {
+                detail: format!(
+                    "response body exceeds {} MB",
+                    MAX_RESPONSE_BODY / (1024 * 1024)
+                ),
+            });
+        }
+    };
     if !(200..300).contains(&status) {
         return Err(classify_status(status, &body));
     }
@@ -867,7 +885,12 @@ pub async fn probe(
     if (200..300).contains(&status) {
         return Ok(started.elapsed());
     }
-    let body = response.text().await.unwrap_or_default();
+    // 確かめるのは失敗の分類だけなので、本文は先頭だけ読む（Spec 77 N5）。
+    let mut response = response;
+    let body = String::from_utf8_lossy(
+        &crate::http_body::read_prefix(&mut response, MAX_ERROR_READ).await,
+    )
+    .into_owned();
     Err(match (status, config.provider) {
         (404, ImageProvider::Openai) => classify_status(status, &body),
         (404, _) => ImageGenFailure::Config {

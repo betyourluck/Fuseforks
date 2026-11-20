@@ -7,8 +7,8 @@
  * 純関数は vitest で固定する。
  *
  * 上限は 2 段（D5）:
- * - 元ファイル 10MB — **デコードの前**に見る。20MB の HEIC をデコードして
- *   から断ると、断るまでの間メモリと時間を払う
+ * - 元ファイル 10MB — **読み込みの前**に見る（`file.size`。#19）。20MB の HEIC を
+ *   読んでデコードしてから断ると、断るまでの間メモリと時間を払う
  * - 変換後 2MB — コア側（`validate_attachment`）と同じ値。フロントで先に
  *   見るのは、IPC を往復してから拒否されるより手前で分かるほうが速いだけで、
  *   **門はコア側が本体**（IPC を直接叩く経路はコアが塞ぐ）
@@ -19,6 +19,11 @@ export type { AttachmentKind };
 
 /** 画像の元ファイルの上限（bytes）。デコード前の門。 */
 export const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 種別の判定に読む先頭のバイト数（#19）。`detectKind` が見るのは先頭 12 バイトまで。
+ */
+export const HEAD_BYTES = 16;
 
 /** 変換後（WebP）の上限（bytes）。コアの `ATTACHMENT_IMAGE_MAX_BYTES` と同じ値。 */
 export const MAX_CONVERTED_BYTES = 2 * 1024 * 1024;
@@ -52,11 +57,17 @@ export interface PendingAttachment {
   bytes: number;
 }
 
-/** 変換の失敗理由。辞書キー（`chatInput.attach*`）に 1 対 1 で対応する。 */
+/**
+ * 変換の失敗理由。辞書キー（`chatInput.attach*`）に 1 対 1 で対応する。
+ *
+ * `readFailed` はファイルそのものを読めなかったとき（#19）。`convertFailed`（変換器が落ちた）と
+ * 分けるのは、人の次の手が違うから — 前者はファイルの置き場所や権限を見る、後者はもう一度試す。
+ */
 export type AttachmentErrorKind =
   | "tooLarge"
   | "convertedTooLarge"
   | "convertFailed"
+  | "readFailed"
   | "unsupportedType";
 
 /** 変換の失敗。`kind` で文言を引く（メッセージに生の例外を混ぜない）。 */
@@ -228,18 +239,28 @@ export function routeAttachment(bytes: Uint8Array): AttachmentKind {
  * **変換するのは画像だけ**（Spec 36 D3）。音声・動画・PDF は無変換で通す —
  * 変換器を同梱すると依存の桁が変わるので、受け付けない形式は入口で断る。
  *
- * @throws {AttachmentError} 上限超・デコード不能（= 対応外）・worker の異常。
+ * **全体を読むのは、大きさと種別で断れないと分かってから**（#19）。順は
+ * 「`file.size` をどの種別の上限よりも大きいかで見る → 先頭 [`HEAD_BYTES`] だけ読んで種別を決める →
+ * その種別の上限で見る → 全体を読む」。全体を先に読むと、数百 MB の動画を落としたときに
+ * その大きさのメモリを確保してから「大きすぎます」になる。
+ *
+ * @throws {AttachmentError} 上限超・読み込み失敗・デコード不能（= 対応外）・worker の異常。
  */
 export async function prepareFile(file: File): Promise<PendingAttachment> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const kind = routeAttachment(bytes);
-  if (kind === "image") {
-    return convertImageFile(file, bytes);
-  }
-  // 無変換の種別は、その種別の上限をそのまま元ファイルへ掛ける。
-  if (bytes.length > KIND_MAX_BYTES[kind]) {
+  if (file.size > largestSourceLimit()) {
     throw new AttachmentError("tooLarge");
   }
+  const kind = routeAttachment(new Uint8Array(await readBytes(file.slice(0, HEAD_BYTES))));
+  // 画像は元ファイルの上限（変換前）、無変換の種別はその種別の上限をそのまま元ファイルへ掛ける。
+  const limit = kind === "image" ? MAX_SOURCE_BYTES : KIND_MAX_BYTES[kind];
+  if (file.size > limit) {
+    throw new AttachmentError("tooLarge");
+  }
+  const whole = await readBytes(file);
+  if (kind === "image") {
+    return convertImageFile(file, whole);
+  }
+  const bytes = new Uint8Array(whole);
   return {
     fileName: file.name || `attachment.${kind}`,
     kind,
@@ -250,20 +271,38 @@ export async function prepareFile(file: File): Promise<PendingAttachment> {
 }
 
 /**
- * 画像ファイルを WebP へ変換し、送信待ちの形にする。
+ * 元ファイルとして受け付ける最大の大きさ（#19）。画像の元ファイルの上限と、無変換の種別の上限の
+ * 大きい方 — これを超えるファイルは、種別を決める前に断れる。
  *
- * @throws {AttachmentError} 10MB 超・変換失敗・変換後 2MB 超。
+ * 画像の `KIND_MAX_BYTES.image` は**変換後**の上限なので数えない（元ファイルの門は `MAX_SOURCE_BYTES`）。
+ */
+function largestSourceLimit(): number {
+  return Math.max(MAX_SOURCE_BYTES, KIND_MAX_BYTES.audio, KIND_MAX_BYTES.video, KIND_MAX_BYTES.pdf);
+}
+
+/**
+ * Blob を読む。失敗は `readFailed`（#19）— 生の例外のまま投げると、呼び手は理由を区別できず
+ * 「変換に失敗」と誤った理由を出す。
+ */
+async function readBytes(blob: Blob): Promise<ArrayBuffer> {
+  try {
+    return await blob.arrayBuffer();
+  } catch {
+    throw new AttachmentError("readFailed");
+  }
+}
+
+/**
+ * 画像ファイルを WebP へ変換し、送信待ちの形にする。元ファイルの上限は呼び手が読む前に見ている。
+ *
+ * @throws {AttachmentError} 変換失敗・変換後 2MB 超。
  */
 async function convertImageFile(
   file: File,
-  bytes: Uint8Array,
+  buffer: ArrayBuffer,
 ): Promise<PendingAttachment> {
-  if (file.size > MAX_SOURCE_BYTES) {
-    throw new AttachmentError("tooLarge");
-  }
-  // worker へは transfer で渡す（コピーしない）。判定で読んだ `bytes` とは
-  // 別の buffer を起こす — transfer した側は以後こちらから読めない。
-  const buffer = bytes.slice().buffer;
+  // worker へは transfer で渡す（コピーしない）。transfer した buffer は以後こちらから読めないが、
+  // 種別の判定は先頭だけを別に読んで済ませてあるので、ここで使い切ってよい。
   const id = ++requestSeq;
   const response = await new Promise<ConvertResponse>((resolve) => {
     inFlight.set(id, { resolve });
@@ -292,6 +331,24 @@ async function convertImageFile(
     scaled: response.scaled,
     bytes: response.bytes,
   };
+}
+
+/**
+ * 保存してある添付の形式から種別を引く（Spec 36）。**形式欄の無い古いレコードは画像**
+ * （Spec 23 の時代の添付はすべて WebP の画像だった — コアの既定と対）。生成画像の写し（`jpeg`）も画像。
+ */
+export function kindOfFormat(format: string | undefined): AttachmentKind {
+  switch (format) {
+    case "mp3":
+    case "wav":
+      return "audio";
+    case "mp4":
+      return "video";
+    case "pdf":
+      return "pdf";
+    default:
+      return "image";
+  }
 }
 
 /**

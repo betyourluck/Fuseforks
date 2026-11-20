@@ -66,6 +66,7 @@ Fuseforks/
 │       │   ├── tools/blackboard.rs  内置工具: blackboard（黑板的便签。只能编写自己的便签）
 │       │   ├── tools/image.rs       内置工具: image（生成图像。默认关闭，发往整个应用统一选择的图像生成 API。Spec 76）
 │       │   ├── image_gen.rs         图像生成 API 的线路（4 家服务商的请求与解析、8 类失败、连接检查。Spec 76）
+│       │   ├── http_body.rs         按块读取响应正文并检查上限（LLM・Jev・图像生成・OAuth・价格表共用。Spec 77）
 │       │   └── llm/
 │       │       ├── mod.rs           LlmBackend / BackendFactory / EchoBackend
 │       │       ├── canonical.rs     提供商中立的类型
@@ -109,6 +110,7 @@ Fuseforks/
             ├── lib/ipc.ts           带类型的 invoke 包装器
             ├── lib/attachment.ts    附件的纯函数（类型判定 / 缩放尺寸 / base64）
             ├── lib/attachmentList.ts 输入框的附件列表（5 个 / 12MB 的判定 / 发送时的拆分。Spec 73）
+            ├── lib/attachmentUrls.ts 对话窗格中附件的 object URL（只读取图像 / 切换对话时释放。Spec 77）
             ├── lib/carries.ts       哪个连线可以携带哪种类型（界面警告用的复制品）
             ├── lib/fileDrop.ts      文件拖放（判定拖动是否携带文件 / 阻止输入栏之外拖放的窗口防护）
             ├── lib/pathComplete.ts  输入框的 `@` 路径补全（触发检测 / 排序 / 确定）

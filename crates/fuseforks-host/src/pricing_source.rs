@@ -161,22 +161,28 @@ pub fn validate_url(url: &str) -> Result<(), String> {
 /// URL が不正、通信に失敗、応答が大きすぎる、JSON として読めないとき。
 pub async fn fetch_table(url: &str) -> Result<ParsedTable, String> {
     validate_url(url)?;
+    // `validate_url` は最初の URL しか見ないので、リダイレクトの後も https に留める（Spec 77 #7a）。
     let client = reqwest::Client::builder()
         .timeout(TIMEOUT)
+        .https_only(true)
         .build()
         .map_err(|e| e.to_string())?;
-    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let mut res = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !res.status().is_success() {
         return Err(format!("取得先が {} を返しました", res.status()));
     }
-    let body = res.bytes().await.map_err(|e| e.to_string())?;
-    if body.len() > MAX_BYTES {
-        return Err(format!(
-            "応答が大きすぎます（{} バイト。上限 {MAX_BYTES}）",
-            body.len()
-        ));
-    }
-    let raw = String::from_utf8(body.to_vec()).map_err(|e| e.to_string())?;
+    // 1 塊ずつ読み、溜める前に上限を見る（Spec 77 #7b — 全部読んでから見ると、桁外れの本文には
+    // その大きさのメモリを確保し、送り終えない相手には待ちの上限まで止まる）。
+    let body = match fuseforks_core::http_body::read_capped(&mut res, MAX_BYTES)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        fuseforks_core::http_body::CappedBody::Complete(body) => body,
+        fuseforks_core::http_body::CappedBody::Exceeded => {
+            return Err(format!("応答が大きすぎます（上限 {MAX_BYTES} バイト）"));
+        }
+    };
+    let raw = String::from_utf8(body).map_err(|e| e.to_string())?;
     let table = fuseforks_core::pricing::parse_table(&raw)?;
     // `context=` は窓が入った要素の数（Spec 50）。**`as_of` は単価の時点で、窓を足しても
     // 動かない** — `as_of=2026-08-20 context=1493` が同じ行に並ぶのは矛盾ではない。
@@ -316,6 +322,32 @@ mod tests {
                 "pricing_source.rs の本体が `{banned}` を持っている（自動取得の凍結が破れた）"
             );
         }
+    }
+
+    /// **リダイレクトの後も https のまま**、**本文は塊ごとに上限を見て読む**（Spec 77 #7a / #7b）。
+    ///
+    /// 入口の `validate_url` は最初の URL しか見ない。reqwest の既定のリダイレクトは http への移動も
+    /// 許すので、配信元が http へ飛ばせば平文で取りに行っていた。本文は `bytes()` で全部読んでから
+    /// 大きさを見ていた。どちらも TLS の相手を立てずに試せないので、本体の字面で留める。
+    #[test]
+    fn the_fetch_stays_on_https_and_reads_with_a_cap() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pricing_source.rs");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} を読めない: {e}", path.display()));
+        let code: String = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("テストより前の本体")
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(code.contains(".https_only(true)"), "リダイレクトの後の http を断っていない");
+        assert!(
+            code.contains("http_body::read_capped(") && !code.contains(".bytes()") && !code.contains(".text()"),
+            "本文を全部読んでから大きさを見ている"
+        );
     }
 
     /// **起動経路が取得を呼ばない。** `build_host`（`boot.rs`）は棚を読むだけ。

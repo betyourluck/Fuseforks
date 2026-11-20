@@ -4,6 +4,7 @@ import {
   MAX_SUGGESTIONS,
   applyCompletion,
   findTrigger,
+  isCurrentListing,
   rankCandidates,
   splitForDisplay,
   type Candidate,
@@ -161,5 +162,32 @@ describe("applyCompletion", () => {
     });
 
     expect(result.text).toBe("これ @docs/readme.md  を見て");
+  });
+});
+
+/**
+ * 取り終えた一覧を入れてよいか（#22）。取得の途中で宛先が変わる・補完が閉じる・取り直しが
+ * 始まると、前の取得が後から届く — そのまま入れると、前のサーヴァントの作業フォルダの相対パスが
+ * 別のサーヴァント宛ての本文に入る。
+ */
+describe("isCurrentListing（#22）", () => {
+  const request = { generation: 3, agentId: "agent_1" };
+
+  it("世代・宛先・種別がそのままなら入れる", () => {
+    expect(isCurrentListing(request, { generation: 3, agentId: "agent_1", kind: "file" })).toBe(true);
+  });
+
+  it("宛先が変わっていたら捨てる", () => {
+    expect(isCurrentListing(request, { generation: 3, agentId: "agent_2", kind: "file" })).toBe(false);
+    expect(isCurrentListing(request, { generation: 3, agentId: null, kind: "file" })).toBe(false);
+  });
+
+  it("閉じた・取り直した（世代が進んだ）なら捨てる", () => {
+    expect(isCurrentListing(request, { generation: 4, agentId: "agent_1", kind: "file" })).toBe(false);
+  });
+
+  it("補完が閉じている・会話の参照に入れ替わっているなら捨てる", () => {
+    expect(isCurrentListing(request, { generation: 3, agentId: "agent_1", kind: null })).toBe(false);
+    expect(isCurrentListing(request, { generation: 3, agentId: "agent_1", kind: "message" })).toBe(false);
   });
 });

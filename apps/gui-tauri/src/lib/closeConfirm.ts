@@ -72,6 +72,31 @@ export function hidesOnClose(state: HideOnCloseState): boolean {
 }
 
 /**
+ * 終了の確認を 1 つに保つ（#21）。返す関数は、確認を出している間に呼ばれると**確認を積まず `null` を返す**。
+ * 答えが出たら（例外で終わっても）次の呼び出しでまた確認を出す。
+ *
+ * ✕・OS の閉じる要求（Alt+F4・タスクバーの「ウィンドウを閉じる」）・トレイの「終了」の 3 経路が
+ * **この 1 つを共有する**。確認の待ち行列（`askConfirm`）は同じ確認を畳まずに積むので、守りが経路ごとに
+ * あると、守りの無い経路から来た要求が確認を 2 つ並べる — 守りがトレイにだけあり、確認の最中に OS から
+ * 閉じる要求が届くと、1 つ目を取り消しても同じ確認がもう一度出ていた。
+ *
+ * `null` は「いま確認中」で、終了でも取り消しでもない。閉じる要求の側は既に止めてある（`preventDefault`）
+ * ので、何もしなければ窓は閉じない。
+ */
+export function singleExitConfirm(ask: () => Promise<boolean>): () => Promise<boolean | null> {
+  let inFlight = false;
+  return async () => {
+    if (inFlight) return null;
+    inFlight = true;
+    try {
+      return await ask();
+    } finally {
+      inFlight = false;
+    }
+  };
+}
+
+/**
  * トレイの「終了」が押されたことを知らせるイベント名（Spec 69 D2）。Rust の `tray.rs` の
  * `QUIT_EVENT` と同じ文字列 — 走査テストが 2 つを突き合わせる。
  */

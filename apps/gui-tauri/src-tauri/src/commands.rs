@@ -885,31 +885,52 @@ pub async fn set_startup_settings(
     batch_start_on_launch: bool,
 ) -> CoreResult<crate::startup::StartupSettings> {
     use tauri::Manager;
-    let next = crate::startup::StartupSettings {
-        minimize_to_tray,
-        batch_start_on_launch,
-    };
-    {
+    // トレイを先に作る。作れなかったら「トレイに隠れる」は保存しない（Spec 77 N1 — トレイが無いまま
+    // ON を保存すると、✕ で窓が隠れて戻す入口が無くなる）。組み立て前は組み立ての後に作られる。
+    let mut tray_failed = false;
+    if minimize_to_tray && let Some(state) = app.try_state::<AppState>() {
+        let language = state.host.orchestrator.display_language().await;
+        if let Err(err) = crate::tray::install(&app, language) {
+            fuseforks_core::note!("トレイを作れませんでした（閉じるとトレイに隠れる、は保存しません）: {err}");
+            tray_failed = true;
+        }
+    }
+    let next = crate::startup::with_tray_outcome(
+        crate::startup::StartupSettings {
+            minimize_to_tray,
+            batch_start_on_launch,
+        },
+        tray_failed,
+    );
+    let saved = {
         let mut store = startup.store.lock().map_err(|_| CoreError::ConfigIo {
             path: crate::startup::CONFIG_FILE.to_owned(),
             source: std::io::Error::other("設定の棚を開けませんでした"),
         })?;
-        store.save(next).map_err(|reason| CoreError::ConfigIo {
-            path: crate::startup::CONFIG_FILE.to_owned(),
-            source: std::io::Error::other(reason),
-        })?;
-    }
-    if minimize_to_tray {
-        if let Some(state) = app.try_state::<AppState>() {
-            let language = state.host.orchestrator.display_language().await;
-            if let Err(err) = crate::tray::install(&app, language) {
-                fuseforks_core::note!("トレイを作れませんでした: {err}");
+        let before = store.settings();
+        store
+            .save(next)
+            .map_err(|reason| CoreError::ConfigIo {
+                path: crate::startup::CONFIG_FILE.to_owned(),
+                source: std::io::Error::other(reason),
+            })
+            .map_err(|err| (err, before))
+    };
+    match saved {
+        Ok(()) => {
+            if !next.minimize_to_tray {
+                crate::tray::remove(&app);
             }
+            Ok(next)
         }
-    } else {
-        crate::tray::remove(&app);
+        Err((err, before)) => {
+            // 書けなかったときは手元の値も変えない（Spec 69 D7）— 先に作ったトレイも、前の値が OFF なら外す。
+            if !before.minimize_to_tray {
+                crate::tray::remove(&app);
+            }
+            Err(err)
+        }
     }
-    Ok(next)
 }
 
 /// サインイン時の自動起動の状態。**OS の登録そのものを読む**（アプリは写しを持たない）。
@@ -1925,7 +1946,10 @@ async fn apply_jev(
 
 /// 発話に書かれたパスを解決する。相対パスは `work_dir`（発言した個体・付箋を書いた個体の作業フォルダ。
 /// 画面が投影から渡す）から。**実在しなければ `None`**（画面は「見つかりません」を出す）。
-#[tauri::command]
+///
+/// **`async` で受ける**（Spec 77 #25c）— 同期のコマンドは Windows では UI のスレッドで走り、応答しない
+/// UNC の共有を指すと SMB のタイムアウトまで窓が「応答なし」になる。
+#[tauri::command(async)]
 pub fn resolve_message_path(
     work_dir: Option<String>,
     raw: String,
@@ -1979,7 +2003,9 @@ pub fn set_editor_settings(
 ///
 /// # Errors
 /// 未設定・コマンドが見つからない・パスが無い・起動に失敗した場合（理由の文）。
-#[tauri::command]
+///
+/// **`async` で受ける**（Spec 77 #25c — `resolve_message_path` と同じ理由。PATH の探索と `spawn` を含む）。
+#[tauri::command(async)]
 pub fn open_in_editor(
     editor: State<'_, crate::editor::EditorState>,
     path: String,

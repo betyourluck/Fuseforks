@@ -306,6 +306,13 @@ pub fn plan(
                         report.unwritable.push(name.clone());
                         out.push(line.to_owned());
                     }
+                    // まだストアに無い秘密。行は書き換えない（印つきコメントのまま）が、足りない秘密として
+                    // 報告する（Spec 77 #6 — 報告しないと CLI は「ストアに無い 0」と出す）。扉の合鍵は
+                    // `bake` が値を作るので、ここで足りない側に数えない。
+                    Some(item) if item.kind != Kind::Door => {
+                        report.missing.push(name.clone());
+                        out.push(line.to_owned());
+                    }
                     _ => out.push(line.to_owned()),
                 }
                 seen.insert(name);
@@ -414,6 +421,17 @@ mod tests {
         assert!(report.door_token_created);
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("sk-") && !json.contains("0123456789abcdef"), "{json}");
+    }
+
+    /// `--update` で残した印つきコメントも、まだストアに無い秘密として報告する（Spec 77 #6）。
+    /// 報告に入らないと CLI は「ストアに無い 0」と出し、コンテナの起動で初めて `SECRET_MISSING` で止まる。
+    #[test]
+    fn a_placeholder_that_stays_is_still_reported_missing() {
+        let existing = "# FUSEFORKS_SECRET_MCP_B=   # bake: 資格情報ストアに無い\n";
+        let wanted = [w("FUSEFORKS_SECRET_MCP_B", Kind::Mcp, None)];
+        let (text, report) = plan(Some(existing), &wanted, &mut || "unused".to_owned());
+        assert!(text.contains("# FUSEFORKS_SECRET_MCP_B="), "印つきコメントはそのまま残す: {text}");
+        assert_eq!(report.missing, ["FUSEFORKS_SECRET_MCP_B"], "残した名前も足りない秘密に数える");
     }
 
     /// `--update`: 既にある行は書き換えない。印つきコメントは値が揃えば置き換え、足りない名前だけ末尾へ。

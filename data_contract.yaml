@@ -715,7 +715,10 @@ enums:
            飛行中のものも) / 承認待ちの波 / 予定の後処理の登録 / 走っている要約 / 走っている下書き補助。
            エラーは SESSION_BUSY。SESSION_SWITCH_BLOCKED は撤去 (作る経路が無くなり、文面が実態と逆に
            なるので流用しない)。判定と SessionRef の発行は同じ lock の下で行う。SessionNotFound の WARN は
-           網として残す
+           網として残す。**消す側は「開いているか」の判定から削除まで switch_gate の read を握る**
+           (Spec 77 #13 / N6 — 握らないと、open_session が保存先を読み終えて world を待つ間に消され、
+           開いている会話が消えた会話を指す。開いていれば read を放して移ってから、もう一度握って確かめる。
+           予定のために作った空の会話を捨てる discard_empty_session も同じで、開かれていれば消さない)
        12. **計器。** turn: 行の末尾に session=<会話 ID> (model= と repeat_max= の後。既存の欄の並びは
            変えない) / 開いていない会話へ書いた発話に `session write: kind=message session=… open=…` /
            消す操作を拒んだときに `session busy: session=… refs=N`
@@ -1818,6 +1821,11 @@ enums:
       **会話ログから参照が消えても実体は消さない** — redb とファイルの 2 つの
       真実を同期させない (Spec 12 が index.json を捨てた判断と同じ)。GC で消えた
       画像の表示は「画像は保持期間を過ぎて削除されました」の枠にする。
+      **Spec 77 N12 (2026-11-20) で画像以外の側が後退した** — 会話ペインは音声・動画・PDF の本体を読まなく
+      なった (ファイル名を出すだけの種別で最大 12MB を読み、object URL を持ち続けていた)。そのため消えた
+      音声・動画・PDF もファイル名の行のまま出て「削除されました」の枠にならない。「入力欄へ」を押すと
+      入力欄が実体を読んで「削除されました」と断る (S73 の送信入口の検査は不変)。会話ペインの object URL は
+      会話の一覧が空に差し替わったときに解放する (`lib/attachmentUrls.ts`・Spec 77 #20a)
 
       ## 凍結 9. 入口は貼り付けと「参照…」の 2 つ (D4)
 
@@ -3229,7 +3237,8 @@ entities:
       PRIVACY 日英へ 1 文足す (P0 では足さない — 存在しない送信を宣言することになる)。
 
       取得は **https のみ・数値のみ・照合の鍵はこちらが持つ model** (向こうが名前を
-      名乗る余地を作らない)。受け取る数値は **単価 5 つ + max_input_tokens** (Spec 50 で
+      名乗る余地を作らない)。**https はリダイレクトの後も** (`https_only(true)` — Spec 77 #7a)。本文は
+      1 塊ずつ読み、8 MiB を超えたら残りを読まない (`http_body::read_capped` — Spec 77 #7b)。受け取る数値は **単価 5 つ + max_input_tokens** (Spec 50 で
       窓を足した。上の禁止事項はこの追加で 1 字も変わっていない — 変わるのは受け取る
       数値の列挙だけ)。単価は 負・非有限・桁外れ (> $1,000/MTok) をその 1 件だけ落とす。
       **窓は欄だけを落とす** (Spec 50 D4): 表の値は Option<f64> で受け (整数型で受けると
@@ -3676,6 +3685,9 @@ entities:
       jev.json / image_gen.json / pricing.json / probe_approvals.json) は同じ
       `settings_file::load` を通り、保存は一時ファイル + rename
       (`settings_file::write_atomic`。Spec 77 N3) で書く。
+      **承認の台帳は書き込みロックを持ったまま書き、書けなければメモリを編集前へ戻す。毒されたロックでは
+      承認せず書かない** (Spec 77 #4a / #4b — 旧実装はロックの外で書いて失敗してもメモリを戻さず、
+      毒されたロックの中身を取り戻して承認を通していた)。
       権限: **Unix は 0600 を明示。Windows は chmod 相当が無いので偽らない**
       ({app_data_dir} が利用者プロファイル配下で OS の既定 ACL が利用者に
       閉じている、が実態。中身がハッシュだけなのはこの前提の保険でもある)。
@@ -3718,6 +3730,9 @@ entities:
       止まり、同じループが担う AgentTyping の排出まで止まる (in_flight が
       掃除されず受信が lag して fail open を誘発する)。**1 件の監視スクリプトが
       村中の予定を止める形**なので、前判定つきは切り離したタスクへ出す。
+      **切り離したタスク (前判定つき・検収の再依頼) は ticker と並行に走るので、in_flight / pending_* への登録は
+      配送の前に済ませ、配送できなければ置き換えた前の登録へ戻す** (Spec 77 #10 — 配送してから登録すると、
+      ターンが先に終わったときに完了の合図を取り逃し、in_flight が残ってその個体宛ての予定が黙って飛ばされる)。
         | | 前判定なし | 前判定あり |
         | 実行 | tick の中 | 切り離したタスク |
         | 消化 | 配送できたときだけ | 決めた時点で (どの結末でも消化するので待つ理由が無い) |
@@ -4594,7 +4609,10 @@ entities:
          メニューは「Fuseforks を表示」「終了」の 2 項目で、文言は村の**表示の言語** (DisplayLanguage — 简体中文の村では中国語。Spec 74。set_language の成功で差し替える)
       4. トレイの「終了」は閉じる確認を通る (Rust が show() → set_focus() → イベント tray://quit-requested、
          画面が confirmClose に従って確認 → destroy)。終了の確認を出している間は 2 回目を積まない
-         (exitConfirmInFlight)。他の確認は取り消さない
+         (~~exitConfirmInFlight~~ → **singleExitConfirm を ✕・OS の閉じる要求・トレイの「終了」の 3 経路で共有** —
+         Spec 77 #21。確認を出している間に Alt+F4 などで閉じる要求が届いても確認を積まない)。他の確認は取り消さない。
+         **実行中に minimizeToTray を ON にしたときはトレイを先に作り、作れなければ OFF で保存する**
+         (Spec 77 N1 — トレイが無いまま ON を保存すると ✕ で窓が隠れて戻す入口が無くなる。起動時の形は 1 が防ぐ)
       5. 一括起動はプロセスに 1 回、manage の後に別のタスクで World::batch_start_ids の順に直列。
          画面の initialize() には置かない (F5 で再発火する)。1 体の失敗で残りを止めない。
          画面は購読を張ってから全件を取り直す既存の順序で取りこぼさない (新しい IPC は無い)
@@ -4862,7 +4880,9 @@ entities:
         (e) **扉の合鍵は GUI の mcp_server.json から引き継がず、コンテナ用に新しく作る** (uuid v4 の simple = 32 桁 hex。
             mcp_server.rs と生成を共有する)。既にある .env に行があれば作り直さない
         (f) **既にある .env は上書きしない** — --update なしで存在すれば 11。--update では足りない名前だけ足し、bake の印つき
-            コメントはストアに値があれば代入へ置き換える。印の無いコメントの `# NAME=` は運用者が止めた名前として触らない
+            コメントはストアに値があれば代入へ置き換え、**無ければ行をそのまま残して足りない秘密 (missing) に数える**
+            (Spec 77 #6 — 数えないと CLI は「ストアに無い 0」と出し、コンテナの起動で初めて SECRET_MISSING で止まる。
+            扉の合鍵は bake が作るので数えない)。印の無いコメントの `# NAME=` は運用者が止めた名前として触らない
             (ENV_COMMENTED_OUT)。値の違いは名前だけ (ENV_VALUE_DIFFERS。compose と同じ規則で引用符を外して比べる。
             対象はストアから読む鍵だけ)。TZ の違いは両方の値を出す (ENV_TZ_DIFFERS)。要らなくなった FUSEFORKS_SECRET_* は
             消さずに名前だけ (ENV_UNUSED。扉の合鍵は除く)。警告がいくつあっても 0
@@ -4946,6 +4966,10 @@ conversation_termination:
       - ツールを呼んだ  → その相手へ転送し、会話が続く
       - 本文だけ返した  → 会話終了。ユーザーへ返る
       ツール名が 64 文字を超える / 衝突する場合は transfer_to_agent_{index} へ退避。
+      **退避名も既に決めた名前と照合し、空くまで _2, _3, … を足す** (Spec 77 #16 — 照合しないと
+      接続先 [agent_2, agent_3, 53 文字以上の ID] の 3 つ目が transfer_to_agent_2 になり、先頭一致の逆引きで
+      長い ID の相手への呼び出しが agent_2 へ配送される)。判断役 (judge_{id} / judge_{index}) も同じ
+      unique_tool_name を通る。
     fan_out: |
       1 応答内の transfer_to_* は**全部**拾い、全宛先へ並行に配送する (2026-07-28)。
       Claude / Gemini は並列ツール呼び出しを普通に返すため、最初の 1 本で
@@ -5063,7 +5087,10 @@ conversation_termination:
            GUI が何でも配送できる形にしない。Spec 20 rev2 の罠の再演防止)
         4. **編集の中間状態に API を与えない。** IPC は
            dispatch_plan_wave(planId, tasks: [{to, message}], verifier?) と
-           discard_plan_wave(planId) の 2 本だけ。提案の真実は
+           discard_plan_wave(planId) の 2 本だけ。**pending からの遷移は 1 回だけ**（Spec 77 #9 —
+           入口の proposal から遷移までに await をまたぐので、遷移できたかを PlanWaveStore::dispatch_wave /
+           discard_wave の戻り値（書き込みロックの中の 1 回）で決め、偽なら PlanWaveNotPending。二重の配送・
+           破棄した計画の配送が起きない）。提案の真実は
            PlanWaveRecord に提示時に記録された tasks、dispatch が受けた
            最終形が配送の真実 — その間に真実は無い。
            **Spec 53 で改訂**: 3 つ目の verifier (Option<AgentId>) を加算。
@@ -5220,7 +5247,9 @@ conversation_termination:
            (自己ループの辺 + ask 自分) だけがすり抜けて自分の受信箱を
            永遠に待つ
         3. **判定は deliver_and_wait の入口 1 実装**。受信箱へ積まずに
-           typed の結果で即答 (停止中の Undeliverable と同じ形 — モデルは
+           typed の結果で即答 (停止中の Undeliverable と同じ形 — **Spec 77 N10 から、停止中・満杯の相手への
+           依頼も記録しない**。受信箱の枠を `reserve_mailbox` で先に取ってから記録して送る。利用者の発話
+           (send_user_message_full) も同じで、届かなかった発話は会話ペイン・保存先・リングに残らない (#12)。モデルは
            同じ周で読んで進路を変えられる)。**転送の配送では判定しない** —
            転送は待ちを作らず (送り手はブロックしない)、輪 = 待ちの循環は
            deliver_and_wait でしか生まれない。判定を転送に足すと健全な形
@@ -7288,7 +7317,10 @@ llm_wire:
       ContextLength(400・413 + code) / Billing(プロバイダ code)          → Stop
       - status 以外の材料（code・本文の待ち時間）は adapter の純関数 `error_signal(body)` が
         出し、client は `Provider` で振り分けて呼ぶ（decode と同じ。client 自身は JSON を
-        解釈しない）
+        解釈しない）。**error_signal は表示用に切る前の本文で呼ぶ**（Spec 77 #2 — `MAX_ERROR_BODY`
+        2,000 バイトの切り詰めは画面とログへ運ぶ本文にだけ掛ける。Gemini の 429 は RetryInfo が
+        details[] の最後に来るので、先に切ると最初に失われるのが待ち時間だった）。読むのは先頭 64 KiB まで
+        （`http_body::read_prefix`）
       - Billing と読む code は OpenAI 互換・Responses 4 本の `insufficient_quota` だけ。
         Anthropic / Gemini は無し（Gemini の RESOURCE_EXHAUSTED は RateLimit。課金起因の
         429 を再試行するリスクを許容する）。表に無い code は status 既定へ落ちる

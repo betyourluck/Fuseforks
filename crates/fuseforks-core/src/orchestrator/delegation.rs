@@ -194,6 +194,19 @@ pub(super) async fn deliver_and_wait(
         AgentMessage::new(from.clone(), Endpoint::Agent { id: to.clone() }, question, next_hop);
     // 質問自体のトークンは呼び出し元のターンに計上済み。二重計上しない。
     outgoing.tokens = 0;
+    // 受信箱の枠を記録より先に取る（Spec 77 N10）。停止中・満杯の相手への依頼は記録しない —
+    // サーヴァント同士の発話は広場ログに出るので、記録すると配られていない依頼が他の個体の
+    // プロンプトに載る（上の輪の拒否が記録を避けるのと同じ理由）。
+    let permit = match super::reserve_mailbox(shared, to).await {
+        Ok(permit) => permit,
+        Err(err) => {
+            // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
+            return (
+                super::reply_text::undeliverable(&err, language),
+                PlanTaskState::Undeliverable,
+            );
+        }
+    };
     shared.record(outgoing.clone(), session).await;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -214,13 +227,7 @@ pub(super) async fn deliver_and_wait(
         session: session.clone(),
     };
 
-    if let Err(err) = deliver_envelope(shared, to, envelope).await {
-        // 相手が停止中・受信箱が飽和。会話は止めず、モデルに事実を返す。
-        return (
-            super::reply_text::undeliverable(&err, language),
-            PlanTaskState::Undeliverable,
-        );
-    }
+    permit.send(envelope);
 
     // 待ちの上限は村の設定（Spec 44 — `World::ask_timeout()`・None = 600 秒）。
     // 呼び出しごとに読むので、保存すれば次の委譲から効く。
@@ -1291,6 +1298,36 @@ impl Outcome {
     }
 }
 
+/// 関数名の長さの上限（OpenAI 互換の口の制約。ほかのワイヤもこれより長い名前を受けない）。
+pub(super) const MAX_TOOL_NAME: usize = 64;
+
+/// 接続先のツール名を決める（転送・委譲・判断役で 1 実装）。
+///
+/// 自然な名前（`{prefix}{target}`）が 64 文字以内で空いていればそれ、そうでなければ退避名
+/// `fallback`。**退避名も既に決めた名前と照合し、空くまで `_2`, `_3`, … を足す**（Spec 77 #16 —
+/// 照合しないと、接続先 `[agent_2, agent_3, 53 文字以上の ID]` の 3 つ目の退避名
+/// `transfer_to_agent_2` が 1 つ目と重なり、先頭一致の逆引きで長い ID の相手への呼び出しが
+/// `agent_2` へ配送される）。`taken` は既に決めた名前を答える。
+pub(super) fn unique_tool_name(
+    prefix: &str,
+    target: &str,
+    fallback: &str,
+    taken: impl Fn(&str) -> bool,
+) -> String {
+    let natural = format!("{prefix}{target}");
+    if natural.len() <= MAX_TOOL_NAME && !taken(&natural) {
+        return natural;
+    }
+    if !taken(fallback) {
+        return fallback.to_owned();
+    }
+    // 退避名は短い（接頭辞 + 連番）ので、接尾辞を足しても 64 文字を超えない。
+    (2usize..)
+        .map(|n| format!("{fallback}_{n}"))
+        .find(|candidate| !taken(candidate))
+        .expect("接尾辞は尽きない")
+}
+
 /// 転送先ごとのツール定義と、その逆引き。
 pub(super) struct HandoffTools {
     /// `(ツール名, 転送先, 表示名)`。名前からの逆引きと、説明文の生成に使う。
@@ -1315,19 +1352,13 @@ impl HandoffTools {
     /// 「ザリ・ロブステル」と `agent_2` を結び付けられない。実際にそうなっており、
     /// 宛先の取り違えと「自分で全員のセリフを書く」の原因になっていた。
     pub(super) fn build(targets: &[(AgentId, String)]) -> Self {
-        const MAX_TOOL_NAME: usize = 64;
         const PREFIX: &str = "transfer_to_";
 
         let mut entries: Vec<(String, AgentId, String)> = Vec::with_capacity(targets.len());
         for (index, (target, display)) in targets.iter().enumerate() {
-            let natural = format!("{PREFIX}{target}");
-            let name = if natural.len() <= MAX_TOOL_NAME
-                && !entries.iter().any(|(existing, _, _)| *existing == natural)
-            {
-                natural
-            } else {
-                format!("{PREFIX}agent_{index}")
-            };
+            let name = unique_tool_name(PREFIX, target.as_str(), &format!("{PREFIX}agent_{index}"), |n| {
+                entries.iter().any(|(existing, _, _)| existing == n)
+            });
             entries.push((name, target.clone(), display.clone()));
         }
         Self { entries, judges: Vec::new() }
@@ -1784,6 +1815,45 @@ mod waiting_chain_tests {
 
     fn agent(id: &str) -> AgentId {
         AgentId::from(id)
+    }
+
+    /// 退避名も既存の名前と照合する（Spec 77 #16）。3 つ目の長い ID の退避名 `transfer_to_agent_2` は
+    /// 1 つ目の自然な名前と同じになり、先頭一致の逆引きで長い ID の相手を呼ぶつもりの呼び出しが
+    /// `agent_2` へ配送されていた。
+    #[test]
+    fn a_fallback_name_never_takes_an_existing_name() {
+        let long = "x".repeat(60);
+        let tools = HandoffTools::build(&[
+            (agent("agent_2"), "ジェミー".to_owned()),
+            (agent("agent_3"), "ルナ".to_owned()),
+            (agent(&long), "長い名前".to_owned()),
+        ]);
+        let names: Vec<&str> = tools.entries.iter().map(|(name, _, _)| name.as_str()).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "ツール名が重なる: {names:?}");
+        let long_tool = &tools.entries[2].0;
+        assert!(long_tool.len() <= 64, "退避名も 64 文字以内: {long_tool}");
+        assert_eq!(tools.resolve(long_tool), Some(&agent(&long)), "長い ID の相手へ届く");
+        assert_eq!(
+            tools.resolve_ask(&HandoffTools::ask_name(long_tool)),
+            Some(&agent(&long)),
+            "ask_* も同じ名前を引き継ぐ"
+        );
+        assert_eq!(tools.resolve("transfer_to_agent_2"), Some(&agent("agent_2")));
+    }
+
+    /// 退避名の照合は、退避名どうしの重なりも避ける（連番が既に使われていれば接尾辞を足す）。
+    #[test]
+    fn unique_tool_name_adds_a_suffix_until_free() {
+        let taken = ["transfer_to_agent_1", "transfer_to_agent_1_2"];
+        let name = unique_tool_name("transfer_to_", &"y".repeat(60), "transfer_to_agent_1", |n| {
+            taken.contains(&n)
+        });
+        assert_eq!(name, "transfer_to_agent_1_3");
+        let natural = unique_tool_name("transfer_to_", "agent_9", "transfer_to_agent_0", |_| false);
+        assert_eq!(natural, "transfer_to_agent_9", "空いていれば自然な名前");
     }
 
     /// ask / plan の連鎖は自分を末尾に足す。**判定は追加後**なので、

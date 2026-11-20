@@ -79,6 +79,17 @@ fn current_exe_string() -> String {
         .unwrap_or_default()
 }
 
+/// Linux で自動起動に登録する実行ファイル（引用符なし）。AppImage は展開先（`current_exe` =
+/// `/tmp/.mount_…`）ではなく AppImage そのもの（`APPIMAGE`）。**登録と、読み戻して比べる側の両方が
+/// これを使う**（Spec 77 #8a — 比べる側だけ `current_exe` だったので、登録が今の Fuseforks を指して
+/// いても「別の Fuseforks」と出続けた）。
+#[cfg(any(target_os = "linux", test))]
+fn launch_target(appimage: Option<std::ffi::OsString>, current_exe: impl FnOnce() -> String) -> String {
+    appimage
+        .map(|path| std::path::PathBuf::from(path).display().to_string())
+        .unwrap_or_else(current_exe)
+}
+
 fn scope_of(user: bool, machine: bool) -> AutostartScope {
     match (user, machine) {
         (true, true) => AutostartScope::Both,
@@ -259,19 +270,29 @@ mod platform {
 
     use super::{current_exe_string, scope_of, AutostartView, AUTOSTART_ARG, ENTRY_NAME};
 
-    /// 登録する実行ファイル。Linux の AppImage は展開先ではなく AppImage そのもの（`APPIMAGE`）。
-    /// **Linux は `Exec` に入るので引用符で包む。macOS は plist の 1 要素なので包まない。**
-    fn app_path() -> String {
+    /// 自動起動の対象の実行ファイル（引用符なし）。**登録（`app_path`）と、読み戻して比べる側（`read`）の
+    /// 1 実装**（Spec 77 #8a）。Linux の AppImage は展開先ではなく AppImage そのもの。
+    fn app_target() -> String {
         #[cfg(target_os = "linux")]
         {
-            let path = std::env::var_os("APPIMAGE")
-                .map(|path| PathBuf::from(path).display().to_string())
-                .unwrap_or_else(current_exe_string);
-            format!("\"{path}\"")
+            super::launch_target(std::env::var_os("APPIMAGE"), current_exe_string)
         }
         #[cfg(not(target_os = "linux"))]
         {
             current_exe_string()
+        }
+    }
+
+    /// 登録する実行ファイル。
+    /// **Linux は `Exec` に入るので引用符で包む。macOS は plist の 1 要素なので包まない。**
+    fn app_path() -> String {
+        #[cfg(target_os = "linux")]
+        {
+            format!("\"{}\"", app_target())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            app_target()
         }
     }
 
@@ -311,7 +332,7 @@ mod platform {
             enabled,
             scope: scope_of(registered.is_some(), false),
             registered_command: registered,
-            current_exe: current_exe_string(),
+            current_exe: app_target(),
         })
     }
 
@@ -327,6 +348,29 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Linux の AppImage は、登録するのも読み戻して比べるのも AppImage そのもの（Spec 77 #8a）。
+    ///
+    /// 登録は `APPIMAGE`、比べる側は `current_exe`（AppImage ではマウント先の `/tmp/.mount_…`）だったので、
+    /// 画面の「別の Fuseforks が登録されています」が必ず立ち、入れ直しても消えなかった。非 Windows の
+    /// 分岐はこの端末ではコンパイルされないので、規則は純関数で、配線は字面で留める。
+    #[test]
+    fn an_appimage_registers_and_compares_the_same_path() {
+        assert_eq!(
+            launch_target(Some("/home/u/Fuseforks.AppImage".into()), || "/tmp/.mount_x/fuseforks".to_owned()),
+            "/home/u/Fuseforks.AppImage"
+        );
+        assert_eq!(launch_target(None, || "/usr/bin/fuseforks".to_owned()), "/usr/bin/fuseforks");
+
+        let src = include_str!("autostart.rs").replace("\r\n", "\n");
+        let unix = &src[src.find("fn registered_command()").expect("非 Windows の読み取り")..];
+        let read = &unix[unix.find("pub fn read()").expect("read")..];
+        let read = &read[..read.find("\n    }\n").expect("read の終わり")];
+        assert!(
+            read.contains("current_exe: app_target()"),
+            "読み戻して比べる側が登録と別の規則で実行ファイルを組んでいる: {read}"
+        );
+    }
 
     #[test]
     fn the_windows_value_quotes_the_path_and_adds_the_argument() {

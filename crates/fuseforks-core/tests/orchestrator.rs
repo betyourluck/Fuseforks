@@ -1726,6 +1726,13 @@ async fn asking_a_stopped_agent_fails_without_hanging() {
         log.iter().any(|m| m.to == Endpoint::User),
         "ユーザーへ何かが返ること: {log:#?}"
     );
+    // 届かなかった依頼は記録しない（Spec 77 N10 — サーヴァント同士の発話は広場ログに出るので、
+    // 記録すると配られていない依頼が他の個体のプロンプトに載る）。
+    let ring = orchestrator.message_log(None).await;
+    assert!(
+        ring.iter().all(|m| m.to != Endpoint::Agent { id: b.clone() }),
+        "停止中の相手への依頼が会話に残る: {ring:#?}"
+    );
 }
 
 /// 居合わせた会話（広場ログ）が見えること。
@@ -4242,6 +4249,13 @@ async fn sending_to_a_stopped_agent_is_refused() {
     let err = orchestrator.send_user_message(&id, "起きてる？").await.unwrap_err();
     assert_eq!(err.code(), "NOT_RUNNING");
     assert!(!err.is_retryable());
+    // 届かなかった発話は記録しない（Spec 77 #12 — 記録してから配送すると、会話ペイン・
+    // 保存先・リングに残り、入力欄へ戻った文面を送り直すと発話が 2 通になる）。
+    let log = orchestrator.message_log(None).await;
+    assert!(
+        log.iter().all(|m| m.content != "起きてる？"),
+        "配られていない発話が会話に残る: {log:#?}"
+    );
 }
 
 #[tokio::test]

@@ -205,6 +205,27 @@ async fn a_judge_draft_that_never_passes_is_returned_invalid_after_three_attempt
     assert_eq!(v.requests.lock().unwrap().len(), 3, "上限は 3 回");
 }
 
+/// 判断役: 2 回目が空の応答（Gemini の止められた応答は `Ok` で本文が無い）でも、空の assistant を
+/// appended に入れない（Spec 77 #17c — 画面はそれを履歴に積んで次の要求で送り返し、Gemini には
+/// `{"role":"model","parts":[]}` として届いていた）。
+#[tokio::test]
+async fn an_empty_reply_in_the_judge_loop_leaves_no_empty_assistant() {
+    let v = village("judge-empty", vec![draft("c1", BAD_RULES), empty()]).await;
+    let reply = v
+        .orchestrator
+        .assist_draft(request(AssistKind::Judge, JUDGE, vec![], Some("作りたい")))
+        .await
+        .unwrap();
+    let history = appended(&reply);
+    assert!(
+        history
+            .iter()
+            .all(|m| m.role != Role::Assistant || !m.content.is_empty() || !m.tool_calls.is_empty()),
+        "本文も呼び出しも無い assistant が残る: {history:#?}"
+    );
+    assert_eq!(check_history(&history[1..]), Ok(()), "返す履歴は対が揃っている");
+}
+
 /// 輪の途中で質問が返ったら会話へ戻す。**不正な下書きと理由は appended に残る。**
 #[tokio::test]
 async fn a_question_in_the_middle_of_the_loop_goes_back_to_the_conversation() {

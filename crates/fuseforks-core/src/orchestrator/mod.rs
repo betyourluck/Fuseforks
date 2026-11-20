@@ -1601,11 +1601,17 @@ impl Orchestrator {
             .map(|(to, message)| (to.clone(), message.chars().count() as u32))
             .collect();
         let started_at_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        self.shared
+        // 入口の proposal から ここまでの await の間に、もう 1 本の承認・破棄が遷移を済ませうる。
+        // 遷移できたかは書き込みロックの中の 1 回で決める（Spec 77 #9 — 二重配送・破棄した計画の配送を防ぐ）。
+        if !self
+            .shared
             .plan_waves
             .write()
             .await
-            .dispatch_wave(plan_id, &announced, started_at_ms);
+            .dispatch_wave(plan_id, &announced, started_at_ms)
+        {
+            return Err(CoreError::PlanWaveNotPending { plan_id });
+        }
 
         let to_list = accepted
             .iter()
@@ -1690,7 +1696,10 @@ impl Orchestrator {
         else {
             return Err(CoreError::PlanWaveNotPending { plan_id });
         };
-        self.shared.plan_waves.write().await.discard_wave(plan_id);
+        // 承認と同じく、遷移できたかは書き込みロックの中で決める（Spec 77 #9）。
+        if !self.shared.plan_waves.write().await.discard_wave(plan_id) {
+            return Err(CoreError::PlanWaveNotPending { plan_id });
+        }
         // 破棄の行は計画を提示した会話へ（Spec 75 凍結 6）。
         let session = self
             .shared
@@ -1810,6 +1819,18 @@ async fn deliver(
 
 /// 返信路つきの配送。
 async fn deliver_envelope(shared: &Shared, to: &AgentId, envelope: Envelope) -> CoreResult<()> {
+    reserve_mailbox(shared, to).await?.send(envelope);
+    Ok(())
+}
+
+/// 受信箱の枠を先に取る（Spec 77 #12）。**配送の失敗の判定はここの 1 実装** — 受信箱が無い・
+/// 閉じた（`NotRunning`）と満杯（`MailboxFull`）。
+///
+/// 発話を記録してから配送する経路（利用者の発話・委譲）は、記録の前にこれを呼ぶ。枠を取ってから
+/// 記録して送れば、「配られていない発話」が会話ペイン・保存先・リングに残らない（記録してから
+/// 配送に失敗すると、入力欄へ戻った文面を送り直したときに発話が 2 通になる）。取った枠は
+/// `send` で使うか、落とせば返る。
+async fn reserve_mailbox(shared: &Shared, to: &AgentId) -> CoreResult<mpsc::OwnedPermit<Envelope>> {
     let sender = {
         let mailboxes = shared.mailboxes.read().await;
         mailboxes.get(to).cloned()
@@ -1819,7 +1840,7 @@ async fn deliver_envelope(shared: &Shared, to: &AgentId, envelope: Envelope) -> 
         agent_id: to.to_string(),
     })?;
 
-    sender.try_send(envelope).map_err(|err| match err {
+    sender.try_reserve_owned().map_err(|err| match err {
         mpsc::error::TrySendError::Full(_) => CoreError::MailboxFull {
             agent_id: to.to_string(),
             capacity: shared.config.mailbox_capacity,
@@ -2293,6 +2314,177 @@ pub(super) fn attachment_summary(
         [] => String::new(),
         [only] => only.clone(),
         [init @ .., last] => format!("{}{last_sep}{last}", init.join(sep)),
+    }
+}
+
+/// 判定と書き込みの間に await をまたぐ取り合い（Spec 77 B 群）。
+///
+/// どのテストも `world` の書き込みロックを握って片方を止め、窓を決定的に作る（公開 API からは
+/// 窓を作れないので、子のモジュールで `shared` に触る）。
+///
+/// - #9: `dispatch_plan_wave` は入口で `proposal` を読み取りロックで確かめてから、`mailboxes` と
+///   `world` の await をまたいで遷移する。その間にもう 1 本の承認・破棄が遷移を済ませる
+/// - #13: `open_session` が保存先を読み終えて `world` を待つ間に、`delete_session` が
+///   `switch_gate` を取らずにその会話を消す
+#[cfg(test)]
+mod race_tests {
+    use super::*;
+    use crate::model::{AgentSpec, ModelTemplate};
+    use crate::plan::PlanTaskInput;
+    use crate::{ConfigStore, FixedBackendFactory, InMemorySecretStore};
+
+    struct TempDir(std::path::PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn setup(tag: &str) -> (TempDir, Orchestrator, AgentId, AgentId) {
+        let dir = TempDir(std::env::temp_dir().join(format!(
+            "fuseforks-dispatchrace-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let orchestrator = Orchestrator::bootstrap(
+            ConfigStore::new(&dir.0),
+            Arc::new(FixedBackendFactory::echo("[echo]")),
+            Arc::new(InMemorySecretStore::new()),
+            OrchestratorConfig {
+                schedule_interval: Duration::from_secs(3600),
+                ..OrchestratorConfig::default()
+            },
+        )
+        .await
+        .expect("bootstrap できること");
+        orchestrator.set_language(crate::world::Language::Ja).await.unwrap();
+        orchestrator
+            .upsert_template(ModelTemplate::new("tpl", "既定", "mock-model"))
+            .await
+            .unwrap();
+        let worker = AgentId::from("race_worker");
+        orchestrator
+            .create_agent(AgentSpec::new(worker.clone(), "ワーカー", "tpl"))
+            .await
+            .unwrap();
+        orchestrator.start_agent(&worker).await.unwrap();
+        let coordinator = AgentId::from("race_coord");
+        let mut spec = AgentSpec::new(coordinator.clone(), "進行役", "tpl");
+        spec.connected_agents = vec![worker.clone()];
+        orchestrator.create_agent(spec).await.unwrap();
+        orchestrator.start_agent(&coordinator).await.unwrap();
+        (dir, orchestrator, coordinator, worker)
+    }
+
+    async fn propose(orchestrator: &Orchestrator, coordinator: &AgentId, worker: &AgentId) -> u64 {
+        orchestrator.shared.plan_waves.write().await.begin_pending_wave(
+            coordinator.clone(),
+            1,
+            &[(worker.clone(), "調べて".to_owned())],
+            0,
+        )
+    }
+
+    fn tasks(worker: &AgentId) -> Vec<PlanTaskInput> {
+        vec![PlanTaskInput {
+            to: worker.clone(),
+            message: "調べて".to_owned(),
+        }]
+    }
+
+    #[tokio::test]
+    async fn two_approvals_of_one_proposal_dispatch_it_once() {
+        let (_dir, orchestrator, coordinator, worker) = setup("twice").await;
+        let plan_id = propose(&orchestrator, &coordinator, &worker).await;
+
+        // 2 本とも入口の proposal を通ってから world の読み取りで止まる。
+        let guard = orchestrator.shared.world.write().await;
+        let (first, second, ()) = tokio::join!(
+            orchestrator.dispatch_plan_wave(plan_id, tasks(&worker), None),
+            orchestrator.dispatch_plan_wave(plan_id, tasks(&worker), None),
+            async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                drop(guard);
+            },
+        );
+
+        let accepted = [first.is_ok(), second.is_ok()].iter().filter(|ok| **ok).count();
+        assert_eq!(accepted, 1, "同じ提案を 2 回配送しない: {first:?} / {second:?}");
+        let rejected = if first.is_err() { first } else { second };
+        assert!(
+            matches!(rejected, Err(CoreError::PlanWaveNotPending { plan_id: id }) if id == plan_id),
+            "負けた側は PlanWaveNotPending: {rejected:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_proposal_discarded_mid_approval_is_not_dispatched() {
+        let (_dir, orchestrator, coordinator, worker) = setup("discard").await;
+        let plan_id = propose(&orchestrator, &coordinator, &worker).await;
+
+        // 承認が world で止まっている間に、破棄が遷移を済ませる（破棄は言語を読む world で止まる）。
+        let guard = orchestrator.shared.world.write().await;
+        let (dispatched, discarded, ()) = tokio::join!(
+            orchestrator.dispatch_plan_wave(plan_id, tasks(&worker), None),
+            orchestrator.discard_plan_wave(plan_id),
+            async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                drop(guard);
+            },
+        );
+
+        assert!(discarded.is_ok(), "破棄は通る: {discarded:?}");
+        assert!(
+            matches!(dispatched, Err(CoreError::PlanWaveNotPending { plan_id: id }) if id == plan_id),
+            "破棄した計画は走らない: {dispatched:?}"
+        );
+        let state = orchestrator
+            .shared
+            .plan_waves
+            .read()
+            .await
+            .list()
+            .into_iter()
+            .find(|w| w.plan_id == plan_id)
+            .map(|w| w.state);
+        assert_eq!(state, Some(crate::plan::PlanWaveState::Discarded));
+    }
+
+    #[tokio::test]
+    async fn a_conversation_being_opened_is_not_deleted_under_it() {
+        let (_dir, orchestrator, _coordinator, _worker) = setup("open-delete").await;
+        let target = orchestrator.create_session().await.unwrap();
+        let other = orchestrator.create_session().await.unwrap();
+        assert_eq!(orchestrator.current_session(), other);
+
+        // 開く側は保存先を読み終えて world の書き込みで止まる。消す側はその間に走る。
+        let guard = orchestrator.shared.world.write().await;
+        let (opened, deleted, ()) = tokio::join!(
+            orchestrator.resume_session(&target),
+            orchestrator.delete_session(&target),
+            async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                drop(guard);
+            },
+        );
+
+        let still_exists = orchestrator
+            .shared
+            .sessions
+            .as_ref()
+            .unwrap()
+            .session_meta(&target)
+            .unwrap()
+            .is_some();
+        let open_now = orchestrator.current_session();
+        assert!(
+            still_exists || open_now != target,
+            "開いている会話が消えた会話を指す: opened={opened:?} deleted={deleted:?} open={open_now}"
+        );
     }
 }
 

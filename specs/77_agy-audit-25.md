@@ -1,9 +1,10 @@
 # Spec 77: agy が挙げた 25 件の指摘の検証と、修正の TODO
 
-- 状態: **A 群の修正 7 件が着地・B / C 群は未着手**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
+- 状態: **A 群 7 件・B 群 17 件が着地・C 群 9 件は未着手**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
   不成立 6 / 設計どおり 2。ほかに指摘に無い問題 14 件（N1〜N14）。**N8 = OpenAI の課金切れの 429 が再試行されている、は `fuseforks.log` の
   実測**。→ 同日、利用者「A 群から着手」で A 群の 7 件（N8 / #3 / #5 + N2 + N3 / #15 / #11 + N11 / #14 / #1 + N9）を、どれも赤いテストを
-  先に書いてから直した。全体 93 本・1,606 本が緑・clippy 0。記録は末尾の「A 群の実装記録」。**実機は未確認**）
+  先に書いてから直した。全体 93 本・1,606 本が緑・clippy 0。記録は末尾の「A 群の実装記録」（`9a195f1`）。→ 2026-11-20、利用者「B 群から着手」で
+  B 群の 17 件を同じ規律で直した（画面の 4 件はサブエージェント）。記録は末尾の「B 群の実装記録」。**実機は A 群・B 群とも未確認**）
 - 起点: 利用者（2026-11-19）—「agy で発見した 25 件のバグをこちらに書きます。TODO のリストを spec に作り、
   バグであるかを調査してください」。agy の報告は `fuseforks-core` / `fuseforks-host` / `apps/cli` / `apps/gui-tauri` の
   全体を対象にした 25 項目（枝を数えると 36 主張）
@@ -431,6 +432,22 @@
 
 ## 指摘に無い問題（検証の途中で見つかったもの）
 
+（N1〜N7 は起票の時点で末尾の「直さないと決めるもの」の後ろに置いていた。2026-11-20 にこの節へ移した — 中身は変えていない）
+
+- **N1 実行中に「閉じるとトレイに隠れる」を ON にしてトレイの作成に失敗すると、✕ で隠れて戻せない** — `set_startup_settings` は
+  `tray::install` の失敗を `note!` で握って設定を ON のまま返す。`hidesOnClose` は設定の値しか見ない。起動時は `after_boot` の
+  `hidden && !tray_ready`（`lib.rs:328`）で防いでいるが、実行中の切り替えでは防いでいない（Spec 69 D5 が起動時にしか効いていない）
+- **N2 単価表の取得が `blocked` を見ない** — `fetch_model_prices`（`commands.rs:1684-1694`）は `pricing.json` が壊れているとき既定の URL を
+  取りに行く。URL を空にして外へ出ない設定の人でも、壊れた後に「取得」を押すと開発者の配信元へ出る（#5 と組で直す）
+- **N3 `mcp_server.json` 以外の 4 つの棚は保存が一時ファイル + rename でない** — 承認・Jev・画像生成・単価表は素の `std::fs::write`。
+  書く途中で落ちると壊れた JSON が残り、承認の台帳なら人が直すまで前判定と後判定が全部止まる
+- **N4 `.env.example` を写してから `--update` すると、どの秘密も埋まらない** — 秘密の行は印の無い `# NAME=` なので `CommentedOut` に
+  分類され、`ENV_COMMENTED_OUT` が出るだけになる
+- **N5 #7b と同じ形（上限なしの全量読み）** — `llm/client.rs:485, 517`、`jev.rs:398, 401`、`image_gen.rs:870` の `response.text()`。
+  相手は利用者が設定した API
+- **N6 `schedules.rs:484` の `discard_empty_session` も `switch_gate` を取らずに削除する**（#13 と同じ形。空の会話なので害は小さい）
+- **N7 Linux の `app_path()` は `APPIMAGE` を検査せずに使う** — 環境変数 1 つで自動起動の登録先を任意のファイルに向けられる。
+  tauri-utils はマウント先にいるかを確かめている
 - **N8 OpenAI の課金切れの 429 が `rate_limit` に分類され、2 回再試行している（実測）** — 実物の本文は `"type": "insufficient_quota"` と
   `"code": "credit_balance_exhausted"` を両方持ち、`openai_compat::error_signal`（`:457-461`）は `code` を優先するので、表に無い
   `credit_balance_exhausted` が分類へ渡り、`classify` は status の既定の `RateLimit` を返す。`fuseforks.log` 25278-25279 / 25303-25304 行
@@ -472,23 +489,23 @@
 
 ### B. 競合・条件の狭いもの
 
-- [ ] **#9** `dispatch_wave` / `discard_wave` が遷移できたかを返し、偽なら `PlanWaveNotPending` — `plan.rs` / `orchestrator/mod.rs`
-- [ ] **#13 + N6** `delete_session` と `discard_empty_session` が判定から削除まで `switch_gate` を握る — `orchestrator/sessions.rs` / `schedules.rs`
-- [ ] **#10** 予定の配送の前に `in_flight` / `pending_*` へ登録し、配送が失敗したら取り消す — `orchestrator/schedules.rs`
-- [ ] **#12 + N10** 利用者の発話と委譲の発話を、受信箱の枠を先に取ってから記録する — `orchestrator/runtime.rs` / `delegation.rs`
-- [ ] **#16** 退避名も既存の名前と照合する — `orchestrator/delegation.rs` / `judging.rs`
-- [ ] **#2** `error_signal` は切る前の本文で呼ぶ — `llm/client.rs`
-- [ ] **#7a + #7b + N5** 単価表は `https_only(true)` / 単価表と OAuth は塊ごとに上限を見て読む（LLM・Jev・画像生成の `text()` も同じ形）
-- [ ] **#25c** `resolve_message_path` / `open_in_editor` を `#[tauri::command(async)]` へ — `commands.rs`
-- [ ] **#19** `prepareFile` はサイズと先頭のバイトを見てから全体を読む — `lib/attachment.ts`
-- [ ] **#20a + N12** 会話を切り替えたら添付の object URL を解放する / 画像以外は本体を読まない — `ChatPanel.vue`
-- [ ] **#22 + N14** 宛先が変わったら補完を閉じ、結果を入れる前に宛先を確かめる / 補完の `↑↓` に `.exact` — `ChatInput.vue`
-- [ ] **#21** 終了確認の守りを ✕ と OS の閉じる要求とトレイで共有する — `App.vue`
-- [ ] **#8a** 非 Windows の自動起動の読みで `current_exe` を `APPIMAGE` で組む — `autostart.rs`
-- [ ] **N1** 実行中に「閉じるとトレイに隠れる」を ON にしてトレイの作成に失敗したら、設定を OFF に戻すか ✕ で隠さない — `commands.rs`
-- [ ] **#6** `--update` で残した印つきコメントも `missing` に数える — `env_file.rs`
-- [ ] **#4a + #4b** 毒されたロックは承認しない / 書き終えるまでロックを持ち、失敗したらメモリを戻す — `probe_approvals.rs`
-- [ ] **#17c** Gemini の encode で空の assistant を落とす / `assist` は空の assistant を `appended` に入れない
+- [x] **#9** `dispatch_wave` / `discard_wave` が遷移できたかを返し、偽なら `PlanWaveNotPending` — `plan.rs` / `orchestrator/mod.rs`
+- [x] **#13 + N6** `delete_session` と `discard_empty_session` が判定から削除まで `switch_gate` を握る — `orchestrator/sessions.rs` / `schedules.rs`
+- [x] **#10** 予定の配送の前に `in_flight` / `pending_*` へ登録し、配送が失敗したら取り消す — `orchestrator/schedules.rs`
+- [x] **#12 + N10** 利用者の発話と委譲の発話を、受信箱の枠を先に取ってから記録する — `orchestrator/runtime.rs` / `delegation.rs`
+- [x] **#16** 退避名も既存の名前と照合する — `orchestrator/delegation.rs` / `judging.rs`
+- [x] **#2** `error_signal` は切る前の本文で呼ぶ — `llm/client.rs`
+- [x] **#7a + #7b + N5** 単価表は `https_only(true)` / 単価表と OAuth は塊ごとに上限を見て読む（LLM・Jev・画像生成の `text()` も同じ形）
+- [x] **#25c** `resolve_message_path` / `open_in_editor` を `#[tauri::command(async)]` へ — `commands.rs`
+- [x] **#19** `prepareFile` はサイズと先頭のバイトを見てから全体を読む — `lib/attachment.ts`
+- [x] **#20a + N12** 会話を切り替えたら添付の object URL を解放する / 画像以外は本体を読まない — `ChatPanel.vue`
+- [x] **#22 + N14** 宛先が変わったら補完を閉じ、結果を入れる前に宛先を確かめる / 補完の `↑↓` に `.exact` — `ChatInput.vue`
+- [x] **#21** 終了確認の守りを ✕ と OS の閉じる要求とトレイで共有する — `App.vue`
+- [x] **#8a** 非 Windows の自動起動の読みで `current_exe` を `APPIMAGE` で組む — `autostart.rs`
+- [x] **N1** 実行中に「閉じるとトレイに隠れる」を ON にしてトレイの作成に失敗したら、設定を OFF に戻すか ✕ で隠さない — `commands.rs`
+- [x] **#6** `--update` で残した印つきコメントも `missing` に数える — `env_file.rs`
+- [x] **#4a + #4b** 毒されたロックは承認しない / 書き終えるまでロックを持ち、失敗したらメモリを戻す — `probe_approvals.rs`
+- [x] **#17c** Gemini の encode で空の assistant を落とす / `assist` は空の assistant を `appended` に入れない
 
 ### C. 任意（防御だけ・害が小さい）
 
@@ -527,24 +544,52 @@
 - 台帳: `data_contract.yaml` の 6 か所（承認の台帳の「読めない」/ 波の押し出し / 打ち切りの検査点 / 計画の計器 / 再試行の code / Spec 15 の
   解決）・Spec 12 の (d)・`failures.md` #158
 
+### B 群の実装記録（2026-11-20）
+
+17 件とも**赤いテストを先に書いて、狙った主張で赤になることを確かめてから**直した。画面の 4 件（#19 / #20a + N12 / #22 + N14 / #21）は
+サブエージェントが同じ規律で直し、Rust 側はメインが直した。**どの項目も実機では確かめていない。**
+
+| 項目 | 赤のテスト | 赤の出方 | 処方 |
+|---|---|---|---|
+| #9 | 単体 `orchestrator/mod.rs` の `race_tests::two_approvals_of_one_proposal_dispatch_it_once` / `a_proposal_discarded_mid_approval_is_not_dispatched`（`world` の書き込みロックを握って窓を作る） | 2 本とも `Ok` / 破棄した計画の配送が `Ok` | `PlanWaveStore::dispatch_wave` / `discard_wave` が遷移できたかを `bool`（`#[must_use]`）で返し、偽なら `PlanWaveNotPending` |
+| #13 + N6 | 単体 `race_tests::a_conversation_being_opened_is_not_deleted_under_it` | 開いている会話が消えた会話を指す | `delete_session` は判定から削除まで `switch_gate` の read を握る（開いていれば read を放して移ってから、もう一度握って確かめる）。`discard_empty_session` も read を握り、開かれていれば消さない（N6 は赤を取れていない — 下） |
+| #10 | 走査 `schedules.rs` の `registration_order_tests`（2 本） | 登録が配送より後 | `deliver_scheduled` / `redeliver_for_acceptance` は配送の前に `in_flight` / `pending_*` へ登録し、配送が `Err` なら置き換えた前の登録へ戻す（`Registered`） |
+| #12 + N10 | 結合 `tests/orchestrator.rs` の既存 2 本へ「記録しない」の主張を足した（`sending_to_a_stopped_agent_is_refused` / `asking_a_stopped_agent_fails_without_hanging`） | 配られていない発話・依頼が会話に残る | `reserve_mailbox`（受信箱の枠を `try_reserve_owned` で先に取る。配送の失敗の判定の 1 実装）を記録の前に呼ぶ。`deliver_envelope` も同じ関数を通る |
+| #16 | 単体 `delegation.rs` の `a_fallback_name_never_takes_an_existing_name` / `unique_tool_name_adds_a_suffix_until_free` | `["transfer_to_agent_2", "transfer_to_agent_3", "transfer_to_agent_2"]` | `unique_tool_name` = 退避名も既に決めた名前と照合し、空くまで `_2`, `_3`, … を足す。転送・委譲と判断役（`judge_{index}`）が共有 |
+| #2 | 結合 `tests/error_body_truncation.rs` の `the_signal_is_read_before_the_body_is_cut` / `a_long_gemini_429_keeps_its_retry_delay` | `ClientError`（`ContextLength` のはず）/ `retry_after: None` | `error_signal` は切る前の本文で呼び、`MAX_ERROR_BODY` の切り詰めは表示へ運ぶ本文にだけ掛ける |
+| #7a + #7b + N5 | 結合 `tests/response_body_cap.rs`（送り終えないスタブ — LLM と OAuth の探索）/ 走査 `pricing_source.rs` の `the_fetch_stays_on_https_and_reads_with_a_cap` | 2 本とも待ちの上限まで返らない（`Elapsed`）/ `.https_only(true)` が無い | 新しいモジュール `http_body`（`ChunkSource` を reqwest 0.12 と 0.13 に実装・`read_capped` / `read_prefix`）を LLM（成功 32 MiB・エラー 64 KiB）・Jev（4 MiB）・画像生成（64 MiB）・OAuth（1 MiB）・単価表（8 MiB）が通る。単価表は `.https_only(true)`。字面の網 `every_outbound_response_is_read_through_the_cap`（変異 = Jev のエラー本文を `.text().await` へ戻す → 赤） |
+| #25c | 走査 `editor.rs` の `the_path_commands_run_off_the_ui_thread` | `#[tauri::command]` | `#[tauri::command(async)]` |
+| #8a | 単体と走査 `autostart.rs` の `an_appimage_registers_and_compares_the_same_path` | 読み戻す側が `current_exe_string()` | `launch_target`（純関数）+ 非 Windows の `app_target` を登録（`app_path`）と読み戻し（`read`）が共有。**非 Windows の分岐はこの端末ではコンパイルされていない** |
+| N1 | 単体と走査 `startup.rs` の `a_tray_that_could_not_be_made_turns_hiding_off` | 保存する値をトレイの結果で決めていない | トレイを先に作り、作れなければ `with_tray_outcome` が「トレイに隠れる」を OFF にして保存する。保存に失敗したら、前の値が OFF なら作ったトレイを外す |
+| #6 | 単体 `env_file.rs` の `a_placeholder_that_stays_is_still_reported_missing` | `missing` が空 | 値の無い印つきコメントは行をそのまま残し、`missing` へ積む（扉の合鍵は `bake` が作るので数えない） |
+| #4a + #4b | 単体 `probe_approvals.rs` の `a_poisoned_lock_approves_nothing` / `a_failed_write_leaves_memory_as_it_was` | 毒されたロックで承認が通る / 書けなかった承認が効く | 毒されたロックは承認せず書かない。`mutate` は書き込みロックを持ったまま書き、失敗したら編集前へ戻す |
+| #17c | 単体 `gemini.rs` の `an_empty_assistant_turn_is_not_sent` / 結合 `assist_draft.rs` の `an_empty_reply_in_the_judge_loop_leaves_no_empty_assistant` | `{"role":"model","parts":[]}` を送る / 空の assistant が appended に残る | Gemini の encode は本文も呼び出しも無い assistant を落とす。`assist` は空の応答を積まない |
+| #19 | `attachment.test.ts` の `prepareFile（#19）` 6 本（全体を読んだ回数を数える偽のファイル） | 13MB の PDF などで全体を 1 回読んでいた / `NotReadableError` | 大きさ → 先頭 16 バイト（`HEAD_BYTES`）で種別 → 種別の上限 → 全体、の順。読み込みの失敗は `readFailed`（辞書 3 言語 `chatInput.attachReadFailed`） |
+| #20a + N12 | `attachmentUrls.test.ts`（10 本）/ `attachmentUrlsWiring.test.ts`（6 本） | モジュールが無い / 画像以外でも本体を読む / `revokeObjectURL` が無い | `lib/attachmentUrls.ts` の `createAttachmentUrlCache`（画像だけ読む・`releaseAll(keep)` で解放・世代で古い読み込みを捨てる）。会話の一覧が空に差し替わったとき解放する |
+| #22 + N14 | `pathComplete.test.ts` の `isCurrentListing` 4 本 / `pathCompleteWiring.test.ts` 5 本 | 宛先の監視が無い / 世代が無い / `.exact` が無い | 宛先が変わったら閉じる・一覧が届いたら世代と宛先と種別を確かめてから入れる・補完の `↑↓` に `.exact` |
+| #21 | `closeConfirm.test.ts` 3 本 / `launchExitWiring.test.ts` を 2 本に割った | ✕ / OS の経路が守りを通らない | `singleExitConfirm` を ✕・OS の閉じる要求・トレイの「終了」の 3 経路で共有（`exitConfirmInFlight` は撤去）。`onCloseRequested` の解除関数を取って解除する |
+
+- **赤を取れていないもの 1 つ（N6）** — 予定のために作った空の会話を、作ってから消すまでの間に人が開く窓は、外から決定的に作れない。
+  処方は構造（`delete_session` と同じく `switch_gate` の read を握り、開かれていれば消さない）で、テストは留めていない
+- **#10 と #8a / N1 / #25c は字面で留めた。** #10 は切り離したタスクの中の順序で外から割り込めない。#8a は非 Windows の分岐がこの端末で
+  コンパイルされず、N1 / #25c は `AppHandle` と Tauri の実行環境が要る。字面の網は**赤を確かめた後に**直した（Spec 57 P1 と同じ扱い）
+- **N1 の副作用**: 保存の前にトレイを作るようになった。保存に失敗したときは、前の値が OFF ならトレイを外す（Spec 69 D7 の「書けなかったときは
+  手元の値も変えない」を保つ）
+- **N12 で 1 つ後退した**（サブエージェントの報告）— 音声・動画・PDF は本体を読まなくなったので、保持期間で消えたかどうかが会話ペインでは
+  分からない。消えていてもファイル名の行が出て、「削除されました」の枠は出ない（Spec 23 D9 が画像以外では効かない）。消えた添付の
+  「入力欄へ」は出たままで、押すと入力欄が読んで「削除されました」と断る。本体を読まずに有無だけ確かめる経路は作っていない
+- **#20a の残り**: 大きく見ている画像の URL は次に会話を切り替えるまで解放されない（多くて 1 つ）。リングの上限から押し出された発話の添付は
+  解放していない
+- **未確認**: #22 の「Alt+↑↓ でキーを離すと新しい宛先の一覧で補完が開き直る」はコードの読み / #21 の `decorations: false` の窓で Alt+F4 が
+  `CloseRequested` として届くか / #7b の成功の本文の上限（LLM 32 MiB）は実データで測っていない（画像の写しと web 検索の結果を含んでも
+  数 MB という見込み）
+- **作業で踏んだもの**: `schedules.rs` の作業コピーが CRLF のまま、ヒアドキュメントで LF の行を足して混在した（LF にそろえた。走査テストは
+  `\r\n` を `\n` へ直してから読む）/ clippy の `large_enum_variant` が `Registered::Acceptance` に掛かった（箱に入れた）
+- **検証**: Rust 全体 94 本・1,631 本が緑・clippy 0 / vitest 137 ファイル・1,190 本・vue-tsc 0・build 緑
+
 ### 直さないと決めるもの
 
 - **#8b** 契約（`data_contract.yaml:4590-4591`）とテストが決めている。Windows が HKLM の `StartupApproved\Run` を HKCU の `Run` にも
   適用するかを一次資料で確かめてから、契約ごと変えるかを決める
 - **#17b** 設計どおり（構造化出力のフォールバック。テストが意図して留めている）
 - **#24 / #25b / #25d** 不成立
-
-- **N1 実行中に「閉じるとトレイに隠れる」を ON にしてトレイの作成に失敗すると、✕ で隠れて戻せない** — `set_startup_settings` は
-  `tray::install` の失敗を `note!` で握って設定を ON のまま返す。`hidesOnClose` は設定の値しか見ない。起動時は `after_boot` の
-  `hidden && !tray_ready`（`lib.rs:328`）で防いでいるが、実行中の切り替えでは防いでいない（Spec 69 D5 が起動時にしか効いていない）
-- **N2 単価表の取得が `blocked` を見ない** — `fetch_model_prices`（`commands.rs:1684-1694`）は `pricing.json` が壊れているとき既定の URL を
-  取りに行く。URL を空にして外へ出ない設定の人でも、壊れた後に「取得」を押すと開発者の配信元へ出る（#5 と組で直す）
-- **N3 `mcp_server.json` 以外の 4 つの棚は保存が一時ファイル + rename でない** — 承認・Jev・画像生成・単価表は素の `std::fs::write`。
-  書く途中で落ちると壊れた JSON が残り、承認の台帳なら人が直すまで前判定と後判定が全部止まる
-- **N4 `.env.example` を写してから `--update` すると、どの秘密も埋まらない** — 秘密の行は印の無い `# NAME=` なので `CommentedOut` に
-  分類され、`ENV_COMMENTED_OUT` が出るだけになる
-- **N5 #7b と同じ形（上限なしの全量読み）** — `llm/client.rs:485, 517`、`jev.rs:398, 401`、`image_gen.rs:870` の `response.text()`。
-  相手は利用者が設定した API
-- **N6 `schedules.rs:484` の `discard_empty_session` も `switch_gate` を取らずに削除する**（#13 と同じ形。空の会話なので害は小さい）
-- **N7 Linux の `app_path()` は `APPIMAGE` を検査せずに使う** — 環境変数 1 つで自動起動の登録先を任意のファイルに向けられる。
-  tauri-utils はマウント先にいるかを確かめている

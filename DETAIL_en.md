@@ -56,6 +56,7 @@ Fuseforks/
 │       │   ├── prune.rs             Tool-result pruning pure mechanics (split into paragraphs / batch / render; knows no HTTP; [Spec 59](specs/59_jev-tool-result-pruning.md))
 │       │   ├── jev.rs               The Jev judgement-only model's wire (via Cloudflare Workers AI; implements `ParagraphScorer` and `Judge`)
 │       │   ├── image_gen.rs         The image-generation API wire (four providers' requests and responses, 8 failure classes, connection check; [Spec 76](specs/76_image-generation.md))
+│       │   ├── http_body.rs         Reads response bodies chunk by chunk against a cap (shared by the LLM, Jev, image generation, OAuth and the price table; Spec 77)
 │       │   ├── judge.rs             Judges, pure mechanism (judge.toml checks, condition grammar, rule evaluation, the active predicate; [Spec 62](specs/62_judge-agents.md))
 │       │   ├── assist.rs            AI drafting, pure mechanism (guides, the two-section context, submit_draft, classification, history checks; [Spec 63](specs/63_ai-draft-assist.md))
 │       │   ├── template_probe.rs    Connection test, pure mechanism (fixed prompt, verdict, the 10 failure categories, the log line; [Spec 68](specs/68_template-connection-test.md))
@@ -127,6 +128,7 @@ Fuseforks/
             ├── lib/ipc.ts           Typed invoke wrapper
             ├── lib/attachment.ts    Attachment pure functions (kind detection / scaling math / base64)
             ├── lib/attachmentList.ts The input's attachment list (5-item / 12MB checks / splitting for send. Spec 73)
+            ├── lib/attachmentUrls.ts Object URLs for attachments in the chat pane (reads images only / releases them on conversation switch. Spec 77)
             ├── lib/carries.ts       Which wire carries which kind (screen-side copy, for warnings)
             ├── lib/fileDrop.ts      File drag-and-drop (is this drag carrying files / the window guard that stops drops outside the input)
             ├── lib/pathComplete.ts  Trigger detection for `@` / `@@`, plus ranking and commit for path completion
@@ -581,7 +583,9 @@ backdrop, ✕ or Esc to close).
   pasting the same image twice, which stores it twice)
 - **If the file has already been removed by the retention rule, the button refuses at once**
   ("This attachment was deleted after its retention period"), rather than sending it and having
-  the model answer that it cannot see anything. Removed attachments get no button at all
+  the model answer that it cannot see anything. Removed images get no button at all.
+  **The conversation pane does not read audio, video or PDF bodies**, so for those the button stays,
+  and pressing it makes the input refuse with "deleted" (Spec 77 — it used to read up to 12 MB just to show a file name)
 - **Re-sending extends the file's retention** (its modification time is set to now when it is
   sent — otherwise an image from 29 days ago would vanish the day after you re-sent it). The
   trade-off: when several utterances point at the same file, they all show "deleted" together
@@ -627,7 +631,8 @@ reference. **On startup, anything older than 30 days — and, beyond a 500 MB to
 oldest first — is deleted.** Copies of generated images (sometimes `.jpg`) follow the same rule — the original
 stays in the work folder's `generated_images/` (Spec 76). A deleted image becomes a "this image was deleted after its
 retention period" placeholder in the conversation pane; showing nothing would make it look
-as if the attachment had never happened.
+as if the attachment had never happened. **Audio, video and PDF stay as a file-name line** (the pane does not read
+their bodies, so it does not know whether they were removed. Spec 77).
 
 ### Provider coverage (measured 2026-08-06)
 

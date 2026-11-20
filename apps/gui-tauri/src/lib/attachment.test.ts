@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AttachmentError,
   MAX_EDGE_PX,
+  MAX_SOURCE_BYTES,
   bytesToBase64,
   detectKind,
   fitWithin,
   isWebpBytes,
+  prepareFile,
   routeAttachment,
 } from "./attachment";
+import { KIND_MAX_BYTES } from "./carries";
 
 describe("fitWithin", () => {
   it("長辺が上限ちょうどなら縮小しない（境界値）", () => {
@@ -160,5 +164,110 @@ describe("routeAttachment", () => {
     // ここで断らないのは、断る根拠がこちらに無いから。デコードして初めて
     // 「画像ではなかった」と言える（そのとき unsupportedType を返す）。
     expect(routeAttachment(bytesOf("PK\x03\x04", 8))).toBe("image");
+  });
+});
+
+/**
+ * `prepareFile` は**大きさと先頭のバイトを見てから**全体を読む（#19）。
+ *
+ * 全体を先に読むと、数百 MB の動画を落としたときにその大きさのメモリを確保してから
+ * 「大きすぎます」になる。種別の判定（`detectKind`）が読むのは先頭 12 バイトまで。
+ */
+describe("prepareFile（#19）", () => {
+  const MB = 1024 * 1024;
+
+  /**
+   * 偽のファイル。`size` バイトのうち先頭に `head` を置いた中身を持つ。全体の読み込みと
+   * 先頭の読み込み（`slice` の先）を別々に数える — 「読んでから断った」と「読まずに断った」を
+   * 結果の種別ではなく読んだ回数で見分ける。
+   */
+  function fakeFile(
+    head: Uint8Array,
+    size: number,
+    options: { failWhole?: boolean; failHead?: boolean } = {},
+  ) {
+    const reads = { whole: 0, head: 0 };
+    const body = new Uint8Array(size);
+    body.set(head.subarray(0, size));
+    const file = {
+      name: "",
+      size,
+      async arrayBuffer(): Promise<ArrayBuffer> {
+        reads.whole += 1;
+        if (options.failWhole) throw new Error("NotReadableError");
+        return body.slice().buffer;
+      },
+      slice(start?: number, end?: number) {
+        return {
+          async arrayBuffer(): Promise<ArrayBuffer> {
+            reads.head += 1;
+            if (options.failHead) throw new Error("NotReadableError");
+            return body.slice(start, end).buffer;
+          },
+        };
+      },
+    };
+    return { file: file as unknown as File, reads };
+  }
+
+  const ascii = (s: string): Uint8Array => {
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i);
+    return out;
+  };
+  const PDF = ascii("%PDF-1.4\n0123456789");
+  const WAV = ascii("RIFF\0\0\0\0WAVEfmt ");
+  const PNG = ascii("\x89PNG\r\n\x1a\n\0\0\0\rIHDR");
+
+  /** 失敗を `AttachmentError` の種別で受け取る。 */
+  async function failureOf(file: File): Promise<string> {
+    try {
+      await prepareFile(file);
+    } catch (error) {
+      expect(error).toBeInstanceOf(AttachmentError);
+      return (error as AttachmentError).kind;
+    }
+    throw new Error("prepareFile が断らなかった");
+  }
+
+  it("どの上限よりも大きいファイルは、先頭も全体も読まずに断る", async () => {
+    // どの種別の上限（最大は動画の 12MB）よりも大きい — 種別を決める前に断れる。
+    const { file, reads } = fakeFile(PDF, 13 * MB);
+    expect(await failureOf(file)).toBe("tooLarge");
+    expect(reads.whole).toBe(0);
+    expect(reads.head).toBe(0);
+  });
+
+  it("種別の上限を超えるファイルは、先頭だけ読んで断る（音声 11MB > 10MB）", async () => {
+    // 12MB（動画の上限）より小さいので、大きさだけでは断れない。種別が決まって初めて断れる。
+    const { file, reads } = fakeFile(WAV, KIND_MAX_BYTES.audio + 1);
+    expect(await failureOf(file)).toBe("tooLarge");
+    expect(reads.whole).toBe(0);
+    expect(reads.head).toBe(1);
+  });
+
+  it("元ファイルの上限を超える画像は、全体を読まずに断る（デコードの前ではなく読み込みの前）", async () => {
+    const { file, reads } = fakeFile(PNG, MAX_SOURCE_BYTES + 1);
+    expect(await failureOf(file)).toBe("tooLarge");
+    expect(reads.whole).toBe(0);
+  });
+
+  it("上限ちょうどの PDF は通り、全体を 1 回だけ読む", async () => {
+    const { file, reads } = fakeFile(PDF, KIND_MAX_BYTES.pdf);
+    const pending = await prepareFile(file);
+    expect(pending.kind).toBe("pdf");
+    expect(pending.bytes).toBe(KIND_MAX_BYTES.pdf);
+    expect(atob(pending.dataBase64.slice(0, 8))).toBe("%PDF-1");
+    expect(reads.whole).toBe(1);
+  });
+
+  it("全体の読み込みに失敗したら readFailed（「変換に失敗」と言わない）", async () => {
+    const { file } = fakeFile(PDF, PDF.length, { failWhole: true });
+    expect(await failureOf(file)).toBe("readFailed");
+  });
+
+  it("先頭の読み込みに失敗しても readFailed", async () => {
+    const { file } = fakeFile(PDF, PDF.length, { failHead: true });
+    expect(await failureOf(file)).toBe("readFailed");
   });
 });

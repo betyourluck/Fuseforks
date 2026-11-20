@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { closeConfirmLines, hidesOnClose } from "./closeConfirm";
+import { closeConfirmLines, hidesOnClose, singleExitConfirm } from "./closeConfirm";
 import ja from "../locales/ja.json";
 import en from "../locales/en.json";
 
@@ -79,5 +79,60 @@ describe("hidesOnClose（Spec 69 D2）", () => {
     expect(hidesOnClose({ minimizeToTray: true, ready: false, failed: false })).toBe(false);
     expect(hidesOnClose({ minimizeToTray: true, ready: false, failed: true })).toBe(false);
     expect(hidesOnClose({ minimizeToTray: true, ready: true, failed: true })).toBe(false);
+  });
+});
+
+/**
+ * 終了の確認を 1 つに保つ（#21）。✕・OS の閉じる要求（Alt+F4 など）・トレイの「終了」が
+ * 同じ守りを通る — 確認を出している間に来た要求は、確認を積まない。
+ */
+describe("singleExitConfirm（#21）", () => {
+  /** 答えを外から与えられる確認。呼ばれた回数を数える。 */
+  function deferredAsk() {
+    let calls = 0;
+    let answer: (value: boolean) => void = () => undefined;
+    const ask = () => {
+      calls += 1;
+      return new Promise<boolean>((resolve) => {
+        answer = resolve;
+      });
+    };
+    return { ask, answer: (value: boolean) => answer(value), calls: () => calls };
+  }
+
+  it("確認を出している間の 2 回目は確認を積まず null を返し、1 回目は答えを返す", async () => {
+    const d = deferredAsk();
+    const confirmOnce = singleExitConfirm(d.ask);
+    const first = confirmOnce();
+    const second = confirmOnce();
+    // 確認は呼んだ時点で同期的に出る — 待つ前に数える（積んでいれば 2 になる）。
+    expect(d.calls()).toBe(1);
+    expect(await second).toBeNull();
+    d.answer(true);
+    expect(await first).toBe(true);
+  });
+
+  it("答えた後は、次の要求でもう一度確認を出す", async () => {
+    const d = deferredAsk();
+    const confirmOnce = singleExitConfirm(d.ask);
+    const first = confirmOnce();
+    d.answer(false);
+    expect(await first).toBe(false);
+    const again = confirmOnce();
+    expect(d.calls()).toBe(2);
+    d.answer(true);
+    expect(await again).toBe(true);
+  });
+
+  it("確認が例外で終わっても守りは外れる（次の要求で確認が出なくならない）", async () => {
+    let calls = 0;
+    const confirmOnce = singleExitConfirm(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("boom");
+      return true;
+    });
+    await expect(confirmOnce()).rejects.toThrow("boom");
+    expect(await confirmOnce()).toBe(true);
+    expect(calls).toBe(2);
   });
 });

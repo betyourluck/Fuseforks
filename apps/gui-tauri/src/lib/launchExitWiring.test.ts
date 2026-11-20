@@ -72,18 +72,31 @@ describe("閉じる経路（Spec 69 D2）", () => {
     expect(hits[0]).toMatch(/App\.vue$/);
   });
 
-  it("トレイの「終了」は Rust と同じイベント名を聴き、確認を出している間は 2 回目を積まない", () => {
+  it("トレイの「終了」は Rust と同じイベント名を聴く", () => {
     const eventName = /export const TRAY_QUIT_EVENT = "([^"]+)"/.exec(closeConfirm)?.[1];
     const rustName = /pub const QUIT_EVENT: &str = "([^"]+)"/.exec(trayRs)?.[1];
     expect(eventName).toBeDefined();
     expect(eventName).toBe(rustName);
     expect(code(app)).toContain("listen(TRAY_QUIT_EVENT");
+  });
 
-    const quit = between(code(app), "async function onTrayQuit()", "let unlistenTrayQuit");
-    expect(quit.indexOf("if (exitConfirmInFlight) return;")).toBeGreaterThanOrEqual(0);
-    expect(quit.indexOf("exitConfirmInFlight = true")).toBeLessThan(quit.indexOf("confirmExit()"));
-    expect(quit).toContain("finally");
-    expect(quit).toContain("exitConfirmInFlight = false");
+  it("✕・OS の閉じる要求・トレイの「終了」は同じ守りを通り、確認を出している間は 2 回目を積まない（#21）", () => {
+    // 守りは `singleExitConfirm` の 1 実装（規則は closeConfirm.test.ts の単体）。経路ごとに
+    // 旗を持つと、片方の経路にだけ守りが付く（トレイにだけあって ✕ に無かった = #21）。
+    const app_ = code(app);
+    const guard = between(app_, "async function registerCloseGuard()", "async function onTrayQuit()");
+    const quit = between(app_, "async function onTrayQuit()", "let unlistenTrayQuit");
+    for (const [name, body] of [["✕ / OS", guard], ["トレイ", quit]] as const) {
+      expect(body, name).not.toContain("confirmExit()");
+      expect(body, name).toContain("confirmExitOnce()");
+    }
+    expect(app_).toContain("const confirmExitOnce = singleExitConfirm(confirmExit);");
+    expect(app_).not.toContain("exitConfirmInFlight");
+    // 閉じる要求は確認の答えを待つ前に止める — 確認中（null）で返ったときも窓は閉じない。
+    const confirm = guard.indexOf("settings.confirmClose");
+    const prevent = guard.indexOf("event.preventDefault()", confirm);
+    expect(prevent).toBeGreaterThan(confirm);
+    expect(prevent).toBeLessThan(guard.indexOf("confirmExitOnce()"));
   });
 
   it("capability に窓を隠す権限がある", () => {

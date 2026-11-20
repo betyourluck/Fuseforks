@@ -69,8 +69,9 @@ import { useUiSettings } from "../composables/useUiSettings";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { visibleAgents } from "../lib/agentGroups";
 import { getToolCall, readAttachment } from "../lib/ipc";
-import { attachmentMime, type PendingAttachment } from "../lib/attachment";
+import { attachmentMime, kindOfFormat, type PendingAttachment } from "../lib/attachment";
 import { canReattachFrom } from "../lib/attachmentList";
+import { createAttachmentUrlCache } from "../lib/attachmentUrls";
 import type { AttachmentKind } from "../lib/carries";
 import type { Attachment } from "../types";
 import type { AgentId, AgentMessage, AgentSnapshot, Endpoint, QuotedMessage } from "../types";
@@ -906,42 +907,24 @@ function quoteFromName(quote: QuotedMessage): string {
 // ---- 添付画像の表示（Spec 23） ----------------------------------------------
 
 /**
- * 添付 id → object URL の投影キャッシュ。
- * `null` = 実体が無い（GC 済み。D9 のプレースホルダを出す）、
- * キー不在 = 未取得（`ensureAttachment` が裏で読みに行く）。
- */
-const attachmentUrls = reactive<Record<string, string | null>>({});
-const attachmentLoading = new Set<string>();
-
-/**
- * 添付の実体を（初回だけ）読みに行く。描画は reactive の更新で追い付く。
+ * 添付 id → object URL の投影キャッシュ（規則は `lib/attachmentUrls.ts`）。
+ * `null` = 実体が無い（GC 済み。D9 のプレースホルダを出す）、キー不在 = 未取得。
+ *
+ * **読むのは画像だけ**（N12）、**会話を切り替えたらまとめて解放する**（#20a。下の watch）。
  * MIME は**保存してある形式から**引く — サーヴァントの返事に付く生成画像の写しは JPEG のことがある
  * （Spec 76 S76-1）。
  */
-function ensureAttachment(att: Attachment): void {
-  const id = att.id;
-  if (id in attachmentUrls || attachmentLoading.has(id)) return;
-  attachmentLoading.add(id);
-  void readAttachment(id)
-    .then((bytes) => {
-      attachmentUrls[id] = bytes
-        ? URL.createObjectURL(
-            new Blob([new Uint8Array(bytes)], { type: attachmentMime(att.format) }),
-          )
-        : null;
-    })
-    .catch(() => {
-      attachmentUrls[id] = null;
-    })
-    .finally(() => {
-      attachmentLoading.delete(id);
-    });
-}
+const attachmentUrls = reactive<Record<string, string | null>>({});
+const attachmentCache = createAttachmentUrlCache(attachmentUrls, {
+  read: readAttachment,
+  create: (bytes, att) =>
+    URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: attachmentMime(att.format) })),
+  revoke: (url) => URL.revokeObjectURL(url),
+});
 
-/** 描画用: 添付の現在の状態。undefined = 読み込み中。 */
+/** 描画用: 画像の添付の現在の状態。undefined = 読み込み中。**画像以外では呼ばない**（本体を読まない）。 */
 function attachmentUrl(att: Attachment): string | null | undefined {
-  ensureAttachment(att);
-  return attachmentUrls[att.id];
+  return attachmentCache.url(att);
 }
 
 /**
@@ -949,17 +932,7 @@ function attachmentUrl(att: Attachment): string | null | undefined {
  * （Spec 23 の時代の添付はすべて WebP の画像だった — コアの既定と対）。
  */
 function attachmentKindOf(att: Attachment): AttachmentKind {
-  switch (att.format) {
-    case "mp3":
-    case "wav":
-      return "audio";
-    case "mp4":
-      return "video";
-    case "pdf":
-      return "pdf";
-    default:
-      return "image";
-  }
+  return kindOfFormat(att.format);
 }
 
 /** インラインで描けるのは画像だけ。 */
@@ -978,6 +951,18 @@ function openPreview(att: Attachment): void {
   if (!src) return;
   preview.value = { src, name: att.fileName, width: att.width, height: att.height };
 }
+
+// 会話を切り替えたら添付の object URL をまとめて解放する（#20a）。会話ペインはアプリの寿命まで
+// unmount されないので、解放しないと見た会話の数だけ Blob が溜まる。合図は `conversationCleared`
+// （会話ログの投影が空の配列に差し替わる。新規チャット・開き直し・分岐のどれでも、保存先の無い村の
+// 新規チャットでも飛ぶ）。発話が積まれるのは同じ配列への追加なので、この watch は鳴らない。
+// 大きく見ている画像だけは残す（開いている間に消すと絵が消える。次の切り替えで解放される）。
+watch(
+  () => state.messages,
+  (messages) => {
+    if (messages.length === 0) attachmentCache.releaseAll(preview.value?.src ?? null);
+  },
+);
 
 /** 会話一覧ダイアログを開いているか（Spec 12）。 */
 const sessionsOpen = ref(false);
@@ -1582,8 +1567,11 @@ async function newChat(): Promise<void> {
                 :height="att.height"
               />
             </button>
+            <!-- 音声・動画・PDF はファイル名を出すだけなので、本体を読まない（N12 — 最大 12 MB を読んで
+                 持ち続けていた）。代わりに保持期間で消えたかは分からず、消えていても名前の行が出る
+                 （「入力欄へ」を押したときに入力欄が読んで確かめ、消えていれば断る）。 -->
             <div
-              v-else-if="!isImageAttachment(att) && attachmentUrl(att)"
+              v-else-if="!isImageAttachment(att)"
               class="mb-1 inline-flex max-w-full items-center gap-2 rounded-2xl bg-surface-2 px-3 py-2 text-[11px] ring-1 ring-line"
             >
               <span class="shrink-0 rounded bg-surface-1 px-1 text-[10px] text-ink-dim">
@@ -1600,9 +1588,10 @@ async function newChat(): Promise<void> {
             <!-- 「入力欄へ」（Spec 73 D5）。過去の添付を、いま選んでいるサーヴァントへ
                  渡し直す。出すのは**利用者とサーヴァントの発話**の添付（サーヴァントの返事には
                  生成画像の写しが付く — Spec 76 S76-3。コアの `find_reattachable` と同じ集合）で、
-                 ファイルが消えていれば出さない。送信はしない。 -->
+                 画像はファイルが消えていれば出さない（画像以外は本体を読まないので消えたかが分からず、
+                 押したときに入力欄が確かめる）。送信はしない。 -->
             <button
-              v-if="canReattachFrom(entry.row.message) && attachmentUrl(att)"
+              v-if="canReattachFrom(entry.row.message) && (!isImageAttachment(att) || attachmentUrl(att))"
               type="button"
               class="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-dim transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
               :disabled="!canSend"

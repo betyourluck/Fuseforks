@@ -35,6 +35,12 @@ pub const DEFAULT_MODEL: &str = "typesafe/jev";
 /// ここは「一過性なら 1 度は待つ」を表すだけ。
 const MAX_RETRIES: u32 = 2;
 
+/// 応答本文を読む上限（Spec 77 N5 — `text()` は全部読んでから返す）。答えは数 KB の JSON。
+const MAX_RESPONSE_BODY: usize = 4 * 1024 * 1024;
+
+/// 上限超えの印を探すために読むエラー本文の上限。
+const MAX_ERROR_READ: usize = 64 * 1024;
+
 /// 判定基準の「真」側。**P0 で実測した文面の逐語**。
 const CRITERIA_YES: &str = "依頼に答える材料 (事実・数値・主張・手順・限界) が含まれる";
 /// 判定基準の「偽」側。**P0 で実測した文面の逐語**。
@@ -395,10 +401,28 @@ impl JevScorer {
         if !resp.status().is_success() {
             // 本文は**上限超えの印を探すためだけに読み、捨てる**。ログにもエラーにも載せない
             // （Cloudflare の本文は受信ヘッダーをエコーすることがある = #71 の系譜）。
-            let body = resp.text().await.unwrap_or_default();
+            // 先頭だけ読む（Spec 77 N5 — 印を探すのに全量は要らない）。
+            let mut resp = resp;
+            let body = String::from_utf8_lossy(
+                &crate::http_body::read_prefix(&mut resp, MAX_ERROR_READ).await,
+            )
+            .into_owned();
             return Err(api_error(status, &body));
         }
-        resp.text().await.map_err(|e| JevError::Http(e.to_string()))
+        // 上限を見ながら読む（Spec 77 N5）。判断モデルの答えは数 KB の JSON。
+        let mut resp = resp;
+        match crate::http_body::read_capped(&mut resp, MAX_RESPONSE_BODY)
+            .await
+            .map_err(|e| JevError::Http(e.to_string()))?
+        {
+            crate::http_body::CappedBody::Complete(bytes) => {
+                Ok(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            crate::http_body::CappedBody::Exceeded => Err(JevError::Http(format!(
+                "応答本文が上限（{} MB）を超えました",
+                MAX_RESPONSE_BODY / (1024 * 1024)
+            ))),
+        }
     }
 
     /// 判断役の 1 回（一過性の失敗だけ再送する）。

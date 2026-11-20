@@ -305,20 +305,22 @@ impl PlanWaveStore {
     ///
     /// 提示時の tasks は残さない — 配送の記録が持つべきは走った形だけで、
     /// 提示と配送の差分は `plan pending:` / `plan dispatch:` のログが運ぶ。
-    /// `pending` でなければ何もしない（呼び出し側が `proposal` で先に確かめる —
-    /// 押し出し済みへの更新を無視する `resolve_task` と同じ規律）。
+    /// `pending` でなければ何もせず `false` を返す（Spec 77 #9）。呼び出し側は入口で `proposal` を
+    /// 読み取りロックで確かめてから await をまたぐので、その間にもう 1 本の承認・破棄が遷移を
+    /// 済ませうる — **遷移できたかはこの戻り値で判定する**（判定と遷移が 1 回の書き込みロックの中）。
+    #[must_use = "偽なら遷移していない — 配送へ進まない"]
     pub fn dispatch_wave(
         &mut self,
         plan_id: u64,
         tasks: &[(AgentId, u32)],
         started_at_ms: u64,
-    ) {
+    ) -> bool {
         let Some(wave) = self
             .waves
             .iter_mut()
             .find(|w| w.plan_id == plan_id && w.state == PlanWaveState::Pending)
         else {
-            return;
+            return false;
         };
         wave.state = PlanWaveState::Dispatched;
         wave.started_at_ms = started_at_ms;
@@ -332,22 +334,25 @@ impl PlanWaveStore {
                 message: None,
             })
             .collect();
+        true
     }
 
     /// 提案を破棄する（Spec 43）。本文を落とし、配送は一度も起きない。
-    /// `pending` でなければ何もしない（`dispatch_wave` と同じ規律）。
-    pub fn discard_wave(&mut self, plan_id: u64) {
+    /// `pending` でなければ何もせず `false` を返す（`dispatch_wave` と同じ規律）。
+    #[must_use = "偽なら遷移していない — 破棄の行を残さない"]
+    pub fn discard_wave(&mut self, plan_id: u64) -> bool {
         let Some(wave) = self
             .waves
             .iter_mut()
             .find(|w| w.plan_id == plan_id && w.state == PlanWaveState::Pending)
         else {
-            return;
+            return false;
         };
         wave.state = PlanWaveState::Discarded;
         for task in &mut wave.tasks {
             task.message = None;
         }
+        true
     }
 
     /// タスクの解決を記録する。押し出された波への更新は**窓の外として無視**する
@@ -513,7 +518,7 @@ mod tests {
         assert_eq!(store.proposal(id), Some((agent("agent_1"), 1)));
 
         // 人が 1 件消して 1 件直した最終形で配送。
-        store.dispatch_wave(id, &[(agent("agent_3"), 5)], 200);
+        assert!(store.dispatch_wave(id, &[(agent("agent_3"), 5)], 200), "pending は遷移できる");
         let wave = &store.list()[0];
         assert_eq!(wave.state, PlanWaveState::Dispatched);
         assert_eq!(wave.started_at_ms, 200, "所要の起点は配送時刻へ動く");
@@ -532,16 +537,18 @@ mod tests {
             store.begin_pending_wave(agent("agent_1"), 1, &[(agent("agent_2"), "調べて".to_owned())], 0);
         let dispatched = store.begin_wave(agent("agent_1"), 2, &[(agent("agent_2"), 3)], 0);
 
-        store.discard_wave(pending);
-        store.discard_wave(dispatched); // 何もしない（pending ではない）
+        assert!(store.discard_wave(pending));
+        assert!(!store.discard_wave(dispatched), "pending ではないので遷移しない");
 
         let waves = store.list();
         assert_eq!(waves[0].state, PlanWaveState::Discarded);
         assert!(waves[0].tasks[0].message.is_none(), "破棄で本文を落とす");
         assert_eq!(waves[1].state, PlanWaveState::Dispatched);
         // 破棄済みへの dispatch も何もしない（一方通行）。
-        store.dispatch_wave(pending, &[(agent("agent_2"), 3)], 9);
+        assert!(!store.dispatch_wave(pending, &[(agent("agent_2"), 3)], 9));
         assert_eq!(store.list()[0].state, PlanWaveState::Discarded);
+        // 破棄は 1 回だけ遷移する（2 回目は偽 — 破棄の行を 2 本残さない）。
+        assert!(!store.discard_wave(pending));
     }
 
     #[test]

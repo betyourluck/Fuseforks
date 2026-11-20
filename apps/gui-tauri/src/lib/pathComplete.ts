@@ -240,3 +240,30 @@ export function removeTrigger(
 ): { text: string; caret: number } {
   return { text: `${text.slice(0, trigger.at)}${text.slice(caret)}`, caret: trigger.at };
 }
+
+/** ファイルの候補を取りに行ったときの印（#22）。 */
+export interface ListingRequest {
+  /** 取りに行った時点の世代。補完を閉じる・取り直すたびに進む。 */
+  generation: number;
+  /** 取りに行った宛先。 */
+  agentId: string;
+}
+
+/**
+ * 取り終えた一覧を入れてよいか（#22）。**世代・宛先・種別が取りに行った時点のままのときだけ**。
+ *
+ * 一覧は IPC の往復の後に届く。その間に宛先が変わる（Alt+↑↓）・補完が閉じる・会話の参照（`@@`）へ
+ * 入れ替わる・取り直しが始まると、前の取得が後から届く。そのまま入れると、**前のサーヴァントの
+ * 作業フォルダの相対パスが別のサーヴァント宛ての本文に入る**（Spec 24「宛先を切り替えたら候補も
+ * 切り替わる」に反する）。
+ */
+export function isCurrentListing(
+  request: ListingRequest,
+  now: { generation: number; agentId: string | null | undefined; kind: TriggerKind | null },
+): boolean {
+  return (
+    request.generation === now.generation &&
+    request.agentId === now.agentId &&
+    now.kind === "file"
+  );
+}

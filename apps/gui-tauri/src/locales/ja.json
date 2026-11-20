@@ -570,6 +570,7 @@
     "attachTooLarge": "添付が大きすぎます（画像 10MB / 音声・PDF 10MB / 動画 12MB）",
     "attachConvertedTooLarge": "変換後の画像が大きすぎます（上限 2MB）",
     "attachFailed": "画像を読み込めませんでした",
+    "attachReadFailed": "ファイルを読み込めませんでした",
     "completeNoWorkDir": "このサーヴァントには作業フォルダが設定されていないため、ファイルを補完できません。",
     "completeLoading": "ファイルを探しています…",
     "completeFailed": "ファイル一覧を取得できませんでした。",

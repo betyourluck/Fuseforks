@@ -160,8 +160,12 @@ impl Orchestrator {
                 response.text.clone().unwrap_or_default(),
                 response.tool_calls.clone(),
             );
-            messages.push(assistant.clone());
-            appended.push(assistant);
+            // 本文も呼び出しも無い応答（Gemini の止められた応答は `Ok` で本文が無い）は積まない —
+            // 画面は appended を履歴に積んで次の要求で送り返すので、空の assistant が残る（Spec 77 #17c）。
+            if !assistant.content.is_empty() || !assistant.tool_calls.is_empty() {
+                messages.push(assistant.clone());
+                appended.push(assistant);
+            }
 
             match classified {
                 Classified::Question(text) => {

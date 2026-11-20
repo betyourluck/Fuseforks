@@ -56,6 +56,7 @@ import { carries, carriersOf, effectiveProvider, type AttachmentKind } from "../
 import {
   applyCompletion,
   findTrigger,
+  isCurrentListing,
   rankCandidates,
   removeTrigger,
   splitForDisplay,
@@ -383,13 +384,29 @@ function refreshTrigger(): void {
   trigger.value = findTrigger(text.value, el.selectionStart ?? 0);
 }
 
-/** 補完を閉じ、取った候補も捨てる。 */
+/**
+ * 候補の取得の世代（#22）。補完を閉じるたびと、取りに行くたびに進める — 進んだ後に届いた
+ * 前の取得の一覧は入れない（`isCurrentListing`）。
+ */
+let listingGeneration = 0;
+
+/** 補完を閉じ、取った候補も捨てる。取得中の一覧は後から届いても入れない。 */
 function closeCompletion(): void {
+  listingGeneration += 1;
   trigger.value = null;
   candidates.value = [];
   candidatesTruncated.value = false;
   candidatesFailed.value = false;
+  loadingCandidates.value = false;
 }
+
+// 宛先が変わったら閉じる（#22。Spec 24「宛先を切り替えたら候補も切り替わる」）。Alt+↑↓ で宛先を
+// 変えるとフォーカスは入力欄に残るので `blur` では閉じない。開き直すのは次の打鍵（keyup）で、
+// そのときの宛先の作業フォルダから取り直す。
+watch(
+  () => props.agentId,
+  () => closeCompletion(),
+);
 
 // 開いた瞬間に 1 回だけ取る（D6）。**開いている間は取り直さない** —
 // 一覧が打鍵の途中で入れ替わると、絞り込みの結果が揺れる。
@@ -402,6 +419,9 @@ watch(
     candidates.value = [];
     candidatesTruncated.value = false;
     candidatesFailed.value = false;
+    // 取得中の印もここで下ろす — 前の取得は届いても印に触らない（下の `current()`）ので、
+    // 種別が変わったときに下ろさないと「ファイルを探しています…」が残る。
+    loadingCandidates.value = false;
     quotePool.value = [];
     if (kind === null) return;
     selectedIndex.value = 0;
@@ -414,18 +434,30 @@ watch(
     }
     // 作業フォルダが無いなら呼ばない（判定に必要な情報を既に持っている）。
     if (!props.agentId || !hasWorkDir.value) return;
+    // 取りに行った時点の世代と宛先（#22）。届いたときにまだ同じかを確かめてから入れる —
+    // 待っている間に宛先が変わる・閉じる・取り直すと、前の宛先の一覧が後から届く。
+    const request = { generation: ++listingGeneration, agentId: props.agentId };
+    const current = () =>
+      isCurrentListing(request, {
+        generation: listingGeneration,
+        agentId: props.agentId,
+        kind: trigger.value?.kind ?? null,
+      });
     loadingCandidates.value = true;
     candidatesFailed.value = false;
     try {
-      const listing = await listWorkDirFiles(props.agentId);
+      const listing = await listWorkDirFiles(request.agentId);
+      if (!current()) return;
       candidates.value = listing.paths.map((id) => ({ id, kind: "file" as const }));
       candidatesTruncated.value = listing.truncated;
     } catch {
+      if (!current()) return;
       // 生の ipc を直に呼んでいるので、失敗はここで受ける。
       // **トーストにしない** — `@` は打鍵のたびに開きうる。
       candidatesFailed.value = true;
     } finally {
-      loadingCandidates.value = false;
+      // 古い取得は、後から始まった取得の「取得中」を下ろさない（閉じたときは closeCompletion が下ろす）。
+      if (current()) loadingCandidates.value = false;
     }
   },
 );
@@ -487,7 +519,13 @@ async function confirmCandidate(candidate: Candidate): Promise<void> {
   el.setSelectionRange(result.caret, result.caret);
 }
 
-/** ↑↓ で選択を動かす。端では巻き戻す。 */
+/**
+ * ↑↓ で選択を動かす。端では巻き戻す。
+ *
+ * **受けるのは修飾なしの ↑↓ だけ**（テンプレートの `.exact`。N14）— Alt+↑↓ はサーヴァント一覧の
+ * 選択（App.vue の `onNavKey`）で、拾うと候補とサーヴァントの選択が同時に動く。Shift+↑↓ は
+ * textarea の範囲選択のまま。
+ */
 function moveSelection(delta: number, event: KeyboardEvent): void {
   if (!popupCaptures.value) return;
   event.preventDefault();
@@ -592,6 +630,7 @@ const ATTACH_ERROR_KEYS = {
   tooLarge: "chatInput.attachTooLarge",
   convertedTooLarge: "chatInput.attachConvertedTooLarge",
   convertFailed: "chatInput.attachFailed",
+  readFailed: "chatInput.attachReadFailed",
   unsupportedType: "chatInput.attachUnsupported",
 } as const;
 
@@ -1059,8 +1098,8 @@ defineExpose({ fill, addAttachmentRef });
         @keyup="refreshTrigger"
         @blur="closeCompletion"
         @keydown.enter.exact="onEnter"
-        @keydown.down="moveSelection(1, $event)"
-        @keydown.up="moveSelection(-1, $event)"
+        @keydown.down.exact="moveSelection(1, $event)"
+        @keydown.up.exact="moveSelection(-1, $event)"
         @keydown.esc="onEscape"
         @keydown.tab="onTab"
         @paste="onPaste"

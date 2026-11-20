@@ -28,8 +28,6 @@ use crate::world::Language;
 pub(super) const JUDGE_TOOL_PREFIX: &str = "judge_";
 /// 判断モデルの締め切り（Spec 59 の圧縮と同じ 20 秒）。**口の中では待たない** — ここで切る。
 const JUDGE_DEADLINE: Duration = Duration::from_secs(20);
-/// 関数名の長さの上限（`HandoffTools` と同じ）。
-const MAX_TOOL_NAME: usize = 64;
 
 /// 読み込みと検査の結果（`None` のときは鍵ごと無い = ファイルが無い）。
 pub(super) type JudgeFiles = BTreeMap<AgentId, Result<JudgeFile, JudgeFileError>>;
@@ -104,12 +102,13 @@ pub(super) async fn judge_entries(shared: &Arc<Shared>, connected: &[AgentId]) -
             continue;
         }
         let Some(Ok(parsed)) = file else { continue };
-        let natural = format!("{JUDGE_TOOL_PREFIX}{id}");
-        let tool = if natural.len() <= MAX_TOOL_NAME && !out.iter().any(|e| e.tool == natural) {
-            natural
-        } else {
-            format!("{JUDGE_TOOL_PREFIX}{index}")
-        };
+        // 名前の決め方は転送・委譲と 1 実装（退避名も既に決めた名前と照合する — Spec 77 #16）。
+        let tool = super::delegation::unique_tool_name(
+            JUDGE_TOOL_PREFIX,
+            id.as_str(),
+            &format!("{JUDGE_TOOL_PREFIX}{index}"),
+            |n| out.iter().any(|e| e.tool == n),
+        );
         let destinations = parsed
             .targets()
             .into_iter()

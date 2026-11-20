@@ -146,6 +146,9 @@ pub fn encode(req: &ChatRequest, skills: GeminiSkills) -> wire::GeminiRequest {
         .messages
         .iter()
         .filter(|m| m.role != Role::System)
+        // 本文も呼び出しも無い assistant は送らない（Spec 77 #17c — 空の parts になる。Anthropic と
+        // Responses 系の adapter と同じく落とす）。
+        .filter(|m| !(m.role == Role::Assistant && m.content.is_empty() && m.tool_calls.is_empty()))
         .map(encode_message)
         .collect();
 
@@ -792,6 +795,27 @@ mod tests {
     /// ネイティブに添付を実装しない、の凍結）を**この形へ置き換えた**。
     /// D8 は Spec 36 で覆したので「添付を無視する」は守るべき性質ではなくなり、
     /// 残る不変条件は**添付を使わない村が 1 バイトも変わらないこと**だけ。
+    /// 本文も呼び出しも無い assistant は送らない（Spec 77 #17c）。`{"role":"model","parts":[]}` は
+    /// Anthropic と Responses 系の adapter が落としている形で、このワイヤだけが空の parts で送っていた。
+    #[test]
+    fn an_empty_assistant_turn_is_not_sent() {
+        let wire = encode(
+            &request(vec![
+                ChatMessage::user("1 回目"),
+                ChatMessage::assistant(""),
+                ChatMessage::user("2 回目"),
+            ]),
+            GeminiSkills::default(),
+        );
+        let json = serde_json::to_value(&wire).unwrap();
+        let contents = json["contents"].as_array().unwrap();
+        assert!(
+            contents.iter().all(|c| !c["parts"].as_array().is_some_and(Vec::is_empty)),
+            "空の parts を送っている: {contents:?}"
+        );
+        assert_eq!(contents.len(), 2, "空の assistant だけを落とす");
+    }
+
     #[test]
     fn encoding_without_attachments_matches_the_golden_bytes() {
         let wire = encode(&request(vec![ChatMessage::user("こんにちは")]), GeminiSkills::default());

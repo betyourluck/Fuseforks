@@ -142,17 +142,28 @@ impl Orchestrator {
     /// または書き込みに失敗した場合。
     pub async fn delete_session(&self, session_id: &str) -> CoreResult<()> {
         let store = self.sessions()?;
-        let was_open = session_id == self.shared.current_session();
-        // 開いている会話を消すなら、先に次の会話へ移る — 移った後は新しい根がこの会話を
-        // 取らない。移ってから処理が残っていると分かったら、移ったまま消さずに断る。
-        if was_open {
+        // 「開いているか」の判定から削除まで `switch_gate` の read を握る（Spec 77 #13）。握らないと、
+        // 開く側（`open_session` は write の下で保存先を読み、`world` を待ってから差し替える）が
+        // 読み終えた後にこの会話を消し、開いている会話が消えた会話を指す。開く側が先に走った
+        // なら、ここで「開いている」と判定して移ってから消す。後に走ったなら、保存先に会話が
+        // 無いので開く側が `SessionNotFound` で断る。
+        let _gate = loop {
+            let gate = self.shared.switch_gate.read().await;
+            if session_id != self.shared.current_session() {
+                break gate;
+            }
+            // 開いている会話を消すなら、先に次の会話へ移る — 移った後は新しい根がこの会話を
+            // 取らない。移ってから処理が残っていると分かったら、移ったまま消さずに断る。
+            // 移るのは write を取るので、read を放してから。移った後にもう一度開かれていたら
+            // （別の操作が開き直した）、また移る。
+            drop(gate);
             self.ensure_unreferenced(session_id)?;
             let next = match store.latest_session_except(session_id)? {
                 Some(id) => id,
                 None => store.create_session(None)?,
             };
             self.switch_to(&next).await?;
-        }
+        };
         match self
             .shared
             .session_refs

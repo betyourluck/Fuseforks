@@ -425,6 +425,9 @@ impl Orchestrator {
                 ),
             });
         }
+        // 受信箱の枠を、何かを書く前に取る（Spec 77 #12）。停止中・満杯ならここで断り、添付も
+        // 発話も書かない。取った枠は最後の送信で使う。
+        let permit = super::reserve_mailbox(&self.shared, to).await?;
         // 保存は発話の記録より**前**。検証に落ちたら発話ごと拒否する —
         // 「添付なしで送信されました」は、送った人の意図と黙って食い違う。
         let mut attachments = Vec::with_capacity(count);
@@ -478,7 +481,8 @@ impl Orchestrator {
         // 利用者の発話は参加者を数えない — 自動要約は予定の発火だけの機能で、
         // 人が話している間に履歴を畳むのは「押していない操作」になる。
         // 利用者の発話は新しい根 — 計画の確認を開けない印は立てない（Spec 53）。
-        deliver(&self.shared, to, message, budget, None, Vec::new(), false, session).await
+        permit.send(super::Envelope::plain(message, budget, None, Vec::new(), false, session));
+        Ok(())
     }
 
     /// 発話 ID の列を写しへ解決し、計器 `quote:` を 1 行出す（Spec 58 凍結 2・7）。

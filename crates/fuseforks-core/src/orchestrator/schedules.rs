@@ -323,6 +323,16 @@ async fn deliver_batch(
 ///
 /// **配送してから記録する。** 逆にすると、受信箱が飽和していた場合に
 /// 「配られていない発話」が会話ペインへ残る。
+/// 配送の前に済ませた後処理の登録（Spec 77 #10）。配送できなければ、置き換えた前の登録を戻す。
+enum Registered {
+    /// 後判定つき。置き換えた前の登録（同じ宛先の前の発火。大きいので箱に入れる）。
+    Acceptance(Option<Box<AcceptancePending>>),
+    /// 完了後の要約つき。置き換えた前の登録。
+    Summary(Option<(Participants, super::SessionRef)>),
+    /// どちらも無い。
+    Nothing,
+}
+
 async fn deliver_scheduled(
     shared: &Arc<Shared>,
     runtime: &ScheduleRuntime,
@@ -382,13 +392,58 @@ async fn deliver_scheduled(
     // **画面は切り替えない**。`continue` は発火の時点で開いている会話。
     let (session, created) = fire_session(shared, task);
 
+    // **配送の前に登録する**（Spec 77 #10）。前判定つき（`probe_and_deliver`）は切り離したタスクで
+    // 走るので、配送してから登録すると、ターンが記録と lock より先に終わったときに完了の合図
+    // （`AgentTyping { active: false }`）を取り逃す — `in_flight` が残ってその個体宛ての予定が
+    // 黙って飛ばされ、残った `pending_*` は無関係な後続のターンで発火する。配送できなければ
+    // 下の `Err` の腕で取り消す。
+    let newly_in_flight = runtime.in_flight.lock().await.insert(task.to.clone());
+    let registered = if let Some(acceptance) = task.acceptance.clone() {
+        // 後判定つきは**こちらへだけ**登録する（Spec 46 D2 の直列 —
+        // 要約は後判定ループが確定させてから走らせるので、
+        // `pending_summaries` には積まない）。
+        //
+        // 同じ宛先へ次の発火が重なった場合は後勝ち（insert が置き換える）。
+        // 隙間は AgentTyping と再依頼の間の一瞬だけで、上書きされた側の
+        // 検収は次の発火がやり直す。
+        let previous = runtime.pending_acceptances.lock().await.insert(
+            task.to.clone(),
+            AcceptancePending {
+                task_id: task.id.clone(),
+                to: task.to.clone(),
+                base_content: content,
+                acceptance,
+                attempt: 1,
+                budget: budget_for_acceptance,
+                participants_union: std::collections::HashSet::new(),
+                current_participants: participants.clone(),
+                summarize_after: task.summarize_after,
+                auto_approve_plans: task.auto_approve_plans,
+                session: session.clone(),
+            },
+        );
+        Registered::Acceptance(previous.map(Box::new))
+    } else if let Some(participants) = participants.clone() {
+        // 根のターンが終わったら要約する（Spec 28 D7）。**ここでは待たない** —
+        // 待つと予定のループが 1 件の依頼に塞がれる。完了の合図は
+        // `AgentTyping { active: false }` で、ティッカーが既に聴いている。
+        let previous = runtime
+            .pending_summaries
+            .lock()
+            .await
+            .insert(task.to.clone(), (participants, session.clone()));
+        Registered::Summary(previous)
+    } else {
+        Registered::Nothing
+    };
+
     // 新しい因果の根 = 空の連鎖（Spec 44 凍結 2）。
     match deliver(
         shared,
         &task.to,
         message.clone(),
         budget,
-        participants.clone(),
+        participants,
         Vec::new(),
         // 計画の確認を開けない印を立てる 1 箇所目（Spec 53 凍結 11 (a)）。
         task.auto_approve_plans,
@@ -398,46 +453,38 @@ async fn deliver_scheduled(
     {
         Ok(()) => {
             shared.record(message, &session).await;
-            runtime.in_flight.lock().await.insert(task.to.clone());
-            if let Some(acceptance) = task.acceptance.clone() {
-                // 後判定つきは**こちらへだけ**登録する（Spec 46 D2 の直列 —
-                // 要約は後判定ループが確定させてから走らせるので、
-                // `pending_summaries` には積まない）。
-                //
-                // 同じ宛先へ次の発火が重なった場合は後勝ち（insert が置き換える）。
-                // 隙間は AgentTyping と再依頼の間の一瞬だけで、上書きされた側の
-                // 検収は次の発火がやり直す。
-                runtime.pending_acceptances.lock().await.insert(
-                    task.to.clone(),
-                    AcceptancePending {
-                        task_id: task.id.clone(),
-                        to: task.to.clone(),
-                        base_content: content,
-                        acceptance,
-                        attempt: 1,
-                        budget: budget_for_acceptance,
-                        participants_union: std::collections::HashSet::new(),
-                        current_participants: participants,
-                        summarize_after: task.summarize_after,
-                        auto_approve_plans: task.auto_approve_plans,
-                        session: session.clone(),
-                    },
-                );
-                return true;
-            }
-            // 根のターンが終わったら要約する（Spec 28 D7）。**ここでは待たない** —
-            // 待つと予定のループが 1 件の依頼に塞がれる。完了の合図は
-            // `AgentTyping { active: false }` で、ティッカーが既に聴いている。
-            if let Some(participants) = participants {
-                runtime
-                    .pending_summaries
-                    .lock()
-                    .await
-                    .insert(task.to.clone(), (participants, session.clone()));
-            }
             true
         }
         Err(err) => {
+            // 登録を配送の前の状態へ戻す（前の発火の登録が置き換わっていたなら、それを戻す）。
+            if newly_in_flight {
+                runtime.in_flight.lock().await.remove(&task.to);
+            }
+            match registered {
+                Registered::Acceptance(previous) => {
+                    let mut pending = runtime.pending_acceptances.lock().await;
+                    match previous {
+                        Some(previous) => {
+                            pending.insert(task.to.clone(), *previous);
+                        }
+                        None => {
+                            pending.remove(&task.to);
+                        }
+                    }
+                }
+                Registered::Summary(previous) => {
+                    let mut pending = runtime.pending_summaries.lock().await;
+                    match previous {
+                        Some(previous) => {
+                            pending.insert(task.to.clone(), previous);
+                        }
+                        None => {
+                            pending.remove(&task.to);
+                        }
+                    }
+                }
+                Registered::Nothing => {}
+            }
             // MailboxFull（背圧）: 消化せず次の tick で再試行する。
             // NotRunning: 上の running 判定との間で停止された競合。
             // どちらも次の tick が正しく拾い直す。
@@ -446,7 +493,7 @@ async fn deliver_scheduled(
             // 空の会話が 1 つずつ増える。参照を手放してから消す（誰も持っていないので消せる）。
             if let Some(id) = created {
                 drop(session);
-                discard_empty_session(shared, &id);
+                discard_empty_session(shared, &id).await;
             }
             false
         }
@@ -477,10 +524,18 @@ fn fire_session(shared: &Arc<Shared>, task: &ScheduledTask) -> (super::SessionRe
 }
 
 /// 配送を見送った発火のために作った会話を消す（中身は空）。参照が残っていれば消さない。
-fn discard_empty_session(shared: &Arc<Shared>, id: &str) {
+///
+/// `delete_session` と同じく、判定から削除まで `switch_gate` の read を握り、開かれていれば
+/// 消さない（Spec 77 N6 — 作ってから消すまでの間に人が会話一覧から開いた場合）。
+async fn discard_empty_session(shared: &Arc<Shared>, id: &str) {
     let Some(store) = shared.sessions.as_ref() else {
         return;
     };
+    let _gate = shared.switch_gate.read().await;
+    if id == shared.current_session() {
+        note!("schedule: 空の会話 `{id}` は開かれているので消しません");
+        return;
+    }
     match shared.session_refs.when_unreferenced(id, || store.delete_session(id)) {
         Ok(Ok(())) => {}
         Ok(Err(err)) => note!("WARN schedule: 空の会話 `{id}` を消せませんでした: {err}"),
@@ -822,39 +877,47 @@ async fn redeliver_for_acceptance(
     let participants: Option<Participants> = state
         .summarize_after
         .then(|| Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())));
+    let to = state.to.clone();
+    let session = state.session.clone();
+    let task_id = state.task_id.clone();
+    let auto_approve_plans = state.auto_approve_plans;
+    let budget = state.budget.clone();
+    // **配送の前に登録する**（Spec 77 #10 — この関数は切り離した `acceptance_step` の中で走るので、
+    // 配送してから登録すると、再依頼のターンが先に終わったときに完了の合図を取り逃す）。
+    let newly_in_flight = runtime.in_flight.lock().await.insert(to.clone());
+    state.attempt += 1;
+    state.current_participants = participants.clone();
+    runtime.pending_acceptances.lock().await.insert(to.clone(), state);
     match deliver(
         shared,
-        &state.to.clone(),
+        &to,
         message.clone(),
-        state.budget.clone(),
-        participants.clone(),
+        budget,
+        participants,
         Vec::new(),
         // 印を立てる 2 箇所目（Spec 53 凍結 11 (a) — 発火時の予定の値）。
-        state.auto_approve_plans,
+        auto_approve_plans,
         // 元の発火の会話（Spec 75 凍結 1 — `fresh` で作った会話を含む）。
-        state.session.clone(),
+        session.clone(),
     )
     .await
     {
         Ok(()) => {
-            shared.record(message, &state.session).await;
-            runtime.in_flight.lock().await.insert(state.to.clone());
-            state.attempt += 1;
-            state.current_participants = participants;
-            runtime
-                .pending_acceptances
-                .lock()
-                .await
-                .insert(state.to.clone(), state);
+            shared.record(message, &session).await;
         }
         Err(err) => {
             // 受信箱の飽和・停止の競合。配送を回し続けると確定が永遠に来ない
             // 沈黙になるので、**記録して確定へ倒す**（次の発火がやり直す）。
-            note!(
-                "acceptance: schedule={} の再依頼を見送りました: {err}",
-                state.task_id
-            );
-            settle_acceptance(shared, &state).await;
+            note!("acceptance: schedule={task_id} の再依頼を見送りました: {err}");
+            if newly_in_flight {
+                runtime.in_flight.lock().await.remove(&to);
+            }
+            // 登録を取り戻して確定する。取り戻せない（配送に失敗したのに、その間に同じ個体の
+            // 同じ会話のターンが終わって後判定が持ち出した）なら、持ち出した側が確定させる。
+            let state = runtime.pending_acceptances.lock().await.remove(&to);
+            if let Some(state) = state {
+                settle_acceptance(shared, &state).await;
+            }
         }
     }
 }
@@ -1071,5 +1134,68 @@ impl Orchestrator {
             }),
             None => Ok(()),
         }
+    }
+}
+
+/// 予定の配送と登録の順序（Spec 77 #10）。
+///
+/// 前判定つき（`probe_and_deliver`）と検収の再依頼（`acceptance_step`）は切り離したタスクで走るので、
+/// 配送してから `in_flight` / `pending_*` へ登録すると、ターンがその前に終わったときに完了の合図
+/// （`AgentTyping { active: false }`）を取り逃す。外から決定的に割り込めないので、関数の本文の
+/// 並び（登録が配送より前にあるか）をソースで留める。
+#[cfg(test)]
+mod registration_order_tests {
+    const SOURCE: &str = include_str!("schedules.rs");
+
+    /// 行コメントを落とした関数の本文（走査テストはコメントも読むので、doc の字面に引っかからないように）。
+    fn body_of(name: &str) -> String {
+        // Windows の作業コピーは CRLF のことがある（索引は LF）。
+        let source = SOURCE.replace("\r\n", "\n");
+        let start = source
+            .find(&format!("async fn {name}("))
+            .unwrap_or_else(|| panic!("{name} が見つからない"));
+        let rest = &source[start..];
+        let end = rest.find("\n}\n").expect("関数の終わり");
+        rest[..end]
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn assert_registered_before_delivery(name: &str) {
+        let body = body_of(name);
+        let delivered = body.find("match deliver(").expect("配送の呼び出し");
+        let registered = body
+            .find("in_flight.lock().await.insert(")
+            .expect("in_flight への登録");
+        assert!(
+            registered < delivered,
+            "{name}: in_flight への登録が配送より後にある（ターンが先に終わると完了の合図を取り逃す）"
+        );
+        let pending = body
+            .find("pending_acceptances")
+            .expect("pending_acceptances への登録");
+        assert!(
+            pending < delivered,
+            "{name}: pending_acceptances への登録が配送より後にある"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_fire_registers_before_it_delivers() {
+        assert_registered_before_delivery("deliver_scheduled");
+        let body = body_of("deliver_scheduled");
+        let delivered = body.find("match deliver(").unwrap();
+        let summaries = body.find("pending_summaries").expect("pending_summaries への登録");
+        assert!(summaries < delivered, "deliver_scheduled: pending_summaries への登録が配送より後にある");
+    }
+
+    #[test]
+    fn a_redelivery_registers_before_it_delivers() {
+        assert_registered_before_delivery("redeliver_for_acceptance");
     }
 }

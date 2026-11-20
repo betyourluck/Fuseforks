@@ -23,7 +23,19 @@ use crate::secret::SecretStore;
 
 /// エラー応答本文をログ・UI に載せる際の最大**バイト数**（文字数ではない）。
 /// プロバイダによっては HTML を丸ごと返すため、青天井にしない。
+///
+/// **切り詰めは表示のため**で、分類（`error_signal`）は切る前の本文で読む（Spec 77 #2 — Gemini の 429 は
+/// `RetryInfo` が `details[]` の最後に来るので、先に切ると最初に失われるのが待ち時間だった）。
 const MAX_ERROR_BODY: usize = 2_000;
+
+/// エラー応答本文を読む上限（分類に使う）。エラー本文は先頭だけあれば足りるので、超えた分は
+/// 読まずに捨てる（Spec 77 N5）。実測のエラー本文は最大 1,375 バイト（Gemini の 429）。
+const MAX_ERROR_READ: usize = 64 * 1024;
+
+/// 成功した応答本文を読む上限（Spec 77 N5）。超えたら残りを読まずに失敗にする — `text()` は
+/// 全部読んでから返すので、送り終えない相手には待ちの上限まで止まり、桁外れの本文にはその大きさの
+/// メモリを確保していた。応答は画像の写しや web 検索の結果を含んでも数 MB に収まる。
+const MAX_RESPONSE_BODY: usize = 32 * 1024 * 1024;
 
 /// `text` を `max` バイト以下に切る。**文字の途中では切らず、直前の文字の境界まで戻る。**
 ///
@@ -482,8 +494,11 @@ impl HttpLlmBackend {
                 .and_then(|v| {
                     super::retry::parse_retry_after(v, std::time::SystemTime::now())
                 });
-            let mut body = response.text().await.unwrap_or_default();
-            truncate_on_char_boundary(&mut body, MAX_ERROR_BODY);
+            let mut response = response;
+            let mut body = String::from_utf8_lossy(
+                &crate::http_body::read_prefix(&mut response, MAX_ERROR_READ).await,
+            )
+            .into_owned();
             let signal = match self.config.provider {
                 Provider::OpenAiCompat
                 | Provider::XaiResponses
@@ -503,6 +518,8 @@ impl HttpLlmBackend {
             let class = super::retry::classify(status.as_u16(), signal.code.as_deref());
             // 計器用に先頭 40 字だけ残す（本文は `turn failed` 行が運ぶ。#71 の規律）。
             let code = signal.code.map(|c| c.chars().take(40).collect::<String>());
+            // 表示へ運ぶ本文だけを切る（分類は上で切る前の本文から読んだ）。
+            truncate_on_char_boundary(&mut body, MAX_ERROR_BODY);
             return Err(LlmError::Api {
                 status: status.as_u16(),
                 body,
@@ -514,7 +531,27 @@ impl HttpLlmBackend {
         }
 
         // 成功ステータスでも本文が期待の形とは限らないので、raw を保持して失敗させる。
-        let raw = response.text().await.map_err(LlmError::from)?;
+        // 本文は上限を見ながら読む（Spec 77 N5）。
+        let mut response = response;
+        let raw = match crate::http_body::read_capped(&mut response, MAX_RESPONSE_BODY)
+            .await
+            .map_err(LlmError::from)?
+        {
+            crate::http_body::CappedBody::Complete(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            crate::http_body::CappedBody::Exceeded => {
+                return Err(LlmError::Api {
+                    status: status.as_u16(),
+                    body: format!(
+                        "応答本文が上限（{} MB）を超えたので、残りを読まずに打ち切りました",
+                        MAX_RESPONSE_BODY / (1024 * 1024)
+                    ),
+                    class: super::retry::RetryClass::ClientError,
+                    code: None,
+                    retry_after: None,
+                    hint_src: super::retry::HintSource::from_presence(false, false),
+                });
+            }
+        };
 
         match self.config.provider {
             Provider::OpenAiCompat => {
