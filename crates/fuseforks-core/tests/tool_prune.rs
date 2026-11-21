@@ -486,3 +486,107 @@ async fn drain_until_quiet(
         }
     }
 }
+
+/// 枠（`frame_head` / `frame_tail`）を付けて返すツール（Spec 78 D6 の `fetch` の代役）。
+struct FramedTool {
+    no_prune: bool,
+}
+
+const FRAME_HEAD: &str = "URL: https://x.test/a\n取り出し: 本文（ページの文字の 40%）\n\n";
+const FRAME_TAIL: &str = "\n\n（ここで切りました。続きは start_index を 4888 にして呼んでください）";
+
+#[async_trait::async_trait]
+impl AgentTool for FramedTool {
+    fn name(&self) -> &str {
+        "framed_probe"
+    }
+    fn description(&self, _l: fuseforks_core::world::Language) -> String {
+        "テスト用。枠つきの本文を返す".into()
+    }
+    fn parameters(&self, _l: fuseforks_core::world::Language) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    fn prunable(&self) -> bool {
+        true
+    }
+    async fn call(
+        &self,
+        ctx: &ToolContext,
+        args: &serde_json::Value,
+    ) -> fuseforks_core::CoreResult<String> {
+        self.call_with_media(ctx, args).await.map(|o| o.whole())
+    }
+    async fn call_with_media(
+        &self,
+        _ctx: &ToolContext,
+        _args: &serde_json::Value,
+    ) -> fuseforks_core::CoreResult<fuseforks_core::tool::ToolOutput> {
+        Ok(fuseforks_core::tool::ToolOutput {
+            text: big_body(),
+            frame_head: FRAME_HEAD.to_owned(),
+            frame_tail: FRAME_TAIL.to_owned(),
+            no_prune: self.no_prune,
+            ..Default::default()
+        })
+    }
+}
+
+/// **枠は圧縮の外に残る**（Spec 78 D6）。採点に回るのは `text` だけで、先頭の枠と末尾の続きの案内は
+/// 圧縮した本文の前後にそのまま付く。枠を `text` に混ぜると、120 字未満の行は隣の段落へ寄せられて
+/// 段落ごと落ちうる（`prune::prepare`）。
+#[tokio::test]
+async fn the_frame_stays_outside_pruning() {
+    let dir = TempDir::new("frame");
+    let spy = Arc::new(Spy {
+        inner: CallThenOmit { tool: "framed_probe", omit: false },
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let (orchestrator, id) = village(&dir, spy.clone()).await;
+    orchestrator.register_tool(Arc::new(FramedTool { no_prune: false })).await;
+    let scorer = Arc::new(KeepFirst { calls: AtomicUsize::new(0) });
+    orchestrator.set_paragraph_scorer(Some(scorer.clone())).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "この依頼は 20 字以上あるので基準として通ります")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(scorer.calls.load(Ordering::SeqCst), 1, "採点は 1 回");
+    let seen = spy.seen.lock().unwrap().clone();
+    let got = &seen[0];
+    assert!(got.starts_with(FRAME_HEAD), "先頭の枠がそのまま: {got}");
+    assert!(got.ends_with(FRAME_TAIL), "続きの案内がそのまま: {got}");
+    // ちょうど 1 回ずつ — 枠ごと圧縮に回して後から付け直す形（枠が二重になる）も、枠を寄せて落とす形も留める。
+    assert_eq!(got.matches("URL: https://x.test/a").count(), 1, "{got}");
+    assert_eq!(got.matches("続きは start_index を 4888").count(), 1, "{got}");
+    assert!(got.contains("関連度で段落を省略"), "本文は圧縮された: {got}");
+    assert!(got.contains("段落 0。") && !got.contains("段落 5。"));
+}
+
+/// **`no_prune` の結果は圧縮しない**（Spec 78 D6 — `fetch` の `raw: true`）。採点器を 1 度も呼ばず、
+/// 枠つきの全体がバイト等価で届く。
+#[tokio::test]
+async fn a_no_prune_result_is_left_whole() {
+    let dir = TempDir::new("noprune");
+    let spy = Arc::new(Spy {
+        inner: CallThenOmit { tool: "framed_probe", omit: false },
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let (orchestrator, id) = village(&dir, spy.clone()).await;
+    orchestrator.register_tool(Arc::new(FramedTool { no_prune: true })).await;
+    let scorer = Arc::new(KeepFirst { calls: AtomicUsize::new(0) });
+    orchestrator.set_paragraph_scorer(Some(scorer.clone())).await;
+
+    let mut rx = orchestrator.subscribe();
+    orchestrator
+        .send_user_message(&id, "この依頼は 20 字以上あるので基準として通ります")
+        .await
+        .unwrap();
+    drain_until_quiet(&mut rx, Duration::from_millis(400)).await;
+
+    assert_eq!(scorer.calls.load(Ordering::SeqCst), 0, "採点器を呼ばない");
+    let seen = spy.seen.lock().unwrap().clone();
+    assert_eq!(seen[0], format!("{FRAME_HEAD}{}{FRAME_TAIL}", big_body()), "枠つきの全体がそのまま");
+}

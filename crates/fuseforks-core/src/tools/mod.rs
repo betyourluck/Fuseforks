@@ -6,6 +6,7 @@
 
 pub mod blackboard;
 pub mod edit;
+pub mod fetch;
 pub mod file;
 pub mod fs;
 pub mod image;
@@ -15,6 +16,7 @@ pub mod run;
 
 pub use blackboard::BlackboardTool;
 pub use edit::{SdTool, YqTool};
+pub use fetch::FetchTool;
 pub use file::FileTool;
 pub use fs::{DiffTool, FdTool, GrepTool};
 pub use image::ImageTool;
@@ -37,13 +39,16 @@ pub use run::RunTool;
 ///
 /// **`image`（Spec 76）もここに入る** — 提示は `enabledTools` にあること（この表が受ける 1 段目）と、
 /// 画像生成の設定が効いていること（`ImageTool::spec_for` が受ける 2 段目）の両方。
-pub const BUNDLED_TOOL_NAMES: [&str; 9] =
-    ["diff", "fd", "file", "grep", "image", "remember", "run", "sd", "yq"];
+///
+/// **`fetch`（Spec 78）もここに入る** — 提示は `enabledTools` にあることだけで決まる（設定を持たない）。
+pub const BUNDLED_TOOL_NAMES: [&str; 10] =
+    ["diff", "fd", "fetch", "file", "grep", "image", "remember", "run", "sd", "yq"];
 
 /// `enabled_tools: None`（既定に従う）で提示する集合。
 ///
-/// **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run, image}`。** `run`（Spec 15、破壊的変更）と
-/// `image`（Spec 76。費用がかかり外へ送る）が既定集合の外に居る。
+/// **`BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run, image, fetch}`。** `run`（Spec 15、破壊的変更）と
+/// `image`（Spec 76。費用がかかり外へ送る）と `fetch`（Spec 78。モデルが選んだ URL へ送る — 入れると
+/// `enabledTools: null` の個体が**更新しただけで**送れるようになる）が既定集合の外に居る。
 ///
 /// `run` を他の 7 本と同じ扱いにすると、**アプリを更新した瞬間に全個体が
 /// コマンド実行能力を得る**。`batch_start_invariant` が「開いただけで課金が
@@ -58,6 +63,7 @@ pub const DEFAULT_ENABLED_TOOLS: [&str; 7] =
 /// 作業フォルダが無いと動かない同梱ツール。
 ///
 /// **`image` は入れない**（Spec 76 D2 — 作業フォルダが無くても会話とモデルへは届き、保存だけが無くなる）。
+/// **`fetch` も入れない**（Spec 78 D8 — 作業フォルダを使わない）。
 ///
 /// 未設定のエージェントには enabled_tools に関わらず**提示しない** —
 /// 呼んでも「未設定です」と答えるだけのツールに、毎ターンスキーマ分の

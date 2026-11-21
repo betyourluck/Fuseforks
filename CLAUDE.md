@@ -3144,7 +3144,8 @@ Spec の「#8b の実装記録」が正）/ 調べてもらったジェミー（
 **同日、[Spec 78](specs/78_bundled-web-fetch.md)（同梱の web 取得ツール `fetch`）を起票し、査読 2 系統を受けて rev2 にした**
 （未決 5。「Spec の状態」の行が正）。**続けて利用者が未決 5 つを推しで閉じ、P0a（実ページ 31 本）を測って rev4 にした** —
 村の Docker の fetch は Node.js が無いので記事を抽出しておらずリンクの URL も落としていた / robotstxt が長い行 + 多バイト文字で panic する
-など。**続けて利用者が残る裁定 4 つを推しで決め、P0b（`data_contract.yaml` の `web_fetch_contract`）まで進めた**。次は P1（コア）。
+など。**続けて利用者が残る裁定 4 つを推しで決め、P0b（`data_contract.yaml` の `web_fetch_contract`）まで進めた**。
+**続けて P1（コア）と P2（画面）をブランチ `claude/web-fetch` で着地**（core + host 1,638 本・vitest 1,209 全緑・clippy 0）。次は P3（台帳）。
 
 ## 現在地（2026-11-20 更新）
 
@@ -8545,7 +8546,7 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 78](specs/78_bundled-web-fetch.md)（同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む）: **rev5・P0b 完了（次は P1）**
+- [Spec 78](specs/78_bundled-web-fetch.md)（同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む）: **rev5・P0〜P2 完了（ブランチ `claude/web-fetch`。次は P3）**
   （2026-11-21 起票 → 同日、査読 2 系統・重なりを除いて 43 項目 → 採用 39 / 前提を訂正して採用 2 / 反証 2。表は Spec の Notes 6 →
   同日、**利用者が未決 5 つを推しのとおりに裁定**（`max_length` 既定 20,000 / robots.txt を見る / 既定集合に**入れない** /
   プロキシは作らない / Docker の fetch は利用者に外してもらう手順を DETAIL へ）→ 同日 **P0a**（実ページ 31 本。記録は Spec の
@@ -8559,7 +8560,13 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
   引数 `links: true` で残す（落とすのは DOM の上で `strip_elements` — P0a の HTML で URL 0・`&amp;` 0 を確かめた）/ chardetng は
   入れない / robots は robotxt（先頭 500 KiB を読んで止める）→ **P0b で `data_contract.yaml` の `web_fetch_contract`（不変条件 16 本）
   に凍結**。あわせて `ToolOutput` を「3 つ」と書いた行が Spec 72 から古かったのと、`tool_prune_contract` の見出しに rev4 で外した
-  rag が残っていたのを直した）。
+  rag が残っていたのを直した）→ 同日 **P1・P2**（ブランチ `claude/web-fetch`）= `tools/fetch/` の 5 ファイル（住所・文字コード・
+  取り出し・robots・本体。外へ出る HTTP は本体の 1 ファイルだけ）/ `ToolOutput` の枠の 3 欄と `whole()`（圧縮に回すのは `text` だけ・
+  RepeatGuard は枠込みで数える）/ 同梱 10 本目 / 画面の行と注記。**仕様から変えたのは 5 点** = リダイレクトは `Policy::none` +
+  自前のループ / robots.txt の取得が住所の判定で断られたら `blocked_address`（結合テストが見つけた — localhost が
+  `robots_unavailable` に化けていた）/ 棚に覚えるのは規則が決まったときだけ / `omitted` が戻すのは本文の段落だけ / 範囲外の引数は
+  既定か端へ寄せる。**設定の「既定」の札が 3 言語とも Spec 15 から嘘だった**（「すべて」と書いて run が外にあった）のを回収し、
+  走査テストで留めた。記録は Spec の「P1 実装記録」「P2 実装記録」。
   起点は利用者 —「Docker の fetch はけっこう読み込みが重い。車輪の再発明ではなく Rust のよい crate で」。**実測**: Docker の
   fetch は 1,063 本で 3 番目に多く使われるツール・中央値 2.3 秒 / 実ページ 8 本 — 取得 30〜680 ms / 推しは **dom_smoothie**
   （Readability の移植・MIT・`Cargo.lock` に 22 項目・純 Rust）+ **encoding_rs**（青空文庫で 298,404 字中 208,572 字が U+FFFD）。

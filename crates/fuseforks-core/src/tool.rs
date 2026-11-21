@@ -53,6 +53,19 @@ pub struct ToolOutput {
     /// 本文の文字列で判定しないための欄 — 拒否文の字面で止めると、MCP のツールが
     /// 同じ文を返した日に止まる（Spec 08 の凍結「分類は文言 parse でなく型で運ぶ」）。
     pub approval_pending: bool,
+    /// **圧縮の外に置く枠**の先頭（Spec 78 D6 / `web_fetch_contract` 14）。ターンの層は
+    /// 「`frame_head` + 圧縮した `text` + `frame_tail`」をモデルへ返す。
+    ///
+    /// **置くのは `fetch` だけ**（URL・題名・取り出し方の行）。どれも 120 字未満で、Jev の圧縮
+    /// （`prune::prepare`）は 120 字未満の段落を隣へ寄せるので、本文に混ぜると寄せた先の段落ごと落ちうる。
+    /// 空なら今までと 1 バイトも変わらない（既存のツールは触らない）。
+    pub frame_head: String,
+    /// 圧縮の外に置く枠の末尾（`fetch` の続きの案内）。意味は [`Self::frame_head`] と同じ。
+    pub frame_tail: String,
+    /// この結果は**圧縮しない**（Spec 78 D6）。立てるのは `fetch` の `raw: true` だけ — 空行で割った
+    /// HTML から段落を落とすと構造が壊れる。[`AgentTool::prunable`] は引数を見られない（ツールごとに
+    /// 1 つの答え）ので、呼び出しごとの判断は結果の側で運ぶ。
+    pub no_prune: bool,
 }
 
 impl ToolOutput {
@@ -62,6 +75,12 @@ impl ToolOutput {
             text: text.into(),
             ..Self::default()
         }
+    }
+
+    /// 枠を付けた全体（`frame_head` + `text` + `frame_tail`）。圧縮しないときにモデルへ返る形で、
+    /// RepeatGuard が数えるのもこれ（Spec 78 D6）。枠が空なら `text` と同じ。
+    pub fn whole(&self) -> String {
+        format!("{}{}{}", self.frame_head, self.text, self.frame_tail)
     }
 }
 
@@ -203,7 +222,9 @@ pub trait AgentTool: Send + Sync {
 
     /// 返した本文を、関連度で段落単位に落としてよいか（Spec 59 / `tool_prune_contract`）。
     ///
-    /// **既定は偽。真を返すのは [`crate::mcp::McpTool`] だけ。**
+    /// **既定は偽。真を返すのは [`crate::mcp::McpTool`] と同梱の `fetch`（Spec 78 D6）。** `fetch` は枠を
+    /// [`ToolOutput::frame_head`] / [`ToolOutput::frame_tail`] へ置き、`raw: true` の結果は
+    /// [`ToolOutput::no_prune`] で止める。
     ///
     /// **`rag` は rev4（2026-09-22）で対象から外した。** 実機で 12,051 字が
     /// **2 段落にしか割れず**、`outcome=all_dropped` で全文へ倒れた（2 回とも）。

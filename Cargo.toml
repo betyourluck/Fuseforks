@@ -83,6 +83,15 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # 独自のミニ構文を発明するより標準の regex を渡すほうが失敗が少ない。
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Spec 78 — 同梱の web 取得ツール `fetch`（web_fetch_contract）。4 本とも純 Rust で、`Cargo.lock` に
+# 増えるのは合わせて 27（P0a で実測）。dom_smoothie = Mozilla Readability の移植（本文の取り出し）/
+# dom_query = 本文の HTML を読み直して md() へ渡す（dom_smoothie と同じ版。Tauri が連れている 0.27 とは別）/
+# encoding_rs = Shift_JIS・EUC-JP・ISO-2022-JP を UTF-8 へ / robotxt = robots.txt（RFC 9309。Google の判定と
+# 43,635 件で一致。robotstxt 0.3 は長い行の先の多バイト文字で panic するので採らない）。
+dom_smoothie = "0.19"
+dom_query = "0.29"
+encoding_rs = "0.8"
+robotxt = { version = "0.7", default-features = false, features = ["parser"] }
 # Spec 47 D4 — リモート MCP の URL 検査（host で loopback を判定する側）。
 # reqwest が既に連れているので新しい crate は増えない。
 url = "2"

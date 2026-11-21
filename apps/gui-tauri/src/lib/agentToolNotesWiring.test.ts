@@ -19,6 +19,7 @@ const NOTES = [
   { tool: "remember", key: "agentSettings.rememberOffWarn" },
   { tool: "run", key: "agentSettings.runOnWarn" },
   { tool: "image", key: "agentSettings.imageInactiveWarn" },
+  { tool: "fetch", key: "agentSettings.fetchOnWarn" },
 ] as const;
 
 const loopStart = dialog.indexOf('<template v-for="tool in BUNDLED_TOOLS"');
@@ -41,6 +42,10 @@ describe("ツール固有の注記はその行の直下", () => {
       expect(outside).not.toContain(`$t("${key}")`);
     });
   }
+
+  it("fetch の注記はチェックしたときに出る（外へ送れるようになった時点で言う）", () => {
+    expect(loop).toContain(`v-if="tool.name === 'fetch' && isToolChecked('fetch')"`);
+  });
 
   it("image の注記は画像生成が効いていないときだけ（判定は Rust の active）", () => {
     expect(loop).toContain(

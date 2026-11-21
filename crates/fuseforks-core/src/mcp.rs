@@ -588,6 +588,10 @@ pub fn render_tool_output(result: &CallToolResult, language: crate::world::Langu
         dropped,
         // MCP のツールは承認待ちを作らない（旗を立てるのは `run` だけ — Spec 72 D2）。
         approval_pending: false,
+        // 枠と「圧縮しない」は `fetch` だけのもの（Spec 78 D6）。MCP の結果は全体を圧縮の対象にする。
+        frame_head: String::new(),
+        frame_tail: String::new(),
+        no_prune: false,
     }
 }
 

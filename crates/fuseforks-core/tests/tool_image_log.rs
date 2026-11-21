@@ -84,6 +84,7 @@ impl AgentTool for CameraTool {
             images: vec![fuseforks_core::tool_image::normalize(&data).expect("通ること")],
             dropped: vec![DropReason::Format],
             approval_pending: false,
+            ..ToolOutput::default()
         })
     }
 }

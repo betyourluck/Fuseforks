@@ -7321,7 +7321,8 @@ conversation_termination:
          `fetch` があるときだけ。wants_reason = true / prunable = true。説明文と結果は村の言語 (ja / en。zh-Hans の
          村は en)。MCP 由来の fetch (MCP_DOCKER__fetch など) とは名前が衝突しない。どちらかを自動で外すことはしない
       2. **引数**: url (必須) / max_length (既定 20,000。1〜999,999) / start_index (既定 0) / raw (既定 false) /
-         links (既定 false)。url / max_length / start_index / raw の形と意味は Docker の mcp/fetch と同じ。
+         links (既定 false)。url / max_length / start_index / raw の形と意味は Docker の mcp/fetch と同じ。数でない値・
+         範囲の外は既定か端へ寄せる (P1。outcome に bad_args を足さない — url だけが読めなければ bad_url)。
          timeout_ms は持たない (打ち切りは 10 の 30 秒と「■ 停止」)
       3. **返す文字列 = 枠 + 本文**。枠は「URL: <リダイレクトの後の最終 URL>」「題名: <題名>」(HTML から取れたときだけ)
          「取り出し: <本文（ページの文字の N%） | ページ全体 | Markdown | そのまま | 変換なし>」、空行、本文、
@@ -7366,8 +7367,9 @@ conversation_termination:
          reqwest はこの解決が返した住所にしか繋がないので、判定した住所と繋ぐ住所が同じになる) / IP の直書きは
          送る前に Url::host() の型 (Host::Ipv4 / Host::Ipv6) で判定する (接続器は IP の直書きに解決器を呼ばない。
          文字列を自分で IP として読まない — url crate が 0x7f000001 などを 127.0.0.1 へ正規化している) /
-         リダイレクトは redirect::Policy::custom で各段にスキームと IP の判定を掛け、5 段を超えたら止める
-         (too_many_redirects)。**プロキシは使わない** (no_proxy)。ループバックのスタブへ繋ぐ構築は #[cfg(test)] の
+         リダイレクトは reqwest に追わせず (Policy::none)、自前のループで 1 段ずつ追い、各段でスキームと IP の判定と
+         robots.txt を掛け直し、5 段を超えたら止める (too_many_redirects。**P1 で決めた** — robots.txt を各段で見るには
+         非同期が要り、Policy::custom の閉包は同期)。**プロキシは使わない** (no_proxy)。ループバックのスタブへ繋ぐ構築は #[cfg(test)] の
          中にだけ置き、配布物には存在しない
      10. **時間と大きさ**: 1 回の呼び出しの全体 (robots.txt・リダイレクトの各段・本文) で 30 秒 (timeout)。取得全体を
          ToolContext.cancel と select! で競わせ、打ち切りが勝ったら要求の future を落とす (interrupted)。
@@ -7384,24 +7386,31 @@ conversation_termination:
      13. **robots.txt を見る**: 最初の URL とリダイレクトの各段で、その先の origin の /robots.txt を取る。取得も 9・
          10・11 を通る (robots.txt 自身には robots.txt を当てない)。本文は先頭 robotxt::BYTE_LIMIT (500 KiB) + 1 バイト
          まで読んで止める (超えた分は読まずに捨て、断らない。RFC 9309 2.5 節は 500 KiB までの解析を求める)。読むのは
-         http_body に足す「先頭だけ読む」関数で、read_capped は使わない (超えたら本文を返さないため)。解析は
+         http_body::read_head (P1 で足した。読み取りの失敗を返す — 既存の read_prefix は失敗で黙って途中までを返すので、
+         途中で切れた規則で判定しうる) で、read_capped は使わない (超えたら本文を返さないため)。解析は
          robotxt 0.7 (default-features = false, features = ["parser"]) の Robots::parse だけで、照合する名前は
          `Fuseforks`。状態コードは自前で振り分ける — 2xx は解析、401 / 403 / 5xx と繋がらないときは断る
          (robots_unavailable)、それ以外の 4xx は規則なしとして通す (robotxt の AccessResult は 4xx を全部許すので
-         使わない)。Disallow に当たったら断る (robots_disallowed)。origin (スキーム・ホスト・ポート) ごとに 1 時間
-         覚える (プロセスの寿命。保存しない)。robotstxt 0.3 は使わない (長い行の先に多バイト文字があると panic
+         使わない)。**robots.txt の取得が住所の判定で断られたら blocked_address を返す** (名前が公開でない住所に解ける先は
+         最初の要求の robots.txt で必ず当たり、robots_unavailable と書くと理由が嘘になる — P1)。Disallow に当たったら
+         断る (robots_disallowed)。origin (スキーム・ホスト・ポート) ごとに 1 時間覚える (プロセスの寿命。保存しない。
+         **覚えるのは規則が決まったとき = 2xx の解析と規則なしの 4xx だけ** — 一時的な失敗で 1 時間読めなくしない。P1)。robotstxt 0.3 は使わない (長い行の先に多バイト文字があると panic
          する — P0a)
-     14. **Jev の圧縮と封筒**: prunable = true (tool_prune_contract の対象に入る)。ToolOutput に 2 欄を足す (加算。
+     14. **Jev の圧縮と封筒**: prunable = true (tool_prune_contract の対象に入る)。ToolOutput に欄を足す (加算。
          既定は今と同じで、既存のツールの結果は 1 バイトも変わらない) — 圧縮の外に置く枠 (先頭と末尾の文字列。
          turn.rs は「先頭 + 圧縮した text + 末尾」を返す) と「この結果は圧縮しない」の旗 (fetch は raw: true のとき
-         立てる)。RepeatGuard が数える本文と omitted が戻す生の本文は、枠を含めた全体。本文には defuse を掛ける
+         立てる)。**P1 の名前**: frame_head / frame_tail / no_prune と、枠を付けた全体を返す ToolOutput::whole()。
+         RepeatGuard が数えるのは枠を含めた全体 (whole)。圧縮に回すのは text だけなので、omitted が戻す段落も text の
+         段落で、枠は落ちないので戻す必要が無い (rev5 の「omitted が戻す生の本文は枠を含めた全体」は P1 で訂正)。
+         本文には defuse を掛ける
          (raw にも)。defuse_quote_tags は掛けない (<quoted_message> の外枠は利用者の発話の中にだけあり、ツールの結果は
          別のメッセージとして届く)。turn.rs の分解 (`let (raw, images, dropped, approval_pending) = match result`) に
          欄を足し忘れると黙って既定へ落ちるので、P1 のテストで留める
      15. **計器** `fetch: agent=… host=… status=… bytes=… chars=… mode=… links=… share=… encoding=… defused=…
          redirects=… elapsed_ms=… outcome=…`。host= はホスト名だけ (パスとクエリは書かない。断った先が IP の
          直書きならその IP)。測っていない欄は `-`。mode= は readability | body | markdown | text | raw (本文を
-         返さなかったら -)、links= は yes | no、share= は mode=readability のときの比の百分率。outcome は ok | empty |
+         返さなかったら -)、links= は yes | no、share= は mode=readability のときの比の百分率、encoding= は「名前:出所」
+         (出所は bom / header / decl / default。P1)。outcome は ok | empty |
          bad_url | bad_scheme | blocked_address | robots_disallowed | robots_unavailable | too_many_redirects |
          http_error | too_large | unsupported_type | unsupported_encoding | timeout | interrupted | network_error の
          閉じた 15 値。**取得した本文はログに 1 字も書かない** (tool: 行は今までどおり字数だけ)

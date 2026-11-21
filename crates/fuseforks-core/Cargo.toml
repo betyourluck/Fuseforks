@@ -18,6 +18,11 @@ rayon.workspace = true
 redb.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+# Spec 78 — 同梱の `fetch`（ルートの Cargo.toml に理由）。
+dom_smoothie.workspace = true
+dom_query.workspace = true
+encoding_rs.workspace = true
+robotxt.workspace = true
 url.workspace = true
 http.workspace = true
 rmcp.workspace = true
@@ -30,7 +35,8 @@ sha2.workspace = true
 similar.workspace = true
 thiserror.workspace = true
 # io-util: MCP の子の標準エラーを 1 行ずつ読む（Spec 64 凍結 13。--events jsonl の間だけ）。
-tokio = { workspace = true, features = ["io-util"] }
+# net: `fetch` の名前解決（Spec 78 D4。tokio::net::lookup_host。hyper が既に有効にしているので crate は増えない）。
+tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-util.workspace = true
 toml_edit.workspace = true
 trash.workspace = true

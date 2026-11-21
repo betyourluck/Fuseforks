@@ -136,6 +136,9 @@ const BUNDLED_TOOLS = [
   // Spec 76。**既定集合の外**（費用がかかり外へ送る）。作業フォルダが無くても会話とモデルへは
   // 届くので false（保存だけが無くなる）。提示はシステム設定の画像生成が効いているときだけ。
   { name: "image", labelKey: "agentSettings.tools.image", needsWorkDir: false },
+  // Spec 78。**既定集合の外**（モデルが選んだ URL へ送る — 入れると `enabledTools: null` の個体が
+  // 更新しただけで送れるようになる）。作業フォルダを使わないので false。設定を持たないので、チェックすれば提示される。
+  { name: "fetch", labelKey: "agentSettings.tools.fetch", needsWorkDir: false },
 ] as const;
 
 /**
@@ -684,6 +687,14 @@ void loadImageGenActive();
                 data-tool-note="image"
               >
                 {{ $t("agentSettings.imageInactiveWarn") }}
+              </p>
+              <!-- チェックした時点で外へ送れるようになる（Spec 78 D8）。何がどこへ残るかをその行で言う。 -->
+              <p
+                v-if="tool.name === 'fetch' && isToolChecked('fetch')"
+                class="pl-5 text-[10px] text-warn"
+                data-tool-note="fetch"
+              >
+                {{ $t("agentSettings.fetchOnWarn") }}
               </p>
             </template>
           </div>

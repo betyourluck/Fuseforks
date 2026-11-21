@@ -121,6 +121,7 @@ impl AgentTool for CameraTool {
             images,
             dropped: Vec::new(),
             approval_pending: false,
+            ..ToolOutput::default()
         })
     }
 }

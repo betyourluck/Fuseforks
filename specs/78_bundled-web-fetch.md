@@ -1,10 +1,11 @@
 # Spec 78: 同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む
 
-- 状態: **Draft rev4**（2026-11-21 起票 → 同日、査読 2 系統を反映して rev2。重なりを除いて 43 項目 → 採用 39 /
+- 状態: **rev5**（2026-11-21 起票 → 同日、査読 2 系統を反映して rev2。重なりを除いて 43 項目 → 採用 39 /
   前提を訂正して採用 2 / 反証 2。表は Notes 6 → 同日、**利用者が未決 5 つを推しのとおりに裁定して rev3** →
   同日、**P0a の測定を終えて rev4**。D3 を実測で直した（ISO-2022-JP）→ 同日、**利用者が P0a の後の裁定 4 つを推しのとおりに
   決めて rev5**（D1 に `links` を足し、D2 を書き直した）→ 同日 **P0b 完了**（`data_contract.yaml` の `web_fetch_contract`
-  ほか 6 箇所。記録は「P0b 凍結記録」）。次は P1（コア）
+  ほか 6 箇所。記録は「P0b 凍結記録」）→ 同日 **P1 / P2 完了**（ブランチ `claude/web-fetch`。コア・ホスト・画面。
+  記録は「P1 実装記録」「P2 実装記録」）。次は P3（台帳）
 - 起点: 利用者（2026-11-21）—「webfetch を同梱ツールとして入れるべきかなと思っている。今は Docker の fetch を
   使っているが、けっこう読み込みが重い。できれば車輪の再発明ではなく Rust でよい crate があればそれを使いたい」
 - 調査だけのターンを 1 回取った（`fuseforks.log` の `MCP_DOCKER__fetch` の行 / crates.io の候補 12 本 / 候補を
@@ -255,8 +256,9 @@
   2. **IP の直書き** — 接続器は名前解決を呼ばない（現況）。送る前に **`Url::host()` の型（`Host::Ipv4` / `Host::Ipv6`）**で
      判定する。**文字列を自分で IP として読まない** — `0x7f000001` / `2130706433` のような別の書き方は url crate が
      `Ipv4(127.0.0.1)` へ正規化している（現況の実測）
-  3. **リダイレクト** — `redirect::Policy::custom` で各段の URL にスキームと 2 の判定を掛け、5 段を超えたら止める
-     （`too_many_redirects`）。名前の段は 1 が拾う
+  3. **リダイレクト** — ~~`redirect::Policy::custom` で~~ **reqwest には追わせず（`Policy::none`）、自前のループで 1 段ずつ追い**、
+     各段の URL にスキームと 2 の判定と robots.txt を掛け直し、5 段を超えたら止める（`too_many_redirects`）。名前の段は 1 が拾う。
+     **P1 で変えた** — robots.txt を各段で見るには非同期が要り、`Policy::custom` の閉包は同期
 - **プロキシは使わない**（`no_proxy()`）。プロキシ越しだと名前を引くのはプロキシで、上の判定が効かない。代償は Notes 1
 - 断ったときは、住所の分類（「ループバック」「プライベートアドレス」「リンクローカル」…）と「この端末のネットワークの中の
   住所なので読めません」を本文で返す
@@ -293,7 +295,8 @@
     枠をここへ置く。**枠が無いと、URL の行や続きの案内（どちらも 120 字未満）が隣の段落へ寄せられ、段落ごと落ちうる**
   - **この結果は圧縮しない**の旗 — `prunable()` は引数を見られないので、`raw: true` の結果は結果の側で止める
     （空行で割った HTML から段落を落とすと構造が壊れる）
-  - RepeatGuard が数える本文と、`omitted` が戻す生の本文は、**枠を含めた全体**
+  - RepeatGuard が数える本文は**枠を含めた全体**（P1 で `ToolOutput::whole()`）。~~`omitted` が戻す生の本文も枠を含めた全体~~ →
+    **P1 で訂正**: 圧縮に回すのは `text` だけなので、`omitted` が戻す段落も `text` の段落。枠は落ちないので戻す必要が無い
   - `turn.rs` の分解（`let (raw, images, dropped, approval_pending) = match result`）に欄を足し忘れると黙って既定へ
     落ちる（Spec 72 D2 の注記と同じ形）。P1 のテストで留める
 - **本文に `defuse` を掛ける**（取ってきた本文は外の誰かが書いた文。`【送り手: …】` が書かれていても送り手として
@@ -311,14 +314,17 @@
   自前に書く（robotxt の `AccessResult` は RFC 9309 どおり 4xx を全部許すので、401 / 403 を断る規則と違う）。
   robots.txt の本文は**先頭 `robotxt::BYTE_LIMIT`（500 KiB）+ 1 バイトまで読んで止める**（超えた分は読まずに捨て、断らない。
   RFC 9309 2.5 節は 500 KiB までの解析を求める）。`http_body` に「先頭だけ読む」関数を足して使う — 5 MiB の `read_capped` は
-  超えたら本文を返さないので robots.txt には合わない。規則は**上流の main に揃える**:
+  超えたら本文を返さないので robots.txt には合わない（**P1: `read_head`**。既存の `read_prefix` は読み取りの失敗で黙って途中までを
+  返すので、途中で切れた規則で判定しうる — 失敗を返す版を足した）。規則は**上流の main に揃える**:
   - robots.txt の取得も D4（住所の判定・リダイレクト）と D5（30 秒の内側。本文は上の 500 KiB + 1 バイトまで）を通る。robots.txt 自身には
     robots.txt を当てない
   - 401 / 403 / 5xx → 断る（`robots_unavailable`）/ それ以外の 4xx → 規則が無いとして通す / 繋がらない → 断る
-    （`robots_unavailable`）
+    （`robots_unavailable`）。**robots.txt の取得が住所の判定で断られたら `blocked_address`**（P1 — 名前が公開でない住所に
+    解ける先は最初の要求の robots.txt で必ず当たり、`robots_unavailable` と書くと理由が嘘になる。結合テストが先に見つけた）
   - `Disallow` に当たったら理由を返す（`robots_disallowed`）。照合する UA の名前は `Fuseforks`
   - **リダイレクトの各段**でも、その先の origin の robots.txt を見る（Docker の版は最初の URL だけ）
-  - origin（スキーム・ホスト・ポート）ごとに 1 時間覚える（プロセスの寿命。保存しない）
+  - origin（スキーム・ホスト・ポート）ごとに 1 時間覚える（プロセスの寿命。保存しない）。**覚えるのは規則が決まったときだけ**
+    （2xx の解析と規則なしの 4xx。P1 — 一時的な失敗で 1 時間そのサイトを読めなくしない）
 
 ### D8. 提示 — 同梱ツールの 10 本目
 
@@ -385,7 +391,7 @@
 - **P0b（凍結）** — **完了（2026-11-21）**。`data_contract.yaml` へ `web_fetch_contract`（D1〜D9）/ `tool_prune_contract` の対象の記述 /
   `enabled_tools_invariant`（`BUNDLED = DEFAULT ∪ {run, image, fetch}` = 10 = 7 + 3。理由に「モデルが選んだ URL へ送れる」を足す）/
   `ToolOutput` の 2 欄
-- **P1（コア）** — `tools/fetch.rs`（`FetchTool`）/ 住所の判定（純関数 + 単体。上流の表の境界の両側・IPv4 射影・NAT64・
+- **P1（コア）** — **完了（2026-11-21。「P1 実装記録」）**。`tools/fetch.rs`（`FetchTool`）/ 住所の判定（純関数 + 単体。上流の表の境界の両側・IPv4 射影・NAT64・
   `::/96`）/ 解決器と `redirect::Policy::custom` / 文字コードの判定（純関数 + 単体。青空文庫の先頭のバイト列・BOM と
   ヘッダの食い違い・XML の宣言を fixture に）/ `ToolOutput` の 2 欄と `turn.rs` の組み立て（枠が圧縮の外に残る・`raw` が
   圧縮されない・RepeatGuard と `omitted` が枠込みの本文を見る）/ 本文の取り出し（`links` の 2 通りを 1 つの経路で・比・
@@ -395,7 +401,7 @@
   **ループバックのスタブへ繋ぐテストは `tools/fetch.rs` の中の単体だけ**に置き、ループバックを許す構築は
   `#[cfg(test)]` の中にだけ書く — **配布物にはその構築が存在しない**（結合テスト `tests/*.rs` からは見えない）。
   結合テストは「本番の構築では 127.0.0.1 のスタブに繋がらず `blocked_address` になる」の向きで書く
-- **P2（画面）** — `AgentSettingsDialog.vue` の行 / `toolLabel.ts` の `KNOWN_TOOLS` と辞書 3 言語 / `RoleDialog.vue`
+- **P2（画面）** — **完了（2026-11-21。「P2 実装記録」）**。`AgentSettingsDialog.vue` の行 / `toolLabel.ts` の `KNOWN_TOOLS` と辞書 3 言語 / `RoleDialog.vue`
   （既定集合の外なので入れない）/ `defaultEnabledTools.test.ts` / サーヴァント設定の行に「チェックすると
   モデルが選んだ URL を取りに行きます」の注記
 - **P3（台帳）** — DETAIL 3 言語（同梱ツールの表・取得の節・Docker の fetch を外す手順）/ README 3 言語の同梱ツールの列挙 /
@@ -544,6 +550,73 @@ Shift_JIS 3・EUC-JP 1・ISO-2022-JP 2・`charset=` が空 1・http から https
 - 構文: このファイルは編集前から厳密なパーサを通らない（「TTL を分ける理由」の行で止まる既知の件）。編集の後も同じ行で
   止まり（挿入した 122 行ぶんずれただけ）、今回の編集はすべてその手前にある。`web_fetch_contract` を単独で解析すると
   通る（107 行）
+
+## P1 実装記録（2026-11-21）
+
+ブランチ `claude/web-fetch`（worktree）。コアとホストだけで、画面（P2）はまだ。
+
+**置いたもの**
+
+- `crates/fuseforks-core/src/tools/fetch/` — `mod.rs`（`FetchTool`・HTTP・リダイレクト・切り出し・枠・計器。**外へ出る通信はこの
+  ファイルにだけ置く**）/ `address.rs`（住所の判定。上流の main の `_is_public_address` の表 2 つと順序をそのまま写した純関数）/
+  `charset.rs`（BOM → ヘッダ → 先頭 1,024 バイトの宣言 → UTF-8。WHATWG の prescan を簡略に写した）/ `extract.rs`（dom_smoothie →
+  本文の HTML を dom_query で読み直して `md()`。失敗か空なら `<body>` 全体。`&amp;` の後処理）/ `robots.rs`（状態コードの振り分けと
+  1 時間の棚）。Spec は `tools/fetch.rs` の 1 ファイルと書いていたが、純関数の 4 つを分けた
+- `ToolOutput` に `frame_head` / `frame_tail` / `no_prune` と `whole()`。`turn.rs` は `ToolOutput` を丸ごと受けてから欄を取る形に
+  変えた（分解のタプルに欄を足し忘れて黙って既定へ落ちる形を、構造で無くした）。圧縮に回すのは `text` だけで、圧縮したら
+  「先頭の枠 + 圧縮した本文 + 末尾の枠」を返す。枠が空のツール（`fetch` 以外の全部）は今までと 1 バイトも変わらない
+- `http_body::read_head`（先頭だけ読み、読み取りの失敗を返す）と、外へ出る HTTP の走査テストの列挙に `tools/fetch/mod.rs`
+- `BUNDLED_TOOL_NAMES` に `fetch`（10 本・名前順）。`build_host` で登録（User-Agent の版は `version:` の行と同じ `opts.app_version`）
+- 依存: dom_smoothie 0.19 / dom_query 0.29 / encoding_rs 0.8 / robotxt 0.7（parser のみ）と、コアの tokio に `net`。
+  `Cargo.lock` に増えたのは **27**（P0a の見積もりと同じ）
+
+**仕様から変えた点**（Spec の D4 / D6 / D7 と契約へ書き戻した）
+
+1. リダイレクトは `Policy::custom` ではなく `Policy::none` + 自前のループ（robots.txt を各段で見るには非同期が要る）
+2. robots.txt の取得が住所の判定で断られたら `blocked_address`。**結合テストが先に見つけた** — localhost は最初の要求の
+   robots.txt で解決器に当たり、`robots_unavailable`（「robots.txt を確かめられなかった」）と書いていた
+3. robots.txt の棚に覚えるのは規則が決まったときだけ（一時的な失敗で 1 時間読めなくしない）
+4. `omitted` が戻すのは `text` の段落（枠は圧縮しないので戻す必要が無い）。rev5 の「枠を含めた全体」を訂正
+5. 数でない値・範囲の外の引数は既定か端へ寄せる（`bad_args` を足さない）
+
+**テスト**
+
+- 単体 44 本（住所 4・文字コード 9・取り出し 8・robots 4・本体 19）。本体の 19 本はループバックのスタブへ繋ぐ —
+  ループバックを許す構築（`for_loopback_tests`）と方針の欄は `#[cfg(test)]` の中にだけあり、配布物には存在しない。スタブは受けた要求の
+  道と見出しを記録するので、「robots.txt が断ったページは要求しない」「Accept-Encoding を送らない」まで見ている
+- 結合 `tests/web_fetch.rs` 3 本 — **本番の構築は 127.0.0.1 にも localhost にも 1 本も繋がない**（スタブへの接続数が 0）・`fetch:` の行・
+  提示の門（`enabledTools: null` の個体には出ない）
+- 結合 `tests/tool_prune.rs` に 2 本 — 枠が圧縮の外に残る / `no_prune` の結果は採点器を呼ばずにそのまま
+- 時間切れは `start_paused` の時計で 30 秒を進めた（実時間を待たない）
+- **画面の 2 本が P1 の時点で赤だった**（`toolLabel.test.ts` / `defaultEnabledTools.test.ts`）— Rust の表に `fetch` が増え、画面の表に
+  まだ無かった。表のずれを捕まえる網が働いた結果で、P2 で通った。**P1 だけを main へ入れると main が赤になる**ので、P2 までブランチに留めた
+- core + host の全テスト 1,638 本全緑・clippy 0。**変異 12 回とも予測どおり**（解決器が判定しない → 本番の構築の結合 1 本 / IP の直書きを判定しない → 3 本 / 圧縮した本文に枠を付け直さない・枠ごと圧縮に回す → それぞれ枠の 1 本 / `no_prune` を見ない → 1 本 / ASCII 互換でない宣言を
+  無視する → ISO-2022-JP の 1 本 / 401・403 の robots.txt を通す → 2 本 / `links: false` でもリンクを残す → 2 本 / 行き先の `&amp;` を
+  戻さない → 5 本 / 続きの案内の位置をずらす → 1 本 / 封筒を無害化しない → 1 本 / `Disallow` を見ない → 1 本。復元はハッシュで確認）
+
+## P2 実装記録（2026-11-21）
+
+同じブランチ `claude/web-fetch`。画面だけ（コアも IPC も 0 行）。
+
+- `AgentSettingsDialog.vue` の同梱ツールの一覧に `fetch` の行（`needsWorkDir: false` — 作業フォルダを使わない）。
+  チェックしている間だけ、その行の直下に注記「web の取得を許しています。モデルが選んだ URL へこの端末から取りに行き、相手の
+  サイトにはこの端末の IP アドレスと User-Agent（Fuseforks）が残ります。この端末と同じネットワークの中と、robots.txt が断る
+  ページは読みません」（`data-tool-note="fetch"`。Spec 76 の `image` の注記と同じ置き場）
+- `toolLabel.ts` の `KNOWN_TOOLS` に `fetch`、辞書 3 言語に `tools.fetch`（会話ペインの動作名「web ページを読む」）と
+  `agentSettings.tools.fetch`。doc の「同梱 11 本 + 合成 3 種」は本数を書かない形へ（足すたびに腐る — #62）
+- `RoleDialog.vue` は変えていない（既定集合の外なので役職の雛形のチェックに入れない、で Tasks のとおり）
+- **既存の誤りを 1 つ回収した** — 設定の「既定」の札が 3 言語とも「既定（すべて。新ツールも自動追加）」のままだった。
+  **Spec 15 で `run` が既定集合の外に出た時点から嘘**で、Spec 76 の `image` で外れが 2 つになっていた。「run・image・fetch 以外」へ
+  直し、`defaultEnabledTools.test.ts` に「札は既定集合の外のツールを 3 言語とも名指しする」を足した（外の集合は Rust の
+  `BUNDLED_TOOL_NAMES` − `DEFAULT_ENABLED_TOOLS` から引くので、外のツールを足して札を直し忘れると赤）
+- 初回案内のサーヴァントの歩（`tour.steps.servant.body`）に「web の取得」と「コマンド実行と web の取得はチェックを付けるまで使えません」
+- P1 で赤だった画面の 2 本（`toolLabel.test.ts` / `defaultEnabledTools.test.ts`）はこれで通った
+
+**テスト**: 走査 `agentToolNotesWiring.test.ts` に `fetch` の注記の 1 本 / `defaultEnabledTools.test.ts` に札の 1 本。
+vitest 1,209（140 ファイル）全緑・vue-tsc 0・build 緑。**変異 5 回とも予測どおり**（`KNOWN_TOOLS` から落とす → `toolLabel.test.ts` /
+一覧の行を落とす → `defaultEnabledTools.test.ts` / ja の札から fetch を落とす → `defaultEnabledTools.test.ts` / 注記の条件を壊す →
+`agentToolNotesWiring.test.ts` / ja の `tools.fetch` を落とす → `toolLabel.test.ts` と `index.test.ts`。復元はハッシュで確認）。
+**実機は未確認**（P4）
 
 ## Notes
 

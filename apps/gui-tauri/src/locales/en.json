@@ -987,7 +987,7 @@
     "maxToolsPlaceholder": "Default: 36",
     "maxToolsHint": "How many tool calls one response may use. Raise it if responses get cut off at the limit (each extra round uses more tokens; the token limit is what caps the cost).",
     "bundledTools": "Bundled tools",
-    "toolsDefault": "Default (all; new tools are added automatically)",
+    "toolsDefault": "Default (all but run, image and fetch; new default tools are added automatically)",
     "toolsCustom": "Custom selection (no automatic additions)",
     "toolsReset": "Restore default",
     "tools": {
@@ -999,7 +999,8 @@
       "yq": "yq — edit TOML/JSON values (writes files)",
       "file": "file — file and folder operations (create/move/copy/trash)",
       "run": "run (execute registered commands)",
-      "image": "image — generate an image (the API chosen in System settings; costs money)"
+      "image": "image — generate an image (the API chosen in System settings; costs money)",
+      "fetch": "fetch — read a web page (fetches the URL the model chooses)"
     },
     "noWorkDirWarn": "No working folder is set, so file tools are not offered (your checkmarks are kept).",
     "rememberOffWarn": "Unchecking remember stops long-term memory from updating itself (Memory.md is still loaded).",
@@ -1040,6 +1041,7 @@
     "roleHelp": "This changes only the role label. Settings (Construct.md, model, and so on) are copied at creation time, so changing the role here does not change them.",
     "runOnWarn": "Command execution is enabled. The work-folder limit does not constrain executed commands. Only calls matching the allow list in this servant's run.json (edited next to the mcp.json tab) can run. The tool is offered even while allow is empty, but nothing can be executed in that state — non-matching calls are recorded as pending, so approving one from \"Command approval\" in the title bar lets it pass from the next turn.",
     "imageInactiveWarn": "Image generation is not active. This tool is not offered until a provider and key are set in System settings > Integration > Image generation.",
+    "fetchOnWarn": "Web fetching is enabled. This computer fetches the URLs the model chooses, and the site sees this computer's IP address and the User-Agent (Fuseforks). Pages on this computer's network (localhost, private addresses) and pages that robots.txt refuses are not read.",
     "allowHandoff": "Allow handoff (pass the conversation on)",
     "allowHandoffHint": "This servant cannot pass the conversation on. It can still delegate (ask and receive the answer) and split work. Suited to a coordinator.",
     "usesBlackboard": "Write notes on the blackboard",
@@ -1570,6 +1572,7 @@
     "blackboard": "work the blackboard",
     "run": "run a command",
     "image": "draw an image",
+    "fetch": "read a web page",
     "plan": "split the work",
     "room_log": "read the room log",
     "handoff": "hand off",
@@ -1720,7 +1723,7 @@
       },
       "servant": {
         "title": "Add a servant",
-        "body": "Press Add and give it a name. Afterwards, the pencil on its card opens the settings: model, bundled tools, command execution and MCP servers, per servant (all optional)."
+        "body": "Press Add and give it a name. Afterwards, the pencil on its card opens the settings: model, bundled tools, command execution, web fetching and MCP servers, per servant (all optional; command execution and web fetching stay off until you check them)."
       },
       "kizuna": {
         "title": "Draw a tie",

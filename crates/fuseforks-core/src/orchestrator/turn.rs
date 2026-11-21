@@ -2745,31 +2745,33 @@ impl CallRunner<'_> {
         let reason_kind = crate::tool_reason::kind_label(&reason);
         let ok = result.is_ok();
         // `approval_pending` も**ここで取る**（Spec 72 D2）— 欄アクセスの分解はコンパイラが
-        // 指さないので、欄を足したら書き忘れが黙って偽に落ちる場所。
-        let (raw, images, dropped, approval_pending) = match result {
-            Ok(output) => (
-                output.text,
-                output.images,
-                output.dropped,
-                output.approval_pending,
-            ),
+        // 指さないので、欄を足したら書き忘れが黙って偽に落ちる場所。**Spec 78 の枠と
+        // 「圧縮しない」の旗も同じ**（`whole()` の前に `ToolOutput` を丸ごと受けて、欄を落とさない）。
+        let output = match result {
+            Ok(output) => output,
             // 失敗しても会話を止めない。モデルが読んで次を決める。
-            Err(err) => (
-                format!("ツールの実行に失敗しました: {err}"),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
+            Err(err) => crate::tool::ToolOutput::text(format!("ツールの実行に失敗しました: {err}")),
         };
+        // 枠を付けた全体。RepeatGuard が数え、圧縮しなかったときにモデルへ返る形（Spec 78 D6）。
+        // 枠が空のツール（`fetch` 以外の全部）では `output.text` と同じ文字列になる。
+        let raw = output.whole();
+        let images = output.images;
+        let dropped = output.dropped;
+        let approval_pending = output.approval_pending;
         // ツール結果の即時圧縮（Spec 59 / `tool_prune_contract`）。
         //
         // **掛けるのはここ 1 箇所で、結果が返った瞬間の 1 回だけ。** 以後の周では
         // 積んだ文字列を 1 バイトも変えない（入力キャッシュの前方一致）。
         // `Err` の整形文は圧縮しない（`ok` の枝でだけ呼ぶ）。
-        let body = if ok {
-            self.prune_body(call, &raw)
-                .await
-                .unwrap_or_else(|| raw.clone())
+        //
+        // **圧縮するのは `text` だけで、枠は外に置く**（Spec 78 D6）— 枠の行は 120 字未満で、
+        // 本文に混ぜると隣の段落へ寄せられて段落ごと落ちうる。`no_prune` の結果（`fetch` の
+        // `raw: true`）は圧縮しない。
+        let body = if ok && !output.no_prune {
+            match self.prune_body(call, &output.text).await {
+                Some(pruned) => format!("{}{pruned}{}", output.frame_head, output.frame_tail),
+                None => raw.clone(),
+            }
         } else {
             raw.clone()
         };

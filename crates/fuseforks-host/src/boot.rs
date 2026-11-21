@@ -321,6 +321,12 @@ pub async fn build_host(paths: &HostPaths, opts: HostBootOptions) -> Result<Host
         .register_tool(Arc::new(fuseforks_core::tools::ImageTool::new(Arc::clone(&image_gen_slot))))
         .await;
 
+    // web の取得（Spec 78）。設定を持たないので登録するだけ — 提示は `enabledTools` の 1 段（既定集合の外）。
+    // User-Agent に載る版は `version:` の行と同じもの（`CARGO_PKG_VERSION` は使えない — 上の注記）。
+    orchestrator
+        .register_tool(Arc::new(fuseforks_core::tools::FetchTool::new(&opts.app_version)))
+        .await;
+
     // MCP サーバーへ接続する。**失敗してもアプリの起動は止めない。**
     // MCP サーバーは外部コマンドで、未インストール・パス違い・権限で普通に落ちる。
     // そこで起動しなくなるのは筋が悪い（各サーバーの結果は list_mcp_servers で読める）。

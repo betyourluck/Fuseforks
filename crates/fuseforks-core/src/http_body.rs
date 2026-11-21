@@ -94,6 +94,28 @@ pub async fn read_prefix(source: &mut impl ChunkSource, limit: usize) -> Vec<u8>
     body
 }
 
+/// 本文の先頭を `limit` バイトまで読み、残りは読まない（Spec 78 D7 — robots.txt は先頭 500 KiB を
+/// 解析すればよく、超えても断らない）。
+///
+/// [`read_prefix`] と違い、**読み取りの失敗を返す** — 途中で切れた規則で判定しないため（`Disallow` の行が
+/// 途中で切れて短い道に化けると、許すべきでない道を許しうる）。
+///
+/// # Errors
+/// 読み取りに失敗したとき（接続の切断・待ちの上限）。
+pub async fn read_head<S: ChunkSource>(source: &mut S, limit: usize) -> Result<Vec<u8>, S::Error> {
+    let mut body = Vec::new();
+    while body.len() < limit {
+        match source.next_chunk().await? {
+            Some(chunk) => {
+                let room = limit - body.len();
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            }
+            None => break,
+        }
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,7 +177,13 @@ mod tests {
     #[test]
     fn every_outbound_response_is_read_through_the_cap() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for file in ["llm/client.rs", "jev.rs", "image_gen.rs", "mcp_oauth.rs"] {
+        for file in [
+            "llm/client.rs",
+            "jev.rs",
+            "image_gen.rs",
+            "mcp_oauth.rs",
+            "tools/fetch/mod.rs",
+        ] {
             let path = root.join(file);
             let src = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{} を読めない: {e}", path.display()));
@@ -171,6 +199,31 @@ mod tests {
                 assert!(!code.contains(banned), "{file} が応答本文を `{banned}` で全部読んでいる");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_head_keeps_the_head_and_stops() {
+        let mut source = chunks(None, &[4, 4, 4, 4]);
+        assert_eq!(read_head(&mut source, 10).await.unwrap().len(), 10);
+        assert_eq!(source.read, 3, "上限に達したら次の塊を読まない");
+    }
+
+    /// 失敗を飲まない（[`read_prefix`] との違い）。途中まで読めていても `Err` を返す。
+    #[tokio::test]
+    async fn a_head_reports_a_failed_read() {
+        struct Breaks(usize);
+        #[async_trait]
+        impl ChunkSource for Breaks {
+            type Error = String;
+            fn declared_len(&self) -> Option<u64> {
+                None
+            }
+            async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, String> {
+                self.0 += 1;
+                if self.0 == 1 { Ok(Some(vec![b'x'; 4])) } else { Err("切れた".into()) }
+            }
+        }
+        assert_eq!(read_head(&mut Breaks(0), 10).await, Err("切れた".to_owned()));
     }
 
     #[tokio::test]

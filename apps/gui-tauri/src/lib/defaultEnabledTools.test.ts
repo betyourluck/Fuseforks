@@ -83,4 +83,19 @@ describe("同梱ツールの名前表", () => {
     expect(vueBundled()).not.toContain("rag");
     expect(vueDefaults()).not.toContain("rag");
   });
+
+  // 「既定」の札は、既定集合の外のツールを名指しする（Spec 78 P2）。旧い文言「既定（すべて。新ツールも
+  // 自動追加）」は Spec 15 で run が外に出た時点から嘘で、image・fetch を足すたびに外れが増えていた。
+  // 外のツールを足したのに札を直し忘れると、ここが赤くなる。
+  it("「既定」の札は既定集合の外のツールを 3 言語とも名指しする", () => {
+    const defaults = new Set(rustList("DEFAULT_ENABLED_TOOLS"));
+    const outside = rustList("BUNDLED_TOOL_NAMES").filter((name) => !defaults.has(name));
+    for (const locale of ["ja", "en", "zh-Hans"]) {
+      const dict = JSON.parse(readFileSync(resolve(here, `../locales/${locale}.json`), "utf-8"));
+      const label: string = dict.agentSettings.toolsDefault;
+      for (const name of outside) {
+        expect(label, `${locale}: ${label}`).toContain(name);
+      }
+    }
+  });
 });
