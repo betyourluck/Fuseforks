@@ -131,10 +131,14 @@ pub struct OrchestratorConfig {
     /// その行き詰まりを上限より手前で切るのは [`RepeatGuard`] の側
     /// （回数の上限はコストの上限にならない。failures.md #41）。
     ///
-    /// 既定 12。当初 6 だったが、**通常の調査委譲が 2 セッションで 3 回**
+    /// 旧既定 12。当初 6 だったが、**通常の調査委譲が 2 セッションで 3 回**
     /// この上限で溶けた（grep → 絞り込み → 読む、の往復は 6 では足りない）。
     /// 低い上限は節約ではなく浪費側に働く — 燃えたトークンの成果が出ないまま、
     /// 再依頼でもう一度同じだけ燃える（2026-07-30 実測）。
+    ///
+    /// **2026-11-21 に 36 へ上げた。** 12 のままの個体はほとんど無く、この村では 13 体中 12 体が
+    /// 個別に 32〜64 を設定し、上限で止まったターン 23 回のうち 13 回が 16 で止まっていた。
+    /// 費用の歯止めはこの回数ではなくトークンの天井（Spec 11）と RepeatGuard が持つ。
     pub max_tool_iterations: u8,
     /// エージェント 1 体あたりの受信箱容量。溢れたら送信側にエラーを返す（背圧）。
     pub mailbox_capacity: usize,
@@ -190,7 +194,7 @@ impl Default for OrchestratorConfig {
         Self {
             max_hops: 8,
             history_turns: 8,
-            max_tool_iterations: 12,
+            max_tool_iterations: 36,
             mailbox_capacity: 64,
             event_capacity: 1_024,
             stats_interval: Duration::from_secs(1),

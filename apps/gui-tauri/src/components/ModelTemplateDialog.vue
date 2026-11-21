@@ -490,7 +490,7 @@ function blank(): ModelTemplate {
     model: "gpt-4o",
     contextLength: 128000,
     temperature: null,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 32000,
     credential: "unset",
     provider: null,
     useTools: true,
@@ -512,7 +512,7 @@ function blank(): ModelTemplate {
     geminiUrlContext: false,
     // Spec 71。既定 OFF（検索料 1,000 回 $10 は上限の外・結果は 1 検索 約 1 万トークン）。
     anthropicWebSearch: false,
-    requestTimeoutSecs: 120,
+    requestTimeoutSecs: 300,
     maxRetries: 3,
     // 単価は既定を持たない（Spec 41）。**0 ではなく未設定**で始まり、
     // 「取得」か手入力で初めて埋まる。
