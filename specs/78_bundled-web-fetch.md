@@ -1,12 +1,12 @@
 # Spec 78: 同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む
 
-- 状態: **rev5**（2026-11-21 起票 → 同日、査読 2 系統を反映して rev2。重なりを除いて 43 項目 → 採用 39 /
+- 状態: **Done**（2026-11-22。rev5。2026-11-21 起票 → 同日、査読 2 系統を反映して rev2。重なりを除いて 43 項目 → 採用 39 /
   前提を訂正して採用 2 / 反証 2。表は Notes 6 → 同日、**利用者が未決 5 つを推しのとおりに裁定して rev3** →
   同日、**P0a の測定を終えて rev4**。D3 を実測で直した（ISO-2022-JP）→ 同日、**利用者が P0a の後の裁定 4 つを推しのとおりに
   決めて rev5**（D1 に `links` を足し、D2 を書き直した）→ 同日 **P0b 完了**（`data_contract.yaml` の `web_fetch_contract`
   ほか 6 箇所。記録は「P0b 凍結記録」）→ 同日 **P1 / P2 完了**（ブランチ `claude/web-fetch`。コア・ホスト・画面。
   記録は「P1 実装記録」「P2 実装記録」）→ 2026-11-22 **P3 完了**（DETAIL 3 言語・README 3 言語・PRIVACY 日英。
-  記録は「P3 台帳記録」）。次は P4（実機）
+  記録は「P3 台帳記録」）→ 同日 **P4 完了 = Done**（利用者「P4 は問題ない」。記録は「P4 実機記録」）
 - 起点: 利用者（2026-11-21）—「webfetch を同梱ツールとして入れるべきかなと思っている。今は Docker の fetch を
   使っているが、けっこう読み込みが重い。できれば車輪の再発明ではなく Rust でよい crate があればそれを使いたい」
 - 調査だけのターンを 1 回取った（`fuseforks.log` の `MCP_DOCKER__fetch` の行 / crates.io の候補 12 本 / 候補を
@@ -409,7 +409,7 @@
   PRIVACY 日英: **要旨の「2 つだけ」/ 4 章の冒頭「設定した接続先に対してのみ」/ 4-4 の「MCP のツールが返した」
   「MCP 以外」**を書き換え、取得の節を足す（送るもの: モデルが選んだ URL への GET・この端末の IP・User-Agent・
   robots.txt の GET）/ `failures.md` は出たら
-- **P4（実機）** — 提示: チェックした個体にだけ `fetch` が出る（`enabledTools: null` の個体には出ないことも見る）/ 日本語の記事と Shift_JIS のページが読める / `http://127.0.0.1:…`・`http://192.168.…`・
+- **P4（実機）** — **完了（2026-11-22。「P4 実機記録」）**。提示: チェックした個体にだけ `fetch` が出る（`enabledTools: null` の個体には出ないことも見る）/ 日本語の記事と Shift_JIS のページが読める / `http://127.0.0.1:…`・`http://192.168.…`・
   `http://[::ffff:127.0.0.1]/` を断る（理由が本文に出る）/ 一覧ページで `<body>` 全体へ戻る / 「■ 停止」で取得中に
   止まる / Jev の圧縮が掛かり、枠（URL・続きの案内）が残る（`tool prune:` の `name=fetch`）/ 所要時間を Docker の
   fetch と比べる
@@ -639,6 +639,30 @@ vitest 1,209（140 ファイル）全緑・vue-tsc 0・build 緑。**変異 5 �
 - **触っていないもの** — ランディングページ（公開ページ。FAQ の「外向きの通信」の列挙は `fetch` を数えていない。配布物に入る前に
   名乗らないので、直すのは次のタグを公開するとき・利用者の判断）/ Qiita の記事（同梱ツールを列挙していない）/ `failures.md`
   （P1〜P3 で新しい失敗の形は出ていない — robots.txt の取得が `robots_unavailable` に化けた件は結合テストが着地前に捕まえた）
+
+## P4 実機記録（2026-11-22）
+
+開発ビルド（`app=0.1.0 profile=debug`。main = `dccaf7a`）。利用者が画面から 5 体（agent / agent_9 / buffet_agent /
+fxtrader_agent / lynch_ai）に `fetch` のチェックを付け、株の分析の普段使いの中で確かめた。Docker の fetch は、MCP_DOCKER を
+使っていた 5 体の `mcp.json` の `--servers` と `--tools` から外した（Wikipedia・playwright ほかは残した）。利用者「P4 は問題ない」で閉じた。
+
+| 検収 | 結果 | 根拠 |
+|---|---|---|
+| 提示 — チェックした個体にだけ出る・チェックの直下の注記 | 観測 | 利用者が画面で確認。`fetch:` 行が出たのはチェックした個体（agent / agent_9）だけ |
+| 日本語の記事 | 観測 | `host=note.com` — 419,953 バイトから本文 10,458 字・本文の割合 94%・`encoding=UTF-8:header`・408 ms |
+| 英語の記事 | 観測 | `host=247wallst.com` — 331,478 バイトから 6,749 字・51%・344 ms |
+| 所要時間を Docker の fetch と比べる | 観測 | 344 / 408 ms。Docker の版は中央値 2.3 秒（1,063 本）で、およそ 1/6〜1/7 |
+| Jev の圧縮が掛かる（`tool prune:` の `name=fetch`） | 走った・圧縮はしなかった | 2 回とも `outcome=below_floor`（正味 0.3% / 7.1%。門は 25%）。判定に 1,113 / 825 ms。モデルへ返した字数は本文 + 枠（6,749 → 7,061 = 枠 312 字） |
+| `http://192.168.…` を断る | **機構は実機で踏めていない** | FX トレーダー（`google/gemini-4-argon`・Perplexity のワイヤ）に `http://192.168.0.6:8188/` を頼むと、**`fetch` を呼ばずに**「localhost やプライベートアドレスへのアクセスは制限されている」と答えた（`turn:` が `rounds=1/32`、`tool:` 行も `fetch:` 行も無い）。ツールの説明文を読んで答えた形。断る機構そのものは単体 `ip_literals_and_schemes_are_refused_before_any_request` / `a_redirect_into_the_private_network_is_refused` と結合 `the_production_build_never_connects_to_the_loopback` に預けた |
+| Shift_JIS のページ / 一覧のページ / 取得中の「■ 停止」/ 圧縮した後に枠が残る | 実機では踏んでいない | 単体 `a_shift_jis_page_is_decoded_from_its_meta_declaration` / `a_page_without_an_article_falls_back_to_the_body` / `the_stop_button_cuts_a_hanging_request` と結合 `the_frame_stays_outside_pruning` に預けた |
+
+**観察（機構は足さない）**
+
+- **記事のページでは Jev の圧縮がほとんど効かず、判定の待ちだけ払う**（0.8〜1.1 秒。取得そのものより長い）。2 回とも正味 7% 以下で、
+  門で止まって全文を返した。Spec 59 の「効くかどうかは入力の形が決める」のとおりで、`fetch` が抽出で既にナビやフッタを落としているぶん、
+  Docker の版（ページ全体を返していた）より圧縮の出番は減るはず。頻度は `tool prune: name=fetch` の `outcome=` で見る
+- **断るはずの依頼は、モデルが説明文を読んで呼ばずに断った。** 説明文の 1 文（この端末のネットワークの中は読まない）が先に効いた形で、
+  機構は最後の網になっている。どちらが効いたかは `fetch:` 行の有無で分かれる
 
 ## Notes
 

@@ -3147,7 +3147,8 @@ Spec の「#8b の実装記録」が正）/ 調べてもらったジェミー（
 など。**続けて利用者が残る裁定 4 つを推しで決め、P0b（`data_contract.yaml` の `web_fetch_contract`）まで進めた**。
 **続けて P1（コア）と P2（画面）をブランチ `claude/web-fetch` で着地**（core + host 1,638 本・vitest 1,209 全緑・clippy 0）。
 **2026-11-22 に P3（台帳）** — DETAIL 3 言語に節・README 3 言語に行・PRIVACY 日英に 4-6（送り先がモデルの選ぶ URL になる初めての経路）。
-DETAIL 日英の同梱ツールの表に `image` の行が Spec 76 から抜けていたのも回収。次は P4（実機）。
+DETAIL 日英の同梱ツールの表に `image` の行が Spec 76 から抜けていたのも回収。main へ早送りして push（`dccaf7a`）。
+**同日 P4 で Done**（開発ビルドで 5 体にチェックを付けて普段使い。Docker の fetch は MCP_DOCKER を使う 5 体の `--servers` / `--tools` から外した）。
 
 ## 現在地（2026-11-20 更新）
 
@@ -8548,7 +8549,9 @@ FSF の立場では派生物で逃げられず、MPL 2.0 にすれば**ファイ
 
 ## Spec の状態
 
-- [Spec 78](specs/78_bundled-web-fetch.md)（同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む）: **rev5・P0〜P3 完了（ブランチ `claude/web-fetch`。次は P4 = 実機）**
+- [Spec 78](specs/78_bundled-web-fetch.md)（同梱の web 取得ツール `fetch` — Docker の MCP なしで web ページを読む）: **Done**（2026-11-22。**起票から Done まで 2 日**。P4 = 開発ビルドで利用者が普段使いの中で確認 — 日本語の記事 408 ms・英語の記事 344 ms
+  （Docker の版の中央値 2.3 秒の 1/6〜1/7）/ Jev の圧縮は記事のページで 2 回とも門で止まった / プライベートアドレスの依頼は
+  モデルが説明文を読んで `fetch` を呼ばずに断った（機構は単体と結合に預けた）。記録は Spec の「P4 実機記録」）
   （2026-11-21 起票 → 同日、査読 2 系統・重なりを除いて 43 項目 → 採用 39 / 前提を訂正して採用 2 / 反証 2。表は Spec の Notes 6 →
   同日、**利用者が未決 5 つを推しのとおりに裁定**（`max_length` 既定 20,000 / robots.txt を見る / 既定集合に**入れない** /
   プロキシは作らない / Docker の fetch は利用者に外してもらう手順を DETAIL へ）→ 同日 **P0a**（実ページ 31 本。記録は Spec の
