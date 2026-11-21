@@ -857,15 +857,60 @@ pub struct GeminiRequest {
     pub generation_config: GeminiGenerationConfig,
 }
 
-/// 1 ロール分の発話。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// 1 ロール分の発話（送る側）。応答の側は [`GeminiResponseContent`]。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeminiContent {
     /// `"user"` / `"model"`。`systemInstruction` では省く。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// 中身。
+    pub parts: Vec<GeminiRequestPart>,
+}
+
+/// 送る側の 1 part — 組み立てた part と、受け取ったままの写し。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum GeminiRequestPart {
+    /// 組み立てた part（`Box` は 2 つの variant の大きさを揃えるため。直列化は中身のまま）。
+    Part(Box<GeminiPart>),
+    /// 応答の part の写し（`failures.md` #162）。**受け取ったオブジェクトをそのまま送る** —
+    /// 署名を持つ `toolCall` / `toolResponse` / 思考 / 本文。型に読み直すと型に無い欄が落ちる。
+    Raw(serde_json::Value),
+}
+
+impl From<GeminiPart> for GeminiRequestPart {
+    fn from(part: GeminiPart) -> Self {
+        Self::Part(Box::new(part))
+    }
+}
+
+/// 応答の中身（`candidates[].content`）。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GeminiResponseContent {
+    /// 中身。
     #[serde(default)]
-    pub parts: Vec<GeminiPart>,
+    pub parts: Vec<GeminiResponsePart>,
+}
+
+/// 応答の 1 part — 型に読んだ形（[`GeminiPart`]）と、受け取ったままのオブジェクト（`raw`）の対
+/// （`failures.md` #162。Anthropic の [`AnthropicResponseBlock`] と同じ形）。
+///
+/// 生のほうを持つのは、関数呼び出しの署名が**別の part（並列に出た組み込みツールの `toolCall`）に
+/// 付いた応答**を、同じターンの次の周へ受け取ったまま送り返すため。
+#[derive(Debug, Clone)]
+pub struct GeminiResponsePart {
+    /// 型に読んだ形。
+    pub part: GeminiPart,
+    /// 受け取ったままのオブジェクト。
+    pub raw: serde_json::Value,
+}
+
+impl<'de> Deserialize<'de> for GeminiResponsePart {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let part = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        Ok(Self { part, raw })
+    }
 }
 
 /// 発話の構成要素。
@@ -1107,7 +1152,7 @@ pub struct GeminiPromptFeedback {
 pub struct GeminiCandidate {
     /// 中身。
     #[serde(default)]
-    pub content: Option<GeminiContent>,
+    pub content: Option<GeminiResponseContent>,
     /// 終了理由（`STOP` / `MAX_TOKENS` など）。
     ///
     /// **`STOP` は終了を意味しない。** 関数呼び出しを返したときも `STOP` が来る

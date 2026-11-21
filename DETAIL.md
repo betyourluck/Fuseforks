@@ -2057,6 +2057,14 @@ tool_use_prompt=… search_queries=…`（組み込みツールを使った周�
 `dropped content blocks: kinds=…`（decode が捨てた part の種別。検索の
 `toolResponse` は毎ターン出る — 今まで無音で捨てていたものの可視化）。
 
+**検索と並列に関数呼び出しが出た応答だけは、検索の部品ごと次の周へ返す**（2026-11-21）。
+Gemini は関数呼び出しに思考署名を付けるが、検索の `toolCall` と同じ段で出た関数呼び出しには付けず、
+段の署名を `toolCall` の側に置くことがある。検索の部品を落として送り返すと、署名の無い関数呼び出しが
+残って次の周が 400（`Function call is missing a thought_signature in functionCall parts`）になり、
+サーヴァントが止まっていた（`gemini-4-hydrogen` で 2 回）。この形の応答は受け取ったまま同じターンの中で
+返し、ログに `gemini replay: parts=… signed=… calls=… unsigned_calls=…` を 1 行残す。返した検索結果は
+次の周の入力トークンに乗る（その代わりモデルは同じ検索をやり直さない）。それ以外の応答は今までどおり。
+
 **Gemini が安全や利用方針の判定で応答を止めたときは、そう書く**（2026-11-16）。入力（依頼の文面や添付）で
 止められると応答の候補が 0 件で返り、理由（`promptFeedback.blockReason`）はそこにしか無い。生成した応答を
 止めたときは `finishReason` に判定の語（`SAFETY` / `PROHIBITED_CONTENT` / `IMAGE_SAFETY` など）が付く。

@@ -7975,13 +7975,44 @@ llm_wire:
         gemini-2.5-flash-lite は 400 `Thinking level is not supported for this model`
         (P0 (b'))。同じワイヤ内の方言の吸収であって、ワイヤの選択に名前を使う
         (Spec 31 D2 の禁止) ではない。includeThoughts: true とは併存する
-      - **toolCall / toolResponse は履歴へ返さない** (Spec 48 P0 (d2) で確定。
+      - **toolCall / toolResponse はふつう履歴へ返さない** (Spec 48 P0 (d2) で確定。
         Spec 05 以来の「未確認」を閉じた)。返さなくても 200 で、モデルは必要なら
         同じ URL / 検索を**再実行**する (toolUsePromptTokenCount がもう 1 度乗る)。
         返すなら thoughtSignature ごと逐語 — 剥ぐと 400
         `Tool call part is missing thought_signature`。返せば次の周の prompt に
         取得本文が乗り (9,050)、返さなければ再取得に乗る (9,047) — どちらも
-        入力単価で同額なので、ChatMessage に不透明な part の席は作らない
+        入力単価で同額なので、~~ChatMessage に不透明な part の席は作らない~~
+      - **例外: 関数呼び出しの段の署名が別の part に付いた応答は、受け取ったまま返す**
+        (failures.md #162。2026-11-21。Spec 48 D3 をこの形の応答について覆した)。
+        関数呼び出しに thoughtSignature が付くのは段の最初の呼び出しだけで、並列の
+        2 本目以降には付かない。段の最初が組み込みツールの toolCall だと段の署名は
+        toolCall に付き、並列に出た functionCall は署名なしで来る。toolCall を落として
+        組み直すと署名の無い functionCall が model の発話の先頭に残り、次の周が 400
+        `Function call is missing a thought_signature in functionCall parts. … function
+        call default_api:{name} , position {n}` (n は contents の 1 始まりの番号 =
+        その model の発話)。実機 = gemini-4-hydrogen が 2026-11-17 (16 周目) /
+        11-21 (7 周目) に fatal で止まった。probe (2026-11-21・gemini-4-hydrogen) —
+        保存した応答の functionCall から署名を外し、(A) 今の組み直し → 実機と同じ文面の 400
+        / (B) 逐語で functionCall を toolResponse の後ろ → 400 / (C) 逐語で functionCall を
+        toolCall の直後 → 200 / (D)(E) 代替の署名 skip_thought_signature_validator /
+        context_engineering_is_the_way_to_go → 200 (文書の現行版に記述が無く、400 の文面が
+        「欠くと性能が落ちうる」と書くので採らない)。**判定 = needs_replay() =
+        署名の無い functionCall が 1 つ以上 AND functionCall 以外で署名を持つ part が
+        1 つ以上** (純関数)。真なら decode が署名の無い思考の part だけを除いた parts を
+        受け取ったまま ChatResponse.replay へ写し (応答の part は「型に読んだ形 + 生」の対
+        = GeminiResponsePart)、encode_message はその発話を組み立てずに写しを並べる
+        (GeminiRequestPart::Raw。functionCall を二重に作らない)。寿命は 1 ターン
+        (ChatMessage.replay は #[serde(skip)] — anthropic_server_tools と同じ席)。
+        偽の応答 (functionCall に全部署名がある = 実機の大半の周 / 並列の 2 本目に
+        署名が無いだけ) は今までどおり組み立て、送るバイトは変わらない。
+        計器 — 写しを作った周は `gemini replay: parts={n} signed={n} calls={n}
+        unsigned_calls={n} reason=call_signature_elsewhere` を 1 行出し、何も捨てて
+        いないので `dropped content blocks:` は出さない
+      - 写しで返した周の費用 (probe 2026-11-21・同じ応答を 2 回ずつ): 検索 3 回ぶんの
+        toolResponse を返すと次の要求の promptTokenCount が 858 → 20,918 (検索結果の
+        本文が入力に乗る)、代わりにモデルは検索をやり直さない (落とした形は毎回 2 回
+        やり直した)。**写しを常に作るか (全周で返すか) は未決** — 今は 400 を避ける形の
+        応答だけに絞っている
       - **計器 2 行** (Spec 48 D5): decode が本文・tool_calls・grounding のどれにも
         写さなかった part は `dropped content blocks: kinds=… count=…` を 1 行
         (Anthropic / Meta と同じ形。toolResponse は現行で毎ターン捨てている =
@@ -8038,6 +8069,8 @@ llm_wire:
       ~~未解決: toolCall / toolResponse を履歴へ返す必要があるかは未確認~~
       → **2026-09-03 Spec 48 P0 (d2) で確定: 返さなくてよい** (invariants の項)。
       席は作らない、が結論のまま残った。
+      → **2026-11-21 に例外を 1 つ足した** (failures.md #162) — 関数呼び出しの段の署名が
+      toolCall に付いた応答だけは、写し (ChatMessage.replay。Spec 71 の席) で返す。
     gemini_url_context_active: |
       **gemini_url_context_active() = gemini_url_context AND effective_provider() == Gemini**
       (Spec 48 D3。grounding_active と同型の AND 述語)。モデル名の門は無い —

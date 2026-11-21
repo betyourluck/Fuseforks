@@ -2125,7 +2125,9 @@ Gemini 系の固有スキルとして使えるものがないか調べて」。�
 
 **→ 1 と 2 は Spec 48 として Done**（2026-09-03〜04。P0 の probe で
 `toolCall` / `toolResponse` を履歴へ返さなくてよいことが確定し、Spec 05 以来の
-「未確認」を閉じた。実機検収 6 件）。3〜5 は据え置き。**URL の取得に失敗したときの
+「未確認」を閉じた。実機検収 6 件。**→ 2026-11-21 に 1 つの形について覆した** — 検索の `toolCall` と
+並列に出た `functionCall` は署名なしで来て、段の署名は `toolCall` が持つ。落とすと次の周が 400 で
+`gemini-4-hydrogen` が 2 回止まった。この形だけ写しで返す = `failures.md` #162）。3〜5 は据え置き。**URL の取得に失敗したときの
 捏造は運用で受ける**（利用者裁定 2026-09-04 — 条例 / `Memory.md` の文言。効いたかは
 `gemini tools: url_context=0/N` の周の後の `reply:` で読む）
    （`providerSkills.ts` の doc が禁じている側）
@@ -9357,7 +9359,8 @@ Ctrl+C は待たない）/ `main.rs`（引数の誤りでも `--events jsonl` �
   （2026-09-03。P0 = probe 7 発 + `data_contract` 凍結 3 箇所。**決着 2 つ** —
   `thinkingLevel` の門は `gemini-3`（2.5-flash-lite が 400・2.5-flash は 404 で提供終了）/
   **`toolCall` / `toolResponse` は履歴へ返さない**（返さなくても 200・返さないと
-  再取得・返すなら signature ごと逐語で剥ぐと 400。Spec 05 以来の「未確認」を閉じた）。
+  再取得・返すなら signature ごと逐語で剥ぐと 400。Spec 05 以来の「未確認」を閉じた。
+  **→ 2026-11-21 に例外 1 つ** = 関数呼び出しの段の署名が `toolCall` に付いた応答は写しで返す。`failures.md` #162）。
   予測を外したのは 1 つ: 2.5-lite は `urlContext` を受ける = 門は要らない。査読 2 系統
   13 点 → 採用 6 / 訂正して採用 4 / 反証 2 / 変更なし 1。**反証 2 つはログと実装が根拠** —
   `gemini-3.6-flash` / `3.5-flash-lite` は村のログに 248 / 92 ターン / `cache:` 行は

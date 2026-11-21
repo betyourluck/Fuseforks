@@ -1633,6 +1633,15 @@ tool_use_prompt=… search_queries=…` (only on rounds that used a built-in too
 `toolResponse` appears every turn — this makes visible what was silently dropped
 before).
 
+**A response where a function call came out in parallel with a search is sent back with the search
+parts** (2026-11-21). Gemini attaches a thought signature to function calls, but a function call issued in the
+same step as a search `toolCall` can come without one, with the step's signature on the `toolCall`. Sending the
+response back without the search parts left an unsigned function call, the next round failed with a 400
+(`Function call is missing a thought_signature in functionCall parts`), and the servant stopped (twice on
+`gemini-4-hydrogen`). Such a response is now returned as received within the same turn, and the log gets one
+`gemini replay: parts=… signed=… calls=… unsigned_calls=…` line. The returned search results count as input
+tokens on the next round (in exchange the model does not repeat the same searches). Other responses are unchanged.
+
 **When Gemini stops a response at its safety or usage-policy check, the chat says so** (2026-11-16). If the
 input (the request text or attachments) is stopped, the response comes back with zero candidates and the reason
 (`promptFeedback.blockReason`) is only there. If the generated response is stopped, `finishReason` carries a

@@ -5908,3 +5908,37 @@ HKCU の `Run` の同名の値に効かず、サインイン時に起動した�
 「設計どおり」と書いた）。**文書に書かれていない OS の挙動は、実機で対照つきの試験をするまで分からない。** 今回の試験の形 —
 調べる値と、条件だけ外した対照の値を並べて置き、両方の痕跡（%TEMP% のファイル）を比べる — は、対照が走らなかったときに
 「試験が成立していない」と読めるので、片方だけの観察より強い。
+
+## #162 Gemini 4 が検索と並列に出した関数呼び出しの署名を、検索の部品ごと捨てていた — 次の周が 400 でサーヴァントが止まる（2026-11-17 / 11-21）
+
+**症状**: `gemini-4-hydrogen` のジェミー（`agent_3`）が、Google 検索と `MCP_DOCKER__fetch` を併用する委譲のターンの途中で
+2 回止まった。`fuseforks.log` は 2 回とも `llm retry stop: … status=400 class=client_error code=INVALID_ARGUMENT` の直後に
+`turn failed: agent=agent_3 … fatal=true` で、本文は `Function call is missing a thought_signature in functionCall parts. …
+function call default_api:MCP_DOCKER__fetch , position 52`（11-17・16 周目・`prompt=1416892` まで払った後）/ `position 18`
+（11-21・7 周目）。どちらも直前の周に `dropped content blocks: kinds=toolResponse… tool_calls=1` と `gemini tools: … search_queries=N`
+が並んでいた。`position` は contents の 1 始まりの番号で、数えると 2 回とも**最後の周の model の発話**だった。
+
+**真因**: Gemini は関数呼び出しに思考署名を付けるが、付けるのは**段の最初の呼び出しだけ**で、並列の 2 本目以降には付けない。
+段の最初が組み込みツールの `toolCall`（検索）だと、段の署名は `toolCall` に付き、同じ段で並列に出た `functionCall` は署名なしで来る。
+decode は `toolCall` / `toolResponse` を捨てて（Spec 48 D3「履歴へ返さない」）、encode が本文 + `functionCall` に組み直していたので、
+署名の無い `functionCall` が model の発話の先頭に残り、API がそれを段の最初の呼び出しと読んで 400 にした。D3 を決めた
+Spec 48 P0 (d2) の probe は `gemini-3.8-flash` で、そこでは `functionCall` に必ず署名が付いていた — **払いが同額かどうかは比べたが、
+署名の検証は数えていなかった**。2026-11-21 の probe（`gemini-4-hydrogen`）で、保存した応答の `functionCall` から署名を外すと
+(A) 今の組み直し → 実機と同じ文面の 400（`position 2`）/ (B) 逐語で `functionCall` を `toolResponse` の後ろ → 400 /
+(C) 逐語で `functionCall` を `toolCall` の直後 → 200。約 30 応答を撃って実機の形そのもの（署名なしの 1 本）は再現しなかった
+（実機の頻度は検索のある周の 1 割前後）。
+
+**処方**: 判定 `needs_replay` = 署名の無い `functionCall` が 1 つ以上 **かつ** `functionCall` 以外で署名を持つ part が 1 つ以上。
+真の応答は、署名の無い思考の part だけを除いて受け取ったまま `ChatResponse::replay` へ写し（応答の part は「型に読んだ形 + 生」の対
+`GeminiResponsePart`）、encode は組み立てずに写しを並べる（`GeminiRequestPart::Raw`）。Spec 71 で Anthropic の web 検索に作った
+写しの席（`ChatMessage::replay`・`#[serde(skip)]`・寿命 1 ターン）をそのまま使う。偽の応答（`functionCall` に全部署名がある =
+実機の大半の周 / 並列の 2 本目に署名が無いだけ）は今までどおり組み立てる。計器は `gemini replay: parts=… signed=… calls=…
+unsigned_calls=… reason=call_signature_elsewhere`。単体 4 本（写しを作る 2 本は、修正の前と、判定を常に偽にした変異の両方で赤を確かめた）+ 結合 `tests/gemini_signature_replay_turn.rs`
+（実物の decode / encode を通す）。代替の署名 `skip_thought_signature_validator` も 200 だったが、文書の現行版に記述が無く、400 の
+文面自身が「欠くと性能が落ちうる」と書くので採らなかった。
+
+**一般化**: **不透明な欄（署名・暗号化された本文）が「どの part に付くか」は、モデルの世代で動く。付く場所を決め打ちして
+組み直す adapter は、新しい世代で別の part へ移った瞬間に黙って欄を落とす。** 落としたものが検証される欄なら、受け取ったまま
+返すのが唯一の安全な形で、組み直すなら「落とす part が署名を持っていないか」を数えてから落とす。もう 1 つ — **払いの比較で
+「返さなくてよい」と決めた判断は、払い以外の理由（検証）で返す必要が生まれたときに覆る**。判断を書くときは、何を比べて
+決めたかを書いておくと、覆す条件が読める。

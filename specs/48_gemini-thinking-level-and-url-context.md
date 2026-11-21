@@ -124,6 +124,13 @@ o 系で分けているのと同じ「同じワイヤ内の方言の吸収」で
   期待値を反転する（P1）。**`google_search` ON のテンプレートの golden は変わる** —
   `toolConfig` が「関数宣言の無い周」で消える。**これは意図した削減**で、加算的変更の
   約束（D2）は `effort` の側だけに掛かる（承認査読の追加指摘）
+- **→ 2026-11-21 に 1 つの形の応答について覆した**（`failures.md` #162）— 関数呼び出しの段の署名が
+  並列の `toolCall` に付き、`functionCall` に署名が無い応答（`gemini-4-hydrogen` の実機で 2 回、
+  次の周が 400 `Function call is missing a thought_signature in functionCall parts` で fatal）。
+  この応答だけは署名の無い思考の part を除いて受け取ったまま写し（`ChatMessage.replay`。Spec 71 の席）で
+  同じターンの次の周へ返す。下の「席を作る理由が無い」は、払いの比較では正しかったが、
+  **署名の検証を数えていなかった**（P0 (d2) の 3.8 では `functionCall` に必ず署名が付いていた）。
+  判定・probe・費用は `data_contract` の `gemini_native` の例外の項が正
 - **`toolCall` / `toolResponse` は履歴へ返さない（現行のまま）。** P0 (d2) で 3 形を
   撃った — (a) 両方落とす（= 現行 decode）→ 200・**モデルは同じ URL を再取得**
   （`toolUsePromptTokenCount` 9,047 がもう 1 度乗る）(b) `toolCall` だけ返す → 同じく

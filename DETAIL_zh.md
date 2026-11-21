@@ -580,6 +580,9 @@ SKILL / Construct 标签与判断者编辑对话框中的“用 AI 创建”。
 - 在模型模板中可以配置思考量（`low` / `medium` / `high`）。当传入大语言模型时，会作为 `thinking_config` 发送。
 - **URL context。** 如果在输入中包含了网页 URL，Gemini 能够直接读取该页面的内容。
 - 工具响应（`toolResponse`）每轮都会输出 — 将以往无声丢弃的信息可视化。
+- **与搜索并行发出函数调用的响应，会连同搜索部分一起原样送回**（2026-11-21）。这类响应中函数调用没有思考签名，
+  签名在搜索的 `toolCall` 上；丢掉搜索部分会导致下一轮 400（`Function call is missing a thought_signature`），
+  仆从停止。日志会记一行 `gemini replay: …`。送回的搜索结果计入下一轮的输入 token。
 
 ### Grok 的 Live Search（[Spec 31](specs/31_grok-live-search.md)）
 

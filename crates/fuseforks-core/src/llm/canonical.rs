@@ -197,8 +197,9 @@ pub struct ChatMessage {
     /// [`ChatResponse::replay`] をターンの層が写す。
     ///
     /// **中身を読むのは書いた adapter だけ**（[`ToolCall::extra`] と同じ規律）。
-    /// 今は Anthropic のサーバー側ツール（web 検索）の保留・停止・済んだ組を、同じ
-    /// ターンの次の周へ受け取った順のまま送り返すためにある。
+    /// 今は 2 つのワイヤが使う — Anthropic のサーバー側ツール（web 検索）の保留・停止・済んだ組と、
+    /// Gemini の、関数呼び出しの段の署名が並列の組み込みツールの `toolCall` に付いた応答
+    /// （`failures.md` #162）。どちらも同じターンの次の周へ受け取った順のまま送り返す。
     ///
     /// **`#[serde(skip)]` — 寿命は 1 ターン。** 保存（`sessions.redb`）にも golden にも出ず、
     /// 履歴は今までどおり本文の文字列で積む（ターンをまたいで検索結果を持ち越さない）。
@@ -664,8 +665,9 @@ pub struct ChatResponse {
     pub reasoning_summary: Vec<String>,
     /// 応答のブロックの写し（Spec 71 D3）。ターンの層が [`ChatMessage::replay`] へ写す。
     ///
-    /// 作るのは Anthropic の decode だけで、応答にサーバー側ツールのブロックが在るか
-    /// `pause_turn` のときに限る。それ以外は `None`（送信バイトは従来のまま）。
+    /// 作るのは Anthropic の decode（応答にサーバー側ツールのブロックが在るか `pause_turn` のとき）と
+    /// Gemini の decode（署名の無い関数呼び出しがあり、関数呼び出し以外の part が署名を持つとき。
+    /// `failures.md` #162）だけ。それ以外は `None`（送信バイトは従来のまま）。
     pub replay: Option<Value>,
 }
 

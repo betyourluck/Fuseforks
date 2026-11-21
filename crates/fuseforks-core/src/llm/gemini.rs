@@ -136,10 +136,13 @@ pub fn encode(req: &ChatRequest, skills: GeminiSkills) -> wire::GeminiRequest {
 
     let system_instruction = (!system_text.trim().is_empty()).then(|| wire::GeminiContent {
         role: None,
-        parts: vec![wire::GeminiPart {
-            text: Some(system_text),
-            ..Default::default()
-        }],
+        parts: vec![
+            wire::GeminiPart {
+                text: Some(system_text),
+                ..Default::default()
+            }
+            .into(),
+        ],
     });
 
     let contents = req
@@ -148,7 +151,12 @@ pub fn encode(req: &ChatRequest, skills: GeminiSkills) -> wire::GeminiRequest {
         .filter(|m| m.role != Role::System)
         // 本文も呼び出しも無い assistant は送らない（Spec 77 #17c — 空の parts になる。Anthropic と
         // Responses 系の adapter と同じく落とす）。
-        .filter(|m| !(m.role == Role::Assistant && m.content.is_empty() && m.tool_calls.is_empty()))
+        .filter(|m| {
+            !(m.role == Role::Assistant
+                && m.content.is_empty()
+                && m.tool_calls.is_empty()
+                && m.replay.is_none())
+        })
         .map(encode_message)
         .collect();
 
@@ -350,27 +358,44 @@ fn encode_message(message: &ChatMessage) -> wire::GeminiContent {
                         .collect(),
                 }),
                 ..Default::default()
-            }],
+            }
+            .into()],
         },
         Role::Assistant => {
-            let mut parts = Vec::new();
+            // 写しを持つ発話（`failures.md` #162）。**組み立てを丸ごと飛ばし、受け取った順に並べる** —
+            // 本文・`tool_calls` からは作らない（組み立て直すと関数呼び出しの段の署名を持つ `toolCall` が
+            // 落ち、関数呼び出しを二重に作ることにもなる）。`tool_calls` はターンの層（実行・RepeatGuard・
+            // 計器）のために残るが、ここでは読まない。
+            if let Some(Value::Array(raw)) = &message.replay {
+                return wire::GeminiContent {
+                    role: Some("model".into()),
+                    parts: raw.iter().cloned().map(wire::GeminiRequestPart::Raw).collect(),
+                };
+            }
+            let mut parts: Vec<wire::GeminiRequestPart> = Vec::new();
             if !message.content.is_empty() {
-                parts.push(wire::GeminiPart {
-                    text: Some(message.content.clone()),
-                    ..Default::default()
-                });
+                parts.push(
+                    wire::GeminiPart {
+                        text: Some(message.content.clone()),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
             }
             for call in &message.tool_calls {
-                parts.push(wire::GeminiPart {
-                    function_call: Some(wire::GeminiFunctionCall {
-                        id: (!call.id.is_empty()).then(|| call.id.clone()),
-                        name: call.name.clone(),
-                        args: call.args.clone(),
-                    }),
-                    // 受け取った署名をそのまま返す。欠くと次の周が落ちうる。
-                    thought_signature: thought_signature(call),
-                    ..Default::default()
-                });
+                parts.push(
+                    wire::GeminiPart {
+                        function_call: Some(wire::GeminiFunctionCall {
+                            id: (!call.id.is_empty()).then(|| call.id.clone()),
+                            name: call.name.clone(),
+                            args: call.args.clone(),
+                        }),
+                        // 受け取った署名をそのまま返す。欠くと次の周が落ちうる。
+                        thought_signature: thought_signature(call),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
             }
             wire::GeminiContent {
                 role: Some("model".into()),
@@ -382,24 +407,30 @@ fn encode_message(message: &ChatMessage) -> wire::GeminiContent {
             // 添付はテキストより前（他社と同じ並び）。**4 種別すべてを運ぶ唯一の
             // ワイヤ**で、音声と動画をここでしか送れないことが Spec 23 D8 を
             // 覆した理由（Spec 36 D8）。
-            let mut parts: Vec<wire::GeminiPart> = message
+            let mut parts: Vec<wire::GeminiRequestPart> = message
                 .attachments
                 .iter()
-                .map(|a| wire::GeminiPart {
-                    inline_data: Some(wire::GeminiInlineData {
-                        mime_type: a.media_type.as_str().to_owned(),
-                        data: a.data.clone(),
-                    }),
-                    ..Default::default()
+                .map(|a| {
+                    wire::GeminiPart {
+                        inline_data: Some(wire::GeminiInlineData {
+                            mime_type: a.media_type.as_str().to_owned(),
+                            data: a.data.clone(),
+                        }),
+                        ..Default::default()
+                    }
+                    .into()
                 })
                 .collect();
             // **添付が無いときは今日までと 1 バイトも変わらない** — 空の本文でも
             // text パートを 1 つ出す形を保つ（golden で凍結）。
             if parts.is_empty() || !message.content.is_empty() {
-                parts.push(wire::GeminiPart {
-                    text: Some(message.content.clone()),
-                    ..Default::default()
-                });
+                parts.push(
+                    wire::GeminiPart {
+                        text: Some(message.content.clone()),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
             }
             wire::GeminiContent {
                 role: Some("user".into()),
@@ -455,9 +486,14 @@ fn note_empty(candidates: usize, block_reason: Option<&str>, finish: Option<&str
 /// ## 落としているもの
 ///
 /// Google 側が実行済みの組み込みツール（`toolCall` / `toolResponse` パート）は
-/// canonical に写す先が無いため**落としている**。検索語（`toolCall.args.queries`）は
-/// 利用者に見せる価値があり、履歴として返す必要があるかも未確認。
-/// どちらも Spec 05 の宿題で、確定するまで嘘の席を作らない。
+/// canonical に写す先が無いため、**ふつうは落とす**（Spec 48 D3。検索語は
+/// `toolCall.args.queries` から拾う）。
+///
+/// **例外は [`needs_replay`] が真の応答**（`failures.md` #162）。関数呼び出しの段の署名が
+/// 並列に出た `toolCall` に付き、関数呼び出しには署名が無い形で、落とすと次の周が 400
+/// `Function call is missing a thought_signature in functionCall parts` になる。この応答は
+/// 署名の無い思考の part だけを除いて受け取ったまま [`ChatResponse::replay`] へ写し、
+/// 同じターンの次の周へ逐語で返す（Spec 71 の Anthropic と同じ形。寿命は 1 ターン）。
 pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
     let usage = resp
         .usage_metadata
@@ -538,8 +574,17 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
     let mut tool_calls = Vec::new();
     let mut reasoning_summary: Vec<String> = Vec::new();
     let mut dropped: Vec<&'static str> = Vec::new();
+    // 写しの材料（`failures.md` #162）。署名の無い思考の part だけを除いて受け取った順に。
+    let mut replay_parts: Vec<Value> = Vec::new();
+    let mut signs = SignatureTally::default();
 
-    for part in candidate.content.map(|c| c.parts).unwrap_or_default() {
+    for wire::GeminiResponsePart { part, raw } in
+        candidate.content.map(|c| c.parts).unwrap_or_default()
+    {
+        signs.count(&part);
+        if !(part.thought == Some(true) && part.thought_signature.is_none()) {
+            replay_parts.push(raw);
+        }
         if let Some(kind) = dropped_kind(&part) {
             dropped.push(kind);
             continue;
@@ -566,9 +611,10 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         // 答えとして表示される。**要約としては受け取る**（Spec 33）。
         //
         // **0 字は入れない**（`reasoning_summary` 契約の凍結 2）。
-        // なお `thoughtSignature` はこの part ではなく `functionCall` の part に
-        // 付いており、その往復は既に `ToolCall::extra` で成立している —
-        // **思考の本文まで戻す要求は無い**（落とす / 戻すの対で実測）。
+        // なお `thoughtSignature` はふつうこの part ではなく `functionCall` の part に
+        // 付いており、その往復は `ToolCall::extra` で成立している —
+        // **思考の本文まで戻す要求は無い**（落とす / 戻すの対で実測）。署名を持つ
+        // 思考の part が来たら、写し（[`needs_replay`]）が受け取ったまま返す。
         if part.thought == Some(true) {
             if let Some(chunk) = part.text
                 && !chunk.is_empty()
@@ -613,9 +659,22 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         );
     }
 
+    // 写しを作るかを決める（`failures.md` #162）。作るときは何も捨てていない（toolResponse も
+    // 未知の part も写しで返る）ので、捨てた数の行の代わりに写しの行を出す。
+    let replay = needs_replay(signs).then_some(Value::Array(replay_parts));
+    if let Some(Value::Array(parts)) = &replay {
+        crate::note!(
+            "gemini replay: parts={} signed={} calls={} unsigned_calls={} reason=call_signature_elsewhere",
+            parts.len(),
+            parts.iter().filter(|p| p.get("thoughtSignature").is_some()).count(),
+            tool_calls.len(),
+            signs.unsigned_calls,
+        );
+    }
+
     // 捨てた part を数える（Spec 48 D5。Anthropic / Meta と同じ形）。toolResponse は
     // 現行でも毎ターン捨てていた — 可視化であって新事象ではない。
-    if !dropped.is_empty() {
+    if !dropped.is_empty() && replay.is_none() {
         crate::note!(
             "dropped content blocks: kinds={} count={} output_tokens={} text_chars={} tool_calls={}",
             dropped.join("+"),
@@ -644,8 +703,43 @@ pub fn decode(resp: wire::GeminiResponse) -> Result<ChatResponse, LlmError> {
         usage,
         grounding,
         reasoning_summary,
-        replay: None,
+        replay,
     })
+}
+
+/// 1 応答の `thoughtSignature` の付き方（`failures.md` #162）。
+#[derive(Debug, Default, Clone, Copy)]
+struct SignatureTally {
+    /// 署名の無い `functionCall` の数。
+    unsigned_calls: usize,
+    /// `functionCall` 以外で署名を持つ part の数（`toolCall` / `toolResponse` / 思考 / 本文）。
+    signed_other: usize,
+}
+
+impl SignatureTally {
+    fn count(&mut self, part: &wire::GeminiPart) {
+        let signed = part.thought_signature.is_some();
+        if part.function_call.is_some() {
+            self.unsigned_calls += usize::from(!signed);
+        } else {
+            self.signed_other += usize::from(signed);
+        }
+    }
+}
+
+/// 応答を受け取ったまま返す（写し）必要があるか（`failures.md` #162。純関数）。
+///
+/// **真 = 署名の無い関数呼び出しがあり、かつ関数呼び出し以外の part が署名を持つ。**
+/// 関数呼び出しに署名を付けるのは段の最初の呼び出しだけで、並列の 2 本目以降には付かない。
+/// 段の最初が組み込みツールの `toolCall` だと、段の署名は `toolCall` に付き、並列に出た
+/// 関数呼び出しは署名なしで来る。組み立て直して `toolCall` を落とすと、署名の無い関数呼び出しが
+/// 段の先頭に残り 400 になる（2026-11-21 の probe: 署名を外した関数呼び出しを `toolCall` の
+/// 直後に置けば 200、`toolResponse` の後ろに置くと 400）。
+///
+/// 偽の応答は今までどおり組み立てる — 関数呼び出しにだけ署名がある形（ふつうの形）と、
+/// 並列の 2 本目以降に署名が無いだけの形（1 本目が持つ）。送るバイトは変わらない。
+fn needs_replay(signs: SignatureTally) -> bool {
+    signs.unsigned_calls > 0 && signs.signed_other > 0
 }
 
 /// decode が本文にも `tool_calls` にも `grounding` にも写さない part の種別（Spec 48 D5）。
@@ -762,6 +856,14 @@ mod tests {
         }
     }
 
+    /// 組み立てた part を取り出す（写しの part ならテストの失敗）。
+    fn typed(part: &wire::GeminiRequestPart) -> &wire::GeminiPart {
+        match part {
+            wire::GeminiRequestPart::Part(part) => part.as_ref(),
+            wire::GeminiRequestPart::Raw(raw) => panic!("組み立てた part のはずが写し: {raw}"),
+        }
+    }
+
     fn request(messages: Vec<ChatMessage>) -> ChatRequest {
         ChatRequest {
             model: "gemini-3.5-flash".into(),
@@ -786,7 +888,7 @@ mod tests {
         assert_eq!(wire.contents.len(), 1, "system は contents に混ざらない");
         assert_eq!(wire.contents[0].role.as_deref(), Some("user"));
         let sys = wire.system_instruction.expect("systemInstruction が要る");
-        assert_eq!(sys.parts[0].text.as_deref(), Some("あなたはザリ"));
+        assert_eq!(typed(&sys.parts[0]).text.as_deref(), Some("あなたはザリ"));
     }
 
     /// **添付が無い発話は Spec 36 の前後でバイト等価**。
@@ -1003,7 +1105,7 @@ mod tests {
         let wire = encode(&req, GeminiSkills::default());
 
         assert_eq!(wire.contents[0].role.as_deref(), Some("user"), "tool ロールは無い");
-        let fr = wire.contents[0].parts[0]
+        let fr = typed(&wire.contents[0].parts[0])
             .function_response
             .as_ref()
             .expect("functionResponse");
@@ -1272,8 +1374,115 @@ mod tests {
         let req = request(vec![ChatMessage::assistant_tool_calls("", calls)]);
         let wire = encode(&req, GeminiSkills::default());
         assert_eq!(
-            wire.contents[0].parts[0].thought_signature.as_deref(),
+            typed(&wire.contents[0].parts[0]).thought_signature.as_deref(),
             Some("SIG")
+        );
+    }
+
+    /// 同じターンの次の周へ送る `model` の発話の parts（写しを付けた assistant + 結果 1 本）。
+    fn replayed_parts(raw: &str) -> Vec<Value> {
+        let out = decode(serde_json::from_str::<wire::GeminiResponse>(raw).unwrap()).unwrap();
+        let calls = out.tool_calls.clone();
+        let mut messages = vec![
+            ChatMessage::user("調べて"),
+            ChatMessage::assistant_tool_calls(out.text.clone().unwrap_or_default(), calls.clone())
+                .with_replay(out.replay.clone()),
+        ];
+        for call in &calls {
+            messages.push(ChatMessage::tool_result(call.id.clone(), call.name.clone(), "本文"));
+        }
+        let wire = serde_json::to_value(encode(&request(messages), SEARCH)).unwrap();
+        wire["contents"][1]["parts"].as_array().unwrap().clone()
+    }
+
+    /// 2026-11-17 / 11-21 の実機（`gemini-4-hydrogen`）の 400
+    /// `Function call is missing a thought_signature in functionCall parts`（`failures.md` #162）。
+    /// 検索の `toolCall` と並列に出た関数呼び出しには署名が無く、段の署名は `toolCall` が持つ。
+    /// `toolCall` を落として組み直すと署名の無い関数呼び出しが先頭に残る。**受け取った順・受け取った
+    /// 形のまま返す**（2026-11-21 の probe で、この並びは 200・組み直した形は同じ文面の 400）。
+    /// 落とすのは署名の無い思考の part だけ（Spec 71 の Anthropic と同じ）。
+    #[test]
+    fn a_call_parallel_to_a_server_tool_call_comes_back_as_received() {
+        let raw = r#"{"candidates":[{"content":{"role":"model","parts":[
+          {"text":"考える","thought":true},
+          {"toolCall":{"toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["rust"]},"id":"c1","future":1},
+           "thoughtSignature":"SC"},
+          {"functionCall":{"name":"MCP_DOCKER__fetch","args":{"url":"https://a"},"id":"f1"}},
+          {"toolResponse":{"toolType":"GOOGLE_SEARCH_WEB","response":{"r":1},"id":"c1"},
+           "thoughtSignature":"SR"}
+        ]},"finishReason":"STOP"}]}"#;
+        let parts = replayed_parts(raw);
+
+        let kinds: Vec<&str> = parts
+            .iter()
+            .map(|p| p.as_object().unwrap().keys().find(|k| *k != "thoughtSignature").unwrap().as_str())
+            .collect();
+        assert_eq!(kinds, ["toolCall", "functionCall", "toolResponse"], "受け取った順のまま: {parts:?}");
+        let sigs: Vec<&str> = parts.iter().filter_map(|p| p["thoughtSignature"].as_str()).collect();
+        assert_eq!(sigs, ["SC", "SR"], "署名を 1 つも落とさない");
+        assert_eq!(
+            parts[0],
+            json!({"toolCall":{"toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["rust"]},"id":"c1","future":1},
+                   "thoughtSignature":"SC"}),
+            "型に無い欄も受け取ったまま返す"
+        );
+        assert_eq!(parts[1]["functionCall"]["id"], "f1", "関数呼び出しは 1 本だけ（二重に作らない）");
+    }
+
+    /// 関数呼び出し以外の part（思考・本文）に署名が付き、関数呼び出しに無い周も写しで返す。本文の
+    /// part の署名は本文を 1 つに連結して組み直すと消え、思考の part は組み直すと丸ごと消える。
+    #[test]
+    fn signatures_on_thought_and_text_parts_of_a_call_round_are_kept() {
+        let raw = r#"{"candidates":[{"content":{"parts":[
+          {"text":"考える","thought":true,"thoughtSignature":"ST"},
+          {"text":"","thoughtSignature":"S0"},
+          {"functionCall":{"name":"grep","args":{},"id":"f1"}}
+        ]},"finishReason":"STOP"}]}"#;
+        let parts = replayed_parts(raw);
+
+        let sigs: Vec<&str> = parts.iter().filter_map(|p| p["thoughtSignature"].as_str()).collect();
+        assert_eq!(sigs, ["ST", "S0"], "{parts:?}");
+        assert_eq!(parts.len(), 3, "署名を持つ思考は落とさない");
+    }
+
+    /// 関数呼び出しに全部署名がある応答は、検索の部品があっても組み直す（Spec 48 D3 のまま。
+    /// 実機の大半の周がこの形 — `[思考, toolCall*, toolResponse*, 思考, functionCall*]`）。
+    #[test]
+    fn a_signed_call_after_server_tools_keeps_the_typed_path() {
+        let raw = r#"{"candidates":[{"content":{"parts":[
+          {"text":"考える","thought":true},
+          {"toolCall":{"toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["rust"]},"id":"c1"},"thoughtSignature":"SC"},
+          {"toolResponse":{"toolType":"GOOGLE_SEARCH_WEB","response":{"r":1},"id":"c1"},"thoughtSignature":"SR"},
+          {"functionCall":{"name":"MCP_DOCKER__fetch","args":{"url":"https://a"},"id":"f1"},"thoughtSignature":"SF"}
+        ]},"finishReason":"STOP"}]}"#;
+        let out = decode(serde_json::from_str::<wire::GeminiResponse>(raw).unwrap()).unwrap();
+        assert_eq!(out.replay, None);
+        assert_eq!(
+            Value::Array(replayed_parts(raw)),
+            json!([{"functionCall":{"id":"f1","name":"MCP_DOCKER__fetch","args":{"url":"https://a"}},
+                    "thoughtSignature":"SF"}])
+        );
+    }
+
+    /// サーバー側の部品も、関数呼び出しの外の署名も無い応答は写しを作らない — 送るバイトは
+    /// 今までどおり（並列の 2 本目に署名が無いのは正常な形。P0 で 200）。
+    #[test]
+    fn a_plain_call_response_keeps_the_typed_path() {
+        let raw = r#"{"candidates":[{"content":{"parts":[
+          {"text":"考える","thought":true},
+          {"functionCall":{"name":"grep","args":{"q":"a"},"id":"f1"},"thoughtSignature":"S1"},
+          {"functionCall":{"name":"fd","args":{},"id":"f2"}}
+        ]},"finishReason":"STOP"}]}"#;
+        let out = decode(serde_json::from_str::<wire::GeminiResponse>(raw).unwrap()).unwrap();
+        assert_eq!(out.replay, None);
+
+        let parts = replayed_parts(raw);
+        assert_eq!(
+            Value::Array(parts),
+            json!([
+              {"functionCall":{"id":"f1","name":"grep","args":{"q":"a"}},"thoughtSignature":"S1"},
+              {"functionCall":{"id":"f2","name":"fd","args":{}}}
+            ])
         );
     }
 
