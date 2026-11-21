@@ -349,10 +349,15 @@ mod tests {
     /// `python.exe` を `python` として通すのに、解決は `python.exe.EXE` しか探さず「PATH に見つかりません」で
     /// 終わっていた（Spec 15 の「`python` と `python.exe` を別物にしない」に反する）。拡張子の列は引数で
     /// 渡すので、この主張は OS を問わず回る。
+    ///
+    /// **拡張子を足して探す側のファイルは、拡張子の列と大小をそろえて置く**（v0.7.2 の CI の Ubuntu で落ちた）。
+    /// `tool` + `.EXE` は Windows と macOS では `tool.exe` に当たるが、大小を区別する Linux のファイルシステムでは
+    /// 当たらない。確かめたいのは「拡張子を足して探す」ことで、ファイルシステムの大小の扱いではない。
     #[test]
     fn a_name_that_already_carries_an_extension_is_found() {
         let dir = TempDir::new("ext");
         std::fs::write(dir.0.join("tool.exe"), b"").unwrap();
+        std::fs::write(dir.0.join("plain.EXE"), b"").unwrap();
         let exts = vec![".EXE".to_owned(), ".CMD".to_owned()];
         let path = std::ffi::OsString::from(dir.0.as_os_str());
 
@@ -362,8 +367,8 @@ mod tests {
             "拡張子まで書いた名前はそのまま探す"
         );
         assert_eq!(
-            resolve_in("tool", &path, &exts).map(|p| p.file_name().unwrap().to_ascii_lowercase()),
-            Some(std::ffi::OsString::from("tool.exe")),
+            resolve_in("plain", &path, &exts),
+            Some(dir.0.join("plain.EXE")),
             "拡張子の無い名前は従来どおり拡張子を足して探す"
         );
         assert_eq!(resolve_in("tool.bat", &path, &exts), None, "無いものは無い");
