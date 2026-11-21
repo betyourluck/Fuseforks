@@ -5932,7 +5932,8 @@ Spec 48 P0 (d2) の probe は `gemini-3.8-flash` で、そこでは `functionCal
 真の応答は、署名の無い思考の part だけを除いて受け取ったまま `ChatResponse::replay` へ写し（応答の part は「型に読んだ形 + 生」の対
 `GeminiResponsePart`）、encode は組み立てずに写しを並べる（`GeminiRequestPart::Raw`）。Spec 71 で Anthropic の web 検索に作った
 写しの席（`ChatMessage::replay`・`#[serde(skip)]`・寿命 1 ターン）をそのまま使う。偽の応答（`functionCall` に全部署名がある =
-実機の大半の周 / 並列の 2 本目に署名が無いだけ）は今までどおり組み立てる。計器は `gemini replay: parts=… signed=… calls=…
+実機の大半の周 / 並列の 2 本目に署名が無いだけ）は今までどおり組み立てる（**→ 2026-11-21 13:50 の実機では、検索と fetch を同じ周に
+並べる依頼で、検索した 10 周すべてが写しになった**。少なくともこの依頼の形では「大半の周」は当たらない。20 周で完走・400 は 0 件）。計器は `gemini replay: parts=… signed=… calls=…
 unsigned_calls=… reason=call_signature_elsewhere`。単体 4 本（写しを作る 2 本は、修正の前と、判定を常に偽にした変異の両方で赤を確かめた）+ 結合 `tests/gemini_signature_replay_turn.rs`
 （実物の decode / encode を通す）。代替の署名 `skip_thought_signature_validator` も 200 だったが、文書の現行版に記述が無く、400 の
 文面自身が「欠くと性能が落ちうる」と書くので採らなかった。
