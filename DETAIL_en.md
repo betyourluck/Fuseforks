@@ -73,6 +73,9 @@ Fuseforks/
 │       │   ├── tools/rag.rs         Built-in tool: rag (heading index over declared reference folders. read-only)
 │       │   ├── tools/blackboard.rs  Built-in tool: blackboard (blackboard notes. a servant writes only its own)
 │       │   ├── tools/image.rs       Built-in tool: image (draws an image; off by default; goes to the one image-generation API chosen for the app; Spec 76)
+│       │   ├── tools/fetch/         Built-in tool: fetch (reads a web page; off by default. mod.rs = HTTP, redirects, frame, log line /
+│       │   │                        address.rs = address check / charset.rs = character encoding / extract.rs = main-text extraction /
+│       │   │                        robots.rs = robots.txt; Spec 78)
 │       │   └── llm/
 │       │       ├── mod.rs           LlmBackend / BackendFactory / EchoBackend
 │       │       ├── canonical.rs     Provider-neutral types
@@ -1047,7 +1050,7 @@ When a round cut off by the limit has no text response, the model is called **on
 
 Tool failures do not end the conversation. Errors return to the model as strings, and the model reads them to decide what to do next. **Failing an entire turn just because an argument was wrong would end the conversation.** Invocation itself is announced through `CoreEvent::ToolInvoked`; results disappear inside the prompt, so the UI must not leave silent side effects. **That announcement also carries the one-line reason the model wrote** (see "Tool reasons" below). **Arguments and result text are not part of the announcement** — they are fetched from the app's memory only when a row is opened (see "Opening and folding tool rows" below).
 
-There are ten built-in tools. External capabilities are added through MCP.
+The built-in tools are in the table below (no count is written — it would rot each time one is added). External capabilities are added through MCP.
 
 | Tool | What it does | Scope |
 |---|---|---|
@@ -1061,6 +1064,8 @@ There are ten built-in tools. External capabilities are added through MCP.
 | `rag` | Query Markdown in **declared reference folders** through a heading index ([Spec 18](specs/18_bundled-doc-index.md)). Declaring a folder offers the tool automatically | **Declared folders only** (read-only; independent of the work folder) |
 | `blackboard` | Read and write blackboard notes (list / read / write / append / move / remove). [Spec 55](specs/55_blackboard-tool.md). Offered whenever there is a work folder (can be turned off with "Write notes on the blackboard") | **Only inside the work folder's `blackboard/`**; a servant writes only its own notes |
 | `run` | Execute allowed commands ([Spec 15](specs/15_command-execution.md)). **Off by default** | **Unrestricted** (the allowlist is the only enclosure) |
+| `image` | Draw an image ([Spec 76](specs/76_image-generation.md)). **Off by default**. Offered only while image generation is in effect | Generated images are saved in **the work folder's `generated_images/`** |
+| `fetch` | Read a web page ([Spec 78](specs/78_bundled-web-fetch.md)). **Off by default** | **Only public addresses outside this machine** (localhost and private addresses are refused). Pages robots.txt disallows are not read |
 
 
 ### Tool reasons ([Spec 27](specs/27_tool-call-reason.md))
@@ -1174,7 +1179,7 @@ A tool row in the chat pane **opens when clicked** and shows **the arguments the
 Cloudflare account ID and API token; only then can it be enabled. In a village where
 those are not set, tool bodies are not changed by a single byte.
 
-When on, bodies returned by **MCP tools** have paragraphs unrelated to the
+When on, bodies returned by **MCP tools** and **`fetch`** ("Reading a web page" below) have paragraphs unrelated to the
 current request dropped before the model sees them. The judgement comes from **Jev**,
 a judgement-only model (from TypeSafe AI, reached through Cloudflare Workers AI) that
 writes no prose and returns only a 0.0–1.0 relevance per paragraph, at input rates an
@@ -1188,7 +1193,7 @@ source. This is a different question — **dropping by relevance of content** �
 works on prose.
 
 **A tool opts in for itself** (`AgentTool::prunable`, false by default). Only `McpTool`
-returns true, and **there is no name-based exclusion list** — a new bundled tool is out of
+and `FetchTool` (Spec 78; its frame lines stay outside pruning, and a `raw: true` result is stopped on the result side) return true, and **there is no name-based exclusion list** — a new bundled tool is out of
 scope unless it says otherwise. `file` feeds `sd` and needs the text verbatim; `run`'s
 fixed 12,000-character budget exists for repeat detection (exact match on the result body).
 
@@ -1423,6 +1428,56 @@ destination its user does not know.
 - **Opening the village with v0.7.0 or earlier starts any conversation containing a generated image's copy (JPEG) empty and without
   history** (the old version does not know the format; the records are not lost and come back when opened with a newer version)
 
+### Reading a web page (`fetch`, [Spec 78](specs/78_bundled-web-fetch.md))
+
+Servants fetch a URL with the built-in tool `fetch` and read it as Markdown. It stands in for the Docker MCP fetch
+(`MCP_DOCKER__fetch`): fetching, character encoding, main-text extraction and robots.txt are handled inside the app (pure Rust).
+
+- **Off by default.** `fetch` is outside the default set (like `run` and `image` — putting it in would let a model send to a URL of
+  its choosing just because the app was updated). It is offered only to servants whose setting is checked, and a note right under
+  the checkbox says what is left where. It has no settings (no key, no destination)
+- **Five arguments** — `url` (required) / `max_length` (default 20,000 characters; at most 999,999) / `start_index` (default 0) /
+  `raw` (no conversion; default false) / `links` (keep link URLs and images; default false). `url` / `max_length` / `start_index` /
+  `raw` have the same shape as the Docker version. Out-of-range values are moved to the default or the nearest end
+- **The result is split into a frame and a body** — the frame is the `URL:` line (the final URL after redirects), `Title:` and
+  `Extracted:`, plus "call again with start_index set to N to continue" when the body was cut. `start_index` and `max_length` count
+  characters of the body only. Reading on means fetching again (the turn does not hold the body)
+- **Extraction** — for HTML the article's main text is taken (dom_smoothie, a Readability port) and turned into Markdown. The
+  `Extracted:` line says what percentage of the page's text the main text is (a hint for the model that, on a listing page, only part
+  was taken; nothing switches on this ratio). Only when no main text is found, or it is empty, does it fall back to the whole `<body>`
+  (skipping navigation, headers, footers and forms). If that is empty too, it says "`raw: true` returns the HTML". `text/markdown`
+  passes through; `text/*`, JSON and XML pass through with the encoding fixed. PDFs, images, video and zip files are refused unread
+- **Link URLs are dropped by default** (on real pages, link URLs were 40% of the body's characters). `links: true` keeps them
+- **Character encoding** — BOM → the response's `charset` → a declaration in the first 1,024 bytes (`<meta>` / XML declaration) →
+  UTF-8. Pages declaring Shift_JIS / EUC-JP / ISO-2022-JP read correctly. Pages with no declaration are not guessed
+- **Nothing inside this machine's network is read** — `http` / `https` only. Loopback, private, link-local and other non-public
+  addresses are refused for names (after resolution), IP literals, and each redirect hop (the table matches the latest official fetch
+  server; IPv4-mapped and NAT64 addresses are judged by the IPv4 inside). The name check sits in name resolution itself, so the
+  address checked and the address connected to cannot differ. **No proxy is used** (behind a proxy the proxy resolves names and the
+  check would not apply) — on a machine behind a corporate proxy, `fetch` may fail to connect while the LLM still works
+- **robots.txt is honoured** — the User-Agent is `Fuseforks/<version> (+https://github.com/betyourluck/Fuseforks)` (it does not
+  pretend to be a browser). Pages matching `Disallow` are never requested. If robots.txt answers 401 / 403 / 5xx or cannot be
+  reached, the page is refused; any other 4xx means no rules. Each redirect hop's robots.txt is checked too. Rules are remembered per
+  origin for an hour (only once they are settled; never saved)
+- **One call takes at most 30 seconds** (robots.txt and redirects included). "■ Stop" interrupts it mid-fetch. The body is capped at
+  5 MiB (anything larger is refused unread; no partial body is returned). Compressed transfer (`Accept-Encoding`) is not used. A 4xx /
+  5xx status is reported without reading the body
+- **Jev pruning applies** ("Tool-result pruning" above). Only the body is pruned; the frame (URL, how to continue) is never dropped.
+  `raw: true` results are not pruned
+- **Sender envelopes (`【送り手: …】`) in the fetched text are defused** — text someone outside wrote is never read as a sender
+- One log line per call: `fetch: agent=… host=… status=… bytes=… chars=… mode=… links=… share=… encoding=… defused=… redirects=…
+  elapsed_ms=… outcome=…`. **`host=` is the host name only** (no path or query — a query can carry keys or personal data). Unmeasured
+  fields are `-`. The body is never logged
+- It works the same without the GUI (`fuseforks-cli`) and in a container (`bake` has nothing to copy). From inside a container it
+  reaches out past the container's network
+- **Pages built by JavaScript cannot be read** (there is no browser; same as the Docker version)
+
+**On a servant that has the Docker fetch too**, the model may pick either. The app does not remove one automatically (it knows which
+MCP tool does the same job only by name, and guessing would silently remove a fetch the user chose to keep). To have only the built-in
+one used, remove `fetch` from MCP_DOCKER's `--servers` and `--tools` in that servant's `mcp.json` (see "Name the servers for MCP_DOCKER
+with `--servers`" below). **The Docker version does not check addresses**, so with both kept, "nothing inside this machine's
+network is read" does not hold for that servant.
+
 ### Heading index (`rag`)
 
 **Queries the Markdown in declared folders through the heading hierarchy the
@@ -1476,7 +1531,7 @@ Output is always bounded (100 matches, 240 characters per line, 12,000 character
 
 **The schema of an unpresented tool is a fixed cost every turn**, and all agents spend from one person's wallet. Giving every capability to every agent is not a feature but waste. The default should be to give only the tools needed; that is this product's differentiator from large orchestration systems.
 
-- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (the default set is presented; new tools that join the default set appear automatically, and `run` and `image` sit outside it); an explicit selection presents only the needed tools and does not grow automatically.
+- The "Built-in Tools" checkboxes in agent settings select what each agent sees (`AgentSpec.enabledTools`). `null` follows the default (the default set is presented; new tools that join the default set appear automatically, and `run`, `image` and `fetch` sit outside it); an explicit selection presents only the needed tools and does not grow automatically.
 - **`image` is not presented even when checked unless image generation is active in system settings** (a two-step gate; the agent settings show "not offered until it is set up in system settings" right under the checkbox).
 - **If no work folder is configured, the six file tools are not presented regardless of selection**. Do not pay schema cost for tools that can only answer "not configured."
 - **`rag` is outside this mechanism.** It has no checkbox; its presentation is decided solely by the "RAG folders" declaration (only a human can write the declaration, so the declaration itself is the opt-in — two switches for one intent create the trap of enabling one and wondering why nothing appears, which a real run hit on day one).

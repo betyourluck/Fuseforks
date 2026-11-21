@@ -7417,7 +7417,7 @@ conversation_termination:
      16. **GUI なし・PRIVACY**: 登録は build_host の 1 実装で CLI も同じ門。設定を持たないので bake は何も写さない。
          外へ送るもの (モデルが選んだ URL への GET・この端末の IP・User-Agent・robots.txt の GET) は PRIVACY 日英に
          書く (要旨の「2 つだけ」/ 4 章の冒頭の「設定した接続先に対してのみ」/ 4-4 の「MCP のツールが返した」
-         「MCP 以外」を書き換える — P3)
+         「MCP 以外」を書き換え、4-6 を新設した — P3 済み)
 
     **退けた形**: 既定集合に入れる (更新しただけで送信先が増える) / Docker の fetch を自動で外す / timeout_ms /
     比の閾値でページ全体へ戻る / URL を Markdown の正規表現で削る / 自動推定 (chardetng) / ASCII 互換でない宣言を

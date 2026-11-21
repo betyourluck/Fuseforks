@@ -8,7 +8,7 @@
 //! 順序は GUI がそれまで `build_state` で持っていたものに、村の排他ロック（D3）が
 //! 最初の手として足されただけ:
 //! `create_dir_all` → **ロック** → ログ → `version:` 行 → 秘密のストア → `bootstrap` →
-//! 同梱ツール（`rag` / `blackboard` / `run` / `image` を含む全部）→ MCP の初期接続 → 扉 → 前判定の承認 →
+//! 同梱ツール（`rag` / `blackboard` / `run` / `image` / `fetch` を含む全部）→ MCP の初期接続 → 扉 → 前判定の承認 →
 //! Jev → 画像生成の設定（Spec 76）→ 単価表の取得元。
 //! 起動ログの並び（P0 で採った基準。P1 で一致を確認）は `起動しました`（`open_log` が出す）→
 //! `version:` → `session:` → `attachment gc:` → `mcp server:` → `jev:` → `image gen:` で、

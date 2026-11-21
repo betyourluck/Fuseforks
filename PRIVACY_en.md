@@ -1,6 +1,6 @@
 # Privacy Policy — Outcasts Fuseforks
 
-**Last updated: 2026-11-16**
+**Last updated: 2026-11-22**
 
 日本語版: [PRIVACY.md](PRIVACY.md)
 
@@ -17,9 +17,10 @@
 - It performs **no update check** (it contacts nothing on startup).
 - All data you create is stored **entirely on your own device**.
 
-The app communicates externally with **only two kinds of destination**: the ones **you configure
+The app communicates externally with **two kinds of destination**: the ones **you configure
 yourself**, and the **model price table** (for an MCP server you chose to authorize with OAuth, this includes the
-authorization server that MCP server names; see 4-3).
+authorization server that MCP server names; see 4-3). **The exception is web fetching (see 4-6)** — when you turn it
+on for an agent, the app itself goes to web pages that agent's model chooses. It is off by default.
 
 **About the price-table fetch** (used to fill in per-model rates on screen):
 
@@ -163,7 +164,8 @@ not written out.
 ## 4. Information sent to third parties
 
 The app communicates **only with destinations you configure**. You decide both
-where data goes and what goes there.
+where data goes and what goes there. **The one exception: for an agent with web fetching on (see 4-6), that
+agent's model chooses the URL** (whether to turn it on is your decision).
 
 ### 4-1. AI model providers
 
@@ -264,13 +266,14 @@ the key. Each sends only what is listed under it.
 
 #### Tool-result pruning
 
-When on, long bodies returned by MCP tools have paragraphs unrelated to the current
+When on, long bodies returned by MCP tools and by web fetching (`fetch`, see 4-6) have paragraphs unrelated to the current
 request dropped, and the judgement is asked of **Jev**, a judgement-only model
 (from TypeSafe AI, reached through Cloudflare Workers AI).
 
 **Nothing is sent except when a judgement is actually made.** A call that matches any of
 the following is decided entirely on your device and **never leaves it**: the feature is
-off, no key is set, the tool is out of scope (`file`, `run`, `rag` — anything but MCP),
+off, no key is set, the tool is out of scope (`file`, `run`, `rag` — anything that is neither from MCP nor `fetch`),
+`fetch` was called with `raw: true`,
 the result is under 4,000 characters, the body is JSON that is neither a simple wrapper
 nor an object with array fields, the request is under 20 characters, or there are no
 paragraphs to score.
@@ -282,10 +285,10 @@ paragraphs to score.
   are not sent). When the body is array-shaped JSON, what is sent instead of paragraphs is
   **the JSON text of each array element** (key names included).
 
-**Tool names, arguments, conversation history, model names, and village data are never
+**Tool names, arguments (including the URL given to `fetch`), conversation history, model names, and village data are never
 sent.** Nor are images an MCP server returned as a tool result. The body that is sent may contain whatever a connected MCP server returned
 (including memories, mail, or internal documents, if you connected a server that returns
-those).
+those), and the text of web pages `fetch` retrieved.
 
 The diagnostic log (section 6) records **counts and character totals only** — not one
 character of the body.
@@ -338,6 +341,33 @@ re-send it with "To input" in the chat pane, it is also sent to the model provid
 **Sharing your workspace does not share these settings or API keys** (the settings sit on the device shelf, the keys in the
 OS credential store). The diagnostic log (section 6) **records neither the prompt text nor the images**.
 
+### 4-6. Web fetching (`fetch`)
+
+**Off by default; only agents for which you turn on web fetching (`fetch`) in their settings can use it.** If no agent
+has it on, this transmission path does not exist. There is no destination or API key to configure.
+
+**Data is sent only when an agent calls `fetch`.** The app then goes directly from your device to **the URL that
+agent's model chose**. Only the following is sent:
+
+- An HTTP GET to that URL (path and query included — **whatever the model wrote into the URL reaches the site as
+  is**). If redirected, the same request goes to the new location (up to 5 times)
+- An HTTP GET for the same site's `robots.txt` (remembered per site for an hour, during which it is not fetched again)
+- The HTTP User-Agent `Fuseforks/<version> (+https://github.com/betyourluck/Fuseforks)` and an Accept header
+  stating the formats it accepts
+
+**The site sees the request, the URL, your device's IP address and the User-Agent.** No cookies, credentials,
+API keys, conversation content or village data are sent. No proxy is used (even if a proxy is set in environment
+variables, `fetch` alone connects directly).
+
+**Nothing inside your device's network (localhost, private addresses, link-local and so on) is fetched.** The
+check is made on resolved names, on IP addresses written directly in the URL, and on every redirect hop; a match
+is refused without sending the request. Pages robots.txt disallows are not requested either.
+
+The retrieved text is sent to that agent's model provider as a tool result (see 4-1). If tool-result pruning
+(see 4-4) is also on, paragraphs of the text are sent to Jev too. If you use an MCP server's web fetching
+(such as Docker's fetch), its behaviour depends on that MCP server (see 4-3). The diagnostic log (section 6)
+records **only the host name** — never the URL's path and query, nor the text.
+
 ---
 
 ## 5. Operations performed on your device
@@ -368,6 +398,8 @@ tool names and result sizes, and errors.
 - The "Draft with AI" exchange and draft text (only character counts and token counts are recorded)
 - Image-generation prompts and images (only the provider, model, outcome class, elapsed time, byte count, whether it was
   saved, and any cost fields the provider returned are recorded)
+- The path and query of URLs fetched with `fetch`, and the text retrieved (only the host name and the status, byte count,
+  character count, extraction mode, encoding, redirect count, elapsed time and outcome class are recorded)
 - Credentials (for OAuth authorization only the server identifier and the kind of outcome are recorded — never tokens,
   authorization codes or client IDs)
 
@@ -403,7 +435,8 @@ sharing a workspace with someone else does not enable intake on their machine.
 - **Revoking OAuth authorization**: "Revoke authorization" in the MCP settings deletes the local record and asks
   the authorization server to revoke the token.
 - **Stopping transmission**: if you register no model, nothing is sent anywhere. Image generation stops when you set
-  the provider to "Don't use" on the image-generation settings page or delete its API key.
+  the provider to "Don't use" on the image-generation settings page or delete its API key. Web fetching stops when
+  you uncheck `fetch` in the agent's settings.
 - **Removing launch at sign-in**: turn off "Launch Fuseforks when you sign in" under System Settings > General >
   Startup and exit, or remove it from the OS (Startup apps in Windows Task Manager, Login Items on macOS).
   **Turn it off before uninstalling** — the Windows MSI does not remove the registration when uninstalled.

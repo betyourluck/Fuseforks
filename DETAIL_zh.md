@@ -65,6 +65,8 @@ Fuseforks/
 │       │   ├── tools/rag.rs         内置工具: rag（已声明资料目录的标题索引。只读）
 │       │   ├── tools/blackboard.rs  内置工具: blackboard（黑板的便签。只能编写自己的便签）
 │       │   ├── tools/image.rs       内置工具: image（生成图像。默认关闭，发往整个应用统一选择的图像生成 API。Spec 76）
+│       │   ├── tools/fetch/         内置工具: fetch（读取网页。默认关闭。mod.rs = HTTP・重定向・框架・日志 / address.rs = 地址判定 /
+│       │   │                        charset.rs = 字符编码 / extract.rs = 正文提取 / robots.rs = robots.txt。Spec 78）
 │       │   ├── image_gen.rs         图像生成 API 的线路（4 家服务商的请求与解析、8 类失败、连接检查。Spec 76）
 │       │   ├── http_body.rs         按块读取响应正文并检查上限（LLM・Jev・图像生成・OAuth・价格表共用。Spec 77）
 │       │   └── llm/
@@ -452,13 +454,13 @@ SKILL / Construct 标签与判断者编辑对话框中的“用 AI 创建”。
 - 若在同一个回合中连续执行了多个相同的工具（例如连续 3 次 grep），则会自动折叠并合并为 1 行（例如显示为 `grep (3件)`），以防止长篇的工具日志将实质性的对话内容淹没。
 ### 工具结果的压缩（[Spec 59](specs/59_jev-tool-result-pruning.md)）
 
-将 MCP 工具返回的长正文中、与本回合委托无关的段落，在交给仆从之前删去。
+将 MCP 工具和 `fetch` 返回的长正文中、与本回合委托无关的段落，在交给仆从之前删去。
 判定交由**只作判断的模型 Jev**（由 TypeSafe AI 提供，经 Cloudflare Workers AI 调用）。
 
 - **默认为禁用。** 需要用户在「系统设置 ＞ 外部集成 ＞ Jev」填入自己的
   Cloudflare 帐号 ID 与 API 令牌；未设定的村庄，工具正文不会有 1 个字节的变化。
 - **对象由工具自行申报**（`AgentTool::prunable`，默认为否）。返回为真的只有
-  **MCP 工具**；`file` 与 `run` 不在对象内（编辑的素材需要逐字原文）。
+  **MCP 工具与 `fetch`**（Spec 78。框架行不参与压缩，`raw: true` 的结果不压缩）；`file` 与 `run` 不在对象内（编辑的素材需要逐字原文）。
   **`rag` 已于 2026-09-22 依实机结果移出对象** —— 12,051 字只切成 2 个段落，
   两次都以「全部删去」倒回全文。`rag` 的输出以换行排列标题，**不会输出任何空行**，
   因此上述「以空行切分」在结构上无法生效。
@@ -504,6 +506,22 @@ SKILL / Construct 标签与判断者编辑对话框中的“用 AI 创建”。
 - **图像生成的费用不计入令牌上限，也不计入统计**
 - 日志每次生成写一行 `image gen: …`（**不记录提示词正文**）
 - **用 v0.7.0 及更早的版本打开村庄时，含有生成图像副本（JPEG）的会话会以空白、无历史的状态开始**（记录不会丢失，用新版本重新打开即可恢复）
+
+### 读取网页（`fetch`，[Spec 78](specs/78_bundled-web-fetch.md)）
+
+仆从用内置工具 `fetch` 获取 URL 的页面，转为 Markdown 阅读。它代替 Docker MCP 的 fetch（`MCP_DOCKER__fetch`），获取、字符编码、
+正文提取和 robots.txt 都在应用内部（纯 Rust）处理。
+- **默认不启用**：`fetch` 在默认集合之外（与 `run`・`image` 相同）。只提供给在仆从设置中勾选的个体，勾选框下方会注明会留下什么、留在哪里。没有设置项
+- 参数为 `url`（必填）/ `max_length`（默认 20,000 字，上限 999,999）/ `start_index`（默认 0）/ `raw`（不转换）/ `links`（保留链接 URL 和图像，默认 false）
+- 返回内容分为框架和正文：框架是 `URL:`（重定向后的最终 URL）/ 标题 / 提取方式，以及截断时“把 start_index 设为 N 继续调用”。`start_index` 与 `max_length` 只计正文的字符
+- HTML 用 dom_smoothie（Readability 的移植）提取正文，只有提取失败或为空时才退回整个 `<body>`。PDF・图像・视频・zip 不读取
+- 字符编码依次看 BOM → 响应的 `charset` → 开头 1,024 字节的声明 → UTF-8（Shift_JIS / EUC-JP / ISO-2022-JP 也能读）
+- **不读取本机网络内部**：只允许 `http` / `https`，对名称解析后的地址、IP 直写和每一跳重定向，都拒绝回环・私有地址・链路本地等非公开地址。**不使用代理**
+- **遵守 robots.txt**：User-Agent 为 `Fuseforks/<版本> (+https://github.com/betyourluck/Fuseforks)`，不冒充浏览器
+- 每次调用最多 30 秒，“■ 停止”可中途停止；正文上限 5 MiB
+- 适用 Jev 压缩（框架不会被删）；获取到的正文中的发送者信封（`【送り手: …】`）会被无害化
+- 日志每次调用写一行 `fetch: …`，`host=` 只写主机名（不写路径和查询），不记录正文
+- 与 Docker 的 fetch 并存时，模型可任选其一，应用不会自动去掉任何一个。只想用内置版时，在该仆从的 `mcp.json` 中把 `fetch` 从 MCP_DOCKER 的 `--servers` 和 `--tools` 里去掉。**Docker 版不判定地址**
 
 ### 见底索引（`rag`）
 

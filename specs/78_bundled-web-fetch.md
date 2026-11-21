@@ -5,7 +5,8 @@
   同日、**P0a の測定を終えて rev4**。D3 を実測で直した（ISO-2022-JP）→ 同日、**利用者が P0a の後の裁定 4 つを推しのとおりに
   決めて rev5**（D1 に `links` を足し、D2 を書き直した）→ 同日 **P0b 完了**（`data_contract.yaml` の `web_fetch_contract`
   ほか 6 箇所。記録は「P0b 凍結記録」）→ 同日 **P1 / P2 完了**（ブランチ `claude/web-fetch`。コア・ホスト・画面。
-  記録は「P1 実装記録」「P2 実装記録」）。次は P3（台帳）
+  記録は「P1 実装記録」「P2 実装記録」）→ 2026-11-22 **P3 完了**（DETAIL 3 言語・README 3 言語・PRIVACY 日英。
+  記録は「P3 台帳記録」）。次は P4（実機）
 - 起点: 利用者（2026-11-21）—「webfetch を同梱ツールとして入れるべきかなと思っている。今は Docker の fetch を
   使っているが、けっこう読み込みが重い。できれば車輪の再発明ではなく Rust でよい crate があればそれを使いたい」
 - 調査だけのターンを 1 回取った（`fuseforks.log` の `MCP_DOCKER__fetch` の行 / crates.io の候補 12 本 / 候補を
@@ -404,7 +405,7 @@
 - **P2（画面）** — **完了（2026-11-21。「P2 実装記録」）**。`AgentSettingsDialog.vue` の行 / `toolLabel.ts` の `KNOWN_TOOLS` と辞書 3 言語 / `RoleDialog.vue`
   （既定集合の外なので入れない）/ `defaultEnabledTools.test.ts` / サーヴァント設定の行に「チェックすると
   モデルが選んだ URL を取りに行きます」の注記
-- **P3（台帳）** — DETAIL 3 言語（同梱ツールの表・取得の節・Docker の fetch を外す手順）/ README 3 言語の同梱ツールの列挙 /
+- **P3（台帳）** — **完了（2026-11-22。「P3 台帳記録」）**。DETAIL 3 言語（同梱ツールの表・取得の節・Docker の fetch を外す手順）/ README 3 言語の同梱ツールの列挙 /
   PRIVACY 日英: **要旨の「2 つだけ」/ 4 章の冒頭「設定した接続先に対してのみ」/ 4-4 の「MCP のツールが返した」
   「MCP 以外」**を書き換え、取得の節を足す（送るもの: モデルが選んだ URL への GET・この端末の IP・User-Agent・
   robots.txt の GET）/ `failures.md` は出たら
@@ -617,6 +618,27 @@ vitest 1,209（140 ファイル）全緑・vue-tsc 0・build 緑。**変異 5 �
 一覧の行を落とす → `defaultEnabledTools.test.ts` / ja の札から fetch を落とす → `defaultEnabledTools.test.ts` / 注記の条件を壊す →
 `agentToolNotesWiring.test.ts` / ja の `tools.fetch` を落とす → `toolLabel.test.ts` と `index.test.ts`。復元はハッシュで確認）。
 **実機は未確認**（P4）
+
+## P3 台帳記録（2026-11-22）
+
+- **DETAIL 3 言語** — 「web ページを読む（`fetch`）」の節（日英は全文・中文は抄訳。「画像を描く」の次）/ ディレクトリ木に
+  `tools/fetch/` の 5 ファイル / 同梱ツールの表に `fetch` の行（日英。中文は表を持たない）/ 「ツール結果の圧縮」の対象に `fetch` /
+  提示の絞り込みの「既定の外」に `fetch`。**Docker の fetch を外す手順**（未決 5 の裁定）は節の末尾に — その個体の `mcp.json` で
+  MCP_DOCKER の `--servers` と `--tools` から `fetch` を外す（既存の「MCP_DOCKER は `--servers` で使うサーバーを明示する」を指す）
+- **既存の誤りを 1 つ回収** — DETAIL 日英の同梱ツールの表に **`image` の行が Spec 76 から無かった**（表の上の「同梱ツールは 10 本」も
+  行の数と合っていなかった）。`image` の行を足し、本数の記述は外した（#62 — 足すたびに腐る）
+- **README 3 言語** — 同梱ツールの列挙に `fetch`、🎨 の次に 🌐 の行（172 / 172 / 170 行）。既定で動かず使うと外へ送る機能は
+  入口で読めるべき側（Spec 59・62・76 と同じ判断）
+- **PRIVACY 日英**（最終更新 2026-11-22）— 要旨に「例外は web の取得」/ 4 章の冒頭に「取りに行く URL はモデルが選ぶ（有効にするのは
+  利用者）」/ 4-4 の対象と送る本文に `fetch`（引数の URL は Jev へ送らない — 枠は圧縮の外）/ **4-6 を新設**（送るもの = モデルが
+  選んだ URL への GET・リダイレクトの先・robots.txt の GET・User-Agent と Accept / 相手に残るもの = 要求・URL・この端末の IP・
+  User-Agent / 送らないもの = Cookie・認証情報・API キー・会話・村の情報 / プロキシを使わない / 端末のネットワークの中へは行かない）/
+  6 の「記録しないもの」に URL のパスとクエリと本文 / 8 の「送信の停止」に `fetch` のチェック。**送り先を利用者が設定しない初めての
+  経路**なので、「設定した接続先に対してのみ」の一文を消さずに例外として書いた
+- `data_contract.yaml` の `web_fetch_contract` 16 を「書き換えた — P3 済み」へ / `boot.rs` の doc の同梱ツールの列挙に `fetch`
+- **触っていないもの** — ランディングページ（公開ページ。FAQ の「外向きの通信」の列挙は `fetch` を数えていない。配布物に入る前に
+  名乗らないので、直すのは次のタグを公開するとき・利用者の判断）/ Qiita の記事（同梱ツールを列挙していない）/ `failures.md`
+  （P1〜P3 で新しい失敗の形は出ていない — robots.txt の取得が `robots_unavailable` に化けた件は結合テストが着地前に捕まえた）
 
 ## Notes
 
