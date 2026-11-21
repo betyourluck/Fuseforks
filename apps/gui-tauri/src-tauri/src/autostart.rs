@@ -116,7 +116,13 @@ fn windows_command(exe: &str) -> String {
 }
 
 /// `Explorer\StartupApproved\Run` の値が「無効」を表すか。**先頭バイトの最下位ビット**で見る
-/// （有効 `0x02` / `0x06`、無効 `0x03` / `0x07`）。
+/// （有効 `0x02` / `0x06`、無効 `0x03` / `0x07`）。**長さは問わず、空の値は有効**。
+///
+/// 12 バイトでない値・`02` / `03` 以外の先頭バイトも実在する（2026-11-21 のジェミーの調べ。出典はどれも未確認）:
+/// Windows 11 の設定アプリが ON で `00`・OFF で `01` を書く（Reddit の観察）/ `04` 有効・`05` 無効（Nutanix）/
+/// マルウェアが無効にさせないために `08` を書く（Kaspersky）/ 1 バイトの `03`（Nutanix の例）/ 3 バイトの `33 32 FF` で
+/// タスクマネージャーが「無効」と表示する（NextOfWindows）。どれも奇偶の規則と合う。合わないのは `3z9wOpt` のコメントの
+/// `6 = ポリシーで無効` だけで、他の資料の `06` = 有効に合わせている。
 ///
 /// `auto-launch` 0.6 は「末尾 8 バイトが全部 0 なら有効」（無効にした時刻の有無）で見ている。
 /// 実際のタスクマネージャーの値では 2 つの見方は食い違わない（Spec 69 P4 実測: 無効にすると
@@ -423,6 +429,24 @@ mod tests {
         assert!(approved_disabled(&[0x03, 0, 0, 0, 0x10, 0x20, 0, 0, 0, 0, 0, 0]));
         assert!(approved_disabled(&[0x07]));
         assert!(!approved_disabled(&[]));
+    }
+
+    /// 12 バイトでない値・`02` / `03` 以外の先頭バイトも奇偶で読む（`approved_disabled` の doc の出典）。
+    #[test]
+    fn startup_approved_values_seen_in_the_wild_follow_the_lowest_bit() {
+        // Windows 11 の設定アプリ（ON / OFF）
+        assert!(!approved_disabled(&[0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(approved_disabled(&[0x01, 0, 0, 0, 0xCD, 0xC0, 0x1C, 0xDC, 0x9E, 0x00, 0xDB, 0x01]));
+        // 偶奇の規則の 04 / 05
+        assert!(!approved_disabled(&[0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(approved_disabled(&[0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        // 無効にさせないために書かれる 08 は有効
+        assert!(!approved_disabled(&[0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        // 短い値: 1 バイトの 03 / 3 バイトの 33 32 FF はどちらも無効
+        assert!(approved_disabled(&[0x03]));
+        assert!(approved_disabled(&[0x33, 0x32, 0xFF]));
+        // 時刻を 0 で埋めた無効（auto-launch 0.6 の見方では有効になる形）
+        assert!(approved_disabled(&[0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
     }
 
     #[test]
