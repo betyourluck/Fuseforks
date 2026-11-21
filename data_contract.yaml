@@ -2476,6 +2476,8 @@ enums:
            画像の中身はどこにも書かない。
            ToolOutput は text (モデルが読む本文 + 落とした注記) / images (送るものだけ) / dropped (理由。
            計器だけが読む) の 3 つ。部分的な成功はエラーにしない (rev2)。
+           (Spec 70 当時の数。Spec 72 で approval_pending、Spec 78 で「圧縮の外に置く枠」と「圧縮しない」の旗を
+           足す — command_tool_contract の Spec 72 の節と web_fetch_contract の 14)
            P1: 型は AgentTool::call_with_media (既定は call の本文を包む。上書きは McpTool だけ)。
            canonical では ChatMessage.attachments (Role::Tool) と、代替の本文の欄
            ChatMessage.attachment_caption (ターンの層が村の言語で組む。adapter は読むだけ)
@@ -2843,7 +2845,8 @@ entities:
       既存データへの罰ではない)。全角/半角の正規化はしない (どこまで畳むかの
       線引きが恣意的になり、利用者の意図した区別を潰しうる)。
     enabled_tools_invariant: |
-      enabledTools は同梱 9 本 (remember / grep / fd / diff / sd / yq / file / run / image)
+      enabledTools は同梱 9 本 (remember / grep / fd / diff / sd / yq / file / run / image)。**Spec 78 で fetch を
+      足して 10 本になる** (P0b で凍結・P1 で着地。下の Spec 78 の行)
       の提示制御 (Spec 02 rev2 承認、2026-07-30 凍結。file は Spec 09 で追加)。
       MCP 由来・転送・委譲は対象外。**rag も対象外** (Spec 18 D13 — 提示は
       rag_sources の宣言だけが決める。詳細は rag_tool_contract)。
@@ -2888,6 +2891,11 @@ entities:
         送信先が増えるので、更新しただけで全個体に生やさない) で、WORK_DIR_TOOL_NAMES にも入れない
         (作業フォルダが無くても会話とモデルへは届く)。提示は enabledTools かつ is_active の 2 段
         (image_gen_contract)
+      - **【Spec 78 P0b で凍結 (2026-11-21)・着地は P1】fetch (web の取得) が加わり、`BUNDLED_TOOL_NAMES =
+        DEFAULT_ENABLED_TOOLS ∪ {run, image, fetch}` = 10 = 7 + 3 になる**。fetch も既定集合の外 — 入れると
+        enabledTools: null の個体が**アプリを更新しただけでモデルが選んだ URL へ送れるようになる** (送信先が増える。
+        image と同じ理由)。WORK_DIR_TOOL_NAMES にも入れない (作業フォルダを使わない)。提示は enabledTools だけで
+        決まる (web_fetch_contract)。役職の雛形 (RoleDialog) にも出さない (run / image と同じ)
       - remember を外しても Memory.md の注入は続く (書きのみ不可)。
         注入の制御手段は「ファイルを空にする」として既に存在する
     allow_handoff_invariant: |
@@ -4714,7 +4722,7 @@ entities:
          2 本にしない (同梱ツールの登録漏れ・前判定の承認の差し込み漏れが片方だけに起きる)。
          順序は今の GUI と同じで、D3 と D4 の 2 手が足されるだけ:
          create_dir_all → ロック → ログ → version: 行 → 秘密のストア → bootstrap →
-         (Env のときだけ) 変数名の衝突検査 → 同梱ツール (rag / blackboard / run / image を含む全部。本数は書かない —
+         (Env のときだけ) 変数名の衝突検査 → 同梱ツール (rag / blackboard / run / image / fetch (Spec 78) を含む全部。本数は書かない —
          足すたびに腐る。Spec 76 で image が増えたとき 9 本と書いた行が実数と合っていなかった) → MCP の初期接続 →
          扉 (open_door) → 前判定の承認 → Jev → 画像生成の設定 (Spec 76) → 単価表の取得元。呼び出しごとに違うのは HostBootOptions の 4 欄
          (app_version / secrets / run_schedules / open_door) だけ。**扉を開く処理を build_host の
@@ -5675,6 +5683,8 @@ conversation_termination:
     command_tool_contract。run は 2026-08-04 に着地し、**既定集合の外**に居る
     = DEFAULT_ENABLED_TOOLS は 7 本)。
     **image は Spec 76 P1 で着地** (既定集合の外は run と image の 2 本。image_gen_contract)。
+    **Spec 78 で fetch を足して 10 本になる** (既定集合の外は run / image / fetch の 3 本。web_fetch_contract。
+    P0b で凍結・P1 で着地)。
     **この列挙の外に居る同梱ツールが 2 本ある** — rag (Spec 18 D13) と blackboard
     (Spec 55。P2 で着地)。どちらも enabledTools の対象外で、提示は spec_for が決める。
     **2026-08-04 に 4 本 → 7 本へ訂正した** — Spec 01 の sd / yq と Spec 09 の
@@ -6169,7 +6179,7 @@ conversation_termination:
         **run は WORK_DIR_TOOL_NAMES に入れない** (あの集合は「その中しか触らない」
         ツールの集合で、境界を破る run を入れると集合の不変条件が壊れる)
       - **run は既定 OFF**。DEFAULT_ENABLED_TOOLS の外に置き、
-        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` (Spec 76 からは `∪ {run, image}`)。
+        `BUNDLED_TOOL_NAMES = DEFAULT_ENABLED_TOOLS ∪ {run}` (Spec 76 からは `∪ {run, image}`、Spec 78 からは `∪ {run, image, fetch}`)。
         **更新しただけで実行能力が増える作りにしない**
         (batch_start_invariant の「開いただけで課金が始まる作りにしない」と同じ形)
       - **出力は MAX_OUTPUT_CHARS = 12,000 字を上限とし、run では
@@ -6657,7 +6667,8 @@ conversation_termination:
     見出しにエラーの本数を出す (「エラー 0 件」が正常終了と読まれる)
 
   tool_prune_contract: |
-    ツール結果の即時圧縮 = MCP 由来のツールと rag が返した本文から、そのターンの
+    ツール結果の即時圧縮 = MCP 由来のツールが返した本文から (rev4 で rag を外した。Spec 78 で同梱の fetch を
+    足す — 下の「対象」の行)、そのターンの
     依頼に関係の無い段落を、モデルへ返す前に落とす (Spec 59 rev4、2026-09-22 凍結)。
     判定は判断専用モデル Jev (Cloudflare Workers AI の typesafe/jev)。
     **本節は実装より先に凍結した契約で、着地は P1〜P4。既定 OFF。**
@@ -6692,7 +6703,11 @@ conversation_termination:
         **空行を 1 つも出さない**ので、下の割り方 2 (空行で割る) が構造的に効かない。
         割り方を変えれば効きうるが、それは P0 の測定を丸ごとやり直す話になる。
         合成側 (plan / ask_* / transfer_to_* / room_log / omitted) は AgentTool を
-        実装していないので prunable() 自体を持たず、構造上ここへ来ない
+        実装していないので prunable() 自体を持たず、構造上ここへ来ない。
+        **【Spec 78 P0b (2026-11-21)・着地は P1】同梱の fetch も真を返す** — Docker の MCP の fetch から乗り換えると
+        圧縮されなくなる、を防ぐ。fetch は URL・題名・続きの案内の枠 (どれも 120 字未満で、隣の段落へ寄せられて段落
+        ごと落ちうる) を ToolOutput の「圧縮の外に置く枠」へ置き、raw: true の結果は「圧縮しない」の旗で止める
+        (web_fetch_contract の 14)。McpTool と同じく名前の表では持たない
       - **圧縮は結果が返った瞬間の 1 回だけ。** 落とした後の文字列をそのまま積み、
         以後の周では 1 バイトも変えない (入力キャッシュの前方一致)。この「1 バイトも
         変えない」は**本文の不変性**で、omitted の提示によるツール一覧の変化は
@@ -7293,6 +7308,113 @@ conversation_termination:
     WORK_DIR_TOOL_NAMES に入れる / 解像度をモデルに選ばせる / 予算に換算する / 自動の再試行 / 打ち切りでも
     HTTP を待つ / 写しを可逆 WebP で段を踏んで縮める / 用途ごとに別の写しを作る / 元のバイト列をモデルへ返す /
     参照を送る前に変換する / 写しを GC から外す / 生成画像を添付の置き場だけに置く / ComfyUI
+
+  web_fetch_contract: |
+    同梱の web 取得ツール `fetch` = モデルが選んだ URL を取りに行き、本文を Markdown で返す (Spec 78 rev5、
+    2026-11-21 P0b で凍結)。**本節は実装より先に凍結した契約で、着地は P1〜P4。`fetch` にチェックを付けていない
+    個体 (enabledTools: null の個体を含む) はバイト等価 (ツールの提示・プロンプト・ログ)。** 実測は Spec 78 の
+    「P0a 実測記録」が正。
+
+    不変条件:
+      1. **同梱ツール `fetch`**: BUNDLED_TOOL_NAMES に足す (9 → 10)。DEFAULT_ENABLED_TOOLS (7) にも
+         WORK_DIR_TOOL_NAMES (6) にも入れない (enabled_tools_invariant の Spec 78 の行)。提示は enabledTools に
+         `fetch` があるときだけ。wants_reason = true / prunable = true。説明文と結果は村の言語 (ja / en。zh-Hans の
+         村は en)。MCP 由来の fetch (MCP_DOCKER__fetch など) とは名前が衝突しない。どちらかを自動で外すことはしない
+      2. **引数**: url (必須) / max_length (既定 20,000。1〜999,999) / start_index (既定 0) / raw (既定 false) /
+         links (既定 false)。url / max_length / start_index / raw の形と意味は Docker の mcp/fetch と同じ。
+         timeout_ms は持たない (打ち切りは 10 の 30 秒と「■ 停止」)
+      3. **返す文字列 = 枠 + 本文**。枠は「URL: <リダイレクトの後の最終 URL>」「題名: <題名>」(HTML から取れたときだけ)
+         「取り出し: <本文（ページの文字の N%） | ページ全体 | Markdown | そのまま | 変換なし>」、空行、本文、
+         (切ったときだけ) 空行と続きの案内 (start_index を N にして呼ぶ)。文は村の言語。本文を返さないとき
+         (断った・失敗した) は URL の行と理由の文だけを返し、ツールの失敗で会話を止めない
+      4. **位置の単位は本文の char** (Unicode のスカラ値)。数える範囲は本文だけで、枠は含まない。本文 = 取り出した
+         文字列に sender_envelope::defuse を掛けた後 (掛けてから切るので、同じページを同じ引数で取り直せば位置が
+         合う)。start_index が本文の長さ以上なら「これ以上の本文はありません」。続きを読むときも取り直す
+         (ターンの中に本文を持たない)
+      5. **本文の取り出し**: HTML は dom_smoothie 0.19 で本文を取り、本文の HTML (Article.content) を dom_query 0.29 で
+         読み直して md() に渡す。links: false なら md() の前に <a> を外して文字だけ残し (strip_elements)、
+         img / picture / source / video / audio を消す — **URL を落とすのは DOM の上で、Markdown を正規表現で
+         削らない**。links: true も同じ経路を通る (1 つの実装で両方を出す)。dom_smoothie が失敗したか本文が空
+         (空白だけ) のときだけ、<body> を md() に渡す (script / style / meta / head / nav / header / footer / aside /
+         form / noscript / template / svg / iframe を中身ごと飛ばす。取り出し: ページ全体)。それも空なら
+         「本文を取り出せませんでした。raw: true で HTML を読めます」を返す (outcome=empty)。text/markdown は
+         そのまま、raw: true は文字コードを直した HTML をそのまま返す (どちらも links は効かない)
+      6. **比は出すだけで、何も切り替えない**。比 = 本文の HTML のテキスト ÷ <body> のテキスト (script / style /
+         noscript / template / svg を除く)。どちらも空白を除いた字数。取り出し: 本文の行に整数の百分率 (四捨五入)
+         で出す。P0a で、一覧の取りこぼし (0.103) と記事の成功 (0.147 から) を比で分けられないと分かったので、
+         閾値でページ全体へ戻る形は持たない
+      7. **&amp; の後処理** (links: true のときだけ行き先がある): Markdown のリンクと画像の行き先 (`](` の直後から
+         対応する `)` まで。`<…>` で囲まれた形も) の中だけで、&amp; → & / &quot; → " / &nbsp; → NBSP を左から
+         1 回だけ戻す。地の文は触らない。dom_query は行き先にだけ html_escape を掛け、& を例外なく書き換えるので、
+         この 1 回で元の URL に戻る (P0a — 原典と 27 本の実測)
+      8. **文字コード**: BOM → Content-Type の charset → 本文の先頭 1,024 バイトの宣言 (HTML は WHATWG の prescan に
+         沿って <meta charset> と http-equiv の content を読む。XML は先頭の <?xml … encoding="…"?>) → UTF-8 の順で、
+         最初に決まったものを使う。ラベルの解釈は Encoding::for_label。宣言の UTF-16 は UTF-8 に、x-user-defined は
+         windows-1252 に置き換え、**それ以外の宣言は ASCII 互換でなくても宣言どおりに読む** (ISO-2022-JP の宣言を
+         持つページが実在する — P0a で 2 本。上流の main の「ASCII 互換でない宣言は無視」は採らない)。自動推定
+         (chardetng) は持たない (P0a で宣言の無い非 UTF-8 は 0 本)。workspace の reqwest に charset / gzip の
+         feature は足さない (feature は crate に 1 つなので LLM の要求の形まで変わる)
+      9. **取りに行ける先**: スキームは http / https だけ (bad_scheme)。公開でない住所は断る (blocked_address)。表は
+         上流の main の _is_public_address に揃える — IPv4 は IANA の特別用途の登録簿のうち公開でないもの
+         (0.0.0.0/8・10/8・100.64/10・127/8・169.254/16・172.16/12・192.0.0/24・192.0.2/24・192.88.99/24・
+         192.168/16・198.18/15・198.51.100/24・203.0.113/24・240/4・224/4。192.0.0.9 と 192.0.0.10 は通す)。
+         IPv4 射影 (::ffff:0:0/96)・IPv4 変換 (::ffff:0:0:0/96)・NAT64 (64:ff9b::/96) は中の IPv4 を取り出して
+         IPv4 の表で判定し、IPv4 互換 (::/96) は断る。残りの IPv6 は 2000::/3 の外を全部断り、2000::/3 の中でも
+         2001::/23・2001:db8::/32・2002::/16・3fff::/20 は断る (上流の例外 2001:1::1 / 2001:1::2 / 2001:3::/32 /
+         2001:4:112::/48 / 2001:20::/28 / 2001:30::/28 は通す)。**3 つの経路に 1 つずつ仕掛けを置く** —
+         名前は ClientBuilder::dns_resolver に渡す自前の解決 (解決した住所を全部判定し、1 つでも当たれば断る。
+         reqwest はこの解決が返した住所にしか繋がないので、判定した住所と繋ぐ住所が同じになる) / IP の直書きは
+         送る前に Url::host() の型 (Host::Ipv4 / Host::Ipv6) で判定する (接続器は IP の直書きに解決器を呼ばない。
+         文字列を自分で IP として読まない — url crate が 0x7f000001 などを 127.0.0.1 へ正規化している) /
+         リダイレクトは redirect::Policy::custom で各段にスキームと IP の判定を掛け、5 段を超えたら止める
+         (too_many_redirects)。**プロキシは使わない** (no_proxy)。ループバックのスタブへ繋ぐ構築は #[cfg(test)] の
+         中にだけ置き、配布物には存在しない
+     10. **時間と大きさ**: 1 回の呼び出しの全体 (robots.txt・リダイレクトの各段・本文) で 30 秒 (timeout)。取得全体を
+         ToolContext.cancel と select! で競わせ、打ち切りが勝ったら要求の future を落とす (interrupted)。
+         ツールループの検査点は増やさない (run と同じ)。本文は 5 MiB まで — Content-Length が超えていれば読まずに、
+         読んで超えたら断る (too_large。途中までを返さない)。http_body::read_capped を通す。状態が 4xx / 5xx なら
+         本文を読まずに「状態 N で返りました」(http_error)
+     11. **送る見出し**: User-Agent `Fuseforks/{版} (+https://github.com/betyourluck/Fuseforks)` (ブラウザを名乗らない)
+         / Accept `text/markdown, text/html;q=0.9, */*;q=0.8` (raw のときは `*/*`) / Accept-Encoding は送らない。
+         Content-Encoding が identity 以外で届いたら読まずに断る (unsupported_encoding)
+     12. **中身の種類**: text/html・application/xhtml+xml、または型が無く本文が `<!doctype html` か `<html` で始まる
+         → 5 の HTML の取り出し / text/markdown → そのまま / text/*・application/json・*+json・application/xml・
+         *+xml、または型が無く HTML でもない → 文字コードを直してそのまま (取り出し: そのまま) / それ以外 (PDF・
+         画像・動画・zip ほか) → 読まずに断る (unsupported_type)
+     13. **robots.txt を見る**: 最初の URL とリダイレクトの各段で、その先の origin の /robots.txt を取る。取得も 9・
+         10・11 を通る (robots.txt 自身には robots.txt を当てない)。本文は先頭 robotxt::BYTE_LIMIT (500 KiB) + 1 バイト
+         まで読んで止める (超えた分は読まずに捨て、断らない。RFC 9309 2.5 節は 500 KiB までの解析を求める)。読むのは
+         http_body に足す「先頭だけ読む」関数で、read_capped は使わない (超えたら本文を返さないため)。解析は
+         robotxt 0.7 (default-features = false, features = ["parser"]) の Robots::parse だけで、照合する名前は
+         `Fuseforks`。状態コードは自前で振り分ける — 2xx は解析、401 / 403 / 5xx と繋がらないときは断る
+         (robots_unavailable)、それ以外の 4xx は規則なしとして通す (robotxt の AccessResult は 4xx を全部許すので
+         使わない)。Disallow に当たったら断る (robots_disallowed)。origin (スキーム・ホスト・ポート) ごとに 1 時間
+         覚える (プロセスの寿命。保存しない)。robotstxt 0.3 は使わない (長い行の先に多バイト文字があると panic
+         する — P0a)
+     14. **Jev の圧縮と封筒**: prunable = true (tool_prune_contract の対象に入る)。ToolOutput に 2 欄を足す (加算。
+         既定は今と同じで、既存のツールの結果は 1 バイトも変わらない) — 圧縮の外に置く枠 (先頭と末尾の文字列。
+         turn.rs は「先頭 + 圧縮した text + 末尾」を返す) と「この結果は圧縮しない」の旗 (fetch は raw: true のとき
+         立てる)。RepeatGuard が数える本文と omitted が戻す生の本文は、枠を含めた全体。本文には defuse を掛ける
+         (raw にも)。defuse_quote_tags は掛けない (<quoted_message> の外枠は利用者の発話の中にだけあり、ツールの結果は
+         別のメッセージとして届く)。turn.rs の分解 (`let (raw, images, dropped, approval_pending) = match result`) に
+         欄を足し忘れると黙って既定へ落ちるので、P1 のテストで留める
+     15. **計器** `fetch: agent=… host=… status=… bytes=… chars=… mode=… links=… share=… encoding=… defused=…
+         redirects=… elapsed_ms=… outcome=…`。host= はホスト名だけ (パスとクエリは書かない。断った先が IP の
+         直書きならその IP)。測っていない欄は `-`。mode= は readability | body | markdown | text | raw (本文を
+         返さなかったら -)、links= は yes | no、share= は mode=readability のときの比の百分率。outcome は ok | empty |
+         bad_url | bad_scheme | blocked_address | robots_disallowed | robots_unavailable | too_many_redirects |
+         http_error | too_large | unsupported_type | unsupported_encoding | timeout | interrupted | network_error の
+         閉じた 15 値。**取得した本文はログに 1 字も書かない** (tool: 行は今までどおり字数だけ)
+     16. **GUI なし・PRIVACY**: 登録は build_host の 1 実装で CLI も同じ門。設定を持たないので bake は何も写さない。
+         外へ送るもの (モデルが選んだ URL への GET・この端末の IP・User-Agent・robots.txt の GET) は PRIVACY 日英に
+         書く (要旨の「2 つだけ」/ 4 章の冒頭の「設定した接続先に対してのみ」/ 4-4 の「MCP のツールが返した」
+         「MCP 以外」を書き換える — P3)
+
+    **退けた形**: 既定集合に入れる (更新しただけで送信先が増える) / Docker の fetch を自動で外す / timeout_ms /
+    比の閾値でページ全体へ戻る / URL を Markdown の正規表現で削る / 自動推定 (chardetng) / ASCII 互換でない宣言を
+    無視する / プロキシを使う / ブラウザを名乗る / Accept-Encoding (workspace の reqwest に gzip) / 5 MiB を超えた
+    ページの途中までを返す / ターンの中に本文を持つ / robotstxt 0.3 (panic) / texting_robots (Google の判定と
+    86 件食い違う) / htmd (dom_query の md() で足りる)
 
 # ---------------------------------------------------------------------------
 concurrency:
