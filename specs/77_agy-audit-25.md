@@ -1,11 +1,13 @@
 # Spec 77: agy が挙げた 25 件の指摘の検証と、修正の TODO
 
-- 状態: **A 群 7 件・B 群 17 件・C 群 9 件が着地 — TODO（修正）は #8b の 1 件を残して閉じた**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
+- 状態: **A 群 7 件・B 群 17 件・C 群 9 件と #8b が着地 — 修正の TODO はすべて閉じた**（2026-11-19 起票 → 同日に 36 主張の判定を書いた。成立 16 / 一部成立 12 /
   不成立 6 / 設計どおり 2。ほかに指摘に無い問題 14 件（N1〜N14）。**N8 = OpenAI の課金切れの 429 が再試行されている、は `fuseforks.log` の
   実測**。→ 同日、利用者「A 群から着手」で A 群の 7 件（N8 / #3 / #5 + N2 + N3 / #15 / #11 + N11 / #14 / #1 + N9）を、どれも赤いテストを
   先に書いてから直した。全体 93 本・1,606 本が緑・clippy 0。記録は末尾の「A 群の実装記録」（`9a195f1`）。→ 2026-11-20、利用者「B 群から着手」で
   B 群の 17 件を同じ規律で直した（画面の 4 件はサブエージェント）。記録は末尾の「B 群の実装記録」（`a8ee8b9`）。→ 同日、利用者「C 群から着手」で
-  C 群の 9 件も同じ規律で直した。記録は末尾の「C 群の実装記録」。**実機は A〜C 群とも未確認**）
+  C 群の 9 件も同じ規律で直した。記録は末尾の「C 群の実装記録」（`01e053b`）。→ 2026-11-21、利用者「#8b を進めよう」で、文書に答えが無いので
+  実機で測り（HKLM の承認の「無効」は HKCU の `Run` に効かない）、判定を同じハイブの組へ直した。記録は末尾の「#8b の実装記録」。
+  **実機は A〜C 群とも未確認**）
 - 起点: 利用者（2026-11-19）—「agy で発見した 25 件のバグをこちらに書きます。TODO のリストを spec に作り、
   バグであるかを調査してください」。agy の報告は `fuseforks-core` / `fuseforks-host` / `apps/cli` / `apps/gui-tauri` の
   全体を対象にした 25 項目（枝を数えると 36 主張）
@@ -33,7 +35,7 @@
 - [x] #7a `pricing_source::fetch_table` が https → http のリダイレクトに追従する — **成立（影響は小）**
 - [x] #7b `fetch_table` と `UserAgentOAuthHttpClient::execute` が全量を読んでからサイズを検査する — **成立**
 - [x] #8a Linux の AppImage で自動起動の `registeredElsewhere` が常に立つ — **成立**
-- [x] #8b Windows で HKLM の `StartupApproved` に残った値のせいで有効にできない — **設計どおり**（前提は未確認）
+- [x] #8b Windows で HKLM の `StartupApproved` に残った値のせいで有効にできない — ~~**設計どおり**（前提は未確認）~~ **成立**（2026-11-21 に実機で測って直した）
 - [x] #9 `dispatch_plan_wave` / `discard_plan_wave` の TOCTOU（二重配送・打ち切り不能）— **成立**（画面からは困難）
 - [x] #10 予定の配送と `ScheduleRuntime` への登録の順序 — **一部成立**（前判定つきと検収の再依頼だけ）
 - [x] #11 `summarize_agents` が要約中に終わったターンの履歴を消す — **成立**（メモリの履歴だけ）
@@ -178,7 +180,7 @@
 - 影響: 誤った警告が出続けるだけで、登録と起動は正しく動く
 - 修正案: 非 Windows の `read()` の `current_exe` を `app_path()` と同じ規則（`APPIMAGE` を優先・引用符なし）で組む
 
-### #8b Windows で HKLM の `StartupApproved` に残った値のせいで有効にできない — **設計どおり（前提は未確認）**
+### #8b Windows で HKLM の `StartupApproved` に残った値のせいで有効にできない — ~~**設計どおり（前提は未確認）**~~ **成立（2026-11-21 に実機で確認）**
 
 - `autostart.rs:121-123` は `registered && !user_disabled && !machine_disabled`、`machine_disabled` は HKLM の `Run` の有無に関係なく読む。
   `enable()` は HKCU の `Run` と `StartupApproved\Run` しか書かない。コードは指摘のとおり
@@ -186,8 +188,10 @@
   Spec 69 `:312-313`（`auto-launch` 0.6 の `is_enabled` と同じ判定）/ 単体 `the_windows_view_reads_both_hives_and_the_task_manager`
 - 到達: HKLM に Fuseforks が書く経路は無い（Spec 69 `:320`）。HKLM の値をタスクマネージャーで無効にした後に `Run` の値だけ消えた
   ときだけ（管理者が手で消した / 管理者権限で起動した Fuseforks の `disable()` は `StartupApproved` を消さない）
-- **未確認**: Windows が HKLM の `StartupApproved\Run` を HKCU の `Run` にも適用するのか。修正案（`machine_disabled` は HKLM の `Run` に
-  値があるときだけ数える）の正しさはここで決まるので、一次資料に当てるまで直さない
+- ~~**未確認**: Windows が HKLM の `StartupApproved\Run` を HKCU の `Run` にも適用するのか。修正案（`machine_disabled` は HKLM の `Run` に
+  値があるときだけ数える）の正しさはここで決まるので、一次資料に当てるまで直さない~~
+- **確認（2026-11-21）**: 適用しない。Microsoft の文書にこの対応の記述が無く、実機で測った（末尾の「#8b の実装記録」）。
+  契約・Spec 69・単体テストが決めていた判定は `auto-launch` 0.6 の `is_enabled` の写しで、Windows の仕様の証拠ではなかった
 
 ### #9 `dispatch_plan_wave` / `discard_plan_wave` の TOCTOU — **成立（画面からは困難）**
 
@@ -616,7 +620,38 @@
 
 ### 直さないと決めるもの
 
-- **#8b** 契約（`data_contract.yaml:4590-4591`）とテストが決めている。Windows が HKLM の `StartupApproved\Run` を HKCU の `Run` にも
-  適用するかを一次資料で確かめてから、契約ごと変えるかを決める
+- ~~**#8b** 契約（`data_contract.yaml:4590-4591`）とテストが決めている。Windows が HKLM の `StartupApproved\Run` を HKCU の `Run` にも
+  適用するかを一次資料で確かめてから、契約ごと変えるかを決める~~ → 2026-11-21 に直した（末尾の「#8b の実装記録」）
 - **#17b** 設計どおり（構造化出力のフォールバック。テストが意図して留めている）
 - **#24 / #25b / #25d** 不成立
+
+## #8b の実装記録（2026-11-21）
+
+利用者「#8b を進めよう」。**文書で決まらなかったので実機で測り、判定を直した。**
+
+- **文書**: Microsoft Learn の「Startup apps」（Windows 8 cookbook）は Run キーの種類を挙げるだけで `StartupApproved` に触れていない。
+  対応を書いている資料（windowsir 2022-07「Does 'Autostart' Really Mean 'Autostart'?」/ Nutanix「Windows OS Optimization Essentials,
+  Part 4」2021-12）はどちらも同じハイブの組（HKLM の承認 ↔ HKLM の `Run`、HKCU ↔ HKCU、`Run32` ↔ WOW6432Node の `Run`）で書くが、
+  説明として書いているだけで、ハイブをまたぐ場合を試していない。村（ルナ。ジェミーは別件の 400 で停止）の調べも「分からない」だった。
+  ハイブをまたいで判定しているのは `auto-launch` の現行（`zzzgydi/auto-launch` `8408d6f`。両方のハイブの承認を AND）だけで、
+  0.5.0 は HKCU しか見ていない — どちらも作者の組み方
+- **試験**（使い捨てのスクリプト。リポジトリには入れていない）: HKCU の `Run` に `ff8b-probe` と `ff8b-control`（どちらも
+  `cmd.exe /d /c echo %DATE% %TIME%> "%TEMP%\<名前>.txt"`）、HKLM の `StartupApproved\Run` に `ff8b-probe` の「無効」
+  （`03 00 00 00` + 置いた時刻の FILETIME = タスクマネージャーが書く形）。HKCU の承認と HKLM の `Run` には何も置かない。
+  HKLM へは UAC の昇格で書き、昇格していないシェルから同じ HKCU に値が見えることを確かめてから、利用者がサインインし直した
+- **結果**（Windows 11 Pro 26H2・10.0.26320・UBR 10003）: サインイン 11:11:50 → Explorer 11:11:51 → OneDrive 11:13:04 →
+  **`ff8b-probe` 11:14:30.86 / `ff8b-control` 11:14:31.41 の両方が起動**。HKLM の承認の「無効」は HKCU の `Run` の同名の値に効かない。
+  試験の値は UAC で片付け、6 つとも残っていないことを昇格していないシェルから確かめた
+- **測っていない向き**: HKCU の承認の「無効」が HKLM の `Run` の同名の値に効くか（HKLM の `Run` へ値を置く試験が別に要る）。
+  同じ規則が対称に効くと読んで、判定は対称に直した
+- **直したこと**: `autostart.rs` の `windows_view` を「HKCU の `Run` に値があり HKCU の承認で無効でない、**または** HKLM の `Run` に値があり
+  HKLM の承認で無効でない」へ。赤いテスト `startup_approved_applies_only_to_its_own_hive` を先に書き、旧い判定で 1 つ目の主張
+  （HKCU の `Run` だけ + HKLM の承認が無効 → 有効）が赤になるのを確かめた。既存テストの「HKCU の登録 + HKLM の承認が無効 → 無効」
+  （旧 452 行目）は実測と逆なので新しいテストへ移した。**変異 1 回**: 2 つのハイブの承認を入れ替えると、新しいテストと既存の
+  `the_windows_view_reads_both_hives_and_the_task_manager` の 2 本が赤（予測どおり。sha1 で復元を確認）
+- **画面の帰結**: HKLM に「無効」だけが残った端末でも、チェックを入れれば HKCU へ書いて ON と表示され、サインイン時に起動する
+  （旧い判定では OFF のまま戻らなかった）
+- 台帳: `data_contract.yaml` の `launch_exit_contract` 8 / Spec 69 の「Windows の読み」に覆しを書いた。`failures.md` #161
+- **別件で見つけたもの**: ジェミー（`gemini-4-hydrogen`）が Google 検索と関数ツールを併用するターンで
+  `Function call is missing a thought_signature`（400）を返して停止した（2026-11-17 にも 1 回）。#8b とは別のセッション
+  「Gemini 4 の thought_signature 欠落で 400 になる」で扱う

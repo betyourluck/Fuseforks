@@ -129,8 +129,11 @@ fn approved_disabled(bytes: &[u8]) -> bool {
 
 /// Windows の読みの結果から画面の状態を組む（純関数）。
 ///
-/// 有効 = どちらかの `Run` に値があり、かつ両方の `StartupApproved\Run` で無効になっていない
-/// （`auto-launch` 0.6 の `is_enabled` と同じ組み合わせ方）。コマンドは HKCU を優先する。
+/// 有効 = HKCU の `Run` に値があり HKCU の `StartupApproved\Run` で無効でない、**または** HKLM の `Run` に値があり
+/// HKLM の `StartupApproved\Run` で無効でない。**承認は同じハイブの `Run` にだけ掛かる**（Spec 77 #8b。HKLM の
+/// 「無効」が HKCU の値に効かないことを 2026-11-21 に実機で測った）。`auto-launch` 0.6 は両方のハイブの承認を
+/// AND で掛けており、それを写した旧い判定は、HKLM に残った「無効」だけで HKCU の登録を OFF と表示していた。
+/// コマンドは HKCU を優先する。
 #[cfg(any(windows, test))]
 fn windows_view(
     user: Option<String>,
@@ -139,9 +142,10 @@ fn windows_view(
     machine_disabled: bool,
     current_exe: String,
 ) -> AutostartView {
-    let registered = user.is_some() || machine.is_some();
+    let user_runs = user.is_some() && !user_disabled;
+    let machine_runs = machine.is_some() && !machine_disabled;
     AutostartView {
-        enabled: registered && !user_disabled && !machine_disabled,
+        enabled: user_runs || machine_runs,
         scope: scope_of(user.is_some(), machine.is_some()),
         registered_command: user.or(machine),
         current_exe,
@@ -448,8 +452,31 @@ mod tests {
         assert_eq!(both.registered_command, user);
 
         // タスクマネージャーで切られていれば、登録があっても無効。
-        assert!(!windows_view(user.clone(), None, true, false, exe.clone()).enabled);
-        assert!(!windows_view(user, None, false, true, exe).enabled);
+        assert!(!windows_view(user, None, true, false, exe).enabled);
+    }
+
+    /// 承認（`StartupApproved\Run`）が掛かるのは同じハイブの `Run` の値だけ（Spec 77 #8b）。
+    ///
+    /// HKCU → HKCU は 2026-11-21 の実機（Windows 11 26H2・10.0.26320）で測った: HKCU の `Run` にだけ値を置き、
+    /// HKLM の `StartupApproved\Run` に同じ名前で「無効」（`03 00 00 00` + FILETIME）を置いてサインインし直すと、
+    /// 対照と同じく起動した。HKLM → HKLM の向きは測っていない（同じ規則が対称に効くと読んでいる）。
+    #[test]
+    fn startup_approved_applies_only_to_its_own_hive() {
+        let exe = "C:\\x\\fuseforks.exe".to_owned();
+        let user = Some("\"C:\\x\\fuseforks.exe\" --autostart".to_owned());
+        let machine = Some("\"C:\\y\\fuseforks.exe\" --autostart".to_owned());
+
+        // HKLM の承認だけが「無効」で、HKLM の Run には値が無い（実機で起動した形）。
+        assert!(windows_view(user.clone(), None, false, true, exe.clone()).enabled);
+        // 逆向き: HKCU の承認だけが「無効」で、HKCU の Run には値が無い。
+        assert!(windows_view(None, machine.clone(), true, false, exe.clone()).enabled);
+        // 同じハイブの承認が「無効」なら、そのハイブの登録は起動しない。
+        assert!(!windows_view(None, machine.clone(), false, true, exe.clone()).enabled);
+        // 片方のハイブだけ「無効」でも、もう片方の登録は起動する。
+        assert!(windows_view(user.clone(), machine.clone(), true, false, exe.clone()).enabled);
+        assert!(windows_view(user.clone(), machine.clone(), false, true, exe.clone()).enabled);
+        // 両方とも「無効」なら起動しない。
+        assert!(!windows_view(user, machine, true, true, exe).enabled);
     }
 
     #[test]

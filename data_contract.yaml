@@ -4628,8 +4628,15 @@ entities:
          実際のタスクマネージャーの値では食い違わない (Spec 69 P4 実測: 無効にすると 03 00 00 00 + 無効にした時刻の
          FILETIME を書く。食い違うのは先頭 0x03・時刻 0 の形だけで、タスクマネージャーはその形を作らない)。
          実機の値名は Run も StartupApproved\Run も fuseforks (小文字)
-      8. Windows の読み: HKLM と HKCU の両方の Run を読み、どちらかに値があり、両方の StartupApproved\Run で
-         無効でなければ有効。scope = user / machine / both / none
+      8. Windows の読み: HKLM と HKCU の両方の Run と StartupApproved\Run を読み、**承認は同じハイブの Run にだけ
+         掛ける** — HKCU の Run に値があり HKCU の承認で無効でない、または HKLM の Run に値があり HKLM の承認で
+         無効でなければ有効。scope = user / machine / both / none。
+         (Spec 77 #8b、2026-11-21 改訂。旧: 「どちらかに値があり、両方の StartupApproved\Run で無効でなければ有効」=
+         auto-launch 0.6 の is_enabled の写し。Microsoft の文書はこの対応を書いていないので実機で測った —
+         Windows 11 26H2 (10.0.26320) で HKCU の Run にだけ値を置き、HKLM の StartupApproved\Run に同名の「無効」
+         (03 00 00 00 + FILETIME) を置いてサインインし直すと、対照と同じく起動した。旧い判定はこの形を OFF と表示し、
+         チェックを入れても HKCU を書くだけなので OFF のまま戻らなかった。HKLM の Run と HKCU の承認の向きは
+         測っていない — 同じ規則が対称に効くと読んでいる)
       9. Windows の外し: HKCU の値を消す。**HKLM は読みで値の有無を見て、ある場合だけ消しにいく** —
          管理者でない起動では HKLM の Run を書き込みで開く段で値の有無に依らず 0x80070005 が返る (P0 実測)。
          値がある HKLM の削除の拒否は握らず scope: machine で返す。値が無い (0x80070002) は成功

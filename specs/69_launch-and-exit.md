@@ -309,8 +309,12 @@ Spec 64 のまま）。
 - **Windows の登録（`enable`）**: HKCU の `Run` へ値を書く。`Explorer\StartupApproved\Run` に同名の値があり無効
   （タスクマネージャーで切られた状態）なら、有効の値で上書きする（`auto-launch` 0.6 の `enable_with_root_key` と同じ
   振る舞い — チェックを入れたのに OS 側の無効が残って起動しない形を作らない）。**HKLM には書かない**
-- **Windows の読み（`is_enabled` 相当）**: HKLM と HKCU の両方の `Run` を読み、どちらかに値があり、かつ両方の
-  `StartupApproved\Run` で無効になっていなければ真（`auto-launch` 0.6 の `is_enabled` と同じ判定。ここは写す）
+- **Windows の読み（`is_enabled` 相当）**: ~~HKLM と HKCU の両方の `Run` を読み、どちらかに値があり、かつ両方の
+  `StartupApproved\Run` で無効になっていなければ真（`auto-launch` 0.6 の `is_enabled` と同じ判定。ここは写す）~~
+  **→ 2026-11-21 に Spec 77 #8b で覆した。** 承認は同じハイブの `Run` にだけ掛かる（HKCU の `Run` に値があり HKCU の
+  承認で無効でない、または HKLM の `Run` に値があり HKLM の承認で無効でなければ真）。写した判定は `auto-launch` の作者の
+  組み方で、Windows の仕様の証拠ではなかった — 実機（Windows 11 26H2）で、HKLM の承認の「無効」が HKCU の `Run` の
+  同名の値に効かないことを測った（記録は Spec 77 の「#8b の実装記録」）
 - **Windows の外し（`disable`）**: HKCU の値を消し、**HKLM に値があるときだけ HKLM の値も消しにいく**（裁定の条件。
   P0 で、管理者でない起動では HKLM の `Run` を書き込みで開く段で値の有無に依らず拒否されると分かった — 常に開きにいくと
   値が無くても `scope: machine` を誤って出す）。値がある HKLM の削除が拒否されたら（`E_ACCESSDENIED`）握らず、
