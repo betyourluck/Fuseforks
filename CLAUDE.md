@@ -3097,10 +3097,19 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 
 ## 現在地（2026-11-21 更新）
 
-**この日は 2 つ**: Spec 77 の #8b を実機で測って直した（HKLM の承認の「無効」は HKCU の `Run` に効かない。「Spec の状態」の行と
+**この日は 2 つ**: Spec 77 の #8b を実機で測って直した（`9b2c83a`。HKLM の承認の「無効」は HKCU の `Run` に効かない。「Spec の状態」の行と
 Spec の「#8b の実装記録」が正）/ 調べてもらったジェミー（`gemini-4-hydrogen`）が `Function call is missing a thought_signature`（400）で
-停止した件を、別のセッション「Gemini 4 の thought_signature 欠落で 400 になる」へ渡した。**次の一手**: #8b のコミット / A〜C 群の実機確認 /
-非 Windows の自動起動の分岐（#8a / N7）は次のタグの CI で初めてコンパイルされる / 別セッションの結果の確認。
+停止した件を、別のセッション「Gemini 4 の thought_signature 欠落で 400 になる」で直し、`8744b5d` を main へ早送りでマージした（`failures.md` #162 が正）。
+どちらも push 済み（origin/main = `8744b5d`）。
+**Gemini 4 の 400 の要点** — Gemini は思考署名を段の最初の呼び出しにだけ付け、段の最初が検索の `toolCall` だと、並列に出た `functionCall` は
+署名なしで来る。decode が `toolCall` を捨てて組み直していた（Spec 48 D3）ので、署名の無い `functionCall` が model の発話の先頭に残り、
+次の周が 400 になった。D3 を決めた probe は `gemini-3.8-flash` で、そこでは `functionCall` に必ず署名が付いていた。処方は、
+署名の無い `functionCall` と署名を持つ別の part が同じ応答にあるときだけ（`needs_replay`）、受け取った part を写しのまま次の周へ返すこと
+（Spec 71 で作った `ChatResponse::replay` の席を使う。寿命 1 ターン）。それ以外の応答は今までどおり組み立てる。計器は `gemini replay:`。
+マージ後に workspace 全体で clippy 0 件・95 本 1,646 件が緑。**実機は未確認** — ジェミーに検索と fetch を併用させ、`gemini replay:` の行が出て
+400 にならずに完走すれば合格（実機の頻度は検索のある周の 1 割前後なので、1 回の依頼で踏めるとは限らない）。番号は同じ日の #8b（#161）と
+重なったので #162 へ付け直した。
+**次の一手**: Gemini の修正の実機確認 / A〜C 群の実機確認 / 非 Windows の自動起動の分岐（#8a / N7）は次のタグの CI で初めてコンパイルされる。
 **Fuseforks の MCP の扉を Claude Code から呼ぶと、300 秒で Claude Code の側が待つのをやめる**（村は止まらず答えを返すが受け取れない。
 短く頼み直すと履歴から再掲できた）— 長い依頼を投げるなら `.mcp.json` の `timeout` か `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` を上げる。
 
