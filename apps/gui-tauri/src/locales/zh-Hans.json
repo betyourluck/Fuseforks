@@ -1338,6 +1338,7 @@
   "errors": {
     "retryAfterTooLong": "提供商要求在 {secs} 秒后重试。请稍后再试。",
     "imagesRejected": "此连接端不接受图像（WebP 和 JPEG 均被拒绝）。请去掉图像后重新发送。",
+    "requestTimedOut": "连接端未在 {secs} 秒内响应。在“{dialog}”中延长此模型的“{field}”，请求可能会成功。",
     "AGENT_NOT_FOUND": "该仆从未注册",
     "DUPLICATE_AGENT": "已存在相同 ID 的仆从",
     "DUPLICATE_AGENT_NAME": "该显示名称已被其他仆从使用",

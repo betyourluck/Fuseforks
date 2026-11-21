@@ -19,6 +19,11 @@
  * - 接続先が画像を受け付けなかったとき（`imagesRejected`）: 同じ形で「この接続先は画像を
  *   受け付けません…画像なしで送り直してください」を添える（2026-10-20。JPEG フォールバックの
  *   結末。それまではコアが日本語固定の文で本文を差し替えていた）。鍵は `errors.imagesRejected`
+ * - 接続先がテンプレートの待ち時間以内に応答しなかったとき（`timeoutSecs`）: 同じ形で「接続先が N 秒以内に
+ *   応答しませんでした…『モデル登録』でこのモデルの『タイムアウト(秒)』を延ばすと通ることがあります」を
+ *   添える（2026-11-21。それまでは reqwest の原文 `operation timed out` だけで、延ばす欄が分からなかった）。
+ *   欄の名前は辞書の `agentList.modelRegistration` / `modelTemplate.timeout` を差し込む — 画面のラベルを
+ *   改名したら案内も追従する。鍵は `errors.requestTimedOut`
  */
 import { i18n } from "../i18n";
 import type { ErrorPayload } from "../types";
@@ -30,6 +35,15 @@ function guidance(payload: ErrorPayload): string[] {
     lines.push(i18n.global.t("errors.retryAfterTooLong", { secs: payload.retryAfterSecs }));
   }
   if (payload.imagesRejected === true) lines.push(i18n.global.t("errors.imagesRejected"));
+  if (payload.timeoutSecs != null) {
+    lines.push(
+      i18n.global.t("errors.requestTimedOut", {
+        secs: payload.timeoutSecs,
+        dialog: i18n.global.t("agentList.modelRegistration"),
+        field: i18n.global.t("modelTemplate.timeout"),
+      }),
+    );
+  }
   return lines;
 }
 

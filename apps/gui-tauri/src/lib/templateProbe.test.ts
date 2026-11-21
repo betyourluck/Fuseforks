@@ -111,6 +111,7 @@ describe("probeView（Spec 68 D2・D6）", () => {
         retryable: true,
         retryAfterSecs: 120,
         imagesRejected: false,
+        timeoutSecs: null,
       },
       elapsedMs: 300,
     };

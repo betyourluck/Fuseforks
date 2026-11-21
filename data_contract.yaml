@@ -3363,6 +3363,13 @@ entities:
       imagesRejected: bool          # 2026-10-20。この接続先が画像を受け付けなかった (WebP も JPEG も 400。
                                     # LlmError::ImagesRejected)。同じく文は運ばず formatError が添える。
                                     # 欄の無い古い記録は false で読む
+      timeoutSecs: u64 | null       # 2026-11-21。接続先がテンプレートの「タイムアウト(秒)」以内に応答せず、
+                                    # こちらが切ったときの秒数（LlmError::timed_out_after。付けるのは秒数を
+                                    # 知っている HttpLlmBackend の 1 往復の出口だけで、reqwest の is_timeout()
+                                    # が偽の失敗 = 接続拒否・DNS・TLS には付けない）。同じく文は運ばず
+                                    # formatError が「N 秒以内に応答がなかった・『モデル登録』の『タイムアウト
+                                    # (秒)』を延ばすと通ることがある」を添える。失敗したターンの注記には
+                                    # 入れない（待ち時間はモデルではなく利用者が変える設定）。古い記録は null
     codes:
       - AGENT_NOT_FOUND
       - DUPLICATE_AGENT

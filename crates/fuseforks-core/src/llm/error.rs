@@ -33,6 +33,13 @@ pub enum LlmError {
         source: reqwest::Error,
         /// source 連鎖を平坦化した詳細。
         detail: String,
+        /// **こちらが待ち切れずに切った**ときの、その待ち時間（テンプレートの「タイムアウト(秒)」。2026-11-21）。
+        ///
+        /// 付けるのは秒数を知っている `HttpLlmBackend` だけ（[`LlmError::with_request_timeout`]）。
+        /// reqwest のエラーから作った直後は `None` で、タイムアウトでない失敗（接続拒否・DNS・TLS）には
+        /// 付かない。読むのは [`LlmError::timed_out_after`] → `ErrorPayload.timeout_secs` → 画面の
+        /// `formatError`（表示の言語で「N 秒以内に応答がなかった・延ばすと通ることがある」を添える）。
+        timeout: Option<std::time::Duration>,
     },
 
     /// API がエラーステータスを返した。再試行の可否は `class` が決める（Spec 52）。
@@ -144,7 +151,11 @@ impl From<reqwest::Error> for LlmError {
             detail.push_str(&inner.to_string());
             cause = inner.source();
         }
-        LlmError::Http { source, detail }
+        LlmError::Http {
+            source,
+            detail,
+            timeout: None,
+        }
     }
 }
 
@@ -204,6 +215,33 @@ impl LlmError {
     /// （`ErrorPayload.images_rejected`）と失敗したターンの注記 — どちらも言語を知っている側で文にする。
     pub fn images_rejected(&self) -> bool {
         matches!(self, Self::ImagesRejected { .. })
+    }
+
+    /// 送信がタイムアウトで切れた失敗なら、切った待ち時間を付ける（2026-11-21）。それ以外は何も変えない。
+    ///
+    /// 呼ぶのは `HttpLlmBackend` の 1 往復の出口だけ — 何秒で切ったかを知っているのはそこしか無い。
+    /// 判定は reqwest の `is_timeout()` で、接続拒否・DNS・TLS の失敗には付けない（付けると「延ばせば通る」と
+    /// 誤った手を指す）。
+    pub fn with_request_timeout(self, limit: std::time::Duration) -> Self {
+        match self {
+            Self::Http { source, detail, .. } if source.is_timeout() => Self::Http {
+                source,
+                detail,
+                timeout: Some(limit),
+            },
+            other => other,
+        }
+    }
+
+    /// こちらの待ち時間で切った失敗なら、その待ち時間（2026-11-21）。読むのは画面（`ErrorPayload.timeout_secs`）。
+    ///
+    /// 文にするのは言語を知っている画面の `formatError`（`retry_after_too_long` / `images_rejected` と同じ形）。
+    /// 失敗したターンの注記には入れない — 待ち時間はモデルではなく利用者が変える設定なので。
+    pub fn timed_out_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Http { timeout, .. } => *timeout,
+            _ => None,
+        }
     }
 
     /// 再試行で回復しうるか。
@@ -309,6 +347,21 @@ mod tests {
         // 明示値が無い失敗・Api 以外は None。
         assert_eq!(LlmError::api(429, "").retry_after_too_long(), None);
         assert_eq!(LlmError::EmptyResponse.retry_after_too_long(), None);
+    }
+
+    /// タイムアウトでない HTTP の失敗と HTTP 以外の失敗には、待ち時間を付けない（2026-11-21）。
+    /// タイムアウトに付くことは `tests/request_timeout_guidance.rs` が実際に待ち切れない要求で確かめる。
+    #[test]
+    fn only_a_timeout_carries_the_request_timeout() {
+        let limit = std::time::Duration::from_secs(120);
+        let built = reqwest::Client::new().get("not a url").build().unwrap_err();
+        assert!(!built.is_timeout(), "前提: タイムアウトではない reqwest の失敗");
+        let err = LlmError::from(built).with_request_timeout(limit);
+        assert_eq!(err.timed_out_after(), None);
+        assert_eq!(err.code(), "LLM_HTTP");
+
+        assert_eq!(LlmError::api(504, "").with_request_timeout(limit).timed_out_after(), None);
+        assert_eq!(LlmError::EmptyResponse.with_request_timeout(limit).timed_out_after(), None);
     }
 
     /// 払ったことが分かる失敗だけが usage を運ぶ（#103）。

@@ -3117,6 +3117,18 @@ Spec の「#8b の実装記録」が正）/ 調べてもらったジェミー（
 非 Windows の自動起動の分岐（#8a / N7）は次のタグの CI で初めてコンパイルされる。
 **Fuseforks の MCP の扉を Claude Code から呼ぶと、300 秒で Claude Code の側が待つのをやめる**（村は止まらず答えを返すが受け取れない。
 短く頼み直すと履歴から再掲できた）— 長い依頼を投げるなら `.mcp.json` の `timeout` か `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` を上げる。
+**同日 14:19〜14:31、ジェミー（`gemini-4-hydrogen`）が 2 ターン続けて `LLM_HTTP` の `operation timed out` で止まった**（どちらも
+1 回の呼び出しが 120 秒 = テンプレートの「タイムアウト(秒)」を 3 回続けて超えた。写しとは無関係 — 1 本目は検索の無い周の次で
+止まり、同じターンの前の周は 11〜13 秒で返っている）。過去 132 回の hydrogen の呼び出しは中央値 11 秒・上位 10% が 74 秒・
+90 秒超が 9 回で、Gemini のテンプレートは全部 120 秒のまま（Anthropic の 2 つは 360 秒）。**画面には reqwest の原文しか出ず、
+どの欄を延ばせば通るかが分からなかった**ので、`ErrorPayload.timeoutSecs`（`LlmError::timed_out_after`。秒数を知っている
+`HttpLlmBackend::attempt` の出口で、`is_timeout()` の失敗にだけ付ける）を足し、`formatError` が表示の言語で
+「接続先が N 秒以内に応答しませんでした。『モデル登録』でこのモデルの『タイムアウト(秒)』を延ばすと通ることがあります」を添える
+（辞書 `errors.requestTimedOut`。欄の名前は `agentList.modelRegistration` / `modelTemplate.timeout` を差し込むので、ラベルを
+改名しても追従する）。失敗したターンの注記には入れない（待ち時間は利用者が変える設定）。結合 `tests/request_timeout_guidance.rs`
+3 本（待ち切れない要求で秒数が付く / 再試行の後も付く / 接続拒否には付かない）・単体 1 本・vitest 1 本、変異 4 回とも予測どおり。
+**開発ビルドが動いていたので worktree（`claude/timeout-guidance`）で作った。** 実機は未確認 — テンプレートのタイムアウトを
+小さくして長い依頼を投げると踏める。
 
 ## 現在地（2026-11-20 更新）
 

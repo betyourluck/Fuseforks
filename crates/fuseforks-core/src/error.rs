@@ -506,6 +506,15 @@ impl CoreError {
         matches!(self, Self::Llm(err) if err.images_rejected())
     }
 
+    /// こちらの待ち時間（テンプレートの「タイムアウト(秒)」）で切った失敗なら、その待ち時間（2026-11-21）。
+    /// [`crate::llm::LlmError::timed_out_after`] に委譲する。読むのは [`ErrorPayload::timeout_secs`] だけ。
+    pub fn timed_out_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Llm(err) => err.timed_out_after(),
+            _ => None,
+        }
+    }
+
     /// エージェントの稼働を降ろすべき失敗か。
     ///
     /// **[`Self::is_retryable`] とは別の問い。** 再試行の可否は「**この 1 件**を
@@ -564,6 +573,14 @@ pub struct ErrorPayload {
     /// 日本語固定の文を `message` の中へ差し替えていた。欄の無い古い記録は `default` で偽として読む。
     #[serde(default)]
     pub images_rejected: bool,
+    /// 接続先がテンプレートの「タイムアウト(秒)」以内に応答せず、こちらが切ったときの秒数（2026-11-21）。
+    ///
+    /// それまで画面に出たのは reqwest の原文「…: operation timed out」だけで、どの設定を延ばせば通るのかが
+    /// 分からなかった（`gemini-4-hydrogen` が 120 秒を 3 回続けて超えて止まった）。**コアは秒数だけを運び、
+    /// 文にするのは画面**（`formatError` が表示の言語で「N 秒以内に応答がありませんでした…延ばすと通る
+    /// ことがあります」を添える）。欄の無い古い記録は `default` で `None` として読む。
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 impl From<&CoreError> for ErrorPayload {
@@ -587,6 +604,7 @@ impl From<&CoreError> for ErrorPayload {
             retryable: err.is_retryable(),
             retry_after_secs: err.retry_after_too_long().map(|wait| wait.as_secs()),
             images_rejected: err.images_rejected(),
+            timeout_secs: err.timed_out_after().map(|wait| wait.as_secs()),
         }
     }
 }
@@ -687,6 +705,8 @@ mod tests {
         // 秒数が無い失敗では null（欄そのものは常にある）。
         let plain = serde_json::to_value(CoreError::Llm(crate::llm::LlmError::api(500, "boom"))).unwrap();
         assert!(plain["retryAfterSecs"].is_null());
+        // タイムアウトの秒数（2026-11-21）も、タイムアウトでない失敗では null。
+        assert!(plain["timeoutSecs"].is_null());
 
         // 欄の無い古い記録（world.json の lastError）も読める。
         let old: ErrorPayload = serde_json::from_str(
@@ -695,6 +715,7 @@ mod tests {
         .expect("欄の無い記録を読めること");
         assert_eq!(old.retry_after_secs, None);
         assert!(!old.images_rejected);
+        assert_eq!(old.timeout_secs, None);
     }
 
     /// 画像を受け付けなかった失敗は `imagesRejected` で運ぶ（2026-10-20）。コードと表示は 400 の `Api` と同じ。

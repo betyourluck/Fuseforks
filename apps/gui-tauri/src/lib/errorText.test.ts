@@ -13,7 +13,16 @@ import { formatError } from "./errorText";
 import type { ErrorPayload } from "../types";
 
 function payload(code: string, message: string): ErrorPayload {
-  return { code, message, detail: null, agentId: null, retryable: false, retryAfterSecs: null, imagesRejected: false };
+  return {
+    code,
+    message,
+    detail: null,
+    agentId: null,
+    retryable: false,
+    retryAfterSecs: null,
+    imagesRejected: false,
+    timeoutSecs: null,
+  };
 }
 
 afterEach(() => {
@@ -73,6 +82,29 @@ describe("formatError", () => {
     const ja = formatError(rejected);
     expect(ja).toContain("この接続先は画像を受け付けません");
     expect(ja).toContain("unsupported image format");
+  });
+
+  // 2026-11-21: 接続先がテンプレートの待ち時間を超えて止まると、画面には reqwest の原文
+  // （`operation timed out`）しか出ず、どの設定を延ばせば通るのかが分からなかった。コアは秒数を
+  // `timeoutSecs` で運び、文にするのはここ。
+  it("接続先が時間内に応答しなかったときは、秒数と延ばす欄の名前を表示の言語で添える", () => {
+    const timedOut: ErrorPayload = {
+      ...payload("LLM_HTTP", "HTTP エラー: error sending request for url (https://x/v1): operation timed out"),
+      timeoutSecs: 120,
+    };
+
+    for (const locale of ["ja", "en", "zh-Hans"] as const) {
+      i18n.global.locale.value = locale;
+      const text = formatError(timedOut);
+      expect(text, locale).toContain("120");
+      // 案内が名指す画面と欄は、画面の実物のラベルと同じ文字列（ラベルを改名すると、ここが赤になる）。
+      expect(text, locale).toContain(i18n.global.t("agentList.modelRegistration"));
+      expect(text, locale).toContain(i18n.global.t("modelTemplate.timeout"));
+      expect(text, locale).toContain("operation timed out");
+    }
+
+    i18n.global.locale.value = "en";
+    expect(formatError(timedOut)).not.toContain("秒以内");
   });
 
   it("秒数が無ければ何も添えない（従来の表示のまま）", () => {

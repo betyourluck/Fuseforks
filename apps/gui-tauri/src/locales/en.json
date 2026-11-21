@@ -1338,6 +1338,7 @@
   "errors": {
     "retryAfterTooLong": "The provider asks to retry after {secs} seconds. Please try again later.",
     "imagesRejected": "This endpoint does not accept images (both WebP and JPEG were rejected). Send it again without the image.",
+    "requestTimedOut": "The endpoint did not respond within {secs} seconds. Raising this model's \"{field}\" in \"{dialog}\" may let the request through.",
     "AGENT_NOT_FOUND": "The servant is not registered",
     "DUPLICATE_AGENT": "A servant with the same ID already exists",
     "DUPLICATE_AGENT_NAME": "The display name is already in use by another servant",

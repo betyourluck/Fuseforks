@@ -158,6 +158,11 @@ export interface ErrorPayload {
    * コアは事実だけを運び、文にするのは `formatError`（表示の言語で原因と次の手を添える）。
    */
   imagesRejected: boolean;
+  /**
+   * 接続先がテンプレートの「タイムアウト(秒)」以内に応答せず、こちらが切ったときの秒数。それ以外は `null`
+   * （2026-11-21）。コアは秒数だけを運び、文にするのは `formatError`（表示の言語で延ばす欄の名前を添える）。
+   */
+  timeoutSecs: number | null;
 }
 
 /** モデルテンプレートの接続テスト（Spec 68）の失敗の分類。`template_probe.rs` の `ProbeFailure` の写し。 */

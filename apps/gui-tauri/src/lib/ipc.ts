@@ -95,6 +95,7 @@ export function toErrorPayload(error: unknown): ErrorPayload {
     retryable: false,
     retryAfterSecs: null,
     imagesRejected: false,
+    timeoutSecs: null,
   };
 }
 

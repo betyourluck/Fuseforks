@@ -965,6 +965,7 @@ async function initialize(): Promise<void> {
           retryable: false,
           retryAfterSecs: null,
           imagesRejected: false,
+          timeoutSecs: null,
         } satisfies ErrorPayload;
       }
       if (boot.ready) break;

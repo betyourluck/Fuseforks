@@ -274,6 +274,7 @@ pub fn judge(result: Result<ChatResponse, LlmError>, elapsed_ms: u64) -> Templat
                 retryable: false,
                 retry_after_secs: None,
                 images_rejected: false,
+                timeout_secs: None,
             },
         ),
         LlmError::NoStructuredOutput => failed(ProbeFailure::UnexpectedShape, None, None, payload(err)),
@@ -327,6 +328,7 @@ pub fn degraded_failure(reason: String, elapsed_ms: u64) -> TemplateProbe {
             retryable: false,
             retry_after_secs: None,
             images_rejected: false,
+            timeout_secs: None,
         },
         elapsed_ms,
     }

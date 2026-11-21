@@ -375,7 +375,18 @@ impl HttpLlmBackend {
     }
 
     /// 1 回ぶんの往復。再試行は [`HttpLlmBackend::chat`] 側が担う。
+    ///
+    /// タイムアウトで切れた失敗には、切った待ち時間（テンプレートの「タイムアウト(秒)」）を付けて返す
+    /// （2026-11-21）。秒数を知っているのはこの層だけで、画面はそれを読んで「延ばすと通ることがある」と
+    /// 案内する。送信と応答の本文の読み取りのどちらで切れても同じ出口を通る。
     async fn attempt(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
+        self.send_and_decode(req)
+            .await
+            .map_err(|err| err.with_request_timeout(self.config.request_timeout))
+    }
+
+    /// 要求を組んで送り、応答を canonical へ読む（[`HttpLlmBackend::attempt`] の本体）。
+    async fn send_and_decode(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
         let url = format!(
             "{}{}",
             self.config.base_url,
