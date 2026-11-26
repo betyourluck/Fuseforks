@@ -942,8 +942,8 @@ repos/betyourluck/winget-pkgs/git/refs/heads/master -f sha=<本家の先頭> -F 
 0.6.9 = PR #477932（2026-11-11 23:18 UTC 提出 = publish の 5 分後。wingetcreate で通った。2026-11-12 00:34 UTC マージ = publish の 1 時間 21 分後）/
 0.7.0 = PR #478283（2026-11-12 08:41 UTC 提出 = publish の 50 秒後。wingetcreate で通った。2026-11-12 09:49 UTC マージ = publish の 1 時間 8 分後。2026-11-15 に `winget search` が 0.7.0 を返すことを確認）/
 0.7.1 = PR #481489（2026-11-16 11:27 UTC 提出 = publish の 55 秒後。wingetcreate で通った。2026-11-16 12:25 UTC マージ = publish の 59 分後。2026-11-19 に `winget search` が 0.7.1 を返すことを確認）/
-0.7.2 = PR #486194（2026-11-22 02:40 UTC 提出 = publish の 47 秒後。wingetcreate で通った。マージ待ち）。** 所要を測れた update PR
-（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.9 / 0.7.0〜0.7.1）は、**0.3.4 を除く全部が 46 分〜3 時間 52 分・
+0.7.2 = PR #486194（2026-11-22 02:40 UTC 提出 = publish の 47 秒後。wingetcreate で通った。2026-11-22 03:37 UTC マージ = publish の 58 分後。2026-11-27 に `winget search` が 0.7.2 を返すことを確認）。** 所要を測れた update PR
+（0.1.12 / 0.2.0〜0.2.5 / 0.3.2〜0.3.7 / 0.4.0 / 0.5.0 / 0.6.0〜0.6.9 / 0.7.0〜0.7.2）は、**0.3.4 を除く全部が 46 分〜3 時間 52 分・
 中央値 1 時間前後、0.3.4 だけ 29 時間**。自動検証は毎回 1 時間以内に終わり、幅を作っているのは人の承認の待ち。
 **古い版は壊れずに止まる**（エラーが出ないので気づく契機が無い）ので、
 下の「版を出すたびに 2 経路の更新が要る」が唯一の追従経路。
@@ -3102,7 +3102,8 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 Ubuntu だけテストで赤になり、直して付け直した。タグ履歴が正）。publish 2026-11-22 02:39:35 UTC / winget PR #486194 / tap `c53a011`。
 同日、ランディングページ（Pages リポジトリ `9a1ff7e`。同梱ツールの列挙と FAQ の外向き通信に `fetch`）と `prices.json`（`4ff9847`。LiteLLM `754c222` へ
 追従・Gemini 4 系と Perplexity 経由の Gemini を手で追加。**Perplexity の Gemini 4 Argon / Carbon は 2026-11-30 までの導入価格**）も更新した。
-**次の一手**: winget 0.7.2（PR #486194）のマージ確認 → タグ履歴と winget の節へ書き戻し / 12 月に Perplexity の Gemini 4 の単価を確かめ直す /
+**次の一手**: ~~winget 0.7.2（PR #486194）のマージ確認 → タグ履歴と winget の節へ書き戻し~~（**→ 2026-11-22 03:37 UTC マージ = publish の 58 分後**。
+2026-11-27 に `winget search` が 0.7.2 を返すことを確認し、書き戻し済み）/ 12 月に Perplexity の Gemini 4 の単価を確かめ直す /
 ジェミー・ルナ・イクスは Docker の fetch を外した後、同梱の `fetch` にチェックが無い（web を読めない）。
 
 ## 現在地（2026-11-21 更新）
@@ -5191,7 +5192,7 @@ P4 は D12 どおり単独コミット = revert 単位が撤去に一致）。
   開かない / 音声・動画・PDF の添付は消えた後もファイル名の行が出る / Windows の開発ビルドで確かめた範囲）。
   **タグの付け直し・publish・winget・tap は Neo** — winget 0.7.2 = PR #486194（`gh repo sync` → `wingetcreate update … --out` で生成して確かめてから
   `wingetcreate submit --token`。`InstallerLocale` 無し・ProductCode は `{048F5650-…}`・`InstallerSha256` は Release の digest と一致。02:40 UTC 提出 =
-  publish の 47 秒後）/ tap `c53a011`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
+  publish の 47 秒後。03:37 UTC マージ = publish の 58 分後）/ tap `c53a011`（sha256 は Release API の `digest`）/ LP は `releases/latest` なので触らない
 - **`v0.7.1` = `475d251`（2026-11-16 JST タグ。11 コミット — Spec 76（画像生成）の起票から P4、入力欄へのドラッグ&ドロップ、#157、表のセルの `<br>`）**。3 OS 緑・アセット 7 件・publish 2026-11-16 11:26:28 UTC。**macOS だけ 1 回目が公証の 403 で落ちた** —
   `A required agreement is missing or has expired`（Apple Developer Program License Agreement が 2026-10-30 に改訂され、未同意だった。コードのテストは macOS でも通っていた）。利用者が同意 → `verify-notary.yml` は同意の直後はまだ 403、約 5 分後に通った（反映のラグ）→
   `gh run rerun --failed` で macOS だけ再実行して dmg がそろった（`releaseDraft: true` が 5 件の draft で止めていた）。**次に公証が 403 で落ちたら、まず developer.apple.com の契約を見る**。ノートは英・中・日の 3 部で、主題は画像生成、「利用者が負う条件」8 つ（費用はトークン制限にも統計にも入らない / 止めても接続先が生成と課金を続けうる / 返事の無いターンの画像は作業フォルダだけ / 会話の写しは 30 日 / 参照画像は画像生成の接続先へ・渡し直しは受け取る個体のモデルの接続先へ / **v0.7.0 以前で開くと生成画像の写しの付いた会話が空で始まる** / 送り先は PRIVACY 4-5 / Windows の開発ビルドで 4 社確認・ドラッグ&ドロップは macOS と Linux 未確認）。**ノートを書く段で、画像生成の設定ページの中文の辞書 3 か所がサーヴァントを「从者」と書いていたのを見つけた**（ほかは「仆从」。このタグには入っていない — main で直した）。
