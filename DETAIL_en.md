@@ -1763,7 +1763,10 @@ no frame at all.
 **Three of the four providers return nothing unless asked.** Only xAI returns it by
 default; Anthropic needs `thinking.display: "summarized"`, Gemini needs
 `thinkingConfig.includeThoughts`, and **OpenAI needs `reasoning.summary: "detailed"`** —
-`auto` returns not a single character (measured: 0 vs 522). **Thinking happens and is
+`auto` returns not a single character (measured: 0 vs 522). **Meta is also sent
+`reasoning.summary: "detailed"`** (since 2026-11-27; before that it was not sent and
+none of Meta's thinking reached the screen. The summary comes back as one or two
+English lines, about as short as xAI's). **Thinking happens and is
 billed either way**, so
 these fields change only how it is returned. **Anthropic is asked only on
 5-generation models** (older ones reject it with a 400, and they do not think by default).

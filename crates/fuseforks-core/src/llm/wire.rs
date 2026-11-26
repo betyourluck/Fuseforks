@@ -1393,7 +1393,8 @@ pub struct OpenAiReasoning {
 /// - **`store` / `include` を送らない** — このワイヤで測っていない。
 ///   **未測定の欄を送らない**のがこの村の作法（測っていないものを既定で送ると、
 ///   400 が出たとき原因がこちらの欄か相手の仕様か分からなくなる）
-/// - **`reasoning` は `effort` の 1 欄だけ** — `summary` / `context` / `mode` は未測定
+/// - **`reasoning` は `effort` と `summary` の 2 欄** — `context` / `mode` は未測定。
+///   `summary` は 2026-11-27 に測って足した（[`MetaReasoning`] を参照）
 #[derive(Debug, Serialize)]
 pub struct MetaResponsesRequest {
     /// モデル名。
@@ -1403,9 +1404,9 @@ pub struct MetaResponsesRequest {
     /// 空なら欄ごと省く。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ResponsesTool>,
-    /// 思考の制御。**`effort` だけ**（実測で通った形）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<MetaReasoning>,
+    /// 思考の制御。**常に送る** — 要約を頼む欄があるので、思考段階を設定して
+    /// いないテンプレートでも省かない（`effort` だけが省ける）。
+    pub reasoning: MetaReasoning,
     /// 最大出力トークン数。
     pub max_output_tokens: u32,
     /// サンプリング温度。**明示時のみ送る**（`openai_compat` と同じ規律）。
@@ -1413,15 +1414,25 @@ pub struct MetaResponsesRequest {
     pub temperature: Option<f32>,
 }
 
-/// Meta の思考の制御。**`effort` の 1 欄だけ**（Spec 37）。
+/// Meta の思考の制御。**`effort` と `summary` の 2 欄**（Spec 37 + 2026-11-27）。
 ///
 /// 他社の `OpenAiReasoning` を使い回さないのは、あちらが持つ
-/// `summary` / `context` / `mode` を**このワイヤで測っていない**から。
+/// `context` / `mode` を**このワイヤで測っていない**から。
+///
+/// **`summary` は 2026-11-27 の実測で足した**（Spec 37 は未測定として送って
+/// いなかった）。頼まないと `reasoning` item の `summary` は空配列で返り、
+/// 思考は 1 字も画面に出ない。受理集合は `auto` / `concise` / `detailed`
+/// （不正な値で 400 が列挙した）。`effort` なしで `summary` だけでも 200。
+/// 返る要約は英語の 1〜2 行で、思考 1 トークンあたり 0.2〜0.3 字（xAI 並み）。
 #[derive(Debug, Serialize)]
 pub struct MetaReasoning {
     /// `low` / `medium` / `high` / `xhigh`。**canonical をそのまま入れない** —
     /// `max` は受理されないので `meta_responses::meta_effort` で丸めてから入れる。
-    pub effort: &'static str,
+    /// 思考段階を設定していないテンプレートでは省く（Meta の既定の段階になる）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<&'static str>,
+    /// 思考の要約の細かさ。`meta_responses::REASONING_SUMMARY` を常に送る。
+    pub summary: &'static str,
 }
 
 /// `input` の 1 要素。メッセージと関数往復が同じ列に混在する。

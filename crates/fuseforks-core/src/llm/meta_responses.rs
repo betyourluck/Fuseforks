@@ -20,6 +20,8 @@
 //!   測っていない**型**は送らない、が正しい射程
 //! - **4 種別すべてを運ぶ**（Gemini に次ぐ 2 本目）。`input_audio` と
 //!   `input_video` はこのワイヤだけが持つ
+//! - **`reasoning.summary` を常に送る**（2026-11-27 に測って足した）。
+//!   頼まないと思考の要約は空配列で返る。Spec 37 は未測定として送っていなかった
 
 use super::canonical::{
     ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingEngine, GroundingSource,
@@ -35,6 +37,13 @@ const WEB_SEARCH_TOOL: &str = "web_search";
 
 /// 検索呼び出しとして受ける output 種別。
 const SEARCH_CALL_KIND: &str = "web_search_call";
+
+/// 思考の要約として頼む細かさ。`openai_responses` と同じ `detailed`。
+///
+/// 2026-11-27 の実測では `auto` と `detailed` の差はほぼ無かった
+/// （パズル 1 問で 161 字対 164 字）。そろえておくのは、ワイヤごとに
+/// 違う値を送る理由が無いから。
+pub(crate) const REASONING_SUMMARY: &str = "detailed";
 
 /// 添付 1 件を Meta の part へ写す（**このワイヤだけが 4 種別すべてを持つ**）。
 ///
@@ -150,9 +159,13 @@ pub fn encode(
         // 実機の `max` が `fatal=true` の 400 で個体ごと落ちて分かった。
         // `openai_compat::reasoning_effort` を呼ばないのは openai_responses と同じ
         // 理由 — あの `"none"` 強制は chat/completions 固有の制約への対処。
-        reasoning: req.effort.map(|e| wire::MetaReasoning {
-            effort: meta_effort(e),
-        }),
+        //
+        // `summary` は思考段階の有無に関わらず常に送る（2026-11-27）。
+        // 送らないと要約は空で返る（[`wire::MetaReasoning`] を参照）。
+        reasoning: wire::MetaReasoning {
+            effort: req.effort.map(meta_effort),
+            summary: REASONING_SUMMARY,
+        },
         max_output_tokens: req.max_tokens,
         temperature: req.temperature,
     }
@@ -371,9 +384,32 @@ mod tests {
         let mut req = ChatRequest::plain("m", vec![ChatMessage::user("問い")], 64);
         req.effort = Some(Effort::Max);
         assert_eq!(
-            encode(&req, true, false).reasoning.map(|r| r.effort),
+            encode(&req, true, false).reasoning.effort,
             Some("xhigh"),
             "encode が丸めを通していない（max が素通りしている）"
         );
+    }
+
+    /// **思考の要約を頼む（2026-11-27）。** 頼まないと Meta は `reasoning` item の
+    /// `summary` を空配列で返し、思考は 1 字も画面に出ない。
+    #[test]
+    fn encode_asks_for_the_reasoning_summary() {
+        let mut req = ChatRequest::plain("m", vec![ChatMessage::user("問い")], 64);
+        req.effort = Some(Effort::Medium);
+        let sent = serde_json::to_value(encode(&req, true, false)).unwrap();
+        assert_eq!(
+            sent["reasoning"],
+            serde_json::json!({"effort": "medium", "summary": "detailed"}),
+        );
+    }
+
+    /// **思考段階を設定していないテンプレートでも要約は頼む。** `effort` は省き、
+    /// Meta の既定の段階に任せる（`{"summary": "detailed"}` だけで 200 を実測）。
+    #[test]
+    fn encode_asks_for_the_summary_even_without_effort() {
+        let req = ChatRequest::plain("m", vec![ChatMessage::user("問い")], 64);
+        assert_eq!(req.effort, None);
+        let sent = serde_json::to_value(encode(&req, true, false)).unwrap();
+        assert_eq!(sent["reasoning"], serde_json::json!({"summary": "detailed"}));
     }
 }
