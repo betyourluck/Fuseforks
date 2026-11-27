@@ -7669,6 +7669,8 @@ llm_wire:
       Meta      reasoning: {"summary":"detailed"} を常送 (2026-11-27 に追記。
                 Spec 33 の 3 社の後に入ったワイヤで、Spec 37 は未測定として
                 送っていなかった)。**頼まないと要約は空配列で返る**。
+                **web_search のツールを提示した要求では、頼んでも空配列**
+                (2026-11-27 実測 8 回。metaWebSearch ON のテンプレートには効かない)。
                 effort は思考段階があるときだけ同じ object に入れる
                 (meta_responses の measured が正)
     **トグルにしない** — 思考ぶんは display に関わらず払っており、summarized は
@@ -8605,6 +8607,25 @@ llm_wire:
       テンプレートに思考段階があるときだけ (openai_responses と同じ値にそろえた)。
       それまでは思考段階を設定していないテンプレートでは `reasoning` ごと送っておらず、
       Meta の思考 (村の思考トークンの 38%。2026-08-09〜11-27) は 1 字も画面に出ていなかった。
+
+      **web_search のツールを提示した要求では、頼んでも要約は空配列で返る**
+      (2026-11-27 の開発ビルドの実機で発覚し、同日 probe で切り分けた)。上の 4 行は
+      ツールを 1 つも付けない要求で測っており、この条件が抜けていた。
+      ミュゼ (muse-spark-latest, metaWebSearch: true) の 1 ターンが reasoning=1044 で
+      `reasoning summary:` の行を出さなかったのが発端。同じ問いで撃ち分けた結果:
+
+        ツールなし / 関数ツール 1 本 / system + user / 履歴 4 発話 → 7 回とも要約あり
+        web_search 単独 / system + user + web_search + 関数ツール   → 6 回とも 0 件
+        web_search + summary: auto / concise                        → 2 回とも 0 件
+
+      モデルが実際に検索したかとは無関係 (8 回とも output は reasoning と message だけで、
+      検索の item は無かった)。**提示しただけで要約が止まる。** 送信形は変えない
+      (summary を常送しても害は無く、web_search を外したテンプレートでは返る)。
+      **帰結: metaWebSearch を ON にしたテンプレートの思考は、今も画面に出ない。**
+      実機でも対になった (同日・開発ビルド・ミュゼ。同じ 46 字・履歴 0 の依頼):
+        19:10 web 検索 ON  → reasoning=1365、`reasoning summary:` の行なし
+        19:15 web 検索 OFF → reasoning=867、`reasoning summary: items=2 chars=178`、会話ペインに枠
+      prompt は 26,752 → 26,186 (差 566 = web_search のツール定義のぶんと読める。推定)。
     files_are_retained: |
       **送った添付は /v1/files に期限なしで保存される (Spec 37 P0b の最重要発見)。**
 

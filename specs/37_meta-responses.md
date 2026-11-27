@@ -368,8 +368,11 @@ data URL と、Meta が `https` URL から取得したものは残る）。**機
      頼まないと要約は空配列で返り、Meta の思考（村の思考トークンの 38%）が
      1 字も画面に出ていなかった。受理集合は `auto` / `concise` / `detailed`、
      `effort` なしでも 200。`summary: "detailed"` を常送し、`reasoning` は
-     思考段階の無いテンプレートでも送る。実測は `data_contract.yaml` の
-     `meta_responses` の measured が正。`store` / `include` / `context` は送らないまま
+     思考段階の無いテンプレートでも送る。**ただし `web_search` のツールを提示した
+     要求では、頼んでも要約は空配列で返る**（同日の開発ビルドの実機で発覚・probe 8 回。
+     最初の probe はツールなしで撃っており、この条件を測っていなかった。同日 19:15 に
+     web 検索を外したミュゼで、会話ペインに要約の枠（2 件・178 字）が出た）。実測は
+     `data_contract.yaml` の `meta_responses` の measured が正。`store` / `include` / `context` は送らないまま
   4. **`phase: "commentary"` は読まない**（`intentionally_unread`）。
      本文として繋ぐ — ここだけ独自の選別を持ち込むと「なぜこの社だけ発言が
      消えるのか」が画面から読めない。雑音だと分かったら**そのとき観測を根拠に**落とす

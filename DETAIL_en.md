@@ -1766,7 +1766,10 @@ default; Anthropic needs `thinking.display: "summarized"`, Gemini needs
 `auto` returns not a single character (measured: 0 vs 522). **Meta is also sent
 `reasoning.summary: "detailed"`** (since 2026-11-27; before that it was not sent and
 none of Meta's thinking reached the screen. The summary comes back as one or two
-English lines, about as short as xAI's). **Thinking happens and is
+English lines, about as short as xAI's). **But Meta returns no summary for a template
+with web search (`metaWebSearch`) on** — any request that offers the `web_search` tool
+gets an empty summary, even on turns where the model does not search (measured
+2026-11-27). The thinking is still billed. **Thinking happens and is
 billed either way**, so
 these fields change only how it is returned. **Anthropic is asked only on
 5-generation models** (older ones reject it with a 400, and they do not think by default).

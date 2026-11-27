@@ -1424,6 +1424,9 @@ pub struct MetaResponsesRequest {
 /// 思考は 1 字も画面に出ない。受理集合は `auto` / `concise` / `detailed`
 /// （不正な値で 400 が列挙した）。`effort` なしで `summary` だけでも 200。
 /// 返る要約は英語の 1〜2 行で、思考 1 トークンあたり 0.2〜0.3 字（xAI 並み）。
+///
+/// **`tools` に `web_search` を入れた要求では、頼んでも要約は空配列で返る**
+/// （同日に実測 8 回。値を `auto` / `concise` に変えても空）。関数ツールだけなら返る。
 #[derive(Debug, Serialize)]
 pub struct MetaReasoning {
     /// `low` / `medium` / `high` / `xhigh`。**canonical をそのまま入れない** —

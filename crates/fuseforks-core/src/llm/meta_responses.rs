@@ -21,7 +21,9 @@
 //! - **4 種別すべてを運ぶ**（Gemini に次ぐ 2 本目）。`input_audio` と
 //!   `input_video` はこのワイヤだけが持つ
 //! - **`reasoning.summary` を常に送る**（2026-11-27 に測って足した）。
-//!   頼まないと思考の要約は空配列で返る。Spec 37 は未測定として送っていなかった
+//!   頼まないと思考の要約は空配列で返る。Spec 37 は未測定として送っていなかった。
+//!   **`web_search` のツールを提示した要求では、頼んでも空配列**（同日に実測 8 回。
+//!   検索しなかったターンでも空）。metaWebSearch を ON にしたテンプレートでは要約は出ない
 
 use super::canonical::{
     ChatRequest, ChatResponse, Effort, Finish, Grounding, GroundingEngine, GroundingSource,
