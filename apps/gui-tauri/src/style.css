@@ -312,6 +312,66 @@ textarea,
 }
 
 /*
+ * 中央下段ペイン（黒板 / 作業状況）の見出し行（2026-11-27 利用者要望）。
+ *
+ * ペインを横に縮めると「黒板」「作業状況」「検証役:」が 1 文字ずつ折り返し、高さ 38px の
+ * 見出し行が 2 行になっていた。見出し行は `whitespace-nowrap` で折り返さず、**幅が足りない
+ * ときは文字をアイコンに替える**。判定は見出し行の幅の container query（ウィンドウ幅ではなく
+ * ペイン幅 — 会話ペインの `chat-panel` と一覧の `agent-list` と同じ形）。
+ *
+ * **scoped ではなくここに置く**のは、黒板と作業状況の 2 つの見出し（`BlackboardPane` /
+ * `PlanWavePane`）とその中のタブ（`BottomPaneTabs`）が同じ閾値で切り替わることを 1 箇所で
+ * 読ませるため。コンテナを見出し行に置き、ペインの根に置かないのは、`container-type` が
+ * 中の `fixed` を枠に閉じ込めるから（会話ペインの画像の拡大表示で踏んだ形）。
+ *
+ * - `.pane-head-wide` — 広いときだけ出る文字（タブの名前・「検証役:」・波の件数・隠した波の案内）
+ * - `.pane-head-narrow` — 狭いときだけ出るアイコン（文字の代わり）
+ *
+ * **閾値は言語で 2 段**（2026-11-27 に幅を 10px 刻みで実測。文字を出したうえで選択欄が
+ * 56px 以上残り、はみ出さない最小の幅）。**container query が測るのは見出し行の中身の幅**
+ * （左右の余白 `px-3` を除く。ペインの幅より 24px 狭い）。いちばん詰まる形 — 承認待ちの
+ * 件数のバッジ・波の件数・隠した波の案内と「すべて表示」が全部出ている作業状況 — で、
+ * 日本語・中国語は 374px、英語は 434px（黒板は 324 / 394px）。案内が無ければ 294 / 354px で
+ * 収まるが、案内は表示クリアを 1 度押すと残り続けるので、最悪の形に合わせた。
+ * 英語はタブの名前（"Blackboard" / "Work status"）だけで日本語より約 70px 長い。1 つに
+ * 揃えると、日本語の村が 380〜440px で文字を出せるのにアイコンになる。
+ * **長さの分からない言語は広い閾値**（ja / zh を名指しで狭くし、それ以外を既定の広い側に置く）。
+ * `<html lang>` は `setLocale` が表示言語に追従させている（i18n/index.ts）。
+ *
+ * 狭い側を既定にする（会話ペインと同じ向き — container query が効かなければアイコンのまま）。
+ * 文字が出ている間に幅が詰まると、件数などの文が先に「…」で縮み、選択欄は後から縮む
+ * （各部品の `shrink-[100]`）。**どの幅でも折り返さない**のは見出し行の `whitespace-nowrap`。
+ */
+.bottom-pane-header {
+  container-type: inline-size;
+  container-name: bottom-pane-header;
+}
+
+.pane-head-wide {
+  display: none;
+}
+
+@container bottom-pane-header (min-width: 380px) {
+  :root:is(:lang(ja), :lang(zh)) .pane-head-wide {
+    display: inline;
+  }
+
+  :root:is(:lang(ja), :lang(zh)) .pane-head-narrow {
+    display: none;
+  }
+}
+
+@container bottom-pane-header (min-width: 440px) {
+  .pane-head-wide {
+    display: inline;
+  }
+
+  .pane-head-narrow {
+    display: none;
+  }
+}
+
+/*
  * 会話バブル内の Markdown 描画（ChatPanel の .md-body、v-html で挿す）。
  *
  * v-html の中身には Vue の scoped 属性が付かないため、ここ（グローバル）に置く。

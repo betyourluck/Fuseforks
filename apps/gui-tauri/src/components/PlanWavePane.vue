@@ -279,40 +279,89 @@ watch(
       高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。
       下線は引かない — VS Code のパネル（問題 / 出力）と同じで、タブと中身の
       間に境界線を置かない（2026-08-02 利用者指定。下段タブの 2 ペイン共通）。
+      **どの幅でも 1 行**（`whitespace-nowrap`）。狭いときに文字をアイコンへ替えるのは
+      `bottom-pane-header` の container query（閾値は `style.css` の 1 箇所。黒板と共通）。
     -->
     <header
-      class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
+      class="bottom-pane-header flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs whitespace-nowrap text-ink-dim"
     >
       <!-- タイトルはタブが兼ねる。読み方の説明はタブのホバーへ（サーヴァントの絆と同じ規則）。 -->
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
-      <span v-if="waves.length">{{ $t("waves.waveCount", { count: waves.length }) }}</span>
+      <!--
+        件数は狭いときは出さず、間の幅では末尾を「…」で切る（全文はホバー）。
+        **文は選択欄より先に縮む**（`shrink-[100]`）— 等しく縮むと、長い文が残ったまま
+        検証役の選択欄が潰れる（英語の 400px で選択欄が 10px になった）。
+      -->
+      <span
+        v-if="waves.length"
+        class="pane-head-wide min-w-0 shrink-[100] truncate"
+        :title="$t('waves.waveCount', { count: waves.length })"
+      >{{ $t("waves.waveCount", { count: waves.length }) }}</span>
       <!--
         表示クリアの案内。**消していないことを画面で言い、そこから戻せる**
-        （会話ペインの表示クリアと同じ規律）。
+        （会話ペインの表示クリアと同じ規律）。狭いときは文を畳み、戻すボタンは目のアイコンに
+        して残す（文はボタンのホバーへ — 戻す導線を幅で消さない）。文は件数と同じく先に縮む。
+        **文とボタンを 1 つの span で包まない** — 包みが縮むと、縮まないボタンが包みの外へ
+        はみ出して検証役の欄に重なる（2026-11-27 に踏んだ）。どちらも見出し行の直接の子にし、
+        ボタンは `shrink-0`（文との間隔は見出し行の gap のまま — 狭いときは文が消え、
+        負の余白を足すとタブとの間だけ詰まる）。
       -->
-      <span v-if="hiddenCount" class="flex items-center gap-1.5 text-[10px]">
-        <span>{{ $t("waves.clearedNote", { count: hiddenCount }) }}</span>
+      <template v-if="hiddenCount">
+        <span class="pane-head-wide min-w-0 shrink-[100] truncate text-[10px]">{{
+          $t("waves.clearedNote", { count: hiddenCount })
+        }}</span>
         <button
           type="button"
-          class="rounded border border-line px-1.5 py-0.5 hover:border-accent hover:text-accent"
+          class="flex shrink-0 items-center rounded border border-line px-1.5 py-0.5 text-[10px] hover:border-accent hover:text-accent"
+          :title="$t('waves.clearedNote', { count: hiddenCount })"
+          :aria-label="$t('waves.clearedRestore')"
           @click="waveClear.restore()"
         >
-          {{ $t("waves.clearedRestore") }}
+          <svg
+            class="pane-head-narrow size-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+            <path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+          </svg>
+          <span class="pane-head-wide">{{ $t("waves.clearedRestore") }}</span>
         </button>
-      </span>
+      </template>
       <!--
         束ねの既定の検証役（Spec 53）。**村の内容物**なので、計画を見るこの見出しに置く
         （システム設定ではない — #52 の境界）。絆は要らないので全員から選べる。
+        狭いときは「検証役:」を盾のアイコンに替え、選択欄は縮んで名前の末尾が切れる。
+        名前は `aria-label` に残す（文字が消えると `label` からは名前が取れない）。
       -->
       <label
-        class="ml-auto flex items-center gap-1 text-[10px]"
+        class="ml-auto flex min-w-0 items-center gap-1 text-[10px]"
         :title="$t('waves.verifierTitle')"
         data-default-verifier
       >
-        <span>{{ $t("waves.verifierLabel") }}</span>
+        <svg
+          class="pane-head-narrow size-3.5 shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3 5 6v5c0 4.4 2.9 8.3 7 10 4.1-1.7 7-5.6 7-10V6z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+        <span class="pane-head-wide">{{ $t("waves.verifierLabel") }}</span>
         <select
           :value="defaultVerifier ?? ''"
-          class="rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
+          :aria-label="$t('waves.panelVerifierLabel')"
+          class="min-w-0 rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
           @change="onDefaultVerifier(($event.target as HTMLSelectElement).value)"
         >
           <option value="">{{ $t("waves.verifierNone") }}</option>
@@ -328,7 +377,7 @@ watch(
       -->
       <button
         type="button"
-        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        class="grid size-6 shrink-0 place-items-center rounded text-ink-dim transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
         :disabled="!canClear"
         :title="$t('waves.clearView')"
         :aria-label="$t('waves.clearView')"

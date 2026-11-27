@@ -340,29 +340,34 @@ function formatTime(ms: number): string {
       高さは 4 ペイン共通の 38px 固定（AgentList のコメント参照）。
       下線は引かない — VS Code のパネル（問題 / 出力）と同じで、タブと中身の
       間に境界線を置かない（2026-08-02 利用者指定。下段タブの 2 ペイン共通）。
+      **どの幅でも 1 行**（`whitespace-nowrap`）。狭いときにタブの文字をアイコンへ替えるのは
+      `bottom-pane-header` の container query（閾値は `style.css` の 1 箇所。作業状況と共通）。
+      件数が先に縮み（`shrink-[100]`）、次に絞り込みの欄が縮む。ボタンは縮まない。
     -->
     <header
-      class="flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs text-ink-dim"
+      class="bottom-pane-header flex h-[38px] shrink-0 items-center gap-3 px-3 text-xs whitespace-nowrap text-ink-dim"
     >
       <BottomPaneTabs :active="activeTab" @select="emit('selectTab', $event)" />
-      <span v-if="notes.length && activeFilter !== 'all'">{{
+      <span v-if="notes.length && activeFilter !== 'all'" class="min-w-0 shrink-[100] truncate">{{
         $t("blackboard.noteCountFiltered", { shown: visibleNotes.length, count: notes.length })
       }}</span>
-      <span v-else-if="notes.length">{{ $t("blackboard.noteCount", { count: notes.length }) }}</span>
+      <span v-else-if="notes.length" class="min-w-0 shrink-[100] truncate">{{
+        $t("blackboard.noteCount", { count: notes.length })
+      }}</span>
       <!--
         持ち主の絞り込み（2026-09-27）。選べるのは付箋を持つ個体だけ。列の形は変えない。
         保存しない（再起動をまたいで黒板の一部だけが見える状態から始めない）。
       -->
       <label
         v-if="owners.owners.length > 0 || owners.hasUnowned"
-        class="ml-auto flex items-center text-[10px]"
+        class="ml-auto flex min-w-0 items-center text-[10px]"
         :title="$t('blackboard.filterTitle')"
       >
         <select
           :value="activeFilter"
           data-blackboard-filter
           :aria-label="$t('blackboard.filter')"
-          class="rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
+          class="min-w-0 rounded border border-line bg-surface-0 px-1 py-0.5 text-[10px] text-ink"
           @change="onFilter(($event.target as HTMLSelectElement).value)"
         >
           <option value="all">{{ $t("blackboard.filterAll") }}</option>
@@ -380,7 +385,7 @@ function formatTime(ms: number): string {
       -->
       <button
         :class="[
-          'grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim',
+          'grid size-6 shrink-0 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim',
           owners.owners.length > 0 || owners.hasUnowned ? '' : 'ml-auto',
         ]"
         data-blackboard-fold-all
@@ -410,7 +415,7 @@ function formatTime(ms: number): string {
         ただし**あちらは表示だけ・こちらは実体**なので、確認の文面で言い切る。
       -->
       <button
-        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
+        class="grid size-6 shrink-0 place-items-center rounded text-ink-dim transition-colors hover:text-fail focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-40 disabled:hover:text-ink-dim"
         :disabled="notes.length === 0 || busy"
         :title="$t('blackboard.clearAllTitle')"
         :aria-label="$t('blackboard.clearAll')"
@@ -431,7 +436,7 @@ function formatTime(ms: number): string {
         </svg>
       </button>
       <button
-        class="grid size-6 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        class="grid size-6 shrink-0 place-items-center rounded text-ink-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
         :title="$t('blackboard.refreshTitle')"
         :aria-label="$t('blackboard.refresh')"
         @click="refresh"
