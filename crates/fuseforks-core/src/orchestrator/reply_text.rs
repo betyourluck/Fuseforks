@@ -311,6 +311,33 @@ pub(super) fn empty_body(cause: EmptyBody<'_>, failure: Option<&str>, language: 
     }
 }
 
+/// 本文が出力の上限で切れたときに、コアが本文の末尾へ足す注記（[`crate::llm::Finish::Length`]）。
+///
+/// 本文が空のときは使わない（そちらは [`empty_body`] が書く）。切れた本文は答えとして
+/// 配るが、**切れたことを書かないと、利用者は終わりまで書かれた答えだと読む** —
+/// 2026-11-28 の実機で、gemini-4-argon（Perplexity 経由）が終わるべき所で止まらず
+/// 同じ記号の並びを上限 16,000 トークンまで出し、それが普通の答えとして配られた。
+/// **繰り返しかどうかは断定しない**（見たのはトークン数と終わり方だけ）。
+pub(super) fn output_cut(limit: u32, language: Language) -> String {
+    match language {
+        // 直し方は「小さく分けて頼み直す」だけを書く。上限を上げるのは、長い答えが切れた
+        // ときには効くが、モデルが止まれなくなって繰り返したときは上げたぶん燃えるだけで
+        // 直らない（どちらだったかはコアには分からない）。
+        Language::Ja => format!(
+            "（この返事は出力の上限 {limit} トークンで途中で切れました。\
+             続きが要るなら、依頼を小さく分けて頼み直してください。\
+             終わりのほうで同じ文字が繰り返されているなら、モデルが止まれなくなった形で、\
+             上限を上げても直りません。）"
+        ),
+        Language::En => format!(
+            "(This reply was cut off at the output limit of {limit} tokens. \
+             If you need the rest, split the request into smaller parts and ask again. \
+             If the end repeats the same characters, the model failed to stop, \
+             and raising the limit will not fix it.)"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +392,7 @@ mod tests {
                     language,
                 ),
             ),
+            ("output_cut", output_cut(16_000, language)),
         ]
     }
 
@@ -398,6 +426,8 @@ mod tests {
             // 2026-11-16 に足した 2 つ（提供元が判定で止めた — 入力の段 / 出力の段）。
             "（モデルの提供元が、入力（依頼の文面や添付）を安全や利用方針の判定で止めたため、応答が返りませんでした。添付や頼み方を変えてもう一度頼んでみてください。）",
             "（モデルの提供元が、生成した応答を安全や利用方針の判定で止めました。頼み方を変えてもう一度頼んでみてください。）",
+            // 2026-11-28 に足した 1 つ（本文が出力の上限で切れた — 本文の末尾へ足す注記）。
+            "（この返事は出力の上限 16000 トークンで途中で切れました。続きが要るなら、依頼を小さく分けて頼み直してください。終わりのほうで同じ文字が繰り返されているなら、モデルが止まれなくなった形で、上限を上げても直りません。）",
         ];
         let texts = every_text(Language::Ja);
         assert_eq!(texts.len(), expected.len(), "文を足したら逐語の期待値にも足す");

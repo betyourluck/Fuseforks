@@ -2353,6 +2353,31 @@ async fn run_turn_inner(
             super::reply_text::empty_body(cause, summary_error.as_deref(), tool_images.language);
     }
 
+    // 本文が出力の上限で切れた（最後の呼び出しの終わり方が `Length`）。本文は答えとして
+    // 配るが、**切れたことを末尾に書き、ログに 1 行残す**。
+    //
+    // それまでは本文が空のときしか終わり方を見ておらず、切れた本文が `stop=-` の
+    // 普通の答えとして配られていた — 2026-11-28 の実機で、gemini-4-argon（Perplexity
+    // 経由）が終わるべき所で止まらず同じ記号の並びを上限 16,000 トークンまで出し、
+    // 会話ペインにも `turn:` 行にも切れた印が無かった（気づく手掛かりは
+    // `total − prompt` が最大出力と同じことだけ）。注記は履歴にも積まれるので、
+    // 次のターンのモデルも前の返事が切れていたことを読める。
+    if let Outcome::Finish { content } = &mut outcome
+        && !written_by_core
+        && last_finish == crate::llm::Finish::Length
+    {
+        note!(
+            "output cut: agent={agent_id} limit={} completion={last_completion} chars={}",
+            template.max_output_tokens,
+            content.chars().count(),
+        );
+        content.push_str("\n\n");
+        content.push_str(&super::reply_text::output_cut(
+            template.max_output_tokens,
+            tool_images.language,
+        ));
+    }
+
     // 7. 統計と履歴を更新する。履歴には「実際に言ったこと」を積む。
     //    受信側は**送ったものをそのまま**積む — プロンプトと履歴の形を揃えないと、
     //    過去のターンだけ出所不明に戻るうえ、**その位置で前方一致が切れて

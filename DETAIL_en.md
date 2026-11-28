@@ -1711,6 +1711,19 @@ with neither text nor a function call leaves one log line, `gemini empty: candid
 output_tokens=…` (words as Gemini returned them). Words that may not be a check (`OTHER`, etc.) and empty
 responses without a reason still show "the model returned no text".
 
+**When the reply is cut off at the output limit, the end of the reply says so** (2026-11-28, on every
+protocol). When the last call ends as "cut at the limit" (Anthropic's `max_tokens` / Gemini's `MAX_TOKENS` /
+`incomplete` with `max_output_tokens` on the Responses wires) and the text is not empty, one sentence in the
+village language — "This reply was cut off at the output limit of N tokens" — is added after the text, and
+one log line `output cut: agent=… limit=… completion=… chars=…` is written. Before this, the finish was only
+looked at when the text was empty, so a cut-off reply went out as an ordinary answer: when `gemini-4-argon`
+via Perplexity failed to stop at the end of its answer and repeated the same symbols up to the 16,000-token
+limit, neither the chat nor the `turn:` line showed that it had been cut. The note is stored in the history
+too, so the model on the next turn can read that its previous reply was cut. The only fix it suggests is
+"split the request into smaller parts and ask again" — raising the limit helps when a long answer was cut,
+but when the model failed to stop and repeated itself, it only burns more, and the app cannot tell which
+happened.
+
 ### Grok Live Search ([Spec 31](specs/31_grok-live-search.md))
 
 Set the model template's **protocol to "xAI native (Responses)"** and the
@@ -2589,8 +2602,8 @@ written in **the village's language at the moment of recording** and never retra
 languages keeps its old lines in the old language — an honest record, like the user's own past
 messages). **Delegation results the requester receives are written in the village language too**
 (2026-11-12) — the tool results of `ask` / `plan` / judges, the reply text sent back to the requester
-("There is no answer." and the like), the reply the core writes when the model returned no text, and the
-frame of the bundle headings (`## agent_02（Worker）` / `## agent_02 (Worker)`). Built-in tool results
+("There is no answer." and the like), the reply the core writes when the model returned no text, the note
+added at the end when the text was cut off at the output limit, and the frame of the bundle headings (`## agent_02（Worker）` / `## agent_02 (Worker)`). Built-in tool results
 and the core's error text stay Japanese ([Spec 35](specs/35_bilingual-core.md) D4-4), so the error kind
 still appears in Japanese inside an English sentence.
 
