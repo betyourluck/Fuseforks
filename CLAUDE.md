@@ -2138,6 +2138,45 @@ Gemini 系の固有スキルとして使えるものがないか調べて」。�
 **自分の誤り 1 つ**: 2 本目の probe スクリプトが 1 本目を import した時点で全 probe を再実行し、
 同じ 8 発を 2 度撃った（`sys.argv` の差し替えでは止まらなかった — import 時の既定が `all`）。
 
+## gemini-4-hydrogen が偽の URL を書くかの検証（2026-11-28。API を直接 64 回）
+
+起点は利用者 —「最近の Gemini は精度が上がって、偽の URL を混ぜるハルシネーションが減った可能性がある。hydrogen で検証して」。
+`generateContent` を直接撃った（村のシステムプロンプトも条例も入っていない。鍵は環境変数 `GEMINI_API_KEY`）。
+モデル 2（`gemini-4-hydrogen` / 比較に `gemini-3.8-flash`）× 条件 2（道具なし / 村の hydrogen と同じ `googleSearch` + `urlContext`）×
+問い 8 × 2 回。問いは偽 URL を書かせやすい形 — 公式ドキュメントの深いページ（tokio の `select!` / v-network-graph の `fitToContents()` /
+MCP 2025-06-18 の Streamable HTTP / redb の設計文書）・並列のツール呼び出しを扱った arXiv の論文 3 本・Tauri で Ctrl+R / F5 を
+無効化する GitHub issue 2 つ・Rust の所有権を解説した Qiita / Zenn の記事 3 本・架空の論文「Recursive Lattice Prompting for
+Tool-Augmented Agents」。判定は本文（思考でない text part）の URL の HTTP の状態と、**本文が添えた題名と実ページの `<title>` の照合**。
+
+| | gemini-3.8-flash | gemini-4-hydrogen |
+|---|---|---|
+| 道具なし | 32 本中 偽 14（404 が 8・実在するが別物 6）・確かめられず 3 | 19 本中 偽 0（16 回中 5 回は URL を出さずに断った） |
+| 検索 + URL context | 36 本中 偽 1（題名と合わない arXiv ID） | 32 本中 偽 0 |
+
+- **偽は 2 つの形に割れ、番号だけ本物の形は HTTP の状態では見抜けない** — 3.8-flash の道具なしで「Ctrl+R を無効化する issue」として
+  挙げた番号 5 本（`tauri#829` / `#4079` / `#1313` / `wry#562` / `wry#422`）はどれも 200 を返し、中身は renovate の依存更新の PR や
+  無関係な discussion だった。arXiv `2312.15110` は「NexusRaven-V2」と書いて数学の論文だった。404 の形は Qiita / Zenn の記事 6 本すべて。
+  **URL の実在を確かめる計器を作るなら、状態ではなく題名の照合が要る**
+- **hydrogen の減り方は「断る」が主** — 道具なしでは Tauri の issue と Qiita / Zenn の記事を 2 回とも「インターネットにアクセスできないので
+  URL は控える」と断り、論文は 1 回「確実な 1 本だけ」に絞った。代償は答えの量で、3.8-flash が 1 回は正しく出した `fitToContents()` の
+  該当ページ（`reference/methods.html`）を hydrogen は 2 回とも出さなかった（トップページだけ）
+- **「混ぜる」形は 3.8-flash の検索ありで 1 回** — 架空の論文に「該当なし」と正しく答えたうえで、「関連する実在の論文」として題名と合わない
+  `2602.16738` を添えた。その URL は `groundingChunks` のリダイレクト先に無い = 検索の出典ではなく記憶から書いた URL。hydrogen は同じ場面で
+  添えた 2 本（`2512.24601` / `2510.02837`）とも ID と題名が合っていた
+- **hydrogen は検索結果のページを開いて読む** — `urlContextMetadata` に検索のリダイレクト URL の取得が出たのは hydrogen が 16 回中 8 回、
+  3.8-flash は 2 回。本文の URL が `groundingChunks`（リダイレクトを解いた先）と一致したのは hydrogen が 32 本中 29 本・3.8-flash が 36 本中 27 本
+- 架空の論文は両モデルとも 4 回すべて「見つからない」と答えた（罠の問いでは差が出なかった）
+- **試していない**: `failures.md` #116 の形（URL の取得に失敗した後の捏造）/ 概要の説明が正しいか / 村の中での hydrogen（ジェミー）の振る舞い
+- **未確認の観察 — hydrogen の usage は URL context で読んだページのトークンを報告しない。** `toolUsePromptTokenCount` の欄そのものが無く、
+  11 ページを `URL_RETRIEVAL_STATUS_SUCCESS` で読んだ応答でも `totalTokenCount` = 13,575（= prompt 352 + candidates 3,744 + thoughts 9,479）。
+  3.8-flash は同じ問いで `toolUsePromptTokenCount` 626,996 を報告した。**村の `fuseforks.log` でも同じ形** — `gemini tools:` 行を直後の
+  `cache:` 行の `model=` で割ると、hydrogen は 108 周のうち `url_context` が 1 以上の周が 13 で、`tool_use_prompt` が 0 でない周は 0
+  （3.8-flash は `url_context` の周 1 で読み込みを報告）。課金されていないのか報告されないだけかは分からない。後者なら、Spec 48 の畳み
+  （`toolUsePromptTokenCount` を `prompt` へ足す）は hydrogen では何も足さず、統計・予算・`turn:` 行が読んだページぶん少なく数える。
+  確かめるなら Google の料金の文書か、請求の明細と `turn:` 行の突き合わせ
+- probe のスクリプトと生の応答は scratchpad に置いた（捨ててよい。数字はここが正）。費用は 64 回・検索 89 回で、3.8-flash の読み込みだけで
+  約 140 万トークン（推定 1 ドル前後。hydrogen の単価は確かめていない）
+
 ## 設計の材料 3 件（2026-08-29 の議論。未起票）
 
 利用者との設計議論 3 往復の記録。裁定が落ちたものと構想の段階のものを分けて書く。
@@ -3096,6 +3135,15 @@ D5 の検査でボタンが死ぬ」と指摘したが、**承認待ちが出る
 （`stop_agent` は `Stopping` にした直後に受信箱を外す）。Spec の P1 テスト項目も
 「3 状態とも試す」から 1 本へ縮んだ — **状態ごとの分岐が実装に無いので、
 テストも 3 通り書く理由が無い**（確かめられない項目を書かない = #68 の系譜）。
+
+## 現在地（2026-11-28 更新）
+
+**この日は 3 つ**: winget 0.7.3 のマージと Qiita 記事の公開の書き戻し（`5a66845` / `4ab2d9e`）/ 広場ログのチェックを外したザリが
+ピーターとの会話に触れた件は、利用者が `@@` でその発話を参照に付けていたと判明（`quote: to=agent count=1 chars=1564` の字数が
+ピーターの `reply:` と一致。チェックは効いている。説明文は変えない = 利用者裁定）/ **`gemini-4-hydrogen` が偽の URL を書くかの検証**
+（上の「gemini-4-hydrogen が偽の URL を書くかの検証」の節が正。偽は hydrogen 0 本・3.8-flash 15 本。hydrogen の減り方は断るのが主。
+副産物 = hydrogen の usage が URL context で読んだページのトークンを報告しない — 村のログでも 13 周で 0）。
+**次の一手**: hydrogen の読み込みトークンが課金されているか（Google の料金の文書か請求の明細）/ 従来の残り。
 
 ## 現在地（2026-11-27 更新）
 
