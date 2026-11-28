@@ -2380,6 +2380,12 @@ enums:
       統計・黒板・予定の宛先・ステータスバー・fuseforks.log / **一括起動** (非表示の
       グループも全体 ▶ で起きる。休ませるのは AgentGroup.batchStart の仕事)。
       **無所属はどのフィルタでも隠れない。**
+      **追補 (2026-11-29 利用者要望)**: 判断役 (Spec 62) は所属を持たないが、JudgeSpec.hideWithGroup で
+      選んだグループを隠すと、**地図の上だけ**その判断役のノードと判断役に触れる線も隠れる。効くのは地図の
+      ノードと辺だけで、左の「判断特化」の一覧・判断役の評価・配送・ツールの提示には効かない。連動先は
+      判断役とグループの関係なので所属と同じく村 (world.json)、隠している状態は凍結 1 のまま端末。判定は
+      サーヴァントと同じ述語 (引けない id は隠れない。apps/gui-tauri/src/lib/judges.ts の isJudgeHidden が
+      agentGroups.ts の isHidden をそのまま使う)
 
       ## 凍結 7. 一括起動の門は 2 段。判定は batchAction の 1 本
 
@@ -3070,6 +3076,12 @@ entities:
       order: u32                    # 「判断特化」の見出しの下の並び。サーヴァントの並びとは独立
       enabled: bool                 # 利用者の有効/無効 (左ペインのトグル。P4 の実機で追加)。欄が無ければ true
                                     # で読む (既存の判断役を止めない)。偽なら JudgeStatus は最初に disabled
+      hideWithGroup: AgentGroupId | null  # 地図の表示を連動させるグループ (2026-11-29 利用者要望・編集ダイアログの
+                                    # 「非表示に連動する」)。**表示だけ** — このグループを地図で隠すと、判断役の
+                                    # ノードと判断役に触れる線も隠れる。コアの評価・配送・ツールの提示は読まない
+                                    # (tests/judge_hide_with_group.rs が読んでよい場所を走査で留める)。欄が無ければ
+                                    # null (連動しない)。引けない id も連動しない (group_contract 凍結 3 と同じ — 消して
+                                    # も触らず、次に判断役を保存する操作で画面が null へ正規化)。一覧の姿 (judges()) にも写す
 
   AssistTarget:
     description: |
@@ -7004,7 +7016,7 @@ conversation_termination:
         Score の段階は 2〜10 (1 と 11 は 400)。Choice 1 択は Jev は受ける
 
     不変条件:
-      - **判断役は別の型** (JudgeSpec = { id, name, order, enabled } だけ。World.judges)。AgentSpec に
+      - **判断役は別の型** (JudgeSpec = { id, name, order, enabled, hideWithGroup } だけ。World.judges)。AgentSpec に
         同居させない。**ID は AgentId 型で、サーヴァントと同じ名前空間**。ID の検証は
         AgentId::is_safe を同じ関数のまま掛ける (2 つ目の検証を書かない)。**ID と表示名の
         一意性は 2 つの一覧をまたぐ**。衝突は既存の DUPLICATE_AGENT / DUPLICATE_AGENT_NAME
@@ -7018,7 +7030,9 @@ conversation_termination:
         直せないので配布のノートの「利用者が負う条件」に書く
       - **判断役は起動を持たない。** 受信箱もターンも履歴も持たず、起動のトグル・一括起動・
         グループ (Spec 51)・状態の輪・コンテキスト使用率の輪・Alt + ↑↓・会話の宛先・@@ の
-        候補・顔ぶれ (Spec 06) の対象外。選ぶと編集ダイアログが開き、selectedAgentId は変えない
+        候補・顔ぶれ (Spec 06) の対象外。選ぶと編集ダイアログが開き、selectedAgentId は変えない。
+        **グループについて例外が 1 つ** (2026-11-29) — 所属は持たないが、hideWithGroup で地図の非表示だけを
+        連動させられる (表示だけ。group_contract 凍結 6 の追補)
       - **問いと規則は {workspace}/judges/<id>/judge.toml** (TOML。toml_edit の serde で読む)。
         読み書きの IPC は判断役の ID で受け、パスを受けない。保存時に検査し、落ちたら保存を拒否
       - **judge.toml の形**:

@@ -141,7 +141,7 @@ Fuseforks/
             ├── lib/contextUsage.ts  ratio and tone of the context-usage ring (pure functions, [Spec 49](specs/49_context-usage-ring.md))
             ├── lib/agentGroups.ts   group sections, visible set, batch-start gate, drop commit (pure functions, [Spec 51](specs/51_agent-groups.md))
             ├── lib/jevThreshold.ts  pruning thresholds and label keys (pure; Rust holds the authoritative table, a scan test compares them)
-            ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines (pure; Spec 62)
+            ├── lib/judges.ts        judge ids (derived across both lists), status text, the map's dashed lines, following a group's visibility (pure; Spec 62)
             ├── lib/imageGenSettings.ts the image-generation settings page's rules (building the saved config, unsaved edits, the connection-check gate; pure; Spec 76)
             ├── lib/assist.ts        AI drafting: picking the template, the before-apply difference (pure; Spec 63)
             ├── lib/templateDraft.ts Whether a model template draft differs from the saved one (pure; the connection test's gate)
@@ -308,6 +308,16 @@ judge draws no dashed lines.
 a judge in both directions (arrowheads too) and the judge's diamond. It is not a red, because on this map red
 already means "the ring of an agent that failed". Direction is told by shape (agent → judge is solid,
 judge → agent is a row of round dots).
+
+**Judges belong to no group, but can follow a group's visibility** (2026-11-29). Pick a group under
+"Hide with group" in the judge editor (the first option is "None"); when that group is hidden with the eye
+on its heading, the judge's diamond and every line touching it (agent → judge and judge → agent) disappear
+from the map too, and come back when the group is shown again. **Display only** — the judge's evaluation,
+delivery, and the tools offered are unchanged (the core never reads this field). The link is a field of
+the judge in the village (`hideWithGroup` in `world.json`) and travels with it; whether a group is hidden
+stays a per-device setting, as with groups, so nothing gets hidden on the receiving side by itself. "None"
+and a deleted group do not link (deleting a group leaves the judge's field alone, and the next save of the
+judge resets it to "None"). The "Judges" list on the left is not affected — the map only.
 
 **Only the label changed; the types did not** — `TopologyEdge` / `topologyPositions` / `TopologyMap.vue` / `list_topology` are untouched, following the same discipline as "servant vs. agent" above: do not bind what changes easily to what changes with difficulty. (The wave pane set the precedent when its display name became "Work status" while its contract stayed put.)
 
@@ -2450,6 +2460,8 @@ and the tool set offered to models are untouched. Hiding is a per-device setting
 (`localStorage`) and does not travel with the village. If the selected servant gets hidden,
 the selection moves to the first visible one; **with nothing visible, the recipient is empty**
 (the same state as an empty village).
+Judges have no membership, but a judge set to "Hide with group" in its editor hides together with that
+group — on the map only (see the Kizuna section above).
 
 **Batch start has two gates.** Switching a heading off makes the global ▶ skip that group
 (the toggle on each card remains the per-servant gate). **Hiding does not stop starting** —

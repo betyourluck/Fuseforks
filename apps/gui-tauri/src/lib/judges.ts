@@ -8,7 +8,8 @@
  *   有効かどうかを自分で判定し直さない — 別々に判定すると「ツールは生えないのに線は
  *   描かれる」が生まれる
  */
-import type { AgentId, JudgeStatus, JudgeView } from "../types";
+import type { AgentGroup, AgentId, GroupId, JudgeSpec, JudgeStatus, JudgeView } from "../types";
+import { isHidden, sectionKeyOf, UNASSIGNED } from "./agentGroups";
 
 /**
  * ID を名前から機械的に導く。`taken` と衝突したら `_2`, `_3` … を足す。
@@ -89,4 +90,62 @@ export function judgeEdges(judges: readonly JudgeView[]): JudgeEdge[] {
   return judges
     .filter((j) => j.status.kind === "active")
     .flatMap((j) => [...new Set(j.targets)].map((to) => ({ from: j.id, to })));
+}
+
+// ---- 非表示に連動する（2026-11-29 利用者要望） ------------------------------------------
+
+/**
+ * 連動先のグループ。**村に居るグループのときだけ id を返し、引けない id は `null`**（連動しない）—
+ * グループを消しても判断役の `hideWithGroup` には触らない（`group_contract` 凍結 3 と同じ）ので、
+ * 引けない id は「なし」として描き、次に判断役を保存する操作で `null` へ正規化する。
+ * 判定はサーヴァントの所属と同じ `sectionKeyOf` を通す（規則を 2 つ書かない）。
+ */
+export function linkedGroupOf(
+  judge: Pick<JudgeView, "hideWithGroup">,
+  groups: readonly AgentGroup[],
+): GroupId | null {
+  const key = sectionKeyOf({ groupId: judge.hideWithGroup }, groups);
+  return key === UNASSIGNED ? null : key;
+}
+
+/**
+ * 地図で隠すか。連動先が村に居て、かつ非表示の集合に入っているときだけ。**表示だけ** —
+ * コアの評価・配送はこの欄を読まない。述語はサーヴァントの `isHidden` をそのまま使う
+ * （連動先を所属に見立てる。引けない id は隠れない、まで同じ規則）。
+ */
+export function isJudgeHidden(
+  judge: Pick<JudgeView, "hideWithGroup">,
+  groups: readonly AgentGroup[],
+  hidden: readonly GroupId[],
+): boolean {
+  return isHidden({ groupId: judge.hideWithGroup }, groups, hidden);
+}
+
+/** 地図に出す判断役（並びは受け取った順のまま）。 */
+export function shownJudges<T extends Pick<JudgeView, "hideWithGroup">>(
+  judges: readonly T[],
+  groups: readonly AgentGroup[],
+  hidden: readonly GroupId[],
+): T[] {
+  return judges.filter((judge) => !isJudgeHidden(judge, groups, hidden));
+}
+
+/**
+ * 一覧の姿から更新の形を組む（`update_judge` は欄ごと差し替える — 写し忘れた欄は既定へ戻る）。
+ * 連動先は `linkedGroupOf` で正規化して送る（引けない id はここで `null` になる）。
+ * `patch` は変える欄だけ。
+ */
+export function judgeSpecOf(
+  view: JudgeView,
+  groups: readonly AgentGroup[],
+  patch: Partial<JudgeSpec> = {},
+): JudgeSpec {
+  return {
+    id: view.id,
+    name: view.name,
+    order: view.order,
+    enabled: view.enabled,
+    hideWithGroup: linkedGroupOf(view, groups),
+    ...patch,
+  };
 }

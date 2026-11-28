@@ -1223,6 +1223,10 @@ pub struct JudgeView {
     /// 利用者の有効/無効（`JudgeSpec::enabled` の写し）。画面が更新を組み直すときに要る —
     /// 無いと名前を直しただけで既定（有効）へ戻る（Spec 14 P1 の「投影から組み直して欄が消える」）。
     pub enabled: bool,
+    /// 地図の表示を連動させるグループ（`JudgeSpec::hide_with_group` の写し）。**表示だけ** —
+    /// 画面が地図のノードと線を隠すのに読み、更新を組み直すときに写す（写さないと名前を直しただけで
+    /// 連動が外れる）。コアの評価・配送はこの欄を読まない。
+    pub hide_with_group: Option<crate::model::AgentGroupId>,
     /// 有効かどうか。
     pub status: JudgeStatus,
     /// 行き先になりうる相手（ファイルが読めたときだけ。地図の破線はここから描く）。

@@ -9,6 +9,9 @@
  *   送る（開いただけでは 1 バイトも出ない）。問いの文面の一文で確度が動く（Notes 1）ので、
  *   書き換えたらその場で確かめられないと調整できない
  * - 選択状態（`selectedAgentId`）は変えない — 判断役は会話の相手ではない
+ * - **「非表示に連動する」は表示だけ**（2026-11-29 利用者要望）。選んだグループを絆の地図で
+ *   隠すと、この判断役と判断役に触れる線も地図から隠れる。`world.json` の欄（`hideWithGroup`）で、
+ *   名前と同じく選んだ時点で保存する（judge.toml の保存ボタンとは別）
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -19,7 +22,7 @@ import { askConfirm } from "../composables/useConfirm";
 import { useOrchestrator } from "../composables/useOrchestrator";
 import { formatError } from "../lib/errorText";
 import * as ipc from "../lib/ipc";
-import { judgeStatusText } from "../lib/judges";
+import { judgeSpecOf, judgeStatusText, linkedGroupOf } from "../lib/judges";
 import type { AgentId, ErrorPayload, JudgeTrial } from "../types";
 
 const props = defineProps<{ judgeId: AgentId }>();
@@ -103,8 +106,34 @@ async function commitName(): Promise<void> {
     if (current) nameDraft.value = current.name;
     return;
   }
-  const ok = await orchestrator.updateJudge({ id: current.id, name, order: current.order, enabled: current.enabled });
+  const ok = await orchestrator.updateJudge(judgeSpecOf(current, state.groups, { name }));
   if (!ok) nameDraft.value = current.name;
+}
+
+// ---- 非表示に連動する ------------------------------------------------------
+
+/**
+ * 選択欄の値。**引けない id（消したグループ）は「なし」として描く** — 連動しないので（`linkedGroupOf`）。
+ * 次にこの判断役を保存する操作で `null` へ正規化される（`group_contract` 凍結 3 と同じ）。
+ */
+const hideWithValue = computed(() => (judge.value ? (linkedGroupOf(judge.value, state.groups) ?? "") : ""));
+const hideWithBusy = ref(false);
+
+/** 連動先を差し替える。**表示だけ** — 判定と配送は変わらない（コアはこの欄を読まない）。 */
+async function commitHideWith(event: Event): Promise<void> {
+  const select = event.target as HTMLSelectElement;
+  const current = judge.value;
+  if (!current) return;
+  const next = select.value || null;
+  if (next === linkedGroupOf(current, state.groups)) return;
+  hideWithBusy.value = true;
+  try {
+    const ok = await orchestrator.updateJudge(judgeSpecOf(current, state.groups, { hideWithGroup: next }));
+    // 通らなければ表示を保存済みの値へ戻す（値が変わらないので Vue は描き直さない）。
+    if (!ok) select.value = hideWithValue.value;
+  } finally {
+    hideWithBusy.value = false;
+  }
 }
 
 // ---- 試す ------------------------------------------------------------------
@@ -225,6 +254,30 @@ const statusView = computed(() => {
           {{ statusView.label }}
         </span>
       </p>
+
+      <!--
+        非表示に連動する（2026-11-29）。**表示だけ**で、地図のノードと判断役に触れる線を隠すだけ。
+        出すのは村にグループがあるときだけ（選べない選択肢を並べない。消したグループの id は
+        連動しないので、外す入口が無くても害は無い — 次の保存で null へ正規化される）。
+      -->
+      <div
+        v-if="state.groups.length"
+        class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-2 text-[11px]"
+        data-judge-hide-with
+      >
+        <label for="judge-hide-with" class="shrink-0 text-ink-dim">{{ $t("judges.hideWith") }}</label>
+        <select
+          id="judge-hide-with"
+          :value="hideWithValue"
+          :disabled="hideWithBusy"
+          class="max-w-56 min-w-0 rounded border border-line bg-surface-0 px-2 py-0.5 outline-none focus:border-accent disabled:opacity-40"
+          @change="commitHideWith"
+        >
+          <option value="">{{ $t("judges.hideWithNone") }}</option>
+          <option v-for="group in state.groups" :key="group.id" :value="group.id">{{ group.name }}</option>
+        </select>
+        <span class="basis-full text-ink-dim">{{ $t("judges.hideWithHelp") }}</span>
+      </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-3">
         <p v-if="loading" class="py-8 text-center text-[11px] text-ink-dim">{{ $t("judges.loading") }}</p>

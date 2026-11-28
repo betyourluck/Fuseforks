@@ -176,7 +176,7 @@ pub async fn village_in(
     zari.connected_agents = vec!["agent_02".into()];
     orchestrator.create_agent(zari).await.unwrap();
     orchestrator
-        .create_judge(JudgeSpec { id: JUDGE.into(), name: "振り分け役".into(), order: 0, enabled: true, unknown: UnknownFields::default() })
+        .create_judge(JudgeSpec { id: JUDGE.into(), name: "振り分け役".into(), order: 0, enabled: true, hide_with_group: None, unknown: UnknownFields::default() })
         .await
         .unwrap();
     Village { _dir: dir, orchestrator, requests, templates }

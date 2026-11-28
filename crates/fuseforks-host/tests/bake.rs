@@ -350,6 +350,7 @@ async fn unsafe_ids_in_world_json_stop_the_bake_before_any_path_is_built() {
         name: "外へ".to_owned(),
         order: 0,
         enabled: true,
+        hide_with_group: None,
         unknown: Default::default(),
     });
     store.save_world(&world).await.unwrap();

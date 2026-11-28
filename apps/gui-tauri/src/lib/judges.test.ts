@@ -1,10 +1,29 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveId, judgeEdges, judgeStatusText, judgesInOrder, nextJudgeOrder } from "./judges";
-import type { JudgeStatus, JudgeView } from "../types";
+import {
+  deriveId,
+  isJudgeHidden,
+  judgeEdges,
+  judgeSpecOf,
+  judgeStatusText,
+  judgesInOrder,
+  linkedGroupOf,
+  nextJudgeOrder,
+  shownJudges,
+} from "./judges";
+import type { AgentGroup, JudgeStatus, JudgeView } from "../types";
 
 function view(id: string, status: JudgeStatus, targets: string[] = [], order = 0): JudgeView {
-  return { id, name: id, order, enabled: status.kind !== "disabled", status, targets, outline: null };
+  return {
+    id,
+    name: id,
+    order,
+    enabled: status.kind !== "disabled",
+    hideWithGroup: null,
+    status,
+    targets,
+    outline: null,
+  };
 }
 
 describe("deriveId", () => {
@@ -81,5 +100,61 @@ describe("judgeEdges", () => {
   it("同じ相手へは 1 本", () => {
     const edges = judgeEdges([view("j", { kind: "active" }, ["agent_3", "agent_3"])]);
     expect(edges).toHaveLength(1);
+  });
+});
+
+describe("非表示に連動する（2026-11-29）", () => {
+  const groups: AgentGroup[] = [
+    { id: "g-invest", name: "投資", batchStart: true },
+    { id: "g-research", name: "調査", batchStart: true },
+  ];
+  const linked = (id: string, hideWithGroup: string | null): JudgeView => ({
+    ...view(id, { kind: "active" }),
+    hideWithGroup,
+  });
+
+  it("連動先のグループを隠すと隠れ、出すと戻る", () => {
+    const judge = linked("madoguchi", "g-research");
+    expect(isJudgeHidden(judge, groups, ["g-research"])).toBe(true);
+    expect(isJudgeHidden(judge, groups, [])).toBe(false);
+    // 別のグループを隠しても隠れない。
+    expect(isJudgeHidden(judge, groups, ["g-invest"])).toBe(false);
+  });
+
+  it("「なし」は何を隠しても隠れない（今までどおり）", () => {
+    expect(isJudgeHidden(linked("j", null), groups, ["g-invest", "g-research"])).toBe(false);
+  });
+
+  it("消したグループ・引けない id は連動しない（非表示の集合に残っていても）", () => {
+    // 保存値の hiddenGroups には消したグループの id が残りうる（useHiddenGroups は読み飛ばさず持つ）。
+    const judge = linked("j", "g-deleted");
+    expect(isJudgeHidden(judge, groups, ["g-deleted"])).toBe(false);
+    expect(linkedGroupOf(judge, groups)).toBeNull();
+    expect(linkedGroupOf(linked("j", "g-invest"), groups)).toBe("g-invest");
+  });
+
+  it("地図に出す判断役は隠れたものを落とし、並びを保つ", () => {
+    const judges = [linked("a", "g-research"), linked("b", null), linked("c", "g-invest"), linked("d", "g-research")];
+    expect(shownJudges(judges, groups, ["g-research"]).map((j) => j.id)).toEqual(["b", "c"]);
+    expect(shownJudges(judges, groups, []).map((j) => j.id)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("更新の形は一覧の写しから組み、連動先を落とさない（トグルで外れない）", () => {
+    const judge = { ...linked("j", "g-invest"), name: "窓口", order: 3 };
+    expect(judgeSpecOf(judge, groups, { enabled: false })).toEqual({
+      id: "j",
+      name: "窓口",
+      order: 3,
+      enabled: false,
+      hideWithGroup: "g-invest",
+    });
+    expect(judgeSpecOf(judge, groups, { hideWithGroup: null }).hideWithGroup).toBeNull();
+    // 名前だけ直すときも、無効にしてある判断役は無効のまま（コアの既定＝有効へ戻さない）。
+    const off = { ...judge, enabled: false };
+    expect(judgeSpecOf(off, groups, { name: "受付" })).toMatchObject({ name: "受付", enabled: false, hideWithGroup: "g-invest" });
+  });
+
+  it("更新の形では引けない id を null へ正規化する（group_contract 凍結 3 と同じ）", () => {
+    expect(judgeSpecOf(linked("j", "g-deleted"), groups).hideWithGroup).toBeNull();
   });
 });

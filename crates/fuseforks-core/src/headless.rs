@@ -1109,6 +1109,7 @@ mod tests {
                 name: "判断役".to_owned(),
                 order: 0,
                 enabled: true,
+                hide_with_group: None,
                 unknown: UnknownFields::default(),
             })
             .unwrap();
@@ -1245,6 +1246,7 @@ mod tests {
                 name: "判断役".to_owned(),
                 order: 0,
                 enabled: true,
+                hide_with_group: None,
                 unknown: UnknownFields::default(),
             })
             .unwrap();

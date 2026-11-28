@@ -15,7 +15,7 @@ import { useI18n } from "vue-i18n";
 
 import { useJudgeDialog } from "../composables/useJudgeDialog";
 import { useOrchestrator } from "../composables/useOrchestrator";
-import { deriveId, judgeStatusText, judgesInOrder, nextJudgeOrder } from "../lib/judges";
+import { deriveId, judgeSpecOf, judgeStatusText, judgesInOrder, nextJudgeOrder } from "../lib/judges";
 import type { JudgeView } from "../types";
 
 const orchestrator = useOrchestrator();
@@ -33,7 +33,7 @@ async function submit(): Promise<void> {
   if (!name) return;
   // 名前空間は 1 つ — サーヴァントの id とも衝突させない（コアも DUPLICATE_AGENT で拒む）。
   const id = deriveId(name, [...state.agents.map((a) => a.id), ...state.judges.map((j) => j.id)], "judge");
-  const ok = await orchestrator.createJudge({ id, name, order: nextJudgeOrder(state.judges), enabled: true });
+  const ok = await orchestrator.createJudge({ id, name, order: nextJudgeOrder(state.judges), enabled: true, hideWithGroup: null });
   if (ok) {
     newName.value = "";
     creating.value = false;
@@ -42,9 +42,12 @@ async function submit(): Promise<void> {
   }
 }
 
-/** 有効/無効を切り替える。ほかの欄は一覧の写しをそのまま送る（名前・並びを巻き戻さない）。 */
+/**
+ * 有効/無効を切り替える。ほかの欄は一覧の写しをそのまま送る（名前・並び・地図の連動先を巻き戻さない。
+ * 組み立ては `judgeSpecOf` の 1 実装）。
+ */
 async function setEnabled(judge: JudgeView, enabled: boolean): Promise<void> {
-  await orchestrator.updateJudge({ id: judge.id, name: judge.name, order: judge.order, enabled });
+  await orchestrator.updateJudge(judgeSpecOf(judge, state.groups, { enabled }));
 }
 
 function statusLine(status: Parameters<typeof judgeStatusText>[0]) {

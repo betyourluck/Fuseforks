@@ -330,6 +330,13 @@ export interface JudgeSpec {
   order: number;
   /** 利用者の有効/無効（左ペインのトグル）。**必ず送る** — 省くとコアは既定（有効）で読む。 */
   enabled: boolean;
+  /**
+   * 地図の表示を連動させるグループ（2026-11-29。編集ダイアログの「非表示に連動する」）。このグループを
+   * 絆の地図で隠すと、この判断役と判断役に触れる線も隠れる。**表示だけ** — コアの評価・配送は読まない。
+   * `null` = 連動しない。**必ず送る** — 省くとコアは `null`（連動しない）で読み、連動が外れる。
+   * 組み立ては `judgeSpecOf`（`lib/judges.ts`）の 1 実装。
+   */
+  hideWithGroup: GroupId | null;
 }
 
 /**
@@ -363,6 +370,8 @@ export interface JudgeView {
   order: number;
   /** 利用者の有効/無効。更新を組み直すときに写す（写さないと名前を直しただけで有効へ戻る）。 */
   enabled: boolean;
+  /** 地図の表示を連動させるグループ（`JudgeSpec.hideWithGroup` の写し。引けない id もそのまま来る）。 */
+  hideWithGroup: GroupId | null;
   status: JudgeStatus;
   targets: AgentId[];
   /** `null` = ファイルが無いか検査に落ちている（「読めない」と「0 本」を畳まない）。 */

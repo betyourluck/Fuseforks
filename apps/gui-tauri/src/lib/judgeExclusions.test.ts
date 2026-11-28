@@ -59,7 +59,9 @@ describe("判断役が入らない場所（Spec 62 D2）", () => {
 describe("判断役の線（Spec 62 D9）", () => {
   it("判断役 → サーヴァントの線は有効な判断役の to から合成し、地図から切らない", () => {
     const map = src("../components/TopologyMap.vue");
-    expect(map).toContain("judgeEdges(state.judges)");
+    // 合成するのは地図に出している判断役から（連動して隠れた判断役の線は出さない —
+    // judgeHideWithWiring.test.ts）。
+    expect(map).toContain("judgeEdges(shownJudgeList.value)");
     expect(map).toContain("if (edge && !edges.value[edge]?.judge) void removeEdge(edge);");
   });
 
@@ -82,13 +84,15 @@ describe("判断役の線（Spec 62 D9）", () => {
     expect(list).toContain(':title="$t(\'judges.edit\')"');
     expect(list).toContain('role="switch"');
     expect(list).toContain("setEnabled(judge, !judge.enabled)");
-    // 切り替えは一覧の写しで組み直す — 名前・並びを巻き戻さない。
-    expect(list).toContain("{ id: judge.id, name: judge.name, order: judge.order, enabled }");
+    // 切り替えは一覧の写しで組み直す — 名前・並び・地図の連動先を巻き戻さない（judgeSpecOf の 1 実装。
+    // 写す欄は judges.test.ts が留める）。
+    expect(list).toContain("judgeSpecOf(judge, state.groups, { enabled })");
   });
 
   it("名前の更新は enabled を写す（写さないとコアの既定＝有効へ戻る）", () => {
     const dialog = src("../components/JudgeDialog.vue");
-    expect(dialog).toContain("enabled: current.enabled");
+    // 組み立ては judgeSpecOf の 1 実装で、変えるのは名前だけ（enabled を写すことは judges.test.ts が留める）。
+    expect(dialog).toContain("judgeSpecOf(current, state.groups, { name })");
   });
 
   it("カードの drop は判断役を受け側にできる", () => {

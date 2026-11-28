@@ -56,7 +56,7 @@ import { hasOverlap, untangle } from "../lib/kizunaUntangle";
 import { visibleAgents, visibleEdges } from "../lib/agentGroups";
 import { useHiddenGroups } from "../composables/useHiddenGroups";
 import { useJudgeDialog } from "../composables/useJudgeDialog";
-import { judgeEdges, judgeStatusText } from "../lib/judges";
+import { judgeEdges, judgeStatusText, shownJudges } from "../lib/judges";
 import { avatarHue, avatarInitial } from "../lib/avatar";
 import { tieAddition } from "../lib/kizunaDrop";
 import { canStartLink, edgeCutPlan, type EdgeCut } from "../lib/kizunaLink";
@@ -113,16 +113,24 @@ const UNTANGLE_GAP = NODE_RADIUS * 2 + 44;
 const visible = computed(() => visibleAgents(state.agents, state.groups, hiddenGroups.hidden));
 
 /**
- * 判断役（Spec 62 D9）。**グループに入らないので常に見える。** ノードの形を変え
- * （菱形・アバター無し）、押すと編集ダイアログが開く（選択状態は変えない）。
+ * 判断役（Spec 62 D9）。**グループには入らない。** ノードの形を変え（菱形・アバター無し）、
+ * 押すと編集ダイアログが開く（選択状態は変えない）。`isJudge` は隠れているかを問わず
+ * 「判断役の id か」の分類（`judgeIds` は全員）。
  */
 const judgeIds = computed(() => new Set(state.judges.map((j) => j.id)));
 const isJudge = (id: string) => judgeIds.value.has(id);
 const judgeOf = (id: string) => state.judges.find((j) => j.id === id) ?? null;
 
-/** 地図に載る id（見えているサーヴァント + 判断役）。 */
+/**
+ * 地図に出す判断役（2026-11-29 利用者要望「非表示に連動する」）。連動先のグループを隠していれば
+ * その判断役も隠す — **表示だけ**で、判断役の評価・配送・ツールの提示は変わらない（コアはこの
+ * 欄を読まない）。連動しない・連動先が引けない判断役は常に見える（`shownJudges`）。
+ */
+const shownJudgeList = computed(() => shownJudges(state.judges, state.groups, hiddenGroups.hidden));
+
+/** 地図に載る id（見えているサーヴァント + 出している判断役）。 */
 const visibleIds = computed(
-  () => new Set([...visible.value.map((a) => a.id), ...state.judges.map((j) => j.id)]),
+  () => new Set([...visible.value.map((a) => a.id), ...shownJudgeList.value.map((j) => j.id)]),
 );
 
 /**
@@ -143,7 +151,7 @@ const nodes = computed<Nodes>(() => {
     // ここを持たせないと辺の端が旧い半径のまま刺さる。
     result[agent.id] = { name: agent.name, selected: agent.id === state.selectedAgentId };
   }
-  for (const judge of state.judges) {
+  for (const judge of shownJudgeList.value) {
     result[judge.id] = { name: judge.name, selected: false, judge: true };
   }
   return result;
@@ -193,7 +201,8 @@ const edges = computed<Edges>(() => {
   // 判断役 → サーヴァント（Spec 62 D9）。**正本は `judge.toml` の `to`** で、保存しない。
   // **有効な判断役からしか描かない**（`judgeEdges`）。破線にするのは、色が既に通常の辺を
   // 意味しているから。行き先が隠れたグループに居れば描かない（片端だけの線を作らない）。
-  for (const edge of judgeEdges(state.judges)) {
+  // 判断役そのものが隠れていれば（連動先のグループを隠した）線ごと出さない。
+  for (const edge of judgeEdges(shownJudgeList.value)) {
     if (!visibleIds.value.has(edge.to)) continue;
     result[edgeKey(`${edge.from}->${edge.to}`, true)] = {
       source: edge.from,
@@ -602,8 +611,8 @@ function onPointerdown(event: PointerEvent): void {
 watch(visibleIds, (ids) => {
   if (linkSource.value && !ids.has(linkSource.value)) cancelLink();
   if (menu.value && !ids.has(menu.value.id)) menu.value = null;
-  // 隠れた個体は動かせないので、移動のための選択からも外す。
-  const kept = moveSelection.value.filter((id) => ids.has(id as AgentId) || isJudge(id));
+  // 隠れた個体は動かせないので、移動のための選択からも外す（連動して隠れた判断役も同じ）。
+  const kept = moveSelection.value.filter((id) => ids.has(id as AgentId));
   if (kept.length !== moveSelection.value.length) moveSelection.value = kept;
 });
 

@@ -287,6 +287,19 @@ pub struct JudgeSpec {
     /// ツールも地図の破線も出ない。**ファイル・線・座標は残す**（戻したときにそのまま使える）。
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 地図の表示を連動させるグループ（2026-11-29 利用者要望。編集ダイアログの「非表示に連動する」）。
+    /// **表示だけ** — このグループを絆の地図で非表示にすると、この判断役のノードと、判断役に触れる
+    /// 線も地図から隠れる。評価・配送・ツールの提示・`plan` のどれもこの欄を読まない
+    /// （`judge_contract`。`tests/judge_hide_with_group.rs` が走査で留める）。
+    ///
+    /// **村（`world.json`）に置く理由はグループの所属（`AgentSpec::group_id`）と同じ** — 判断役と
+    /// グループの関係は村の内容物で、配ると付いて回る。隠している状態そのものは端末の
+    /// `localStorage` に残る（`group_contract` 凍結 1）ので、配った先で勝手に隠れることはない。
+    ///
+    /// `None` = 連動しない（今までどおり常に見える）。`World::groups` に無い id も連動しない —
+    /// グループを消しても触らない（`group_contract` 凍結 3 と同じ。id は再発行しないので取り違えない）。
+    #[serde(default)]
+    pub hide_with_group: Option<AgentGroupId>,
     /// この版が知らない欄（[`UnknownFields`]）。
     #[serde(flatten)]
     pub unknown: UnknownFields,
@@ -1880,6 +1893,20 @@ mod spec33_wire_shape {
         let json = r#"{ "id": "judge", "name": "振り分け", "order": 0 }"#;
         let parsed: JudgeSpec = serde_json::from_str(json).expect("旧形が読めること");
         assert!(parsed.enabled);
+    }
+
+    /// **`hideWithGroup` の無い判断役は連動しない**で読む（2026-11-29 に足した欄）。既存の村の
+    /// 判断役が、更新しただけで地図から消えたり現れたりしない。
+    #[test]
+    fn a_judge_without_hide_with_group_is_not_linked() {
+        let json = r#"{ "id": "judge", "name": "振り分け", "order": 0, "enabled": true }"#;
+        let parsed: JudgeSpec = serde_json::from_str(json).expect("旧形が読めること");
+        assert_eq!(parsed.hide_with_group, None);
+        // 画面が読む鍵は camelCase（snake_case で出ていたら連動先が画面に届かない）。
+        let linked = JudgeSpec { hide_with_group: Some("g1".into()), ..parsed };
+        let value = serde_json::to_value(&linked).unwrap();
+        assert_eq!(value["hideWithGroup"], serde_json::json!("g1"));
+        assert!(value.get("hide_with_group").is_none());
     }
 }
 

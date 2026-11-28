@@ -95,6 +95,7 @@ async fn a_judge_turned_off_offers_no_tool_and_keeps_its_file() {
         name: "振り分け役".into(),
         order: 0,
         enabled,
+        hide_with_group: None,
         unknown: UnknownFields::default(),
     };
     v.orchestrator.update_judge(off(false)).await.unwrap();
@@ -168,7 +169,7 @@ async fn saving_rejects_invalid_rules_and_unknown_destinations() {
 async fn a_new_judge_starts_from_a_template_that_passes_the_checks() {
     let v = village("template", Some(("research", 0.9)), true, false).await;
     v.orchestrator
-        .create_judge(JudgeSpec { id: "second".into(), name: "二番目".into(), order: 1, enabled: true, unknown: UnknownFields::default() })
+        .create_judge(JudgeSpec { id: "second".into(), name: "二番目".into(), order: 1, enabled: true, hide_with_group: None, unknown: UnknownFields::default() })
         .await
         .unwrap();
     let text = v.orchestrator.read_judge_file(&"second".into()).await.unwrap();

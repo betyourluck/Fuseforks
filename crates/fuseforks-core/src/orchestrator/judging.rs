@@ -417,7 +417,16 @@ impl Orchestrator {
                     Some(Ok(parsed)) => (parsed.targets().into_iter().cloned().collect(), Some(parsed.outline())),
                     _ => (Vec::new(), None),
                 };
-                JudgeView { id: j.id, name: j.name, order: j.order, enabled: j.enabled, status, targets, outline }
+                JudgeView {
+                    id: j.id,
+                    name: j.name,
+                    order: j.order,
+                    enabled: j.enabled,
+                    hide_with_group: j.hide_with_group,
+                    status,
+                    targets,
+                    outline,
+                }
             })
             .collect()
     }
