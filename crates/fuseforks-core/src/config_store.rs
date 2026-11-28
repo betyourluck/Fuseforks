@@ -647,10 +647,12 @@ impl ConfigStore {
                 ),
             });
         }
-        // 接地の作法。**「出典を出すな」ではなく「何が手元に無いか」を伝える。**
+        // 接地の作法。**「出典を出すな」ではなく「何が手元にあり、何を確かめて
+        // いないか」を伝える。**
         //
-        // Google 検索による接地は、答えの中身は運んでくるが**参照元 URL を
-        // こちらへ渡さない**（渡ってくるのは検索語だけ）。この事実を伝えないまま
+        // 2026-07-29 の gemini-3.6-flash では、Google 検索による接地は答えの中身は
+        // 運んでくるが**参照元 URL をこちらへ渡さなかった**（渡ってくるのは
+        // 検索語だけ）。この事実を伝えないまま
         // 出典を求められると、モデルは引用の形をした文字列を作る — 実機で、
         // ドメインのルート URL に記事の見出しを添えた偽の引用が返り、さらに
         // 2 回目には**実在するものと 404 が混在する**、より紛らわしい形になった
@@ -659,33 +661,54 @@ impl ConfigStore {
         // これは作業フォルダの実パス開示と同じ形の処方で、上の節と同じ理由で
         // ここに置いている。人格ではなくワイヤ経路の性質なので、SKILL.md では
         // なく実装側から入れる（接地を有効にした全員に等しく効く）。
+        //
+        // **2026-11-28 に告知の中身を書き換えた。** 「URL は手元に来ない」は
+        // 2026-07-29 の gemini-3.6-flash では真だったが、今は偽 — 3.8 からは
+        // 検索の応答に出典（`groundingChunks`）が URL つきで返り（2026-09-03 の
+        // probe）、gemini-4-hydrogen は本文に書いた URL 32 本のうち 29 本が
+        // 出典の転送先と一致した（2026-11-28 の 64 回の検証。CLAUDE.md の
+        // 「gemini-4-hydrogen が偽の URL を書くかの検証」）。偽の事実を教えると、
+        // 出典つきで頼まれたときにも検索で見た URL を書けない。
+        // 残したのは記憶から URL を書く形への歯止め — 同じ検証で、検索ありの
+        // 3.8-flash が出した偽 1 本は検索結果に無い arXiv ID を記憶から書いた
+        // ものだった。偽は 404 になる形と、番号だけ実在して中身が違う形
+        // （GitHub の issue 番号・arXiv ID）に割れたので、後者も名指しする。
+        // 村で効いている gemini-3.5-flash-lite と gemini-4-neon は測っていない。
         if grounded {
             prompt.push_str(match language {
                 Language::Ja => {
                     "## グラウンディング（Google 検索）について\n\
-                     あなたは Google 検索で裏を取ってから答えられます。ただし\
-                     **参照したページの URL は、あなたの手元には渡ってきません。**\n\
-                     - **URL を書かないでください。** 出典を求められたら\
-                     「URL は取得できない」と正直に答えてください。\n\
-                     - 代わりに、**実際に検索した語**と、**発表元の名前**\
-                     （気象庁・内閣府・◯◯新聞 など）は答えられます。それを示してください。\n\
-                     - もっともらしい URL を組み立ててはいけません。\
+                     あなたは Google 検索で裏を取ってから答えられます。検索の結果には、\
+                     出てきたページの URL が含まれます。一方、\
+                     **あなたが記憶している URL は、このターンでは確かめていません。**\
+                     実在しないことも、番号だけ合っていて別のページを指していることも\
+                     あります（論文の ID・issue の番号など）。\n\
+                     - 出典の URL は、**検索の結果や、依頼文・ツールの結果に実際に\
+                     出てきたものだけ**を書いてください。記憶から URL を書いたり、\
+                     もっともらしい URL を組み立てたりしてはいけません。\
                      実在しない URL は、出典が無いことより有害です\
-                     （受け取った相手が確認済みだと誤解します）。\n\n"
+                     （受け取った相手が確認済みだと誤解します）。\n\
+                     - URL を確かめられなかった出典は、そう書いたうえで、\
+                     **実際に検索した語**と**発表元の名前**\
+                     （気象庁・内閣府・◯◯新聞 など）を示してください。\n\n"
                 }
                 Language::En => {
                     "## Grounding (Google Search)\n\
                      You can check your answer against Google Search before \
-                     replying, but **the URLs of the pages you consulted are \
-                     never handed back to you.**\n\
-                     - **Do not write URLs.** If asked for sources, say honestly \
-                     that URLs are not available to you.\n\
-                     - What you can report instead are **the exact search terms \
-                     you used** and **the names of the publishers** (a weather \
-                     bureau, a ministry, a newspaper, and so on). Offer those.\n\
-                     - Never assemble a plausible-looking URL. A URL that does \
-                     not exist is worse than having no source at all (the reader \
-                     will assume it has been verified).\n\n"
+                     replying. The search results include the URLs of the pages \
+                     they return. **URLs you remember, however, have not been \
+                     checked in this turn.** They may not exist, or may match \
+                     only in a number while pointing to a different page (a \
+                     paper ID, an issue number, and so on).\n\
+                     - Cite only URLs that **actually appeared in the search \
+                     results, the request, or a tool result.** Do not write URLs \
+                     from memory, and never assemble a plausible-looking URL. A \
+                     URL that does not exist is worse than having no source at \
+                     all (the reader will assume it has been verified).\n\
+                     - For a source whose URL you could not confirm, say so, and \
+                     give **the exact search terms you used** and **the names of \
+                     the publishers** (a weather bureau, a ministry, a newspaper, \
+                     and so on).\n\n"
                 }
             });
         }
@@ -1100,20 +1123,32 @@ mod tests {
         assert!(!without.contains("今の顔ぶれ"), "無ければ節ごと出さない");
     }
 
-    /// 接地を有効にしたエージェントには、URL が手元に来ないことを伝えること。
+    /// 接地を有効にしたエージェントには、書いてよい URL と確かめていない URL を伝えること。
     ///
     /// 伝えないと、出典を求められたモデルは引用の形をした文字列を作る。
     /// 実機では実在する URL と 404 が混ざった形で返り、生きている側が
     /// 死んでいる側に信憑性を貸した（2026-07-29）。
+    ///
+    /// 2026-11-28 まで「URL は手元に来ない」と伝えていたが、3.8 以降は検索の応答に
+    /// URL が返るので偽になった。偽の告知が戻らないことも留める。
     #[tokio::test]
-    async fn a_grounded_agent_is_told_it_cannot_cite_urls() {
+    async fn a_grounded_agent_is_told_which_urls_it_may_cite() {
         let dir = TempDir::new("prompt-grounded");
         let store = ConfigStore::new(&dir.0);
         let spec = AgentSpec::new(AgentId::from("agent_01"), "ジェミー", "tpl");
 
         let (grounded, stable_len) = store.compose_system_prompt(&spec, true, None, Language::Ja).await.unwrap();
-        assert!(grounded.contains("URL は、あなたの手元には渡ってきません"));
-        assert!(grounded.contains("検索した語"), "代わりに何を言えるかも伝える");
+        assert!(grounded.contains("実際に出てきたものだけ"), "書いてよい URL の範囲を伝える");
+        assert!(grounded.contains("記憶から URL を書いたり"), "記憶から書く形を止める");
+        assert!(grounded.contains("番号だけ合っていて"), "番号だけ実在する偽も名指しする");
+        assert!(grounded.contains("検索した語"), "確かめられなかったときに何を言えるかも伝える");
+        assert!(!grounded.contains("手元には渡ってきません"), "偽になった告知を戻さない");
+        assert!(!grounded.contains("URL を書かないでください"), "検索で見た URL まで止めない");
+
+        let (en, _) = store.compose_system_prompt(&spec, true, None, Language::En).await.unwrap();
+        assert!(en.contains("actually appeared in the search"), "{en}");
+        assert!(en.contains("Do not write URLs from memory"), "{en}");
+        assert!(!en.contains("never handed back"), "偽になった告知を戻さない（英語）");
 
         // 会話ごとに揺れない情報なので、キャッシュの安定部分に入っていること。
         let stable: String = grounded.chars().take(stable_len).collect();

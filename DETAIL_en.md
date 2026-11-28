@@ -1640,9 +1640,11 @@ It is intentional that `generativelanguage.googleapis.com` is **not automaticall
 
 Checking "Google Grounding" in a model template makes that model verify with search before replying. It **can be used with function calls**, so enabling grounding does not disable delegation through `transfer_to_*` or built-in tools.
 
-> **The referenced URLs are not returned to us.** Responses contain search queries and a link to Google Search, but not the URLs of articles the model read. Without stating this fact, models produce **strings shaped like citations** when asked for sources. In production, this appeared in the especially confusing form of a mix of real URLs and 404s ([failures.md](failures.md) #31).
+> **With `gemini-3.6-flash` on 2026-07-29, the referenced URLs were not returned to us.** Responses contained search queries and a link to Google Search, but not the URLs of articles the model read. Without stating this fact, models produce **strings shaped like citations** when asked for sources. In production, this appeared in the especially confusing form of a mix of real URLs and 404s ([failures.md](failures.md) #31).
 >
-> Therefore, the system prompt for a grounded agent automatically says: "URLs do not reach you; you can instead state search terms and the publishing organization." The key is a **notice of missing information rather than a prohibition**. Saying only "do not write URLs" collapses when the user asks for "URLs of sources." This is the same remedy as disclosing the real work-folder path: fill missing decision material with information.
+> Therefore, the system prompt for a grounded agent automatically states which URLs the model has at hand and which it has not checked. The key is a **notice of missing information rather than a prohibition**. Saying only "do not write URLs" collapses when the user asks for "URLs of sources." This is the same remedy as disclosing the real work-folder path: fill missing decision material with information.
+
+**The notice was rewritten on 2026-11-28.** The first notice said "URLs do not reach you; you can instead state search terms and the publishing organization; do not write URLs", which was true for `gemini-3.6-flash` on 2026-07-29. From 3.8 on, search responses return sources with URLs (see the Spec 48 section below), and of the 32 URLs `gemini-4-hydrogen` wrote in its answers, 29 matched where the source redirects led — so the notice had become false. The current notice says four things: the search results include the URLs of the pages / URLs the model remembers have not been checked in this turn (they may match only in a number while pointing to a different page, such as a paper ID or an issue number) / cite only URLs that appeared in the search results, the request, or a tool result / for a source whose URL could not be confirmed, give the search terms and the publisher's name. **The guard against writing URLs from memory stays** because, in the same check, the one fake URL from `gemini-3.8-flash` with search was an arXiv ID written from memory that was not in the search results. `gemini-3.5-flash-lite` and `gemini-4-neon`, which the village uses, were not measured.
 
 For utterances where grounding occurred, **search terms and sources are shown outside the speech bubble**. They are facts observed by this application, not the model's statement, so they do not share the body area. When zero sources are returned, the field remains and says "No sources were returned." **Emptiness itself establishes that no sources are available**; silently collapsing it would make users believe URLs in the text are sources.
 
@@ -1679,9 +1681,11 @@ context is a tool the model uses on its own only when the request contains a URL
 and it fires without any notice.
 
 On 3.8, **search sources (`groundingChunks`) are now returned as well**, but the URLs
-are `vertexaisearch.cloud.google.com` redirects with only the domain as a title —
-read the note above ("referenced URLs are not returned") as "**real** URLs are not
-returned".
+are `vertexaisearch.cloud.google.com` redirects with only the domain as a title.
+The URLs the model writes in its answers, however, often match where those
+redirects lead (29 of 32 for `gemini-4-hydrogen`, 27 of 36 for `gemini-3.8-flash`).
+The grounding notice was rewritten on 2026-11-28 in response (see the "Google Search
+Grounding" section above).
 
 Two log lines: `gemini tools: url_context={fetched}/{requested} statuses=…
 tool_use_prompt=… search_queries=…` (only on rounds that used a built-in tool), and
